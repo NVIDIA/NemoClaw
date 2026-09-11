@@ -54,6 +54,14 @@ describe("protected managed-image runtime workflow", () => {
     expect(validateManagedImageProtectedRuntimeWorkflow(workflow())).toEqual([]);
   });
 
+  it("rejects a runtime job that exceeds the 75 minute budget", () => {
+    const value = workflow();
+    runtimeJob(value)["timeout-minutes"] = 300;
+    expect(validateManagedImageProtectedRuntimeWorkflow(value)).toContain(
+      "managed-image-protected-runtime must keep the 75 minute timeout",
+    );
+  });
+
   // source-shape-contract: security -- The isolated registry must be gone before reporter-backed validations can publish passing risk evidence
   test("cleans the protected registry before passing risk evidence", () => {
     const steps = multiarchJob(workflow()).steps as Array<Record<string, unknown>>;
@@ -245,11 +253,56 @@ describe("protected managed-image runtime workflow", () => {
 
     expect(activation).toEqual({
       agents: ["openclaw", "hermes", "langchain-deepagents-code"],
-      contractVersion: 1,
+      contractVersion: 2,
       jobId: "managed-image-protected-runtime",
       platform: "linux/amd64",
       providers: ["ollama", "nim", "vllm"],
+      runtimeUser: "sandbox",
     });
+  });
+
+  it("rejects runtime contract selection drift", () => {
+    const value = workflow();
+    const activation = namedJobStep(
+      value,
+      "managed-image-protected-runtime",
+      "Validate protected runtime activation contract",
+    );
+    activation.run = String(activation.run).replace(
+      ".contractVersion == 2",
+      ".contractVersion == 3",
+    );
+
+    expect(validateManagedImageProtectedRuntimeWorkflow(value)).toContain(
+      "managed-image-protected-runtime step 'Validate protected runtime activation contract' must include .contractVersion == 2",
+    );
+  });
+
+  it("rejects an unbound runtime contract output", () => {
+    const value = workflow();
+    namedJobStep(
+      value,
+      "managed-image-protected-runtime",
+      "Validate protected runtime activation contract",
+    ).id = "changed-runtime-contract";
+
+    expect(validateManagedImageProtectedRuntimeWorkflow(value)).toContain(
+      "managed-image-protected-runtime activation step must expose the reviewed runtime contract",
+    );
+  });
+
+  it("rejects a protected build that drops the selected runtime user", () => {
+    const value = workflow();
+    const build = namedJobStep(
+      value,
+      "managed-image-protected-runtime",
+      "Build exact all-agent protected runtime images",
+    );
+    (build.env as Record<string, unknown>).RUNTIME_USER = "root";
+
+    expect(validateManagedImageProtectedRuntimeWorkflow(value)).toContain(
+      "managed-image-protected-runtime protected runtime build bases must bind RUNTIME_USER to ${{ steps.runtime-contract.outputs.runtime_user }}",
+    );
   });
 
   it("rejects job-scoped NGC credentials", () => {

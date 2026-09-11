@@ -7,7 +7,11 @@ import type {
   DockerGpuPatchMode,
   DockerUlimit,
 } from "./docker-gpu-patch-types";
-import { openshellSandboxCommandEnvValue } from "./docker-startup-command-env";
+import {
+  OPENSHELL_MAIN_PROCESS_SPEC_ENV,
+  openshellSandboxCommandEnvValue,
+  replaceOpenShellMainProcessSpecCommand,
+} from "./docker-startup-command-env";
 
 const OPENSHELL_SANDBOX_COMMAND_ENV = "OPENSHELL_SANDBOX_COMMAND";
 const OPENSHELL_SANDBOX_ENTRYPOINT = "/opt/openshell/bin/openshell-sandbox";
@@ -638,18 +642,37 @@ export function buildDockerGpuCloneRunArgs(
     }
   }
 
-  const sandboxCommand = openshellSandboxCommandEnvValue(options.openshellSandboxCommand);
+  const inspectedMainProcessSpec = envValue(config.Env, OPENSHELL_MAIN_PROCESS_SPEC_ENV);
+  const sandboxCommand = inspectedMainProcessSpec
+    ? null
+    : openshellSandboxCommandEnvValue(options.openshellSandboxCommand);
+  const intendedMainProcessSpec =
+    inspectedMainProcessSpec && options.openshellSandboxCommand
+      ? replaceOpenShellMainProcessSpecCommand(
+          inspectedMainProcessSpec,
+          options.openshellSandboxCommand,
+        )
+      : null;
   const omitOciImageUser = shouldOmitOpenShellOciImageUser(
     inspect,
     options.openshellSandboxCommand,
   );
   let sawSandboxCommand = false;
+  let sawMainProcessSpec = false;
   for (const env of stringArray(config.Env).filter(
     (entry) =>
       (!gpuAugment || !GPU_ENV_KEYS.has(envKey(entry))) &&
       (!omitOciImageUser || envKey(entry) !== OPENSHELL_OCI_IMAGE_USER_ENV),
   )) {
     const key = envKey(env);
+    if (key === OPENSHELL_MAIN_PROCESS_SPEC_ENV && intendedMainProcessSpec) {
+      sawMainProcessSpec = true;
+      args.push("--env", `${OPENSHELL_MAIN_PROCESS_SPEC_ENV}=${intendedMainProcessSpec}`);
+      continue;
+    }
+    if (key === OPENSHELL_SANDBOX_COMMAND_ENV && inspectedMainProcessSpec) {
+      continue;
+    }
     if (key === OPENSHELL_SANDBOX_COMMAND_ENV && sandboxCommand) {
       sawSandboxCommand = true;
       args.push("--env", `${OPENSHELL_SANDBOX_COMMAND_ENV}=${sandboxCommand}`);
@@ -657,7 +680,9 @@ export function buildDockerGpuCloneRunArgs(
     }
     args.push("--env", replaceEnvValue(env, "OPENSHELL_ENDPOINT", options.openshellEndpoint));
   }
-  if (sandboxCommand && !sawSandboxCommand) {
+  if (intendedMainProcessSpec && !sawMainProcessSpec) {
+    args.push("--env", `${OPENSHELL_MAIN_PROCESS_SPEC_ENV}=${intendedMainProcessSpec}`);
+  } else if (sandboxCommand && !sawSandboxCommand && !inspectedMainProcessSpec) {
     args.push("--env", `${OPENSHELL_SANDBOX_COMMAND_ENV}=${sandboxCommand}`);
   }
 

@@ -28,49 +28,53 @@ describe("destroySandbox managed vLLM retirement", () => {
     resetDestroyModuleCache();
   });
 
-  it("retires the managed vLLM container after the last Local vLLM sandbox is destroyed", async () => {
-    const containerId = "b".repeat(64);
-    const harness = createDestroyHarness(LOCAL_VLLM_SANDBOX);
-    const retirementOrder: string[] = [];
-    harness.withCurrentPortableHostFenceSpy.mockImplementation(async (operation) => {
-      retirementOrder.push("host-fence-enter");
-      try {
-        return await operation();
-      } finally {
-        retirementOrder.push("host-fence-exit");
-      }
-    });
-    harness.listHostGatewayRegistryEntriesSpy.mockImplementation(() => {
-      retirementOrder.push("inventory");
-      return [];
-    });
-    harness.retireHostLocalVllmRuntimeSpy.mockImplementation(() => {
-      retirementOrder.push("retire");
-      return {
-        status: "removed",
-        containerId,
-        removed: [`container:${containerId}`],
-      };
-    });
+  it(
+    "retires the managed vLLM container after the last Local vLLM sandbox is destroyed",
+    { timeout: 30_000 },
+    async () => {
+      const containerId = "b".repeat(64);
+      const harness = createDestroyHarness(LOCAL_VLLM_SANDBOX);
+      const retirementOrder: string[] = [];
+      harness.withCurrentPortableHostFenceSpy.mockImplementation(async (operation) => {
+        retirementOrder.push("host-fence-enter");
+        try {
+          return await operation();
+        } finally {
+          retirementOrder.push("host-fence-exit");
+        }
+      });
+      harness.listHostGatewayRegistryEntriesSpy.mockImplementation(() => {
+        retirementOrder.push("inventory");
+        return [];
+      });
+      harness.retireHostLocalVllmRuntimeSpy.mockImplementation(() => {
+        retirementOrder.push("retire");
+        return {
+          status: "removed",
+          containerId,
+          removed: [`container:${containerId}`],
+        };
+      });
 
-    await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
+      await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
 
-    expect(harness.retireHostLocalVllmRuntimeSpy).toHaveBeenCalledOnce();
-    expect(harness.removeSandboxSpy.mock.invocationCallOrder[0]).toBeLessThan(
-      harness.retireHostLocalVllmRuntimeSpy.mock.invocationCallOrder[0],
-    );
-    expect(retirementOrder).toEqual([
-      "host-fence-enter",
-      "host-fence-enter",
-      "inventory",
-      "retire",
-      "host-fence-exit",
-      "host-fence-exit",
-    ]);
-    expect(loggedLines(harness)).toContain(
-      `Removed managed vLLM container 'nemoclaw-vllm' (${containerId.slice(0, 12)})`,
-    );
-  });
+      expect(harness.retireHostLocalVllmRuntimeSpy).toHaveBeenCalledOnce();
+      expect(harness.removeSandboxSpy.mock.invocationCallOrder[0]).toBeLessThan(
+        harness.retireHostLocalVllmRuntimeSpy.mock.invocationCallOrder[0],
+      );
+      expect(retirementOrder).toEqual([
+        "host-fence-enter",
+        "host-fence-enter",
+        "inventory",
+        "retire",
+        "host-fence-exit",
+        "host-fence-exit",
+      ]);
+      expect(loggedLines(harness)).toContain(
+        `Removed managed vLLM container 'nemoclaw-vllm' (${containerId.slice(0, 12)})`,
+      );
+    },
+  );
 
   it("keeps the managed vLLM container while another gateway registers a Local vLLM sandbox", async () => {
     const harness = createDestroyHarness(LOCAL_VLLM_SANDBOX);

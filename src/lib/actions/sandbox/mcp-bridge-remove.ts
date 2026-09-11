@@ -351,7 +351,7 @@ async function removeMcpBridgeUnlocked(
   let policyCleanupProved = false;
   if (adapterCleanupProved) {
     try {
-      removeGeneratedPolicy(sandboxName, entry, {
+      await removeGeneratedPolicy(sandboxName, entry, {
         runtimeSelection: providerRuntimeSelection,
       });
       policyCleanupProved = true;

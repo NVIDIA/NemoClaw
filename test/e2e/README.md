@@ -13,8 +13,6 @@ before those targets run; local runners must provide it themselves.
   It also supports trusted manual dispatches for the latest PR commit.
   Full manual runs dispatched against `main` publish the `Release qualification` check for the candidate commit SHA.
   Each trusted push to `main` selects the CPU-only `jetson-nvmap-gpu` proof.
-  Push runs skip the DGX Spark llama.cpp jobs because their required workflow
-  dispatch flag cannot be set by a push event.
 - `.github/workflows/hosted-runner-recovery.yaml` evaluates first-attempt
   failures from approved `main` workflows and requests one full rerun only when
   every non-passing job has authenticated GitHub-hosted runner-loss evidence.
@@ -352,7 +350,7 @@ npx tsx tools/e2e/credential-free-tests.mts
 OpenShell target work in issue #9872. The trusted workflow downloads and
 verifies the exact OpenShell SDK archive with package-read permission. The
 candidate job receives the archive but no package credential. It calls a local
-OpenShell 0.0.106 gateway over HTTPS with an explicit CA. The target confirms
+OpenShell 0.0.116 gateway over HTTPS with an explicit CA. The target confirms
 that its configured authentication file path does not exist before and after
 the health request. A successful request proves that public health does not
 require a credential read or make an authenticated gateway call.
@@ -421,6 +419,12 @@ Changes to shared catalogue execution paths select every catalogue target.
 
 Most entries use one ID for catalogue selection, evidence, and artifacts.
 Matrix-style targets use one target ID for evidence and artifacts, with separate catalogue IDs and shards for each concrete execution.
+
+The `double-onboard-hermes` and `onboard-resume-hermes` entries run the existing
+onboarding scenarios with Hermes and API port 8643. They retain sandbox identity,
+registered dashboard and API ports, and direct forward listener evidence before
+and after reuse or resume. The original entries retain OpenClaw coverage.
+
 Give each entry one `displayName` in the form `<area>: <observable outcome>`.
 Do not include this implementation metadata or workflow text in the display name:
 
@@ -780,8 +784,10 @@ write failure propagates, so that retry artifact may be absent. `tools.invoke`
 assertions prove the plugin version after onboarding, restart, and recreation.
 The job also keeps the test-only tmpfs mount and uses OpenClaw's plugin installer
 across the proven filesystem boundary before restart. `e2e-support` tests own
-deterministic wrapper argument rewriting. Deterministic tests own exact package
-versions and third-party replacement internals. Runtime inspection and catalog
+sandbox-create interception and wrapper argument rewriting. Onboarding and
+recreation load the test-only interceptor; all other OpenShell commands use the
+canonical binary so dashboard forward ownership remains verifiable. Deterministic
+tests own exact package versions and third-party replacement internals. Runtime inspection and catalog
 permutations are outside this live contract. Workspace preservation and policy
 selection retain their focused coverage instead of another assertion in this
 target. The `rebuild-openclaw` job remains the canonical live rebuild coverage.
@@ -806,6 +812,10 @@ the GitHub asset ID, source URL, size, and SHA-256 digest for every required
 Linux x64 archive and checksum file. It rejects release drift during download,
 then uploads the verified bytes under a content-addressed name with the shared
 14-day E2E retention policy.
+
+`mcp-bridge-dev` is an explicit-only compatibility lane. Empty-selector full-suite
+dispatches qualify the exact stable OpenShell 0.0.116 product contract and do not
+select the development runtime.
 
 The OpenClaw, Hermes, and LangChain Deep Agents Code shards restore and verify that same artifact with the trusted workflow revision.
 The `actions/setup-node` step selects Node.js 22 and disables automatic package manager caching before candidate checkout.
@@ -1142,8 +1152,7 @@ expires, `lane.log` records that result and cleanup continues. The diagnostic
 phase is read-only, uses one 30-second budget, and does not retry the failed E2E
 or repair the workspace.
 
-Manual ordinary and full runs exclude the Jetson nvmap and DGX Spark llama.cpp
-jobs unless their independent opt-in flags are `true`.
+Manual ordinary and full runs exclude the Jetson nvmap job unless `allow_jetson_dispatch` is `true`.
 Set `allow_jetson_dispatch=true` to select `jetson-nvmap-gpu` after the
 operator-owned dispatch service is available at the repository variable
 `JETSON_DISPATCH_URL`. Refer to the
@@ -1151,12 +1160,7 @@ operator-owned dispatch service is available at the repository variable
 HTTP contract, and evidence boundary that NemoClaw owns.
 Each trusted push to `main` selects `jetson-nvmap-gpu` without changing the
 manual input default.
-Set `allow_dgx_spark_runner_queue=true` to select both
-`llama-cpp-dgx-spark-plan` and `llama-cpp-dgx-spark-qualification`.
-GitHub can pause the qualification job for the
-`approve-dgx-spark-image-qualification` environment before it reaches the DGX
-Spark runner.
-Full manual `main` dispatches require both hardware opt-in flags to remain `false`.
+Full manual `main` dispatches require `allow_jetson_dispatch=false`.
 Jetson push results and opt-in hardware results do not enter the strict full-run
 qualification set.
 
@@ -1442,7 +1446,6 @@ If no other E2E target owns a changed file, `Relevant E2E` requires only the Jet
 Otherwise, `Relevant E2E` requires every selected workflow job to pass.
 For trusted manual PR runs, the same check also records selected results and references the existing dispatch receipt.
 The [review queue evidence contract](../../tools/pr-review-advisor/REVIEW-QUEUE.md#results) defines artifact validation and incomplete results.
-The central workflow skips the DGX Spark llama.cpp jobs on push.
 The central workflow has no scheduled trigger.
 
 The workflow planner connects each trusted input to its execution and evidence boundary:
@@ -1522,8 +1525,6 @@ Main and manual PR runs use the same typed planner from the trusted workflow rev
 PRs from forks, including other NVIDIA repositories, are rejected before candidate execution.
 The run skips `jetson-nvmap-gpu` unless `allow_jetson_dispatch` is `true`.
 Jetson and Launchable retain their operator and image-producer requirements.
-It skips `llama-cpp-dgx-spark-plan` and `llama-cpp-dgx-spark-qualification`
-unless their runner-queue flag is `true`.
 The trusted workflow definition remains on `main` and binds the latest PR commit to the current PR base SHA.
 It does not run GitHub's synthetic merge commit.
 Before candidate execution, the workflow uploads a `nemoclaw-e2e-dispatch-v2` receipt for the trusted manual run.
@@ -1624,9 +1625,7 @@ recorded base SHA and `checkout_repository` to `NVIDIA/NemoClaw`, while leaving 
 or automatically replay the base.
 
 For the default same-repository PR revision selection, leave `jobs` and `targets` empty and keep `include_staging_brev_launchable=false`.
-Keep `allow_jetson_dispatch=false` and `allow_dgx_spark_runner_queue=false` for the default PR revision selection.
-If `allow_dgx_spark_runner_queue=true`, GitHub can pause the qualification job for the `approve-dgx-spark-image-qualification` environment.
-An authorized environment reviewer must approve it before qualification starts.
+Keep `allow_jetson_dispatch=false` for the default PR revision selection.
 To select the protected managed-image runtime qualification, set `jobs=managed-image-protected-runtime`.
 Leave `targets` empty.
 Keep `include_staging_brev_launchable=false`.

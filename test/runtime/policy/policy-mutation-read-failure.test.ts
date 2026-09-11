@@ -64,9 +64,9 @@ describe("OpenShell policy mutation read failures", () => {
 
   beforeEach(() => {
     vi.spyOn(
-      policyReader.syncCliOpenShellSandboxPolicyReader,
+      policyReader.cliOpenShellSandboxPolicyReader,
       "inspectSandboxPolicy",
-    ).mockReturnValue({
+    ).mockResolvedValue({
       ok: true,
       value: {
         policySource: "sandbox",
@@ -91,11 +91,11 @@ describe("OpenShell policy mutation read failures", () => {
   describe.each([
     {
       mutation: "applyPresetContent",
-      apply: () => policies.applyPresetContent("alpha", "custom", CUSTOM_PRESET),
+      apply: async () => await policies.applyPresetContent("alpha", "custom", CUSTOM_PRESET),
     },
-    { mutation: "applyPresets", apply: () => policies.applyPresets("alpha", ["npm"]) },
+    { mutation: "applyPresets", apply: async () => await policies.applyPresets("alpha", ["npm"]) },
   ] as const)("$mutation policy mutation", ({ mutation, apply }) => {
-    it("refuses to set policy when the base-policy read fails", () => {
+    it("refuses to set policy when the base-policy read fails", async () => {
       const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-read-failure-"));
       tempDirs.push(tempDir);
       const callsPath = path.join(tempDir, "calls.log");
@@ -108,7 +108,7 @@ describe("OpenShell policy mutation read failures", () => {
       vi.stubEnv("NEMOCLAW_OPENSHELL_BIN", fakeOpenshell);
       const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
-      expect(apply()).toBe(false);
+      expect(await apply()).toBe(false);
       const calls = fs.readFileSync(callsPath, "utf-8").trim().split("\n");
       expect(calls).toEqual(["policy get -g nemoclaw --base alpha"]);
       expect(calls.some((call) => call.startsWith("policy set "))).toBe(false);
@@ -122,7 +122,7 @@ describe("OpenShell policy mutation read failures", () => {
       { outputName: "whitespace-only", emitOutput: "printf '   \\n'" },
     ])(
       "refuses to set policy when the successful base-policy read is $outputName",
-      ({ emitOutput }) => {
+      async ({ emitOutput }) => {
         const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-empty-read-"));
         tempDirs.push(tempDir);
         const callsPath = path.join(tempDir, "calls.log");
@@ -142,7 +142,7 @@ describe("OpenShell policy mutation read failures", () => {
         const mkdtempSpy = vi.spyOn(fs, "mkdtempSync");
         const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
-        expect(apply()).toBe(false);
+        expect(await apply()).toBe(false);
         const calls = fs.readFileSync(callsPath, "utf-8").trim().split("\n");
         expect(calls).toEqual(["policy get -g nemoclaw --base alpha"]);
         expect(calls.some((call) => call.startsWith("policy set "))).toBe(false);
@@ -157,7 +157,7 @@ describe("OpenShell policy mutation read failures", () => {
 
     it.each(MALFORMED_BASE_POLICIES)(
       "refuses to set policy when the base-policy read has %s",
-      (_shapeName, policyOutput) => {
+      async (_shapeName, policyOutput) => {
         const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-malformed-read-"));
         tempDirs.push(tempDir);
         const callsPath = path.join(tempDir, "calls.log");
@@ -178,7 +178,7 @@ describe("OpenShell policy mutation read failures", () => {
         const mkdtempSpy = vi.spyOn(fs, "mkdtempSync");
         const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
-        expect(apply()).toBe(false);
+        expect(await apply()).toBe(false);
         const calls = fs.readFileSync(callsPath, "utf-8").trim().split("\n");
         expect(calls).toEqual(["policy get -g nemoclaw --base alpha"]);
         expect(calls.some((call) => call.startsWith("policy set "))).toBe(false);
@@ -193,7 +193,7 @@ describe("OpenShell policy mutation read failures", () => {
 
     it.each(UNMARKED_NON_POLICY_MAPPINGS)(
       "refuses to set policy when the successful base-policy read is an unmarked %s",
-      (_shapeName, policyOutput) => {
+      async (_shapeName, policyOutput) => {
         const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-diagnostic-read-"));
         tempDirs.push(tempDir);
         const callsPath = path.join(tempDir, "calls.log");
@@ -214,7 +214,7 @@ describe("OpenShell policy mutation read failures", () => {
         const mkdtempSpy = vi.spyOn(fs, "mkdtempSync");
         const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
-        expect(apply()).toBe(false);
+        expect(await apply()).toBe(false);
         const calls = fs.readFileSync(callsPath, "utf-8").trim().split("\n");
         expect(calls).toEqual(["policy get -g nemoclaw --base alpha"]);
         expect(calls.some((call) => call.startsWith("policy set "))).toBe(false);

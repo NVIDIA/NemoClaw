@@ -8,6 +8,7 @@ import {
   EXTERNAL_COMPONENT_ACTIVATION_TIMEOUT_MS,
   EXTERNAL_COMPONENT_MAX_RESPONSE_BYTES,
   EXTERNAL_COMPONENT_SCHEMA_VERSION,
+  ExternalComponentContractError,
   parseStrictExternalComponentJson,
   type PreparedExternalComponent,
 } from "./index";
@@ -38,7 +39,7 @@ export interface ExternalComponentActivationProof {
   readonly policySource: "sandbox";
   readonly policyHash: string;
   readonly policyActiveVersion: number;
-  revalidate(operation: "before_handoff" | "after_activation"): void;
+  revalidate(operation: "before_handoff" | "after_activation"): void | Promise<void>;
 }
 
 interface ActivationResponse {
@@ -136,7 +137,11 @@ export function parseExternalComponentHttpResponse(raw: Buffer): string {
   return raw.subarray(bodyStart).toString("utf-8");
 }
 
-export function sendExternalComponentActivation(socketPath: string, body: string): Promise<string> {
+export function sendExternalComponentActivation(
+  socketPath: string,
+  body: string,
+  route: "/v1/activate" | "/v2/prepare" = "/v1/activate",
+): Promise<string> {
   return new Promise((resolve, reject) => {
     const request = Buffer.from(body, "utf-8");
     const socket = net.createConnection({ path: socketPath });
@@ -159,7 +164,7 @@ export function sendExternalComponentActivation(socketPath: string, body: string
     deadline.unref();
     socket.once("connect", () => {
       socket.write(
-        `POST /v1/activate HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nAccept: application/json\r\nContent-Length: ${String(request.length)}\r\nConnection: close\r\n\r\n${body}`,
+        `POST ${route} HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nAccept: application/json\r\nContent-Length: ${String(request.length)}\r\nConnection: close\r\n\r\n${body}`,
       );
     });
     socket.on("data", (chunk: Buffer) => {
@@ -192,6 +197,61 @@ export function sendExternalComponentActivation(socketPath: string, body: string
   });
 }
 
+export interface ExternalComponentGatewayPreparation {
+  readonly gateway: {
+    readonly id: string;
+    readonly issuer: string;
+    readonly publicKeyPem: string;
+    readonly kid: string;
+    readonly extensionTokenTtlSecs: 900;
+  };
+  readonly network: { readonly gatewayIp: string; readonly subnet: string };
+  revalidate(): void;
+}
+
+export async function prepareExternalComponentGateway(
+  component: PreparedExternalComponent,
+  gatewayName: string,
+  preparation: ExternalComponentGatewayPreparation | void,
+  transport: typeof sendExternalComponentActivation = sendExternalComponentActivation,
+): Promise<void> {
+  if (component.declaration.schemaVersion !== 2) return;
+  try {
+    if (!preparation || !component.setGatewayRevalidation) throw new Error("missing gateway proof");
+    component.setGatewayRevalidation(() => preparation.revalidate());
+    component.revalidateBeforeGateway();
+    const declaration = component.declaration;
+    const preparationId = randomUUID();
+    const body = JSON.stringify({
+      schemaVersion: 2,
+      preparationId,
+      componentId: declaration.componentId,
+      gateway: { name: gatewayName, ...preparation.gateway },
+      network: preparation.network,
+      interceptor: declaration.interceptor,
+      middleware: declaration.middleware,
+      ...(declaration.providerProfileSource
+        ? { providerProfileSource: declaration.providerProfileSource }
+        : {}),
+    });
+    const raw = await transport(declaration.activationSocketPath, body, "/v2/prepare");
+    const response = parseStrictExternalComponentJson(raw);
+    if (
+      !isRecord(response) ||
+      Object.keys(response).sort().join(",") !== "componentId,preparationId,result,schemaVersion" ||
+      response.schemaVersion !== 2 ||
+      response.preparationId !== preparationId ||
+      response.componentId !== declaration.componentId ||
+      response.result !== "prepared"
+    ) {
+      throw new Error("preparation rejected");
+    }
+    component.revalidateBeforeGateway();
+  } catch {
+    throw new ExternalComponentContractError("preparation_failed");
+  }
+}
+
 export async function activateExternalComponent(
   component: PreparedExternalComponent,
   proof: ExternalComponentActivationProof,
@@ -217,7 +277,7 @@ export async function activateExternalComponent(
   });
   try {
     component.revalidateBeforeActivation();
-    proof.revalidate("before_handoff");
+    await proof.revalidate("before_handoff");
   } catch {
     return { kind: "ambiguous", activationId, reason: "evidence_mismatch" };
   }
@@ -248,7 +308,7 @@ export async function activateExternalComponent(
   if (response.result === "rejected") return { kind: "rejected", activationId };
   try {
     component.revalidateBeforeActivation();
-    proof.revalidate("after_activation");
+    await proof.revalidate("after_activation");
   } catch {
     return { kind: "ambiguous", activationId, reason: "evidence_mismatch" };
   }

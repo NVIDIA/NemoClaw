@@ -142,7 +142,7 @@ describe("deterministic PR risk plan", () => {
     const second = plan("src/lib/onboard.ts", "src/lib/state/registry.ts");
 
     expect(first).toEqual(second);
-    expect(first.version).toBe(22);
+    expect(first.version).toBe(23);
     expect(first.headSha).toBe(HEAD_SHA);
     expect(first.planHash).toMatch(/^[a-f0-9]{64}$/u);
     expect(first.changedFiles).toEqual(["src/lib/onboard.ts", "src/lib/state/registry.ts"]);
@@ -660,37 +660,12 @@ describe("deterministic PR risk plan", () => {
     ).toBe(false);
   });
 
-  it("keeps protected llama.cpp DGX Spark qualification activation-only until trusted (#8260)", () => {
-    const activation = "ci/llama-cpp-dgx-spark-qualification-v1.yaml";
-    const agentQualification =
-      "managed-inference/qualifications/llama-cpp.openclaw.spark-single.v1.yaml";
-    const result = plan(activation);
-    const dormantImplementation = plan(
-      "scripts/checks/run-llama-cpp-dgx-spark-qualification.mts",
-      "test/e2e/live/llama-cpp-dgx-spark-qualification.test.ts",
+  it("does not recommend the removed DGX Spark workflow job", () => {
+    const result = plan(
+      "ci/llama-cpp-dgx-spark-qualification-v1.yaml",
+      "managed-inference/qualifications/llama-cpp.openclaw.spark-single.v1.yaml",
     );
-
-    expect(result.families).toContainEqual(
-      expect.objectContaining({
-        id: "llama-cpp-dgx-spark-qualification",
-        matchedFiles: [activation],
-        requiredJobs: ["llama-cpp-dgx-spark-qualification"],
-      }),
-    );
-    expect(riskPlanRequiredJobIds(result)).toEqual(["llama-cpp-dgx-spark-qualification"]);
-    expect(riskPlanRequiredJobIds(plan(agentQualification))).toContain(
-      "llama-cpp-dgx-spark-qualification",
-    );
-    expect(
-      riskPlanRequiredJobIds(
-        plan("managed-inference/qualifications/llama-cpp.other.spark-single.v1.yaml"),
-      ),
-    ).not.toContain("llama-cpp-dgx-spark-qualification");
-    expect(
-      dormantImplementation.families.some(
-        (family) => family.id === "llama-cpp-dgx-spark-qualification",
-      ),
-    ).toBe(false);
+    expect(riskPlanRequiredJobIds(result)).not.toContain("llama-cpp-dgx-spark-qualification");
   });
 
   it("loads protected multiarch identifiers through the workflow node loader (#7744)", () => {

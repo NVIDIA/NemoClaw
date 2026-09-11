@@ -22,17 +22,6 @@
       ]
     },
     {
-      "live": "test/e2e/live/llama-cpp-dgx-spark-qualification.test.ts",
-      "fast": [
-        "test/e2e/support/llama-cpp-dgx-spark-qualification-workflow.test.ts",
-        "test/inference/llama/llama-cpp-dgx-spark-qualification-contract.test.ts",
-        "test/inference/llama/llama-cpp-dgx-spark-qualification-plan.test.ts",
-        "test/inference/llama/llama-cpp-dgx-spark-qualification-runner.test.ts",
-        "test/inference/llama/llama-cpp-image.test.ts",
-        "test/automation/pull-requests/pr-risk-plan.test.ts"
-      ]
-    },
-    {
       "live": "test/e2e/live/llama-cpp-generic-gpu.test.ts",
       "fast": [
         "src/lib/inference/llama-cpp/managed-selection.test.ts",
@@ -95,6 +84,7 @@
         "src/lib/adapters/container-engine.test.ts",
         "src/lib/adapters/podman/index.test.ts",
         "src/lib/adapters/podman/socket-authority.test.ts",
+        "src/lib/onboard/docker-driver-gateway-runtime.test.ts",
         "src/lib/onboard/runtime-provider/podman-lifecycle.test.ts",
         "src/lib/onboard/runtime-provider/podman-preflight.test.ts",
         "src/lib/onboard/runtime-provider/podman.test.ts",
@@ -116,6 +106,7 @@
       "fast": [
         "src/lib/actions/uninstall/portable-runtime-cleanup.test.ts",
         "src/lib/actions/uninstall/run-plan-portable-runtime.test.ts",
+        "src/lib/onboard/docker-driver-gateway-runtime.test.ts",
         "test/e2e/support/podman-cpu-proof-workflow.test.ts"
       ]
     },
@@ -141,6 +132,7 @@
       "live": "test/e2e/live/inference-routing.test.ts",
       "liveSources": ["test/e2e/live/inference-routing-helpers.ts"],
       "fast": [
+        "nemoclaw/src/shared/openshell-gateway-health-sdk.test.ts",
         "nemoclaw/src/blueprint/runner-identity.test.ts",
         "nemoclaw/src/blueprint/runtime-identity.test.ts",
         "src/lib/onboard/inference-providers/compatible-endpoint-gateway-route.test.ts",
@@ -266,12 +258,21 @@
     },
     {
       "live": "test/e2e/live/openshell-gateway-auth-source-contract.test.ts",
-      "fast": ["test/e2e/support/openshell-gateway-auth-source-contract-helpers.test.ts"]
+      "liveSources": [
+        "test/e2e/live/openshell-gateway-auth-source-contract-helpers.ts",
+        "test/e2e/live/openshell-v0116-tls-server-name-source.ts"
+      ],
+      "fast": [
+        "test/e2e/support/openshell-gateway-auth-contract-workflow-boundary.test.ts",
+        "test/e2e/support/openshell-gateway-auth-source-contract-helpers.test.ts",
+        "test/e2e/support/openshell-v0116-tls-server-name-source.test.ts"
+      ]
     },
     {
       "live": "test/e2e/live/external-gateway-health.test.ts",
       "liveSources": ["test/e2e/live/external-gateway-health-helpers.ts"],
       "fast": [
+        "test/e2e/support/external-gateway-health-helpers.test.ts",
         "test/e2e/support/external-gateway-health-process.test.ts",
         "test/e2e/support/retry-policy.test.ts",
         "test/install/reviewed-npm-archive.test.ts"
@@ -279,6 +280,7 @@
     },
     {
       "live": "test/e2e/live/openshell-credential-generation-window.test.ts",
+      "liveSources": ["test/e2e/live/openshell-credential-generation-window.ts"],
       "fast": [
         "test/credentials/openshell-credential-generation-window.test.ts",
         "test/mcp/mcp-artifact-secret-scan.test.ts",
@@ -297,7 +299,10 @@
     },
     {
       "live": "test/e2e/live/dashboard-remote-bind.test.ts",
-      "liveSources": ["test/e2e/live/dashboard-connect-handoff.ts", "test/e2e/live/json-envelope.ts"],
+      "liveSources": [
+        "test/e2e/live/dashboard-connect-handoff.ts",
+        "test/e2e/live/json-envelope.ts"
+      ],
       "fast": [
         "test/e2e/support/json-envelope.test.ts",
         "test/e2e/support/dashboard-connect-handoff.test.ts",
@@ -529,6 +534,7 @@
         "test/channels/channels-add-preset.test.ts",
         "test/e2e/support/hermes-discord-policy-binding.test.ts",
         "test/e2e/support/hermes-discord-proxy-request.test.ts",
+        "test/e2e/support/openclaw-discord-pairing-helpers.test.ts",
         "test/onboarding/effective-policy-contracts.test.ts",
         "test/e2e/support/messaging-providers-runtime-proofs.test.ts",
         "test/onboarding/onboard-preset-diff.test.ts",
@@ -621,6 +627,7 @@
         "test/e2e/live/mcp-bridge-sandbox.ts",
         "test/e2e/live/mcp-bridge-tool-discovery.ts",
         "test/e2e/live/mcp-bridge-trusted-private.ts",
+        "test/e2e/live/mcp-provider-rewrite-probe.ts",
         "test/e2e/live/openshell-allowed-ips-rebinding.ts",
         "test/e2e/live/openshell-exact-main-runtime-contracts.ts"
       ],
@@ -729,6 +736,7 @@
       "live": "test/e2e/live/openclaw-plugin-runtime-exdev.test.ts",
       "liveSources": [
         "test/e2e/live/openclaw-plugin-runtime-exdev-trusted-prebuild.ts",
+        "test/e2e/live/openshell-driver-config-test-wrapper.ts",
         "test/e2e/live/json-envelope.ts"
       ],
       "fast": [
@@ -817,6 +825,7 @@
       "live": "test/e2e/live/rebuild-hermes.test.ts",
       "liveSources": [
         "test/e2e/live/rebuild-hermes-base-identity.ts",
+        "test/e2e/live/rebuild-hermes-cron-restore.ts",
         "test/e2e/live/rebuild-hermes-env.ts",
         "test/e2e/live/rebuild-hermes-host-policy.ts"
       ],
@@ -838,6 +847,7 @@
       "live": "test/e2e/live/rebuild-openclaw.test.ts",
       "fast": [
         "src/lib/actions/sandbox/rebuild-flow-lifecycle.test.ts",
+        "src/lib/onboard/machine/handlers/finalization.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
       ]

@@ -3,7 +3,7 @@
 # Manual PR runs bind the selected head or base SHA independently from reusable image publication.
 
 name: E2E / Main and Manual Suite
-run-name: "${{ inputs.checkout_sha != '' && format('E2E PR #{0} ({1})', inputs.pr_number, inputs.correlation_id) || inputs.correlation_id != '' && inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '' && !inputs.allow_jetson_dispatch && !inputs.allow_dgx_spark_runner_queue && format('E2E full {0} ({1})', github.ref_name, inputs.correlation_id) || inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '' && !inputs.allow_jetson_dispatch && !inputs.allow_dgx_spark_runner_queue && format('E2E full {0}', github.ref_name) || inputs.correlation_id != '' && format('E2E {0} ({1})', github.ref_name, inputs.correlation_id) || format('E2E {0}', github.ref_name) }}"
+run-name: "${{ inputs.checkout_sha != '' && format('E2E PR #{0} ({1})', inputs.pr_number, inputs.correlation_id) || inputs.correlation_id != '' && inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '' && !inputs.allow_jetson_dispatch && format('E2E full {0} ({1})', github.ref_name, inputs.correlation_id) || inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '' && !inputs.allow_jetson_dispatch && format('E2E full {0}', github.ref_name) || inputs.correlation_id != '' && format('E2E {0} ({1})', github.ref_name, inputs.correlation_id) || format('E2E {0}', github.ref_name) }}"
 
 on:
   push:
@@ -49,11 +49,6 @@ on:
         type: string
       allow_jetson_dispatch:
         description: "Set true for a manual jetson-nvmap-gpu run. Main pushes dispatch it automatically. The operator-owned dispatch backend must be available, and JETSON_DISPATCH_URL must contain its verified HTTPS origin. Refer to test/e2e/docs/jetson-dispatch.md."
-        required: false
-        default: false
-        type: boolean
-      allow_dgx_spark_runner_queue:
-        description: "Before setting true for llama-cpp-dgx-spark-qualification, obtain repository administrator confirmation of an online DGX Spark runner in the authoritative NVIDIA/NemoClaw Settings -> Actions -> Runners inventory; queued jobs do not honor timeout-minutes before assignment."
         required: false
         default: false
         type: boolean
@@ -405,7 +400,6 @@ jobs:
         name: Authenticate manual PR dispatch
         if: ${{ inputs.pr_number != '' || inputs.checkout_sha != '' || inputs.checkout_repository != '' || inputs.base_sha != '' || inputs.workflow_sha != '' }}
         env:
-          ALLOW_DGX_SPARK_RUNNER_QUEUE: ${{ inputs.allow_dgx_spark_runner_queue && 'true' || 'false' }}
           ALLOW_JETSON_DISPATCH: ${{ inputs.allow_jetson_dispatch && 'true' || 'false' }}
           BASE_SHA: ${{ inputs.base_sha }}
           CHECKOUT_REPOSITORY: ${{ inputs.checkout_repository }}
@@ -443,11 +437,9 @@ jobs:
           [[ "$(jq -r '.base.ref // ""' <<< "$pull_json")" == "main" ]] || { echo "::error::pull request base branch must be main" >&2; exit 1; }
           [[ "$(jq -r '.base.sha' <<< "$pull_json")" == "$BASE_SHA" ]] || { echo "::error::base_sha must match the PR base SHA" >&2; exit 1; }
           if [[ "$CHECKOUT_SHA" == "$BASE_SHA" ]]; then
-            [[ "$ALLOW_JETSON_DISPATCH" != "true" && "$ALLOW_DGX_SPARK_RUNNER_QUEUE" != "true" ]] || { echo "::error::exact-base E2E cannot launch dedicated hardware dispatches" >&2; exit 1; }
+            [[ "$ALLOW_JETSON_DISPATCH" != "true" ]] || { echo "::error::exact-base E2E cannot launch dedicated hardware dispatches" >&2; exit 1; }
             [[ ",${TARGETS}," != *",jetson-nvmap-gpu,"* &&
-               ",${JOBS}," != *",jetson-nvmap-gpu,"* &&
-               ",${TARGETS}," != *",llama-cpp-dgx-spark-qualification,"* &&
-               ",${JOBS}," != *",llama-cpp-dgx-spark-qualification,"* ]] || { echo "::error::exact-base E2E cannot select dedicated hardware jobs" >&2; exit 1; }
+               ",${JOBS}," != *",jetson-nvmap-gpu,"* ]] || { echo "::error::exact-base E2E cannot select dedicated hardware jobs" >&2; exit 1; }
             [[ "$(jq -r '.base.repo.full_name // ""' <<< "$pull_json")" == "$CHECKOUT_REPOSITORY" ]] || { echo "::error::checkout_repository must match the PR base repository" >&2; exit 1; }
           else
             [[ "$(jq -r '.head.repo.full_name // ""' <<< "$pull_json")" == "$CHECKOUT_REPOSITORY" ]] || { echo "::error::checkout_repository must match the PR source repository" >&2; exit 1; }
@@ -476,7 +468,6 @@ jobs:
         if: ${{ github.event_name == 'workflow_dispatch' }}
         env:
           ACTOR: ${{ github.actor }}
-          ALLOW_DGX_SPARK_RUNNER_QUEUE: ${{ inputs.allow_dgx_spark_runner_queue && 'true' || 'false' }}
           ALLOW_JETSON_DISPATCH: ${{ inputs.allow_jetson_dispatch && 'true' || 'false' }}
           ALLOW_JETSON_RUNNER_QUEUE: "false"
           BASE_SHA: ${{ inputs.checkout_sha != '' && inputs.base_sha || github.sha }}
@@ -510,7 +501,6 @@ jobs:
             --arg triggeringActor "$TRIGGERING_ACTOR" \
             --arg workflowRunId "$RUN_ID" \
             --arg workflowSha "$WORKFLOW_SHA" \
-            --argjson allowDgxSparkRunnerQueue "$ALLOW_DGX_SPARK_RUNNER_QUEUE" \
             --argjson allowJetsonDispatch "$ALLOW_JETSON_DISPATCH" \
             --argjson allowJetsonRunnerQueue "$ALLOW_JETSON_RUNNER_QUEUE" \
             --argjson includeStagingBrevLaunchable "$INCLUDE_STAGING_BREV_LAUNCHABLE" \
@@ -529,7 +519,7 @@ jobs:
               eventName: $eventName,
               jobs: $jobs,
               targets: $targets,
-              allowDgxSparkRunnerQueue: $allowDgxSparkRunnerQueue,
+              allowDgxSparkRunnerQueue: false,
               allowJetsonDispatch: $allowJetsonDispatch,
               allowJetsonRunnerQueue: $allowJetsonRunnerQueue,
               includeStagingBrevLaunchable: $includeStagingBrevLaunchable,
@@ -3315,8 +3305,8 @@ jobs:
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/openshell-gateway-auth-contract
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_NON_INTERACTIVE: "1"
-      NEMOCLAW_CANDIDATE_VERSION: "0.0.106"
-      NEMOCLAW_OPENSHELL_PIN_VERSION: "0.0.106"
+      NEMOCLAW_CANDIDATE_VERSION: "0.0.116"
+      NEMOCLAW_OPENSHELL_PIN_VERSION: "0.0.116"
       DOCKER_GRPC_PROBE_IMAGE: "node:22-trixie-slim@sha256:db8a96a63e5264607ada2d206758876ebbed6a12be2ada7517793cbfb0c2a29c"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -3390,11 +3380,11 @@ jobs:
       E2E_TARGET_ID: "external-gateway-health"
       E2E_AGENT_RUNTIME: "none"
       E2E_OBSERVABLE_OUTCOME: "The exact Blueprint Runner observes public gateway health over explicit HTTPS and CA"
-      E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT: "Ubuntu host with OpenShell 0.0.106; no inference endpoint"
+      E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT: "Ubuntu host with OpenShell 0.0.116; no inference endpoint"
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/external-gateway-health
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_NON_INTERACTIVE: "1"
-      NEMOCLAW_OPENSHELL_PIN_VERSION: "0.0.106"
+      NEMOCLAW_OPENSHELL_PIN_VERSION: "0.0.116"
       NEMOCLAW_E2E_REQUIRE_EXECUTED_TEST: "1"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -3495,7 +3485,7 @@ jobs:
       NEMOCLAW_OPENSHELL_EXACT_MAIN_PROOF: ${{ matrix.runtime_provider == 'docker' && '1' || '0' }}
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_GATEWAY_RUNTIME: ${{ matrix.runtime_provider }}
-      OPENSHELL_DOCKER_SUPERVISOR_IMAGE: ghcr.io/nvidia/openshell/supervisor@sha256:722f44669722961b7f432b0b81de25b91a58f34a61d6403bef967acaf2b3af01
+      OPENSHELL_DOCKER_SUPERVISOR_IMAGE: ghcr.io/nvidia/openshell/supervisor@sha256:c8c42aef16c200063e32cbf72e553e4ead027085427b555efafd95063ecead42
     steps:
       - id: trusted_hermes_swap
         name: Provision trusted Hermes E2E swap
@@ -3760,12 +3750,12 @@ jobs:
             jq -n '{
               schemaVersion: 1,
               sourceRepository: "NVIDIA/OpenShell",
-              releaseTag: "v0.0.106",
-              sourceSha: "c4b500a7de64d0b66e3ee8098f58d14299092162",
+              releaseTag: "v0.0.116",
+              sourceSha: "d1155aa70042d3e2ee49dbfa15346b108b7c1d92",
               artifacts: {
-                cli: {binarySha256: "98ecf95113fea999e94a928043e57b04cf58a45a1b66ae8bffc73d1bc8bb1d59"},
-                gateway: {binarySha256: "e6cde8a54568aa1926ff6584ffd6984314c68dad64d2722509618a74094c622c"},
-                standaloneSandbox: {binarySha256: "019301ec8618abbed8135e8d39dde7bea47e5e92813bbc17768550de34db59f8"}
+                cli: {binarySha256: "24e85062073d512d1951c76cd3890b7bce1ab01cc36a08f88b3b43c067a402da"},
+                gateway: {binarySha256: "780fc7ad871e2163f3fb866a2d0254ee682fc0d83e6261a84b350c8dcdd9f47b"},
+                standaloneSandbox: {binarySha256: "326ee26df8f8575ba761470757a12fe5c1cdc904ba064b81946692dd0328dd40"}
               }
             }' > "$E2E_ARTIFACT_DIR/mcp-bridge-deepagents/openshell-exact-main-provenance.json"
           fi
@@ -3840,7 +3830,7 @@ jobs:
       E2E_GATEWAY_RUNTIMES: docker,podman
       E2E_TARGET_ID: "openshell-credential-generation-window"
       E2E_AGENT_RUNTIME: "openclaw"
-      E2E_OBSERVABLE_OUTCOME: "Credential expiry rotation detach and rebuild preserve the intended access window"
+      E2E_OBSERVABLE_OUTCOME: "Stable-handle refresh, revocation, detach, re-add, and rebuild preserve authorization epochs"
       E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT: "Ubuntu managed runtime host; local compatible inference and MCP endpoint"
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/openshell-credential-generation-window/${{ matrix.runtime_provider }}
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
@@ -3848,7 +3838,7 @@ jobs:
       NEMOCLAW_OPENSHELL_EXACT_MAIN_PROOF: "1"
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_GATEWAY_RUNTIME: ${{ matrix.runtime_provider }}
-      OPENSHELL_DOCKER_SUPERVISOR_IMAGE: ghcr.io/nvidia/openshell/supervisor@sha256:722f44669722961b7f432b0b81de25b91a58f34a61d6403bef967acaf2b3af01
+      OPENSHELL_DOCKER_SUPERVISOR_IMAGE: ghcr.io/nvidia/openshell/supervisor@sha256:c8c42aef16c200063e32cbf72e553e4ead027085427b555efafd95063ecead42
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -3906,12 +3896,12 @@ jobs:
           jq -n '{
             schemaVersion: 1,
             sourceRepository: "NVIDIA/OpenShell",
-            releaseTag: "v0.0.106",
-            sourceSha: "c4b500a7de64d0b66e3ee8098f58d14299092162",
+            releaseTag: "v0.0.116",
+            sourceSha: "d1155aa70042d3e2ee49dbfa15346b108b7c1d92",
             artifacts: {
-              cli: {binarySha256: "98ecf95113fea999e94a928043e57b04cf58a45a1b66ae8bffc73d1bc8bb1d59"},
-              gateway: {binarySha256: "e6cde8a54568aa1926ff6584ffd6984314c68dad64d2722509618a74094c622c"},
-              standaloneSandbox: {binarySha256: "019301ec8618abbed8135e8d39dde7bea47e5e92813bbc17768550de34db59f8"}
+              cli: {binarySha256: "24e85062073d512d1951c76cd3890b7bce1ab01cc36a08f88b3b43c067a402da"},
+              gateway: {binarySha256: "780fc7ad871e2163f3fb866a2d0254ee682fc0d83e6261a84b350c8dcdd9f47b"},
+              standaloneSandbox: {binarySha256: "326ee26df8f8575ba761470757a12fe5c1cdc904ba064b81946692dd0328dd40"}
             }
           }' > "$E2E_ARTIFACT_DIR/openshell-credential-generation-window/openshell-exact-main-provenance.json"
 
@@ -4029,6 +4019,7 @@ jobs:
       NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON: ${{ needs.base-image-publication.outputs.managed_image_catalog }}
       E2E_JOB: "1"
       E2E_GATEWAY_RUNTIMES: docker,podman
+      E2E_DEFAULT_ENABLED: "0"
       E2E_TARGET_ID: "mcp-bridge-dev"
       E2E_OBSERVABLE_OUTCOME: "Development OpenShell MCP bridge reaches tools and inference"
       E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT: "Ubuntu managed runtime host; local compatible inference and MCP endpoint"
@@ -4583,7 +4574,6 @@ jobs:
             "${NEMOCLAW_PROTECTED_MANAGED_IMAGE_EVIDENCE}.tmp" \
             "$NEMOCLAW_PROTECTED_MANAGED_IMAGE_EVIDENCE"
 
-
       - name: Remove isolated protected managed-image registry
         if: always()
         shell: bash
@@ -4667,265 +4657,6 @@ jobs:
         shell: bash
         run: bash .github/scripts/docker-auth-cleanup.sh
 
-  # The trusted plan compiler runs on a standard runner before the protected
-  # job can be assigned. Candidate workflow code is never evaluated; trusted
-  # main compiles the exact candidate's declarative YAML into bounded outputs.
-  llama-cpp-dgx-spark-plan:
-    name: Compile protected llama.cpp DGX Spark plan
-    needs: generate-matrix
-    if: ${{ inputs.allow_dgx_spark_runner_queue && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'llama-cpp-dgx-spark-qualification') }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    permissions:
-      contents: read
-    outputs:
-      agent_qualification_execution: ${{ steps.plan.outputs.agent_qualification_execution }}
-      environment: ${{ steps.plan.outputs.environment }}
-      execution: ${{ steps.plan.outputs.execution }}
-      model_host_path: ${{ steps.plan.outputs.model_host_path }}
-      plan: ${{ steps.plan.outputs.plan }}
-      plan_sha256: ${{ steps.plan.outputs.plan_sha256 }}
-      qualification: ${{ steps.plan.outputs.qualification }}
-      runner: ${{ steps.plan.outputs.runner }}
-    steps:
-      - name: Validate trusted llama.cpp plan dispatch
-        env:
-          BASE_SHA: ${{ inputs.base_sha || github.event.before || github.sha }}
-          CHECKOUT_SHA: ${{ inputs.checkout_sha || github.sha }}
-          EVENT_NAME: ${{ github.event_name }}
-          EXPECTED_WORKFLOW_SHA: ${{ inputs.workflow_sha || github.workflow_sha }}
-          REF: ${{ github.ref }}
-          REPOSITORY: ${{ github.repository }}
-          WORKFLOW_SHA: ${{ github.workflow_sha }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          [[ "$REPOSITORY" == "NVIDIA/NemoClaw" && "$REF" == "refs/heads/main" && ( "$EVENT_NAME" == "push" || "$EVENT_NAME" == "workflow_dispatch" ) ]] || {
-            echo "::error::Protected llama.cpp planning must run from trusted NVIDIA/NemoClaw main" >&2
-            exit 1
-          }
-          [[ "$CHECKOUT_SHA" =~ ^[a-f0-9]{40}$ && "$BASE_SHA" =~ ^[a-f0-9]{40}$ ]] || {
-            echo "::error::Protected llama.cpp planning requires candidate and base SHAs" >&2
-            exit 1
-          }
-          [[ "$EXPECTED_WORKFLOW_SHA" =~ ^[a-f0-9]{40}$ && "$WORKFLOW_SHA" == "$EXPECTED_WORKFLOW_SHA" ]] || {
-            echo "::error::Protected llama.cpp planning requires the exact trusted workflow SHA" >&2
-            exit 1
-          }
-
-      - name: Checkout trusted llama.cpp plan compiler
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: ${{ github.repository }}
-          ref: ${{ inputs.workflow_sha || github.workflow_sha }}
-          fetch-depth: 0
-          persist-credentials: false
-
-      - name: Checkout exact llama.cpp candidate configuration
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: ${{ inputs.checkout_repository || github.repository }}
-          ref: ${{ inputs.checkout_sha || github.sha }}
-          path: .candidate-llama-cpp
-          fetch-depth: 0
-          persist-credentials: false
-
-      - name: Set up Node for trusted llama.cpp plan compilation
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: ">=22.19.0 <23"
-          cache: npm
-
-      - name: Install trusted llama.cpp plan dependencies
-        run: npm ci --ignore-scripts
-
-      - id: plan
-        name: Compile exact candidate llama.cpp qualification plan
-        env:
-          CANDIDATE_ROOT: ${{ github.workspace }}/.candidate-llama-cpp
-          CHECKOUT_SHA: ${{ inputs.checkout_sha || github.sha }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          [[ "$(git -C "$CANDIDATE_ROOT" rev-parse --verify HEAD)" == "$CHECKOUT_SHA" ]] || {
-            echo "::error::Protected llama.cpp candidate checkout does not match the candidate SHA" >&2
-            exit 1
-          }
-          node --no-warnings \
-            scripts/checks/export-llama-cpp-dgx-spark-qualification-plan.mts \
-            --source-root "$CANDIDATE_ROOT"
-
-  # The opt-in flag prevents assignment to an unavailable DGX Spark runner.
-  # Qualification runs only when the trusted plan reports execution=enabled.
-  llama-cpp-dgx-spark-qualification:
-    name: Protected llama.cpp on NVIDIA DGX Spark
-    needs: [generate-matrix, llama-cpp-dgx-spark-plan]
-    if: ${{ inputs.allow_dgx_spark_runner_queue && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'llama-cpp-dgx-spark-qualification') && needs.llama-cpp-dgx-spark-plan.outputs.execution == 'enabled' }}
-    runs-on: ${{ needs.llama-cpp-dgx-spark-plan.outputs.runner }}
-    environment:
-      name: ${{ needs.llama-cpp-dgx-spark-plan.outputs.environment }}
-    timeout-minutes: 300
-    permissions:
-      contents: read
-    env:
-      E2E_DEFAULT_ENABLED: "0"
-      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/llama-cpp-dgx-spark-qualification
-      E2E_JOB: "1"
-      E2E_GATEWAY_RUNTIMES: docker
-      E2E_TARGET_ID: "llama-cpp-dgx-spark-qualification"
-      E2E_AGENT_RUNTIME: "unresolved"
-      E2E_OBSERVABLE_OUTCOME: "Exact NemoClaw-built llama.cpp image produces protected DGX Spark evidence"
-      E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT: "NVIDIA DGX Spark GB10; local llama.cpp inference"
-      E2E_UNRESOLVED_REASON: "The protected plan can enable or skip its OpenClaw subqualification"
-      NEMOCLAW_E2E_EXPECTED_SHA: ${{ inputs.checkout_sha }}
-      NEMOCLAW_E2E_SHARD: linux-arm64-gpu-dgx-spark-gb10
-      NEMOCLAW_LLAMA_CPP_QUALIFICATION_BASE_SHA: ${{ inputs.base_sha || github.event.before || github.sha }}
-      NEMOCLAW_LLAMA_CPP_QUALIFICATION_HEAD_SHA: ${{ inputs.checkout_sha || github.sha }}
-      NEMOCLAW_LLAMA_CPP_QUALIFICATION_CANDIDATE_ROOT: ${{ github.workspace }}/.candidate-llama-cpp
-      NEMOCLAW_LLAMA_CPP_QUALIFICATION_EVIDENCE: ${{ github.workspace }}/e2e-artifacts/live/llama-cpp-dgx-spark-qualification/evidence.json
-      NEMOCLAW_LLAMA_CPP_QUALIFICATION_PLAN: ${{ github.workspace }}/.llama-cpp-qualification/plan.json
-      NEMOCLAW_LLAMA_CPP_QUALIFICATION_PLAN_SHA256: ${{ needs.llama-cpp-dgx-spark-plan.outputs.plan_sha256 }}
-      NEMOCLAW_LLAMA_CPP_QUALIFICATION_REGISTRY: nemoclaw-llama-cpp-${{ github.run_id }}-${{ github.run_attempt }}
-      NEMOCLAW_LLAMA_CPP_QUALIFICATION_WORKFLOW_SHA: ${{ inputs.workflow_sha || github.workflow_sha }}
-      NEMOCLAW_RUN_LIVE_E2E: "1"
-      RELEASE_E2E_ACTIVATION_PATH: ci/llama-cpp-dgx-spark-qualification-v1.yaml
-    steps:
-      - name: Validate protected llama.cpp exact-head dispatch
-        env:
-          BASE_SHA: ${{ inputs.base_sha || github.event.before || github.sha }}
-          CHECKOUT_SHA: ${{ inputs.checkout_sha || github.sha }}
-          EVENT_NAME: ${{ github.event_name }}
-          EXPECTED_WORKFLOW_SHA: ${{ inputs.workflow_sha || github.workflow_sha }}
-          REF: ${{ github.ref }}
-          REPOSITORY: ${{ github.repository }}
-          RUNNER_ARCH_KIND: ${{ runner.arch }}
-          WORKFLOW_SHA: ${{ github.workflow_sha }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          [[ "$REPOSITORY" == "NVIDIA/NemoClaw" && "$REF" == "refs/heads/main" && ( "$EVENT_NAME" == "push" || "$EVENT_NAME" == "workflow_dispatch" ) ]] || {
-            echo "::error::Protected llama.cpp qualification must run from trusted NVIDIA/NemoClaw main" >&2
-            exit 1
-          }
-          [[ "$CHECKOUT_SHA" =~ ^[a-f0-9]{40}$ && "$BASE_SHA" =~ ^[a-f0-9]{40}$ ]] || {
-            echo "::error::Protected llama.cpp qualification requires candidate and base SHAs" >&2
-            exit 1
-          }
-          [[ "$EXPECTED_WORKFLOW_SHA" =~ ^[a-f0-9]{40}$ && "$WORKFLOW_SHA" == "$EXPECTED_WORKFLOW_SHA" ]] || {
-            echo "::error::Protected llama.cpp qualification requires the exact trusted workflow SHA" >&2
-            exit 1
-          }
-          [[ "$RUNNER_ARCH_KIND" == "ARM64" ]] || {
-            echo "::error::Protected llama.cpp qualification requires native Linux ARM64" >&2
-            exit 1
-          }
-
-      - name: Checkout trusted llama.cpp qualification
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: ${{ github.repository }}
-          ref: ${{ inputs.workflow_sha || github.workflow_sha }}
-          fetch-depth: 0
-          persist-credentials: false
-
-      - name: Checkout exact llama.cpp qualification candidate
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: ${{ inputs.checkout_repository || github.repository }}
-          ref: ${{ inputs.checkout_sha || github.sha }}
-          path: .candidate-llama-cpp
-          fetch-depth: 0
-          persist-credentials: false
-
-      - *dockerhub-auth
-
-      - name: Set up protected llama.cpp Buildx
-        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
-        with:
-          driver: docker
-
-      - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
-        with:
-          build-cli: "false"
-
-      - name: Install OpenShell CLI for declarative OpenClaw qualification
-        if: ${{ needs.llama-cpp-dgx-spark-plan.outputs.agent_qualification_execution == 'enabled' }}
-        run: env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_API_KEY -u NVIDIA_INFERENCE_API_KEY -u GITHUB_TOKEN bash scripts/install-openshell.sh
-
-      - name: Materialize trusted llama.cpp qualification plan
-        env:
-          CANDIDATE_ROOT: ${{ github.workspace }}/.candidate-llama-cpp
-          CHECKOUT_SHA: ${{ inputs.checkout_sha || github.sha }}
-          PLAN: ${{ needs.llama-cpp-dgx-spark-plan.outputs.plan }}
-          PLAN_SHA256: ${{ needs.llama-cpp-dgx-spark-plan.outputs.plan_sha256 }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          [[ "$(git -C "$CANDIDATE_ROOT" rev-parse --verify HEAD)" == "$CHECKOUT_SHA" ]] || {
-            echo "::error::Protected llama.cpp candidate checkout does not match the candidate SHA" >&2
-            exit 1
-          }
-          install -d -m 0700 "$E2E_ARTIFACT_DIR"
-          install -d -m 0700 "$(dirname "$NEMOCLAW_LLAMA_CPP_QUALIFICATION_PLAN")"
-          umask 077
-          printf '%s' "$PLAN" > "$NEMOCLAW_LLAMA_CPP_QUALIFICATION_PLAN"
-          [[ "sha256:$(sha256sum "$NEMOCLAW_LLAMA_CPP_QUALIFICATION_PLAN" | awk '{print $1}')" == "$PLAN_SHA256" ]] || {
-            echo "::error::Protected llama.cpp qualification plan digest changed" >&2
-            exit 1
-          }
-
-      - id: qualify
-        name: Build and qualify exact llama.cpp candidate
-        env:
-          BASE_SHA: ${{ inputs.base_sha || github.event.before || github.sha }}
-          CANDIDATE_ROOT: ${{ github.workspace }}/.candidate-llama-cpp
-          CHECKOUT_SHA: ${{ inputs.checkout_sha || github.sha }}
-          MODEL_HOST_PATH: ${{ needs.llama-cpp-dgx-spark-plan.outputs.model_host_path }}
-          WORKFLOW_SHA: ${{ inputs.workflow_sha || github.workflow_sha }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          [[ "$(git rev-parse --verify HEAD)" == "$WORKFLOW_SHA" ]] || {
-            echo "::error::Protected llama.cpp qualification must execute trusted workflow code" >&2
-            exit 1
-          }
-          npx --no-install tsx scripts/checks/run-llama-cpp-dgx-spark-qualification.mts \
-            --base-sha "$BASE_SHA" \
-            --candidate-root "$CANDIDATE_ROOT" \
-            --head-sha "$CHECKOUT_SHA" \
-            --model-host-path "$MODEL_HOST_PATH" \
-            --output "$NEMOCLAW_LLAMA_CPP_QUALIFICATION_EVIDENCE" \
-            --plan "$NEMOCLAW_LLAMA_CPP_QUALIFICATION_PLAN" \
-            --plan-sha256 "$NEMOCLAW_LLAMA_CPP_QUALIFICATION_PLAN_SHA256" \
-            --registry-name "$NEMOCLAW_LLAMA_CPP_QUALIFICATION_REGISTRY" \
-            --run-attempt "$GITHUB_RUN_ATTEMPT" \
-            --run-id "$GITHUB_RUN_ID" \
-            --workflow-sha "$WORKFLOW_SHA"
-
-      - name: Remove protected llama.cpp qualification resources
-        if: always()
-        shell: bash
-        run: >-
-          npx --no-install tsx scripts/checks/run-llama-cpp-dgx-spark-qualification.mts --cleanup-only --registry-name "$NEMOCLAW_LLAMA_CPP_QUALIFICATION_REGISTRY" --run-attempt "$GITHUB_RUN_ATTEMPT" --run-id "$GITHUB_RUN_ID"
-
-      - name: Validate protected llama.cpp evidence
-        shell: bash
-        run: >-
-          npx --no-install tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/llama-cpp-dgx-spark-qualification.test.ts
-
-      - name: Upload protected llama.cpp evidence
-        if: always()
-        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
-        with:
-          name: e2e-llama-cpp-dgx-spark-qualification
-          path: e2e-artifacts/live/llama-cpp-dgx-spark-qualification/
-
-      - name: Clean up Docker auth
-        if: always()
-        shell: bash
-        run: bash .github/scripts/docker-auth-cleanup.sh
-
   # This lane runs after managed-image startup succeeds. Manual PR qualification
   # requires the exact candidate activation contract. Its
   # hosted amd64 prerequisite exports the exact candidate build cache.
@@ -4956,7 +4687,7 @@ jobs:
     needs: [base-image-publication, generate-matrix, managed-image-multiarch-startup]
     if: ${{ always() && github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && needs['base-image-publication'].result == 'success' && needs['generate-matrix'].result == 'success' && needs['managed-image-multiarch-startup'].result == 'success' && contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'managed-image-protected-runtime') }}
     runs-on: linux-amd64-gpu-rtxpro6000-latest-1
-    timeout-minutes: 300
+    timeout-minutes: 75
     permissions:
       contents: read
     env:
@@ -5057,7 +4788,8 @@ jobs:
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
-      - name: Validate protected runtime activation contract
+      - id: runtime-contract
+        name: Validate protected runtime activation contract
         env:
           CHECKOUT_SHA: ${{ inputs.checkout_sha || github.sha }}
         shell: bash
@@ -5073,17 +4805,31 @@ jobs:
             echo "::error::Protected managed-image runtime activation contract is absent" >&2
             exit 1
           }
-          jq -e '
-            (keys | sort) == ["agents", "contractVersion", "jobId", "platform", "providers"] and
-            .contractVersion == 1 and
-            .jobId == "managed-image-protected-runtime" and
-            .agents == ["openclaw", "hermes", "langchain-deepagents-code"] and
-            .platform == "linux/amd64" and
-            .providers == ["ollama", "nim", "vllm"]
-          ' "$activation" >/dev/null || {
+          runtime_user="$(
+            jq -er '
+              (
+                .jobId == "managed-image-protected-runtime" and
+                .agents == ["openclaw", "hermes", "langchain-deepagents-code"] and
+                .platform == "linux/amd64" and
+                .providers == ["ollama", "nim", "vllm"]
+              ) as $common |
+              if $common and
+                (keys | sort) == ["agents", "contractVersion", "jobId", "platform", "providers"] and
+                .contractVersion == 1
+              then "root"
+              elif $common and
+                (keys | sort) == ["agents", "contractVersion", "jobId", "platform", "providers", "runtimeUser"] and
+                .contractVersion == 2 and
+                .runtimeUser == "sandbox"
+              then "sandbox"
+              else error("invalid protected runtime activation contract")
+              end
+            ' "$activation"
+          )" || {
             echo "::error::Protected managed-image runtime activation contract is invalid" >&2
             exit 1
           }
+          printf 'runtime_user=%s\n' "$runtime_user" >> "$GITHUB_OUTPUT"
           install -d -m 0700 "$E2E_ARTIFACT_DIR"
 
       - id: runtime-hermes-base
@@ -5185,6 +4931,7 @@ jobs:
           BASE_HERMES: ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@${{ steps.runtime-hermes-base.outputs.digest }}
           BASE_OPENCLAW: ${{ steps.runtime-bases.outputs.openclaw }}
           CHECKOUT_SHA: ${{ inputs.checkout_sha || github.sha }}
+          RUNTIME_USER: ${{ steps.runtime-contract.outputs.runtime_user }}
         shell: bash
         run: |
           set -euo pipefail
@@ -5193,6 +4940,7 @@ jobs:
             --revision "$CHECKOUT_SHA" \
             --cohort "$NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT" \
             --platform linux/amd64 \
+            --runtime-user "$RUNTIME_USER" \
             --source-root "$GITHUB_WORKSPACE/.candidate-runtime" \
             --cache-from "$NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE" \
             --audit-evidence-from "$GITHUB_WORKSPACE/.candidate-runtime/artifacts/reviewed-npm-audit" \
@@ -6080,8 +5828,6 @@ jobs:
         openshell-dev-artifact,
         mcp-bridge-dev,
         managed-image-multiarch-startup,
-        llama-cpp-dgx-spark-plan,
-        llama-cpp-dgx-spark-qualification,
         managed-image-protected-runtime,
         hermes-e2e,
         hermes-gpu-startup,
@@ -6197,7 +5943,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     needs: *e2e-result-jobs
-    if: ${{ always() && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.checkout_sha == '' && inputs.jobs == '' && inputs.targets == '' && inputs.include_staging_brev_launchable && !inputs.allow_jetson_dispatch && !inputs.allow_dgx_spark_runner_queue }}
+    if: ${{ always() && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.checkout_sha == '' && inputs.jobs == '' && inputs.targets == '' && inputs.include_staging_brev_launchable && !inputs.allow_jetson_dispatch }}
     permissions:
       contents: read
     steps:
