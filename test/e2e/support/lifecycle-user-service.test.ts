@@ -18,6 +18,13 @@ import {
 } from "../fixtures/phases/lifecycle.ts";
 
 const installer = fileURLToPath(new URL("../../../scripts/install.sh", import.meta.url));
+const upstreamServiceShow =
+  "--user show openshell-gateway.service --property=ActiveState --property=FragmentPath --property=ExecStart";
+const trustedActiveUpstreamMetadata = [
+  "ActiveState=active",
+  "FragmentPath=/usr/lib/systemd/user/openshell-gateway.service",
+  "ExecStart={ path=/usr/bin/openshell-gateway ; argv[]=/usr/bin/openshell-gateway ; }",
+].join("\n");
 
 describe("reboot lifecycle OpenShell gateway user-service fixture", () => {
   it("stages, enables, and removes the repository service without installer cleanup", () => {
@@ -270,7 +277,7 @@ describe("managed OpenShell gateway user-service stop", () => {
       [
         "#!/bin/sh",
         `printf "%s\\n" "$*" >> ${JSON.stringify(log)}`,
-        'if [ "$*" = "--user cat openshell-gateway" ]; then exit 1; fi',
+        `if [ "$*" = ${JSON.stringify(upstreamServiceShow)} ]; then exit 1; fi`,
         "exit 0",
       ].join("\n"),
       { mode: 0o755 },
@@ -289,8 +296,9 @@ describe("managed OpenShell gateway user-service stop", () => {
       });
 
       expect(fs.readFileSync(log, "utf8").trim().split("\n")).toEqual([
-        "--user cat openshell-gateway",
+        upstreamServiceShow,
         "--user show-environment",
+        "--user is-active --quiet nemoclaw-openshell-gateway",
         "--user stop nemoclaw-openshell-gateway",
       ]);
     } finally {
@@ -309,7 +317,14 @@ describe("managed OpenShell gateway user-service stop", () => {
     fs.writeFileSync(path.join(bin, "uname"), "#!/bin/sh\nprintf 'Linux\\n'\n", { mode: 0o755 });
     fs.writeFileSync(
       path.join(bin, "systemctl"),
-      ["#!/bin/sh", `printf "%s\\n" "$*" >> ${JSON.stringify(log)}`, "exit 0"].join("\n"),
+      [
+        "#!/bin/sh",
+        `printf "%s\\n" "$*" >> ${JSON.stringify(log)}`,
+        `if [ "$*" = ${JSON.stringify(upstreamServiceShow)} ]; then`,
+        `  printf "%b\\n" ${JSON.stringify(trustedActiveUpstreamMetadata)}`,
+        "fi",
+        "exit 0",
+      ].join("\n"),
       { mode: 0o755 },
     );
 
@@ -325,9 +340,198 @@ describe("managed OpenShell gateway user-service stop", () => {
       });
 
       expect(fs.readFileSync(log, "utf8").trim().split("\n")).toEqual([
-        "--user cat openshell-gateway",
+        upstreamServiceShow,
         "--user stop openshell-gateway",
       ]);
+    } finally {
+      fs.rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  it("uses the NVIDIA OpenShell Homebrew service on macOS (#10947)", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-lifecycle-stop-homebrew-"));
+    const home = path.join(root, "home");
+    const bin = path.join(root, "bin");
+    const log = path.join(root, "brew.log");
+
+    fs.mkdirSync(home, { recursive: true });
+    fs.mkdirSync(bin, { recursive: true });
+    fs.writeFileSync(path.join(bin, "uname"), "#!/bin/sh\nprintf 'Darwin\\n'\n", { mode: 0o755 });
+    fs.writeFileSync(
+      path.join(bin, "brew"),
+      [
+        "#!/bin/sh",
+        `printf "%s\\n" "$*" >> ${JSON.stringify(log)}`,
+        'if [ "$*" = "list --formula openshell" ]; then exit 0; fi',
+        'if [ "$*" = "info --json=v2 openshell" ]; then',
+        '  printf \'%s\\n\' \'{"formulae":[{"tap":"nvidia/openshell"}]}\'',
+        "  exit 0",
+        "fi",
+        'if [ "$*" = "services stop openshell" ]; then exit 0; fi',
+        "exit 1",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    try {
+      const env = buildAvailabilityProbeEnv({
+        HOME: home,
+        PATH: `${bin}:/usr/bin:/bin`,
+      });
+      execFileSync("sh", ["-c", buildOpenShellGatewayUserServiceStopScript()], {
+        env,
+        killSignal: "SIGKILL",
+        timeout: 30_000,
+      });
+
+      expect(fs.readFileSync(log, "utf8").trim().split("\n")).toEqual([
+        "list --formula openshell",
+        "info --json=v2 openshell",
+        "services stop openshell",
+      ]);
+    } finally {
+      fs.rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  it("rejects a non-NVIDIA OpenShell Homebrew service without stopping it (#10947)", () => {
+    const root = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-lifecycle-stop-homebrew-foreign-"),
+    );
+    const home = path.join(root, "home");
+    const bin = path.join(root, "bin");
+    const log = path.join(root, "brew.log");
+
+    fs.mkdirSync(home, { recursive: true });
+    fs.mkdirSync(bin, { recursive: true });
+    fs.writeFileSync(path.join(bin, "uname"), "#!/bin/sh\nprintf 'Darwin\\n'\n", { mode: 0o755 });
+    fs.writeFileSync(
+      path.join(bin, "brew"),
+      [
+        "#!/bin/sh",
+        `printf "%s\\n" "$*" >> ${JSON.stringify(log)}`,
+        'if [ "$*" = "list --formula openshell" ]; then exit 0; fi',
+        'if [ "$*" = "info --json=v2 openshell" ]; then',
+        '  printf \'%s\\n\' \'{"formulae":[{"tap":"homebrew/core"}]}\'',
+        "  exit 0",
+        "fi",
+        "exit 1",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    try {
+      const env = buildAvailabilityProbeEnv({
+        HOME: home,
+        PATH: `${bin}:/usr/bin:/bin`,
+      });
+      const result = spawnSync("sh", ["-c", buildOpenShellGatewayUserServiceStopScript()], {
+        encoding: "utf8",
+        env,
+        killSignal: "SIGKILL",
+        timeout: 30_000,
+      });
+
+      expect(result.status).toBe(1);
+      expect(fs.readFileSync(log, "utf8").trim().split("\n")).toEqual([
+        "list --formula openshell",
+        "info --json=v2 openshell",
+      ]);
+    } finally {
+      fs.rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  it("rejects an untrusted upstream OpenShell user service without stopping it (#10947)", () => {
+    const root = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-lifecycle-stop-upstream-foreign-"),
+    );
+    const home = path.join(root, "home");
+    const bin = path.join(root, "bin");
+    const log = path.join(root, "systemctl.log");
+    const untrustedMetadata = [
+      "ActiveState=active",
+      `FragmentPath=${home}/.config/systemd/user/openshell-gateway.service`,
+      "ExecStart={ path=/usr/bin/openshell-gateway ; argv[]=/usr/bin/openshell-gateway ; }",
+    ].join("\n");
+
+    fs.mkdirSync(home, { recursive: true });
+    fs.mkdirSync(bin, { recursive: true });
+    fs.writeFileSync(path.join(bin, "uname"), "#!/bin/sh\nprintf 'Linux\\n'\n", { mode: 0o755 });
+    fs.writeFileSync(
+      path.join(bin, "systemctl"),
+      [
+        "#!/bin/sh",
+        `printf "%s\\n" "$*" >> ${JSON.stringify(log)}`,
+        `if [ "$*" = ${JSON.stringify(upstreamServiceShow)} ]; then`,
+        `  printf "%b\\n" ${JSON.stringify(untrustedMetadata)}`,
+        "  exit 0",
+        "fi",
+        "exit 1",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    try {
+      const env = buildAvailabilityProbeEnv({
+        HOME: home,
+        PATH: `${bin}:/usr/bin:/bin`,
+      });
+      const result = spawnSync("sh", ["-c", buildOpenShellGatewayUserServiceStopScript()], {
+        env,
+        killSignal: "SIGKILL",
+        timeout: 30_000,
+      });
+
+      expect(result.status).toBe(75);
+      expect(fs.readFileSync(log, "utf8").trim()).toBe(upstreamServiceShow);
+    } finally {
+      fs.rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  it("falls back when the trusted upstream OpenShell user service is inactive (#10947)", () => {
+    const root = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-lifecycle-stop-upstream-inactive-"),
+    );
+    const home = path.join(root, "home");
+    const bin = path.join(root, "bin");
+    const log = path.join(root, "systemctl.log");
+    const inactiveMetadata = trustedActiveUpstreamMetadata.replace(
+      "ActiveState=active",
+      "ActiveState=inactive",
+    );
+
+    fs.mkdirSync(home, { recursive: true });
+    fs.mkdirSync(bin, { recursive: true });
+    fs.writeFileSync(path.join(bin, "uname"), "#!/bin/sh\nprintf 'Linux\\n'\n", { mode: 0o755 });
+    fs.writeFileSync(
+      path.join(bin, "systemctl"),
+      [
+        "#!/bin/sh",
+        `printf "%s\\n" "$*" >> ${JSON.stringify(log)}`,
+        `if [ "$*" = ${JSON.stringify(upstreamServiceShow)} ]; then`,
+        `  printf "%b\\n" ${JSON.stringify(inactiveMetadata)}`,
+        "  exit 0",
+        "fi",
+        "exit 1",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    try {
+      const env = buildAvailabilityProbeEnv({
+        HOME: home,
+        PATH: `${bin}:/usr/bin:/bin`,
+      });
+      const result = spawnSync("sh", ["-c", buildOpenShellGatewayUserServiceStopScript()], {
+        env,
+        killSignal: "SIGKILL",
+        timeout: 30_000,
+      });
+
+      expect(result.status).toBe(75);
+      expect(fs.readFileSync(log, "utf8").trim()).toBe(upstreamServiceShow);
     } finally {
       fs.rmSync(root, { force: true, recursive: true });
     }
@@ -352,7 +556,7 @@ describe("managed OpenShell gateway user-service stop", () => {
       [
         "#!/bin/sh",
         `printf "%s\\n" "$*" >> ${JSON.stringify(log)}`,
-        'if [ "$*" = "--user cat openshell-gateway" ]; then exit 1; fi',
+        `if [ "$*" = ${JSON.stringify(upstreamServiceShow)} ]; then exit 1; fi`,
         "exit 0",
       ].join("\n"),
       { mode: 0o755 },
@@ -374,7 +578,7 @@ describe("managed OpenShell gateway user-service stop", () => {
       expect(result.status).toBe(75);
       expect(fs.readFileSync(unit, "utf8")).toBe("[Service]\nExecStart=/tmp/foreign\n");
       expect(fs.readFileSync(log, "utf8").trim().split("\n")).toEqual([
-        "--user cat openshell-gateway",
+        upstreamServiceShow,
         "--user show-environment",
       ]);
     } finally {
@@ -396,7 +600,7 @@ describe("managed OpenShell gateway user-service stop", () => {
       [
         "#!/bin/sh",
         `printf "%s\\n" "$*" >> ${JSON.stringify(log)}`,
-        'if [ "$*" = "--user cat openshell-gateway" ]; then exit 1; fi',
+        `if [ "$*" = ${JSON.stringify(upstreamServiceShow)} ]; then exit 1; fi`,
         'if [ "$*" = "--user show-environment" ]; then',
         '  printf "Failed to connect to bus\\n" >&2',
         "  exit 1",
@@ -421,7 +625,7 @@ describe("managed OpenShell gateway user-service stop", () => {
       expect(result.status).toBe(1);
       expect(result.stderr).toContain("Failed to connect to bus");
       expect(fs.readFileSync(log, "utf8").trim().split("\n")).toEqual([
-        "--user cat openshell-gateway",
+        upstreamServiceShow,
         "--user show-environment",
       ]);
     } finally {

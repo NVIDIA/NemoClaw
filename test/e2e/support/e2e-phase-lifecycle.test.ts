@@ -483,11 +483,11 @@ describe("LifecyclePhaseFixture rebuild helpers", () => {
 });
 
 describe("LifecyclePhaseFixture gateway runtime restart helpers", () => {
-  it("stops PID/container runtimes, starts the previous runtime shape, and polls health", async () => {
+  it("falls back to PID/container controls when the selected user service is inactive (#10947)", async () => {
     const runner = new FakeRunner();
     runner.enqueue(shellResult(0, "12345\n")); // resolveHostRuntime pid probe
     runner.enqueue(shellResult(0)); // forward stop
-    runner.enqueue(shellResult(75)); // no user service available
+    runner.enqueue(shellResult(75)); // selected user service is inactive
     runner.enqueue(shellResult(0)); // gateway stop
     runner.enqueue(shellResult(0)); // pid stop
     runner.enqueue(shellResult(0)); // container stop
