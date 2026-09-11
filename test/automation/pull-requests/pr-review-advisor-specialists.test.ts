@@ -489,6 +489,17 @@ describe("PR review advisor specialist prompts", () => {
             regressionTest: "Prove credential-bearing validation classes remain ineligible.",
             exclusions: [],
           },
+          {
+            severity: "P1",
+            kind: "correctness",
+            summary: "Platform selection is wrong.",
+            path: "src/lib/platform.ts",
+            line: 4,
+            impact: "Generated-head validation would require credential-bearing cloud onboarding.",
+            smallestSafeFix: "Leave the credential-sensitive repair to a maintainer.",
+            regressionTest: "Prove E2E-owned credential eligibility gates repair selection.",
+            exclusions: [],
+          },
         ],
         noFindingsReason: null,
       },
@@ -501,6 +512,9 @@ describe("PR review advisor specialist prompts", () => {
     const excluded = ledger.findings.find(({ path: file }) => file === "package-lock.json")!;
     const credentialBearing = ledger.findings.find(
       ({ path: file }) => file === "src/lib/credentials/example.ts",
+    )!;
+    const platformCredentialBearing = ledger.findings.find(
+      ({ path: file }) => file === "src/lib/platform.ts",
     )!;
     const selection = selectRepairFindings({
       version: 1,
@@ -523,7 +537,12 @@ describe("PR review advisor specialist prompts", () => {
       stateDigest: `sha256:${"e".repeat(64)}`,
       reviewDigest: `sha256:${"f".repeat(64)}`,
       ledgers: [ledger],
-      optedFindingIds: [eligible.id, excluded.id, credentialBearing.id],
+      optedFindingIds: [
+        eligible.id,
+        excluded.id,
+        credentialBearing.id,
+        platformCredentialBearing.id,
+      ],
       productScope: "accepted:#10791",
       optIn: "manual-exact-head",
     });
@@ -539,6 +558,11 @@ describe("PR review advisor specialist prompts", () => {
       id: credentialBearing.id,
       selected: false,
       reason: "excluded:repair-validation-requires-cloud-inference",
+    });
+    expect(selection.decisions).toContainEqual({
+      id: platformCredentialBearing.id,
+      selected: false,
+      reason: "excluded:repair-validation-requires-cloud-onboard",
     });
     expect(() =>
       parseProposal(

@@ -22,6 +22,7 @@ import { buildRiskPlan, riskPlanRequiredJobIds, type RiskPlan } from "../advisor
 import {
   buildE2eWorkflowPlan,
   e2eEvidenceJobNamesForSelectors,
+  repairValidationCredentialRequiredE2eJob,
   selectedWorkflowJobs,
 } from "../e2e/workflow-plan.mts";
 import { dispatchWorkflowWithReconciliation } from "../e2e/pr-e2e-dispatch-reconciliation.mts";
@@ -30,7 +31,6 @@ import { readValidatedArtifactZipEntries } from "../../scripts/lib/read-artifact
 import {
   assertLiveRepairState,
   assertValidatedRepair,
-  credentialBearingRepairE2eJob,
   fullSha,
   parseSelection,
   parseValidationReceipt,
@@ -1006,7 +1006,7 @@ export async function waitForAdvisorRepairHead(input: {
   const receiptName = repairValidationReceiptName(input);
   const riskPlan = advisorRepairRiskPlan(input.generatedHeadSha, input.changedPaths);
   const checkpoint = input.checkpoint ?? createAdvisorRepairHeadCheckpoint();
-  const credentialJob = credentialBearingRepairE2eJob(riskPlan.requiredJobs);
+  const credentialJob = repairValidationCredentialRequiredE2eJob(riskPlan.requiredJobs);
   if (credentialJob)
     throw new RepairError(
       `generated-head repair validation requires credential-bearing E2E job ${credentialJob}`,

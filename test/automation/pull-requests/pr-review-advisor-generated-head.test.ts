@@ -546,6 +546,13 @@ describe("PR Review Advisor generated-head evidence", () => {
     );
     expect(dispatchedWorkflows.size).toBe(0);
     expect(dispatchE2e).not.toHaveBeenCalled();
+    changedPaths = ["src/lib/platform.ts"];
+    dispatchedWorkflows.clear();
+    await expect(verify()).rejects.toThrow(
+      "generated-head repair validation requires credential-bearing E2E job cloud-onboard",
+    );
+    expect(dispatchedWorkflows.size).toBe(0);
+    expect(dispatchE2e).not.toHaveBeenCalled();
     changedPaths = [];
     workflowHeadSha = "6".repeat(40);
     dispatchedWorkflows.clear();

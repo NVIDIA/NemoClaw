@@ -11,6 +11,7 @@ import Ajv2020, { type AnySchema } from "ajv/dist/2020.js";
 
 import { canonicalJson } from "../advisors/canonical-json.mts";
 import { buildRiskPlan, riskPlanRequiredJobIds } from "../advisors/risk-plan.mts";
+import { repairValidationCredentialRequiredE2eJob } from "../e2e/workflow-plan.mts";
 import { readBoundedFile } from "../post-merge-docs/contract.mts";
 import { applyResolutionPatch, requireSha, writeTree } from "../pr-merge-conflict-fixer/merge.mts";
 import type { AdvisorFinding } from "./finding-ledger.mts";
@@ -23,14 +24,9 @@ export const MAX_REPAIR_FILE_BYTES = 1024 * 1024;
 export const MAX_REPAIR_PATCH_BYTES = 2 * 1024 * 1024;
 const SHA = /^[0-9a-f]{40}$/u;
 const ATTEMPT = /^sha256:[0-9a-f]{64}$/u;
-const CREDENTIAL_BEARING_REPAIR_E2E_JOBS = new Set(["cloud-inference"]);
-
-export function credentialBearingRepairE2eJob(requiredJobs: readonly string[]): string | null {
-  return requiredJobs.find((job) => CREDENTIAL_BEARING_REPAIR_E2E_JOBS.has(job)) ?? null;
-}
 
 function credentialBearingRepairPathJob(headSha: string, changedPaths: readonly string[]) {
-  return credentialBearingRepairE2eJob(
+  return repairValidationCredentialRequiredE2eJob(
     riskPlanRequiredJobIds(buildRiskPlan({ headSha, changedFiles: changedPaths })),
   );
 }
