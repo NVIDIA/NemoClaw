@@ -1517,7 +1517,7 @@ export function recoverHermesPortableSandboxLifecycle(
   }
   const wasRunning = qualified.container.authority.running;
   timing.setContainerAction(wasRunning ? "reused" : "started");
-  const rollbackAuthority = qualified;
+  let rollbackAuthority = qualified;
   let startedByRecovery = false;
   let primaryFailureClass: HermesPortableRecoveryFailureClass = "container-start";
   try {
@@ -1570,6 +1570,7 @@ export function recoverHermesPortableSandboxLifecycle(
           currentnessTiming,
         ),
       );
+      rollbackAuthority = qualified;
       startedByRecovery =
         qualified.container.authority.running && qualified.container.status === "running";
       if (!startedByRecovery) {
@@ -1804,15 +1805,32 @@ export function recoverHermesPortableSandboxLifecycle(
     if (startedByRecovery) {
       try {
         timing.increment("rollback");
-        timing.measure("rollback", () =>
+        timing.measure("rollback", () => {
+          if (rollbackAuthority.openShellPhase === "Error") {
+            try {
+              rollbackAuthority = {
+                ...qualified,
+                openShellPhase: observeOpenShellIdentity(qualified.receipt, qualified.capture, [
+                  "Ready",
+                  "Error",
+                  "Stopped",
+                ]).phase,
+              };
+            } catch (rollbackAuthorityError) {
+              throw new HermesPortableRollbackAttemptError(
+                "pre-stop-authority",
+                rollbackAuthorityError,
+              );
+            }
+          }
           rollbackStartedHermesPortableRecovery(
             sandboxName,
             context,
             instrumentedDeps,
             rollbackAuthority,
             timing,
-          ),
-        );
+          );
+        });
       } catch (rollbackError) {
         inspectionTiming?.finish();
         currentnessTiming.finish();

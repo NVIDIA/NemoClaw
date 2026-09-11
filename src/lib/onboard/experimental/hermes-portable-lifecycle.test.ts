@@ -162,9 +162,11 @@ function lifecycleDeps(
     readonly sandboxPhase?: (running: boolean) => string;
     readonly sandboxIdentity?: (running: boolean) => string | undefined;
     readonly failPostStartInspectOnce?: boolean;
+    readonly stopRequiresAssist?: boolean;
   } = {},
 ) {
   let running = initiallyRunning,
+    workloadRunning = initiallyRunning,
     now = 0;
   let lifecyclePhase: "Ready" | "Stopped" | undefined;
   let postStartInspectFailurePending = false;
@@ -212,9 +214,13 @@ function lifecycleDeps(
   });
   const liveIdentityFingerprint = fingerprintOpenShellSandboxLiveIdentity(LIVE)!;
   const captureOpenShell = vi.fn((args: readonly string[]) => {
+    const stopAssist = args.includes(
+      hermesPortableLifecycleInternals.openShellV0116StopAssistProgram,
+    );
+    workloadRunning = stopAssist && options.stopRequiresAssist ? false : workloadRunning;
     const sandboxExecOutput = args.includes(hermesPortableLifecycleInternals.healthWaitProgram)
       ? "schema=1 result=ready attempts=1 notReady=0 timeouts=0 errors=0 lastFailure=none probeMs=0 sleepMs=0\n"
-      : args.includes(hermesPortableLifecycleInternals.openShellV0116StopAssistProgram)
+      : stopAssist
         ? "schema=1 result=armed pgrp=123\n"
         : args.includes("python3")
           ? "200\n"
@@ -223,14 +229,18 @@ function lifecycleDeps(
     const mutation = {
       "sandbox:start": () => {
         running = true;
+        workloadRunning = true;
         lifecyclePhase = "Ready";
         postStartInspectFailurePending = options.failPostStartInspectOnce === true;
         return { status: 0, stdout: "", stderr: "" };
       },
       "sandbox:stop": () => {
-        running = false;
-        lifecyclePhase = "Stopped";
-        return { status: 0, stdout: "", stderr: "" };
+        const blocked = options.stopRequiresAssist && workloadRunning;
+        running = blocked ? running : false;
+        lifecyclePhase = blocked ? lifecyclePhase : "Stopped";
+        return blocked
+          ? { status: 1, stdout: "", stderr: "managed workload is still running" }
+          : { status: 0, stdout: "", stderr: "" };
       },
     }[operation];
     const responses = {
@@ -500,11 +510,12 @@ describe("Hermes portable lifecycle", () => {
     );
   });
 
-  it("arms the stop assistant before rolling back a started OpenShell Stopped sandbox", () => {
+  it("uses post-start authority to roll back an Error-origin OpenShell sandbox", () => {
     const receipt = activeReceipt();
     publishSuccessor();
     const fixture = lifecycleDeps(receipt, false, {
-      sandboxPhase: (running) => (running ? "Ready" : "Stopped"),
+      sandboxPhase: (running) => (running ? "Stopped" : "Error"),
+      stopRequiresAssist: true,
     });
     const defaultCapture = fixture.captureOpenShell.getMockImplementation()!;
     fixture.captureOpenShell.mockImplementation((args: readonly string[]) =>
@@ -527,7 +538,7 @@ describe("Hermes portable lifecycle", () => {
           }),
         { stateDir: path.join(stateDir, "state") },
       ),
-    ).toThrow("managed startup did not pass authenticated health");
+    ).toThrow("OpenShell sandbox identity disagrees with the receipt container");
 
     const calls = fixture.captureOpenShell.mock.calls.map(([args]) => args);
     const assist = calls.findIndex((args) =>
@@ -536,6 +547,7 @@ describe("Hermes portable lifecycle", () => {
     const stop = calls.findIndex((args) => args[0] === "sandbox" && args[1] === "stop");
     expect(assist).toBeGreaterThanOrEqual(0);
     expect(stop).toBeGreaterThan(assist);
+    expect(openshellMutationCalls(fixture.captureOpenShell, "stop")).toHaveLength(1);
   });
 
   it("rejects live sandbox rebind before the name-addressed startup launch (#10423)", () => {

@@ -423,7 +423,7 @@ export async function restoreExistingMcpBridgeRuntime(
         statusMcpBridge,
       );
     } catch (error) {
-      unregisterAgentAdapter(sandboxName, adapter, entry, providerRuntimeSelection, {
+      await unregisterAgentAdapter(sandboxName, adapter, entry, providerRuntimeSelection, {
         bestEffort: true,
         envValues: {},
         force: false,

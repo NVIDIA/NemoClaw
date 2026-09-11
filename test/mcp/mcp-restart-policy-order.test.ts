@@ -347,6 +347,7 @@ bridge.restartMcpBridge("alpha", "example").then(
     pendingDenyTools,
     policyApplyFails = false,
     stableRevision = false,
+    deferAdapterRemoval = false,
   }: {
     operation?: "restart" | "restore";
     probeResponses: Record<
@@ -363,6 +364,7 @@ bridge.restartMcpBridge("alpha", "example").then(
     pendingDenyTools?: string[];
     policyApplyFails?: boolean;
     stableRevision?: boolean;
+    deferAdapterRemoval?: boolean;
   }) => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-restart-credential-"));
     const gatewayManagement = writeManagedGatewayDeclaration(home);
@@ -381,6 +383,7 @@ const bridgeStatus = require("./src/lib/actions/sandbox/mcp-bridge-status.js");
 let policyApplyCalls = 0;
 let resourceVersion = 1;
 let adapterRegistered = true;
+let adapterCleanupCompleted = false;
 const providerCalls = [];
 const statusCalls = [];
 const entry = {
@@ -455,12 +458,17 @@ processRecovery.executeSandboxExecCommand = () => ({
   stdout: stableRevision ? "s" + "a".repeat(64) : "v" + resourceVersion,
   stderr: "",
 });
-processRecovery.executeSandboxCommand = (_sandbox, command) => ({
+const deferAdapterRemoval = ${JSON.stringify(deferAdapterRemoval)};
+processRecovery.executeSandboxCommand = async (_sandbox, command) => ({
   status: 0,
-  stdout: (() => {
+  stdout: await (async () => {
     if (command === "command -v mcporter") return "/usr/local/bin/mcporter\n";
     if (command.includes("config' 'remove") || (command.includes('spawnSync("mcporter"') && command.includes('"remove", expected.server'))) {
+      if (deferAdapterRemoval) {
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
       adapterRegistered = false;
+      adapterCleanupCompleted = true;
       return "removed\n";
     }
     if (command.includes("config' 'add") || command.includes('"config", "add"')) {
@@ -503,7 +511,7 @@ const report = (payload) => {
       policyApplyCalls,
       providerCalls,
       statusCalls,
-      ...(operation === "restore" ? { adapterRegistered } : {}),
+      ...(operation === "restore" ? { adapterRegistered, adapterCleanupCompleted } : {}),
       ...journalState(),
     });
   },
@@ -515,7 +523,7 @@ const report = (payload) => {
       policyApplyCalls,
       providerCalls,
       statusCalls,
-      ...(operation === "restore" ? { adapterRegistered } : {}),
+      ...(operation === "restore" ? { adapterRegistered, adapterCleanupCompleted } : {}),
       ...journalState(),
     });
   },
@@ -591,6 +599,7 @@ const report = (payload) => {
     const payload = runCredentialRestart({
       operation: "restore",
       stableRevision: true,
+      deferAdapterRemoval: true,
       probeResponses: {
         example: {
           ok: null,
@@ -607,6 +616,7 @@ const report = (payload) => {
         "MCP server 'example' did not authorize its unchanged stable credential handle after provider update:",
       ),
       adapterRegistered: false,
+      adapterCleanupCompleted: true,
       statusCalls: [expectedStatusCall("example", true)],
     });
     expect(payload.message).not.toContain("host-only-secret");
