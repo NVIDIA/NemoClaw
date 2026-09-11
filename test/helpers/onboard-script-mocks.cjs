@@ -96,8 +96,12 @@ function installForwardServiceReachabilityFixture(initiallyReachable = false) {
   const listener = require(
     path.resolve(__dirname, "../../src/lib/adapters/openshell/local-forward-listener.ts"),
   );
+  const forwardService = require(
+    path.resolve(__dirname, "../../src/lib/adapters/openshell/forward-service.ts"),
+  );
   let reachable = initiallyReachable;
   listener.probeLocalForwardListener = () => reachable;
+  forwardService.isForwardServiceListenerOwner = () => reachable;
   return {
     recordSpawn(args) {
       const argv = Array.isArray(args[1]) ? args[1] : [];
