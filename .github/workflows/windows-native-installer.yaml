@@ -19,7 +19,7 @@ on:
         default: false
         type: boolean
       windows_native_diagnostic_source_run_id:
-        description: Replay the fixed published0.1.2 installer (source run34544062535; no runtime overlay)
+        description: Replay the fixed built 0.1.3 installer (source run 34555046495; no runtime overlay)
         required: false
         default: ""
         type: string
@@ -556,7 +556,7 @@ jobs:
           if-no-files-found: error
 
   windows-native-package-diagnostic:
-    name: Published0.1.2 installed replay (Windows ARM64)
+    name: Built 0.1.3 installed replay (Windows ARM64)
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_windows_native_installer && !inputs.test_native_windows_runtime && !inputs.profile_native_windows && !inputs.probe_official_hermes_components && inputs.windows_native_diagnostic_source_run_id != '' }}
     runs-on: windows-11-vs2026-arm
     timeout-minutes: 60
@@ -566,7 +566,7 @@ jobs:
         with:
           path: candidate
           persist-credentials: false
-      - name: Verify and extract the fixed published0.1.2 artifacts
+      - name: Verify and extract the fixed built 0.1.3 artifacts
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
@@ -583,12 +583,12 @@ jobs:
         run: |
           & "$env:GITHUB_WORKSPACE\candidate\packaging\windows\installer\run-installed-acceptance.ps1" `
             -SourceRoot "$env:GITHUB_WORKSPACE\candidate" -WorkDirectory "$env:RUNNER_TEMP\finished-windows" `
-            -ProductVersion '0.1.2' -ArtifactSourceRevision 'b54a1f3a54ab28dff7813de2db9430f6735ec624' -Mode published-0.1.2-replay
-      - name: Preserve published replay identity, timing and installed diagnostics
+            -ProductVersion '0.1.3' -ArtifactSourceRevision '491a3a3d5e7206d82c741198062b6e2aa98dc72c' -Mode built-0.1.3-replay
+      - name: Preserve built-preview replay identity, timing and installed diagnostics
         if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: published012-installed-replay-${{ github.sha }}
+          name: built013-installed-replay-${{ github.sha }}
           path: |
             ${{ runner.temp }}/finished-windows/replay-inputs.json
             ${{ runner.temp }}/finished-windows/downloads/*.json

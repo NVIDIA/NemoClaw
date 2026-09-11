@@ -1,13 +1,13 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# The same installed acceptance body is used for current builds and exact published replay.
+# The same installed acceptance body is used for current builds and exact built-preview replay.
 [CmdletBinding()]
 param([Parameter(Mandatory)][string]$SourceRoot,
     [Parameter(Mandatory)][string]$WorkDirectory,
     [Parameter(Mandatory)][string]$ProductVersion,
     [Parameter(Mandatory)][string]$ArtifactSourceRevision,
-    [ValidateSet('current-build','published-0.1.2-replay')][string]$Mode = 'current-build')
+    [ValidateSet('current-build','built-0.1.3-replay')][string]$Mode = 'current-build')
 $ErrorActionPreference = 'Stop'
 $controllerSource = $env:GITHUB_SHA
 if ($env:OS -cne 'Windows_NT' -or $env:GITHUB_ACTIONS -cne 'true' -or $PSVersionTable.PSEdition -cne 'Core' -or
@@ -17,8 +17,8 @@ $head = (& git -C $SourceRoot rev-parse HEAD | Out-String).Trim()
 if ($LASTEXITCODE -ne 0 -or $head -cne $controllerSource) { throw 'The acceptance controller differs from this checkout.' }
 if ($Mode -ceq 'current-build') {
     if ($ArtifactSourceRevision -cne $controllerSource) { throw 'Normal build acceptance requires the exact current source.' }
-} elseif ($ArtifactSourceRevision -cne 'b54a1f3a54ab28dff7813de2db9430f6735ec624' -or $ProductVersion -cne '0.1.2') {
-    throw 'Published replay accepts only the fixed0.1.2 artifact source.'
+} elseif ($ArtifactSourceRevision -cne '491a3a3d5e7206d82c741198062b6e2aa98dc72c' -or $ProductVersion -cne '0.1.3') {
+    throw 'Built-preview replay accepts only the fixed 0.1.3 artifact source.'
 }
 # These held-pipe controls run outside install/startup timing and do not execute app code.
 $ciNode = Join-Path $WorkDirectory 'application\node\node.exe'

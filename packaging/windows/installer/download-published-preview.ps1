@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# CI-only transport of the fixed published0.1.2 bytes. It never installs/overlays files.
+# CI-only transport of the fixed built 0.1.3 bytes. It never installs/overlays files.
 [CmdletBinding()]
 param([Parameter(Mandatory)][string]$OutputDirectory,
     [Parameter(Mandatory)][string]$SourceRunId,
@@ -11,16 +11,16 @@ $ErrorActionPreference = 'Stop'
 if ($env:OS -cne 'Windows_NT' -or $env:GITHUB_ACTIONS -cne 'true' -or
     $PSVersionTable.PSEdition -cne 'Core' -or $PSVersionTable.PSVersion -lt [version]'7.4' -or
     $env:GITHUB_REPOSITORY -cne 'NVIDIA/NemoClaw' -or -not $env:GH_TOKEN -or
-    $SourceRunId -cne '34544062535' -or $ProductVersion -cne '0.1.2') {
-    throw 'Replay requires the fixed published0.1.2 run in authorized Windows CI.'
+    $SourceRunId -cne '34555046495' -or $ProductVersion -cne '0.1.3') {
+    throw 'Replay requires the fixed built 0.1.3 run in authorized Windows CI.'
 }
-if (Test-Path -LiteralPath $OutputDirectory) { throw 'The published replay directory must be fresh.' }
+if (Test-Path -LiteralPath $OutputDirectory) { throw 'The built-preview replay directory must be fresh.' }
 $work = [IO.Path]::GetFullPath($OutputDirectory)
 [IO.Directory]::CreateDirectory($work) | Out-Null
 $downloads = Join-Path $work 'downloads'
 [IO.Directory]::CreateDirectory($downloads) | Out-Null
 $gh = (Get-Command gh.exe -CommandType Application | Select-Object -First 1).Source
-$artifactSource = 'b54a1f3a54ab28dff7813de2db9430f6735ec624'
+$artifactSource = '491a3a3d5e7206d82c741198062b6e2aa98dc72c'
 
 function Invoke-RawCapture {
     param([string]$Executable, [string[]]$Arguments, [string]$OutputPath,
@@ -77,7 +77,7 @@ function Assert-PinnedFile([string]$Path, [long]$Bytes, [string]$Sha256) {
     $file = Get-Item -LiteralPath $Path -Force
     if ($file -isnot [IO.FileInfo] -or ($file.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
         $file.Length -ne $Bytes -or (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant() -cne $Sha256) {
-        throw 'A published replay file failed its complete byte/hash identity check.'
+        throw 'A built-preview replay file failed its complete byte/hash identity check.'
     }
 }
 function Assert-ArtifactMetadata($Metadata, $Expected, $Run) {
@@ -89,25 +89,25 @@ function Assert-ArtifactMetadata($Metadata, $Expected, $Run) {
     }
 }
 
-$receipt = [ordered]@{schemaVersion=1;classification='fixed-published-installer-replay-inputs';status='failed';
-    artifactSourceRevision=$artifactSource;controllerSourceRevision=$env:GITHUB_SHA;sourceRunId=34544062535;sourceRunAttempt=1;
-    productVersion='0.1.2';installedRuntimeOverlay=$false;currentHeadQualification=$false;archives=@()}
+$receipt = [ordered]@{schemaVersion=1;classification='fixed-built-preview-replay-inputs';status='failed';
+    artifactSourceRevision=$artifactSource;controllerSourceRevision=$env:GITHUB_SHA;sourceRunId=34555046495;sourceRunAttempt=1;
+    productVersion='0.1.3';installedRuntimeOverlay=$false;currentHeadQualification=$false;archives=@()}
 $primary = $null
 try {
-    $run = Read-GitHubMetadata 'repos/NVIDIA/NemoClaw/actions/runs/34544062535' 'source-run'
-    if ($run.id -ne 34544062535 -or $run.head_sha -cne $artifactSource -or $run.run_attempt -ne 1 -or
+    $run = Read-GitHubMetadata 'repos/NVIDIA/NemoClaw/actions/runs/34555046495' 'source-run'
+    if ($run.id -ne 34555046495 -or $run.head_sha -cne $artifactSource -or $run.run_attempt -ne 1 -or
         $run.repository.full_name -cne 'NVIDIA/NemoClaw' -or $run.head_repository.full_name -cne 'NVIDIA/NemoClaw' -or
         $run.path -cne '.github/workflows/windows-native-installer.yaml' -or $run.status -cne 'completed' -or
         $run.event -cne 'workflow_dispatch' -or $run.head_branch -cne 'feat/windows-native-installer') {
-        throw 'The published source run does not match the fixed replay identity.'
+        throw 'The built-preview source run does not match the fixed replay identity.'
     }
     # The source workflow's failed installed acceptance remains failed; the built
     # preview is explicitly unqualified and is the exact object being replayed.
     $expected = @(
-        @{ id=10178641244; name=('finished-windows-preview-' + $artifactSource); bytes=341647780;
-            sha256='8c6b339e6c1aa228d1fe5ab86d22169e3e6f6cf4dabedfd5299490216611af60'; label='preview'; destination=$work },
-        @{ id=10178411226; name=('compiled-windows-application-' + $artifactSource); bytes=63714548;
-            sha256='22ca3877bfc0cdb452ea113f428f88b1c080188415de11ad079f00f62d4349fb'; label='ci-application'; destination=(Join-Path $work 'application') }
+        @{ id=10182548159; name=('finished-windows-preview-' + $artifactSource); bytes=353693459;
+            sha256='d2e23aead9e137e7f7177b000840221aabe17350768be72390c8bb4950548539'; label='preview'; destination=$work },
+        @{ id=10182337051; name=('compiled-windows-application-' + $artifactSource); bytes=71861646;
+            sha256='c65e1f1f35d0676f264267a9af3b5b8c408e592a3b5cd0e5129ea9c705fb9a7e'; label='ci-application'; destination=(Join-Path $work 'application') }
     )
     foreach ($item in $expected) {
         $metadata = Read-GitHubMetadata ('repos/NVIDIA/NemoClaw/actions/artifacts/' + $item.id) ($item.label + '-metadata')
@@ -119,8 +119,8 @@ try {
         $receipt.archives += @{id=$item.id;sha256=$item.sha256;bytes=$item.bytes;fullArchiveVerified=$true;transport=$transport}
         Expand-Archive -LiteralPath $archive -DestinationPath $item.destination
     }
-    Assert-PinnedFile (Join-Path $work 'package\NemoClawSetup-0.1.2-windows-arm64.exe') 198595309 'c738acc8b8d68e11f9555fe5798bf3e1241991aedded558d76f7506d6c7cb19a'
-    Assert-PinnedFile (Join-Path $work 'package\NemoClaw-0.1.2-windows-arm64.msi') 144761392 '01c51f6cc74c5126dc6e900283b4df416e0ec4930a1ff332bf49c9cf171360a8'
+    Assert-PinnedFile (Join-Path $work 'package\NemoClawSetup-0.1.3-windows-arm64.exe') 204621961 '7376adac66b2fef369f2288173029d2ddd091839a833e39a0ee70ab80dedb927'
+    Assert-PinnedFile (Join-Path $work 'package\NemoClaw-0.1.3-windows-arm64.msi') 150995644 'f94a68d1717759a6e86ca74c6347dd7f2fad5d9324f7f437b6f32a602c6db151'
     Assert-PinnedFile (Join-Path $work 'application\node\node.exe') 77132104 '97cce5301a815d2dce07ac5bfd1e6039eae88185ec1d10ae4f8cb712f1732878'
     $build = Get-Content -LiteralPath (Join-Path $work 'package\immutable-package-build.json') -Raw | ConvertFrom-Json
     if ($build.sourceRevision -cne $artifactSource -or $build.status -cne 'candidate-built-for-installed-qualification') { throw 'The preview receipt source is incorrect.' }

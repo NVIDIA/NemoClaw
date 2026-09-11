@@ -168,6 +168,49 @@ export function recordedExec(history: { messages?: unknown[] }, command: string,
   throw new Error("The chat lacks the matching successful shell tool execution.");
 }
 
+export function recordedFileTool(
+  history: { messages?: unknown[] },
+  name: "write" | "read",
+  file: string,
+  content: string,
+) {
+  assert.ok(Array.isArray(history.messages));
+  for (const [index, value] of history.messages.entries()) {
+    const message = value as {
+      role?: string;
+      content?: {
+        type?: string;
+        name?: string;
+        id?: string;
+        arguments?: { path?: string; content?: string };
+      }[];
+    };
+    if (message.role !== "assistant" || !Array.isArray(message.content)) continue;
+    for (const call of message.content) {
+      if (
+        call.type !== "toolCall" ||
+        call.name !== name ||
+        typeof call.id !== "string" ||
+        call.arguments?.path !== file ||
+        (name === "write" && call.arguments.content !== content)
+      )
+        continue;
+      for (const candidate of history.messages.slice(index + 1)) {
+        const result = candidate as { role?: string; toolName?: string; toolCallId?: string };
+        if (
+          result.role !== "toolResult" ||
+          result.toolName !== name ||
+          result.toolCallId !== call.id
+        )
+          continue;
+        verifyToolOutput({ ok: true, output: result }, name === "write" ? file : content);
+        return result;
+      }
+    }
+  }
+  throw new Error("The chat lacks the matching successful " + name + " file-tool execution.");
+}
+
 export function sanitizedFailure(error: unknown, secret: string) {
   const bounded = (value: string, bytes: number) =>
     Buffer.from(secret ? value.split(secret).join("[REDACTED]") : value)
@@ -753,23 +796,9 @@ async function main() {
     for (const name of ["read", "write", "exec"])
       assert.ok(effectiveIds.includes(name), "Required effective tool unavailable: " + name);
     assert.ok(catalogIds.includes("web_search"), "The web search catalog registration is missing.");
-    const invoke = async (label: string, name: string, args: Record<string, unknown>) => {
-      const result = await rpc("tools.invoke", {
-        name,
-        args,
-        agentId: "main",
-        sessionKey,
-        idempotencyKey: randomBytes(12).toString("hex"),
-      });
-      results["tool-" + label] = result;
-      assert.equal(result.toolName, name);
-      return result;
-    };
     const file = "nemoclaw-acceptance-" + nonce + ".txt";
-    const written = await invoke("write", "write", { path: file, content: nonce });
-    assert.equal(written.ok, true);
-    assert.notEqual(written.output?.isError, true);
-    verifyToolOutput(await invoke("read", "read", { path: file }), nonce);
+    // Gateway tools.invoke constructs gateway-visible tools, not the agent's
+    // base coding tools. Exercise write/read through the same real model turn.
     // Local code uses the packaged Node executable through the actual shell tool.
     // OpenClaw's unrelated code_execution tool needs xAI; no extra provider is invented.
     const nodeCommand =
@@ -781,16 +810,22 @@ async function main() {
     const shellCommand = "Write-Output 'NEMOCLAW_SHELL_" + nonce + "'";
     const completed = "NEMOCLAW_TOOLS_" + nonce;
     const toolPrompt =
-      "Use the exec tool to run each of these exact PowerShell commands separately. Do not change the commands or simulate their output. First: " +
+      "Use the write tool with these exact arguments: " +
+      JSON.stringify({ path: file, content: nonce }) +
+      ". Then use the read tool with these exact arguments and verify the file content: " +
+      JSON.stringify({ path: file }) +
+      ". Then use the exec tool to run each of these exact PowerShell commands separately. Do not change the arguments or commands, or simulate tool output. First command: " +
       JSON.stringify(shellCommand) +
       ". Second: " +
       JSON.stringify(nodeCommand) +
-      ". After both succeed, reply with exactly " +
+      ". After all four tool calls succeed, reply with exactly " +
       completed;
     await composer.fill(toolPrompt);
     await composer.press("Enter");
     await waitForReply(toolPrompt, completed);
     const history = await rpc("chat.history", { sessionKey, limit: 100, maxChars: 20000 });
+    results["tool-write"] = recordedFileTool(history, "write", file, nonce);
+    results["tool-read"] = recordedFileTool(history, "read", file, nonce);
     results["tool-shell"] = recordedExec(history, shellCommand, "NEMOCLAW_SHELL_" + nonce);
     results["tool-local-code"] = recordedExec(
       history,

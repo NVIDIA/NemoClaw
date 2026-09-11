@@ -14,6 +14,7 @@ import {
   childEnvironment,
   exactChatAddress,
   recordedExec,
+  recordedFileTool,
   sanitizedFailure,
   toolIds,
   verifyToolOutput,
@@ -104,6 +105,81 @@ const call = {
     { type: "toolCall", id: "call-owned", name: "exec", arguments: { command: "exact command" } },
   ],
 };
+for (const name of ["write", "read"] as const) {
+  const file = "owned-nonce.txt",
+    content = "owned-content";
+  const fileCall = {
+    role: "assistant",
+    content: [
+      {
+        type: "toolCall",
+        name,
+        id: "file-owned",
+        arguments: { path: file, ...(name === "write" ? { content } : {}) },
+      },
+    ],
+  };
+  const fileResult = {
+    role: "toolResult",
+    toolName: name,
+    toolCallId: "file-owned",
+    isError: false,
+    content: [
+      { type: "text", text: name === "write" ? "Successfully wrote 13 bytes to " + file : content },
+    ],
+  };
+  test(
+    name + " proof requires exact agent arguments followed by its successful tool result",
+    () => {
+      assert.deepEqual(
+        recordedFileTool({ messages: [fileCall, fileResult] }, name, file, content),
+        fileResult,
+      );
+    },
+  );
+  for (const [label, messages] of [
+    ["assistant claim", [fileCall, { ...fileResult, role: "assistant" }]],
+    ["foreign call", [fileCall, { ...fileResult, toolCallId: "foreign" }]],
+    [
+      "foreign file",
+      [
+        {
+          ...fileCall,
+          content: [{ ...fileCall.content[0], arguments: { path: "foreign.txt", content } }],
+        },
+        fileResult,
+      ],
+    ],
+    ["missing call", [fileResult]],
+    ["result before call", [fileResult, fileCall]],
+    ["failed tool", [fileCall, { ...fileResult, isError: true }]],
+    ["wrong output", [fileCall, { ...fileResult, content: [{ type: "text", text: "different" }] }]],
+  ] as const)
+    test(name + " proof rejects " + label, () => {
+      assert.throws(() => recordedFileTool({ messages: [...messages] }, name, file, content));
+    });
+  if (name === "write")
+    test("a write of different content cannot qualify", () => {
+      assert.throws(() =>
+        recordedFileTool(
+          {
+            messages: [
+              {
+                ...fileCall,
+                content: [
+                  { ...fileCall.content[0], arguments: { path: file, content: "foreign" } },
+                ],
+              },
+              fileResult,
+            ],
+          },
+          name,
+          file,
+          content,
+        ),
+      );
+    });
+}
 const result = {
   role: "toolResult",
   toolCallId: "call-owned",
