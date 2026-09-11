@@ -77,10 +77,16 @@ describe("full E2E gateway ownership", () => {
       vi.stubEnv("NEMOCLAW_GATEWAY_MANAGEMENT", declaration().NEMOCLAW_GATEWAY_MANAGEMENT);
       const result = { exitCode: 0, stdout: "", stderr: "", timedOut: false, signal: null };
       const host = {
-        command: vi.fn(async (command: string) => ({
-          ...result,
-          exitCode: command === "brev-quickstart" || command === "bash" ? 42 : 0,
-        })),
+        command: vi.fn(
+          async (
+            command: string,
+            _args?: readonly string[],
+            _options?: { env?: NodeJS.ProcessEnv },
+          ) => ({
+            ...result,
+            exitCode: command === "brev-quickstart" || command === "bash" ? 42 : 0,
+          }),
+        ),
       };
       const sandbox = { openshell: vi.fn(async () => result), cleanupSandbox: vi.fn() };
       const cleanup = {
@@ -107,6 +113,18 @@ describe("full E2E gateway ownership", () => {
       expect(host.command.mock.calls.map((call) => call[0])).toContain(
         preinstalled ? "brev-quickstart" : "bash",
       );
+      const install = host.command.mock.calls.find(
+        ([command]) => command === (preinstalled ? "brev-quickstart" : "bash"),
+      );
+      expect(install?.[2]?.env).toMatchObject({
+        OPENSHELL_GATEWAY: preinstalled ? "nemoclaw-18080" : "nemoclaw",
+        ...(preinstalled
+          ? {
+              NEMOCLAW_GATEWAY_PORT: "18080",
+              NEMOCLAW_GATEWAY_MANAGEMENT: process.env.NEMOCLAW_GATEWAY_MANAGEMENT,
+            }
+          : {}),
+      });
       expect(cleanup.trackGateway).toHaveBeenCalledTimes(preinstalled ? 0 : 1);
       expect(lifecycle.trackInstallerGatewayUserService).toHaveBeenCalledTimes(
         preinstalled ? 0 : 1,
