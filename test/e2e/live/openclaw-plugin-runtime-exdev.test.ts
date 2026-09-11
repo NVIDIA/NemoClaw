@@ -8,12 +8,15 @@ import os from "node:os";
 import path from "node:path";
 
 import { resolveOpenshell } from "../../../src/lib/adapters/openshell/resolve.ts";
+import { isLocalForwardReachable } from "../../../src/lib/actions/sandbox/forward-health.ts";
 import { DASHBOARD_PORT } from "../../../src/lib/core/ports.ts";
+import { waitUntil } from "../../../src/lib/core/wait.ts";
 import { pullAndResolveBaseImageDigest } from "../../../src/lib/onboard/base-image.ts";
 import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { CleanupRegistry } from "../fixtures/cleanup.ts";
+import { terminateProcessIfRunning } from "../fixtures/cleanup-resources.ts";
 import { resultText } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import {
@@ -401,6 +404,11 @@ test(
       host,
       path.join(REPO_ROOT, "scripts", "install-openshell.sh"),
     );
+    await host.resolveOpenShellCommandPath({
+      artifactName: "resolve-canonical-openshell-for-exdev-listener",
+      env: liveEnv(),
+      timeoutMs: PROBE_TIMEOUT_MS,
+    });
     const sandboxEnv = withCanonicalOpenShellEnv(deploymentEnv, openshell);
     const capturePairingDiagnostics = () =>
       captureIssue4462FailureDiagnostics(sandbox, {
@@ -507,7 +515,18 @@ test(
         timeoutMs: 180_000,
       },
     );
-    expect(restart.exitCode, resultText(restart)).toBe(0);
+    const listenerAfterRestart = await host.inspectOpenShellForwardListener(
+      String(DASHBOARD_PORT),
+      SANDBOX_NAME,
+      {
+        artifactName: "openclaw-weather-plugin-listener-after-restart",
+        env: liveEnv(),
+      },
+    );
+    expect(
+      restart.exitCode === 0 && listenerAfterRestart.valid,
+      `${resultText(restart)}\n${listenerAfterRestart.output}`,
+    ).toBe(true);
     const weatherAfterRestart = await assertWeatherPluginRuntime(
       sandbox,
       "after-restart",
@@ -530,6 +549,11 @@ test(
       version: "v2",
     });
     writeTrustedPluginFixtureHandoff(imageHandoff, pluginImageV2);
+    terminateProcessIfRunning(listenerAfterRestart.pid!, "SIGKILL");
+    expect(
+      waitUntil(() => !isLocalForwardReachable(DASHBOARD_PORT, 100), 5, 50),
+      `verified dashboard listener still owns port ${DASHBOARD_PORT} after termination`,
+    ).toBe(true);
     const recreate = await runOpenClawPluginWithFailureEvidence({
       operation: "openclaw-plugin-runtime-exdev.recreate-pairing",
       captureDiagnostics: capturePairingDiagnostics,

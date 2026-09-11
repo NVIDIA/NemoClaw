@@ -804,16 +804,17 @@ filesystem boundary, not a particular internal `EXDEV` system call or fallback.
 The live assertions stop at the boundary outcomes: v1 after onboarding,
 distinct source and target devices, a successful real install, v1-exdev after a
 real gateway restart, v2 after recreation, and registered cleanup. The target
-does not inspect listener process IDs, kill a gateway listener, rewrite
-OpenShell commands, or assert terminal wording. Production forward-service
-unit and integration tests own listener authority and wrapper mismatch
-rejection. `e2e-support` owns canonical component composition, immutable image
-handoff, recreation command shape, fixture extraction safety, output parsing,
-and cleanup ordering. Deterministic tests also own exact package versions and
-third-party replacement internals. Runtime inspection and catalog permutations
-remain outside this live contract. Workspace preservation and policy selection
-retain their focused coverage. The `rebuild-openclaw` job remains the canonical
-live rebuild coverage.
+does not rewrite OpenShell commands or assert terminal wording. Its one
+forward-specific setup check proves the restarted listener belongs to the exact
+canonical OpenShell command before targeted termination, then bounds port
+release before recreation. Fast tests own the listener matching and
+termination behavior. `e2e-support` also owns canonical component composition,
+immutable image handoff, recreation command shape, fixture extraction safety,
+output parsing, and cleanup ordering. Deterministic tests own exact package
+versions and third-party replacement internals. Runtime inspection and catalog
+permutations remain outside this live contract. Workspace preservation and
+policy selection retain their focused coverage. The `rebuild-openclaw` job
+remains the canonical live rebuild coverage.
 
 The current-checkout fixture locally prebuilds repository-controlled images
 with BuildKit. It verifies each local tag, extracts the cross-device payload
@@ -838,12 +839,12 @@ fixed canonical forward ownership, the current base kept those assertion totals
 while growing to 658 target lines and 1,202 transitive live lines. Its first
 automatic main run completed the live step in 7 minutes 26 seconds.
 
-The #11547 reduction keeps all seven phases while lowering the target to 8
-direct `expect` calls and 16 direct assertion points. Its two companions bring
-the transitive totals to 8 `expect` calls, 25 assertion points, and no generated
-probe blocks across 1,094 lines. Against the current base, the live target falls
-from 658 to 580 lines and the transitive live surface falls from 1,202 to 1,094
-lines. Push-run timing for this revision is recorded by the focused PR E2E run.
+The #11547 reduction keeps all seven phases and the target's 9 direct `expect`
+calls and 17 direct assertion points. Its three companions bring the transitive
+totals to 9 `expect` calls, 26 assertion points, and no generated probe blocks
+across 1,159 lines. Against the current base, the live target falls from 658 to
+604 lines and the transitive live surface falls from 1,202 to 1,159 lines.
+Push-run timing for this revision is recorded by the focused PR E2E run.
 
 ## OpenShell development artifact retention
 
