@@ -54,7 +54,7 @@ export type SpecialistE2eReceipt = {
 
 const provenanceSchema = Type.Object(
   {
-    repository: Type.String({ pattern: "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$" }),
+    repository: Type.String({ pattern: "^[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9][A-Za-z0-9_.-]*$" }),
     prNumber: Type.Union([
       Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }),
       Type.Null(),
