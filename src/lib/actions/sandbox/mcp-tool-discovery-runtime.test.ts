@@ -63,6 +63,10 @@ describe("shared MCP tool discovery runtime", () => {
           "openshell:resolve:env:v14429878272859325890_EXAMPLE_MCP_TOKEN",
         ),
       ).toBe("Bearer openshell:resolve:env:v14429878272859325890_EXAMPLE_MCP_TOKEN");
+      const stableReference = `openshell:resolve:env:s${"a".repeat(64)}_EXAMPLE_MCP_TOKEN`;
+      expect(
+        buildMcpToolDiscoveryAuthorizationPlaceholder("EXAMPLE_MCP_TOKEN", stableReference),
+      ).toBe(`Bearer ${stableReference}`);
       expect(() => validateMcpCredentialEnvName(credentialEnv)).toThrow();
       expect(
         buildMcpToolDiscoveryAuthorizationPlaceholder(
@@ -87,6 +91,10 @@ describe("shared MCP tool discovery runtime", () => {
     "openshell:resolve:env:v42_OTHER_MCP_TOKEN",
     "openshell:resolve:env:vbad_EXAMPLE_MCP_TOKEN",
     "openshell:resolve:env:v144298782728593258901_EXAMPLE_MCP_TOKEN",
+    `openshell:resolve:env:s${"a".repeat(63)}_EXAMPLE_MCP_TOKEN`,
+    `openshell:resolve:env:s${"a".repeat(65)}_EXAMPLE_MCP_TOKEN`,
+    `openshell:resolve:env:s${"A".repeat(64)}_EXAMPLE_MCP_TOKEN`,
+    `openshell:resolve:env:s${"a".repeat(64)}_OTHER_MCP_TOKEN`,
     "openshell:resolve:env:v42_EXAMPLE_MCP_TOKEN\nAuthorization: Bearer raw-secret",
   ])("rejects unsafe live credential values [case %#]", (runtimeValue) => {
     expect(
@@ -282,7 +290,11 @@ describe("shared MCP tool discovery runtime", () => {
   it("rejects redirects, HTTP failures, and declared oversized responses before reading bodies", async () => {
     const deadline = AbortSignal.timeout(1_000);
     const redirectFetch = createBoundedMcpFetch(
-      async () => new Response(null, { status: 307, headers: { location: "https://other/" } }),
+      async () =>
+        new Response(null, {
+          status: 307,
+          headers: { location: "https://other/" },
+        }),
       deadline,
     );
     await expect(redirectFetch("https://example.test/mcp")).rejects.toMatchObject({
@@ -378,7 +390,9 @@ describe("shared MCP tool discovery runtime", () => {
           }),
       );
       const boundedFetch = createBoundedMcpFetch(blockingFetch, deadline.signal);
-      const pending = boundedFetch("https://example.test/mcp", { signal: request.signal });
+      const pending = boundedFetch("https://example.test/mcp", {
+        signal: request.signal,
+      });
       (abortSource === "deadline" ? deadline : request).abort();
       const error = await pending.catch((caught: unknown) => caught);
       expect(error).toMatchObject({ code: "timeout" });
@@ -399,7 +413,9 @@ describe("shared MCP tool discovery runtime", () => {
     );
     expect(
       safeToolDiscoveryErrorDetail(
-        Object.assign(new Error("remote body contains Bearer secret-value"), { code: 401 }),
+        Object.assign(new Error("remote body contains Bearer secret-value"), {
+          code: 401,
+        }),
       ),
     ).toBe("MCP request failed");
     expect(safeToolDiscoveryErrorDetail(new Error("Bearer secret-value"))).toBe(

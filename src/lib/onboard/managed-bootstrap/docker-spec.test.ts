@@ -16,7 +16,7 @@ describe("managed bootstrap Docker launch spec", () => {
     first.Mounts = [
       {
         Type: "image",
-        Source: "ghcr.io/nvidia/openshell/sandbox:v0.0.106",
+        Source: "ghcr.io/nvidia/openshell/sandbox:v0.0.116",
         Destination: "/opt/openshell/bin",
         RW: false,
       },
@@ -71,7 +71,7 @@ describe("managed bootstrap Docker launch spec", () => {
     );
     expect(expected.spec.inspect.HostConfig?.Mounts).toContainEqual({
       Type: "image",
-      Source: "ghcr.io/nvidia/openshell/sandbox:v0.0.106",
+      Source: "ghcr.io/nvidia/openshell/sandbox:v0.0.116",
       Target: "/opt/openshell/bin",
       ReadOnly: true,
     });

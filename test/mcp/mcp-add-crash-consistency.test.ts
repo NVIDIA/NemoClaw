@@ -8,7 +8,7 @@ import path from "node:path";
 
 import { describe, it, vi, type ExpectStatic } from "vitest";
 
-const MATCHING_OPENSHELL = path.resolve("test/fixtures/openshell-v0.0.106");
+const MATCHING_OPENSHELL = path.resolve("test/fixtures/openshell-v0.0.116");
 
 // Each case owns a separate temporary HOME; keep child-process overlap bounded.
 vi.setConfig({ maxConcurrency: 3 });
@@ -29,6 +29,7 @@ type CrashBoundary =
   | "credential-projection-coalesced"
   | "credential-projection-unstable"
   | "credential-projection-delayed-hostless"
+  | "credential-wire-unauthorized"
   | "registered-credential-collision"
   | "registered-late-collision"
   | "adapter"
@@ -72,13 +73,13 @@ const providerVersion = () => Number.parseInt(marked("provider-version") ? fs.re
 // OpenShell provider resource versions and child credential revisions are
 // separate identities. Keep the fixture values unrelated so readiness cannot
 // derive one from the other.
-const initialChildCredentialRevision = "v4067750153477477214";
+const initialChildCredentialRevision = "s" + "a".repeat(64);
 const childCredentialRevision = () => marked("child-credential-revision")
   ? fs.readFileSync(marker("child-credential-revision"), "utf8").trim()
   : initialChildCredentialRevision;
 const setChildCredentialRevision = (revision) => fs.writeFileSync(marker("child-credential-revision"), revision, { mode: 0o600 });
 const advanceChildCredentialRevision = () => setChildCredentialRevision(
-  "v" + (BigInt(childCredentialRevision().slice(1)) + 1n).toString(),
+  "s" + (BigInt("0x" + childCredentialRevision().slice(1)) + 1n).toString(16).padStart(64, "0"),
 );
 const setProviderVersion = (version) => fs.writeFileSync(marker("provider-version"), String(version), { mode: 0o600 });
 const providerPresentAtStart = marked("provider");
@@ -113,6 +114,7 @@ runner.run = (args) => {
 };
 const policies = require("./src/lib/policy/index.js");
 const processRecovery = require("./src/lib/actions/sandbox/process-recovery.js");
+const bridgeStatus = require("./src/lib/actions/sandbox/mcp-bridge-status.js");
 const ownershipLocks = require("./src/lib/state/mcp-lifecycle-lock/credential-ownership.js");
 
 providerInspection.getMcpProviderInspectionRuntimeSelection = () => {
@@ -180,7 +182,7 @@ providerCommands.runOpenshellProviderCommand = (args) => {
       setProviderVersion(providerVersion() + 1);
       if (isCredentialUpdate) {
         credentialUpdatedThisProcess = true;
-        advanceChildCredentialRevision();
+        if (crashAfter !== "credential-wire-unauthorized") advanceChildCredentialRevision();
         mark("updated");
       }
       if (
@@ -342,7 +344,7 @@ processRecovery.executeSandboxCommand = (_sandbox, command) => {
     return { status: 0, stdout: "/usr/local/bin/mcporter\n", stderr: "" };
   }
   if (command.includes("config' 'add") || command.includes('"config", "add"')) {
-    const adapterRevision = command.match(/openshell:resolve:env:(v[0-9]+)_FAKE_MCP_SECRET/)?.[1];
+    const adapterRevision = command.match(/openshell:resolve:env:((?:v[0-9]+|s[a-f0-9]{64}))_FAKE_MCP_SECRET/)?.[1];
     if (adapterRevision) {
       fs.writeFileSync(marker("adapter-revision"), adapterRevision, { mode: 0o600 });
     }
@@ -369,7 +371,7 @@ processRecovery.executeSandboxCommand = (_sandbox, command) => {
     marked("adapter") &&
     (command.includes('["config", "get"') || command.includes('"get", expected.server'))
   ) {
-    const expectedRevision = command.match(/openshell:resolve:env:(v[0-9]+)_FAKE_MCP_SECRET/)?.[1];
+    const expectedRevision = command.match(/openshell:resolve:env:((?:v[0-9]+|s[a-f0-9]{64}))_FAKE_MCP_SECRET/)?.[1];
     const adapterRevision = fs.readFileSync(marker("adapter-revision"), "utf8");
     return {
       status: 0,
@@ -383,6 +385,22 @@ processRecovery.executeSandboxCommand = (_sandbox, command) => {
     stderr: "",
   };
 };
+
+if (crashAfter === "credential-wire-unauthorized") {
+  bridgeStatus.statusMcpBridge = async (_sandbox, _server, options) => {
+    fs.writeFileSync(marker("credential-wire-probe"), JSON.stringify(options), { mode: 0o600 });
+    return [{
+      provider: {
+        credentialResolution: {
+          ok: null,
+          httpStatus: 401,
+          controlHttpStatus: 401,
+          detail: "updated credential remained unauthorized",
+        },
+      },
+    }];
+  };
+}
 
 if (initializeSandbox && !registry.getSandbox("crash-test")) {
   registry.registerSandbox({
@@ -797,10 +815,10 @@ describe.concurrent("MCP add crash consistency", () => {
           .split("\n")
           .filter(Boolean),
       ).toEqual([
-        "v4067750153477477214",
-        "v4067750153477477215",
-        "v4067750153477477215",
-        "v4067750153477477215",
+        `s${"a".repeat(64)}`,
+        `s${"a".repeat(63)}b`,
+        `s${"a".repeat(63)}b`,
+        `s${"a".repeat(63)}b`,
       ]);
       expect(fs.readFileSync(path.join(home, "adapter-revision.marker"), "utf8")).toBe(
         fs.readFileSync(path.join(home, "child-credential-revision.marker"), "utf8"),
@@ -932,6 +950,35 @@ describe.concurrent("MCP add crash consistency", () => {
       expect(resumed.status, `${resumed.stdout}\n${resumed.stderr}`).toBe(0);
       expect(fs.existsSync(path.join(home, "observation.marker"))).toBe(false);
       expect(readBridge(home).addState).toBeUndefined();
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("unregisters a resumed adapter when an unchanged stable credential fails wire authorization", async ({
+    expect,
+  }) => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-add-wire-proof-"));
+    try {
+      const interrupted = await runAddProcess(home, "adapter");
+      expect(interrupted.status, `${interrupted.stdout}\n${interrupted.stderr}`).toBe(86);
+      expect(fs.existsSync(path.join(home, "adapter.marker"))).toBe(true);
+
+      const resumed = await runAddProcess(home, "credential-wire-unauthorized");
+      expect(resumed.status, `${resumed.stdout}\n${resumed.stderr}`).toBe(2);
+      expect(resumed.stderr).toContain(
+        "did not authorize its unchanged stable credential handle after provider update",
+      );
+      expect(`${resumed.stdout}\n${resumed.stderr}`).not.toContain("host-only-secret");
+      expect(fs.existsSync(path.join(home, "credential-wire-probe.marker"))).toBe(true);
+      expect(
+        JSON.parse(fs.readFileSync(path.join(home, "credential-wire-probe.marker"), "utf8")),
+      ).toMatchObject({
+        allowCredentialProbeWithAdapterMismatch: true,
+        allowIncompleteAddCredentialProbe: true,
+        probeCredentialResolution: true,
+      });
+      expect(fs.existsSync(path.join(home, "adapter.marker"))).toBe(false);
     } finally {
       fs.rmSync(home, { recursive: true, force: true });
     }

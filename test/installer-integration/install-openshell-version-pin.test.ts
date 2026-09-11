@@ -26,8 +26,8 @@ test(
       `#!/bin/sh
 printf '%s\\n' '${JSON.stringify([
         { tagName: "v0.0.99" },
-        { tagName: "v0.0.107" },
-        { tagName: "v0.0.106" },
+        { tagName: "v0.0.117" },
+        { tagName: "v0.0.116" },
       ])}'`,
     );
 
@@ -42,8 +42,8 @@ printf '%s\\n' '${JSON.stringify([
 const pin = require(${JSON.stringify(path.join(REPO_ROOT, "src/lib/onboard/openshell-pin.ts"))});
 const version = require(${JSON.stringify(path.join(REPO_ROOT, "src/lib/onboard/openshell-version.ts"))});
 const deps = {
-  getBlueprintMinOpenshellVersion: () => "0.0.106",
-  getBlueprintMaxOpenshellVersion: () => "0.0.106",
+  getBlueprintMinOpenshellVersion: () => "0.0.116",
+  getBlueprintMaxOpenshellVersion: () => "0.0.116",
   versionGte: version.versionGte,
 };
 const resolution = pin.resolveOpenshellInstallPin(deps);
@@ -68,12 +68,12 @@ process.stdout.write(JSON.stringify({
       expect(result.status, result.stderr).toBe(0);
       expect(JSON.parse(result.stdout)).toEqual({
         installed: "0.0.99",
-        resolution: { kind: "pin", version: "0.0.106", latest: "0.0.107", reason: "max-cap" },
+        resolution: { kind: "pin", version: "0.0.116", latest: "0.0.117", reason: "max-cap" },
         replacement: {
           INSTALLED_OPENSHELL_VERSION: "0.0.99",
-          NEMOCLAW_OPENSHELL_MIN_VERSION: "0.0.106",
-          NEMOCLAW_OPENSHELL_MAX_VERSION: "0.0.106",
-          NEMOCLAW_OPENSHELL_PIN_VERSION: "0.0.106",
+          NEMOCLAW_OPENSHELL_MIN_VERSION: "0.0.116",
+          NEMOCLAW_OPENSHELL_MAX_VERSION: "0.0.116",
+          NEMOCLAW_OPENSHELL_PIN_VERSION: "0.0.116",
         },
       });
     } finally {
@@ -83,9 +83,9 @@ process.stdout.write(JSON.stringify({
 );
 
 const PINNED_OPEN_SHELL_SHA256 = {
-  cliLinuxX64: "d1a885a91b3e5aaa006c36aca95dc78bed0638c1ba1a79b55f1da93211b8a0a0",
-  gatewayLinuxX64: "b7760cb752a4363c2f21d32298dd0c683dc438f6edfd16c2e4242bc0baefbb7c",
-  sandboxLinuxX64: "559b8aaad3a8eeab45c511e7de531d9baa98a311282dcb0c2c5f38cc2d4ca355",
+  cliLinuxX64: "4fb4476d80a1875a0b83547ec3aba999cf0a2e2d75f95f2f709b622e2103520e",
+  gatewayLinuxX64: "59c6da724eae7a00c28826f9191efbdf4fbaa5c768afdc8dea6a80a949ebcc89",
+  sandboxLinuxX64: "0bb160f73e5007338b94e3c868f66f50c71cd65c27c932ed9a4fa67c49e6d423",
 };
 
 type GhDownloadMode = "success" | "fail";
@@ -95,7 +95,7 @@ function writeExecutable(target: string, contents: string): void {
 }
 
 // Bash helpers shared by the gh and curl stubs: write a fake archive and emit
-// the same pinned digest lines the real OpenShell v0.0.106 release uses. A fake
+// the same pinned digest lines the real OpenShell v0.0.116 release uses. A fake
 // sha256sum below keeps this test self-contained even though the tarball bytes are
 // synthetic.
 const SHARED_DOWNLOAD_BASH_HELPERS = `\
@@ -108,7 +108,7 @@ pinned_sha256() {
   case "$1" in
     openshell-x86_64-unknown-linux-musl.tar.gz) printf '%s\\n' ${JSON.stringify(PINNED_OPEN_SHELL_SHA256.cliLinuxX64)} ;;
     openshell-gateway-x86_64-unknown-linux-gnu.tar.gz) printf '%s\\n' ${JSON.stringify(PINNED_OPEN_SHELL_SHA256.gatewayLinuxX64)} ;;
-    openshell-sandbox-x86_64-unknown-linux-gnu.tar.gz) printf '%s\\n' ${JSON.stringify(PINNED_OPEN_SHELL_SHA256.sandboxLinuxX64)} ;;
+    openshell-sandbox-x86_64-unknown-linux-musl.tar.gz) printf '%s\\n' ${JSON.stringify(PINNED_OPEN_SHELL_SHA256.sandboxLinuxX64)} ;;
     *) exit 4 ;;
   esac
 }
@@ -195,7 +195,7 @@ ${failureBranch}
       write_checksum "$dir/$pattern" "$asset_name" "$dir/$asset_name"
       ;;
     openshell-sandbox-checksums-sha256.txt)
-      asset_name="openshell-sandbox-x86_64-unknown-linux-gnu.tar.gz"
+      asset_name="openshell-sandbox-x86_64-unknown-linux-musl.tar.gz"
       write_checksum "$dir/$pattern" "$asset_name" "$dir/$asset_name"
       ;;
     *)
@@ -236,7 +236,7 @@ case "$(basename "$out")" in
     write_checksum "$out" "$asset_name" "$(dirname "$out")/$asset_name"
     ;;
   openshell-sandbox-checksums-sha256.txt)
-    asset_name="openshell-sandbox-x86_64-unknown-linux-gnu.tar.gz"
+    asset_name="openshell-sandbox-x86_64-unknown-linux-musl.tar.gz"
     write_checksum "$out" "$asset_name" "$(dirname "$out")/$asset_name"
     ;;
   *)
@@ -340,7 +340,7 @@ function runVersionPinTarget(options: {
     createFakeHelperBinaries(fakeBin);
     createFakeGh(fakeBin, downloadLog, options.ghDownloadMode);
     createFakeCurl(fakeBin, downloadLog);
-    createFakeTar(fakeBin, "0.0.106");
+    createFakeTar(fakeBin, "0.0.116");
     createFakeStrings(fakeBin);
     createFakeSha256sum(fakeBin);
 
@@ -360,10 +360,10 @@ function runVersionPinTarget(options: {
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
     expect(result.stdout).toMatch(options.expectedDecision);
 
-    // Assertion 2: download-log-contains-v0.0.106 — pinned release tag was
+    // Assertion 2: download-log-contains-v0.0.116 — pinned release tag was
     // requested from the release host.
     const downloads = fs.readFileSync(downloadLog, "utf-8");
-    expect(downloads).toContain("v0.0.106");
+    expect(downloads).toContain("v0.0.116");
 
     // Assertion 3: download-log-excludes-installed-version — the existing
     // release is never re-fetched in place of the pinned replacement.
@@ -372,23 +372,23 @@ function runVersionPinTarget(options: {
     if (options.ghDownloadMode === "fail") {
       // Assertion 3b: curl-fallback-observed — the installer must recover from
       // gh download failure by re-requesting the pinned assets via curl.
-      expect(downloads).toContain("gh download-fail v0.0.106");
+      expect(downloads).toContain("gh download-fail v0.0.116");
       expect(downloads).toContain("curl ");
     } else {
-      expect(downloads).toContain("gh download v0.0.106");
+      expect(downloads).toContain("gh download v0.0.116");
       expect(downloads).not.toContain("curl ");
     }
 
-    // Assertion 4: replaced-openshell-reports-0.0.106 — the binary on disk in
+    // Assertion 4: replaced-openshell-reports-0.0.116 — the binary on disk in
     // the active install dir (== fakeBin, since ACTIVE_OPENSHELL_BIN resolved
-    // there and it is writable) was overwritten with the pinned 0.0.106 build.
+    // there and it is writable) was overwritten with the pinned 0.0.116 build.
     const replacedVersion = spawnSync(path.join(fakeBin, "openshell"), ["--version"], {
       encoding: "utf8",
       killSignal: "SIGKILL",
       timeout: 30_000,
     });
     expect(replacedVersion.status).toBe(0);
-    expect(replacedVersion.stdout).toContain("0.0.106");
+    expect(replacedVersion.stdout).toContain("0.0.116");
     expect(replacedVersion.stdout).not.toContain(options.installedVersion);
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
@@ -402,9 +402,9 @@ test(
   },
   () => {
     runVersionPinTarget({
-      expectedDecision: /above the maximum.*reinstalling pinned OpenShell 0\.0\.106/u,
+      expectedDecision: /above the maximum.*reinstalling pinned OpenShell 0\.0\.116/u,
       ghDownloadMode: "success",
-      installedVersion: "0.0.107",
+      installedVersion: "0.0.117",
     });
   },
 );
@@ -416,23 +416,23 @@ test(
   },
   () => {
     runVersionPinTarget({
-      expectedDecision: /above the maximum.*reinstalling pinned OpenShell 0\.0\.106/u,
+      expectedDecision: /above the maximum.*reinstalling pinned OpenShell 0\.0\.116/u,
       ghDownloadMode: "fail",
-      installedVersion: "0.0.107",
+      installedVersion: "0.0.117",
     });
   },
 );
 
 test(
-  "replaces an installed OpenShell 0.0.99 with the pinned 0.0.106 release (#8606)",
+  "replaces an installed OpenShell 0.0.106 with the pinned 0.0.116 release (#11229)",
   {
     timeout: TEST_TIMEOUT_MS,
   },
   () => {
     runVersionPinTarget({
-      expectedDecision: /below minimum 0\.0\.106.*upgrading/u,
+      expectedDecision: /below minimum 0\.0\.116.*upgrading/u,
       ghDownloadMode: "success",
-      installedVersion: "0.0.99",
+      installedVersion: "0.0.106",
     });
   },
 );
