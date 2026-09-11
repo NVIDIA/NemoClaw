@@ -25,10 +25,39 @@ $last = ''
 $stopped = $false
 $session = $null
 $sessionStarted = $null
+$heldHost = $null
+$heldHostPath = $null
+$heldHostStarted = $null
+$stopSnapshot = $null
+$nextSnapshot = 0
+$stopSnapshotTimes = @(0, 2000, 8000)
+function Write-StopSnapshot([string]$Label) {
+    $captureWatch = [Diagnostics.Stopwatch]::StartNew()
+    $record = [ordered]@{ kind='stop-snapshot'; label=$Label; rootPid=$RootProcessId; stopElapsedMs=$stopWatch.ElapsedMilliseconds; captureElapsedMs=0; snapshot=$null; error=$null }
+    try {
+        if ($null -eq $stopSnapshot) { throw 'The owned Stop snapshot was not initialized.' }
+        $record.snapshot = $stopSnapshot.Capture()
+    } catch { $record.error = $_.Exception.GetType().FullName }
+    $record.captureElapsedMs = $captureWatch.ElapsedMilliseconds
+    $encoded = $record | ConvertTo-Json -Depth 8 -Compress
+    if ([Text.Encoding]::UTF8.GetByteCount($encoded) -gt 32768) { $record.snapshot=$null; $record.error='Snapshot exceeds its output bound.'; $encoded=$record | ConvertTo-Json -Depth 3 -Compress }
+    [Console]::Out.WriteLine($encoded); [Console]::Out.Flush()
+}
 try {
     while (-not $root.HasExited) {
         if ($watch.ElapsedMilliseconds -gt 600000) { throw 'The installed session observer exceeded its bound.' }
-        if ($null -ne $stopWatch -and $stopWatch.ElapsedMilliseconds -gt 120000) { throw 'The actual session did not finish its Stop cleanup.' }
+        if ($null -ne $stopWatch -and $stopWatch.ElapsedMilliseconds -gt 120000) {
+            Write-StopSnapshot 'stop-deadline'
+            throw 'The actual session did not finish its Stop cleanup.'
+        }
+        if ($stopped) {
+            if ($nextSnapshot -lt $stopSnapshotTimes.Count -and $stopWatch.ElapsedMilliseconds -ge $stopSnapshotTimes[$nextSnapshot]) {
+                Write-StopSnapshot ('after-' + $stopSnapshotTimes[$nextSnapshot] + 'ms')
+                $nextSnapshot++
+            }
+            Start-Sleep -Milliseconds 100
+            continue
+        }
         # Only the native launcher's direct SEA child may own this gateway.
         $children = @(Get-CimInstance Win32_Process -Filter "ParentProcessId=$RootProcessId" -ErrorAction Stop)
         $hosts = @($children | Where-Object {
@@ -44,6 +73,8 @@ try {
             try {
                 $hostHandle = $hostProcess.Handle
                 if ([Math]::Abs(($hostProcess.StartTime.ToUniversalTime() - $hostRow.CreationDate.ToUniversalTime()).Ticks) -gt 10) { throw 'The runtime host process identity changed.' }
+                if ($null -eq $heldHost) { $heldHost=$hostProcess; $heldHostPath=$hostPath; $heldHostStarted=$hostProcess.StartTime.ToUniversalTime() }
+                elseif ($heldHost.Id -ne $hostProcess.Id -or $heldHostStarted -ne $hostProcess.StartTime.ToUniversalTime()) { throw 'The held runtime host identity changed.' }
                 $ports = @(Get-NetTCPConnection -State Listen -OwningProcess $hostProcess.Id -ErrorAction SilentlyContinue |
                     Where-Object { $_.LocalAddress -ceq '127.0.0.1' } | Select-Object -ExpandProperty LocalPort -Unique | Sort-Object)
                 if ($ports.Count -gt 16) { throw 'The installed runtime has an unexpected listener inventory.' }
@@ -89,24 +120,35 @@ try {
                             $stopCondition = [Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::AutomationIdProperty, 'NativeWebSessionStop')
                             $button = $window.FindFirst([Windows.Automation.TreeScope]::Descendants, $stopCondition)
                             if ($null -eq $button -or -not $button.Current.IsEnabled -or $button.Current.Name -cne 'Stop session') { throw 'The actual session Stop control is unavailable.' }
+                            # Compile/hold only after the command arrives, before Stop. No startup or idle sampling work.
+                            try {
+                                Add-Type -Path (Join-Path $PSScriptRoot 'InstalledStopSnapshot.cs')
+                                $stopSnapshot = [NemoClaw.InstalledStop.Snapshot]::new($RootProcessId, $handle, (Join-Path $rootPath 'bin\NemoClaw.exe'), $started.ToFileTimeUtc(), $heldHost.Id, $heldHost.Handle, $heldHostPath, $heldHostStarted.ToFileTimeUtc())
+                                $null = $stopSnapshot.Capture() # retain descendants before they can exit
+                            } catch { [Console]::Error.WriteLine('Owned Stop snapshot preparation failed: ' + $_.Exception.GetType().FullName) }
                             ([Windows.Automation.InvokePattern]$button.GetCurrentPattern([Windows.Automation.InvokePattern]::Pattern)).Invoke()
                             $stopped = $true; $stopWatch = [Diagnostics.Stopwatch]::StartNew()
                             [Console]::Out.WriteLine('{"kind":"stop-invoked"}')
                             [Console]::Out.Flush()
+                            Write-StopSnapshot 'after-0ms'
+                            $nextSnapshot = 1
                         }
                     }
                 }
                 $encoded = $record | ConvertTo-Json -Depth 3 -Compress
                 if ($encoded -cne $last) { [Console]::Out.WriteLine($encoded); [Console]::Out.Flush(); $last=$encoded }
-            } finally { $hostProcess.Dispose() }
+            } finally { if (-not [object]::ReferenceEquals($hostProcess, $heldHost)) { $hostProcess.Dispose() } }
         }
         Start-Sleep -Milliseconds 500
     }
     if (-not $stopped) { throw 'The installed launcher exited before the actual Stop action.' }
+    Write-StopSnapshot 'guardian-exited'
     $root.WaitForExit()
     [Console]::Out.WriteLine(([ordered]@{ kind='closed'; exitCode=$root.ExitCode; stopElapsedMs=$stopWatch.ElapsedMilliseconds } | ConvertTo-Json -Compress))
     [Console]::Out.Flush()
 } finally {
+    if ($null -ne $stopSnapshot) { $stopSnapshot.Dispose() }
+    if ($null -ne $heldHost) { $heldHost.Dispose() }
     $inputReader.Dispose()
     if ($null -ne $session) { $session.Dispose() }
     $root.Dispose()

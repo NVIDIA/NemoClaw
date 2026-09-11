@@ -8,6 +8,7 @@ import os from "node:os";
 import path from "node:path";
 import {
   captureFailure,
+  terminalAgentError,
   decodeDiagnosticOwnerRead,
   retainNativeSessionDiagnostics,
   childEnvironment,
@@ -284,4 +285,55 @@ test("native diagnostic enumeration refuses linked directories and invalid docum
       "",
     ),
   );
+});
+
+const ownPrompt = "Reply exactly NEMOCLAW_NVIDIA_0123456789abcdef";
+const ownUser = { role: "user", content: [{ type: "text", text: ownPrompt }] };
+const actualMissing = "⚠️ Agent failed before reply: Cannot find module 'undici'";
+test("terminal error keeps the actual cause after this exact fresh prompt", () => {
+  assert.equal(
+    terminalAgentError(
+      {
+        messages: [
+          ownUser,
+          { role: "assistant", stopReason: "error", errorMessage: "Cannot find module 'undici'" },
+        ],
+      },
+      ownPrompt,
+    ),
+    "Cannot find module 'undici'",
+  );
+  assert.equal(
+    terminalAgentError(
+      {
+        messages: [
+          ownUser,
+          { role: "assistant", content: [{ type: "text", text: actualMissing }] },
+        ],
+      },
+      ownPrompt,
+    ),
+    actualMissing,
+  );
+});
+test("earlier, unrelated, user and tool failures cannot end this reply wait", () => {
+  const failure = { role: "assistant", stopReason: "error", errorMessage: "old" };
+  for (const messages of [
+    [failure, ownUser],
+    [{ ...ownUser, content: "foreign" }, failure],
+    [ownUser, { ...failure, role: "user" }],
+    [ownUser, { ...failure, role: "toolResult" }],
+    [ownUser, { role: "user", content: "later" }, failure],
+  ]) {
+    assert.equal(terminalAgentError({ messages }, ownPrompt), null);
+  }
+});
+test("ordinary or incomplete assistant output is never a terminal failure", () => {
+  for (const value of [
+    null,
+    {},
+    { messages: [ownUser, { role: "assistant", content: "working" }] },
+    { messages: [ownUser, { role: "assistant", stopReason: "error" }] },
+  ])
+    assert.equal(terminalAgentError(value, ownPrompt), null);
 });

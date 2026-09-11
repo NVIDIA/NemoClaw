@@ -54,6 +54,52 @@ export function exactChatAddress(value: string, origin: string) {
   );
 }
 
+// Only errors following this exact nonce-bearing user prompt can end the wait.
+export function terminalAgentError(history: unknown, prompt: string): string | null {
+  if (
+    !history ||
+    typeof history !== "object" ||
+    !("messages" in history) ||
+    !Array.isArray(history.messages)
+  )
+    return null;
+  let matched = false;
+  for (const item of history.messages) {
+    if (!item || typeof item !== "object") continue;
+    const message = item as {
+      role?: string;
+      content?: unknown;
+      stopReason?: string;
+      errorMessage?: string;
+    };
+    const text =
+      typeof message.content === "string"
+        ? message.content
+        : Array.isArray(message.content)
+          ? message.content
+              .filter(
+                (part: { type?: string; text?: unknown }) =>
+                  part?.type === "text" && typeof part.text === "string",
+              )
+              .map((part: { text: string }) => part.text)
+              .join("\n")
+          : "";
+    if (message.role === "user") {
+      matched = text === prompt;
+      continue;
+    }
+    if (!matched || message.role !== "assistant") continue;
+    if (
+      message.stopReason === "error" &&
+      typeof message.errorMessage === "string" &&
+      message.errorMessage.trim()
+    )
+      return message.errorMessage.slice(0, 8192);
+    if (/^(?:⚠️?\s*)?Agent failed before reply:/u.test(text)) return text.slice(0, 8192);
+  }
+  return null;
+}
+
 export function toolIds(result: unknown): string[] {
   assert.ok(
     result && typeof result === "object" && "agentId" in result && result.agentId === "main",
@@ -501,7 +547,11 @@ async function main() {
             );
             latest = value;
           } else if (value.kind === "stop-invoked") stopInvoked = true;
-          else if (value.kind === "closed") {
+          else if (value.kind === "stop-snapshot") {
+            assert.equal(value.rootPid, agent!.pid);
+            assert.ok(typeof value.label === "string" && Number.isFinite(value.stopElapsedMs));
+            assert.ok(Buffer.byteLength(line) <= 64 * 1024);
+          } else if (value.kind === "closed") {
             assert.equal(value.exitCode, 0);
             results.nativeStop = value;
             stopped = true;
@@ -629,16 +679,52 @@ async function main() {
         ),
         45_000,
       ) as Promise<any>;
+    const sessionKey = await page.evaluate(
+      () =>
+        (document.querySelector("openclaw-app-shell") as unknown as { activeSessionKey?: string })
+          ?.activeSessionKey,
+    );
+    assert.ok(
+      typeof sessionKey === "string" && /^agent:main:[A-Za-z0-9:._-]+$/u.test(sessionKey),
+      "The visible chat session identity is missing.",
+    );
+    const waitForReply = async (prompt: string, expected: string) => {
+      let complete = false;
+      const terminal = (async () => {
+        while (!complete) {
+          await sleep(1000);
+          if (complete) return;
+          let history: unknown;
+          try {
+            history = await rpc("chat.history", { sessionKey, limit: 100, maxChars: 20000 });
+          } catch {
+            continue;
+          } // A failed diagnostic read cannot replace the ordinary reply deadline.
+          if (complete) return;
+          const error = terminalAgentError(history, prompt);
+          if (error) throw new Error("The installed agent failed: " + error);
+        }
+      })();
+      try {
+        await Promise.race([
+          page
+            .getByText(expected, { exact: true })
+            .last()
+            .waitFor({ state: "visible", timeout: 180_000 }),
+          terminal,
+        ]);
+      } finally {
+        complete = true;
+      }
+    };
     phase = "nvidia-response";
     const responseStarted = performance.now();
     const nonce = randomBytes(12).toString("hex"),
       reply = "NEMOCLAW_NVIDIA_" + nonce;
-    await composer.fill("Reply with exactly this text and no other text: " + reply);
+    const responsePrompt = "Reply with exactly this text and no other text: " + reply;
+    await composer.fill(responsePrompt);
     await composer.press("Enter");
-    await page
-      .getByText(reply, { exact: true })
-      .last()
-      .waitFor({ state: "visible", timeout: 180_000 });
+    await waitForReply(responsePrompt, reply);
     await page.screenshot({ path: path.join(output, "nvidia-response.png") });
     results.response = {
       provider: "nvidia",
@@ -649,15 +735,6 @@ async function main() {
     };
     phase = "tools";
     const toolsStarted = performance.now();
-    const sessionKey = await page.evaluate(
-      () =>
-        (document.querySelector("openclaw-app-shell") as unknown as { activeSessionKey?: string })
-          ?.activeSessionKey,
-    );
-    assert.ok(
-      typeof sessionKey === "string" && /^agent:main:[A-Za-z0-9:._-]+$/u.test(sessionKey),
-      "The visible chat session identity is missing.",
-    );
     const catalog = await rpc("tools.catalog", { agentId: "main", includePlugins: true });
     const effective = await rpc("tools.effective", { agentId: "main", sessionKey });
     const catalogIds = toolIds(catalog),
@@ -703,19 +780,16 @@ async function main() {
       ":'+String(6*7))\"";
     const shellCommand = "Write-Output 'NEMOCLAW_SHELL_" + nonce + "'";
     const completed = "NEMOCLAW_TOOLS_" + nonce;
-    await composer.fill(
+    const toolPrompt =
       "Use the exec tool to run each of these exact PowerShell commands separately. Do not change the commands or simulate their output. First: " +
-        JSON.stringify(shellCommand) +
-        ". Second: " +
-        JSON.stringify(nodeCommand) +
-        ". After both succeed, reply with exactly " +
-        completed,
-    );
+      JSON.stringify(shellCommand) +
+      ". Second: " +
+      JSON.stringify(nodeCommand) +
+      ". After both succeed, reply with exactly " +
+      completed;
+    await composer.fill(toolPrompt);
     await composer.press("Enter");
-    await page
-      .getByText(completed, { exact: true })
-      .last()
-      .waitFor({ state: "visible", timeout: 180_000 });
+    await waitForReply(toolPrompt, completed);
     const history = await rpc("chat.history", { sessionKey, limit: 100, maxChars: 20000 });
     results["tool-shell"] = recordedExec(history, shellCommand, "NEMOCLAW_SHELL_" + nonce);
     results["tool-local-code"] = recordedExec(
