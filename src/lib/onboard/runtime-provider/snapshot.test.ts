@@ -802,6 +802,7 @@ describe("Docker provider snapshot evidence", () => {
   it.each(
     Array.from(
       [
+        dockerGpuSnapshot(["amd.com/gpu=0"]),
         dockerSnapshot({
           deviceRequests: null,
           nativeGpuAttachmentState: "present",

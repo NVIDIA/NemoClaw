@@ -263,7 +263,7 @@ function dockerNvidiaGpuRequestSelectors(
 
 function canonicalNvidiaGpuSelector(device: string): string {
   const identifier = device.trim().replace(/^nvidia[.]com\/gpu=/iu, "");
-  if (!identifier || CONTROL_CHARACTERS.test(identifier)) {
+  if (!identifier || identifier.includes("=") || CONTROL_CHARACTERS.test(identifier)) {
     throw new RuntimeProviderSnapshotError(
       "Docker GPU attachment does not expose exact live device selectors",
     );
