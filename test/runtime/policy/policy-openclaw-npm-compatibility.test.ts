@@ -165,6 +165,7 @@ exit 1
   );
 
   const script = String.raw`
+(async () => {
 const fs = require("node:fs");
 const YAML = require("yaml");
 const registry = require(${REGISTRY_PATH});
@@ -173,6 +174,8 @@ registry.registerSandbox(${JSON.stringify({
     ...managedSandboxEntry(sandboxName),
   })});
 ${childScript}
+
+})().catch((error) => { console.error(error); process.exitCode = 1; });
 `;
 
   try {
@@ -210,7 +213,7 @@ describe("OpenClaw npm compatibility policy lifecycle", () => {
       sandboxName: "personal-owner",
       initialPolicy,
       childScript: `
-const removed = policies.removePreset("personal-owner", "npm");
+const removed = await policies.removePreset("personal-owner", "npm");
 process.stdout.write("\\n__RESULT__" + JSON.stringify({
   removed,
   policy: fs.readFileSync(process.env.CURRENT_POLICY, "utf-8"),
@@ -235,7 +238,7 @@ process.stdout.write("\\n__RESULT__" + JSON.stringify({
       sandboxName: "personal-npm",
       initialPolicy,
       childScript: `
-const removed = policies.removePreset("personal-npm", "npm");
+const removed = await policies.removePreset("personal-npm", "npm");
 process.stdout.write("\\n__RESULT__" + JSON.stringify({
   removed,
   policy: YAML.parse(fs.readFileSync(process.env.CURRENT_POLICY, "utf-8")),
@@ -256,11 +259,11 @@ process.stdout.write("\\n__RESULT__" + JSON.stringify({
       sandboxName: "npm-lifecycle",
       initialPolicy: unoverlaidActivePolicy(),
       childScript: `
-const beforeApplyState = policies.getOpenClawNpmCompatibilityState("npm-lifecycle");
-const applied = policies.applyPresets("npm-lifecycle", ["npm"]);
+const beforeApplyState = await policies.getOpenClawNpmCompatibilityState("npm-lifecycle");
+const applied = await policies.applyPresets("npm-lifecycle", ["npm"]);
 const afterApply = YAML.parse(fs.readFileSync(process.env.CURRENT_POLICY, "utf-8"));
-const afterApplyState = policies.getOpenClawNpmCompatibilityState("npm-lifecycle");
-const removed = policies.removePreset("npm-lifecycle", "npm");
+const afterApplyState = await policies.getOpenClawNpmCompatibilityState("npm-lifecycle");
+const removed = await policies.removePreset("npm-lifecycle", "npm");
 const afterRemove = YAML.parse(fs.readFileSync(process.env.CURRENT_POLICY, "utf-8"));
 process.stdout.write("\\n__RESULT__" + JSON.stringify({
   beforeApplyState,
@@ -296,10 +299,10 @@ process.stdout.write("\\n__RESULT__" + JSON.stringify({
       initialPolicy: YAML.stringify(oldActivePolicy),
       setMode: "fail-once",
       childScript: `
-const failedRemoval = policies.removePreset("npm-old-overlay", "npm", { nonFatal: true });
+const failedRemoval = await policies.removePreset("npm-old-overlay", "npm", { nonFatal: true });
 const afterFailedPolicy = YAML.parse(fs.readFileSync(process.env.CURRENT_POLICY, "utf-8"));
 const afterFailedRegistry = structuredClone(registry.getSandbox("npm-old-overlay"));
-const removed = policies.removePreset("npm-old-overlay", "npm", { nonFatal: true });
+const removed = await policies.removePreset("npm-old-overlay", "npm", { nonFatal: true });
 const afterRemove = YAML.parse(fs.readFileSync(process.env.CURRENT_POLICY, "utf-8"));
 process.stdout.write("\\n__RESULT__" + JSON.stringify({
   failedRemoval,
@@ -328,7 +331,7 @@ process.stdout.write("\\n__RESULT__" + JSON.stringify({
       sandboxName: "npm-drift",
       initialPolicy: YAML.stringify(drifted),
       childScript: `
-const removed = policies.removePreset("npm-drift", "npm", { nonFatal: true });
+const removed = await policies.removePreset("npm-drift", "npm", { nonFatal: true });
 process.stdout.write("\\n__RESULT__" + JSON.stringify({
   removed,
   policy: YAML.parse(fs.readFileSync(process.env.CURRENT_POLICY, "utf-8")),

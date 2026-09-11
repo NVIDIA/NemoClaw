@@ -86,25 +86,25 @@ beforeEach(() => {
   );
 
   vi.spyOn(policies, "listPresets").mockReturnValue(POLICY_PRESETS);
-  vi.spyOn(policies, "listCustomPresets").mockReturnValue([]);
-  vi.spyOn(policies, "getAppliedPresets").mockReturnValue(["pypi"]);
+  vi.spyOn(policies, "listCustomPresets").mockResolvedValue([]);
+  vi.spyOn(policies, "getAppliedPresets").mockResolvedValue(["pypi"]);
   loadPresetForSandboxMock = vi
     .spyOn(policies, "loadPresetForSandbox")
     .mockImplementation(
-      (_sandboxName: unknown, name: unknown) =>
+      async (_sandboxName: unknown, name: unknown) =>
         `network_policies:\n  ${String(name)}:\n    host: ${String(name)}.example.com\n`,
     );
-  applyPresetMock = vi.spyOn(policies, "applyPreset").mockReturnValue(true);
-  gatewayStateMock = vi.spyOn(policies, "getPresetContentGatewayState").mockReturnValue("drift");
+  applyPresetMock = vi.spyOn(policies, "applyPreset").mockResolvedValue(true);
+  gatewayStateMock = vi.spyOn(policies, "getPresetContentGatewayState").mockResolvedValue("drift");
   npmCompatibilityStateMock = vi
     .spyOn(policies, "getOpenClawNpmCompatibilityState")
-    .mockReturnValue("match");
+    .mockResolvedValue("match");
   vi.spyOn(policies, "getPresetEndpoints").mockReturnValue(["pypi.example.com"]);
   vi.spyOn(policies, "getPresetValidationWarning").mockReturnValue(null);
 
   refreshSpy = vi
     .spyOn(policyContextRefresh, "refreshSandboxPolicyContextFile")
-    .mockReturnValue({ outcome: "ok", written: true });
+    .mockResolvedValue({ outcome: "ok", written: true });
 });
 
 afterEach(() => {
@@ -176,7 +176,7 @@ describe("addSandboxPolicy drift-aware named re-add", () => {
     vi.spyOn(policies, "listPresets").mockReturnValue([
       { file: "wechat/policy/openclaw.yaml", name: "wechat", description: "WeChat" },
     ]);
-    vi.spyOn(policies, "getAppliedPresets").mockReturnValue(["wechat"]);
+    vi.spyOn(policies, "getAppliedPresets").mockResolvedValue(["wechat"]);
     loadPresetForSandboxMock.mockRestore();
     let appliedPolicy: string | null = null;
     applyPresetMock.mockImplementation(
@@ -232,8 +232,8 @@ describe("addSandboxPolicy drift-aware named re-add", () => {
     vi.spyOn(policies, "listPresets").mockReturnValue([
       { file: "npm.yaml", name: "npm", description: "npm registry access" },
     ]);
-    vi.spyOn(policies, "getAppliedPresets").mockReturnValue(["npm"]);
-    vi.spyOn(policies, "loadPresetForSandbox").mockReturnValue(
+    vi.spyOn(policies, "getAppliedPresets").mockResolvedValue(["npm"]);
+    vi.spyOn(policies, "loadPresetForSandbox").mockResolvedValue(
       "network_policies:\n  npm_yarn:\n    name: npm_yarn\n",
     );
     const disclosureSpy = vi
@@ -306,7 +306,7 @@ describe("addSandboxPolicy drift-aware named re-add", () => {
   });
 
   it("fails without an already-applied claim when the preset content cannot be read", async () => {
-    vi.spyOn(policies, "loadPresetForSandbox").mockReturnValue(null);
+    vi.spyOn(policies, "loadPresetForSandbox").mockResolvedValue(null);
 
     await expect(
       captureExit(() => addSandboxPolicy("alpha", { preset: "pypi", yes: true })),
@@ -336,7 +336,7 @@ describe("addSandboxPolicy drift-aware named re-add", () => {
   });
 
   it("does not classify drift for a preset that is not applied yet", async () => {
-    vi.spyOn(policies, "getAppliedPresets").mockReturnValue([]);
+    vi.spyOn(policies, "getAppliedPresets").mockResolvedValue([]);
 
     await addSandboxPolicy("alpha", { preset: "pypi", yes: true });
 

@@ -36,7 +36,7 @@ export default class SandboxPolicyExplainCommand extends NemoClawCommand {
 
   public async run(): Promise<void> {
     const { args, flags } = await this.parse(SandboxPolicyExplainCommand);
-    explainSandboxPolicy(
+    await explainSandboxPolicy(
       args.sandboxName,
       { json: flags.json, writeToSandbox: flags.write },
       { logJson: (value) => this.logJson(value) },
