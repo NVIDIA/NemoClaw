@@ -596,7 +596,7 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
   });
   const selectGatewaySpy = vi
     .spyOn(destroyGateway, "selectGatewayForSandboxDestroy")
-    .mockImplementation(() => undefined);
+    .mockImplementation(async () => undefined);
   const resolveGatewayRuntimeProviderIdSpy = vi
     .spyOn(destroyGateway, "resolveGatewayCleanupRuntimeProviderId")
     .mockImplementation(
@@ -605,7 +605,7 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     );
   const cleanupGatewaySpy = vi
     .spyOn(destroyGateway, "cleanupGatewayAfterLastSandbox")
-    .mockImplementation(() => undefined);
+    .mockImplementation(async () => undefined);
   const shouldCleanupGatewaySpy = vi.spyOn(
     destroyGatewayCleanup,
     "shouldCleanupGatewayAfterConfirmedFinalDestroy",

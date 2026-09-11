@@ -20,7 +20,7 @@ import {
 import { assertNoOpenShellGatewayEndpointOverride } from "../../openshell-gateway-endpoint-guard";
 import { isTerminalSandboxPhase, TERMINAL_SANDBOX_PHASES } from "../../state/gateway";
 export { isTerminalSandboxPhase, TERMINAL_SANDBOX_PHASES };
-import { selectSandboxOwningGateway } from "./gateway-select";
+import { selectNamedGateway, selectSandboxOwningGateway } from "./gateway-select";
 import {
   gatewayNamePattern,
   getKnownSandboxTargetGatewayName,
@@ -666,10 +666,8 @@ export async function reconcileMissingAgainstNamedGateway(
     return missingLookup;
   }
   if (lifecycle.state === "connected_other") {
-    runOpenshell(["gateway", "select", targetGatewayName], {
-      ignoreError: true,
-      timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
-    });
+    const selection = await selectNamedGateway(targetGatewayName);
+    if (!selection.ok) return missingLookup;
     const retry = await getSandboxGatewayState(sandboxName, targetGatewayName);
     if (retry.state === "present") {
       return { ...retry, recoveredGateway: true, recoveryVia: "select" };
@@ -919,7 +917,7 @@ export async function getReconciledSandboxGatewayState(
     // never trust that process-global state for this lookup: another CLI can
     // change it immediately after selection. The explicit gateway argument
     // below is the per-subprocess authority for the status RPC.
-    const selection = selectSandboxOwningGateway(sandboxName);
+    const selection = await selectSandboxOwningGateway(sandboxName);
     if (selection.outcome !== "selected") {
       const lifecycle = await getNamedGatewayLifecycleState(targetGatewayName);
       return {

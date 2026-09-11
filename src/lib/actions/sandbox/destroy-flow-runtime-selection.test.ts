@@ -38,13 +38,14 @@ describe("destroySandbox OpenShell runtime selection", () => {
       force: false,
       runtimeSelection,
     });
-    const preflightRunner = harness.selectGatewaySpy.mock.calls[0]?.[2] as
-      | ((args: string[], opts?: Record<string, unknown>) => unknown)
-      | undefined;
-    expect(preflightRunner).toBeTypeOf("function");
-    preflightRunner?.(["gateway", "info", "nemoclaw-19080"]);
+    const preflightLifecycle = harness.selectGatewaySpy.mock
+      .calls[0]?.[2] as import("../../adapters/openshell/gateway-lifecycle").OpenShellGatewayLifecycle;
+    await preflightLifecycle.selectGateway({
+      target: { kind: "named", gatewayName: "nemoclaw-19080" },
+      runtimeSelection: harness.selectGatewaySpy.mock.calls[0]?.[3],
+    });
     expect(harness.runOpenshellSpy).toHaveBeenCalledWith(
-      ["gateway", "info", "nemoclaw-19080"],
+      ["gateway", "select", "nemoclaw-19080"],
       expect.objectContaining({
         replaceEnv: true,
         env: expect.objectContaining({
@@ -115,6 +116,7 @@ describe("destroySandbox OpenShell runtime selection", () => {
       | undefined;
     expect(cleanupRunner).toBeTypeOf("function");
     cleanupRunner?.(["gateway", "info", "nemoclaw-19080"]);
+    expect(harness.cleanupGatewaySpy.mock.calls[0]?.[2]).toMatchObject({ runtimeSelection });
     expect(harness.runOpenshellSpy).toHaveBeenLastCalledWith(
       ["gateway", "info", "nemoclaw-19080"],
       expect.objectContaining({

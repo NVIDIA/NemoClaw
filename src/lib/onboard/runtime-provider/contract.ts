@@ -115,7 +115,7 @@ export interface RuntimeProviderOwnedGatewayReadinessInput {
   readonly gatewayName: string;
   readonly gatewayPort: number;
   readonly expectedEndpoint: string;
-  readonly managedGatewayOutputs: readonly string[];
+  readonly managedGatewayEndpoints: readonly (string | null)[];
   readonly portAvailable: boolean;
   readonly installedOpenShellVersion: string | null;
   readonly trustedGatewayBin: string | null;

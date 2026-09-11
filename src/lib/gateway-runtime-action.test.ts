@@ -21,10 +21,10 @@ describe("gateway observations and recovery", () => {
   let start: ReturnType<typeof vi.spyOn>;
   beforeEach(() => {
     observe = vi.spyOn(gatewayRuntime.gatewayRuntimeDependencies, "observeGateway");
-    run = vi.spyOn(gatewayRuntime.gatewayRuntimeDependencies, "runOpenshell");
+    run = vi.spyOn(gatewayRuntime.gatewayRuntimeDependencies, "selectGateway");
     start = vi.spyOn(gatewayRuntime.gatewayRuntimeDependencies, "startGatewayForRecovery");
     observe.mockReset().mockResolvedValue(observation("missing_named"));
-    run.mockReset().mockReturnValue({ status: 0 } as never);
+    run.mockReset().mockResolvedValue({ ok: true, state: "completed" } as never);
     start.mockReset().mockResolvedValue(undefined);
     vi.stubEnv("OPENSHELL_GATEWAY", "foreign");
   });
@@ -110,10 +110,7 @@ describe("gateway observations and recovery", () => {
     expect(
       await gatewayRuntime.recoverNamedGatewayRuntime({ gatewayName: "nemoclaw-8090" }),
     ).toMatchObject({ recovered: true, via: "select" });
-    expect(run).toHaveBeenCalledWith(
-      ["gateway", "select", "nemoclaw-8090"],
-      expect.objectContaining({ stdio: "ignore" }),
-    );
+    expect(run).toHaveBeenCalledWith({ target: { kind: "named", gatewayName: "nemoclaw-8090" } });
     expect(start).not.toHaveBeenCalled();
     expect(process.env.OPENSHELL_GATEWAY).toBe("nemoclaw-8090");
   });

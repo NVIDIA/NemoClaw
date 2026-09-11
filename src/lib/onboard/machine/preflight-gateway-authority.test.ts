@@ -107,16 +107,18 @@ describe("preflight gateway authority", () => {
         return { ok: true };
       }),
       isDockerDriverGatewayPortListener: vi.fn(() => false),
-      getGatewayReuseSnapshot: vi.fn(() => {
+      getGatewayReuseSnapshot: vi.fn(async () => {
         events.push("get reuse snapshot");
         return {
-          gatewayStatus: "",
-          gwInfo: "",
-          activeGatewayInfo: "",
+          healthy: true,
+          namedMetadata: true,
+          shouldSelect: false,
+          endpoints: [],
+          endpointBinding: "unknown" as const,
           gatewayReuseState: "healthy" as const,
         };
       }),
-      selectNamedGatewayForReuseIfNeeded: vi.fn((snapshot) => {
+      selectNamedGatewayForReuseIfNeeded: vi.fn(async (snapshot) => {
         events.push("select named gateway");
         return snapshot;
       }),
@@ -190,10 +192,12 @@ describe("preflight gateway authority", () => {
       ],
       evidence: [],
     };
-    const getGatewayReuseSnapshot = vi.fn(() => ({
-      gatewayStatus: "",
-      gwInfo: "",
-      activeGatewayInfo: "",
+    const getGatewayReuseSnapshot = vi.fn(async () => ({
+      healthy: true,
+      namedMetadata: true,
+      shouldSelect: false,
+      endpoints: [],
+      endpointBinding: "unknown" as const,
       gatewayReuseState: "healthy" as const,
     }));
     const selectNamedGatewayForReuseIfNeeded = vi.fn();
@@ -230,10 +234,12 @@ describe("preflight gateway authority", () => {
   });
 
   it("keeps provider-owned readiness out of Docker reuse observation (#10984)", async () => {
-    const getGatewayReuseSnapshot = vi.fn(() => ({
-      gatewayStatus: "",
-      gwInfo: "",
-      activeGatewayInfo: "",
+    const getGatewayReuseSnapshot = vi.fn(async () => ({
+      healthy: true,
+      namedMetadata: true,
+      shouldSelect: false,
+      endpoints: [],
+      endpointBinding: "unknown" as const,
       gatewayReuseState: "healthy" as const,
     }));
     const selectNamedGatewayForReuseIfNeeded = vi.fn((snapshot) => snapshot);

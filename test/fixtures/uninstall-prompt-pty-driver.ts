@@ -54,7 +54,7 @@ const knownGatewayListResult: RunResult = {
   stderr: "",
 };
 
-const { exitCode } = runUninstallPlan(
+const { exitCode } = await runUninstallPlan(
   { assumeYes: false, deleteModels: false, keepOpenShell: true },
   {
     commandExists: (command) => command === "openshell",

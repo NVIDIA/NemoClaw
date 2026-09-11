@@ -11,17 +11,17 @@ export interface PreflightGatewayReuseDeps {
   externallySupervised?: boolean;
   gatewayName: string;
   verifyGatewayContainerRunning(name: string): GatewayContainerState;
-  recoverGatewayRuntime(): Promise<boolean>;
-  waitForGatewayHttpReady(): Promise<boolean>;
+  recoverGatewayRuntime(): boolean | Promise<boolean>;
+  waitForGatewayHttpReady(): boolean | Promise<boolean>;
   getGatewayLocalEndpoint(): string;
   stopDashboardForward(): void;
   stopAllDashboardForwards(): void;
-  destroyGateway(): boolean;
+  destroyGateway(): boolean | Promise<boolean>;
   destroyGatewayForReuse(
-    destroyGateway: () => boolean,
+    destroyGateway: () => boolean | Promise<boolean>,
     successMessage: string,
     failureMessage: string,
-  ): GatewayReuseState;
+  ): GatewayReuseState | Promise<GatewayReuseState>;
   getGatewayClusterImageDrift(): { currentVersion: string; expectedVersion: string } | null;
   exitProcess(code: number): never;
 }
@@ -53,7 +53,7 @@ export async function reconcilePreflightGatewayReuseState(
   if (containerState === "missing") {
     console.log("  Gateway metadata is stale (container not running). Cleaning up...");
     deps.stopDashboardForward();
-    gatewayReuseState = deps.destroyGatewayForReuse(
+    gatewayReuseState = await deps.destroyGatewayForReuse(
       deps.destroyGateway,
       "  ✓ Stale gateway metadata cleaned up",
       "  ! Stale gateway metadata cleanup failed; leaving registry state intact.",
@@ -114,7 +114,7 @@ export async function reconcilePreflightGatewayReuseState(
       `  Gateway container is running but ${deps.getGatewayLocalEndpoint()}/ is not responding. Recreating...`,
     );
     deps.stopDashboardForward();
-    gatewayReuseState = deps.destroyGatewayForReuse(
+    gatewayReuseState = await deps.destroyGatewayForReuse(
       deps.destroyGateway,
       "  ✓ Stale gateway cleaned up",
       "  ! Stale gateway cleanup failed; leaving registry state intact.",
@@ -130,7 +130,7 @@ export async function reconcilePreflightGatewayReuseState(
         `  Gateway image ${imageDrift.currentVersion} does not match openshell ${imageDrift.expectedVersion}. Recreating...`,
       );
       deps.stopAllDashboardForwards();
-      gatewayReuseState = deps.destroyGatewayForReuse(
+      gatewayReuseState = await deps.destroyGatewayForReuse(
         deps.destroyGateway,
         "  ✓ Previous gateway cleaned up",
         "  ! Previous gateway cleanup failed; leaving registry state intact.",

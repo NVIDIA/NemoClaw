@@ -49,7 +49,8 @@ export function expectSuccessfulLiveDestroy(harness: DestroyHarness, exitSpy: Mo
   expect(harness.selectGatewaySpy).toHaveBeenCalledWith(
     "alpha",
     "nemoclaw-19080",
-    harness.runOpenshellSpy,
+    expect.objectContaining({ selectGateway: expect.any(Function) }),
+    undefined,
   );
   expect(harness.gatewayPinsAtSandboxList).toEqual(["nemoclaw-19080"]);
   expect(harness.runOpenshellSpy).toHaveBeenCalledWith(

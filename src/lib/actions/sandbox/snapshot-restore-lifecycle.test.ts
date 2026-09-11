@@ -6,12 +6,15 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { withSandboxMutationLock } from "../../state/mcp-lifecycle-lock";
 import * as f from "./snapshot-restore-test-fixture";
 
 const tempHomes: string[] = [];
+beforeAll(async () => {
+  await import("./snapshot");
+}, 60_000);
 beforeEach(() => {
   f.resetSnapshotRestoreMocks();
   const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-snapshot-restore-home-"));

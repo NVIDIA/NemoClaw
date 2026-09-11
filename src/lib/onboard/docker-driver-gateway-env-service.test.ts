@@ -5,6 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { gatewayAdaptersForTest } from "../../../test/helpers/openshell-gateway-adapters";
 import { describe, expect, it, vi } from "vitest";
 import { writeSafeGatewayAuthConfig } from "../../../test/support/docker-driver-gateway-env-test-support";
 import { startPackageManagedDockerDriverGatewayWithEnvOverride } from "./docker-driver-gateway-env";
@@ -41,6 +42,7 @@ describe("package-managed Docker-driver gateway env service", () => {
     try {
       await expect(
         startPackageManagedDockerDriverGatewayWithEnvOverride({
+          observer: gatewayAdaptersForTest().observer,
           clearDockerDriverGatewayRuntimeFiles: vi.fn(),
           env: selectedEnv,
           exitOnFailure: false,
@@ -91,6 +93,7 @@ describe("package-managed Docker-driver gateway env service", () => {
     try {
       await expect(
         startPackageManagedDockerDriverGatewayWithEnvOverride({
+          observer: gatewayAdaptersForTest().observer,
           clearDockerDriverGatewayRuntimeFiles: vi.fn(),
           env,
           exitOnFailure: false,
@@ -142,6 +145,7 @@ describe("package-managed Docker-driver gateway env service", () => {
     try {
       await expect(
         startPackageManagedDockerDriverGatewayWithEnvOverride({
+          observer: gatewayAdaptersForTest().observer,
           clearDockerDriverGatewayRuntimeFiles: vi.fn(),
           env: { ...homeEnv(tempHome), DOCKER_HOST: dockerHost },
           exitOnFailure: false,
@@ -178,6 +182,7 @@ describe("package-managed Docker-driver gateway env service", () => {
     try {
       await expect(
         startPackageManagedDockerDriverGatewayWithEnvOverride({
+          observer: gatewayAdaptersForTest().observer,
           clearDockerDriverGatewayRuntimeFiles: vi.fn(),
           env: homeEnv(tempHome),
           exitOnFailure: false,
@@ -219,6 +224,7 @@ describe("package-managed Docker-driver gateway env service", () => {
     try {
       await expect(
         startPackageManagedDockerDriverGatewayWithEnvOverride({
+          observer: gatewayAdaptersForTest().observer,
           clearDockerDriverGatewayRuntimeFiles: vi.fn(),
           env: homeEnv(tempHome),
           exitOnFailure: false,
@@ -246,6 +252,7 @@ describe("package-managed Docker-driver gateway env service", () => {
   it("rejects package-managed wildcard binds before writing the service env (#6903)", () => {
     expect(() =>
       startPackageManagedDockerDriverGatewayWithEnvOverride({
+        observer: gatewayAdaptersForTest().observer,
         clearDockerDriverGatewayRuntimeFiles: vi.fn(),
         exitOnFailure: false,
         gatewayEnv: {
@@ -279,6 +286,7 @@ describe("package-managed Docker-driver gateway env service", () => {
 
         expect(() =>
           startPackageManagedDockerDriverGatewayWithEnvOverride({
+            observer: gatewayAdaptersForTest().observer,
             clearDockerDriverGatewayRuntimeFiles: vi.fn(),
             env,
             exitOnFailure: false,

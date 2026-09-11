@@ -128,13 +128,14 @@ export interface PackageManagedDockerDriverGatewayOptions {
   hasOpenShellGatewayUserService?: () => boolean;
   healthPollCount?: number;
   healthPollInterval?: number;
-  isDockerDriverGatewayReady?: () => Promise<boolean>;
+  isDockerDriverGatewayReady?: () => boolean | Promise<boolean>;
   managedServiceLogCommand?: string;
   now?: () => number;
   output?: Pick<GatewayRecoveryOutput, "error" | "log" | "warn">;
   prepareOpenShellGatewayUserServiceEnv?: () => void;
   preparePortForOpenShellGatewayUserServiceStart?: () => void;
-  registerDockerDriverGatewayEndpoint: () => boolean;
+  registerDockerDriverGatewayEndpoint: () => boolean | Promise<boolean>;
+  observer: import("../adapters/openshell/gateway-reuse").OpenShellGatewayReuseObserver;
   runCaptureOpenshell: (args: string[], opts?: { ignoreError?: boolean }) => string;
   skipSandboxBridgeReachability: boolean;
   sleepSeconds?: (seconds: number) => void;
@@ -152,7 +153,7 @@ export interface PackageManagedDockerDriverGatewayOptions {
       output?: Pick<GatewayRecoveryOutput, "error" | "log" | "warn">;
       skip?: boolean;
     },
-  ) => Promise<void>;
+  ) => void | Promise<void>;
 }
 
 interface OpenShellGatewayUserServiceTarget {
@@ -1397,6 +1398,7 @@ export async function startPackageManagedDockerDriverGateway({
   prepareOpenShellGatewayUserServiceEnv,
   preparePortForOpenShellGatewayUserServiceStart,
   registerDockerDriverGatewayEndpoint,
+  observer,
   runCaptureOpenshell,
   skipSandboxBridgeReachability,
   sleepSeconds: sleepSecondsImpl = sleepSeconds,
@@ -1498,20 +1500,21 @@ export async function startPackageManagedDockerDriverGateway({
     sleepSecondsImpl(ms / 1000),
   );
   let lastReadiness = { cliHealthy: false, grpcHealthy: false, registered: false };
+  let registrationAttempt: Promise<boolean> | undefined;
   const healthy =
     waitOptions !== null &&
     (await waitUntilAsync(async () => {
-      const registered = registerDockerDriverGatewayEndpoint();
+      const registered = await (registrationAttempt ??= Promise.resolve(
+        registerDockerDriverGatewayEndpoint(),
+      ));
       if (!registered) {
         lastReadiness = { cliHealthy: false, grpcHealthy: false, registered };
         return false;
       }
-      const status = runCaptureOpenshell(["status"], { ignoreError: true });
-      const namedInfo = runCaptureOpenshell(["gateway", "info", "-g", gatewayName], {
-        ignoreError: true,
+      const observation = await observer.observeGatewayReuse({
+        target: { kind: "named", gatewayName },
       });
-      const currentInfo = runCaptureOpenshell(["gateway", "info"], { ignoreError: true });
-      const cliHealthy = isGatewayHealthy(status, namedInfo, currentInfo);
+      const cliHealthy = !observation.error && observation.healthy && observation.namedMetadata;
       const grpcHealthy = await isDockerDriverGatewayReady();
       lastReadiness = { cliHealthy, grpcHealthy, registered };
       return cliHealthy && grpcHealthy;

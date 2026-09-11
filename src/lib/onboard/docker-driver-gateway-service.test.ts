@@ -3,6 +3,7 @@
 
 import path from "node:path";
 
+import { gatewayAdaptersForTest } from "../../../test/helpers/openshell-gateway-adapters";
 import { describe, expect, it, vi } from "vitest";
 
 import { createVirtualClock } from "./__test-helpers__/virtual-clock";
@@ -471,10 +472,11 @@ describe("docker-driver-gateway-service", () => {
     const verifySandboxBridgeGatewayReachableOrExit = vi.fn(async () => {
       events.push("verify");
     });
-    let registerCount = 0;
+    let readinessCount = 0;
 
     await expect(
       startPackageManagedDockerDriverGateway({
+        observer: gatewayAdaptersForTest().observer,
         clearDockerDriverGatewayRuntimeFiles: () => events.push("clear"),
         exitOnFailure: false,
         gatewayName: "nemoclaw",
@@ -483,14 +485,14 @@ describe("docker-driver-gateway-service", () => {
         healthPollInterval: 1,
         isDockerDriverGatewayReady: async () => {
           events.push("ready");
-          return true;
+          readinessCount += 1;
+          return readinessCount >= 2;
         },
         now: clock.now,
         output,
         registerDockerDriverGatewayEndpoint: () => {
           events.push("register");
-          registerCount += 1;
-          return registerCount >= 2;
+          return true;
         },
         runCaptureOpenshell: (args) => (args[0] === "status" ? STATUS_CONNECTED : GATEWAY_INFO),
         skipSandboxBridgeReachability: false,
@@ -507,7 +509,7 @@ describe("docker-driver-gateway-service", () => {
       }),
     ).resolves.toBe(true);
 
-    expect(events).toEqual(["register", "sleep", "register", "ready", "clear", "verify"]);
+    expect(events).toEqual(["register", "ready", "sleep", "ready", "clear", "verify"]);
     expect(output.log).toHaveBeenCalledWith("  Starting OpenShell gateway via managed service...");
     expect(verifySandboxBridgeGatewayReachableOrExit).toHaveBeenCalledWith(false, {
       output,
@@ -535,6 +537,7 @@ describe("docker-driver-gateway-service", () => {
 
       await expect(
         startPackageManagedDockerDriverGateway({
+          observer: gatewayAdaptersForTest().observer,
           clearDockerDriverGatewayRuntimeFiles: vi.fn(),
           exitOnFailure: false,
           gatewayName: "nemoclaw",
@@ -565,6 +568,7 @@ describe("docker-driver-gateway-service", () => {
 
     await expect(
       startPackageManagedDockerDriverGateway({
+        observer: gatewayAdaptersForTest().observer,
         clearDockerDriverGatewayRuntimeFiles: vi.fn(),
         exitOnFailure: false,
         gatewayName: "nemoclaw",
@@ -597,6 +601,7 @@ describe("docker-driver-gateway-service", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     await expect(
       startPackageManagedDockerDriverGateway({
+        observer: gatewayAdaptersForTest().observer,
         clearDockerDriverGatewayRuntimeFiles: clear,
         exitOnFailure: false,
         gatewayName: "nemoclaw",
@@ -636,6 +641,7 @@ describe("docker-driver-gateway-service", () => {
 
     await expect(
       startPackageManagedDockerDriverGateway({
+        observer: gatewayAdaptersForTest().observer,
         clearDockerDriverGatewayRuntimeFiles: vi.fn(),
         exitOnFailure: false,
         gatewayName: "nemoclaw",
@@ -664,6 +670,7 @@ describe("docker-driver-gateway-service", () => {
   it("blocks standalone fallback when managed service cleanup fails without permission (#8926)", async () => {
     await expect(
       startPackageManagedDockerDriverGateway({
+        observer: gatewayAdaptersForTest().observer,
         clearDockerDriverGatewayRuntimeFiles: vi.fn(),
         exitOnFailure: false,
         gatewayName: "nemoclaw",
@@ -689,6 +696,7 @@ describe("docker-driver-gateway-service", () => {
 
     await expect(
       startPackageManagedDockerDriverGateway({
+        observer: gatewayAdaptersForTest().observer,
         clearDockerDriverGatewayRuntimeFiles: vi.fn(),
         exitOnFailure: false,
         gatewayName: "nemoclaw",
@@ -720,6 +728,7 @@ describe("docker-driver-gateway-service", () => {
 
     await expect(
       startPackageManagedDockerDriverGateway({
+        observer: gatewayAdaptersForTest().observer,
         clearDockerDriverGatewayRuntimeFiles: vi.fn(),
         exitOnFailure: false,
         gatewayName: "nemoclaw",
@@ -750,6 +759,7 @@ describe("docker-driver-gateway-service", () => {
 
     await expect(
       startPackageManagedDockerDriverGateway({
+        observer: gatewayAdaptersForTest().observer,
         clearDockerDriverGatewayRuntimeFiles: vi.fn(),
         exitOnFailure: true,
         gatewayName: "nemoclaw",
@@ -775,6 +785,7 @@ describe("docker-driver-gateway-service", () => {
 
     await expect(
       startPackageManagedDockerDriverGateway({
+        observer: gatewayAdaptersForTest().observer,
         clearDockerDriverGatewayRuntimeFiles: vi.fn(),
         exitOnFailure: true,
         gatewayName: "nemoclaw",
@@ -803,6 +814,7 @@ describe("docker-driver-gateway-service", () => {
 
     await expect(
       startPackageManagedDockerDriverGateway({
+        observer: gatewayAdaptersForTest().observer,
         clearDockerDriverGatewayRuntimeFiles: vi.fn(),
         exitOnFailure: false,
         gatewayName: "nemoclaw",
@@ -825,6 +837,7 @@ describe("docker-driver-gateway-service", () => {
   it("blocks standalone fallback when managed service cleanup fails trust validation (#8104)", async () => {
     await expect(
       startPackageManagedDockerDriverGateway({
+        observer: gatewayAdaptersForTest().observer,
         clearDockerDriverGatewayRuntimeFiles: vi.fn(),
         exitOnFailure: false,
         gatewayName: "nemoclaw",
@@ -859,6 +872,7 @@ describe("docker-driver-gateway-service", () => {
 
     await expect(
       startPackageManagedDockerDriverGateway({
+        observer: gatewayAdaptersForTest().observer,
         clearDockerDriverGatewayRuntimeFiles: vi.fn(),
         exitOnFailure: true,
         gatewayName: "nemoclaw",
@@ -895,6 +909,7 @@ describe("docker-driver-gateway-service", () => {
 
     await expect(
       startPackageManagedDockerDriverGateway({
+        observer: gatewayAdaptersForTest().observer,
         clearDockerDriverGatewayRuntimeFiles: vi.fn(),
         exitOnFailure: true,
         gatewayName: "nemoclaw",
