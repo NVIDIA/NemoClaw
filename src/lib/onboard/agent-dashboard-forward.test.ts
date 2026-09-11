@@ -91,6 +91,32 @@ describe("ensureAgentDashboardForward", () => {
     expect(events).toEqual(["before:18789", "forward:18789", "before:8643", "forward:8643"]);
   });
 
+  it("reuses exactly owned primary and secondary forwards during resume", async () => {
+    const ensureDashboardForward = vi.fn((_sandboxName, chatUiUrl = "") => {
+      return Number(new URL(chatUiUrl).port);
+    });
+
+    await ensureAgentDashboardForward({
+      sandboxName: "hm",
+      agent: {
+        forwardPort: 18789,
+        forward_ports: [18789, 8642],
+      },
+      ensureDashboardForward,
+      hermesApiPort: 8643,
+      reuseExistingForward: true,
+    });
+
+    expect(ensureDashboardForward).toHaveBeenNthCalledWith(1, "hm", "http://127.0.0.1:18789", {
+      allowPortReallocation: false,
+      reuseExistingForward: true,
+    });
+    expect(ensureDashboardForward).toHaveBeenNthCalledWith(2, "hm", "http://127.0.0.1:8643", {
+      allowPortReallocation: false,
+      reuseExistingForward: true,
+    });
+  });
+
   it("keeps an explicit effective port and omits the replaced manifest default (#6277)", async () => {
     const ensureDashboardForward = vi.fn((_sandboxName, chatUiUrl = "") => {
       return Number(new URL(chatUiUrl).port);

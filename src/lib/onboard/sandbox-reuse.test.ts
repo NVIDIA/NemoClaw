@@ -73,7 +73,7 @@ describe("applyReusedSandboxDashboardState", () => {
     });
     expect(result.hermesDashboardState).toBe(hermesDashboardState);
     expect(ensureDashboardForward).toHaveBeenCalledWith("reuse-me", "http://127.0.0.1:18789", {
-      reuseExistingOpenClawForward: true,
+      reuseExistingForward: true,
     });
   });
 
@@ -240,7 +240,7 @@ describe("applyReusedSandboxDashboardState", () => {
 
     expect(releaseDashboardPort).toHaveBeenCalledOnce();
     expect(ensureDashboardForward).toHaveBeenCalledWith("reuse-me", "http://127.0.0.1:18789", {
-      reuseExistingOpenClawForward: true,
+      reuseExistingForward: true,
     });
     expect(result.dashboardPort).toBe(18_789);
   });
@@ -291,6 +291,7 @@ describe("applyReusedSandboxDashboardState", () => {
 
     expect(ensureForState).toHaveBeenCalledOnce();
     expect(ensureDashboardForward).toHaveBeenCalledWith("reuse-me", "http://127.0.0.1:18789", {
+      reuseExistingForward: true,
       revalidateSandboxIdentity,
     });
     expect(updateReusedSandboxMetadata).not.toHaveBeenCalled();

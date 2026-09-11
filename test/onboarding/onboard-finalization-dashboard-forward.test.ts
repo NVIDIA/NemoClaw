@@ -11,6 +11,7 @@ function harness(options: {
   listSandboxes: ListSandboxesFn;
   isPortBound?: (port: number) => boolean;
   ownsForward?: (target: ForwardServiceTarget) => boolean;
+  getSandbox?: () => { hermesApiPort?: number };
 }) {
   const launch = vi.fn();
   const owns = vi.fn(options.ownsForward ?? (() => false));
@@ -27,6 +28,7 @@ function harness(options: {
     sleep: vi.fn(),
     printAgentDashboardUi: vi.fn(),
     listSandboxes: options.listSandboxes,
+    getSandbox: options.getSandbox,
     isPortBoundOnHost: options.isPortBound ?? (() => false),
     forwardService: {
       executable: () => "/usr/local/bin/openshell",
@@ -119,7 +121,7 @@ describe("finalization dashboard ForwardTcp launch", () => {
     expect(launch).not.toHaveBeenCalled();
   });
 
-  it("enables owned-forward reuse only for OpenClaw agents", async () => {
+  it("reuses exactly owned forwards for OpenClaw and Hermes agents", async () => {
     vi.stubEnv("CHAT_UI_URL", undefined);
     const openClaw = harness({
       listSandboxes: () => ({
@@ -153,7 +155,32 @@ describe("finalization dashboard ForwardTcp launch", () => {
         undefined,
         undefined,
       ),
-    ).rejects.toThrow(/cannot be reallocated/u);
+    ).resolves.toBe(18_790);
+    expect(hermes.owns).toHaveBeenCalledOnce();
+    expect(hermes.launch).not.toHaveBeenCalled();
+  });
+
+  it("reuses Hermes secondary API forward when exact ownership is proven", async () => {
+    vi.stubEnv("CHAT_UI_URL", undefined);
+    const hermes = harness({
+      listSandboxes: () => ({
+        sandboxes: [{ name: "reonboard-test", dashboardPort: 18_790, hermesApiPort: 8_642 }],
+      }),
+      getSandbox: () => ({ hermesApiPort: 8_642 }),
+      isPortBound: (port) => port === 18_790 || port === 8_642,
+      ownsForward: () => true,
+    });
+
+    await expect(
+      hermes.helpers.ensureFinalizationAgentDashboardForward(
+        "reonboard-test",
+        { name: "hermes", forwardPort: 18_790, forward_ports: [18_790, 8_642] },
+        undefined,
+        undefined,
+      ),
+    ).resolves.toBe(18_790);
+    expect(hermes.owns).toHaveBeenCalledTimes(2);
+    expect(hermes.launch).not.toHaveBeenCalled();
   });
 
   it("honors an explicit dashboard URL", () => {

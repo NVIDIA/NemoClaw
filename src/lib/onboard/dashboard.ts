@@ -382,7 +382,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     options: DashboardForwardOptions = {},
   ): number {
     chatUiUrl ||= `http://127.0.0.1:${CONTROL_UI_PORT}`;
-    const { rollbackSandboxOnFailure, allowPortReallocation, reuseExistingOpenClawForward } =
+    const { rollbackSandboxOnFailure, allowPortReallocation, reuseExistingForward } =
       normalizeDashboardForwardOptions(options);
     const { revalidateSandboxIdentity } = options;
     const preferredPort = Number(getDashboardForwardPort(chatUiUrl));
@@ -398,17 +398,19 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     const isPortBound = deps.isPortBoundOnHost ?? isPortBoundOnHost;
     const persistedPort = getPersistedDashboardPort(sandboxName, listSandboxes);
     const registryOccupiedPorts = getRegistryOccupiedDashboardPorts(sandboxName, listSandboxes);
-    if (persistedPort === preferredPort && isPortBound(preferredPort)) {
-      if (
-        reuseExistingOpenClawForward &&
-        !registryOccupiedPorts.has(String(preferredPort)) &&
-        ownsDashboardForward(sandboxName, forwardGateway, preferredPort, chatUiUrl)
-      ) {
-        revalidateSandboxIdentity?.(
-          `retain dashboard forward ${String(preferredPort)} for sandbox '${sandboxName}'`,
-        );
-        return preferredPort;
-      }
+    const preferredPortIsBound = isPortBound(preferredPort);
+    if (
+      preferredPortIsBound &&
+      reuseExistingForward &&
+      !registryOccupiedPorts.has(String(preferredPort)) &&
+      ownsDashboardForward(sandboxName, forwardGateway, preferredPort, chatUiUrl)
+    ) {
+      revalidateSandboxIdentity?.(
+        `retain dashboard forward ${String(preferredPort)} for sandbox '${sandboxName}'`,
+      );
+      return preferredPort;
+    }
+    if (persistedPort === preferredPort && preferredPortIsBound) {
       throw new Error(
         `Registered dashboard port ${String(preferredPort)} is already occupied; it cannot be reallocated or adopted.`,
       );
@@ -533,7 +535,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
       envUrl || (persistedPort === null ? undefined : `http://127.0.0.1:${String(persistedPort)}`);
     const actualPort = ensureDashboardForward(sandboxName, requestedUrl, {
       allowPortReallocation: false,
-      reuseExistingOpenClawForward: true,
+      reuseExistingForward: true,
       ...(revalidateSandboxIdentity ? { revalidateSandboxIdentity } : {}),
     });
     revalidateSandboxIdentity?.(`publish the dashboard URL for sandbox '${sandboxName}'`);
@@ -549,7 +551,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     agent: { forwardPort?: number | null; forward_ports?: number[] | null },
     options: {
       beforeForwardPort?: (port: number) => Promise<void> | void;
-      reuseExistingOpenClawForward?: boolean;
+      reuseExistingForward?: boolean;
       revalidateSandboxIdentity?: (operation: string) => void;
     } = {},
   ): Promise<number> {
@@ -562,7 +564,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
       controlUiPort: chatUiUrl ? Number(getDashboardForwardPort(chatUiUrl)) : undefined,
       hermesApiPort: getSandbox?.(sandboxName)?.hermesApiPort,
       beforeForwardPort: options.beforeForwardPort,
-      reuseExistingOpenClawForward: options.reuseExistingOpenClawForward,
+      reuseExistingForward: options.reuseExistingForward,
       revalidateSandboxIdentity: options.revalidateSandboxIdentity,
     });
   }
@@ -578,16 +580,13 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     if (!agent) {
       return ensureFinalizationDashboardForward(sandboxName, revalidateSandboxIdentity);
     }
-    const mayReuseOpenClawForward = agent.name === "openclaw";
-    if (mayReuseOpenClawForward) {
-      const registeredPort = getPersistedDashboardPort(sandboxName, listSandboxes);
-      if (!process.env.CHAT_UI_URL && registeredPort !== null) {
-        process.env.CHAT_UI_URL = `http://127.0.0.1:${String(registeredPort)}`;
-      }
+    const registeredPort = getPersistedDashboardPort(sandboxName, listSandboxes);
+    if (!process.env.CHAT_UI_URL && registeredPort !== null) {
+      process.env.CHAT_UI_URL = `http://127.0.0.1:${String(registeredPort)}`;
     }
     return ensureAgentDashboardForward(sandboxName, agent, {
       revalidateSandboxIdentity,
-      ...(mayReuseOpenClawForward ? { reuseExistingOpenClawForward: true } : {}),
+      reuseExistingForward: true,
       beforeForwardPort: portReservation
         ? (port) => portReservation.releaseBeforeForward(agent.name, port)
         : undefined,
