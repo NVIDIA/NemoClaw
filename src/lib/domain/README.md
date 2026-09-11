@@ -31,6 +31,15 @@ admitting disclosure must not admit extra tool gateways or minimal-bootstrap set
 Hermes keeps its canonical export without `tools`; a retained direct selection or
 profile is unsupported even when those two sources agree.
 
+One read-only secondary OpenClaw agent can share the primary hosted route on Docker.
+Runtime `main` remains the sole default and exports as `primary`; the secondary keeps
+its compatible, nonreserved ID and exports `tools: {allow: [read]}`. The generator
+and exporter use the same manifest normalizer in `src/lib/extra-agents-validation.ts`.
+Canonical workspace paths stay implicit. Verify the whole retained manifest before
+admitting that leaf in the residual profile comparison; other agent settings still
+need their own supported projection. Apply the new pair and route constraints only
+to documents using `tools.allow`, preserving existing v1 agent shapes.
+
 Managed OpenClaw exports `agents[].interfaces.dashboard` when the retained port agrees with the
 registry and remote bind agrees with recorded preparation. Port 18789 and loopback bind are omitted.
 Legacy registry entries may omit the port only for the canonical loopback/default-port profile.

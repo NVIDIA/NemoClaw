@@ -22,7 +22,7 @@ import {
   MCP_BRIDGE_TEST_REDACTION_VALUES,
   readConcurrentMcpStatusAndConfirmHermesRegistration,
   restartBridgeWithoutHostSecret,
-  retryAfterHermesRestartTransportFailure,
+  retryAfterConcurrentAddTransientFailure,
   retryHermesGatewayDraining,
   retryOpenClawBaselineScopeOnboardFailure,
 } from "../live/mcp-bridge-reliability.ts";
@@ -640,7 +640,7 @@ describe("MCP bridge transient classification", () => {
     const retry = vi.fn(async () => ({ exitCode: 2 }));
 
     await expect(
-      retryAfterHermesRestartTransportFailure({
+      retryAfterConcurrentAddTransientFailure({
         adapter: "hermes-config",
         committedBridgeVerified: true,
         diagnostic: "server already exists",
@@ -656,10 +656,27 @@ describe("MCP bridge transient classification", () => {
     const retry = vi.fn(async () => retryResult);
 
     await expect(
-      retryAfterHermesRestartTransportFailure({
+      retryAfterConcurrentAddTransientFailure({
         adapter: "hermes-config",
         committedBridgeVerified: true,
         diagnostic: HERMES_BROKEN_PIPE,
+        originalResult: { exitCode: 1 },
+        retry,
+      }),
+    ).resolves.toBe(retryResult);
+    expect(retry).toHaveBeenCalledOnce();
+  });
+
+  it("retries the portable host lock loser after the committed bridge is verified", async () => {
+    const retryResult = { exitCode: 1 };
+    const retry = vi.fn(async () => retryResult);
+
+    await expect(
+      retryAfterConcurrentAddTransientFailure({
+        adapter: "mcporter",
+        committedBridgeVerified: true,
+        diagnostic:
+          "Error: Failed to acquire lock on /home/runner/.nemoclaw-portable-host.lock after 120 retries",
         originalResult: { exitCode: 1 },
         retry,
       }),
@@ -671,14 +688,23 @@ describe("MCP bridge transient classification", () => {
     const retry = vi.fn(async () => ({ exitCode: 1 }));
 
     await expect(
-      retryAfterHermesRestartTransportFailure({
+      retryAfterConcurrentAddTransientFailure({
         adapter: "hermes-config",
         committedBridgeVerified: true,
         diagnostic: "unexpected transport error",
         originalResult: { exitCode: 1 },
         retry,
       }),
-    ).rejects.toThrow("not a known Hermes restart transport failure");
+    ).rejects.toThrow("not a known transient failure");
+    await expect(
+      retryAfterConcurrentAddTransientFailure({
+        adapter: "mcporter",
+        committedBridgeVerified: true,
+        diagnostic: "Error: Failed to acquire lock on /tmp/other.lock after 120 retries",
+        originalResult: { exitCode: 1 },
+        retry,
+      }),
+    ).rejects.toThrow("not a known transient failure");
     expect(retry).not.toHaveBeenCalled();
   });
 
@@ -686,7 +712,7 @@ describe("MCP bridge transient classification", () => {
     const retry = vi.fn(async () => ({ exitCode: 1 }));
 
     await expect(
-      retryAfterHermesRestartTransportFailure({
+      retryAfterConcurrentAddTransientFailure({
         adapter: "hermes-config",
         committedBridgeVerified: false,
         diagnostic: HERMES_BROKEN_PIPE,

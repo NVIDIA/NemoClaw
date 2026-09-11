@@ -307,7 +307,9 @@ function startOpenShellInference(
   );
   const stopGateway =
     tools.start("openshell-gateway", ["--config", configurationPath], {
-      env: commandEnv,
+      env: input.ownGateway
+        ? { ...commandEnv, OPENSHELL_DB_URL: "sqlite::memory:?cache=shared" }
+        : commandEnv,
       logPath: path.join(gatewayDirectory, "gateway.log"),
     }) ?? (async () => undefined);
 

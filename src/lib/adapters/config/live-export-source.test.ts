@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from "node:crypto";
 import os from "node:os";
 import { describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
@@ -56,6 +57,7 @@ import type { ObservedManagedVllmRuntime } from "../../domain/config/export-evid
 import { getLiveGatewayInference } from "../../inference/live";
 import { resolveGatewayStateDirForPort } from "../../onboard/gateway/state-dir";
 import { buildManagedStartupProfile } from "../../onboard/managed-startup/profile-builder";
+import { encodeManagedStartupProfile } from "../../onboard/managed-startup/profile";
 import type { ManagedStartupProfileBuilderInput } from "../../onboard/managed-startup/profile-builder";
 import { getSandboxEntryInference } from "../../state/registry-entry-view";
 import { load as loadRegistry } from "../../state/registry/persistence";
@@ -69,6 +71,7 @@ import {
   readFailureCanary,
   imageRef,
   startupInput,
+  startup,
   entry,
   inventory,
   provider,
@@ -430,6 +433,27 @@ describe("live export snapshot reader", () => {
     expect(captureSanitizedResolvedOpenshell).toHaveBeenCalledTimes(1);
     expect(vi.mocked(captureSanitizedResolvedOpenshell).mock.calls[0]?.[0]).toContain("nemoclaw");
     expect(raw.getProvider).not.toHaveBeenCalled();
+  });
+
+  it("retains direct tool selection through the live reader and stable verifier", async () => {
+    const profile = {
+      ...startup.profile,
+      tools: { ...startup.profile.tools, disclosure: "direct" as const },
+    };
+    const encodedProfile = encodeManagedStartupProfile(profile);
+    mockSupportedLiveSource(3, 3, {
+      ...entry,
+      toolDisclosure: "direct",
+      workload: {
+        ...entry.workload,
+        encodedProfile,
+        startupProfileSha256: createHash("sha256").update(encodedProfile, "utf8").digest("hex"),
+      },
+    });
+    const result = await observeStableExportSource("alpha", createLiveExportSnapshotReader());
+    expect(result).toMatchObject({ ok: true, source: { tools: { disclosure: "direct" } } });
+    expect(raw.getSandbox).toHaveBeenCalledTimes(2);
+    expect(JSON.stringify(result)).not.toContain(readFailureCanary);
   });
 
   it("returns a complete non-secret raw snapshot", async () => {
@@ -853,6 +877,40 @@ describe("live export snapshot reader", () => {
     expect(raw.getProvider).toHaveBeenCalledTimes(2);
     expect(raw.getSandboxConfig).toHaveBeenCalledTimes(2);
     expect(JSON.stringify(result)).not.toContain(readFailureCanary);
+  });
+
+  it("exports a secondary agent through SDK observations without copying provider credentials (#11434)", async () => {
+    const built = buildManagedStartupProfile({
+      ...startupInput,
+      environment: {
+        NEMOCLAW_EXTRA_AGENTS_JSON: JSON.stringify([
+          { id: "reviewer-2", tools: { allow: ["read"] } },
+        ]),
+      },
+    });
+    mockSupportedLiveSource(3, 3, {
+      ...entry,
+      workload: {
+        ...entry.workload,
+        encodedProfile: built.encodedProfile,
+        startupProfileSha256: built.startupProfileSha256,
+      },
+    });
+    const { result, writeStdout } = await exportLiveSource();
+    expect(result.ok).toBe(true);
+    const yaml = writeStdout.mock.calls[0]![0];
+    const config = validateNemoClawConfig(YAML.parse(yaml));
+    const [primary, secondary] = config.spec.sandboxes[0]!.agents;
+    expect(primary!.name).toBe("primary");
+    expect(secondary).toEqual({
+      name: "reviewer-2",
+      type: "openclaw",
+      tools: { allow: ["read"] },
+      inference: primary!.inference,
+    });
+    expect(config.spec.inferenceProviders).toHaveLength(1);
+    expect(yaml).not.toContain(readFailureCanary);
+    expect(raw.getSandboxConfig).toHaveBeenCalledTimes(2);
   });
 
   it.each([
