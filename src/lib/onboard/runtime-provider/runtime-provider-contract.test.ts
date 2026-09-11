@@ -21,7 +21,6 @@ import { executeSandboxDestroy } from "../../actions/sandbox/destroy-execution";
 import { SANDBOX_DESTROY_TIMEOUT_MS } from "../../actions/sandbox/destroy-gateway";
 import { startSandbox } from "../../actions/sandbox/start";
 import { stopSandbox } from "../../actions/sandbox/stop";
-import { withCurrentPortableHostFence } from "../../state/portable-uninstall-retirement";
 import { loadAgent } from "../../agent/defs";
 import type { SandboxEntry, SandboxWorkloadReceipt } from "../../state/registry/types";
 import { withCurrentPortableHostFence } from "../../state/portable-uninstall-retirement";
