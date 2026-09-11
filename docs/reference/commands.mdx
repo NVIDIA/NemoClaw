@@ -367,7 +367,13 @@ Select one serving profile from `$$nemoclaw profiles list` for interactive or no
 $$nemoclaw onboard --profile <profile-id>
 ```
 
-NemoClaw rejects an unknown, ambiguous, disabled, or incompatible profile before image or model downloads begin. It also rejects `--profile` when you combine it with `NEMOCLAW_PROVIDER`, `NEMOCLAW_MODEL`, `NEMOCLAW_VLLM_MODEL`, `NEMOCLAW_MANAGED_CLUSTER_PEERS`, or `NEMOCLAW_VLLM_EXTRA_ARGS_JSON` overrides. If `NEMOCLAW_SERVING_PRESET` is already set, it must select the same stable profile ID; a different ID conflicts with `--profile`. Run `$$nemoclaw profiles list` to inspect an incompatibility reason before onboarding.
+NemoClaw rejects an unknown, ambiguous, disabled, or incompatible profile before image or model downloads begin. It also rejects `--profile` when you combine it with `NEMOCLAW_PROVIDER`, `NEMOCLAW_MODEL`, `NEMOCLAW_VLLM_MODEL`, `NEMOCLAW_LLAMACPP_RECIPE`, `NEMOCLAW_MANAGED_CLUSTER_PEERS`, or `NEMOCLAW_VLLM_EXTRA_ARGS_JSON` overrides. If `NEMOCLAW_SERVING_PRESET` is already set, it must select the same stable profile ID; a different ID conflicts with `--profile`. Run `$$nemoclaw profiles list` to inspect an incompatibility reason before onboarding.
+
+The flag selects managed vLLM and managed llama.cpp profiles. A managed llama.cpp profile installs the recipe that the profile declares, including an explicit-only profile that the interactive provider menu does not list:
+
+```bash
+$$nemoclaw onboard --profile llama-cpp.dgx-spark-gb10.single.muse-glimmer-30b
+```
 
 If you omit `--profile`, onboarding uses the same provider and model defaults as an installation without this feature. The onboarding review screen identifies the resolved profile, recipe, declared model, served model alias, runtime image, support state, and download estimates before confirmation. When onboarding reuses a running vLLM server, its `/v1/models` response must match the requested profile's served alias or declared model root. Otherwise, onboarding stops before it records a route that the profile does not declare. After creation, human status shows the profile, recipe, and catalog digest; JSON status includes the complete secret-free `servingProfileProvenance` record for diagnostics and automation.
 
@@ -634,7 +640,7 @@ It reuses the latest backups, forces the pinned OpenShell installation, and star
 
 The wizard prompts for a provider first, then collects the provider credential if needed. Supported non-experimental choices include NVIDIA Endpoints, OpenRouter, OpenAI, Anthropic, Google Gemini, and compatible OpenAI or Anthropic endpoints. Credentials are registered with the OpenShell gateway and never persisted to host disk. Refer to [Credential Storage](../security/credential-storage) for details on inspection, rotation, and migration from earlier releases. The legacy `$$nemoclaw setup` command is deprecated; use `$$nemoclaw onboard` instead.
 
-On a qualified DGX Spark, the provider menu lists compatible experimental managed llama.cpp profiles in descending YAML priority order. During interactive onboarding without an explicit provider request, the menu ignores `NEMOCLAW_LLAMACPP_RECIPE` and marks the unique highest-priority compatible profile as `(recommended)`. The recommended profile appears as **Managed llama.cpp: Meta Muse Glimmer 30B on one DGX Spark (recommended)**. The NVIDIA Nemotron profile appears next without the recommendation marker. The selected menu entry determines the exact recipe even when `NEMOCLAW_LLAMACPP_RECIPE` names another recipe. Select the same path non-interactively with the repository-owned recipe:
+On a qualified DGX Spark, the provider menu lists compatible experimental managed llama.cpp profiles with automatic selection in descending YAML priority order. During interactive onboarding without an explicit provider request, the menu ignores `NEMOCLAW_LLAMACPP_RECIPE` and `NEMOCLAW_SERVING_PRESET` and marks the unique highest-priority compatible profile as `(recommended)`. The recommended profile appears as **Managed llama.cpp: NVIDIA Nemotron 3 Nano 30B-A3B on one DGX Spark (recommended)**. The explicit-only Meta Muse Glimmer profile does not appear in the menu; select it with `--profile llama-cpp.dgx-spark-gb10.single.muse-glimmer-30b` or with the recipe variable below. The selected menu entry determines the exact recipe even when `NEMOCLAW_LLAMACPP_RECIPE` names another recipe. Select the same path non-interactively with the repository-owned recipe:
 
 ```bash
 NEMOCLAW_PROVIDER=install-llama-cpp \
