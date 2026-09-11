@@ -5,17 +5,18 @@ import fs from "node:fs";
 import { NAME_MAX_LENGTH, NAME_VALID_PATTERN } from "../../name-validation";
 import { redactFullWithUrls } from "../../security/redact";
 import {
-  OPENSHELL_OPERATION_TIMEOUT_MS,
-  parseCliOpenShellProviderNames,
-  runOpenshellProviderCommand,
-} from "./provider-command";
+  assertNoOpenShellGatewayEndpointOverride,
+  type OpenShellGatewayEndpointEnvironment,
+  OpenShellGatewayEndpointOverrideError,
+  scopeGatewayOpenshellArgs,
+} from "./gateway-scope";
 import {
   type AttachOpenShellProviderRequest,
   type ConfigureOpenShellProviderRefreshRequest,
   type DeleteOpenShellProviderRequest,
   type DetachOpenShellProviderRequest,
-  type GetOpenShellProviderRequest,
   type GetOpenShellProviderRefreshStatusRequest,
+  type GetOpenShellProviderRequest,
   type ImportOpenShellProviderProfileRequest,
   type InspectOpenShellProviderProfileRequest,
   type ListOpenShellProviderAttachmentsRequest,
@@ -28,26 +29,26 @@ import {
   type UpdateOpenShellProviderRequest,
 } from "./provider-adapter";
 import {
+  OPENSHELL_OPERATION_TIMEOUT_MS,
+  parseCliOpenShellProviderNames,
+  runOpenshellProviderCommand,
+} from "./provider-command";
+import {
   reportsExactProviderNotFound,
   reportsExactSandboxNotFound,
   reportsProviderNotAttached,
 } from "./provider-diagnostic-cli";
 import {
   isValidCliOpenShellProviderIdentifier,
+  parseCliOpenShellProviderCredentialExpirations,
   parseCliOpenShellProviderMetadata,
 } from "./provider-metadata-cli";
-import type { OpenShellGatewayTarget } from "./sandbox-observer";
-import {
-  assertNoOpenShellGatewayEndpointOverride,
-  OpenShellGatewayEndpointOverrideError,
-  scopeGatewayOpenshellArgs,
-  type OpenShellGatewayEndpointEnvironment,
-} from "./gateway-scope";
 import {
   exportedProviderProfileMatchesContract,
   isMissingProviderProfile,
   parseCheckedInProviderProfileContract,
 } from "./provider-profile";
+import type { OpenShellGatewayTarget } from "./sandbox-observer";
 
 export type CapturedProviderCommandResult = Readonly<{
   status: number | null;
@@ -102,6 +103,8 @@ const TERMINAL_CONTROL_RE = /[\u0000-\u0008\u000B-\u001F\u007F-\u009F]/gu;
 const ATTACHED_TO_SANDBOX_RE =
   /attached(?:\s|│)+to(?:\s|│)+sandbox\(\s*es?\s*\)?\s*:\s*([^"\n]+?)(?=\.\s+[a-z]|["\n]|$)/iu;
 const PROVIDER_GET_DIAGNOSTIC_LIMIT = 64 * 1024;
+const PROVIDER_INVENTORY_DIAGNOSTIC_LIMIT = 4 * 1024 * 1024;
+const PROVIDER_INVENTORY_LIMIT = 1_000;
 const REFRESH_STATUS_PATTERN = /^[a-z][a-z0-9_-]{0,31}$/u;
 const NO_PROVIDER_ATTACHMENTS_RE = /^No providers attached to sandbox\b/mu;
 const PROVIDER_ATTACHMENT_HEADER_RE = /^NAME\s+TYPE\s+CREDENTIAL_KEYS\s+CONFIG_KEYS$/u;
@@ -588,9 +591,40 @@ export function createCliOpenShellProviderAdapter(
       );
     }
     const metadata = parseCliOpenShellProviderMetadata(rawCommandOutput(result));
-    return metadata?.name === request.providerName
-      ? success(metadata)
-      : failure({ kind: "schema", message: "OpenShell returned invalid provider metadata." });
+    if (metadata?.name !== request.providerName) {
+      return failure({ kind: "schema", message: "OpenShell returned invalid provider metadata." });
+    }
+    if (!request.includeCredentialExpirations) return success(metadata);
+
+    const inventory = invoke(
+      [
+        "provider",
+        "list",
+        "--limit",
+        String(PROVIDER_INVENTORY_LIMIT),
+        "--offset",
+        "0",
+        "--output",
+        "json",
+      ],
+      request,
+      undefined,
+      2,
+      true,
+      PROVIDER_INVENTORY_DIAGNOSTIC_LIMIT,
+    );
+    const inventoryError = commandError(inventory);
+    if (inventoryError) return failure(inventoryError);
+    const credentialExpiresAtMs = parseCliOpenShellProviderCredentialExpirations(
+      commandStdout(inventory),
+      request.providerName,
+    );
+    return credentialExpiresAtMs
+      ? success({ ...metadata, credentialExpiresAtMs })
+      : failure({
+          kind: "schema",
+          message: "OpenShell returned invalid provider credential expiration metadata.",
+        });
   };
 
   const updateProvider: OpenShellProviderAdapter["updateProvider"] = async (

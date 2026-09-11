@@ -8,6 +8,8 @@ const MAX_PROVIDER_NAME_LENGTH = 128;
 const MAX_PROVIDER_TYPE_LENGTH = 64;
 const MAX_PROVIDER_KEYS = 32;
 const MAX_PROVIDER_KEY_LENGTH = 128;
+const MAX_PROVIDER_INVENTORY_ENTRIES = 1_000;
+const MAX_PROVIDER_INVENTORY_OUTPUT_BYTES = 4 * 1024 * 1024;
 const SAFE_PROVIDER_IDENTIFIER = /^[A-Za-z0-9._:-]+$/;
 const SAFE_PROVIDER_KEY = /^[A-Z_][A-Z0-9_]*$/;
 const ANSI_OSC_PATTERN = /\x1B\][\s\S]*?(?:\x07|\x1B\\|$)/gu;
@@ -124,4 +126,59 @@ export function parseCliOpenShellProviderMetadata(
     configKeys,
     revision: { id, resourceVersion },
   };
+}
+
+/** Parse one provider's non-secret expiry map from `openshell provider list --output json`. */
+export function parseCliOpenShellProviderCredentialExpirations(
+  output: string,
+  providerName: string,
+): Readonly<Record<string, number>> | null {
+  if (
+    !isValidCliOpenShellProviderIdentifier(providerName) ||
+    Buffer.byteLength(output, "utf8") > MAX_PROVIDER_INVENTORY_OUTPUT_BYTES
+  ) {
+    return null;
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(output);
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(parsed) || parsed.length > MAX_PROVIDER_INVENTORY_ENTRIES) return null;
+
+  const matchingProviders: Record<string, unknown>[] = [];
+  for (const candidate of parsed) {
+    if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) return null;
+    const record = candidate as Record<string, unknown>;
+    if (typeof record.name !== "string" || !isValidCliOpenShellProviderIdentifier(record.name)) {
+      return null;
+    }
+    if (record.name === providerName) matchingProviders.push(record);
+  }
+  if (matchingProviders.length !== 1) return null;
+
+  const rawExpirations = matchingProviders[0].credential_expires_at_ms;
+  if (rawExpirations === undefined) return Object.freeze({});
+  if (!rawExpirations || typeof rawExpirations !== "object" || Array.isArray(rawExpirations)) {
+    return null;
+  }
+
+  const entries = Object.entries(rawExpirations);
+  if (entries.length > MAX_PROVIDER_KEYS) return null;
+  const expirations: Record<string, number> = {};
+  for (const [credentialKey, expiresAtMs] of entries) {
+    if (
+      credentialKey.length > MAX_PROVIDER_KEY_LENGTH ||
+      !SAFE_PROVIDER_KEY.test(credentialKey) ||
+      typeof expiresAtMs !== "number" ||
+      !Number.isSafeInteger(expiresAtMs) ||
+      expiresAtMs < 0
+    ) {
+      return null;
+    }
+    expirations[credentialKey] = expiresAtMs;
+  }
+  return Object.freeze(expirations);
 }
