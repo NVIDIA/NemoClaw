@@ -14,8 +14,8 @@ import (
 )
 
 func (e *Engine) export(ctx context.Context, r Record) error {
-	if !r.Succeeded || r.Pending {
-		return errors.New("export requires a successfully applied deployment; reconcile any unfinished apply first")
+	if r.Version == 0 || r.Pending {
+		return errors.New("export requires established resource bindings; reconcile any unfinished apply first")
 	}
 	ids, err := e.stateIDs()
 	if err != nil {
@@ -71,7 +71,7 @@ func (e *Engine) export(ctx context.Context, r Record) error {
 		return err
 	}
 	defer c.Close()
-	if err = oshell.Ready(ctx, c, d.Workspace(), d.Spec.Sandboxes[0].Name, d.Spec.Sandboxes[0].Agents[0].Name); err != nil {
+	if err = oshell.Configuration(ctx, c, d.Workspace(), d.Spec.Sandboxes[0].Name, d.Spec.Sandboxes[0].Agents[0].Name); err != nil {
 		return err
 	}
 	b, err := d.YAML()

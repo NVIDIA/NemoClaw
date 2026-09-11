@@ -61,10 +61,22 @@ func policyEqual(a, b *v1.SandboxPolicy) bool {
 	return *a.Process == *b.Process && *a.Landlock == *b.Landlock && a.Filesystem.IncludeWorkdir == b.Filesystem.IncludeWorkdir && samePaths(a.Filesystem.ReadOnly, b.Filesystem.ReadOnly) && samePaths(a.Filesystem.ReadWrite, b.Filesystem.ReadWrite) && len(a.NetworkPolicies) == 0 && len(a.NetworkMiddlewares) == 0
 }
 
+const configurationProbe = `const fs=require('node:fs'),u=require('node:util');try{const actual=JSON.parse(fs.readFileSync('/sandbox/.openclaw/openclaw.json','utf8'));const expected=JSON.parse(process.env.NEMOCLAW_EXPECTED_CONFIG);for(const k of Object.keys(expected))if(!u.isDeepStrictEqual(actual[k],expected[k]))process.exit(2);}catch{process.exit(2);}`
+
+func Configuration(ctx context.Context, c Client, workspace, name, agent string) error {
+	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	r, err := c.Exec().Run(ctx, workspace, name, []string{"node", "-e", configurationProbe + "process.exit(0)"}, v1.ExecOptions{Env: map[string]string{"NEMOCLAW_EXPECTED_CONFIG": Environment(agent)["NEMOCLAW_AGENT_CONFIG"]}})
+	if err != nil || r.ExitCode != 0 {
+		return errors.New("agent configuration cannot be independently established")
+	}
+	return nil
+}
+
 func Ready(ctx context.Context, c Client, workspace, name, agent string) error {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
-	probe := []string{"node", "-e", `const fs=require('node:fs'),u=require('node:util');try{const actual=JSON.parse(fs.readFileSync('/sandbox/.openclaw/openclaw.json','utf8'));const expected=JSON.parse(process.env.NEMOCLAW_EXPECTED_CONFIG);for(const k of Object.keys(expected))if(!u.isDeepStrictEqual(actual[k],expected[k]))process.exit(2);}catch{process.exit(2);}fetch('http://127.0.0.1:18789/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))`}
+	probe := []string{"node", "-e", configurationProbe + `fetch('http://127.0.0.1:18789/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))`}
 	ticks := time.Tick(time.Second)
 	for {
 		result, err := c.Exec().Run(ctx, workspace, name, probe, v1.ExecOptions{Env: map[string]string{"NEMOCLAW_EXPECTED_CONFIG": Environment(agent)["NEMOCLAW_AGENT_CONFIG"]}})

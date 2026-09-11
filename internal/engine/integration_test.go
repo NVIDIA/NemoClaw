@@ -309,21 +309,21 @@ func TestReplacementAndMissingCredentialsCauseNoEffects(t *testing.T) {
 	}
 }
 
-func TestUnreachableInferenceRetainsAnUnfinishedDeployment(t *testing.T) {
+func TestUnreachableInferenceRetainsConfigurationAndAllowsExport(t *testing.T) {
 	e, f, d, _ := setup(t)
 	f.inferenceExit = 1
 	if invoke(t, e, "apply", d) == nil {
 		t.Fatal("unreachable inference reported success")
 	}
 	r, err := loadRecord(e.StateDir)
-	if err != nil || !r.Pending || r.Succeeded {
-		t.Fatal("inference failure lost unfinished intent")
+	if err != nil || r.Pending || r.Succeeded {
+		t.Fatal("inference failure confused completed configuration with a pending write")
 	}
 	if f.count() != 4 {
 		t.Fatal("expected four retained resources")
 	}
-	if invoke(t, e, "export", d) == nil {
-		t.Fatal("exported deployment with failed inference")
+	if err = invoke(t, e, "export", d); err != nil {
+		t.Fatalf("known configuration could not be exported while inference was unhealthy: %v", err)
 	}
 	f.mu.Lock()
 	f.inferenceExit = 0

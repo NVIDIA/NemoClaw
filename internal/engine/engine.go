@@ -193,6 +193,11 @@ func (e *Engine) Run(ctx context.Context, operation string, input io.Reader) err
 	if _, err = e.tofu(ctx, "apply", "-input=false", "-no-color", "-parallelism=1", "apply.plan"); err != nil {
 		return fmt.Errorf("apply incomplete; keep the state directory and reapply identical YAML: %w", err)
 	}
+	// A readiness failure does not make completed writes ambiguous.
+	record.Pending = false
+	if err = saveJSON(filepath.Join(e.StateDir, "intent.json"), record); err != nil {
+		return err
+	}
 	if err = oshell.Ready(ctx, c, d.Workspace(), d.Spec.Sandboxes[0].Name, d.Spec.Sandboxes[0].Agents[0].Name); err != nil {
 		return err
 	}
