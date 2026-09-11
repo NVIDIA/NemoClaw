@@ -21,7 +21,7 @@ export type EnsureDashboardForward = (
   chatUiUrl?: string,
   options?: {
     allowPortReallocation?: boolean;
-    reuseExistingOpenClawForward?: boolean;
+    reuseExistingForward?: boolean;
     revalidateSandboxIdentity?: (operation: string) => void;
   },
 ) => number;
@@ -40,7 +40,7 @@ export async function ensureAgentDashboardForward(options: {
   /** Host port allocated to this sandbox's OpenAI-compatible API, when it has one. */
   hermesApiPort?: number | null;
   beforeForwardPort?: (port: number) => Promise<void> | void;
-  reuseExistingOpenClawForward?: boolean;
+  reuseExistingForward?: boolean;
   revalidateSandboxIdentity?: (operation: string) => void;
   warn?: (message: string) => void;
 }): Promise<number> {
@@ -52,7 +52,7 @@ export async function ensureAgentDashboardForward(options: {
     controlUiPort,
     hermesApiPort,
     beforeForwardPort,
-    reuseExistingOpenClawForward = false,
+    reuseExistingForward = false,
     revalidateSandboxIdentity,
     warn = (message: string) => console.warn(message),
   } = options;
@@ -107,7 +107,7 @@ export async function ensureAgentDashboardForward(options: {
     await beforeForwardPort?.(agentDashboardPort);
     const actualAgentDashboardPort = ensureDashboardForward(sandboxName, requestedDashboardUrl, {
       allowPortReallocation: false,
-      ...(reuseExistingOpenClawForward ? { reuseExistingOpenClawForward: true } : {}),
+      ...(reuseExistingForward ? { reuseExistingForward: true } : {}),
       ...(revalidateIdentity ? { revalidateSandboxIdentity: revalidateIdentity } : {}),
     });
     if (!usesFixedApiPort) {
@@ -125,10 +125,11 @@ export async function ensureAgentDashboardForward(options: {
             : `http://127.0.0.1:${port}`;
         ensureDashboardForward(sandboxName, forwardUrl, {
           allowPortReallocation: false,
+          ...(reuseExistingForward ? { reuseExistingForward: true } : {}),
           ...(revalidateIdentity ? { revalidateSandboxIdentity: revalidateIdentity } : {}),
         });
       } catch (err) {
-        if (err === identityFailure) throw err;
+        if (reuseExistingForward || err === identityFailure) throw err;
         warn(
           `  ! Could not start optional agent port forward ${port}: ${
             err instanceof Error ? err.message : String(err)
@@ -140,7 +141,7 @@ export async function ensureAgentDashboardForward(options: {
     revalidateIdentity?.(`report successful dashboard forwarding for sandbox '${sandboxName}'`);
     return actualAgentDashboardPort;
   } catch (error) {
-    if (error === identityFailure) {
+    if (reuseExistingForward || error === identityFailure) {
       restoreChatUiUrl();
     }
     throw error;

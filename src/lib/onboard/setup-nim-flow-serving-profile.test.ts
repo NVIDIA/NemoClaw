@@ -53,7 +53,10 @@ async function selectAgainstRunningVllm(
       detectInferenceProviderHostState: () => runningVllmHostState(),
       discoverManagedLlamaCppSelections: () => ({
         choices: [],
-        resolution: { kind: "rejected", reason: "No llama.cpp profile in this vLLM fixture" },
+        resolution: {
+          kind: "rejected",
+          reason: "the vLLM profile test does not select llama.cpp",
+        },
       }),
       handleVllmSelection,
       resolveRequestedServingProfileModel,

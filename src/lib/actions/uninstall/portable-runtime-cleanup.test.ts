@@ -10,7 +10,7 @@ import { afterAll, afterEach, assert, beforeAll, describe, expect, it, vi } from
 
 import type { CheckpointPortableRuntimeAuthority } from "../../state/onboard-checkpoint-types";
 import { createSession } from "../../state/onboard-session";
-import { withMcpLifecycleLockSync } from "../../state/mcp-lifecycle-lock-acquisition";
+import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock-acquisition";
 import {
   hasPortableRetirementRecord,
   inspectPortableRetirementRecovery,
@@ -25,7 +25,7 @@ import {
 import { listPortableDemoSandboxLifecycleReceipts } from "../../onboard/experimental/portable-demo-lifecycle";
 import { portableDemoReceiptPath } from "../../onboard/experimental/portable-runtime-receipt-readiness";
 import {
-  withProcessBoundRegistryLockAt,
+  withProcessBoundRegistryLockAtAsync,
   withRegistryLockAt,
   type RegistryLockDeps,
 } from "../../state/registry/lock";
@@ -35,6 +35,7 @@ import {
   type PortableRuntimeCleanupDeps,
   type PortableRuntimeCleanupInput,
 } from "./portable-runtime-cleanup";
+import { RETIREMENT_COMPETITOR_SCRIPT } from "./portable-runtime-cleanup.test-support";
 
 const UID = process.getuid?.() ?? 1001;
 const ALPHA_ID = "a".repeat(64);
@@ -50,41 +51,6 @@ interface ContainerRecord {
 }
 
 const temporaryDirectories: string[] = [];
-
-const RETIREMENT_COMPETITOR_SCRIPT = String.raw`
-  import fs from "node:fs";
-  const [lifecycleUrl, registryUrl, stateDir, registryFile, receiptFile, marker, sandboxName, control] = process.argv.slice(1);
-  const lifecycle = (await import(lifecycleUrl)).default;
-  const registry = (await import(registryUrl)).default;
-  const attempt = (owner) => {
-  const mutate = () => {
-    fs.writeFileSync(marker, "entered");
-    fs.unlinkSync(receiptFile);
-  };
-  try {
-    if (owner === "registry-only") {
-      registry.withRegistryLockAt(registryFile, mutate, { maxRetries: 2, wait: () => {} });
-    } else {
-      lifecycle.withMcpLifecycleLockSync(owner, () => registry.withRegistryLockAt(
-        registryFile,
-        mutate,
-        { maxRetries: 2, wait: () => {} },
-      ), { stateDir, pollIntervalMs: 1, timeoutMs: 10 });
-    }
-    return 0;
-  } catch {
-    return 2;
-  }
-  };
-  if (!control) process.exit(attempt(sandboxName));
-  fs.writeFileSync(control + ".ready", "ready");
-  while (!fs.existsSync(control + ".trigger")) await new Promise(resolve => setTimeout(resolve, 1));
-  const resultPayload = JSON.stringify([attempt(sandboxName), attempt("registry-only")]);
-  const resultTmp = control + ".result.tmp";
-  fs.writeFileSync(resultTmp, resultPayload);
-  fs.renameSync(resultTmp, control + ".result");
-  process.exit(0);
-`;
 
 function fixture() {
   const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-portable-uninstall-"));
@@ -328,8 +294,11 @@ function fixture() {
   };
 }
 
-function completeCleanup(input: PortableRuntimeCleanupInput, deps: PortableRuntimeCleanupDeps) {
-  return runPortableRuntimeCleanupTransaction(input, () => true, deps);
+async function completeCleanup(
+  input: PortableRuntimeCleanupInput,
+  deps: PortableRuntimeCleanupDeps,
+) {
+  return await runPortableRuntimeCleanupTransaction(input, () => true, deps);
 }
 
 type PodmanObservation = ReturnType<NonNullable<PortableRuntimeCleanupDeps["podman"]>>;
@@ -363,7 +332,7 @@ function authorityDeps(test: ReturnType<typeof fixture>) {
     listReceipts: listPortableDemoSandboxLifecycleReceipts,
     loadRegistry: () => JSON.parse(fs.readFileSync(test.registryFile, "utf8")),
     withLifecycleLock: async <T>(sandboxName: string, operation: () => Promise<T> | T) =>
-      await withMcpLifecycleLockSync(sandboxName, operation, {
+      await withMcpLifecycleLock(sandboxName, operation, {
         stateDir: path.join(test.stateDir, "state"),
       }),
   };
@@ -753,7 +722,7 @@ describe("portable runtime uninstall cleanup", () => {
       const originalLoad = scope.authority.deps.loadRegistry;
       const loadRegistry = () => {
         fs.writeFileSync(`${control}.trigger`, "trigger");
-        const deadline = Date.now() + 1_000;
+        const deadline = Date.now() + 5_000;
         while (!fs.existsSync(`${control}.result`) && Date.now() < deadline)
           Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1);
         expect(JSON.parse(fs.readFileSync(`${control}.result`, "utf8"))).toEqual([2, 2]);
@@ -932,11 +901,11 @@ describe("portable runtime uninstall cleanup", () => {
     },
   );
 
-  it("removes only exact receipt-owned containers and exact current selector projections (#9189)", () => {
+  it("removes only exact receipt-owned containers and exact current selector projections (#9189)", async () => {
     const test = fixture();
 
     expect(hasPortableRuntimeCleanup(test.stateDir)).toBe(true);
-    const cleanup = completeCleanup(test.input, test.deps);
+    const cleanup = await completeCleanup(test.input, test.deps);
 
     expect(cleanup).toEqual({
       registryRemoved: true,
@@ -963,13 +932,13 @@ describe("portable runtime uninstall cleanup", () => {
     expect(fs.existsSync(`${test.registryFile}.lock`)).toBe(false);
   });
 
-  it("retries one failed read-only sandbox discovery under reasserted authority (#9499)", () => {
+  it("retries one failed read-only sandbox discovery under reasserted authority (#9499)", async () => {
     const test = fixture();
     const observations = interceptSandboxDiscoveries(test, [
       { status: 125, stdout: "", stderr: "transient local Podman observation failure" },
     ]);
 
-    expect(completeCleanup(test.input, test.deps)).toEqual({
+    expect(await completeCleanup(test.input, test.deps)).toEqual({
       registryRemoved: true,
       sandboxContainersRemoved: 1,
       selectorsRemoved: ["CONTAINERS_CONF", "NETAVARK_FW"],
@@ -981,11 +950,11 @@ describe("portable runtime uninstall cleanup", () => {
   it.each([
     ["non-125 status", { status: 126, stdout: "", stderr: "permission denied" }],
     ["spawn error", { status: null, stdout: "", stderr: "", error: new Error("spawn EACCES") }],
-  ] as const)("does not retry a %s sandbox discovery failure (#9499)", (_label, failure) => {
+  ] as const)("does not retry a %s sandbox discovery failure (#9499)", async (_label, failure) => {
     const test = fixture();
     const observations = interceptSandboxDiscoveries(test, [failure]);
 
-    expect(() => completeCleanup(test.input, test.deps)).toThrow(
+    await expect(async () => await completeCleanup(test.input, test.deps)).rejects.toThrow(
       "Finding portable sandbox 'alpha' failed",
     );
     expect(observations()).toBe(1);
@@ -994,7 +963,7 @@ describe("portable runtime uninstall cleanup", () => {
     expect(test.podmanCalls.some((args) => args[0] === "rm")).toBe(false);
   });
 
-  it("stops a status-125 retry when socket authority changes before re-observation (#9499)", () => {
+  it("stops a status-125 retry when socket authority changes before re-observation (#9499)", async () => {
     const test = fixture();
     let authorityChanged = false;
     const authorityError = "Podman socket authority changed after it was qualified";
@@ -1012,7 +981,9 @@ describe("portable runtime uninstall cleanup", () => {
       },
     ]);
 
-    expect(() => completeCleanup(test.input, test.deps)).toThrow(authorityError);
+    await expect(async () => await completeCleanup(test.input, test.deps)).rejects.toThrow(
+      authorityError,
+    );
     expect(observations()).toBe(1);
     expect(assertSocketAuthority).toHaveBeenCalled();
     expect(test.containers.has(ALPHA_ID)).toBe(true);
@@ -1020,7 +991,7 @@ describe("portable runtime uninstall cleanup", () => {
     expect(test.podmanCalls.some((args) => args[0] === "rm")).toBe(false);
   });
 
-  it("stops without mutation after two failed read-only sandbox discoveries (#9499)", () => {
+  it("stops without mutation after two failed read-only sandbox discoveries (#9499)", async () => {
     const test = fixture();
     const failure = {
       status: 125,
@@ -1029,7 +1000,7 @@ describe("portable runtime uninstall cleanup", () => {
     };
     const observations = interceptSandboxDiscoveries(test, [failure, failure]);
 
-    expect(() => completeCleanup(test.input, test.deps)).toThrow(
+    await expect(async () => await completeCleanup(test.input, test.deps)).rejects.toThrow(
       "Finding portable sandbox 'alpha' failed",
     );
     expect(observations()).toBe(2);
@@ -1038,12 +1009,12 @@ describe("portable runtime uninstall cleanup", () => {
     expect(test.podmanCalls.some((args) => args[0] === "rm")).toBe(false);
   });
 
-  it("preserves changed current-user manager selector values (#9189)", () => {
+  it("preserves changed current-user manager selector values (#9189)", async () => {
     const test = fixture();
     test.selectors.set("CONTAINERS_CONF", "/home/test/user-containers.conf");
     test.selectors.set("NETAVARK_FW", "nftables");
 
-    expect(completeCleanup(test.input, test.deps)).toEqual({
+    expect(await completeCleanup(test.input, test.deps)).toEqual({
       registryRemoved: true,
       sandboxContainersRemoved: 1,
       selectorsRemoved: [],
@@ -1052,7 +1023,7 @@ describe("portable runtime uninstall cleanup", () => {
     expect(test.selectors.get("NETAVARK_FW")).toBe("nftables");
   });
 
-  it("prevalidates every receipt before deleting the first container (#9189)", () => {
+  it("prevalidates every receipt before deleting the first container (#9189)", async () => {
     const test = fixture();
     test.writeReceipt("beta", BETA_ID, "sandbox-beta");
     test.addSandbox("beta", "sandbox-beta", BETA_ID, { "openshell.managed": "false" });
@@ -1069,7 +1040,7 @@ describe("portable runtime uninstall cleanup", () => {
     };
     fs.writeFileSync(test.registryFile, `${JSON.stringify(registry)}\n`);
 
-    expect(() => completeCleanup(test.input, test.deps)).toThrow(
+    await expect(async () => await completeCleanup(test.input, test.deps)).rejects.toThrow(
       /OpenShell identity does not match sandbox 'beta'/,
     );
     expect(test.containers.has(ALPHA_ID)).toBe(true);
@@ -1127,11 +1098,13 @@ describe("portable runtime uninstall cleanup", () => {
       },
       /conflicting gateway identity/,
     ],
-  ])("rejects a %s registry row before any mutation (#9189)", (_case, prepare, expected) => {
+  ])("rejects a %s registry row before any mutation (#9189)", async (_case, prepare, expected) => {
     const test = fixture();
     prepare(test);
 
-    expect(() => completeCleanup(test.input, test.deps)).toThrow(expected);
+    await expect(async () => await completeCleanup(test.input, test.deps)).rejects.toThrow(
+      expected,
+    );
     expect(test.containers.has(ALPHA_ID)).toBe(true);
     expect(test.containers.has(REGISTRY_ID)).toBe(true);
     expect(test.selectors.has("CONTAINERS_CONF")).toBe(true);
@@ -1139,14 +1112,16 @@ describe("portable runtime uninstall cleanup", () => {
     expect(test.podmanCalls.some((args) => args[0] === "rm")).toBe(false);
   });
 
-  it("preserves shared portable evidence when exact OpenShell retirement fails (#9189)", () => {
+  it("preserves shared portable evidence when exact OpenShell retirement fails (#9189)", async () => {
     const test = fixture();
     const configMarker = path.join(test.homeDir, ".config", "nemoclaw", "keep-for-retry");
     fs.mkdirSync(path.dirname(configMarker), { recursive: true });
     fs.writeFileSync(configMarker, "retry\n");
     const retireOpenShell = vi.fn(() => false);
 
-    expect(runPortableRuntimeCleanupTransaction(test.input, retireOpenShell, test.deps)).toBeNull();
+    expect(
+      await runPortableRuntimeCleanupTransaction(test.input, retireOpenShell, test.deps),
+    ).toBeNull();
     expect(retireOpenShell).toHaveBeenCalledWith(1, ["alpha"], "nemoclaw");
     expect(test.containers.has(ALPHA_ID)).toBe(false);
     expect(test.containers.has(REGISTRY_ID)).toBe(true);
@@ -1157,7 +1132,7 @@ describe("portable runtime uninstall cleanup", () => {
     expect(fs.existsSync(test.stateDir)).toBe(true);
   });
 
-  it("holds sorted lifecycle locks before the registry lock and releases in reverse (#9189)", () => {
+  it("holds sorted lifecycle locks before the registry lock and releases in reverse (#9189)", async () => {
     const test = fixture();
     const order: string[] = [];
     test.writeReceipt("beta", BETA_ID, "sandbox-beta");
@@ -1176,20 +1151,20 @@ describe("portable runtime uninstall cleanup", () => {
     fs.writeFileSync(test.registryFile, `${JSON.stringify(registry)}\n`);
 
     expect(
-      runPortableRuntimeCleanupTransaction(test.input, () => true, {
+      await runPortableRuntimeCleanupTransaction(test.input, () => true, {
         ...test.deps,
-        withLifecycleLock: (sandboxName, operation) => {
+        withLifecycleLock: async (sandboxName, operation) => {
           order.push(`acquire:${sandboxName}`);
           try {
-            return operation();
+            return await operation();
           } finally {
             order.push(`release:${sandboxName}`);
           }
         },
-        withRegistryLock: (_registryFile, operation) => {
+        withRegistryLock: async (_registryFile, operation) => {
           order.push("acquire:registry");
           try {
-            return operation();
+            return await operation();
           } finally {
             order.push("release:registry");
           }
@@ -1206,7 +1181,7 @@ describe("portable runtime uninstall cleanup", () => {
     ]);
   });
 
-  it("runs final evidence retirement while both production lock primitives are held (#9189)", () => {
+  it("runs final evidence retirement while both production lock primitives are held (#9189)", async () => {
     const test = fixture();
     const lifecycleStateDir = path.join(test.stateDir, "state");
     const lockDeps: RegistryLockDeps = {
@@ -1222,16 +1197,16 @@ describe("portable runtime uninstall cleanup", () => {
     });
 
     expect(
-      runPortableRuntimeCleanupTransaction(test.input, () => true, {
+      await runPortableRuntimeCleanupTransaction(test.input, () => true, {
         ...test.deps,
         publishRetirement: retireEvidence,
         withLifecycleLock: (sandboxName, operation, stateDir) =>
-          withMcpLifecycleLockSync(
+          withMcpLifecycleLock(
             sandboxName,
-            () => {
+            async () => {
               lifecycleHeld = true;
               try {
-                return operation();
+                return await operation();
               } finally {
                 lifecycleHeld = false;
               }
@@ -1239,12 +1214,12 @@ describe("portable runtime uninstall cleanup", () => {
             { stateDir },
           ),
         withRegistryLock: (registryFile, operation) =>
-          withProcessBoundRegistryLockAt(
+          withProcessBoundRegistryLockAtAsync(
             registryFile,
-            () => {
+            async () => {
               registryHeld = true;
               try {
-                return operation();
+                return await operation();
               } finally {
                 registryHeld = false;
               }
@@ -1259,7 +1234,7 @@ describe("portable runtime uninstall cleanup", () => {
     expect(fs.existsSync(path.join(lifecycleStateDir, "mcp-lifecycle-locks"))).toBe(true);
   });
 
-  it("preserves receipts and selectors when exact container removal cannot be verified (#9189)", () => {
+  it("preserves receipts and selectors when exact container removal cannot be verified (#9189)", async () => {
     const test = fixture();
     test.deps.podman = vi.fn((rawArgs: readonly string[], env?: NodeJS.ProcessEnv) => {
       const args = rawArgs[0] === "--url" ? rawArgs.slice(2) : rawArgs;
@@ -1268,12 +1243,14 @@ describe("portable runtime uninstall cleanup", () => {
         : test.podman(rawArgs, env);
     });
 
-    expect(() => completeCleanup(test.input, test.deps)).toThrow(/still has/);
+    await expect(async () => await completeCleanup(test.input, test.deps)).rejects.toThrow(
+      /still has/,
+    );
     expect(test.systemctlCalls.some((args) => args[1] === "unset-environment")).toBe(false);
     expect(fs.existsSync(portableDemoReceiptPath("alpha", test.stateDir))).toBe(true);
   });
 
-  it("preserves retry evidence when managed registry removal fails (#9189)", () => {
+  it("preserves retry evidence when managed registry removal fails (#9189)", async () => {
     const test = fixture();
     const failingDeps: PortableRuntimeCleanupDeps = {
       ...test.deps,
@@ -1285,21 +1262,21 @@ describe("portable runtime uninstall cleanup", () => {
       }),
     };
 
-    expect(() => completeCleanup(test.input, failingDeps)).toThrow(
+    await expect(async () => await completeCleanup(test.input, failingDeps)).rejects.toThrow(
       /Removing the managed portable registry container failed: registry removal denied/,
     );
     expect(test.containers.has(REGISTRY_ID)).toBe(true);
     expect(test.systemctlCalls.some((args) => args[1] === "unset-environment")).toBe(false);
     expect(fs.existsSync(portableDemoReceiptPath("alpha", test.stateDir))).toBe(true);
 
-    expect(completeCleanup(test.input, test.deps)).toEqual({
+    expect(await completeCleanup(test.input, test.deps)).toEqual({
       registryRemoved: true,
       sandboxContainersRemoved: 0,
       selectorsRemoved: ["CONTAINERS_CONF", "NETAVARK_FW"],
     });
   });
 
-  it("retries selector cleanup after the managed registry was already removed (#9189)", () => {
+  it("retries selector cleanup after the managed registry was already removed (#9189)", async () => {
     const test = fixture();
     const systemctl = test.deps.systemctl!;
     const failingDeps: PortableRuntimeCleanupDeps = {
@@ -1311,23 +1288,23 @@ describe("portable runtime uninstall cleanup", () => {
       ),
     };
 
-    expect(() => completeCleanup(test.input, failingDeps)).toThrow(
+    await expect(async () => await completeCleanup(test.input, failingDeps)).rejects.toThrow(
       /Clearing NemoClaw portable selectors.*permission denied/,
     );
     expect(test.containers.has(REGISTRY_ID)).toBe(false);
     expect(fs.existsSync(portableDemoReceiptPath("alpha", test.stateDir))).toBe(true);
 
-    expect(completeCleanup(test.input, test.deps)).toEqual({
+    expect(await completeCleanup(test.input, test.deps)).toEqual({
       registryRemoved: false,
       sandboxContainersRemoved: 0,
       selectorsRemoved: ["CONTAINERS_CONF", "NETAVARK_FW"],
     });
   });
 
-  it("accepts an already-absent exact sandbox on retry but rejects a replaced identity (#9189)", () => {
+  it("accepts an already-absent exact sandbox on retry but rejects a replaced identity (#9189)", async () => {
     const retry = fixture();
     retry.containers.delete(ALPHA_ID);
-    expect(completeCleanup(retry.input, retry.deps)).toEqual({
+    expect(await completeCleanup(retry.input, retry.deps)).toEqual({
       registryRemoved: true,
       sandboxContainersRemoved: 0,
       selectorsRemoved: ["CONTAINERS_CONF", "NETAVARK_FW"],
@@ -1336,22 +1313,24 @@ describe("portable runtime uninstall cleanup", () => {
     const replaced = fixture();
     replaced.containers.delete(ALPHA_ID);
     replaced.addSandbox("alpha", "sandbox-replacement", BETA_ID);
-    expect(() => completeCleanup(replaced.input, replaced.deps)).toThrow(
+    await expect(async () => await completeCleanup(replaced.input, replaced.deps)).rejects.toThrow(
       /replaced or ambiguous container/,
     );
   });
 
-  it("rejects duplicate containers in the sandbox label index before removal (#9189)", () => {
+  it("rejects duplicate containers in the sandbox label index before removal (#9189)", async () => {
     const test = fixture();
     test.addSandbox("alpha", "sandbox-duplicate", BETA_ID);
 
-    expect(() => completeCleanup(test.input, test.deps)).toThrow(/replaced or ambiguous container/);
+    await expect(async () => await completeCleanup(test.input, test.deps)).rejects.toThrow(
+      /replaced or ambiguous container/,
+    );
     expect(test.containers.has(ALPHA_ID)).toBe(true);
     expect(test.containers.has(BETA_ID)).toBe(true);
     expect(test.podmanCalls.some((args) => args[0] === "rm")).toBe(false);
   });
 
-  it("fails closed on malformed receipts and mismatched lifecycle generations (#9189)", () => {
+  it("fails closed on malformed receipts and mismatched lifecycle generations (#9189)", async () => {
     const malformed = fixture();
     fs.writeFileSync(portableDemoReceiptPath("alpha", malformed.stateDir), "{not-json\n");
     expect(() => hasPortableRuntimeCleanup(malformed.stateDir)).toThrow(/malformed/);
@@ -1362,13 +1341,13 @@ describe("portable runtime uninstall cleanup", () => {
     };
     registry.sandboxes.alpha.lifecycleGeneration = "different-generation";
     fs.writeFileSync(mismatch.registryFile, `${JSON.stringify(registry)}\n`);
-    expect(() => completeCleanup(mismatch.input, mismatch.deps)).toThrow(
+    await expect(async () => await completeCleanup(mismatch.input, mismatch.deps)).rejects.toThrow(
       /current registry ownership/,
     );
     expect(mismatch.containers.has(ALPHA_ID)).toBe(true);
   });
 
-  it("blocks a destroy-shaped retirement until exact shared cleanup completes (#9189)", () => {
+  it("blocks a destroy-shaped retirement until exact shared cleanup completes (#9189)", async () => {
     const test = fixture();
     const receiptFile = portableDemoReceiptPath("alpha", test.stateDir);
     const configMarker = path.join(test.homeDir, ".config", "nemoclaw", "keep-for-retry");
@@ -1383,7 +1362,7 @@ describe("portable runtime uninstall cleanup", () => {
     };
     fs.mkdirSync(path.dirname(configMarker), { recursive: true });
     fs.writeFileSync(configMarker, "retry\n");
-    const competingDestroy = () =>
+    const competingDestroy = (lifecycleModuleUrl = lifecycleUrl) =>
       spawnSync(
         process.execPath,
         [
@@ -1393,7 +1372,7 @@ describe("portable runtime uninstall cleanup", () => {
           "--input-type=module",
           "-e",
           RETIREMENT_COMPETITOR_SCRIPT,
-          lifecycleUrl,
+          lifecycleModuleUrl,
           registryUrl,
           lifecycleStateDir,
           test.registryFile,
@@ -1404,7 +1383,7 @@ describe("portable runtime uninstall cleanup", () => {
         { encoding: "utf8" },
       );
 
-    const cleanup = runPortableRuntimeCleanupTransaction(
+    const cleanup = await runPortableRuntimeCleanupTransaction(
       test.input,
       () => {
         expect(competingDestroy().status).toBe(2);
@@ -1416,9 +1395,9 @@ describe("portable runtime uninstall cleanup", () => {
           expect(competingDestroy().status).toBe(2);
         },
         withLifecycleLock: (sandboxName, operation, stateDir) =>
-          withMcpLifecycleLockSync(sandboxName, operation, { stateDir }),
+          withMcpLifecycleLock(sandboxName, operation, { stateDir }),
         withRegistryLock: (registryFile, operation) =>
-          withProcessBoundRegistryLockAt(registryFile, operation, lockDeps),
+          withProcessBoundRegistryLockAtAsync(registryFile, operation, lockDeps),
       },
     );
 
@@ -1439,9 +1418,13 @@ describe("portable runtime uninstall cleanup", () => {
     ).toHaveProperty("alpha");
     expect(fs.existsSync(configMarker)).toBe(true);
     expect(fs.existsSync(`${test.registryFile}.lock`)).toBe(false);
-  });
+    expect(competingDestroy("node:fs").status).toBe(3);
+    expect(competingDestroy()).toMatchObject({ status: 0, stderr: "" });
+    expect(fs.existsSync(competitorMarker)).toBe(true);
+    expect(fs.existsSync(receiptFile)).toBe(false);
+  }, 20_000);
 
-  it("fails before mutation when destroy retires ownership before lock acquisition (#9189)", () => {
+  it("fails before mutation when destroy retires ownership before lock acquisition (#9189)", async () => {
     const test = fixture();
     const receiptFile = portableDemoReceiptPath("alpha", test.stateDir);
     const lifecycleLocks = path.join(test.stateDir, "test-pre-acquisition-locks");
@@ -1450,11 +1433,14 @@ describe("portable runtime uninstall cleanup", () => {
       isProcessAlive: () => true,
       readProcessIdentity: () => PROCESS_IDENTITY,
     };
-    const withLifecycleLock = <Value>(sandboxName: string, operation: () => Value): Value => {
+    const withLifecycleLock = async <Value>(
+      sandboxName: string,
+      operation: () => Value | Promise<Value>,
+    ): Promise<Value> => {
       const lockPath = path.join(lifecycleLocks, sandboxName);
       fs.mkdirSync(lockPath, { recursive: false });
       try {
-        return operation();
+        return await operation();
       } finally {
         fs.rmdirSync(lockPath);
       }
@@ -1473,22 +1459,26 @@ describe("portable runtime uninstall cleanup", () => {
           lockDeps,
         ),
       );
-    const acquireAfterRetirement = <Value>(sandboxName: string, operation: () => Value): Value => {
-      retireOwnership();
-      return withLifecycleLock(sandboxName, operation);
+    const acquireAfterRetirement = async <Value>(
+      sandboxName: string,
+      operation: () => Value | Promise<Value>,
+    ): Promise<Value> => {
+      await retireOwnership();
+      return await withLifecycleLock(sandboxName, operation);
     };
     fs.mkdirSync(lifecycleLocks, { recursive: true });
     fs.mkdirSync(path.dirname(configMarker), { recursive: true });
     fs.writeFileSync(configMarker, "retry\n");
 
-    expect(() =>
-      runPortableRuntimeCleanupTransaction(test.input, () => true, {
-        ...test.deps,
-        withLifecycleLock: acquireAfterRetirement,
-        withRegistryLock: (registryFile, operation) =>
-          withProcessBoundRegistryLockAt(registryFile, operation, lockDeps),
-      }),
-    ).toThrow(/state changed while uninstall acquired its fences/);
+    await expect(
+      async () =>
+        await runPortableRuntimeCleanupTransaction(test.input, () => true, {
+          ...test.deps,
+          withLifecycleLock: acquireAfterRetirement,
+          withRegistryLock: (registryFile, operation) =>
+            withProcessBoundRegistryLockAtAsync(registryFile, operation, lockDeps),
+        }),
+    ).rejects.toThrow(/state changed while uninstall acquired its fences/);
     expect(test.containers.has(ALPHA_ID)).toBe(true);
     expect(test.containers.has(REGISTRY_ID)).toBe(true);
     expect(test.selectors.has("CONTAINERS_CONF")).toBe(true);

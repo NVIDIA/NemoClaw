@@ -11,7 +11,14 @@ import type {
 } from "../adapters/openshell/provider-adapter";
 import type { OpenShellGatewayTarget } from "../adapters/openshell/sandbox-observer";
 import { OPENSHELL_OPERATION_TIMEOUT_MS } from "../adapters/openshell/timeouts";
+import { resolveAgentNameAlias } from "../agent/aliases";
 import { CLI_NAME } from "../cli/branding";
+import {
+  HERMES_TAVILY_PROVIDER_PROFILE_ID,
+  TAVILY_PROVIDER_PROFILE_AGENTS,
+  TAVILY_PROVIDER_PROFILE_ID,
+  webSearchProviderProfileId,
+} from "../messaging/applier/web-search-provider-profile";
 import {
   isBridgeProviderName,
   recoverCredentialGatewayTargetOrExit,
@@ -30,6 +37,7 @@ import {
 export type CredentialsAddInput = {
   provider: string;
   type: string;
+  agent?: string;
   credentials: readonly string[];
   configPairs: readonly string[];
   fromExisting: boolean;
@@ -269,6 +277,35 @@ export async function runCredentialsAddAction(
     ]);
   }
 
+  const normalizedType = type.toLowerCase();
+  const isTavily =
+    normalizedType === TAVILY_PROVIDER_PROFILE_ID ||
+    normalizedType === HERMES_TAVILY_PROVIDER_PROFILE_ID;
+  let agentName: string | null = null;
+  if (input.agent !== undefined) {
+    if (!isTavily) return fail(["  --agent is supported only with Tavily provider profiles."]);
+    agentName = resolveAgentNameAlias(input.agent, TAVILY_PROVIDER_PROFILE_AGENTS);
+    if (!agentName) {
+      return fail([
+        "  Unsupported Tavily agent. Use --agent hermes, --agent openclaw, or --agent dcode.",
+      ]);
+    }
+    if (normalizedType === HERMES_TAVILY_PROVIDER_PROFILE_ID && agentName !== "hermes") {
+      return fail([
+        `  Provider profile '${HERMES_TAVILY_PROVIDER_PROFILE_ID}' is only compatible with Hermes.`,
+        `  Use --type tavily --agent ${agentName} for the selected runtime.`,
+      ]);
+    }
+  }
+  const effectiveType = isTavily ? webSearchProviderProfileId(normalizedType, agentName) : type;
+  const compatibilityWarnings =
+    normalizedType === TAVILY_PROVIDER_PROFILE_ID && !agentName
+      ? [
+          "  Warning: --type tavily does not authorise the Hermes Python runtime.",
+          `  For Hermes, use --type tavily --agent hermes or --type ${HERMES_TAVILY_PROVIDER_PROFILE_ID}.`,
+        ]
+      : [];
+
   if (isBridgeProviderName(provider)) {
     return fail([
       `  '${provider}' is a per-sandbox messaging bridge, not a credential.`,
@@ -366,8 +403,8 @@ export async function runCredentialsAddAction(
     return fail(recoveryFailureLines);
   }
 
-  const profile = bundledProviderProfile(type);
-  const providerType = profile?.profileType ?? type;
+  const profile = bundledProviderProfile(effectiveType);
+  const providerType = profile?.profileType ?? effectiveType;
   const providerProfileFailure = await ensureBundledProviderProfile(
     profile,
     target,
@@ -420,6 +457,7 @@ export async function runCredentialsAddAction(
       if (result.ok) {
         keepReservation = true;
         return ok([
+          ...compatibilityWarnings,
           `  Registered provider '${provider}' with the OpenShell gateway.`,
           `  Verify with '${CLI_NAME} credentials list'.`,
           `  Rebuild each sandbox that should use '${provider}' (\`${CLI_NAME} <sandbox> rebuild\`).`,

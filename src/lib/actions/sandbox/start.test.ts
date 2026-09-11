@@ -768,7 +768,7 @@ describe("startSandbox", () => {
         preferredInferenceApi: "openai-completions",
       },
       {},
-      30_000,
+      95_000,
     );
     expect(probeInferenceInvocation).toHaveBeenCalledOnce();
     expect(probeInferenceInvocation.mock.invocationCallOrder[0]).toBeGreaterThan(
@@ -801,7 +801,7 @@ describe("startSandbox", () => {
         preferredInferenceApi: "openai-completions",
       },
       {},
-      30_000,
+      95_000,
     );
     expect(probeInferenceInvocation).toHaveBeenCalledOnce();
     expect(probeInferenceInvocation.mock.invocationCallOrder[0]).toBeGreaterThan(
