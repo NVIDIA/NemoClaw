@@ -267,38 +267,6 @@ It exports Hermes API-key authentication only when the retained authentication p
 The exported agent binds its API-key authentication to that provider reference.
 OAuth authentication and other unsupported profiles fail with a diagnostic instead of producing an incomplete document.
 
-<AgentOnly variant="hermes">
-
-### `nemoclaw-acp`
-
-Use `nemoclaw-acp` to connect an external Agent Client Protocol (ACP) client to a compatible managed Hermes sandbox.
-The command starts an ACP session and writes protocol traffic only to standard output.
-It writes lifecycle diagnostics to standard error.
-It requires the supported OpenShell version and the system SSH client on Linux or macOS.
-
-Specify the registered sandbox name.
-If the name is registered on more than one gateway, specify its NemoClaw gateway name.
-
-```bash
-nemoclaw-acp --sandbox <sandbox-name> [--gateway <nemoclaw-gateway-name>] [--timeout <seconds>]
-```
-
-The command accepts a timeout from `1` through `86,400` seconds.
-When the timeout expires, it ends the ACP session.
-
-Before it starts the session, `nemoclaw-acp` recovers the selected gateway, verifies the live sandbox identity, and requires the sandbox to be ready.
-It accepts only a current managed Hermes sandbox with its recorded immutable lifecycle identity.
-It rejects custom-image, stale, missing, ambiguous, stopped, or incompatible targets before it opens the session.
-
-```bash
-nemoclaw-acp --sandbox my-hermes-sandbox
-```
-
-Use `--help` to print command usage.
-Use `--version` to print the installed NemoClaw version.
-
-</AgentOnly>
-
 ### `$$nemoclaw resources`
 
 Display host hardware inventory and configured sandbox resource profiles. Use `--json` for machine-readable CPU, memory, GPU, Kubernetes allocatable-capacity, and profile data.
