@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from "node:crypto";
 import os from "node:os";
 import { describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
@@ -56,6 +57,7 @@ import type { ObservedManagedVllmRuntime } from "../../domain/config/export-evid
 import { getLiveGatewayInference } from "../../inference/live";
 import { resolveGatewayStateDirForPort } from "../../onboard/gateway/state-dir";
 import { buildManagedStartupProfile } from "../../onboard/managed-startup/profile-builder";
+import { encodeManagedStartupProfile } from "../../onboard/managed-startup/profile";
 import type { ManagedStartupProfileBuilderInput } from "../../onboard/managed-startup/profile-builder";
 import { getSandboxEntryInference } from "../../state/registry-entry-view";
 import { load as loadRegistry } from "../../state/registry/persistence";
@@ -69,6 +71,7 @@ import {
   readFailureCanary,
   imageRef,
   startupInput,
+  startup,
   entry,
   inventory,
   provider,
