@@ -2,12 +2,19 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { Readable } from "node:stream";
 import test from "node:test";
+import { runInNewContext } from "node:vm";
+import { parse as parseYaml } from "yaml";
 import { configureNativeFromStdin } from "./native-setup-configuration.mts";
 import { nativeCredentialBinding } from "./native-security.mts";
 import { nativeServiceBinding } from "./native-options.mts";
 import { NATIVE_EXPRESS } from "./native-inference-manifest.mts";
+import { interactiveWorkloadSource } from "./run-installed-native-console-agent.mts";
+import type { NativeOptions } from "./native-options.mts";
 
 const configuration = {
   schemaVersion: 1,
@@ -183,4 +190,79 @@ test("a local-model endpoint placeholder is rejected before inspecting a pack", 
     /configuration is invalid/u,
   );
   assert.equal(called, false);
+});
+
+function writeGeneratedHermesConfiguration(home: string, options: NativeOptions) {
+  // Execute only the actual prebuilt worker's configuration writer. No worker
+  // startup, interpreter, credentials, provider, or network operation is run.
+  const source = interactiveWorkloadSource();
+  const declaration = source.indexOf("const nativeHermesConfiguration = ");
+  const declarationEnd = source.indexOf("\n\nconst required = ", declaration);
+  const writer = source.indexOf('writeFileSync(join(hermesHome, "config.yaml"),');
+  const writerEnd = source.indexOf("  const runner = ", writer);
+  assert(declaration >= 0 && declarationEnd > declaration && writer >= 0 && writerEnd > writer);
+  runInNewContext(
+    source.slice(declaration, declarationEnd) + "\n" + source.slice(writer, writerEnd),
+    {
+      writeFileSync: fs.writeFileSync,
+      join: path.join,
+      hermesHome: home,
+      model: "test-model",
+      baseUrl: "http://127.0.0.1:1/v1",
+      brokerToken: "",
+      nativeServices: { options },
+    },
+  );
+  return parseYaml(fs.readFileSync(path.join(home, "config.yaml"), "utf8"));
+}
+
+test("unchecked Hermes search replaces persisted enables with the stable disabled-web contract", () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "native-hermes-search-off-"));
+  try {
+    fs.writeFileSync(
+      path.join(home, "config.yaml"),
+      JSON.stringify({
+        web: { backend: "tavily", keyless_fallback: true },
+        agent: { disabled_toolsets: [] },
+        platform_toolsets: { cli: ["hermes-cli", "web"], slack: ["web"] },
+      }),
+    );
+    const actual = writeGeneratedHermesConfiguration(home, {});
+    // v2026.9.7: web_search_registry reads keyless_fallback; the final
+    // model_tools selection subtracts agent.disabled_toolsets after enables.
+    assert.deepEqual(actual.web, { keyless_fallback: false });
+    assert.deepEqual(actual.agent.disabled_toolsets, ["web"]);
+    assert.equal(actual.platform_toolsets, undefined);
+    assert.equal(actual.agent.disabled_toolsets.includes("browser"), false);
+    assert.equal(actual.security.allow_lazy_installs, false);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("Tavily selection clears previous suppression and preserves existing Hermes YAML semantics", () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "native-hermes-search-on-"));
+  try {
+    writeGeneratedHermesConfiguration(home, {});
+    const actual = writeGeneratedHermesConfiguration(home, {
+      search: { provider: "tavily", credentialStored: true },
+      messaging: { telegram: { credentialStored: true, allowedUsers: [] } },
+    });
+    assert.deepEqual(actual, {
+      model: {
+        default: "test-model",
+        provider: "custom",
+        base_url: "http://127.0.0.1:1/v1",
+        api_key: "",
+        context_length: 131072,
+      },
+      web: { backend: "tavily", search_backend: "tavily", extract_backend: "tavily" },
+      platforms: { telegram: { enabled: true } },
+      memory: { memory_enabled: true, user_profile_enabled: true },
+      security: { allow_lazy_installs: false },
+      updates: { check: false, pre_update_backup: false, refresh_cua_driver: false },
+    });
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
 });

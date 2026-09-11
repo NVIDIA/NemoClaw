@@ -25,7 +25,7 @@ import {
   NativeSessionFailure,
 } from "./native-session-diagnostics.mts";
 
-import { readNativeServiceEnvironment } from "./native-options.mts";
+import { nativeHermesConfiguration, readNativeServiceEnvironment } from "./native-options.mts";
 import { startNativeInferenceBroker } from "./native-inference-broker.mts";
 import { startNativeBrokerRelay } from "./native-broker-relay.mts";
 import { acquireNativeStateSession } from "./native-state.mts";
@@ -163,6 +163,8 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { open as openFile } from "node:fs/promises";
 import { join } from "node:path";
 import { StringDecoder } from "node:string_decoder";
+
+const nativeHermesConfiguration = ${nativeHermesConfiguration.toString()};
 
 const required = (name) => {
   const value = process.env[name];
@@ -340,27 +342,7 @@ if (agent === "pi") {
   if (!python || !hermesSource) throw new Error("Hermes Python runtime is incomplete");
   const hermesHome = join(home, ".hermes");
   mkdirSync(hermesHome, { recursive: true });
-  writeFileSync(join(hermesHome, "config.yaml"), [
-    "model:",
-    "  default: " + JSON.stringify(model),
-    "  provider: custom",
-    "  base_url: " + JSON.stringify(baseUrl),
-    "  api_key: " + JSON.stringify(brokerToken),
-    "  context_length: 131072",
-    ...(nativeServices.options.search ? ["web:", "  backend: tavily", "  search_backend: tavily", "  extract_backend: tavily"] : []),
-    "platforms:",
-    ...Object.entries(nativeServices.options.messaging || {}).flatMap(([channel]) => ["  " + channel + ":", "    enabled: true"]),
-    "memory:",
-    "  memory_enabled: true",
-    "  user_profile_enabled: true",
-    "security:",
-    "  allow_lazy_installs: false",
-    "updates:",
-    "  check: false",
-    "  pre_update_backup: false",
-    "  refresh_cua_driver: false",
-    "",
-  ].join("\n"), "utf8");
+  writeFileSync(join(hermesHome, "config.yaml"), nativeHermesConfiguration(model, baseUrl, brokerToken, nativeServices.options), "utf8");
   const runner = join(home, "run-hermes.py");
   const consoleProbe = process.env.NEMOCLAW_AGENT_CONSOLE_PROBE;
   writeFileSync(runner, [

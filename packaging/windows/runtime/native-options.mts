@@ -170,6 +170,40 @@ export function nativeOpenClawOptions(options: NativeOptions) {
   };
 }
 
+export function nativeHermesConfiguration(
+  model: string,
+  baseUrl: string,
+  brokerToken: string,
+  options: NativeOptions,
+): string {
+  return [
+    "model:",
+    "  default: " + JSON.stringify(model),
+    "  provider: custom",
+    "  base_url: " + JSON.stringify(baseUrl),
+    "  api_key: " + JSON.stringify(brokerToken),
+    "  context_length: 131072",
+    ...(options.search
+      ? ["web:", "  backend: tavily", "  search_backend: tavily", "  extract_backend: tavily"]
+      : ["web:", "  keyless_fallback: false", "agent:", "  disabled_toolsets: [web]"]),
+    "platforms:",
+    ...Object.entries(options.messaging || {}).flatMap(([channel]) => [
+      "  " + channel + ":",
+      "    enabled: true",
+    ]),
+    "memory:",
+    "  memory_enabled: true",
+    "  user_profile_enabled: true",
+    "security:",
+    "  allow_lazy_installs: false",
+    "updates:",
+    "  check: false",
+    "  pre_update_backup: false",
+    "  refresh_cua_driver: false",
+    "",
+  ].join("\n");
+}
+
 export function createNativeServiceBootstrap(
   selected: { options: NativeOptions; environment: Record<string, string> },
   token: string,
