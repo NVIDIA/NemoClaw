@@ -22,10 +22,7 @@ const {
   sandboxActionTokensForDispatch,
 } = require("./command-registry");
 
-import {
-  hasMigratableLegacySandbox,
-  migrateLegacyPortState,
-} from "../state/legacy-port-migration";
+import { hasMigratableLegacySandbox, migrateLegacyPortState } from "../state/legacy-port-migration";
 import {
   isGlobalCommandInvocation,
   type NormalizedArgv,
@@ -536,16 +533,6 @@ async function dispatchSandboxArgv(
     return;
   }
 
-  // #3447 — when the typed command matches an OpenShell-owned operation
-  // (term / policy set / gateway stop) and there is no sandbox by that name,
-  // point users at the correct tool. Must run before recovery so bare
-  // `nemoclaw term` (which normalizes to sandboxName=term, action=connect)
-  // doesn't get swallowed by the recovery's "Sandbox does not exist" exit.
-  const openshellHint = getOpenShellCommandHint(argv);
-  if (openshellHint && !registry().getSandbox(cmd)) {
-    printOpenShellCommandHint(openshellHint);
-  }
-
   // #11394 — recovery retirement is not gated on the registry row. The retire
   // path resolves its record from the rebuild-backups directory by sandbox
   // name and transaction id, then requires the recorded gateway to report the
@@ -562,6 +549,16 @@ async function dispatchSandboxArgv(
       { sandboxName: cmd },
     );
     return;
+  }
+
+  // #3447 — when the typed command matches an OpenShell-owned operation
+  // (term / policy set / gateway stop) and there is no sandbox by that name,
+  // point users at the correct tool. Must run before recovery so bare
+  // `nemoclaw term` (which normalizes to sandboxName=term, action=connect)
+  // doesn't get swallowed by the recovery's "Sandbox does not exist" exit.
+  const openshellHint = getOpenShellCommandHint(argv);
+  if (openshellHint && !registry().getSandbox(cmd)) {
+    printOpenShellCommandHint(openshellHint);
   }
 
   // If the registry doesn't know this name but the action is a sandbox-scoped
@@ -647,8 +644,5 @@ export async function dispatchCli(argv: string[] = process.argv.slice(2)): Promi
     return;
   }
 
-  await dispatchNormalizedArgv(
-    normalizeArgv(argv, PUBLIC_ARGV_OPTIONS),
-    argv,
-  );
+  await dispatchNormalizedArgv(normalizeArgv(argv, PUBLIC_ARGV_OPTIONS), argv);
 }
