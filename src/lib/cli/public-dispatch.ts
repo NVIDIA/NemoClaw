@@ -156,11 +156,15 @@ const REBUILD_RECOVERY_RETIREMENT_FLAG = "--retire-recovery";
  * recovery. Its identity is the backup record on disk plus the gateway that
  * record names, not the registry row: rebuild's own guidance runs it after
  * `destroy --yes` has already removed that row (#11394).
+ *
+ * Only tokens before the option separator count. oclif owns flag parsing and
+ * treats everything after `--` as positional, so a retirement flag placed
+ * there is an ordinary rebuild invocation and keeps the registry gate.
  */
 function isRebuildRecoveryRetirement(action: string, actionArgs: readonly string[]): boolean {
   return (
     action === "rebuild" &&
-    actionArgs.some(
+    argsBeforeSeparator(actionArgs).some(
       (arg) =>
         arg === REBUILD_RECOVERY_RETIREMENT_FLAG ||
         arg.startsWith(`${REBUILD_RECOVERY_RETIREMENT_FLAG}=`),
@@ -489,6 +493,11 @@ async function dispatchGlobalArgv(normalized: NormalizedGlobalArgv): Promise<voi
   await runPublicTranslationResult(translatePublicGlobalArgv(normalized.command, normalized.args));
 }
 
+/**
+ * Route a `nemoclaw <sandbox-name> <action>` invocation to its oclif command.
+ * Resolves bare-connect grammar, renders sandbox-scoped help, and applies the
+ * registry-aware missing-sandbox checks before translation.
+ */
 async function dispatchSandboxArgv(
   normalized: NormalizedSandboxArgv,
   argv: string[],
