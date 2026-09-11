@@ -754,6 +754,7 @@ describe("uninstall OpenShell gateway user service", () => {
       ]);
       expect(result.exitCode).toBe(1);
       const guidance = warnings.find((line) => line.startsWith("Docker is not available")) ?? "";
+      expect(Boolean(guidance)).toBe(recovery);
       expect(
         /WSL integration.*wsl --shutdown.*docker info.*rerun the same uninstall command/s.test(
           guidance,
