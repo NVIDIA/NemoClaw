@@ -109,19 +109,19 @@ describe("MCP tool discovery host boundary (#6901)", () => {
       server: "local-mcp",
       url: "https://172.17.0.2:8443/mcp",
       env: ["MCP_KEY"],
-    } as McpBridgeEntry;
+    } as McpSourceEntry;
     const trustedPrivateEntry = {
       ...unrecordedPrivateEntry,
       trustedPrivateHost: "172.17.0.2",
       allowedIps: ["172.17.0.2"],
-    } as McpBridgeEntry;
+    } as McpSourceEntry;
 
-    const built = buildMcpToolDiscoveryCommand(trustedPrivateEntry, "mcporter");
+    const built = buildMcpToolDiscoveryCommand(trustedPrivateEntry, "openclaw-config");
     expect(built).not.toBeNull();
     expect(built?.command).toContain("https://172.17.0.2:8443/mcp");
     expect(built?.command).toContain("--credential-env");
     expect(built?.command).toContain("MCP_KEY");
-    expect(buildMcpToolDiscoveryCommand(unrecordedPrivateEntry, "mcporter")).toBeNull();
+    expect(buildMcpToolDiscoveryCommand(unrecordedPrivateEntry, "openclaw-config")).toBeNull();
   });
 
   it("accepts one framed, deterministic, names-only runtime result", () => {

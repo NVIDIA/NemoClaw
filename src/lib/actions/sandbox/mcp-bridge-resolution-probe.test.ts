@@ -355,7 +355,7 @@ describe("MCP credential-resolution probe execution gates", () => {
         trustedPrivateHost: "172.17.0.2",
         allowedIps: ["172.17.0.2"],
       },
-      "mcporter",
+      "openclaw-config",
       readyProbe,
       runtimeSelection,
     );
