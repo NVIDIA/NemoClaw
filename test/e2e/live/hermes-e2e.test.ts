@@ -792,8 +792,12 @@ test(
         timeoutMs: 30_000,
       },
     );
-    expect(recoveredHealth.exitCode, resultText(recoveredHealth)).toBe(0);
-    expect(resultText(recoveredHealth)).toMatch(/"ok"/i);
+    expect(
+      recoveredHealth.exitCode === 0 &&
+        recoveredHealth.stderr === "" &&
+        /"ok"/i.test(recoveredHealth.stdout),
+      resultText(recoveredHealth),
+    ).toBe(true);
     await expectDashboardReachable("phase-4-dashboard-host-after-recover");
 
     // OpenClaw launch qualification now reads its structured JSONL session
@@ -813,6 +817,19 @@ test(
         sandboxName: SANDBOX_NAME,
         scenario,
       });
+    await lifecycle.stopGatewayRuntime();
+    const stoppedGatewayStatus = await host.command("openshell", ["status"], {
+      artifactName: "phase-5-openshell-gateway-stopped-before-acp-recovery",
+      env: commandEnv(),
+      timeoutMs: 30_000,
+    });
+    expect(
+      stoppedGatewayStatus.exitCode === 0 &&
+        /^Status:[ \t]*Disconnected[ \t]*\r?$/imu.test(stoppedGatewayStatus.stdout),
+      resultText(stoppedGatewayStatus),
+    ).toBe(true);
+    const gatewayRecoveryPassed = await runAcpScenario("gateway-recovery");
+    await lifecycle.waitForGatewayConnected();
     const exchangePassed = await runAcpScenario("exchange");
     const remoteExitPassed = await runAcpScenario("remote-exit");
     const cancellationPassed = await runAcpScenario("cancel");
@@ -832,6 +849,7 @@ test(
     });
     const postRestartInitializePassed = await runAcpScenario("initialize");
     const acpLifecyclePassed =
+      gatewayRecoveryPassed &&
       exchangePassed &&
       remoteExitPassed &&
       cancellationPassed &&
@@ -988,6 +1006,7 @@ test(
         hermesSkillUsedInFreshSession: true,
         standaloneRoutingSidecarsAbsentAfterRecovery: true,
         hermesAcpInitializeSessionPromptPong: true,
+        hermesAcpRecoversStoppedOpenShellGatewayBeforeSession: true,
         hermesAcpInterruptDisconnectAndRemoteExitClean: true,
         hermesAcpCleansUpAndReconnectsAfterOpenShellGatewayRestart: true,
         dashboardChecked: hermesDashboardE2eEnabled(),

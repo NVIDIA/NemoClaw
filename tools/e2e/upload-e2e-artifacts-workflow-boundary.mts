@@ -244,13 +244,6 @@ const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
     },
   ],
   [
-    "llama-cpp-dgx-spark-qualification",
-    {
-      name: "e2e-llama-cpp-dgx-spark-qualification",
-      path: "e2e-artifacts/live/llama-cpp-dgx-spark-qualification/",
-    },
-  ],
-  [
     "hermes-gpu-startup",
     {
       name: "e2e-hermes-gpu-startup-${{ matrix.scenario }}-${{ matrix.runtime_provider }}",

@@ -252,6 +252,7 @@ describe("OpenShell forward service", () => {
 
   it("detaches the OpenShell child and waits for its local port", () => {
     const unref = vi.fn();
+    const verifyReady = vi.fn(() => expect(unref).not.toHaveBeenCalled());
     const spawnDetached = vi.fn(() => ({ unref }));
     const terminateProcessTree = vi.fn();
     let probes = 0;
@@ -261,6 +262,7 @@ describe("OpenShell forward service", () => {
       sleep: () => {},
       spawnDetached,
       terminateProcessTree,
+      verifyReady,
       timeoutMs: 1_000,
     });
 
@@ -270,6 +272,7 @@ describe("OpenShell forward service", () => {
       expect.any(Object),
     );
     expect(unref).toHaveBeenCalledOnce();
+    expect(verifyReady).toHaveBeenCalledOnce();
     expect(terminateProcessTree).not.toHaveBeenCalled();
   });
 
@@ -303,6 +306,53 @@ describe("OpenShell forward service", () => {
     );
     expect(spawnDetached).not.toHaveBeenCalled();
   });
+
+  it.each([
+    {
+      cleanup: "terminated",
+      terminate: () => {},
+      remains: false,
+      expected: /Forward ownership changed/u,
+    },
+    {
+      cleanup: "termination-failed",
+      terminate: () => {
+        throw new Error("Child remained alive");
+      },
+      remains: false,
+      expected: ForwardServiceStartupCleanupError,
+    },
+    {
+      cleanup: "listener-remained",
+      terminate: () => {},
+      remains: true,
+      expected: ForwardServiceStartupCleanupError,
+    },
+  ])(
+    "rejects failed startup verification with cleanup $cleanup",
+    ({ terminate, remains, expected }) => {
+      const child = { pid: detachedChildPid, unref: vi.fn() };
+      const verificationError = new Error("Forward ownership changed");
+      const terminateProcessTree = vi.fn(terminate);
+      const launch = () =>
+        launchForwardService(target, {
+          isReachable: vi
+            .fn()
+            .mockReturnValueOnce(false)
+            .mockReturnValueOnce(true)
+            .mockReturnValue(remains),
+          spawnDetached: () => child,
+          terminateProcessTree,
+          verifyReady: () => {
+            throw verificationError;
+          },
+        });
+
+      expect(launch).toThrow(expected);
+      expect(terminateProcessTree).toHaveBeenCalledExactlyOnceWith(child);
+      expect(child.unref).not.toHaveBeenCalled();
+    },
+  );
 
   it("terminates a detached service that does not bind before the deadline", () => {
     const child = { pid: detachedChildPid, unref: vi.fn() };
