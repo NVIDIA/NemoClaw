@@ -43,6 +43,10 @@ inheriting that pipe blocks until the test timeout, regardless of the model-time
 File-message turns exercise ordinary files,
 paths with spaces, symlinks and relative chains, with EOF or competing stdin.
 Each successful turn must return the model answer from the selected input.
+The first JSON turn also requires at most 60 seconds outside OpenClaw's reported
+agent duration. This bounds host dispatch, transport, CLI startup and output
+handling separately from the configurable hosted-model turn cap. Missing or
+inconsistent duration metadata fails that bound rather than supplying a zero estimate.
 Direct OpenClaw and wrapped calls must preserve native rejection of empty files
 and inaccessible stdin paths. OpenShell 0.0.106 creates stdin pipes before dropping
 the child UID: the descriptor remains readable, but pathname reopening fails with
@@ -166,6 +170,11 @@ assembles one exact candidate catalog from the workflow's published contracts, u
 and sandbox, records the authenticated discovery diagnostics, scans the evidence for fixture
 credentials, and must pass.
 These are two required acceptance executions, not retries; either failure remains a failed check.
+The concurrent-add probe retries only the rejected command after status proves that
+the winner committed one coherent bridge. The rejection must match the exact portable
+host-lock timeout or the reviewed Hermes restart transport failure. The one retry has
+its own command artifact and must reject the already committed duplicate. Other lock
+errors and unverified mutations remain failures.
 The workflow records one publication cohort before its PR producer matrix runs. Failed-job reruns
 reuse that cohort and replace only the stable run-scoped artifact owned by each retried agent.
 Consumers accept one complete cohort from the same run at the current or an earlier attempt. They

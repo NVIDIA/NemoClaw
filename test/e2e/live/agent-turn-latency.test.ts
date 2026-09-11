@@ -14,6 +14,7 @@ import {
   assertHermesConfig,
   assertNoOpenClawTransportErrors,
   assertOpenClawConfig,
+  buildOpenClawFirstTurnLatencyEvidence,
   CLI,
   chatContent,
   cleanupTurnSandbox,
@@ -32,6 +33,7 @@ import {
 } from "./agent-turn-latency-helpers.ts";
 
 const TIMEOUT_MS = testTimeout(90 * 60_000);
+const MAX_HOST_DISPATCH_OVERHEAD_MS = 60_000;
 
 // A real latency measurement needs a real hosted endpoint; the shared
 // adapter's hermetic `mock` mode would just measure a loopback round trip
@@ -71,6 +73,7 @@ runAgentTurnLatencyTest(
     const results: Record<string, unknown> = {
       model: inference.model,
       maxTurnSeconds: MAX_TURN_SECONDS,
+      maxHostDispatchOverheadMs: MAX_HOST_DISPATCH_OVERHEAD_MS,
     };
     await artifacts.target.declare({
       id: "agent-turn-latency",
@@ -146,8 +149,9 @@ runAgentTurnLatencyTest(
       progress,
     );
     expect(openclawRoute.exitCode, resultText(openclawRoute)).toBe(0);
-    expect(resultText(openclawRoute)).toContain(inference.expectedRouteProvider);
-    expect(resultText(openclawRoute)).toContain(inference.model);
+    for (const expected of [inference.expectedRouteProvider, inference.model]) {
+      expect(resultText(openclawRoute)).toContain(expected);
+    }
     const openclawConfig = await sandbox.execShell(
       OPENCLAW_SANDBOX,
       trustedSandboxShellScript(openclawConfigCommand()),
@@ -277,7 +281,7 @@ runAgentTurnLatencyTest(
         })),
       ),
     ];
-    const turnTimes: Record<string, number> = {};
+    const completedTurns: Record<string, Awaited<ReturnType<typeof openclawTurn>>> = {};
     for (const turn of turns) {
       progress.event(`OpenClaw turn: ${turn.artifactName}`);
       const completed = await openclawTurn(host, inference, progress, turn);
@@ -288,8 +292,22 @@ runAgentTurnLatencyTest(
         resultText(completed.result),
       ).toBe(true);
       expect(completed.elapsedMs).toBeLessThanOrEqual(MAX_TURN_SECONDS * 1000);
-      turnTimes[turn.artifactName] = completed.elapsedMs;
+      completedTurns[turn.artifactName] = completed;
     }
+    const firstTurn = completedTurns["openclaw-agent-turn"]!;
+    const firstTurnTiming = buildOpenClawFirstTurnLatencyEvidence(
+      firstTurn.result.stdout,
+      firstTurn.elapsedMs,
+    );
+    const turnTimes = Object.fromEntries(
+      Object.entries(completedTurns).map(([name, turn]) => [name, turn.elapsedMs]),
+    );
+    // This excludes the reported agent duration, so slow inference cannot hide
+    // a multi-minute wait in host dispatch, transport, or CLI startup.
+    expect(
+      firstTurnTiming.firstTurnHostOverheadMs,
+      JSON.stringify(firstTurnTiming),
+    ).toBeLessThanOrEqual(MAX_HOST_DISPATCH_OVERHEAD_MS);
     // OpenShell 0.0.106 creates stdin as root before dropping the child UID.
     // The descriptor remains readable, but reopening its path fails with EACCES.
     // Compare native OpenClaw with the wrapper; input forwarding itself is also
@@ -327,6 +345,7 @@ runAgentTurnLatencyTest(
     }
 
     results.openclaw = {
+      ...firstTurnTiming,
       firstTurnElapsedMs: turnTimes["openclaw-agent-turn"],
       followUpTurnElapsedMs: turnTimes["openclaw-agent-follow-up-turn"],
       turns: turnTimes,
@@ -364,8 +383,9 @@ runAgentTurnLatencyTest(
       progress,
     );
     expect(hermesRoute.exitCode, resultText(hermesRoute)).toBe(0);
-    expect(resultText(hermesRoute)).toContain(inference.expectedRouteProvider);
-    expect(resultText(hermesRoute)).toContain(inference.model);
+    for (const expected of [inference.expectedRouteProvider, inference.model]) {
+      expect(resultText(hermesRoute)).toContain(expected);
+    }
     const hermesHealth = await waitHermesHealth(sandbox, inference, progress);
     expect(hermesHealth.exitCode, resultText(hermesHealth)).toBe(0);
     const hermesConfig = await sandbox.exec(

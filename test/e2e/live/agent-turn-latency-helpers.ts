@@ -173,6 +173,7 @@ export type OpenClawAgentDurationEvidence =
 export interface OpenClawFirstTurnLatencyEvidence {
   firstTurnAgentDuration: OpenClawAgentDurationEvidence;
   firstTurnCommandMs: number;
+  firstTurnHostOverheadMs?: number;
 }
 
 /**
@@ -210,9 +211,14 @@ export function buildOpenClawFirstTurnLatencyEvidence(
   ) {
     throw new Error("first-turn command duration is invalid");
   }
+  const firstTurnAgentDuration = extractOpenClawAgentDurationEvidence(output);
   return {
-    firstTurnAgentDuration: extractOpenClawAgentDurationEvidence(output),
+    firstTurnAgentDuration,
     firstTurnCommandMs,
+    ...(firstTurnAgentDuration.status === "available" &&
+    firstTurnAgentDuration.durationMs <= firstTurnCommandMs
+      ? { firstTurnHostOverheadMs: firstTurnCommandMs - firstTurnAgentDuration.durationMs }
+      : {}),
   };
 }
 
