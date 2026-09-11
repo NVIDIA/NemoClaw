@@ -479,9 +479,6 @@ describe("pull request and main workflow contracts", () => {
   const installerHashWorkflow = readYaml<CiWorkflow>(".github/workflows/installer-hash-check.yaml");
   const codeScanningWorkflow = readYaml<CiWorkflow>(".github/workflows/code-scanning.yaml");
   const advisorWorkflow = readYaml<AdvisorWorkflow>(".github/workflows/pr-review-advisor.yaml");
-  const generatedHeadWorkflow = readYaml<AdvisorWorkflow>(
-    ".github/workflows/pr-review-advisor-generated-head.yaml",
-  );
   const sdkPackageWorkflow = readYaml<SdkPackageWorkflow>(
     ".github/workflows/openshell-sdk-package-pr.yaml",
   );
@@ -526,7 +523,6 @@ describe("pull request and main workflow contracts", () => {
         ),
       ),
     ).toEqual([true, true, true, true, true]);
-    const serialized = standard.map((workflow) => JSON.stringify(workflow));
     const repairRunNameClause =
       "inputs.repair_attempt_key != '' && format('Repair validation {0} head {1}', inputs.repair_attempt_key, inputs.repair_head_sha)";
     expect(
