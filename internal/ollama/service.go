@@ -55,12 +55,56 @@ func NewDocker(endpoint string) (*Docker, error) {
 	return &Docker{API: c}, nil
 }
 
-func (d *Docker) Close() error       { return d.API.Close() }
+func (d *Docker) Close() error { return d.API.Close() }
+
+// Bound validates the physical parent before accessing its unauthenticated API.
+func (d *Docker) Bound(ctx context.Context, id, endpoint string) (*Service, error) {
+	parts := strings.Split(id, "/")
+	if len(parts) != 3 {
+		return nil, errors.New("invalid Ollama physical binding")
+	}
+	c, err := d.API.ContainerInspect(ctx, parts[1], client.ContainerInspectOptions{})
+	if err != nil || c.Container.Config == nil || c.Container.HostConfig == nil {
+		return nil, errors.New("bound Ollama container observation failed")
+	}
+	spec := ServiceSpec{Name: strings.TrimPrefix(c.Container.Name, "/"), Owner: c.Container.Config.Labels[ownerLabel], Generation: c.Container.Config.Labels[operationLabel], Image: c.Container.Config.Image, Network: string(c.Container.HostConfig.NetworkMode), BindAddress: strings.TrimSuffix(strings.TrimPrefix(endpoint, "http://"), "/v1")}
+	s, err := d.Observe(ctx, spec)
+	if err != nil {
+		return nil, err
+	}
+	if s == nil || s.ID != id {
+		return nil, errors.New("Ollama target or storage identity changed")
+	}
+	return s, nil
+}
 func (s ServiceSpec) Volume() string { return s.Name + "-models" }
 func (s ServiceSpec) labels() map[string]string {
 	b, _ := json.Marshal(s)
 	h := sha256.Sum256(b)
 	return map[string]string{ownerLabel: s.Owner, operationLabel: s.Generation, specLabel: hex.EncodeToString(h[:])}
+}
+
+func (d *Docker) Preflight(ctx context.Context, want ServiceSpec, id string) error {
+	s, err := d.Observe(ctx, want)
+	if id != "" {
+		if err != nil || s == nil || s.ID != id {
+			return errors.New("bound Ollama identity or storage is unavailable; automatic replacement is forbidden")
+		}
+		return nil
+	}
+	if !errors.Is(err, errPartialCreate) {
+		return err
+	}
+	v, err := d.API.VolumeInspect(ctx, want.Volume(), client.VolumeInspectOptions{})
+	if err != nil || v.Volume.CreatedAt == "" || v.Volume.Driver != "local" || len(v.Volume.Options) != 0 {
+		return errors.New("incomplete retained Ollama storage")
+	}
+	for k, value := range want.labels() {
+		if value == "" || v.Volume.Labels[k] != value {
+			return errors.New("Ollama storage does not match the retained create operation")
+		}
+	}
+	return nil
 }
 
 func (d *Docker) Observe(ctx context.Context, want ServiceSpec) (*Service, error) {

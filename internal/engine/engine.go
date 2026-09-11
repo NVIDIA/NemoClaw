@@ -100,6 +100,9 @@ func (e *Engine) Run(ctx context.Context, operation string, input io.Reader) err
 	} else {
 		record = Record{Version: 1, Generations: newGenerations()}
 	}
+	if d.Spec.InferenceProviders[0].Ollama != nil && record.Generations["ollama"] == "" {
+		record.Generations["ollama"] = newGenerations()["ollama"]
+	}
 	c, err := oshell.Connect(d.Spec.Gateway)
 	if err != nil {
 		return err
@@ -124,6 +127,11 @@ func (e *Engine) Run(ctx context.Context, operation string, input io.Reader) err
 	}
 	ids, err := e.stateIDs()
 	if err != nil {
+		return err
+	}
+	// Tracked service loss must not be interpreted as permission to allocate
+	// empty model storage. Initial partial creates reconcile inside the resource.
+	if err = preflightOllama(preflightCtx, d, record.Generations, ids["nemoclaw_ollama.service"]); err != nil {
 		return err
 	}
 	for _, target := range Targets(d, record.Generations) {

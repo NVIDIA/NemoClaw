@@ -13,11 +13,16 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"syscall"
 	"time"
 )
 
 // ErrAbsent is returned only after a complete successful inventory response.
 var ErrAbsent = errors.New("model is confirmed absent")
+
+// ErrStarting permits a bounded activation wait after starting the owned server.
+// It is never evidence that a model is absent.
+var ErrStarting = errors.New("Ollama connection refused; model inventory is unknown")
 
 type Model struct {
 	Name   string `json:"name"`
@@ -32,7 +37,7 @@ type Models struct {
 
 func NewModels(endpoint string) Models {
 	return Models{Endpoint: strings.TrimSuffix(endpoint, "/v1"), HTTP: &http.Client{
-		Transport:     &http.Transport{Proxy: nil, ResponseHeaderTimeout: 30 * time.Second},
+		Transport:     &http.Transport{Proxy: nil, ResponseHeaderTimeout: 30 * time.Second, IdleConnTimeout: 30 * time.Second},
 		CheckRedirect: func(*http.Request, []*http.Request) error { return errors.New("redirect forbidden") },
 	}}
 }
@@ -45,6 +50,9 @@ func (m Models) request(ctx context.Context, method, path string, body []byte) (
 	q.Header.Set("Content-Type", "application/json")
 	r, err := m.HTTP.Do(q)
 	if err != nil {
+		if errors.Is(err, syscall.ECONNREFUSED) {
+			return nil, ErrStarting
+		}
 		return nil, errors.New("Ollama transport failed; model inventory is unknown")
 	}
 	if r.StatusCode != http.StatusOK {

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/NVIDIA/NemoClaw/internal/config"
+	"github.com/NVIDIA/NemoClaw/internal/ollama"
 	oshell "github.com/NVIDIA/NemoClaw/internal/openshell"
 	"github.com/NVIDIA/NemoClaw/internal/query"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
@@ -40,7 +41,7 @@ func (*Provider) Metadata(_ context.Context, _ framework.MetadataRequest, r *fra
 }
 func (*Provider) Schema(_ context.Context, _ framework.SchemaRequest, r *framework.SchemaResponse) {
 	a := map[string]ps.Attribute{"endpoint": ps.StringAttribute{Required: true}}
-	for _, n := range []string{"credential_env", "tls_ca_env", "tls_certificate_env", "tls_key_env"} {
+	for _, n := range []string{"credential_env", "tls_ca_env", "tls_certificate_env", "tls_key_env", "ollama_engine"} {
 		a[n] = ps.StringAttribute{Optional: true}
 	}
 	r.Schema = ps.Schema{Attributes: a}
@@ -72,11 +73,22 @@ func (*Provider) Configure(ctx context.Context, q framework.ConfigureRequest, r 
 		r.Diagnostics.AddError("Provider configuration", "missing absolute osquery bundle directory")
 		return
 	}
-	r.ResourceData = resourceClients{mutation: c, observation: query.Client{BundleDir: bundle, Gateway: g}}
+	clients := resourceClients{mutation: c, observation: query.Client{BundleDir: bundle, Gateway: g}}
+	if endpoint := get("ollama_engine"); endpoint != "" {
+		clients.docker, err = ollama.NewDocker(endpoint)
+		if err != nil {
+			r.Diagnostics.AddError("Ollama engine", err.Error())
+			return
+		}
+	}
+	r.ResourceData = clients
 }
 func (*Provider) Resources(context.Context) []func() resource.Resource {
 	var result []func() resource.Resource
 	for _, d := range oshell.Definitions {
+		result = append(result, func() resource.Resource { return &Resource{definition: d} })
+	}
+	for _, d := range ollamaDefinitions {
 		result = append(result, func() resource.Resource { return &Resource{definition: d} })
 	}
 	return result
@@ -87,11 +99,13 @@ type Resource struct {
 	definition oshell.Definition
 	client     oshell.Client
 	observer   query.Client
+	docker     *ollama.Docker
 }
 
 type resourceClients struct {
 	mutation    oshell.Client
 	observation query.Client
+	docker      *ollama.Docker
 }
 
 func (r *Resource) Metadata(_ context.Context, _ resource.MetadataRequest, out *resource.MetadataResponse) {
@@ -106,6 +120,9 @@ func (r *Resource) Schema(_ context.Context, _ resource.SchemaRequest, out *reso
 		}
 		a[n] = attr
 	}
+	if r.definition.Kind == "ollama_model" {
+		a["digest"] = schema.StringAttribute{Computed: true}
+	}
 	out.Schema = schema.Schema{Attributes: a}
 }
 func (r *Resource) Configure(_ context.Context, q resource.ConfigureRequest, out *resource.ConfigureResponse) {
@@ -119,6 +136,7 @@ func (r *Resource) Configure(_ context.Context, q resource.ConfigureRequest, out
 	}
 	r.client = c.mutation
 	r.observer = c.observation
+	r.docker = c.docker
 }
 
 type attributeReader interface {
@@ -138,6 +156,9 @@ func (r *Resource) put(ctx context.Context, state *tfsdk.State, row oshell.Row, 
 	for _, n := range append(slices.Clone(r.definition.Fields), "id") {
 		diags.Append(state.SetAttribute(ctx, path.Root(n), types.StringValue(row[n]))...)
 	}
+	if r.definition.Kind == "ollama_model" {
+		diags.Append(state.SetAttribute(ctx, path.Root("digest"), types.StringValue(row["digest"]))...)
+	}
 }
 func (r *Resource) Read(ctx context.Context, q resource.ReadRequest, out *resource.ReadResponse) {
 	// Retain the last known identity on every failed observation.
@@ -146,6 +167,19 @@ func (r *Resource) Read(ctx context.Context, q resource.ReadRequest, out *resour
 	defer cancel()
 	want := r.values(ctx, q.State, &out.Diagnostics)
 	if out.Diagnostics.HasError() {
+		return
+	}
+	if r.definition.Kind == "ollama" || r.definition.Kind == "ollama_model" {
+		got, err := r.readOllama(ctx, want)
+		if err != nil {
+			out.Diagnostics.AddError("Resource observation", err.Error())
+			return
+		}
+		if got == nil {
+			out.State.RemoveResource(ctx)
+			return
+		}
+		r.put(ctx, &out.State, got, &out.Diagnostics)
 		return
 	}
 	key := query.Key{Kind: r.definition.Kind, Workspace: want["workspace"], Name: want["name"]}
@@ -184,7 +218,13 @@ func (r *Resource) Update(ctx context.Context, q resource.UpdateRequest, out *re
 func (r *Resource) apply(ctx context.Context, want oshell.Row, plan tfsdk.Plan, state *tfsdk.State, diags *diag.Diagnostics) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
-	got, err := oshell.Ensure(ctx, r.client, r.definition.Kind, want)
+	var got oshell.Row
+	var err error
+	if r.definition.Kind == "ollama" || r.definition.Kind == "ollama_model" {
+		got, err = r.applyOllama(ctx, want)
+	} else {
+		got, err = oshell.Ensure(ctx, r.client, r.definition.Kind, want)
+	}
 	if err != nil {
 		diags.AddError("Apply incomplete", err.Error()+"; retain the state directory and reapply the same YAML to reconcile")
 		return

@@ -39,7 +39,7 @@ func Targets(d config.Document, generations map[string]string) []Target {
 
 func newGenerations() map[string]string {
 	m := map[string]string{}
-	for _, kind := range []string{"workspace", "provider", "sandbox"} {
+	for _, kind := range []string{"workspace", "provider", "sandbox", "ollama"} {
 		b := make([]byte, 16)
 		rand.Read(b)
 		m[kind] = hex.EncodeToString(b)
@@ -59,6 +59,19 @@ func Compile(d config.Document, generations map[string]string, version string) m
 		p["tls_key_env"] = g.TLS.Key.Env
 	}
 	resources := map[string]any{}
+	if o := d.Spec.InferenceProviders[0].Ollama; o != nil {
+		p["ollama_engine"] = o.Engine
+		s := ollamaSpec(d, generations)
+		resources["nemoclaw_ollama"] = map[string]any{"service": map[string]any{
+			"name": s.Name, "owner": s.Owner, "generation": s.Generation, "image": s.Image, "network": s.Network, "bind_address": s.BindAddress, "running": "true",
+			"lifecycle": map[string]any{"prevent_destroy": true},
+		}}
+		resources["nemoclaw_ollama_model"] = map[string]any{"inference": map[string]any{
+			"service_id": "${nemoclaw_ollama.service.id}", "endpoint": d.Spec.InferenceProviders[0].Endpoint,
+			"model":     d.Spec.Sandboxes[0].Agents[0].Inference.Routes[0].Overrides.Model,
+			"lifecycle": map[string]any{"prevent_destroy": true},
+		}}
+	}
 	for i, t := range Targets(d, generations) {
 		attrs := map[string]any{}
 		for k, v := range maps.All(t.Values) {
@@ -70,6 +83,9 @@ func Compile(d config.Document, generations map[string]string, version string) m
 		}
 		if t.Kind == "route" {
 			attrs["provider_name"] = "${nemoclaw_provider.inference.name}"
+			if d.Spec.InferenceProviders[0].Ollama != nil {
+				attrs["depends_on"] = []string{"nemoclaw_ollama_model.inference"}
+			}
 		}
 		if t.Kind == "sandbox" {
 			attrs["depends_on"] = []string{"nemoclaw_route.primary"}

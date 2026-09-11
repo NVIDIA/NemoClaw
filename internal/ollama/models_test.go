@@ -8,9 +8,11 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -38,6 +40,49 @@ func TestObservationFailureDoesNotAuthorizePull(t *testing.T) {
 		if err == nil || errors.Is(err, ErrAbsent) || strings.Contains(err.Error(), "secret-sentinel") {
 			t.Fatalf("HTTP %d: %v", code, err)
 		}
+	}
+}
+
+func TestCancelDuringPullRetainsUnknownOutcomeUntilExplicitReapply(t *testing.T) {
+	var pulls atomic.Int32
+	var installed atomic.Bool
+	started := make(chan struct{})
+	m := Model{Name: "m:1", Digest: strings.Repeat("a", 64), Size: 42}
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			models := []Model{}
+			if installed.Load() {
+				models = append(models, m)
+			}
+			json.MarshalWrite(w, struct {
+				Models []Model `json:"models"`
+			}{Models: models})
+			return
+		}
+		io.Copy(io.Discard, r.Body)
+		fmt.Fprintln(w, `{"status":"pulling manifest"}`)
+		w.(http.Flusher).Flush()
+		if pulls.Add(1) == 1 {
+			close(started)
+			<-r.Context().Done()
+			return
+		}
+		installed.Store(true)
+		fmt.Fprintln(w, `{"status":"success"}`)
+	}))
+	defer s.Close()
+	c := NewModels(s.URL)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { _, err := c.Ensure(ctx, m.Name); done <- err }()
+	<-started
+	cancel()
+	if err := <-done; err == nil || errors.Is(err, ErrAbsent) || pulls.Load() != 1 {
+		t.Fatalf("canceled pull was treated as complete or retried: %v", err)
+	}
+	if got, err := c.Ensure(t.Context(), m.Name); err != nil || got != m || pulls.Load() != 2 {
+		t.Fatalf("explicit reapply did not resume: %+v, %v", got, err)
 	}
 }
 

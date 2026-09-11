@@ -52,10 +52,16 @@ type Gateway struct {
 	TLS        *TLS        `yaml:"tls,omitempty" json:"tls,omitempty"`
 }
 type InferenceProvider struct {
-	Name       string      `yaml:"name" json:"name"`
-	Provider   string      `yaml:"provider" json:"provider"`
-	Endpoint   string      `yaml:"endpoint" json:"endpoint"`
-	Credential *Credential `yaml:"credential,omitempty" json:"credential,omitempty"`
+	Name       string         `yaml:"name" json:"name"`
+	Provider   string         `yaml:"provider" json:"provider"`
+	Endpoint   string         `yaml:"endpoint" json:"endpoint"`
+	Credential *Credential    `yaml:"credential,omitempty" json:"credential,omitempty"`
+	Ollama     *ManagedOllama `yaml:"ollama,omitempty" json:"ollama,omitempty"`
+}
+type ManagedOllama struct {
+	Engine  string `yaml:"engine" json:"engine"`
+	Image   string `yaml:"image" json:"image"`
+	Network string `yaml:"network" json:"network"`
 }
 type Sandbox struct {
 	Name    string  `yaml:"name" json:"name"`
@@ -94,6 +100,7 @@ var slug = regexp.MustCompile(`^[a-z][a-z0-9-]{0,39}$`)
 var uuid = regexp.MustCompile(`^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$`)
 var envName = regexp.MustCompile(`^[A-Z_][A-Z0-9_]{0,127}$`)
 var modelName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,199}$`)
+var ollamaModelName = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]*:[a-z0-9][a-z0-9._-]*$`)
 var imageRef = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64}$`)
 
 func Parse(r io.Reader) (Document, error) {
@@ -205,6 +212,20 @@ func (d Document) Validate() error {
 	r := a.Inference.Routes[0]
 	if r.Name != "primary" || r.ProviderRef != p.Name || !modelName.MatchString(r.Overrides.Model) {
 		return errors.New("primary route must reference the declared provider and a valid model")
+	}
+	if p.Ollama != nil {
+		o := p.Ollama
+		u, _ := url.Parse(p.Endpoint)
+		bind, err := netip.ParseAddrPort(u.Host)
+		if p.Credential != nil || u.Scheme != "http" || u.Path != "/v1" || err != nil || bind.Port() == 0 || !(bind.Addr().IsLoopback() || bind.Addr().IsPrivate()) {
+			return errors.New("managed Ollama requires an explicit private or loopback IP:port/v1 HTTP endpoint without credentials")
+		}
+		if !strings.HasPrefix(o.Engine, "unix:///") || strings.ContainsAny(o.Engine, "$%{}\r\n\x00") || !slug.MatchString(o.Network) || !imageRef.MatchString(o.Image) || !strings.HasPrefix(o.Image, "ollama/ollama@sha256:") {
+			return errors.New("managed Ollama requires a local Unix engine socket, existing named network, and pinned ollama/ollama image")
+		}
+		if !ollamaModelName.MatchString(r.Overrides.Model) {
+			return errors.New("managed Ollama requires an explicit registry-library model:tag")
+		}
 	}
 	return nil
 }

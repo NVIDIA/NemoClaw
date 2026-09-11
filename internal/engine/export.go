@@ -9,6 +9,7 @@ import (
 	"fmt"
 
 	"github.com/NVIDIA/NemoClaw/internal/config"
+	"github.com/NVIDIA/NemoClaw/internal/ollama"
 	oshell "github.com/NVIDIA/NemoClaw/internal/openshell"
 	"github.com/NVIDIA/NemoClaw/internal/query"
 )
@@ -61,6 +62,18 @@ func (e *Engine) export(ctx context.Context, r Record) error {
 			if got["image"] != t.Values["image"] || got["agent_name"] != t.Values["agent_name"] {
 				return errors.New("sandbox configuration drift requires inspection")
 			}
+		}
+	}
+	if d.Spec.InferenceProviders[0].Ollama != nil {
+		id := ids["nemoclaw_ollama.service"]
+		if id == "" || ids["nemoclaw_ollama_model.inference"] != id+"/model" {
+			return errors.New("managed Ollama has no established bindings")
+		}
+		if _, err = observeOllama(ctx, d, r.Generations, id); err != nil {
+			return err
+		}
+		if _, err = ollama.NewModels(d.Spec.InferenceProviders[0].Endpoint).Read(ctx, d.Spec.Sandboxes[0].Agents[0].Inference.Routes[0].Overrides.Model); err != nil {
+			return err
 		}
 	}
 	if err = d.Validate(); err != nil {
