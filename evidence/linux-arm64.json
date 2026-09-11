@@ -1,0 +1,21 @@
+{
+  "agentReplies": 3,
+  "firstIDs": {
+    "nemoclaw_provider.inference": "4913a31d-1f01-4aa5-a723-fa5f2b5d6733",
+    "nemoclaw_route.primary": "3f9191bd-993d-455e-8036-ea7a174e9903/primary",
+    "nemoclaw_sandbox.agent": "a5683ee4-7557-43d7-b688-94da1ae3250b",
+    "nemoclaw_workspace.deployment": "3f9191bd-993d-455e-8036-ea7a174e9903"
+  },
+  "gateway": "0.0.116",
+  "modelAfter": "qwen3:0.6b",
+  "noOp": true,
+  "platform": "linux_arm64",
+  "recreatedIDs": {
+    "nemoclaw_provider.inference": "d0947ee4-71bd-434c-8420-7521373cc144",
+    "nemoclaw_route.primary": "88005df6-4b4a-483c-959c-05713788fd62/primary",
+    "nemoclaw_sandbox.agent": "fcaf1e21-20d4-44e0-b15b-66fbd58f3aad",
+    "nemoclaw_workspace.deployment": "88005df6-4b4a-483c-959c-05713788fd62"
+  },
+  "result": "pass",
+  "sandboxPreserved": true
+}

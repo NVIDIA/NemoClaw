@@ -1,0 +1,60 @@
+{
+  "go": "1.27.1",
+  "opentofu": "1.12.6",
+  "osquery": "5.23.1",
+  "openshell": "0.0.116",
+  "openclaw": "2026.9.4",
+  "ollama": "0.34.0",
+  "platforms": {
+    "linux_arm64": {
+      "tofu": {
+        "url": "https://github.com/opentofu/opentofu/releases/download/v1.12.6/tofu_1.12.6_linux_arm64.zip",
+        "sha256": "e573979ba68a17fe7b881752051a694a7efcd970e39521f6a25775197861ed4d"
+      },
+      "osquery": {
+        "url": "https://github.com/osquery/osquery/releases/download/5.23.1/osquery-5.23.1_1.linux_aarch64.tar.gz",
+        "sha256": "9ae763820166f75f19970b5147b1930a308865a923ab127f4b8bbaea7b69962a"
+      }
+    },
+    "linux_amd64": {
+      "tofu": {
+        "url": "https://github.com/opentofu/opentofu/releases/download/v1.12.6/tofu_1.12.6_linux_amd64.zip",
+        "sha256": "5dc43da4f750f33873dc25e94587128709e819e544b7be9016b255316153c3a8"
+      },
+      "osquery": {
+        "url": "https://github.com/osquery/osquery/releases/download/5.23.1/osquery-5.23.1_1.linux_x86_64.tar.gz",
+        "sha256": "0f37a478a1dbda24b67c81551e32d734b392c5a2f5deb156bf1c41ca204cfa67"
+      }
+    },
+    "darwin_arm64": {
+      "tofu": {
+        "url": "https://github.com/opentofu/opentofu/releases/download/v1.12.6/tofu_1.12.6_darwin_arm64.zip",
+        "sha256": "e083ee43790ab9e19ad66d9933e24a7244a1412e1d5728f37999ae2163fdac95"
+      },
+      "osquery": {
+        "url": "https://github.com/osquery/osquery/releases/download/5.23.1/osquery-5.23.1_1.macos_arm64.tar.gz",
+        "sha256": "5484f0b62e05a7b2fa9d6e43f038915ea2b7ce063d59bd671ede0cf8dd0552da"
+      }
+    },
+    "darwin_amd64": {
+      "tofu": {
+        "url": "https://github.com/opentofu/opentofu/releases/download/v1.12.6/tofu_1.12.6_darwin_amd64.zip",
+        "sha256": "166388e5feed47e107e11721b6366bf91d21e47eccbced75f3cbe0c7184ffd9b"
+      },
+      "osquery": {
+        "url": "https://github.com/osquery/osquery/releases/download/5.23.1/osqueryd-macos-bare-5.23.1.tar.gz",
+        "sha256": "8c10f293def8cda9734a4d8e734fac8d271032868f14c7bc4fcef789832602b6"
+      }
+    },
+    "windows_amd64": {
+      "tofu": {
+        "url": "https://github.com/opentofu/opentofu/releases/download/v1.12.6/tofu_1.12.6_windows_amd64.zip",
+        "sha256": "0d1421721cf9ec24b41b698a9620dda218d47fa7e76ac3dc15cdbc13bd79b0bb"
+      },
+      "osquery": {
+        "url": "https://github.com/osquery/osquery/releases/download/5.23.1/osquery-5.23.1.windows_x86_64.zip",
+        "sha256": "7bd411050ef6b5aae1b23956aec0dc5ce6e800c5656f0cd463ac70a6e1bdf30b"
+      }
+    }
+  }
+}

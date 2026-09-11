@@ -1,0 +1,33 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+apiVersion: nemoclaw.nvidia.com/v1alpha1
+kind: NemoClawConfig
+metadata:
+  name: local-agent
+  uid: 87d485ad-fba7-4197-9eaa-aa97cc97446b
+spec:
+  gateway:
+    management: external
+    endpoint: http://127.0.0.1:17671
+  inferenceProviders:
+    - name: local
+      provider: openai
+      endpoint: http://172.20.0.1:11436/v1
+  sandboxes:
+    - name: assistant
+      image:
+        ref: nc-prototype-openclaw@sha256:f73285851f5cc9d1862da7aaa603249f2c97fdf431bc4b03a5a435af897405f3
+      runtime:
+        provider: docker
+      network:
+        tier: isolated
+      agents:
+        - name: main
+          type: openclaw
+          inference:
+            routes:
+              - name: primary
+                providerRef: local
+                overrides:
+                  model: qwen3.5:0.8b

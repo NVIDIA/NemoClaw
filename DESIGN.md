@@ -1,0 +1,49 @@
+# Local desired-state prototype
+
+Decision: Accept for a local experiment, authorized by cv in this task on 2026-09-11.
+Placement: the independent root of `codex/desired-state-prototype`.
+Accountable maintainer: cv. No publication or existing-deployment migration is authorized.
+
+The experiment tests whether Go, OpenTofu, OpenShell, and osquery can implement
+NemoClaw's desired-state workflow with a small amount of new code.
+No existing NemoClaw source or documentation is copied into this branch.
+
+The configuration analysis in issue #10904 supplies the resource vocabulary and
+the constraints: explicit deployment UID, strict fields, secret references,
+ownership checks, non-destructive omission, and recovery after partial effects.
+This prototype is a subset, not implementation of the entire accepted epic.
+
+## Slice
+
+The user supplies YAML to `nemoclaw config apply` and retrieves it with
+`nemoclaw config export`. Planning uses OpenTofu and is exposed through
+`nemoclaw config plan`. Execution location is an operational option.
+
+The first deployment attaches to an explicitly selected OpenShell gateway and
+manages a deployment workspace, inference registrations/routes, and an OpenClaw
+sandbox. Gateway provisioning and inference-server installation are prerequisites
+for this slice. The upstream gateway owns Docker or Podman integration.
+
+OpenTofu owns dependencies, refresh, diffs, saved plans, and resource state.
+NemoClaw owns YAML validation, compilation, ownership enforcement, and recovery
+of operations that may have completed before their response was recorded.
+Resource readers are shared with a Go osquery extension. Host queries run on the
+machine being observed; they do not pretend to inspect a container guest.
+
+## Acceptance evidence
+
+1. Create a working agent from YAML against a real local OpenShell gateway.
+2. Apply unchanged YAML with no resource changes.
+3. Change the inference model without replacing the sandbox.
+4. Interrupt an apply and reconcile the recorded intent without duplicates.
+5. Export reusable, secret-free YAML and recreate the deployment in a fresh target.
+6. Reject foreign ownership, changed identities, unknown fields, inline secrets,
+   unsupported combinations, and deletion/replacement during ordinary apply.
+7. Build native binaries for Linux, macOS, and Windows. Record native execution
+   separately; cross-compilation is not platform qualification.
+
+Tests will exercise real OpenTofu/provider/osquery process boundaries and a
+protocol fixture for deterministic failure cases. Linux runtime evidence uses
+only resources created for this prototype. Windows/macOS runtime qualification,
+managed inference installation, adoption, pruning, migration, and the rest of the
+#10904 schema remain separate work.

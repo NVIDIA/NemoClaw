@@ -1,0 +1,26 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+repos:
+  - repo: local
+    hooks:
+      - id: go-format
+        name: Format Go sources
+        language: system
+        entry: gofmt -w
+        types: [go]
+        stages: [pre-commit]
+      - id: go-vet
+        name: Analyze Go sources
+        language: system
+        entry: go vet ./...
+        types: [go]
+        pass_filenames: false
+        stages: [pre-commit]
+      - id: go-test
+        name: Test Go sources
+        language: system
+        entry: go test ./...
+        types: [go]
+        pass_filenames: false
+        stages: [pre-commit]
