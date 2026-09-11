@@ -784,8 +784,10 @@ write failure propagates, so that retry artifact may be absent. `tools.invoke`
 assertions prove the plugin version after onboarding, restart, and recreation.
 The job also keeps the test-only tmpfs mount and uses OpenClaw's plugin installer
 across the proven filesystem boundary before restart. `e2e-support` tests own
-deterministic wrapper argument rewriting. Deterministic tests own exact package
-versions and third-party replacement internals. Runtime inspection and catalog
+sandbox-create interception and wrapper argument rewriting. Onboarding and
+recreation load the test-only interceptor; all other OpenShell commands use the
+canonical binary so dashboard forward ownership remains verifiable. Deterministic
+tests own exact package versions and third-party replacement internals. Runtime inspection and catalog
 permutations are outside this live contract. Workspace preservation and policy
 selection retain their focused coverage instead of another assertion in this
 target. The `rebuild-openclaw` job remains the canonical live rebuild coverage.

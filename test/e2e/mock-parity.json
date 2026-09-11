@@ -736,6 +736,7 @@
       "live": "test/e2e/live/openclaw-plugin-runtime-exdev.test.ts",
       "liveSources": [
         "test/e2e/live/openclaw-plugin-runtime-exdev-trusted-prebuild.ts",
+        "test/e2e/live/openshell-driver-config-test-wrapper.ts",
         "test/e2e/live/json-envelope.ts"
       ],
       "fast": [
