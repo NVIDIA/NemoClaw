@@ -10,7 +10,10 @@ import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { assertCleanupSucceededOrAbsent } from "../fixtures/cleanup-resources.ts";
 import { assertExitZero as expectExitZero, resultText } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
-import { validateSandboxName } from "../fixtures/clients/sandbox.ts";
+import {
+  HISTORICAL_SANDBOX_MAIN_PROCESS,
+  validateSandboxName,
+} from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import {
   readJsonFile,
@@ -542,8 +545,10 @@ test(
           "--policy",
           path.join(REPO_ROOT, "nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"),
           "--no-tty",
+          // OpenShell 0.0.116 treats this argv as the canonical main process,
+          // so the historical fixture must stay alive until NemoClaw rebuilds it.
           "--",
-          "true",
+          ...HISTORICAL_SANDBOX_MAIN_PROCESS,
         ],
         {
           artifactName: "phase-3-create-old-openclaw-sandbox",

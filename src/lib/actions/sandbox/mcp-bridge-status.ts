@@ -16,7 +16,7 @@ import {
   type HermesMcpReconciliationResult,
   inspectHermesMcpRuntimeIntent,
 } from "./mcp-bridge-hermes-reconciliation";
-import { redactBridgeSecretsForDisplay } from "./mcp-bridge-output";
+import { redactBridgeFailureForDisplay, redactBridgeSecretsForDisplay } from "./mcp-bridge-output";
 import { getPolicyGatewayState, getRegisteredGeneratedPolicy } from "./mcp-bridge-policy";
 import {
   getMcpProviderInspectionRuntimeSelection,
@@ -69,6 +69,52 @@ const UNSUPPORTED_STORED_CREDENTIAL_WARNING =
   "This persisted MCP credential name no longer satisfies the host-only credential boundary. Restart and rebuild fail closed for it; remove this server, then add it again with a dedicated service credential name.";
 const UNSUPPORTED_ATTACHED_CREDENTIAL_DETAIL =
   "the unsupported legacy credential may still be attached to fresh sandbox children";
+const AUTHORIZATION_DETAIL_MAX_LENGTH = 240;
+
+function authorizationDetailForDisplay(
+  detail: string,
+  entry: McpBridgeEntry,
+  fallback: string,
+): string {
+  return (
+    redactBridgeFailureForDisplay(detail, entry).trim().slice(0, AUTHORIZATION_DETAIL_MAX_LENGTH) ||
+    fallback
+  );
+}
+
+/** Require endpoint authorization before accepting an unchanged stable credential handle. */
+export async function assertUnchangedStableMcpCredentialAuthorized(
+  sandboxName: string,
+  entry: McpBridgeEntry,
+  runtimeSelection: McpProviderInspectionRuntimeSelection,
+  previousRevision: McpCredentialRevisionObservation | undefined,
+  credentialRevision: McpCredentialRevisionObservation,
+  inspectStatus: typeof statusMcpBridge = statusMcpBridge,
+): Promise<void> {
+  if (previousRevision !== credentialRevision || !credentialRevision.startsWith("s")) return;
+
+  let detail = "post-update wire-level credential verification did not return a result";
+  try {
+    const [status] = await inspectStatus(sandboxName, entry.server, {
+      allowCredentialProbeWithAdapterMismatch: true,
+      allowIncompleteAddCredentialProbe: true,
+      probeCredentialResolution: true,
+      runtimeSelection,
+    });
+    const probe = status?.provider.credentialResolution;
+    if (probe?.ok === true) return;
+    if (probe?.detail) detail = authorizationDetailForDisplay(probe.detail, entry, detail);
+  } catch (error) {
+    detail = authorizationDetailForDisplay(
+      error instanceof Error ? error.message : String(error),
+      entry,
+      "post-update credential status inspection failed",
+    );
+  }
+  throw new McpBridgeError(
+    `MCP server '${entry.server}' did not authorize its unchanged stable credential handle after provider update: ${detail}.`,
+  );
+}
 
 function storedUrlWarning(entry: McpBridgeEntry): string | undefined {
   try {
@@ -164,6 +210,11 @@ export interface McpBridgeStatusOptions {
    */
   allowCredentialProbeWithAdapterMismatch?: boolean;
   /**
+   * Let the add transaction prove an already-applied provider and policy before
+   * clearing its durable add journal. Internal lifecycle callers only.
+   */
+  allowIncompleteAddCredentialProbe?: boolean;
+  /**
    * Run the wire-level credential-resolution probe for each entry (#6379).
    * Costs one SSH round trip plus an in-sandbox MCP initialize per entry, so
    * the dispatch layer enables it only where the operator asked for it.
@@ -198,7 +249,7 @@ function credentialObservationDetail(
     return "a fresh OpenShell exec did not expose the credential placeholder";
   }
   if (observation === "canonical") {
-    return "a fresh OpenShell exec exposed an identityless credential placeholder instead of a revision-scoped placeholder";
+    return "a fresh OpenShell exec exposed an identityless credential placeholder instead of a generation-scoped placeholder";
   }
   return undefined;
 }
@@ -432,7 +483,9 @@ export async function statusMcpBridge(
                   }
                 : await probeCredentialResolution(
                     sandboxName,
-                    entry,
+                    options.allowIncompleteAddCredentialProbe && entry.addState
+                      ? (({ addState: _addState, ...committedEntry }) => committedEntry)(entry)
+                      : entry,
                     support.adapter,
                     readiness,
                     providerRuntimeSelection,

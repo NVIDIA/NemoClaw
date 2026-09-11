@@ -146,7 +146,7 @@ describe("uninstall sandbox delete outcomes (#7906)", () => {
         const calls: string[][] = [];
         const warnings: string[] = [];
 
-        const result = runPortUninstall(
+        const result = await runPortUninstall(
           {
             assumeYes: true,
             deleteModels: false,

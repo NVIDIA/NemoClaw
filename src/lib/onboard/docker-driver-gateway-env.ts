@@ -24,8 +24,10 @@ import {
   NEMOCLAW_EXTERNAL_COMPONENT_GATEWAY_IDENTITY_ENV,
   NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV,
   prepareDockerDriverGatewayConfigEnv,
+  readExternalComponentGatewayPreparation,
   type ExternalComponentGatewayConfiguration,
 } from "./docker-driver-gateway-config";
+import type { ExternalComponentGatewayPreparation } from "./external-component/activation";
 import { buildDockerDriverGatewayLocalTlsEnv } from "./docker-driver-gateway-local-tls";
 import {
   getOpenShellGatewayManagedServiceLogCommand,
@@ -97,7 +99,7 @@ export interface BuildDockerDriverGatewayEnvOptions {
 export function configureDockerDriverGatewayExternalComponent(
   gatewayEnv: Record<string, string>,
   externalComponent: ExternalComponentGatewayConfiguration | null,
-): void {
+): ExternalComponentGatewayPreparation | void {
   const configPath = gatewayEnv.OPENSHELL_GATEWAY_CONFIG;
   if (!configPath) {
     throw new Error("OpenShell Docker-driver gateway requires OPENSHELL_GATEWAY_CONFIG");
@@ -110,6 +112,9 @@ export function configureDockerDriverGatewayExternalComponent(
       externalComponent,
     },
   );
+  if (externalComponent && "interceptor" in externalComponent) {
+    return readExternalComponentGatewayPreparation(gatewayEnv, externalComponent);
+  }
 }
 
 function preparePortableGatewayHostRuntime(
