@@ -288,7 +288,12 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
   ): boolean {
     return (
       forwardService?.owns?.(
-        forwardTarget(sandboxName, gatewayName, port, getDashboardForwardTarget(chatUiUrl)),
+        forwardTarget(
+          sandboxName,
+          gatewayName,
+          port,
+          getDashboardForwardTarget(chatUiUrl, { isWsl: deps.isWsl() }),
+        ),
       ) === true
     );
   }

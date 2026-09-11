@@ -377,6 +377,7 @@ RUN chown root:sandbox /sandbox \
 RUN if [ "$NEMOCLAW_DARWIN_VM_COMPAT" = "1" ]; then \
         chmod -R a+rwX /sandbox/.deepagents; \
         find /sandbox/.deepagents -type d -exec chmod a+rwx {} +; \
+        chmod 1777 /sandbox/.deepagents; \
         for p in /sandbox/.nemoclaw/state /sandbox/.nemoclaw/migration /sandbox/.nemoclaw/snapshots /sandbox/.nemoclaw/staging; do \
             chmod -R a+rwX "$p"; \
             find "$p" -type d -exec chmod a+rwx {} +; \

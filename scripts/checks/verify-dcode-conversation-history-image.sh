@@ -19,6 +19,7 @@ docker run --rm --platform "$platform" --user root --entrypoint /bin/sh "$image_
   darwin_compat="$1"
   history=/sandbox/.deepagents/conversation_history
   marker="$history/nemoclaw-permission-probe"
+  renamed="$history.deleted"
 
   test "$(stat -c "%U:%G:%a" "$history")" = "sandbox:sandbox:700"
   printf "%s\n" private > "$marker"
@@ -39,7 +40,12 @@ docker run --rm --platform "$platform" --user root --entrypoint /bin/sh "$image_
     echo "ERROR: another UID can delete Deep Agents Code conversation history." >&2
     exit 1
   fi
+  if setpriv --reuid=65534 --regid=65534 --clear-groups /bin/mv "$history" "$renamed" 2>/dev/null; then
+    echo "ERROR: another UID can rename the Deep Agents Code conversation-history directory." >&2
+    exit 1
+  fi
   test ! -e "$history/nonowner-write"
+  test ! -e "$renamed"
   test -f "$marker"
 
   if [ "$darwin_compat" = "1" ] &&
