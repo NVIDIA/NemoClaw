@@ -11,11 +11,11 @@ The component supplies policy. OpenShell validates effective policy and enforces
 ## Runtime dependency
 
 This v2 implementation requires authenticated interceptor and middleware APIs,
-interceptor-backed provider profiles, and exact authorization for disjoint RPC phases.
+and interceptor-backed provider profiles.
 The current shared runtime pin does not contain all required behavior.
-The local OpenShell candidate is validation evidence, not a qualified release.
+Qualify the accepted behavior against a released runtime before claiming integration support.
 Keep runtime qualification and shared version pins in their existing owner.
-Do not add an insecure transport or dynamic-binding fallback.
+Dynamic registration is the accepted v2 contract. Do not add an insecure transport fallback.
 
 ## Declaration
 
@@ -31,17 +31,7 @@ V2 contains these fields only:
   "interceptor": {
     "endpoint": "https://127.0.0.1:9443",
     "caCertificatePath": "/run/user/1000/component/ca.pem",
-    "audience": "urn:generic:admission",
-    "bindings": [
-      {
-        "rpc": "openshell.v1.OpenShell/CreateSandbox",
-        "phases": ["modify_operation", "validate"]
-      },
-      {
-        "rpc": "openshell.v1.OpenShell/CreateSandbox",
-        "phases": ["post_commit"]
-      }
-    ]
+    "audience": "urn:generic:admission"
   },
   "middleware": {
     "name": "generic/middleware",
@@ -58,12 +48,12 @@ The middleware endpoint must use the fixed `host.openshell.internal` selector wi
 NemoClaw resolves this selector to the inspected Docker bridge address and writes an IP endpoint.
 It does not perform a DNS lookup or accept arbitrary host addresses.
 
-Bindings authorize RPC and phase pairs exactly. Admission failures close the operation.
-A post-commit phase must occupy its own group and uses `fail_open`, because the operation has already committed.
-Duplicate or overlapping phases are invalid. `CreateSandbox` and `UpdateConfig` support all three phases.
-The other accepted RPCs support validation only: `CreateProvider`, `UpdateProvider`, `ImportProviderProfiles`,
-`UpdateProviderProfiles`, `DeleteProviderProfile`, `SubmitPolicyAnalysis`, `ApproveDraftChunk`, and `ApproveAllDraftChunks`.
-OpenShell remains responsible for manifest compatibility and middleware binding validation.
+The authenticated component's manifest owns callback selection and callback failure behavior.
+NemoClaw configures `binding_policy = "dynamic"` with no binding or failure-policy overrides.
+New supported callbacks are trusted. Missing callbacks do not trigger a strict-registration failure.
+A callback's explicit failure policy can override the manifest's service default, including a `fail_closed` default.
+Tests must verify the component's required checks and their allowed and denied outcomes.
+OpenShell validates supported RPCs, phases, manifests, and middleware bindings, and retains enforcement authority.
 
 `providerProfileSource` is optional. When present, it must name this interceptor.
 It selects the interceptor as the sole profile source; unresolved profiles cannot fall back to built-in or user profiles.
@@ -82,14 +72,14 @@ The JSON request has `schemaVersion: 2`, a random `preparationId`, `componentId`
 
 - `gateway`: `name`, `id`, `issuer`, `publicKeyPem`, `kid`, and `extensionTokenTtlSecs: 900`.
 - `network`: the inspected `gatewayIp` and `subnet`.
-- `interceptor` and `middleware`: the validated declaration settings, including ports, CA paths, audiences, and bindings.
+- `interceptor` and `middleware`: the validated declaration settings, including ports, CA paths and audiences.
 - `providerProfileSource`: included only when declared.
 
 The component uses the public key to verify OpenShell's EdDSA extension credentials.
 It must check the issuer, audience, key ID, token type, expiration, and caller identity.
 The gateway signing key stays in NemoClaw's protected state directory. It is never sent to the component.
 OpenShell mints and refreshes extension credentials; they expire after 900 seconds with the existing gateway settings.
-Removing component registration removes future delivery. Existing credentials remain valid until their expiration.
+Restarting the gateway without component registration removes future delivery. Existing credentials remain valid until their expiration.
 
 The component replies with HTTP 200 and exactly four JSON fields:
 `schemaVersion: 2`, the matching `preparationId`, the matching `componentId`, and `result: "prepared"`.

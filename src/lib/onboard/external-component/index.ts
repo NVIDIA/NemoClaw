@@ -41,7 +41,6 @@ export type ExternalComponentContractErrorCode =
   | "lifecycle_unsupported"
   | "platform_unsupported"
   | "schema_unsupported"
-  | "binding_unauthorized"
   | "endpoint_restricted"
   | "trust_invalid"
   | "trust_changed"
@@ -75,18 +74,11 @@ export interface ExternalComponentConnection {
   readonly audience: string;
 }
 
-export interface ExternalComponentBinding {
-  readonly rpc: string;
-  readonly phases: readonly ("modify_operation" | "validate" | "post_commit")[];
-}
-
 export interface ExternalComponentDeclarationV2 {
   readonly schemaVersion: 2;
   readonly componentId: string;
   readonly activationSocketPath: string;
-  readonly interceptor: ExternalComponentConnection & {
-    readonly bindings: readonly ExternalComponentBinding[];
-  };
+  readonly interceptor: ExternalComponentConnection;
   readonly middleware: ExternalComponentConnection & { readonly name: string };
   readonly providerProfileSource?: string;
 }
@@ -639,71 +631,13 @@ function connection(
   });
 }
 
-function bindings(value: unknown): readonly ExternalComponentBinding[] {
-  if (!Array.isArray(value) || value.length === 0 || value.length > 32) {
-    throw new ExternalComponentContractError("binding_unauthorized");
-  }
-  const seen = new Set<string>();
-  return Object.freeze(
-    value.map((entry) => {
-      const record = fields(entry, ["rpc", "phases"]);
-      const method =
-        typeof record.rpc === "string"
-          ? record.rpc.replace(/^openshell\.v1\.OpenShell\//u, "")
-          : "";
-      const policyMutation = method === "CreateSandbox" || method === "UpdateConfig";
-      const supported = [
-        "CreateProvider",
-        "UpdateProvider",
-        "ImportProviderProfiles",
-        "UpdateProviderProfiles",
-        "DeleteProviderProfile",
-        "SubmitPolicyAnalysis",
-        "ApproveDraftChunk",
-        "ApproveAllDraftChunks",
-      ];
-      if (
-        record.rpc !== `openshell.v1.OpenShell/${method}` ||
-        (!policyMutation && !supported.includes(method)) ||
-        !Array.isArray(record.phases) ||
-        record.phases.length === 0 ||
-        record.phases.length > 2
-      ) {
-        throw new ExternalComponentContractError("binding_unauthorized");
-      }
-      for (const phase of record.phases) {
-        const key = `${String(record.rpc)}:${String(phase)}`;
-        if (
-          !(
-            policyMutation ? ["modify_operation", "validate", "post_commit"] : ["validate"]
-          ).includes(phase) ||
-          (phase === "post_commit" && record.phases.length !== 1) ||
-          seen.has(key)
-        ) {
-          throw new ExternalComponentContractError("binding_unauthorized");
-        }
-        seen.add(key);
-      }
-      return Object.freeze({
-        rpc: record.rpc as string,
-        phases: Object.freeze([...record.phases]) as ExternalComponentBinding["phases"],
-      });
-    }),
-  );
-}
-
 function parseConnectionDeclaration(value: unknown): ExternalComponentDeclarationV2 {
   const record = fields(
     value,
     ["schemaVersion", "componentId", "activationSocketPath", "interceptor", "middleware"],
     ["providerProfileSource"],
   );
-  const interceptor = fields(record.interceptor, [
-    "endpoint",
-    "caCertificatePath",
-    "audience",
-    "bindings",
-  ]);
+  const interceptor = fields(record.interceptor, ["endpoint", "caCertificatePath", "audience"]);
   const middleware = fields(record.middleware, [
     "name",
     "endpoint",
@@ -718,10 +652,7 @@ function parseConnectionDeclaration(value: unknown): ExternalComponentDeclaratio
     schemaVersion: 2,
     componentId,
     activationSocketPath: validatedSocketPath(record.activationSocketPath),
-    interceptor: Object.freeze({
-      ...connection(interceptor, true),
-      bindings: bindings(interceptor.bindings),
-    }),
+    interceptor: connection(interceptor, true),
     middleware: Object.freeze({
       ...connection(middleware, false),
       name: serviceName(middleware.name),

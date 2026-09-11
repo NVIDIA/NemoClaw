@@ -65,7 +65,6 @@ function preparedConnectionComponent(): PreparedExternalComponent {
         endpoint: "https://127.0.0.1:9443",
         caCertificatePath: "/run/component/ca.pem",
         audience: "urn:generic:admission",
-        bindings: [{ rpc: "openshell.v1.OpenShell/CreateSandbox", phases: ["validate"] }],
       },
       middleware: {
         name: "generic-middleware",

@@ -42,12 +42,6 @@ function declaration(caCertificatePath = "/run/component/ca.pem"): ExternalCompo
       endpoint: "https://127.0.0.1:9443",
       caCertificatePath,
       audience: "urn:generic:admission",
-      bindings: [
-        { rpc: "openshell.v1.OpenShell/CreateSandbox", phases: ["modify_operation", "validate"] },
-        { rpc: "openshell.v1.OpenShell/UpdateConfig", phases: ["modify_operation", "validate"] },
-        { rpc: "openshell.v1.OpenShell/CreateSandbox", phases: ["post_commit"] },
-        { rpc: "openshell.v1.OpenShell/UpdateConfig", phases: ["post_commit"] },
-      ],
     },
     middleware: {
       name: "generic/middleware",
@@ -83,7 +77,7 @@ function fixture() {
 }
 
 describe("external component connection declaration", () => {
-  it("accepts protected connection references and separate admission and observation phases (#11507)", () => {
+  it("accepts protected connection references for a component-owned manifest (#11507)", () => {
     const parsed = parseExternalComponentDeclaration(JSON.stringify(declaration()));
     expect(parsed).toEqual(declaration());
     expect(Object.isFrozen(parsed)).toBe(true);
@@ -121,56 +115,22 @@ describe("external component connection declaration", () => {
     },
   );
 
-  it.each([
-    ["unrecognized RPC", [{ rpc: "openshell.v1.OpenShell/DeleteSandbox", phases: ["validate"] }]],
-    ["wildcard RPC", [{ rpc: "openshell.v1.OpenShell/*", phases: ["validate"] }]],
-    ["unknown phase", [{ rpc: "openshell.v1.OpenShell/CreateSandbox", phases: ["before"] }]],
-    [
-      "overlapping phases",
-      [{ rpc: "openshell.v1.OpenShell/CreateSandbox", phases: ["validate", "validate"] }],
-    ],
-    [
-      "mixed failure behavior",
-      [{ rpc: "openshell.v1.OpenShell/CreateSandbox", phases: ["validate", "post_commit"] }],
-    ],
-    [
-      "unauthorized provider mutation",
-      [{ rpc: "openshell.v1.OpenShell/CreateProvider", phases: ["modify_operation"] }],
-    ],
-    ["empty bindings", []],
-  ])("rejects %s (#11507)", (_title, bindings) => {
-    const value = declaration();
-    expect(() =>
-      parseExternalComponentDeclaration(
-        JSON.stringify({ ...value, interceptor: { ...value.interceptor, bindings } }),
-      ),
-    ).toThrow(/binding_unauthorized/);
-  });
+  it.each(["bindings", "failurePolicy", "bindingPolicy", "allowInsecureTransport"])(
+    "rejects declaration overrides of %s (#11507)",
+    (field) => {
+      const value = declaration();
+      expect(() =>
+        parseExternalComponentDeclaration(
+          JSON.stringify({ ...value, interceptor: { ...value.interceptor, [field]: [] } }),
+        ),
+      ).toThrow(/declaration_unknown_field/);
+    },
+  );
 
-  it("rejects overlapping phase groups and unknown nested settings (#11507)", () => {
-    const value = declaration();
+  it("rejects an unregistered provider-profile source (#11507)", () => {
     expect(() =>
       parseExternalComponentDeclaration(
-        JSON.stringify({
-          ...value,
-          interceptor: {
-            ...value.interceptor,
-            bindings: [...value.interceptor.bindings, value.interceptor.bindings[0]],
-          },
-        }),
-      ),
-    ).toThrow(/binding_unauthorized/);
-    expect(() =>
-      parseExternalComponentDeclaration(
-        JSON.stringify({
-          ...value,
-          interceptor: { ...value.interceptor, allowInsecureTransport: true },
-        }),
-      ),
-    ).toThrow(/declaration_unknown_field/);
-    expect(() =>
-      parseExternalComponentDeclaration(
-        JSON.stringify({ ...value, providerProfileSource: "unregistered" }),
+        JSON.stringify({ ...declaration(), providerProfileSource: "unregistered" }),
       ),
     ).toThrow(/declaration_invalid/);
   });
@@ -241,7 +201,7 @@ describe("external component trust", () => {
 });
 
 describe("managed gateway connection configuration", () => {
-  it("writes authenticated connections, authoritative profiles, and distinct failure policies (#11507)", () => {
+  it("writes authenticated connections and delegates callback selection to the component (#11507)", () => {
     const f = fixture();
     f.write();
     const config = fs.readFileSync(f.env.OPENSHELL_GATEWAY_CONFIG!, "utf-8");
@@ -251,17 +211,12 @@ describe("managed gateway connection configuration", () => {
       { type: "interceptor", name: f.component.componentId },
     ]);
     expect(gateway.interceptors[0]).toMatchObject({
-      binding_policy: "exact",
-      failure_policy: "fail_closed",
+      binding_policy: "dynamic",
       allow_insecure_transport: false,
       audience: f.component.interceptor.audience,
     });
-    expect(gateway.interceptors[0].bindings.map((binding: any) => binding.failure_policy)).toEqual([
-      "fail_closed",
-      "fail_closed",
-      "fail_open",
-      "fail_open",
-    ]);
+    expect(gateway.interceptors[0]).not.toHaveProperty("bindings");
+    expect(gateway.interceptors[0]).not.toHaveProperty("failure_policy");
     expect(parsed.openshell.supervisor.middleware[0]).toMatchObject({
       grpc_endpoint: "https://172.30.115.1:9444",
       allow_insecure_transport: false,
@@ -277,7 +232,7 @@ describe("managed gateway connection configuration", () => {
   });
 
   it.each([
-    'binding_policy = "exact"',
+    'binding_policy = "dynamic"',
     "allow_insecure_transport = false",
     "172.30.115.1",
     "ca-sha256",

@@ -64,21 +64,12 @@ export function renderExternalComponentConnections(
     `audience = ${quote(interceptor.audience)}`,
     "allow_insecure_transport = false",
     "order = 10",
-    'failure_policy = "fail_closed"',
-    'binding_policy = "exact"',
+    'binding_policy = "dynamic"',
     'timeout = "500ms"',
     "max_response_bytes = 1048576",
     "max_patches = 32",
     "",
   );
-  for (const binding of interceptor.bindings)
-    lines.push(
-      "[[openshell.gateway.interceptors.bindings]]",
-      `rpc = ${quote(binding.rpc)}`,
-      `phases = [${binding.phases.map((phase) => quote(phase)).join(", ")}]`,
-      `failure_policy = "${binding.phases[0] === "post_commit" ? "fail_open" : "fail_closed"}"`,
-      "",
-    );
   lines.push(
     "[[openshell.supervisor.middleware]]",
     `name = ${quote(middleware.name)}`,
@@ -116,13 +107,7 @@ export function parseExternalComponentConnections(openshell: Record<string, unkn
   return validateExternalComponentGatewaySettings({
     schemaVersion: 2,
     componentId: interceptor.name,
-    interceptor: {
-      ...connection(interceptor),
-      bindings: (interceptor.bindings as Record<string, unknown>[]).map((binding) => ({
-        rpc: binding.rpc,
-        phases: binding.phases,
-      })),
-    },
+    interceptor: connection(interceptor),
     middleware: {
       ...connection(middleware),
       endpoint:
