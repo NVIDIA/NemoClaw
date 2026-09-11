@@ -292,6 +292,7 @@ const PROFILE_CONFLICT_ENV = [
 function validateServingProfileConflicts(
   selectedProfileId: string,
   deps: ResolveOnboardOptionsDeps,
+  allowedLlamaCppRecipeId?: string,
 ): void {
   const existingPreset = String(deps.env[NEMOCLAW_SERVING_PRESET_ENV] ?? "").trim();
   if (existingPreset && existingPreset !== selectedProfileId) {
@@ -300,7 +301,11 @@ function validateServingProfileConflicts(
       `  --profile ${selectedProfileId} conflicts with ${NEMOCLAW_SERVING_PRESET_ENV}=${existingPreset}.`,
     );
   }
-  const conflicts = PROFILE_CONFLICT_ENV.filter((name) => String(deps.env[name] ?? "").trim());
+  const conflicts = PROFILE_CONFLICT_ENV.filter((name) => {
+    const value = String(deps.env[name] ?? "").trim();
+    if (!value) return false;
+    return name !== "NEMOCLAW_LLAMACPP_RECIPE" || value !== allowedLlamaCppRecipeId;
+  });
   if (conflicts.length > 0) {
     fail(deps, `  --profile cannot be combined with inference overrides: ${conflicts.join(", ")}.`);
   }
@@ -432,7 +437,11 @@ function resolveResumedServingProfile(
       `  --profile ${requested.preset.id} does not match resumed profile ${current.preset.id}.`,
     );
   }
-  validateServingProfileConflicts(current.preset.id, deps);
+  validateServingProfileConflicts(
+    current.preset.id,
+    deps,
+    current.recipe.backend === "install-llama-cpp" ? current.recipe.id : undefined,
+  );
   return current;
 }
 
