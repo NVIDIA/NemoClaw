@@ -12,7 +12,7 @@ import type {
   CheckpointSandboxIdentity,
   OnboardCheckpoint,
 } from "../state/onboard-checkpoint-types";
-import { HERMES_TAVILY_PROVIDER_PROFILE_ID } from "../messaging/applier/web-search-provider-profile";
+import { webSearchProviderProfileId } from "../messaging/applier/web-search-provider-profile";
 import type { OnboardMachineState } from "./machine/types";
 import { ONBOARD_MACHINE_STATES } from "./machine/types";
 import {
@@ -135,9 +135,7 @@ export function requiredWebSearchProviderType(
   provider: "brave" | "tavily",
   agent: { name?: string } | null,
 ): string {
-  return provider === "tavily" && agent?.name?.trim().toLowerCase() === "hermes"
-    ? HERMES_TAVILY_PROVIDER_PROFILE_ID
-    : provider;
+  return webSearchProviderProfileId(provider, agent?.name);
 }
 
 /** Collect every active credential binding, including multiple keys owned by one provider. */
