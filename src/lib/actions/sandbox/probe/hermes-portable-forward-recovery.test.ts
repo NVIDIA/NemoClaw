@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { isDeepStrictEqual } from "node:util";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -21,6 +22,7 @@ import {
 import {
   buildForwardServiceArgs,
   ForwardServiceStartupCleanupError,
+  type ForwardServiceTarget,
 } from "../../../adapters/openshell/forward-service";
 
 type LaunchForwardService = NonNullable<
@@ -1359,11 +1361,24 @@ describe("Hermes Portable connect composition", () => {
       portableReceiptDisposition: { kind: "hermes", phase: "active" },
       portableRecoveryResult: { kind: "already-running" },
     });
-    harness.forwardServiceOwnerSpy.mockReturnValue(true);
+    const expectedTarget: ForwardServiceTarget = {
+      executable: "/usr/bin/openshell",
+      gatewayEndpoint: "https://127.0.0.1:8080",
+      gatewayName: "nemoclaw",
+      localHost: "127.0.0.1",
+      localPort: 18_789,
+      sandboxName: "alpha",
+      targetHost: "127.0.0.1",
+      targetPort: 18_789,
+      workspace: "default",
+    };
+    harness.forwardServiceOwnerSpy.mockImplementation((target: ForwardServiceTarget) =>
+      isDeepStrictEqual(target, expectedTarget),
+    );
 
     await expect(harness.connectSandbox("alpha")).rejects.toThrow("process.exit(0)");
 
-    expect(harness.forwardServiceOwnerSpy).toHaveBeenCalled();
+    expect(harness.forwardServiceOwnerSpy).toHaveBeenCalledWith(expectedTarget);
     expect(
       harness.runOpenshellSpy.mock.calls.some(
         ([args]) => Array.isArray(args) && args[0] === "forward",
