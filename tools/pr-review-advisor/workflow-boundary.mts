@@ -66,20 +66,39 @@ export function validatePrReviewAdvisorWorkflow(workflowPath = DEFAULT_WORKFLOW_
   const errors: string[] = [];
   const source = readFileSync(workflowPath, "utf8");
   const advisor = YAML.parse(source) as AdvisorWorkflow;
-  const permissionBlocks = [
-    advisor.permissions,
-    ...Object.values(advisor.jobs ?? {}).map((job) => job.permissions),
-  ];
+  const dispatchJob = advisor.jobs?.["repair-dispatch-generated-head"] ?? {};
+  const dispatchSteps = dispatchJob.steps ?? [];
+  const dispatchStep = dispatchSteps.find(
+    (step) => step.name === "Dispatch exact generated-head validation",
+  );
+  const jobsWithActionsWrite = Object.entries(advisor.jobs ?? {})
+    .filter(([, job]) => permissionMap(job.permissions).actions === "write")
+    .map(([name]) => name);
   if (
-    permissionBlocks.some(
-      (permissions) =>
-        permissions === "write-all" || permissionMap(permissions).actions === "write",
-    )
+    advisor.permissions === "write-all" ||
+    permissionMap(advisor.permissions).actions === "write" ||
+    !isDeepStrictEqual(jobsWithActionsWrite, ["repair-dispatch-generated-head"]) ||
+    !isDeepStrictEqual(permissionMap(dispatchJob.permissions), { actions: "write" }) ||
+    !sameMembers(needs(dispatchJob), ["repair-publish"]) ||
+    dispatchJob.if !==
+      "needs.repair-publish.result == 'success' && needs.repair-publish.outputs.published-sha != ''" ||
+    dispatchSteps.length !== 1 ||
+    dispatchStep?.env?.GH_TOKEN !== "${{ github.token }}" ||
+    !String(dispatchStep.run ?? "").includes(
+      "actions/workflows/pr-review-advisor-generated-head.yaml/dispatches",
+    ) ||
+    !String(dispatchStep.run ?? "").includes('-f "inputs[source_run_id]=$GITHUB_RUN_ID"') ||
+    !String(dispatchStep.run ?? "").includes('-f "inputs[source_run_attempt]=$GITHUB_RUN_ATTEMPT"')
   ) {
-    errors.push("Unified advisor must not hold actions: write");
+    errors.push("Unified advisor must isolate exact generated-head dispatch after publication");
   }
-  if (/createWorkflowDispatch|workflow_dispatches/u.test(source)) {
-    errors.push("Unified advisor must not auto-dispatch workflows");
+  if (
+    (
+      source.match(/actions\/workflows\/pr-review-advisor-generated-head[.]yaml\/dispatches/gu) ??
+      []
+    ).length !== 1
+  ) {
+    errors.push("Unified advisor must contain only the exact generated-head dispatch");
   }
   if (
     advisor.on?.pull_request_target !== undefined ||

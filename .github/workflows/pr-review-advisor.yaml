@@ -988,7 +988,7 @@ jobs:
       vars.PR_REVIEW_ADVISOR_REPAIR_ENABLED == 'true'
     environment: advisor-repair-publish
     permissions:
-      actions: write
+      actions: read
       contents: write
       pull-requests: read
     runs-on: ubuntu-24.04
@@ -1150,6 +1150,17 @@ jobs:
           STATE_FILE: ${{ runner.temp }}/publish-live/state.json
         run: node --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/repair-publish.mts" advisor-repair-publish
 
+  repair-dispatch-generated-head:
+    name: Dispatch exact generated-head validation
+    needs: repair-publish
+    if: >-
+      needs.repair-publish.result == 'success' &&
+      needs.repair-publish.outputs.published-sha != ''
+    permissions:
+      actions: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
       - name: Dispatch exact generated-head validation
         env:
           GH_TOKEN: ${{ github.token }}
@@ -1163,7 +1174,7 @@ jobs:
   repair-audit:
     name: Preserve bounded repair audit receipt
     if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.repair_finding_ids_json != '[]' }}
-    needs: [repair-select, repair-resolve, repair-validate, repair-publish]
+    needs: [repair-select, repair-resolve, repair-validate, repair-publish, repair-dispatch-generated-head]
     permissions: {}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -1178,19 +1189,21 @@ jobs:
           VALIDATE_RESULT: ${{ needs.repair-validate.result }}
           PUBLISH_REQUESTED: ${{ inputs.repair_publish }}
           PUBLISH_RESULT: ${{ needs.repair-publish.result }}
+          DISPATCH_RESULT: ${{ needs.repair-dispatch-generated-head.result }}
         run: |
           mkdir -m 700 "$RUNNER_TEMP/advisor-repair-audit"
           jq -n \
             --arg run "$GITHUB_RUN_ID" --arg attempt "$GITHUB_RUN_ATTEMPT" \
             --arg pr "$(printf '%s' "$TARGET_PR" | tr -cd '0-9' | cut -c1-10)" \
             --arg select "$SELECT_RESULT" --arg resolve "$RESOLVE_RESULT" --arg validate "$VALIDATE_RESULT" \
-            --arg publish "$PUBLISH_RESULT" --arg publishRequested "$PUBLISH_REQUESTED" \
+            --arg publish "$PUBLISH_RESULT" --arg dispatch "$DISPATCH_RESULT" --arg publishRequested "$PUBLISH_REQUESTED" \
             --arg resolveFailureStage "$RESOLVE_FAILURE_STAGE" --argjson resolveCleanup "$RESOLVE_CLEANUP" \
-            '{version:1, phase:(if $publishRequested == "true" then 1 else 0 end), runId:$run, runAttempt:$attempt, prNumber:$pr, jobs:{select:$select, resolve:$resolve, validate:$validate, publish:$publish, cleanup:$resolveCleanup}} |
+            '{version:1, phase:(if $publishRequested == "true" then 1 else 0 end), runId:$run, runAttempt:$attempt, prNumber:$pr, jobs:{select:$select, resolve:$resolve, validate:$validate, publish:$publish, dispatch:$dispatch, cleanup:$resolveCleanup}} |
              . + (if $select == "failure" or $select == "cancelled" then {failure:{stage:"select", reason:"repair selection did not produce an eligible exact-head attempt"}}
                   elif $resolve == "failure" or $resolve == "cancelled" then {failure:{stage:"resolve", phase:(if $resolveFailureStage == "" then "unknown" else $resolveFailureStage end), reason:"sandboxed repair did not produce a complete bounded proposal"}}
                   elif $validate == "failure" or $validate == "cancelled" then {failure:{stage:"validate", reason:"trusted validation rejected or could not verify the candidate"}}
                   elif $publish == "failure" or $publish == "cancelled" then {failure:{stage:"publish", reason:"current-head-safe publication did not complete"}}
+                  elif $dispatch == "failure" or $dispatch == "cancelled" then {failure:{stage:"dispatch", reason:"exact generated-head validation was not dispatched"}}
                   else {} end)' \
             > "$RUNNER_TEMP/advisor-repair-audit/attempt.json"
 

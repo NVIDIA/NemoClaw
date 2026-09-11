@@ -91,6 +91,18 @@ it.each([
     "needs.require-green-checks.outputs.base_sha || ''",
     "Unified advisor must prepare the PR revision from the successful checks run",
   ],
+  [
+    "generated-head dispatch dependency",
+    "needs: repair-publish\n    if: >-\n      needs.repair-publish.result == 'success'",
+    "needs: []\n    if: >-\n      needs.repair-publish.result == 'success'",
+    "Unified advisor must isolate exact generated-head dispatch after publication",
+  ],
+  [
+    "generated-head dispatch target",
+    "pr-review-advisor-generated-head.yaml/dispatches",
+    "pr-review-advisor.yaml/dispatches",
+    "Unified advisor must isolate exact generated-head dispatch after publication",
+  ],
 ])("rejects an unsafe Advisor %s mutation", (_case, before, after, error) => {
   const directory = mkdtempSync(join(tmpdir(), "nemoclaw-pr-review-advisor-"));
   const advisorPath = join(directory, "advisor.yaml");

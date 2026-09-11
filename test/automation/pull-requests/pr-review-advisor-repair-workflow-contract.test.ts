@@ -28,6 +28,7 @@ describe("PR Review Advisor repair workflow contracts", () => {
     const resolve = advisorWorkflow.jobs["repair-resolve"];
     const validate = advisorWorkflow.jobs["repair-validate"];
     const repairPublish = advisorWorkflow.jobs["repair-publish"];
+    const repairDispatch = advisorWorkflow.jobs["repair-dispatch-generated-head"];
     const repairVerify = generatedHeadWorkflow.jobs.validate;
     const repairRequest = generatedHeadWorkflow.jobs.locate;
     const audit = advisorWorkflow.jobs["repair-audit"];
@@ -49,10 +50,14 @@ describe("PR Review Advisor repair workflow contracts", () => {
     expect(repairPublish.environment).toBe("advisor-repair-publish");
     expect(repairPublish.if).toContain("inputs.repair_publish");
     expect(repairPublish.permissions).toEqual({
-      actions: "write",
+      actions: "read",
       contents: "write",
       "pull-requests": "read",
     });
+    expect(repairDispatch.permissions).toEqual({ actions: "write" });
+    expect(repairDispatch.needs).toBe("repair-publish");
+    expect(repairDispatch.if).toContain("needs.repair-publish.result == 'success'");
+    expect(repairDispatch.if).toContain("needs.repair-publish.outputs.published-sha != ''");
     expect(repairRequest.permissions).toEqual({ actions: "read", contents: "read" });
     expect(repairVerify.permissions).toEqual({
       actions: "write",
@@ -132,6 +137,7 @@ describe("PR Review Advisor repair workflow contracts", () => {
     expect(generatedHeadWorkflowText).not.toContain("workflow_run:");
     expect(repairRequest.if).toContain("github.event_name == 'workflow_dispatch'");
     expect(audit.needs).toContain("repair-publish");
+    expect(audit.needs).toContain("repair-dispatch-generated-head");
     const auditSteps = advisorWorkflow.jobs["repair-audit"]?.steps ?? [];
     const writeAuditStep = auditSteps.find(
       (candidate) => candidate.name === "Write bounded redacted receipt",
@@ -145,10 +151,12 @@ describe("PR Review Advisor repair workflow contracts", () => {
     expect(uploadAuditStep?.["continue-on-error"]).not.toBe(true);
     expect(repairPublishText).not.toMatch(/secrets[.]|OPENAI_API_KEY|PR_REVIEW_ADVISOR_API_KEY/u);
     expect(repairRequestText).not.toContain("github.event.workflow_run");
-    expect(repairPublishText).toContain("Dispatch exact generated-head validation");
-    expect(repairPublishText.indexOf("Compare-and-swap the prepared repair commit")).toBeLessThan(
-      repairPublishText.indexOf("Dispatch exact generated-head validation"),
-    );
+    const repairDispatchText = JSON.stringify(repairDispatch);
+    expect(repairPublishText).not.toContain("Dispatch exact generated-head validation");
+    expect(repairDispatchText).toContain("Dispatch exact generated-head validation");
+    expect(repairDispatchText).toContain("inputs[source_run_id]=$GITHUB_RUN_ID");
+    expect(repairDispatchText).toContain("inputs[source_run_attempt]=$GITHUB_RUN_ATTEMPT");
+    expect(repairDispatchText).not.toMatch(/secrets[.]|contents":"write/u);
     expect(repairRequestText).toContain("pr-review-advisor.yaml");
     expect(repairRequestText).toContain("source-artifact-pages.json");
     expect(repairVerifyText).toContain("needs.locate.outputs.source-workflow-sha");

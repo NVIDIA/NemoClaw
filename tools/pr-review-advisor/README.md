@@ -191,10 +191,11 @@ Authors and coding agents should follow the shared [PR CI and Review Follow-Up](
 - A separate trusted host step collects deterministic GitHub context with `github.token` and writes a bounded, identity-checked context file before model work. The sandbox receives that file, not the token.
 - The OpenShell gateway binds only to loopback and holds the upstream provider credential. The sandbox uses `https://inference.local/v1` with an inert SDK key, and receives neither the provider credential nor a GitHub token.
 - The advisory-comment publisher has pull-request write permission, but receives neither the model secret, specialist artifacts, nor the untrusted PR worktree. It rechecks the latest PR commit immediately before posting only the workflow-run link.
-- The protected repair publisher separately has `contents: write` for the branch update and
-  `actions: write` only to dispatch exact generated-head validation after that update succeeds. It
-  receives no model credential, rechecks the complete live PR state, creates one verified commit,
-  and advances the contributor branch once with a non-force compare-and-swap update.
+- The protected repair publisher separately has `contents: write` for the branch update. After a
+  successful update, an isolated job with only `actions: write` dispatches exact generated-head
+  validation. Neither receives a model credential; the publisher rechecks the complete live PR
+  state, creates one verified commit, and advances the contributor branch once with a non-force
+  compare-and-swap update.
 - Sticky publication updates only a marker-bearing comment owned by `github-actions[bot]`; a user-authored marker cannot claim the update target. Publication errors remain visible in the publisher logs.
 - Ordinary review runs post advisory comments only; they do not approve, request changes, merge,
   push, label, or dispatch E2E. The manual repair pilot can perform its single protected branch
