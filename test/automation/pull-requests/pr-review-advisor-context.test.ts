@@ -127,20 +127,18 @@ describe("PR review advisor", () => {
       testOrDocs: ["Unit or documentation validation candidate for the touched files."],
       requiredRiskUsesFactualJobAndTarget: true,
       runtimePath: [
-        "Identify the existing runtime or integration evidence for the changed behavior. Prefer strengthening or replacing its coverage before adding a test. External E2E job results are outside this context.",
+        "Runtime or integration validation candidate for the changed behavior; external E2E job results are outside this context.",
       ],
       runtimeBoundary: [
-        "Identify the existing integration evidence for the changed process or container behavior. Prefer strengthening or replacing its coverage before adding a test.",
+        "Integration validation candidate for the changed process or container behavior.",
       ],
       mockedBoundary: [
-        "Identify the existing behavioral evidence at the mocked filesystem, network, or process boundary. Prefer strengthening or replacing its coverage before adding a test.",
+        "Behavioral validation candidate with mocked filesystem, network, or process boundaries.",
       ],
       unchangedTests: [
         "No changed test files were detected for changed source files: tools/pr-review-advisor/context-tests.mts.",
       ],
-      defaultUnit: [
-        "Identify the targeted existing unit evidence for the changed modules before proposing additional coverage.",
-      ],
+      defaultUnit: ["Targeted unit validation candidate for the changed modules."],
     });
   });
 
