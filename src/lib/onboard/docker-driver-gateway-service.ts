@@ -148,7 +148,10 @@ export interface PackageManagedDockerDriverGatewayOptions {
   validatePortOwnerForOpenShellGatewayUserServiceStart?: () => void;
   verifySandboxBridgeGatewayReachableOrExit: (
     exitOnFailure: boolean,
-    options?: { skip?: boolean },
+    options?: {
+      output?: Pick<GatewayRecoveryOutput, "error" | "log" | "warn">;
+      skip?: boolean;
+    },
   ) => Promise<void>;
 }
 
@@ -1516,6 +1519,7 @@ export async function startPackageManagedDockerDriverGateway({
   if (healthy) {
     clearDockerDriverGatewayRuntimeFiles();
     await verifySandboxBridgeGatewayReachableOrExit(exitOnFailure, {
+      ...(output ? { output } : {}),
       skip: skipSandboxBridgeReachability,
     });
     log("  ✓ OpenShell gateway managed service is healthy");

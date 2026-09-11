@@ -5,6 +5,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { parseEnv } from "node:util";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
 import {
@@ -471,14 +472,16 @@ describe("agents/hermes/generate-config.ts", () => {
     expect(envFile).not.toContain("API_SERVER_KEY=");
   });
 
-  it("configures Hermes' native Tavily backend with an egress-resolved credential", () => {
+  it("omits the Tavily credential from the generated dotenv when web search is enabled", () => {
     const { config, envFile } = runConfigScript({
       NEMOCLAW_WEB_SEARCH_ENABLED: "1",
       NEMOCLAW_WEB_SEARCH_PROVIDER: "tavily",
+      TAVILY_API_KEY: "build-only-test-credential",
     });
 
     expect(config.web).toEqual({ backend: "tavily" });
-    expect(envFile).toContain("TAVILY_API_KEY=openshell:resolve:env:TAVILY_API_KEY\n");
+    expect(parseEnv(envFile).TAVILY_API_KEY).toBeUndefined();
+    expect(envFile).not.toContain("build-only-test-credential");
     expect(findRawSecretEnvEntries(envFile)).toEqual([]);
   });
 
@@ -827,7 +830,7 @@ describe("agents/hermes/generate-config.ts", () => {
     expect(config.web).toEqual({ backend: "tavily" });
     expect(config.tts).toEqual({ provider: "openai", use_gateway: true });
     expect(config.stt).toEqual({ provider: "openai", use_gateway: true });
-    expect(envFile).toContain("TAVILY_API_KEY=openshell:resolve:env:TAVILY_API_KEY\n");
+    expect(envFile).not.toContain("TAVILY_API_KEY=");
     expect(envFile).not.toContain("FIRECRAWL_GATEWAY_URL=");
     expect(envFile).toContain(
       "OPENAI_AUDIO_GATEWAY_URL=http://host.openshell.internal:11436/openai-audio\n",
