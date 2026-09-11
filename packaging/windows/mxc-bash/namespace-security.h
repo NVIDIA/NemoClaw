@@ -33,6 +33,26 @@ inline bool make_shared_section_descriptor(PSID user, PSID container, ScopedDesc
         SetSecurityDescriptorControl(&output.descriptor, SE_DACL_PROTECTED, SE_DACL_PROTECTED);
 }
 
+
+constexpr ACCESS_MASK shared_mutex_user_access = 0x001f0001;
+constexpr ACCESS_MASK shared_mutex_container_access = 0x00100001;
+
+// Only the two pinned named NULL-DACL mutexes use this creation descriptor.
+inline bool make_shared_mutex_descriptor(PSID user, PSID container, ScopedDescriptor& output) {
+    if (!user || !container || !IsValidSid(user) || !IsValidSid(container) || EqualSid(user, container)) {
+        SetLastError(ERROR_INVALID_SID);
+        return false;
+    }
+    ZeroMemory(&output, sizeof(output));
+    auto acl = reinterpret_cast<PACL>(output.acl);
+    return InitializeSecurityDescriptor(&output.descriptor, SECURITY_DESCRIPTOR_REVISION) &&
+        InitializeAcl(acl, sizeof(output.acl), ACL_REVISION) &&
+        AddAccessAllowedAceEx(acl, ACL_REVISION, 0, shared_mutex_user_access, user) &&
+        AddAccessAllowedAceEx(acl, ACL_REVISION, 0, shared_mutex_container_access, container) &&
+        SetSecurityDescriptorDacl(&output.descriptor, TRUE, acl, FALSE) &&
+        SetSecurityDescriptorControl(&output.descriptor, SE_DACL_PROTECTED, SE_DACL_PROTECTED);
+}
+
 // Read-only signal-pipe diagnostics. Raw ACL bytes preserve every captured
 // ACE's order/type/flags/mask/SID without lookup, allocation or modification.
 struct PipeSecurityObservation {

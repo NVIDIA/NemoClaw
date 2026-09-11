@@ -23,6 +23,10 @@ using SectionQuery = NTSTATUS (NTAPI*)(HANDLE, ULONG, PVOID, SIZE_T, PSIZE_T);
 SectionCreate realCreateSharedSection = nullptr;
 SectionOpen realOpenSharedSection = nullptr;
 SectionQuery realQuerySharedSection = nullptr;
+using MutantCreate = NTSTATUS (NTAPI*)(PHANDLE, ACCESS_MASK, POBJECT_ATTRIBUTES, BOOLEAN);
+MutantCreate realCreateSharedMutex = nullptr;
+SectionOpen realOpenSharedMutex = nullptr;
+LONG sharedMutexRecords = 0;
 HANDLE heldSharedDirectory = nullptr;
 LONG sharedDirectoryState = 0;
 LONG sharedSectionRecords = 0;
@@ -56,6 +60,7 @@ DWORD ownSession = 0;
 alignas(void*) BYTE worldSid[SECURITY_MAX_SID_SIZE] = {};
 ScopedDescriptor privateDescriptor = {};
 ScopedDescriptor sharedSectionDescriptor = {};
+ScopedDescriptor sharedMutexDescriptor = {};
 LONG emitted = 0;
 LONG installationKeyState = 0;
 char installationKey[17] = {};
@@ -171,6 +176,11 @@ bool initialize_namespace() {
             error = GetLastError();
             break;
         }
+        stage = "shared-mutex-descriptor";
+        if (!make_shared_mutex_descriptor(user, container, sharedMutexDescriptor)) {
+            error = GetLastError();
+            break;
+        }
         size_t apiLength = 0;
         while (apiLength < maximum_root_characters && apiRoot[apiLength]) ++apiLength;
         privateRootLength = private_nt_root(apiRoot, apiLength, contextDiagnostic.tokenSid, ownSession,
@@ -191,6 +201,10 @@ bool initialize_namespace() {
     realQuerySharedSection = reinterpret_cast<SectionQuery>(GetProcAddress(ntdll, "NtQuerySection"));
     if (!realCreateSharedSection || !realOpenSharedSection || !realQuerySharedSection)
         return context_result("ntdll-section-exports", "win32", GetLastError());
+    realCreateSharedMutex = reinterpret_cast<MutantCreate>(GetProcAddress(ntdll, "NtCreateMutant"));
+    realOpenSharedMutex = reinterpret_cast<SectionOpen>(GetProcAddress(ntdll, "NtOpenMutant"));
+    if (!realCreateSharedMutex || !realOpenSharedMutex)
+        return context_result("ntdll-mutant-exports", "win32", GetLastError());
     realNativePipeCreate = reinterpret_cast<NativePipeCreate>(GetProcAddress(ntdll, "NtCreateNamedPipeFile"));
     if (!realNativePipeCreate) return context_result("ntdll-pipe-create-export", "win32", GetLastError());
     realNativeFileOpen = reinterpret_cast<NativeFileOpen>(GetProcAddress(ntdll, "NtOpenFile"));
@@ -1010,6 +1024,120 @@ NTSTATUS NTAPI create_shared_section(PHANDLE output, ACCESS_MASK access, POBJECT
     return finalStatus;
 }
 
+struct SharedMutexRequest {
+    bool bound = false;
+    bool exact = false;
+    const WCHAR* name = nullptr;
+    const char* label = "";
+    OBJECT_ATTRIBUTES attributes = {};
+    PipeSecurityObservation security = {};
+};
+
+SharedMutexRequest inspect_shared_mutex(ACCESS_MASK access, POBJECT_ATTRIBUTES input, BOOLEAN owner) {
+    SharedMutexRequest result = {};
+    __try {
+        if (InterlockedCompareExchange(&sharedDirectoryState, 2, 2) != 2 || !sameKernelObject ||
+            !input || input->Length != sizeof(OBJECT_ATTRIBUTES) || !input->RootDirectory ||
+            !input->ObjectName || input->ObjectName->Length != 34 ||
+            input->ObjectName->MaximumLength < 34 || !input->ObjectName->Buffer ||
+            !sameKernelObject(input->RootDirectory, heldSharedDirectory)) return result;
+        if (memcmp(input->ObjectName->Buffer, L"tty_list::mutex.0", 34) == 0) {
+            result.name = L"tty_list::mutex.0";
+            result.label = "tty_list::mutex.0";
+        } else if (memcmp(input->ObjectName->Buffer, L"cyg.loadavg.mutex", 34) == 0) {
+            result.name = L"cyg.loadavg.mutex";
+            result.label = "cyg.loadavg.mutex";
+        } else return result;
+        result.bound = true;
+        result.attributes = *input;
+        SECURITY_ATTRIBUTES attributes = {sizeof(SECURITY_ATTRIBUTES), input->SecurityDescriptor,
+                                           (input->Attributes & OBJ_INHERIT) != 0};
+        observe_pipe_security(&attributes, result.security);
+        const auto& sd = result.security;
+        const char* rejected = nullptr;
+        DWORD identityError = 0;
+        result.exact = access == shared_mutex_user_access && owner == FALSE &&
+            input->Attributes == (OBJ_OPENIF | OBJ_CASE_INSENSITIVE) && !input->SecurityQualityOfService &&
+            sd.complete && sd.descriptorPresent && sd.control == SE_DACL_PRESENT &&
+            sd.revision == SECURITY_DESCRIPTOR_REVISION && !sd.ownerPresent && !sd.groupPresent &&
+            !sd.ownerDefaulted && !sd.groupDefaulted && sd.nullDacl &&
+            not_impersonating(rejected, identityError);
+    } __except (EXCEPTION_EXECUTE_HANDLER) { result.exact = false; }
+    return result;
+}
+
+void log_shared_mutex(const SharedMutexRequest& request, ACCESS_MASK access, BOOLEAN owner,
+                      NTSTATUS originalStatus, NTSTATUS finalStatus, bool attempted,
+                      NTSTATUS openStatus, HANDLE originalHandle, bool reused) {
+    if (InterlockedIncrement(&sharedMutexRecords) > 8) return;
+    alignas(void*) BYTE descriptor[2048] = {};
+    DWORD required = 0, descriptorError = 0;
+    const bool descriptorRead = originalHandle && GetKernelObjectSecurity(originalHandle,
+        OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION | LABEL_SECURITY_INFORMATION,
+        descriptor, sizeof(descriptor), &required);
+    if (originalHandle && !descriptorRead) descriptorError = GetLastError();
+    char descriptorHex[sizeof(descriptor) * 2 + 1] = {};
+    constexpr char hex[] = "0123456789abcdef";
+    if (descriptorRead && required <= sizeof(descriptor))
+        for (DWORD n = 0; n < required; ++n) {
+            descriptorHex[n * 2] = hex[descriptor[n] >> 4];
+            descriptorHex[n * 2 + 1] = hex[descriptor[n] & 15];
+        }
+    char line[6144];
+    const int count = _snprintf_s(line, sizeof(line), _TRUNCATE,
+        "NEMOCLAW_MSYS_SHARED_MUTEX={\"schemaVersion\":1,\"pid\":%lu,\"name\":\"%s\",\"parentHandleBound\":true,\"exactContract\":%s,\"requestDescriptorAdapted\":%s,\"access\":\"0x%08lx\",\"containerAccess\":\"0x%08lx\",\"initialOwner\":%u,\"objectAttributes\":\"0x%08lx\",\"inputDescriptorPresent\":%s,\"inputControl\":%u,\"inputNullDacl\":%s,\"originalStatus\":\"0x%08lx\",\"finalStatus\":\"0x%08lx\",\"existingOnlyOpenAttempted\":%s,\"openStatus\":\"0x%08lx\",\"existingMutexReused\":%s,\"originalResultDescriptorAttempted\":%s,\"originalResultDescriptorRead\":%s,\"descriptorError\":%lu,\"descriptorRequiredBytes\":%lu,\"descriptorHex\":\"%s\"}\n",
+        GetCurrentProcessId(), request.label, request.exact ? "true" : "false", request.exact ? "true" : "false",
+        access, shared_mutex_container_access, static_cast<unsigned>(owner), request.attributes.Attributes,
+        request.security.descriptorPresent ? "true" : "false", static_cast<unsigned>(request.security.control),
+        request.security.nullDacl ? "true" : "false", static_cast<ULONG>(originalStatus), static_cast<ULONG>(finalStatus),
+        attempted ? "true" : "false", static_cast<ULONG>(openStatus), reused ? "true" : "false",
+        originalHandle ? "true" : "false", descriptorRead ? "true" : "false", descriptorError, required, descriptorHex);
+    DWORD written = 0;
+    writingPipeDiagnostic = true;
+    if (count > 0) WriteFile(GetStdHandle(STD_ERROR_HANDLE), line, static_cast<DWORD>(count), &written, nullptr);
+    writingPipeDiagnostic = false;
+}
+
+NTSTATUS NTAPI create_shared_mutex(PHANDLE output, ACCESS_MASK access, POBJECT_ATTRIBUTES input, BOOLEAN owner) {
+    if (writingPipeDiagnostic) return realCreateSharedMutex(output, access, input, owner);
+    const DWORD before = GetLastError();
+    const SharedMutexRequest request = inspect_shared_mutex(access, input, owner);
+    OBJECT_ATTRIBUTES adapted = request.attributes;
+    if (request.exact) adapted.SecurityDescriptor = &sharedMutexDescriptor.descriptor;
+    SetLastError(before);
+    const NTSTATUS originalStatus = realCreateSharedMutex(output, access, request.exact ? &adapted : input, owner);
+    const DWORD after = GetLastError();
+    NTSTATUS finalStatus = originalStatus, openStatus = 0;
+    bool attempted = false, reused = false;
+    HANDLE originalHandle = nullptr;
+    if (originalStatus >= 0) {
+        __try { if (output) originalHandle = *output; }
+        __except (EXCEPTION_EXECUTE_HANDLER) { originalHandle = nullptr; }
+    }
+    if (request.exact && output && originalStatus == static_cast<NTSTATUS>(0xc0000022)) {
+        UNICODE_STRING name = {34, 36, const_cast<PWSTR>(request.name)};
+        OBJECT_ATTRIBUTES attributes = {};
+        attributes.Length = sizeof(attributes);
+        attributes.RootDirectory = heldSharedDirectory;
+        attributes.ObjectName = &name;
+        attributes.Attributes = OBJ_CASE_INSENSITIVE;
+        HANDLE existing = nullptr;
+        attempted = true;
+        openStatus = realOpenSharedMutex(&existing, shared_mutex_container_access, &attributes);
+        // Never read or close either native API's indeterminate failed output.
+        if (openStatus >= 0) {
+            __try { *output = existing; reused = true; }
+            __except (EXCEPTION_EXECUTE_HANDLER) { reused = false; }
+            if (reused) finalStatus = static_cast<NTSTATUS>(0x40000000);
+            else CloseHandle(existing);
+        }
+    }
+    if (request.bound) log_shared_mutex(request, access, owner, originalStatus, finalStatus,
+        attempted, openStatus, originalHandle, reused);
+    SetLastError(after);
+    return finalStatus;
+}
+
 #if defined(_M_X64)
 LONG observedAccessViolations = 0;
 PVOID faultObserver = nullptr;
@@ -1136,6 +1264,7 @@ BOOL WINAPI DllMain(HINSTANCE self, DWORD reason, LPVOID reserved) {
     if (!error) error = DetourAttach(&realCreate, create_directory);
     if (!error) error = DetourAttach(&realOpen, open_directory);
     if (!error) error = DetourAttach(&realCreateSharedSection, create_shared_section);
+    if (!error) error = DetourAttach(&realCreateSharedMutex, create_shared_mutex);
     if (!error) error = DetourAttach(&realCreateSignalServer, observe_signal_server);
     if (!error) error = DetourAttach(&realOpenSignalWriter, observe_signal_writer);
     if (!error) error = DetourAttach(&realCreateTrackerPipe, create_tracker_pipe);
