@@ -10,6 +10,8 @@ import os from "node:os";
 import path from "node:path";
 
 import { describe, it } from "vitest";
+import { decodeManagedStartupProfile } from "../../src/lib/onboard/managed-startup/profile";
+import { mapManagedStartupProfileToAgentEnvironment } from "../../src/lib/onboard/managed-startup/agent-environment";
 import { writeOkOpenshell } from "../helpers/onboard-openshell-fixture";
 import { type CommandEntry, onboardScriptMocksPath } from "../helpers/onboard-split-context";
 import { encodeMessagingPlan, makeMessagingPlan } from "../helpers/messaging-plan-fixtures";
@@ -35,130 +37,145 @@ function runNodeScript(
 }
 
 describe("fresh create identity", () => {
-  it.concurrent.each([
-    {
-      title: "binds ordinary providers at create time before managed registration (#9833)",
-      apfInterceptorRequested: false,
-      provider: "nvidia-prod",
-      model: "gpt-5.4",
-      agent: null,
-      expectedOutcome: "managed-provider" as const,
-    },
-    {
-      title: "rejects provider-backed APF creation before sandbox or provider effects (#9833)",
-      apfInterceptorRequested: true,
-      provider: "nvidia-prod",
-      model: "gpt-5.4",
-      agent: null,
-      expectedOutcome: "provider-refusal" as const,
-    },
-    {
-      title: "rejects a nondefault agent before credential reads or sandbox inspection (#9833)",
-      apfInterceptorRequested: true,
-      provider: null,
-      model: null,
-      agent: { name: "hermes" },
-      expectedOutcome: "unsupported-agent-refusal" as const,
-    },
-    {
-      title:
-        "rejects pre-resolved nondefault agent intent before credential reads or sandbox inspection (#9833)",
-      apfInterceptorRequested: true,
-      provider: null,
-      model: null,
-      agent: null,
-      expectedOutcome: "resolved-agent-refusal" as const,
-    },
-    {
-      title:
-        "registers providerless APF only after identity, policy, and checkpoint verification (#9833)",
-      apfInterceptorRequested: true,
-      provider: null,
-      model: null,
-      agent: null,
-      expectedOutcome: "providerless-apf" as const,
-    },
-    {
-      title: "rejects mismatched selector and get identities before later effects (#10463)",
-      apfInterceptorRequested: true,
-      provider: null,
-      model: null,
-      agent: null,
-      expectedOutcome: "identity-mismatch-refusal" as const,
-    },
-    {
-      title: "retains recovery state when the create runner fails after verification (#9833)",
-      apfInterceptorRequested: true,
-      provider: null,
-      model: null,
-      agent: null,
-      expectedOutcome: "post-create-runner-refusal" as const,
-    },
-    {
-      title: "retains recovery state when registry publication fails after create (#9833)",
-      apfInterceptorRequested: true,
-      provider: null,
-      model: null,
-      agent: null,
-      expectedOutcome: "post-create-registration-refusal" as const,
-    },
-    {
-      title: "blocks every reentry when registry-failure recovery has no durable journal (#9833)",
-      apfInterceptorRequested: true,
-      provider: null,
-      model: null,
-      agent: null,
-      expectedOutcome: "post-create-registration-recovery-readback-failure" as const,
-    },
-    {
-      title: "retries registry-failure recovery from the process-exit owner (#9833)",
-      apfInterceptorRequested: true,
-      provider: null,
-      model: null,
-      agent: null,
-      expectedOutcome: "post-create-registration-recovery-retry" as const,
-    },
-    {
-      title: "accepts an external policy change after registration (#9833)",
-      apfInterceptorRequested: true,
-      provider: null,
-      model: null,
-      agent: null,
-      expectedOutcome: "post-create-policy-change" as const,
-    },
-    {
-      title: "rejects staged messaging intent before any onboarding side effect (#9833)",
-      apfInterceptorRequested: true,
-      provider: null,
-      model: null,
-      agent: null,
-      expectedOutcome: "staged-messaging-refusal" as const,
-    },
-    {
-      title: "makes a tier-cancelled created sandbox recovery-only (#9833)",
-      apfInterceptorRequested: false,
-      provider: "nvidia-prod",
-      model: "gpt-5.4",
-      agent: null,
-      expectedOutcome: "cancel-after-create-tier" as const,
-    },
-    {
-      title: "makes a tier-preset-cancelled created sandbox recovery-only (#9833)",
-      apfInterceptorRequested: false,
-      provider: "nvidia-prod",
-      model: "gpt-5.4",
-      agent: null,
-      expectedOutcome: "cancel-after-create-tier-presets" as const,
-    },
-    {
-      title: "makes a custom-preset-cancelled created sandbox recovery-only (#9833)",
-      apfInterceptorRequested: false,
-      provider: "nvidia-prod",
-      model: "gpt-5.4",
-      agent: null,
-      expectedOutcome: "cancel-after-create-custom-presets" as const,
-    },
-  ])(
+  it.concurrent.each(
+    [
+      {
+        title: "binds ordinary providers at create time before managed registration (#9833)",
+        apfInterceptorRequested: false,
+        provider: "nvidia-prod",
+        model: "gpt-5.4",
+        agent: null,
+        expectedOutcome: "managed-provider" as const,
+      },
+      {
+        title: "rejects provider-backed APF creation before sandbox or provider effects (#9833)",
+        apfInterceptorRequested: true,
+        provider: "nvidia-prod",
+        model: "gpt-5.4",
+        agent: null,
+        expectedOutcome: "provider-refusal" as const,
+      },
+      {
+        title:
+          "rejects an unsupported agent before credential reads or sandbox inspection (#11548)",
+        apfInterceptorRequested: true,
+        provider: null,
+        model: null,
+        agent: { name: "pi" },
+        expectedOutcome: "unsupported-agent-refusal" as const,
+      },
+      {
+        title:
+          "rejects conflicting resolved agent identity before credential reads or sandbox inspection (#11548)",
+        apfInterceptorRequested: true,
+        provider: null,
+        model: null,
+        agent: null,
+        expectedOutcome: "resolved-agent-refusal" as const,
+      },
+      {
+        title:
+          "registers providerless APF only after identity, policy, and checkpoint verification (#9833)",
+        apfInterceptorRequested: true,
+        provider: null,
+        model: null,
+        agent: null,
+        expectedOutcome: "providerless-apf" as const,
+      },
+      {
+        title: "rejects mismatched selector and get identities before later effects (#10463)",
+        apfInterceptorRequested: true,
+        provider: null,
+        model: null,
+        agent: null,
+        expectedOutcome: "identity-mismatch-refusal" as const,
+      },
+      {
+        title: "retains recovery state when the create runner fails after verification (#9833)",
+        apfInterceptorRequested: true,
+        provider: null,
+        model: null,
+        agent: null,
+        expectedOutcome: "post-create-runner-refusal" as const,
+      },
+      {
+        title: "retains recovery state when registry publication fails after create (#9833)",
+        apfInterceptorRequested: true,
+        provider: null,
+        model: null,
+        agent: null,
+        expectedOutcome: "post-create-registration-refusal" as const,
+      },
+      {
+        title: "blocks every reentry when registry-failure recovery has no durable journal (#9833)",
+        apfInterceptorRequested: true,
+        provider: null,
+        model: null,
+        agent: null,
+        expectedOutcome: "post-create-registration-recovery-readback-failure" as const,
+      },
+      {
+        title: "retries registry-failure recovery from the process-exit owner (#9833)",
+        apfInterceptorRequested: true,
+        provider: null,
+        model: null,
+        agent: null,
+        expectedOutcome: "post-create-registration-recovery-retry" as const,
+      },
+      {
+        title: "accepts an external policy change after registration (#9833)",
+        apfInterceptorRequested: true,
+        provider: null,
+        model: null,
+        agent: null,
+        expectedOutcome: "post-create-policy-change" as const,
+      },
+      {
+        title: "rejects staged messaging intent before any onboarding side effect (#9833)",
+        apfInterceptorRequested: true,
+        provider: null,
+        model: null,
+        agent: null,
+        expectedOutcome: "staged-messaging-refusal" as const,
+      },
+      {
+        title: "makes a tier-cancelled created sandbox recovery-only (#9833)",
+        apfInterceptorRequested: false,
+        provider: "nvidia-prod",
+        model: "gpt-5.4",
+        agent: null,
+        expectedOutcome: "cancel-after-create-tier" as const,
+      },
+      {
+        title: "makes a tier-preset-cancelled created sandbox recovery-only (#9833)",
+        apfInterceptorRequested: false,
+        provider: "nvidia-prod",
+        model: "gpt-5.4",
+        agent: null,
+        expectedOutcome: "cancel-after-create-tier-presets" as const,
+      },
+      {
+        title: "makes a custom-preset-cancelled created sandbox recovery-only (#9833)",
+        apfInterceptorRequested: false,
+        provider: "nvidia-prod",
+        model: "gpt-5.4",
+        agent: null,
+        expectedOutcome: "cancel-after-create-custom-presets" as const,
+      },
+    ].flatMap(
+      (testCase): (Omit<typeof testCase, "agent"> & { agent: { name: string } | null })[] =>
+        testCase.agent || testCase.expectedOutcome.startsWith("cancel-after-create-")
+          ? [testCase]
+          : [
+              testCase,
+              {
+                ...testCase,
+                title: testCase.title.replace(/ \(#\d+\)$/, " for Hermes (#11548)"),
+                agent: { name: "hermes" },
+              },
+            ],
+    ),
+  )(
     "$title",
     {
       timeout: 45000,
@@ -288,7 +305,10 @@ let identityMismatchGetCalls = 0;
 let routeReservationCalls = 0;
 const keepAlive = setInterval(() => {}, 1000);
 const apfInterceptorRequested = ${JSON.stringify(apfInterceptorRequested)};
-const agent = ${JSON.stringify(agent)};
+const requestedAgent = ${JSON.stringify(agent)};
+const agent = requestedAgent?.name === "hermes"
+  ? require(${JSON.stringify(path.join(repoRoot, "src/lib/agent/defs.ts"))}).loadAgent("hermes")
+  : requestedAgent;
 const model = ${JSON.stringify(model)};
 const provider = ${JSON.stringify(provider)};
 const selectedChannels = ${JSON.stringify(expectedOutcome === "provider-refusal" ? ["telegram"] : null)};
@@ -741,7 +761,7 @@ if (${JSON.stringify(
 	    return;
 	  }
 	  const createArgs = fixtureMocks.sandboxCreateArgsWithVerifiedReservation(
-	    [null, model, provider, null, null, null, selectedChannels, null, agent, null, null, null, []],
+	    [null, model, provider, null, "my-assistant", null, selectedChannels, null, agent, null, null, null, []],
 	    createFixture,
 	  );
 	  createArgs[15] = {
@@ -758,7 +778,7 @@ if (${JSON.stringify(
 	    ...(${JSON.stringify(expectedOutcome === "resolved-agent-refusal")}
 	      ? {
 	          resolved: {
-	            policy: { options: { agentName: "hermes" } },
+	            policy: { options: { agentName: agent?.name === "hermes" ? "openclaw" : "hermes" } },
 	          },
 	        }
 	      : {}),
@@ -896,6 +916,27 @@ if (${JSON.stringify(
         assert.equal(payload.stdoutDestroyCalls, 0);
         assert.equal(payload.stderrDestroyCalls, 0);
         assert.equal(payload.registeredSandbox.workload.kind, "managed-image");
+        assert.equal(payload.registeredSandbox.agent ?? "openclaw", agent?.name ?? "openclaw");
+        assert.match(
+          payload.registeredSandbox.workload.reference,
+          new RegExp("/" + (agent?.name ?? "openclaw") + "-sandbox@sha256:"),
+        );
+        const profile = decodeManagedStartupProfile(
+          payload.registeredSandbox.workload.encodedProfile,
+        );
+        const startup = mapManagedStartupProfileToAgentEnvironment(profile);
+        assert.equal(profile.agent, agent?.name ?? "openclaw");
+        assert.equal(
+          startup.configurationEnvironment.NEMOCLAW_INFERENCE_BASE_URL,
+          "https://inference.local/v1",
+        );
+        assert.equal(startup.configurationEnvironment.NEMOCLAW_INFERENCE_PROVIDER_ID, "inference");
+        assert.ok(startup.configurationEnvironment.NEMOCLAW_MODEL);
+        assert.ok(
+          startup.actions.some(
+            (action) => action.kind === "generate-agent-config" && action.agent === profile.agent,
+          ),
+        );
         assert.match(payload.registeredSandbox.lifecycleGeneration, /^[0-9a-f-]{36}$/u);
         assert.equal(
           payload.registeredSandbox.lifecycleLiveIdentityFingerprint,

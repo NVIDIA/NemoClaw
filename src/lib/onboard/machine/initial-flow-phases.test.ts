@@ -25,7 +25,7 @@ type SandboxGpuConfig = {
   sandboxGpuDevice?: string | null;
   errors?: string[];
 };
-type Context = InitialOnboardFlowContext<null, Gpu, SandboxGpuConfig>;
+type Context = InitialOnboardFlowContext<{ name: string } | null, Gpu, SandboxGpuConfig>;
 
 function context(overrides: Partial<Context> = {}): Context {
   return {
@@ -280,6 +280,17 @@ describe("initial onboard flow phases", () => {
       revalidateBeforeActivation: vi.fn(),
     };
     prepareExternalComponent.mockReturnValue(component);
+    await expect(
+      phases[0].run(
+        context({
+          agent: { name: "pi" },
+          session: createSession({ apfInterceptorRequested: true }),
+        }),
+      ),
+    ).rejects.toThrow("no qualified integration");
+    expect(runPreflight).not.toHaveBeenCalled();
+    expect(configureExternalComponentGateway).not.toHaveBeenCalled();
+
     assertExternalComponentFreshSandbox.mockImplementation(() => {
       throw new Error("sandbox is not fresh");
     });
