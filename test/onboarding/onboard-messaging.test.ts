@@ -21,8 +21,6 @@ import {
 import { runBoundedOnboardScript } from "../helpers/onboard-child-process-harness";
 import { writeOkOpenshell } from "../helpers/onboard-openshell-fixture";
 
-vi.setConfig({ maxConcurrency: 4 });
-
 type CommandEntry = {
   command: string;
   env?: Record<string, string | undefined>;
