@@ -116,6 +116,24 @@ describe("Advisor E2E receipts", () => {
     expect(result.unresolvedRecommendations).toHaveLength(1);
   });
 
+  it("deduplicates specialists without weakening a required recommendation (#11489)", () => {
+    const item = {
+      selectorType: "job",
+      id: "device-auth-health",
+      reason: "Verify authentication.",
+    };
+    const receipts = [false, true].map((required, index) =>
+      receipt(expected.expectedSpecialists[index], {
+        recommendations: [{ ...item, required }],
+        noAdditionalE2eReason: null,
+        unresolvedRecommendations: [],
+      }),
+    );
+    expect(collectE2eRecommendations(receipts, expected).recommendations).toEqual([
+      { ...item, required: true },
+    ]);
+  });
+
   it.each([
     { selectorType: "job", id: "invented" },
     { selectorType: "target", id: "device-auth-health" },

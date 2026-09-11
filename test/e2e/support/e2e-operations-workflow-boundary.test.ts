@@ -33,29 +33,11 @@ describe("E2E operations workflow", testTimeoutOptions(15_000), () => {
   it("accepts the checked-in workflow", () => {
     expect(validateE2eOperationsWorkflowBoundary()).toEqual([]);
   });
-  it("rejects altered review queue authority, dependencies, and evidence (#11489)", () => {
-    const workflow = readE2eOperationsWorkflow();
-    const job = workflow.jobs["review-queue-result"];
-    job.needs = ["generate-matrix"];
-    job.permissions = { contents: "write" };
-    job.steps![0]!.with!.ref = "${{ inputs.checkout_sha }}";
-    job.steps![1]!.env!.NEEDS_JSON = "{}";
-    job.steps![2]!.with!.name = "result";
-    expect(validateE2eOperationsWorkflow(workflow)).toEqual(
-      expect.arrayContaining([
-        "review-queue-result must wait for every E2E execution group",
-        "review-queue-result must retain trusted manual PR scope and read-only permissions",
-        "review-queue-result must execute only its trusted recorder",
-        "review-queue-result must bind planner selection and workflow results as data",
-        "review-queue-result must upload one attempt-scoped result file",
-      ]),
-    );
-  });
   it.each([true, undefined])("rejects recorder cone mode %s (#11489)", (coneMode) => {
     const workflow = readE2eOperationsWorkflow();
-    workflow.jobs["review-queue-result"].steps![0]!.with!["sparse-checkout-cone-mode"] = coneMode;
+    workflow.jobs["relevant-e2e"].steps![0]!.with!["sparse-checkout-cone-mode"] = coneMode;
     expect(validateE2eOperationsWorkflow(workflow)).toContain(
-      "review-queue-result must execute only its trusted recorder",
+      "relevant-e2e must check out only the trusted evaluator",
     );
   });
   it("rejects a lookalike live cold-onboard performance artifact path (#6660)", () => {
@@ -162,12 +144,12 @@ describe("E2E operations workflow", testTimeoutOptions(15_000), () => {
     const requireResults = job.steps!.find(
       (step) => step.name === "Require every selected E2E result",
     )!;
-    requireResults.run = "true";
+    requireResults.env!.E2E_RESULT_PATH = "";
 
     expect(validateE2eOperationsWorkflow(workflow)).toEqual(
       expect.arrayContaining([
         "relevant-e2e needs must exactly match report-to-pr needs",
-        "relevant-e2e must be the stable aggregate check for main pushes",
+        "relevant-e2e must be the stable aggregate check for main pushes and trusted PR runs",
         "relevant-e2e permissions must be contents: read",
         "relevant-e2e checkout must pin its action to a full SHA",
         "relevant-e2e must check out only the trusted evaluator",

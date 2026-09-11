@@ -111,9 +111,10 @@ function isExactNativeRuntimeAggregateUpload(jobName: string, step: WorkflowStep
 
 function isExactReviewQueueResultUpload(jobName: string, step: WorkflowStep): boolean {
   return (
-    jobName === "review-queue-result" &&
+    jobName === "relevant-e2e" &&
     isDeepStrictEqual(step, {
       name: "Upload PR E2E results",
+      if: "${{ always() && inputs.checkout_sha != '' }}",
       uses: UPLOAD_ARTIFACT_ACTION,
       with: {
         name: "review-queue-e2e-result-${{ github.run_id }}-${{ github.run_attempt }}",

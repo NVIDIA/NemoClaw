@@ -84,19 +84,19 @@ describe("E2E artifact uploads", () => {
     { key: "include-hidden-files", value: true },
   ])("rejects changed receipt upload $key (#11489)", ({ key, value }) => {
     const workflow = mutableWorkflow();
-    const upload = workflow.jobs["review-queue-result"].steps!.find(
+    const upload = workflow.jobs["relevant-e2e"].steps!.find(
       (step) => step.name === "Upload PR E2E results",
     )!;
     upload.with![key] = value;
     expect(validateUploadE2eArtifactsInvocations(workflow)).toContain(
-      "review-queue-result must not invoke actions/upload-artifact directly",
+      "relevant-e2e must not invoke actions/upload-artifact directly",
     );
   });
 
   it("rejects receipt upload from another job (#11489)", () => {
     const workflow = mutableWorkflow();
-    workflow.jobs["untrusted-reporter"] = workflow.jobs["review-queue-result"];
-    delete workflow.jobs["review-queue-result"];
+    workflow.jobs["untrusted-reporter"] = workflow.jobs["relevant-e2e"];
+    delete workflow.jobs["relevant-e2e"];
     expect(validateUploadE2eArtifactsInvocations(workflow)).toContain(
       "untrusted-reporter must not invoke actions/upload-artifact directly",
     );

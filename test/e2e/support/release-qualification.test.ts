@@ -3,6 +3,8 @@
 
 import { spawnSync } from "node:child_process";
 import path from "node:path";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 
 import { describe, expect, it } from "vitest";
 
@@ -19,6 +21,71 @@ const successfulNeeds = {
 };
 
 describe("release qualification", () => {
+  it.each(["success", "failure", "cancelled", "skipped", undefined])(
+    "records %s PR evidence with the existing evaluator and dispatch reference (#11489)",
+    (result) => {
+      const directory = mkdtempSync(path.join(tmpdir(), "e2e-result-"));
+      const evidence = {
+        outputPath: path.join(directory, "result.json"),
+        runId: "123",
+        attempt: "2",
+      };
+      try {
+        const evaluate = () =>
+          assertReleaseQualification(
+            JSON.stringify({ ...successfulNeeds, live: { result } }),
+            '["live","staging-brev-launchable"]',
+            evidence,
+          );
+        if (result === "success") expect(evaluate).not.toThrow();
+        else expect(evaluate).toThrow("Release qualification did not pass: live");
+        const receipt = JSON.parse(readFileSync(evidence.outputPath, "utf8"));
+        expect(receipt.status).toBe(
+          result === "success" ? "pass" : result === "failure" ? "fail" : "unknown",
+        );
+        expect(receipt.dispatchArtifact).toBe("e2e-dispatch-123-2");
+        expect(receipt.results).toContainEqual({ job: "live", result: result ?? null });
+        if (result === "success") {
+          expect(receipt).toEqual(
+            JSON.parse(
+              readFileSync(
+                new URL("../../fixtures/review-queue-e2e-pass.json", import.meta.url),
+                "utf8",
+              ),
+            ),
+          );
+          expect(evaluate).toThrow("EEXIST");
+        }
+      } finally {
+        rmSync(directory, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.each(["[]", "null", '["live","live"]', '["bad job"]', '["generate-matrix"]'])(
+    "rejects invalid PR selection %s (#11489)",
+    (selection) => {
+      expect(() =>
+        assertReleaseQualification(JSON.stringify(successfulNeeds), selection, {
+          outputPath: "unused.json",
+          runId: "123",
+          attempt: "2",
+        }),
+      ).toThrow();
+    },
+  );
+  it("rejects invalid PR evidence without changing controller-only push behavior (#11489)", () => {
+    const evidence = { outputPath: "unused.json", runId: "123", attempt: "2" };
+    expect(() =>
+      assertReleaseQualification(JSON.stringify(successfulNeeds), '["live"]', {
+        ...evidence,
+        attempt: "0",
+      }),
+    ).toThrow("dispatch receipt reference");
+    expect(() => assertReleaseQualification("null", '["live"]', evidence)).toThrow(
+      "Missing workflow results",
+    );
+  });
   it("accepts one successful result for every planner-selected job (#7912)", () => {
     expect(
       failedReleaseQualificationJobs(successfulNeeds, ["live", "staging-brev-launchable"]),

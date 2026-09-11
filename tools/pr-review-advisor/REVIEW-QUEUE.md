@@ -10,7 +10,7 @@ Older runs remain unknown. The blocker ledger is a separate dependency proposed 
 ## Advisor recommendations
 
 Each successful specialist writes `pr-review-<interest>-e2e.json` inside `pr-review-specialist-<interest>-<attempt>`.
-`e2e-receipt.mts` owns validation, recording, and complete-set collection.
+`e2e-receipt.mts` records and validates complete specialist evidence. It reuses the recommendation types, selector checks, and deduplication in `tools/advisors/e2e-recommendations.mts`.
 The payload has these fields:
 
 | Field | Meaning |
@@ -18,8 +18,7 @@ The payload has these fields:
 | `kind` | `nemoclaw-advisor-e2e-v1` |
 | `headSha`, `baseSha` | Full candidate and comparison commit SHAs |
 | `interest`, `expectedSpecialists` | Specialist owner and complete trusted specialist inventory |
-| `deterministic.version`, `deterministic.planHash` | Existing risk-plan identity |
-| `deterministic.recommendations` | Every job and typed target in the deterministic floor |
+| `deterministic.version`, `deterministic.planHash` | Reference to the existing risk plan, not a second copy of its recommendations |
 | `advisor.recommendations` | Every additional specialist recommendation, including optional coverage |
 | `advisor.noAdditionalE2eReason` | Required nonempty reason when the specialist adds no selectors; otherwise `null` |
 | `advisor.unresolvedRecommendations` | Needed coverage without a supported selector; prevents a complete passing decision |
@@ -27,7 +26,7 @@ The payload has these fields:
 A recommendation is `{selectorType, id, required, reason}`. `selectorType` is `job`, `target`, or `all`.
 `all` uses ID `e2e-all`. Preserve `required:false`: the review queue requires optional recommendations to pass too.
 Deduplicate by selector type and ID. A required occurrence takes precedence over an optional occurrence.
-The deterministic floor cannot be removed by specialist output.
+Collection adds every job and typed target from the referenced trusted risk plan. Specialist output cannot remove that floor.
 
 The recording tool validates IDs against the trusted inventory. An invalid or duplicate selection is rejected without recording a result.
 The specialist can correct rejected input. Missing successful recording fails the specialist run.
@@ -83,11 +82,13 @@ Require one matching run. Zero, multiple, inconsistent, or incomplete results re
 The existing `e2e-dispatch-<run-id>-<attempt>/dispatch.json` (`nemoclaw-e2e-dispatch-v2`) binds selectors, opt-ins, candidate, base, workflow, actor, run, and attempt.
 Require it to match the recorded request and current PR before accepting results.
 
-The trusted terminal job uploads `review-queue-e2e-result-<run-id>-<attempt>/review-queue-e2e-result.json`.
-Its kind is `nemoclaw-review-queue-e2e-result-v1`. It records repository, PR, candidate/base/workflow SHAs, run ID, attempt, selected workflow jobs, and their GitHub `needs` results.
-The helper requires a nonempty selection and a result for every selected workflow job plus `generate-matrix`.
+The existing `Relevant E2E` job uploads `review-queue-e2e-result-<run-id>-<attempt>/review-queue-e2e-result.json` for PR runs.
+Its kind is `nemoclaw-review-queue-e2e-result-v1`. `dispatchArtifact` references the existing dispatch artifact from the same run and attempt.
+Verify both artifact envelopes and the dispatch identity before accepting results. A payload reference alone proves no identity.
+`release-qualification.mts` records selected workflow jobs and their GitHub `needs` results before enforcing its existing success check.
+PR evidence requires a nonempty selection. Every selected job, `base-image-publication`, and `generate-matrix` must succeed.
 Each matrix group includes its fan-out executions. A pass requires every selected group to succeed.
-Skipped or cancelled groups are unknown. A failed selected group produces `fail`.
+Missing, skipped, or cancelled groups are unknown. A failed selected group or controller produces `fail`.
 This aggregate proves the whole dispatched set; it does not attribute a group failure to an individual selector within that group.
 For per-selector failure detail, retain the GitHub job links and report the aggregate limitation.
 
@@ -95,5 +96,5 @@ Require workflow completion with conclusion `success` and receipt status `pass` 
 A queued or running matching run is pending. A complete search with no matching dispatch is not-run.
 Missing artifacts, skipped jobs, cancellations, expired retention, stale identities, unsupported versions, and ambiguous searches remain unknown.
 All recommendation selectors must be covered by passing matching dispatches before the consumer reports green.
-Tests in `test/automation/pull-requests/review-queue-e2e-result.test.ts` cover pass, fail, incomplete, skipped, cancelled, and invalid identity examples.
-`test/fixtures/review-queue-e2e-pass.json` is the tested passing payload fixture. Its SHAs and run identity are synthetic.
+Tests in `test/e2e/support/release-qualification.test.ts` cover pass, fail, incomplete, skipped, cancelled, and invalid dispatch references.
+`test/fixtures/review-queue-e2e-pass.json` is the tested passing payload fixture. Its dispatch reference is synthetic.

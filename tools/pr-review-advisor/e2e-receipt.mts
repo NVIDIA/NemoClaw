@@ -6,7 +6,13 @@ import { isDeepStrictEqual } from "node:util";
 import { Type, type Static } from "typebox";
 import { Check } from "typebox/value";
 
-import type { TrustedE2eRecommendationInventory } from "../advisors/e2e-recommendations.mts";
+import {
+  deterministicRiskRecommendations,
+  isSupportedE2eSelector,
+  mergeRecommendations,
+  type E2eRecommendationSelector,
+  type TrustedE2eRecommendationInventory,
+} from "../advisors/e2e-recommendations.mts";
 import type { RiskPlan } from "../advisors/risk-plan.mts";
 
 export const E2E_RECEIPT_TOOL = "pr_review_record_e2e_recommendations";
@@ -31,7 +37,7 @@ export const e2eRecommendationInputSchema = Type.Object(
 );
 
 export type E2eRecommendationInput = Static<typeof e2eRecommendationInputSchema>;
-export type RecommendationSelector = E2eRecommendationInput["recommendations"][number];
+export type RecommendationSelector = E2eRecommendationSelector;
 
 export type SpecialistE2eReceipt = {
   kind: "nemoclaw-advisor-e2e-v1";
@@ -42,7 +48,6 @@ export type SpecialistE2eReceipt = {
   deterministic: {
     version: number;
     planHash: string;
-    recommendations: RecommendationSelector[];
   };
   advisor: E2eRecommendationInput;
 };
@@ -60,13 +65,9 @@ export function validateE2eRecommendations(
     );
   }
   const seen = new Set<string>();
+  const allowedJobs = new Set([...inventory.allowedJobIds, ...inventory.manualOnlyJobIds]);
   for (const item of input.recommendations) {
-    const allowed =
-      item.selectorType === "all"
-        ? item.id === inventory.fanoutId
-        : item.selectorType === "target"
-          ? inventory.liveSupportedTargetIds.includes(item.id)
-          : [...inventory.allowedJobIds, ...inventory.manualOnlyJobIds].includes(item.id);
+    const allowed = isSupportedE2eSelector(item, allowedJobs, inventory.liveSupportedTargetIds);
     const key = `${item.selectorType}:${item.id}`;
     if (!allowed || seen.has(key)) throw new Error(`Unknown or duplicate E2E selector: ${key}`);
     seen.add(key);
@@ -116,20 +117,6 @@ export function buildSpecialistE2eReceipt(input: {
   ) {
     throw new Error("E2E receipt requires a unique specialist inventory containing its owner");
   }
-  const recommendations: RecommendationSelector[] = [
-    ...input.riskPlan.requiredJobs.map((item) => ({
-      selectorType: "job" as const,
-      id: item.id,
-      required: true,
-      reason: item.reasons.join("; "),
-    })),
-    ...input.riskPlan.requiredTargets.map((item) => ({
-      selectorType: "target" as const,
-      id: item.id,
-      required: true,
-      reason: item.reasons.join("; "),
-    })),
-  ];
   return {
     kind: "nemoclaw-advisor-e2e-v1",
     headSha: input.riskPlan.headSha,
@@ -139,7 +126,6 @@ export function buildSpecialistE2eReceipt(input: {
     deterministic: {
       version: input.riskPlan.version,
       planHash: input.riskPlan.planHash,
-      recommendations,
     },
     advisor: validateE2eRecommendations(input.advisor, input.inventory),
   };
@@ -157,7 +143,9 @@ export function collectE2eRecommendations(
     throw new Error("Incomplete specialist E2E evidence");
   }
   const seen = new Set<string>();
-  const selected = new Map<string, RecommendationSelector>();
+  let selected: RecommendationSelector[] = deterministicRiskRecommendations(expected.riskPlan).map(
+    ({ workflow: _workflow, ...item }) => item,
+  );
   const unresolvedRecommendations: string[] = [];
   for (const value of values) {
     if (!value || typeof value !== "object" || Array.isArray(value))
@@ -173,17 +161,10 @@ export function collectE2eRecommendations(
     if (!isDeepStrictEqual(value, receipt))
       throw new Error("Stale, malformed, or mismatched specialist E2E receipt");
     seen.add(receipt.interest);
-    for (const item of [
-      ...receipt.deterministic.recommendations,
-      ...receipt.advisor.recommendations,
-    ]) {
-      const key = `${item.selectorType}:${item.id}`;
-      const previous = selected.get(key);
-      selected.set(key, { ...item, required: item.required || (previous?.required ?? false) });
-    }
+    selected = mergeRecommendations(selected, receipt.advisor.recommendations);
     unresolvedRecommendations.push(...receipt.advisor.unresolvedRecommendations);
   }
-  const recommendations = [...selected.values()].sort((a, b) =>
+  const recommendations = selected.sort((a, b) =>
     `${a.selectorType}:${a.id}`.localeCompare(`${b.selectorType}:${b.id}`),
   );
   return {

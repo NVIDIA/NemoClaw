@@ -21,7 +21,6 @@ const META_JOBS = new Set([
   "release-qualification",
   "relevant-e2e",
   "report-to-pr",
-  "review-queue-result",
   "scorecard",
 ]);
 const FULL_SHA_ACTION = /^[^\s@]+@[0-9a-f]{40}$/u;
@@ -590,9 +589,8 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
         step.name === "Check out the qualification evaluator" &&
         step.with?.ref === "${{ github.workflow_sha }}";
       const trustedRelevantE2eCheckout =
-        ((jobName === "relevant-e2e" && step.name === "Check out the E2E result evaluator") ||
-          (jobName === "review-queue-result" &&
-            step.name === "Check out the trusted result recorder")) &&
+        jobName === "relevant-e2e" &&
+        step.name === "Check out the E2E result evaluator" &&
         step.with?.ref === "${{ github.workflow_sha }}";
       const trustedLaunchableLaneCheckout =
         ((jobName === "staging-brev-launchable" &&
@@ -1126,9 +1124,11 @@ function validateAggregation(errors: string[], workflow: OperationsWorkflow): vo
 function validateRelevantE2e(errors: string[], workflow: OperationsWorkflow): void {
   const job = workflow.jobs["relevant-e2e"] ?? {};
   const expectedCondition =
-    "${{ always() && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'push' }}";
+    "${{ always() && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '')) }}";
   if (job.name !== "Relevant E2E" || job.if !== expectedCondition) {
-    errors.push("relevant-e2e must be the stable aggregate check for main pushes");
+    errors.push(
+      "relevant-e2e must be the stable aggregate check for main pushes and trusted PR runs",
+    );
   }
   if (!isDeepStrictEqual(permissionMap(job.permissions), { contents: "read" })) {
     errors.push("relevant-e2e permissions must be contents: read");
@@ -1138,7 +1138,7 @@ function validateRelevantE2e(errors: string[], workflow: OperationsWorkflow): vo
   const steps = job.steps ?? [];
   requirePinnedAction(errors, checkout, "relevant-e2e checkout");
   if (
-    steps.length !== 3 ||
+    steps.length !== 4 ||
     steps[0] !== checkout ||
     steps[1] !== requireResults ||
     checkout.with?.ref !== "${{ github.workflow_sha }}" ||
@@ -1152,67 +1152,12 @@ function validateRelevantE2e(errors: string[], workflow: OperationsWorkflow): vo
     requireResults.env?.NEEDS_JSON !== "${{ toJSON(needs) }}" ||
     requireResults.env?.RELEASE_REQUIRED_JOBS !==
       "${{ needs.generate-matrix.outputs.selected_workflow_jobs }}" ||
+    requireResults.env?.E2E_RESULT_PATH !==
+      "${{ inputs.checkout_sha != '' && format('{0}/review-queue-e2e-result.json', runner.temp) || '' }}" ||
     requireResults.run !== "node --no-warnings tools/e2e/release-qualification.mts"
   ) {
     errors.push("relevant-e2e must evaluate planner-selected jobs from needs");
   }
-}
-
-function validateReviewQueueResult(errors: string[], workflow: OperationsWorkflow): void {
-  const job = workflow.jobs["review-queue-result"] ?? {};
-  if (!sameMembers(needs(job), needs(workflow.jobs["report-to-pr"] ?? {}))) {
-    errors.push("review-queue-result must wait for every E2E execution group");
-  }
-  if (
-    job.if !==
-      "${{ always() && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' }}" ||
-    !isDeepStrictEqual(job.permissions, { contents: "read" }) ||
-    job.env !== undefined
-  ) {
-    errors.push(
-      "review-queue-result must retain trusted manual PR scope and read-only permissions",
-    );
-  }
-  const [checkout, record, upload] = job.steps ?? [];
-  if (
-    job.steps?.length !== 3 ||
-    !checkout?.uses?.startsWith("actions/checkout@") ||
-    checkout?.run !== undefined ||
-    checkout?.env !== undefined ||
-    checkout?.with?.repository !== undefined ||
-    checkout?.with?.ref !== "${{ github.workflow_sha }}" ||
-    checkout?.with?.["persist-credentials"] !== false ||
-    checkout?.with?.["sparse-checkout"] !== "tools/e2e/review-queue-result.mts" ||
-    checkout?.with?.["sparse-checkout-cone-mode"] !== false
-  ) {
-    errors.push("review-queue-result must execute only its trusted recorder");
-  }
-  requirePinnedAction(errors, checkout ?? {}, "review-queue-result checkout");
-  if (
-    record?.uses !== undefined ||
-    record?.if !== undefined ||
-    record?.run !==
-      'node --no-warnings tools/e2e/review-queue-result.mts "${RUNNER_TEMP}/review-queue-e2e-result.json"' ||
-    !isDeepStrictEqual(record?.env, {
-      PR_NUMBER: "${{ inputs.pr_number }}",
-      CANDIDATE_SHA: "${{ inputs.checkout_sha }}",
-      BASE_SHA: "${{ inputs.base_sha }}",
-      SELECTED_WORKFLOW_JOBS: "${{ needs.generate-matrix.outputs.selected_workflow_jobs }}",
-      NEEDS_JSON: "${{ toJSON(needs) }}",
-    })
-  ) {
-    errors.push("review-queue-result must bind planner selection and workflow results as data");
-  }
-  if (
-    !upload?.uses?.startsWith("actions/upload-artifact@") ||
-    upload.with?.name !==
-      "review-queue-e2e-result-${{ github.run_id }}-${{ github.run_attempt }}" ||
-    upload.with?.path !== "${{ runner.temp }}/review-queue-e2e-result.json" ||
-    upload.with?.["if-no-files-found"] !== "error"
-  ) {
-    errors.push("review-queue-result must upload one attempt-scoped result file");
-  }
-  requirePinnedAction(errors, upload ?? {}, "review-queue-result upload");
 }
 
 function validateReleaseQualification(errors: string[], workflow: OperationsWorkflow): void {
@@ -1633,7 +1578,6 @@ export function validateE2eOperationsWorkflow(workflow: OperationsWorkflow): str
   validatePrGateEvidenceProducers(errors, workflow);
   validateAggregation(errors, workflow);
   validateRelevantE2e(errors, workflow);
-  validateReviewQueueResult(errors, workflow);
   validateReleaseQualification(errors, workflow);
   validateIssueRoutingRetirement(errors, workflow);
   validateScorecard(errors, workflow);
