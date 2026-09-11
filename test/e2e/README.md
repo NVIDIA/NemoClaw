@@ -147,6 +147,10 @@ assembles one exact candidate catalog from the workflow's published contracts, u
 and sandbox, records the authenticated discovery diagnostics, scans the evidence for fixture
 credentials, and must pass.
 These are two required acceptance executions, not retries; either failure remains a failed check.
+The concurrent-add probe retries only the rejected command after status proves that the other
+command committed one coherent bridge. The rejected command must report either the exact portable
+host-lock timeout or the reviewed Hermes restart transport failure. The retry runs once, has its own
+command artifact, and must reject the committed duplicate as already present.
 The workflow records one publication cohort before its PR producer matrix runs. Failed-job reruns
 reuse that cohort and replace only the stable run-scoped artifact owned by each retried agent.
 Consumers accept one complete cohort from the same run at the current or an earlier attempt. They
@@ -1435,6 +1439,8 @@ The planner also selects the CPU-only `jetson-nvmap-gpu` proof for every trusted
 Changes to the central workflow, planner, or shared execution helpers select the complete default E2E set.
 If no other E2E target owns a changed file, `Relevant E2E` requires only the Jetson proof.
 Otherwise, `Relevant E2E` requires every selected workflow job to pass.
+For trusted manual PR runs, the same check also records selected results and references the existing dispatch receipt.
+The [review queue evidence contract](../../tools/pr-review-advisor/REVIEW-QUEUE.md#results) defines artifact validation and incomplete results.
 The central workflow skips the DGX Spark llama.cpp jobs on push.
 The central workflow has no scheduled trigger.
 
@@ -1454,8 +1460,8 @@ flowchart LR
   retained --> dedicated
   reusable --> evidence["Diagnostic product evidence"]
   dedicated --> evidence
-  reusable -->|"push job results"| relevant["Relevant E2E"]
-  dedicated -->|"push job results"| relevant
+  reusable -->|"push or PR job results"| relevant["Relevant E2E"]
+  dedicated -->|"push or PR job results"| relevant
   reusable -->|"full manual job results"| release["Release qualification"]
   dedicated -->|"full manual job results"| release
   release --> decision["Status for maintainer decision"]
