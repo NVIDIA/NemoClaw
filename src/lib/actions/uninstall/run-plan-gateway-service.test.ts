@@ -709,17 +709,31 @@ describe("uninstall OpenShell gateway user service", () => {
     expect(calls.some((call) => call[0] === "systemctl" && call.includes("disable"))).toBe(false);
   });
 
-  it("preserves the marked Linux unit when scoped gateway registration removal fails (#8220)", async () => {
+  /** Verify failed registration removal retains the unit and reports unavailable Docker. */
+  async function verifyDockerRecovery({
+    dockerInstalled,
+    dockerStatus,
+    recovery,
+  }: {
+    dockerInstalled: boolean;
+    dockerStatus: number | null;
+    recovery: boolean;
+  }): Promise<void> {
     const test = fixture(true);
     const servicePath = writeManagedService(test);
     writeSelectedSandboxRegistry(test, "my-assistant");
     const calls: string[][] = [];
+    const warnings: string[] = [];
+    const runDocker = vi.fn(() => ({ ...ok(), status: dockerStatus }));
 
     const result = await uninstall(
       test,
       false,
       {
-        commandExists: (command) => command === "systemctl",
+        commandExists: (command) =>
+          command === "systemctl" || (command === "docker" && dockerInstalled),
+        error: (line) => warnings.push(line),
+        runDocker,
         run: (command, args) => {
           calls.push([command, ...args]);
           return command === "openshell" && args[0] === "gateway" && args[1] === "remove"
@@ -741,9 +755,29 @@ describe("uninstall OpenShell gateway user service", () => {
       "my-assistant",
     ]);
     expect(result.exitCode).toBe(1);
+    const guidance = warnings.find((line) => line.startsWith("Docker is not available")) ?? "";
+    expect(Boolean(guidance)).toBe(recovery);
+    expect(
+      /WSL integration.*wsl --shutdown.*docker info.*rerun the same uninstall command/s.test(
+        guidance,
+      ),
+    ).toBe(recovery);
+    expect(runDocker.mock.calls).toEqual(
+      dockerInstalled ? [[["info"], expect.objectContaining({ timeout: 10_000 })]] : [],
+    );
     expect(fs.existsSync(servicePath)).toBe(true);
     expect(calls.some((call) => call[0] === "systemctl" && call.includes("disable"))).toBe(false);
-  });
+  }
+
+  it.each([
+    { condition: "missing", dockerInstalled: false, dockerStatus: 0, recovery: true },
+    { condition: "available", dockerInstalled: true, dockerStatus: 0, recovery: false },
+    { condition: "unreachable", dockerInstalled: true, dockerStatus: 1, recovery: true },
+    { condition: "timed out", dockerInstalled: true, dockerStatus: null, recovery: true },
+  ])(
+    "preserves the Linux unit after gateway removal fails with Docker $condition (#11438)",
+    verifyDockerRecovery,
+  );
 
   it("retries scoped cleanup after marked Linux unit cleanup fails (#8220)", async () => {
     const test = fixture(true);

@@ -56,11 +56,11 @@ function restoreProcessSignalListeners(
   }
 }
 
-function captureLogsRun(
+async function captureLogsRun(
   options: Parameters<typeof showSandboxLogsWithDeps>[1],
   results: Record<string, LogProbeResult>,
   overrides: Partial<Parameters<typeof showSandboxLogsWithDeps>[2]> = {},
-): CapturedLogsRun {
+): Promise<CapturedLogsRun> {
   const calls: CapturedLogsRun["calls"] = [];
   const spawns: CapturedLogsRun["spawns"] = [];
   const stdout: string[] = [];
@@ -86,7 +86,7 @@ function captureLogsRun(
   }) as unknown as SpawnFn;
 
   try {
-    showSandboxLogsWithDeps("alpha", options, {
+    await showSandboxLogsWithDeps("alpha", options, {
       exit: (code) => {
         exitCode = code;
         throw new ExitError(code);
@@ -94,6 +94,15 @@ function captureLogsRun(
       isDockerRuntimeDown: () => false,
       getOpenshellBinary: () => "openshell",
       runOpenshell,
+      enableAuditLogs: async () => {
+        const result = results.settings ?? { status: 0 };
+        return result.status === 0
+          ? { ok: true, value: undefined }
+          : {
+              ok: false,
+              error: { kind: "command", reason: "failed", message: "settings unavailable" },
+            };
+      },
       spawn,
       writeStdout: (chunk) => {
         stdout.push(chunk);
@@ -112,8 +121,8 @@ function captureLogsRun(
 }
 
 describe("showSandboxLogsWithDeps", () => {
-  it("enables audit logs, reads both log sources, and writes merged output", () => {
-    const result = captureLogsRun(
+  it("enables audit logs, reads both log sources, and writes merged output", async () => {
+    const result = await captureLogsRun(
       { follow: false, lines: "50", since: null },
       {
         settings: { status: 0 },
@@ -127,14 +136,13 @@ describe("showSandboxLogsWithDeps", () => {
     // OpenShell line already carries its own tag and is passed through (#10340).
     expect(result.stdout).toBe("[1] [gateway] gateway\n[2] openshell\n");
     expect(result.calls.map((call) => call.args)).toEqual([
-      ["settings", "set", "alpha", "--key", "ocsf_json_enabled", "--value", "true"],
       ["sandbox", "exec", "-n", "alpha", "--", "tail", "-n", "50", "/tmp/gateway.log"],
       ["logs", "alpha", "-n", "50", "--source", "all"],
     ]);
   });
 
-  it("skips the OpenClaw gateway tail when --since targets OpenShell logs", () => {
-    const result = captureLogsRun(
+  it("skips the OpenClaw gateway tail when --since targets OpenShell logs", async () => {
+    const result = await captureLogsRun(
       { follow: false, lines: "200", since: "5m" },
       {
         settings: { status: 0 },
@@ -145,13 +153,12 @@ describe("showSandboxLogsWithDeps", () => {
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toBe("[3] openshell only\n");
     expect(result.calls.map((call) => call.args)).toEqual([
-      ["settings", "set", "alpha", "--key", "ocsf_json_enabled", "--value", "true"],
       ["logs", "alpha", "-n", "200", "--source", "all", "--since", "5m"],
     ]);
   });
 
-  it("streams follow logs with the requested tail count", () => {
-    const result = captureLogsRun(
+  it("streams follow logs with the requested tail count", async () => {
+    const result = await captureLogsRun(
       { follow: true, lines: "50", since: null },
       {
         settings: { status: 0 },
@@ -159,9 +166,7 @@ describe("showSandboxLogsWithDeps", () => {
     );
 
     expect(result.exitCode).toBe(0);
-    expect(result.calls.map((call) => call.args)).toEqual([
-      ["settings", "set", "alpha", "--key", "ocsf_json_enabled", "--value", "true"],
-    ]);
+    expect(result.calls.map((call) => call.args)).toEqual([]);
     expect(result.spawns.map((call) => call.command)).toEqual(["openshell", "openshell"]);
     expect(result.spawns.map((call) => call.args)).toEqual([
       ["sandbox", "exec", "-n", "alpha", "--", "tail", "-n", "50", "-f", "/tmp/gateway.log"],
@@ -169,8 +174,8 @@ describe("showSandboxLogsWithDeps", () => {
     ]);
   });
 
-  it("streams follow logs with --since through OpenShell without an unfiltered gateway tail", () => {
-    const result = captureLogsRun(
+  it("streams follow logs with --since through OpenShell without an unfiltered gateway tail", async () => {
+    const result = await captureLogsRun(
       { follow: true, lines: "200", since: "5m" },
       {
         settings: { status: 0 },
@@ -178,17 +183,15 @@ describe("showSandboxLogsWithDeps", () => {
     );
 
     expect(result.exitCode).toBe(0);
-    expect(result.calls.map((call) => call.args)).toEqual([
-      ["settings", "set", "alpha", "--key", "ocsf_json_enabled", "--value", "true"],
-    ]);
+    expect(result.calls.map((call) => call.args)).toEqual([]);
     expect(result.spawns.map((call) => call.args)).toEqual([
       ["logs", "alpha", "-n", "200", "--source", "all", "--since", "5m", "--tail"],
     ]);
   });
 
-  it("warns about degraded audit and OpenClaw sources while continuing to OpenShell logs", () => {
+  it("warns about degraded audit and OpenClaw sources while continuing to OpenShell logs", async () => {
     const timeout = new Error("spawn openshell ETIMEDOUT");
-    const result = captureLogsRun(
+    const result = await captureLogsRun(
       { follow: false, lines: "200", since: null },
       {
         settings: { status: 7, stderr: "settings unavailable\n" },
@@ -200,7 +203,7 @@ describe("showSandboxLogsWithDeps", () => {
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toBe("[4] openshell fallback\n");
     expect(result.errors.join("\n")).toContain(
-      "failed to enable OpenShell audit logs for sandbox 'alpha' (exit 7)",
+      "failed to enable OpenShell audit logs for sandbox 'alpha'",
     );
     expect(result.errors.join("\n")).toContain("settings unavailable");
     expect(result.errors.join("\n")).toContain("Policy denial events may be missing");
@@ -209,9 +212,9 @@ describe("showSandboxLogsWithDeps", () => {
     );
   });
 
-  it("prints Docker outage guidance and exits before OpenShell log probes", () => {
+  it("prints Docker outage guidance and exits before OpenShell log probes", async () => {
     const guidance = vi.fn();
-    const result = captureLogsRun(
+    const result = await captureLogsRun(
       { follow: false, lines: "200", since: null },
       {},
       {
@@ -225,7 +228,7 @@ describe("showSandboxLogsWithDeps", () => {
     expect(result.calls).toEqual([]);
   });
 
-  it("surfaces a sparse gateway breadcrumb when OpenShell output dominates the tail", () => {
+  it("surfaces a sparse gateway breadcrumb when OpenShell output dominates the tail", async () => {
     const gatewayStdout = [
       "[1779488800.000] [gateway] starting HTTP server",
       "[1779488815.000] [telegram] [default] bridge did not start within 15s; check channels.telegram.enabled, plugin entries, and gateway log",
@@ -234,7 +237,7 @@ describe("showSandboxLogsWithDeps", () => {
       { length: 200 },
       (_v, i) => `[${1779488900 + i}.000] [sandbox] [INFO ] line ${i}`,
     ).join("\n");
-    const result = captureLogsRun(
+    const result = await captureLogsRun(
       { follow: false, lines: "200", since: null },
       {
         settings: { status: 0 },
@@ -278,9 +281,9 @@ function createCapturedOutput(written: string[]): PassThrough {
   return output;
 }
 
-function startFollowRun(
+async function startFollowRun(
   options: { output?: Writable; keepOpenshellRunning?: boolean } = {},
-): FollowRun {
+): Promise<FollowRun> {
   const written: string[] = [];
   let spawnCount = 0;
   const gateway = createStreamingChild();
@@ -298,7 +301,7 @@ function startFollowRun(
     return spawnCount === 1 ? gateway.child : (openshell?.child ?? createExitedChild());
   }) as unknown as SpawnFn;
 
-  showSandboxLogsWithDeps(
+  await showSandboxLogsWithDeps(
     "alpha",
     { follow: true, lines: "50", since: null },
     {
@@ -311,6 +314,7 @@ function startFollowRun(
       isDockerRuntimeDown: () => false,
       getOpenshellBinary: () => "openshell",
       runOpenshell: vi.fn(() => ({ status: 0 })),
+      enableAuditLogs: async () => ({ ok: true, value: undefined }),
       spawn,
       stdout: output,
     },
@@ -356,7 +360,7 @@ describe("follow-mode log source attribution (#10340)", () => {
   ].join("\n");
 
   it("attributes every streamed banner line to a source", async () => {
-    const run = startFollowRun();
+    const run = await startFollowRun();
     run.gateway.stdout.write(`${BANNER}\n`);
     run.gateway.stdout.end();
     run.gateway.child.emit("exit", 0, null);
@@ -367,7 +371,7 @@ describe("follow-mode log source attribution (#10340)", () => {
   });
 
   it("emits a trailing line that arrives without a newline", async () => {
-    const run = startFollowRun();
+    const run = await startFollowRun();
     run.gateway.stdout.write("no trailing newline");
     run.gateway.stdout.end();
     run.gateway.child.emit("exit", 0, null);
@@ -388,7 +392,7 @@ describe("follow-mode log source attribution (#10340)", () => {
       expected: "[gateway] message\rcontinued\n",
     },
   ])("preserves a bare carriage return $position (#10340)", async ({ chunks, expected }) => {
-    const run = startFollowRun();
+    const run = await startFollowRun();
     chunks.forEach((chunk) => run.gateway.stdout.write(chunk));
     run.gateway.stdout.end();
     run.gateway.child.emit("exit", 0, null);
@@ -400,7 +404,7 @@ describe("follow-mode log source attribution (#10340)", () => {
   it("stops following when the source exits while a descendant holds its stdout open", async () => {
     // A grandchild that inherited the child's stdout write end keeps `end` from
     // firing. Completion must not require `end`, or follow mode hangs forever.
-    const run = startFollowRun();
+    const run = await startFollowRun();
     run.gateway.stdout.write("gateway banner line\n");
     run.gateway.child.emit("exit", 0, null);
 
@@ -409,7 +413,7 @@ describe("follow-mode log source attribution (#10340)", () => {
   });
 
   it("streams a long unterminated line before the source completes (#10340)", async () => {
-    const run = startFollowRun();
+    const run = await startFollowRun();
     const line = "x".repeat(1_000_000);
     run.gateway.stdout.write(line);
     await new Promise<void>((resolve) => setImmediate(resolve));
@@ -423,7 +427,7 @@ describe("follow-mode log source attribution (#10340)", () => {
   });
 
   it("normalizes CRLF delimiters split across source chunks (#10340)", async () => {
-    const run = startFollowRun();
+    const run = await startFollowRun();
     const longLine = "x".repeat(4_097);
     run.gateway.stdout.write("short line\r");
     run.gateway.stdout.write(`\n${longLine}\r`);
@@ -437,7 +441,7 @@ describe("follow-mode log source attribution (#10340)", () => {
 
   it("pauses the gateway source until log output drains (#10340)", async () => {
     const output = new DeferredOutput();
-    const run = startFollowRun({ output });
+    const run = await startFollowRun({ output });
     run.gateway.stdout.write("gateway line\n");
     await new Promise<void>((resolve) => setImmediate(resolve));
 
@@ -457,7 +461,7 @@ describe("follow-mode log source attribution (#10340)", () => {
     vi.useFakeTimers();
     try {
       const output = new DeferredOutput();
-      const run = startFollowRun({ output });
+      const run = await startFollowRun({ output });
       run.gateway.stdout.write("first line\n");
       run.gateway.stdout.write("second line\n");
       run.gateway.stdout.end();
@@ -480,7 +484,7 @@ describe("follow-mode log source attribution (#10340)", () => {
 
   it("waits for accepted output writes before reporting success (#10340)", async () => {
     const output = new DeferredOutput(1_024);
-    const run = startFollowRun({ output });
+    const run = await startFollowRun({ output });
     let exitCode: number | null = null;
     void run.exited.then((code) => {
       exitCode = code;
@@ -501,7 +505,7 @@ describe("follow-mode log source attribution (#10340)", () => {
 
   it("waits for accepted output writes before reporting a tagged child error (#10340)", async () => {
     const output = new DeferredOutput(1_024);
-    const run = startFollowRun({ output });
+    const run = await startFollowRun({ output });
     let exitCode: number | null = null;
     void run.exited.then((code) => {
       exitCode = code;
@@ -521,7 +525,7 @@ describe("follow-mode log source attribution (#10340)", () => {
 
   it("terminates both log sources after a downstream broken pipe (#10340)", async () => {
     const output = new PassThrough();
-    const run = startFollowRun({ output, keepOpenshellRunning: true });
+    const run = await startFollowRun({ output, keepOpenshellRunning: true });
     const error = Object.assign(new Error("write EPIPE"), { code: "EPIPE" });
 
     output.emit("error", error);
@@ -535,7 +539,7 @@ describe("follow-mode log source attribution (#10340)", () => {
   });
 
   it("terminates the gateway source after the raw source receives SIGPIPE (#10340)", async () => {
-    const run = startFollowRun({ keepOpenshellRunning: true });
+    const run = await startFollowRun({ keepOpenshellRunning: true });
     const openshell = run.openshell as StreamingChild;
 
     Object.assign(openshell.child, { signalCode: "SIGPIPE" });
@@ -551,7 +555,7 @@ describe("follow-mode log source attribution (#10340)", () => {
     const output = new PassThrough();
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     try {
-      const run = startFollowRun({ output });
+      const run = await startFollowRun({ output });
       const error = Object.assign(new Error("no space"), { code: "ENOSPC" });
 
       output.emit("error", error);
@@ -569,7 +573,7 @@ describe("follow-mode log source attribution (#10340)", () => {
   it("reports a gateway read error instead of a successful stop (#10340)", async () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     try {
-      const run = startFollowRun();
+      const run = await startFollowRun();
       const error = Object.assign(new Error("read failed"), { code: "EIO" });
 
       run.gateway.stdout.emit("error", error);
@@ -587,7 +591,7 @@ describe("follow-mode log source attribution (#10340)", () => {
     const output = new DeferredOutput();
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     try {
-      const run = startFollowRun({ output });
+      const run = await startFollowRun({ output });
       run.gateway.stdout.write("gateway line");
       run.gateway.child.emit("exit", 0, null);
 

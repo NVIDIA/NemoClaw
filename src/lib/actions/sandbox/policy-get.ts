@@ -1,16 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { OpenShellSandboxPolicyReader } from "../../adapters/openshell/sandbox-policy";
+
 import {
-  redactOpenShellSandboxPolicyReadForDisplay,
-  type CliOpenShellSandboxPolicyRead,
-  readCliOpenShellSandboxPolicy,
+  redactOpenShellSandboxPolicyDocumentForDisplay,
+  cliOpenShellSandboxPolicyReader,
 } from "../../adapters/openshell/sandbox-policy-cli";
 import { PolicyObservationError } from "../../adapters/openshell/policy-state";
-import {
-  namedOpenShellGateway,
-  selectedOpenShellGateway,
-} from "../../adapters/openshell/sandbox-observer";
 import { formatOpenShellPolicyRecoveryAction } from "../../gateway-start-guidance";
 import { assertNoOpenShellGatewayEndpointOverride } from "../../openshell-gateway-endpoint-guard";
 import { getKnownSandboxTargetGatewayName } from "./gateway-target";
@@ -21,28 +18,28 @@ export interface PolicyGetResult {
 }
 
 /** Read the round-trippable OpenShell base policy and strip its metadata header. */
-export function getSandboxPolicy(
+export async function getSandboxPolicy(
   sandboxName: string,
-  readPolicy: CliOpenShellSandboxPolicyRead = readCliOpenShellSandboxPolicy,
+  readPolicy: OpenShellSandboxPolicyReader["readSandboxPolicy"] = cliOpenShellSandboxPolicyReader.readSandboxPolicy,
 ): Promise<PolicyGetResult> {
-  return readSandboxPolicy(sandboxName, readPolicy);
+  return await readSandboxPolicy(sandboxName, readPolicy);
 }
 
 async function readSandboxPolicy(
   sandboxName: string,
-  readPolicy: CliOpenShellSandboxPolicyRead,
+  readPolicy: OpenShellSandboxPolicyReader["readSandboxPolicy"],
 ): Promise<PolicyGetResult> {
   const recordedGatewayName = getKnownSandboxTargetGatewayName(sandboxName);
   if (recordedGatewayName) assertNoOpenShellGatewayEndpointOverride();
   const read = await readPolicy({
     target: recordedGatewayName
-      ? namedOpenShellGateway(recordedGatewayName)
-      : selectedOpenShellGateway(),
+      ? { kind: "named", gatewayName: recordedGatewayName }
+      : { kind: "selected" },
     sandboxName,
     scope: "base",
   });
-  if (!read.result.ok) {
-    const policyReadError = read.result.error;
+  if (!read.ok) {
+    const policyReadError = read.error;
     const recovery = formatOpenShellPolicyRecoveryAction(
       policyReadError,
       `nemoclaw ${sandboxName} policy get`,
@@ -59,14 +56,14 @@ async function readSandboxPolicy(
       { policyReadError },
     );
   }
-  const display = redactOpenShellSandboxPolicyReadForDisplay({
-    displayOutput: read.displayOutput,
-    document: read.result.value.document,
-  });
-  if (display === null) {
+  const yaml = redactOpenShellSandboxPolicyDocumentForDisplay(read.value.document);
+  if (yaml === null) {
     throw new Error(
       `Failed to retrieve base policy for sandbox '${sandboxName}'. OpenShell returned an invalid sandbox policy document.`,
     );
   }
-  return display;
+  const metadata = (read.value.metadata ?? [])
+    .map(({ field, value }) => `${field}: ${value}`)
+    .join("\n");
+  return { yaml, raw: metadata ? `${metadata}\n---\n${yaml}` : yaml };
 }
