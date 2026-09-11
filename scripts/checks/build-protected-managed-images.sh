@@ -449,7 +449,7 @@ build_agent() {
     -f "$dockerfile_path" \
     --build-arg "BASE_IMAGE=${base_reference}" \
     --build-arg "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1" \
-    --build-arg "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root" \
+    --build-arg "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=sandbox" \
     --build-arg "TARGETARCH=${target_arch}"
 
   local -a build_command=(docker buildx build
@@ -474,7 +474,7 @@ build_agent() {
     # Buildx target explicitly so that default cannot override linux/arm64.
     --build-arg "TARGETARCH=${platform#linux/}"
     --build-arg "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1"
-    --build-arg "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root"
+    --build-arg "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=sandbox"
     --build-arg "TARGETARCH=${target_arch}"
     "$source_root")
   run_build_with_retry "$agent" "$image_repository" "${build_command[@]}"
@@ -510,8 +510,7 @@ build_agent() {
     --arg revision "$revision" '
       length == 1 and
       .[0].Id == $image_id and
-      ((.[0].Config.User // "") as $user |
-        $user == "" or $user == "root" or $user == "0") and
+      .[0].Config.User == "sandbox" and
       .[0].Config.Labels["io.nvidia.nemoclaw.agent"] == $agent and
       .[0].Config.Labels["io.nvidia.nemoclaw.managed-image.contract"] == "1" and
       .[0].Config.Labels["io.nvidia.nemoclaw.managed-image.platform"] == $platform and

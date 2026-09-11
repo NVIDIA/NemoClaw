@@ -43,7 +43,7 @@ vi.mock("node:fs", async (importOriginal) => {
 });
 
 vi.mock("../shared/openshell-external-target-boundary.cjs", () => ({
-  EXTERNAL_OPENSHELL_RELEASE: "0.0.106",
+  EXTERNAL_OPENSHELL_RELEASE: "0.0.116",
   ...externalTargetBoundaryMocks,
   default: externalTargetBoundaryMocks,
 }));
@@ -67,7 +67,7 @@ const EXTERNAL_AUTHENTICATION_FILE = "/var/run/openshell-target/private-authenti
 const SANITIZED_TARGET_PLAN = {
   endpoint: "https://openshell.example.test:8443",
   workspace: "default",
-  expected_release: "0.0.106",
+  expected_release: "0.0.116",
   lifecycle: "external",
   authentication_source: "file",
   ca_fingerprint: `sha256:${"a".repeat(64)}`,
@@ -76,12 +76,12 @@ const SANITIZED_TARGET_PLAN = {
 function externalTargetBlueprint(): Record<string, unknown> {
   return {
     version: "1.0.0",
-    min_openshell_version: "0.0.106",
-    max_openshell_version: "0.0.106",
+    min_openshell_version: "0.0.116",
+    max_openshell_version: "0.0.116",
     openshell_target: {
       endpoint: "https://openshell.example.test:8443",
       workspace: "default",
-      expected_release: "0.0.106",
+      expected_release: "0.0.116",
       lifecycle: "external",
       trust: { ca_file: EXTERNAL_CA_FILE },
       authentication: { credential_file: EXTERNAL_AUTHENTICATION_FILE },
@@ -112,7 +112,7 @@ describe("Blueprint Runner external OpenShell target", () => {
     );
     observeHealth.mockResolvedValue({
       ok: true,
-      value: { status: "healthy", release: "0.0.106" },
+      value: { status: "healthy", release: "0.0.116" },
     });
     delete process.env.NEMOCLAW_BLUEPRINT_PATH;
     vi.spyOn(process.stdout, "write").mockImplementation(stdoutCapture.write);
@@ -213,8 +213,8 @@ describe("Blueprint Runner external OpenShell target", () => {
     expect(
       externalTargetBoundaryMocks.buildSanitizedExternalOpenShellTargetPlan,
     ).toHaveBeenCalledWith(externalTargetBlueprint().openshell_target as Record<string, unknown>, {
-      minVersion: "0.0.106",
-      maxVersion: "0.0.106",
+      minVersion: "0.0.116",
+      maxVersion: "0.0.116",
     });
     expect(mockExeca).not.toHaveBeenCalled();
     expect(mockedValidateEndpoint).not.toHaveBeenCalled();
@@ -250,12 +250,12 @@ describe("Blueprint Runner external OpenShell target", () => {
     expect(stdoutCapture.jsonOutput()).toEqual({
       run_id: expect.stringMatching(/^nc-/),
       openshell_target: SANITIZED_TARGET_PLAN,
-      gateway: { status: "healthy", release: "0.0.106" },
+      gateway: { status: "healthy", release: "0.0.116" },
       compatibility: "compatible",
     });
     expect(externalTargetBoundaryMocks.withExternalOpenShellTargetCa).toHaveBeenCalledWith(
       externalTargetBlueprint().openshell_target as Record<string, unknown>,
-      { minVersion: "0.0.106", maxVersion: "0.0.106" },
+      { minVersion: "0.0.116", maxVersion: "0.0.116" },
       expect.any(Function),
     );
     expect(observeHealth).toHaveBeenCalledWith({
