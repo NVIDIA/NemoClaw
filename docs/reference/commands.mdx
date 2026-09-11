@@ -244,6 +244,9 @@ Version 1 exports managed OpenClaw sandboxes and canonical managed Hermes sandbo
 Supported sandboxes use hosted external inference or the native NVIDIA hosted provider with its default endpoint, an immutable managed image, a NemoClaw-owned gateway, and an explicit representable policy.
 A managed OpenClaw sandbox can also use the verified managed local vLLM configuration.
 The managed vLLM export runs only on Linux x86_64 and requires its fixed managed serving identity and complete live runtime evidence.
+A managed OpenClaw sandbox can also export the verified local Ollama route on native Linux with the Docker driver.
+The export records the external Ollama daemon port, the NemoClaw-managed authentication proxy port, and the `qwen3.5:9b` model digest.
+It fails unless the live daemon, proxy, model, and sandbox route match the retained configuration.
 When a managed OpenClaw sandbox uses Brave Search, the export includes its `webSearch` integration and the `BRAVE_API_KEY` environment-variable reference, never the key.
 When retained managed proxy settings differ from the default, the export includes the validated host and port under `network.proxy`.
 For hosted OpenClaw inference, the export preserves nondefault managed context-window, maximum-token, reasoning, and reasoning-effort settings as route overrides.

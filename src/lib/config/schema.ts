@@ -171,6 +171,27 @@ function managedProviderProblems(
   provider: Extract<NemoClawInferenceProviderConfig, { serving: unknown }>,
   providerIndex: number,
 ): string[] {
+  if (provider.serving.backend === "ollama") {
+    const serving = provider.serving;
+    const matches =
+      serving.daemon.hostPort !== serving.proxy.hostPort &&
+      config.spec.sandboxes.every((sandbox) =>
+        sandbox.agents.every((agent) =>
+          agent.inference.routes.every(
+            (route) =>
+              route.providerRef !== provider.name ||
+              (sandbox.runtime.provider === "docker" &&
+                agent.type === "openclaw" &&
+                route.overrides.model === serving.model.servedName),
+          ),
+        ),
+      );
+    return matches
+      ? []
+      : [
+          `/spec/inferenceProviders/${providerIndex}/serving requires distinct Ollama ports and a matching Docker OpenClaw route`,
+        ];
+  }
   const matches = config.spec.sandboxes.every((sandbox) =>
     sandbox.agents.every((agent) =>
       agent.inference.routes.every(

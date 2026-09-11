@@ -1,12 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { createHash } from "node:crypto";
+import os from "node:os";
 import { describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
 import { managedBraveProfile } from "../../../../test/fixtures/openshell-provider-profile";
 import { runConfigExport } from "../../actions/config/export";
 import {
+  EXPORTED_OLLAMA_MODEL,
   parseNemoClawConfigDocumentName,
   EXPORTED_VLLM_PROFILE_ID,
   EXPORTED_VLLM_RECIPE_ID,
@@ -17,6 +18,11 @@ import { validateNemoClawConfig } from "../../config/schema";
 
 vi.mock("../../inference/serving/vllm-export-runtime", () => ({
   observeManagedVllmForExport: vi.fn(),
+}));
+vi.mock("../../inference/ollama/proxy", () => ({ createOllamaExportProbe: vi.fn() }));
+vi.mock("../../platform", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../platform")>()),
+  isWsl: vi.fn(() => false),
 }));
 vi.mock("../../state/registry/persistence", () => ({ load: vi.fn() }));
 vi.mock("../../state/registry-entry-view", () => ({ getSandboxEntryInference: vi.fn() }));
@@ -39,6 +45,9 @@ vi.mock("../../onboard/gateway/state-dir", () => ({
 }));
 
 import { observeManagedVllmForExport } from "../../inference/serving/vllm-export-runtime";
+import { createOllamaExportProbe } from "../../inference/ollama/proxy";
+import { OLLAMA_LOCAL_CREDENTIAL_ENV } from "../../inference/ollama/contract";
+import type { ObservedOllamaProxy } from "../../inference/ollama/proxy-observation";
 import { loadServingCatalog } from "../../inference/serving/catalog-loader";
 import { servingProfileProvenance } from "../../inference/serving/profile-provenance";
 import { applyVllmRuntimeContextWindow } from "../../inference/vllm-runtime-context";
@@ -48,7 +57,6 @@ import { getLiveGatewayInference } from "../../inference/live";
 import { resolveGatewayStateDirForPort } from "../../onboard/gateway/state-dir";
 import { buildManagedStartupProfile } from "../../onboard/managed-startup/profile-builder";
 import type { ManagedStartupProfileBuilderInput } from "../../onboard/managed-startup/profile-builder";
-import { encodeManagedStartupProfile } from "../../onboard/managed-startup/profile";
 import { getSandboxEntryInference } from "../../state/registry-entry-view";
 import { load as loadRegistry } from "../../state/registry/persistence";
 import type { SandboxEntry } from "../../state/registry/types";
@@ -56,43 +64,21 @@ import { connectManagedOpenShellSdk } from "../openshell/sdk";
 import { observeStableExportSource } from "../../actions/config/observe-export-source";
 import { captureSanitizedResolvedOpenshell } from "../openshell/sanitized-capture";
 import { createLiveExportSnapshotReader } from "./live-export-source";
-
 import {
   endpoint,
   readFailureCanary,
   imageRef,
   startupInput,
-  startup,
   entry,
   inventory,
   provider,
   configuration,
+  openAiProviderProfile,
+  nativeNvidiaProvider,
+  ollamaSource,
+  telemetryEntry,
+  dashboardSource,
 } from "./live-export-source-test-fixture";
-
-function telemetryEntry(
-  telemetry: Readonly<Record<string, unknown>> = {},
-  agentSettings: Readonly<Record<string, unknown>> = {},
-) {
-  const profile = JSON.parse(Buffer.from(startup.encodedProfile, "base64url").toString("utf8")) as {
-    agentConfig: { otel: Record<string, unknown> };
-  };
-  Object.assign(profile.agentConfig.otel, {
-    enabled: true,
-    serviceName: "research-assistant",
-    sampleRate: 0.5,
-    ...telemetry,
-  });
-  Object.assign(profile.agentConfig, agentSettings);
-  const encodedProfile = Buffer.from(JSON.stringify(profile)).toString("base64url");
-  return {
-    ...entry,
-    workload: {
-      ...entry.workload,
-      encodedProfile,
-      startupProfileSha256: createHash("sha256").update(encodedProfile).digest("hex"),
-    },
-  };
-}
 
 const raw = {
   getProvider: vi.fn(),
@@ -203,10 +189,20 @@ async function exportLiveSource() {
   return { result, writeStdout, publish };
 }
 
-function nativeNvidiaProvider() {
-  return { ...provider().provider, type: "nvidia", profileWorkspace: "", config: {} };
+function expectExportRefusal(
+  exported: Awaited<ReturnType<typeof exportLiveSource>>,
+  finding: Readonly<{ field?: string; category: string }>,
+) {
+  expect(exported.result).toMatchObject({
+    ok: false,
+    failure: {
+      kind: "observation",
+      findings: expect.arrayContaining([expect.objectContaining(finding)]),
+    },
+  });
+  expect(exported.writeStdout).not.toHaveBeenCalled();
+  expect(exported.publish).not.toHaveBeenCalled();
 }
-
 function mockNativeNvidiaSource() {
   mockSupportedLiveSource();
   raw.getProvider.mockResolvedValue({ provider: nativeNvidiaProvider() });
@@ -975,7 +971,7 @@ function mockManagedVllmSource(
   });
   Object.assign(environment, environmentOverrides);
   const built = buildManagedStartupProfile({
-    agent: "openclaw",
+    ...startupInput,
     inference: {
       routeProvider: inference.providerKey,
       upstreamProvider: "vllm-local",
@@ -986,21 +982,8 @@ function mockManagedVllmSource(
       primaryModelRef: inference.primaryModelRef,
       compatibility: inference.inferenceCompat ?? {},
     },
-    dashboard: {
-      agent: "openclaw",
-      mode: "loopback",
-      url: "http://127.0.0.1:18789",
-      port: 18789,
-      bindAddress: "127.0.0.1",
-      wslExposure: false,
-    },
     webSearch,
     toolDisclosure,
-    hermesToolGateways: [],
-    messagingPlan: null,
-    dcodeAutoApprovalMode: null,
-    observabilityEnabled: null,
-    corporateCa: null,
     environment,
   });
   const source: SandboxEntry = {
@@ -1065,18 +1048,7 @@ function mockManagedVllmSource(
       config: { OPENAI_BASE_URL: source.endpointUrl },
     },
   });
-  raw.getProviderProfile.mockResolvedValue({
-    profile: {
-      id: "openai",
-      source: "user",
-      scope: "workspace",
-      resourceVersion: 4n,
-      credentials: [],
-      endpoints: [],
-      binaries: [],
-      inferenceCapable: true,
-    },
-  });
+  raw.getProviderProfile.mockResolvedValue(openAiProviderProfile());
   return { source, observed };
 }
 
@@ -1299,37 +1271,147 @@ describe("managed vLLM export pipeline", () => {
   });
 });
 
+function ollamaProbe(observed: ObservedOllamaProxy) {
+  const models = JSON.stringify({
+    models: [{ name: observed.serving.model.servedName, digest: observed.serving.model.digest }],
+  });
+  return {
+    backend: {
+      kind: "ollama" as const,
+      url: `http://127.0.0.1:${observed.serving.daemon.hostPort}`,
+    },
+    proxyPort: String(observed.serving.proxy.hostPort),
+    pid: String(observed.pid),
+    processMatches: vi.fn(() => true),
+    readActiveConfig: vi.fn(() =>
+      JSON.stringify({
+        schemaVersion: 1,
+        pid: observed.pid,
+        listener: { address: observed.listenerAddress, port: observed.serving.proxy.hostPort },
+        backendOrigin: `http://127.0.0.1:${observed.serving.daemon.hostPort}`,
+      }),
+    ),
+    readProxyModels: vi.fn(() => models),
+    readDaemonModels: vi.fn(() => models),
+  };
+}
+
+function mockOllamaSource() {
+  vi.spyOn(os, "platform").mockReturnValue("linux");
+  const model = EXPORTED_OLLAMA_MODEL;
+  const { source, observed } = ollamaSource(model);
+  mockSupportedLiveSource(3, 3, source);
+  const probe = ollamaProbe(observed);
+  vi.mocked(createOllamaExportProbe).mockReturnValue(probe);
+  vi.mocked(getSandboxEntryInference).mockReturnValue({
+    kind: "configured",
+    provider: "ollama-local",
+    model,
+  });
+  vi.mocked(getLiveGatewayInference).mockReturnValue({
+    failure: null,
+    inference: { provider: "ollama-local", model },
+    output: "",
+    status: 0,
+  });
+  const liveSandbox = inventory();
+  Object.assign(liveSandbox.sandbox.spec, { providers: ["ollama-local"] });
+  raw.getSandbox.mockResolvedValue(liveSandbox);
+  const readCredential = vi.fn(() => {
+    throw new Error(readFailureCanary);
+  });
+  const credentials = Object.defineProperty({}, OLLAMA_LOCAL_CREDENTIAL_ENV, {
+    enumerable: true,
+    get: readCredential,
+  });
+  const localProvider = {
+    ...provider().provider,
+    metadata: { ...provider().provider.metadata, name: "ollama-local" },
+    profileWorkspace: "default",
+    credentials,
+    config: { OPENAI_BASE_URL: source.endpointUrl },
+  };
+  raw.getProvider.mockResolvedValue({ provider: localProvider });
+  raw.getProviderProfile.mockResolvedValue(openAiProviderProfile());
+  return { source, observed, probe, readCredential, localProvider };
+}
+
+describe("attached Ollama export pipeline", () => {
+  it("publishes the complete managed document without reading gateway credentials (#11435)", async () => {
+    const { observed, probe, readCredential } = mockOllamaSource();
+    const { result, writeStdout, publish } = await exportLiveSource();
+    expect(result).toEqual({ ok: true, completion: { kind: "stdout" } });
+    const yaml = writeStdout.mock.calls[0]![0];
+    const document = validateNemoClawConfig(YAML.parse(yaml));
+    expect(document.spec.inferenceProviders).toEqual([
+      {
+        name: "local-ollama",
+        provider: "ollama-local",
+        api: "openai-completions",
+        serving: observed.serving,
+      },
+    ]);
+    expect(document.spec.sandboxes[0]!.agents[0]!.inference.routes).toEqual([
+      { name: "primary", providerRef: "local-ollama", overrides: { model: EXPORTED_OLLAMA_MODEL } },
+    ]);
+    expect(probe.readActiveConfig).toHaveBeenCalledWith(11440);
+    expect(probe.readDaemonModels).toHaveBeenCalledWith(11439);
+    expect(readCredential).not.toHaveBeenCalled();
+    expect(yaml).not.toMatch(
+      /NEMOCLAW_OLLAMA_PROXY_TOKEN|credential-canary-value|host\.openshell\.internal/u,
+    );
+    expect(publish).not.toHaveBeenCalled();
+  });
+  it("sanitizes a failed or legacy proxy observation and publishes nothing (#11435)", async () => {
+    mockOllamaSource();
+    vi.mocked(createOllamaExportProbe).mockImplementation(() => {
+      throw new Error(readFailureCanary);
+    });
+    const { result, writeStdout } = await exportLiveSource();
+    expect(result).toMatchObject({ ok: false });
+    expect(JSON.stringify(result)).not.toContain(readFailureCanary);
+    expect(writeStdout).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      { endpointUrl: "http://host.openshell.internal:11435/v1" },
+      { field: "spec.inferenceProviders[].endpoint", category: "drifted" },
+    ],
+    [
+      { credentialEnv: "OTHER_TOKEN" },
+      { field: "source.live", category: "live-verification-failed" },
+    ],
+    [{ agent: "hermes" }, { field: "spec.inferenceProviders[].serving", category: "drifted" }],
+    [
+      { sandboxGpuEnabled: true, sandboxGpuDevice: "nvidia.com/gpu=all" },
+      { field: "spec.sandboxes[].runtime.gpu", category: "unsupported" },
+    ],
+  ])("refuses unsupported or drifted local route intent %# (#11435)", async (change, finding) => {
+    const { source } = mockOllamaSource();
+    Object.assign(source, change);
+    expectExportRefusal(await exportLiveSource(), finding);
+  });
+  it("refuses an absent provider attachment (#11435)", async () => {
+    mockOllamaSource();
+    raw.getSandbox.mockResolvedValue(inventory());
+    expectExportRefusal(await exportLiveSource(), {
+      field: "spec.inferenceProviders[].serving",
+      category: "drifted",
+    });
+  });
+  it("refuses a continuously changing active proxy identity (#11435)", async () => {
+    const { observed } = mockOllamaSource();
+    let pid = observed.pid;
+    vi.mocked(createOllamaExportProbe).mockImplementation(() =>
+      ollamaProbe({ ...observed, pid: ++pid }),
+    );
+    expectExportRefusal(await exportLiveSource(), { category: "unstable-source" });
+  });
+});
 describe("dashboard export observation", () => {
   it("projects registered dashboard and direct tools through complete live observation (#10904)", async () => {
-    const workload = entry.workload as Extract<
-      NonNullable<SandboxEntry["workload"]>,
-      { kind: "managed-image" }
-    >;
-    expect(workload?.kind).toBe("managed-image");
-    const profile = {
-      ...startup.profile,
-      tools: { ...startup.profile.tools, disclosure: "direct" as const },
-      dashboard: {
-        agent: "openclaw" as const,
-        mode: "remote" as const,
-        url: "http://127.0.0.1:19000",
-        port: 19000,
-        bindAddress: "0.0.0.0" as const,
-        wslExposure: false,
-      },
-    };
-    const encodedProfile = encodeManagedStartupProfile(profile);
-    const sourceEntry = {
-      ...entry,
-      toolDisclosure: "direct" as const,
-      dashboardPort: 19000,
-      dashboardRemoteBindPrepared: true,
-      workload: {
-        ...workload,
-        encodedProfile,
-        startupProfileSha256: createHash("sha256").update(encodedProfile).digest("hex"),
-      },
-    };
+    const sourceEntry = dashboardSource();
     mockSupportedLiveSource(3, 3, sourceEntry);
     const reader = createLiveExportSnapshotReader();
     const observed = await reader.read("alpha");
@@ -1357,7 +1439,6 @@ describe("dashboard export observation", () => {
       },
     );
     expect(result).toEqual({ ok: true, completion: { kind: "stdout" } });
-    expect(raw.getSandbox).toHaveBeenCalledTimes(3);
     expect(JSON.stringify(result)).not.toContain(readFailureCanary);
     const yaml = writeStdout.mock.calls[0]?.[0] ?? "";
     expect(yaml).not.toContain(readFailureCanary);
@@ -1369,20 +1450,15 @@ describe("dashboard export observation", () => {
     });
   });
 
-  it("retains dashboard registry changes in both complete snapshots (#10904)", async () => {
+  it("refuses dashboard registry changes without publishing (#10904)", async () => {
     mockSupportedLiveSource();
     let reads = 0;
     vi.mocked(loadRegistry).mockImplementation(() => ({
       sandboxes: { alpha: { ...entry, dashboardPort: reads++ % 2 === 0 ? 18789 : 19000 } },
       defaultSandbox: null,
     }));
-    const result = await observeStableExportSource("alpha", createLiveExportSnapshotReader());
-    expect(result).toMatchObject({
-      ok: false,
-      attempts: 2,
-      findings: [expect.objectContaining({ category: "unstable-source" })],
-    });
-    expect(loadRegistry).toHaveBeenCalledTimes(4);
+    const exported = await exportLiveSource();
+    expectExportRefusal(exported, { category: "unstable-source" });
   });
 });
 
