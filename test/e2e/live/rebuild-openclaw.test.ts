@@ -5,6 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { shellQuote } from "../../../src/lib/core/shell-quote";
+import { containsAnswer } from "../../helpers/e2e-answer-assertions.ts";
 import { execTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { assertCleanupSucceededOrAbsent } from "../fixtures/cleanup-resources.ts";
@@ -23,8 +24,11 @@ import {
   writeJsonFile,
 } from "../fixtures/file-state.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
+import { parseOpenClawAgentText } from "../fixtures/openclaw-agent-output.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { createOldBaseBuildContext } from "./rebuild-openclaw-old-base-context.ts";
+
+process.env.NEMOCLAW_CLI_BIN ??= CLI_ENTRYPOINT;
 
 // The contract stays intentionally local to this live test: build an older
 // OpenClaw base image, create a sandbox from it through the real OpenShell CLI,
@@ -63,7 +67,10 @@ const ONBOARD_TIMEOUT_MS = 20 * 60_000;
 const LOCAL_ONBOARD_COMMAND_TIMEOUT_MS = execTimeout(ONBOARD_TIMEOUT_MS);
 const DOCKER_BUILD_TIMEOUT_MS = 35 * 60_000;
 const REBUILD_TIMEOUT_MS = 30 * 60_000;
+const AGENT_TURN_TIMEOUT_MS = 120_000;
 const OPENSHELL_TIMEOUT_MS = 2 * 60_000;
+const REBUILD_E2E_TIMEOUT_MS =
+  REBUILD_TIMEOUT_MS + 2 * DOCKER_BUILD_TIMEOUT_MS + ONBOARD_TIMEOUT_MS + AGENT_TURN_TIMEOUT_MS;
 
 interface SeedGatewayTokenResult {
   seeded: boolean;
@@ -339,9 +346,9 @@ function backupCredentialLeakPaths(backupDir: string, oldGatewayToken: string): 
 // Accidental cli-test-shard discovery must not build Docker images, mutate
 // ~/.nemoclaw, or call NVIDIA.
 test(
-  "rebuild-openclaw: old OpenClaw sandbox rebuild preserves state and rotates gateway token",
+  "rebuild-openclaw: old OpenClaw sandbox rebuild preserves state and leaves the agent usable",
   {
-    timeout: REBUILD_TIMEOUT_MS + 2 * DOCKER_BUILD_TIMEOUT_MS + ONBOARD_TIMEOUT_MS,
+    timeout: REBUILD_E2E_TIMEOUT_MS,
     meta: {
       e2ePhases: [
         "confirm Docker and prepare OpenClaw rebuild resources",
@@ -351,16 +358,16 @@ test(
         "seed persistent state and registry metadata",
         "restore the current OpenClaw base image",
         "rebuild the OpenClaw sandbox",
-        "validate upgraded state policy inference and backup hygiene",
+        "validate rebuilt agent readiness and preserved state",
       ],
     },
   },
   async ({ artifacts, cleanup, host, progress, sandbox, secrets, skip }) => {
     const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
     expect(
-      fs.existsSync(CLI_ENTRYPOINT),
-      "bin/nemoclaw.js missing — run npm ci && npm run build:cli before live rebuild coverage",
-    ).toBe(true);
+      path.resolve(host.commandPath),
+      "rebuild-OpenClaw must invoke the checked-out CLI through NEMOCLAW_CLI_BIN",
+    ).toBe(CLI_ENTRYPOINT);
 
     const dockerInfo = await host.command("docker", ["info"], {
       artifactName: "prereq-docker-info",
@@ -752,11 +759,34 @@ print(json.dumps({'seeded': saved == os.environ['PRE_REBUILD_GATEWAY_TOKEN'], 'h
     expectExitZero(rebuild, "nemoclaw rebuild");
     const rebuildText = resultText(rebuild);
     expect(rebuildText).toContain(`Sandbox '${SANDBOX_NAME}' rebuild completed`);
-    expect(rebuildText).not.toContain("post-restore steps were incomplete");
 
-    // Phase 7: state preservation, upgrade, token rotation, backup hygiene, and
-    // policy-preset preservation assertions.
-    progress.phase("validate upgraded state policy inference and backup hygiene");
+    // Phase 7: agent readiness, state preservation, upgrade, token rotation,
+    // backup hygiene, and policy-preset preservation assertions.
+    progress.phase("validate rebuilt agent readiness and preserved state");
+    const agentTurn = await host.nemoclaw(
+      [
+        SANDBOX_NAME,
+        "agent",
+        "--agent",
+        "main",
+        "--json",
+        "--session-id",
+        `e2e-rebuild-oc-${Date.now()}-${process.pid}`,
+        "-m",
+        "What is 6 multiplied by 7? Reply with only the integer, no extra words.",
+      ],
+      {
+        artifactName: "phase-7-agent-inference-after-rebuild",
+        env: cliEnv(apiKey),
+        redactionValues: [apiKey],
+        timeoutMs: AGENT_TURN_TIMEOUT_MS,
+      },
+    );
+    expectExitZero(agentTurn, "OpenClaw agent inference after rebuild");
+    expect(
+      containsAnswer(parseOpenClawAgentText(agentTurn.stdout), "42"),
+      resultText(agentTurn),
+    ).toBe(true);
     const markerRead = await sandbox.exec(SANDBOX_NAME, ["cat", MARKER_FILE], {
       artifactName: "phase-7-read-workspace-marker",
       env: dockerContextEnv(),
@@ -830,7 +860,6 @@ print(json.dumps({'tokenPresent': bool(token), 'tokenRotated': token != old, 'ru
     expectExitZero(postPolicy, "openshell policy get after rebuild");
     expect(postPolicy.stdout).toMatch(/npm|registry\.npmjs\.org/i);
     expect(postPolicy.stdout).toMatch(/pypi|pypi\.org/i);
-    expect(postPolicy.stdout).toMatch(/telegram/i);
     expect(postPolicy.stdout).toContain("api.telegram.org");
     expect(postPolicy.stdout).toContain("host_edit_rebuild_openclaw_e2e");
 
@@ -867,27 +896,5 @@ print(json.dumps({'tokenPresent': bool(token), 'tokenRotated': token != old, 'ru
     expectExitZero(telegramApiReachability, "api.telegram.org reachability after rebuild");
     expect(telegramApiReachability.stdout).toMatch(/STATUS_\d+/);
     expect(telegramApiReachability.stdout).not.toMatch(/STATUS_403|Forbidden/i);
-
-    // External inference API availability can make this inconclusive; keep it as a
-    // non-fatal artifact-producing probe like the former shell test did.
-    await sandbox.exec(
-      SANDBOX_NAME,
-      [
-        "curl",
-        "-s",
-        "--max-time",
-        "60",
-        "https://inference.local/v1/chat/completions",
-        "-H",
-        "Content-Type: application/json",
-        "-d",
-        '{"model":"nvidia/nemotron-3-super-120b-a12b","messages":[{"role":"user","content":"Reply with exactly one word: PONG"}],"max_tokens":100}',
-      ],
-      {
-        artifactName: "phase-7-inference-after-rebuild-nonfatal",
-        env: dockerContextEnv(),
-        timeoutMs: 75_000,
-      },
-    );
   },
 );

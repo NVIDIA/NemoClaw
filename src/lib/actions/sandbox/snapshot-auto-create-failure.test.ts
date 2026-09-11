@@ -158,7 +158,7 @@ vi.mock("../../adapters/openshell/runtime", () => ({
 }));
 vi.mock("../../adapters/openshell/sandbox-policy-cli", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../adapters/openshell/sandbox-policy-cli")>()),
-  syncCliOpenShellSandboxPolicyReader: {
+  cliOpenShellSandboxPolicyReader: {
     inspectSandboxPolicy: vi.fn(),
     readSandboxPolicy: readSandboxPolicyMock,
     readSandboxPolicyRevision: vi.fn(),

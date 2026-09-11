@@ -17,11 +17,11 @@ type SanitizedCaptureOptions = Readonly<{
   replaceEnv?: true;
 }>;
 
+type SanitizedAsyncCaptureOptions = Omit<SanitizedCaptureOptions, "maxBuffer"> &
+  Readonly<{ outputLimitBytes: number }>;
+
 /** Capture a bounded OpenShell read with a credential-minimizing environment. */
-export function captureSanitizedResolvedOpenshell(
-  args: string[],
-  opts: SanitizedCaptureOptions,
-): CapturedOpenShellCommandResult {
+function resolveCapture(args: string[]) {
   const env = buildOpenShellSubprocessEnv();
   for (const name of ["XDG_CONFIG_HOME", "OPENSHELL_WORKSPACE"] as const) {
     const value = process.env[name];
@@ -32,17 +32,44 @@ export function captureSanitizedResolvedOpenshell(
 
   const openshell = resolveOpenshellBinaryOrNull();
   if (!openshell) {
-    return {
-      status: null,
-      output: "",
-      error: Object.assign(new Error("OpenShell binary not found"), { code: "ENOENT" }),
-    };
+    return null;
   }
   if (!path.isAbsolute(openshell)) throw new Error("OpenShell executable must be absolute");
+  return { openshell, env };
+}
+
+function missingBinary(): CapturedOpenShellCommandResult {
+  return {
+    status: null,
+    output: "",
+    error: Object.assign(new Error("OpenShell binary not found"), { code: "ENOENT" }),
+  };
+}
+
+export function captureSanitizedResolvedOpenshell(
+  args: string[],
+  opts: SanitizedCaptureOptions,
+): CapturedOpenShellCommandResult {
+  const resolved = resolveCapture(args);
+  if (!resolved) return missingBinary();
   return openshellRuntime.captureOpenshell(args, {
-    openshellBinary: openshell,
-    env,
+    openshellBinary: resolved.openshell,
+    env: resolved.env,
     replaceEnv: true,
     ...opts,
+  });
+}
+
+export async function captureSanitizedResolvedOpenshellAsync(
+  args: string[],
+  opts: SanitizedAsyncCaptureOptions,
+): Promise<CapturedOpenShellCommandResult> {
+  const resolved = resolveCapture(args);
+  if (!resolved) return missingBinary();
+  return openshellRuntime.captureResolvedOpenshellAsync(args, {
+    ...opts,
+    openshellBinary: resolved.openshell,
+    env: opts.env ?? resolved.env,
+    replaceEnv: true,
   });
 }
