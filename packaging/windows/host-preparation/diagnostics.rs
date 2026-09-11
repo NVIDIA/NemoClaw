@@ -59,6 +59,7 @@ pub struct Outcome {
     pub win32_error: Option<u32>,
     pub stderr: String,
     pub failed: bool,
+    preparation_counts: Option<(usize, usize)>,
 }
 
 impl Outcome {
@@ -69,6 +70,7 @@ impl Outcome {
                 win32_error: None,
                 stderr: String::new(),
                 failed: false,
+                preparation_counts: None,
             };
         };
         let native = message
@@ -89,7 +91,13 @@ impl Outcome {
                 sanitized(message)
             ),
             failed: true,
+            preparation_counts: None,
         }
+    }
+
+    pub fn with_preparation_counts(mut self, counts: Option<(usize, usize)>) -> Self {
+        self.preparation_counts = if self.failed { None } else { counts };
+        self
     }
 
     pub fn exit_code(&self) -> i32 {
@@ -104,13 +112,17 @@ impl Outcome {
 
     pub fn json(&self, attempt: Option<&str>, elapsed_ms: u128) -> String {
         format!(
-            "{{\"schemaVersion\":1,\"classification\":\"nemoclaw-host-preparation-diagnostic\",\"operation\":\"prepare-system-drive\",\"attemptId\":{},\"status\":\"{}\",\"stage\":{},\"win32Error\":{},\"elapsedMilliseconds\":{},\"stderr\":{}}}\n",
+            "{{\"schemaVersion\":1,\"classification\":\"nemoclaw-host-preparation-diagnostic\",\"operation\":\"prepare-system-drive\",\"attemptId\":{},\"status\":\"{}\",\"stage\":{},\"win32Error\":{},\"elapsedMilliseconds\":{},\"addedAces\":{},\"writeCalls\":{},\"stderr\":{}}}\n",
             attempt.map_or("null".into(), quoted),
             if self.failed { "failed" } else { "succeeded" },
             quoted(&self.stage),
             self.win32_error
                 .map_or("null".into(), |code| code.to_string()),
             elapsed_ms,
+            self.preparation_counts
+                .map_or("null".into(), |counts| counts.0.to_string()),
+            self.preparation_counts
+                .map_or("null".into(), |counts| counts.1.to_string()),
             quoted(&self.stderr),
         )
     }
@@ -243,5 +255,23 @@ mod tests {
         );
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "first");
         std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn success_retains_existing_write_counts_without_inventing_failure_counts() {
+        let success = Outcome::from_result(&Ok(())).with_preparation_counts(Some((0, 0)));
+        assert!(
+            success
+                .json(None, 7)
+                .contains("\"addedAces\":0,\"writeCalls\":0")
+        );
+        let failure = Outcome::from_result(&Err("read-descriptor: Win32 error 5".into()))
+            .with_preparation_counts(Some((0, 0)));
+        assert_eq!(failure.exit_code(), 5);
+        assert!(
+            failure
+                .json(None, 7)
+                .contains("\"addedAces\":null,\"writeCalls\":null")
+        );
     }
 }

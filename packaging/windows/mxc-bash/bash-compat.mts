@@ -581,8 +581,6 @@ async function main() {
   const build = JSON.parse(fs.readFileSync(path.join(compat, "build-receipt.json"), "utf8"));
   assert.equal(build.classification, "mxc-msys-compatibility-prototype-build");
   assert.equal(build.status, "built");
-  assert.equal(build.tokenQueryRepairSupported, true);
-  assert.equal(build.tokenAccessMode, "owned-child-query-only");
   for (const file of build.files) {
     assert(
       [

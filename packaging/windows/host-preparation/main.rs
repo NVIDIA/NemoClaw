@@ -18,10 +18,17 @@ fn main() {
     };
     let started = std::time::Instant::now();
     #[cfg(all(windows, target_arch = "aarch64"))]
-    let result = windows_metadata::prepare_system_drive();
+    let (result, preparation_counts) = match windows_metadata::prepare_system_drive() {
+        Ok(counts) => (Ok(()), Some(counts)),
+        Err(error) => (Err(error), None),
+    };
     #[cfg(not(all(windows, target_arch = "aarch64")))]
-    let result = Err("The metadata helper requires native Windows ARM64.".into());
-    let outcome = diagnostics::Outcome::from_result(&result);
+    let (result, preparation_counts) = (
+        Err("The metadata helper requires native Windows ARM64.".into()),
+        None,
+    );
+    let outcome =
+        diagnostics::Outcome::from_result(&result).with_preparation_counts(preparation_counts);
     let record = outcome.json(
         destination.as_ref().map(|value| value.attempt.as_str()),
         started.elapsed().as_millis(),

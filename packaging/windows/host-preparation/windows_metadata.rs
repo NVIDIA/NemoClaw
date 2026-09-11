@@ -195,28 +195,6 @@ fn write(handle: &Handle, acl: &[u8], control: u16) -> Result<(), String> {
     Ok(())
 }
 
-#[cfg(test)]
-fn write_without_propagation_fixture(path: &OsStr, acl: &[u8], control: u16) {
-    // SetFileSecurity explicitly does not inherit directory security to
-    // children. Use it only to construct this owned, deliberately divergent
-    // fixture; production continues to use its independently held Nt handle.
-    let mut aligned = vec![0u32; (20 + acl.len()).div_ceil(4)];
-    let bytes = unsafe {
-        std::slice::from_raw_parts_mut(aligned.as_mut_ptr().cast::<u8>(), 20 + acl.len())
-    };
-    bytes[0] = 1;
-    bytes[2..4].copy_from_slice(&control.to_le_bytes());
-    bytes[16..20].copy_from_slice(&20u32.to_le_bytes());
-    bytes[20..].copy_from_slice(acl);
-    let path = wide(path);
-    assert_ne!(
-        unsafe { SetFileSecurityW(path.as_ptr(), 4, aligned.as_ptr().cast()) },
-        0,
-        "{}",
-        api_error("fixture-set-file-security")
-    );
-}
-
 struct Preparation {
     before: Descriptor,
     after: Descriptor,
@@ -260,7 +238,7 @@ fn prepare_target(path: &OsStr, directory: bool) -> Result<Preparation, String> 
     })
 }
 
-pub fn prepare_system_drive() -> Result<(), String> {
+pub fn prepare_system_drive() -> Result<(usize, usize), String> {
     let root = system_drive()?;
     let prepared = prepare_target(OsStr::new(&root), true)?;
     let Preparation {
@@ -284,7 +262,8 @@ pub fn prepare_system_drive() -> Result<(), String> {
         write_result.is_ok() && verification.is_ok()
     );
     write_result?;
-    verification
+    verification?;
+    Ok((additions, usize::from(additions != 0)))
 }
 
 #[link(name = "kernel32")]
@@ -330,7 +309,13 @@ unsafe extern "system" {
         descriptor: *mut *mut c_void,
     ) -> u32;
     #[cfg(test)]
-    fn SetFileSecurityW(path: *const u16, information: u32, descriptor: *const c_void) -> i32;
+    fn GetKernelObjectSecurity(
+        handle: RawHandle,
+        information: u32,
+        descriptor: *mut c_void,
+        bytes: u32,
+        needed: *mut u32,
+    ) -> i32;
     fn GetSecurityDescriptorLength(descriptor: *mut c_void) -> u32;
     fn IsValidSecurityDescriptor(descriptor: *mut c_void) -> i32;
 }
@@ -402,6 +387,30 @@ mod tests {
         );
         assert_eq!(error, 32);
     }
+    fn kernel_descriptor(handle: &Handle) -> Descriptor {
+        let mut storage = vec![0u32; MAX_DESCRIPTOR / 4];
+        let mut needed = 0;
+        assert_ne!(
+            unsafe {
+                GetKernelObjectSecurity(
+                    handle.0,
+                    7,
+                    storage.as_mut_ptr().cast(),
+                    MAX_DESCRIPTOR as u32,
+                    &mut needed,
+                )
+            },
+            0
+        );
+        assert_ne!(
+            unsafe { IsValidSecurityDescriptor(storage.as_mut_ptr().cast()) },
+            0
+        );
+        let length = unsafe { GetSecurityDescriptorLength(storage.as_mut_ptr().cast()) } as usize;
+        assert!((20..=MAX_DESCRIPTOR).contains(&length));
+        let bytes = unsafe { std::slice::from_raw_parts(storage.as_ptr().cast::<u8>(), length) };
+        Descriptor::parse(bytes.to_vec()).unwrap()
+    }
     fn verified(result: Preparation) -> Preparation {
         assert!(result.write_result.is_ok(), "{:?}", result.write_result);
         assert!(result.verification.is_ok(), "{:?}", result.verification);
@@ -419,12 +428,13 @@ mod tests {
             let child = open(root.join("child").as_os_str(), true, READ_CONTROL).unwrap();
             let file = open(root.join("child/file").as_os_str(), false, READ_CONTROL).unwrap();
             let child_before = read(&child).unwrap();
+            let kernel_before = kernel_descriptor(&child);
             let file_before = read(&file).unwrap();
             {
                 // Add a harmless owner-only inheritable metadata ACE without
                 // propagating it. The production update must not subsequently
                 // walk/rewrite the deliberately unchanged existing descendants.
-                let parent = open(root.as_os_str(), true, READ_CONTROL).unwrap();
+                let parent = open(root.as_os_str(), true, READ_CONTROL | WRITE_DAC).unwrap();
                 let initial = read(&parent).unwrap();
                 let owner = initial.owner.as_ref().unwrap();
                 let mut extra = vec![0, 3];
@@ -438,13 +448,29 @@ mod tests {
                     .unwrap_or(initial.aces.len());
                 let offset = 8 + initial.aces[..index].iter().map(Vec::len).sum::<usize>();
                 let mut acl = initial.acl.clone();
+                let mut expected_aces = initial.aces.clone();
+                expected_aces.insert(index, extra.clone());
                 acl.splice(offset..offset, extra);
                 let size = u16::try_from(acl.len()).unwrap();
                 acl[2..4].copy_from_slice(&size.to_le_bytes());
                 acl[4..6]
                     .copy_from_slice(&u16::try_from(initial.aces.len() + 1).unwrap().to_le_bytes());
-                write_without_propagation_fixture(root.as_os_str(), &acl, initial.control);
-                assert_eq!(read(&child).unwrap().bytes, child_before.bytes);
+                write(&parent, &acl, initial.control).unwrap();
+                let constructed = read(&parent).unwrap();
+                assert_eq!(constructed.aces, expected_aces);
+                assert_eq!(constructed.owner, initial.owner);
+                assert_eq!(constructed.group, initial.group);
+                let child_after = read(&child).unwrap();
+                let kernel_after = kernel_descriptor(&child);
+                eprintln!(
+                    "Fixture child controls: getter before=0x{:04x}, after=0x{:04x}; kernel before=0x{:04x}, after=0x{:04x}; kernel bytes unchanged={}",
+                    child_before.control,
+                    child_after.control,
+                    kernel_before.control,
+                    kernel_after.control,
+                    kernel_before.bytes == kernel_after.bytes
+                );
+                assert_eq!(child_after.bytes, child_before.bytes);
                 assert_eq!(read(&file).unwrap().bytes, file_before.bytes);
             }
             let result = verified(prepare_target(root.as_os_str(), true).unwrap());
