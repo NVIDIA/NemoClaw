@@ -244,7 +244,11 @@ const staleAdmissionExit = new Error("stale recovery admission refused");
 if (scenario.mode === "providerless-external-component") {
   require(${externalComponentPath}).loadExternalComponentDeclaration = () => {
     called.push("component-validated");
-    return {};
+    return {
+      declaration: { schemaVersion: 1, componentId: "policy-governance", interceptorSocketPath: "/run/component/interceptor.sock", activationSocketPath: "/run/component/activation.sock" },
+      revalidateBeforeGateway() {},
+      revalidateBeforeActivation() {},
+    };
   };
 }
 
@@ -387,6 +391,7 @@ preflightHandlers.handlePreflightState = async (options) => {
 gatewayHandlers.handleGatewayState = async (options) => {
   if (scenario.mode === "providerless-external-component") {
     called.push("gateway-effect");
+    return { gatewayReuseState: "healthy", session: options.session, stateResult: advanceTo("provider_selection", { metadata: { state: "gateway" } }) };
   }
   if (!scenario.mode.includes("core-gateway")) {
     throw new Error("unexpected gateway compatibility handler");
@@ -594,9 +599,7 @@ const { onboard } = require(${onboardPath});
       (scenario.mode === "endpoint-override" &&
         error?.name === "OpenShellGatewayEndpointOverrideError") ||
       (scenario.mode === "providerless-staged-messaging" &&
-        /supports providerless sandbox creation only/.test(String(error?.message))) ||
-      (scenario.mode === "providerless-external-component" &&
-        error?.code === "lifecycle_unsupported")
+        /supports providerless sandbox creation only/.test(String(error?.message)))
     ) {
       const payload = "__RESULT__" + JSON.stringify({ called });
       if (scenario.mode === "dashboard-port-composition") {
@@ -687,11 +690,16 @@ describe("live onboard FSM slice boundaries", () => {
     );
   });
 
-  it("rejects a registered component with providerless APF before effects (#11340)", () => {
-    assert.deepEqual(runSliceProbe({ slice: "initial", mode: "providerless-external-component" }), [
-      "component-validated",
-    ]);
-  });
+  it(
+    "validates the registered component before providerless onboarding effects (#11486)",
+    () => {
+      assert.deepEqual(
+        runSliceProbe({ slice: "initial", mode: "providerless-external-component" }),
+        ["component-validated", "preflight-effect", "gateway-effect", "sandbox-effect"],
+      );
+    },
+    probeTimeoutMs,
+  );
 
   it("rechecks retained sandbox admission after acquiring the onboarding lock (#9833)", () => {
     assert.deepEqual(runSliceProbe({ slice: "initial", mode: "stale-recovery-admission" }), []);

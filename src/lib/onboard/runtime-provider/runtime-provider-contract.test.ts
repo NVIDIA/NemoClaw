@@ -21,6 +21,7 @@ import { executeSandboxDestroy } from "../../actions/sandbox/destroy-execution";
 import { SANDBOX_DESTROY_TIMEOUT_MS } from "../../actions/sandbox/destroy-gateway";
 import { startSandbox } from "../../actions/sandbox/start";
 import { stopSandbox } from "../../actions/sandbox/stop";
+import { withCurrentPortableHostFence } from "../../state/portable-uninstall-retirement";
 import { loadAgent } from "../../agent/defs";
 import type { SandboxEntry, SandboxWorkloadReceipt } from "../../state/registry/types";
 import { cloneSandboxWorkloadReceipt } from "../../state/registry/workload";
@@ -1127,17 +1128,19 @@ describe("socket-free MXC action contract", () => {
           log: vi.fn(),
         }),
       ).resolves.toEqual({ exitCode: 0 });
-      expect(
-        stopSandbox(sandboxName, {
-          getSandbox,
-          updateSandbox,
-          runtimeProviders: providers,
-          stopSandboxChannels,
-          teardownSandboxDashboardForward,
-          log: vi.fn(),
-          warn: vi.fn(),
-        }),
-      ).toEqual({ exitCode: 0 });
+      await expect(
+        withCurrentPortableHostFence(() =>
+          stopSandbox(sandboxName, {
+            getSandbox,
+            updateSandbox,
+            runtimeProviders: providers,
+            stopSandboxChannels,
+            teardownSandboxDashboardForward,
+            log: vi.fn(),
+            warn: vi.fn(),
+          }),
+        ),
+      ).resolves.toEqual({ exitCode: 0 });
       expect(() => requireInferenceSetRuntimeAuthority(entry, providers)).not.toThrow();
       await expect(
         executeSandboxDestroy({
