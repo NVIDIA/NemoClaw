@@ -10,6 +10,7 @@
  * window kept for a cloud model → silent under-utilization).
  */
 
+import { getScopedCredentialOverride } from "../credentials/scoped-overrides";
 import { DEFAULT_CONTEXT_WINDOW } from "./config";
 import {
   createOllamaApiCaptureEx,
@@ -93,9 +94,20 @@ const defaultContextWindowDeps: ContextWindowDeps = {
   },
   defaultCloudContextWindow: (): number => DEFAULT_CONTEXT_WINDOW,
   probeLlamaCppContextWindow: (model: string): number | null => {
-    const { resolveLlamaCppEndpointContextWindow } =
-      require("./compatible-endpoint-context") as typeof import("./compatible-endpoint-context");
-    return resolveLlamaCppEndpointContextWindow(model);
+    const { LLAMA_CPP_CREDENTIAL_ENV, probeLlamaCppAttachment } = require("./llama-cpp") as {
+      LLAMA_CPP_CREDENTIAL_ENV: string;
+      probeLlamaCppAttachment: (
+        apiKey: string,
+        options?: { requestedModel?: string | null },
+      ) => { ok: boolean; contextWindow?: number };
+    };
+    const apiKey =
+      getScopedCredentialOverride(LLAMA_CPP_CREDENTIAL_ENV) ??
+      process.env[LLAMA_CPP_CREDENTIAL_ENV]?.replace(/\r/g, "").trim() ??
+      null;
+    if (!apiKey) return null;
+    const result = probeLlamaCppAttachment(apiKey, { requestedModel: model });
+    return result.ok ? (result.contextWindow ?? null) : null;
   },
 };
 

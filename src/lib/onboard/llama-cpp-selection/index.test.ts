@@ -2,10 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import {
-  clearAutoDetectedCompatibleContextWindow,
-  resetCompatibleEndpointContextWindowAutoState,
-} from "../../inference/compatible-endpoint-context";
+import { resetCompatibleEndpointContextWindowAutoState } from "../../inference/compatible-endpoint-context";
 import {
   LLAMA_CPP_CREDENTIAL_ENV,
   LLAMA_CPP_HOST_OPENAI_BASE_URL,
@@ -81,22 +78,6 @@ describe("createLlamaCppSelectionHandler", () => {
     expect(process.env.NEMOCLAW_CONTEXT_WINDOW).toBe("");
   });
 
-  it("clears the detected window before selecting another provider (#11527)", async () => {
-    vi.stubEnv("NEMOCLAW_CONTEXT_WINDOW", "");
-    const handler = createLlamaCppSelectionHandler(
-      deps({
-        probeLlamaCppAttachment: () => ({
-          ok: true,
-          model: "team/model-alias",
-          contextWindow: 65536,
-        }),
-      }),
-    );
-    await handler(state(), null, null);
-    clearAutoDetectedCompatibleContextWindow();
-    expect(process.env.NEMOCLAW_CONTEXT_WINDOW).toBeUndefined();
-  });
-
   it("adopts the authenticated server context window after successful selection (#11527)", async () => {
     vi.stubEnv("NEMOCLAW_CONTEXT_WINDOW", "");
     const handler = createLlamaCppSelectionHandler(
@@ -114,6 +95,32 @@ describe("createLlamaCppSelectionHandler", () => {
     } finally {
       vi.unstubAllEnvs();
     }
+  });
+
+  it("warns before replacing an invalid explicit context window (#11527)", async () => {
+    vi.stubEnv("NEMOCLAW_CONTEXT_WINDOW", "invalid");
+    const valuesAtWarning: Array<string | undefined> = [];
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {
+      valuesAtWarning.push(process.env.NEMOCLAW_CONTEXT_WINDOW);
+    });
+    const handler = createLlamaCppSelectionHandler(
+      deps({
+        probeLlamaCppAttachment: () => ({
+          ok: true,
+          model: "team/model-alias",
+          contextWindow: 65536,
+        }),
+      }),
+    );
+
+    await expect(handler(state(), null, null)).resolves.toBe("selected");
+
+    expect(valuesAtWarning).toEqual(["invalid"]);
+    expect(warning).toHaveBeenCalledWith(
+      expect.stringContaining('NEMOCLAW_CONTEXT_WINDOW="invalid"'),
+    );
+    expect(warning).toHaveBeenCalledWith(expect.stringContaining("65536 tokens"));
+    expect(process.env.NEMOCLAW_CONTEXT_WINDOW).toBe("65536");
   });
 
   it("binds the classified alias to a credential-bearing completions route (#8161)", async () => {

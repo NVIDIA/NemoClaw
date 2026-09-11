@@ -4,7 +4,6 @@
 import { createOpenAiLikeAuthConfig } from "../adapters/http/auth-config";
 import { runCurlProbe } from "../adapters/http/probe";
 import { getCredential } from "../credentials/store";
-import { LLAMA_CPP_CREDENTIAL_ENV, probeLlamaCppAttachment } from "./llama-cpp";
 import {
   assertEndpointResolvesPublic,
   buildResolvePinArgs,
@@ -22,14 +21,6 @@ import { resolveVllmContextWindowFromModels } from "./vllm-runtime-context";
 // Explicit NEMOCLAW_CONTEXT_WINDOW overrides share the auto-detect ceiling so a
 // user-supplied window can't bake an implausible value the probed path rejects.
 const MAX_COMPATIBLE_CONTEXT_WINDOW = MAX_AUTODETECTED_OLLAMA_CONTEXT_WINDOW;
-
-/** Read served context through the existing authenticated native-server probe. */
-export function resolveLlamaCppEndpointContextWindow(model: string): number | null {
-  const apiKey = getCredential(LLAMA_CPP_CREDENTIAL_ENV);
-  if (!apiKey) return null;
-  const result = probeLlamaCppAttachment(apiKey, { requestedModel: model });
-  return result.ok ? (result.contextWindow ?? null) : null;
-}
 
 // Hosts that only resolve inside the OpenShell sandbox network (or are the
 // hijacked docker-internal alias), mirroring probeOpenAiLikeEndpoint's
@@ -149,20 +140,29 @@ let autoDetectedCompatibleContextWindow: string | null = null;
 export function applyDetectedEndpointContextWindow(
   contextWindow: number | undefined,
   env: NodeJS.ProcessEnv = process.env,
+  logger: Pick<Console, "warn"> = console,
 ): void {
   const current = env.NEMOCLAW_CONTEXT_WINDOW;
   const previousAuto = !!current && current === autoDetectedCompatibleContextWindow;
   const configured = parsePositiveInteger(current);
   if (!previousAuto && configured && configured <= MAX_COMPATIBLE_CONTEXT_WINDOW) return;
+  const validDetectedContextWindow =
+    contextWindow !== undefined &&
+    Number.isSafeInteger(contextWindow) &&
+    contextWindow > 0 &&
+    contextWindow <= MAX_COMPATIBLE_CONTEXT_WINDOW;
+  if (!previousAuto && hasExplicitContextWindow(current)) {
+    const replacement = validDetectedContextWindow
+      ? `Using the server's served context window: ${contextWindow} tokens.`
+      : "The server did not report a valid served context window, so leaving it unset.";
+    logger.warn(
+      `  ⚠ Ignoring invalid NEMOCLAW_CONTEXT_WINDOW="${current}"; it must be a positive ` +
+        `integer ≤ ${MAX_COMPATIBLE_CONTEXT_WINDOW}. ${replacement}`,
+    );
+  }
   if (previousAuto || hasExplicitContextWindow(current)) delete env.NEMOCLAW_CONTEXT_WINDOW;
   autoDetectedCompatibleContextWindow = null;
-  if (
-    contextWindow === undefined ||
-    !Number.isSafeInteger(contextWindow) ||
-    contextWindow <= 0 ||
-    contextWindow > MAX_COMPATIBLE_CONTEXT_WINDOW
-  )
-    return;
+  if (!validDetectedContextWindow) return;
   const value = String(contextWindow);
   env.NEMOCLAW_CONTEXT_WINDOW = value;
   autoDetectedCompatibleContextWindow = value;
