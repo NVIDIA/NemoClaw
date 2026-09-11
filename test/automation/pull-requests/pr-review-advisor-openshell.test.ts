@@ -1140,7 +1140,6 @@ describe("PR review advisor OpenShell wrapper", () => {
         "exec",
         "--name",
         "pr-advisor-test",
-        "--no-login-shell",
         "--timeout",
         "2100",
         "--workdir",
@@ -1163,6 +1162,18 @@ describe("PR review advisor OpenShell wrapper", () => {
         "HEAD",
       ]),
     );
+    expect(runArgs).not.toContain("--no-login-shell");
+    const commandBoundaryIndex = runArgs.indexOf("--");
+    expect(runArgs.slice(commandBoundaryIndex)).toEqual([
+      "--",
+      "/usr/bin/node",
+      "--no-warnings",
+      "/advisor/tools/pr-review-advisor/run-specialist.mts",
+      "--base",
+      "target/base",
+      "--head",
+      "HEAD",
+    ]);
     expect(runArgs.join("\n")).not.toContain("github-host-secret");
     expect(runArgs.join("\n")).not.toContain("model-host-secret");
     expect(runArgs.join("\n")).not.toContain("advisor-host-secret");
