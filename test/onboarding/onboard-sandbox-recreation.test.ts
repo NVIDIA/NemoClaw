@@ -2,29 +2,34 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { beforeEach, describe, it, vi } from "vitest";
+import { describe, it } from "vitest";
+import { runOnboardProcessAsync } from "../helpers/onboard-child-process-harness";
 import { writeOkOpenshell } from "../helpers/onboard-openshell-fixture";
 import { type CommandEntry, onboardScriptMocksPath } from "../helpers/onboard-split-context";
 
-beforeEach(() => {
-  vi.stubEnv("NEMOCLAW_TEST_MANAGED_IMAGE_CATALOG", "1");
-  vi.stubEnv("NEMOCLAW_TEST_FORWARD_SERVICE_FIXTURE", "1");
-  vi.stubEnv("NEMOCLAW_SANDBOX_PREBUILD", "1");
-});
+const ONBOARD_TEST_ENV = {
+  NEMOCLAW_SANDBOX_PREBUILD: "1",
+  NEMOCLAW_TEST_FORWARD_SERVICE_FIXTURE: "1",
+  NEMOCLAW_TEST_MANAGED_IMAGE_CATALOG: "1",
+} as const;
 
-describe("onboard helpers", () => {
+function isolatedDashboardPort(tmpDir: string): string {
+  const offset = createHash("sha256").update(tmpDir).digest().readUInt16BE(0) % 10_000;
+  return String(20_000 + offset);
+}
+
+describe.concurrent("onboard helpers", () => {
   it(
     "non-interactive exits with error when existing sandbox is not ready",
     {
       timeout: 60_000,
     },
-    async () => {
+    async (context) => {
       const repoRoot = path.join(import.meta.dirname, "../..");
       const tmpDir = fs.mkdtempSync(
         path.join(os.tmpdir(), "nemoclaw-onboard-noninteractive-notready-"),
@@ -91,15 +96,18 @@ const { createSandbox } = require(${onboardPath});
 
       const env: Record<string, string | undefined> = {
         ...process.env,
+        ...ONBOARD_TEST_ENV,
+        NEMOCLAW_DASHBOARD_PORT: isolatedDashboardPort(tmpDir),
         HOME: tmpDir,
         PATH: `${fakeBin}:${process.env.PATH || ""}`,
         NEMOCLAW_NON_INTERACTIVE: "1",
       };
       delete env["NEMOCLAW_RECREATE_SANDBOX"];
-      const result = spawnSync(process.execPath, [scriptPath], {
+      const result = await runOnboardProcessAsync([scriptPath], {
         cwd: repoRoot,
-        encoding: "utf-8",
         env,
+        timeoutMs: 45_000,
+        context,
       });
 
       assert.notEqual(result.status, 0, "expected non-zero exit for not-ready sandbox");
@@ -115,12 +123,12 @@ const { createSandbox } = require(${onboardPath});
     },
   );
 
-  it.each(["balanced", "restricted"])(
+  it.for(["balanced", "restricted"])(
     "recreate-sandbox uses the requested %s tier without recording it",
     {
       timeout: 60_000,
     },
-    async (policyTier) => {
+    async (policyTier, context) => {
       const repoRoot = path.join(import.meta.dirname, "../..");
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-recreate-flag-"));
       const fakeBin = path.join(tmpDir, "bin");
@@ -229,16 +237,19 @@ const { createSandbox } = require(${onboardPath});
 `;
       fs.writeFileSync(scriptPath, script);
 
-      const result = spawnSync(process.execPath, [scriptPath], {
+      const result = await runOnboardProcessAsync([scriptPath], {
         cwd: repoRoot,
-        encoding: "utf-8",
         env: {
           ...process.env,
+          ...ONBOARD_TEST_ENV,
+          NEMOCLAW_DASHBOARD_PORT: isolatedDashboardPort(tmpDir),
           HOME: tmpDir,
           PATH: `${fakeBin}:${process.env.PATH || ""}`,
           NEMOCLAW_NON_INTERACTIVE: "1",
           NEMOCLAW_POLICY_TIER: policyTier,
         },
+        timeoutMs: 45_000,
+        context,
       });
 
       assert.equal(result.status, 0, result.stderr);
@@ -290,7 +301,7 @@ const { createSandbox } = require(${onboardPath});
     {
       timeout: 60_000,
     },
-    async () => {
+    async (context) => {
       const repoRoot = path.join(import.meta.dirname, "../..");
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-recreate-backup-"));
       const fakeBin = path.join(tmpDir, "bin");
@@ -416,15 +427,18 @@ const { createSandbox } = require(${onboardPath});
 `;
       fs.writeFileSync(scriptPath, script);
 
-      const result = spawnSync(process.execPath, [scriptPath], {
+      const result = await runOnboardProcessAsync([scriptPath], {
         cwd: repoRoot,
-        encoding: "utf-8",
         env: {
           ...process.env,
+          ...ONBOARD_TEST_ENV,
+          NEMOCLAW_DASHBOARD_PORT: isolatedDashboardPort(tmpDir),
           HOME: tmpDir,
           PATH: `${fakeBin}:${process.env.PATH || ""}`,
           NEMOCLAW_NON_INTERACTIVE: "1",
         },
+        timeoutMs: 45_000,
+        context,
       });
 
       assert.equal(result.status, 0, result.stderr);
@@ -474,7 +488,7 @@ const { createSandbox } = require(${onboardPath});
     {
       timeout: 60_000,
     },
-    async () => {
+    async (context) => {
       const repoRoot = path.join(import.meta.dirname, "../..");
       const tmpDir = fs.mkdtempSync(
         path.join(os.tmpdir(), "nemoclaw-onboard-recreate-skip-backup-"),
@@ -587,15 +601,18 @@ const { createSandbox } = require(${onboardPath});
 `;
       fs.writeFileSync(scriptPath, script);
 
-      const result = spawnSync(process.execPath, [scriptPath], {
+      const result = await runOnboardProcessAsync([scriptPath], {
         cwd: repoRoot,
-        encoding: "utf-8",
         env: {
           ...process.env,
+          ...ONBOARD_TEST_ENV,
+          NEMOCLAW_DASHBOARD_PORT: isolatedDashboardPort(tmpDir),
           HOME: tmpDir,
           PATH: `${fakeBin}:${process.env.PATH || ""}`,
           NEMOCLAW_NON_INTERACTIVE: "1",
         },
+        timeoutMs: 45_000,
+        context,
       });
 
       assert.equal(result.status, 0, result.stderr);
@@ -624,7 +641,7 @@ const { createSandbox } = require(${onboardPath});
     {
       timeout: 60_000,
     },
-    async () => {
+    async (context) => {
       const repoRoot = path.join(import.meta.dirname, "../..");
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-recreate-notready-"));
       const fakeBin = path.join(tmpDir, "bin");
@@ -756,15 +773,18 @@ const { createSandbox } = require(${onboardPath});
 `;
       fs.writeFileSync(scriptPath, script);
 
-      const result = spawnSync(process.execPath, [scriptPath], {
+      const result = await runOnboardProcessAsync([scriptPath], {
         cwd: repoRoot,
-        encoding: "utf-8",
         env: {
           ...process.env,
+          ...ONBOARD_TEST_ENV,
+          NEMOCLAW_DASHBOARD_PORT: isolatedDashboardPort(tmpDir),
           HOME: tmpDir,
           PATH: `${fakeBin}:${process.env.PATH || ""}`,
           NEMOCLAW_NON_INTERACTIVE: "1",
         },
+        timeoutMs: 45_000,
+        context,
       });
 
       assert.equal(result.status, 0, result.stderr);
@@ -800,7 +820,7 @@ const { createSandbox } = require(${onboardPath});
     {
       timeout: 60_000,
     },
-    async () => {
+    async (context) => {
       const repoRoot = path.join(import.meta.dirname, "../..");
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-interactive-reuse-"));
       const fakeBin = path.join(tmpDir, "bin");
@@ -907,15 +927,18 @@ const { createSandbox } = require(${onboardPath});
       // Run WITHOUT NEMOCLAW_NON_INTERACTIVE to exercise interactive path
       const env: Record<string, string | undefined> = {
         ...process.env,
+        ...ONBOARD_TEST_ENV,
+        NEMOCLAW_DASHBOARD_PORT: isolatedDashboardPort(tmpDir),
         HOME: tmpDir,
         PATH: `${fakeBin}:${process.env.PATH || ""}`,
       };
       delete env["NEMOCLAW_NON_INTERACTIVE"];
       delete env["NEMOCLAW_RECREATE_SANDBOX"];
-      const result = spawnSync(process.execPath, [scriptPath], {
+      const result = await runOnboardProcessAsync([scriptPath], {
         cwd: repoRoot,
-        encoding: "utf-8",
         env,
+        timeoutMs: 45_000,
+        context,
       });
 
       assert.equal(result.status, 0, result.stderr);
@@ -949,7 +972,7 @@ const { createSandbox } = require(${onboardPath});
     {
       timeout: 60_000,
     },
-    async () => {
+    async (context) => {
       const repoRoot = path.join(import.meta.dirname, "../..");
       const tmpDir = fs.mkdtempSync(
         path.join(os.tmpdir(), "nemoclaw-onboard-interactive-decline-"),
@@ -1079,16 +1102,19 @@ const { createSandbox } = require(${onboardPath});
       // Run WITHOUT NEMOCLAW_NON_INTERACTIVE to exercise interactive path
       const env: Record<string, string | undefined> = {
         ...process.env,
+        ...ONBOARD_TEST_ENV,
+        NEMOCLAW_DASHBOARD_PORT: isolatedDashboardPort(tmpDir),
         HOME: tmpDir,
         PATH: `${fakeBin}:${process.env.PATH || ""}`,
         NEMOCLAW_RECREATE_WITHOUT_BACKUP: "1",
       };
       delete env["NEMOCLAW_NON_INTERACTIVE"];
       delete env["NEMOCLAW_RECREATE_SANDBOX"];
-      const result = spawnSync(process.execPath, [scriptPath], {
+      const result = await runOnboardProcessAsync([scriptPath], {
         cwd: repoRoot,
-        encoding: "utf-8",
         env,
+        timeoutMs: 45_000,
+        context,
       });
 
       assert.equal(result.status, 0, result.stderr);
@@ -1125,7 +1151,7 @@ const { createSandbox } = require(${onboardPath});
     {
       timeout: 60_000,
     },
-    async () => {
+    async (context) => {
       const repoRoot = path.join(import.meta.dirname, "../..");
       const tmpDir = fs.mkdtempSync(
         path.join(os.tmpdir(), "nemoclaw-onboard-interactive-notready-"),
@@ -1254,16 +1280,19 @@ const { createSandbox } = require(${onboardPath});
       // Run WITHOUT NEMOCLAW_NON_INTERACTIVE to exercise interactive path
       const env: Record<string, string | undefined> = {
         ...process.env,
+        ...ONBOARD_TEST_ENV,
+        NEMOCLAW_DASHBOARD_PORT: isolatedDashboardPort(tmpDir),
         HOME: tmpDir,
         PATH: `${fakeBin}:${process.env.PATH || ""}`,
         NEMOCLAW_RECREATE_WITHOUT_BACKUP: "1",
       };
       delete env["NEMOCLAW_NON_INTERACTIVE"];
       delete env["NEMOCLAW_RECREATE_SANDBOX"];
-      const result = spawnSync(process.execPath, [scriptPath], {
+      const result = await runOnboardProcessAsync([scriptPath], {
         cwd: repoRoot,
-        encoding: "utf-8",
         env,
+        timeoutMs: 45_000,
+        context,
       });
 
       assert.equal(result.status, 0, result.stderr);
