@@ -10,6 +10,7 @@ import { createSession, type Session } from "../../../state/onboard-session";
 import { flushTrace, resetTraceForTests, TRACE_FILE_ENV, type TraceArtifact } from "../../../trace";
 import type { GatewayContainerState } from "../../gateway-container-running";
 import type { PreparedExternalComponent } from "../../external-component";
+import * as componentActivation from "../../external-component/activation";
 import {
   type GatewayAttachmentProbe,
   type GatewayOwner,
@@ -50,6 +51,29 @@ function preparedExternalComponent(revalidateBeforeGateway = vi.fn()): PreparedE
     },
     revalidateBeforeGateway,
     revalidateBeforeActivation: vi.fn(),
+  };
+}
+
+function preparedConnectionComponent(): PreparedExternalComponent {
+  return {
+    ...preparedExternalComponent(),
+    declaration: {
+      schemaVersion: 2,
+      componentId: "generic-policy",
+      activationSocketPath: "/run/component/activate.sock",
+      interceptor: {
+        endpoint: "https://127.0.0.1:9443",
+        caCertificatePath: "/run/component/ca.pem",
+        audience: "urn:generic:admission",
+        bindings: [{ rpc: "openshell.v1.OpenShell/CreateSandbox", phases: ["validate"] }],
+      },
+      middleware: {
+        name: "generic-middleware",
+        endpoint: "https://host.openshell.internal:9444",
+        caCertificatePath: "/run/component/ca.pem",
+        audience: "urn:generic:middleware",
+      },
+    },
   };
 }
 
@@ -255,6 +279,39 @@ describe("handleGatewayState", () => {
     expect(calls.configureExternalComponentGateway.mock.invocationCallOrder[0]).toBeLessThan(
       calls.refresh.mock.invocationCallOrder[0],
     );
+  });
+
+  it("starts the gateway after component preparation succeeds (#11507)", async () => {
+    const prepare = vi
+      .spyOn(componentActivation, "prepareExternalComponentGateway")
+      .mockResolvedValue();
+    const component = preparedConnectionComponent();
+    const { deps, calls } = createDeps({ isLinuxDockerDriverGatewayEnabled: vi.fn(() => true) });
+    await handleGatewayState({ ...baseOptions(deps, "missing"), externalComponent: component });
+    expect(prepare).toHaveBeenCalledOnce();
+    expect(calls.configureExternalComponentGateway).toHaveBeenCalledWith(
+      expect.objectContaining({ schemaVersion: 2 }),
+    );
+    expect(prepare.mock.invocationCallOrder[0]).toBeLessThan(
+      calls.startGateway.mock.invocationCallOrder[0]!,
+    );
+    expect(component.revalidateBeforeGateway).toHaveBeenCalledTimes(2);
+  });
+
+  it("preserves gateway state when component preparation fails (#11507)", async () => {
+    vi.spyOn(componentActivation, "prepareExternalComponentGateway").mockRejectedValue(
+      new Error("preparation_failed"),
+    );
+    const { deps, calls } = createDeps({ isLinuxDockerDriverGatewayEnabled: vi.fn(() => true) });
+    await expect(
+      handleGatewayState({
+        ...baseOptions(deps, "missing"),
+        externalComponent: preparedConnectionComponent(),
+      }),
+    ).rejects.toThrow("preparation_failed");
+    expect(calls.refresh).not.toHaveBeenCalled();
+    expect(calls.startGateway).not.toHaveBeenCalled();
+    expect(calls.complete).not.toHaveBeenCalled();
   });
 
   it("removes a prior component before evaluating managed gateway reuse (#11340)", async () => {
