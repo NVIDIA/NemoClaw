@@ -105,7 +105,6 @@ function resolverEnvironment(): NodeJS.ProcessEnv {
     RESOLUTION_WORKDIR: "/resolution",
     RESOLVER_CONFIG_DIR: "/config",
     REPAIR_DOWNLOAD_DIR: path.join(directory, "repair-download"),
-    REPAIR_OUTPUT_DIR: "/output",
     RUNNER_TEMP: directory,
     SANDBOX_NAME: "sandbox-test",
     TRUSTED_CHECKOUT: "/trusted",
@@ -886,7 +885,7 @@ describe("PR merge conflict fixer", () => {
     expect(fs.existsSync(required(env.ARTIFACT_DIR, "ARTIFACT_DIR"))).toBe(true);
   });
 
-  it("reuses the sandbox for exactly two credential-free Advisor repair turns (#10791)", () => {
+  it("keeps repair output inside the two-turn credential-free sandbox (#10791)", () => {
     const env: NodeJS.ProcessEnv = {
       ...resolverEnvironment(),
     };
@@ -899,7 +898,10 @@ describe("PR merge conflict fixer", () => {
     const calls = vi.mocked(tools.run).mock.calls;
     expect(calls).toHaveLength(5);
     const create = required(calls[0], "missing sandbox create")[1];
-    expect(create).toEqual(expect.arrayContaining(["--upload", "/output:/sandbox"]));
+    expect(create).not.toContain("/output:/sandbox");
+    expect(create).toEqual(
+      expect.arrayContaining(["--", "/usr/bin/mkdir", "-p", "/sandbox/output"]),
+    );
     const turns = calls.slice(1, 3).map((call) => call[1]);
     expect(turns).toHaveLength(2);
     expect(turns[0]).toContain("@/sandbox/pi-config/turn-1.txt");
@@ -974,7 +976,6 @@ describe("PR merge conflict fixer", () => {
     const selectionFile = path.join(directory, "selection.json");
     const contextFile = path.join(directory, "context.json");
     const configDirectory = path.join(directory, "pi-config");
-    const outputDirectory = path.join(directory, "output");
     const selection = repairSelection();
     fs.writeFileSync(selectionFile, JSON.stringify(selection));
     fs.writeFileSync(contextFile, JSON.stringify({ findings: selection.selectedFindings }));
@@ -983,7 +984,6 @@ describe("PR merge conflict fixer", () => {
       selectionFile,
       modelContextFile: contextFile,
       configDirectory,
-      outputDirectory,
     });
 
     expect(fs.readdirSync(configDirectory).sort()).toEqual([
@@ -999,7 +999,6 @@ describe("PR merge conflict fixer", () => {
     expect(fs.readFileSync(path.join(configDirectory, "turn-2.txt"), "utf8")).toContain(
       "Turn 2 of exactly 2",
     );
-    expect(fs.existsSync(outputDirectory)).toBe(true);
   });
 
   it("passes complete bounded Advisor context without authority identities (#10791)", () => {
@@ -1058,7 +1057,6 @@ describe("PR merge conflict fixer", () => {
           selectionFile,
           modelContextFile: contextFile,
           configDirectory: path.join(directory, "pi-config"),
-          outputDirectory: path.join(directory, "output"),
         }),
       ).toThrow("revision or digest identity");
     },

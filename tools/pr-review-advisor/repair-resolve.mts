@@ -90,7 +90,6 @@ export function prepareAdvisorRepairInputs(input: {
   selectionFile: string;
   modelContextFile: string;
   configDirectory: string;
-  outputDirectory: string;
 }): RepairSelection {
   const selection = parseSelection(readJson(input.selectionFile));
   const modelContext = readBoundedFile(input.modelContextFile, 10 * 1024 * 1024);
@@ -100,7 +99,6 @@ export function prepareAdvisorRepairInputs(input: {
   )
     throw new RepairError("repair model context contains a revision or digest identity");
   mkdirSync(input.configDirectory, { recursive: true, mode: 0o700 });
-  mkdirSync(input.outputDirectory, { recursive: true, mode: 0o700 });
   const write = (name: string, content: string | Buffer): void => {
     writeFileSync(path.join(input.configDirectory, name), content, { flag: "wx", mode: 0o600 });
   };
@@ -173,9 +171,8 @@ export function createAdvisorRepairSandbox(
           source: required(env.RESOLVER_CONFIG_DIR, "RESOLVER_CONFIG_DIR"),
           destination: "/sandbox",
         },
-        { source: required(env.REPAIR_OUTPUT_DIR, "REPAIR_OUTPUT_DIR"), destination: "/sandbox" },
       ],
-      command: ["/usr/bin/test", "-f", "/sandbox/pi-config/turn-2.txt"],
+      command: ["/usr/bin/mkdir", "-p", "/sandbox/output"],
     },
     tools,
   );
@@ -371,7 +368,6 @@ async function main(): Promise<void> {
         selectionFile: required(process.env.SELECTION_FILE, "SELECTION_FILE"),
         modelContextFile: required(process.env.MODEL_CONTEXT_FILE, "MODEL_CONTEXT_FILE"),
         configDirectory: required(process.env.RESOLVER_CONFIG_DIR, "RESOLVER_CONFIG_DIR"),
-        outputDirectory: required(process.env.REPAIR_OUTPUT_DIR, "REPAIR_OUTPUT_DIR"),
       });
       return;
     case "configure":

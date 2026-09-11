@@ -704,7 +704,6 @@ jobs:
             echo "ARTIFACT_DIR=$RUNNER_TEMP/repair-artifact"
             echo "REPAIR_BASE_DIR=$RUNNER_TEMP/repo-base"
             echo "REPAIR_DOWNLOAD_DIR=$RUNNER_TEMP/download"
-            echo "REPAIR_OUTPUT_DIR=$RUNNER_TEMP/output"
             echo "RESOLUTION_WORKDIR=$RUNNER_TEMP/repo"
             echo "RESOLVER_CONFIG_DIR=$RUNNER_TEMP/pi-config"
             echo "RESOLVER_STARTED_AT=$(date +%s)"

@@ -60,8 +60,10 @@ For an open, same-repository, non-draft PR whose exact head and base match the s
 maintainer may select eligible finding IDs and request one two-turn repair attempt when both the
 workflow actor and triggering actor have `maintain` or `admin` permission. Pi can edit only a
 disposable checkout in a credential-free OpenShell sandbox; it cannot run tests, commit, push, or
-call GitHub. A separate secret-free job reconstructs and validates the patch. When publication is
-explicitly requested, the protected deterministic publisher rechecks the live state and may make
+call GitHub. The resolver uploads only the disposable checkout and generated configuration, creates
+`/sandbox/output` inside the sandbox, and downloads only the bounded `proposal.json` from that
+output subtree. A separate secret-free job reconstructs and validates the patch. When publication
+is explicitly requested, the protected deterministic publisher rechecks the live state and may make
 one verified, non-force, compare-and-swap branch update. A trusted-main reporter then runs and
 records the approved exact-generated-SHA checks without starting another repair attempt.
 The publisher seals the generated-head request before branch mutation, but the reporter receives
