@@ -36,6 +36,8 @@ export interface ContextWindowDeps {
   probeOllamaContextWindow: (model: string) => number | null;
   /** Read the running vLLM server's max_model_len for the model; null when unavailable. */
   probeVllmContextWindow: (model: string) => number | null;
+  /** Read the authenticated llama.cpp server's served context size. */
+  probeLlamaCppContextWindow?: (model: string) => number | null;
   /** Fallback window for providers without a per-model runtime signal (cloud). */
   defaultCloudContextWindow: () => number;
 }
@@ -90,6 +92,11 @@ const defaultContextWindowDeps: ContextWindowDeps = {
     return resolveVllmContextWindowFromModels(parsed, model);
   },
   defaultCloudContextWindow: (): number => DEFAULT_CONTEXT_WINDOW,
+  probeLlamaCppContextWindow: (model: string): number | null => {
+    const { resolveLlamaCppEndpointContextWindow } =
+      require("./compatible-endpoint-context") as typeof import("./compatible-endpoint-context");
+    return resolveLlamaCppEndpointContextWindow(model);
+  },
 };
 
 /**
@@ -101,6 +108,8 @@ const defaultContextWindowDeps: ContextWindowDeps = {
  *   returns null if the load has not finished.
  * - vllm-local: read the running server's max_model_len from /v1/models (the
  *   same source onboard uses); null when the server is unreachable.
+ * - llama-cpp-local: read authenticated native metadata for the served model;
+ *   null when the server or its served context is unavailable.
  * - cloud providers: the onboard default. Accuracy is bounded by the missing
  *   per-model cloud context metadata (tracked as a separate issue).
  */
@@ -115,6 +124,9 @@ export function resolveContextWindowForModel(
   }
   if (provider === "vllm-local") {
     return deps.probeVllmContextWindow(model);
+  }
+  if (provider === "llama-cpp-local") {
+    return deps.probeLlamaCppContextWindow?.(model) ?? null;
   }
   return deps.defaultCloudContextWindow();
 }

@@ -1,7 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  clearAutoDetectedCompatibleContextWindow,
+  resetCompatibleEndpointContextWindowAutoState,
+} from "../../inference/compatible-endpoint-context";
 import {
   LLAMA_CPP_CREDENTIAL_ENV,
   LLAMA_CPP_HOST_OPENAI_BASE_URL,
@@ -41,6 +45,77 @@ function deps(overrides: Partial<LlamaCppSelectionDeps> = {}): LlamaCppSelection
 }
 
 describe("createLlamaCppSelectionHandler", () => {
+  afterEach(() => {
+    resetCompatibleEndpointContextWindowAutoState();
+    vi.unstubAllEnvs();
+  });
+
+  it("preserves an explicit context window (#11527)", async () => {
+    vi.stubEnv("NEMOCLAW_CONTEXT_WINDOW", "32768");
+    const handler = createLlamaCppSelectionHandler(
+      deps({
+        probeLlamaCppAttachment: () => ({
+          ok: true,
+          model: "team/model-alias",
+          contextWindow: 65536,
+        }),
+      }),
+    );
+    await handler(state(), null, null);
+    expect(process.env.NEMOCLAW_CONTEXT_WINDOW).toBe("32768");
+  });
+
+  it("does not adopt metadata when inference validation fails (#11527)", async () => {
+    vi.stubEnv("NEMOCLAW_CONTEXT_WINDOW", "");
+    const handler = createLlamaCppSelectionHandler(
+      deps({
+        probeLlamaCppAttachment: () => ({
+          ok: true,
+          model: "team/model-alias",
+          contextWindow: 65536,
+        }),
+        validateOpenAiLikeSelection: async () => ({ ok: false }),
+      }),
+    );
+    expect(await handler(state(), null, null)).toBe("retry-selection");
+    expect(process.env.NEMOCLAW_CONTEXT_WINDOW).toBe("");
+  });
+
+  it("clears the detected window before selecting another provider (#11527)", async () => {
+    vi.stubEnv("NEMOCLAW_CONTEXT_WINDOW", "");
+    const handler = createLlamaCppSelectionHandler(
+      deps({
+        probeLlamaCppAttachment: () => ({
+          ok: true,
+          model: "team/model-alias",
+          contextWindow: 65536,
+        }),
+      }),
+    );
+    await handler(state(), null, null);
+    clearAutoDetectedCompatibleContextWindow();
+    expect(process.env.NEMOCLAW_CONTEXT_WINDOW).toBeUndefined();
+  });
+
+  it("adopts the authenticated server context window after successful selection (#11527)", async () => {
+    vi.stubEnv("NEMOCLAW_CONTEXT_WINDOW", "");
+    const handler = createLlamaCppSelectionHandler(
+      deps({
+        probeLlamaCppAttachment: () => ({
+          ok: true,
+          model: "team/model-alias",
+          contextWindow: 65536,
+        }),
+      }),
+    );
+    try {
+      await expect(handler(state(), null, null)).resolves.toBe("selected");
+      expect(process.env.NEMOCLAW_CONTEXT_WINDOW).toBe("65536");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("binds the classified alias to a credential-bearing completions route (#8161)", async () => {
     const validate = vi.fn(async () => ({ ok: true, api: "openai-completions" }));
     const current = state();

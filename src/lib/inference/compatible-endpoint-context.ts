@@ -4,6 +4,7 @@
 import { createOpenAiLikeAuthConfig } from "../adapters/http/auth-config";
 import { runCurlProbe } from "../adapters/http/probe";
 import { getCredential } from "../credentials/store";
+import { LLAMA_CPP_CREDENTIAL_ENV, probeLlamaCppAttachment } from "./llama-cpp";
 import {
   assertEndpointResolvesPublic,
   buildResolvePinArgs,
@@ -21,6 +22,14 @@ import { resolveVllmContextWindowFromModels } from "./vllm-runtime-context";
 // Explicit NEMOCLAW_CONTEXT_WINDOW overrides share the auto-detect ceiling so a
 // user-supplied window can't bake an implausible value the probed path rejects.
 const MAX_COMPATIBLE_CONTEXT_WINDOW = MAX_AUTODETECTED_OLLAMA_CONTEXT_WINDOW;
+
+/** Read served context through the existing authenticated native-server probe. */
+export function resolveLlamaCppEndpointContextWindow(model: string): number | null {
+  const apiKey = getCredential(LLAMA_CPP_CREDENTIAL_ENV);
+  if (!apiKey) return null;
+  const result = probeLlamaCppAttachment(apiKey, { requestedModel: model });
+  return result.ok ? (result.contextWindow ?? null) : null;
+}
 
 // Hosts that only resolve inside the OpenShell sandbox network (or are the
 // hijacked docker-internal alias), mirroring probeOpenAiLikeEndpoint's
@@ -135,6 +144,29 @@ export function fetchCompatibleEndpointModels(
 // provider adopts the same "auto-detected vs user override" pattern, extract a
 // shared trackAutoDetectedContextWindow helper instead of duplicating it again.
 let autoDetectedCompatibleContextWindow: string | null = null;
+
+/** Adopt already-authenticated endpoint metadata without repeating a network probe. */
+export function applyDetectedEndpointContextWindow(
+  contextWindow: number | undefined,
+  env: NodeJS.ProcessEnv = process.env,
+): void {
+  const current = env.NEMOCLAW_CONTEXT_WINDOW;
+  const previousAuto = !!current && current === autoDetectedCompatibleContextWindow;
+  const configured = parsePositiveInteger(current);
+  if (!previousAuto && configured && configured <= MAX_COMPATIBLE_CONTEXT_WINDOW) return;
+  if (previousAuto || hasExplicitContextWindow(current)) delete env.NEMOCLAW_CONTEXT_WINDOW;
+  autoDetectedCompatibleContextWindow = null;
+  if (
+    contextWindow === undefined ||
+    !Number.isSafeInteger(contextWindow) ||
+    contextWindow <= 0 ||
+    contextWindow > MAX_COMPATIBLE_CONTEXT_WINDOW
+  )
+    return;
+  const value = String(contextWindow);
+  env.NEMOCLAW_CONTEXT_WINDOW = value;
+  autoDetectedCompatibleContextWindow = value;
+}
 
 /** Test-only: forget any tracked auto value without touching the environment. */
 export function resetCompatibleEndpointContextWindowAutoState(): void {

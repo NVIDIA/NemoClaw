@@ -42,6 +42,20 @@ function makeDeps(over: Partial<ContextWindowDeps> = {}): ContextWindowDeps {
 }
 
 describe("resolveContextWindowForModel", () => {
+  it("uses the llama.cpp served context instead of the cloud default (#11527)", () => {
+    const probe = vi.fn(() => 65536);
+    const deps = makeDeps({ probeLlamaCppContextWindow: probe });
+    expect(resolveContextWindowForModel("llama-cpp-local", "test-model", deps)).toBe(65536);
+    expect(probe).toHaveBeenCalledWith("test-model");
+    expect(deps.defaultCloudContextWindow).not.toHaveBeenCalled();
+  });
+
+  it("does not invent a context window when llama.cpp metadata is unavailable (#11527)", () => {
+    const deps = makeDeps({ probeLlamaCppContextWindow: () => null });
+    expect(resolveContextWindowForModel("llama-cpp-local", "test-model", deps)).toBeNull();
+    expect(deps.defaultCloudContextWindow).not.toHaveBeenCalled();
+  });
+
   it("ollama-local: loads the model, then returns the probed window", () => {
     const deps = makeDeps({ probeOllamaContextWindow: vi.fn(() => 16384) });
 
