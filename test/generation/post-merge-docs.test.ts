@@ -727,6 +727,7 @@ describe("post-merge documentation publisher", () => {
     expect(api.branchRef?.object.sha).toBe(api.commitSha);
     expect(api.openPulls[0]?.head.sha).toBe(api.existingSha);
     expect(requestCount(api, "POST", "/graphql")).toBe(1);
+    expectDraftNotice(api);
   });
   it("rejects a conditional update when the managed branch moves to an ancestor", async () => {
     const value = fixture();
@@ -804,6 +805,7 @@ describe("post-merge documentation publisher", () => {
     api.installActive(value.finalTree);
     await expect(publish(value, api)).resolves.toBeUndefined();
     expect(writeCount(api)).toBe(0);
+    expectDraftNotice(api);
   });
   it("rejects a human commit at the active branch head", async () => {
     const value = fixture();
@@ -854,6 +856,7 @@ describe("post-merge documentation publisher", () => {
     expect(api.openPulls).toHaveLength(1);
     expect(api.openPulls[0]?.head.sha).toBe(api.existingSha);
     expect(requestCount(api, "POST", "/pulls")).toBe(1);
+    expectDraftNotice(api);
   });
   it("rejects an orphan branch whose workflow commit has the wrong parent", async () => {
     const value = fixture();
@@ -881,6 +884,7 @@ describe("post-merge documentation publisher", () => {
     await expect(publish(value, api)).resolves.toBeUndefined();
     expect(requestCount(api, "POST", "/pulls")).toBe(1);
     expect(requestCount(api, "POST", "/git/refs")).toBe(1);
+    expectDraftNotice(api);
   });
   it("reconciles an applied conditional update after a lost response", async () => {
     const value = fixture();
@@ -892,6 +896,7 @@ describe("post-merge documentation publisher", () => {
     await expect(publish(value, api)).resolves.toBeUndefined();
     expect(api.branchRef?.object.sha).toBe(api.commitSha);
     expect(requestCount(api, "POST", "/graphql")).toBe(1);
+    expectDraftNotice(api);
   });
 });
 
@@ -942,6 +947,7 @@ describe("post-merge documentation runner", () => {
         parents: [input.env.POST_MERGE_DOCS_PREVIOUS_SHA, input.env.GITHUB_SHA],
         tree: value.finalTree,
       });
+      expectDraftNotice(api);
     },
   );
 
