@@ -17,7 +17,7 @@ spec:
       provider: openai
       service:
         backend: vllm-qwen38-spark-v1
-        image: nc-prototype-qwen38@sha256:232af38c6451e1430e7dbcdea2ee23c284545a258318863ded5c4ac1069f2864
+        image: nc-prototype-qwen38@sha256:c76fd5c3a78f65fcc2dff2aba30f68ab27a880aec3b8a5f2647cd4d19736f8fb
         model:
           repository: Mia-AiLab/Qwen3.8-Flash-Next-NVFP4
           revision: 925d7be6c14c6c9442ef83e8f05b5a3c39304f69

@@ -229,3 +229,106 @@ func captureSpark(t *testing.T, e *Engine, d config.Document) sparkCapture {
 	}
 	return sparkCapture{IDs: ids, Receipts: receipts}
 }
+
+// Qualify an explicit artifact change without repeating the watchdog scenario.
+// The old record and new YAML must differ only by their runtime image pin.
+func TestLiveSparkArtifactChange(t *testing.T) {
+	input, state := os.Getenv("NEMOCLAW_LIVE_SPARK_CONFIG"), os.Getenv("NEMOCLAW_LIVE_SPARK_STATE")
+	if input == "" || state == "" {
+		t.Skip("set explicit Spark configuration and state paths")
+	}
+	r, err := loadRecord(state)
+	if err != nil || !r.Succeeded || r.Pending {
+		t.Fatal("artifact qualification requires a healthy established deployment", err)
+	}
+	f, err := os.Open(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, err := config.Parse(f)
+	f.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := r.Document.Spec.InferenceProviders[0].Service
+	next := d.Spec.InferenceProviders[0].Service
+	if old == nil || next == nil || old.Image == next.Image {
+		t.Fatal("an explicit managed image change is required")
+	}
+	image := next.Image
+	next.Image = old.Image
+	if d.Digest() != r.Document.Digest() {
+		t.Fatal("qualification permits only an artifact pin change")
+	}
+	next.Image = image
+	bundle, err := filepath.Abs("../../dist/linux_arm64")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	e := &Engine{StateDir: state, BundleDir: bundle, Output: &output}
+	before := captureSpark(t, e, r.Document)
+	evidence := map[string]any{"started": time.Now().UTC(), "before": before, "oldImage": old.Image, "newImage": image, "passed": false}
+	defer func() {
+		evidence["finished"] = time.Now().UTC()
+		if err := saveJSON(filepath.Join(state, "spark-artifact-validation.json"), evidence); err != nil {
+			t.Error(err)
+		}
+	}()
+	run := func(operation string) Result {
+		t.Helper()
+		output.Reset()
+		if err := e.Run(t.Context(), operation, bytes.NewReader(outputYAML(t, d))); err != nil {
+			t.Fatal(err)
+		}
+		var result Result
+		if err := json.Unmarshal(output.Bytes(), &result); err != nil {
+			t.Fatal(err)
+		}
+		return result
+	}
+	plan := run("plan")
+	service := "nemoclaw_inference_service.runtime"
+	if len(plan.Changes) != 1 || plan.Changes[0].Resource != service || !reflect.DeepEqual(plan.Changes[0].Actions, []string{"delete", "create"}) || !reflect.DeepEqual(before, captureSpark(t, e, r.Document)) {
+		t.Fatal("artifact plan changed resources or exceeded the process boundary", plan)
+	}
+	evidence["plan"] = plan
+	applied := run("apply")
+	after := captureSpark(t, e, d)
+	if applied.AgentResponse == "" || after.IDs[service] == before.IDs[service] || !maps.Equal(before.Receipts, after.Receipts) {
+		t.Fatal("artifact change failed inference or repeated artifact work", applied)
+	}
+	for address, id := range before.IDs {
+		if address != service && after.IDs[address] != id {
+			t.Fatal("artifact change lost an independent identity", address)
+		}
+	}
+	evidence["apply"], evidence["after"] = applied, after
+	noOp := run("apply")
+	if len(noOp.Changes) != 0 || noOp.AgentResponse == "" || !reflect.DeepEqual(after, captureSpark(t, e, d)) {
+		t.Fatal("new artifact did not converge", noOp)
+	}
+	evidence["unchangedApply"] = noOp
+	output.Reset()
+	if err = e.Run(t.Context(), "export", nil); err != nil {
+		t.Fatal(err)
+	}
+	exported, err := config.Parse(bytes.NewReader(output.Bytes()))
+	if err != nil || exported.Digest() != d.Digest() {
+		t.Fatal("final export changed the artifact pin", err)
+	}
+	if err = os.WriteFile(filepath.Join(state, "spark-export.yaml"), output.Bytes(), 0600); err != nil {
+		t.Fatal(err)
+	}
+	exportedYAML := bytes.Clone(output.Bytes())
+	output.Reset()
+	if err = e.Run(t.Context(), "apply", bytes.NewReader(exportedYAML)); err != nil {
+		t.Fatal(err)
+	}
+	var reapplied Result
+	if err = json.Unmarshal(output.Bytes(), &reapplied); err != nil || len(reapplied.Changes) != 0 || reapplied.AgentResponse == "" || !reflect.DeepEqual(after, captureSpark(t, e, d)) {
+		t.Fatal("final export/reapply changed resources", err)
+	}
+	evidence["exportReapply"] = reapplied
+	evidence["passed"] = true
+}
