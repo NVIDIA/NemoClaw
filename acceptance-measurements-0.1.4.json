@@ -1,0 +1,1262 @@
+{
+  "schemaVersion": 1,
+  "candidateSha": "7935e0ccee812d365fd58d32e7291fd3286a98bf",
+  "sourceWorkflowRun": 34642501912,
+  "sourceWorkflowConclusion": "failure",
+  "functionalAcceptance": "passed",
+  "timingGate": "failed",
+  "fullQualification": false,
+  "timingFailure": {
+    "status": "failed",
+    "targetMilliseconds": 30000,
+    "wholeSetupProcessMilliseconds": 30245,
+    "exceededByMilliseconds": 245,
+    "jobId": 103409580601,
+    "failedStep": "Exercise the installed preview, real inference and owned cleanup",
+    "actualJobMessage": "The installed preview missed its measured30-second installation target.",
+    "jobLogSha256": "7f7afaca942d5e0db27d22c61fdfe6865080e5bd5202b9dbab72b19dfabe3273",
+    "jobUrl": "https://github.com/NVIDIA/NemoClaw/actions/runs/34642501912/job/103409580601"
+  },
+  "sourceWorkflowAttempt": 1,
+  "evidenceArtifacts": {
+    "preview": {
+      "artifactId": 10281415305,
+      "artifactName": "finished-windows-preview-7935e0ccee812d365fd58d32e7291fd3286a98bf",
+      "bytes": 353687893,
+      "sha256": "4daf3f4f91f8a4e654d784841a335fb409d0cd5b6f32529b3869917844847f73",
+      "url": "https://github.com/NVIDIA/NemoClaw/actions/runs/34642501912/artifacts/10281415305"
+    },
+    "installed-evidence": {
+      "artifactId": 10281645846,
+      "artifactName": "finished-windows-installed-evidence-7935e0ccee812d365fd58d32e7291fd3286a98bf",
+      "bytes": 1359094,
+      "sha256": "577e9462701a7ea8a41d7cdbbf19b2fa9ca407a5aa38cf45f4b143e9a2aaadcf",
+      "url": "https://github.com/NVIDIA/NemoClaw/actions/runs/34642501912/artifacts/10281645846"
+    },
+    "migration-evidence": {
+      "artifactId": 10281461025,
+      "artifactName": "windows-setup-migration-7935e0ccee812d365fd58d32e7291fd3286a98bf",
+      "bytes": 3910267,
+      "sha256": "66ca374eef99db8a5ef49466c25b424ad66eba2472de38aca81f6c56967919d1",
+      "url": "https://github.com/NVIDIA/NemoClaw/actions/runs/34642501912/artifacts/10281461025"
+    }
+  },
+  "evidenceMembers": {
+    "preview/package/immutable-package-build.json": {
+      "artifactId": 10281415305,
+      "archiveMember": "package/immutable-package-build.json",
+      "sha256": "73c162af6abd0805f344f4d29696497d5364baa41a190e429de0701d4038d3a7",
+      "bytes": 3421
+    },
+    "preview/assembled/runtime-identity.json": {
+      "artifactId": 10281415305,
+      "archiveMember": "assembled/runtime-identity.json",
+      "sha256": "7e8eb123d4689e66907ef2611a8af94cdc821a83f74272c913a3c1d352968762",
+      "bytes": 350
+    },
+    "preview/package/NemoClawSetup-0.1.4-windows-arm64.exe": {
+      "artifactId": 10281415305,
+      "archiveMember": "package/NemoClawSetup-0.1.4-windows-arm64.exe",
+      "sha256": "99a1f9db86f9be25cf5b903545f6dce626f9f09700c0e51b0b4040f1fd82d750",
+      "bytes": 204621797
+    },
+    "preview/package/NemoClaw-0.1.4-windows-arm64.msi": {
+      "artifactId": 10281415305,
+      "archiveMember": "package/NemoClaw-0.1.4-windows-arm64.msi",
+      "sha256": "6fcbdef8cbe25157d473729d1ce4a8ad00dadf1bc6f31ed134ac27a7bee91225",
+      "bytes": 150983356
+    },
+    "installed-evidence/package/immutable-package-build.json": {
+      "artifactId": 10281645846,
+      "archiveMember": "package/immutable-package-build.json",
+      "sha256": "73c162af6abd0805f344f4d29696497d5364baa41a190e429de0701d4038d3a7",
+      "bytes": 3421
+    },
+    "installed-evidence/installed-stage-timings.json": {
+      "artifactId": 10281645846,
+      "archiveMember": "installed-stage-timings.json",
+      "sha256": "e314af94a6bab79d59069e3a57eaf5df3029004cd604e6d12bb1a6ed82c16181",
+      "bytes": 1735
+    },
+    "installed-evidence/installed-smoke/finished-package-smoke.json": {
+      "artifactId": 10281645846,
+      "archiveMember": "installed-smoke/finished-package-smoke.json",
+      "sha256": "d8423478e06aeda93468e77af0f523d4d85132d80ad77395e43f725072d1bae1",
+      "bytes": 2874
+    },
+    "installed-evidence/installed-acceptance/installed-openclaw-acceptance.json": {
+      "artifactId": 10281645846,
+      "archiveMember": "installed-acceptance/installed-openclaw-acceptance.json",
+      "sha256": "b637313846d208a387868826a8b6f6ccb5d889ae0dbfbe4025ee1ff0f206817a",
+      "bytes": 39075
+    },
+    "installed-evidence/installed-acceptance/installed-idle.json": {
+      "artifactId": 10281645846,
+      "archiveMember": "installed-acceptance/installed-idle.json",
+      "sha256": "bafbd0a55124eab2f7fd8470e69d8894a5b9113ca5bed3c6aa79fde175a7d66a",
+      "bytes": 26841
+    },
+    "installed-evidence/installed-acceptance-warm/installed-openclaw-acceptance.json": {
+      "artifactId": 10281645846,
+      "archiveMember": "installed-acceptance-warm/installed-openclaw-acceptance.json",
+      "sha256": "b336cc76066f0dd1f980a3a02c8c3659d08826243ed4d7781e35a1038a954ccb",
+      "bytes": 39039
+    },
+    "installed-evidence/installed-acceptance-warm/installed-idle.json": {
+      "artifactId": 10281645846,
+      "archiveMember": "installed-acceptance-warm/installed-idle.json",
+      "sha256": "fd02e34b0c0efd0675d778e4c6925b49a5289da3edd12e971f308dc3c303f0d1",
+      "bytes": 26839
+    },
+    "migration-evidence/migration/preview-migration.json": {
+      "artifactId": 10281461025,
+      "archiveMember": "migration/preview-migration.json",
+      "sha256": "5fc227e458a85b0bf8a729170eed86de46633e07058b4f323195a317e643f38a",
+      "bytes": 4244
+    },
+    "migration-evidence/burn-diagnostics/burn-diagnostics.json": {
+      "artifactId": 10281461025,
+      "archiveMember": "burn-diagnostics/burn-diagnostics.json",
+      "sha256": "4e874e33bb377f66ed40731e2eeff21eb94e473196337f29c209f50097aa6b55",
+      "bytes": 949
+    }
+  },
+  "installedTimings": {
+    "schemaVersion": 1,
+    "sourceRevision": "7935e0ccee812d365fd58d32e7291fd3286a98bf",
+    "artifactSourceRevision": "7935e0ccee812d365fd58d32e7291fd3286a98bf",
+    "controllerSourceRevision": "7935e0ccee812d365fd58d32e7291fd3286a98bf",
+    "currentHeadQualification": false,
+    "mode": "current-build",
+    "measurement": "fresh-runner-installed-preview",
+    "hostPreparationRunBeforeInstall": false,
+    "upgradeMeasured": false,
+    "installTargetMilliseconds": 30000,
+    "installTargetSatisfied": false,
+    "compiledMsi": {
+      "fileCount": 4769,
+      "componentCount": 684,
+      "fileBytes": 640555765
+    },
+    "stages": {
+      "-install": {
+        "exitCode": 0,
+        "elapsedMilliseconds": 30245
+      },
+      "-uninstall": {
+        "exitCode": 0,
+        "elapsedMilliseconds": 29375
+      }
+    },
+    "startupComparisonAvailable": true,
+    "firstInstalledLaunch": {
+      "modelAndToolDurationsSeparate": true,
+      "exitCode": 0,
+      "agentStateResetPerCase": true,
+      "receipt": "installed-acceptance/installed-openclaw-acceptance.json"
+    },
+    "warmInstalledLaunch": {
+      "modelAndToolDurationsSeparate": true,
+      "exitCode": 0,
+      "agentStateResetPerCase": true,
+      "receipt": "installed-acceptance-warm/installed-openclaw-acceptance.json"
+    },
+    "installedInventory": {
+      "observation": "after-application-checks-before-uninstall",
+      "componentCount": 684,
+      "componentCountSource": "compiled-msi-Component-table",
+      "contentHashesRead": false,
+      "bytes": 640556029,
+      "fileCount": 4770
+    },
+    "installationRootRemoved": true,
+    "remainingInstallation": {
+      "contentRead": false,
+      "reparseTraversal": false,
+      "entries": [],
+      "entryLimit": 4096,
+      "truncated": false
+    }
+  },
+  "sessions": {
+    "first": {
+      "verdict": "pass",
+      "startupMilliseconds": 46539.075000000004,
+      "responseMilliseconds": 7637.719100000002,
+      "toolTurnMilliseconds": 28255.279699999992,
+      "nativeStop": {
+        "kind": "closed",
+        "exitCode": 0,
+        "stopElapsedMs": 6682
+      },
+      "runtimeBytesCopied": 0,
+      "privateSessionCleanup": {
+        "sandboxDeleted": true,
+        "sandboxRegistryAbsent": true,
+        "gatewayStopped": true,
+        "qualificationRootsRemoved": true
+      },
+      "provider": "nvidia",
+      "model": "nvidia/nemotron-3-super-120b-a12b",
+      "toolResults": {
+        "tool-write": {
+          "toolName": "write",
+          "isError": false
+        },
+        "tool-read": {
+          "toolName": "read",
+          "isError": false
+        },
+        "tool-shell": {
+          "toolName": "exec",
+          "isError": false
+        },
+        "tool-local-code": {
+          "toolName": "exec",
+          "isError": false
+        }
+      },
+      "liveSearchQualified": false,
+      "idle": {
+        "status": "measured",
+        "runtime": {
+          "runtimeId": "67a963c0b49d32bce7b7c2bc7975dd4cac179fcb34cc33af996229c0a33a2446",
+          "sourceRevision": "7935e0ccee812d365fd58d32e7291fd3286a98bf",
+          "manifestSha256": "80fe905a3ce888fd365a087cf8fe0e7cce5f0a39eb219327e717a55843aa3964"
+        },
+        "requestedIdleMs": 30000,
+        "summary": {
+          "targets": [
+            {
+              "role": "guardian",
+              "processId": 1768,
+              "executable": "C:\\Program Files\\NVIDIA\\NemoClaw\\bin\\NemoClaw.exe",
+              "creationFileTime": "134336317911828203",
+              "elapsedMs": 30028.6651,
+              "kernelMs": 0,
+              "userMs": 0,
+              "cpuMs": 0,
+              "cpuPercentOfOneLogicalProcessor": 0,
+              "cpuPercentOfReportedLogicalCapacity": 0,
+              "counters": {
+                "kernel100ns": "0",
+                "user100ns": "0",
+                "readOperations": "0",
+                "writeOperations": "0",
+                "otherOperations": "0",
+                "readTransferBytes": "0",
+                "writeTransferBytes": "0",
+                "otherTransferBytes": "0"
+              }
+            },
+            {
+              "role": "host-runtime",
+              "processId": 9312,
+              "executable": "C:\\Program Files\\NVIDIA\\NemoClaw\\runtimes\\67a963c0b49d32bce7b7c2bc7975dd4cac179fcb34cc33af996229c0a33a2446\\app\\NemoClaw.Runtime.exe",
+              "creationFileTime": "134336317912037232",
+              "elapsedMs": 30028.195,
+              "kernelMs": 15.625,
+              "userMs": 15.625,
+              "cpuMs": 31.25,
+              "cpuPercentOfOneLogicalProcessor": 0.10406885928374983,
+              "cpuPercentOfReportedLogicalCapacity": 0.026017214820937457,
+              "counters": {
+                "kernel100ns": "156250",
+                "user100ns": "156250",
+                "readOperations": "142126",
+                "writeOperations": "71053",
+                "otherOperations": "572",
+                "readTransferBytes": "378807",
+                "writeTransferBytes": "3511606",
+                "otherTransferBytes": "6240"
+              }
+            },
+            {
+              "role": "openshell-gateway",
+              "processId": 7448,
+              "executable": "C:\\Program Files\\NVIDIA\\NemoClaw\\bin\\openshell-gateway.exe",
+              "creationFileTime": "134336317928742238",
+              "elapsedMs": 30028.1593,
+              "kernelMs": 0,
+              "userMs": 0,
+              "cpuMs": 0,
+              "cpuPercentOfOneLogicalProcessor": 0,
+              "cpuPercentOfReportedLogicalCapacity": 0,
+              "counters": {
+                "kernel100ns": "0",
+                "user100ns": "0",
+                "readOperations": "0",
+                "writeOperations": "11",
+                "otherOperations": "160",
+                "readTransferBytes": "0",
+                "writeTransferBytes": "6726",
+                "otherTransferBytes": "3412"
+              }
+            },
+            {
+              "role": "native-window",
+              "processId": 1784,
+              "executable": "C:\\Program Files\\NVIDIA\\NemoClaw\\native-ui\\NemoClaw.Bootstrapper.exe",
+              "creationFileTime": "134336317913819778",
+              "elapsedMs": 30028.1458,
+              "kernelMs": 437.5,
+              "userMs": 281.25,
+              "cpuMs": 718.75,
+              "cpuPercentOfOneLogicalProcessor": 2.3935876853242135,
+              "cpuPercentOfReportedLogicalCapacity": 0.5983969213310534,
+              "counters": {
+                "kernel100ns": "4375000",
+                "user100ns": "2812500",
+                "readOperations": "912",
+                "writeOperations": "722",
+                "otherOperations": "120",
+                "readTransferBytes": "112822",
+                "writeTransferBytes": "42940",
+                "otherTransferBytes": "3840"
+              }
+            },
+            {
+              "role": "ui-relay",
+              "processId": 1492,
+              "executable": "C:\\Program Files\\NVIDIA\\NemoClaw\\bin\\NemoClaw.exe",
+              "creationFileTime": "134336317928355214",
+              "elapsedMs": 30028.1487,
+              "kernelMs": 0,
+              "userMs": 0,
+              "cpuMs": 0,
+              "cpuPercentOfOneLogicalProcessor": 0,
+              "cpuPercentOfReportedLogicalCapacity": 0,
+              "counters": {
+                "kernel100ns": "0",
+                "user100ns": "0",
+                "readOperations": "11472",
+                "writeOperations": "11468",
+                "otherOperations": "17267",
+                "readTransferBytes": "413334",
+                "writeTransferBytes": "75119",
+                "otherTransferBytes": "1260798"
+              }
+            },
+            {
+              "role": "inference-relay",
+              "processId": 8284,
+              "executable": "C:\\Program Files\\NVIDIA\\NemoClaw\\bin\\NemoClaw.exe",
+              "creationFileTime": "134336317918341830",
+              "elapsedMs": 30028.1272,
+              "kernelMs": 0,
+              "userMs": 0,
+              "cpuMs": 0,
+              "cpuPercentOfOneLogicalProcessor": 0,
+              "cpuPercentOfReportedLogicalCapacity": 0,
+              "counters": {
+                "kernel100ns": "0",
+                "user100ns": "0",
+                "readOperations": "59587",
+                "writeOperations": "59587",
+                "otherOperations": "59588",
+                "readTransferBytes": "3098576",
+                "writeTransferBytes": "297935",
+                "otherTransferBytes": "0"
+              }
+            },
+            {
+              "role": "mxc-executor",
+              "processId": 2852,
+              "executable": "C:\\Program Files\\NVIDIA\\NemoClaw\\mxc\\wxc-exec.exe",
+              "creationFileTime": "134336317935567821",
+              "elapsedMs": 30028.1248,
+              "kernelMs": 0,
+              "userMs": 0,
+              "cpuMs": 0,
+              "cpuPercentOfOneLogicalProcessor": 0,
+              "cpuPercentOfReportedLogicalCapacity": 0,
+              "counters": {
+                "kernel100ns": "0",
+                "user100ns": "0",
+                "readOperations": "0",
+                "writeOperations": "0",
+                "otherOperations": "0",
+                "readTransferBytes": "0",
+                "writeTransferBytes": "0",
+                "otherTransferBytes": "0"
+              }
+            },
+            {
+              "role": "contained-node",
+              "processId": 3188,
+              "executable": "C:\\Program Files\\NVIDIA\\NemoClaw\\bin\\node.exe",
+              "creationFileTime": "134336317938371985",
+              "elapsedMs": 30028.1962,
+              "kernelMs": 7046.875,
+              "userMs": 2468.75,
+              "cpuMs": 9515.625,
+              "cpuPercentOfOneLogicalProcessor": 31.68896638553334,
+              "cpuPercentOfReportedLogicalCapacity": 7.922241596383335,
+              "counters": {
+                "kernel100ns": "70468750",
+                "user100ns": "24687500",
+                "readOperations": "96269",
+                "writeOperations": "6",
+                "otherOperations": "854658",
+                "readTransferBytes": "2362508",
+                "writeTransferBytes": "252",
+                "otherTransferBytes": "15939380"
+              }
+            }
+          ],
+          "observer": {
+            "role": "observer",
+            "processId": 836,
+            "executable": "C:\\Program Files\\PowerShell\\7\\pwsh.exe",
+            "creationFileTime": "134336318794771225",
+            "elapsedMs": 30028.2658,
+            "kernelMs": 46.875,
+            "userMs": 1156.25,
+            "cpuMs": 1203.125,
+            "cpuPercentOfOneLogicalProcessor": 4.0066416356285215,
+            "cpuPercentOfReportedLogicalCapacity": 1.0016604089071304,
+            "counters": {
+              "kernel100ns": "468750",
+              "user100ns": "11562500",
+              "readOperations": "0",
+              "writeOperations": "39490",
+              "otherOperations": "25",
+              "readTransferBytes": "0",
+              "writeTransferBytes": "198888",
+              "otherTransferBytes": "78"
+            }
+          },
+          "observerPreparationMs": 5298.9275,
+          "observerCpuBeforeSampleMs": 1796.875,
+          "observerCpuThroughLastSampleMs": 3000,
+          "observerCaptureMs": 4.9074,
+          "ioScope": "general per-process I/O; not file-only, copied bytes or native flushes",
+          "processScope": "individually held roles; no automatic descendant or browser aggregation",
+          "modelLatencyMs": null,
+          "relayCounters": null,
+          "unavailable": [
+            "logical relay slot scans",
+            "per-frame native flush timing",
+            "physical disk or scanner attribution",
+            "isolated model latency"
+          ]
+        },
+        "qualificationClaim": false
+      }
+    },
+    "warm": {
+      "verdict": "pass",
+      "startupMilliseconds": 22032.2014,
+      "responseMilliseconds": 7634.819899999999,
+      "toolTurnMilliseconds": 20416.8102,
+      "nativeStop": {
+        "kind": "closed",
+        "exitCode": 0,
+        "stopElapsedMs": 6705
+      },
+      "runtimeBytesCopied": 0,
+      "privateSessionCleanup": {
+        "sandboxDeleted": true,
+        "sandboxRegistryAbsent": true,
+        "gatewayStopped": true,
+        "qualificationRootsRemoved": true
+      },
+      "provider": "nvidia",
+      "model": "nvidia/nemotron-3-super-120b-a12b",
+      "toolResults": {
+        "tool-write": {
+          "toolName": "write",
+          "isError": false
+        },
+        "tool-read": {
+          "toolName": "read",
+          "isError": false
+        },
+        "tool-shell": {
+          "toolName": "exec",
+          "isError": false
+        },
+        "tool-local-code": {
+          "toolName": "exec",
+          "isError": false
+        }
+      },
+      "liveSearchQualified": false,
+      "idle": {
+        "status": "measured",
+        "runtime": {
+          "runtimeId": "67a963c0b49d32bce7b7c2bc7975dd4cac179fcb34cc33af996229c0a33a2446",
+          "sourceRevision": "7935e0ccee812d365fd58d32e7291fd3286a98bf",
+          "manifestSha256": "80fe905a3ce888fd365a087cf8fe0e7cce5f0a39eb219327e717a55843aa3964"
+        },
+        "requestedIdleMs": 30000,
+        "summary": {
+          "targets": [
+            {
+              "role": "guardian",
+              "processId": 3420,
+              "executable": "C:\\Program Files\\NVIDIA\\NemoClaw\\bin\\NemoClaw.exe",
+              "creationFileTime": "134336319256037521",
+              "elapsedMs": 30033.0443,
+              "kernelMs": 0,
+              "userMs": 0,
+              "cpuMs": 0,
+              "cpuPercentOfOneLogicalProcessor": 0,
+              "cpuPercentOfReportedLogicalCapacity": 0,
+              "counters": {
+                "kernel100ns": "0",
+                "user100ns": "0",
+                "readOperations": "0",
+                "writeOperations": "0",
+                "otherOperations": "0",
+                "readTransferBytes": "0",
+                "writeTransferBytes": "0",
+                "otherTransferBytes": "0"
+              }
+            },
+            {
+              "role": "host-runtime",
+              "processId": 8400,
+              "executable": "C:\\Program Files\\NVIDIA\\NemoClaw\\runtimes\\67a963c0b49d32bce7b7c2bc7975dd4cac179fcb34cc33af996229c0a33a2446\\app\\NemoClaw.Runtime.exe",
+              "creationFileTime": "134336319256240453",
+              "elapsedMs": 30032.6899,
+              "kernelMs": 0,
+              "userMs": 31.25,
+              "cpuMs": 31.25,
+              "cpuPercentOfOneLogicalProcessor": 0.10405328361879433,
+              "cpuPercentOfReportedLogicalCapacity": 0.026013320904698583,
+              "counters": {
+                "kernel100ns": "0",
+                "user100ns": "312500",
+                "readOperations": "133785",
+                "writeOperations": "66883",
+                "otherOperations": "574",
+                "readTransferBytes": "355561",
+                "writeTransferBytes": "3358582",
+                "otherTransferBytes": "6240"
+              }
+            },
+            {
+              "role": "openshell-gateway",
+              "processId": 916,
+              "executable": "C:\\Program Files\\NVIDIA\\NemoClaw\\bin\\openshell-gateway.exe",
+              "creationFileTime": "134336319267156247",
+              "elapsedMs": 30032.6954,
+              "kernelMs": 0,
+              "userMs": 0,
+              "cpuMs": 0,
+              "cpuPercentOfOneLogicalProcessor": 0,
+              "cpuPercentOfReportedLogicalCapacity": 0,
+              "counters": {
+                "kernel100ns": "0",
+                "user100ns": "0",
+                "readOperations": "0",
+                "writeOperations": "11",
+                "otherOperations": "163",
+                "readTransferBytes": "0",
+                "writeTransferBytes": "6726",
+                "otherTransferBytes": "3445"
+              }
+            },
+            {
+              "role": "native-window",
+              "processId": 3144,
+              "executable": "C:\\Program Files\\NVIDIA\\NemoClaw\\native-ui\\NemoClaw.Bootstrapper.exe",
+              "creationFileTime": "134336319257917687",
+              "elapsedMs": 30032.7145,
+              "kernelMs": 531.25,
+              "userMs": 312.5,
+              "cpuMs": 843.75,
+              "cpuPercentOfOneLogicalProcessor": 2.809436356477201,
+              "cpuPercentOfReportedLogicalCapacity": 0.7023590891193002,
+              "counters": {
+                "kernel100ns": "5312500",
+                "user100ns": "3125000",
+                "readOperations": "912",
+                "writeOperations": "722",
+                "otherOperations": "124",
+                "readTransferBytes": "112822",
+                "writeTransferBytes": "42940",
+                "otherTransferBytes": "3968"
+              }
+            },
+            {
+              "role": "ui-relay",
+              "processId": 11164,
+              "executable": "C:\\Program Files\\NVIDIA\\NemoClaw\\bin\\NemoClaw.exe",
+              "creationFileTime": "134336319266811273",
+              "elapsedMs": 30032.7521,
+              "kernelMs": 0,
+              "userMs": 0,
+              "cpuMs": 0,
+              "cpuPercentOfOneLogicalProcessor": 0,
+              "cpuPercentOfReportedLogicalCapacity": 0,
+              "counters": {
+                "kernel100ns": "0",
+                "user100ns": "0",
+                "readOperations": "7485",
+                "writeOperations": "7483",
+                "otherOperations": "11281",
+                "readTransferBytes": "272508",
+                "writeTransferBytes": "52788",
+                "otherTransferBytes": "822244"
+              }
+            },
+            {
+              "role": "inference-relay",
+              "processId": 10388,
+              "executable": "C:\\Program Files\\NVIDIA\\NemoClaw\\bin\\NemoClaw.exe",
+              "creationFileTime": "134336319262390034",
+              "elapsedMs": 30032.7652,
+              "kernelMs": 15.625,
+              "userMs": 0,
+              "cpuMs": 15.625,
+              "cpuPercentOfOneLogicalProcessor": 0.05202651136499412,
+              "cpuPercentOfReportedLogicalCapacity": 0.01300662784124853,
+              "counters": {
+                "kernel100ns": "156250",
+                "user100ns": "0",
+                "readOperations": "59407",
+                "writeOperations": "59407",
+                "otherOperations": "59407",
+                "readTransferBytes": "3089164",
+                "writeTransferBytes": "297035",
+                "otherTransferBytes": "0"
+              }
+            },
+            {
+              "role": "mxc-executor",
+              "processId": 6360,
+              "executable": "C:\\Program Files\\NVIDIA\\NemoClaw\\mxc\\wxc-exec.exe",
+              "creationFileTime": "134336319273619872",
+              "elapsedMs": 30032.7818,
+              "kernelMs": 0,
+              "userMs": 0,
+              "cpuMs": 0,
+              "cpuPercentOfOneLogicalProcessor": 0,
+              "cpuPercentOfReportedLogicalCapacity": 0,
+              "counters": {
+                "kernel100ns": "0",
+                "user100ns": "0",
+                "readOperations": "0",
+                "writeOperations": "0",
+                "otherOperations": "0",
+                "readTransferBytes": "0",
+                "writeTransferBytes": "0",
+                "otherTransferBytes": "0"
+              }
+            },
+            {
+              "role": "contained-node",
+              "processId": 11072,
+              "executable": "C:\\Program Files\\NVIDIA\\NemoClaw\\bin\\node.exe",
+              "creationFileTime": "134336319274831134",
+              "elapsedMs": 30032.7938,
+              "kernelMs": 2906.25,
+              "userMs": 1609.375,
+              "cpuMs": 4515.625,
+              "cpuPercentOfOneLogicalProcessor": 15.0356474661375,
+              "cpuPercentOfReportedLogicalCapacity": 3.758911866534375,
+              "counters": {
+                "kernel100ns": "29062500",
+                "user100ns": "16093750",
+                "readOperations": "85783",
+                "writeOperations": "6",
+                "otherOperations": "594121",
+                "readTransferBytes": "2121853",
+                "writeTransferBytes": "2934",
+                "otherTransferBytes": "10699720"
+              }
+            }
+          ],
+          "observer": {
+            "role": "observer",
+            "processId": 984,
+            "executable": "C:\\Program Files\\PowerShell\\7\\pwsh.exe",
+            "creationFileTime": "134336319836503757",
+            "elapsedMs": 30032.8088,
+            "kernelMs": 62.5,
+            "userMs": 31.25,
+            "cpuMs": 93.75,
+            "cpuPercentOfOneLogicalProcessor": 0.3121586150143905,
+            "cpuPercentOfReportedLogicalCapacity": 0.07803965375359763,
+            "counters": {
+              "kernel100ns": "625000",
+              "user100ns": "312500",
+              "readOperations": "0",
+              "writeOperations": "39525",
+              "otherOperations": "18",
+              "readTransferBytes": "0",
+              "writeTransferBytes": "194555",
+              "otherTransferBytes": "78"
+            }
+          },
+          "observerPreparationMs": 953.1122,
+          "observerCpuBeforeSampleMs": 1609.375,
+          "observerCpuThroughLastSampleMs": 1703.125,
+          "observerCaptureMs": 4.2606,
+          "ioScope": "general per-process I/O; not file-only, copied bytes or native flushes",
+          "processScope": "individually held roles; no automatic descendant or browser aggregation",
+          "modelLatencyMs": null,
+          "relayCounters": null,
+          "unavailable": [
+            "logical relay slot scans",
+            "per-frame native flush timing",
+            "physical disk or scanner attribution",
+            "isolated model latency"
+          ]
+        },
+        "qualificationClaim": false
+      }
+    }
+  },
+  "migration": {
+    "schemaVersion": 1,
+    "classification": "actual-published-preview-native-migration",
+    "sourceRevision": "7935e0ccee812d365fd58d32e7291fd3286a98bf",
+    "productVersion": "0.1.4",
+    "oldSource": "491a3a3d5e7206d82c741198062b6e2aa98dc72c",
+    "oldSha256": "7376adac66b2fef369f2288173029d2ddd091839a833e39a0ee70ab80dedb927",
+    "newSha256": "99a1f9db86f9be25cf5b903545f6dce626f9f09700c0e51b0b4040f1fd82d750",
+    "status": "pass",
+    "freshInstallTimingContaminated": false,
+    "realModelRequests": 0,
+    "cases": [
+      {
+        "kind": "conventional-reinstall",
+        "oldInstall": {
+          "mode": "install",
+          "nativeWpf": true,
+          "installClicks": 1,
+          "configureClicks": 1,
+          "replacementMilliseconds": null,
+          "applyToReadyMilliseconds": 27207,
+          "exitCode": 0,
+          "cleanupClosed": true,
+          "windowProcessId": 2336,
+          "windowHandle": 1114756,
+          "elapsedMilliseconds": 32182
+        },
+        "oldUninstall": {
+          "exitCode": 0,
+          "elapsedMilliseconds": 29876
+        },
+        "newInstall": {
+          "mode": "install",
+          "nativeWpf": true,
+          "installClicks": 1,
+          "configureClicks": 1,
+          "replacementMilliseconds": null,
+          "applyToReadyMilliseconds": 25985,
+          "exitCode": 0,
+          "cleanupClosed": true,
+          "windowProcessId": 5444,
+          "windowHandle": 721546,
+          "elapsedMilliseconds": 29657
+        },
+        "newUninstall": {
+          "mode": "uninstall",
+          "nativeWpf": true,
+          "installClicks": 0,
+          "configureClicks": 0,
+          "replacementMilliseconds": null,
+          "applyToReadyMilliseconds": 29679,
+          "exitCode": 0,
+          "cleanupClosed": true,
+          "windowProcessId": 6724,
+          "windowHandle": 590268,
+          "elapsedMilliseconds": 32804
+        },
+        "preservedBeforeNewOnboarding": true,
+        "preparation": {
+          "addedAces": 0,
+          "writeCalls": 0,
+          "elapsedMilliseconds": 1,
+          "sidecarSha256": "1a135baad5313370b8f51f2f251e6e1ca660d815c3c5633fb2be7e80e3f2495b"
+        },
+        "resetVerified": true,
+        "resetObserved": {
+          "installationRootExists": false,
+          "credentialOutputEmpty": true,
+          "configurationExists": false,
+          "credentialReadExitCode": 2,
+          "stateRootExists": false
+        }
+      },
+      {
+        "kind": "native-replace-preview",
+        "oldInstall": {
+          "mode": "install",
+          "nativeWpf": true,
+          "installClicks": 1,
+          "configureClicks": 1,
+          "replacementMilliseconds": null,
+          "applyToReadyMilliseconds": 26528,
+          "exitCode": 0,
+          "cleanupClosed": true,
+          "windowProcessId": 6236,
+          "windowHandle": 3670674,
+          "elapsedMilliseconds": 30074
+        },
+        "oldUninstall": null,
+        "newInstall": {
+          "mode": "replace",
+          "nativeWpf": true,
+          "installClicks": 1,
+          "configureClicks": 1,
+          "replacementMilliseconds": 32003,
+          "applyToReadyMilliseconds": 26031,
+          "exitCode": 0,
+          "cleanupClosed": true,
+          "windowProcessId": 1628,
+          "windowHandle": 918104,
+          "elapsedMilliseconds": 61893
+        },
+        "newUninstall": {
+          "mode": "uninstall",
+          "nativeWpf": true,
+          "installClicks": 0,
+          "configureClicks": 0,
+          "replacementMilliseconds": null,
+          "applyToReadyMilliseconds": 29632,
+          "exitCode": 0,
+          "cleanupClosed": true,
+          "windowProcessId": 2656,
+          "windowHandle": 1507494,
+          "elapsedMilliseconds": 32826
+        },
+        "preservedBeforeNewOnboarding": true,
+        "preparation": {
+          "addedAces": 0,
+          "writeCalls": 0,
+          "elapsedMilliseconds": 1,
+          "sidecarSha256": "b1150ea87dfbacffaa3f376e12f9bd8288979081ede37fb05970b99ef23960cb"
+        },
+        "resetVerified": true,
+        "resetObserved": {
+          "installationRootExists": false,
+          "credentialOutputEmpty": true,
+          "configurationExists": false,
+          "credentialReadExitCode": 2,
+          "stateRootExists": false
+        }
+      }
+    ],
+    "cleanupErrors": [],
+    "installationRootRemoved": true
+  },
+  "nativePrerequisiteFailure": {
+    "schemaVersion": 1,
+    "classification": "actual-burn-prerequisite-failure-qualification",
+    "sourceRevision": "7935e0ccee812d365fd58d32e7291fd3286a98bf",
+    "status": "pass",
+    "packageNotInstalled": true,
+    "primaryFailureRetained": true,
+    "sidecarMatched": true,
+    "stdoutReceiptAbsent": true,
+    "ui": {
+      "mode": "failure",
+      "nativeWpf": true,
+      "installClicks": 1,
+      "configureClicks": 1,
+      "replacementMilliseconds": null,
+      "applyToReadyMilliseconds": 3027,
+      "exitCode": 32,
+      "cleanupClosed": true,
+      "windowProcessId": 5184,
+      "windowHandle": 393800,
+      "failureText": "Checking system-drive access failed.\nWindows error 32: The process cannot access the file because it is being used by another process.\nStage: open-metadata-inspection-target.\n\nChoose Setup log to open the saved details.",
+      "elapsedMilliseconds": 8483
+    },
+    "cleanupErrors": [],
+    "fixtureUninstallExitCode": 0
+  },
+  "nativeMsiControls": {
+    "provenance": {
+      "sourceWorkflowRun": 34642504758,
+      "sourceWorkflowAttempt": 1,
+      "artifactId": 10280673217,
+      "archiveSha256": "02c07c3b80f52f7e245bd358b9f8460983f3b7fdaebbb0355da55e8c0f72fb40",
+      "archiveBytes": 196187,
+      "member": "windows-msi-boundary-fixtures/msi-boundary.json",
+      "memberSha256": "3e9974b1138135c07928c80d2c70ea6abb24848122d3190ea750e7c852d93dbf"
+    },
+    "receipt": {
+      "schemaVersion": 1,
+      "classification": "connected-msi-boundary-fixtures",
+      "sourceRevision": "7935e0ccee812d365fd58d32e7291fd3286a98bf",
+      "completeRuntime": false,
+      "installedAcceptance": false,
+      "status": "pass",
+      "results": [
+        {
+          "label": "first-install",
+          "exitCode": 0,
+          "elapsedMilliseconds": 1197,
+          "log": "C:\\a\\_temp\\windows-msi-boundary-fixtures\\first-install.msi.log"
+        },
+        {
+          "label": "busy-direct-repair",
+          "exitCode": 1603,
+          "elapsedMilliseconds": 1034,
+          "log": "C:\\a\\_temp\\windows-msi-boundary-fixtures\\busy-direct-repair.msi.log"
+        },
+        {
+          "label": "busy-direct-uninstall",
+          "exitCode": 1603,
+          "elapsedMilliseconds": 588,
+          "log": "C:\\a\\_temp\\windows-msi-boundary-fixtures\\busy-direct-uninstall.msi.log"
+        },
+        {
+          "label": "busy-major-upgrade",
+          "exitCode": 1603,
+          "elapsedMilliseconds": 590,
+          "log": "C:\\a\\_temp\\windows-msi-boundary-fixtures\\busy-major-upgrade.msi.log"
+        },
+        {
+          "label": "released-direct-repair",
+          "exitCode": 0,
+          "elapsedMilliseconds": 1042,
+          "log": "C:\\a\\_temp\\windows-msi-boundary-fixtures\\released-direct-repair.msi.log"
+        },
+        {
+          "label": "deferred-failure",
+          "exitCode": 1603,
+          "elapsedMilliseconds": 2170,
+          "log": "C:\\a\\_temp\\windows-msi-boundary-fixtures\\deferred-failure.msi.log"
+        },
+        {
+          "label": "commit-failure",
+          "exitCode": 1603,
+          "elapsedMilliseconds": 1738,
+          "log": "C:\\a\\_temp\\windows-msi-boundary-fixtures\\commit-failure.msi.log"
+        },
+        {
+          "label": "released-major-upgrade",
+          "exitCode": 0,
+          "elapsedMilliseconds": 1497,
+          "log": "C:\\a\\_temp\\windows-msi-boundary-fixtures\\released-major-upgrade.msi.log"
+        },
+        {
+          "label": "released-direct-uninstall",
+          "exitCode": 0,
+          "elapsedMilliseconds": 588,
+          "log": "C:\\a\\_temp\\windows-msi-boundary-fixtures\\released-direct-uninstall.msi.log"
+        },
+        {
+          "label": "foreign-file-install",
+          "exitCode": 0,
+          "elapsedMilliseconds": 1085,
+          "log": "C:\\a\\_temp\\windows-msi-boundary-fixtures\\foreign-file-install.msi.log"
+        },
+        {
+          "label": "foreign-file-uninstall",
+          "exitCode": 0,
+          "elapsedMilliseconds": 548,
+          "log": "C:\\a\\_temp\\windows-msi-boundary-fixtures\\foreign-file-uninstall.msi.log"
+        }
+      ],
+      "cleanupFailures": [],
+      "snapshots": {
+        "first-install": "D|/|O:SYG:SYD:AI(A;ID;FA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;CIIOID;GA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;ID;FA;;;SY)(A;OICIIOID;GA;;;SY)(A;ID;FA;;;BA)(A;OICIIOID;GA;;;BA)(A;ID;0x1200a9;;;BU)(A;OICIIOID;GXGR;;;BU)(A;OICIIOID;GA;;;CO)(A;ID;0x1200a9;;;AC)(A;OICIIOID;GXGR;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)(A;OICIIOID;GXGR;;;S-1-15-2-2)\nD|/bin|O:SYG:SYD:AI(A;ID;FA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;CIIOID;GA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;ID;FA;;;SY)(A;OICIIOID;GA;;;SY)(A;ID;FA;;;BA)(A;OICIIOID;GA;;;BA)(A;ID;0x1200a9;;;BU)(A;OICIIOID;GXGR;;;BU)(A;OICIIOID;GA;;;CO)(A;ID;0x1200a9;;;AC)(A;OICIIOID;GXGR;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)(A;OICIIOID;GXGR;;;S-1-15-2-2)\nF|/bin/node.exe|97CCE5301A815D2DCE07AC5BFD1E6039EAE88185EC1D10AE4F8CB712F1732878|O:SYG:SYD:AI(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;0x1200a9;;;BU)(A;ID;0x1200a9;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)\nF|/runtime-current|AA55933E25E796AE0734EFD1DFE3E705D88653EF0F368246DA06E8A1CB22E689|O:SYG:SYD:AI(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;0x1200a9;;;BU)(A;ID;0x1200a9;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)\nD|/runtimes|O:SYG:SYD:AI(A;ID;FA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;CIIOID;GA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;ID;FA;;;SY)(A;OICIIOID;GA;;;SY)(A;ID;FA;;;BA)(A;OICIIOID;GA;;;BA)(A;ID;0x1200a9;;;BU)(A;OICIIOID;GXGR;;;BU)(A;OICIIOID;GA;;;CO)(A;ID;0x1200a9;;;AC)(A;OICIIOID;GXGR;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)(A;OICIIOID;GXGR;;;S-1-15-2-2)\nD|/runtimes/7472ca0f8b089f7894bc2894410c9189c034c5192f87a502a5e1dbc71c4fd1aa|O:SYG:SYD:AI(A;ID;FA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;CIIOID;GA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;ID;FA;;;SY)(A;OICIIOID;GA;;;SY)(A;ID;FA;;;BA)(A;OICIIOID;GA;;;BA)(A;ID;0x1200a9;;;BU)(A;OICIIOID;GXGR;;;BU)(A;OICIIOID;GA;;;CO)(A;ID;0x1200a9;;;AC)(A;OICIIOID;GXGR;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)(A;OICIIOID;GXGR;;;S-1-15-2-2)\nD|/runtimes/7472ca0f8b089f7894bc2894410c9189c034c5192f87a502a5e1dbc71c4fd1aa/empty|O:SYG:SYD:AI(A;ID;FA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;CIIOID;GA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;ID;FA;;;SY)(A;OICIIOID;GA;;;SY)(A;ID;FA;;;BA)(A;OICIIOID;GA;;;BA)(A;ID;0x1200a9;;;BU)(A;OICIIOID;GXGR;;;BU)(A;OICIIOID;GA;;;CO)(A;ID;0x1200a9;;;AC)(A;OICIIOID;GXGR;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)(A;OICIIOID;GXGR;;;S-1-15-2-2)\nF|/runtimes/7472ca0f8b089f7894bc2894410c9189c034c5192f87a502a5e1dbc71c4fd1aa/NODE-LICENSE.txt|8CC9BB466B19FC7E7CC99D03E9DF1132021FDA8B01EEA2624C58BB372DBEF576|O:SYG:SYD:AI(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;0x1200a9;;;BU)(A;ID;0x1200a9;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)\nF|/runtimes/7472ca0f8b089f7894bc2894410c9189c034c5192f87a502a5e1dbc71c4fd1aa/payload.txt|A0F55EECC91798DFA1DD932A4AEF13F5A8DAC359ECDF25C7514024FD5870C8B0|O:SYG:SYD:AI(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;0x1200a9;;;BU)(A;ID;0x1200a9;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)\nF|/runtimes/7472ca0f8b089f7894bc2894410c9189c034c5192f87a502a5e1dbc71c4fd1aa/runtime.manifest|D615288BC42B684AD4AD9D18AA5F8CDCA1EE2CB80413743383A666043AB7D265|O:SYG:SYD:AI(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;0x1200a9;;;BU)(A;ID;0x1200a9;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)\nF|/runtimes/7472ca0f8b089f7894bc2894410c9189c034c5192f87a502a5e1dbc71c4fd1aa/runtime.ready|AA55933E25E796AE0734EFD1DFE3E705D88653EF0F368246DA06E8A1CB22E689|O:SYG:SYD:AI(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;0x1200a9;;;BU)(A;ID;0x1200a9;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)",
+        "busy-direct-repair": "D|/|O:SYG:SYD:AI(A;ID;FA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;CIIOID;GA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;ID;FA;;;SY)(A;OICIIOID;GA;;;SY)(A;ID;FA;;;BA)(A;OICIIOID;GA;;;BA)(A;ID;0x1200a9;;;BU)(A;OICIIOID;GXGR;;;BU)(A;OICIIOID;GA;;;CO)(A;ID;0x1200a9;;;AC)(A;OICIIOID;GXGR;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)(A;OICIIOID;GXGR;;;S-1-15-2-2)\nD|/bin|O:SYG:SYD:AI(A;ID;FA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;CIIOID;GA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;ID;FA;;;SY)(A;OICIIOID;GA;;;SY)(A;ID;FA;;;BA)(A;OICIIOID;GA;;;BA)(A;ID;0x1200a9;;;BU)(A;OICIIOID;GXGR;;;BU)(A;OICIIOID;GA;;;CO)(A;ID;0x1200a9;;;AC)(A;OICIIOID;GXGR;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)(A;OICIIOID;GXGR;;;S-1-15-2-2)\nF|/bin/node.exe|97CCE5301A815D2DCE07AC5BFD1E6039EAE88185EC1D10AE4F8CB712F1732878|O:SYG:SYD:AI(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;0x1200a9;;;BU)(A;ID;0x1200a9;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)\nF|/runtime-current|AA55933E25E796AE0734EFD1DFE3E705D88653EF0F368246DA06E8A1CB22E689|O:SYG:SYD:AI(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;0x1200a9;;;BU)(A;ID;0x1200a9;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)\nD|/runtimes|O:SYG:SYD:AI(A;ID;FA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;CIIOID;GA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;ID;FA;;;SY)(A;OICIIOID;GA;;;SY)(A;ID;FA;;;BA)(A;OICIIOID;GA;;;BA)(A;ID;0x1200a9;;;BU)(A;OICIIOID;GXGR;;;BU)(A;OICIIOID;GA;;;CO)(A;ID;0x1200a9;;;AC)(A;OICIIOID;GXGR;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)(A;OICIIOID;GXGR;;;S-1-15-2-2)\nD|/runtimes/7472ca0f8b089f7894bc2894410c9189c034c5192f87a502a5e1dbc71c4fd1aa|O:SYG:SYD:AI(A;ID;FA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;CIIOID;GA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;ID;FA;;;SY)(A;OICIIOID;GA;;;SY)(A;ID;FA;;;BA)(A;OICIIOID;GA;;;BA)(A;ID;0x1200a9;;;BU)(A;OICIIOID;GXGR;;;BU)(A;OICIIOID;GA;;;CO)(A;ID;0x1200a9;;;AC)(A;OICIIOID;GXGR;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)(A;OICIIOID;GXGR;;;S-1-15-2-2)\nD|/runtimes/7472ca0f8b089f7894bc2894410c9189c034c5192f87a502a5e1dbc71c4fd1aa/empty|O:SYG:SYD:AI(A;ID;FA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;CIIOID;GA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;ID;FA;;;SY)(A;OICIIOID;GA;;;SY)(A;ID;FA;;;BA)(A;OICIIOID;GA;;;BA)(A;ID;0x1200a9;;;BU)(A;OICIIOID;GXGR;;;BU)(A;OICIIOID;GA;;;CO)(A;ID;0x1200a9;;;AC)(A;OICIIOID;GXGR;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)(A;OICIIOID;GXGR;;;S-1-15-2-2)\nF|/runtimes/7472ca0f8b089f7894bc2894410c9189c034c5192f87a502a5e1dbc71c4fd1aa/NODE-LICENSE.txt|8CC9BB466B19FC7E7CC99D03E9DF1132021FDA8B01EEA2624C58BB372DBEF576|O:SYG:SYD:AI(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;0x1200a9;;;BU)(A;ID;0x1200a9;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)\nF|/runtimes/7472ca0f8b089f7894bc2894410c9189c034c5192f87a502a5e1dbc71c4fd1aa/payload.txt|A0F55EECC91798DFA1DD932A4AEF13F5A8DAC359ECDF25C7514024FD5870C8B0|O:SYG:SYD:AI(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;0x1200a9;;;BU)(A;ID;0x1200a9;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)\nF|/runtimes/7472ca0f8b089f7894bc2894410c9189c034c5192f87a502a5e1dbc71c4fd1aa/runtime.manifest|D615288BC42B684AD4AD9D18AA5F8CDCA1EE2CB80413743383A666043AB7D265|O:SYG:SYD:AI(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;0x1200a9;;;BU)(A;ID;0x1200a9;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)\nF|/runtimes/7472ca0f8b089f7894bc2894410c9189c034c5192f87a502a5e1dbc71c4fd1aa/runtime.ready|AA55933E25E796AE0734EFD1DFE3E705D88653EF0F368246DA06E8A1CB22E689|O:SYG:SYD:AI(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;0x1200a9;;;BU)(A;ID;0x1200a9;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)",
+        "busy-direct-uninstall": "D|/|O:SYG:SYD:AI(A;ID;FA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;CIIOID;GA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;ID;FA;;;SY)(A;OICIIOID;GA;;;SY)(A;ID;FA;;;BA)(A;OICIIOID;GA;;;BA)(A;ID;0x1200a9;;;BU)(A;OICIIOID;GXGR;;;BU)(A;OICIIOID;GA;;;CO)(A;ID;0x1200a9;;;AC)(A;OICIIOID;GXGR;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)(A;OICIIOID;GXGR;;;S-1-15-2-2)\nD|/bin|O:SYG:SYD:AI(A;ID;FA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;CIIOID;GA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;ID;FA;;;SY)(A;OICIIOID;GA;;;SY)(A;ID;FA;;;BA)(A;OICIIOID;GA;;;BA)(A;ID;0x1200a9;;;BU)(A;OICIIOID;GXGR;;;BU)(A;OICIIOID;GA;;;CO)(A;ID;0x1200a9;;;AC)(A;OICIIOID;GXGR;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)(A;OICIIOID;GXGR;;;S-1-15-2-2)\nF|/bin/node.exe|97CCE5301A815D2DCE07AC5BFD1E6039EAE88185EC1D10AE4F8CB712F1732878|O:SYG:SYD:AI(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;0x1200a9;;;BU)(A;ID;0x1200a9;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)\nF|/runtime-current|AA55933E25E796AE0734EFD1DFE3E705D88653EF0F368246DA06E8A1CB22E689|O:SYG:SYD:AI(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;0x1200a9;;;BU)(A;ID;0x1200a9;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)\nD|/runtimes|O:SYG:SYD:AI(A;ID;FA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;CIIOID;GA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;ID;FA;;;SY)(A;OICIIOID;GA;;;SY)(A;ID;FA;;;BA)(A;OICIIOID;GA;;;BA)(A;ID;0x1200a9;;;BU)(A;OICIIOID;GXGR;;;BU)(A;OICIIOID;GA;;;CO)(A;ID;0x1200a9;;;AC)(A;OICIIOID;GXGR;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)(A;OICIIOID;GXGR;;;S-1-15-2-2)\nD|/runtimes/7472ca0f8b089f7894bc2894410c9189c034c5192f87a502a5e1dbc71c4fd1aa|O:SYG:SYD:AI(A;ID;FA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;CIIOID;GA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;ID;FA;;;SY)(A;OICIIOID;GA;;;SY)(A;ID;FA;;;BA)(A;OICIIOID;GA;;;BA)(A;ID;0x1200a9;;;BU)(A;OICIIOID;GXGR;;;BU)(A;OICIIOID;GA;;;CO)(A;ID;0x1200a9;;;AC)(A;OICIIOID;GXGR;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)(A;OICIIOID;GXGR;;;S-1-15-2-2)\nD|/runtimes/7472ca0f8b089f7894bc2894410c9189c034c5192f87a502a5e1dbc71c4fd1aa/empty|O:SYG:SYD:AI(A;ID;FA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;CIIOID;GA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;ID;FA;;;SY)(A;OICIIOID;GA;;;SY)(A;ID;FA;;;BA)(A;OICIIOID;GA;;;BA)(A;ID;0x1200a9;;;BU)(A;OICIIOID;GXGR;;;BU)(A;OICIIOID;GA;;;CO)(A;ID;0x1200a9;;;AC)(A;OICIIOID;GXGR;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)(A;OICIIOID;GXGR;;;S-1-15-2-2)\nF|/runtimes/7472ca0f8b089f7894bc2894410c9189c034c5192f87a502a5e1dbc71c4fd1aa/NODE-LICENSE.txt|8CC9BB466B19FC7E7CC99D03E9DF1132021FDA8B01EEA2624C58BB372DBEF576|O:SYG:SYD:AI(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;0x1200a9;;;BU)(A;ID;0x1200a9;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)\nF|/runtimes/7472ca0f8b089f7894bc2894410c9189c034c5192f87a502a5e1dbc71c4fd1aa/payload.txt|A0F55EECC91798DFA1DD932A4AEF13F5A8DAC359ECDF25C7514024FD5870C8B0|O:SYG:SYD:AI(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;0x1200a9;;;BU)(A;ID;0x1200a9;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)\nF|/runtimes/7472ca0f8b089f7894bc2894410c9189c034c5192f87a502a5e1dbc71c4fd1aa/runtime.manifest|D615288BC42B684AD4AD9D18AA5F8CDCA1EE2CB80413743383A666043AB7D265|O:SYG:SYD:AI(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;0x1200a9;;;BU)(A;ID;0x1200a9;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)\nF|/runtimes/7472ca0f8b089f7894bc2894410c9189c034c5192f87a502a5e1dbc71c4fd1aa/runtime.ready|AA55933E25E796AE0734EFD1DFE3E705D88653EF0F368246DA06E8A1CB22E689|O:SYG:SYD:AI(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;0x1200a9;;;BU)(A;ID;0x1200a9;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)",
+        "busy-major-upgrade": "D|/|O:SYG:SYD:AI(A;ID;FA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;CIIOID;GA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;ID;FA;;;SY)(A;OICIIOID;GA;;;SY)(A;ID;FA;;;BA)(A;OICIIOID;GA;;;BA)(A;ID;0x1200a9;;;BU)(A;OICIIOID;GXGR;;;BU)(A;OICIIOID;GA;;;CO)(A;ID;0x1200a9;;;AC)(A;OICIIOID;GXGR;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)(A;OICIIOID;GXGR;;;S-1-15-2-2)\nD|/bin|O:SYG:SYD:AI(A;ID;FA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;CIIOID;GA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;ID;FA;;;SY)(A;OICIIOID;GA;;;SY)(A;ID;FA;;;BA)(A;OICIIOID;GA;;;BA)(A;ID;0x1200a9;;;BU)(A;OICIIOID;GXGR;;;BU)(A;OICIIOID;GA;;;CO)(A;ID;0x1200a9;;;AC)(A;OICIIOID;GXGR;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)(A;OICIIOID;GXGR;;;S-1-15-2-2)\nF|/bin/node.exe|97CCE5301A815D2DCE07AC5BFD1E6039EAE88185EC1D10AE4F8CB712F1732878|O:SYG:SYD:AI(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;0x1200a9;;;BU)(A;ID;0x1200a9;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)\nF|/runtime-current|AA55933E25E796AE0734EFD1DFE3E705D88653EF0F368246DA06E8A1CB22E689|O:SYG:SYD:AI(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;0x1200a9;;;BU)(A;ID;0x1200a9;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)\nD|/runtimes|O:SYG:SYD:AI(A;ID;FA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;CIIOID;GA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;ID;FA;;;SY)(A;OICIIOID;GA;;;SY)(A;ID;FA;;;BA)(A;OICIIOID;GA;;;BA)(A;ID;0x1200a9;;;BU)(A;OICIIOID;GXGR;;;BU)(A;OICIIOID;GA;;;CO)(A;ID;0x1200a9;;;AC)(A;OICIIOID;GXGR;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)(A;OICIIOID;GXGR;;;S-1-15-2-2)\nD|/runtimes/7472ca0f8b089f7894bc2894410c9189c034c5192f87a502a5e1dbc71c4fd1aa|O:SYG:SYD:AI(A;ID;FA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;CIIOID;GA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;ID;FA;;;SY)(A;OICIIOID;GA;;;SY)(A;ID;FA;;;BA)(A;OICIIOID;GA;;;BA)(A;ID;0x1200a9;;;BU)(A;OICIIOID;GXGR;;;BU)(A;OICIIOID;GA;;;CO)(A;ID;0x1200a9;;;AC)(A;OICIIOID;GXGR;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)(A;OICIIOID;GXGR;;;S-1-15-2-2)\nD|/runtimes/7472ca0f8b089f7894bc2894410c9189c034c5192f87a502a5e1dbc71c4fd1aa/empty|O:SYG:SYD:AI(A;ID;FA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;CIIOID;GA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;ID;FA;;;SY)(A;OICIIOID;GA;;;SY)(A;ID;FA;;;BA)(A;OICIIOID;GA;;;BA)(A;ID;0x1200a9;;;BU)(A;OICIIOID;GXGR;;;BU)(A;OICIIOID;GA;;;CO)(A;ID;0x1200a9;;;AC)(A;OICIIOID;GXGR;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)(A;OICIIOID;GXGR;;;S-1-15-2-2)\nF|/runtimes/7472ca0f8b089f7894bc2894410c9189c034c5192f87a502a5e1dbc71c4fd1aa/NODE-LICENSE.txt|8CC9BB466B19FC7E7CC99D03E9DF1132021FDA8B01EEA2624C58BB372DBEF576|O:SYG:SYD:AI(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;0x1200a9;;;BU)(A;ID;0x1200a9;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)\nF|/runtimes/7472ca0f8b089f7894bc2894410c9189c034c5192f87a502a5e1dbc71c4fd1aa/payload.txt|A0F55EECC91798DFA1DD932A4AEF13F5A8DAC359ECDF25C7514024FD5870C8B0|O:SYG:SYD:AI(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;0x1200a9;;;BU)(A;ID;0x1200a9;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)\nF|/runtimes/7472ca0f8b089f7894bc2894410c9189c034c5192f87a502a5e1dbc71c4fd1aa/runtime.manifest|D615288BC42B684AD4AD9D18AA5F8CDCA1EE2CB80413743383A666043AB7D265|O:SYG:SYD:AI(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;0x1200a9;;;BU)(A;ID;0x1200a9;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)\nF|/runtimes/7472ca0f8b089f7894bc2894410c9189c034c5192f87a502a5e1dbc71c4fd1aa/runtime.ready|AA55933E25E796AE0734EFD1DFE3E705D88653EF0F368246DA06E8A1CB22E689|O:SYG:SYD:AI(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;0x1200a9;;;BU)(A;ID;0x1200a9;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)",
+        "before-lease-release": "D|/|O:SYG:SYD:AI(A;ID;FA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;CIIOID;GA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;ID;FA;;;SY)(A;OICIIOID;GA;;;SY)(A;ID;FA;;;BA)(A;OICIIOID;GA;;;BA)(A;ID;0x1200a9;;;BU)(A;OICIIOID;GXGR;;;BU)(A;OICIIOID;GA;;;CO)(A;ID;0x1200a9;;;AC)(A;OICIIOID;GXGR;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)(A;OICIIOID;GXGR;;;S-1-15-2-2)\nD|/bin|O:SYG:SYD:AI(A;ID;FA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;CIIOID;GA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;ID;FA;;;SY)(A;OICIIOID;GA;;;SY)(A;ID;FA;;;BA)(A;OICIIOID;GA;;;BA)(A;ID;0x1200a9;;;BU)(A;OICIIOID;GXGR;;;BU)(A;OICIIOID;GA;;;CO)(A;ID;0x1200a9;;;AC)(A;OICIIOID;GXGR;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)(A;OICIIOID;GXGR;;;S-1-15-2-2)\nF|/bin/node.exe|97CCE5301A815D2DCE07AC5BFD1E6039EAE88185EC1D10AE4F8CB712F1732878|O:SYG:SYD:AI(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;0x1200a9;;;BU)(A;ID;0x1200a9;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)\nF|/runtime-current|AA55933E25E796AE0734EFD1DFE3E705D88653EF0F368246DA06E8A1CB22E689|O:SYG:SYD:AI(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;0x1200a9;;;BU)(A;ID;0x1200a9;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)\nD|/runtimes|O:SYG:SYD:AI(A;ID;FA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;CIIOID;GA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;ID;FA;;;SY)(A;OICIIOID;GA;;;SY)(A;ID;FA;;;BA)(A;OICIIOID;GA;;;BA)(A;ID;0x1200a9;;;BU)(A;OICIIOID;GXGR;;;BU)(A;OICIIOID;GA;;;CO)(A;ID;0x1200a9;;;AC)(A;OICIIOID;GXGR;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)(A;OICIIOID;GXGR;;;S-1-15-2-2)\nD|/runtimes/7472ca0f8b089f7894bc2894410c9189c034c5192f87a502a5e1dbc71c4fd1aa|O:SYG:SYD:AI(A;ID;FA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;CIIOID;GA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;ID;FA;;;SY)(A;OICIIOID;GA;;;SY)(A;ID;FA;;;BA)(A;OICIIOID;GA;;;BA)(A;ID;0x1200a9;;;BU)(A;OICIIOID;GXGR;;;BU)(A;OICIIOID;GA;;;CO)(A;ID;0x1200a9;;;AC)(A;OICIIOID;GXGR;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)(A;OICIIOID;GXGR;;;S-1-15-2-2)\nD|/runtimes/7472ca0f8b089f7894bc2894410c9189c034c5192f87a502a5e1dbc71c4fd1aa/empty|O:SYG:SYD:AI(A;ID;FA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;CIIOID;GA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;ID;FA;;;SY)(A;OICIIOID;GA;;;SY)(A;ID;FA;;;BA)(A;OICIIOID;GA;;;BA)(A;ID;0x1200a9;;;BU)(A;OICIIOID;GXGR;;;BU)(A;OICIIOID;GA;;;CO)(A;ID;0x1200a9;;;AC)(A;OICIIOID;GXGR;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)(A;OICIIOID;GXGR;;;S-1-15-2-2)\nF|/runtimes/7472ca0f8b089f7894bc2894410c9189c034c5192f87a502a5e1dbc71c4fd1aa/NODE-LICENSE.txt|8CC9BB466B19FC7E7CC99D03E9DF1132021FDA8B01EEA2624C58BB372DBEF576|O:SYG:SYD:AI(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;0x1200a9;;;BU)(A;ID;0x1200a9;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)\nF|/runtimes/7472ca0f8b089f7894bc2894410c9189c034c5192f87a502a5e1dbc71c4fd1aa/payload.txt|A0F55EECC91798DFA1DD932A4AEF13F5A8DAC359ECDF25C7514024FD5870C8B0|O:SYG:SYD:AI(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;0x1200a9;;;BU)(A;ID;0x1200a9;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)\nF|/runtimes/7472ca0f8b089f7894bc2894410c9189c034c5192f87a502a5e1dbc71c4fd1aa/runtime.manifest|D615288BC42B684AD4AD9D18AA5F8CDCA1EE2CB80413743383A666043AB7D265|O:SYG:SYD:AI(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;0x1200a9;;;BU)(A;ID;0x1200a9;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)\nF|/runtimes/7472ca0f8b089f7894bc2894410c9189c034c5192f87a502a5e1dbc71c4fd1aa/runtime.ready|AA55933E25E796AE0734EFD1DFE3E705D88653EF0F368246DA06E8A1CB22E689|O:SYG:SYD:AI(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;0x1200a9;;;BU)(A;ID;0x1200a9;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)",
+        "after-lease-release": "D|/|O:SYG:SYD:AI(A;ID;FA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;CIIOID;GA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;ID;FA;;;SY)(A;OICIIOID;GA;;;SY)(A;ID;FA;;;BA)(A;OICIIOID;GA;;;BA)(A;ID;0x1200a9;;;BU)(A;OICIIOID;GXGR;;;BU)(A;OICIIOID;GA;;;CO)(A;ID;0x1200a9;;;AC)(A;OICIIOID;GXGR;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)(A;OICIIOID;GXGR;;;S-1-15-2-2)\nD|/bin|O:SYG:SYD:AI(A;ID;FA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;CIIOID;GA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;ID;FA;;;SY)(A;OICIIOID;GA;;;SY)(A;ID;FA;;;BA)(A;OICIIOID;GA;;;BA)(A;ID;0x1200a9;;;BU)(A;OICIIOID;GXGR;;;BU)(A;OICIIOID;GA;;;CO)(A;ID;0x1200a9;;;AC)(A;OICIIOID;GXGR;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)(A;OICIIOID;GXGR;;;S-1-15-2-2)\nF|/bin/node.exe|97CCE5301A815D2DCE07AC5BFD1E6039EAE88185EC1D10AE4F8CB712F1732878|O:SYG:SYD:AI(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;0x1200a9;;;BU)(A;ID;0x1200a9;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)\nF|/runtime-current|AA55933E25E796AE0734EFD1DFE3E705D88653EF0F368246DA06E8A1CB22E689|O:SYG:SYD:AI(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;0x1200a9;;;BU)(A;ID;0x1200a9;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)\nD|/runtimes|O:SYG:SYD:AI(A;ID;FA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;CIIOID;GA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;ID;FA;;;SY)(A;OICIIOID;GA;;;SY)(A;ID;FA;;;BA)(A;OICIIOID;GA;;;BA)(A;ID;0x1200a9;;;BU)(A;OICIIOID;GXGR;;;BU)(A;OICIIOID;GA;;;CO)(A;ID;0x1200a9;;;AC)(A;OICIIOID;GXGR;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)(A;OICIIOID;GXGR;;;S-1-15-2-2)\nD|/runtimes/7472ca0f8b089f7894bc2894410c9189c034c5192f87a502a5e1dbc71c4fd1aa|O:SYG:SYD:AI(A;ID;FA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;CIIOID;GA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;ID;FA;;;SY)(A;OICIIOID;GA;;;SY)(A;ID;FA;;;BA)(A;OICIIOID;GA;;;BA)(A;ID;0x1200a9;;;BU)(A;OICIIOID;GXGR;;;BU)(A;OICIIOID;GA;;;CO)(A;ID;0x1200a9;;;AC)(A;OICIIOID;GXGR;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)(A;OICIIOID;GXGR;;;S-1-15-2-2)\nD|/runtimes/7472ca0f8b089f7894bc2894410c9189c034c5192f87a502a5e1dbc71c4fd1aa/empty|O:SYG:SYD:AI(A;ID;FA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;CIIOID;GA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;ID;FA;;;SY)(A;OICIIOID;GA;;;SY)(A;ID;FA;;;BA)(A;OICIIOID;GA;;;BA)(A;ID;0x1200a9;;;BU)(A;OICIIOID;GXGR;;;BU)(A;OICIIOID;GA;;;CO)(A;ID;0x1200a9;;;AC)(A;OICIIOID;GXGR;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)(A;OICIIOID;GXGR;;;S-1-15-2-2)\nF|/runtimes/7472ca0f8b089f7894bc2894410c9189c034c5192f87a502a5e1dbc71c4fd1aa/NODE-LICENSE.txt|8CC9BB466B19FC7E7CC99D03E9DF1132021FDA8B01EEA2624C58BB372DBEF576|O:SYG:SYD:AI(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;0x1200a9;;;BU)(A;ID;0x1200a9;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)\nF|/runtimes/7472ca0f8b089f7894bc2894410c9189c034c5192f87a502a5e1dbc71c4fd1aa/payload.txt|A0F55EECC91798DFA1DD932A4AEF13F5A8DAC359ECDF25C7514024FD5870C8B0|O:SYG:SYD:AI(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;0x1200a9;;;BU)(A;ID;0x1200a9;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)\nF|/runtimes/7472ca0f8b089f7894bc2894410c9189c034c5192f87a502a5e1dbc71c4fd1aa/runtime.manifest|D615288BC42B684AD4AD9D18AA5F8CDCA1EE2CB80413743383A666043AB7D265|O:SYG:SYD:AI(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;0x1200a9;;;BU)(A;ID;0x1200a9;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)\nF|/runtimes/7472ca0f8b089f7894bc2894410c9189c034c5192f87a502a5e1dbc71c4fd1aa/runtime.ready|AA55933E25E796AE0734EFD1DFE3E705D88653EF0F368246DA06E8A1CB22E689|O:SYG:SYD:AI(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;0x1200a9;;;BU)(A;ID;0x1200a9;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)",
+        "released-direct-repair": "D|/|O:SYG:SYD:AI(A;ID;FA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;CIIOID;GA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;ID;FA;;;SY)(A;OICIIOID;GA;;;SY)(A;ID;FA;;;BA)(A;OICIIOID;GA;;;BA)(A;ID;0x1200a9;;;BU)(A;OICIIOID;GXGR;;;BU)(A;OICIIOID;GA;;;CO)(A;ID;0x1200a9;;;AC)(A;OICIIOID;GXGR;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)(A;OICIIOID;GXGR;;;S-1-15-2-2)\nD|/bin|O:SYG:SYD:AI(A;ID;FA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;CIIOID;GA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;ID;FA;;;SY)(A;OICIIOID;GA;;;SY)(A;ID;FA;;;BA)(A;OICIIOID;GA;;;BA)(A;ID;0x1200a9;;;BU)(A;OICIIOID;GXGR;;;BU)(A;OICIIOID;GA;;;CO)(A;ID;0x1200a9;;;AC)(A;OICIIOID;GXGR;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)(A;OICIIOID;GXGR;;;S-1-15-2-2)\nF|/bin/node.exe|97CCE5301A815D2DCE07AC5BFD1E6039EAE88185EC1D10AE4F8CB712F1732878|O:SYG:SYD:(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;0x1200a9;;;BU)(A;ID;0x1200a9;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)\nF|/runtime-current|AA55933E25E796AE0734EFD1DFE3E705D88653EF0F368246DA06E8A1CB22E689|O:SYG:SYD:AI(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;0x1200a9;;;BU)(A;ID;0x1200a9;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)\nD|/runtimes|O:SYG:SYD:AI(A;ID;FA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;CIIOID;GA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;ID;FA;;;SY)(A;OICIIOID;GA;;;SY)(A;ID;FA;;;BA)(A;OICIIOID;GA;;;BA)(A;ID;0x1200a9;;;BU)(A;OICIIOID;GXGR;;;BU)(A;OICIIOID;GA;;;CO)(A;ID;0x1200a9;;;AC)(A;OICIIOID;GXGR;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)(A;OICIIOID;GXGR;;;S-1-15-2-2)\nD|/runtimes/7472ca0f8b089f7894bc2894410c9189c034c5192f87a502a5e1dbc71c4fd1aa|O:SYG:SYD:AI(A;ID;FA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;CIIOID;GA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;ID;FA;;;SY)(A;OICIIOID;GA;;;SY)(A;ID;FA;;;BA)(A;OICIIOID;GA;;;BA)(A;ID;0x1200a9;;;BU)(A;OICIIOID;GXGR;;;BU)(A;OICIIOID;GA;;;CO)(A;ID;0x1200a9;;;AC)(A;OICIIOID;GXGR;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)(A;OICIIOID;GXGR;;;S-1-15-2-2)\nD|/runtimes/7472ca0f8b089f7894bc2894410c9189c034c5192f87a502a5e1dbc71c4fd1aa/empty|O:SYG:SYD:AI(A;ID;FA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;CIIOID;GA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;ID;FA;;;SY)(A;OICIIOID;GA;;;SY)(A;ID;FA;;;BA)(A;OICIIOID;GA;;;BA)(A;ID;0x1200a9;;;BU)(A;OICIIOID;GXGR;;;BU)(A;OICIIOID;GA;;;CO)(A;ID;0x1200a9;;;AC)(A;OICIIOID;GXGR;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)(A;OICIIOID;GXGR;;;S-1-15-2-2)\nF|/runtimes/7472ca0f8b089f7894bc2894410c9189c034c5192f87a502a5e1dbc71c4fd1aa/NODE-LICENSE.txt|8CC9BB466B19FC7E7CC99D03E9DF1132021FDA8B01EEA2624C58BB372DBEF576|O:SYG:SYD:(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;0x1200a9;;;BU)(A;ID;0x1200a9;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)\nF|/runtimes/7472ca0f8b089f7894bc2894410c9189c034c5192f87a502a5e1dbc71c4fd1aa/payload.txt|A0F55EECC91798DFA1DD932A4AEF13F5A8DAC359ECDF25C7514024FD5870C8B0|O:SYG:SYD:(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;0x1200a9;;;BU)(A;ID;0x1200a9;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)\nF|/runtimes/7472ca0f8b089f7894bc2894410c9189c034c5192f87a502a5e1dbc71c4fd1aa/runtime.manifest|D615288BC42B684AD4AD9D18AA5F8CDCA1EE2CB80413743383A666043AB7D265|O:SYG:SYD:(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;0x1200a9;;;BU)(A;ID;0x1200a9;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)\nF|/runtimes/7472ca0f8b089f7894bc2894410c9189c034c5192f87a502a5e1dbc71c4fd1aa/runtime.ready|AA55933E25E796AE0734EFD1DFE3E705D88653EF0F368246DA06E8A1CB22E689|O:SYG:SYD:(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;0x1200a9;;;BU)(A;ID;0x1200a9;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)",
+        "deferred-failure": "D|/|O:SYG:SYD:AI(A;ID;FA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;CIIOID;GA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;ID;FA;;;SY)(A;OICIIOID;GA;;;SY)(A;ID;FA;;;BA)(A;OICIIOID;GA;;;BA)(A;ID;0x1200a9;;;BU)(A;OICIIOID;GXGR;;;BU)(A;OICIIOID;GA;;;CO)(A;ID;0x1200a9;;;AC)(A;OICIIOID;GXGR;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)(A;OICIIOID;GXGR;;;S-1-15-2-2)\nD|/bin|O:SYG:SYD:AI(A;ID;FA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;CIIOID;GA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;ID;FA;;;SY)(A;OICIIOID;GA;;;SY)(A;ID;FA;;;BA)(A;OICIIOID;GA;;;BA)(A;ID;0x1200a9;;;BU)(A;OICIIOID;GXGR;;;BU)(A;OICIIOID;GA;;;CO)(A;ID;0x1200a9;;;AC)(A;OICIIOID;GXGR;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)(A;OICIIOID;GXGR;;;S-1-15-2-2)\nF|/bin/node.exe|97CCE5301A815D2DCE07AC5BFD1E6039EAE88185EC1D10AE4F8CB712F1732878|O:SYG:SYD:(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;0x1200a9;;;BU)(A;ID;0x1200a9;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)\nF|/runtime-current|AA55933E25E796AE0734EFD1DFE3E705D88653EF0F368246DA06E8A1CB22E689|O:SYG:SYD:AI(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;0x1200a9;;;BU)(A;ID;0x1200a9;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)\nD|/runtimes|O:SYG:SYD:AI(A;ID;FA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;CIIOID;GA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;ID;FA;;;SY)(A;OICIIOID;GA;;;SY)(A;ID;FA;;;BA)(A;OICIIOID;GA;;;BA)(A;ID;0x1200a9;;;BU)(A;OICIIOID;GXGR;;;BU)(A;OICIIOID;GA;;;CO)(A;ID;0x1200a9;;;AC)(A;OICIIOID;GXGR;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)(A;OICIIOID;GXGR;;;S-1-15-2-2)\nD|/runtimes/7472ca0f8b089f7894bc2894410c9189c034c5192f87a502a5e1dbc71c4fd1aa|O:SYG:SYD:AI(A;ID;FA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;CIIOID;GA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;ID;FA;;;SY)(A;OICIIOID;GA;;;SY)(A;ID;FA;;;BA)(A;OICIIOID;GA;;;BA)(A;ID;0x1200a9;;;BU)(A;OICIIOID;GXGR;;;BU)(A;OICIIOID;GA;;;CO)(A;ID;0x1200a9;;;AC)(A;OICIIOID;GXGR;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)(A;OICIIOID;GXGR;;;S-1-15-2-2)\nD|/runtimes/7472ca0f8b089f7894bc2894410c9189c034c5192f87a502a5e1dbc71c4fd1aa/empty|O:SYG:SYD:(A;ID;FA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;CIIOID;GA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;ID;FA;;;SY)(A;OICIIOID;GA;;;SY)(A;ID;FA;;;BA)(A;OICIIOID;GA;;;BA)(A;ID;0x1200a9;;;BU)(A;OICIIOID;GXGR;;;BU)(A;OICIIOID;GA;;;CO)(A;ID;0x1200a9;;;AC)(A;OICIIOID;GXGR;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)(A;OICIIOID;GXGR;;;S-1-15-2-2)\nF|/runtimes/7472ca0f8b089f7894bc2894410c9189c034c5192f87a502a5e1dbc71c4fd1aa/NODE-LICENSE.txt|8CC9BB466B19FC7E7CC99D03E9DF1132021FDA8B01EEA2624C58BB372DBEF576|O:SYG:SYD:(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;0x1200a9;;;BU)(A;ID;0x1200a9;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)\nF|/runtimes/7472ca0f8b089f7894bc2894410c9189c034c5192f87a502a5e1dbc71c4fd1aa/payload.txt|A0F55EECC91798DFA1DD932A4AEF13F5A8DAC359ECDF25C7514024FD5870C8B0|O:SYG:SYD:(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;0x1200a9;;;BU)(A;ID;0x1200a9;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)\nF|/runtimes/7472ca0f8b089f7894bc2894410c9189c034c5192f87a502a5e1dbc71c4fd1aa/runtime.manifest|D615288BC42B684AD4AD9D18AA5F8CDCA1EE2CB80413743383A666043AB7D265|O:SYG:SYD:(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;0x1200a9;;;BU)(A;ID;0x1200a9;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)\nF|/runtimes/7472ca0f8b089f7894bc2894410c9189c034c5192f87a502a5e1dbc71c4fd1aa/runtime.ready|AA55933E25E796AE0734EFD1DFE3E705D88653EF0F368246DA06E8A1CB22E689|O:SYG:SYD:(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;0x1200a9;;;BU)(A;ID;0x1200a9;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)",
+        "commit-failure": "D|/|O:SYG:SYD:AI(A;ID;FA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;CIIOID;GA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;ID;FA;;;SY)(A;OICIIOID;GA;;;SY)(A;ID;FA;;;BA)(A;OICIIOID;GA;;;BA)(A;ID;0x1200a9;;;BU)(A;OICIIOID;GXGR;;;BU)(A;OICIIOID;GA;;;CO)(A;ID;0x1200a9;;;AC)(A;OICIIOID;GXGR;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)(A;OICIIOID;GXGR;;;S-1-15-2-2)\nD|/bin|O:SYG:SYD:AI(A;ID;FA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;CIIOID;GA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;ID;FA;;;SY)(A;OICIIOID;GA;;;SY)(A;ID;FA;;;BA)(A;OICIIOID;GA;;;BA)(A;ID;0x1200a9;;;BU)(A;OICIIOID;GXGR;;;BU)(A;OICIIOID;GA;;;CO)(A;ID;0x1200a9;;;AC)(A;OICIIOID;GXGR;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)(A;OICIIOID;GXGR;;;S-1-15-2-2)\nF|/bin/node.exe|97CCE5301A815D2DCE07AC5BFD1E6039EAE88185EC1D10AE4F8CB712F1732878|O:SYG:SYD:(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;0x1200a9;;;BU)(A;ID;0x1200a9;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)\nF|/runtime-current|AA55933E25E796AE0734EFD1DFE3E705D88653EF0F368246DA06E8A1CB22E689|O:SYG:SYD:AI(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;0x1200a9;;;BU)(A;ID;0x1200a9;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)\nD|/runtimes|O:SYG:SYD:AI(A;ID;FA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;CIIOID;GA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;ID;FA;;;SY)(A;OICIIOID;GA;;;SY)(A;ID;FA;;;BA)(A;OICIIOID;GA;;;BA)(A;ID;0x1200a9;;;BU)(A;OICIIOID;GXGR;;;BU)(A;OICIIOID;GA;;;CO)(A;ID;0x1200a9;;;AC)(A;OICIIOID;GXGR;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)(A;OICIIOID;GXGR;;;S-1-15-2-2)\nD|/runtimes/7472ca0f8b089f7894bc2894410c9189c034c5192f87a502a5e1dbc71c4fd1aa|O:SYG:SYD:AI(A;ID;FA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;CIIOID;GA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;ID;FA;;;SY)(A;OICIIOID;GA;;;SY)(A;ID;FA;;;BA)(A;OICIIOID;GA;;;BA)(A;ID;0x1200a9;;;BU)(A;OICIIOID;GXGR;;;BU)(A;OICIIOID;GA;;;CO)(A;ID;0x1200a9;;;AC)(A;OICIIOID;GXGR;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)(A;OICIIOID;GXGR;;;S-1-15-2-2)\nD|/runtimes/7472ca0f8b089f7894bc2894410c9189c034c5192f87a502a5e1dbc71c4fd1aa/empty|O:SYG:SYD:(A;ID;FA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;CIIOID;GA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;ID;FA;;;SY)(A;OICIIOID;GA;;;SY)(A;ID;FA;;;BA)(A;OICIIOID;GA;;;BA)(A;ID;0x1200a9;;;BU)(A;OICIIOID;GXGR;;;BU)(A;OICIIOID;GA;;;CO)(A;ID;0x1200a9;;;AC)(A;OICIIOID;GXGR;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)(A;OICIIOID;GXGR;;;S-1-15-2-2)\nF|/runtimes/7472ca0f8b089f7894bc2894410c9189c034c5192f87a502a5e1dbc71c4fd1aa/NODE-LICENSE.txt|8CC9BB466B19FC7E7CC99D03E9DF1132021FDA8B01EEA2624C58BB372DBEF576|O:SYG:SYD:(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;0x1200a9;;;BU)(A;ID;0x1200a9;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)\nF|/runtimes/7472ca0f8b089f7894bc2894410c9189c034c5192f87a502a5e1dbc71c4fd1aa/payload.txt|A0F55EECC91798DFA1DD932A4AEF13F5A8DAC359ECDF25C7514024FD5870C8B0|O:SYG:SYD:(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;0x1200a9;;;BU)(A;ID;0x1200a9;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)\nF|/runtimes/7472ca0f8b089f7894bc2894410c9189c034c5192f87a502a5e1dbc71c4fd1aa/runtime.manifest|D615288BC42B684AD4AD9D18AA5F8CDCA1EE2CB80413743383A666043AB7D265|O:SYG:SYD:(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;0x1200a9;;;BU)(A;ID;0x1200a9;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)\nF|/runtimes/7472ca0f8b089f7894bc2894410c9189c034c5192f87a502a5e1dbc71c4fd1aa/runtime.ready|AA55933E25E796AE0734EFD1DFE3E705D88653EF0F368246DA06E8A1CB22E689|O:SYG:SYD:(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;0x1200a9;;;BU)(A;ID;0x1200a9;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)"
+      },
+      "snapshotDiffsFromFirstInstall": {
+        "first-install": [],
+        "busy-direct-repair": [],
+        "busy-direct-uninstall": [],
+        "busy-major-upgrade": [],
+        "before-lease-release": [],
+        "after-lease-release": [],
+        "released-direct-repair": [
+          {
+            "side": "=>",
+            "row": "F|/bin/node.exe|97CCE5301A815D2DCE07AC5BFD1E6039EAE88185EC1D10AE4F8CB712F1732878|O:SYG:SYD:(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;0x1200a9;;;BU)(A;ID;0x1200a9;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)"
+          },
+          {
+            "side": "=>",
+            "row": "F|/runtimes/7472ca0f8b089f7894bc2894410c9189c034c5192f87a502a5e1dbc71c4fd1aa/NODE-LICENSE.txt|8CC9BB466B19FC7E7CC99D03E9DF1132021FDA8B01EEA2624C58BB372DBEF576|O:SYG:SYD:(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;0x1200a9;;;BU)(A;ID;0x1200a9;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)"
+          },
+          {
+            "side": "=>",
+            "row": "F|/runtimes/7472ca0f8b089f7894bc2894410c9189c034c5192f87a502a5e1dbc71c4fd1aa/payload.txt|A0F55EECC91798DFA1DD932A4AEF13F5A8DAC359ECDF25C7514024FD5870C8B0|O:SYG:SYD:(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;0x1200a9;;;BU)(A;ID;0x1200a9;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)"
+          },
+          {
+            "side": "=>",
+            "row": "F|/runtimes/7472ca0f8b089f7894bc2894410c9189c034c5192f87a502a5e1dbc71c4fd1aa/runtime.manifest|D615288BC42B684AD4AD9D18AA5F8CDCA1EE2CB80413743383A666043AB7D265|O:SYG:SYD:(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;0x1200a9;;;BU)(A;ID;0x1200a9;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)"
+          },
+          {
+            "side": "=>",
+            "row": "F|/runtimes/7472ca0f8b089f7894bc2894410c9189c034c5192f87a502a5e1dbc71c4fd1aa/runtime.ready|AA55933E25E796AE0734EFD1DFE3E705D88653EF0F368246DA06E8A1CB22E689|O:SYG:SYD:(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;0x1200a9;;;BU)(A;ID;0x1200a9;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)"
+          },
+          {
+            "side": "<=",
+            "row": "F|/bin/node.exe|97CCE5301A815D2DCE07AC5BFD1E6039EAE88185EC1D10AE4F8CB712F1732878|O:SYG:SYD:AI(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;0x1200a9;;;BU)(A;ID;0x1200a9;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)"
+          },
+          {
+            "side": "<=",
+            "row": "F|/runtimes/7472ca0f8b089f7894bc2894410c9189c034c5192f87a502a5e1dbc71c4fd1aa/NODE-LICENSE.txt|8CC9BB466B19FC7E7CC99D03E9DF1132021FDA8B01EEA2624C58BB372DBEF576|O:SYG:SYD:AI(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;0x1200a9;;;BU)(A;ID;0x1200a9;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)"
+          },
+          {
+            "side": "<=",
+            "row": "F|/runtimes/7472ca0f8b089f7894bc2894410c9189c034c5192f87a502a5e1dbc71c4fd1aa/payload.txt|A0F55EECC91798DFA1DD932A4AEF13F5A8DAC359ECDF25C7514024FD5870C8B0|O:SYG:SYD:AI(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;0x1200a9;;;BU)(A;ID;0x1200a9;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)"
+          },
+          {
+            "side": "<=",
+            "row": "F|/runtimes/7472ca0f8b089f7894bc2894410c9189c034c5192f87a502a5e1dbc71c4fd1aa/runtime.manifest|D615288BC42B684AD4AD9D18AA5F8CDCA1EE2CB80413743383A666043AB7D265|O:SYG:SYD:AI(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;0x1200a9;;;BU)(A;ID;0x1200a9;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)"
+          },
+          {
+            "side": "<=",
+            "row": "F|/runtimes/7472ca0f8b089f7894bc2894410c9189c034c5192f87a502a5e1dbc71c4fd1aa/runtime.ready|AA55933E25E796AE0734EFD1DFE3E705D88653EF0F368246DA06E8A1CB22E689|O:SYG:SYD:AI(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;0x1200a9;;;BU)(A;ID;0x1200a9;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)"
+          }
+        ],
+        "deferred-failure": [
+          {
+            "side": "=>",
+            "row": "F|/bin/node.exe|97CCE5301A815D2DCE07AC5BFD1E6039EAE88185EC1D10AE4F8CB712F1732878|O:SYG:SYD:(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;0x1200a9;;;BU)(A;ID;0x1200a9;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)"
+          },
+          {
+            "side": "=>",
+            "row": "D|/runtimes/7472ca0f8b089f7894bc2894410c9189c034c5192f87a502a5e1dbc71c4fd1aa/empty|O:SYG:SYD:(A;ID;FA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;CIIOID;GA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;ID;FA;;;SY)(A;OICIIOID;GA;;;SY)(A;ID;FA;;;BA)(A;OICIIOID;GA;;;BA)(A;ID;0x1200a9;;;BU)(A;OICIIOID;GXGR;;;BU)(A;OICIIOID;GA;;;CO)(A;ID;0x1200a9;;;AC)(A;OICIIOID;GXGR;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)(A;OICIIOID;GXGR;;;S-1-15-2-2)"
+          },
+          {
+            "side": "=>",
+            "row": "F|/runtimes/7472ca0f8b089f7894bc2894410c9189c034c5192f87a502a5e1dbc71c4fd1aa/NODE-LICENSE.txt|8CC9BB466B19FC7E7CC99D03E9DF1132021FDA8B01EEA2624C58BB372DBEF576|O:SYG:SYD:(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;0x1200a9;;;BU)(A;ID;0x1200a9;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)"
+          },
+          {
+            "side": "=>",
+            "row": "F|/runtimes/7472ca0f8b089f7894bc2894410c9189c034c5192f87a502a5e1dbc71c4fd1aa/payload.txt|A0F55EECC91798DFA1DD932A4AEF13F5A8DAC359ECDF25C7514024FD5870C8B0|O:SYG:SYD:(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;0x1200a9;;;BU)(A;ID;0x1200a9;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)"
+          },
+          {
+            "side": "=>",
+            "row": "F|/runtimes/7472ca0f8b089f7894bc2894410c9189c034c5192f87a502a5e1dbc71c4fd1aa/runtime.manifest|D615288BC42B684AD4AD9D18AA5F8CDCA1EE2CB80413743383A666043AB7D265|O:SYG:SYD:(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;0x1200a9;;;BU)(A;ID;0x1200a9;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)"
+          },
+          {
+            "side": "=>",
+            "row": "F|/runtimes/7472ca0f8b089f7894bc2894410c9189c034c5192f87a502a5e1dbc71c4fd1aa/runtime.ready|AA55933E25E796AE0734EFD1DFE3E705D88653EF0F368246DA06E8A1CB22E689|O:SYG:SYD:(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;0x1200a9;;;BU)(A;ID;0x1200a9;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)"
+          },
+          {
+            "side": "<=",
+            "row": "F|/bin/node.exe|97CCE5301A815D2DCE07AC5BFD1E6039EAE88185EC1D10AE4F8CB712F1732878|O:SYG:SYD:AI(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;0x1200a9;;;BU)(A;ID;0x1200a9;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)"
+          },
+          {
+            "side": "<=",
+            "row": "D|/runtimes/7472ca0f8b089f7894bc2894410c9189c034c5192f87a502a5e1dbc71c4fd1aa/empty|O:SYG:SYD:AI(A;ID;FA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;CIIOID;GA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;ID;FA;;;SY)(A;OICIIOID;GA;;;SY)(A;ID;FA;;;BA)(A;OICIIOID;GA;;;BA)(A;ID;0x1200a9;;;BU)(A;OICIIOID;GXGR;;;BU)(A;OICIIOID;GA;;;CO)(A;ID;0x1200a9;;;AC)(A;OICIIOID;GXGR;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)(A;OICIIOID;GXGR;;;S-1-15-2-2)"
+          },
+          {
+            "side": "<=",
+            "row": "F|/runtimes/7472ca0f8b089f7894bc2894410c9189c034c5192f87a502a5e1dbc71c4fd1aa/NODE-LICENSE.txt|8CC9BB466B19FC7E7CC99D03E9DF1132021FDA8B01EEA2624C58BB372DBEF576|O:SYG:SYD:AI(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;0x1200a9;;;BU)(A;ID;0x1200a9;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)"
+          },
+          {
+            "side": "<=",
+            "row": "F|/runtimes/7472ca0f8b089f7894bc2894410c9189c034c5192f87a502a5e1dbc71c4fd1aa/payload.txt|A0F55EECC91798DFA1DD932A4AEF13F5A8DAC359ECDF25C7514024FD5870C8B0|O:SYG:SYD:AI(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;0x1200a9;;;BU)(A;ID;0x1200a9;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)"
+          },
+          {
+            "side": "<=",
+            "row": "F|/runtimes/7472ca0f8b089f7894bc2894410c9189c034c5192f87a502a5e1dbc71c4fd1aa/runtime.manifest|D615288BC42B684AD4AD9D18AA5F8CDCA1EE2CB80413743383A666043AB7D265|O:SYG:SYD:AI(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;0x1200a9;;;BU)(A;ID;0x1200a9;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)"
+          },
+          {
+            "side": "<=",
+            "row": "F|/runtimes/7472ca0f8b089f7894bc2894410c9189c034c5192f87a502a5e1dbc71c4fd1aa/runtime.ready|AA55933E25E796AE0734EFD1DFE3E705D88653EF0F368246DA06E8A1CB22E689|O:SYG:SYD:AI(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;0x1200a9;;;BU)(A;ID;0x1200a9;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)"
+          }
+        ],
+        "commit-failure": [
+          {
+            "side": "=>",
+            "row": "F|/bin/node.exe|97CCE5301A815D2DCE07AC5BFD1E6039EAE88185EC1D10AE4F8CB712F1732878|O:SYG:SYD:(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;0x1200a9;;;BU)(A;ID;0x1200a9;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)"
+          },
+          {
+            "side": "=>",
+            "row": "D|/runtimes/7472ca0f8b089f7894bc2894410c9189c034c5192f87a502a5e1dbc71c4fd1aa/empty|O:SYG:SYD:(A;ID;FA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;CIIOID;GA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;ID;FA;;;SY)(A;OICIIOID;GA;;;SY)(A;ID;FA;;;BA)(A;OICIIOID;GA;;;BA)(A;ID;0x1200a9;;;BU)(A;OICIIOID;GXGR;;;BU)(A;OICIIOID;GA;;;CO)(A;ID;0x1200a9;;;AC)(A;OICIIOID;GXGR;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)(A;OICIIOID;GXGR;;;S-1-15-2-2)"
+          },
+          {
+            "side": "=>",
+            "row": "F|/runtimes/7472ca0f8b089f7894bc2894410c9189c034c5192f87a502a5e1dbc71c4fd1aa/NODE-LICENSE.txt|8CC9BB466B19FC7E7CC99D03E9DF1132021FDA8B01EEA2624C58BB372DBEF576|O:SYG:SYD:(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;0x1200a9;;;BU)(A;ID;0x1200a9;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)"
+          },
+          {
+            "side": "=>",
+            "row": "F|/runtimes/7472ca0f8b089f7894bc2894410c9189c034c5192f87a502a5e1dbc71c4fd1aa/payload.txt|A0F55EECC91798DFA1DD932A4AEF13F5A8DAC359ECDF25C7514024FD5870C8B0|O:SYG:SYD:(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;0x1200a9;;;BU)(A;ID;0x1200a9;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)"
+          },
+          {
+            "side": "=>",
+            "row": "F|/runtimes/7472ca0f8b089f7894bc2894410c9189c034c5192f87a502a5e1dbc71c4fd1aa/runtime.manifest|D615288BC42B684AD4AD9D18AA5F8CDCA1EE2CB80413743383A666043AB7D265|O:SYG:SYD:(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;0x1200a9;;;BU)(A;ID;0x1200a9;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)"
+          },
+          {
+            "side": "=>",
+            "row": "F|/runtimes/7472ca0f8b089f7894bc2894410c9189c034c5192f87a502a5e1dbc71c4fd1aa/runtime.ready|AA55933E25E796AE0734EFD1DFE3E705D88653EF0F368246DA06E8A1CB22E689|O:SYG:SYD:(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;0x1200a9;;;BU)(A;ID;0x1200a9;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)"
+          },
+          {
+            "side": "<=",
+            "row": "F|/bin/node.exe|97CCE5301A815D2DCE07AC5BFD1E6039EAE88185EC1D10AE4F8CB712F1732878|O:SYG:SYD:AI(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;0x1200a9;;;BU)(A;ID;0x1200a9;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)"
+          },
+          {
+            "side": "<=",
+            "row": "D|/runtimes/7472ca0f8b089f7894bc2894410c9189c034c5192f87a502a5e1dbc71c4fd1aa/empty|O:SYG:SYD:AI(A;ID;FA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;CIIOID;GA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;ID;FA;;;SY)(A;OICIIOID;GA;;;SY)(A;ID;FA;;;BA)(A;OICIIOID;GA;;;BA)(A;ID;0x1200a9;;;BU)(A;OICIIOID;GXGR;;;BU)(A;OICIIOID;GA;;;CO)(A;ID;0x1200a9;;;AC)(A;OICIIOID;GXGR;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)(A;OICIIOID;GXGR;;;S-1-15-2-2)"
+          },
+          {
+            "side": "<=",
+            "row": "F|/runtimes/7472ca0f8b089f7894bc2894410c9189c034c5192f87a502a5e1dbc71c4fd1aa/NODE-LICENSE.txt|8CC9BB466B19FC7E7CC99D03E9DF1132021FDA8B01EEA2624C58BB372DBEF576|O:SYG:SYD:AI(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;0x1200a9;;;BU)(A;ID;0x1200a9;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)"
+          },
+          {
+            "side": "<=",
+            "row": "F|/runtimes/7472ca0f8b089f7894bc2894410c9189c034c5192f87a502a5e1dbc71c4fd1aa/payload.txt|A0F55EECC91798DFA1DD932A4AEF13F5A8DAC359ECDF25C7514024FD5870C8B0|O:SYG:SYD:AI(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;0x1200a9;;;BU)(A;ID;0x1200a9;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)"
+          },
+          {
+            "side": "<=",
+            "row": "F|/runtimes/7472ca0f8b089f7894bc2894410c9189c034c5192f87a502a5e1dbc71c4fd1aa/runtime.manifest|D615288BC42B684AD4AD9D18AA5F8CDCA1EE2CB80413743383A666043AB7D265|O:SYG:SYD:AI(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;0x1200a9;;;BU)(A;ID;0x1200a9;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)"
+          },
+          {
+            "side": "<=",
+            "row": "F|/runtimes/7472ca0f8b089f7894bc2894410c9189c034c5192f87a502a5e1dbc71c4fd1aa/runtime.ready|AA55933E25E796AE0734EFD1DFE3E705D88653EF0F368246DA06E8A1CB22E689|O:SYG:SYD:AI(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;0x1200a9;;;BU)(A;ID;0x1200a9;;;AC)(A;ID;0x1200a9;;;S-1-15-2-2)"
+          }
+        ]
+      },
+      "node": {
+        "path": "C:\\hostedtoolcache\\windows\\node\\22.23.2\\arm64\\node.exe",
+        "version": "22.23.2",
+        "architecture": "arm64",
+        "sha256": "97cce5301a815d2dce07ac5bfd1e6039eae88185ec1d10ae4f8cb712f1732878"
+      },
+      "helperSha256": "7caa597042c6d48c1bb9cd3b1bf2b1ff473b2d19e8278224eeafc3d5480f6926",
+      "heldLease": {
+        "schemaVersion": 1,
+        "kind": "native-runtime-session",
+        "agent": "openclaw",
+        "runtimeRoot": "C:\\Program Files\\NVIDIA\\NemoClaw\\runtimes\\7472ca0f8b089f7894bc2894410c9189c034c5192f87a502a5e1dbc71c4fd1aa",
+        "runtimeId": "7472ca0f8b089f7894bc2894410c9189c034c5192f87a502a5e1dbc71c4fd1aa",
+        "manifestSha256": "d615288bc42b684ad4ad9d18aa5f8cdca1ee2cb80413743383a666043ab7d265",
+        "sourceRevision": "7935e0ccee812d365fd58d32e7291fd3286a98bf",
+        "nodeSha256": "97cce5301a815d2dce07ac5bfd1e6039eae88185ec1d10ae4f8cb712f1732878",
+        "nodeVersion": "22.23.2",
+        "integrity": "installer-sealed-content",
+        "leaseHeld": true
+      },
+      "leaseProcess": {
+        "pid": 6068,
+        "startedUtc": "2026-09-11T20:12:43.0744714Z",
+        "releaseRequested": true,
+        "exitCode": 0,
+        "stderr": "",
+        "stderrComplete": true,
+        "stdinCodePage": 65001,
+        "stdinPreambleBytes": 0,
+        "observations": [
+          {
+            "label": "ready",
+            "observedUtc": "2026-09-11T20:12:43.1443286Z",
+            "hasExited": false,
+            "exitCode": null
+          },
+          {
+            "label": "busy-direct-repair-before",
+            "observedUtc": "2026-09-11T20:12:43.1473790Z",
+            "hasExited": false,
+            "exitCode": null
+          },
+          {
+            "label": "busy-direct-repair-after",
+            "observedUtc": "2026-09-11T20:12:44.1922015Z",
+            "hasExited": false,
+            "exitCode": null
+          },
+          {
+            "label": "busy-direct-uninstall-before",
+            "observedUtc": "2026-09-11T20:12:44.3345581Z",
+            "hasExited": false,
+            "exitCode": null
+          },
+          {
+            "label": "busy-direct-uninstall-after",
+            "observedUtc": "2026-09-11T20:12:44.9317753Z",
+            "hasExited": false,
+            "exitCode": null
+          },
+          {
+            "label": "busy-major-upgrade-before",
+            "observedUtc": "2026-09-11T20:12:45.0725039Z",
+            "hasExited": false,
+            "exitCode": null
+          },
+          {
+            "label": "busy-major-upgrade-after",
+            "observedUtc": "2026-09-11T20:12:45.6719174Z",
+            "hasExited": false,
+            "exitCode": null
+          },
+          {
+            "label": "before-release",
+            "observedUtc": "2026-09-11T20:12:45.9564004Z",
+            "hasExited": false,
+            "exitCode": null
+          },
+          {
+            "label": "closed",
+            "observedUtc": "2026-09-11T20:12:45.9602995Z",
+            "hasExited": true,
+            "exitCode": 0
+          }
+        ]
+      },
+      "recreatedFileMetadataChanges": [
+        {
+          "path": "/bin/node.exe",
+          "control": "SE_DACL_AUTO_INHERITED",
+          "before": "set",
+          "after": "clear"
+        },
+        {
+          "path": "/runtimes/7472ca0f8b089f7894bc2894410c9189c034c5192f87a502a5e1dbc71c4fd1aa/NODE-LICENSE.txt",
+          "control": "SE_DACL_AUTO_INHERITED",
+          "before": "set",
+          "after": "clear"
+        },
+        {
+          "path": "/runtimes/7472ca0f8b089f7894bc2894410c9189c034c5192f87a502a5e1dbc71c4fd1aa/payload.txt",
+          "control": "SE_DACL_AUTO_INHERITED",
+          "before": "set",
+          "after": "clear"
+        },
+        {
+          "path": "/runtimes/7472ca0f8b089f7894bc2894410c9189c034c5192f87a502a5e1dbc71c4fd1aa/runtime.manifest",
+          "control": "SE_DACL_AUTO_INHERITED",
+          "before": "set",
+          "after": "clear"
+        },
+        {
+          "path": "/runtimes/7472ca0f8b089f7894bc2894410c9189c034c5192f87a502a5e1dbc71c4fd1aa/runtime.ready",
+          "control": "SE_DACL_AUTO_INHERITED",
+          "before": "set",
+          "after": "clear"
+        }
+      ],
+      "rollbackLeafMetadataChanges-deferred-failure": [
+        {
+          "path": "/runtimes/7472ca0f8b089f7894bc2894410c9189c034c5192f87a502a5e1dbc71c4fd1aa/empty",
+          "control": "SE_DACL_AUTO_INHERITED",
+          "before": "set",
+          "after": "clear",
+          "emptyBefore": true,
+          "emptyAfter": true
+        }
+      ],
+      "rollbackLeafMetadataChanges-commit-failure": [],
+      "emptyInstallationDirectoryRemains": false,
+      "foreignFilePreserved": true,
+      "foreignFixtureCleaned": true
+    }
+  },
+  "limits": [
+    "Selected OpenClaw preview only; Hermes remains pending.",
+    "First and warm launches reset agent state; warm does not measure a persistent conversation.",
+    "Response duration includes browser, gateway and inference; isolated inference latency is unavailable.",
+    "Idle measurements include CI observers; process I/O is not file-only or native-flush attribution.",
+    "Runner measurements do not guarantee timing on physical hardware. No whole-product qualification claim."
+  ]
+}

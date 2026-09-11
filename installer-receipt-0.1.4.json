@@ -1,0 +1,84 @@
+{
+  "schemaVersion": 1,
+  "classification": "finished-windows-arm64-openclaw-preview",
+  "productVersion": "0.1.4",
+  "architecture": "arm64",
+  "selectedAgents": [
+    "openclaw"
+  ],
+  "candidateSha": "7935e0ccee812d365fd58d32e7291fd3286a98bf",
+  "sourceRepository": "https://github.com/NVIDIA/NemoClaw",
+  "sourcePullRequest": 10799,
+  "sourceWorkflowRun": 34642501912,
+  "sourceWorkflowAttempt": 1,
+  "sourceWorkflowConclusion": "failure",
+  "functionalAcceptance": "passed",
+  "timingGate": "failed",
+  "fullQualification": false,
+  "timingFailure": {
+    "status": "failed",
+    "targetMilliseconds": 30000,
+    "wholeSetupProcessMilliseconds": 30245,
+    "exceededByMilliseconds": 245,
+    "jobId": 103409580601,
+    "failedStep": "Exercise the installed preview, real inference and owned cleanup",
+    "actualJobMessage": "The installed preview missed its measured30-second installation target.",
+    "jobLogSha256": "7f7afaca942d5e0db27d22c61fdfe6865080e5bd5202b9dbab72b19dfabe3273",
+    "jobUrl": "https://github.com/NVIDIA/NemoClaw/actions/runs/34642501912/job/103409580601"
+  },
+  "sourceArtifact": {
+    "artifactId": 10281415305,
+    "artifactName": "finished-windows-preview-7935e0ccee812d365fd58d32e7291fd3286a98bf",
+    "bytes": 353687893,
+    "sha256": "4daf3f4f91f8a4e654d784841a335fb409d0cd5b6f32529b3869917844847f73",
+    "url": "https://github.com/NVIDIA/NemoClaw/actions/runs/34642501912/artifacts/10281415305"
+  },
+  "sourceBuilderJobId": 103406900422,
+  "acceptanceJobId": 103409580601,
+  "migrationJobId": 103409580577,
+  "runtime": {
+    "runtimeId": "67a963c0b49d32bce7b7c2bc7975dd4cac179fcb34cc33af996229c0a33a2446",
+    "manifestSha256": "80fe905a3ce888fd365a087cf8fe0e7cce5f0a39eb219327e717a55843aa3964",
+    "sourceRevision": "7935e0ccee812d365fd58d32e7291fd3286a98bf",
+    "nodeSha256": "97cce5301a815d2dce07ac5bfd1e6039eae88185ec1d10ae4f8cb712f1732878",
+    "nodeVersion": "22.23.2"
+  },
+  "files": [
+    {
+      "sha256": "99a1f9db86f9be25cf5b903545f6dce626f9f09700c0e51b0b4040f1fd82d750",
+      "bytes": 204621797,
+      "file": "NemoClawSetup-0.1.4-windows-arm64.exe"
+    },
+    {
+      "sha256": "6fcbdef8cbe25157d473729d1ce4a8ad00dadf1bc6f31ed134ac27a7bee91225",
+      "bytes": 150983356,
+      "file": "NemoClaw-0.1.4-windows-arm64.msi"
+    }
+  ],
+  "acceptanceAtPublication": "failed-installation-timing-target",
+  "qualification": {
+    "selectedOpenClawInstalledAcceptance": true,
+    "freshUninstallRootRemoved": true,
+    "publishedPreviewMigration": true,
+    "hermes": "pending",
+    "fullProductQualification": false,
+    "nativeMsiForeignFileControls": true,
+    "productionSupport": false,
+    "physicalHardwareQualified": false,
+    "liveSearchQualified": false
+  },
+  "buildReceipt": {
+    "file": "immutable-package-build-0.1.4.json",
+    "sha256": "73c162af6abd0805f344f4d29696497d5364baa41a190e429de0701d4038d3a7"
+  },
+  "runtimeIdentity": {
+    "file": "runtime-identity-0.1.4.json",
+    "sha256": "7e8eb123d4689e66907ef2611a8af94cdc821a83f74272c913a3c1d352968762"
+  },
+  "acceptanceMeasurements": {
+    "file": "acceptance-measurements-0.1.4.json",
+    "sha256": "bf858b871a55f7b6c5812f3a371c533c5c51123d64a9bd6700ae8207738be955"
+  },
+  "windowsAuthenticode": "not certified by this publication preparation",
+  "delivery": "Existing repository Git LFS artifact branch; no GitHub Release"
+}
