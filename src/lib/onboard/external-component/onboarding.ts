@@ -20,11 +20,7 @@ export function prepareExternalComponent(
   } | null,
 ): PreparedExternalComponent | null {
   assertNoIncompleteExternalComponentActivation(session);
-  const externalComponent = loadExternalComponentDeclaration();
-  if (externalComponent && session?.apfInterceptorRequested === true) {
-    throw new ExternalComponentContractError("lifecycle_unsupported");
-  }
-  return externalComponent;
+  return loadExternalComponentDeclaration();
 }
 
 export function assertNoIncompleteExternalComponentActivation(

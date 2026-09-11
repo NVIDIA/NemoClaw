@@ -218,18 +218,14 @@ describe("external component onboarding lifecycle", () => {
     }
   });
 
-  it("rejects APF onboarding when a component is registered (#11340)", () => {
-    mocks.loadExternalComponentDeclaration.mockReturnValue({} as never);
-
-    expect(() =>
-      prepareExternalComponent({
-        externalComponentActivation: null,
-        apfInterceptorRequested: true,
-      }),
-    ).toThrowError(
-      expect.objectContaining<Partial<ExternalComponentContractError>>({
-        code: "lifecycle_unsupported",
-      }),
-    );
-  });
+  it.each([true, false])(
+    "preserves registration with providerless selection %s (#11486)",
+    (apfInterceptorRequested) => {
+      const component = {} as PreparedExternalComponent;
+      mocks.loadExternalComponentDeclaration.mockReturnValue(component);
+      expect(prepareExternalComponent({ apfInterceptorRequested })).toBe(component);
+      mocks.loadExternalComponentDeclaration.mockReturnValue(null);
+      expect(prepareExternalComponent({ apfInterceptorRequested })).toBeNull();
+    },
+  );
 });

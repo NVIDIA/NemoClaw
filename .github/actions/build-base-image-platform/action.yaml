@@ -52,6 +52,10 @@ inputs:
     description: Optional same-run reviewed mcporter raw audit report path.
     required: false
     default: ""
+  mcporter-audit-policy-result:
+    description: Optional same-run reviewed mcporter audit policy result path.
+    required: false
+    default: ""
 
 runs:
   using: composite
@@ -74,6 +78,7 @@ runs:
         OPENCLAW_VERSION_INPUT: ${{ inputs.openclaw-version }}
         MCPORTER_AUDIT_RECEIPT: ${{ inputs.mcporter-audit-receipt }}
         MCPORTER_AUDIT_RAW_REPORT: ${{ inputs.mcporter-audit-raw-report }}
+        MCPORTER_AUDIT_POLICY_RESULT: ${{ inputs.mcporter-audit-policy-result }}
       run: |
         set -euo pipefail
         build_args=()
@@ -101,7 +106,9 @@ runs:
         if [ "$AGENT" = "openclaw" ] && [ -n "${MCPORTER_AUDIT_RECEIPT:-}" ]; then
           test -f "$MCPORTER_AUDIT_RECEIPT"
           test -f "${MCPORTER_AUDIT_RAW_REPORT:-}"
-          audit_build_args="NEMOCLAW_MCPORTER_AUDIT_RECEIPT_SHA256=$(sha256sum "$MCPORTER_AUDIT_RECEIPT" | cut -d' ' -f1)"
+          test -f "${MCPORTER_AUDIT_POLICY_RESULT:-}"
+          audit_build_args="NEMOCLAW_MCPORTER_AUDIT_RECEIPT_SHA256=$(sha256sum "$MCPORTER_AUDIT_RECEIPT" | cut -d' ' -f1)
+        NEMOCLAW_MCPORTER_AUDIT_POLICY_RESULT_SHA256=$(sha256sum "$MCPORTER_AUDIT_POLICY_RESULT" | cut -d' ' -f1)"
         fi
         printf 'openclaw_build_arg=%s\n' "$openclaw_build_arg" >> "$GITHUB_OUTPUT"
         if [ -n "$audit_build_args" ]; then
@@ -127,6 +134,7 @@ runs:
         secret-files: |
           ${{ inputs.agent == 'openclaw' && format('nemoclaw-mcporter-audit-receipt={0}', inputs.mcporter-audit-receipt) || '' }}
           ${{ inputs.agent == 'openclaw' && format('nemoclaw-mcporter-audit-raw-report={0}', inputs.mcporter-audit-raw-report) || '' }}
+          ${{ inputs.agent == 'openclaw' && format('nemoclaw-mcporter-audit-policy-result={0}', inputs.mcporter-audit-policy-result) || '' }}
 
     - name: Validate Deep Agents Code dos2unix executable
       if: ${{ inputs.agent == 'langchain-deepagents-code' }}

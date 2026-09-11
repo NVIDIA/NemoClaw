@@ -275,6 +275,36 @@ describe("sandbox config sync helpers", () => {
     expect(fs.statSync(configDir).uid).toBe(process.getuid?.());
   });
 
+  itUnix("syncs Hermes selection while preserving an existing OpenClaw directory", async () => {
+    const homeDir = createConfigSyncHome();
+    const configDir = path.join(homeDir, ".openclaw");
+    const configFile = path.join(configDir, "openclaw.json");
+    const hashFile = path.join(configDir, ".config-hash");
+    fs.mkdirSync(configDir, { mode: 0o750 });
+    fs.writeFileSync(configFile, "retained user state\n", { mode: 0o640 });
+    fs.writeFileSync(hashFile, "retained hash\n", { mode: 0o640 });
+    const modesBefore = [configDir, configFile, hashFile].map(modeBits);
+    const runConnectScript = vi.fn(async (_name: string, script: string) => {
+      const { nativeCalls } = runConfigSyncScript(script, homeDir, "1234", "1234", {
+        validationStatus: 127,
+      });
+      expect(nativeCalls).toEqual([]);
+    });
+
+    await runSandboxConfigSync("hermes-reuse", {
+      getSelectionConfig: () => ({ ...selection, agent: "hermes" }),
+      runConnectScript,
+    });
+
+    expect(runConnectScript).toHaveBeenCalledOnce();
+    expect(
+      JSON.parse(fs.readFileSync(path.join(homeDir, ".nemoclaw", "config.json"), "utf8")),
+    ).toMatchObject({ ...selection, agent: "hermes", onboardedAt: expect.any(String) });
+    expect(fs.readFileSync(configFile, "utf8")).toBe("retained user state\n");
+    expect(fs.readFileSync(hashFile, "utf8")).toBe("retained hash\n");
+    expect([configDir, configFile, hashFile].map(modeBits)).toEqual(modesBefore);
+  });
+
   itUnix("keeps credential values out of sandbox selection config", () => {
     const homeDir = createConfigSyncHome();
     const anthropicSelection = {

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   hostLocalInferenceReceipt,
   serializedLlamaCppHostLocalInferenceReceipt,
@@ -186,6 +186,7 @@ vi.mock("../../inference/nim", () => ({
 }));
 vi.mock("../../messaging/channels", () => ({
   BUILT_IN_CHANNEL_MANIFESTS: [],
+  createBuiltInChannelManifestRegistry: vi.fn(() => ({ list: () => [] })),
   getMessagingConfigEnvAliases: vi.fn(() => ({})),
   getMessagingCredentialEnvKeysByChannel: vi.fn(() => ({})),
   getMessagingProviderSuffixesByChannel: vi.fn(() => ({})),
@@ -268,6 +269,11 @@ vi.mock("./snapshot/dependencies", async (importOriginal) => ({
 }));
 
 describe("snapshot restore auto-create failures", () => {
+  beforeAll(async () => {
+    // Load the mocked action graph before measuring the individual cleanup operations.
+    await import("./snapshot");
+  }, 30_000);
+
   beforeEach(() => {
     vi.clearAllMocks();
     harness.entries.clear();

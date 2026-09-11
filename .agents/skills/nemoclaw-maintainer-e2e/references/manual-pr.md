@@ -86,7 +86,6 @@ gh workflow run .github/workflows/e2e.yaml \
   -f inference_mode=mock \
   -f "include_staging_brev_launchable=${INCLUDE_STAGING_BREV_LAUNCHABLE}" \
   -f "allow_jetson_dispatch=${ALLOW_JETSON_DISPATCH}" \
-  -f allow_dgx_spark_runner_queue=false \
   -f "pr_number=${PR_NUMBER}" \
   -f "checkout_sha=${HEAD_SHA}" \
   -f "checkout_repository=${HEAD_REPOSITORY}" \
@@ -184,7 +183,6 @@ gh workflow run .github/workflows/e2e.yaml \
   -f inference_mode=mock \
   -f "include_staging_brev_launchable=${INCLUDE_STAGING_BREV_LAUNCHABLE}" \
   -f allow_jetson_dispatch=false \
-  -f allow_dgx_spark_runner_queue=false \
   -f "pr_number=${PR_NUMBER}" \
   -f "checkout_sha=${BASE_SHA}" \
   -f "checkout_repository=${BASE_REPOSITORY}" \
