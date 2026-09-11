@@ -520,7 +520,7 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
     gatewayStateCreated: false,
     liveGatewayNames: ["nemoclaw"],
     onLog: (_message: string, _tmpHome: string, _port: number) => undefined,
-    onPortCheck: (_call: number, _tmpHome: string, _port: number) => undefined,
+    onPortCheck: (_firstAfterAdmission: boolean, _tmpHome: string, _port: number) => undefined,
     portAvailability: [true],
     prepareState: (stateRoot: string, port: number) =>
       writePreGatewaySession(stateRoot, port, "interrupted"),
@@ -620,10 +620,14 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
     },
     {
       ...interruptedPreGatewayBase,
+      assertErrors: (errors: string) =>
+        expect(errors).toContain(
+          "The interrupted pre-gateway state changed during uninstall; preserving it for retry.",
+        ),
       expectedExit: 1,
       gatewayStateCreated: true,
-      onPortCheck: (call: number, tmpHome: string, port: number) =>
-        call === 4 ? writeScopedGatewayState(tmpHome, port) : undefined,
+      onPortCheck: (firstAfterAdmission: boolean, tmpHome: string, port: number) =>
+        firstAfterAdmission ? writeScopedGatewayState(tmpHome, port) : undefined,
       scenario: "preserves interrupted state when gateway state appears during revalidation",
       stateKept: true,
     },
@@ -705,6 +709,8 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
         const calls: string[][] = [];
         const errors: string[] = [];
         let observedGatewayNames: readonly string[] = liveGatewayNames;
+        let interruptedPreGatewayAdmissionObserved = false;
+        let postAdmissionPortChecks = 0;
         let portAvailabilityIndex = 0;
         const commandResults: Record<string, RunResult> = {
           pgrep: { ...ok(), status: 1 },
@@ -729,13 +735,20 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
             hasPortableRuntimeCleanup: () => false,
             isPortFree: () => {
               portAvailabilityIndex += 1;
-              onPortCheck(portAvailabilityIndex, tmpHome, port);
+              onPortCheck(
+                interruptedPreGatewayAdmissionObserved && postAdmissionPortChecks++ === 0,
+                tmpHome,
+                port,
+              );
               return portAvailability[
                 Math.min(portAvailabilityIndex - 1, portAvailability.length - 1)
               ]!;
             },
             isTty: false,
             log: (message) => {
+              interruptedPreGatewayAdmissionObserved ||=
+                message ===
+                "No sandbox or gateway process was created; continuing cleanup of the interrupted onboarding state.";
               observedGatewayNames = onLog(message, tmpHome, port) ?? observedGatewayNames;
             },
             requireCompleteGatewayProcessCleanup: childRun,
