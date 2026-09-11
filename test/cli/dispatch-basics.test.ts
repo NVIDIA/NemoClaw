@@ -8,6 +8,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { help } from "../../src/lib/actions/root-help.js";
+import { selectSandboxOwningGateway } from "../../src/lib/actions/sandbox/gateway-select.js";
 import { normalizeArgv } from "../../src/lib/cli/argv-normalizer.js";
 import { globalCommandTokens } from "../../src/lib/cli/command-registry.js";
 import { withDirectPublicDispatch } from "../support/public-dispatch-test-harness.js";
@@ -1213,6 +1214,34 @@ describe("CLI dispatch", () => {
           );
         },
         { sandboxNames: ["owner-b"], preserveHome: true },
+      );
+    });
+  });
+
+  it("routes connect for a sibling-port sandbox through its recorded gateway", async () => {
+    await withSiblingGatewayRegistry([{ port: 8245, name: "owner-a" }], async () => {
+      await withDirectPublicDispatch(
+        async ({ dispatchCli, recoverRegistryEntries, runOclifCommandById, stderr }) => {
+          const runGatewaySelect = vi.fn(() => ({ status: 0 }) as never);
+          runOclifCommandById.mockImplementationOnce(async (commandId: string, args: string[]) => {
+            expect(commandId).toBe("sandbox:connect");
+            expect(args).toEqual(["owner-a", "--probe-only"]);
+            expect(selectSandboxOwningGateway("owner-a", runGatewaySelect)).toEqual({
+              outcome: "selected",
+              gatewayName: "nemoclaw-8245",
+            });
+          });
+
+          await dispatchCli(["owner-a", "connect", "--probe-only"]);
+
+          expect(stderr.join("\n")).not.toContain("does not exist");
+          expect(recoverRegistryEntries).not.toHaveBeenCalled();
+          expect(runGatewaySelect).toHaveBeenCalledWith(
+            ["gateway", "select", "nemoclaw-8245"],
+            expect.objectContaining({ ignoreError: true }),
+          );
+        },
+        { sandboxNames: ["owner-b"], preserveHome: true, connectFlags: ["--probe-only"] },
       );
     });
   });
