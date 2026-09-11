@@ -685,7 +685,9 @@ jobs:
       actions: read
       contents: read
     runs-on: ubuntu-24.04
-    timeout-minutes: 35
+    # Keep the job deadline outside every bounded sandbox-owning phase so the
+    # runner-local cleanup step gets a deterministic chance to execute.
+    timeout-minutes: 60
     outputs:
       candidate-artifact-id: ${{ steps.upload.outputs.artifact-id }}
       cleanup-receipt: ${{ steps.outcome.outputs.cleanup-receipt }}
@@ -784,15 +786,15 @@ jobs:
 
       - id: create
         name: Create the credential-free sandbox
-        run: node --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/repair-resolve.mts" create
+        run: timeout --signal=TERM --kill-after=15s 5m node --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/repair-resolve.mts" create
 
       - id: repair_run
         name: Run exactly two Pi turns
-        run: node --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/repair-resolve.mts" run
+        run: timeout --signal=TERM --kill-after=15s 22m node --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/repair-resolve.mts" run
 
       - id: download
         name: Download the candidate and proposal
-        run: node --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/repair-resolve.mts" download
+        run: timeout --signal=TERM --kill-after=15s 5m node --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/repair-resolve.mts" download
 
       - id: cleanup
         name: Delete the sandbox
@@ -800,7 +802,7 @@ jobs:
         continue-on-error: true
         env:
           CLEANUP_RECEIPT_FILE: ${{ runner.temp }}/repair-cleanup.json
-        run: node --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/repair-resolve.mts" delete
+        run: timeout --signal=TERM --kill-after=15s 5m node --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/repair-resolve.mts" delete
 
       - id: export
         name: Export the exact-path patch on the trusted host

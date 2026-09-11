@@ -93,7 +93,14 @@ describe("PR Review Advisor repair workflow contracts", () => {
     expect(resolveText).toContain("CLEANUP_RECEIPT_FILE");
     expect(resolveText).toContain("Preserve resolver and cleanup outcomes");
     expect(resolve["runs-on"]).toBe("ubuntu-24.04");
-    expect(resolve["timeout-minutes"]).toBe(35);
+    expect(resolve["timeout-minutes"]).toBe(60);
+    const boundedSandboxSteps = new Map(
+      (resolve.steps ?? []).map((step) => [step.id, String(step.run ?? "")]),
+    );
+    expect(boundedSandboxSteps.get("create")).toContain("kill-after=15s 5m");
+    expect(boundedSandboxSteps.get("repair_run")).toContain("kill-after=15s 22m");
+    expect(boundedSandboxSteps.get("download")).toContain("kill-after=15s 5m");
+    expect(boundedSandboxSteps.get("cleanup")).toContain("kill-after=15s 5m");
     expect(resolveText).toContain("advisor-repair-${{ github.run_id }}");
     expect(validateText).toContain("needs.repair-select.outputs.context-artifact-id");
     expect(validateText).toContain("needs.repair-resolve.outputs.candidate-artifact-id");

@@ -272,6 +272,7 @@ describe("PR Review Advisor generated-head evidence", () => {
     const runName = `Repair validation ${selection.attemptKey} head ${generatedHeadSha}`;
     const receiptName = `Repair receipt ${selection.attemptKey} PR ${selection.prNumber} head ${generatedHeadSha} base ${selection.baseSha}`;
     let failedWorkflow: string | undefined;
+    let prerequisiteStatus: "completed" | "queued" = "completed";
     let workflowHeadSha = "5".repeat(40);
     let correlationMode: "one" | "zero" | "ambiguous" = "one";
     let mismatchedReceipt = false;
@@ -434,12 +435,18 @@ describe("PR Review Advisor generated-head evidence", () => {
             const specification = ADVISOR_REPAIR_HEAD_WORKFLOWS[runId - 1];
             const workflowName =
               specification?.workflow ?? ADVISOR_REPAIR_PREREQUISITE_WORKFLOWS[0];
+            const prerequisite = ADVISOR_REPAIR_PREREQUISITE_WORKFLOWS.includes(workflowName);
             return {
               id: runId,
               event: "workflow_dispatch",
               path: `.github/workflows/${workflowName}`,
-              status: "completed",
-              conclusion: workflowName === failedWorkflow ? "failure" : "success",
+              status: prerequisite ? prerequisiteStatus : "completed",
+              conclusion:
+                prerequisite && prerequisiteStatus !== "completed"
+                  ? null
+                  : workflowName === failedWorkflow
+                    ? "failure"
+                    : "success",
               display_title: runName,
               head_branch: "main",
               head_sha: workflowHeadSha,
@@ -553,9 +560,21 @@ describe("PR Review Advisor generated-head evidence", () => {
       request.mock.calls.filter(
         ([method, apiPath]) => method === "POST" && String(apiPath).endsWith("/dispatches"),
       ).length;
+    const checkRunPublicationCalls = () =>
+      request.mock.calls.filter(
+        ([method, apiPath]) => method === "POST" && String(apiPath).endsWith("/check-runs"),
+      ).length;
     const dispatchCount = workflowDispatchCalls();
     await expect(verify()).resolves.toMatchObject({ outcome: "success" });
     expect(workflowDispatchCalls()).toBe(dispatchCount);
+    const publishedChecks = checkRunPublicationCalls();
+    prerequisiteStatus = "queued";
+    dispatchedWorkflows.clear();
+    await expect(verify()).rejects.toThrow(
+      "generated-head validation did not finish before its controller deadline",
+    );
+    expect(checkRunPublicationCalls()).toBe(publishedChecks);
+    prerequisiteStatus = "completed";
     changedPaths = ["src/lib/credentials/example.ts"];
     dispatchedWorkflows.clear();
     await expect(verify()).rejects.toThrow(

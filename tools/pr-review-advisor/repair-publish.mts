@@ -1162,6 +1162,7 @@ export async function waitForAdvisorRepairHead(input: {
       }
     }
     const workflows: AdvisorRepairHeadReceipt["workflows"] = [];
+    let completedPrerequisites = 0;
     for (const workflow of ADVISOR_REPAIR_PREREQUISITE_WORKFLOWS) {
       const dispatch = dispatches.get(workflow);
       if (!dispatch) continue;
@@ -1173,6 +1174,7 @@ export async function waitForAdvisorRepairHead(input: {
       }
       if (run.status === "completed" && run.conclusion !== "success")
         throw new RepairError(`generated-head ${workflow} run failed`);
+      if (run.status === "completed" && run.conclusion === "success") completedPrerequisites += 1;
     }
     for (const specification of ADVISOR_REPAIR_HEAD_WORKFLOWS) {
       const dispatch = dispatches.get(specification.workflow);
@@ -1215,7 +1217,11 @@ export async function waitForAdvisorRepairHead(input: {
           }
         },
       });
-    if (workflows.length === ADVISOR_REPAIR_HEAD_WORKFLOWS.length && (!e2eDispatch || e2e)) {
+    if (
+      completedPrerequisites === ADVISOR_REPAIR_PREREQUISITE_WORKFLOWS.length &&
+      workflows.length === ADVISOR_REPAIR_HEAD_WORKFLOWS.length &&
+      (!e2eDispatch || e2e)
+    ) {
       const checks = await publishRepairChecks(
         input.generatedHeadSha,
         input.attemptKey,
