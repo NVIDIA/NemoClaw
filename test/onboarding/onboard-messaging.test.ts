@@ -1696,7 +1696,7 @@ const { setupMessagingChannels } = require(${onboardPath});
       const payload = parseStdoutJson<{ channels: string[]; commands: string[] }>(result.stdout);
       assert.deepEqual(payload.channels, ["telegram", "slack"]);
       assert.ok(
-        !payload.commands.some((command) => command.includes("discord")),
+        !payload.commands.some((command) => command.toLowerCase().includes("discord")),
         "No captured command should mention Discord",
       );
     },
