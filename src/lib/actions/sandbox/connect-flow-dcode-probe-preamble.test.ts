@@ -35,6 +35,90 @@ describe("connectSandbox DCode probe preamble boundary", () => {
     delete require.cache[requireDist.resolve(connectModulePath)];
   });
 
+  it("does not run an uncached version command before refusing a broken DeepAgents route (#11520)", async () => {
+    const harness = createConnectHarness({
+      agentName: "langchain-deepagents-code",
+      sessionAgent: { name: "langchain-deepagents-code" },
+      inferenceProbeResponses: ["probe unavailable"],
+    });
+    const version = requireDist(
+      "../../src/lib/sandbox/version.js",
+    ) as typeof import("../../sandbox/version");
+    const ssh = requireDist(
+      "../../src/lib/adapters/openshell/sandbox-ssh-cli.js",
+    ) as typeof import("../../adapters/openshell/sandbox-ssh-cli");
+    vi.mocked(version.checkAgentVersion).mockRestore();
+    const run = vi.fn(async () => ({
+      kind: "completed" as const,
+      exitCode: 0,
+      stdout: "0.1.12",
+      stderr: "",
+    }));
+    vi.spyOn(ssh, "createCliOpenShellSandboxSshExecutor").mockReturnValue({ run });
+
+    await expect(harness.connectSandbox("alpha")).rejects.toThrow("process.exit(1)");
+
+    expect(run).not.toHaveBeenCalled();
+    expect(harness.startSandboxSessionSpy).not.toHaveBeenCalled();
+    expect(harness.registryUpdateSpy).not.toHaveBeenCalled();
+    await version.checkAgentVersion("alpha");
+    expect(run).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    ["rejected inference", { status: 1, output: "503\n", stderr: "" }],
+    ["forged success", { status: 0, output: "OK 200", stderr: "" }],
+    ["unavailable transport", { status: null, output: "", stderr: "" }],
+  ])(
+    "refuses a session after models discovery succeeds but %s follows (#11520)",
+    async (_reason, response) => {
+      const harness = createConnectHarness({
+        agentName: "langchain-deepagents-code",
+        registryEntry: {
+          provider: "nvidia-prod",
+          model: "nvidia/nemotron-3-super-120b-a12b",
+        },
+        inferenceGetOutput: "Provider: nvidia-prod\nModel: nvidia/nemotron-3-super-120b-a12b\n",
+        sessionAgent: { name: "langchain-deepagents-code" },
+      });
+      const runBuffered = harness.sandboxRunBufferedSpy.getMockImplementation()!;
+      harness.sandboxRunBufferedSpy.mockImplementation(async (request) =>
+        request.command.join(" ").includes("/v1/chat/completions")
+          ? {
+              outcome:
+                response.status === null
+                  ? { kind: "failed", error: { kind: "capture", message: "unavailable" } }
+                  : { kind: "completed", exitCode: response.status },
+              stdout: response.output,
+              stderr: response.stderr,
+            }
+          : runBuffered(request),
+      );
+
+      await expect(harness.connectSandbox("alpha")).rejects.toThrow("process.exit(1)");
+
+      expect(harness.startSandboxSessionSpy).not.toHaveBeenCalled();
+      expect(harness.runAutoPairSpy).not.toHaveBeenCalled();
+      expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain("inference request");
+    },
+  );
+
+  it.each([{ provider: null }, { model: null }])(
+    "refuses a DeepAgents session with incomplete route metadata %j (#11520)",
+    async (missing) => {
+      const harness = createConnectHarness({
+        agentName: "langchain-deepagents-code",
+        sessionAgent: { name: "langchain-deepagents-code" },
+        registryEntry: { provider: "nvidia-prod", model: "nvidia/nemotron", ...missing },
+      });
+
+      await expect(harness.connectSandbox("alpha")).rejects.toThrow("process.exit(1)");
+
+      expect(harness.startSandboxSessionSpy).not.toHaveBeenCalled();
+      expect(harness.sandboxRunBufferedSpy).not.toHaveBeenCalled();
+    },
+  );
+
   it.each(["OK 200\nBROKEN 000", "BROKEN 503\nOK 200"])(
     "rejects login-shell preamble evidence without repair or SSH (%s) (#6192)",
     async (output) => {
