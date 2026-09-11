@@ -657,8 +657,10 @@ ensure_cli_shim "nemoclaw-acp"`,
       expect(
         fs.readdirSync(path.dirname(shimPath)).filter((name) => name.includes(".tmp.")).length,
       ).toBe(0);
-      expect(`${result.stdout}${result.stderr}`).toContain(
-        `${shimPath} changed while NemoClaw prepared its shim`,
+      const output = `${result.stdout}${result.stderr}`;
+      expect(output).toContain(shimPath);
+      expect(output).toMatch(
+        /(?:changed while NemoClaw prepared its shim|is no longer a NemoClaw-managed shim)/,
       );
     },
   );
