@@ -34,6 +34,7 @@ import {
   onboardCredentialEnv,
   onboardSession,
   openshellRuntime,
+  providerCommand,
   policies,
   policyGet,
   policyState,
@@ -571,7 +572,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     detected: false,
     sessions: [],
   });
-  vi.spyOn(sandboxVersion, "checkAgentVersion").mockImplementation((...args: unknown[]) => {
+  vi.spyOn(sandboxVersion, "checkAgentVersion").mockImplementation(async (...args: unknown[]) => {
     const options = args[1] as { forceProbe?: boolean } | undefined;
     if (options?.forceProbe) {
       const expectedVersion = overrides.versionCheck?.expectedVersion ?? "0.2.0";
@@ -731,12 +732,12 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
       return argv[0] === "provider" && argv[1] === "get"
         ? {
             status: 0,
-            stdout:
-              "Name: compatible-endpoint\nType: openai\nCredential keys: COMPATIBLE_API_KEY\nConfig keys: OPENAI_BASE_URL\n",
+            stdout: `Name: ${argv[2]}\nType: openai\nCredential keys: COMPATIBLE_API_KEY\nConfig keys: OPENAI_BASE_URL\n`,
             stderr: "",
           }
         : { status: 0, output: "" };
     });
+  providerCommand.setProviderCommandRuntimeHooksForTest({ runOpenshell: runOpenshellSpy });
   const captureOpenshellSpy = vi
     .spyOn(openshellRuntime, "captureOpenshell")
     .mockImplementation((args: unknown, options?: unknown) => {
@@ -1008,6 +1009,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     prepareManagedDcodeRebuildImageSpy,
     preparedDcodeBuildContext,
     registryUpdateSpy,
+    getSandboxEntry: readCurrentSandboxEntry,
     setDefaultSpy,
     setDefault: (name: string) => registry.setDefault(name),
     registerHermesInferenceProviderSpy,

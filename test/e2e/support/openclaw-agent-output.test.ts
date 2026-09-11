@@ -4,7 +4,11 @@
 import { describe, expect, it } from "vitest";
 
 import { containsAnswer } from "../../helpers/e2e-answer-assertions.ts";
-import { parseOpenClawAgentText } from "../fixtures/openclaw-agent-output.ts";
+import {
+  nativeStateDoctorReportIsValid,
+  nativeStateProcessIdentitiesAreValid,
+  parseOpenClawAgentText,
+} from "../fixtures/openclaw-agent-output.ts";
 
 describe("OpenClaw agent-output fixture", () => {
   it("rejects echoed user messages as agent-response evidence", () => {
@@ -353,5 +357,92 @@ describe("OpenClaw agent-output fixture", () => {
     ["incomplete-turn error", { error: { kind: "incomplete_turn" } }],
   ])("rejects reply evidence with declared %s metadata", (_label, meta) => {
     expect(parseOpenClawAgentText(JSON.stringify({ payloads: [{ text: "56" }], meta }))).toBe("");
+  });
+});
+
+describe("OpenClaw native state doctor evidence", () => {
+  const report = (findings: unknown[] = []) =>
+    JSON.stringify({ ok: findings.length === 0, checksRun: 1, checksSkipped: 50, findings });
+  const checkId = "core/doctor/state-integrity";
+  const warning = { checkId, severity: "warning", path: "/unrelated-state-volume" };
+  const clean = report();
+  const unrelated = report([warning]);
+
+  it.each([
+    ["native startup text", 0, false, `native startup info\n${clean}`, true],
+    ["unrelated warning", 1, false, unrelated, true],
+    ["ok false with exit0", 0, false, unrelated, false],
+    [
+      "pathless detector exception",
+      1,
+      false,
+      report([{ checkId, severity: "error", message: "health check threw: EACCES" }]),
+      false,
+    ],
+    [
+      "state directory permissions",
+      1,
+      false,
+      report([{ ...warning, path: "/sandbox/.openclaw" }]),
+      false,
+    ],
+    [
+      "config permissions",
+      1,
+      false,
+      report([{ ...warning, path: "/sandbox/.openclaw/openclaw.json" }]),
+      false,
+    ],
+    ["timeout with exit1", 1, true, unrelated, false],
+    [
+      "different selected check",
+      1,
+      false,
+      report([{ ...warning, checkId: "core/doctor/disk-space" }]),
+      false,
+    ],
+    ["unavailable command", 127, false, unrelated, false],
+    ["absent completed exit", null, false, unrelated, false],
+    ["duplicate reports", 0, false, `${clean}\n${clean}`, false],
+    ["malformed report", 0, false, '{"ok":true,', false],
+    ["missing report", 0, false, "", false],
+  ] as const)("classifies %s", (_name, exitCode, timedOut, stdout, expected) => {
+    expect(nativeStateDoctorReportIsValid({ exitCode, timedOut, stdout })).toBe(expected);
+  });
+});
+
+describe("OpenClaw native state process identities", () => {
+  const identities = ` EUID EGID PID PPID COMMAND
+    0 0 1 0 openshell-sandb
+    998 998 892 1 bash
+    998 998 1315 892 openclaw-gatewa
+    998 998 2196 1 ps`;
+
+  it.each([
+    ["same-user gateway", 0, false, identities, true],
+    ["distinct user and group IDs", 0, false, identities.replaceAll("998 998", "1000 999"), true],
+    ["root gateway user", 0, false, identities.replace("998 998 1315", "0 998 1315"), false],
+    ["root gateway group", 0, false, identities.replace("998 998 1315", "998 0 1315"), false],
+    ["different gateway user", 0, false, identities.replace("998 998 1315", "999 998 1315"), false],
+    [
+      "different gateway group",
+      0,
+      false,
+      identities.replace("998 998 1315", "998 999 1315"),
+      false,
+    ],
+    ["missing gateway", 0, false, identities.replace("openclaw-gatewa", "node"), false],
+    ["duplicate gateway", 0, false, `${identities}\n998 998 1316 892 openclaw-gatewa`, false],
+    ["duplicate PID", 0, false, `${identities}\n998 998 892 1 bash`, false],
+    ["non-Bash parent", 0, false, identities.replace("1 bash", "1 sh"), false],
+    ["indirect parent", 0, false, identities.replace("892 1 bash", "892 900 bash"), false],
+    ["non-root PID1 user", 0, false, identities.replace("0 0 1 0", "998 0 1 0"), false],
+    ["non-root PID1 group", 0, false, identities.replace("0 0 1 0", "0 998 1 0"), false],
+    ["malformed row", 0, false, `${identities}\ntruncated`, false],
+    ["empty stdout", 0, false, "", false],
+    ["failed command", 1, false, identities, false],
+    ["timed-out command", 0, true, identities, false],
+  ] as const)("classifies %s", (_name, exitCode, timedOut, stdout, expected) => {
+    expect(nativeStateProcessIdentitiesAreValid({ exitCode, timedOut, stdout })).toBe(expected);
   });
 });

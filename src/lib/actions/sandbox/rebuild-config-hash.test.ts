@@ -38,15 +38,19 @@ describe("OpenClaw rebuild config hash target selection", () => {
     vi.unstubAllEnvs();
   });
 
-  it("refreshes the config hash on the selected target instead of the ambient target (#10514)", () => {
-    const execute = vi.spyOn(processRecovery, "executeSandboxCommand").mockReturnValue({
+  it("refreshes the config hash on the selected target instead of the ambient target (#10514)", async () => {
+    const execute = vi.spyOn(processRecovery, "executeSandboxCommand").mockResolvedValue({
       status: 0,
       stdout: "",
       stderr: "",
     });
 
     expect(
-      refreshMutableOpenClawConfigHashAfterPostRestoreWrites("alpha", vi.fn(), runtimeSelection),
+      await refreshMutableOpenClawConfigHashAfterPostRestoreWrites(
+        "alpha",
+        vi.fn(),
+        runtimeSelection,
+      ),
     ).toBe(true);
     expect(execute).toHaveBeenCalledExactlyOnceWith(
       "alpha",
@@ -56,14 +60,16 @@ describe("OpenClaw rebuild config hash target selection", () => {
     expect(process.env.OPENSHELL_GATEWAY).toBe("hostile-gateway");
   });
 
-  it("verifies the config hash on the selected target instead of the ambient target (#10514)", () => {
-    const execute = vi.spyOn(processRecovery, "executeSandboxCommand").mockReturnValue({
+  it("verifies the config hash on the selected target instead of the ambient target (#10514)", async () => {
+    const execute = vi.spyOn(processRecovery, "executeSandboxCommand").mockResolvedValue({
       status: 0,
       stdout: "",
       stderr: "",
     });
 
-    expect(verifyFinalMutableOpenClawConfigHash("alpha", vi.fn(), runtimeSelection)).toBe(true);
+    expect(await verifyFinalMutableOpenClawConfigHash("alpha", vi.fn(), runtimeSelection)).toBe(
+      true,
+    );
     expect(execute).toHaveBeenCalledExactlyOnceWith(
       "alpha",
       buildVerifyMutableOpenClawConfigHashCommand(),

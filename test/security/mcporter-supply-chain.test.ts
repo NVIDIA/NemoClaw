@@ -51,8 +51,7 @@ const reviewedAuditDriver = fs.readFileSync(
 function extractIntegrityGate(contents: string): string {
   const startMarker = 'MCPORTER_EXPECTED_INTEGRITY=""';
   const start = contents.indexOf(startMarker);
-  const helperMarker =
-    "node /scripts/lib/reviewed-npm-archive.mts --verify-only";
+  const helperMarker = "node /scripts/lib/reviewed-npm-archive.mts --verify-only";
   const helperStart = contents.indexOf(helperMarker, start);
   const helperEndMarker = '--label "mcporter ${MCPORTER_VERSION}"';
   const helperEnd = contents.indexOf(helperEndMarker, helperStart) + helperEndMarker.length;
@@ -70,7 +69,7 @@ function extractIntegrityGate(contents: string): string {
 
 function extractAuditReceiptInvocation(contents: string): string {
   const startMarker = "node /scripts/lib/npm-audit-receipt.mts";
-  const endMarker = "--legacy-npmjs true";
+  const endMarker = "--legacy-audit true";
   const start = contents.indexOf(startMarker);
   const end = contents.indexOf(endMarker, start);
   expect(start).toBeGreaterThanOrEqual(0);
@@ -213,14 +212,12 @@ describe("mcporter image supply-chain controls", () => {
     expect(contents).toContain(
       "--mount=type=secret,id=nemoclaw-mcporter-audit-raw-report,required=false",
     );
-    expect(flattenedContents).toContain(
-      "node /scripts/lib/npm-audit-receipt.mts --receipt",
-    );
+    expect(flattenedContents).toContain("node /scripts/lib/npm-audit-receipt.mts --receipt");
     expect(flattenedContents).toContain(
       "--package-json /usr/local/lib/nemoclaw/mcporter-runtime/package.json --package-lock /usr/local/lib/nemoclaw/mcporter-runtime/package-lock.json --raw-report",
     );
     expect(auditReceiptInvocation).toContain(
-      "--exceptions /scripts/npm-audit-exceptions.json --graph mcporter-runtime --audit-config /scripts/reviewed-npm-audit.json --registry https://registry.yarnpkg.com --threshold high --legacy-npmjs true",
+      "--exceptions /scripts/npm-audit-exceptions.json --graph mcporter-runtime --audit-config /scripts/reviewed-npm-audit.json --registry https://registry.yarnpkg.com --threshold high --legacy-audit true",
     );
     expect(expectedReviewedNpmVersion).toMatch(/^[0-9]+\.[0-9]+\.[0-9]+$/);
     expect(auditReceiptInvocation).not.toContain("--npm-version");

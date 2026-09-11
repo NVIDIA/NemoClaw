@@ -213,7 +213,8 @@ describe("MCP tool discovery host boundary (#6901)", () => {
           count: 0,
           tools: [],
           truncated: false,
-          detail: "sandbox image does not include the MCP tool discovery runtime; rebuild the sandbox",
+          detail:
+            "sandbox image does not include the MCP tool discovery runtime; rebuild the sandbox",
           failedStage: "runtime",
           failureClass: "runtime",
         }),

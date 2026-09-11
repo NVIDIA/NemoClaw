@@ -63,7 +63,7 @@ export function isExplicitMissingSandboxGatewayOutput(
   if (exactStructuredNotFound.test(clean)) return true;
 
   const escapedName = sandboxName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const namedSandbox = `(?:['\"]${escapedName}['\"]|${escapedName})`;
+  const namedSandbox = `(?:['"]${escapedName}['"]|${escapedName})`;
   return (
     new RegExp(
       `^(?:error:\\s*)?sandbox\\s+${namedSandbox}\\s+(?:(?:is\\s+)?not\\s+(?:found|present)|does\\s+not\\s+exist)[.!]?$`,

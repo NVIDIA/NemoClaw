@@ -166,10 +166,7 @@ describe("local PR review advisor", () => {
     const githubEnv = path.join(temporaryDirectory(), "github-env");
     execFileSync(
       process.execPath,
-      [
-        "--no-warnings",
-        path.resolve("tools/pr-review-advisor/export-runtime-env.mts"),
-      ],
+      ["--no-warnings", path.resolve("tools/pr-review-advisor/export-runtime-env.mts")],
       { env: { ...process.env, GITHUB_ENV: githubEnv } },
     );
 
@@ -177,7 +174,7 @@ describe("local PR review advisor", () => {
     expect(ADVISOR_PI_IMAGE).toMatch(/@sha256:[0-9a-f]{64}$/u);
   });
 
-  it("installs origin/main dependencies without executing contributor node_modules (#10611)", () => {
+  it("installs trusted dependencies and runs the canonical entrypoint through a temporary symlink (#10611)", () => {
     const source = temporaryDirectory();
     git(source, ["init", "--initial-branch=main"]);
     git(source, ["config", "user.name", "Test"]);
@@ -201,13 +198,16 @@ describe("local PR review advisor", () => {
         'import fs from "node:fs";',
         'import path from "node:path";',
         'import { execFileSync } from "node:child_process";',
+        'import { pathToFileURL } from "node:url";',
         'import { hostValue } from "./trusted-host.mts";',
+        "if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {",
         "const source = process.argv[2];",
         'const gitHead = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();',
         'let detached = false; try { execFileSync("git", ["symbolic-ref", "-q", "HEAD"], { stdio: "ignore" }); } catch { detached = true; }',
         'const policy = fs.readFileSync(path.join(source, "tools/pr-review-advisor/policy.txt"), "utf8").trim();',
         'fs.writeFileSync(path.join(source, "bootstrap-result.txt"), [hostValue, policy].join("|") + "\\n");',
         'fs.writeFileSync(path.join(source, "trusted-child.json"), JSON.stringify({ pid: process.pid, nodeOptions: process.env.NODE_OPTIONS, nodePath: process.env.NODE_PATH, git: fs.existsSync(".git"), gitHead, detached }));',
+        "}",
       ].join("\n"),
     );
     const npmBin = installFakeNpm(source);
@@ -260,7 +260,7 @@ describe("local PR review advisor", () => {
         "config",
         "--global",
         "filter.hostile.smudge",
-        `sh -c 'printf %s \"$PR_REVIEW_ADVISOR_API_KEY\" > ${bootstrapFilterMarker}; cat'`,
+        `sh -c 'printf %s "$PR_REVIEW_ADVISOR_API_KEY" > ${bootstrapFilterMarker}; cat'`,
       ],
       { env: { ...process.env, HOME: path.resolve(npmBin, "../..") } },
     );
@@ -268,6 +268,9 @@ describe("local PR review advisor", () => {
       path.join(source, "node_modules", "malicious", "index.js"),
       'require("node:fs").writeFileSync("contributor-module-executed", "yes")\n',
     );
+    const trustedTemporaryDirectory = temporaryDirectory();
+    const temporaryAlias = path.join(temporaryDirectory(), "temporary-alias");
+    fs.symlinkSync(trustedTemporaryDirectory, temporaryAlias, "dir");
 
     const result = spawnSync(
       process.execPath,
@@ -283,6 +286,7 @@ describe("local PR review advisor", () => {
           NODE_OPTIONS: "--require=" + preload,
           NODE_PATH: maliciousBin,
           SECRET_TOKEN: "must-not-reach-npm",
+          TMPDIR: temporaryAlias,
           npm_config_cache: path.join(source, "npm-cache"),
         },
       },
@@ -385,10 +389,7 @@ describe("local PR review advisor", () => {
 
     const result = spawnSync(
       process.execPath,
-      [
-        "--no-warnings",
-        path.resolve("tools/pr-review-advisor/local-review.mts"),
-      ],
+      ["--no-warnings", path.resolve("tools/pr-review-advisor/local-review.mts")],
       { cwd: source, encoding: "utf8" },
     );
 
@@ -423,8 +424,12 @@ describe("local PR review advisor", () => {
     expect(fs.existsSync(path.join(snapshot, "ignored.txt"))).toBe(false);
     expect(fs.readlinkSync(path.join(snapshot, "tracked-internal-link"))).toBe("committed.txt");
     expect(fs.readlinkSync(path.join(snapshot, "tracked-retargeted-link"))).toBe("committed.txt");
-    expect(git(snapshot, ["ls-tree", refs.headRef, "tracked-internal-link"])).toContain("120000 blob");
-    expect(git(snapshot, ["ls-tree", refs.headRef, "tracked-retargeted-link"])).toContain("120000 blob");
+    expect(git(snapshot, ["ls-tree", refs.headRef, "tracked-internal-link"])).toContain(
+      "120000 blob",
+    );
+    expect(git(snapshot, ["ls-tree", refs.headRef, "tracked-retargeted-link"])).toContain(
+      "120000 blob",
+    );
     expect(git(snapshot, ["ls-tree", refs.headRef, "untracked-link"])).toContain("120000 blob");
     expect(fs.existsSync(path.join(snapshot, "untracked-link"))).toBe(false);
     expect(git(source, ["status", "--porcelain=v1", "-uall"])).toBe(before);
@@ -447,7 +452,7 @@ describe("local PR review advisor", () => {
         "config",
         "--global",
         "filter.hostile.smudge",
-        `sh -c 'printf %s \"$PR_REVIEW_ADVISOR_API_KEY\" > ${marker}; cat'`,
+        `sh -c 'printf %s "$PR_REVIEW_ADVISOR_API_KEY" > ${marker}; cat'`,
       ],
       { env: { ...process.env, HOME: home } },
     );
@@ -548,6 +553,17 @@ describe("local PR review advisor", () => {
     ],
   ])("removes its temporary root after %s (#10611)", async (_case, lifecycle, expected) => {
     const source = repository();
+    const external = temporaryDirectory();
+    const externalMode = fs.statSync(external).mode & 0o777;
+    const originalPrepare = lifecycle.prepare;
+    lifecycle.prepare = async (env) => {
+      await originalPrepare(env);
+      const readOnly = path.join(env.RUNNER_TEMP as string, "read-only");
+      fs.mkdirSync(readOnly);
+      fs.writeFileSync(path.join(readOnly, "artifact"), "review\n");
+      fs.symlinkSync(external, path.join(readOnly, "external"), "dir");
+      fs.chmodSync(readOnly, 0o500);
+    };
     let removedRoot = "";
     const [result] = await Promise.allSettled([
       runLocalReview({
@@ -564,6 +580,7 @@ describe("local PR review advisor", () => {
     expect(result).toMatchObject(expected);
     expect(path.basename(removedRoot)).toMatch(/^nemoclaw-local-review-/u);
     expect(fs.existsSync(removedRoot)).toBe(false);
+    expect(fs.statSync(external).mode & 0o777).toBe(externalMode);
   });
 
   it("stops between specialists and restores a received signal after cleanup (#10611)", async () => {

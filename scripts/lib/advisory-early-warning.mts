@@ -5,7 +5,7 @@
 // and the reviewed npm package inventory (#7338). Upstream repository advisories
 // are often published weeks before the global reviewed ecosystem record that
 // `npm audit` enforces, so this module turns the earlier signal into a traceable,
-// NON-blocking investigation prompt. It never replaces the reviewed npm audit
+// NON-blocking investigation prompt. It never replaces the npm audit
 // gate: only exact npm package-name plus semver-range matches are marked
 // "investigate", and ambiguous CPE-to-npm matches stay "informational".
 

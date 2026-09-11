@@ -2448,13 +2448,12 @@ export function validateOllamaModel(
         ignoreError: true,
         timeout: 5_000,
       }).trim() === "active";
-    const staleRunnerRecovery =
-      staleRunnerTimeout
-        ? " Stale runner processes from a previous model may be holding GPU memory. " +
-          (activeSystemdUnit
-            ? "Run 'sudo systemctl restart ollama' and rerun onboarding."
-            : "Restart Ollama and rerun onboarding.")
-        : "";
+    const staleRunnerRecovery = staleRunnerTimeout
+      ? " Stale runner processes from a previous model may be holding GPU memory. " +
+        (activeSystemdUnit
+          ? "Run 'sudo systemctl restart ollama' and rerun onboarding."
+          : "Restart Ollama and rerun onboarding.")
+      : "";
     const failure =
       timedOut === true
         ? `Selected Ollama model '${model}' did not answer the local probe in time. It may still be loading, too large for the host, or otherwise unhealthy.`

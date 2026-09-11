@@ -71,7 +71,7 @@ describe("checkAndRecoverSandboxProcesses managed startup", () => {
     ["GATEWAY_HEALTH_TIMEOUT", false],
   ] as const)(
     "waits through the exact %s startup transition (#9466)",
-    (startupMarker, discovery) => {
+    async (startupMarker, discovery) => {
       const sandboxName = "startup-box";
       mockGatewaySandbox(sandboxName);
       mockRecoveredForward(sandboxName);
@@ -88,12 +88,12 @@ describe("checkAndRecoverSandboxProcesses managed startup", () => {
         .mockReturnValueOnce(ACCEPTED_MANAGED_RECOVERY);
       const relaunchManagedSupervisorSessionImpl = vi.fn(() => null);
 
-      const result = checkAndRecoverSandboxProcesses(sandboxName, {
+      const result = await checkAndRecoverSandboxProcesses(sandboxName, {
         quiet: true,
-        isSandboxGatewayRunningImpl: () => false,
+        isSandboxGatewayRunningImpl: async () => false,
         requestGatewaySupervisorAction,
         relaunchManagedSupervisorSessionImpl,
-        waitForRecreatedSandboxOpenShellReadyImpl: () => true,
+        waitForRecreatedSandboxOpenShellReadyImpl: async () => true,
       });
 
       expect(result).toMatchObject({
@@ -107,7 +107,7 @@ describe("checkAndRecoverSandboxProcesses managed startup", () => {
     },
   );
 
-  it("does not retry a diagnostic-bearing supervisor-discovery result", () => {
+  it("does not retry a diagnostic-bearing supervisor-discovery result", async () => {
     const sandboxName = "diagnostic-start";
     mockGatewaySandbox(sandboxName);
     vi.stubEnv("NEMOCLAW_GATEWAY_RECOVERY_POLL_INTERVAL_SECONDS", "0");
@@ -118,9 +118,9 @@ describe("checkAndRecoverSandboxProcesses managed startup", () => {
     }));
     const relaunchManagedSupervisorSessionImpl = vi.fn(() => null);
 
-    const result = checkAndRecoverSandboxProcesses(sandboxName, {
+    const result = await checkAndRecoverSandboxProcesses(sandboxName, {
       quiet: true,
-      isSandboxGatewayRunningImpl: () => false,
+      isSandboxGatewayRunningImpl: async () => false,
       requestGatewaySupervisorAction,
       relaunchManagedSupervisorSessionImpl,
     });
@@ -135,7 +135,7 @@ describe("checkAndRecoverSandboxProcesses managed startup", () => {
     expect(relaunchManagedSupervisorSessionImpl).not.toHaveBeenCalled();
   });
 
-  it("does not retry a managed-container identity mismatch (#9466)", () => {
+  it("does not retry a managed-container identity mismatch (#9466)", async () => {
     const sandboxName = "identity-box";
     mockGatewaySandbox(sandboxName);
     vi.stubEnv("NEMOCLAW_GATEWAY_RECOVERY_POLL_INTERVAL_SECONDS", "0");
@@ -148,9 +148,9 @@ describe("checkAndRecoverSandboxProcesses managed startup", () => {
     }));
     const relaunchManagedSupervisorSessionImpl = vi.fn(() => null);
 
-    const result = checkAndRecoverSandboxProcesses(sandboxName, {
+    const result = await checkAndRecoverSandboxProcesses(sandboxName, {
       quiet: true,
-      isSandboxGatewayRunningImpl: () => false,
+      isSandboxGatewayRunningImpl: async () => false,
       requestGatewaySupervisorAction,
       relaunchManagedSupervisorSessionImpl,
     });
@@ -165,7 +165,7 @@ describe("checkAndRecoverSandboxProcesses managed startup", () => {
     expect(relaunchManagedSupervisorSessionImpl).not.toHaveBeenCalled();
   });
 
-  it("shares one deadline across managed recovery controller calls (#11107)", () => {
+  it("shares one deadline across managed recovery controller calls (#11107)", async () => {
     const sandboxName = "deadline-box";
     mockGatewaySandbox(sandboxName);
     vi.stubEnv("NEMOCLAW_GATEWAY_RECOVERY_POLL_INTERVAL_SECONDS", "3");
@@ -183,9 +183,9 @@ describe("checkAndRecoverSandboxProcesses managed startup", () => {
     );
     const onRecoveryFailureLayer = vi.fn();
 
-    const result = checkAndRecoverSandboxProcesses(sandboxName, {
+    const result = await checkAndRecoverSandboxProcesses(sandboxName, {
       quiet: true,
-      isSandboxGatewayRunningImpl: () => false,
+      isSandboxGatewayRunningImpl: async () => false,
       managedControlNowImpl: () => now,
       managedControlTimeoutMs: 20_000,
       onRecoveryFailureLayer,
@@ -327,7 +327,7 @@ describe("managed container discovery settlement", () => {
     expect({ calls, seconds }).toEqual({ calls: 31, seconds: 90 });
   });
 
-  it("waits through supervisor startup before recreation after delayed discovery (#11107)", () => {
+  it("waits through supervisor startup before recreation after delayed discovery (#11107)", async () => {
     const sandboxName = "hermes-discovery";
     mockGatewaySandbox(sandboxName, "hermes");
     vi.stubEnv("NEMOCLAW_GATEWAY_RECOVERY_POLL_INTERVAL_SECONDS", "3");
@@ -339,9 +339,9 @@ describe("managed container discovery settlement", () => {
       expect(seconds).toBe(66);
       return null;
     });
-    const result = checkAndRecoverSandboxProcesses(sandboxName, {
+    const result = await checkAndRecoverSandboxProcesses(sandboxName, {
       quiet: true,
-      isSandboxGatewayRunningImpl: () => false,
+      isSandboxGatewayRunningImpl: async () => false,
       requestGatewaySupervisorAction: () => ({
         status: 1,
         stdout: "",
@@ -374,7 +374,7 @@ describe("managed container discovery settlement", () => {
     { readyAt: 63, recovered: false, elapsed: 60 },
   ])(
     "ends Hermes recovery at $elapsed seconds when discovery needs $readyAt seconds (#11107)",
-    ({ readyAt, recovered, elapsed }) => {
+    async ({ readyAt, recovered, elapsed }) => {
       const sandboxName = "hermes-discovery";
       mockGatewaySandbox(sandboxName, "hermes");
       mockRecoveredForward(sandboxName);
@@ -385,13 +385,13 @@ describe("managed container discovery settlement", () => {
         seconds += duration;
       });
       const relaunch = vi.fn(() => null);
-      const result = checkAndRecoverSandboxProcesses(sandboxName, {
+      const result = await checkAndRecoverSandboxProcesses(sandboxName, {
         quiet: true,
-        isSandboxGatewayRunningImpl: () => false,
+        isSandboxGatewayRunningImpl: async () => false,
         requestGatewaySupervisorAction: () =>
           seconds >= readyAt ? ACCEPTED_MANAGED_RECOVERY : PENDING_MANAGED_CONTAINER_DISCOVERY,
         relaunchManagedSupervisorSessionImpl: relaunch,
-        waitForRecreatedSandboxOpenShellReadyImpl: () => true,
+        waitForRecreatedSandboxOpenShellReadyImpl: async () => true,
       });
       expect({ recovered: result.recovered, elapsed: seconds }).toEqual({ recovered, elapsed });
       expect(relaunch).not.toHaveBeenCalled();

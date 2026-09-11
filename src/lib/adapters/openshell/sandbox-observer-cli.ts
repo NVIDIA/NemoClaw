@@ -252,7 +252,7 @@ function failure<T>(error: OpenShellSandboxError): OpenShellSandboxResult<T> {
 }
 
 function streamText(value: string | Buffer | null | undefined): string {
-  return value == null ? "" : String(value);
+  return String(value ?? "");
 }
 
 /** Normalize structured runner results inside the CLI implementation. */

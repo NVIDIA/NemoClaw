@@ -48,7 +48,9 @@ describe("baseline exclusion supported-feature disclosure (#7178)", () => {
       );
 
       expect(excludableKeys).not.toHaveLength(0);
-      expect(excludableKeys.every((key) => !(getBaselineExclusionFeatureImpact(agent, key) === null))).toBe(true);
+      expect(
+        excludableKeys.every((key) => !(getBaselineExclusionFeatureImpact(agent, key) === null)),
+      ).toBe(true);
     },
   );
 

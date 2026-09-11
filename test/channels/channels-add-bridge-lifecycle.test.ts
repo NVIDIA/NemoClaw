@@ -360,12 +360,12 @@ beforeEach(() => {
     attempted: false,
   });
 
-  vi.spyOn(processRecovery, "executeSandboxExecCommand").mockReturnValue({
+  vi.spyOn(processRecovery, "executeSandboxExecCommand").mockResolvedValue({
     status: 0,
     stdout: "",
     stderr: "",
   });
-  vi.spyOn(processRecovery, "executeSandboxCommand").mockReturnValue(null);
+  vi.spyOn(processRecovery, "executeSandboxCommand").mockResolvedValue(null);
 });
 
 afterEach(() => {

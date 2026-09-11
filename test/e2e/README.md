@@ -359,18 +359,35 @@ and transport. It also stops the gateway and removes its temporary state.
 
 ## Catalogue Targets
 
+Every catalogue profile installs a lockfile-selected reviewed OpenShell SDK archive before restoring the candidate CLI.
+The shared package job downloads and verifies the active SDK and any approved transition replacement with package-read permission.
+Catalogue jobs receive the run-scoped archives without package credentials and reject a missing artifact or more than one approved transition pair.
+Catalogue and external-gateway health jobs add each reviewed archive to npm's cache, then reinstall dependencies from the lockfile with package scripts disabled.
+This preserves the locked dependency versions and avoids npm resolving a new peer dependency graph during SDK installation.
+Both jobs verify that the SDK connection API loads before running tests.
+This keeps the private optional dependency available for SDK-backed commands such as configuration export.
+
 The `network-policy` target also owns live configuration-export evidence for #10938 and PR #11065.
 After ordinary restricted OpenClaw onboarding, it invokes the candidate `config export` command through the real SDK connection.
 It compares the exported sandbox name, immutable managed image, hosted endpoint, and explicit policy with the fixture's registered and effective state.
 It then changes the fixture's recorded sandbox fingerprint and requires export to fail without creating a file.
 The fixture restores the registry in `finally` and removes private export files through its existing cleanup registry.
-This covers the SDK connection and complete export observation boundary; the deterministic adapter tests remain the owners of individual wire shapes and malformed responses.
+The exported effective policy comes from the SDK configuration response and is compared with the
+independent CLI policy observation. This covers the SDK connection and complete export observation boundary; the deterministic adapter tests remain the owners of individual wire shapes and malformed responses.
 The assertion budget is unchanged. Nine export assertions replace nine redundant checks in the same target:
 
 - Two CLI-file and two OpenShell-version checks are covered by the retained successful onboarding checks.
 - Two intermediate process-start comparisons are covered by the retained comparison after all policy and traffic probes.
 - The approved HTTP status check is redundant with the marker server response, which always returns that marker with status 200.
 - Two web-fetch success-marker checks duplicate the retained probe exit-status check; the probe rejects missing approved content and unexpected denied-port access.
+
+The `security-posture-hermes` target owns the corresponding live Hermes export evidence for #11286.
+After canonical hosted-inference onboarding, it invokes `config export` through both the `nemoclaw`
+and `nemohermes` launchers and requires the validated documents to have identical specs. It checks
+the Hermes agent type, immutable managed image, hosted route, effective policy, and omission of
+credential values. It then changes the fixture's recorded sandbox fingerprint and requires both
+launchers to fail without publishing a file before restoring the registry. The assertion budget is
+unchanged because this contract replaces a redundant nonempty-log assertion in the same scenario.
 
 `tools/e2e/target-catalogue.mts` declares live E2E targets that share one execution shape.
 Each entry owns these target properties:
@@ -444,8 +461,34 @@ The standard layout writes product evidence and `evidence-manifest.json` under `
 When `shard` is not `default`, the standard layout adds the shard directory.
 The security-posture matrix uses the reviewed flat-shard layout to preserve its existing artifact names.
 The `gpu-double-onboard`, `gpu-e2e`, and `llama-cpp-generic-gpu` targets keep the standard layout and select `linux-amd64-gpu-rtxpro6000-latest-1` through the catalogue.
+The `gpu-e2e` target also qualifies configuration export for an attached native Linux Ollama daemon.
+A separate OpenClaw scenario disables direct sandbox GPU, starts a fixture-owned daemon on port
+11439, and uses normal onboarding to create the managed proxy on port 11440. It exports twice through
+the candidate CLI and real SDK, validates both documents, compares their specs and model digest,
+checks credential omission, and requires a stopped daemon to prevent publication. Private YAML is
+removed through the cleanup registry; retained evidence contains only the selected model, ports,
+managed image, and result booleans. The existing CUDA, authentication, and inference lifecycle
+scenarios remain separate. Daemon readiness polls only connection refusal, for at most 20 reads,
+and records each attempt; onboarding and export mutations are not retried.
 Retained workflow jobs are exceptions to the catalogue shape.
 Keep one only for a multi-job handoff, an unrepresented credential boundary, or an execution contract the reusable profile cannot represent.
+
+The `brave-search` target qualifies configuration export after normal Brave-enabled OpenClaw onboarding.
+It validates two exports through the public schema, compares their specs, and requires a `BRAVE_API_KEY` reference without credential values or internal transports.
+The target retains checks of the materialized OpenClaw search configuration, credential isolation, real agent search, direct Brave API results, and disabled-search reuse.
+Private YAML files are removed during cleanup; artifacts retain redacted command results and an allowlisted qualification summary.
+The export assertions replace redundant checks within the same Brave lifecycle.
+Live policy qualification and a real Brave response cover the initial policy command and hostname substring.
+Successful agent execution and its answer cover the negative diagnostic-text check.
+Retained sandbox identity, materialized configuration, and HTTP egress cover the reused status command.
+Complete JSON parsing and expected configuration fields cover config-read exit codes; valid exact UUID continuity covers sandbox-read exit codes.
+The retained nonzero HTTP response covers the extra egress command exit check.
+The lower direct assertion count is recorded in the census; transitive coverage remains unchanged.
+
+For manual PR qualification, select `jobs=brave-search` with Docker and leave `targets` empty.
+Confirm that the target executes: an unavailable optional Brave credential can remove it from the plan.
+Trusted `main` controls the 45-minute job limit.
+Changes to `brave-search-helpers.ts` select the target through its catalogue ownership metadata.
 
 ### Catalogue Execution Evidence
 
@@ -704,6 +747,15 @@ The retired `hermes-dashboard` selector remains a compatibility alias for
 `hermes-e2e` name. That lane always enables dashboard coverage while preserving
 the manually selected `mock`, `internal-nvidia`, or `public-nvidia` inference
 mode.
+
+That existing lane also owns Hermes interface export evidence for #11433. It onboards with public
+dashboard port 19000 through both port aliases, internal port 19120, browser TUI enabled and API
+port 8643. Both CLI names must export the same validated interface values. Existing host dashboard
+and API probes verify the public endpoints; the export fixture separately checks the deployed
+dashboard process's internal port and TUI flag, then probes that internal listener. Process evidence
+contains only the numeric port and TUI boolean. The fixture retains identity-drift rejection,
+registry restoration and export-file cleanup. The `security-posture-hermes` lane retains canonical
+disabled/default interface coverage. This extends one existing behavior dimension and adds no target.
 
 ## Current OpenClaw plugin EXDEV lifecycle
 
@@ -992,12 +1044,12 @@ rm -rf -- "$evidence_dir"
 test ! -e "$evidence_dir"
 ```
 
-A manual run with `jobs=staging-brev-launchable` runs only `staging Brev Launchable`.
+A manual run with `jobs=staging-brev-launchable` runs only `Exact staging Brev Launchable`.
 Push runs do not select this job.
 
 A manual trusted-`main` run with
 `jobs=staging-brev-launchable-identity` and an empty `targets` selector runs
-only `staging Brev Launchable identity`. It builds the candidate
+only `Exact staging Brev Launchable identity`. It builds the candidate
 image, deploys the standing Launchable, waits for workspace and SSH readiness,
 checks the concrete boot image and baked runtime identity, and confirms two
 consecutive absent workspace observations during cleanup. A passing run uploads
@@ -1040,20 +1092,22 @@ Brev Launchable`. The workflow names this selection `E2E full main`, with the
 correlation ID when one was supplied, so maintainers can find the newest full
 manual run without scanning every run's jobs.
 
-Each full dispatch uses `github.run_id` in its workflow concurrency identity, so
-another full dispatch cannot supersede it while it waits. The trusted `main`
+Each full or focused Launchable dispatch uses `github.run_id` in its workflow concurrency identity,
+so another dispatch cannot supersede it while it waits. The trusted `main`
 workflow dispatch verifies that the dispatching and rerunning actors have
 repository `maintain` or `admin` permission before the Launchable path's source
 checkout. That automatic role check authorizes `staging-brev-launchable` and
 `staging-brev-launchable-identity`; neither job uses GitHub environment
 approval.
 
-Both Launchable jobs use the `staging-brev-launchable-cpu` concurrency group
-without cancelling a running job. GitHub keeps at most one pending job in that
-group, so a newer job can replace an older pending job.
+Both Launchable jobs and `.github/workflows/staging-launchable-full.yaml` share the
+`staging-brev-launchable-cpu` concurrency group with `queue: max` and `cancel-in-progress: false`.
+One job or workflow runs at a time, and up to 100 pending entries wait without replacing each other.
+GitHub cancels new entries when the queue is full. Entries run in the order they enter the group;
+that order can differ from workflow dispatch order.
 
 For a full manual run dispatched against `main`, `Release qualification` waits
-for every E2E job that does not require a separate opt-in, including `staging Brev Launchable`. The strict aggregate reports whether that full run
+for every E2E job that does not require a separate opt-in, including `Exact staging Brev Launchable`. The strict aggregate reports whether that full run
 passed; it does not authorize or reject a tag. For a release decision, report
 the newest identifiable full run, its timestamps, tested commit SHA, workflow
 result, `Release qualification` result, and every job that did not succeed.
@@ -1063,7 +1117,7 @@ rerun focused jobs, or request another full run.
 The release-tag skill records only the general E2E decision and any reason for
 proceeding with exceptional status in the signed release brief.
 
-Separately, every release candidate requires a successful candidate `staging Brev Launchable` job. That evidence can come from a Launchable-only or
+Separately, every release candidate requires a successful candidate `Exact staging Brev Launchable` job. That evidence can come from a Launchable-only or
 full run and cannot be waived by the maintainer's general E2E decision. The job
 builds the candidate image, deploys the standing Launchable, verifies the
 booted image and baked runtime, runs the preinstalled full E2E suite with
@@ -1412,7 +1466,7 @@ A main push can queue repository-owned GPU runners or create external resources 
 The main-run observer records attempt evidence but does not request broad failed-job reruns.
 Each E2E test owns any bounded operation-level retry policy.
 
-`staging Brev Launchable` runs only for a trusted manual dispatch against `main`.
+`Exact staging Brev Launchable` runs only for a trusted manual dispatch against `main`.
 The job reads these credentials from repository Actions secrets:
 
 - `BREV_API_KEY` authenticates the trusted host-side Brev CLI for workspace
@@ -1421,16 +1475,13 @@ The job reads these credentials from repository Actions secrets:
 - `NEMOCLAW_IMAGE_DISPATCH_TOKEN` is exposed as `GH_TOKEN` only to the trusted
   host controller. The controller uses it to list successful producer runs in
   `brevdev/nemoclaw-image` and download the selected staging handoff artifact.
-- `NVIDIA_INFERENCE_API_KEY` is exported into the Brev guest for the full E2E
-  process. Code in the baked candidate checkout can read and use it.
+- `NVIDIA_API_KEY` supplies the public NVIDIA endpoint credential. The workflow
+  exports it as `NVIDIA_INFERENCE_API_KEY` into the Brev guest for full E2E.
+  The preinstalled suite selects `build` for `brev-quickstart` and probes the
+  public endpoint. Code in the baked candidate checkout can read and use the key.
 
-`brev login` writes `BREV_API_KEY` and `BREV_ORG_ID` to
-`$HOME/.brev/credentials.json` on the GitHub-hosted runner. Later trusted steps
-and processes in the same job can read that file. An always-run workflow step
-removes the temporary credential home and verifies its absence after the scenario.
-These credentials remain valid until they expire or an administrator revokes
-them in their issuing services. If cleanup fails, remove the recorded Brev
-workspace. Rotate or revoke each credential to remove later access.
+Follow the [Staging Brev Launchable Boundary](../../.agents/skills/nemoclaw-maintainer-e2e/SKILL.md#staging-brev-launchable-boundary)
+for credential access, lifetime, and cleanup.
 For a same-repository PR revision, the job builds and runs the candidate commit with this same credential boundary.
 The PR branch must be in `NVIDIA/NemoClaw` because the image producer does not accept a sibling-repository candidate.
 
@@ -1454,7 +1505,7 @@ Before checkout, it verifies the open PR, target repository and `main` branch, c
 
 The API must report `NVIDIA/NemoClaw` as the PR source repository. Empty `jobs` and `targets` select:
 
-- every default-selected free-standing workflow E2E except `staging Brev Launchable`;
+- every default-selected free-standing workflow E2E except `Exact staging Brev Launchable`;
 - every catalogue target across all credential profiles;
 - every shared credential-free test; and
 - every default registry target.
@@ -1479,6 +1530,10 @@ For that publication, the job binds the run ID, attempt, revision, cohort artifa
 It validates the complete three-agent, two-architecture cohort artifact and the immutable Deep Agents Code base artifact from that workflow attempt.
 `generate-matrix` and every stock-onboarding job depend on this publication job, so incomplete publication creates no onboarding fanout.
 Direct `main` runs use the same publication workflow and artifact contract.
+
+The Deep Agents Code managed-image target uses the shared receipt check to verify its image digest, source revision, and cohort.
+Onboarding and fresh re-onboarding do not supply a base-image override.
+The retained `dcode-base-image.json` artifact records publication evidence; it does not select the managed workload's image.
 
 PR Review Advisor maps changes to either of these shared journaled-recreation handlers to recommended E2E coverage:
 

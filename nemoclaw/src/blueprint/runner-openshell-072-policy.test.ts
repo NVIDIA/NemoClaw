@@ -205,7 +205,7 @@ describe("blueprint policy convenience", () => {
             case "ambiguous-applied":
               recordPolicyWrite(requestedPolicy);
               return { exitCode: 1, stdout: "", stderr: "h2 protocol error" };
-            default:
+            case "applied":
               recordPolicyWrite(requestedPolicy);
               return successResult();
           }

@@ -3,7 +3,8 @@
 
 import type * as TypeBoxModule from "typebox" with { "resolution-mode": "import" };
 import type * as TypeBoxValueModule from "typebox/value" with { "resolution-mode": "import" };
-import { MetadataSchema, ReadTextSchema, WorkspaceSchema } from "./sdk-read-schema";
+import type { MetadataSchema } from "./sdk-read-schema";
+import { ReadTextSchema, WorkspaceSchema } from "./sdk-read-schema";
 import { cloneAndDeepFreeze } from "../../core/immutable";
 import { connectManagedOpenShellSdk } from "./sdk";
 import type { OpenShellGatewayTarget, OpenShellSandboxError } from "./sandbox-observer";

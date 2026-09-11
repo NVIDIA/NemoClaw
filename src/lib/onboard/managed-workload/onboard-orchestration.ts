@@ -559,9 +559,12 @@ export async function prepareOnboardSandboxWorkloadLaunch(
       // Read the patch input only after that boundary so the final image gets
       // the exact metadata produced by the same staging operation.
       ...patchInput,
-      // An explicit path to the checked-in agent Dockerfile is staged through
-      // the trusted agent builder. Preserve that classification at patch time.
-      fromDockerfile: buildContext.origin === "generated" ? null : patchInput.fromDockerfile,
+      // A prepared rebuild must retain its original target for identity checks.
+      // Fresh generated builds use the managed-agent Dockerfile patch policy.
+      fromDockerfile:
+        !patchInput.preparedBuildContext && buildContext.origin === "generated"
+          ? null
+          : patchInput.fromDockerfile,
       selectedGpuRoute: initialGpuRoute,
       stagedDockerfile: buildContext.stagedDockerfile,
     });
