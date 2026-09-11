@@ -1,13 +1,17 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { once } from "node:events";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { PassThrough, Writable } from "node:stream";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { ArtifactSink } from "../fixtures/artifacts.ts";
+import * as observedChild from "../fixtures/observed-child-process.ts";
+import { REPO_ROOT } from "../fixtures/paths.ts";
 import {
   acpMessageContainsPong,
   createHermesAcpPromptEvidenceTracker,
@@ -17,6 +21,7 @@ import {
   isAcpResponse,
   isProcessAbsent,
   runHermesAcpLiveScenario,
+  writeRequest,
 } from "../fixtures/hermes-acp-live.ts";
 
 describe("Hermes ACP live evidence boundary", () => {
@@ -143,5 +148,85 @@ describe("Hermes ACP live evidence boundary", () => {
   it("classifies the live adapter process state", () => {
     expect(isProcessAbsent(undefined)).toBe(true);
     expect(isProcessAbsent(process.pid)).toBe(false);
+  });
+
+  it("rejects requests after the adapter input has closed", async () => {
+    const input = new PassThrough();
+    input.destroy();
+    await once(input, "close");
+    let submitted = false;
+    expect(
+      await writeRequest(input, { id: 1 }, () => {
+        submitted = true;
+      }),
+    ).toBe(false);
+    expect(submitted).toBe(false);
+  });
+
+  it.each([
+    ["close", undefined],
+    ["error", new Error("input failed")],
+  ] as const)("settles a blocked request after adapter input %s", async (_event, error) => {
+    const input = new PassThrough({ highWaterMark: 1 });
+    const pending = writeRequest(input, { id: 1 });
+    input.destroy(error);
+    await expect(pending).resolves.toBe(false);
+  });
+
+  it("marks a request once and completes after backpressure drains", async () => {
+    let release!: () => void;
+    const input = new Writable({
+      highWaterMark: 1,
+      write(_chunk, _encoding, done) {
+        release = done;
+      },
+    });
+    let submissions = 0;
+    const pending = writeRequest(input, { id: 1 }, () => {
+      submissions += 1;
+    });
+    expect(submissions).toBe(1);
+    release();
+    await expect(pending).resolves.toBe(true);
+    input.destroy();
+  });
+
+  it("checks the UTF-8 request limit before writing to the adapter", async () => {
+    let writes = 0;
+    const input = new Writable({
+      write(_chunk, _encoding, done) {
+        writes += 1;
+        done();
+      },
+    });
+    expect(await writeRequest(input, { text: "😀".repeat(4096) })).toBe(false);
+    expect(writes).toBe(0);
+    input.destroy();
+  });
+
+  it("launches the compiled ACP entrypoint with the current Node runtime", async () => {
+    const launch = vi.spyOn(observedChild, "spawnObservedChild").mockImplementation(() => {
+      throw new Error("captured launch");
+    });
+    try {
+      await expect(
+        runHermesAcpLiveScenario({
+          artifacts: {} as never,
+          deadlineAtMs: 180_000,
+          env: { PATH: "" },
+          now: () => 0,
+          progress: {} as never,
+          sandbox: {} as never,
+          sandboxName: "e2e-hermes",
+          scenario: "initialize",
+        }),
+      ).rejects.toThrow("captured launch");
+      expect(launch.mock.calls[0]?.[0]).toBe(process.execPath);
+      expect(launch.mock.calls[0]?.[1]?.[0]).toBe(
+        path.join(REPO_ROOT, "dist", "lib", "acp", "main.js"),
+      );
+    } finally {
+      launch.mockRestore();
+    }
   });
 });

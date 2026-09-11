@@ -2,9 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { once } from "node:events";
+import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
 import type { ArtifactSink } from "./artifacts.ts";
+import { REPO_ROOT } from "./paths.ts";
 import type { SandboxClient } from "./clients/sandbox.ts";
 import { type ChildProcessProgress, spawnObservedChild } from "./observed-child-process.ts";
 import { superviseChild } from "../../helpers/process-supervisor.ts";
@@ -140,7 +142,7 @@ function sessionIdFromResponse(message: JsonObject | null): string | null {
     : null;
 }
 
-async function writeRequest(
+export async function writeRequest(
   stream: NodeJS.WritableStream,
   request: JsonObject,
   onWritten?: () => void,
@@ -148,9 +150,15 @@ async function writeRequest(
   const payload = `${JSON.stringify(request)}\n`;
   if (Buffer.byteLength(payload, "utf8") > 16 * 1024) return false;
   try {
+    if (!stream.writable) return false;
     const accepted = stream.write(payload);
     onWritten?.();
-    if (!accepted) await once(stream, "drain");
+    if (!accepted) {
+      return await Promise.race([
+        once(stream, "drain").then(() => true),
+        once(stream, "close").then(() => false),
+      ]);
+    }
     return true;
   } catch {
     return false;
@@ -275,8 +283,9 @@ export async function runHermesAcpLiveScenario(options: HermesAcpLiveOptions): P
     Math.floor((scenarioTimeoutMs - ACP_SESSION_SHUTDOWN_RESERVE_MS) / 1_000),
   );
   const child = spawnObservedChild(
-    "nemoclaw-acp",
+    process.execPath,
     [
+      path.join(REPO_ROOT, "dist", "lib", "acp", "main.js"),
       "--sandbox",
       options.sandboxName,
       "--gateway",
