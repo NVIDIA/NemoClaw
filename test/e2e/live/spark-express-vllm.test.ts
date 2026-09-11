@@ -37,6 +37,7 @@ const REPLACEMENT_SANDBOX_NAME =
   SANDBOX_NAME === "e2e-vllm-after" ? "e2e-vllm-next" : "e2e-vllm-after";
 const VLLM_CONTAINER = "nemoclaw-vllm";
 const CUSTOM_VLLM_PORT = 46_145;
+const FALLBACK_VLLM_PORT = CUSTOM_VLLM_PORT + 1;
 const TEST_TIMEOUT_MS = 120 * 60_000;
 const ONBOARD_TIMEOUT_MS = 55 * 60_000;
 
@@ -170,11 +171,12 @@ async function runCandidateNemoClaw(
   args: string[],
   artifactName: string,
   timeoutMs = 180_000,
+  extraEnv: NodeJS.ProcessEnv = {},
 ): Promise<CommandExitResult> {
   return host.command("node", ["bin/nemoclaw.js", ...args], {
     artifactName,
     cwd: REPO_ROOT,
-    env: e2eEnv(),
+    env: e2eEnv(extraEnv),
     timeoutMs,
   });
 }
@@ -432,7 +434,6 @@ test(
       [SANDBOX_NAME, "status", "--json"],
       "spark-express-vllm-status",
     );
-    expect(status.exitCode, resultText(status)).toBe(0);
     expect(JSON.parse(status.stdout)).toMatchObject({
       inferenceHealth: {
         ok: true,
@@ -444,7 +445,6 @@ test(
       [SANDBOX_NAME, "doctor", "--json"],
       "spark-express-vllm-doctor",
     );
-    expect(doctor.exitCode, resultText(doctor)).toBe(0);
     expect(JSON.parse(doctor.stdout)).toMatchObject({
       checks: expect.arrayContaining([
         expect.objectContaining({
@@ -455,11 +455,22 @@ test(
         }),
       ]),
     });
+    const fallbackPort = await probeHostPort(
+      host,
+      FALLBACK_VLLM_PORT,
+      "preflight-spark-express-vllm-fallback-port",
+    );
+    expect(fallbackPort.exitCode, resultText(fallbackPort)).toBe(0);
+    expect(
+      fallbackPort.stdout.trim(),
+      `Fallback TCP port ${String(FALLBACK_VLLM_PORT)} is already in use`,
+    ).toBe("");
     const connect = await runCandidateNemoClaw(
       host,
       [SANDBOX_NAME, "connect", "--probe-only"],
       "spark-express-vllm-connect-probe",
       300_000,
+      { NEMOCLAW_VLLM_PORT: String(FALLBACK_VLLM_PORT) },
     );
     expect(connect.exitCode, resultText(connect)).toBe(0);
 

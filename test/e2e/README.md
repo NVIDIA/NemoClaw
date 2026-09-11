@@ -1405,7 +1405,7 @@ Separate installer tests own those earlier boundaries.
 The live target refuses to replace either of its two sandbox names, a pre-existing `nemoclaw-vllm` container, or a listener on its non-default test port.
 It preserves the shared Hugging Face cache, records the created sandbox and container identities, and revalidates each identity before cleanup.
 If onboarding exits nonzero, the target captures the managed-container log tail and sandbox details before cleanup.
-After the first onboard, it runs `status`, `doctor`, and `connect --probe-only` without carrying `NEMOCLAW_VLLM_PORT` forward and verifies that they use the route's recorded port. It destroys the final consumer, proves that the exact managed container and listener are absent, then onboards a second sandbox on the released port and proves inference again. The successful second managed-vLLM start is the GPU-resource reacquisition evidence.
+After the first onboard, it runs `status` and `doctor` without carrying `NEMOCLAW_VLLM_PORT` forward and verifies that they use the route's recorded port. It then gives `connect --probe-only` a verified-unused fallback port and proves the recorded healthy route wins. It destroys the final consumer, proves that the exact managed container and listener are absent, then onboards a second sandbox on the released port and proves inference again. The successful second managed-vLLM start is the GPU-resource reacquisition evidence.
 The standard E2E artifacts retain bounded command output.
 
 Run the target from a clean candidate checkout on the Spark host:
