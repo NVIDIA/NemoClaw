@@ -382,7 +382,7 @@ Use `NEMOCLAW_GATEWAY_BIND_ADDRESS=0.0.0.0` only on supported gateway modes and 
 
 ### Older-glibc gateway compatibility container
 
-OpenShell 0.0.106 directly supports Linux hosts with glibc 2.39 or newer. On an older trusted host, `NEMOCLAW_OPENSHELL_GATEWAY_CONTAINER_PATCH=1` explicitly opts into NemoClaw's compatibility container. Leave it unset on supported hosts.
+OpenShell 0.0.116 directly supports Linux hosts with glibc 2.39 or newer. On an older trusted host, `NEMOCLAW_OPENSHELL_GATEWAY_CONTAINER_PATCH=1` explicitly opts into NemoClaw's compatibility container. Leave it unset on supported hosts.
 
 The compatibility container uses host networking and mounts the host Docker socket read-only. A read-only socket mount still permits privileged Docker API operations and can control the host, so do not enable this mode on an untrusted or shared host. The gateway remains loopback-bound, and startup fails closed unless the configured Unix socket answers as a Docker daemon. See [Gateway Compatibility Container](../security/security-controls/gateway-authentication-controls#gateway-compatibility-container) for the container boundary and removal conditions.
 
@@ -1305,7 +1305,7 @@ If the host rebooted or the OpenShell gateway is down, first run:
 $$nemoclaw <name> status
 ```
 
-The status command selects or starts the sandbox's recorded OpenShell gateway when possible, then checks whether OpenShell can still see the sandbox. If the sandbox container is present but stopped on a Docker-driver host, status can recover the labeled container and then re-query OpenShell. After the sandbox is visible again, use `$$nemoclaw <name> recover` only for the in-sandbox OpenClaw gateway and host forwards. Use `$$nemoclaw <name> gateway restart` when you intentionally need the in-sandbox gateway to reload supported runtime configuration.
+The status command selects or starts the sandbox's recorded OpenShell gateway when possible, then checks whether OpenShell can still see the sandbox. If the sandbox container is present but stopped on a Docker-driver host without a matching intentional-stop record, status can recover the labeled container and then re-query OpenShell. If you stopped the sandbox intentionally, run `$$nemoclaw <name> start`. After the sandbox is visible again, use `$$nemoclaw <name> recover` only for the in-sandbox OpenClaw gateway and host forwards. Use `$$nemoclaw <name> gateway restart` when you intentionally need the in-sandbox gateway to reload supported runtime configuration.
 
 </AgentOnly>
 
@@ -1751,7 +1751,7 @@ If it is missing, apply the preset, register the host-side credential, and rebui
 ```bash
 nemo-deepagents <name> policy add tavily --yes
 export TAVILY_API_KEY=tvly-...
-nemo-deepagents credentials add tavily-search --type tavily --credential TAVILY_API_KEY
+nemo-deepagents credentials add tavily-search --type tavily --agent dcode --credential TAVILY_API_KEY
 unset TAVILY_API_KEY
 nemo-deepagents <name> rebuild
 ```
@@ -2217,7 +2217,6 @@ WhatsApp pairs entirely inside the sandbox. NemoClaw advertises WhatsApp for Ope
 `scripts/rcf_patch.py` is intentionally absent from current NemoClaw blueprints. Older QA plans used that helper for a Dockerfile "Patch-4" test that corrupted the build-time `replaceConfigFile` monkey-patch and expected `ERROR: Patch 4 (replaceConfigFile EACCES) not applied`. The old Patch-4 fail-closed test no longer applies because NemoClaw no longer patches OpenClaw's compiled `replaceConfigFile` source at image build time.
 
 Current sandboxes use a mutable config model instead.
-`/sandbox/.openclaw/openclaw.json` is group-writable by the sandbox and gateway users, so OpenClaw config mutations should write normally rather than requiring an EACCES swallow.
 Use the host-side NemoClaw config command when you need validation and managed metadata to change with the config.
 
 To validate this area now, use the config lifecycle tests instead of looking for `rcf_patch.py`:
@@ -2259,7 +2258,10 @@ If `openclaw doctor` reports that it moved Telegram single-account values under 
 
 ### `openclaw doctor --fix` tightened config permissions and the gateway can no longer save config
 
-In a mutable NemoClaw sandbox, the gateway UID and the sandbox UID share the `sandbox` group, so `/sandbox/.openclaw` is setgid and group-writable (`2770`) and `openclaw.json` is group-writable (`660`). OpenClaw's `openclaw doctor --fix` enforces its own single-user `700/600` layout, so running it inside the sandbox strips group write and breaks gateway-side config writes (for example, control-UI toggles that mutate `openclaw.json`).
+In a sandbox with separate gateway and sandbox user IDs, both users need shared config access through the `sandbox` group.
+The directory `/sandbox/.openclaw` uses `2770`, and `openclaw.json` uses `0660`.
+Running `openclaw doctor --fix` can tighten these permissions to `0700/0600`, which prevents the separate gateway user from saving config changes.
+When the existing config guard verifies a same-user nonroot launch, `0700/0600` is supported and preserves gateway write access.
 
 When you invoke the command through the host-side one-shot path, NemoClaw restores the mutable contract as the command exits:
 
@@ -2275,27 +2277,27 @@ If you ran `openclaw doctor --fix` from an interactive `connect` shell or use an
 $$nemoclaw <sandbox> doctor --fix
 ```
 
-`$$nemoclaw <sandbox> doctor` reports the drift as a `Config permissions` warning, and `--fix` restores `2770/660`.
+`$$nemoclaw <sandbox> doctor` reports the drift as a `Config permissions` warning, and `--fix` restores the permissions selected by the existing config guard.
 Restarting the sandbox repairs the same drift automatically when the config tree passes its safety checks, and NemoClaw's own `rebuild` reapplies the contract after its post-upgrade `openclaw doctor --fix` step.
 For a persisted root-owned `700/600` tree, startup reclaims ownership only when both fixed config files have that exact posture under the expected sandbox-owned parent.
 Other root-owned layouts, links, mounts, and ambiguous metadata fail closed so startup cannot mistake an unsafe tree for ordinary mutable-permission drift.
 If startup reports `[SECURITY] Refusing mutable config permission normalization`, NemoClaw stops startup without following or modifying the unsafe target; safe permission repairs completed before detection are not rolled back.
 Rebuild with the current image and trusted host-side configuration instead of repairing the tree recursively.
 
-When verifying gateway write access by hand, step down to the gateway UID with the image's installed mechanism so the `sandbox` group membership is initialized:
+For a separate gateway user ID, verify write access with the image's installed mechanism so the `sandbox` group membership is initialized:
 
 ```bash
-setpriv --reuid=gateway --regid=gateway --init-groups -- sh -c 'echo ok >> /sandbox/.openclaw/openclaw.json'
+setpriv --reuid=gateway --regid=gateway --init-groups -- sh -c ': >> /sandbox/.openclaw/openclaw.json'
 ```
 
 If `setpriv` is unavailable, rebuild the sandbox from a NemoClaw-managed image that includes `util-linux`. When a root entrypoint must change identity, it fails closed if this required privilege-separation command is missing.
 
 Do not probe with `su -s /bin/sh gateway ...`: `su` does not initialize the gateway's supplementary groups the same way, so a group-write probe can spuriously report `EACCES` even when the mutable contract is intact.
 
-A NemoClaw sandbox supports the mutable permission state for `/sandbox/.openclaw`; `700/600` is drift:
+The existing config guard selects these permissions for `/sandbox/.openclaw` and `openclaw.json`:
 
-- **Mutable default:** `/sandbox/.openclaw` is `2770 sandbox:sandbox` and `openclaw.json` is `660 sandbox:sandbox`. Both the sandbox user and the gateway (same `sandbox` group, different UID) can write config, so control-UI toggles persist.
-- **`700/600` (drift):** the layout that upstream `openclaw doctor --fix` imposes inside a mutable sandbox. It is not a supported NemoClaw state; recover with `$$nemoclaw <sandbox> doctor --fix` or a sandbox restart.
+- **Verified same-user nonroot launch:** `0700/0600` keeps config private to the sandbox user shared by the agent and gateway.
+- **Separate gateway identity or unverified layout:** `2770/0660` retains shared access through the `sandbox` group.
 
 ### Discord bot logs in, but the channel still does not work
 
@@ -4629,12 +4631,29 @@ TAVILY_API_KEY=<your-tavily-key> \
 
 NemoClaw writes `web.backend: tavily`, applies the `tavily` policy preset, and configures request-body credential rewriting for Hermes. If the same onboarding run selected the Nous-managed web gateway, Tavily replaces `nous-web` while selected Nous image, audio, browser, and code tools remain enabled.
 
+### Tavily authentication fails after registration or rebuild
+
+A Hermes Tavily provider needs both the `tavily-hermes-v1` profile and the current credential reference issued by OpenShell.
+Older images can save an unversioned `TAVILY_API_KEY` reference in `/sandbox/.hermes/.env`.
+Hermes loads that file over its process environment, replacing the current revision-scoped reference even after the correct provider is registered.
+A copied reference from an older provider can fail for the same reason.
+
+Current Hermes images omit `TAVILY_API_KEY` from generated gateway and dashboard dotenv files and retain the process-injected reference.
+Follow [Repair a Hermes Tavily Provider](../security/credential-rotation#repair-a-hermes-tavily-provider) to preserve supported state and rebuild with the current image.
+Keep an already-correct provider rather than resetting it solely to repair the old dotenv file.
+Do not save raw keys in the sandbox or broaden the provider's binary allowlist.
+
+The onboarding probe uses Hermes Python and the issued reference in a JSON `api_key` request.
+It refuses stale dotenv overrides and raw credentials, and reports successful egress only for HTTP `200` with search results.
+Configuration or network failures remain advisory; a detected raw credential blocks handoff.
+Confirm a real Hermes search after rebuilding.
+
 ### Langfuse works with raw keys but not OpenShell placeholders
 
 Do not replace an OpenShell placeholder with a raw Langfuse key in `~/.hermes/.env`.
 That workaround bypasses the sandbox credential boundary.
 
-OpenShell 0.0.106 resolves static credentials only at endpoints declared by their provider profile.
+OpenShell 0.0.116 resolves static credentials only at endpoints declared by their provider profile.
 Older provider-backed Langfuse setups could rely on destination-independent placeholder rewriting, so they can stop working after a NemoClaw upgrade or sandbox rebuild even though the Hermes placeholder validator still accepts the value.
 
 For Langfuse Cloud, register the two keys through the checked-in endpoint profile and rebuild the sandbox:
@@ -4657,7 +4676,7 @@ The provider must expose the exact `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KE
 
 For self-hosted Langfuse, import a separate reviewed profile that matches the exact HTTPS origin, including its port, before registering the provider.
 Set only the non-secret `HERMES_LANGFUSE_BASE_URL` in `~/.hermes/.env`.
-Remove any copied `HERMES_LANGFUSE_PUBLIC_KEY` or `HERMES_LANGFUSE_SECRET_KEY` line because a saved revision-scoped placeholder can shadow the current process-injected revision after rotation or rebuild.
+Remove any copied `HERMES_LANGFUSE_PUBLIC_KEY` or `HERMES_LANGFUSE_SECRET_KEY` line because a saved credential-handle placeholder can shadow the current process-injected value after rotation or rebuild.
 
 ### Re-onboarding asks every messaging prompt again
 

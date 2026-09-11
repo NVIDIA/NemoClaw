@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { HermesAcpSshTransport } from "../adapters/openshell/hermes-acp-ssh";
 import type { OpenShellSandboxObserver } from "../adapters/openshell/sandbox-observer";
+import { HERMES_LIFECYCLE_DEFINITION } from "../domain/lifecycle/hermes-definition";
 import type { HostGatewayRegistryEntry } from "../state/gateway-registry";
 import {
   type HermesAcpCommandDeps,
@@ -41,7 +42,7 @@ function registryEntry(
       lifecycleGeneration: "generation-1",
       lifecycleLiveIdentityFingerprint: FINGERPRINT,
       nemoclawVersion: VERSION,
-      openshellVersion: "0.0.106",
+      openshellVersion: HERMES_LIFECYCLE_DEFINITION.openshellVersion,
       ...overrides,
     },
   };
@@ -187,6 +188,11 @@ describe("Hermes ACP command", () => {
       "incompatible",
     ],
     ["wrong Hermes", [registryEntry("alpha", 8080, { agentVersion: "0.20.5" })], "incompatible"],
+    [
+      "wrong OpenShell",
+      [registryEntry("alpha", 8080, { openshellVersion: "0.0.106" })],
+      "incompatible",
+    ],
     [
       "custom image",
       [registryEntry("alpha", 8080, { fromDockerfile: "/tmp/Dockerfile" })],

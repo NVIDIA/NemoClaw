@@ -26,7 +26,42 @@ describe("connectSandbox lifecycle lock", () => {
       value: originalStdoutIsTty,
     });
     delete process.env.NEMOCLAW_TEST_NO_SLEEP;
+    delete process.env.NEMOCLAW_GATEWAY_PORT;
     delete require.cache[requireDist.resolve(connectModulePath)];
+  });
+
+  it("uses the host-scoped lifecycle lock for interactive Hermes connect", async () => {
+    process.env.NEMOCLAW_GATEWAY_PORT = "18080";
+    const harness = createConnectHarness({
+      agentName: "hermes",
+      sessionAgent: { name: "hermes" },
+      registryEntry: {
+        openshellDriver: "docker",
+        gatewayName: "nemoclaw",
+        lifecycleGeneration: "generation-1",
+      },
+      portableReceiptDisposition: { kind: "hermes", phase: "active" },
+      portableRecoveryResult: { kind: "already-running" },
+    });
+    const gatewayState = requireDist(
+      "../../src/lib/actions/sandbox/gateway-state.js",
+    ) as typeof import("./gateway-state");
+
+    await expect(harness.connectSandbox("alpha")).rejects.toThrow("process.exit(0)");
+
+    expect(gatewayState.withConnectSandboxLifecycleLock).toHaveBeenCalledTimes(2);
+    expect(gatewayState.withConnectSandboxLifecycleLock).toHaveBeenNthCalledWith(
+      1,
+      "alpha",
+      expect.any(Function),
+      { stateDir: "/home/test/.nemoclaw/state" },
+    );
+    expect(gatewayState.withConnectSandboxLifecycleLock).toHaveBeenNthCalledWith(
+      2,
+      "alpha",
+      expect.any(Function),
+      { stateDir: "/home/test/.nemoclaw/state" },
+    );
   });
 
   it("releases the lifecycle lock before waiting on the interactive shell (#9737)", async () => {
@@ -56,14 +91,24 @@ describe("connectSandbox lifecycle lock", () => {
     const childStarting = new Promise<void>((resolve) => {
       childStarted = resolve;
     });
-    let completeChild!: (result: { status: number; signal: null }) => void;
-    const childCompletion = new Promise<{ status: number; signal: null }>((resolve) => {
+    let completeChild!: (result: {
+      outcome: { kind: "exited"; exitCode: number };
+      stdout: string;
+      stderr: string;
+      release: () => void;
+    }) => void;
+    const childCompletion = new Promise<{
+      outcome: { kind: "exited"; exitCode: number };
+      stdout: string;
+      stderr: string;
+      release: () => void;
+    }>((resolve) => {
       completeChild = resolve;
     });
-    harness.runSandboxExecChildSpy.mockImplementation(() => {
+    harness.startSandboxSessionSpy.mockImplementation(() => {
       expect(lockDepth).toBeGreaterThan(0);
       childStarted();
-      return childCompletion;
+      return { completion: childCompletion, cancel: vi.fn() };
     });
 
     const connect = harness.connectSandbox("alpha");
@@ -78,7 +123,12 @@ describe("connectSandbox lifecycle lock", () => {
       expect(lockDepth).toBe(1);
     });
     expect(contenderEntered).toBe(true);
-    completeChild({ status: 0, signal: null });
+    completeChild({
+      outcome: { kind: "exited", exitCode: 0 },
+      stdout: "",
+      stderr: "",
+      release: vi.fn(),
+    });
     await expect(connect).rejects.toThrow("process.exit(0)");
   });
 });

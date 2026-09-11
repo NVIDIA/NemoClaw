@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { createSession, MACHINE_SNAPSHOT_VERSION, type Session } from "../../state/onboard-session";
 import type { OnboardFlowContext } from "./flow-context";
+import type { PreparedExternalComponent } from "../external-component";
 import { prepareCoreOnboardFlowContext, prepareFinalOnboardFlowContext } from "./flow-handoff";
 import type { OnboardMachineState } from "./types";
 
@@ -99,6 +100,70 @@ function context(): OnboardFlowContext & {
 }
 
 describe("onboard flow handoffs", () => {
+  const component = (): PreparedExternalComponent => ({
+    declaration: {
+      schemaVersion: 1,
+      componentId: "policy-governance",
+      interceptorSocketPath: "/run/component/interceptor.sock",
+      activationSocketPath: "/run/component/activation.sock",
+    },
+    revalidateBeforeGateway: vi.fn(),
+    revalidateBeforeActivation: vi.fn(),
+  });
+
+  it("accepts a providerless final handoff with explicit selection and registration (#11486)", () => {
+    expect(
+      prepareFinalOnboardFlowContext({
+        context: {
+          ...context(),
+          sandboxName: "ready",
+          providerlessApf: true,
+          externalComponent: component(),
+        },
+        session: createSession(),
+      }),
+    ).toMatchObject({ model: "", provider: "" });
+  });
+
+  it.each([
+    [false, false],
+    [false, true],
+    [true, false],
+  ])(
+    "rejects a providerless final handoff with selection=%s and registration=%s (#11486)",
+    (selected, registered) => {
+      expect(() =>
+        prepareFinalOnboardFlowContext({
+          context: {
+            ...context(),
+            sandboxName: "ready",
+            providerlessApf: selected ? true : undefined,
+            externalComponent: registered ? component() : null,
+          },
+          session: createSession(),
+        }),
+      ).toThrow("incomplete after sandbox setup");
+    },
+  );
+
+  it.each(["provider", "model"])(
+    "rejects conflicting %s state in a providerless final handoff (#11486)",
+    (field) => {
+      expect(() =>
+        prepareFinalOnboardFlowContext({
+          context: {
+            ...context(),
+            sandboxName: "ready",
+            providerlessApf: true,
+            externalComponent: component(),
+            [field]: "unexpected",
+          },
+          session: createSession(),
+        }),
+      ).toThrow("incomplete after sandbox setup");
+    },
+  );
+
   it("constructs core context from the initial result and requested name", () => {
     const initialContext = context();
     const persisted = createSession();

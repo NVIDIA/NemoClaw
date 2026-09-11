@@ -1176,6 +1176,14 @@ async function validatePortableManagedWorkloadSelection(input: {
   await input.prepareWorkload();
 }
 
+function transactionBoundHermesPortableInferenceProvider(
+  portableLifecycle: boolean,
+  inferenceProvider: string | null,
+): string | null {
+  if (!portableLifecycle || inferenceProvider !== "ollama-local") return null;
+  return inferenceProvider;
+}
+
 type ProviderPreparationInput = Parameters<
   typeof validateAttachedMessagingProvidersBeforeSandboxCreation
 >[0];
@@ -1266,7 +1274,7 @@ type SandboxProviderCleanupAuthority =
       readonly revalidateSandboxIdentity: (operation: string) => void;
     };
 
-export function runAuthorityBoundProviderCleanup(
+export async function runAuthorityBoundProviderCleanup(
   input: {
     readonly sandboxName: string;
     readonly runProviderPreDeleteCleanup: SandboxCreateOrchestrationRuntime["runSandboxProviderPreDeleteCleanup"];
@@ -1274,7 +1282,7 @@ export function runAuthorityBoundProviderCleanup(
     readonly redact: SandboxCreateOrchestrationRuntime["redact"];
     readonly tolerateMissingSandbox?: boolean;
   } & SandboxProviderCleanupAuthority,
-): void {
+): Promise<void> {
   const revalidateSandboxIdentity =
     "observeSandbox" in input
       ? (operation: string): void => {
@@ -1287,7 +1295,7 @@ export function runAuthorityBoundProviderCleanup(
         }
       : input.revalidateSandboxIdentity;
   revalidateSandboxIdentity(`cleaning up providers for sandbox '${input.sandboxName}'`);
-  input.runProviderPreDeleteCleanup(input.sandboxName, {
+  await input.runProviderPreDeleteCleanup(input.sandboxName, {
     runOpenshell: input.runOpenshell,
     redact: input.redact,
     ...(input.tolerateMissingSandbox ? { tolerateMissingSandbox: true } : {}),
@@ -2253,7 +2261,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
 
       revalidateSandboxIdentity(true, `recreating sandbox '${sandboxName}'`);
       if (recreateRuntime.beginDelete() === "source") {
-        runAuthorityBoundProviderCleanup({
+        await runAuthorityBoundProviderCleanup({
           sandboxName,
           revalidateSandboxIdentity: (operation) => revalidateSandboxIdentity(true, operation),
           runProviderPreDeleteCleanup: runSandboxProviderPreDeleteCleanup,
@@ -2411,8 +2419,8 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
                   )
                 ).messagingTokenDefs;
               },
-              runProviderPreDeleteCleanup: (verifiedIdentityRevalidation) => {
-                runAuthorityBoundProviderCleanup({
+              runProviderPreDeleteCleanup: async (verifiedIdentityRevalidation) => {
+                await runAuthorityBoundProviderCleanup({
                   sandboxName,
                   runProviderPreDeleteCleanup: runSandboxProviderPreDeleteCleanup,
                   runOpenshell,
@@ -3101,6 +3109,10 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
     const providerPreparationInput = {
       openshellDriver: sandboxRuntimeFields.openshellDriver,
       inferenceProvider: resolvedCreateIntent.inferenceProvider,
+      transactionBoundInferenceProvider: transactionBoundHermesPortableInferenceProvider(
+        hermesPortableAuthority !== null,
+        resolvedCreateIntent.inferenceProvider,
+      ),
       messagingProviders,
       messagingProviderRequests: resolvedCreateIntent.messagingProviderRequests,
       extraProviders: resolvedCreateIntent.extraProviders,
@@ -3159,7 +3171,9 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           startupArgv: intendedSandboxStartupCommand,
         },
         inferenceRouteReservation,
-        withLifecycleLock: sandboxMutationLock.withMcpLifecycleLock,
+        withLifecycleLock: sandboxGpuCreateFlow.bindHermesPortableOnboardingLifecycleLock(
+          sandboxMutationLock.withMcpLifecycleLock,
+        ),
         childEnv: sandboxEnv,
         openshellArgv,
         createSandbox: (

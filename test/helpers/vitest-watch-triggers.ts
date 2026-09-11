@@ -18,7 +18,6 @@ const E2E_WORKFLOW_CONTRACTS = [
   "test/e2e/support/hermes-workflow-boundary.test.ts",
   "test/automation/pull-requests/hosted-runner-recovery-workflow.test.ts",
   "test/e2e/support/inference-switch-workflow-boundary.test.ts",
-  "test/e2e/support/llama-cpp-dgx-spark-qualification-workflow.test.ts",
   "test/e2e/support/jetson-workflow-boundary.test.ts",
   "test/e2e/support/managed-image-protected-runtime-workflow.test.ts",
   "test/e2e/support/mcp-workflow-boundary.test.ts",
@@ -44,6 +43,13 @@ function runTests(...tests: string[]): () => string[] {
 }
 
 export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
+  {
+    pattern: /(?:^|\/)(?:scripts\/checks\/read-only-fixer\.py|\.pre-commit-config\.yaml)$/,
+    testsToRun: runTests(
+      "test/repository/publication-validation.test.ts",
+      "test/repository/checks-runner.test.ts",
+    ),
+  },
   {
     pattern:
       /(?:^|\/)(?:oxlint\.config\.ts|oxc\.ignore-patterns\.ts|tsconfig(?:\.cli)?\.json|nemoclaw\/tsconfig(?:\.test)?\.json|\.pre-commit-config\.yaml)$/,
@@ -321,11 +327,17 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   },
   {
     pattern: /(?:^|\/)\.github\/workflows\/e2e\.yaml$/,
-    testsToRun: runTests(...E2E_WORKFLOW_CONTRACTS),
+    testsToRun: runTests(
+      ...E2E_WORKFLOW_CONTRACTS,
+      "test/e2e/support/openshell-sdk-install.test.ts",
+    ),
   },
   {
     pattern: /(?:^|\/)\.github\/workflows\/e2e-standard-profile\.yaml$/,
-    testsToRun: runTests("test/e2e/support/standard-profile-workflow-boundary.test.ts"),
+    testsToRun: runTests(
+      "test/e2e/support/standard-profile-workflow-boundary.test.ts",
+      "test/e2e/support/openshell-sdk-install.test.ts",
+    ),
   },
   {
     pattern: /(?:^|\/)\.github\/workflows\/portable-profile-e2e\.yaml$/,

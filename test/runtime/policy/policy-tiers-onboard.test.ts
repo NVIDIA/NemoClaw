@@ -10,7 +10,7 @@ import { type SpawnSyncReturns, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, it, type MockInstance, vi } from "vitest";
+import { afterEach, describe, expect, it, type MockInstance, vi } from "vitest";
 
 import { parsePolicyPresetEnv } from "../../../src/lib/core/url-utils";
 import {
@@ -398,6 +398,31 @@ describe("policy tier selection", () => {
 });
 
 describe("policy tier setup", () => {
+  it.each([true, false])(
+    "requests Open-tier messaging defaults for fresh OpenClaw without channels (nonInteractive=%s) (#11058)",
+    async (nonInteractive) => {
+      const expectedMessagingPresets = [
+        "slack",
+        "discord",
+        "telegram",
+        "wechat",
+        "whatsapp",
+        "teams",
+      ];
+      const result = await runPolicySetup(
+        { tierName: "open", currentApplied: [], nonInteractive },
+        { agent: "openclaw", enabledChannels: [] },
+      );
+
+      expect(result.applied).toEqual(expect.arrayContaining(expectedMessagingPresets));
+      assert.equal(result.syncCalls.length, 1);
+      assert.deepEqual(result.syncCalls[0]?.current, []);
+      assert.deepEqual(result.syncCalls[0]?.selected, result.applied);
+      assert.deepEqual(result.appliedCalls, result.applied);
+      assert.deepEqual(result.removedCalls, []);
+    },
+  );
+
   it("persists the selected tier through setPolicyTier", async () => {
     const result = await runPolicySetup({ tierName: "open", policyMode: "skip" });
 

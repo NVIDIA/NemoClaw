@@ -107,7 +107,6 @@ gh workflow run .github/workflows/e2e.yaml \
   -f inference_mode=mock \
   -f "include_staging_brev_launchable=${INCLUDE_LAUNCHABLE}" \
   -f allow_jetson_dispatch=false \
-  -f allow_dgx_spark_runner_queue=false \
   -f "correlation_id=${CORRELATION_ID}"
 ```
 
@@ -145,7 +144,8 @@ Wait for completion:
 gh run watch "$RUN_ID" --repo NVIDIA/NemoClaw
 ```
 
-The Launchable concurrency group does not cancel a running E2E job. GitHub can replace an older pending run with a newer pending run in the same group.
+The Launchable concurrency group runs one entry at a time and preserves up to 100 pending entries
+with `queue: max`. GitHub cancels new entries when the queue is full.
 
 ## Verify and Report
 
