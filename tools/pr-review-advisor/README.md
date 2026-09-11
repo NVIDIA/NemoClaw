@@ -189,11 +189,9 @@ Each specialist returns a Markdown review grounded in repository evidence and sh
 guidance. No component combines findings or makes merge decisions. Specialist reviews are advisory.
 They do not replace required human review or change repository merge gates.
 
-The shared guidance asks specialists to evaluate coverage actions in this order: `Existing`,
-`Strengthen`, `Replace`, `Add`, then `Not applicable`, and select one for each finding. For a proposed
-`Strengthen`, `Replace`, or `Add`, it asks for the expected net change in test cases, assertions, and
-test files, plus the coverage that becomes redundant or `none`. An `Add` recommendation must also
-explain why an existing test cannot detect the regression without losing another distinct contract.
+The canonical coverage-decision contract lives in `trusted-guidance.mts`. It asks specialists to
+exhaust existing coverage before recommending more and to make the net test growth and redundant
+coverage explicit. Keep action labels and required finding details in that single executable owner.
 
 Each specialist also records all additional E2E recommendations through a validated tool.
 The receipt preserves the deterministic floor, optional coverage, explicit empty decisions, and unresolved coverage.
