@@ -182,8 +182,29 @@ function curlCommand(url: string, authorization: string, httpMarker: string): st
   ];
 }
 
+/**
+ * Trusted-private hosts the stored URL must be validated under.
+ *
+ * The recorded exact-host trust intent must ride along with the stored URL: a
+ * trusted private endpoint is canonical only under that intent, and dropping it
+ * made status skip a healthy registration as "no credential binding or safe
+ * endpoint to probe" (#11377). Entries without a recorded trusted host keep the
+ * strict public boundary.
+ */
+function recordedTrustedPrivateHosts(
+  entry: Pick<McpBridgeEntry, "trustedPrivateHost">,
+): readonly string[] | undefined {
+  return entry.trustedPrivateHost ? [entry.trustedPrivateHost] : undefined;
+}
+
+/**
+ * Build the in-sandbox wire probe that checks whether the gateway resolves the
+ * recorded credential placeholder for a persisted MCP entry. Returns null when
+ * the entry has no credential binding or its stored URL fails the current
+ * authenticated-endpoint boundary under the entry's recorded trust.
+ */
 export function buildCredentialResolutionProbeCommand(
-  entry: Pick<McpBridgeEntry, "server" | "url" | "env">,
+  entry: Pick<McpBridgeEntry, "server" | "url" | "env" | "trustedPrivateHost">,
   adapter: AgentMcpAdapter,
   credentialRevision: McpAttachedCredentialRevision,
 ): CredentialResolutionProbeCommand | null {
@@ -193,7 +214,13 @@ export function buildCredentialResolutionProbeCommand(
   // authenticated-endpoint boundary: the gateway could rewrite the placeholder
   // header into a live credential bound for a legacy or private endpoint.
   try {
-    if (normalizeMcpServerUrl(entry.url) !== entry.url) return null;
+    if (
+      normalizeMcpServerUrl(entry.url, {
+        trustedPrivateHosts: recordedTrustedPrivateHosts(entry),
+      }) !== entry.url
+    ) {
+      return null;
+    }
   } catch {
     return null;
   }
@@ -384,6 +411,11 @@ export function credentialResolutionWarning(
   return `Credential resolution could not be verified: a placeholder-bearing MCP initialize probe and a deliberately-unresolvable control probe were rejected identically (HTTP ${probe.httpStatus}). If the stored credential is confirmed valid, the OpenShell host is not rewriting the '${placeholder}' placeholder on egress and agent runtimes will hit the same auth failure and skip this MCP server (see NVIDIA/OpenShell issue 2161). Otherwise, rotate the credential with mcp restart and re-run mcp status.`;
 }
 
+/**
+ * Run the credential-resolution probe for one persisted MCP entry and classify
+ * the framed result. Readiness gates and the stored-URL boundary check run
+ * before any credential observation or sandbox traffic.
+ */
 export async function probeCredentialResolution(
   sandboxName: string,
   entry: McpBridgeEntry,
@@ -399,7 +431,12 @@ export async function probeCredentialResolution(
   // Reject the entry before the fresh credential observation so an unsafe
   // persisted URL cannot trigger either sandbox or endpoint traffic.
   try {
-    if (!entry.env[0] || normalizeMcpServerUrl(entry.url) !== entry.url) {
+    if (
+      !entry.env[0] ||
+      normalizeMcpServerUrl(entry.url, {
+        trustedPrivateHosts: recordedTrustedPrivateHosts(entry),
+      }) !== entry.url
+    ) {
       return { ok: null, detail: "no credential binding or safe endpoint to probe" };
     }
   } catch {

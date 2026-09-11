@@ -116,6 +116,27 @@ describe("MCP credential-resolution probe command security", () => {
     ).toBeNull();
   });
 
+  it("probes a recorded trusted private endpoint and still refuses an unrecorded one (#11377)", () => {
+    const unrecordedPrivateEntry: McpBridgeEntry = {
+      ...baseEntry,
+      url: "https://172.17.0.2:8443/mcp",
+      env: ["MCP_KEY"],
+    };
+    const trustedPrivateEntry: McpBridgeEntry = {
+      ...unrecordedPrivateEntry,
+      trustedPrivateHost: "172.17.0.2",
+      allowedIps: ["172.17.0.2"],
+    };
+
+    const built = buildCredentialResolutionProbeCommand(trustedPrivateEntry, "mcporter", "v11");
+    expect(built).not.toBeNull();
+    expect(built?.command).toContain("https://172.17.0.2:8443/mcp");
+    expect(built?.command).toContain("'authorization: Bearer openshell:resolve:env:v11_MCP_KEY'");
+    expect(
+      buildCredentialResolutionProbeCommand(unrecordedPrivateEntry, "mcporter", "v11"),
+    ).toBeNull();
+  });
+
   it("rejects duplicate and out-of-order result markers (#6379)", () => {
     const built = buildCredentialResolutionProbeCommand(baseEntry, "mcporter", "v11");
     expect(built).not.toBeNull();
