@@ -98,11 +98,11 @@ function runManagedOpenClawHeartbeatProbe(
   heartbeat: { every: string; isolatedSession: boolean },
   postHashAppend = "",
 ) {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-heartbeat-probe-"));
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-heartbeat-'$HOME`pwd`-"));
   const configPath = path.join(directory, "openclaw.json");
   try {
     fs.writeFileSync(configPath, JSON.stringify({ agents: { defaults: { heartbeat } } }));
-    const hash = spawnSync("/sbin/sha256sum", ["openclaw.json"], {
+    const hash = spawnSync("sha256sum", ["openclaw.json"], {
       cwd: directory,
       encoding: "utf8",
     });
@@ -112,7 +112,7 @@ function runManagedOpenClawHeartbeatProbe(
 
     return spawnSync(
       "/bin/sh",
-      ["-c", managedOpenClawHeartbeatProbe(configPath, process.execPath, "/sbin/sha256sum")],
+      ["-c", managedOpenClawHeartbeatProbe(configPath, process.execPath, "sha256sum")],
       { encoding: "utf8" },
     );
   } finally {

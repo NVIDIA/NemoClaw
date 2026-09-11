@@ -539,19 +539,20 @@ export function managedOpenClawHeartbeatProbe(
   nodeExecutable = "/usr/local/bin/node",
   sha256sumExecutable = "sha256sum",
 ): string {
+  const shellQuote = (value: string): string => `'${value.replace(/'/gu, `'\\''`)}'`;
   const configProbe = [
-    JSON.stringify(nodeExecutable),
+    shellQuote(nodeExecutable),
     "-e",
-    JSON.stringify(
+    shellQuote(
       "const fs=require('node:fs');const c=JSON.parse(fs.readFileSync(process.argv[1],'utf8'));const h=c?.agents?.defaults?.heartbeat;if(h?.every!==process.argv[2]||h?.isolatedSession!==true)process.exit(1);",
     ),
-    JSON.stringify(configPath),
-    JSON.stringify(MANAGED_STARTUP_E2E_OPENCLAW_HEARTBEAT_EVERY),
+    shellQuote(configPath),
+    shellQuote(MANAGED_STARTUP_E2E_OPENCLAW_HEARTBEAT_EVERY),
   ].join(" ");
   return [
     configProbe,
-    `cd ${JSON.stringify(path.dirname(configPath))}`,
-    `${JSON.stringify(sha256sumExecutable)} --check .config-hash >/dev/null`,
+    `cd ${shellQuote(path.dirname(configPath))}`,
+    `${shellQuote(sha256sumExecutable)} --check .config-hash >/dev/null`,
   ].join(" && ");
 }
 
