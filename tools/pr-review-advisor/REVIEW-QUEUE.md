@@ -5,7 +5,34 @@
 
 Issue #11489 owns this read-only consumer contract. These artifacts are advisory evidence, not merge authorization.
 The consumer must verify GitHub provenance before parsing their contents. New artifacts appear only after this producer reaches trusted `main`.
-Older runs remain unknown. The blocker ledger is a separate dependency proposed by PR #11047; this change does not publish blocker counts.
+Older runs without the required evidence remain unknown.
+
+## Advisor blockers
+
+Each successful specialist writes `pr-review-<interest>-findings.json` in its existing specialist artifact.
+The read-only ledger and canonical JSON implementation are adapted from @cjagwani's PR #11047.
+The producer includes no repair selection, generated commits, or repair workflow.
+
+The ledger requires `version:1`, `revision:1`, `identity:"exact-head"`, `headSha`, and `interest`.
+`status:"clear"` requires an empty `findings` array and a nonempty normalized `noFindingsReason`.
+`status:"findings"` requires one to twenty findings and `noFindingsReason:null`.
+Each finding contains `id`, `interest`, `severity`, `kind`, `summary`, `path`, `line`, `impact`, `smallestSafeFix`, `regressionTest`, and `exclusions`.
+Only P0/P1 findings are accepted. All findings count as blockers, including every excluded finding.
+Exclusions describe constraints on a possible correction; they never remove a blocker.
+
+The trusted recorder normalizes text, sorts exclusions, and derives IDs before sorting findings by ID.
+Each ID is `F-<interest>-` followed by the first twenty hexadecimal characters of SHA-256 over canonical JSON of the finding without `id`.
+Canonical JSON recursively sorts object keys and preserves array order. The ledger parser rebuilds and compares the canonical result.
+Reject files larger than 512 KiB, unsupported fields, stale identities, malformed findings, and noncanonical IDs or ordering.
+The producer writes private files without replacing an existing file or following a symlink.
+
+The specialist must record its complete P0/P1 set after its human-readable analysis, including an explicit reason for zero blockers.
+Missing recording fails the specialist run. Missing artifacts never mean zero blockers.
+Require every trusted specialist, a successful matching workflow, and the provenance checks below before calculating the blocker count.
+The ledger does not authenticate itself; bind its candidate and specialist to the shared context and GitHub artifact envelope.
+
+`test/fixtures/review-queue-findings-clear.json` and `test/fixtures/review-queue-findings-excluded-blocker.json` are producer-generated synthetic fixtures.
+The focused ledger tests rebuild both fixtures, validate canonical identity, and prove excluded findings remain present.
 
 ## Advisor recommendations
 
@@ -76,7 +103,6 @@ Run and attempt identity come from the GitHub artifact envelope. Payloads cannot
 Do not combine artifacts from different runs or attempts. Incomplete rerun artifacts remain unknown even if an earlier attempt passed.
 Runs without the context sidecar remain unknown. Do not scrape Pi session chunks to supply missing evidence.
 
-The proposed #11047 finding ledger is separate. All validated P0/P1 findings count as blockers, including findings excluded from automated repair.
 Require every expected specialist ledger before reporting zero. A completion comment alone cannot establish zero blockers.
 
 ## Dispatch
