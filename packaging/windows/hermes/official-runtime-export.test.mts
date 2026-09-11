@@ -35,6 +35,20 @@ try:
   result.update(members=members,payload=payload,lexicalRoot=lexical_root,canonicalRoot=canonical_root)
  elif mode=='outside-link':
   runtime=root/'runtime';runtime.mkdir();(root/'outside').write_text('not-a-runtime-file');(runtime/'bad').symlink_to(root/'outside');result=inv.inventory(runtime)
+ elif mode in ('current-adapter','stale-adapter','modified-adapter'):
+  runtime=root/'runtime';runtime.mkdir();runtime=runtime.resolve()
+  adapter=pathlib.Path(sys.argv[1]).with_name('nemoclaw_native_windows.py');data=adapter.read_bytes();current=hashlib.sha256(data).hexdigest()
+  stale=('0' if current[0]!='0' else '1')+current[1:]
+  marker={'startupAdapterSha256':stale if mode=='stale-adapter' else current}
+  (runtime/'nemoclaw-windows-runtime.json').write_text(json.dumps(marker))
+  locations=['hermes-agent/venv/Lib/site-packages/nemoclaw_native_windows.py','hermes-agent/.hermes-runtime/python/cpython-3.11.16-windows-aarch64-none/Lib/site-packages/nemoclaw_native_windows.py','tools/browser-use/Lib/site-packages/nemoclaw_native_windows.py']
+  for relative in locations:
+   file=runtime/relative;file.parent.mkdir(parents=True,exist_ok=True);file.write_bytes(data)
+  files=[{'path':relative,'bytes':(runtime/relative).stat().st_size,'sha256':m.digest(runtime/relative)} for relative in ['nemoclaw-windows-runtime.json',*locations]]
+  report={'schemaVersion':1,'classification':'native-hermes-generated-metadata-adaptation','hermesRevision':inv.UPSTREAM_COMMIT,'runtimeExecutionQualified':False,'requiresMovedRootProbe':True,'environments':['hermes-agent/venv','tools/browser-use'],'files':files}
+  if mode=='modified-adapter':
+   changed=bytearray(data);changed[0]^=1;(runtime/locations[0]).write_bytes(changed)
+  checked=m.validate_current_adaptation(runtime,report);assert checked==current;result={'currentAdapterSha256':checked,'copies':len(locations)}
  elif mode=='build-only':inv.validate_build_receipt(build);result={'buildOnlyAccepted':True}
  elif mode=='failed-mxc':
   relocation={'schemaVersion':1,'upstreamCommit':inv.UPSTREAM_COMMIT,'status':'fail','targetRoot':str(root)}
@@ -106,6 +120,16 @@ test("a link redirected outside after inventory cannot be archived", () =>
   assert.match(run("link-drift").error, /outside target/u));
 test("an outside runtime link cannot become candidate bytes", () =>
   assert.match(run("outside-link").error, /escapes/u));
+test("candidate adaptation binds all three installed hooks to the current pinned source", () => {
+  const value = run("current-adapter");
+  assert.equal(value.ok, true, JSON.stringify(value));
+  assert.equal(value.result.copies, 3);
+  assert.match(value.result.currentAdapterSha256, /^[a-f0-9]{64}$/u);
+});
+test("a stale adapter binding cannot satisfy current-source provenance", () =>
+  assert.match(run("stale-adapter").error, /exact current startup adapter/u));
+test("same-size hook mutation after adaptation is refused", () =>
+  assert.match(run("modified-adapter").error, /metadata changed/u));
 test("candidate build admission does not weaken the separate failed MXC qualification gate", () => {
   assert.equal(run("build-only").ok, true);
   assert.match(run("failed-mxc").error, /not passed/u);

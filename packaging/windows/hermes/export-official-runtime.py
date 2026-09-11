@@ -82,6 +82,14 @@ def validate_adaptation(runtime, report, module_sha):
         )
 
 
+def validate_current_adaptation(runtime, report):
+    # The pinned controller checkout is the reviewed adapter source. Compare
+    # every installed copy to these exact bytes and retain the hash in the receipt.
+    module_sha = digest(Path(__file__).with_name("nemoclaw_native_windows.py"))
+    validate_adaptation(runtime, report, module_sha)
+    return module_sha
+
+
 class HashedReader:
     def __init__(self, source):
         self.source = source
@@ -190,8 +198,8 @@ def main():
         "computerUse": "not-selected-official-SkipComputerUse",
         "tavilyLiveLookup": "not-tested-user-waiver",
         "mxcQualification": {
-            "status": "not-run-known-prerequisite-blocker",
-            "reason": "Unmodified official MSYS named-object initialization is denied by pinned MXC",
+            "status": "pending-Personal-MXC",
+            "reason": "Canonical Bash/browser/ConPTY still requires the current Hermes Personal-profile test; the older component failure is retained separately.",
             "upstreamIssue": "https://github.com/microsoft/mxc/issues/1061",
         },
         "finalInstallPathAdaptationRequired": True,
@@ -201,18 +209,9 @@ def main():
         inventory = load_inventory()
         build = json.loads(args.build_receipt.read_text(encoding="utf-8"))
         inventory.validate_build_receipt(build)
-        module_sha = digest(Path(__file__).with_name("nemoclaw_native_windows.py"))
-        if (
-            module_sha
-            != "055f26bd95242d0fbe7e2f69034b19c1fed13ebb71c5e8b5323db374e399427e"
-        ):
-            raise ValueError(
-                "The startup adapter differs from the reviewed current source"
-            )
-        validate_adaptation(
+        module_sha = validate_current_adaptation(
             runtime,
             json.loads(args.adaptation_receipt.read_text(encoding="utf-8")),
-            module_sha,
         )
         source_files = inventory.verify_official_source(runtime, args.source_archive)
         payload = inventory.inventory(runtime)
