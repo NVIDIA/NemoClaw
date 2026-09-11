@@ -363,7 +363,7 @@ const NemoClawInferenceRouteConfigSchema = Type.Object(
   { additionalProperties: false },
 );
 
-export const NemoClawAgentToolsConfigSchema = Type.Object(
+export const NemoClawAgentToolDisclosureSchema = Type.Object(
   { disclosure: Type.Union([Type.Literal("progressive"), Type.Literal("direct")]) },
   { additionalProperties: false },
 );
@@ -458,6 +458,32 @@ export const NemoClawOpenClawObservabilitySchema = Type.Object(
   },
   { additionalProperties: false },
 );
+
+export const NemoClawReadOnlyAgentToolsSchema = Type.Object(
+  { allow: Type.Array(Type.Literal("read"), { minItems: 1, maxItems: 1 }) },
+  { additionalProperties: false },
+);
+
+export const NemoClawAgentToolsConfigSchema = Type.Union([
+  NemoClawAgentToolDisclosureSchema,
+  NemoClawReadOnlyAgentToolsSchema,
+]);
+
+// Exported secondary names must also be valid runtime IDs; main maps to primary.
+const SecondaryAgentNameSchema = Type.String({
+  minLength: 1,
+  maxLength: 32,
+  pattern: "^(?!main$|primary$)[a-z](?:[a-z0-9-]*[a-z0-9])?$",
+});
+
+export const NemoClawAdditionalAgentSchema = Type.Object(
+  { name: SecondaryAgentNameSchema, tools: NemoClawReadOnlyAgentToolsSchema },
+  { additionalProperties: false },
+);
+
+export function isValidNemoClawSecondaryAgentName(value: unknown): value is string {
+  return Check(SecondaryAgentNameSchema, value);
+}
 
 const nemoClawAgentFields = {
   name: LocalResourceNameSchema,
