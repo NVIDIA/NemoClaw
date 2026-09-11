@@ -89,7 +89,7 @@ describe("E2E workflow plan", () => {
       }),
     ]);
     expect(plan.hermesSelected).toBe(true);
-    expect(plan.coverageMatrix).toHaveLength(83);
+    expect(plan.coverageMatrix).toHaveLength(85);
     expect(selectedWorkflowJobs(plan)).toEqual([
       "catalogue-brave-nvidia-inference",
       "catalogue-github-read",
@@ -114,7 +114,6 @@ describe("E2E workflow plan", () => {
       "staging-brev-launchable-identity",
       "external-gateway-health",
       "mcp-bridge-dev",
-      "llama-cpp-dgx-spark-qualification",
     ]);
     expect(releaseRequiredWorkflowJobs()).toContain("live");
     expect(releaseRequiredWorkflowJobs()).toContain("staging-brev-launchable");
@@ -664,6 +663,28 @@ describe("E2E workflow plan", () => {
     expect(plan.catalogueMatrices.standard.map((row) => row.id)).toEqual(["snapshot-commands"]);
     expect(selectedWorkflowJobs(plan)).toEqual(["catalogue-standard", "jetson-nvmap-gpu"]);
   });
+
+  it.each(["src/lib/onboard/dashboard-forward-control.ts", "src/lib/onboard/dashboard-runtime.ts"])(
+    "selects both Hermes onboarding scenarios when %s changes",
+    (changedFile) => {
+      const plan = buildE2eWorkflowPlan({}, { changedFiles: [changedFile] });
+
+      expect(plan.catalogueMatrices.standard.map((row) => row.id)).toEqual(
+        expect.arrayContaining(["double-onboard-hermes", "onboard-resume-hermes"]),
+      );
+    },
+  );
+
+  it.each(["double-onboard-hermes", "onboard-resume-hermes"])(
+    "prepares Hermes swap for the %s execution",
+    (target) => {
+      const plan = buildE2eWorkflowPlan({ targets: target });
+
+      expect(plan.catalogueMatrices.standard).toEqual([
+        expect.objectContaining({ id: target, host_preparation: "hermes-swap" }),
+      ]);
+    },
+  );
 
   it("selects only full E2E consumers when the timeout contract changes", () => {
     const changedFile = "tools/e2e/full-e2e-timeout-contract.mts";
@@ -1338,9 +1359,7 @@ describe("E2E workflow plan", () => {
       "| Repository install onboarding and hosted inference succeed | `ubuntu-repo-cloud-langchain-deepagents-code / docker`, `ubuntu-repo-cloud-openclaw / docker` | agent runtime |",
     );
     expect(complete.stdout).toContain("### Intentional exclusions");
-    expect(complete.stdout).toContain(
-      "| `llama-cpp-dgx-spark-qualification` | unresolved | Exact NemoClaw-built llama.cpp image produces protected DGX Spark evidence | NVIDIA DGX Spark GB10; local llama.cpp inference | Explicit dispatch only; excluded from the default release matrix | The protected plan can enable or skip its OpenClaw subqualification |",
-    );
+    expect(complete.stdout).not.toContain("llama-cpp-dgx-spark-qualification");
     expect(complete.stdout).toContain("### Unsupported or unresolved typed declarations");
     const inertDeclarationCount = listTargets().filter(
       (target) => !liveTargetSupport(target).supported,
