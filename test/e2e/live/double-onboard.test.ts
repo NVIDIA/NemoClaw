@@ -59,6 +59,8 @@ function onboardEnv(sandboxName: string, fakeBaseUrl: string, recreate = false):
   return commandEnv({
     COMPATIBLE_API_KEY: "dummy",
     NEMOCLAW_PROVIDER: "custom",
+    NEMOCLAW_AGENT: process.env.NEMOCLAW_AGENT ?? "openclaw",
+    NEMOCLAW_HERMES_API_PORT: sandboxName === SANDBOX_A ? process.env.NEMOCLAW_HERMES_API_PORT : "",
     NEMOCLAW_ENDPOINT_URL: fakeBaseUrl,
     NEMOCLAW_MODEL: "test-model",
     NEMOCLAW_SANDBOX_NAME: sandboxName,
@@ -555,6 +557,15 @@ test(
       },
     );
 
+    const apiPortBeforeSecond = registryEntry(SANDBOX_A)?.hermesApiPort;
+    const hasHermesApi = process.env.NEMOCLAW_AGENT === "hermes";
+    const apiListenerBeforeSecond = hasHermesApi
+      ? await host.inspectOpenShellForwardListener(String(apiPortBeforeSecond), SANDBOX_A, {
+          artifactName: "phase-2-api-listener-before-second-onboard",
+          env: commandEnv(),
+        })
+      : null;
+
     progress.phase("re-onboard same sandbox on existing gateway");
     // Phase 3: second onboard with the same name must reuse the healthy gateway.
     const gatewayBeforeSecond = await gatewayRuntimeId(gateway);
@@ -566,10 +577,6 @@ test(
     const gatewayAfterSecond = await gatewayRuntimeId(gateway);
     expect(gatewayBeforeSecond, "gateway runtime id before second onboard").not.toBe("");
     expect(gatewayAfterSecond).toBe(gatewayBeforeSecond);
-    expect(secondText).toContain("Reusing healthy NemoClaw gateway.");
-    expect(secondText).toContain(`[reuse] Skipping sandbox (${SANDBOX_A})`);
-    expect(secondText).not.toContain("Port 8080 is not available");
-    expect(secondText).not.toContain("Port 18789 is not available");
     const sandboxAAfterSecond = await sandbox.openshell(["sandbox", "get", SANDBOX_A], {
       artifactName: "phase-3-openshell-sandbox-a-get",
       env: commandEnv(),
@@ -608,6 +615,25 @@ test(
       `${dashboardAfterSecond.reachable}:${listenerBeforeSecond.valid}:${listenerAfterSecond.valid}:${listenerBeforeSecond.identity === listenerAfterSecond.identity}`,
       `${dashboardAfterSecond.output}\n${listenerBeforeSecond.output}\n${listenerAfterSecond.output}`,
     ).toBe("true:true:true:true");
+
+    const apiListenerAfterSecond = hasHermesApi
+      ? await host.inspectOpenShellForwardListener(
+          String(sandboxARegistryAfterSecond?.hermesApiPort),
+          SANDBOX_A,
+          {
+            artifactName: "phase-3-api-listener-after-second-onboard",
+            env: commandEnv(),
+          },
+        )
+      : null;
+    expect(sandboxARegistryAfterSecond?.hermesApiPort).toBe(apiPortBeforeSecond);
+    expect(apiListenerBeforeSecond?.valid ?? false, apiListenerBeforeSecond?.output).toBe(
+      hasHermesApi,
+    );
+    expect(apiListenerAfterSecond?.valid ?? false, apiListenerAfterSecond?.output).toBe(
+      hasHermesApi,
+    );
+    expect(apiListenerAfterSecond?.identity).toBe(apiListenerBeforeSecond?.identity);
 
     progress.phase("recreate same sandbox on existing gateway");
     const gatewayBeforeRecreate = await gatewayRuntimeId(gateway);

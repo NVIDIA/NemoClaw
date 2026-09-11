@@ -36,6 +36,8 @@ export interface ForwardServiceLaunchOptions {
     environment: NodeJS.ProcessEnv,
   ) => ForwardServiceChild;
   readonly terminateProcessTree?: (child: ForwardServiceChild) => void;
+  /** Verify the bound forward before releasing the child from startup cleanup. */
+  readonly verifyReady?: () => void;
   readonly timeoutMs?: number;
 }
 
@@ -427,16 +429,22 @@ export function launchForwardService(
   const sleep =
     options.sleep ?? ((milliseconds: number) => Atomics.wait(sleepBuffer, 0, 0, milliseconds));
   const deadline = Date.now() + (options.timeoutMs ?? START_TIMEOUT_MS);
+  let startupError = new Error(
+    `OpenShell forward service did not bind ${target.localHost}:${String(target.localPort)}`,
+  );
   while (Date.now() < deadline) {
     if (isReachable(target.localPort)) {
+      try {
+        options.verifyReady?.();
+      } catch (error) {
+        startupError = error instanceof Error ? error : new Error(String(error));
+        break;
+      }
       child.unref();
       return;
     }
     sleep(POLL_INTERVAL_MS);
   }
-  const startupError = new Error(
-    `OpenShell forward service did not bind ${target.localHost}:${String(target.localPort)}`,
-  );
   try {
     (options.terminateProcessTree ?? terminateForwardServiceProcessTree)(child);
     if (isReachable(target.localPort)) {
