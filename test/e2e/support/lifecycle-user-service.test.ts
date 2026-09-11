@@ -76,6 +76,18 @@ function writeCandidateInstaller(root: string, exists: boolean): string {
   return candidateInstaller;
 }
 
+function writeNoUpstreamInstaller(root: string): string {
+  const candidateInstaller = path.join(root, "no-upstream-installer.sh");
+  fs.writeFileSync(
+    candidateInstaller,
+    [
+      `source ${JSON.stringify(installer)}`,
+      "upstream_openshell_gateway_user_service_installed() { return 1; }",
+    ].join("\n"),
+  );
+  return candidateInstaller;
+}
+
 function writeMacServiceStubs(
   root: string,
   trustedProgram: boolean,
@@ -482,7 +494,7 @@ describe("managed OpenShell gateway user-service stop", () => {
         XDG_CONFIG_HOME: configHome,
         NEMOCLAW_GATEWAY_PORT: "8080",
       });
-      const result = runStopScript(installer, env);
+      const result = runStopScript(writeNoUpstreamInstaller(root), env);
 
       expect(result.status, result.stdout + result.stderr).toBe(0);
       expect(result.stdout).toContain(
@@ -1012,7 +1024,7 @@ describe("managed OpenShell gateway user-service stop", () => {
         XDG_CONFIG_HOME: configHome,
         NEMOCLAW_GATEWAY_PORT: "8080",
       });
-      const result = runStopScript(installer, env);
+      const result = runStopScript(writeNoUpstreamInstaller(root), env);
 
       expect(result.status).toBe(1);
       expect(result.stderr).toContain("non-NemoClaw user service");
