@@ -793,7 +793,9 @@ test(
       },
     );
     expect(
-      recoveredHealth.exitCode === 0 && /"ok"/i.test(resultText(recoveredHealth)),
+      recoveredHealth.exitCode === 0 &&
+        recoveredHealth.stderr === "" &&
+        /"ok"/i.test(recoveredHealth.stdout),
       resultText(recoveredHealth),
     ).toBe(true);
     await expectDashboardReachable("phase-4-dashboard-host-after-recover");
