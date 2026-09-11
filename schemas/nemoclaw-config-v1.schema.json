@@ -218,6 +218,85 @@
                   }
                 },
                 "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "required": ["name", "provider", "api", "serving"],
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 63,
+                    "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"
+                  },
+                  "provider": {
+                    "type": "string",
+                    "const": "ollama-local"
+                  },
+                  "api": {
+                    "type": "string",
+                    "const": "openai-completions"
+                  },
+                  "serving": {
+                    "type": "object",
+                    "required": ["backend", "daemon", "proxy", "model"],
+                    "properties": {
+                      "backend": {
+                        "type": "string",
+                        "const": "ollama"
+                      },
+                      "daemon": {
+                        "type": "object",
+                        "required": ["management", "hostPort"],
+                        "properties": {
+                          "management": {
+                            "type": "string",
+                            "const": "external"
+                          },
+                          "hostPort": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 65535
+                          }
+                        },
+                        "additionalProperties": false
+                      },
+                      "proxy": {
+                        "type": "object",
+                        "required": ["management", "hostPort"],
+                        "properties": {
+                          "management": {
+                            "type": "string",
+                            "const": "nemoclaw"
+                          },
+                          "hostPort": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 65535
+                          }
+                        },
+                        "additionalProperties": false
+                      },
+                      "model": {
+                        "type": "object",
+                        "required": ["servedName", "digest"],
+                        "properties": {
+                          "servedName": {
+                            "type": "string",
+                            "const": "qwen3.5:9b"
+                          },
+                          "digest": {
+                            "type": "string",
+                            "pattern": "^sha256:[a-f0-9]{64}$"
+                          }
+                        },
+                        "additionalProperties": false
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                },
+                "additionalProperties": false
               }
             ]
           },
@@ -296,68 +375,405 @@
               "agents": {
                 "type": "array",
                 "items": {
-                  "type": "object",
-                  "required": ["name", "type", "inference"],
-                  "properties": {
-                    "name": {
-                      "type": "string",
-                      "minLength": 1,
-                      "maxLength": 63,
-                      "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"
-                    },
-                    "type": {
-                      "enum": ["openclaw", "hermes"]
-                    },
-                    "inference": {
+                  "anyOf": [
+                    {
                       "type": "object",
-                      "required": ["routes"],
+                      "required": ["name", "inference", "type"],
                       "properties": {
-                        "routes": {
-                          "type": "array",
-                          "items": {
-                            "type": "object",
-                            "required": ["name", "providerRef", "overrides"],
-                            "properties": {
-                              "name": {
-                                "type": "string",
-                                "minLength": 1,
-                                "maxLength": 63,
-                                "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"
-                              },
-                              "providerRef": {
-                                "type": "string",
-                                "minLength": 1,
-                                "maxLength": 63,
-                                "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"
-                              },
-                              "overrides": {
+                        "name": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 63,
+                          "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"
+                        },
+                        "auth": {
+                          "type": "object",
+                          "required": ["method", "providerRef"],
+                          "properties": {
+                            "method": {
+                              "type": "string",
+                              "const": "api-key"
+                            },
+                            "providerRef": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 63,
+                              "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"
+                            }
+                          },
+                          "additionalProperties": false
+                        },
+                        "inference": {
+                          "type": "object",
+                          "required": ["routes"],
+                          "properties": {
+                            "routes": {
+                              "type": "array",
+                              "items": {
                                 "type": "object",
-                                "required": ["model"],
+                                "required": ["name", "providerRef", "overrides"],
                                 "properties": {
-                                  "model": {
+                                  "name": {
                                     "type": "string",
                                     "minLength": 1,
-                                    "maxLength": 512,
-                                    "pattern": "^[^\\s\\p{Cc}\\p{Cf}]+$"
+                                    "maxLength": 63,
+                                    "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"
                                   },
-                                  "contextWindow": {
-                                    "type": "integer",
-                                    "minimum": 1,
-                                    "maximum": 4194304
+                                  "providerRef": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 63,
+                                    "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"
+                                  },
+                                  "overrides": {
+                                    "type": "object",
+                                    "required": ["model"],
+                                    "properties": {
+                                      "model": {
+                                        "type": "string",
+                                        "minLength": 1,
+                                        "maxLength": 512,
+                                        "pattern": "^[^\\s\\p{Cc}\\p{Cf}]+$"
+                                      },
+                                      "contextWindow": {
+                                        "type": "integer",
+                                        "minimum": 1,
+                                        "maximum": 4194304
+                                      },
+                                      "maxTokens": {
+                                        "type": "integer",
+                                        "minimum": 1,
+                                        "maximum": 1000000000
+                                      },
+                                      "reasoning": {
+                                        "type": "boolean"
+                                      },
+                                      "reasoningEffort": {
+                                        "enum": ["default", "low", "medium", "high"]
+                                      }
+                                    },
+                                    "additionalProperties": false
                                   }
                                 },
                                 "additionalProperties": false
-                              }
-                            },
-                            "additionalProperties": false
+                              },
+                              "minItems": 1
+                            }
                           },
-                          "minItems": 1
+                          "additionalProperties": false
+                        },
+                        "type": {
+                          "type": "string",
+                          "const": "openclaw"
+                        },
+                        "execution": {
+                          "type": "object",
+                          "properties": {
+                            "timeoutSeconds": {
+                              "type": "integer",
+                              "minimum": 1,
+                              "maximum": 1000000000
+                            },
+                            "heartbeatEvery": {
+                              "type": "string",
+                              "maxLength": 256,
+                              "pattern": "^[0-9]+[smh]$(?![\\s\\S])"
+                            }
+                          },
+                          "additionalProperties": false,
+                          "minProperties": 1
+                        },
+                        "tools": {
+                          "anyOf": [
+                            {
+                              "type": "object",
+                              "required": ["disclosure"],
+                              "properties": {
+                                "disclosure": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string",
+                                      "const": "progressive"
+                                    },
+                                    {
+                                      "type": "string",
+                                      "const": "direct"
+                                    }
+                                  ]
+                                }
+                              },
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "object",
+                              "required": ["allow"],
+                              "properties": {
+                                "allow": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "string",
+                                    "const": "read"
+                                  },
+                                  "minItems": 1,
+                                  "maxItems": 1
+                                }
+                              },
+                              "additionalProperties": false
+                            }
+                          ]
+                        },
+                        "interfaces": {
+                          "type": "object",
+                          "required": ["dashboard"],
+                          "properties": {
+                            "dashboard": {
+                              "type": "object",
+                              "properties": {
+                                "port": {
+                                  "type": "integer",
+                                  "minimum": 1024,
+                                  "maximum": 65535,
+                                  "not": {
+                                    "minimum": 8642,
+                                    "maximum": 8652
+                                  }
+                                },
+                                "bind": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string",
+                                      "const": "127.0.0.1"
+                                    },
+                                    {
+                                      "type": "string",
+                                      "const": "0.0.0.0"
+                                    }
+                                  ]
+                                }
+                              },
+                              "additionalProperties": false,
+                              "minProperties": 1
+                            }
+                          },
+                          "additionalProperties": false
+                        },
+                        "observability": {
+                          "type": "object",
+                          "required": ["otlp"],
+                          "properties": {
+                            "otlp": {
+                              "type": "object",
+                              "required": ["enabled", "endpoint", "serviceName", "sampleRate"],
+                              "properties": {
+                                "enabled": {
+                                  "type": "boolean",
+                                  "const": true
+                                },
+                                "endpoint": {
+                                  "type": "string",
+                                  "const": "http://host.openshell.internal:4318"
+                                },
+                                "serviceName": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 256,
+                                  "pattern": "^[!-~](?:[ -~]*[!-~])?$(?![\\s\\S])"
+                                },
+                                "sampleRate": {
+                                  "type": "number",
+                                  "minimum": 0,
+                                  "maximum": 1
+                                }
+                              },
+                              "additionalProperties": false
+                            }
+                          },
+                          "additionalProperties": false
+                        }
+                      },
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "required": ["name", "inference", "type"],
+                      "properties": {
+                        "name": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 63,
+                          "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"
+                        },
+                        "auth": {
+                          "type": "object",
+                          "required": ["method", "providerRef"],
+                          "properties": {
+                            "method": {
+                              "type": "string",
+                              "const": "api-key"
+                            },
+                            "providerRef": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 63,
+                              "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"
+                            }
+                          },
+                          "additionalProperties": false
+                        },
+                        "inference": {
+                          "type": "object",
+                          "required": ["routes"],
+                          "properties": {
+                            "routes": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "required": ["name", "providerRef", "overrides"],
+                                "properties": {
+                                  "name": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 63,
+                                    "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"
+                                  },
+                                  "providerRef": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 63,
+                                    "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"
+                                  },
+                                  "overrides": {
+                                    "type": "object",
+                                    "required": ["model"],
+                                    "properties": {
+                                      "model": {
+                                        "type": "string",
+                                        "minLength": 1,
+                                        "maxLength": 512,
+                                        "pattern": "^[^\\s\\p{Cc}\\p{Cf}]+$"
+                                      },
+                                      "contextWindow": {
+                                        "type": "integer",
+                                        "minimum": 1,
+                                        "maximum": 4194304
+                                      },
+                                      "maxTokens": {
+                                        "type": "integer",
+                                        "minimum": 1,
+                                        "maximum": 1000000000
+                                      },
+                                      "reasoning": {
+                                        "type": "boolean"
+                                      },
+                                      "reasoningEffort": {
+                                        "enum": ["default", "low", "medium", "high"]
+                                      }
+                                    },
+                                    "additionalProperties": false
+                                  }
+                                },
+                                "additionalProperties": false
+                              },
+                              "minItems": 1
+                            }
+                          },
+                          "additionalProperties": false
+                        },
+                        "type": {
+                          "type": "string",
+                          "const": "hermes"
+                        },
+                        "interfaces": {
+                          "type": "object",
+                          "properties": {
+                            "dashboard": {
+                              "anyOf": [
+                                {
+                                  "type": "object",
+                                  "required": ["enabled"],
+                                  "properties": {
+                                    "enabled": {
+                                      "type": "boolean",
+                                      "const": false
+                                    }
+                                  },
+                                  "additionalProperties": false
+                                },
+                                {
+                                  "type": "object",
+                                  "required": ["enabled"],
+                                  "properties": {
+                                    "enabled": {
+                                      "type": "boolean",
+                                      "const": true
+                                    },
+                                    "port": {
+                                      "type": "integer",
+                                      "minimum": 1024,
+                                      "maximum": 65535,
+                                      "not": {
+                                        "anyOf": [
+                                          {
+                                            "minimum": 8642,
+                                            "maximum": 8652
+                                          },
+                                          {
+                                            "const": 18642
+                                          }
+                                        ]
+                                      }
+                                    },
+                                    "internalPort": {
+                                      "type": "integer",
+                                      "minimum": 1024,
+                                      "maximum": 65535,
+                                      "not": {
+                                        "anyOf": [
+                                          {
+                                            "minimum": 8642,
+                                            "maximum": 8652
+                                          },
+                                          {
+                                            "const": 18642
+                                          }
+                                        ]
+                                      }
+                                    },
+                                    "tui": {
+                                      "type": "object",
+                                      "required": ["enabled"],
+                                      "properties": {
+                                        "enabled": {
+                                          "type": "boolean"
+                                        }
+                                      },
+                                      "additionalProperties": false
+                                    }
+                                  },
+                                  "additionalProperties": false
+                                }
+                              ]
+                            },
+                            "api": {
+                              "type": "object",
+                              "required": ["port"],
+                              "properties": {
+                                "port": {
+                                  "type": "integer",
+                                  "minimum": 8642,
+                                  "maximum": 8652
+                                }
+                              },
+                              "additionalProperties": false
+                            }
+                          },
+                          "additionalProperties": false,
+                          "minProperties": 1
                         }
                       },
                       "additionalProperties": false
                     }
-                  },
-                  "additionalProperties": false
+                  ]
                 },
                 "minItems": 1
               },

@@ -36,8 +36,9 @@ import { expectPackageDatabaseReadOnly } from "./package-database-read-only.ts";
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-hermes";
 validateSandboxName(SANDBOX_NAME);
-const HERMES_HEALTH_URL = "http://localhost:8642/health";
-const HERMES_HOST_HEALTH_URL = "http://127.0.0.1:8642/health";
+const HERMES_API_PORT = process.env.NEMOCLAW_HERMES_API_PORT ?? "8642";
+const HERMES_HEALTH_URL = `http://localhost:${HERMES_API_PORT}/health`;
+const HERMES_HOST_HEALTH_URL = `http://127.0.0.1:${HERMES_API_PORT}/health`;
 const HERMES_DASHBOARD_PORT = process.env.NEMOCLAW_DASHBOARD_PORT ?? "18789";
 const SESSION_FILE = path.join(os.homedir(), ".nemoclaw", "onboard-session.json");
 const REGISTRY_FILE = path.join(os.homedir(), ".nemoclaw", "sandboxes.json");
@@ -80,21 +81,16 @@ function commandEnv(inferenceEnv: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
     NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
     ...securityPostureModeEnv(),
   };
-  if (process.env.NEMOCLAW_E2E_HERMES_DASHBOARD) {
-    env.NEMOCLAW_E2E_HERMES_DASHBOARD = process.env.NEMOCLAW_E2E_HERMES_DASHBOARD;
-  }
-  if (process.env.NEMOCLAW_HERMES_DASHBOARD) {
-    env.NEMOCLAW_HERMES_DASHBOARD = process.env.NEMOCLAW_HERMES_DASHBOARD;
-  }
-  if (process.env.NEMOCLAW_HERMES_DASHBOARD_TUI) {
-    env.NEMOCLAW_HERMES_DASHBOARD_TUI = process.env.NEMOCLAW_HERMES_DASHBOARD_TUI;
-  }
-  if (process.env.NEMOCLAW_DASHBOARD_PORT) {
-    env.NEMOCLAW_DASHBOARD_PORT = process.env.NEMOCLAW_DASHBOARD_PORT;
-  }
-  if (process.env.NEMOCLAW_HERMES_DASHBOARD_INTERNAL_PORT) {
-    env.NEMOCLAW_HERMES_DASHBOARD_INTERNAL_PORT =
-      process.env.NEMOCLAW_HERMES_DASHBOARD_INTERNAL_PORT;
+  if (hermesDashboardE2eEnabled()) env.NEMOCLAW_HERMES_DASHBOARD = "1";
+  for (const key of [
+    "NEMOCLAW_HERMES_API_PORT",
+    "NEMOCLAW_HERMES_DASHBOARD_PORT",
+    "NEMOCLAW_E2E_HERMES_DASHBOARD",
+    "NEMOCLAW_HERMES_DASHBOARD_TUI",
+    "NEMOCLAW_DASHBOARD_PORT",
+    "NEMOCLAW_HERMES_DASHBOARD_INTERNAL_PORT",
+  ]) {
+    if (process.env[key]) env[key] = process.env[key];
   }
   return env;
 }
@@ -547,11 +543,14 @@ test(
     let recoveredRootGatewayPid: string | undefined;
 
     if (rootSupervisorTopology) {
-      const stopApiForward = await sandbox.openshell(["forward", "stop", "8642", SANDBOX_NAME], {
-        artifactName: "phase-4-stop-hermes-api-forward-before-restart",
-        env: commandEnv(),
-        timeoutMs: 30_000,
-      });
+      const stopApiForward = await sandbox.openshell(
+        ["forward", "stop", HERMES_API_PORT, SANDBOX_NAME],
+        {
+          artifactName: "phase-4-stop-hermes-api-forward-before-restart",
+          env: commandEnv(),
+          timeoutMs: 30_000,
+        },
+      );
       expect(stopApiForward.exitCode, resultText(stopApiForward)).toBe(0);
 
       const restart = await host.command("nemohermes", [SANDBOX_NAME, "gateway", "restart"], {
@@ -694,11 +693,14 @@ test(
         expect(restoreManagedEnv.exitCode, resultText(restoreManagedEnv)).toBe(0);
       }
 
-      const stopApiForward = await sandbox.openshell(["forward", "stop", "8642", SANDBOX_NAME], {
-        artifactName: "phase-4-stop-managed-hermes-api-forward",
-        env: commandEnv(),
-        timeoutMs: 30_000,
-      });
+      const stopApiForward = await sandbox.openshell(
+        ["forward", "stop", HERMES_API_PORT, SANDBOX_NAME],
+        {
+          artifactName: "phase-4-stop-managed-hermes-api-forward",
+          env: commandEnv(),
+          timeoutMs: 30_000,
+        },
+      );
       expect(stopApiForward.exitCode, resultText(stopApiForward)).toBe(0);
 
       const restartManagedGateway = await host.command(
@@ -883,7 +885,9 @@ test(
     const configExport = await verifyHermesConfigExportLive({
       artifacts,
       cleanup,
-      enabled: securityPostureEnabled(),
+      enabled: securityPostureEnabled() || hermesDashboardE2eEnabled(),
+      dashboardEnabled: hermesDashboardE2eEnabled(),
+      sandbox,
       env: commandEnv(),
       host,
       redactionValues,

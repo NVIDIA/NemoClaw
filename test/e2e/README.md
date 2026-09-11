@@ -147,6 +147,10 @@ assembles one exact candidate catalog from the workflow's published contracts, u
 and sandbox, records the authenticated discovery diagnostics, scans the evidence for fixture
 credentials, and must pass.
 These are two required acceptance executions, not retries; either failure remains a failed check.
+The concurrent-add probe retries only the rejected command after status proves that the other
+command committed one coherent bridge. The rejected command must report either the exact portable
+host-lock timeout or the reviewed Hermes restart transport failure. The retry runs once, has its own
+command artifact, and must reject the committed duplicate as already present.
 The workflow records one publication cohort before its PR producer matrix runs. Failed-job reruns
 reuse that cohort and replace only the stable run-scoped artifact owned by each retried agent.
 Consumers accept one complete cohort from the same run at the current or an earlier attempt. They
@@ -359,10 +363,12 @@ and transport. It also stops the gateway and removes its temporary state.
 
 ## Catalogue Targets
 
-Every catalogue profile installs the reviewed OpenShell SDK archive before restoring the candidate CLI.
-The shared package job downloads and verifies the pinned SDK with package-read permission.
-Catalogue jobs receive the run-scoped archive without package credentials and reject a missing or ambiguous archive.
-The install disables package scripts and verifies that the SDK connection API loads before running tests.
+Every catalogue profile installs a lockfile-selected reviewed OpenShell SDK archive before restoring the candidate CLI.
+The shared package job downloads and verifies the active SDK and any approved transition replacement with package-read permission.
+Catalogue jobs receive the run-scoped archives without package credentials and reject a missing artifact or more than one approved transition pair.
+Catalogue and external-gateway health jobs add each reviewed archive to npm's cache, then reinstall dependencies from the lockfile with package scripts disabled.
+This preserves the locked dependency versions and avoids npm resolving a new peer dependency graph during SDK installation.
+Both jobs verify that the SDK connection API loads before running tests.
 This keeps the private optional dependency available for SDK-backed commands such as configuration export.
 
 The `network-policy` target also owns live configuration-export evidence for #10938 and PR #11065.
@@ -459,6 +465,15 @@ The standard layout writes product evidence and `evidence-manifest.json` under `
 When `shard` is not `default`, the standard layout adds the shard directory.
 The security-posture matrix uses the reviewed flat-shard layout to preserve its existing artifact names.
 The `gpu-double-onboard`, `gpu-e2e`, and `llama-cpp-generic-gpu` targets keep the standard layout and select `linux-amd64-gpu-rtxpro6000-latest-1` through the catalogue.
+The `gpu-e2e` target also qualifies configuration export for an attached native Linux Ollama daemon.
+A separate OpenClaw scenario disables direct sandbox GPU, starts a fixture-owned daemon on port
+11439, and uses normal onboarding to create the managed proxy on port 11440. It exports twice through
+the candidate CLI and real SDK, validates both documents, compares their specs and model digest,
+checks credential omission, and requires a stopped daemon to prevent publication. Private YAML is
+removed through the cleanup registry; retained evidence contains only the selected model, ports,
+managed image, and result booleans. The existing CUDA, authentication, and inference lifecycle
+scenarios remain separate. Daemon readiness polls only connection refusal, for at most 20 reads,
+and records each attempt; onboarding and export mutations are not retried.
 Retained workflow jobs are exceptions to the catalogue shape.
 Keep one only for a multi-job handoff, an unrepresented credential boundary, or an execution contract the reusable profile cannot represent.
 
@@ -736,6 +751,15 @@ The retired `hermes-dashboard` selector remains a compatibility alias for
 `hermes-e2e` name. That lane always enables dashboard coverage while preserving
 the manually selected `mock`, `internal-nvidia`, or `public-nvidia` inference
 mode.
+
+That existing lane also owns Hermes interface export evidence for #11433. It onboards with public
+dashboard port 19000 through both port aliases, internal port 19120, browser TUI enabled and API
+port 8643. Both CLI names must export the same validated interface values. Existing host dashboard
+and API probes verify the public endpoints; the export fixture separately checks the deployed
+dashboard process's internal port and TUI flag, then probes that internal listener. Process evidence
+contains only the numeric port and TUI boolean. The fixture retains identity-drift rejection,
+registry restoration and export-file cleanup. The `security-posture-hermes` lane retains canonical
+disabled/default interface coverage. This extends one existing behavior dimension and adds no target.
 
 ## Current OpenClaw plugin EXDEV lifecycle
 
@@ -1072,17 +1096,19 @@ Brev Launchable`. The workflow names this selection `E2E full main`, with the
 correlation ID when one was supplied, so maintainers can find the newest full
 manual run without scanning every run's jobs.
 
-Each full dispatch uses `github.run_id` in its workflow concurrency identity, so
-another full dispatch cannot supersede it while it waits. The trusted `main`
+Each full or focused Launchable dispatch uses `github.run_id` in its workflow concurrency identity,
+so another dispatch cannot supersede it while it waits. The trusted `main`
 workflow dispatch verifies that the dispatching and rerunning actors have
 repository `maintain` or `admin` permission before the Launchable path's source
 checkout. That automatic role check authorizes `staging-brev-launchable` and
 `staging-brev-launchable-identity`; neither job uses GitHub environment
 approval.
 
-Both Launchable jobs use the `staging-brev-launchable-cpu` concurrency group
-without cancelling a running job. GitHub keeps at most one pending job in that
-group, so a newer job can replace an older pending job.
+Both Launchable jobs and `.github/workflows/staging-launchable-full.yaml` share the
+`staging-brev-launchable-cpu` concurrency group with `queue: max` and `cancel-in-progress: false`.
+One job or workflow runs at a time, and up to 100 pending entries wait without replacing each other.
+GitHub cancels new entries when the queue is full. Entries run in the order they enter the group;
+that order can differ from workflow dispatch order.
 
 For a full manual run dispatched against `main`, `Release qualification` waits
 for every E2E job that does not require a separate opt-in, including `Exact staging Brev Launchable`. The strict aggregate reports whether that full run
@@ -1413,6 +1439,8 @@ The planner also selects the CPU-only `jetson-nvmap-gpu` proof for every trusted
 Changes to the central workflow, planner, or shared execution helpers select the complete default E2E set.
 If no other E2E target owns a changed file, `Relevant E2E` requires only the Jetson proof.
 Otherwise, `Relevant E2E` requires every selected workflow job to pass.
+For trusted manual PR runs, the same check also records selected results and references the existing dispatch receipt.
+The [review queue evidence contract](../../tools/pr-review-advisor/REVIEW-QUEUE.md#results) defines artifact validation and incomplete results.
 The central workflow skips the DGX Spark llama.cpp jobs on push.
 The central workflow has no scheduled trigger.
 
@@ -1432,8 +1460,8 @@ flowchart LR
   retained --> dedicated
   reusable --> evidence["Diagnostic product evidence"]
   dedicated --> evidence
-  reusable -->|"push job results"| relevant["Relevant E2E"]
-  dedicated -->|"push job results"| relevant
+  reusable -->|"push or PR job results"| relevant["Relevant E2E"]
+  dedicated -->|"push or PR job results"| relevant
   reusable -->|"full manual job results"| release["Release qualification"]
   dedicated -->|"full manual job results"| release
   release --> decision["Status for maintainer decision"]

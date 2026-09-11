@@ -21,8 +21,10 @@ import { DEFAULT_GATEWAY_PORT, GATEWAY_PORT } from "../core/ports";
 import { isSupportedGatewayDockerHost } from "../domain/docker-host";
 import {
   DOCKER_DRIVER_GATEWAY_JWT_TTL_SECS,
+  NEMOCLAW_EXTERNAL_COMPONENT_GATEWAY_IDENTITY_ENV,
   NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV,
   prepareDockerDriverGatewayConfigEnv,
+  type ExternalComponentGatewayConfiguration,
 } from "./docker-driver-gateway-config";
 import { buildDockerDriverGatewayLocalTlsEnv } from "./docker-driver-gateway-local-tls";
 import {
@@ -74,6 +76,7 @@ export const DOCKER_DRIVER_GATEWAY_RUNTIME_ENV_KEYS = [
   "OPENSHELL_VM_DRIVER_STATE_DIR",
   "OPENSHELL_DRIVER_DIR",
   "NEMOCLAW_DOCKER_ENABLE_BIND_MOUNTS",
+  NEMOCLAW_EXTERNAL_COMPONENT_GATEWAY_IDENTITY_ENV,
   NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV,
   "NETAVARK_FW",
 ] as const;
@@ -89,6 +92,24 @@ export interface BuildDockerDriverGatewayEnvOptions {
   getDockerSupervisorImage: () => string;
   resolveSandboxBin: () => string | null;
   enableBindMounts?: boolean;
+}
+
+export function configureDockerDriverGatewayExternalComponent(
+  gatewayEnv: Record<string, string>,
+  externalComponent: ExternalComponentGatewayConfiguration | null,
+): void {
+  const configPath = gatewayEnv.OPENSHELL_GATEWAY_CONFIG;
+  if (!configPath) {
+    throw new Error("OpenShell Docker-driver gateway requires OPENSHELL_GATEWAY_CONFIG");
+  }
+  prepareDockerDriverGatewayConfigEnv(
+    gatewayEnv,
+    path.dirname(configPath),
+    gatewayEnv.OPENSHELL_DOCKER_SUPERVISOR_BIN,
+    {
+      externalComponent,
+    },
+  );
 }
 
 function preparePortableGatewayHostRuntime(

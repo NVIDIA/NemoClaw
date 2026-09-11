@@ -33,12 +33,12 @@ import {
   parseOllamaRuntimeModelStatus,
 } from "../../../inference/ollama-runtime-context";
 import { buildSubprocessEnv, redact, redactFull } from "../../../runner";
-import type { SandboxExecSignalSource } from "../exec";
+import type { ProcessSessionSignals } from "../../../core/process-session";
 import {
-  type AgentDispatchChild,
-  type AgentDispatchSpawner,
-  runAgentDispatch,
-} from "./passthrough-dispatch";
+  type CapturedProcessChild,
+  type CapturedProcessSpawner,
+  runCapturedProcess,
+} from "../../../core/process-capture";
 
 export interface OllamaRestartRecoveryRoute {
   provider?: string | null;
@@ -61,7 +61,7 @@ export interface OllamaRestartRecoveryDeps extends OllamaRestartRecoveryOptions 
   prepareDockerEnvironment?: PrepareOllamaDockerEnvironment;
   routeProtectionCapture?: OllamaExecutionOptions["runCaptureImpl"];
   runRecoveryCaptureImpl?: OllamaRecoveryCaptureFn;
-  signalSource?: SandboxExecSignalSource;
+  signalSource?: ProcessSessionSignals;
   spawnRecoveryChild?: OllamaRecoverySpawner;
   now?: () => number;
   revalidateOllamaHost?: () => string | null;
@@ -179,7 +179,7 @@ export type OllamaRecoveryCaptureFn = (
     dockerContextIsDefault?: OllamaExecutionOptions["dockerContextIsDefault"];
     prepareDockerEnvironment?: PrepareOllamaDockerEnvironment;
     routeProtectionCapture?: OllamaExecutionOptions["runCaptureImpl"];
-    signalSource?: SandboxExecSignalSource;
+    signalSource?: ProcessSessionSignals;
     spawnRecoveryChild?: OllamaRecoverySpawner;
   },
 ) => Promise<OllamaRecoveryCaptureResult>;
@@ -189,10 +189,10 @@ export type OllamaRecoverySpawner = (
   args: readonly string[],
   stdio: StdioOptions,
   env: NodeJS.ProcessEnv,
-) => AgentDispatchChild;
+) => CapturedProcessChild;
 
 const defaultOllamaRecoverySpawner: OllamaRecoverySpawner = (binary, args, stdio, env) =>
-  spawn(binary, [...args], { stdio, env }) as unknown as AgentDispatchChild;
+  spawn(binary, [...args], { stdio, env }) as unknown as CapturedProcessChild;
 
 /** Capture one bounded recovery command through the shared signal-aware child supervisor. */
 export async function runOllamaRecoveryCapture(
@@ -222,7 +222,7 @@ export async function runOllamaRecoveryCapture(
   let timeout: ReturnType<typeof setTimeout> | undefined;
   let forceTimeout: ReturnType<typeof setTimeout> | undefined;
   const spawnRecoveryChild = options.spawnRecoveryChild ?? defaultOllamaRecoverySpawner;
-  const spawnChild: AgentDispatchSpawner = (runBinary, runArgs, stdio) => {
+  const spawnChild: CapturedProcessSpawner = (runBinary, runArgs, stdio) => {
     const child = spawnRecoveryChild(runBinary, runArgs, stdio, execution.env ?? {});
     timeout = setTimeout(() => {
       timedOut = true;
@@ -239,7 +239,7 @@ export async function runOllamaRecoveryCapture(
   };
 
   try {
-    const result = await runAgentDispatch(
+    const result = await runCapturedProcess(
       binary,
       args,
       { maxBufferBytes: OLLAMA_RESTART_RECOVERY_MAX_BUFFER_BYTES, stdinIsTty: true },

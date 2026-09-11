@@ -21,7 +21,7 @@ import {
   retireRemovedImmutabilityStateRecord,
 } from "../../state/migrations/removed-immutability";
 import * as onboardSession from "../../state/onboard-session";
-import { load as loadRegistry, REGISTRY_FILE } from "../../state/registry/persistence";
+import * as registry from "../../state/registry";
 import {
   captureRebuildPolicyDocument,
   clearHermesOperatorConfigHandoff,
@@ -116,7 +116,7 @@ export async function rebuildSandbox(
   return withPortableOnboardRetirementBoundary(
     {
       homeDir,
-      registryFile: REGISTRY_FILE,
+      registryFile: registry.REGISTRY_FILE,
       sessionFile: onboardSession.SESSION_FILE,
       stateDir: path.dirname(onboardSession.SESSION_FILE),
     },
@@ -157,7 +157,7 @@ export async function rebuildSandbox(
           );
         }
       }),
-    { loadRegistry, withLifecycleLock: withMcpLifecycleLock },
+    { loadRegistry: registry.load, withLifecycleLock: withMcpLifecycleLock },
   );
 }
 
@@ -170,7 +170,7 @@ async function rebuildSandboxUnlocked(
   let executionOptions = opts;
   if (!executionOptions.recoveryManifest) {
     const transaction = onboardSession.loadSession()?.checkpoint?.sandboxRecreate;
-    const registryEntry = loadRegistry().sandboxes[sandboxName];
+    const registryEntry = registry.load().sandboxes[sandboxName];
     if (transaction?.sandboxName === sandboxName && registryEntry) {
       const retainedRecovery = findRebuildRecoveryBackup({
         sandboxName,
@@ -225,15 +225,21 @@ async function rebuildSandboxUnlocked(
   const recoveryRecreate = staleRecovery || preparedBackupRecovery;
   try {
     let recoveryRegistrySnapshot = preparedBackupRecovery
-      ? JSON.parse(JSON.stringify(loadRegistry()))
+      ? JSON.parse(JSON.stringify(registry.load()))
       : liveState.staleRegistrySnapshot;
-    const registryRollback = createRebuildRegistryRollback({
-      sandboxName,
-      preparedBackupRecovery,
-      staleRecovery,
-      getRecoveryRegistrySnapshot: () => recoveryRegistrySnapshot,
-      log,
-    });
+    const registryRollback = createRebuildRegistryRollback(
+      {
+        sandboxName,
+        preparedBackupRecovery,
+        staleRecovery,
+        getRecoveryRegistrySnapshot: () => recoveryRegistrySnapshot,
+        log,
+      },
+      {
+        restoreSandboxEntry: registry.restoreSandboxEntry,
+        restoreSandboxEntryIfMissing: registry.restoreSandboxEntryIfMissing,
+      },
+    );
     let retainPolicyHandoffForRecovery = false;
 
     try {
@@ -610,6 +616,11 @@ async function rebuildSandboxUnlocked(
         }
         rebuildPolicyHandoffManifest = recoveryBackup;
         retainPolicyHandoffForRecovery = true;
+        if (!registry.recordSandboxStopIntent(sandboxName, false, registry.updateSandbox)) {
+          return bail(
+            `Sandbox '${sandboxName}' was recovered, but NemoClaw could not clear its intentional-stop record. Retry 'nemoclaw ${sandboxName} rebuild --yes' before another lifecycle command.`,
+          );
+        }
         const restored = runRebuildRestorePhase({
           sandboxName,
           targetAgentType: rebuildAgent || "openclaw",
@@ -836,6 +847,11 @@ async function rebuildSandboxUnlocked(
         restoreDcodeGpuPatchNetwork();
       }
       if (!recreated) return;
+      if (!registry.recordSandboxStopIntent(sandboxName, false, registry.updateSandbox)) {
+        return bail(
+          `Sandbox '${sandboxName}' was rebuilt, but NemoClaw could not clear its intentional-stop record. Run 'nemoclaw ${sandboxName} status' before another lifecycle command.`,
+        );
+      }
 
       const restore = () =>
         runRebuildRestorePhase({

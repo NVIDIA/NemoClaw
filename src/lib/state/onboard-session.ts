@@ -94,6 +94,7 @@ const SAFE_VLLM_INSTALL_MODEL = /^[A-Za-z0-9._:/-]+$/;
 
 export class InvalidPersistedApfInterceptorIntentError extends Error {}
 export class InvalidPersistedCancellationRecoveryError extends Error {}
+export class InvalidPersistedExternalComponentActivationError extends Error {}
 
 // Session-specific aliases for the shared JSON types.
 type SessionJsonValue = JsonValue;
@@ -137,6 +138,15 @@ export interface SessionCancellationRecovery {
   readonly lifecycleGeneration: string;
   readonly createAttemptNonce: string;
   readonly recordedAt: string;
+}
+
+export interface ExternalComponentActivationIncomplete {
+  readonly schemaVersion: 1;
+  readonly activationId: string;
+  readonly componentId: string;
+  readonly lifecycleGeneration: string;
+  readonly sandboxIdentityFingerprint: string;
+  readonly resultClass: "failed" | "ambiguous";
 }
 
 function sameCancellationRecovery(
@@ -255,6 +265,8 @@ export interface Session {
   lastCompletedStep: string | null;
   failure: SessionFailure | null;
   cancellationRecovery: SessionCancellationRecovery | null;
+  /** Secret-free evidence for one activation that did not reach verified success. */
+  externalComponentActivation: ExternalComponentActivationIncomplete | null;
   agent: string | null;
   sandboxName: string | null;
   provider: string | null;
@@ -373,6 +385,7 @@ export interface SessionUpdates {
   gpuPassthrough?: boolean;
   telegramConfig?: TelegramConfig | null;
   wechatConfig?: WechatConfig | null;
+  externalComponentActivation?: ExternalComponentActivationIncomplete | null;
   metadata?: { gatewayName?: string; fromDockerfile?: string | null };
   /** Ephemeral vLLM checkpoint proof consumed by Station provider binding; never persisted. */
   stationExpressModelIdentity?: string;
@@ -409,6 +422,7 @@ export interface DebugSessionSummary {
   lastCompletedStep: string | null;
   failure: SessionFailure | null;
   cancellationRecovery: SessionCancellationRecovery | null;
+  externalComponentActivation: ExternalComponentActivationIncomplete | null;
   gatewayAuthority: GatewayOwnerDescription | null;
   machine: OnboardMachineSnapshot;
   steps: Record<string, StepState>;
@@ -843,6 +857,49 @@ function parseSessionCancellationRecovery(
   };
 }
 
+function parseExternalComponentActivation(
+  value: SessionJsonValue | undefined,
+): ExternalComponentActivationIncomplete | null {
+  if (!isObject(value)) return null;
+  const activationId = readString(value.activationId);
+  const componentId = readString(value.componentId);
+  const lifecycleGeneration = readString(value.lifecycleGeneration);
+  const sandboxIdentityFingerprint = readString(value.sandboxIdentityFingerprint);
+  if (
+    value.schemaVersion !== 1 ||
+    !activationId ||
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(activationId) ||
+    !componentId ||
+    !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/u.test(componentId) ||
+    !lifecycleGeneration ||
+    !validSafeEvidence(lifecycleGeneration) ||
+    !sandboxIdentityFingerprint ||
+    !/^sha256:[0-9a-f]{64}$/u.test(sandboxIdentityFingerprint) ||
+    (value.resultClass !== "failed" && value.resultClass !== "ambiguous") ||
+    Object.keys(value).some(
+      (field) =>
+        ![
+          "schemaVersion",
+          "activationId",
+          "componentId",
+          "lifecycleGeneration",
+          "sandboxIdentityFingerprint",
+          "resultClass",
+        ].includes(field),
+    )
+  ) {
+    return null;
+  }
+  return {
+    schemaVersion: 1,
+    activationId,
+    componentId,
+    lifecycleGeneration,
+    sandboxIdentityFingerprint,
+    resultClass: value.resultClass,
+  };
+}
+
 // ── Session CRUD ─────────────────────────────────────────────────
 
 function createMachineSnapshot(
@@ -941,6 +998,9 @@ export function createSession(overrides: Partial<Session> = {}): Session {
     failure: overrides.failure ?? null,
     cancellationRecovery: parseSessionCancellationRecovery(
       overrides.cancellationRecovery as SessionJsonValue | undefined,
+    ),
+    externalComponentActivation: parseExternalComponentActivation(
+      overrides.externalComponentActivation as SessionJsonValue | undefined,
     ),
     agent: overrides.agent ?? null,
     sandboxName: overrides.sandboxName ?? null,
@@ -1068,6 +1128,18 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
       "Refusing to load the onboarding session: saved recovery authority is incomplete.",
     );
   }
+  const externalComponentActivation = parseExternalComponentActivation(
+    data.externalComponentActivation,
+  );
+  if (
+    hasOwn(data, "externalComponentActivation") &&
+    data.externalComponentActivation !== null &&
+    !externalComponentActivation
+  ) {
+    throw new InvalidPersistedExternalComponentActivationError(
+      "Refusing to load the onboarding session: saved external component activation evidence is incomplete.",
+    );
+  }
 
   const normalized = createSession({
     sessionId: readString(data.sessionId) ?? undefined,
@@ -1110,6 +1182,7 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
     lastCompletedStep: readString(data.lastCompletedStep),
     failure: sanitizeFailure(isObject(data.failure) ? data.failure : null),
     cancellationRecovery,
+    externalComponentActivation,
     metadata: parseSessionMetadata(data.metadata),
     checkpoint: data.checkpoint as unknown as OnboardCheckpoint | null,
   });
@@ -1221,7 +1294,10 @@ export function loadSession(): Session | null {
     if (lockOwned) assertOnboardLockOwned();
     return normalized;
   } catch (error) {
-    if (error instanceof InvalidPersistedApfInterceptorIntentError) {
+    if (
+      error instanceof InvalidPersistedApfInterceptorIntentError ||
+      error instanceof InvalidPersistedExternalComponentActivationError
+    ) {
       throw error;
     }
     if (lockOwned) throw error;
@@ -1232,8 +1308,10 @@ export function loadSession(): Session | null {
 }
 
 function serializeSessionForDisk(session: Session): Record<string, unknown> {
+  const { externalComponentActivation, ...persistentSession } = session;
   return {
-    ...session,
+    ...persistentSession,
+    ...(externalComponentActivation ? { externalComponentActivation } : {}),
     messagingPlan: session.messagingPlan
       ? compactSandboxMessagingPlanForPersistence(session.messagingPlan)
       : session.messagingPlan,
@@ -1880,6 +1958,14 @@ export function filterSafeUpdates(updates: SessionUpdates): Partial<Session> {
     if (parsed) safe.wechatConfig = parsed;
   } else if (updates.wechatConfig === null) {
     safe.wechatConfig = null;
+  }
+  if (updates.externalComponentActivation === null) {
+    safe.externalComponentActivation = null;
+  } else {
+    const activation = parseExternalComponentActivation(
+      updates.externalComponentActivation as SessionJsonValue | undefined,
+    );
+    if (activation) safe.externalComponentActivation = activation;
   }
   if (isObject(updates.metadata) && typeof updates.metadata.gatewayName === "string") {
     safe.metadata = {
@@ -2610,6 +2696,7 @@ export function summarizeForDebug(
     lastCompletedStep: session.lastCompletedStep,
     failure: sanitizeFailure(session.failure),
     cancellationRecovery: session.cancellationRecovery,
+    externalComponentActivation: session.externalComponentActivation,
     gatewayAuthority,
     machine: session.machine,
     steps: Object.fromEntries(
