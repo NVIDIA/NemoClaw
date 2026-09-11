@@ -13,8 +13,11 @@ The [fresh Windows ARM64 run](https://github.com/NVIDIA/NemoClaw/actions/runs/34
 measured install **20.025 seconds** and uninstall **15.811 seconds**, both exit 0.
 This measured fresh install meets the 30-second target. Uninstall left one empty installation directory.
 The installed payload contains 2,488 files (607,983,795 bytes; 374 MSI components).
-Startup acceptance failed in the session observer before any HTTP probe; no model/tool or warm-start pass is claimed.
-The retained application diagnostic reached browser handoff after 22.768 seconds; this is not a usable-prompt measurement.
+The original startup observer failed before probing the dashboard. The [corrected replay](https://github.com/NVIDIA/NemoClaw/actions/runs/34547627462/job/103103565519),
+using controller `d159455f17c10a418c90ae0fc3a58b56de869429` against these unchanged binaries, reached the dashboard and composer.
+The first inference turn then failed locally because the runtime is missing `undici`; no provider response or tool pass was established.
+The replay measured install **19.459 seconds** and uninstall **15.789 seconds**. Native sandbox cleanup completed,
+but the guardian did not exit within the existing cleanup bound and required termination. Warm startup and idle sampling were not reached.
 
 Known limitation: Discord, Slack and Tavily plugin dependencies are not included in this preview.
 Those choices can enter an upstream plugin-install path and do not meet the finished-payload contract.
