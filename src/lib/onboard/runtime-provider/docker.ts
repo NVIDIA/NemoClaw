@@ -26,12 +26,12 @@ import {
 } from "../experimental/docker-network-authority";
 import {
   hasPortableAgentSandboxLifecycleReceipt,
-  hermesPortableLifecycleLockOptions,
   recoverPortableAgentSandboxLifecycle,
   requalifyPortableAgentSandboxAuthority,
   stopPortableAgentSandboxLifecycle,
 } from "../experimental/portable-agent-lifecycle";
 import { withMcpLifecycleLockSync } from "../../state/mcp-lifecycle-lock-acquisition";
+import { resolveHermesPortableLifecycleLockOptions } from "../experimental/portable-lifecycle-lock";
 import { queryOpenShellDockerSandboxRuntimeSnapshot } from "../openshell-docker-sandbox-containers";
 import { validateSandboxGpuPreflight } from "../sandbox-gpu-preflight";
 import {
@@ -307,12 +307,11 @@ function dockerLifecycleLockOptions(
   input: RuntimeProviderLifecycleInput,
   deps: DockerRuntimeProviderDependencies,
 ): { readonly stateDir: string } | undefined {
-  return hermesPortableLifecycleLockOptions(
+  if (input.sandbox.agent !== "hermes") return undefined;
+  return resolveHermesPortableLifecycleLockOptions(
     input.sandboxName,
     input.environment,
-    () =>
-      input.sandbox.agent === "hermes" &&
-      deps.hasPortableLifecycleReceipt(input.sandboxName, input.environment),
+    deps.hasPortableLifecycleReceipt,
   );
 }
 

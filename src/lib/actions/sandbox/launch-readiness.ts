@@ -46,7 +46,7 @@ import {
   publishLaunchReadinessLease,
   readLaunchReadinessLease,
 } from "../../state/launch-readiness-lease";
-import { withMcpLifecycleLock as withSandboxMutationLock } from "../../state/mcp-lifecycle-lock-acquisition";
+import { withSandboxLifecycleLock as withSandboxMutationLock } from "./lifecycle/lock";
 import type { SandboxEntry, SandboxWorkloadReceipt } from "../../state/registry";
 import { normalizeSandboxMcpState } from "../../state/registry";
 import * as registry from "../../state/registry";

@@ -33,6 +33,13 @@ describe("E2E operations workflow", testTimeoutOptions(15_000), () => {
   it("accepts the checked-in workflow", () => {
     expect(validateE2eOperationsWorkflowBoundary()).toEqual([]);
   });
+  it.each([true, undefined])("rejects recorder cone mode %s (#11489)", (coneMode) => {
+    const workflow = readE2eOperationsWorkflow();
+    workflow.jobs["relevant-e2e"].steps![0]!.with!["sparse-checkout-cone-mode"] = coneMode;
+    expect(validateE2eOperationsWorkflow(workflow)).toContain(
+      "relevant-e2e must check out only the trusted evaluator",
+    );
+  });
   it("rejects a lookalike live cold-onboard performance artifact path (#6660)", () => {
     const workflow = readE2eOperationsWorkflow();
     const upload = workflow.jobs.live.steps!.find((step) => step.name === "Upload E2E artifacts")!;
@@ -137,12 +144,12 @@ describe("E2E operations workflow", testTimeoutOptions(15_000), () => {
     const requireResults = job.steps!.find(
       (step) => step.name === "Require every selected E2E result",
     )!;
-    requireResults.run = "true";
+    requireResults.env!.E2E_RESULT_PATH = "";
 
     expect(validateE2eOperationsWorkflow(workflow)).toEqual(
       expect.arrayContaining([
         "relevant-e2e needs must exactly match report-to-pr needs",
-        "relevant-e2e must be the stable aggregate check for main pushes",
+        "relevant-e2e must be the stable aggregate check for main pushes and trusted PR runs",
         "relevant-e2e permissions must be contents: read",
         "relevant-e2e checkout must pin its action to a full SHA",
         "relevant-e2e must check out only the trusted evaluator",
