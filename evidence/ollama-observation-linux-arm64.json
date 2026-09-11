@@ -1,0 +1,37 @@
+{
+  "platform": "linux_arm64",
+  "osquery": "5.23.1",
+  "docker": "29.2.1",
+  "query": "SELECT id, name, state FROM docker_containers WHERE name = '/nc-observation-absent';",
+  "results": [
+    {
+      "reader": "osquery",
+      "socket": "available",
+      "exitCode": 0,
+      "output": "[\n\n]",
+      "diagnostic": ""
+    },
+    {
+      "reader": "direct",
+      "socket": "available",
+      "exitCode": 0,
+      "output": "absent",
+      "diagnostic": ""
+    },
+    {
+      "reader": "osquery",
+      "socket": "unavailable",
+      "exitCode": 0,
+      "output": "[\n\n]",
+      "diagnostic": ""
+    },
+    {
+      "reader": "direct",
+      "socket": "unavailable",
+      "exitCode": 0,
+      "output": "unknown",
+      "diagnostic": ""
+    }
+  ],
+  "limit": "This tests absence classification only, not equivalent collectors or total maintenance cost."
+}

@@ -1,0 +1,40 @@
+{
+  "agentReplies": 3,
+  "bundle": {
+    "Version": "0.1.0-dev.g17f54bad65eb",
+    "Go": "1.27.1",
+    "OpenTofu": "1.12.6",
+    "Osquery": "5.23.1",
+    "Files": {
+      "bin/nemoclaw": "62c5a2dd3bb83397a13c6261d75af0d3e7cdaa0ec281569692ed1051cf6a29e1",
+      "libexec/nemoclaw-osquery.ext": "35fa24d69a416a0eed0e94dba2bc1d0fdd0a7f00b7dbb12e09c23f691e33a89d",
+      "libexec/osqueryi": "78c38c72feb3e431c1a1b9e5029d1ba17edff43cd47b7f2695b453ad1af7c2cb",
+      "libexec/tofu": "641c1eb92d089746dfe25c46e7ef99e1466de80656ed081b6c4bffd6eeb69a59",
+      "providers/registry.opentofu.org/nvidia/nemoclaw/0.1.0-dev.g17f54bad65eb/linux_arm64/terraform-provider-nemoclaw_v0.1.0-dev.g17f54bad65eb": "d786c31ab64932307b9dc149f67ad60f55917a0b0554592511d31bcdd1e11689"
+    }
+  },
+  "firstIDs": {
+    "nemoclaw_ollama.service": "9003d825-ec2b-414b-a043-d70389061d6d/7907658d5d226b1cab9aebb4a94117fdf2aa05d912bc93da6403007428b49cca/2026-09-11T07:37:29-07:00",
+    "nemoclaw_ollama_model.inference": "9003d825-ec2b-414b-a043-d70389061d6d/7907658d5d226b1cab9aebb4a94117fdf2aa05d912bc93da6403007428b49cca/2026-09-11T07:37:29-07:00/model",
+    "nemoclaw_provider.inference": "d939d32a-3397-4daf-80b8-035f70aad525",
+    "nemoclaw_route.primary": "c7c6a351-5411-4ef5-bfe2-3ec22787b03a/primary",
+    "nemoclaw_sandbox.agent": "6a784c0d-1f5c-408f-a78d-e0c9abf52c49",
+    "nemoclaw_workspace.deployment": "c7c6a351-5411-4ef5-bfe2-3ec22787b03a"
+  },
+  "gateway": "0.0.116",
+  "managedOllama": true,
+  "modelAfter": "qwen3.5:0.8b",
+  "noOp": true,
+  "platform": "linux_arm64",
+  "recreatedIDs": {
+    "nemoclaw_ollama.service": "9003d825-ec2b-414b-a043-d70389061d6d/d838e55777b0db6178e01838f2ab22aa085296e852393e2762cae63ca108fc2f/2026-09-11T07:39:58-07:00",
+    "nemoclaw_ollama_model.inference": "9003d825-ec2b-414b-a043-d70389061d6d/d838e55777b0db6178e01838f2ab22aa085296e852393e2762cae63ca108fc2f/2026-09-11T07:39:58-07:00/model",
+    "nemoclaw_provider.inference": "98e2a8aa-6cfd-421b-95f3-5b79b17ca607",
+    "nemoclaw_route.primary": "cd55b9a9-7fbe-47fb-b1a5-2fa9d5540ac3/primary",
+    "nemoclaw_sandbox.agent": "285ac7ee-d8f4-49d5-a592-b9ae24b87849",
+    "nemoclaw_workspace.deployment": "cd55b9a9-7fbe-47fb-b1a5-2fa9d5540ac3"
+  },
+  "result": "pass",
+  "sandboxPreserved": true,
+  "stoppedServiceScenario": "separate model refresh blocks restart; explicit runtime start restores no-op"
+}

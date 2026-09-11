@@ -42,6 +42,10 @@ func TestLivePlanApplyModelExportRecreate(t *testing.T) {
 	if d.Spec.Sandboxes[0].Agents[0].Inference.Routes[0].Overrides.Model == alternate {
 		t.Fatal("alternate model must differ")
 	}
+	resourceCount := 4
+	if d.Spec.InferenceProviders[0].Ollama != nil {
+		resourceCount = 6
+	}
 	d.Metadata.UID = uuid.NewV4().String()
 	root, err := filepath.Abs(filepath.Join("../../.local", "live-"+d.Metadata.UID))
 	if err != nil {
@@ -78,14 +82,14 @@ func TestLivePlanApplyModelExportRecreate(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer c.Close()
-	if result := invoke(e, "plan", d); len(result.Changes) != 4 {
+	if result := invoke(e, "plan", d); len(result.Changes) != resourceCount {
 		t.Fatalf("plan has %d changes", len(result.Changes))
 	}
 	if _, err = c.Workspaces().Get(ctx, d.Workspace()); !v1.IsNotFound(err) {
 		t.Fatal("plan created a workspace")
 	}
-	if result := invoke(e, "apply", d); len(result.Changes) != 4 {
-		t.Fatal("expected four created resources")
+	if result := invoke(e, "apply", d); len(result.Changes) != resourceCount {
+		t.Fatalf("expected %d created resources", resourceCount)
 	}
 	firstIDs, err := e.stateIDs()
 	if err != nil {
@@ -100,10 +104,26 @@ func TestLivePlanApplyModelExportRecreate(t *testing.T) {
 		t.Fatal("repeated apply changed resources")
 	}
 	liveAgentReply(t, ctx, c, d)
+	initialModel := d.Spec.Sandboxes[0].Agents[0].Inference.Routes[0].Overrides.Model
+	if d.Spec.InferenceProviders[0].Ollama != nil {
+		liveStoppedOllama(t, ctx, e, d, firstIDs)
+	}
 	d.Spec.Sandboxes[0].Agents[0].Inference.Routes[0].Overrides.Model = alternate
 	result := invoke(e, "apply", d)
-	if len(result.Changes) != 1 || result.Changes[0].Resource != "nemoclaw_route.primary" || strings.Join(result.Changes[0].Actions, ",") != "update" {
+	wantChanges := 1
+	if d.Spec.InferenceProviders[0].Ollama != nil {
+		wantChanges = 2
+	}
+	if len(result.Changes) != wantChanges {
 		t.Fatalf("model change affected unexpected resources: %+v", result)
+	}
+	for _, change := range result.Changes {
+		if (change.Resource != "nemoclaw_route.primary" && change.Resource != "nemoclaw_ollama_model.inference") || strings.Join(change.Actions, ",") != "update" {
+			t.Fatalf("unexpected model change: %+v", change)
+		}
+	}
+	if d.Spec.InferenceProviders[0].Ollama != nil {
+		liveModelRetained(t, ctx, d, initialModel)
 	}
 	ids, err := e.stateIDs()
 	if err != nil || ids["nemoclaw_sandbox.agent"] != firstIDs["nemoclaw_sandbox.agent"] {
@@ -125,9 +145,12 @@ func TestLivePlanApplyModelExportRecreate(t *testing.T) {
 	// The protocol integration test additionally recreates the same UID on a
 	// different gateway endpoint.
 	exported.Metadata.UID = uuid.NewV4().String()
+	if exported.Spec.InferenceProviders[0].Ollama != nil {
+		liveFreshOllamaEndpoint(t, &exported)
+	}
 	other := &Engine{StateDir: filepath.Join(root, "recreated"), BundleDir: bundle, Output: out}
-	if result := invoke(other, "apply", exported); len(result.Changes) != 4 {
-		t.Fatal("export did not create four resources")
+	if result := invoke(other, "apply", exported); len(result.Changes) != resourceCount {
+		t.Fatalf("export did not create %d resources", resourceCount)
 	}
 	otherIDs, err := other.stateIDs()
 	if err != nil {
@@ -139,7 +162,16 @@ func TestLivePlanApplyModelExportRecreate(t *testing.T) {
 		}
 	})
 	liveAgentReply(t, ctx, c, exported)
-	if err = saveJSON(filepath.Join(root, "evidence.json"), map[string]any{"result": "pass", "platform": runtime.GOOS + "_" + runtime.GOARCH, "gateway": "0.0.116", "firstIDs": firstIDs, "recreatedIDs": otherIDs, "modelAfter": alternate, "noOp": true, "sandboxPreserved": true, "agentReplies": 3}); err != nil {
+	evidence := map[string]any{"result": "pass", "platform": runtime.GOOS + "_" + runtime.GOARCH, "gateway": "0.0.116", "firstIDs": firstIDs, "recreatedIDs": otherIDs, "modelAfter": alternate, "noOp": true, "sandboxPreserved": true, "agentReplies": 3, "managedOllama": d.Spec.InferenceProviders[0].Ollama != nil}
+	if d.Spec.InferenceProviders[0].Ollama != nil {
+		evidence["stoppedServiceScenario"] = "separate model refresh blocks restart; explicit runtime start restores no-op"
+	}
+	manifest, err := os.ReadFile(filepath.Join(bundle, "manifest.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidence["bundle"] = json.RawMessage(manifest)
+	if err = saveJSON(filepath.Join(root, "evidence.json"), evidence); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -196,5 +228,8 @@ func liveCleanup(t *testing.T, d config.Document, ids map[string]string) {
 	}
 	if err = c.Workspaces().Delete(ctx, d.Workspace()); err != nil {
 		t.Error("cleanup workspace failed")
+	}
+	if d.Spec.InferenceProviders[0].Ollama != nil {
+		liveOllamaCleanup(t, ctx, d, ids)
 	}
 }
