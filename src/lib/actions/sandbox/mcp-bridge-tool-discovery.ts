@@ -89,6 +89,12 @@ export function toolDiscoveryReadinessSkipDetail(
   return undefined;
 }
 
+/**
+ * Build the in-sandbox command that runs authenticated tool discovery for a
+ * persisted MCP entry. Returns null when the entry has no credential binding or
+ * its stored URL fails the current authenticated-endpoint boundary under the
+ * entry's recorded trust.
+ */
 export function buildMcpToolDiscoveryCommand(
   entry: Pick<McpBridgeEntry, "server" | "url" | "env" | "trustedPrivateHost">,
   adapter: AgentMcpAdapter,

@@ -967,6 +967,70 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
     });
   });
 
+  it("probes and discovers a recorded trusted-private endpoint through the status path (#11377)", () => {
+    // The persisted entry carries the operator's `--trusted-private-host`
+    // intent. Status must hand that recorded host to both wire checks; before
+    // the fix each one re-validated the bare URL, threw on the private IP
+    // literal, and reported a precondition skip for a healthy registration.
+    const home = createTempHome("nemoclaw-mcp-trusted-private-status-");
+    const { stdout } = runHarness(
+      home,
+      String.raw`
+  const current = registry.getSandbox("alpha");
+  registry.updateSandbox("alpha", {
+    mcp: {
+      bridges: {
+        github: {
+          ...current.mcp.bridges.github,
+          url: "https://172.17.0.2:8443/mcp",
+          trustedPrivateHost: "172.17.0.2",
+          allowedIps: ["172.17.0.2"],
+        },
+      },
+    },
+  });
+  await bridge.dispatchMcpBridgeCommand("alpha", ["status", "github", "--probe", "--tools", "--json"]);
+  const status = JSON.parse(logLines.join("\n"));
+  writeHarnessResult(JSON.stringify({
+    status,
+    probeCommands: executedSandboxCommands.filter((c) => c.includes("NEMOCLAW_MCP_PROBE")),
+    discoveryCommands: executedSandboxCommands.filter((c) => c.includes("mcp-tool-discovery-runtime")),
+  }));
+`,
+      { controlHttpStatus: 401, probeHttpStatus: 200 },
+    );
+    const payload = JSON.parse(stdout) as {
+      status: {
+        url: string;
+        trustedPrivateTarget: { host: string; recordedPins: string[] };
+        provider: { credentialResolution: { ok: boolean | null; detail?: string } };
+        toolDiscovery: { ok: boolean; count: number; tools: string[]; detail?: string };
+      };
+      probeCommands: string[];
+      discoveryCommands: string[];
+    };
+    expect(payload.probeCommands).toHaveLength(1);
+    expect(payload.probeCommands[0]).toContain("https://172.17.0.2:8443/mcp");
+    expect(payload.discoveryCommands).toHaveLength(1);
+    expect(payload.discoveryCommands[0]).toContain("https://172.17.0.2:8443/mcp");
+    expect(payload.status.url).toBe("https://172.17.0.2:8443/mcp");
+    expect(payload.status.trustedPrivateTarget).toMatchObject({
+      host: "172.17.0.2",
+      recordedPins: ["172.17.0.2"],
+    });
+    expect(payload.status.provider.credentialResolution).toMatchObject({
+      ok: true,
+      httpStatus: 200,
+      controlHttpStatus: 401,
+    });
+    expect(payload.status.toolDiscovery).toMatchObject({
+      ok: true,
+      count: 2,
+      tools: ["alpha", "zeta"],
+      commandStatus: 0,
+    });
+  });
+
   it("exits nonzero when a zero-exit runtime reports denied authentication (#10944)", () => {
     const home = createTempHome("nemoclaw-mcp-tools-auth-failure-");
     const { stdout } = runHarness(
