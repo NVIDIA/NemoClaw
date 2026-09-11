@@ -12,6 +12,27 @@ struct ScopedDescriptor {
     alignas(DWORD) BYTE acl[sizeof(ACL) + 2 * (sizeof(ACCESS_ALLOWED_ACE) + SECURITY_MAX_SID_SIZE)];
 };
 
+constexpr ACCESS_MASK shared_section_user_access = 0x000f0007;
+constexpr ACCESS_MASK shared_section_container_access = 0x00000007;
+
+// The canonical NULL-DACL shared.5 is accessible outside AppContainer rules,
+// but its sibling contained processes need an explicit actual AppContainer ACE.
+// Describe only a new private section; never change an existing object ACL.
+inline bool make_shared_section_descriptor(PSID user, PSID container, ScopedDescriptor& output) {
+    if (!user || !container || !IsValidSid(user) || !IsValidSid(container) || EqualSid(user, container)) {
+        SetLastError(ERROR_INVALID_SID);
+        return false;
+    }
+    ZeroMemory(&output, sizeof(output));
+    auto acl = reinterpret_cast<PACL>(output.acl);
+    return InitializeSecurityDescriptor(&output.descriptor, SECURITY_DESCRIPTOR_REVISION) &&
+        InitializeAcl(acl, sizeof(output.acl), ACL_REVISION) &&
+        AddAccessAllowedAceEx(acl, ACL_REVISION, 0, shared_section_user_access, user) &&
+        AddAccessAllowedAceEx(acl, ACL_REVISION, 0, shared_section_container_access, container) &&
+        SetSecurityDescriptorDacl(&output.descriptor, TRUE, acl, FALSE) &&
+        SetSecurityDescriptorControl(&output.descriptor, SE_DACL_PROTECTED, SE_DACL_PROTECTED);
+}
+
 // Read-only signal-pipe diagnostics. Raw ACL bytes preserve every captured
 // ACE's order/type/flags/mask/SID without lookup, allocation or modification.
 struct PipeSecurityObservation {

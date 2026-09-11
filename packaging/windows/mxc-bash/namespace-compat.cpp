@@ -55,6 +55,7 @@ size_t privateRootLength = 0;
 DWORD ownSession = 0;
 alignas(void*) BYTE worldSid[SECURITY_MAX_SID_SIZE] = {};
 ScopedDescriptor privateDescriptor = {};
+ScopedDescriptor sharedSectionDescriptor = {};
 LONG emitted = 0;
 LONG installationKeyState = 0;
 char installationKey[17] = {};
@@ -163,6 +164,11 @@ bool initialize_namespace() {
         if (!make_scoped_descriptor(user, container, privateDescriptor, &stage)) {
             error = GetLastError();
             if (stage && strcmp(stage, "descriptor-identities") == 0) { kind = "validation"; error = 0; }
+            break;
+        }
+        stage = "shared-section-descriptor";
+        if (!make_shared_section_descriptor(user, container, sharedSectionDescriptor)) {
+            error = GetLastError();
             break;
         }
         size_t apiLength = 0;
@@ -855,6 +861,7 @@ struct SharedSectionRequest {
     ULONG attributes = 0;
     LONGLONG size = 0;
     PipeSecurityObservation security = {};
+    OBJECT_ATTRIBUTES originalAttributes = {};
 };
 
 void bind_shared_directory(PHANDLE output) {
@@ -895,6 +902,7 @@ SharedSectionRequest inspect_shared_section(ACCESS_MASK access, POBJECT_ATTRIBUT
             !sameKernelObject(input->RootDirectory, heldSharedDirectory)) return result;
         result.bound = true;
         result.attributes = input->Attributes;
+        result.originalAttributes = *input;
         if (size) result.size = size->QuadPart;
         SECURITY_ATTRIBUTES attributes = {sizeof(SECURITY_ATTRIBUTES), input->SecurityDescriptor,
                                            (input->Attributes & OBJ_INHERIT) != 0};
@@ -916,12 +924,12 @@ SharedSectionRequest inspect_shared_section(ACCESS_MASK access, POBJECT_ATTRIBUT
 void log_shared_section(const SharedSectionRequest& request, ACCESS_MASK access, ULONG protection,
                         ULONG allocation, NTSTATUS originalStatus, NTSTATUS finalStatus,
                         bool attempted, NTSTATUS openStatus, NTSTATUS queryStatus,
-                        LONGLONG actualSize, ULONG actualAllocation, HANDLE originalHandle, bool reused) {
+                        LONGLONG actualSize, ULONG actualAllocation, HANDLE originalHandle, bool reused, bool descriptorAdapted) {
     if (InterlockedIncrement(&sharedSectionRecords) > 8) return;
     alignas(void*) BYTE descriptor[2048] = {};
     DWORD required = 0, descriptorError = 0;
     const bool descriptorRead = originalHandle && GetKernelObjectSecurity(originalHandle,
-        OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
+        OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION | LABEL_SECURITY_INFORMATION,
         descriptor, sizeof(descriptor), &required);
     if (originalHandle && !descriptorRead) descriptorError = GetLastError();
     char descriptorHex[sizeof(descriptor) * 2 + 1] = {};
@@ -933,8 +941,10 @@ void log_shared_section(const SharedSectionRequest& request, ACCESS_MASK access,
         }
     char line[6144];
     const int count = _snprintf_s(line, sizeof(line), _TRUNCATE,
-        "NEMOCLAW_MSYS_SHARED_SECTION={\"schemaVersion\":1,\"pid\":%lu,\"name\":\"shared.5\",\"parentHandleBound\":true,\"exactContract\":%s,\"access\":\"0x%08lx\",\"objectAttributes\":\"0x%08lx\",\"requestedSize\":%lld,\"protection\":%lu,\"allocation\":%lu,\"inputSecurityComplete\":%s,\"inputDescriptorPresent\":%s,\"inputControl\":%u,\"inputRevision\":%lu,\"inputOwnerPresent\":%s,\"inputGroupPresent\":%s,\"inputNullDacl\":%s,\"inputAceCount\":%lu,\"originalStatus\":\"0x%08lx\",\"finalStatus\":\"0x%08lx\",\"existingOnlyOpenAttempted\":%s,\"openAccess\":7,\"openStatus\":\"0x%08lx\",\"queryStatus\":\"0x%08lx\",\"actualSectionSize\":%lld,\"actualAllocation\":%lu,\"existingSectionReused\":%s,\"originalResultDescriptorAttempted\":%s,\"originalResultDescriptorRead\":%s,\"descriptorError\":%lu,\"descriptorRequiredBytes\":%lu,\"descriptorHex\":\"%s\"}\n",
-        GetCurrentProcessId(), request.exact ? "true" : "false", access, request.attributes,
+        "NEMOCLAW_MSYS_SHARED_SECTION={\"schemaVersion\":1,\"pid\":%lu,\"name\":\"shared.5\",\"parentHandleBound\":true,\"exactContract\":%s,\"requestDescriptorAdapted\":%s,\"sectionUserAccess\":%lu,\"sectionContainerAccess\":%lu,\"access\":\"0x%08lx\",\"objectAttributes\":\"0x%08lx\",\"requestedSize\":%lld,\"protection\":%lu,\"allocation\":%lu,\"inputSecurityComplete\":%s,\"inputDescriptorPresent\":%s,\"inputControl\":%u,\"inputRevision\":%lu,\"inputOwnerPresent\":%s,\"inputGroupPresent\":%s,\"inputNullDacl\":%s,\"inputAceCount\":%lu,\"originalStatus\":\"0x%08lx\",\"finalStatus\":\"0x%08lx\",\"existingOnlyOpenAttempted\":%s,\"openAccess\":7,\"openStatus\":\"0x%08lx\",\"queryStatus\":\"0x%08lx\",\"actualSectionSize\":%lld,\"actualAllocation\":%lu,\"existingSectionReused\":%s,\"originalResultDescriptorAttempted\":%s,\"originalResultDescriptorRead\":%s,\"descriptorError\":%lu,\"descriptorRequiredBytes\":%lu,\"descriptorHex\":\"%s\"}\n",
+        GetCurrentProcessId(), request.exact ? "true" : "false", descriptorAdapted ? "true" : "false",
+        descriptorAdapted ? shared_section_user_access : 0UL, descriptorAdapted ? shared_section_container_access : 0UL,
+        access, request.attributes,
         request.size, protection, allocation, request.security.complete ? "true" : "false",
         request.security.descriptorPresent ? "true" : "false", static_cast<unsigned>(request.security.control),
         request.security.revision, request.security.ownerPresent ? "true" : "false",
@@ -954,8 +964,13 @@ NTSTATUS NTAPI create_shared_section(PHANDLE output, ACCESS_MASK access, POBJECT
     if (writingPipeDiagnostic) return realCreateSharedSection(output, access, input, size, protection, allocation, file);
     const DWORD before = GetLastError();
     const SharedSectionRequest request = inspect_shared_section(access, input, size, protection, allocation, file);
+    OBJECT_ATTRIBUTES adapted = request.originalAttributes;
+    const bool descriptorAdapted = request.exact;
+    if (descriptorAdapted) adapted.SecurityDescriptor = &sharedSectionDescriptor.descriptor;
     SetLastError(before);
-    const NTSTATUS originalStatus = realCreateSharedSection(output, access, input, size, protection, allocation, file);
+    // OBJ_OPENIF ignores this descriptor on an existing object. Only creation
+    // receives the actual-user/AppContainer ACL; access and all other fields stay intact.
+    const NTSTATUS originalStatus = realCreateSharedSection(output, access, descriptorAdapted ? &adapted : input, size, protection, allocation, file);
     const DWORD after = GetLastError();
     NTSTATUS finalStatus = originalStatus, openStatus = 0, queryStatus = 0;
     bool attempted = false, reused = false;
@@ -990,7 +1005,7 @@ NTSTATUS NTAPI create_shared_section(PHANDLE output, ACCESS_MASK access, POBJECT
         }
     }
     if (request.bound) log_shared_section(request, access, protection, allocation, originalStatus, finalStatus,
-        attempted, openStatus, queryStatus, actualSize, actualAllocation, originalHandle, reused);
+        attempted, openStatus, queryStatus, actualSize, actualAllocation, originalHandle, reused, descriptorAdapted);
     SetLastError(after);
     return finalStatus;
 }
