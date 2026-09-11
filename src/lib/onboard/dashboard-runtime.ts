@@ -2,6 +2,42 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { isTerminalAgent } from "../agent/runtime-manifest";
+import {
+  createForwardServiceTarget,
+  isForwardServiceListenerOwner,
+} from "../adapters/openshell/forward-service";
+import { teardownSandboxDashboardForward } from "../actions/sandbox/forward-recovery";
+import { isLocalForwardReachable } from "../actions/sandbox/forward-health";
+
+export function ownsForwardPort(
+  executable: string,
+  sandboxName: string,
+  gatewayName: string,
+  port: number,
+): boolean {
+  return (["127.0.0.1", "0.0.0.0"] as const).some((localHost) =>
+    isForwardServiceListenerOwner(
+      createForwardServiceTarget(
+        { executable, sandboxName, gatewayName, workspace: "default", localHost },
+        port,
+      ),
+    ),
+  );
+}
+
+export function assertSandboxForwardsReleased(
+  sandboxName: string,
+  reservedPorts: readonly (number | undefined)[],
+): void {
+  if (
+    !teardownSandboxDashboardForward(sandboxName, {
+      isLocalForwardReachable: (port) =>
+        !reservedPorts.includes(port) && isLocalForwardReachable(port),
+    })
+  ) {
+    throw new Error(`Cannot recreate sandbox '${sandboxName}': its host forwards did not exit.`);
+  }
+}
 
 export type DashboardRuntimeAgent = {
   forwardPort?: number | null;

@@ -1671,6 +1671,8 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       agent,
     );
     const isManagedDcodeAgent = usesManagedDcodeIdentity(agent?.name, fromDockerfile);
+    const ownsForward = (port: number) =>
+      dashboardRuntime.ownsForwardPort(openshellArgv([])[0], sandboxName, GATEWAY_NAME, port);
     let effectivePort = 0,
       chatUiUrl = "",
       hermesApiPortReservationInput = {
@@ -1679,11 +1681,13 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         env: process.env,
         getSandbox: registry.getSandbox,
         captureForwardList: () => runCaptureOpenshell(["forward", "list"], { ignoreError: true }),
+        ownsForward,
         warn: (message: string) => console.warn(message),
       };
     if (manageDashboard) {
       const dashboardSelection = await reserveCreateSandboxDashboardPort({
         sandboxName,
+        ownsForward,
         controlUiPort,
         chatUiUrlEnv: process.env.CHAT_UI_URL,
         persistedPort: registry.getSandbox(sandboxName)?.dashboardPort ?? null,
@@ -2287,6 +2291,10 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           );
       }
       recreateRuntime.confirmDeleted();
+      dashboardRuntime.assertSandboxForwardsReleased(sandboxName, [
+        dashboardPortReservationScope.current?.port,
+        hermesApiPortReservationScope.current?.port,
+      ]);
       finalizeRecreatedSourceHermesVolume(
         true,
         previousEntry,

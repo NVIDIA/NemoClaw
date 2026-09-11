@@ -50,6 +50,7 @@ export interface HermesApiPortReservationInput {
   env: NodeJS.ProcessEnv;
   getSandbox(name: string): HermesApiPortSandboxLookup | null | undefined;
   captureForwardList(): string | null;
+  ownsForward?(port: number): boolean;
   reservePort?(port: number): Promise<DashboardPortReservation>;
   warn(message: string): void;
 }
@@ -205,6 +206,7 @@ export async function reserveCreateSandboxHermesApiPort(options: {
   getSandbox?: (name: string) => HermesApiPortSandboxLookup | null | undefined;
   allowRegisteredOverride?: boolean;
   forwardListOutput?: string | null;
+  ownsForward?(port: number): boolean;
   isPortBoundCheck?: (port: number) => boolean;
   registryOccupiedPorts?: ReadonlyMap<string, string>;
   reservePort?: (port: number) => Promise<DashboardPortReservation>;
@@ -220,7 +222,10 @@ export async function reserveCreateSandboxHermesApiPort(options: {
   const reserveSelectedPort = async (
     effectivePort: number,
   ): Promise<ReservedCreateSandboxHermesApiPortResult> => {
-    if (forwardOwners.get(String(effectivePort)) === options.sandboxName) {
+    if (
+      options.ownsForward?.(effectivePort) ||
+      forwardOwners.get(String(effectivePort)) === options.sandboxName
+    ) {
       return { effectivePort, reservation: null };
     }
     return { effectivePort, reservation: await reservePort(effectivePort) };
@@ -280,6 +285,7 @@ export function createHermesApiPortReservationScope(): HermesApiPortReservationS
         getSandbox: input.getSandbox,
         allowRegisteredOverride: true,
         forwardListOutput: input.captureForwardList(),
+        ownsForward: input.ownsForward,
         reservePort: input.reservePort,
         warn: input.warn,
       });

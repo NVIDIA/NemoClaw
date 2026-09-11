@@ -245,27 +245,40 @@ describe("reserveCreateSandboxHermesApiPort", () => {
     expect(release).toHaveBeenCalledOnce();
   });
 
-  it("rebinds an owned forward after sandbox deletion", async () => {
-    const env: NodeJS.ProcessEnv = {};
-    const scope = createHermesApiPortReservationScope();
-    const input = {
-      agentName: "hermes",
-      sandboxName: "beta",
-      env,
-      getSandbox: () => ({ hermesApiPort: 8643 }),
-      captureForwardList: () => forwardList(["beta 127.0.0.1 8643 101 running"]),
-      reservePort: async (port: number) => ({ port, release: vi.fn(async () => undefined) }),
-      warn: vi.fn(),
-    };
+  it.each(["legacy", "direct"])(
+    "rebinds an owned %s forward after sandbox deletion",
+    async (kind) => {
+      const env: NodeJS.ProcessEnv = {};
+      const scope = createHermesApiPortReservationScope();
+      let ownsForward = kind === "direct";
+      const reservePort = vi.fn(async (port: number) => ({
+        port,
+        release: vi.fn(async () => undefined),
+      }));
+      const input = {
+        agentName: "hermes",
+        sandboxName: "beta",
+        env,
+        getSandbox: () => ({ hermesApiPort: 8643 }),
+        captureForwardList: () =>
+          kind === "legacy" ? forwardList(["beta 127.0.0.1 8643 101 running"]) : "",
+        ownsForward: () => ownsForward,
+        reservePort,
+        warn: vi.fn(),
+      };
 
-    await scope.selectAndReserve(input);
-    expect(scope.effectivePort).toBe(8643);
-    expect(scope.current).toBeNull();
+      await scope.selectAndReserve(input);
+      expect(scope.effectivePort).toBe(8643);
+      expect(scope.current).toBeNull();
+      expect(reservePort).not.toHaveBeenCalled();
 
-    await scope.rebindAfterOwnedForwardDelete(input);
-    expect(scope.current?.port).toBe(8643);
-    await scope.release();
-  });
+      ownsForward = false;
+      await scope.rebindAfterOwnedForwardDelete(input);
+      expect(scope.current?.port).toBe(8643);
+      expect(reservePort).toHaveBeenCalledExactlyOnceWith(8643);
+      await scope.release();
+    },
+  );
 
   it("releases only before the matching Hermes API forward", async () => {
     const release = vi.fn(async () => undefined);

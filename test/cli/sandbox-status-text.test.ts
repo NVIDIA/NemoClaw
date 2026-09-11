@@ -589,7 +589,7 @@ describe("CLI sandbox status text output", () => {
     },
   );
 
-  it.each(["missing", "present"] as const)(
+  it.each(["missing", "present", "stopped"] as const)(
     "sandbox <name> status reports clean Stopped state with a %s live lookup (#11025)",
     testTimeoutOptions(30_000),
     (gatewayState) => {
@@ -617,7 +617,7 @@ describe("CLI sandbox status text output", () => {
           "  echo '  Id: abc'",
           "  echo '  Name: alpha'",
           "  echo '  Namespace: openshell'",
-          "  echo '  Phase: Provisioning'",
+          `  echo '  Phase: ${gatewayState === "stopped" ? "Stopped" : "Provisioning"}'`,
           "  exit 0",
           "fi",
           'if [ "$1" = "inference" ] && [ "$2" = "get" ]; then',
@@ -711,7 +711,7 @@ describe("CLI sandbox status text output", () => {
       expect(j.code).toBe(0);
       const parsed = JSON.parse(j.out);
       expect(parsed.phase).toBe("Stopped");
-      expect(parsed.gatewayState).toBe(gatewayState);
+      expect(parsed.gatewayState).toBe(gatewayState === "missing" ? "missing" : "present");
       expect(parsed.failureLayer).toBeNull();
     },
   );
