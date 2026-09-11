@@ -20,6 +20,7 @@ import {
 } from "./onboard/gateway-binding";
 import type { GatewayRecoveryOutput } from "./onboard/gateway-recovery";
 import { sanitizeReadinessText } from "./readiness/sanitize";
+import { classifyOpenShellSandboxPresence } from "./adapters/openshell/sandbox-presence";
 
 export { resolveGatewayName, resolveSandboxGatewayName };
 
@@ -55,6 +56,14 @@ export const gatewayRuntimeDependencies = {
     return onboard.startGatewayForRecovery(options);
   },
 };
+
+export function observeNamedGatewaySandboxPresence(sandboxName: string, gatewayName: string) {
+  const result = gatewayRuntimeDependencies.captureOpenshell(
+    ["sandbox", "list", "-g", gatewayName, "-o", "json"],
+    { ignoreError: true, includeStreams: true, timeout: OPENSHELL_PROBE_TIMEOUT_MS },
+  );
+  return classifyOpenShellSandboxPresence(sandboxName, result);
+}
 
 /** Whether `gateway info` output names the given NemoClaw gateway. */
 function hasNamedGateway(output = "", gatewayName = "nemoclaw"): boolean {
@@ -189,6 +198,7 @@ export function getNamedGatewayLifecycleState(
 type NamedGatewayLifecycleStateName = NamedGatewayLifecycleState["state"];
 
 export type RecoverNamedGatewayRuntimeOptions = {
+  ignoreProbeErrors?: boolean;
   recoverableStates?: readonly NamedGatewayLifecycleStateName[];
   gatewayName?: string;
   output?: GatewayRecoveryOutput;
@@ -203,9 +213,10 @@ export async function recoverNamedGatewayRuntime(options: RecoverNamedGatewayRun
       `Gateway recovery target '${gatewayName}' does not match runtime selection '${options.runtimeSelection.gatewayName}'`,
     );
   }
-  const lifecycleOptions = options.runtimeSelection
-    ? { runtimeSelection: options.runtimeSelection }
-    : {};
+  const lifecycleOptions = {
+    ignoreProbeErrors: options.ignoreProbeErrors,
+    ...(options.runtimeSelection ? { runtimeSelection: options.runtimeSelection } : {}),
+  };
   const recoverableStates = new Set<NamedGatewayLifecycleStateName>(
     options.recoverableStates ?? [
       "missing_named",

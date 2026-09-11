@@ -157,6 +157,61 @@ describe("gateway-runtime-action per-sandbox gateway routing", () => {
 
   describe("recoverNamedGatewayRuntime", () => {
     it.each([
+      { status: 0, stdout: "[]", stderr: "", expected: "absent" },
+      { status: 1, stdout: "", stderr: "Unknown gateway 'nemoclaw'", expected: "unknown" },
+      { status: 0, stdout: "not-json", stderr: "", expected: "unknown" },
+    ])("observes named sandbox presence conservatively: $expected", (result) => {
+      captureSpy.mockReturnValue({ ...result, output: result.stdout });
+
+      expect(gatewayRuntime.observeNamedGatewaySandboxPresence("my-assistant", "nemoclaw")).toBe(
+        result.expected,
+      );
+      expect(captureSpy).toHaveBeenCalledWith(
+        ["sandbox", "list", "-g", "nemoclaw", "-o", "json"],
+        expect.objectContaining({ ignoreError: true, includeStreams: true }),
+      );
+    });
+
+    it("restores an unknown gateway when recovery opts into non-fatal probes (#11510)", async () => {
+      let started = false;
+      captureSpy.mockImplementation((_args, opts) => {
+        expect(opts?.ignoreError).toBe(true);
+        return started
+          ? { status: 0, output: "Status: Connected\nGateway: nemoclaw\n" }
+          : { status: 1, output: "Unknown gateway 'nemoclaw'" };
+      });
+      runSpy.mockReturnValue({ status: 0 } as never);
+      startGatewaySpy.mockImplementation(async () => {
+        started = true;
+      });
+
+      const result = await gatewayRuntime.recoverNamedGatewayRuntime({
+        gatewayName: "nemoclaw",
+        ignoreProbeErrors: true,
+      });
+
+      expect(result).toMatchObject({ recovered: true, via: "start" });
+      expect(startGatewaySpy).toHaveBeenCalledExactlyOnceWith({
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+      });
+      expect(captureSpy.mock.calls.every(([, opts]) => opts?.includeStderr === true)).toBe(true);
+    });
+
+    it("keeps authentication failures blocking with non-fatal recovery probes (#11510)", async () => {
+      captureSpy.mockReturnValue({ status: 1, output: "gateway info requires admin privileges" });
+
+      const result = await gatewayRuntime.recoverNamedGatewayRuntime({
+        gatewayName: "nemoclaw",
+        ignoreProbeErrors: true,
+      });
+
+      expect(result).toMatchObject({ recovered: false, attempted: false });
+      expect(startGatewaySpy).not.toHaveBeenCalled();
+      expect(runSpy).not.toHaveBeenCalled();
+    });
+
+    it.each([
       { label: "authentication", status: 1, output: "gateway info requires admin privileges" },
       { label: "schema validation", status: 1, output: "protobuf decode error: invalid wire type" },
       { label: "gateway identity validation", status: 1, output: "handshake verification failed" },

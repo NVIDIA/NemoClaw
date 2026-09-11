@@ -648,19 +648,7 @@ async function promptOrDefault(
 ): Promise<string> {
   return onboardPromptHelpers.promptOrDefault(promptHelperDeps, question, envVar, defaultValue);
 }
-
-async function promptYesNoOrDefault(
-  question: string,
-  envVar: string | null,
-  defaultIsYes: boolean,
-): Promise<boolean> {
-  return onboardPromptHelpers.promptYesNoOrDefault(
-    promptHelperDeps,
-    question,
-    envVar,
-    defaultIsYes,
-  );
-}
+const promptYesNoOrDefault = onboardPromptHelpers.promptYesNoOrDefault.bind(null, promptHelperDeps);
 
 // ── Helpers ──────────────────────────────────────────────────────
 
@@ -3380,6 +3368,14 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
   preserveIncompleteSession = true;
 }
 module.exports = {
+  retainedOnboardRecoveryHost: {
+    gatewayPort: DEFAULT_GATEWAY_PORT,
+    loadSession: onboardSession.loadSession,
+    listRecords: onboardSession.listRetainedSandboxRecoveryRecords,
+    getSandbox: registry.getSandbox,
+    validateName,
+    prompt,
+  },
   buildOrphanedSandboxRollbackMessage,
   buildGatewayBootstrapSecretsScript,
   buildCompatibleEndpointSandboxSmokeCommand,
