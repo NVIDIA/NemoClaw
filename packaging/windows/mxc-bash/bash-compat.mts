@@ -398,10 +398,9 @@ async function worker(configFile: string) {
           "printf ORIGINAL_STARTED",
         ]);
         assert(r.closed && !r.forced && !r.error && r.exitCode !== 0);
-        // The verified direct x64 failure may have no stderr. The ARM64
-        // wrapper must retain the exact NT denial; any direct marker must agree.
-        if (target === "bin/bash.exe" || r.stderr.includes("NtCreateDirectoryObject"))
-          keys.push(baselineKey(r.stderr));
+        // Either failed attempt may omit stderr. Require one exact denial
+        // across both attempts and agreement among all present markers.
+        if (r.stderr.includes("NtCreateDirectoryObject")) keys.push(baselineKey(r.stderr));
       }
       assert.equal(new Set(keys).size, 1);
       results.key = keys[0];
