@@ -208,7 +208,7 @@ describe("onboard dashboard helpers", () => {
       expect(
         helpers.ensureDashboardForward("my-sandbox", "https://hermes.example.test:18794"),
       ).toBe(18_794);
-      expect(launch).toHaveBeenCalledWith({
+      expect(launch.mock.calls[0]?.[0]).toEqual({
         executable: "/usr/local/bin/openshell",
         gatewayName: "nemoclaw",
         workspace: "default",
