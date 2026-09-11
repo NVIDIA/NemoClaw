@@ -138,9 +138,7 @@ function dependencyEntries(
 }
 
 function exactDependencyVersion(requested: string): string | undefined {
-  return /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?$/u.test(
-    requested,
-  )
+  return /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?$/u.test(requested)
     ? requested
     : undefined;
 }

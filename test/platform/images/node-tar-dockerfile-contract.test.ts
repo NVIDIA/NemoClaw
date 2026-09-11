@@ -457,9 +457,7 @@ describe("reviewed npm image remediation contract", () => {
     const portableOptions = file === "agents/hermes/Dockerfile" ? "" : "--chmod=0444 ";
     const archiveSource = `ADD ${portableOptions}--checksum=sha256:${REVIEWED_NPM_ARCHIVE_SHA256} ${REVIEWED_NPM_TARBALL} /npm-${REVIEWED_NPM_VERSION}.tgz`;
     const selectedArchivePath =
-      file === "agents/hermes/Dockerfile"
-        ? hermesReviewedNpmArchivePath
-        : reviewedNpmArchivePath;
+      file === "agents/hermes/Dockerfile" ? hermesReviewedNpmArchivePath : reviewedNpmArchivePath;
     const directArchiveCopy = `COPY --from=reviewed-npm-archive /npm-${REVIEWED_NPM_VERSION}.tgz ${selectedArchivePath}`;
     const archiveCopy =
       file === "agents/hermes/Dockerfile"
@@ -503,12 +501,8 @@ describe("reviewed npm image remediation contract", () => {
       patchCommand,
       npmRootArguments,
     ).commandStart;
-    const braceRun = npm12.source.indexOf(
-      "node /scripts/patch-bundled-npm-brace-expansion.mts",
-    );
-    const ipAddressRun = npm12.source.indexOf(
-      "node /scripts/lib/patch-bundled-npm-ip-address.mts",
-    );
+    const braceRun = npm12.source.indexOf("node /scripts/patch-bundled-npm-brace-expansion.mts");
+    const ipAddressRun = npm12.source.indexOf("node /scripts/lib/patch-bundled-npm-ip-address.mts");
 
     expect(upgradeRun).toBeGreaterThan(npm12.source.indexOf(reviewedNpmArchivePath));
     expect(tarRun).toBeGreaterThan(upgradeRun);
@@ -593,13 +587,9 @@ describe("reviewed npm image remediation contract", () => {
       ),
     ).toHaveLength(2);
     expect(
-      rootDockerfile.match(
-        /node \/scripts\/lib\/seed-reviewed-npm-cache[.]mts/gmu,
-      ),
+      rootDockerfile.match(/node \/scripts\/lib\/seed-reviewed-npm-cache[.]mts/gmu),
     ).toHaveLength(3);
-    expect(rootDockerfile).toContain(
-      "node /scripts/lib/reviewed-npm-archive.mts",
-    );
+    expect(rootDockerfile).toContain("node /scripts/lib/reviewed-npm-archive.mts");
     expect(rootDockerfile).not.toContain("/opt/nemoclaw-build-tools/seed-reviewed-npm-cache.mts");
     expect(rootDockerfile).not.toContain(
       "/opt/nemoclaw-build-tools/lib/seed-reviewed-npm-cache.mts",

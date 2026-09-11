@@ -83,8 +83,7 @@ export function validatePrepareE2eAction(actionPath = DEFAULT_ACTION_PATH): stri
     },
     {
       name: "Install reviewed npm",
-      uses:
-        "NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@470a5417558c65260d59cdb5eabb01d35834535e",
+      uses: "NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@98669f24d35f18e49b6b2769cd68709509ea24f2",
     },
     {
       name: "Install root dependencies",

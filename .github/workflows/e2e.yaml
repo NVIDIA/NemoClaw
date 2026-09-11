@@ -2588,7 +2588,7 @@ jobs:
           persist-credentials: false
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@667c431859bf8d0a75b7f6a4946e635640e7734d
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@afffe9cdedd168bfd7116c53846ddffe32eadd4c
         with:
           build-cli: "false"
 
@@ -2834,7 +2834,7 @@ jobs:
       # Configure NEMOCLAW_TRACE_DIR before workspace prep so every child
       # command writes raw traces under runner temp, never under upload roots.
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@667c431859bf8d0a75b7f6a4946e635640e7734d
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@afffe9cdedd168bfd7116c53846ddffe32eadd4c
         with:
           build-cli: "false"
 
@@ -3051,7 +3051,7 @@ jobs:
           persist-credentials: false
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@667c431859bf8d0a75b7f6a4946e635640e7734d
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@afffe9cdedd168bfd7116c53846ddffe32eadd4c
         with:
           build-cli: "false"
 
@@ -3357,7 +3357,7 @@ jobs:
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@667c431859bf8d0a75b7f6a4946e635640e7734d
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@afffe9cdedd168bfd7116c53846ddffe32eadd4c
         with:
           build-cli: "false"
 
@@ -3433,7 +3433,7 @@ jobs:
           persist-credentials: false
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@667c431859bf8d0a75b7f6a4946e635640e7734d
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@afffe9cdedd168bfd7116c53846ddffe32eadd4c
         with:
           build-cli: "false"
 
@@ -3731,7 +3731,7 @@ jobs:
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@667c431859bf8d0a75b7f6a4946e635640e7734d
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@afffe9cdedd168bfd7116c53846ddffe32eadd4c
         with:
           build-cli: "false"
 
@@ -3888,7 +3888,7 @@ jobs:
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@667c431859bf8d0a75b7f6a4946e635640e7734d
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@afffe9cdedd168bfd7116c53846ddffe32eadd4c
         with:
           build-cli: "false"
 
@@ -4168,7 +4168,7 @@ jobs:
       # it after the trusted installer has consumed the verified OpenShell
       # assets and Docker credentials have been revoked.
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@667c431859bf8d0a75b7f6a4946e635640e7734d
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@afffe9cdedd168bfd7116c53846ddffe32eadd4c
         with:
           build-cli: "false"
 
@@ -4389,7 +4389,7 @@ jobs:
               http = true
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@667c431859bf8d0a75b7f6a4946e635640e7734d
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@afffe9cdedd168bfd7116c53846ddffe32eadd4c
         with:
           build-cli: "false"
 
@@ -4885,7 +4885,7 @@ jobs:
           driver: docker
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@667c431859bf8d0a75b7f6a4946e635640e7734d
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@afffe9cdedd168bfd7116c53846ddffe32eadd4c
         with:
           build-cli: "false"
 
@@ -5095,7 +5095,7 @@ jobs:
               http = true
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@667c431859bf8d0a75b7f6a4946e635640e7734d
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@afffe9cdedd168bfd7116c53846ddffe32eadd4c
 
       - name: Validate protected runtime activation contract
         env:
@@ -5367,7 +5367,7 @@ jobs:
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@667c431859bf8d0a75b7f6a4946e635640e7734d
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@afffe9cdedd168bfd7116c53846ddffe32eadd4c
         with:
           build-cli: "false"
 
@@ -5540,7 +5540,7 @@ jobs:
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@667c431859bf8d0a75b7f6a4946e635640e7734d
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@afffe9cdedd168bfd7116c53846ddffe32eadd4c
         with:
           build-cli: "false"
 
@@ -5828,7 +5828,7 @@ jobs:
           packages: expect
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@667c431859bf8d0a75b7f6a4946e635640e7734d
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@afffe9cdedd168bfd7116c53846ddffe32eadd4c
         with:
           build-cli: "false"
 
@@ -5971,7 +5971,7 @@ jobs:
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@667c431859bf8d0a75b7f6a4946e635640e7734d
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@afffe9cdedd168bfd7116c53846ddffe32eadd4c
         with:
           build-cli: "false"
 
@@ -6069,7 +6069,7 @@ jobs:
         uses: NVIDIA/NemoClaw/.github/actions/docker-auth-cleanup@d5f37099766ca82a4516e7d8f0de117cda197fe3
 
       - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@667c431859bf8d0a75b7f6a4946e635640e7734d
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@afffe9cdedd168bfd7116c53846ddffe32eadd4c
         with:
           build-cli: "false"
 

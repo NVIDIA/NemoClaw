@@ -4,12 +4,12 @@
 export const E2E_ACTION_PROVENANCE = {
   reviewedNpmSetup: {
     reference:
-      "NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@7363df49a5f25b0dd1c20c80905917c31760a27e",
+      "NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@98669f24d35f18e49b6b2769cd68709509ea24f2",
   },
   prepareWorkspace: {
     reference:
-      "NVIDIA/NemoClaw/.github/actions/prepare-e2e@667c431859bf8d0a75b7f6a4946e635640e7734d",
-    contentSha256: "852afadf535895ce781a44725250190fbe0743088303e6819e8e22a9f03017a2",
+      "NVIDIA/NemoClaw/.github/actions/prepare-e2e@afffe9cdedd168bfd7116c53846ddffe32eadd4c",
+    contentSha256: "4458b3491e5e01097db99a212c4a7bf5ae0cc62cdeda7fef8e3862ed572d2c2b",
   },
   nativePodmanRuntime: {
     reference:

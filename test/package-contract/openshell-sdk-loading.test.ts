@@ -8,6 +8,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import YAML from "yaml";
 import { createPackageFixture } from "./helpers/package-fixture";
+import { npmPackFilePaths } from "../helpers/npm-pack-result";
 
 const repositoryRoot = path.join(import.meta.dirname, "..", "..");
 const roots: string[] = [];
@@ -118,15 +119,11 @@ console.log(JSON.stringify({ client, policy }));
       identity: ["fixture-ca", "fixture-cert", "fixture-key"],
     });
     expect(YAML.parse(result.policy)).toEqual({ version: 1 });
-    const packed = JSON.parse(
-      execFileSync("npm", ["pack", "--dry-run", "--json", "--ignore-scripts"], {
-        cwd: root,
-        encoding: "utf8",
-      }),
-    ) as Array<{ files: Array<{ path: string }> }>;
-    expect(packed[0]?.files.map(({ path: filePath }) => filePath)).toContain(
-      "dist/lib/adapters/openshell/sdk-import.mjs",
-    );
+    const packed = execFileSync("npm", ["pack", "--dry-run", "--json", "--ignore-scripts"], {
+      cwd: root,
+      encoding: "utf8",
+    });
+    expect(npmPackFilePaths(packed)).toContain("dist/lib/adapters/openshell/sdk-import.mjs");
   });
 
   it("loads the compiled adapters before the optional SDK is installed", () => {

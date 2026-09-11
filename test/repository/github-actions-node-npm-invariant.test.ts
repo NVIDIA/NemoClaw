@@ -22,6 +22,8 @@ const IMMUTABLE_REVIEWED_NPM_ACTION =
   "NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@98669f24d35f18e49b6b2769cd68709509ea24f2";
 const IMMUTABLE_PREPARE_E2E_NPM_ACTION =
   "NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@98669f24d35f18e49b6b2769cd68709509ea24f2";
+const IMMUTABLE_PREPARE_E2E_ACTION =
+  "NVIDIA/NemoClaw/.github/actions/prepare-e2e@afffe9cdedd168bfd7116c53846ddffe32eadd4c";
 
 type Step = {
   if?: string;
@@ -48,6 +50,19 @@ function yamlFiles(directory: string): string[] {
       : /\.ya?ml$/u.test(entry.name)
         ? [candidate]
         : [];
+  });
+}
+
+function sourceFiles(directory: string): string[] {
+  return fs.readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    const candidate = path.join(directory, entry.name);
+    return [".git", "coverage", "dist", "node_modules"].includes(entry.name)
+      ? []
+      : entry.isDirectory()
+        ? sourceFiles(candidate)
+        : /(?:\.ya?ml|\.[cm]?[jt]s)$/u.test(entry.name)
+          ? [candidate]
+          : [];
   });
 }
 
@@ -354,6 +369,26 @@ describe("controlled setup-node environments", () => {
     expect(installerStep?.run).toMatch(
       /^env -u NODE_AUTH_TOKEN -u NPM_TOKEN -u NPM_CONFIG__AUTH_TOKEN\s+"\$GITHUB_ACTION_PATH\/verify-and-install-npm[.]sh"/u,
     );
+
+    const pinPattern =
+      /NVIDIA\/NemoClaw\/\.github\/actions\/(?:setup-reviewed-npm|prepare-e2e)@[0-9a-f]{40}/gu;
+    const invalidPins = [
+      GITHUB_ROOT,
+      path.join(REPO_ROOT, "scripts"),
+      path.join(REPO_ROOT, "tools"),
+    ]
+      .flatMap(sourceFiles)
+      .flatMap((file) =>
+        [...fs.readFileSync(file, "utf8").matchAll(pinPattern)]
+          .map(([reference]) => reference)
+          .filter(
+            (reference) =>
+              reference !== IMMUTABLE_REVIEWED_NPM_ACTION &&
+              reference !== IMMUTABLE_PREPARE_E2E_ACTION,
+          )
+          .map((reference) => `${path.relative(REPO_ROOT, file)}:${reference}`),
+      );
+    expect(invalidPins).toEqual([]);
   });
 
   // source-shape-contract: security -- Every npm-mutating script must import the canonical reviewed identity so independent version or digest pins cannot drift

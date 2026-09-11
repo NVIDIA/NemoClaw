@@ -52,7 +52,7 @@ function validWorkflow(): OpenClawPluginRuntimeExdevWorkflow {
           },
           {
             name: "Prepare E2E workspace",
-            uses: "NVIDIA/NemoClaw/.github/actions/prepare-e2e@667c431859bf8d0a75b7f6a4946e635640e7734d",
+            uses: "NVIDIA/NemoClaw/.github/actions/prepare-e2e@afffe9cdedd168bfd7116c53846ddffe32eadd4c",
           },
           {
             name: "Run OpenClaw cross-device plugin lifecycle live test",

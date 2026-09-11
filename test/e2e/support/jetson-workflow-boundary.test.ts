@@ -169,9 +169,7 @@ describe("Jetson nvmap GPU E2E workflow boundary", () => {
       setup.uses = "NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@main";
     });
 
-    expect(errors).toContain(
-      "jetson-nvmap-gpu controller must install reviewed npm immutably",
-    );
+    expect(errors).toContain("jetson-nvmap-gpu controller must install reviewed npm immutably");
   });
 
   it("keeps the runner temporary artifact path on the dispatch step (#8142)", () => {

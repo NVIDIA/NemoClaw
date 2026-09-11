@@ -51,7 +51,7 @@ const DEV_ARTIFACT_TRUSTED_CHECKOUT = ".trusted-openshell-dev-artifact";
 const DEV_ARTIFACT_COPY_HELPER = ".github/scripts/copy-openshell-dev-asset.sh";
 const DEV_ARTIFACT_TOOL_PATHS =
   "scripts/install-openshell.sh\ntools/e2e/openshell-dev-artifact.mts\n";
-const DEV_ARTIFACT_TRUSTED_PATHS = `.github/actions/setup-reviewed-npm\nci/reviewed-npm-audit.json\n${DEV_ARTIFACT_TOOL_PATHS}`;
+const DEV_ARTIFACT_TRUSTED_PATHS = `.github/actions/setup-reviewed-npm\nci/reviewed-npm-audit.json\nscripts/lib/reviewed-npm-audit.mts\n${DEV_ARTIFACT_TOOL_PATHS}`;
 const DEV_ARTIFACT_SHARD_TRUSTED_PATHS = `${DEV_ARTIFACT_COPY_HELPER}\n.github/scripts/docker-auth-cleanup.sh\n${DEV_ARTIFACT_TOOL_PATHS}`;
 const DEV_ARTIFACT_TRUSTED_TOOL = `\${{ github.workspace }}/${DEV_ARTIFACT_TRUSTED_CHECKOUT}/${DEV_ARTIFACT_TOOL}`;
 const DEV_ARTIFACT_TRUSTED_COPY_HELPER = `\${{ github.workspace }}/${DEV_ARTIFACT_TRUSTED_CHECKOUT}/${DEV_ARTIFACT_COPY_HELPER}`;
@@ -592,7 +592,7 @@ function validateJobExecution(
     requireEqual(
       errors,
       reviewedNpm.uses,
-      "NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@7363df49a5f25b0dd1c20c80905917c31760a27e",
+      "NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@98669f24d35f18e49b6b2769cd68709509ea24f2",
       "mcp-bridge-dev must install reviewed npm from the immutable trusted action",
     );
     if (

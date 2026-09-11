@@ -72,14 +72,7 @@ function installReviewedOpenClaw(workspace: string): string {
   };
   const packed = spawnSync(
     "npm",
-    [
-      "pack",
-      reviewed.tarball,
-      "--allow-remote=all",
-      "--pack-destination",
-      workspace,
-      "--json",
-    ],
+    ["pack", reviewed.tarball, "--allow-remote=all", "--pack-destination", workspace, "--json"],
     {
       encoding: "utf-8",
       env: childEnv,
