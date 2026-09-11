@@ -11,6 +11,8 @@ import {
   publishPluginFacades,
   stagePublishedResources,
   resourceInventory,
+  PREBUILT_CHOICE_PLUGINS,
+  prebuiltPluginRegistrationSource,
 } from "./openclaw-app-resources.mts";
 
 const require = createRequire(import.meta.url);
@@ -27,6 +29,10 @@ const external = [
   "playwright-core",
   "typescript",
   "jiti",
+  "@snazzah/davey",
+  "libopus-wasm",
+  "undici",
+  "@discordjs/voice",
 ];
 function argument(name: string) {
   const index = process.argv.indexOf(name);
@@ -64,10 +70,13 @@ if (
   materialization.classification !== "verified-application-build-inputs" ||
   materialization.source.sha256 !==
     "67ad539d9915efb63d5f294beeb9290b7172d23c92d8052110a9c8355f783458" ||
-  !materialization.additionalPackages?.some(
-    (item) =>
-      item.package === "@openclaw/brave-plugin" &&
-      item.sha256 === "f5198ea18ea0adebc376c669b8e5e1100781f07ec2d9e24e86c90cb82acb039c",
+  !Object.values(PREBUILT_CHOICE_PLUGINS).every((expected) =>
+    materialization.additionalPackages?.some(
+      (item) =>
+        item.package === expected.package &&
+        item.version === "2026.7.1" &&
+        item.sha256 === expected.sha256,
+    ),
   )
 )
   throw new Error("The verified complete application input receipt is required.");
@@ -89,7 +98,7 @@ const syntaxApi = require(
   path.join(source, "node_modules", "typescript"),
 ) as typeof import("typescript");
 const pluginPlan = compiledPluginPlan(source, syntaxApi, compiler);
-const adapter = `${pluginPlan.prelude}export async function runCli(argv = process.argv) {
+const adapter = `${pluginPlan.prelude}${prebuiltPluginRegistrationSource(source)}export async function runCli(argv = process.argv) {
   __nemoPrepareAssetRoot();
   const upstream = await import(${JSON.stringify(entry.replaceAll("\\", "/"))});
   return await upstream.runCli(argv);
@@ -109,6 +118,9 @@ function __nemoPrepareAssetRoot() {
   __nemoAssetDir = resolved;
   __nemoFilename = path.join(resolved, "openclaw-app.cjs");
   __nemoModuleUrl = require("node:url").pathToFileURL(__nemoFilename).href;
+}
+function __nemoExternalRequire(specifier) {
+  return require("node:module").createRequire(__nemoFilename)(specifier);
 }
 function __nemoExternalImport(specifier) {
   return require("node:module").createRequire(__nemoFilename)("./openclaw-dynamic-import.cjs")(specifier);
@@ -160,7 +172,7 @@ try {
   const ts = require(path.join(source, "node_modules", "typescript")) as {
     ScriptTarget: { Latest: number };
     ScriptKind: { JS: number };
-    SyntaxKind: { ImportKeyword: number };
+    SyntaxKind: { ImportKeyword: number; Identifier: number; StringLiteral: number };
     createSourceFile(
       name: string,
       text: string,
@@ -171,7 +183,13 @@ try {
     isCallExpression(node: AstNode): boolean;
     forEachChild(node: AstNode, visit: (node: AstNode) => void): void;
   };
-  type AstNode = { kind: number; expression?: AstNode; getStart(source: AstNode): number };
+  type AstNode = {
+    kind: number;
+    expression?: AstNode;
+    arguments?: AstNode[];
+    text?: string;
+    getStart(source: AstNode): number;
+  };
   const codePath = path.join(app, "openclaw-app.cjs");
   let codeText = fs.readFileSync(codePath, "utf8");
   const syntax = ts.createSourceFile(
@@ -182,23 +200,60 @@ try {
     ts.ScriptKind.JS,
   );
   const imports: number[] = [];
+  const standaloneRequires: number[] = [];
+  const standalonePackages = new Set([
+    // This optional peer remains absent. Keep its lazy Mistral tracing import
+    // opaque to the second compiler instead of resolving it at build time.
+    "@opentelemetry/api",
+    "undici",
+    "@snazzah/davey",
+    "libopus-wasm",
+    "@discordjs/voice",
+  ]);
   const visit = (node: AstNode) => {
     if (ts.isCallExpression(node) && node.expression?.kind === ts.SyntaxKind.ImportKeyword)
       imports.push(node.expression.getStart(syntax));
+    if (
+      ts.isCallExpression(node) &&
+      node.expression?.kind === ts.SyntaxKind.Identifier &&
+      node.expression.text === "require" &&
+      node.arguments?.length === 1 &&
+      node.arguments[0].kind === ts.SyntaxKind.StringLiteral &&
+      standalonePackages.has(node.arguments[0].text ?? "")
+    )
+      standaloneRequires.push(node.expression.getStart(syntax));
     ts.forEachChild(node, visit);
   };
   visit(syntax);
-  for (const offset of imports.sort((a, b) => b - a)) {
-    if (codeText.slice(offset, offset + 6) !== "import")
-      throw new Error("Unexpected generated import syntax.");
-    codeText = codeText.slice(0, offset) + "__nemoExternalImport" + codeText.slice(offset + 6);
+  const replacements = [
+    ...imports.map((offset) => ({
+      offset,
+      original: "import",
+      replacement: "__nemoExternalImport",
+    })),
+    ...standaloneRequires.map((offset) => ({
+      offset,
+      original: "require",
+      replacement: "__nemoExternalRequire",
+    })),
+  ];
+  for (const { offset, original, replacement } of replacements.sort(
+    (a, b) => b.offset - a.offset,
+  )) {
+    if (codeText.slice(offset, offset + original.length) !== original)
+      throw new Error("Unexpected generated module loading syntax.");
+    codeText = codeText.slice(0, offset) + replacement + codeText.slice(offset + original.length);
   }
   fs.writeFileSync(codePath, codeText);
   const bridge = '"use strict"; module.exports = specifier => import(specifier);\n';
   fs.writeFileSync(path.join(app, "openclaw-dynamic-import.cjs"), bridge, { flag: "wx" });
   const code = Buffer.from(codeText);
   publishPluginFacades(app, pluginPlan.entries);
-  const admittedPackages = stagePublishedResources(source, app);
+  const admittedPackages = stagePublishedResources(
+    source,
+    app,
+    portable ? process.platform : "win32",
+  );
   const workerResult = await compiler.build({
     entryPoints: [path.join(source, "dist/audit/audit-event-writer.worker.js")],
     outfile: path.join(app, "dist/audit/audit-event-writer.worker.js"),
@@ -245,7 +300,7 @@ try {
         portableProof: portable,
         compiledInputs: Object.keys(result.metafile.inputs).length,
         code: { file: "app/openclaw-app.cjs", bytes: code.length, sha256: sha256(code) },
-        exports: ["runOpenClaw", "runCli"],
+        exports: ["runOpenClaw", "runCli", "registerPrebuiltPlugins"],
         argvConvention: "full [node, entry, ...args]",
         assetRootEnvironment: "OPENCLAW_COMPILED_ASSET_ROOT",
         nativeImportBridge: {
@@ -253,6 +308,8 @@ try {
           bytes: Buffer.byteLength(bridge),
           sha256: sha256(bridge),
           rewrittenGeneratedImports: imports.length,
+          rewrittenStandaloneRequires: standaloneRequires.length,
+          standalonePackages: [...standalonePackages],
           keepExternalToSea: true,
         },
         externalPackages: external,

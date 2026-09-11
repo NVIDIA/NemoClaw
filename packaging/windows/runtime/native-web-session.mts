@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawn } from "node:child_process";
+import { createNativeBrowserOpener } from "./native-runtime-browser.mts";
 import { join, resolve } from "node:path";
 import { cp, lstat, readdir } from "node:fs/promises";
 import type { Writable } from "node:stream";
@@ -219,6 +220,18 @@ export async function openNativeWebSession(
   let sawReady = false;
   let failure: Error | undefined;
   let completion: Promise<void> | undefined;
+  let browser: Promise<Awaited<ReturnType<typeof createNativeBrowserOpener>>> | undefined;
+  let browserOpening: Promise<void> | undefined;
+  let browserAddress = url;
+  let openRequests = 0;
+  const closeBrowser = async () => {
+    if (browserOpening) await browserOpening;
+    if (browser)
+      await browser.then(
+        (owner) => owner.close(),
+        () => {},
+      );
+  };
   const reject = () => {
     failure ??= new Error("The native web session control stopped unexpectedly.");
     fail(failure);
@@ -232,7 +245,7 @@ export async function openNativeWebSession(
   });
   child.stdout.on("data", (chunk: Buffer) => {
     bytes += chunk.length;
-    if (bytes > 256) {
+    if (bytes > 4096) {
       reject();
       child.kill();
       return;
@@ -247,6 +260,30 @@ export async function openNativeWebSession(
         if (record.kind === "ready" && !sawReady) {
           sawReady = true;
           ready();
+        } else if (
+          record.kind === "open" &&
+          Object.keys(record).length === 1 &&
+          sawReady &&
+          !stopRequested &&
+          !completing &&
+          !browserOpening &&
+          browserAddress !== undefined &&
+          ++openRequests <= 64
+        ) {
+          browser ??= createNativeBrowserOpener(browserAddress);
+          browserOpening = browser
+            .then(async (owner) => {
+              await owner.open();
+              if (!ended && !completing && !stopRequested)
+                child.stdin.write('{"kind":"browser-opened"}\n');
+            })
+            .catch(() => {
+              if (!ended && !completing && !stopRequested)
+                child.stdin.write('{"kind":"browser-failed"}\n');
+            })
+            .finally(() => {
+              browserOpening = undefined;
+            });
         } else if (record.kind === "stop" && sawReady) {
           stopRequested = true;
           cancellation.abort(new Error("The native Web UI session was stopped."));
@@ -288,6 +325,7 @@ export async function openNativeWebSession(
       if (failure || ended || stopRequested)
         throw new Error("The native Web UI session was stopped.");
       validateAddress(address);
+      browserAddress = address;
       progressWriter.clear();
       child.stdin.write(JSON.stringify({ kind: "ready", url: address }) + "\n");
     },
@@ -310,6 +348,12 @@ export async function openNativeWebSession(
       completion = (async () => {
         completing = true;
         progressWriter.close();
+        let browserFailure: unknown;
+        try {
+          await closeBrowser();
+        } catch (error) {
+          browserFailure = error;
+        }
         if (!ended)
           child.stdin.end(
             JSON.stringify({ kind: cleanupSucceeded ? "stopped" : "failed", ...detail }) + "\n",
@@ -323,6 +367,7 @@ export async function openNativeWebSession(
           clearTimeout(timer);
         }
         if (failure) throw failure;
+        if (browserFailure) throw browserFailure;
       })();
       return await completion;
     },

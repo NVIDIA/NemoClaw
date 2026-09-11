@@ -45,6 +45,33 @@
       "integrity": "sha512-7Z+GZ/6K6a8LlkTsWVnAZ1hv8EarORzHQvFHD7ekcg033FGJOXYPEZSbvvE3qR9vM+vnoZplNjMZ7vFMRcvQgw==",
       "sha256": "f5198ea18ea0adebc376c669b8e5e1100781f07ec2d9e24e86c90cb82acb039c",
       "bytes": 8149
+    },
+    {
+      "package": "@openclaw/discord",
+      "version": "2026.7.1",
+      "url": "https://registry.npmjs.org/@openclaw/discord/-/discord-2026.7.1.tgz",
+      "integrity": "sha512-tZfdC1YA8oVLvc2BK1w0F6rUljS5ugCOp2uWe0vPsbG1fbzVVIO4V32RoqZznGHe5u2R9u4n1aV5Z/qa1m2oFg==",
+      "sha256": "28f1511de04906def70f7ff6950cd2d26f52be0ec93c5efce8f5c07cb46bc521",
+      "bytes": 14438562,
+      "target": "plugins/discord"
+    },
+    {
+      "package": "@openclaw/slack",
+      "version": "2026.7.1",
+      "url": "https://registry.npmjs.org/@openclaw/slack/-/slack-2026.7.1.tgz",
+      "integrity": "sha512-dwVGEVCmoTQrOIeZaSCIOPg8pT7hB883QQEXdp9EZUDzTGuvSc+KxH2iERSOV/59hROQctYdcobGn/vdB1H4XA==",
+      "sha256": "d6ae8745867d812560e917707e633c8b66b36f7270124a8cca9602c6dc98ef46",
+      "bytes": 3860207,
+      "target": "plugins/slack"
+    },
+    {
+      "package": "@openclaw/tavily-plugin",
+      "version": "2026.7.1",
+      "url": "https://registry.npmjs.org/@openclaw/tavily-plugin/-/tavily-plugin-2026.7.1.tgz",
+      "integrity": "sha512-JI9RIGmZVmtCnt8F+OwQb973pOTa7X0b/tDi7B8cIjYr5Ieq9IlzgLNTgnUBNZbSnJSh7p89QIaeUQ98LFVAHQ==",
+      "sha256": "c8d7c2fb40b0c6a3f8ad99e927c1851ef501bef89ce049e88ab79083ff6dcb09",
+      "bytes": 262410,
+      "target": "plugins/tavily"
     }
   ]
 }

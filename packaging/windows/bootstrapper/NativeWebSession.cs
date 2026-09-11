@@ -43,6 +43,7 @@ internal static class NativeWebSession
             using var shutdown = new CancellationTokenSource();
             var stopped = false;
             var stopRequested = false;
+            var browserPending = false;
             string? diagnosticPath = null;
             var progress = new NativeProgressPresentation();
             var green = new SolidColorBrush(Color.FromRgb(0x76, 0xB9, 0x00));
@@ -157,13 +158,15 @@ internal static class NativeWebSession
                     catch (Exception) { status.Text = "Windows could not open the saved diagnostics. Close this window and check the agent in NemoClaw Setup."; }
                     return;
                 }
-                if (url is null || stopRequested) return;
+                if (url is null || stopRequested || browserPending) return;
                 try
                 {
-                    Process.Start(new ProcessStartInfo { FileName = url, UseShellExecute = true })?.Dispose();
-                    ShowRunning(browserRequested: true);
+                    browserPending = true;
+                    open.IsEnabled = false;
+                    output.WriteLine("{\"kind\":\"open\"}");
+                    status.Text = "Asking Windows to open your default browser…";
                 }
-                catch (Exception) { status.Text = "Windows could not open your default browser. Try Open Web UI again, or stop this session."; }
+                catch (Exception) { browserPending = false; open.IsEnabled = !stopRequested; status.Text = "Windows could not open your default browser. Try Open Web UI again, or stop this session."; }
             }
             open.Click += (_, _) => OpenBrowser();
             stop.Click += (_, _) => { if (stopped) window.Close(); else RequestStop(); };
@@ -211,6 +214,17 @@ internal static class NativeWebSession
                             {
                                 ShowRunning(browserRequested: false);
                                 open.IsEnabled = true; if (!qualification) OpenBrowser();
+                            }
+                        }
+                        else if (kind is "browser-opened" or "browser-failed")
+                        {
+                            if (!browserPending) throw new InvalidDataException();
+                            browserPending = false;
+                            if (!stopRequested)
+                            {
+                                open.IsEnabled = true;
+                                if (kind == "browser-opened") ShowRunning(browserRequested: true);
+                                else status.Text = "Windows could not open your default browser. Try Open Web UI again, or stop this session.";
                             }
                         }
                         else if (kind == "progress")

@@ -92,7 +92,7 @@ impl Agent {
             && self.live()
     }
 }
-fn creation(handle: RawHandle) -> Result<u64, &'static str> {
+pub(super) fn creation(handle: RawHandle) -> Result<u64, &'static str> {
     let mut created = FileTime::default();
     let mut exited = FileTime::default();
     let mut kernel = FileTime::default();
@@ -198,10 +198,14 @@ fn cancel_started(child: &mut Child) -> Result<(), &'static str> {
     Err("runtime-service-cancel")
 }
 
+// An exclusive duplicate keeps the private job alive only for its guardian worker.
+struct BrowserJob(Handle);
+unsafe impl Send for BrowserJob {}
 pub(super) struct Pending {
     pipe: Pipe,
     pub(super) name: String,
     installation: PathBuf,
+    browser_job: Option<BrowserJob>,
 }
 pub(super) struct Worker {
     stop: Arc<AtomicBool>,
@@ -255,7 +259,13 @@ impl Pending {
             pipe: Pipe(Handle(handle)),
             name,
             installation: installation.to_owned(),
+            browser_job: None,
         })
+    }
+    pub(super) fn browser(installation: &Path, job: RawHandle) -> Result<Self, &'static str> {
+        let mut pending = Self::new(installation)?;
+        pending.browser_job = Some(BrowserJob(clone_process(job)?));
+        Ok(pending)
     }
     pub(super) fn start(self, process: RawHandle, pid: u32) -> Result<Worker, &'static str> {
         let agent = Agent {
@@ -295,6 +305,9 @@ impl Pending {
             }
             // The File owns the same unique handle after the Pipe guard is moved.
             let mut file = self.pipe.into_file();
+            if let Some(job) = &self.browser_job {
+                return super::browser::serve(file, || !stopped(&stop, &agent), job.0.0);
+            }
             if stopped(&stop, &agent) {
                 return Ok(());
             }

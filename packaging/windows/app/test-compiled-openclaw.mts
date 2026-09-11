@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { Worker } from "node:worker_threads";
@@ -22,9 +23,34 @@ assert.equal(fs.existsSync(output), false, "Control output must be fresh.");
 fs.mkdirSync(output, { recursive: true });
 const app = path.join(output, "isolated-code-unit");
 fs.mkdirSync(app);
-for (const name of ["openclaw-app.cjs", "openclaw-dynamic-import.cjs"])
-  fs.copyFileSync(path.join(inputApp, name), path.join(app, name), fs.constants.COPYFILE_EXCL);
-assert.equal(fs.existsSync(path.join(app, "node_modules")), false);
+const receipt = JSON.parse(
+  fs.readFileSync(path.join(inputApp, "openclaw-resource-closure.json"), "utf8"),
+) as {
+  files: { path: string; bytes: number; sha256: string }[];
+};
+const selected = receipt.files.filter(
+  (row) =>
+    ["openclaw-app.cjs", "openclaw-dynamic-import.cjs"].includes(row.path) ||
+    row.path.startsWith("node_modules/undici/"),
+);
+assert(selected.some((row) => row.path === "node_modules/undici/package.json"));
+for (const row of selected) {
+  assert(
+    !row.path.includes("\\") &&
+      !row.path.includes(":") &&
+      row.path.split("/").every((part) => part && part !== "." && part !== ".."),
+  );
+  const source = path.join(inputApp, row.path),
+    target = path.join(app, row.path);
+  const stat = fs.lstatSync(source);
+  assert(stat.isFile() && !stat.isSymbolicLink());
+  const bytes = fs.readFileSync(source);
+  assert.equal(bytes.length, row.bytes);
+  assert.equal(createHash("sha256").update(bytes).digest("hex"), row.sha256);
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.writeFileSync(target, bytes, { flag: "wx" });
+}
+assert.deepEqual(fs.readdirSync(path.join(app, "node_modules")), ["undici"]);
 const state = path.join(output, "state");
 fs.mkdirSync(state);
 const entry = path.join(app, "openclaw-app.cjs");
@@ -76,7 +102,7 @@ fs.writeFileSync(
 assert.equal(direct.status, 0, direct.stderr);
 assert.match(direct.stdout, /OpenClaw 2026\.7\.1/);
 results.push({
-  control: "direct-version-without-node-modules",
+  control: "direct-version-with-declared-undici-only",
   passed: true,
   stdout: direct.stdout.trim(),
 });
@@ -110,7 +136,7 @@ fs.writeFileSync(path.join(output, "worker-version.log"), stdout + stderr);
 assert.equal(exitCode, 0, stderr);
 assert.match(stdout, /OpenClaw 2026\.7\.1/);
 results.push({
-  control: "owned-worker-import-and-explicit-api-without-node-modules",
+  control: "owned-worker-import-and-explicit-api-with-declared-undici-only",
   passed: true,
   stdout: stdout.trim(),
 });
@@ -138,7 +164,7 @@ fs.writeFileSync(
 assert.equal(config.status, 0, config.stderr);
 assert.equal((JSON.parse(config.stdout) as { valid?: boolean }).valid, true);
 results.push({
-  control: "actual-config-validation-without-node-modules",
+  control: "actual-config-validation-with-declared-undici-only",
   passed: true,
   stdout: config.stdout.trim(),
 });
@@ -152,7 +178,9 @@ fs.writeFileSync(
       architecture: process.arch,
       nodeVersion: process.version,
       portableProof: portable,
-      neighboringDependencyTreeAbsent: true,
+      neighboringDependencyTreeAbsent: false,
+      declaredSidecars: ["undici"],
+      unrelatedNeighboringDependenciesAbsent: true,
       sourceTreeIsolationVerified: false,
       originalBuildTreeAccess:
         "Not asserted by this script; a separate OS-denied control records that boundary.",

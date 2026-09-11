@@ -131,6 +131,45 @@ fn owned_process_fixture() {
             wait_for(&root.join("release"));
             event(&root, "grandchild-finished");
         }
+        "browser-owned" | "browser-invalid" | "browser-foreign-child" => {
+            let pipe = std::env::var_os("NEMOCLAW_RUNTIME_BROWSER_PIPE").unwrap();
+            let mut channel = OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(pipe)
+                .unwrap();
+            let origin = if mode == "browser-invalid" {
+                "https://example.com".to_owned()
+            } else {
+                std::env::var("NEMOCLAW_BROWSER_PROOF_ORIGIN").unwrap()
+            };
+            channel
+                .write_all(format!("bind {origin}\n").as_bytes())
+                .unwrap();
+            let mut reader = std::io::BufReader::new(channel);
+            let mut line = String::new();
+            if mode != "browser-owned" {
+                assert!(reader.read_line(&mut line).is_err() || line.is_empty());
+            } else {
+                reader.read_line(&mut line).unwrap();
+                assert_eq!(line, "bound\n");
+                line.clear();
+                reader.get_mut().write_all(b"open\n").unwrap();
+                reader.read_line(&mut line).unwrap();
+                assert_eq!(line, "opened\n");
+                line.clear();
+                reader.get_mut().write_all(b"close\n").unwrap();
+                reader.read_line(&mut line).unwrap();
+                assert_eq!(line, "closed\n");
+            }
+        }
+        "browser-foreign-parent" => {
+            let mut command = Command::new(std::env::current_exe().unwrap());
+            command
+                .args(["--exact", FIXTURE, "--nocapture"])
+                .env("NEMOCLAW_GUARDIAN_TEST_MODE", "browser-foreign-child");
+            assert!(command.status().unwrap().success());
+        }
         "pipe-invalid" => {
             let pipe = std::env::var_os("NEMOCLAW_RUNTIME_SERVICE_PIPE").unwrap();
             let mut channel = OpenOptions::new()
@@ -476,5 +515,140 @@ fn service_pipe_rejects_unknown_actions_from_even_the_correct_agent_process() {
         ),
         Err("runtime-service-request")
     );
+    finish(fixture);
+}
+
+#[test]
+fn browser_pipe_rejects_a_foreign_descendant_client() {
+    let fixture = Fixture::new();
+    let mut command = fixture.command("browser-foreign-parent");
+    command.env("NEMOCLAW_BROWSER_PROOF_ORIGIN", "http://127.0.0.1:12345");
+    assert_eq!(
+        run_managed(
+            command,
+            0x08000000,
+            fixture.lease_handle(),
+            false,
+            Some(&fixture.root),
+            false
+        ),
+        Err("runtime-service-client")
+    );
+    finish(fixture);
+}
+#[test]
+fn browser_pipe_refuses_non_loopback_origin_before_activation() {
+    let fixture = Fixture::new();
+    assert_eq!(
+        run_managed(
+            fixture.command("browser-invalid"),
+            0x08000000,
+            fixture.lease_handle(),
+            false,
+            Some(&fixture.root),
+            false
+        ),
+        Err("runtime-browser-address")
+    );
+    finish(fixture);
+}
+#[test]
+#[ignore = "Requires an explicitly selected disposable Windows browser/job proof"]
+fn browser_survives_successful_private_job_close() {
+    assert_eq!(std::env::var("NEMOCLAW_BROWSER_PROOF").as_deref(), Ok("1"));
+    assert_eq!(
+        std::env::var("GITHUB_ACTIONS").as_deref(),
+        Ok("true"),
+        "Real browser proof requires disposable CI."
+    );
+    let fixture = Fixture::new();
+    let started_file_time = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos()
+        / 100
+        + 116444736000000000u128;
+    let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let origin = format!("http://127.0.0.1:{}", listener.local_addr().unwrap().port());
+    let server = std::thread::spawn(move || {
+        let deadline = Instant::now() + Duration::from_secs(20);
+        loop {
+            match listener.accept() {
+                Ok((mut stream, _)) => {
+                    stream
+                        .set_read_timeout(Some(Duration::from_secs(5)))
+                        .unwrap();
+                    let mut request = [0; 4096];
+                    let length = stream.read(&mut request).unwrap();
+                    assert!(
+                        String::from_utf8_lossy(&request[..length]).starts_with("GET / HTTP/1.1")
+                    );
+                    stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 28\r\nConnection: close\r\nContent-Type: text/plain\r\n\r\nNemoClaw browser owner proof").unwrap();
+                    return;
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    assert!(
+                        Instant::now() < deadline,
+                        "The actual browser did not navigate to the owned origin."
+                    );
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+                Err(error) => panic!("{error}"),
+            }
+        }
+    });
+    let mut command = fixture.command("browser-owned");
+    command.env("NEMOCLAW_BROWSER_PROOF_ORIGIN", origin);
+    assert_eq!(
+        run_managed(
+            command,
+            0x08000000,
+            fixture.lease_handle(),
+            false,
+            Some(&fixture.root),
+            false
+        ),
+        Ok(0)
+    );
+    server.join().unwrap();
+    let proof=browser::PROOF.lock().unwrap().take().expect("Fresh CI activation must return an exact browser handle; reused activation is not a survival proof.");
+    let created = inference_owner::creation(proof.process.0).unwrap();
+    assert!(
+        u128::from(created) >= started_file_time,
+        "A preexisting browser must never be owned or terminated by this test."
+    );
+    assert_eq!(
+        unsafe { WaitForSingleObject(proof.process.0, 0) },
+        258,
+        "The default browser must survive private job close."
+    );
+    unsafe extern "system" {
+        fn GetProcessId(process: RawHandle) -> u32;
+        fn QueryFullProcessImageNameW(
+            process: RawHandle,
+            flags: u32,
+            image: *mut u16,
+            size: *mut u32,
+        ) -> i32;
+    }
+    let browser_pid = unsafe { GetProcessId(proof.process.0) };
+    let mut image = vec![0u16; 4096];
+    let mut size = image.len() as u32;
+    assert_ne!(
+        unsafe { QueryFullProcessImageNameW(proof.process.0, 0, image.as_mut_ptr(), &mut size) },
+        0
+    );
+    println!(
+        "browser-proof: pid={browser_pid} creationFileTime={created} executable={}",
+        String::from_utf16(&image[..size as usize]).unwrap()
+    );
+    println!(
+        "browser-proof: actual HTTP navigation; private job membership false at activation; runtime exit0; browser alive after job close"
+    );
+    // Test teardown only, after the survival assertion, using ShellExecuteEx's
+    // exact new-process handle. Production never terminates the user browser.
+    assert_ne!(unsafe { TerminateProcess(proof.process.0, 0) }, 0);
+    assert_eq!(unsafe { WaitForSingleObject(proof.process.0, 5000) }, 0);
     finish(fixture);
 }

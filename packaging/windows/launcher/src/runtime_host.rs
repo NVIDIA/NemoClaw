@@ -3,6 +3,8 @@
 
 //! Native guardian: create the owned Node process inside its job atomically,
 //! preserving command arguments and waiting for all descendants before release.
+#[path = "runtime_browser.rs"]
+mod browser;
 #[path = "runtime_inference_owner.rs"]
 mod inference_owner;
 #[path = "runtime_service_startup.rs"]
@@ -371,6 +373,29 @@ pub(crate) fn run_managed(
     {
         return Err("runtime-host-job");
     }
+    let browser_profile = command
+        .get_args()
+        .next()
+        .is_some_and(|mode| mode == "web" || mode == "hermes-dashboard");
+    #[cfg(test)]
+    let browser_profile = browser_profile
+        || command.get_envs().any(|(key, value)| {
+            key == "NEMOCLAW_GUARDIAN_TEST_MODE"
+                && value.is_some_and(|value| value.to_string_lossy().starts_with("browser-"))
+        });
+    let browser = if browser_profile {
+        Some(inference_owner::Pending::browser(
+            service_root.ok_or("runtime-browser-installation")?,
+            job.0,
+        )?)
+    } else {
+        None
+    };
+    if let Some(pending) = &browser {
+        command.env("NEMOCLAW_RUNTIME_BROWSER_PIPE", &pending.name);
+    } else {
+        command.env_remove("NEMOCLAW_RUNTIME_BROWSER_PIPE");
+    }
     let startup_gate = if provisional_service {
         Some(service_startup::Gate::start(job.0)?)
     } else {
@@ -510,6 +535,9 @@ pub(crate) fn run_managed(
         .map(|pending| pending.start(process.0, child.pid))
         .transpose()?;
     drop(inherited);
+    let browser_worker = browser
+        .map(|pending| pending.start(process.0, child.pid))
+        .transpose()?;
     if let Some(writer) = &handshake_writer {
         let mut written = 0;
         if unsafe {
@@ -539,6 +567,7 @@ pub(crate) fn run_managed(
     if unsafe { GetExitCodeProcess(process.0, &mut code) } == 0 {
         return Err("runtime-host-exit");
     }
+    let browser_result = browser_worker.map(|worker| worker.finish()).transpose();
     let service_result = service_worker.map(|worker| worker.finish()).transpose();
     let startup_result = startup_gate.map(|gate| gate.finish()).transpose();
     let settle_deadline = Instant::now() + Duration::from_secs(5);
@@ -557,6 +586,12 @@ pub(crate) fn run_managed(
             return Err("runtime-host-descendants");
         }
         return Err("runtime-host-left-descendants");
+    }
+    if let Err(error) = browser_result {
+        if code == 0 {
+            return Err(error);
+        }
+        eprintln!("The native browser request owner also failed cleanup.");
     }
     if let Err(error) = service_result {
         if code == 0 {

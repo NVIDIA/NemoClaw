@@ -182,7 +182,9 @@ export function staticWorkerSource(mode: string, input: string, assets: Map<stri
   return [
     'import { nativeGuestAsset } from "./native-assets.mts";',
     ...(mode === "openclaw-web"
-      ? ['import { runPackagedOpenClaw } from "native-openclaw-api";']
+      ? [
+          'import { runPackagedOpenClaw, registerPackagedOpenClawPlugins } from "native-openclaw-api";',
+        ]
       : []),
     ...imports,
     "export async function run() {",
@@ -259,10 +261,10 @@ export async function buildNativeWorkers(
           loader: "js" as const,
           resolveDir: runtimeSource,
           contents: openClawBundle
-            ? "export { runOpenClaw as runPackagedOpenClaw } from " +
+            ? "export { runOpenClaw as runPackagedOpenClaw, registerPrebuiltPlugins as registerPackagedOpenClawPlugins } from " +
               JSON.stringify(path.resolve(openClawBundle)) +
               ";"
-            : 'import { createRequire } from "node:module"; export async function runPackagedOpenClaw(argv) { const entry = process.env.NEMOCLAW_MXC_OPENCLAW_ENTRY; if (!entry) throw new Error("Missing prebuilt OpenClaw entry"); return await createRequire(entry)(entry).runOpenClaw(argv); }',
+            : 'import { createRequire } from "node:module"; function packagedApi() { const entry = process.env.NEMOCLAW_MXC_OPENCLAW_ENTRY; if (!entry) throw new Error("Missing prebuilt OpenClaw entry"); return createRequire(entry)(entry); } export async function runPackagedOpenClaw(argv) { return await packagedApi().runOpenClaw(argv); } export async function registerPackagedOpenClawPlugins(config) { return await packagedApi().registerPrebuiltPlugins(config); }',
         }));
       },
     },

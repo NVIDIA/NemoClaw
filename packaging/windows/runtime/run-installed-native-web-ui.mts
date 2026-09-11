@@ -358,8 +358,9 @@ if (configured) {
   const services = await response.json();
   Object.assign(process.env, services.environment);
   serviceConfiguration = services.openclaw;
-  if (services.options.search?.provider === "brave") {
-    serviceConfiguration.plugins.load = { paths: [required("NEMOCLAW_NATIVE_BRAVE_PLUGIN")] };
+  const prebuiltPlugins = ["brave", "discord", "slack", "tavily"].filter(id => serviceConfiguration.plugins?.entries?.[id]?.enabled === true);
+  if (prebuiltPlugins.length) {
+    serviceConfiguration.plugins.load = { paths: prebuiltPlugins.map(id => join(required("OPENCLAW_COMPILED_ASSET_ROOT"), "plugins", id)) };
   }
 }
 writeFileSync(join(configDirectory, "openclaw.json"), JSON.stringify({
@@ -388,14 +389,10 @@ Object.assign(process.env, {
   OPENCLAW_NO_AUTO_UPDATE: "1",
   USERPROFILE: home,
 });
-// The official --link command records the already built path in its supported
-// install registry. It changes only agent configuration/state; no npm or runtime
-// copy is allowed or needed for this sealed prebuilt package.
-if (serviceConfiguration.plugins?.entries?.brave?.enabled) {
-  process.argv = [process.execPath, launcher, "plugins", "install", "--link", required("NEMOCLAW_NATIVE_BRAVE_PLUGIN")];
-  await runPackagedOpenClaw(process.argv);
-}
+// Register sealed paths directly through the canonical guest-state record API
+// before CLI/loader initialization. No plugin installer or package manager runs.
 process.argv = [process.execPath, launcher, "gateway", "run", "--allow-unconfigured", "--port", String(uiPort), "--bind", "loopback", "--auth", "none"];
+await registerPackagedOpenClawPlugins(serviceConfiguration);
 const fileTunnelTask = startNativeUiTunnel({ relayRoot, relayToken, uiPort });
 void fileTunnelTask.catch(() => {});
 // The gateway import can remain pending for its entire server lifetime. A
@@ -1430,7 +1427,6 @@ async function mainInternal(runtimeLease: NativeRuntimeSession) {
         NEMOCLAW_MXC_RELAY_TOKEN: relayToken,
         NEMOCLAW_MXC_UI_PORT: String(uiPort),
         NEMOCLAW_NATIVE_SERVICES: configuredIdentity === null ? "0" : "1",
-        NEMOCLAW_NATIVE_BRAVE_PLUGIN: path.join(openClawRoot, "plugins", "brave"),
         NODE_DISABLE_COMPILE_CACHE: "1",
         NUMBER_OF_PROCESSORS: process.env.NUMBER_OF_PROCESSORS ?? "1",
         OS: "Windows_NT",
