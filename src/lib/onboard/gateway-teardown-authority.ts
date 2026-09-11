@@ -17,6 +17,7 @@ import path from "node:path";
 import { isErrnoException } from "../core/errno";
 import { DEFAULT_GATEWAY_PORT } from "../core/ports";
 import { inspectCheckpoint } from "../state/onboard-checkpoint";
+import { resolveCheckpointForResume } from "../state/onboard-checkpoint-migrate";
 import type { Session } from "../state/onboard-session";
 import { nemoclawStateRoot, resolveHome } from "../state/state-root";
 import { hasOpenShellGatewayUserService } from "./docker-driver-gateway-service";
@@ -227,6 +228,51 @@ export function resolveGatewayTeardownAuthority(
   deps: GatewayTeardownAuthorityDeps = {},
 ): GatewayOwner {
   return resolveGatewayEffectAuthority(target, "teardown", deps);
+}
+
+/**
+ * Confirm that current-schema onboarding state stopped before gateway effects
+ * and still names the exact authority selected for teardown.
+ */
+export function isInterruptedPreGatewayTeardownSession(
+  value: unknown,
+  target: GatewayTeardownTarget,
+  owner: GatewayOwner,
+): boolean {
+  const record = (candidate: unknown): Record<string, unknown> | null =>
+    typeof candidate === "object" && candidate !== null && !Array.isArray(candidate)
+      ? (candidate as Record<string, unknown>)
+      : null;
+  const session = record(value);
+  const failure = record(session?.failure);
+  const machine = record(session?.machine);
+  const steps = record(session?.steps);
+  const preflight = record(steps?.preflight);
+  const gateway = record(steps?.gateway);
+  const sandbox = record(steps?.sandbox);
+  if (
+    !session ||
+    session.resumable !== true ||
+    session.status !== "failed" ||
+    session.lastStepStarted !== "preflight" ||
+    failure?.interrupted !== true ||
+    failure.step !== "preflight" ||
+    machine?.state !== "failed" ||
+    preflight?.status !== "failed" ||
+    gateway?.status !== "pending" ||
+    sandbox?.status !== "pending"
+  ) {
+    return false;
+  }
+  const inspected = resolveCheckpointForResume(value);
+  if (inspected.status !== "loaded") return false;
+  const authority = inspected.checkpoint.gatewayAuthority;
+  return Boolean(
+    authority.kind === "selected" &&
+    sameGatewayOwner(gatewayOwnerFromCheckpoint(authority.value), owner) &&
+    authority.value.gatewayName === target.gatewayName &&
+    authority.value.gatewayPort === target.gatewayPort,
+  );
 }
 
 /**
