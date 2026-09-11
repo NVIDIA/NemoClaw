@@ -11,6 +11,35 @@ constexpr uint32_t directory_access = 0x0002000f;
 constexpr size_t maximum_source_characters = 96;
 constexpr size_t maximum_root_characters = 512;
 constexpr size_t maximum_target_characters = 640;
+constexpr size_t maximum_signal_pipe_characters = 96;
+
+// Pinned sigproc.cc requests "sigwait" with PIPE_ADD_PID. Observe that
+// process's exact pipe only, never arbitrary files or other MSYS pipe roles.
+inline bool signal_pipe_name(const char* input, size_t count, uint32_t own_pid) {
+    if (!input || !own_pid || !count || count >= maximum_signal_pipe_characters) return false;
+    constexpr char prefix[] = "\\\\.\\pipe\\msys-";
+    size_t at = 0;
+    for (size_t n = 0; prefix[n]; ++n)
+        if (at == count || input[at++] != prefix[n]) return false;
+    for (size_t n = 0; n < 16; ++n) {
+        if (at == count) return false;
+        const char c = input[at++];
+        if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) return false;
+    }
+    if (at == count || input[at++] != '-' || at == count || input[at] < '1' || input[at] > '9') return false;
+    uint32_t pid = 0;
+    size_t digits = 0;
+    while (at < count && input[at] >= '0' && input[at] <= '9') {
+        const uint32_t digit = static_cast<uint32_t>(input[at++] - '0');
+        if (++digits > 10 || pid > (UINT32_MAX - digit) / 10) return false;
+        pid = pid * 10 + digit;
+    }
+    if (pid != own_pid) return false;
+    constexpr char suffix[] = "-sigwait";
+    for (size_t n = 0; suffix[n]; ++n)
+        if (at == count || input[at++] != suffix[n]) return false;
+    return at == count;
+}
 
 enum class Family { none, global, session };
 struct Match {

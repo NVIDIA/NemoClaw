@@ -105,6 +105,30 @@ int main() {
           !private_nt_root(relativeRoot, relativeCount, tokenSid, 2, a, ntCount) &&
           private_nt_root(relativeRoot, relativeCount, tokenSid, 2, a, ntCount + 1) == ntCount,
           "api-root-output-capacity");
+    const char* signalName = "\\\\.\\pipe\\msys-52ddb898ef8d77fd-9784-sigwait";
+    const char* maximumPidSignal = "\\\\.\\pipe\\msys-52ddb898ef8d77fd-4294967295-sigwait";
+    check(signal_pipe_name(signalName, strlen(signalName), 9784) &&
+          signal_pipe_name(maximumPidSignal, strlen(maximumPidSignal), UINT32_MAX),
+          "signal-server-writer-exact-own-pid");
+    check(!signal_pipe_name(signalName, strlen(signalName), 9785) &&
+          !signal_pipe_name(signalName, strlen(signalName), 0), "signal-foreign-pid-refused");
+    const char* ordinaryPipe = "\\\\.\\pipe\\msys-52ddb898ef8d77fd-9784-pipe-1";
+    const char* childPipe = "\\\\.\\pipe\\msys-52ddb898ef8d77fd-9784-sigwait-child";
+    check(!signal_pipe_name(ordinaryPipe, strlen(ordinaryPipe), 9784) &&
+          !signal_pipe_name(childPipe, strlen(childPipe), 9784), "signal-other-pipe-roles-refused");
+    const char* remotePipe = "\\\\server\\pipe\\msys-52ddb898ef8d77fd-9784-sigwait";
+    const char* localPipe = "\\\\.\\pipe\\LOCAL\\msys-52ddb898ef8d77fd-9784-sigwait";
+    check(!signal_pipe_name(remotePipe, strlen(remotePipe), 9784) &&
+          !signal_pipe_name(localPipe, strlen(localPipe), 9784), "signal-other-prefixes-refused");
+    const char* uppercaseKey = "\\\\.\\pipe\\msys-52Ddb898ef8d77fd-9784-sigwait";
+    check(!signal_pipe_name(uppercaseKey, strlen(uppercaseKey), 9784) &&
+          !signal_pipe_name(signalName, strlen(signalName) + 1, 9784) &&
+          !signal_pipe_name(nullptr, 0, 9784) && !signal_pipe_name(signalName, 96, 9784),
+          "signal-key-and-counted-bounds");
+    const char* paddedPid = "\\\\.\\pipe\\msys-52ddb898ef8d77fd-09784-sigwait";
+    const char* overflowPid = "\\\\.\\pipe\\msys-52ddb898ef8d77fd-4294967296-sigwait";
+    check(!signal_pipe_name(paddedPid, strlen(paddedPid), 9784) &&
+          !signal_pipe_name(overflowPid, strlen(overflowPid), UINT32_MAX), "signal-pid-alias-and-overflow-refused");
 
 #ifdef _WIN32
     alignas(void*) BYTE world[SECURITY_MAX_SID_SIZE] = {};
@@ -120,6 +144,18 @@ int main() {
     // MSYS RtlFirstFreeAce truncates AclSize to its single ACE's actual extent.
     acl->AclSize = static_cast<WORD>(sizeof(ACL) + offsetof(ACCESS_ALLOWED_ACE, SidStart) + GetLengthSid(world));
     check(is_msys_directory_descriptor(&original, world), "windows-exact-msys-descriptor-admitted");
+    SECURITY_ATTRIBUTES pipeAttributes = {sizeof(SECURITY_ATTRIBUTES), &original, FALSE};
+    PipeSecurityObservation pipeSecurity = {};
+    observe_pipe_security(&pipeAttributes, pipeSecurity);
+    check(pipeSecurity.complete && pipeSecurity.attributesPresent && pipeSecurity.descriptorPresent &&
+          pipeSecurity.daclPresent && !pipeSecurity.nullDacl && pipeSecurity.aceCount == 1 &&
+          pipeSecurity.capturedAclBytes == acl->AclSize && memcmp(pipeSecurity.acl, rawAcl, acl->AclSize) == 0 &&
+          is_msys_directory_descriptor(&original, world), "windows-pipe-acl-observation-preserves-original");
+    PipeSecurityObservation absentSecurity = {}, invalidSecurity = {};
+    observe_pipe_security(nullptr, absentSecurity);
+    observe_pipe_security(reinterpret_cast<const SECURITY_ATTRIBUTES*>(static_cast<uintptr_t>(1)), invalidSecurity);
+    check(absentSecurity.complete && !absentSecurity.attributesPresent && !invalidSecurity.complete,
+          "windows-pipe-null-and-invalid-attributes-observed-safely");
     auto ace = reinterpret_cast<ACCESS_ALLOWED_ACE*>(rawAcl + sizeof(ACL));
     ace->Mask |= WRITE_DAC;
     check(!is_msys_directory_descriptor(&original, world), "windows-other-mask-refused");

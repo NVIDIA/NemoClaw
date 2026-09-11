@@ -12,6 +12,53 @@ struct ScopedDescriptor {
     alignas(DWORD) BYTE acl[sizeof(ACL) + 2 * (sizeof(ACCESS_ALLOWED_ACE) + SECURITY_MAX_SID_SIZE)];
 };
 
+// Read-only signal-pipe diagnostics. Raw ACL bytes preserve every captured
+// ACE's order/type/flags/mask/SID without lookup, allocation or modification.
+struct PipeSecurityObservation {
+    bool complete = false;
+    bool attributesPresent = false;
+    DWORD attributesLength = 0;
+    BOOL inheritedHandle = FALSE;
+    bool descriptorPresent = false;
+    SECURITY_DESCRIPTOR_CONTROL control = 0;
+    DWORD revision = 0;
+    BOOL daclPresent = FALSE;
+    bool nullDacl = false;
+    DWORD aclBytes = 0;
+    DWORD aceCount = 0;
+    DWORD capturedAclBytes = 0;
+    BYTE acl[512] = {};
+};
+
+inline void observe_pipe_security(const SECURITY_ATTRIBUTES* attributes, PipeSecurityObservation& result) {
+    __try {
+        if (!attributes) { result.complete = true; return; }
+        result.attributesPresent = true;
+        result.attributesLength = attributes->nLength;
+        if (attributes->nLength != sizeof(SECURITY_ATTRIBUTES)) return;
+        result.inheritedHandle = attributes->bInheritHandle;
+        auto descriptor = attributes->lpSecurityDescriptor;
+        if (!descriptor) { result.complete = true; return; }
+        result.descriptorPresent = true;
+        if (!GetSecurityDescriptorControl(descriptor, &result.control, &result.revision)) return;
+        PACL acl = nullptr;
+        BOOL defaulted = FALSE;
+        if (!GetSecurityDescriptorDacl(descriptor, &result.daclPresent, &acl, &defaulted)) return;
+        result.nullDacl = result.daclPresent && !acl;
+        if (acl) {
+            result.aclBytes = acl->AclSize;
+            result.aceCount = acl->AceCount;
+            result.capturedAclBytes = result.aclBytes < sizeof(result.acl)
+                ? result.aclBytes : static_cast<DWORD>(sizeof(result.acl));
+            const BYTE* bytes = reinterpret_cast<const BYTE*>(acl);
+            for (DWORD n = 0; n < result.capturedAclBytes; ++n) result.acl[n] = bytes[n];
+        }
+        result.complete = true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        result.complete = false;
+    }
+}
+
 inline bool make_scoped_descriptor(PSID user, PSID container, ScopedDescriptor& output,
                                    const char** failed_stage = nullptr) {
     if (failed_stage) *failed_stage = "descriptor-identities";

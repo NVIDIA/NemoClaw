@@ -17,6 +17,10 @@ using namespace nemoclaw_msys;
 using DirectoryCall = NTSTATUS (NTAPI*)(PHANDLE, ACCESS_MASK, POBJECT_ATTRIBUTES);
 DirectoryCall realCreate = nullptr;
 DirectoryCall realOpen = nullptr;
+decltype(&CreateNamedPipeA) realCreateSignalServer = CreateNamedPipeA;
+decltype(&CreateFileA) realOpenSignalWriter = CreateFileA;
+LONG pipeRecords = 0;
+__declspec(thread) bool writingPipeDiagnostic = false;
 WCHAR privateRoot[maximum_root_characters] = {};
 WCHAR apiRoot[maximum_root_characters] = {};
 size_t privateRootLength = 0;
@@ -288,6 +292,88 @@ NTSTATUS NTAPI open_directory(PHANDLE output, ACCESS_MASK access, POBJECT_ATTRIB
     return call(realOpen, output, access, input, false);
 }
 
+// These two observers do not redirect or repair pipes. They preserve original
+// argument pointers, handles and immediate last-error values on every path.
+bool observed_signal_name(LPCSTR input, char* copied) {
+    __try {
+        if (!input) return false;
+        for (size_t n = 0; n < maximum_signal_pipe_characters; ++n) {
+            copied[n] = input[n];
+            if (!copied[n]) return signal_pipe_name(copied, n, GetCurrentProcessId());
+        }
+        return false;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+void log_signal_pipe(const char* name, const char* operation, DWORD access, DWORD mode,
+                     DWORD instances, DWORD outBuffer, DWORD inBuffer, DWORD timeout,
+                     DWORD share, DWORD disposition, DWORD flags, HANDLE result, DWORD error,
+                     const PipeSecurityObservation& security) {
+    if (InterlockedIncrement(&pipeRecords) > 8) return;
+    char escaped[maximum_signal_pipe_characters * 2 + 1] = {};
+    size_t at = 0;
+    for (size_t n = 0; name[n]; ++n) {
+        if (name[n] == '\\') escaped[at++] = '\\';
+        escaped[at++] = name[n];
+    }
+    char aclHex[sizeof(security.acl) * 2 + 1] = {};
+    constexpr char hex[] = "0123456789abcdef";
+    for (DWORD n = 0; n < security.capturedAclBytes; ++n) {
+        aclHex[n * 2] = hex[security.acl[n] >> 4];
+        aclHex[n * 2 + 1] = hex[security.acl[n] & 15];
+    }
+    char line[2560];
+    const int count = _snprintf_s(line, sizeof(line), _TRUNCATE,
+        "NEMOCLAW_MSYS_SIGNAL_PIPE={\"schemaVersion\":1,\"pid\":%lu,\"operation\":\"%s\",\"name\":\"%s\",\"accessOrOpenMode\":\"0x%08lx\",\"pipeMode\":\"0x%08lx\",\"maxInstances\":%lu,\"outBufferBytes\":%lu,\"inBufferBytes\":%lu,\"defaultTimeout\":%lu,\"shareMode\":\"0x%08lx\",\"creationDisposition\":%lu,\"flags\":\"0x%08lx\",\"resultSuccess\":%s,\"win32Error\":%lu,\"securityInspectionComplete\":%s,\"attributesPresent\":%s,\"attributesLength\":%lu,\"inheritHandle\":%d,\"descriptorPresent\":%s,\"descriptorControl\":\"0x%04x\",\"descriptorRevision\":%lu,\"daclPresent\":%s,\"nullDacl\":%s,\"aclBytes\":%lu,\"aceCount\":%lu,\"capturedAclBytes\":%lu,\"aclTruncated\":%s,\"aclHex\":\"%s\"}\n",
+        GetCurrentProcessId(), operation, escaped, access, mode, instances, outBuffer, inBuffer, timeout,
+        share, disposition, flags, result && result != INVALID_HANDLE_VALUE ? "true" : "false", error,
+        security.complete ? "true" : "false", security.attributesPresent ? "true" : "false",
+        security.attributesLength, security.inheritedHandle, security.descriptorPresent ? "true" : "false",
+        static_cast<unsigned>(security.control), security.revision, security.daclPresent ? "true" : "false",
+        security.nullDacl ? "true" : "false", security.aclBytes, security.aceCount, security.capturedAclBytes,
+        security.capturedAclBytes < security.aclBytes ? "true" : "false", aclHex);
+    DWORD written = 0;
+    writingPipeDiagnostic = true;
+    if (count > 0) WriteFile(GetStdHandle(STD_ERROR_HANDLE), line, static_cast<DWORD>(count), &written, nullptr);
+    writingPipeDiagnostic = false;
+}
+
+HANDLE WINAPI observe_signal_server(LPCSTR name, DWORD openMode, DWORD pipeMode,
+    DWORD maxInstances, DWORD outBuffer, DWORD inBuffer, DWORD timeout, LPSECURITY_ATTRIBUTES attributes) {
+    if (writingPipeDiagnostic) return realCreateSignalServer(name, openMode, pipeMode, maxInstances, outBuffer, inBuffer, timeout, attributes);
+    const DWORD before = GetLastError();
+    char copied[maximum_signal_pipe_characters] = {};
+    const bool observed = observed_signal_name(name, copied);
+    PipeSecurityObservation security = {};
+    if (observed) observe_pipe_security(attributes, security);
+    SetLastError(before);
+    HANDLE result = realCreateSignalServer(name, openMode, pipeMode, maxInstances, outBuffer, inBuffer, timeout, attributes);
+    const DWORD error = GetLastError();
+    if (observed) log_signal_pipe(copied, "server-create", openMode, pipeMode, maxInstances,
+        outBuffer, inBuffer, timeout, 0, 0, 0, result, error, security);
+    SetLastError(error);
+    return result;
+}
+
+HANDLE WINAPI observe_signal_writer(LPCSTR name, DWORD access, DWORD share, LPSECURITY_ATTRIBUTES attributes,
+    DWORD disposition, DWORD flags, HANDLE templateFile) {
+    if (writingPipeDiagnostic) return realOpenSignalWriter(name, access, share, attributes, disposition, flags, templateFile);
+    const DWORD before = GetLastError();
+    char copied[maximum_signal_pipe_characters] = {};
+    const bool observed = observed_signal_name(name, copied);
+    PipeSecurityObservation security = {};
+    if (observed) observe_pipe_security(attributes, security);
+    SetLastError(before);
+    HANDLE result = realOpenSignalWriter(name, access, share, attributes, disposition, flags, templateFile);
+    const DWORD error = GetLastError();
+    if (observed) log_signal_pipe(copied, "writer-open", access, 0, 0, 0, 0, 0,
+        share, disposition, flags, result, error, security);
+    SetLastError(error);
+    return result;
+}
+
 } // namespace
 
 BOOL WINAPI DllMain(HINSTANCE self, DWORD reason, LPVOID reserved) {
@@ -303,6 +389,8 @@ BOOL WINAPI DllMain(HINSTANCE self, DWORD reason, LPVOID reserved) {
     if (!error) error = NemoClawStageProcessPropagation();
     if (!error) error = DetourAttach(&realCreate, create_directory);
     if (!error) error = DetourAttach(&realOpen, open_directory);
+    if (!error) error = DetourAttach(&realCreateSignalServer, observe_signal_server);
+    if (!error) error = DetourAttach(&realOpenSignalWriter, observe_signal_writer);
     if (error) {
         DetourTransactionAbort();
         return initialization_result("hook-staging", error);
