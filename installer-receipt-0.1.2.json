@@ -1,0 +1,61 @@
+{
+  "schemaVersion": 1,
+  "classification": "finished-windows-arm64-preview-unqualified",
+  "productVersion": "0.1.2",
+  "architecture": "arm64",
+  "selectedAgents": [
+    "openclaw"
+  ],
+  "candidateSha": "b54a1f3a54ab28dff7813de2db9430f6735ec624",
+  "reviewedPrHead": "8d1ffc30d073e8d5341525797ef1ce5a2b410d7f",
+  "sourceRepository": "https://github.com/NVIDIA/NemoClaw",
+  "sourcePullRequest": 10799,
+  "sourceWorkflowRun": 34544062535,
+  "sourceWorkflowAttempt": 1,
+  "sourceArtifactId": 10178641244,
+  "sourceArtifactName": "finished-windows-preview-b54a1f3a54ab28dff7813de2db9430f6735ec624",
+  "sourceArtifactBytes": 341647780,
+  "sourceArtifactSha256": "8c6b339e6c1aa228d1fe5ab86d22169e3e6f6cf4dabedfd5299490216611af60",
+  "sourceBuilderJobId": 103093394226,
+  "runtime": {
+    "runtimeId": "ee7b1276577764fc46bc9a3ce1e7a9e7a93effec5b0516a6c3e121559cea2057",
+    "manifestSha256": "a35f6b076e3f257dd28a97cc7c7b45e6d65c9722985f93f2bbd379c00d2deb33",
+    "sourceRevision": "b54a1f3a54ab28dff7813de2db9430f6735ec624",
+    "nodeSha256": "97cce5301a815d2dce07ac5bfd1e6039eae88185ec1d10ae4f8cb712f1732878",
+    "nodeVersion": "22.23.2"
+  },
+  "files": [
+    {
+      "sha256": "c738acc8b8d68e11f9555fe5798bf3e1241991aedded558d76f7506d6c7cb19a",
+      "bytes": 198595309,
+      "file": "NemoClawSetup-0.1.2-windows-arm64.exe"
+    },
+    {
+      "sha256": "01c51f6cc74c5126dc6e900283b4df416e0ec4930a1ff332bf49c9cf171360a8",
+      "bytes": 144761392,
+      "file": "NemoClaw-0.1.2-windows-arm64.msi"
+    }
+  ],
+  "buildReceipt": {
+    "file": "immutable-package-build-0.1.2.json",
+    "sha256": "5a2cce4fec74e54b7aadaeeb5b3777b3626ba89f1abcf09e48cb85d6fd597263"
+  },
+  "runtimeIdentity": {
+    "file": "runtime-identity-0.1.2.json",
+    "sha256": "aba33f4c49d63da98f2fb5b500f5c3742d7af73b2d74d118c99e7344b931af98"
+  },
+  "buildStatus": "candidate-built-for-installed-qualification",
+  "acceptanceAtPublication": "failed",
+  "qualification": {
+    "qualified": false,
+    "completeNativePasses": 0,
+    "requiredCompleteNativePasses": 2,
+    "installedAcceptanceCertified": false,
+    "productionSupport": false
+  },
+  "signature": {
+    "gitCommits": "SSH signed; separate from Windows Authenticode",
+    "windowsAuthenticode": "not certified by this helper"
+  },
+  "delivery": "prebuilt selected OpenClaw application candidate; no whole-product qualification claim"
+}

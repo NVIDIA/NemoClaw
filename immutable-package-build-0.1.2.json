@@ -1,0 +1,96 @@
+{
+  "schemaVersion": 1,
+  "classification": "finished-native-runtime-package-build",
+  "sourceRevision": "b54a1f3a54ab28dff7813de2db9430f6735ec624",
+  "status": "candidate-built-for-installed-qualification",
+  "installedAcceptance": false,
+  "activationAllowed": false,
+  "phase": "native-burn-build",
+  "systemDrivePreparation": {
+    "schemaVersion": 1,
+    "classification": "same-job-system-drive-helper-build-gate",
+    "sourceRevision": "b54a1f3a54ab28dff7813de2db9430f6735ec624",
+    "helperSha256": "f27463623a4653ca1bef58faa52494e7a7c827dc5067ca5b6b0aa713d8876204",
+    "buildReceiptSha256": "d582ff2f408ef5d51480930c2a63ad03eda497ac213668743f02606221eb5be9",
+    "proofSha256": "874594d4029da2af2c7c5d2b87efff5e9165586fe57d999ab2d2ee852dee1f22",
+    "policySha256": "7be6db86f7f21a47e500603afc38a5b04c7c17e708fe7f72a9d3371458c12966",
+    "proofProducerSha256": "52dfad6f1abbf70e56d7ec4db07d6e50bb39c37fd9e18c6b8cb96383bfe50446",
+    "requestProfile": "existing-personal-node-compatibility",
+    "nodeAclComparison": {
+      "restored": true,
+      "exactRestored": false,
+      "metadataChange": "dacl-auto-inherited-added"
+    },
+    "proofCommands": [
+      {
+        "label": "metadata-first",
+        "exitCode": 0,
+        "elapsedMilliseconds": 66.3424
+      },
+      {
+        "label": "metadata-repeat",
+        "exitCode": 0,
+        "elapsedMilliseconds": 29.1004
+      },
+      {
+        "label": "upstream-null-device",
+        "exitCode": 0,
+        "elapsedMilliseconds": 62.896
+      },
+      {
+        "label": "mxc-execution",
+        "exitCode": 0,
+        "elapsedMilliseconds": 878.0989000000001
+      },
+      {
+        "label": "owned-profile-delete",
+        "exitCode": 0,
+        "elapsedMilliseconds": 48.797200000000004
+      }
+    ],
+    "systemDriveMetadataPreparation": true,
+    "sameJobHostAlreadyPrepared": true,
+    "installedAcceptance": false,
+    "publicationApproved": false
+  },
+  "compiledArtifacts": [
+    {
+      "file": "compiled-launcher.json",
+      "sha256": "c13135663a836f19dfcc553c15d8a0cbcabfbe985a107c78de32f83aca98bb16"
+    },
+    {
+      "file": "compiled-transaction-helper.json",
+      "sha256": "36d1e0690ae30b18d0461d4a177438061f1e5b65f57a06d8011ba0a11a19a03e"
+    }
+  ],
+  "compiledMsi": {
+    "fileCount": 2488,
+    "componentCount": 374,
+    "fileBytes": 607983795
+  },
+  "payload": {
+    "fileCount": 2488,
+    "bytes": 607983795
+  },
+  "runtime": {
+    "runtimeId": "ee7b1276577764fc46bc9a3ce1e7a9e7a93effec5b0516a6c3e121559cea2057",
+    "manifestSha256": "a35f6b076e3f257dd28a97cc7c7b45e6d65c9722985f93f2bbd379c00d2deb33",
+    "sourceRevision": "b54a1f3a54ab28dff7813de2db9430f6735ec624",
+    "nodeSha256": "97cce5301a815d2dce07ac5bfd1e6039eae88185ec1d10ae4f8cb712f1732878",
+    "nodeVersion": "22.23.2"
+  },
+  "files": [
+    {
+      "sha256": "01c51f6cc74c5126dc6e900283b4df416e0ec4930a1ff332bf49c9cf171360a8",
+      "bytes": 144761392,
+      "file": "NemoClaw-0.1.2-windows-arm64.msi"
+    },
+    {
+      "sha256": "c738acc8b8d68e11f9555fe5798bf3e1241991aedded558d76f7506d6c7cb19a",
+      "bytes": 198595309,
+      "file": "NemoClawSetup-0.1.2-windows-arm64.exe"
+    }
+  ],
+  "launcherCapabilitiesSha256": "a2e0b77259ebf88d5f859c593ff8e746b5413a46e43615e2a57805ffe8a5fb6e",
+  "transactionHelperSha256": "7bca42fa815d17d03e3433f583391d979a97c12b44d0cd537e31fad49e4cc42b"
+}
