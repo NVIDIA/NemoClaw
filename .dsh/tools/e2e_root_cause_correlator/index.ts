@@ -76,12 +76,6 @@ export default async function e2e_root_cause_correlator(input: {
       return "launch-readiness/publication/evidence-failed";
     if (text.includes("sandbox_phase=deleting") || text.includes("sandbox in deleting"))
       return "openshell/lifecycle/sandbox-deleting";
-    if (
-      text.includes("reviewed npm audit") ||
-      text.includes("unaccepted at or above high") ||
-      text.includes("advisory")
-    )
-      return "dependency-audit/unaccepted-advisory";
     if (text.includes("timed out") || text.includes("timeout"))
       return "runtime/timeout/unclassified";
     const first =
@@ -111,7 +105,7 @@ export default async function e2e_root_cause_correlator(input: {
         (path) => file === path || file.startsWith(`${path}/`) || path.startsWith(`${file}/`),
       ),
     );
-    const externalSignature = key.includes("dependency-audit") || key.includes("sandbox-deleting");
+    const externalSignature = key.includes("sandbox-deleting");
     const classification =
       matched.length > 0
         ? "source-change-candidate"

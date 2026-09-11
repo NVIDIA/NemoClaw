@@ -105,7 +105,7 @@ async function assertPreparedMcpAddResourcesAbsent(
   target: McpBridgeTargetValidation,
   providerRuntimeSelection: ReturnType<typeof getMcpProviderInspectionRuntimeSelection>,
 ): Promise<void> {
-  const adapterInspection = inspectAgentAdapterRegistration(
+  const adapterInspection = await inspectAgentAdapterRegistration(
     sandboxName,
     adapter,
     entry,
@@ -467,7 +467,7 @@ async function addMcpBridgeUnlocked(
         detachedMissingProviderReference = true;
       }
     }
-    assertAgentMcpMutationRuntimeCapability(sandboxName, adapter, providerRuntimeSelection);
+    await assertAgentMcpMutationRuntimeCapability(sandboxName, adapter, providerRuntimeSelection);
     if (detachedMissingProviderReference) {
       await waitForDetachedMcpCredential(sandboxName, entry, providerRuntimeSelection);
     }
@@ -500,7 +500,7 @@ async function addMcpBridgeUnlocked(
       // may therefore reuse only missing or exact resources, never drift.
       writeBridgeEntry(sandboxName, entry);
     }
-    const adapterInspection = inspectAgentAdapterRegistration(
+    const adapterInspection = await inspectAgentAdapterRegistration(
       sandboxName,
       adapter,
       entry,
@@ -639,15 +639,22 @@ async function addMcpBridgeUnlocked(
     // The adapter was proven absent above, so cleanup is safe even when a
     // command commits config and then fails during its runtime reload.
     adapterMutationAttempted = true;
-    registerAgentAdapter(sandboxName, adapter, entry, providerRuntimeSelection, adapterEnvValues, {
-      // An exact adapter entry is evidence of a post-commit process death.
-      // Replacing it is idempotent and, for Hermes, re-verifies runtime reload.
-      // The wait above already proved the same revision stable in consecutive
-      // fresh execs, so repeating reconciliation here can outlive the caller's
-      // bounded provider-synchronization contract.
-      replaceExisting: resumingPreflightedAdd && adapterInspection.state === "registered",
-      credentialRevision,
-    });
+    await registerAgentAdapter(
+      sandboxName,
+      adapter,
+      entry,
+      providerRuntimeSelection,
+      adapterEnvValues,
+      {
+        // An exact adapter entry is evidence of a post-commit process death.
+        // Replacing it is idempotent and, for Hermes, re-verifies runtime reload.
+        // The wait above already proved the same revision stable in consecutive
+        // fresh execs, so repeating reconciliation here can outlive the caller's
+        // bounded provider-synchronization contract.
+        replaceExisting: resumingPreflightedAdd && adapterInspection.state === "registered",
+        credentialRevision,
+      },
+    );
     if (adapter === "hermes-config") {
       assertHermesMcpRuntimeIntent(sandboxName, {
         runtimeSelection: providerRuntimeSelection,
@@ -664,7 +671,7 @@ async function addMcpBridgeUnlocked(
       !!rollbackProviderInspection &&
       providerMatchesCredential(rollbackProviderInspection, entry.env[0], entry.providerId);
     if (adapterMutationAttempted) {
-      unregisterAgentAdapter(sandboxName, adapter, entry, providerRuntimeSelection, {
+      await unregisterAgentAdapter(sandboxName, adapter, entry, providerRuntimeSelection, {
         force: false,
         bestEffort: true,
         envValues: adapterEnvValues,

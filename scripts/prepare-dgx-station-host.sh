@@ -436,7 +436,8 @@ nvidia_firmware_product_class() {
   local product=${1:-}
   if [[ "$product" =~ [Dd][Gg][Xx]([_[:space:]-]+)[Ss][Pp][Aa][Rr][Kk] ]]; then
     printf '%s' spark
-  elif [[ "$product" =~ (^|[^[:alnum:]])[Ss][Tt][Aa][Tt][Ii][Oo][Nn]([_[:space:]-]+)[Gg][Bb]300($|[^[:alnum:]]) ]]; then
+  elif [[ "$product" =~ (^|[^[:alnum:]])[Ss][Tt][Aa][Tt][Ii][Oo][Nn]([_[:space:]-]+)([Dd][Gg][Xx]([_[:space:]-]+))?[Gg][Bb]300($|[^[:alnum:]]) ||
+    "$product" =~ (^|[^[:alnum:]])[Gg][Bb]300([_[:space:]-]+)([Dd][Gg][Xx]([_[:space:]-]+))?[Ss][Tt][Aa][Tt][Ii][Oo][Nn]($|[^[:alnum:]]) ]]; then
     printf '%s' station-gb300
   elif [[ "$product" =~ (^|[^[:alnum:]])[Pp]3830($|[^[:alnum:]]) || "$product" =~ [Dd][Gg][Xx]([_[:space:]-]+)[Ss][Tt][Aa][Tt][Ii][Oo][Nn] ]]; then
     printf '%s' station-other

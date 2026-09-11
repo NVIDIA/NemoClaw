@@ -21,8 +21,10 @@ import { executeSandboxDestroy } from "../../actions/sandbox/destroy-execution";
 import { SANDBOX_DESTROY_TIMEOUT_MS } from "../../actions/sandbox/destroy-gateway";
 import { startSandbox } from "../../actions/sandbox/start";
 import { stopSandbox } from "../../actions/sandbox/stop";
+import { withCurrentPortableHostFence } from "../../state/portable-uninstall-retirement";
 import { loadAgent } from "../../agent/defs";
 import type { SandboxEntry, SandboxWorkloadReceipt } from "../../state/registry/types";
+import { withCurrentPortableHostFence } from "../../state/portable-uninstall-retirement";
 import { cloneSandboxWorkloadReceipt } from "../../state/registry/workload";
 import { createDockerManagedBootstrapSurface } from "../managed-bootstrap/docker-runtime";
 import { MANAGED_IMAGE_REPOSITORIES } from "../managed-image/contract";
@@ -1114,6 +1116,7 @@ describe("socket-free MXC action contract", () => {
       });
       state.workloads.add(imageTag);
       const getSandbox = vi.fn(() => entry);
+      const updateSandbox = vi.fn(() => true);
       const stopSandboxChannels = vi.fn();
       const teardownSandboxDashboardForward = vi.fn();
       const runOpenshell = vi.fn(() => ({ status: 0, stdout: "", stderr: "" }));
@@ -1121,20 +1124,24 @@ describe("socket-free MXC action contract", () => {
       await expect(
         startSandbox(sandboxName, {
           getSandbox,
+          updateSandbox,
           runtimeProviders: providers,
           log: vi.fn(),
         }),
       ).resolves.toEqual({ exitCode: 0 });
-      expect(
-        stopSandbox(sandboxName, {
-          getSandbox,
-          runtimeProviders: providers,
-          stopSandboxChannels,
-          teardownSandboxDashboardForward,
-          log: vi.fn(),
-          warn: vi.fn(),
-        }),
-      ).toEqual({ exitCode: 0 });
+      await expect(
+        withCurrentPortableHostFence(() =>
+          stopSandbox(sandboxName, {
+            getSandbox,
+            updateSandbox,
+            runtimeProviders: providers,
+            stopSandboxChannels,
+            teardownSandboxDashboardForward,
+            log: vi.fn(),
+            warn: vi.fn(),
+          }),
+        ),
+      ).resolves.toEqual({ exitCode: 0 });
       expect(() => requireInferenceSetRuntimeAuthority(entry, providers)).not.toThrow();
       await expect(
         executeSandboxDestroy({
