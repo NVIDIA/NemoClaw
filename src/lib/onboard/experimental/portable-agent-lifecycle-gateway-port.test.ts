@@ -42,7 +42,7 @@ async function loadLifecycleForGatewayPort(gatewayPort: string, home: string) {
 
 async function requalifyUnderLifecycleLock(gatewayPort: string, home: string) {
   const { lock, lifecycle } = await loadLifecycleForGatewayPort(gatewayPort, home);
-  return lock.withMcpLifecycleLockSync(SANDBOX, () =>
+  return lock.withMcpLifecycleLock(SANDBOX, () =>
     lifecycle.requalifyPortableAgentSandboxAuthority(SANDBOX, { readRegistry: () => null }),
   );
 }
@@ -79,8 +79,8 @@ describe("portable agent requalification across gateway ports", () => {
     const stateDir = portable.defaultPortableStateDir(process.env);
     fs.mkdirSync(receipt.hermesPortableReceiptDirectory(SANDBOX, stateDir), { recursive: true });
 
-    expect(() =>
+    await expect(() =>
       lifecycle.requalifyPortableAgentSandboxAuthority(SANDBOX, { readRegistry: () => null }),
-    ).toThrow(/requalification requires the sandbox lifecycle lock/u);
+    ).rejects.toThrow(/requalification requires the sandbox lifecycle lock/u);
   });
 });
