@@ -709,41 +709,61 @@ describe("uninstall OpenShell gateway user service", () => {
     expect(calls.some((call) => call[0] === "systemctl" && call.includes("disable"))).toBe(false);
   });
 
-  it("preserves the marked Linux unit when scoped gateway registration removal fails (#8220)", async () => {
-    const test = fixture(true);
-    const servicePath = writeManagedService(test);
-    writeSelectedSandboxRegistry(test, "my-assistant");
-    const calls: string[][] = [];
+  it.each([
+    { condition: "missing", dockerInstalled: false, dockerStatus: 0, recovery: true },
+    { condition: "available", dockerInstalled: true, dockerStatus: 0, recovery: false },
+    { condition: "unreachable", dockerInstalled: true, dockerStatus: 1, recovery: true },
+    { condition: "timed out", dockerInstalled: true, dockerStatus: null, recovery: true },
+  ])(
+    "preserves the Linux unit after gateway removal fails with Docker $condition (#11438)",
+    async ({ dockerInstalled, dockerStatus, recovery }) => {
+      const test = fixture(true);
+      const servicePath = writeManagedService(test);
+      writeSelectedSandboxRegistry(test, "my-assistant");
+      const calls: string[][] = [];
+      const warnings: string[] = [];
+      const runDocker = vi.fn(() => ({ ...ok(), status: dockerStatus }));
 
-    const result = await uninstall(
-      test,
-      false,
-      {
-        commandExists: (command) => command === "systemctl",
-        run: (command, args) => {
-          calls.push([command, ...args]);
-          return command === "openshell" && args[0] === "gateway" && args[1] === "remove"
-            ? { status: 1, stdout: "", stderr: "gateway registration is busy" }
-            : ok();
+      const result = await uninstall(
+        test,
+        false,
+        {
+          commandExists: (command) =>
+            command === "systemctl" || (command === "docker" && dockerInstalled),
+          error: (line) => warnings.push(line),
+          runDocker,
+          run: (command, args) => {
+            calls.push([command, ...args]);
+            return command === "openshell" && args[0] === "gateway" && args[1] === "remove"
+              ? { status: 1, stdout: "", stderr: "gateway registration is busy" }
+              : ok();
+          },
         },
-      },
-      [{ name: "nemoclaw" }, { name: "nemoclaw-8081" }],
-    );
+        [{ name: "nemoclaw" }, { name: "nemoclaw-8081" }],
+      );
 
-    // Sandbox deletion succeeded, so this pins the second cleanup boundary: registration
-    // removal failed, and uninstall still returns before it removes the gateway service.
-    expect(calls).toContainEqual([
-      "openshell",
-      "sandbox",
-      "delete",
-      "-g",
-      "nemoclaw",
-      "my-assistant",
-    ]);
-    expect(result.exitCode).toBe(1);
-    expect(fs.existsSync(servicePath)).toBe(true);
-    expect(calls.some((call) => call[0] === "systemctl" && call.includes("disable"))).toBe(false);
-  });
+      // Sandbox deletion succeeded, so this pins the second cleanup boundary: registration
+      // removal failed, and uninstall still returns before it removes the gateway service.
+      expect(calls).toContainEqual([
+        "openshell",
+        "sandbox",
+        "delete",
+        "-g",
+        "nemoclaw",
+        "my-assistant",
+      ]);
+      expect(result.exitCode).toBe(1);
+      const guidance = warnings.find((line) => line.startsWith("Docker is not available")) ?? "";
+      expect(
+        /WSL integration.*wsl --shutdown.*docker info.*rerun the same uninstall command/s.test(
+          guidance,
+        ),
+      ).toBe(recovery);
+      expect(runDocker.mock.calls.length).toBe(Number(dockerInstalled));
+      expect(fs.existsSync(servicePath)).toBe(true);
+      expect(calls.some((call) => call[0] === "systemctl" && call.includes("disable"))).toBe(false);
+    },
+  );
 
   it("retries scoped cleanup after marked Linux unit cleanup fails (#8220)", async () => {
     const test = fixture(true);
