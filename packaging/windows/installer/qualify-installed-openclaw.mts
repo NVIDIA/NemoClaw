@@ -95,6 +95,9 @@ export function terminalAgentError(history: unknown, prompt: string): string | n
       message.errorMessage.trim()
     )
       return message.errorMessage.slice(0, 8192);
+    // Canonical chat-history projection removes errorMessage but retains the
+    // terminal stopReason and sanitized display text. Never match ordinary prose.
+    if (message.stopReason === "error" && text.trim()) return text.slice(0, 8192);
     if (/^(?:⚠️?\s*)?Agent failed before reply:/u.test(text)) return text.slice(0, 8192);
   }
   return null;

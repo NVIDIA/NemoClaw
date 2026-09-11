@@ -413,3 +413,33 @@ test("ordinary or incomplete assistant output is never a terminal failure", () =
   ])
     assert.equal(terminalAgentError(value, ownPrompt), null);
 });
+
+const projectedError = {
+  role: "assistant",
+  stopReason: "error",
+  content: [{ type: "text", text: "The agent run failed before producing a reply." }],
+};
+test("canonical projected terminal errors retain failure without errorMessage", () => {
+  assert.equal(
+    terminalAgentError({ messages: [ownUser, projectedError] }, ownPrompt),
+    projectedError.content[0].text,
+  );
+});
+test("projected-error display prose alone cannot terminate an ordinary reply", () => {
+  assert.equal(
+    terminalAgentError(
+      { messages: [ownUser, { ...projectedError, stopReason: "end_turn" }] },
+      ownPrompt,
+    ),
+    null,
+  );
+});
+test("projected terminal errors still require the exact current prompt", () => {
+  for (const messages of [
+    [projectedError, ownUser],
+    [{ ...ownUser, content: "foreign" }, projectedError],
+    [ownUser, { role: "user", content: "later" }, projectedError],
+    [ownUser, { ...projectedError, role: "toolResult" }],
+  ])
+    assert.equal(terminalAgentError({ messages }, ownPrompt), null);
+});
