@@ -14,9 +14,9 @@ const TRANSACTION = path.join(
   "hermes",
   "mcp-config-transaction.py",
 );
-const MANIFEST_NAME = "openshell-child-visible-credentials.v0.0.106.json";
+const MANIFEST_NAME = "openshell-child-visible-credentials.v0.0.116.json";
 const validManifest: Record<string, unknown> = {
-  openshellVersion: "0.0.106",
+  openshellVersion: "0.0.116",
   rawChildValueKeys: ["RAW_CHILD_VALUE"],
   rewrittenChildValueKeys: ["REWRITTEN_CHILD_VALUE"],
   runtimeControlKeys: ["RUNTIME_CONTROL"],

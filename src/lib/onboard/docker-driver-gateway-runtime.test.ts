@@ -40,7 +40,7 @@ function makeHelpers(overrides: Partial<DockerDriverGatewayRuntimeDeps> = {}): {
     loadDockerDriverGatewayEnv: () => dockerDriverGatewayEnv,
     runCapture,
     shouldUseOpenshellDevChannel: () => false,
-    supportedOpenshellFallbackVersion: "0.0.44",
+    supportedOpenshellFallbackVersion: "0.0.116",
     ...overrides,
   };
   return {
@@ -72,6 +72,15 @@ function withEnv<T>(values: Record<string, string | undefined>, callback: () => 
   }
 }
 
+function withTemporaryGatewayState<T>(callback: () => T): T {
+  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-runtime-test-"));
+  try {
+    return withEnv({ NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: stateDir }, callback);
+  } finally {
+    fs.rmSync(stateDir, { force: true, recursive: true });
+  }
+}
+
 describe("docker-driver gateway runtime helpers", () => {
   afterEach(() => {
     vi.restoreAllMocks();
@@ -92,7 +101,7 @@ describe("docker-driver gateway runtime helpers", () => {
         },
         () => {
           const { helpers } = makeHelpers({
-            supportedOpenshellFallbackVersion: "0.0.106",
+            supportedOpenshellFallbackVersion: "0.0.116",
           });
 
           expect(helpers.getDockerDriverGatewayStateDir()).toBe(path.resolve(stateDir));
@@ -106,7 +115,7 @@ describe("docker-driver gateway runtime helpers", () => {
           expect(env.OPENSHELL_DOCKER_NETWORK_NAME).toBe("custom-openshell-docker");
           expect(env.OPENSHELL_DOCKER_SUPERVISOR_BIN).toBe(path.resolve(sandboxBin));
           expect(env.OPENSHELL_DOCKER_SUPERVISOR_IMAGE).toBe(
-            "ghcr.io/nvidia/openshell/supervisor@sha256:722f44669722961b7f432b0b81de25b91a58f34a61d6403bef967acaf2b3af01",
+            "ghcr.io/nvidia/openshell/supervisor@sha256:c8c42aef16c200063e32cbf72e553e4ead027085427b555efafd95063ecead42",
           );
           expect(env.OPENSHELL_GATEWAY_CONFIG).toBe(
             path.join(path.resolve(stateDir), "openshell-gateway.toml"),
@@ -141,37 +150,56 @@ describe("docker-driver gateway runtime helpers", () => {
     });
   });
 
-  it("uses the moving dev supervisor image for an explicit or detected dev runtime", () => {
-    const explicit = makeHelpers({ shouldUseOpenshellDevChannel: () => true });
-    expect(
-      explicit.helpers.getDockerDriverGatewayEnv("openshell 0.0.72", "linux")
-        .OPENSHELL_DOCKER_SUPERVISOR_IMAGE,
-    ).toBe("ghcr.io/nvidia/openshell/supervisor:dev");
+  it("rejects an explicit or detected dev runtime", () => {
+    withTemporaryGatewayState(() => {
+      const explicit = makeHelpers({ shouldUseOpenshellDevChannel: () => true });
+      expect(() => explicit.helpers.getDockerDriverGatewayEnv("openshell 0.0.72", "linux")).toThrow(
+        "exact stable OpenShell 0.0.116",
+      );
 
-    const detected = makeHelpers({
-      isOpenshellDevVersion: (versionOutput) => String(versionOutput).includes("-dev."),
+      const detected = makeHelpers({
+        isOpenshellDevVersion: (versionOutput) => String(versionOutput).includes("-dev."),
+      });
+      expect(() =>
+        detected.helpers.getDockerDriverGatewayEnv("openshell 0.0.72-dev.8+g7bce1223", "linux"),
+      ).toThrow("exact stable OpenShell 0.0.116");
     });
-    expect(
-      detected.helpers.getDockerDriverGatewayEnv("openshell 0.0.72-dev.8+g7bce1223", "linux")
-        .OPENSHELL_DOCKER_SUPERVISOR_IMAGE,
-    ).toBe("ghcr.io/nvidia/openshell/supervisor:dev");
   });
 
-  it("pins the stable 0.0.106 supervisor default while preserving an explicit override", () => {
+  it("pins the stable 0.0.116 supervisor and rejects a foreign override", () => {
     const image = (fallback: string) =>
       makeHelpers({
-        getBlueprintMaxOpenshellVersion: () => "0.0.106",
+        getBlueprintMaxOpenshellVersion: () => "0.0.116",
         supportedOpenshellFallbackVersion: fallback,
       }).helpers.getDockerDriverGatewayEnv(null, "linux").OPENSHELL_DOCKER_SUPERVISOR_IMAGE;
-    const stable = withEnv({ OPENSHELL_DOCKER_SUPERVISOR_IMAGE: undefined }, () =>
-      image("0.0.106"),
+    const stable = withTemporaryGatewayState(() =>
+      withEnv({ OPENSHELL_DOCKER_SUPERVISOR_IMAGE: undefined }, () => image("0.0.116")),
     );
-    expect(stable).toBe(
-      "ghcr.io/nvidia/openshell/supervisor@sha256:722f44669722961b7f432b0b81de25b91a58f34a61d6403bef967acaf2b3af01",
-    );
-    const override = "registry.example.test/supervisor@sha256:override";
-    expect(withEnv({ OPENSHELL_DOCKER_SUPERVISOR_IMAGE: override }, () => image("0.0.106"))).toBe(
-      override,
+    const qualified =
+      "ghcr.io/nvidia/openshell/supervisor@sha256:c8c42aef16c200063e32cbf72e553e4ead027085427b555efafd95063ecead42";
+    expect(stable).toBe(qualified);
+    expect(
+      withTemporaryGatewayState(() =>
+        withEnv({ OPENSHELL_DOCKER_SUPERVISOR_IMAGE: qualified }, () => image("0.0.116")),
+      ),
+    ).toBe(qualified);
+    expect(() =>
+      withTemporaryGatewayState(() =>
+        withEnv(
+          {
+            OPENSHELL_DOCKER_SUPERVISOR_IMAGE: "registry.example.test/supervisor@sha256:override",
+          },
+          () => image("0.0.116"),
+        ),
+      ),
+    ).toThrow("requires the reviewed Docker supervisor image");
+  });
+
+  it("rejects an installed 0.0.106 runtime before gateway recovery selects a supervisor", () => {
+    const { helpers } = makeHelpers();
+
+    expect(() => helpers.getDockerDriverGatewayEnv("openshell 0.0.106", "linux")).toThrow(
+      "requires exact stable OpenShell 0.0.116; found 0.0.106",
     );
   });
 

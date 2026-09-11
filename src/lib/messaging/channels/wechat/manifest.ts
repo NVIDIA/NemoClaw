@@ -150,7 +150,7 @@ export const wechatManifest = {
         {
           envKey: "WECHAT_BOT_TOKEN",
           targetEnvKey: "WEIXIN_TOKEN",
-          match: "^openshell:resolve:env:v[0-9]+_WECHAT_BOT_TOKEN$",
+          match: "^openshell:resolve:env:(?:v[0-9]{1,20}|s[a-f0-9]{64})_WECHAT_BOT_TOKEN$",
           value: "openshell:resolve:env:WECHAT_BOT_TOKEN",
         },
       ],

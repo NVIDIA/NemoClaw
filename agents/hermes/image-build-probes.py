@@ -450,6 +450,13 @@ def verify_langfuse_credentials() -> None:
     assert (
         validate(
             "HERMES_LANGFUSE_PUBLIC_KEY",
+            f"openshell:resolve:env:s{'a' * 64}_LANGFUSE_PUBLIC_KEY",
+        )
+        is None
+    )
+    assert (
+        validate(
+            "HERMES_LANGFUSE_PUBLIC_KEY",
             "openshell:resolve:env:LANGFUSE_SECRET_KEY",
         )
         is not None
@@ -465,6 +472,27 @@ def verify_langfuse_credentials() -> None:
         validate(
             "HERMES_LANGFUSE_SECRET_KEY",
             "openshell:resolve:env:v1_LANGFUSE_PUBLIC_KEY",
+        )
+        is not None
+    )
+    assert (
+        validate(
+            "HERMES_LANGFUSE_PUBLIC_KEY",
+            f"openshell:resolve:env:s{'a' * 63}_LANGFUSE_PUBLIC_KEY",
+        )
+        is not None
+    )
+    assert (
+        validate(
+            "HERMES_LANGFUSE_PUBLIC_KEY",
+            f"openshell:resolve:env:s{'a' * 65}_LANGFUSE_PUBLIC_KEY",
+        )
+        is not None
+    )
+    assert (
+        validate(
+            "HERMES_LANGFUSE_PUBLIC_KEY",
+            f"openshell:resolve:env:s{'A' * 64}_LANGFUSE_PUBLIC_KEY",
         )
         is not None
     )
