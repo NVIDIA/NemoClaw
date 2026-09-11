@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <wchar.h>
 #include "namespace-path.h"
 #ifdef _WIN32
@@ -77,6 +78,33 @@ int main() {
     check(mapped_name(g, 2, L"relative", 8, b, maximum_target_characters) == 0 &&
           mapped_name(g, 2, L"\\root\\", 6, b, maximum_target_characters) == 0,
           "invalid-api-root-shape-refused");
+    const wchar_t* relativeRoot = L"AppContainerNamedObjects\\S-1-15-2-11";
+    const char* tokenSid = "S-1-15-2-11";
+    const size_t relativeCount = wcslen(relativeRoot);
+    const size_t ntCount = private_nt_root(relativeRoot, relativeCount, tokenSid, 2, a, maximum_target_characters);
+    check(ntCount && wcscmp(a, rootA) == 0, "token-api-root-to-exact-nt-root");
+    check(private_nt_root(relativeRoot, relativeCount, tokenSid, 0, a, maximum_target_characters) &&
+          wcscmp(a, L"\\Sessions\\0\\AppContainerNamedObjects\\S-1-15-2-11") == 0 &&
+          private_nt_root(relativeRoot, relativeCount, tokenSid, UINT32_MAX, a, maximum_target_characters) &&
+          wcscmp(a, L"\\Sessions\\4294967295\\AppContainerNamedObjects\\S-1-15-2-11") == 0,
+          "token-session-conversion-bounds");
+    check(!private_nt_root(relativeRoot, relativeCount, "S-1-15-2-22", 2, a, maximum_target_characters),
+          "api-foreign-token-sid-refused");
+    const wchar_t* absoluteRoot = L"\\Sessions\\2\\AppContainerNamedObjects\\S-1-15-2-11";
+    const wchar_t* win32Root = L"Global\\Session\\2\\AppContainerNamedObjects\\S-1-15-2-11";
+    check(!private_nt_root(absoluteRoot, wcslen(absoluteRoot), tokenSid, 2, a, maximum_target_characters) &&
+          !private_nt_root(win32Root, wcslen(win32Root), tokenSid, 2, a, maximum_target_characters),
+          "api-prefix-aliases-refused");
+    const wchar_t* trailingRoot = L"AppContainerNamedObjects\\S-1-15-2-11\\";
+    const wchar_t* descendantRoot = L"AppContainerNamedObjects\\S-1-15-2-11\\child";
+    check(!private_nt_root(trailingRoot, wcslen(trailingRoot), tokenSid, 2, a, maximum_target_characters) &&
+          !private_nt_root(descendantRoot, wcslen(descendantRoot), tokenSid, 2, a, maximum_target_characters),
+          "api-trailing-separator-and-descendant-refused");
+    small[0] = L'x';
+    check(!private_nt_root(relativeRoot, relativeCount, tokenSid, 2, small, 3) && small[0] == L'x' &&
+          !private_nt_root(relativeRoot, relativeCount, tokenSid, 2, a, ntCount) &&
+          private_nt_root(relativeRoot, relativeCount, tokenSid, 2, a, ntCount + 1) == ntCount,
+          "api-root-output-capacity");
 
 #ifdef _WIN32
     alignas(void*) BYTE world[SECURITY_MAX_SID_SIZE] = {};
@@ -112,7 +140,9 @@ int main() {
     check(ConvertStringSidToSidW(L"S-1-5-21-1-2-3-1000", &user) &&
           ConvertStringSidToSidW(L"S-1-15-2-1-2-3-4-5-6-7", &container), "windows-test-identity-sids");
     ScopedDescriptor scoped = {};
-    check(make_scoped_descriptor(user, container, scoped), "windows-scoped-descriptor-built");
+    const char* failedStage = "not-cleared";
+    check(make_scoped_descriptor(user, container, scoped, &failedStage) && failedStage == nullptr,
+          "windows-scoped-descriptor-built");
     SECURITY_DESCRIPTOR_CONTROL control = 0;
     DWORD revision = 0;
     PACL scopedAcl = nullptr;
@@ -130,6 +160,9 @@ int main() {
               allowed->Mask == directory_access && EqualSid(&allowed->SidStart, n ? container : user) &&
               !EqualSid(&allowed->SidStart, world), "windows-only-exact-user-or-container-access");
     }
+    check(!make_scoped_descriptor(user, user, scoped, &failedStage) &&
+          failedStage && strcmp(failedStage, "descriptor-identities") == 0 && GetLastError() == ERROR_INVALID_SID,
+          "windows-descriptor-failure-stage");
     LocalFree(user);
     LocalFree(container);
 #endif

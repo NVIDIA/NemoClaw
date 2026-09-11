@@ -73,12 +73,35 @@ test("all independent raw denial results must be access denied, including NULL-D
     rawProbeUnshimmed: true,
     foreignRoot: "other",
     foreignDirectory: "0xc0000022",
+    foreignGlobalQuery: "0xc0000022",
+    foreignGlobalCreateObject: "0xc0000022",
+    foreignGlobalCreateSubdirectory: "0xc0000022",
+    foreignSessionQuery: "0xc0000022",
+    foreignSessionCreateObject: "0xc0000022",
+    foreignSessionCreateSubdirectory: "0xc0000022",
+    foreignEventSynchronize: "0xc0000022",
+    foreignEventModifyState: "0xc0000022",
+    foreignSectionMapWrite: "0xc0000022",
     foreignEvent: "0xc0000022",
     foreignSection: "0xc0000022",
     originalGlobalCreate: "0xc0000022",
   };
   validateDenials(row, "other");
-  for (const key of ["foreignDirectory", "foreignEvent", "foreignSection", "originalGlobalCreate"])
+  for (const key of [
+    "foreignDirectory",
+    "foreignGlobalQuery",
+    "foreignGlobalCreateObject",
+    "foreignGlobalCreateSubdirectory",
+    "foreignSessionQuery",
+    "foreignSessionCreateObject",
+    "foreignSessionCreateSubdirectory",
+    "foreignEvent",
+    "foreignEventSynchronize",
+    "foreignEventModifyState",
+    "foreignSection",
+    "foreignSectionMapWrite",
+    "originalGlobalCreate",
+  ])
     assert.throws(() => validateDenials({ ...row, [key]: "0xc0000034" }, "other"));
   assert.throws(() => validateDenials({ ...row, rawProbeUnshimmed: false }, "other"));
   assert.throws(() => validateDenials(row, "another"));

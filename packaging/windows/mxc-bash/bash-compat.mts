@@ -108,7 +108,21 @@ export function validateDenials(row: any, other: string) {
   assert.equal(row.kind, "denials");
   assert.equal(row.rawProbeUnshimmed, true);
   assert.equal(row.foreignRoot, other);
-  for (const key of ["foreignDirectory", "foreignEvent", "foreignSection", "originalGlobalCreate"])
+  for (const key of [
+    "foreignDirectory",
+    "foreignGlobalQuery",
+    "foreignGlobalCreateObject",
+    "foreignGlobalCreateSubdirectory",
+    "foreignSessionQuery",
+    "foreignSessionCreateObject",
+    "foreignSessionCreateSubdirectory",
+    "foreignEvent",
+    "foreignEventSynchronize",
+    "foreignEventModifyState",
+    "foreignSection",
+    "foreignSectionMapWrite",
+    "originalGlobalCreate",
+  ])
     assert.equal(row[key], "0xc0000022", key);
 }
 function write(file: string, value: unknown) {

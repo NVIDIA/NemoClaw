@@ -12,16 +12,29 @@ struct ScopedDescriptor {
     alignas(DWORD) BYTE acl[sizeof(ACL) + 2 * (sizeof(ACCESS_ALLOWED_ACE) + SECURITY_MAX_SID_SIZE)];
 };
 
-inline bool make_scoped_descriptor(PSID user, PSID container, ScopedDescriptor& output) {
-    if (!IsValidSid(user) || !IsValidSid(container) || EqualSid(user, container)) return false;
+inline bool make_scoped_descriptor(PSID user, PSID container, ScopedDescriptor& output,
+                                   const char** failed_stage = nullptr) {
+    if (failed_stage) *failed_stage = "descriptor-identities";
+    if (!user || !container || !IsValidSid(user) || !IsValidSid(container) || EqualSid(user, container)) {
+        SetLastError(ERROR_INVALID_SID);
+        return false;
+    }
     ZeroMemory(&output, sizeof(output));
     auto acl = reinterpret_cast<PACL>(output.acl);
-    return InitializeSecurityDescriptor(&output.descriptor, SECURITY_DESCRIPTOR_REVISION) &&
-        InitializeAcl(acl, sizeof(output.acl), ACL_REVISION) &&
-        AddAccessAllowedAceEx(acl, ACL_REVISION, 0, directory_access, user) &&
-        AddAccessAllowedAceEx(acl, ACL_REVISION, 0, directory_access, container) &&
-        SetSecurityDescriptorDacl(&output.descriptor, TRUE, acl, FALSE) &&
-        SetSecurityDescriptorControl(&output.descriptor, SE_DACL_PROTECTED, SE_DACL_PROTECTED);
+    if (failed_stage) *failed_stage = "descriptor-initialize";
+    if (!InitializeSecurityDescriptor(&output.descriptor, SECURITY_DESCRIPTOR_REVISION)) return false;
+    if (failed_stage) *failed_stage = "descriptor-acl-initialize";
+    if (!InitializeAcl(acl, sizeof(output.acl), ACL_REVISION)) return false;
+    if (failed_stage) *failed_stage = "descriptor-user-ace";
+    if (!AddAccessAllowedAceEx(acl, ACL_REVISION, 0, directory_access, user)) return false;
+    if (failed_stage) *failed_stage = "descriptor-container-ace";
+    if (!AddAccessAllowedAceEx(acl, ACL_REVISION, 0, directory_access, container)) return false;
+    if (failed_stage) *failed_stage = "descriptor-set-dacl";
+    if (!SetSecurityDescriptorDacl(&output.descriptor, TRUE, acl, FALSE)) return false;
+    if (failed_stage) *failed_stage = "descriptor-protect-dacl";
+    if (!SetSecurityDescriptorControl(&output.descriptor, SE_DACL_PROTECTED, SE_DACL_PROTECTED)) return false;
+    if (failed_stage) *failed_stage = nullptr;
+    return true;
 }
 
 // Exact shape produced by pinned MSYS _everyone_sd(CYG_SHARED_DIR_ACCESS).

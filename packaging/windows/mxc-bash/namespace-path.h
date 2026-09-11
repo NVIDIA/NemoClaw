@@ -96,4 +96,37 @@ inline size_t mapped_name(const Match& match, uint32_t session,
     return at;
 }
 
+// GetAppContainerNamedObjectPath returns a Win32-relative object path. Accept
+// only the complete current-token SID spelling before constructing its NT
+// session root; neither the API nor a caller may select another namespace.
+inline size_t private_nt_root(const wchar_t* api_path, size_t count, const char* token_sid,
+                              uint32_t session, wchar_t* output, size_t capacity) {
+    if (!api_path || !token_sid || !output || !count || count >= maximum_root_characters) return 0;
+    constexpr char sid_prefix[] = "S-1-15-2-";
+    for (size_t n = 0; sid_prefix[n]; ++n) if (token_sid[n] != sid_prefix[n]) return 0;
+    size_t sid_count = 0;
+    while (sid_count < 192 && token_sid[sid_count]) ++sid_count;
+    if (sid_count <= sizeof(sid_prefix) - 1 || sid_count == 192) return 0;
+    size_t at = 0;
+    if (!consume(api_path, count, at, L"AppContainerNamedObjects\\") || count - at != sid_count) return 0;
+    for (size_t n = 0; n < sid_count; ++n)
+        if (api_path[at + n] != static_cast<wchar_t>(token_sid[n])) return 0;
+    wchar_t digits[10];
+    size_t digit_count = 0;
+    do {
+        digits[digit_count++] = static_cast<wchar_t>(L'0' + session % 10);
+        session /= 10;
+    } while (session);
+    constexpr wchar_t prefix[] = L"\\Sessions\\";
+    const size_t needed = length(prefix) + digit_count + 1 + count;
+    if (needed + 1 > capacity || needed >= maximum_root_characters) return 0;
+    at = 0;
+    for (size_t n = 0; prefix[n]; ++n) output[at++] = prefix[n];
+    while (digit_count) output[at++] = digits[--digit_count];
+    output[at++] = L'\\';
+    for (size_t n = 0; n < count; ++n) output[at++] = api_path[n];
+    output[at] = 0;
+    return at;
+}
+
 } // namespace nemoclaw_msys

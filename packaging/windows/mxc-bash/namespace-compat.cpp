@@ -7,6 +7,7 @@
 #include <securityappcontainer.h>
 #include <detours.h>
 #include <stdio.h>
+#include <string.h>
 #include "namespace-path.h"
 #include "namespace-security.h"
 #include "process-propagation.h"
@@ -17,53 +18,164 @@ using DirectoryCall = NTSTATUS (NTAPI*)(PHANDLE, ACCESS_MASK, POBJECT_ATTRIBUTES
 DirectoryCall realCreate = nullptr;
 DirectoryCall realOpen = nullptr;
 WCHAR privateRoot[maximum_root_characters] = {};
+WCHAR apiRoot[maximum_root_characters] = {};
 size_t privateRootLength = 0;
 DWORD ownSession = 0;
 alignas(void*) BYTE worldSid[SECURITY_MAX_SID_SIZE] = {};
 ScopedDescriptor privateDescriptor = {};
 LONG emitted = 0;
 
-// Fixed-size startup state, derived solely from the actual process token.
-// This DLL intentionally fails to initialize outside an AppContainer.
-bool initialize_namespace() {
-    HANDLE token = nullptr;
-    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) return false;
-    alignas(void*) BYTE containerBuffer[sizeof(TOKEN_APPCONTAINER_INFORMATION) + SECURITY_MAX_SID_SIZE] = {};
-    alignas(void*) BYTE userBuffer[sizeof(TOKEN_USER) + SECURITY_MAX_SID_SIZE] = {};
-    DWORD isContainer = 0, needed = 0;
-    ULONG rootNeeded = 0;
-    DWORD worldSize = sizeof(worldSid);
-    bool success = GetTokenInformation(token, TokenIsAppContainer, &isContainer, sizeof(isContainer), &needed) &&
-        isContainer == 1 &&
-        GetTokenInformation(token, TokenAppContainerSid, containerBuffer, sizeof(containerBuffer), &needed) &&
-        GetTokenInformation(token, TokenUser, userBuffer, sizeof(userBuffer), &needed) &&
-        GetTokenInformation(token, TokenSessionId, &ownSession, sizeof(ownSession), &needed) &&
-        GetAppContainerNamedObjectPath(token, nullptr, static_cast<ULONG>(maximum_root_characters), privateRoot, &rootNeeded) &&
-        CreateWellKnownSid(WinWorldSid, nullptr, worldSid, &worldSize);
-    if (success) {
-        auto container = reinterpret_cast<TOKEN_APPCONTAINER_INFORMATION*>(containerBuffer)->TokenAppContainer;
-        auto user = reinterpret_cast<TOKEN_USER*>(userBuffer)->User.Sid;
-        success = container && user && make_scoped_descriptor(user, container, privateDescriptor);
-        while (privateRootLength < maximum_root_characters && privateRoot[privateRootLength]) ++privateRootLength;
-        success = success && privateRootLength > 1 && privateRootLength < maximum_root_characters &&
-            privateRoot[0] == L'\\' && privateRoot[privateRootLength - 1] != L'\\';
+struct ContextDiagnostic {
+    DWORD isContainer = 0;
+    ULONG apiPathRequired = 0;
+    bool apiPathReturned = false;
+    bool ntRootOpened = false;
+    ULONG ntRootStatus = 0;
+    char tokenSid[192] = {};
+};
+ContextDiagnostic contextDiagnostic = {};
+
+// Token SID formatting is diagnostic only: no allocation, lookup, or identity
+// override. The supplied SID has just passed IsValidSid on TokenAppContainerSid.
+void describe_token_sid(PSID sid) {
+    const auto authority = GetSidIdentifierAuthority(sid);
+    unsigned long long identifier = 0;
+    for (size_t n = 0; n < 6; ++n) identifier = (identifier << 8) | authority->Value[n];
+    int count = _snprintf_s(contextDiagnostic.tokenSid, sizeof(contextDiagnostic.tokenSid), _TRUNCATE,
+        "S-%u-%llu", static_cast<unsigned>(SID_REVISION), identifier);
+    if (count < 0) { contextDiagnostic.tokenSid[0] = 0; return; }
+    size_t at = static_cast<size_t>(count);
+    for (DWORD n = 0; n < *GetSidSubAuthorityCount(sid); ++n) {
+        count = _snprintf_s(contextDiagnostic.tokenSid + at, sizeof(contextDiagnostic.tokenSid) - at,
+            _TRUNCATE, "-%lu", *GetSidSubAuthority(sid, n));
+        if (count < 0) { contextDiagnostic.tokenSid[0] = 0; return; }
+        at += static_cast<size_t>(count);
     }
-    const DWORD error = GetLastError();
-    CloseHandle(token);
-    SetLastError(success ? ERROR_SUCCESS : (error ? error : ERROR_ACCESS_DENIED));
-    if (!success) return false;
-    HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
-    if (!ntdll) return false;
-    realCreate = reinterpret_cast<DirectoryCall>(GetProcAddress(ntdll, "NtCreateDirectoryObject"));
-    realOpen = reinterpret_cast<DirectoryCall>(GetProcAddress(ntdll, "NtOpenDirectoryObject"));
-    return realCreate && realOpen;
 }
 
-bool not_impersonating() {
+bool root_has_sid_suffix(size_t count) {
+    size_t sidLength = 0;
+    while (contextDiagnostic.tokenSid[sidLength]) ++sidLength;
+    if (!sidLength || count <= sidLength || apiRoot[count - sidLength - 1] != L'\\') return false;
+    for (size_t n = 0; n < sidLength; ++n)
+        if (apiRoot[count - sidLength + n] != static_cast<WCHAR>(contextDiagnostic.tokenSid[n])) return false;
+    return true;
+}
+
+bool context_result(const char* stage, const char* kind, DWORD error) {
+    // UTF-16 code units retain the trusted API's exact spelling, including a
+    // trailing separator, without JSON escaping or unsupported normalization.
+    size_t count = 0;
+    while (count < maximum_root_characters && apiRoot[count]) ++count;
+    char pathHex[maximum_root_characters * 4 + 1] = {};
+    constexpr char hex[] = "0123456789abcdef";
+    for (size_t n = 0; n < count; ++n) {
+        const unsigned value = static_cast<unsigned>(apiRoot[n]);
+        for (size_t digit = 0; digit < 4; ++digit)
+            pathHex[n * 4 + digit] = hex[(value >> ((3 - digit) * 4)) & 15];
+    }
+    const bool trailing = count > 0 && apiRoot[count - 1] == L'\\';
+    char line[3072];
+    const int length = _snprintf_s(line, sizeof(line), _TRUNCATE,
+        "NEMOCLAW_MSYS_CONTEXT={\"schemaVersion\":1,\"pid\":%lu,\"stage\":\"%s\",\"kind\":\"%s\",\"win32Error\":%lu,\"isAppContainer\":%lu,\"sessionId\":%lu,\"tokenAppContainerSid\":\"%s\",\"apiPathReturned\":%s,\"apiPathRequired\":%lu,\"pathCharacters\":%zu,\"pathTerminated\":%s,\"pathLeadingSeparator\":%s,\"pathTrailingSeparator\":%s,\"pathEndsWithTokenSid\":%s,\"pathEndsWithTokenSidAndSeparator\":%s,\"pathUtf16Hex\":\"%s\",\"ntRootOpened\":%s,\"ntRootStatus\":\"0x%08lx\"}\n",
+        GetCurrentProcessId(), stage, kind, error, contextDiagnostic.isContainer, ownSession,
+        contextDiagnostic.tokenSid, contextDiagnostic.apiPathReturned ? "true" : "false",
+        contextDiagnostic.apiPathRequired, count, count < maximum_root_characters ? "true" : "false",
+        count && apiRoot[0] == L'\\' ? "true" : "false", trailing ? "true" : "false",
+        root_has_sid_suffix(count) ? "true" : "false",
+        trailing && root_has_sid_suffix(count - 1) ? "true" : "false", pathHex,
+        contextDiagnostic.ntRootOpened ? "true" : "false", contextDiagnostic.ntRootStatus);
+    DWORD written = 0;
+    if (length > 0) WriteFile(GetStdHandle(STD_ERROR_HANDLE), line, static_cast<DWORD>(length), &written, nullptr);
+    SetLastError(error);
+    return false;
+}
+
+// Fixed-size startup state, derived solely from the actual process token.
+// Every native failure captures GetLastError immediately. Validation failures
+// are separately labeled and do not masquerade as native ACCESS_DENIED.
+bool initialize_namespace() {
+    HANDLE token = nullptr;
+    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token))
+        return context_result("open-process-token", "win32", GetLastError());
+    alignas(void*) BYTE containerBuffer[sizeof(TOKEN_APPCONTAINER_INFORMATION) + SECURITY_MAX_SID_SIZE] = {};
+    alignas(void*) BYTE userBuffer[sizeof(TOKEN_USER) + SECURITY_MAX_SID_SIZE] = {};
+    DWORD needed = 0;
+    DWORD worldSize = sizeof(worldSid);
+    const char* stage = "token-is-appcontainer";
+    const char* kind = "win32";
+    DWORD error = ERROR_SUCCESS;
+    bool success = false;
+    do {
+        if (!GetTokenInformation(token, TokenIsAppContainer, &contextDiagnostic.isContainer,
+                                 sizeof(contextDiagnostic.isContainer), &needed)) { error = GetLastError(); break; }
+        if (contextDiagnostic.isContainer != 1) { stage = "token-appcontainer-validation"; kind = "validation"; break; }
+        stage = "token-appcontainer-sid";
+        if (!GetTokenInformation(token, TokenAppContainerSid, containerBuffer, sizeof(containerBuffer), &needed)) { error = GetLastError(); break; }
+        auto container = reinterpret_cast<TOKEN_APPCONTAINER_INFORMATION*>(containerBuffer)->TokenAppContainer;
+        if (!container || !IsValidSid(container)) { stage = "token-sid-validation"; kind = "validation"; break; }
+        describe_token_sid(container);
+        stage = "token-user";
+        if (!GetTokenInformation(token, TokenUser, userBuffer, sizeof(userBuffer), &needed)) { error = GetLastError(); break; }
+        auto user = reinterpret_cast<TOKEN_USER*>(userBuffer)->User.Sid;
+        stage = "token-session";
+        if (!GetTokenInformation(token, TokenSessionId, &ownSession, sizeof(ownSession), &needed)) { error = GetLastError(); break; }
+        stage = "appcontainer-named-object-path";
+        if (!GetAppContainerNamedObjectPath(token, nullptr, static_cast<ULONG>(maximum_root_characters), apiRoot,
+                                           &contextDiagnostic.apiPathRequired)) { error = GetLastError(); break; }
+        contextDiagnostic.apiPathReturned = true;
+        stage = "world-sid";
+        if (!CreateWellKnownSid(WinWorldSid, nullptr, worldSid, &worldSize)) { error = GetLastError(); break; }
+        if (!make_scoped_descriptor(user, container, privateDescriptor, &stage)) {
+            error = GetLastError();
+            if (stage && strcmp(stage, "descriptor-identities") == 0) { kind = "validation"; error = 0; }
+            break;
+        }
+        size_t apiLength = 0;
+        while (apiLength < maximum_root_characters && apiRoot[apiLength]) ++apiLength;
+        privateRootLength = private_nt_root(apiRoot, apiLength, contextDiagnostic.tokenSid, ownSession,
+                                            privateRoot, maximum_root_characters);
+        if (!privateRootLength) { stage = "named-object-path-token-shape"; kind = "validation"; break; }
+        success = true;
+    } while (false);
+    CloseHandle(token);
+    if (!success) return context_result(stage, kind, error);
+    HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
+    if (!ntdll) return context_result("ntdll-module", "win32", GetLastError());
+    realCreate = reinterpret_cast<DirectoryCall>(GetProcAddress(ntdll, "NtCreateDirectoryObject"));
+    if (!realCreate) return context_result("ntdll-create-export", "win32", GetLastError());
+    realOpen = reinterpret_cast<DirectoryCall>(GetProcAddress(ntdll, "NtOpenDirectoryObject"));
+    if (!realOpen) return context_result("ntdll-open-export", "win32", GetLastError());
+    // Validate the converted root through the original native API before any
+    // hooks exist, requesting only traversal and creation of our subdirectories.
+    UNICODE_STRING rootName = {};
+    rootName.Buffer = privateRoot;
+    rootName.Length = static_cast<USHORT>(privateRootLength * sizeof(WCHAR));
+    rootName.MaximumLength = static_cast<USHORT>((privateRootLength + 1) * sizeof(WCHAR));
+    OBJECT_ATTRIBUTES rootAttributes = {};
+    rootAttributes.Length = sizeof(rootAttributes);
+    rootAttributes.ObjectName = &rootName;
+    HANDLE rootHandle = nullptr;
+    const NTSTATUS rootStatus = realOpen(&rootHandle, 0x0000000a, &rootAttributes);
+    contextDiagnostic.ntRootStatus = static_cast<ULONG>(rootStatus);
+    contextDiagnostic.ntRootOpened = rootStatus >= 0;
+    if (rootHandle) CloseHandle(rootHandle);
+    if (rootStatus < 0) return context_result("private-nt-root-open", "ntstatus", ERROR_SUCCESS);
+    context_result("ready", "success", ERROR_SUCCESS);
+    return true;
+}
+
+bool not_impersonating(const char*& rejected, DWORD& error) {
     HANDLE threadToken = nullptr;
-    if (!OpenThreadToken(GetCurrentThread(), TOKEN_QUERY, TRUE, &threadToken))
-        return GetLastError() == ERROR_NO_TOKEN;
+    if (!OpenThreadToken(GetCurrentThread(), TOKEN_QUERY, TRUE, &threadToken)) {
+        error = GetLastError();
+        if (error == ERROR_NO_TOKEN) { error = 0; return true; }
+        rejected = "thread-token-query";
+        return false;
+    }
     CloseHandle(threadToken);
+    rejected = "thread-token-present";
+    error = 0;
     return false;
 }
 
@@ -71,7 +183,7 @@ bool not_impersonating() {
 // to the original API unchanged, including its ordinary parameter validation.
 bool prepare(POBJECT_ATTRIBUTES input, ACCESS_MASK access, bool create,
              OBJECT_ATTRIBUTES& attributes, UNICODE_STRING& targetName,
-             WCHAR* target, Match& match) {
+             WCHAR* target, Match& match, const char*& rejected) {
     __try {
         if (!input || input->Length != sizeof(OBJECT_ATTRIBUTES) || input->RootDirectory ||
             !input->ObjectName || !input->ObjectName->Buffer ||
@@ -84,11 +196,16 @@ bool prepare(POBJECT_ATTRIBUTES input, ACCESS_MASK access, bool create,
         for (size_t n = 0; n < count; ++n) source[n] = input->ObjectName->Buffer[n];
         match = match_name(source, count, ownSession);
         if (match.family == Family::none) return false;
-        if (create && (access != directory_access || attributes.Attributes != OBJ_OPENIF ||
-                       !is_msys_directory_descriptor(attributes.SecurityDescriptor, worldSid))) return false;
+        if (create) {
+            if (access != directory_access) { rejected = "create-access"; return false; }
+            if (attributes.Attributes != OBJ_OPENIF) { rejected = "create-flags"; return false; }
+            if (!is_msys_directory_descriptor(attributes.SecurityDescriptor, worldSid)) {
+                rejected = "create-descriptor"; return false;
+            }
+        }
         const size_t size = mapped_name(match, ownSession, privateRoot, privateRootLength,
                                         target, maximum_target_characters);
-        if (!size) return false;
+        if (!size) { rejected = "target-name-bounds"; return false; }
         targetName.Buffer = target;
         targetName.Length = static_cast<USHORT>(size * sizeof(WCHAR));
         targetName.MaximumLength = static_cast<USHORT>((size + 1) * sizeof(WCHAR));
@@ -96,6 +213,7 @@ bool prepare(POBJECT_ATTRIBUTES input, ACCESS_MASK access, bool create,
         if (create) attributes.SecurityDescriptor = &privateDescriptor.descriptor;
         return true;
     } __except (EXCEPTION_EXECUTE_HANDLER) {
+        if (match.family != Family::none) rejected = "parameter-exception";
         return false;
     }
 }
@@ -110,6 +228,21 @@ void log_result(const Match& match, bool create, NTSTATUS status) {
         GetCurrentProcessId(), ownSession, create ? "create" : "open",
         match.family == Family::global ? "global" : "session", key,
         create ? "true" : "false", static_cast<ULONG>(status));
+    DWORD written = 0;
+    if (count > 0) WriteFile(GetStdHandle(STD_ERROR_HANDLE), line, static_cast<DWORD>(count), &written, nullptr);
+}
+
+void log_rejected(const Match& match, bool create, ACCESS_MASK access, ULONG flags,
+                  const char* reason, DWORD error, NTSTATUS status) {
+    if (InterlockedIncrement(&emitted) > 16) return;
+    char key[17] = {};
+    for (size_t n = 0; n < 16; ++n) key[n] = static_cast<char>(match.key[n]);
+    char line[512];
+    const int count = _snprintf_s(line, sizeof(line), _TRUNCATE,
+        "NEMOCLAW_MSYS_REJECTED={\"schemaVersion\":1,\"pid\":%lu,\"sessionId\":%lu,\"operation\":\"%s\",\"family\":\"%s\",\"key\":\"%s\",\"reason\":\"%s\",\"requestedAccess\":\"0x%08lx\",\"objectAttributes\":\"0x%08lx\",\"win32Error\":%lu,\"originalStatus\":\"0x%08lx\"}\n",
+        GetCurrentProcessId(), ownSession, create ? "create" : "open",
+        match.family == Family::global ? "global" : "session", key, reason,
+        access, flags, error, static_cast<ULONG>(status));
     DWORD written = 0;
     if (count > 0) WriteFile(GetStdHandle(STD_ERROR_HANDLE), line, static_cast<DWORD>(count), &written, nullptr);
 }
@@ -133,12 +266,16 @@ NTSTATUS call(DirectoryCall original, PHANDLE output, ACCESS_MASK access,
     WCHAR target[maximum_target_characters] = {};
     Match match = {};
     // Check the cheap name/descriptor conditions before querying thread state.
-    const bool redirect = prepare(input, access, create, attributes, name, target, match) && not_impersonating();
+    const char* rejected = nullptr;
+    DWORD rejectionError = 0;
+    const bool redirect = prepare(input, access, create, attributes, name, target, match, rejected) &&
+                          not_impersonating(rejected, rejectionError);
     SetLastError(before);
     const NTSTATUS status = original(output, access, redirect ? &attributes : input);
-    if (redirect) {
+    if (redirect || rejected) {
         const DWORD after = GetLastError();
-        log_result(match, create, status);
+        if (redirect) log_result(match, create, status);
+        else log_rejected(match, create, access, attributes.Attributes, rejected, rejectionError, status);
         SetLastError(after);
     }
     return status;
