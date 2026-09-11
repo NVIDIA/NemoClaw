@@ -17,6 +17,12 @@ using namespace nemoclaw_msys;
 using DirectoryCall = NTSTATUS (NTAPI*)(PHANDLE, ACCESS_MASK, POBJECT_ATTRIBUTES);
 DirectoryCall realCreate = nullptr;
 DirectoryCall realOpen = nullptr;
+using NativePipeCreate = NTSTATUS (NTAPI*)(PHANDLE, ACCESS_MASK, POBJECT_ATTRIBUTES, PIO_STATUS_BLOCK,
+    ULONG, ULONG, ULONG, ULONG, ULONG, ULONG, ULONG, ULONG, ULONG, PLARGE_INTEGER);
+using NativeFileOpen = NTSTATUS (NTAPI*)(PHANDLE, ACCESS_MASK, POBJECT_ATTRIBUTES, PIO_STATUS_BLOCK, ULONG, ULONG);
+NativePipeCreate realNativePipeCreate = nullptr;
+NativeFileOpen realNativeFileOpen = nullptr;
+LONG nativePipeRecords = 0;
 decltype(&CreateNamedPipeA) realCreateSignalServer = CreateNamedPipeA;
 decltype(&CreateFileA) realOpenSignalWriter = CreateFileA;
 LONG pipeRecords = 0;
@@ -152,6 +158,10 @@ bool initialize_namespace() {
     if (!realCreate) return context_result("ntdll-create-export", "win32", GetLastError());
     realOpen = reinterpret_cast<DirectoryCall>(GetProcAddress(ntdll, "NtOpenDirectoryObject"));
     if (!realOpen) return context_result("ntdll-open-export", "win32", GetLastError());
+    realNativePipeCreate = reinterpret_cast<NativePipeCreate>(GetProcAddress(ntdll, "NtCreateNamedPipeFile"));
+    if (!realNativePipeCreate) return context_result("ntdll-pipe-create-export", "win32", GetLastError());
+    realNativeFileOpen = reinterpret_cast<NativeFileOpen>(GetProcAddress(ntdll, "NtOpenFile"));
+    if (!realNativeFileOpen) return context_result("ntdll-file-open-export", "win32", GetLastError());
     // Validate the converted root through the original native API before any
     // hooks exist, requesting only traversal and creation of our subdirectories.
     UNICODE_STRING rootName = {};
@@ -412,6 +422,120 @@ HANDLE WINAPI observe_signal_writer(LPCSTR name, DWORD access, DWORD share, LPSE
     return result;
 }
 
+struct NativePipeObservation {
+    char name[maximum_signal_pipe_characters] = {};
+    HANDLE root = nullptr;
+    ULONG attributes = 0;
+    bool npfsRoot = false;
+    PipeSecurityObservation security = {};
+};
+
+bool observe_native_pipe_name(POBJECT_ATTRIBUTES input, NativePipeObservation& result) {
+    if (InterlockedCompareExchange(&installationKeyState, 2, 2) != 2) return false;
+    __try {
+        if (!input || input->Length != sizeof(OBJECT_ATTRIBUTES) || !input->ObjectName) return false;
+        const OBJECT_ATTRIBUTES attributes = *input;
+        const UNICODE_STRING name = *attributes.ObjectName;
+        if (!name.Buffer || name.Length % sizeof(WCHAR) || name.Length > name.MaximumLength ||
+            name.Length / sizeof(WCHAR) >= maximum_signal_pipe_characters) return false;
+        const size_t count = name.Length / sizeof(WCHAR);
+        WCHAR copied[maximum_signal_pipe_characters] = {};
+        for (size_t n = 0; n < count; ++n) copied[n] = name.Buffer[n];
+        result.npfsRoot = !attributes.RootDirectory && npfs_root_name(copied, count);
+        if (!result.npfsRoot && !(attributes.RootDirectory &&
+            ordinary_pipe_name(copied, count, installationKey, GetCurrentProcessId()))) return false;
+        for (size_t n = 0; n < count; ++n) result.name[n] = static_cast<char>(copied[n]);
+        result.root = attributes.RootDirectory;
+        result.attributes = attributes.Attributes;
+        SECURITY_ATTRIBUTES security = {sizeof(SECURITY_ATTRIBUTES), attributes.SecurityDescriptor,
+                                       (attributes.Attributes & OBJ_INHERIT) ? TRUE : FALSE};
+        observe_pipe_security(&security, result.security);
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+unsigned long long observed_native_handle(PHANDLE output, NTSTATUS status) {
+    if (status != 0 || !output) return 0;
+    __try { return reinterpret_cast<unsigned long long>(*output); }
+    __except (EXCEPTION_EXECUTE_HANDLER) { return 0; }
+}
+
+void log_native_pipe(const NativePipeObservation& observation, const char* operation, ACCESS_MASK access,
+    ULONG share, ULONG disposition, ULONG options, ULONG pipeType, ULONG readMode, ULONG completionMode,
+    ULONG instances, ULONG inbound, ULONG outbound, bool timeoutReadable, LONGLONG timeout,
+    NTSTATUS status, unsigned long long handle, DWORD lastError) {
+    if (InterlockedIncrement(&nativePipeRecords) > 16) return;
+    char escaped[maximum_signal_pipe_characters * 2 + 1] = {};
+    size_t at = 0;
+    for (size_t n = 0; observation.name[n]; ++n) {
+        if (observation.name[n] == '\\') escaped[at++] = '\\';
+        escaped[at++] = observation.name[n];
+    }
+    const auto& security = observation.security;
+    char aclHex[sizeof(security.acl) * 2 + 1] = {};
+    constexpr char hex[] = "0123456789abcdef";
+    for (DWORD n = 0; n < security.capturedAclBytes; ++n) {
+        aclHex[n * 2] = hex[security.acl[n] >> 4];
+        aclHex[n * 2 + 1] = hex[security.acl[n] & 15];
+    }
+    char line[2560];
+    const int count = _snprintf_s(line, sizeof(line), _TRUNCATE,
+        "NEMOCLAW_MSYS_NATIVE_PIPE={\"schemaVersion\":1,\"pid\":%lu,\"operation\":\"%s\",\"name\":\"%s\",\"rootHandle\":\"0x%llx\",\"objectAttributes\":\"0x%08lx\",\"access\":\"0x%08lx\",\"share\":%lu,\"disposition\":%lu,\"options\":\"0x%08lx\",\"pipeType\":%lu,\"readMode\":%lu,\"completionMode\":%lu,\"maxInstances\":%lu,\"inboundQuota\":%lu,\"outboundQuota\":%lu,\"timeoutReadable\":%s,\"timeout100ns\":%lld,\"ntStatus\":\"0x%08lx\",\"resultHandle\":\"0x%llx\",\"lastError\":%lu,\"securitySource\":\"OBJECT_ATTRIBUTES-input\",\"securityInspectionComplete\":%s,\"descriptorPresent\":%s,\"descriptorControl\":\"0x%04x\",\"daclPresent\":%s,\"nullDacl\":%s,\"aclBytes\":%lu,\"aceCount\":%lu,\"capturedAclBytes\":%lu,\"aclTruncated\":%s,\"aclHex\":\"%s\"}\n",
+        GetCurrentProcessId(), operation, escaped, reinterpret_cast<unsigned long long>(observation.root), observation.attributes,
+        access, share, disposition, options, pipeType, readMode, completionMode, instances, inbound, outbound,
+        timeoutReadable ? "true" : "false", timeout, static_cast<ULONG>(status), handle, lastError,
+        security.complete ? "true" : "false", security.descriptorPresent ? "true" : "false",
+        static_cast<unsigned>(security.control), security.daclPresent ? "true" : "false", security.nullDacl ? "true" : "false",
+        security.aclBytes, security.aceCount, security.capturedAclBytes,
+        security.capturedAclBytes < security.aclBytes ? "true" : "false", aclHex);
+    DWORD written = 0;
+    writingPipeDiagnostic = true;
+    if (count > 0) WriteFile(GetStdHandle(STD_ERROR_HANDLE), line, static_cast<DWORD>(count), &written, nullptr);
+    writingPipeDiagnostic = false;
+}
+
+NTSTATUS NTAPI observe_native_open(PHANDLE output, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes,
+    PIO_STATUS_BLOCK io, ULONG share, ULONG options) {
+    if (writingPipeDiagnostic) return realNativeFileOpen(output, access, attributes, io, share, options);
+    const DWORD before = GetLastError();
+    NativePipeObservation observed = {};
+    const bool matched = observe_native_pipe_name(attributes, observed);
+    SetLastError(before);
+    const NTSTATUS status = realNativeFileOpen(output, access, attributes, io, share, options);
+    const DWORD after = GetLastError();
+    if (matched) log_native_pipe(observed, observed.npfsRoot ? "npfs-root-open" : "ordinary-writer-open",
+        access, share, 0, options, 0, 0, 0, 0, 0, 0, false, 0, status, observed_native_handle(output, status), after);
+    SetLastError(after);
+    return status;
+}
+
+NTSTATUS NTAPI observe_native_create(PHANDLE output, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes,
+    PIO_STATUS_BLOCK io, ULONG share, ULONG disposition, ULONG options, ULONG pipeType, ULONG readMode,
+    ULONG completionMode, ULONG instances, ULONG inbound, ULONG outbound, PLARGE_INTEGER timeout) {
+    if (writingPipeDiagnostic) return realNativePipeCreate(output, access, attributes, io, share, disposition,
+        options, pipeType, readMode, completionMode, instances, inbound, outbound, timeout);
+    const DWORD before = GetLastError();
+    NativePipeObservation observed = {};
+    const bool matched = observe_native_pipe_name(attributes, observed) && !observed.npfsRoot;
+    bool timeoutReadable = false;
+    LONGLONG timeoutValue = 0;
+    if (matched && timeout) {
+        __try { timeoutValue = timeout->QuadPart; timeoutReadable = true; }
+        __except (EXCEPTION_EXECUTE_HANDLER) { timeoutReadable = false; }
+    }
+    SetLastError(before);
+    const NTSTATUS status = realNativePipeCreate(output, access, attributes, io, share, disposition,
+        options, pipeType, readMode, completionMode, instances, inbound, outbound, timeout);
+    const DWORD after = GetLastError();
+    if (matched) log_native_pipe(observed, "ordinary-server-create", access, share, disposition, options,
+        pipeType, readMode, completionMode, instances, inbound, outbound, timeoutReadable, timeoutValue,
+        status, observed_native_handle(output, status), after);
+    SetLastError(after);
+    return status;
+}
+
 } // namespace
 
 BOOL WINAPI DllMain(HINSTANCE self, DWORD reason, LPVOID reserved) {
@@ -429,6 +553,8 @@ BOOL WINAPI DllMain(HINSTANCE self, DWORD reason, LPVOID reserved) {
     if (!error) error = DetourAttach(&realOpen, open_directory);
     if (!error) error = DetourAttach(&realCreateSignalServer, observe_signal_server);
     if (!error) error = DetourAttach(&realOpenSignalWriter, observe_signal_writer);
+    if (!error) error = DetourAttach(&realNativePipeCreate, observe_native_create);
+    if (!error) error = DetourAttach(&realNativeFileOpen, observe_native_open);
     if (error) {
         DetourTransactionAbort();
         return initialization_result("hook-staging", error);

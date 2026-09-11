@@ -55,6 +55,41 @@ inline bool owned_signal_pipe(const char* name, size_t count, uint32_t pid, cons
     return installation_key[16] == 0;
 }
 
+inline bool ordinary_pipe_name(const wchar_t* input, size_t count, const char* installation_key, uint32_t own_pid) {
+    if (!input || !installation_key || !own_pid || count >= maximum_signal_pipe_characters || count < 16) return false;
+    size_t at = 0;
+    for (; at < 16; ++at)
+        if (!installation_key[at] || input[at] != static_cast<wchar_t>(installation_key[at])) return false;
+    if (installation_key[16] || at == count || input[at++] != L'-' ||
+        at == count || input[at] < L'1' || input[at] > L'9') return false;
+    uint32_t pid = 0;
+    size_t digits = 0;
+    while (at < count && input[at] >= L'0' && input[at] <= L'9') {
+        const uint32_t digit = static_cast<uint32_t>(input[at++] - L'0');
+        if (++digits > 10 || pid > (UINT32_MAX - digit) / 10) return false;
+        pid = pid * 10 + digit;
+    }
+    if (pid != own_pid) return false;
+    constexpr wchar_t suffix[] = L"-pipe-nt-0x";
+    for (size_t n = 0; suffix[n]; ++n)
+        if (at == count || input[at++] != suffix[n]) return false;
+    const size_t hex_count = count - at;
+    if (!hex_count || hex_count > 16) return false;
+    for (; at < count; ++at) {
+        const wchar_t c = input[at];
+        if (!((c >= L'0' && c <= L'9') || (c >= L'a' && c <= L'f') || (c >= L'A' && c <= L'F'))) return false;
+    }
+    return true;
+}
+
+inline bool npfs_root_name(const wchar_t* input, size_t count) {
+    if (!input) return false;
+    constexpr wchar_t expected[] = L"\\Device\\NamedPipe\\";
+    if (count != sizeof(expected) / sizeof(wchar_t) - 1) return false;
+    for (size_t n = 0; n < count; ++n) if (input[n] != expected[n]) return false;
+    return true;
+}
+
 enum class Family { none, global, session };
 struct Match {
     Family family;

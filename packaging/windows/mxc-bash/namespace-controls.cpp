@@ -145,6 +145,34 @@ int main() {
           !owned_signal_pipe(signalName, strlen(signalName), 9784, boundKey, 0x80001, 0xc, 1, 65472, 65472, 1),
           "owned-signal-instance-buffer-timeout-fixed");
 
+    const wchar_t* npfs = L"\\Device\\NamedPipe\\";
+    check(npfs_root_name(npfs, wcslen(npfs)) && !npfs_root_name(npfs, wcslen(npfs) - 1) &&
+          !npfs_root_name(L"\\Device\\NamedPipe\\child", 23), "native-npfs-exact-root-only");
+    const wchar_t* ordinary = L"52ddb898ef8d77fd-9784-pipe-nt-0x1";
+    const wchar_t* mixedCounter = L"52ddb898ef8d77fd-9784-pipe-nt-0xaBcDeF0123456789";
+    check(ordinary_pipe_name(ordinary, wcslen(ordinary), boundKey, 9784) &&
+          ordinary_pipe_name(mixedCounter, wcslen(mixedCounter), boundKey, 9784),
+          "native-ordinary-server-writer-exact-role");
+    check(!ordinary_pipe_name(ordinary, wcslen(ordinary), boundKey, 9785) &&
+          !ordinary_pipe_name(ordinary, wcslen(ordinary), "aaaaaaaaaaaaaaaa", 9784),
+          "native-ordinary-foreign-key-pid-refused");
+    const wchar_t* tooLongCounter = L"52ddb898ef8d77fd-9784-pipe-nt-0x12345678901234567";
+    const wchar_t* badCounter = L"52ddb898ef8d77fd-9784-pipe-nt-0xG";
+    check(!ordinary_pipe_name(tooLongCounter, wcslen(tooLongCounter), boundKey, 9784) &&
+          !ordinary_pipe_name(badCounter, wcslen(badCounter), boundKey, 9784) &&
+          !ordinary_pipe_name(ordinary, wcslen(ordinary) - 1, boundKey, 9784),
+          "native-ordinary-counter-bounded-hex");
+    const wchar_t* ordinaryChild = L"52ddb898ef8d77fd-9784-pipe-nt-0x1\\child";
+    const wchar_t* signalRole = L"52ddb898ef8d77fd-9784-sigwait";
+    check(!ordinary_pipe_name(ordinaryChild, wcslen(ordinaryChild), boundKey, 9784) &&
+          !ordinary_pipe_name(signalRole, wcslen(signalRole), boundKey, 9784),
+          "native-ordinary-other-role-and-descendants-refused");
+    const wchar_t* ordinaryPadded = L"52ddb898ef8d77fd-09784-pipe-nt-0x1";
+    check(!ordinary_pipe_name(ordinaryPadded, wcslen(ordinaryPadded), boundKey, 9784) &&
+          !ordinary_pipe_name(nullptr, 0, boundKey, 9784) &&
+          !ordinary_pipe_name(ordinary, wcslen(ordinary) + 1, boundKey, 9784) &&
+          !ordinary_pipe_name(ordinary, 96, boundKey, 9784), "native-ordinary-counted-name-bounds");
+
 #ifdef _WIN32
     alignas(void*) BYTE world[SECURITY_MAX_SID_SIZE] = {};
     DWORD size = sizeof(world);

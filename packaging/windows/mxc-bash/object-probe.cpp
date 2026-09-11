@@ -135,8 +135,9 @@ class PipeProof {
   bool connected=false;
   SECURITY_DESCRIPTOR descriptor{};
   SECURITY_ATTRIBUTES attributes{};
-  alignas(void*) std::array<BYTE,512> aclStorage{};
-  alignas(void*) std::array<BYTE,SECURITY_MAX_SID_SIZE> adminSid{},systemSid{};
+  std::array<DWORD,512/sizeof(DWORD)> aclStorage{};
+  std::array<DWORD,SECURITY_MAX_SID_SIZE/sizeof(DWORD)> adminSid{},systemSid{};
+  static_assert(SECURITY_MAX_SID_SIZE%sizeof(DWORD)==0);
   PSID user=nullptr,container=nullptr;
   bool closed=false;
   using QueryFile=NTSTATUS(NTAPI*)(HANDLE,PIO_STATUS_BLOCK,PVOID,ULONG,FILE_INFORMATION_CLASS);
@@ -206,8 +207,8 @@ class PipeProof {
     queryFile=api.load<QueryFile>("NtQueryInformationFile");queryObject=api.load<QueryObject>("NtQueryObject");require(queryFile&&queryObject,"pipe-native-queries");
     try{
       require(ConvertStringSidToSidW(id.userSid.c_str(),&user)!=0&&ConvertStringSidToSidW(id.sid.c_str(),&container)!=0,"pipe-token-sids");
-      DWORD size=static_cast<DWORD>(adminSid.size());require(CreateWellKnownSid(WinBuiltinAdministratorsSid,nullptr,adminSid.data(),&size)!=0,"pipe-admin-sid");size=static_cast<DWORD>(systemSid.size());require(CreateWellKnownSid(WinLocalSystemSid,nullptr,systemSid.data(),&size)!=0,"pipe-system-sid");
-      const size_t aclBytes=sizeof(ACL)+4*(sizeof(ACCESS_ALLOWED_ACE)-sizeof(DWORD))+GetLengthSid(user)+GetLengthSid(adminSid.data())+GetLengthSid(systemSid.data())+GetLengthSid(container);require(aclBytes<=aclStorage.size(),"pipe-acl-bound");
+      DWORD size=static_cast<DWORD>(sizeof(adminSid));require(CreateWellKnownSid(WinBuiltinAdministratorsSid,nullptr,adminSid.data(),&size)!=0,"pipe-admin-sid");size=static_cast<DWORD>(sizeof(systemSid));require(CreateWellKnownSid(WinLocalSystemSid,nullptr,systemSid.data(),&size)!=0,"pipe-system-sid");
+      const size_t aclBytes=sizeof(ACL)+4*(sizeof(ACCESS_ALLOWED_ACE)-sizeof(DWORD))+GetLengthSid(user)+GetLengthSid(adminSid.data())+GetLengthSid(systemSid.data())+GetLengthSid(container);require(aclBytes<=sizeof(aclStorage),"pipe-acl-bound");
       auto acl=reinterpret_cast<PACL>(aclStorage.data());require(InitializeAcl(acl,static_cast<DWORD>(aclBytes),ACL_REVISION)!=0,"pipe-acl-init");
       for(PSID sid:std::array<PSID,3>{user,adminSid.data(),systemSid.data()})require(AddAccessAllowedAceEx(acl,ACL_REVISION,0,GENERIC_ALL,sid)!=0,"pipe-original-ace");
       require(AddAccessAllowedAceEx(acl,ACL_REVISION,0,0x00120196,container)!=0,"pipe-container-ace");
