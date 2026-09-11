@@ -16,7 +16,6 @@ import {
   type PodmanSocketAuthority,
 } from "../../adapters/podman";
 import type { SandboxEntry, SandboxWorkloadReceipt } from "../../state/registry/types";
-import { withCurrentPortableHostFence } from "../../state/portable-uninstall-retirement";
 import { CURRENT_RUNTIME_PROVIDER_BUNDLES } from "./current";
 import { createPodmanRuntimeProviderBundle } from "./podman";
 import {
