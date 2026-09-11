@@ -643,14 +643,21 @@ export function createRebuildHermesCronRestoreFixture({
       );
       expect(beforeRestart).toMatchObject({ pid: receipt.pid, start_time: receipt.start_time });
 
-      const containerId = resolveDirectSandboxContainer(sandboxName, "docker");
-      const restart = await host.command("docker", ["restart", containerId], {
-        artifactName: "phase-8-restart-container-with-stranded-hermes-cron-gate",
-        env,
-        redactionValues,
-        timeoutMs,
-      });
-      expectExitZero(restart, "restart Hermes container with stranded cron restore gate");
+      const restart = await host.command(
+        "bash",
+        [
+          "-lc",
+          `${shellQuote(host.openshellCommandPath)} sandbox stop -g nemoclaw ${shellQuote(sandboxName)} && ` +
+            `${shellQuote(host.openshellCommandPath)} sandbox start -g nemoclaw ${shellQuote(sandboxName)}`,
+        ],
+        {
+          artifactName: "phase-8-restart-sandbox-with-stranded-hermes-cron-gate",
+          env,
+          redactionValues,
+          timeoutMs,
+        },
+      );
+      expectExitZero(restart, "restart Hermes sandbox with stranded cron restore gate");
       const afterRestart = await waitForGatewayState(
         "draining",
         "phase-8-verify-gateway-redrained-after-restart",

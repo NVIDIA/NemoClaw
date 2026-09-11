@@ -26,7 +26,7 @@ The payload has these fields:
 A recommendation is `{selectorType, id, required, reason}`. `selectorType` is `job`, `target`, or `all`.
 `all` uses ID `e2e-all`. Preserve `required:false`: the review queue requires optional recommendations to pass too.
 Deduplicate by selector type and ID. A required occurrence takes precedence over an optional occurrence.
-Collection adds every job and typed target from the referenced trusted risk plan. Specialist output cannot remove that floor.
+Collection adds every job and typed target from the context's trusted risk plan. Specialist output cannot remove that floor.
 
 The recording tool validates IDs against the trusted inventory. An invalid or duplicate selection is rejected without recording a result.
 The specialist can correct rejected input. Missing successful recording fails the specialist run.
@@ -39,17 +39,42 @@ Tests in `test/automation/pull-requests/pr-review-advisor-e2e-receipt.test.ts` p
 
 ## Discovery and identity
 
+Each specialist artifact also contains `review-queue-context.json`, with kind `nemoclaw-review-queue-context-v1`.
+The trusted runner writes it before model execution from the same deterministic context used by that specialist.
+It contains no GitHub discussion context or session internals. No repository code execution is required to read it.
+
+| Field | Meaning |
+| --- | --- |
+| `headSha`, `baseSha` | Full candidate and comparison commits |
+| `expectedSpecialists` | Complete sorted trusted specialist inventory |
+| `deterministic` | Complete existing risk plan: `version`, `planHash`, `headSha`, `changedFiles`, `tier`, `families`, `requiredJobs`, `requiredTargets` |
+| `selectorInventory` | Existing trusted selector inventory: `workflow`, `fanoutId`, `selectorTypes`, `allowedJobIds`, `manualOnlyJobIds`, `liveSupportedTargetIds` |
+| `provenance` | Hosted identity described below; `null` for local runs |
+
+Hosted provenance contains `repository`, `prNumber`, `workflowRepository`, `workflowSha`, `workflowPath`, `eventName`, `runId`, and `runAttempt`.
+Run IDs and attempts are positive decimal strings. The PR number is a positive integer, or `null` for non-PR runs.
+The workflow repository is `NVIDIA/NemoClaw`; the path is `.github/workflows/pr-review-advisor.yaml`.
+Events are `workflow_run` or `workflow_dispatch`. Local or non-PR provenance cannot establish queue readiness.
+Every provenance value must match independently verified GitHub evidence. Payload identity does not authenticate an artifact.
+
+Preserve every `deterministic.requiredJobs` and `deterministic.requiredTargets` entry as required coverage, using its `id` and `reasons`.
+Both arrays contain `{id, tier, families, reasons, matchedFiles}` entries. Empty arrays explicitly represent an empty deterministic floor.
+Do not derive selectors from family descriptions or recompute a partial plan from changed files.
+The existing plan hash identifies the complete plan, including workflow-derived focused coverage; it is not an artifact signature.
+The producer copies that plan without truncation. Reject incomplete data rather than dropping unrecognized selections.
+`test/fixtures/review-queue-context.json` is a tested synthetic payload for passive consumers.
+
 1. Read the current PR candidate SHA, base SHA, and source repository from GitHub.
 2. Find the trusted `pr-review-advisor.yaml` run that reviewed that candidate. Validate the workflow path, repository, event, and trusted workflow revision.
-3. Read the expected specialist inventory from that trusted workflow revision. Never let a payload shorten the expected inventory.
+3. Read regular Markdown prompt filenames under `tools/pr-review-advisor/specialists` at the trusted workflow revision. Never let a payload shorten that inventory.
 4. List all artifacts for the run. Select one nonexpired artifact per expected specialist, with the current attempt suffix.
 5. Verify each immutable artifact ID belongs to that run and verify its download digest. Extract only bounded regular files without links or traversal.
-6. Require all receipt candidate/base identities, specialist identities, and risk-plan identities to agree with trusted evidence.
+6. Require identical contexts across all specialists, matching trusted identities and inventories. Match receipt candidate/base, specialist, and plan identities to that context.
 7. Recheck the PR identity and run attempt after collection. Discard the result if either changed.
 
 Run and attempt identity come from the GitHub artifact envelope. Payloads cannot establish their own provenance.
 Do not combine artifacts from different runs or attempts. Incomplete rerun artifacts remain unknown even if an earlier attempt passed.
-Use the deterministic context's existing focused-job selection when reconstructing the risk plan; a raw changed-file plan can omit workflow-derived focused coverage.
+Runs without the context sidecar remain unknown. Do not scrape Pi session chunks to supply missing evidence.
 
 The proposed #11047 finding ledger is separate. All validated P0/P1 findings count as blockers, including findings excluded from automated repair.
 Require every expected specialist ledger before reporting zero. A completion comment alone cannot establish zero blockers.
@@ -67,8 +92,8 @@ An explicit full-suite selection does not erase separately recommended hardware 
 Use `inference_mode:mock` unless the requested coverage requires another supported mode.
 Preserve `gateway_runtime` or `gateway_runtimes` when coverage requires a specific runtime.
 
-Keep `allow_jetson_dispatch`, `allow_dgx_spark_runner_queue`, and `include_staging_brev_launchable` false unless separately authorized.
-Recommendations do not grant hardware opt-in. The DGX Spark runner confirmation, protected environments, and other workflow checks still apply.
+Keep `allow_jetson_dispatch` and `include_staging_brev_launchable` false unless separately authorized.
+Recommendations do not grant hardware opt-in. Protected environments and other workflow checks still apply.
 See the owning `test/e2e/README.md` for credential custody and hardware requirements.
 
 Generate a UUIDv4 `correlation_id` once for the logical dispatch. Persist the candidate, base, workflow SHA, selectors, opt-ins, correlation, and send time before sending.

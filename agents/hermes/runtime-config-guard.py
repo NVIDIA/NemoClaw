@@ -585,7 +585,7 @@ def _pinned_process_matches_supervised_nonroot_start(
     supervisor_identity: tuple[str, int | None],
     expected_effective_uid: int,
 ) -> bool:
-    # OpenShell 0.0.106 keeps its supervisor at PID 1 and launches the non-root
+    # OpenShell 0.0.116 keeps its supervisor at PID 1 and launches the non-root
     # NemoClaw entrypoint as a child, so startup authority must be proved from
     # pinned procfs identity rather than a PID-1 equality check. Remove this
     # compatibility proof when #6256 provides authenticated supervisor/runtime
@@ -3055,8 +3055,10 @@ def _is_generated_api_server_key(value: str) -> bool:
 def _placeholder_suffix_matches_env_key(suffix: str, env_key: str) -> bool:
     if suffix == env_key:
         return True
-    revision_match = re.fullmatch(r"v[0-9]{1,20}_(.+)", suffix)
-    return revision_match is not None and revision_match.group(1) == env_key
+    generation_match = re.fullmatch(
+        r"(?:v[0-9]{1,20}|s[a-f0-9]{64})_(.+)", suffix
+    )
+    return generation_match is not None and generation_match.group(1) == env_key
 
 
 def _provider_placeholder_for_env_key(value: str, env_key: str) -> str | None:
@@ -3220,7 +3222,10 @@ def _runtime_plan_replacements_and_provider_keys(
                     "messaging runtime plan cross-key env alias source is not bound "
                     "to its channel"
                 )
-            expected_pattern = f"^openshell:resolve:env:v[0-9]+_{env_key}$"
+            expected_pattern = (
+                "^openshell:resolve:env:"
+                f"(?:v[0-9]{{1,20}}|s[a-f0-9]{{64}})_{env_key}$"
+            )
             expected_value = f"{SCOPED_PLACEHOLDER_PREFIX}{env_key}"
             if pattern != expected_pattern or value != expected_value:
                 raise UnsafePathError(
@@ -3255,7 +3260,8 @@ def _runtime_plan_replacements_and_provider_keys(
                 runtime_suffix = runtime_value[len(SCOPED_PLACEHOLDER_PREFIX) :]
                 alias_prefix, alias_suffix = value.split(alias_marker, 1)
                 if alias_suffix == env_key and re.fullmatch(
-                    rf"v[0-9]{{1,20}}_{re.escape(env_key)}", runtime_suffix
+                    rf"(?:v[0-9]{{1,20}}|s[a-f0-9]{{64}})_{re.escape(env_key)}",
+                    runtime_suffix,
                 ):
                     replacement_value = f"{alias_prefix}{alias_marker}{runtime_suffix}"
             replacements[replacement_env_key] = (replacement_value, message)

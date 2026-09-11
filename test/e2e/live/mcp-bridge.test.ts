@@ -93,7 +93,7 @@ import {
 } from "./mcp-bridge-tool-discovery.ts";
 import { assertTrustedPrivateMcpRebindingDenied } from "./mcp-bridge-trusted-private.ts";
 import {
-  buildRevisionScopedMcpAuthorizationPattern,
+  buildMcpCredentialHandleAuthorizationPattern,
   MCP_PROVIDER_REWRITE_PROBE_SOURCE,
 } from "./mcp-provider-rewrite-probe.ts";
 import { assertRawOpenShellAllowedIpsRebindingDenied } from "./openshell-allowed-ips-rebinding.ts";
@@ -547,7 +547,7 @@ async function assertDeepAgentsConfig(
   sandboxName: string,
   mcpUrl: string,
 ): Promise<void> {
-  const authorizationPattern = buildRevisionScopedMcpAuthorizationPattern("FAKE_MCP_SECRET");
+  const authorizationPattern = buildMcpCredentialHandleAuthorizationPattern("FAKE_MCP_SECRET");
   const script = [
     "set -eu",
     "python3 - <<'PY'",

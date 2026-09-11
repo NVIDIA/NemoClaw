@@ -29,6 +29,16 @@ function lifecycleInput(environment: NodeJS.ProcessEnv = {}): RuntimeProviderLif
   };
 }
 
+function openClawLifecycleInput(
+  environment: NodeJS.ProcessEnv = {},
+): RuntimeProviderLifecycleInput {
+  const input = lifecycleInput(environment);
+  return {
+    ...input,
+    sandbox: { ...input.sandbox, agent: "openclaw" },
+  };
+}
+
 function poison(): never {
   throw new Error("Docker dependency must not be called");
 }
@@ -292,5 +302,107 @@ describe("Docker provider portable lifecycle dispatch", () => {
       stateDir: "/portable-home/.nemoclaw/state",
     });
     expect(stopPortableSandbox).toHaveBeenCalledOnce();
+  });
+});
+
+describe("Docker provider OpenShell lifecycle dispatch", () => {
+  it("starts a stopped OpenShell sandbox through the gateway instead of Docker (#11251)", () => {
+    const captureSandboxLifecycle = vi.fn(() => ({ status: 0, output: "started" }));
+    const provider = createDockerRuntimeProviderBundle({
+      captureSandboxLifecycle,
+      findLabeledSandboxContainers: () => [
+        { name: "openshell-default--alpha-id", running: false, status: "Exited (0) 1 second ago" },
+      ],
+      recoverPortableSandbox: () => ({ kind: "not-installed" }),
+      recoverSandbox: poison,
+      withLifecycleLockSync: (_sandboxName, operation) => operation(),
+    });
+
+    expect(
+      supportedLifecycle(provider).start(openClawLifecycleInput({ HOME: "/test-home" })),
+    ).toEqual({ exitCode: 0 });
+    expect(captureSandboxLifecycle).toHaveBeenCalledWith("start", "alpha", "nemoclaw", {
+      HOME: "/test-home",
+    });
+  });
+
+  it("stops a running OpenShell sandbox through the gateway instead of Docker (#11251)", () => {
+    const beforeStop = vi.fn();
+    const captureSandboxLifecycle = vi.fn(() => ({ status: 0, output: "stopped" }));
+    const provider = createDockerRuntimeProviderBundle({
+      captureSandboxLifecycle,
+      findLabeledSandboxContainers: () => [
+        { name: "openshell-default--alpha-id", running: true, status: "Up 1 minute" },
+      ],
+      stopContainer: poison,
+      stopPortableSandbox: () => ({ kind: "not-installed" }),
+      withLifecycleLockSync: (_sandboxName, operation) => operation(),
+    });
+
+    expect(
+      supportedLifecycle(provider).stop(openClawLifecycleInput({ HOME: "/test-home" }), {
+        beforeStop,
+      }),
+    ).toEqual({ exitCode: 0, state: "stopped" });
+    expect(beforeStop).toHaveBeenCalledOnce();
+    expect(captureSandboxLifecycle).toHaveBeenCalledWith("stop", "alpha", "nemoclaw", {
+      HOME: "/test-home",
+    });
+  });
+
+  it("fails closed when OpenShell cannot start the stopped sandbox (#11251)", () => {
+    const provider = createDockerRuntimeProviderBundle({
+      captureSandboxLifecycle: () => ({ status: 1, output: "sandbox phase is Error" }),
+      findLabeledSandboxContainers: () => [
+        { name: "openshell-default--alpha-id", running: false, status: "Exited (0) 1 second ago" },
+      ],
+      recoverPortableSandbox: () => ({ kind: "not-installed" }),
+      recoverSandbox: poison,
+      withLifecycleLockSync: (_sandboxName, operation) => operation(),
+    });
+
+    expect(supportedLifecycle(provider).start(openClawLifecycleInput())).toEqual({
+      exitCode: 1,
+      message: "  OpenShell could not start sandbox 'alpha' (exit 1): sandbox phase is Error.",
+    });
+  });
+
+  it("fails closed when OpenShell cannot stop the running sandbox (#11251)", () => {
+    const beforeStop = vi.fn();
+    const provider = createDockerRuntimeProviderBundle({
+      captureSandboxLifecycle: () => ({ status: 1, output: "gateway unavailable" }),
+      findLabeledSandboxContainers: () => [
+        { name: "openshell-default--alpha-id", running: true, status: "Up 1 minute" },
+      ],
+      stopContainer: poison,
+      stopPortableSandbox: () => ({ kind: "not-installed" }),
+      withLifecycleLockSync: (_sandboxName, operation) => operation(),
+    });
+
+    expect(supportedLifecycle(provider).stop(openClawLifecycleInput(), { beforeStop })).toEqual({
+      exitCode: 1,
+      message: "  OpenShell could not stop sandbox 'alpha' (exit 1): gateway unavailable.",
+    });
+    expect(beforeStop).toHaveBeenCalledOnce();
+  });
+
+  it("keeps an already-stopped sandbox idempotent without calling OpenShell (#11251)", () => {
+    const captureSandboxLifecycle = vi.fn(poison);
+    const beforeStop = vi.fn(poison);
+    const provider = createDockerRuntimeProviderBundle({
+      captureSandboxLifecycle,
+      findLabeledSandboxContainers: () => [
+        { name: "openshell-default--alpha-id", running: false, status: "Exited (0) 1 second ago" },
+      ],
+      stopPortableSandbox: () => ({ kind: "not-installed" }),
+      withLifecycleLockSync: (_sandboxName, operation) => operation(),
+    });
+
+    expect(supportedLifecycle(provider).stop(openClawLifecycleInput(), { beforeStop })).toEqual({
+      exitCode: 0,
+      state: "already-stopped",
+    });
+    expect(captureSandboxLifecycle).not.toHaveBeenCalled();
+    expect(beforeStop).not.toHaveBeenCalled();
   });
 });

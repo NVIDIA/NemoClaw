@@ -31,7 +31,7 @@ import {
 } from "../../inference/gateway-route-compatibility";
 import { withGatewayRouteMutationLock } from "../../inference/gateway-route-mutation-lock";
 import * as nim from "../../inference/nim";
-import { listMessagingProviderSuffixes } from "../../messaging/channels";
+import { deleteSandboxProviderRegistrations } from "../../onboard/sandbox-provider-cleanup";
 import {
   findAvailableDashboardPort,
   getRegistryOccupiedDashboardPorts,
@@ -683,8 +683,8 @@ async function autoCreateSandboxFromSource(
 // `stopHostServices`), Ollama model unload, gateway teardown \u2014 are
 // deliberately skipped here because they can also affect the source sandbox
 // we are about to clone from.
-function deleteSandboxForRestore(name: string): void {
-  withMcpLifecycleLockSync(name, () => {
+async function deleteSandboxForRestore(name: string): Promise<void> {
+  await withMcpLifecycleLock(name, async () => {
     const sbMeta = registry.getSandbox(name);
     if (!sbMeta) {
       console.error(
@@ -761,12 +761,7 @@ function deleteSandboxForRestore(name: string): void {
     } catch {
       // PID dir may not exist \u2014 ignore.
     }
-    for (const suffix of listMessagingProviderSuffixes()) {
-      runOpenshell(["provider", "delete", `${name}${suffix}`], {
-        ignoreError: true,
-        stdio: ["ignore", "ignore", "ignore"],
-      });
-    }
+    await deleteSandboxProviderRegistrations(name, "messaging", { runOpenshell });
     requireSnapshotDestinationRegistryRemoval(name, removeSandboxRegistryEntryOutcome(name));
   });
   console.log(`  ${G}\u2713${R} '${name}' deleted`);
@@ -805,11 +800,11 @@ function verifyRestoreDestinationOnOwnGateway(targetSandbox: string): void {
 
 type PendingSnapshotCloneRecovery = "not-pending" | "finalized" | "removed";
 
-function reconcilePendingSnapshotClone(
+async function reconcilePendingSnapshotClone(
   targetSandbox: string,
   sourceEntry: SandboxEntry,
   sourceGatewayName: string,
-): PendingSnapshotCloneRecovery {
+): Promise<PendingSnapshotCloneRecovery> {
   const pending = registry.getSandbox(targetSandbox);
   if (
     !pending ||
@@ -839,7 +834,7 @@ function reconcilePendingSnapshotClone(
   }
   const liveNames = parseLiveSandboxNames(list.output || "");
   if (!liveNames.has(targetSandbox)) {
-    deleteSandboxForRestore(targetSandbox);
+    await deleteSandboxForRestore(targetSandbox);
     return "removed";
   }
 
@@ -853,7 +848,7 @@ function reconcilePendingSnapshotClone(
   }
   const liveIdentityFingerprint = fingerprintSandboxLiveIdentity(get.output || "");
   if (liveIdentityFingerprint !== pending.lifecycleLiveIdentityFingerprint) {
-    deleteSandboxForRestore(targetSandbox);
+    await deleteSandboxForRestore(targetSandbox);
     return "removed";
   }
   if (!isSandboxReady(list.output || "", targetSandbox)) {
@@ -865,7 +860,7 @@ function reconcilePendingSnapshotClone(
     (pending.agent || "openclaw") === "openclaw" &&
     !waitForRestoredSandboxGatewaySupervisor(targetSandbox)
   ) {
-    deleteSandboxForRestore(targetSandbox);
+    await deleteSandboxForRestore(targetSandbox);
     return "removed";
   }
   if (!registry.finalizePendingSandboxRegistration(targetSandbox)) {
@@ -1363,7 +1358,7 @@ async function runSnapshotRestoreUnlocked(
         );
         snapshotExit(1);
       }
-      const pendingRecovery = reconcilePendingSnapshotClone(
+      const pendingRecovery = await reconcilePendingSnapshotClone(
         targetSandbox,
         lockedSourceEntry,
         lockedGatewayName,
@@ -1406,7 +1401,7 @@ async function runSnapshotRestoreUnlocked(
           if (targetEntry) {
             verifyRestoreDestinationOnOwnGateway(targetSandbox);
           }
-          deleteSandboxForRestore(targetSandbox);
+          await deleteSandboxForRestore(targetSandbox);
           requireLiveSandboxesOnSandboxGateway(
             sandboxName,
             "  Failed to re-select source sandbox gateway after deleting destination.",
@@ -1481,7 +1476,7 @@ async function runSnapshotRestoreUnlocked(
         console.error(
           `  Removing incomplete clone '${targetSandbox}' while its exact provider ownership is still registered.`,
         );
-        deleteSandboxForRestore(targetSandbox);
+        await deleteSandboxForRestore(targetSandbox);
         snapshotExit(1);
       }
     }
