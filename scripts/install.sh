@@ -2389,7 +2389,8 @@ assert_nemoclaw_acp_shim_unchanged() {
 preflight_nemoclaw_acp_shim() {
   local shim_path="${NEMOCLAW_SHIM_DIR}/nemoclaw-acp" npm_bin="" cli_path=""
   [[ -e "$shim_path" || -L "$shim_path" ]] || return 0
-  npm_bin="$(resolve_npm_bin)" || true
+  npm_bin="$(resolve_npm_bin)" \
+    || error "Installation stopped because NemoClaw could not resolve the active npm prefix to verify $shim_path. NemoClaw left it unchanged. Fix the npm configuration, then rerun the installer."
   cli_path="${npm_bin:+${npm_bin}/nemoclaw-acp}"
   if [[ -n "$cli_path" && "$cli_path" != "$shim_path" && -e "$cli_path" &&
     "$cli_path" -ef "$shim_path" ]]; then
@@ -2439,6 +2440,12 @@ ensure_cli_shim() {
     ensure_local_bin_in_profile
     return 0
   fi
+  if [[ "$cli_bin" == "nemoclaw-acp" && "$replace_identity" != "absent" ]]; then
+    assert_nemoclaw_acp_shim_unchanged "$cli_bin" "$cli_path" "$replace_identity"
+    refresh_path
+    ensure_local_bin_in_profile
+    return 0
+  fi
 
   expected_shim="$(
     cat <<EOF
@@ -2464,7 +2471,17 @@ EOF
     error "Could not prepare the user-local shim for $cli_bin."
   fi
   assert_nemoclaw_acp_shim_unchanged "$cli_bin" "$cli_path" "$replace_identity"
-  if ! mv -f -- "$temp_shim" "$shim_path"; then
+  if [[ "$cli_bin" == "nemoclaw-acp" ]]; then
+    if ! ln "$temp_shim" "$shim_path"; then
+      rm -f "$temp_shim"
+      if [[ -e "$shim_path" || -L "$shim_path" ]]; then
+        error "Installation stopped because $shim_path changed while NemoClaw published its shim. NemoClaw left the current path unchanged. Rerun the installer."
+      fi
+      error "Could not publish the user-local shim at $shim_path."
+    fi
+    rm -f "$temp_shim" \
+      || error "NemoClaw published $shim_path but could not remove its temporary shim."
+  elif ! mv -f -- "$temp_shim" "$shim_path"; then
     rm -f "$temp_shim"
     error "Could not publish the user-local shim at $shim_path."
   fi

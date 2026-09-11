@@ -792,7 +792,10 @@ test(
         timeoutMs: 30_000,
       },
     );
-    expect(recoveredHealth.exitCode, resultText(recoveredHealth)).toBe(0);
+    expect(
+      recoveredHealth.exitCode === 0 && /"ok"/i.test(resultText(recoveredHealth)),
+      resultText(recoveredHealth),
+    ).toBe(true);
     await expectDashboardReachable("phase-4-dashboard-host-after-recover");
 
     // OpenClaw launch qualification now reads its structured JSONL session
