@@ -51,6 +51,12 @@ const REMOTE_PROVIDER_CONFIG: SetupNimFlowDeps["remoteProviderConfig"] = {
     endpointUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
     credentialEnv: "GEMINI_API_KEY",
   },
+  llmman: {
+    label: "Local llmman",
+    providerName: "llmman-local",
+    endpointUrl: "http://127.0.0.1:17434/v1",
+    credentialEnv: "NEMOCLAW_LLMMAN_LOCAL_TOKEN",
+  },
 };
 
 export function makeHostState(
@@ -124,6 +130,7 @@ export function makeDeps(overrides: Partial<SetupNimFlowDeps> = {}): SetupNimFlo
     exitProcess: (code) => unexpected(`exitProcess(${code})`),
     abortNonInteractive: (message) => unexpected(`abortNonInteractive(${message})`),
     handleLlamaCppSelection: async () => unexpected("llama.cpp selection"),
+    handleLlmmanSelection: async () => unexpected("llmman selection"),
     handleRemoteProviderSelection: async () => unexpected("remote provider selection"),
     handleNimLocalSelection: async () => unexpected("local NIM selection"),
     handleRunningOllamaSelection: async () => unexpected("running Ollama selection"),

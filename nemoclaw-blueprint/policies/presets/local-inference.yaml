@@ -3,7 +3,7 @@
 
 preset:
   name: local-inference
-  description: "Local inference access (Ollama, vLLM, llama.cpp) through the OpenShell gateway"
+  description: "Local inference access (Ollama, vLLM, llama.cpp, llmman) through the OpenShell gateway"
 
 network_policies:
   local_inference:
@@ -18,6 +18,17 @@ network_policies:
           - 172.16.0.0/12
           - 192.168.0.0/16
         rules:
+          - allow: { method: POST, path: "/v1/chat/completions" }
+      - host: host.openshell.internal
+        port: 17434
+        protocol: rest
+        enforcement: enforce
+        allowed_ips:
+          - 10.0.0.0/8
+          - 172.16.0.0/12
+          - 192.168.0.0/16
+        rules:
+          # Chat Completions only; llmman's own /llmman/* routes stay unreachable.
           - allow: { method: POST, path: "/v1/chat/completions" }
       - host: host.openshell.internal
         port: 11434

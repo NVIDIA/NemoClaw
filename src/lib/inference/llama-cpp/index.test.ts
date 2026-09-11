@@ -3,31 +3,9 @@
 
 import fs from "node:fs";
 import { describe, expect, it, vi } from "vitest";
-import { validateCurlProbeArgs } from "../../adapters/http/curl-args";
+import { curlFailure, response, scriptedProbe } from "../__test-helpers__/attachment-probe";
 import type { CurlProbeOptions, CurlProbeResult } from "../../adapters/http/probe";
 import { isSafeLlamaCppServedModelAlias, probeLlamaCppAttachment } from "./index";
-
-function response(httpStatus: number, body: string): CurlProbeResult {
-  return {
-    ok: httpStatus >= 200 && httpStatus < 300,
-    httpStatus,
-    curlStatus: 0,
-    body,
-    stderr: "",
-    message: `HTTP ${httpStatus}`,
-  } as CurlProbeResult;
-}
-
-function curlFailure(curlStatus: number): CurlProbeResult {
-  return {
-    ok: false,
-    httpStatus: 0,
-    curlStatus,
-    body: "",
-    stderr: "bounded probe failure",
-    message: "bounded probe failure",
-  };
-}
 
 function nativeModel(id = "team/model-alias") {
   return {
@@ -54,17 +32,6 @@ function nativeResponses(model = "team/model-alias"): CurlProbeResult[] {
     ),
     response(200, "# TYPE llamacpp:requests_processing gauge\nllamacpp:requests_processing 0\n"),
   ];
-}
-
-function scriptedProbe(responses: CurlProbeResult[]) {
-  let index = 0;
-  return vi.fn((argv: string[], options?: CurlProbeOptions) => {
-    expect(() => validateCurlProbeArgs(argv, options)).not.toThrow();
-    const current = responses[index];
-    index += 1;
-    expect(current, `unexpected probe ${index}`).toBeDefined();
-    return current!;
-  });
 }
 
 describe("isSafeLlamaCppServedModelAlias", () => {

@@ -8,6 +8,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { normalizeProviderBaseUrl } from "../../src/lib/core/url-utils.js";
+import { unexpected } from "../../src/lib/onboard/__test-helpers__/setup-nim-flow.js";
 import { resetOllamaHostCache } from "../../src/lib/inference/local.js";
 import {
   promptCloudModel,
@@ -149,9 +150,6 @@ type WindowsRequirement = ReturnType<typeof getWindowsHostOllamaDockerRequiremen
 type ProviderMenuOverrides = Partial<Parameters<typeof buildInferenceProviderMenu>[0]>;
 type SetupNimOllamaDeps = Parameters<typeof createSetupNimOllamaHandlers>[0];
 type RemoteModelValidatorDeps = Parameters<typeof createRemoteModelValidator>[0];
-function unexpected(name: string): never {
-  throw new Error(`Unexpected ${name} call`);
-}
 function makeSetupNimHostState(
   overrides: Partial<InferenceProviderHostState> = {},
 ): InferenceProviderHostState {
@@ -208,6 +206,7 @@ function makeSetupNimFlowDeps(overrides: Partial<SetupNimFlowDeps> = {}): SetupN
     exitProcess: (code) => unexpected(`exitProcess(${code})`),
     abortNonInteractive: (message) => unexpected(`abortNonInteractive(${message})`),
     handleLlamaCppSelection: async () => unexpected("llama.cpp selection"),
+    handleLlmmanSelection: async () => unexpected("llmman selection"),
     handleRemoteProviderSelection: async () => unexpected("remote provider selection"),
     handleNimLocalSelection: async () => unexpected("local NIM selection"),
     handleRunningOllamaSelection: async () => unexpected("running Ollama selection"),

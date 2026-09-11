@@ -7,6 +7,7 @@ import {
   parseGatewayPort,
   parsePort,
   validateLlamaCppPortReservation,
+  validateLlmmanPortReservation,
   validateRuntimeAdapterPort,
 } from "./ports";
 
@@ -182,6 +183,30 @@ describe("validateLlamaCppPortReservation", () => {
         [field]: 8081,
       }),
     ).toThrow(/fixed llama\.cpp inference port \(8081\)/);
+  });
+});
+
+describe("validateLlmmanPortReservation", () => {
+  it.each([
+    "gatewayPort",
+    "dashboardPort",
+    "vllmPort",
+    "ollamaPort",
+    "ollamaProxyPort",
+    "bedrockRuntimeAdapterPort",
+    "openrouterRuntimeAdapterPort",
+    "httpsPinRuntimeAdapterPort",
+  ] as const)("rejects configured %s collision with fixed port 17434", (field) => {
+    expect(() =>
+      validateLlmmanPortReservation({
+        ...GATEWAY_VALIDATION_OPTIONS,
+        [field]: 17434,
+      }),
+    ).toThrow(/fixed llmman inference port \(17434\)/);
+  });
+
+  it("accepts the default configuration", () => {
+    expect(() => validateLlmmanPortReservation(GATEWAY_VALIDATION_OPTIONS)).not.toThrow();
   });
 });
 

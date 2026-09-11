@@ -110,6 +110,9 @@ navigation:
                   - page: "Set Up llama.cpp"
                     path: _build/agent-variants/inference/set-up-llama-cpp.openclaw.generated.mdx
                     slug: set-up-llama-cpp
+                  - page: "Set Up llmman"
+                    path: _build/agent-variants/inference/set-up-llmman.openclaw.generated.mdx
+                    slug: set-up-llmman
                   - page: "Set Up NVIDIA NIM"
                     path: _build/agent-variants/inference/set-up-nvidia-nim.openclaw.generated.mdx
                     slug: set-up-nvidia-nim
@@ -572,6 +575,9 @@ navigation:
                   - page: "Set Up llama.cpp"
                     path: _build/agent-variants/inference/set-up-llama-cpp.deepagents.generated.mdx
                     slug: set-up-llama-cpp
+                  - page: "Set Up llmman"
+                    path: _build/agent-variants/inference/set-up-llmman.deepagents.generated.mdx
+                    slug: set-up-llmman
                   - page: "Set Up NVIDIA NIM"
                     path: _build/agent-variants/inference/set-up-nvidia-nim.deepagents.generated.mdx
                     slug: set-up-nvidia-nim
@@ -921,6 +927,9 @@ navigation:
                   - page: "Set Up llama.cpp"
                     path: _build/agent-variants/inference/set-up-llama-cpp.hermes.generated.mdx
                     slug: set-up-llama-cpp
+                  - page: "Set Up llmman"
+                    path: _build/agent-variants/inference/set-up-llmman.hermes.generated.mdx
+                    slug: set-up-llmman
                   - page: "Set Up NVIDIA NIM"
                     path: _build/agent-variants/inference/set-up-nvidia-nim.hermes.generated.mdx
                     slug: set-up-nvidia-nim

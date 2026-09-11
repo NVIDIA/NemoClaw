@@ -263,7 +263,7 @@ resolve_nemoclaw_gateway_port() {
     error "NEMOCLAW_GATEWAY_PORT must not overlap the 18789-18799 dashboard port range."
   fi
   case "$port" in
-    8000 | 8081 | 11434 | 11435 | 11436 | 11437 | 11438)
+    8000 | 8081 | 11434 | 11435 | 11436 | 11437 | 11438 | 17434)
       error "NEMOCLAW_GATEWAY_PORT must not overlap a reserved inference or runtime-adapter port ($port)."
       ;;
   esac
@@ -287,14 +287,17 @@ resolve_nemoclaw_gateway_port() {
     "${NEMOCLAW_OPENROUTER_RUNTIME_ADAPTER_PORT:-11437}"
     "${NEMOCLAW_HTTPS_PIN_RUNTIME_ADAPTER_PORT:-11438}"
   )
-  local i configured_port
+  local i configured_port fixed fixed_port fixed_label
   for i in "${!configured_ports[@]}"; do
     configured_port="${configured_ports[$i]}"
     configured_port="${configured_port#"${configured_port%%[![:space:]]*}"}"
     configured_port="${configured_port%"${configured_port##*[![:space:]]}"}"
-    if [[ "$configured_port" =~ ^0*8081$ ]]; then
-      error "${configured_names[$i]} must not overlap the fixed llama.cpp inference port (8081)."
-    fi
+    for fixed in "8081 llama.cpp" "17434 llmman"; do
+      read -r fixed_port fixed_label <<<"$fixed"
+      if [[ "$configured_port" =~ ^0*${fixed_port}$ ]]; then
+        error "${configured_names[$i]} must not overlap the fixed ${fixed_label} inference port (${fixed_port})."
+      fi
+    done
     if [[ "$configured_port" =~ ^[0-9]+$ ]] && [ "$port" -eq "$configured_port" ]; then
       error "NEMOCLAW_GATEWAY_PORT conflicts with ${configured_names[$i]} ($configured_port)."
     fi
@@ -1088,7 +1091,7 @@ usage() {
   printf "    NEMOCLAW_INSTALL_REF          Exact Git ref/SHA to install\n"
   printf "    NEMOCLAW_PROVIDER             build | openrouter | openai | anthropic | anthropicCompatible\n"
   printf "                                  | gemini | ollama | custom | nim-local | vllm | routed\n"
-  printf "                                  | hermes-provider | llama-cpp | install-llama-cpp\n"
+  printf "                                  | hermes-provider | llama-cpp | install-llama-cpp | llmman\n"
   printf "                                  (aliases: cloud -> build, nim -> nim-local)\n"
   printf "    NEMOCLAW_MODEL                Inference model to configure\n"
   printf "    NEMOCLAW_POLICY_MODE          suggested | custom | skip\n"
@@ -4595,7 +4598,7 @@ should_defer_hermes_onboarding() {
   # src/lib/onboard/providers.ts. These values select a route; they are not
   # inference credentials.
   case "$provider_key" in
-    "" | inference | cloud | nim | vllm | open-router | openrouterai | anthropiccompatible | hermes | hermes-provider | hermesprovider | nous | nous-portal | build | openrouter | openai | anthropic | gemini | ollama | llama-cpp | install-llama-cpp | custom | nim-local | routed | install-vllm | install-ollama | install-windows-ollama | start-windows-ollama) ;;
+    "" | inference | cloud | nim | vllm | open-router | openrouterai | anthropiccompatible | hermes | hermes-provider | hermesprovider | nous | nous-portal | build | openrouter | openai | anthropic | gemini | ollama | llama-cpp | install-llama-cpp | llmman | custom | nim-local | routed | install-vllm | install-ollama | install-windows-ollama | start-windows-ollama) ;;
     *) return 1 ;;
   esac
 }

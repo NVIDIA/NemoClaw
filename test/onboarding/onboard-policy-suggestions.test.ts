@@ -232,6 +232,7 @@ describe("onboard policy preset suggestions", () => {
 
     expect(getSuggestedPolicyPresets({ provider: "vllm-local" })).toContain("local-inference");
     expect(getSuggestedPolicyPresets({ provider: "llama-cpp-local" })).toContain("local-inference");
+    expect(getSuggestedPolicyPresets({ provider: "llmman-local" })).toContain("local-inference");
     expect(getSuggestedPolicyPresets({ provider: "nvidia-prod" })).not.toContain("local-inference");
     expect(getSuggestedPolicyPresets({ provider: "openai-api" })).not.toContain("local-inference");
     expect(getSuggestedPolicyPresets({ provider: null })).not.toContain("local-inference");

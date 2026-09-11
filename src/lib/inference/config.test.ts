@@ -20,6 +20,7 @@ import {
   HERMES_PROVIDER_MODEL_OPTIONS,
   INFERENCE_ROUTE_URL,
   LLAMA_CPP_LOCAL_CREDENTIAL_ENV,
+  LLMMAN_LOCAL_CREDENTIAL_ENV,
   MANAGED_PROVIDER_ID,
   OLLAMA_LOCAL_CREDENTIAL_ENV,
   parseGatewayInference,
@@ -200,6 +201,40 @@ describe("inference selection config", () => {
   ])("refuses llama.cpp selection without a validated served alias: %s (#8161)", (model) => {
     expect(getProviderSelectionConfig("llama-cpp-local", model)).toBeNull();
   });
+
+  it("maps llmman attachment to inference.local with Chat Completions", () => {
+    expect(getProviderSelectionConfig("llmman-local", "hf.co/unsloth/Qwen3.5-0.8B-GGUF")).toEqual({
+      endpointType: "custom",
+      endpointUrl: INFERENCE_ROUTE_URL,
+      ncpPartner: null,
+      model: "hf.co/unsloth/Qwen3.5-0.8B-GGUF",
+      profile: DEFAULT_ROUTE_PROFILE,
+      credentialEnv: LLMMAN_LOCAL_CREDENTIAL_ENV,
+      provider: "llmman-local",
+      providerLabel: "Local llmman",
+    });
+    expect(LLMMAN_LOCAL_CREDENTIAL_ENV).toBe("NEMOCLAW_LLMMAN_LOCAL_TOKEN");
+    expect(
+      getSandboxInferenceConfig(
+        "hf.co/unsloth/Qwen3.5-0.8B-GGUF",
+        "llmman-local",
+        "openai-responses",
+      ),
+    ).toEqual({
+      providerKey: MANAGED_PROVIDER_ID,
+      primaryModelRef: `${MANAGED_PROVIDER_ID}/hf.co/unsloth/Qwen3.5-0.8B-GGUF`,
+      inferenceBaseUrl: INFERENCE_ROUTE_URL,
+      inferenceApi: "openai-completions",
+      inferenceCompat: { supportsStore: false },
+    });
+  });
+
+  it.each([undefined, "", "/models/model.gguf", "models/../secret", "model@sha256:abc"])(
+    "refuses llmman selection without a safe model reference: %s",
+    (model) => {
+      expect(getProviderSelectionConfig("llmman-local", model)).toBeNull();
+    },
+  );
 
   it("maps nvidia-nim to the sandbox inference route", () => {
     expect(getProviderSelectionConfig("nvidia-nim", "nvidia/nemotron-3-super-120b-a12b")).toEqual({

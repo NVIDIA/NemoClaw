@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { LLAMA_CPP_PORT } from "../inference/llama-cpp/contract";
+import { LLMMAN_PORT } from "../inference/llmman/contract";
 
 /**
  * Central port configuration — override any port via environment variables.
@@ -75,6 +76,8 @@ export const OLLAMA_PORT = parsePort("NEMOCLAW_OLLAMA_PORT", 11434);
 export const OLLAMA_PROXY_PORT = parsePort("NEMOCLAW_OLLAMA_PROXY_PORT", 11435);
 /** llama.cpp existing-server attachment port; fixed by the declarative serving contract. */
 export { LLAMA_CPP_PORT };
+/** llmman existing-server attachment port (llmman's default). */
+export { LLMMAN_PORT };
 /** Default Hermes OpenAI-compatible API port (manifest `forward_ports[1]`; the default for start.sh `PUBLIC_PORT`). */
 export const HERMES_OPENAI_API_PORT = 8642;
 /** Start of the auto-allocation range for Hermes API ports (inclusive). */
@@ -147,6 +150,13 @@ const SERVICE_PORT_CATALOG: readonly ServicePortDefinition[] = [
     envVar: null,
     label: "llama.cpp inference",
     defaultPort: LLAMA_CPP_PORT,
+    reserveDefault: true,
+    configuredPort: () => undefined,
+  },
+  {
+    envVar: null,
+    label: "llmman inference",
+    defaultPort: LLMMAN_PORT,
     reserveDefault: true,
     configuredPort: () => undefined,
   },
@@ -281,18 +291,32 @@ export function validateRuntimeAdapterPort(
   validateServicePort(ownerEnvVar, port, options, ownerEnvVar);
 }
 
-/** Reject every configurable service collision with fixed llama.cpp attachment port 8081. */
-export function validateLlamaCppPortReservation(
+function validateFixedPortReservation(
   options: RuntimeAdapterPortValidationOptions,
+  fixedPort: number,
+  label: string,
 ): void {
   const conflict = SERVICE_PORT_CATALOG.find(
-    (entry) => entry.envVar !== null && entry.configuredPort(options) === LLAMA_CPP_PORT,
+    (entry) => entry.envVar !== null && entry.configuredPort(options) === fixedPort,
   );
   if (conflict) {
     throw new Error(
-      `Invalid port: ${conflict.envVar}="${LLAMA_CPP_PORT}" — conflicts with the fixed llama.cpp inference port (${LLAMA_CPP_PORT})`,
+      `Invalid port: ${conflict.envVar}="${fixedPort}" — conflicts with the fixed ${label} inference port (${fixedPort})`,
     );
   }
 }
 
+/** Reject every configurable service collision with fixed llama.cpp attachment port 8081. */
+export function validateLlamaCppPortReservation(
+  options: RuntimeAdapterPortValidationOptions,
+): void {
+  validateFixedPortReservation(options, LLAMA_CPP_PORT, "llama.cpp");
+}
+
+/** Reject every configurable service collision with fixed llmman attachment port 17434. */
+export function validateLlmmanPortReservation(options: RuntimeAdapterPortValidationOptions): void {
+  validateFixedPortReservation(options, LLMMAN_PORT, "llmman");
+}
+
 validateLlamaCppPortReservation(CURRENT_RUNTIME_PORT_CONFIGURATION);
+validateLlmmanPortReservation(CURRENT_RUNTIME_PORT_CONFIGURATION);

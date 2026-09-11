@@ -307,7 +307,8 @@ export function shouldSkipResponsesProbe(provider: string): boolean {
     provider === "nvidia-nim" ||
     provider === "gemini-api" ||
     provider === "openrouter-api" ||
-    provider === "llama-cpp-local"
+    provider === "llama-cpp-local" ||
+    provider === "llmman-local"
   );
 }
 

@@ -73,6 +73,7 @@ const CUSTOM_ROUTE_PROVIDERS = new Set([
   "compatible-endpoint",
   "compatible-anthropic-endpoint",
   "llama-cpp-local",
+  "llmman-local",
 ]);
 
 const SUPPORTED_INFERENCE_APIS = new Set([

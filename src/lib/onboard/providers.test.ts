@@ -42,8 +42,10 @@ const {
   NON_INTERACTIVE_PROVIDER_ALIASES,
   NON_INTERACTIVE_PROVIDER_KEYS,
   REMOTE_PROVIDER_CONFIG,
+  getEffectiveProviderName,
   getNonInteractiveProvider,
   getNonInteractiveModel,
+  getProviderLabel,
   getRequestedModelHint,
   getRequestedProviderHint,
   isProviderKeyCredentialCandidate,
@@ -62,9 +64,12 @@ const {
       providerType: string;
       credentialEnv: string;
       defaultModel: string;
+      endpointUrl: string;
     }
   >;
+  getEffectiveProviderName: (providerKey: string | null | undefined) => string | null;
   getNonInteractiveProvider: (allowHostedInferenceStaging?: boolean) => string | null;
+  getProviderLabel: (provider: string) => string;
   getNonInteractiveModel: (
     providerKey: string,
     options?: { allowProviderModelFallback?: boolean },
@@ -147,6 +152,21 @@ describe("onboard provider helpers", () => {
     expect(NON_INTERACTIVE_PROVIDER_KEYS.has("install-llama-cpp")).toBe(true);
     withProviderEnv({ NEMOCLAW_PROVIDER: "install-llama-cpp" }, () => {
       expect(getNonInteractiveProvider(false)).toBe("install-llama-cpp");
+    });
+  });
+
+  it("selects the llmman existing-server attachment with NEMOCLAW_PROVIDER=llmman", async () => {
+    expect(NON_INTERACTIVE_PROVIDER_KEYS.has("llmman")).toBe(true);
+    withProviderEnv({ NEMOCLAW_PROVIDER: "LLMMAN" }, () => {
+      expect(getNonInteractiveProvider(false)).toBe("llmman");
+    });
+    expect(getEffectiveProviderName("llmman")).toBe("llmman-local");
+    expect(getProviderLabel("llmman-local")).toBe("Local llmman");
+    expect(REMOTE_PROVIDER_CONFIG.llmman).toMatchObject({
+      providerName: "llmman-local",
+      providerType: "openai",
+      credentialEnv: "NEMOCLAW_LLMMAN_LOCAL_TOKEN",
+      endpointUrl: "http://127.0.0.1:17434/v1",
     });
   });
 

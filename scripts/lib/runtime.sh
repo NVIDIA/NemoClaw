@@ -243,11 +243,15 @@ _validate_port() {
       return 1
       ;;
   esac
-  if [[ "$value" =~ ^0*8081$ ]]; then
-    printf 'Invalid %s=%s (conflicts with fixed llama.cpp inference port 8081)\n' \
-      "$name" "$value" >&2
-    return 1
-  fi
+  local fixed fixed_port fixed_label
+  for fixed in "8081 llama.cpp" "17434 llmman"; do
+    read -r fixed_port fixed_label <<<"$fixed"
+    if [[ "$value" =~ ^0*${fixed_port}$ ]]; then
+      printf 'Invalid %s=%s (conflicts with fixed %s inference port %s)\n' \
+        "$name" "$value" "$fixed_label" "$fixed_port" >&2
+      return 1
+    fi
+  done
   if ! { [ "$value" -ge 1024 ] && [ "$value" -le 65535 ]; }; then
     printf 'Invalid %s=%s (expected 1024-65535)\n' "$name" "$value" >&2
     return 1
@@ -264,6 +268,7 @@ get_local_provider_base_url() {
   case "$provider" in
     vllm-local) printf 'http://host.openshell.internal:%s/v1\n' "$vllm_port" ;;
     ollama-local) printf 'http://host.openshell.internal:%s/v1\n' "$ollama_port" ;;
+    llmman-local) printf 'http://host.openshell.internal:17434/v1\n' ;;
     *) return 1 ;;
   esac
 }
@@ -281,6 +286,13 @@ check_local_provider_health() {
       ;;
     ollama-local)
       curl -sf "http://localhost:${ollama_port}/api/tags" >/dev/null 2>&1
+      ;;
+    llmman-local)
+      # Any HTTP status counts: an authenticated daemon answers 401 without a key.
+      local status
+      status="$(curl -s -o /dev/null -w '%{http_code}' \
+        "http://localhost:17434/api/version" 2>/dev/null)" || return 1
+      [ -n "$status" ] && [ "$status" != "000" ]
       ;;
     *)
       return 1

@@ -190,7 +190,7 @@ nemoclaw_state_dir`,
     }
   });
 
-  it.each(["08000", "08081", "11434", "11438", "18790"])(
+  it.each(["08000", "08081", "11434", "11438", "17434", "18790"])(
     "rejects conflicting gateway port %s before writing selected state",
     (gatewayPort) => {
       const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-installer-port-conflict-"));
@@ -236,6 +236,27 @@ save_usage_notice_acceptance_shell "test-version"`,
       fs.rmSync(home, { recursive: true, force: true });
     }
   });
+
+  it.each(["NEMOCLAW_OLLAMA_PORT", "NEMOCLAW_VLLM_PORT"])(
+    "rejects %s on fixed llmman port 17434 before writing selected state",
+    (envName) => {
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-installer-llmman-port-"));
+      try {
+        const result = runInstallerFunctions(
+          home,
+          `${envName}=017434
+save_usage_notice_acceptance_shell "test-version"`,
+        );
+
+        expect(result.status, result.output).not.toBe(0);
+        expect(result.output).toContain(`${envName} must not overlap`);
+        expect(result.output).toContain("fixed llmman inference port (17434)");
+        expect(fs.existsSync(path.join(home, ".nemoclaw", "gateways", "9123"))).toBe(false);
+      } finally {
+        fs.rmSync(home, { recursive: true, force: true });
+      }
+    },
+  );
 
   it.each(stateSymlinkCases)(
     "rejects a symlinked $label state ancestor before writing usage acceptance",

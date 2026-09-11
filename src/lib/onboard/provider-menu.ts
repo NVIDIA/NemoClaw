@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { LLMMAN_PROVIDER_LABEL, LLMMAN_SELECTION_KEY } from "../inference/llmman/contract";
 import type { NvidiaPlatform } from "../inference/nim";
 import { resolveRunningOllamaMenuEntry } from "./ollama-install-menu";
 
@@ -134,6 +135,9 @@ export function buildInferenceProviderMenu(
   // Existing-server attachment stays visible without probing or claiming lifecycle ownership.
   if (!options.some((option) => option.key === "llama-cpp")) {
     options.push({ key: "llama-cpp", label: "Local llama.cpp" });
+  }
+  if (!options.some((option) => option.key === LLMMAN_SELECTION_KEY)) {
+    options.push({ key: LLMMAN_SELECTION_KEY, label: LLMMAN_PROVIDER_LABEL });
   }
 
   return {

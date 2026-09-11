@@ -440,6 +440,10 @@ describe("shouldSkipResponsesProbe", () => {
     expect(shouldSkipResponsesProbe("llama-cpp-local")).toBe(true);
   });
 
+  it("skips the Responses probe for completions-only llmman attachment", () => {
+    expect(shouldSkipResponsesProbe("llmman-local")).toBe(true);
+  });
+
   it("does not skip the Responses probe for other providers", () => {
     expect(shouldSkipResponsesProbe("openai-api")).toBe(false);
     expect(shouldSkipResponsesProbe("anthropic-prod")).toBe(false);

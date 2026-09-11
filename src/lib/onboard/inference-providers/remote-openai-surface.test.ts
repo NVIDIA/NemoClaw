@@ -93,6 +93,17 @@ function createHarness() {
         defaultModel: "",
         skipVerify: true,
       },
+      llmman: {
+        label: "Local llmman",
+        providerName: "llmman-local",
+        providerType: "openai",
+        credentialEnv: "NEMOCLAW_LLMMAN_LOCAL_TOKEN",
+        endpointUrl: "http://127.0.0.1:17434/v1",
+        helpUrl: null,
+        modelMode: "input",
+        defaultModel: "",
+        skipVerify: true,
+      },
     },
     hydrateCredentialEnv: hydrateCredential,
     promptValidationRecovery: vi.fn(async () => "selection" as const),
@@ -506,6 +517,47 @@ describe("llama.cpp existing-server provider registration", () => {
         "llama-cpp-local",
         "--model",
         "team/model-alias",
+      ],
+      { ignoreError: true },
+    );
+  });
+});
+
+describe("llmman existing-server provider registration", () => {
+  it("registers the fixed llmman gateway endpoint with NEMOCLAW_LLMMAN_LOCAL_TOKEN", async () => {
+    const harness = createHarness();
+    harness.deps.hydrateCredentialEnv.mockReturnValue("llmman-secret");
+
+    await expect(
+      setupRemoteProviderInference(
+        {
+          sandboxName: SANDBOX,
+          model: "qwen3.8:latest",
+          provider: "llmman-local",
+          endpointUrl: "http://127.0.0.1:17434/v1",
+          credentialEnv: "NEMOCLAW_LLMMAN_LOCAL_TOKEN",
+          preferredInferenceApi: "openai-completions",
+        },
+        harness.deps,
+      ),
+    ).resolves.toEqual({ done: false });
+
+    expect(harness.upsertProvider).toHaveBeenCalledWith(
+      "llmman-local",
+      "openai",
+      "NEMOCLAW_LLMMAN_LOCAL_TOKEN",
+      "http://host.openshell.internal:17434/v1",
+      { NEMOCLAW_LLMMAN_LOCAL_TOKEN: "llmman-secret" },
+    );
+    expect(harness.runOpenshell).toHaveBeenCalledWith(
+      [
+        "inference",
+        "set",
+        "--no-verify",
+        "--provider",
+        "llmman-local",
+        "--model",
+        "qwen3.8:latest",
       ],
       { ignoreError: true },
     );

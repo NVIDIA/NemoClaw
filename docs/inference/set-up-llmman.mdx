@@ -1,0 +1,109 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "Set Up llmman"
+sidebar-title: "Set Up llmman"
+description: "Attach an existing, authenticated llmman daemon as the local inference provider for NemoClaw."
+description-agent: "Sets up llmman for NemoClaw. Use to attach an operator-run llmman serve daemon on loopback port 17434 with an API key."
+keywords: ["nemoclaw llmman", "llmman serve", "llmman local inference", "oci model registry inference"]
+content:
+  type: "how_to"
+---
+llmman is a local inference daemon that serves GGUF and safetensors models from OCI registries and Hugging Face through the Ollama, OpenAI, and Anthropic wire formats.
+NemoClaw attaches to an llmman daemon that you operate and routes sandbox traffic to it through OpenAI Chat Completions at `https://inference.local/v1`.
+
+Unlike Ollama, which NemoClaw can install and start for you, llmman is operator-run: NemoClaw does not install, start, stop, upgrade, or remove it.
+Refer to [Choose a Local Inference Server](choose-local-inference-server) for the complete comparison.
+
+## Requirements
+
+The llmman daemon must satisfy all of these requirements:
+
+- Listen over HTTP on `127.0.0.1:17434`, which is llmman's default `LLMMAN_HOST`.
+- Require an API key through `LLMMAN_API_KEYS`, and accept the same key from `NEMOCLAW_LLMMAN_LOCAL_TOKEN`.
+- Report the llmman daemon identity on `/api/version`.
+- Store the model you want to serve, so it appears in `llmman list` and `/api/tags`.
+
+NemoClaw refuses a daemon that answers without an API key, because the sandbox reaches it through the OpenShell host bridge on `host.openshell.internal:17434`.
+The `local-inference` network policy allows only `POST /v1/chat/completions` on that port, so llmman's own `/llmman/*` routes stay unreachable from the sandbox.
+
+## Start llmman
+
+Pull the model you want, then start the daemon with an API key:
+
+```bash
+llmman pull qwen3.8
+LLMMAN_API_KEYS="$(openssl rand -hex 32)" llmman serve
+```
+
+Record the key you generated; NemoClaw asks for it as `NEMOCLAW_LLMMAN_LOCAL_TOKEN`.
+Alternatively, store the key with `llmman config set auth.api_keys <key>` so every `llmman serve` requires it.
+
+Confirm the daemon requires the key:
+
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:17434/api/version
+```
+
+The command prints `401`.
+
+## Attach the Daemon
+
+For interactive onboarding, run:
+
+```bash
+$$nemoclaw onboard
+```
+
+Select **Local llmman** and provide the API key.
+When llmman stores exactly one model, NemoClaw selects it.
+When llmman stores several models, NemoClaw lists them and asks you to choose one.
+
+For non-interactive onboarding, export `NEMOCLAW_LLMMAN_LOCAL_TOKEN` from your secret manager and run:
+
+```bash
+: "${NEMOCLAW_LLMMAN_LOCAL_TOKEN:?Export the llmman API key first}"
+NEMOCLAW_PROVIDER=llmman \
+NEMOCLAW_MODEL="qwen3.8" \
+NEMOCLAW_SANDBOX_NAME=my-assistant \
+  $$nemoclaw onboard --non-interactive --yes-i-accept-third-party-software
+```
+
+`NEMOCLAW_MODEL` accepts any reference llmman stores, such as `qwen3.8`, `n/gemma4:latest`, or `hf.co/unsloth/Qwen3.5-0.8B-GGUF`.
+An untagged reference matches the stored `:latest` image.
+You can omit `NEMOCLAW_MODEL` only when llmman stores exactly one model.
+When the requested model is not stored, onboarding stops and prints the `llmman pull` command that stores it.
+
+NemoClaw identifies the daemon from `/api/version`, reads the stored models from `/api/tags`, and validates the selected model through `/v1/chat/completions` before it registers the `llmman-local` provider.
+
+Verify the registered route:
+
+```bash
+$$nemoclaw my-assistant status
+$$nemoclaw my-assistant doctor
+```
+
+## Manage Models
+
+Use the `llmman` CLI to change the stored models; NemoClaw does not pull or remove them.
+
+```bash
+llmman pull hf.co/unsloth/Qwen3.5-0.8B-GGUF
+llmman list
+llmman rm qwen3.8
+```
+
+To switch the sandbox to another stored model, refer to [Switch Models](../manage-inference/switch-models).
+
+## Troubleshooting
+
+| Message | Cause | Action |
+|---|---|---|
+| `No llmman daemon responded on fixed port 17434.` | The daemon is not running, or it listens on another address. | Start `llmman serve` with the default `LLMMAN_HOST`. |
+| `The llmman daemon answered without an API key.` | `LLMMAN_API_KEYS` is not set. | Restart the daemon with `LLMMAN_API_KEYS=<key>`. |
+| `The llmman API key was rejected.` | `NEMOCLAW_LLMMAN_LOCAL_TOKEN` differs from the daemon's keys. | Rerun onboarding and enter a key the daemon accepts, or export the correct `NEMOCLAW_LLMMAN_LOCAL_TOKEN` for non-interactive onboarding. |
+| `The server on port 17434 did not identify itself as llmman.` | Another server, such as Ollama, uses port `17434`. | Stop that server, or use [Set Up an OpenAI-Compatible Endpoint](../custom-endpoints/set-up-openai-compatible-endpoint) for it. |
+| `llmman has no stored model '<reference>'.` | The requested model is not in the llmman store. | Run the printed `llmman pull` command and rerun onboarding. |
+
+Port `17434` is reserved for llmman.
+NemoClaw rejects any other configurable service port set to `17434`.
