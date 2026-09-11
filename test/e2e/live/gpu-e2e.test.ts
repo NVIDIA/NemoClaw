@@ -433,7 +433,6 @@ test(
       NEMOCLAW_SANDBOX_GPU: "0",
       NEMOCLAW_SANDBOX_GPU_DEVICE: "",
       NEMOCLAW_OLLAMA_PORT: "11439",
-      NEMOCLAW_OLLAMA_PROXY_PORT: "11440",
       NEMOCLAW_MODEL: "qwen3.5:9b",
       NEMOCLAW_WEB_SEARCH_PROVIDER: "none",
       OLLAMA_HOST: "127.0.0.1:11439",
@@ -528,7 +527,7 @@ test(
         : undefined;
     expect(exportedProvider.provider).toBe("ollama-local");
     expect(serving?.daemon.hostPort).toBe(11439);
-    expect(serving?.proxy.hostPort).toBe(11440);
+    expect(serving?.proxy.hostPort).toBe(Number(PROXY_PORT));
     expect(serving?.model.digest).toBe(`sha256:${model?.digest.replace(/^sha256:/u, "")}`);
     const entry = loadRegistry().sandboxes[SANDBOX_NAME];
     expect(document.spec.sandboxes[0].runtime.image.ref).toBe(
@@ -562,7 +561,7 @@ test(
     await artifacts.writeJson("ollama-config-export-evidence.json", {
       sandboxName: SANDBOX_NAME,
       daemonPort: 11439,
-      proxyPort: 11440,
+      proxyPort: Number(PROXY_PORT),
       model: "qwen3.5:9b",
       image: document.spec.sandboxes[0].runtime.image.ref,
       repeatedSpecMatches: true,
