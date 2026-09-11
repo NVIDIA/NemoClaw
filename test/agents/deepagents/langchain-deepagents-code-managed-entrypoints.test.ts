@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
+import { execFile } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -22,6 +22,36 @@ const TRACING_ENABLE_ENV_NAMES = [
 
 function readAgentFile(name: string): string {
   return fs.readFileSync(path.join(agentDir, name), "utf8");
+}
+
+function runCommand(
+  file: string,
+  args: readonly string[],
+  options: {
+    encoding: "utf8";
+    env?: NodeJS.ProcessEnv;
+    input?: string;
+    timeout?: number;
+  },
+) {
+  return new Promise<{
+    error: Error | undefined;
+    status: number | null;
+    stderr: string;
+    stdout: string;
+  }>((resolve) => {
+    const { input, ...execOptions } = options;
+    const child = execFile(file, [...args], execOptions, (error, stdout, stderr) => {
+      const exitCode = error?.code;
+      resolve({
+        error: error && typeof exitCode !== "number" ? error : undefined,
+        status: error ? (typeof exitCode === "number" ? exitCode : child.exitCode) : 0,
+        stderr,
+        stdout,
+      });
+    });
+    child.stdin?.end(input);
+  });
 }
 
 const MANAGED_MCP_VALIDATOR_INVOCATION = [
@@ -86,10 +116,10 @@ function makeWrapperFixture(
   return { wrapperPath, ranMarker, autoApprovalPath };
 }
 
-describe("LangChain Deep Agents Code managed entrypoints", () => {
-  it("uses loopback with a canonical DNS URL when the build validator has no route", () => {
+describe.concurrent("LangChain Deep Agents Code managed entrypoints", () => {
+  it("uses loopback with a canonical DNS URL when the build validator has no route", async () => {
     const validator = path.join(agentDir, "validate-read-only-mcp-call.py");
-    const probe = spawnSync(
+    const probe = await runCommand(
       "python3",
       [
         "-I",
@@ -135,14 +165,14 @@ describe("LangChain Deep Agents Code managed entrypoints", () => {
     expect(validator).not.toContain("unittest.mock");
   });
 
-  it("keeps deterministic read-only MCP parsing bounded and structured (#9889)", () => {
+  it("keeps deterministic read-only MCP parsing bounded and structured (#9889)", async () => {
     const commandPath = path.join(agentDir, "nemoclaw_read_only_mcp.py");
-    const invalid = spawnSync("python3", [commandPath, "bad/tool", "--json"], {
+    const invalid = await runCommand("python3", [commandPath, "bad/tool", "--json"], {
       encoding: "utf8",
       input: "{}",
     });
-    const help = spawnSync("python3", [commandPath, "--help"], { encoding: "utf8" });
-    const oversized = spawnSync(
+    const help = await runCommand("python3", [commandPath, "--help"], { encoding: "utf8" });
+    const oversized = await runCommand(
       "python3",
       [
         "-I",
@@ -152,7 +182,7 @@ describe("LangChain Deep Agents Code managed entrypoints", () => {
       ],
       { encoding: "utf8" },
     );
-    const nonFinite = spawnSync(
+    const nonFinite = await runCommand(
       "python3",
       [
         "-I",
@@ -235,11 +265,11 @@ describe("LangChain Deep Agents Code managed entrypoints", () => {
     );
   });
 
-  it("overrides hostile tracing and analytics flags before the managed package starts", () => {
+  it("overrides hostile tracing and analytics flags before the managed package starts", async () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-tracing-"));
     const { wrapperPath } = makeWrapperFixture(tempDir);
     const tracingEnv = Object.fromEntries(TRACING_ENABLE_ENV_NAMES.map((name) => [name, "true"]));
-    const result = spawnSync("bash", [wrapperPath, "-n", "hi"], {
+    const result = await runCommand("bash", [wrapperPath, "-n", "hi"], {
       env: {
         PATH: process.env.PATH ?? "/usr/bin:/bin",
         LANGGRAPH_CLI_NO_ANALYTICS: "0",
@@ -262,10 +292,10 @@ describe("LangChain Deep Agents Code managed entrypoints", () => {
     "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
     "OTEL_EXPORTER_OTLP_HEADERS",
     "OTEL_EXPORTER_OTLP_TRACES_HEADERS",
-  ])("rejects credential-bearing tracing replica configuration in %s", (name) => {
+  ])("rejects credential-bearing tracing replica configuration in %s", async (name) => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-tracing-runs-"));
     const { wrapperPath, ranMarker } = makeWrapperFixture(tempDir);
-    const result = spawnSync("bash", [wrapperPath, "-n", "hi"], {
+    const result = await runCommand("bash", [wrapperPath, "-n", "hi"], {
       env: {
         PATH: process.env.PATH ?? "/usr/bin:/bin",
         [name]: '{"https://trace.example":"opaque-key-value"}',
@@ -291,10 +321,10 @@ describe("LangChain Deep Agents Code managed entrypoints", () => {
     { args: ["--acp"], posture: "ACP approval" },
     { args: ["--startup-cmd", "touch /tmp/unsafe"], posture: "startup command" },
     { args: ["--startup-cmd=touch /tmp/unsafe"], posture: "startup command" },
-  ])("rejects managed runtime override $args", ({ args, posture }) => {
+  ])("rejects managed runtime override $args", async ({ args, posture }) => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-override-"));
     const { wrapperPath, ranMarker } = makeWrapperFixture(tempDir);
-    const result = spawnSync("bash", [wrapperPath, ...args], {
+    const result = await runCommand("bash", [wrapperPath, ...args], {
       env: { PATH: process.env.PATH ?? "/usr/bin:/bin" },
       encoding: "utf8",
     });
@@ -315,10 +345,10 @@ describe("LangChain Deep Agents Code managed entrypoints", () => {
     "--auto-approve",
   ])(
     "allows explicit thread auto-approval through %s only in thread-opt-in mode (#6478)",
-    (arg) => {
+    async (arg) => {
       const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-auto-opt-in-"));
       const { wrapperPath, ranMarker } = makeWrapperFixture(tempDir, "thread-opt-in\n");
-      const result = spawnSync("bash", [wrapperPath, arg], {
+      const result = await runCommand("bash", [wrapperPath, arg], {
         env: {
           PATH: process.env.PATH ?? "/usr/bin:/bin",
           NEMOCLAW_DCODE_AUTO_APPROVAL: "disabled",
@@ -331,10 +361,10 @@ describe("LangChain Deep Agents Code managed entrypoints", () => {
     },
   );
 
-  it("keeps non-interactive argument scanning fail-closed around auto-approval (#6478)", () => {
+  it("keeps non-interactive argument scanning fail-closed around auto-approval (#6478)", async () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-auto-headless-"));
     const { wrapperPath, ranMarker } = makeWrapperFixture(tempDir, "thread-opt-in\n");
-    const enabled = spawnSync("bash", [wrapperPath, "-n", "hi", "--auto-approve"], {
+    const enabled = await runCommand("bash", [wrapperPath, "-n", "hi", "--auto-approve"], {
       env: { PATH: process.env.PATH ?? "/usr/bin:/bin" },
       encoding: "utf8",
     });
@@ -346,7 +376,7 @@ describe("LangChain Deep Agents Code managed entrypoints", () => {
       path.join(os.tmpdir(), "nemoclaw-dcode-auto-headless-disabled-"),
     );
     const disabledFixture = makeWrapperFixture(disabledTempDir);
-    const disabled = spawnSync(
+    const disabled = await runCommand(
       "bash",
       [disabledFixture.wrapperPath, "-n", "hi", "--auto-approve"],
       {
@@ -386,11 +416,11 @@ describe("LangChain Deep Agents Code managed entrypoints", () => {
     },
   ])(
     "fails closed for ambient, malformed, symlinked, and writable auto-approval state [$label] (#6478)",
-    ({ label, prepare }) => {
+    async ({ label, prepare }) => {
       const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-auto-unsafe-"));
       const { wrapperPath, ranMarker, autoApprovalPath } = makeWrapperFixture(tempDir);
       prepare(autoApprovalPath);
-      const result = spawnSync("bash", [wrapperPath, "-y"], {
+      const result = await runCommand("bash", [wrapperPath, "-y"], {
         env: {
           PATH: process.env.PATH ?? "/usr/bin:/bin",
           NEMOCLAW_DCODE_AUTO_APPROVAL: "thread-opt-in",
@@ -405,10 +435,10 @@ describe("LangChain Deep Agents Code managed entrypoints", () => {
     },
   );
 
-  it("removes an inherited OpenAI-specific proxy before the managed package starts", () => {
+  it("removes an inherited OpenAI-specific proxy before the managed package starts", async () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-openai-proxy-"));
     const { wrapperPath } = makeWrapperFixture(tempDir);
-    const result = spawnSync("bash", [wrapperPath, "-n", "hi"], {
+    const result = await runCommand("bash", [wrapperPath, "-n", "hi"], {
       env: {
         PATH: process.env.PATH ?? "/usr/bin:/bin",
         OPENAI_PROXY: "http://user:password@attacker.example:8080",
@@ -420,7 +450,7 @@ describe("LangChain Deep Agents Code managed entrypoints", () => {
     expect(result.stdout).toContain("openai-proxy=__unset__");
   });
 
-  it("ignores hostile PATH and BASH_ENV before wrapper normalization", () => {
+  it("ignores hostile PATH and BASH_ENV before wrapper normalization", async () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-shell-entry-"));
     const { wrapperPath, ranMarker } = makeWrapperFixture(tempDir);
     const fakeBin = path.join(tempDir, "fake-bin");
@@ -435,7 +465,7 @@ describe("LangChain Deep Agents Code managed entrypoints", () => {
     );
     fs.writeFileSync(bashEnv, `touch ${JSON.stringify(bashEnvMarker)}\nexit 92\n`, "utf8");
 
-    const result = spawnSync(wrapperPath, ["-n", "hi"], {
+    const result = await runCommand(wrapperPath, ["-n", "hi"], {
       env: { PATH: `${fakeBin}:${process.env.PATH ?? "/usr/bin:/bin"}`, BASH_ENV: bashEnv },
       encoding: "utf8",
     });
