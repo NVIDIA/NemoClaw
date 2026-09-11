@@ -51,6 +51,13 @@ describe("E2E operations workflow", testTimeoutOptions(15_000), () => {
       ]),
     );
   });
+  it.each([true, undefined])("rejects recorder cone mode %s (#11489)", (coneMode) => {
+    const workflow = readE2eOperationsWorkflow();
+    workflow.jobs["review-queue-result"].steps![0]!.with!["sparse-checkout-cone-mode"] = coneMode;
+    expect(validateE2eOperationsWorkflow(workflow)).toContain(
+      "review-queue-result must execute only its trusted recorder",
+    );
+  });
   it("rejects a lookalike live cold-onboard performance artifact path (#6660)", () => {
     const workflow = readE2eOperationsWorkflow();
     const upload = workflow.jobs.live.steps!.find((step) => step.name === "Upload E2E artifacts")!;

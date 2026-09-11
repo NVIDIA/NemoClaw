@@ -77,6 +77,31 @@ function validateActionMutation(mutate: (action: MutableAction) => void): string
 }
 
 describe("E2E artifact uploads", () => {
+  it.each([
+    { key: "path", value: "${{ runner.temp }}/" },
+    { key: "name", value: "unscoped-result" },
+    { key: "if-no-files-found", value: "ignore" },
+    { key: "include-hidden-files", value: true },
+  ])("rejects changed receipt upload $key (#11489)", ({ key, value }) => {
+    const workflow = mutableWorkflow();
+    const upload = workflow.jobs["review-queue-result"].steps!.find(
+      (step) => step.name === "Upload PR E2E results",
+    )!;
+    upload.with![key] = value;
+    expect(validateUploadE2eArtifactsInvocations(workflow)).toContain(
+      "review-queue-result must not invoke actions/upload-artifact directly",
+    );
+  });
+
+  it("rejects receipt upload from another job (#11489)", () => {
+    const workflow = mutableWorkflow();
+    workflow.jobs["untrusted-reporter"] = workflow.jobs["review-queue-result"];
+    delete workflow.jobs["review-queue-result"];
+    expect(validateUploadE2eArtifactsInvocations(workflow)).toContain(
+      "untrusted-reporter must not invoke actions/upload-artifact directly",
+    );
+  });
+
   it("uses the shared uploader in every E2E execution job", () => {
     expect(validateUploadE2eArtifactsAction()).toEqual([]);
     expect(validateUploadE2eArtifactsInvocations(readWorkflow())).toEqual([]);

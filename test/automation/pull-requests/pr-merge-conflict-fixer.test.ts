@@ -587,11 +587,15 @@ describe("PR merge conflict fixer", () => {
 
   it("configures approved inference through a loopback gateway (#7542)", async () => {
     const env = resolverEnvironment();
+    env.OPENSHELL_DB_URL = "sqlite:///existing-provider-state.db";
     const tools = resolverTools(["/trusted/bin/openshell-sandbox"]);
     const stopGateway = vi.fn(async () => undefined);
     vi.mocked(tools.start).mockReturnValue(stopGateway);
 
     await configureOpenShellInference(env, tools);
+    expect(vi.mocked(tools.start).mock.calls[0]?.[2].env.OPENSHELL_DB_URL).toBe(
+      env.OPENSHELL_DB_URL,
+    );
 
     const gatewayDirectory = path.join(
       required(env.RUNNER_TEMP, "RUNNER_TEMP"),

@@ -1182,7 +1182,8 @@ function validateReviewQueueResult(errors: string[], workflow: OperationsWorkflo
     checkout?.with?.repository !== undefined ||
     checkout?.with?.ref !== "${{ github.workflow_sha }}" ||
     checkout?.with?.["persist-credentials"] !== false ||
-    checkout?.with?.["sparse-checkout"] !== "tools/e2e/review-queue-result.mts"
+    checkout?.with?.["sparse-checkout"] !== "tools/e2e/review-queue-result.mts" ||
+    checkout?.with?.["sparse-checkout-cone-mode"] !== false
   ) {
     errors.push("review-queue-result must execute only its trusted recorder");
   }

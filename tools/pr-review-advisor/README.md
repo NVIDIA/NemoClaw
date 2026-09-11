@@ -179,6 +179,10 @@ The command attempts to remove its temporary snapshot, trusted dependencies, gat
 sandbox after success, failure, or a handled termination signal. It reports cleanup failures with the
 remaining resource name or path. Remove that named resource before retrying.
 
+Each locally owned gateway uses an in-memory database. Its provider records are discarded when the
+gateway process stops. The local runner ignores inherited
+database URLs for its gateway; it does not read or replace an existing gateway database.
+
 ## Output contract
 
 Each specialist returns a Markdown review grounded in repository evidence and shared trusted
