@@ -6,6 +6,7 @@ import type { StdioOptions } from "node:child_process";
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
+import tty from "node:tty";
 
 import { describe, expect, it, vi } from "vitest";
 import { OLLAMA_PORT, OLLAMA_PROXY_PORT } from "../../../core/ports";
@@ -379,7 +380,8 @@ describe("maybeWarmOllamaAfterDaemonRestart", () => {
     expect(cleanups[2]).toHaveBeenCalledOnce();
   });
 
-  it("forwards SIGTERM to an active recovery child and releases its Docker environment", async () => {
+  it.each(["SIGTERM", "SIGINT"] as const)("cleans recovery after %s", async (signal) => {
+    vi.spyOn(tty, "isatty").mockReturnValue(false);
     const childEvents = new EventEmitter();
     const signalEvents = new EventEmitter();
     const stderr = new EventEmitter();
@@ -421,15 +423,15 @@ describe("maybeWarmOllamaAfterDaemonRestart", () => {
         spawnRecoveryChild,
       },
     );
-    signalEvents.emit("SIGTERM");
+    signalEvents.emit(signal);
 
     await expect(pending).resolves.toMatchObject({
       exitCode: null,
-      signal: "SIGTERM",
+      signal,
       timedOut: false,
     });
     expect(child.kill).toHaveBeenCalledOnce();
-    expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+    expect(child.kill).toHaveBeenCalledWith(signal);
     expect(spawnRecoveryChild.mock.calls[0]?.[0]).toBe("docker");
     expect(spawnRecoveryChild.mock.calls[0]?.[3]?.DOCKER_CONFIG).toBe(
       "/tmp/credential-free-docker",
