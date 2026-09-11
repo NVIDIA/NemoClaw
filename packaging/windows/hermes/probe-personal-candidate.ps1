@@ -41,11 +41,11 @@ try {
     $marker=Get-Content -LiteralPath (Join-Path $runtime 'nemoclaw-windows-runtime.json') -Raw|ConvertFrom-Json
     $homeLine=@(Get-Content -LiteralPath (Join-Path $runtime 'hermes-agent\venv\pyvenv.cfg') | Where-Object { $_ -match '^home\s*=' })
     if($homeLine.Count -ne 1){throw 'The original managed Python home is ambiguous.'}
-    $home=($homeLine[0] -replace '^home\s*=\s*','').Trim()
+    $managedPythonHome=($homeLine[0] -replace '^home\s*=\s*','').Trim()
     $relative=[string]$marker.environmentHomes.'hermes-agent/venv'
     $suffix='\'+$relative.Replace('/','\')
-    if(-not $home.EndsWith($suffix,[StringComparison]::OrdinalIgnoreCase)){throw 'The original generated Python home is not bound to the candidate layout.'}
-    $original=$home.Substring(0,$home.Length-$suffix.Length)
+    if(-not $managedPythonHome.EndsWith($suffix,[StringComparison]::OrdinalIgnoreCase)){throw 'The original generated Python home is not bound to the candidate layout.'}
+    $original=$managedPythonHome.Substring(0,$managedPythonHome.Length-$suffix.Length)
     if($original -ceq $runtime -or (Test-Path -LiteralPath $original)){throw 'The original build root must be absent during moved-root execution.'}
     $receipt['originalBuildRoot']=$original
     $receipt['originalBuildRootAbsent']=$true
