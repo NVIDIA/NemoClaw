@@ -93,6 +93,7 @@ COPY agents/hermes/a2a-neutral.patch agents/hermes/patch-gateway-runtime-metadat
 COPY agents/hermes/patch-gateway-process-identity.py /opt/nemoclaw-hermes-config/patch-gateway-process-identity.py
 COPY agents/hermes/patch-cron-execution-runtime.py /opt/nemoclaw-hermes-config/patch-cron-execution-runtime.py
 COPY agents/hermes/patch-cron-restore-drain.py /opt/nemoclaw-hermes-config/patch-cron-restore-drain.py
+COPY agents/hermes/patch-auxiliary-token-limit.py /opt/nemoclaw-hermes-config/patch-auxiliary-token-limit.py
 COPY agents/hermes/patch-neutral-platform-env-activation.py /opt/nemoclaw-hermes-config/patch-neutral-platform-env-activation.py
 COPY agents/hermes/patch-session-list-preview.py /opt/nemoclaw-hermes-config/patch-session-list-preview.py
 COPY agents/hermes/patch-profile-policy-defaults.py /opt/nemoclaw-hermes-config/patch-profile-policy-defaults.py
@@ -455,7 +456,7 @@ COPY --from=hermes-agent-payload / /
 # published base can carry the expected Hermes version while omitting either
 # optional dependency group. This is a build-time package/import guard; live
 # protocol behavior remains a separate E2E concern.
-ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=ba0ac83296f802780b48ecc6807620a2050c7407e654f20bf7f30bfad4746038
+ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=e52443b42315fde3f1a1c7dd2e3c86a3fdea7c9bea73c57e67399f61d47bbbb7
 # hadolint ignore=DL3059,DL4006
 RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256" /opt/nemoclaw-hermes-config/image-build-probes.py \
@@ -483,7 +484,7 @@ RUN find /opt/nemoclaw-hermes-config -type d -exec chmod 755 {} + \
 # same-version wheel selected by its lazy installer. Bind that production
 # boundary to NVIDIA/NemoClaw's reviewed wheel hashes.
 ARG NEMOCLAW_HERMES_HINDSIGHT_LAZY_INTEGRITY_PATCH_SHA256=5c619477c10e0b76cffd7adc214cbccf3beb77e7a1121f394c443502d9e0b736
-ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=ba0ac83296f802780b48ecc6807620a2050c7407e654f20bf7f30bfad4746038
+ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=e52443b42315fde3f1a1c7dd2e3c86a3fdea7c9bea73c57e67399f61d47bbbb7
 # hadolint ignore=DL4006
 RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_HINDSIGHT_LAZY_INTEGRITY_PATCH_SHA256" /opt/nemoclaw-hermes-config/hindsight-lazy-integrity.patch \
@@ -702,6 +703,21 @@ RUN set -eu; \
         /opt/nemoclaw-hermes-config/patch-gateway-process-identity.py \
         /opt/nemoclaw-hermes-config/patch-cron-execution-runtime.py \
         /opt/nemoclaw-hermes-config/patch-cron-restore-drain.py
+
+# Hermes v0.20.6 drops explicit auxiliary output limits on custom endpoints.
+# Preserve those limits on NemoClaw's managed inference route so session-title
+# generation cannot occupy Ollama's only inference slot until the context fills.
+ARG NEMOCLAW_HERMES_AUXILIARY_TOKEN_LIMIT_PATCHER_SHA256=d04ffc133e115caddd6a1243979e317a512a4ffd8b259ec2b053a5057c26ba93
+# hadolint ignore=DL4006
+RUN printf '%s  %s\n' \
+        "$NEMOCLAW_HERMES_AUXILIARY_TOKEN_LIMIT_PATCHER_SHA256" /opt/nemoclaw-hermes-config/patch-auxiliary-token-limit.py \
+    | sha256sum -c - \
+    || { echo "ERROR: patch-auxiliary-token-limit.py hash mismatch (update NEMOCLAW_HERMES_AUXILIARY_TOKEN_LIMIT_PATCHER_SHA256)" >&2; exit 1; }; \
+    /usr/bin/python3 -I /opt/nemoclaw-hermes-config/patch-auxiliary-token-limit.py \
+    && /opt/hermes/.venv/bin/python -m py_compile /opt/hermes/agent/auxiliary_client.py \
+    && /opt/hermes/.venv/bin/python -I \
+        /opt/nemoclaw-hermes-config/image-build-probes.py auxiliary-token-limit \
+    && rm /opt/nemoclaw-hermes-config/patch-auxiliary-token-limit.py
 
 # Hermes v0.20.6 computes `sessions list` preview from the first user message.
 # Its workspace-aware titled table then hides the preview behind an automatic
@@ -1646,6 +1662,7 @@ RUN check_metadata() { \
     && check_absent /opt/nemoclaw-hermes-config/patch-gateway-process-identity.py \
     && check_absent /opt/nemoclaw-hermes-config/patch-cron-execution-runtime.py \
     && check_absent /opt/nemoclaw-hermes-config/patch-cron-restore-drain.py \
+    && check_absent /opt/nemoclaw-hermes-config/patch-auxiliary-token-limit.py \
     && check_absent /opt/nemoclaw-hermes-config/patch-session-list-preview.py \
     && check_absent /opt/nemoclaw-hermes-config/patch-profile-policy-defaults.py \
     && check_absent /opt/nemoclaw-hermes-config/patch-neutral-platform-env-activation.py \
