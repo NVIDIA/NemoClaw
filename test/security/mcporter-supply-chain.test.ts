@@ -232,7 +232,7 @@ describe("mcporter image supply-chain controls", () => {
     const receiptVerification = mcporterAuditHelper.indexOf(
       '"$receipt_sha256" "$receipt" | sha256sum --check --status',
     );
-    const rawBinding = mcporterAuditHelper.indexOf('"rawResponseSha256"');
+    const rawBinding = mcporterAuditHelper.indexOf(".rawResponseSha256");
     const rawVerification = mcporterAuditHelper.indexOf(
       '"$raw_report_sha256" "$raw_report" | sha256sum --check --status',
     );

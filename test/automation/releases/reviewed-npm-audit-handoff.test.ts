@@ -593,6 +593,54 @@ describe("npm audit handoff", () => {
       expect(fs.existsSync(retainedResult)).toBe(false);
       expect(fs.existsSync(nodeLog)).toBe(false);
 
+      const forgedRawReport = path.join(root, "forged-raw-report.json");
+      const forgedRawHelper = path.join(root, "verify-forged-mcporter-raw-report.sh");
+      fs.writeFileSync(forgedRawReport, "{}\n");
+      fs.writeFileSync(
+        forgedRawHelper,
+        helperSource.replaceAll(transportRawReport, forgedRawReport),
+        { mode: 0o755 },
+      );
+      const rejectedRawReport = runHelper(
+        correctReceiptSha256,
+        verifiedPolicyResultSha256,
+        forgedRawHelper,
+      );
+      expect(rejectedRawReport.status).not.toBe(0);
+      expect(rejectedRawReport.stderr).toContain(
+        "raw report does not match the verified receipt",
+      );
+      expect(fs.existsSync(retainedReport)).toBe(false);
+      expect(fs.existsSync(retainedResult)).toBe(false);
+      expect(fs.existsSync(nodeLog)).toBe(false);
+
+      const malformedReceipt = path.join(root, "malformed-receipt.json");
+      const malformedReceiptHelper = path.join(root, "verify-malformed-mcporter-receipt.sh");
+      fs.writeFileSync(
+        malformedReceipt,
+        `not-json "rawResponseSha256":"${createHash("sha256").update(rawReport).digest("hex")}"\n`,
+      );
+      fs.writeFileSync(
+        malformedReceiptHelper,
+        helperSource.replaceAll(receiptFile, malformedReceipt),
+        { mode: 0o755 },
+      );
+      const malformedReceiptSha256 = createHash("sha256")
+        .update(fs.readFileSync(malformedReceipt))
+        .digest("hex");
+      const rejectedMalformedReceipt = runHelper(
+        malformedReceiptSha256,
+        verifiedPolicyResultSha256,
+        malformedReceiptHelper,
+      );
+      expect(rejectedMalformedReceipt.status).not.toBe(0);
+      expect(rejectedMalformedReceipt.stderr).toContain(
+        "receipt does not declare a raw response SHA-256",
+      );
+      expect(fs.existsSync(retainedReport)).toBe(false);
+      expect(fs.existsSync(retainedResult)).toBe(false);
+      expect(fs.existsSync(nodeLog)).toBe(false);
+
       const accepted = runHelper();
       expect(accepted.status, accepted.stderr).toBe(0);
       expect(fs.readFileSync(transportRawReport, "utf8")).toBe(rawReport);
