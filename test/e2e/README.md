@@ -794,30 +794,58 @@ recreation each run once. If onboarding or recreation reports missing canonical
 CLI device pairing or a bounded CLI scope warm-up failure, the test attempts to
 record structured diagnostics, attempts to write bounded `failed-no-retry`
 evidence, and then stops without automatically resuming the ambiguously mutated
-session. An evidence
-write failure propagates, so that retry artifact may be absent. `tools.invoke`
+session. An evidence write failure propagates, so that retry artifact may be
+absent. `tools.invoke`
 assertions prove the plugin version after onboarding, restart, and recreation.
-The job also keeps the test-only tmpfs mount and uses OpenClaw's plugin installer
-across the proven filesystem boundary before restart. `e2e-support` tests own
-sandbox-create interception and wrapper argument rewriting. Onboarding and
-recreation load the test-only interceptor; all other OpenShell commands use the
-canonical binary so dashboard forward ownership remains verifiable. Deterministic
-tests own exact package versions and third-party replacement internals. Runtime inspection and catalog
-permutations are outside this live contract. Workspace preservation and policy
-selection retain their focused coverage instead of another assertion in this
-target. The `rebuild-openclaw` job remains the canonical live rebuild coverage.
+The job uses OpenClaw's real plugin installer from a read-only host mount whose
+device differs from the extension target. This proves installation across the
+filesystem boundary, not a particular internal `EXDEV` system call or fallback.
+
+The live assertions stop at the boundary outcomes: v1 after onboarding,
+distinct source and target devices, a successful real install, v1-exdev after a
+real gateway restart, v2 after recreation, and registered cleanup. The target
+does not rewrite OpenShell commands or assert terminal wording. Its one
+forward-specific setup check proves the restarted listener belongs to the exact
+canonical OpenShell command before targeted termination, then bounds port
+release before recreation. Fast tests own the listener matching and
+termination behavior. `e2e-support` also owns canonical component composition,
+immutable image handoff, recreation command shape, fixture extraction safety,
+output parsing, and cleanup ordering. Deterministic tests own exact package
+versions and third-party replacement internals. Runtime inspection and catalog
+permutations remain outside this live contract. Workspace preservation and
+policy selection retain their focused coverage. The `rebuild-openclaw` job
+remains the canonical live rebuild coverage.
 
 The current-checkout fixture locally prebuilds repository-controlled images
-with BuildKit. It verifies each local tag, then passes the matching immutable
-image ID to OpenShell. User-supplied `--from` Dockerfiles retain the
-gateway-builder trust boundary and are never host-prebuilt by this fixture.
-The current-checkout fixture enables local base-image resolution after the
-workflow removes Docker Hub credentials.
+with BuildKit. It verifies each local tag, extracts the cross-device payload
+from the matching immutable image ID into a fresh canonical `/dev/shm`
+directory, and mounts that directory read-only at the same target during
+onboarding and recreation. A minimal custom Dockerfile pins the image ID while
+preserving the tool-disclosure build arguments. Canonical OpenShell CLI,
+gateway, and sandbox executables own every forward lifecycle command. User
+`--from` Dockerfiles retain the gateway-builder trust boundary and are never
+host-prebuilt by this fixture. The current-checkout fixture enables local
+base-image resolution after the workflow removes Docker Hub credentials.
 
 The release-baseline lane is retired. Historical package versions are not part
 of this current runtime contract.
 
-Push-run timing for the reduced lifecycle has not yet been measured.
+At issue creation, the live target had 9 direct `expect` calls and 17 direct
+assertion points across 654 lines. Its three companions raised the transitive
+totals to 9 `expect` calls, 32 assertion points, and three generated probe
+blocks across 1,178 lines. A passing seven-phase run took about 20 minutes even
+though the core cross-device install took about seven seconds. After #11552
+fixed canonical forward ownership, the current base kept those assertion totals
+while growing to 658 target lines and 1,202 transitive live lines. Its first
+automatic main run completed the live step in 7 minutes 26 seconds.
+
+The #11547 reduction keeps all seven phases and the target's 9 direct `expect`
+calls while lowering the direct assertion points from 17 to 16. Its two
+companions bring the transitive totals to 9 `expect` calls, 25 assertion points,
+and no generated probe blocks across 1,140 lines. Against the current base, the
+live target falls from 658 to 585 lines and the transitive live surface falls
+from 1,202 to 1,140 lines.
+Push-run timing for this revision is recorded by the focused PR E2E run.
 
 ## OpenShell development artifact retention
 

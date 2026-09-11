@@ -28,21 +28,27 @@ import { expect, test } from "../fixtures/e2e-test.ts";
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
 import { captureIssue4462FailureDiagnostics } from "../fixtures/issue-4462-diagnostics.ts";
 import { runOpenClawPluginWithFailureEvidence } from "../fixtures/openclaw-plugin-runtime-exdev-onboard.ts";
+import {
+  type OpenShellComponents,
+  resolveOpenShellSiblingComponents,
+  withCanonicalOpenShellEnv,
+} from "../../helpers/openshell-components.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import type { TestProgress } from "../fixtures/progress.ts";
 import { parseJsonFromText } from "./json-envelope.ts";
 import {
+  buildOpenClawPluginLifecycleOnboardArgs,
   buildTrustedPluginFixtureImage,
-  createOpenShellTrustedImageWrapper,
   createTrustedPluginFixtureDockerfile,
+  createTrustedPluginFixtureHandoff,
+  createTrustedPluginFixtureHostMountSource,
+  crossDevicePluginInstall,
+  extractTrustedPluginFixtureToHost,
+  normalizeSandboxStdoutFrames,
+  parseCrossDeviceInstallEvidence,
   registerTrustedPluginFixtureImageCleanup,
-  TRUSTED_PLUGIN_FIXTURE_IMAGE_DIR,
+  writeTrustedPluginFixtureHandoff,
 } from "./openclaw-plugin-runtime-exdev-trusted-prebuild.ts";
-import {
-  type OpenShellComponents,
-  resolveOpenShellSiblingComponents,
-  withOpenShellDriverConfigWrapperEnv,
-} from "./openshell-driver-config-test-wrapper.ts";
 
 // Keep this contract as a focused live test: build a deterministic custom plugin
 // on top of the complete managed runtime, install it across a real filesystem
@@ -54,35 +60,9 @@ const ONBOARD_TIMEOUT_MS = execTimeout(25 * 60_000);
 const LIVE_TIMEOUT_MS = testTimeout(65 * 60_000);
 const PROBE_TIMEOUT_MS = 60_000;
 const EXDEV_API_KEY = "nemoclaw-exdev-dummy-key";
-const EXDEV_TMPFS_MOUNT = "/tmp/nemoclaw-exdev-tmpfs";
-const EXDEV_TMPFS_SOURCE = `${EXDEV_TMPFS_MOUNT}/source`;
-const EXDEV_TMPFS_MOUNT_CONFIG = {
-  type: "tmpfs",
-  target: EXDEV_TMPFS_MOUNT,
-  // tmpfs is read-write by default. Docker's MountTmpfsOptions rejects `rw`,
-  // `nosuid`, and `nodev`; `noexec` is supported by both pinned drivers.
-  options: ["noexec"],
-  size_bytes: 16_777_216,
-  mode: 0o1777,
-} as const;
-const EXDEV_TMPFS_DRIVER_CONFIG = JSON.stringify({
-  docker: {
-    mounts: [EXDEV_TMPFS_MOUNT_CONFIG],
-  },
-  podman: {
-    mounts: [EXDEV_TMPFS_MOUNT_CONFIG],
-  },
-});
 type WeatherFixtureVersion = "v1" | "v1-exdev" | "v2";
 validateSandboxName(SANDBOX_NAME);
 process.env.NEMOCLAW_CLI_BIN ??= CLI_ENTRYPOINT;
-
-function normalizeSandboxStdoutFrames(output: string): string {
-  return output
-    .split(/\r?\n/)
-    .map((line) => line.replace(/^\s*(?:\[stdout\]|stdout:)\s*/i, ""))
-    .join("\n");
-}
 
 function liveEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   return {
@@ -108,7 +88,7 @@ async function installAndResolveOpenShell(
   installScriptPath: string,
 ): Promise<OpenShellComponents> {
   const install = await host.command("bash", [installScriptPath], {
-    artifactName: "install-openshell-for-exdev-wrapper",
+    artifactName: "install-openshell-for-exdev-lifecycle",
     env: liveEnv(),
     timeoutMs: 5 * 60_000,
   });
@@ -116,24 +96,6 @@ async function installAndResolveOpenShell(
   const resolved = resolveOpenshell();
   assert(resolved, "OpenShell installer did not leave an executable CLI");
   return resolveOpenShellSiblingComponents(resolved);
-}
-
-async function stopOpenShellGatewayBeforeInstall(
-  host: HostCliClient,
-  env: NodeJS.ProcessEnv = liveEnv(),
-): Promise<void> {
-  const openshellPath = resolveOpenshell();
-  if (!openshellPath) return;
-  const stop = await host.command(openshellPath, ["gateway", "stop", "-g", "nemoclaw"], {
-    artifactName: "stop-openshell-gateway-before-install",
-    env,
-    timeoutMs: 60_000,
-  });
-  const diagnostic = resultText(stop);
-  assert(
-    stop.exitCode === 0 || /^No gateway metadata found(?: for nemoclaw)?[.!]?$/i.test(diagnostic),
-    diagnostic,
-  );
 }
 
 type CustomPluginBuildContext = {
@@ -258,22 +220,6 @@ async function assertWeatherPluginRuntime(
   return (invocation.result?.details as { fixtureVersion?: unknown } | undefined)?.fixtureVersion;
 }
 
-const crossDevicePluginInstallSource = `set -eu
-rm -rf ${EXDEV_TMPFS_SOURCE}
-mkdir -p ${EXDEV_TMPFS_SOURCE} /sandbox/.openclaw/extensions
-cp -R ${TRUSTED_PLUGIN_FIXTURE_IMAGE_DIR}/. ${EXDEV_TMPFS_SOURCE}/
-source_device=$(stat -c '%d' ${EXDEV_TMPFS_SOURCE})
-target_device=$(stat -c '%d' /sandbox/.openclaw/extensions)
-printf 'source_device=%s target_device=%s\n' "$source_device" "$target_device"
-if [ "$source_device" = "$target_device" ]; then
-  printf 'EXDEV guard did not get distinct filesystems for ${EXDEV_TMPFS_SOURCE} and /sandbox extensions\n' >&2
-  exit 2
-fi
-HOME=/sandbox openclaw plugins install ${EXDEV_TMPFS_SOURCE} --force
-(cd /sandbox/.openclaw && sha256sum openclaw.json > .config-hash)`;
-
-const crossDevicePluginInstall = trustedSandboxShellScript(crossDevicePluginInstallSource);
-
 async function prepareCustomPluginSource(
   host: HostCliClient,
   cleanup: CleanupRegistry,
@@ -349,7 +295,7 @@ async function requireDocker(
 }
 
 test(
-  "the current-lifecycle custom plugin survives restart and recreation without EXDEV failures (#6108)",
+  "the current-lifecycle custom plugin survives restart and recreation across filesystems (#6108, #11547)",
   {
     timeout: LIVE_TIMEOUT_MS,
     meta: {
@@ -368,15 +314,14 @@ test(
     await artifacts.target.declare({
       id: "openclaw-plugin-runtime-exdev",
       boundary: "fresh-openclaw-sandbox-exec",
-      regressionTargets: ["#6108"],
+      regressionTargets: ["#6108", "#11547"],
       contract: [
         "the current checkout builds and onboards the weather plugin as v1",
         "tools.invoke proves the distinct cross-device payload survives restart and recreation installs v2",
-        "the repository-controlled fixture is prebuilt with local BuildKit and handed to OpenShell as a local image",
-        `test-only driver config mounts tmpfs at ${EXDEV_TMPFS_MOUNT}`,
-        `sandbox proves ${EXDEV_TMPFS_SOURCE} and the OpenClaw extension target are distinct devices`,
+        "the repository-controlled fixture is prebuilt with local BuildKit and handed to canonical OpenShell through an immutable custom image",
+        "the EXDEV source is a stable read-only host mount carried through recreation",
+        "the sandbox proves the mounted source and OpenClaw extension target are distinct devices",
         "OpenClaw installs the weather plugin across that boundary before restart",
-        "the restarted dashboard forward is owned by canonical OpenShell, not the test wrapper",
       ],
       selector: "current-lifecycle",
       nemoclawSource: "current-checkout",
@@ -397,6 +342,8 @@ test(
       environment: liveEnv(),
       host,
     });
+    const imageHandoff = createTrustedPluginFixtureHandoff(cleanup);
+    const hostMountSource = createTrustedPluginFixtureHostMountSource(cleanup);
     cleanup.trackGateway(host, "nemoclaw", {
       artifactName: "cleanup-trusted-exdev-gateway-nemoclaw",
       env: liveEnv(),
@@ -434,7 +381,6 @@ test(
     const customPluginContext = await prepareCustomPluginSource(host, cleanup);
     const deploymentEnv = await startDeploymentFixture(artifacts, cleanup, progress);
     progress.phase("install and validate current OpenShell");
-    await stopOpenShellGatewayBeforeInstall(host);
     const openshell = await installAndResolveOpenShell(
       host,
       path.join(REPO_ROOT, "scripts", "install-openshell.sh"),
@@ -444,16 +390,7 @@ test(
       env: liveEnv(),
       timeoutMs: PROBE_TIMEOUT_MS,
     });
-    const openshellWrapper = createOpenShellTrustedImageWrapper({
-      driverConfigJson: EXDEV_TMPFS_DRIVER_CONFIG,
-      realOpenshellPath: openshell.cli,
-    });
-    cleanup.add("remove current EXDEV OpenShell PATH wrapper", openshellWrapper.remove);
-    const sandboxEnv = withOpenShellDriverConfigWrapperEnv(
-      deploymentEnv,
-      openshellWrapper,
-      openshell,
-    );
+    const sandboxEnv = withCanonicalOpenShellEnv(deploymentEnv, openshell);
     const capturePairingDiagnostics = () =>
       captureIssue4462FailureDiagnostics(sandbox, {
         env: sandboxEnv,
@@ -499,26 +436,26 @@ test(
       sandboxName: SANDBOX_NAME,
       version: "v1",
     });
-    openshellWrapper.selectImage(pluginImageV1);
+    writeTrustedPluginFixtureHandoff(imageHandoff, pluginImageV1);
+    await extractTrustedPluginFixtureToHost({
+      environment: liveEnv(),
+      host,
+      image: pluginImageV1,
+      sourceDirectory: hostMountSource,
+    });
     const onboard = await runOpenClawPluginWithFailureEvidence({
       operation: "openclaw-plugin-runtime-exdev.onboard-pairing",
       sandboxName: SANDBOX_NAME,
       run: () =>
         host.command(
           "node",
-          [
-            "--require",
-            openshellWrapper.createPreloadPath,
-            CLI_ENTRYPOINT,
-            "onboard",
-            "--fresh",
-            "--non-interactive",
-            "--yes-i-accept-third-party-software",
-            "--agent",
-            "openclaw",
-            "--from",
-            customPluginContext.dockerfilePath,
-          ],
+          buildOpenClawPluginLifecycleOnboardArgs({
+            cliEntrypoint: CLI_ENTRYPOINT,
+            dockerfilePath: imageHandoff.dockerfilePath,
+            hostMountSource,
+            recreate: false,
+            sandboxName: SANDBOX_NAME,
+          }),
           {
             artifactName: "openclaw-plugin-exdev-onboard",
             env: sandboxEnv,
@@ -540,12 +477,11 @@ test(
       timeoutMs: PROBE_TIMEOUT_MS,
     });
     const crossDeviceInstallText = resultText(crossDeviceInstall);
-    const [, sourceDevice, targetDevice] =
-      /source_device=(\d+) target_device=(\d+)/.exec(crossDeviceInstallText) ?? [];
+    const { sourceDevice, targetDevice } = parseCrossDeviceInstallEvidence(crossDeviceInstallText);
     expect(
       crossDeviceInstall.exitCode === 0 &&
-        sourceDevice !== undefined &&
-        targetDevice !== undefined &&
+        sourceDevice !== null &&
+        targetDevice !== null &&
         sourceDevice !== targetDevice,
       crossDeviceInstallText,
     ).toBe(true);
@@ -593,7 +529,7 @@ test(
       sandboxName: SANDBOX_NAME,
       version: "v2",
     });
-    openshellWrapper.selectImage(pluginImageV2);
+    writeTrustedPluginFixtureHandoff(imageHandoff, pluginImageV2);
     terminateProcessIfRunning(listenerAfterRestart.pid!, "SIGKILL");
     expect(
       waitUntil(() => !isLocalForwardReachable(DASHBOARD_PORT, 100), 5, 50),
@@ -605,23 +541,13 @@ test(
       run: () =>
         host.command(
           "node",
-          [
-            "--require",
-            openshellWrapper.createPreloadPath,
-            CLI_ENTRYPOINT,
-            "onboard",
-            "--fresh",
-            "--recreate-sandbox",
-            "--non-interactive",
-            "--yes",
-            "--yes-i-accept-third-party-software",
-            "--name",
-            SANDBOX_NAME,
-            "--agent",
-            "openclaw",
-            "--from",
-            customPluginContext.dockerfilePath,
-          ],
+          buildOpenClawPluginLifecycleOnboardArgs({
+            cliEntrypoint: CLI_ENTRYPOINT,
+            dockerfilePath: imageHandoff.dockerfilePath,
+            hostMountSource,
+            recreate: true,
+            sandboxName: SANDBOX_NAME,
+          }),
           {
             artifactName: "openclaw-weather-plugin-recreate",
             env: sandboxEnv,
@@ -645,7 +571,8 @@ test(
       crossDeviceInstallExitCode: crossDeviceInstall.exitCode,
       restartExitCode: restart.exitCode,
       recreateExitCode: recreate.value!.exitCode,
-      testOnlyTmpfsSource: EXDEV_TMPFS_SOURCE,
+      hostMountSourceDevice: sourceDevice,
+      extensionTargetDevice: targetDevice,
       assertions: {
         initialImagePluginV1: weatherAfterOnboard === "v1",
         crossDevicePayloadSurvivedRestart: weatherAfterRestart === "v1-exdev",
