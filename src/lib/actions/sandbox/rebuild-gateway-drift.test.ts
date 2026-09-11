@@ -8,6 +8,7 @@ import * as openshellRuntime from "../../adapters/openshell/runtime";
 import * as gatewayRuntime from "../../gateway-runtime-action";
 import * as dockerDriverRecovery from "../../onboard/docker-driver-sandbox-recovery";
 import * as registry from "../../state/registry";
+import * as crossPortRegistry from "../../state/registry/cross-port";
 import * as registryPersistence from "../../state/registry/persistence";
 import { type RebuildSandboxEntry, resolveRebuildLiveState } from "./rebuild-flow-helpers";
 import {
@@ -84,6 +85,14 @@ describe("rebuild gateway drift preflight", () => {
       .spyOn(dockerDriverRecovery, "recoverDockerDriverSandbox")
       .mockReturnValue({ recovered: false, via: null });
     vi.spyOn(registry, "getSandbox").mockReturnValue(makeSandboxEntry() as never);
+    vi.spyOn(crossPortRegistry, "findSandboxAcrossGatewayRoots").mockImplementation(
+      (name: string) => {
+        const entry = registry.getSandbox(name);
+        return entry
+          ? { entry, gatewayPort: entry.gatewayPort ?? null, registryFile: "/test/sandboxes.json" }
+          : null;
+      },
+    );
     vi.spyOn(registryPersistence, "load").mockReturnValue({
       sandboxes: { alpha: makeSandboxEntry() },
     } as never);

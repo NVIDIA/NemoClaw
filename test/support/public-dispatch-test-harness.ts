@@ -12,6 +12,7 @@ type SandboxStub = { name: string; pendingRouteReservation?: true; createdAt?: s
 export type DirectPublicDispatchHarness = {
   dispatchCli: (argv: string[]) => Promise<void>;
   exitSpy: ReturnType<typeof vi.spyOn>;
+  findSandboxAcrossGatewayRoots: ReturnType<typeof vi.fn>;
   getDefault: ReturnType<typeof vi.fn>;
   getSandbox: ReturnType<typeof vi.fn>;
   listSandboxes: ReturnType<typeof vi.fn>;
@@ -104,6 +105,11 @@ export async function withDirectPublicDispatch(
     if (options.registryReadError) throw options.registryReadError;
     return sandboxes.get(name) ?? null;
   });
+  const findSandboxAcrossGatewayRoots = vi.fn((name: string) => {
+    if (options.registryReadError) throw options.registryReadError;
+    const entry = sandboxes.get(name);
+    return entry ? { entry, gatewayPort: null, registryFile: "/test/sandboxes.json" } : null;
+  });
   const isPublishedSandboxRegistration = vi.fn(
     (sandbox: SandboxStub) => sandbox.pendingRouteReservation !== true,
   );
@@ -145,6 +151,7 @@ export async function withDirectPublicDispatch(
   const resetObservedCalls = () => {
     stderr.length = 0;
     exitSpy.mockClear();
+    findSandboxAcrossGatewayRoots.mockClear();
     getDefault.mockClear();
     getSandbox.mockClear();
     listSandboxes.mockClear();
@@ -162,11 +169,7 @@ export async function withDirectPublicDispatch(
   });
   if (!options.preserveHome) {
     cacheModule(crossPortRegistryPath, {
-      findSandboxAcrossGatewayRoots: (name: string) => {
-        if (options.registryReadError) throw options.registryReadError;
-        const entry = sandboxes.get(name);
-        return entry ? { entry, gatewayPort: null, registryFile: "/test/sandboxes.json" } : null;
-      },
+      findSandboxAcrossGatewayRoots,
       listPublishedSandboxNamesAcrossGatewayRoots: () =>
         [...sandboxes.values()]
           .filter(({ pendingRouteReservation }) => pendingRouteReservation !== true)
@@ -197,6 +200,7 @@ export async function withDirectPublicDispatch(
     await run({
       dispatchCli,
       exitSpy,
+      findSandboxAcrossGatewayRoots,
       getDefault,
       getSandbox,
       listSandboxes,

@@ -220,6 +220,7 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
   const sandboxVersion = requireDist("../../src/lib/sandbox/version.js");
   const sandboxConfig = requireDist("../../src/lib/sandbox/config.js");
   const registry = requireDist("../../src/lib/state/registry.js");
+  const crossPortRegistry = requireDist("../../src/lib/state/registry/cross-port.js");
   const sandboxSession = requireDist("../../src/lib/state/sandbox-session.js");
   const vmDnsMonkeypatch = requireDist("../../src/lib/actions/sandbox/vm-dns-monkeypatch.js");
   const launchReadiness = requireDist("../../src/lib/actions/sandbox/launch-readiness.js");
@@ -595,6 +596,18 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     : [primaryRegistryEntry];
   vi.spyOn(registry, "getSandbox").mockImplementation(
     (name: unknown) => registryEntries.find((candidate) => candidate.name === String(name)) ?? null,
+  );
+  vi.spyOn(crossPortRegistry, "findSandboxAcrossGatewayRoots").mockImplementation(
+    (name: unknown) => {
+      const entry = registryEntries.find((candidate) => candidate.name === String(name));
+      return entry
+        ? {
+            entry,
+            gatewayPort: entry.gatewayPort ?? null,
+            registryFile: "/test/.nemoclaw/sandboxes.json",
+          }
+        : null;
+    },
   );
   vi.spyOn(registry, "listSandboxes").mockReturnValue({
     sandboxes: registryEntries,

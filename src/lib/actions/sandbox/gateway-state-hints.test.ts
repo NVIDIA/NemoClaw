@@ -15,6 +15,7 @@ describe("printGatewayLifecycleHint multi-instance hints", () => {
   let getSandboxDockerRuntimeSpy: MockInstance;
   let getNamedGatewayLifecycleStateSpy: MockInstance;
   let getSandboxSpy: MockInstance;
+  let findSandboxAcrossGatewayRootsSpy: MockInstance;
   let recoverNamedGatewayRuntimeSpy: MockInstance;
 
   function mockSandboxPhase(phase: string): void {
@@ -35,6 +36,7 @@ describe("printGatewayLifecycleHint multi-instance hints", () => {
     const openshellRuntime = requireDist("../../adapters/openshell/runtime.js");
     const gatewayRuntime = requireDist("../../gateway-runtime-action.js");
     const registry = requireDist("../../state/registry.js");
+    const crossPortRegistry = requireDist("../../state/registry/cross-port.js");
     const dockerHealth = requireDist("./docker-health.js");
     const gatewaySelect = requireDist("./gateway-select.js");
     vi.spyOn(gatewayDrift, "detectOpenShellStateRpcPreflightIssue").mockReturnValue(null);
@@ -52,6 +54,14 @@ describe("printGatewayLifecycleHint multi-instance hints", () => {
       gatewayName: "nemoclaw",
       gatewayPort: 8080,
     });
+    findSandboxAcrossGatewayRootsSpy = vi
+      .spyOn(crossPortRegistry, "findSandboxAcrossGatewayRoots")
+      .mockImplementation((name: unknown) => {
+        const entry = registry.getSandbox(String(name));
+        return entry
+          ? { entry, gatewayPort: entry.gatewayPort ?? null, registryFile: "/test/sandboxes.json" }
+          : null;
+      });
     getSandboxDockerRuntimeSpy = vi.spyOn(dockerHealth, "getSandboxDockerRuntime").mockReturnValue({
       health: "none",
       paused: false,
@@ -83,6 +93,7 @@ describe("printGatewayLifecycleHint multi-instance hints", () => {
     expect(combined).toContain("nemoclaw");
     expect(combined).toContain("openshell gateway select");
     expect(getSandboxSpy).toHaveBeenCalledWith("instance-a");
+    expect(findSandboxAcrossGatewayRootsSpy).toHaveBeenCalledWith("instance-a");
   });
 
   it("uses the sandbox's per-port gateway name in the hint for a non-default `NEMOCLAW_GATEWAY_PORT`", () => {

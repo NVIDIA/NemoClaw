@@ -71,6 +71,7 @@ export const rebuildPreparedImageContext = requireDist("./rebuild-prepared-image
 export const rebuildRoutePreflight = requireDist("./rebuild-preflight-guards.js");
 export const rebuildUsageNotice = requireDist("./rebuild-usage-notice.js");
 export const registry = requireDist("../../state/registry.js");
+export const crossPortRegistry = requireDist("../../state/registry/cross-port.js");
 export const registryPersistence = requireDist("../../state/registry/persistence.js");
 export const resolve = requireDist("../../adapters/openshell/resolve.js");
 export const sandboxList = requireDist("../../openshell-sandbox-list.js");
