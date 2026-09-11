@@ -2402,6 +2402,19 @@ preflight_nemoclaw_acp_shim() {
   error "Installation stopped because $shim_path already exists and is not a NemoClaw-managed shim. NemoClaw left it unchanged. Move or remove that path, then rerun the installer."
 }
 
+publish_cli_shim_no_clobber() {
+  local source_path="${1:-}" destination_path="${2:-}" node_path="${3:-}"
+  [[ -n "$source_path" && -n "$destination_path" && -x "$node_path" ]] || return 1
+  "$node_path" -e '
+const fs = require("node:fs");
+try {
+  fs.linkSync(process.argv[1], process.argv[2]);
+} catch {
+  process.exitCode = 1;
+}
+' "$source_path" "$destination_path"
+}
+
 ensure_cli_shim() {
   local cli_bin="${1:-$_CLI_BIN}"
   local npm_bin shim_path node_path node_dir cli_path expected_shim temp_shim=""
@@ -2441,12 +2454,6 @@ ensure_cli_shim() {
     ensure_local_bin_in_profile
     return 0
   fi
-  if [[ "$cli_bin" == "nemoclaw-acp" && "$replace_identity" != "absent" ]]; then
-    assert_nemoclaw_acp_shim_unchanged "$cli_bin" "$cli_path" "$replace_identity"
-    refresh_path
-    ensure_local_bin_in_profile
-    return 0
-  fi
 
   expected_shim="$(
     cat <<EOF
@@ -2455,6 +2462,15 @@ ensure_cli_shim() {
 exec "$cli_path" "\$@"
 EOF
   )"
+
+  if [[ "$cli_bin" == "nemoclaw-acp" && "$replace_identity" != "absent" ]]; then
+    assert_nemoclaw_acp_shim_unchanged "$cli_bin" "$cli_path" "$replace_identity"
+    cmp -s "$shim_path" <(printf '%s\n' "$expected_shim") \
+      || error "Installation stopped because $shim_path is a NemoClaw-managed shim that must be refreshed for the selected Node.js runtime. NemoClaw left it unchanged. Move or remove that path, then rerun the installer."
+    refresh_path
+    ensure_local_bin_in_profile
+    return 0
+  fi
 
   if [[ "$cli_bin" != "nemoclaw-acp" && -x "$shim_path" ]] \
     && cmp -s "$shim_path" <(printf '%s\n' "$expected_shim"); then
@@ -2473,7 +2489,7 @@ EOF
   fi
   assert_nemoclaw_acp_shim_unchanged "$cli_bin" "$cli_path" "$replace_identity"
   if [[ "$cli_bin" == "nemoclaw-acp" ]]; then
-    if ! ln "$temp_shim" "$shim_path"; then
+    if ! publish_cli_shim_no_clobber "$temp_shim" "$shim_path" "$node_path"; then
       rm -f "$temp_shim"
       if [[ -e "$shim_path" || -L "$shim_path" ]]; then
         error "Installation stopped because $shim_path changed while NemoClaw published its shim. NemoClaw left the current path unchanged. Rerun the installer."

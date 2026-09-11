@@ -66,6 +66,10 @@ function writeExecutable(target: string, contents: string): void {
   fs.writeFileSync(target, contents, { mode: 0o755 });
 }
 
+function writeNodeForwarder(target: string): void {
+  writeExecutable(target, `#!/usr/bin/env bash\nexec ${JSON.stringify(process.execPath)} "$@"\n`);
+}
+
 function createPackagedCliTree(prefix: string): {
   fakeBin: string;
   prefixBin: string;
@@ -75,7 +79,7 @@ function createPackagedCliTree(prefix: string): {
   fs.mkdirSync(fakeBin, { recursive: true });
   fs.mkdirSync(prefixBin, { recursive: true });
 
-  writeExecutable(path.join(fakeBin, "node"), "#!/usr/bin/env bash\nexit 0\n");
+  writeNodeForwarder(path.join(fakeBin, "node"));
   writeExecutable(
     path.join(fakeBin, "npm"),
     `#!/usr/bin/env bash
@@ -237,12 +241,7 @@ describe("installer npm resolution", () => {
       fs.mkdirSync(fakeBin);
       fs.mkdirSync(prefixBin, { recursive: true });
 
-      writeExecutable(
-        path.join(fakeBin, "node"),
-        `#!/usr/bin/env bash
-exit 0
-`,
-      );
+      writeNodeForwarder(path.join(fakeBin, "node"));
       writeExecutable(
         path.join(fakeBin, "npm"),
         `#!/usr/bin/env bash
@@ -467,7 +466,7 @@ echo "${cliBin} v0.1.0"
     );
   });
 
-  it("keeps a verified nemoclaw-acp wrapper that targets the packaged executable (#10947)", () => {
+  it("keeps the current nemoclaw-acp wrapper that targets the packaged executable (#10947)", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-acp-managed-shim-"));
     const { fakeBin, prefixBin } = createPackagedCliTree(tmp);
     const shimPath = path.join(tmp, ".local", "bin", "nemoclaw-acp");
@@ -477,7 +476,7 @@ echo "${cliBin} v0.1.0"
       shimPath,
       [
         "#!/usr/bin/env bash",
-        '[[ "$(command -v node 2>/dev/null)" == "/old/node/bin/node" ]] || export PATH="/old/node/bin:$PATH"',
+        `[[ "$(command -v node 2>/dev/null)" == "${path.join(fakeBin, "node")}" ]] || export PATH="${fakeBin}:$PATH"`,
         `exec "${packagedCli}" "$@"`,
         "",
       ].join("\n"),
@@ -497,6 +496,38 @@ echo "${cliBin} v0.1.0"
     expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
     expect(fs.readFileSync(shimPath)).toEqual(originalContents);
     expect(result.stdout).toContain("nemoclaw-acp v0.1.0");
+  });
+
+  it("rejects a managed nemoclaw-acp wrapper that names a removed Node.js runtime (#10947)", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-acp-stale-node-"));
+    const { fakeBin, prefixBin } = createPackagedCliTree(tmp);
+    const shimPath = path.join(tmp, ".local", "bin", "nemoclaw-acp");
+    const packagedCli = path.join(prefixBin, "nemoclaw-acp");
+    fs.mkdirSync(path.dirname(shimPath), { recursive: true });
+    writeExecutable(packagedCli, "#!/usr/bin/env node\nconsole.log('nemoclaw-acp v0.1.0');\n");
+    writeExecutable(
+      shimPath,
+      [
+        "#!/usr/bin/env bash",
+        '[[ "$(command -v node 2>/dev/null)" == "/removed/node/bin/node" ]] || export PATH="/removed/node/bin:$PATH"',
+        `exec "${packagedCli}" "$@"`,
+        "",
+      ].join("\n"),
+    );
+    const originalContents = fs.readFileSync(shimPath);
+
+    const result = runInstallerFunction('ensure_cli_shim "nemoclaw-acp"', fakeBin, {
+      ACTIVE_NPM_PREFIX: path.dirname(prefixBin),
+      HOME: tmp,
+      NO_COLOR: "1",
+    });
+
+    expect(result.status, `${result.stdout}${result.stderr}`).toBe(1);
+    expect(fs.readFileSync(shimPath)).toEqual(originalContents);
+    expect(`${result.stdout}${result.stderr}`).toContain(
+      `${shimPath} is a NemoClaw-managed shim that must be refreshed`,
+    );
+    expect(`${result.stdout}${result.stderr}`).toContain("NemoClaw left it unchanged");
   });
 
   it.skipIf(process.platform === "win32")(
@@ -597,9 +628,10 @@ ensure_cli_shim "nemoclaw-acp"`,
       const result = runInstallerFunction(
         `shim_path=${JSON.stringify(shimPath)}
 replacement_path=${JSON.stringify(replacementPath)}
-ln() {
+eval "$(declare -f publish_cli_shim_no_clobber | sed '1s/publish_cli_shim_no_clobber/original_publish_cli_shim_no_clobber/')"
+publish_cli_shim_no_clobber() {
   command ln "$replacement_path" "$shim_path"
-  command ln "$@"
+  original_publish_cli_shim_no_clobber "$@"
 }
 ensure_cli_shim "nemoclaw-acp"`,
         fakeBin,
@@ -612,6 +644,46 @@ ensure_cli_shim "nemoclaw-acp"`,
 
       expect(result.status, `${result.stdout}${result.stderr}`).toBe(1);
       expect(fs.readFileSync(shimPath)).toEqual(foreignContents);
+      expect(
+        fs.readdirSync(path.dirname(shimPath)).filter((name) => name.includes(".tmp.")).length,
+      ).toBe(0);
+      expect(`${result.stdout}${result.stderr}`).toContain(
+        `${shimPath} changed while NemoClaw published its shim`,
+      );
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "stops when a directory symlink appears during nemoclaw-acp publication (#10947)",
+    () => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-acp-dir-race-"));
+      const { fakeBin, prefixBin } = createPackagedCliTree(tmp);
+      const shimPath = path.join(tmp, ".local", "bin", "nemoclaw-acp");
+      const replacementDir = path.join(tmp, "user-directory");
+      fs.mkdirSync(path.dirname(shimPath), { recursive: true });
+      fs.mkdirSync(replacementDir);
+
+      const result = runInstallerFunction(
+        `shim_path=${JSON.stringify(shimPath)}
+replacement_dir=${JSON.stringify(replacementDir)}
+eval "$(declare -f publish_cli_shim_no_clobber | sed '1s/publish_cli_shim_no_clobber/original_publish_cli_shim_no_clobber/')"
+publish_cli_shim_no_clobber() {
+  command ln -s "$replacement_dir" "$shim_path"
+  original_publish_cli_shim_no_clobber "$@"
+}
+ensure_cli_shim "nemoclaw-acp"`,
+        fakeBin,
+        {
+          ACTIVE_NPM_PREFIX: path.dirname(prefixBin),
+          HOME: tmp,
+          NO_COLOR: "1",
+        },
+      );
+
+      expect(result.status, `${result.stdout}${result.stderr}`).toBe(1);
+      expect(fs.lstatSync(shimPath).isSymbolicLink()).toBe(true);
+      expect(fs.readlinkSync(shimPath)).toBe(replacementDir);
+      expect(fs.readdirSync(replacementDir)).toEqual([]);
       expect(
         fs.readdirSync(path.dirname(shimPath)).filter((name) => name.includes(".tmp.")).length,
       ).toBe(0);
