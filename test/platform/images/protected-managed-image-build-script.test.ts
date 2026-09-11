@@ -36,6 +36,7 @@ let registryCurlExit = "";
 let registryLog = "";
 let registryStatus = "";
 let teeFailureMode = "";
+let imageUser = "";
 
 function writeExecutable(name: string, source: string): void {
   const target = path.join(stubBin, name);
@@ -79,7 +80,16 @@ case "$*" in
     esac
     ;;
   "pull "*) ;;
-  "image inspect "*) printf '[]\n' ;;
+  "image inspect "*)
+    case "$*" in
+      *"/openclaw@"*) agent=openclaw ;;
+      *"/hermes@"*) agent=hermes ;;
+      *"/langchain-deepagents-code@"*) agent=langchain-deepagents-code ;;
+      *) exit 93 ;;
+    esac
+    printf '[{"Id":"sha256:${DIGEST}","Config":{"User":"%s","Labels":{"io.nvidia.nemoclaw.agent":"%s","io.nvidia.nemoclaw.managed-image.contract":"1","io.nvidia.nemoclaw.managed-image.platform":"%s","io.nvidia.nemoclaw.managed-image.startup-profile":"1","io.nvidia.nemoclaw.managed-image.capabilities":"1","io.nvidia.nemoclaw.managed-image.cohort":"protected-1-1","org.opencontainers.image.revision":"${REVISION}"}}}]\n' \
+      "$NEMOCLAW_TEST_IMAGE_USER" "$agent" "$NEMOCLAW_TEST_IMAGE_PLATFORM"
+    ;;
   *) exit 91 ;;
 esac
 `,
@@ -90,7 +100,7 @@ esac
 case "$*" in
   *containerimage.digest*) printf 'sha256:${DIGEST}\\n' ;;
   *"if length == 1 then .[0].Id"*) printf 'sha256:${DIGEST}\\n' ;;
-  *"--arg agent "*) printf '{}\\n' ;;
+  *"--arg agent "*) PATH="$NEMOCLAW_TEST_REAL_PATH" command jq "$@" ;;
   *"-se "*) printf '[]\\n' ;;
   *) ;;
 esac
@@ -235,6 +245,8 @@ function recordedBuildInvocation(agent: string): string {
 
 function runBuild(sourceRoot: string, extraArgs: readonly string[] = [], platform = "linux/amd64") {
   const output = path.join(testRoot, "contracts.json");
+  const platformOverride = extraArgs.findIndex((argument) => argument === "--platform");
+  const effectivePlatform = platformOverride >= 0 ? extraArgs[platformOverride + 1] : platform;
   return spawnSync(
     "bash",
     [
@@ -265,6 +277,8 @@ function runBuild(sourceRoot: string, extraArgs: readonly string[] = [], platfor
         NEMOCLAW_TEST_DOCKER_BUILD_COUNT: dockerBuildCount,
         NEMOCLAW_TEST_DOCKER_BUILD_FAILURE_MODE: dockerBuildFailureMode,
         NEMOCLAW_TEST_DOCKER_LOG: dockerLog,
+        NEMOCLAW_TEST_IMAGE_PLATFORM: effectivePlatform,
+        NEMOCLAW_TEST_IMAGE_USER: imageUser,
         NEMOCLAW_TEST_REGISTRY_CURL_EXIT: registryCurlExit,
         NEMOCLAW_TEST_REGISTRY_LOG: registryLog,
         NEMOCLAW_TEST_REGISTRY_STATUS: registryStatus,
@@ -291,6 +305,7 @@ beforeEach(() => {
   registryLog = path.join(testRoot, "registry.log");
   registryStatus = "404";
   teeFailureMode = "";
+  imageUser = "root";
   mkdirSync(stubBin);
   writeExecutable(
     "docker",
@@ -352,6 +367,7 @@ describe("protected managed-image build-cache boundary", () => {
     ).toBe(true);
 
     writeFileSync(dockerLog, "", "utf8");
+    imageUser = "sandbox";
     const transitioned = runBuild(REPO_ROOT, ["--runtime-user", "sandbox"]);
 
     expect(transitioned.status, transitioned.stderr).toBe(0);
@@ -361,6 +377,19 @@ describe("protected managed-image build-cache boundary", () => {
         invocation.includes("--build-arg NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=sandbox"),
       ),
     ).toBe(true);
+  });
+
+  it("rejects an image whose final Config.User does not match the selected runtime user", () => {
+    stubBuildInvocation();
+    imageUser = "root";
+
+    const result = runBuild(REPO_ROOT, ["--runtime-user", "sandbox"]);
+
+    expect(result.status, result.stderr).toBe(1);
+    expect(recordedBuildInvocations()).toHaveLength(1);
+    expect(recordedBuildInvocation("openclaw")).toContain(
+      "--build-arg NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=sandbox",
+    );
   });
 
   it.each(["0", "Root", "sandbox\nroot"])(
