@@ -290,6 +290,7 @@ describe("managed OpenShell gateway user-service stop", () => {
 
       expect(fs.readFileSync(log, "utf8").trim().split("\n")).toEqual([
         "--user cat openshell-gateway",
+        "--user show-environment",
         "--user stop nemoclaw-openshell-gateway",
       ]);
     } finally {
@@ -372,7 +373,57 @@ describe("managed OpenShell gateway user-service stop", () => {
 
       expect(result.status).toBe(75);
       expect(fs.readFileSync(unit, "utf8")).toBe("[Service]\nExecStart=/tmp/foreign\n");
-      expect(fs.readFileSync(log, "utf8").trim()).toBe("--user cat openshell-gateway");
+      expect(fs.readFileSync(log, "utf8").trim().split("\n")).toEqual([
+        "--user cat openshell-gateway",
+        "--user show-environment",
+      ]);
+    } finally {
+      fs.rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  it("preserves a user-manager failure while inspecting the upstream unit (#10947)", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-lifecycle-stop-manager-"));
+    const home = path.join(root, "home");
+    const bin = path.join(root, "bin");
+    const log = path.join(root, "systemctl.log");
+
+    fs.mkdirSync(home, { recursive: true });
+    fs.mkdirSync(bin, { recursive: true });
+    fs.writeFileSync(path.join(bin, "uname"), "#!/bin/sh\nprintf 'Linux\\n'\n", { mode: 0o755 });
+    fs.writeFileSync(
+      path.join(bin, "systemctl"),
+      [
+        "#!/bin/sh",
+        `printf "%s\\n" "$*" >> ${JSON.stringify(log)}`,
+        'if [ "$*" = "--user cat openshell-gateway" ]; then exit 1; fi',
+        'if [ "$*" = "--user show-environment" ]; then',
+        '  printf "Failed to connect to bus\\n" >&2',
+        "  exit 1",
+        "fi",
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    try {
+      const env = buildAvailabilityProbeEnv({
+        HOME: home,
+        PATH: `${bin}:/usr/bin:/bin`,
+      });
+      const result = spawnSync("sh", ["-c", buildOpenShellGatewayUserServiceStopScript()], {
+        encoding: "utf8",
+        env,
+        killSignal: "SIGKILL",
+        timeout: 30_000,
+      });
+
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("Failed to connect to bus");
+      expect(fs.readFileSync(log, "utf8").trim().split("\n")).toEqual([
+        "--user cat openshell-gateway",
+        "--user show-environment",
+      ]);
     } finally {
       fs.rmSync(root, { force: true, recursive: true });
     }

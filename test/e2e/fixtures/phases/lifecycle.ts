@@ -134,6 +134,7 @@ export function buildOpenShellGatewayUserServiceStopScript(): string {
     `if ! command -v systemctl >/dev/null 2>&1; then exit ${USER_SERVICE_UNAVAILABLE_EXIT}; fi`,
     "service=openshell-gateway",
     'if ! systemctl --user cat "$service" >/dev/null 2>&1; then',
+    "  systemctl --user show-environment >/dev/null",
     '  case "${XDG_CONFIG_HOME:-}" in',
     '    /*) config_home="$XDG_CONFIG_HOME" ;;',
     '    *) config_home="$HOME/.config" ;;',
