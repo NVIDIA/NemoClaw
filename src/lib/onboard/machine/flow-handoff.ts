@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { OnboardFlowContext } from "./flow-context";
+import { isProviderlessComponentOnboarding, type OnboardFlowContext } from "./flow-context";
 import type { OnboardMachineRunnerResult } from "./runner";
 
 type InitialHandoffContext<Gpu, SandboxGpuConfig> = OnboardFlowContext & {
@@ -47,14 +47,18 @@ export function prepareFinalOnboardFlowContext<Context extends OnboardFlowContex
   core: OnboardMachineRunnerResult<Context>,
 ): Context & { sandboxName: string; model: string; provider: string } {
   const context = core.context;
-  if (!context.sandboxName || !context.model || !context.provider) {
+  const providerless = isProviderlessComponentOnboarding(context);
+  if (
+    !context.sandboxName ||
+    (providerless ? context.model || context.provider : !context.model || !context.provider)
+  ) {
     throw new Error("Onboarding state is incomplete after sandbox setup.");
   }
   return {
     ...context,
     session: core.session,
     sandboxName: context.sandboxName,
-    model: context.model,
-    provider: context.provider,
+    model: context.model ?? "",
+    provider: context.provider ?? "",
   };
 }

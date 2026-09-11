@@ -7,6 +7,8 @@ const mocks = vi.hoisted(() => ({
   listSandboxes: vi.fn(),
   getSandbox: vi.fn(),
   backupSandboxState: vi.fn(),
+  captureRecordedSandboxBasePolicy: vi.fn(),
+  writeRebuildPolicyHandoff: vi.fn(),
   captureSandboxListWithGatewayPreflightOrExit: vi.fn(),
   dockerListImagesFormat: vi.fn().mockReturnValue(""),
   dockerRmi: vi.fn(),
@@ -51,7 +53,11 @@ vi.mock("../state/registry", () => ({
 }));
 vi.mock("../state/sandbox", () => ({
   backupSandboxState: mocks.backupSandboxState,
+  writeRebuildPolicyHandoff: mocks.writeRebuildPolicyHandoff,
   BackupResult: {},
+}));
+vi.mock("../policy", () => ({
+  captureRecordedSandboxBasePolicy: mocks.captureRecordedSandboxBasePolicy,
 }));
 vi.mock("../state/mcp-lifecycle-lock", () => ({
   withSandboxMutationLock: mocks.withSandboxMutationLock,
@@ -113,6 +119,14 @@ describe("backupAll", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.backupStartedSandboxState.mockReset();
+    mocks.captureRecordedSandboxBasePolicy.mockReturnValue("version: 1\nnetwork_policies: {}\n");
+    mocks.writeRebuildPolicyHandoff.mockImplementation((manifest) => ({
+      ...manifest,
+      rebuildPolicyHandoff: {
+        file: "rebuild-policy-handoff.sha.yaml",
+        sha256: "sha",
+      },
+    }));
     delete process.env.NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS;
     readySandboxNames = new Set(["sb-good", "sb-bad"]);
     liveSandboxNames = new Set();
@@ -607,6 +621,158 @@ describe("backupAll", () => {
     expect(lockActive).toBe(false);
     expect(mocks.withSandboxMutationLock).toHaveBeenCalledOnce();
     expect(mocks.withSandboxMutationLock).toHaveBeenCalledWith("sb-stopped", expect.any(Function));
+  });
+
+  it("retains the live policy inside a strict pre-upgrade backup transaction", async () => {
+    mocks.listSandboxes.mockReturnValue({
+      sandboxes: [{ name: "sb-good" }],
+      defaultSandbox: "sb-good",
+    });
+    readySandboxNames = new Set(["sb-good"]);
+    const manifest = { backupPath: "/backups/sb-good/timestamp" };
+    const events: string[] = [];
+    let lockActive = false;
+    mocks.withSandboxMutationLock.mockImplementation(
+      async (name: string, action: () => unknown) => {
+        events.push(`lock:start:${name}`);
+        lockActive = true;
+        try {
+          return await action();
+        } finally {
+          lockActive = false;
+          events.push(`lock:end:${name}`);
+        }
+      },
+    );
+    mocks.backupSandboxState.mockImplementation(() => {
+      expect(lockActive).toBe(true);
+      events.push("backup");
+      return {
+        success: true,
+        backedUpDirs: ["workspace"],
+        failedDirs: [],
+        backedUpFiles: [],
+        failedFiles: [],
+        manifest,
+      };
+    });
+    mocks.captureRecordedSandboxBasePolicy.mockImplementation(() => {
+      expect(lockActive).toBe(true);
+      events.push("capture-policy");
+      return "version: 1\nnetwork_policies: {}\n";
+    });
+    mocks.writeRebuildPolicyHandoff.mockImplementation((receivedManifest) => {
+      expect(lockActive).toBe(true);
+      expect(receivedManifest).toBe(manifest);
+      events.push("publish-policy");
+      return {
+        ...receivedManifest,
+        rebuildPolicyHandoff: {
+          file: "rebuild-policy-handoff.sha.yaml",
+          sha256: "sha",
+        },
+      };
+    });
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    await backupAllUnderPortableHostFence({ purpose: "pre-upgrade", requireAll: true });
+
+    expect(events).toEqual([
+      "lock:start:sb-good",
+      "backup",
+      "capture-policy",
+      "publish-policy",
+      "lock:end:sb-good",
+    ]);
+    expect(mocks.captureRecordedSandboxBasePolicy).toHaveBeenCalledWith(
+      "sb-good",
+      "capture the live policy for pre-upgrade recovery",
+    );
+  });
+
+  it.each([
+    { purpose: "pre-upgrade" as const, requireAll: false },
+    { purpose: "pre-uninstall" as const, requireAll: true },
+  ])(
+    "does not retain policy for $purpose when requireAll=$requireAll",
+    async ({ purpose, requireAll }) => {
+      mocks.listSandboxes.mockReturnValue({
+        sandboxes: [{ name: "sb-good" }],
+        defaultSandbox: "sb-good",
+      });
+      readySandboxNames = new Set(["sb-good"]);
+      mocks.backupSandboxState.mockReturnValue({
+        success: true,
+        backedUpDirs: ["workspace"],
+        failedDirs: [],
+        backedUpFiles: [],
+        failedFiles: [],
+        manifest: { backupPath: "/backups/sb-good/timestamp" },
+      });
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      await backupAllUnderPortableHostFence({ purpose, requireAll });
+
+      expect(mocks.captureRecordedSandboxBasePolicy).not.toHaveBeenCalled();
+      expect(mocks.writeRebuildPolicyHandoff).not.toHaveBeenCalled();
+    },
+  );
+
+  it("fails closed when a strict pre-upgrade backup has no published manifest", async () => {
+    mocks.listSandboxes.mockReturnValue({
+      sandboxes: [{ name: "sb-good" }],
+      defaultSandbox: "sb-good",
+    });
+    readySandboxNames = new Set(["sb-good"]);
+    mocks.backupSandboxState.mockReturnValue({
+      success: true,
+      backedUpDirs: ["workspace"],
+      failedDirs: [],
+      backedUpFiles: [],
+      failedFiles: [],
+    });
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    await expect(
+      backupAllUnderPortableHostFence({ purpose: "pre-upgrade", requireAll: true }),
+    ).rejects.toThrow("completed without a published manifest");
+
+    expect(mocks.captureRecordedSandboxBasePolicy).not.toHaveBeenCalled();
+    expect(mocks.writeRebuildPolicyHandoff).not.toHaveBeenCalled();
+  });
+
+  it("returns a started container to stopped when strict policy retention fails", async () => {
+    mocks.listSandboxes.mockReturnValue({
+      sandboxes: [{ name: "sb-stopped" }],
+      defaultSandbox: "sb-stopped",
+    });
+    readySandboxNames = new Set();
+    mocks.startStoppedSandboxContainerForBackup.mockReturnValue({
+      containerName: "openshell-sb-stopped-abc",
+      runtimeProviderId: "docker",
+    });
+    mocks.backupStartedSandboxState.mockResolvedValue({
+      success: true,
+      backedUpDirs: ["workspace"],
+      failedDirs: [],
+      backedUpFiles: [],
+      failedFiles: [],
+      manifest: { backupPath: "/backups/sb-stopped/timestamp" },
+    });
+    mocks.captureRecordedSandboxBasePolicy.mockImplementation(() => {
+      throw new Error("recorded gateway is unavailable");
+    });
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    await expect(
+      backupAllUnderPortableHostFence({ purpose: "pre-upgrade", requireAll: true }),
+    ).rejects.toThrow("recorded gateway is unavailable");
+
+    expect(mocks.returnSandboxContainerToStopped).toHaveBeenCalledWith({
+      containerName: "openshell-sb-stopped-abc",
+      runtimeProviderId: "docker",
+    });
+    expect(mocks.writeRebuildPolicyHandoff).not.toHaveBeenCalled();
   });
 
   it("returns the container to stopped and counts a failure when the started backup fails (#6500)", async () => {

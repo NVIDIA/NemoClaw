@@ -160,7 +160,10 @@ describe("fixture redaction entry point", () => {
         }),
         {
           artifactName: "mcp-tunnel-url-redaction",
-          env: { CANONICAL_LOOKING_URL: canonicalLookingUrl, SECRET_URL: secretUrl },
+          env: {
+            CANONICAL_LOOKING_URL: canonicalLookingUrl,
+            SECRET_URL: secretUrl,
+          },
           redactionValues: [hostSecret],
         },
       );
@@ -220,6 +223,7 @@ describe("fixture redaction entry point", () => {
   it("preserves managed credential references and non-credential JSON identifiers", () => {
     const discordReference = "openshell:resolve:env:DISCORD_BOT_TOKEN";
     const versionedReference = "openshell:resolve:env:v2237303833964223913_WECHAT_BOT_TOKEN";
+    const stableReference = `openshell:resolve:env:s${"a".repeat(64)}_SLACK_APP_TOKEN`;
     const slackReference = "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN";
     const discordAssignment = `DISCORD_BOT_TOKEN=${discordReference}`;
     const text = JSON.stringify({
@@ -227,6 +231,7 @@ describe("fixture redaction entry point", () => {
       replyMarker: "A2603-REPLY",
       token: discordReference,
       versionedToken: versionedReference,
+      stableToken: stableReference,
       botToken: slackReference,
     });
 
@@ -260,6 +265,9 @@ describe("fixture redaction entry point", () => {
     ["nested assignment", "TOKEN=foo=openshell:resolve:env:FOO"],
     ["short prefix", "TOKEN=short:openshell:resolve:env:FOO"],
     ["oversized revision", `TOKEN=openshell:resolve:env:v${"1".repeat(21)}_FOO`],
+    ["short stable handle", `TOKEN=openshell:resolve:env:s${"a".repeat(63)}_FOO`],
+    ["long stable handle", `TOKEN=openshell:resolve:env:s${"a".repeat(65)}_FOO`],
+    ["uppercase stable handle", `TOKEN=openshell:resolve:env:s${"A".repeat(64)}_FOO`],
     ["oversized identifier", `TOKEN=openshell:resolve:env:${"A".repeat(129)}`],
     ["mixed case", "TOKEN=OpenShell:Resolve:Env:FOO"],
     ["lowercase Slack", "TOKEN=xoxb-openshell-resolve-env-SLACK_BOT_TOKEN"],

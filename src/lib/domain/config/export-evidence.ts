@@ -5,15 +5,19 @@ import type * as TypeBoxModule from "typebox" with { "resolution-mode": "import"
 import {
   BoundedTextSchema,
   NemoClawManagedVllmServingSchema,
+  NemoClawOllamaServingSchema,
   CredentialEnvironmentReferenceNameSchema,
   ImmutableImageReferenceSchema,
   InferenceEndpointSchema,
   LocalResourceNameSchema,
   NemoClawInferenceApiSchema,
+  NemoClawOpenClawInterfacesSchema,
+  NemoClawHermesInterfacesSchema,
+  NemoClawAgentToolDisclosureSchema,
+  NemoClawAdditionalAgentSchema,
   NemoClawInferenceTuningSchema,
   NemoClawAgentExecutionSchema,
   NemoClawBraveSearchConfigSchema,
-  NemoClawAgentTypeSchema,
   NemoClawOpenClawObservabilitySchema,
   NemoClawManagedProxyConfigSchema,
   RuntimeProviderSchema,
@@ -26,6 +30,7 @@ import {
 } from "../../config/model";
 import type { SandboxConfiguration } from "../sandbox/configuration";
 import type { SandboxEntry } from "../../state/registry/types";
+import type { ObservedOllamaProxy } from "../../inference/ollama/proxy-observation";
 
 const { Type } = require("typebox") as typeof TypeBoxModule;
 
@@ -43,6 +48,7 @@ export const EXPORT_REGISTRY_EVIDENCE_KEYS = [
   "compatibleEndpointReasoning",
   "compatibleEndpointReasoningEffort",
   "credentialEnv",
+  "dashboardPort",
   "dashboardRemoteBindPrepared",
   "endpointUrl",
   "fromDockerfile",
@@ -158,6 +164,7 @@ export interface ObservedExportInference {
   readonly endpointEvidence: ObservedExportEndpointEvidence | null;
   readonly credentialEnv: string | null;
   readonly managedServing?: ObservedManagedVllmRuntime;
+  readonly ollamaServing?: ObservedOllamaProxy;
 }
 
 export interface ObservedExportPolicy {
@@ -185,6 +192,7 @@ export type ExportSnapshotReadStage =
   | "provider-metadata"
   | "web-search-provider"
   | "managed-serving"
+  | "ollama-serving"
   | "effective-policy";
 
 /** One complete, untrusted read from all export evidence owners. */
@@ -255,6 +263,16 @@ const ExportInferenceSchema = Type.Union([
   HostedExportInferenceSchema,
   Type.Object(
     {
+      provider: Type.Literal("ollama-local"),
+      model: Type.Refine(BoundedTextSchema, isValidNemoClawBoundedText),
+      api: Type.Literal("openai-completions"),
+      serving: NemoClawOllamaServingSchema,
+      overrides: Type.Optional(NemoClawInferenceTuningSchema),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
       provider: Type.Literal("vllm-local"),
       model: Type.Refine(BoundedTextSchema, isValidNemoClawBoundedText),
       api: Type.Literal("openai-completions"),
@@ -265,10 +283,13 @@ const ExportInferenceSchema = Type.Union([
 ]);
 
 /** Representable values only; provenance and policy qualification remain separate. */
-export const ExportSourceValuesSchema = Type.Object({
+const exportSourceFields = {
   sandboxName: Type.Refine(SandboxNameSchema, isValidNemoClawSandboxName),
   execution: Type.Optional(NemoClawAgentExecutionSchema),
-  agent: NemoClawAgentTypeSchema,
+  tools: Type.Optional(NemoClawAgentToolDisclosureSchema),
+  additionalAgents: Type.Optional(
+    Type.Array(NemoClawAdditionalAgentSchema, { minItems: 1, maxItems: 1 }),
+  ),
   auth: Type.Optional(Type.Object({ method: Type.Literal("api-key") })),
   runtime: Type.Object({
     provider: RuntimeProviderSchema,
@@ -279,7 +300,27 @@ export const ExportSourceValuesSchema = Type.Object({
   inference: ExportInferenceSchema,
   observability: Type.Optional(NemoClawOpenClawObservabilitySchema),
   webSearch: Type.Optional(NemoClawBraveSearchConfigSchema),
-});
+};
+
+export const ExportSourceValuesSchema = Type.Refine(
+  Type.Union([
+    Type.Object({
+      ...exportSourceFields,
+      agent: Type.Literal("openclaw"),
+      interfaces: Type.Optional(NemoClawOpenClawInterfacesSchema),
+    }),
+    Type.Object({
+      ...exportSourceFields,
+      agent: Type.Literal("hermes"),
+      interfaces: Type.Optional(NemoClawHermesInterfacesSchema),
+    }),
+  ]),
+  (value) =>
+    value.agent === "openclaw" ||
+    (value.execution === undefined &&
+      value.tools === undefined &&
+      value.additionalAgents === undefined),
+);
 
 type ExportSourceValues = DeepReadonly<TypeBoxModule.Type.Static<typeof ExportSourceValuesSchema>>;
 export type VerifiedExportGateway = ExportSourceValues["gateway"];

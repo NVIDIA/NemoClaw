@@ -1794,7 +1794,7 @@ async function clearSandboxChannelDurableState(
     localDockerFallbackPolicy: "reconciled",
   });
   if (!sentinelSeen(result)) {
-    result = executeSandboxCommand(sandboxName, cmd);
+    result = await executeSandboxCommand(sandboxName, cmd);
   }
   if (!sentinelSeen(result) && agent.name === "openclaw" && channelName === "wechat") {
     const stoppedCleanup = policyChannelDependencies.clearStoppedSandboxStateRoots(

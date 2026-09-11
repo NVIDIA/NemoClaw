@@ -49,7 +49,7 @@ When the default port is already held by another sandbox, `$$nemoclaw onboard` s
 
 <AgentOnly variant="hermes">
 Each Hermes sandbox also needs its own OpenAI-compatible API port.
-When another sandbox or a host listener already holds the default API port `8642`, `$$nemoclaw onboard` scans ports `8642` through `8652`, uses the next free port, and records it for the sandbox.
+When creating a Hermes sandbox, if another sandbox or a host listener already holds the default API port `8642`, `$$nemoclaw onboard` scans ports `8642` through `8652`, uses the next free port, and records it for the sandbox.
 </AgentOnly>
 
 <AgentOnly variant="openclaw,hermes">
@@ -65,9 +65,14 @@ Gateway and dashboard cleanup is scoped by sandbox name and port.
 A later onboarding run that uses a different `NEMOCLAW_GATEWAY_PORT` or `--control-ui-port` does not tear down the first sandbox's gateway or dashboard forward.
 </AgentOnly>
 
-<AgentOnly variant="openclaw">
-If re-onboarding finds the registered dashboard port already bound, NemoClaw verifies that the listener is the exact OpenShell forward for that sandbox and reuses it without restarting the sandbox.
-If ownership cannot be proved, onboarding fails closed and reports the listener conflict.
+<AgentOnly variant="openclaw,hermes">
+Repeated onboarding and resume keep the sandbox's registered dashboard port and restore a missing forward on that port.
+If the port is already bound, NemoClaw verifies that the listener is the exact OpenShell forward for that sandbox and reuses it without restarting the sandbox.
+Ports registered to another sandbox, foreign listeners, or unverified ownership stop onboarding with a port conflict error.
+</AgentOnly>
+
+<AgentOnly variant="hermes">
+Hermes also retains or restores its registered OpenAI-compatible API forward using the same ownership checks.
 </AgentOnly>
 
 <AgentOnly variant="deepagents">
