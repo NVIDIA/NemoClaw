@@ -205,7 +205,7 @@ Start a new shell session to refresh the cached sandbox names after creating or 
 
 ### `$$nemoclaw config export <sandbox>`
 
-Export a supported registered OpenClaw sandbox as a secret-free `NemoClawConfig` document. The command reads the registry and current OpenShell state without changing the sandbox. It stops without writing output when required identity, policy, inference, or workload evidence is missing or inconsistent. If the source changes during observation, the command retries the complete observation once and stops without output if the retry also changes.
+Export a supported registered OpenClaw or Hermes sandbox as a secret-free `NemoClawConfig` document. The same command is available as `$$nemohermes config export <sandbox>`. The command reads the registry and current OpenShell state without changing the sandbox. It stops without writing output when required identity, policy, inference, or workload evidence is missing or inconsistent. If the source changes during observation, the command retries the complete observation once and stops without output if the retry also changes.
 
 The command reads the provider endpoint from the sandbox's OpenShell gateway and compares it with the registered endpoint.
 For NVIDIA Endpoints, it verifies the gateway's built-in NVIDIA provider profile and default endpoint.
@@ -240,8 +240,9 @@ Before manual removal, use `stat` to verify both identities and confirm that the
 If either identity cannot be verified, do not remove files by name alone.
 Do not remove the requested output file to clean up a temporary link.
 
-Version 1 exports managed OpenClaw sandboxes in the default workspace.
+Version 1 exports managed OpenClaw sandboxes and canonical managed Hermes sandboxes in the default workspace.
 Supported sandboxes use hosted external inference or the native NVIDIA hosted provider with its default endpoint, an immutable managed image, a NemoClaw-owned gateway, and an explicit representable policy.
+Hermes export also requires the default API configuration, a disabled dashboard, no Hermes tool gateways, and no Hermes-specific authentication settings.
 Other profiles fail with a diagnostic instead of producing an incomplete document.
 
 ### `$$nemoclaw resources`
@@ -575,7 +576,8 @@ It does not fall back to a stale user-local OpenShell binary.
 When the registry contains a pre-fingerprint OpenClaw or Hermes entry with no recorded custom-image evidence, an interactive install asks you to confirm that the listed sandbox used a NemoClaw-managed image.
 For a non-interactive install, set `NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE` to the JSON array of names printed by the installer, such as `["my-assistant","preserve-hermes"]`, only after verifying every named sandbox used a managed image.
 The confirmation permits those legacy entries to recover onto the current managed image, but it does not override recorded custom-image evidence.
-After successful recovery, the installer skips generic onboarding.
+After confirmed recovery, the installer skips generic onboarding unless DGX Station reconciliation remains necessary.
+Required DGX Station reconciliation still passes host admission before onboarding.
 For any registered-sandbox upgrade that you already prepared manually, set `NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1` only after backing up every registered sandbox and retiring the old gateway.
 This environment variable asserts that those steps are complete, so the installer skips the repeated backup and gateway-retirement phase before it checks whether OpenShell is installed or whether its version is in range.
 For a non-default gateway, preserve the selected port on the `bash` side of the install pipeline.
@@ -1100,10 +1102,13 @@ These diagnostics report durations and counts for authority, container, health, 
 </AgentOnly>
 
 <AgentOnly variant="openclaw">
-  Portable lifecycle recovery also emits one credential-free `Portable lifecycle timing:` line. It
-  reports fixed authority, container, exec-readiness, Ollama, startup, and gateway stages with their
-  durations, selected actions, attempt counts, result, and failed stage when available. This
-  diagnostic does not change recovery behavior or the command exit status.
+  Portable lifecycle recovery attempts to emit at most one credential-free `Portable lifecycle timing:` line.
+  It reports fixed authority, container, exec-readiness, Ollama, startup, and gateway stages with their durations, selected actions, attempt counts, result, and failed stage when available.
+  It also attempts to emit at most one credential-free `Portable OpenClaw gateway startup timing:` line.
+  When accepted launch-readiness evidence lets `connect --probe-only`, `launch`, or `recover` skip additional lifecycle work, NemoClaw attempts to emit each receipt once.
+  The lifecycle receipt reports `0ms` for timing fields, `0` for attempt fields, `containerAction=reused`, `gatewayAction=reused`, `ollamaAction=not-applicable`, and `result=already-running`.
+  The gateway receipt reports `0ms` for timing fields, `firstReadyAttempt=0`, `lastFailure=none`, and `diagnosticReadOutcome=not-applicable`.
+  Receipt-output failures do not change recovery behavior or command exit status.
 </AgentOnly>
 
 Run it for health checks and scripted readiness probes; users continue to run only `$$nemoclaw launch <name>`.
@@ -1537,6 +1542,13 @@ For Portable Hermes, `status` reports `Portable lifecycle phase: pending`, `conf
 
 </AgentOnly>
 
+For a non-Portable sandbox, status reports a clean `phase: "Stopped"` only when the persisted
+intentional-stop record agrees with a provider-confirmed `sandbox_container_stopped` result. In that
+case it keeps `failureLayer` null, suppresses inference probes, and exits `0`; other preflight
+failures remain visible. A separate gateway or status error can still make the command exit
+nonzero. A stopped runtime without recorded stop intent remains a
+`sandbox_container_stopped` failure.
+
 For a `compatible-endpoint` route that uses `openai-completions`, the text output prints `Reasoning effort` as `low`, `medium`, `high`, or `endpoint-default`. The line is omitted for another provider or API family.
 
 Pass `--json` to emit a structured per-sandbox report instead of the text renderer. The JSON output includes at least `schemaVersion`, `name`, `found`, `agent`, `agentDisplayName`, `agentRuntime`, `dcodeAutoApprovalMode`, `model`, `provider`, `recordedRoute`, `liveRoute`, `routeDrift`, `phase`, `gatewayState`, `inferenceHealth`, `rpcIssue`, `hostGpuDetected`, `sandboxGpuEnabled`, `sandboxGpuMode`, `sandboxGpuDevice`, `openshellDriver`, `openshellVersion`, `policies`, `policiesAvailable`, `llamaCpp`, `failureLayer`, `terminalRuntimeHealth`, `servingProcessHealth`, and `dockerPaused`. `policies` is derived from the current OpenShell policy; NemoClaw does not persist a second preset list or baseline-exclusion ledger. `policiesAvailable` is `false` when that live policy cannot be read or parsed, distinguishing an unavailable result from a verified empty `policies` array; text status prints `Policies: unavailable` for the same state. When the live gateway route matches the sandbox's recorded llama.cpp route, `llamaCpp.kind` is `attached`, `managed`, or `unavailable`. An attached route also includes its fixed loopback `llamaCpp.endpointUrl`. An unavailable result means NemoClaw could not safely verify the managed ownership receipt; it does not include an endpoint and provides a secret-free diagnostic and recovery action. During route drift, `status` omits the `llamaCpp` route attribution; inspect `routeDrift` before acting on endpoint information. Text status can still show managed-runtime details from the sandbox-owned receipt. The schema-version `1` `model` and `provider` fields keep their established live-route meaning when the gateway route is readable. Use `recordedRoute` for the sandbox's durable provider and model and `liveRoute` for the gateway-global route. When the live shared route differs, text output prints both routes and JSON output sets `routeDrift.live`, `routeDrift.recorded`, and `routeDrift.canConnect`. When `routeDrift.canConnect` is `false`, `connect` cannot safely restore the recorded route because provider-global identity differs or required route or gateway metadata is incomplete. Refer to [Use Shared Gateway Routes](../inference/manage-inference/use-shared-gateway-routes) for the route-sharing workflow. `openshellDriver` and `openshellVersion` are always strings (falling back to `"unknown"` when the registry has no value), so consumers can rely on `typeof` checks. `agent` is always a string and reports `openclaw` when the registry records no agent for the sandbox. `failureLayer` is `null` when no preflight failure was detected and otherwise one of `docker_unreachable`, `sandbox_container_stopped`, or `sandbox_dashboard_port_conflict`; when set, `inferenceHealth` is suppressed to `null` so automation does not see a stale remote-provider healthy status during a local outage. `inferenceHealth.ok` reports whether the inference route returned a structurally valid result for one request sent from inside the sandbox. The result must match Chat Completions, Responses, or Anthropic Messages for the selected route. An empty body, malformed JSON, provider-error envelope, or wrong response shape reports `unhealthy`, even with a 2xx status. The probe captures at most 64 KiB and does not include the response body in diagnostics. The route probe treats any final HTTP status from `200` through `499` as reachable, so a route with an invalidated provider credential answers HTTP `401` while the route is up. The request uses the live gateway route's provider and model, and falls back to the recorded values when the live route is unreadable. When the live provider matches the recorded provider, the request uses the sandbox's recorded API family, even when only the model differs. This includes `openai-responses`. When the live provider differs, NemoClaw does not carry the recorded API family to the live provider. An ordinary run sends one 16-token request per attempt through the stored provider credential, with a 30-second timeout for each request, and consumes provider tokens on a hosted route. When the inference request returns HTTP `429`, `502`, `503`, or `504`, `status` retries the route and inference request together up to three total attempts, with a two-second delay between failed attempts, because those statuses are transient gateway and availability answers rather than evidence that the route is broken. Before each retry, it writes the failed probe boundary, an HTTP status when one is available, the next attempt, total attempts, and delay to stderr; `--json` keeps stdout machine-readable. On an ordinary run, every other failure is final on the first attempt with no delay: HTTP `401`, `403`, `404`, and `500`, an invalid 2xx response body, a request that returned no HTTP status, and a failing `/v1/models` route probe. When the same run recovers a managed gateway, `status` retries any failed route or inference probe on that schedule instead, while the restarted delivery chain settles. Each inference request can consume another 16 tokens on a hosted route. Each route probe has a 10-second timeout and each inference request has a 30-second timeout, so three complete probe pairs and two delays can take about 124 seconds. When NemoClaw sends an inference request, `inferenceHealth.subprobes` reports the route probe result as the `route reachability` hop, so a failing verdict still shows that the route itself answered. `inferenceHealth.failureLabel` reports why the inference request failed:
@@ -1545,7 +1557,7 @@ Pass `--json` to emit a structured per-sandbox report instead of the text render
 - `unhealthy` when the route returned another failing HTTP status or an invalid 2xx response body.
 - `unreachable` when the request returned no HTTP status, including a probe that could not run.
 
-A host-side upstream probe under `inferenceHealth.subprobes` stays a diagnostic and does not change `inferenceHealth.ok`, because the sandbox route is the one the agent uses. When the route probe failed, or the sandbox records no provider or no model, NemoClaw skips the inference request and `inferenceHealth` reports the route probe result alone. `dockerPaused` is `true` when NemoClaw detects that the Docker-driver sandbox container is paused. In that case, text output keeps OpenShell's authoritative phase but prints a `docker unpause <container>` recovery hint instead of sending you directly to rebuild. For terminal runtime sandboxes, the command also checks cgroup OOM kill counters. If the counter records an OOM kill, text output prints `Runtime health: degraded (... OOM kill recorded)` and points you to `$$nemoclaw <name> rebuild`; JSON output reports `terminalRuntimeHealth.kind: "degraded"` with the OOM kill count and source counter path. For a present gateway runtime, text output prints `Serving process (<agent> gateway): not checked`, and JSON output reports `servingProcessHealth: { "checked": false }`. The existing inference probes run in a fresh sandbox command, so they do not attest that the long-running gateway process has equivalent inference access. NemoClaw does not probe the serving process yet. For terminal runtimes, `servingProcessHealth` is `null` and the text output omits this line because there is no long-running gateway process. The command exits non-zero when the sandbox is missing locally, the gateway state is not `present`, the gateway reports a schema/protobuf mismatch (mirrored as `rpcIssue`), `failureLayer` is non-null, the authoritative in-sandbox inference route fails or cannot be probed, managed llama.cpp ownership is unavailable, or a terminal runtime sandbox reports a recorded OOM kill. When the canonical text command targets an unregistered name, it reports that the sandbox is not registered and tells you to run `$$nemoclaw list`. The alias form `$$nemoclaw <name> status --json` requires the sandbox to be registered locally; the canonical form `$$nemoclaw sandbox status <name> --json` is the one to use from automation that may run against an unknown sandbox name, since it still emits a JSON document with `found: false` instead of a text error.
+A host-side upstream probe under `inferenceHealth.subprobes` stays a diagnostic and does not change `inferenceHealth.ok`, because the sandbox route is the one the agent uses. When the route probe failed, or the sandbox records no provider or no model, NemoClaw skips the inference request and `inferenceHealth` reports the route probe result alone. `dockerPaused` is `true` when NemoClaw detects that the Docker-driver sandbox container is paused. In that case, text output keeps OpenShell's authoritative phase but prints a `docker unpause <container>` recovery hint instead of sending you directly to rebuild. For terminal runtime sandboxes, the command also checks cgroup OOM kill counters. If the counter records an OOM kill, text output prints `Runtime health: degraded (... OOM kill recorded)` and points you to `$$nemoclaw <name> rebuild`; JSON output reports `terminalRuntimeHealth.kind: "degraded"` with the OOM kill count and source counter path. For a present gateway runtime, text output prints `Serving process (<agent> gateway): not checked`, and JSON output reports `servingProcessHealth: { "checked": false }`. The existing inference probes run in a fresh sandbox command, so they do not attest that the long-running gateway process has equivalent inference access. NemoClaw does not probe the serving process yet. For terminal runtimes, `servingProcessHealth` is `null` and the text output omits this line because there is no long-running gateway process. The command exits non-zero when the sandbox is missing locally, the gateway state is neither `present` nor `missing` with confirmed `phase: "Stopped"`, the gateway reports a schema/protobuf mismatch (mirrored as `rpcIssue`), `failureLayer` is non-null, the authoritative in-sandbox inference route fails or cannot be probed, managed llama.cpp ownership is unavailable, or a terminal runtime sandbox reports a recorded OOM kill. When the canonical text command targets an unregistered name, it reports that the sandbox is not registered and tells you to run `$$nemoclaw list`. The alias form `$$nemoclaw <name> status --json` requires the sandbox to be registered locally; the canonical form `$$nemoclaw sandbox status <name> --json` is the one to use from automation that may run against an unknown sandbox name, since it still emits a JSON document with `found: false` instead of a text error.
 
 For a sandbox that owns managed llama.cpp, text output also reports the recipe ID, model digest, image reference, `https://inference.local/v1` endpoint, and lifecycle state. It does not print the managed API key or its fingerprint. The lifecycle state is one of these values:
 
@@ -1594,12 +1606,14 @@ For cloud-only providers, the output omits the NIM status line unless a NIM cont
 
 When the sandbox's recorded driver is `docker` and the host Docker daemon is not reachable, the command prints the `docker_unreachable` failure layer with the message `Docker daemon is not reachable.` as the first line of stdout, suppresses the host-side `Inference` probe (which otherwise hits the remote provider directly and is misleading when the local stack is down), and exits with a non-zero status.
 
-When the host Docker daemon is reachable but the per-sandbox container is stopped, the initial preflight records the `sandbox_container_stopped` failure layer and suppresses the host-side `Inference` probe. If the owning OpenShell gateway is healthy but no longer lists the registered Docker-driver sandbox, status attempts post-reboot recovery from the labeled container. It waits for Docker readiness, restores the in-sandbox gateway and host forwards, and refreshes preflight before probing inference. A successful recovery clears the stale stopped-container failure.
+When the host Docker daemon is reachable but the per-sandbox container is stopped without a matching intentional-stop record, the initial preflight records the `sandbox_container_stopped` failure layer and suppresses the host-side `Inference` probe. A matching intentional-stop record instead produces the clean `Stopped` result described above. If the owning OpenShell gateway is healthy but no longer lists the registered Docker-driver sandbox, status attempts post-reboot recovery from the labeled container. It waits for Docker readiness, restores the in-sandbox gateway and host forwards, and refreshes preflight before probing inference. A successful recovery clears the stale stopped-container failure.
 
 <AgentOnly variant="openclaw">
 If OpenShell already reports the registered Docker-driver sandbox as present and `Ready`, status verifies the OpenClaw gateway and host forward.
 It recovers either component when the verification reports it absent.
 </AgentOnly>
+When status finds a running sandbox but cannot clear its stale intentional-stop record, it exits non-zero and reports the `stop_intent_update_failed` state.
+Repair write access to NemoClaw's local state, then retry `$$nemoclaw <sandbox-name> status` before running another lifecycle command.
 When status finds the sandbox but cannot prove its agent delivery chain, it exits non-zero and reports the `sandbox_recovery_failed` state.
 Address the reported recovery layer, then run the displayed `$$nemoclaw <sandbox-name> recover` command.
 <AgentOnly variant="openclaw,hermes">
@@ -1739,7 +1753,12 @@ For a sandbox that owns managed llama.cpp, `doctor` adds secret-free identity an
 
 <AgentOnly variant="openclaw">
 
-For OpenClaw sandboxes, `doctor` also checks the mutable config permission contract. If `openclaw doctor --fix` was run inside the sandbox, it can tighten `/sandbox/.openclaw` and `openclaw.json` to a single-user `700/600` layout, which stops the gateway from persisting config changes. `doctor` reports this as a `Config permissions` warning; pass `--fix` to restore the group-writable `2770/660` contract without rebuilding. Restarting the sandbox repairs the same drift automatically.
+For OpenClaw sandboxes, `doctor` also checks the mutable config permission contract.
+When the existing config guard verifies a same-user nonroot launch, `/sandbox/.openclaw` uses `0700` and `openclaw.json` uses `0600`.
+Separate gateway identities and unverified layouts retain `2770/0660` for shared access.
+If `openclaw doctor --fix` removes required group access, `doctor` reports a `Config permissions` warning.
+Pass `--fix` to restore the permissions selected by the existing guard without rebuilding.
+Restarting the sandbox repairs the same drift when the config tree passes its safety checks.
 
 ```bash
 $$nemoclaw my-assistant doctor [--json | --fix]
@@ -1748,7 +1767,7 @@ $$nemoclaw my-assistant doctor [--json | --fix]
 | Flag | Description |
 | --- | --- |
 | `--json` | Emit the report as JSON |
-| `--fix` | Restore the mutable OpenClaw config permission contract if it was tightened. Mutually exclusive with `--json` |
+| `--fix` | Restore the mutable OpenClaw config permission contract. Mutually exclusive with `--json` |
 
 </AgentOnly>
 <AgentOnly variant="hermes">

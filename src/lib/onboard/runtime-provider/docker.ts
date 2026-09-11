@@ -31,6 +31,7 @@ import {
   stopPortableAgentSandboxLifecycle,
 } from "../experimental/portable-agent-lifecycle";
 import { withMcpLifecycleLockSync } from "../../state/mcp-lifecycle-lock-acquisition";
+import { resolveHermesPortableLifecycleLockOptions } from "../experimental/portable-lifecycle-lock";
 import { queryOpenShellDockerSandboxRuntimeSnapshot } from "../openshell-docker-sandbox-containers";
 import { validateSandboxGpuPreflight } from "../sandbox-gpu-preflight";
 import {
@@ -295,8 +296,22 @@ function startDockerSandbox(
   input: RuntimeProviderLifecycleInput,
   deps: DockerRuntimeProviderDependencies,
 ): RuntimeProviderLifecycleResult {
-  return deps.withLifecycleLockSync(input.sandboxName, () =>
-    startDockerSandboxUnlocked(input, deps),
+  return deps.withLifecycleLockSync(
+    input.sandboxName,
+    () => startDockerSandboxUnlocked(input, deps),
+    dockerLifecycleLockOptions(input, deps),
+  );
+}
+
+function dockerLifecycleLockOptions(
+  input: RuntimeProviderLifecycleInput,
+  deps: DockerRuntimeProviderDependencies,
+): { readonly stateDir: string } | undefined {
+  if (input.sandbox.agent !== "hermes") return undefined;
+  return resolveHermesPortableLifecycleLockOptions(
+    input.sandboxName,
+    input.environment,
+    deps.hasPortableLifecycleReceipt,
   );
 }
 
@@ -381,8 +396,10 @@ function stopDockerSandbox(
   hooks: RuntimeProviderLifecycleStopHooks,
   deps: DockerRuntimeProviderDependencies,
 ): RuntimeProviderLifecycleStopOutcome {
-  return deps.withLifecycleLockSync(input.sandboxName, () =>
-    stopDockerSandboxUnlocked(input, hooks, deps),
+  return deps.withLifecycleLockSync(
+    input.sandboxName,
+    () => stopDockerSandboxUnlocked(input, hooks, deps),
+    dockerLifecycleLockOptions(input, deps),
   );
 }
 

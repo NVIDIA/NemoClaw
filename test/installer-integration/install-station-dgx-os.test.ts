@@ -260,10 +260,7 @@ dgx_station_release_state "$DGX_RELEASE"
     ["older no-OTA version", writeNoOtaDgxOs76Release({ version: "7.5.0" })],
     ["future release family", writeNoOtaDgxOs76Release({ version: "7.7.0" })],
     ["non-numeric patch", writeNoOtaDgxOs76Release({ version: "7.6.rc1" })],
-    [
-      "different platform",
-      writeNoOtaDgxOs76Release({ platform: "DGX Server for GALAXY-GB200" }),
-    ],
+    ["different platform", writeNoOtaDgxOs76Release({ platform: "DGX Server for GALAXY-GB200" })],
     [
       "partial OTA identity",
       writeNoOtaDgxOs76Release({ otaMetadata: 'DGX_OTA_PRETTY_NAME="DGX OS"' }),

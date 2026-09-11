@@ -65,15 +65,18 @@ describe("normalizeInferenceSelection", () => {
   it.each([
     ["high", "high"],
     [null, "endpoint-default"],
-  ] as const)("describes the effective OpenAI Completions effort (%s) (#7659)", (stored, expected) => {
-    expect(
-      getEffectiveReasoningEffort({
-        provider: "compatible-endpoint",
-        preferredInferenceApi: "openai-completions",
-        compatibleEndpointReasoningEffort: stored,
-      }),
-    ).toBe(expected);
-  });
+  ] as const)(
+    "describes the effective OpenAI Completions effort (%s) (#7659)",
+    (stored, expected) => {
+      expect(
+        getEffectiveReasoningEffort({
+          provider: "compatible-endpoint",
+          preferredInferenceApi: "openai-completions",
+          compatibleEndpointReasoningEffort: stored,
+        }),
+      ).toBe(expected);
+    },
+  );
 
   it("does not report reasoning effort for routes where it does not apply", () => {
     expect(

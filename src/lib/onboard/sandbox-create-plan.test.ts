@@ -335,9 +335,7 @@ describe("resolveSandboxCreatePolicyTier", () => {
       [],
       expect.objectContaining({ policyTier: "balanced" }),
     );
-    expect(plan.initialSandboxPolicy.appliedPresets).toContain(
-      "openclaw-diagnostics-otel-local",
-    );
+    expect(plan.initialSandboxPolicy.appliedPresets).toContain("openclaw-diagnostics-otel-local");
     expect(plan).not.toHaveProperty("policyTier");
   });
 });

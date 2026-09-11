@@ -280,7 +280,6 @@ async function expectAggregatePublicFetchFailure(
 }
 
 describe("common-egress agent parsing and classification helpers", () => {
-
   it("reduces OpenClaw public-fetch traces without retaining fetched content or URL queries", () => {
     const source = "www.wikidata.org";
     const evidence = reduceOpenClawToolEvidence(
@@ -1198,7 +1197,8 @@ describe("common-egress agent parsing and classification helpers", () => {
         ...result,
         exitCode: 0,
         reply: "The command is waiting for your approval to execute.",
-        response: "The command is waiting for your approval to execute. Please approve it to proceed.",
+        response:
+          "The command is waiting for your approval to execute. Please approve it to proceed.",
       }),
     ).toEqual({ passed: false, failureClass: "transient-external" });
     expect(classifyHermesAgentAssertion(result)).toEqual({

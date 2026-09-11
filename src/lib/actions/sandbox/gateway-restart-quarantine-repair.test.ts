@@ -84,13 +84,13 @@ describe("terminal restart repair guidance (#7801)", () => {
     expect(isGatewayTerminalRepairLayer(undefined)).toBe(false);
   });
 
-  it.each([
-    "relaunch quarantined",
-    "config hash mismatch",
-  ] as const)("names the supported repair command for %s", (layer) => {
-    const lines = gatewayTerminalRepairLines("repro-7801", layer).join("\n");
-    expect(lines).toContain("nemoclaw repro-7801 rebuild --yes");
-  });
+  it.each(["relaunch quarantined", "config hash mismatch"] as const)(
+    "names the supported repair command for %s",
+    (layer) => {
+      const lines = gatewayTerminalRepairLines("repro-7801", layer).join("\n");
+      expect(lines).toContain("nemoclaw repro-7801 rebuild --yes");
+    },
+  );
 
   it("resets process quarantine without blaming mutable config (#11108)", () => {
     const lines = gatewayTerminalRepairLines("alpha", "relaunch quarantined").join("\n");

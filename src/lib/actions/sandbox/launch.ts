@@ -5,13 +5,14 @@ import { isDeepStrictEqual } from "node:util";
 
 import * as agentRuntime from "../../agent/runtime";
 import type { AgentDefinition } from "../../agent/definition-types";
-import { spawnExitCode } from "../../core/process-exit";
+import { createCliOpenShellSandboxSessionExecutor } from "../../adapters/openshell/sandbox-command-cli";
 import { REPOSITORY_ROOT } from "../../core/repository-root";
 import {
   createCliOpenShellSandboxCommandExecutor,
   createCurrentnessBoundCliOpenShellSandboxBufferedCommandExecutor,
 } from "../../adapters/openshell/sandbox-command-cli";
 import { resolveSandboxGatewayName } from "../../gateway-runtime-action";
+import { emitPortableOpenClawAlreadyRunningTiming } from "../../onboard/experimental/portable-demo-lifecycle-timing";
 import type { SandboxEntry } from "../../state/registry";
 import {
   completeReadinessQualifiedInteractiveSessionSetup,
@@ -19,12 +20,7 @@ import {
   printInteractiveSessionHints,
 } from "./connect";
 import { prepareHermesLightTerminalSkin } from "./connect-hermes-light-skin";
-import {
-  buildOpenshellExecArgs,
-  execSandbox,
-  runSandboxExecChild,
-  wrapExecCommandWithRuntimeEnv,
-} from "./exec";
+import { execSandbox, wrapExecCommandWithRuntimeEnv } from "./exec";
 import {
   inspectPortableAgentReceiptDisposition,
   captureHermesPortableAcceptedReadinessObservation,
@@ -247,7 +243,7 @@ async function launchAgentWithPortableAuthority(
   command: readonly string[],
   deps: LaunchSandboxDeps,
   acceptedHermesAuthority: HermesPortableLaunchAuthority | null,
-  beforeOrdinaryLaunch?: () => void,
+  beforeOrdinaryLaunch?: () => Promise<void>,
   beforeAgentExec?: () => void,
 ): Promise<void> {
   const runOrdinaryAgent = async (): Promise<void> => {
@@ -263,30 +259,28 @@ async function launchAgentWithPortableAuthority(
     gatewayName: string,
     commandAuthority: HermesPortableReadinessCommandAuthority,
   ): Promise<void> => {
-    const options = {
-      tty: true,
-      stdin: true,
-      timeoutSeconds: 0,
-      subprocessEnv: commandAuthority.env,
-    } as const;
     commandAuthority.assertCurrent();
     beforeAgentExec?.();
-    const result = await runSandboxExecChild(
-      commandAuthority.executablePath,
-      buildOpenshellExecArgs(
-        sandboxName,
-        wrapExecCommandWithRuntimeEnv(command),
-        options,
-        gatewayName,
-      ),
-      options,
-    );
+    const session = createCliOpenShellSandboxSessionExecutor({
+      resolveBinary: () => commandAuthority.executablePath,
+      environment: commandAuthority.env,
+    }).start({
+      kind: "command",
+      sandboxName,
+      target: { kind: "named", gatewayName },
+      command: wrapExecCommandWithRuntimeEnv(command),
+      tty: true,
+      output: "inherit",
+      timeoutSeconds: 0,
+    });
+    const result = await session.completion;
     try {
-      if (result.error) throw result.error;
-      const exitCode = spawnExitCode(result);
-      if (exitCode !== 0) process.exit(exitCode);
+      if (result.outcome.kind === "failed" && result.outcome.reason !== "transport") {
+        throw new Error(result.outcome.message);
+      }
+      if (result.outcome.exitCode !== 0) process.exit(result.outcome.exitCode);
     } finally {
-      result.releaseSignals?.();
+      result.release();
     }
   };
   const lockSandbox = deps.withSandboxMutationLock ?? withSandboxMutationLock;
@@ -296,7 +290,7 @@ async function launchAgentWithPortableAuthority(
       throw new Error("Hermes portable lifecycle authority changed before agent launch.");
     }
     if (current.kind !== "hermes") {
-      beforeOrdinaryLaunch?.();
+      await beforeOrdinaryLaunch?.();
       await runOrdinaryAgent();
       return;
     }
@@ -373,15 +367,16 @@ export async function launchSandbox(
   let decision = inspection.decision;
   let acceptedHermesAuthority = decision.kind === "accepted" ? inspection.hermesAuthority : null;
   let session: Awaited<ReturnType<typeof prepareInteractiveSession>>;
-  let acceptedReadinessSetup: (() => void) | undefined;
+  let acceptedReadinessSetup: (() => Promise<void>) | undefined;
   let readinessAction: LaunchReadinessAction = "prepared";
   while (true) {
     if (decision.kind === "accepted") {
       const acceptedDecision = decision;
       const disposition = inspectPortableAgentReceiptDisposition(sandboxName);
       const hermesPortable = disposition.kind === "hermes";
-      acceptedReadinessSetup = () => {
-        printInteractiveSessionHints(sandboxName);
+      if (disposition.kind === "openclaw") emitPortableOpenClawAlreadyRunningTiming();
+      acceptedReadinessSetup = async () => {
+        await printInteractiveSessionHints(sandboxName);
         completeReadinessQualifiedInteractiveSessionSetup(
           sandboxName,
           acceptedDecision.agent,

@@ -208,8 +208,10 @@ function previousSchemaContainer(role: "head" | "worker"): FakeContainer {
   const container = fakeContainer(role);
   container.labels[DUAL_STATION_VLLM_LAUNCH_SCHEMA_LABEL] =
     PREVIOUS_DUAL_STATION_VLLM_LAUNCH_SCHEMA;
-  container.labels[DUAL_STATION_VLLM_LAUNCH_CONTRACT_LABEL] =
-    previousDualStationVllmLaunchContract(fixturePlan(), role);
+  container.labels[DUAL_STATION_VLLM_LAUNCH_CONTRACT_LABEL] = previousDualStationVllmLaunchContract(
+    fixturePlan(),
+    role,
+  );
   return container;
 }
 
@@ -525,7 +527,11 @@ describe("dual-Station managed vLLM lifecycle", () => {
       expect(call.args).toContain(DUAL_STATION_VLLM_RUNTIME.image);
       expect(call.options?.env?.VLLM_API_KEY).toBeUndefined();
     });
-    expect([...fake.captureOptions, ...fake.rmOptions].every((options) => options?.env?.VLLM_API_KEY === undefined)).toBe(true);
+    expect(
+      [...fake.captureOptions, ...fake.rmOptions].every(
+        (options) => options?.env?.VLLM_API_KEY === undefined,
+      ),
+    ).toBe(true);
   });
 
   it("does not mutate either daemon unless both exact pinned images are present", async () => {
@@ -598,11 +604,17 @@ describe("dual-Station managed vLLM lifecycle", () => {
     expect(headRun?.options?.env?.VLLM_API_KEY).toBe(API_KEY);
     expect(headRun?.args).toContain("VLLM_API_KEY");
     expect(headRun?.args).not.toContain(API_KEY);
-    fake.runCalls.filter((call) => call !== headRun).forEach((call) => {
-      expect(call.options?.env?.VLLM_API_KEY).toBeUndefined();
-      expect(call.args).not.toContain(API_KEY);
-    });
-    expect([...fake.captureOptions, ...fake.rmOptions].every((options) => options?.env?.VLLM_API_KEY === undefined)).toBe(true);
+    fake.runCalls
+      .filter((call) => call !== headRun)
+      .forEach((call) => {
+        expect(call.options?.env?.VLLM_API_KEY).toBeUndefined();
+        expect(call.args).not.toContain(API_KEY);
+      });
+    expect(
+      [...fake.captureOptions, ...fake.rmOptions].every(
+        (options) => options?.env?.VLLM_API_KEY === undefined,
+      ),
+    ).toBe(true);
     expect(fake.buildRemoteDockerEnv).toHaveBeenCalledWith(sshFixture.binding);
   });
 
@@ -630,10 +642,12 @@ describe("dual-Station managed vLLM lifecycle", () => {
     fake.seed("peer", previousSchemaContainer("worker"));
 
     expect(preflightDualStationManagedVllm(fixturePlan(), fake.deps)).toEqual({ ok: true });
-    expect(await startDualStationManagedVllm(fixturePlan(), START_CONFIG, fake.deps)).toMatchObject({
-      ok: true,
-      reusedExisting: false,
-    });
+    expect(await startDualStationManagedVllm(fixturePlan(), START_CONFIG, fake.deps)).toMatchObject(
+      {
+        ok: true,
+        reusedExisting: false,
+      },
+    );
     expect(fake.operations.filter((operation) => operation.kind === "rm")).toEqual(
       expect.arrayContaining([
         { kind: "rm", target: "local", value: HEAD_ID },

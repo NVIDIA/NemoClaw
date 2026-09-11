@@ -146,55 +146,54 @@ function provider(agent: ShippedManagedImageAgent) {
 }
 
 describe("managed rebuild restore authority", () => {
-  it.each([
-    "openclaw",
-    "hermes",
-    "langchain-deepagents-code",
-  ] as const)("revalidates %s content and provider authority at the mutation edge", (agent) => {
-    const target = sandbox(agent);
-    const runtimeProvider = provider(agent);
-    const restore = vi.fn(
-      (_name: string, _path: string, options: RecreatedSandboxRestoreOptions): RestoreResult => {
-        options.validateBeforeMutation?.();
-        return {
-          success: true,
-          restoredDirs: ["workspace"],
-          failedDirs: [],
-          restoredFiles: [],
-          failedFiles: [],
-        };
-      },
-    );
+  it.each(["openclaw", "hermes", "langchain-deepagents-code"] as const)(
+    "revalidates %s content and provider authority at the mutation edge",
+    (agent) => {
+      const target = sandbox(agent);
+      const runtimeProvider = provider(agent);
+      const restore = vi.fn(
+        (_name: string, _path: string, options: RecreatedSandboxRestoreOptions): RestoreResult => {
+          options.validateBeforeMutation?.();
+          return {
+            success: true,
+            restoredDirs: ["workspace"],
+            failedDirs: [],
+            restoredFiles: [],
+            failedFiles: [],
+          };
+        },
+      );
 
-    const result = restoreRecreatedSandboxStateWithManagedAuthority(
-      "alpha",
-      manifest(agent),
-      { targetAgentType: agent },
-      {
-        getSandbox: () => target,
-        requireProvider: () => runtimeProvider.bundle,
-        captureContentAuthority: () => ({
-          schemaVersion: 1,
-          backupPath: "/tmp/alpha",
-          contentSha256: "c".repeat(64),
+      const result = restoreRecreatedSandboxStateWithManagedAuthority(
+        "alpha",
+        manifest(agent),
+        { targetAgentType: agent },
+        {
+          getSandbox: () => target,
+          requireProvider: () => runtimeProvider.bundle,
+          captureContentAuthority: () => ({
+            schemaVersion: 1,
+            backupPath: "/tmp/alpha",
+            contentSha256: "c".repeat(64),
+          }),
+          restore,
+        },
+      );
+
+      expect(result.success).toBe(true);
+      expect(restore).toHaveBeenCalledWith(
+        "alpha",
+        "/tmp/alpha",
+        expect.objectContaining({
+          authority: expect.objectContaining({ contentSha256: "c".repeat(64) }),
+          validateBeforeMutation: expect.any(Function),
         }),
-        restore,
-      },
-    );
-
-    expect(result.success).toBe(true);
-    expect(restore).toHaveBeenCalledWith(
-      "alpha",
-      "/tmp/alpha",
-      expect.objectContaining({
-        authority: expect.objectContaining({ contentSha256: "c".repeat(64) }),
-        validateBeforeMutation: expect.any(Function),
-      }),
-    );
-    expect(runtimeProvider.preflight).toHaveBeenCalledTimes(2);
-    expect(runtimeProvider.validateRestore).toHaveBeenCalledTimes(2);
-    expect(runtimeProvider.restore).toHaveBeenCalledOnce();
-  });
+      );
+      expect(runtimeProvider.preflight).toHaveBeenCalledTimes(2);
+      expect(runtimeProvider.validateRestore).toHaveBeenCalledTimes(2);
+      expect(runtimeProvider.restore).toHaveBeenCalledOnce();
+    },
+  );
 
   it("keeps legacy rebuild manifests on the state-only restore path", () => {
     const legacy = { ...manifest("openclaw"), workload: undefined, runtimeSnapshot: undefined };

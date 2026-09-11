@@ -300,7 +300,7 @@ beforeEach(() => {
           ? { status: 0, stdout: testLog, stderr: "" }
           : { status: 0, stdout: "", stderr: "" };
     });
-  vi.spyOn(processRecovery, "executeSandboxCommand").mockReturnValue(null);
+  vi.spyOn(processRecovery, "executeSandboxCommand").mockResolvedValue(null);
 
   buildPlanSpy = vi
     .spyOn(MessagingWorkflowPlanner.prototype, "buildPlan")
@@ -604,10 +604,9 @@ describe("channels add applies a matching policy preset (#3437)", () => {
       lifecycleGeneration: "generation-1",
       lifecycleLiveIdentityFingerprint: "fingerprint-1",
     } as SandboxEntry;
-    vi.spyOn(
-      policyChannelDependencies,
-      "inspectMessagingProviderAttachmentTarget",
-    ).mockReturnValue("fingerprint-1");
+    vi.spyOn(policyChannelDependencies, "inspectMessagingProviderAttachmentTarget").mockReturnValue(
+      "fingerprint-1",
+    );
     applyPresetSpy
       .mockImplementationOnce((_name, presetName) => {
         callOrder.push(`applyPreset:${presetName}`);

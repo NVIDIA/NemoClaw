@@ -2,73 +2,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Focused unit tests for the shared shell supervisor + trusted-command
- * modules. The headline guarantees of the consolidation are:
- *
- *   1. Every TS spawn site reaches the same NUL-byte argv guard.
- *   2. Every TS spawn site reaches the same process-group cleanup
- *      with SIGTERM -> SIGKILL escalation, so a bash child that
- *      ignores SIGTERM (e.g. `trap "" TERM`) still dies on timeout.
- *
- * Both come from the leaf modules under fixtures/shell/, so the
- * assertions live here at the leaf level. The end-to-end behaviour
- * (orchestrator log redaction, fixture artifact persistence, probe
- * outcome mapping) stays covered by the existing support-tests
- * (e2e-phase-orchestrators, e2e-fixture-context).
+ * Focused unit tests for shared process-group cleanup and
+ * SIGTERM -> SIGKILL escalation.
  */
 
 import { spawn } from "node:child_process";
 import { describe, expect, it } from "vitest";
 
-import { superviseChild } from "../fixtures/shell/supervisor.ts";
-import { trustedShellCommand, validateShellToken } from "../fixtures/shell/trusted-command.ts";
+import { superviseChild } from "./process-supervisor.ts";
 
-const NUL = String.fromCharCode(0);
-
-describe("fixtures/shell/trusted-command", () => {
-  it("validateShellToken rejects NUL bytes with a labelled error", () => {
-    expect(() => validateShellToken(`a${NUL}b`, "argv[0]")).toThrowError(
-      /argv\[0\] cannot contain NUL bytes/,
-    );
-  });
-
-  it("validateShellToken passes a clean token through unchanged", () => {
-    expect(validateShellToken("bash", "command")).toBe("bash");
-  });
-
-  it("trustedShellCommand rejects NUL bytes in the command", () => {
-    expect(() => trustedShellCommand({ command: `ba${NUL}sh`, reason: "test" })).toThrowError(
-      /command cannot contain NUL bytes/,
-    );
-  });
-
-  it("trustedShellCommand rejects NUL bytes in arguments", () => {
-    expect(() =>
-      trustedShellCommand({ command: "bash", args: [`x${NUL}y`], reason: "test" }),
-    ).toThrowError(/argument cannot contain NUL bytes/);
-  });
-
-  it("trustedShellCommand requires a non-empty reason", () => {
-    expect(() => trustedShellCommand({ command: "bash", reason: "   " })).toThrowError(
-      /reason is required/,
-    );
-  });
-
-  it("trustedShellCommand runs the caller's validate hook", () => {
-    expect(() =>
-      trustedShellCommand({
-        command: "bash",
-        args: ["-c", "echo hi"],
-        reason: "test",
-        validate: (_cmd, args) => {
-          if (args.includes("-c")) throw new Error("bash -c is forbidden here");
-        },
-      }),
-    ).toThrowError(/bash -c is forbidden here/);
-  });
-});
-
-describe("fixtures/shell/supervisor", () => {
+describe("helpers/process-supervisor", () => {
   it("returns exitCode 0 when the child exits cleanly", async () => {
     const child = spawn("bash", ["-c", "exit 0"], {
       detached: true,
