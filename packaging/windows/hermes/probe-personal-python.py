@@ -13,14 +13,34 @@ import time
 import traceback
 
 
+def owned_runtime(directory):
+    # The already-loaded production adapter validates every path component
+    # without the final-path API denied to an otherwise readable MXC runtime.
+    import nemoclaw_native_windows as native_paths
+
+    root = native_paths._absolute_path(Path(directory))
+    if root != native_paths._active_root:
+        raise ValueError("The supplied runtime differs from the loaded native adapter.")
+    native_paths._regular_file(root / native_paths.MARKER, root)
+    return root
+
+
+def owned_file(file, root):
+    from nemoclaw_native_windows import _regular_file
+
+    return _regular_file(Path(file), root)
+
+
 def python_check(root, nonce):
     expected = (
         root
         / "hermes-agent/.hermes-runtime/python/cpython-3.11.16-windows-aarch64-none"
     )
     assert sys.version_info[:3] == (3, 11, 16)
-    assert Path(sys.base_prefix).resolve() == expected.resolve()
-    assert Path(sys._base_executable).resolve() == (expected / "python.exe").resolve()
+    assert Path(sys.base_prefix) == expected
+    assert owned_file(sys._base_executable, root) == owned_file(
+        expected / "python.exe", root
+    )
     assert "nemoclaw_native_windows" in sys.modules
     with tempfile.TemporaryDirectory() as directory:
         file = Path(directory) / "owned.txt"
@@ -60,8 +80,8 @@ def python_check(root, nonce):
 def bash_check(root, nonce):
     from tools.environments.local import LocalEnvironment, _find_bash
 
-    selected = Path(_find_bash()).resolve()
-    assert selected == (root / "git/bin/bash.exe").resolve()
+    selected = owned_file(_find_bash(), root)
+    assert selected == owned_file(root / "git/bin/bash.exe", root)
     environment = LocalEnvironment(cwd=os.getcwd(), timeout=20)
     try:
         result = environment.execute(
@@ -119,7 +139,9 @@ def browser_check(root, nonce):
     import threading
 
     expected = root / "agent-browser/bin/agent-browser-win32-x64.exe"
-    assert Path(_find_agent_browser(validate=True)).resolve() == expected.resolve()
+    assert owned_file(_find_agent_browser(validate=True), root) == owned_file(
+        expected, root
+    )
     page = (
         "<!doctype html><title>Hermes Personal proof</title><p id='sentinel'>"
         + nonce
@@ -213,7 +235,6 @@ def browser_check(root, nonce):
 
 def main():
     kind, directory, nonce = sys.argv[1:]
-    root = Path(directory).resolve(strict=True)
     result = {"schemaVersion": 1, "component": kind, "nonce": nonce, "passed": False}
     try:
         assert (
@@ -221,6 +242,21 @@ def main():
             and len(nonce) == 24
             and all(value in "0123456789abcdef" for value in nonce)
         )
+        root = owned_runtime(directory)
+        # Retain the old prelude's actual Windows outcome separately; it is
+        # not used as authority or allowed to prevent the component operation.
+        try:
+            previous = root.resolve(strict=True)
+            result["previousFinalPathPrelude"] = {
+                "succeeded": True,
+                "path": str(previous),
+            }
+        except OSError as error:
+            result["previousFinalPathPrelude"] = {
+                "succeeded": False,
+                "error": repr(error),
+                "winerror": getattr(error, "winerror", None),
+            }
         result["details"] = {
             "python": python_check,
             "bash": bash_check,
