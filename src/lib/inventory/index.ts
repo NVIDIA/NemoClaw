@@ -88,7 +88,7 @@ export interface ListSandboxesCommandDeps {
   /** Detect active SSH sessions for a sandbox. Returns session count or null if unavailable. */
   getActiveSessionCount?: (sandboxName: string) => number | null;
   /** Derive applied preset names from the current OpenShell policy. */
-  getPolicyPresets?: (sandboxName: string) => string[];
+  getPolicyPresets?: (sandboxName: string) => string[] | Promise<string[]>;
   log?: (message?: string) => void;
 }
 
@@ -155,7 +155,7 @@ export interface ShowStatusCommandDeps {
    */
   getActiveSessionCount?: (sandboxName: string) => number | null;
   /** Derive applied preset names from the current OpenShell policy. */
-  getPolicyPresets?: (sandboxName: string) => string[];
+  getPolicyPresets?: (sandboxName: string) => string[] | Promise<string[]>;
   /**
    * Report whether the named NemoClaw gateway is reachable. When omitted,
    * `showStatusCommand` keeps its legacy 0-exit behaviour; when provided and
@@ -294,12 +294,12 @@ function resolveDisplayAgent(sandbox: SandboxEntry): string {
  * resolving inference/GPU fields and marking gateway-recovered rows so unknown
  * agent/GPU state renders as "unknown" rather than OpenClaw/CPU defaults.
  */
-function buildSandboxInventoryRow(
+async function buildSandboxInventoryRow(
   sandbox: SandboxEntry,
   defaultSandbox: string | null,
   getActiveSessionCount?: (sandboxName: string) => number | null,
-  getPolicyPresets?: (sandboxName: string) => string[],
-): SandboxInventoryRow {
+  getPolicyPresets?: (sandboxName: string) => string[] | Promise<string[]>,
+): Promise<SandboxInventoryRow> {
   const activeSessionCount = getActiveSessionCount ? getActiveSessionCount(sandbox.name) : null;
   const sandboxGpuEnabled =
     typeof sandbox.sandboxGpuEnabled === "boolean"
@@ -318,7 +318,7 @@ function buildSandboxInventoryRow(
     sandboxGpuDevice: safeStatusString(sandbox.sandboxGpuDevice || null),
     openshellDriver: safeStatusString(sandbox.openshellDriver || null),
     openshellVersion: safeStatusString(sandbox.openshellVersion || null),
-    policies: getPolicyPresets?.(sandbox.name) ?? [],
+    policies: (await getPolicyPresets?.(sandbox.name)) ?? [],
     agent: resolveDisplayAgent(sandbox),
     ...(sandbox.dashboardPort != null ? { dashboardPort: sandbox.dashboardPort } : {}),
     isDefault: sandbox.name === defaultSandbox,
@@ -344,6 +344,18 @@ export async function getSandboxInventory(
       : null;
   const incompleteOnboarding = projectIncompleteOnboarding(recovery.sandboxes, lastSession);
 
+  const rows = await Promise.all(
+    recovery.sandboxes
+      .filter(isPublishedSandboxRegistration)
+      .map((sandbox) =>
+        buildSandboxInventoryRow(
+          sandbox,
+          resolvedDefault,
+          deps.getActiveSessionCount,
+          deps.getPolicyPresets,
+        ),
+      ),
+  );
   return {
     schemaVersion: 1,
     defaultSandbox: resolvedDefault,
@@ -355,16 +367,7 @@ export async function getSandboxInventory(
     incompleteOnboarding,
     // Pending rows are internal lifecycle state. They remain readable by their
     // recovery authority, but must not appear as completed sandboxes.
-    sandboxes: recovery.sandboxes
-      .filter(isPublishedSandboxRegistration)
-      .map((sandbox) =>
-        buildSandboxInventoryRow(
-          sandbox,
-          resolvedDefault,
-          deps.getActiveSessionCount,
-          deps.getPolicyPresets,
-        ),
-      ),
+    sandboxes: rows,
   };
 }
 
@@ -475,13 +478,13 @@ export async function listSandboxesCommand(deps: ListSandboxesCommandDeps): Prom
   renderSandboxInventoryText(inventory, log, liveInference);
 }
 
-function buildStatusSandboxRow(
+async function buildStatusSandboxRow(
   sandbox: SandboxEntry,
   defaultSandbox: string | null,
   liveInference: GatewayInference | null,
   portablePhase: "pending" | "configuring" | "active" | null,
-  getPolicyPresets?: (sandboxName: string) => string[],
-): StatusSandboxRow {
+  getPolicyPresets?: (sandboxName: string) => string[] | Promise<string[]>,
+): Promise<StatusSandboxRow> {
   const isDefault = sandbox.name === defaultSandbox;
   const liveModel = isDefault ? liveInference?.model : null;
   const liveProvider = isDefault ? liveInference?.provider : null;
@@ -505,7 +508,7 @@ function buildStatusSandboxRow(
     sandboxGpuDevice: safeStatusString(sandbox.sandboxGpuDevice || null),
     openshellDriver: safeStatusString(sandbox.openshellDriver || null),
     openshellVersion: safeStatusString(sandbox.openshellVersion || null),
-    policies: (getPolicyPresets?.(sandbox.name) ?? []).map(
+    policies: ((await getPolicyPresets?.(sandbox.name)) ?? []).map(
       (policy) => safeStatusString(policy) || policy,
     ),
     agent: redactFull(resolveDisplayAgent(sandbox)),
@@ -562,7 +565,7 @@ function normalizeGatewayAuthority(
   };
 }
 
-export function getStatusReport(deps: ShowStatusCommandDeps): StatusReport {
+export async function getStatusReport(deps: ShowStatusCommandDeps): Promise<StatusReport> {
   const sandboxList = deps.listSandboxes();
   // Pending registrations are recovery state, not normal sandbox inventory.
   const sandboxes = sandboxList.sandboxes.filter(isPublishedSandboxRegistration);
@@ -595,6 +598,17 @@ export function getStatusReport(deps: ShowStatusCommandDeps): StatusReport {
         .map(normalizeServiceStatus) ?? [])
     : [];
 
+  const rows = await Promise.all(
+    sandboxes.map((sandbox) =>
+      buildStatusSandboxRow(
+        sandbox,
+        resolvedDefault,
+        liveInference,
+        portablePhases.get(sandbox.name) ?? null,
+        deps.getPolicyPresets,
+      ),
+    ),
+  );
   return {
     schemaVersion: 1,
     defaultSandbox: safeStatusString(resolvedDefault),
@@ -609,15 +623,7 @@ export function getStatusReport(deps: ShowStatusCommandDeps): StatusReport {
       ? null
       : normalizeGatewayAuthority(deps.getGatewayAuthority?.()),
     incompleteOnboarding,
-    sandboxes: sandboxes.map((sandbox) =>
-      buildStatusSandboxRow(
-        sandbox,
-        resolvedDefault,
-        liveInference,
-        portablePhases.get(sandbox.name) ?? null,
-        deps.getPolicyPresets,
-      ),
-    ),
+    sandboxes: rows,
     services,
   };
 }
