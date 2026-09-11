@@ -1746,6 +1746,14 @@ trusted_upstream_openshell_gateway_bin_for_service() {
   esac
 }
 
+supported_openshell_gateway_user_service_candidate_exists() {
+  upstream_openshell_gateway_user_service_installed && return 0
+  local service_path
+  service_path="$(openshell_user_config_home)/systemd/user/${NEMOCLAW_GATEWAY_SERVICE_NAME}.service" \
+    || return 1
+  [ -e "$service_path" ] || [ -L "$service_path" ]
+}
+
 inspect_upstream_openshell_gateway_user_service() {
   local service_output service_status line fragment_path="" exec_start="" gateway_bin
   local fragment_count=0 exec_start_count=0
@@ -4007,6 +4015,8 @@ stop_active_openshell_gateway_user_service() {
   fi
   [ "$platform" = "Linux" ] || return 1
   command_exists systemctl || return 1
+  systemctl --user show-environment >/dev/null || return 2
+  supported_openshell_gateway_user_service_candidate_exists || return 1
 
   if inspect_upstream_openshell_gateway_user_service; then
     if systemctl --user is-active --quiet openshell-gateway.service 2>/dev/null; then
@@ -4017,11 +4027,9 @@ stop_active_openshell_gateway_user_service() {
       printf -v "$selection_variable" '%s' "systemd:openshell-gateway.service"
       return 0
     fi
-    systemctl --user show-environment >/dev/null || return 2
   else
     inspect_status=$?
     [ "$inspect_status" -ne 2 ] || return 2
-    systemctl --user show-environment >/dev/null || return 2
   fi
 
   if stop_nemoclaw_openshell_gateway_user_service; then

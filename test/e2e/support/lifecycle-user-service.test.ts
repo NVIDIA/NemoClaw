@@ -56,9 +56,22 @@ function writeTrustedInstaller(
       `source ${JSON.stringify(installer)}`,
       `trusted_upstream_openshell_gateway_unit_for_service() { [ "$1" = ${JSON.stringify(trustedUnit)} ]; }`,
       `trusted_upstream_openshell_gateway_bin_for_service() { [ "$1" = ${JSON.stringify(trustedGatewayBin)} ]; }`,
+      "supported_openshell_gateway_user_service_candidate_exists() { return 0; }",
     ].join("\n"),
   );
   return trustedInstaller;
+}
+
+function writeCandidateInstaller(root: string, exists: boolean): string {
+  const candidateInstaller = path.join(root, "candidate-installer.sh");
+  fs.writeFileSync(
+    candidateInstaller,
+    [
+      `source ${JSON.stringify(installer)}`,
+      `supported_openshell_gateway_user_service_candidate_exists() { return ${exists ? "0" : "1"}; }`,
+    ].join("\n"),
+  );
+  return candidateInstaller;
 }
 
 function writeMacServiceStubs(root: string, trustedProgram: boolean) {
@@ -381,9 +394,9 @@ describe("managed OpenShell gateway user-service restart", () => {
 
       expect(env.XDG_CONFIG_HOME).toBe(configHome);
       expect(fs.readFileSync(log, "utf8").trim().split("\n")).toEqual([
+        "--user show-environment",
         upstreamServiceShow,
         "--user is-active --quiet openshell-gateway.service",
-        "--user show-environment",
         "--user is-active --quiet nemoclaw-openshell-gateway.service",
         "--user show nemoclaw-openshell-gateway.service --property=FragmentPath --value",
         "--user show nemoclaw-openshell-gateway.service --property=ExecStart --value",
@@ -452,8 +465,8 @@ describe("managed OpenShell gateway user-service stop", () => {
         `${stoppedServicePrefix}systemd:nemoclaw-openshell-gateway.service`,
       );
       expect(fs.readFileSync(log, "utf8").trim().split("\n")).toEqual([
-        upstreamServiceShow,
         "--user show-environment",
+        upstreamServiceShow,
         "--user is-active --quiet nemoclaw-openshell-gateway.service",
         "--user show nemoclaw-openshell-gateway.service --property=FragmentPath --value",
         "--user show nemoclaw-openshell-gateway.service --property=ExecStart --value",
@@ -512,6 +525,7 @@ describe("managed OpenShell gateway user-service stop", () => {
       expect(result.status, result.stdout + result.stderr).toBe(0);
       expect(result.stdout).toContain(`${stoppedServicePrefix}systemd:openshell-gateway.service`);
       expect(fs.readFileSync(log, "utf8").trim().split("\n")).toEqual([
+        "--user show-environment",
         upstreamServiceShow,
         "--user is-active --quiet openshell-gateway.service",
         "--user stop openshell-gateway.service",
@@ -575,6 +589,41 @@ describe("managed OpenShell gateway user-service stop", () => {
     }
   });
 
+  it("reports no service without inspecting absent service definitions (#10947)", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-lifecycle-stop-absent-"));
+    const home = path.join(root, "home");
+    const bin = path.join(root, "bin");
+    const log = path.join(root, "systemctl.log");
+    const candidateInstaller = writeCandidateInstaller(root, false);
+
+    fs.mkdirSync(home, { recursive: true });
+    fs.mkdirSync(bin, { recursive: true });
+    fs.writeFileSync(path.join(bin, "uname"), "#!/bin/sh\nprintf 'Linux\\n'\n", { mode: 0o755 });
+    fs.writeFileSync(
+      path.join(bin, "systemctl"),
+      [
+        "#!/bin/sh",
+        `printf "%s\\n" "$*" >> ${JSON.stringify(log)}`,
+        'if [ "$*" = "--user show-environment" ]; then exit 0; fi',
+        "exit 97",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    try {
+      const env = buildAvailabilityProbeEnv({
+        HOME: home,
+        PATH: `${bin}:/usr/bin:/bin`,
+      });
+      const result = runStopScript(candidateInstaller, env);
+
+      expect(result.status).toBe(75);
+      expect(fs.readFileSync(log, "utf8").trim()).toBe("--user show-environment");
+    } finally {
+      fs.rmSync(root, { force: true, recursive: true });
+    }
+  });
+
   it("rejects an untrusted upstream OpenShell user service without stopping it (#10947)", () => {
     const root = fs.mkdtempSync(
       path.join(os.tmpdir(), "nemoclaw-lifecycle-stop-upstream-foreign-"),
@@ -586,6 +635,7 @@ describe("managed OpenShell gateway user-service stop", () => {
       `FragmentPath=${home}/.config/systemd/user/openshell-gateway.service`,
       "ExecStart={ path=/usr/bin/openshell-gateway ; argv[]=/usr/bin/openshell-gateway ; }",
     ].join("\n");
+    const candidateInstaller = writeCandidateInstaller(root, true);
 
     fs.mkdirSync(home, { recursive: true });
     fs.mkdirSync(bin, { recursive: true });
@@ -610,12 +660,12 @@ describe("managed OpenShell gateway user-service stop", () => {
         HOME: home,
         PATH: `${bin}:/usr/bin:/bin`,
       });
-      const result = runStopScript(installer, env);
+      const result = runStopScript(candidateInstaller, env);
 
       expect(result.status).toBe(75);
       expect(fs.readFileSync(log, "utf8").trim().split("\n")).toEqual([
-        upstreamServiceShow,
         "--user show-environment",
+        upstreamServiceShow,
       ]);
     } finally {
       fs.rmSync(root, { force: true, recursive: true });
@@ -633,6 +683,7 @@ describe("managed OpenShell gateway user-service stop", () => {
       "FragmentPath=/usr/lib/systemd/user/openshell-gateway.service",
       "ExecStart={ path=/tmp/foreign/openshell-gateway ; argv[]=/tmp/foreign/openshell-gateway ; }",
     ].join("\n");
+    const candidateInstaller = writeCandidateInstaller(root, true);
 
     fs.mkdirSync(home, { recursive: true });
     fs.mkdirSync(bin, { recursive: true });
@@ -657,12 +708,12 @@ describe("managed OpenShell gateway user-service stop", () => {
         HOME: home,
         PATH: `${bin}:/usr/bin:/bin`,
       });
-      const result = runStopScript(installer, env);
+      const result = runStopScript(candidateInstaller, env);
 
       expect(result.status).toBe(75);
       expect(fs.readFileSync(log, "utf8").trim().split("\n")).toEqual([
-        upstreamServiceShow,
         "--user show-environment",
+        upstreamServiceShow,
       ]);
     } finally {
       fs.rmSync(root, { force: true, recursive: true });
@@ -711,8 +762,8 @@ describe("managed OpenShell gateway user-service stop", () => {
 
       expect(result.status).toBe(75);
       expect(fs.readFileSync(log, "utf8").trim().split("\n")).toEqual([
-        upstreamServiceShow,
         "--user show-environment",
+        upstreamServiceShow,
       ]);
     } finally {
       fs.rmSync(root, { force: true, recursive: true });
@@ -789,9 +840,9 @@ describe("managed OpenShell gateway user-service stop", () => {
         `${stoppedServicePrefix}systemd:nemoclaw-openshell-gateway.service`,
       );
       expect(fs.readFileSync(log, "utf8").trim().split("\n")).toEqual([
+        "--user show-environment",
         upstreamServiceShow,
         "--user is-active --quiet openshell-gateway.service",
-        "--user show-environment",
         "--user is-active --quiet nemoclaw-openshell-gateway.service",
         "--user show nemoclaw-openshell-gateway.service --property=FragmentPath --value",
         "--user show nemoclaw-openshell-gateway.service --property=ExecStart --value",
@@ -841,8 +892,8 @@ describe("managed OpenShell gateway user-service stop", () => {
       expect(result.stderr).toContain("non-NemoClaw user service");
       expect(fs.readFileSync(unit, "utf8")).toBe("[Service]\nExecStart=/tmp/foreign\n");
       expect(fs.readFileSync(log, "utf8").trim().split("\n")).toEqual([
-        upstreamServiceShow,
         "--user show-environment",
+        upstreamServiceShow,
       ]);
     } finally {
       fs.rmSync(root, { force: true, recursive: true });
@@ -882,10 +933,7 @@ describe("managed OpenShell gateway user-service stop", () => {
 
       expect(result.status).toBe(2);
       expect(result.stderr).toContain("Failed to connect to bus");
-      expect(fs.readFileSync(log, "utf8").trim().split("\n")).toEqual([
-        upstreamServiceShow,
-        "--user show-environment",
-      ]);
+      expect(fs.readFileSync(log, "utf8").trim()).toBe("--user show-environment");
     } finally {
       fs.rmSync(root, { force: true, recursive: true });
     }
