@@ -34,7 +34,7 @@ import * as rebuildUsageNotice from "./rebuild-usage-notice";
 import * as policyGet from "./policy-get";
 
 const policyBoundaryMocks = vi.hoisted(() => ({
-  inspectSandboxPolicy: vi.fn(() => ({
+  inspectSandboxPolicy: vi.fn(async () => ({
     ok: true as const,
     value: {
       policySource: "sandbox" as const,
@@ -42,7 +42,7 @@ const policyBoundaryMocks = vi.hoisted(() => ({
       policyIdentity: { hash: "sha256:resume-policy", activeVersion: 1 },
     },
   })),
-  readSandboxPolicy: vi.fn(() => ({
+  readSandboxPolicy: vi.fn(async () => ({
     ok: true as const,
     value: {
       document: "version: 1\nnetwork_policies: {}\n",
@@ -53,7 +53,7 @@ const policyBoundaryMocks = vi.hoisted(() => ({
 
 vi.mock("../../adapters/openshell/sandbox-policy-cli", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../adapters/openshell/sandbox-policy-cli")>()),
-  syncCliOpenShellSandboxPolicyReader: {
+  cliOpenShellSandboxPolicyReader: {
     inspectSandboxPolicy: policyBoundaryMocks.inspectSandboxPolicy,
     readSandboxPolicy: policyBoundaryMocks.readSandboxPolicy,
     readSandboxPolicyRevision: vi.fn(),

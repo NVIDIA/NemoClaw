@@ -125,7 +125,7 @@ describe("external component declaration", () => {
       "declaration_duplicate_key",
     ],
     ["unknown fields", validJson({ command: "run" }), "declaration_unknown_field"],
-    ["unsupported schemas", validJson({ schemaVersion: 2 }), "schema_unsupported"],
+    ["unsupported schemas", validJson({ schemaVersion: 3 }), "schema_unsupported"],
     [
       "missing fields",
       JSON.stringify({ schemaVersion: 1, componentId: "component" }),

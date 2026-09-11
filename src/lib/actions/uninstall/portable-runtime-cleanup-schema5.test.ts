@@ -26,7 +26,9 @@ describe("Hermes Portable runtime uninstall cleanup", () => {
       continueLegacyOpenShell,
       {
         inspectHermesPortableSandboxNames: () => ["beta", "alpha"],
-        runHermesPortableUninstall: () => {
+        runHermesPortableUninstall: async () => {
+          expect(registryHeld).toBe(true);
+          await Promise.resolve();
           expect(registryHeld).toBe(true);
           order.push("transaction");
           return { phase: "completed", sandboxContainersRemoved: 2, targetCount: 2 };

@@ -11,6 +11,7 @@ import { addDarwinFcntlSealConstants } from "./darwin-fcntl-seal-fixture";
 export const agentDir = path.join(process.cwd(), "agents", "langchain-deepagents-code");
 export const patcher = path.join(agentDir, "patch-managed-deepagents-code.py");
 const packageFixtureDirs = new Set<string>();
+let cachedPatchedFixture: string | undefined;
 
 export function managedAutoApprovalPath(root: string): string {
   return path.join(root, "managed-auto-approval");
@@ -1001,7 +1002,12 @@ export function cleanupPackageFixtures(): void {
   packageFixtureDirs.clear();
 }
 
-export function patchFixture(tempDir: string): void {
+export function cleanupCachedPatchedFixture(): void {
+  if (cachedPatchedFixture) fs.rmSync(cachedPatchedFixture, { recursive: true, force: true });
+  cachedPatchedFixture = undefined;
+}
+
+function runPatcher(tempDir: string): void {
   execFileSync("python3", [patcher], {
     env: { PATH: process.env.PATH, PYTHONPATH: tempDir },
   });
@@ -1026,4 +1032,27 @@ export function patchFixture(tempDir: string): void {
     )
     .replace("_MANAGED_FILE_OWNER_UID = 0", `_MANAGED_FILE_OWNER_UID = ${process.getuid?.() ?? 0}`);
   fs.writeFileSync(helperPath, helper, "utf8");
+}
+
+export function createPatchedPackageFixture(): string {
+  if (!cachedPatchedFixture) {
+    cachedPatchedFixture = createPackageFixture();
+    packageFixtureDirs.delete(cachedPatchedFixture);
+    runPatcher(cachedPatchedFixture);
+  }
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-patched-"));
+  packageFixtureDirs.add(tempDir);
+  for (const name of fs.readdirSync(cachedPatchedFixture)) {
+    const target = path.join(tempDir, name);
+    fs.rmSync(target, { force: true, recursive: true });
+    fs.cpSync(path.join(cachedPatchedFixture, name), target, { recursive: true });
+  }
+  const helperPath = path.join(tempDir, "deepagents_code", "_nemoclaw_managed.py");
+  const helper = fs.readFileSync(helperPath, "utf8").replaceAll(cachedPatchedFixture, tempDir);
+  fs.writeFileSync(helperPath, helper, "utf8");
+  return tempDir;
+}
+
+export function patchFixture(tempDir: string): void {
+  runPatcher(tempDir);
 }

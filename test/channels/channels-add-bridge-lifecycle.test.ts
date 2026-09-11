@@ -203,18 +203,18 @@ beforeEach(() => {
   ]);
 
   appliedPresets = [];
-  vi.spyOn(policies, "loadPresetForSandbox").mockReturnValue(
+  vi.spyOn(policies, "loadPresetForSandbox").mockResolvedValue(
     "network_policies:\n  stub:\n    egress:\n      - host: example.com\n",
   );
-  vi.spyOn(policies, "applyPreset").mockImplementation((_sandboxName, preset) => {
+  vi.spyOn(policies, "applyPreset").mockImplementation(async (_sandboxName, preset) => {
     appliedPresets = [...new Set([...appliedPresets, preset])];
     return true;
   });
-  vi.spyOn(policies, "removePreset").mockImplementation((_sandboxName, preset) => {
+  vi.spyOn(policies, "removePreset").mockImplementation(async (_sandboxName, preset) => {
     appliedPresets = appliedPresets.filter((name) => name !== preset);
     return true;
   });
-  vi.spyOn(policies, "getAppliedPresets").mockImplementation(() => [...appliedPresets]);
+  vi.spyOn(policies, "getAppliedPresets").mockImplementation(async () => [...appliedPresets]);
 
   vi.spyOn(store, "getCredential").mockImplementation((key) => process.env[key] || null);
   vi.spyOn(store, "saveCredential").mockImplementation(() => undefined);
@@ -234,7 +234,7 @@ beforeEach(() => {
   // refresh boundary. Individual failure tests override the spy below.
   providerSpy = vi.spyOn(policyChannelDependencies, "upsertMessagingProviders");
   vi.spyOn(policyChannelDependencies, "revalidateChannelProviderPolicy").mockImplementation(
-    () => undefined,
+    async () => undefined,
   );
   vi.spyOn(policyChannelDependencies, "inspectMessagingProviderAttachmentTarget").mockReturnValue(
     LIVE_IDENTITY_FINGERPRINT,

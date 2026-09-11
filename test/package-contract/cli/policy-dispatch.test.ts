@@ -34,14 +34,16 @@ describe("compiled CLI policy contracts", () => {
 const YAML = require(${YAML_PATH});
 const registry = require(${REGISTRY_PATH});
 const policies = require(${POLICIES_PATH});
+(async () => {
 registry.registerSandbox({ name: "openclaw-contract", agent: "openclaw", policies: [] });
 registry.registerSandbox({ name: "hermes-contract", agent: "hermes", policies: [] });
-const openclaw = YAML.parse(policies.loadPresetForSandbox("openclaw-contract", "telegram"));
-const hermes = YAML.parse(policies.loadPresetForSandbox("hermes-contract", "telegram"));
+const openclaw = YAML.parse(await policies.loadPresetForSandbox("openclaw-contract", "telegram"));
+const hermes = YAML.parse(await policies.loadPresetForSandbox("hermes-contract", "telegram"));
 process.stdout.write("__RESULT__" + JSON.stringify({
   openclawKeys: Object.keys(openclaw.network_policies || {}),
   hermesKeys: Object.keys(hermes.network_policies || {}),
 }));
+})().catch(error => { console.error(error); process.exitCode = 1; });
 `;
     fs.writeFileSync(scriptPath, script);
     const result = spawnSync(process.execPath, [scriptPath], {

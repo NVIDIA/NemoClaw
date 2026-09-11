@@ -50,8 +50,8 @@ const ORPHANED_VLLM_INSPECT_ARGS = [
 
 const RESERVED_INFERENCE_NAMES_ARGS = ["ps", "-a", "--format", "{{.Names}}"];
 
-function runUninstallPlan(options: UninstallRunOptions, deps: UninstallRunDeps) {
-  return runUninstallPlanBase(options, {
+async function runUninstallPlan(options: UninstallRunOptions, deps: UninstallRunDeps) {
+  return await runUninstallPlanBase(options, {
     resolveGatewayTeardownAuthority: ({ gatewayName, gatewayPort }) => ({
       gatewayName,
       gatewayPort,

@@ -23,8 +23,8 @@ The early capability check identifies managed image version only; NemoClaw still
 </AgentOnly>
 <AgentOnly variant="hermes">
 Hermes performs its managed runtime probe before an active add or restart changes a live provider or policy.
-Hermes stores the credential revision from the readiness check in the OpenShell resolver placeholder.
-Registration, inspection, rollback, and lifecycle reconciliation preserve that revision while it remains observable.
+Hermes stores the stable credential handle from the readiness check in the OpenShell resolver placeholder.
+Registration, inspection, rollback, and lifecycle reconciliation preserve that handle while it remains observable.
 </AgentOnly>
 <AgentOnly variant="openclaw">
 OpenClaw verifies the pinned `mcporter` during adapter registration and rolls back an incomplete add.
@@ -146,11 +146,12 @@ Do not reuse OpenShell Google Cloud compatibility names such as `GCP_PROJECT_ID`
 NemoClaw rejects them because OpenShell exposes those non-secret configuration names as child-process values.
 
 It also rejects `GCE_METADATA_HOST`, `GCE_METADATA_IP`, and `METADATA_SERVER_DETECTION`, which OpenShell rewrites for its metadata emulator.
-NemoClaw pins the child-visible compatibility list to OpenShell `v0.0.106` commit `c4b500a7de64d0b66e3ee8098f58d14299092162`.
+NemoClaw pins the child-visible compatibility list to OpenShell `v0.0.116` commit `d1155aa70042d3e2ee49dbfa15346b108b7c1d92`.
 Review this list with every OpenShell version change.
 
 OpenShell reserves credential names matching `v[0-9]+_[A-Za-z0-9_]+` for revisioned placeholders.
 NemoClaw rejects names such as `v10_GITHUB_TOKEN` because OpenShell skips them instead of attaching a credential resolver.
+OpenShell `0.0.116` also reserves names matching `s<64-lowercase-hex>_[A-Za-z0-9_]+` for stable credential handles.
 
 NemoClaw rejects host subprocess controls such as `PATH`, proxy or TLS variables, and `OPENSHELL_*`, `GRPC_*`, `LC_*`, or `XDG_*` keys.
 Loader, shell, language, and agent runtime controls such as `LD_PRELOAD`, `BASH_ENV`, `NODE_OPTIONS`, `PYTHONHOME`, `NEMOCLAW_*`, and `OPENCLAW_*` are rejected as well.
@@ -194,7 +195,7 @@ A named tunnel can stabilize the hostname without stabilizing its address set.
 Use stable private DNS and a routed private HTTPS endpoint when you operate the MCP server locally.
 
 Authenticated MCP rejects `host.openshell.internal`, `host.docker.internal`, and `host.containers.internal`.
-OpenShell `v0.0.106` has a trusted-gateway branch for a narrow driver-provided topology, but it does not expose an attested driver gateway address that NemoClaw can pin for this flow.
+OpenShell `v0.0.116` has a trusted-gateway branch for a narrow driver-provided topology, but it does not expose an attested driver gateway address that NemoClaw can pin for this flow.
 Use a routed HTTPS endpoint on a stable private address instead.
 
 ## Understand the Generated Method Profile

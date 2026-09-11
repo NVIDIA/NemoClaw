@@ -74,15 +74,15 @@ function getPublishedSandbox(sandboxName: string): registry.SandboxEntry | null 
   return entry && registry.isPublishedSandboxRegistration(entry) ? entry : null;
 }
 
-function hermesPortableStatusReport(
+async function hermesPortableStatusReport(
   sandboxName: string,
   authority: HermesPortableAgentLifecycleAuthority,
   readPolicies: typeof getGatewayPresets,
-): SandboxStatusReport {
+): Promise<SandboxStatusReport> {
   const { entry, phase } = authority;
   const model = entry?.model ?? "unknown";
   const provider = entry?.provider ?? "unknown";
-  const livePolicies = readPolicies(sandboxName);
+  const livePolicies = await readPolicies(sandboxName);
   return {
     schemaVersion: 1,
     name: sandboxName,
@@ -127,7 +127,7 @@ export async function getSandboxStatusReport(
   return withSandboxLifecycleLock(sandboxName, async () => {
     const hermesPortable = inspectHermesPortableStatus(sandboxName);
     if (hermesPortable) {
-      return hermesPortableStatusReport(
+      return await hermesPortableStatusReport(
         sandboxName,
         hermesPortable,
         deps.getGatewayPresets ?? getGatewayPresets,

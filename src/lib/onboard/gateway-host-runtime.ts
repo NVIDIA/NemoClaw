@@ -18,7 +18,10 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import type { GatewayPortListenerRawScan } from "./docker-driver-gateway-port-listener";
-import { hasOpenShellGatewayUserService } from "./docker-driver-gateway-service";
+import {
+  hasOpenShellGatewayUserService,
+  startOpenShellGatewayUserService,
+} from "./docker-driver-gateway-service";
 import { isDefaultGatewayPort } from "./gateway-binding";
 import {
   isDockerDriverGatewayHttpReady,
@@ -47,12 +50,22 @@ import type { PortProbeResult } from "./preflight";
 /** `systemctl is-active` is a local query; anything slower than this is wedged. */
 const SUPERVISOR_PROBE_TIMEOUT_MS = 5_000;
 
+function restartTrustedPackagedGateway(): void {
+  const result = startOpenShellGatewayUserService();
+  if (!result.attempted || !result.started) {
+    const detail = result.reason ? `: ${result.reason}` : "";
+    throw new Error(`OpenShell packaged gateway restart after install failed${detail}`);
+  }
+}
+
 export interface GatewayHostRuntimeDeps {
   lifecycle: OpenShellGatewayLifecycle;
   observer: OpenShellGatewayReuseObserver;
   applyOverlayfsAutoFix(clusterImage: string): string | null;
   checkGatewayPortAvailable(): Promise<PortProbeResult>;
   hasOpenShellGatewayUserService?: typeof hasOpenShellGatewayUserService;
+  /** Restart the trusted packaged service after its binaries are replaced in place. */
+  restartPackagedGatewayAfterTrustedInstall?(owner: GatewayOwner): void;
   /**
    * Read lazily: the onboarding entrypoint rebinds its gateway port at runtime
    * when an authoritative gateway is selected, so a captured value goes stale.
@@ -191,21 +204,29 @@ export function createGatewayHostRuntime(deps: GatewayHostRuntimeDeps): GatewayH
       );
     }
     const resolved = resolveCurrentGatewayOwner(boundOwner.gatewayName, boundOwner.gatewayPort);
-    if (sameGatewayOwner(boundOwner, resolved)) return boundOwner;
-    const expectedPackagedOwner = { ...boundOwner, source: "packaged-service" as const };
-    if (
-      boundOwner.mode !== "nemoclaw-managed" ||
-      boundOwner.source !== "standalone" ||
-      !sameGatewayOwner(expectedPackagedOwner, resolved)
-    ) {
-      throw new Error(
-        "Gateway lifecycle authority changed during this run " +
-          `(${describeGatewayOwnerForError(boundOwner)} -> ${describeGatewayOwnerForError(resolved)}). ` +
-          "Exactly one component owns the gateway per run; re-run onboarding to adopt the new authority.",
-      );
+    if (!sameGatewayOwner(boundOwner, resolved)) {
+      const expectedPackagedOwner = { ...boundOwner, source: "packaged-service" as const };
+      if (
+        boundOwner.mode !== "nemoclaw-managed" ||
+        boundOwner.source !== "standalone" ||
+        !sameGatewayOwner(expectedPackagedOwner, resolved)
+      ) {
+        throw new Error(
+          "Gateway lifecycle authority changed during this run " +
+            `(${describeGatewayOwnerForError(boundOwner)} -> ${describeGatewayOwnerForError(resolved)}). ` +
+            "Exactly one component owns the gateway per run; re-run onboarding to adopt the new authority.",
+        );
+      }
+      persistOwner?.(resolved);
+      boundOwner = resolved;
     }
-    persistOwner?.(resolved);
-    boundOwner = resolved;
+
+    // Replacing a packaged binary does not replace the already-running process.
+    // Restart only the owner that was independently resolved as NemoClaw's
+    // trusted packaged service; standalone and declared supervisors stay untouched.
+    if (boundOwner.mode === "nemoclaw-managed" && boundOwner.source === "packaged-service") {
+      (deps.restartPackagedGatewayAfterTrustedInstall ?? restartTrustedPackagedGateway)(boundOwner);
+    }
     return boundOwner;
   }
 

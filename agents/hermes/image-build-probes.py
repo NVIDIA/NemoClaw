@@ -195,6 +195,36 @@ def verify_gateway_process_identity() -> None:
     )
 
 
+def verify_auxiliary_token_limit() -> None:
+    """Keep explicit auxiliary limits on the managed inference route."""
+    from agent.auxiliary_client import _build_call_kwargs
+
+    common = {
+        "provider": "custom",
+        "model": "qwen3-vl:4b",
+        "messages": [{"role": "user", "content": "probe"}],
+        "max_tokens": 64,
+        "task": "title_generation",
+    }
+    managed = _build_call_kwargs(
+        **common,
+        base_url="https://inference.local/v1",
+    )
+    external = _build_call_kwargs(
+        **common,
+        base_url="https://example.test/v1",
+    )
+    external_moa = _build_call_kwargs(
+        **{**common, "task": "moa_reference"},
+        base_url="https://example.test/v1",
+    )
+
+    assert managed.get("max_tokens") == 64, managed
+    assert "max_tokens" not in external, external
+    assert "max_completion_tokens" not in external, external
+    assert external_moa.get("max_tokens") == 64, external_moa
+
+
 def verify_neutral_platform_inertness() -> None:
     import socket
 
@@ -450,6 +480,13 @@ def verify_langfuse_credentials() -> None:
     assert (
         validate(
             "HERMES_LANGFUSE_PUBLIC_KEY",
+            f"openshell:resolve:env:s{'a' * 64}_LANGFUSE_PUBLIC_KEY",
+        )
+        is None
+    )
+    assert (
+        validate(
+            "HERMES_LANGFUSE_PUBLIC_KEY",
             "openshell:resolve:env:LANGFUSE_SECRET_KEY",
         )
         is not None
@@ -465,6 +502,27 @@ def verify_langfuse_credentials() -> None:
         validate(
             "HERMES_LANGFUSE_SECRET_KEY",
             "openshell:resolve:env:v1_LANGFUSE_PUBLIC_KEY",
+        )
+        is not None
+    )
+    assert (
+        validate(
+            "HERMES_LANGFUSE_PUBLIC_KEY",
+            f"openshell:resolve:env:s{'a' * 63}_LANGFUSE_PUBLIC_KEY",
+        )
+        is not None
+    )
+    assert (
+        validate(
+            "HERMES_LANGFUSE_PUBLIC_KEY",
+            f"openshell:resolve:env:s{'a' * 65}_LANGFUSE_PUBLIC_KEY",
+        )
+        is not None
+    )
+    assert (
+        validate(
+            "HERMES_LANGFUSE_PUBLIC_KEY",
+            f"openshell:resolve:env:s{'A' * 64}_LANGFUSE_PUBLIC_KEY",
         )
         is not None
     )
@@ -676,6 +734,7 @@ def verify_managed_runtime_capability() -> None:
 
 
 COMMANDS: dict[str, Callable[[], None]] = {
+    "auxiliary-token-limit": verify_auxiliary_token_limit,
     "compatibility-retirement": verify_compatibility_retirement,
     "cron-backup": verify_cron_backup,
     "cron-create": verify_cron_create,

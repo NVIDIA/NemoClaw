@@ -12,6 +12,7 @@ import {
   assertExitZero,
   type CommandRunner,
   GatewayClient,
+  HISTORICAL_SANDBOX_MAIN_PROCESS,
   HostCliClient,
   ProviderClient,
   SandboxClient,
@@ -101,6 +102,10 @@ async function recordedPairingWait(): Promise<string[]> {
 }
 
 describe("E2E fixture clients", () => {
+  it("keeps historical rebuild sandboxes alive until the rebuild owns their lifecycle", () => {
+    expect(HISTORICAL_SANDBOX_MAIN_PROCESS).toEqual(["sleep", "infinity"]);
+  });
+
   it.each([
     "a2345678901234567890",
     "e2e--sandbox",

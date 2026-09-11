@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import path from "node:path";
+
 import { describe, expect, it, vi } from "vitest";
 
 import { namedOpenShellGateway, selectedOpenShellGateway } from "./sandbox-observer";
@@ -8,8 +11,7 @@ import type { CapturedOpenShellCommandResult } from "./sandbox-observer-cli";
 import {
   classifyCliOpenShellSandboxPolicySetResult,
   createCliOpenShellSandboxPolicyReader,
-  createSyncCliOpenShellSandboxPolicyWriter,
-  createSyncCliOpenShellSandboxPolicyReader,
+  createCliOpenShellSandboxPolicyWriter,
 } from "./sandbox-policy-cli";
 
 const POLICY = "version: 1\nnetwork_policies: {}";
@@ -19,17 +21,27 @@ function captured(overrides: Partial<CapturedOpenShellCommandResult> = {}) {
 }
 
 describe("CLI OpenShell sandbox policy reader", () => {
-  it("maps synchronous base reads to the recorded gateway", () => {
+  it("maps base reads to the recorded gateway", async () => {
     const capture = vi.fn(() => captured());
-    const reader = createSyncCliOpenShellSandboxPolicyReader({ capture });
+    const reader = createCliOpenShellSandboxPolicyReader({ capture });
 
     expect(
-      reader.readSandboxPolicy({
+      await reader.readSandboxPolicy({
         target: namedOpenShellGateway("nemoclaw"),
         sandboxName: "alpha",
         scope: "base",
       }),
-    ).toEqual({ ok: true, value: { document: POLICY, appliedRevision: 3 } });
+    ).toEqual({
+      ok: true,
+      value: {
+        document: POLICY,
+        appliedRevision: 3,
+        metadata: [
+          { field: "Version", value: "4" },
+          { field: "Active", value: "3" },
+        ],
+      },
+    });
     expect(capture).toHaveBeenCalledWith(
       ["policy", "get", "-g", "nemoclaw", "--base", "alpha"],
       expect.objectContaining({ ignoreError: true, timeout: 15_000 }),
@@ -156,21 +168,21 @@ describe("CLI OpenShell sandbox policy reader", () => {
     ).resolves.toMatchObject({ ok: false, error: { kind: "command" } });
     expect(capture).toHaveBeenCalledWith(
       ["policy", "get", "-g", "nemoclaw", "--base", "alpha"],
-      expect.objectContaining({ maxBuffer: 1024 * 1024, timeout: 15_000 }),
+      expect.objectContaining({ outputLimitBytes: 1024 * 1024, timeout: 15_000 }),
     );
   });
 });
 
 describe("CLI OpenShell sandbox policy writer", () => {
-  it("maps a successful synchronous write to exact gateway-pinned arguments", () => {
+  it("maps a successful write to exact gateway-pinned arguments", async () => {
     const capture = vi.fn(() => captured({ output: "" }));
-    const writer = createSyncCliOpenShellSandboxPolicyWriter({ capture });
+    const writer = createCliOpenShellSandboxPolicyWriter({ capture });
 
     expect(
-      writer.setSandboxPolicy({
+      await writer.setSandboxPolicy({
         target: namedOpenShellGateway("nemoclaw"),
         sandboxName: "my-dev-assistant-v2",
-        policyPath: "/tmp/policy.yaml",
+        document: POLICY,
       }),
     ).toEqual({ outcome: { kind: "applied" }, status: 0 });
     expect(capture).toHaveBeenCalledWith(
@@ -180,7 +192,7 @@ describe("CLI OpenShell sandbox policy writer", () => {
         "-g",
         "nemoclaw",
         "--policy",
-        "/tmp/policy.yaml",
+        expect.any(String),
         "--wait",
         "my-dev-assistant-v2",
       ],
@@ -188,46 +200,113 @@ describe("CLI OpenShell sandbox policy writer", () => {
     );
   });
 
-  it("classifies an authoritative policy refusal without exposing it as a transport error", () => {
+  it("rejects malformed documents before creating submission material or capturing", async () => {
+    const capture = vi.fn();
+    const makeDirectory = vi.spyOn(fs, "mkdtempSync");
+    try {
+      const result = await createCliOpenShellSandboxPolicyWriter({ capture }).setSandboxPolicy({
+        target: selectedOpenShellGateway(),
+        sandboxName: "alpha",
+        document: "network_policies: [",
+      });
+      expect(result).toEqual({
+        status: 1,
+        outcome: { kind: "rejected", status: 1, message: "Invalid sandbox policy document." },
+      });
+      expect(capture).not.toHaveBeenCalled();
+      expect(makeDirectory).not.toHaveBeenCalled();
+    } finally {
+      makeDirectory.mockRestore();
+    }
+  });
+
+  it("retains private submission material until capture finishes on success", async () => {
+    let settle!: () => void;
+    let policyPath = "";
+    const capture = vi.fn(async (args: string[]) => {
+      policyPath = args[args.indexOf("--policy") + 1]!;
+      await new Promise<void>((resolve) => {
+        settle = resolve;
+      });
+      expect(fs.readFileSync(policyPath, "utf8")).toBe(POLICY);
+      return captured({ output: "" });
+    });
+    const pending = createCliOpenShellSandboxPolicyWriter({ capture }).setSandboxPolicy({
+      target: selectedOpenShellGateway(),
+      sandboxName: "alpha",
+      document: POLICY,
+    });
+    expect(fs.statSync(policyPath).mode & 0o777).toBe(0o600);
+    expect(fs.statSync(path.dirname(policyPath)).mode & 0o777).toBe(0o700);
+    settle();
+    await expect(pending).resolves.toEqual({ outcome: { kind: "applied" }, status: 0 });
+    expect(fs.existsSync(path.dirname(policyPath))).toBe(false);
+  });
+
+  it("retains private submission material until capture finishes on capture failure", async () => {
+    let settle!: () => void;
+    let policyPath = "";
+    const capture = vi.fn(async (args: string[]) => {
+      policyPath = args[args.indexOf("--policy") + 1]!;
+      await new Promise<void>((resolve) => {
+        settle = resolve;
+      });
+      expect(fs.readFileSync(policyPath, "utf8")).toBe(POLICY);
+      throw new Error("capture failed");
+    });
+    const pending = createCliOpenShellSandboxPolicyWriter({ capture }).setSandboxPolicy({
+      target: selectedOpenShellGateway(),
+      sandboxName: "alpha",
+      document: POLICY,
+    });
+    expect(fs.statSync(policyPath).mode & 0o777).toBe(0o600);
+    expect(fs.statSync(path.dirname(policyPath)).mode & 0o777).toBe(0o700);
+    settle();
+    await expect(pending).rejects.toThrow("capture failed");
+    expect(fs.existsSync(path.dirname(policyPath))).toBe(false);
+  });
+
+  it("classifies an authoritative policy refusal without exposing it as a transport error", async () => {
     const stderr =
       "Error: code: 'Failed precondition', message: 'network policy rejected', " +
       "source: tonic::Status { code: FailedPrecondition, grpc_status: 9 }";
     const capture = vi.fn((_args: string[]) => captured({ status: 1, output: "", stderr }));
-    const writer = createSyncCliOpenShellSandboxPolicyWriter({
+    const writer = createCliOpenShellSandboxPolicyWriter({
       capture,
     });
 
     expect(
-      writer.setSandboxPolicy({
+      await writer.setSandboxPolicy({
         target: selectedOpenShellGateway(),
         sandboxName: "alpha",
-        policyPath: "/tmp/policy.yaml",
+        document: POLICY,
       }),
     ).toEqual({
-      outcome: { kind: "rejected", status: 1, message: "network policy rejected" },
       status: 1,
+      outcome: { kind: "rejected", status: 1, message: "network policy rejected" },
     });
     expect(capture.mock.calls[0]?.[0]).toEqual([
       "policy",
       "set",
       "--policy",
-      "/tmp/policy.yaml",
+      expect.any(String),
       "--wait",
       "alpha",
     ]);
   });
 
-  it("rejects an invalid sandbox name before invoking OpenShell", () => {
+  it("rejects an invalid sandbox name before invoking OpenShell", async () => {
     const capture = vi.fn(() => captured({ output: "" }));
-    const writer = createSyncCliOpenShellSandboxPolicyWriter({ capture });
+    const writer = createCliOpenShellSandboxPolicyWriter({ capture });
 
-    expect(() =>
-      writer.setSandboxPolicy({
-        target: selectedOpenShellGateway(),
-        sandboxName: "alpha; whoami",
-        policyPath: "/tmp/policy.yaml",
-      }),
-    ).toThrow("Invalid OpenShell sandbox name");
+    await expect(
+      (async () =>
+        await writer.setSandboxPolicy({
+          target: selectedOpenShellGateway(),
+          sandboxName: "alpha; whoami",
+          document: POLICY,
+        }))(),
+    ).rejects.toThrow("Invalid OpenShell sandbox name");
     expect(capture).not.toHaveBeenCalled();
   });
 
@@ -254,4 +333,56 @@ describe("CLI OpenShell sandbox policy writer", () => {
       kind: "ambiguous",
     });
   });
+});
+
+it("reports retained policy material and preserves a simultaneous capture failure", async () => {
+  const captureFailure = new Error("capture failed");
+  let directory = "";
+  const capture = vi.fn(async (args: string[]) => {
+    directory = path.dirname(args[args.indexOf("--policy") + 1]!);
+    throw captureFailure;
+  });
+  const remove = vi.spyOn(fs, "rmSync").mockImplementation(() => {
+    throw Object.assign(new Error("removal failed"), { code: "EACCES" });
+  });
+  try {
+    await expect(
+      createCliOpenShellSandboxPolicyWriter({ capture }).setSandboxPolicy({
+        target: selectedOpenShellGateway(),
+        sandboxName: "alpha",
+        document: POLICY,
+      }),
+    ).rejects.toMatchObject({
+      message: expect.stringContaining("Could not remove the temporary policy directory"),
+      cause: captureFailure,
+    });
+    expect(fs.existsSync(path.join(directory, "policy.yaml"))).toBe(true);
+  } finally {
+    remove.mockRestore();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+it("does not report success when submitted policy material cannot be removed", async () => {
+  let directory = "";
+  const capture = vi.fn(async (args: string[]) => {
+    directory = path.dirname(args[args.indexOf("--policy") + 1]!);
+    return captured({ output: "" });
+  });
+  const remove = vi.spyOn(fs, "rmSync").mockImplementation(() => {
+    throw Object.assign(new Error("removal failed"), { code: "EACCES" });
+  });
+  try {
+    await expect(
+      createCliOpenShellSandboxPolicyWriter({ capture }).setSandboxPolicy({
+        target: selectedOpenShellGateway(),
+        sandboxName: "alpha",
+        document: POLICY,
+      }),
+    ).rejects.toThrow("It still holds the composed sandbox policy; remove it before retrying.");
+    expect(fs.existsSync(path.join(directory, "policy.yaml"))).toBe(true);
+  } finally {
+    remove.mockRestore();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
 });

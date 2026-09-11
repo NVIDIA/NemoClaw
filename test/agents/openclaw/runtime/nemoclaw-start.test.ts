@@ -2502,36 +2502,38 @@ describe("provider placeholder refresh (#4251)", () => {
     );
   });
 
-  it("does not warn when the Slack config alias matches an OpenShell runtime placeholder", () => {
-    const run = runRefresh(
-      {
-        channels: {
-          slack: {
-            accounts: {
-              default: {
-                botToken: "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
-                appToken: "xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN",
+  it.each(["v42", `s${"a".repeat(64)}`])(
+    "does not warn when the Slack config alias matches an OpenShell %s runtime placeholder",
+    (credentialHandle) => {
+      const run = runRefresh(
+        {
+          channels: {
+            slack: {
+              accounts: {
+                default: {
+                  botToken: "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
+                  appToken: "xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN",
+                },
               },
             },
           },
         },
-      },
-      {
-        SLACK_BOT_TOKEN: "openshell:resolve:env:v42_SLACK_BOT_TOKEN",
-        SLACK_APP_TOKEN: "openshell:resolve:env:v42_SLACK_APP_TOKEN",
-      },
-    );
+        {
+          SLACK_BOT_TOKEN: `openshell:resolve:env:${credentialHandle}_SLACK_BOT_TOKEN`,
+          SLACK_APP_TOKEN: `openshell:resolve:env:${credentialHandle}_SLACK_APP_TOKEN`,
+        },
+      );
 
-    expect(run.result.status, run.result.stderr).toBe(0);
-    expect(run.result.stderr).not.toContain("slack.default");
-    // The Bolt-compatible alias follows the revision-scoped runtime placeholder.
-    expect(run.config.channels.slack.accounts.default.botToken).toBe(
-      "xoxb-OPENSHELL-RESOLVE-ENV-v42_SLACK_BOT_TOKEN",
-    );
-    expect(run.config.channels.slack.accounts.default.appToken).toBe(
-      "xapp-OPENSHELL-RESOLVE-ENV-v42_SLACK_APP_TOKEN",
-    );
-  });
+      expect(run.result.status, run.result.stderr).toBe(0);
+      expect(run.result.stderr).not.toContain("slack.default");
+      expect(run.config.channels.slack.accounts.default.botToken).toBe(
+        `xoxb-OPENSHELL-RESOLVE-ENV-${credentialHandle}_SLACK_BOT_TOKEN`,
+      );
+      expect(run.config.channels.slack.accounts.default.appToken).toBe(
+        `xapp-OPENSHELL-RESOLVE-ENV-${credentialHandle}_SLACK_APP_TOKEN`,
+      );
+    },
+  );
 
   it("does not warn when the Slack runtime env holds a genuine xoxb-/xapp- token", () => {
     const run = runRefresh(
@@ -2581,8 +2583,6 @@ describe("provider placeholder refresh (#4251)", () => {
   });
 
   it("warns when the Slack runtime env resolves a different key than expected", () => {
-    // A placeholder for the wrong key must not look healthy — Bolt would still
-    // inherit a non-Slack placeholder and fail at startup.
     const run = runRefresh(
       {
         channels: {

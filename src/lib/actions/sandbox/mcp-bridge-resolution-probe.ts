@@ -8,7 +8,7 @@
  * rewrites the `openshell:resolve:env:` placeholder on egress, so every agent
  * request fails with the literal placeholder as the bearer token (see
  * NVIDIA/OpenShell#2161). Identity-bound provider credentials require the
- * revision-scoped placeholder observed through a fresh OpenShell exec.
+ * generation-scoped placeholder observed through a fresh OpenShell exec.
  *
  * The probe is differential: it sends the same idempotent MCP `initialize`
  * request twice from inside the sandbox — once with the placeholder
@@ -375,8 +375,8 @@ export function credentialResolutionWarning(
     return undefined;
   if (probe.httpStatus < 400 || probe.httpStatus >= 500) return undefined;
   const placeholder = envName
-    ? `openshell:resolve:env:vN_${envName}`
-    : "openshell:resolve:env:vN_<KEY>";
+    ? `openshell:resolve:env:<generation>_${envName}`
+    : "openshell:resolve:env:<generation>_<KEY>";
   if (probe.httpStatus === 400) {
     return `Credential resolution could not be verified: a placeholder-bearing MCP initialize probe and a deliberately-unresolvable control probe were rejected identically (HTTP 400). This is inconclusive even with a valid stored credential — the endpoint may reject the probe's initialize request itself (request validation), the '${placeholder}' placeholder may have been forwarded verbatim, or the credential may be expired or revoked. Rotate the credential with mcp restart if in doubt, and compare mcp status for the same server on a known-good host; if that host verifies, suspect this host's OpenShell placeholder rewrite (see NVIDIA/OpenShell issue 2161).`;
   }
@@ -426,7 +426,7 @@ export async function probeCredentialResolution(
     return {
       ok: null,
       detail:
-        "probe skipped: a fresh OpenShell exec exposed an identityless credential placeholder instead of a revision-scoped placeholder",
+        "probe skipped: a fresh OpenShell exec exposed an identityless credential placeholder instead of a generation-scoped placeholder",
     };
   }
   const probeCommand = buildCredentialResolutionProbeCommand(entry, adapter, credentialRevision);

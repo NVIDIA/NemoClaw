@@ -4,11 +4,13 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, describe, expect, it } from "vitest";
 import { addDarwinFcntlSealConstants } from "../../helpers/darwin-fcntl-seal-fixture";
 import {
+  cleanupCachedPatchedFixture,
   cleanupPackageFixtures,
   createPackageFixture,
+  createPatchedPackageFixture,
   managedAutoApprovalPath,
   patcher,
   patchFixture,
@@ -23,6 +25,7 @@ const progressiveDisclosureHarness = path.join(
 );
 
 afterEach(cleanupPackageFixtures);
+afterAll(cleanupCachedPatchedFixture);
 
 describe("LangChain Deep Agents Code managed package patch", () => {
   it("fails fast when the Darwin fcntl seal injection anchor is missing", () => {
@@ -45,8 +48,7 @@ describe("LangChain Deep Agents Code managed package patch", () => {
     "_nemoclaw_assert_safe_runtime()",
     'os.environ.pop("PYTHONPATH", None)',
   ])("patches every 0.1.55 mutation and credential boundary idempotently [case %#]", (expected) => {
-    const tempDir = createPackageFixture();
-    patchFixture(tempDir);
+    const tempDir = createPatchedPackageFixture();
     patchFixture(tempDir);
 
     const packageDir = path.join(tempDir, "deepagents_code");
@@ -106,8 +108,7 @@ describe("LangChain Deep Agents Code managed package patch", () => {
     ["app", "app.py", "async def _nemoclaw_on_auto_approve_enabled"],
     ["approval", "tui/widgets/approval.py", "if managed_auto_approval_enabled():"],
   ])("rejects a fully marked package with a corrupt %s patch", (boundary, relativePath, anchor) => {
-    const tempDir = createPackageFixture();
-    patchFixture(tempDir);
+    const tempDir = createPatchedPackageFixture();
     const target = path.join(tempDir, "deepagents_code", relativePath);
     const corrupted = fs.readFileSync(target, "utf8").replace(anchor, `${anchor}  # corrupt`);
     fs.writeFileSync(target, corrupted, "utf8");
@@ -123,8 +124,7 @@ describe("LangChain Deep Agents Code managed package patch", () => {
     ['os.environ["LANGGRAPH_CLI_NO_ANALYTICS"] = "1"'],
     ["def managed_auto_approval_enabled() -> bool:"],
   ])("rejects a fully marked package with a stale managed helper guard: %s", (anchor) => {
-    const tempDir = createPackageFixture();
-    patchFixture(tempDir);
+    const tempDir = createPatchedPackageFixture();
     const target = path.join(tempDir, "deepagents_code", "_nemoclaw_managed.py");
     const corrupted = fs.readFileSync(target, "utf8").replace(anchor, `${anchor}  # stale`);
     fs.writeFileSync(target, corrupted, "utf8");
@@ -137,8 +137,7 @@ describe("LangChain Deep Agents Code managed package patch", () => {
     expect(fs.readFileSync(target, "utf8")).toBe(corrupted);
   });
   it("preserves upstream MCP JSON diagnostics around the managed descriptor loader", () => {
-    const tempDir = createPackageFixture();
-    patchFixture(tempDir);
+    const tempDir = createPatchedPackageFixture();
     const invalidConfig = path.join(tempDir, "invalid-mcp.json");
     fs.writeFileSync(invalidConfig, '{"mcpServers": }\n', "utf8");
     const result = spawnSync(
@@ -200,8 +199,7 @@ else:
     ["--startup-cmd", "touch /tmp/unsafe"],
     ["--startup-cmd=touch /tmp/unsafe"],
   ])("rejects direct-module mutation arguments: %s", (...args) => {
-    const tempDir = createPackageFixture();
-    patchFixture(tempDir);
+    const tempDir = createPatchedPackageFixture();
     const result = spawnSync("python3", ["-m", "deepagents_code", ...args], {
       env: { PATH: process.env.PATH, PYTHONPATH: tempDir },
       encoding: "utf8",
@@ -214,8 +212,7 @@ else:
   it.each([["-y"], ["--auto-approve"]])(
     "preserves explicit direct-module auto-approval in thread-opt-in mode: %s (#6478)",
     (...args) => {
-      const tempDir = createPackageFixture();
-      patchFixture(tempDir);
+      const tempDir = createPatchedPackageFixture();
       writeManagedAutoApproval(tempDir, "thread-opt-in\n");
       const result = spawnSync("python3", ["-m", "deepagents_code", ...args], {
         env: {
@@ -233,8 +230,7 @@ else:
   );
 
   it("validates exact trusted auto-approval state and otherwise fails closed (#6478)", () => {
-    const tempDir = createPackageFixture();
-    patchFixture(tempDir);
+    const tempDir = createPatchedPackageFixture();
     const capabilityPath = managedAutoApprovalPath(tempDir);
     const validation = `
 import os
@@ -307,8 +303,7 @@ check("disabled", False)
   it.each([[[]], [["tools", "list"]], [["tools", "help"]]] as const)(
     "preserves ordinary direct-module and read-only tools execution for argv %#",
     (args) => {
-      const tempDir = createPackageFixture();
-      patchFixture(tempDir);
+      const tempDir = createPatchedPackageFixture();
       const result = spawnSync("python3", ["-m", "deepagents_code", ...args], {
         env: {
           PATH: process.env.PATH,
@@ -336,8 +331,7 @@ check("disabled", False)
   ] as const)(
     "rejects direct-module runtime credential in %s before settings bootstrap",
     (name, value) => {
-      const tempDir = createPackageFixture();
-      patchFixture(tempDir);
+      const tempDir = createPatchedPackageFixture();
       const result = spawnSync("python3", ["-m", "deepagents_code"], {
         env: { PATH: process.env.PATH, PYTHONPATH: tempDir, [name]: value },
         encoding: "utf8",
@@ -353,8 +347,7 @@ check("disabled", False)
     ["OPENSHELL_TLS_CERT", "/etc/openshell/tls/client/tls.crt"],
     ["OPENSHELL_TLS_KEY", "/etc/openshell/tls/client/tls.key"],
   ])("rejects supervisor-only %s before settings bootstrap", (name, value) => {
-    const tempDir = createPackageFixture();
-    patchFixture(tempDir);
+    const tempDir = createPatchedPackageFixture();
     const result = spawnSync("python3", ["-m", "deepagents_code"], {
       env: { PATH: process.env.PATH, PYTHONPATH: tempDir, [name]: value },
       encoding: "utf8",
@@ -375,8 +368,7 @@ check("disabled", False)
       ].map((value) => ({ name, value })),
     ),
   )("allows managed OTLP collector URL candidate %# for $name (#6466)", ({ name, value }) => {
-    const tempDir = createPackageFixture();
-    patchFixture(tempDir);
+    const tempDir = createPatchedPackageFixture();
     const result = spawnSync("python3", ["-m", "deepagents_code"], {
       env: { PATH: process.env.PATH, PYTHONPATH: tempDir, [name]: value },
       encoding: "utf8",
@@ -406,8 +398,7 @@ check("disabled", False)
       ].map((value) => ({ name, value })),
     ),
   )("rejects fail-open OTLP endpoint candidate %# for $name (#6538)", ({ name, value }) => {
-    const tempDir = createPackageFixture();
-    patchFixture(tempDir);
+    const tempDir = createPatchedPackageFixture();
     const result = spawnSync("python3", ["-m", "deepagents_code"], {
       env: { PATH: process.env.PATH, PYTHONPATH: tempDir, [name]: value },
       encoding: "utf8",
@@ -417,8 +408,7 @@ check("disabled", False)
   });
 
   it("allows only scoped managed credential-shaped runtime values", () => {
-    const tempDir = createPackageFixture();
-    patchFixture(tempDir);
+    const tempDir = createPatchedPackageFixture();
     const result = spawnSync("python3", ["-m", "deepagents_code"], {
       env: {
         PATH: process.env.PATH,
@@ -449,8 +439,7 @@ check("disabled", False)
     "openshell:resolve:env:v0_GITHUB_MCP_TOKEN",
     `openshell:resolve:env:v${"1".repeat(20)}_GITHUB_MCP_TOKEN`,
   ])("accepts exact same-name OpenShell credential placeholder candidate %#", (value) => {
-    const tempDir = createPackageFixture();
-    patchFixture(tempDir);
+    const tempDir = createPatchedPackageFixture();
     const run = (name: string, value: string) =>
       spawnSync("python3", ["-m", "deepagents_code"], {
         env: { PATH: process.env.PATH, PYTHONPATH: tempDir, [name]: value },
@@ -466,8 +455,7 @@ check("disabled", False)
     ["GITHUB_MCP_TOKEN", "openshell:resolve:env:OTHER_TOKEN"],
     ["GITHUB_MCP_TOKEN", `openshell:resolve:env:v${"1".repeat(21)}_GITHUB_MCP_TOKEN`],
   ] as const)("rejects mismatched OpenShell credential placeholder candidate %#", (name, value) => {
-    const tempDir = createPackageFixture();
-    patchFixture(tempDir);
+    const tempDir = createPatchedPackageFixture();
     const run = (candidateName: string, candidateValue: string) =>
       spawnSync("python3", ["-m", "deepagents_code"], {
         env: { PATH: process.env.PATH, PYTHONPATH: tempDir, [candidateName]: candidateValue },
@@ -479,8 +467,7 @@ check("disabled", False)
   });
 
   it("loads only strict HTTPS-only managed MCP configuration", () => {
-    const tempDir = createPackageFixture();
-    patchFixture(tempDir);
+    const tempDir = createPatchedPackageFixture();
     const configPath = path.join(tempDir, ".mcp.json");
     const validate = (config: unknown, mode = 0o600) => {
       fs.writeFileSync(configPath, `${JSON.stringify(config)}\n`, { mode });
@@ -589,8 +576,7 @@ check("disabled", False)
   });
 
   it("rejects duplicate keys and configs beyond the 256 KiB cap", () => {
-    const tempDir = createPackageFixture();
-    patchFixture(tempDir);
+    const tempDir = createPatchedPackageFixture();
     const configPath = path.join(tempDir, ".mcp.json");
     const run = () =>
       spawnSync(
@@ -637,8 +623,7 @@ check("disabled", False)
   it.runIf(process.platform === "linux").each(["sealed-memfd", "anonymous-otmpfile"] as const)(
     "passes sealed and anonymous MCP snapshots through ServerProcess restart [%s]",
     (snapshotKind) => {
-      const tempDir = createPackageFixture();
-      patchFixture(tempDir);
+      const tempDir = createPatchedPackageFixture();
       const configPath = path.join(tempDir, ".nemoclaw-mcp.json");
       const managedConfig = {
         mcpServers: {
@@ -802,8 +787,7 @@ print(json.dumps({
   );
 
   it("blocks TUI commands, credential screens, dotenv, OAuth, and install backends", () => {
-    const tempDir = createPackageFixture();
-    patchFixture(tempDir);
+    const tempDir = createPatchedPackageFixture();
     const managedMcpPath = path.join(tempDir, "managed-mcp.json");
     fs.writeFileSync(
       managedMcpPath,
@@ -1220,8 +1204,7 @@ print("managed-boundaries-ok")
   });
 
   it("enables warned thread-scoped approval and resets it at thread boundaries (#6478)", () => {
-    const tempDir = createPackageFixture();
-    patchFixture(tempDir);
+    const tempDir = createPatchedPackageFixture();
     writeManagedAutoApproval(tempDir, "thread-opt-in\n");
     const validation = `
 import asyncio

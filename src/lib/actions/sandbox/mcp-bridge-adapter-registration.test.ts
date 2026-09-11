@@ -443,7 +443,7 @@ describe("MCP adapter credential revision reconciliation failures", () => {
           {},
           "v11",
         ),
-      ).rejects.toThrow("did not expose a revision-scoped credential");
+      ).rejects.toThrow("did not expose a credential handle");
     },
   );
 

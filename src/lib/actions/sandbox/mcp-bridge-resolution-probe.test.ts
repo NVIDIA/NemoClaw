@@ -422,7 +422,7 @@ describe("MCP credential-resolution probe execution gates", () => {
     expect(probe).toEqual({
       ok: null,
       detail:
-        "probe skipped: a fresh OpenShell exec exposed an identityless credential placeholder instead of a revision-scoped placeholder",
+        "probe skipped: a fresh OpenShell exec exposed an identityless credential placeholder instead of a generation-scoped placeholder",
     });
     expect(mocks.executeSandboxCommand).not.toHaveBeenCalled();
   });
@@ -435,7 +435,7 @@ describe("MCP credential-resolution warning", () => {
       httpStatus: 403,
       controlHttpStatus: 403,
     });
-    expect(warning).toContain("openshell:resolve:env:vN_GITHUB_TOKEN");
+    expect(warning).toContain("openshell:resolve:env:<generation>_GITHUB_TOKEN");
     expect(warning).toContain("identically (HTTP 403)");
     expect(warning).toContain("If the stored credential is confirmed valid");
     expect(warning).toContain("OpenShell issue 2161");

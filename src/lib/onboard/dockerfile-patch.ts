@@ -186,7 +186,7 @@ export interface PatchStagedDockerfileOptions {
   rebuildPreservedEnv?: readonly PreservedEnvFile[];
 }
 
-function openClawRootStartupArg(dockerfile: string): DockerfileInstruction | null {
+function openClawRuntimeUserArg(dockerfile: string): DockerfileInstruction | null {
   const instructions = dockerfileInstructions(dockerfile);
   const finalFromIndex = instructions.reduce(
     (last, instruction, index) => (/^FROM(?:\s|$)/i.test(instruction.text) ? index : last),
@@ -221,7 +221,7 @@ function openClawRootStartupArg(dockerfile: string): DockerfileInstruction | nul
       entrypoint.length === 1 &&
       entrypoint[0] === "/usr/local/bin/nemoclaw-start";
   } catch {
-    // Root startup requires the trusted exec-form entrypoint.
+    // The managed startup contract requires the trusted exec-form entrypoint.
   }
   const runtimeUserControlsStartup =
     runtimeUserArgIndex < finalUserIndex &&
@@ -640,16 +640,17 @@ export function patchStagedDockerfile(
       );
     }
     const corporateCaArgPattern = /^ARG NEMOCLAW_CORPORATE_CA_B64=.*$/m;
-    const openClawRootStartup = options.agentName === "openclaw";
-    const runtimeUserArg = openClawRootStartup ? openClawRootStartupArg(dockerfile) : null;
+    const openClawManagedStartup = options.agentName === "openclaw";
+    const runtimeUserArg = openClawManagedStartup ? openClawRuntimeUserArg(dockerfile) : null;
     if (
       corporateCaArgPattern.test(dockerfile) &&
-      (!openClawRootStartup || runtimeUserArg !== null)
+      (!openClawManagedStartup || runtimeUserArg !== null)
     ) {
       if (runtimeUserArg) {
-        // Root startup creates the merged runtime trust bundle before the
-        // entrypoint starts the sandbox user's agent process (#8803).
-        dockerfile = `${dockerfile.slice(0, runtimeUserArg.start)}ARG NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root${dockerfile.slice(runtimeUserArg.end)}`;
+        // OpenShell 0.0.116 rejects a root OCI image user. Managed startup
+        // applies the root-owned runtime trust bundle before releasing this
+        // sandbox-user entrypoint.
+        dockerfile = `${dockerfile.slice(0, runtimeUserArg.start)}ARG NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=sandbox${dockerfile.slice(runtimeUserArg.end)}`;
       }
       dockerfile = dockerfile.replace(
         corporateCaArgPattern,
@@ -676,7 +677,7 @@ export function patchStagedDockerfile(
       );
     } else {
       // A fallback source stays a no-op when a custom Dockerfile lacks either
-      // build argument required for root-owned runtime trust. Onboarding still
+      // build argument required for the managed startup contract. Onboarding still
       // exits 0 and the sandbox still reaches Ready, so report the dropped
       // anchor here; otherwise the missing trust is invisible until external
       // TLS through the corporate proxy fails at runtime (#8454).

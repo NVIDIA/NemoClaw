@@ -432,7 +432,7 @@ describe("CLI dispatch", () => {
         '  "sandbox get liost") printf "Name: liost\\nPhase: Ready\\nPolicy:\\n"; exit 0 ;;',
         `  "policy get"*) printf '%b' ${JSON.stringify(LAUNCH_READINESS_FIXTURE_POLICY)}; exit 0 ;;`,
         '  "inference get") exit 1 ;;',
-        '  "sandbox connect liost") echo "CONNECTED_LIOST"; exit 0 ;;',
+        '  "sandbox exec --name liost --tty -- /bin/bash -i") echo "CONNECTED_LIOST"; exit 0 ;;',
         "  *) exit 0 ;;",
         "esac",
       ].join("\n"),
@@ -455,6 +455,7 @@ describe("CLI dispatch", () => {
     // selected gateway (#7105).
     expect(calls).not.toContain("sandbox list");
     expect(calls).toContain("sandbox list -g nemoclaw");
+    expect(calls).toContain("sandbox exec --name liost --tty -- /bin/bash -i");
   });
 
   it("fails fast on gated NEMOCLAW_VLLM_MODEL without HF token before sandbox side effects", () => {

@@ -5,7 +5,10 @@ import type { AgentMcpAdapter } from "../../agent/defs";
 import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock";
 import { assertHermesPortableCommandUnavailable } from "../../onboard/experimental/portable-agent-lifecycle";
 import type { McpBridgeEntry } from "../../state/registry";
-import { registerAgentAdapterAtCurrentCredentialRevision } from "./mcp-bridge-adapters";
+import {
+  registerAgentAdapterAtCurrentCredentialRevision,
+  unregisterAgentAdapter,
+} from "./mcp-bridge-adapters";
 import { McpBridgeError } from "./mcp-bridge-contracts";
 import { assertHermesMcpRuntimeIntent } from "./mcp-bridge-hermes-reconciliation";
 import { redactBridgeFailureForDisplay } from "./mcp-bridge-output";
@@ -46,7 +49,7 @@ import {
   nowIso,
   writeBridgeEntry,
 } from "./mcp-bridge-state";
-import { statusMcpBridge } from "./mcp-bridge-status";
+import { assertUnchangedStableMcpCredentialAuthorized, statusMcpBridge } from "./mcp-bridge-status";
 import type { McpBridgeTargetValidation } from "./mcp-bridge-url-validation";
 import {
   assertAuthenticatedBridgeEntry,
@@ -233,7 +236,7 @@ async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): P
     // credentials. The temporary policy cannot bind the provider until an
     // endpointless profile is attached.
     await ensureMcpBridgeProviderProfile(providerRuntimeSelection);
-    applyGeneratedPolicy(sandboxName, entry, target, {
+    await applyGeneratedPolicy(sandboxName, entry, target, {
       bindCredential: false,
       runtimeSelection: providerRuntimeSelection,
     });
@@ -276,7 +279,7 @@ async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): P
       );
     }
     await attachProvider(sandboxName, entry, providerRuntimeSelection);
-    applyGeneratedPolicy(sandboxName, entry, target, {
+    await applyGeneratedPolicy(sandboxName, entry, target, {
       runtimeSelection: providerRuntimeSelection,
     });
     await refreshMcpProviderEnvironment(entry, providerRuntimeSelection);
@@ -291,6 +294,16 @@ async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): P
           : {}),
       },
     );
+    if (providerResult.action === "updated") {
+      await assertUnchangedStableMcpCredentialAuthorized(
+        sandboxName,
+        entry,
+        providerRuntimeSelection,
+        previousCredentialRevision,
+        credentialRevision,
+        statusMcpBridge,
+      );
+    }
     await registerAgentAdapterAtCurrentCredentialRevision(
       sandboxName,
       entryAdapter,
@@ -376,24 +389,47 @@ export async function restoreExistingMcpBridgeRuntime(
     );
     await ensureMcpBridgeProviderProfile(providerRuntimeSelection);
     if (options.applyPolicy !== false) {
-      applyGeneratedPolicy(sandboxName, entry, resolvedTargetPins(resolvedByServer, entry), {
+      await applyGeneratedPolicy(sandboxName, entry, resolvedTargetPins(resolvedByServer, entry), {
         bindCredential: false,
         runtimeSelection: providerRuntimeSelection,
       });
     }
     await attachProvider(sandboxName, entry, providerRuntimeSelection);
     if (options.applyPolicy !== false) {
-      applyGeneratedPolicy(sandboxName, entry, resolvedTargetPins(resolvedByServer, entry), {
+      await applyGeneratedPolicy(sandboxName, entry, resolvedTargetPins(resolvedByServer, entry), {
         runtimeSelection: providerRuntimeSelection,
       });
     }
     const adapter = (entry.adapter as AgentMcpAdapter | undefined) ?? defaultAdapter;
+    const previousCredentialRevision = await observeMcpCredentialRevision(
+      sandboxName,
+      entry,
+      providerRuntimeSelection,
+    );
     await refreshMcpProviderEnvironment(entry, providerRuntimeSelection);
     const credentialRevision = await waitForAttachedMcpCredential(
       sandboxName,
       entry,
       providerRuntimeSelection,
+      { previousRevision: previousCredentialRevision },
     );
+    try {
+      await assertUnchangedStableMcpCredentialAuthorized(
+        sandboxName,
+        entry,
+        providerRuntimeSelection,
+        previousCredentialRevision,
+        credentialRevision,
+        statusMcpBridge,
+      );
+    } catch (error) {
+      await unregisterAgentAdapter(sandboxName, adapter, entry, providerRuntimeSelection, {
+        bestEffort: true,
+        envValues: {},
+        force: false,
+      });
+      throw error;
+    }
     await registerAgentAdapterAtCurrentCredentialRevision(
       sandboxName,
       adapter,

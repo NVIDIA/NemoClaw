@@ -1388,13 +1388,13 @@ config_file = sys.argv[1]
 prefix = "openshell:resolve:env:"
 alias_marker = "-OPENSHELL-RESOLVE-ENV-"
 env_key_re = re.compile(r"^[A-Z][A-Z0-9_]{0,127}$")
-revision_re = re.compile(r"^v[0-9]+_")
+generation_re = re.compile(r"^(?:v[0-9]{1,20}|s[a-f0-9]{64})_")
 keys = set()
 MESSAGING_RUNTIME_PLAN_DEFAULT_PATH = "/usr/local/share/nemoclaw/messaging-runtime-plan.json"
 
 
 def add_key(value):
-    key = revision_re.sub("", value)
+    key = generation_re.sub("", value)
     if env_key_re.match(key):
         keys.add(key)
 
@@ -1560,8 +1560,8 @@ for key in keys:
         states[key] = {"kind": "present"}
         continue
     suffix = value[len(prefix) :]
-    revision = re.match(r"^v[0-9]+_", suffix)
-    unversioned = suffix[len(revision.group(0)) :] if revision else suffix
+    generation = re.match(r"^(?:v[0-9]{1,20}|s[a-f0-9]{64})_", suffix)
+    unversioned = suffix[len(generation.group(0)) :] if generation else suffix
     if unversioned != key:
         states[key] = {"kind": "placeholder-mismatch"}
         continue
@@ -1610,8 +1610,8 @@ def runtime_state(key):
         return {"kind": "missing", "value": ""}
     if value.startswith(prefix):
         suffix = value[len(prefix) :]
-        revision = re.match(r"^v[0-9]+_", suffix)
-        unversioned = suffix[len(revision.group(0)) :] if revision else suffix
+        generation = re.match(r"^(?:v[0-9]{1,20}|s[a-f0-9]{64})_", suffix)
+        unversioned = suffix[len(generation.group(0)) :] if generation else suffix
         kind = "placeholder" if unversioned == key else "placeholder-mismatch"
         return {"kind": kind, "value": value}
     return {"kind": "present", "value": value}
@@ -1653,7 +1653,8 @@ def rewrite(value):
             alias_suffix = value[alias_index + len(alias_marker) :]
             for env_key in keys:
                 if alias_suffix != env_key and not re.fullmatch(
-                    rf"v[0-9]{{1,20}}_{re.escape(env_key)}", alias_suffix
+                    rf"(?:v[0-9]{{1,20}}|s[a-f0-9]{{64}})_{re.escape(env_key)}",
+                    alias_suffix,
                 ):
                     continue
                 runtime_value = os.environ.get(env_key, "")
@@ -1661,7 +1662,8 @@ def rewrite(value):
                     continue
                 runtime_suffix = runtime_value[len(prefix) :]
                 if runtime_suffix != env_key and not re.fullmatch(
-                    rf"v[0-9]{{1,20}}_{re.escape(env_key)}", runtime_suffix
+                    rf"(?:v[0-9]{{1,20}}|s[a-f0-9]{{64}})_{re.escape(env_key)}",
+                    runtime_suffix,
                 ):
                     continue
                 updated = value[: alias_index + len(alias_marker)] + runtime_suffix
@@ -1681,8 +1683,8 @@ updated = rewrite(config)
 def placeholder_suffix_matches_env_key(suffix, env_key):
     if suffix == env_key:
         return True
-    revision = re.match(r"^v[0-9]+_", suffix)
-    return bool(revision and suffix[len(revision.group(0)) :] == env_key)
+    generation = re.match(r"^(?:v[0-9]{1,20}|s[a-f0-9]{64})_", suffix)
+    return bool(generation and suffix[len(generation.group(0)) :] == env_key)
 
 
 def path_label(path):
@@ -1729,7 +1731,7 @@ def walk_for_warnings(value, path):
                 state = runtime_state(env_key)
                 env_value = state.get("value", "")
                 placeholder_re = re.compile(
-                    rf"^{re.escape(prefix)}(v[0-9]+_)?{re.escape(env_key)}$"
+                    rf"^{re.escape(prefix)}(?:(?:v[0-9]{{1,20}}|s[a-f0-9]{{64}})_)?{re.escape(env_key)}$"
                 )
                 if state.get("kind") == "missing":
                     warnings.append(
@@ -1885,8 +1887,12 @@ def clean_env_alias(entry, index):
         fail(f"envAliases[{index}].match is not a valid regex: {exc}")
     value = clean_string(entry.get("value"), f"envAliases[{index}].value", allow_empty=True)
     if target_env_key != env_key:
-        if pattern != f"^openshell:resolve:env:v[0-9]+_{env_key}$":
-            fail(f"envAliases[{index}] cross-key match is not revision-scoped")
+        expected_pattern = (
+            "^openshell:resolve:env:"
+            f"(?:v[0-9]{{1,20}}|s[a-f0-9]{{64}})_{env_key}$"
+        )
+        if pattern != expected_pattern:
+            fail(f"envAliases[{index}] cross-key match is not generation-scoped")
         if value != f"openshell:resolve:env:{env_key}":
             fail(f"envAliases[{index}] cross-key value is not the canonical source placeholder")
     return {
@@ -2033,7 +2039,10 @@ for alias in plan.get("envAliases", []):
     placeholder_prefix = "openshell:resolve:env:"
     if marker in value and runtime_value.startswith(placeholder_prefix):
         runtime_suffix = runtime_value[len(placeholder_prefix) :]
-        if re.fullmatch(rf"v[0-9]{{1,20}}_{re.escape(env_key)}", runtime_suffix):
+        if re.fullmatch(
+            rf"(?:v[0-9]{{1,20}}|s[a-f0-9]{{64}})_{re.escape(env_key)}",
+            runtime_suffix,
+        ):
             alias_suffix = value.split(marker, 1)[1]
             if alias_suffix == env_key:
                 value = value.split(marker, 1)[0] + marker + runtime_suffix

@@ -152,7 +152,7 @@ async function withPortableFences<T>(
     const sandboxName = sandboxNames[index];
     return sandboxName
       ? withLifecycleLock(sandboxName, () => acquireNext(index + 1), lifecycleStateDir)
-      : withRegistryLock(input.registryFile, operation);
+      : withRegistryLock(input.registryFile, async () => operation());
   };
   return acquireNext(0);
 }
@@ -308,8 +308,8 @@ export async function runPortableRuntimeCleanupTransaction(
   )(hermesInput);
   if (hermesSandboxNames) {
     const names = [...hermesSandboxNames].sort(compareCodeUnits);
-    return withPortableFences(input, names, deps, () => {
-      const result = (deps.runHermesPortableUninstall ?? runHermesPortableUninstall)(
+    return withPortableFences(input, names, deps, async () => {
+      const result = await (deps.runHermesPortableUninstall ?? runHermesPortableUninstall)(
         hermesInput,
         deps.hermesPortable,
       );

@@ -488,7 +488,7 @@ describe("CLI connect recovery process contracts", () => {
     const calls = fs.readFileSync(markerFile, "utf8");
     expect(calls).toContain("sandbox list");
     expect(calls).toContain("sandbox get -g nemoclaw alpha");
-    expect(calls).toContain("sandbox connect alpha");
+    expect(calls).toContain("sandbox exec --name alpha --tty -- /bin/bash -i");
     const recoveredRegistry = JSON.parse(
       fs.readFileSync(path.join(nemoclawDir, "sandboxes.json"), "utf8"),
     );

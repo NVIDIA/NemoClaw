@@ -79,6 +79,38 @@ describe("destroySandbox flow", () => {
     expectStrictSandboxPresenceClassification();
   });
 
+  it("waits for provider detach before deleting the sandbox", { timeout: 30_000 }, async () => {
+    const harness = createDestroyHarness();
+    let finishDetach!: () => void;
+    let detachStarted!: () => void;
+    const pending = new Promise<void>((resolve) => {
+      finishDetach = resolve;
+    });
+    const started = new Promise<void>((resolve) => {
+      detachStarted = resolve;
+    });
+    harness.runSandboxProviderPreDeleteCleanupSpy.mockImplementationOnce(async () => {
+      detachStarted();
+      await pending;
+      return { detached: [], failures: [] };
+    });
+    const destroy = harness.destroySandbox("alpha", { yes: true, cleanupGateway: false });
+    try {
+      await Promise.race([started, destroy]);
+      expect(harness.runSandboxProviderPreDeleteCleanupSpy).toHaveBeenCalledOnce();
+      expect(harness.events).not.toContain("delete");
+      expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
+      expect(harness.lifecycleLockEvents).toContain("acquired");
+      expect(harness.lifecycleLockEvents).not.toContain("released");
+    } finally {
+      finishDetach();
+      await destroy;
+    }
+    expect(harness.events).toContain("delete");
+    expect(harness.removeSandboxSpy).toHaveBeenCalledOnce();
+    expect(harness.lifecycleLockEvents).toContain("released");
+  });
+
   it(
     "selects the sandbox gateway, deletes live resources, cleans host state, and removes registry state",
     { timeout: 30_000 },

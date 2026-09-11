@@ -404,7 +404,7 @@ describe("MCP bridge transient classification", () => {
     const status = vi.fn(async () => HERMES_RESTART_SETTLING_STATUS);
     const execShell = vi
       .fn()
-      .mockResolvedValueOnce({ ...HERMES_REGISTERED_ADAPTER, stdout: "v4\n" })
+      .mockResolvedValueOnce({ ...HERMES_REGISTERED_ADAPTER, stdout: `s${"a".repeat(64)}\n` })
       .mockResolvedValueOnce(HERMES_REGISTERED_ADAPTER);
     const writeJson = vi.fn(async () => undefined);
     const sleep = vi.fn(async () => undefined);

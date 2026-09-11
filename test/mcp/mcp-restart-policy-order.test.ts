@@ -8,7 +8,7 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-const MATCHING_OPENSHELL = path.resolve("test/fixtures/openshell-v0.0.106");
+const MATCHING_OPENSHELL = path.resolve("test/fixtures/openshell-v0.0.116");
 
 function writeManagedGatewayDeclaration(home: string): string {
   const declarationPath = path.join(home, "gateway-management.json");
@@ -340,12 +340,16 @@ bridge.restartMcpBridge("alpha", "example").then(
   )}`;
 
   const runCredentialRestart = ({
+    operation = "restart",
     probeResponses,
     statusErrors = {},
     restartAll = false,
     pendingDenyTools,
     policyApplyFails = false,
+    stableRevision = false,
+    deferAdapterRemoval = false,
   }: {
+    operation?: "restart" | "restore";
     probeResponses: Record<
       string,
       {
@@ -359,12 +363,14 @@ bridge.restartMcpBridge("alpha", "example").then(
     restartAll?: boolean;
     pendingDenyTools?: string[];
     policyApplyFails?: boolean;
+    stableRevision?: boolean;
+    deferAdapterRemoval?: boolean;
   }) => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-restart-credential-"));
     const gatewayManagement = writeManagedGatewayDeclaration(home);
     const script = String.raw`
 process.env.HOME = ${JSON.stringify(home)};
-delete process.env.MCP_TOKEN;
+${stableRevision ? 'process.env.MCP_TOKEN = "host-only-secret";' : "delete process.env.MCP_TOKEN;"}
 delete process.env.LATER_TOKEN;
 const registry = require("./src/lib/state/registry.js");
 const providerCommands = require("./src/lib/adapters/openshell/provider-command.js");
@@ -376,6 +382,8 @@ const bridgeStatus = require("./src/lib/actions/sandbox/mcp-bridge-status.js");
 
 let policyApplyCalls = 0;
 let resourceVersion = 1;
+let adapterRegistered = true;
+let adapterCleanupCompleted = false;
 const providerCalls = [];
 const statusCalls = [];
 const entry = {
@@ -444,10 +452,31 @@ policies.applyPresetContent = () => {
   policyApplyCalls += 1;
   return !policyApplyFails;
 };
-processRecovery.executeSandboxExecCommand = () => ({ status: 0, stdout: "v" + resourceVersion, stderr: "" });
-processRecovery.executeSandboxCommand = (_sandbox, command) => ({
+const stableRevision = ${JSON.stringify(stableRevision)};
+processRecovery.executeSandboxExecCommand = () => ({
   status: 0,
-  stdout: command === "command -v mcporter" ? "/usr/local/bin/mcporter\n" : "registered\n",
+  stdout: stableRevision ? "s" + "a".repeat(64) : "v" + resourceVersion,
+  stderr: "",
+});
+const deferAdapterRemoval = ${JSON.stringify(deferAdapterRemoval)};
+processRecovery.executeSandboxCommand = async (_sandbox, command) => ({
+  status: 0,
+  stdout: await (async () => {
+    if (command === "command -v mcporter") return "/usr/local/bin/mcporter\n";
+    if (command.includes("config' 'remove") || (command.includes('spawnSync("mcporter"') && command.includes('"remove", expected.server'))) {
+      if (deferAdapterRemoval) {
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      adapterRegistered = false;
+      adapterCleanupCompleted = true;
+      return "removed\n";
+    }
+    if (command.includes("config' 'add") || command.includes('"config", "add"')) {
+      adapterRegistered = true;
+      return "registered\n";
+    }
+    return adapterRegistered ? "registered\n" : "absent\n";
+  })(),
   stderr: "",
 });
 const probeResponses = ${JSON.stringify(probeResponses)};
@@ -468,16 +497,21 @@ registry.registerSandbox({
 });
 
 const bridge = require("./src/lib/actions/sandbox/mcp-bridge.js");
+const restart = require("./src/lib/actions/sandbox/mcp-bridge-restart.js");
+const operation = ${JSON.stringify(operation)};
 const report = (payload) => {
   process.stdout.write(JSON.stringify(payload), () => process.exit(0));
 };
-bridge.restartMcpBridge("alpha", ${restartAll ? "undefined" : '"example"'}).then(
+(operation === "restart"
+  ? bridge.restartMcpBridge("alpha", ${restartAll ? "undefined" : '"example"'})
+  : restart.restoreExistingMcpBridgeRuntime("alpha", [entry])).then(
   () => {
     report({
       outcome: "refreshed",
       policyApplyCalls,
       providerCalls,
       statusCalls,
+      ...(operation === "restore" ? { adapterRegistered, adapterCleanupCompleted } : {}),
       ...journalState(),
     });
   },
@@ -489,6 +523,7 @@ bridge.restartMcpBridge("alpha", ${restartAll ? "undefined" : '"example"'}).then
       policyApplyCalls,
       providerCalls,
       statusCalls,
+      ...(operation === "restore" ? { adapterRegistered, adapterCleanupCompleted } : {}),
       ...journalState(),
     });
   },
@@ -521,14 +556,16 @@ bridge.restartMcpBridge("alpha", ${restartAll ? "undefined" : '"example"'}).then
         server: string;
         options: { probeCredentialResolution: boolean };
       }>;
+      adapterRegistered: boolean;
     };
   };
 
-  const expectedStatusCall = (server: string) => ({
+  const expectedStatusCall = (server: string, incompleteAdd = false) => ({
     sandboxName: "alpha",
     server,
     options: {
       allowCredentialProbeWithAdapterMismatch: true,
+      ...(incompleteAdd ? { allowIncompleteAddCredentialProbe: true } : {}),
       probeCredentialResolution: true,
       runtimeSelection: { gatewayName: "nemoclaw", workspace: "default" },
     },
@@ -556,6 +593,33 @@ bridge.restartMcpBridge("alpha", ${restartAll ? "undefined" : '"example"'}).then
       providerCalls: [],
       statusCalls: [expectedStatusCall("example")],
     });
+  }, 75_000);
+
+  it("unregisters a recovered adapter when an unchanged stable credential fails wire authorization", () => {
+    const payload = runCredentialRestart({
+      operation: "restore",
+      stableRevision: true,
+      deferAdapterRemoval: true,
+      probeResponses: {
+        example: {
+          ok: null,
+          httpStatus: 401,
+          controlHttpStatus: 401,
+          detail: "updated credential remained unauthorized",
+        },
+      },
+    });
+
+    expect(payload).toMatchObject({
+      outcome: "rejected",
+      message: expect.stringContaining(
+        "MCP server 'example' did not authorize its unchanged stable credential handle after provider update:",
+      ),
+      adapterRegistered: false,
+      adapterCleanupCompleted: true,
+      statusCalls: [expectedStatusCall("example", true)],
+    });
+    expect(payload.message).not.toContain("host-only-secret");
   }, 75_000);
 
   it("redacts and bounds an unverified credential probe detail (#10750)", () => {
@@ -595,6 +659,34 @@ bridge.restartMcpBridge("alpha", ${restartAll ? "undefined" : '"example"'}).then
       providerCalls: ["provider update alpha-mcp-example"],
       statusCalls: [expectedStatusCall("example")],
     });
+  }, 75_000);
+
+  it("requires a post-update wire proof when the stable handle is unchanged", () => {
+    const payload = runCredentialRestart({
+      stableRevision: true,
+      probeResponses: {
+        example: {
+          ok: null,
+          httpStatus: 401,
+          controlHttpStatus: 401,
+          detail: "updated credential remained unauthorized",
+        },
+      },
+    });
+
+    expect(payload).toMatchObject({
+      outcome: "rejected",
+      message: expect.stringContaining(
+        "MCP server 'example' did not authorize its unchanged stable credential handle after provider update:",
+      ),
+      policyApplyCalls: 2,
+      providerCalls: [
+        "provider update alpha-mcp-example --credential MCP_TOKEN",
+        "provider update alpha-mcp-example",
+      ],
+      statusCalls: [expectedStatusCall("example", true)],
+    });
+    expect(payload.message).not.toContain("host-only-secret");
   }, 75_000);
 
   it("retains journaled replacement intent until restart policy activation succeeds (#11115)", () => {

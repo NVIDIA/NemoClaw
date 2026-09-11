@@ -644,7 +644,7 @@ describe("collectSandboxStatusSnapshot inference route health", () => {
         preferredInferenceApi: null,
       },
       {},
-      30_000,
+      95_000,
     );
     expect(probeSandboxInferenceGatewayHealthImpl).toHaveBeenCalledWith("alpha", {
       gatewayName: "nemoclaw-19080",
@@ -697,7 +697,7 @@ describe("collectSandboxStatusSnapshot inference route health", () => {
         preferredInferenceApi: "openai-completions",
       },
       {},
-      30_000,
+      95_000,
     );
     expect(probeSandboxInferenceInvocationImpl).toHaveBeenCalledOnce();
     expect(snapshot.inferenceHealth).toMatchObject({ ok: true });

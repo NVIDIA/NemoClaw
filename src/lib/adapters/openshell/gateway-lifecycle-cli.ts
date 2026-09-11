@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { isValidName } from "../../sandbox-name-contract";
+import { isValidName } from "../../../../nemoclaw/dist/shared/sandbox-name.cjs";
 import { withSelectedOpenShellCommandOptions } from "./command-argv";
 import { assertNoOpenShellGatewayEndpointOverride } from "./gateway-scope";
 import type { ObserveOpenShellGatewayRequest } from "./gateway-observer";

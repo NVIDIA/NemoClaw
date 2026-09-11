@@ -1,13 +1,18 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { type SpawnSyncOptions, type SpawnSyncReturns, spawnSync } from "node:child_process";
+import type { SpawnSyncOptions } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
-import { dockerSpawnSync } from "../../adapters/docker/exec";
+import {
+  defaultRun,
+  defaultRunDocker,
+  createUninstallProviderAdapter,
+  type RunResult,
+} from "../../adapters/uninstall/commands";
 import { type OpenRegularFile, openRegularFileNoFollow } from "../../adapters/fs/regular-file";
 import { type AgentBranding, getAgentBranding } from "../../cli/branding";
 import { isErrnoException } from "../../core/errno";
@@ -120,11 +125,7 @@ import {
   withPortableHostFence,
 } from "./portable-runtime-cleanup";
 
-export interface RunResult {
-  status: number | null;
-  stdout: string;
-  stderr: string;
-}
+export type { RunResult } from "../../adapters/uninstall/commands";
 
 export interface UninstallRunOptions {
   assumeYes: boolean;
@@ -195,22 +196,6 @@ const OPENSHELL_COMMAND_MISSING_ERROR =
   "openshell command not found. Restore it to PATH and re-run nemoclaw uninstall.";
 export const MANAGED_INFERENCE_CONTAINER_NAME_PATTERN =
   /^(?:nemoclaw-vllm|nemoclaw-vllm-worker|nemoclaw-llama-cpp|nemoclaw-vllm-cluster-rank-[0-9]+)$/;
-
-function toRunResult(result: SpawnSyncReturns<string | Buffer>): RunResult {
-  return {
-    status: result.status,
-    stdout: typeof result.stdout === "string" ? result.stdout : String(result.stdout ?? ""),
-    stderr: typeof result.stderr === "string" ? result.stderr : String(result.stderr ?? ""),
-  };
-}
-
-function defaultRun(command: string, args: string[], options: SpawnSyncOptions = {}): RunResult {
-  return toRunResult(spawnSync(command, args, { encoding: "utf-8", ...options }));
-}
-
-function defaultRunDocker(args: string[], options: SpawnSyncOptions = {}): RunResult {
-  return toRunResult(dockerSpawnSync(args, { encoding: "utf-8", ...options }));
-}
 
 function defaultCommandExists(command: string, env: NodeJS.ProcessEnv): boolean {
   if (!command || command.includes("\0")) return false;
@@ -1547,14 +1532,14 @@ async function removeOpenShellResources(
       onSkip: OPENSHELL_SANDBOXES_DELETE_SKIP_MESSAGE,
     },
   );
-  for (const provider of NEMOCLAW_PROVIDERS) {
-    runOptional(
-      runtime,
-      `Deleted provider '${provider}'`,
-      "openshell",
-      ["provider", "delete", provider],
-      { onSkip: providerDeleteSkipMessage(provider) },
-    );
+  const providerAdapter = createUninstallProviderAdapter(runtime.run, runtime.env);
+  for (const providerName of NEMOCLAW_PROVIDERS) {
+    const result = await providerAdapter.deleteProvider({
+      target: { kind: "selected" },
+      providerName,
+    });
+    if (result.ok) runtime.log(`Deleted provider '${providerName}'`);
+    else runtime.warn(providerDeleteSkipMessage(providerName));
   }
   return removeGatewayRegistration(
     runtime,

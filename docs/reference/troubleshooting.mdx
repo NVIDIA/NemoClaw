@@ -382,7 +382,7 @@ Use `NEMOCLAW_GATEWAY_BIND_ADDRESS=0.0.0.0` only on supported gateway modes and 
 
 ### Older-glibc gateway compatibility container
 
-OpenShell 0.0.106 directly supports Linux hosts with glibc 2.39 or newer. On an older trusted host, `NEMOCLAW_OPENSHELL_GATEWAY_CONTAINER_PATCH=1` explicitly opts into NemoClaw's compatibility container. Leave it unset on supported hosts.
+OpenShell 0.0.116 directly supports Linux hosts with glibc 2.39 or newer. On an older trusted host, `NEMOCLAW_OPENSHELL_GATEWAY_CONTAINER_PATCH=1` explicitly opts into NemoClaw's compatibility container. Leave it unset on supported hosts.
 
 The compatibility container uses host networking and mounts the host Docker socket read-only. A read-only socket mount still permits privileged Docker API operations and can control the host, so do not enable this mode on an untrusted or shared host. The gateway remains loopback-bound, and startup fails closed unless the configured Unix socket answers as a Docker daemon. See [Gateway Compatibility Container](../security/security-controls/gateway-authentication-controls#gateway-compatibility-container) for the container boundary and removal conditions.
 
@@ -4653,7 +4653,7 @@ Confirm a real Hermes search after rebuilding.
 Do not replace an OpenShell placeholder with a raw Langfuse key in `~/.hermes/.env`.
 That workaround bypasses the sandbox credential boundary.
 
-OpenShell 0.0.106 resolves static credentials only at endpoints declared by their provider profile.
+OpenShell 0.0.116 resolves static credentials only at endpoints declared by their provider profile.
 Older provider-backed Langfuse setups could rely on destination-independent placeholder rewriting, so they can stop working after a NemoClaw upgrade or sandbox rebuild even though the Hermes placeholder validator still accepts the value.
 
 For Langfuse Cloud, register the two keys through the checked-in endpoint profile and rebuild the sandbox:
@@ -4676,7 +4676,7 @@ The provider must expose the exact `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KE
 
 For self-hosted Langfuse, import a separate reviewed profile that matches the exact HTTPS origin, including its port, before registering the provider.
 Set only the non-secret `HERMES_LANGFUSE_BASE_URL` in `~/.hermes/.env`.
-Remove any copied `HERMES_LANGFUSE_PUBLIC_KEY` or `HERMES_LANGFUSE_SECRET_KEY` line because a saved revision-scoped placeholder can shadow the current process-injected revision after rotation or rebuild.
+Remove any copied `HERMES_LANGFUSE_PUBLIC_KEY` or `HERMES_LANGFUSE_SECRET_KEY` line because a saved credential-handle placeholder can shadow the current process-injected value after rotation or rebuild.
 
 ### Re-onboarding asks every messaging prompt again
 

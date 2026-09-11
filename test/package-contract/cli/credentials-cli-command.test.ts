@@ -354,6 +354,7 @@ describe("credentials oclif commands", () => {
           ignoreError: true,
           replaceEnv: true,
           stdio: ["ignore", "pipe", "pipe"],
+          suppressOutput: true,
           timeout: 30_000,
         },
       },

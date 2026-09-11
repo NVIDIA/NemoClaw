@@ -45,8 +45,8 @@ function withManagedGatewayAuthority(deps: UninstallRunDeps): UninstallRunDeps {
   });
 }
 
-function runUninstallPlan(options: UninstallRunOptions, deps: UninstallRunDeps) {
-  return runUninstallPlanBase(options, withManagedGatewayAuthority(deps));
+async function runUninstallPlan(options: UninstallRunOptions, deps: UninstallRunDeps) {
+  return await runUninstallPlanBase(options, withManagedGatewayAuthority(deps));
 }
 
 function okWithKnownGatewayList(command: string, args: readonly string[]): RunResult {

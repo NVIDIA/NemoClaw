@@ -722,7 +722,6 @@ function legacyForwardEnvironment(hosted: HostedInferenceConfig): NodeJS.Process
 
 async function runLegacyForwardMigration(
   host: HostCliClient,
-  runtimeProvider: RuntimeProviderPrerequisite,
   hosted: HostedInferenceConfig,
 ): Promise<void> {
   const migrationEnv = legacyForwardEnvironment(hosted);
@@ -768,17 +767,16 @@ printf 'DIRECT_FORWARD_RELEASED=%s\n' "$dashboard_port"`,
   );
   expect(stopAndRelease.exitCode, resultText(stopAndRelease)).toBe(0);
 
-  const resourceHandle = await runtimeProvider.resolveSandboxResourceHandle(
-    LEGACY_FORWARD_SANDBOX,
+  const startWorkload = await host.command(
+    host.openshellCommandPath,
+    ["sandbox", "start", "-g", "nemoclaw", LEGACY_FORWARD_SANDBOX],
     {
-      artifactName: "legacy-forward-resolve-stopped-sandbox",
-      timeoutMs: 60_000,
+      artifactName: "legacy-forward-start-sandbox-workload",
+      env: migrationEnv,
+      redactionValues: [hosted.apiKey],
+      timeoutMs: 120_000,
     },
   );
-  const startWorkload = await runtimeProvider.command(["container", "start", resourceHandle], {
-    artifactName: "legacy-forward-start-sandbox-workload-only",
-    timeoutMs: 120_000,
-  });
   expect(startWorkload.exitCode, resultText(startWorkload)).toBe(0);
 
   const migrate = await host.command(
@@ -993,7 +991,7 @@ test(
     );
 
     progress.phase("seed, migrate, and release the legacy dashboard forward");
-    await runLegacyForwardMigration(host, runtimeProvider, hosted);
+    await runLegacyForwardMigration(host, hosted);
 
     await artifacts.target.complete({
       id: "sandbox-operations",

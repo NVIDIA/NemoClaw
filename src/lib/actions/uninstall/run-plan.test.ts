@@ -47,12 +47,12 @@ function withManagedGatewayAuthority(deps: UninstallRunDeps): UninstallRunDeps {
   };
 }
 
-function runUninstallPlan(options: UninstallRunOptions, deps: UninstallRunDeps) {
-  return runUninstallPlanBase(options, withManagedGatewayAuthority(deps));
+async function runUninstallPlan(options: UninstallRunOptions, deps: UninstallRunDeps) {
+  return await runUninstallPlanBase(options, withManagedGatewayAuthority(deps));
 }
 
-function runUninstallPlanWithBackup(options: UninstallRunOptions, deps: UninstallRunDeps) {
-  return runUninstallPlanProduction(
+async function runUninstallPlanWithBackup(options: UninstallRunOptions, deps: UninstallRunDeps) {
+  return await runUninstallPlanProduction(
     options,
     withSuccessfulPreUninstallBackup(withManagedGatewayAuthority(deps)),
   );

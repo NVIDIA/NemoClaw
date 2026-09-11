@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { classifyManagedGatewayEndpointBinding } from "../../../../nemoclaw/dist/shared/openshell-gateway-endpoint-boundary.cjs";
-import { isValidName } from "../../sandbox-name-contract";
+import { isValidName } from "../../../../nemoclaw/dist/shared/sandbox-name.cjs";
 import {
   getGatewayReuseState,
   hasStaleGateway,

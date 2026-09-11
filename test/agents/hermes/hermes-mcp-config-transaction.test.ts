@@ -32,9 +32,14 @@ function runPython(source: string, args: string[] = []) {
       `openshell:resolve:env:${name!}`,
     ]),
   );
+  const stableEnvironment = Object.fromEntries(
+    [...source.matchAll(/openshell:resolve:env:(s[a-f0-9]{64})_([A-Za-z_][A-Za-z0-9_]*)/gu)].map(
+      ([, handle, name]) => [name!, `openshell:resolve:env:${handle!}_${name!}`],
+    ),
+  );
   return spawnSync("python3", ["-c", source, TRANSACTION, GUARD, ...args], {
     encoding: "utf8",
-    env: { ...process.env, ...canonicalEnvironment },
+    env: { ...process.env, ...canonicalEnvironment, ...stableEnvironment },
   });
 }
 
@@ -160,9 +165,9 @@ if len(errors) != 3:
 
     expect(result.status, result.stderr).toBe(0);
     expect(JSON.parse(result.stdout)).toEqual([
-      "Authenticated MCP OpenShell host aliases are unavailable with OpenShell v0.0.106",
-      "Authenticated MCP OpenShell host aliases are unavailable with OpenShell v0.0.106",
-      "Authenticated MCP OpenShell host aliases are unavailable with OpenShell v0.0.106",
+      "Authenticated MCP OpenShell host aliases are unavailable with OpenShell v0.0.116",
+      "Authenticated MCP OpenShell host aliases are unavailable with OpenShell v0.0.116",
+      "Authenticated MCP OpenShell host aliases are unavailable with OpenShell v0.0.116",
     ]);
   });
 
@@ -198,6 +203,7 @@ print(json.dumps({"ok": True}))
       "v1_TOKEN",
       "v999999_very_unlikely",
       "v0_1",
+      `s${"a".repeat(64)}_TOKEN`,
     ];
     const result = runPython(
       `
@@ -265,6 +271,7 @@ base = {
 }
 valid = [
     ("add", {**base, "replace_existing": False}),
+    ("add", {**base, "headers": {"Authorization": "Bearer openshell:resolve:env:saaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa_SAFE_MCP_TOKEN"}, "replace_existing": False}),
     ("remove", {**base, "force": False}),
 ]
 invalid = [
@@ -298,7 +305,7 @@ print(json.dumps(accepted))
 `);
 
     expect(result.status, result.stderr).toBe(0);
-    expect(JSON.parse(result.stdout)).toEqual([true, true, ...Array(16).fill(false)]);
+    expect(JSON.parse(result.stdout)).toEqual([true, true, true, ...Array(16).fill(false)]);
   });
 
   it("rejects command, YAML-tag, and terminal-control injection without executing it", () => {

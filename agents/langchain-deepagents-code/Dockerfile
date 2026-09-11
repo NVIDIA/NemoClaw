@@ -441,7 +441,7 @@ RUN set -eu; \
     test -z "$(dpkg --audit)"
 # End completed-image security package verification.
 
-ARG NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root
+ARG NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=sandbox
 RUN case "$NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER" in \
         root|sandbox) ;; \
         *) echo "ERROR: NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER must be root or sandbox" >&2; exit 1 ;; \
