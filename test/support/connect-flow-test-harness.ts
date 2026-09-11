@@ -139,6 +139,7 @@ export type ConnectHarnessOptions = {
         gatewayName?: string;
         lifecycleGeneration?: string;
       };
+  useRealPortableReceipt?: boolean;
   dockerRuntime?: {
     health?: string;
     paused?: boolean;
@@ -292,6 +293,11 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     () => undefined,
   );
   const requestedPortableDisposition = options.portableReceiptDisposition ?? { kind: "absent" };
+  vi.spyOn(gatewayState, "hermesPortableLifecycleLockOptions").mockReturnValue(
+    requestedPortableDisposition.kind === "hermes"
+      ? { stateDir: "/home/test/.nemoclaw/state" }
+      : undefined,
+  );
   const portableDisposition =
     requestedPortableDisposition.kind === "hermes"
       ? {
@@ -307,32 +313,45 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
           liveIdentityFingerprint: "f".repeat(64),
         }
       : requestedPortableDisposition;
-  const inspectPortableReceiptDispositionSpy = vi
-    .spyOn(portableAgentLifecycle, "inspectPortableAgentReceiptDisposition")
-    .mockReturnValue(portableDisposition);
+  const inspectPortableReceiptDispositionSpy = vi.spyOn(
+    portableAgentLifecycle,
+    "inspectPortableAgentReceiptDisposition",
+  );
+  if (!options.useRealPortableReceipt) {
+    inspectPortableReceiptDispositionSpy.mockReturnValue(portableDisposition);
+  }
   let registryEntries: SandboxEntry[] = [];
   const qualifyPortableAgentLifecycleAuthority =
     portableAgentLifecycle.qualifyPortableAgentLifecycleAuthority;
   const requireHermesPortableActiveLifecycleAuthority =
     portableAgentLifecycle.requireHermesPortableActiveLifecycleAuthority;
   const portableAuthorityDeps = () => ({
-    inspectReceiptDisposition: (sandboxName: string) =>
-      portableAgentLifecycle.inspectPortableAgentReceiptDisposition(sandboxName),
+    ...(options.useRealPortableReceipt
+      ? {}
+      : {
+          inspectReceiptDisposition: (sandboxName: string) =>
+            portableAgentLifecycle.inspectPortableAgentReceiptDisposition(sandboxName),
+        }),
     readRegistry: (sandboxName: string) =>
       registryEntries.find((candidate) => candidate.name === sandboxName) ?? null,
   });
   vi.spyOn(gatewayState, "qualifyPortableAgentLifecycleAuthority").mockImplementation(((
     sandboxName: string,
-  ) => qualifyPortableAgentLifecycleAuthority(sandboxName, portableAuthorityDeps())) as never);
+    deps: object,
+  ) =>
+    qualifyPortableAgentLifecycleAuthority(sandboxName, {
+      ...deps,
+      ...portableAuthorityDeps(),
+    })) as never);
   vi.spyOn(gatewayState, "requireHermesPortableActiveLifecycleAuthority").mockImplementation(((
     sandboxName: string,
     expected: unknown,
+    deps: object,
   ) =>
-    requireHermesPortableActiveLifecycleAuthority(
-      sandboxName,
-      expected,
-      portableAuthorityDeps(),
-    )) as never);
+    requireHermesPortableActiveLifecycleAuthority(sandboxName, expected, {
+      ...deps,
+      ...portableAuthorityDeps(),
+    })) as never);
   const recoverHermesPortableOllamaInferenceSpy = vi
     .spyOn(hermesInferenceRecovery, "recoverHermesPortableInferenceForConnectProbe")
     .mockImplementation((async (input: {

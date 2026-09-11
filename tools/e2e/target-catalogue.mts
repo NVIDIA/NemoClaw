@@ -724,7 +724,17 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     installMode: "authenticated",
     restoreCli: true,
     exposeCliBin: true,
-    owningPaths: ["test/e2e/live/hermes-cli-adapter-live.ts"],
+    owningPaths: [
+      "test/e2e/live/gpu-e2e-helpers.ts",
+      "test/e2e/live/hermes-cli-adapter-live.ts",
+      "src/lib/inference/ollama/proxy.ts",
+      "src/lib/inference/ollama/proxy-observation.ts",
+      "scripts/ollama-auth-proxy.mts",
+      "src/lib/adapters/config/live-export-source.ts",
+      "src/lib/domain/config/verify-ollama-serving.ts",
+      "src/lib/config/model.ts",
+      "src/lib/config/schema.ts",
+    ],
     environment: {
       ...nonInteractive,
       NEMOCLAW_MODEL: "qwen3.5:9b",
