@@ -6,7 +6,6 @@ import { execFile, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { promisify } from "node:util";
 import * as ts from "typescript";
 import { describe, expect, it, vi } from "vitest";
 import { extractShellFunctionFromSource } from "../../../helpers/shell-source";
@@ -42,8 +41,14 @@ const JSON5_MODULE = path.join(
   "node_modules",
   "json5",
 );
-const execFileAsync = promisify(execFile);
 vi.setConfig({ maxConcurrency: 4 });
+function execFileResult(file, args, options) {
+  return new Promise((resolve) =>
+    execFile(file, args, options, (error, stdout, stderr) =>
+      resolve({ status: Number(error?.code ?? (error ? -1 : 0)), stdout, stderr }),
+    ),
+  );
+}
 function commandPath(name: string): string {
   const result = spawnSync("/bin/sh", ["-c", `command -v ${name}`], { encoding: "utf-8" });
   if (result.status !== 0 || !result.stdout.trim()) throw new Error(`${name} is required`);
@@ -2334,7 +2339,6 @@ describe.concurrent("provider placeholder refresh (#4251)", () => {
   const canonicalKeys: string[] = Array.from(
     extraPlaceholderKeys.canonicalPlaceholderKeys(),
   ).sort();
-  // Each canonical key becomes an independent concurrent fixture.
   async function runRefresh(
     config: unknown,
     env: Record<string, string> = {},
@@ -2342,49 +2346,52 @@ describe.concurrent("provider placeholder refresh (#4251)", () => {
     runtimePlan: unknown = { credentialBindings: [] },
   ) {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-provider-placeholders-"));
-    const openclawDir = path.join(tmpDir, ".openclaw");
-    const configPath = path.join(openclawDir, "openclaw.json");
-    const hashPath = path.join(openclawDir, ".config-hash");
-    const handoffEnvPath = path.join(tmpDir, "handoff-env");
-    const runtimePlanPath = path.join(tmpDir, "messaging-runtime-plan.json");
-    const scriptPath = path.join(tmpDir, "run.sh");
-    fs.mkdirSync(openclawDir, { recursive: true });
-    fs.writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`);
-    fs.writeFileSync(runtimePlanPath, JSON.stringify(runtimePlan));
-    const fn = extractShellFunctionFromSource(src, "refresh_openclaw_provider_placeholders")
-      .replaceAll("/sandbox/.openclaw", openclawDir)
-      .replaceAll("/usr/local/share/nemoclaw/messaging-runtime-plan.json", runtimePlanPath);
-    fs.writeFileSync(
-      scriptPath,
-      [
-        "#!/usr/bin/env bash",
-        "set -euo pipefail\nrefresh_openclaw_wechat_account_placeholder() { :; }",
-        ...(rootMode
-          ? [
-              "id() { printf '0\\n'; }",
-              `STEP_DOWN_PREFIX_SANDBOX=(/bin/bash -c 'env >${JSON.stringify(handoffEnvPath)}; exec "$@"' sandbox-step-down)`,
-              extractShellFunctionFromSource(src, "run_openclaw_config_as_owner"),
-            ]
-          : ['run_openclaw_config_as_owner() { "$@"; }']),
-        "normalize_mutable_config_perms() { :; }",
-        `ensure_mutable_openclaw_config_hash() { (cd ${JSON.stringify(openclawDir)} && sha256sum openclaw.json >.config-hash); }`,
-        fn,
-        "refresh_openclaw_provider_placeholders",
-      ].join("\n"),
-      { mode: 0o700 },
-    );
-    const { stdout, stderr } = await execFileAsync("bash", [scriptPath], {
-      encoding: "utf-8",
-      env: { PATH: process.env.PATH || "", ...env },
-      timeout: 5000,
-    });
-    const updatedConfig = JSON.parse(fs.readFileSync(configPath, "utf-8"));
-    const hash = fs.existsSync(hashPath) ? fs.readFileSync(hashPath, "utf-8") : "";
-    const handoffEnv = fs.existsSync(handoffEnvPath)
-      ? fs.readFileSync(handoffEnvPath, "utf-8")
-      : "";
-    fs.rmSync(tmpDir, { recursive: true, force: true });
-    return { config: updatedConfig, handoffEnv, hash, result: { status: 0, stderr, stdout } };
+    try {
+      const openclawDir = path.join(tmpDir, ".openclaw");
+      const configPath = path.join(openclawDir, "openclaw.json");
+      const hashPath = path.join(openclawDir, ".config-hash");
+      const handoffEnvPath = path.join(tmpDir, "handoff-env");
+      const runtimePlanPath = path.join(tmpDir, "messaging-runtime-plan.json");
+      const scriptPath = path.join(tmpDir, "run.sh");
+      fs.mkdirSync(openclawDir, { recursive: true });
+      fs.writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`);
+      fs.writeFileSync(runtimePlanPath, JSON.stringify(runtimePlan));
+      const fn = extractShellFunctionFromSource(src, "refresh_openclaw_provider_placeholders")
+        .replaceAll("/sandbox/.openclaw", openclawDir)
+        .replaceAll("/usr/local/share/nemoclaw/messaging-runtime-plan.json", runtimePlanPath);
+      fs.writeFileSync(
+        scriptPath,
+        [
+          "#!/usr/bin/env bash",
+          "set -euo pipefail\nrefresh_openclaw_wechat_account_placeholder() { :; }",
+          ...(rootMode
+            ? [
+                "id() { printf '0\\n'; }",
+                `STEP_DOWN_PREFIX_SANDBOX=(/bin/bash -c 'env >${JSON.stringify(handoffEnvPath)}; exec "$@"' sandbox-step-down)`,
+                extractShellFunctionFromSource(src, "run_openclaw_config_as_owner"),
+              ]
+            : ['run_openclaw_config_as_owner() { "$@"; }']),
+          "normalize_mutable_config_perms() { :; }",
+          `ensure_mutable_openclaw_config_hash() { (cd ${JSON.stringify(openclawDir)} && sha256sum openclaw.json >.config-hash); }`,
+          fn,
+          "refresh_openclaw_provider_placeholders",
+        ].join("\n"),
+        { mode: 0o700 },
+      );
+      const result = await execFileResult("bash", [scriptPath], {
+        encoding: "utf-8",
+        env: { PATH: process.env.PATH || "", ...env },
+        timeout: 5000,
+      });
+      const updatedConfig = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+      const hash = fs.existsSync(hashPath) ? fs.readFileSync(hashPath, "utf-8") : "";
+      const handoffEnv = fs.existsSync(handoffEnvPath)
+        ? fs.readFileSync(handoffEnvPath, "utf-8")
+        : "";
+      return { config: updatedConfig, handoffEnv, hash, result };
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
   }
 
   function placeholderPlan(envKeys: string[]): string {
@@ -2920,20 +2927,13 @@ describe.concurrent("provider placeholder refresh (#4251)", () => {
   );
 
   it("caps NEMOCLAW_EXTRA_PLACEHOLDER_KEYS at 32 entries inside the sandbox", async () => {
-    // 33 fillers in the list, all extending TELEGRAM_BOT_TOKEN_, all valid
-    // canonical extensions. The cap should accept the first 32 (indices
-    // 0..31) and reject the 33rd entry (index 32, named ..._FILLER_32),
-    // which is also the beyondCap placeholder we plant in openclaw.json.
+    // The first 32 extension keys are accepted; the planted 33rd must remain unchanged.
     const tokens = Array.from({ length: 33 }, (_, i) => `TELEGRAM_BOT_TOKEN_FILLER_${i}`);
     const beyondCap = tokens[32];
     const beyondCapScoped = `openshell:resolve:env:v42_${beyondCap}`;
     const env: Record<string, string> = {
       NEMOCLAW_EXTRA_PLACEHOLDER_KEYS: tokens.join(" "),
-      // Stage a revision-scoped placeholder ONLY for the beyondCap entry.
-      // If the cap is a no-op, the python heredoc would iterate beyondCap
-      // and collapse the canonical placeholder in openclaw.json to the
-      // v42_-scoped form. With the cap working, beyondCap stays out of
-      // the keys list, so the rewrite never runs.
+      // Only the 33rd key has a scoped value, so any rewrite proves the cap was exceeded.
       [beyondCap]: beyondCapScoped,
       // Deliberately leave TELEGRAM_BOT_TOKEN / DISCORD_BOT_TOKEN / etc.
       // unset so no canonical replacement is added; that sidesteps the
