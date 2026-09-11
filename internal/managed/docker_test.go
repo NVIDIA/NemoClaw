@@ -122,6 +122,18 @@ func TestImmediateProcessExitStillEstablishesConfigurationIdentity(t *testing.T)
 	}
 }
 
+func TestMissingContainerAndVolumeCannotHideFailedNetworkObservation(t *testing.T) {
+	f := newRuntimeFixture(t)
+	f.Container, f.Volume = nil, nil
+	f.Unavailable, f.Code = "networks", 403
+	if _, err := f.Docker.Observe(t.Context(), f.Spec, ""); err == nil {
+		t.Fatal("network authorization failure became confirmed runtime absence")
+	}
+	if _, err := f.Docker.Ensure(t.Context(), f.Spec, ""); err == nil || f.Writes != 0 {
+		t.Fatal("failed dependency observation permitted creation", err)
+	}
+}
+
 func TestRefreshAndExplicitRestartPreserveRuntimeAndStorageIdentity(t *testing.T) {
 	f := newRuntimeFixture(t)
 	o, err := f.Docker.Observe(t.Context(), f.Spec, "")

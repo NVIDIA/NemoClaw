@@ -73,6 +73,9 @@ func (d *Docker) Observe(ctx context.Context, want Spec, id string) (*Observatio
 	c, ce := d.API.ContainerInspect(ctx, want.Name, client.ContainerInspectOptions{})
 	v, ve := d.API.VolumeInspect(ctx, want.Volume(), client.VolumeInspectOptions{})
 	n, ne := d.API.NetworkInspect(ctx, want.Network(), client.NetworkInspectOptions{})
+	if ne != nil && !errdefs.IsNotFound(ne) {
+		return nil, errors.New("managed network observation failed; runtime absence unconfirmed")
+	}
 	if errdefs.IsNotFound(ce) && errdefs.IsNotFound(ve) && (want.Kind == ServiceKind || errdefs.IsNotFound(ne)) {
 		if id != "" {
 			return nil, errors.New("bound managed runtime disappeared; automatic replacement forbidden")

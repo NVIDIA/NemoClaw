@@ -45,6 +45,8 @@ func (d *Docker) Status(ctx context.Context, o *Observation) (Status, error) {
 }
 
 func (d *Docker) VerifyArtifacts(ctx context.Context, o *Observation) error {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
 	m := spark.ModelManifest()
 	dir := "/data/models/" + m.Revision
 	b, err := d.ReadFile(ctx, o.ContainerID, dir+"/.nemoclaw-complete.json", 1<<20)
