@@ -57,7 +57,6 @@ describe("OpenShell SDK package credential boundary", () => {
     const fetch = requiredStep(job, "Download and verify exact OpenShell SDK package");
     expect(fetch.env).toEqual({
       NEMOCLAW_OPEN_SHELL_SDK_OUTPUT_DIRECTORY: "${{ runner.temp }}/openshell-sdk",
-      NEMOCLAW_OPEN_SHELL_SDK_INCLUDE_REPLACEMENT: "1",
       NODE_AUTH_TOKEN: "${{ github.token }}",
     });
     expect(fetch.run).toContain("node scripts/checks/package-openshell-sdk-for-pr.mts");
