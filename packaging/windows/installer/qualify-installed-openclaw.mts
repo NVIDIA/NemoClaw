@@ -11,6 +11,7 @@ import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { setTimeout as sleep } from "node:timers/promises";
 import { captureOwned } from "./qualify-finished-package.mts";
+import { sampleInstalledIdle } from "../tests/performance/installed-idle.mts";
 import { sanitizeNativeDiagnostic } from "../runtime/native-session-diagnostics.mts";
 
 export function childEnvironment(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
@@ -244,7 +245,9 @@ function argument(name: string, fallback?: string) {
 type Observation = {
   kind: "observation";
   rootPid: number;
+  rootStartedUtc: string;
   hostPid: number;
+  hostStartedUtc: string;
   hostPath: string;
   ports: number[];
   sessionPid: number | null;
@@ -451,6 +454,8 @@ async function main() {
     capture(agent, "stdout", "agentStdout");
     capture(agent, "stderr", "agentStderr");
     assert.ok(agent.pid);
+    // Keep the existing observer deadline; the optional sample must leave its Stop budget.
+    const observerDeadline = performance.now() + 600_000;
     observer = spawn(
       ps,
       [
@@ -725,6 +730,36 @@ async function main() {
       realDashboard: true,
       containedGateway: true,
     };
+    // Model/tool results and their durations are already recorded. This read-only
+    // companion is independent diagnostic evidence and never owns application Stop.
+    if (performance.now() > observerDeadline - 45_000 - 130_000) {
+      results.idleObservation = {
+        status: "censored",
+        reason: "The existing observer deadline must retain its normal Stop budget.",
+      };
+    } else {
+      try {
+        assert.ok(latest && agent.pid);
+        results.idleObservation = await sampleInstalledIdle(
+          {
+            installRoot: install,
+            guardianPid: agent.pid,
+            guardianStartedUtc: latest.rootStartedUtc,
+            hostPid: latest.hostPid,
+            hostStartedUtc: latest.hostStartedUtc,
+            runtimeId: identity.runtimeId,
+            sourceRevision: identity.sourceRevision,
+            manifestSha256: identity.manifestSha256,
+          },
+          path.join(output, "installed-idle.json"),
+        );
+      } catch (error) {
+        results.idleObservation = {
+          status: "failed",
+          error: sanitizedFailure(error, secret),
+        };
+      }
+    }
   } catch (error) {
     primary = error;
     results.observerAtFailure = observerSnapshot();

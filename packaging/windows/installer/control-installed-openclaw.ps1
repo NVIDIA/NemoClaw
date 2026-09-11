@@ -16,7 +16,9 @@ $started = $root.StartTime.ToUniversalTime()
 if (-not [string]::Equals($root.MainModule.FileName, (Join-Path $rootPath 'bin\NemoClaw.exe'), [StringComparison]::OrdinalIgnoreCase)) {
     throw 'The UI controller root is not the installed native launcher.'
 }
-$inputLine = [Console]::In.ReadLineAsync()
+# Console.In is synchronized and its ReadLineAsync blocks this observer thread.
+$inputReader = [IO.StreamReader]::new([Console]::OpenStandardInput(), [Text.UTF8Encoding]::new($false, $true), $false, 1024, $false)
+$inputLine = $inputReader.ReadLineAsync()
 $watch = [Diagnostics.Stopwatch]::StartNew()
 $stopWatch = $null
 $last = ''
@@ -105,6 +107,7 @@ try {
     [Console]::Out.WriteLine(([ordered]@{ kind='closed'; exitCode=$root.ExitCode; stopElapsedMs=$stopWatch.ElapsedMilliseconds } | ConvertTo-Json -Compress))
     [Console]::Out.Flush()
 } finally {
+    $inputReader.Dispose()
     if ($null -ne $session) { $session.Dispose() }
     $root.Dispose()
 }
