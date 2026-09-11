@@ -527,26 +527,29 @@ describe("PR review advisor specialist lifecycle", () => {
 });
 
 describe("PR review advisor OpenShell wrapper", () => {
-  it("initializes and keeps the sandbox entrypoint alive until OpenShell terminates it (#10791)", async () => {
-    const signals = new EventEmitter();
-    const initialize = vi.fn();
-    let settled = false;
-    const waiting = runOpenShellAdvisorCommand("initialize", initialize, () =>
-      waitForAdvisorSandboxTermination(signals),
-    ).then(() => {
-      settled = true;
-    });
+  it.each(["SIGTERM", "SIGINT"] as const)(
+    "initializes and keeps the sandbox entrypoint alive until OpenShell sends %s (#10791)",
+    async (signal) => {
+      const signals = new EventEmitter();
+      const initialize = vi.fn();
+      let settled = false;
+      const waiting = runOpenShellAdvisorCommand("initialize", initialize, () =>
+        waitForAdvisorSandboxTermination(signals),
+      ).then(() => {
+        settled = true;
+      });
 
-    await Promise.resolve();
-    expect(initialize).toHaveBeenCalledOnce();
-    expect(settled).toBe(false);
+      await Promise.resolve();
+      expect(initialize).toHaveBeenCalledOnce();
+      expect(settled).toBe(false);
 
-    signals.emit("SIGTERM");
-    await waiting;
-    expect(settled).toBe(true);
-    expect(signals.listenerCount("SIGTERM")).toBe(0);
-    expect(signals.listenerCount("SIGINT")).toBe(0);
-  });
+      signals.emit(signal);
+      await waiting;
+      expect(settled).toBe(true);
+      expect(signals.listenerCount("SIGTERM")).toBe(0);
+      expect(signals.listenerCount("SIGINT")).toBe(0);
+    },
+  );
 
   it("permits only the pinned image login files required by stable OpenShell exec", () => {
     const policy = YAML.parse(
