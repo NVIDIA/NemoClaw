@@ -2,11 +2,21 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { vi } from "vitest";
+import type { PreparedExternalComponent } from "../../src/lib/onboard/external-component";
+import {
+  activateExternalComponent,
+  type ExternalComponentActivationProof,
+} from "../../src/lib/onboard/external-component/activation";
+import { prepareFinalOnboardFlowContext } from "../../src/lib/onboard/machine/flow-handoff";
 import type { DashboardDeliveryChain } from "../../src/lib/dashboard/contract";
 import type { OnboardMachineEvent } from "../../src/lib/onboard/machine/events";
-import { createFinalOnboardFlowPhases } from "../../src/lib/onboard/machine/final-flow-phases";
+import {
+  createFinalOnboardFlowPhases,
+  runFinalOnboardFlowSlice,
+} from "../../src/lib/onboard/machine/final-flow-phases";
 import type { OnboardFlowContext } from "../../src/lib/onboard/machine/flow-context";
 import type { PoliciesStateOptions } from "../../src/lib/onboard/machine/handlers/policies";
+import type { FinalizationStateOptions } from "../../src/lib/onboard/machine/handlers/finalization";
 import { OnboardRuntime, type OnboardRuntimeDeps } from "../../src/lib/onboard/machine/runtime";
 import type { OnboardMachineState } from "../../src/lib/onboard/machine/types";
 import { OnboardRuntimeBoundary } from "../../src/lib/onboard/runtime-boundary";
@@ -24,6 +34,9 @@ export type Agent = { name: string };
 type WebSearchConfig = NonNullable<OnboardFlowContext["webSearchConfig"]>;
 
 export type RecorderOverrides = {
+  finalizationDeps?: Partial<
+    FinalizationStateOptions<Agent | null, DashboardDeliveryChain, VerifyDeploymentResult>["deps"]
+  >;
   loadSession?: () => Session | null;
   updateSession?: (mutator: (session: Session) => Session | void) => Session;
   recordStepSkipped?: (stepName: string) => Promise<Session>;
@@ -312,6 +325,93 @@ export function createPhases(
       printDashboard: recorders.printDashboard ?? vi.fn(),
       error: vi.fn(),
       log: vi.fn(),
+      ...recorders.finalizationDeps,
     },
   });
+}
+
+export function createProviderlessComponentFlow() {
+  const order: string[] = [];
+  const harness = createRuntimeHarness(sessionAt("openclaw"));
+  const revalidate = vi.fn();
+  const revalidateEndpoint = vi.fn();
+  const proof: ExternalComponentActivationProof = {
+    gatewayName: "nemoclaw",
+    sandboxId: "sandbox-123",
+    sandboxIdentityFingerprint: `sha256:${"b".repeat(64)}`,
+    lifecycleGeneration: "generation-1",
+    policySource: "sandbox",
+    policyHash: `sha256:${"a".repeat(64)}`,
+    policyActiveVersion: 1,
+    revalidate,
+  };
+  const component: PreparedExternalComponent = {
+    declaration: {
+      schemaVersion: 1,
+      componentId: "policy-governance",
+      interceptorSocketPath: "/run/component/interceptor.sock",
+      activationSocketPath: "/run/component/activation.sock",
+    },
+    revalidateBeforeGateway: vi.fn(),
+    revalidateBeforeActivation: revalidateEndpoint,
+  };
+  const activationId = "4b5a8e18-f967-4e27-a3b2-f2cc315abe21";
+  const response = {
+    schemaVersion: 1,
+    activationId,
+    componentId: component.declaration.componentId,
+    sandboxId: proof.sandboxId,
+    policyHash: proof.policyHash,
+    result: "activated",
+  };
+  const transport = vi.fn(async (_socket: string, _body: string) => JSON.stringify(response));
+  const evidence = vi.fn();
+  const createProof = vi.fn(() => {
+    order.push("verify-proof");
+    return proof;
+  });
+  const phases = createPhases("openclaw", order, {
+    finalizationDeps: {
+      createExternalComponentActivationProof: createProof,
+      createExternalComponentActivationId: () => activationId,
+      activateExternalComponent: (registered, verified, id) =>
+        activateExternalComponent(
+          registered,
+          verified,
+          (socket, body) => {
+            order.push("activate");
+            return transport(socket, body);
+          },
+          id,
+        ),
+      setExternalComponentActivationEvidence: evidence,
+    },
+  });
+  const initial = prepareFinalOnboardFlowContext({
+    context: context({
+      providerlessApf: true,
+      externalComponent: component,
+      model: null,
+      provider: null,
+    }),
+    session: harness.getSession(),
+  });
+  return {
+    order,
+    proof,
+    response,
+    transport,
+    evidence,
+    createProof,
+    revalidate,
+    revalidateEndpoint,
+    initial,
+    run: () =>
+      runFinalOnboardFlowSlice({
+        context: initial,
+        runtime: harness.boundary.getRuntime(),
+        phases,
+        recordRepairEvent: vi.fn(),
+      }),
+  };
 }

@@ -24,6 +24,7 @@ describe("Hermes ACP live evidence boundary", () => {
     expect(
       hermesAcpLiveHostEnv({
         HOME: "/tmp/home",
+        NEMOCLAW_OPENSHELL_BIN: "/tmp/exact-openshell",
         PATH: "/usr/bin",
         OPENSHELL_GATEWAY: "nemoclaw",
         NVIDIA_INFERENCE_API_KEY: "secret",
@@ -33,6 +34,7 @@ describe("Hermes ACP live evidence boundary", () => {
       }),
     ).toEqual({
       HOME: "/tmp/home",
+      NEMOCLAW_OPENSHELL_BIN: "/tmp/exact-openshell",
       PATH: "/usr/bin",
       OPENSHELL_GATEWAY: "nemoclaw",
     });
