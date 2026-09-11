@@ -589,7 +589,7 @@ printf 'NEMOCLAW_FULL_E2E_PASSED\\n'
     FAKE_IMAGE_REPOSITORY_SHA: options.imageRepositorySha ?? "b".repeat(40),
     FAKE_LISTENER_OUTPUT:
       options.listenerOutput ??
-      'LISTEN 0 4096 127.0.0.1:8080 0.0.0.0:* users:(("s3cr3t",pid=99,fd=3))',
+      'LISTEN 0 4096 127.0.0.1:18080 0.0.0.0:* users:(("s3cr3t",pid=99,fd=3))',
     FAKE_MISSING_PROVISION_RECEIPT: options.missingProvisionReceipt ? "1" : "0",
     FAKE_OMIT_RECEIPT_FIELD: options.omitReceiptField ?? "",
     FAKE_PLATFORM_DIAGNOSTIC_FAILS: options.platformDiagnosticFails ? "1" : "0",

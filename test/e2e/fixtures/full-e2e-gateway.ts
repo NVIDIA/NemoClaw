@@ -20,7 +20,7 @@ export function fullE2eGateway(preinstalled: boolean, env: NodeJS.ProcessEnv = p
     return { owned: true, env: { OPENSHELL_GATEWAY: resolveGatewayName(port) } };
   }
   const declarationPath =
-    env.NEMOCLAW_GATEWAY_MANAGEMENT ?? "/etc/nemoclaw/gateway-management.json";
+    env.NEMOCLAW_GATEWAY_MANAGEMENT?.trim() || "/etc/nemoclaw/gateway-management.json";
   const loaded = loadGatewayManagementDeclaration({
     env: { ...env, NEMOCLAW_GATEWAY_MANAGEMENT: declarationPath },
   });

@@ -12,6 +12,7 @@ const disposables: (() => Promise<void>)[] = [];
 afterEach(async () => {
   for (const dispose of disposables.splice(0).reverse()) await dispose();
   for (const directory of directories.splice(0)) fs.rmSync(directory, { recursive: true });
+  vi.restoreAllMocks();
   vi.unstubAllEnvs();
 });
 
@@ -192,6 +193,18 @@ describe("full E2E gateway ownership", () => {
       "unsupported gateway-management contract version",
     );
   });
+  it.each([undefined, "", "   "])(
+    "uses the system declaration path when the configured path is %s (#9851)",
+    (configuredPath) => {
+      const readFileSync = vi.spyOn(fs, "readFileSync");
+      expect(() =>
+        fullE2eGateway(true, {
+          NEMOCLAW_GATEWAY_MANAGEMENT: configuredPath,
+        }),
+      ).toThrow("declaration file could not be read");
+      expect(readFileSync).toHaveBeenCalledWith("/etc/nemoclaw/gateway-management.json", "utf-8");
+    },
+  );
   it("does not interpret a managed declaration as Launchable cleanup authority (#9851)", () => {
     expect(() =>
       fullE2eGateway(true, declaration({ version: 1, mode: "nemoclaw-managed" })),
