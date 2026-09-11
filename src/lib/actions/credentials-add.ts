@@ -404,7 +404,7 @@ export async function runCredentialsAddAction(
   }
 
   const profile = bundledProviderProfile(effectiveType);
-  const providerType = profile?.profileType ?? effectiveType;
+  const providerType = profile?.profileType ?? effectiveType.toLowerCase();
   const providerProfileFailure = await ensureBundledProviderProfile(
     profile,
     target,

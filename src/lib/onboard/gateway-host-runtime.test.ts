@@ -57,6 +57,7 @@ function createDeps(overrides: Partial<GatewayHostRuntimeDeps> = {}): GatewayHos
     getGatewayPortListenerRawScan: () => ({ pids: [SYSTEMD_GATEWAY_PID], complete: true }),
     getInstalledOpenshellVersion: () => "0.0.72",
     isGatewayHealthy: () => true,
+    restartPackagedGatewayAfterTrustedInstall: () => undefined,
     runCaptureOpenshell: () => "healthy",
     runOpenshell: () => ({ status: 0 }),
     resolveOpenShellGatewayBinary: () => SYSTEMD_GATEWAY_EXEC,
@@ -242,23 +243,86 @@ describe("gateway host runtime ownership", () => {
     });
   });
 
+  it("restarts an already-bound packaged service after a trusted binary replacement", () => {
+    const restartPackagedGatewayAfterTrustedInstall = vi.fn();
+    const runtime = createGatewayHostRuntime(
+      createDeps({
+        hasOpenShellGatewayUserService: () => true,
+        restartPackagedGatewayAfterTrustedInstall,
+      }),
+    );
+    const owner = runtime.getGatewayOwner();
+
+    expect(runtime.adoptPackagedGatewayOwnerAfterTrustedInstall()).toBe(owner);
+    expect(restartPackagedGatewayAfterTrustedInstall).toHaveBeenCalledOnce();
+    expect(restartPackagedGatewayAfterTrustedInstall).toHaveBeenCalledWith(owner);
+  });
+
   it("adopts only a trusted standalone-to-packaged-service install transition (#7411)", () => {
     let hasPackagedService = false;
+    const events: string[] = [];
+    const restartPackagedGatewayAfterTrustedInstall = vi.fn(() => events.push("restart"));
     const runtime = createGatewayHostRuntime(
-      createDeps({ hasOpenShellGatewayUserService: () => hasPackagedService }),
+      createDeps({
+        hasOpenShellGatewayUserService: () => hasPackagedService,
+        restartPackagedGatewayAfterTrustedInstall,
+      }),
     );
     expect(runtime.getGatewayOwner()).toMatchObject({ source: "standalone" });
 
     hasPackagedService = true;
 
-    const persistOwner = vi.fn();
+    const persistOwner = vi.fn(() => events.push("persist"));
     expect(runtime.adoptPackagedGatewayOwnerAfterTrustedInstall(persistOwner)).toMatchObject({
       source: "packaged-service",
     });
     expect(persistOwner).toHaveBeenCalledWith(
       expect.objectContaining({ source: "packaged-service" }),
     );
+    expect(restartPackagedGatewayAfterTrustedInstall).toHaveBeenCalledOnce();
+    expect(events).toEqual(["persist", "restart"]);
     expect(runtime.getGatewayOwner()).toMatchObject({ source: "packaged-service" });
+  });
+
+  it("does not restart a standalone owner after a trusted CLI-only install", () => {
+    const restartPackagedGatewayAfterTrustedInstall = vi.fn();
+    const runtime = createGatewayHostRuntime(
+      createDeps({ restartPackagedGatewayAfterTrustedInstall }),
+    );
+    const owner = runtime.getGatewayOwner();
+
+    expect(runtime.adoptPackagedGatewayOwnerAfterTrustedInstall()).toBe(owner);
+    expect(owner.source).toBe("standalone");
+    expect(restartPackagedGatewayAfterTrustedInstall).not.toHaveBeenCalled();
+  });
+
+  it("does not restart a declared external supervisor after a trusted CLI install", () => {
+    declareExternalSupervision();
+    const restartPackagedGatewayAfterTrustedInstall = vi.fn();
+    const runtime = createGatewayHostRuntime(
+      createDeps({ restartPackagedGatewayAfterTrustedInstall }),
+    );
+    const owner = runtime.getGatewayOwner();
+
+    expect(runtime.adoptPackagedGatewayOwnerAfterTrustedInstall()).toBe(owner);
+    expect(owner.source).toBe("declared");
+    expect(restartPackagedGatewayAfterTrustedInstall).not.toHaveBeenCalled();
+  });
+
+  it("fails the trusted install reconciliation when packaged restart fails", () => {
+    const runtime = createGatewayHostRuntime(
+      createDeps({
+        hasOpenShellGatewayUserService: () => true,
+        restartPackagedGatewayAfterTrustedInstall: () => {
+          throw new Error("packaged restart failed");
+        },
+      }),
+    );
+    runtime.getGatewayOwner();
+
+    expect(() => runtime.adoptPackagedGatewayOwnerAfterTrustedInstall()).toThrow(
+      "packaged restart failed",
+    );
   });
 
   it("keeps the old binding when trusted-install persistence fails (#7411)", () => {

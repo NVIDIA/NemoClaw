@@ -58,10 +58,10 @@ _LANGFUSE_OPENSHELL_KEYS: Dict[str, str] = {
     if value.startswith(expected):
         return None
     openshell_key = _LANGFUSE_OPENSHELL_KEYS.get(env_name)
-    # Keep the revision bound aligned with NemoClaw's OpenShell credential
+    # Keep the generation bound aligned with NemoClaw's OpenShell credential
     # observation contract in mcp-bridge-provider-readiness.ts.
     if openshell_key and re.fullmatch(
-        rf"openshell:resolve:env:(?:v[0-9]{{1,20}}_)?{re.escape(openshell_key)}",
+        rf"openshell:resolve:env:(?:(?:v[0-9]{{1,20}}|s[a-f0-9]{{64}})_)?{re.escape(openshell_key)}",
         value,
     ):
         return None

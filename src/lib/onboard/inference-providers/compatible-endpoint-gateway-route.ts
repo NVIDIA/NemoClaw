@@ -2,11 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { VLLM_PORT } from "../../core/vllm-port";
-import { createCliOpenShellProviderAdapter } from "../../adapters/openshell/provider-adapter-cli";
-import {
-  checkOpenAiInferenceProviderProfile,
-  OPENAI_GATEWAY_PROVIDER_TYPE,
-} from "../../adapters/openshell/provider-profile-registration";
 import { LLAMA_CPP_PORT } from "../../inference/llama-cpp/contract";
 import type { RunOpenshell, UpsertProvider, UpsertProviderResult } from "./types";
 
@@ -92,47 +87,19 @@ export async function reuseRegisteredProviderWithGatewayEndpoint(args: {
   } = args;
   // The caller has already authorized the recovered provider's non-secret
   // credential/config identity through assessRecoveredProviderCredentialReuse.
-  const adapter = createCliOpenShellProviderAdapter({
-    run: (command, options) => {
-      const result = runOpenshell(command, options);
-      return {
-        status: result.status,
-        stdout:
-          typeof result.stdout === "string" || Buffer.isBuffer(result.stdout)
-            ? result.stdout
-            : null,
-        stderr:
-          typeof result.stderr === "string" || Buffer.isBuffer(result.stderr)
-            ? result.stderr
-            : null,
-      };
-    },
+  const existing = runOpenshell(["provider", "get", provider], {
+    ignoreError: true,
+    suppressOutput: true,
   });
-  const existing = await adapter.getProvider({
-    target: { kind: "selected" },
-    providerName: provider,
-  });
-  if (!existing.ok) {
+  if (existing.status !== 0) {
     return {
       ok: false,
-      status: 1,
-      message:
-        existing.error.kind === "command" && existing.error.reason === "not_found"
-          ? `Recovered provider '${provider}' is no longer registered in OpenShell.`
-          : existing.error.message,
+      status: existing.status || 1,
+      message: `Recovered provider '${provider}' is no longer registered in OpenShell.`,
     };
   }
   if (gatewayEndpointUrl === endpointUrl) {
-    if (providerType !== OPENAI_GATEWAY_PROVIDER_TYPE) return { ok: true };
-    // #9895: an unchanged gateway route performs no upsert, so the shared
-    // provider-profile boundary in setup-inference never runs here. A provider
-    // that an earlier NemoClaw registered without the `openai` profile stays
-    // unclassifiable, and the sandbox supervisor keeps rejecting the provider
-    // environment until the profile import lands. Declare it here as well.
-    const profile = checkOpenAiInferenceProviderProfile({ runOpenshell });
-    return profile.ok
-      ? { ok: true }
-      : { ok: false, status: 1, message: profile.messages.join("\n").trim() };
+    return { ok: true };
   }
   return upsertProvider(provider, providerType, credentialEnv, gatewayEndpointUrl, {});
 }

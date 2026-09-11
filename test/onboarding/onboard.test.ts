@@ -101,10 +101,6 @@ const createDirectSetupInferenceHarness =
   createDirectSetupInferenceHarnessFactory(createSetupInference);
 
 describe("onboard helpers", () => {
-  it("does not expose the removed provider argument builder", () => {
-    expect(loadedOnboardInternals).not.toHaveProperty("buildProviderArgs");
-  });
-
   it("does not treat an empty policy preset selection as already applied (#6042)", () => {
     expect(arePolicyPresetsApplied("unused", [])).toBe(false);
   });
@@ -667,6 +663,35 @@ startGateway(null).catch((error) => {
     assert.equal(evidence.parentCredentialUnchanged, true);
   });
 
+  it("uses the OpenShell 0.0.116 provider path without a compatibility-profile mutation", () => {
+    const { commands } = runProductionSetupInferenceCredentialBoundary({
+      credentialEnv: "OPENAI_API_KEY",
+      credentialValue: "sk-TEST-NOT-A-REAL-VALUE",
+      endpointUrl: "https://api.openai.com/v1",
+      model: "gpt-5.4",
+      provider: "openai-api",
+    });
+    const commandSequence = commands.map(({ argv }) => argv.join(" "));
+
+    assert.match(commandSequence[0] ?? "", /^provider get -g nemoclaw openai-api$/);
+    assert.ok(
+      commandSequence.some((command) =>
+        /^provider update -g nemoclaw openai-api(?: |$)/.test(command),
+      ),
+    );
+    assert.ok(
+      commandSequence.some((command) =>
+        /^inference set -g nemoclaw --no-verify --provider openai-api --model gpt-5\.4(?: |$)/.test(
+          command,
+        ),
+      ),
+    );
+    assert.ok(
+      commands.every(({ argv }) => !(argv[0] === "provider" && argv[1] === "profile")),
+      `unexpected compatibility-profile command: ${commandSequence.join(" | ")}`,
+    );
+  });
+
   it("restores the dashboard forward when onboarding reuses an existing ready sandbox", async () => {
     const repoRoot = path.join(import.meta.dirname, "../..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-reuse-forward-"));
@@ -811,12 +836,8 @@ const { createSandbox } = require(${onboardPath});
         "OPENAI_API_KEY",
       );
 
-      // openai provider profile validation + provider get + provider update + inference set
-      assert.equal(
-        harness.commands[0].command,
-        "provider profile -g nemoclaw export openai --output json",
-      );
-      assert.equal(harness.commands.length, 4);
+      assert.equal(harness.commands[0].command, "provider get -g nemoclaw openai-api");
+      assert.equal(harness.commands.length, 3);
     });
   });
   it("accepts gateway inference output that omits the Route line", async () => {
@@ -855,12 +876,8 @@ const { createSandbox } = require(${onboardPath});
         "OPENAI_API_KEY",
       );
 
-      // openai provider profile validation + provider get + provider update + inference set
-      assert.equal(
-        harness.commands[0].command,
-        "provider profile -g nemoclaw export openai --output json",
-      );
-      assert.equal(harness.commands.length, 4);
+      assert.equal(harness.commands[0].command, "provider get -g nemoclaw openai-api");
+      assert.equal(harness.commands.length, 3);
     });
   });
   it("uses the sandbox-base registry in pullAndResolveBaseImageDigest (#1904)", () => {
