@@ -48,9 +48,9 @@ beforeEach(() => {
 
   vi.spyOn(registry, "getSandbox").mockReturnValue({ name: "sb-scope" });
   vi.spyOn(defs, "loadAgent").mockReturnValue(agentFixture("openclaw"));
-  vi.spyOn(policy, "loadPresetForSandbox").mockReturnValue(WHATSAPP_PRESET);
+  vi.spyOn(policy, "loadPresetForSandbox").mockResolvedValue(WHATSAPP_PRESET);
   vi.spyOn(policy, "parsePresetPolicyKeys").mockReturnValue(["whatsapp"]);
-  vi.spyOn(policy, "getPresetContentGatewayState").mockReturnValue("absent");
+  vi.spyOn(policy, "getPresetContentGatewayState").mockResolvedValue("absent");
 });
 
 afterEach(() => {
@@ -105,7 +105,7 @@ describe("channels add --dry-run discloses effective preset egress before mutati
   });
 
   it("does not claim new egress when the channel's preset already matches the live policy (#7179)", async () => {
-    vi.spyOn(policy, "getPresetContentGatewayState").mockReturnValue("match");
+    vi.spyOn(policy, "getPresetContentGatewayState").mockResolvedValue("match");
 
     await addSandboxChannel("sb-scope", { channel: "whatsapp", dryRun: true });
 

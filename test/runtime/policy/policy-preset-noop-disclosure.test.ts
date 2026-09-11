@@ -94,16 +94,19 @@ exit 1
     ? `policies.applyPresets("alpha", ${JSON.stringify(presetNames)})`
     : `policies.applyPreset("alpha", ${JSON.stringify(presetNames[0])}, ${JSON.stringify({ suppressDisclosure, disclosedPresetState })})`;
   const script = `
+(async () => {
 const fs = require("node:fs");
 const policies = require(${POLICY_MODULE});
 const registry = require(${REGISTRY_MODULE});
 ${managedRegistrationSource("alpha")}
-const result = ${invocation};
+const result = await ${invocation};
 process.stdout.write("\\n__RESULT__" + JSON.stringify({
   result,
   calls: fs.readFileSync(process.env.CALLS_PATH, "utf8").trim().split("\\n").filter(Boolean),
   registry: registry.getSandbox("alpha"),
 }));
+
+})().catch((error) => { console.error(error); process.exitCode = 1; });
 `;
   const result = spawnSync(process.execPath, [...SOURCE_NODE_ARGS, "-e", script], {
     cwd: REPO_ROOT,

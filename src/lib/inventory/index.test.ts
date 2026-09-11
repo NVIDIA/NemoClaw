@@ -331,8 +331,8 @@ describe("inventory commands", () => {
     expect(inventory.sandboxes).toEqual([]);
   });
 
-  it("hides route-only reservations from status output too (#7609)", () => {
-    const report = getStatusReport({
+  it("hides route-only reservations from status output too (#7609)", async () => {
+    const report = await getStatusReport({
       listSandboxes: () => ({
         sandboxes: [
           {
@@ -378,7 +378,7 @@ describe("inventory commands", () => {
     expect(lines.some((line) => line.includes("base-img-reject"))).toBe(false);
   });
 
-  it("reports incomplete onboarding in global status without sandbox probes (#10097)", () => {
+  it("reports incomplete onboarding in global status without sandbox probes (#10097)", async () => {
     const listSandboxes = () => ({
       sandboxes: [
         {
@@ -399,7 +399,7 @@ describe("inventory commands", () => {
     });
     const getLiveInference = vi.fn();
     const getGatewayHealth = vi.fn();
-    const report = getStatusReport({
+    const report = await getStatusReport({
       listSandboxes,
       loadLastSession,
       getLiveInference,
@@ -450,8 +450,8 @@ describe("inventory commands", () => {
     expect(lines.some((line) => line.includes("base-img-reject"))).toBe(false);
   });
 
-  it("normalizes invalid configured inference fields out of status rows", () => {
-    const report = getStatusReport({
+  it("normalizes invalid configured inference fields out of status rows", async () => {
+    const report = await getStatusReport({
       listSandboxes: () => ({
         sandboxes: [
           { name: "blank-provider", provider: "", model: "nvidia/test" },
@@ -471,11 +471,11 @@ describe("inventory commands", () => {
     ]);
   });
 
-  it("reports schema-5 phase without ambient global probes", () => {
+  it("reports schema-5 phase without ambient global probes", async () => {
     const getLiveInference = vi.fn();
     const getGatewayHealth = vi.fn();
     const getServiceStatuses = vi.fn();
-    const report = getStatusReport({
+    const report = await getStatusReport({
       listSandboxes: () => ({
         sandboxes: [
           {
@@ -550,24 +550,25 @@ describe("inventory commands", () => {
     expect(showServiceStatus).not.toHaveBeenCalled();
   });
 
-  it("fails before ambient probes when schema-5 registry agreement is rejected", () => {
+  it("fails before ambient probes when schema-5 registry agreement is rejected", async () => {
     const getLiveInference = vi.fn();
     const getGatewayAuthority = vi.fn();
-    expect(() =>
-      getStatusReport({
-        listSandboxes: () => ({
-          sandboxes: [{ name: "alpha", agent: "hermes" }],
-          defaultSandbox: "alpha",
-        }),
-        getHermesPortableHostAuthorityCount: () => 1,
-        getHermesPortablePhase: () => {
-          throw new Error("registry row disagreement");
-        },
-        getLiveInference,
-        getGatewayAuthority,
-        showServiceStatus: vi.fn(),
-      }),
-    ).toThrow("registry row disagreement");
+    await expect(
+      (async () =>
+        await getStatusReport({
+          listSandboxes: () => ({
+            sandboxes: [{ name: "alpha", agent: "hermes" }],
+            defaultSandbox: "alpha",
+          }),
+          getHermesPortableHostAuthorityCount: () => 1,
+          getHermesPortablePhase: () => {
+            throw new Error("registry row disagreement");
+          },
+          getLiveInference,
+          getGatewayAuthority,
+          showServiceStatus: vi.fn(),
+        }))(),
+    ).rejects.toThrow("registry row disagreement");
     expect(getLiveInference).not.toHaveBeenCalled();
     expect(getGatewayAuthority).not.toHaveBeenCalled();
   });
@@ -1132,13 +1133,13 @@ describe("inventory commands", () => {
       expect(showServiceStatus).toHaveBeenCalledWith({ sandboxName: "alpha" });
     });
 
-    it("reuses the existing sandbox list when resolving JSON status service sandbox", () => {
+    it("reuses the existing sandbox list when resolving JSON status service sandbox", async () => {
       const listSandboxes = vi.fn(() => ({
         sandboxes: [{ name: "alpha", model: "nvidia/nemotron-3-super-120b-a12b" }],
         defaultSandbox: "alpha",
       }));
       const getServiceStatuses = vi.fn().mockReturnValue([]);
-      const report = getStatusReport({
+      const report = await getStatusReport({
         listSandboxes,
         getLiveInference: () => null,
         getServiceStatuses,
@@ -1164,10 +1165,10 @@ describe("inventory commands", () => {
       expect(showServiceStatus).toHaveBeenCalledWith({ sandboxName: "env-sandbox" });
     });
 
-    it("resolves JSON service status sandbox from NEMOCLAW_SANDBOX_NAME env", () => {
+    it("resolves JSON service status sandbox from NEMOCLAW_SANDBOX_NAME env", async () => {
       process.env.NEMOCLAW_SANDBOX_NAME = "json-sandbox";
       const getServiceStatuses = vi.fn().mockReturnValue([]);
-      const report = getStatusReport({
+      const report = await getStatusReport({
         listSandboxes: () => ({
           sandboxes: [{ name: "json-sandbox" }],
           defaultSandbox: "other",
