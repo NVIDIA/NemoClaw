@@ -744,6 +744,9 @@ async function runRuntimeIdentityE2EScenario(
   progress.phase("call the protected resource with the injected bearer");
   let placeholder = "";
   let placeholderProbeAttempt = 0;
+  const placeholderPattern = new RegExp(
+    `^openshell:resolve:env:(?:(?:v[0-9]{1,20}|s[a-f0-9]{64})_)?${credentialKey}$`,
+  );
   await expect
     .poll(
       async () => {
@@ -758,8 +761,8 @@ async function runRuntimeIdentityE2EScenario(
       },
       { interval: 2_000, timeout: 35_000 },
     )
-    .toMatch(new RegExp(`^openshell:resolve:env:(?:v[0-9]+_)?${credentialKey}$`));
-  expect(placeholder).toMatch(new RegExp(`^openshell:resolve:env:(?:v[0-9]+_)?${credentialKey}$`));
+    .toMatch(placeholderPattern);
+  expect(placeholder).toMatch(placeholderPattern);
   for (const secret of redactionValues) expect(placeholder).not.toContain(secret);
   const expectProtectedResourceVersion = async (
     projectedPlaceholder: string,
