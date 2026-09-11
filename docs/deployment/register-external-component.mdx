@@ -15,6 +15,17 @@ skill:
 NemoClaw can register one external host component during fresh sandbox onboarding.
 The experimental version 1 contract lets the component intercept selected OpenShell operations and activate resources for one verified sandbox.
 
+## Version 2 Is Not Yet a Supported Integration
+
+NemoClaw recognizes a version 2 declaration for authenticated interceptor and middleware connections during fresh Linux Docker-driver onboarding.
+The shared OpenShell runtime currently pinned by NemoClaw does not provide all required version 2 behavior.
+Do not rely on version 2 in an installed release until NemoClaw qualifies it against a released runtime.
+
+Version 2 uses HTTPS endpoints, CA certificates, gateway preparation, and optional interceptor-backed provider profiles.
+It does not change the version 1 declaration or `/v1/activate` protocol.
+NemoClaw continues to own generated gateway configuration and gateway lifecycle.
+The component supplies policy, and OpenShell validates and enforces the effective sandbox policy.
+
 ## Check the Version 1 Limits
 
 Use this contract only when all these conditions apply:
