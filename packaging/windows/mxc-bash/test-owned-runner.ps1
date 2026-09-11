@@ -26,5 +26,16 @@ try{
  $caught=$null
  try{Invoke-Owned $NodePath @('-e','process.stdout.write("x".repeat(5*1024*1024));setInterval(()=>{},1000)') 'overflow' 5}catch{$caught=$_}
  if($null -eq $caught -or $caught.Exception.Message -cne 'Owned prototype output bound exceeded.' -or (Get-Item -LiteralPath (Join-Path $out 'overflow.stdout.log')).Length -ne 4194304 -or -not $receipt.stages[-1].closed){throw 'Output memory/retention bound control failed.'}
- Write-Output 'PASS 4 actual owned-process/output controls (no AppContainer execution).'
+ $compilerAst=[Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot 'build-object-probe.ps1'),[ref]$tokens,[ref]$errors)
+ if($errors){throw 'Probe compiler parse failed.'}
+ $function=$compilerAst.FindAll({param($a)$a -is [Management.Automation.Language.FunctionDefinitionAst] -and $a.Name -eq 'Invoke-ProbeCompiler'},$true)
+ if($function.Count -ne 1){throw 'Expected the actual nested compiler owner.'}
+ $nested=Join-Path $work 'nested.ps1';$childScript=Join-Path $work 'child.cjs'
+ [IO.File]::WriteAllText($childScript,'console.log("nested compiler stdout");console.error("nested compiler stderr");process.exitCode=7;')
+ $nestedText=$function[0].Extent.Text+"`nInvoke-ProbeCompiler '"+$NodePath.Replace("'","''")+"' '"+[char]34+$childScript.Replace("'","''")+[char]34+"' 5000"
+ [IO.File]::WriteAllText($nested,$nestedText)
+ $caught=$null
+ try{Invoke-Owned (Join-Path $PSHOME $(if($IsWindows){'pwsh.exe'}else{'pwsh'})) @('-NoProfile','-File',$nested) 'nested-compiler' 10}catch{$caught=$_}
+ if($null -eq $caught -or (Get-Content -Raw (Join-Path $out 'nested-compiler.stdout.log')) -notmatch 'nested compiler stdout' -or (Get-Content -Raw (Join-Path $out 'nested-compiler.stderr.log')) -notmatch 'nested compiler stderr' -or -not $receipt.stages[-1].closed){throw 'Actual nested compiler pipe retention failed.'}
+ Write-Output 'PASS 5 actual owned-process/output controls (no AppContainer execution).'
 }finally{Remove-Item -LiteralPath $work -Recurse -Force}

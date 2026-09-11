@@ -15,7 +15,7 @@ const c: Config = {
   nonce: "a".repeat(24),
   containerId: "nm-aaaaaaaaaaaa-base",
   mode: "baseline",
-  share: "C:\\owned\\share",
+  share: "C:\\owned-state-base",
   node: "C:\\owned\\control\\node.exe",
   git: "C:\\owned\\git",
   compat: "C:\\owned\\compat",
@@ -32,9 +32,11 @@ test("Personal request grants only fixed inputs and its own share, without profi
   );
   assert.equal(row.processContainer.leastPrivilege, false);
   assert.deepEqual(row.filesystem, {
-    readonlyPaths: [c.git, c.compat, "C:\\owned\\control"],
+    readonlyPaths: ["C:\\owned"],
     readwritePaths: [c.share],
   });
+  assert.equal(row.process.cwd, c.share);
+  assert(!row.filesystem.readonlyPaths.some((root) => c.share.startsWith(root + "\\")));
   assert.equal(row.process.timeout, 120000);
   assert.equal(row.lifecycle.destroyOnExit, false);
   assert.equal(row.ui.disable, false);

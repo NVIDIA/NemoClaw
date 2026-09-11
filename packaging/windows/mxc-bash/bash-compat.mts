@@ -83,7 +83,7 @@ export function request(config: Config, script: string, configFile: string, wind
       allowLocalNetwork: true,
     },
     filesystem: {
-      readonlyPaths: [config.git, config.compat, path.win32.dirname(config.node)],
+      readonlyPaths: [path.win32.dirname(config.compat)],
       readwritePaths: [config.share],
     },
     lifecycle: { destroyOnExit: false, preservePolicy: false },
@@ -522,7 +522,9 @@ async function main() {
   };
   const save = () => atomic(path.join(output, "progress.json"), report);
   const start = (role: "base" | "start" | "a" | "b", mode: Config["mode"], key: string) => {
-    const share = path.join(work, "state-" + role);
+    // Keep every writable state outside the fully readonly input root so Node
+    // can inspect its source ancestors without seeing another container state.
+    const share = work + "-state-" + role;
     fs.mkdirSync(share);
     const c: Config = {
       nonce,
@@ -688,6 +690,19 @@ async function main() {
           report.hostBaselineError = String(error);
         }
       }
+    for (const value of executions) {
+      const row = report.cleanup[value.c.containerId];
+      row.shareRemoved = false;
+      if (value.process.closed && row.deletion?.closed && row.deletion?.exitCode === 0) {
+        try {
+          fs.rmSync(value.c.share, { recursive: true });
+          row.shareRemoved = !fs.existsSync(value.c.share);
+        } catch (error) {
+          row.shareRemovalError = String(error);
+          report.passed = false;
+        }
+      }
+    }
     report.startedHostProcesses = hostExecutions.length;
     report.hostProcessesClosed = hostExecutions.every((child) => child.closed);
     report.hostProcessesNormal = hostExecutions.every((child) => child.closed && !child.forced);
@@ -697,7 +712,8 @@ async function main() {
       report.startedExecutors === executions.length &&
       executions.every((value) => value.process.closed && !value.process.forced) &&
       Object.values(report.cleanup).every(
-        (v: any) => v.deletion?.exitCode === 0 && v.deletion?.closed && !v.deletion?.forced,
+        (v: any) =>
+          v.deletion?.exitCode === 0 && v.deletion?.closed && !v.deletion?.forced && v.shareRemoved,
       );
     if (!report.normalCleanup) report.passed = false;
     save();
