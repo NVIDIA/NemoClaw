@@ -618,6 +618,50 @@ describe("LifecyclePhaseFixture gateway runtime restart helpers", () => {
     ]);
   });
 
+  it.each(["homebrew:homebrew.mxcl.openshell", "homebrew:sh.brew.openshell"])(
+    "passes the exact Homebrew user-service selection to restart: %s (#10947)",
+    async (selection) => {
+      const runner = new FakeRunner();
+      const cleanup = new FakeCleanup();
+      runner.enqueue(shellResult(0)); // forward stop
+      runner.enqueue(shellResult(0, `NEMOCLAW_E2E_STOPPED_GATEWAY_USER_SERVICE=${selection}\n`)); // user service stop
+      const fx = fixture(runner, cleanup);
+
+      await fx.stopGatewayRuntime();
+
+      expect(cleanup.calls.map((call) => call.name)).toEqual([
+        `lifecycle.gateway-user-service-restart:${selection}`,
+      ]);
+      runner.enqueue(shellResult(0)); // selected user service restart
+      await cleanup.calls[0]!.run();
+      const restart = runner.calls.find(
+        (call) => call.options?.artifactName === "lifecycle-gateway-user-service-restart",
+      );
+      expect(restart?.args.at(-1)).toBe(selection);
+    },
+  );
+
+  it("preserves a pending user-service restart when a repeated stop finds it inactive (#10947)", async () => {
+    const runner = new FakeRunner();
+    const cleanup = new FakeCleanup();
+    const fx = fixture(runner, cleanup);
+    runner.enqueue(shellResult(0)); // first forward stop
+    runner.enqueue(shellResult(0, stoppedGatewayUserService)); // first user service stop
+    runner.enqueue(shellResult(0)); // repeated forward stop
+    runner.enqueue(shellResult(75)); // stopped service is inactive
+
+    await fx.stopGatewayRuntime();
+    await fx.stopGatewayRuntime();
+
+    expect(cleanup.calls.map((call) => call.name)).toEqual([
+      "lifecycle.gateway-user-service-restart:systemd:nemoclaw-openshell-gateway.service",
+    ]);
+    expect(runner.calls).toHaveLength(4);
+    runner.enqueue(shellResult(0)); // pending user service restart
+    await cleanup.calls[0]!.run();
+    expect(runner.calls.at(-1)?.args.at(-1)).toBe("systemd:nemoclaw-openshell-gateway.service");
+  });
+
   it("reports a user-service stop failure without invoking legacy controls (#10947)", async () => {
     const runner = new FakeRunner();
     runner.enqueue(shellResult(0)); // forward stop

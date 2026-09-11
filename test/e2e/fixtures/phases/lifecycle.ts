@@ -54,7 +54,8 @@ const USER_SERVICE_STOP_RESULT_PREFIX = "NEMOCLAW_E2E_STOPPED_GATEWAY_USER_SERVI
 
 type UserServiceStageResult = "upstream" | "existing" | "staged";
 type UserServiceSelection =
-  | "homebrew:openshell"
+  | "homebrew:homebrew.mxcl.openshell"
+  | "homebrew:sh.brew.openshell"
   | "systemd:nemoclaw-openshell-gateway.service"
   | "systemd:openshell-gateway.service";
 
@@ -140,7 +141,7 @@ export function buildOpenShellGatewayUserServiceStopScript(): string {
     "selection=",
     "if stop_active_openshell_gateway_user_service selection; then",
     '  case "$selection" in',
-    "    homebrew:openshell|systemd:nemoclaw-openshell-gateway.service|systemd:openshell-gateway.service|unavailable) ;;",
+    "    homebrew:homebrew.mxcl.openshell|homebrew:sh.brew.openshell|systemd:nemoclaw-openshell-gateway.service|systemd:openshell-gateway.service|unavailable) ;;",
     "    *) exit 1 ;;",
     "  esac",
     `  printf '%s%s\\n' '${USER_SERVICE_STOP_RESULT_PREFIX}' "$selection"`,
@@ -687,7 +688,7 @@ export class LifecyclePhaseFixture {
   }
 
   private async stopOpenShellGatewayUserService(): Promise<boolean> {
-    this.stoppedOpenShellGatewayUserService = null;
+    const pendingSelection = this.stoppedOpenShellGatewayUserService;
     const result = await this.host.command(
       "bash",
       [
@@ -706,14 +707,14 @@ export class LifecyclePhaseFixture {
       const match = result.stdout.match(
         new RegExp(
           `(?:^|\\n)${USER_SERVICE_STOP_RESULT_PREFIX}` +
-            `(homebrew:openshell|systemd:nemoclaw-openshell-gateway\\.service|systemd:openshell-gateway\\.service|unavailable)(?:\\n|$)`,
+            `(homebrew:(?:homebrew\\.mxcl|sh\\.brew)\\.openshell|systemd:nemoclaw-openshell-gateway\\.service|systemd:openshell-gateway\\.service|unavailable)(?:\\n|$)`,
           "u",
         ),
       );
       if (!match) {
         throw new Error("OpenShell gateway user service stop did not report its selection.");
       }
-      if (match[1] === "unavailable") return false;
+      if (match[1] === "unavailable") return pendingSelection !== null;
       const selection = match[1] as UserServiceSelection;
       this.stoppedOpenShellGatewayUserService = selection;
       this.cleanup.add(`lifecycle.gateway-user-service-restart:${selection}`, async () => {
@@ -722,7 +723,7 @@ export class LifecyclePhaseFixture {
       });
       return true;
     }
-    if (result.exitCode === USER_SERVICE_UNAVAILABLE_EXIT) return false;
+    if (result.exitCode === USER_SERVICE_UNAVAILABLE_EXIT) return pendingSelection !== null;
     throw new Error(
       `OpenShell gateway user service stop failed during lifecycle qualification: ` +
         `${result.stderr || result.stdout || `exit ${String(result.exitCode)}`}`,
