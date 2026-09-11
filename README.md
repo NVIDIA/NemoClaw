@@ -9,12 +9,20 @@
 This is a selected OpenClaw finished-application candidate, not a production release.
 It does not qualify other agents, physical hardware or live search.
 
-The Windows ARM64 runner measured a fresh install at **28.033 seconds** and uninstall at
-31.141 seconds (both exit 0). The dashboard returned a real NVIDIA inference response,
-and Stop exited cleanly with private state released and no cleanup errors. These are
-single-run measurements, not a guarantee for every machine. The source acceptance run
-then failed because its test invoked file tools through a gateway-only API; corrected
-conversation-driven file, shell and code qualification is still pending.
+The original Windows ARM64 run measured a fresh install at **28.033 seconds**.
+A [later replay of these unchanged package bytes](https://github.com/NVIDIA/NemoClaw/actions/runs/34559667235)
+measured **25.719 seconds** for install and **27.694 seconds** for uninstall (both exit 0).
+Its first installed session passed a real NVIDIA reply, file write/read, a PowerShell
+command, packaged Node code execution and clean Stop with private state released.
+Both launches copied zero runtime bytes. The second launch reached the dashboard,
+but its tool turn failed on an explicit inference-service overload; the replay remains
+failed. A separate idle measurement found high contained-process CPU, under investigation.
+These are individual GitHub Windows ARM64 runner measurements, not a guarantee for every
+machine or a complete qualification. The original source acceptance failure remains
+recorded in its immutable publication receipt.
+
+Both complete anonymous EXE/MSI downloads were verified against their published SHA-256
+hashes after publication. No privileged account or Actions artifact download is needed.
 
 Built source: `491a3a3d5e7206d82c741198062b6e2aa98dc72c`. Separately reviewed PR head: `b0e29e11ab8280a33ffcc794571b73b568de2890`.
 The [source workflow, attempt 1](https://github.com/NVIDIA/NemoClaw/actions/runs/34555046495/attempts/1)
