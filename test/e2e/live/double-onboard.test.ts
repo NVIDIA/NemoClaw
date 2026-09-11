@@ -895,7 +895,7 @@ test(
     const postStopText = resultText(postStopStatus);
     expect([0, 1]).toContain(postStopStatus.exitCode);
     expect(postStopText).toMatch(
-      /Recovered NemoClaw gateway runtime|gateway is no longer configured after restart\/rebuild|gateway is still refusing connections after restart|gateway trust material rotated after restart/,
+      /Recovered NemoClaw gateway runtime|gateway is no longer configured after restart\/rebuild|gateway is still refusing connections after restart|gateway trust material rotated after restart|OpenShell could not reach the selected gateway/,
     );
     expect(registryHas(SANDBOX_B), "gateway-stop status removed sandbox B registry entry").toBe(
       true,
@@ -942,7 +942,7 @@ test(
           !stoppedStatusTextB.includes("sandbox_dashboard_port_conflict"),
         staleRegistryRecovered: rebuild.exitCode === 0,
         gatewayStopGuidance:
-          /Recovered NemoClaw gateway runtime|gateway is no longer configured after restart\/rebuild|gateway is still refusing connections after restart|gateway trust material rotated after restart/.test(
+          /Recovered NemoClaw gateway runtime|gateway is no longer configured after restart\/rebuild|gateway is still refusing connections after restart|gateway trust material rotated after restart|OpenShell could not reach the selected gateway/.test(
             postStopText,
           ),
       },
