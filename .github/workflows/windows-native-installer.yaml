@@ -49,6 +49,7 @@ on:
           - runtime
           - npm-shims
           - export-controls
+          - personal-candidate
           - host-prerequisites
           - system-drive
           - application
@@ -58,7 +59,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: windows-native-installer-${{ github.ref }}${{ inputs.run_windows_native_installer && inputs.windows_native_diagnostic_source_run_id == '' && '-finished-package' || inputs.test_native_windows_runtime && '-runtime-controls' || inputs.profile_native_windows && '-profiling' || inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'python' && '-hermes-python' || inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'runtime' && '-hermes-runtime' || inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'npm-shims' && '-hermes-npm-shims' || inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'export-controls' && '-hermes-export-controls' || inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'application' && '-compiled-application' || inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'host-prerequisites' && '-host-prerequisites' || inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'system-drive' && '-system-drive' || inputs.probe_official_hermes_components && '-hermes-components' || inputs.windows_native_diagnostic_source_run_id != '' && '-package-diagnostic' || '' }}
+  group: windows-native-installer-${{ github.ref }}${{ inputs.run_windows_native_installer && inputs.windows_native_diagnostic_source_run_id == '' && '-finished-package' || inputs.test_native_windows_runtime && '-runtime-controls' || inputs.profile_native_windows && '-profiling' || inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'python' && '-hermes-python' || inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'runtime' && '-hermes-runtime' || inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'npm-shims' && '-hermes-npm-shims' || inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'personal-candidate' && '-hermes-personal-candidate' || inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'export-controls' && '-hermes-export-controls' || inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'application' && '-compiled-application' || inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'host-prerequisites' && '-host-prerequisites' || inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'system-drive' && '-system-drive' || inputs.probe_official_hermes_components && '-hermes-components' || inputs.windows_native_diagnostic_source_run_id != '' && '-package-diagnostic' || '' }}
   # Finish the in-flight artifact/evidence; keep only the latest queued request.
   cancel-in-progress: false
 
@@ -654,9 +655,68 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  official-hermes-personal-candidate:
+    name: Canonical Hermes candidate Personal MXC feasibility (Windows ARM64)
+    if: ${{ github.event_name == 'workflow_dispatch' && !inputs.run_windows_native_installer && inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'personal-candidate' && !inputs.test_native_windows_runtime && !inputs.profile_native_windows }}
+    runs-on: windows-11-vs2026-arm
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Check out the Windows feasibility controller
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Prepare pinned native Rust for the admitted metadata helper
+        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
+        with:
+          toolchain: 1.95.0
+          target: aarch64-pc-windows-msvc
+          cache: false
+      - name: Verify pinned interpreters and archive admission controls
+        shell: pwsh
+        run: |
+          $bootstrap = "$env:RUNNER_TEMP\personal-bootstrap"
+          & packaging/windows/hermes/test-official-runtime-export.ps1 -ArtifactDirectory $bootstrap
+          $record = Get-Content -LiteralPath "$bootstrap\export-controls.json" -Raw | ConvertFrom-Json
+          $env:NEMOCLAW_TEST_PYTHON = $record.pythonPath
+          $env:NEMOCLAW_PERSONAL_CONTROL_EVIDENCE = "$env:RUNNER_TEMP\personal-controls"
+          $null = New-Item -ItemType Directory -Path $env:NEMOCLAW_PERSONAL_CONTROL_EVIDENCE
+          & "$bootstrap\tools\node\node-v22.23.2-win-arm64\node.exe" --experimental-strip-types --no-warnings --test packaging/windows/hermes/personal-candidate.test.mts
+          if ($LASTEXITCODE -ne 0) { throw 'The candidate admission/Personal controls failed.' }
+      - name: Build the fixed-purpose system-drive metadata helper
+        shell: pwsh
+        run: |
+          & packaging/windows/host-preparation/build-helper.ps1 -OutputDirectory "$env:RUNNER_TEMP\personal-helper"
+      - name: Verify the complete candidate and test canonical Personal components
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          & packaging/windows/hermes/probe-personal-candidate.ps1 `
+            -ArtifactDirectory "$env:RUNNER_TEMP\official-hermes-personal" `
+            -BootstrapDirectory "$env:RUNNER_TEMP\personal-bootstrap" `
+            -HelperDirectory "$env:RUNNER_TEMP\personal-helper"
+      - name: Preserve small exact-candidate feasibility evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: official-hermes-personal-feasibility-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/official-hermes-personal/
+            !${{ runner.temp }}/official-hermes-personal/downloads/
+            ${{ runner.temp }}/personal-bootstrap/export-controls.json
+            ${{ runner.temp }}/personal-bootstrap/results/
+            ${{ runner.temp }}/personal-controls/
+            ${{ runner.temp }}/personal-helper/build-receipt.json
+            ${{ runner.temp }}/personal-helper/build.log
+          if-no-files-found: error
+          retention-days: 7
+
   official-hermes-components:
     name: Official Hermes ${{ inputs.official_hermes_phase || 'components' }} probe (Windows ARM64)
-    if: ${{ github.event_name == 'workflow_dispatch' && !inputs.run_windows_native_installer && inputs.probe_official_hermes_components && inputs.official_hermes_phase != 'host-prerequisites' && inputs.official_hermes_phase != 'application' && inputs.official_hermes_phase != 'system-drive' && inputs.official_hermes_phase != 'npm-shims' && inputs.official_hermes_phase != 'export-controls' && !inputs.test_native_windows_runtime && !inputs.profile_native_windows }}
+    if: ${{ github.event_name == 'workflow_dispatch' && !inputs.run_windows_native_installer && inputs.probe_official_hermes_components && inputs.official_hermes_phase != 'host-prerequisites' && inputs.official_hermes_phase != 'application' && inputs.official_hermes_phase != 'system-drive' && inputs.official_hermes_phase != 'npm-shims' && inputs.official_hermes_phase != 'export-controls' && inputs.official_hermes_phase != 'personal-candidate' && !inputs.test_native_windows_runtime && !inputs.profile_native_windows }}
     runs-on: windows-11-vs2026-arm
     timeout-minutes: ${{ inputs.official_hermes_phase == 'runtime' && 180 || 90 }}
     steps:
