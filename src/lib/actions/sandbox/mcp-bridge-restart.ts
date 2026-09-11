@@ -233,16 +233,26 @@ export async function restoreExistingMcpBridgeRuntime(
       );
       await ensureMcpBridgeProviderProfile(providerRuntimeSelection);
       if (options.applyPolicy !== false) {
-        await applyGeneratedPolicy(sandboxName, entry, resolvedTargetPins(resolvedByServer, entry), {
-          bindCredential: false,
-          runtimeSelection: providerRuntimeSelection,
-        });
+        await applyGeneratedPolicy(
+          sandboxName,
+          entry,
+          resolvedTargetPins(resolvedByServer, entry),
+          {
+            bindCredential: false,
+            runtimeSelection: providerRuntimeSelection,
+          },
+        );
       }
       await attachProvider(sandboxName, entry, providerRuntimeSelection);
       if (options.applyPolicy !== false) {
-        await applyGeneratedPolicy(sandboxName, entry, resolvedTargetPins(resolvedByServer, entry), {
-          runtimeSelection: providerRuntimeSelection,
-        });
+        await applyGeneratedPolicy(
+          sandboxName,
+          entry,
+          resolvedTargetPins(resolvedByServer, entry),
+          {
+            runtimeSelection: providerRuntimeSelection,
+          },
+        );
       }
       const adapter = entry.adapter ?? defaultAdapter;
       const previousCredentialRevision = await observeMcpCredentialRevision(
