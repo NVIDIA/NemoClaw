@@ -29,7 +29,7 @@ function officialFormulaInfo(
     JSON.stringify({
       formulae: [
         {
-          installed: options.installed ?? [{ version: "0.0.106" }],
+          installed: options.installed ?? [{ version: "0.0.116" }],
           name: "openshell",
           service: { run: options.serviceProgram ?? SERVICE_PROGRAM },
           tap: options.tap ?? "nvidia/openshell",
