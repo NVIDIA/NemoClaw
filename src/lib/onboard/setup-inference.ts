@@ -242,8 +242,7 @@ export type SetupInferenceDeps = ProviderBranchDeps & {
   // #6294 optional overrides for the remote-provider OpenAI-surface branch;
   // production omits these and remote.ts falls back to the real modules.
   probeOpenAiLikeEndpoint?: RemoteProviderDeps["probeOpenAiLikeEndpoint"];
-  readGatewayProviderMetadata?: RemoteProviderDeps["readGatewayProviderMetadata"];
-  deleteGatewayProvider?: RemoteProviderDeps["deleteGatewayProvider"];
+  providerAdapter?: RemoteProviderDeps["providerAdapter"];
   log: (message: string) => void;
   error: (message: string) => void;
   exitProcess: (code: number) => never;
@@ -979,8 +978,7 @@ export function createSetupInference(
                 redact: deps.redact,
                 compactText: deps.compactText,
                 probeOpenAiLikeEndpoint: deps.probeOpenAiLikeEndpoint,
-                readGatewayProviderMetadata: deps.readGatewayProviderMetadata,
-                deleteGatewayProvider: deps.deleteGatewayProvider,
+                providerAdapter: deps.providerAdapter,
               },
             );
             if (outcome.done) return outcome.result;

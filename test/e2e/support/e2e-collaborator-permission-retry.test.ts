@@ -118,7 +118,6 @@ printf '%s\n' "$1" >>"$SLEEP_LOG"
     env: {
       ...process.env,
       ACTOR: options.actor ?? "dispatch-admin",
-      ALLOW_DGX_SPARK_RUNNER_QUEUE: "false",
       ALLOW_JETSON_DISPATCH: "false",
       BASE_SHA: "b".repeat(40),
       CHECKOUT_REPOSITORY: "contributor/NemoClaw",
