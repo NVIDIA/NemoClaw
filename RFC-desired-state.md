@@ -7,7 +7,7 @@
 
 | Field | Value |
 |---|---|
-| Document | `draft-nemoclaw-desired-state-03` |
+| Document | `draft-nemoclaw-desired-state-04` |
 | Status | Draft for project discussion |
 | Intended scope | NemoClaw architecture and product contract |
 | Date | 2026-09-11 |
@@ -90,6 +90,13 @@ this experiment does not establish a supported managed-inference product.
 Later slices can cover gateway provisioning, other inference backends, additional
 agents, and other accepted configuration capabilities. Each needs a resource
 contract and qualification evidence before inclusion.
+
+The Spark experiment now tests gateway provisioning and a pinned inference recipe.
+It adds a managed `service` alternative to a provider's external `endpoint` and
+keeps provider references and routes unchanged. The service names a qualified
+backend, immutable image and model, bounded serving settings, and memory policy.
+The schema version resolves stable agent-image, Docker-runtime, and isolated-policy
+defaults. It exposes no generic commands, shell hooks, or extra arguments.
 
 Automatic adoption, pruning, arbitrary scripts, user-defined OpenTofu modules,
 and a permanent NemoClaw daemon are outside the first slice.
@@ -179,6 +186,13 @@ Section 4.2 defines the engine checks that enforce this behavior.
 Later removal or replacement needs explicit intent, retention rules, and recovery
 behavior. The first slice cannot repair a lost persistent resource by silently
 creating an empty replacement.
+
+The Spark extension permits one narrower replacement: an explicit change to the
+inference service specification can replace its container after the independent
+model volume's ownership and durable binding are confirmed. It retains that volume,
+the gateway, and OpenShell identities. A tainted container under unchanged intent
+does not authorize replacement. Removal, storage replacement, and gateway
+replacement remain forbidden.
 
 Apply builds its own plan under the deployment lock.
 The sequence below shows successful resource operations; Section 5.4 defines recovery from operation failures.
@@ -374,6 +388,20 @@ Go provider: resource operations and typed readers
 The frontend generates OpenTofu JSON configuration [TOFU-JSON]. Each independently
 managed resource has a stable address, allowing OpenTofu to order its operations.
 
+The Spark implementation uses two explicit graphs under one deployment lock:
+runtime infrastructure, then OpenShell resources. The runtime graph owns the
+gateway, retained model volume, and replaceable inference container. The second
+graph owns the workspace, registration, route, and sandbox. Each graph gets its
+own checked saved plan and state checkpoint. This is ordered convergence, with
+partial completion retained across graphs; it is not a transaction.
+
+On a first plan, an absent gateway makes the OpenShell graph explicitly deferred.
+No backend is created to discover that graph. With established children and an
+unavailable gateway, plan fails because their observations are unknown. Apply can
+reconcile the runtime graph, wait for readiness, and then plan the OpenShell graph
+from current observations. This fixed two-stage boundary adds orchestration, but
+avoids a generic scheduler, targeted apply, or fabricated child observations.
+
 For a sandbox managed by OpenShell, NemoClaw uses OpenShell's lifecycle API.
 It does not also manage that sandbox's Docker or Podman container directly.
 Direct backend handlers apply to separately owned resources, such as a
@@ -498,6 +526,14 @@ refresh and export. Existing OpenShell observations retain their custom tables
 with explicit `present`, `absent`, and `failed` results. A future Docker table
 would need to preserve the direct reader's failure and identity semantics.
 
+The Spark resources reuse this direct Docker boundary for container, bridge,
+volume, and offline artifact inspection. Capacity checks use local filesystem
+capacity, `/proc/meminfo`, and bounded NVIDIA GPU inventory calls. The resident
+watchdog reads host memory every second; starting an osquery process for each
+sample would add latency and another failure boundary without removing a collector.
+An added table remains an option for independent inventory consumers, rather
+than a prerequisite for these safety checks. Mutations and active probes stay direct.
+
 Before bundling osquery, compare the same readers consumed directly and through
 custom tables. Measure collection code removed, useful joins, startup latency,
 memory, binary size, tests, and release maintenance. Retain osquery where that
@@ -537,7 +573,34 @@ observations. Any extra staging must justify its orchestration cost. Hidden writ
 during refresh, stale inventory reported as current, and unreviewed targeted apply
 are not acceptable substitutes.
 
-The experiment treats downloaded models as reproducible cache contents: changing
+The Spark experiment chooses the fixed staging described in Section 4. Container
+configuration and named storage are separate resources; download, preparation,
+and inference loading run inside the pinned service artifact. Their progress does
+not depend on an HTTP inventory endpoint that disappears when inference stops.
+The container's running flag is computed and becomes unknown in a restart plan.
+An immediate process exit can therefore record the configured container's identity
+without contradicting a promised `running = true` value and tainting the resource.
+Deployment readiness still fails until loading and an actual agent reply succeed.
+
+Snapshot files have pinned sizes and hashes, resumable range downloads, and atomic
+completion receipts. Packed PLE preparation uses a staging directory, verifies
+every row against the pinned model, and publishes an atomic completion record.
+Its key includes the model manifest, recipe, preparation tool, and verifier source
+revisions. Reapply checks verified receipts and file identity without downloading
+or preparing again. Established conflicting files are retained for inspection.
+The artifact includes the recipe patches, original and patched source notices,
+preparation tools, and supervisor source; mutable tags do not select its contents.
+
+Memory protection belongs to the runtime artifact's supervisor, which remains
+active after the CLI exits. It checks available host memory independently of
+readiness polling and terminates the inference process group after consecutive
+low-memory samples or failed observation. Docker has automatic restart disabled.
+Explicit apply restarts the same stopped container after capacity checks; it does
+not create a restart loop. Startup capacity uses reclaimable available memory,
+since downloading weights can fill page cache while leaving ample safe headroom.
+This experiment makes no host kernel, driver, or memory-tuning changes.
+
+The earlier Ollama experiment treats downloaded models as reproducible cache contents: changing
 the selected tag pulls the new model and retains previous weights. It records the
 observed digest but does not pin model contents in desired YAML. The named volume
 is retained; loss of a bound container or volume stops ordinary apply. Docker's
