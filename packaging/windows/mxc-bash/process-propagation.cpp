@@ -71,30 +71,83 @@ BOOL readProcessImageMachine(HANDLE process, ProcessImageFile& image, USHORT& ma
     return TRUE;
 }
 
-BOOL processContainerSid(HANDLE process, BYTE* output) {
+struct TokenProof {
+    const char* operation = "not-called";
+    const char* kind = "not-called";
+    DWORD apiError = 0;
+    BOOL appContainerKnown = FALSE;
+    DWORD appContainer = 0;
+    BOOL sidPresent = FALSE;
+    BOOL sidValid = FALSE;
+    BOOL sidCopied = FALSE;
+};
+LONG tokenProofRecords = 0;
+
+BOOL processContainerSid(HANDLE process, BYTE* output, TokenProof* observed = nullptr) {
+    TokenProof proof;
     HANDLE token = nullptr;
-    if (!OpenProcessToken(process, TOKEN_QUERY, &token)) return FALSE;
+    proof.operation = "OpenProcessToken";
+    if (!OpenProcessToken(process, TOKEN_QUERY, &token)) {
+        proof.kind = "win32-api-failure"; proof.apiError = GetLastError();
+        if (observed) *observed = proof;
+        return FALSE;
+    }
     DWORD appContainer = 0, needed = 0;
     alignas(TOKEN_APPCONTAINER_INFORMATION) BYTE buffer[sizeof(TOKEN_APPCONTAINER_INFORMATION) + SECURITY_MAX_SID_SIZE] = {};
+    proof.operation = "GetTokenInformation/TokenIsAppContainer";
     BOOL result = GetTokenInformation(token, TokenIsAppContainer, &appContainer,
                                      sizeof(appContainer), &needed);
+    proof.appContainerKnown = result;
+    proof.appContainer = appContainer;
+    if (!result) { proof.kind = "win32-api-failure"; proof.apiError = GetLastError(); }
     if (result && appContainer) {
+        proof.operation = "GetTokenInformation/TokenAppContainerSid";
         result = GetTokenInformation(token, TokenAppContainerSid, buffer, sizeof(buffer), &needed);
+        if (!result) { proof.kind = "win32-api-failure"; proof.apiError = GetLastError(); }
         if (result) {
             const auto info = reinterpret_cast<TOKEN_APPCONTAINER_INFORMATION*>(buffer);
-            result = info->TokenAppContainer && IsValidSid(info->TokenAppContainer)
-                && GetLengthSid(info->TokenAppContainer) <= SECURITY_MAX_SID_SIZE
-                && CopySid(SECURITY_MAX_SID_SIZE, output, info->TokenAppContainer);
+            proof.operation = "IsValidSid/GetLengthSid";
+            proof.sidPresent = info->TokenAppContainer != nullptr;
+            proof.sidValid = proof.sidPresent && IsValidSid(info->TokenAppContainer)
+                && GetLengthSid(info->TokenAppContainer) <= SECURITY_MAX_SID_SIZE;
+            result = proof.sidValid;
+            if (result) {
+                proof.operation = "CopySid";
+                result = CopySid(SECURITY_MAX_SID_SIZE, output, info->TokenAppContainer);
+                if (!result) { proof.kind = "win32-api-failure"; proof.apiError = GetLastError(); }
+                proof.sidCopied = result;
+            } else proof.kind = "invalid-sid";
         }
     } else {
+        if (result) proof.kind = "not-appcontainer";
         result = FALSE;
         SetLastError(ERROR_ACCESS_DENIED);
     }
     DWORD error = result ? ERROR_SUCCESS : GetLastError();
     if (!result && !error) error = ERROR_INVALID_SID;
+    if (result) proof.kind = "success";
     CloseHandle(token);
+    if (observed) *observed = proof;
     SetLastError(error);
     return result;
+}
+
+void logTokenProof(HANDLE child, const TokenProof& proof, BOOL queried, BOOL sameSid,
+                   BOOL jobKnown, BOOL inJob, DWORD jobError) {
+    const DWORD saved = GetLastError();
+    if (InterlockedIncrement(&tokenProofRecords) <= 16) {
+        char line[896];
+        const int length = _snprintf_s(line, sizeof(line), _TRUNCATE,
+            "NEMOCLAW_MSYS_TOKEN_PROOF={\"schemaVersion\":1,\"parentPid\":%lu,\"childPid\":%lu,\"sourceApi\":\"%s\",\"resultKind\":\"%s\",\"apiError\":%lu,\"tokenIsAppContainerKnown\":%s,\"tokenIsAppContainer\":%lu,\"sidPresent\":%s,\"sidValid\":%s,\"sidCopied\":%s,\"parentIdentityInitialized\":%s,\"tokenProbeAttempted\":%s,\"sidComparisonPerformed\":%s,\"sameAppContainer\":%s,\"jobQuerySucceeded\":%s,\"inJob\":%s,\"jobQueryError\":%lu}\n",
+            GetCurrentProcessId(), GetProcessId(child), proof.operation, proof.kind, proof.apiError,
+            proof.appContainerKnown ? "true" : "false", proof.appContainer,
+            proof.sidPresent ? "true" : "false", proof.sidValid ? "true" : "false", proof.sidCopied ? "true" : "false",
+            initialized ? "true" : "false", initialized ? "true" : "false", queried ? "true" : "false", sameSid ? "true" : "false",
+            jobKnown ? "true" : "false", inJob ? "true" : "false", jobError);
+        DWORD written = 0;
+        if (length > 0) WriteFile(GetStdHandle(STD_ERROR_HANDLE), line, static_cast<DWORD>(length), &written, nullptr);
+    }
+    SetLastError(saved);
 }
 
 void logPropagation(DWORD pid, USHORT machine, BOOL sameSid, BOOL inJob, BOOL injected, DWORD error) {
@@ -110,10 +163,13 @@ void logPropagation(DWORD pid, USHORT machine, BOOL sameSid, BOOL inJob, BOOL in
 BOOL inject(HANDLE child) {
     alignas(SID) BYTE actualSid[SECURITY_MAX_SID_SIZE] = {};
     USHORT processMachine = 0, nativeMachine = 0;
-    BOOL sameSid = initialized && processContainerSid(child, actualSid)
-        && EqualSid(containerSid, actualSid);
+    TokenProof proof;
+    const BOOL sidQueried = initialized && processContainerSid(child, actualSid, &proof);
+    BOOL sameSid = sidQueried && EqualSid(containerSid, actualSid);
     BOOL inJob = FALSE;
     BOOL jobKnown = IsProcessInJob(child, nullptr, &inJob);
+    const DWORD jobError = jobKnown ? ERROR_SUCCESS : GetLastError();
+    logTokenProof(child, proof, sidQueried, sameSid, jobKnown, inJob, jobError);
     DWORD error = ERROR_ACCESS_DENIED;
     if (!sameSid || !jobKnown || !inJob) {
         logPropagation(GetProcessId(child), 0, sameSid, inJob, FALSE, error);
