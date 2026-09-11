@@ -729,7 +729,7 @@ function auditLockedGraph(
     },
     reviewedNpmIdentity: config,
     reportFile: path.join(artifactDirectory, `locked-graph-${index + 1}.json`),
-    resultFile: path.join(artifactDirectory, `locked-graph-${index + 1}-policy.json`),
+    resultFile: path.join(artifactDirectory, `${graph.id}.policy.json`),
     threshold: graph.severityThreshold ?? config.severityThreshold,
     throwOnBlock: false,
   });

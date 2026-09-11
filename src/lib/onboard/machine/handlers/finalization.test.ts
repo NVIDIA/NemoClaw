@@ -150,6 +150,26 @@ async function runFinalizationHandlers(
 }
 
 describe("finalization handlers", () => {
+  it("completes providerless component activation without ordinary setup (#11486)", async () => {
+    const { deps, calls } = createDeps();
+    const result = await handleFinalizationPhase({
+      ...baseOptions(deps),
+      externalComponent,
+      providerless: true,
+      provider: "",
+      model: "",
+    });
+    expect(result.stateResult).toMatchObject({ type: "transition", next: "post_verify" });
+    expect(calls.activateExternalComponent).toHaveBeenCalledOnce();
+    expect(calls.setExternalComponentActivationEvidence).toHaveBeenLastCalledWith(null);
+    expect(calls.setDefaultSandbox).not.toHaveBeenCalled();
+    expect(calls.removeLegacy).not.toHaveBeenCalled();
+    expect(calls.cleanupHost).not.toHaveBeenCalled();
+    expect(calls.recoverProcesses).not.toHaveBeenCalled();
+    expect(calls.verify).not.toHaveBeenCalled();
+    expect(calls.dashboard).not.toHaveBeenCalled();
+  });
+
   it("activates the registered component before declaring the sandbox ready (#11340)", async () => {
     const { deps, calls } = createDeps();
 
@@ -182,11 +202,13 @@ describe("finalization handlers", () => {
   });
 
   it.each([
-    ["rejected", "failed"],
-    ["ambiguous", "ambiguous"],
+    ["rejected", "failed", false],
+    ["ambiguous", "ambiguous", false],
+    ["rejected", "failed", true],
+    ["ambiguous", "ambiguous", true],
   ] as const)(
     "preserves identity-bound incomplete state for %s activation (#11340)",
-    async (kind, resultClass) => {
+    async (kind, resultClass, providerless) => {
       const activationId = "4b5a8e18-f967-4e27-a3b2-f2cc315abe21";
       const activate = vi.fn(async () =>
         kind === "rejected"
@@ -198,6 +220,7 @@ describe("finalization handlers", () => {
       const result = await handleFinalizationPhase({
         ...baseOptions(deps),
         externalComponent,
+        providerless,
       });
 
       expect(result.stateResult).toEqual({

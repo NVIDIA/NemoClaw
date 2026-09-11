@@ -409,9 +409,9 @@ describe("trusted npm audit workflow (#5896)", () => {
     ["malformed npm output", "{not-json", 1, /invalid-json/],
     [
       "parseable npm error JSON",
-      JSON.stringify({ error: { code: "ECONNREFUSED", summary: "registry unreachable" } }),
+      JSON.stringify({ error: { summary: "registry request failed: ECONNRESET" } }),
       1,
-      /incomplete-report/,
+      /registry-network-error/,
     ],
     ["missing vulnerability metadata", JSON.stringify({}), 0, /incomplete-report/],
     [

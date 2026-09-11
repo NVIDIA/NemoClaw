@@ -5,6 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { shellQuote } from "../../../src/lib/core/shell-quote.ts";
+import { resolveGatewayLogPathForPort } from "../../../src/lib/onboard/gateway/state-dir.ts";
 import {
   type ManagedImageContractCatalog,
   type ManagedImageContractV1,
@@ -343,6 +344,25 @@ async function collectOnboardFailureDockerDiagnostics(
   env: NodeJS.ProcessEnv,
 ): Promise<void> {
   try {
+    await host.command(
+      "tail",
+      [
+        "-c",
+        "65536",
+        resolveGatewayLogPathForPort({
+          configured: env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR,
+          home: os.homedir(),
+          port: 8080,
+        }),
+      ],
+      {
+        artifactName: `managed-activation-onboard-failure-${agent}-gateway-log`,
+        captureLimitBytes: 65536,
+        env,
+        redactionValues: [API_KEY],
+        timeoutMs: 5_000,
+      },
+    );
     const inventory = await host.command(
       "docker",
       [

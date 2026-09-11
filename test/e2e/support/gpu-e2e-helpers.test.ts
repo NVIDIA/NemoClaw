@@ -2,14 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { ChildProcess, execFileSync } from "node:child_process";
 import { once } from "node:events";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
@@ -20,7 +20,11 @@ import {
   hasExactReadyPhase,
   ollamaCleanupScript,
   openClawModelConfigProjectionScript,
+  REPO_ROOT,
+  startAttachedOllama,
 } from "../live/gpu-e2e-helpers.ts";
+import * as observedChild from "../fixtures/observed-child-process.ts";
+import { startTestProgress } from "../fixtures/progress.ts";
 import {
   PROTECTED_OLLAMA_CURL_MAX_SECONDS,
   PROTECTED_OLLAMA_READY_ATTEMPTS,
@@ -160,6 +164,52 @@ const invalidExecutionProofs: Array<{
 ];
 
 describe("GPU E2E helpers", () => {
+  it("owns the attached Ollama daemon with the supplied listener and cleanup (#11435)", async () => {
+    const progress = startTestProgress(
+      "attached Ollama helper",
+      ["start the attached daemon", "close the owned daemon"],
+      {
+        logLine: () => undefined,
+      },
+    );
+    const child = new ChildProcess();
+    const spawn = vi.spyOn(observedChild, "spawnObservedChild").mockReturnValue(child);
+    const kill = vi.spyOn(child, "kill").mockReturnValue(true);
+    const environment = { OLLAMA_HOST: "127.0.0.1:11444", OLLAMA_MODELS: "/tmp/owned-models" };
+    try {
+      const owner = startAttachedOllama(progress, environment);
+      expect(spawn).toHaveBeenCalledExactlyOnceWith(
+        "ollama",
+        ["serve"],
+        expect.objectContaining({
+          progress,
+          spawn: { cwd: REPO_ROOT, env: environment, stdio: "ignore" },
+        }),
+      );
+      expect(owner.child).toBe(child);
+      let closed = false;
+      void owner.closed.then(() => {
+        closed = true;
+      });
+      let terminated = false;
+      const termination = owner.terminate().then(() => {
+        terminated = true;
+      });
+      expect(kill).toHaveBeenCalledExactlyOnceWith("SIGTERM");
+      await Promise.resolve();
+      expect([closed, terminated]).toEqual([false, false]);
+      child.emit("close", null, "SIGTERM");
+      await termination;
+      await owner.closed;
+      expect(closed).toBe(true);
+      await owner.terminate();
+      expect(kill).toHaveBeenCalledTimes(1);
+    } finally {
+      child.emit("close", null, "SIGTERM");
+      progress.stop();
+    }
+  });
+
   it("stops the Ollama system service before cleanup completes", async () => {
     const root = mkdtempSync(path.join(tmpdir(), "nemoclaw-ollama-cleanup-"));
     const listenerPort = await unusedLoopbackPort();
