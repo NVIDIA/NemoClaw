@@ -93,6 +93,7 @@ const defaultContextWindowDeps: ContextWindowDeps = {
     return resolveVllmContextWindowFromModels(parsed, model);
   },
   defaultCloudContextWindow: (): number => DEFAULT_CONTEXT_WINDOW,
+  /** Read the selected model's served context using the scoped or staged credential. */
   probeLlamaCppContextWindow: (model: string): number | null => {
     const { LLAMA_CPP_CREDENTIAL_ENV, probeLlamaCppAttachment } = require("./llama-cpp") as {
       LLAMA_CPP_CREDENTIAL_ENV: string;

@@ -10,6 +10,7 @@ import {
 import type { SetupNimSelectionState } from "../setup-nim-flow";
 import { createLlamaCppSelectionHandler, type LlamaCppSelectionDeps } from "./index";
 
+/** Create a fresh provider-selection state for each scenario. */
 function state(): SetupNimSelectionState {
   return {
     model: null,
@@ -24,6 +25,7 @@ function state(): SetupNimSelectionState {
   };
 }
 
+/** Build successful attachment dependencies with targeted failure overrides. */
 function deps(overrides: Partial<LlamaCppSelectionDeps> = {}): LlamaCppSelectionDeps {
   return {
     isNonInteractive: () => false,

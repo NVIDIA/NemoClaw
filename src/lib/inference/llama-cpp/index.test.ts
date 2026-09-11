@@ -7,6 +7,7 @@ import { validateCurlProbeArgs } from "../../adapters/http/curl-args";
 import type { CurlProbeOptions, CurlProbeResult } from "../../adapters/http/probe";
 import { isSafeLlamaCppServedModelAlias, probeLlamaCppAttachment } from "./index";
 
+/** Build an HTTP probe response without making a network request. */
 function response(httpStatus: number, body: string): CurlProbeResult {
   return {
     ok: httpStatus >= 200 && httpStatus < 300,
@@ -18,6 +19,7 @@ function response(httpStatus: number, body: string): CurlProbeResult {
   } as CurlProbeResult;
 }
 
+/** Represent a curl transport failure without an HTTP response. */
 function curlFailure(curlStatus: number): CurlProbeResult {
   return {
     ok: false,
@@ -29,6 +31,7 @@ function curlFailure(curlStatus: number): CurlProbeResult {
   };
 }
 
+/** Provide native metadata with distinct served and training context windows. */
 function nativeModel(id = "team/model-alias") {
   return {
     id,
@@ -38,6 +41,7 @@ function nativeModel(id = "team/model-alias") {
   };
 }
 
+/** Supply successful authentication and native-server fingerprint responses. */
 function nativeResponses(model = "team/model-alias"): CurlProbeResult[] {
   return [
     response(401, '{"error":"unauthorized"}'),
@@ -56,6 +60,7 @@ function nativeResponses(model = "team/model-alias"): CurlProbeResult[] {
   ];
 }
 
+/** Validate each probe's arguments and return its next scripted response. */
 function scriptedProbe(responses: CurlProbeResult[]) {
   let index = 0;
   return vi.fn((argv: string[], options?: CurlProbeOptions) => {

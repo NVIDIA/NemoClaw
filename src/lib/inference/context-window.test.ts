@@ -33,10 +33,12 @@ const llamaCpp = require("./llama-cpp") as {
   ) => { ok: boolean; contextWindow?: number };
 };
 
+/** Build a captured command result with an optional timeout. */
 function captured(timedOut = false): CaptureStub {
   return { stdout: "", exitCode: 0, timedOut };
 }
 
+/** Supply isolated context probes with per-test overrides. */
 function makeDeps(over: Partial<ContextWindowDeps> = {}): ContextWindowDeps {
   return {
     loadOllamaModel: vi.fn(),

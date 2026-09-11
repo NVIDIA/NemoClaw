@@ -48,7 +48,7 @@ export function createLlamaCppSelectionHandler(
   requestedModel: string | null,
   recoveredModel: string | null,
 ) => Promise<SetupNimSelectionResult> {
-  return async function handleLlamaCppSelection(
+  return /** Validate server identity and inference before applying the selected model and context. */ async function handleLlamaCppSelection(
     state,
     requestedModel,
     recoveredModel,
