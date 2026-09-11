@@ -23,33 +23,67 @@ export const originalBinaryPins = {
 };
 export const binaryPins = {
   ...originalBinaryPins,
+  "usr/bin/bash.exe": "1d9ff9b052760c832874bfef619eecaefecef3abda0ffe8f40c726a517315a1c",
   "usr/bin/msys-2.0.dll": "48f8451360bb491f915ddcf0018b20a5938810a4edff74ad3fcd0eaff67ebdb8",
 };
-const variant = "ci-derived-unsigned-msys-dll-dynamic-base";
+const variant = "ci-derived-unsigned-msys-dll-and-bash-dynamic-base";
 export function validateDerivedMetadata(receipt: any, revision: string) {
   assert.equal(receipt.classification, "ci-derived-canonical-msys-dynamic-base");
   assert.equal(receipt.sourceRevision, revision);
-  assert.equal(receipt.adaptation, "unsigned-msys-dll-dynamic-base-only");
+  assert.equal(receipt.adaptation, "msys-dll-and-unsigned-bash-dynamic-base");
   assert.equal(receipt.untouchedOfficialBytes, false);
   assert.equal(receipt.originalsPreserved, true);
   assert.equal(receipt.allOtherFilesUnchanged, true);
-  assert.equal(receipt.signedBashAndArm64WrapperUnchanged, true);
+  assert.equal(receipt.arm64WrapperUnchanged, true);
+  assert.equal(receipt.derivedBashExplicitlyUnsigned, true);
   assert.equal(receipt.nativeChecksumVerified, true);
+  assert.equal(receipt.derivedBashUnsignedVerified, true);
   assert.equal(receipt.qualified, false);
   assert.equal(receipt.upstream.nousCommit, "2237be355906fbe6065ce1815711eee52b2d646e");
   assert.equal(
     receipt.upstream.sha256,
     "f8e92cd3359fcbb96998cfd606a536ccc6dbfb23c04e12b29042f9ba45b6b0c7",
   );
-  assert.equal(receipt.files.length, 1);
-  const file = receipt.files[0];
-  assert.equal(file.path, "usr/bin/msys-2.0.dll");
-  assert.equal(file.beforeSha256, originalBinaryPins["usr/bin/msys-2.0.dll"]);
-  assert.equal(file.afterSha256, binaryPins["usr/bin/msys-2.0.dll"]);
-  assert.equal(file.beforeFlags, 0);
-  assert.equal(file.afterFlags, 0x40);
-  assert.equal(file.onlyMetadataChanged, true);
-  assert.equal(file.certificateDirectoryAbsent, true);
+  assert.equal(receipt.files.length, 2);
+  assert.equal(new Set(receipt.files.map((file: any) => file.path)).size, 2);
+  for (const [relative, flags] of [
+    ["usr/bin/msys-2.0.dll", 0],
+    ["usr/bin/bash.exe", 0x8000],
+  ] as const) {
+    const file = receipt.files.find((row: any) => row.path === relative);
+    assert.equal(file?.beforeSha256, originalBinaryPins[relative]);
+    assert.equal(file.afterSha256, binaryPins[relative]);
+    assert.equal(file.beforeFlags, flags);
+    assert.equal(file.afterFlags, flags | 0x40);
+    assert.equal(file.onlyMetadataChanged, true);
+    assert.equal(file.certificateDirectoryAbsent, true);
+    assert.equal(file.derivedNotSigned, true);
+    assert.equal(file.certificateTableRemoved, relative === "usr/bin/bash.exe");
+  }
+  const bash = receipt.files.find((row: any) => row.path === "usr/bin/bash.exe");
+  assert.equal(bash.beforeBytes, 2455808);
+  assert.equal(bash.bytes, 2442752);
+  assert.equal(bash.originalCertificate.offset, 2442752);
+  assert.equal(bash.originalCertificate.bytes, 13056);
+  assert.equal(
+    bash.originalCertificate.sha256,
+    "ad13eb3d0e085570befdca351ea777c89bce3120f9675b2c5e8ba3df9a674e5d",
+  );
+  assert.equal(receipt.nativeSignatures.length, 3);
+  for (const [file, expected] of [
+    ["original-bash.exe", originalBinaryPins["usr/bin/bash.exe"]],
+    ["derived-bash.exe", binaryPins["usr/bin/bash.exe"]],
+    ["original-arm64-wrapper.exe", originalBinaryPins["bin/bash.exe"]],
+  ]) {
+    const matches = receipt.nativeSignatures.filter((row: any) => row.file === file);
+    assert.equal(matches.length, 1);
+    assert.equal(matches[0].sha256, expected);
+    assert.equal(typeof matches[0].status, "string");
+    assert(matches[0].status.length > 0);
+    if (file === "derived-bash.exe") assert.equal(matches[0].status, "NotSigned");
+    if (file === "original-bash.exe")
+      assert.equal(bash.originalCertificate.authenticodeStatus, matches[0].status);
+  }
   return receipt;
 }
 export function fixedEnvironment(windows: string, home: string, git: string, node: string) {

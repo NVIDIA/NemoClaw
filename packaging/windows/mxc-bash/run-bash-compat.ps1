@@ -84,17 +84,29 @@ public static class MsysImageChecksum {
  public static extern uint MapFileAndCheckSumW(string file,out uint header,out uint computed);
 }
 '@
- $nativeChecks=@()
- foreach($name in @('original-msys-2.0.dll','derived-msys-2.0.dll')) {
+ $derived=Get-Content -LiteralPath (Join-Path $derivation 'derivation.json') -Raw|ConvertFrom-Json
+ $nativeChecks=@();$checksumsValid=$true
+ foreach($name in @('original-msys-2.0.dll','derived-msys-2.0.dll','original-bash.exe','derived-bash.exe')) {
   [uint32]$header=0;[uint32]$computed=0
   $code=[MsysImageChecksum]::MapFileAndCheckSumW((Join-Path $derivation $name),[ref]$header,[ref]$computed)
-  if($code -ne 0 -or $header -ne $computed){throw 'Windows rejected the derived image checksum.'}
+  if($code -ne 0 -or $header -ne $computed){$checksumsValid=$false}
   $nativeChecks+=@(@{file=$name;header=$header;computed=$computed;status=$code})
  }
- $derived=Get-Content -LiteralPath (Join-Path $derivation 'derivation.json') -Raw|ConvertFrom-Json
- $derived|Add-Member -NotePropertyName nativeChecksumVerified -NotePropertyValue $true
+ $nativeSignatures=@()
+ foreach($name in @('original-bash.exe','derived-bash.exe','original-arm64-wrapper.exe')) {
+  $file=Join-Path $derivation $name;$signature=Get-AuthenticodeSignature -LiteralPath $file
+  $nativeSignatures+=@(@{file=$name;sha256=(Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant();status=$signature.Status.ToString();statusMessage=$signature.StatusMessage;signatureType=$signature.SignatureType.ToString();signerSubject=$(if($null -ne $signature.SignerCertificate){$signature.SignerCertificate.Subject}else{$null});signerThumbprint=$(if($null -ne $signature.SignerCertificate){$signature.SignerCertificate.Thumbprint}else{$null})})
+ }
+ $unsigned=@($nativeSignatures|Where-Object file -ceq 'derived-bash.exe')[0].status -ceq 'NotSigned'
+ $bash=@($derived.files|Where-Object path -ceq 'usr/bin/bash.exe')[0]
+ $bash.originalCertificate.authenticodeStatus=@($nativeSignatures|Where-Object file -ceq 'original-bash.exe')[0].status
+ $derived|Add-Member -NotePropertyName nativeChecksumVerified -NotePropertyValue $checksumsValid
  $derived|Add-Member -NotePropertyName nativeChecksums -NotePropertyValue $nativeChecks
+ $derived|Add-Member -NotePropertyName derivedBashUnsignedVerified -NotePropertyValue $unsigned
+ $derived|Add-Member -NotePropertyName nativeSignatures -NotePropertyValue $nativeSignatures
  [IO.File]::WriteAllText((Join-Path $derivation 'derivation.json'),($derived|ConvertTo-Json -Depth 12)+"`n",[Text.UTF8Encoding]::new($false))
+ if(-not $checksumsValid){throw 'Windows rejected an original or derived image checksum.'}
+ if(-not $unsigned){throw 'Windows must report the derived Bash copy as NotSigned.'}
  Copy-Item -LiteralPath (Join-Path $derivation 'derivation.json') -Destination (Join-Path $tools 'git-aslr-derivation.json')
  $sdk=Join-Path $downloads 'mxc-sdk-0.8.0.tgz';Invoke-WebRequest -Uri 'https://registry.npmjs.org/@microsoft/mxc-sdk/-/mxc-sdk-0.8.0.tgz' -OutFile $sdk -TimeoutSec 120
  if((Get-FileHash -LiteralPath $sdk -Algorithm SHA256).Hash.ToLowerInvariant() -cne '06bb2399d7e98ab1907acf851e12a4e44748dd467b79d3e53c2f2fbf569da14e'){throw 'Pinned stock MXC archive changed.'}

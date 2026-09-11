@@ -68,18 +68,20 @@ test("worker environment has Windows process prerequisites, only pinned tool pat
   assert.equal("NEMOCLAW_MSYS_IMAGE_LAYOUT" in env, false);
   assert.equal(env.NEMOCLAW_MSYS_ASLR_METADATA, "1");
 });
-test("derived DLL provenance preserves both official Bash executables and requires native checksum proof", () => {
-  assert.equal(binaryPins["usr/bin/bash.exe"], originalBinaryPins["usr/bin/bash.exe"]);
+test("derived DLL and unsigned Bash provenance preserves the wrapper and requires native signature/checksum evidence", () => {
+  assert.notEqual(binaryPins["usr/bin/bash.exe"], originalBinaryPins["usr/bin/bash.exe"]);
   assert.equal(binaryPins["bin/bash.exe"], originalBinaryPins["bin/bash.exe"]);
   const receipt = {
     classification: "ci-derived-canonical-msys-dynamic-base",
     sourceRevision: "a".repeat(40),
-    adaptation: "unsigned-msys-dll-dynamic-base-only",
+    adaptation: "msys-dll-and-unsigned-bash-dynamic-base",
     untouchedOfficialBytes: false,
     originalsPreserved: true,
     allOtherFilesUnchanged: true,
-    signedBashAndArm64WrapperUnchanged: true,
+    arm64WrapperUnchanged: true,
+    derivedBashExplicitlyUnsigned: true,
     nativeChecksumVerified: true,
+    derivedBashUnsignedVerified: true,
     qualified: false,
     upstream: {
       nousCommit: "2237be355906fbe6065ce1815711eee52b2d646e",
@@ -94,19 +96,72 @@ test("derived DLL provenance preserves both official Bash executables and requir
         afterFlags: 0x40,
         onlyMetadataChanged: true,
         certificateDirectoryAbsent: true,
+        derivedNotSigned: true,
+        certificateTableRemoved: false,
+      },
+      {
+        path: "usr/bin/bash.exe",
+        beforeSha256: originalBinaryPins["usr/bin/bash.exe"],
+        afterSha256: binaryPins["usr/bin/bash.exe"],
+        beforeFlags: 0x8000,
+        afterFlags: 0x8040,
+        beforeBytes: 2455808,
+        bytes: 2442752,
+        onlyMetadataChanged: true,
+        certificateDirectoryAbsent: true,
+        derivedNotSigned: true,
+        certificateTableRemoved: true,
+        originalCertificate: {
+          offset: 2442752,
+          bytes: 13056,
+          sha256: "ad13eb3d0e085570befdca351ea777c89bce3120f9675b2c5e8ba3df9a674e5d",
+          authenticodeStatus: "Valid",
+        },
+      },
+    ],
+    // Synthetic status values exercise the receipt contract; real Windows
+    // Authenticode results remain required by run-bash-compat.ps1.
+    nativeSignatures: [
+      {
+        file: "original-bash.exe",
+        sha256: originalBinaryPins["usr/bin/bash.exe"],
+        status: "Valid",
+      },
+      { file: "derived-bash.exe", sha256: binaryPins["usr/bin/bash.exe"], status: "NotSigned" },
+      {
+        file: "original-arm64-wrapper.exe",
+        sha256: originalBinaryPins["bin/bash.exe"],
+        status: "NotSigned",
       },
     ],
   };
   assert.equal(validateDerivedMetadata(receipt, receipt.sourceRevision), receipt);
-  assert.throws(() =>
-    validateDerivedMetadata({ ...receipt, nativeChecksumVerified: false }, receipt.sourceRevision),
-  );
+  for (const field of [
+    "nativeChecksumVerified",
+    "derivedBashUnsignedVerified",
+    "arm64WrapperUnchanged",
+    "derivedBashExplicitlyUnsigned",
+  ])
+    assert.throws(() =>
+      validateDerivedMetadata({ ...receipt, [field]: false }, receipt.sourceRevision),
+    );
   assert.throws(() =>
     validateDerivedMetadata({ ...receipt, untouchedOfficialBytes: true }, receipt.sourceRevision),
   );
   assert.throws(() =>
     validateDerivedMetadata(
-      { ...receipt, files: [{ ...receipt.files[0], afterFlags: 0xc0 }] },
+      { ...receipt, files: [{ ...receipt.files[0], afterFlags: 0xc0 }, receipt.files[1]] },
+      receipt.sourceRevision,
+    ),
+  );
+  assert.throws(() =>
+    validateDerivedMetadata(
+      {
+        ...receipt,
+        nativeSignatures: receipt.nativeSignatures.map((row) =>
+          row.file === "derived-bash.exe" ? { ...row, status: "Valid" } : row,
+        ),
+      },
       receipt.sourceRevision,
     ),
   );

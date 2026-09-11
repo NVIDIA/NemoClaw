@@ -38,6 +38,25 @@ function fixture() {
   data.writeUInt32LE(imageChecksum(data, 216), 216);
   return data;
 }
+function signedFixture() {
+  const data = Buffer.concat([fixture(), Buffer.alloc(16)]);
+  data.writeUInt16LE(0x8000, 222);
+  data.writeUInt32LE(1536, 296);
+  data.writeUInt32LE(16, 300);
+  data.writeUInt32LE(16, 1536);
+  data.writeUInt16LE(0x200, 1540);
+  data.writeUInt16LE(2, 1542);
+  data.writeUInt32LE(imageChecksum(data, 216), 216);
+  return data;
+}
+function signedPin(data: Buffer, offset = 1536, bytes = 16) {
+  return {
+    bytes: data.length,
+    sha256: sha(data),
+    flags: 0x8000,
+    certificate: { offset, bytes, sha256: sha(data.subarray(offset, offset + bytes)) },
+  };
+}
 test("only DYNAMIC_BASE and checksum change; original and every section remain intact", () => {
   const input = fixture(),
     copy = Buffer.from(input);
@@ -58,6 +77,62 @@ test("certificate-bearing images are rejected before adaptation", () => {
   data.writeUInt32LE(1408, 296);
   data.writeUInt32LE(128, 300);
   assert.throws(() => inspectPe(data), /Signed images/u);
+});
+test("derived signed-input copy removes only its exact trailing certificate and enables normal ASLR", () => {
+  const input = signedFixture(),
+    preserved = Buffer.from(input),
+    pin = signedPin(input);
+  const before = inspectPe(input, pin.certificate);
+  const { output, receipt } = deriveImage(input, pin);
+  assert(input.equals(preserved));
+  assert.equal(output.length, 1536);
+  assert.equal(receipt.beforeBytes, 1552);
+  assert.equal(receipt.beforeFlags, 0x8000);
+  assert.equal(receipt.afterFlags, 0x8040);
+  assert.equal(receipt.derivedNotSigned, true);
+  assert.equal(receipt.certificateTableRemoved, true);
+  assert.equal(receipt.originalCertificate?.sha256, pin.certificate.sha256);
+  assert.equal(receipt.originalCertificate?.authenticodeStatus, "pending-native-verification");
+  assert.equal(inspectPe(output).certificate, null);
+  assert.equal(inspectPe(output).entryPointRva, before.entryPointRva);
+  assert.deepEqual(inspectPe(output).sections, before.sections);
+  assert.equal(output.readBigUInt64LE(296), 0n);
+  assert.equal(imageChecksum(output, 216), receipt.afterChecksum);
+  const allowed = new Set([216, 217, 218, 219, 222, 223, 296, 297, 298, 299, 300, 301, 302, 303]);
+  for (let i = 0; i < output.length; i++) if (!allowed.has(i)) assert.equal(output[i], input[i]);
+});
+test("certificate removal refuses non-trailing, overlapping or changed certificate data", () => {
+  const trailing = Buffer.concat([signedFixture(), Buffer.alloc(8)]);
+  assert.throws(
+    () => inspectPe(trailing, signedPin(trailing).certificate),
+    /trailing certificate/u,
+  );
+  const overlapping = fixture();
+  overlapping.writeUInt32LE(1408, 296);
+  overlapping.writeUInt32LE(128, 300);
+  overlapping.writeUInt32LE(128, 1408);
+  overlapping.writeUInt16LE(0x200, 1412);
+  overlapping.writeUInt16LE(2, 1414);
+  assert.throws(
+    () => inspectPe(overlapping, signedPin(overlapping, 1408, 128).certificate),
+    /overlap/u,
+  );
+  const changed = signedFixture(),
+    pin = signedPin(changed);
+  changed[1544] ^= 1;
+  assert.throws(() => inspectPe(changed, pin.certificate), /certificate bytes changed/u);
+});
+test("certificate removal requires the complete single PKCS7 certificate header", () => {
+  for (const [offset, value] of [
+    [1536, 8],
+    [1540, 0x100],
+    [1542, 1],
+  ]) {
+    const data = signedFixture();
+    if (offset === 1536) data.writeUInt32LE(value!, offset);
+    else data.writeUInt16LE(value!, offset!);
+    assert.throws(() => inspectPe(data, signedPin(data).certificate));
+  }
 });
 test("stripped or absent relocations cannot opt in", () => {
   const stripped = fixture();

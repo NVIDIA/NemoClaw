@@ -7,16 +7,28 @@ import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-export const originals = {
+type CertificatePin = { offset: number; bytes: number; sha256: string };
+type ImagePin = { bytes: number; sha256: string; flags: number; certificate?: CertificatePin };
+export const originals: Record<string, ImagePin> = {
   "usr/bin/msys-2.0.dll": {
     bytes: 3364447,
     sha256: "13f0b0dc94588766ecfa1867f1a00061508ba1dc62f5b8e858ac59f01e358aa0",
     flags: 0,
   },
+  "usr/bin/bash.exe": {
+    bytes: 2455808,
+    sha256: "92cff5f145d42f85b55aa3be8d3ad9827844a21ec4fbeaa1ddfe1dd4d76c6474",
+    flags: 0x8000,
+    certificate: {
+      offset: 2442752,
+      bytes: 13056,
+      sha256: "ad13eb3d0e085570befdca351ea777c89bce3120f9675b2c5e8ba3df9a674e5d",
+    },
+  },
 };
 const hash = (data: Buffer) => createHash("sha256").update(data).digest("hex");
 
-export function inspectPe(data: Buffer) {
+export function inspectPe(data: Buffer, certificate?: CertificatePin) {
   assert(data.length >= 512 && data.length < 64 * 1024 * 1024);
   assert.equal(data.readUInt16LE(0), 0x5a4d);
   const pe = data.readUInt32LE(60);
@@ -30,16 +42,39 @@ export function inspectPe(data: Buffer) {
   assert(count > 0 && count <= 32 && optionalBytes >= 240);
   assert.equal(data.readUInt16LE(optional), 0x20b);
   assert(data.readUInt32LE(optional + 108) >= 6);
-  assert.equal(
-    data.readUInt32LE(optional + 112 + 32),
-    0,
-    "Signed images require a separate signing decision",
-  );
-  assert.equal(data.readUInt32LE(optional + 112 + 36), 0, "Certificate directory must be empty");
+  const certificateDirectoryOffset = optional + 112 + 32;
+  const certificateOffset = data.readUInt32LE(certificateDirectoryOffset);
+  const certificateBytes = data.readUInt32LE(certificateDirectoryOffset + 4);
+  if (certificate) {
+    assert.equal(certificateOffset, certificate.offset);
+    assert.equal(certificateBytes, certificate.bytes);
+    assert(certificateOffset % 8 === 0 && certificateBytes >= 8);
+    assert.equal(
+      certificateOffset + certificateBytes,
+      data.length,
+      "Only an exact trailing certificate may be removed",
+    );
+    assert.equal(
+      data.readUInt32LE(certificateOffset),
+      certificateBytes,
+      "Expected one complete WIN_CERTIFICATE",
+    );
+    assert.equal(data.readUInt16LE(certificateOffset + 4), 0x200);
+    assert.equal(data.readUInt16LE(certificateOffset + 6), 2);
+    assert.equal(
+      hash(data.subarray(certificateOffset)),
+      certificate.sha256,
+      "Original certificate bytes changed",
+    );
+  } else {
+    assert.equal(certificateOffset, 0, "Signed images require the exact certificate-removal pin");
+    assert.equal(certificateBytes, 0, "Certificate directory must be empty");
+  }
   const table = optional + optionalBytes;
   assert(table + count * 40 <= data.length);
   const imageSize = data.readUInt32LE(optional + 56),
     headersSize = data.readUInt32LE(optional + 60);
+  if (certificate) assert(certificateOffset >= headersSize);
   const sections = [];
   for (let i = 0; i < count; i++) {
     const at = table + i * 40;
@@ -48,12 +83,15 @@ export function inspectPe(data: Buffer) {
       offset = data.readUInt32LE(at + 20);
     assert(rva < imageSize);
     if (bytes) assert(offset >= headersSize && offset + bytes <= data.length);
+    if (certificate && bytes)
+      assert(offset + bytes <= certificateOffset, "Certificate must not overlap any section");
     sections.push({
       name: data
         .subarray(at, at + 8)
         .toString("ascii")
         .replace(/\0.*$/u, ""),
       rva,
+      virtualBytes: data.readUInt32LE(at + 8),
       bytes,
       offset,
       sha256: hash(data.subarray(offset, offset + bytes)),
@@ -97,6 +135,9 @@ export function inspectPe(data: Buffer) {
     checksum: data.readUInt32LE(optional + 64),
     imageBase: "0x" + data.readBigUInt64LE(optional + 24).toString(16),
     imageSize,
+    entryPointRva: data.readUInt32LE(optional + 16),
+    certificateDirectoryOffset,
+    certificate: certificate ? { ...certificate, recordRevision: 0x200, recordType: 2 } : null,
     relocationRva,
     relocationBytes,
     relocations,
@@ -115,14 +156,16 @@ export function imageChecksum(data: Buffer, checksumOffset: number) {
   return (sum + data.length) >>> 0;
 }
 
-export function deriveImage(input: Buffer, pin: { bytes: number; sha256: string; flags: number }) {
+export function deriveImage(input: Buffer, pin: ImagePin) {
   assert.equal(input.length, pin.bytes);
   assert.equal(hash(input), pin.sha256, "Upstream bytes must match the immutable input");
-  const before = inspectPe(input);
+  const before = inspectPe(input, pin.certificate);
   assert.equal(before.flags, pin.flags);
   assert.equal(before.flags & 0x40, 0, "Input must be the preserved original");
   assert.equal(imageChecksum(input, before.checksumOffset), before.checksum);
-  const output = Buffer.from(input);
+  const output = Buffer.from(input.subarray(0, pin.certificate?.offset ?? input.length));
+  if (pin.certificate)
+    output.fill(0, before.certificateDirectoryOffset, before.certificateDirectoryOffset + 8);
   output.writeUInt16LE(before.flags | 0x40, before.flagsOffset);
   output.writeUInt32LE(imageChecksum(output, before.checksumOffset), before.checksumOffset);
   const after = inspectPe(output);
@@ -134,12 +177,22 @@ export function deriveImage(input: Buffer, pin: { bytes: number; sha256: string;
   const restored = Buffer.from(output);
   input.copy(restored, before.flagsOffset, before.flagsOffset, before.flagsOffset + 2);
   input.copy(restored, before.checksumOffset, before.checksumOffset, before.checksumOffset + 4);
-  assert(restored.equals(input), "Only DllCharacteristics and CheckSum may differ");
+  input.copy(
+    restored,
+    before.certificateDirectoryOffset,
+    before.certificateDirectoryOffset,
+    before.certificateDirectoryOffset + 8,
+  );
+  assert(
+    restored.equals(input.subarray(0, output.length)),
+    "Only loader metadata and the exact trailing certificate may differ",
+  );
   return {
     output,
     receipt: {
       beforeSha256: pin.sha256,
       afterSha256: hash(output),
+      beforeBytes: input.length,
       bytes: output.length,
       beforeFlags: before.flags,
       afterFlags: after.flags,
@@ -148,10 +201,17 @@ export function deriveImage(input: Buffer, pin: { bytes: number; sha256: string;
       afterChecksum: after.checksum,
       checksumOffset: before.checksumOffset,
       imageBase: before.imageBase,
+      entryPointRva: before.entryPointRva,
       relocations: before.relocations,
       relocationRva: before.relocationRva,
       relocationBytes: before.relocationBytes,
       certificateDirectoryAbsent: true,
+      certificateDirectoryOffset: before.certificateDirectoryOffset,
+      originalCertificate: before.certificate
+        ? { ...before.certificate, authenticodeStatus: "pending-native-verification" }
+        : null,
+      certificateTableRemoved: Boolean(before.certificate),
+      derivedNotSigned: true,
       onlyMetadataChanged: true,
       sections: before.sections,
     },
@@ -213,6 +273,11 @@ function main() {
   });
   assert.deepEqual(inventory(destination), before);
   const files: ({ path: string } & ReturnType<typeof deriveImage>["receipt"])[] = [];
+  fs.copyFileSync(
+    path.join(source, "bin/bash.exe"),
+    path.join(evidence, "original-arm64-wrapper.exe"),
+    fs.constants.COPYFILE_EXCL,
+  );
   for (const [relative, pin] of Object.entries(originals)) {
     const input = fs.readFileSync(path.join(source, relative));
     const { output, receipt } = deriveImage(input, pin);
@@ -222,6 +287,12 @@ function main() {
     fs.writeFileSync(path.join(evidence, "derived-" + path.basename(relative)), output, {
       flag: "wx",
     });
+    if (pin.certificate)
+      fs.writeFileSync(
+        path.join(evidence, "original-bash-certificate.bin"),
+        input.subarray(pin.certificate.offset),
+        { flag: "wx" },
+      );
     fs.writeFileSync(path.join(destination, relative), output);
     files.push({ path: relative, ...receipt });
   }
@@ -231,7 +302,7 @@ function main() {
     after,
     before.map((row) => {
       const change = files.find((f) => f.path === row.path);
-      return change ? { ...row, sha256: change.afterSha256 } : row;
+      return change ? { ...row, bytes: change.bytes, sha256: change.afterSha256 } : row;
     }),
   );
   fs.writeFileSync(
@@ -250,13 +321,15 @@ function main() {
         untouchedOfficialBytes: false,
         originalsPreserved: true,
         allOtherFilesUnchanged: true,
-        adaptation: "unsigned-msys-dll-dynamic-base-only",
-        signedBashAndArm64WrapperUnchanged: true,
+        adaptation: "msys-dll-and-unsigned-bash-dynamic-base",
+        arm64WrapperUnchanged: true,
+        derivedBashExplicitlyUnsigned: true,
         fileCount: before.length,
         originalInventorySha256: hash(Buffer.from(JSON.stringify(before))),
         derivedInventorySha256: hash(Buffer.from(JSON.stringify(after))),
         files,
         nativeChecksumVerificationRequired: true,
+        nativeAuthenticodeVerificationRequired: true,
         qualified: false,
       },
       null,
