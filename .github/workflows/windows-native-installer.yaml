@@ -48,6 +48,7 @@ on:
           - python
           - runtime
           - npm-shims
+          - export-controls
           - host-prerequisites
           - system-drive
           - application
@@ -57,7 +58,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: windows-native-installer-${{ github.ref }}${{ inputs.run_windows_native_installer && inputs.windows_native_diagnostic_source_run_id == '' && '-finished-package' || inputs.test_native_windows_runtime && '-runtime-controls' || inputs.profile_native_windows && '-profiling' || inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'python' && '-hermes-python' || inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'runtime' && '-hermes-runtime' || inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'npm-shims' && '-hermes-npm-shims' || inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'application' && '-compiled-application' || inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'host-prerequisites' && '-host-prerequisites' || inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'system-drive' && '-system-drive' || inputs.probe_official_hermes_components && '-hermes-components' || inputs.windows_native_diagnostic_source_run_id != '' && '-package-diagnostic' || '' }}
+  group: windows-native-installer-${{ github.ref }}${{ inputs.run_windows_native_installer && inputs.windows_native_diagnostic_source_run_id == '' && '-finished-package' || inputs.test_native_windows_runtime && '-runtime-controls' || inputs.profile_native_windows && '-profiling' || inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'python' && '-hermes-python' || inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'runtime' && '-hermes-runtime' || inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'npm-shims' && '-hermes-npm-shims' || inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'export-controls' && '-hermes-export-controls' || inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'application' && '-compiled-application' || inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'host-prerequisites' && '-host-prerequisites' || inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'system-drive' && '-system-drive' || inputs.probe_official_hermes_components && '-hermes-components' || inputs.windows_native_diagnostic_source_run_id != '' && '-package-diagnostic' || '' }}
   # Finish the in-flight artifact/evidence; keep only the latest queued request.
   cancel-in-progress: false
 
@@ -598,9 +599,35 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  official-hermes-export-controls:
+    name: Official runtime export path controls (Windows ARM64)
+    if: ${{ github.event_name == 'workflow_dispatch' && !inputs.run_windows_native_installer && inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'export-controls' && !inputs.test_native_windows_runtime && !inputs.profile_native_windows }}
+    runs-on: windows-11-vs2026-arm
+    timeout-minutes: 10
+    steps:
+      - name: Check out the bounded export controls
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check exact alias paths, outside links and archive integrity
+        shell: pwsh
+        run: |
+          & "$env:GITHUB_WORKSPACE\packaging\windows\hermes\test-official-runtime-export.ps1" `
+            -ArtifactDirectory "$env:RUNNER_TEMP\official-hermes-export-controls"
+      - name: Retain interpreter inputs and export-control evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: official-hermes-export-controls-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/official-hermes-export-controls/
+            !${{ runner.temp }}/official-hermes-export-controls/tools/
+          if-no-files-found: error
+          retention-days: 14
+
   official-hermes-components:
     name: Official Hermes ${{ inputs.official_hermes_phase || 'components' }} probe (Windows ARM64)
-    if: ${{ github.event_name == 'workflow_dispatch' && !inputs.run_windows_native_installer && inputs.probe_official_hermes_components && inputs.official_hermes_phase != 'host-prerequisites' && inputs.official_hermes_phase != 'application' && inputs.official_hermes_phase != 'system-drive' && inputs.official_hermes_phase != 'npm-shims' && !inputs.test_native_windows_runtime && !inputs.profile_native_windows }}
+    if: ${{ github.event_name == 'workflow_dispatch' && !inputs.run_windows_native_installer && inputs.probe_official_hermes_components && inputs.official_hermes_phase != 'host-prerequisites' && inputs.official_hermes_phase != 'application' && inputs.official_hermes_phase != 'system-drive' && inputs.official_hermes_phase != 'npm-shims' && inputs.official_hermes_phase != 'export-controls' && !inputs.test_native_windows_runtime && !inputs.profile_native_windows }}
     runs-on: windows-11-vs2026-arm
     timeout-minutes: ${{ inputs.official_hermes_phase == 'runtime' && 180 || 90 }}
     steps:
@@ -688,6 +715,8 @@ jobs:
             ${{ runner.temp }}/official-hermes-runtime-candidate/
             ${{ runner.temp }}/official-hermes-runtime-build/
             ${{ runner.temp }}/official-hermes-runtime-phase.json
+            ${{ runner.temp }}/official-hermes-export-controls/
+            !${{ runner.temp }}/official-hermes-export-controls/tools/
             ${{ runner.temp }}/official-hermes-components/
             ${{ runner.temp }}/official-hermes-python/
             !${{ runner.temp }}/official-hermes-components/downloads/

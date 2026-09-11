@@ -63,6 +63,17 @@ def download(artifact, directory):
     return target
 
 
+def verified_build_archive(artifact, file):
+    file = Path(file).resolve(strict=True)
+    if (
+        not file.is_file()
+        or file.stat().st_size != artifact["size"]
+        or sha256(file) != artifact["sha256"]
+    ):
+        raise ValueError("The retained CI archive differs from its immutable input")
+    return file
+
+
 def extract_complete(archive, target, archive_format, strip_components=1):
     """Extract every member, retaining licenses and dynamic assets without pruning."""
     target = Path(target)
@@ -513,6 +524,9 @@ def main():
     parser.add_argument("--artifact-directory", required=True, type=Path)
     parser.add_argument("--component-lock", required=True, type=Path)
     parser.add_argument("--source-archive", type=Path)
+    parser.add_argument(
+        "--node-archive", type=Path, help="Verified CI export-control Node archive"
+    )
     parser.add_argument("--python-phase-evidence", type=Path)
     parser.add_argument("--build-tool-path", action="append", default=[], type=Path)
     parser.add_argument("--phase", choices=["python", "runtime"], default="runtime")
@@ -698,7 +712,11 @@ def main():
         downloads.mkdir()
         inputs = {}
         for artifact in lock["artifacts"]:
-            file = download(artifact, downloads)
+            file = (
+                verified_build_archive(artifact, args.node_archive)
+                if artifact["id"] == "node" and args.node_archive is not None
+                else download(artifact, downloads)
+            )
             inputs[artifact["id"]] = file
             if "destination" in artifact:
                 extract_complete(

@@ -97,6 +97,7 @@ class HashedReader:
 
 def archive_candidate(runtime, payload, destination):
     """Every inventoried regular byte and in-root link is retained; no pruning."""
+    runtime = Path(runtime).resolve(strict=True)
     with (
         destination.open("xb") as output,
         gzip.GzipFile(fileobj=output, mode="wb", mtime=0) as zipped,

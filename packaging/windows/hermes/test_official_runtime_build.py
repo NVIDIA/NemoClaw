@@ -41,6 +41,17 @@ class BuildControls(unittest.TestCase):
         self.root = Path(self.temporary.name)
         self.addCleanup(self.temporary.cleanup)
 
+    def test_retained_ci_archive_must_match_the_same_immutable_bytes(self):
+        file = self.root / "node-input.zip"
+        file.write_bytes(b"verified-archive-fixture")
+        record = {"size": file.stat().st_size, "sha256": builder.sha256(file)}
+        self.assertEqual(builder.verified_build_archive(record, file), file.resolve())
+        file.write_bytes(b"changed-archive--fixture")
+        with self.assertRaisesRegex(ValueError, "immutable input"):
+            builder.verified_build_archive(record, file)
+        with self.assertRaisesRegex(ValueError, "immutable input"):
+            builder.verified_build_archive({**record, "size": 0}, file)
+
     def test_complete_archive_keeps_licenses_and_dynamic_assets(self):
         archive = self.root / "input.zip"
         with zipfile.ZipFile(archive, "w") as handle:

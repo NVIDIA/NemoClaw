@@ -10,22 +10,29 @@ import { test } from "node:test";
 const exporter = fileURLToPath(new URL("./export-official-runtime.py", import.meta.url));
 const python = process.env.NEMOCLAW_TEST_PYTHON ?? "python3";
 const control = String.raw`
-import importlib.util,sys,json,pathlib,tarfile,hashlib
+import importlib.util,sys,json,pathlib,tarfile,hashlib,traceback
 spec=importlib.util.spec_from_file_location('exporter',sys.argv[1]);m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
 root=pathlib.Path(sys.argv[2]);mode=sys.argv[3];inv=m.load_inventory()
 build={'schemaVersion':1,'upstreamCommit':inv.UPSTREAM_COMMIT,'status':'runtime-provisioned','installedTier':'hash-verified (uv.lock)','sourceUnchanged':True,'fallbacks':[],'stages':[{'stage':s,'ok':True,'skipped':False} for s in inv.REQUIRED_STAGES]}
 build["nodeBuild"]={'schemaVersion': 1, 'profile': 'official-prebuilt-cli-web-tui', 'npmVersion': '12.0.2', 'upstreamLockUnchanged': True, 'neighboringBuildDependenciesAbsent': True, 'tuiNonTtyImports': True, 'desktopSelected': False, 'outputs': [{'path': 'ui-tui/dist'}, {'path': 'hermes_cli/web_dist'}], 'sidecars': [{'path': 'plugins/platforms/photon/sidecar'}, {'path': 'scripts/whatsapp-bridge'}]}
 build["selectedBrowserChain"]={'profile': 'official-prebuilt-cli-web-tui', 'browserUse': '0.13.10', 'agentBrowser': 'agent-browser/bin/agent-browser-win32-x64.exe', 'runtimeQualified': False}
 try:
- if mode in ('archive','drift','link'):
+ if mode in ('archive','drift','link','root-alias','link-drift','alias-outside'):
   runtime=root/'runtime';runtime.mkdir();(runtime/'empty').mkdir();(runtime/'LICENSE').write_bytes(b'license');(runtime/'dynamic.dat').write_bytes(b'opaque-runtime-bytes');(runtime/'runtime.d.ts').write_text('unpruned');
-  if mode=='link':(runtime/'resource-link').symlink_to(runtime/'dynamic.dat')
+  if mode in ('link','root-alias','link-drift','alias-outside'):(runtime/'resource-link').symlink_to(runtime/'dynamic.dat')
+  lexical_root=str(runtime);canonical_root=str(runtime.resolve())
+  if mode in ('root-alias','alias-outside'):
+   alias=root/'runtime-alias';alias.symlink_to(runtime,target_is_directory=True);runtime=alias;lexical_root=str(runtime);canonical_root=str(runtime.resolve())
+  if mode=='alias-outside':
+   (root/'outside').write_bytes(b'outside');(runtime/'resource-link').unlink();(runtime/'resource-link').symlink_to(root/'outside')
   payload=inv.inventory(runtime)
   if mode=='drift':(runtime/'dynamic.dat').write_bytes(b'changed')
+  if mode=='link-drift':
+   (root/'outside').write_bytes(b'outside');(runtime/'resource-link').unlink();(runtime/'resource-link').symlink_to(root/'outside')
   artifact=root/'candidate.tar.gz';result=m.archive_candidate(runtime,payload,artifact)
   with tarfile.open(artifact) as handle:
    members=[{'name':i.name,'link':i.linkname,'bytes':handle.extractfile(i).read().hex() if i.isfile() else None} for i in handle]
-  result.update(members=members,payload=payload)
+  result.update(members=members,payload=payload,lexicalRoot=lexical_root,canonicalRoot=canonical_root)
  elif mode=='outside-link':
   runtime=root/'runtime';runtime.mkdir();(root/'outside').write_text('not-a-runtime-file');(runtime/'bad').symlink_to(root/'outside');result=inv.inventory(runtime)
  elif mode=='build-only':inv.validate_build_receipt(build);result={'buildOnlyAccepted':True}
@@ -36,7 +43,7 @@ try:
  elif mode=='missing-stage':build['stages']=[];inv.validate_build_receipt(build);result=None
  elif mode=='wrong-adapter':m.validate_adaptation(root,{'schemaVersion':1},'0'*64);result=None
  print(json.dumps({'ok':True,'result':result}))
-except BaseException as error:print(json.dumps({'ok':False,'type':type(error).__name__,'error':str(error)}))
+except BaseException as error:print(json.dumps({'ok':False,'type':type(error).__name__,'error':str(error),'traceback':traceback.format_exc()[-12000:]}))
 `;
 function run(mode: string) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "runtime-export-"));
@@ -46,14 +53,22 @@ function run(mode: string) {
       timeout: 10_000,
     });
     assert.equal(p.status, 0, p.stderr);
-    return JSON.parse(p.stdout);
+    const result = JSON.parse(p.stdout);
+    const evidence = process.env.NEMOCLAW_EXPORT_CONTROL_EVIDENCE;
+    if (evidence)
+      fs.writeFileSync(
+        path.join(evidence, `${mode}.json`),
+        JSON.stringify({ fixtureRoot: root, ...result }, null, 2) + "\n",
+        { flag: "wx" },
+      );
+    return result;
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
 }
 test("candidate archive retains every regular byte, empty directory and unproven declaration", () => {
   const value = run("archive");
-  assert.equal(value.ok, true);
+  assert.equal(value.ok, true, JSON.stringify(value));
   assert(value.result.bytes > 0);
   const entries = new Map(
     value.result.members.map((m: { name: string; bytes: string | null }) => [m.name, m.bytes]),
@@ -70,12 +85,25 @@ test("a byte change after inventory prevents candidate archival", () =>
   assert.match(run("drift").error, /changed/u));
 test("safe owned links retain portable in-root targets", () => {
   const value = run("link");
-  assert.equal(value.ok, true);
+  assert.equal(value.ok, true, JSON.stringify(value));
   assert.equal(
     value.result.members.find((m: { name: string }) => m.name === "runtime/resource-link").link,
     "dynamic.dat",
   );
 });
+test("a real alias of the owned root preserves the same safe portable link", () => {
+  const value = run("root-alias");
+  assert.equal(value.ok, true, JSON.stringify(value));
+  assert.notEqual(value.result.lexicalRoot, value.result.canonicalRoot);
+  assert.equal(
+    value.result.members.find((m: { name: string }) => m.name === "runtime/resource-link").link,
+    "dynamic.dat",
+  );
+});
+test("root alias normalization still refuses an outside target", () =>
+  assert.match(run("alias-outside").error, /escapes/u));
+test("a link redirected outside after inventory cannot be archived", () =>
+  assert.match(run("link-drift").error, /outside target/u));
 test("an outside runtime link cannot become candidate bytes", () =>
   assert.match(run("outside-link").error, /escapes/u));
 test("candidate build admission does not weaken the separate failed MXC qualification gate", () => {

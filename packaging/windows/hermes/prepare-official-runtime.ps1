@@ -28,6 +28,13 @@ try {
     if($LASTEXITCODE -ne 0){throw 'The official runtime controller controls failed before provisioning.'}
     & $baseControlPython -I (Join-Path $PSScriptRoot 'test_generated_finder_paths.py')
     if($LASTEXITCODE -ne 0){throw 'The generated canonical finder controls failed before provisioning.'}
+    # Reject portable-export fixture failures before any expensive dependency build.
+    $receipt.phase='candidate-export-controls'
+    $exportControls=Join-Path (Split-Path -Parent $ArtifactDirectory) 'official-hermes-export-controls'
+    & (Join-Path $PSScriptRoot 'test-official-runtime-export.ps1') -ArtifactDirectory $exportControls -PythonPath $baseControlPython
+    $exportInputs=Get-Content -LiteralPath (Join-Path $exportControls 'export-controls.json') -Raw|ConvertFrom-Json
+    if ($exportInputs.status -cne 'pass') { throw 'The exact Windows export controls did not pass.' }
+    $receipt.phase='python-prerequisites'
     # Same selected VS environment and exact current native dependency controller.
     # Failure here precedes any large browser or desktop dependency download.
     & (Join-Path $PSScriptRoot 'prepare-official-python.ps1') -RuntimeRoot $RuntimeRoot `
@@ -47,14 +54,10 @@ try {
     }
     $receipt.phase='complete-official-stages'
     $arguments=@('-I',(Join-Path $PSScriptRoot 'provision-official-runtime.py'),'--phase','runtime','--runtime-root',$RuntimeRoot,
-        '--artifact-directory',$build,'--component-lock',$components,'--source-archive',$archive,'--python-phase-evidence',$ArtifactDirectory)
+        '--artifact-directory',$build,'--component-lock',$components,'--source-archive',$archive,'--python-phase-evidence',$ArtifactDirectory,'--node-archive',$exportInputs.nodeArchive)
     foreach($directory in $phase.buildToolPaths){$arguments+=@('--build-tool-path',[string]$directory)}
     & $python @arguments
     if($LASTEXITCODE -ne 0){throw 'The complete official runtime stages failed; no candidate archive may be admitted.'}
-    $receipt.phase='candidate-export-controls'
-    $env:NEMOCLAW_TEST_PYTHON=$python
-    & (Join-Path $RuntimeRoot 'node\node.exe') --experimental-strip-types --no-warnings --test (Join-Path $PSScriptRoot 'official-runtime-export.test.mts')
-    if($LASTEXITCODE -ne 0){throw 'The candidate byte-export controls failed.'}
     $receipt.phase='generated-metadata-adaptation'
     $adaptation=Join-Path $build 'native-adaptation.json'
     & $python -I (Join-Path $PSScriptRoot 'prepare-native-runtime.py') `
