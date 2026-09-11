@@ -347,7 +347,7 @@ async function assertConcurrentAddSerialized(
     originalResult: rejected[0]!,
     retry: () =>
       host.nemoclaw(args, {
-        artifactName: `${options.artifactPrefix}-mcp-concurrent-add-after-transient-failure`,
+        artifactName: `${options.artifactPrefix}-mcp-concurrent-add-after-restart-transport-failure`,
         env,
         redactionValues: [HOST_SECRET],
         timeoutMs: MCP_MUTATION_TIMEOUT_MS[options.expectedAdapter],

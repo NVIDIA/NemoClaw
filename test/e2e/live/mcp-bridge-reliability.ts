@@ -272,7 +272,6 @@ const HERMES_RESTART_SUCCESS_PREFIX = new RegExp(
   ].join("\n")}$`,
   "u",
 );
-
 const PORTABLE_HOST_LOCK_CONTENTION =
   /^Error: Failed to acquire lock on \/[^\n]*\/\.nemoclaw-portable-host\.lock after 120 retries$/u;
 

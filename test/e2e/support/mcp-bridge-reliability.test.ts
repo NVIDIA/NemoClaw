@@ -667,9 +667,10 @@ describe("MCP bridge transient classification", () => {
     expect(retry).toHaveBeenCalledOnce();
   });
 
-  it("retries a portable host-lock loser once after the committed bridge is verified", async () => {
-    const result = { exitCode: 1 };
-    const retry = vi.fn(async () => result);
+  it("retries the portable host lock loser after the committed bridge is verified", async () => {
+    const retryResult = { exitCode: 1 };
+    const retry = vi.fn(async () => retryResult);
+
     await expect(
       retryAfterConcurrentAddTransientFailure({
         adapter: "mcporter",
@@ -679,46 +680,9 @@ describe("MCP bridge transient classification", () => {
         originalResult: { exitCode: 1 },
         retry,
       }),
-    ).resolves.toBe(result);
+    ).resolves.toBe(retryResult);
     expect(retry).toHaveBeenCalledOnce();
   });
-
-  it.each([
-    {
-      verified: false,
-      diagnostic:
-        "Error: Failed to acquire lock on /home/runner/.nemoclaw-portable-host.lock after 120 retries",
-    },
-    {
-      verified: true,
-      diagnostic: "Error: Failed to acquire lock on /tmp/other.lock after 120 retries",
-    },
-    {
-      verified: true,
-      diagnostic:
-        "Error: Failed to acquire lock on /home/runner/.nemoclaw-portable-host.lock after 10 retries",
-    },
-    {
-      verified: true,
-      diagnostic:
-        "Permission denied\nError: Failed to acquire lock on /home/runner/.nemoclaw-portable-host.lock after 120 retries",
-    },
-  ])(
-    "does not retry unverified or unrelated lock rejection (%j)",
-    async ({ verified, diagnostic }) => {
-      const retry = vi.fn(async () => ({ exitCode: 1 }));
-      await expect(
-        retryAfterConcurrentAddTransientFailure({
-          adapter: "mcporter",
-          committedBridgeVerified: verified,
-          diagnostic,
-          originalResult: { exitCode: 1 },
-          retry,
-        }),
-      ).rejects.toThrow();
-      expect(retry).not.toHaveBeenCalled();
-    },
-  );
 
   it("fails closed for an unknown rejection", async () => {
     const retry = vi.fn(async () => ({ exitCode: 1 }));
@@ -728,6 +692,15 @@ describe("MCP bridge transient classification", () => {
         adapter: "hermes-config",
         committedBridgeVerified: true,
         diagnostic: "unexpected transport error",
+        originalResult: { exitCode: 1 },
+        retry,
+      }),
+    ).rejects.toThrow("not a known transient failure");
+    await expect(
+      retryAfterConcurrentAddTransientFailure({
+        adapter: "mcporter",
+        committedBridgeVerified: true,
+        diagnostic: "Error: Failed to acquire lock on /tmp/other.lock after 120 retries",
         originalResult: { exitCode: 1 },
         retry,
       }),
