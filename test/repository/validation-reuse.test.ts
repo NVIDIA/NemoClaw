@@ -205,7 +205,7 @@ describe("validation reuse", () => {
     const options = check();
     runCachedCommand(options);
     runCachedCommand({ ...options, command: [process.execPath, "--help"] });
-    runCachedCommand({ ...options, env: { NODE_OPTIONS: "--max-old-space-size=5120" } });
+    runCachedCommand({ ...options, env: { NODE_OPTIONS: "--trace-warnings" } });
     expect(options.execute).toHaveBeenCalledTimes(3);
   });
 
@@ -298,8 +298,14 @@ describe("validation reuse", () => {
       }),
     ).toEqual({
       PATH: ["/tools", "/usr/bin"].join(path.delimiter),
-      NODE_OPTIONS: "--max-old-space-size=5120",
+      NODE_OPTIONS: "--max-old-space-size=8192",
       npm_config_yes: "false",
+    });
+  });
+
+  it("adds the validation heap limit when NODE_OPTIONS is absent", () => {
+    expect(validationEnvironment({})).toMatchObject({
+      NODE_OPTIONS: "--max-old-space-size=8192",
     });
   });
 });
