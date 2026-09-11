@@ -87,7 +87,7 @@ function isPublicSandboxConnectFlag(arg: string | undefined): boolean {
 
 /** A sandbox registered under any gateway-port root on this host is addressable by name. */
 function findKnownSandboxEntry(name: string): import("../state/registry").SandboxEntry | null {
-  return registry().getSandbox(name) ?? findSandboxAcrossGatewayRoots(name)?.entry ?? null;
+  return findSandboxAcrossGatewayRoots(name)?.entry ?? registry().getSandbox(name) ?? null;
 }
 
 function hasRegisteredSandbox(name: string): boolean {

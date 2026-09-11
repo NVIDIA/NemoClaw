@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import { vi } from "vitest";
 
 type SandboxStub = { name: string; pendingRouteReservation?: true; createdAt?: string };
@@ -35,6 +39,8 @@ type DirectPublicDispatchOptions = {
   migrationError?: Error;
   /** Error injected by sandbox registry lookups. */
   registryReadError?: Error;
+  /** Preserve a caller-provided HOME containing real cross-port registry fixtures. */
+  preserveHome?: boolean;
 };
 
 const requireCache = require.cache as Record<string, NodeModule | undefined>;
@@ -77,6 +83,11 @@ export async function withDirectPublicDispatch(
   const priorRegistryRecovery = requireCache[registryRecoveryPath];
   const priorRunner = requireCache[runnerPath];
   const priorDockerHost = process.env.DOCKER_HOST;
+  const priorHome = process.env.HOME;
+  const isolatedHome = options.preserveHome
+    ? null
+    : fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-public-dispatch-"));
+  if (isolatedHome) process.env.HOME = isolatedHome;
   const pendingSandboxNames = new Set(options.pendingSandboxNames ?? []);
   const sandboxes = new Map<string, SandboxStub>(
     (options.sandboxNames ?? []).map((name) => [
@@ -195,5 +206,11 @@ export async function withDirectPublicDispatch(
     } else {
       process.env.DOCKER_HOST = priorDockerHost;
     }
+    if (priorHome === undefined) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = priorHome;
+    }
+    if (isolatedHome) fs.rmSync(isolatedHome, { recursive: true, force: true });
   }
 }

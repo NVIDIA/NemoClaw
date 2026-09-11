@@ -1192,7 +1192,7 @@ describe("CLI dispatch", () => {
             expect.anything(),
           );
         },
-        { sandboxNames: ["owner-b"] },
+        { sandboxNames: ["owner-b"], preserveHome: true },
       );
     });
   });
@@ -1212,7 +1212,7 @@ describe("CLI dispatch", () => {
             expect.anything(),
           );
         },
-        { sandboxNames: ["owner-b"] },
+        { sandboxNames: ["owner-b"], preserveHome: true },
       );
     });
   });
@@ -1228,7 +1228,7 @@ describe("CLI dispatch", () => {
           expect(output).toContain("Registered sandboxes: owner-b, owner-a");
           expect(exitSpy).toHaveBeenCalledWith(1);
         },
-        { sandboxNames: ["owner-b"] },
+        { sandboxNames: ["owner-b"], preserveHome: true },
       );
     });
   });

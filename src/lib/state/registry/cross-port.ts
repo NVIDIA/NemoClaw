@@ -1,11 +1,16 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import fs from "node:fs";
-
 import path from "node:path";
 
-import { GATEWAYS_SUBDIR, STATE_DIR_NAME, resolveHome } from "../state-root";
+import {
+  DEFAULT_GATEWAY_PORT,
+  listGatewayStateRoots,
+  readGatewayRegistryFile,
+  registryEntryGatewayPort,
+  resolveHome,
+  type GatewayRegistryEntry,
+} from "../gateway-registry";
 import type { SandboxEntry } from "./types";
 
 export interface CrossPortSandboxHit {
@@ -15,76 +20,53 @@ export interface CrossPortSandboxHit {
   registryFile: string;
 }
 
-function readRegistryFile(file: string): Record<string, unknown> | null {
-  let raw: string;
-  try {
-    raw = fs.readFileSync(file, "utf-8");
-  } catch {
-    return null;
-  }
-  try {
-    const parsed: unknown = JSON.parse(raw);
-    if (parsed && typeof parsed === "object") return parsed as Record<string, unknown>;
-  } catch {
-    return null;
-  }
-  return null;
+function crossPortStateError(message: string): Error {
+  return new Error(`Cannot safely inspect NemoClaw gateway state: ${message}`);
 }
 
-function isSandboxEntryLike(value: unknown): value is SandboxEntry {
-  return (
-    typeof value === "object" && value !== null && typeof (value as SandboxEntry).name === "string"
-  );
-}
-
-interface RegistryRootScan {
-  file: string;
-  /** Port authority for this root; `undefined` for the default-port base root. */
-  gatewayPort: number | undefined;
-}
-
-function listRegistryRootCandidates(home: string): RegistryRootScan[] {
-  const base = path.join(home, STATE_DIR_NAME);
-  const candidates: RegistryRootScan[] = [
-    { file: path.join(base, "sandboxes.json"), gatewayPort: undefined },
-  ];
-  const gatewaysDir = path.join(base, GATEWAYS_SUBDIR);
-  let portDirs: fs.Dirent[];
-  try {
-    portDirs = fs.readdirSync(gatewaysDir, { withFileTypes: true });
-  } catch {
-    return candidates;
+function normalizeEntryForRoot(
+  entry: GatewayRegistryEntry,
+  stateGatewayPort: number,
+): GatewayRegistryEntry {
+  if (
+    stateGatewayPort !== DEFAULT_GATEWAY_PORT &&
+    (entry.gatewayPort === undefined || entry.gatewayPort === null) &&
+    (entry.gatewayName === undefined || entry.gatewayName === null)
+  ) {
+    return { ...entry, gatewayPort: stateGatewayPort };
   }
-  const scans: RegistryRootScan[] = [];
-  for (const dirent of portDirs) {
-    if (!dirent.isDirectory()) continue;
-    if (!/^\d+$/.test(dirent.name)) continue;
-    const gatewayPort = Number(dirent.name);
-    if (!Number.isInteger(gatewayPort) || gatewayPort < 1 || gatewayPort > 65535) continue;
-    scans.push({ file: path.join(gatewaysDir, dirent.name, "sandboxes.json"), gatewayPort });
-  }
-  scans.sort((left, right) => (left.gatewayPort ?? 0) - (right.gatewayPort ?? 0));
-  return [...candidates, ...scans];
+  return entry;
 }
 
-function entriesFromRoot(scan: RegistryRootScan): Array<[string, SandboxEntry]> {
-  const document = readRegistryFile(scan.file);
-  if (!document) return [];
-  const sandboxes = document.sandboxes;
-  if (!sandboxes || typeof sandboxes !== "object") return [];
-  const entries: Array<[string, SandboxEntry]> = [];
-  for (const [name, value] of Object.entries(sandboxes)) {
-    if (!isSandboxEntryLike(value)) continue;
-    const entry = { ...value };
-    // A sibling-port directory is the port authority for an entry that
-    // predates the recorded gatewayPort field; entries in the default base
-    // root keep their absent-field semantics (the bare default gateway).
-    if (!Number.isInteger(entry.gatewayPort) && scan.gatewayPort !== undefined) {
-      entry.gatewayPort = scan.gatewayPort;
+function listSandboxHitsAcrossGatewayRoots(home: string): CrossPortSandboxHit[] {
+  const hits: CrossPortSandboxHit[] = [];
+  for (const state of listGatewayStateRoots(home)) {
+    const registryFile = path.join(state.root, "sandboxes.json");
+    const registry = readGatewayRegistryFile(home, registryFile);
+    if (!registry) continue;
+
+    for (const rawEntry of Object.values(registry.sandboxes)) {
+      const entry = normalizeEntryForRoot(rawEntry, state.gatewayPort);
+      const gatewayPort = registryEntryGatewayPort(entry);
+      if (state.gatewayPort !== DEFAULT_GATEWAY_PORT && gatewayPort !== state.gatewayPort) {
+        throw crossPortStateError(
+          `${registryFile} contains sandbox ${JSON.stringify(entry.name)} for gateway port ${String(gatewayPort)}`,
+        );
+      }
+      const hasRecordedGatewayIdentity =
+        (entry.gatewayPort !== undefined && entry.gatewayPort !== null) ||
+        (entry.gatewayName !== undefined && entry.gatewayName !== null);
+      hits.push({
+        entry: entry as SandboxEntry,
+        gatewayPort:
+          state.gatewayPort === DEFAULT_GATEWAY_PORT && !hasRecordedGatewayIdentity
+            ? null
+            : gatewayPort,
+        registryFile,
+      });
     }
-    entries.push([name, entry]);
   }
-  return entries;
+  return hits;
 }
 
 /**
@@ -98,27 +80,26 @@ export function findSandboxAcrossGatewayRoots(
   sandboxName: string,
   home: string = resolveHome(),
 ): CrossPortSandboxHit | null {
-  for (const scan of listRegistryRootCandidates(home)) {
-    for (const [name, entry] of entriesFromRoot(scan)) {
-      if (name === sandboxName) {
-        const gatewayPort = Number.isInteger(entry.gatewayPort) ? Number(entry.gatewayPort) : null;
-        return { entry, gatewayPort, registryFile: scan.file };
-      }
-    }
+  const matches = listSandboxHitsAcrossGatewayRoots(home).filter(
+    ({ entry }) => entry.name === sandboxName,
+  );
+  if (matches.length === 0) return null;
+  if (matches.length > 1) {
+    throw crossPortStateError(
+      `sandbox ${JSON.stringify(sandboxName)} appears in multiple gateway registries`,
+    );
   }
-  return null;
+  return matches[0];
 }
 
 function listNamesAcrossGatewayRoots(published: boolean, home: string): string[] {
   const names: string[] = [];
   const seen = new Set<string>();
-  for (const scan of listRegistryRootCandidates(home)) {
-    for (const [name, entry] of entriesFromRoot(scan)) {
-      if ((entry.pendingRouteReservation === true) !== !published) continue;
-      if (seen.has(name)) continue;
-      seen.add(name);
-      names.push(name);
-    }
+  for (const { entry } of listSandboxHitsAcrossGatewayRoots(home)) {
+    if ((entry.pendingRouteReservation === true) !== !published) continue;
+    if (seen.has(entry.name)) continue;
+    seen.add(entry.name);
+    names.push(entry.name);
   }
   return names;
 }

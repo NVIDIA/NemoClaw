@@ -67,15 +67,17 @@ describe("findSandboxAcrossGatewayRoots", () => {
     expect(hit?.entry.gatewayPort).toBe(8456);
   });
 
-  it("prefers the base root for an entry present in both roots", async () => {
+  it("rejects an ambiguous name present in multiple registry roots", async () => {
     writeRegistry("", { dup: { name: "dup", gatewayPort: 8090 } });
     writeRegistry(path.join("gateways", "8245"), { dup: { name: "dup", gatewayPort: 8245 } });
     const { findSandboxAcrossGatewayRoots } = await loadModule();
 
-    expect(findSandboxAcrossGatewayRoots("dup")?.gatewayPort).toBe(8090);
+    expect(() => findSandboxAcrossGatewayRoots("dup")).toThrow(
+      'Cannot safely inspect NemoClaw gateway state: sandbox "dup" appears in multiple gateway registries',
+    );
   });
 
-  it("tolerates unreadable sibling roots and non-port directories", async () => {
+  it("ignores non-port directories but rejects a malformed sibling registry", async () => {
     writeRegistry("", { "owner-b": { name: "owner-b", gatewayPort: 8090 } });
     const gatewaysDir = path.join(home, ".nemoclaw", "gateways");
     fs.mkdirSync(gatewaysDir, { recursive: true });
@@ -84,8 +86,26 @@ describe("findSandboxAcrossGatewayRoots", () => {
     fs.writeFileSync(path.join(gatewaysDir, "8245", "sandboxes.json"), "{not json");
     const { findSandboxAcrossGatewayRoots } = await loadModule();
 
-    expect(findSandboxAcrossGatewayRoots("owner-b")?.gatewayPort).toBe(8090);
-    expect(findSandboxAcrossGatewayRoots("owner-a")).toBeNull();
+    expect(() => findSandboxAcrossGatewayRoots("owner-b")).toThrow(
+      "Cannot safely inspect NemoClaw gateway state:",
+    );
+  });
+
+  it("rejects a symbolic-link gateway root", async () => {
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cross-port-outside-"));
+    writeRegistry("", { "owner-b": { name: "owner-b", gatewayPort: 8090 } });
+    const gatewaysDir = path.join(home, ".nemoclaw", "gateways");
+    fs.mkdirSync(gatewaysDir, { recursive: true });
+    fs.symlinkSync(outside, path.join(gatewaysDir, "8245"));
+    const { findSandboxAcrossGatewayRoots } = await loadModule();
+
+    try {
+      expect(() => findSandboxAcrossGatewayRoots("owner-b")).toThrow(
+        "Cannot safely inspect NemoClaw gateway state:",
+      );
+    } finally {
+      fs.rmSync(outside, { recursive: true, force: true });
+    }
   });
 });
 
