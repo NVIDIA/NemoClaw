@@ -19,7 +19,7 @@ it.each([
 ])(
   "preserves failed gateway removal and reports Docker availability when $condition (#11438)",
   /** Verify Docker recovery guidance without allowing cleanup after gateway removal fails. */
-  ({ dockerInstalled, dockerStatus, recovery }) => {
+  async ({ dockerInstalled, dockerStatus, recovery }) => {
     const warnings: string[] = [];
     const logs: string[] = [];
     const rmSync = vi.fn();
@@ -28,7 +28,7 @@ it.each([
       ["gateway list -o json", { ...ok, stdout: JSON.stringify([{ name: "nemoclaw" }]) }],
       ["gateway remove nemoclaw", { ...ok, status: 1 }],
     ]);
-    const result = runUninstallPlan(
+    const result = await runUninstallPlan(
       { assumeYes: true, deleteModels: false, keepOpenShell: true },
       withProvenManagedGatewayProcess({
         isPortFree: () => true,
