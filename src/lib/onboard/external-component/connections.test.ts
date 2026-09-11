@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import assert from "node:assert/strict";
 import http from "node:http";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -9,6 +10,8 @@ import { parse as parseToml } from "smol-toml";
 import { PEM, LEAF_PEM, PRIVATE_KEY } from "../__test-helpers__/corporate-ca-fixtures";
 import { baseGatewayEnv } from "../../../../test/support/openshell-gateway-config-helpers";
 import { resolveRegisteredRuntimeProvider } from "../runtime-provider/selection";
+import * as runtimeSelection from "../runtime-provider/selection";
+import { configureDockerDriverGatewayExternalComponent } from "../docker-driver-gateway-env";
 import {
   prepareDockerDriverGatewayConfigEnv,
   readExternalComponentGatewayPreparation,
@@ -73,7 +76,7 @@ function fixture() {
       gatewayRuntime: runtime,
       externalComponent: settings,
     });
-  return { root, ca, state, env, component, settings, runtime, inspect, write };
+  return { root, ca, state, env, component, settings, runtime, provider, gateway, inspect, write };
 }
 
 describe("external component connection declaration", () => {
@@ -223,7 +226,12 @@ describe("managed gateway connection configuration", () => {
     });
     expect(() => f.write()).not.toThrow();
     expect(fs.readFileSync(f.env.OPENSHELL_GATEWAY_CONFIG!, "utf-8")).toBe(config);
-    const preparation = readExternalComponentGatewayPreparation(f.env, f.settings, f.runtime);
+    vi.spyOn(runtimeSelection, "resolveConfiguredRuntimeProvider").mockReturnValue({
+      ...f.provider,
+      gateway: { ...f.gateway, observeHostRuntime: () => f.runtime },
+    });
+    const preparation = configureDockerDriverGatewayExternalComponent(f.env, f.settings);
+    assert.ok(preparation, "configuration must return the component preparation");
     expect(preparation.gateway.publicKeyPem).toContain("BEGIN PUBLIC KEY");
     expect(preparation.gateway.extensionTokenTtlSecs).toBe(900);
     expect(preparation.network).toEqual({ gatewayIp: "172.30.115.1", subnet: "172.30.115.0/24" });
