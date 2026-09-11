@@ -2,17 +2,21 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import assert from "node:assert/strict";
-import { execFile, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterAll, describe, it, vi } from "vitest";
+import { afterAll, describe, it, type TestContext, vi } from "vitest";
+import {
+  runOnboardProcessAsync,
+  type OnboardProcessResult,
+} from "../../helpers/onboard-child-process-harness";
 
 // Every case owns a separate HOME; keep child-process overlap bounded on CI.
 vi.setConfig({ maxConcurrency: 3 });
 
-type ScriptResult = { readonly status: number; readonly stderr: string; readonly stdout: string };
+type ChildTestContext = Pick<TestContext, "onTestFinished" | "signal">;
 const CHILD_COMPILE_CACHE = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-ollama-node-cache-"));
 
 afterAll(() => fs.rmSync(CHILD_COMPILE_CACHE, { recursive: true, force: true }));
@@ -21,23 +25,13 @@ function runNodeScript(
   repoRoot: string,
   scriptPath: string,
   env: NodeJS.ProcessEnv,
-): Promise<ScriptResult> {
-  return new Promise((resolve, reject) => {
-    execFile(
-      process.execPath,
-      [scriptPath],
-      {
-        cwd: repoRoot,
-        encoding: "utf-8",
-        env: { ...env, NODE_COMPILE_CACHE: CHILD_COMPILE_CACHE },
-      },
-      (error, stdout, stderr) => {
-        const exitCode = error?.code;
-        error && typeof exitCode !== "number"
-          ? reject(error)
-          : resolve({ status: typeof exitCode === "number" ? exitCode : 0, stderr, stdout });
-      },
-    );
+  context: ChildTestContext,
+): Promise<OnboardProcessResult> {
+  return runOnboardProcessAsync([scriptPath], {
+    cwd: repoRoot,
+    env: { ...env, NODE_COMPILE_CACHE: CHILD_COMPILE_CACHE },
+    timeoutMs: 45_000,
+    context,
   });
 }
 
@@ -50,12 +44,15 @@ function parseStdoutJson<T>(stdout: string): T {
   return JSON.parse(line);
 }
 
-async function runProxyRecoveryRefusal(options: {
-  readonly backendKind: "ollama" | "compatible-endpoint" | null;
-  readonly backendUrl: string;
-  readonly descriptorSchemaVersion?: number;
-  readonly descriptorUrl?: string;
-}): Promise<ScriptResult> {
+async function runProxyRecoveryRefusal(
+  options: {
+    readonly backendKind: "ollama" | "compatible-endpoint" | null;
+    readonly backendUrl: string;
+    readonly descriptorSchemaVersion?: number;
+    readonly descriptorUrl?: string;
+  },
+  context: ChildTestContext,
+): Promise<OnboardProcessResult> {
   const repoRoot = path.join(import.meta.dirname, "../../..");
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-ollama-proxy-refusal-"));
   const scriptPath = path.join(tmpDir, "recovery-refusal-check.js");
@@ -110,14 +107,14 @@ proxy.ensureOllamaAuthProxy();
     const childEnv: NodeJS.ProcessEnv = { ...process.env, HOME: tmpDir };
     delete childEnv.NEMOCLAW_OLLAMA_PORT;
     delete childEnv.NEMOCLAW_OLLAMA_PROXY_PORT;
-    return await runNodeScript(repoRoot, scriptPath, childEnv);
+    return await runNodeScript(repoRoot, scriptPath, childEnv, context);
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
 }
 
 describe.concurrent("ollama auth proxy recovery", () => {
-  it.each([
+  it.for([
     {
       name: "compatible endpoint on the Ollama port",
       backendKind: "compatible-endpoint" as const,
@@ -148,11 +145,14 @@ describe.concurrent("ollama auth proxy recovery", () => {
     },
   ])(
     "renders the structured bind refusal for $name",
-    async ({ backendKind, backendUrl, expected, unexpected }) => {
-      const result = await runProxyRecoveryRefusal({
-        backendKind,
-        backendUrl,
-      });
+    async ({ backendKind, backendUrl, expected, unexpected }, context) => {
+      const result = await runProxyRecoveryRefusal(
+        {
+          backendKind,
+          backendUrl,
+        },
+        context,
+      );
 
       assert.equal(result.status, 0, result.stderr);
       assert.match(result.stderr, expected);
@@ -161,31 +161,37 @@ describe.concurrent("ollama auth proxy recovery", () => {
     },
   );
 
-  it("ignores a descriptor whose URL does not match the legacy route", async () => {
-    const result = await runProxyRecoveryRefusal({
-      backendKind: "compatible-endpoint",
-      backendUrl: "http://127.0.0.1:11434",
-      descriptorUrl: "http://127.0.0.1:8000",
-    });
+  it("ignores a descriptor whose URL does not match the legacy route", async (context) => {
+    const result = await runProxyRecoveryRefusal(
+      {
+        backendKind: "compatible-endpoint",
+        backendUrl: "http://127.0.0.1:11434",
+        descriptorUrl: "http://127.0.0.1:8000",
+      },
+      context,
+    );
 
     assert.equal(result.status, 0, result.stderr);
     assert.match(result.stderr, /The inference backend at 127\.0\.0\.1:11434/);
     assert.doesNotMatch(result.stderr, /OLLAMA_HOST=/);
   });
 
-  it("ignores an unsupported descriptor schema", async () => {
-    const result = await runProxyRecoveryRefusal({
-      backendKind: "ollama",
-      backendUrl: "http://127.0.0.1:11434",
-      descriptorSchemaVersion: 2,
-    });
+  it("ignores an unsupported descriptor schema", async (context) => {
+    const result = await runProxyRecoveryRefusal(
+      {
+        backendKind: "ollama",
+        backendUrl: "http://127.0.0.1:11434",
+        descriptorSchemaVersion: 2,
+      },
+      context,
+    );
 
     assert.equal(result.status, 0, result.stderr);
     assert.match(result.stderr, /The inference backend at 127\.0\.0\.1:11434/);
     assert.doesNotMatch(result.stderr, /OLLAMA_HOST=/);
   });
 
-  it("restarts with the persisted token and compatible backend when the pid is stale (#7424)", async () => {
+  it("restarts with the persisted token and compatible backend when the pid is stale (#7424)", async (context) => {
     const repoRoot = path.join(import.meta.dirname, "../../..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-ollama-proxy-restart-"));
     const scriptPath = path.join(tmpDir, "restart-proxy-check.js");
@@ -246,10 +252,15 @@ console.log(JSON.stringify({
 `;
     fs.writeFileSync(scriptPath, script);
 
-    const result = await runNodeScript(repoRoot, scriptPath, {
-      ...process.env,
-      HOME: tmpDir,
-    });
+    const result = await runNodeScript(
+      repoRoot,
+      scriptPath,
+      {
+        ...process.env,
+        HOME: tmpDir,
+      },
+      context,
+    );
 
     assert.equal(result.status, 0, result.stderr);
     const payload = parseStdoutJson<{
@@ -279,7 +290,7 @@ console.log(JSON.stringify({
     assert.equal(payload.proxySpawns[0].env.OLLAMA_BACKEND_URL, "http://127.0.0.1:8000");
   });
 
-  it("keeps the existing proxy when the recorded pid still points to the auth proxy", async () => {
+  it("keeps the existing proxy when the recorded pid still points to the auth proxy", async (context) => {
     const repoRoot = path.join(import.meta.dirname, "../../..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-ollama-proxy-keep-"));
     const scriptPath = path.join(tmpDir, "keep-proxy-check.js");
@@ -326,13 +337,18 @@ console.log(JSON.stringify({ proxySpawns, curlEnv }));
 `;
     fs.writeFileSync(scriptPath, script);
 
-    const result = await runNodeScript(repoRoot, scriptPath, {
-      ...process.env,
-      HTTP_PROXY: "http://proxy.invalid:8888",
-      HOME: tmpDir,
-      NVIDIA_INFERENCE_API_KEY: "must-not-leak",
-      NO_PROXY: "",
-    });
+    const result = await runNodeScript(
+      repoRoot,
+      scriptPath,
+      {
+        ...process.env,
+        HTTP_PROXY: "http://proxy.invalid:8888",
+        HOME: tmpDir,
+        NVIDIA_INFERENCE_API_KEY: "must-not-leak",
+        NO_PROXY: "",
+      },
+      context,
+    );
 
     assert.equal(result.status, 0, result.stderr);
     const payload = parseStdoutJson<{
@@ -346,7 +362,7 @@ console.log(JSON.stringify({ proxySpawns, curlEnv }));
     assert.match(payload.curlEnv.NO_PROXY, /(^|,)localhost(,|$)/);
   });
 
-  it("keeps the existing proxy when the token is accepted but the backend is unavailable", async () => {
+  it("keeps the existing proxy when the token is accepted but the backend is unavailable", async (context) => {
     const repoRoot = path.join(import.meta.dirname, "../../..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-ollama-proxy-backend-"));
     const scriptPath = path.join(tmpDir, "backend-down-check.js");
@@ -389,17 +405,22 @@ console.log(JSON.stringify({ proxySpawns }));
 `;
     fs.writeFileSync(scriptPath, script);
 
-    const result = await runNodeScript(repoRoot, scriptPath, {
-      ...process.env,
-      HOME: tmpDir,
-    });
+    const result = await runNodeScript(
+      repoRoot,
+      scriptPath,
+      {
+        ...process.env,
+        HOME: tmpDir,
+      },
+      context,
+    );
 
     assert.equal(result.status, 0, result.stderr);
     const payload = parseStdoutJson<{ proxySpawns: object[] }>(result.stdout);
     assert.equal(payload.proxySpawns.length, 0);
   });
 
-  it("reports reachable non-2xx proxy health responses distinctly", async () => {
+  it("reports reachable non-2xx proxy health responses distinctly", async (context) => {
     const repoRoot = path.join(import.meta.dirname, "../../..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-ollama-proxy-404-"));
     const scriptPath = path.join(tmpDir, "proxy-health-404-check.js");
@@ -427,10 +448,15 @@ console.log(JSON.stringify(proxy.probeOllamaAuthProxyHealth()));
 `;
     fs.writeFileSync(scriptPath, script);
 
-    const result = await runNodeScript(repoRoot, scriptPath, {
-      ...process.env,
-      HOME: tmpDir,
-    });
+    const result = await runNodeScript(
+      repoRoot,
+      scriptPath,
+      {
+        ...process.env,
+        HOME: tmpDir,
+      },
+      context,
+    );
 
     assert.equal(result.status, 0, result.stderr);
     const payload = parseStdoutJson<{ detail: string; ok: boolean }>(result.stdout);
@@ -440,7 +466,7 @@ console.log(JSON.stringify(proxy.probeOllamaAuthProxyHealth()));
     assert.doesNotMatch(payload.detail, /not reachable/);
   });
 
-  it("restarts the existing proxy when it rejects the persisted token", async () => {
+  it("restarts the existing proxy when it rejects the persisted token", async (context) => {
     const repoRoot = path.join(import.meta.dirname, "../../..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-ollama-proxy-token-"));
     const scriptPath = path.join(tmpDir, "token-mismatch-check.js");
@@ -505,10 +531,15 @@ console.log(JSON.stringify({
 `;
     fs.writeFileSync(scriptPath, script);
 
-    const result = await runNodeScript(repoRoot, scriptPath, {
-      ...process.env,
-      HOME: tmpDir,
-    });
+    const result = await runNodeScript(
+      repoRoot,
+      scriptPath,
+      {
+        ...process.env,
+        HOME: tmpDir,
+      },
+      context,
+    );
 
     assert.equal(result.status, 0, result.stderr);
     const payload = parseStdoutJson<{
@@ -534,7 +565,7 @@ console.log(JSON.stringify({
     assert.equal(payload.proxySpawns[0].env.OLLAMA_BACKEND_PORT, "11434");
   });
 
-  it("keeps the committed token when switching from a compatible backend to Ollama (#7424)", async () => {
+  it("keeps the committed token when switching from a compatible backend to Ollama (#7424)", async (context) => {
     const repoRoot = path.join(import.meta.dirname, "../../..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-ollama-proxy-switch-"));
     const scriptPath = path.join(tmpDir, "provider-switch-check.js");
@@ -613,7 +644,12 @@ console.log(JSON.stringify({
 `;
     fs.writeFileSync(scriptPath, script);
 
-    const result = await runNodeScript(repoRoot, scriptPath, { ...process.env, HOME: tmpDir });
+    const result = await runNodeScript(
+      repoRoot,
+      scriptPath,
+      { ...process.env, HOME: tmpDir },
+      context,
+    );
 
     assert.equal(result.status, 0, result.stderr);
     const payload = parseStdoutJson<{
@@ -640,7 +676,7 @@ console.log(JSON.stringify({
     });
   });
 
-  it("persists compatible backend and token state for restart recovery (#7424)", async () => {
+  it("persists compatible backend and token state for restart recovery (#7424)", async (context) => {
     // The compatible no-auth flow persists both restart inputs after startup.
     // Assert that the backend round-trips and that the token file remains 0600
     // with contents matching the running proxy.
@@ -704,7 +740,7 @@ console.log(JSON.stringify({
     delete childEnv.NEMOCLAW_OLLAMA_PROXY_PORT;
     delete childEnv.NEMOCLAW_OLLAMA_PORT;
 
-    const result = await runNodeScript(repoRoot, scriptPath, childEnv);
+    const result = await runNodeScript(repoRoot, scriptPath, childEnv, context);
 
     assert.equal(result.status, 0, result.stderr);
     const payload = parseStdoutJson<{
@@ -731,7 +767,7 @@ console.log(JSON.stringify({
     assert.equal(payload.fileToken, payload.runningToken);
   });
 
-  it("restart preserves a 0600 token file whose contents match the respawned token (#2553)", async () => {
+  it("restart preserves a 0600 token file whose contents match the respawned token (#2553)", async (context) => {
     // A stale recorded pid forces a restart. Beyond spawning with the persisted
     // token (covered above), assert the lifecycle invariant: the token file
     // survives the restart at mode 0600 and the respawned proxy is launched with
@@ -787,7 +823,12 @@ console.log(JSON.stringify({
 `;
     fs.writeFileSync(scriptPath, script);
 
-    const result = await runNodeScript(repoRoot, scriptPath, { ...process.env, HOME: tmpDir });
+    const result = await runNodeScript(
+      repoRoot,
+      scriptPath,
+      { ...process.env, HOME: tmpDir },
+      context,
+    );
 
     assert.equal(result.status, 0, result.stderr);
     const payload = parseStdoutJson<{ spawnedToken: string; mode: string; fileToken: string }>(
@@ -799,7 +840,7 @@ console.log(JSON.stringify({
     assert.equal(payload.spawnedToken, "persisted-token");
   });
 
-  it("repairs a divergent on-disk token by restarting with the file token (#2553)", async () => {
+  it("repairs a divergent on-disk token by restarting with the file token (#2553)", async (context) => {
     // Divergence: the running proxy holds a token that no longer matches the
     // authoritative on-disk token (e.g. after a failed re-onboard rewrote the
     // file). The file token probe returns 401, so ensureOllamaAuthProxy detects
@@ -867,7 +908,12 @@ console.log(JSON.stringify({
 `;
     fs.writeFileSync(scriptPath, script);
 
-    const result = await runNodeScript(repoRoot, scriptPath, { ...process.env, HOME: tmpDir });
+    const result = await runNodeScript(
+      repoRoot,
+      scriptPath,
+      { ...process.env, HOME: tmpDir },
+      context,
+    );
 
     assert.equal(result.status, 0, result.stderr);
     const payload = parseStdoutJson<{
@@ -886,22 +932,25 @@ console.log(JSON.stringify({
 });
 
 describe.concurrent("ollama auth proxy state across gateway ports", () => {
-  async function runSecondGatewayProxyStart(options: {
-    readonly callingGatewayPort?: number;
-    readonly gatewayScopedBackend?: string;
-    readonly gatewayScopedBackendKind?: "ollama" | "compatible-endpoint";
-    readonly gatewayScopedPort?: number;
-    readonly otherGatewayScopedToken?: string;
-    readonly prefix: string;
-    readonly proxyPort?: number;
-    readonly sharedProxyPort?: number;
-    readonly recover?: boolean;
-    readonly sharedBackend?: string;
-    readonly sharedBackendKind?: "ollama" | "compatible-endpoint";
-    readonly sharedPid?: number;
-    readonly sharedToken?: string;
-    readonly gatewayScopedToken?: string;
-  }): Promise<{
+  async function runSecondGatewayProxyStart(
+    options: {
+      readonly callingGatewayPort?: number;
+      readonly gatewayScopedBackend?: string;
+      readonly gatewayScopedBackendKind?: "ollama" | "compatible-endpoint";
+      readonly gatewayScopedPort?: number;
+      readonly otherGatewayScopedToken?: string;
+      readonly prefix: string;
+      readonly proxyPort?: number;
+      readonly sharedProxyPort?: number;
+      readonly recover?: boolean;
+      readonly sharedBackend?: string;
+      readonly sharedBackendKind?: "ollama" | "compatible-endpoint";
+      readonly sharedPid?: number;
+      readonly sharedToken?: string;
+      readonly gatewayScopedToken?: string;
+    },
+    context: ChildTestContext,
+  ): Promise<{
     readonly spawnedBackends: Array<string | null>;
     readonly spawnedProxyPorts: string[];
     readonly spawnedTokens: string[];
@@ -1048,12 +1097,17 @@ console.log(JSON.stringify({
 `;
     fs.writeFileSync(scriptPath, script);
 
-    const result = await runNodeScript(repoRoot, scriptPath, {
-      ...process.env,
-      HOME: tmpDir,
-      NEMOCLAW_GATEWAY_PORT: String(options.callingGatewayPort ?? 8990),
-      NEMOCLAW_OLLAMA_PROXY_PORT: String(options.proxyPort ?? 11435),
-    });
+    const result = await runNodeScript(
+      repoRoot,
+      scriptPath,
+      {
+        ...process.env,
+        HOME: tmpDir,
+        NEMOCLAW_GATEWAY_PORT: String(options.callingGatewayPort ?? 8990),
+        NEMOCLAW_OLLAMA_PROXY_PORT: String(options.proxyPort ?? 11435),
+      },
+      context,
+    );
 
     try {
       assert.equal(result.status, 0, result.stderr);
@@ -1063,11 +1117,14 @@ console.log(JSON.stringify({
     }
   }
 
-  it("reuses the persisted host token when onboarding a second gateway port (#8704)", async () => {
-    const payload = await runSecondGatewayProxyStart({
-      prefix: "nemoclaw-ollama-proxy-second-gateway-",
-      sharedToken: "first-gateway-token",
-    });
+  it("reuses the persisted host token when onboarding a second gateway port (#8704)", async (context) => {
+    const payload = await runSecondGatewayProxyStart(
+      {
+        prefix: "nemoclaw-ollama-proxy-second-gateway-",
+        sharedToken: "first-gateway-token",
+      },
+      context,
+    );
 
     assert.deepEqual(payload.spawnedTokens, ["first-gateway-token"]);
     assert.equal(payload.activeToken, "first-gateway-token");
@@ -1075,15 +1132,18 @@ console.log(JSON.stringify({
     assert.equal(payload.gatewayScopedToken, null);
   });
 
-  it.each([8990, 9000])(
+  it.for([8990, 9000])(
     "keeps the configured proxy port host-wide for gateway %i (#8704)",
-    async (callingGatewayPort) => {
-      const payload = await runSecondGatewayProxyStart({
-        callingGatewayPort,
-        prefix: `nemoclaw-ollama-proxy-port-${String(callingGatewayPort)}-`,
-        proxyPort: 12000,
-        sharedToken: "shared-token",
-      });
+    async (callingGatewayPort, context) => {
+      const payload = await runSecondGatewayProxyStart(
+        {
+          callingGatewayPort,
+          prefix: `nemoclaw-ollama-proxy-port-${String(callingGatewayPort)}-`,
+          proxyPort: 12000,
+          sharedToken: "shared-token",
+        },
+        context,
+      );
 
       assert.deepEqual(payload.spawnedProxyPorts, ["12000"]);
       assert.equal(payload.sharedProxyPort, "12000");
@@ -1091,15 +1151,18 @@ console.log(JSON.stringify({
     },
   );
 
-  it("rejects a second gateway proxy port before changing shared proxy state (#8704)", async () => {
-    const payload = await runSecondGatewayProxyStart({
-      callingGatewayPort: 9000,
-      prefix: "nemoclaw-ollama-proxy-port-conflict-",
-      proxyPort: 12000,
-      sharedPid: 4241,
-      sharedProxyPort: 11435,
-      sharedToken: "first-gateway-token",
-    });
+  it("rejects a second gateway proxy port before changing shared proxy state (#8704)", async (context) => {
+    const payload = await runSecondGatewayProxyStart(
+      {
+        callingGatewayPort: 9000,
+        prefix: "nemoclaw-ollama-proxy-port-conflict-",
+        proxyPort: 12000,
+        sharedPid: 4241,
+        sharedProxyPort: 11435,
+        sharedToken: "first-gateway-token",
+      },
+      context,
+    );
 
     assert.deepEqual(payload.spawnedProxyPorts, []);
     assert.deepEqual(payload.spawnedTokens, []);
@@ -1109,28 +1172,34 @@ console.log(JSON.stringify({
     assert.match(payload.operationError || "", /already uses port 11435/);
   });
 
-  it("adopts a token an earlier gateway-scoped run left behind (#8704)", async () => {
-    const payload = await runSecondGatewayProxyStart({
-      callingGatewayPort: 9000,
-      gatewayScopedPort: 8990,
-      prefix: "nemoclaw-ollama-proxy-adopt-scoped-",
-      gatewayScopedToken: "scoped-token",
-    });
+  it("adopts a token an earlier gateway-scoped run left behind (#8704)", async (context) => {
+    const payload = await runSecondGatewayProxyStart(
+      {
+        callingGatewayPort: 9000,
+        gatewayScopedPort: 8990,
+        prefix: "nemoclaw-ollama-proxy-adopt-scoped-",
+        gatewayScopedToken: "scoped-token",
+      },
+      context,
+    );
 
     assert.deepEqual(payload.spawnedTokens, ["scoped-token"]);
     assert.equal(payload.sharedToken, "scoped-token");
   });
 
-  it("adopts a gateway-scoped backend with its token during recovery (#8704)", async () => {
-    const payload = await runSecondGatewayProxyStart({
-      callingGatewayPort: 9000,
-      gatewayScopedBackend: "http://127.0.0.1:12345",
-      gatewayScopedBackendKind: "compatible-endpoint",
-      gatewayScopedPort: 8990,
-      prefix: "nemoclaw-ollama-proxy-adopt-backend-",
-      gatewayScopedToken: "scoped-token",
-      recover: true,
-    });
+  it("adopts a gateway-scoped backend with its token during recovery (#8704)", async (context) => {
+    const payload = await runSecondGatewayProxyStart(
+      {
+        callingGatewayPort: 9000,
+        gatewayScopedBackend: "http://127.0.0.1:12345",
+        gatewayScopedBackendKind: "compatible-endpoint",
+        gatewayScopedPort: 8990,
+        prefix: "nemoclaw-ollama-proxy-adopt-backend-",
+        gatewayScopedToken: "scoped-token",
+        recover: true,
+      },
+      context,
+    );
 
     assert.deepEqual(payload.spawnedTokens, ["scoped-token"]);
     assert.deepEqual(payload.spawnedBackends, ["http://127.0.0.1:12345"]);
@@ -1144,16 +1213,19 @@ console.log(JSON.stringify({
     });
   });
 
-  it("keeps the shared backend when adopting a gateway-scoped token without one (#8704)", async () => {
-    const payload = await runSecondGatewayProxyStart({
-      callingGatewayPort: 9000,
-      gatewayScopedPort: 8990,
-      gatewayScopedToken: "scoped-token",
-      prefix: "nemoclaw-ollama-proxy-adopt-mixed-backend-",
-      recover: true,
-      sharedBackend: "http://127.0.0.1:12345",
-      sharedBackendKind: "ollama",
-    });
+  it("keeps the shared backend when adopting a gateway-scoped token without one (#8704)", async (context) => {
+    const payload = await runSecondGatewayProxyStart(
+      {
+        callingGatewayPort: 9000,
+        gatewayScopedPort: 8990,
+        gatewayScopedToken: "scoped-token",
+        prefix: "nemoclaw-ollama-proxy-adopt-mixed-backend-",
+        recover: true,
+        sharedBackend: "http://127.0.0.1:12345",
+        sharedBackendKind: "ollama",
+      },
+      context,
+    );
 
     assert.deepEqual(payload.spawnedTokens, ["scoped-token"]);
     assert.deepEqual(payload.spawnedBackends, ["http://127.0.0.1:12345"]);
@@ -1167,24 +1239,30 @@ console.log(JSON.stringify({
     });
   });
 
-  it("mints a token when no gateway on the host has one (#8704)", async () => {
-    const payload = await runSecondGatewayProxyStart({
-      prefix: "nemoclaw-ollama-proxy-first-run-",
-    });
+  it("mints a token when no gateway on the host has one (#8704)", async (context) => {
+    const payload = await runSecondGatewayProxyStart(
+      {
+        prefix: "nemoclaw-ollama-proxy-first-run-",
+      },
+      context,
+    );
 
     assert.equal(payload.spawnedTokens.length, 1);
     assert.match(payload.spawnedTokens[0], /^[0-9a-f]{48}$/);
     assert.equal(payload.activeToken, payload.spawnedTokens[0]);
   });
 
-  it("fails safely when dormant gateway roots contain conflicting tokens (#8704)", async () => {
-    const payload = await runSecondGatewayProxyStart({
-      callingGatewayPort: 9000,
-      gatewayScopedPort: 8990,
-      gatewayScopedToken: "first-token",
-      otherGatewayScopedToken: "second-token",
-      prefix: "nemoclaw-ollama-proxy-conflicting-scoped-",
-    });
+  it("fails safely when dormant gateway roots contain conflicting tokens (#8704)", async (context) => {
+    const payload = await runSecondGatewayProxyStart(
+      {
+        callingGatewayPort: 9000,
+        gatewayScopedPort: 8990,
+        gatewayScopedToken: "first-token",
+        otherGatewayScopedToken: "second-token",
+        prefix: "nemoclaw-ollama-proxy-conflicting-scoped-",
+      },
+      context,
+    );
 
     assert.deepEqual(payload.spawnedTokens, []);
     assert.equal(payload.sharedToken, null);
