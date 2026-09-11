@@ -23,6 +23,7 @@ export type HermesAcpLiveScenario =
   | "cancel"
   | "client-disconnect"
   | "exchange"
+  | "gateway-recovery"
   | "gateway-restart"
   | "initialize"
   | "remote-exit";
@@ -55,6 +56,7 @@ export function hermesAcpLiveHostEnv(source: NodeJS.ProcessEnv): NodeJS.ProcessE
     "NODE_EXTRA_CA_CERTS",
     "CURL_CA_BUNDLE",
     "XDG_CONFIG_HOME",
+    "NEMOCLAW_OPENSHELL_BIN",
     "OPENSHELL_GATEWAY",
     "OPENSHELL_WORKSPACE",
   ]) {
@@ -393,7 +395,10 @@ export async function runHermesAcpLiveScenario(options: HermesAcpLiveOptions): P
       options.sandboxName,
       options.env,
     );
-  } else if (scenarioValid && options.scenario === "exchange") {
+  } else if (
+    scenarioValid &&
+    (options.scenario === "exchange" || options.scenario === "gateway-recovery")
+  ) {
     scenarioValid = await writeRequest(input, {
       jsonrpc: "2.0",
       id: 2,
@@ -435,6 +440,7 @@ export async function runHermesAcpLiveScenario(options: HermesAcpLiveOptions): P
     cancel: 143,
     "client-disconnect": 1,
     exchange: 0,
+    "gateway-recovery": 0,
     "gateway-restart": 255,
     initialize: 0,
     "remote-exit": null,
@@ -458,7 +464,8 @@ export async function runHermesAcpLiveScenario(options: HermesAcpLiveOptions): P
     scenarioValid &&
     adapterProcessAbsent &&
     remoteProcessAbsent &&
-    (options.scenario !== "exchange" ||
+    (options.scenario !== "gateway-recovery" || stderrObserved) &&
+    (!["exchange", "gateway-recovery"].includes(options.scenario) ||
       hermesAcpExchangeEvidencePassed({
         pongObserved: promptEvidence.pongObserved,
         promptCompleted,
