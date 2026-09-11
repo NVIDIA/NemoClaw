@@ -476,9 +476,11 @@ the candidate CLI and real SDK, validates both documents, compares their specs a
 checks credential omission, and requires a stopped daemon to prevent publication. Private YAML is
 removed through the cleanup registry; retained evidence contains only the selected model, ports,
 managed image, and result booleans. The existing CUDA, authentication, and inference lifecycle
-scenarios remain separate. The export fixture retries read-only daemon readiness checks on connection
-refusal or curl timeout, for at most 20 reads. It records each attempt and stops on any other failure;
-onboarding and export mutations are not retried.
+scenarios remain separate. The export fixture prepares its attached daemon's model cache and stops
+the installer service after onboarding so it cannot replace the fixture-owned daemon. It retries
+read-only daemon readiness checks on connection refusal or curl timeout, for at most 20 reads. It
+records each attempt and stops on any other failure; model preparation, onboarding, and export
+mutations are not retried.
 Retained workflow jobs are exceptions to the catalogue shape.
 Keep one only for a multi-job handoff, an unrepresented credential boundary, or an execution contract the reusable profile cannot represent.
 

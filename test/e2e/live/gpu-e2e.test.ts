@@ -474,18 +474,16 @@ test(
       timeoutMs: 120000,
     });
     await waitForAttachedOllama(host, exportEnv);
+    await host.command("ollama", ["pull", "qwen3.5:9b"], {
+      artifactName: "export-prepare-attached-model",
+      env: exportEnv,
+      timeoutMs: execTimeout(30 * 60000),
+    });
 
     progress.phase("onboard OpenClaw without sandbox GPU");
     const onboard = await host.command(
       "node",
-      [
-        CLI,
-        "onboard",
-        "--fresh",
-        "--non-interactive",
-        "--yes",
-        "--yes-i-accept-third-party-software",
-      ],
+      [CLI, "onboard", "--fresh", "--non-interactive", "--yes-i-accept-third-party-software"],
       {
         artifactName: "export-onboard-ollama",
         cwd: REPO_ROOT,
@@ -494,6 +492,12 @@ test(
       },
     );
     expect(onboard.exitCode, resultText(onboard)).toBe(0);
+    // Onboarding can restart the installer service; only the attached child may own this fixture.
+    await host.command("sudo", ["-n", "systemctl", "stop", "ollama.service"], {
+      artifactName: "export-stop-competing-service",
+      env: exportEnv,
+      timeoutMs: 60000,
+    });
 
     progress.phase("export and compare the active Ollama configuration");
     const firstPath = path.join(directory, "first.yaml");
