@@ -1430,7 +1430,15 @@ export function recoverHermesPortableSandboxLifecycle(
             OPENSHELL_LIFECYCLE_MUTATION_TIMEOUT_MS,
           ),
         );
-        startedByRecovery = startResult.status === 0 && !startResult.error;
+        if (startResult.status !== 0 || startResult.error) {
+          throw (
+            startResult.error ??
+            new Error(
+              `Hermes portable OpenShell start failed with status ${String(startResult.status)}`,
+            )
+          );
+        }
+        startedByRecovery = true;
         primaryFailureClass = "post-start-authority";
         if (qualified.hasTransactionAuthority) {
           timing.increment("transactionCurrentness");
