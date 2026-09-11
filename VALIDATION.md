@@ -107,3 +107,54 @@ tests. `go vet -tags=integration,live ./...` passed, the live test compiled, and
 `go fix -diff -tags=integration,live ./...` returned no changes. All five platform
 bundles rebuilt at provider version `0.1.0-dev.gbce1d676b2a4`.
 The live runtime scenario above was not rerun for this idiom cleanup.
+
+## Provider refresh through osquery: 2026-09-11
+
+Provider `Resource.Read` and export now use `internal/query` against the existing
+four `openshell_*` tables. Each lookup carries an explicit observation status.
+Only confirmed absence permits state removal; an empty result, partial response,
+failed extension, or gateway error produces a diagnostic. Ownership, generation,
+durable identity, launch configuration, and active policy checks remain enforced.
+
+`go test -race -tags=integration ./... -count=1 -v` passed. All fourteen engine
+integration tests passed in 187.064 seconds. The five new refresh tests exercise
+the real OpenTofu/provider process boundary directly, without the CLI preflight:
+
+- Successful refresh produces no-op plans; observed endpoint and model changes
+  produce updates, and export sees those same live values.
+- Confirmed absence of each resource type can remove its state in a refresh-only
+  operation. The CLI's ordinary apply still rejects missing managed resources.
+- Authentication, authorization, transport, deadline, unknown gateway errors,
+  and incomplete SDK responses stop planning and preserve durable state.
+  A missing policy response cannot become an absent sandbox.
+- Ownership, generation, durable ID, policy, command, environment, and immutable
+  image drift retain the existing guards.
+- Missing osquery, a missing extension, empty SQL output, and partial SQL output
+  stop planning. Refresh-only operations cannot persist an accidental deletion;
+  recovery followed by ordinary apply creates no duplicate resources.
+
+Adapter tests also reject duplicate resource rows and JSON columns, null or
+missing columns, unexpected keys, inconsistent status, and incomplete batches.
+Remote error details containing a credential sentinel do not reach diagnostics.
+
+`go vet -tags=integration,live ./...`, `go fix -diff -tags=integration,live ./...`,
+formatting, and `git diff --check` passed. The live test compiled and then passed
+against Docker, OpenShell, OpenClaw, and Ollama in 69.030 seconds. It checked
+creation, no-op apply, model change without replacement, export, recreation,
+and three agent replies. IDs and results are recorded in
+[evidence/osquery-refresh-linux-arm64.json](evidence/osquery-refresh-linux-arm64.json).
+Both test deployments, the dedicated gateway, Ollama container, and Docker network
+were removed after success. Existing unrelated containers were unchanged.
+
+All five bundles rebuilt at `0.1.0-dev.g739a5f2af9c0`; every manifest's five file
+hashes verified. Linux ARM64 has native runtime evidence. Other architectures,
+macOS, Windows, and Podman still require their own native qualification. The
+race detector covers Go tests and the fixture; bundled executables are ordinary
+builds. Windows process cleanup remains unqualified.
+
+Reads still direct: CLI gateway capability/version discovery and resource
+ownership preflight; mutation reconciliation and immediate conditional-write
+version reads; sandbox readiness waits and active configuration/health/inference
+probes; local intent, OpenTofu state, bundle and credential access. The extension
+uses the SDK as the authoritative source for its tables. Refresh and export
+have no direct SDK observation fallback.

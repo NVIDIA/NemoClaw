@@ -1,0 +1,24 @@
+{
+  "agentReplies": 3,
+  "firstIDs": {
+    "nemoclaw_provider.inference": "711ee002-1889-408a-9618-27dbbad53532",
+    "nemoclaw_route.primary": "d302a229-52fe-4325-b472-41496df4c5ef/primary",
+    "nemoclaw_sandbox.agent": "3146a1a3-7bba-4f95-ae47-4d001f2f92ee",
+    "nemoclaw_workspace.deployment": "d302a229-52fe-4325-b472-41496df4c5ef"
+  },
+  "gateway": "0.0.116",
+  "modelAfter": "qwen3:0.6b",
+  "noOp": true,
+  "platform": "linux_arm64",
+  "recreatedIDs": {
+    "nemoclaw_provider.inference": "21ba928d-2702-4139-80d7-edcdd972b823",
+    "nemoclaw_route.primary": "22a19c50-e878-4916-99bc-a8966e852a9b/primary",
+    "nemoclaw_sandbox.agent": "f32101fd-a24f-476f-9efe-bb013a58dae2",
+    "nemoclaw_workspace.deployment": "22a19c50-e878-4916-99bc-a8966e852a9b"
+  },
+  "result": "pass",
+  "sandboxPreserved": true,
+  "providerVersion": "0.1.0-dev.g739a5f2af9c0",
+  "scenario": "osquery provider refresh: plan/apply/model/export/recreate",
+  "elapsedSeconds": 69.03
+}

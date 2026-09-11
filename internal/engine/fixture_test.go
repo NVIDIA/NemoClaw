@@ -39,11 +39,15 @@ type fixture struct {
 	endpoint      string
 	execExit      int32
 	inferenceExit int32
+	readFailure   map[string]codes.Code
+	partialRead   map[string]bool
 }
 
 func newFixture(t *testing.T) *fixture {
 	t.Helper()
 	f := &fixture{workspaces: map[string]*dm.Workspace{}, providers: map[string]*dm.Provider{}, routes: map[string]*ip.SetInferenceRouteRequest{}, sandboxes: map[string]*pb.Sandbox{}, creates: map[string]int{}}
+	f.readFailure = map[string]codes.Code{}
+	f.partialRead = map[string]bool{}
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -68,6 +72,12 @@ func (f *fixture) GetGatewayInfo(context.Context, *pb.GetGatewayInfoRequest) (*p
 func (f *fixture) GetWorkspace(_ context.Context, q *pb.GetWorkspaceRequest) (*pb.GetWorkspaceResponse, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if code := f.readFailure["workspace"]; code != codes.OK {
+		return nil, status.Error(code, "sensitive-sentinel-42")
+	}
+	if f.partialRead["workspace"] {
+		return &pb.GetWorkspaceResponse{}, nil
+	}
 	w := f.workspaces[q.Name]
 	if w == nil {
 		return nil, missing()
@@ -88,6 +98,12 @@ func (f *fixture) CreateWorkspace(_ context.Context, q *pb.CreateWorkspaceReques
 func (f *fixture) GetProvider(_ context.Context, q *pb.GetProviderRequest) (*pb.ProviderResponse, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if code := f.readFailure["provider"]; code != codes.OK {
+		return nil, status.Error(code, "sensitive-sentinel-42")
+	}
+	if f.partialRead["provider"] {
+		return &pb.ProviderResponse{}, nil
+	}
 	p := f.providers[q.Workspace+"/"+q.Name]
 	if p == nil {
 		return nil, missing()
@@ -131,6 +147,12 @@ func (f *fixture) UpdateProvider(_ context.Context, q *pb.UpdateProviderRequest)
 func (f *fixture) GetInferenceRoute(_ context.Context, q *ip.GetInferenceRouteRequest) (*ip.GetInferenceRouteResponse, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if code := f.readFailure["route"]; code != codes.OK {
+		return nil, status.Error(code, "sensitive-sentinel-42")
+	}
+	if f.partialRead["route"] {
+		return &ip.GetInferenceRouteResponse{}, nil
+	}
 	r := f.routes[q.Workspace]
 	if r == nil {
 		return nil, missing()
@@ -150,6 +172,12 @@ func (f *fixture) SetInferenceRoute(_ context.Context, q *ip.SetInferenceRouteRe
 func (f *fixture) GetSandbox(_ context.Context, q *pb.GetSandboxRequest) (*pb.SandboxResponse, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if code := f.readFailure["sandbox"]; code != codes.OK {
+		return nil, status.Error(code, "sensitive-sentinel-42")
+	}
+	if f.partialRead["sandbox"] {
+		return &pb.SandboxResponse{}, nil
+	}
 	s := f.sandboxes[q.Workspace+"/"+q.Name]
 	if s == nil {
 		return nil, missing()
@@ -190,6 +218,9 @@ func (f *fixture) ExecSandbox(q *pb.ExecSandboxRequest, s grpc.ServerStreamingSe
 func (f *fixture) GetSandboxPolicyStatus(_ context.Context, q *pb.GetSandboxPolicyStatusRequest) (*pb.GetSandboxPolicyStatusResponse, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if code := f.readFailure["policy"]; code != codes.OK {
+		return nil, status.Error(code, "sensitive-sentinel-42")
+	}
 	s := f.sandboxes[q.Workspace+"/"+q.Name]
 	if s == nil {
 		return nil, missing()

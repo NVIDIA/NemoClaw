@@ -68,6 +68,9 @@ func Observe(ctx context.Context, c Client, kind, workspace, name string) (Row, 
 		if err != nil {
 			return nil, remoteError("read workspace", err)
 		}
+		if w == nil {
+			return nil, errors.New("incomplete workspace response")
+		}
 		if w.DeletionTimestamp != nil || w.Phase != v1.WorkspaceActive {
 			return nil, errors.New("workspace is not active")
 		}
@@ -79,6 +82,9 @@ func Observe(ctx context.Context, c Client, kind, workspace, name string) (Row, 
 		}
 		if err != nil {
 			return nil, remoteError("read provider", err)
+		}
+		if p == nil {
+			return nil, errors.New("incomplete provider response")
 		}
 		if p.DeletionTimestamp != nil || p.Type != "openai" {
 			return nil, errors.New("provider type or lifecycle changed")
@@ -99,7 +105,7 @@ func Observe(ctx context.Context, c Client, kind, workspace, name string) (Row, 
 			return nil, remoteError("read inference route", err)
 		}
 		if r == nil || r.ProviderName == "" {
-			return nil, nil
+			return nil, errors.New("incomplete inference route response")
 		}
 		row = Row{"name": name, "id": w["id"] + "/primary", "owner": w["owner"], "generation": w["generation"], "provider_name": r.ProviderName, "model": r.ModelID}
 	case "sandbox":
@@ -109,6 +115,9 @@ func Observe(ctx context.Context, c Client, kind, workspace, name string) (Row, 
 		}
 		if err != nil {
 			return nil, remoteError("read sandbox", err)
+		}
+		if s == nil {
+			return nil, errors.New("incomplete sandbox response")
 		}
 		if s.Spec.Template == nil || s.DeletionTimestamp != nil {
 			return nil, errors.New("sandbox template or lifecycle is unavailable")
@@ -134,6 +143,14 @@ func Observe(ctx context.Context, c Client, kind, workspace, name string) (Row, 
 	}
 	if kind != "workspace" {
 		row["workspace"] = workspace
+	}
+	for _, field := range append(slices.Clone(DefinitionFor(kind).Fields), "id") {
+		if field != "credential_env" && row[field] == "" {
+			return nil, fmt.Errorf("incomplete %s response", kind)
+		}
+	}
+	if row["name"] != name {
+		return nil, errors.New("resource response identity does not match the request")
 	}
 	return row, nil
 }

@@ -73,5 +73,14 @@ func remoteError(operation string, err error) error {
 	if v1.IsAlreadyExists(err) {
 		return fmt.Errorf("%s: resource collision; inspect ownership before retrying", operation)
 	}
+	if v1.IsUnauthenticated(err) {
+		return fmt.Errorf("%s: gateway authentication failed", operation)
+	}
+	if v1.IsPermissionDenied(err) {
+		return fmt.Errorf("%s: gateway permission denied", operation)
+	}
+	if v1.IsUnavailable(err) || v1.IsDeadlineExceeded(err) || v1.IsCancelled(err) {
+		return fmt.Errorf("%s: gateway transport unavailable or interrupted", operation)
+	}
 	return fmt.Errorf("%s failed; remote outcome may be inconclusive", operation)
 }

@@ -6,11 +6,14 @@ package provider
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"slices"
 	"time"
 
 	"github.com/NVIDIA/NemoClaw/internal/config"
 	oshell "github.com/NVIDIA/NemoClaw/internal/openshell"
+	"github.com/NVIDIA/NemoClaw/internal/query"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -63,7 +66,13 @@ func (*Provider) Configure(ctx context.Context, q framework.ConfigureRequest, r 
 		r.Diagnostics.AddError("Gateway connection", err.Error())
 		return
 	}
-	r.ResourceData = c
+	bundle := os.Getenv("NEMOCLAW_INTERNAL_BUNDLE")
+	if !filepath.IsAbs(bundle) {
+		c.Close()
+		r.Diagnostics.AddError("Provider configuration", "missing absolute osquery bundle directory")
+		return
+	}
+	r.ResourceData = resourceClients{mutation: c, observation: query.Client{BundleDir: bundle, Gateway: g}}
 }
 func (*Provider) Resources(context.Context) []func() resource.Resource {
 	var result []func() resource.Resource
@@ -77,6 +86,12 @@ func (*Provider) DataSources(context.Context) []func() datasource.DataSource { r
 type Resource struct {
 	definition oshell.Definition
 	client     oshell.Client
+	observer   query.Client
+}
+
+type resourceClients struct {
+	mutation    oshell.Client
+	observation query.Client
 }
 
 func (r *Resource) Metadata(_ context.Context, _ resource.MetadataRequest, out *resource.MetadataResponse) {
@@ -97,12 +112,13 @@ func (r *Resource) Configure(_ context.Context, q resource.ConfigureRequest, out
 	if q.ProviderData == nil {
 		return
 	}
-	c, ok := q.ProviderData.(oshell.Client)
+	c, ok := q.ProviderData.(resourceClients)
 	if !ok {
 		out.Diagnostics.AddError("Provider configuration", "invalid gateway client")
 		return
 	}
-	r.client = c
+	r.client = c.mutation
+	r.observer = c.observation
 }
 
 type attributeReader interface {
@@ -124,21 +140,30 @@ func (r *Resource) put(ctx context.Context, state *tfsdk.State, row oshell.Row, 
 	}
 }
 func (r *Resource) Read(ctx context.Context, q resource.ReadRequest, out *resource.ReadResponse) {
+	// Retain the last known identity on every failed observation.
+	out.State = q.State
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	want := r.values(ctx, q.State, &out.Diagnostics)
 	if out.Diagnostics.HasError() {
 		return
 	}
-	got, err := oshell.Observe(ctx, r.client, r.definition.Kind, want["workspace"], want["name"])
-	if err == nil {
-		err = oshell.VerifyIdentity(want, got)
-	}
+	key := query.Key{Kind: r.definition.Kind, Workspace: want["workspace"], Name: want["name"]}
+	observations, err := r.observer.Read(ctx, key)
 	if err != nil {
 		out.Diagnostics.AddError("Resource observation", err.Error())
 		return
 	}
-	out.State = q.State
+	observation := observations[key]
+	if observation.Status == query.Absent {
+		out.State.RemoveResource(ctx)
+		return
+	}
+	got := observation.Row()
+	if err = oshell.VerifyIdentity(want, got); err != nil {
+		out.Diagnostics.AddError("Resource observation", err.Error())
+		return
+	}
 	r.put(ctx, &out.State, got, &out.Diagnostics)
 }
 func (r *Resource) Create(ctx context.Context, q resource.CreateRequest, out *resource.CreateResponse) {

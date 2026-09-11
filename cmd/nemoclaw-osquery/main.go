@@ -15,6 +15,7 @@ import (
 
 	"github.com/NVIDIA/NemoClaw/internal/config"
 	oshell "github.com/NVIDIA/NemoClaw/internal/openshell"
+	"github.com/NVIDIA/NemoClaw/internal/query"
 	"github.com/osquery/osquery-go"
 	"github.com/osquery/osquery-go/plugin/table"
 )
@@ -46,7 +47,7 @@ func run() error {
 	}
 	for _, d := range oshell.Definitions {
 		var cols []table.ColumnDefinition
-		for _, n := range append(slices.Clone(d.Fields), "id") {
+		for _, n := range append(slices.Clone(d.Fields), "id", "observation_status", "observation_error") {
 			cols = append(cols, table.TextColumn(n))
 		}
 		if d.Kind == "sandbox" {
@@ -67,11 +68,21 @@ func run() error {
 			ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 			defer cancel()
 			row, err := oshell.Observe(ctx, c, d.Kind, workspace, name)
+			// Every constrained lookup returns a receipt. Plugin errors and missing
+			// rows can otherwise both appear to SQL consumers as an empty result.
+			status := query.Present
 			if err != nil {
-				return nil, err
+				status = query.Failed
+			} else if row == nil {
+				status = query.Absent
 			}
 			if row == nil {
-				return nil, nil
+				row = oshell.Row{"name": name, "workspace": workspace}
+			}
+			row["observation_status"] = string(status)
+			row["observation_error"] = ""
+			if err != nil {
+				row["observation_error"] = err.Error()
 			}
 			return []map[string]string{row}, nil
 		}))

@@ -27,8 +27,14 @@ for this slice. The upstream gateway owns Docker or Podman integration.
 OpenTofu owns dependencies, refresh, diffs, saved plans, and resource state.
 NemoClaw owns YAML validation, compilation, ownership enforcement, and recovery
 of operations that may have completed before their response was recorded.
-Resource readers are shared with a Go osquery extension. Host queries run on the
-machine being observed; they do not pretend to inspect a container guest.
+Provider refresh and export share a typed osquery adapter over the four resource
+tables. The extension uses the OpenShell SDK and emits explicit present, absent,
+or failed observations. Empty or partial SQL output cannot remove resource state.
+Ownership, generation, durable identity, launch specification, and active policy
+checks remain enforced. Mutations and their reconciliation, CLI preflight, active
+probes, and local state/credential access remain direct in this slice.
+Host queries run on the machine being observed; they do not pretend to inspect
+a container guest.
 
 ## Acceptance evidence
 

@@ -5,17 +5,12 @@ package engine
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
-	"runtime"
-	"slices"
-	"strings"
 
 	"github.com/NVIDIA/NemoClaw/internal/config"
 	oshell "github.com/NVIDIA/NemoClaw/internal/openshell"
+	"github.com/NVIDIA/NemoClaw/internal/query"
 )
 
 func (e *Engine) export(ctx context.Context, r Record) error {
@@ -27,58 +22,22 @@ func (e *Engine) export(ctx context.Context, r Record) error {
 		return err
 	}
 	d := r.Document
-	// One osquery process collects four resource tables. Missing rows, including
-	// a table query that failed upstream, cannot become an apparently valid export.
-	columns := []string{"kind", "id", "name", "owner", "generation", "workspace", "endpoint", "credential_env", "provider_name", "model", "image", "agent_name"}
-	var selects []string
-	for _, t := range Targets(d, r.Generations) {
-		def := oshell.DefinitionFor(t.Kind)
-		var expr []string
-		for _, column := range columns {
-			switch {
-			case column == "kind":
-				expr = append(expr, "'"+t.Kind+"' AS kind")
-			case column == "id" || slices.Contains(def.Fields, column):
-				expr = append(expr, column)
-			default:
-				expr = append(expr, "'' AS "+column)
-			}
-		}
-		query := "SELECT " + strings.Join(expr, ",") + " FROM " + def.Table + " WHERE name='" + t.Values["name"] + "'"
-		if t.Kind != "workspace" {
-			query += " AND workspace='" + d.Workspace() + "'"
-		}
-		selects = append(selects, query)
+	targets := Targets(d, r.Generations)
+	keys := make([]query.Key, 0, len(targets))
+	for _, t := range targets {
+		keys = append(keys, query.Key{Kind: t.Kind, Workspace: t.Values["workspace"], Name: t.Values["name"]})
 	}
-	tmp, err := os.MkdirTemp("", "ncq-")
+	observer := query.Client{BundleDir: e.BundleDir, Gateway: d.Spec.Gateway}
+	observations, err := observer.Read(ctx, keys...)
 	if err != nil {
-		return err
+		return fmt.Errorf("export: %w; no YAML exported", err)
 	}
-	defer os.RemoveAll(tmp)
-	g, _ := json.Marshal(d.Spec.Gateway)
-	env := append(cleanEnv(), "NEMOCLAW_INTERNAL_GATEWAY="+string(g))
-	socket := filepath.Join(tmp, "em")
-	if runtime.GOOS == "windows" {
-		socket = `\\.\pipe\` + filepath.Base(tmp)
-	}
-	b, err := run(ctx, e.StateDir, executable(e.BundleDir, "osqueryi"), env, "--json", "--disable_logging=true", "--extensions_socket="+socket, "--extensions_timeout=30", "--extensions_require=nemoclaw", "--extension="+executable(e.BundleDir, "nemoclaw-osquery.ext"), strings.Join(selects, " UNION ALL "))
-	if err != nil {
-		return err
-	}
-	var rows []oshell.Row
-	if json.Unmarshal(b, &rows) != nil || len(rows) != 4 {
-		return errors.New("resource observation is incomplete; no YAML exported")
-	}
-	for _, t := range Targets(d, r.Generations) {
-		var got oshell.Row
-		for _, row := range rows {
-			if row["kind"] == t.Kind {
-				if got != nil {
-					return errors.New("ambiguous resource observation")
-				}
-				got = row
-			}
+	for i, t := range targets {
+		observation := observations[keys[i]]
+		if observation.Status == query.Absent {
+			return fmt.Errorf("export %s: resource is confirmed absent; no YAML exported", t.Kind)
 		}
+		got := observation.Row()
 		t.Values["id"] = ids[t.Address]
 		if t.Values["id"] == "" {
 			return errors.New("resource has no durable state identity")
@@ -115,7 +74,7 @@ func (e *Engine) export(ctx context.Context, r Record) error {
 	if err = oshell.Ready(ctx, c, d.Workspace(), d.Spec.Sandboxes[0].Name, d.Spec.Sandboxes[0].Agents[0].Name); err != nil {
 		return err
 	}
-	b, err = d.YAML()
+	b, err := d.YAML()
 	if err != nil {
 		return err
 	}

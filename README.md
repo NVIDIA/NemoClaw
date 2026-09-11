@@ -106,15 +106,16 @@ loopback addresses. Plaintext gateways must use literal loopback addresses.
 | Go CLI | Strict YAML, compilation, deployment lock, ownership, unfinished intent |
 | OpenTofu | Dependency graph, refresh, diff, saved plan, resource state |
 | Go provider | Workspace, provider registration, inference route, sandbox resources |
-| OpenShell SDK | Authoritative reads, mutations, policy status, sandbox execution |
-| osquery extension | Explicit tables backed by the same Go readers |
-| osqueryi | SQL execution and export observations |
+| OpenShell SDK | Table data source, mutation reconciliation, conditional writes, sandbox execution |
+| osquery extension | Explicit resource tables with observation status and policy checks |
+| Typed query adapter | Complete observations shared by provider refresh and export |
+| osqueryi | SQL execution for refresh and export |
 
-Export queries `openshell_workspaces`, `openshell_providers`,
+Provider refresh and export query `openshell_workspaces`, `openshell_providers`,
 `openshell_inference_routes`, and `openshell_sandboxes`. For example:
 
 ```sql
-SELECT name, provider_name, model
+SELECT name, observation_status, observation_error, provider_name, model
 FROM openshell_inference_routes
 WHERE workspace = 'nc-8bb56695710753e3' AND name = 'primary';
 ```
@@ -124,9 +125,41 @@ require `workspace`. There is no document table. Export uses observed resource
 values, verifies durable identities and the active policy, and checks the agent's
 configuration and health. Missing observations produce an error and no YAML.
 
-The gateway connection is supplied to the private extension by the CLI.
+Each constrained lookup returns one row with `observation_status` set to
+`present`, `absent`, or `failed`. An absent row contains the requested key and
+empty resource attributes. It requires an explicit OpenShell NotFound response
+for that object, or its parent workspace for a route. A policy-status NotFound
+is an observation failure, not evidence that the sandbox disappeared.
+Use `observation_status = 'present'` when querying only existing resource values.
+The shared adapter deliberately does not filter status: it requires exactly one
+complete row for each key, checks columns and identities, and rejects empty,
+partial, duplicate, malformed, or failed results. Only explicit absence permits
+the provider's `Resource.Read` to remove an object from OpenTofu state. Query,
+extension, authentication, permission, and transport failures stop planning with
+a diagnostic and preserve the last known state. Export rejects absence as well.
+
+The CLI supplies its verified absolute bundle directory to the private provider
+through `NEMOCLAW_INTERNAL_BUNDLE`. The adapter invokes that bundle's osquery and
+extension executables and supplies gateway configuration with secret references.
+Refresh starts one osquery process per resource; export batches its four tables
+in one process. There is no fallback from refresh or export to direct SDK reads.
 Host CPU and process inventory remain available in osquery's built-in tables;
 they are not needed to manage this externally provisioned first slice.
+
+These reads still bypass osquery in this slice:
+
+- CLI gateway version/compute-driver discovery and ownership preflight. The
+  preflight retains the existing rule against replacing missing managed objects.
+- Mutation reconciliation before and after writes, parent ownership checks,
+  immediate provider resource-version reads for conditional updates, and the
+  sandbox readiness wait.
+- Active agent configuration/health and inference probes through OpenShell exec.
+- Local intent, OpenTofu state, bundle manifests, environment credential values,
+  and TLS credential files.
+
+The extension itself uses the OpenShell SDK to populate its tables, including
+the sandbox's active policy and launch specification. Those SDK calls are the
+source of osquery observations, not a second refresh path.
 
 ## Recovery and limits
 
@@ -169,6 +202,8 @@ go test -tags=integration ./internal/engine -count=1
 Integration tests execute the real OpenTofu, provider, and osquery binaries
 against a gRPC fixture. They cover no-op apply, model changes, export/recreate,
 lost responses, cancellation, ownership, policy/configuration drift, and secrets.
+Refresh tests invoke OpenTofu directly to verify state removal on confirmed
+absence, retained state on observation failures, and recovery without recreation.
 The fixture does not implement a sandbox or prove inference works.
 
 To run the opt-in live test, set `NEMOCLAW_LIVE_CONFIG` to an absolute YAML path

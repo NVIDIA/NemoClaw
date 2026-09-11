@@ -4,20 +4,17 @@
 package engine
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/NVIDIA/NemoClaw/internal/subprocess"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strings"
-	"time"
 )
 
 type Manifest struct {
@@ -60,57 +57,7 @@ func VerifyBundle(dir string) error {
 	}
 	return nil
 }
-func executable(dir, name string) string {
-	if runtime.GOOS == "windows" {
-		name += ".exe"
-	}
-	return filepath.Join(dir, "libexec", name)
-}
-
-func cleanEnv() []string {
-	var env []string
-	for _, v := range os.Environ() {
-		name, _, _ := strings.Cut(v, "=")
-		n := strings.ToUpper(name)
-		if strings.HasPrefix(n, "TF_") || strings.HasPrefix(n, "TOFU_") || strings.HasPrefix(n, "NEMOCLAW_INTERNAL_") {
-			continue
-		}
-		env = append(env, v)
-	}
-	return env
-}
-
-func run(ctx context.Context, dir, binary string, env []string, args ...string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, binary, args...)
-	cmd.Dir = dir
-	cmd.Env = env
-	cmd.WaitDelay = 5 * time.Second
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	prepareProcess(cmd)
-	err := cmd.Run()
-	finishProcess(cmd)
-	if err != nil {
-		if ctx.Err() != nil {
-			return nil, errors.New("operation interrupted; retain state and reapply the same YAML")
-		}
-		msg := stderr.String()
-		msg = msg[:min(len(msg), 16384)]
-		// Credentials never enter configuration, but upstream diagnostics are still
-		// treated as untrusted and redacted before reaching the terminal.
-		for _, entry := range env {
-			key, value, _ := strings.Cut(entry, "=")
-			if len(value) > 3 && (strings.Contains(key, "KEY") || strings.Contains(key, "TOKEN") || strings.Contains(key, "SECRET") || strings.Contains(key, "PASSWORD")) {
-				msg = strings.ReplaceAll(msg, value, "[redacted]")
-			}
-		}
-		return nil, fmt.Errorf("%s failed: %s", filepath.Base(binary), strings.TrimSpace(msg))
-	}
-	return stdout.Bytes(), nil
-}
-
 func (e *Engine) tofu(ctx context.Context, args ...string) ([]byte, error) {
-	env := append(cleanEnv(), "TF_IN_AUTOMATION=1", "TF_INPUT=0", "TF_CLI_CONFIG_FILE="+filepath.Join(e.StateDir, "providers.tfrc"), "CHECKPOINT_DISABLE=1")
-	return run(ctx, e.StateDir, executable(e.BundleDir, "tofu"), env, args...)
+	env := append(subprocess.CleanEnv(), "NEMOCLAW_INTERNAL_BUNDLE="+e.BundleDir, "TF_IN_AUTOMATION=1", "TF_INPUT=0", "TF_CLI_CONFIG_FILE="+filepath.Join(e.StateDir, "providers.tfrc"), "CHECKPOINT_DISABLE=1")
+	return subprocess.Run(ctx, e.StateDir, subprocess.Executable(e.BundleDir, "tofu"), env, args...)
 }
