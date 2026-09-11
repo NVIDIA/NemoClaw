@@ -120,6 +120,10 @@ func (r *Resource) Schema(_ context.Context, _ resource.SchemaRequest, out *reso
 	a := map[string]schema.Attribute{"id": schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}}}
 	for _, n := range r.definition.Fields {
 		attr := schema.StringAttribute{Required: true}
+		if n == "running" && (r.definition.Kind == managed.GatewayKind || r.definition.Kind == managed.ServiceKind) {
+			a[n] = schema.StringAttribute{Computed: true}
+			continue
+		}
 		if !slices.Contains(r.definition.Mutable, n) {
 			attr.PlanModifiers = []planmodifier.String{stringplanmodifier.RequiresReplace()}
 		}

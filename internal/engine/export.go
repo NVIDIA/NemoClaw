@@ -7,8 +7,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 
 	"github.com/NVIDIA/NemoClaw/internal/config"
+	"github.com/NVIDIA/NemoClaw/internal/managed"
 	"github.com/NVIDIA/NemoClaw/internal/ollama"
 	oshell "github.com/NVIDIA/NemoClaw/internal/openshell"
 	"github.com/NVIDIA/NemoClaw/internal/query"
@@ -23,6 +25,41 @@ func (e *Engine) export(ctx context.Context, r Record) error {
 		return err
 	}
 	d := r.Document
+	if d.Spec.Gateway.Management == "managed" {
+		stage := &Engine{StateDir: filepath.Join(e.StateDir, "runtime")}
+		bound, err := stage.stateIDs()
+		if err != nil {
+			return err
+		}
+		docker, err := managed.New(d.Spec.Gateway.Engine)
+		if err != nil {
+			return err
+		}
+		defer docker.Close()
+		if d.Spec.InferenceProviders[0].Service != nil {
+			if bound[storageAddress] == "" {
+				return errors.New("model storage has no established identity")
+			}
+			if _, err = docker.Storage(ctx, runtimeStorage(d, r.Generations), bound[storageAddress], false); err != nil {
+				return err
+			}
+		}
+		for _, s := range runtimeSpecs(d, r.Generations) {
+			id := bound[runtimeAddress(s)]
+			if id == "" {
+				return errors.New("managed runtime has no established identity")
+			}
+			o, err := docker.Observe(ctx, s, id)
+			if err != nil || o == nil {
+				return errors.New("managed runtime configuration is unobservable; no YAML exported")
+			}
+			if s.Service != nil {
+				if err = docker.VerifyArtifacts(ctx, o); err != nil {
+					return err
+				}
+			}
+		}
+	}
 	targets := Targets(d, r.Generations)
 	keys := make([]query.Key, 0, len(targets))
 	for _, t := range targets {
@@ -48,7 +85,13 @@ func (e *Engine) export(ctx context.Context, r Record) error {
 		}
 		switch t.Kind {
 		case "provider":
-			d.Spec.InferenceProviders[0].Endpoint = got["endpoint"]
+			if d.Spec.InferenceProviders[0].Service != nil {
+				if got["endpoint"] != d.InferenceEndpoint() || got["credential_env"] != "" {
+					return errors.New("managed inference registration drifted")
+				}
+			} else {
+				d.Spec.InferenceProviders[0].Endpoint = got["endpoint"]
+			}
 			d.Spec.InferenceProviders[0].Credential = nil
 			if got["credential_env"] != "" {
 				d.Spec.InferenceProviders[0].Credential = &config.Credential{Env: got["credential_env"]}

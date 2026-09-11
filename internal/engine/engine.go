@@ -31,8 +31,10 @@ type Change struct {
 	Actions  []string `json:"actions"`
 }
 type Result struct {
-	Outcome string   `json:"outcome"`
-	Changes []Change `json:"changes"`
+	Outcome       string   `json:"outcome"`
+	Changes       []Change `json:"changes"`
+	Deferred      []string `json:"deferred,omitempty"`
+	AgentResponse string   `json:"agentResponse,omitempty"`
 }
 type Plan struct {
 	ResourceChanges []struct {
@@ -91,7 +93,7 @@ func (e *Engine) Run(ctx context.Context, operation string, input io.Reader) err
 		}
 	}
 	if record.Version != 0 {
-		if record.Document.Metadata.UID != d.Metadata.UID || record.Document.Spec.Gateway.Endpoint != d.Spec.Gateway.Endpoint {
+		if record.Document.Metadata.UID != d.Metadata.UID || record.Document.Spec.Gateway.Endpoint != d.Spec.Gateway.Endpoint || record.Document.Spec.Gateway.Management != d.Spec.Gateway.Management {
 			return errors.New("state is bound to a different deployment UID or gateway")
 		}
 		if record.Pending && record.Digest != d.Digest() {
@@ -102,6 +104,16 @@ func (e *Engine) Run(ctx context.Context, operation string, input io.Reader) err
 	}
 	if d.Spec.InferenceProviders[0].Ollama != nil && record.Generations["ollama"] == "" {
 		record.Generations["ollama"] = newGenerations()["ollama"]
+	}
+	if record.Document.Spec.Gateway.Management == "managed" && d.Spec.Gateway.Management != "managed" {
+		return errors.New("ordinary apply cannot relinquish managed gateway ownership")
+	}
+	runtimeChanges, deferred, err := e.runtimeStage(ctx, operation, d, &record)
+	if err != nil {
+		return err
+	}
+	if deferred {
+		return json.NewEncoder(e.Output).Encode(Result{Outcome: "planned", Changes: runtimeChanges, Deferred: []string{"OpenShell graph requires the new managed gateway; apply will plan it after runtime readiness"}})
 	}
 	c, err := oshell.Connect(d.Spec.Gateway)
 	if err != nil {
@@ -165,7 +177,7 @@ func (e *Engine) Run(ctx context.Context, operation string, input io.Reader) err
 	if err = json.Unmarshal(b, &plan); err != nil {
 		return errors.New("invalid OpenTofu plan")
 	}
-	result := Result{Outcome: "planned", Changes: []Change{}}
+	result := Result{Outcome: "planned", Changes: append([]Change{}, runtimeChanges...)}
 	for _, change := range plan.ResourceChanges {
 		if slices.Contains(change.Change.Actions, "delete") {
 			return errors.New("plan would delete or replace a resource; resources retained")
@@ -212,6 +224,12 @@ func (e *Engine) Run(ctx context.Context, operation string, input io.Reader) err
 	if err = oshell.InferenceReady(ctx, c, d.Workspace(), d.Spec.Sandboxes[0].Name); err != nil {
 		return err
 	}
+	if d.Spec.InferenceProviders[0].Service != nil {
+		result.AgentResponse, err = oshell.AgentResponse(ctx, c, d.Workspace(), d.Spec.Sandboxes[0].Name, d.Spec.Sandboxes[0].Agents[0].Name)
+		if err != nil {
+			return err
+		}
+	}
 	record.Pending = false
 	record.Succeeded = true
 	if err = saveJSON(filepath.Join(e.StateDir, "intent.json"), record); err != nil {
@@ -252,9 +270,23 @@ func (e *Engine) prepare(d config.Document, g map[string]string) error {
 
 func (e *Engine) stateIDs() (map[string]string, error) {
 	ids := map[string]string{}
+	bindings, err := e.stateBindings()
+	for address, b := range bindings {
+		ids[address] = b.ID
+	}
+	return ids, err
+}
+
+type stateBinding struct {
+	ID   string `json:"id"`
+	Spec string `json:"spec"`
+}
+
+func (e *Engine) stateBindings() (map[string]stateBinding, error) {
+	bindings := map[string]stateBinding{}
 	b, err := os.ReadFile(filepath.Join(e.StateDir, "terraform.tfstate"))
 	if errors.Is(err, os.ErrNotExist) {
-		return ids, nil
+		return bindings, nil
 	}
 	if err != nil {
 		return nil, err
@@ -263,9 +295,7 @@ func (e *Engine) stateIDs() (map[string]string, error) {
 		Resources []struct {
 			Type, Name string
 			Instances  []struct {
-				Attributes struct {
-					ID string `json:"id"`
-				}
+				Attributes stateBinding
 			}
 		}
 	}
@@ -276,7 +306,11 @@ func (e *Engine) stateIDs() (map[string]string, error) {
 		if len(r.Instances) != 1 {
 			return nil, errors.New("unexpected resource instances in state")
 		}
-		ids[r.Type+"."+r.Name] = r.Instances[0].Attributes.ID
+		address := r.Type + "." + r.Name
+		if _, duplicate := bindings[address]; duplicate || r.Instances[0].Attributes.ID == "" {
+			return nil, errors.New("duplicate or unbound resource in state")
+		}
+		bindings[address] = r.Instances[0].Attributes
 	}
-	return ids, nil
+	return bindings, nil
 }

@@ -61,6 +61,8 @@ func verifyLabels(want, got map[string]string) error {
 }
 
 func (d *Docker) Observe(ctx context.Context, want Spec, id string) (*Observation, error) {
+	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
 	if err := want.Validate(); err != nil {
 		return nil, err
 	}
@@ -230,6 +232,8 @@ func sameDevices(a, b []container.DeviceRequest) bool {
 // ReadFile is an offline Docker archive read, including stopped containers. A
 // transport/authentication error must never become a missing file or resource.
 func (d *Docker) ReadFile(ctx context.Context, id, path string, limit int64) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
 	r, err := d.API.CopyFromContainer(ctx, id, client.CopyFromContainerOptions{SourcePath: path})
 	if err != nil {
 		return nil, err

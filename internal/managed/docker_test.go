@@ -32,6 +32,7 @@ type runtimeFixture struct {
 	Unavailable             string
 	Code                    int
 	Writes, Starts, Removes int
+	ExitOnStart             bool
 }
 
 func newRuntimeFixture(t *testing.T) *runtimeFixture {
@@ -70,7 +71,7 @@ func newRuntimeFixture(t *testing.T) *runtimeFixture {
 			}
 		case strings.HasSuffix(p, "/start"):
 			f.Starts++
-			f.Container.State.Running = true
+			f.Container.State.Running = !f.ExitOnStart
 			w.WriteHeader(204)
 		case strings.HasSuffix(p, "/stop"):
 			f.Container.State.Running = false
@@ -99,6 +100,26 @@ func newRuntimeFixture(t *testing.T) *runtimeFixture {
 	f.Docker = &Docker{API: api, CheckStart: func(context.Context, Spec, *Observation) error { return nil }}
 	t.Cleanup(func() { f.Docker.Close() })
 	return f
+}
+
+func TestImmediateProcessExitStillEstablishesConfigurationIdentity(t *testing.T) {
+	f := newRuntimeFixture(t)
+	f.Container.State.Running = false
+	f.ExitOnStart = true
+	o, err := f.Docker.Ensure(t.Context(), f.Spec, "")
+	if err != nil || o == nil || o.ID != "engine/container-id/created-once/network-id" || o.Running || f.Starts != 1 || f.Removes != 0 {
+		t.Fatal("immediate exit lost the established configuration or storage", o, err)
+	}
+	// Observation must not restart it, and a later explicit apply retries the
+	// same container after the fixture's startup fault is corrected.
+	if _, err = f.Docker.Observe(t.Context(), f.Spec, o.ID); err != nil || f.Starts != 1 {
+		t.Fatal(err)
+	}
+	f.ExitOnStart = false
+	after, err := f.Docker.Ensure(t.Context(), f.Spec, o.ID)
+	if err != nil || after.ID != o.ID || !after.Running || f.Starts != 2 || f.Removes != 0 {
+		t.Fatal("explicit recovery replaced the resource", err)
+	}
 }
 
 func TestRefreshAndExplicitRestartPreserveRuntimeAndStorageIdentity(t *testing.T) {

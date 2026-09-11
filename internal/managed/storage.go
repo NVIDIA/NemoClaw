@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"regexp"
+	"time"
 
 	"github.com/containerd/errdefs"
 	"github.com/moby/moby/client"
@@ -21,6 +22,8 @@ func (s Storage) labels() map[string]string {
 }
 
 func (d *Docker) Storage(ctx context.Context, s Storage, id string, create bool) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
 	if !regexp.MustCompile(`^nc-[a-f0-9]{16}-inference-data$`).MatchString(s.Name) || !regexp.MustCompile(`^[a-f0-9-]{36}$`).MatchString(s.Owner) || !regexp.MustCompile(`^[a-f0-9]{32}$`).MatchString(s.Generation) {
 		return "", errors.New("storage lacks explicit ownership and generation")
 	}

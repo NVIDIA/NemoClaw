@@ -31,7 +31,7 @@ func Targets(d config.Document, generations map[string]string) []Target {
 	}
 	return []Target{
 		{"workspace", "nemoclaw_workspace.deployment", oshell.Row{"name": w, "owner": owner, "generation": generations["workspace"]}},
-		{"provider", "nemoclaw_provider.inference", oshell.Row{"workspace": w, "name": p.Name, "owner": owner, "generation": generations["provider"], "endpoint": p.Endpoint, "credential_env": credential}},
+		{"provider", "nemoclaw_provider.inference", oshell.Row{"workspace": w, "name": p.Name, "owner": owner, "generation": generations["provider"], "endpoint": d.InferenceEndpoint(), "credential_env": credential}},
 		{"route", "nemoclaw_route.primary", oshell.Row{"workspace": w, "name": "primary", "owner": owner, "generation": generations["workspace"], "provider_name": p.Name, "model": a.Inference.Routes[0].Overrides.Model}},
 		{"sandbox", "nemoclaw_sandbox.agent", oshell.Row{"workspace": w, "name": s.Name, "owner": owner, "generation": generations["sandbox"], "image": s.Image.Ref, "agent_name": a.Name}},
 	}
@@ -39,7 +39,7 @@ func Targets(d config.Document, generations map[string]string) []Target {
 
 func newGenerations() map[string]string {
 	m := map[string]string{}
-	for _, kind := range []string{"workspace", "provider", "sandbox", "ollama"} {
+	for _, kind := range []string{"workspace", "provider", "sandbox", "ollama", "managed_gateway", "inference_service"} {
 		b := make([]byte, 16)
 		rand.Read(b)
 		m[kind] = hex.EncodeToString(b)

@@ -1,0 +1,54 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+apiVersion: nemoclaw.nvidia.com/v1alpha1
+kind: NemoClawConfig
+metadata:
+  name: spark-recipe
+  uid: 302ff5e1-088d-42ce-959f-4ff4c3570c13
+spec:
+  gateway:
+    management: managed
+    endpoint: http://127.0.0.1:17681
+    engine: unix:///var/run/docker.sock
+    image: ghcr.io/nvidia/openshell/gateway@sha256:3d08ad1e7d839a2ffb9ac85a66102b96dd6bc042c3a6f1eaa31351998fd65792
+    networkCIDR: 172.30.110.0/24
+  inferenceProviders:
+    - name: qwen
+      provider: openai
+      service:
+        backend: vllm-qwen38-spark-v1
+        image: nc-prototype-qwen38@sha256:232af38c6451e1430e7dbcdea2ee23c284545a258318863ded5c4ac1069f2864
+        model:
+          repository: Mia-AiLab/Qwen3.8-Flash-Next-NVFP4
+          revision: 925d7be6c14c6c9442ef83e8f05b5a3c39304f69
+        serving:
+          port: 18888
+          contextTokens: 32768
+          maxSequences: 1
+          batchTokens: 1024
+          speculativeTokens: 0
+          startupTimeoutSeconds: 1800
+        memory:
+          hostReserveGiB: 32
+          kvCacheGiB: 8
+          minAvailableGiB: 8
+          minFreeGiB: 3
+          freeGateGiB: 12
+          consecutiveSamples: 5
+  sandboxes:
+    - name: assistant
+      image:
+        ref: nc-prototype-openclaw@sha256:f73285851f5cc9d1862da7aaa603249f2c97fdf431bc4b03a5a435af897405f3
+      runtime:
+        provider: docker
+      network:
+        tier: isolated
+      agents:
+        - name: assistant
+          type: openclaw
+          inference:
+            routes:
+              - name: primary
+                providerRef: qwen
+                overrides:
+                  model: qwen3.8-flash-next

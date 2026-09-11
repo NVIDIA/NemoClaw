@@ -14,6 +14,7 @@ import (
 
 	"github.com/NVIDIA/NemoClaw/internal/managed"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
+	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -94,5 +95,37 @@ func TestManagedProviderRefreshRetainsStateOnObservationFailure(t *testing.T) {
 				t.Fatal("refresh mutated resources")
 			}
 		})
+	}
+}
+
+func TestStoppedRuntimePlansRestartWithoutPromisingReadiness(t *testing.T) {
+	for _, definition := range managedDefinitions[:2] {
+		for _, running := range []string{"true", "false"} {
+			t.Run(definition.Kind+"/"+running, func(t *testing.T) {
+				r := Resource{definition: definition}
+				var schema resource.SchemaResponse
+				r.Schema(t.Context(), resource.SchemaRequest{}, &schema)
+				if !schema.Schema.Attributes["running"].IsComputed() || schema.Schema.Attributes["running"].IsRequired() {
+					t.Fatal("process readiness is a creation promise")
+				}
+				value, diags := types.ObjectValue(map[string]attr.Type{"id": types.StringType, "spec": types.StringType, "running": types.StringType}, map[string]attr.Value{"id": types.StringValue("durable-id"), "spec": types.StringValue("retained-spec"), "running": types.StringValue(running)})
+				if diags.HasError() {
+					t.Fatal(diags)
+				}
+				state := tfsdk.State{Schema: schema.Schema}
+				if diags := state.Set(t.Context(), value); diags.HasError() {
+					t.Fatal(diags)
+				}
+				plan := tfsdk.Plan{Schema: schema.Schema, Raw: state.Raw}
+				out := resource.ModifyPlanResponse{Plan: plan}
+				r.ModifyPlan(t.Context(), resource.ModifyPlanRequest{State: state, Plan: plan}, &out)
+				var actual, id types.String
+				out.Diagnostics.Append(out.Plan.GetAttribute(t.Context(), path.Root("running"), &actual)...)
+				out.Diagnostics.Append(out.Plan.GetAttribute(t.Context(), path.Root("id"), &id)...)
+				if out.Diagnostics.HasError() || actual.IsUnknown() != (running == "false") || id.ValueString() != "durable-id" || len(out.RequiresReplace) != 0 {
+					t.Fatal("restart plan lost identity or could taint an immediately stopped process", out.Diagnostics)
+				}
+			})
+		}
 	}
 }

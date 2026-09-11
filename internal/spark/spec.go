@@ -127,7 +127,9 @@ func (s Service) CheckCapacity(c Capacity, starting bool, downloadRemaining, pre
 	if s.GPUBytes()+int64(s.Memory.HostReserveGiB)*GiB > c.Total {
 		return errors.New("requested GPU budget leaves less than the declared host memory reserve")
 	}
-	if starting && (c.Available < s.GPUBytes()+20*GiB || c.Free < int64(s.Memory.MinFreeGiB)*GiB) {
+	// Downloaded weights fill reclaimable page cache. MemFree alone would
+	// reject a safe restart even when MemAvailable covers the entire budget.
+	if starting && c.Available < s.GPUBytes()+20*GiB {
 		return fmt.Errorf("insufficient startup memory headroom: available %.1f GiB, require %.1f GiB", float64(c.Available)/float64(GiB), float64(s.GPUBytes()+20*GiB)/float64(GiB))
 	}
 	return nil

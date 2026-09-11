@@ -163,7 +163,9 @@ func sourceVersion() (string, error) {
 			}
 			return nil
 		}
-		if !strings.HasSuffix(p, ".go") && p != "go.mod" && p != "go.sum" {
+		// These files are embedded in the provider and runtime observation code.
+		// Changing either must select a fresh provider version in the local mirror.
+		if !strings.HasSuffix(p, ".go") && p != "go.mod" && p != "go.sum" && p != "internal/spark/model.json" && p != "internal/spark/verify_packed.py" {
 			return nil
 		}
 		b, err := os.ReadFile(p)

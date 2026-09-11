@@ -33,6 +33,10 @@ func TestCapacityRejectsSafelyBeforeAllocations(t *testing.T) {
 	if err := s.CheckCapacity(c, true, ModelManifest().Bytes(), PreparedBytes); err != nil {
 		t.Fatal(err)
 	}
+	c.Free = GiB
+	if err := s.CheckCapacity(c, true, 0, PreparedBytes); err != nil {
+		t.Fatal("reclaimable model page cache prevented safe startup", err)
+	}
 	for _, dimension := range []string{"memory", "disk", "gpu", "architecture", "driver", "gpu busy", "reserve"} {
 		t.Run(dimension, func(t *testing.T) {
 			bad, spec := c, s

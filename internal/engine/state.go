@@ -35,7 +35,7 @@ func loadRecord(dir string) (Record, error) {
 	if err = json.Unmarshal(b, &r); err != nil {
 		return r, errors.New("deployment intent record is corrupt; retain it for recovery")
 	}
-	if r.Version != 1 || r.Document.Validate() != nil || r.Document.Digest() != r.Digest || (len(r.Generations) != 3 && len(r.Generations) != 4) {
+	if r.Version != 1 || r.Document.Validate() != nil || r.Document.Digest() != r.Digest || (len(r.Generations) != 3 && len(r.Generations) != 4 && len(r.Generations) != 6) {
 		return r, errors.New("deployment intent record is invalid")
 	}
 	return r, nil

@@ -219,6 +219,9 @@ func (d Document) Validate() error {
 	if s.Runtime.Provider != "docker" && s.Runtime.Provider != "podman" {
 		return errors.New("sandbox runtime must be docker or podman")
 	}
+	if g.Management == "managed" && s.Runtime.Provider != "docker" {
+		return errors.New("managed gateway requires the qualified Docker driver")
+	}
 	if s.Network.Tier != "isolated" {
 		return errors.New("this slice supports only the isolated network tier")
 	}

@@ -11,6 +11,9 @@ import (
 
 	"github.com/NVIDIA/NemoClaw/internal/managed"
 	oshell "github.com/NVIDIA/NemoClaw/internal/openshell"
+	"github.com/hashicorp/terraform-plugin-framework/path"
+	"github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
 var managedDefinitions = []oshell.Definition{
@@ -70,4 +73,21 @@ func (r *Resource) runtimeClient(engine string) (*managed.Docker, error) {
 		return r.runtimeFactory(engine)
 	}
 	return managed.New(engine)
+}
+
+// Running is observed, not a promise that startup cannot fail. Keep it unknown
+// during create and a planned restart so an immediate process exit can still
+// establish durable configuration without Terraform tainting the container.
+func (r *Resource) ModifyPlan(ctx context.Context, q resource.ModifyPlanRequest, out *resource.ModifyPlanResponse) {
+	if r.definition.Kind != managed.GatewayKind && r.definition.Kind != managed.ServiceKind {
+		return
+	}
+	if q.State.Raw.IsNull() || q.Plan.Raw.IsNull() {
+		return
+	}
+	var running types.String
+	out.Diagnostics.Append(q.State.GetAttribute(ctx, path.Root("running"), &running)...)
+	if running.ValueString() == "false" {
+		out.Diagnostics.Append(out.Plan.SetAttribute(ctx, path.Root("running"), types.StringUnknown())...)
+	}
 }
