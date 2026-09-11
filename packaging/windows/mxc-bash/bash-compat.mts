@@ -1,0 +1,713 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+// Explicit CI prototype only. No application/model/runtime installation.
+import assert from "node:assert/strict";
+import { spawn, type ChildProcess } from "node:child_process";
+import { createHash, randomBytes } from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { setTimeout as delay } from "node:timers/promises";
+
+const LIMIT = 256 * 1024;
+const sha = (file: string) => createHash("sha256").update(fs.readFileSync(file)).digest("hex");
+const argument = (name: string) => {
+  const i = process.argv.indexOf(name);
+  assert(i >= 0 && process.argv[i + 1]);
+  return process.argv[i + 1]!;
+};
+export const binaryPins = {
+  "bin/bash.exe": "828e6e891cee98d39057c0c193800e564231fdf92b3cefa15944378fc7730095",
+  "usr/bin/bash.exe": "92cff5f145d42f85b55aa3be8d3ad9827844a21ec4fbeaa1ddfe1dd4d76c6474",
+  "usr/bin/msys-2.0.dll": "13f0b0dc94588766ecfa1867f1a00061508ba1dc62f5b8e858ac59f01e358aa0",
+};
+export function fixedEnvironment(windows: string, home: string, git: string, node: string) {
+  return {
+    SYSTEMROOT: windows,
+    WINDIR: windows,
+    SYSTEMDRIVE: path.win32.parse(windows).root.slice(0, 2),
+    COMSPEC: path.win32.join(windows, "System32/cmd.exe"),
+    OS: "Windows_NT",
+    PROCESSOR_ARCHITECTURE: "ARM64",
+    HOME: home,
+    USERPROFILE: home,
+    LOCALAPPDATA: home,
+    APPDATA: home,
+    TEMP: home,
+    TMP: home,
+    PATHEXT: ".COM;.EXE;.BAT;.CMD",
+    NODE_DISABLE_COMPILE_CACHE: "1",
+    PATH: [
+      path.win32.dirname(node),
+      path.win32.join(git, "bin"),
+      path.win32.join(git, "usr/bin"),
+      path.win32.join(git, "cmd"),
+      path.win32.join(windows, "System32"),
+      windows,
+    ].join(";"),
+    GITHUB_ACTIONS: "true",
+    NEMOCLAW_MSYS_PROBE_NODE: node.replaceAll("\\", "/"),
+  };
+}
+export function request(config: Config, script: string, configFile: string, windows: string) {
+  return {
+    version: "0.6.0-alpha",
+    containerId: config.containerId,
+    containment: "processcontainer",
+    process: {
+      commandLine: [
+        config.node,
+        "--experimental-strip-types",
+        "--no-warnings",
+        script,
+        "--worker",
+        configFile,
+      ]
+        .map((value) => '"' + value + '"')
+        .join(" "),
+      cwd: config.share,
+      timeout: 120000,
+      env: Object.entries(fixedEnvironment(windows, config.share, config.git, config.node)).map(
+        ([key, value]) => key + "=" + value,
+      ),
+    },
+    processContainer: {
+      leastPrivilege: false,
+      capabilities: ["privateNetworkClientServer", "internetClient"],
+    },
+    ui: { disable: false },
+    network: {
+      defaultPolicy: "allow",
+      allowedHosts: [],
+      blockedHosts: [],
+      allowLocalNetwork: true,
+    },
+    filesystem: {
+      readonlyPaths: [config.git, config.compat, path.win32.dirname(config.node)],
+      readwritePaths: [config.share],
+    },
+    lifecycle: { destroyOnExit: false, preservePolicy: false },
+  };
+}
+export function baselineKey(stderr: string) {
+  const matches = [
+    ...stderr.matchAll(
+      /NtCreateDirectoryObject\(\\BaseNamedObjects\\msys-2\.0S5-([a-f0-9]{16})\):\s*0xC0000022/giu,
+    ),
+  ];
+  assert(matches.length > 0, "Original Bash did not report the known global-directory denial.");
+  assert.equal(new Set(matches.map((row) => row[1]!.toLowerCase())).size, 1);
+  return matches[0]![1]!.toLowerCase();
+}
+export function parseJsonLines(text: string) {
+  const lines = text.split(/\r?\n/u);
+  lines.pop();
+  return lines.filter(Boolean).map((line) => JSON.parse(line));
+}
+export function validateDenials(row: any, other: string) {
+  assert.equal(row.kind, "denials");
+  assert.equal(row.rawProbeUnshimmed, true);
+  assert.equal(row.foreignRoot, other);
+  for (const key of ["foreignDirectory", "foreignEvent", "foreignSection", "originalGlobalCreate"])
+    assert.equal(row[key], "0xc0000022", key);
+}
+function write(file: string, value: unknown) {
+  fs.writeFileSync(file, JSON.stringify(value, null, 2) + "\n", { flag: "wx" });
+}
+function atomic(file: string, value: unknown) {
+  const tmp = file + ".tmp";
+  fs.writeFileSync(tmp, JSON.stringify(value) + "\n", { flag: "wx" });
+  fs.renameSync(tmp, file);
+}
+function decode(bytes: Buffer) {
+  if (bytes[0] === 255 && bytes[1] === 254) return bytes.subarray(2).toString("utf16le");
+  return bytes.toString("utf8").replace(/^\uFEFF/u, "");
+}
+export class Owned {
+  child: ChildProcess;
+  out: Buffer[] = [];
+  err: Buffer[] = [];
+  outBytes = 0;
+  errBytes = 0;
+  closed = false;
+  forced = false;
+  error: string | null = null;
+  completion: Promise<void>;
+  settle!: () => void;
+  stopping?: Promise<void>;
+  timer: ReturnType<typeof setTimeout>;
+  readonly exe: string;
+  readonly args: string[];
+  constructor(exe: string, args: string[], env: NodeJS.ProcessEnv, cwd: string, timeout: number) {
+    this.exe = exe;
+    this.args = args;
+    this.child = spawn(exe, args, { env, cwd, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
+    this.child.stdin!.on("error", () => {});
+    this.completion = new Promise((resolve) => {
+      this.settle = resolve;
+      this.child.once("error", (e) => {
+        this.error = e.message;
+      });
+      this.child.once("close", () => {
+        this.closed = true;
+        clearTimeout(this.timer);
+        resolve();
+      });
+    });
+    for (const channel of ["out", "err"] as const) {
+      const stream = channel === "out" ? this.child.stdout! : this.child.stderr!;
+      stream.on("data", (chunk: Buffer) => {
+        const used = channel === "out" ? this.outBytes : this.errBytes;
+        const left = Math.max(0, LIMIT - used);
+        this[channel].push(chunk.subarray(0, left));
+        if (channel === "out") this.outBytes += chunk.length;
+        else this.errBytes += chunk.length;
+        if (chunk.length > left) {
+          this.error = "output-bound";
+          void this.stop();
+        }
+      });
+    }
+    this.timer = setTimeout(() => {
+      this.error = "process-deadline";
+      void this.stop();
+    }, timeout);
+  }
+  stdout() {
+    return decode(Buffer.concat(this.out));
+  }
+  stderr() {
+    return decode(Buffer.concat(this.err));
+  }
+  stop() {
+    this.stopping ??= this.stopInner();
+    return this.stopping;
+  }
+  private async stopInner() {
+    if (this.closed) return;
+    this.forced = true;
+    const windows = process.env.SYSTEMROOT ?? process.env.SystemRoot;
+    if (process.platform === "win32" && this.child.pid && windows) {
+      const killer = spawn(
+        path.join(windows, "System32/taskkill.exe"),
+        ["/PID", String(this.child.pid), "/T", "/F"],
+        { windowsHide: true, stdio: "ignore", env: { SYSTEMROOT: windows, WINDIR: windows } },
+      );
+      await new Promise<void>((r) => {
+        const timer = setTimeout(() => {
+          killer.kill();
+          r();
+        }, 5000);
+        killer.once("error", () => {
+          clearTimeout(timer);
+          r();
+        });
+        killer.once("close", () => {
+          clearTimeout(timer);
+          r();
+        });
+      });
+    } else this.child.kill("SIGKILL");
+    await Promise.race([this.completion, delay(5000)]);
+    if (!this.closed) {
+      this.child.stdin?.destroy();
+      this.child.stdout?.destroy();
+      this.child.stderr?.destroy();
+      this.child.unref();
+    }
+    clearTimeout(this.timer);
+    this.settle();
+  }
+  async finish() {
+    await this.completion;
+    return this.result();
+  }
+  result() {
+    return {
+      executable: this.exe,
+      args: this.args,
+      pid: this.child.pid,
+      exitCode: this.child.exitCode,
+      signal: this.child.signalCode,
+      closed: this.closed,
+      forced: this.forced,
+      error: this.error,
+      stdout: this.stdout(),
+      stderr: this.stderr(),
+    };
+  }
+  async line(kind: string, timeout = 20000) {
+    const end = Date.now() + timeout;
+    while (Date.now() < end) {
+      for (const row of parseJsonLines(this.stdout())) if (row.kind === kind) return row;
+      if (this.closed) throw Error("Owned probe closed before " + kind + ": " + this.stderr());
+      await delay(25);
+    }
+    throw Error("Owned probe did not report " + kind);
+  }
+}
+export type Config = {
+  nonce: string;
+  containerId: string;
+  mode: "baseline" | "startup" | "isolation";
+  share: string;
+  node: string;
+  git: string;
+  compat: string;
+  probe: string;
+  key: string;
+  script: string;
+};
+function validateConfig(c: Config) {
+  assert.match(c.nonce, /^[a-f0-9]{24}$/u);
+  assert.match(c.containerId, /^nm-[a-f0-9]{12}-(?:base|start|a|b)$/u);
+  assert(["baseline", "startup", "isolation"].includes(c.mode));
+  for (const value of [c.share, c.node, c.git, c.compat, c.probe, c.script])
+    assert(/^[A-Za-z]:\\/u.test(value) && !/["\r\n]/u.test(value));
+  assert.match(c.key, /^[a-f0-9]{16}$/u);
+}
+function checkSuccess(result: ReturnType<Owned["result"]>, expected?: string) {
+  assert(result.closed && !result.forced && !result.error);
+  assert.equal(result.exitCode, 0, result.stderr);
+  if (expected !== undefined) assert.equal(result.stdout.replaceAll("\r\n", "\n"), expected);
+  for (const line of result.stderr.split(/\r?\n/u))
+    if (line.startsWith("NEMOCLAW_MSYS_FAILED_CHILD="))
+      assert.notEqual(
+        JSON.parse(line.split("=", 2)[1]!).closed,
+        false,
+        "An injection failure left its created child unclosed.",
+      );
+}
+async function waitFile(file: string, deadline: number) {
+  while (Date.now() < deadline) {
+    if (fs.existsSync(file)) return JSON.parse(fs.readFileSync(file, "utf8"));
+    await delay(50);
+  }
+  throw Error("Owned coordination deadline: " + path.basename(file));
+}
+async function worker(configFile: string) {
+  const c = JSON.parse(fs.readFileSync(configFile, "utf8")) as Config;
+  validateConfig(c);
+  const env = fixedEnvironment(process.env.SYSTEMROOT!, c.share, c.git, c.node);
+  const results: any = {
+    schemaVersion: 1,
+    nonce: c.nonce,
+    containerId: c.containerId,
+    mode: c.mode,
+    phase: "start",
+    passed: false,
+    cases: [],
+    cleanup: { childrenClosed: false, forced: false },
+  };
+  const owned: Owned[] = [];
+  const save = () => atomic(path.join(c.share, "progress.json"), results);
+  const finite = async (exe: string, args: string[], timeout = 15000) => {
+    const child = new Owned(exe, args, env, c.share, timeout);
+    owned.push(child);
+    child.child.stdin!.end();
+    const result = await child.finish();
+    results.cases.push(result);
+    save();
+    return result;
+  };
+  try {
+    for (const [file, pin] of Object.entries(binaryPins))
+      assert.equal(sha(path.join(c.git, file)), pin);
+    if (c.mode === "baseline") {
+      results.phase = "original-bash";
+      const keys = [];
+      for (const target of ["usr/bin/bash.exe", "bin/bash.exe"]) {
+        const r = await finite(path.join(c.git, target), [
+          "--noprofile",
+          "--norc",
+          "-c",
+          "printf ORIGINAL_STARTED",
+        ]);
+        assert(r.closed && !r.forced && !r.error && r.exitCode !== 0);
+        // The verified direct x64 failure may have no stderr. The ARM64
+        // wrapper must retain the exact NT denial; any direct marker must agree.
+        if (target === "bin/bash.exe" || r.stderr.includes("NtCreateDirectoryObject"))
+          keys.push(baselineKey(r.stderr));
+      }
+      assert.equal(new Set(keys).size, 1);
+      results.key = keys[0];
+      results.passed = true;
+    } else {
+      const launcher = path.join(c.compat, "NemoClawMsysLauncher.exe");
+      if (c.mode === "startup") {
+        results.phase = "injected-startup";
+        for (const target of ["usr/bin/bash.exe", "bin/bash.exe"]) {
+          const marker = "INJECTED_" + c.nonce;
+          const r = await finite(launcher, [
+            "--",
+            path.join(c.git, target),
+            "--noprofile",
+            "--norc",
+            "-c",
+            "printf '%s\\n' '" + marker + "'",
+          ]);
+          checkSuccess(r, marker + "\n");
+        }
+      }
+      results.phase = "pipes-fork-child";
+      save();
+      const bash = new Owned(
+        launcher,
+        [
+          "--",
+          path.join(c.git, "usr/bin/bash.exe"),
+          "--noprofile",
+          "--norc",
+          c.script.replaceAll("\\", "/"),
+          c.nonce,
+        ],
+        env,
+        c.share,
+        100000,
+      );
+      owned.push(bash);
+      const until = Date.now() + 20000;
+      while (
+        !bash
+          .stdout()
+          .replaceAll("\r\n", "\n")
+          .includes("BASH_HOLD_" + c.nonce + "\n") &&
+        Date.now() < until &&
+        !bash.closed
+      )
+        await delay(25);
+      const expected =
+        ["PIPE_", "SUBSHELL_", "CHILD_", "NATIVE_", "BASH_HOLD_"]
+          .map((prefix) => prefix + c.nonce)
+          .join("\n") + "\n";
+      assert.equal(bash.stdout().replaceAll("\r\n", "\n"), expected, bash.stderr());
+      results.toolsPassed = true;
+      save();
+      if (c.mode === "isolation") {
+        results.phase = "namespace-open";
+        save();
+        const host = await waitFile(path.join(c.share, "host.json"), Date.now() + 5000);
+        assert.equal(host.nonce, c.nonce);
+        assert(Number.isSafeInteger(host.executorPid) && host.executorPid > 0);
+        const probeArgs = [c.key, c.nonce, String(process.pid), String(host.executorPid)];
+        const probe = new Owned(c.probe, ["hold", ...probeArgs], env, c.share, 70000);
+        owned.push(probe);
+        const ready = await probe.line("ready");
+        assert.equal(ready.rawProbeUnshimmed, true);
+        assert.equal(ready.key, c.key);
+        assert.equal(ready.nullDaclChildren, true);
+        results.namespace = ready;
+        atomic(path.join(c.share, "ready.json"), ready);
+        const cross = await waitFile(path.join(c.share, "cross.json"), Date.now() + 45000);
+        assert.equal(cross.nonce, c.nonce);
+        assert(
+          typeof cross.otherRoot === "string" &&
+            cross.otherRoot !== ready.privateRoot &&
+            !/[\r\n]/u.test(cross.otherRoot),
+        );
+        probe.child.stdin!.write("check " + cross.otherRoot + "\n");
+        const denied = await probe.line("denials");
+        validateDenials(denied, cross.otherRoot);
+        results.denials = denied;
+        atomic(path.join(c.share, "checked.json"), denied);
+        const stop = await waitFile(path.join(c.share, "stop.json"), Date.now() + 30000);
+        assert.equal(stop.nonce, c.nonce);
+        probe.child.stdin!.end("stop\n");
+        checkSuccess(await probe.finish());
+        results.cases.push(probe.result());
+        bash.child.stdin!.end("stop\n");
+        const br = await bash.finish();
+        checkSuccess(br, expected + "BASH_STOP_" + c.nonce + "\n");
+        results.cases.push(br);
+        results.phase = "namespace-release";
+        const absent = await finite(c.probe, ["absent", ...probeArgs]);
+        checkSuccess(absent);
+        results.absence = parseJsonLines(absent.stdout).find((r) => r.kind === "absence");
+      } else {
+        bash.child.stdin!.end("stop\n");
+        const r = await bash.finish();
+        checkSuccess(r, expected + "BASH_STOP_" + c.nonce + "\n");
+        results.cases.push(r);
+      }
+      results.passed = true;
+    }
+  } catch (error) {
+    results.error = error instanceof Error ? error.stack : String(error);
+  } finally {
+    for (const child of owned) if (!child.closed) await child.stop();
+    results.cleanup.childrenClosed = owned.every((child) => child.closed);
+    results.cleanup.forced = owned.some((child) => child.forced);
+    if (!results.cleanup.childrenClosed || results.cleanup.forced) results.passed = false;
+    results.ownedChildren = owned.map((child) => child.result());
+    save();
+    write(path.join(c.share, "done.json"), results);
+  }
+}
+const scriptBody = `set -euo pipefail
+nonce="$1"
+printf 'PIPE_%s\\n' "$nonce" | cat | grep -F "PIPE_$nonce"
+value="$( (printf 'SUBSHELL_%s' "$nonce") )"
+printf '%s\\n' "$value"
+bash --noprofile --norc -c 'printf "CHILD_%s\\n" "$1"' _ "$nonce"
+"$NEMOCLAW_MSYS_PROBE_NODE" -e 'process.stdout.write("NATIVE_"+process.argv[1]+"\\n")' "$nonce"
+printf 'BASH_HOLD_%s\\n' "$nonce"
+IFS= read -r action
+test "$action" = stop
+printf 'BASH_STOP_%s\\n' "$nonce"
+`;
+async function main() {
+  assert.equal(process.platform, "win32");
+  assert.equal(process.arch, "arm64");
+  assert.equal(process.versions.node, "22.23.2");
+  assert.equal(process.env.GITHUB_ACTIONS, "true");
+  if (process.argv.includes("--worker")) {
+    await worker(argument("--worker"));
+    return;
+  }
+  const work = path.resolve(argument("--work-root")),
+    output = path.resolve(argument("--output")),
+    node = path.join(work, "control/node.exe"),
+    git = path.join(work, "git"),
+    compat = path.join(work, "compatibility"),
+    probe = path.join(work, "control/NemoClawMsysObjectProbe.exe"),
+    mxc = path.resolve(argument("--mxc"));
+  assert.match(work, /^[A-Za-z]:\\NemoClawMsysProof-[a-f0-9]{12}$/u);
+  assert.equal(sha(node), "97cce5301a815d2dce07ac5bfd1e6039eae88185ec1d10ae4f8cb712f1732878");
+  assert.equal(sha(mxc), "dde1c592270e9a659b01dccad70362da7b99fec114885fa4d625507aa775a503");
+  const build = JSON.parse(fs.readFileSync(path.join(compat, "build-receipt.json"), "utf8"));
+  assert.equal(build.classification, "mxc-msys-compatibility-prototype-build");
+  assert.equal(build.status, "built");
+  for (const file of build.files) {
+    assert(
+      [
+        "NemoClawMsysLauncher.exe",
+        "NemoClawMsysCompat-arm64.dll",
+        "NemoClawMsysCompat-x64.dll",
+      ].includes(file.file),
+    );
+    assert.equal(sha(path.join(compat, file.file)), file.sha256);
+    assert.equal(fs.statSync(path.join(compat, file.file)).size, file.bytes);
+  }
+  assert.equal(build.files.length, 3);
+  assert.equal(new Set(build.files.map((file: any) => file.file)).size, 3);
+  const nonce = randomBytes(12).toString("hex"),
+    windows = process.env.SYSTEMROOT ?? process.env.SystemRoot!;
+  const env = { ...fixedEnvironment(windows, work, git, node), GITHUB_ACTIONS: "true" };
+  const script = path.join(work, "control/bash-proof.sh");
+  write(path.join(output, "compatibility-input.json"), build);
+  fs.writeFileSync(script, scriptBody, { flag: "wx" });
+  const source = fileURLToPath(import.meta.url),
+    copied = path.join(work, "control/bash-compat.mts");
+  fs.copyFileSync(source, copied, fs.constants.COPYFILE_EXCL);
+  const executions: { c: Config; process: Owned }[] = [];
+  const hostExecutions: Owned[] = [];
+  const report: any = {
+    schemaVersion: 1,
+    classification: "small-msys-appcontainer-compatibility-proof",
+    sourceRevision: process.env.GITHUB_SHA,
+    nonce,
+    phase: "baseline",
+    passed: false,
+    startedExecutors: 0,
+    inputs: {
+      nodeSha256: sha(node),
+      mxcSha256: sha(mxc),
+      git: Object.fromEntries(
+        Object.keys(binaryPins).map((name) => [name, sha(path.join(git, name))]),
+      ),
+      compatibility: build,
+    },
+    stages: [],
+    cleanup: {},
+  };
+  const save = () => atomic(path.join(output, "progress.json"), report);
+  const start = (role: "base" | "start" | "a" | "b", mode: Config["mode"], key: string) => {
+    const share = path.join(work, "state-" + role);
+    fs.mkdirSync(share);
+    const c: Config = {
+      nonce,
+      containerId: "nm-" + nonce.slice(0, 12) + "-" + role,
+      mode,
+      share,
+      node,
+      git,
+      compat,
+      probe,
+      key,
+      script,
+    };
+    const config = path.join(work, "control/" + role + ".json");
+    write(config, c);
+    const policy = path.join(output, role + "-request.json");
+    write(policy, request(c, copied, config, windows));
+    const child = new Owned(
+      mxc,
+      [policy, "--log-file", path.join(output, role + "-mxc.log")],
+      env,
+      share,
+      125000,
+    );
+    const value = { c, process: child };
+    executions.push(value);
+    if (child.child.pid) report.startedExecutors++;
+    child.child.stdin!.end();
+    atomic(path.join(share, "host.json"), { nonce, executorPid: child.child.pid });
+    return value;
+  };
+  const completed = async (value: (typeof executions)[number]) => {
+    await value.process.finish();
+    write(path.join(output, value.c.containerId + "-executor.json"), value.process.result());
+    checkSuccess(value.process.result());
+    const r = await waitFile(path.join(value.c.share, "done.json"), Date.now() + 1000);
+    write(path.join(output, value.c.containerId + "-result.json"), r);
+    report.stages.push(r);
+    save();
+    assert.equal(r.passed, true, r.error);
+    return r;
+  };
+  try {
+    save();
+    const original = await completed(start("base", "baseline", "0000000000000000"));
+    const key = original.key;
+    assert.match(key, /^[a-f0-9]{16}$/u);
+    report.installationKey = key;
+    report.phase = "injected-startup-and-tools";
+    save();
+    await completed(start("start", "startup", key));
+    report.phase = "two-container-isolation";
+    save();
+    assert(
+      fs.existsSync(probe),
+      "Native object probe was not built; earlier launch evidence remains.",
+    );
+    const a = start("a", "isolation", key),
+      b = start("b", "isolation", key);
+    const end = Date.now() + 50000;
+    const ready = async (value: typeof a) => {
+      while (Date.now() < end) {
+        if (fs.existsSync(path.join(value.c.share, "done.json")))
+          throw Error(fs.readFileSync(path.join(value.c.share, "done.json"), "utf8"));
+        if (fs.existsSync(path.join(value.c.share, "ready.json")))
+          return JSON.parse(fs.readFileSync(path.join(value.c.share, "ready.json"), "utf8"));
+        await delay(50);
+      }
+      throw Error("Two-container readiness deadline");
+    };
+    const [ar, br] = await Promise.all([ready(a), ready(b)]);
+    assert.notEqual(ar.sid, br.sid);
+    assert.notEqual(ar.privateRoot, br.privateRoot);
+    assert.equal(ar.session, br.session);
+    atomic(path.join(a.c.share, "cross.json"), { nonce, otherRoot: br.privateRoot });
+    atomic(path.join(b.c.share, "cross.json"), { nonce, otherRoot: ar.privateRoot });
+    await Promise.all([
+      waitFile(path.join(a.c.share, "checked.json"), Date.now() + 20000),
+      waitFile(path.join(b.c.share, "checked.json"), Date.now() + 20000),
+    ]);
+    atomic(path.join(a.c.share, "stop.json"), { nonce });
+    atomic(path.join(b.c.share, "stop.json"), { nonce });
+    await Promise.all([completed(a), completed(b)]);
+    for (const [file, pin] of Object.entries(binaryPins))
+      assert.equal(sha(path.join(git, file)), pin);
+    report.passed = true;
+  } catch (error) {
+    report.error = error instanceof Error ? error.stack : String(error);
+  } finally {
+    for (const value of executions) {
+      if (!value.process.closed) {
+        try {
+          if (!fs.existsSync(path.join(value.c.share, "stop.json")))
+            atomic(path.join(value.c.share, "stop.json"), { nonce });
+        } catch {}
+        await value.process.stop();
+      }
+      if (value.process.closed) {
+        const deletion = new Owned(
+          mxc,
+          ["--delete", "--containername", value.c.containerId],
+          env,
+          work,
+          15000,
+        );
+        deletion.child.stdin!.end();
+        await deletion.finish();
+        report.cleanup[value.c.containerId] = {
+          executor: value.process.result(),
+          deletion: deletion.result(),
+        };
+        if (deletion.child.exitCode !== 0 || !deletion.closed || deletion.forced)
+          report.passed = false;
+      } else {
+        report.cleanup[value.c.containerId] = { executorClosed: false };
+        report.passed = false;
+      }
+    }
+    // Retain bounded guest phase/cleanup evidence after executor termination,
+    // including failures that never reached the normal completed() path.
+    report.retainedWorkerEvidence = [];
+    for (const value of executions)
+      if (value.process.closed) {
+        for (const name of ["progress.json", "done.json", "ready.json", "checked.json"]) {
+          const input = path.join(value.c.share, name);
+          try {
+            const stat = fs.lstatSync(input);
+            assert(stat.isFile() && !stat.isSymbolicLink() && stat.size <= 4 * 1024 * 1024);
+            const target = value.c.containerId + "-" + name;
+            fs.copyFileSync(input, path.join(output, target), fs.constants.COPYFILE_EXCL);
+            report.retainedWorkerEvidence.push(target);
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+              report.evidenceRetentionError = String(error);
+              report.passed = false;
+            }
+          }
+        }
+      }
+    report.hostBaseline = [];
+    if (
+      executions.every((value) => value.process.closed) &&
+      Object.values(report.cleanup).every(
+        (v: any) => v.deletion?.closed && v.deletion?.exitCode === 0,
+      )
+    )
+      for (const target of ["usr/bin/bash.exe", "bin/bash.exe"]) {
+        const child = new Owned(
+          path.join(git, target),
+          ["--noprofile", "--norc", "-c", "printf 'HOST_" + nonce + "\\n'"],
+          env,
+          work,
+          15000,
+        );
+        hostExecutions.push(child);
+        child.child.stdin!.end();
+        const r = await child.finish();
+        report.hostBaseline.push(r);
+        try {
+          checkSuccess(r, "HOST_" + nonce + "\n");
+        } catch (error) {
+          report.passed = false;
+          report.hostBaselineError = String(error);
+        }
+      }
+    report.startedHostProcesses = hostExecutions.length;
+    report.hostProcessesClosed = hostExecutions.every((child) => child.closed);
+    report.hostProcessesNormal = hostExecutions.every((child) => child.closed && !child.forced);
+    report.normalCleanup =
+      report.hostProcessesNormal &&
+      executions.length > 0 &&
+      report.startedExecutors === executions.length &&
+      executions.every((value) => value.process.closed && !value.process.forced) &&
+      Object.values(report.cleanup).every(
+        (v: any) => v.deletion?.exitCode === 0 && v.deletion?.closed && !v.deletion?.forced,
+      );
+    if (!report.normalCleanup) report.passed = false;
+    save();
+    write(path.join(output, "result.json"), report);
+  }
+  if (!report.passed)
+    throw Error("MSYS prototype failed at " + report.phase + "; see bounded stage receipts.");
+}
+if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href)
+  main().catch((error) => {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+  });
