@@ -42,6 +42,31 @@ export function getRequestedSandboxAgentName(agent: AgentDefinition | null | und
   return normalizeSandboxAgentName(agent?.name);
 }
 
+/** Limit providerless onboarding to qualified agent integrations without changing agent selection. */
+export function assertProviderlessSandboxAgent(
+  agent: unknown,
+  resolvedAgentName?: string | null,
+): void {
+  const name = (agent as { name?: unknown } | null)?.name;
+  const requested =
+    name === undefined && agent == null
+      ? "openclaw"
+      : typeof name === "string"
+        ? name.trim().toLowerCase()
+        : "";
+  const resolved = resolvedAgentName?.trim().toLowerCase() || null;
+  if (requested !== "openclaw" && requested !== "hermes") {
+    throw new Error(
+      "Interceptor onboarding supports providerless sandbox creation only for OpenClaw and Hermes. The selected agent has no qualified integration. No sandbox or provider was created.",
+    );
+  }
+  if (resolved !== null && resolved !== requested) {
+    throw new Error(
+      "Interceptor onboarding supports providerless sandbox creation only when requested and resolved agents agree. No sandbox or provider was created.",
+    );
+  }
+}
+
 export function formatSandboxAgentName(agentName: string | null | undefined): string {
   const normalized = normalizeSandboxAgentName(agentName);
   if (normalized === "openclaw") return "OpenClaw";
