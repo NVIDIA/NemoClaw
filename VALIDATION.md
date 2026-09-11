@@ -3,6 +3,44 @@
 Evidence date: 2026-09-11. This is local experiment evidence, not
 supported-platform or release qualification.
 
+## Top-level commands and teardown
+
+Implementation `6ace8e61a9`, native bundle `0.1.0-dev.gec65081aa297`, was validated
+on Linux ARM64 with Go 1.27.1 and OpenTofu 1.12.6. The CLI exposes `plan`, `apply`,
+`export`, and `destroy`; `plan --destroy` previews teardown using selected state.
+
+`go test -race ./...` and `go vet -tags=integration,live ./...` passed. The full
+native OpenTofu integration suite with the race detector passed in 43.230 seconds.
+Fixtures cover dependency order, read-only preview, unchanged ordinary apply after
+preview, confirmed absence, failed/partial/authentication observations, ownership
+and policy drift, lost delete responses, retained state, explicit retry without
+recreation, missing established state, unhealthy inference, absent inference
+credentials, retained untracked workspace contents, and refusal of unsupported
+Ollama or unfinished-create teardown. Docker fixtures cover running and stopped
+inference containers, retained storage, and deletion without startup or readiness.
+
+A disposable deployment on this Spark created a managed gateway and sandbox using
+the existing inference endpoint. Preview left its OpenTofu state unchanged.
+Destroy removed four bound workloads and retained its workspace and gateway
+storage. Reapply retained both identities and produced an actual `FOUR` agent
+reply through the recreated gateway and sandbox. Final destroy confirmed the
+workload containers absent; repeating it returned zero changes. The stopped
+initializer, volume, bridge, and state remain. The primary Spark gateway/inference
+deployment stayed running, and both radio containers remained stopped and intact.
+
+[Structured evidence](evidence/destroy-linux-arm64.json) retains the bundle
+manifest, command results, identity comparisons, and hashes of the complete local
+logs. This qualifies the managed gateway/sandbox teardown path on this host.
+Inference-process teardown uses deterministic Docker fixtures; the primary large
+model service was not destroyed for validation. No new Windows, macOS, or Podman
+runtime qualification is claimed.
+
+Workspace and data deletion are intentionally absent. The legacy combined Ollama
+resource and applies with potentially unbound create effects require separate
+recovery/storage work. OpenShell's name-addressed delete has no caller-provided
+ID/version condition; immediate identity checks do not eliminate a concurrent
+same-name replacement by another gateway client.
+
 The architecture now uses shared direct readers for provider refresh and export.
 The historical live runs below tested implementation `706f228877` with bundle
 `0.1.0-dev.g17f54bad65eb`, before removal of the SQL observation layer. Their

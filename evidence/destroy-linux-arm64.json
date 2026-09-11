@@ -1,0 +1,217 @@
+{
+  "date": "2026-09-11T23:57:56.277413+00:00",
+  "implementationCommit": "6ace8e61a9962722684b6b609d5ec79816ce4b64",
+  "platform": "Linux ARM64, local Docker, DGX Spark",
+  "bundle": {
+    "Version": "0.1.0-dev.gec65081aa297",
+    "Go": "1.27.1",
+    "OpenTofu": "1.12.6",
+    "Files": {
+      "bin/nemoclaw": "dd90f22e881ed600f6593e591141f48824f19dba91723aa6815a5454471682d4",
+      "libexec/tofu": "641c1eb92d089746dfe25c46e7ef99e1466de80656ed081b6c4bffd6eeb69a59",
+      "providers/registry.opentofu.org/nvidia/nemoclaw/0.1.0-dev.gec65081aa297/linux_arm64/terraform-provider-nemoclaw_v0.1.0-dev.gec65081aa297": "9d9df45eeedff20ebf65fded7fe8a733ab24c9b12e8bc0ca51a5c721b69d524f"
+    }
+  },
+  "checks": {
+    "unitRace": "passed",
+    "taggedVet": "passed",
+    "nativeOpenTofuIntegration": "ok  \tgithub.com/NVIDIA/NemoClaw/internal/engine\t43.230s"
+  },
+  "live": {
+    "disposableDeploymentUID": "d0434391-d743-4290-81d0-fd5e214142d0",
+    "stateDirectory": ".local/destroy-live",
+    "commands": {
+      "apply": {
+        "outcome": "succeeded",
+        "changes": [
+          {
+            "resource": "nemoclaw_managed_gateway.runtime",
+            "actions": [
+              "create"
+            ]
+          },
+          {
+            "resource": "nemoclaw_provider.inference",
+            "actions": [
+              "create"
+            ]
+          },
+          {
+            "resource": "nemoclaw_route.primary",
+            "actions": [
+              "create"
+            ]
+          },
+          {
+            "resource": "nemoclaw_sandbox.agent",
+            "actions": [
+              "create"
+            ]
+          }
+        ]
+      },
+      "agent": {
+        "agentResponse": "FOUR"
+      },
+      "plan": {
+        "outcome": "planned",
+        "changes": [
+          {
+            "resource": "nemoclaw_provider.inference",
+            "actions": [
+              "delete"
+            ]
+          },
+          {
+            "resource": "nemoclaw_route.primary",
+            "actions": [
+              "delete"
+            ]
+          },
+          {
+            "resource": "nemoclaw_sandbox.agent",
+            "actions": [
+              "delete"
+            ]
+          },
+          {
+            "resource": "nemoclaw_managed_gateway.runtime",
+            "actions": [
+              "delete"
+            ]
+          }
+        ],
+        "retained": [
+          "nemoclaw_workspace.deployment",
+          "nemoclaw_gateway_storage.runtime"
+        ]
+      },
+      "result": {
+        "outcome": "destroyed",
+        "changes": [
+          {
+            "resource": "nemoclaw_provider.inference",
+            "actions": [
+              "delete"
+            ]
+          },
+          {
+            "resource": "nemoclaw_route.primary",
+            "actions": [
+              "delete"
+            ]
+          },
+          {
+            "resource": "nemoclaw_sandbox.agent",
+            "actions": [
+              "delete"
+            ]
+          },
+          {
+            "resource": "nemoclaw_managed_gateway.runtime",
+            "actions": [
+              "delete"
+            ]
+          }
+        ],
+        "retained": [
+          "nemoclaw_workspace.deployment",
+          "nemoclaw_gateway_storage.runtime"
+        ]
+      },
+      "repeat": {
+        "outcome": "destroyed",
+        "changes": [],
+        "retained": [
+          "nemoclaw_workspace.deployment",
+          "nemoclaw_gateway_storage.runtime"
+        ]
+      }
+    },
+    "retained": {
+      "nemoclaw_workspace.deployment": {
+        "identitySHA256": "dd00aadfb66dfa5e7effa1e3a56c14ade3487d5295903771f0698f708bfa8342",
+        "unchanged": true
+      },
+      "nemoclaw_gateway_storage.runtime": {
+        "identitySHA256": "c94036f7c2f2729b41a4db634365c0da842ea95d86ce09f81a5e7315b126a97d",
+        "unchanged": true
+      }
+    },
+    "workloadContainersConfirmedAbsent": true,
+    "previewLeftStateUnchanged": true,
+    "containerStatus": {
+      "nc-68d203b0c7e6083f-inference": "running",
+      "nc-68d203b0c7e6083f-gateway": "running",
+      "nemoradio-vllm": "exited",
+      "nemoradio-tts": "exited",
+      "nc-a66b4713c58a5dd4-gateway-initialize": "exited"
+    }
+  },
+  "boundaries": [
+    "Full Spark inference process teardown was tested with Docker API fixtures; the primary inference process remained running.",
+    "Live teardown and reapply covered a managed gateway and sandbox using the primary inference endpoint.",
+    "Workspace, storage, keys, bridge, initializer, images and local state are retained; sandbox files and history are deleted.",
+    "The legacy combined Ollama resource and unfinished applies with potentially unbound effects are rejected before teardown.",
+    "OpenShell delete has no caller-supplied identity/version precondition; the implementation rechecks identity immediately before the request.",
+    "No host packages, drivers, kernel settings, or unrelated containers were changed."
+  ],
+  "localEvidence": {
+    ".local/destroy-unit-race.log": {
+      "bytes": 859,
+      "sha256": "86cf1567e0ffae51594d21b8aff8f04c65eccebc9ed87298496c151a6024a7d6"
+    },
+    ".local/destroy-vet.log": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    ".local/destroy-final-integration.log": {
+      "bytes": 56,
+      "sha256": "8de981d8cb4cae0d29852722a7e4ff93ac17bef8d2131e6905bea90bb8ece48b"
+    },
+    ".local/destroy-live-identities.json": {
+      "bytes": 2061,
+      "sha256": "a48413c75c3dcadb2f5db810cdb4a25d2cadf76021162e498f69b4395e4b62da"
+    },
+    ".local/destroy-live-current-apply.json": {
+      "bytes": 287,
+      "sha256": "a60178aeb02338cf816e476a5f5b642c61b47ed4320621daceeb286be4a89cf5"
+    },
+    ".local/destroy-live-current-apply.stderr": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    ".local/destroy-live-current-agent.json": {
+      "bytes": 24,
+      "sha256": "f48788a9e6b23925e6181909180369a54108dbc4032d23d84c48ab449b18c551"
+    },
+    ".local/destroy-live-current-agent.stderr": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    ".local/destroy-live-current-plan.json": {
+      "bytes": 364,
+      "sha256": "ff8102c26a16257b8e7cb1caa3acef7c51ad08905f15bcb2c4fca71ba7118061"
+    },
+    ".local/destroy-live-current-plan.stderr": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    ".local/destroy-live-current-result.json": {
+      "bytes": 366,
+      "sha256": "4dc416770f13d11fef7b44f67a2379d82f8595ea18885a7e6d04daf7d1ee12ff"
+    },
+    ".local/destroy-live-current-result.stderr": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    ".local/destroy-live-current-repeat.json": {
+      "bytes": 116,
+      "sha256": "eae72013252f3204faf13540876151ef101a4eef3b2f7db5069ab4c0b4a1922c"
+    },
+    ".local/destroy-live-current-repeat.stderr": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  }
+}
