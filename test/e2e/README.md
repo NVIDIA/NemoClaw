@@ -350,7 +350,7 @@ npx tsx tools/e2e/credential-free-tests.mts
 OpenShell target work in issue #9872. The trusted workflow downloads and
 verifies the exact OpenShell SDK archive with package-read permission. The
 candidate job receives the archive but no package credential. It calls a local
-OpenShell 0.0.106 gateway over HTTPS with an explicit CA. The target confirms
+OpenShell 0.0.116 gateway over HTTPS with an explicit CA. The target confirms
 that its configured authentication file path does not exist before and after
 the health request. A successful request proves that public health does not
 require a credential read or make an authenticated gateway call.
@@ -810,6 +810,10 @@ the GitHub asset ID, source URL, size, and SHA-256 digest for every required
 Linux x64 archive and checksum file. It rejects release drift during download,
 then uploads the verified bytes under a content-addressed name with the shared
 14-day E2E retention policy.
+
+`mcp-bridge-dev` is an explicit-only compatibility lane. Empty-selector full-suite
+dispatches qualify the exact stable OpenShell 0.0.116 product contract and do not
+select the development runtime.
 
 The OpenClaw, Hermes, and LangChain Deep Agents Code shards restore and verify that same artifact with the trusted workflow revision.
 The `actions/setup-node` step selects Node.js 22 and disables automatic package manager caching before candidate checkout.

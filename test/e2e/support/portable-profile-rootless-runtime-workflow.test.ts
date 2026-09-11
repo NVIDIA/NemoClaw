@@ -137,6 +137,13 @@ describe("portable profile rootless runtime workflow", () => {
       /mkdtempSync\(\s*path\.join\(os\.tmpdir\(\),\s*["']nemoclaw-portable-e2e-/,
     );
     expect(liveTest).toContain("preparePortableExperimentalHost(process.env, { home });");
+    expect(liveTest).toContain(
+      'import { OPENSHELL_V0116_QUALIFICATION } from "../fixtures/openshell-v0116-qualification.ts";',
+    );
+    expect(liveTest).toContain(
+      "getDockerSupervisorImage: () => OPENSHELL_V0116_QUALIFICATION.supervisorImage",
+    );
+    expect(liveTest).not.toContain("OPENSHELL_V0106_QUALIFICATION");
     expect(liveTest).toContain("createHermesPortableBuildContextPlan(");
     expect(liveTest).toContain('"test/e2e/live/hermes-portable-lifecycle-policy.yaml"');
     expect(liveTest).toContain('".hermes-policy.yaml"');

@@ -71,13 +71,20 @@ if (result.status !== 0) {
   process.exit(result.status || 1);
 }
 const rows = JSON.parse(result.stdout);
-const prefix = "OPENSHELL_SANDBOX_COMMAND=";
-const matches = (rows[0]?.Config?.Env || []).filter((entry) => entry.startsWith(prefix));
+const environment = rows[0]?.Config?.Env || [];
+const legacyPrefix = "OPENSHELL_SANDBOX_COMMAND=";
+const specPrefix = "OPENSHELL_MAIN_PROCESS_SPEC=";
+const prefixes = [legacyPrefix, specPrefix];
+const matches = environment.filter((entry) => prefixes.some((prefix) => entry.startsWith(prefix)));
 if (matches.length !== 1) {
   process.stderr.write("expected one OpenShell sandbox startup command\n");
   process.exit(1);
 }
-process.stdout.write(matches[0].slice(prefix.length) + "\n");
+const match = matches[0];
+const command = match.startsWith(legacyPrefix)
+  ? match.slice(legacyPrefix.length)
+  : JSON.parse(match.slice(specPrefix.length)).command.join(" ");
+process.stdout.write(command + "\n");
 `;
 
 const SUPERVISOR_TOPOLOGY_SCRIPT = String.raw`from pathlib import Path
