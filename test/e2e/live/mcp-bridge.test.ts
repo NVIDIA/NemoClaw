@@ -69,7 +69,7 @@ import {
   runOpenClawDeniedToolUpdateProof,
   restartBridgeWithoutHostSecret,
   retryOpenClawBaselineScopeOnboardFailure,
-  retryAfterHermesRestartTransportFailure,
+  retryAfterConcurrentAddTransientFailure,
   retryHermesGatewayDraining,
 } from "./mcp-bridge-reliability.ts";
 import {
@@ -341,7 +341,7 @@ async function assertConcurrentAddSerialized(
     policy: { registryPresent: true, gatewayPresent: true },
   });
   expect(statusObservation.registered).toBe(true);
-  const duplicateRejection = await retryAfterHermesRestartTransportFailure({
+  const duplicateRejection = await retryAfterConcurrentAddTransientFailure({
     adapter: options.expectedAdapter,
     committedBridgeVerified: true,
     diagnostic: resultText(rejected[0]!),
