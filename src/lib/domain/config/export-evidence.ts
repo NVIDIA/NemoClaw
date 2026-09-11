@@ -5,6 +5,7 @@ import type * as TypeBoxModule from "typebox" with { "resolution-mode": "import"
 import {
   BoundedTextSchema,
   NemoClawManagedVllmServingSchema,
+  NemoClawOllamaServingSchema,
   CredentialEnvironmentReferenceNameSchema,
   ImmutableImageReferenceSchema,
   InferenceEndpointSchema,
@@ -12,7 +13,8 @@ import {
   NemoClawInferenceApiSchema,
   NemoClawOpenClawInterfacesSchema,
   NemoClawHermesInterfacesSchema,
-  NemoClawAgentToolsConfigSchema,
+  NemoClawAgentToolDisclosureSchema,
+  NemoClawAdditionalAgentSchema,
   NemoClawInferenceTuningSchema,
   NemoClawAgentExecutionSchema,
   NemoClawBraveSearchConfigSchema,
@@ -28,6 +30,7 @@ import {
 } from "../../config/model";
 import type { SandboxConfiguration } from "../sandbox/configuration";
 import type { SandboxEntry } from "../../state/registry/types";
+import type { ObservedOllamaProxy } from "../../inference/ollama/proxy-observation";
 
 const { Type } = require("typebox") as typeof TypeBoxModule;
 
@@ -161,6 +164,7 @@ export interface ObservedExportInference {
   readonly endpointEvidence: ObservedExportEndpointEvidence | null;
   readonly credentialEnv: string | null;
   readonly managedServing?: ObservedManagedVllmRuntime;
+  readonly ollamaServing?: ObservedOllamaProxy;
 }
 
 export interface ObservedExportPolicy {
@@ -188,6 +192,7 @@ export type ExportSnapshotReadStage =
   | "provider-metadata"
   | "web-search-provider"
   | "managed-serving"
+  | "ollama-serving"
   | "effective-policy";
 
 /** One complete, untrusted read from all export evidence owners. */
@@ -258,6 +263,16 @@ const ExportInferenceSchema = Type.Union([
   HostedExportInferenceSchema,
   Type.Object(
     {
+      provider: Type.Literal("ollama-local"),
+      model: Type.Refine(BoundedTextSchema, isValidNemoClawBoundedText),
+      api: Type.Literal("openai-completions"),
+      serving: NemoClawOllamaServingSchema,
+      overrides: Type.Optional(NemoClawInferenceTuningSchema),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
       provider: Type.Literal("vllm-local"),
       model: Type.Refine(BoundedTextSchema, isValidNemoClawBoundedText),
       api: Type.Literal("openai-completions"),
@@ -271,7 +286,10 @@ const ExportInferenceSchema = Type.Union([
 const exportSourceFields = {
   sandboxName: Type.Refine(SandboxNameSchema, isValidNemoClawSandboxName),
   execution: Type.Optional(NemoClawAgentExecutionSchema),
-  tools: Type.Optional(NemoClawAgentToolsConfigSchema),
+  tools: Type.Optional(NemoClawAgentToolDisclosureSchema),
+  additionalAgents: Type.Optional(
+    Type.Array(NemoClawAdditionalAgentSchema, { minItems: 1, maxItems: 1 }),
+  ),
   auth: Type.Optional(Type.Object({ method: Type.Literal("api-key") })),
   runtime: Type.Object({
     provider: RuntimeProviderSchema,
@@ -298,7 +316,10 @@ export const ExportSourceValuesSchema = Type.Refine(
     }),
   ]),
   (value) =>
-    value.agent === "openclaw" || (value.execution === undefined && value.tools === undefined),
+    value.agent === "openclaw" ||
+    (value.execution === undefined &&
+      value.tools === undefined &&
+      value.additionalAgents === undefined),
 );
 
 type ExportSourceValues = DeepReadonly<TypeBoxModule.Type.Static<typeof ExportSourceValuesSchema>>;
