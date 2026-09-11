@@ -19,7 +19,17 @@ import {
   ensureDockerDriverGatewayJwtBundle,
 } from "./docker-driver-gateway-jwt-bundle";
 import { parseDockerDriverGatewayRuntimeMarker } from "./docker-driver-gateway-runtime-marker";
-import type { ExternalComponentDeclaration } from "./external-component";
+import {
+  ExternalComponentContractError,
+  type ExternalComponentGatewayConfiguration,
+} from "./external-component";
+import {
+  externalComponentGatewayNetwork,
+  parseExternalComponentConnections,
+  renderExternalComponentConnections,
+  validateExternalComponentGatewaySettings,
+} from "./external-component/gateway-config";
+import type { ExternalComponentGatewayPreparation } from "./external-component/activation";
 import type { RuntimeProviderGatewayHostRuntime } from "./runtime-provider/contract";
 import {
   resolveConfiguredRuntimeProvider,
@@ -125,16 +135,19 @@ type DockerDriverGatewayIdentity =
       sandboxNamespace: string;
     };
 
-export type ExternalComponentGatewayConfiguration = Pick<
-  ExternalComponentDeclaration,
-  "componentId" | "interceptorSocketPath"
->;
+export type { ExternalComponentGatewayConfiguration } from "./external-component";
 
 function externalComponentGatewayIdentity(
   component: ExternalComponentGatewayConfiguration,
 ): string {
   return createHash("sha256")
-    .update(JSON.stringify([component.componentId, component.interceptorSocketPath]))
+    .update(
+      JSON.stringify(
+        "interceptor" in component
+          ? validateExternalComponentGatewaySettings(component)
+          : [component.componentId, component.interceptorSocketPath],
+      ),
+    )
     .digest("hex");
 }
 
@@ -617,7 +630,12 @@ function existingGatewayIdentityFromConfig(
     const driverConfig = asTomlTable(drivers?.[driver]);
     let externalComponent: ExternalComponentGatewayConfiguration | null;
     try {
-      externalComponent = parseExternalComponentGatewayConfiguration(gateway?.interceptors);
+      const interceptors = gateway?.interceptors;
+      const first = Array.isArray(interceptors) ? asTomlTable(interceptors[0]) : null;
+      externalComponent =
+        typeof first?.grpc_endpoint === "string" && first.grpc_endpoint.startsWith("https://")
+          ? parseExternalComponentConnections(openshell!)
+          : parseExternalComponentGatewayConfiguration(interceptors);
     } catch {
       throw ambiguousGatewayConfig(configPath, "the interceptor configuration is invalid");
     }
@@ -861,6 +879,16 @@ function buildDockerDriverGatewayConfigTomlForIdentity(
     "disable_tls = false",
     "",
   ];
+  if (
+    externalComponent &&
+    "interceptor" in externalComponent &&
+    externalComponent.providerProfileSource
+  ) {
+    sections.push(
+      `provider_profile_sources = [{ type = "interceptor", name = ${tomlString(externalComponent.providerProfileSource)} }]`,
+      "",
+    );
+  }
 
   if (jwtBundle) {
     const tlsDir = localTlsDir ?? gatewayLocalTlsDir(gatewayEnv);
@@ -887,7 +915,12 @@ function buildDockerDriverGatewayConfigTomlForIdentity(
     );
   }
 
-  if (externalComponent) {
+  if (externalComponent && "interceptor" in externalComponent) {
+    if (!jwtBundle) throw new ExternalComponentContractError("declaration_invalid");
+    const settings = validateExternalComponentGatewaySettings(externalComponent);
+    const network = externalComponentGatewayNetwork(gatewayEnv, runtime, settings);
+    sections.push(...renderExternalComponentConnections(settings, network.gatewayIp));
+  } else if (externalComponent) {
     sections.push(
       "[[openshell.gateway.interceptors]]",
       `name = ${tomlString(externalComponent.componentId)}`,
@@ -1020,6 +1053,68 @@ export function writeDockerDriverGatewayConfig(
   );
 }
 
+export function readExternalComponentGatewayPreparation(
+  gatewayEnv: Record<string, string>,
+  component: ExternalComponentGatewayConfiguration,
+  projectedRuntime?: RuntimeProviderGatewayHostRuntime,
+): ExternalComponentGatewayPreparation {
+  if (!("interceptor" in component) || !gatewayEnv.OPENSHELL_GATEWAY_CONFIG) {
+    throw new ExternalComponentContractError("preparation_failed");
+  }
+  const env = { ...gatewayEnv };
+  const stateDir = path.dirname(env.OPENSHELL_GATEWAY_CONFIG!);
+  const runtime = resolveGatewayRuntimeProjection(env, projectedRuntime);
+  const snapshot = () => {
+    const identity = resolveDockerDriverGatewayIdentity(stateDir, env, runtime);
+    let keys: LegacyJwtBundleProof | undefined;
+    try {
+      if (
+        !identity.configProof ||
+        !identity.externalComponent ||
+        externalComponentGatewayIdentity(identity.externalComponent) !==
+          externalComponentGatewayIdentity(component)
+      ) {
+        throw new Error("component configuration changed");
+      }
+      keys = openOwnedLegacyJwtBundle(stateDir, identity.configProof.stateDirIdentity.uid);
+      const read = (filePath: string) =>
+        keys!.files.find((file) => file.path === filePath)!.bytes.toString("utf-8");
+      return {
+        gateway: {
+          id: identity.gatewayId,
+          issuer: `openshell-gateway:${identity.gatewayId}`,
+          publicKeyPem: read(keys.bundle.publicKeyPath),
+          kid: read(keys.bundle.kidPath).trim(),
+          extensionTokenTtlSecs: 900 as const,
+        },
+        network: externalComponentGatewayNetwork(env, runtime, component),
+        config: identity.configProof.bytes.toString("utf-8"),
+      };
+    } finally {
+      if (keys) closeLegacyJwtBundleProof(keys);
+      if (identity.configProof) closeRegularFileProof(identity.configProof);
+      if (identity.kind === "legacy") closeLegacyJwtBundleProof(identity.jwtProof);
+    }
+  };
+  try {
+    const expected = snapshot();
+    return {
+      gateway: expected.gateway,
+      network: expected.network,
+      revalidate() {
+        try {
+          if (!isDeepStrictEqual(snapshot(), expected))
+            throw new Error("gateway preparation changed");
+        } catch {
+          throw new ExternalComponentContractError("preparation_failed");
+        }
+      },
+    };
+  } catch {
+    throw new ExternalComponentContractError("preparation_failed");
+  }
+}
+
 export function prepareDockerDriverGatewayConfigEnv(
   gatewayEnv: Record<string, string>,
   stateDir: string,
@@ -1053,6 +1148,22 @@ export function prepareDockerDriverGatewayConfigEnv(
     options.externalComponent === undefined
       ? identity.externalComponent
       : options.externalComponent;
+  const observedComponentIdentity = externalComponent
+    ? externalComponentGatewayIdentity(externalComponent)
+    : NO_EXTERNAL_COMPONENT_GATEWAY_IDENTITY;
+  const expectedComponentIdentity = gatewayEnv[NEMOCLAW_EXTERNAL_COMPONENT_GATEWAY_IDENTITY_ENV];
+  if (
+    options.externalComponent === undefined &&
+    expectedComponentIdentity !== undefined &&
+    expectedComponentIdentity !== observedComponentIdentity
+  ) {
+    if (identity.configProof) closeRegularFileProof(identity.configProof);
+    if (identity.kind === "legacy") closeLegacyJwtBundleProof(identity.jwtProof);
+    throw ambiguousGatewayConfig(
+      path.join(stateDir, DOCKER_DRIVER_GATEWAY_CONFIG_NAME),
+      "the external component configuration changed",
+    );
+  }
   gatewayEnv.OPENSHELL_GATEWAY_CONFIG = writeDockerDriverGatewayConfigWithIdentity(
     stateDir,
     gatewayEnv,
@@ -1062,9 +1173,7 @@ export function prepareDockerDriverGatewayConfigEnv(
     externalComponent,
   );
   // An explicit absence lets the existing runtime comparison detect removal.
-  gatewayEnv[NEMOCLAW_EXTERNAL_COMPONENT_GATEWAY_IDENTITY_ENV] = externalComponent
-    ? externalComponentGatewayIdentity(externalComponent)
-    : NO_EXTERNAL_COMPONENT_GATEWAY_IDENTITY;
+  gatewayEnv[NEMOCLAW_EXTERNAL_COMPONENT_GATEWAY_IDENTITY_ENV] = observedComponentIdentity;
   if (runtime.gatewayConfig.sandboxNamespace === "omitted") {
     delete gatewayEnv[NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV];
   } else {
