@@ -375,6 +375,45 @@ describe("snapshot provider lifecycle", () => {
     );
   });
 
+  it("accepts a provider-verified canonical acceleration receipt for a legacy source", () => {
+    const legacyAcceleration = {
+      kind: "gpu" as const,
+      vendor: "nvidia",
+      devices: ["docker-device-id:nvidia.com/gpu=all"],
+    };
+    const canonicalAcceleration = {
+      kind: "gpu" as const,
+      vendor: "nvidia",
+      devices: ["nvidia.com/gpu=all"],
+    };
+    const canRepresentAcceleration = vi.fn((source: object, target: object) => {
+      expect(Object.isFrozen(source)).toBe(true);
+      expect(Object.isFrozen(target)).toBe(true);
+      return true;
+    });
+    const { bundle, restore } = provider();
+    Object.assign(bundle.snapshot, { canRepresentAcceleration });
+    const target = sandbox("target");
+    const source = {
+      ...captureSandboxRuntimeSnapshot(bundle, target),
+      runtime: { ...runtime(), acceleration: legacyAcceleration },
+    };
+    const prepared = prepareSandboxRuntimeRestore(bundle, target, source, managedProfile);
+    restore.mockReturnValueOnce({
+      ...prepared.preflight,
+      runtime: { ...runtime(), acceleration: canonicalAcceleration },
+      managedProfile,
+    });
+
+    expect(confirmSandboxRuntimeRestore(bundle, target, prepared)).toMatchObject({
+      restoreReceipt: { runtime: { acceleration: canonicalAcceleration } },
+    });
+    expect(canRepresentAcceleration).toHaveBeenCalledWith(
+      legacyAcceleration,
+      canonicalAcceleration,
+    );
+  });
+
   it("isolates central authority from a hostile provider that mutates backup inputs", () => {
     const { bundle, capture } = provider();
     capture.mockImplementationOnce((_entry, preflight) => {
