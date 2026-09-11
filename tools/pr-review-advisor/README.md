@@ -80,13 +80,15 @@ being checked.
 
 The generated-head request carries the sealed validation receipt, and reconciliation requires its
 attempt, workflow, source head, base, finding IDs, and selected paths to match the trusted selection.
-The reporter binds its generated-head code and every workflow it dispatches to one revision that it
-first verifies as the current trusted `main`. It rebuilds the checked-in risk plan from the receipt's
-changed paths and the generated SHA. When that plan requires E2E jobs, it dispatches only those jobs
-through the trusted `main` workflow, bound to the exact repair attempt. Repair E2E cannot cancel an
-earlier run, uses mock inference, posts nothing to Slack, receives no E2E credentials, and cannot
-select protected or dedicated infrastructure. The authoritative E2E planner and workflow metadata
-determine the expected job names and the longest selected dependency path. The controller adds a
+The reporter first binds its generated-head code to the current trusted `main`. For each validation
+workflow dispatched from `main`, it captures the returned run ID and that run's actual immutable
+workflow SHA, then requires later evidence to match both. It rebuilds the checked-in risk plan from
+the receipt's changed paths and the generated SHA. When that plan requires E2E jobs, it dispatches
+only those jobs through the trusted `main` workflow, bound to the exact repair attempt. Repair E2E
+cannot cancel an earlier run, uses mock inference, posts nothing to Slack, receives no E2E
+credentials, and cannot select protected or dedicated infrastructure. The authoritative E2E
+planner and workflow metadata determine the expected job names and the longest selected dependency
+path. The controller adds a
 reporting margin to that path, keeps a sixty-minute minimum, and rejects a plan that cannot finish
 inside its bounded workflow window. Each expected name must have one job record with completed
 status and a successful conclusion.
@@ -145,11 +147,13 @@ Review Advisor Generated Head` from `main` with the successful source `source_ru
 without creating another repair attempt.
 
 The repair path retains bounded proposal, validation, publication, generated-head, and diagnostic
-artifacts. The workflow fails visibly when it cannot write or upload the redacted audit receipt. The
-resolver runs on an ephemeral GitHub-hosted `ubuntu-24.04` runner: its `always()`
-step deletes the run-named sandbox after ordinary failures, while cancellation or job timeout
-retires the runner-local gateway and sandbox with the runner. Moving this job to a persistent or
-self-hosted runner requires a separate external reconciliation design.
+artifacts. The redacted audit receipt preserves the primary resolver failure stage and separately
+records the sanitized cleanup outcome and run-named sandbox identity, so cleanup failure does not
+hide the original failure. The workflow fails visibly when it cannot write or upload that receipt.
+The resolver runs on an ephemeral GitHub-hosted `ubuntu-24.04` runner: its `always()` step attempts
+to delete the run-named sandbox after ordinary failures, while cancellation or job timeout retires
+the runner-local gateway and sandbox with the runner. Moving this job to a persistent or self-hosted
+runner requires a separate external reconciliation design.
 
 Automatic `workflow_run` analysis jobs remain advisory-only and read-only. The advisory-comment
 publisher can update only its sticky workflow-link comment.

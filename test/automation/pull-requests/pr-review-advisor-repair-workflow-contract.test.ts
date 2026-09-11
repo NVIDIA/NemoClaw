@@ -89,6 +89,9 @@ describe("PR Review Advisor repair workflow contracts", () => {
     expect(resolveText).toContain("assertRepairArtifactDirectory");
     expect(resolveText.match(/repair-resolve[.]mts[^\n]* export/gu)).toHaveLength(1);
     expect(resolveText).toContain('if":"always()"');
+    expect(resolveText).toContain('"continue-on-error":true');
+    expect(resolveText).toContain("CLEANUP_RECEIPT_FILE");
+    expect(resolveText).toContain("Preserve resolver and cleanup outcomes");
     expect(resolve["runs-on"]).toBe("ubuntu-24.04");
     expect(resolve["timeout-minutes"]).toBe(35);
     expect(resolveText).toContain("advisor-repair-${{ github.run_id }}");
@@ -136,6 +139,8 @@ describe("PR Review Advisor repair workflow contracts", () => {
     expect(repairVerifyText).not.toMatch(/secrets[.]|contents":"write/u);
     const auditText = JSON.stringify(audit);
     expect(auditText).toContain("failure:{stage:");
+    expect(auditText).toContain("resolveFailureStage");
+    expect(auditText).toContain("cleanup:$resolveCleanup");
     expect(auditText).toContain("prNumber:$pr");
     expect(auditText).toContain("tr -cd '0-9'");
   });

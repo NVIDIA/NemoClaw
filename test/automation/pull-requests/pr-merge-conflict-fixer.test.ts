@@ -51,6 +51,7 @@ import {
 } from "../../../tools/pr-review-advisor/repair-publish.mts";
 import {
   createAdvisorRepairSandbox,
+  deleteAdvisorRepairSandbox,
   downloadAdvisorRepairCandidate,
   exportAdvisorRepairPatch,
   prepareAdvisorRepairInputs,
@@ -946,6 +947,25 @@ describe("PR merge conflict fixer", () => {
       expect(options.env.GITHUB_TOKEN).toBeUndefined();
       expect(options.env.OPENAI_API_KEY).toBeUndefined();
       expect(options.env.PR_REVIEW_ADVISOR_API_KEY).toBeUndefined();
+    });
+  });
+
+  it("writes a bounded sanitized cleanup receipt when sandbox deletion fails (#10791)", () => {
+    const env = resolverEnvironment();
+    const receiptFile = path.join(temporaryDirectory(), "cleanup.json");
+    const tools = resolverTools(["sandbox-test"]);
+    vi.mocked(tools.run)
+      .mockImplementationOnce(() => "sandbox-test")
+      .mockImplementationOnce(() => {
+        throw new Error("token=cleanup-secret delete failed");
+      });
+
+    expect(() => deleteAdvisorRepairSandbox(env, receiptFile, tools)).toThrow("delete failed");
+    expect(JSON.parse(fs.readFileSync(receiptFile, "utf8"))).toEqual({
+      version: 1,
+      sandboxName: "sandbox-test",
+      outcome: "failure",
+      error: "Failed to delete OpenShell sandbox sandbox-test: [REDACTED] delete failed",
     });
   });
 

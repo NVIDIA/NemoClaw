@@ -688,6 +688,8 @@ jobs:
     timeout-minutes: 35
     outputs:
       candidate-artifact-id: ${{ steps.upload.outputs.artifact-id }}
+      cleanup-receipt: ${{ steps.outcome.outputs.cleanup-receipt }}
+      failure-stage: ${{ steps.outcome.outputs.failure-stage }}
     env:
       ADVISOR_DIR: ${{ github.workspace }}/advisor
       OPENSHELL_GATEWAY_ENDPOINT: http://127.0.0.1:8080
@@ -774,25 +776,34 @@ jobs:
           env -u GITHUB_TOKEN -u GH_TOKEN -u PR_REVIEW_ADVISOR_API_KEY \
             NEMOCLAW_NON_INTERACTIVE=1 bash "$ADVISOR_DIR/scripts/install-openshell.sh"
 
-      - name: Configure inference on the trusted host
+      - id: configure
+        name: Configure inference on the trusted host
         env:
           OPENAI_API_KEY: ${{ secrets.PR_REVIEW_ADVISOR_API_KEY }}
         run: node --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/repair-resolve.mts" configure
 
-      - name: Create the credential-free sandbox
+      - id: create
+        name: Create the credential-free sandbox
         run: node --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/repair-resolve.mts" create
 
-      - name: Run exactly two Pi turns
+      - id: repair_run
+        name: Run exactly two Pi turns
         run: node --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/repair-resolve.mts" run
 
-      - name: Download the candidate and proposal
+      - id: download
+        name: Download the candidate and proposal
         run: node --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/repair-resolve.mts" download
 
-      - name: Delete the sandbox
+      - id: cleanup
+        name: Delete the sandbox
         if: always()
+        continue-on-error: true
+        env:
+          CLEANUP_RECEIPT_FILE: ${{ runner.temp }}/repair-cleanup.json
         run: node --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/repair-resolve.mts" delete
 
-      - name: Export the exact-path patch on the trusted host
+      - id: export
+        name: Export the exact-path patch on the trusted host
         env:
           SELECTION_FILE: ${{ runner.temp }}/repair-context/selection.json
           SOURCE_REPOSITORY: ${{ runner.temp }}/pr-workdir
@@ -806,6 +817,47 @@ jobs:
           path: ${{ env.ARTIFACT_DIR }}/
           if-no-files-found: error
           retention-days: 1
+
+      - id: outcome
+        name: Preserve resolver and cleanup outcomes
+        if: always()
+        env:
+          CLEANUP_OUTCOME: ${{ steps.cleanup.outcome }}
+          CLEANUP_RECEIPT_FILE: ${{ runner.temp }}/repair-cleanup.json
+          CONFIGURE_OUTCOME: ${{ steps.configure.outcome }}
+          CREATE_OUTCOME: ${{ steps.create.outcome }}
+          DOWNLOAD_OUTCOME: ${{ steps.download.outcome }}
+          EXPORT_OUTCOME: ${{ steps.export.outcome }}
+          REPAIR_RUN_OUTCOME: ${{ steps.repair_run.outcome }}
+          SANDBOX_NAME: ${{ env.SANDBOX_NAME }}
+          UPLOAD_OUTCOME: ${{ steps.upload.outcome }}
+        run: |
+          node --no-warnings --input-type=module <<'NODE'
+          import fs from "node:fs";
+          const phases = [
+            ["configure", process.env.CONFIGURE_OUTCOME],
+            ["create", process.env.CREATE_OUTCOME],
+            ["run", process.env.REPAIR_RUN_OUTCOME],
+            ["download", process.env.DOWNLOAD_OUTCOME],
+            ["export", process.env.EXPORT_OUTCOME],
+            ["upload", process.env.UPLOAD_OUTCOME],
+          ];
+          const primary = phases.find(([, outcome]) => outcome === "failure" || outcome === "cancelled");
+          let cleanup = {
+            version: 1,
+            sandboxName: process.env.SANDBOX_NAME,
+            outcome: process.env.CLEANUP_OUTCOME === "success" ? "success" : process.env.CLEANUP_OUTCOME === "failure" ? "failure" : "not-run",
+            error: null,
+          };
+          if (fs.existsSync(process.env.CLEANUP_RECEIPT_FILE)) {
+            const stat = fs.statSync(process.env.CLEANUP_RECEIPT_FILE);
+            if (!stat.isFile() || stat.size > 4096) throw new Error("repair cleanup receipt is invalid");
+            cleanup = JSON.parse(fs.readFileSync(process.env.CLEANUP_RECEIPT_FILE, "utf8"));
+          }
+          const failureStage = primary?.[0] ?? (cleanup.outcome === "failure" ? "cleanup" : "");
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `failure-stage=${failureStage}\ncleanup-receipt=${JSON.stringify(cleanup)}\n`);
+          if (cleanup.outcome === "failure") process.exitCode = 1;
+          NODE
 
   repair-validate:
     name: Validate Phase 0 candidate without secrets
@@ -1093,6 +1145,8 @@ jobs:
       - name: Write bounded redacted receipt
         env:
           TARGET_PR: ${{ inputs.target_pr }}
+          RESOLVE_CLEANUP: ${{ needs.repair-resolve.outputs.cleanup-receipt || 'null' }}
+          RESOLVE_FAILURE_STAGE: ${{ needs.repair-resolve.outputs.failure-stage }}
           RESOLVE_RESULT: ${{ needs.repair-resolve.result }}
           SELECT_RESULT: ${{ needs.repair-select.result }}
           VALIDATE_RESULT: ${{ needs.repair-validate.result }}
@@ -1105,9 +1159,10 @@ jobs:
             --arg pr "$(printf '%s' "$TARGET_PR" | tr -cd '0-9' | cut -c1-10)" \
             --arg select "$SELECT_RESULT" --arg resolve "$RESOLVE_RESULT" --arg validate "$VALIDATE_RESULT" \
             --arg publish "$PUBLISH_RESULT" --arg publishRequested "$PUBLISH_REQUESTED" \
-            '{version:1, phase:(if $publishRequested == "true" then 1 else 0 end), runId:$run, runAttempt:$attempt, prNumber:$pr, jobs:{select:$select, resolve:$resolve, validate:$validate, publish:$publish}} |
+            --arg resolveFailureStage "$RESOLVE_FAILURE_STAGE" --argjson resolveCleanup "$RESOLVE_CLEANUP" \
+            '{version:1, phase:(if $publishRequested == "true" then 1 else 0 end), runId:$run, runAttempt:$attempt, prNumber:$pr, jobs:{select:$select, resolve:$resolve, validate:$validate, publish:$publish, cleanup:$resolveCleanup}} |
              . + (if $select == "failure" or $select == "cancelled" then {failure:{stage:"select", reason:"repair selection did not produce an eligible exact-head attempt"}}
-                  elif $resolve == "failure" or $resolve == "cancelled" then {failure:{stage:"resolve", reason:"sandboxed repair did not produce a complete bounded proposal"}}
+                  elif $resolve == "failure" or $resolve == "cancelled" then {failure:{stage:"resolve", phase:(if $resolveFailureStage == "" then "unknown" else $resolveFailureStage end), reason:"sandboxed repair did not produce a complete bounded proposal"}}
                   elif $validate == "failure" or $validate == "cancelled" then {failure:{stage:"validate", reason:"trusted validation rejected or could not verify the candidate"}}
                   elif $publish == "failure" or $publish == "cancelled" then {failure:{stage:"publish", reason:"current-head-safe publication did not complete"}}
                   else {} end)' \

@@ -37,9 +37,17 @@ import {
   parseProposal,
   parseSelection,
   readJson,
+  sanitizeDiagnostic,
   type RepairSelection,
   RepairError,
 } from "./repair-contract.mts";
+
+export type AdvisorRepairCleanupReceipt = {
+  version: 1;
+  sandboxName: string;
+  outcome: "success" | "failure";
+  error: string | null;
+};
 
 const REPAIR_COMMAND_PREFIX = [
   "/usr/bin/node",
@@ -211,6 +219,30 @@ export function downloadAdvisorRepairCandidate(
     );
 }
 
+export function deleteAdvisorRepairSandbox(
+  env: NodeJS.ProcessEnv,
+  receiptFile: string,
+  tools: OpenShellTools = defaultOpenShellTools,
+): AdvisorRepairCleanupReceipt {
+  const sandboxName = required(env.SANDBOX_NAME, "SANDBOX_NAME");
+  let receipt: AdvisorRepairCleanupReceipt;
+  try {
+    deleteOpenShellSandbox(env, sandboxName, tools);
+    receipt = { version: 1, sandboxName, outcome: "success", error: null };
+  } catch (error) {
+    receipt = {
+      version: 1,
+      sandboxName,
+      outcome: "failure",
+      error: sanitizeDiagnostic(error),
+    };
+    writeFileSync(receiptFile, `${JSON.stringify(receipt)}\n`, { flag: "wx", mode: 0o600 });
+    throw error;
+  }
+  writeFileSync(receiptFile, `${JSON.stringify(receipt)}\n`, { flag: "wx", mode: 0o600 });
+  return receipt;
+}
+
 function regularFileInventory(root: string): Map<string, string> {
   const inventory = new Map<string, string>();
   let totalBytes = 0;
@@ -358,9 +390,9 @@ async function main(): Promise<void> {
       exportRepair(process.env);
       return;
     case "delete":
-      deleteOpenShellSandbox(
+      deleteAdvisorRepairSandbox(
         process.env,
-        required(process.env.SANDBOX_NAME, "SANDBOX_NAME"),
+        required(process.env.CLEANUP_RECEIPT_FILE, "CLEANUP_RECEIPT_FILE"),
         defaultOpenShellTools,
       );
       return;

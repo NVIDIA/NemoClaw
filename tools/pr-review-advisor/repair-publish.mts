@@ -188,6 +188,7 @@ export type AdvisorRepairHeadReceipt = {
   outcome: "success" | "manual-remediation-required";
   workflows: Array<{
     workflow: string;
+    workflowSha: string;
     runId: number;
     runAttempt: number;
     url: string;
@@ -506,6 +507,7 @@ async function dispatchRepairValidation(
   runName: string;
   workflowSha: string;
   existingRun?: WorkflowRun;
+  dispatchedRun?: WorkflowRun;
 }> {
   const prior = await listRepairValidationRuns(workflow, request);
   const matches = prior.filter(
@@ -513,19 +515,48 @@ async function dispatchRepairValidation(
       run.path === `.github/workflows/${workflow}` &&
       run.event === "workflow_dispatch" &&
       run.head_branch === "main" &&
-      run.head_sha === input.workflowSha &&
       run.display_title === runName &&
       run.html_url === `https://github.com/${REPAIR_REPOSITORY}/actions/runs/${run.id}`,
   );
   if (matches.length > 1)
     throw new RepairError(`generated-head ${workflow} run identity is ambiguous`);
-  if (matches.length === 1)
-    return { workflow, runName, workflowSha: input.workflowSha, existingRun: matches[0] };
-  await request("POST", `/repos/${REPAIR_REPOSITORY}/actions/workflows/${workflow}/dispatches`, {
-    ref: "main",
-    inputs: repairValidationInputs(workflow, input),
-  });
-  return { workflow, runName, workflowSha: input.workflowSha };
+  if (matches.length === 1) {
+    const workflowSha = fullSha(matches[0]?.head_sha, `generated-head ${workflow} workflow SHA`);
+    return { workflow, runName, workflowSha, existingRun: matches[0] };
+  }
+  const dispatched = (await request(
+    "POST",
+    `/repos/${REPAIR_REPOSITORY}/actions/workflows/${workflow}/dispatches`,
+    {
+      ref: "main",
+      return_run_details: true,
+      inputs: repairValidationInputs(workflow, input),
+    },
+  )) as { workflow_run_id?: unknown; run_url?: unknown; html_url?: unknown };
+  if (
+    !Number.isSafeInteger(dispatched.workflow_run_id) ||
+    Number(dispatched.workflow_run_id) < 1 ||
+    dispatched.run_url !==
+      `https://api.github.com/repos/${REPAIR_REPOSITORY}/actions/runs/${dispatched.workflow_run_id}` ||
+    dispatched.html_url !==
+      `https://github.com/${REPAIR_REPOSITORY}/actions/runs/${dispatched.workflow_run_id}`
+  )
+    throw new RepairError(`generated-head ${workflow} dispatch response is invalid`);
+  const run = (await request(
+    "GET",
+    `/repos/${REPAIR_REPOSITORY}/actions/runs/${dispatched.workflow_run_id}`,
+  )) as WorkflowRun;
+  const workflowSha = fullSha(run.head_sha, `generated-head ${workflow} workflow SHA`);
+  if (
+    run.id !== dispatched.workflow_run_id ||
+    run.path !== `.github/workflows/${workflow}` ||
+    run.event !== "workflow_dispatch" ||
+    run.head_branch !== "main" ||
+    run.display_title !== runName ||
+    run.html_url !== dispatched.html_url
+  )
+    throw new RepairError(`generated-head ${workflow} dispatched run identity is invalid`);
+  return { workflow, runName, workflowSha, dispatchedRun: run };
 }
 
 async function listRepairValidationRuns(
@@ -550,10 +581,12 @@ async function listRepairValidationRuns(
 async function discoverRepairValidationRun(
   pending: Awaited<ReturnType<typeof dispatchRepairValidation>>,
   request: GitHubRequest,
-): Promise<{ workflow: string; runId: number; url: string } | null> {
+): Promise<{ workflow: string; workflowSha: string; runId: number; url: string } | null> {
   const inventory = pending.existingRun
     ? [pending.existingRun]
-    : await listRepairValidationRuns(pending.workflow, request);
+    : pending.dispatchedRun
+      ? [pending.dispatchedRun]
+      : await listRepairValidationRuns(pending.workflow, request);
   const matches = inventory.filter(
     (run) =>
       run.path === `.github/workflows/${pending.workflow}` &&
@@ -567,14 +600,18 @@ async function discoverRepairValidationRun(
     throw new RepairError(`generated-head ${pending.workflow} run identity is ambiguous`);
   const [match] = matches;
   return match
-    ? { workflow: pending.workflow, runId: Number(match.id), url: String(match.html_url) }
+    ? {
+        workflow: pending.workflow,
+        workflowSha: pending.workflowSha,
+        runId: Number(match.id),
+        url: String(match.html_url),
+      }
     : null;
 }
 
 async function readRepairValidationRun(
-  dispatch: { workflow: string; runId: number; url: string },
+  dispatch: { workflow: string; workflowSha: string; runId: number; url: string },
   runName: string,
-  workflowSha: string,
   request: GitHubRequest,
 ): Promise<WorkflowRun> {
   const run = (await request(
@@ -588,7 +625,7 @@ async function readRepairValidationRun(
     run.head_branch !== "main" ||
     run.display_title !== runName ||
     run.html_url !== dispatch.url ||
-    run.head_sha !== workflowSha ||
+    run.head_sha !== dispatch.workflowSha ||
     !Number.isSafeInteger(run.run_attempt) ||
     Number(run.run_attempt) < 1
   )
@@ -597,15 +634,14 @@ async function readRepairValidationRun(
 }
 
 async function completedWorkflowEvidence(
-  dispatch: { workflow: string; runId: number; url: string },
+  dispatch: { workflow: string; workflowSha: string; runId: number; url: string },
   requiredJobs: readonly string[],
   runName: string,
   receiptName: string,
-  workflowSha: string,
   request: GitHubRequest,
   observe?: (run: WorkflowRun) => void,
 ): Promise<AdvisorRepairHeadReceipt["workflows"][number] | null> {
-  const run = await readRepairValidationRun(dispatch, runName, workflowSha, request);
+  const run = await readRepairValidationRun(dispatch, runName, request);
   observe?.(run);
   if (run.status !== "completed") return null;
   if (run.conclusion !== "success")
@@ -1091,7 +1127,10 @@ export async function waitForAdvisorRepairHead(input: {
     checkpoint.e2e.status =
       e2eDispatch.source === "workflow-run-inventory" ? "adopted" : "dispatched";
   }
-  const dispatches = new Map<string, { workflow: string; runId: number; url: string }>();
+  const dispatches = new Map<
+    string,
+    { workflow: string; workflowSha: string; runId: number; url: string }
+  >();
   let e2e: AdvisorRepairE2eEvidence | null = null;
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     const pull = (await input.request(
@@ -1126,12 +1165,7 @@ export async function waitForAdvisorRepairHead(input: {
     for (const workflow of ADVISOR_REPAIR_PREREQUISITE_WORKFLOWS) {
       const dispatch = dispatches.get(workflow);
       if (!dispatch) continue;
-      const run = await readRepairValidationRun(
-        dispatch,
-        runName,
-        input.workflowSha,
-        input.request,
-      );
+      const run = await readRepairValidationRun(dispatch, runName, input.request);
       const observed = checkpoint.workflows.find((entry) => entry.workflow === workflow);
       if (observed) {
         observed.status = String(run.status);
@@ -1148,7 +1182,6 @@ export async function waitForAdvisorRepairHead(input: {
         specification.checks,
         runName,
         receiptName,
-        input.workflowSha,
         input.request,
         (run) => {
           const observed = checkpoint.workflows.find(

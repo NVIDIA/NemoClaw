@@ -329,8 +329,13 @@ describe("PR Review Advisor generated-head evidence", () => {
             };
           }
           case method === "POST" && workflow !== undefined: {
-            const dispatch = body as { ref?: unknown; inputs?: Record<string, unknown> };
+            const dispatch = body as {
+              ref?: unknown;
+              return_run_details?: unknown;
+              inputs?: Record<string, unknown>;
+            };
             expect(dispatch.ref).toBe("main");
+            expect(dispatch.return_run_details).toBe(true);
             expect(dispatch.inputs).toMatchObject({
               repair_head_sha: generatedHeadSha,
               repair_base_sha: selection.baseSha,
@@ -342,7 +347,17 @@ describe("PR Review Advisor generated-head evidence", () => {
                 : selection.sourceHeadSha,
             ).toBe(selection.sourceHeadSha);
             dispatchedWorkflows.add(workflow);
-            return {};
+            const prerequisite = ADVISOR_REPAIR_PREREQUISITE_WORKFLOWS.some(
+              (candidate) => candidate === workflow,
+            );
+            const runId = prerequisite
+              ? ADVISOR_REPAIR_HEAD_WORKFLOWS.length + 1
+              : ADVISOR_REPAIR_HEAD_WORKFLOWS.findIndex((item) => item.workflow === workflow) + 1;
+            return {
+              workflow_run_id: runId,
+              run_url: `https://api.github.com/repos/${selection.repository}/actions/runs/${runId}`,
+              html_url: `https://github.com/${selection.repository}/actions/runs/${runId}`,
+            };
           }
           case method === "GET" && apiPath.endsWith(`/actions/runs/${e2eRunId}`):
             return {
@@ -558,7 +573,10 @@ describe("PR Review Advisor generated-head evidence", () => {
     changedPaths = [];
     workflowHeadSha = "6".repeat(40);
     dispatchedWorkflows.clear();
-    await expect(verify()).rejects.toThrow("controller deadline");
+    await expect(verify()).resolves.toMatchObject({
+      outcome: "success",
+      workflows: expect.arrayContaining([expect.objectContaining({ workflowSha: "6".repeat(40) })]),
+    });
     workflowHeadSha = "5".repeat(40);
     failedWorkflow = "pr.yaml";
     dispatchedWorkflows.clear();
@@ -581,9 +599,10 @@ describe("PR Review Advisor generated-head evidence", () => {
     mismatchedReceipt = false;
     correlationMode = "zero";
     dispatchedWorkflows.clear();
-    await expect(verify()).rejects.toThrow("did not finish");
+    await expect(verify()).resolves.toMatchObject({ outcome: "success" });
     correlationMode = "ambiguous";
     dispatchedWorkflows.clear();
+    dispatchedWorkflows.add("openshell-sdk-package-pr.yaml");
     await expect(verify()).rejects.toThrow("run identity is ambiguous");
     correlationMode = "one";
     changedPaths = ["src/lib/onboard/sandbox-create-step.ts"];
