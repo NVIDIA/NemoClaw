@@ -694,7 +694,7 @@ describe("CLI OpenShell sandbox command executor", () => {
     ]);
   });
 
-  it("holds TERM handlers until command-dependent cleanup releases the stream", async () => {
+  it("preserves interactive SIGINT and holds TERM handlers through cleanup", async () => {
     const childEvents = new EventEmitter();
     const signalEvents = new EventEmitter();
     const child: OpenShellCommandChild = {
@@ -723,6 +723,8 @@ describe("CLI OpenShell sandbox command executor", () => {
       target: selectedOpenShellGateway(),
       command: ["sleep", "30"],
     });
+    signalEvents.emit("SIGINT");
+    expect(child.kill).not.toHaveBeenCalled();
     signalEvents.emit("SIGTERM");
     const completed = await pending;
 

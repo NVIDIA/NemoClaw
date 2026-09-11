@@ -975,8 +975,9 @@ describe("focused staging Brev Launchable lane", () => {
     });
   });
 
-  it("reports unavailable when SSH alias lookup fails", () => {
-    const { env, state, workDir } = fixture({
+  it("reports unavailable when SSH alias lookup fails after readiness expires during logging (#11208)", () => {
+    const { calls, env, state, workDir } = fixture({
+      delaySshReadinessLog: true,
       sshAliasQueryStatus: 42,
       sshReadyAfter: Number.MAX_SAFE_INTEGER,
     });
@@ -984,6 +985,8 @@ describe("focused staging Brev Launchable lane", () => {
     expect(result.status).not.toBe(0);
     const output = emittedOutput(result, workDir);
     expect(output).toContain("Readiness SSH alias nclaw-e2e-test-1: unavailable");
+    expect(output).toContain("Readiness classification: workspace shell is unreachable");
+    expect(fs.readFileSync(calls, "utf8")).not.toContain("ssh readiness attempt");
     expect(fs.existsSync(state)).toBe(false);
     expect(JSON.parse(fs.readFileSync(path.join(workDir, "cleanup.json"), "utf8"))).toMatchObject({
       status: "ABSENT",

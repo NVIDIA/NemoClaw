@@ -1140,6 +1140,7 @@ describe("PR review advisor OpenShell wrapper", () => {
         "exec",
         "--name",
         "pr-advisor-test",
+        "--no-login-shell",
         "--timeout",
         "2100",
         "--workdir",
