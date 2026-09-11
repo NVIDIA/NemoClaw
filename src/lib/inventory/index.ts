@@ -30,6 +30,7 @@ export interface SandboxEntry {
   messaging?: SandboxMessagingState | null;
   agent?: string | null;
   dashboardPort?: number | null;
+  dashboardBindAddress?: string | null;
   // Passthrough of the durable registry reservation marker so list and status
   // hide registrations that have not committed their lifecycle yet.
   pendingRouteReservation?: true;
@@ -106,6 +107,7 @@ export interface SandboxInventoryRow {
   policies: string[];
   agent: string;
   dashboardPort?: number | null;
+  dashboardBindAddress?: string | null;
   isDefault: boolean;
   activeSessionCount: number | null;
   // #5714: row recovered display-only from the live gateway. Its agent/GPU/
@@ -321,6 +323,7 @@ function buildSandboxInventoryRow(
     policies: getPolicyPresets?.(sandbox.name) ?? [],
     agent: resolveDisplayAgent(sandbox),
     ...(sandbox.dashboardPort != null ? { dashboardPort: sandbox.dashboardPort } : {}),
+    ...(sandbox.dashboardBindAddress ? { dashboardBindAddress: sandbox.dashboardBindAddress } : {}),
     isDefault: sandbox.name === defaultSandbox,
     activeSessionCount,
     ...(sandbox.recoveredFromGateway ? { recoveredFromGateway: true } : {}),
@@ -460,7 +463,16 @@ export function renderSandboxInventoryText(
       log(`      (live OpenShell gateway differs from onboarded: ${parts.join(", ")})`);
     }
     if (sandbox.dashboardPort != null) {
-      log(`      dashboard: http://127.0.0.1:${sandbox.dashboardPort}/`);
+      // The URL stays loopback: a wildcard bind is not a browser destination.
+      // Say when the recorded bind means the forward also listens on every
+      // interface, so `list` no longer contradicts the listener (#10861).
+      const reach =
+        sandbox.dashboardBindAddress === "0.0.0.0"
+          ? "  (bound on all interfaces)"
+          : sandbox.dashboardBindAddress
+            ? ""
+            : "  (bind not recorded)";
+      log(`      dashboard: http://127.0.0.1:${sandbox.dashboardPort}/${reach}`);
     }
   }
   log("");

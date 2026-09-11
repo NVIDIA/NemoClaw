@@ -17,7 +17,9 @@ export interface DashboardUrlCommandDeps {
   /** Pull gateway.auth.token from the sandbox config (host-side helper). */
   fetchToken: (sandboxName: string) => string | null;
   /** Read sandbox metadata such as agent name and recorded dashboard port. */
-  getSandbox?: (sandboxName: string) => Pick<SandboxEntry, "agent" | "dashboardPort"> | null;
+  getSandbox?: (
+    sandboxName: string,
+  ) => Pick<SandboxEntry, "agent" | "dashboardPort" | "dashboardBindAddress"> | null;
   /** Resolve the browser-facing dashboard base URL for this host, when known. */
   getAccessUrl?: (port: number) => string | null;
   /** Resolve a registered agent's dashboard auth contract. */
@@ -56,6 +58,19 @@ const SECURITY_WARNING = "Treat this URL like a password -- do not log, share, o
 
 function dashboardUrlFail(lines: string | readonly string[], exitCode = 1): never {
   throw new DashboardUrlCommandError(lines, exitCode);
+}
+
+/**
+ * The bind recorded when this sandbox's dashboard forward last started, or
+ * null for rows written before it was recorded. `NEMOCLAW_DASHBOARD_BIND` and
+ * WSL select the bind; `CHAT_UI_URL` selects only the browser URL and port.
+ * Later commands rarely carry that environment, so recomputing the bind here
+ * would misreport a dashboard listening on every interface (#10861).
+ */
+function recordedBindAddress(
+  sandbox: Pick<SandboxEntry, "dashboardBindAddress"> | null,
+): string | null {
+  return sandbox?.dashboardBindAddress || null;
 }
 
 function resolveDashboardPort(sandbox: Pick<SandboxEntry, "dashboardPort"> | null): number {
@@ -134,14 +149,41 @@ export function runDashboardUrlCommand(
   const log = deps.log ?? ((m: string) => console.log(m));
   const error = deps.error ?? ((m: string) => console.error(m));
 
-  const printSshForwardHint = (port: number, accessUrl: string | null): void => {
-    const hint = buildSshForwardHintLines({ port, accessUrl, env: deps.env });
+  // The printed URL stays the browser-usable one: a wildcard bind is not a
+  // browser destination. The recorded bind decides what follows it. A wide
+  // bind is disclosed and needs no SSH forward; a loopback bind keeps the
+  // forward hint; a row with no record falls back to the access URL alone.
+  const printDashboardReach = (
+    port: number,
+    accessUrl: string | null,
+    bindAddress: string | null,
+  ): void => {
+    if (bindAddress === "0.0.0.0") {
+      log(
+        `  Bound on all interfaces (0.0.0.0:${String(port)}); other hosts may reach it at this host's address, subject to the host firewall.`,
+      );
+      return;
+    }
+    if (bindAddress === null && sandbox?.dashboardPort) {
+      // No record: say so rather than assert loopback. A row from before
+      // binds were recorded, a launch whose registry write failed and a
+      // forward that never started all land here, so the note describes the
+      // state, not a cause. The next forward launch records the bind.
+      log(
+        `  NemoClaw has no recorded bind for this dashboard forward; it records the bind when it next creates the forward. Until then, check the host's listening sockets for port ${String(port)}.`,
+      );
+    }
+    const hint = buildSshForwardHintLines({
+      port,
+      accessUrl: bindAddress ? `http://${bindAddress}:${String(port)}` : accessUrl,
+      env: deps.env,
+    });
     if (!hint) return;
     log("");
     for (const line of hint) log(line);
   };
 
-  let sandbox: Pick<SandboxEntry, "agent" | "dashboardPort"> | null = null;
+  let sandbox: Pick<SandboxEntry, "agent" | "dashboardPort" | "dashboardBindAddress"> | null = null;
   if (deps.getSandbox) {
     try {
       sandbox = deps.getSandbox(sandboxName);
@@ -178,7 +220,7 @@ export function runDashboardUrlCommand(
     }
     log("  Dashboard URL:");
     log(`  ${url}`);
-    printSshForwardHint(port, accessUrl);
+    printDashboardReach(port, accessUrl, recordedBindAddress(sandbox));
     return;
   }
 
@@ -206,6 +248,6 @@ export function runDashboardUrlCommand(
 
   log("  Dashboard URL:");
   log(`  ${url}`);
-  printSshForwardHint(port, accessUrl);
+  printDashboardReach(port, accessUrl, recordedBindAddress(sandbox));
   error(SECURITY_WARNING);
 }

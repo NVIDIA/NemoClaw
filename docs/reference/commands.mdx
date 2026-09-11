@@ -1899,7 +1899,7 @@ $$nemoclaw my-assistant dashboard-url
 $$nemoclaw my-assistant dashboard-url --quiet
 ```
 
-The default output includes a label and a warning. Pass `--quiet` or `-q` to print only the URL to stdout so scripts can capture it:
+The default output includes a label and a warning. When the dashboard forward is bound on all interfaces, or its bind has not been recorded yet, the default output also says so on its own line. Pass `--quiet` or `-q` to print only the URL to stdout so scripts can capture it:
 
 ```bash
 URL=$($$nemoclaw my-assistant dashboard-url --quiet)
@@ -1913,7 +1913,7 @@ URL=$($$nemoclaw my-assistant dashboard-url --quiet)
 </AgentOnly>
 <AgentOnly variant="hermes">
 
-Print the browser dashboard URL for a running Hermes sandbox. Hermes manages dashboard sessions itself, so this command prints a plain URL without an OpenClaw `#token=` fragment. The built-in dashboard is forwarded on port `18789` by default.
+Print the browser dashboard URL for a running Hermes sandbox. Hermes manages dashboard sessions itself, so this command prints a plain URL without an OpenClaw `#token=` fragment. The built-in dashboard is forwarded on port `18789` by default. When the dashboard forward is bound on all interfaces, or its bind has not been recorded yet, the default output says so on its own line; `--quiet` prints only the URL.
 
 ```bash
 nemohermes my-assistant dashboard-url

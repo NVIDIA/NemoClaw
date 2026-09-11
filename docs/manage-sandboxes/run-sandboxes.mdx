@@ -101,6 +101,8 @@ CHAT_UI_URL=http://127.0.0.1:19000 $$nemoclaw onboard
 NEMOCLAW_DASHBOARD_PORT=19000 $$nemoclaw onboard
 ```
 
+The host-side dashboard forward listens on all interfaces (`0.0.0.0`) only when `NEMOCLAW_DASHBOARD_BIND=0.0.0.0` is set for a sandbox created with that opt-in, or when the host is WSL. `CHAT_UI_URL` does not change the bind. Other hosts may then reach the dashboard at this host's address, subject to the host firewall. A later forward recovery, such as `connect` or `recover` re-creating a missing forward, selects the bind the same way from its own environment. NemoClaw records the bind each time it starts a dashboard forward. `$$nemoclaw <name> dashboard-url` and `$$nemoclaw list` report that recorded bind, and `$$nemoclaw <name> status` omits its SSH port-forward guidance while the recorded bind is `0.0.0.0`. Leave `NEMOCLAW_DASHBOARD_BIND` unset to keep the forward on loopback.
+
 For port conflicts and overrides, refer to [Port already in use](../../reference/troubleshooting#port-already-in-use).
 
 </AgentOnly>

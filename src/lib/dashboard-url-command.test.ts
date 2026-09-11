@@ -68,6 +68,126 @@ describe("dashboard-url command helpers", () => {
     expect(sinks.out).toEqual(["http://172.22.1.1:19000/#token=secret-token"]);
   });
 
+  it("keeps the URL usable and discloses a recorded wide bind instead of printing 0.0.0.0 (#10861)", () => {
+    const sinks = makeSinks();
+
+    runDashboardUrlCommand(
+      "alpha",
+      { quiet: false },
+      {
+        fetchToken: () => "secret-token",
+        getSandbox: () => ({
+          agent: "openclaw",
+          dashboardPort: 19000,
+          dashboardBindAddress: "0.0.0.0",
+        }),
+        getAccessUrl: () => "http://127.0.0.1:19000",
+        env: { SSH_CONNECTION: "10.0.0.9 51000 10.6.76.40 22", USER: "spark" },
+        log: sinks.log,
+        error: sinks.error,
+      },
+    );
+
+    expect(sinks.out).toEqual([
+      "  Dashboard URL:",
+      "  http://127.0.0.1:19000/#token=secret-token",
+      "  Bound on all interfaces (0.0.0.0:19000); other hosts may reach it at this host's address, subject to the host firewall.",
+    ]);
+  });
+
+  it("discloses a recorded wide bind in the session-auth branch too (#10861)", () => {
+    const sinks = makeSinks();
+
+    runDashboardUrlCommand(
+      "alpha",
+      { quiet: false },
+      {
+        fetchToken: () => "secret-token",
+        getSandbox: () => ({
+          agent: "hermes",
+          dashboardPort: 18790,
+          dashboardBindAddress: "0.0.0.0",
+        }),
+        getAgentDashboardAuth: () => "session",
+        getAccessUrl: () => "http://127.0.0.1:18790",
+        env: { SSH_CONNECTION: "10.0.0.9 51000 10.6.76.40 22", USER: "spark" },
+        log: sinks.log,
+        error: sinks.error,
+      },
+    );
+
+    expect(sinks.out).toEqual([
+      "  Dashboard URL:",
+      "  http://127.0.0.1:18790/",
+      "  Bound on all interfaces (0.0.0.0:18790); other hosts may reach it at this host's address, subject to the host firewall.",
+    ]);
+  });
+
+  it("keeps the SSH forward hint for a recorded loopback bind (#10861)", () => {
+    const sinks = makeSinks();
+
+    runDashboardUrlCommand(
+      "alpha",
+      { quiet: false },
+      {
+        fetchToken: () => "secret-token",
+        getSandbox: () => ({
+          agent: "openclaw",
+          dashboardPort: 19000,
+          dashboardBindAddress: "127.0.0.1",
+        }),
+        getAccessUrl: () => "http://127.0.0.1:19000",
+        env: { SSH_CONNECTION: "10.0.0.9 51000 10.6.76.40 22", USER: "spark" },
+        log: sinks.log,
+        error: sinks.error,
+      },
+    );
+
+    expect(sinks.out).toContain("      ssh -L 19000:127.0.0.1:19000 spark@<host>");
+    expect(sinks.out.join("\n")).not.toContain("Bound on all interfaces");
+  });
+
+  it("prints only the usable URL in quiet mode for a recorded wide bind (#10861)", () => {
+    const sinks = makeSinks();
+
+    runDashboardUrlCommand(
+      "alpha",
+      { quiet: true },
+      {
+        fetchToken: () => "secret-token",
+        getSandbox: () => ({
+          agent: "openclaw",
+          dashboardPort: 19000,
+          dashboardBindAddress: "0.0.0.0",
+        }),
+        getAccessUrl: () => "http://127.0.0.1:19000",
+        env: { SSH_CONNECTION: "10.0.0.9 51000 10.6.76.40 22", USER: "spark" },
+        log: sinks.log,
+        error: sinks.error,
+      },
+    );
+
+    expect(sinks.out).toEqual(["http://127.0.0.1:19000/#token=secret-token"]);
+  });
+
+  it("keeps the recomputed access URL for a row with no recorded bind", () => {
+    const sinks = makeSinks();
+
+    runDashboardUrlCommand(
+      "alpha",
+      { quiet: true },
+      {
+        fetchToken: () => "secret-token",
+        getSandbox: () => ({ agent: "openclaw", dashboardPort: 19000 }),
+        getAccessUrl: () => "http://172.22.1.1:19000",
+        log: sinks.log,
+        error: sinks.error,
+      },
+    );
+
+    expect(sinks.out).toEqual(["http://172.22.1.1:19000/#token=secret-token"]);
+  });
+
   it("prints a human label and warning outside quiet mode", () => {
     const sinks = makeSinks();
     runDashboardUrlCommand(
@@ -82,8 +202,29 @@ describe("dashboard-url command helpers", () => {
       },
     );
 
-    expect(sinks.out).toEqual(["  Dashboard URL:", "  http://127.0.0.1:18789/#token=secret-token"]);
+    expect(sinks.out).toEqual([
+      "  Dashboard URL:",
+      "  http://127.0.0.1:18789/#token=secret-token",
+      "  NemoClaw has no recorded bind for this dashboard forward; it records the bind when it next creates the forward. Until then, check the host's listening sockets for port 18789.",
+    ]);
     expect(sinks.err.join("\n")).toContain("Treat this URL like a password");
+  });
+
+  it("does not claim a missing record when the registry has no row for the sandbox (#10861)", () => {
+    const sinks = makeSinks();
+    runDashboardUrlCommand(
+      "alpha",
+      { quiet: false },
+      {
+        fetchToken: () => "secret-token",
+        getSandbox: () => null,
+        env: {},
+        log: sinks.log,
+        error: sinks.error,
+      },
+    );
+
+    expect(sinks.out).toEqual(["  Dashboard URL:", "  http://127.0.0.1:18789/#token=secret-token"]);
   });
 
   it("appends an SSH port-forward hint when run over SSH (#5925)", () => {

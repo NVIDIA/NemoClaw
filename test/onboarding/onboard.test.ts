@@ -711,6 +711,10 @@ runner.runCapture = (command) => {
 	  name: "my-assistant",
 	  toolDisclosure: "progressive",
 	}, { sandboxId: existingSandbox.state.sandboxId });
+// The harness never registers the sandbox, so the launcher's record of the
+// wide bind CHAT_UI_URL implies would find no row and refuse the forward
+// (#10861). Accept the write as a registered sandbox would.
+registry.updateSandbox = () => true;
 
 childProcess.spawn = (...args) => {
   forwardService.recordSpawn(args);

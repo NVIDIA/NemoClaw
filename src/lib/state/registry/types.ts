@@ -151,6 +151,14 @@ export interface SandboxEntry extends Partial<InferenceSelection> {
   dashboardPort?: number | null;
   /** Remote dashboard exposure was included in the sandbox's generated config. */
   dashboardRemoteBindPrepared?: boolean;
+  /**
+   * Address the dashboard forward was bound to when it last started. The bind
+   * is selected from `NEMOCLAW_DASHBOARD_BIND` and WSL, which later commands
+   * usually do not carry, so each dashboard-forward launch records it and
+   * recomputing it from a command's own environment would report the wrong
+   * address (#10861). Absent on rows written before this field existed.
+   */
+  dashboardBindAddress?: string | null;
   /** Generation proving which durable same-name recreate registered this row. */
   lifecycleGeneration?: string;
   /** Hashed OpenShell identity paired with lifecycleGeneration for exact recovery. */

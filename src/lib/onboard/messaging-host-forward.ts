@@ -37,6 +37,7 @@ export function productionForwardServiceRegistryContext() {
   return {
     getSandbox: registry.getSandbox,
     listSandboxes: registry.listSandboxes,
+    updateSandbox: registry.updateSandbox,
     resolveGatewayName: resolveProductionForwardServiceGatewayName,
     retireLegacy: retireProductionLegacySandboxForwards,
   };
