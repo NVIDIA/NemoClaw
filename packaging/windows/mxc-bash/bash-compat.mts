@@ -16,11 +16,42 @@ const argument = (name: string) => {
   assert(i >= 0 && process.argv[i + 1]);
   return process.argv[i + 1]!;
 };
-export const binaryPins = {
+export const originalBinaryPins = {
   "bin/bash.exe": "828e6e891cee98d39057c0c193800e564231fdf92b3cefa15944378fc7730095",
   "usr/bin/bash.exe": "92cff5f145d42f85b55aa3be8d3ad9827844a21ec4fbeaa1ddfe1dd4d76c6474",
   "usr/bin/msys-2.0.dll": "13f0b0dc94588766ecfa1867f1a00061508ba1dc62f5b8e858ac59f01e358aa0",
 };
+export const binaryPins = {
+  ...originalBinaryPins,
+  "usr/bin/msys-2.0.dll": "48f8451360bb491f915ddcf0018b20a5938810a4edff74ad3fcd0eaff67ebdb8",
+};
+const variant = "ci-derived-unsigned-msys-dll-dynamic-base";
+export function validateDerivedMetadata(receipt: any, revision: string) {
+  assert.equal(receipt.classification, "ci-derived-canonical-msys-dynamic-base");
+  assert.equal(receipt.sourceRevision, revision);
+  assert.equal(receipt.adaptation, "unsigned-msys-dll-dynamic-base-only");
+  assert.equal(receipt.untouchedOfficialBytes, false);
+  assert.equal(receipt.originalsPreserved, true);
+  assert.equal(receipt.allOtherFilesUnchanged, true);
+  assert.equal(receipt.signedBashAndArm64WrapperUnchanged, true);
+  assert.equal(receipt.nativeChecksumVerified, true);
+  assert.equal(receipt.qualified, false);
+  assert.equal(receipt.upstream.nousCommit, "2237be355906fbe6065ce1815711eee52b2d646e");
+  assert.equal(
+    receipt.upstream.sha256,
+    "f8e92cd3359fcbb96998cfd606a536ccc6dbfb23c04e12b29042f9ba45b6b0c7",
+  );
+  assert.equal(receipt.files.length, 1);
+  const file = receipt.files[0];
+  assert.equal(file.path, "usr/bin/msys-2.0.dll");
+  assert.equal(file.beforeSha256, originalBinaryPins["usr/bin/msys-2.0.dll"]);
+  assert.equal(file.afterSha256, binaryPins["usr/bin/msys-2.0.dll"]);
+  assert.equal(file.beforeFlags, 0);
+  assert.equal(file.afterFlags, 0x40);
+  assert.equal(file.onlyMetadataChanged, true);
+  assert.equal(file.certificateDirectoryAbsent, true);
+  return receipt;
+}
 export function fixedEnvironment(windows: string, home: string, git: string, node: string) {
   return {
     SYSTEMROOT: windows,
@@ -47,7 +78,7 @@ export function fixedEnvironment(windows: string, home: string, git: string, nod
     ].join(";"),
     GITHUB_ACTIONS: "true",
     NEMOCLAW_MSYS_TOKEN_INSPECTION_HOLD: "repair-query",
-    NEMOCLAW_MSYS_IMAGE_LAYOUT: "preferred",
+    NEMOCLAW_MSYS_ASLR_METADATA: "1",
     NEMOCLAW_MSYS_PROBE_NODE: node.replaceAll("\\", "/"),
   };
 }
@@ -370,6 +401,7 @@ async function worker(configFile: string) {
     mode: c.mode,
     phase: "start",
     passed: false,
+    imageVariant: variant,
     cases: [],
     cleanup: { childrenClosed: false, forced: false },
   };
@@ -388,14 +420,14 @@ async function worker(configFile: string) {
     for (const [file, pin] of Object.entries(binaryPins))
       assert.equal(sha(path.join(c.git, file)), pin);
     if (c.mode === "baseline") {
-      results.phase = "original-bash";
+      results.phase = "unhooked-derived-bash";
       const keys = [];
       for (const target of ["usr/bin/bash.exe", "bin/bash.exe"]) {
         const r = await finite(path.join(c.git, target), [
           "--noprofile",
           "--norc",
           "-c",
-          "printf ORIGINAL_STARTED",
+          "printf UNHOOKED_DERIVED_STARTED",
         ]);
         assert(r.closed && !r.forced && !r.error && r.exitCode !== 0);
         // Either failed attempt may omit stderr. Require one exact denial
@@ -597,6 +629,13 @@ async function main() {
   const nonce = randomBytes(12).toString("hex"),
     windows = process.env.SYSTEMROOT ?? process.env.SystemRoot!;
   const env = { ...fixedEnvironment(windows, work, git, node), GITHUB_ACTIONS: "true" };
+  const originalGit = path.join(work, "git-original");
+  for (const [name, pin] of Object.entries(originalBinaryPins))
+    assert.equal(sha(path.join(originalGit, name)), pin);
+  const derivation = validateDerivedMetadata(
+    JSON.parse(fs.readFileSync(path.join(work, "control/git-aslr-derivation.json"), "utf8")),
+    process.env.GITHUB_SHA!,
+  );
   const script = path.join(work, "control/bash-proof.sh");
   write(path.join(output, "compatibility-input.json"), build);
   fs.writeFileSync(script, scriptBody, { flag: "wx" });
@@ -611,12 +650,15 @@ async function main() {
     sourceRevision: process.env.GITHUB_SHA,
     nonce,
     phase: "baseline",
+    imageVariant: variant,
     passed: false,
     startedExecutors: 0,
     inputs: {
       nodeSha256: sha(node),
       mxcSha256: sha(mxc),
       mxcBuild,
+      gitDerivation: derivation,
+      preservedOriginalGit: originalBinaryPins,
       git: Object.fromEntries(
         Object.keys(binaryPins).map((name) => [name, sha(path.join(git, name))]),
       ),
@@ -786,23 +828,34 @@ async function main() {
         (v: any) => v.deletion?.closed && v.deletion?.exitCode === 0,
       )
     )
-      for (const target of ["usr/bin/bash.exe", "bin/bash.exe"]) {
-        const child = new Owned(
-          path.join(git, target),
-          ["--noprofile", "--norc", "-c", "printf 'HOST_" + nonce + "\\n'"],
-          env,
-          work,
-          15000,
-        );
-        hostExecutions.push(child);
-        child.child.stdin!.end();
-        const r = await child.finish();
-        report.hostBaseline.push(r);
-        try {
-          checkSuccess(r, "HOST_" + nonce + "\n");
-        } catch (error) {
-          report.passed = false;
-          report.hostBaselineError = String(error);
+      for (const [label, tree] of [
+        ["official-original", originalGit],
+        [variant, git],
+      ]) {
+        for (const target of ["usr/bin/bash.exe", "bin/bash.exe"]) {
+          const marker = "HOST_" + label + "_" + nonce;
+          const child = new Owned(
+            path.join(tree!, target),
+            [
+              "--noprofile",
+              "--norc",
+              "-c",
+              "printf '%s\\n' '" + marker + "' | cat | grep -F -x '" + marker + "'",
+            ],
+            fixedEnvironment(windows, work, tree!, node),
+            work,
+            15000,
+          );
+          hostExecutions.push(child);
+          child.child.stdin!.end();
+          const r = await child.finish();
+          report.hostBaseline.push({ ...r, imageVariant: label, pipeline: "printf|cat|grep" });
+          try {
+            checkSuccess(r, marker + "\n");
+          } catch (error) {
+            report.passed = false;
+            report.hostBaselineError = String(error);
+          }
         }
       }
     for (const value of executions) {

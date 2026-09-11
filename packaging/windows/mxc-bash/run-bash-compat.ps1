@@ -73,7 +73,29 @@ try{
  # which could warm host MSYS before the contained comparison.
  $seven=Join-Path $env:ProgramFiles '7-Zip/7z.exe';if(-not(Test-Path -LiteralPath $seven)){throw 'The CI-only7-Zip archive tool is missing.'}
  $receipt['archiveExtractor']=[ordered]@{path=$seven;sha256=(Get-FileHash -LiteralPath $seven -Algorithm SHA256).Hash.ToLowerInvariant()}
- Invoke-Owned $seven @('x',$gitArchive,('-o'+(Join-Path $work 'git')),'-y') 'portable-git-extract' 180
+ Invoke-Owned $seven @('x',$gitArchive,('-o'+(Join-Path $work 'git-original')),'-y') 'portable-git-extract' 180
+ $derivation=Join-Path $out 'derived-aslr'
+ Invoke-Owned (Join-Path $tools 'node.exe') @('--experimental-strip-types','--no-warnings',(Join-Path $SourceRoot 'packaging/windows/mxc-bash/prepare-msys-aslr.mts'),'--source',(Join-Path $work 'git-original'),'--destination',(Join-Path $work 'git'),'--evidence',$derivation) 'derive-msys-dynamic-base' 180
+ # The portable checksum implementation is independently checked by Windows.
+ Add-Type -TypeDefinition @'
+using System; using System.Runtime.InteropServices;
+public static class MsysImageChecksum {
+ [DllImport("imagehlp.dll",CharSet=CharSet.Unicode,ExactSpelling=true)]
+ public static extern uint MapFileAndCheckSumW(string file,out uint header,out uint computed);
+}
+'@
+ $nativeChecks=@()
+ foreach($name in @('original-msys-2.0.dll','derived-msys-2.0.dll')) {
+  [uint32]$header=0;[uint32]$computed=0
+  $code=[MsysImageChecksum]::MapFileAndCheckSumW((Join-Path $derivation $name),[ref]$header,[ref]$computed)
+  if($code -ne 0 -or $header -ne $computed){throw 'Windows rejected the derived image checksum.'}
+  $nativeChecks+=@(@{file=$name;header=$header;computed=$computed;status=$code})
+ }
+ $derived=Get-Content -LiteralPath (Join-Path $derivation 'derivation.json') -Raw|ConvertFrom-Json
+ $derived|Add-Member -NotePropertyName nativeChecksumVerified -NotePropertyValue $true
+ $derived|Add-Member -NotePropertyName nativeChecksums -NotePropertyValue $nativeChecks
+ [IO.File]::WriteAllText((Join-Path $derivation 'derivation.json'),($derived|ConvertTo-Json -Depth 12)+"`n",[Text.UTF8Encoding]::new($false))
+ Copy-Item -LiteralPath (Join-Path $derivation 'derivation.json') -Destination (Join-Path $tools 'git-aslr-derivation.json')
  $sdk=Join-Path $downloads 'mxc-sdk-0.8.0.tgz';Invoke-WebRequest -Uri 'https://registry.npmjs.org/@microsoft/mxc-sdk/-/mxc-sdk-0.8.0.tgz' -OutFile $sdk -TimeoutSec 120
  if((Get-FileHash -LiteralPath $sdk -Algorithm SHA256).Hash.ToLowerInvariant() -cne '06bb2399d7e98ab1907acf851e12a4e44748dd467b79d3e53c2f2fbf569da14e'){throw 'Pinned stock MXC archive changed.'}
  Invoke-Owned (Join-Path ([Environment]::SystemDirectory) 'tar.exe') @('-xzf',$sdk,'-C',$downloads,'package/bin/arm64/wxc-exec.exe','package/bin/arm64/wxc-host-prep.exe') 'stock-mxc-extract' 30

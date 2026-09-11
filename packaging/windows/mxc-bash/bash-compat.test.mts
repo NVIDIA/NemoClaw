@@ -10,6 +10,9 @@ import {
   validateDenials,
   validateTracker,
   validateMxcInspectionBuild,
+  validateDerivedMetadata,
+  binaryPins,
+  originalBinaryPins,
   Owned,
   type Config,
 } from "./bash-compat.mts";
@@ -62,6 +65,51 @@ test("worker environment has Windows process prerequisites, only pinned tool pat
   assert.equal(env.PATH.split(";").length, 6);
   assert(env.PATH.includes("C:\\owned\\git\\usr\\bin"));
   assert.equal("GITHUB_TOKEN" in env, false);
+  assert.equal("NEMOCLAW_MSYS_IMAGE_LAYOUT" in env, false);
+  assert.equal(env.NEMOCLAW_MSYS_ASLR_METADATA, "1");
+});
+test("derived DLL provenance preserves both official Bash executables and requires native checksum proof", () => {
+  assert.equal(binaryPins["usr/bin/bash.exe"], originalBinaryPins["usr/bin/bash.exe"]);
+  assert.equal(binaryPins["bin/bash.exe"], originalBinaryPins["bin/bash.exe"]);
+  const receipt = {
+    classification: "ci-derived-canonical-msys-dynamic-base",
+    sourceRevision: "a".repeat(40),
+    adaptation: "unsigned-msys-dll-dynamic-base-only",
+    untouchedOfficialBytes: false,
+    originalsPreserved: true,
+    allOtherFilesUnchanged: true,
+    signedBashAndArm64WrapperUnchanged: true,
+    nativeChecksumVerified: true,
+    qualified: false,
+    upstream: {
+      nousCommit: "2237be355906fbe6065ce1815711eee52b2d646e",
+      sha256: "f8e92cd3359fcbb96998cfd606a536ccc6dbfb23c04e12b29042f9ba45b6b0c7",
+    },
+    files: [
+      {
+        path: "usr/bin/msys-2.0.dll",
+        beforeSha256: originalBinaryPins["usr/bin/msys-2.0.dll"],
+        afterSha256: binaryPins["usr/bin/msys-2.0.dll"],
+        beforeFlags: 0,
+        afterFlags: 0x40,
+        onlyMetadataChanged: true,
+        certificateDirectoryAbsent: true,
+      },
+    ],
+  };
+  assert.equal(validateDerivedMetadata(receipt, receipt.sourceRevision), receipt);
+  assert.throws(() =>
+    validateDerivedMetadata({ ...receipt, nativeChecksumVerified: false }, receipt.sourceRevision),
+  );
+  assert.throws(() =>
+    validateDerivedMetadata({ ...receipt, untouchedOfficialBytes: true }, receipt.sourceRevision),
+  );
+  assert.throws(() =>
+    validateDerivedMetadata(
+      { ...receipt, files: [{ ...receipt.files[0], afterFlags: 0xc0 }] },
+      receipt.sourceRevision,
+    ),
+  );
 });
 test("baseline key requires exact known native failure, not a generic denial", () => {
   const error =

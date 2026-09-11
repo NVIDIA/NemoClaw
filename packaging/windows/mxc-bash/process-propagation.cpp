@@ -31,6 +31,15 @@ bool preferredMsysLayout() {
     return enabled;
 }
 
+bool observeDerivedMsysLayout() {
+    const DWORD saved = GetLastError();
+    WCHAR ci[8] = {}, mode[4] = {};
+    const bool enabled = initialized && GetEnvironmentVariableW(L"GITHUB_ACTIONS", ci, 8) == 4 && !wcscmp(ci, L"true") &&
+        GetEnvironmentVariableW(L"NEMOCLAW_MSYS_ASLR_METADATA", mode, 4) == 1 && !wcscmp(mode, L"1");
+    SetLastError(saved);
+    return enabled;
+}
+
 template<class Startup, class Extended> struct MsysCreationLayout {
     Startup* startup = nullptr;
     Extended extended = {};
@@ -75,9 +84,8 @@ struct MsysMappedLayout {
     WORD characteristics = 0;
     BOOL exactShape = FALSE;
 };
-MsysMappedLayout currentMsysLayout() {
+MsysMappedLayout mappedImageLayout(HMODULE module, bool msys) {
     MsysMappedLayout value;
-    HMODULE module = GetModuleHandleW(L"msys-2.0.dll");
     if (!module) return value;
     value.base = reinterpret_cast<DWORD64>(module);
     __try {
@@ -85,32 +93,38 @@ MsysMappedLayout currentMsysLayout() {
         const auto dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
         if (dos->e_magic != IMAGE_DOS_SIGNATURE || dos->e_lfanew < 64 || dos->e_lfanew > 1024) return value;
         const auto pe = reinterpret_cast<const IMAGE_NT_HEADERS64*>(base + dos->e_lfanew);
-        if (pe->Signature != IMAGE_NT_SIGNATURE || pe->FileHeader.Machine != IMAGE_FILE_MACHINE_AMD64 ||
+        if (pe->Signature != IMAGE_NT_SIGNATURE ||
+            (pe->FileHeader.Machine != IMAGE_FILE_MACHINE_AMD64 && pe->FileHeader.Machine != IMAGE_FILE_MACHINE_ARM64) ||
             pe->OptionalHeader.Magic != IMAGE_NT_OPTIONAL_HDR64_MAGIC) return value;
         value.preferred = pe->OptionalHeader.ImageBase;
         value.size = pe->OptionalHeader.SizeOfImage;
         value.characteristics = pe->OptionalHeader.DllCharacteristics;
-        value.exactShape = value.preferred == 0x210040000ULL && value.size == 0x360000 &&
+        value.exactShape = msys && pe->FileHeader.Machine == IMAGE_FILE_MACHINE_AMD64 &&
+            value.preferred == 0x210040000ULL && value.size == 0x360000 &&
             pe->FileHeader.TimeDateStamp == 0x69c910a9;
         if (value.exactShape) value.caps = *reinterpret_cast<const DWORD64*>(base + 0x34d198);
     } __except (EXCEPTION_EXECUTE_HANDLER) {}
     return value;
 }
 void logMsysCreationLayout(HANDLE child, bool requested, bool applied, bool preservedExtended) {
-    if (!preferredMsysLayout()) return;
+    const bool derived = observeDerivedMsysLayout();
+    if (!preferredMsysLayout() && !derived) return;
     const DWORD saved = GetLastError();
     PROCESS_MITIGATION_ASLR_POLICY parentPolicy = {}, childPolicy = {};
     const BOOL parentKnown = GetProcessMitigationPolicy(GetCurrentProcess(), ProcessASLRPolicy, &parentPolicy, sizeof(parentPolicy));
     const DWORD parentError = parentKnown ? 0 : GetLastError();
     const BOOL childKnown = child && GetProcessMitigationPolicy(child, ProcessASLRPolicy, &childPolicy, sizeof(childPolicy));
     const DWORD childError = child && !childKnown ? GetLastError() : 0;
-    const MsysMappedLayout module = currentMsysLayout();
-    char line[1024];
+    const MsysMappedLayout module = mappedImageLayout(GetModuleHandleW(L"msys-2.0.dll"), true);
+    const MsysMappedLayout executable = mappedImageLayout(GetModuleHandleW(nullptr), false);
+    char line[1536];
     const int count = _snprintf_s(line, sizeof(line), _TRUNCATE,
-        "NEMOCLAW_MSYS_IMAGE_LAYOUT={\"schemaVersion\":1,\"pid\":%lu,\"childPid\":%lu,\"requested\":%s,\"applied\":%s,\"existingExtendedAttributesPreserved\":%s,\"creationPolicy\":\"0x0000000000000200\",\"parentAslrKnown\":%s,\"parentAslrFlags\":%lu,\"parentAslrError\":%lu,\"childAslrKnown\":%s,\"childAslrFlags\":%lu,\"childAslrError\":%lu,\"msysBase\":\"0x%llx\",\"msysPreferredBase\":\"0x%llx\",\"msysImageSize\":%lu,\"msysDllCharacteristics\":%u,\"exactMsysShape\":%s,\"capsPointer\":\"0x%llx\"}\n",
+        "NEMOCLAW_MSYS_IMAGE_LAYOUT={\"schemaVersion\":1,\"pid\":%lu,\"childPid\":%lu,\"requested\":%s,\"applied\":%s,\"existingExtendedAttributesPreserved\":%s,\"creationPolicy\":\"%s\",\"derivedMsysMetadata\":%s,\"parentAslrKnown\":%s,\"parentAslrFlags\":%lu,\"parentAslrError\":%lu,\"childAslrKnown\":%s,\"childAslrFlags\":%lu,\"childAslrError\":%lu,\"msysBase\":\"0x%llx\",\"msysPreferredBase\":\"0x%llx\",\"msysImageSize\":%lu,\"msysDllCharacteristics\":%u,\"exactMsysShape\":%s,\"capsPointer\":\"0x%llx\",\"mainImageBase\":\"0x%llx\",\"mainPreferredBase\":\"0x%llx\",\"mainDllCharacteristics\":%u}\n",
         GetCurrentProcessId(), child ? GetProcessId(child) : 0, requested ? "true" : "false", applied ? "true" : "false", preservedExtended ? "true" : "false",
+        applied ? "0x0000000000000200" : "unchanged", derived ? "true" : "false",
         parentKnown ? "true" : "false", parentPolicy.Flags, parentError, childKnown ? "true" : "false", childPolicy.Flags, childError,
-        module.base, module.preferred, module.size, static_cast<unsigned>(module.characteristics), module.exactShape ? "true" : "false", module.caps);
+        module.base, module.preferred, module.size, static_cast<unsigned>(module.characteristics), module.exactShape ? "true" : "false", module.caps,
+        executable.base, executable.preferred, static_cast<unsigned>(executable.characteristics));
     DWORD written = 0;
     if (count > 0) WriteFile(GetStdHandle(STD_ERROR_HANDLE), line, static_cast<DWORD>(count), &written, nullptr);
     SetLastError(saved);
