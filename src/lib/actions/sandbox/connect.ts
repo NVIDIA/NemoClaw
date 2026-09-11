@@ -2299,6 +2299,14 @@ export async function prepareInteractiveSession(sandboxName: string): Promise<{
         ? await verifyHermesPortableInferenceRouteOrExit(sandboxName, agent)
         : await ensureSandboxInferenceRouteOrExit(sandboxName, agent);
       requalify();
+      if (hermesPortable) {
+        const authority = requireHermesPortableActiveLifecycleAuthority(
+          sandboxName,
+          undefined,
+          portableAgentLifecycleAuthorityDeps(),
+        );
+        recoverHermesPortableForwardsForConnectProbeOrExit(sandboxName, authority);
+      }
       if (!hermesPortable && !(await settlePortablePairingOrExit(sandboxName))) {
         completeInteractiveSessionSetup(sandboxName, sb);
       }

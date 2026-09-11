@@ -36,9 +36,13 @@ export function resolveDockerStartupCommandPatch(
   if (isPortableExperimentalProfile(env)) {
     return { persistStartupCommand: false, requiredUlimits };
   }
+  // OpenShell 0.0.116 persists and relaunches its canonical main-process spec.
+  // Recreating OpenClaw or Hermes solely to copy that command is not only
+  // redundant: stopping the original container reports its main-process exit,
+  // which makes the sandbox terminally Error before the replacement supervisor
+  // can reconnect. DCode still needs the recreation for its exact Docker ulimits.
   return {
-    persistStartupCommand:
-      agentName === "openclaw" || agentName === "hermes" || agentName === DCODE_AGENT_NAME,
+    persistStartupCommand: agentName === DCODE_AGENT_NAME,
     requiredUlimits,
   };
 }

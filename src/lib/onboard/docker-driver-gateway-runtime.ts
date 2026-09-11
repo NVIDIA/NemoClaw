@@ -47,8 +47,9 @@ const OPENSHELL_SUPERVISOR_MANIFEST_DIGESTS: Readonly<Record<string, string>> = 
   "0.0.72": "sha256:80ed9cda5bf672fefdb9dcd4604b40a8b09c0891b6eb9d03e10227c7e3dfb49d",
   "0.0.99": "sha256:ea3632b6e9528e2309103af5b6949606fcdc83ca1f69e8db81482a25bea84bb6",
   "0.0.101": "sha256:b58be5e40c788977ffa0e8305a8cad9c656efdf1a3fe182582a00ca870bb0edb",
-  "0.0.106": "sha256:722f44669722961b7f432b0b81de25b91a58f34a61d6403bef967acaf2b3af01",
+  "0.0.116": "sha256:c8c42aef16c200063e32cbf72e553e4ead027085427b555efafd95063ecead42",
 };
+const QUALIFIED_STABLE_OPENSHELL_VERSION = "0.0.116";
 
 /** Resolve the canonical gateway name without bypassing the binding owner. */
 export function resolveDockerDriverGatewayName(gatewayPort: number): string {
@@ -226,21 +227,32 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
   }
 
   function getOpenShellDockerSupervisorImage(versionOutput: string | null = null): string {
-    if (process.env.OPENSHELL_DOCKER_SUPERVISOR_IMAGE) {
-      return process.env.OPENSHELL_DOCKER_SUPERVISOR_IMAGE;
-    }
     const installedVersion = deps.getInstalledOpenshellVersion(versionOutput);
     if (deps.shouldUseOpenshellDevChannel() || deps.isOpenshellDevVersion(versionOutput)) {
-      return "ghcr.io/nvidia/openshell/supervisor:dev";
+      throw new Error(
+        `OpenShell Docker-driver gateway recovery requires exact stable OpenShell ${QUALIFIED_STABLE_OPENSHELL_VERSION}; development builds are not supported.`,
+      );
     }
     const supportedVersion =
       installedVersion ??
       deps.getBlueprintMaxOpenshellVersion() ??
       deps.supportedOpenshellFallbackVersion;
+    if (supportedVersion !== QUALIFIED_STABLE_OPENSHELL_VERSION) {
+      throw new Error(
+        `OpenShell Docker-driver gateway recovery requires exact stable OpenShell ${QUALIFIED_STABLE_OPENSHELL_VERSION}; found ${supportedVersion}. Re-run onboarding to reconcile the installed runtime.`,
+      );
+    }
     const manifestDigest = OPENSHELL_SUPERVISOR_MANIFEST_DIGESTS[supportedVersion];
-    return manifestDigest
+    const qualifiedImage = manifestDigest
       ? `ghcr.io/nvidia/openshell/supervisor@${manifestDigest}`
       : `ghcr.io/nvidia/openshell/supervisor:${supportedVersion}`;
+    const configuredImage = process.env.OPENSHELL_DOCKER_SUPERVISOR_IMAGE;
+    if (configuredImage && configuredImage !== qualifiedImage) {
+      throw new Error(
+        `Stable OpenShell ${supportedVersion} requires the reviewed Docker supervisor image ${qualifiedImage}; found override ${configuredImage}.`,
+      );
+    }
+    return qualifiedImage;
   }
 
   function getDockerDriverGatewayEnv(
