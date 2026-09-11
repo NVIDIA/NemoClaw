@@ -3,7 +3,7 @@
 
 # Finished Windows ARM64 preview 0.1.2 for PR #10799
 
-[Download the setup EXE](https://media.githubusercontent.com/media/NVIDIA/NemoClaw/refs/heads/artifacts/windows-native-pr-10799/NemoClawSetup-0.1.2-windows-arm64.exe) · [Download the MSI](https://media.githubusercontent.com/media/NVIDIA/NemoClaw/refs/heads/artifacts/windows-native-pr-10799/NemoClaw-0.1.2-windows-arm64.msi)
+[Download the setup EXE](https://media.githubusercontent.com/media/NVIDIA/NemoClaw/80ab9a0c566ff50463edc76227a0c76ca8fe3e30/NemoClawSetup-0.1.2-windows-arm64.exe) · [Download the MSI](https://media.githubusercontent.com/media/NVIDIA/NemoClaw/80ab9a0c566ff50463edc76227a0c76ca8fe3e30/NemoClaw-0.1.2-windows-arm64.msi)
 
 **The source acceptance run failed. This preview remains unqualified.** No complete native qualification passes are certified by this publication.
 This is a selected OpenClaw finished-application candidate, not a production release.
@@ -18,8 +18,8 @@ The [source workflow, attempt 1](https://github.com/NVIDIA/NemoClaw/actions/runs
 completed the package build and downloadable preview upload. This status is the staging-time snapshot; the workflow may have advanced.
 Its linked results remain authoritative for later acceptance progress.
 
-The [publication receipt](https://raw.githubusercontent.com/NVIDIA/NemoClaw/refs/heads/artifacts/windows-native-pr-10799/installer-receipt-0.1.2.json), [build receipt](https://raw.githubusercontent.com/NVIDIA/NemoClaw/refs/heads/artifacts/windows-native-pr-10799/immutable-package-build-0.1.2.json) and
-[runtime identity](https://raw.githubusercontent.com/NVIDIA/NemoClaw/refs/heads/artifacts/windows-native-pr-10799/runtime-identity-0.1.2.json) bind the two verified binaries to the exact source and sealed runtime.
+The [publication receipt](https://raw.githubusercontent.com/NVIDIA/NemoClaw/80ab9a0c566ff50463edc76227a0c76ca8fe3e30/installer-receipt-0.1.2.json), [build receipt](https://raw.githubusercontent.com/NVIDIA/NemoClaw/80ab9a0c566ff50463edc76227a0c76ca8fe3e30/immutable-package-build-0.1.2.json) and
+[runtime identity](https://raw.githubusercontent.com/NVIDIA/NemoClaw/80ab9a0c566ff50463edc76227a0c76ca8fe3e30/runtime-identity-0.1.2.json) bind the two verified binaries to the exact source and sealed runtime.
 The complete original [Actions artifact](https://github.com/NVIDIA/NemoClaw/actions/runs/34544062535/artifacts/10178641244) was checked against GitHub's SHA256 digest.
 Git commit signatures do not certify Windows Authenticode signing or application qualification.
 
