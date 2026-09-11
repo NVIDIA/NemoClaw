@@ -28,7 +28,7 @@
       "src/lib/onboard/gateway-binding.ts": 52,
       "src/lib/runner.ts": 83,
       "src/lib/security/redact.ts": 51,
-      "src/lib/state/mcp-lifecycle-lock.ts": 22,
+      "src/lib/state/mcp-lifecycle-lock.ts": 20,
       "src/lib/state/onboard-session.ts": 35,
       "src/lib/state/registry.ts": 90,
       "src/lib/state/state-root.ts": 21,
