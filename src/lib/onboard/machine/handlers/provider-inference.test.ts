@@ -49,7 +49,7 @@ describe("handleProviderInferenceState", () => {
     expect(calls.startStep).toHaveBeenNthCalledWith(1, "provider_selection");
     expect(calls.setupNim).toHaveBeenCalledWith(
       { type: "nvidia" },
-      null,
+      "my-assistant",
       null,
       true,
       "nemoclaw",
@@ -702,7 +702,7 @@ describe("handleProviderInferenceState", () => {
     const completedSelection = createSession({ sessionId: "resume-selection-session" });
     const { deps, calls } = createDeps({ isInferenceRouteReady: vi.fn(() => true) });
     calls.complete.mockResolvedValueOnce(completedSelection);
-    calls.promptName.mockResolvedValueOnce("tm");
+    calls.promptName.mockResolvedValue("tm");
 
     const result = await handleProviderInferenceState({
       ...baseOptions(deps, session),
@@ -1387,7 +1387,7 @@ describe("handleProviderInferenceState", () => {
     expect(setupNim).toHaveBeenNthCalledWith(
       1,
       { type: "nvidia" },
-      null,
+      "my-assistant",
       null,
       true,
       "nemoclaw",

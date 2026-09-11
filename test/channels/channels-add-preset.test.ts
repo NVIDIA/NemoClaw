@@ -301,7 +301,7 @@ beforeEach(() => {
           ? { status: 0, stdout: testLog, stderr: "" }
           : { status: 0, stdout: "", stderr: "" };
     });
-  vi.spyOn(processRecovery, "executeSandboxCommand").mockReturnValue(null);
+  vi.spyOn(processRecovery, "executeSandboxCommand").mockResolvedValue(null);
 
   buildPlanSpy = vi
     .spyOn(MessagingWorkflowPlanner.prototype, "buildPlan")
@@ -432,6 +432,19 @@ describe("channels add applies a matching policy preset (#3437)", () => {
       expect(presetCallIndexes[1]).toBeLessThan(callOrder.indexOf("promptAndRebuild"));
     },
   );
+
+  it("rejects the Discord placeholder before changing channel state (#10668)", async () => {
+    process.env.DISCORD_BOT_TOKEN = "<your-discord-bot-token>";
+
+    await expectExit(() => addSandboxChannel("test-sb", { channel: "discord" }));
+
+    expect(providerSpy).not.toHaveBeenCalled();
+    expect(applyPresetSpy).not.toHaveBeenCalled();
+    expect(updateSandboxSpy).not.toHaveBeenCalled();
+    expect(saveCredentialSpy).not.toHaveBeenCalled();
+    expect(deleteCredentialSpy).not.toHaveBeenCalled();
+    expect(rebuildSpy).not.toHaveBeenCalled();
+  });
 
   it("applies the tokenless WhatsApp preset for Hermes before triggering rebuild", async () => {
     sandboxAgent = "hermes";

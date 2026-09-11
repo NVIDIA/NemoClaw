@@ -38,7 +38,8 @@ for merged changes. Continue its managed draft PR when one exists. If no managed
 release entry is the only missing change, use one direct documentation-only PR.
 
 The documentation PR must contain all required documentation for every merged change selected for
-the release and one canonical dated entry headed `## vX.Y.Z`. Follow
+the release. Write or update the pre-tag changelog entry in `docs/changelog/YYYY-MM-DD.mdx`,
+headed `## vX.Y.Z`, within the cumulative documentation PR. Follow
 [`docs/CONTRIBUTING.md`](../../../docs/CONTRIBUTING.md) and obtain its required independent
 documentation writer review. Do not create a separate release-entry PR when the active cumulative
 docs PR can carry it.

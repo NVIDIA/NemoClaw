@@ -58,7 +58,7 @@ export const upgradeSandboxesDependencies = {
 function checkAgentVersionForUpgrade(
   sandboxName: string,
   liveNames: Set<string>,
-): sandboxVersion.VersionCheckResult {
+): Promise<sandboxVersion.VersionCheckResult> {
   return sandboxVersion.checkAgentVersion(
     sandboxName,
     liveNames.has(sandboxName) ? { forceProbe: true } : undefined,
@@ -324,11 +324,16 @@ export async function upgradeSandboxes(
   // Classify sandboxes as stale, unknown, or current. Pass the running NemoClaw
   // build so a NemoClaw image/build change is detected even when the agent
   // version is unchanged (#5026).
+  const currentNemoclawVersion = resolveCurrentNemoclawVersion();
+  const versions = new Map<string, sandboxVersion.VersionCheckResult>();
+  for (const sandbox of sandboxes) {
+    versions.set(sandbox.name, await checkAgentVersionForUpgrade(sandbox.name, liveNames));
+  }
   const { stale, unknown } = classifyUpgradeableSandboxes(
     sandboxes,
     liveNames,
-    (name) => checkAgentVersionForUpgrade(name, liveNames),
-    { currentNemoclawVersion: resolveCurrentNemoclawVersion() },
+    (name) => versions.get(name)!,
+    { currentNemoclawVersion },
   );
 
   // Source boundary (#6114): a legacy OpenShell install can leave its already-

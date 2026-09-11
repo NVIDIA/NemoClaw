@@ -41,7 +41,7 @@ describe("NVIDIA endpoint inference fix preload (#1193, #2051, #4063)", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-nemotron-entrypoint-"));
     const preloadPath = path.join(tempDir, "nemotron-fix.js");
     const start = src.indexOf("# NVIDIA endpoint model-specific inference parameter injection");
-    const end = src.indexOf("# mDNS / ciao network interface guard", start);
+    const end = src.indexOf("# Stage the immutable, image-packaged preload set", start);
     if (start === -1 || end === -1 || end <= start) {
       throw new Error(
         "Expected NVIDIA endpoint preload entrypoint block in scripts/nemoclaw-start.sh",
@@ -67,8 +67,6 @@ describe("NVIDIA endpoint inference fix preload (#1193, #2051, #4063)", () => {
       `_SANDBOX_SAFETY_NET_SOURCE=${JSON.stringify(NEMOTRON_FIX_SOURCE)}`,
       `_PROXY_FIX_SCRIPT=${JSON.stringify(path.join(tempDir, "proxy-fix.js"))}`,
       `_PROXY_FIX_SOURCE=${JSON.stringify(NEMOTRON_FIX_SOURCE)}`,
-      `_CIAO_GUARD_SCRIPT=${JSON.stringify(path.join(tempDir, "ciao-guard.js"))}`,
-      `_CIAO_GUARD_SOURCE=${JSON.stringify(NEMOTRON_FIX_SOURCE)}`,
       extractShellFunction(src, "install_core_runtime_preloads"),
       "install_core_runtime_preloads",
       "printf 'NODE_OPTIONS=%s\\n' \"$NODE_OPTIONS\"",

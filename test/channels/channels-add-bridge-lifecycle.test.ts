@@ -366,7 +366,7 @@ beforeEach(() => {
     stdout: "",
     stderr: "",
   });
-  vi.spyOn(processRecovery, "executeSandboxCommand").mockReturnValue(null);
+  vi.spyOn(processRecovery, "executeSandboxCommand").mockResolvedValue(null);
 });
 
 afterEach(() => {

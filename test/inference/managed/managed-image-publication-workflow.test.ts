@@ -68,7 +68,7 @@ function managedPrBuilder(workflow: Workflow): Job {
 function managedPrReviewedAudit(workflow: Workflow): Job {
   return required(
     workflow.jobs?.["pr-reviewed-npm-audit"],
-    "managed-image workflow is missing its exact PR reviewed npm audit",
+    "managed-image workflow is missing its PR npm audit",
   );
 }
 
@@ -84,7 +84,7 @@ function managedPrOpenClawMcpDiscovery(workflow: Workflow): Job {
 }
 
 describe("complete managed-image publication workflow", () => {
-  it("restricts reviewed npm audit cache publication to trusted callers (#11028)", () => {
+  it("restricts npm audit cache publication to trusted callers (#11028)", () => {
     const action = readAction("ci-reviewed-npm-audit") as ReturnType<typeof readAction> & {
       inputs: Record<string, { default?: string; required?: boolean }>;
     };
@@ -103,18 +103,18 @@ describe("complete managed-image publication workflow", () => {
     ]);
     expect(restores.map(({ with: inputs }) => inputs)).toEqual([
       {
-        key: "reviewed-npm-audit-v1-${{ runner.os }}-${{ steps.cache-buckets.outputs.input-digest }}-${{ steps.cache-buckets.outputs.current }}",
+        key: "reviewed-npm-audit-v2-${{ runner.os }}-${{ steps.cache-buckets.outputs.input-digest }}-${{ steps.cache-buckets.outputs.current }}",
         path: "${{ inputs.cache-directory }}",
       },
       {
-        key: "reviewed-npm-audit-v1-${{ runner.os }}-${{ steps.cache-buckets.outputs.input-digest }}-${{ steps.cache-buckets.outputs.previous }}",
+        key: "reviewed-npm-audit-v2-${{ runner.os }}-${{ steps.cache-buckets.outputs.input-digest }}-${{ steps.cache-buckets.outputs.previous }}",
         path: "${{ inputs.cache-directory }}",
       },
     ]);
     const save = step(
       { steps: actionSteps },
-      "Save current reviewed npm audit cache bucket",
-      "reviewed npm audit action",
+      "Save current npm audit cache bucket",
+      "npm audit action",
     );
     expect(save).toMatchObject({
       if: "inputs.trusted-cache-write == 'true' && steps.cache-current.outputs.cache-hit != 'true'",
@@ -124,8 +124,8 @@ describe("complete managed-image publication workflow", () => {
     expect(
       step(
         { steps: actionSteps },
-        "Materialize and audit reviewed npm graphs",
-        "reviewed npm audit action",
+        "Materialize and audit production dependency graphs",
+        "npm audit action",
       ).env,
     ).toMatchObject({
       NEMOCLAW_REVIEWED_NPM_AUDIT_CACHE_DIR: "${{ inputs.cache-directory }}",
@@ -238,7 +238,7 @@ describe("complete managed-image publication workflow", () => {
     });
     const reviewedAudit = required(
       baseWorkflow.jobs?.["reviewed-npm-audit"],
-      "base-image workflow is missing the reviewed npm audit",
+      "base-image workflow is missing the npm audit",
     );
     expect(reviewedAudit).toMatchObject({
       if: "github.repository == 'NVIDIA/NemoClaw'",
@@ -456,7 +456,7 @@ describe("complete managed-image publication workflow", () => {
       path: "candidate",
       "persist-credentials": false,
     });
-    const trustedCheckout = step(reviewedAudit, "Checkout trusted reviewed npm audit");
+    const trustedCheckout = step(reviewedAudit, "Checkout npm audit code from the base commit");
     expect(trustedCheckout.with).toMatchObject({
       ref: "${{ github.event.pull_request.base.sha }}",
       path: ".trusted-reviewed-npm-audit",
@@ -1149,20 +1149,26 @@ fi
       publisher = managedPublisher(workflow),
       action = readAction("publish-managed-image-digest"),
       source = JSON.stringify(workflow);
+    const auditEvidence = step(publisher, "Prepare same-run mcporter audit evidence");
     expect(workflow.jobs?.["reviewed-npm-audit"]?.if).toBe("github.event_name != 'pull_request'");
     expect(publisher.needs).toEqual(["publication-identity", "reviewed-npm-audit"]);
     expect(
       [
-        "Download same-run reviewed npm audit evidence",
+        "Download same-run npm audit evidence",
         "Prepare same-run mcporter audit evidence",
         "mcporter-runtime.receipt.json",
         "mcporter-runtime.raw.json",
+        "mcporter-runtime.policy.json",
         "nemoclaw-mcporter-audit-receipt",
         "nemoclaw-mcporter-audit-raw-report",
+        "nemoclaw-mcporter-audit-policy-result",
         "NEMOCLAW_MCPORTER_AUDIT_RECEIPT_SHA256",
+        "NEMOCLAW_MCPORTER_AUDIT_POLICY_RESULT_SHA256",
       ].filter((marker) => !source.includes(marker)),
     ).toEqual([]);
     expect(source).not.toContain("NEMOCLAW_MCPORTER_AUDIT_RAW_REPORT_SHA256");
+    expect(auditEvidence.run).toContain('test -s "$policy"');
+    expect(auditEvidence.run).toContain('test ! -L "$policy"');
     const actionSource = JSON.stringify(action);
     expect([
       actionSource.includes('"secret-files":{"description"'),

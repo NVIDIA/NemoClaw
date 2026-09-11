@@ -54,7 +54,6 @@ function writeRuntimeShellEnv(tmpDir: string): string {
     `_SANDBOX_SAFETY_NET=${JSON.stringify(path.join(tmpDir, "safety-net.js"))}`,
     `_PROXY_FIX_SCRIPT=${JSON.stringify(path.join(tmpDir, "proxy-fix.js"))}`,
     `_NEMOTRON_FIX_SCRIPT=${JSON.stringify(path.join(tmpDir, "nemotron-fix.js"))}`,
-    `_CIAO_GUARD_SCRIPT=${JSON.stringify(path.join(tmpDir, "ciao-guard.js"))}`,
     "NODE_USE_ENV_PROXY=",
     '_TOOL_REDIRECTS=("NEMOCLAW_TEST_REDIRECT=/tmp/nemoclaw-test")',
     "emit_messaging_connect_runtime_preload_exports() { :; }",

@@ -132,6 +132,23 @@ describe("gateway observations and recovery", () => {
     },
   );
 
+  it("reports a redacted startup failure only after recovery remains unhealthy", async () => {
+    const output = { error: vi.fn(), log: vi.fn(), step: vi.fn(), warn: vi.fn() };
+    observe.mockResolvedValue(observation("named_unhealthy"));
+    start.mockRejectedValueOnce(
+      new Error("gateway start failed with Authorization: Bearer recovery-secret"),
+    );
+    const result = await gatewayRuntime.recoverNamedGatewayRuntime({
+      gatewayName: "nemoclaw-8090",
+      output,
+    });
+    expect(result).toMatchObject({ recovered: false, attempted: true });
+    expect(output.error).toHaveBeenCalledOnce();
+    expect(output.error.mock.calls[0]?.[0]).toContain("OpenShell gateway recovery failed");
+    expect(output.error.mock.calls[0]?.[0]).toContain("<REDACTED>");
+    expect(output.error.mock.calls[0]?.[0]).not.toContain("recovery-secret");
+  });
+
   it("preserves an explicitly excluded recovery state", async () => {
     expect(
       await gatewayRuntime.recoverNamedGatewayRuntime({ recoverableStates: [] }),

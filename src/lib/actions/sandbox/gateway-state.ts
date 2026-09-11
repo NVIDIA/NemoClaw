@@ -74,6 +74,8 @@ import {
   assertHermesPortableAgentLifecycleAuthority,
   buildHermesPortableCommandEnvironment,
   buildHermesPortableCommandAuthority,
+  defaultPortableDemoStateDir,
+  hermesPortableLifecycleLockOptions,
   inspectPortableAgentReceiptDisposition,
   qualifyHermesPortableAcceptedReadinessAuthority,
   qualifyPortableAgentLifecycleAuthority,
@@ -134,6 +136,8 @@ export type {
 export {
   buildHermesPortableCommandAuthority,
   buildHermesPortableCommandEnvironment,
+  defaultPortableDemoStateDir,
+  hermesPortableLifecycleLockOptions,
   inspectPortableAgentReceiptDisposition,
   qualifyHermesPortableAcceptedReadinessAuthority,
   qualifyPortableAgentLifecycleAuthority,
@@ -936,6 +940,7 @@ export async function getReconciledSandboxGatewayState(
     return lookup;
   }
   if (lookup.state === "missing") {
+    if (gatewayRecovery === "observe") return lookup;
     return reconcileMissingAgainstNamedGateway(sandboxName, lookup, targetGatewayName);
   }
 

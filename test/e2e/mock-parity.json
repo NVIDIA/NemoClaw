@@ -22,17 +22,6 @@
       ]
     },
     {
-      "live": "test/e2e/live/llama-cpp-dgx-spark-qualification.test.ts",
-      "fast": [
-        "test/e2e/support/llama-cpp-dgx-spark-qualification-workflow.test.ts",
-        "test/inference/llama/llama-cpp-dgx-spark-qualification-contract.test.ts",
-        "test/inference/llama/llama-cpp-dgx-spark-qualification-plan.test.ts",
-        "test/inference/llama/llama-cpp-dgx-spark-qualification-runner.test.ts",
-        "test/inference/llama/llama-cpp-image.test.ts",
-        "test/automation/pull-requests/pr-risk-plan.test.ts"
-      ]
-    },
-    {
       "live": "test/e2e/live/llama-cpp-generic-gpu.test.ts",
       "fast": [
         "src/lib/inference/llama-cpp/managed-selection.test.ts",
@@ -163,6 +152,7 @@
         "test/e2e/live/launch-agent-turn.ts"
       ],
       "fast": [
+        "test/agents/openclaw/runtime/nemoclaw-start-preload-gateway.test.ts",
         "test/runtime/sandbox/sandbox-provisioning.test.ts",
         "test/e2e/support/hosted-inference.test.ts",
         "test/e2e/support/full-e2e-inference-probe.test.ts",
@@ -642,7 +632,8 @@
         "test/e2e/support/mcp-bridge-tool-discovery.test.ts",
         "test/e2e/support/mcp-provider-rewrite-probe.test.ts",
         "test/e2e/support/mcp-workflow-boundary.test.ts",
-        "test/e2e/support/openshell-exact-main-runtime-contracts.test.ts"
+        "test/e2e/support/openshell-exact-main-runtime-contracts.test.ts",
+        "test/mcp/mcp-bridge-servers.test.ts"
       ]
     },
     {
