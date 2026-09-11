@@ -478,7 +478,14 @@ test(
     progress.phase("onboard OpenClaw without sandbox GPU");
     const onboard = await host.command(
       "node",
-      [CLI, "onboard", "--fresh", "--non-interactive", "--yes-i-accept-third-party-software"],
+      [
+        CLI,
+        "onboard",
+        "--fresh",
+        "--non-interactive",
+        "--yes",
+        "--yes-i-accept-third-party-software",
+      ],
       {
         artifactName: "export-onboard-ollama",
         cwd: REPO_ROOT,
