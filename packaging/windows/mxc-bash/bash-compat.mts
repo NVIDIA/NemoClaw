@@ -233,6 +233,63 @@ export function validateDenials(row: any, other: string) {
   ])
     assert.equal(row[key], true, key);
 }
+export function validateRawPipeDiagnostics(rows: any[], nonce: string) {
+  const summaries = rows.filter((row) => row.kind === "rawpipe-summary");
+  assert.equal(summaries.length, 1);
+  const summary = summaries[0];
+  assert.equal(summary.nonce, nonce);
+  assert.equal(summary.diagnosticOnly, true);
+  assert.equal(summary.rawProbeUnshimmed, true);
+  assert.equal(summary.runtimeGrantsChanged, false);
+  assert.equal(summary.casesCompleted, 2);
+  const cases = rows.filter((row) => row.kind === "rawpipe-case");
+  assert.deepEqual(cases.map((row) => row.appSidMask).sort(), [0x120196, 0x12019f]);
+  for (const row of cases) {
+    assert.equal(row.nonce, nonce);
+    assert.equal(row.diagnosticOnly, true);
+    assert.equal(typeof row.roundtripPassed, "boolean");
+    assert.equal(typeof row.error, "string");
+    if (!row.roundtripPassed) {
+      assert(row.error.length > 0);
+      continue;
+    }
+    const select = (kind: string) => {
+      const matches = rows.filter(
+        (item) => item.kind === kind && item.appSidMask === row.appSidMask && item.nonce === nonce,
+      );
+      assert.equal(matches.length, 1, kind);
+      return matches[0];
+    };
+    const write = select("rawpipe-child-write");
+    assert.equal(write.passed, true);
+    assert.equal(write.writeAttempted, true);
+    assert.equal(write.eventCreated, true);
+    assert.equal(write.completionObserved, true);
+    assert.equal(write.ioStatus, "0x00000000");
+    assert.equal(write.cancelled, false);
+    assert.equal(write.requestedBytes, 9 + nonce.length);
+    assert.equal(write.transferredBytes, write.requestedBytes);
+    const created = select("rawpipe-child-created");
+    assert.equal(created.created, true);
+    assert.equal(created.childPid, write.pid);
+    assert.equal(created.explicitHandleList, true);
+    assert.equal(created.pipeReaderExcluded, true);
+    const closed = select("rawpipe-child-closed");
+    assert.equal(closed.childPid, write.pid);
+    assert.equal(closed.childClosed, true);
+    assert.equal(closed.parentWriterClosed, true);
+    assert.equal(closed.forced, false);
+    assert.equal(closed.exitCode, 0);
+    const readback = select("rawpipe-roundtrip");
+    assert.equal(readback.sentinelMatched, true);
+    assert.equal(readback.transferBytes, write.requestedBytes);
+    assert.equal(readback.parentWriterClosedBeforeRead, true);
+    assert.equal(readback.childClosedBeforeEof, true);
+    assert.equal(readback.eof, true);
+  }
+  assert.equal(summary.casesPassed, cases.filter((row) => row.roundtripPassed).length);
+  return { summary, cases };
+}
 export function validateTracker(row: any) {
   assert.equal(row.kind, "tracker-proof");
   assert.equal(typeof row.originalSuccess, "boolean");
@@ -474,6 +531,28 @@ async function worker(configFile: string) {
     } else {
       const launcher = path.join(c.compat, "NemoClawMsysLauncher.exe");
       if (c.mode === "startup") {
+        results.phase = "raw-pipe-diagnostics";
+        save();
+        const host = await waitFile(path.join(c.share, "host.json"), Date.now() + 5000);
+        assert.equal(host.nonce, c.nonce);
+        assert(Number.isSafeInteger(host.executorPid) && host.executorPid > 0);
+        const raw = await finite(
+          c.probe,
+          ["rawpipe", c.key, c.nonce, String(process.pid), String(host.executorPid)],
+          30000,
+        );
+        results.rawPipeDiagnostics = { diagnosticOnly: true, execution: raw };
+        try {
+          const rows = parseJsonLines(raw.stdout);
+          results.rawPipeDiagnostics.rows = rows;
+          results.rawPipeDiagnostics.observation = validateRawPipeDiagnostics(rows, c.nonce);
+        } catch (error) {
+          results.rawPipeDiagnostics.error = error instanceof Error ? error.message : String(error);
+        }
+        save();
+        // Diagnostic failures remain visible and never substitute for the full
+        // Bash pipeline. Only unsafe process closure stops the later workload.
+        assert(raw.closed && !raw.forced, "The raw pipe diagnostic did not close normally");
         results.phase = "injected-startup";
         for (const target of ["usr/bin/bash.exe", "bin/bash.exe"]) {
           const marker = "INJECTED_" + c.nonce;

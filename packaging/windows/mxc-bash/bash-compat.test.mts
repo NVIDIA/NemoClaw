@@ -9,6 +9,7 @@ import {
   parseJsonLines,
   validateDenials,
   validateTracker,
+  validateRawPipeDiagnostics,
   validateMxcInspectionBuild,
   validateDerivedMetadata,
   binaryPins,
@@ -178,6 +179,124 @@ test("partial pipe record remains unparsed until its newline arrives", () => {
   assert.deepEqual(parseJsonLines('{"kind":"ready"}\n{"kind":'), [{ kind: "ready" }]);
   assert.deepEqual(parseJsonLines('{"kind":"ready"}'), []);
   assert.throws(() => parseJsonLines("{broken}\n"));
+});
+test("raw pipe diagnostics require inherited-writer I/O and EOF for a successful variant", () => {
+  const rows: any[] = [];
+  for (const appSidMask of [0x120196, 0x12019f]) {
+    rows.push(
+      {
+        kind: "rawpipe-case",
+        nonce: c.nonce,
+        appSidMask,
+        diagnosticOnly: true,
+        roundtripPassed: true,
+        error: "",
+      },
+      {
+        kind: "rawpipe-child-write",
+        nonce: c.nonce,
+        appSidMask,
+        pid: 42,
+        passed: true,
+        writeAttempted: true,
+        eventCreated: true,
+        completionObserved: true,
+        ioStatus: "0x00000000",
+        cancelled: false,
+        requestedBytes: 33,
+        transferredBytes: 33,
+      },
+      {
+        kind: "rawpipe-child-created",
+        nonce: c.nonce,
+        appSidMask,
+        childPid: 42,
+        created: true,
+        explicitHandleList: true,
+        pipeReaderExcluded: true,
+      },
+      {
+        kind: "rawpipe-child-closed",
+        nonce: c.nonce,
+        appSidMask,
+        childPid: 42,
+        childClosed: true,
+        parentWriterClosed: true,
+        forced: false,
+        exitCode: 0,
+      },
+      {
+        kind: "rawpipe-roundtrip",
+        nonce: c.nonce,
+        appSidMask,
+        sentinelMatched: true,
+        transferBytes: 33,
+        parentWriterClosedBeforeRead: true,
+        childClosedBeforeEof: true,
+        eof: true,
+      },
+    );
+  }
+  rows.push({
+    kind: "rawpipe-summary",
+    nonce: c.nonce,
+    diagnosticOnly: true,
+    rawProbeUnshimmed: true,
+    runtimeGrantsChanged: false,
+    casesCompleted: 2,
+    casesPassed: 2,
+  });
+  assert.equal(validateRawPipeDiagnostics(rows, c.nonce).summary.casesPassed, 2);
+  for (const kind of [
+    "rawpipe-child-created",
+    "rawpipe-child-write",
+    "rawpipe-child-closed",
+    "rawpipe-roundtrip",
+  ])
+    assert.throws(() =>
+      validateRawPipeDiagnostics(
+        rows.filter((row) => row.kind !== kind),
+        c.nonce,
+      ),
+    );
+  assert.throws(() =>
+    validateRawPipeDiagnostics(
+      rows.map((row) =>
+        row.kind === "rawpipe-child-write"
+          ? { ...row, completionObserved: false, ioStatus: null }
+          : row,
+      ),
+      c.nonce,
+    ),
+  );
+});
+test("both raw descriptor variants remain diagnostic observations when actual I/O fails", () => {
+  const rows = [
+    ...[0x120196, 0x12019f].map((appSidMask) => ({
+      kind: "rawpipe-case",
+      nonce: c.nonce,
+      appSidMask,
+      diagnosticOnly: true,
+      roundtripPassed: false,
+      error: "native transfer failed",
+    })),
+    {
+      kind: "rawpipe-summary",
+      nonce: c.nonce,
+      diagnosticOnly: true,
+      rawProbeUnshimmed: true,
+      runtimeGrantsChanged: false,
+      casesCompleted: 2,
+      casesPassed: 0,
+    },
+  ];
+  assert.equal(validateRawPipeDiagnostics(rows, c.nonce).summary.casesPassed, 0);
+  assert.throws(() =>
+    validateRawPipeDiagnostics(
+      rows.map((row) => (row.kind === "rawpipe-case" ? { ...row, appSidMask: 0x120196 } : row)),
+      c.nonce,
+    ),
+  );
 });
 test("all independent raw denial results must be access denied, including NULL-DACL children", () => {
   const row = {

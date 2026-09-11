@@ -120,6 +120,48 @@ std::string jobProof(DWORD workerPid,DWORD executorPid){
   std::string report="\"jobFlags\":"+std::to_string(flags)+",\"jobProcessIds\":["+ids.str()+"],\"expectedWorkerPid\":"+std::to_string(workerPid)+",\"expectedExecutorPid\":"+std::to_string(executorPid)+",\"normalSuspendedChildCreatedAndClosed\":true,\"rawBreakawayCreated\":"+(escape.first?"true":"false")+",\"rawBreakawayError\":"+std::to_string(escape.second);
   line("{\"kind\":\"job-proof\","+report+"}");require(!escape.first&&escape.second==ERROR_ACCESS_DENIED,"raw-breakaway-was-not-denied");return report;
 }
+// A bounded native writer used only by the raw-pipe diagnostic. Its inherited
+// handle is never reopened and no compatibility module is loaded.
+[[noreturn]] void raw_pipe_fatal(){fprintf(stderr,"NEMOCLAW_RAW_PIPE_CLEANUP_FAILED\n");fflush(stderr);TerminateProcess(GetCurrentProcess(),ERROR_OPERATION_ABORTED);std::terminate();}
+std::string raw_pipe_handle(Api& api,HANDLE handle){
+  using QueryObject=NTSTATUS(NTAPI*)(HANDLE,OBJECT_INFORMATION_CLASS,PVOID,ULONG,PULONG);
+  using QueryFile=NTSTATUS(NTAPI*)(HANDLE,PIO_STATUS_BLOCK,PVOID,ULONG,FILE_INFORMATION_CLASS);
+  struct Basic {ULONG attributes,access,handles,pointers,reserved[10];};
+  struct Local {ULONG type,configuration,maximum,current,inQuota,readAvailable,outQuota,writeQuota,state,end;};
+  Basic basic{};Local local{};ULONG access=0,needed=0;IO_STATUS_BLOCK accessIo{},localIo{};
+  auto queryObject=api.load<QueryObject>("NtQueryObject");auto queryFile=api.load<QueryFile>("NtQueryInformationFile");require(queryObject&&queryFile,"raw-pipe-query-exports");
+  NTSTATUS objectStatus=queryObject(handle,static_cast<OBJECT_INFORMATION_CLASS>(0),&basic,sizeof(basic),&needed);
+  NTSTATUS accessStatus=queryFile(handle,&accessIo,&access,sizeof(access),static_cast<FILE_INFORMATION_CLASS>(8));
+  if(accessStatus==static_cast<NTSTATUS>(0x103)){fprintf(stderr,"NEMOCLAW_RAW_PIPE_QUERY_PENDING={\"class\":8,\"status\":\"0x00000103\"}\n");raw_pipe_fatal();}
+  NTSTATUS localStatus=queryFile(handle,&localIo,&local,sizeof(local),static_cast<FILE_INFORMATION_CLASS>(24));
+  if(localStatus==static_cast<NTSTATUS>(0x103)){fprintf(stderr,"NEMOCLAW_RAW_PIPE_QUERY_PENDING={\"class\":24,\"status\":\"0x00000103\"}\n");raw_pipe_fatal();}
+  DWORD flags=0;BOOL flagsOk=GetHandleInformation(handle,&flags);DWORD flagsError=flagsOk?0:GetLastError();
+  return "\"handle\":"+quote(std::to_string(reinterpret_cast<uintptr_t>(handle)))+",\"objectBasicStatus\":"+status(objectStatus)+",\"grantedAccess\":"+(objectStatus==0?std::to_string(basic.access):"null")+",\"flagsAvailable\":"+(flagsOk?"true":"false")+",\"inheritanceFlags\":"+std::to_string(flags)+",\"flagsError\":"+std::to_string(flagsError)+",\"fileAccessStatus\":"+status(accessStatus)+",\"fileAccess\":"+(accessStatus==0?std::to_string(access):"null")+",\"pipeLocalStatus\":"+status(localStatus)+",\"pipeEnd\":"+(localStatus==0?std::to_string(local.end):"null")+",\"pipeConfiguration\":"+(localStatus==0?std::to_string(local.configuration):"null");
+}
+int raw_pipe_writer(int argc,wchar_t** argv){
+  require(argc==6&&lowerHex(argv[3],24),"raw-writer-arguments");
+  HANDLE writer=reinterpret_cast<HANDLE>(static_cast<uintptr_t>(std::stoull(argv[2])));DWORD mask=static_cast<DWORD>(std::stoul(argv[4])),parent=static_cast<DWORD>(std::stoul(argv[5]));
+  require(writer&&writer!=INVALID_HANDLE_VALUE&&parent&&(mask==0x00120196||mask==0x0012019f),"raw-writer-identity");
+  Api api;Identity id=identity(api);BOOL inJob=FALSE;require(IsProcessInJob(GetCurrentProcess(),nullptr,&inJob)&&inJob,"raw-writer-job");
+  line("{\"kind\":\"rawpipe-child-handle\",\"nonce\":"+quote(utf8(argv[3]))+",\"appSidMask\":"+std::to_string(mask)+",\"parentPid\":"+std::to_string(parent)+","+identityFields(id)+","+raw_pipe_handle(api,writer)+"}");
+  using NativeWrite=NTSTATUS(NTAPI*)(HANDLE,HANDLE,PVOID,PVOID,PIO_STATUS_BLOCK,PVOID,ULONG,PLARGE_INTEGER,PULONG);
+  auto write=api.load<NativeWrite>("NtWriteFile");require(write!=nullptr,"raw-writer-export");
+  Handle event;event.value=CreateEventW(nullptr,FALSE,FALSE,nullptr);DWORD eventError=event.value?0:GetLastError();
+  std::string bytes="RAW_PIPE_"+utf8(argv[3]);IO_STATUS_BLOCK io{};io.Status=static_cast<NTSTATUS>(0x103);
+  NTSTATUS submitted=0;bool attempted=false,completed=false,cancelled=false;DWORD waited=WAIT_FAILED;
+  if(event.value){
+    attempted=true;submitted=write(writer,event.value,nullptr,nullptr,&io,bytes.data(),static_cast<ULONG>(bytes.size()),nullptr,nullptr);
+    if(submitted==static_cast<NTSTATUS>(0x103)){
+      waited=WaitForSingleObject(event.value,2000);
+      if(waited!=WAIT_OBJECT_0){cancelled=true;if(!CancelIoEx(writer,nullptr)&&GetLastError()!=ERROR_NOT_FOUND)raw_pipe_fatal();if(WaitForSingleObject(event.value,2000)!=WAIT_OBJECT_0)raw_pipe_fatal();}
+      completed=true;
+    }else completed=submitted==0;
+  }
+  const bool passed=attempted&&completed&&!cancelled&&io.Status==0&&io.Information==bytes.size();
+  line("{\"kind\":\"rawpipe-child-write\",\"nonce\":"+quote(utf8(argv[3]))+",\"appSidMask\":"+std::to_string(mask)+",\"pid\":"+std::to_string(GetCurrentProcessId())+",\"eventCreated\":"+(event.value?"true":"false")+",\"eventError\":"+std::to_string(eventError)+",\"writeAttempted\":"+(attempted?"true":"false")+",\"requestedBytes\":"+std::to_string(bytes.size())+",\"submitStatus\":"+(attempted?status(submitted):"null")+",\"waitResult\":"+std::to_string(waited)+",\"completionObserved\":"+(completed?"true":"false")+",\"ioStatus\":"+(completed?status(io.Status):"null")+",\"transferredBytes\":"+(completed?std::to_string(io.Information):"null")+",\"cancelled\":"+(cancelled?"true":"false")+",\"passed\":"+(passed?"true":"false")+"}");
+  require(CloseHandle(writer)!=0,"raw-writer-close");return passed?0:1;
+}
+
 // Raw pipe fixture: no compatibility exports or hooks. Every handle belongs to
 // this probe. Exact synchronous behavior is checked first; the independent
 // isolation fixture then uses overlapped I/O for bounded observation/cleanup.
@@ -131,6 +173,9 @@ class PipeProof {
   Handle server;
   Handle npfs;
   bool ordinary;
+  DWORD appSidMask;
+  bool diagnostic;
+  bool lastTransferEof=false;
   std::wstring originalOwner,originalGroup;
   SECURITY_DESCRIPTOR_CONTROL originalControl=0;
   bool originalDescriptorRead=false;
@@ -170,19 +215,20 @@ class PipeProof {
     while(GetTickCount64()<deadline){if(available())return;Sleep(1);}
     throw std::runtime_error("pipe-not-available");
   }
-  DWORD transfer(HANDLE handle,bool write,bool asynchronous,void* buffer,DWORD count){
-    DWORD transferred=0;
-    if(!asynchronous){BOOL ok=write?WriteFile(handle,buffer,count,&transferred,nullptr):ReadFile(handle,buffer,count,&transferred,nullptr);require(ok!=0,"pipe-sync-transfer");return transferred;}
+  DWORD transfer(HANDLE handle,bool write,bool asynchronous,void* buffer,DWORD count,bool allowEof=false){
+    lastTransferEof=false;DWORD transferred=0;
+    auto report=[&](BOOL submitted,DWORD submitError,BOOL completed,DWORD error){if(diagnostic)line("{\"kind\":\"rawpipe-transfer\",\"nonce\":"+quote(nonce)+",\"appSidMask\":"+std::to_string(appSidMask)+",\"operation\":"+quote(write?"WriteFile":"ReadFile")+",\"asynchronous\":"+(asynchronous?"true":"false")+",\"requestedBytes\":"+std::to_string(count)+",\"submitted\":"+(submitted?"true":"false")+",\"submitError\":"+std::to_string(submitError)+",\"completed\":"+(completed?"true":"false")+",\"error\":"+std::to_string(error)+",\"transferredBytes\":"+(completed?std::to_string(transferred):"null")+",\"eof\":"+(lastTransferEof?"true":"false")+"}");};
+    if(!asynchronous){BOOL ok=write?WriteFile(handle,buffer,count,&transferred,nullptr):ReadFile(handle,buffer,count,&transferred,nullptr);DWORD error=ok?0:GetLastError();lastTransferEof=!write&&allowEof&&!ok&&error==ERROR_BROKEN_PIPE;if(lastTransferEof)transferred=0;report(ok,error,ok,error);require(ok||lastTransferEof,"pipe-sync-transfer");return transferred;}
     Handle event;event.value=CreateEventW(nullptr,TRUE,FALSE,nullptr);require(event.value!=nullptr,"pipe-transfer-event");OVERLAPPED operation{};operation.hEvent=event.value;
-    BOOL ok=write?WriteFile(handle,buffer,count,nullptr,&operation):ReadFile(handle,buffer,count,nullptr,&operation);DWORD error=ok?0:GetLastError();
-    if(!ok){require(error==ERROR_IO_PENDING,"pipe-transfer-submit");
-      if(WaitForSingleObject(event.value,2000)!=WAIT_OBJECT_0){
-        if(!CancelIoEx(handle,&operation)&&GetLastError()!=ERROR_NOT_FOUND)fatal_cleanup();
-        if(WaitForSingleObject(event.value,2000)!=WAIT_OBJECT_0)fatal_cleanup();DWORD ignored=0;BOOL drained=GetOverlappedResult(handle,&operation,&ignored,FALSE);if(!drained&&GetLastError()!=ERROR_OPERATION_ABORTED)fatal_cleanup();
-        throw std::runtime_error("pipe-transfer-deadline");
-      }
+    BOOL submitted=write?WriteFile(handle,buffer,count,nullptr,&operation):ReadFile(handle,buffer,count,nullptr,&operation);DWORD submitError=submitted?0:GetLastError();
+    if(!submitted&&submitError!=ERROR_IO_PENDING){lastTransferEof=!write&&allowEof&&submitError==ERROR_BROKEN_PIPE;report(submitted,submitError,FALSE,submitError);require(lastTransferEof,"pipe-transfer-submit");return 0;}
+    if(!submitted&&WaitForSingleObject(event.value,2000)!=WAIT_OBJECT_0){
+      if(!CancelIoEx(handle,&operation)&&GetLastError()!=ERROR_NOT_FOUND)fatal_cleanup();
+      if(WaitForSingleObject(event.value,2000)!=WAIT_OBJECT_0)fatal_cleanup();DWORD ignored=0;BOOL drained=GetOverlappedResult(handle,&operation,&ignored,FALSE);DWORD error=drained?0:GetLastError();if(!drained&&error!=ERROR_OPERATION_ABORTED)fatal_cleanup();
+      report(submitted,submitError,drained,error);throw std::runtime_error("pipe-transfer-deadline");
     }
-    require(GetOverlappedResult(handle,&operation,&transferred,FALSE)!=0,"pipe-transfer-result");return transferred;
+    BOOL completed=GetOverlappedResult(handle,&operation,&transferred,FALSE);DWORD error=completed?0:GetLastError();lastTransferEof=!write&&allowEof&&!completed&&error==ERROR_BROKEN_PIPE;if(lastTransferEof)transferred=0;
+    report(submitted,submitError,completed,error);require(completed||lastTransferEof,"pipe-transfer-result");return transferred;
   }
   void roundtrip(HANDLE client,bool overlapped){
     std::string bytes="NEMOCLAW_PIPE_"+nonce;std::array<char,128> actual{};
@@ -203,7 +249,7 @@ class PipeProof {
       std::array<PSID,4> sids={user,adminSid.data(),systemSid.data(),container};std::string fields;
       for(DWORD index=0;index<expectedCount;++index){PVOID raw=nullptr;require(GetAce(acl,index,&raw)!=0,"pipe-readback-ace");auto ace=static_cast<ACCESS_ALLOWED_ACE*>(raw);
         require(ace->Header.AceType==ACCESS_ALLOWED_ACE_TYPE&&ace->Header.AceFlags==0&&EqualSid(&ace->SidStart,sids[index]),"pipe-readback-principal");
-        DWORD original=index==3?0x00120196:GENERIC_ALL,mapped=original;GENERIC_MAPPING mapping={FILE_GENERIC_READ,FILE_GENERIC_WRITE,FILE_GENERIC_EXECUTE,FILE_ALL_ACCESS};MapGenericMask(&mapped,&mapping);
+        DWORD original=index==3?appSidMask:GENERIC_ALL,mapped=original;GENERIC_MAPPING mapping={FILE_GENERIC_READ,FILE_GENERIC_WRITE,FILE_GENERIC_EXECUTE,FILE_ALL_ACCESS};MapGenericMask(&mapped,&mapping);
         require(ace->Mask==original||ace->Mask==mapped,"pipe-readback-mask");if(index)fields+=",";fields+=std::to_string(ace->Mask);
       }
       LPWSTR ownerText=nullptr,groupText=nullptr;require(owner&&group&&ConvertSidToStringSidW(owner,&ownerText)!=0,"pipe-owner-readback");std::wstring ownerSid=ownerText;LocalFree(ownerText);require(ConvertSidToStringSidW(group,&groupText)!=0,"pipe-group-readback");std::wstring groupSid=groupText;LocalFree(groupText);
@@ -239,7 +285,8 @@ class PipeProof {
   std::wstring name;
   std::wstring kernelName;
   bool exactSynchronousPositive=false,ownBefore=false,minimalBefore=false,ownAfter=false,minimalAfter=false;
-  PipeProof(const Identity& identity,Api& calls,const std::wstring& installationKey,const std::wstring& marker,bool ordinaryNt=false):id(identity),api(calls),key(installationKey),nonce(utf8(marker)),ordinary(ordinaryNt){
+  PipeProof(const Identity& identity,Api& calls,const std::wstring& installationKey,const std::wstring& marker,bool ordinaryNt=false,DWORD mask=0x00120196,bool rawDiagnostic=false):id(identity),api(calls),key(installationKey),nonce(utf8(marker)),ordinary(ordinaryNt),appSidMask(mask),diagnostic(rawDiagnostic){
+    require(mask==0x00120196||(rawDiagnostic&&ordinaryNt&&mask==0x0012019f),"pipe-diagnostic-mask-scope");
     queryFile=api.load<QueryFile>("NtQueryInformationFile");queryObject=api.load<QueryObject>("NtQueryObject");require(queryFile&&queryObject,"pipe-native-queries");
     try{
       require(ConvertStringSidToSidW(id.userSid.c_str(),&user)!=0&&ConvertStringSidToSidW(id.sid.c_str(),&container)!=0,"pipe-token-sids");
@@ -247,12 +294,13 @@ class PipeProof {
       const size_t aclBytes=sizeof(ACL)+4*(sizeof(ACCESS_ALLOWED_ACE)-sizeof(DWORD))+GetLengthSid(user)+GetLengthSid(adminSid.data())+GetLengthSid(systemSid.data())+GetLengthSid(container);require(aclBytes<=sizeof(aclStorage),"pipe-acl-bound");
       auto acl=reinterpret_cast<PACL>(aclStorage.data());require(InitializeAcl(acl,static_cast<DWORD>(aclBytes),ACL_REVISION)!=0,"pipe-acl-init");
       if(ordinary)default_template(acl);else for(PSID sid:std::array<PSID,3>{user,adminSid.data(),systemSid.data()})require(AddAccessAllowedAceEx(acl,ACL_REVISION,0,GENERIC_ALL,sid)!=0,"pipe-original-ace");
-      require(AddAccessAllowedAceEx(acl,ACL_REVISION,0,0x00120196,container)!=0,"pipe-container-ace");
+      require(AddAccessAllowedAceEx(acl,ACL_REVISION,0,appSidMask,container)!=0,"pipe-container-ace");
       require(InitializeSecurityDescriptor(&descriptor,SECURITY_DESCRIPTOR_REVISION)!=0&&SetSecurityDescriptorDacl(&descriptor,TRUE,acl,FALSE)!=0,"pipe-descriptor-init");attributes={sizeof(attributes),&descriptor,FALSE};
       name=L"\\\\.\\pipe\\msys-"+key+L"-"+std::to_wstring(GetCurrentProcessId())+L"-sigwait";
       if(ordinary){
         nativeCreate=api.load<NativeCreate>("NtCreateNamedPipeFile");nativeOpen=api.load<NativeOpen>("NtOpenFile");require(nativeCreate&&nativeOpen,"pipe-native-exports");std::wstring root=L"\\Device\\NamedPipe\\";Name object(root);IO_STATUS_BLOCK io{};NTSTATUS result=nativeOpen(&npfs.value,0x00100080,&object.attributes,&io,3,0);if(result==static_cast<NTSTATUS>(0x103))fatal_cleanup();require(result==0,"pipe-owned-npfs-root");
         name=key+L"-"+std::to_wstring(GetCurrentProcessId())+L"-pipe-nt-0x1";
+        if(diagnostic)name+=L"-diagnostic-"+std::to_wstring(appSidMask);
         server.value=create_server(0x00080001,true);require(server.value!=INVALID_HANDLE_VALUE,"pipe-original-default-server");readback(false);Handle denied;const DWORD error=open_client(name,false,denied);require(error==0xc0000022u,"pipe-original-default-writer-not-denied");require(CloseHandle(server.value)!=0,"pipe-default-server-close");server.value=nullptr;
       }
       server.value=create_server(0x00080001);require(server.value!=INVALID_HANDLE_VALUE,"pipe-exact-server-create");readback();exact_sync_positive();
@@ -271,6 +319,41 @@ class PipeProof {
     require(CloseHandle(client.value)!=0,"pipe-own-client-close");client.value=nullptr;disconnect();
   }
   void before(){start_listener();positive(false);ownBefore=true;positive(true);minimalBefore=true;require(available(),"pipe-before-not-free");}
+  void inherited_writer(){
+    require(diagnostic&&ordinary&&available(),"raw-inherited-fixture");
+    Handle writer;open_client(name,false,writer);require(writer.value!=INVALID_HANDLE_VALUE,"raw-inherited-writer-open");join_listener(false);readback(true,writer.value);
+    line("{\"kind\":\"rawpipe-parent-handle\",\"nonce\":"+quote(nonce)+",\"appSidMask\":"+std::to_string(appSidMask)+",\"role\":\"writer\","+raw_pipe_handle(api,writer.value)+"}");
+    line("{\"kind\":\"rawpipe-parent-handle\",\"nonce\":"+quote(nonce)+",\"appSidMask\":"+std::to_string(appSidMask)+",\"role\":\"reader\","+raw_pipe_handle(api,server.value)+"}");
+    DWORD flags=0;require(GetHandleInformation(writer.value,&flags)&&(flags&HANDLE_FLAG_INHERIT),"raw-writer-inherit-flag");
+    std::array<Handle,3> streams;const std::array<DWORD,3> kinds={STD_INPUT_HANDLE,STD_OUTPUT_HANDLE,STD_ERROR_HANDLE};
+    for(size_t i=0;i<streams.size();++i)require(DuplicateHandle(GetCurrentProcess(),GetStdHandle(kinds[i]),GetCurrentProcess(),&streams[i].value,0,TRUE,DUPLICATE_SAME_ACCESS)!=0,"raw-child-standard-stream");
+    std::array<HANDLE,4> inherited={writer.value,streams[0].value,streams[1].value,streams[2].value};
+    require(std::find(inherited.begin(),inherited.end(),server.value)==inherited.end(),"raw-reader-not-in-handle-list");
+    SIZE_T needed=0;InitializeProcThreadAttributeList(nullptr,1,0,&needed);require(needed&&needed<8192,"raw-child-attribute-size");std::vector<BYTE> storage(needed);
+    auto attributesList=reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(storage.data());require(InitializeProcThreadAttributeList(attributesList,1,0,&needed)!=0,"raw-child-attribute-init");
+    bool attributesLive=true;Handle child,thread;bool childClosed=false,forced=false;DWORD childPid=0,exitCode=STILL_ACTIVE;
+    auto closeChild=[&](){if(child.value&&!childClosed){if(WaitForSingleObject(child.value,0)!=WAIT_OBJECT_0){forced=true;if(!TerminateProcess(child.value,124)||WaitForSingleObject(child.value,2000)!=WAIT_OBJECT_0)fatal_cleanup();}childClosed=true;}};
+    try{
+      require(UpdateProcThreadAttribute(attributesList,0,PROC_THREAD_ATTRIBUTE_HANDLE_LIST,inherited.data(),sizeof(inherited),nullptr,nullptr)!=0,"raw-child-handle-list");
+      std::array<wchar_t,MAX_PATH> image{};DWORD length=GetModuleFileNameW(nullptr,image.data(),static_cast<DWORD>(image.size()));require(length&&length<image.size(),"raw-child-image");
+      std::wstring command=L"\""+std::wstring(image.data())+L"\" rawpipe-writer "+std::to_wstring(reinterpret_cast<uintptr_t>(writer.value))+L" "+std::wstring(nonce.begin(),nonce.end())+L" "+std::to_wstring(appSidMask)+L" "+std::to_wstring(GetCurrentProcessId());
+      STARTUPINFOEXW startup{};startup.StartupInfo.cb=sizeof(startup);startup.StartupInfo.dwFlags=STARTF_USESTDHANDLES;startup.StartupInfo.hStdInput=streams[0].value;startup.StartupInfo.hStdOutput=streams[1].value;startup.StartupInfo.hStdError=streams[2].value;startup.lpAttributeList=attributesList;PROCESS_INFORMATION process{};
+      BOOL created=CreateProcessW(image.data(),command.data(),nullptr,nullptr,TRUE,EXTENDED_STARTUPINFO_PRESENT|CREATE_NO_WINDOW,nullptr,nullptr,&startup.StartupInfo,&process);DWORD createError=created?0:GetLastError();
+      if(created){child.value=process.hProcess;thread.value=process.hThread;childPid=process.dwProcessId;}
+      DeleteProcThreadAttributeList(attributesList);attributesLive=false;
+      line("{\"kind\":\"rawpipe-child-created\",\"nonce\":"+quote(nonce)+",\"appSidMask\":"+std::to_string(appSidMask)+",\"created\":"+(created?"true":"false")+",\"error\":"+std::to_string(createError)+",\"childPid\":"+std::to_string(childPid)+",\"pipeReaderExcluded\":true,\"explicitHandleList\":true}");
+      require(created!=FALSE,"raw-child-create");require(CloseHandle(writer.value)!=0,"raw-parent-writer-close");writer.value=nullptr;
+      DWORD waited=WaitForSingleObject(child.value,7000);if(waited!=WAIT_OBJECT_0)closeChild();else childClosed=true;
+      require(GetExitCodeProcess(child.value,&exitCode)!=0,"raw-child-exit-code");
+      line("{\"kind\":\"rawpipe-child-closed\",\"nonce\":"+quote(nonce)+",\"appSidMask\":"+std::to_string(appSidMask)+",\"childPid\":"+std::to_string(childPid)+",\"exitCode\":"+std::to_string(exitCode)+",\"childClosed\":true,\"forced\":"+(forced?"true":"false")+",\"parentWriterClosed\":true}");
+      require(!forced,"raw-child-deadline");
+      std::string expected="RAW_PIPE_"+nonce;std::array<char,128> actual{};DWORD count=transfer(server.value,false,true,actual.data(),static_cast<DWORD>(actual.size()));
+      require(count==expected.size()&&memcmp(actual.data(),expected.data(),count)==0,"raw-inherited-readback");
+      char byte=0;require(transfer(server.value,false,true,&byte,1,true)==0&&lastTransferEof,"raw-inherited-eof");
+      require(exitCode==0,"raw-child-write-failed");
+      line("{\"kind\":\"rawpipe-roundtrip\",\"nonce\":"+quote(nonce)+",\"appSidMask\":"+std::to_string(appSidMask)+",\"sentinelMatched\":true,\"transferBytes\":"+std::to_string(expected.size())+",\"parentWriterClosedBeforeRead\":true,\"childClosedBeforeEof\":true,\"eof\":true}");
+    }catch(...){if(attributesLive)DeleteProcThreadAttributeList(attributesList);closeChild();throw;}
+  }
   void tracker(){
     require(ordinary,"tracker-default-template-required");
     SECURITY_ATTRIBUTES original={sizeof(SECURITY_ATTRIBUTES),nullptr,FALSE};
@@ -327,10 +410,21 @@ class PipeProof {
 int wmain(int argc,wchar_t** argv){
   try{
     if(argc==2&&std::wstring(argv[1])==L"breakaway-child")return 0;
+    if(argc>1&&std::wstring(argv[1])==L"rawpipe-writer")return raw_pipe_writer(argc,argv);
     require(argc==6,"arguments");std::wstring mode=argv[1],key=argv[2],nonce=argv[3];require(lowerHex(key,16)&&lowerHex(nonce,24),"fixed-identity");
     DWORD workerPid=static_cast<DWORD>(std::stoul(argv[4])),executorPid=static_cast<DWORD>(std::stoul(argv[5]));require(workerPid&&executorPid&&workerPid!=executorPid,"process-identities");
     Api api;Identity id=identity(api);jobProof(workerPid,executorPid);std::wstring gd=absolute(id.root,globalLeaf(key)),sd=id.session?absolute(id.root,sessionLeaf(id.session,key)):gd;
     std::wstring eventLeaf=L"isolation-event-"+nonce,sectionLeaf=L"isolation-section-"+nonce;
+    if(mode==L"rawpipe"){
+      int succeeded=0;
+      for(DWORD mask:std::array<DWORD,2>{0x00120196,0x0012019f}){
+        bool passed=false;std::string error;
+        try{PipeProof pipe(id,api,key,nonce,true,mask,true);pipe.before();pipe.inherited_writer();pipe.finish();passed=true;++succeeded;}
+        catch(const std::exception& failure){error=failure.what();}
+        line("{\"kind\":\"rawpipe-case\",\"nonce\":"+quote(utf8(nonce))+",\"appSidMask\":"+std::to_string(mask)+",\"diagnosticOnly\":true,\"roundtripPassed\":"+(passed?"true":"false")+",\"error\":"+quote(error)+"}");
+      }
+      line("{\"kind\":\"rawpipe-summary\",\"nonce\":"+quote(utf8(nonce))+",\"diagnosticOnly\":true,\"rawProbeUnshimmed\":true,\"runtimeGrantsChanged\":false,\"casesCompleted\":2,\"casesPassed\":"+std::to_string(succeeded)+"}");return 0;
+    }
     if(mode==L"identity"){line("{\"kind\":\"identity\","+identityFields(id)+"}");return 0;}
     if(mode==L"absent"){
       Handle g,s;NTSTATUS gs=openDir(api,gd,g),ss=openDir(api,sd,s);

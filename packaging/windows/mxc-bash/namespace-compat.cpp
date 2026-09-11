@@ -8,6 +8,7 @@
 #include <detours.h>
 #include <stdio.h>
 #include <string.h>
+#include <intrin.h>
 #include "namespace-path.h"
 #include "namespace-security.h"
 #include "process-propagation.h"
@@ -27,6 +28,18 @@ using MutantCreate = NTSTATUS (NTAPI*)(PHANDLE, ACCESS_MASK, POBJECT_ATTRIBUTES,
 MutantCreate realCreateSharedMutex = nullptr;
 SectionOpen realOpenSharedMutex = nullptr;
 LONG sharedMutexRecords = 0;
+using NativeIoApc = VOID (NTAPI*)(PVOID, PIO_STATUS_BLOCK, ULONG);
+using NativeIoWrite = NTSTATUS (NTAPI*)(HANDLE, HANDLE, NativeIoApc, PVOID, PIO_STATUS_BLOCK, PVOID, ULONG, PLARGE_INTEGER, PULONG);
+using NativeIoWaitMany = NTSTATUS (NTAPI*)(ULONG, PHANDLE, ULONG, BOOLEAN, PLARGE_INTEGER);
+using NativeIoWaitOne = NTSTATUS (NTAPI*)(HANDLE, BOOLEAN, PLARGE_INTEGER);
+using NativeIoEvent = NTSTATUS (NTAPI*)(PHANDLE, ACCESS_MASK, POBJECT_ATTRIBUTES, ULONG, BOOLEAN);
+NativeIoWrite realWriteIoFile = nullptr;
+NativeIoWaitMany realWaitIoMany = nullptr;
+NativeIoWaitOne realWaitIoOne = nullptr;
+NativeIoEvent realCreateIoEvent = nullptr;
+LONG ioFailureRecords = 0, ioSuccessRecords = 0, ioRecordSequence = 0;
+void observe_failed_private_mutant(POBJECT_ATTRIBUTES, ACCESS_MASK, BOOLEAN, NTSTATUS, DWORD, PVOID);
+
 HANDLE heldSharedDirectory = nullptr;
 LONG sharedDirectoryState = 0;
 LONG sharedSectionRecords = 0;
@@ -205,6 +218,12 @@ bool initialize_namespace() {
     realOpenSharedMutex = reinterpret_cast<SectionOpen>(GetProcAddress(ntdll, "NtOpenMutant"));
     if (!realCreateSharedMutex || !realOpenSharedMutex)
         return context_result("ntdll-mutant-exports", "win32", GetLastError());
+    realWriteIoFile = reinterpret_cast<NativeIoWrite>(GetProcAddress(ntdll, "NtWriteFile"));
+    realWaitIoMany = reinterpret_cast<NativeIoWaitMany>(GetProcAddress(ntdll, "NtWaitForMultipleObjects"));
+    realWaitIoOne = reinterpret_cast<NativeIoWaitOne>(GetProcAddress(ntdll, "NtWaitForSingleObject"));
+    realCreateIoEvent = reinterpret_cast<NativeIoEvent>(GetProcAddress(ntdll, "NtCreateEvent"));
+    if (!realWriteIoFile || !realWaitIoMany || !realWaitIoOne || !realCreateIoEvent)
+        return context_result("ntdll-io-observer-exports", "win32", GetLastError());
     realNativePipeCreate = reinterpret_cast<NativePipeCreate>(GetProcAddress(ntdll, "NtCreateNamedPipeFile"));
     if (!realNativePipeCreate) return context_result("ntdll-pipe-create-export", "win32", GetLastError());
     realNativeFileOpen = reinterpret_cast<NativeFileOpen>(GetProcAddress(ntdll, "NtOpenFile"));
@@ -1134,8 +1153,205 @@ NTSTATUS NTAPI create_shared_mutex(PHANDLE output, ACCESS_MASK access, POBJECT_A
     }
     if (request.bound) log_shared_mutex(request, access, owner, originalStatus, finalStatus,
         attempted, openStatus, originalHandle, reused);
+    else observe_failed_private_mutant(input, access, owner, originalStatus, after, _ReturnAddress());
     SetLastError(after);
     return finalStatus;
+}
+
+struct IoObservation {
+    const char* operation = "";
+    const char* family = "";
+    NTSTATUS status = 0;
+    DWORD lastError = 0;
+    PVOID caller = nullptr;
+    HANDLE handles[8] = {};
+    ULONG handleCount = 0;
+    ULONG originalHandleCount = 0;
+    bool handlesReadable = true;
+    ULONG requestedBytes = 0;
+    ACCESS_MASK requestedAccess = 0;
+    ULONG flags = 0;
+    ULONG auxiliary = 0;
+    ULONG eventType = 0;
+    bool descriptorPresent = false;
+    bool requestReadable = true;
+    bool unusualOutcome = false;
+    bool completionKnown = false;
+    NTSTATUS completionStatus = 0;
+    ULONG_PTR transferred = 0;
+};
+
+void log_io_observation(const IoObservation& record) {
+    if (writingPipeDiagnostic || !GetModuleHandleW(L"msys-2.0.dll")) return;
+    // Failures have their own budget, so ordinary startup traffic cannot hide
+    // the first failed write/wait/event. These counters do not change any API.
+    if ((record.status < 0 || record.unusualOutcome) ? InterlockedIncrement(&ioFailureRecords) > 32 :
+                            InterlockedIncrement(&ioSuccessRecords) > 16) return;
+    writingPipeDiagnostic = true;
+    const LONG sequence = InterlockedIncrement(&ioRecordSequence);
+    HMODULE callerModule = nullptr;
+    unsigned long long callerRva = 0;
+    const bool msysCaller = GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+        GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, reinterpret_cast<LPCWSTR>(record.caller), &callerModule) &&
+        callerModule == GetModuleHandleW(L"msys-2.0.dll");
+    if (msysCaller) callerRva = reinterpret_cast<ULONG_PTR>(record.caller) - reinterpret_cast<ULONG_PTR>(callerModule);
+    char line[2048];
+    int count = _snprintf_s(line, sizeof(line), _TRUNCATE,
+        "NEMOCLAW_MSYS_NATIVE_IO={\"schemaVersion\":1,\"pid\":%lu,\"tid\":%lu,\"sequence\":%ld,\"operation\":\"%s\",\"family\":\"%s\",\"nativeStatus\":\"0x%08lx\",\"lastError\":%lu,\"msysCaller\":%s,\"callerRva\":\"0x%llx\",\"handleCount\":%lu,\"originalHandleCount\":%lu,\"handlesReadable\":%s,\"requestedBytes\":%lu,\"requestedAccess\":\"0x%08lx\",\"flags\":%lu,\"auxiliary\":%lu,\"eventType\":%lu,\"descriptorPresent\":%s,\"requestReadable\":%s,\"pending\":%s,\"unusualOutcome\":%s,\"completionKnown\":%s,\"completionStatus\":\"0x%08lx\",\"transferredBytes\":%llu}\n",
+        GetCurrentProcessId(), GetCurrentThreadId(), sequence, record.operation, record.family,
+        static_cast<ULONG>(record.status), record.lastError, msysCaller ? "true" : "false", callerRva,
+        record.handleCount, record.originalHandleCount, record.handlesReadable ? "true" : "false",
+        record.requestedBytes, record.requestedAccess, record.flags, record.auxiliary, record.eventType,
+        record.descriptorPresent ? "true" : "false", record.requestReadable ? "true" : "false",
+        record.status == 0x103 ? "true" : "false", record.unusualOutcome ? "true" : "false", record.completionKnown ? "true" : "false",
+        static_cast<ULONG>(record.completionStatus), static_cast<unsigned long long>(record.transferred));
+    DWORD written = 0;
+    if (count > 0) WriteFile(GetStdHandle(STD_ERROR_HANDLE), line, static_cast<DWORD>(count), &written, nullptr);
+    for (ULONG index = 0; record.status != 0x103 && index < record.handleCount; ++index) {
+        const HANDLE handle = record.handles[index];
+        PUBLIC_OBJECT_BASIC_INFORMATION basic = {};
+        const NTSTATUS basicStatus = queryKernelObject(handle, ObjectBasicInformation, &basic, sizeof(basic), nullptr);
+        DWORD inheritance = 0;
+        const BOOL inherited = GetHandleInformation(handle, &inheritance);
+        const DWORD inheritanceError = inherited ? 0 : GetLastError();
+        SetLastError(0);
+        const DWORD fileType = GetFileType(handle);
+        const DWORD fileTypeError = GetLastError();
+        alignas(void*) BYTE typeStorage[1024] = {};
+        const NTSTATUS typeStatus = queryKernelObject(handle, ObjectTypeInformation, typeStorage, sizeof(typeStorage), nullptr);
+        char type[40] = {};
+        if (typeStatus == 0) {
+            const auto name = reinterpret_cast<UNICODE_STRING*>(typeStorage);
+            const auto begin = reinterpret_cast<ULONG_PTR>(name->Buffer);
+            const auto low = reinterpret_cast<ULONG_PTR>(typeStorage);
+            if (!(name->Length % sizeof(WCHAR)) && name->Length <= 76 && begin >= low &&
+                begin <= low + sizeof(typeStorage) - name->Length) {
+                bool safe = true;
+                for (USHORT n = 0; n < name->Length / sizeof(WCHAR); ++n) {
+                    const WCHAR c = name->Buffer[n];
+                    if (!((c >= L'A' && c <= L'Z') || (c >= L'a' && c <= L'z'))) { safe = false; break; }
+                    type[n] = static_cast<char>(c);
+                }
+                if (!safe) type[0] = 0;
+            }
+        }
+        DWORD pipeFlags = 0;
+        const bool pipeQueryAttempted = fileType == FILE_TYPE_PIPE;
+        const bool pipeInfoKnown = pipeQueryAttempted && GetNamedPipeInfo(handle, &pipeFlags, nullptr, nullptr, nullptr);
+        const DWORD pipeInfoError = pipeQueryAttempted && !pipeInfoKnown ? GetLastError() : 0;
+        count = _snprintf_s(line, sizeof(line), _TRUNCATE,
+            "NEMOCLAW_MSYS_IO_HANDLE={\"schemaVersion\":1,\"pid\":%lu,\"tid\":%lu,\"sequence\":%ld,\"index\":%lu,\"handle\":\"0x%llx\",\"basicStatus\":\"0x%08lx\",\"grantedAccessKnown\":%s,\"grantedAccess\":\"0x%08lx\",\"inheritanceKnown\":%s,\"inheritanceFlags\":%lu,\"inheritanceError\":%lu,\"objectTypeStatus\":\"0x%08lx\",\"objectType\":\"%s\",\"fileType\":%lu,\"fileTypeError\":%lu,\"pipeQueryAttempted\":%s,\"pipeInfoKnown\":%s,\"pipeInfoError\":%lu,\"pipeFlags\":%lu,\"serverEnd\":%s}\n",
+            GetCurrentProcessId(), GetCurrentThreadId(), sequence, index, reinterpret_cast<unsigned long long>(handle),
+            static_cast<ULONG>(basicStatus), basicStatus == 0 ? "true" : "false", basicStatus == 0 ? basic.GrantedAccess : 0UL,
+            inherited ? "true" : "false", inherited ? inheritance : 0UL, inheritanceError, static_cast<ULONG>(typeStatus), type,
+            fileType, fileTypeError, pipeQueryAttempted ? "true" : "false", pipeInfoKnown ? "true" : "false",
+            pipeInfoError, pipeInfoKnown ? pipeFlags : 0UL, pipeInfoKnown && (pipeFlags & PIPE_SERVER_END) ? "true" : "false");
+        if (count > 0) WriteFile(GetStdHandle(STD_ERROR_HANDLE), line, static_cast<DWORD>(count), &written, nullptr);
+    }
+    writingPipeDiagnostic = false;
+}
+
+void observe_io_attributes(POBJECT_ATTRIBUTES attributes, IoObservation& record) {
+    __try {
+        if (attributes) {
+            if (attributes->Length != sizeof(OBJECT_ATTRIBUTES)) { record.requestReadable = false; return; }
+            record.flags = attributes->Attributes;
+            record.descriptorPresent = attributes->SecurityDescriptor != nullptr;
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) { record.requestReadable = false; }
+}
+
+NTSTATUS NTAPI observe_io_write(HANDLE file, HANDLE event, NativeIoApc apc, PVOID context,
+                               PIO_STATUS_BLOCK io, PVOID buffer, ULONG length, PLARGE_INTEGER offset, PULONG key) {
+    const NTSTATUS status = realWriteIoFile(file, event, apc, context, io, buffer, length, offset, key);
+    const DWORD after = GetLastError();
+    if (!writingPipeDiagnostic) {
+        IoObservation record = {};
+        record.operation = "NtWriteFile"; record.status = status; record.lastError = after; record.caller = _ReturnAddress();
+        record.handles[0] = file; record.handleCount = 1;
+        if (event) record.handles[record.handleCount++] = event;
+        record.originalHandleCount = record.handleCount; record.requestedBytes = length;
+        // Pending or failed I/O does not establish a completed output block.
+        if (status == 0) {
+            __try { if (io) { record.completionStatus = io->Status; record.transferred = io->Information; record.completionKnown = true; } }
+            __except (EXCEPTION_EXECUTE_HANDLER) { record.completionKnown = false; }
+            if (record.completionKnown && record.completionStatus < 0) record.unusualOutcome = true;
+        }
+        log_io_observation(record);
+    }
+    SetLastError(after);
+    return status;
+}
+
+bool unusual_io_wait(NTSTATUS status, ULONG count, ULONG type, BOOLEAN alertable, bool timed) {
+    if (status < 0) return true;
+    if ((type == 0 && status == 0) || (type == 1 && static_cast<ULONG>(status) < count)) return false;
+    if (status == 0x102 && timed) return false;
+    if ((status == 0xc0 || status == 0x101) && alertable) return false;
+    return true; // Includes abandoned mutexes, which MSYS raw_write handles as an error.
+}
+
+NTSTATUS NTAPI observe_io_wait_many(ULONG count, PHANDLE handles, ULONG waitType, BOOLEAN alertable, PLARGE_INTEGER timeout) {
+    const NTSTATUS status = realWaitIoMany(count, handles, waitType, alertable, timeout);
+    const DWORD after = GetLastError();
+    if (!writingPipeDiagnostic && unusual_io_wait(status, count, waitType, alertable, timeout != nullptr)) {
+        IoObservation record = {};
+        record.unusualOutcome = true;
+        record.operation = "NtWaitForMultipleObjects"; record.status = status; record.lastError = after; record.caller = _ReturnAddress();
+        record.originalHandleCount = count; record.flags = waitType; record.auxiliary = alertable;
+        __try { if (handles) { for (ULONG n = 0; n < count && n < 8; ++n) record.handles[record.handleCount++] = handles[n]; } else record.handlesReadable = false; }
+        __except (EXCEPTION_EXECUTE_HANDLER) { record.handlesReadable = false; }
+        log_io_observation(record);
+    }
+    SetLastError(after);
+    return status;
+}
+
+NTSTATUS NTAPI observe_io_wait_one(HANDLE handle, BOOLEAN alertable, PLARGE_INTEGER timeout) {
+    const NTSTATUS status = realWaitIoOne(handle, alertable, timeout);
+    const DWORD after = GetLastError();
+    if (!writingPipeDiagnostic && unusual_io_wait(status, 1, 0, alertable, timeout != nullptr)) {
+        IoObservation record = {};
+        record.unusualOutcome = true;
+        record.operation = "NtWaitForSingleObject"; record.status = status; record.lastError = after; record.caller = _ReturnAddress();
+        record.handles[0] = handle; record.handleCount = record.originalHandleCount = 1; record.auxiliary = alertable;
+        log_io_observation(record);
+    }
+    SetLastError(after);
+    return status;
+}
+
+NTSTATUS NTAPI observe_io_event(PHANDLE output, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes, ULONG type, BOOLEAN initial) {
+    const NTSTATUS status = realCreateIoEvent(output, access, attributes, type, initial);
+    const DWORD after = GetLastError();
+    if (!writingPipeDiagnostic && status < 0) {
+        IoObservation record = {};
+        record.operation = "NtCreateEvent"; record.status = status; record.lastError = after; record.caller = _ReturnAddress();
+        record.requestedAccess = access; record.eventType = type; record.auxiliary = initial;
+        observe_io_attributes(attributes, record);
+        log_io_observation(record);
+    }
+    SetLastError(after);
+    return status;
+}
+
+void observe_failed_private_mutant(POBJECT_ATTRIBUTES input, ACCESS_MASK access, BOOLEAN owner,
+                                   NTSTATUS status, DWORD error, PVOID caller) {
+    if (writingPipeDiagnostic || status >= 0) return;
+    IoObservation record = {};
+    record.operation = "NtCreateMutant-unadapted"; record.status = status; record.lastError = error;
+    record.caller = caller; record.requestedAccess = access; record.auxiliary = owner;
+    __try {
+        if (InterlockedCompareExchange(&sharedDirectoryState, 2, 2) != 2 || !sameKernelObject ||
+            !input || input->Length != sizeof(OBJECT_ATTRIBUTES) ||
+            !sameKernelObject(input->RootDirectory, heldSharedDirectory)) return;
+        record.family = "owned-private-other";
+        if (input->ObjectName && input->ObjectName->Buffer && input->ObjectName->Length >= 16 &&
+            input->ObjectName->MaximumLength >= input->ObjectName->Length &&
+            memcmp(input->ObjectName->Buffer, L"cygpipe.", 16) == 0) record.family = "owned-private-cygpipe-mutex";
+    } __except (EXCEPTION_EXECUTE_HANDLER) { return; }
+    observe_io_attributes(input, record);
+    log_io_observation(record);
 }
 
 #if defined(_M_X64)
@@ -1265,6 +1481,10 @@ BOOL WINAPI DllMain(HINSTANCE self, DWORD reason, LPVOID reserved) {
     if (!error) error = DetourAttach(&realOpen, open_directory);
     if (!error) error = DetourAttach(&realCreateSharedSection, create_shared_section);
     if (!error) error = DetourAttach(&realCreateSharedMutex, create_shared_mutex);
+    if (!error) error = DetourAttach(&realWriteIoFile, observe_io_write);
+    if (!error) error = DetourAttach(&realWaitIoMany, observe_io_wait_many);
+    if (!error) error = DetourAttach(&realWaitIoOne, observe_io_wait_one);
+    if (!error) error = DetourAttach(&realCreateIoEvent, observe_io_event);
     if (!error) error = DetourAttach(&realCreateSignalServer, observe_signal_server);
     if (!error) error = DetourAttach(&realOpenSignalWriter, observe_signal_writer);
     if (!error) error = DetourAttach(&realCreateTrackerPipe, create_tracker_pipe);
