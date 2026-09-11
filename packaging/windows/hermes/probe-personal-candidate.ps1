@@ -68,7 +68,7 @@ finally{
     if($mxcAttempted){
         try{
             $completed=Get-Content -LiteralPath (Join-Path $output 'personal-mxc\personal-feasibility.json') -Raw|ConvertFrom-Json
-            $removeRuntime=$completed.schemaVersion -eq 1 -and $completed.classification -ceq 'canonical-personal-mxc-feasibility' -and $completed.runtime -ceq $runtime -and ($completed.executorAttempted -ceq $false -or $completed.cleanup.executorClosed -ceq $true)
+            $removeRuntime=$completed.schemaVersion -eq 1 -and $completed.classification -ceq 'canonical-personal-mxc-feasibility' -and $completed.runtime -ceq $runtime -and ($completed.executorAttempted -ceq $false -or ($completed.cleanup.executorClosed -ceq $true -and $completed.cleanup.hostDiagnosticChildrenClosed -ceq $true))
         }catch{$receipt.cleanupErrors+=@('Runtime retained: executor completion receipt unavailable. '+$_.Exception.Message)}
     }
     $receipt['runtimeRetainedForUnclosedExecutor']= -not $removeRuntime

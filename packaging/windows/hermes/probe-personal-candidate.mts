@@ -6,6 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { command, errorDetail, fileIdentity } from "./probe-component-workload.mts";
+import { bashDiagnostics } from "./probe-personal-workload.mts";
 
 export function personalRequest(
   node: string,
@@ -147,6 +148,7 @@ async function main() {
   const root = path.parse(runtime).root;
   const launcher = path.join(root, `NemoClawPersonalNode-${nonce.slice(0, 12)}`);
   const share = path.join(root, `NemoClawPersonalShare-${nonce.slice(0, 12)}`);
+  const hostScratch = path.join(root, `NemoClawBashHost-${nonce.slice(0, 12)}`);
   const environment: NodeJS.ProcessEnv = {};
   for (const key of [
     "SystemRoot",
@@ -164,7 +166,12 @@ async function main() {
   ])
     if (process.env[key]) environment[key] = process.env[key];
   environment.PATH = path.join(windowsRoot, "System32");
-  const cleanup = { executorClosed: false, profileDeleted: false, ownedRootsRemoved: false };
+  const cleanup = {
+    executorClosed: false,
+    hostDiagnosticChildrenClosed: true,
+    profileDeleted: false,
+    ownedRootsRemoved: false,
+  };
   const receipt: Record<string, unknown> = {
     schemaVersion: 1,
     classification: "canonical-personal-mxc-feasibility",
@@ -191,7 +198,9 @@ async function main() {
     receipt.hostInputs = { node: nodeIdentity, mxc: mxcIdentity };
     fs.mkdirSync(launcher);
     fs.mkdirSync(share);
+    fs.mkdirSync(hostScratch);
     for (const name of ["home", "temp"]) fs.mkdirSync(path.join(share, name));
+    for (const name of ["home", "temp"]) fs.mkdirSync(path.join(hostScratch, name));
     fs.copyFileSync(process.execPath, path.join(launcher, "node.exe"));
     for (const name of [
       "probe-component-workload.mts",
@@ -228,6 +237,29 @@ async function main() {
     if (fs.existsSync(result)) {
       fs.copyFileSync(result, path.join(output, "workload.json"));
       receipt.workload = JSON.parse(fs.readFileSync(result, "utf8"));
+    }
+    if (execution.childClosed) {
+      // Run the same bytes after containment has ended, so a host process
+      // cannot initialize MSYS state before the canonical contained attempt.
+      const hostEnvironment = Object.fromEntries(
+        request.process.env.map((value) => {
+          const split = value.indexOf("=");
+          return [value.slice(0, split), value.slice(split + 1)];
+        }),
+      );
+      for (const key of ["HOME", "HERMES_HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA"])
+        hostEnvironment[key] = path.join(hostScratch, "home");
+      for (const key of ["TEMP", "TMP"]) hostEnvironment[key] = path.join(hostScratch, "temp");
+      cleanup.hostDiagnosticChildrenClosed = false;
+      const diagnostic = await bashDiagnostics(
+        runtime,
+        hostScratch,
+        nonce,
+        hostEnvironment,
+        "host",
+      );
+      receipt.hostBashDiagnostic = diagnostic;
+      cleanup.hostDiagnosticChildrenClosed = diagnostic.childrenClosed;
     }
     if (
       execution.exitCode !== 0 ||
@@ -275,11 +307,12 @@ async function main() {
         errors.push(errorDetail(error));
       }
     }
-    const roots = removePersonalRoots([share, launcher], attempted, cleanup.executorClosed);
+    const allClosed = cleanup.executorClosed && cleanup.hostDiagnosticChildrenClosed;
+    const roots = removePersonalRoots([share, launcher, hostScratch], attempted, allClosed);
     errors.push(...roots.errors);
     cleanup.ownedRootsRemoved = roots.removed;
     receipt.executorAttempted = attempted;
-    receipt.rootsRetainedForUnclosedExecutor = attempted && !cleanup.executorClosed;
+    receipt.rootsRetainedForUnclosedExecutor = attempted && !allClosed;
     receipt.error = failure ? errorDetail(failure) : null;
     receipt.cleanupErrors = errors;
     receipt.feasibilityPassed =
