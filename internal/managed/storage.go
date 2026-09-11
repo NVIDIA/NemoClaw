@@ -4,7 +4,6 @@
 package managed
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"regexp"
@@ -78,13 +77,8 @@ func (d *Docker) ReplaceContainer(ctx context.Context, s Spec, id string) error 
 	// OpenTofu's old graph. Preserve the legacy key while this verified container
 	// still exists, even if the storage resource's Create has not run yet.
 	if s.Kind == GatewayKind && s.Layout == 0 {
-		key, e := d.credentialKey(ctx, s, o.ContainerID, o.DataPath, false, true)
-		if e != nil {
-			return e
-		}
-		legacy, e := d.ReadFile(ctx, o.ContainerID, "/root/.local/state/openshell/gateway/credentials/key-encryption-key.bin", 32)
-		if e != nil || !bytes.Equal(key, legacy) {
-			return errors.New("legacy gateway encryption key was not preserved; replacement forbidden")
+		if err := d.preserveLegacyCredentialKey(ctx, o); err != nil {
+			return err
 		}
 	}
 	if o.Running {

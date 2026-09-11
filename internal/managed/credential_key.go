@@ -53,6 +53,11 @@ func (d *Docker) credentialKey(ctx context.Context, s Spec, helper, dataPath str
 	if !create {
 		return b, nil
 	}
+	return d.writeCredentialKey(ctx, helper, dataPath, b)
+}
+
+func (d *Docker) writeCredentialKey(ctx context.Context, helper, dataPath string, b []byte) ([]byte, error) {
+	var err error
 	var archive bytes.Buffer
 	t := tar.NewWriter(&archive)
 	for _, name := range []string{"state", "state/openshell", "state/openshell/gateway", "state/openshell/gateway/credentials"} {
@@ -72,5 +77,27 @@ func (d *Docker) credentialKey(ctx context.Context, s Spec, helper, dataPath str
 	if _, err = d.API.CopyToContainer(ctx, helper, client.CopyToContainerOptions{DestinationPath: dataPath, Content: &archive}); err != nil {
 		return nil, errors.New("credential encryption key persistence outcome unknown; retain intent")
 	}
-	return d.credentialKey(ctx, s, helper, dataPath, true, false)
+	got, err := d.ReadFile(ctx, helper, dataPath+credentialKeyPath, 32)
+	if err != nil || !bytes.Equal(got, b) {
+		return nil, errors.New("persisted gateway encryption key could not be verified")
+	}
+	return got, nil
+}
+
+// The caller has verified this legacy container's immutable identity and launch
+// specification. Keep its actual key before deleting that process, regardless
+// of whether the new storage resource has already been created by OpenTofu.
+func (d *Docker) preserveLegacyCredentialKey(ctx context.Context, o *Observation) error {
+	legacy, err := d.ReadFile(ctx, o.ContainerID, "/root/.local/state/openshell/gateway/credentials/key-encryption-key.bin", 32)
+	if err != nil || len(legacy) != 32 {
+		return errors.New("legacy gateway encryption key is unobservable; replacement forbidden")
+	}
+	key, err := d.ReadFile(ctx, o.ContainerID, o.DataPath+credentialKeyPath, 32)
+	if errdefs.IsNotFound(err) {
+		key, err = d.writeCredentialKey(ctx, o.ContainerID, o.DataPath, legacy)
+	}
+	if err != nil || !bytes.Equal(key, legacy) {
+		return errors.New("legacy gateway encryption key was not preserved; replacement forbidden")
+	}
+	return nil
 }
