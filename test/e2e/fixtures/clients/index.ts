@@ -20,6 +20,7 @@ export {
   trustedProviderEndpoint,
 } from "./provider.ts";
 export {
+  HISTORICAL_SANDBOX_MAIN_PROCESS,
   SandboxClient,
   sandboxAccessEnv,
   type TrustedSandboxShellScript,

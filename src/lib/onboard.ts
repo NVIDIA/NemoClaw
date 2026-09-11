@@ -3075,7 +3075,6 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
             reconcileModelRouter,
             reupsertRoutedProvider: setupInferenceFactory.createRoutedResumeProviderUpsert({
               upsertProvider,
-              runGatewayOpenshell: runCoreGatewayOpenshell,
               hydrateCredentialEnv,
             }),
             reserveSandboxInferenceRoute: registry.reserveSandboxInferenceRoute,

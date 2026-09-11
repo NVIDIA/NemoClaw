@@ -52,6 +52,73 @@ export type SpecialistE2eReceipt = {
   advisor: E2eRecommendationInput;
 };
 
+const provenanceSchema = Type.Object(
+  {
+    repository: Type.String({ pattern: "^[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9][A-Za-z0-9_.-]*$" }),
+    prNumber: Type.Union([
+      Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }),
+      Type.Null(),
+    ]),
+    workflowRepository: Type.Literal("NVIDIA/NemoClaw"),
+    workflowSha: Type.String({ pattern: "^[0-9a-f]{40}$" }),
+    workflowPath: Type.Literal(".github/workflows/pr-review-advisor.yaml"),
+    eventName: Type.Union([Type.Literal("workflow_run"), Type.Literal("workflow_dispatch")]),
+    runId: Type.String({ pattern: "^[1-9][0-9]*$" }),
+    runAttempt: Type.String({ pattern: "^[1-9][0-9]*$" }),
+  },
+  { additionalProperties: false },
+);
+
+type ReviewQueueContextInput = Omit<
+  Parameters<typeof buildSpecialistE2eReceipt>[0],
+  "advisor" | "interest"
+>;
+
+export function buildReviewQueueContext(input: ReviewQueueContextInput, env: NodeJS.ProcessEnv) {
+  validateE2eIdentity(input);
+  const hosted = [
+    env.GITHUB_RUN_ID,
+    env.GITHUB_RUN_ATTEMPT,
+    env.GITHUB_WORKFLOW_SHA,
+    env.GITHUB_EVENT_NAME,
+  ].some((value) => value !== undefined);
+  const provenance = hosted
+    ? {
+        repository: env.TARGET_REPO || env.GITHUB_REPOSITORY,
+        prNumber: env.PR_NUMBER ? Number(env.PR_NUMBER) : null,
+        workflowRepository: env.GITHUB_REPOSITORY,
+        workflowSha: env.GITHUB_WORKFLOW_SHA,
+        workflowPath: ".github/workflows/pr-review-advisor.yaml",
+        eventName: env.GITHUB_EVENT_NAME,
+        runId: env.GITHUB_RUN_ID,
+        runAttempt: env.GITHUB_RUN_ATTEMPT,
+      }
+    : null;
+  if (provenance !== null && !Check(provenanceSchema, provenance))
+    throw new Error("Review queue context requires complete hosted provenance");
+  if (provenance !== null && env.PR_NUMBER && !/^[1-9][0-9]*$/.test(env.PR_NUMBER))
+    throw new Error("Review queue context requires decimal PR provenance");
+  return {
+    kind: "nemoclaw-review-queue-context-v1" as const,
+    headSha: input.riskPlan.headSha,
+    baseSha: input.baseSha,
+    expectedSpecialists: [...input.expectedSpecialists].sort(),
+    deterministic: structuredClone(input.riskPlan),
+    selectorInventory: structuredClone(input.inventory),
+    provenance,
+  };
+}
+
+function validateE2eIdentity(input: ReviewQueueContextInput): void {
+  if (![input.baseSha, input.riskPlan.headSha].every((sha) => /^[0-9a-f]{40}$/.test(sha)))
+    throw new Error("E2E receipt requires full candidate and base SHAs");
+  if (
+    input.expectedSpecialists.length === 0 ||
+    new Set(input.expectedSpecialists).size !== input.expectedSpecialists.length
+  )
+    throw new Error("E2E receipt requires a nonempty unique specialist inventory");
+}
+
 export function validateE2eRecommendations(
   value: unknown,
   inventory: TrustedE2eRecommendationInventory,
@@ -108,13 +175,8 @@ export function buildSpecialistE2eReceipt(input: {
   advisor: unknown;
   inventory: TrustedE2eRecommendationInventory;
 }): SpecialistE2eReceipt {
-  if (![input.baseSha, input.riskPlan.headSha].every((sha) => /^[0-9a-f]{40}$/.test(sha))) {
-    throw new Error("E2E receipt requires full candidate and base SHAs");
-  }
-  if (
-    !input.expectedSpecialists.includes(input.interest) ||
-    new Set(input.expectedSpecialists).size !== input.expectedSpecialists.length
-  ) {
+  validateE2eIdentity(input);
+  if (!input.expectedSpecialists.includes(input.interest)) {
     throw new Error("E2E receipt requires a unique specialist inventory containing its owner");
   }
   return {

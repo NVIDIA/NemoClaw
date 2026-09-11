@@ -7,6 +7,7 @@ import type { TrustedE2eRecommendationInventory } from "../../../tools/advisors/
 import { buildRiskPlan } from "../../../tools/advisors/risk-plan.mts";
 import {
   buildSpecialistE2eReceipt,
+  buildReviewQueueContext,
   collectE2eRecommendations,
   createE2eRecommendationRecorder,
   validateE2eRecommendations,
@@ -33,6 +34,110 @@ const expected = {
 };
 const receipt = (interest: string, advisor: unknown = empty) =>
   buildSpecialistE2eReceipt({ ...expected, interest, advisor });
+
+const hostedEnvironment = {
+  GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
+  TARGET_REPO: "NVIDIA/NemoClaw",
+  PR_NUMBER: "11489",
+  GITHUB_WORKFLOW_SHA: "c".repeat(40),
+  GITHUB_EVENT_NAME: "workflow_run",
+  GITHUB_RUN_ID: "123456",
+  GITHUB_RUN_ATTEMPT: "2",
+};
+
+describe("Review queue context", () => {
+  it("exports the complete existing plan and inventories without session parsing (#11489)", () => {
+    const input = {
+      ...expected,
+      riskPlan: {
+        ...expected.riskPlan,
+        requiredJobs: [
+          {
+            id: "device-auth-health",
+            tier: 1 as const,
+            families: [],
+            reasons: ["Check authentication."],
+            matchedFiles: [],
+          },
+        ],
+        requiredTargets: [
+          {
+            id: "sample-target",
+            tier: 1 as const,
+            families: [],
+            reasons: ["Check target."],
+            matchedFiles: [],
+          },
+        ],
+      },
+    };
+    const context = buildReviewQueueContext(input, hostedEnvironment);
+    expect(JSON.parse(JSON.stringify(context)).deterministic).toEqual(input.riskPlan);
+    expect(context.deterministic).toEqual(input.riskPlan);
+    expect(context.selectorInventory).toEqual(inventory);
+    expect(context.expectedSpecialists).toEqual(expected.expectedSpecialists);
+    expect(context).toMatchObject({
+      kind: "nemoclaw-review-queue-context-v1",
+      headSha: "a".repeat(40),
+      baseSha: expected.baseSha,
+      provenance: {
+        repository: "NVIDIA/NemoClaw",
+        prNumber: 11489,
+        workflowRepository: "NVIDIA/NemoClaw",
+        workflowSha: "c".repeat(40),
+        runId: "123456",
+        runAttempt: "2",
+      },
+    });
+    context.deterministic.requiredJobs.length = 0;
+    context.selectorInventory.allowedJobIds.length = 0;
+    expect(input.riskPlan.requiredJobs).toHaveLength(1);
+    expect(inventory.allowedJobIds).toHaveLength(1);
+  });
+
+  it("matches the passive consumer fixture and existing receipt identity (#11489)", () => {
+    const fixture = JSON.parse(
+      readFileSync(new URL("../../fixtures/review-queue-context.json", import.meta.url), "utf8"),
+    );
+    expect(buildReviewQueueContext(expected, hostedEnvironment)).toEqual(fixture);
+    expect(receipt("first").deterministic).toEqual({
+      version: fixture.deterministic.version,
+      planHash: fixture.deterministic.planHash,
+    });
+  });
+
+  it("marks local and non-PR evidence without inventing hosted PR identity (#11489)", () => {
+    expect(buildReviewQueueContext(expected, {}).provenance).toBeNull();
+    expect(
+      buildReviewQueueContext(expected, { ...hostedEnvironment, PR_NUMBER: "" }).provenance
+        ?.prNumber,
+    ).toBeNull();
+  });
+
+  it.each([
+    { GITHUB_WORKFLOW_SHA: undefined },
+    { GITHUB_RUN_ID: "" },
+    { GITHUB_RUN_ATTEMPT: "0" },
+    { GITHUB_WORKFLOW_SHA: "main" },
+    { GITHUB_REPOSITORY: "other/repo" },
+    { TARGET_REPO: "../repo" },
+    { PR_NUMBER: "-1" },
+    { GITHUB_EVENT_NAME: "pull_request" },
+    { PR_NUMBER: "1e3" },
+  ])("rejects invalid or partial hosted provenance %j (#11489)", (change) => {
+    expect(() => buildReviewQueueContext(expected, { ...hostedEnvironment, ...change })).toThrow(
+      "provenance",
+    );
+  });
+
+  it.each([
+    { baseSha: "main" },
+    { expectedSpecialists: [] },
+    { expectedSpecialists: ["first", "first"] },
+  ])("rejects incomplete context identity %j (#11489)", (change) => {
+    expect(() => buildReviewQueueContext({ ...expected, ...change }, hostedEnvironment)).toThrow();
+  });
+});
 
 describe("Advisor E2E receipts", () => {
   it("validates the optional full-suite consumer fixture (#11489)", () => {

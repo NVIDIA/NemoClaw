@@ -50,9 +50,9 @@ If restart reports a missing provider and the original credential is not registe
 If restart or rebuild reports that the provider uses the profile-less legacy `generic` type, remove that server and add it again with the recorded credential variable exported.
 OpenShell cannot bind that provider to an MCP endpoint, and NemoClaw accepts it only for cleanup.
 
-## Rebuild or Destroy Cannot Prove a Credential Revision
+## Rebuild or Destroy Cannot Prove a Credential Handle
 
-If rebuild or destroy reports that it could not prove a revision-scoped credential, a fresh sandbox process did not expose the exact OpenShell credential identity required for adapter cleanup.
+If rebuild or destroy reports that it could not prove a credential handle, a fresh sandbox process did not expose the exact OpenShell credential identity required for adapter cleanup.
 NemoClaw leaves the affected adapter and every provider unchanged.
 It attempts to restore adapter entries prepared earlier in the operation and reports rollback failures.
 
@@ -63,7 +63,7 @@ $$nemoclaw <sandbox> mcp status <server> --json
 ```
 
 If status cannot reach the sandbox, repair the reported gateway condition first.
-Export the recorded environment variable, then restart the server to publish and verify a fresh credential revision:
+Export the recorded environment variable, then restart the server to publish the current credential and verify endpoint authorization for its credential handle:
 
 ```bash
 export <CREDENTIAL_ENV>='replacement-value'
@@ -72,8 +72,9 @@ unset <CREDENTIAL_ENV>
 ```
 
 Run status again.
+An ordinary credential refresh can retain the same `s…` stable handle; restart proves current authorization and does not need to mint a different handle.
 Retry rebuild or destroy only after `provider.credentialReady` and `adapter.registered` are both `true`.
-If restart still cannot prove the revision, repair the reported OpenShell provider, policy, or adapter condition before retrying teardown.
+If restart still cannot prove credential readiness, repair the reported OpenShell provider, policy, or adapter condition before retrying teardown.
 
 ## Add Transaction Is Incomplete
 

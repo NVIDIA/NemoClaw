@@ -1459,8 +1459,8 @@ function isProviderPlaceholderForEnvKey(value: string, envKey: string): boolean 
 
 function placeholderSuffixMatchesEnvKey(suffix: string, envKey: string): boolean {
   if (suffix === envKey) return true;
-  const revisionMatch = suffix.match(/^v[0-9]+_(.+)$/);
-  return revisionMatch?.[1] === envKey;
+  const generationMatch = suffix.match(/^(?:v[0-9]{1,20}|s[a-f0-9]{64})_(.+)$/);
+  return generationMatch?.[1] === envKey;
 }
 
 function setJsonPath(root: JsonObject, pathValue: string, value: MessagingSerializableValue): void {

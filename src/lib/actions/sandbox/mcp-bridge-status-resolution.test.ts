@@ -325,7 +325,7 @@ describe("MCP status wire-level credential-resolution probe", testTimeoutOptions
       "authorization: Bearer openshell:resolve:env:GITHUB_TOKEN",
     );
     expect(outcomes[1]?.probeCommand).toBeNull();
-    expect(outcomes[1]?.resolution.detail).toContain("revision-scoped placeholder");
+    expect(outcomes[1]?.resolution.detail).toContain("identityless credential placeholder");
     expect(outcomes.map((outcome) => outcome.credentialObservationCount)).toEqual([1, 1]);
   });
 

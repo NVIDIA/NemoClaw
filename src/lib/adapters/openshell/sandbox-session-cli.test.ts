@@ -127,7 +127,7 @@ describe("OpenShell sessions", () => {
     });
     expect(f.spawnChild).toHaveBeenCalledWith(
       "/bin/openshell",
-      ["sandbox", "connect", "alpha"],
+      ["sandbox", "exec", "--name", "alpha", "--tty", "--", "/bin/bash", "-i"],
       expect.objectContaining({ stdio: ["inherit", "inherit", "inherit"] }),
     );
     f.signals.emit("SIGINT");
@@ -140,6 +140,22 @@ describe("OpenShell sessions", () => {
     completed.release();
     expect(f.signals.listenerCount("SIGINT")).toBe(0);
     expect(f.signals.listenerCount("SIGTERM")).toBe(0);
+  });
+
+  it("opens the explicit interactive shell through the named gateway", async () => {
+    const f = sessionHarness();
+    const session = f.executor.start({
+      kind: "connect",
+      sandboxName: "alpha",
+      target: { kind: "named", gatewayName: "gateway-a" },
+    });
+    expect(f.spawnChild).toHaveBeenCalledWith(
+      "/bin/openshell",
+      ["sandbox", "exec", "--name", "alpha", "-g", "gateway-a", "--tty", "--", "/bin/bash", "-i"],
+      expect.objectContaining({ stdio: ["inherit", "inherit", "inherit"] }),
+    );
+    f.events.emit("close", 0, null);
+    (await session.completion).release();
   });
 
   it.each([
