@@ -46,7 +46,7 @@ export function fixedEnvironment(windows: string, home: string, git: string, nod
       windows,
     ].join(";"),
     GITHUB_ACTIONS: "true",
-    NEMOCLAW_MSYS_TOKEN_INSPECTION_HOLD: "1",
+    NEMOCLAW_MSYS_TOKEN_INSPECTION_HOLD: "repair-query",
     NEMOCLAW_MSYS_PROBE_NODE: node.replaceAll("\\", "/"),
   };
 }
@@ -94,6 +94,8 @@ export function validateMxcInspectionBuild(build: any, patchSha256: string) {
   assert.equal(build.schemaVersion, 1);
   assert.equal(build.classification, "mxc-owned-token-inspection-build");
   assert.equal(build.status, "built");
+  assert.equal(build.tokenQueryRepairSupported, true);
+  assert.equal(build.tokenAccessMode, "owned-child-query-only");
   assert.equal(build.sourceCommit, "7dac1a952f0c9ad13f0a4cb089c4e0e8b3e0013a");
   assert.equal(
     build.sourceSha256,
@@ -579,6 +581,8 @@ async function main() {
   const build = JSON.parse(fs.readFileSync(path.join(compat, "build-receipt.json"), "utf8"));
   assert.equal(build.classification, "mxc-msys-compatibility-prototype-build");
   assert.equal(build.status, "built");
+  assert.equal(build.tokenQueryRepairSupported, true);
+  assert.equal(build.tokenAccessMode, "owned-child-query-only");
   for (const file of build.files) {
     assert(
       [
@@ -648,7 +652,7 @@ async function main() {
     const child = new Owned(
       mxc,
       [policy, "--log-file", path.join(output, role + "-mxc.log")],
-      { ...env, NEMOCLAW_MSYS_TOKEN_INSPECTION: "1" },
+      { ...env, NEMOCLAW_MSYS_TOKEN_INSPECTION: "repair-query" },
       share,
       125000,
     );

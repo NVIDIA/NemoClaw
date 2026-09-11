@@ -491,6 +491,11 @@ jobs:
             --target aarch64-pc-windows-msvc --manifest-path packaging/windows/host-preparation/Cargo.toml `
             --target-dir "$work\rust-target" -- --test-threads=1 2>&1 | Tee-Object -FilePath "$work\native-controls.log"
           if ($LASTEXITCODE -ne 0) { throw 'The actual native metadata controls failed.' }
+      - name: Verify retained preparation errors and Setup diagnostics
+        shell: pwsh
+        run: |
+          & dotnet run --project packaging/windows/tests/host-preparation-diagnostics/HostPreparation.Diagnostics.Controls.csproj
+          if ($LASTEXITCODE -ne 0) { throw 'The preparation diagnostic controls failed.' }
       - name: Verify the actual system root and contained Node access
         shell: pwsh
         run: |

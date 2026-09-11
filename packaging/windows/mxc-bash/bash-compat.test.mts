@@ -43,12 +43,12 @@ test("Personal request grants only fixed inputs and its own share, without profi
   assert.equal(row.lifecycle.destroyOnExit, false);
   assert.equal(row.ui.disable, false);
   assert(row.process.commandLine.startsWith('"' + c.node + '"'));
-  assert(row.process.env.includes("NEMOCLAW_MSYS_TOKEN_INSPECTION_HOLD=1"));
+  assert(row.process.env.includes("NEMOCLAW_MSYS_TOKEN_INSPECTION_HOLD=repair-query"));
   assert(
     !row.process.env.some(
       (v) =>
         /TOKEN|API_KEY|SECRET|NODE_OPTIONS/.test(v) &&
-        v !== "NEMOCLAW_MSYS_TOKEN_INSPECTION_HOLD=1",
+        v !== "NEMOCLAW_MSYS_TOKEN_INSPECTION_HOLD=repair-query",
     ),
   );
 });
@@ -246,6 +246,8 @@ test("patched MXC receipt requires exact upstream source, patch and sole ARM64 e
     schemaVersion: 1,
     classification: "mxc-owned-token-inspection-build",
     status: "built",
+    tokenQueryRepairSupported: true,
+    tokenAccessMode: "owned-child-query-only",
     sourceCommit: "7dac1a952f0c9ad13f0a4cb089c4e0e8b3e0013a",
     sourceSha256: "814659a1db0b4cd06854066705f274bba2b2702f563735d69ba72a407c0ad258",
     patchSha256: patch,
@@ -257,6 +259,8 @@ test("patched MXC receipt requires exact upstream source, patch and sole ARM64 e
     sourceSha256: "0".repeat(64),
     patchSha256: "0".repeat(64),
     status: "pending",
+    tokenQueryRepairSupported: false,
+    tokenAccessMode: "unrestricted",
   }))
     assert.throws(() => validateMxcInspectionBuild({ ...receipt, [key]: value }, patch));
   for (const invalid of [

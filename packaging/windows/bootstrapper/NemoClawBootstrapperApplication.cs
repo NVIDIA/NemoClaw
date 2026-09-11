@@ -27,6 +27,9 @@ internal sealed class NemoClawBootstrapperApplication : BootstrapperApplication
     private bool replacedPreviousPreview;
     private bool cancelRequested;
     private bool executingPackage;
+    private string? executingPackageId;
+    private readonly string preparationAttempt = Guid.NewGuid().ToString("N");
+    private NativePreparationFailure? preparationFailure;
     private readonly NativePresentationUpdates stepProgressUpdates = new();
     private readonly NativePresentationUpdates overallProgressUpdates = new();
     private LaunchAction plannedAction = LaunchAction.Unknown;
@@ -61,6 +64,7 @@ internal sealed class NemoClawBootstrapperApplication : BootstrapperApplication
         }
 
         this.Engine.Log(LogLevel.Standard, "NemoClaw native Windows bootstrapper started.");
+        this.Engine.SetVariableString("NemoClawPreparationAttempt", this.preparationAttempt, false);
         this.Engine.Detect();
         Dispatcher.Run();
         dispatcherThread.Join();
@@ -152,6 +156,11 @@ internal sealed class NemoClawBootstrapperApplication : BootstrapperApplication
             }
         };
         this.ExecutePackageBegin += this.OnExecutePackageBegin;
+        this.ExecutePackageComplete += (_, args) =>
+        {
+            if (args.PackageId == "MxcSystemDrivePreparation" && args.Status < 0)
+                this.RememberPreparationFailure(args.Status);
+        };
         this.ExecuteProgress += (_, args) =>
         {
             args.Cancel = this.cancelRequested;
@@ -337,6 +346,7 @@ internal sealed class NemoClawBootstrapperApplication : BootstrapperApplication
     private void OnExecutePackageBegin(object? sender, ExecutePackageBeginEventArgs args)
     {
         this.executingPackage = true;
+        this.executingPackageId = args.PackageId;
         var (title, detail) = args.PackageId switch
         {
             "MxcSystemDrivePreparation" => ("Preparing native isolation", "Windows is preparing protected access for the native agent runtimes."),
@@ -353,8 +363,18 @@ internal sealed class NemoClawBootstrapperApplication : BootstrapperApplication
     private void OnError(object? sender, WixToolset.BootstrapperApplicationApi.ErrorEventArgs args)
     {
         this.Engine.Log(LogLevel.Error, $"NemoClaw setup error {args.ErrorCode}: {args.ErrorMessage}");
-        this.Ui(() => this.window?.ShowRecoverableError($"Windows reported setup error {args.ErrorCode}. Setup log contains the saved details."));
+        if (this.executingPackageId == "MxcSystemDrivePreparation" && args.PackageId == "MxcSystemDrivePreparation")
+            this.RememberPreparationFailure(args.ErrorCode);
+        var detail = this.preparationFailure?.Summary ?? $"Windows reported setup error {args.ErrorCode}. Setup log contains the saved details.";
+        this.Ui(() => this.window?.ShowRecoverableError(detail));
         args.Result = this.cancelRequested ? Result.Cancel : args.Recommendation;
+    }
+
+    private void RememberPreparationFailure(int status)
+    {
+        this.preparationFailure = NativeHostPreparationDiagnostics.Read(this.BundleLogPath(), this.preparationAttempt)
+            ?? this.preparationFailure ?? NativeHostPreparationDiagnostics.Fallback(status);
+        this.Engine.Log(LogLevel.Error, this.preparationFailure.LogDetail);
     }
 
     private void OnApplyComplete(object? sender, ApplyCompleteEventArgs args)
@@ -380,7 +400,8 @@ internal sealed class NemoClawBootstrapperApplication : BootstrapperApplication
         }
         else
         {
-            this.Ui(() => this.window?.ShowFailure("Setup rolled back because Windows could not complete the requested change.", this.BundleLogPath()));
+            var detail = this.preparationFailure?.Summary ?? "Setup rolled back because Windows could not complete the requested change.";
+            this.Ui(() => this.window?.ShowFailure(detail, this.BundleLogPath()));
         }
 
         if (this.command?.Display != Display.Full)

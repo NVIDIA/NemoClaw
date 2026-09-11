@@ -196,25 +196,25 @@ fn write(handle: &Handle, acl: &[u8], control: u16) -> Result<(), String> {
 }
 
 #[cfg(test)]
-fn write_without_propagation_fixture(handle: &Handle, acl: &[u8]) {
-    // Construct a deliberately divergent inherited-child fixture using the
-    // documented MAXIMUM_ALLOWED exception. Production never calls this API.
-    let mut aligned = vec![0u32; acl.len().div_ceil(4)];
-    unsafe {
-        std::ptr::copy_nonoverlapping(acl.as_ptr(), aligned.as_mut_ptr().cast::<u8>(), acl.len());
-    }
-    let status = unsafe {
-        SetSecurityInfo(
-            handle.0,
-            1,
-            4,
-            null_mut(),
-            null_mut(),
-            aligned.as_mut_ptr().cast(),
-            null_mut(),
-        )
+fn write_without_propagation_fixture(path: &OsStr, acl: &[u8], control: u16) {
+    // SetFileSecurity explicitly does not inherit directory security to
+    // children. Use it only to construct this owned, deliberately divergent
+    // fixture; production continues to use its independently held Nt handle.
+    let mut aligned = vec![0u32; (20 + acl.len()).div_ceil(4)];
+    let bytes = unsafe {
+        std::slice::from_raw_parts_mut(aligned.as_mut_ptr().cast::<u8>(), 20 + acl.len())
     };
-    assert_eq!(status, 0);
+    bytes[0] = 1;
+    bytes[2..4].copy_from_slice(&control.to_le_bytes());
+    bytes[16..20].copy_from_slice(&20u32.to_le_bytes());
+    bytes[20..].copy_from_slice(acl);
+    let path = wide(path);
+    assert_ne!(
+        unsafe { SetFileSecurityW(path.as_ptr(), 4, aligned.as_ptr().cast()) },
+        0,
+        "{}",
+        api_error("fixture-set-file-security")
+    );
 }
 
 struct Preparation {
@@ -330,15 +330,7 @@ unsafe extern "system" {
         descriptor: *mut *mut c_void,
     ) -> u32;
     #[cfg(test)]
-    fn SetSecurityInfo(
-        handle: RawHandle,
-        kind: i32,
-        information: u32,
-        owner: *mut c_void,
-        group: *mut c_void,
-        dacl: *mut c_void,
-        sacl: *mut c_void,
-    ) -> u32;
+    fn SetFileSecurityW(path: *const u16, information: u32, descriptor: *const c_void) -> i32;
     fn GetSecurityDescriptorLength(descriptor: *mut c_void) -> u32;
     fn IsValidSecurityDescriptor(descriptor: *mut c_void) -> i32;
 }
@@ -432,7 +424,7 @@ mod tests {
                 // Add a harmless owner-only inheritable metadata ACE without
                 // propagating it. The production update must not subsequently
                 // walk/rewrite the deliberately unchanged existing descendants.
-                let parent = open(root.as_os_str(), true, 0x0200_0000).unwrap();
+                let parent = open(root.as_os_str(), true, READ_CONTROL).unwrap();
                 let initial = read(&parent).unwrap();
                 let owner = initial.owner.as_ref().unwrap();
                 let mut extra = vec![0, 3];
@@ -451,7 +443,7 @@ mod tests {
                 acl[2..4].copy_from_slice(&size.to_le_bytes());
                 acl[4..6]
                     .copy_from_slice(&u16::try_from(initial.aces.len() + 1).unwrap().to_le_bytes());
-                write_without_propagation_fixture(&parent, &acl);
+                write_without_propagation_fixture(root.as_os_str(), &acl, initial.control);
                 assert_eq!(read(&child).unwrap().bytes, child_before.bytes);
                 assert_eq!(read(&file).unwrap().bytes, file_before.bytes);
             }

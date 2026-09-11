@@ -15,6 +15,7 @@
     <BootstrapperApplication SourceFile="$(var.BootstrapperPath)">
       <PayloadGroupRef Id="NemoClawBootstrapperPayloads" />
     </BootstrapperApplication>
+    <Variable Name="NemoClawPreparationAttempt" Type="string" Value="" />
     <!-- Keep transactional rollback; omit the separate per-install OS restore point. -->
     <Chain DisableSystemRestore="yes">
       <?if $(var.SystemDriveMetadataPreparation) = "true" ?>
@@ -25,7 +26,7 @@
         CacheId="NemoClawSystemDriveMetadata-$(var.SystemDrivePrepSha256)"
         Name="mxc\NemoClawHostPreparation.exe"
         SourceFile="$(var.SystemDrivePrepPath)"
-        InstallArguments="prepare-system-drive"
+        InstallArguments="prepare-system-drive --diagnostic-log &quot;[WixBundleLog].host-preparation-[NemoClawPreparationAttempt].json&quot; --diagnostic-id [NemoClawPreparationAttempt]"
         PerMachine="yes"
         Permanent="yes"
         Compressed="yes"

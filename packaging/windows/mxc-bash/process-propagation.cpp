@@ -287,11 +287,115 @@ void holdFailedForkForInspection(HANDLE child) {
     SetLastError(saved);
 }
 
+BOOL removeInspectionHandle(HANDLE file) {
+    FILE_DISPOSITION_INFO disposition = {}; disposition.DeleteFile = TRUE;
+    return SetFileInformationByHandle(file, FileDispositionInfo, &disposition, sizeof(disposition));
+}
+
+BOOL requestHostQueryRepair(HANDLE child) {
+    const DWORD saved = GetLastError();
+    WCHAR mode[16] = {};
+    const DWORD modeLength = GetEnvironmentVariableW(L"NEMOCLAW_MSYS_TOKEN_INSPECTION_HOLD", mode, 16);
+    if (!modeLength || modeLength >= 16 || wcscmp(mode, L"repair-query")) { SetLastError(saved); return FALSE; }
+    static LONG attempts = 0;
+    if (InterlockedIncrement(&attempts) > 32) { SetLastError(saved); return FALSE; }
+    const ULONGLONG started = GetTickCount64();
+    BOOL published = FALSE, verified = FALSE, ackRemoved = FALSE, requestRemoved = FALSE, replySeen = FALSE;
+    DWORD error = 0;
+    WCHAR request[MAX_PATH] = {}, reply[MAX_PATH] = {};
+    BY_HANDLE_FILE_INFORMATION requestIdentity = {};
+    BOOL requestOwned = FALSE;
+    do {
+        FILETIME parentCreated = {}, childCreated = {}, exit = {}, kernel = {}, user = {};
+        if (!GetProcessTimes(GetCurrentProcess(), &parentCreated, &exit, &kernel, &user) ||
+            !GetProcessTimes(child, &childCreated, &exit, &kernel, &user)) { error = GetLastError(); break; }
+        const ULONGLONG parentTime = (static_cast<ULONGLONG>(parentCreated.dwHighDateTime) << 32) | parentCreated.dwLowDateTime;
+        const ULONGLONG childTime = (static_cast<ULONGLONG>(childCreated.dwHighDateTime) << 32) | childCreated.dwLowDateTime;
+        WCHAR root[MAX_PATH] = {}; const DWORD count = GetCurrentDirectoryW(MAX_PATH, root);
+        if (!count || count >= MAX_PATH || swprintf_s(request, L"%s\\msys-token-inspection.request", root) < 0 ||
+            swprintf_s(reply, L"%s\\msys-token-inspection.ack", root) < 0) { error = ERROR_BUFFER_OVERFLOW; break; }
+        char frame[128], success[160], failure[160];
+        const int length = _snprintf_s(frame, sizeof(frame), _TRUNCATE, "1 %lu %llu %lu %llu\n", GetCurrentProcessId(), parentTime, GetProcessId(child), childTime);
+        if (length <= 0 || _snprintf_s(success, sizeof(success), _TRUNCATE, "%.*s verified\n", length - 1, frame) <= 0 ||
+            _snprintf_s(failure, sizeof(failure), _TRUNCATE, "%.*s failed\n", length - 1, frame) <= 0) { error = ERROR_BUFFER_OVERFLOW; break; }
+        HANDLE output = INVALID_HANDLE_VALUE;
+        // CREATE_NEW is the fixed per-sandbox request lock. All waiting shares
+        // this one five-second budget; there is no recursive injection retry.
+        while (GetTickCount64() - started < 5000 && WaitForSingleObject(child, 0) == WAIT_TIMEOUT) {
+            output = CreateFileW(request, GENERIC_WRITE | DELETE, FILE_SHARE_READ | FILE_SHARE_DELETE, nullptr, CREATE_NEW,
+                FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+            if (output != INVALID_HANDLE_VALUE) break;
+            error = GetLastError();
+            if (error != ERROR_FILE_EXISTS && error != ERROR_ALREADY_EXISTS) break;
+            Sleep(10);
+        }
+        if (output == INVALID_HANDLE_VALUE) break;
+        const BOOL identityRead = GetFileInformationByHandle(output, &requestIdentity);
+        requestOwned = identityRead && requestIdentity.nNumberOfLinks == 1 &&
+            !(requestIdentity.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT));
+        error = requestOwned ? 0 : identityRead ? ERROR_INVALID_DATA : GetLastError();
+        DWORD written = 0;
+        if (requestOwned) {
+            const BOOL wrote = WriteFile(output, frame, static_cast<DWORD>(length), &written, nullptr);
+            published = wrote && written == static_cast<DWORD>(length);
+            error = published ? 0 : wrote ? ERROR_WRITE_FAULT : GetLastError();
+        }
+        if (!published) requestRemoved = removeInspectionHandle(output);
+        if (!CloseHandle(output)) { error = GetLastError(); published = FALSE; }
+        if (!published) break;
+        while (GetTickCount64() - started < 5000 && WaitForSingleObject(child, 0) == WAIT_TIMEOUT) {
+            HANDLE answer = CreateFileW(reply, GENERIC_READ | DELETE, FILE_SHARE_READ | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
+                FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+            if (answer == INVALID_HANDLE_VALUE) {
+                error = GetLastError();
+                if (error != ERROR_FILE_NOT_FOUND && error != ERROR_SHARING_VIOLATION) break;
+                Sleep(10); continue;
+            }
+            replySeen = TRUE;
+            BY_HANDLE_FILE_INFORMATION identity = {}; char bytes[160] = {}; DWORD read = 0;
+            const BOOL ordinary = GetFileInformationByHandle(answer, &identity) && identity.nNumberOfLinks == 1 &&
+                !(identity.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)) &&
+                !identity.nFileSizeHigh && identity.nFileSizeLow > 0 && identity.nFileSizeLow < sizeof(bytes);
+            const BOOL readOk = ordinary && ReadFile(answer, bytes, sizeof(bytes) - 1, &read, nullptr) && read == identity.nFileSizeLow;
+            verified = readOk && read == strlen(success) && !memcmp(bytes, success, read);
+            const BOOL matching = verified || (readOk && read == strlen(failure) && !memcmp(bytes, failure, read));
+            error = matching ? 0 : ERROR_INVALID_DATA;
+            if (matching) { ackRemoved = removeInspectionHandle(answer); if (!ackRemoved) error = GetLastError(); }
+            if (!CloseHandle(answer)) { error = GetLastError(); ackRemoved = FALSE; }
+            break;
+        }
+    } while (false);
+    // Delete only the exact file object this request created. Ack is removed
+    // first; the request lock is released last. A replaced file is never deleted.
+    if (requestOwned && !requestRemoved && (!replySeen || ackRemoved)) {
+        HANDLE owned = CreateFileW(request, DELETE | FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            nullptr, OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT | FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (owned != INVALID_HANDLE_VALUE) {
+            BY_HANDLE_FILE_INFORMATION current = {};
+            if (!GetFileInformationByHandle(owned, &current)) error = GetLastError();
+            else if (current.dwVolumeSerialNumber != requestIdentity.dwVolumeSerialNumber ||
+                current.nFileIndexHigh != requestIdentity.nFileIndexHigh || current.nFileIndexLow != requestIdentity.nFileIndexLow ||
+                (current.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT))) error = ERROR_INVALID_DATA;
+            else { requestRemoved = removeInspectionHandle(owned); if (!requestRemoved) error = GetLastError(); }
+            if (!CloseHandle(owned)) { error = GetLastError(); requestRemoved = FALSE; }
+        } else error = GetLastError();
+    }
+    const BOOL recheck = verified && ackRemoved && requestRemoved;
+    char line[640];
+    const int length = _snprintf_s(line, sizeof(line), _TRUNCATE,
+        "NEMOCLAW_MSYS_QUERY_REPAIR_WAIT={\"schemaVersion\":1,\"parentPid\":%lu,\"childPid\":%lu,\"requestPublished\":%s,\"matchingVerifiedAck\":%s,\"ackRemoved\":%s,\"requestRemoved\":%s,\"elapsedMs\":%llu,\"error\":%lu,\"actualSidRecheckRequired\":true,\"childResumed\":false}\n",
+        GetCurrentProcessId(), GetProcessId(child), published ? "true" : "false", verified ? "true" : "false", ackRemoved ? "true" : "false", requestRemoved ? "true" : "false", GetTickCount64() - started, error);
+    DWORD written = 0;
+    if (length > 0) WriteFile(GetStdHandle(STD_ERROR_HANDLE), line, static_cast<DWORD>(length), &written, nullptr);
+    SetLastError(saved);
+    return recheck;
+}
+
 BOOL inject(HANDLE child) {
     alignas(SID) BYTE actualSid[SECURITY_MAX_SID_SIZE] = {};
     USHORT processMachine = 0, nativeMachine = 0;
     TokenProof proof;
-    const BOOL sidQueried = initialized && processContainerSid(child, actualSid, &proof);
+    BOOL sidQueried = initialized && processContainerSid(child, actualSid, &proof);
     BOOL sameSid = sidQueried && EqualSid(containerSid, actualSid);
     BOOL inJob = FALSE;
     BOOL jobKnown = IsProcessInJob(child, nullptr, &inJob);
@@ -302,10 +406,20 @@ BOOL inject(HANDLE child) {
         if (!sidQueried && !strcmp(proof.operation, "OpenProcessToken") && proof.apiError == ERROR_ACCESS_DENIED) {
             logTokenOpenDenial(child);
             holdFailedForkForInspection(child);
+            if (requestHostQueryRepair(child)) {
+                sidQueried = initialized && processContainerSid(child, actualSid, &proof);
+                sameSid = sidQueried && EqualSid(containerSid, actualSid);
+                inJob = FALSE;
+                jobKnown = IsProcessInJob(child, nullptr, &inJob);
+                const DWORD recheckJobError = jobKnown ? ERROR_SUCCESS : GetLastError();
+                logTokenProof(child, proof, sidQueried, sameSid, jobKnown, inJob, recheckJobError);
+            }
         }
-        logPropagation(GetProcessId(child), 0, sameSid, inJob, FALSE, error);
-        SetLastError(error);
-        return FALSE;
+        if (!sameSid || !jobKnown || !inJob) {
+            logPropagation(GetProcessId(child), 0, sameSid, inJob, FALSE, error);
+            SetLastError(error);
+            return FALSE;
+        }
     }
     // A suspended x64 process on ARM64 can still report UNKNOWN/native ARM64
     // before loader initialization. Bind selection to its executable image.

@@ -19,7 +19,7 @@ $build=Join-Path $output 'build';[void][IO.Directory]::CreateDirectory($build)
 $commit='7dac1a952f0c9ad13f0a4cb089c4e0e8b3e0013a'
 $sourceHash='814659a1db0b4cd06854066705f274bba2b2702f563735d69ba72a407c0ad258'
 $patch=Join-Path $SourceRoot 'packaging/windows/mxc-bash/mxc-token-inspection.patch'
-$record=[ordered]@{schemaVersion=1;classification='mxc-owned-token-inspection-build';status='failed';sourceCommit=$commit;sourceSha256=$sourceHash;sourceBytes=6168990;patchSha256=$null;candidateRevision=$env:GITHUB_SHA;tokenMutation=$false;files=@()}
+$record=[ordered]@{schemaVersion=1;classification='mxc-owned-token-inspection-build';status='failed';sourceCommit=$commit;sourceSha256=$sourceHash;sourceBytes=6168990;patchSha256=$null;candidateRevision=$env:GITHUB_SHA;tokenQueryRepairSupported=$true;tokenAccessMode='owned-child-query-only';files=@()}
 $failure=$null
 function File-Hash([string]$Path){(Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()}
 try{
