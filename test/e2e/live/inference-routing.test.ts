@@ -15,6 +15,7 @@ import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/command.ts";
 import { type E2ETargetFixtures, expect, test } from "../fixtures/e2e-test.ts";
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
+import { hostedInferenceCredentialReferencePattern } from "../fixtures/hosted-inference.ts";
 import { OPENSHELL_V0116_QUALIFICATION } from "../fixtures/openshell-v0116-qualification.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import { resolveVerifiedCloudflaredBinary } from "./cloudflared-prerequisite.ts";
@@ -744,9 +745,7 @@ async function runRuntimeIdentityE2EScenario(
   progress.phase("call the protected resource with the injected bearer");
   let placeholder = "";
   let placeholderProbeAttempt = 0;
-  const placeholderPattern = new RegExp(
-    `^openshell:resolve:env:(?:(?:v[0-9]{1,20}|s[a-f0-9]{64})_)?${credentialKey}$`,
-  );
+  const placeholderPattern = hostedInferenceCredentialReferencePattern(credentialKey);
   await expect
     .poll(
       async () => {
