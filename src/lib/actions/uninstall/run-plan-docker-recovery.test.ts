@@ -18,6 +18,7 @@ it.each([
   { condition: "Docker times out", dockerInstalled: true, dockerStatus: null, recovery: true },
 ])(
   "preserves failed gateway removal and reports Docker availability when $condition (#11438)",
+  /** Verify Docker recovery guidance without allowing cleanup after gateway removal fails. */
   ({ dockerInstalled, dockerStatus, recovery }) => {
     const warnings: string[] = [];
     const logs: string[] = [];
