@@ -76,3 +76,15 @@ export function changeInputDuringRead() {
   });
   return change;
 }
+
+export function observeInputReads(file: string) {
+  const expected = fs.statSync(file);
+  const observed = vi.fn();
+  const read = fs.readFileSync;
+  vi.spyOn(fs, "readFileSync").mockImplementation((...args: Parameters<typeof fs.readFileSync>) => {
+    const stat = typeof args[0] === "number" ? fs.fstatSync(args[0]) : undefined;
+    if (stat?.dev === expected.dev && stat.ino === expected.ino) observed();
+    return read(...args);
+  });
+  return observed;
+}

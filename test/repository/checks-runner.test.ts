@@ -1,20 +1,18 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { SpawnSyncOptions } from "node:child_process";
+import { spawnSync, type SpawnSyncOptions } from "node:child_process";
+import { copyFileSync, readFileSync, rmSync, symlinkSync } from "node:fs";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
-import {
-  buildCheckSpawnInvocation,
-  CHECKS,
-  runChecks,
-  selectChecks,
-} from "../../scripts/checks/run.mts";
+import { CHECKS, runChecks, selectChecks } from "../../scripts/checks/run.mts";
+
+import { validationFixture, writeFixture } from "./validation-fixture";
 
 const sampleCheck = {
   name: "sample",
-  command: "tsx.cmd",
   args: ["scripts/checks/sample.mts"],
 };
 
@@ -56,6 +54,7 @@ describe("checks runner", () => {
     "package-lock.json",
     "nemoclaw/package.json",
     "vitest.config.ts",
+    "nemoclaw/vitest.project.ts",
     "nemoclaw/tsconfig.test.json",
     ".pre-commit-config.yaml",
   ])("runs every check when shared input %s changes", (file) => {
@@ -96,73 +95,49 @@ describe("checks runner", () => {
       successfulSpawn(),
     );
 
-    runChecks({ platform: "linux", spawn });
+    runChecks({ spawn });
 
     expect(spawn).toHaveBeenCalledWith(
-      path.resolve("node_modules/.bin", process.platform === "win32" ? "tsx.cmd" : "tsx"),
-      ["scripts/checks/pi-qualification-receipt-refresh.mts"],
+      process.execPath,
+      [
+        fileURLToPath(import.meta.resolve("tsx/cli")),
+        "scripts/checks/pi-qualification-receipt-refresh.mts",
+      ],
       expect.objectContaining({ stdio: "inherit" }),
     );
   });
 
-  it("runs Windows command shims through cmd.exe", () => {
-    expect(
-      buildCheckSpawnInvocation(sampleCheck, "win32", {
-        ComSpec: "C:\\Windows\\System32\\cmd.exe",
-      }),
-    ).toEqual({
-      command: "C:\\Windows\\System32\\cmd.exe",
-      args: ["/d", "/s", "/c", "tsx.cmd", "scripts/checks/sample.mts"],
-    });
-  });
-
-  it("uses cmd.exe when ComSpec is unavailable on Windows", () => {
-    expect(buildCheckSpawnInvocation(sampleCheck, "win32", {})).toMatchObject({
-      command: "cmd.exe",
-    });
-  });
-
-  it("keeps POSIX runner execution direct", () => {
-    expect(buildCheckSpawnInvocation(sampleCheck, "linux")).toEqual({
-      command: "tsx.cmd",
-      args: ["scripts/checks/sample.mts"],
-    });
-  });
-
-  it("uses the Windows shim invocation when running checks", () => {
-    const calls: SpawnSyncOptions[] = [];
-    const spawn = vi.fn((_command: string, _args: string[], options: SpawnSyncOptions) => {
-      calls.push(options);
-      return successfulSpawn();
-    });
-
-    runChecks({
-      checks: [sampleCheck],
-      platform: "win32",
-      env: { ComSpec: "C:\\Windows\\System32\\cmd.exe" },
-      spawn,
-    });
-
-    expect(spawn).toHaveBeenCalledWith(
-      "C:\\Windows\\System32\\cmd.exe",
-      ["/d", "/s", "/c", "tsx.cmd", "scripts/checks/sample.mts"],
-      expect.objectContaining({ stdio: "inherit" }),
-    );
-    expect(calls[0]?.shell).toBeUndefined();
-  });
-
-  it("uses direct execution when running checks on POSIX", () => {
-    const spawn = vi.fn((_command: string, _args: string[], _options: SpawnSyncOptions) =>
-      successfulSpawn(),
-    );
-
-    runChecks({ checks: [sampleCheck], platform: "linux", spawn });
-
-    expect(spawn).toHaveBeenCalledWith(
-      "tsx.cmd",
-      ["scripts/checks/sample.mts"],
-      expect.objectContaining({ stdio: "inherit" }),
-    );
+  it("starts checks with literal paths and arguments without a command shell", () => {
+    const root = validationFixture();
+    const checkout = path.join(root, "checkout & spaces");
+    try {
+      writeFixture(
+        checkout,
+        "scripts/checks/probe.mts",
+        'import {writeFileSync} from "node:fs"; const value: string = process.argv[2]; writeFileSync("observed.json", JSON.stringify(value));\n',
+      );
+      const runner = path.join(checkout, "scripts/checks/run.mts");
+      copyFileSync(path.resolve("scripts/checks/run.mts"), runner);
+      symlinkSync(path.resolve("node_modules"), path.join(checkout, "node_modules"), "junction");
+      const result = spawnSync(
+        process.execPath,
+        [
+          "--input-type=module",
+          "--eval",
+          `import {runChecks} from ${JSON.stringify(pathToFileURL(runner).href)}; runChecks({checks:[{name:"probe",args:["scripts/checks/probe.mts","literal & argument"]}]});`,
+        ],
+        {
+          encoding: "utf8",
+          env: { ...process.env, ComSpec: "must-not-run" },
+        },
+      );
+      expect(result.status, result.stderr).toBe(0);
+      expect(JSON.parse(readFileSync(path.join(checkout, "observed.json"), "utf8"))).toBe(
+        "literal & argument",
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it("exits with one when a check has no status", () => {
@@ -175,9 +150,7 @@ describe("checks runner", () => {
     });
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
-    expect(() => runChecks({ checks: [sampleCheck], platform: "linux", spawn, exit })).toThrow(
-      "exit 1",
-    );
+    expect(() => runChecks({ checks: [sampleCheck], spawn, exit })).toThrow("exit 1");
     expect(exit).toHaveBeenCalledWith(1);
     expect(error).toHaveBeenCalledWith("Check failed: sample");
     expect(error).toHaveBeenCalledWith("spawn failed");
@@ -193,9 +166,7 @@ describe("checks runner", () => {
     });
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
-    expect(() => runChecks({ checks: [sampleCheck], platform: "linux", spawn, exit })).toThrow(
-      "exit 2",
-    );
+    expect(() => runChecks({ checks: [sampleCheck], spawn, exit })).toThrow("exit 2");
     expect(exit).toHaveBeenCalledWith(2);
     expect(error).toHaveBeenCalledWith("Check failed: sample");
     expect(error).not.toHaveBeenCalledWith("spawn failed");

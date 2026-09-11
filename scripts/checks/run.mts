@@ -10,7 +10,6 @@ import { fileURLToPath } from "node:url";
 
 type CheckCommand = {
   name: string;
-  command: string;
   args: string[];
   inputs?: RegExp;
 };
@@ -22,22 +21,12 @@ type CheckSpawnResult = {
 
 type CheckSpawn = (command: string, args: string[], options: SpawnSyncOptions) => CheckSpawnResult;
 
-type SpawnInvocation = {
-  command: string;
-  args: string[];
-};
-
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
-const TSX = path.join(
-  REPO_ROOT,
-  "node_modules/.bin",
-  process.platform === "win32" ? "tsx.cmd" : "tsx",
-);
+const TSX = fileURLToPath(import.meta.resolve("tsx/cli"));
 export const CHECKS: readonly CheckCommand[] = [
   {
     name: "direct-credential-env",
     inputs: /^src\/lib\/(?:onboard(?:\.ts|\/)|security\/)/,
-    command: TSX,
     args: [
       "scripts/checks/direct-credential-env.mts",
       "src/lib/onboard.ts",
@@ -49,117 +38,97 @@ export const CHECKS: readonly CheckCommand[] = [
     name: "local-credential-helper-pin",
     inputs:
       /^(?:src\/lib\/security\/|docs\/resources\/(?:starter-prompt\.md|local-credential-form\.html)$)/,
-    command: TSX,
     args: ["scripts/checks/local-credential-helper-pin.mts"],
   },
   {
     name: "hermes-light-skin-boundary",
     inputs: /^(?:agents\/hermes\/Dockerfile\.base$|src\/lib\/domain\/sandbox\/connect-env\.ts$)/,
-    command: TSX,
     args: ["scripts/checks/hermes-light-skin-boundary.mts"],
   },
   {
     name: "dependency-pins",
     inputs:
       /^(?:Dockerfile(?:\.base)?$|agents\/(?:openclaw|hermes)\/|nemoclaw-blueprint\/blueprint\.yaml$|src\/lib\/(?:onboard\/|actions\/sandbox\/)|\.github\/workflows\/e2e\.yaml$)/,
-    command: TSX,
     args: ["scripts/checks/dependency-pins.mts"],
   },
   {
     name: "no-defaulted-dependent-flags",
     inputs: /^(?:src|nemoclaw\/src)\//,
-    command: TSX,
     args: ["scripts/checks/no-defaulted-dependent-flags.mts"],
   },
   {
     name: "no-coverage-ignore",
     inputs: /^(?:bin|src|scripts|test|nemoclaw\/src)\//,
-    command: TSX,
     args: ["scripts/checks/no-coverage-ignore.mts"],
   },
   {
     name: "layer-import-boundaries",
     inputs: /^src\//,
-    command: TSX,
     args: ["scripts/checks/layer-import-boundaries.mts"],
   },
   {
     name: "source-architecture",
     inputs: /^(?:src|nemoclaw\/src|agents\/hermes|bin|scripts|tools|nemoclaw-blueprint\/scripts)\//,
-    command: TSX,
     args: ["scripts/checks/source-architecture.mts"],
   },
   {
     name: "onboard-entry-composition",
     inputs: /^src\/lib\/onboard\.ts$/,
-    command: TSX,
     args: ["scripts/checks/onboard-entry-composition.mts"],
   },
   {
     name: "no-test-dist-imports",
     inputs: /\.[cm]?[jt]sx?$/,
-    command: TSX,
     args: ["scripts/checks/no-test-dist-imports.mts"],
   },
   {
     name: "test-create-require-budget",
     inputs: /^(?:src|test)\//,
-    command: TSX,
     args: ["scripts/checks/test-create-require-budget.mts"],
   },
   {
     name: "vitest-project-overlap",
     inputs: /^(?:src|test|nemoclaw\/src)\/.*\.(?:test|spec)\.[cm]?[jt]sx?$/,
-    command: TSX,
     args: ["scripts/checks/vitest-project-overlap.mts"],
   },
   {
     name: "test-title-style",
     inputs: /^(?:src|test|nemoclaw\/src)\/.*\.(?:test|spec)\.[cm]?[jt]sx?$/,
-    command: TSX,
     args: ["scripts/checks/test-title-style.mts"],
   },
   {
     name: "no-unit-blocks-in-live-e2e",
     inputs: /^test\/e2e\/live\//,
-    command: TSX,
     args: ["scripts/checks/no-unit-blocks-in-live-e2e.mts"],
   },
   {
     name: "e2e-assertion-census",
     inputs: /^test\//,
-    command: TSX,
     args: ["scripts/checks/e2e-assertion-census.mts", "--check"],
   },
   {
     name: "optimized-build-context-copy-sources",
-    command: TSX,
     args: ["scripts/checks/optimized-build-context-copy-sources.mts"],
   },
   {
     name: "pi-qualification-receipt-refresh",
-    command: TSX,
     args: ["scripts/checks/pi-qualification-receipt-refresh.mts"],
   },
   {
     name: "test-registration-boundary",
     inputs: /^(?:bin|nemoclaw\/src|scripts|src|test|tools)\//,
-    command: TSX,
     args: ["scripts/checks/test-registration-boundary.mts"],
   },
   {
     name: "growth-guardrails-workflow-boundary",
     inputs:
       /^\.github\/(?:workflows\/codebase-growth-guardrails\.yaml|actions\/ci-static-checks\/action\.yaml)$/,
-    command: TSX,
     args: ["scripts/checks/growth-guardrails-workflow-boundary.mts"],
   },
 ];
 
 type RunChecksOptions = {
   checks?: readonly CheckCommand[];
-  platform?: NodeJS.Platform;
-  env?: NodeJS.ProcessEnv;
   spawn?: CheckSpawn;
   exit?: (code?: number) => never;
   files?: readonly string[];
@@ -170,7 +139,7 @@ type RunChecksOptions = {
 // Changes to checker implementations, shared helpers, budgets, or tool configuration
 // invalidate every selector. Checks with transitive or dynamic inputs stay unconditional.
 const SHARED_INPUT =
-  /^(?:scripts\/|test\/helpers\/|ci\/|\.pre-commit-config\.yaml$)|(?:^|\/)(?:package(?:-lock)?\.json|\.npmrc|[^/]*config\.[^/]+)$/;
+  /^(?:scripts\/|test\/helpers\/|ci\/|nemoclaw\/vitest\.project\.ts$|\.pre-commit-config\.yaml$)|(?:^|\/)(?:package(?:-lock)?\.json|\.npmrc|[^/]*config\.[^/]+)$/;
 
 export function selectChecks(
   checks: readonly CheckCommand[],
@@ -217,28 +186,9 @@ export function changedCheckFiles(
   return [...new Set([...args.slice(1), ...result.stdout.split("\0").filter(Boolean)])];
 }
 
-export function buildCheckSpawnInvocation(
-  check: CheckCommand,
-  platform: NodeJS.Platform = process.platform,
-  env: NodeJS.ProcessEnv = process.env,
-): SpawnInvocation {
-  if (platform === "win32") {
-    return {
-      command: env.ComSpec || "cmd.exe",
-      args: ["/d", "/s", "/c", check.command, ...check.args],
-    };
-  }
-  return {
-    command: check.command,
-    args: check.args,
-  };
-}
-
 export function runChecks(options: RunChecksOptions = {}): void {
   const available = options.checks ?? CHECKS;
   const checks = selectChecks(available, options.files);
-  const platform = options.platform ?? process.platform;
-  const env = options.env ?? process.env;
   const spawn: CheckSpawn =
     options.spawn ?? ((command, args, spawnOptions) => spawnSync(command, args, spawnOptions));
   const exit = options.exit ?? process.exit;
@@ -249,8 +199,7 @@ export function runChecks(options: RunChecksOptions = {}): void {
   );
   for (const check of checks) {
     const started = now();
-    const invocation = buildCheckSpawnInvocation(check, platform, env);
-    const result = spawn(invocation.command, invocation.args, {
+    const result = spawn(process.execPath, [TSX, ...check.args], {
       cwd: REPO_ROOT,
       encoding: "utf-8",
       stdio: "inherit",

@@ -8,6 +8,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
 import { fileURLToPath } from "node:url";
+import { executeValidationCommand, windowsNpmCli } from "./validation-command.mts";
 
 function git(root: string, args: string[]): string {
   const result = spawnSync("git", args, { cwd: root, encoding: "utf8" });
@@ -155,6 +156,22 @@ export function validationFingerprint(
     )
       throw new Error("External npm execution configuration prevents validation reuse");
   }
+  // These recursive inputs include ignored source files and already cover their
+  // tracked children. Keep only other tracked paths in the individual file list.
+  const sourceTrees = [
+    "src",
+    "test",
+    "bin",
+    "scripts",
+    "agents",
+    "tools",
+    ".agents",
+    "nemoclaw/src",
+    "nemoclaw-blueprint",
+  ];
+  const otherFiles = files.filter(
+    (file) => !sourceTrees.some((tree) => file === tree || file.startsWith(`${tree}/`)),
+  );
   const inputs = createHash("sha256")
     .update(
       JSON.stringify({
@@ -169,17 +186,8 @@ export function validationFingerprint(
     )
     .update(
       hashPaths(root, [
-        ...files,
-        // Compiler globs also include ignored source files inside these trees.
-        "src",
-        "test",
-        "bin",
-        "scripts",
-        "agents",
-        "tools",
-        ".agents",
-        "nemoclaw/src",
-        "nemoclaw-blueprint",
+        ...otherFiles,
+        ...sourceTrees,
         process.execPath,
         resolved,
         ...(npmCli ? [path.resolve(npmCli, "../..")] : []),
@@ -242,7 +250,9 @@ export function runCachedCommand(options: CachedCommandOptions): number {
   } catch {
     before = undefined;
   }
-  const status = options.execute ? options.execute(env) : executeCommand(root, command, env);
+  const status = options.execute
+    ? options.execute(env)
+    : executeValidationCommand(root, command, env);
   if (status === 0 && before) {
     try {
       const after = validationFingerprint(root, command, env, options.outputPaths);
@@ -263,36 +273,6 @@ export function runCachedCommand(options: CachedCommandOptions): number {
     `${label}: ${status === 0 ? "passed" : "failed"} (${Math.round(performance.now() - started)} ms)`,
   );
   return status;
-}
-
-function windowsNpmCli(
-  root: string,
-  executable: string,
-  env: NodeJS.ProcessEnv,
-): string | undefined {
-  if (process.platform !== "win32" || !/^(?:npm|npx)$/.test(executable)) return undefined;
-  // Invoke npm's JavaScript entry point directly on Windows, without cmd.exe
-  // interpreting paths, environment values, or arguments as shell syntax.
-  const npmCli = (env.PATH ?? "")
-    .split(path.delimiter)
-    .map((directory) =>
-      path.resolve(root, directory, "node_modules/npm/bin", `${executable}-cli.js`),
-    )
-    .find((candidate) => fs.existsSync(candidate));
-  if (!npmCli) throw new Error("Could not resolve the installed npm entry point");
-  return npmCli;
-}
-
-function executeCommand(root: string, command: string[], env: NodeJS.ProcessEnv): number {
-  const executable = command[0];
-  const npmCli = windowsNpmCli(root, executable, env);
-  const result = spawnSync(
-    npmCli ? process.execPath : executable,
-    npmCli ? [npmCli, ...command.slice(1)] : command.slice(1),
-    { cwd: root, env, stdio: "inherit" },
-  );
-  if (result.error) console.error(result.error.message);
-  return result.status ?? 1;
 }
 
 export function compilerCommand(label: string): string[] {

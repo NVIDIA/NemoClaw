@@ -15,6 +15,7 @@ import { changedCheckFiles } from "../../scripts/checks/run.mts";
 import {
   changeInputDuringRead,
   fixtureGit,
+  observeInputReads,
   replaceInputBeforeRead,
   validationFixture,
   writeFixture,
@@ -40,6 +41,12 @@ function check(execute = vi.fn(() => 0), env: NodeJS.ProcessEnv = {}) {
 }
 
 describe("validation reuse", () => {
+  it("reads a tracked source input once per fingerprint", () => {
+    const observed = observeInputReads(path.join(root, "src/example.ts"));
+    validationFingerprint(root, [process.execPath, "--version"], {});
+    expect(observed).toHaveBeenCalledOnce();
+  });
+
   it.each([false, true])("rejects a replaced input before reading (symlink: %s)", (linked) => {
     const replace = replaceInputBeforeRead(root, linked);
     expect(() => validationFingerprint(root, [process.execPath, "--version"], {})).toThrow(
@@ -71,6 +78,27 @@ describe("validation reuse", () => {
     );
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain("Expected only a compiler check name");
+  });
+
+  it("returns a failed check when the Windows npm entry point is unavailable", () => {
+    const descriptor = Object.getOwnPropertyDescriptor(process, "platform")!;
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      Object.defineProperty(process, "platform", { value: "win32" });
+      expect(
+        runCachedCommand({
+          root,
+          label: "fixture",
+          command: ["npm", "--version"],
+          env: { PATH: "/missing-npm" },
+          report: vi.fn(),
+        }),
+      ).toBe(1);
+    } finally {
+      Object.defineProperty(process, "platform", descriptor);
+    }
+    expect(error).toHaveBeenCalledWith("Could not resolve the installed npm entry point");
+    expect(fs.existsSync(path.join(root, ".git/nemoclaw-validation/fixture.json"))).toBe(false);
   });
 
   it.each(["npm", "npx"])("passes Windows %s arguments without shell interpretation", (command) => {

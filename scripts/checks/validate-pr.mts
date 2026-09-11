@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { readOnlyHookConfiguration } from "./read-only-config.mts";
+import { executeValidationCommand } from "./validation-command.mts";
 
 type Execute = (command: string, args: string[]) => number;
 
@@ -58,19 +59,9 @@ export function validatePr(root: string, execute: Execute): number {
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const root = path.resolve(import.meta.dirname, "../..");
   process.exitCode = validatePr(root, (command, args) => {
-    const windows = process.platform === "win32";
-    const result = spawnSync(
-      windows ? (process.env.ComSpec ?? "cmd.exe") : command,
-      windows ? ["/d", "/s", "/c", `${command}.cmd`, ...args] : args,
-      {
-        cwd: root,
-        stdio: "inherit",
-        // Prek 0.3.6 otherwise substitutes native fixers for the copy wrappers.
-        env:
-          args.at(-1) === "pre-commit" ? { ...process.env, PREK_NO_FAST_PATH: "1" } : process.env,
-      },
-    );
-    if (result.error) console.error(result.error.message);
-    return result.status ?? 1;
+    // Prek 0.3.6 otherwise substitutes native fixers for the copy wrappers.
+    const env =
+      args.at(-1) === "pre-commit" ? { ...process.env, PREK_NO_FAST_PATH: "1" } : process.env;
+    return executeValidationCommand(root, [command, ...args], env);
   });
 }

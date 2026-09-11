@@ -20,6 +20,37 @@ export function readOnlyHookConfiguration(source: string): string {
   for (const repo of configuration.repos) {
     for (const hook of repo.hooks) {
       switch (hook.id) {
+        // Classify new hooks before they can enter publication validation.
+        case "no-force-added-ignored":
+        case "check-merge-conflict":
+        case "check-added-large-files":
+        case "check-case-conflict":
+        case "check-yaml":
+        case "check-toml":
+        case "check-json":
+        case "detect-private-key":
+        case "check-executables-have-shebangs":
+        case "check-shebang-scripts-are-executable":
+        case "validate-config-schemas":
+        case "validate-nemoclaw-config-schema":
+        case "validate-managed-inference-catalog":
+        case "repository-checks":
+        case "env-var-docs":
+        case "shellcheck":
+        case "hadolint":
+        case "gitleaks":
+        case "markdownlint-cli2":
+        case "commitlint":
+        case "tsc-plugin":
+        case "tsc-js":
+        case "tsc-cli":
+        case "stale-dist-check":
+        case "e2e-semantic-phase-plans":
+        case "test-cli":
+        case "test-plugin":
+        case "source-shape-test-budget":
+        case "codebase-growth-guardrails":
+          break;
         case "trailing-whitespace":
         case "end-of-file-fixer":
         case "mixed-line-ending":
@@ -73,6 +104,8 @@ export function readOnlyHookConfiguration(source: string): string {
             "npx oxlint --type-aware --no-error-on-unmatched-pattern",
           );
           break;
+        default:
+          throw new Error(`Classify the read-only behavior of hook ${hook.id}`);
       }
     }
   }

@@ -17,7 +17,7 @@ beforeEach(() => {
     root,
     ".pre-commit-config.yaml",
     YAML.stringify({
-      repos: [{ repo: "local", hooks: [{ id: "example", entry: "check-example" }] }],
+      repos: [{ repo: "local", hooks: [{ id: "check-json", entry: "check-json" }] }],
     }),
   );
   fixtureGit(root, "add", ".");
@@ -27,33 +27,99 @@ afterEach(() => {
   rmSync(root, { recursive: true, force: true });
 });
 
+const hookCases = [
+  {
+    id: "spdx-headers",
+    source: { entry: "bash scripts/check-spdx-headers.sh --fix" },
+    expected: { entry: "bash scripts/check-spdx-headers.sh" },
+  },
+  {
+    id: "oxfmt",
+    source: { entry: "npx oxfmt --write --no-error-on-unmatched-pattern" },
+    expected: { entry: "npx oxfmt --check --no-error-on-unmatched-pattern" },
+  },
+  {
+    id: "oxlint-fix",
+    source: { entry: "npx oxlint --fix --no-error-on-unmatched-pattern" },
+    expected: { entry: "npx oxlint --no-error-on-unmatched-pattern" },
+  },
+  {
+    id: "oxlint-type-aware",
+    source: { entry: "npx oxlint --fix --type-aware --no-error-on-unmatched-pattern" },
+    expected: { entry: "npx oxlint --type-aware --no-error-on-unmatched-pattern" },
+  },
+  {
+    id: "trailing-whitespace",
+    source: {},
+    expected: { entry: "python scripts/checks/read-only-fixer.py trailing-whitespace", args: [] },
+  },
+  {
+    id: "end-of-file-fixer",
+    source: {},
+    expected: { entry: "python scripts/checks/read-only-fixer.py end-of-file-fixer", args: [] },
+  },
+  {
+    id: "mixed-line-ending",
+    source: { args: ["--fix=lf"] },
+    expected: { entry: "python scripts/checks/read-only-fixer.py mixed-line-ending", args: [] },
+  },
+  {
+    id: "platform-matrix-sync",
+    source: {
+      entry:
+        "bash -c 'python3 scripts/generate-platform-docs.py && git add docs/get-started/prerequisites.mdx docs/inference/choose-inference-provider.mdx docs/reference/platform-support.mdx'",
+    },
+    expected: { entry: "python3 scripts/generate-platform-docs.py --check" },
+  },
+  {
+    id: "shfmt",
+    source: { args: ["-w", "-i", "2", "-ci", "-bn"] },
+    expected: { args: ["-d", "-i", "2", "-ci", "-bn"] },
+  },
+];
+
 describe("read-only publication checks", () => {
-  it.each([
-    [
-      "spdx-headers",
-      "bash scripts/check-spdx-headers.sh --fix",
-      "bash scripts/check-spdx-headers.sh",
-    ],
-    [
-      "oxfmt",
-      "npx oxfmt --write --no-error-on-unmatched-pattern",
-      "npx oxfmt --check --no-error-on-unmatched-pattern",
-    ],
-    [
-      "oxlint-fix",
-      "npx oxlint --fix --no-error-on-unmatched-pattern",
-      "npx oxlint --no-error-on-unmatched-pattern",
-    ],
-    [
-      "oxlint-type-aware",
-      "npx oxlint --fix --type-aware --no-error-on-unmatched-pattern",
-      "npx oxlint --type-aware --no-error-on-unmatched-pattern",
-    ],
-  ])("uses the non-writing command for %s", (id, entry, expected) => {
+  it.each(hookCases)("uses the non-writing command for $id", ({ id, source, expected }) => {
     const config = YAML.parse(
-      readOnlyHookConfiguration(YAML.stringify({ repos: [{ hooks: [{ id, entry }] }] })),
+      readOnlyHookConfiguration(YAML.stringify({ repos: [{ hooks: [{ id, ...source }] }] })),
     );
-    expect(config.repos[0].hooks[0].entry).toBe(expected);
+    expect(config.repos[0].hooks[0]).toEqual({ id, ...expected });
+  });
+
+  it("passes all read-only conversions to the publication stage", () => {
+    writeFixture(
+      root,
+      ".pre-commit-config.yaml",
+      readFileSync(path.resolve(".pre-commit-config.yaml"), "utf8"),
+    );
+    fixtureGit(root, "add", ".pre-commit-config.yaml");
+    fixtureGit(root, "commit", "-m", "test: complete hook fixture");
+    const execute = vi
+      .fn((_command: string, _args: string[]) => 0)
+      .mockImplementationOnce((_command, args) => {
+        const config = YAML.parse(readFileSync(args[args.indexOf("--config") + 1], "utf8"));
+        expect(config.repos.flatMap((repo: { hooks: unknown[] }) => repo.hooks)).toEqual(
+          expect.arrayContaining(
+            hookCases.map(({ id, expected }) => expect.objectContaining({ id, ...expected })),
+          ),
+        );
+        return 0;
+      });
+    expect(validatePr(root, execute)).toBe(0);
+    expect(execute).toHaveBeenCalledTimes(3);
+  });
+
+  it.each(["new-hook", "renamed-oxfmt"])("rejects unclassified hook %s before execution", (id) => {
+    writeFixture(
+      root,
+      ".pre-commit-config.yaml",
+      YAML.stringify({ repos: [{ repo: "local", hooks: [{ id, entry: "npx oxfmt --write" }] }] }),
+    );
+    fixtureGit(root, "add", ".pre-commit-config.yaml");
+    fixtureGit(root, "commit", "-m", "test: unclassified hook");
+    const execute = vi.fn(() => 0);
+    expect(() => validatePr(root, execute)).toThrow("Classify the read-only behavior");
+    expect(execute).not.toHaveBeenCalled();
   });
 
   it("rejects changed formatter commands instead of running an unreviewed fixer", () => {
