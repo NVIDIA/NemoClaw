@@ -107,6 +107,9 @@ function writeMacServiceStubs(root: string, trustedProgram: boolean) {
       "#!/bin/sh",
       `printf "%s\\n" "$*" >> ${JSON.stringify(brewLog)}`,
       `if [ "$*" = "--prefix" ]; then printf '%s\\n' ${JSON.stringify(brewPrefix)}; exit 0; fi`,
+      `if [ "$*" = "list --formula openshell" ]; then exit 0; fi`,
+      `if [ "$*" = "info --json=v2 openshell" ]; then printf '%s\\n' '{"formulae":[{"tap":"nvidia/openshell"}]}'; exit 0; fi`,
+      `if [ "$*" = "services restart openshell" ]; then touch ${JSON.stringify(active)}; exit 0; fi`,
       "exit 97",
     ].join("\n"),
     { mode: 0o755 },
@@ -536,7 +539,7 @@ describe("managed OpenShell gateway user-service stop", () => {
     }
   });
 
-  it("uses the NVIDIA OpenShell Homebrew service on macOS (#10947)", () => {
+  it("stops and restarts the NVIDIA OpenShell Homebrew service on macOS (#10947)", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-lifecycle-stop-homebrew-"));
     const { active, bin, brewLog, home, launchctlLog, serviceDomain } = writeMacServiceStubs(
       root,
@@ -553,7 +556,6 @@ describe("managed OpenShell gateway user-service stop", () => {
 
       expect(result.status, result.stdout + result.stderr).toBe(0);
       expect(result.stdout).toContain(`${stoppedServicePrefix}homebrew:openshell`);
-      expect(fs.readFileSync(brewLog, "utf8").trim()).toBe("--prefix");
       expect(fs.readFileSync(launchctlLog, "utf8").trim().split("\n")).toEqual([
         `print ${serviceDomain}`,
         "print gui/501/homebrew.mxcl.openshell",
@@ -561,6 +563,16 @@ describe("managed OpenShell gateway user-service stop", () => {
         `print ${serviceDomain}`,
       ]);
       expect(fs.existsSync(active)).toBe(false);
+
+      const restarted = runRestartScript(installer, "homebrew:openshell", env);
+      expect(restarted.status, restarted.stdout + restarted.stderr).toBe(0);
+      expect(fs.readFileSync(brewLog, "utf8").trim().split("\n")).toEqual([
+        "--prefix",
+        "list --formula openshell",
+        "info --json=v2 openshell",
+        "services restart openshell",
+      ]);
+      expect(fs.existsSync(active)).toBe(true);
     } finally {
       fs.rmSync(root, { force: true, recursive: true });
     }
@@ -617,7 +629,8 @@ describe("managed OpenShell gateway user-service stop", () => {
       });
       const result = runStopScript(candidateInstaller, env);
 
-      expect(result.status).toBe(75);
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain(`${stoppedServicePrefix}unavailable`);
       expect(fs.readFileSync(log, "utf8").trim()).toBe("--user show-environment");
     } finally {
       fs.rmSync(root, { force: true, recursive: true });

@@ -288,7 +288,39 @@ describe("LifecyclePhaseFixture.simulate post-reboot-recovery (stop-original)", 
     expect(cleanup.calls.map((call) => call.name)).toEqual([
       "lifecycle.remove-staged-gateway-user-service",
       "lifecycle.runtime-start:openshell-cluster-e2e-cloud-oc",
+      "lifecycle.gateway-user-service-restart:systemd:nemoclaw-openshell-gateway.service",
     ]);
+  });
+
+  it("restarts the selected gateway service during cleanup after recovery fails (#10947)", async () => {
+    const runner = new FakeRunner();
+    const cleanup = new FakeCleanup();
+    const prepared = await preparedPostRebootFixture(runner, cleanup);
+    runner.enqueue(shellResult(0, "container-1\n")); // discover
+    runner.enqueue(shellResult(0)); // docker stop
+    runner.enqueue(shellResult(0)); // forward stop
+    runner.enqueue(shellResult(0, stoppedGatewayUserService)); // user service stop
+    runner.enqueue(shellResult(1, "restart failed")); // normal user service restart
+
+    await expect(prepared.simulate("post-reboot-recovery", instance())).rejects.toThrow(
+      /user service restart failed.*restart failed/,
+    );
+
+    const serviceCleanup = cleanup.calls.find((call) =>
+      call.name.startsWith("lifecycle.gateway-user-service-restart:"),
+    );
+    expect(serviceCleanup?.name).toBe(
+      "lifecycle.gateway-user-service-restart:systemd:nemoclaw-openshell-gateway.service",
+    );
+    runner.enqueue(shellResult(0)); // cleanup user service restart
+    await serviceCleanup!.run();
+    await serviceCleanup!.run();
+
+    expect(
+      runner.calls.filter(
+        (call) => call.options?.artifactName === "lifecycle-gateway-user-service-restart",
+      ),
+    ).toHaveLength(2);
   });
 
   it("fails when status cannot prove post-reboot recovery", async () => {
@@ -430,10 +462,11 @@ describe("LifecyclePhaseFixture.simulate post-reboot-recovery (rename-to-gpu-bac
       }),
     );
 
-    // Cleanup queue now has both docker-start and docker-rename-back.
+    // Cleanup queue also restores the user service if normal recovery does not.
     expect(cleanup.calls.map((call) => call.name.split(":")[0])).toEqual([
       "lifecycle.runtime-start",
       "lifecycle.runtime-rename-back",
+      "lifecycle.gateway-user-service-restart",
     ]);
   });
 });
@@ -553,7 +586,7 @@ describe("LifecyclePhaseFixture gateway runtime restart helpers", () => {
   it("stops only the exact gateway container when a sandbox has the gateway-name prefix", async () => {
     const runner = new FakeRunner();
     runner.enqueue(shellResult(0)); // forward stop
-    runner.enqueue(shellResult(75)); // no user service available
+    runner.enqueue(shellResult(0, "NEMOCLAW_E2E_STOPPED_GATEWAY_USER_SERVICE=unavailable\n"));
     runner.enqueue(shellResult(0)); // gateway stop
     runner.enqueue(shellResult(0)); // pid stop
     runner.enqueue(shellResult(0, "gateway-id\topenshell-cluster-nemoclaw\n")); // discover

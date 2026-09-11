@@ -140,7 +140,7 @@ export function buildOpenShellGatewayUserServiceStopScript(): string {
     "selection=",
     "if stop_active_openshell_gateway_user_service selection; then",
     '  case "$selection" in',
-    "    homebrew:openshell|systemd:nemoclaw-openshell-gateway.service|systemd:openshell-gateway.service) ;;",
+    "    homebrew:openshell|systemd:nemoclaw-openshell-gateway.service|systemd:openshell-gateway.service|unavailable) ;;",
     "    *) exit 1 ;;",
     "  esac",
     `  printf '%s%s\\n' '${USER_SERVICE_STOP_RESULT_PREFIX}' "$selection"`,
@@ -436,6 +436,7 @@ export class LifecyclePhaseFixture {
    *     created one);
    *   - `docker start` the labeled container so the sandbox returns
    *     to a usable state for any teardown that expects it live;
+   *   - restart a gateway user service when normal recovery did not;
    *   - remove a user service staged only for this source-checkout
    *     fixture after the sandbox cleanup has used it.
    */
@@ -705,14 +706,20 @@ export class LifecyclePhaseFixture {
       const match = result.stdout.match(
         new RegExp(
           `(?:^|\\n)${USER_SERVICE_STOP_RESULT_PREFIX}` +
-            `(homebrew:openshell|systemd:nemoclaw-openshell-gateway\\.service|systemd:openshell-gateway\\.service)(?:\\n|$)`,
+            `(homebrew:openshell|systemd:nemoclaw-openshell-gateway\\.service|systemd:openshell-gateway\\.service|unavailable)(?:\\n|$)`,
           "u",
         ),
       );
       if (!match) {
         throw new Error("OpenShell gateway user service stop did not report its selection.");
       }
-      this.stoppedOpenShellGatewayUserService = match[1] as UserServiceSelection;
+      if (match[1] === "unavailable") return false;
+      const selection = match[1] as UserServiceSelection;
+      this.stoppedOpenShellGatewayUserService = selection;
+      this.cleanup.add(`lifecycle.gateway-user-service-restart:${selection}`, async () => {
+        if (this.stoppedOpenShellGatewayUserService !== selection) return;
+        await this.startOpenShellGatewayUserService({ requireAvailable: true });
+      });
       return true;
     }
     if (result.exitCode === USER_SERVICE_UNAVAILABLE_EXIT) return false;

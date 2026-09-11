@@ -4016,7 +4016,10 @@ stop_active_openshell_gateway_user_service() {
   [ "$platform" = "Linux" ] || return 1
   command_exists systemctl || return 1
   systemctl --user show-environment >/dev/null || return 2
-  supported_openshell_gateway_user_service_candidate_exists || return 1
+  if ! supported_openshell_gateway_user_service_candidate_exists; then
+    printf -v "$selection_variable" '%s' "unavailable"
+    return 0
+  fi
 
   if inspect_upstream_openshell_gateway_user_service; then
     if systemctl --user is-active --quiet openshell-gateway.service 2>/dev/null; then
