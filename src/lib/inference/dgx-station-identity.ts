@@ -6,7 +6,7 @@ import path from "node:path";
 export const NVIDIA_FIRMWARE_VALUE_MAX_BYTES = 256;
 
 const STATION_GB300_PRODUCT_PATTERN =
-  /(?:^|[^A-Za-z0-9])Station[\t\n\v\f\r _-]+GB300(?:$|[^A-Za-z0-9])/i;
+  /(?:^|[^A-Za-z0-9])(?:Station[\t\n\v\f\r _-]+(?:DGX[\t\n\v\f\r _-]+)?GB300|GB300[\t\n\v\f\r _-]+(?:DGX[\t\n\v\f\r _-]+)?Station)(?:$|[^A-Za-z0-9])/i;
 const NVIDIA_PCI_VENDOR = "0x10de";
 const STATION_GB300_PCI_DEVICES = new Set(["0x31c2", "0x31c3"]);
 const DISPLAY_PCI_CLASS_PATTERN = /^0x03[0-9a-f]{4}$/iu;
