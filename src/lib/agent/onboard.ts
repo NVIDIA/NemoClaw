@@ -347,6 +347,7 @@ export async function handleAgentSetup(
   const syncNemoClawConfig = async (): Promise<void> => {
     revalidateSandboxIdentity?.(`synchronize agent configuration in sandbox '${sandboxName}'`);
     await runSandboxConfigSync(sandboxName, {
+      agentName: agent.name,
       getSelectionConfig: () => {
         const cfg = getProviderSelectionConfig(provider, model);
         return cfg ? { ...cfg, agent: agent.name } : null;

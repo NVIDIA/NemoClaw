@@ -421,6 +421,7 @@ describe("agent setup session boundaries", () => {
     expect(configRequest?.input).toContain('"provider": "vllm-local"');
     expect(configRequest?.input).toContain('"model": "meta-llama"');
     expect(configRequest?.input).toContain('"agent": "hermes"');
+    expect(configRequest?.input).not.toContain("/usr/local/bin/openclaw");
   });
 
   it("retries a configured gateway probe through the supplied scheduler", async () => {

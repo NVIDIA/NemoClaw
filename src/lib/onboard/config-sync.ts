@@ -8,6 +8,7 @@ import { selectedOpenShellGateway } from "../adapters/openshell/sandbox-observer
 export interface RunSandboxConfigSyncDeps {
   getSelectionConfig: () => ProviderSelectionConfig | null;
   runConnectScript: (sandboxName: string, scriptContent: string) => Promise<void>;
+  agentName: string;
 }
 
 export interface NemoClawConfigSyncDeps {
@@ -25,6 +26,7 @@ export function createNemoClawConfigSync(deps: NemoClawConfigSyncDeps) {
     revalidateSandboxIdentity: (operation: string) => void = skipSandboxIdentityRevalidation,
   ): Promise<void> {
     await runSandboxConfigSync(sandboxName, {
+      agentName: "openclaw",
       getSelectionConfig: () => deps.getProviderSelectionConfig(provider, model),
       runConnectScript: async (name, scriptContent) => {
         revalidateSandboxIdentity(`synchronize OpenClaw config in sandbox '${name}'`);
@@ -55,12 +57,33 @@ export async function runSandboxConfigSync(
   const selectionConfig = deps.getSelectionConfig();
   if (!selectionConfig) return;
   const sandboxConfig = { ...selectionConfig, onboardedAt: new Date().toISOString() };
-  const script = buildSandboxConfigSyncScript(sandboxConfig);
+  const script = buildSandboxConfigSyncScript(sandboxConfig, deps.agentName);
   await deps.runConnectScript(sandboxName, script);
 }
 
-export function buildSandboxConfigSyncScript(selectionConfig: ProviderSelectionConfig): string {
+export function buildSandboxConfigSyncScript(
+  selectionConfig: ProviderSelectionConfig,
+  agentName: string,
+): string {
   // Native baseline setup preserves valid routing and creates its own state.
+  const openClawStateInitialization =
+    agentName === "openclaw"
+      ? `config_dir=/sandbox/.openclaw
+if [ -d "$config_dir" ]; then
+  config_dir_owner="$(stat -c '%U' "$config_dir" 2>/dev/null || echo unknown)"
+  if [ "$config_dir_owner" != "root" ]; then
+    if [ -L "$config_dir" ] || [ -L "$config_dir/openclaw.json" ] || [ -L "$config_dir/.config-hash" ]; then
+      echo "Refusing OpenClaw state initialization through a symlink" >&2
+      exit 1
+    fi
+    export HOME=/sandbox OPENCLAW_STATE_DIR="$config_dir" OPENCLAW_CONFIG_PATH="$config_dir/openclaw.json"
+    /usr/local/bin/openclaw config validate
+    /usr/local/bin/openclaw setup --baseline
+    (cd "$config_dir" && sha256sum openclaw.json >.config-hash)
+    python3 -I /usr/local/lib/nemoclaw/normalize_mutable_config_perms.py "$config_dir" "$current_uid" "$(id -g)"
+  fi
+fi`
+      : "";
   return `
 set -euo pipefail
 # OpenShell exec and the OpenClaw gateway can expose different HOME values.
@@ -77,21 +100,7 @@ cat > "$nemoclaw_config" <<'EOF_NEMOCLAW_CFG'
 ${JSON.stringify(selectionConfig, null, 2)}
 EOF_NEMOCLAW_CFG
 chmod 600 "$nemoclaw_config"
-config_dir=/sandbox/.openclaw
-if [ -d "$config_dir" ]; then
-  config_dir_owner="$(stat -c '%U' "$config_dir" 2>/dev/null || echo unknown)"
-  if [ "$config_dir_owner" != "root" ]; then
-    if [ -L "$config_dir" ] || [ -L "$config_dir/openclaw.json" ] || [ -L "$config_dir/.config-hash" ]; then
-      echo "Refusing OpenClaw state initialization through a symlink" >&2
-      exit 1
-    fi
-    export HOME=/sandbox OPENCLAW_STATE_DIR="$config_dir" OPENCLAW_CONFIG_PATH="$config_dir/openclaw.json"
-    /usr/local/bin/openclaw config validate
-    /usr/local/bin/openclaw setup --baseline
-    (cd "$config_dir" && sha256sum openclaw.json >.config-hash)
-    python3 -I /usr/local/lib/nemoclaw/normalize_mutable_config_perms.py "$config_dir" "$current_uid" "$(id -g)"
-  fi
-fi
+${openClawStateInitialization}
 exit
 `.trim();
 }

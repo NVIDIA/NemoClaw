@@ -224,7 +224,7 @@ describe("sandbox config sync helpers", () => {
       };
       fs.writeFileSync(openclawConfig, JSON.stringify(existingConfig), { mode: 0o644 });
       fs.writeFileSync(openclawHash, "existing hash\n", { mode: 0o644 });
-      const script = buildSandboxConfigSyncScript(selection);
+      const script = buildSandboxConfigSyncScript(selection, "openclaw");
 
       const { nativeCalls } = runConfigSyncScript(
         script,
@@ -254,12 +254,28 @@ describe("sandbox config sync helpers", () => {
     },
   );
 
+  itUnix("skips OpenClaw initialization for Hermes when its compatibility directory exists", () => {
+    const homeDir = createConfigSyncHome();
+    const openclawDir = path.join(homeDir, ".openclaw");
+    fs.mkdirSync(path.join(openclawDir, "workspace"), { recursive: true });
+    const script = buildSandboxConfigSyncScript(selection, "hermes");
+
+    const { nativeCalls } = runConfigSyncScript(script, homeDir, String(process.getuid?.()));
+
+    expect(nativeCalls).toEqual([]);
+    expect(fs.existsSync(path.join(openclawDir, "openclaw.json"))).toBe(false);
+    expect(fs.existsSync(path.join(openclawDir, ".config-hash"))).toBe(false);
+    expect(
+      JSON.parse(fs.readFileSync(path.join(homeDir, ".nemoclaw", "config.json"), "utf8")),
+    ).toEqual(selection);
+  });
+
   itUnix("propagates a real config normalizer ownership refusal", () => {
     const homeDir = createConfigSyncHome();
     const configDir = path.join(homeDir, ".openclaw");
     fs.mkdirSync(configDir);
     fs.writeFileSync(path.join(configDir, "openclaw.json"), '{"gateway":{"mode":"local"}}');
-    const script = buildSandboxConfigSyncScript(selection);
+    const script = buildSandboxConfigSyncScript(selection, "openclaw");
     const { result, nativeCalls } = runConfigSyncScript(
       script,
       homeDir,
@@ -284,7 +300,7 @@ describe("sandbox config sync helpers", () => {
       provider: "compatible-anthropic-endpoint",
       providerLabel: "Other Anthropic-compatible endpoint",
     } as const;
-    const script = buildSandboxConfigSyncScript(anthropicSelection);
+    const script = buildSandboxConfigSyncScript(anthropicSelection, "openclaw");
 
     runConfigSyncScript(script, homeDir, "1234");
 
@@ -315,7 +331,7 @@ describe("sandbox config sync helpers", () => {
     fs.writeFileSync(protectedFile, "protected bytes\n");
     const symlink = kind === "hash symlink";
     seedHash(hashFile, protectedFile);
-    const script = buildSandboxConfigSyncScript(selection);
+    const script = buildSandboxConfigSyncScript(selection, "openclaw");
     const { nativeCalls } = runConfigSyncScript(
       script,
       homeDir,
@@ -342,7 +358,7 @@ describe("sandbox config sync helpers", () => {
     const nemoclawDir = path.join(homeDir, ".nemoclaw");
     fs.mkdirSync(nemoclawDir, { mode: 0o755 });
     fs.chmodSync(nemoclawDir, 0o755);
-    const script = buildSandboxConfigSyncScript(selection);
+    const script = buildSandboxConfigSyncScript(selection, "openclaw");
 
     runConfigSyncScript(script, homeDir, "1234", "0");
     expect(modeBits(nemoclawDir)).toBe(0o755);
@@ -366,6 +382,7 @@ describe("sandbox config sync helpers", () => {
     } as const;
     try {
       await runSandboxConfigSync("spark-box", {
+        agentName: "openclaw",
         getSelectionConfig: () => selection,
         runConnectScript,
       });
