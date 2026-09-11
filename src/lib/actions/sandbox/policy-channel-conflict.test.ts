@@ -408,8 +408,8 @@ beforeEach(() => {
   // unit-test runner; locally it is installed, so this only bites in CI). Stub
   // the exec path so the post-add verification never shells out and never trips
   // the exit spy unless a test explicitly overrides it.
-  vi.spyOn(processRecovery, "executeSandboxExecCommand").mockReturnValue(null);
-  vi.spyOn(processRecovery, "executeSandboxCommand").mockReturnValue(null);
+  vi.spyOn(processRecovery, "executeSandboxExecCommand").mockResolvedValue(null);
+  vi.spyOn(processRecovery, "executeSandboxCommand").mockResolvedValue(null);
 
   process.env.NEMOCLAW_SKIP_TELEGRAM_REACHABILITY = "1";
   process.env.NEMOCLAW_SKIP_SLACK_AUTH_VALIDATION = "1";
@@ -575,17 +575,19 @@ describe("addSandboxChannel cross-sandbox conflict check (#4305)", () => {
   it("removes credential-free policy when provider attachment fails", async () => {
     arrangeRegistry({ current: makeEmptyEntry("alpha") });
     getCredentialMock.mockReturnValue(TELEGRAM_TOKEN);
-    upsertMock.mockReturnValue(["alpha-telegram-bridge"]);
+    upsertMock.mockRejectedValue(
+      Object.assign(new Error("provider attachment failed"), {
+        code: "NEMOCLAW_MESSAGING_PROVIDER_MUTATION_FAILURE",
+        mutatedProviderNames: ["alpha-telegram-bridge"],
+        createdProviderNames: ["alpha-telegram-bridge"],
+      }),
+    );
     vi.mocked(policy.listPresets).mockReturnValue([
       { file: "telegram.yaml", name: "telegram", description: "Telegram" },
     ]);
     vi.mocked(policy.getAppliedPresets).mockReturnValue(["telegram"]);
     const removePresetMock = vi.spyOn(policy, "removePreset").mockReturnValue(true);
-    runOpenshellMock.mockImplementation((args: readonly string[]) =>
-      args.includes("attach")
-        ? { ...successfulOpenshellResult(), status: 1 }
-        : successfulOpenshellResult(),
-    );
+    runOpenshellMock.mockReturnValue(successfulOpenshellResult());
 
     await expect(addSandboxChannel("alpha", { channel: "telegram" })).rejects.toThrow(
       "process.exit(1)",
@@ -641,7 +643,12 @@ describe("addSandboxChannel cross-sandbox conflict check (#4305)", () => {
         },
       ],
       "nemoclaw",
-      { bestEffort: true, requireExactBindings: true },
+      { replaceExisting: true },
+      expect.objectContaining({
+        channelName: "discord",
+        sandboxAgent: "hermes",
+        sandboxName: "alpha",
+      }),
     );
   });
 
@@ -1221,6 +1228,11 @@ describe("addSandboxChannel cross-sandbox conflict check (#4305)", () => {
     const execCommands = vi
       .mocked(processRecovery.executeSandboxExecCommand)
       .mock.calls.map((call: unknown[]) => String(call[1]));
+    expect(
+      vi
+        .mocked(processRecovery.executeSandboxExecCommand)
+        .mock.calls.every((call) => call[3]?.localDockerFallbackPolicy === "read-only"),
+    ).toBe(true);
     expect(execCommands.some((cmd: string) => cmd.includes("grep"))).toBe(false);
     expect(
       execCommands.some(
@@ -1389,7 +1401,7 @@ describe("Teams host-forward lifecycle (PRA-2)", () => {
 
 function mockBridgeHealthExec(options: { config: unknown; log: string }): void {
   vi.mocked(processRecovery.executeSandboxExecCommand).mockImplementation(
-    (_sandboxName: string, command: string) => {
+    async (_sandboxName: string, command: string) => {
       if (command.includes("cat") && command.includes("openclaw.json")) {
         return { status: 0, stdout: JSON.stringify(options.config), stderr: "" };
       }

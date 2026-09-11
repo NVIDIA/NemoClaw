@@ -109,6 +109,22 @@ function isExactNativeRuntimeAggregateUpload(jobName: string, step: WorkflowStep
   );
 }
 
+function isExactReviewQueueResultUpload(jobName: string, step: WorkflowStep): boolean {
+  return (
+    jobName === "relevant-e2e" &&
+    isDeepStrictEqual(step, {
+      name: "Upload PR E2E results",
+      if: "${{ always() && inputs.checkout_sha != '' }}",
+      uses: UPLOAD_ARTIFACT_ACTION,
+      with: {
+        name: "review-queue-e2e-result-${{ github.run_id }}-${{ github.run_attempt }}",
+        path: "${{ runner.temp }}/review-queue-e2e-result.json",
+        "if-no-files-found": "error",
+      },
+    })
+  );
+}
+
 function isExactOpenShellSdkE2ePackageUpload(jobName: string, step: WorkflowStep): boolean {
   const inputs = record(step.with);
   return (
@@ -364,12 +380,18 @@ function validateUploadPlacement(
   // checkout. Its exact pre-checkout position is enforced by workflow-boundary.
   if (jobName === "generate-matrix") return;
   const stepsAfterUpload = jobSteps.slice(jobSteps.indexOf(upload) + 1);
-  if (
-    stepsAfterUpload.length > 1 ||
-    stepsAfterUpload.some((step) => step.name !== "Clean up Docker auth")
-  ) {
+  const tailNames = stepsAfterUpload.map((step) => step.name);
+  const validTail = [
+    [],
+    ["Clean up Docker auth"],
+    ["Restore Docker CLI after native Podman E2E"],
+    ["Restore Docker CLI after native Podman E2E", "Clean up Docker auth"],
+    ["Restore Docker CLI after native Podman public install"],
+    ["Restore Docker CLI after native Podman public install", "Clean up Docker auth"],
+  ].some((candidate) => isDeepStrictEqual(tailNames, candidate));
+  if (!validTail) {
     errors.push(
-      `${jobName} upload-e2e-artifacts invocation must follow artifact producers and precede only Docker auth cleanup`,
+      `${jobName} upload-e2e-artifacts invocation must follow artifact producers and precede only native Podman restoration and Docker auth cleanup`,
     );
   }
 }
@@ -512,7 +534,8 @@ export function validateUploadE2eArtifactsInvocations(workflow: WorkflowRecord):
         !isExactCommitCliArtifactUpload &&
         !isExactManagedImageBuildCacheUpload(jobName, step) &&
         !isExactOpenShellSdkE2ePackageUpload(jobName, step) &&
-        !isExactNativeRuntimeAggregateUpload(jobName, step)
+        !isExactNativeRuntimeAggregateUpload(jobName, step) &&
+        !isExactReviewQueueResultUpload(jobName, step)
       ) {
         errors.push(`${jobName} must not invoke actions/upload-artifact directly`);
       }

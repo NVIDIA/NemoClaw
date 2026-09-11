@@ -25,6 +25,7 @@ The contributor lifecycle has one owner for each stage: `nemoclaw-contributor-on
 Component-specific guidance belongs in the `AGENTS.md` file of the package it describes, not in a skill.
 Load the `nemoclaw-skills-guide` skill for a full catalog and quick decision guide mapping tasks to skills.
 Skills that write or review explanatory text must follow the shared [Documentation Writing and Review](.agents/skills/_shared/documentation-writing-review.md) contract.
+Keep repository skill workflows agent-harness agnostic. State required capabilities, actions, and observable results instead of requiring harness-specific tool names. A skill may name a client or command when that client or command is the user-visible subject. Harness-specific automation may assist with a workflow, but it does not define or replace the skill's requirements.
 
 ## Architecture
 
@@ -75,7 +76,7 @@ Package-specific guides:
 | Run the broad repo-wide pre-commit and coverage baseline | `npm run check` |
 | Type-check CLI | `npm run typecheck:cli` |
 | Type-check plugin and plugin tests | `npm --prefix nemoclaw run typecheck` |
-| Auto-format added JavaScript and TypeScript files that Oxfmt does not exclude | `npm run format` |
+| Format maintained JavaScript and TypeScript files | `npm run format` |
 | Build docs | `npm run docs` |
 | Serve docs locally | `npm run docs:live` |
 
@@ -139,7 +140,14 @@ Every source file needs the repository SPDX header; the pre-commit hook inserts 
 - `bin/` launcher and remaining `scripts/*.js`: **CommonJS** (`require`/`module.exports`), Node.js 22.19+
 - `test/`: **ESM** (`import`/`export`)
 - Do not add new JavaScript source files. Prefer TypeScript when modifying existing JavaScript. New test files must use TypeScript.
-- Oxlint uses `oxlint.config.ts`. The isolated `oxlint.type-aware.config.ts` configuration enforces `typescript/no-floating-promises` for plugin sources.
+- Oxlint uses `oxlint.config.ts`. Correctness checks are errors; the configuration records rule families awaiting migration.
+  Warnings and unused disable comments fail validation. Browser globals are limited to documentation components.
+  The same configuration owns ordinary and type-aware rules. Adapter and plugin files run only in their type-aware pass.
+  Type-aware checks discover `src/lib/adapters/tsconfig.json` and `nemoclaw/src/tsconfig.json`, which extend the CLI and plugin test projects.
+  Adapter checks also reject misused promises, invalid awaits, and incomplete switches.
+- Adapter sources and tests require type-only imports and exports, strict equality, and no unused variables or explicit `any`.
+  Production adapters also reject non-null assertions and nested ternaries.
+- Oxfmt covers all maintained JavaScript and TypeScript files. The formatting hook formats every changed source file.
 
 - Use `eslint-plugin-sonarjs` only for the `oxlint.config.ts` cognitive-complexity rules documented in [`tools/lint/DEPENDENCY-REVIEW.md`](tools/lint/DEPENDENCY-REVIEW.md).
 - Keep function complexity low; existing complexity hotspots are tracked separately
@@ -147,7 +155,7 @@ Every source file needs the repository SPDX header; the pre-commit hook inserts 
 
 ### TypeScript
 
-- Oxlint lints plugin code in `nemoclaw/src/`. Oxfmt formats added plugin files that it does not exclude.
+- Oxlint lints plugin code in `nemoclaw/src/`. Oxfmt formats all maintained plugin source and test files.
 - CLI type-checking via `tsconfig.cli.json`
 - Plugin production and test type-checking via `npm --prefix nemoclaw run typecheck`, using
   `nemoclaw/tsconfig.json` and `nemoclaw/tsconfig.test.json`
@@ -171,6 +179,11 @@ All hooks managed by [prek](https://prek.j178.dev/) (installed via `npm install`
 | **pre-commit** | Cheap structural and file-local checks, including fixers, formatters, and linters |
 | **commit-msg** | commitlint (Conventional Commits) |
 | **pre-push** | Path-scoped incremental CLI/plugin TypeScript checks and checked-JavaScript checks |
+
+`npm run validate:pr` requires a clean committed tree and runs read-only formatting checks.
+The repository-check runner reports durations and selects checks from changed paths, including deletions.
+Compiler hooks share content-based local result reuse with explicit validation. Changed or unavailable
+inputs require execution; reuse does not replace trusted validation or independent CI.
 
 ## Working with This Repo
 

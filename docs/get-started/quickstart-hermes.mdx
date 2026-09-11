@@ -61,14 +61,14 @@ Review the [Prerequisites](prerequisites) before you begin.
       Press Enter to use the recommended express install mode for that platform.
       This mode applies preset settings and runs the remaining onboarding non-interactively.
       Express install mode preserves the explicit Hermes selection in the install command.
-      On supported non-N1x express platforms, enter `n` if you want to select a sandbox name, an inference provider, and a model interactively.
-      On N1x, entering `n` stops installation because the Deferred managed-vLLM preview is the only admitted onboarding path.
+      Enter `n` if you want to select a sandbox name, an inference provider, and a model interactively.
+      On N1x, the selected provider must meet its existing requirements, and local NVIDIA NIM remains unavailable.
       Refer to [Use a container runtime and supported platforms](#use-a-container-runtime-and-supported-platforms) for more information.
     </Note>
 
     The install command creates the `my-hermes` sandbox used in the commands that follow.
     If you accept Express setup, wait for the installer to finish, then continue with **Confirm the Sandbox Is Ready**; Express selects the provider and model non-interactively.
-    If the installer does not offer Express setup, or if you enter `n` at the Express prompt on a supported non-N1x host, choose an inference provider and model, then provide its credential when prompted.
+    If the installer does not offer Express setup, or if you enter `n` at the Express prompt, choose an inference provider and model, then provide its credential when prompted.
     For that interactive path, skip optional web search and messaging setup on a first run, then accept the suggested network policy tier.
     With the OpenShell Docker driver, stock Hermes onboarding normally uses the release's exact managed-image digest.
     If registry or catalog availability prevents resolution, stock onboarding stops before sandbox creation and does not build a shipped Dockerfile.
@@ -212,7 +212,11 @@ Use these details when your first-run path needs more control.
     A sandbox receives those ports when no other sandbox or host listener already holds them.
     Otherwise, NemoClaw allocates the next free dashboard port from `18789` through `18799` and the next free API port from `8642` through `8652`.
     Run `openshell forward list` to read the host bind for each of that sandbox's forwards.
-    For a remote dashboard origin or tunnel, set `CHAT_UI_URL` to the externally reachable dashboard origin before onboarding.
+    Choose how the remote client reaches the host forwards.
+    If a reverse proxy or tunnel already reaches the loopback dashboard forward, set `CHAT_UI_URL` to its externally reachable HTTPS origin before onboarding.
+    Do not include credentials in the URL.
+    Hostname validation does not authenticate clients of your reverse proxy or tunnel.
+    Protect that ingress before exposing the dashboard.
 
     ```bash
     export NEMOCLAW_AGENT=hermes
@@ -222,10 +226,30 @@ Use these details when your first-run path needs more control.
     ```
 
     NemoClaw derives the forwarded dashboard port from `CHAT_UI_URL` and passes its hostname to Hermes for browser Host-header validation.
+    `CHAT_UI_URL` does not expose the host forward outside WSL.
     The Hermes dashboard service remains bound to loopback.
-    External `CHAT_UI_URL` values must use HTTPS.
+    Use HTTPS for an external `CHAT_UI_URL`.
+    Hermes rejects an external HTTP URL when the sandbox starts.
     NemoClaw preserves an external browser URL across rebuild and clone operations.
-    Otherwise, leave it unset and use SSH port forwarding for remote access.
+
+    For direct dashboard or API access to a non-WSL host, set `NEMOCLAW_DASHBOARD_BIND=0.0.0.0` before onboarding.
+    Use the same setting for later `nemohermes <sandbox> connect` calls.
+
+    ```bash
+    export NEMOCLAW_AGENT=hermes
+    export NEMOCLAW_SANDBOX_NAME=my-hermes
+    export NEMOCLAW_DASHBOARD_BIND=0.0.0.0
+    curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
+    ```
+
+    A sandbox created without the bind opt-in must be recreated before it can use a remote bind:
+
+    ```bash
+    NEMOCLAW_DASHBOARD_BIND=0.0.0.0 nemohermes onboard --recreate-sandbox
+    ```
+
+    See the [environment-variable reference](../reference/commands#environment-variables) for the complete bind behavior.
+    To keep the host forwards on loopback, leave the bind setting unset and use SSH port forwarding for remote access.
 
     ```bash
     ssh -L 18789:127.0.0.1:18789 <user>@<host>
@@ -267,9 +291,9 @@ Use these details when your first-run path needs more control.
     N1x remains outside the supported-platform set until that validation passes and the platform matrix status is promoted.
     Press Enter at the express install prompt to apply preset settings, switch the remaining onboarding to non-interactive mode, and select the managed local inference path for that platform.
     On N1x, accept the preview prompt to apply those settings as explicit Deferred preview intent.
-    On supported non-N1x express platforms, enter `n` to continue with interactive onboarding when you want to select the agent or other settings yourself.
-    On N1x, declining the preview or setting only `NEMOCLAW_NO_EXPRESS=1` stops installation before onboarding.
-    Accept the preview, or set `NEMOCLAW_PROVIDER=install-vllm` before installation to provide the required explicit managed-vLLM intent.
+    Enter `n` to continue with interactive onboarding when you want to select the agent or other settings yourself.
+    On N1x, setting `NEMOCLAW_NO_EXPRESS=1` also continues with ordinary onboarding.
+    Set `NEMOCLAW_PROVIDER=install-vllm` to bypass the prompt with managed-vLLM preview intent, or set a recognized provider other than Local NVIDIA NIM or `install-vllm` to enter standard onboarding directly.
     The first Hermes start can take several minutes while OpenShell pulls the managed image when it is not already cached.
     The N1x preview selects one-host managed vLLM with `nvidia/Qwen3.6-35B-A3B-NVFP4`.
     Refer to [Set Up vLLM](../inference/local-inference/set-up-vllm) for managed model profiles and headless setup.

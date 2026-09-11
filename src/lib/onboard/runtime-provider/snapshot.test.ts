@@ -880,6 +880,37 @@ describe("Docker provider snapshot evidence", () => {
     );
   });
 
+  it("rejects mapping-only GPU evidence without NVIDIA selectors (#10758)", () => {
+    const target = sandbox({ openshellDriver: "docker" });
+    const captureHostCommand = dockerRestoreCapture();
+    const surface = requireSupportedSurface(
+      createDockerRuntimeProviderSnapshotSurface("docker", {
+        captureHostCommand,
+        queryRuntimeSnapshot: () =>
+          dockerSnapshot({
+            deviceRequests: null,
+            devices: [
+              {
+                PathOnHost: "/dev/dri/renderD128",
+                PathInContainer: "/dev/dri/renderD128",
+                CgroupPermissions: "rwm",
+              },
+            ],
+            nativeGpuAttachmentState: "present",
+          }),
+      }),
+    );
+    const acceleration = {
+      kind: "gpu" as const,
+      vendor: "nvidia",
+      devices: ["docker-device-path:/dev/dri/renderD128=>/dev/dri/renderD128:rwm"],
+    };
+
+    expect(() => surface.preflight("restore", target)).toThrow(/exact live device selectors/u);
+    expect(surface.canRepresentAcceleration?.(acceleration, acceleration)).toBe(false);
+    expect(captureHostCommand.mock.calls.some(([, args]) => args[0] === "exec")).toBe(false);
+  });
+
   it.each(
     Array.from(
       [
@@ -965,7 +996,13 @@ describe("Docker provider snapshot evidence", () => {
         queryRuntimeSnapshot: () =>
           dockerSnapshot({
             deviceRequests: null,
-            devices: null,
+            devices: [
+              {
+                PathOnHost: "/dev/nvhost-gpu",
+                PathInContainer: "/dev/nvhost-gpu",
+                CgroupPermissions: "rwm",
+              },
+            ],
             nativeGpuAttachmentState: "present",
             runtime: "nvidia",
             nvidiaVisibleDevices: "0,GPU-live-1",
@@ -976,7 +1013,11 @@ describe("Docker provider snapshot evidence", () => {
     expect(observed.runtime.acceleration).toEqual({
       kind: "gpu",
       vendor: "nvidia",
-      devices: ["nvidia.com/gpu=0", "nvidia.com/gpu=GPU-live-1"],
+      devices: [
+        "docker-device-path:/dev/nvhost-gpu=>/dev/nvhost-gpu:rwm",
+        "nvidia.com/gpu=0",
+        "nvidia.com/gpu=GPU-live-1",
+      ],
     });
   });
 

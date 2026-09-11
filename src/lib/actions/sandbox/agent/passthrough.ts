@@ -106,17 +106,14 @@
 //   - Drop Ollama pre-dispatch recovery when supported daemon restarts preserve
 //     loaded runners or NemoClaw manages and warms the daemon lifecycle.
 
+import { performance } from "node:perf_hooks";
+import { signalExitCode } from "../../../core/process-exit";
 import { type AgentDefinition, isTerminalAgent, listAgents, loadAgent } from "../../../agent/defs";
 import { CLI_NAME } from "../../../cli/branding";
-import { isStdinTty } from "../../../core/stdin";
+import { createCliOpenShellSandboxSessionExecutor } from "../../../adapters/openshell/sandbox-command-cli";
 import { resolveSandboxHermesApiPort } from "../../../onboard/hermes-api-port";
 import * as registry from "../../../state/registry";
-import {
-  buildOpenshellExecArgs,
-  computeExitCode,
-  execSandbox,
-  wrapOpenClawAgentCommandWithRuntimeEnv,
-} from "../exec";
+import { execSandbox, wrapOpenClawAgentCommandWithRuntimeEnv } from "../exec";
 import { ensureLiveSandboxOrExit } from "../gateway-state";
 import { getKnownSandboxTargetGatewayName } from "../gateway-target";
 import {
@@ -126,6 +123,8 @@ import {
   isTimedOutAgentDispatch,
   OPENCLAW_AGENT_BOOLEAN_FLAGS,
   OPENCLAW_AGENT_VALUE_FLAGS,
+  replaceRequestedAgentTimeoutSeconds,
+  requestedAgentTimeoutSeconds,
   runAgentDispatch,
   SILENT_AGENT_DISPATCH_EXIT_CODE,
   TIMED_OUT_AGENT_TURN_EXIT_CODE,
@@ -136,11 +135,7 @@ import {
   writeSilentAgentDispatchFailure,
   writeTimedOutAgentTurnFailure,
 } from "./passthrough-help";
-import {
-  type AgentJsonPassthroughProcess,
-  defaultGetOpenshellBinary,
-  runAgentJsonPassthrough,
-} from "./passthrough-json";
+import { type AgentJsonPassthroughProcess, runAgentJsonPassthrough } from "./passthrough-json";
 import { OLLAMA_LOCAL_PROVIDER, runOllamaRestartRecovery } from "./passthrough-ollama-recovery";
 
 export { hasAgentPassthroughHelpToken, printAgentPassthroughHelp } from "./passthrough-help";
@@ -167,19 +162,26 @@ export async function runAgentNonJsonPassthrough(
   proc: NonNullable<AgentPassthroughDeps["process"]>,
   deps: AgentNonJsonPassthroughDeps = {},
 ): Promise<never> {
-  const binary = (deps.getOpenshellBinary ?? defaultGetOpenshellBinary)();
-  const result = await (deps.runDispatch ?? runAgentDispatch)(
-    binary,
-    buildOpenshellExecArgs(
-      sandboxName,
-      wrapOpenClawAgentCommandWithRuntimeEnv(command),
-      { tty: false, timeoutSeconds: agentDispatchDeadlineSeconds(command) },
-      (deps.getGatewayName ?? getKnownSandboxTargetGatewayName)(sandboxName) ?? undefined,
-    ),
-    {
-      stdinIsTty: (deps.stdinIsTty ?? isStdinTty)(),
-    },
-  );
+  const gatewayName = (deps.getGatewayName ?? getKnownSandboxTargetGatewayName)(sandboxName);
+  const runDispatch: AgentDispatchRunner =
+    deps.runDispatch ??
+    ((request) =>
+      runAgentDispatch(
+        request,
+        createCliOpenShellSandboxSessionExecutor({
+          resolveBinary: deps.getOpenshellBinary,
+          stdinIsTty: deps.stdinIsTty,
+        }),
+      ));
+  const result = await runDispatch({
+    kind: "command",
+    sandboxName,
+    target: gatewayName ? { kind: "named", gatewayName } : { kind: "selected" },
+    command: wrapOpenClawAgentCommandWithRuntimeEnv(command),
+    tty: false,
+    output: "capture",
+    timeoutSeconds: agentDispatchDeadlineSeconds(command),
+  });
   const { stderr, stdout } = result;
 
   if (isSilentAgentDispatch(result, stdout, stderr)) {
@@ -206,8 +208,9 @@ export async function runAgentNonJsonPassthrough(
 
   if (stdout) (proc.stdout ?? process.stdout).write(stdout);
   if (stderr) proc.stderr.write(stderr);
-  const { code, errorMessage } = computeExitCode(result);
-  if (errorMessage) {
+  const code = result.outcome.exitCode;
+  if (result.outcome.kind === "failed" && result.outcome.reason !== "transport") {
+    const errorMessage = result.outcome.message;
     proc.stderr.write(`  Failed to invoke openshell: ${errorMessage}\n`);
     proc.stderr.write("  Ensure 'openshell' is installed and on PATH.\n");
   }
@@ -232,12 +235,50 @@ export interface AgentPassthroughDeps {
   exec?: typeof execSandbox;
   execJson?: typeof runAgentJsonPassthrough;
   execNonJson?: typeof runAgentNonJsonPassthrough;
-  runOllamaRestartRecovery?: typeof runOllamaRestartRecovery;
+  runOllamaRestartRecovery?: (
+    ...args: Parameters<typeof runOllamaRestartRecovery>
+  ) => ReturnType<typeof runOllamaRestartRecovery> | NodeJS.Signals | null | void;
+  now?: () => number;
   process?: {
     exit(code: number): never;
     stdout?: { write(s: string): unknown };
     stderr: { write(s: string): unknown };
   };
+}
+
+const MINIMUM_AGENT_DISPATCH_BUDGET_SECONDS = 1;
+
+function startAgentCommandDeadline(command: readonly string[], now: () => number): number | null {
+  const timeoutSeconds = requestedAgentTimeoutSeconds(command);
+  const timeoutMilliseconds = timeoutSeconds === null ? null : timeoutSeconds * 1000;
+  return timeoutMilliseconds === null || !Number.isSafeInteger(timeoutMilliseconds)
+    ? null
+    : now() + timeoutMilliseconds;
+}
+
+function remainingAgentCommandSeconds(deadline: number | null, now: () => number): number | null {
+  return deadline === null ? null : Math.max(0, (deadline - now()) / 1000);
+}
+
+function recoveryBudgetSeconds(deadline: number | null, now: () => number): number | null {
+  const remaining = remainingAgentCommandSeconds(deadline, now);
+  // Keep one second for the actual turn so best-effort recovery cannot consume
+  // the entire user-requested deadline before OpenClaw starts.
+  return remaining === null ? null : Math.max(0, remaining - MINIMUM_AGENT_DISPATCH_BUDGET_SECONDS);
+}
+
+function commandWithRemainingDeadline(
+  command: readonly string[],
+  deadline: number | null,
+  now: () => number,
+): readonly string[] {
+  const remaining = remainingAgentCommandSeconds(deadline, now);
+  return remaining === null
+    ? command
+    : replaceRequestedAgentTimeoutSeconds(
+        command,
+        Math.max(MINIMUM_AGENT_DISPATCH_BUDGET_SECONDS, Math.ceil(remaining)),
+      );
 }
 
 type RegistryReadResult =
@@ -540,15 +581,27 @@ export async function runAgentPassthrough(
   if (isOpenClawPassthroughCommand(command) && !hasTargetSelector(extraArgs)) {
     rejectNoTargetSelector(proc);
   }
+  let dispatchCommand: readonly string[] = command;
   if (isOpenClawPassthroughCommand(command)) {
+    const now = deps.now ?? (() => performance.now());
+    const commandDeadline = startAgentCommandDeadline(command, now);
     if (lookup.kind === "agent" && lookup.provider === OLLAMA_LOCAL_PROVIDER) {
       const recoverOllama = deps.runOllamaRestartRecovery ?? runOllamaRestartRecovery;
-      recoverOllama(lookup, proc);
+      const timeoutSeconds = recoveryBudgetSeconds(commandDeadline, now);
+      const recoverySignal = await recoverOllama(
+        lookup,
+        proc,
+        timeoutSeconds === null ? {} : { timeoutSeconds },
+      );
+      if (recoverySignal) {
+        return proc.exit(signalExitCode(recoverySignal));
+      }
     }
+    dispatchCommand = commandWithRemainingDeadline(command, commandDeadline, now);
   }
   if (isOpenClawPassthroughCommand(command) && requestsOpenClawJsonOutput(extraArgs)) {
     const execJson = deps.execJson ?? runAgentJsonPassthrough;
-    await execJson(sandboxName, command, {
+    await execJson(sandboxName, dispatchCommand, {
       exit: proc.exit.bind(proc),
       stdout: proc.stdout ?? process.stdout,
       stderr: proc.stderr,
@@ -557,7 +610,7 @@ export async function runAgentPassthrough(
   }
   if (isOpenClawPassthroughCommand(command)) {
     const execNonJson = deps.execNonJson ?? runAgentNonJsonPassthrough;
-    await execNonJson(sandboxName, command, proc);
+    await execNonJson(sandboxName, dispatchCommand, proc);
     return;
   }
   const exec = deps.exec ?? execSandbox;

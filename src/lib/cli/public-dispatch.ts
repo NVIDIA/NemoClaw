@@ -22,11 +22,13 @@ const {
   sandboxActionTokensForDispatch,
 } = require("./command-registry");
 
-import { migrateLegacyPortState } from "../state/legacy-port-migration";
+import { hasMigratableLegacySandbox, migrateLegacyPortState } from "../state/legacy-port-migration";
 import {
+  isGlobalCommandInvocation,
   type NormalizedArgv,
   type NormalizedGlobalArgv,
   type NormalizedSandboxArgv,
+  type NormalizeArgvOptions,
   normalizeArgv,
   suggestCommand,
 } from "./argv-normalizer";
@@ -44,6 +46,12 @@ import {
 const GLOBAL_COMMANDS = globalCommandTokens();
 const NATIVE_OCLIF_NAMESPACES = new Set(["internal", "sandbox"]);
 const MIGRATION_RECOVERY_SANDBOX_ACTIONS = new Set(["doctor", "recover"]);
+const PUBLIC_ARGV_OPTIONS: NormalizeArgvOptions = {
+  globalCommands: GLOBAL_COMMANDS,
+  isRegisteredSandbox: hasRegisteredOrMigratableSandbox,
+  isSandboxAction: isKnownSandboxAction,
+  isSandboxConnectFlag: isPublicSandboxConnectFlag,
+};
 
 type RegistryModule = typeof import("../state/registry");
 type RegistryRecoveryModule = typeof import("../registry-recovery-action");
@@ -70,6 +78,25 @@ function sandboxConnect(): SandboxConnectModule {
 
 function isPublicSandboxConnectFlag(arg: string | undefined): boolean {
   return sandboxConnect().isSandboxConnectFlag(arg);
+}
+
+function hasRegisteredSandbox(name: string): boolean {
+  try {
+    return registry().getSandbox(name) !== null;
+  } catch {
+    // Global doctor owns the registry-readability diagnostic. If dispatch
+    // cannot inspect the registry, keep routing the bare token there.
+    return false;
+  }
+}
+
+function hasRegisteredOrMigratableSandbox(name: string): boolean {
+  if (hasRegisteredSandbox(name)) return true;
+  try {
+    return hasMigratableLegacySandbox(name);
+  } catch {
+    return false;
+  }
 }
 
 // ── Commands ─────────────────────────────────────────────────────
@@ -128,11 +155,8 @@ function isMigrationRecoveryInvocation(argv: readonly string[]): boolean {
   if (argv[0] === "sandbox") {
     return MIGRATION_RECOVERY_SANDBOX_ACTIONS.has(argv[1] ?? "");
   }
-  return (
-    argv.length > 1 &&
-    !GLOBAL_COMMANDS.has(argv[0] ?? "") &&
-    MIGRATION_RECOVERY_SANDBOX_ACTIONS.has(argv[1] ?? "")
-  );
+  if (isGlobalCommandInvocation(argv, PUBLIC_ARGV_OPTIONS)) return argv[0] === "doctor";
+  return argv.length > 1 && MIGRATION_RECOVERY_SANDBOX_ACTIONS.has(argv[1] ?? "");
 }
 
 function sandboxRegistrationNames(): { published: string[]; pending: string[] } {
@@ -211,8 +235,8 @@ function printOpenShellCommandHint(hint: OpenShellCommandHint): never {
   process.exit(1);
 }
 
-function isKnownSandboxAction(action: string): boolean {
-  return sandboxActionList().includes(action);
+function isKnownSandboxAction(action: string | undefined): boolean {
+  return typeof action === "string" && sandboxActionList().includes(action);
 }
 
 function validSandboxActionsText(): string {
@@ -574,11 +598,5 @@ export async function dispatchCli(argv: string[] = process.argv.slice(2)): Promi
     return;
   }
 
-  await dispatchNormalizedArgv(
-    normalizeArgv(argv, {
-      globalCommands: GLOBAL_COMMANDS,
-      isSandboxConnectFlag: isPublicSandboxConnectFlag,
-    }),
-    argv,
-  );
+  await dispatchNormalizedArgv(normalizeArgv(argv, PUBLIC_ARGV_OPTIONS), argv);
 }

@@ -426,21 +426,21 @@ describe("trusted live-test outcome reporter (#7146)", () => {
     ).toBe("timeout");
   });
 
-  it.each([
-    "assertion",
-    "timeout",
-  ] as const)("writes and strictly reads a private %s artifact", (outcome) => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-live-outcome-"));
-    const file = path.join(dir, LIVE_TEST_OUTCOME_FILE);
-    try {
-      writeLiveTestOutcome(file, outcome);
-      expect(readLiveTestOutcome(file)).toBe(outcome);
-      expect(fs.statSync(file).mode & 0o777).toBe(0o600);
-      expect(() => parseLiveTestOutcome('{"v":1,"outcome":"assertion","token":"secret"}')).toThrow(
-        /unsupported shape/u,
-      );
-    } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
-    }
-  });
+  it.each(["assertion", "timeout"] as const)(
+    "writes and strictly reads a private %s artifact",
+    (outcome) => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-live-outcome-"));
+      const file = path.join(dir, LIVE_TEST_OUTCOME_FILE);
+      try {
+        writeLiveTestOutcome(file, outcome);
+        expect(readLiveTestOutcome(file)).toBe(outcome);
+        expect(fs.statSync(file).mode & 0o777).toBe(0o600);
+        expect(() =>
+          parseLiveTestOutcome('{"v":1,"outcome":"assertion","token":"secret"}'),
+        ).toThrow(/unsupported shape/u);
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  );
 });

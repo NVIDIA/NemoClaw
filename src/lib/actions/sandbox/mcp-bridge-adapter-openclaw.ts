@@ -40,11 +40,13 @@ function mcporterRootForEntry(entry: McpBridgeEntry): string {
     : OPENCLAW_MCPORTER_ROOT;
 }
 
-function ensureMcporter(
+async function ensureMcporter(
   sandboxName: string,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
-): void {
-  const check = executeSandboxCommand(sandboxName, "command -v mcporter", { runtimeSelection });
+): Promise<void> {
+  const check = await executeSandboxCommand(sandboxName, "command -v mcporter", {
+    runtimeSelection,
+  });
   if (check?.status === 0 && check.stdout.trim()) return;
   throw new McpBridgeError(
     `mcporter is not available in sandbox '${sandboxName}'. Rebuild with a NemoClaw image that includes mcporter@${MCPORTER_VERSION}.`,
@@ -131,13 +133,13 @@ export function buildOpenClawMcporterRemoveCommand(
   ].join("\n");
 }
 
-export function inspectOpenClawAdapterRegistration(
+export async function inspectOpenClawAdapterRegistration(
   sandboxName: string,
   entry: McpBridgeEntry,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
-): AdapterRegistrationInspection {
+): Promise<AdapterRegistrationInspection> {
   const root = mcporterRootForEntry(entry);
-  return inspectAdapterRegistrationCommand(
+  return await inspectAdapterRegistrationCommand(
     sandboxName,
     entry,
     buildOpenClawMcporterInspectCommand(entry, false, root),
@@ -145,17 +147,17 @@ export function inspectOpenClawAdapterRegistration(
   );
 }
 
-export function registerOpenClawAdapter(
+export async function registerOpenClawAdapter(
   sandboxName: string,
   entry: McpBridgeEntry,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
   envValues: Record<string, string> = {},
   replaceExisting = false,
   credentialRevision?: McpAttachedCredentialRevision,
-): void {
-  ensureMcporter(sandboxName, runtimeSelection);
+): Promise<void> {
+  await ensureMcporter(sandboxName, runtimeSelection);
   const root = mcporterRootForEntry(entry);
-  const result = executeSandboxCommand(
+  const result = await executeSandboxCommand(
     sandboxName,
     buildOpenClawMcporterRegisterCommand(entry, replaceExisting, root, credentialRevision),
     { runtimeSelection },
@@ -173,7 +175,7 @@ export function registerOpenClawAdapter(
   // command. Re-read the persisted definition before claiming ownership so a
   // changed mcporter normalization/schema cannot commit an entry that differs
   // from the URL and opaque OpenShell placeholder NemoClaw intended.
-  const verification = executeSandboxCommand(
+  const verification = await executeSandboxCommand(
     sandboxName,
     buildOpenClawMcporterInspectCommand(entry, true, root, credentialRevision),
     { runtimeSelection },
@@ -194,14 +196,14 @@ export function registerOpenClawAdapter(
   }
 }
 
-export function unregisterOpenClawAdapter(
+export async function unregisterOpenClawAdapter(
   sandboxName: string,
   entry: McpBridgeEntry,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
   options: AdapterMutationOptions = {},
-): void {
+): Promise<void> {
   const root = mcporterRootForEntry(entry);
-  const result = executeSandboxCommand(
+  const result = await executeSandboxCommand(
     sandboxName,
     buildOpenClawMcporterRemoveCommand(entry, options.force === true, root),
     { runtimeSelection },

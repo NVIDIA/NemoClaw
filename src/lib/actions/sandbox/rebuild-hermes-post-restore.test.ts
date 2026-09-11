@@ -23,64 +23,62 @@ const RESTART_FAILED = {
   failureLayer: "health timeout",
   detail: "gateway did not become healthy",
 } as const;
-const RESTARTED_WITH_MCP_MISMATCH = {
-  ok: false,
-  failureLayer: "MCP reconciliation refusal",
-  detail: "Hermes MCP config does not match persisted managed intent",
-  restarted: true,
-  healthPassed: true,
-} as const;
-const MCP_REFUSED_BEFORE_RESTART = {
+const RESTART_REFUSED = {
   ok: false,
   failureLayer: "MCP reconciliation refusal",
   detail: "supervisor refused the restart before replacing the gateway",
 } as const;
 
 describe("binding the Hermes gateway to restored state", () => {
+  it("keeps selected OpenShell operations pinned while using frozen rebuild supervisor authority", async () => {
+    const runtimeSelection = {
+      gatewayName: "nemoclaw-19080",
+      workspace: "default",
+      localTlsDir: "/authority/tls",
+    };
+    const frozenTargetGatewaySupervisorAction = vi.fn(() => null);
+    const restartSandboxGateway = vi.fn(async () => RESTART_SUCCEEDED);
+    const checkAndRecoverSandboxProcesses = vi.fn(async () => ({
+      checked: true,
+      wasRunning: true,
+      recovered: false,
+    }));
 
-  it("keeps restart evidence while rebuild restores the managed MCP projection (#8671)", () => {
-    const restartState = restartHermesGatewayAfterStateRestore("alpha", "hermes", {
-      restartSandboxGateway: () => RESTARTED_WITH_MCP_MISMATCH,
+    const restartState = await restartHermesGatewayAfterStateRestore("alpha", "hermes", {
+      frozenTargetGatewaySupervisorAction,
+      restartSandboxGateway,
+      runtimeSelection,
+    });
+    expect(restartState).toBe("restarted");
+    expect(restartSandboxGateway).toHaveBeenCalledExactlyOnceWith("alpha", {
+      quiet: true,
+      deps: { requestGatewaySupervisorAction: frozenTargetGatewaySupervisorAction },
+      runtimeSelection,
     });
 
-    expect(restartState).toBe("restarted");
     expect(
-      verifyHermesGatewayAfterStateRestore("alpha", "hermes", restartState, {
-        checkAndRecoverSandboxProcesses: () => ({
-          checked: true,
-          wasRunning: true,
-          recovered: false,
-        }),
+      await verifyHermesGatewayAfterStateRestore("alpha", "hermes", restartState, {
+        checkAndRecoverSandboxProcesses,
+        frozenTargetGatewaySupervisorAction,
+        runtimeSelection,
       }),
     ).toBe("healthy");
-  });
-
-  it("rejects managed MCP drift that remains after rebuild restoration (#8671)", () => {
-    const restartState = restartHermesGatewayAfterStateRestore("alpha", "hermes", {
-      restartSandboxGateway: () => RESTARTED_WITH_MCP_MISMATCH,
+    expect(checkAndRecoverSandboxProcesses).toHaveBeenCalledExactlyOnceWith("alpha", {
+      quiet: true,
+      requestGatewaySupervisorAction: frozenTargetGatewaySupervisorAction,
+      runtimeSelection,
     });
-
-    expect(
-      verifyHermesGatewayAfterStateRestore("alpha", "hermes", restartState, {
-        checkAndRecoverSandboxProcesses: () => ({
-          checked: true,
-          wasRunning: true,
-          recovered: false,
-          mcpReconciliationRefused: true,
-        }),
-      }),
-    ).toBe("unverified");
   });
 
-  it("preserves an MCP refusal before gateway replacement (#8671)", () => {
-    const restartState = restartHermesGatewayAfterStateRestore("alpha", "hermes", {
-      restartSandboxGateway: () => MCP_REFUSED_BEFORE_RESTART,
+  it("preserves an MCP refusal before gateway replacement (#8671)", async () => {
+    const restartState = await restartHermesGatewayAfterStateRestore("alpha", "hermes", {
+      restartSandboxGateway: async () => RESTART_REFUSED,
     });
 
     expect(restartState).toBe("restart-failed");
     expect(
-      verifyHermesGatewayAfterStateRestore("alpha", "hermes", restartState, {
-        checkAndRecoverSandboxProcesses: () => ({
+      await verifyHermesGatewayAfterStateRestore("alpha", "hermes", restartState, {
+        checkAndRecoverSandboxProcesses: async () => ({
           checked: true,
           wasRunning: true,
           recovered: false,
@@ -88,39 +86,42 @@ describe("binding the Hermes gateway to restored state", () => {
       }),
     ).toBe("unverified");
   });
-
-
-
-  it("verifies the final cron-bound gateway without restarting after MCP restoration (#8472)", () => {
+  it("verifies the final cron-bound gateway without restarting after MCP restoration (#8472)", async () => {
     const original = { pid: 41, start_time: 902, drain_token: "restore-token" };
     const replacement = { pid: 77, start_time: 903, drain_token: "restore-token" };
-    const restartSandboxGateway = vi.fn(() => RESTART_SUCCEEDED);
+    const restartSandboxGateway = vi.fn(async () => RESTART_SUCCEEDED);
     const observeHermesCronReplacement = vi.fn(() => replacement);
 
     expect(
-      verifyHermesGatewayAfterStateRestoreForCronGate("alpha", "hermes", "restarted", original, {
-        restartSandboxGateway,
-        observeHermesCronReplacement,
-        checkAndRecoverSandboxProcesses: () => ({
-          checked: true,
-          wasRunning: true,
-          recovered: false,
-        }),
-      }),
+      await verifyHermesGatewayAfterStateRestoreForCronGate(
+        "alpha",
+        "hermes",
+        "restarted",
+        original,
+        {
+          restartSandboxGateway,
+          observeHermesCronReplacement,
+          checkAndRecoverSandboxProcesses: async () => ({
+            checked: true,
+            wasRunning: true,
+            recovered: false,
+          }),
+        },
+      ),
     ).toEqual({ state: "healthy", replacementIdentity: replacement });
     expect(restartSandboxGateway).not.toHaveBeenCalled();
     expect(observeHermesCronReplacement).toHaveBeenCalledTimes(2);
   });
 
-  it("rejects unstable final cron identity without restarting after MCP restoration (#8472)", () => {
-    const restartSandboxGateway = vi.fn(() => RESTART_SUCCEEDED);
+  it("rejects unstable final cron identity without restarting after MCP restoration (#8472)", async () => {
+    const restartSandboxGateway = vi.fn(async () => RESTART_SUCCEEDED);
     const observeHermesCronReplacement = vi
       .fn()
       .mockReturnValueOnce({ pid: 77, start_time: 903, drain_token: "restore-token" })
       .mockReturnValueOnce({ pid: 88, start_time: 904, drain_token: "restore-token" });
 
     expect(
-      verifyHermesGatewayAfterStateRestoreForCronGate(
+      await verifyHermesGatewayAfterStateRestoreForCronGate(
         "alpha",
         "hermes",
         "restarted",
@@ -128,7 +129,7 @@ describe("binding the Hermes gateway to restored state", () => {
         {
           restartSandboxGateway,
           observeHermesCronReplacement,
-          checkAndRecoverSandboxProcesses: () => ({
+          checkAndRecoverSandboxProcesses: async () => ({
             checked: true,
             wasRunning: true,
             recovered: false,
@@ -136,23 +137,6 @@ describe("binding the Hermes gateway to restored state", () => {
         },
       ),
     ).toEqual({ state: "unverified" });
-    expect(restartSandboxGateway).not.toHaveBeenCalled();
-  });
-
-  it("preserves MCP reconciliation refusal during restart-free final verification (#7084)", () => {
-    const restartSandboxGateway = vi.fn(() => RESTART_SUCCEEDED);
-
-    expect(
-      verifyHermesGatewayAfterStateRestore("alpha", "hermes", "restarted", {
-        restartSandboxGateway,
-        checkAndRecoverSandboxProcesses: () => ({
-          checked: true,
-          wasRunning: true,
-          recovered: false,
-          mcpReconciliationRefused: true,
-        }),
-      }),
-    ).toBe("unverified");
     expect(restartSandboxGateway).not.toHaveBeenCalled();
   });
 });
@@ -252,38 +236,6 @@ describe("Hermes rebuild post-restore verification", () => {
     const output = harness.logSpy.mock.calls.map((call) => String(call[0])).join("\n");
     expect(output).toContain("MCP bridge definitions were preserved but not fully refreshed");
     expect(output).not.toContain("rebuilt successfully");
-  });
-
-  it("fails when the final gateway check refuses MCP reconciliation (#7084)", async () => {
-    const mcpEntry = {
-      server: "blender",
-      providerName: "nemoclaw-mcp-alpha-blender",
-    };
-    const harness = createRebuildFlowHarness({
-      agentName: "hermes",
-      checkAndRecoverSandboxProcesses: () => ({
-        checked: true,
-        wasRunning: true,
-        recovered: false,
-        forwardRecovered: false,
-        mcpReconciliationRefused: true,
-      }),
-      mcpPreparation: {
-        entries: [mcpEntry],
-        detachedProviderEntries: [mcpEntry],
-        scrubbedAdapterEntries: [mcpEntry],
-      },
-      sandboxEntry: { agent: "hermes" },
-    });
-
-    await expect(
-      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
-    ).rejects.toThrow("Hermes post-restore verification failed");
-
-    expect(harness.restoreMcpBridgesAfterRebuildSpy).toHaveBeenCalledWith("alpha", [mcpEntry]);
-    expect(harness.logSpy).not.toHaveBeenCalledWith(
-      expect.stringContaining("rebuilt successfully"),
-    );
   });
 
   it.each(["forwardRecoveryFailed", "secretBoundaryRefused"] as const)(

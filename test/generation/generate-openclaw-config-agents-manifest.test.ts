@@ -61,14 +61,7 @@ function withEnv<T>(env: Record<string, string>, fn: () => T): T {
 function runMessagingPostInstall(env: Record<string, string>): void {
   const result = spawnSync(
     "node",
-    [
-      "--experimental-strip-types",
-      APPLIER_PATH,
-      "--agent",
-      "openclaw",
-      "--phase",
-      "post-agent-install",
-    ],
+    [APPLIER_PATH, "--agent", "openclaw", "--phase", "post-agent-install"],
     {
       encoding: "utf-8",
       stdio: ["pipe", "pipe", "pipe"],
@@ -135,6 +128,27 @@ afterEach(() => {
 });
 
 describe("generate-openclaw-config :: agents manifest", () => {
+  it.each(["array", "object"])(
+    "preserves the default and shared inference for the read-only %s manifest (#11434)",
+    (shape) => {
+      const agents = [{ id: "researcher", tools: { allow: ["read"] } }];
+      const config = runConfigScript({
+        NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64(shape === "array" ? agents : { agents }),
+      });
+      expect(config.agents.list).toEqual([
+        { id: "main", default: true },
+        {
+          id: "researcher",
+          workspace: "/sandbox/.openclaw/workspace-researcher",
+          agentDir: "/sandbox/.openclaw/agents/researcher",
+          tools: { allow: ["read"] },
+        },
+      ]);
+      expect(config.agents.defaults.model.primary).toBe(BASE_ENV.NEMOCLAW_PRIMARY_MODEL_REF);
+      expect(config.models.providers[BASE_ENV.NEMOCLAW_PROVIDER_KEY].models).toHaveLength(1);
+    },
+  );
+
   it("accepts the new payload object shape {agents, defaults?, main?}", () => {
     const config = runConfigScript({
       NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64({
@@ -295,6 +309,27 @@ describe("generate-openclaw-config :: agents manifest", () => {
           }),
         },
         /maxSpawnDepth must be an integer between 1 and 5/,
+      );
+    },
+  );
+
+  it.each([
+    [
+      "secondary agent",
+      { agents: [makeExtra({ subagents: { maxSpawnDepth: 2 } })] },
+      "NEMOCLAW_EXTRA_AGENTS_JSON.agents[0].subagents",
+    ],
+    [
+      "main agent",
+      { agents: [], main: { subagents: { maxSpawnDepth: 2 } } },
+      "NEMOCLAW_EXTRA_AGENTS_JSON.main.subagents",
+    ],
+  ])(
+    "rejects per-agent maxSpawnDepth from a Base64 build payload for the %s",
+    (_label, payload, path) => {
+      expectBuildConfigError(
+        { NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64(payload) },
+        `${path}.maxSpawnDepth is not accepted per-agent; OpenClaw honours it only on agents.defaults.subagents. Set it under the manifest 'defaults.subagents.maxSpawnDepth' instead.`,
       );
     },
   );

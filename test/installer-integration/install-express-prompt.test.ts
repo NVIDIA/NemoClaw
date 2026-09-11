@@ -11,6 +11,18 @@ import { runExpressPromptWithTty } from "../helpers/installer-express-prompt-pty
 import { INSTALLER_PAYLOAD, TEST_SYSTEM_PATH } from "../helpers/installer-sourced-env";
 
 describe("installer express install prompt (sourced)", () => {
+  it("carries a declined N1x preview through preflight into ordinary onboarding (#11041)", () => {
+    const result = runExpressPromptWithTty("n\n", "pipe", "N1x", {}, "n1x-standard-main");
+    const output = `${result.stdout}${result.stderr}`;
+
+    expect(result.error, output).toBeUndefined();
+    expect(result.status, output).toBe(0);
+    expect(output).toContain("Skipping express install. Continuing with interactive flow.");
+    expect(output.match(/Detected container runtime: docker/g)).toHaveLength(1);
+    expect(output).not.toContain("Host preflight found issues");
+    expect(output.match(/ONBOARD NO_EXPRESS=1 PROVIDER= ARGS=onboard/g)).toHaveLength(1);
+  });
+
   it("drains PTY output after the child exits", () => {
     const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pty-tail-"));
     try {
@@ -47,58 +59,62 @@ describe("installer express install prompt (sourced)", () => {
     releasePath: string,
     extraEnv: Record<string, string> = {},
   ) {
-    return spawnSync(
-      "bash",
-      [
-        "-c",
-        `
+    const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-express-platform-detect-"));
+    const pci = path.join(fixture, "pci", "0000:01:00.0");
+    try {
+      fs.mkdirSync(pci, { recursive: true });
+      fs.writeFileSync(path.join(fixture, "product_name"), productName);
+      fs.writeFileSync(path.join(fixture, "product_family"), extraEnv.EXPRESS_PRODUCT_FAMILY ?? "");
+      fs.writeFileSync(path.join(pci, "vendor"), "0x10de\n");
+      fs.writeFileSync(path.join(pci, "device"), "0x31c2\n");
+      fs.writeFileSync(path.join(pci, "class"), "0x030200\n");
+      fs.writeFileSync(
+        path.join(fixture, "prepare-dgx-station-host.sh"),
+        `#!/bin/bash
+source "$STATION_PREPARE"
+station_product_name_path() { printf '%s/product_name' "$FIXTURE"; }
+station_product_family_path() { printf '%s/product_family' "$FIXTURE"; }
+station_board_name_path() { printf '%s/board_name' "$FIXTURE"; }
+station_device_tree_model_path() { printf '%s/model' "$FIXTURE"; }
+station_pci_devices_path() { printf '%s/pci' "$FIXTURE"; }
+dgx_station_release_path() { printf '%s' "\${EXPRESS_DGX_RELEASE_PATH:-$FIXTURE/dgx-release}"; }
+dgx_station_release_file_is_safe() { return 0; }
+main "$@"
+`,
+      );
+      return spawnSync(
+        "bash",
+        [
+          "-c",
+          `
 source "$INSTALLER_UNDER_TEST" >/dev/null
-classify_dgx_station_release() {
-  if [[ -z "$EXPRESS_DGX_RELEASE_PATH" ]]; then
-    printf "generic-ubuntu"
-    return
-  fi
-  bash -c '
-    source "$STATION_PREPARE" >/dev/null
-    dgx_station_release_file_is_safe() { return 0; }
-    dgx_station_release_state "$EXPRESS_DGX_RELEASE_PATH"
-  '
-}
-function [ {
-  if [[ "$#" -eq 3 && "$1" = "-r" && "$2" = "/sys/class/dmi/id/product_name" && "$3" = "]" ]]; then
-    return 0
-  fi
-  builtin [ "$@"
-}
-cat() {
-  if [[ "$#" -eq 1 && "$1" = "/sys/class/dmi/id/product_name" ]]; then
-    printf "%s" "$EXPRESS_PRODUCT_NAME"
-    return
-  fi
-  command cat "$@"
-}
+SCRIPT_DIR="$FIXTURE"
 is_wsl_host() { return 1; }
 detect_express_platform
 `,
-      ],
-      {
-        cwd: path.join(import.meta.dirname, "../.."),
-        encoding: "utf-8",
-        env: {
-          HOME: fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-express-platform-detect-")),
-          PATH: TEST_SYSTEM_PATH,
-          INSTALLER_UNDER_TEST: INSTALLER_PAYLOAD,
-          STATION_PREPARE: path.join(
-            path.resolve(import.meta.dirname, "../.."),
-            "scripts",
-            "prepare-dgx-station-host.sh",
-          ),
-          EXPRESS_PRODUCT_NAME: productName,
-          EXPRESS_DGX_RELEASE_PATH: releasePath,
-          ...extraEnv,
+        ],
+        {
+          cwd: path.join(import.meta.dirname, "../.."),
+          encoding: "utf-8",
+          timeout: 15_000,
+          env: {
+            HOME: fixture,
+            PATH: TEST_SYSTEM_PATH,
+            INSTALLER_UNDER_TEST: INSTALLER_PAYLOAD,
+            STATION_PREPARE: path.join(
+              path.resolve(import.meta.dirname, "../.."),
+              "scripts",
+              "prepare-dgx-station-host.sh",
+            ),
+            FIXTURE: fixture,
+            EXPRESS_DGX_RELEASE_PATH: releasePath,
+            ...extraEnv,
+          },
         },
-      },
-    );
+      );
+    } finally {
+      fs.rmSync(fixture, { recursive: true, force: true });
+    }
   }
 
   function detectExpressPlatformForProductName(productName: string) {
@@ -172,7 +188,7 @@ DGX_COMMIT_ID="d0e99cc"\nDGX_PLATFORM="DGX Server for GALAXY-GB300"
 
     expect(result.status, output).toBe(0);
     expect(output).toMatch(
-      /--force-station-install\s+Bypass only the DGX release-metadata allowlist/,
+      /--force-station-install\s+Validate an unrecognized Station GB300 release profile without onboarding/,
     );
   });
 
@@ -962,7 +978,7 @@ main "$@"
       entrypointArgs: ["--force-station-install", "--yes-i-accept-third-party-software"],
     },
   ])(
-    "reaches and accepts the forced Station express prompt through main with $name",
+    "validates and stops the forced Station flow through main with $name",
     ({ extraEnv, entrypointArgs }) => {
       const result = runExpressPromptWithTty(
         "\n",
@@ -975,16 +991,14 @@ main "$@"
       const output = `${result.stdout}${result.stderr}`;
 
       expect(result.status, output).toBe(0);
+      expect(
+        output.match(/Run validation-only Station checks with these settings\?/g),
+      ).toHaveLength(1);
+      expect(output).toMatch(/Using validation-only Station checks/);
       expect(output).toMatch(
-        /Explicit --force-station-install intent bypasses only DGX release-metadata qualification/,
+        /factory-runtime validation completed[\s\S]*Station Express remains blocked/,
       );
-      expect(output).toMatch(
-        /Active agent and unrelated Docker workloads still block Station preparation; an existing vLLM workload receives explicit handling choices/,
-      );
-      expect(output.match(/Run express install with these settings\?/g)).toHaveLength(1);
-      expect(output).toMatch(/Using express install for DGX Station/);
-      expect(output).toMatch(/PROVIDER=install-vllm/);
-      expect(output).not.toMatch(/cannot be combined with non-interactive mode/);
+      expect(output).not.toMatch(/PROVIDER=install-vllm/);
     },
   );
 
@@ -1192,15 +1206,26 @@ detect_express_platform
     expect(result.stdout).toBe("Windows WSL");
   });
 
-  it.each(["Dell Pro Max with Station GB300", "NVIDIA DGX Station GB300", "DGX_Station_GB300"])(
-    "recognizes supported Station GB300 firmware as DGX Station: %s",
-    (productName) => {
-      const result = detectExpressPlatformForProductName(productName);
+  it.each([
+    "Dell Pro Max with Station GB300",
+    "NVIDIA DGX Station GB300",
+    "DGX_Station_GB300",
+    "GB300 DGX Station",
+  ])("recognizes supported Station GB300 firmware as DGX Station: %s", (productName) => {
+    const result = detectExpressPlatformForProductName(productName);
 
-      expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
-      expect(result.stdout).toBe("DGX Station");
-    },
-  );
+    expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+    expect(result.stdout).toBe("DGX Station");
+  });
+
+  it("rejects conflicting NVIDIA firmware identities before platform selection (#10928)", () => {
+    const result = detectExpressPlatform("NVIDIA DGX Spark", "", {
+      EXPRESS_PRODUCT_FAMILY: "GB300 DGX Station",
+    });
+
+    expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+    expect(result.stdout).toBe("Conflicting NVIDIA firmware identity");
+  });
 
   it.each([
     "Acme XP3830 Workstation",
@@ -1223,8 +1248,8 @@ detect_express_platform
     expect(result.stdout).toBe("DGX Station");
   });
 
-  it.each(["NVIDIA DGX GB300WS", "NVIDIA DGX Server"])(
-    "recognizes the no-OTA DGX OS 7.6 family with the %s display name (#9898)",
+  it.each(["NVIDIA DGX GB300WS", "NVIDIA DGX Server", "NVIDIA DGX GB300 Workstation"])(
+    "recognizes the no-OTA DGX OS 7.6 family without binding the %s display name (#9898, #10928)",
     (pretty) => {
       const result = detectExpressPlatformForStockDgxRelease(
         "DGX Station GB300",
@@ -1260,7 +1285,18 @@ detect_express_platform
     expect(result.stdout).toBe("DGX Station");
   });
 
-  it("requires explicit intent before treating unrecognized metadata as Station Express", () => {
+  it("recognizes the exact Colossus BaseOS profile with the GB300WS display name (#10906)", () => {
+    const release = noOtaFactoryRelease("colossus-baseos").replace(
+      "NVIDIA DGX Server",
+      "NVIDIA DGX GB300WS",
+    );
+    const result = detectExpressPlatformForStockDgxRelease("DGX Station GB300", release);
+
+    expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+    expect(result.stdout).toBe("DGX Station");
+  }, 15_000);
+
+  it("keeps trusted unrecognized release metadata outside automatic Station Express (#10928)", () => {
     const releasePath = path.join(
       fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dgx-release-force-")),
       "dgx-release",
@@ -1270,22 +1306,17 @@ detect_express_platform
       [
         'DGX_NAME="DGX Server"',
         'DGX_PRETTY_NAME="NVIDIA DGX GB300WS"',
-        'DGX_SWBUILD_DATE="2026-04-02-08-20-16"',
+        'DGX_SWBUILD_DATE="2099-01-02-03-04-05"',
         'DGX_SWBUILD_VERSION="7.5.0-GB300ws-GB200ws"',
         'DGX_PLATFORM="DGX Server for GALAXY-GB300"',
         "",
       ].join("\n"),
     );
 
-    const rejected = detectExpressPlatform("DGX Station GB300", releasePath);
-    const forced = detectExpressPlatform("DGX Station GB300", releasePath, {
-      FORCE_STATION_INSTALL: "1",
-    });
+    const detected = detectExpressPlatform("DGX Station GB300", releasePath);
 
-    expect(rejected.status, `${rejected.stdout}${rejected.stderr}`).toBe(0);
-    expect(rejected.stdout).toBe("Unsupported DGX Station OS");
-    expect(forced.status, `${forced.stdout}${forced.stderr}`).toBe(0);
-    expect(forced.stdout).toBe("DGX Station");
+    expect(detected.status, `${detected.stdout}${detected.stderr}`).toBe(0);
+    expect(detected.stdout).toBe("Unsupported DGX Station OS");
   });
 
   it("does not let the metadata override impersonate Station GB300 hardware", () => {
@@ -1299,8 +1330,15 @@ detect_express_platform
     ["out-of-scope OTA version", stockDgxRelease("7.6.0")],
     ["future OTA version", stockDgxRelease("7.7.0")],
     ["unreviewed no-OTA version", noOtaDgxOs76Release("7.7.0")],
+  ])("keeps a Station with %s outside automatic Express handling (#10928)", (_scenario, marker) => {
+    const result = detectExpressPlatformForStockDgxRelease("GB300 DGX Station", marker);
+
+    expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+    expect(result.stdout).toBe("Unsupported DGX Station OS");
+  });
+
+  it.each([
     ["wrong DGX platform", stockDgxRelease("7.5.0", "DGX Server for GALAXY-GB200")],
-    ["missing DGX_OTA_PRETTY_NAME", stockDgxRelease("7.5.0", "DGX Server for GALAXY-GB300", null)],
     ["BaseOS identity", stockDgxRelease("7.5.0", "DGX Server for GALAXY-GB300", "NVIDIA BaseOS")],
     [
       "duplicate non-history field",
@@ -1315,8 +1353,8 @@ detect_express_platform
   });
 
   it.each([
-    ["P3830", ""],
-    ["NVIDIA P3830 Rev A", ""],
+    ["P3830", "Unsupported DGX Station generation"],
+    ["NVIDIA P3830 Rev A", "Unsupported DGX Station generation"],
     ["Acme XP3830 Workstation", ""],
     ["Acme Workstation GB300", ""],
     ["NVIDIA DGX Station GB300X", "Unsupported DGX Station generation"],
@@ -1339,40 +1377,41 @@ detect_express_platform
     expect(result.stdout).toBe("Unsupported DGX Station generation");
   });
 
-  it.each(["Unsupported DGX Station OS", "Unsupported DGX Station generation"])(
-    "rejects %s before the express prompt",
-    (platform) => {
-      const result = spawnSync(
-        "bash",
-        [
-          "--noprofile",
-          "--norc",
-          "-c",
-          `
+  it.each([
+    "Unsupported DGX Station OS",
+    "Unsupported DGX Station generation",
+    "Conflicting NVIDIA firmware identity",
+  ])("rejects %s before the express prompt", (platform) => {
+    const result = spawnSync(
+      "bash",
+      [
+        "--noprofile",
+        "--norc",
+        "-c",
+        `
 source "$INSTALLER_UNDER_TEST" >/dev/null
 validate_express_platform_boundary "$EXPRESS_PLATFORM"
 printf 'PROMPT_REACHED\n'
 `,
-        ],
-        {
-          cwd: path.join(import.meta.dirname, "../.."),
-          encoding: "utf-8",
-          env: {
-            HOME: fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-express-platform-reject-")),
-            PATH: TEST_SYSTEM_PATH,
-            INSTALLER_UNDER_TEST: INSTALLER_PAYLOAD,
-            EXPRESS_PLATFORM: platform,
-          },
+      ],
+      {
+        cwd: path.join(import.meta.dirname, "../.."),
+        encoding: "utf-8",
+        env: {
+          HOME: fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-express-platform-reject-")),
+          PATH: TEST_SYSTEM_PATH,
+          INSTALLER_UNDER_TEST: INSTALLER_PAYLOAD,
+          EXPRESS_PLATFORM: platform,
         },
-      );
-      const output = `${result.stdout}${result.stderr}`;
-      expect(result.status, output).not.toBe(0);
-      expect(output).toMatch(
-        /outside the (recognized Station Express release-metadata|validated Station GB300 express) boundary/,
-      );
-      expect(output).not.toContain("PROMPT_REACHED");
-    },
-  );
+      },
+    );
+    const output = `${result.stdout}${result.stderr}`;
+    expect(result.status, output).not.toBe(0);
+    expect(output).toMatch(
+      /outside the .* boundary|platform identity conflicts across firmware fields/,
+    );
+    expect(output).not.toContain("PROMPT_REACHED");
+  });
 
   it("explains the supported boundary for an unrecognized DGX OS before Station preparation", () => {
     const result = spawnSync(
@@ -1403,9 +1442,8 @@ printf 'PROMPT_REACHED\n'
     expect(output).toContain("outside the recognized Station Express release-metadata boundary");
     expect(output).toContain("generic Ubuntu 24.04 ARM64");
     expect(output).toContain("OTA-form DGX OS 7.2.0, 7.4.0, or 7.5.0");
-    expect(output).toContain(
-      'no-OTA DGX OS 7.6.x profile with DGX_PRETTY_NAME="NVIDIA DGX GB300WS" or DGX_PRETTY_NAME="NVIDIA DGX Server"',
-    );
+    expect(output).toContain("no-OTA DGX OS 7.6.x profile");
+    expect(output).toContain("DGX_PRETTY_NAME is diagnostic and does not determine qualification");
     expect(output).not.toContain("PROMPT_REACHED");
   });
 

@@ -299,13 +299,15 @@ function canonicalDockerAcceleration(
       gpuSelectors.push("all");
       continue;
     }
-    if (/^docker-device-request:[^:]+:count=-1$/u.test(selector)) {
+    if (selector === "docker-device-request:nvidia:count=-1") {
       gpuSelectors.push("all");
       continue;
     }
-    const legacyDevice = selector.match(/^docker-(?:device-id|nvidia-visible-device):(.+)$/u)?.[1];
+    const legacyDevice = selector.match(
+      /^docker-(?:device-id:(nvidia[.]com\/gpu=.+)|nvidia-visible-device:(.+))$/u,
+    );
     if (legacyDevice) {
-      gpuSelectors.push(legacyDevice);
+      gpuSelectors.push(legacyDevice[1] ?? legacyDevice[2]);
       continue;
     }
     if (/^nvidia[.]com\/gpu=/iu.test(selector)) {
@@ -319,7 +321,7 @@ function canonicalDockerAcceleration(
       ...canonicalDockerGpuSelection(gpuSelectors),
       ...new Set(pathSelectors),
     ].sort();
-    return devices.length > 0 ? { kind: "gpu", vendor: "nvidia", devices } : null;
+    return gpuSelectors.length > 0 ? { kind: "gpu", vendor: "nvidia", devices } : null;
   } catch {
     return null;
   }
@@ -380,7 +382,7 @@ function dockerGpuSelectors(
   }
   const devices = [...new Set(selectors)].sort();
   if (
-    devices.length === 0 ||
+    selectedDevices.length === 0 ||
     devices.some(
       (device) =>
         device.trim() === "" ||

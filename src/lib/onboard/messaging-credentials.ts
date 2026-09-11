@@ -19,11 +19,11 @@ export interface RecordedMessagingChannelsOptions {
   sandboxName: string | null;
   channels: unknown[];
   getCredential(envKey: string): string | null | undefined;
-  providerExistsInGateway(name: string): boolean;
+  providerExistsInGateway(name: string): boolean | Promise<boolean>;
   isNonInteractive(): boolean;
 }
 
-export function getRecordedMessagingChannelsForResume({
+export async function getRecordedMessagingChannelsForResume({
   resume,
   sessionMessagingChannels,
   sandboxName,
@@ -31,7 +31,7 @@ export function getRecordedMessagingChannelsForResume({
   getCredential,
   providerExistsInGateway,
   isNonInteractive,
-}: RecordedMessagingChannelsOptions): string[] | null {
+}: RecordedMessagingChannelsOptions): Promise<string[] | null> {
   return require("./messaging-reuse").getNonInteractiveStoredMessagingChannels(
     resume,
     sessionMessagingChannels,

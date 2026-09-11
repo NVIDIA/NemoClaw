@@ -351,14 +351,14 @@ export function ordinaryOpenClawPairingIncompleteMessage(
 }
 
 export const finalizationHandlerDeps = {
-  waitForSandboxControlPlaneReady(name: string): boolean {
+  async waitForSandboxControlPlaneReady(name: string): Promise<boolean> {
     return finalizationHandlerRuntime
       .loadProcessRecovery()
       .waitForRecreatedSandboxOpenShellReady(name);
   },
-  checkAndRecoverSandboxProcesses(name: string, options: { quiet: boolean }): void {
+  async checkAndRecoverSandboxProcesses(name: string, options: { quiet: boolean }): Promise<void> {
     const processRecovery = finalizationHandlerRuntime.loadProcessRecovery();
-    processRecovery.checkAndRecoverSandboxProcesses(name, options);
+    await processRecovery.checkAndRecoverSandboxProcesses(name, options);
   },
   settleOrdinaryOpenClawPairing(name: string): Promise<OrdinaryOpenClawPairingSettlementResult> {
     return settleOrdinaryOpenClawPairing(name, defaultPairingSettlementDeps());

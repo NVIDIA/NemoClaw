@@ -12,24 +12,27 @@ import { testTimeout } from "../helpers/timeouts";
 
 const PROVIDER_SELECTION_TEST_TIMEOUT_MS = testTimeout(60_000);
 
-describe("onboard provider selection vLLM UX", {
-  timeout: PROVIDER_SELECTION_TEST_TIMEOUT_MS,
-}, () => {
-  it("offers detected running vLLM without requiring a rerun", () => {
-    const repoRoot = path.join(import.meta.dirname, "../..");
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-vllm-running-"));
-    const fakeBin = path.join(tmpDir, "bin");
-    const scriptPath = path.join(tmpDir, "vllm-running-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const credentialsPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
-    );
-    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
+describe(
+  "onboard provider selection vLLM UX",
+  {
+    timeout: PROVIDER_SELECTION_TEST_TIMEOUT_MS,
+  },
+  () => {
+    it("offers detected running vLLM without requiring a rerun", () => {
+      const repoRoot = path.join(import.meta.dirname, "../..");
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-vllm-running-"));
+      const fakeBin = path.join(tmpDir, "bin");
+      const scriptPath = path.join(tmpDir, "vllm-running-check.js");
+      const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
+      const credentialsPath = JSON.stringify(
+        path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
+      );
+      const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
 
-    fs.mkdirSync(fakeBin, { recursive: true });
-    fs.writeFileSync(
-      path.join(fakeBin, "curl"),
-      `#!/usr/bin/env bash
+      fs.mkdirSync(fakeBin, { recursive: true });
+      fs.writeFileSync(
+        path.join(fakeBin, "curl"),
+        `#!/usr/bin/env bash
 body='{"id":"ok"}'
 status="200"
 outfile=""
@@ -42,9 +45,9 @@ done
 printf '%s' "$body" > "$outfile"
 printf '%s' "$status"
 `,
-      { mode: 0o755 },
-    );
-    const script = String.raw`
+        { mode: 0o755 },
+      );
+      const script = String.raw`
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
@@ -104,59 +107,64 @@ const { setupNim } = require(${onboardPath});
   process.exit(1);
 });
 `;
-    fs.writeFileSync(scriptPath, script);
+      fs.writeFileSync(scriptPath, script);
 
-    const result = spawnSync(process.execPath, [scriptPath], {
-      cwd: repoRoot,
-      encoding: "utf-8",
-      env: {
-        ...process.env,
-        HOME: tmpDir,
-        PATH: `${fakeBin}:${process.env.PATH || ""}`,
-        NEMOCLAW_EXPERIMENTAL: "",
-        NEMOCLAW_PROVIDER: "",
-        NEMOCLAW_CONTEXT_WINDOW: "",
-      },
+      const result = spawnSync(process.execPath, [scriptPath], {
+        cwd: repoRoot,
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          HOME: tmpDir,
+          PATH: `${fakeBin}:${process.env.PATH || ""}`,
+          NEMOCLAW_EXPERIMENTAL: "",
+          NEMOCLAW_PROVIDER: "",
+          NEMOCLAW_CONTEXT_WINDOW: "",
+        },
+      });
+
+      expect(result.status).toBe(0);
+      expect(result.stdout.trim()).not.toBe("");
+      const payload = JSON.parse(result.stdout.trim());
+      assert.equal(payload.result.provider, "vllm-local");
+      assert.equal(payload.result.model, "meta-llama/Llama-3.3-70B-Instruct");
+      assert.equal(payload.result.preferredInferenceApi, "openai-completions");
+      assert.equal(payload.contextWindow, "65536");
+      assert.equal(
+        payload.messages.filter((message: string) => /Choose \[/.test(message)).length,
+        1,
+      );
+      assert.ok(
+        payload.lines.some((line: string) =>
+          line.includes("Detected local inference option: vLLM"),
+        ),
+      );
+      assert.ok(
+        payload.lines.some((line: string) => line.includes("Using vLLM max_model_len: 65536")),
+      );
+      assert.ok(
+        payload.lines.some((line: string) =>
+          /^\s*\d+\) Local vLLM \[experimental\] \(localhost:8000\) — running \(suggested\)/.test(
+            line,
+          ),
+        ),
+      );
+      assert.ok(!payload.lines.some((line: string) => line.includes("rerun the same command")));
     });
 
-    expect(result.status).toBe(0);
-    expect(result.stdout.trim()).not.toBe("");
-    const payload = JSON.parse(result.stdout.trim());
-    assert.equal(payload.result.provider, "vllm-local");
-    assert.equal(payload.result.model, "meta-llama/Llama-3.3-70B-Instruct");
-    assert.equal(payload.result.preferredInferenceApi, "openai-completions");
-    assert.equal(payload.contextWindow, "65536");
-    assert.equal(payload.messages.filter((message: string) => /Choose \[/.test(message)).length, 1);
-    assert.ok(
-      payload.lines.some((line: string) => line.includes("Detected local inference option: vLLM")),
-    );
-    assert.ok(
-      payload.lines.some((line: string) => line.includes("Using vLLM max_model_len: 65536")),
-    );
-    assert.ok(
-      payload.lines.some((line: string) =>
-        /^\s*\d+\) Local vLLM \[experimental\] \(localhost:8000\) — running \(suggested\)/.test(
-          line,
-        ),
-      ),
-    );
-    assert.ok(!payload.lines.some((line: string) => line.includes("rerun the same command")));
-  });
+    it("does not apply detected vLLM max_model_len when validation returns to provider selection", () => {
+      const repoRoot = path.join(import.meta.dirname, "../..");
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-vllm-validation-"));
+      const scriptPath = path.join(tmpDir, "vllm-validation-context-check.js");
+      const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
+      const credentialsPath = JSON.stringify(
+        path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
+      );
+      const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
+      const validationPath = JSON.stringify(
+        path.join(repoRoot, "src", "lib", "onboard", "inference-selection-validation.ts"),
+      );
 
-  it("does not apply detected vLLM max_model_len when validation returns to provider selection", () => {
-    const repoRoot = path.join(import.meta.dirname, "../..");
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-vllm-validation-"));
-    const scriptPath = path.join(tmpDir, "vllm-validation-context-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const credentialsPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
-    );
-    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
-    const validationPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "onboard", "inference-selection-validation.ts"),
-    );
-
-    const script = String.raw`
+      const script = String.raw`
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 const validationHelpers = require(${validationPath});
@@ -232,47 +240,50 @@ const { setupNim } = require(${onboardPath});
   process.exit(1);
 });
 `;
-    fs.writeFileSync(scriptPath, script);
+      fs.writeFileSync(scriptPath, script);
 
-    const result = spawnSync(process.execPath, [scriptPath], {
-      cwd: repoRoot,
-      encoding: "utf-8",
-      env: {
-        ...process.env,
-        HOME: tmpDir,
-        NEMOCLAW_EXPERIMENTAL: "",
-        NEMOCLAW_PROVIDER: "",
-        NEMOCLAW_CONTEXT_WINDOW: "",
-      },
+      const result = spawnSync(process.execPath, [scriptPath], {
+        cwd: repoRoot,
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          HOME: tmpDir,
+          NEMOCLAW_EXPERIMENTAL: "",
+          NEMOCLAW_PROVIDER: "",
+          NEMOCLAW_CONTEXT_WINDOW: "",
+        },
+      });
+
+      expect(result.status).toBe(0);
+      expect(result.stdout.trim()).not.toBe("");
+      const payload = JSON.parse(result.stdout.trim());
+      assert.equal(payload.contextWindow, null);
+      assert.equal(
+        payload.messages.filter((message: string) => /Choose \[/.test(message)).length,
+        2,
+      );
+      assert.ok(
+        payload.lines.some((line: string) =>
+          line.includes("Detected model: meta-llama/Llama-3.3-70B-Instruct"),
+        ),
+      );
+      assert.ok(
+        !payload.lines.some((line: string) => line.includes("Using vLLM max_model_len: 65536")),
+      );
     });
 
-    expect(result.status).toBe(0);
-    expect(result.stdout.trim()).not.toBe("");
-    const payload = JSON.parse(result.stdout.trim());
-    assert.equal(payload.contextWindow, null);
-    assert.equal(payload.messages.filter((message: string) => /Choose \[/.test(message)).length, 2);
-    assert.ok(
-      payload.lines.some((line: string) =>
-        line.includes("Detected model: meta-llama/Llama-3.3-70B-Instruct"),
-      ),
-    );
-    assert.ok(
-      !payload.lines.some((line: string) => line.includes("Using vLLM max_model_len: 65536")),
-    );
-  });
+    it("does not turn non-interactive NEMOCLAW_PROVIDER=vllm into managed install-vllm", () => {
+      const repoRoot = path.join(import.meta.dirname, "../..");
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-vllm-no-install-"));
+      const scriptPath = path.join(tmpDir, "vllm-no-install-check.js");
+      const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
+      const credentialsPath = JSON.stringify(
+        path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
+      );
+      const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
+      const vllmPath = JSON.stringify(path.join(repoRoot, "src", "lib", "inference", "vllm.ts"));
 
-  it("does not turn non-interactive NEMOCLAW_PROVIDER=vllm into managed install-vllm", () => {
-    const repoRoot = path.join(import.meta.dirname, "../..");
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-vllm-no-install-"));
-    const scriptPath = path.join(tmpDir, "vllm-no-install-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const credentialsPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
-    );
-    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
-    const vllmPath = JSON.stringify(path.join(repoRoot, "src", "lib", "inference", "vllm.ts"));
-
-    const script = String.raw`
+      const script = String.raw`
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 const vllm = require(${vllmPath});
@@ -305,84 +316,84 @@ const { setupNim } = require(${onboardPath});
   process.exit(1);
 });
 `;
-    fs.writeFileSync(scriptPath, script);
+      fs.writeFileSync(scriptPath, script);
 
-    const result = spawnSync(process.execPath, [scriptPath], {
-      cwd: repoRoot,
-      encoding: "utf-8",
-      env: {
-        ...process.env,
-        HOME: tmpDir,
-        NEMOCLAW_NON_INTERACTIVE: "1",
-        NEMOCLAW_PROVIDER: "vllm",
-        NEMOCLAW_EXPERIMENTAL: "",
-      },
+      const result = spawnSync(process.execPath, [scriptPath], {
+        cwd: repoRoot,
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          HOME: tmpDir,
+          NEMOCLAW_NON_INTERACTIVE: "1",
+          NEMOCLAW_PROVIDER: "vllm",
+          NEMOCLAW_EXPERIMENTAL: "",
+        },
+      });
+
+      assert.equal(result.status, 1);
+      assert.match(result.stderr, /Requested provider 'vllm' is not available/);
+      assert.doesNotMatch(result.stderr, /INSTALL_VLLM_CALLED/);
     });
 
-    assert.equal(result.status, 1);
-    assert.match(result.stderr, /Requested provider 'vllm' is not available/);
-    assert.doesNotMatch(result.stderr, /INSTALL_VLLM_CALLED/);
-  });
+    it("surfaces managed vLLM by default on accepted NVIDIA platforms", () => {
+      const repoRoot = path.join(import.meta.dirname, "../..");
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-vllm-platform-"));
+      const fakeBin = path.join(tmpDir, "bin");
+      const scriptPath = path.join(tmpDir, "vllm-platform-menu-check.js");
+      const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
+      const credentialsPath = JSON.stringify(
+        path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
+      );
+      const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
+      const dockerRunPath = JSON.stringify(
+        path.join(repoRoot, "src", "lib", "adapters", "docker", "run.ts"),
+      );
+      type VllmPlatformScenario =
+        | {
+            name: string;
+            gpu: { type: string; platform: string };
+            vllmExpected: true;
+            platformLabel: string;
+            deferredPreviewExpected: boolean;
+          }
+        | {
+            name: string;
+            gpu: { type: string; platform: string };
+            vllmExpected: false;
+          };
+      const scenarios: VllmPlatformScenario[] = [
+        {
+          name: "spark",
+          gpu: { type: "nvidia", platform: "spark" },
+          vllmExpected: true,
+          platformLabel: "DGX Spark",
+          deferredPreviewExpected: false,
+        },
+        {
+          name: "station",
+          gpu: { type: "nvidia", platform: "station" },
+          vllmExpected: true,
+          platformLabel: "DGX Station",
+          deferredPreviewExpected: false,
+        },
+        {
+          name: "n1x",
+          gpu: { type: "nvidia", platform: "n1x" },
+          vllmExpected: true,
+          platformLabel: "N1x",
+          deferredPreviewExpected: true,
+        },
+        {
+          name: "linux",
+          gpu: { type: "nvidia", platform: "linux" },
+          vllmExpected: false,
+        },
+      ];
 
-  it("surfaces managed vLLM by default on accepted NVIDIA platforms", () => {
-    const repoRoot = path.join(import.meta.dirname, "../..");
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-vllm-platform-"));
-    const fakeBin = path.join(tmpDir, "bin");
-    const scriptPath = path.join(tmpDir, "vllm-platform-menu-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const credentialsPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
-    );
-    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
-    const dockerRunPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "adapters", "docker", "run.ts"),
-    );
-    type VllmPlatformScenario =
-      | {
-          name: string;
-          gpu: { type: string; platform: string };
-          vllmExpected: true;
-          platformLabel: string;
-          deferredPreviewExpected: boolean;
-        }
-      | {
-          name: string;
-          gpu: { type: string; platform: string };
-          vllmExpected: false;
-        };
-    const scenarios: VllmPlatformScenario[] = [
-      {
-        name: "spark",
-        gpu: { type: "nvidia", platform: "spark" },
-        vllmExpected: true,
-        platformLabel: "DGX Spark",
-        deferredPreviewExpected: false,
-      },
-      {
-        name: "station",
-        gpu: { type: "nvidia", platform: "station" },
-        vllmExpected: true,
-        platformLabel: "DGX Station",
-        deferredPreviewExpected: false,
-      },
-      {
-        name: "n1x",
-        gpu: { type: "nvidia", platform: "n1x" },
-        vllmExpected: true,
-        platformLabel: "N1x",
-        deferredPreviewExpected: true,
-      },
-      {
-        name: "linux",
-        gpu: { type: "nvidia", platform: "linux" },
-        vllmExpected: false,
-      },
-    ];
-
-    fs.mkdirSync(fakeBin, { recursive: true });
-    fs.writeFileSync(
-      path.join(fakeBin, "curl"),
-      `#!/usr/bin/env bash
+      fs.mkdirSync(fakeBin, { recursive: true });
+      fs.writeFileSync(
+        path.join(fakeBin, "curl"),
+        `#!/usr/bin/env bash
 body='{"id":"ok"}'
 status="200"
 outfile=""
@@ -395,10 +406,10 @@ done
 printf '%s' "$body" > "$outfile"
 printf '%s' "$status"
 `,
-      { mode: 0o755 },
-    );
+        { mode: 0o755 },
+      );
 
-    const script = String.raw`
+      const script = String.raw`
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 const dockerRun = require(${dockerRunPath});
@@ -463,70 +474,70 @@ async function runScenario(scenario) {
   process.exit(1);
 });
 `;
-    fs.writeFileSync(scriptPath, script);
+      fs.writeFileSync(scriptPath, script);
 
-    const result = spawnSync(process.execPath, [scriptPath], {
-      cwd: repoRoot,
-      encoding: "utf-8",
-      env: {
-        ...process.env,
-        HOME: tmpDir,
-        PATH: `${fakeBin}:${process.env.PATH || ""}`,
-        NEMOCLAW_NON_INTERACTIVE: "",
-        NEMOCLAW_EXPERIMENTAL: "",
-        NEMOCLAW_PROVIDER: "",
-        NEMOCLAW_MODEL: "",
-      },
-    });
+      const result = spawnSync(process.execPath, [scriptPath], {
+        cwd: repoRoot,
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          HOME: tmpDir,
+          PATH: `${fakeBin}:${process.env.PATH || ""}`,
+          NEMOCLAW_NON_INTERACTIVE: "",
+          NEMOCLAW_EXPERIMENTAL: "",
+          NEMOCLAW_PROVIDER: "",
+          NEMOCLAW_MODEL: "",
+        },
+      });
 
-    assert.equal(result.status, 0, result.stderr);
-    assert.notEqual(result.stdout.trim(), "");
-    const payload = JSON.parse(result.stdout.trim());
+      assert.equal(result.status, 0, result.stderr);
+      assert.notEqual(result.stdout.trim(), "");
+      const payload = JSON.parse(result.stdout.trim());
 
-    scenarios.forEach((scenario) => {
-      const scenarioResult = payload.results.find(
-        (entry: { name: string }) => entry.name === scenario.name,
-      );
-      assert.ok(scenarioResult, scenario.name);
-      const menuOutput = scenarioResult.lines.join("\n");
-      assert.ok(
-        scenarioResult.messages.some((message: string) => /Choose \[/.test(message)),
-        scenario.name,
-      );
-      assert.ok(menuOutput.length > 0, `${scenario.name}: empty menu output`);
-
-      if (scenario.vllmExpected) {
+      scenarios.forEach((scenario) => {
+        const scenarioResult = payload.results.find(
+          (entry: { name: string }) => entry.name === scenario.name,
+        );
+        assert.ok(scenarioResult, scenario.name);
+        const menuOutput = scenarioResult.lines.join("\n");
         assert.ok(
-          menuOutput.includes(`Install vLLM (${scenario.platformLabel})`) ||
-            menuOutput.includes(`Start vLLM (${scenario.platformLabel})`),
+          scenarioResult.messages.some((message: string) => /Choose \[/.test(message)),
           scenario.name,
         );
-        assert.equal(
-          /\[Deferred preview\]/.test(menuOutput),
-          scenario.deferredPreviewExpected,
-          scenario.name,
-        );
-      } else {
-        assert.doesNotMatch(menuOutput, /Install vLLM \(/);
-        assert.doesNotMatch(menuOutput, /Start vLLM \(/);
-      }
+        assert.ok(menuOutput.length > 0, `${scenario.name}: empty menu output`);
+
+        if (scenario.vllmExpected) {
+          assert.ok(
+            menuOutput.includes(`Install vLLM (${scenario.platformLabel})`) ||
+              menuOutput.includes(`Start vLLM (${scenario.platformLabel})`),
+            scenario.name,
+          );
+          assert.equal(
+            /\[Deferred preview\]/.test(menuOutput),
+            scenario.deferredPreviewExpected,
+            scenario.name,
+          );
+        } else {
+          assert.doesNotMatch(menuOutput, /Install vLLM \(/);
+          assert.doesNotMatch(menuOutput, /Start vLLM \(/);
+        }
+      });
     });
-  });
 
-  it("surfaces a precise error when NEMOCLAW_PROVIDER=install-vllm but no vLLM profile is detected (#3765)", () => {
-    const repoRoot = path.join(import.meta.dirname, "../..");
-    const tmpDir = fs.mkdtempSync(
-      path.join(os.tmpdir(), "nemoclaw-onboard-install-vllm-no-profile-"),
-    );
-    const scriptPath = path.join(tmpDir, "install-vllm-no-profile-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const credentialsPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
-    );
-    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
-    const vllmPath = JSON.stringify(path.join(repoRoot, "src", "lib", "inference", "vllm.ts"));
+    it("surfaces a precise error when NEMOCLAW_PROVIDER=install-vllm but no vLLM profile is detected (#3765)", () => {
+      const repoRoot = path.join(import.meta.dirname, "../..");
+      const tmpDir = fs.mkdtempSync(
+        path.join(os.tmpdir(), "nemoclaw-onboard-install-vllm-no-profile-"),
+      );
+      const scriptPath = path.join(tmpDir, "install-vllm-no-profile-check.js");
+      const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
+      const credentialsPath = JSON.stringify(
+        path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
+      );
+      const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
+      const vllmPath = JSON.stringify(path.join(repoRoot, "src", "lib", "inference", "vllm.ts"));
 
-    const script = String.raw`
+      const script = String.raw`
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 const vllm = require(${vllmPath});
@@ -562,40 +573,42 @@ const { setupNim } = require(${onboardPath});
   process.exit(1);
 });
 `;
-    fs.writeFileSync(scriptPath, script);
+      fs.writeFileSync(scriptPath, script);
 
-    const result = spawnSync(process.execPath, [scriptPath], {
-      cwd: repoRoot,
-      encoding: "utf-8",
-      env: {
-        ...process.env,
-        HOME: tmpDir,
-        NEMOCLAW_NON_INTERACTIVE: "1",
-        NEMOCLAW_PROVIDER: "install-vllm",
-        NEMOCLAW_EXPERIMENTAL: "1",
-      },
+      const result = spawnSync(process.execPath, [scriptPath], {
+        cwd: repoRoot,
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          HOME: tmpDir,
+          NEMOCLAW_NON_INTERACTIVE: "1",
+          NEMOCLAW_PROVIDER: "install-vllm",
+          NEMOCLAW_EXPERIMENTAL: "1",
+        },
+      });
+
+      assert.equal(result.status, 1);
+      // The fix routes the explicit opt-in through the install-vllm dispatcher,
+      // which emits a precise message instead of the generic "Requested provider
+      // 'install-vllm' is not available in this environment." that hid the cause.
+      assert.match(result.stderr, /No vLLM install profile available for this host\./);
+      assert.doesNotMatch(result.stderr, /Requested provider 'install-vllm' is not available/);
+      assert.doesNotMatch(result.stderr, /INSTALL_VLLM_CALLED/);
     });
 
-    assert.equal(result.status, 1);
-    // The fix routes the explicit opt-in through the install-vllm dispatcher,
-    // which emits a precise message instead of the generic "Requested provider
-    // 'install-vllm' is not available in this environment." that hid the cause.
-    assert.match(result.stderr, /No vLLM install profile available for this host\./);
-    assert.doesNotMatch(result.stderr, /Requested provider 'install-vllm' is not available/);
-    assert.doesNotMatch(result.stderr, /INSTALL_VLLM_CALLED/);
-  });
+    it("rejects a running vLLM model that differs from NEMOCLAW_VLLM_MODEL", () => {
+      const repoRoot = path.join(import.meta.dirname, "../..");
+      const tmpDir = fs.mkdtempSync(
+        path.join(os.tmpdir(), "nemoclaw-onboard-install-vllm-running-"),
+      );
+      const scriptPath = path.join(tmpDir, "install-vllm-running-check.js");
+      const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
+      const credentialsPath = JSON.stringify(
+        path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
+      );
+      const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
 
-  it("rejects a running vLLM model that differs from NEMOCLAW_VLLM_MODEL", () => {
-    const repoRoot = path.join(import.meta.dirname, "../..");
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-install-vllm-running-"));
-    const scriptPath = path.join(tmpDir, "install-vllm-running-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const credentialsPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
-    );
-    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
-
-    const script = String.raw`
+      const script = String.raw`
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
@@ -630,42 +643,42 @@ const { setupNim } = require(${onboardPath});
   process.exit(1);
 });
 `;
-    fs.writeFileSync(scriptPath, script);
+      fs.writeFileSync(scriptPath, script);
 
-    const result = spawnSync(process.execPath, [scriptPath], {
-      cwd: repoRoot,
-      encoding: "utf-8",
-      env: {
-        ...process.env,
-        HOME: tmpDir,
-        NEMOCLAW_NON_INTERACTIVE: "1",
-        NEMOCLAW_PROVIDER: "install-vllm",
-        NEMOCLAW_VLLM_MODEL: "nemotron-3.5-lightning-30b",
-        NEMOCLAW_EXPERIMENTAL: "1",
-      },
+      const result = spawnSync(process.execPath, [scriptPath], {
+        cwd: repoRoot,
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          HOME: tmpDir,
+          NEMOCLAW_NON_INTERACTIVE: "1",
+          NEMOCLAW_PROVIDER: "install-vllm",
+          NEMOCLAW_VLLM_MODEL: "nemotron-3.5-lightning-30b",
+          NEMOCLAW_EXPERIMENTAL: "1",
+        },
+      });
+
+      assert.equal(result.status, 1);
+      assert.match(result.stderr, /Detected vLLM model 'muse-glimmer' does not match/);
+      assert.match(result.stderr, /nvidia-nemotron-3\.5-lightning-30b-a3b-nvfp4/);
+      assert.doesNotMatch(result.stdout, /Detected model:/);
     });
 
-    assert.equal(result.status, 1);
-    assert.match(result.stderr, /Detected vLLM model 'muse-glimmer' does not match/);
-    assert.match(result.stderr, /nvidia-nemotron-3\.5-lightning-30b-a3b-nvfp4/);
-    assert.doesNotMatch(result.stdout, /Detected model:/);
-  });
+    it("adopts an existing Ultra served alias during Station express (#7023)", () => {
+      const repoRoot = path.join(import.meta.dirname, "../..");
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-ultra-alias-"));
+      const fakeBin = path.join(tmpDir, "bin");
+      const scriptPath = path.join(tmpDir, "station-ultra-alias-check.js");
+      const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
+      const credentialsPath = JSON.stringify(
+        path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
+      );
+      const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
 
-  it("adopts an existing Ultra served alias during Station express (#7023)", () => {
-    const repoRoot = path.join(import.meta.dirname, "../..");
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-ultra-alias-"));
-    const fakeBin = path.join(tmpDir, "bin");
-    const scriptPath = path.join(tmpDir, "station-ultra-alias-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const credentialsPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
-    );
-    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
-
-    fs.mkdirSync(fakeBin, { recursive: true });
-    fs.writeFileSync(
-      path.join(fakeBin, "curl"),
-      `#!/usr/bin/env bash
+      fs.mkdirSync(fakeBin, { recursive: true });
+      fs.writeFileSync(
+        path.join(fakeBin, "curl"),
+        `#!/usr/bin/env bash
 body='{"id":"ok"}'
 status="200"
 outfile=""
@@ -678,9 +691,9 @@ done
 printf '%s' "$body" > "$outfile"
 printf '%s' "$status"
 `,
-      { mode: 0o755 },
-    );
-    const script = String.raw`
+        { mode: 0o755 },
+      );
+      const script = String.raw`
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
@@ -716,28 +729,29 @@ const { setupNim } = require(${onboardPath});
   process.exit(1);
 });
 `;
-    fs.writeFileSync(scriptPath, script);
+      fs.writeFileSync(scriptPath, script);
 
-    const result = spawnSync(process.execPath, [scriptPath], {
-      cwd: repoRoot,
-      encoding: "utf-8",
-      env: {
-        ...process.env,
-        HOME: tmpDir,
-        PATH: `${fakeBin}:${process.env.PATH || ""}`,
-        NEMOCLAW_NON_INTERACTIVE: "1",
-        NEMOCLAW_PROVIDER: "install-vllm",
-        NEMOCLAW_VLLM_MODEL: "nemotron-3-ultra-550b-a55b",
-      },
+      const result = spawnSync(process.execPath, [scriptPath], {
+        cwd: repoRoot,
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          HOME: tmpDir,
+          PATH: `${fakeBin}:${process.env.PATH || ""}`,
+          NEMOCLAW_NON_INTERACTIVE: "1",
+          NEMOCLAW_PROVIDER: "install-vllm",
+          NEMOCLAW_VLLM_MODEL: "nemotron-3-ultra-550b-a55b",
+        },
+      });
+
+      assert.equal(result.status, 0, result.stderr);
+      assert.match(
+        result.stdout,
+        /NEMOCLAW_PROVIDER=install-vllm requested, but vLLM is already running on localhost:8000 — selecting the running instance\./,
+      );
+      assert.match(result.stdout, /Detected model: nemotron-ultra/);
+      assert.match(result.stdout, /SELECTED vllm-local nemotron-ultra/);
+      assert.doesNotMatch(result.stderr, /does not match/);
     });
-
-    assert.equal(result.status, 0, result.stderr);
-    assert.match(
-      result.stdout,
-      /NEMOCLAW_PROVIDER=install-vllm requested, but vLLM is already running on localhost:8000 — selecting the running instance\./,
-    );
-    assert.match(result.stdout, /Detected model: nemotron-ultra/);
-    assert.match(result.stdout, /SELECTED vllm-local nemotron-ultra/);
-    assert.doesNotMatch(result.stderr, /does not match/);
-  });
-});
+  },
+);

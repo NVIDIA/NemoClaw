@@ -8,7 +8,6 @@ import {
   canRecreateMissingRebuildGatewayProvider,
   checkRebuildGatewayCredentialReuseOrBail,
   checkRebuildGatewayProviderOrBail,
-  classifyRebuildGatewayProviderRegistration,
   inspectRebuildGatewayProviderRegistration,
   shouldVerifyRebuildGatewayProvider,
 } from "./rebuild-provider-preflight";
@@ -55,7 +54,7 @@ afterEach(() => {
 });
 
 describe("shouldVerifyRebuildGatewayProvider", () => {
-  it("requires remote registrations while allowing reconstructible local registrations", () => {
+  it("requires remote registrations while allowing reconstructible local registrations", async () => {
     expect(shouldVerifyRebuildGatewayProvider("nvidia-prod")).toBe(true);
     expect(shouldVerifyRebuildGatewayProvider("ollama-local")).toBe(false);
     expect(shouldVerifyRebuildGatewayProvider("vllm-local")).toBe(false);
@@ -64,14 +63,16 @@ describe("shouldVerifyRebuildGatewayProvider", () => {
     const bail = vi.fn(() => {
       throw new Error("local provider must not require an existing gateway registration");
     });
-    expect(checkRebuildGatewayProviderOrBail("ollama-local", null, log, bail)).toBe(true);
+    await expect(checkRebuildGatewayProviderOrBail("ollama-local", null, log, bail)).resolves.toBe(
+      true,
+    );
     expect(log).not.toHaveBeenCalled();
     expect(bail).not.toHaveBeenCalled();
   });
 });
 
 describe("canRecreateMissingRebuildGatewayProvider", () => {
-  it("requires a canonical provider and its exact credential binding (#6114)", () => {
+  it("requires a canonical provider and its exact credential binding (#6114)", async () => {
     expect(
       canRecreateMissingRebuildGatewayProvider("compatible-endpoint", "COMPATIBLE_API_KEY"),
     ).toBe(true);
@@ -88,115 +89,8 @@ describe("canRecreateMissingRebuildGatewayProvider", () => {
   });
 });
 
-describe("classifyRebuildGatewayProviderRegistration", () => {
-  it("distinguishes explicit absence from an indeterminate lookup failure (#6114)", () => {
-    expect(
-      classifyRebuildGatewayProviderRegistration(
-        {
-          status: 1,
-          stderr: "Error: provider 'compatible-endpoint' not found",
-        },
-        "compatible-endpoint",
-      ),
-    ).toBe("missing");
-    expect(
-      classifyRebuildGatewayProviderRegistration(
-        {
-          status: 1,
-          stderr:
-            "Error:   × code: 'Some requested entity was not found', message: \"provider not found\"",
-        },
-        "compatible-endpoint",
-      ),
-    ).toBe("missing");
-    expect(
-      classifyRebuildGatewayProviderRegistration(
-        {
-          status: 1,
-          stderr:
-            'Error: status: NotFound, message: "provider not found", details: [], metadata: MetadataMap { headers: {} }',
-        },
-        "compatible-endpoint",
-      ),
-    ).toBe("missing");
-    expect(
-      classifyRebuildGatewayProviderRegistration(
-        {
-          status: 7,
-          stderr: "gateway transport unavailable",
-        },
-        "compatible-endpoint",
-      ),
-    ).toBe("indeterminate");
-    expect(
-      classifyRebuildGatewayProviderRegistration(
-        {
-          status: 7,
-          stderr: "provider lookup failed because gateway was not found",
-        },
-        "compatible-endpoint",
-      ),
-    ).toBe("indeterminate");
-    expect(
-      classifyRebuildGatewayProviderRegistration(
-        { status: 1, stderr: "provider lookup not found" },
-        "compatible-endpoint",
-      ),
-    ).toBe("indeterminate");
-    expect(
-      classifyRebuildGatewayProviderRegistration(
-        { status: 1, stderr: "provider 'other-provider' not found" },
-        "compatible-endpoint",
-      ),
-    ).toBe("indeterminate");
-    expect(
-      classifyRebuildGatewayProviderRegistration(
-        {
-          status: 7,
-          stderr: 'Error: status: Unavailable, message: "provider not found"',
-        },
-        "compatible-endpoint",
-      ),
-    ).toBe("indeterminate");
-    expect(
-      classifyRebuildGatewayProviderRegistration(
-        {
-          status: 1,
-          stderr: 'Error: status: NotFound, message: "gateway not found"',
-        },
-        "compatible-endpoint",
-      ),
-    ).toBe("indeterminate");
-    expect(
-      classifyRebuildGatewayProviderRegistration(
-        {
-          status: 1,
-          stderr: [
-            'Error: status: NotFound, message: "gateway not found"',
-            'Error: status: Unavailable, message: "provider not found"',
-          ].join("\n"),
-        },
-        "compatible-endpoint",
-      ),
-    ).toBe("indeterminate");
-    expect(
-      classifyRebuildGatewayProviderRegistration(
-        {
-          status: 1,
-          stderr:
-            'Error: status: NotFound, message: "gateway not found"; status: Unavailable, message: "provider not found"',
-        },
-        "compatible-endpoint",
-      ),
-    ).toBe("indeterminate");
-    expect(classifyRebuildGatewayProviderRegistration({ status: 0 }, "compatible-endpoint")).toBe(
-      "registered",
-    );
-  });
-});
-
 describe("inspectRebuildGatewayProviderRegistration", () => {
-  it("pins the delete-edge lookup to the frozen target under hostile ambient selectors (#10514)", () => {
+  it("pins the delete-edge lookup to the frozen target under hostile ambient selectors (#10514)", async () => {
     vi.stubEnv("OPENSHELL_GATEWAY", "hostile-gateway");
     vi.stubEnv("OPENSHELL_WORKSPACE", "hostile-workspace");
     vi.stubEnv("OPENSHELL_LOCAL_TLS_DIR", "/hostile/tls");
@@ -212,14 +106,14 @@ describe("inspectRebuildGatewayProviderRegistration", () => {
       localTlsDir: "/authority/tls",
     };
 
-    expect(
+    await expect(
       inspectRebuildGatewayProviderRegistration(
         "compatible-endpoint",
         vi.fn(),
         "Delete-edge",
         runtimeSelection,
       ),
-    ).toBe("missing");
+    ).resolves.toBe("missing");
 
     expect(runOpenshell).toHaveBeenCalledWith(
       ["provider", "get", "compatible-endpoint"],
@@ -238,27 +132,27 @@ describe("inspectRebuildGatewayProviderRegistration", () => {
 });
 
 describe("checkRebuildGatewayCredentialReuseOrBail", () => {
-  it("accepts an exact complete registry route and gateway provider identity", () => {
-    expect(
+  it("accepts an exact complete registry route and gateway provider identity", async () => {
+    await expect(
       checkRebuildGatewayCredentialReuseOrBail("alpha", config(), false, vi.fn(), throwingBail, {
-        readGatewayProviderMetadata: () => exactGatewayProvider,
+        readGatewayProviderMetadata: async () => exactGatewayProvider,
         readRecordedProviderEndpoints: () => [],
       }),
-    ).toBe(true);
+    ).resolves.toBe(true);
   });
 
-  it("preserves normal host-key validation without reading gateway recovery metadata", () => {
+  it("preserves normal host-key validation without reading gateway recovery metadata", async () => {
     const readGatewayProviderMetadata = vi.fn();
-    expect(
+    await expect(
       checkRebuildGatewayCredentialReuseOrBail("alpha", config(), true, vi.fn(), throwingBail, {
         readGatewayProviderMetadata,
         readRecordedProviderEndpoints: vi.fn(),
       }),
-    ).toBe(true);
+    ).resolves.toBe(true);
     expect(readGatewayProviderMetadata).not.toHaveBeenCalled();
   });
 
-  it("preserves Bedrock Runtime rebuilds with explicit AWS authentication", () => {
+  it("preserves Bedrock Runtime rebuilds with explicit AWS authentication", async () => {
     const readGatewayProviderMetadata = vi.fn();
     const bedrock = config({
       provider: "compatible-anthropic-endpoint",
@@ -273,17 +167,17 @@ describe("checkRebuildGatewayCredentialReuseOrBail", () => {
       },
     });
 
-    expect(
+    await expect(
       checkRebuildGatewayCredentialReuseOrBail("alpha", bedrock, false, vi.fn(), throwingBail, {
         hasBedrockRuntimeAwsAuth: () => true,
         readGatewayProviderMetadata,
         readRecordedProviderEndpoints: vi.fn(),
       }),
-    ).toBe(true);
+    ).resolves.toBe(true);
     expect(readGatewayProviderMetadata).not.toHaveBeenCalled();
   });
 
-  it("rejects Bedrock Runtime before deletion when neither AWS nor compatible auth exists", () => {
+  it("rejects Bedrock Runtime before deletion when neither AWS nor compatible auth exists", async () => {
     const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const bedrock = config({
       provider: "compatible-anthropic-endpoint",
@@ -298,10 +192,10 @@ describe("checkRebuildGatewayCredentialReuseOrBail", () => {
       },
     });
 
-    expect(() =>
+    await expect(
       checkRebuildGatewayCredentialReuseOrBail("alpha", bedrock, false, vi.fn(), throwingBail, {
         hasBedrockRuntimeAwsAuth: () => false,
-        readGatewayProviderMetadata: () => ({
+        readGatewayProviderMetadata: async () => ({
           name: "compatible-anthropic-endpoint",
           type: "openai",
           credentialKeys: ["NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_TOKEN"],
@@ -309,7 +203,7 @@ describe("checkRebuildGatewayCredentialReuseOrBail", () => {
         }),
         readRecordedProviderEndpoints: () => [],
       }),
-    ).toThrow("Missing Bedrock Runtime authentication");
+    ).rejects.toThrow("Missing Bedrock Runtime authentication");
 
     const diagnostics = errors.mock.calls.flat().join(" ");
     expect(diagnostics).toContain("AWS_BEARER_TOKEN_BEDROCK");
@@ -340,9 +234,9 @@ describe("checkRebuildGatewayCredentialReuseOrBail", () => {
         },
       }),
     ],
-  ])("rejects %s before destructive rebuild work", (_label, unsafeConfig) => {
+  ])("rejects %s before destructive rebuild work", async (_label, unsafeConfig) => {
     vi.spyOn(console, "error").mockImplementation(() => undefined);
-    expect(() =>
+    await expect(
       checkRebuildGatewayCredentialReuseOrBail(
         "alpha",
         unsafeConfig,
@@ -350,37 +244,37 @@ describe("checkRebuildGatewayCredentialReuseOrBail", () => {
         vi.fn(),
         throwingBail,
         {
-          readGatewayProviderMetadata: () => exactGatewayProvider,
+          readGatewayProviderMetadata: async () => exactGatewayProvider,
           readRecordedProviderEndpoints: () => [],
         },
       ),
-    ).toThrow("Unsafe gateway credential reuse");
+    ).rejects.toThrow("Unsafe gateway credential reuse");
   });
 
-  it("rejects spoofed gateway bindings", () => {
+  it("rejects spoofed gateway bindings", async () => {
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     const spoofedProvider = {
       ...exactGatewayProvider,
       credentialKeys: ["ATTACKER_KEY"],
     };
-    expect(() =>
+    await expect(
       checkRebuildGatewayCredentialReuseOrBail("alpha", config(), false, vi.fn(), throwingBail, {
-        readGatewayProviderMetadata: () => spoofedProvider,
+        readGatewayProviderMetadata: async () => spoofedProvider,
         readRecordedProviderEndpoints: () => [],
       }),
-    ).toThrow("no compatible non-secret identity");
+    ).rejects.toThrow("no compatible non-secret identity");
   });
 
-  it("rejects a custom endpoint recorded by another sandbox", () => {
+  it("rejects a custom endpoint recorded by another sandbox", async () => {
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     const readRecordedProviderEndpoints = vi.fn(() => ["https://other.example.test/v1"]);
 
-    expect(() =>
+    await expect(
       checkRebuildGatewayCredentialReuseOrBail("alpha", config(), false, vi.fn(), throwingBail, {
-        readGatewayProviderMetadata: () => exactGatewayProvider,
+        readGatewayProviderMetadata: async () => exactGatewayProvider,
         readRecordedProviderEndpoints,
       }),
-    ).toThrow("recovered endpoint identity is missing or incompatible");
+    ).rejects.toThrow("recovered endpoint identity is missing or incompatible");
     expect(readRecordedProviderEndpoints).toHaveBeenCalledWith("compatible-endpoint", "alpha");
   });
 });

@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createPodmanHostLocalInferenceTestHarness } from "../../../../test/helpers/podman-host-local-inference-test-harness";
 import { startSandbox } from "../../actions/sandbox/start";
 import { stopSandbox } from "../../actions/sandbox/stop";
+import { withCurrentPortableHostFence } from "../../state/portable-uninstall-retirement";
 import type { ContainerEngineCommandResult } from "../../adapters/container-engine";
 import {
   createPodmanContainerEngine,
@@ -15,6 +16,7 @@ import {
   type PodmanSocketAuthority,
 } from "../../adapters/podman";
 import type { SandboxEntry, SandboxWorkloadReceipt } from "../../state/registry/types";
+import { withCurrentPortableHostFence } from "../../state/portable-uninstall-retirement";
 import { CURRENT_RUNTIME_PROVIDER_BUNDLES } from "./current";
 import { createPodmanRuntimeProviderBundle } from "./podman";
 import {
@@ -31,6 +33,10 @@ import {
   createRuntimeProviderBundleRegistry,
   requireRuntimeProviderHostLocalInferenceOperation,
 } from "./registry";
+import {
+  DirectSandboxContainerNotFoundError,
+  DirectSandboxFallbackUnavailableError,
+} from "./privileged-sandbox-control-errors";
 import { clearStoppedSandboxStateWithEngine } from "./stopped-sandbox-state-cleanup";
 
 const AGENTS = ["openclaw", "hermes", "langchain-deepagents-code"] as const;
@@ -50,6 +56,10 @@ const SUCCESSFUL_RECOVERY = {
   wasRunning: true,
   recovered: false,
   forwardRecovered: false,
+} as const;
+const GPU_PROOF_RESOURCE = {
+  name: "nemoclaw-gpu-proof-1234",
+  ownership: { label: "com.nvidia.nemoclaw.gpu-proof", value: "true" },
 } as const;
 
 function podmanExecutableAuthorityDeps(): PodmanExecutableAuthorityDeps {
@@ -81,12 +91,15 @@ function podmanExecutableAuthorityDeps(): PodmanExecutableAuthorityDeps {
   };
 }
 
-function realOperationEngines(socketAuthority: PodmanSocketAuthority = REAL_SOCKET_AUTHORITY) {
+function realOperationEngines(
+  socketAuthority: PodmanSocketAuthority = REAL_SOCKET_AUTHORITY,
+  capture = vi.fn(() => ({ status: 0, stdout: "", stderr: "" })),
+) {
   const common = {
     socketAuthority,
     executable: "/usr/bin/podman",
     assertAuthority: vi.fn(),
-    capture: vi.fn(() => ({ status: 0, stdout: "", stderr: "" })),
+    capture,
   } as const;
   return {
     hostDoctor: createPodmanContainerEngine({ ...common, operation: "host-doctor" }),
@@ -100,6 +113,17 @@ function realOperationEngines(socketAuthority: PodmanSocketAuthority = REAL_SOCK
       operation: "sandbox-lifecycle",
     }),
   };
+}
+
+function supportedContainerEngine(provider: ReturnType<typeof createPodmanRuntimeProviderBundle>) {
+  expect(provider.containerEngine.supported).toBe(true);
+  return provider.containerEngine as Extract<typeof provider.containerEngine, { supported: true }>;
+}
+
+function nvidiaContainer(provider: ReturnType<typeof createPodmanRuntimeProviderBundle>) {
+  const capability = supportedContainerEngine(provider).nvidiaContainer;
+  expect(capability).toBeDefined();
+  return capability!;
 }
 
 function hostDoctorEngine(authorityId = AUTHORITY_ID): PodmanContainerEngine {
@@ -248,27 +272,32 @@ describe("managed Podman runtime provider", () => {
     async (agent) => {
       const runtime = providerHarness(agent);
       const verifyGateway = vi.fn(async () => undefined);
-      const restoreStartupState = vi.fn(() => SUCCESSFUL_RECOVERY);
+      const restoreStartupState = vi.fn(async () => SUCCESSFUL_RECOVERY);
       const stopSandboxChannels = vi.fn();
+      const updateSandbox = vi.fn(() => true);
 
       await expect(
         startSandbox(runtime.sandboxName, {
           getSandbox: () => runtime.entry,
+          updateSandbox,
           runtimeProviders: runtime.providers,
           restoreStartupState,
           verifyGateway,
           log: vi.fn(),
         }),
       ).resolves.toEqual({ exitCode: 0 });
-      expect(
-        stopSandbox(runtime.sandboxName, {
-          getSandbox: () => runtime.entry,
-          runtimeProviders: runtime.providers,
-          stopSandboxChannels,
-          teardownSandboxDashboardForward: vi.fn(),
-          log: vi.fn(),
-        }),
-      ).toEqual({ exitCode: 0 });
+      await expect(
+        withCurrentPortableHostFence(() =>
+          stopSandbox(runtime.sandboxName, {
+            getSandbox: () => runtime.entry,
+            updateSandbox,
+            runtimeProviders: runtime.providers,
+            stopSandboxChannels,
+            teardownSandboxDashboardForward: vi.fn(),
+            log: vi.fn(),
+          }),
+        ),
+      ).resolves.toEqual({ exitCode: 0 });
 
       expect(restoreStartupState).toHaveBeenCalledExactlyOnceWith(runtime.sandboxName);
       expect(verifyGateway).toHaveBeenCalledExactlyOnceWith(runtime.sandboxName);
@@ -291,7 +320,7 @@ describe("managed Podman runtime provider", () => {
       startSandbox(runtime.sandboxName, {
         getSandbox: () => runtime.entry,
         runtimeProviders: runtime.providers,
-        restoreStartupState: vi.fn(() => SUCCESSFUL_RECOVERY),
+        restoreStartupState: vi.fn(async () => SUCCESSFUL_RECOVERY),
         verifyGateway,
         log: vi.fn(),
       }),
@@ -345,6 +374,49 @@ describe("managed Podman runtime provider", () => {
     expect(
       JSON.stringify((runtime.lifecycle.capture as ReturnType<typeof vi.fn>).mock.calls),
     ).not.toContain("docker");
+  });
+
+  it("keeps a stopped Podman container terminal for privileged control (#11107)", () => {
+    const runtime = providerHarness("hermes");
+    const lifecycle = runtime.providers.podman?.lifecycle;
+    expect(lifecycle).toMatchObject({ supported: true });
+    const supportedLifecycle = lifecycle as Extract<
+      NonNullable<typeof lifecycle>,
+      { readonly supported: true }
+    >;
+    let refusal: unknown;
+
+    try {
+      supportedLifecycle.privilegedSandboxControl.resolveTarget({
+        registeredSandboxNames: [runtime.sandboxName],
+        sandbox: runtime.entry,
+        sandboxName: runtime.sandboxName,
+      });
+    } catch (error) {
+      refusal = error;
+    }
+
+    expect(refusal).toBeInstanceOf(DirectSandboxFallbackUnavailableError);
+    expect(refusal).not.toBeInstanceOf(DirectSandboxContainerNotFoundError);
+  });
+
+  it("classifies a successful Podman discovery with no container as pending (#11107)", () => {
+    const runtime = providerHarness("hermes");
+    vi.mocked(runtime.lifecycle.capture).mockReturnValue({ status: 0, stdout: "", stderr: "" });
+    const lifecycle = runtime.providers.podman?.lifecycle;
+    expect(lifecycle).toMatchObject({ supported: true });
+    const supportedLifecycle = lifecycle as Extract<
+      NonNullable<typeof lifecycle>,
+      { readonly supported: true }
+    >;
+
+    expect(() =>
+      supportedLifecycle.privilegedSandboxControl.resolveTarget({
+        registeredSandboxNames: [runtime.sandboxName],
+        sandbox: runtime.entry,
+        sandboxName: runtime.sandboxName,
+      }),
+    ).toThrow(DirectSandboxContainerNotFoundError);
   });
 
   it("routes stopped state cleanup through the Podman workload-cleanup engine", () => {
@@ -600,6 +672,123 @@ describe("managed Podman runtime provider", () => {
       },
     });
     expect(CURRENT_RUNTIME_PROVIDER_BUNDLES.podman?.identity.id).toBe("podman");
+  });
+
+  it("maps one provider-neutral NVIDIA run to Podman CDI arguments", () => {
+    const inference = createPodmanHostLocalInferenceTestHarness();
+    const capture = vi.fn(() => ({ status: 0, stdout: "proof", stderr: "" }));
+    const bundle = createPodmanRuntimeProviderBundle({
+      engines: realOperationEngines(REAL_SOCKET_AUTHORITY, capture),
+      hostLocalInference: {
+        authorityStore: inference.authorityStore,
+        routeAuthorityStore: inference.routeAuthorityStore,
+        onFailureEvidence: inference.onFailureEvidence,
+        redactSensitive: inference.redactSensitive,
+      },
+    });
+    const capability = nvidiaContainer(bundle);
+
+    expect(
+      capability.capture(
+        "host-local-inference",
+        {
+          image: "registry.example/proof@sha256:" + "a".repeat(64),
+          entrypoint: "/bin/sh",
+          command: ["-c", "proof"],
+          resource: GPU_PROOF_RESOURCE,
+        },
+        12_000,
+      ),
+    ).toMatchObject({ status: 0, stdout: "proof" });
+    expect(capture).toHaveBeenCalledWith(
+      "/usr/bin/podman",
+      [
+        "--url",
+        `unix://${REAL_SOCKET_AUTHORITY.socketPath}`,
+        "run",
+        "--rm",
+        "--name",
+        GPU_PROOF_RESOURCE.name,
+        "--label",
+        "com.nvidia.nemoclaw.gpu-proof=true",
+        "--device",
+        "nvidia.com/gpu=all",
+        "--entrypoint",
+        "/bin/sh",
+        "registry.example/proof@sha256:" + "a".repeat(64),
+        "-c",
+        "proof",
+      ],
+      12_000,
+    );
+  });
+
+  it("removes only the exact owned proof container after timeout", () => {
+    const inference = createPodmanHostLocalInferenceTestHarness();
+    const containerId = "b".repeat(64);
+    const capture = vi
+      .fn()
+      .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" })
+      .mockReturnValueOnce({
+        status: 0,
+        stdout: `${containerId}\t${GPU_PROOF_RESOURCE.name}\n`,
+        stderr: "",
+      })
+      .mockReturnValueOnce({ status: 0, stdout: containerId, stderr: "" });
+    const capability = nvidiaContainer(
+      createPodmanRuntimeProviderBundle({
+        engines: realOperationEngines(REAL_SOCKET_AUTHORITY, capture),
+        hostLocalInference: {
+          authorityStore: inference.authorityStore,
+          routeAuthorityStore: inference.routeAuthorityStore,
+          onFailureEvidence: inference.onFailureEvidence,
+          redactSensitive: inference.redactSensitive,
+        },
+      }),
+    );
+
+    expect(
+      capability.cleanup("host-local-inference", GPU_PROOF_RESOURCE, {
+        timeoutMs: 15_000,
+        observation: "until-deadline",
+      }),
+    ).toEqual({ status: "removed" });
+    expect(capture).toHaveBeenNthCalledWith(
+      1,
+      "/usr/bin/podman",
+      [
+        "--url",
+        `unix://${REAL_SOCKET_AUTHORITY.socketPath}`,
+        "ps",
+        "--all",
+        "--no-trunc",
+        "--filter",
+        `name=^${GPU_PROOF_RESOURCE.name}$`,
+        "--filter",
+        "label=com.nvidia.nemoclaw.gpu-proof=true",
+        "--format",
+        "{{.ID}}\t{{.Names}}",
+      ],
+      expect.any(Number),
+    );
+    expect(capture).toHaveBeenNthCalledWith(
+      2,
+      "/usr/bin/podman",
+      expect.arrayContaining([
+        "ps",
+        "--filter",
+        `name=^${GPU_PROOF_RESOURCE.name}$`,
+        "--filter",
+        "label=com.nvidia.nemoclaw.gpu-proof=true",
+      ]),
+      expect.any(Number),
+    );
+    expect(capture).toHaveBeenNthCalledWith(
+      3,
+      "/usr/bin/podman",
+      ["--url", `unix://${REAL_SOCKET_AUTHORITY.socketPath}`, "rm", "-f", containerId],
+      expect.any(Number),
+    );
   });
 
   it("rejects real operation engines when one socket endpoint drifts", () => {

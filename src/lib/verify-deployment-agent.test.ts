@@ -9,7 +9,7 @@ const NO_RETRY = { retryDelaysMs: [], sleep: async (_ms: number) => {} };
 
 function makeDeps(overrides: Record<string, unknown> = {}) {
   return {
-    executeSandboxCommand: (_name: string, _script: string) => ({
+    executeSandboxCommand: async (_name: string, _script: string) => ({
       status: 0,
       stdout: "200",
       stderr: "",
@@ -32,7 +32,7 @@ describe("verifyDeployment agent dashboard probes", () => {
     const sandboxScripts: string[] = [];
     const hostProbes: Array<{ port: number; path: string }> = [];
     const deps = makeDeps({
-      executeSandboxCommand: (_name: string, script: string) => {
+      executeSandboxCommand: async (_name: string, script: string) => {
         sandboxScripts.push(script);
         if (script.includes("inference.local")) return { status: 0, stdout: "200", stderr: "" };
         if (script.includes("openclaw --version")) return { status: 0, stdout: "", stderr: "" };

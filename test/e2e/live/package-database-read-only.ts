@@ -23,14 +23,14 @@ export async function expectPackageDatabaseReadOnly(
 ): Promise<void> {
   const sentinel = `/var/lib/dpkg/nemoclaw-e2e-write-probe-${process.pid}`;
   const prepare = await options.runtimeProvider.execSandboxAsRoot(
-      options.sandboxName,
-      [
-        "sh",
-        "-c",
-        'set -eu; probe="$1"; test ! -e "$probe"; install -o sandbox -g sandbox -m 600 /dev/null "$probe"',
-        "sh",
-        sentinel,
-      ],
+    options.sandboxName,
+    [
+      "sh",
+      "-c",
+      'set -eu; probe="$1"; test ! -e "$probe"; install -o sandbox -g sandbox -m 600 /dev/null "$probe"',
+      "sh",
+      sentinel,
+    ],
     {
       artifactName: `${options.artifactPrefix}-prepare-dpkg-landlock-sentinel`,
       env: options.env,

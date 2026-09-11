@@ -105,6 +105,39 @@ describe("agent variant docs", () => {
     expect(rendered).not.toContain("<AgentOnly");
   });
 
+  it("publishes Deep Agents forward recovery scope only for Deep Agents (#11176)", () => {
+    const sourcePath = "manage-sandboxes/recover-rebuild-sandboxes.mdx";
+    const pageSource = readFileSync(path.join(repoRoot, "docs", sourcePath), "utf8");
+    const render = (variant: "openclaw" | "hermes" | "deepagents") =>
+      renderAgentVariantPage(pageSource, variant, { sourcePath });
+    const gatewayStartRepair =
+      "The `start` command repairs the agent runtime and host-side port forwards.";
+    const gatewayStartSuccess =
+      "It returns success only after it authenticates the recovered agent runtime, OpenShell reports the sandbox ready, and host-side port forwards pass their checks.";
+    const gatewayStartFailure =
+      "If a check fails, the command exits nonzero, identifies the failure, and prints recovery guidance before you retry `start`.";
+    const terminalRuntimeScope =
+      "Deep Agents uses a terminal runtime without an in-sandbox agent gateway or host-side port forward.";
+    const forwardPrerequisites =
+      "The OpenShell ownership and local endpoint reachability prerequisites for an active port forward do not apply.";
+
+    expect(render("openclaw")).toContain(gatewayStartRepair);
+    expect(render("hermes")).toContain(gatewayStartRepair);
+    expect(render("deepagents")).not.toContain(gatewayStartRepair);
+    expect(render("openclaw")).toContain(gatewayStartSuccess);
+    expect(render("hermes")).toContain(gatewayStartSuccess);
+    expect(render("deepagents")).not.toContain(gatewayStartSuccess);
+    expect(render("openclaw")).toContain(gatewayStartFailure);
+    expect(render("hermes")).toContain(gatewayStartFailure);
+    expect(render("deepagents")).not.toContain(gatewayStartFailure);
+    expect(render("deepagents")).toContain(terminalRuntimeScope);
+    expect(render("deepagents")).toContain(forwardPrerequisites);
+    expect(render("openclaw")).not.toContain(terminalRuntimeScope);
+    expect(render("openclaw")).not.toContain(forwardPrerequisites);
+    expect(render("hermes")).not.toContain(terminalRuntimeScope);
+    expect(render("hermes")).not.toContain(forwardPrerequisites);
+  });
+
   it("renders Pi placeholder code and content", () => {
     const rendered = renderAgentVariantPage(source, "pi");
 
@@ -515,6 +548,62 @@ Real content.
 `;
 
     expect(() => renderAgentVariantPage(mixed, "openclaw")).not.toThrow();
+  });
+
+  it("points OpenClaw enterprise readiness at the OpenClaw OTEL command fragment (#11145)", () => {
+    const sourcePath = path.join(repoRoot, "docs/reference/enterprise-readiness.mdx");
+    const rendered = renderAgentVariantPage(readFileSync(sourcePath, "utf8"), "openclaw", {
+      sourcePath,
+    });
+
+    expect(rendered).toContain("#openclaw-conversation-otel-diagnostics");
+    expect(rendered).not.toContain("#deep-agents-code-otlp-traces");
+  });
+
+  it("does not send Hermes enterprise readiness to the Deep Agents OTLP command fragment (#11145)", () => {
+    const sourcePath = path.join(repoRoot, "docs/reference/enterprise-readiness.mdx");
+    const rendered = renderAgentVariantPage(readFileSync(sourcePath, "utf8"), "hermes", {
+      sourcePath,
+    });
+
+    expect(rendered).not.toContain("#deep-agents-code-otlp-traces");
+    expect(rendered).toContain("#messaging-bridge-appears-running-but-no-messages-arrive");
+  });
+
+  it("keeps the messaging-bridge heading on the Hermes troubleshooting page (#11145)", () => {
+    const sourcePath = path.join(repoRoot, "docs/reference/troubleshooting.mdx");
+    const rendered = renderAgentVariantPage(readFileSync(sourcePath, "utf8"), "hermes", {
+      sourcePath,
+    });
+
+    expect(rendered).toContain("### Messaging bridge appears running but no messages arrive");
+  });
+
+  it("omits the messaging-bridge fragment from Deep Agents pages (#11145)", () => {
+    const readinessPath = path.join(repoRoot, "docs/reference/enterprise-readiness.mdx");
+    const troubleshootingPath = path.join(repoRoot, "docs/reference/troubleshooting.mdx");
+    const readiness = renderAgentVariantPage(readFileSync(readinessPath, "utf8"), "deepagents", {
+      sourcePath: readinessPath,
+    });
+    const troubleshooting = renderAgentVariantPage(
+      readFileSync(troubleshootingPath, "utf8"),
+      "deepagents",
+      { sourcePath: troubleshootingPath },
+    );
+
+    expect(troubleshooting).not.toContain(
+      "### Messaging bridge appears running but no messages arrive",
+    );
+    expect(readiness).not.toContain("#messaging-bridge-appears-running-but-no-messages-arrive");
+  });
+
+  it("points Hermes recovery at the variant recover command fragment (#11147)", () => {
+    const sourcePath = path.join(repoRoot, "docs/manage-sandboxes/recover-rebuild-sandboxes.mdx");
+    const pageSource = readFileSync(sourcePath, "utf8");
+    const rendered = renderAgentVariantPage(pageSource, "hermes", { sourcePath });
+
+    expect(rendered).toContain("#nemohermes-name-recover");
+    expect(rendered).not.toContain("#nemoclaw-name-recover");
   });
 
   it("leaves no shared page section heading without content in any published variant (#9731)", () => {

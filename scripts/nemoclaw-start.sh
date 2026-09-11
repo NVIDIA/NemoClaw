@@ -541,22 +541,9 @@ export OPENCLAW_CONFIG_PATH="${_OPENCLAW_STATE_DIR}/openclaw.json"
 export OPENCLAW_OAUTH_DIR="${_OPENCLAW_CREDENTIALS_DIR}"
 
 # ── Mutable config permission normalize (#2681) ─────────────────
-# OpenClaw's control-UI toggles (Enable Dreaming, account toggles, etc.)
-# write through mutateConfigFile to /sandbox/.openclaw/openclaw.json.
-# In root mode the gateway runs as the gateway UID; the file is owned
-# sandbox:sandbox. Without group write, every toggle EACCESs.
-#
-# Make the mutable-default tree group-readable/writable + setgid so both
-# `gateway` (now a member of the sandbox group via Dockerfile.base
-# usermod -aG) and `sandbox` can write. Setgid means new files
-# inherit group=sandbox regardless of which UID created them, so the
-# agent keeps read access.
-#
-# This also self-heals a sandbox whose mutable config tree was tightened to
-# single-user 700/600 by `openclaw doctor --fix` (#4538): every (re)start
-# restores the setgid + group-writable contract. Host-side, `nemoclaw <name>
-# doctor --fix` and the rebuild post-upgrade repair step apply the same
-# normalization without requiring a restart.
+# The descriptor-safe owner selects native private modes for proven same-user
+# startup. Separate gateway identities retain group access. Config recovery,
+# baseline capture, startup, and host repair use that same decision.
 resolve_mutable_config_normalizer() {
   local normalizer="/usr/local/lib/nemoclaw/normalize_mutable_config_perms.py"
   if [ -f "$normalizer" ]; then
@@ -756,13 +743,9 @@ reclaim_collapsed_mutable_config() {
   fi
 }
 
-# Invalid state (#4538, #6047): OpenClaw assumes a single-UID 700/600 config
-# tree, while NemoClaw's separate sandbox and gateway UIDs require the mutable
-# 2770/660 group contract. The tightening originates at the OpenClaw command
-# boundary; NemoClaw owns restoring its multi-UID postcondition afterward.
-# Regression proof lives in test/agents/openclaw/runtime/nemoclaw-start-perms.test.ts.
-# Issue #6047 tracks the boundary and its removal condition: remove this wrapper
-# only when the pinned OpenClaw preserves 2770/660 after every command outcome.
+# Keep command signals and status intact while the descriptor-safe owner checks
+# the resulting state. Separate gateway identities still need shared access
+# after native commands tighten permissions (#4538, #6047).
 run_oneshot_command() {
   local _nemoclaw_runtime_env_file="${_RUNTIME_SHELL_ENV_FILE:-/tmp/nemoclaw-proxy-env.sh}"
   local _nemoclaw_oneshot_child_pid=""
@@ -944,17 +927,14 @@ ensure_mutable_openclaw_config_hash() {
     return 1
   fi
 
-  # Mutable mode: $config_dir is 2770 sandbox:sandbox and
-  # $hash_file is 660 sandbox:sandbox. Without CAP_DAC_OVERRIDE root
-  # cannot bypass the sandbox-only write bit and the redirection
-  # aborts with EACCES, so step down to the file's owner for the write.
+  # Root cannot bypass the sandbox owner's write permissions after dropping
+  # CAP_DAC_OVERRIDE, so perform the write as that owner.
   # shellcheck disable=SC2016  # positional params are expanded by the inner sh
   if [ "$(id -u)" -eq 0 ]; then
     if ! /usr/bin/env -i HOME=/sandbox PATH=/usr/local/bin:/usr/bin:/bin \
       "${STEP_DOWN_PREFIX_SANDBOX[@]}" /bin/sh -c '
       cd "$1" || exit 1
       /usr/bin/sha256sum openclaw.json >".config-hash" || exit 1
-      /usr/bin/chmod 660 ".config-hash" 2>/dev/null || true
     ' _ "$config_dir"; then
       printf '[SECURITY] Failed to refresh mutable OpenClaw config hash\n' >&2
       return 1
@@ -962,11 +942,11 @@ ensure_mutable_openclaw_config_hash() {
   elif ! sh -c '
     cd "$1" || exit 1
     /usr/bin/sha256sum openclaw.json >".config-hash" || exit 1
-    /usr/bin/chmod 660 ".config-hash" 2>/dev/null || true
   ' _ "$config_dir"; then
     printf '[SECURITY] Failed to refresh mutable OpenClaw config hash\n' >&2
     return 1
   fi
+  normalize_mutable_config_perms
 }
 
 # ── Runtime model/provider override ──────────────────────────────
@@ -1449,11 +1429,11 @@ def read_messaging_plan():
             return json.loads(base64.b64decode(raw_plan).decode("utf-8"))
         except Exception:
             return None
-    artifact_path = os.environ.get(
-        "NEMOCLAW_MESSAGING_RUNTIME_PLAN_PATH",
-        MESSAGING_RUNTIME_PLAN_DEFAULT_PATH,
+    artifact_path = (
+        os.environ.get("NEMOCLAW_MESSAGING_RUNTIME_PLAN_PATH", "").strip()
+        or MESSAGING_RUNTIME_PLAN_DEFAULT_PATH
     )
-    if not artifact_path or not os.path.isfile(artifact_path):
+    if not os.path.isfile(artifact_path):
         return None
     try:
         with open(artifact_path, encoding="utf-8") as f:
@@ -2191,7 +2171,7 @@ validate_nemoclaw_tmp_permissions() {
     [ -n "$_target" ] && _dynamic_targets+=("$_target")
   done < <(messaging_runtime_preload_targets)
 
-  validate_tmp_permissions "$_SANDBOX_SAFETY_NET" "$_PROXY_FIX_SCRIPT" "$_NEMOTRON_FIX_SCRIPT" "$_CIAO_GUARD_SCRIPT" "${_dynamic_targets[@]+"${_dynamic_targets[@]}"}"
+  validate_tmp_permissions "$_SANDBOX_SAFETY_NET" "$_PROXY_FIX_SCRIPT" "$_NEMOTRON_FIX_SCRIPT" "${_dynamic_targets[@]+"${_dynamic_targets[@]}"}"
 }
 
 verify_messaging_runtime_secret_scans() {
@@ -3418,7 +3398,7 @@ fi
 # patterns are documented inline in the script; unknown patterns are
 # logged with full stack so they can be diagnosed and either fixed
 # upstream or added to the allow-list with explicit justification.
-# Specific guards (Slack, ciao) pre-empt their own error patterns;
+# Channel-specific guards pre-empt their own error patterns;
 # this is the backstop for everything else.
 #
 # Only active when OPENSHELL_SANDBOX=1 (set by OpenShell at runtime),
@@ -3457,17 +3437,6 @@ _PROXY_FIX_SOURCE="/usr/local/lib/nemoclaw/preloads/http-proxy-fix.js"
 _NEMOTRON_FIX_SCRIPT="/tmp/nemoclaw-nemotron-inference-fix.js"
 _NEMOTRON_FIX_SOURCE="/usr/local/lib/nemoclaw/preloads/nemotron-inference-fix.js"
 
-# mDNS / ciao network interface guard.
-# The @homebridge/ciao mDNS library calls os.networkInterfaces() which
-# throws a SystemError (uv_interface_addresses) inside sandboxes with
-# restricted network namespaces (seccomp/Landlock). This crashes the
-# gateway even though mDNS is not needed. The guard monkey-patches
-# os.networkInterfaces to return an empty object on failure instead
-# of throwing, and catches the uncaughtException as a fallback.
-# Ref: https://github.com/NVIDIA/NemoClaw/issues/2340
-_CIAO_GUARD_SCRIPT="/tmp/nemoclaw-ciao-network-guard.js"
-_CIAO_GUARD_SOURCE="/usr/local/lib/nemoclaw/preloads/ciao-network-guard.js"
-
 # Stage the immutable, image-packaged preload set into /tmp. Startup and
 # authenticated PID 1 recovery share this exact path so a pod-recreate-style
 # /tmp wipe cannot drift from the initial security boundary. The shared emit
@@ -3483,9 +3452,6 @@ install_core_runtime_preloads() {
 
   emit_sandbox_sourced_file "$_NEMOTRON_FIX_SCRIPT" <"$_NEMOTRON_FIX_SOURCE" || return 1
   append_node_require_once "$_NEMOTRON_FIX_SCRIPT"
-
-  emit_sandbox_sourced_file "$_CIAO_GUARD_SCRIPT" <"$_CIAO_GUARD_SOURCE" || return 1
-  append_node_require_once "$_CIAO_GUARD_SCRIPT"
 }
 
 install_core_runtime_preloads || exit 1
@@ -3505,7 +3471,6 @@ install_core_runtime_preloads || exit 1
 # lowercase (no_proxy) over uppercase (NO_PROXY) when both are set.
 # curl/wget use uppercase.  gRPC C-core uses lowercase.
 _RUNTIME_SHELL_ENV_FILE="/tmp/nemoclaw-proxy-env.sh"
-_RUNTIME_SHELL_ENV_SHIM="[ -f ${_RUNTIME_SHELL_ENV_FILE} ] && . ${_RUNTIME_SHELL_ENV_FILE}"
 
 write_runtime_shell_env() {
   _PROXY_ENV_FILE="/tmp/nemoclaw-proxy-env.sh"
@@ -3630,48 +3595,22 @@ GATEWAYURLENVEOF
     )
     cat <<'GUARDENVEOF'
 # nemoclaw-configure-guard begin
-# #4538: a raw in-sandbox `openclaw doctor --fix` (run directly from a connect
-# shell, outside any NemoClaw wrapper command) tightens the mutable OpenClaw
-# config tree back to single-user 700/600 — even when it exits nonzero (e.g. it
-# hits EACCES on a root-locked shell init file). That blocks the gateway UID,
-# a member of the sandbox group, from persisting config writes. Restore the
-# setgid + group-writable contract (2770 dir / 660 config) after every openclaw
-# invocation routed through this guard, regardless of exit code. Best-effort and
-# idempotent: it skips a root-owned active config transaction and is a no-op
-# when the contract already holds. Kept in sync with the entrypoint's
-# normalize_mutable_config_perms.
+# Use the same descriptor-safe mode decision as startup and host repair.
+# The caller UID supplies file ownership, not runtime topology.
 _nemoclaw_restore_mutable_config_perms() {
-  local _nemoclaw_oc_dir _nemoclaw_oc_owner _nemoclaw_oc_dir_mode _nemoclaw_oc_file_mode _nemoclaw_oc_hash_mode
-  _nemoclaw_oc_dir="${OPENCLAW_STATE_DIR:-/sandbox/.openclaw}"
+  local _nemoclaw_oc_dir="/sandbox/.openclaw" _nemoclaw_oc_owner
   [ -d "$_nemoclaw_oc_dir" ] || return 0
   _nemoclaw_oc_owner="$(stat -c '%U' "$_nemoclaw_oc_dir" 2>/dev/null || stat -f '%Su' "$_nemoclaw_oc_dir" 2>/dev/null || echo unknown)"
-  # A root-owned config belongs to a host transaction; never weaken it here.
+  # A root-owned config belongs to a host transaction; never write its hash.
   [ "$_nemoclaw_oc_owner" = "root" ] && return 0
-  _nemoclaw_oc_dir_mode="$(stat -c '%a' "$_nemoclaw_oc_dir" 2>/dev/null || stat -f '%Lp' "$_nemoclaw_oc_dir" 2>/dev/null || echo '')"
-  _nemoclaw_oc_file_mode="$(stat -c '%a' "$_nemoclaw_oc_dir/openclaw.json" 2>/dev/null || stat -f '%Lp' "$_nemoclaw_oc_dir/openclaw.json" 2>/dev/null || echo '')"
-  _nemoclaw_oc_hash_mode="$(stat -c '%a' "$_nemoclaw_oc_dir/.config-hash" 2>/dev/null || stat -f '%Lp' "$_nemoclaw_oc_dir/.config-hash" 2>/dev/null || echo '')"
-  # Fast path: contract already intact (2770 dir, 660 config + hash when present).
-  # Check .config-hash too so a doctor run that tightened only it is still fixed.
-  if [ "$_nemoclaw_oc_dir_mode" = "2770" ] &&
-    { [ "$_nemoclaw_oc_file_mode" = "660" ] || [ -z "$_nemoclaw_oc_file_mode" ]; } &&
-    { [ "$_nemoclaw_oc_hash_mode" = "660" ] || [ -z "$_nemoclaw_oc_hash_mode" ]; }; then
-    return 0
-  fi
-  chmod -R g+rwX,o-rwx "$_nemoclaw_oc_dir" 2>/dev/null || true
-  find "$_nemoclaw_oc_dir" -type d -exec chmod g+s {} + 2>/dev/null || true
-  chmod 2770 "$_nemoclaw_oc_dir" 2>/dev/null || true
-  if [ ! -L "$_nemoclaw_oc_dir" ] &&
-    [ ! -L "$_nemoclaw_oc_dir/openclaw.json" ] &&
-    [ ! -L "$_nemoclaw_oc_dir/.config-hash" ] &&
-    [ -f "$_nemoclaw_oc_dir/openclaw.json" ]; then
+  if [ ! -L "$_nemoclaw_oc_dir" ] \
+    && [ ! -L "$_nemoclaw_oc_dir/openclaw.json" ] \
+    && [ ! -L "$_nemoclaw_oc_dir/.config-hash" ] \
+    && [ -f "$_nemoclaw_oc_dir/openclaw.json" ]; then
     (cd "$_nemoclaw_oc_dir" && sha256sum openclaw.json >.config-hash) 2>/dev/null || true
   fi
-  chmod 660 "$_nemoclaw_oc_dir/openclaw.json" "$_nemoclaw_oc_dir/.config-hash" 2>/dev/null || true
-  # Keep the recovery baseline out of the group-writable contract — it is a
-  # read-only trust anchor (root:sandbox 0440 when root re-locks it). The
-  # recursive chmod above would otherwise loosen it to group-writable in
-  # rootless mode, where the root-only re-lock is skipped (#4538).
-  chmod g-w "$_nemoclaw_oc_dir/openclaw.json.nemoclaw-baseline" 2>/dev/null || true
+  python3 -I /usr/local/lib/nemoclaw/normalize_mutable_config_perms.py \
+    "$_nemoclaw_oc_dir" "$(id -u)" "$(id -g)" || true
 }
 _nemoclaw_messaging_connect_node_options() {
   local _nemoclaw_preload _nemoclaw_options=""
@@ -4015,11 +3954,8 @@ openclaw() {
       esac
       ;;
     *)
-      # #4538: re-assert the mutable config perm contract after any openclaw run
-      # (notably `doctor --fix`), even on a nonzero exit, then preserve its status.
-      # Drop errexit around the call (mirroring the devices-approve branch above) so
-      # a nonzero openclaw exit cannot abort the guard before the restore runs — the
-      # nonzero-exit case is the exact #4538 scenario.
+      # Preserve the native command status after shared-owner permission repair
+      # and hash refresh, including failed commands (#4538).
       local _nemoclaw_oc_errexit=0
       case $- in *e*) _nemoclaw_oc_errexit=1 ;; esac
       set +e
@@ -4195,8 +4131,6 @@ GUARDENVEOF
     fi
     # Nemotron inference fix for connect sessions. (NemoClaw#1193, #2051)
     echo "export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_NEMOTRON_FIX_SCRIPT\""
-    # ciao network guard for connect sessions.
-    echo "export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_CIAO_GUARD_SCRIPT\""
     # Manifest-declared messaging preloads for connect sessions.
     if type emit_messaging_connect_runtime_preload_exports >/dev/null 2>&1; then
       emit_messaging_connect_runtime_preload_exports
@@ -4254,61 +4188,6 @@ GATEWAYTOKENENVEOF
 # Each code path arms the trap before launching the gateway. These values are
 # populated as children start; cleanup refreshes and validates them before
 # signaling anything.
-
-# Keep per-user rc files out of runtime proxy wiring. Older images and prior
-# entrypoint versions wrote a two-line shim into .bashrc/.profile; remove that
-# managed stanza before lock_rc_files makes the files read-only again.
-#
-# The Python body lives in scripts/lib/clean_runtime_shell_env_shim.py so it
-# can be unit-tested with controlled rc fixtures. Installed location in the
-# sandbox image: /usr/local/lib/nemoclaw/clean_runtime_shell_env_shim.py.
-ensure_runtime_shell_env_shim() {
-  local failed=0
-  local rc_file
-  # Resolution order is deliberately fixed: the immutable installed helper at
-  # /usr/local/lib/nemoclaw/ ALWAYS wins when present. That path is set up
-  # by the Dockerfile, chmod 644, root-owned (or build-time owned), and lives
-  # under a system directory the sandbox user cannot write to. We refuse to
-  # honour any environment-supplied override when that file is in place so a
-  # malicious envvar cannot swap in arbitrary Python.
-  #
-  # The NEMOCLAW_RC_CLEAN_SCRIPT override is consulted ONLY when the installed
-  # helper is missing — i.e. running the unit-test wrappers against the
-  # repository tree, where the script lives at scripts/lib/ instead.
-  # The final fallback resolves the script relative to nemoclaw-start.sh so
-  # `bash scripts/nemoclaw-start.sh` works out-of-the-box for ad-hoc dev runs.
-  local clean_script="/usr/local/lib/nemoclaw/clean_runtime_shell_env_shim.py"
-  if [ ! -f "$clean_script" ]; then
-    if [ -n "${NEMOCLAW_RC_CLEAN_SCRIPT:-}" ] && [ -f "${NEMOCLAW_RC_CLEAN_SCRIPT}" ]; then
-      clean_script="${NEMOCLAW_RC_CLEAN_SCRIPT}"
-    else
-      clean_script="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/clean_runtime_shell_env_shim.py"
-    fi
-  fi
-
-  for rc_file in "${_SANDBOX_HOME}/.bashrc" "${_SANDBOX_HOME}/.profile"; do
-    if [ -L "$rc_file" ]; then
-      echo "[SECURITY] refusing symlinked rc file: $rc_file" >&2
-      failed=1
-      continue
-    fi
-    if [ -e "$rc_file" ] && [ ! -f "$rc_file" ]; then
-      echo "[SECURITY] refusing non-regular rc file: $rc_file" >&2
-      failed=1
-      continue
-    fi
-    if [ ! -f "$rc_file" ]; then
-      continue
-    fi
-
-    if ! command python3 "$clean_script" "$rc_file" "$_RUNTIME_SHELL_ENV_SHIM" "$(id -u)"; then
-      failed=1
-      continue
-    fi
-  done
-
-  return "$failed"
-}
 
 # ── Legacy layout migration ──────────────────────────────────────
 # Sandboxes created with the OLD base image have:
@@ -4768,6 +4647,7 @@ setup_auth_profile_as_sandbox() {
 }
 
 PLUGIN_REFRESH_LOG="/tmp/nemoclaw-plugin-refresh.log"
+PLUGIN_REFRESH_TIMEOUT_DURATION="30s"
 
 prepare_plugin_refresh_log() {
   local dir base tmp
@@ -4820,16 +4700,26 @@ start_plugin_registry_refresh() {
       echo "[plugin-refresh] gateway did not become ready; skipping registry refresh" >&2
       exit 0
     fi
+    local refresh_rc=0
     if [ "$(id -u)" -eq 0 ]; then
-      "${STEP_DOWN_PREFIX_SANDBOX[@]}" env HOME=/sandbox PLUGIN_REFRESH_LOG="$PLUGIN_REFRESH_LOG" \
+      timeout --signal=TERM --kill-after=5s "$PLUGIN_REFRESH_TIMEOUT_DURATION" \
+        "${STEP_DOWN_PREFIX_SANDBOX[@]}" env HOME=/sandbox PLUGIN_REFRESH_LOG="$PLUGIN_REFRESH_LOG" \
         sh -c "exec \"\$@\" >\"\$PLUGIN_REFRESH_LOG\" 2>&1" sh \
-        "$OPENCLAW" plugins registry --refresh || true
+        "$OPENCLAW" plugins registry --refresh || refresh_rc=$?
     else
-      env HOME=/sandbox PLUGIN_REFRESH_LOG="$PLUGIN_REFRESH_LOG" \
+      timeout --signal=TERM --kill-after=5s "$PLUGIN_REFRESH_TIMEOUT_DURATION" \
+        env HOME=/sandbox PLUGIN_REFRESH_LOG="$PLUGIN_REFRESH_LOG" \
         sh -c "exec \"\$@\" >\"\$PLUGIN_REFRESH_LOG\" 2>&1" sh \
-        "$OPENCLAW" plugins registry --refresh || true
+        "$OPENCLAW" plugins registry --refresh || refresh_rc=$?
+    fi
+    if [ "$refresh_rc" -eq 124 ]; then
+      echo "[plugin-refresh] registry refresh timed out after $PLUGIN_REFRESH_TIMEOUT_DURATION" >&2
     fi
 
+    if ! normalize_mutable_config_perms; then
+      echo "[plugin-refresh] mutable OpenClaw config permission normalization failed" >&2
+      exit 1
+    fi
     # The registry refresh may rewrite openclaw.json after the gateway reports
     # ready. Keep the mutable integrity metadata ordered after that writer so a
     # rebuild cannot observe the refreshed config with its previous hash. Run
@@ -4837,6 +4727,7 @@ start_plugin_registry_refresh() {
     # part of the config before returning nonzero.
     if ! ensure_mutable_openclaw_config_hash; then
       echo "[plugin-refresh] mutable OpenClaw config hash refresh failed" >&2
+      exit 1
     fi
   ) &
   PLUGIN_REFRESH_PID=$!
@@ -4844,6 +4735,16 @@ start_plugin_registry_refresh() {
     # The best-effort refresh may legitimately finish before PID 1 can read
     # its stat record.  An uncaptured PID is never admitted or signalled.
     PLUGIN_REFRESH_PID_START_IDENTITY=""
+  fi
+}
+
+wait_for_plugin_registry_refresh() {
+  local refresh_rc=0
+  [ -n "${PLUGIN_REFRESH_PID:-}" ] || return 0
+  wait "$PLUGIN_REFRESH_PID" || refresh_rc=$?
+  if [ "$refresh_rc" -ne 0 ]; then
+    echo "[plugin-refresh] registry refresh postcondition failed" >&2
+    return "$refresh_rc"
   fi
 }
 
@@ -5588,7 +5489,6 @@ openclaw_runtime_guard_chain_complete() {
   local targets=(
     "$_SANDBOX_SAFETY_NET"
     "$_NEMOTRON_FIX_SCRIPT"
-    "$_CIAO_GUARD_SCRIPT"
     "$_RUNTIME_SHELL_ENV_FILE"
   )
   local target
@@ -5804,6 +5704,12 @@ handle_openclaw_gateway_control_request() {
   # prior refresh is harmless and will exit on its own.
   start_plugin_registry_refresh
   refresh_openclaw_supervised_child_pids
+  if ! wait_for_plugin_registry_refresh; then
+    refresh_openclaw_supervised_child_pids
+    gateway_control_fail unsafe-config "$old_pid"
+    return 1
+  fi
+  refresh_openclaw_supervised_child_pids
   gateway_control_complete ok "$old_pid" "$GATEWAY_PID"
 }
 
@@ -5871,8 +5777,6 @@ if [ "$(id -u)" -ne 0 ]; then
   _nemoclaw_capture_epoch_realtime _NEMOCLAW_GATEWAY_TOKEN_FINISHED_EPOCH
   write_messaging_runtime_setup_plan
   write_runtime_shell_env
-  ensure_runtime_shell_env_shim
-  lock_rc_files "$_SANDBOX_HOME" || true
   # Apply manifest-declared runtime env aliases before any child inherits the
   # env. This covers both one-shot commands and the gateway launch.
   apply_messaging_runtime_env_aliases
@@ -5909,8 +5813,6 @@ if [ "$(id -u)" -ne 0 ]; then
         && echo "[setup] fixed ownership on ${openclaw_dir}" >&2 \
         || echo "[setup] could not fix ownership on ${openclaw_dir}; writes may fail" >&2
     fi
-    chmod 2770 "$openclaw_dir" 2>/dev/null || true
-    chmod 660 "$openclaw_dir/openclaw.json" "$openclaw_dir/.config-hash" 2>/dev/null || true
   }
   fix_openclaw_ownership
   normalize_mutable_config_perms
@@ -5945,6 +5847,8 @@ if [ "$(id -u)" -ne 0 ]; then
   start_persistent_gateway_log_mirror || exit 1
   start_auto_pair
   start_plugin_registry_refresh
+  refresh_openclaw_supervised_child_pids
+  wait_for_plugin_registry_refresh || exit 1
   start_gateway_serving_watchdog
   # NOTE: PIDs are collected after launch; a signal arriving between trap
   # registration and the final append is a small race window (same as before
@@ -6024,8 +5928,6 @@ write_openclaw_config_baseline
 export_gateway_token
 write_messaging_runtime_setup_plan
 write_runtime_shell_env
-ensure_runtime_shell_env_shim
-lock_rc_files "$_SANDBOX_HOME"
 # Apply manifest-declared runtime env aliases before any child (the one-shot
 # "${NEMOCLAW_CMD[@]}" exec or the stepped-down gateway) inherits the env.
 # setpriv preserves the environment, so the export reaches the gateway user.
@@ -6184,7 +6086,8 @@ start_auto_pair
 # registry forgets them — so `/nemoclaw` is unreachable in the TUI and
 # `openclaw plugins inspect nemoclaw` says "Plugin not found" (#2021).
 # A `plugins registry --refresh` repopulates plugins[] from installRecords.
-# Backgrounded so the gateway-wait loop is unblocked; failure is non-fatal.
+# Run in a supervised child so PID 1 can forward shutdown signals while the
+# caller waits for its config postcondition before publishing readiness.
 # Source boundary: the lossy policy-changed rebuild lives in OpenClaw's registry
 # regeneration path, outside NemoClaw. NemoClaw can only heal the initial
 # post-start registry from persisted installRecords until upstream preserves
@@ -6193,6 +6096,8 @@ start_auto_pair
 # workaround after openclaw/openclaw#89606 ships and the full onboard E2E still
 # proves /nemoclaw registration without the refresh.
 start_plugin_registry_refresh
+refresh_openclaw_supervised_child_pids
+wait_for_plugin_registry_refresh || exit 1
 
 start_gateway_serving_watchdog
 

@@ -21,7 +21,7 @@ import path from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
 
 import { buildHermesManagedPolicy } from "../../../agents/hermes/config/managed-policy.ts";
-import { buildOpenshellExecArgs } from "../../../src/lib/actions/sandbox/exec.ts";
+import { buildCliOpenShellSandboxExecArgs } from "../../../src/lib/adapters/openshell/sandbox-command-cli";
 import { canRun, runWrapper, VALIDATOR, WRAPPER } from "../../helpers/hermes-wrapper-harness.ts";
 
 function runUnmodifiedWrapperWithTrustedPython(
@@ -93,20 +93,18 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
   });
 
   it("allows `gateway` when only resolver placeholders / allow-listed keys are present", () => {
-    const run = runWrapper(
-      ["gateway", "run"],
-      {
-        SLACK_BOT_TOKEN: "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
-        TELEGRAM_BOT_TOKEN: "openshell:resolve:env:TELEGRAM_BOT_TOKEN",
-        OPENCLAW_GATEWAY_TOKEN: "raw-gateway-token",
-      },
-      { validatorScript: "raise SystemExit(0)\n" },
-    );
+    const run = runWrapper(["gateway", "run"], {
+      SLACK_BOT_TOKEN: "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
+      TELEGRAM_BOT_TOKEN: "openshell:resolve:env:TELEGRAM_BOT_TOKEN",
+      OPENCLAW_GATEWAY_TOKEN: "raw-gateway-token",
+    });
 
     expect(run.status).toBe(0);
     expect(run.stderr).toBe("");
     expect(run.realInvoked).toBe(true);
     expect(run.realArgs).toBe("gateway run");
+    expect(run.realEnv.HERMES_SKIP_CHMOD).toBe("1");
+    expect(run.realEnv.HERMES_LAZY_INSTALL_TARGET).toBe("/sandbox/.hermes/lazy-packages");
   });
 
   it("scrubs package-manager and Python startup inputs before a root-separated gateway exec", () => {
@@ -130,7 +128,21 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
         VIRTUAL_ENV: "/sandbox/venv",
         PATH: "/sandbox/bin",
       },
-      { validatorScript: "raise SystemExit(0)\n" },
+      {
+        validatorScript: [
+          "import json, os, sys",
+          "logical_env = json.load(sys.stdin)",
+          "assert logical_env.get('PIP_CONFIG_FILE') == '/sandbox/pip.conf'",
+          "assert logical_env.get('LD_PRELOAD') == '/sandbox/hostile.so'",
+          "assert os.environ.get('HERMES_LAZY_INSTALL_TARGET') == '/run/nemoclaw/hermes-gateway-lazy-packages'",
+          "blocked = ('BASH_ENV', 'ENV', 'PATH', 'VIRTUAL_ENV')",
+          "prefixes = ('DYLD_', 'LD_', 'UV_', 'PIP_', 'PYTHON')",
+          "assert not any(key in os.environ for key in blocked)",
+          "assert not any(key.startswith(prefixes) for key in os.environ)",
+          "raise SystemExit(0)",
+          "",
+        ].join("\n"),
+      },
     );
 
     expect(run.status, run.stderr).toBe(0);
@@ -164,32 +176,76 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
     });
   });
 
-  it.each([
-    ["sandbox-owned", "/sandbox/.hermes/lazy-packages"],
-    ["arbitrary", "/tmp/attacker-controlled-python"],
-  ])("replaces a %s lazy target before gateway validation and exec", (_label, lazyTarget) => {
-    const run = runWrapper(
-      ["gateway", "run"],
-      {
-        HERMES_LAZY_INSTALL_TARGET: lazyTarget,
-        UV_CONFIG_FILE: "/sandbox/uv.toml",
-        PIP_CONFIG_FILE: "/sandbox/pip.conf",
-        PYTHONPATH: "/sandbox/python",
-      },
-      { validatorScript: "raise SystemExit(0)\n" },
-    );
+  it("uses only managed package-manager and Python startup values for a same-identity gateway exec", () => {
+    const run = runWrapper(["gateway", "run"], {
+      UV_CONFIG_FILE: "/sandbox/uv.toml",
+      UV_INDEX_URL: "file:///sandbox/wheels",
+      UV_NO_CONFIG: "0",
+      PIP_CONFIG_FILE: "/sandbox/pip.conf",
+      PIP_INDEX_URL: "file:///sandbox/wheels",
+      PIP_DISABLE_PIP_VERSION_CHECK: "0",
+      PYTHONPATH: "/sandbox/python",
+      PYTHONHOME: "/sandbox/python-home",
+      PYTHONSAFEPATH: "0",
+      PYTHONNOUSERSITE: "0",
+      PYTHONUTF8: "0",
+      LD_PRELOAD: "/sandbox/hostile.so",
+      BASH_ENV: "/sandbox/bash-env",
+      VIRTUAL_ENV: "/sandbox/venv",
+      PATH: "/sandbox/bin",
+    });
 
     expect(run.status, run.stderr).toBe(0);
     expect(run.realInvoked).toBe(true);
     expect(run.realEnv.HERMES_HOME).toBe("/sandbox/.hermes");
     expect(run.realEnv.HERMES_BUNDLED_PLUGINS).toBe("/opt/hermes/plugins");
-    expect(run.realEnv.HERMES_LAZY_INSTALL_TARGET).toBe(
-      "/run/nemoclaw/hermes-gateway-lazy-packages",
-    );
+    expect(run.realEnv.HERMES_LAZY_INSTALL_TARGET).toBe("/sandbox/.hermes/lazy-packages");
     expect(run.realEnv.HOME).toBe("/sandbox");
-    expect(run.realEnv.UV_CONFIG_FILE).toBeUndefined();
-    expect(run.realEnv.PIP_CONFIG_FILE).toBe("/dev/null");
-    expect(run.realEnv.PYTHONPATH).toBeUndefined();
+    const packageEnvironment = Object.fromEntries(
+      Object.entries(run.realEnv).filter(
+        ([name]) =>
+          name.startsWith("UV_") ||
+          name.startsWith("PIP_") ||
+          name.startsWith("PYTHON") ||
+          name.startsWith("LD_") ||
+          ["BASH_ENV", "VIRTUAL_ENV", "PATH"].includes(name),
+      ),
+    );
+    expect(packageEnvironment).toEqual({
+      UV_NO_CONFIG: "1",
+      UV_NO_CACHE: "1",
+      UV_CACHE_DIR: "/sandbox/.hermes/lazy-packages/.uv-cache",
+      PIP_CONFIG_FILE: "/dev/null",
+      PIP_DISABLE_PIP_VERSION_CHECK: "1",
+      PYTHONSAFEPATH: "1",
+      PYTHONNOUSERSITE: "1",
+      PYTHONUTF8: "1",
+      PATH: "/usr/local/bin:/opt/hermes/.venv/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    });
+  });
+
+  it("rejects an arbitrary gateway lazy target without exposing its value", () => {
+    const arbitraryTarget = "/tmp/attacker-controlled-python";
+    const run = runWrapper(["gateway", "run"], {
+      HERMES_LAZY_INSTALL_TARGET: arbitraryTarget,
+    });
+
+    expect(run.status).toBe(1);
+    expect(run.stderr).toContain("HERMES_LAZY_INSTALL_TARGET");
+    expect(run.stderr).not.toContain(arbitraryTarget);
+    expect(run.stdout).not.toContain(arbitraryTarget);
+    expect(run.realInvoked).toBe(false);
+  });
+
+  it("rejects a package-prefixed raw secret without exposing its value", () => {
+    const secret = "pypi-secret-value-that-must-not-leak";
+    const run = runWrapper(["gateway", "run"], { PIP_API_KEY: secret });
+
+    expect(run.status).toBe(1);
+    expect(run.stderr).toContain("PIP_API_KEY");
+    expect(run.stderr).not.toContain(secret);
+    expect(run.stdout).not.toContain(secret);
+    expect(run.realInvoked).toBe(false);
   });
 
   it("refuses a direct root gateway before invoking the real binary", () => {
@@ -242,15 +298,32 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
     expect(run.stderr).toBe("");
     expect(run.realInvoked).toBe(true);
     expect(run.realArgs).toBe("dashboard");
+    expect(run.realEnv.HERMES_SKIP_CHMOD).toBe("1");
   });
 
-  it("passes --version through (build assertion path) without invoking the guard", () => {
-    const run = runWrapper(["--version"], { SLACK_BOT_TOKEN: "xoxb-real-1234567890" });
+  it.each([
+    { flag: "missing", exitCode: 0 },
+    { flag: "empty", exitCode: 7 },
+  ])(
+    "supplies the image permission policy when the version caller's flag is $flag (#11153)",
+    ({ flag, exitCode }) => {
+      const run = runWrapper(
+        ["--version"],
+        {
+          SLACK_BOT_TOKEN: "xoxb-real-1234567890",
+          ...(flag === "empty" ? { HERMES_SKIP_CHMOD: "" } : {}),
+        },
+        { stub: { stdout: "version output", stderr: "version diagnostic", exitCode } },
+      );
 
-    expect(run.status).toBe(0);
-    expect(run.realInvoked).toBe(true);
-    expect(run.realArgs).toBe("--version");
-  });
+      expect(run.realInvoked).toBe(true);
+      expect(run.realArgv).toEqual(["--version"]);
+      expect(run.realEnv.HERMES_SKIP_CHMOD).toBe("1");
+      expect(run.status).toBe(exitCode);
+      expect(run.stdout).toBe("version output\n");
+      expect(run.stderr).toBe("version diagnostic\n");
+    },
+  );
 
   it("invokes the runtime-env validator with python3 -I (isolated mode)", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-wrapper-argv-"));
@@ -262,15 +335,11 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
         `#!/usr/bin/env bash\nprintf '%s\\n' "$@" > ${JSON.stringify(argvLog)}\nexit 1\n`,
         { mode: 0o755 },
       );
-      const run = runUnmodifiedWrapperWithTrustedPython(
-        dir,
-        ["gateway", "run"],
-        [stubPython],
-      );
+      const run = runUnmodifiedWrapperWithTrustedPython(dir, ["gateway", "run"], [stubPython]);
       expect(run.status).not.toBe(0);
       const argv = fs.readFileSync(argvLog, "utf-8").trim().split("\n");
       expect(argv[0]).toBe("-I");
-      expect(argv[argv.length - 1]).toBe("runtime-env");
+      expect(argv[argv.length - 1]).toBe("runtime-env-json");
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
@@ -291,11 +360,7 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
         ].join("\n"),
         { mode: 0o755 },
       );
-      const run = runUnmodifiedWrapperWithTrustedPython(
-        dir,
-        ["config", "show"],
-        [stubPython],
-      );
+      const run = runUnmodifiedWrapperWithTrustedPython(dir, ["config", "show"], [stubPython]);
       expect(run.status).not.toBe(0);
       const argv = fs.readFileSync(argvLog, "utf-8").trim().split("\n");
       expect(argv[0]).toBe("-I");
@@ -312,20 +377,12 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
       const missingB = path.join(dir, "missing-python3-b");
       const missingC = path.join(dir, "missing-python3-c");
       const candidates = [missingA, missingB, missingC];
-      const gatewayRun = runUnmodifiedWrapperWithTrustedPython(
-        dir,
-        ["gateway", "run"],
-        candidates,
-      );
+      const gatewayRun = runUnmodifiedWrapperWithTrustedPython(dir, ["gateway", "run"], candidates);
       expect(gatewayRun.status).toBe(127);
       expect(gatewayRun.stderr).toContain("[SECURITY]");
       expect(gatewayRun.stderr).toContain("no python3 at a trusted absolute path");
 
-      const configRun = runUnmodifiedWrapperWithTrustedPython(
-        dir,
-        ["config", "show"],
-        candidates,
-      );
+      const configRun = runUnmodifiedWrapperWithTrustedPython(dir, ["config", "show"], candidates);
       expect(configRun.status).toBe(127);
       expect(configRun.stderr).toContain("[SECURITY]");
       expect(configRun.stderr).toContain("no python3 at a trusted absolute path");
@@ -347,6 +404,7 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
     expect(run.status).toBe(0);
     expect(run.realInvoked).toBe(true);
     expect(run.realArgs).toBe("config show");
+    expect(run.realEnv.HERMES_SKIP_CHMOD).toBe("1");
     expect(run.stdout).not.toContain("sk-OPENSHELL-PROXY-REWRITE");
     expect(run.stdout).toContain("'api_key': 'sk-****'");
     expect(run.stdout).toContain("'default': 'meta/llama-3.1-8b-instruct'");
@@ -964,8 +1022,12 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
     }
   });
 
-  it("composes the openshell dispatch argv built by buildOpenshellExecArgs with the wrapper so `nemoclaw <name> exec -- hermes config show` masks Model api_key (#5981)", () => {
-    const dispatchArgv = buildOpenshellExecArgs("hermes-sandbox", ["hermes", "config", "show"]);
+  it("composes the openshell dispatch argv built by the CLI adapter with the wrapper so `nemoclaw <name> exec -- hermes config show` masks Model api_key (#5981)", () => {
+    const dispatchArgv = buildCliOpenShellSandboxExecArgs({
+      sandboxName: "hermes-sandbox",
+      target: { kind: "selected" },
+      command: ["hermes", "config", "show"],
+    });
     expect(dispatchArgv).toEqual([
       "sandbox",
       "exec",

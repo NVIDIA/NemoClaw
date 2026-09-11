@@ -400,8 +400,12 @@ describe("managed rebuild restore authority", () => {
     expect(restore).not.toHaveBeenCalled();
   });
 
-  it("restores retained all-GPU authority through the managed rebuild path (#10758)", () => {
-    const fixture = managedDockerRestoreFixture(["docker-device-id:nvidia.com/gpu=all"], "all");
+  it.each([
+    "docker-device-id:nvidia.com/gpu=all",
+    "docker-device-request:nvidia:count=-1",
+    "docker-nvidia-visible-devices:all",
+  ])("restores retained NVIDIA authority %s through managed rebuild (#10758)", (selector) => {
+    const fixture = managedDockerRestoreFixture([selector], "all");
 
     expect(fixture.run()).toMatchObject({ success: true, restoredDirs: ["workspace"] });
     expect(fixture.restore).toHaveBeenCalledOnce();
@@ -420,6 +424,28 @@ describe("managed rebuild restore authority", () => {
       }),
     );
   });
+
+  it.each([
+    ["docker-device-request:amd:count=-1", "all"],
+    ["docker-device-request:default:count=-1", "all"],
+    ["docker-device-id:all", "all"],
+    ["docker-device-id:0", "exact"],
+  ] as const)(
+    "rejects retained selector %s before managed restore (#10758)",
+    (selector, target) => {
+      const fixture = managedDockerRestoreFixture([selector], target);
+
+      expect(fixture.run()).toMatchObject({
+        success: false,
+        error: expect.stringContaining("cannot represent the snapshot acceleration state"),
+      });
+      expect(fixture.restore).not.toHaveBeenCalled();
+      expect(fixture.providerRestore).not.toHaveBeenCalled();
+      expect(fixture.captureHostCommand.mock.calls.some(([, args]) => args[0] === "exec")).toBe(
+        false,
+      );
+    },
+  );
 
   it("retains exact-device authority before mutation and succeeds on retry (#10758)", () => {
     const fixture = managedDockerRestoreFixture(["docker-device-id:nvidia.com/gpu=0"], "all");

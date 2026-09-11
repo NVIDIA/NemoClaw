@@ -53,7 +53,7 @@ function dcodeOptions(
 }
 
 describe("handleSandboxState live DCode selection", () => {
-  it("carries durable observability intent in the sandbox create intent", async () => {
+  it("keeps observability in the create intent when the verified-create callback is absent (#10964)", async () => {
     const session = createSession({
       observabilityEnabled: true,
       observabilityRequestedExplicitly: true,
@@ -70,7 +70,7 @@ describe("handleSandboxState live DCode selection", () => {
       agent: { name: "langchain-deepagents-code" },
     });
 
-    expect(calls.createSandbox.mock.calls[0]?.at(-1)).toMatchObject({
+    expect(calls.createSandbox.mock.calls[0]?.at(-2)).toMatchObject({
       resolved: expect.any(Object),
       recreate: false,
       toolDisclosure: "progressive",
@@ -80,6 +80,8 @@ describe("handleSandboxState live DCode selection", () => {
       dcodeAutoApprovalMode: "disabled",
       extraProviders: [],
     });
+    expect(calls.createSandbox.mock.calls[0]).toHaveLength(17);
+    expect(calls.createSandbox.mock.calls[0]?.at(-1)).toBeUndefined();
   });
 
   it("carries authoritative thread opt-in in the create intent (#6478)", async () => {
@@ -92,7 +94,7 @@ describe("handleSandboxState live DCode selection", () => {
       requestedDcodeAutoApprovalMode: "thread-opt-in",
     });
 
-    expect(calls.createSandbox.mock.calls[0]?.at(-1)).toMatchObject({
+    expect(calls.createSandbox.mock.calls[0]?.at(-2)).toMatchObject({
       dcodeAutoApprovalMode: "thread-opt-in",
     });
   });
@@ -121,7 +123,7 @@ describe("handleSandboxState live DCode selection", () => {
       requestedDcodeAutoApprovalMode: "thread-opt-in",
     });
 
-    expect(journal.completeCreate.mock.calls[0]?.at(-1)).toMatchObject({
+    expect(journal.completeCreate.mock.calls[0]?.at(-2)).toMatchObject({
       recreate: true,
       recreateTransaction: expect.any(Object),
       dcodeAutoApprovalMode: "thread-opt-in",
@@ -163,7 +165,7 @@ describe("handleSandboxState live DCode selection", () => {
       state: "sandbox",
       metadata: { repair: "recorded-sandbox-cleanup", sandboxName: "saved" },
     });
-    expect(journal.completeCreate.mock.calls[0]?.at(-1)).toMatchObject({
+    expect(journal.completeCreate.mock.calls[0]?.at(-2)).toMatchObject({
       recreate: true,
       recreateTransaction: expect.any(Object),
       dcodeAutoApprovalMode: "thread-opt-in",
@@ -193,7 +195,7 @@ describe("handleSandboxState live DCode selection", () => {
     ["changed", { changed: true, unknown: false }],
     ["unreadable", { changed: false, unknown: true }],
   ])("recreates a ready sandbox when live selection is %s (#6311)", async (_label, drift) => {
-    const getDcodeSelectionDrift = vi.fn(() => drift);
+    const getDcodeSelectionDrift = vi.fn(async () => drift);
     const { deps, calls } = createDeps({
       getSandboxReuseState: () => "ready",
       getDcodeSelectionDrift,
@@ -209,7 +211,7 @@ describe("handleSandboxState live DCode selection", () => {
       "openai-completions",
       null,
     );
-    expect(calls.createSandbox.mock.calls[0]?.at(-1)).toEqual({
+    expect(calls.createSandbox.mock.calls[0]?.at(-2)).toEqual({
       resolved: expect.any(Object),
       recreate: true,
       toolDisclosure: "progressive",
@@ -224,7 +226,7 @@ describe("handleSandboxState live DCode selection", () => {
   it("preserves registry fidelity when GPU drift recreates managed DCode (#6311)", async () => {
     const { deps, calls } = createDeps({
       getSandboxReuseState: () => "ready",
-      getDcodeSelectionDrift: () => ({ changed: false, unknown: false }),
+      getDcodeSelectionDrift: async () => ({ changed: false, unknown: false }),
       hasSandboxGpuDrift: () => true,
       getSandboxRegistryEntry: (name) => dcodeRegistryEntry(name),
     });
@@ -232,7 +234,7 @@ describe("handleSandboxState live DCode selection", () => {
     await handleSandboxState(dcodeOptions(deps));
 
     expect(calls.removeSandbox).not.toHaveBeenCalled();
-    expect(calls.createSandbox.mock.calls[0]?.at(-1)).toEqual({
+    expect(calls.createSandbox.mock.calls[0]?.at(-2)).toEqual({
       resolved: expect.any(Object),
       recreate: true,
       toolDisclosure: "progressive",
@@ -244,7 +246,7 @@ describe("handleSandboxState live DCode selection", () => {
   });
 
   it("reuses a ready sandbox only after the live selection is verified (#6311)", async () => {
-    const getDcodeSelectionDrift = vi.fn(() => ({ changed: false, unknown: false }));
+    const getDcodeSelectionDrift = vi.fn(async () => ({ changed: false, unknown: false }));
     const { deps, calls } = createDeps({
       getSandboxReuseState: () => "ready",
       getDcodeSelectionDrift,
@@ -260,7 +262,7 @@ describe("handleSandboxState live DCode selection", () => {
 
   it("reuses a ready OpenRouter-compatible sandbox after endpoint-aware verification (#9555)", async () => {
     const endpointUrl = "https://openrouter.ai/api/v1/";
-    const getDcodeSelectionDrift = vi.fn(() => ({ changed: false, unknown: false }));
+    const getDcodeSelectionDrift = vi.fn(async () => ({ changed: false, unknown: false }));
     const { deps, calls } = createDeps({
       getSandboxReuseState: () => "ready",
       getDcodeSelectionDrift,
@@ -290,7 +292,7 @@ describe("handleSandboxState live DCode selection", () => {
   });
 
   it("refuses managed DCode reuse when the registry record is missing (#6311)", async () => {
-    const getDcodeSelectionDrift = vi.fn(() => ({ changed: false, unknown: false }));
+    const getDcodeSelectionDrift = vi.fn(async () => ({ changed: false, unknown: false }));
     const { deps, calls } = createDeps({
       getSandboxReuseState: () => "ready",
       getDcodeSelectionDrift,
@@ -314,7 +316,7 @@ describe("handleSandboxState live DCode selection", () => {
       pendingRouteReservation: true,
       reservationSessionId: session.sessionId,
     };
-    const getDcodeSelectionDrift = vi.fn(() => ({ changed: true, unknown: true }));
+    const getDcodeSelectionDrift = vi.fn(async () => ({ changed: true, unknown: true }));
     const finalizeSandboxRouteReservation = vi.fn((name: string, sessionId: string) => {
       expect(name).toBe(registryEntry.name);
       expect(sessionId).toBe(registryEntry.reservationSessionId);
@@ -347,7 +349,7 @@ describe("handleSandboxState live DCode selection", () => {
   });
 
   it("fails closed for missing registry selection before live reuse (#6311)", async () => {
-    const getDcodeSelectionDrift = vi.fn(() => ({ changed: false, unknown: false }));
+    const getDcodeSelectionDrift = vi.fn(async () => ({ changed: false, unknown: false }));
     const { deps, calls } = createDeps({
       getSandboxReuseState: () => "ready",
       getDcodeSelectionDrift,
@@ -367,12 +369,10 @@ describe("handleSandboxState live DCode selection", () => {
       pendingRouteReservation: true,
       reservationSessionId: session.sessionId,
     };
-    const getDcodeSelectionDrift = vi.fn(() => ({ changed: false, unknown: false }));
-    const updateSandboxRegistry = vi.fn(
-      (_name: string, updates: Record<string, unknown>) => {
-        Object.assign(registryEntry, updates);
-      },
-    );
+    const getDcodeSelectionDrift = vi.fn(async () => ({ changed: false, unknown: false }));
+    const updateSandboxRegistry = vi.fn((_name: string, updates: Record<string, unknown>) => {
+      Object.assign(registryEntry, updates);
+    });
     const finalizeSandboxRouteReservation = vi.fn((name: string, sessionId: string) => {
       expect(name).toBe(registryEntry.name);
       expect(sessionId).toBe(registryEntry.reservationSessionId);

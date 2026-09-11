@@ -159,22 +159,22 @@ describe("public readiness presentation (#7412)", () => {
     });
   });
 
-  it.each([
-    `nvapi-${"a".repeat(24)}`,
-    "not-a-source-revision",
-  ])("rejects the invalid source revision %s (#7777)", (sourceRevision) => {
-    expect(() =>
-      createPublicReadinessReport(
-        report({
-          provenance: {
-            nemoclawVersion: "0.1.0",
-            observedAt: "2026-06-01T12:00:00.000Z",
-            sourceRevision,
-          },
-        }),
-      ),
-    ).toThrow("NemoClaw build identity has an invalid source revision.");
-  });
+  it.each([`nvapi-${"a".repeat(24)}`, "not-a-source-revision"])(
+    "rejects the invalid source revision %s (#7777)",
+    (sourceRevision) => {
+      expect(() =>
+        createPublicReadinessReport(
+          report({
+            provenance: {
+              nemoclawVersion: "0.1.0",
+              observedAt: "2026-06-01T12:00:00.000Z",
+              sourceRevision,
+            },
+          }),
+        ),
+      ).toThrow("NemoClaw build identity has an invalid source revision.");
+    },
+  );
 
   it("rejects a described version that names a different source revision (#7777)", () => {
     expect(() =>

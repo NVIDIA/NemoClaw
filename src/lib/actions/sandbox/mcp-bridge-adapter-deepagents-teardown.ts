@@ -165,13 +165,13 @@ export function buildDeepAgentsMcpRemoveCommand(
   ].join("\n");
 }
 
-export function unregisterDeepAgentsAdapter(
+export async function unregisterDeepAgentsAdapter(
   sandboxName: string,
   entry: McpBridgeEntry,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
   options: AdapterMutationOptions = {},
-): AdapterRemovalOutcome {
-  const stdout = runDeepAgentsAdapterCommand(
+): Promise<AdapterRemovalOutcome> {
+  const stdout = await runDeepAgentsAdapterCommand(
     sandboxName,
     entry,
     buildDeepAgentsMcpRemoveCommand(entry, options.force === true, options.teardown === true),

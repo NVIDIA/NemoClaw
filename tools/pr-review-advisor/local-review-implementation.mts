@@ -71,6 +71,13 @@ function combineFailures(first: unknown, next: unknown): unknown {
   });
 }
 
+function makeOwnedTemporaryDirectoriesWritable(root: string): void {
+  for (const entry of fs.readdirSync(root, { recursive: true, withFileTypes: true })) {
+    if (entry.isDirectory()) fs.chmodSync(path.join(entry.parentPath, entry.name), 0o700);
+  }
+  fs.chmodSync(root, 0o700);
+}
+
 export const defaultLocalReviewLifecycle: LocalReviewLifecycle = {
   ...defaultAdvisorSpecialistLifecycle,
   prepare: (env) => prepareAdvisorSandboxInputs(env, { collectContext: async () => null }),
@@ -295,9 +302,13 @@ function stageArtifacts(
 
 function validateSpecialistArtifacts(root: string, interest: string): void {
   const directory = path.join(root, "artifacts", "pr-review-specialist-" + interest);
-  const expected = [`pr-review-${interest}-session.jsonl`, `pr-review-${interest}-summary.md`];
+  const expected = [
+    `pr-review-${interest}-e2e.json`,
+    `pr-review-${interest}-session.jsonl`,
+    `pr-review-${interest}-summary.md`,
+  ];
   if (JSON.stringify(fs.readdirSync(directory).sort()) !== JSON.stringify(expected))
-    throw new Error("Specialist artifacts do not match the existing Markdown and JSONL contract");
+    throw new Error("Specialist artifacts do not match the E2E, Markdown, and JSONL contract");
   if (
     expected.some((name) => {
       const stat = fs.lstatSync(path.join(directory, name));
@@ -387,7 +398,8 @@ export async function runLocalReview(input: {
     if (specialists.length > 0) {
       await lifecycle.prepare(
         specialistEnvironment(
-          input.advisorDirectory ?? path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../.."),
+          input.advisorDirectory ??
+            path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../.."),
           output,
           runnerTemp,
           snapshot,
@@ -429,7 +441,10 @@ export async function runLocalReview(input: {
   try {
     await activeCleanup?.();
     activeCleanup = undefined;
-    if (ownsRoot) (input.removeTemporaryRoot ?? fs.rmSync)(root, { recursive: true, force: true });
+    if (ownsRoot) {
+      makeOwnedTemporaryDirectoriesWritable(root);
+      (input.removeTemporaryRoot ?? fs.rmSync)(root, { recursive: true, force: true });
+    }
   } catch (error) {
     cleanup = contextualError(
       `Local review failed during cleanup for temporary root ${root}`,

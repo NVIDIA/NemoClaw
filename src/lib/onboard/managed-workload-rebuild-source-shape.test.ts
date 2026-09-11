@@ -21,17 +21,18 @@ describe("managed workload rebuild source shape", () => {
     expect(CENTRAL_REBUILD_MODULES).not.toHaveLength(0);
   });
 
-  it.each(
-    CENTRAL_REBUILD_MODULES,
-  )("keeps %s free of provider-specific imports and switches", (file) => {
-    const text = source(file);
+  it.each(CENTRAL_REBUILD_MODULES)(
+    "keeps %s free of provider-specific imports and switches",
+    (file) => {
+      const text = source(file);
 
-    expect(text).not.toMatch(/from\s+["'][^"']*(?:docker|podman)[^"']*["']/iu);
-    expect(text).not.toMatch(
-      /(?:providerId|openshellDriver)\s*(?:===|!==)\s*["'](?:docker|podman)["']/iu,
-    );
-    expect(text).not.toMatch(/switch\s*\(\s*(?:providerId|[^)]*[.]openshellDriver)\s*\)/iu);
-  });
+      expect(text).not.toMatch(/from\s+["'][^"']*(?:docker|podman)[^"']*["']/iu);
+      expect(text).not.toMatch(
+        /(?:providerId|openshellDriver)\s*(?:===|!==)\s*["'](?:docker|podman)["']/iu,
+      );
+      expect(text).not.toMatch(/switch\s*\(\s*(?:providerId|[^)]*[.]openshellDriver)\s*\)/iu);
+    },
+  );
 
   it.each(CENTRAL_REBUILD_MODULES)("keeps %s free of name-only sandbox deletion", (file) => {
     const text = source(file);

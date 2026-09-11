@@ -46,7 +46,7 @@ import {
   publishLaunchReadinessLease,
   readLaunchReadinessLease,
 } from "../../state/launch-readiness-lease";
-import { withMcpLifecycleLock as withSandboxMutationLock } from "../../state/mcp-lifecycle-lock-acquisition";
+import { withSandboxLifecycleLock as withSandboxMutationLock } from "./lifecycle/lock";
 import type { SandboxEntry, SandboxWorkloadReceipt } from "../../state/registry";
 import { normalizeSandboxMcpState } from "../../state/registry";
 import * as registry from "../../state/registry";
@@ -389,6 +389,9 @@ function projectMcpState(value: unknown): unknown {
           adapter: bridge.adapter ?? null,
           url: bridge.url,
           env: [...bridge.env],
+          denyTools: bridge.denyTools ? [...bridge.denyTools] : null,
+          pendingDenyTools:
+            bridge.pendingDenyTools !== undefined ? [...bridge.pendingDenyTools] : null,
           trustedPrivateHost: bridge.trustedPrivateHost ?? null,
           allowedIps: bridge.allowedIps ? [...bridge.allowedIps] : null,
           providerName: bridge.providerName ?? null,

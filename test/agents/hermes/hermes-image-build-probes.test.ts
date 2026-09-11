@@ -107,7 +107,8 @@ exit ${doctorExit}
     node,
     `#!/usr/bin/env bash
 set -euo pipefail
-test "$1" = "--experimental-strip-types"
+test "$#" -eq 1
+test "$1" = "${generator}"
 printf 'generate\n' >> "$ORDER_LOG"
 printf 'model: trusted\n' > "$HERMES_HOME/config.yaml"
 printf 'SAFE=1\n' > "$HERMES_HOME/.env"
@@ -168,6 +169,29 @@ function runNeutralPlatformProbe(configuration: string) {
 }
 
 describe("Hermes image build probes", () => {
+  // source-shape-contract: security -- Every executed probe must match the reviewed source digest
+  it("binds every image build probe pin to its source digest", () => {
+    const imageDockerfile = fs.readFileSync(
+      path.join(import.meta.dirname, "../../../agents/hermes/Dockerfile"),
+      "utf8",
+    );
+    const imageBuildProbes = fs.readFileSync(
+      path.join(import.meta.dirname, "../../../agents/hermes/image-build-probes.py"),
+    );
+    const digest = createHash("sha256").update(imageBuildProbes).digest("hex");
+    const digestBinding = `ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=${digest}`;
+
+    expect(imageDockerfile).toContain(digestBinding);
+    expect(
+      Array.from(
+        imageDockerfile.matchAll(
+          /^ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=([0-9a-f]{64})$/gmu,
+        ),
+        (match) => match[1],
+      ),
+    ).toEqual([digest, digest]);
+  });
+
   it("verifies the A2A neutralization patch before root applies it", () => {
     const digest = createHash("sha256").update(a2aNeutralPatch).digest("hex");
     const digestBinding = `ARG NEMOCLAW_HERMES_A2A_NEUTRAL_PATCH_SHA256=${digest}`;
@@ -187,16 +211,39 @@ describe("Hermes image build probes", () => {
   // source-shape-contract: security -- The final image must execute the reviewed runtime environment validator bytes
   it("binds the runtime environment validator to its source digest", () => {
     const imageDockerfile = fs.readFileSync(
-      path.join(process.cwd(), "agents", "hermes", "Dockerfile"),
+      path.join(import.meta.dirname, "../../../agents/hermes/Dockerfile"),
       "utf8",
     );
     const runtimeEnvValidator = fs.readFileSync(
-      path.join(process.cwd(), "agents", "hermes", "validate-env-secret-boundary.py"),
+      path.join(import.meta.dirname, "../../../agents/hermes/validate-env-secret-boundary.py"),
     );
     const digest = createHash("sha256").update(runtimeEnvValidator).digest("hex");
     const digestBinding = `ARG NEMOCLAW_HERMES_VALIDATOR_SHA256=${digest}`;
     const integrityCheck =
       '"$NEMOCLAW_HERMES_VALIDATOR_SHA256" /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py';
+    const bindingIndex = imageDockerfile.indexOf(digestBinding);
+    const integrityCheckIndex = imageDockerfile.indexOf(integrityCheck, bindingIndex);
+
+    expect(bindingIndex).toBeGreaterThan(-1);
+    expect(integrityCheckIndex).toBeGreaterThan(bindingIndex);
+    expect(imageDockerfile.indexOf("| sha256sum -c -", integrityCheckIndex)).toBeGreaterThan(
+      integrityCheckIndex,
+    );
+  });
+
+  // source-shape-contract: security -- The final image must execute the reviewed Hermes wrapper bytes
+  it("binds the Hermes wrapper to its source digest", () => {
+    const imageDockerfile = fs.readFileSync(
+      path.join(import.meta.dirname, "../../../agents/hermes/Dockerfile"),
+      "utf8",
+    );
+    const hermesWrapper = fs.readFileSync(
+      path.join(import.meta.dirname, "../../../agents/hermes/hermes-wrapper.py"),
+    );
+    const digest = createHash("sha256").update(hermesWrapper).digest("hex");
+    const digestBinding = `ARG NEMOCLAW_HERMES_WRAPPER_SHA256=${digest}`;
+    const integrityCheck =
+      '"$NEMOCLAW_HERMES_WRAPPER_SHA256" /usr/local/lib/nemoclaw/hermes-wrapper.py';
     const bindingIndex = imageDockerfile.indexOf(digestBinding);
     const integrityCheckIndex = imageDockerfile.indexOf(integrityCheck, bindingIndex);
 

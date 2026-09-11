@@ -153,7 +153,9 @@ export function createOpenShellSdkGatewayHealthObserver(
         return failure("schema", "The external OpenShell gateway health request is not valid.");
       }
 
-      const signal = (dependencies.timeoutSignal ?? AbortSignal.timeout)(request.timeoutMs);
+      const signal = (dependencies.timeoutSignal ?? AbortSignal.timeout.bind(AbortSignal))(
+        request.timeoutMs,
+      );
       let sdk: LoadedOpenShellSdk;
       try {
         sdk = parseLoadedOpenShellSdk(
