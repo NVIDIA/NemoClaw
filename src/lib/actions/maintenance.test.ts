@@ -656,7 +656,8 @@ describe("backupAll", () => {
         manifest,
       };
     });
-    mocks.captureRecordedSandboxBasePolicy.mockImplementation(() => {
+    mocks.captureRecordedSandboxBasePolicy.mockImplementation(async () => {
+      await Promise.resolve();
       expect(lockActive).toBe(true);
       events.push("capture-policy");
       return "version: 1\nnetwork_policies: {}\n";

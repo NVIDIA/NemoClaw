@@ -488,12 +488,10 @@ async function assertRegistryRebuild(host: HostCliClient, sandboxName: string): 
   try {
     fs.rmSync(REGISTRY_FILE, { force: true });
     await expectListed(host, sandboxName, "tc-sbx-07-registry-rebuild-list");
-    fs.rmSync(backup, { force: true });
-  } catch (error) {
-    fs.copyFileSync(backup, REGISTRY_FILE);
-    throw error;
   } finally {
-    fs.rmSync(backup, { force: true });
+    // Discovery cannot reconstruct runtime authority from OpenShell's name list.
+    // Restore the fixture's authority before the independent mutation checks.
+    fs.renameSync(backup, REGISTRY_FILE);
   }
 }
 
@@ -1011,13 +1009,22 @@ test(
     timeout: 45 * 60_000,
     meta: {
       e2ePhases: [
-        "confirm Docker and clear the credential provider fixture",
+        "confirm the selected runtime and clear the credential provider fixture",
         "onboard the credential lifecycle sandbox",
         "add, attach, reset, and remove the credential provider",
       ],
     },
   },
-  async ({ artifacts, cleanup, docker, environment, host, progress, sandbox, secrets }) => {
+  async ({
+    artifacts,
+    cleanup,
+    environment,
+    host,
+    progress,
+    runtimeProvider,
+    sandbox,
+    secrets,
+  }) => {
     const hosted = requireHostedInferenceConfig(secrets);
 
     await artifacts.target.declare({
@@ -1029,7 +1036,10 @@ test(
     });
 
     artifacts.addRedactionValues([CREDENTIAL_VALUE]);
-    await docker.requireDocker();
+    await runtimeProvider.requireAvailable({
+      artifactName: "prereq-runtime-provider-credential-lifecycle",
+      scenarioLabel: "credential provider lifecycle",
+    });
     await environment.assertReady(ENVIRONMENT);
     cleanup.trackGateway(host, "nemoclaw", {
       env: buildAvailabilityProbeEnv(),
