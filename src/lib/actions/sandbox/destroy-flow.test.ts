@@ -1041,7 +1041,10 @@ describe("destroySandbox flow", () => {
   ])(
     "restores MCP preparation and refuses workspace wipe after %s",
     async (_scenario, changedIdentity, expectedMessage) => {
-      const managed = { status: 0, stdout: "aaaa000000000000\topenshell\tdefault\tsb-alpha\t\tend" };
+      const managed = {
+        status: 0,
+        stdout: "aaaa000000000000\topenshell\tdefault\tsb-alpha\t\tend",
+      };
       const harness = createDestroyHarness({
         mcpServers: ["github"],
         dockerRunResultSequence: [managed, managed, managed, managed, changedIdentity],

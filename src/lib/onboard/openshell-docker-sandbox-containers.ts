@@ -47,8 +47,7 @@ export function isOpenShellSandboxOwnershipMarker(
 ): boolean {
   const ownership = resolveOpenShellSandboxOwnershipLabel(env);
   return (
-    observed.managedBy === ownership.value ||
-    observed.managedAlt === OPENSHELL_PODMAN_MANAGED_VALUE
+    observed.managedBy === ownership.value || observed.managedAlt === OPENSHELL_PODMAN_MANAGED_VALUE
   );
 }
 
