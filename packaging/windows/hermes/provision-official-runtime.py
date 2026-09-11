@@ -444,7 +444,9 @@ def clean_environment(runtime, evidence, build_paths):
             )
         ),
         CI="1",
-        PATHEXT=".COM;.EXE;.BAT;.CMD",
+        # npm12 cmd-shim9 appends a blank after ENDLOCAL. A terminal separator
+        # keeps that blank outside .CMD; the executable-extension set is unchanged.
+        PATHEXT=".COM;.EXE;.BAT;.CMD;",
         DISTUTILS_USE_SDK="1",
         HERMES_GIT_BASH_PATH=str(runtime / "git/bin/bash.exe"),
         UV_LINK_MODE="copy",
