@@ -34,6 +34,8 @@ DWORD npfsBindingError = 0;
 const char* npfsBindingReason = "not-observed";
 decltype(&CreateNamedPipeA) realCreateSignalServer = CreateNamedPipeA;
 decltype(&CreateFileA) realOpenSignalWriter = CreateFileA;
+decltype(&CreatePipe) realCreateTrackerPipe = CreatePipe;
+LONG trackerPipeRecords = 0;
 LONG pipeRecords = 0;
 __declspec(thread) bool writingPipeDiagnostic = false;
 WCHAR privateRoot[maximum_root_characters] = {};
@@ -779,6 +781,54 @@ NTSTATUS NTAPI observe_native_create(PHANDLE output, ACCESS_MASK access, POBJECT
     return status;
 }
 
+// Pinned child_info::prefork requests exactly this anonymous 16-byte pipe,
+// then separately makes only its writer inheritable. Keep both operations.
+BOOL WINAPI create_tracker_pipe(PHANDLE read, PHANDLE write, LPSECURITY_ATTRIBUTES attributes, DWORD size) {
+    if (writingPipeDiagnostic) return realCreateTrackerPipe(read, write, attributes, size);
+    const DWORD before = GetLastError();
+    PipeSecurityObservation security = {};
+    const bool context = InterlockedCompareExchange(&installationKeyState, 2, 2) == 2 &&
+                         size == 16 && read && write && read != write;
+    if (context) observe_pipe_security(attributes, security);
+    const bool matched = context && security.complete && security.attributesPresent &&
+        security.attributesLength == sizeof(SECURITY_ATTRIBUTES) && !security.inheritedHandle && !security.descriptorPresent;
+    SignalPipeDescriptor descriptor = {};
+    bool appended = false;
+    const char* adaptation = "outside-exact-contract";
+    if (matched) {
+        const char* rejected = nullptr;
+        DWORD identityError = 0;
+        if (!not_impersonating(rejected, identityError)) adaptation = rejected;
+        else {
+            appended = current_default_pipe_descriptor(descriptor);
+            adaptation = appended ? "new-anonymous-default-template" : "token-default-not-admitted";
+        }
+    }
+    SetLastError(before);
+    const BOOL result = realCreateTrackerPipe(read, write, appended ? &descriptor.attributes : attributes, size);
+    const DWORD after = GetLastError();
+    if (matched && InterlockedIncrement(&trackerPipeRecords) <= 8) {
+        // CreatePipe documents indeterminate outputs on failure. Never read
+        // or close them then; successful outputs stay owned by canonical MSYS.
+        char readValue[32] = "null", writeValue[32] = "null";
+        if (result) {
+            _snprintf_s(readValue, sizeof(readValue), _TRUNCATE, "\"0x%llx\"", observed_native_handle(read, 0));
+            _snprintf_s(writeValue, sizeof(writeValue), _TRUNCATE, "\"0x%llx\"", observed_native_handle(write, 0));
+        }
+        char line[640];
+        const int count = _snprintf_s(line, sizeof(line), _TRUNCATE,
+            "NEMOCLAW_MSYS_TRACKER_PIPE={\"schemaVersion\":1,\"pid\":%lu,\"operation\":\"CreatePipe\",\"size\":%lu,\"resultSuccess\":%s,\"win32Error\":%lu,\"outputHandlesObserved\":%s,\"readHandle\":%s,\"writeHandle\":%s,\"requestDescriptorAppended\":%s,\"appendedAccess\":\"0x%08lx\",\"requestInheritHandles\":false,\"adaptation\":\"%s\"}\n",
+            GetCurrentProcessId(), size, result ? "true" : "false", after, result ? "true" : "false", readValue, writeValue,
+            appended ? "true" : "false", appended ? static_cast<ULONG>(signal_writer_access) : 0UL, adaptation);
+        DWORD written = 0;
+        writingPipeDiagnostic = true;
+        if (count > 0) WriteFile(GetStdHandle(STD_ERROR_HANDLE), line, static_cast<DWORD>(count), &written, nullptr);
+        writingPipeDiagnostic = false;
+    }
+    SetLastError(after);
+    return result;
+}
+
 } // namespace
 
 BOOL WINAPI DllMain(HINSTANCE self, DWORD reason, LPVOID reserved) {
@@ -796,6 +846,7 @@ BOOL WINAPI DllMain(HINSTANCE self, DWORD reason, LPVOID reserved) {
     if (!error) error = DetourAttach(&realOpen, open_directory);
     if (!error) error = DetourAttach(&realCreateSignalServer, observe_signal_server);
     if (!error) error = DetourAttach(&realOpenSignalWriter, observe_signal_writer);
+    if (!error) error = DetourAttach(&realCreateTrackerPipe, create_tracker_pipe);
     if (!error) error = DetourAttach(&realNativePipeCreate, observe_native_create);
     if (!error) error = DetourAttach(&realNativeFileOpen, observe_native_open);
     if (error) {

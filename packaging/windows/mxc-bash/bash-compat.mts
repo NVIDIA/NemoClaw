@@ -145,6 +145,23 @@ export function validateDenials(row: any, other: string) {
   ])
     assert.equal(row[key], true, key);
 }
+export function validateTracker(row: any) {
+  assert.equal(row.kind, "tracker-proof");
+  assert.equal(typeof row.originalSuccess, "boolean");
+  assert(Number.isInteger(row.originalError) && row.originalError >= 0);
+  assert.equal(row.adaptedSuccess, true);
+  assert.equal(row.readType, 3);
+  assert.equal(row.writeType, 3);
+  assert.equal(row.initialReadFlags, 0);
+  assert.equal(row.initialWriteFlags, 0);
+  assert.equal(row.finalReadFlags, 0);
+  assert.equal(row.finalWriteFlags, 1);
+  assert.equal(row.transferBytes, 16);
+  assert.equal(row.writerClosedBeforeEof, true);
+  assert.equal(row.eofError, 109);
+  assert.equal(row.handlesClosed, true);
+  assert.equal(row.failedOutputsInspected, false);
+}
 function write(file: string, value: unknown) {
   fs.writeFileSync(file, JSON.stringify(value, null, 2) + "\n", { flag: "wx" });
 }
@@ -441,6 +458,10 @@ async function worker(configFile: string) {
           "ordinaryDescriptorMatched",
         ])
           assert.equal(ready[key], true, key);
+        assert.equal(ready.trackerComplete, true);
+        const tracker = parseJsonLines(probe.stdout()).find((row) => row.kind === "tracker-proof");
+        validateTracker(tracker);
+        results.tracker = tracker;
         results.namespace = ready;
         atomic(path.join(c.share, "ready.json"), ready);
         const cross = await waitFile(path.join(c.share, "cross.json"), Date.now() + 45000);

@@ -195,8 +195,8 @@ class PipeProof {
     require(CloseHandle(client.value)!=0,"pipe-sync-client-close");client.value=nullptr;require(CloseHandle(server.value)!=0,"pipe-sync-server-close");server.value=nullptr;exactSynchronousPositive=true;
   }
   void disconnect(){require(DisconnectNamedPipe(server.value)!=0,"pipe-disconnect");start_listener();}
-  void readback(bool appended=true){
-    PACL acl=nullptr;PSID owner=nullptr,group=nullptr;PSECURITY_DESCRIPTOR sd=nullptr;DWORD error=GetSecurityInfo(server.value,SE_KERNEL_OBJECT,OWNER_SECURITY_INFORMATION|GROUP_SECURITY_INFORMATION|DACL_SECURITY_INFORMATION,&owner,&group,&acl,nullptr,&sd);
+  void readback(bool appended=true,HANDLE target=nullptr){
+    PACL acl=nullptr;PSID owner=nullptr,group=nullptr;PSECURITY_DESCRIPTOR sd=nullptr;DWORD error=GetSecurityInfo(target?target:server.value,SE_KERNEL_OBJECT,OWNER_SECURITY_INFORMATION|GROUP_SECURITY_INFORMATION|DACL_SECURITY_INFORMATION,&owner,&group,&acl,nullptr,&sd);
     require(error==ERROR_SUCCESS&&sd,"pipe-security-readback");
     try{
       const DWORD expectedCount=appended?4:3;require(acl&&acl->AceCount==expectedCount,"pipe-readback-ace-count");SECURITY_DESCRIPTOR_CONTROL control=0;DWORD revision=0;require(GetSecurityDescriptorControl(sd,&control,&revision)!=0,"pipe-readback-control");
@@ -209,7 +209,7 @@ class PipeProof {
       LPWSTR ownerText=nullptr,groupText=nullptr;require(owner&&group&&ConvertSidToStringSidW(owner,&ownerText)!=0,"pipe-owner-readback");std::wstring ownerSid=ownerText;LocalFree(ownerText);require(ConvertSidToStringSidW(group,&groupText)!=0,"pipe-group-readback");std::wstring groupSid=groupText;LocalFree(groupText);
       if(!originalDescriptorRead){originalOwner=ownerSid;originalGroup=groupSid;originalControl=control;originalDescriptorRead=true;}
       else require(originalOwner==ownerSid&&originalGroup==groupSid&&originalControl==control,"pipe-owner-group-control-changed");
-      line("{\"kind\":\"pipe-descriptor\",\"fixture\":"+quote(ordinary?"ordinary-nt":"signal-win32")+",\"appended\":"+std::string(appended?"true":"false")+",\"rawProbeUnshimmed\":true,\"actualControl\":"+std::to_string(control)+",\"ownerSid\":"+quote(utf8(ownerSid))+",\"groupSid\":"+quote(utf8(groupSid))+",\"aceCount\":"+std::to_string(expectedCount)+",\"aceMasks\":["+fields+"],\"actualTokenSidsMatched\":true,\"ownerGroupControlPreserved\":true,\"genericMappingOnly\":true}");
+      line("{\"kind\":\"pipe-descriptor\",\"fixture\":"+quote(target?"tracker-createpipe":ordinary?"ordinary-nt":"signal-win32")+",\"appended\":"+std::string(appended?"true":"false")+",\"rawProbeUnshimmed\":true,\"actualControl\":"+std::to_string(control)+",\"ownerSid\":"+quote(utf8(ownerSid))+",\"groupSid\":"+quote(utf8(groupSid))+",\"aceCount\":"+std::to_string(expectedCount)+",\"aceMasks\":["+fields+"],\"actualTokenSidsMatched\":true,\"ownerGroupControlPreserved\":true,\"genericMappingOnly\":true}");
     }catch(...){LocalFree(sd);throw;}LocalFree(sd);
   }
   void default_template(PACL destination){
@@ -271,6 +271,44 @@ class PipeProof {
     require(CloseHandle(client.value)!=0,"pipe-own-client-close");client.value=nullptr;disconnect();
   }
   void before(){start_listener();positive(false);ownBefore=true;positive(true);minimalBefore=true;require(available(),"pipe-before-not-free");}
+  void tracker(){
+    require(ordinary,"tracker-default-template-required");
+    SECURITY_ATTRIBUTES original={sizeof(SECURITY_ATTRIBUTES),nullptr,FALSE};
+    HANDLE originalRead=nullptr,originalWrite=nullptr;
+    const BOOL originalResult=CreatePipe(&originalRead,&originalWrite,&original,16);
+    const DWORD originalError=originalResult?ERROR_SUCCESS:GetLastError();
+    line("{\"kind\":\"tracker-original\",\"success\":"+std::string(originalResult?"true":"false")+",\"error\":"+std::to_string(originalError)+",\"failedOutputsInspected\":false}");
+    // FALSE leaves both outputs undefined. They enter ownership only on TRUE.
+    if(originalResult){Handle read,write;read.value=originalRead;write.value=originalWrite;
+      require(read.value&&write.value&&read.value!=INVALID_HANDLE_VALUE&&write.value!=INVALID_HANDLE_VALUE&&read.value!=write.value,"tracker-original-handles");
+      require(CloseHandle(write.value)!=0,"tracker-original-write-close");write.value=nullptr;require(CloseHandle(read.value)!=0,"tracker-original-read-close");read.value=nullptr;}
+    HANDLE rawRead=nullptr,rawWrite=nullptr;
+    const BOOL result=CreatePipe(&rawRead,&rawWrite,&attributes,16);
+    const DWORD error=result?ERROR_SUCCESS:GetLastError();
+    line("{\"kind\":\"tracker-adapted-create\",\"success\":"+std::string(result?"true":"false")+",\"error\":"+std::to_string(error)+",\"failedOutputsInspected\":false}");
+    require(result!=FALSE,"tracker-adapted-create-failed");
+    Handle read,write;read.value=rawRead;write.value=rawWrite;
+    require(read.value&&write.value&&read.value!=INVALID_HANDLE_VALUE&&write.value!=INVALID_HANDLE_VALUE&&read.value!=write.value,"tracker-adapted-handles");
+    const DWORD readType=GetFileType(read.value),writeType=GetFileType(write.value);
+    DWORD readFlags=0,writeFlags=0;require(GetHandleInformation(read.value,&readFlags)&&GetHandleInformation(write.value,&writeFlags),"tracker-initial-flags");
+    require(readType==FILE_TYPE_PIPE&&writeType==FILE_TYPE_PIPE&&readFlags==0&&writeFlags==0,"tracker-initial-type-inheritance");
+    readback(true,read.value);readback(true,write.value);
+    require(SetHandleInformation(write.value,HANDLE_FLAG_INHERIT,HANDLE_FLAG_INHERIT)!=0,"tracker-set-writer-inherit");
+    require(GetHandleInformation(read.value,&readFlags)&&GetHandleInformation(write.value,&writeFlags)&&readFlags==0&&writeFlags==HANDLE_FLAG_INHERIT,"tracker-writer-only-inherited");
+    std::string marker=nonce.substr(0,16);std::array<char,16> actual{};
+    require(marker.size()==16&&transfer(write.value,true,false,marker.data(),16)==16,"tracker-write");
+    require(transfer(read.value,false,false,actual.data(),16)==16&&memcmp(marker.data(),actual.data(),16)==0,"tracker-readback");
+    require(CloseHandle(write.value)!=0,"tracker-writer-close");write.value=nullptr;
+    // Establish the broken/empty endpoint before the synchronous EOF read, so
+    // an unexpected surviving writer is a failure rather than a blocking read.
+    DWORD available=0;const BOOL peek=PeekNamedPipe(read.value,nullptr,0,nullptr,&available,nullptr);const DWORD peekError=peek?ERROR_SUCCESS:GetLastError();
+    require(!peek&&peekError==ERROR_BROKEN_PIPE,"tracker-writer-still-open");
+    char byte=0;DWORD readBytes=0;const BOOL eof=ReadFile(read.value,&byte,1,&readBytes,nullptr);const DWORD eofError=eof?ERROR_SUCCESS:GetLastError();
+    require(!eof&&eofError==ERROR_BROKEN_PIPE&&readBytes==0,"tracker-eof-after-writer-close");
+    require(CloseHandle(read.value)!=0,"tracker-reader-close");read.value=nullptr;
+    line("{\"kind\":\"tracker-proof\",\"originalSuccess\":"+std::string(originalResult?"true":"false")+",\"originalError\":"+std::to_string(originalError)+",\"adaptedSuccess\":true,\"readType\":"+std::to_string(readType)+",\"writeType\":"+std::to_string(writeType)+",\"initialReadFlags\":0,\"initialWriteFlags\":0,\"finalReadFlags\":"+std::to_string(readFlags)+",\"finalWriteFlags\":"+std::to_string(writeFlags)+",\"transferBytes\":16,\"writerClosedBeforeEof\":true,\"eofError\":"+std::to_string(eofError)+",\"handlesClosed\":true,\"failedOutputsInspected\":false}");
+  }
+
   std::pair<DWORD,DWORD> foreign(const std::wstring& peer){
     const std::wstring prefix=ordinary?key+L"-":L"\\\\.\\pipe\\msys-"+key+L"-",suffix=ordinary?L"-pipe-nt-0x1":L"-sigwait";require(peer.starts_with(prefix)&&peer.ends_with(suffix)&&peer!=name,"pipe-peer-name");
     auto pid=peer.substr(prefix.size(),peer.size()-prefix.size()-suffix.size());require(!pid.empty()&&pid.size()<=10&&pid[0]!=L'0'&&pid.find_first_not_of(L"0123456789")==std::wstring::npos,"pipe-peer-pid");
@@ -306,8 +344,8 @@ int wmain(int argc,wchar_t** argv){
     LARGE_INTEGER size{};size.QuadPart=4096;Name sectionName(sectionLeaf,g.value,&security);NTSTATUS ms=api.createSection(&section.value,0xf001f,&sectionName.attributes,&size,PAGE_READWRITE,SEC_COMMIT,nullptr);require(ms==0,"own-section-create");
     View view;view.value=MapViewOfFile(section.value,FILE_MAP_READ|FILE_MAP_WRITE,0,0,4096);require(view.value!=nullptr,"own-section-map");std::string marker="NEMOCLAW_SECTION_"+utf8(nonce);memcpy(view.value,marker.data(),marker.size());require(memcmp(view.value,marker.data(),marker.size())==0,"own-section-readback");
     PipeProof pipe(id,api,key,nonce);pipe.before();
-    PipeProof ordinaryPipe(id,api,key,nonce,true);ordinaryPipe.before();
-    line("{\"kind\":\"ready\","+identityFields(id)+",\"key\":"+quote(utf8(key))+",\"globalDirectory\":"+quote(utf8(gd))+",\"sessionDirectory\":"+quote(utf8(sd))+",\"nullDaclChildren\":true,\"ownEvent\":"+status(es)+",\"ownSection\":"+status(ms)+",\"ownSectionReadback\":true,\"pipeExactSynchronousPositive\":"+std::string(pipe.exactSynchronousPositive?"true":"false")+",\"pipeOverlappedFixture\":true,\"pipeName\":"+quote(utf8(pipe.name))+",\"pipeKernelName\":"+quote(utf8(pipe.kernelName))+",\"pipeAvailable\":true,\"pipeDescriptorMatched\":true,\"ordinaryPipeName\":"+quote(utf8(ordinaryPipe.name))+",\"ordinaryPipeKernelName\":"+quote(utf8(ordinaryPipe.kernelName))+",\"ordinaryExactSynchronousPositive\":true,\"ordinaryOverlappedFixture\":true,\"ordinaryPipeAvailable\":true,\"ordinaryDescriptorMatched\":true}");
+    PipeProof ordinaryPipe(id,api,key,nonce,true);ordinaryPipe.before();ordinaryPipe.tracker();
+    line("{\"kind\":\"ready\","+identityFields(id)+",\"key\":"+quote(utf8(key))+",\"globalDirectory\":"+quote(utf8(gd))+",\"sessionDirectory\":"+quote(utf8(sd))+",\"nullDaclChildren\":true,\"ownEvent\":"+status(es)+",\"ownSection\":"+status(ms)+",\"ownSectionReadback\":true,\"pipeExactSynchronousPositive\":"+std::string(pipe.exactSynchronousPositive?"true":"false")+",\"pipeOverlappedFixture\":true,\"pipeName\":"+quote(utf8(pipe.name))+",\"pipeKernelName\":"+quote(utf8(pipe.kernelName))+",\"pipeAvailable\":true,\"pipeDescriptorMatched\":true,\"ordinaryPipeName\":"+quote(utf8(ordinaryPipe.name))+",\"ordinaryPipeKernelName\":"+quote(utf8(ordinaryPipe.kernelName))+",\"ordinaryExactSynchronousPositive\":true,\"ordinaryOverlappedFixture\":true,\"ordinaryPipeAvailable\":true,\"ordinaryDescriptorMatched\":true,\"trackerComplete\":true}");
     bool checked=false;
     for(int count=0;count<3;++count){
       std::string command=readLine();

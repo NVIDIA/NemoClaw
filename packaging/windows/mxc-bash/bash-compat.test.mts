@@ -8,6 +8,7 @@ import {
   request,
   parseJsonLines,
   validateDenials,
+  validateTracker,
   Owned,
   type Config,
 } from "./bash-compat.mts";
@@ -191,4 +192,41 @@ test("actual oversized output is bounded and fails instead of retaining arbitrar
   assert.equal(result.error, "output-bound");
   assert(result.stdout.length <= 256 * 1024);
   assert.equal(result.closed, true);
+});
+
+test("tracker requires actual writer-only inheritance, data, EOF and closed handles", () => {
+  const row = {
+    kind: "tracker-proof",
+    originalSuccess: false,
+    originalError: 5,
+    adaptedSuccess: true,
+    readType: 3,
+    writeType: 3,
+    initialReadFlags: 0,
+    initialWriteFlags: 0,
+    finalReadFlags: 0,
+    finalWriteFlags: 1,
+    transferBytes: 16,
+    writerClosedBeforeEof: true,
+    eofError: 109,
+    handlesClosed: true,
+    failedOutputsInspected: false,
+  };
+  validateTracker(row);
+  validateTracker({ ...row, originalSuccess: true, originalError: 0 });
+  for (const [key, value] of Object.entries({
+    adaptedSuccess: false,
+    readType: 1,
+    writeType: 1,
+    initialReadFlags: 1,
+    initialWriteFlags: 1,
+    finalReadFlags: 1,
+    finalWriteFlags: 0,
+    transferBytes: 15,
+    writerClosedBeforeEof: false,
+    eofError: 0,
+    handlesClosed: false,
+    failedOutputsInspected: true,
+  }))
+    assert.throws(() => validateTracker({ ...row, [key]: value }));
 });
