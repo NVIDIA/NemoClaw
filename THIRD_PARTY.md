@@ -12,7 +12,8 @@ respective licenses. `go.mod`, `go.sum`, and `versions.json` identify the inputs
 | Terraform plugin framework | Provider protocol implementation | MPL-2.0 |
 | OpenShell and its Go SDK | Gateway, isolation, and typed API | Apache-2.0 |
 | OpenClaw | Agent image | MIT |
-| Ollama | Live-test inference server | MIT |
+| Ollama | Managed inference service and live-test server | MIT |
+| Moby Go client and API | Docker engine resource operations | Apache-2.0 |
 
 Generated bundles and images are local artifacts and are not committed. A
 distribution release still needs the complete transitive license inventory,
