@@ -52,10 +52,10 @@ beforeEach(() => {
   vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
     throw new ExitError(code);
   }) as never);
-  applyPresetContentSpy = vi.spyOn(policies, "applyPresetContent").mockReturnValue(true);
+  applyPresetContentSpy = vi.spyOn(policies, "applyPresetContent").mockResolvedValue(true);
   refreshSpy = vi
     .spyOn(policyContextRefresh, "refreshSandboxPolicyContextFile")
-    .mockReturnValue({ outcome: "ok", written: true });
+    .mockResolvedValue({ outcome: "ok", written: true });
 });
 
 afterEach(() => {

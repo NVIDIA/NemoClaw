@@ -14,39 +14,39 @@ import {
 } from "./policy-context-refresh";
 
 describe("refreshSandboxPolicyContextFile", () => {
-  it("reports `ok` when the write succeeds and does not warn", () => {
+  it("reports `ok` when the write succeeds and does not warn", async () => {
     const warn = vi.fn();
     const unexpected = vi.fn();
-    const write = vi.fn(() => ({ written: true }));
+    const write = vi.fn(async () => ({ written: true }));
 
-    const outcome = refreshSandboxPolicyContextFile("alpha", { warn, unexpected, write });
+    const outcome = await refreshSandboxPolicyContextFile("alpha", { warn, unexpected, write });
 
     expect(outcome.outcome).toBe("ok");
     expect(warn).not.toHaveBeenCalled();
     expect(unexpected).not.toHaveBeenCalled();
   });
 
-  it("treats `sandbox unreachable` as a non-fatal `unreachable` outcome without warning", () => {
+  it("treats `sandbox unreachable` as a non-fatal `unreachable` outcome without warning", async () => {
     const warn = vi.fn();
     const unexpected = vi.fn();
-    const write = vi.fn(() => ({ written: false, reason: "sandbox unreachable" }));
+    const write = vi.fn(async () => ({ written: false, reason: "sandbox unreachable" }));
 
-    const outcome = refreshSandboxPolicyContextFile("alpha", { warn, unexpected, write });
+    const outcome = await refreshSandboxPolicyContextFile("alpha", { warn, unexpected, write });
 
     expect(outcome.outcome).toBe("unreachable");
     expect(warn).not.toHaveBeenCalled();
     expect(unexpected).not.toHaveBeenCalled();
   });
 
-  it("warns about explicit `failed` outcomes when the sandbox returns a non-zero exit", () => {
+  it("warns about explicit `failed` outcomes when the sandbox returns a non-zero exit", async () => {
     const warn = vi.fn();
     const unexpected = vi.fn();
-    const write = vi.fn(() => ({
+    const write = vi.fn(async () => ({
       written: false,
       reason: "write failed (status 13): denied",
     }));
 
-    const outcome = refreshSandboxPolicyContextFile("alpha", { warn, unexpected, write });
+    const outcome = await refreshSandboxPolicyContextFile("alpha", { warn, unexpected, write });
 
     expect(outcome.outcome).toBe("failed");
     expect(warn).toHaveBeenCalledTimes(1);
@@ -55,14 +55,14 @@ describe("refreshSandboxPolicyContextFile", () => {
     expect(unexpected).not.toHaveBeenCalled();
   });
 
-  it("routes unexpected exceptions through the `unexpected` sink instead of swallowing them", () => {
+  it("routes unexpected exceptions through the `unexpected` sink instead of swallowing them", async () => {
     const warn = vi.fn();
     const unexpected = vi.fn();
-    const write = vi.fn(() => {
+    const write = vi.fn(async () => {
       throw new Error("import regression: cannot find module");
     });
 
-    const outcome = refreshSandboxPolicyContextFile("alpha", { warn, unexpected, write });
+    const outcome = await refreshSandboxPolicyContextFile("alpha", { warn, unexpected, write });
 
     expect(outcome.outcome).toBe("crashed");
     expect(unexpected).toHaveBeenCalledTimes(1);
@@ -71,17 +71,17 @@ describe("refreshSandboxPolicyContextFile", () => {
     expect(warn).not.toHaveBeenCalled();
   });
 
-  it("treats loader crashes from writePolicyContextToSandbox as `crashed` even when the write returns instead of throwing", () => {
+  it("treats loader crashes from writePolicyContextToSandbox as `crashed` even when the write returns instead of throwing", async () => {
     const warn = vi.fn();
     const unexpected = vi.fn();
-    const write = vi.fn(() => ({
+    const write = vi.fn(async () => ({
       written: false,
       reason: "policy-context executor failed to load: missing module",
       failure: "unexpected-loader" as const,
       errorMessage: "missing module",
     }));
 
-    const outcome = refreshSandboxPolicyContextFile("alpha", { warn, unexpected, write });
+    const outcome = await refreshSandboxPolicyContextFile("alpha", { warn, unexpected, write });
 
     expect(outcome.outcome).toBe("crashed");
     expect(unexpected).toHaveBeenCalledTimes(1);
@@ -90,25 +90,27 @@ describe("refreshSandboxPolicyContextFile", () => {
     expect(warn).not.toHaveBeenCalled();
   });
 
-  it("treats `loader-vitest` and `no-runtime` loader signals as non-warning `unreachable` outcomes", () => {
+  it("treats `loader-vitest` and `no-runtime` loader signals as non-warning `unreachable` outcomes", async () => {
     const warn = vi.fn();
     const unexpected = vi.fn();
-    const writeVitest = vi.fn(() => ({
+    const writeVitest = vi.fn(async () => ({
       written: false,
       reason: "sandbox unreachable",
       failure: "loader-vitest" as const,
     }));
-    const writeNoRuntime = vi.fn(() => ({
+    const writeNoRuntime = vi.fn(async () => ({
       written: false,
       reason: "sandbox unreachable",
       failure: "no-runtime" as const,
     }));
 
     expect(
-      refreshSandboxPolicyContextFile("alpha", { warn, unexpected, write: writeVitest }).outcome,
+      (await refreshSandboxPolicyContextFile("alpha", { warn, unexpected, write: writeVitest }))
+        .outcome,
     ).toBe("unreachable");
     expect(
-      refreshSandboxPolicyContextFile("alpha", { warn, unexpected, write: writeNoRuntime }).outcome,
+      (await refreshSandboxPolicyContextFile("alpha", { warn, unexpected, write: writeNoRuntime }))
+        .outcome,
     ).toBe("unreachable");
     expect(warn).not.toHaveBeenCalled();
     expect(unexpected).not.toHaveBeenCalled();
