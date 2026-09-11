@@ -5,7 +5,8 @@ FROM vllm/vllm-openai@sha256:3b0e188ffceb3d07e09c3cb5215433a0020eacf02d7f882ed3a
 ARG SOURCE_DATE_EPOCH=1788974180
 ADD --checksum=sha256:5c98f577c4f786cbfb976db9424efb01ad16f2136b357c139f8212081395681a https://codeload.github.com/MiaAI-Lab/Qwen3.8-Flash-Next-Single-DGX-Spark/tar.gz/d03809008834124e80223c3482f2ddb59577a48f /opt/nemoclaw/source/recipe.tar.gz
 RUN mkdir /opt/nemoclaw/source/recipe && tar -xzf /opt/nemoclaw/source/recipe.tar.gz -C /opt/nemoclaw/source/recipe --strip-components=1
-COPY runtimes/qwen38/apply_patches.py runtimes/qwen38/verify_packed.py runtimes/qwen38/pins.json runtimes/qwen38/NOTICE.md /opt/nemoclaw/source/
+COPY runtimes/qwen38/apply_patches.py runtimes/qwen38/pins.json runtimes/qwen38/NOTICE.md /opt/nemoclaw/source/
+COPY internal/spark/verify_packed.py /opt/nemoclaw/source/verify_packed.py
 COPY internal/spark/model.json /opt/nemoclaw/model.json
 COPY LICENSE /opt/nemoclaw/source/Apache-2.0.txt
 RUN SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH python3 /opt/nemoclaw/source/apply_patches.py

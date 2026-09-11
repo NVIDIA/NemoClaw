@@ -4,7 +4,9 @@
 package spark
 
 import (
+	"crypto/sha256"
 	_ "embed"
+	"encoding/hex"
 	"encoding/json/v2"
 
 	"github.com/NVIDIA/NemoClaw/internal/snapshot"
@@ -17,6 +19,14 @@ const PreparedFile = "language_model.model.layers.1.ple.ple_embedding.ngram_embe
 
 //go:embed model.json
 var modelJSON []byte
+
+//go:embed verify_packed.py
+var verifierSource []byte
+
+func VerifierSHA256() string {
+	h := sha256.Sum256(verifierSource)
+	return hex.EncodeToString(h[:])
+}
 
 func ModelManifest() snapshot.Manifest {
 	var m snapshot.Manifest

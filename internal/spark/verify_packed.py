@@ -15,6 +15,7 @@ index = json.load(open(os.path.join(snapshot, "model.safetensors.index.json")))[
 prefix = "model.language_model.layers.1.ple.ple_embedding.ngram_embedding"
 name = "language_model.model.layers.1.ple.ple_embedding.ngram_embedding.packed_u8"
 metadata = json.load(open(os.path.join(prepared, name + ".json")))
+assert metadata["snapshot"] == os.path.basename(os.path.normpath(snapshot))
 assert metadata["num_shards"] == 128
 assert metadata["codes_width"] == 80 and metadata["scales_width"] == 10
 assert metadata["row_width"] == 90

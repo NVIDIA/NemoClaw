@@ -24,7 +24,7 @@ type Preparation struct {
 }
 
 func PreparationKey() string {
-	h := sha256.Sum256([]byte(ModelManifest().Key() + RecipeRevision + PreparerSHA256 + "verify-packed-v1"))
+	h := sha256.Sum256([]byte(ModelManifest().Key() + RecipeRevision + PreparerSHA256 + VerifierSHA256()))
 	return hex.EncodeToString(h[:])
 }
 

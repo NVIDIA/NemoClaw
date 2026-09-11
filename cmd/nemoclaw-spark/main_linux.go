@@ -15,6 +15,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -96,6 +97,14 @@ func run(ctx context.Context) error {
 	if mem.Available < spec.GPUBytes()+20*spark.GiB || spec.GPUBytes()+int64(spec.Memory.HostReserveGiB)*spark.GiB > mem.Total {
 		return errors.New("memory headroom changed during preparation; service was not started")
 	}
+	// Downloads may take hours. Recheck GPU availability immediately before
+	// loading, since another workload could have started after CLI preflight.
+	gpuCtx, cancelGPU := context.WithTimeout(ctx, 15*time.Second)
+	gpuProcesses, gpuErr := exec.CommandContext(gpuCtx, "nvidia-smi", "--query-compute-apps=pid", "--format=csv,noheader,nounits").Output()
+	cancelGPU()
+	if gpuErr != nil || strings.TrimSpace(string(gpuProcesses)) != "" {
+		return errors.New("GPU availability changed or is unobservable after preparation; service was not started")
+	}
 	cmd := exec.Command("python3", spec.Arguments(modelDir, mem.Total)...)
 	cmd.Env = append(os.Environ(), "HF_HUB_OFFLINE=1", "TRANSFORMERS_OFFLINE=1", "VLLM_USE_V2_MODEL_RUNNER=1", "VLLM_PLE_CPU_OFFLOAD=1", "VLLM_PLE_OFFLOAD_STEP_TIMEOUT=300", "VLLM_PLE_PACKED_TABLE_DIR="+filepath.Join(prepRoot, spark.PreparationKey()), "VLLM_MTP_DRAFT_VOCAB=/opt/nemoclaw/source/recipe/files/draft_vocab_en_code_47k.txt", "HF_HOME=/data/huggingface", "VLLM_CACHE_ROOT=/data/vllm-cache")
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -114,22 +123,65 @@ func run(ctx context.Context) error {
 	trip := make(chan os.Signal, 1)
 	signal.Notify(trip, syscall.SIGUSR1)
 	defer signal.Stop(trip)
+	httpClient := &http.Client{Timeout: time.Second, Transport: &http.Transport{Proxy: nil}}
+	health := make(chan bool, 1)
+	healthCtx, cancelHealth := context.WithCancel(ctx)
+	defer cancelHealth()
+	go func() {
+		for {
+			req, _ := http.NewRequestWithContext(healthCtx, http.MethodGet, fmt.Sprintf("http://127.0.0.1:%d/health", spec.Serving.Port), nil)
+			response, err := httpClient.Do(req)
+			ok := err == nil && response.StatusCode == http.StatusOK
+			if response != nil {
+				response.Body.Close()
+			}
+			if ok {
+				select {
+				case health <- true:
+				case <-healthCtx.Done():
+				}
+				return
+			}
+			select {
+			case <-healthCtx.Done():
+				return
+			case <-time.After(5 * time.Second):
+			}
+		}
+	}()
+	return supervise(ctx, spec, cmd, done, monitors{samples: time.Tick(time.Second), health: health, trip: trip, observe: memory, report: report})
+}
+
+type monitors struct {
+	samples <-chan time.Time
+	health  <-chan bool
+	trip    <-chan os.Signal
+	observe func() (spark.Capacity, error)
+	report  func(string, string, int) error
+}
+
+func supervise(ctx context.Context, spec spark.Service, cmd *exec.Cmd, done <-chan error, m monitors) error {
 	watch := spark.Watchdog{Policy: spec.Memory}
 	deadline := time.Now().Add(time.Duration(spec.Serving.StartupTimeoutSeconds) * time.Second)
 	ready := false
-	httpClient := &http.Client{Timeout: time.Second, Transport: &http.Transport{Proxy: nil}}
 	for {
 		select {
 		case <-ctx.Done():
 			terminate(cmd, done)
 			return errors.New("runtime stopped by operator; persistent data retained")
-		case <-trip:
+		case <-m.trip:
 			terminate(cmd, done)
 			return errors.New("memory protection tripped by operator; explicit apply required")
 		case <-done:
 			return errors.New("inference process exited; inspect retained container logs and explicitly reapply")
-		case <-time.After(time.Second):
-			mem, err = memory()
+		case <-m.health:
+			ready = true
+			if err := m.report("ready", "inference health confirmed", cmd.Process.Pid); err != nil {
+				terminate(cmd, done)
+				return err
+			}
+		case <-m.samples:
+			mem, err := m.observe()
 			if err != nil || watch.Sample(mem.Available, mem.Free) {
 				terminate(cmd, done)
 				return errors.New("host memory protection stopped inference; explicit apply required")
@@ -138,18 +190,6 @@ func run(ctx context.Context) error {
 				if time.Now().After(deadline) {
 					terminate(cmd, done)
 					return errors.New("inference loading exceeded startup budget; data retained")
-				}
-				req, _ := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("http://127.0.0.1:%d/health", spec.Serving.Port), nil)
-				response, err := httpClient.Do(req)
-				if err == nil {
-					ready = response.StatusCode == http.StatusOK
-					response.Body.Close()
-				}
-				if ready {
-					if err = report("ready", "inference health confirmed", cmd.Process.Pid); err != nil {
-						terminate(cmd, done)
-						return err
-					}
 				}
 			}
 		}

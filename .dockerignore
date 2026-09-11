@@ -3,3 +3,4 @@
 .local
 dist
 .agents
+.build/spark/runtime.tar
