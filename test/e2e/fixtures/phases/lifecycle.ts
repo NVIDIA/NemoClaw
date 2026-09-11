@@ -123,6 +123,30 @@ export function buildOpenShellGatewayUserServiceRemovalScript(): string {
   ].join("\n");
 }
 
+export function buildOpenShellGatewayUserServiceStopScript(): string {
+  return [
+    "set -eu",
+    'if [ "$(uname -s)" = Darwin ] && command -v brew >/dev/null 2>&1 && brew list --formula openshell >/dev/null 2>&1; then',
+    '  brew info --json=v2 openshell | grep -Eq \'"tap"[[:space:]]*:[[:space:]]*"nvidia/openshell"\' || exit 1',
+    "  brew services stop openshell",
+    "  exit 0",
+    "fi",
+    `if ! command -v systemctl >/dev/null 2>&1; then exit ${USER_SERVICE_UNAVAILABLE_EXIT}; fi`,
+    "service=openshell-gateway",
+    'if ! systemctl --user cat "$service" >/dev/null 2>&1; then',
+    '  case "${XDG_CONFIG_HOME:-}" in',
+    '    /*) config_home="$XDG_CONFIG_HOME" ;;',
+    '    *) config_home="$HOME/.config" ;;',
+    "  esac",
+    '  unit="$config_home/systemd/user/nemoclaw-openshell-gateway.service"',
+    `  if [ -L "$unit" ] || [ ! -f "$unit" ]; then exit ${USER_SERVICE_UNAVAILABLE_EXIT}; fi`,
+    `  grep -Fxq '${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER_LINE}' "$unit" || exit ${USER_SERVICE_UNAVAILABLE_EXIT}`,
+    "  service=nemoclaw-openshell-gateway",
+    "fi",
+    'systemctl --user stop "$service"',
+  ].join("\n");
+}
+
 export function buildOpenShellGatewayUserServiceRestartScript(): string {
   return [
     "set -eu",
@@ -596,6 +620,8 @@ export class LifecyclePhaseFixture {
         timeoutMs: 30_000,
       },
     );
+    if (await this.stopOpenShellGatewayUserService()) return runtime;
+
     await this.host.command(
       "sh",
       ["-lc", "command -v openshell >/dev/null 2>&1 && openshell gateway stop -g nemoclaw || true"],
@@ -662,6 +688,24 @@ export class LifecyclePhaseFixture {
       assertExitZero(containerStop, "stop OpenShell gateway runtime resource");
     }
     return runtime;
+  }
+
+  private async stopOpenShellGatewayUserService(): Promise<boolean> {
+    const result = await this.host.command(
+      "sh",
+      ["-lc", buildOpenShellGatewayUserServiceStopScript()],
+      {
+        artifactName: "lifecycle-gateway-user-service-stop",
+        env: buildAvailabilityProbeEnv(),
+        timeoutMs: 120_000,
+      },
+    );
+    if (result.exitCode === 0) return true;
+    if (result.exitCode === USER_SERVICE_UNAVAILABLE_EXIT) return false;
+    throw new Error(
+      `OpenShell gateway user service stop failed during lifecycle qualification: ` +
+        `${result.stderr || result.stdout || `exit ${String(result.exitCode)}`}`,
+    );
   }
 
   async startGatewayRuntime(

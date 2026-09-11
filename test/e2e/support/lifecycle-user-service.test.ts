@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -14,6 +14,7 @@ import {
   buildOpenShellGatewayUserServiceRemovalScript,
   buildOpenShellGatewayUserServiceRestartScript,
   buildOpenShellGatewayUserServiceStageScript,
+  buildOpenShellGatewayUserServiceStopScript,
 } from "../fixtures/phases/lifecycle.ts";
 
 const installer = fileURLToPath(new URL("../../../scripts/install.sh", import.meta.url));
@@ -241,6 +242,137 @@ describe("managed OpenShell gateway user-service restart", () => {
         "--user daemon-reload",
         "--user restart nemoclaw-openshell-gateway",
       ]);
+    } finally {
+      fs.rmSync(root, { force: true, recursive: true });
+    }
+  });
+});
+
+describe("managed OpenShell gateway user-service stop", () => {
+  it("stops a marked NemoClaw unit from an absolute custom XDG config root (#10947)", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-lifecycle-stop-service-"));
+    const home = path.join(root, "home");
+    const configHome = path.join(root, "config");
+    const bin = path.join(root, "bin");
+    const log = path.join(root, "systemctl.log");
+    const unitDir = path.join(configHome, "systemd", "user");
+
+    fs.mkdirSync(home, { recursive: true });
+    fs.mkdirSync(bin, { recursive: true });
+    fs.mkdirSync(unitDir, { recursive: true });
+    fs.writeFileSync(path.join(bin, "uname"), "#!/bin/sh\nprintf 'Linux\\n'\n", { mode: 0o755 });
+    fs.writeFileSync(
+      path.join(unitDir, "nemoclaw-openshell-gateway.service"),
+      "# NEMOCLAW_MANAGED_OPENSHELL_GATEWAY=1\n",
+    );
+    fs.writeFileSync(
+      path.join(bin, "systemctl"),
+      [
+        "#!/bin/sh",
+        `printf "%s\\n" "$*" >> ${JSON.stringify(log)}`,
+        'if [ "$*" = "--user cat openshell-gateway" ]; then exit 1; fi',
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    try {
+      const env = buildAvailabilityProbeEnv({
+        HOME: home,
+        PATH: `${bin}:/usr/bin:/bin`,
+        XDG_CONFIG_HOME: configHome,
+      });
+      execFileSync("sh", ["-c", buildOpenShellGatewayUserServiceStopScript()], {
+        env,
+        killSignal: "SIGKILL",
+        timeout: 30_000,
+      });
+
+      expect(fs.readFileSync(log, "utf8").trim().split("\n")).toEqual([
+        "--user cat openshell-gateway",
+        "--user stop nemoclaw-openshell-gateway",
+      ]);
+    } finally {
+      fs.rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  it("uses the upstream OpenShell user service when it is available (#10947)", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-lifecycle-stop-upstream-"));
+    const home = path.join(root, "home");
+    const bin = path.join(root, "bin");
+    const log = path.join(root, "systemctl.log");
+
+    fs.mkdirSync(home, { recursive: true });
+    fs.mkdirSync(bin, { recursive: true });
+    fs.writeFileSync(path.join(bin, "uname"), "#!/bin/sh\nprintf 'Linux\\n'\n", { mode: 0o755 });
+    fs.writeFileSync(
+      path.join(bin, "systemctl"),
+      ["#!/bin/sh", `printf "%s\\n" "$*" >> ${JSON.stringify(log)}`, "exit 0"].join("\n"),
+      { mode: 0o755 },
+    );
+
+    try {
+      const env = buildAvailabilityProbeEnv({
+        HOME: home,
+        PATH: `${bin}:/usr/bin:/bin`,
+      });
+      execFileSync("sh", ["-c", buildOpenShellGatewayUserServiceStopScript()], {
+        env,
+        killSignal: "SIGKILL",
+        timeout: 30_000,
+      });
+
+      expect(fs.readFileSync(log, "utf8").trim().split("\n")).toEqual([
+        "--user cat openshell-gateway",
+        "--user stop openshell-gateway",
+      ]);
+    } finally {
+      fs.rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  it("leaves a foreign NemoClaw-named unit untouched (#10947)", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-lifecycle-stop-foreign-"));
+    const home = path.join(root, "home");
+    const configHome = path.join(root, "config");
+    const bin = path.join(root, "bin");
+    const log = path.join(root, "systemctl.log");
+    const unitDir = path.join(configHome, "systemd", "user");
+    const unit = path.join(unitDir, "nemoclaw-openshell-gateway.service");
+
+    fs.mkdirSync(home, { recursive: true });
+    fs.mkdirSync(bin, { recursive: true });
+    fs.mkdirSync(unitDir, { recursive: true });
+    fs.writeFileSync(path.join(bin, "uname"), "#!/bin/sh\nprintf 'Linux\\n'\n", { mode: 0o755 });
+    fs.writeFileSync(unit, "[Service]\nExecStart=/tmp/foreign\n");
+    fs.writeFileSync(
+      path.join(bin, "systemctl"),
+      [
+        "#!/bin/sh",
+        `printf "%s\\n" "$*" >> ${JSON.stringify(log)}`,
+        'if [ "$*" = "--user cat openshell-gateway" ]; then exit 1; fi',
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    try {
+      const env = buildAvailabilityProbeEnv({
+        HOME: home,
+        PATH: `${bin}:/usr/bin:/bin`,
+        XDG_CONFIG_HOME: configHome,
+      });
+      const result = spawnSync("sh", ["-c", buildOpenShellGatewayUserServiceStopScript()], {
+        encoding: "utf8",
+        env,
+        killSignal: "SIGKILL",
+        timeout: 30_000,
+      });
+
+      expect(result.status).toBe(75);
+      expect(fs.readFileSync(unit, "utf8")).toBe("[Service]\nExecStart=/tmp/foreign\n");
+      expect(fs.readFileSync(log, "utf8").trim()).toBe("--user cat openshell-gateway");
     } finally {
       fs.rmSync(root, { force: true, recursive: true });
     }
