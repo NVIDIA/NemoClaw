@@ -359,10 +359,10 @@ and transport. It also stops the gateway and removes its temporary state.
 
 ## Catalogue Targets
 
-Every catalogue profile installs the reviewed OpenShell SDK archive before restoring the candidate CLI.
-The shared package job downloads and verifies the pinned SDK with package-read permission.
-Catalogue jobs receive the run-scoped archive without package credentials and reject a missing or ambiguous archive.
-Catalogue and external-gateway health jobs add the archive to npm's cache, then reinstall dependencies from the lockfile with package scripts disabled.
+Every catalogue profile installs a lockfile-selected reviewed OpenShell SDK archive before restoring the candidate CLI.
+The shared package job downloads and verifies the active SDK and any approved transition replacement with package-read permission.
+Catalogue jobs receive the run-scoped archives without package credentials and reject a missing artifact or more than one approved transition pair.
+Catalogue and external-gateway health jobs add each reviewed archive to npm's cache, then reinstall dependencies from the lockfile with package scripts disabled.
 This preserves the locked dependency versions and avoids npm resolving a new peer dependency graph during SDK installation.
 Both jobs verify that the SDK connection API loads before running tests.
 This keeps the private optional dependency available for SDK-backed commands such as configuration export.
