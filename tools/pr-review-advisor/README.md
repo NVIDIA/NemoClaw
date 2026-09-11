@@ -189,11 +189,11 @@ Each specialist returns a Markdown review grounded in repository evidence and sh
 guidance. No component combines findings or makes merge decisions. Specialist reviews are advisory.
 They do not replace required human review or change repository merge gates.
 
-Each finding classifies regression coverage as `Existing`, `Strengthen`, `Replace`, `Add`, or
-`Not applicable`. `Strengthen` and `Replace` take priority over `Add`. A proposed change states its
-expected net change in test cases, assertions, and test files. It identifies coverage that becomes
-redundant. `Add` also explains why an existing test cannot detect the regression without losing
-another distinct contract.
+The shared guidance asks specialists to classify regression coverage in each finding as `Existing`,
+`Strengthen`, `Replace`, `Add`, or `Not applicable`. It prioritizes `Strengthen` and `Replace` over
+`Add`. For a proposed change, it asks for the expected net change in test cases, assertions, and test
+files, plus any coverage that becomes redundant. An `Add` recommendation must also explain why an
+existing test cannot detect the regression without losing another distinct contract.
 
 Each specialist also records all additional E2E recommendations through a validated tool.
 The receipt preserves the deterministic floor, optional coverage, explicit empty decisions, and unresolved coverage.
