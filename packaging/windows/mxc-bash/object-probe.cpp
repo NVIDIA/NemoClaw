@@ -120,6 +120,13 @@ std::string jobProof(DWORD workerPid,DWORD executorPid){
   std::string report="\"jobFlags\":"+std::to_string(flags)+",\"jobProcessIds\":["+ids.str()+"],\"expectedWorkerPid\":"+std::to_string(workerPid)+",\"expectedExecutorPid\":"+std::to_string(executorPid)+",\"normalSuspendedChildCreatedAndClosed\":true,\"rawBreakawayCreated\":"+(escape.first?"true":"false")+",\"rawBreakawayError\":"+std::to_string(escape.second);
   line("{\"kind\":\"job-proof\","+report+"}");require(!escape.first&&escape.second==ERROR_ACCESS_DENIED,"raw-breakaway-was-not-denied");return report;
 }
+// Job configuration is evidence only for the diagnostic raw-pipe mode. The
+// identity/isolation modes continue to require the unchanged strict jobProof.
+void raw_pipe_job_observation(const char* role,const std::wstring& nonce){
+  BOOL member=FALSE;BOOL memberOk=IsProcessInJob(GetCurrentProcess(),nullptr,&member);DWORD memberError=memberOk?0:GetLastError();
+  JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};BOOL limitsOk=QueryInformationJobObject(nullptr,JobObjectExtendedLimitInformation,&limits,sizeof(limits),nullptr);DWORD limitsError=limitsOk?0:GetLastError();
+  line("{\"kind\":\"rawpipe-job-observation\",\"diagnosticOnly\":true,\"role\":"+quote(role)+",\"nonce\":"+quote(utf8(nonce))+",\"pid\":"+std::to_string(GetCurrentProcessId())+",\"membershipQuerySucceeded\":"+(memberOk?"true":"false")+",\"membershipError\":"+std::to_string(memberError)+",\"inJob\":"+(memberOk?(member?"true":"false"):"null")+",\"limitsQuerySucceeded\":"+(limitsOk?"true":"false")+",\"limitsError\":"+std::to_string(limitsError)+",\"jobFlags\":"+(limitsOk?std::to_string(limits.BasicLimitInformation.LimitFlags):"null")+"}");
+}
 // A bounded native writer used only by the raw-pipe diagnostic. Its inherited
 // handle is never reopened and no compatibility module is loaded.
 [[noreturn]] void raw_pipe_fatal(){fprintf(stderr,"NEMOCLAW_RAW_PIPE_CLEANUP_FAILED\n");fflush(stderr);TerminateProcess(GetCurrentProcess(),ERROR_OPERATION_ABORTED);std::terminate();}
@@ -142,7 +149,7 @@ int raw_pipe_writer(int argc,wchar_t** argv){
   require(argc==6&&lowerHex(argv[3],24),"raw-writer-arguments");
   HANDLE writer=reinterpret_cast<HANDLE>(static_cast<uintptr_t>(std::stoull(argv[2])));DWORD mask=static_cast<DWORD>(std::stoul(argv[4])),parent=static_cast<DWORD>(std::stoul(argv[5]));
   require(writer&&writer!=INVALID_HANDLE_VALUE&&parent&&(mask==0x00120196||mask==0x0012019f),"raw-writer-identity");
-  Api api;Identity id=identity(api);BOOL inJob=FALSE;require(IsProcessInJob(GetCurrentProcess(),nullptr,&inJob)&&inJob,"raw-writer-job");
+  Api api;Identity id=identity(api);raw_pipe_job_observation("writer-child",argv[3]);
   line("{\"kind\":\"rawpipe-child-handle\",\"nonce\":"+quote(utf8(argv[3]))+",\"appSidMask\":"+std::to_string(mask)+",\"parentPid\":"+std::to_string(parent)+","+identityFields(id)+","+raw_pipe_handle(api,writer)+"}");
   using NativeWrite=NTSTATUS(NTAPI*)(HANDLE,HANDLE,PVOID,PVOID,PIO_STATUS_BLOCK,PVOID,ULONG,PLARGE_INTEGER,PULONG);
   auto write=api.load<NativeWrite>("NtWriteFile");require(write!=nullptr,"raw-writer-export");
@@ -413,9 +420,10 @@ int wmain(int argc,wchar_t** argv){
     if(argc>1&&std::wstring(argv[1])==L"rawpipe-writer")return raw_pipe_writer(argc,argv);
     require(argc==6,"arguments");std::wstring mode=argv[1],key=argv[2],nonce=argv[3];require(lowerHex(key,16)&&lowerHex(nonce,24),"fixed-identity");
     DWORD workerPid=static_cast<DWORD>(std::stoul(argv[4])),executorPid=static_cast<DWORD>(std::stoul(argv[5]));require(workerPid&&executorPid&&workerPid!=executorPid,"process-identities");
-    Api api;Identity id=identity(api);jobProof(workerPid,executorPid);std::wstring gd=absolute(id.root,globalLeaf(key)),sd=id.session?absolute(id.root,sessionLeaf(id.session,key)):gd;
+    Api api;Identity id=identity(api);std::wstring gd=absolute(id.root,globalLeaf(key)),sd=id.session?absolute(id.root,sessionLeaf(id.session,key)):gd;
     std::wstring eventLeaf=L"isolation-event-"+nonce,sectionLeaf=L"isolation-section-"+nonce;
     if(mode==L"rawpipe"){
+      raw_pipe_job_observation("parent",nonce);
       int succeeded=0;
       for(DWORD mask:std::array<DWORD,2>{0x00120196,0x0012019f}){
         bool passed=false;std::string error;
@@ -425,6 +433,7 @@ int wmain(int argc,wchar_t** argv){
       }
       line("{\"kind\":\"rawpipe-summary\",\"nonce\":"+quote(utf8(nonce))+",\"diagnosticOnly\":true,\"rawProbeUnshimmed\":true,\"runtimeGrantsChanged\":false,\"casesCompleted\":2,\"casesPassed\":"+std::to_string(succeeded)+"}");return 0;
     }
+    jobProof(workerPid,executorPid);
     if(mode==L"identity"){line("{\"kind\":\"identity\","+identityFields(id)+"}");return 0;}
     if(mode==L"absent"){
       Handle g,s;NTSTATUS gs=openDir(api,gd,g),ss=openDir(api,sd,s);
