@@ -241,7 +241,7 @@ describe("E2E fixture clients", () => {
       runner.enqueue({ stdout: "/opt/openshell\n" });
       runner.enqueue({
         stdout:
-          "/usr/local/bin/openshell --gateway nemoclaw --workspace default forward service alpha --target-port 18789 --target-host 127.0.0.1 --local 127.0.0.1:18789\n",
+          "/usr/local/bin/openshell --gateway nemoclaw --gateway-endpoint https://127.0.0.1:8080 --workspace default forward service alpha --target-port 18789 --target-host 127.0.0.1 --local 127.0.0.1:18789\n",
       });
       runner.enqueue({ stdout: "4321\n" });
       const host = new HostCliClient(runner);
@@ -261,7 +261,7 @@ describe("E2E fixture clients", () => {
     runner.enqueue({ stdout: "/tmp/openshell-wrapper\n" });
     runner.enqueue({
       stdout:
-        "/tmp/openshell-wrapper --gateway nemoclaw --workspace default forward service alpha --target-port 18789 --target-host 127.0.0.1 --local 127.0.0.1:18789\n",
+        "/tmp/openshell-wrapper --gateway nemoclaw --gateway-endpoint https://127.0.0.1:8080 --workspace default forward service alpha --target-port 18789 --target-host 127.0.0.1 --local 127.0.0.1:18789\n",
     });
     runner.enqueue({ stdout: "4321\n" });
 

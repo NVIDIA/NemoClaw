@@ -1,35 +1,37 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import {
-  buildSelectedOpenShellSubprocessEnv,
-  withSelectedOpenShellCommandOptions,
-} from "../../adapters/openshell/command-argv";
+import path from "node:path";
+
 import {
   createForwardServiceTarget,
   isForwardServiceListenerOwner,
   launchForwardService,
   type ForwardServiceTarget,
-  localListenerPids,
 } from "../../adapters/openshell/forward-service";
 import { resolveOpenshell } from "../../adapters/openshell/resolve";
-import { legacySandboxForwardRow } from "../../adapters/openshell/forward-service-migration";
 import {
-  captureOpenshell,
+  buildSelectedOpenShellSubprocessEnv,
   captureResolvedOpenshell,
+  replaceOpenShellRuntimeSelectionEnv,
   type OpenShellRuntimeSelection,
   runOpenshell,
 } from "../../adapters/openshell/runtime";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
 import * as agentRuntime from "../../agent/runtime";
+import { getGatewayHttpsEndpoint } from "../../core/gateway-address";
 import { DASHBOARD_PORT, HERMES_OPENAI_API_PORT } from "../../core/ports";
 import { getActiveMessagingHostForward } from "../../messaging/host-forward";
 import { hydrateDerivedSandboxMessagingPlanFields } from "../../messaging/hydration";
 import type { SandboxMessagingHostForwardPlan } from "../../messaging/manifest";
 import { parseSandboxMessagingPlan } from "../../messaging/plan-validation";
 import { isRemoteDashboardBindRequested } from "../../onboard/dockerfile-remote-dashboard-bind-contract";
-import { resolveSandboxGatewayName } from "../../onboard/gateway-binding";
-import { retireProductionLegacySandboxForwards } from "../../onboard/forward-service-migration";
+import {
+  resolveGatewayPortFromName,
+  resolveSandboxGatewayName,
+} from "../../onboard/gateway-binding";
+import { resolveGatewayForwardAuthority } from "../../onboard/gateway-teardown-authority";
+import { sameGatewayOwner, type GatewayOwner } from "../../onboard/gateway-ownership";
 import {
   resolveSandboxHermesApiPort,
   retargetHermesApiPortInUrl,
@@ -41,9 +43,10 @@ import {
   ensureHermesDashboardPortForwardIfEnabled as ensureHermesDashboardPortForward,
   getHermesDashboardRecoveryConfig,
 } from "./hermes-dashboard-recovery";
-import type {
-  HermesPortableForwardRecoveryInput,
-  HermesPortableForwardRecoveryTimingEvidence,
+import {
+  HermesPortableForwardRecoveryError,
+  type HermesPortableForwardRecoveryInput,
+  type HermesPortableForwardRecoveryTimingEvidence,
 } from "./probe/hermes-portable-forward-recovery";
 export {
   HermesPortableForwardRecoveryError,
@@ -78,6 +81,34 @@ export function createHermesPortableForwardRecoveryInput(input: {
   readonly ports: readonly number[];
   readonly sandboxName: string;
 }): HermesPortableForwardRecoveryInput {
+  let gatewayAuthority: ReturnType<typeof resolveForwardGatewayAuthority>;
+  try {
+    input.assertCurrent();
+    gatewayAuthority = resolveForwardGatewayAuthority(input.gatewayName);
+    input.assertCurrent();
+  } catch {
+    throw new HermesPortableForwardRecoveryError("authority-drift");
+  }
+  const assertGatewayAuthorityCurrent = (): void => {
+    const current = resolveForwardGatewayAuthority(input.gatewayName);
+    if (!sameForwardGatewayAuthority(current, gatewayAuthority)) {
+      throw new Error("OpenShell forward service gateway authority changed");
+    }
+  };
+  const assertCurrent = (): void => {
+    input.assertCurrent();
+    assertGatewayAuthorityCurrent();
+  };
+  const assertRollbackCurrent = (): void => {
+    input.assertRollbackCurrent();
+    assertGatewayAuthorityCurrent();
+  };
+  const sourceEnvironment = { ...input.commandAuthority.env };
+  replaceOpenShellRuntimeSelectionEnv(sourceEnvironment, {
+    gatewayName: input.gatewayName,
+    workspace: "default",
+    ...(gatewayAuthority.localTlsDir ? { localTlsDir: gatewayAuthority.localTlsDir } : {}),
+  });
   return {
     intent: input.intent,
     sandboxName: input.sandboxName,
@@ -87,16 +118,17 @@ export function createHermesPortableForwardRecoveryInput(input: {
     probeTimeoutMs: OPENSHELL_PROBE_TIMEOUT_MS,
     forwardService: {
       executablePath: input.commandAuthority.executablePath,
-      sourceEnvironment: input.commandAuthority.env,
+      gatewayEndpoint: gatewayAuthority.endpoint,
+      sourceEnvironment,
       workspace: "default",
     },
     timing: { onComplete: input.onTiming },
     deps: {
-      assertCurrent: input.assertCurrent,
-      assertRollbackCurrent: input.assertRollbackCurrent,
+      assertCurrent,
+      assertRollbackCurrent,
       captureCurrentList: (args, timeout) =>
         captureResolvedOpenshell([...args], {
-          env: input.commandAuthority.env,
+          env: sourceEnvironment,
           openshellBinary: input.commandAuthority.executablePath,
           replaceEnv: true,
           ignoreError: true,
@@ -105,7 +137,7 @@ export function createHermesPortableForwardRecoveryInput(input: {
         }),
       captureRollbackList: (args, timeout) =>
         captureResolvedOpenshell([...args], {
-          env: input.commandAuthority.env,
+          env: sourceEnvironment,
           openshellBinary: input.commandAuthority.executablePath,
           replaceEnv: true,
           ignoreError: true,
@@ -114,7 +146,7 @@ export function createHermesPortableForwardRecoveryInput(input: {
         }),
       runCurrentMutation: (args, timeout) =>
         runOpenshell([...args], {
-          env: input.commandAuthority.env,
+          env: sourceEnvironment,
           openshellBinary: input.commandAuthority.executablePath,
           replaceEnv: true,
           ignoreError: true,
@@ -146,39 +178,67 @@ type SandboxForwardRecoveryOptions = {
   runtimeSelection?: OpenShellRuntimeSelection;
 };
 
-function retireLegacyForwardServiceMigration(
-  sandboxName: string,
+function selectedForwardRuntime(
   gatewayName: string,
-  ports: readonly number[],
   runtimeSelection?: OpenShellRuntimeSelection,
-): number {
-  return retireProductionLegacySandboxForwards(sandboxName, gatewayName, ports, {
-    capture: (gatewayName) =>
-      captureOpenshell(
-        ["forward", "list", "--gateway", gatewayName],
-        withSelectedOpenShellCommandOptions(
-          {
-            ignoreError: true,
-            includeStreams: true,
-            timeout: OPENSHELL_PROBE_TIMEOUT_MS,
-          },
-          runtimeSelection,
-        ),
-      ),
-    isReachable: isLocalForwardReachable,
-    run: (gatewayName, sandboxName, port) =>
-      runOpenshell(
-        ["forward", "stop", String(port), sandboxName, "--gateway", gatewayName],
-        withSelectedOpenShellCommandOptions(
-          {
-            ignoreError: true,
-            stdio: "ignore",
-            timeout: 30_000,
-          },
-          runtimeSelection,
-        ),
-      ),
-  });
+  authorityLocalTlsDir?: string,
+): OpenShellRuntimeSelection {
+  if (
+    runtimeSelection?.localTlsDir &&
+    authorityLocalTlsDir &&
+    runtimeSelection.localTlsDir !== authorityLocalTlsDir
+  ) {
+    throw new Error("OpenShell forward service TLS selection disagrees with gateway authority");
+  }
+  const localTlsDir = authorityLocalTlsDir ?? runtimeSelection?.localTlsDir;
+  return {
+    gatewayName,
+    workspace: runtimeSelection?.workspace ?? "default",
+    ...(localTlsDir ? { localTlsDir } : {}),
+  };
+}
+
+type ForwardGatewayAuthority = {
+  readonly endpoint: string;
+  readonly localTlsDir?: string;
+  readonly owner: GatewayOwner;
+};
+
+function resolveForwardGatewayAuthority(gatewayName: string): ForwardGatewayAuthority {
+  const gatewayPort = resolveGatewayPortFromName(gatewayName);
+  if (gatewayPort === null) {
+    throw new Error(`Invalid OpenShell forward gateway '${gatewayName}'`);
+  }
+  const owner = resolveGatewayForwardAuthority({ gatewayName, gatewayPort });
+  const externalTlsDir =
+    owner.endpoint && new URL(owner.endpoint).protocol === "https:" && owner.stateDir
+      ? path.join(owner.stateDir, "tls")
+      : undefined;
+  return {
+    endpoint: owner.endpoint ?? new URL(getGatewayHttpsEndpoint(gatewayPort)).origin,
+    ...(externalTlsDir ? { localTlsDir: externalTlsDir } : {}),
+    owner,
+  };
+}
+
+function sameForwardGatewayAuthority(
+  first: ForwardGatewayAuthority,
+  second: ForwardGatewayAuthority,
+): boolean {
+  return (
+    first.endpoint === second.endpoint &&
+    first.localTlsDir === second.localTlsDir &&
+    sameGatewayOwner(first.owner, second.owner)
+  );
+}
+
+function assertForwardGatewayAuthorityCurrent(
+  gatewayName: string,
+  expected: ForwardGatewayAuthority,
+): void {
+  if (!sameForwardGatewayAuthority(resolveForwardGatewayAuthority(gatewayName), expected)) {
+    throw new Error("OpenShell forward service gateway authority changed during launch");
+  }
 }
 
 function forwardServiceTarget(
@@ -188,11 +248,13 @@ function forwardServiceTarget(
   port: number,
   expectedBind = "127.0.0.1",
   workspace = "default",
+  gatewayEndpoint?: string,
 ): ForwardServiceTarget {
   return createForwardServiceTarget(
     {
       executable,
       gatewayName,
+      ...(gatewayEndpoint ? { gatewayEndpoint } : {}),
       workspace,
       sandboxName,
       localHost: expectedBind === "0.0.0.0" ? "0.0.0.0" : "127.0.0.1",
@@ -348,13 +410,12 @@ export function ensureSandboxPortForward(
  * - `owned`: this sandbox's exact OpenShell ForwardTcp service, proved from
  *   the listener PID, its executable and its full argv.
  * - `absent`: nothing listens.
- * - `legacy`: a tracked legacy forward that recovery migrates.
  * - `unverified`: something listens that NemoClaw cannot attribute to this
  *   sandbox's forward. Recovery never relaunches onto it: the listener is
  *   left running and reported, because a forward that did start there would
  *   hand the dashboard URL and its token to whatever answers (#11149).
  */
-export type SandboxForwardListener = "owned" | "absent" | "legacy" | "unverified";
+export type SandboxForwardListener = "owned" | "absent" | "unverified";
 
 export function describeSandboxForwardListener(
   sandboxName: string,
@@ -392,10 +453,19 @@ export function isSandboxPortForwardHealthy(
 
 /** Why recovery leaves a listener it cannot attribute to the sandbox alone. */
 export function unverifiedForwardListenerRefusal(sandboxName: string, port: number): string {
-  return `  Host port ${String(port)} for '${sandboxName}' is held by a listener that NemoClaw cannot attribute to this sandbox's OpenShell forward. NemoClaw did not start it, leaves it running, and does not restore a forward onto it. Find the owner with \`ss -ltnp 'sport = :${String(port)}'\` or \`lsof -nP -iTCP:${String(port)} -sTCP:LISTEN\`, free the port, then run \`nemoclaw ${sandboxName} recover\` again.`;
+  return `  Host port ${String(port)} for '${sandboxName}' is held by a listener that NemoClaw cannot attribute to this sandbox's OpenShell forward. NemoClaw cannot prove it started the listener, so it leaves the listener running and does not restore a forward onto it. Find the owner with \`ss -ltnp 'sport = :${String(port)}'\` or \`lsof -nP -iTCP:${String(port)} -sTCP:LISTEN\`, free the port, then run \`nemoclaw ${sandboxName} recover\` again.`;
 }
 
 export function describeSandboxPortForwardListener(
+  sandboxName: string,
+  port: number,
+  expectedBind?: string,
+  runtimeSelection?: OpenShellRuntimeSelection,
+): SandboxForwardListener {
+  return inspectSandboxPortForwardListener(sandboxName, port, expectedBind, runtimeSelection);
+}
+
+function inspectSandboxPortForwardListener(
   sandboxName: string,
   port: number,
   expectedBind?: string,
@@ -405,46 +475,22 @@ export function describeSandboxPortForwardListener(
   if (!sandbox) return "absent";
   if (!isLocalForwardReachable(port)) return "absent";
   const gatewayName = runtimeSelection?.gatewayName ?? resolveSandboxGatewayName(sandbox);
-  const listed = captureOpenshell(
-    ["forward", "list", "--gateway", gatewayName],
-    withSelectedOpenShellCommandOptions(
-      {
-        ignoreError: true,
-        includeStreams: true,
-        timeout: OPENSHELL_PROBE_TIMEOUT_MS,
-      },
-      runtimeSelection,
-    ),
-  );
+  const authority = resolveForwardGatewayAuthority(gatewayName);
+  const proofRuntime = selectedForwardRuntime(gatewayName, runtimeSelection, authority.localTlsDir);
   const executable = resolveOpenshell();
-  const legacyRow =
-    !listed.error && !listed.signal && listed.status === 0
-      ? legacySandboxForwardRow(listed.output, sandboxName, port)
-      : undefined;
-  if (legacyRow !== undefined) {
-    // OpenShell 0.0.106 list_forwards validates SSH argv against the recorded
-    // sandbox ID and port before reporting "running". stop_forward repeats that
-    // proof before signalling. The listener runs as ssh; bind the validated
-    // row to the live socket here instead of requiring the openshell executable.
-    const holders = localListenerPids(port);
-    return legacyRow.status === "running" &&
-      legacyRow.pid !== null &&
-      holders.length === 1 &&
-      holders[0] === String(legacyRow.pid)
-      ? "legacy"
-      : "unverified";
-  }
   if (!executable) return "unverified";
-  return isForwardServiceListenerOwner(
-    forwardServiceTarget(
-      executable,
-      gatewayName,
-      sandboxName,
-      port,
-      expectedBind ?? "127.0.0.1",
-      runtimeSelection?.workspace ?? "default",
-    ),
-  )
+  const bindAddress = expectedBind ?? "127.0.0.1";
+  const target = forwardServiceTarget(
+    executable,
+    gatewayName,
+    sandboxName,
+    port,
+    bindAddress,
+    proofRuntime.workspace,
+    authority.endpoint,
+  );
+  if (!isForwardServiceListenerOwner(target)) return "unverified";
+  return sameForwardGatewayAuthority(resolveForwardGatewayAuthority(gatewayName), authority)
     ? "owned"
     : "unverified";
 }
@@ -476,12 +522,17 @@ export function ensureSandboxPortForwardForPort(
     }
     return accepted;
   };
-  const listener = describeSandboxPortForwardListener(
-    sandboxName,
-    port,
-    expectedBind,
-    runtimeSelection,
-  );
+  let listener: SandboxForwardListener;
+  try {
+    listener = inspectSandboxPortForwardListener(sandboxName, port, expectedBind, runtimeSelection);
+  } catch (error) {
+    console.error(
+      `  Warning: OpenShell ForwardTcp ${String(port)} for ${sandboxName} could not be inspected: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+    return false;
+  }
   if (listener === "owned") return acceptSuccessfulForward();
   // A listener this sandbox does not own is reported, never replaced. A
   // launch onto it would only fail as "occupied", and reporting the forward
@@ -495,22 +546,33 @@ export function ensureSandboxPortForwardForPort(
     const sandbox = registry.getSandbox(sandboxName);
     if (!sandbox) throw new Error(`Sandbox '${sandboxName}' is not registered`);
     const gatewayName = runtimeSelection?.gatewayName ?? resolveSandboxGatewayName(sandbox);
-    retireLegacyForwardServiceMigration(sandboxName, gatewayName, [port], runtimeSelection);
+    const authority = resolveForwardGatewayAuthority(gatewayName);
+    const launchRuntime = selectedForwardRuntime(
+      gatewayName,
+      runtimeSelection,
+      authority.localTlsDir,
+    );
     const executable = resolveOpenshell();
     if (!executable) throw new Error("OpenShell is unavailable");
-    launchForwardService(
-      forwardServiceTarget(
-        executable,
-        gatewayName,
-        sandboxName,
-        port,
-        expectedBind ?? (forwardTarget.startsWith("0.0.0.0:") ? "0.0.0.0" : "127.0.0.1"),
-        runtimeSelection?.workspace ?? "default",
-      ),
-      runtimeSelection
-        ? { sourceEnvironment: buildSelectedOpenShellSubprocessEnv(runtimeSelection) }
-        : {},
+    const target = forwardServiceTarget(
+      executable,
+      gatewayName,
+      sandboxName,
+      port,
+      expectedBind ?? (forwardTarget.startsWith("0.0.0.0:") ? "0.0.0.0" : "127.0.0.1"),
+      launchRuntime.workspace,
+      authority.endpoint,
     );
+    launchForwardService(target, {
+      sourceEnvironment: buildSelectedOpenShellSubprocessEnv(launchRuntime),
+      verifyReady: () => {
+        assertForwardGatewayAuthorityCurrent(gatewayName, authority);
+        if (!isForwardServiceListenerOwner(target)) {
+          throw new Error("OpenShell ForwardTcp listener ownership could not be verified");
+        }
+        assertForwardGatewayAuthorityCurrent(gatewayName, authority);
+      },
+    });
     return acceptSuccessfulForward();
   } catch (error) {
     console.error(

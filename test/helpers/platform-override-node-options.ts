@@ -6,7 +6,7 @@ import path from "node:path";
 
 /**
  * `synthetic` accepts a reachable listener as the sandbox's ForwardTcp service.
- * `real` keeps the production ownership proof. Legacy PID checks run in both modes.
+ * `real` keeps the production ownership proof.
  */
 export type ForwardOwnerProof = "synthetic" | "real";
 

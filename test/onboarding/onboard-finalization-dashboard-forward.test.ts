@@ -13,12 +13,15 @@ import { loadAgent } from "../../src/lib/agent/defs";
 import type { ListSandboxesFn } from "../../src/lib/onboard/dashboard-port";
 
 function harness(options: {
+  forwardList?: string;
   listSandboxes: ListSandboxesFn;
   isPortBound?: (port: number) => boolean;
   ownsForward?: (target: ForwardServiceTarget) => boolean;
   launch?: typeof launchForwardService;
 }) {
   const startedPorts = new Set<number>();
+  const runOpenshell = vi.fn(() => ({ status: 0 }));
+  const runCaptureOpenshell = vi.fn(() => options.forwardList ?? "");
   const launch = vi.fn(
     options.launch ??
       ((target: ForwardServiceTarget, launchOptions?: ForwardServiceLaunchOptions) => {
@@ -29,8 +32,8 @@ function harness(options: {
   const owns = vi.fn(options.ownsForward ?? ((target) => startedPorts.has(target.localPort)));
 
   const helpers = createOnboardDashboardHelpers({
-    runOpenshell: vi.fn(() => ({ status: 0 })),
-    runCaptureOpenshell: vi.fn(() => ""),
+    runOpenshell,
+    runCaptureOpenshell,
     openshellArgv: (args) => ["/usr/local/bin/openshell", ...args],
     cliName: () => "nemoclaw",
     agentProductName: () => "NemoClaw",
@@ -48,10 +51,9 @@ function harness(options: {
       launch,
       owns,
       resolveGatewayName: () => "nemoclaw",
-      retireLegacy: vi.fn(() => 0),
     },
   });
-  return { helpers, launch, owns };
+  return { helpers, launch, owns, runCaptureOpenshell, runOpenshell };
 }
 
 describe("finalization dashboard ForwardTcp launch", () => {
@@ -76,9 +78,10 @@ describe("finalization dashboard ForwardTcp launch", () => {
     expect(process.env.CHAT_UI_URL).toBe("http://127.0.0.1:18790");
   });
 
-  it("fails closed when a foreign or ambiguous listener occupies the persisted port", () => {
+  it("leaves a listed legacy listener untouched and explains how to unblock onboarding", () => {
     vi.stubEnv("CHAT_UI_URL", undefined);
-    const { helpers, launch } = harness({
+    const { helpers, launch, runOpenshell } = harness({
+      forwardList: "SANDBOX BIND PORT PID STATUS\nreonboard-test 127.0.0.1 18790 4242 running",
       listSandboxes: () => ({
         sandboxes: [{ name: "reonboard-test", dashboardPort: 18_790 }],
       }),
@@ -86,9 +89,24 @@ describe("finalization dashboard ForwardTcp launch", () => {
     });
 
     expect(() => helpers.ensureFinalizationDashboardForward("reonboard-test")).toThrow(
-      /cannot be reallocated or adopted/u,
+      /cannot be reallocated or adopted.*Stop the owning service or OpenShell gateway/u,
     );
     expect(launch).not.toHaveBeenCalled();
+    expect(runOpenshell).not.toHaveBeenCalled();
+  });
+
+  it("does not accept a foreign listener that wins a fixed-forward bind race", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const { helpers, owns } = harness({
+      listSandboxes: () => ({ sandboxes: [{ name: "reonboard-test" }] }),
+      ownsForward: () => false,
+    });
+
+    expect(helpers.ensureAgentFixedForward("reonboard-test", 8_642, "Hermes API")).toBe(false);
+    expect(owns).toHaveBeenCalledOnce();
+    expect(warn.mock.calls.flat().join("\n")).toContain(
+      "Could not verify Hermes API forward ownership on port 8642",
+    );
   });
 
   it("reuses an exactly owned dashboard forward (#11074)", () => {
@@ -105,6 +123,7 @@ describe("finalization dashboard ForwardTcp launch", () => {
     expect(owns).toHaveBeenCalledOnce();
     expect(owns).toHaveBeenCalledWith({
       executable: "/usr/local/bin/openshell",
+      gatewayEndpoint: "https://127.0.0.1:8080",
       gatewayName: "nemoclaw",
       workspace: "default",
       sandboxName: "reonboard-test",

@@ -1672,7 +1672,7 @@ function recoverUnhealthyDashboardForward(
     console.log("");
     if (listener === "unverified") {
       console.log(
-        `  Dashboard port forward to '${sandboxName}' is held by a listener NemoClaw does not own.`,
+        `  Dashboard port forward to '${sandboxName}' is held by a listener whose ownership NemoClaw cannot prove.`,
       );
     } else {
       console.log(`  Dashboard port forward to '${sandboxName}' is missing or dead.`);

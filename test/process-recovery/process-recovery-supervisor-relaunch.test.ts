@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as forwardHealth from "../../src/lib/actions/sandbox/forward-health.ts";
 import { checkAndRecoverSandboxProcesses } from "../../src/lib/actions/sandbox/process-recovery.ts";
 import { relaunchManagedSupervisorSession } from "../../src/lib/actions/sandbox/supervisor-relaunch.ts";
@@ -10,6 +10,7 @@ import * as openshellResolve from "../../src/lib/adapters/openshell/resolve.ts";
 import * as openshellRuntime from "../../src/lib/adapters/openshell/runtime.ts";
 import * as agentRuntime from "../../src/lib/agent/runtime.ts";
 import { finalizeDockerGpuPatchBackup } from "../../src/lib/onboard/docker-gpu-patch-finalize.ts";
+import * as gatewayTeardownAuthority from "../../src/lib/onboard/gateway-teardown-authority.ts";
 import * as registry from "../../src/lib/state/registry.ts";
 
 const OPENSHELL_RELAY_CHANNEL_DROPPED_STDERR = `Error:   × status: Unavailable, message: "relay
@@ -37,6 +38,21 @@ function pinnedIdentityRefusal(sandboxName: string) {
     stderr: `MANAGED_CONTROL_IDENTITY_CHANGED\nOpenShell container identity changed for sandbox '${sandboxName}'; refusing privileged execution against a different container.`,
   } as const;
 }
+
+beforeEach(() => {
+  vi.spyOn(gatewayTeardownAuthority, "resolveGatewayForwardAuthority").mockImplementation(
+    ({ gatewayName, gatewayPort }) => ({
+      gatewayName,
+      gatewayPort,
+      mode: "nemoclaw-managed",
+      source: "standalone",
+      endpoint: null,
+      stateDir: null,
+      supervisor: null,
+      requiredCapabilities: [],
+    }),
+  );
+});
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -445,7 +461,6 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
       async (_name, options) => options.beforeProbe?.(1000) === true,
     );
     vi.spyOn(forwardHealth, "isLocalForwardReachable").mockReturnValue(true);
-    vi.spyOn(forwardService, "localListenerPids").mockReturnValue(["12345"]);
     vi.spyOn(openshellResolve, "resolveOpenshell").mockReturnValue("/usr/local/bin/openshell");
     vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({
       status: 0,
@@ -870,7 +885,6 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
       async (_name, options) => options.beforeProbe?.(1000) === true,
     );
     vi.spyOn(forwardHealth, "isLocalForwardReachable").mockReturnValue(true);
-    vi.spyOn(forwardService, "localListenerPids").mockReturnValue(["12345"]);
     vi.spyOn(openshellResolve, "resolveOpenshell").mockReturnValue("/usr/local/bin/openshell");
     vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({
       status: 0,
@@ -1153,7 +1167,7 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
         async (_name, options) => options.beforeProbe?.(1000) === true,
       );
       vi.spyOn(forwardHealth, "isLocalForwardReachable").mockReturnValue(true);
-      vi.spyOn(forwardService, "localListenerPids").mockReturnValue(["12345"]);
+      vi.spyOn(forwardService, "isForwardServiceListenerOwner").mockReturnValue(true);
       vi.spyOn(openshellResolve, "resolveOpenshell").mockReturnValue("/usr/local/bin/openshell");
       vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({
         status: 0,
@@ -1231,7 +1245,7 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
       async (_name, options) => options.beforeProbe?.(1000) === true,
     );
     vi.spyOn(forwardHealth, "isLocalForwardReachable").mockReturnValue(true);
-    vi.spyOn(forwardService, "localListenerPids").mockReturnValue(["12345"]);
+    vi.spyOn(forwardService, "isForwardServiceListenerOwner").mockReturnValue(true);
     vi.spyOn(openshellResolve, "resolveOpenshell").mockReturnValue("/usr/local/bin/openshell");
     vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({
       status: 0,

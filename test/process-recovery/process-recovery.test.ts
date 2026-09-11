@@ -7,7 +7,7 @@ import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const requireSource = createRequire(import.meta.url);
 const { checkAndRecoverSandboxProcesses: checkAndRecoverSandboxProcessesImpl } = requireSource(
@@ -25,6 +25,24 @@ const forwardService = requireSource(
 const openshellResolve = requireSource(
   "../../src/lib/adapters/openshell/resolve.ts",
 ) as typeof import("../../src/lib/adapters/openshell/resolve.js");
+const gatewayTeardownAuthority = requireSource(
+  "../../src/lib/onboard/gateway-teardown-authority.ts",
+) as typeof import("../../src/lib/onboard/gateway-teardown-authority.js");
+
+beforeEach(() => {
+  vi.spyOn(gatewayTeardownAuthority, "resolveGatewayForwardAuthority").mockImplementation(
+    ({ gatewayName, gatewayPort }) => ({
+      gatewayName,
+      gatewayPort,
+      mode: "nemoclaw-managed",
+      source: "standalone",
+      endpoint: null,
+      stateDir: null,
+      supervisor: null,
+      requiredCapabilities: [],
+    }),
+  );
+});
 
 function checkAndRecoverSandboxProcesses(
   sandboxName: string,
@@ -652,7 +670,6 @@ hermes-box  127.0.0.1  18789  12345  running`;
     });
     vi.spyOn(forwardHealth, "isLocalForwardReachable").mockReturnValue(true);
     vi.spyOn(forwardService, "isForwardServiceListenerOwner").mockReturnValue(true);
-    vi.spyOn(forwardService, "localListenerPids").mockReturnValue(["12345"]);
     vi.spyOn(openshellResolve, "resolveOpenshell").mockReturnValue("/usr/local/bin/openshell");
     vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({
       status: 0,
@@ -705,7 +722,6 @@ hermes-box  127.0.0.1  18789  12345  running`;
     });
     vi.spyOn(forwardHealth, "isLocalForwardReachable").mockReturnValue(true);
     vi.spyOn(forwardService, "isForwardServiceListenerOwner").mockReturnValue(true);
-    vi.spyOn(forwardService, "localListenerPids").mockReturnValue(["12345"]);
     vi.spyOn(openshellResolve, "resolveOpenshell").mockReturnValue("/usr/local/bin/openshell");
     vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({
       status: 0,
@@ -906,12 +922,12 @@ describe("recover with a dashboard port held by a listener the sandbox does not 
       ),
     });
     expect(launch).not.toHaveBeenCalled();
-    // One classification decides; the recovery helper is not asked to classify again.
+    // Direct process identity decides; the legacy forward registry is not ownership evidence.
     expect(
       forwardList.mock.calls.filter(
         ([rawArgs]) => Array.isArray(rawArgs) && rawArgs[0] === "forward" && rawArgs[1] === "list",
       ),
-    ).toHaveLength(1);
+    ).toHaveLength(0);
     expect(
       runOpenshell.mock.calls.some(
         ([rawArgs]) => Array.isArray(rawArgs) && rawArgs[0] === "forward",
@@ -919,7 +935,7 @@ describe("recover with a dashboard port held by a listener the sandbox does not 
     ).toBe(false);
     const output = logSpy.mock.calls.map((call) => String(call[0] ?? "")).join("\n");
     expect(output).not.toContain("missing or dead");
-    expect(output).toContain("held by a listener NemoClaw does not own");
+    expect(output).toContain("held by a listener whose ownership NemoClaw cannot prove");
     const errors = errorSpy.mock.calls.map((call) => String(call[0] ?? "")).join("\n");
     expect(errors).toContain("Host port 18789 for 'beta' is held by a listener");
   });

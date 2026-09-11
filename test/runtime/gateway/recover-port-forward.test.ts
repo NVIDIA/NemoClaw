@@ -388,8 +388,8 @@ describe("nemoclaw <name> recover", () => {
       const calls = fs.readFileSync(fixture.invocationLog, "utf-8").split("\n");
       const stopIdx = calls.findIndex((l) => l.startsWith("forward stop "));
       const startIdx = calls.findIndex((line) => line.includes("forward service "));
-      expect(stopIdx).toBeGreaterThanOrEqual(0);
-      expect(startIdx).toBeGreaterThan(stopIdx);
+      expect(stopIdx).toBe(-1);
+      expect(startIdx).toBeGreaterThanOrEqual(0);
     },
   );
 
@@ -417,24 +417,33 @@ describe("nemoclaw <name> recover", () => {
     },
   );
 
-  it("migrates a reachable tracked legacy forward", testTimeoutOptions(20_000), () => {
-    const fixture = setupFixture({
-      sandboxName: "legacy-sandbox",
-      gatewayProbe: "RUNNING",
-      forwardListStatus: "running",
-    });
-    const result = runRecover(fixture, "real");
-    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+  it(
+    "refuses a live legacy row without stopping or adopting its listener",
+    testTimeoutOptions(20_000),
+    () => {
+      const fixture = setupFixture({
+        sandboxName: "legacy-sandbox",
+        gatewayProbe: "RUNNING",
+        forwardListStatus: "running",
+      });
+      const result = runRecover(fixture, "real");
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(1);
 
-    const combined = (result.stdout || "") + (result.stderr || "");
-    expect(combined).toContain("gateway is running in 'legacy-sandbox'");
+      const combined = (result.stdout || "") + (result.stderr || "");
+      expect(combined).toContain(
+        `Host port ${fixture.port} for 'legacy-sandbox' is held by a listener that NemoClaw cannot attribute to this sandbox's OpenShell forward`,
+      );
+      expect(combined).not.toContain("restored dashboard port forward");
 
-    const calls = fs.readFileSync(fixture.invocationLog, "utf-8").split("\n");
-    const stopIdx = calls.findIndex((line) => line.startsWith("forward stop "));
-    const startIdx = calls.findIndex((line) => line.includes("forward service "));
-    expect(stopIdx).toBeGreaterThanOrEqual(0);
-    expect(startIdx).toBeGreaterThan(stopIdx);
-  });
+      const calls = fs.readFileSync(fixture.invocationLog, "utf-8").split("\n");
+      expect(calls.some((line) => line.startsWith("forward stop "))).toBe(false);
+      expect(calls.some((line) => line.includes("forward service "))).toBe(false);
+      const listenerPid = Number(
+        fs.readFileSync(fixture.listenerPidFile, "utf-8").trim().split(/\s+/).at(-1),
+      );
+      expect(() => process.kill(listenerPid, 0)).not.toThrow();
+    },
+  );
 
   it(
     "exits non-zero and leaves an unrelated listener on the dashboard port untouched (#11149)",
