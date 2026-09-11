@@ -21,9 +21,36 @@ const successfulNeeds = {
 };
 
 describe("release qualification", () => {
-  it.each(["success", "failure", "cancelled", "skipped", undefined])(
+  it("records passing PR evidence and refuses to overwrite it (#11489)", ({ onTestFinished }) => {
+    const directory = mkdtempSync(path.join(tmpdir(), "e2e-result-"));
+    onTestFinished(() => rmSync(directory, { recursive: true, force: true }));
+    const evidence = {
+      outputPath: path.join(directory, "result.json"),
+      runId: "123",
+      attempt: "2",
+    };
+    const evaluate = () =>
+      assertReleaseQualification(
+        JSON.stringify(successfulNeeds),
+        '["live","staging-brev-launchable"]',
+        evidence,
+      );
+    expect(evaluate).not.toThrow();
+    expect(JSON.parse(readFileSync(evidence.outputPath, "utf8"))).toEqual(
+      JSON.parse(
+        readFileSync(new URL("../../fixtures/review-queue-e2e-pass.json", import.meta.url), "utf8"),
+      ),
+    );
+    expect(evaluate).toThrow("EEXIST");
+  });
+  it.each([
+    ["failure", "fail"],
+    ["cancelled", "unknown"],
+    ["skipped", "unknown"],
+    [undefined, "unknown"],
+  ])(
     "records %s PR evidence with the existing evaluator and dispatch reference (#11489)",
-    (result) => {
+    (result, status) => {
       const directory = mkdtempSync(path.join(tmpdir(), "e2e-result-"));
       const evidence = {
         outputPath: path.join(directory, "result.json"),
@@ -37,25 +64,11 @@ describe("release qualification", () => {
             '["live","staging-brev-launchable"]',
             evidence,
           );
-        if (result === "success") expect(evaluate).not.toThrow();
-        else expect(evaluate).toThrow("Release qualification did not pass: live");
+        expect(evaluate).toThrow("Release qualification did not pass: live");
         const receipt = JSON.parse(readFileSync(evidence.outputPath, "utf8"));
-        expect(receipt.status).toBe(
-          result === "success" ? "pass" : result === "failure" ? "fail" : "unknown",
-        );
+        expect(receipt.status).toBe(status);
         expect(receipt.dispatchArtifact).toBe("e2e-dispatch-123-2");
         expect(receipt.results).toContainEqual({ job: "live", result: result ?? null });
-        if (result === "success") {
-          expect(receipt).toEqual(
-            JSON.parse(
-              readFileSync(
-                new URL("../../fixtures/review-queue-e2e-pass.json", import.meta.url),
-                "utf8",
-              ),
-            ),
-          );
-          expect(evaluate).toThrow("EEXIST");
-        }
       } finally {
         rmSync(directory, { recursive: true, force: true });
       }
