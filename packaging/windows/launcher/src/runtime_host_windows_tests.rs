@@ -9,6 +9,9 @@ use std::os::windows::io::AsRawHandle;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+#[path = "runtime_browser_http_fixture.rs"]
+mod browser_http_fixture;
+
 static NEXT: AtomicU64 = AtomicU64::new(0);
 const FIXTURE: &str = "runtime_host::tests::owned_process_fixture";
 
@@ -581,35 +584,9 @@ fn browser_survives_successful_private_job_close() {
         / 100
         + 116444736000000000u128;
     let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
-    listener.set_nonblocking(true).unwrap();
     let origin = format!("http://127.0.0.1:{}", listener.local_addr().unwrap().port());
     let server = std::thread::spawn(move || {
-        let deadline = Instant::now() + Duration::from_secs(20);
-        loop {
-            match listener.accept() {
-                Ok((mut stream, _)) => {
-                    stream.set_nonblocking(false).unwrap();
-                    stream
-                        .set_read_timeout(Some(Duration::from_secs(5)))
-                        .unwrap();
-                    let mut request = [0; 4096];
-                    let length = stream.read(&mut request).unwrap();
-                    assert!(
-                        String::from_utf8_lossy(&request[..length]).starts_with("GET / HTTP/1.1")
-                    );
-                    stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 28\r\nConnection: close\r\nContent-Type: text/plain\r\n\r\nNemoClaw browser owner proof").unwrap();
-                    return;
-                }
-                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                    assert!(
-                        Instant::now() < deadline,
-                        "The actual browser did not navigate to the owned origin."
-                    );
-                    std::thread::sleep(Duration::from_millis(20));
-                }
-                Err(error) => panic!("{error}"),
-            }
-        }
+        browser_http_fixture::serve_root(listener, Duration::from_secs(20))
     });
     let mut command = fixture.command("browser-owned");
     command.env("NEMOCLAW_BROWSER_PROOF_ORIGIN", origin);
@@ -624,7 +601,10 @@ fn browser_survives_successful_private_job_close() {
         ),
         Ok(0)
     );
-    server.join().unwrap();
+    let http = server.join().unwrap();
+    println!("browser-http: {http:?}");
+    let http = http.expect("The actual browser must complete the exact root HTTP request.");
+    assert!(http.elapsed_ms <= 20_000);
     let proof=browser::PROOF.lock().unwrap().take().expect("Fresh CI activation must return an exact browser handle; reused activation is not a survival proof.");
     let created = inference_owner::creation(proof.process.0).unwrap();
     assert!(

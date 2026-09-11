@@ -1075,8 +1075,8 @@ jobs:
             $result = $LASTEXITCODE
           } finally { $ErrorActionPreference = 'Stop' }
           if ($result -ne 0) { throw 'The native runtime guardian controls failed.' }
-          if ((Get-Content -LiteralPath $log -Raw) -notmatch 'test result: ok\. 19 passed; 0 failed; 0 ignored;') {
-            throw 'The eighteen guardian/browser controls and their child-fixture entry did not all execute.'
+          if ((Get-Content -LiteralPath $log -Raw) -notmatch 'test result: ok\. 21 passed; 0 failed; 0 ignored;') {
+            throw 'The twenty guardian/browser controls and their child-fixture entry did not all execute.'
           }
 
       - name: Set up pinned tools for isolated MSI fixtures
