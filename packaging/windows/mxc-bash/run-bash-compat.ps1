@@ -90,9 +90,21 @@ try{
  Copy-Item -LiteralPath (Join-Path $compatBuild 'DETOURS-LICENSE.txt') -Destination (Join-Path $compat 'DETOURS-LICENSE.txt')
  Copy-Item -LiteralPath (Join-Path $compatBuild 'build-receipt.json') -Destination (Join-Path $compat 'build-receipt.json')
  $arm=@($built.toolchains|Where-Object target -ceq 'arm64');if($arm.Count -ne 1){throw 'Native ARM64 compiler identity missing.'}
+ $rustCargo=@(& rustup which --toolchain 1.93.0 cargo)
+ if($LASTEXITCODE -ne 0 -or $rustCargo.Count -ne 1){throw 'The upstream-pinned Rust toolchain is unavailable.'}
+ $inspectionBuild=Join-Path $out 'mxc-token-inspection-build'
+ Invoke-Owned (Join-Path $PSHOME 'pwsh.exe') @('-NoProfile','-File',(Join-Path $SourceRoot 'packaging/windows/mxc-bash/build-mxc-token-inspection.ps1'),'-SourceRoot',$SourceRoot,'-OutputDirectory',$inspectionBuild,'-ToolchainReceipt',(Join-Path $compatBuild 'build-receipt.json'),'-RustBinDirectory',([IO.Path]::GetDirectoryName($rustCargo[0]))) 'compile-mxc-token-inspection' 900
+ $inspection=Get-Content -LiteralPath (Join-Path $inspectionBuild 'mxc-token-inspection-build.json') -Raw|ConvertFrom-Json
+ $inspectionPatch=Join-Path $SourceRoot 'packaging/windows/mxc-bash/mxc-token-inspection.patch'
+ if($inspection.schemaVersion -ne 1 -or $inspection.classification -cne 'mxc-owned-token-inspection-build' -or $inspection.status -cne 'built' -or $inspection.sourceCommit -cne '7dac1a952f0c9ad13f0a4cb089c4e0e8b3e0013a' -or $inspection.sourceSha256 -cne '814659a1db0b4cd06854066705f274bba2b2702f563735d69ba72a407c0ad258' -or $inspection.patchSha256 -cne (Get-FileHash -LiteralPath $inspectionPatch -Algorithm SHA256).Hash.ToLowerInvariant() -or $inspection.tokenMutation -cne $false){throw 'The read-only MXC inspection producer differs from its contract.'}
+ $executors=@($inspection.files);if($executors.Count -ne 1 -or $executors[0].file -cne 'wxc-exec.exe' -or $executors[0].machine -ne 0xAA64){throw 'Unexpected inspection executor output.'}
+ $inspectionExe=Join-Path $inspectionBuild 'wxc-exec.exe';Assert-Bytes $inspectionExe $executors[0].bytes $executors[0].sha256
+ Copy-Item -LiteralPath $inspectionExe -Destination (Join-Path $tools 'wxc-exec.exe')
+ Copy-Item -LiteralPath (Join-Path $inspectionBuild 'mxc-token-inspection-build.json') -Destination (Join-Path $tools 'mxc-token-inspection-build.json')
+ Copy-Item -LiteralPath $inspectionPatch -Destination (Join-Path $tools 'mxc-token-inspection.patch')
  # Use the producer's initialized environment through its narrow probe builder.
  try{Invoke-Owned (Join-Path $PSHOME 'pwsh.exe') @('-NoProfile','-File',(Join-Path $SourceRoot 'packaging/windows/mxc-bash/build-object-probe.ps1'),'-Source',(Join-Path $SourceRoot 'packaging/windows/mxc-bash/object-probe.cpp'),'-Output',(Join-Path $tools 'NemoClawMsysObjectProbe.exe'),'-ToolchainReceipt',(Join-Path $compatBuild 'build-receipt.json')) 'compile-object-probe' 120}catch{$receipt['objectProbeCompileError']=$_.Exception.Message}
- Invoke-Owned (Join-Path $tools 'node.exe') @('--experimental-strip-types','--no-warnings',(Join-Path $SourceRoot 'packaging/windows/mxc-bash/bash-compat.mts'),'--work-root',$work,'--output',$out,'--mxc',(Join-Path $mxc 'wxc-exec.exe')) 'contained-qualification' 420
+ Invoke-Owned (Join-Path $tools 'node.exe') @('--experimental-strip-types','--no-warnings',(Join-Path $SourceRoot 'packaging/windows/mxc-bash/bash-compat.mts'),'--work-root',$work,'--output',$out,'--mxc',(Join-Path $tools 'wxc-exec.exe')) 'contained-qualification' 420
  $proof=Get-Content -LiteralPath (Join-Path $out 'result.json') -Raw|ConvertFrom-Json
  if($proof.passed -cne $true -or $proof.normalCleanup -cne $true){throw 'The prototype did not finish all required checks.'}
  $receipt.status='pass'

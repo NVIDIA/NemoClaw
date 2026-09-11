@@ -678,6 +678,13 @@ jobs:
         shell: pwsh
         run: |
           & packaging/windows/host-preparation/build-helper.ps1 -OutputDirectory "$env:RUNNER_TEMP\bash-compat-helper"
+      - name: Prepare upstream-pinned Rust for MXC token inspection
+        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
+        with:
+          toolchain: 1.93.0
+          target: aarch64-pc-windows-msvc
+          cache: false
+          override: false
       - name: Build and test the isolated canonical Bash compatibility prototype
         shell: pwsh
         run: |
@@ -695,6 +702,7 @@ jobs:
             !${{ runner.temp }}/bash-compat-evidence/downloads/
             !${{ runner.temp }}/bash-compat-evidence/build/
             !${{ runner.temp }}/bash-compat-evidence/compatibility-build/build/
+            !${{ runner.temp }}/bash-compat-evidence/mxc-token-inspection-build/build/
             !${{ runner.temp }}/bash-compat-evidence/node/node.exe
             !${{ runner.temp }}/bash-compat-evidence/node/*.zip
             ${{ runner.temp }}/bash-compat-helper/build-receipt.json

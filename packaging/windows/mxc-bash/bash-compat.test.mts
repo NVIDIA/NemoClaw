@@ -9,6 +9,7 @@ import {
   parseJsonLines,
   validateDenials,
   validateTracker,
+  validateMxcInspectionBuild,
   Owned,
   type Config,
 } from "./bash-compat.mts";
@@ -42,7 +43,14 @@ test("Personal request grants only fixed inputs and its own share, without profi
   assert.equal(row.lifecycle.destroyOnExit, false);
   assert.equal(row.ui.disable, false);
   assert(row.process.commandLine.startsWith('"' + c.node + '"'));
-  assert(!row.process.env.some((v) => /TOKEN|API_KEY|SECRET|NODE_OPTIONS/.test(v)));
+  assert(row.process.env.includes("NEMOCLAW_MSYS_TOKEN_INSPECTION_HOLD=1"));
+  assert(
+    !row.process.env.some(
+      (v) =>
+        /TOKEN|API_KEY|SECRET|NODE_OPTIONS/.test(v) &&
+        v !== "NEMOCLAW_MSYS_TOKEN_INSPECTION_HOLD=1",
+    ),
+  );
 });
 test("worker environment has Windows process prerequisites, only pinned tool paths, and no ambient credentials", () => {
   const env = fixedEnvironment("C:\\Windows", c.share, c.git, c.node);
@@ -229,4 +237,46 @@ test("tracker requires actual writer-only inheritance, data, EOF and closed hand
     failedOutputsInspected: true,
   }))
     assert.throws(() => validateTracker({ ...row, [key]: value }));
+});
+
+test("patched MXC receipt requires exact upstream source, patch and sole ARM64 executor", () => {
+  const patch = "a".repeat(64);
+  const file = { file: "wxc-exec.exe", machine: 0xaa64, bytes: 1024, sha256: "b".repeat(64) };
+  const receipt = {
+    schemaVersion: 1,
+    classification: "mxc-owned-token-inspection-build",
+    status: "built",
+    sourceCommit: "7dac1a952f0c9ad13f0a4cb089c4e0e8b3e0013a",
+    sourceSha256: "814659a1db0b4cd06854066705f274bba2b2702f563735d69ba72a407c0ad258",
+    patchSha256: patch,
+    files: [file],
+  };
+  assert.equal(validateMxcInspectionBuild(receipt, patch), file);
+  for (const [key, value] of Object.entries({
+    sourceCommit: "main",
+    sourceSha256: "0".repeat(64),
+    patchSha256: "0".repeat(64),
+    status: "pending",
+  }))
+    assert.throws(() => validateMxcInspectionBuild({ ...receipt, [key]: value }, patch));
+  for (const invalid of [
+    { ...file, machine: 0x8664 },
+    { ...file, file: "other.exe" },
+    { ...file, bytes: 0 },
+    { ...file, sha256: "missing" },
+  ])
+    assert.throws(() => validateMxcInspectionBuild({ ...receipt, files: [invalid] }, patch));
+  assert.throws(() => validateMxcInspectionBuild({ ...receipt, files: [file, file] }, patch));
+  assert.equal(
+    "NEMOCLAW_MSYS_TOKEN_INSPECTION" in fixedEnvironment("C:\\Windows", c.share, c.git, c.node),
+    false,
+  );
+  assert(
+    !request(
+      c,
+      "C:\\owned\\control\\worker.mts",
+      "C:\\owned\\control\\base.json",
+      "C:\\Windows",
+    ).process.env.some((entry) => entry.startsWith("NEMOCLAW_MSYS_TOKEN_INSPECTION=")),
+  );
 });

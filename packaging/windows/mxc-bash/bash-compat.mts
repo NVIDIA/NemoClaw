@@ -46,6 +46,7 @@ export function fixedEnvironment(windows: string, home: string, git: string, nod
       windows,
     ].join(";"),
     GITHUB_ACTIONS: "true",
+    NEMOCLAW_MSYS_TOKEN_INSPECTION_HOLD: "1",
     NEMOCLAW_MSYS_PROBE_NODE: node.replaceAll("\\", "/"),
   };
 }
@@ -88,6 +89,25 @@ export function request(config: Config, script: string, configFile: string, wind
     },
     lifecycle: { destroyOnExit: false, preservePolicy: false },
   };
+}
+export function validateMxcInspectionBuild(build: any, patchSha256: string) {
+  assert.equal(build.schemaVersion, 1);
+  assert.equal(build.classification, "mxc-owned-token-inspection-build");
+  assert.equal(build.status, "built");
+  assert.equal(build.sourceCommit, "7dac1a952f0c9ad13f0a4cb089c4e0e8b3e0013a");
+  assert.equal(
+    build.sourceSha256,
+    "814659a1db0b4cd06854066705f274bba2b2702f563735d69ba72a407c0ad258",
+  );
+  assert.match(patchSha256, /^[a-f0-9]{64}$/u);
+  assert.equal(build.patchSha256, patchSha256);
+  assert(Array.isArray(build.files) && build.files.length === 1);
+  const file = build.files[0];
+  assert.equal(file.file, "wxc-exec.exe");
+  assert.equal(file.machine, 0xaa64);
+  assert(Number.isSafeInteger(file.bytes) && file.bytes > 0);
+  assert.match(file.sha256, /^[a-f0-9]{64}$/u);
+  return file;
 }
 export function baselineKey(stderr: string) {
   const matches = [
@@ -547,7 +567,15 @@ async function main() {
     mxc = path.resolve(argument("--mxc"));
   assert.match(work, /^[A-Za-z]:\\NemoClawMsysProof-[a-f0-9]{12}$/u);
   assert.equal(sha(node), "97cce5301a815d2dce07ac5bfd1e6039eae88185ec1d10ae4f8cb712f1732878");
-  assert.equal(sha(mxc), "dde1c592270e9a659b01dccad70362da7b99fec114885fa4d625507aa775a503");
+  const mxcBuild = JSON.parse(
+    fs.readFileSync(path.join(work, "control/mxc-token-inspection-build.json"), "utf8"),
+  );
+  const mxcFile = validateMxcInspectionBuild(
+    mxcBuild,
+    sha(path.join(path.dirname(fileURLToPath(import.meta.url)), "mxc-token-inspection.patch")),
+  );
+  assert.equal(fs.statSync(mxc).size, mxcFile.bytes);
+  assert.equal(sha(mxc), mxcFile.sha256);
   const build = JSON.parse(fs.readFileSync(path.join(compat, "build-receipt.json"), "utf8"));
   assert.equal(build.classification, "mxc-msys-compatibility-prototype-build");
   assert.equal(build.status, "built");
@@ -586,6 +614,7 @@ async function main() {
     inputs: {
       nodeSha256: sha(node),
       mxcSha256: sha(mxc),
+      mxcBuild,
       git: Object.fromEntries(
         Object.keys(binaryPins).map((name) => [name, sha(path.join(git, name))]),
       ),
@@ -619,7 +648,7 @@ async function main() {
     const child = new Owned(
       mxc,
       [policy, "--log-file", path.join(output, role + "-mxc.log")],
-      env,
+      { ...env, NEMOCLAW_MSYS_TOKEN_INSPECTION: "1" },
       share,
       125000,
     );

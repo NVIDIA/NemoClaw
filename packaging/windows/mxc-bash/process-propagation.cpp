@@ -235,6 +235,58 @@ void logTokenOpenDenial(HANDLE child) {
     SetLastError(saved);
 }
 
+void holdFailedForkForInspection(HANDLE child) {
+    const DWORD saved = GetLastError();
+    WCHAR enabled[2] = {};
+    if (GetEnvironmentVariableW(L"NEMOCLAW_MSYS_TOKEN_INSPECTION_HOLD", enabled, 2) != 1 || enabled[0] != L'1') {
+        SetLastError(saved); return;
+    }
+    static LONG used = 0;
+    if (InterlockedCompareExchange(&used, 1, 0) != 0) { SetLastError(saved); return; }
+    DWORD error = 0; BOOL published = FALSE, acknowledged = FALSE;
+    ULONGLONG parentTime = 0, childTime = 0, elapsed = 0;
+    do {
+        FILETIME parentCreated = {}, childCreated = {}, exit = {}, kernel = {}, user = {};
+        if (!GetProcessTimes(GetCurrentProcess(), &parentCreated, &exit, &kernel, &user) ||
+            !GetProcessTimes(child, &childCreated, &exit, &kernel, &user)) { error = GetLastError(); break; }
+        parentTime = (static_cast<ULONGLONG>(parentCreated.dwHighDateTime) << 32) | parentCreated.dwLowDateTime;
+        childTime = (static_cast<ULONGLONG>(childCreated.dwHighDateTime) << 32) | childCreated.dwLowDateTime;
+        WCHAR root[MAX_PATH] = {}, request[MAX_PATH] = {}, reply[MAX_PATH] = {};
+        const DWORD count = GetCurrentDirectoryW(MAX_PATH, root);
+        if (!count || count >= MAX_PATH || swprintf_s(request, L"%s\\msys-token-inspection.request", root) < 0 ||
+            swprintf_s(reply, L"%s\\msys-token-inspection.ack", root) < 0) { error = ERROR_BUFFER_OVERFLOW; break; }
+        char frame[128];
+        const int length = _snprintf_s(frame, sizeof(frame), _TRUNCATE, "1 %lu %llu %lu %llu\n",
+            GetCurrentProcessId(), parentTime, GetProcessId(child), childTime);
+        if (length <= 0) { error = ERROR_BUFFER_OVERFLOW; break; }
+        HANDLE output = CreateFileW(request, GENERIC_WRITE, FILE_SHARE_READ, nullptr, CREATE_NEW,
+            FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+        if (output == INVALID_HANDLE_VALUE) { error = GetLastError(); break; }
+        DWORD written = 0;
+        published = WriteFile(output, frame, static_cast<DWORD>(length), &written, nullptr) && written == static_cast<DWORD>(length);
+        error = published ? 0 : GetLastError();
+        if (!CloseHandle(output)) { if (!error) error = GetLastError(); published = FALSE; }
+        if (!published) break;
+        const ULONGLONG start = GetTickCount64();
+        while (GetTickCount64() - start < 5000 && WaitForSingleObject(child, 0) == WAIT_TIMEOUT) {
+            const DWORD attributes = GetFileAttributesW(reply);
+            if (attributes != INVALID_FILE_ATTRIBUTES && !(attributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT))) {
+                acknowledged = TRUE; break;
+            }
+            Sleep(10);
+        }
+        elapsed = GetTickCount64() - start;
+    } while (false);
+    char line[640];
+    const int length = _snprintf_s(line, sizeof(line), _TRUNCATE,
+        "NEMOCLAW_MSYS_TOKEN_INSPECTION_HOLD={\"schemaVersion\":1,\"parentPid\":%lu,\"childPid\":%lu,\"parentCreationFiletime\":\"%llu\",\"childCreationFiletime\":\"%llu\",\"requestPublished\":%s,\"acknowledged\":%s,\"elapsedMs\":%llu,\"error\":%lu,\"childResumed\":false,\"originalRefusalPreserved\":true}\n",
+        GetCurrentProcessId(), GetProcessId(child), parentTime, childTime, published ? "true" : "false",
+        acknowledged ? "true" : "false", elapsed, error);
+    DWORD written = 0;
+    if (length > 0) WriteFile(GetStdHandle(STD_ERROR_HANDLE), line, static_cast<DWORD>(length), &written, nullptr);
+    SetLastError(saved);
+}
+
 BOOL inject(HANDLE child) {
     alignas(SID) BYTE actualSid[SECURITY_MAX_SID_SIZE] = {};
     USHORT processMachine = 0, nativeMachine = 0;
@@ -247,8 +299,10 @@ BOOL inject(HANDLE child) {
     logTokenProof(child, proof, sidQueried, sameSid, jobKnown, inJob, jobError);
     DWORD error = ERROR_ACCESS_DENIED;
     if (!sameSid || !jobKnown || !inJob) {
-        if (!sidQueried && !strcmp(proof.operation, "OpenProcessToken") && proof.apiError == ERROR_ACCESS_DENIED)
+        if (!sidQueried && !strcmp(proof.operation, "OpenProcessToken") && proof.apiError == ERROR_ACCESS_DENIED) {
             logTokenOpenDenial(child);
+            holdFailedForkForInspection(child);
+        }
         logPropagation(GetProcessId(child), 0, sameSid, inJob, FALSE, error);
         SetLastError(error);
         return FALSE;
