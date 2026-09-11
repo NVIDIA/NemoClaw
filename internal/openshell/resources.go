@@ -142,6 +142,9 @@ func Observe(ctx context.Context, c Client, kind, workspace, name string) (Row, 
 		if !slices.Equal(s.Spec.Command, Command()) || !maps.Equal(s.Spec.Environment, Environment(row["agent_name"])) {
 			return nil, errors.New("sandbox launch specification drifted")
 		}
+		if !policyEqual(s.Spec.Policy, Policy()) {
+			return nil, errors.New("sandbox declared policy is missing or drifted")
+		}
 		if s.Status.Phase == v1.SandboxReady {
 			status, err := c.Policy().GetStatus(ctx, workspace, name)
 			if err != nil {

@@ -36,6 +36,19 @@ func TestFailedSandboxStartupRetainsBindingWithoutTaintOrRecreation(t *testing.T
 	if err != nil || !maps.Equal(before, after) || f.creates["sandbox"] != 1 {
 		t.Fatal("readiness retry replaced or duplicated the sandbox", err)
 	}
+	f.mu.Lock()
+	f.sandboxes[d.Workspace()+"/assistant"].Spec.Policy.Process.RunAsUser = "0"
+	f.mu.Unlock()
+	if err = invoke(t, e, "plan", d); err == nil {
+		t.Fatal("failed startup hid declared policy drift")
+	}
+	after, err = e.stateIDs()
+	if err != nil || !maps.Equal(before, after) {
+		t.Fatal("policy drift discarded failed sandbox identity", err)
+	}
+	f.mu.Lock()
+	f.sandboxes[d.Workspace()+"/assistant"].Spec.Policy.Process.RunAsUser = "1000"
+	f.mu.Unlock()
 	// This fixture models owning-system recovery, not a product write to status.
 	// OpenShell 0.0.116 does not expose recovery from terminal Error over its API.
 	f.mu.Lock()

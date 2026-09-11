@@ -29,7 +29,7 @@ func (r sandboxReader) Get(ctx context.Context, workspace, name string) (*v1.San
 }
 
 func TestObserveSandboxRequiresCompleteFacts(t *testing.T) {
-	for _, mode := range []string{"present", "absent", "failed", "nil response", "missing phase", "missing identity", "wrong name"} {
+	for _, mode := range []string{"present", "absent", "failed", "nil response", "missing phase", "missing identity", "wrong name", "missing policy", "failed startup policy drift"} {
 		t.Run(mode, func(t *testing.T) {
 			c := observationClient{sandboxes: sandboxReader{get: func(ctx context.Context, workspace, name string) (*v1.Sandbox, error) {
 				if deadline, ok := ctx.Deadline(); !ok || time.Until(deadline) > 20*time.Second {
@@ -43,7 +43,7 @@ func TestObserveSandboxRequiresCompleteFacts(t *testing.T) {
 					Labels: map[string]string{OwnerLabel: "owner", GenerationLabel: "generation", AgentLabel: "agent"},
 					Spec: v1.SandboxSpec{
 						Template: &v1.SandboxTemplate{Image: "image"},
-						Command:  Command(), Environment: Environment("agent"),
+						Command:  Command(), Environment: Environment("agent"), Policy: Policy(),
 					},
 					Status: v1.SandboxStatus{Phase: v1.SandboxProvisioning},
 				}
@@ -58,6 +58,11 @@ func TestObserveSandboxRequiresCompleteFacts(t *testing.T) {
 					s.Status.Phase = ""
 				case "missing identity":
 					s.ID = ""
+				case "missing policy":
+					s.Spec.Policy = nil
+				case "failed startup policy drift":
+					s.Status.Phase = v1.SandboxError
+					s.Spec.Policy.Process.RunAsUser = "0"
 				case "wrong name":
 					s.Name = "other"
 				}
