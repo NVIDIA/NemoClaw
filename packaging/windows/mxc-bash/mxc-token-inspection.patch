@@ -1,11 +1,86 @@
 diff --git a/src/backends/appcontainer/common/src/appcontainer_runner.rs b/src/backends/appcontainer/common/src/appcontainer_runner.rs
-index 41bc32f..5654b45 100644
 --- a/src/backends/appcontainer/common/src/appcontainer_runner.rs
 +++ b/src/backends/appcontainer/common/src/appcontainer_runner.rs
-@@ -1127,6 +1127,25 @@ impl AppContainerScriptRunner {
+@@ -773,16 +773,34 @@
              }
-         };
+         }
 
++        // Select the existing CI-only prototype before first workload creation;
++        // later child overrides left the effective policy unchanged in the last run.
++        let working_directory = crate::working_directory::launch_working_directory(request);
++        let msys_root_layout = crate::msys_token_inspection::root_image_layout_requested(
++            &working_directory.path,
++            &request.policy.readwrite_paths,
++            &request.container_id,
++        )
++        .map_err(|error| WxcError::Process(format!("MSYS root image placement: {error}")))?;
++
+         // --- Allocate and initialize attribute list ---
+         let attr_count = compute_attr_count(
+             request.policy.least_privilege_mode,
+-            request.policy.ui.disable,
++            request.policy.ui.disable || msys_root_layout,
+             pipe_mode,
+         );
+
+         // Lifetime spans the attribute list and CreateProcessW:
+         // PROC_THREAD_ATTRIBUTE_MITIGATION_POLICY stores a pointer into this u64.
+-        let mitigation_value: u64 = process_mitigation::win32k_disable_value();
++        let mitigation_value: u64 = if request.policy.ui.disable {
++            process_mitigation::win32k_disable_value()
++        } else {
++            0
++        } | if msys_root_layout {
++            crate::msys_token_inspection::ROOT_IMAGE_PLACEMENT
++        } else {
++            0
++        };
+
+         let mut attr_list_size: usize = 0;
+
+@@ -860,7 +878,7 @@
+
+         // 3. MITIGATION_POLICY (Win32k syscall disable) -- applied by the kernel
+         // before the child runs any user-mode code, so there is no race window.
+-        if request.policy.ui.disable {
++        if mitigation_value != 0 {
+             unsafe {
+                 UpdateProcThreadAttribute(
+                     attr_list,
+@@ -878,7 +896,9 @@
+                     ))
+                 })?;
+             }
+-            logger.log_line("Win32k mitigation applied to child process");
++            if request.policy.ui.disable {
++                logger.log_line("Win32k mitigation applied to child process");
++            }
+         }
+
+         // --- Setup handle passthrough / capture (pipe mode only) ---
+@@ -1013,7 +1033,6 @@
+
+         // Resolved via the shared helper so both Windows launch paths agree and
+         // neither can pass a NULL cwd (see `working_directory`).
+-        let working_directory = crate::working_directory::launch_working_directory(request);
+         logger.log_line(&format!(
+             "working directory: {}",
+             working_directory.describe()
+@@ -1124,6 +1143,33 @@
+                     let _ = TerminateProcess(process_handle.get(), u32::MAX);
+                 }
+                 return Err(e);
++            }
++        };
++
++        if msys_root_layout {
++            crate::msys_token_inspection::log_root_image_layout(
++                process_handle.get(),
++                pi.dwProcessId,
++                mitigation_value,
++            );
++        }
++
 +        // The CI-only diagnostic keeps query-only duplicates of this exact job
 +        // and root process; the guest cannot supply either authority handle.
 +        let msys_token_inspection = match crate::msys_token_inspection::start_if_requested(
@@ -22,13 +97,10 @@ index 41bc32f..5654b45 100644
 +                    format!("MSYS token inspection failed: {error}; suspended job cleanup failed: {cleanup}"),
 +                ))?;
 +                return Err(WxcError::Process(format!("MSYS token inspection failed: {error}")));
-+            }
-+        };
-+
-         // --- Guarded WPR captureDenials session (legacy-tier fallback) ---
-         //
-         // Started only now — after the job has been created, UI-limited,
-@@ -1216,6 +1235,7 @@ impl AppContainerScriptRunner {
+             }
+         };
+
+@@ -1216,6 +1262,7 @@
          Ok(SpawnedChild {
              process: process_handle,
              thread: thread_handle,
@@ -36,7 +108,7 @@ index 41bc32f..5654b45 100644
              job,
              pid: pi.dwProcessId,
              capture_session,
-@@ -1263,6 +1283,8 @@ impl AppContainerScriptRunner {
+@@ -1263,6 +1310,8 @@
  struct SpawnedChild {
      process: OwnedHandle,
      thread: OwnedHandle,
@@ -45,7 +117,7 @@ index 41bc32f..5654b45 100644
      job: UiJobObject,
      /// OS process id of the child.
      pid: u32,
-@@ -1646,6 +1668,7 @@ impl SandboxBackend for AppContainerScriptRunner {
+@@ -1646,6 +1695,7 @@
  struct AppContainerSandboxProcess {
      process: SendOwnedHandle,
      _thread: SendOwnedHandle,
@@ -53,7 +125,7 @@ index 41bc32f..5654b45 100644
      job: crate::job_object::UiJobObject,
      pid: u32,
      stdin: Option<PipeWriter>,
-@@ -1711,6 +1734,7 @@ impl AppContainerSandboxProcess {
+@@ -1711,6 +1761,7 @@
          Self {
              process,
              _thread: thread,
@@ -62,10 +134,9 @@ index 41bc32f..5654b45 100644
              pid: child.pid,
              stdin,
 diff --git a/src/backends/appcontainer/common/src/lib.rs b/src/backends/appcontainer/common/src/lib.rs
-index e1d8139..418dc54 100644
 --- a/src/backends/appcontainer/common/src/lib.rs
 +++ b/src/backends/appcontainer/common/src/lib.rs
-@@ -30,6 +30,10 @@ pub mod guarded_capture;
+@@ -30,6 +30,10 @@
  #[cfg(target_os = "windows")]
  pub mod job_object;
  #[cfg(target_os = "windows")]
@@ -78,10 +149,9 @@ index e1d8139..418dc54 100644
  pub mod network_manager;
 diff --git a/src/backends/appcontainer/common/src/msys_token_inspection.rs b/src/backends/appcontainer/common/src/msys_token_inspection.rs
 new file mode 100644
-index 0000000..fe3498a
 --- /dev/null
 +++ b/src/backends/appcontainer/common/src/msys_token_inspection.rs
-@@ -0,0 +1,191 @@
+@@ -0,0 +1,261 @@
 +// Copyright (c) NVIDIA Corporation.
 +// Licensed under the MIT License.
 +// CI-only exact-owned-job token inspection or explicitly selected TOKEN_QUERY repair.
@@ -192,6 +262,76 @@ index 0000000..fe3498a
 +    Ok(PathBuf::from(cwd))
 +}
 +
++pub(crate) fn root_image_layout_requested(
++    cwd: &str,
++    writable: &[String],
++    container: &str,
++) -> Result<bool, String> {
++    match std::env::var("NEMOCLAW_MSYS_IMAGE_LAYOUT") {
++        Err(std::env::VarError::NotPresent) => return Ok(false),
++        Ok(value) if value == "preferred" => (),
++        _ => return Err("invalid host MSYS image-layout opt-in".into()),
++    }
++    // The unmodified negative baseline must retain its original root policy.
++    if container.ends_with("-base") {
++        return Ok(false);
++    }
++    if std::env::var("GITHUB_ACTIONS").as_deref() != Ok("true")
++        || std::env::var("NEMOCLAW_MSYS_TOKEN_INSPECTION").as_deref() != Ok("repair-query")
++    {
++        return Err("MSYS root image placement requires the opted-in CI prototype".into());
++    }
++    trusted_root(cwd, writable, container)?;
++    Ok(true)
++}
++
++// PROCESS_CREATION_MITIGATION_POLICY_FORCE_RELOCATE_IMAGES_ALWAYS_OFF.
++// Other mitigation choices remain at the original caller-selected values.
++pub(crate) const ROOT_IMAGE_PLACEMENT: u64 = 0x0000_0000_0000_0200;
++
++#[link(name = "kernel32")]
++unsafe extern "system" {
++    #[link_name = "GetProcessMitigationPolicy"]
++    fn query_aslr_policy(
++        process: *mut std::ffi::c_void,
++        policy: i32,
++        buffer: *mut std::ffi::c_void,
++        length: usize,
++    ) -> i32;
++}
++
++fn effective_aslr(process: HANDLE) -> (bool, u32, i32) {
++    // ProcessASLRPolicy is1; its Windows policy structure is a single DWORD.
++    let mut flags: u32 = 0;
++    let known = unsafe {
++        query_aslr_policy(
++            process.0,
++            1,
++            &mut flags as *mut _ as *mut _,
++            size_of::<u32>(),
++        )
++    } != 0;
++    let error = if known {
++        0
++    } else {
++        std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
++    };
++    (known, flags, error)
++}
++
++pub(crate) fn log_root_image_layout(root_process: HANDLE, root_pid: u32, policy: u64) {
++    let host = effective_aslr(unsafe { GetCurrentProcess() });
++    let root = effective_aslr(root_process);
++    let record = serde_json::json!({
++        "schemaVersion":1, "classification":"initial-MXC-canonical-Bash-image-layout",
++        "creationPolicy":format!("0x{policy:016x}"), "rootPid":root_pid,
++        "hostAslrKnown":host.0, "hostAslrFlags":host.1, "hostAslrError":host.2,
++        "rootAslrKnown":root.0, "rootAslrFlags":root.1, "rootAslrError":root.2,
++        "rootResumed":false
++    });
++    eprintln!("NEMOCLAW_MSYS_ROOT_IMAGE_LAYOUT={record}");
++}
++
 +pub(crate) struct OwnerGuard {
 +    stop: Arc<AtomicBool>,
 +    worker: Option<JoinHandle<()>>,
@@ -275,7 +415,6 @@ index 0000000..fe3498a
 +}
 diff --git a/src/backends/appcontainer/common/src/msys_token_readback.rs b/src/backends/appcontainer/common/src/msys_token_readback.rs
 new file mode 100644
-index 0000000..adb1f50
 --- /dev/null
 +++ b/src/backends/appcontainer/common/src/msys_token_readback.rs
 @@ -0,0 +1,989 @@
