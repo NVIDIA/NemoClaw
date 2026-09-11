@@ -678,7 +678,7 @@ describe("PR review advisor specialist prompts", () => {
     ).toThrow("no opted-in finding is eligible for repair");
   });
 
-  it("binds Phase 0 to the exact manual run, PR revisions, artifacts, and owner (#10791)", () => {
+  it("binds Phase 0 to the exact manual run, PR revisions, artifacts, and same-repository owner (#10791)", () => {
     const headSha = "a".repeat(40);
     const baseSha = "b".repeat(40);
     const workflowSha = "c".repeat(40);
@@ -715,7 +715,8 @@ describe("PR review advisor specialist prompts", () => {
     const pullRequest = {
       state: "open",
       draft: false,
-      maintainer_can_modify: true,
+      // GitHub exposes maintainer_can_modify only for cross-repository fork PRs.
+      maintainer_can_modify: false,
       user: { login: "contributor" },
       head: { ref: "feature/fix", sha: headSha, repo: { full_name: "NVIDIA/NemoClaw" } },
       base: {
@@ -772,12 +773,6 @@ describe("PR review advisor specialist prompts", () => {
     expect(() => bindRepairSelection({ ...request, sourceBaseSha: "d".repeat(40) })).toThrow(
       "not eligible",
     );
-    expect(() =>
-      bindRepairSelection({
-        ...request,
-        pullRequest: { ...pullRequest, maintainer_can_modify: false },
-      }),
-    ).toThrow("not eligible");
     expect(() => bindRepairSelection({ ...request, currentRunId: 78 })).toThrow(
       "successful trusted workflow revision",
     );
