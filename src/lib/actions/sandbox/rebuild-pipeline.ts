@@ -481,9 +481,11 @@ async function rebuildSandboxUnlocked(
           return false;
         }
       };
-      const capturePolicyHandoff = (runtimeSelection?: OpenShellRuntimeSelection): boolean => {
+      const capturePolicyHandoff = async (
+        runtimeSelection?: OpenShellRuntimeSelection,
+      ): Promise<boolean> => {
         return publishPolicyHandoff(
-          captureRebuildPolicyDocument(
+          await captureRebuildPolicyDocument(
             sandboxName,
             recreateOptions.targetGatewayName,
             runtimeSelection,
@@ -819,7 +821,7 @@ async function rebuildSandboxUnlocked(
             preparation.runtimeSelection,
           );
         },
-        validateAtDeleteEdge: (runtimeSelection) => {
+        validateAtDeleteEdge: async (runtimeSelection) => {
           const validation =
             revalidateManagedWorkloadRebuildBeforeDelete(
               sandboxName,
@@ -837,7 +839,7 @@ async function rebuildSandboxUnlocked(
           // prepared recovery manifest, so there is no live policy to recapture.
           if (staleRecovery) return validation;
           try {
-            return capturePolicyHandoff(runtimeSelection)
+            return (await capturePolicyHandoff(runtimeSelection))
               ? validation
               : {
                   ok: false,

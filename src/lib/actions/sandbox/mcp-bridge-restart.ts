@@ -233,14 +233,14 @@ export async function restoreExistingMcpBridgeRuntime(
       );
       await ensureMcpBridgeProviderProfile(providerRuntimeSelection);
       if (options.applyPolicy !== false) {
-        applyGeneratedPolicy(sandboxName, entry, resolvedTargetPins(resolvedByServer, entry), {
+        await applyGeneratedPolicy(sandboxName, entry, resolvedTargetPins(resolvedByServer, entry), {
           bindCredential: false,
           runtimeSelection: providerRuntimeSelection,
         });
       }
       await attachProvider(sandboxName, entry, providerRuntimeSelection);
       if (options.applyPolicy !== false) {
-        applyGeneratedPolicy(sandboxName, entry, resolvedTargetPins(resolvedByServer, entry), {
+        await applyGeneratedPolicy(sandboxName, entry, resolvedTargetPins(resolvedByServer, entry), {
           runtimeSelection: providerRuntimeSelection,
         });
       }

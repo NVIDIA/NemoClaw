@@ -206,12 +206,12 @@ async function preflightMigrationOpenShellState(
       entry.denyTools,
     );
     if (
-      policies.getPresetContentGatewayState(
+      (await policies.getPresetContentGatewayState(
         sandboxName,
         expectedPolicy,
         undefined,
         runtimeSelection,
-      ) !== "match"
+      )) !== "match"
     ) {
       throw new McpBridgeError(
         `Legacy MCP server '${entry.server}' does not match the current restrictive OpenShell policy. No source was changed.`,
@@ -249,7 +249,7 @@ export async function migrateMcpBridges(
     );
     for (const [server, committedEntry] of Object.entries(committedRegistryEntries)) {
       if (
-        getPolicyPresence(sandboxName, committedEntry, runtimeSelection) === true &&
+        (await getPolicyPresence(sandboxName, committedEntry, runtimeSelection)) === true &&
         !isDeepStrictEqual(
           committedEntry.denyTools ?? [],
           rawRegistryEntries[server]?.denyTools ?? [],
@@ -295,7 +295,7 @@ export async function migrateMcpBridges(
           url: entry.url,
           credentialEnv: entry.env[0] ?? null,
           policyName: entry.policyName,
-          policyPresent: getPolicyPresence(sandboxName, entry, runtimeSelection),
+          policyPresent: await getPolicyPresence(sandboxName, entry, runtimeSelection),
           providerName: entry.providerName ?? null,
           providerAttached: await providerAttached(
             sandboxName,

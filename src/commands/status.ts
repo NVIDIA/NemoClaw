@@ -20,7 +20,7 @@ export default class StatusCommand extends NemoClawCommand {
     await this.parse(StatusCommand);
     const deps = buildStatusCommandDeps(this.config.root);
     if (this.jsonEnabled()) {
-      const report = getStatusReport(deps);
+      const report = await getStatusReport(deps);
       if (report.gatewayHealth && !report.gatewayHealth.healthy) {
         process.exitCode = 1;
       }

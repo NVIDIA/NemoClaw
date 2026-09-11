@@ -77,7 +77,7 @@ export async function removeMcpBridge(
 
     const warnings: string[] = [];
     try {
-      removeGeneratedPolicy(sandboxName, entry, { runtimeSelection });
+      await removeGeneratedPolicy(sandboxName, entry, { runtimeSelection });
     } catch (error) {
       warnings.push(error instanceof Error ? error.message : String(error));
     }

@@ -290,7 +290,7 @@ network_policies:
     const policyMutations: Array<{ document: string; operation: string | undefined }> = [];
     const setPolicy = vi
       .spyOn(policy, "setPolicyDocument")
-      .mockImplementation((_sandboxName, document, options) => {
+      .mockImplementation(async (_sandboxName, document, options) => {
         currentPolicy = document;
         policyMutations.push({ document, operation: options?.operation });
         return true;

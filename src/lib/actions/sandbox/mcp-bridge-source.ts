@@ -414,7 +414,7 @@ export async function joinMcpEntriesToOpenShell(
   runtimeSelection: McpProviderInspectionRuntimeSelection,
   operation = "inspect current MCP source state",
 ): Promise<Record<string, McpSourceEntry>> {
-  const policyDocument = captureRecordedSandboxBasePolicy(
+  const policyDocument = await captureRecordedSandboxBasePolicy(
     sandbox.name,
     operation,
     runtimeSelection,
@@ -444,7 +444,7 @@ export async function inspectPolicyOnlyMcpEntry(
   adapter: AgentMcpAdapter,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
 ): Promise<McpSourceEntry | null> {
-  const policyDocument = captureRecordedSandboxBasePolicy(
+  const policyDocument = await captureRecordedSandboxBasePolicy(
     sandbox.name,
     "inspect orphaned MCP policy state",
     runtimeSelection,

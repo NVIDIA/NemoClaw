@@ -275,9 +275,9 @@ export function buildStatusCommandDeps(rootDir: string): ShowStatusCommandDeps {
 
   return {
     listSandboxes: () => registry.listSandboxes(),
-    getPolicyPresets: (sandboxName) => {
+    getPolicyPresets: async (sandboxName) => {
       try {
-        return policy.getAppliedPresets(sandboxName, INVENTORY_POLICY_PROBE_TIMEOUT_MS);
+        return await policy.getAppliedPresets(sandboxName, INVENTORY_POLICY_PROBE_TIMEOUT_MS);
       } catch {
         return [];
       }

@@ -6,8 +6,8 @@
  *   policy-list shows telegram as not applied but gateway still allows traffic.
  *
  * Tests getGatewayPresets() matching logic and sandboxPolicyList() discrepancy
- * rendering via subprocesses, since the CJS policies module captures runCapture
- * at require-time and cannot be spied on in-process.
+ * rendering through the compiled package, with the OpenShell capture seam
+ * installed before the policy module loads.
  */
 
 import { spawnSync } from "node:child_process";
@@ -18,24 +18,43 @@ import { describe, expect, it } from "vitest";
 
 const REPO_ROOT = path.join(import.meta.dirname, "../..");
 const POLICIES_PATH = path.join(REPO_ROOT, "dist", "lib", "policy", "index.js");
-const RUNNER_PATH = path.join(REPO_ROOT, "dist", "lib", "runner.js");
+const CAPTURE_PATH = path.join(
+  REPO_ROOT,
+  "dist",
+  "lib",
+  "adapters",
+  "openshell",
+  "sanitized-capture.js",
+);
 const CLI_PATH = path.join(REPO_ROOT, "bin", "nemoclaw.js");
 const REGISTRY_PATH = path.join(REPO_ROOT, "dist", "lib", "state", "registry.js");
 
 /**
  * Run a CJS script in a subprocess and return stdout.
- * The script has access to `policies`, `runner`, and `YAML` modules.
+ * Install optional dependency seams before loading the compiled policy module.
  */
-function runScript(body: string): { stdout: string; stderr: string; status: number | null } {
+function runScript(
+  body: string,
+  setup = "",
+): { stdout: string; stderr: string; status: number | null } {
   const preamble = `
+    ${setup}
     const policies = require(${JSON.stringify(POLICIES_PATH)});
-    const runner = require(${JSON.stringify(RUNNER_PATH)});
-    const YAML = require("yaml");
   `;
-  const result = spawnSync(process.execPath, ["-e", preamble + body], {
-    cwd: REPO_ROOT,
-    encoding: "utf-8",
-  });
+  const result = spawnSync(
+    process.execPath,
+    [
+      "-e",
+      preamble +
+        "\n(async () => {\n" +
+        body +
+        "\n})().catch(error => { console.error(error); process.exitCode = 1; });",
+    ],
+    {
+      cwd: REPO_ROOT,
+      encoding: "utf-8",
+    },
+  );
   return { stdout: result.stdout || "", stderr: result.stderr || "", status: result.status };
 }
 
@@ -48,7 +67,7 @@ function buildGatewayYaml(presetNames: string[]): string {
   const { stdout } = runScript(`
     const parts = ["version: 1", "", "network_policies:"];
     for (const name of ${names}) {
-      const content = policies.loadPresetForSandbox("repro-2010-sandbox", name);
+      const content = await policies.loadPresetForSandbox("repro-2010-sandbox", name);
       if (!content) continue;
       const entries = policies.extractPresetEntries(content);
       if (!entries) continue;
@@ -72,7 +91,7 @@ function buildGatewayYamlWithCustom(
   const { stdout } = runScript(`
     const parts = ["version: 1", "", "network_policies:"];
     for (const name of ${names}) {
-      const content = policies.loadPresetForSandbox("repro-2010-sandbox", name);
+      const content = await policies.loadPresetForSandbox("repro-2010-sandbox", name);
       if (!content) continue;
       const entries = policies.extractPresetEntries(content);
       if (!entries) continue;
@@ -88,69 +107,24 @@ function buildGatewayYamlWithCustom(
   return stdout;
 }
 
-/**
- * Call getGatewayPresets() in a subprocess with a stubbed runCapture
- * that returns the given YAML (or throws if null). Optionally include
- * registry-recorded custom presets so the matching loop sees them. (#3590)
- */
-function callGetGatewayPresets(
-  gatewayYaml: string | null,
-  customPresets: Array<{ name: string; content: string }> = [],
-): string[] | null {
-  const yamlArg = gatewayYaml !== null ? JSON.stringify(gatewayYaml) : "null";
-  const customArg = JSON.stringify(customPresets);
-  const { stdout } = runScript(`
-    const yaml = ${yamlArg};
-    const customPresets = ${customArg};
-    // Replace the closed-over runCapture by re-requiring the module cache entry
-    const mod = require.cache[${JSON.stringify(POLICIES_PATH)}];
-    // Stub: replace getGatewayPresets with one that uses our fake runCapture
-    const origRunCapture = runner.runCapture;
-    runner.runCapture = (cmd, opts) => {
-      if (yaml === null) throw new Error("gateway unreachable");
-      return yaml;
-    };
-    // Re-execute getGatewayPresets body through the module's own internal call
-    // by patching runCapture on the runner module object (CJS modules share the
-    // same exports object, so policies.ts's destructured ref is stale, but
-    // we can call the function via the policies export which calls runCapture
-    // from its closure). Since the closure captured the original, we must
-    // instead call the matching logic ourselves using exported helpers.
-    const rawPolicy = yaml;
-    if (!rawPolicy) { process.stdout.write("null"); process.exit(0); }
-    const currentPolicy = policies.parseCurrentPolicy(rawPolicy);
-    if (!currentPolicy) { process.stdout.write("null"); process.exit(0); }
-    let parsed;
-    try { parsed = YAML.parse(currentPolicy); } catch { process.stdout.write("null"); process.exit(0); }
-    if (!parsed || typeof parsed !== "object") { process.stdout.write("null"); process.exit(0); }
-    const gp = parsed.network_policies;
-    if (!gp || typeof gp !== "object" || Array.isArray(gp)) {
-      process.stdout.write(JSON.stringify([]));
-      process.exit(0);
-    }
-    const keys = new Set(Object.keys(gp));
-    const matched = [];
-    const matchContent = (content) => {
-      const e = policies.extractPresetEntries(content); if (!e) return false;
-      let pp;
-      try { pp = YAML.parse("network_policies:\\n" + e); } catch { return false; }
-      const np = pp && pp.network_policies;
-      if (!np || typeof np !== "object") return false;
-      const pk = Object.keys(np);
-      return pk.length > 0 && pk.every(k => keys.has(k));
-    };
-    for (const preset of policies.listPresets()) {
-      const c = policies.loadPresetForSandbox("repro-2010-sandbox", preset.name); if (!c) continue;
-      if (matchContent(c)) matched.push(preset.name);
-    }
-    for (const entry of customPresets) {
-      if (matchContent(entry.content)) matched.push(entry.name);
-    }
-    process.stdout.write(JSON.stringify(matched));
-    runner.runCapture = origRunCapture;
-  `);
-  if (stdout.trim() === "null") return null;
-  return JSON.parse(stdout.trim());
+/** Call the compiled gateway reader with an asynchronous capture fixture. */
+function callGetGatewayPresets(gatewayYaml: string | null): string[] | null {
+  const setup = `
+    const yaml = ${JSON.stringify(gatewayYaml)};
+    const capture = require(${JSON.stringify(CAPTURE_PATH)});
+    capture.captureSanitizedResolvedOpenshellAsync = async () =>
+      yaml === null ? { status: 1, output: "gateway unreachable" } : { status: 0, output: yaml };
+    const registry = require(${JSON.stringify(REGISTRY_PATH)});
+    registry.getSandbox = () => ({ name: "repro-2010-sandbox", gatewayName: "nemoclaw" });
+  `;
+  const result = runScript(
+    `
+    process.stdout.write(JSON.stringify(await policies.getGatewayPresets("repro-2010-sandbox")));
+  `,
+    setup,
+  );
+  expect(result.status, result.stderr).toBe(0);
+  return JSON.parse(result.stdout.trim());
 }
 
 describe("policy state inconsistency (#2010)", () => {
@@ -193,7 +167,7 @@ describe("policy state inconsistency (#2010)", () => {
   description: "Slack file upload URL access"
 
 network_policies:
-  slack-files-upload:
+  nemoclaw_custom__slack-files-upload__slack-files-upload:
     name: slack-files-upload
     endpoints:
       - host: files.slack.com
@@ -207,7 +181,7 @@ network_policies:
         },
       ];
       const yaml = buildGatewayYamlWithCustom(["telegram"], custom);
-      const result = callGetGatewayPresets(yaml, custom);
+      const result = callGetGatewayPresets(yaml);
       expect(result).toContain("telegram");
       expect(result).toContain("slack-files-upload");
     });

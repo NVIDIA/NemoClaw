@@ -6,13 +6,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { McpSourceEntry } from "./mcp-bridge-contracts";
 
 const mocks = vi.hoisted(() => ({
-  applyGeneratedPolicy: vi.fn(),
+  applyGeneratedPolicy: vi.fn().mockResolvedValue(undefined),
   assertGeneratedPolicyMutationSafe: vi.fn(),
   ensureSandboxGatewaySelected: vi.fn().mockResolvedValue(undefined),
   preflightMcpEntryTargets: vi
     .fn()
     .mockResolvedValue(new Map([["github", { addresses: ["8.8.8.8"] }]])),
-  removeGeneratedPolicy: vi.fn(),
+  removeGeneratedPolicy: vi.fn().mockResolvedValue(undefined),
   inspectSourceBridgeState: vi.fn(),
 }));
 
@@ -106,9 +106,7 @@ describe("source-backed MCP denied-tool policy updates", () => {
   });
 
   it("leaves the route blocked with an exact retry command after activation failure (#11115)", async () => {
-    mocks.applyGeneratedPolicy.mockImplementationOnce(() => {
-      throw new Error("activation failed");
-    });
+    mocks.applyGeneratedPolicy.mockRejectedValueOnce(new Error("activation failed"));
 
     await expect(updateMcpBridgeDenyTools("alpha", "github", ["delete_repo"])).rejects.toThrow(
       /route remains blocked.*mcp update github --deny-tool delete_repo/,

@@ -18,8 +18,8 @@ const entry = {
 const mocks = vi.hoisted(() => ({
   assertProviderRecoverable: vi.fn(),
   getSandbox: vi.fn(),
-  getPolicyPresence: vi.fn(() => true),
-  getPolicyState: vi.fn(() => "match"),
+  getPolicyPresence: vi.fn(async () => true),
+  getPolicyState: vi.fn(async () => "match"),
   getAgent: vi.fn(),
   getAdapter: vi.fn(),
   updateSandbox: vi.fn(),
@@ -92,8 +92,8 @@ describe("explicit MCP migration", () => {
     mocks.getAdapter.mockReturnValue("openclaw-config");
     mocks.updateSandbox.mockReturnValue(true);
     mocks.readConfig.mockReturnValue({});
-    mocks.getPolicyPresence.mockReturnValue(true);
-    mocks.getPolicyState.mockReturnValue("match");
+    mocks.getPolicyPresence.mockResolvedValue(true);
+    mocks.getPolicyState.mockResolvedValue("match");
     mocks.joinEntries.mockImplementation((_sandbox: unknown, entries: unknown) => entries);
     mocks.inspectLegacy.mockReturnValue({
       bridges: { github: entry },
@@ -143,7 +143,7 @@ describe("explicit MCP migration", () => {
   });
 
   it("validates restrictive live policy before the first native write", async () => {
-    mocks.getPolicyState.mockReturnValue("drift");
+    mocks.getPolicyState.mockResolvedValue("drift");
 
     await expect(migrateMcpBridges("alpha", { apply: true })).rejects.toThrow(
       /does not match the current restrictive OpenShell policy/,

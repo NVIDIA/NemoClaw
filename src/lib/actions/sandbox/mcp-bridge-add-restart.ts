@@ -147,7 +147,7 @@ async function recoverCommittedPolicyTarget(
   matchingTrustedPrivateHosts: readonly string[],
   runtimeSelection: ReturnType<typeof getMcpProviderInspectionRuntimeSelection>,
 ): Promise<McpBridgeTargetValidation | null> {
-  const boundState = policies.getPresetContentGatewayState(
+  const boundState = await policies.getPresetContentGatewayState(
     sandboxName,
     buildMcpBridgePolicyYaml(
       requestedEntry.server,
@@ -160,7 +160,7 @@ async function recoverCommittedPolicyTarget(
     undefined,
     runtimeSelection,
   );
-  const capabilityState = policies.getPresetContentGatewayState(
+  const capabilityState = await policies.getPresetContentGatewayState(
     sandboxName,
     buildMcpBridgeCapabilityPolicyYaml(
       requestedEntry.server,
@@ -251,7 +251,7 @@ async function inspectMcpAddRecovery(
     entry.providerName ?? "",
     entry.denyTools,
   );
-  const boundPolicyState = policies.getPresetContentGatewayState(
+  const boundPolicyState = await policies.getPresetContentGatewayState(
     sandboxName,
     boundPolicyContent,
     undefined,
@@ -263,7 +263,7 @@ async function inspectMcpAddRecovery(
   } else if (boundPolicyState === "absent") {
     policyState = "absent";
   } else {
-    const capabilityPolicyState = policies.getPresetContentGatewayState(
+    const capabilityPolicyState = await policies.getPresetContentGatewayState(
       sandboxName,
       buildMcpBridgeCapabilityPolicyYaml(entry.server, entry.url, adapter, target, entry.denyTools),
       undefined,
@@ -386,9 +386,9 @@ async function updateMcpBridgeDenyToolsUnlocked(
   // Live OpenShell policy owns enforcement state. Remove the prior allow route
   // before applying a stricter replacement so interruption fails closed; the
   // source registration remains available for an explicit update retry.
-  removeGeneratedPolicy(sandboxName, storedEntry, { runtimeSelection });
+  await removeGeneratedPolicy(sandboxName, storedEntry, { runtimeSelection });
   try {
-    applyGeneratedPolicy(sandboxName, updatedEntry, target, { runtimeSelection });
+    await applyGeneratedPolicy(sandboxName, updatedEntry, target, { runtimeSelection });
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     const retryArgs =
@@ -590,7 +590,7 @@ async function addMcpBridgeUnlocked(
     // attached before it accepts credential_binding.provider, and withholds
     // that provider's static credential until the bound policy is active.
     if (recovery.policyState === "absent") {
-      applyGeneratedPolicy(sandboxName, entry, target, {
+      await applyGeneratedPolicy(sandboxName, entry, target, {
         bindCredential: false,
         runtimeSelection: providerRuntimeSelection,
       });
@@ -637,7 +637,7 @@ async function addMcpBridgeUnlocked(
       await attachProvider(sandboxName, entry, providerRuntimeSelection);
     }
     if (recovery.policyState !== "bound") {
-      applyGeneratedPolicy(sandboxName, entry, target, {
+      await applyGeneratedPolicy(sandboxName, entry, target, {
         runtimeSelection: providerRuntimeSelection,
       });
       policyRebound = recovery.policyState === "capability";
@@ -743,13 +743,13 @@ async function addMcpBridgeUnlocked(
       });
     }
     if (policyApplied) {
-      removeGeneratedPolicy(sandboxName, entry, {
+      await removeGeneratedPolicy(sandboxName, entry, {
         bestEffort: true,
         runtimeSelection: providerRuntimeSelection,
       });
     } else if (policyRebound) {
       try {
-        applyGeneratedPolicy(sandboxName, entry, target, {
+        await applyGeneratedPolicy(sandboxName, entry, target, {
           bindCredential: false,
           runtimeSelection: providerRuntimeSelection,
         });

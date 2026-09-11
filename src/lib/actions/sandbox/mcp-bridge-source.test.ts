@@ -66,7 +66,7 @@ const runtimeSelection = { gatewayName: "nemoclaw", workspace: "default" };
 describe("source-backed MCP inventory", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.capturePolicy.mockReturnValue(`version: 1
+    mocks.capturePolicy.mockResolvedValue(`version: 1
 network_policies:
   mcp_bridge_github:
     name: mcp_bridge_github
@@ -219,7 +219,7 @@ network_policies:
   });
 
   it("recovers the deterministic live provider when the policy route is missing", async () => {
-    mocks.capturePolicy.mockReturnValue("network_policies: {}\n");
+    mocks.capturePolicy.mockResolvedValue("network_policies: {}\n");
     mocks.executeSandboxCommand.mockReturnValue({
       status: 0,
       stdout: JSON.stringify([
@@ -284,7 +284,7 @@ network_policies:
   });
 
   it("reports an agent URL that conflicts with the live policy endpoint", async () => {
-    mocks.capturePolicy.mockReturnValue(`network_policies:
+    mocks.capturePolicy.mockResolvedValue(`network_policies:
   mcp_bridge_github:
     endpoints:
       - host: other.example.com

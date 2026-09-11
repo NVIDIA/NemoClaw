@@ -101,7 +101,7 @@ describe("MCP adapter teardown rollback", () => {
     mocks.getSandboxAgent.mockReset().mockReturnValue("hermes");
     mocks.captureRecordedSandboxBasePolicy
       .mockReset()
-      .mockReturnValue("version: 1\nnetwork_policies:\n  mcp_bridge_github: {}\n");
+      .mockResolvedValue("version: 1\nnetwork_policies:\n  mcp_bridge_github: {}\n");
     mocks.getSandboxOrThrow.mockReset().mockReturnValue(sandbox);
     mocks.inspectExactMcpDestroyProvider.mockReset().mockReturnValue({
       credentialKeys: ["GITHUB_TOKEN"],
@@ -112,7 +112,7 @@ describe("MCP adapter teardown rollback", () => {
     });
     mocks.inspectMcpProvider.mockReset().mockReturnValue({ exists: false });
     mocks.observeMcpCredentialRevision.mockReset().mockResolvedValue("v12");
-    mocks.removeGeneratedPolicy.mockReset().mockImplementation(() => {
+    mocks.removeGeneratedPolicy.mockReset().mockImplementation(async () => {
       throw new Error("forced lifecycle failure after adapter scrub");
     });
     mocks.registerAgentAdapterAtCurrentCredentialRevision.mockReset().mockResolvedValue("v12");

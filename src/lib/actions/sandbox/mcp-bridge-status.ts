@@ -345,7 +345,7 @@ export async function statusMcpBridge(
   return Promise.all(
     entries.map(async ([name, entry]) => {
       const support = entry ? getPersistedBridgeSupport(entry) : getSupportSummary(agent);
-      const policyPresence = getPolicyPresence(sandboxName, entry, providerRuntimeSelection);
+      const policyPresence = await getPolicyPresence(sandboxName, entry, providerRuntimeSelection);
       const hasCredentialBinding =
         !!entry &&
         Array.isArray(entry.env) &&
