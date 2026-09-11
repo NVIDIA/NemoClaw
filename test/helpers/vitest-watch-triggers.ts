@@ -45,6 +45,13 @@ function runTests(...tests: string[]): () => string[] {
 
 export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   {
+    pattern: /(?:^|\/)(?:scripts\/checks\/read-only-fixer\.py|\.pre-commit-config\.yaml)$/,
+    testsToRun: runTests(
+      "test/repository/publication-validation.test.ts",
+      "test/repository/checks-runner.test.ts",
+    ),
+  },
+  {
     pattern:
       /(?:^|\/)(?:oxlint\.config\.ts|oxc\.ignore-patterns\.ts|tsconfig(?:\.cli)?\.json|nemoclaw\/tsconfig(?:\.test)?\.json|\.pre-commit-config\.yaml)$/,
     testsToRun: runTests(
