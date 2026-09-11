@@ -9,6 +9,7 @@ import {
   type AdvisorSpecialist,
 } from "./specialist-catalog.mts";
 import { specialistToolNames } from "./specialist-tools.mts";
+import { E2E_RECEIPT_TOOL } from "./e2e-receipt.mts";
 
 function advisorSpecialist(interest: AdvisorInterest): AdvisorSpecialist {
   const specialist = ADVISOR_SPECIALISTS.find((candidate) => candidate.interest === interest);
@@ -77,7 +78,9 @@ const COMMON_PROMPT = `Call every deterministic context tool supplied to this tu
 
 Reach a conclusion for the assigned area. Support it with repository evidence. Report each issue that requires a change, its effect, and the change that would resolve it. If you find no issue, explain why the change satisfies the assignment.
 
-This is an investigation-only specialist turn. Do not emit a final result schema, canonical finding ID, merge recommendation, or GitHub comment. Do not call recording, E2E recommendation, or submission tools. Do not mutate files, execute repository code, access the network, run a package manager, or run tests.`;
+Record every additional E2E recommendation, including optional coverage, with pr_review_record_e2e_recommendations before your final Markdown review. Give an explicit reason when no additional E2E is needed. Record needed coverage without a supported selector as unresolved. The recorded recommendations must include every E2E recommendation in your Markdown review.
+
+This is an investigation-only specialist turn. Do not emit a final result schema, canonical finding ID, merge recommendation, or GitHub comment. Do not mutate files, execute repository code, access the network, run a package manager, or run tests.`;
 
 export function buildSpecialistInvestigateTurn(
   interest: AdvisorInterest,
@@ -88,7 +91,8 @@ export function buildSpecialistInvestigateTurn(
   return {
     ...fullTurn,
     name: `investigate-${interest}`,
-    activeToolNames: specialistToolNames(interest),
+    activeToolNames: [...specialistToolNames(interest), E2E_RECEIPT_TOOL],
+    requiredToolNames: [...(fullTurn.requiredToolNames ?? []), E2E_RECEIPT_TOOL],
     requiredReadOneOfPaths: [context.diffPath],
     prompt: `Review the ${specialist.label} area.
 

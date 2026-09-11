@@ -41,7 +41,7 @@ import {
   resolvePrivilegedSandboxTarget,
   withPrivilegedSandboxExecutionLease,
 } from "../../sandbox/privileged-exec";
-import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock-acquisition";
+import { withSandboxLifecycleLock } from "./lifecycle/lock";
 import * as registry from "../../state/registry";
 import { buildSubprocessEnv } from "../../subprocess-env";
 import {
@@ -1096,7 +1096,7 @@ export async function restartSandboxGateway(
     const defaultSupervisorAction = runtimeSelection
       ? refuseHostLocalSupervisorForSelectedRuntime
       : executeGatewaySupervisorAction;
-    return withMcpLifecycleLock(sandboxName, () =>
+    return withSandboxLifecycleLock(sandboxName, () =>
       restartSandboxGatewayWithDeps(sandboxName, {
         quiet,
         deps: {
@@ -2191,7 +2191,7 @@ export async function checkAndRecoverSandboxProcesses(
     runtimeSelection?: OpenShellRuntimeSelection;
   } = {},
 ) {
-  return withMcpLifecycleLock(sandboxName, () =>
+  return withSandboxLifecycleLock(sandboxName, () =>
     checkAndRecoverSandboxProcessesWithoutHostLock(sandboxName, options),
   );
 }

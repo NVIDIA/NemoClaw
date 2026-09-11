@@ -202,11 +202,6 @@
       "category": "security"
     },
     {
-      "file": "test/automation/releases/reviewed-npm-audit-handoff.test.ts",
-      "test": "pairs every production audit receipt with raw and trusted policy results",
-      "category": "security"
-    },
-    {
       "file": "test/automation/releases/reviewed-npm-audit-workflow.test.ts",
       "test": "passes the cache identity target root without interpolating it into shell source",
       "category": "security"

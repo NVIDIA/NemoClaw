@@ -188,7 +188,6 @@ for command in curl docker jq node sha256sum; do
 done
 
 work_dir="$(mktemp -d "${RUNNER_TEMP:-/tmp}/nemoclaw-protected-images.XXXXXX")"
-cache_export_complete=0
 seed_overlay_active=0
 seed_backup="$work_dir/npm-cache-seed-original"
 mcp_seed_overlay_active=0
@@ -207,9 +206,6 @@ restore_worktree() {
   if [[ "$messaging_seed_overlay_active" == 1 ]]; then
     rm -rf -- "$source_messaging_seed_dir"
     cp -pR -- "$messaging_seed_backup" "$source_messaging_seed_dir"
-  fi
-  if [[ -n "$cache_to" && "$cache_export_complete" != 1 && -d "$cache_to" ]]; then
-    find "$cache_to" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
   fi
   rm -rf -- "$work_dir"
 }
@@ -474,6 +470,9 @@ build_agent() {
     --label "io.nvidia.nemoclaw.managed-image.capabilities=1"
     --label "io.nvidia.nemoclaw.managed-image.cohort=${cohort}"
     --build-arg "BASE_IMAGE=${base_reference}"
+    # Dockerfile defaults preserve direct Podman x86 builds. Pass the selected
+    # Buildx target explicitly so that default cannot override linux/arm64.
+    --build-arg "TARGETARCH=${platform#linux/}"
     --build-arg "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1"
     --build-arg "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root"
     --build-arg "TARGETARCH=${target_arch}"
@@ -590,4 +589,3 @@ jq -se \
   end
 ' "$contracts" >"${output}.tmp"
 mv "${output}.tmp" "$output"
-cache_export_complete=1

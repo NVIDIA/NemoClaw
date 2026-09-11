@@ -19,6 +19,7 @@ import { stopSandboxChannels } from "../../tunnel/sandbox-gateway-stop";
 import { teardownSandboxDashboardForward } from "./forward-recovery";
 import {
   captureSandboxOwnershipPhases,
+  hermesPortableLifecycleLockOptions,
   resolvePersistedSandboxOwnershipGateway,
   withSandboxLifecycleLockSync,
 } from "./gateway-state";
@@ -263,8 +264,11 @@ export function stopSandbox(
   sandboxName: string,
   deps: SandboxStopDeps = {},
 ): SandboxLifecycleResult {
-  return (deps.withLifecycleLockSync ?? withSandboxLifecycleLockSync)(sandboxName, () =>
-    stopSandboxWithinLifecycleFence(sandboxName, deps),
+  const environment = deps.environment ?? process.env;
+  return (deps.withLifecycleLockSync ?? withSandboxLifecycleLockSync)(
+    sandboxName,
+    () => stopSandboxWithinLifecycleFence(sandboxName, deps),
+    hermesPortableLifecycleLockOptions(sandboxName, environment),
   );
 }
 

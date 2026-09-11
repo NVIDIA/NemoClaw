@@ -235,6 +235,7 @@ function lifecycleDeps(
     readonly sandboxPhase?: (running: boolean) => string;
     readonly sandboxIdentity?: (running: boolean) => string | undefined;
     readonly failPostStartInspectOnce?: boolean;
+    readonly startStatus?: number;
   } = {},
 ) {
   let running = initiallyRunning,
@@ -293,7 +294,7 @@ function lifecycleDeps(
       "sandbox:start": () => {
         running = true;
         postStartInspectFailurePending = options.failPostStartInspectOnce === true;
-        return { status: 0, stdout: "", stderr: "" };
+        return { status: options.startStatus ?? 0, stdout: "", stderr: "start failed" };
       },
       "sandbox:stop": () => {
         running = false;
@@ -1063,23 +1064,22 @@ describe("Hermes portable lifecycle", () => {
     expect(openshellMutationCalls(captureOpenShell, "start")).toHaveLength(1);
     expect(openshellMutationCalls(captureOpenShell, "stop")).toHaveLength(1);
   });
-
-  it("reconciles and rolls back a start whose post-start inspection fails (#9203)", () => {
+  it.each([
+    ["post-start inspection fails", { failPostStartInspectOnce: true }, "exact inspect failed"],
+    ["OpenShell reports failure", { startStatus: 1 }, "OpenShell start failed with status 1"],
+  ])("reconciles and rolls back when %s (#9203)", (_case, options, failure) => {
     const receipt = activeReceipt();
-    const { deps, captureOpenShell } = lifecycleDeps(receipt, false, {
-      failPostStartInspectOnce: true,
-    });
+    const { deps, captureOpenShell } = lifecycleDeps(receipt, false, options);
     expect(() =>
       withMcpLifecycleLockSync(
         SANDBOX,
         () => recoverHermesPortableSandboxLifecycle(SANDBOX, lifecycleContext(), deps),
         { stateDir: path.join(stateDir, "state") },
       ),
-    ).toThrow("exact inspect failed with status 1");
+    ).toThrow(failure);
     expect(openshellMutationCalls(captureOpenShell, "start")).toHaveLength(1);
     expect(openshellMutationCalls(captureOpenShell, "stop")).toHaveLength(1);
   });
-
   it("does not stop an already-running container after a health failure (#9203)", () => {
     const receipt = activeReceipt();
     const { deps, podman, captureOpenShell, launchOpenShell } = lifecycleDeps(receipt);
