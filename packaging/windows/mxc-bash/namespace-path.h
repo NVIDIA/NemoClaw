@@ -12,6 +12,7 @@ constexpr size_t maximum_source_characters = 96;
 constexpr size_t maximum_root_characters = 512;
 constexpr size_t maximum_target_characters = 640;
 constexpr size_t maximum_signal_pipe_characters = 96;
+constexpr uint32_t signal_writer_access = 0x00120196;
 
 // Pinned sigproc.cc requests "sigwait" with PIPE_ADD_PID. Observe that
 // process's exact pipe only, never arbitrary files or other MSYS pipe roles.
@@ -39,6 +40,19 @@ inline bool signal_pipe_name(const char* input, size_t count, uint32_t own_pid) 
     for (size_t n = 0; suffix[n]; ++n)
         if (at == count || input[at++] != suffix[n]) return false;
     return at == count;
+}
+
+inline bool owned_signal_pipe(const char* name, size_t count, uint32_t pid, const char* installation_key,
+                              uint32_t open_mode, uint32_t pipe_mode, uint32_t instances,
+                              uint32_t out_buffer, uint32_t in_buffer, uint32_t timeout) {
+    if (!installation_key || !signal_pipe_name(name, count, pid) || open_mode != 0x00080001 ||
+        pipe_mode != 0x0000000c || instances != 1 || timeout != 0 ||
+        out_buffer != 65472 || in_buffer != 65472) return false;
+    // 50d's exact canonical signal-packet buffer and first-instance modes.
+    constexpr size_t key_at = sizeof("\\\\.\\pipe\\msys-") - 1;
+    for (size_t n = 0; n < 16; ++n)
+        if (!installation_key[n] || installation_key[n] != name[key_at + n]) return false;
+    return installation_key[16] == 0;
 }
 
 enum class Family { none, global, session };

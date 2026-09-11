@@ -28,6 +28,8 @@ DWORD ownSession = 0;
 alignas(void*) BYTE worldSid[SECURITY_MAX_SID_SIZE] = {};
 ScopedDescriptor privateDescriptor = {};
 LONG emitted = 0;
+LONG installationKeyState = 0;
+char installationKey[17] = {};
 
 struct ContextDiagnostic {
     DWORD isContainer = 0;
@@ -278,8 +280,14 @@ NTSTATUS call(DirectoryCall original, PHANDLE output, ACCESS_MASK access,
     const NTSTATUS status = original(output, access, redirect ? &attributes : input);
     if (redirect || rejected) {
         const DWORD after = GetLastError();
-        if (redirect) log_result(match, create, status);
-        else log_rejected(match, create, access, attributes.Attributes, rejected, rejectionError, status);
+        if (redirect) {
+            if (create && match.family == Family::global && status >= 0 &&
+                InterlockedCompareExchange(&installationKeyState, 1, 0) == 0) {
+                for (size_t n = 0; n < 16; ++n) installationKey[n] = static_cast<char>(match.key[n]);
+                InterlockedExchange(&installationKeyState, 2);
+            }
+            log_result(match, create, status);
+        } else log_rejected(match, create, access, attributes.Attributes, rejected, rejectionError, status);
         SetLastError(after);
     }
     return status;
@@ -292,8 +300,8 @@ NTSTATUS NTAPI open_directory(PHANDLE output, ACCESS_MASK access, POBJECT_ATTRIB
     return call(realOpen, output, access, input, false);
 }
 
-// These two observers do not redirect or repair pipes. They preserve original
-// argument pointers, handles and immediate last-error values on every path.
+// The writer remains observation-only. The server can append a token-bound
+// ACE to an exact new signal-pipe request; names, modes and native results stay intact.
 bool observed_signal_name(LPCSTR input, char* copied) {
     __try {
         if (!input) return false;
@@ -310,7 +318,8 @@ bool observed_signal_name(LPCSTR input, char* copied) {
 void log_signal_pipe(const char* name, const char* operation, DWORD access, DWORD mode,
                      DWORD instances, DWORD outBuffer, DWORD inBuffer, DWORD timeout,
                      DWORD share, DWORD disposition, DWORD flags, HANDLE result, DWORD error,
-                     const PipeSecurityObservation& security) {
+                     const PipeSecurityObservation& security, bool appended = false,
+                     const char* adaptation = "not-requested") {
     if (InterlockedIncrement(&pipeRecords) > 8) return;
     char escaped[maximum_signal_pipe_characters * 2 + 1] = {};
     size_t at = 0;
@@ -326,14 +335,16 @@ void log_signal_pipe(const char* name, const char* operation, DWORD access, DWOR
     }
     char line[2560];
     const int count = _snprintf_s(line, sizeof(line), _TRUNCATE,
-        "NEMOCLAW_MSYS_SIGNAL_PIPE={\"schemaVersion\":1,\"pid\":%lu,\"operation\":\"%s\",\"name\":\"%s\",\"accessOrOpenMode\":\"0x%08lx\",\"pipeMode\":\"0x%08lx\",\"maxInstances\":%lu,\"outBufferBytes\":%lu,\"inBufferBytes\":%lu,\"defaultTimeout\":%lu,\"shareMode\":\"0x%08lx\",\"creationDisposition\":%lu,\"flags\":\"0x%08lx\",\"resultSuccess\":%s,\"win32Error\":%lu,\"securityInspectionComplete\":%s,\"attributesPresent\":%s,\"attributesLength\":%lu,\"inheritHandle\":%d,\"descriptorPresent\":%s,\"descriptorControl\":\"0x%04x\",\"descriptorRevision\":%lu,\"daclPresent\":%s,\"nullDacl\":%s,\"aclBytes\":%lu,\"aceCount\":%lu,\"capturedAclBytes\":%lu,\"aclTruncated\":%s,\"aclHex\":\"%s\"}\n",
+        "NEMOCLAW_MSYS_SIGNAL_PIPE={\"schemaVersion\":1,\"pid\":%lu,\"operation\":\"%s\",\"name\":\"%s\",\"accessOrOpenMode\":\"0x%08lx\",\"pipeMode\":\"0x%08lx\",\"maxInstances\":%lu,\"outBufferBytes\":%lu,\"inBufferBytes\":%lu,\"defaultTimeout\":%lu,\"shareMode\":\"0x%08lx\",\"creationDisposition\":%lu,\"flags\":\"0x%08lx\",\"resultSuccess\":%s,\"win32Error\":%lu,\"securityInspectionComplete\":%s,\"attributesPresent\":%s,\"attributesLength\":%lu,\"inheritHandle\":%d,\"descriptorPresent\":%s,\"descriptorControl\":\"0x%04x\",\"descriptorRevision\":%lu,\"daclPresent\":%s,\"nullDacl\":%s,\"aclBytes\":%lu,\"aceCount\":%lu,\"capturedAclBytes\":%lu,\"aclTruncated\":%s,\"aclHex\":\"%s\",\"requestDescriptorAppended\":%s,\"appendedAccess\":\"0x%08lx\",\"descriptorSource\":\"%s\",\"adaptation\":\"%s\"}\n",
         GetCurrentProcessId(), operation, escaped, access, mode, instances, outBuffer, inBuffer, timeout,
         share, disposition, flags, result && result != INVALID_HANDLE_VALUE ? "true" : "false", error,
         security.complete ? "true" : "false", security.attributesPresent ? "true" : "false",
         security.attributesLength, security.inheritedHandle, security.descriptorPresent ? "true" : "false",
         static_cast<unsigned>(security.control), security.revision, security.daclPresent ? "true" : "false",
         security.nullDacl ? "true" : "false", security.aclBytes, security.aceCount, security.capturedAclBytes,
-        security.capturedAclBytes < security.aclBytes ? "true" : "false", aclHex);
+        security.capturedAclBytes < security.aclBytes ? "true" : "false", aclHex,
+        appended ? "true" : "false", appended ? static_cast<ULONG>(signal_writer_access) : 0UL,
+        appended ? "adapted-input" : "original-input", adaptation);
     DWORD written = 0;
     writingPipeDiagnostic = true;
     if (count > 0) WriteFile(GetStdHandle(STD_ERROR_HANDLE), line, static_cast<DWORD>(count), &written, nullptr);
@@ -348,11 +359,38 @@ HANDLE WINAPI observe_signal_server(LPCSTR name, DWORD openMode, DWORD pipeMode,
     const bool observed = observed_signal_name(name, copied);
     PipeSecurityObservation security = {};
     if (observed) observe_pipe_security(attributes, security);
+    SignalPipeDescriptor scoped = {};
+    bool appended = false;
+    const char* adaptation = "outside-exact-contract";
+    if (observed && InterlockedCompareExchange(&installationKeyState, 2, 2) == 2 &&
+        owned_signal_pipe(copied, strlen(copied), GetCurrentProcessId(), installationKey,
+                          openMode, pipeMode, maxInstances, outBuffer, inBuffer, timeout)) {
+        DWORD impersonationError = 0;
+        const char* impersonationReason = nullptr;
+        if (not_impersonating(impersonationReason, impersonationError)) {
+            void* userAce = nullptr;
+            void* containerAce = nullptr;
+            auto identities = reinterpret_cast<PACL>(privateDescriptor.acl);
+            if (GetAce(identities, 0, &userAce) && GetAce(identities, 1, &containerAce))
+                appended = append_signal_container_ace(security,
+                    &static_cast<ACCESS_ALLOWED_ACE*>(userAce)->SidStart,
+                    &static_cast<ACCESS_ALLOWED_ACE*>(containerAce)->SidStart, scoped);
+            adaptation = appended ? "new-server-request" : "descriptor-not-admitted";
+        } else adaptation = impersonationReason;
+    }
+    if (appended) {
+        security = {};
+        observe_pipe_security(&scoped.attributes, security);
+    }
     SetLastError(before);
-    HANDLE result = realCreateSignalServer(name, openMode, pipeMode, maxInstances, outBuffer, inBuffer, timeout, attributes);
+    // Use the validated private name snapshot with the private descriptor so
+    // caller mutation cannot redirect the appended ACE to another pipe name.
+    // FIRST_PIPE_INSTANCE stays set: a preexisting same-name server is refused.
+    HANDLE result = realCreateSignalServer(appended ? copied : name, openMode, pipeMode, maxInstances,
+        outBuffer, inBuffer, timeout, appended ? &scoped.attributes : attributes);
     const DWORD error = GetLastError();
     if (observed) log_signal_pipe(copied, "server-create", openMode, pipeMode, maxInstances,
-        outBuffer, inBuffer, timeout, 0, 0, 0, result, error, security);
+        outBuffer, inBuffer, timeout, 0, 0, 0, result, error, security, appended, adaptation);
     SetLastError(error);
     return result;
 }

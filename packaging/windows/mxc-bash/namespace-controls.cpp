@@ -130,6 +130,21 @@ int main() {
     check(!signal_pipe_name(paddedPid, strlen(paddedPid), 9784) &&
           !signal_pipe_name(overflowPid, strlen(overflowPid), UINT32_MAX), "signal-pid-alias-and-overflow-refused");
 
+    const char* boundKey = "52ddb898ef8d77fd";
+    check(owned_signal_pipe(signalName, strlen(signalName), 9784, boundKey, 0x80001, 0xc, 1, 65472, 65472, 0),
+          "owned-signal-exact-observed-contract");
+    check(!owned_signal_pipe(signalName, strlen(signalName), 9784, "aaaaaaaaaaaaaaaa", 0x80001, 0xc, 1, 65472, 65472, 0) &&
+          !owned_signal_pipe(signalName, strlen(signalName), 9784, nullptr, 0x80001, 0xc, 1, 65472, 65472, 0),
+          "owned-signal-requires-bound-installation-key");
+    check(!owned_signal_pipe(signalName, strlen(signalName), 9784, boundKey, 1, 0xc, 1, 65472, 65472, 0) &&
+          !owned_signal_pipe(signalName, strlen(signalName), 9784, boundKey, 0x80003, 0xc, 1, 65472, 65472, 0) &&
+          !owned_signal_pipe(signalName, strlen(signalName), 9784, boundKey, 0x80001, 4, 1, 65472, 65472, 0),
+          "owned-signal-first-instance-inbound-remote-reject-required");
+    check(!owned_signal_pipe(signalName, strlen(signalName), 9784, boundKey, 0x80001, 0xc, 2, 65472, 65472, 0) &&
+          !owned_signal_pipe(signalName, strlen(signalName), 9784, boundKey, 0x80001, 0xc, 1, 65536, 65472, 0) &&
+          !owned_signal_pipe(signalName, strlen(signalName), 9784, boundKey, 0x80001, 0xc, 1, 65472, 65472, 1),
+          "owned-signal-instance-buffer-timeout-fixed");
+
 #ifdef _WIN32
     alignas(void*) BYTE world[SECURITY_MAX_SID_SIZE] = {};
     DWORD size = sizeof(world);
@@ -199,6 +214,50 @@ int main() {
     check(!make_scoped_descriptor(user, user, scoped, &failedStage) &&
           failedStage && strcmp(failedStage, "descriptor-identities") == 0 && GetLastError() == ERROR_INVALID_SID,
           "windows-descriptor-failure-stage");
+
+    // Exact complete88-byte caller DACL from verified50d artifact10190056869.
+    const BYTE actualAcl[] = {
+        0x02,0x00,0x58,0x00,0x03,0x00,0x00,0x00,0x00,0x00,0x24,0x00,0x00,0x00,0x00,0x10,
+        0x01,0x05,0x00,0x00,0x00,0x00,0x00,0x05,0x15,0x00,0x00,0x00,0xd7,0xb5,0xaf,0xe1,
+        0x6e,0x23,0x75,0xa7,0x42,0x81,0xce,0x5f,0xf4,0x01,0x00,0x00,0x00,0x00,0x18,0x00,
+        0x00,0x00,0x00,0x10,0x01,0x02,0x00,0x00,0x00,0x00,0x00,0x05,0x20,0x00,0x00,0x00,
+        0x20,0x02,0x00,0x00,0x00,0x00,0x14,0x00,0x00,0x00,0x00,0x10,0x01,0x01,0x00,0x00,
+        0x00,0x00,0x00,0x05,0x12,0x00,0x00,0x00
+    };
+    PSID actualUser = nullptr;
+    check(ConvertStringSidToSidW(L"S-1-5-21-3786388951-2809471854-1607369026-500", &actualUser) != FALSE,
+          "windows-actual50d-user-sid");
+    PipeSecurityObservation actual = {};
+    actual.complete = true; actual.attributesPresent = true; actual.attributesLength = sizeof(SECURITY_ATTRIBUTES);
+    actual.descriptorPresent = true; actual.control = SE_DACL_PRESENT; actual.revision = SECURITY_DESCRIPTOR_REVISION;
+    actual.daclPresent = TRUE; actual.aclBytes = sizeof(actualAcl); actual.aceCount = 3; actual.capturedAclBytes = sizeof(actualAcl);
+    memcpy(actual.acl, actualAcl, sizeof(actualAcl));
+    SignalPipeDescriptor adapted = {};
+    check(append_signal_container_ace(actual, actualUser, container, adapted), "windows-actual50d-signal-ace-appended");
+    auto adaptedAcl = reinterpret_cast<PACL>(adapted.acl);
+    void* appendedValue = nullptr;
+    check(adaptedAcl->AceCount == 4 && memcmp(adapted.acl + sizeof(ACL), actualAcl + sizeof(ACL), sizeof(actualAcl) - sizeof(ACL)) == 0 &&
+          GetAce(adaptedAcl, 3, &appendedValue), "windows-original-three-aces-byte-preserved");
+    auto appended = static_cast<ACCESS_ALLOWED_ACE*>(appendedValue);
+    check(appended->Header.AceType == ACCESS_ALLOWED_ACE_TYPE && appended->Header.AceFlags == 0 &&
+          appended->Mask == (FILE_GENERIC_WRITE | FILE_READ_ATTRIBUTES) && appended->Mask == 0x00120196 &&
+          EqualSid(&appended->SidStart, container), "windows-only-actual-container-writer-rights-added");
+    SECURITY_DESCRIPTOR_CONTROL adaptedControl = 0; DWORD adaptedRevision = 0;
+    check(GetSecurityDescriptorControl(&adapted.descriptor, &adaptedControl, &adaptedRevision) &&
+          adaptedControl == SE_DACL_PRESENT && !adapted.attributes.bInheritHandle &&
+          memcmp(actual.acl, actualAcl, sizeof(actualAcl)) == 0, "windows-original-descriptor-input-unchanged");
+    check(!append_signal_container_ace(actual, user, container, adapted), "windows-foreign-original-user-refused");
+    auto changed = actual; changed.acl[12] = 1;
+    check(!append_signal_container_ace(changed, actualUser, container, adapted), "windows-other-original-mask-refused");
+    changed = actual; changed.acl[9] = INHERITED_ACE;
+    check(!append_signal_container_ace(changed, actualUser, container, adapted), "windows-original-inherited-ace-refused");
+    changed = actual; changed.control |= SE_DACL_PROTECTED;
+    check(!append_signal_container_ace(changed, actualUser, container, adapted), "windows-other-original-control-refused");
+    changed = actual; changed.ownerPresent = true;
+    check(!append_signal_container_ace(changed, actualUser, container, adapted), "windows-original-owner-refused");
+    changed = actual; changed.acl[2] = 0xff; changed.acl[3] = 0xff;
+    check(!append_signal_container_ace(changed, actualUser, container, adapted), "windows-raced-acl-size-refused-before-walk");
+    LocalFree(actualUser);
     LocalFree(user);
     LocalFree(container);
 #endif

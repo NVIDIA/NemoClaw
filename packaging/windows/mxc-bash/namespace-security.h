@@ -22,6 +22,10 @@ struct PipeSecurityObservation {
     bool descriptorPresent = false;
     SECURITY_DESCRIPTOR_CONTROL control = 0;
     DWORD revision = 0;
+    bool ownerPresent = false;
+    bool groupPresent = false;
+    BOOL ownerDefaulted = FALSE;
+    BOOL groupDefaulted = FALSE;
     BOOL daclPresent = FALSE;
     bool nullDacl = false;
     DWORD aclBytes = 0;
@@ -41,6 +45,11 @@ inline void observe_pipe_security(const SECURITY_ATTRIBUTES* attributes, PipeSec
         if (!descriptor) { result.complete = true; return; }
         result.descriptorPresent = true;
         if (!GetSecurityDescriptorControl(descriptor, &result.control, &result.revision)) return;
+        PSID owner = nullptr, group = nullptr;
+        if (!GetSecurityDescriptorOwner(descriptor, &owner, &result.ownerDefaulted) ||
+            !GetSecurityDescriptorGroup(descriptor, &group, &result.groupDefaulted)) return;
+        result.ownerPresent = owner != nullptr;
+        result.groupPresent = group != nullptr;
         PACL acl = nullptr;
         BOOL defaulted = FALSE;
         if (!GetSecurityDescriptorDacl(descriptor, &result.daclPresent, &acl, &defaulted)) return;
@@ -57,6 +66,59 @@ inline void observe_pipe_security(const SECURITY_ATTRIBUTES* attributes, PipeSec
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         result.complete = false;
     }
+}
+
+struct SignalPipeDescriptor {
+    SECURITY_ATTRIBUTES attributes;
+    SECURITY_DESCRIPTOR descriptor;
+    alignas(DWORD) BYTE acl[512 + sizeof(ACCESS_ALLOWED_ACE) + SECURITY_MAX_SID_SIZE];
+};
+
+// Only the observed canonical three-ACE descriptor is eligible. Preserve its
+// existing ACE bytes/order, then append the actual AppContainer writer rights.
+// This describes a new first-instance pipe; it never changes an existing ACL.
+inline bool append_signal_container_ace(const PipeSecurityObservation& original, PSID user, PSID container,
+                                         SignalPipeDescriptor& result) {
+    if (!user || !container || !IsValidSid(user) || !IsValidSid(container) || EqualSid(user, container) ||
+        !original.complete || !original.attributesPresent || original.attributesLength != sizeof(SECURITY_ATTRIBUTES) ||
+        original.inheritedHandle || !original.descriptorPresent || original.control != SE_DACL_PRESENT ||
+        original.revision != SECURITY_DESCRIPTOR_REVISION || original.ownerPresent || original.groupPresent ||
+        original.ownerDefaulted || original.groupDefaulted || !original.daclPresent || original.nullDacl ||
+        original.aceCount != 3 || original.aclBytes < sizeof(ACL) || original.aclBytes > sizeof(original.acl) ||
+        original.capturedAclBytes != original.aclBytes) return false;
+    auto acl = reinterpret_cast<PACL>(const_cast<BYTE*>(original.acl));
+    if (acl->AclSize != original.aclBytes || acl->AclRevision != ACL_REVISION ||
+        acl->Sbz1 || acl->Sbz2 || acl->AceCount != 3 || !IsValidAcl(acl)) return false;
+    alignas(void*) BYTE admins[SECURITY_MAX_SID_SIZE] = {}, system[SECURITY_MAX_SID_SIZE] = {};
+    DWORD adminSize = sizeof(admins), systemSize = sizeof(system);
+    if (!CreateWellKnownSid(WinBuiltinAdministratorsSid, nullptr, admins, &adminSize) ||
+        !CreateWellKnownSid(WinLocalSystemSid, nullptr, system, &systemSize)) return false;
+    PSID expected[3] = {user, admins, system};
+    DWORD used = sizeof(ACL);
+    for (DWORD n = 0; n < 3; ++n) {
+        void* value = nullptr;
+        if (!GetAce(acl, n, &value)) return false;
+        auto ace = static_cast<ACCESS_ALLOWED_ACE*>(value);
+        const DWORD sidSize = GetLengthSid(expected[n]);
+        const DWORD aceSize = static_cast<DWORD>(offsetof(ACCESS_ALLOWED_ACE, SidStart)) + sidSize;
+        if (ace->Header.AceType != ACCESS_ALLOWED_ACE_TYPE || ace->Header.AceFlags != 0 ||
+            ace->Header.AceSize != aceSize || ace->Mask != GENERIC_ALL ||
+            used + aceSize > acl->AclSize || memcmp(&ace->SidStart, expected[n], sidSize) != 0) return false;
+        used += aceSize;
+    }
+    if (used != acl->AclSize) return false;
+    ZeroMemory(&result, sizeof(result));
+    auto next = reinterpret_cast<PACL>(result.acl);
+    if (!InitializeAcl(next, sizeof(result.acl), ACL_REVISION) ||
+        !AddAce(next, ACL_REVISION, MAXDWORD, original.acl + sizeof(ACL), used - sizeof(ACL)) ||
+        !AddAccessAllowedAceEx(next, ACL_REVISION, 0, signal_writer_access, container) ||
+        !InitializeSecurityDescriptor(&result.descriptor, SECURITY_DESCRIPTOR_REVISION) ||
+        !SetSecurityDescriptorDacl(&result.descriptor, TRUE, next, FALSE)) return false;
+    next->AclSize = static_cast<WORD>(used + offsetof(ACCESS_ALLOWED_ACE, SidStart) + GetLengthSid(container));
+    result.attributes.nLength = sizeof(SECURITY_ATTRIBUTES);
+    result.attributes.bInheritHandle = FALSE;
+    result.attributes.lpSecurityDescriptor = &result.descriptor;
+    return true;
 }
 
 inline bool make_scoped_descriptor(PSID user, PSID container, ScopedDescriptor& output,
