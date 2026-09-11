@@ -30,8 +30,12 @@ describe("createInitialOnboardFlowPhases", () => {
   });
 
   it("adds gateway verification and cleanup dependencies when it creates the initial phases (#7695)", () => {
+    const assertExternalComponentFreshSandbox = vi.fn();
+    const configureExternalComponentGateway = vi.fn();
     const existingGatewayDependency = vi.fn();
     const options = {
+      assertExternalComponentFreshSandbox,
+      configureExternalComponentGateway,
       gatewayDeps: { existingGatewayDependency },
     } as never;
 
@@ -40,6 +44,8 @@ describe("createInitialOnboardFlowPhases", () => {
     expect(mocks.createInitialFlowPhases).toHaveBeenCalledWith({
       gatewayDeps: {
         existingGatewayDependency,
+        assertExternalComponentFreshSandbox,
+        configureExternalComponentGateway,
         destroyGatewayForReuse: mocks.destroyGatewayForReuse,
         verifyGatewayContainerRunning: mocks.verifyGatewayContainerRunning,
       },

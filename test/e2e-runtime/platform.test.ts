@@ -15,6 +15,7 @@ import {
   getPodmanSocketCandidates,
   inferContainerRuntime,
   isWsl,
+  observeDockerAuthorityConflict,
   shouldPatchCoredns,
 } from "../../src/lib/platform";
 
@@ -451,6 +452,159 @@ describe("platform helpers", () => {
               : { reachable: false, identity: "unknown", inconclusive: true },
         }),
       ).toBe(null);
+    });
+  });
+
+  describe("observeDockerAuthorityConflict (#10622)", () => {
+    const unreachableDefault = { reachable: false, identity: "unknown" as const };
+
+    it("reports both engines in probe order when mixed fallbacks answer and the default is unreachable", () => {
+      const dockerSocket = "/var/run/docker.sock";
+      const podmanSocket = "/run/user/1000/podman/podman.sock";
+      const sockets = new Set([dockerSocket, podmanSocket]);
+      const answers = new Map([
+        [`unix://${dockerSocket}`, { reachable: true, identity: "docker" as const }],
+        [`unix://${podmanSocket}`, { reachable: true, identity: "podman" as const }],
+      ]);
+      const opts = {
+        env: {},
+        platform: "linux" as const,
+        uid: 1000,
+        existsSync: (candidate: string) => sockets.has(candidate),
+        probeDockerHost: (dockerHost: string | undefined) =>
+          answers.get(dockerHost ?? "") ?? unreachableDefault,
+      };
+
+      expect(observeDockerAuthorityConflict(opts)).toEqual({
+        candidates: [
+          { socketPath: dockerSocket, identity: "docker" },
+          { socketPath: podmanSocket, identity: "podman" },
+        ],
+      });
+      expect(detectDockerHost(opts)).toBe(null);
+    });
+
+    it("lists the Podman candidate first when it is probed before the Docker candidate", () => {
+      const home = "/tmp/test-home";
+      const podmanSocket = path.join(home, ".local/share/containers/podman/machine/podman.sock");
+      const dockerDesktopSocket = path.join(home, ".docker/run/docker.sock");
+      const sockets = new Set([podmanSocket, dockerDesktopSocket]);
+      const answers = new Map([
+        [`unix://${podmanSocket}`, { reachable: true, identity: "podman" as const }],
+        [`unix://${dockerDesktopSocket}`, { reachable: true, identity: "docker" as const }],
+      ]);
+
+      expect(
+        observeDockerAuthorityConflict({
+          env: {},
+          platform: "darwin",
+          home,
+          existsSync: (candidate) => sockets.has(candidate),
+          probeDockerHost: (dockerHost) => answers.get(dockerHost ?? "") ?? unreachableDefault,
+        }),
+      ).toEqual({
+        candidates: [
+          { socketPath: podmanSocket, identity: "podman" },
+          { socketPath: dockerDesktopSocket, identity: "docker" },
+        ],
+      });
+    });
+
+    it("returns null when two reachable candidates identify as the same engine", () => {
+      const sockets = new Set(["/run/docker.sock", "/var/run/docker.sock"]);
+
+      expect(
+        observeDockerAuthorityConflict({
+          env: {},
+          platform: "linux",
+          uid: 1000,
+          existsSync: (candidate) => sockets.has(candidate),
+          probeDockerHost: reachableDockerFallback,
+        }),
+      ).toBe(null);
+    });
+
+    it("returns null and probes no candidate when the default authority is reachable", () => {
+      const sockets = new Set(["/var/run/docker.sock", "/run/user/1000/podman/podman.sock"]);
+      const probes: Array<string | undefined> = [];
+
+      expect(
+        observeDockerAuthorityConflict({
+          env: {},
+          platform: "linux",
+          uid: 1000,
+          existsSync: (candidate) => sockets.has(candidate),
+          probeDockerHost: (dockerHost) => {
+            probes.push(dockerHost);
+            return { reachable: true, identity: "docker" };
+          },
+        }),
+      ).toBe(null);
+      expect(probes).toEqual([undefined]);
+    });
+
+    it("returns null when the default authority probe is inconclusive", () => {
+      const sockets = new Set(["/var/run/docker.sock", "/run/user/1000/podman/podman.sock"]);
+
+      expect(
+        observeDockerAuthorityConflict({
+          env: {},
+          platform: "linux",
+          uid: 1000,
+          existsSync: (candidate) => sockets.has(candidate),
+          probeDockerHost: (dockerHost) =>
+            dockerHost
+              ? { reachable: true, identity: dockerHost.includes("podman") ? "podman" : "docker" }
+              : { reachable: false, identity: "unknown", inconclusive: true },
+        }),
+      ).toBe(null);
+    });
+
+    it("returns null when the differing candidate has an unknown engine identity", () => {
+      const dockerSocket = "/var/run/docker.sock";
+      const podmanSocket = "/run/user/1000/podman/podman.sock";
+      const sockets = new Set([dockerSocket, podmanSocket]);
+      const answers = new Map([
+        [`unix://${dockerSocket}`, { reachable: true, identity: "docker" as const }],
+        [`unix://${podmanSocket}`, { reachable: true, identity: "unknown" as const }],
+      ]);
+      const opts = {
+        env: {},
+        platform: "linux" as const,
+        uid: 1000,
+        existsSync: (candidate: string) => sockets.has(candidate),
+        probeDockerHost: (dockerHost: string | undefined) =>
+          answers.get(dockerHost ?? "") ?? unreachableDefault,
+      };
+
+      expect(observeDockerAuthorityConflict(opts)).toBe(null);
+      expect(detectDockerHost(opts)).toEqual({
+        dockerHost: `unix://${dockerSocket}`,
+        source: "socket",
+        socketPath: dockerSocket,
+      });
+    });
+
+    it("returns null and probes nothing when DOCKER_HOST is set", () => {
+      const sockets = new Set(["/var/run/docker.sock", "/run/user/1000/podman/podman.sock"]);
+      const probes: Array<string | undefined> = [];
+
+      expect(
+        observeDockerAuthorityConflict({
+          env: { DOCKER_HOST: "unix:///custom/docker.sock" },
+          platform: "linux",
+          uid: 1000,
+          existsSync: (candidate) => sockets.has(candidate),
+          probeDockerHost: (dockerHost) => {
+            probes.push(dockerHost);
+            return {
+              reachable: true,
+              identity: dockerHost?.includes("podman") ? "podman" : "docker",
+            };
+          },
+        }),
+      ).toBe(null);
+      expect(probes).toEqual([]);
     });
   });
 

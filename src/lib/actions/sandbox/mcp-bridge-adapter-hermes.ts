@@ -73,13 +73,13 @@ export function buildHermesMcpProbeCommand(): string[] {
   return [HERMES_MCP_TRANSACTION_HELPER, "probe"];
 }
 
-export function inspectHermesAdapterRegistration(
+export async function inspectHermesAdapterRegistration(
   sandboxName: string,
   entry: McpBridgeEntry,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
   credentialRevision?: McpAttachedCredentialRevision,
-): AdapterRegistrationInspection {
-  return inspectAdapterRegistrationCommand(
+): Promise<AdapterRegistrationInspection> {
+  return await inspectAdapterRegistrationCommand(
     sandboxName,
     entry,
     buildHermesMcpStatusCommand(entry, credentialRevision),
@@ -224,13 +224,13 @@ function runHermesAdapterCommand(
   }
 }
 
-function verifyHermesAdapterRegistration(
+async function verifyHermesAdapterRegistration(
   sandboxName: string,
   entry: McpBridgeEntry,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
   credentialRevision?: McpAttachedCredentialRevision,
-): void {
-  const inspection = inspectHermesAdapterRegistration(
+): Promise<void> {
+  const inspection = await inspectHermesAdapterRegistration(
     sandboxName,
     entry,
     runtimeSelection,
@@ -243,14 +243,14 @@ function verifyHermesAdapterRegistration(
   );
 }
 
-export function registerHermesAdapter(
+export async function registerHermesAdapter(
   sandboxName: string,
   entry: McpBridgeEntry,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
   envValues: Record<string, string> = {},
   replaceExisting = false,
   credentialRevision?: McpAttachedCredentialRevision,
-): void {
+): Promise<void> {
   runHermesAdapterCommand(
     sandboxName,
     entry,
@@ -259,7 +259,7 @@ export function registerHermesAdapter(
     runtimeSelection,
     { envValues, requireReload: true },
   );
-  verifyHermesAdapterRegistration(sandboxName, entry, runtimeSelection, credentialRevision);
+  await verifyHermesAdapterRegistration(sandboxName, entry, runtimeSelection, credentialRevision);
 }
 
 export function unregisterHermesAdapter(

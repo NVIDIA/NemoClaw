@@ -15,11 +15,8 @@ const REDACTED_URL_CANARY = "https://user:secret@example.test/hermes";
 type ConnectHarness = ReturnType<typeof createConnectHarness>;
 
 function connectCalls(harness: ConnectHarness, sandboxName = "alpha") {
-  return harness.runSandboxExecChildSpy.mock.calls.filter(
-    ([command, args]) =>
-      command === "openshell" &&
-      Array.isArray(args) &&
-      args.join(" ") === `sandbox connect ${sandboxName}`,
+  return harness.startSandboxSessionSpy.mock.calls.filter(
+    ([request]) => request.kind === "connect" && request.sandboxName === sandboxName,
   );
 }
 
@@ -111,7 +108,7 @@ describe("Hermes sandbox connect light terminal skin", () => {
     expect(process.env.COLORFGBG).toBe("0;15");
     expect(process.env.TERM_PROGRAM).toBe("Apple_Terminal");
     expect(process.env.HERMES_TUI_LIGHT).not.toBe("1");
-    expect(connectCalls(harness)[0]?.[2]).not.toHaveProperty("hostEnv");
+    expect(harness.createSessionExecutorSpy.mock.calls[0]?.[0].environment).toBeUndefined();
     expectConnectSucceeded(harness, exitSpy);
   });
 

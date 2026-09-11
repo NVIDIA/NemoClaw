@@ -132,6 +132,7 @@ export function createFinalOnboardFlowPhases<
           : null,
       portableProfileSelected: context.session?.checkpoint?.profile.value === "portable",
       recreateJournalHandoff: context.recreateJournalHandoff,
+      externalComponent: context.externalComponent,
       deps: finalizationDeps,
     });
     return { result: finalizationResult.stateResult };
@@ -157,6 +158,7 @@ export function createFinalOnboardFlowPhases<
           : null,
       portableProfileSelected: context.session?.checkpoint?.profile.value === "portable",
       recreateJournalHandoff: context.recreateJournalHandoff,
+      externalComponent: null,
       deps: finalizationDeps,
     });
     return { result: postVerifyResult.stateResult };

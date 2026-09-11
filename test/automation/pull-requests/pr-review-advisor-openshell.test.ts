@@ -986,6 +986,7 @@ describe("PR review advisor OpenShell wrapper", () => {
 
   it("registers the selected model while confining the upstream key to provider creation", async () => {
     const env = advisorEnvironment();
+    env.OPENSHELL_DB_URL = "sqlite:///existing-provider-state.db";
     const tools = advisorTools();
 
     const gateway = startAdvisorOpenShellInference(env, tools);
@@ -1023,6 +1024,10 @@ describe("PR review advisor OpenShell wrapper", () => {
     });
     expect(calls.filter(([, , options]) => options.env.OPENAI_API_KEY)).toHaveLength(1);
     expect(vi.mocked(tools.start).mock.calls[0]?.[2].env.OPENAI_API_KEY).toBeUndefined();
+    expect(vi.mocked(tools.start).mock.calls[0]?.[2].env.OPENSHELL_DB_URL).toBe(
+      "sqlite::memory:?cache=shared",
+    );
+    expect(env.OPENSHELL_DB_URL).toBe("sqlite:///existing-provider-state.db");
     const gatewayConfig = fs.readFileSync(
       path.join(env.RUNNER_TEMP as string, "openshell-gateway", "gateway.toml"),
       "utf8",

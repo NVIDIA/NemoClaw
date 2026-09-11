@@ -19,12 +19,18 @@ beforeEach(() => {
   vi.stubEnv("NEMOCLAW_SANDBOX_PREBUILD", "1");
 });
 
-type ProviderBoundaryMode = "create" | "deferred" | "ordinary-resume" | "superseded";
+type ProviderBoundaryMode =
+  | "create"
+  | "deferred"
+  | "ollama-create"
+  | "ordinary-resume"
+  | "superseded";
 
 type ProviderBoundaryResult = {
   events: string[];
   firstError: string | null;
   gpuCreateCalls: number;
+  portableLockInvocations: number;
   portableTransactions: number;
   providerCalls: string[][];
   result: string;
@@ -47,6 +53,7 @@ function runProviderBoundary(mode: ProviderBoundaryMode): ProviderBoundaryResult
   const script = String.raw`
 const fixtureMocks = require(${onboardScriptMocksPath});
 fixtureMocks.mockStandaloneGatewayTeardownAuthority();
+const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const runner = require(${modulePath("runner.ts")});
 const registry = require(${modulePath("state/registry.ts")});
@@ -57,13 +64,18 @@ const createdSandboxFinalizationId = require.resolve(${modulePath("onboard/creat
 const dashboardPortId = require.resolve(${modulePath("onboard/dashboard-port.ts")});
 const dashboardRuntimeId = require.resolve(${modulePath("onboard/dashboard-runtime.ts")});
 const sandboxGpuCreateFlowId = require.resolve(${modulePath("onboard/sandbox-gpu-create-flow.ts")});
+const lifecycleLock = require(${modulePath("state/mcp-lifecycle-lock.ts")});
 const sandboxProviderCleanupId = require.resolve(${modulePath("onboard/sandbox-provider-cleanup.ts")});
 const normalize = (command) => Array.isArray(command) ? command.map(String) : [String(command)];
 const events = [];
 const providerCalls = [];
 let gpuCreateCalls = 0;
+let portableLockInvocations = 0;
 let portableTransactions = 0;
 const portableMode = ${JSON.stringify(mode !== "ordinary-resume")};
+const inferenceProvider = ${JSON.stringify(
+    mode === "ollama-create" ? "ollama-local" : "nvidia-prod",
+  )};
 const customDockerfile = process.env.HOME + "/Dockerfile";
 fs.writeFileSync(customDockerfile, [
   "FROM scratch",
@@ -113,7 +125,7 @@ const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry,
   sandboxName,
   gatewayName,
   agentName: portableMode ? "hermes" : "langchain-deepagents-code",
-  provider: "nvidia-prod",
+  provider: inferenceProvider,
   model: "gpt-5.4",
 });
 if (!portableMode) {
@@ -190,6 +202,11 @@ require.cache[sandboxGpuCreateFlowId].exports = {
   runHermesPortableOnboardingFromOnboard: async (input) => {
     portableTransactions += 1;
     events.push("portable:transaction");
+    await input.withLifecycleLock(sandboxName, async () => {
+      portableLockInvocations += 1;
+      const portableStateDir = process.env.HOME + "/.nemoclaw/state";
+      assert.equal(lifecycleLock.isMcpLifecycleLockHeld(sandboxName, portableStateDir), true);
+    });
     if (${JSON.stringify(mode)} === "superseded") return { created: false };
     const attemptArgv = [...input.createArgv];
     const separator = attemptArgv.indexOf("--");
@@ -270,7 +287,7 @@ const { resolveSandboxGpuConfig } = require(${modulePath("onboard/sandbox-gpu-mo
       resolved: resolveSandboxCreateIntent({
         basePolicyPath: ${JSON.stringify(path.join(repoRoot, "agents/hermes/policy-additions.yaml"))},
         sandboxName,
-        inferenceProvider: "nvidia-prod",
+        inferenceProvider,
         channels: [],
         enabledChannels: [],
         disabledChannelNames: new Set(),
@@ -302,6 +319,7 @@ const { resolveSandboxGpuConfig } = require(${modulePath("onboard/sandbox-gpu-mo
       events,
       firstError,
       gpuCreateCalls,
+      portableLockInvocations,
       portableTransactions,
       providerCalls,
       result,
@@ -343,12 +361,32 @@ describe("sandbox-create provider publication branches", () => {
 
       assert.equal(payload.result, "my-assistant");
       assert.deepEqual(payload.providerCalls, expectedProviderCalls);
+      assert.equal(payload.portableLockInvocations, 1);
       assert.equal(payload.portableTransactions, 1);
       assert.ok(
         payload.events.indexOf("portable:transaction") < payload.events.indexOf("provider:update"),
       );
       assert.ok(
         payload.events.indexOf("provider:update") < payload.events.indexOf("sandbox:create"),
+      );
+    },
+  );
+
+  it(
+    "keeps the transaction-bound Ollama provider at its committed version (#11336)",
+    { timeout: 60_000 },
+    () => {
+      const payload = runProviderBoundary("ollama-create");
+
+      assert.equal(payload.result, "my-assistant");
+      assert.deepEqual(payload.providerCalls, []);
+      assert.equal(payload.portableTransactions, 1);
+      assert.equal(payload.gpuCreateCalls, 1);
+      assert.equal(payload.events.filter((event) => event === "provider:update").length, 0);
+      assert.ok(payload.events.includes("sandbox:create"));
+      assert.ok(payload.events.includes("sandbox:identity-verified"));
+      assert.ok(
+        payload.events.indexOf("portable:transaction") < payload.events.indexOf("sandbox:create"),
       );
     },
   );
