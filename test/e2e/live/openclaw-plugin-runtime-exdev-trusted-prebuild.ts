@@ -264,7 +264,8 @@ export async function extractTrustedPluginFixtureToHost(options: {
   );
   const containerIdPath = path.join(containerIdentityDirectory, "container.cid");
   const failures: string[] = [];
-  let containerId: string | null = null;
+  let cleanupContainerId: string | null = null;
+  let copyContainerId: string | null = null;
   try {
     let create: Awaited<ReturnType<HostCliClient["command"]>> | null = null;
     try {
@@ -291,17 +292,20 @@ export async function extractTrustedPluginFixtureToHost(options: {
       ? fs.readFileSync(containerIdPath, "utf8").trim()
       : "";
     if (/^[0-9a-f]{64}$/.test(createdId)) {
-      containerId = createdId;
+      cleanupContainerId = createdId;
+      copyContainerId = createdId;
     } else {
       failures.push("create trusted EXDEV source container returned an invalid identity");
+      const stdoutId = create?.stdout.trim() ?? "";
+      if (/^[0-9a-f]{64}$/.test(stdoutId)) cleanupContainerId = stdoutId;
     }
     if (create && create.exitCode !== 0) {
       failures.push(`create trusted EXDEV source container: ${resultText(create).trim()}`);
-    } else if (create?.exitCode === 0 && containerId) {
+    } else if (create?.exitCode === 0 && copyContainerId) {
       try {
         const copy = await options.host.command(
           "docker",
-          ["cp", `${containerId}:${TRUSTED_PLUGIN_FIXTURE_IMAGE_DIR}/.`, sourceDirectory],
+          ["cp", `${copyContainerId}:${TRUSTED_PLUGIN_FIXTURE_IMAGE_DIR}/.`, sourceDirectory],
           {
             artifactName: "copy-trusted-exdev-source-from-container",
             env: options.environment,
@@ -316,9 +320,9 @@ export async function extractTrustedPluginFixtureToHost(options: {
       }
     }
 
-    if (containerId) {
+    if (cleanupContainerId) {
       try {
-        const remove = await options.host.command("docker", ["rm", containerId], {
+        const remove = await options.host.command("docker", ["rm", cleanupContainerId], {
           artifactName: "remove-trusted-exdev-source-container",
           env: options.environment,
           timeoutMs: 60_000,

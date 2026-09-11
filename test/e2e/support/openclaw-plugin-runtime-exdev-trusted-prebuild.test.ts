@@ -602,18 +602,25 @@ describe("trusted EXDEV host mount extraction", () => {
     }
   });
 
-  it("does not copy or remove by an unproven cidfile identity (#11547)", async () => {
+  it("uses validated create output only to clean up an unproven cidfile identity (#11547)", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-exdev-root-"));
     const cleanup = new CleanupRegistry();
     try {
       const sourceDirectory = createTrustedPluginFixtureHostMountSource(cleanup, root);
       const calls: string[][] = [];
-      const host = {
-        command: vi.fn(async (_command: string, args: string[]) => {
+      const command = vi
+        .fn()
+        .mockImplementationOnce(async (_command: string, args: string[]) => {
           calls.push(args);
           writeContainerIdentity(args, "short-container-id");
           return commandResult(0, "", `${CONTAINER_ID}\n`);
-        }),
+        })
+        .mockImplementationOnce(async (_command: string, args: string[]) => {
+          calls.push(args);
+          return commandResult();
+        });
+      const host = {
+        command,
       };
 
       await expect(
@@ -624,8 +631,8 @@ describe("trusted EXDEV host mount extraction", () => {
           sourceDirectory,
         }),
       ).rejects.toThrow("returned an invalid identity");
-      expect(calls).toHaveLength(1);
-      expect(calls[0]?.[0]).toBe("create");
+      expect(calls.map((args) => args[0])).toEqual(["create", "rm"]);
+      expect(calls.at(-1)).toEqual(["rm", CONTAINER_ID]);
       expect(await cleanup.runAll()).toEqual({
         failures: [],
         passed: ["remove trusted EXDEV host mount source"],
