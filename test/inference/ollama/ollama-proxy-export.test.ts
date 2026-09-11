@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { expect } from "vitest";
+import { isWsl } from "../../../src/lib/platform";
 import { test } from "../../helpers/owned-test-resources";
 import {
   closeServer,
@@ -18,7 +19,7 @@ import {
 
 const execFileAsync = promisify(execFile);
 
-test.skipIf(process.platform !== "linux")(
+test.skipIf(process.platform !== "linux" || isWsl())(
   "observes existing proxy state without migration or credential exposure (#11435)",
   async () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-proxy-export-"));
