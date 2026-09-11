@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//
-// Interactive onboarding wizard — 8 steps from zero to running sandbox.
+// Interactive onboarding entry point; see onboard/machine/README.md.
 const {
   envInt,
   LOCAL_INFERENCE_TIMEOUT_SECS,
@@ -2849,16 +2848,12 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
       });
       setOnboardBrandingAgent(agent?.name || "openclaw");
       session = selectedAgentTransition.session;
-      const resumeAgentChanged = selectedAgentTransition.resumeAgentChanged;
-      const forceProviderSelectionForAgentChange = resumeAgentChanged;
       console.log("");
       console.log(`  ${cliDisplayName()} Onboarding`);
       if (isNonInteractive()) note("  (non-interactive mode)");
       if (resume) note("  (resume mode)");
       console.log("  ===================");
       onboardSessionBootstrap.reportReadOnlyHostMounts(effectiveHostMounts, note);
-      const explicitSandboxGpuFlag = resolveSandboxGpuFlagFromOptions(opts);
-      const recordedGpuPassthroughBeforePreflight = session?.gpuPassthrough === true;
       const initialFlowContext = {
         resume,
         fresh,
@@ -2891,14 +2886,14 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         import("./onboard/machine/sequence-runner").OnboardSequencePhase<InitialOnboardFlowContext>,
         import("./onboard/machine/sequence-runner").OnboardSequencePhase<InitialOnboardFlowContext>,
       ] = createInitialOnboardFlowPhases({
-        explicitSandboxGpuFlag,
+        explicitSandboxGpuFlag: resolveSandboxGpuFlagFromOptions(opts),
         sandboxGpuDevice: opts.sandboxGpuDevice ?? null,
         gpuRequested: opts.gpu === true,
         noGpu: opts.noGpu === true,
         allowDeferredN1xManagedVllm: opts.allowDeferredN1xManagedVllm,
         allowLegacyDgxStationQualification: opts.allowLegacyDgxStationQualification,
         env: process.env,
-        recordedGpuPassthroughBeforePreflight,
+        recordedGpuPassthroughBeforePreflight: session?.gpuPassthrough === true,
         commitSelectedAgentTransition: selectedAgentTransition.commit,
         ensureResumePreflightDashboardPortAvailable: () => {
           if (_preflightDashboardPort === null) preflightDashboardPortRangeAvailability();
@@ -2927,7 +2922,12 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         },
         getInitialGatewayReuseState: () =>
           selectNamedGatewayForReuseIfNeeded(getGatewayReuseSnapshot()).gatewayReuseState,
-        ...component.flowDeps(preflightGateway, getDockerDriverGatewayEnv, inspectSandboxForCreate),
+        ...component.flowDeps(
+          preflightGateway,
+          getDockerDriverGatewayEnv,
+          inspectSandboxForCreate,
+          resolveOpenShellGatewayBinary,
+        ),
         gatewayName: GATEWAY_NAME,
         recreateSandbox: isRecreateSandbox,
         requiresBindMounts: effectiveHostMounts.length > 0,
@@ -3007,7 +3007,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         providerInference: {
           gatewayName: GATEWAY_NAME,
           inspectSandboxForCreate,
-          forceProviderSelection: forceProviderSelectionForAgentChange,
+          forceProviderSelection: selectedAgentTransition.resumeAgentChanged,
           ...authoritativeRebuildTarget.rebuildProviderFlowOptions(opts, coreFlowContext),
           endpointProvenance,
           env: process.env,
@@ -3103,7 +3103,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           ...authoritativeRebuildTarget.authoritativeRebuildSandboxFlowOptions(opts),
           recreateJournalTargetIntentFingerprint:
             opts.recreateJournalTargetIntentFingerprint ?? null,
-          resumeAgentChanged,
+          resumeAgentChanged: selectedAgentTransition.resumeAgentChanged,
           requestedObservabilityEnabled: runtimeControlRequests.requestedObservabilityEnabled,
           requestedDcodeAutoApprovalMode: runtimeControlRequests.requestedDcodeAutoApprovalMode,
           rebuildPreservedEnv: opts.rebuildPreservedEnv,

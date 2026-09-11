@@ -61,6 +61,26 @@ NemoClaw does not distribute profiles or evaluate profile content.
 
 ## Preparation
 
+Authenticated v2 onboarding first lists the selected Docker network and inspects an existing bridge.
+Only a successful listing that reports absence triggers `openshell-gateway prepare-docker-network`
+with the selected network name and socket. OpenShell's existing Docker driver owns network creation.
+NemoClaw reads back the inspected network identity and addressing before writing connections.
+The operation does not start a gateway, configure inference, or create a sandbox.
+Ordinary onboarding and v1 components do not call it.
+
+Preparation requires a single local, non-internal bridge with exactly one private IPv4 subnet and
+a usable gateway in that subnet. Missing identities, multiple networks, ambiguous IPAM, incompatible
+drivers, inspection failures, and replacement or address drift stop onboarding.
+The network command has a 35-second subprocess deadline and bounded output; OpenShell bounds its
+Docker operation to 30 seconds. NemoClaw does not create, retry, recreate, or delete networks.
+A failure stops before component preparation or gateway startup, even if OpenShell already created
+the network. Existing network state remains with its lifecycle owner.
+
+Fresh-host preparation requires an OpenShell build with the preparation command. Released 0.0.116
+lacks it and fails with `preparation_failed` on a missing network; existing valid networks remain
+usable without the new command. Runtime pins are unchanged. An appropriate runtime release and
+separate pin integration are required before production qualification.
+
 The component must create its CA files and protected activation socket before onboarding.
 CA files must contain currently valid CA certificates only, with protected parents and no symlinks or hardlinks.
 Root or the current user must own the files. Group and other users must not have write access.
@@ -93,7 +113,7 @@ The component associates the later activation with the prepared `componentId` an
 It verifies the sandbox against the prepared gateway identity before acknowledging activation.
 The existing activation UUID, effective-policy proof, failure classification, and incomplete-activation state remain unchanged.
 
-NemoClaw revalidates declaration, socket, CA files, generated configuration, gateway keys, and bridge addressing.
+NemoClaw revalidates declaration, socket, CA files, generated configuration, gateway keys, and bridge identity and addressing.
 OpenShell performs authenticated registration after successful preparation and rejects missing or incompatible services.
 NemoClaw does not install or supervise those services.
 

@@ -3,7 +3,10 @@
 
 import { inspectPolicyMutationContext } from "../../policy";
 import type { ExternalComponentActivationIncomplete } from "../../state/onboard-session";
-import { configureDockerDriverGatewayExternalComponent } from "../docker-driver-gateway-env";
+import {
+  configureDockerDriverGatewayExternalComponent,
+  observeConfiguredGatewayHostRuntime,
+} from "../docker-driver-gateway-env";
 import type { SandboxLifecycleHelpers } from "../sandbox-lifecycle";
 import {
   ExternalComponentContractError,
@@ -13,6 +16,7 @@ import {
 } from "./index";
 import { activateExternalComponent, createExternalComponentActivationId } from "./activation";
 import { createExternalComponentActivationProof } from "./proof";
+import { prepareExternalComponentNetwork } from "./network";
 
 export function prepareExternalComponent(
   session: {
@@ -49,15 +53,34 @@ export function flowDeps(
   readiness: { collectGatewayReadiness(): Promise<unknown> },
   getDockerDriverGatewayEnv: () => Record<string, string>,
   inspectSandboxForCreate: SandboxLifecycleHelpers["inspectSandboxForCreate"],
+  resolveGatewayBinary: () => string | null,
 ) {
   return {
     assertGatewayReadiness: () => readiness.collectGatewayReadiness().then(() => undefined),
     assertExternalComponentFreshSandbox: (requestedSandboxName: string | null) =>
       assertExternalComponentFreshSandbox(requestedSandboxName, inspectSandboxForCreate),
-    configureExternalComponentGateway: (
+    configureExternalComponentGateway: async (
       externalComponent: ExternalComponentGatewayConfiguration | null,
-    ) =>
-      configureDockerDriverGatewayExternalComponent(getDockerDriverGatewayEnv(), externalComponent),
+    ) => {
+      const env = getDockerDriverGatewayEnv();
+      const revalidateNetwork =
+        externalComponent && "interceptor" in externalComponent
+          ? await prepareExternalComponentNetwork(
+              env,
+              resolveGatewayBinary(),
+              observeConfiguredGatewayHostRuntime({ environment: env }),
+            )
+          : undefined;
+      revalidateNetwork?.();
+      const preparation = configureDockerDriverGatewayExternalComponent(env, externalComponent);
+      if (!preparation || !revalidateNetwork) return preparation;
+      const revalidate = () => {
+        revalidateNetwork();
+        preparation.revalidate();
+      };
+      revalidate();
+      return { ...preparation, revalidate };
+    },
     prepareExternalComponent,
   };
 }

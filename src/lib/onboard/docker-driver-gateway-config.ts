@@ -1100,7 +1100,7 @@ export function readExternalComponentGatewayPreparation(
     const expected = snapshot();
     return {
       gateway: expected.gateway,
-      network: expected.network,
+      network: { gatewayIp: expected.network.gatewayIp, subnet: expected.network.subnet },
       revalidate() {
         try {
           if (!isDeepStrictEqual(snapshot(), expected))

@@ -11,6 +11,8 @@ import { PEM, LEAF_PEM, PRIVATE_KEY } from "../__test-helpers__/corporate-ca-fix
 import { baseGatewayEnv } from "../../../../test/support/openshell-gateway-config-helpers";
 import { resolveRegisteredRuntimeProvider } from "../runtime-provider/selection";
 import * as runtimeSelection from "../runtime-provider/selection";
+import * as openShellClient from "../../adapters/openshell/client";
+import { flowDeps } from "./onboarding";
 import { configureDockerDriverGatewayExternalComponent } from "../docker-driver-gateway-env";
 import {
   prepareDockerDriverGatewayConfigEnv,
@@ -64,19 +66,57 @@ function fixture() {
   const state = path.join(root, "gateway");
   fs.mkdirSync(state, { mode: 0o700 });
   const env = baseGatewayEnv(state);
+  env.OPENSHELL_GATEWAY_CONFIG = path.join(state, "openshell-gateway.toml");
   const component = declaration(ca);
   const provider = resolveRegisteredRuntimeProvider("docker")!;
   const gateway = provider.gateway as Extract<typeof provider.gateway, { supported: true }>;
   const observed = gateway.observeHostRuntime({ environment: env, platform: "linux" });
   const inspect = vi.fn(() => ({ gatewayIp: "172.30.115.1", subnet: "172.30.115.0/24" }));
-  const runtime = { ...observed, network: { ...observed.network, inspect } };
+  const network = () => {
+    const address = inspect();
+    return {
+      Id: "a".repeat(64),
+      Name: env.OPENSHELL_DOCKER_NETWORK_NAME,
+      Driver: "bridge",
+      Scope: "local",
+      Internal: false,
+      IPAM: { Config: [{ Gateway: address.gatewayIp, Subnet: address.subnet }] },
+    };
+  };
+  const run = vi.fn((args: readonly string[], _timeoutMs: number) => ({
+    status: 0,
+    stdout:
+      args[1] === "ls" ? `${env.OPENSHELL_DOCKER_NETWORK_NAME}\n` : JSON.stringify([network()]),
+    stderr: "",
+  }));
+  const runtime = { ...observed, network: { ...observed.network, inspect, run } };
   const settings = gatewayConfigurationForExternalComponent(component);
   const write = () =>
     prepareDockerDriverGatewayConfigEnv(env, state, "/usr/bin/openshell-sandbox", {
       gatewayRuntime: runtime,
       externalComponent: settings,
     });
-  return { root, ca, state, env, component, settings, runtime, provider, gateway, inspect, write };
+  const select = () =>
+    vi.spyOn(runtimeSelection, "resolveConfiguredRuntimeProvider").mockReturnValue({
+      ...provider,
+      gateway: { ...gateway, observeHostRuntime: () => runtime },
+    });
+  return {
+    root,
+    ca,
+    state,
+    env,
+    component,
+    settings,
+    runtime,
+    provider,
+    gateway,
+    inspect,
+    run,
+    network,
+    select,
+    write,
+  };
 }
 
 describe("external component connection declaration", () => {
@@ -204,6 +244,214 @@ describe("external component trust", () => {
 });
 
 describe("managed gateway connection configuration", () => {
+  it.each(["missing", "existing"])(
+    "uses the inspected %s network before writing connections",
+    async (state) => {
+      const f = fixture();
+      f.select();
+      let exists = state === "existing";
+      f.run.mockImplementation((args) => ({
+        status: args[1] === "ls" || exists ? 0 : 1,
+        stdout:
+          args[1] === "ls"
+            ? exists
+              ? `${f.env.OPENSHELL_DOCKER_NETWORK_NAME}\n`
+              : ""
+            : exists
+              ? JSON.stringify([f.network()])
+              : "",
+        stderr: "",
+      }));
+      const capture = vi
+        .spyOn(openShellClient, "captureOpenshellCommandAsyncResult")
+        .mockImplementation(async (_binary, args, options) => {
+          expect(args).toEqual([
+            "prepare-docker-network",
+            "--network-name",
+            f.env.OPENSHELL_DOCKER_NETWORK_NAME,
+          ]);
+          expect(options).toMatchObject({
+            timeoutMilliseconds: 35_000,
+            timeoutKillSignal: "SIGKILL",
+            outputLimitBytes: 16 * 1024,
+          });
+          expect(options?.environment).not.toHaveProperty("OPENSHELL_GATEWAY_CONFIG");
+          expect(fs.existsSync(f.env.OPENSHELL_GATEWAY_CONFIG!)).toBe(false);
+          exists = true;
+          return {
+            status: 0,
+            signal: null,
+            stdout: JSON.stringify({
+              id: "a".repeat(64),
+              name: f.env.OPENSHELL_DOCKER_NETWORK_NAME,
+              gatewayIp: "172.30.115.1",
+              subnet: "172.30.115.0/24",
+            }),
+            stderr: "",
+          };
+        });
+      const deps = flowDeps(
+        { collectGatewayReadiness: async () => undefined },
+        () => f.env,
+        vi.fn(),
+        () => "/usr/bin/openshell-gateway",
+      );
+      const preparation = await deps.configureExternalComponentGateway(f.settings);
+      expect(preparation?.network).toEqual({
+        gatewayIp: "172.30.115.1",
+        subnet: "172.30.115.0/24",
+      });
+      expect(capture).toHaveBeenCalledTimes(state === "missing" ? 1 : 0);
+      expect(
+        f.run.mock.calls.every(
+          ([args]) => args[0] === "network" && ["inspect", "ls"].includes(args[1]!),
+        ),
+      ).toBe(true);
+      expect(fs.readFileSync(f.env.OPENSHELL_GATEWAY_CONFIG!, "utf-8")).toContain(
+        "https://172.30.115.1:9444",
+      );
+      preparation!.revalidate();
+      f.run.mockReturnValue({
+        status: 0,
+        stdout: JSON.stringify([{ ...f.network(), Id: "b".repeat(64) }]),
+        stderr: "",
+      });
+      expect(() => preparation!.revalidate()).toThrow();
+    },
+  );
+
+  it.each(["command failure", "timeout", "invalid output", "wrong identity", "readback failure"])(
+    "stops before writing connections after network %s",
+    async (failure) => {
+      const f = fixture();
+      f.select();
+      const capture = vi
+        .spyOn(openShellClient, "captureOpenshellCommandAsyncResult")
+        .mockResolvedValue({
+          status: failure === "command failure" ? 1 : 0,
+          signal: null,
+          timedOut: failure === "timeout",
+          stdout:
+            failure === "invalid output"
+              ? "invalid"
+              : JSON.stringify({
+                  id: (failure === "wrong identity" ? "b" : "a").repeat(64),
+                  name: f.env.OPENSHELL_DOCKER_NETWORK_NAME,
+                  gatewayIp: "172.30.115.1",
+                  subnet: "172.30.115.0/24",
+                }),
+          stderr: "service diagnostics must not be forwarded",
+        });
+      f.run.mockImplementation((args) => ({
+        status: args[1] === "ls" || failure !== "readback failure" ? 0 : 1,
+        stdout: args[1] === "ls" ? "" : JSON.stringify([f.network()]),
+        stderr: "",
+      }));
+      const deps = flowDeps(
+        { collectGatewayReadiness: async () => undefined },
+        () => f.env,
+        vi.fn(),
+        () => "/usr/bin/openshell-gateway",
+      );
+      await expect(deps.configureExternalComponentGateway(f.settings)).rejects.toThrow(
+        "preparation_failed",
+      );
+      expect(capture).toHaveBeenCalledOnce();
+      expect(fs.existsSync(f.env.OPENSHELL_GATEWAY_CONFIG!)).toBe(false);
+    },
+  );
+
+  it.each(["listing failure", "duplicate names", "inspection failure", "incompatible bridge"])(
+    "stops without preparation after %s",
+    async (failure) => {
+      const f = fixture();
+      f.select();
+      const capture = vi.spyOn(openShellClient, "captureOpenshellCommandAsyncResult");
+      f.run.mockImplementation((args) => ({
+        status:
+          failure === "listing failure" ||
+          (failure === "inspection failure" && args[1] === "inspect")
+            ? 1
+            : 0,
+        stdout:
+          args[1] === "ls"
+            ? `${f.env.OPENSHELL_DOCKER_NETWORK_NAME}\n`.repeat(
+                failure === "duplicate names" ? 2 : 1,
+              )
+            : JSON.stringify([
+                {
+                  ...f.network(),
+                  Driver: failure === "incompatible bridge" ? "overlay" : "bridge",
+                },
+              ]),
+        stderr: "",
+      }));
+      const deps = flowDeps(
+        { collectGatewayReadiness: async () => undefined },
+        () => f.env,
+        vi.fn(),
+        () => "/usr/bin/openshell-gateway",
+      );
+      await expect(deps.configureExternalComponentGateway(f.settings)).rejects.toThrow(
+        "preparation_failed",
+      );
+      expect(capture).not.toHaveBeenCalled();
+      expect(fs.existsSync(f.env.OPENSHELL_GATEWAY_CONFIG!)).toBe(false);
+    },
+  );
+
+  it.each([
+    null,
+    { componentId: "generic-component", interceptorSocketPath: "/run/component/interceptor.sock" },
+  ])("keeps ordinary and v1 onboarding free of network preparation: %j", async (component) => {
+    const f = fixture();
+    f.select();
+    const resolve = vi.fn();
+    const deps = flowDeps(
+      { collectGatewayReadiness: async () => undefined },
+      () => f.env,
+      vi.fn(),
+      resolve,
+    );
+    await deps.configureExternalComponentGateway(component);
+    expect(resolve).not.toHaveBeenCalled();
+    expect(f.run).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    "incompatible driver",
+    "multiple networks",
+    "multiple IPv4 ranges",
+    "mismatched subnet",
+    "public address",
+  ])("rejects %s before writing component configuration", (kind) => {
+    const f = fixture();
+    const network = f.network();
+    const mutations: Record<string, () => void> = {
+      "incompatible driver": () => {
+        network.Driver = "overlay";
+      },
+      "multiple IPv4 ranges": () => {
+        network.IPAM.Config.push({ Gateway: "172.31.1.1", Subnet: "172.31.1.0/24" });
+      },
+      "mismatched subnet": () => {
+        network.IPAM.Config[0]!.Gateway = "172.29.1.1";
+      },
+      "public address": () => {
+        network.IPAM.Config[0]!.Gateway = "8.8.8.8";
+      },
+      "multiple networks": () => {},
+    };
+    mutations[kind]!();
+    f.run.mockReturnValue({
+      status: 0,
+      stdout: JSON.stringify(kind === "multiple networks" ? [network, network] : [network]),
+      stderr: "",
+    });
+    expect(() => f.write()).toThrow("endpoint_restricted");
+    expect(fs.existsSync(f.env.OPENSHELL_GATEWAY_CONFIG!)).toBe(false);
+  });
+
   it("writes authenticated connections and delegates callback selection to the component (#11507)", () => {
     const f = fixture();
     f.write();

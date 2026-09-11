@@ -41,6 +41,12 @@ Machine states are coarse user-visible onboarding phases, not every subprocess o
 
 A state handler may perform many smaller operations, but it should expose only stable, redacted state transitions and context updates to the FSM.
 
+The gateway handler awaits authenticated component connection configuration. That configuration
+inspects an existing Docker network or asks OpenShell to prepare a missing one, then writes NemoClaw-owned
+configuration. Component preparation must acknowledge before gateway startup or state advancement.
+Network preparation errors leave gateway startup and sandbox creation unattempted; ordinary and
+v1 onboarding retain their existing sequence. See [external-component preparation](../external-component/README.md#preparation).
+
 ## Session steps versus machine state
 
 The persisted onboarding session tracks step-level progress for resumability.
