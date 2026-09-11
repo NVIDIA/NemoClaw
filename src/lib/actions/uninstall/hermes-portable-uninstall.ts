@@ -475,10 +475,10 @@ function requireCache(cache: LoadedAuthority | null): LoadedAuthority {
 }
 
 /** Run schema-5 cleanup after the host fence, sorted lifecycle locks, and registry lock. */
-export function runHermesPortableUninstall(
+export async function runHermesPortableUninstall(
   input: HermesPortableUninstallInput,
   deps: HermesPortableUninstallDeps = {},
-): HermesPortableUninstallTransactionResult {
+): Promise<HermesPortableUninstallTransactionResult> {
   let cache: LoadedAuthority | null = null;
   return runHermesPortableUninstallTransaction(input.stateDir, {
     prepare: () => {
@@ -501,10 +501,10 @@ export function runHermesPortableUninstall(
       }
       return removed;
     },
-    reconcileProviders: () => {
+    reconcileProviders: async () => {
       for (const target of requireCache(cache).targets) {
         if (target.authority.provider.disposition === "remove") {
-          target.provider.removeAndVerify();
+          await target.provider.removeAndVerify();
         }
       }
     },

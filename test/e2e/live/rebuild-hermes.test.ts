@@ -28,7 +28,7 @@ import {
   snapshotFile,
   writeJsonFile,
 } from "../fixtures/file-state.ts";
-import { CLI_ENTRYPOINT } from "../fixtures/paths.ts";
+import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import { listCredentialLeakPaths } from "../fixtures/phases/state-validation.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
@@ -1180,6 +1180,7 @@ test(
     const hermesVersionText = resultText(hermesVersion);
     const actualHermesVersion = hermesVersionText.match(/v(\d+\.\d+\.\d+)/)?.[1];
     const acpInitializedAfterRebuild = await runHermesAcpLiveScenario({
+      adapterEntrypoint: path.join(REPO_ROOT, "dist/lib/acp/main.js"),
       artifacts,
       env: testEnv(apiKey),
       progress,

@@ -4,6 +4,7 @@
 import { createHash } from "node:crypto";
 
 import { describe, expect, it, type Mock, vi } from "vitest";
+import { createManagedProviderAdapter } from "../../adapters/openshell/managed-provider-adapter";
 import { managedStartupE2eProfile } from "../../../../scripts/checks/generate-managed-startup-profile-fixture.mts";
 import type { HermesToolGatewayCloneBroker } from "../../hermes-tool-gateway-clone-broker";
 import {
@@ -413,6 +414,8 @@ describe("Hermes managed clone broker transaction", () => {
     const profile = hermesProfile();
     const source = sourceEntry(profile);
     const runner = providerRunner();
+    const providerAdapter = createManagedProviderAdapter(runner.run);
+    const deleteProvider = vi.spyOn(providerAdapter, "deleteProvider");
     const hostBroker = broker();
     hostBroker.activateHermesToolGatewayCloneBinding.mockImplementation(() => {
       throw new Error("activation rejected");
@@ -431,10 +434,12 @@ describe("Hermes managed clone broker transaction", () => {
         ...authority(source),
         environment: environment(),
         runOpenshell: runner.run,
+        providerAdapter,
         broker: hostBroker,
       }),
     ).rejects.toThrow("activation rejected");
     expect(runner.live.size).toBe(0);
+    expect(deleteProvider).toHaveBeenCalledTimes(2);
     expect(hostBroker.discardHermesToolGatewayCloneBinding).toHaveBeenCalledOnce();
   });
 });

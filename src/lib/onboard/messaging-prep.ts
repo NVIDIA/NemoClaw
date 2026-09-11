@@ -4,7 +4,7 @@
 import type { WebSearchConfig } from "../inference/web-search";
 import * as webSearch from "../inference/web-search";
 import { listMessagingCredentialMetadata } from "../messaging/channels";
-import { HERMES_TAVILY_PROVIDER_PROFILE_ID } from "../messaging/applier/web-search-provider-profile";
+import { webSearchProviderProfileId } from "../messaging/applier/web-search-provider-profile";
 import { MESSAGING_CREDENTIAL_PROVIDER_TYPE } from "../messaging/provider-profile";
 import { type ChannelDef, getChannelTokenKeys } from "../sandbox/channels";
 import type { ExtraPlaceholderCredentialSources } from "./extra-placeholder-keys";
@@ -132,10 +132,7 @@ export async function prepareCreateSandboxMessaging(
   const webSearchEnabled = webSearch.isWebSearchEnabled(input.webSearchConfig);
   const webSearchProvider = webSearch.webSearchProviderForConfig(input.webSearchConfig);
   const webSearchCredentialEnv = webSearch.webSearchEnvFor(webSearchProvider);
-  const webSearchProviderType =
-    webSearchProvider === "tavily" && input.agentName?.trim().toLowerCase() === "hermes"
-      ? HERMES_TAVILY_PROVIDER_PROFILE_ID
-      : webSearchProvider;
+  const webSearchProviderType = webSearchProviderProfileId(webSearchProvider, input.agentName);
   const webSearchProviderName = `${input.sandboxName}-${webSearchProvider}-search`;
   const webSearchApiKey = webSearchEnabled
     ? input.getCredential(webSearchCredentialEnv) ||

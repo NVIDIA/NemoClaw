@@ -2,7 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { WebSearchConfig, WebSearchProvider } from "../../inference/web-search";
-import { assertSandboxCreatedContext, type OnboardFlowContext } from "./flow-context";
+import {
+  assertSandboxCreatedContext,
+  isProviderlessComponentOnboarding,
+  type OnboardFlowContext,
+} from "./flow-context";
 import {
   createAgentSetupPhase,
   createFinalizationPhase,
@@ -20,7 +24,7 @@ import {
 } from "./handlers/finalization";
 import { handlePoliciesState, type PoliciesStateOptions } from "./handlers/policies";
 import { createPhaseProgressReporter } from "./phase-progress";
-import type { OnboardStateResult } from "./result";
+import { advanceTo, completeOnboardMachine, type OnboardStateResult } from "./result";
 import type { OnboardMachineRunnerRuntime, OnboardStateHandlerResult } from "./runner";
 import type { OnboardSequencePhase } from "./sequence-runner";
 import type { OnboardMachineEventType, OnboardMachineState } from "./types";
@@ -60,10 +64,14 @@ export function createFinalOnboardFlowPhases<
   OnboardSequencePhase<Context>,
 ] {
   const finalizationDeps = options.finalizationDeps;
+  let activatedProviderlessSandbox: string | null = null;
   const createBranchPhase =
     options.branchState === "agent_setup" ? createAgentSetupPhase : createOpenclawSetupPhase;
   const branchSetupPhase = createBranchPhase<Context>(async (context) => {
     assertSandboxCreatedContext(context, "agent setup");
+    if (isProviderlessComponentOnboarding(context)) {
+      return { result: advanceTo("policies", { metadata: { state: options.branchState } }) };
+    }
     const agentSetupResult = await handleAgentSetupState({
       agent: context.agent,
       sandboxName: context.sandboxName,
@@ -84,6 +92,10 @@ export function createFinalOnboardFlowPhases<
 
   const policiesPhase = createPoliciesPhase<Context>(async (context) => {
     assertSandboxCreatedContext(context, "policies");
+    if (isProviderlessComponentOnboarding(context)) {
+      // OpenShell already verified the interceptor-supplied policy during creation.
+      return { result: advanceTo("finalizing", { metadata: { state: "policies" } }) };
+    }
     const policiesResult = await handlePoliciesState({
       resume: context.resume,
       preserveRebuildLivePolicy: options.preserveRebuildLivePolicy,
@@ -133,13 +145,28 @@ export function createFinalOnboardFlowPhases<
       portableProfileSelected: context.session?.checkpoint?.profile.value === "portable",
       recreateJournalHandoff: context.recreateJournalHandoff,
       externalComponent: context.externalComponent,
+      providerless: isProviderlessComponentOnboarding(context),
       deps: finalizationDeps,
     });
+    if (
+      isProviderlessComponentOnboarding(context) &&
+      finalizationResult.stateResult.type === "transition"
+    ) {
+      activatedProviderlessSandbox = context.sandboxName;
+    }
     return { result: finalizationResult.stateResult };
   });
 
   const postVerifyPhase = createPostVerifyPhase<Context>(async (context) => {
     assertSandboxCreatedContext(context, "post verification");
+    if (isProviderlessComponentOnboarding(context)) {
+      if (activatedProviderlessSandbox !== context.sandboxName) {
+        throw new Error(
+          "Providerless component activation has not completed in this onboarding run.",
+        );
+      }
+      return { result: completeOnboardMachine({}, { state: "post_verify" }) };
+    }
     const webSearchEnabled = options.finalization.webSearchEnabled(context.webSearchConfig);
     const postVerifyResult = await handlePostVerifyState({
       sandboxName: context.sandboxName,

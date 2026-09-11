@@ -110,6 +110,30 @@ describe("preserved environment inventory", () => {
     ).toBe(false);
   });
 
+  it.each([
+    "openshell:resolve:env:TAVILY_API_KEY",
+    "openshell:resolve:env:v17_TAVILY_API_KEY",
+    "tvly-backup-test-secret",
+  ])("does not restore a Tavily credential from an older Hermes dotenv [case %#]", (credential) => {
+    const assignments = extractPreservedEnvAssignments(
+      `SLACK_HOME_CHANNEL=C0123\nTAVILY_API_KEY=${credential}\n`,
+      inventory,
+    );
+    const merged = mergeHermesPreservedEnvIntoMessagingPlan(hermesPlan(), [
+      { path: ".env", assignments },
+    ]);
+    const envLines: string[] = [];
+    applyMessagingAgentRenderToEnvLines(envLines, merged, "~/.hermes/.env");
+
+    expect(envLines).toContain("SLACK_HOME_CHANNEL=C0123");
+    expect(envLines.join("\n")).not.toContain("TAVILY_API_KEY=");
+    expect(() =>
+      mergeHermesPreservedEnvIntoMessagingPlan(hermesPlan(), [
+        { path: ".env", assignments: [`TAVILY_API_KEY=${credential}`] },
+      ]),
+    ).toThrow("Invalid preserved environment assignments");
+  });
+
   it("applies restored values before current manifest renders (#7803)", () => {
     const plan = hermesPlan();
     const currentRender = plan.agentRender[0];
