@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { makePlan, planEntry } from "../../../../../../test/helpers/messaging-conflict-fixtures";
 import {
@@ -128,6 +128,90 @@ describe("teams.hostForwardPortConflict hook", () => {
     ).rejects.toMatchObject({
       code: MESSAGING_HOOK_CONFLICT_CODE,
     });
+  });
+
+  it("aborts when an unrelated host process owns the webhook port", async () => {
+    const registry = new MessagingHookRegistry([
+      createTeamsHostForwardPortConflictHookRegistration({
+        currentSandbox: "bob",
+        registryEntries: [],
+        checkPortAvailable: async () => ({
+          ok: false,
+          process: "nc",
+          pid: 4321,
+          reason: "lsof reports nc (PID 4321) listening on port 3978",
+        }),
+        isCurrentSandboxForward: () => false,
+      }),
+    ]);
+
+    await expect(
+      runMessagingHook(HOOK, registry, {
+        channelId: "teams",
+        inputs: {
+          currentGatewayName: "nemoclaw",
+          webhookPort: "3978",
+        },
+      }),
+    ).rejects.toThrow(
+      "Microsoft Teams webhook port 3978 is already in use by nc (PID 4321). " +
+        "Free the port or set MSTEAMS_PORT to a different free port before enabling Teams.",
+    );
+  });
+
+  it("aborts when the host port probe cannot verify availability", async () => {
+    const isCurrentSandboxForward = vi.fn(() => true);
+    const registry = new MessagingHookRegistry([
+      createTeamsHostForwardPortConflictHookRegistration({
+        currentSandbox: "bob",
+        registryEntries: [],
+        checkPortAvailable: async () => ({
+          ok: true,
+          warning: "port probe skipped: listen EACCES: permission denied 127.0.0.1:443",
+        }),
+        isCurrentSandboxForward,
+      }),
+    ]);
+
+    await expect(
+      runMessagingHook(HOOK, registry, {
+        channelId: "teams",
+        inputs: {
+          currentGatewayName: "nemoclaw",
+          webhookPort: "443",
+        },
+      }),
+    ).rejects.toMatchObject({
+      code: MESSAGING_HOOK_CONFLICT_CODE,
+      message:
+        "Microsoft Teams webhook port 443 could not be verified as free: " +
+        "port probe skipped: listen EACCES: permission denied 127.0.0.1:443. " +
+        "Resolve the probe failure or set MSTEAMS_PORT to a different free port before enabling Teams.",
+    });
+    expect(isCurrentSandboxForward).not.toHaveBeenCalled();
+  });
+
+  it("allows the current sandbox's live host forward during rebuild", async () => {
+    const isCurrentSandboxForward = vi.fn(() => true);
+    const registry = new MessagingHookRegistry([
+      createTeamsHostForwardPortConflictHookRegistration({
+        currentSandbox: "bob",
+        registryEntries: [],
+        checkPortAvailable: async () => ({ ok: false, process: "openshell", pid: 1234 }),
+        isCurrentSandboxForward,
+      }),
+    ]);
+
+    await expect(
+      runMessagingHook(HOOK, registry, {
+        channelId: "teams",
+        inputs: {
+          currentGatewayName: "nemoclaw",
+          webhookPort: "3978",
+        },
+      }),
+    ).resolves.toMatchObject({ outputs: {} });
+    expect(isCurrentSandboxForward).toHaveBeenCalledWith("bob", "nemoclaw", 3978, 1234);
   });
 
   it("accepts serialized applier inputs for registry-scoped checks", async () => {

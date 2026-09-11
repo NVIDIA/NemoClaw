@@ -32,7 +32,7 @@ afterEach(() => {
 // credential binding carrying a hash — staging preserves credentialBindings
 // verbatim, so a shared hash across two sandboxes is a "matching-token"
 // conflict.
-function teamsPlan(sandboxName: string, credentialHash: string) {
+function teamsPlan(sandboxName: string, credentialHash: string, webhookPort?: number) {
   return {
     schemaVersion: 1,
     sandboxName,
@@ -47,8 +47,41 @@ function teamsPlan(sandboxName: string, credentialHash: string) {
         selected: true,
         configured: true,
         disabled: false,
-        inputs: [],
-        hooks: [],
+        inputs:
+          webhookPort === undefined
+            ? []
+            : [
+                {
+                  channelId: "teams",
+                  inputId: "webhookPort",
+                  kind: "config",
+                  required: false,
+                  sourceEnv: "MSTEAMS_PORT",
+                  statePath: "teamsConfig.webhookPort",
+                  value: String(webhookPort),
+                },
+              ],
+        hooks:
+          webhookPort === undefined
+            ? []
+            : [
+                {
+                  id: "teams-host-forward-port-conflict",
+                  phase: "pre-enable",
+                  handler: "teams.hostForwardPortConflict",
+                  inputs: ["webhookPort"],
+                  onFailure: "abort",
+                },
+              ],
+        ...(webhookPort === undefined
+          ? {}
+          : {
+              hostForward: {
+                channelId: "teams",
+                port: webhookPort,
+                label: "Microsoft Teams webhook",
+              },
+            }),
       },
     ],
     disabledChannels: [],
@@ -112,6 +145,7 @@ function createConflictFixture() {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-5954-"));
   tmpFixtures.push(tmpDir);
   const nemoclawDir = path.join(tmpDir, ".nemoclaw");
+  const legacyForwardListMarker = path.join(tmpDir, "legacy-forward-list-called");
   fs.mkdirSync(nemoclawDir, { recursive: true, mode: 0o700 });
 
   const sandboxEntry = (name: string) => ({
@@ -161,7 +195,7 @@ function createConflictFixture() {
 const a = process.argv.slice(2);
 if (a[0]==="sandbox" && a[1]==="list")       { process.stdout.write("my-assistant\\n"); process.exit(0); }
 if (a[0]==="sandbox" && a[1]==="ssh-config") { process.stdout.write("${sshConfig}\\n"); process.exit(0); }
-if (a[0]==="sandbox" && a[1]==="delete")     { process.exit(0); }
+if (a[0]==="sandbox" && a[1]==="delete")     { process.stderr.write("openshell delete must not run before the conflict preflight\\n"); process.exit(17); }
 if (a[0]==="status")                         { process.stdout.write("Status: Connected\\nGateway: nemoclaw\\n"); process.exit(0); }
 if (a[0]==="gateway" && a[1]==="info")       { process.stdout.write("Gateway: nemoclaw\\n"); process.exit(0); }
 if (a[0]==="gateway" && a[1]==="select")     { process.exit(0); }
@@ -169,7 +203,10 @@ if (a[0]==="inference" && a[1]==="get")      { process.stdout.write('{"provider"
 if (a[0]==="inference")                      { process.exit(0); }
 if (a[0]==="provider" && a[1]==="get")       { process.exit(0); }
 if (a[0]==="provider")                       { process.exit(0); }
-if (a[0]==="forward")                        { process.exit(0); }
+if (a.some((value, index) => value === "forward" && a[index + 1] === "list")) {
+  require("node:fs").writeFileSync(${JSON.stringify(legacyForwardListMarker)}, "called", { mode: 0o600 });
+  process.exit(17);
+}
 process.exit(0);
 `,
     { mode: 0o755 },
@@ -200,7 +237,31 @@ process.exit(17);
     { mode: 0o755 },
   );
 
-  return { tmpDir, nemoclawDir };
+  return { tmpDir, nemoclawDir, legacyForwardListMarker };
+}
+
+function createHostPortConflictFixture() {
+  const fixture = createConflictFixture();
+  const registryPath = path.join(fixture.nemoclawDir, "sandboxes.json");
+  const registry = JSON.parse(fs.readFileSync(registryPath, "utf-8"));
+  delete registry.sandboxes.hermes;
+  registry.sandboxes["my-assistant"].messaging.plan = teamsPlan(
+    "my-assistant",
+    "unique-teams-hash",
+    3978,
+  );
+  fs.writeFileSync(registryPath, JSON.stringify(registry), { mode: 0o600 });
+  fs.writeFileSync(
+    path.join(fixture.tmpDir, "lsof"),
+    `#!/usr/bin/env node
+if (process.argv.includes(":3978")) {
+  process.stdout.write("COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME\\nnc 4321 user 3u IPv4 1 0t0 TCP 127.0.0.1:3978 (LISTEN)\\n");
+}
+process.exit(0);
+`,
+    { mode: 0o755 },
+  );
+  return fixture;
 }
 
 function runRebuild(tmpDir: string) {
@@ -250,6 +311,28 @@ describe("rebuild messaging credential conflict preflight (#5954)", () => {
       expect(output).not.toContain("Backing up sandbox state");
       expect(output).not.toContain("Old sandbox deleted");
       expect(output).not.toContain("must not run before the conflict preflight");
+      expect(fs.existsSync(f.legacyForwardListMarker)).toBe(false);
+      expect(registryHasSandbox(f.nemoclawDir, "my-assistant")).toBe(true);
+    },
+  );
+
+  it(
+    "aborts BEFORE backup/delete when an unrelated process owns the Teams webhook port",
+    { timeout: 90_000 },
+    () => {
+      const f = createHostPortConflictFixture();
+      const result = runRebuild(f.tmpDir);
+      const output = `${result.stderr || ""}${result.stdout || ""}`;
+
+      expect(result.status).not.toBe(0);
+      expect(output).toContain(
+        "Microsoft Teams webhook port 3978 is already in use by nc (PID 4321)",
+      );
+      expect(output).toContain("MSTEAMS_PORT");
+      expect(output).not.toContain("Backing up sandbox state");
+      expect(output).not.toContain("Old sandbox deleted");
+      expect(output).not.toContain("must not run before the conflict preflight");
+      expect(fs.existsSync(f.legacyForwardListMarker)).toBe(false);
       expect(registryHasSandbox(f.nemoclawDir, "my-assistant")).toBe(true);
     },
   );

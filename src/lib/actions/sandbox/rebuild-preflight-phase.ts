@@ -54,6 +54,7 @@ import {
   pinRebuildTargetGatewayForReadiness,
   prepareRebuildTargetPreflights,
   resolveRebuildMcpRuntimeSelection,
+  type RebuildPreparedTarget,
 } from "./rebuild-preflight-target-phase";
 import { disposePreparedBuildContext } from "./rebuild-prepared-image-context";
 import {
@@ -72,6 +73,7 @@ export interface RebuildPreflightPhaseResult {
   targetConfig: RebuildTargetConfig;
   recreateOptions: RebuildRecreateOnboardOpts;
   messagingPlan: SandboxMessagingPlan | null;
+  recheckMessagingConflicts: RebuildPreparedTarget["recheckMessagingConflicts"];
   baseImagePreflight: RebuildAgentBaseImagePreflight;
   liveState: RebuildLiveState;
   recoveryManifest: RebuildManifest | null;

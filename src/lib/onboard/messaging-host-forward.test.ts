@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { SandboxMessagingPlan } from "../messaging/manifest";
 import {
+  createMessagingHostForwardPortConflictHookOptions,
   ensureMessagingHostForwardIfConfigured,
   resolveProductionForwardServiceGatewayName,
   resolveMessagingHostForward,
@@ -98,6 +99,96 @@ function makeCompactTeamsPlan(): SandboxMessagingPlan {
 }
 
 describe("ensureMessagingHostForwardIfConfigured", () => {
+  it("checks the listener PID and the complete current-sandbox forward target", async () => {
+    const checkPortAvailable = vi.fn(async () => ({
+      ok: false,
+      process: "openshell",
+      pid: 1234,
+    }));
+    const isListenerOwner = vi.fn(() => true);
+    const options = createMessagingHostForwardPortConflictHookOptions({
+      checkPortAvailable,
+      resolveExecutable: () => "/usr/bin/openshell",
+      isListenerOwner,
+      runtimeSelection: { gatewayName: "nemoclaw-8090", workspace: "review" },
+    });
+
+    await expect(options.checkPortAvailable?.(3978)).resolves.toMatchObject({ ok: false });
+    expect(options.isCurrentSandboxForward?.("demo", "nemoclaw-8090", 3978, 1234)).toBe(true);
+    expect(isListenerOwner).toHaveBeenCalledWith(
+      {
+        executable: "/usr/bin/openshell",
+        gatewayName: "nemoclaw-8090",
+        workspace: "review",
+        sandboxName: "demo",
+        localHost: "127.0.0.1",
+        localPort: 3978,
+        targetHost: "127.0.0.1",
+        targetPort: 3978,
+      },
+      { expectedPid: 1234 },
+    );
+  });
+
+  it("targets the hook gateway and default workspace without a runtime selection", () => {
+    const isListenerOwner = vi.fn(() => true);
+    const options = createMessagingHostForwardPortConflictHookOptions({
+      resolveExecutable: () => "/usr/bin/openshell",
+      isListenerOwner,
+    });
+
+    expect(options.isCurrentSandboxForward?.("demo", "nemoclaw", 3978, 1234)).toBe(true);
+    expect(isListenerOwner).toHaveBeenCalledWith(
+      expect.objectContaining({
+        gatewayName: "nemoclaw",
+        workspace: "default",
+        sandboxName: "demo",
+        localPort: 3978,
+      }),
+      { expectedPid: 1234 },
+    );
+  });
+
+  it.each([
+    { sandbox: "demo", gateway: null, executable: "/usr/bin/openshell" },
+    { sandbox: "demo", gateway: "other", executable: "/usr/bin/openshell" },
+    { sandbox: "../demo", gateway: "nemoclaw", executable: "/usr/bin/openshell" },
+    { sandbox: "demo", gateway: "nemoclaw", executable: null },
+  ])(
+    "rejects incomplete forward authority: $sandbox / $gateway / $executable",
+    ({ sandbox, gateway, executable }) => {
+      const isListenerOwner = vi.fn(() => true);
+      const options = createMessagingHostForwardPortConflictHookOptions({
+        resolveExecutable: () => executable,
+        isListenerOwner,
+        runtimeSelection: { gatewayName: "nemoclaw", workspace: "default" },
+      });
+
+      expect(options.isCurrentSandboxForward?.(sandbox, gateway, 3978, 1234)).toBe(false);
+      expect(isListenerOwner).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([null, 1234])("rejects unproved ownership when the initial PID is %s", (pid) => {
+    const options = createMessagingHostForwardPortConflictHookOptions({
+      resolveExecutable: () => "/usr/bin/openshell",
+      isListenerOwner: () => false,
+    });
+
+    expect(options.isCurrentSandboxForward?.("demo", "nemoclaw", 3978, pid)).toBe(false);
+  });
+
+  it("rejects ownership when the owner probe fails", () => {
+    const options = createMessagingHostForwardPortConflictHookOptions({
+      resolveExecutable: () => "/usr/bin/openshell",
+      isListenerOwner: () => {
+        throw new Error("owner probe unavailable");
+      },
+    });
+
+    expect(options.isCurrentSandboxForward?.("demo", "nemoclaw", 3978, 1234)).toBe(false);
+  });
+
   it("resolves compact persisted messaging host forwards", () => {
     expect(resolveMessagingHostForward(makeCompactTeamsPlan())).toEqual({
       channelId: "teams",

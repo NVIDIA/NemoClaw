@@ -76,6 +76,7 @@ type ForwardServiceOwnerProbe = (
 ) => { status: number | null; stdout: string };
 
 export interface ForwardServiceOwnerOptions {
+  readonly expectedPid?: number | null;
   readonly platform?: NodeJS.Platform;
   readonly probe?: ForwardServiceOwnerProbe;
   readonly procRoot?: string;
@@ -277,6 +278,12 @@ export function isForwardServiceListenerOwner(
   const before = listenerPids(target.localPort, platform, procRoot, procWorkLimit, probe);
   if (before.length !== 1 || !/^[1-9]\d*$/u.test(before[0])) return false;
   const pid = before[0];
+  if (
+    options.expectedPid !== undefined &&
+    options.expectedPid !== null &&
+    pid !== String(options.expectedPid)
+  )
+    return false;
   if (!processExecutableMatches(pid, target, platform, procRoot, probe)) return false;
   const commandLine = probe("ps", ["-ww", "-p", pid, "-o", "args="]);
   if (commandLine.status !== 0) return false;

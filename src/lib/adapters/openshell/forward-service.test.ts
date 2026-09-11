@@ -158,6 +158,19 @@ describe("OpenShell forward service", () => {
     expect(probe).toHaveBeenCalledTimes(4);
   });
 
+  it.each([
+    { expectedPid: 4321, owned: true },
+    { expectedPid: 9876, owned: false },
+    { expectedPid: 0, owned: false },
+    { expectedPid: null, owned: true },
+  ])("compares listener ownership with the observed PID $expectedPid", ({ expectedPid, owned }) => {
+    const expected = [ownerTarget.executable, ...buildForwardServiceArgs(ownerTarget)].join(" ");
+    const probe = darwinOwnerProbe(`${expected}\n`);
+    const options = { platform: "darwin" as const, probe, expectedPid };
+
+    expect(isForwardServiceListenerOwner(ownerTarget, options)).toBe(owned);
+  });
+
   it("rejects a listener whose process does not match the direct ForwardTcp target", () => {
     const probe = darwinOwnerProbe("/usr/bin/node foreign-listener.js\n");
 

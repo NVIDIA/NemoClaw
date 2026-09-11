@@ -68,6 +68,13 @@ import {
 import type { ReadinessCapability, SystemReadinessReport } from "../../readiness/types";
 import type { RebuildRecreateOnboardOpts } from "./rebuild-gpu-opt-out";
 import { prepareRebuildTargetPreflights } from "./rebuild-preflight-target-phase";
+import { makePlan } from "../../../../test/helpers/messaging-conflict-fixtures";
+import * as portPreflight from "../../onboard/preflight";
+import * as registry from "../../state/registry";
+import * as messagingPreflight from "./rebuild-messaging-conflict-preflight";
+import * as messagingPhase from "./rebuild-messaging-phase";
+import * as forwardService from "../../adapters/openshell/forward-service";
+import * as openshellResolution from "../../adapters/openshell/resolve";
 
 describe("prepareRebuildTargetPreflights", () => {
   afterEach(() => vi.unstubAllEnvs());
@@ -81,6 +88,11 @@ describe("prepareRebuildTargetPreflights", () => {
     });
     mocks.prepareManagedWorkloadRebuildHandoff.mockResolvedValue(null);
     mocks.preflightAuthoritativeOnboardRuntime.mockResolvedValue(false);
+    mocks.bail.mockReset();
+    vi.mocked(messagingPhase.stageRebuildMessagingPlanOrBail).mockReset().mockResolvedValue(null);
+    vi.mocked(messagingPreflight.preflightRebuildMessagingConflicts)
+      .mockReset()
+      .mockResolvedValue(undefined);
   });
 
   async function prepareN1xTarget(
@@ -154,6 +166,74 @@ describe("prepareRebuildTargetPreflights", () => {
       | RebuildRecreateOnboardOpts
       | undefined;
   }
+
+  it("runs the default Teams port hook before gateway recovery or runtime preparation", async () => {
+    const actual = await vi.importActual<typeof import("./rebuild-messaging-conflict-preflight")>(
+      "./rebuild-messaging-conflict-preflight",
+    );
+    vi.mocked(messagingPreflight.preflightRebuildMessagingConflicts).mockImplementation(
+      actual.preflightRebuildMessagingConflicts,
+    );
+    const plan = makePlan("my-assistant", {
+      channels: [
+        {
+          channelId: "teams",
+          displayName: "Microsoft Teams",
+          authMode: "token-paste",
+          active: true,
+          selected: true,
+          configured: true,
+          disabled: false,
+          inputs: [
+            {
+              channelId: "teams",
+              inputId: "webhookPort",
+              kind: "config",
+              required: false,
+              value: "3978",
+            },
+          ],
+          hooks: [
+            {
+              id: "teams-host-forward-port-conflict",
+              channelId: "teams",
+              phase: "pre-enable",
+              handler: "teams.hostForwardPortConflict",
+              inputs: ["webhookPort"],
+              onFailure: "abort",
+            },
+          ],
+        },
+      ],
+      credentialBindings: [
+        {
+          channelId: "teams",
+          credentialId: "teamsClientSecret",
+          sourceInput: "clientSecret",
+          providerName: "my-assistant-teams-bridge",
+          providerEnvKey: "MSTEAMS_APP_PASSWORD",
+          placeholder: "openshell:resolve:env:MSTEAMS_APP_PASSWORD",
+          credentialAvailable: true,
+          credentialHash: "unique-hash",
+        },
+      ],
+    });
+    vi.mocked(messagingPhase.stageRebuildMessagingPlanOrBail).mockResolvedValue(plan);
+    vi.spyOn(registry, "listSandboxes").mockReturnValue({ sandboxes: [], defaultSandbox: null });
+    const probe = vi
+      .spyOn(portPreflight, "checkPortAvailable")
+      .mockResolvedValue({ ok: false, process: "nc", pid: 4321 });
+    vi.spyOn(openshellResolution, "resolveOpenshell").mockReturnValue("/usr/bin/openshell");
+    vi.spyOn(forwardService, "isForwardServiceListenerOwner").mockReturnValue(false);
+    mocks.bail.mockImplementationOnce((message: string) => {
+      throw new Error(message);
+    });
+
+    await expect(prepareN1xTarget("onboard")).rejects.toThrow("messaging channel conflict");
+    expect(probe).toHaveBeenCalledWith(3978);
+    expect(mocks.preflightAuthoritativeOnboardRuntime).not.toHaveBeenCalled();
+    expect(mocks.ensureRebuildTargetGatewaySelected).not.toHaveBeenCalled();
+  });
 
   it("resolves the Ollama context window through target preparation", async () => {
     const catalogHandoff = {
@@ -539,5 +619,9 @@ describe("prepareRebuildTargetPreflights", () => {
 
     expect(mocks.getMcpPreparationRuntimeSelection).toHaveBeenCalledOnce();
     expect(readinessOptions?.runtimeSelection).toBe(runtimeSelection);
+    expect(messagingPreflight.preflightRebuildMessagingConflicts).toHaveBeenCalledWith(
+      null,
+      expect.objectContaining({ runtimeSelection }),
+    );
   });
 });

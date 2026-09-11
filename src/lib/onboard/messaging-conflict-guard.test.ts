@@ -12,10 +12,67 @@ import {
   tgChannel,
 } from "../../../test/helpers/messaging-conflict-fixtures";
 import { SLACK_SOCKET_MODE_GATEWAY_CONFLICT_HOOK_HANDLER_ID } from "../messaging/channels/slack/hooks";
+import { TEAMS_HOST_FORWARD_PORT_CONFLICT_HOOK_HANDLER_ID } from "../messaging/channels/teams/hooks";
 import type { SandboxMessagingPlan } from "../messaging/manifest";
 import { enforceMessagingChannelConflicts } from "./messaging-conflict-guard";
+import { checkPortAvailable } from "./preflight";
+
+vi.mock("./preflight", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./preflight")>()),
+  checkPortAvailable: vi.fn(),
+}));
 
 class AbortError extends Error {}
+
+const TEAMS_HOST_FORWARD_PORT_CONFLICT_HOOK = {
+  channelId: "teams",
+  id: "teams-host-forward-port-conflict",
+  phase: "pre-enable",
+  handler: TEAMS_HOST_FORWARD_PORT_CONFLICT_HOOK_HANDLER_ID,
+  inputs: ["webhookPort"],
+  onFailure: "abort",
+} as const satisfies SandboxMessagingPlan["channels"][number]["hooks"][number];
+
+function teamsPlan(sandboxName: string): SandboxMessagingPlan {
+  return makePlan(sandboxName, {
+    channels: [
+      {
+        channelId: "teams",
+        displayName: "Microsoft Teams",
+        authMode: "token-paste",
+        active: true,
+        selected: true,
+        configured: true,
+        disabled: false,
+        inputs: [
+          {
+            channelId: "teams",
+            inputId: "webhookPort",
+            kind: "config",
+            required: false,
+            sourceEnv: "MSTEAMS_PORT",
+            statePath: "teamsConfig.webhookPort",
+            value: "3978",
+          },
+        ],
+        hostForward: { channelId: "teams", port: 3978, label: "Microsoft Teams webhook" },
+        hooks: [TEAMS_HOST_FORWARD_PORT_CONFLICT_HOOK],
+      },
+    ],
+    credentialBindings: [
+      {
+        channelId: "teams",
+        credentialId: "teamsClientSecret",
+        sourceInput: "clientSecret",
+        providerName: `${sandboxName}-teams-bridge`,
+        providerEnvKey: "MSTEAMS_APP_PASSWORD",
+        placeholder: "openshell:resolve:env:MSTEAMS_APP_PASSWORD",
+        credentialAvailable: true,
+        credentialHash: `${sandboxName}-teams-hash`,
+      },
+    ],
+  });
+}
 
 const SLACK_SOCKET_MODE_GATEWAY_CONFLICT_HOOK = {
   channelId: "slack",
@@ -287,5 +344,23 @@ describe("enforceMessagingChannelConflicts — Slack Socket Mode gateway axis (#
     const { deps, log } = makeDeps({ currentPlan: makePlan("bob") });
     await expect(enforceMessagingChannelConflicts(deps as never)).resolves.toBeUndefined();
     expect(log).not.toHaveBeenCalled();
+  });
+});
+
+describe("enforceMessagingChannelConflicts — Microsoft Teams host port axis", () => {
+  it("probes the webhook port through the default hook registry and aborts on an unrelated listener", async () => {
+    vi.mocked(checkPortAvailable).mockResolvedValue({ ok: false, process: "nc", pid: 4321 });
+    const { deps, error, promptContinue } = makeDeps({ currentPlan: teamsPlan("bob") });
+
+    await expect(enforceMessagingChannelConflicts(deps as never)).rejects.toBeInstanceOf(
+      AbortError,
+    );
+    expect(error).toHaveBeenCalledWith(
+      expect.stringContaining(
+        "Microsoft Teams webhook port 3978 is already in use by nc (PID 4321)",
+      ),
+    );
+    expect(checkPortAvailable).toHaveBeenCalledWith(3978);
+    expect(promptContinue).not.toHaveBeenCalled();
   });
 });

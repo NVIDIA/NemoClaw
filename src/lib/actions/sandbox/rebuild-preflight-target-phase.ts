@@ -95,6 +95,10 @@ export interface RebuildPreparedTarget {
   targetConfig: RebuildTargetConfig;
   recreateOptions: RebuildRecreateOnboardOpts;
   messagingPlan: SandboxMessagingPlan | null;
+  recheckMessagingConflicts(
+    runtimeSelection?: OpenShellRuntimeSelection,
+    onConflict?: RebuildBail,
+  ): Promise<void>;
   baseImagePreflight: RebuildAgentBaseImagePreflight;
   preparedImage: PreparedRebuildImage | null;
   routePreflightReceipt: RebuildRoutePreflightReceipt;
@@ -310,15 +314,19 @@ export async function prepareRebuildTargetPreflights(args: {
   }
   // Detect cross-sandbox credential conflicts immediately after staging the
   // exact rebuild plan, before host/runtime probes and every destructive phase.
-  await preflightRebuildMessagingConflicts(messagingPlan, {
-    sandboxName,
-    gatewayName: getSandboxTargetGatewayName(sandboxName),
-    registry,
-    cliName: () => CLI_NAME,
-    log: (message) => console.log(message),
-    error: (message) => console.error(message),
-    bail,
-  });
+  const messagingGatewayName = getSandboxTargetGatewayName(sandboxName);
+  const recheckMessagingConflicts = (runtimeSelection = mcpRuntimeSelection, onConflict = bail) =>
+    preflightRebuildMessagingConflicts(messagingPlan, {
+      sandboxName,
+      gatewayName: messagingGatewayName,
+      registry,
+      cliName: () => CLI_NAME,
+      log: (message) => console.log(message),
+      error: (message) => console.error(message),
+      runtimeSelection,
+      bail: onConflict,
+    });
+  await recheckMessagingConflicts();
   const gatewayRecovered = await runRebuildGatewayRecoveryAfterReadiness({
     assertReadiness: () =>
       preflightAuthoritativeOnboardRuntime(
@@ -432,6 +440,7 @@ export async function prepareRebuildTargetPreflights(args: {
         targetConfig,
         recreateOptions,
         messagingPlan,
+        recheckMessagingConflicts,
         baseImagePreflight,
         preparedImage,
         routePreflightReceipt: routePreflight.receipt,

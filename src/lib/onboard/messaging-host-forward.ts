@@ -2,15 +2,25 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
+  createBuiltInMessagingHookRegistry,
   getActiveMessagingHostForward,
   MessagingHostStateApplier,
+  type MessagingHookRegistry,
   type SandboxMessagingPlan,
 } from "../messaging";
+import type { TeamsHostForwardPortConflictHookOptions } from "../messaging/channels/teams/hooks";
 import { hydrateDerivedSandboxMessagingPlanFields } from "../messaging/hydration";
 import type { SandboxMessagingHostForwardPlan } from "../messaging/manifest";
 import { parseSandboxMessagingPlan } from "../messaging/plan-validation";
 import * as registry from "../state/registry";
+import {
+  createForwardServiceTarget,
+  isForwardServiceListenerOwner,
+} from "../adapters/openshell/forward-service";
+import { resolveOpenshellBinaryOrNull } from "../adapters/openshell/resolve-shared";
+import type { OpenShellRuntimeSelection } from "../adapters/openshell/runtime-selection";
 import { retireProductionLegacySandboxForwards } from "./forward-service-migration";
+import { checkPortAvailable, type PortProbeResult } from "./preflight";
 
 type GatewayBinding =
   | {
@@ -47,6 +57,58 @@ export interface MessagingHostForwardRollbackOptions {
   readonly cliName: () => string;
   readonly error?: (message?: string) => void;
   readonly exit?: (code: number) => never;
+}
+
+export interface MessagingHostForwardPortConflictOptionsDeps {
+  readonly checkPortAvailable?: (port: number) => Promise<PortProbeResult>;
+  readonly resolveExecutable?: () => string | null;
+  readonly isListenerOwner?: typeof isForwardServiceListenerOwner;
+  readonly runtimeSelection?: OpenShellRuntimeSelection;
+}
+
+export function createMessagingHostForwardPortConflictHookOptions(
+  deps: MessagingHostForwardPortConflictOptionsDeps = {},
+): TeamsHostForwardPortConflictHookOptions {
+  return {
+    checkPortAvailable: deps.checkPortAvailable ?? checkPortAvailable,
+    isCurrentSandboxForward: (sandboxName, gatewayName, port, listenerPid) => {
+      if (
+        !gatewayName ||
+        (deps.runtimeSelection && deps.runtimeSelection.gatewayName !== gatewayName)
+      ) {
+        return false;
+      }
+      try {
+        const executable = (deps.resolveExecutable ?? resolveOpenshellBinaryOrNull)();
+        if (!executable) return false;
+        return (deps.isListenerOwner ?? isForwardServiceListenerOwner)(
+          createForwardServiceTarget(
+            {
+              executable,
+              gatewayName,
+              workspace: deps.runtimeSelection?.workspace ?? "default",
+              sandboxName,
+              localHost: "127.0.0.1",
+            },
+            port,
+          ),
+          { expectedPid: listenerPid },
+        );
+      } catch {
+        return false;
+      }
+    },
+  };
+}
+
+export function createMessagingHostForwardPreEnableHookRegistry(
+  deps: MessagingHostForwardPortConflictOptionsDeps = {},
+): MessagingHookRegistry {
+  return createBuiltInMessagingHookRegistry({
+    teams: {
+      hostForwardPortConflict: createMessagingHostForwardPortConflictHookOptions(deps),
+    },
+  });
 }
 
 export function resolveMessagingHostForward(
