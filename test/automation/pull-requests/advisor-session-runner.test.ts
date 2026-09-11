@@ -59,7 +59,8 @@ const sdk = vi.hoisted(() => {
     omitAnalysis: false,
     omitAnalysisPrompts: 0,
     prompts: [] as string[],
-    retryResponses: [] as Array<"exhausted" | "success">,
+    retryCancelled: false,
+    retryResponses: [] as Array<"budget-exceeded" | "exhausted" | "success">,
     terminalResponses: [] as TerminalResponse[],
   };
 
@@ -76,6 +77,7 @@ const sdk = vi.hoisted(() => {
     state.omitAnalysis = false;
     state.omitAnalysisPrompts = 0;
     state.prompts = [];
+    state.retryCancelled = false;
     state.retryResponses = [];
     state.terminalResponses = [];
   };
@@ -179,7 +181,10 @@ const sdk = vi.hoisted(() => {
         Array.from({ length: terminalTool ? terminalPlan.failureCount : 0 }).forEach(() =>
           failTerminalTool(terminalTool as MockTool, emit),
         );
-        const retryError = "429 status code (no body)";
+        const retryError =
+          retryResponse === "budget-exceeded"
+            ? '429: {"message":"Budget has been exceeded!","code":"budget_exceeded"}'
+            : "429 status code (no body)";
         const retryAttemptEvents = [
           {
             type: "message_update",
@@ -209,12 +214,24 @@ const sdk = vi.hoisted(() => {
             { type: "auto_retry_end", success: false, attempt: 1, finalError: retryError },
           ],
         };
-        retryPlans[retryResponse ?? "none"].forEach(emit);
+        await (retryResponse === "budget-exceeded"
+          ? (async () => {
+              retryAttemptEvents.forEach(emit);
+              await Promise.resolve();
+              emit({
+                type: "auto_retry_end",
+                success: false,
+                attempt: 1,
+                finalError: state.retryCancelled ? "Retry cancelled" : retryError,
+              });
+            })()
+          : Promise.resolve(retryPlans[retryResponse ?? "none"].forEach(emit)));
         const omitThisAnalysis = state.omitAnalysis || state.omitAnalysisPrompts > 0;
         state.omitAnalysisPrompts = Math.max(0, state.omitAnalysisPrompts - 1);
         const shouldEmitText =
           !omitThisAnalysis &&
           retryResponse !== "exhausted" &&
+          retryResponse !== "budget-exceeded" &&
           !prompt.startsWith("Prepare ") &&
           (!prompt.includes("Emit no prose before or after") ||
             (state.emitCommitProse && !isRepairPrompt) ||
@@ -239,6 +256,9 @@ const sdk = vi.hoisted(() => {
           });
         emit({ type: "agent_end" });
       },
+      abortRetry: vi.fn(() => {
+        state.retryCancelled = true;
+      }),
       abort: vi.fn(async () => {}),
       exportToHtml: vi.fn(async (outputPath: string) => outputPath),
       dispose: vi.fn(),
@@ -271,6 +291,7 @@ import {
   ADVISOR_OPENSHELL_INFERENCE_BASE_URL,
   type AdvisorPromptTurn,
   advisorRetrySettings,
+  isAdvisorBudgetExceededError,
   READ_ONLY_TOOLS,
   runReadOnlyAdvisor,
 } from "../../../tools/advisors/session.mts";
@@ -372,6 +393,13 @@ afterEach(() => {
 });
 
 describe("advisor session runner", () => {
+  it("distinguishes terminal budget exhaustion from transient rate limiting", () => {
+    expect(isAdvisorBudgetExceededError('{"code":"budget_exceeded"}')).toBe(true);
+    expect(isAdvisorBudgetExceededError("Budget has been exceeded! Try later")).toBe(true);
+    expect(isAdvisorBudgetExceededError("429 status code (no body)")).toBe(false);
+    expect(isAdvisorBudgetExceededError("provider overloaded")).toBe(false);
+  });
+
   it("uses one bounded, specialist-spread retry layer for transient failures", () => {
     const behavior = advisorRetrySettings("azure/openai/gpt-5.6-terra", "pr-review-behavior");
     const dependencyUse = advisorRetrySettings(
@@ -429,6 +457,17 @@ describe("advisor session runner", () => {
 
     expect(result.fatalError).toBe("429 status code (no body)");
     expect(result.turnErrors).toEqual(["only-analysis: 429 status code (no body)"]);
+    expect(result.raw).toContain("retry_end success=false attempts=1");
+  });
+
+  it("cancels terminal provider budget retries without hiding the cause", async () => {
+    sdk.state.retryResponses = ["budget-exceeded"];
+    const result = await run([analysisTurn("only-analysis")]);
+
+    expect(result.fatalError).toContain("Budget has been exceeded");
+    expect(result.turnErrors).toHaveLength(1);
+    expect(result.turnErrors[0]).toContain("budget_exceeded");
+    expect(result.raw).toContain("retry_cancel terminal=budget_exceeded");
     expect(result.raw).toContain("retry_end success=false attempts=1");
   });
 

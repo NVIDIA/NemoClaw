@@ -151,9 +151,10 @@ jobs:
         uses: ./.github/actions/setup-reviewed-npm
 
       - id: package
-        name: Download and verify exact OpenShell SDK package
+        name: Download and verify reviewed OpenShell SDK packages
         env:
           NEMOCLAW_OPEN_SHELL_SDK_OUTPUT_DIRECTORY: ${{ runner.temp }}/openshell-sdk
+          NEMOCLAW_OPEN_SHELL_SDK_INCLUDE_AVAILABLE_REPLACEMENT: "1"
           NODE_AUTH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
@@ -3447,10 +3448,13 @@ jobs:
       - name: Install reviewed OpenShell SDK archive without package credentials
         run: |
           set -euo pipefail
-          mapfile -t archives < <(find "$RUNNER_TEMP/openshell-sdk" -maxdepth 1 -type f -name '*.tgz' -print)
-          test "${#archives[@]}" -eq 1
-          env -u NODE_AUTH_TOKEN -u GITHUB_TOKEN -u GH_TOKEN \
-            npm cache add "${archives[0]}" --offline --ignore-scripts
+          mapfile -t archives < <(find "$RUNNER_TEMP/openshell-sdk" -maxdepth 1 -type f -name '*.tgz' -print | sort)
+          test "${#archives[@]}" -ge 1
+          test "${#archives[@]}" -le 2
+          for archive in "${archives[@]}"; do
+            env -u NODE_AUTH_TOKEN -u GITHUB_TOKEN -u GH_TOKEN \
+              npm cache add "$archive" --offline --ignore-scripts
+          done
           env -u NODE_AUTH_TOKEN -u GITHUB_TOKEN -u GH_TOKEN \
             npm ci --ignore-scripts --prefer-offline --no-audit --no-fund
           env -u NODE_AUTH_TOKEN -u GITHUB_TOKEN -u GH_TOKEN \
@@ -5316,6 +5320,12 @@ jobs:
       NEMOCLAW_GATEWAY_RUNTIME: ${{ matrix.runtime_provider }}
       NEMOCLAW_E2E_INFERENCE_MODE: ${{ inputs.inference_mode || 'mock' }}
       NEMOCLAW_E2E_HERMES_DASHBOARD: "1"
+      NEMOCLAW_HERMES_DASHBOARD: "1"
+      NEMOCLAW_DASHBOARD_PORT: "19000"
+      NEMOCLAW_HERMES_DASHBOARD_PORT: "19000"
+      NEMOCLAW_HERMES_DASHBOARD_INTERNAL_PORT: "19120"
+      NEMOCLAW_HERMES_DASHBOARD_TUI: "1"
+      NEMOCLAW_HERMES_API_PORT: "8643"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       NEMOCLAW_AGENT: hermes
       NEMOCLAW_NON_INTERACTIVE: "1"
@@ -6185,7 +6195,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     needs: *e2e-result-jobs
-    if: ${{ always() && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'push' }}
+    if: ${{ always() && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '')) }}
     permissions:
       contents: read
     steps:
@@ -6200,7 +6210,15 @@ jobs:
         env:
           NEEDS_JSON: ${{ toJSON(needs) }}
           RELEASE_REQUIRED_JOBS: ${{ needs.generate-matrix.outputs.selected_workflow_jobs }}
+          E2E_RESULT_PATH: ${{ inputs.checkout_sha != '' && format('{0}/review-queue-e2e-result.json', runner.temp) || '' }}
         run: node --no-warnings tools/e2e/release-qualification.mts
+      - name: Upload PR E2E results
+        if: ${{ always() && inputs.checkout_sha != '' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: review-queue-e2e-result-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/review-queue-e2e-result.json
+          if-no-files-found: error
       - name: Summarize selected E2E
         env:
           SELECTED_WORKFLOW_JOBS: ${{ needs.generate-matrix.outputs.selected_workflow_jobs }}

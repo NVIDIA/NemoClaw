@@ -745,6 +745,7 @@ function auditLockedGraph(
     provenance: {
       label: graph.label,
       nodeVersion: process.version,
+      npmIntegrity: config.npmIntegrity,
       npmVersion: config.npmVersion,
       packageSpecs: [graph.packageSpec],
     },
@@ -826,6 +827,7 @@ export function auditMaterializedSourceGraph(
     provenance: {
       label: SOURCE_GRAPH.label,
       nodeVersion: process.version,
+      npmIntegrity: options.reviewedNpmIdentity.npmIntegrity,
       npmVersion: options.reviewedNpmIdentity.npmVersion,
       packageSpecs: [options.packageSpec],
     },

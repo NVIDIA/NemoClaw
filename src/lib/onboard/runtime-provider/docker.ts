@@ -1,8 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import path from "node:path";
-
 import { captureHostCommand } from "../../actions/sandbox/doctor-host-command";
 import { dockerCapture, dockerRun } from "../../adapters/docker/run";
 import {
@@ -33,7 +31,7 @@ import {
   stopPortableAgentSandboxLifecycle,
 } from "../experimental/portable-agent-lifecycle";
 import { withMcpLifecycleLockSync } from "../../state/mcp-lifecycle-lock-acquisition";
-import { defaultPortableStateDir } from "../../state/portable-uninstall-retirement";
+import { resolveHermesPortableLifecycleLockOptions } from "../experimental/portable-lifecycle-lock";
 import { queryOpenShellDockerSandboxRuntimeSnapshot } from "../openshell-docker-sandbox-containers";
 import { validateSandboxGpuPreflight } from "../sandbox-gpu-preflight";
 import {
@@ -309,13 +307,12 @@ function dockerLifecycleLockOptions(
   input: RuntimeProviderLifecycleInput,
   deps: DockerRuntimeProviderDependencies,
 ): { readonly stateDir: string } | undefined {
-  if (
-    input.sandbox.agent !== "hermes" ||
-    !deps.hasPortableLifecycleReceipt(input.sandboxName, input.environment)
-  ) {
-    return undefined;
-  }
-  return { stateDir: path.join(defaultPortableStateDir(input.environment), "state") };
+  if (input.sandbox.agent !== "hermes") return undefined;
+  return resolveHermesPortableLifecycleLockOptions(
+    input.sandboxName,
+    input.environment,
+    deps.hasPortableLifecycleReceipt,
+  );
 }
 
 function startDockerSandboxUnlocked(

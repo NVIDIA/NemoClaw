@@ -1267,6 +1267,7 @@ describe("trusted npm audit workflow (#5896)", () => {
             graph: "nemoclaw-cli",
             provenance: {
               label: "NemoClaw CLI locked production graph",
+              npmIntegrity: REVIEWED_AUDIT_CONFIG.npmIntegrity,
               npmVersion: "12.0.2",
               packageSpecs: ["nemoclaw@0.0.0"],
             },
