@@ -514,7 +514,9 @@ describe("backupAll", () => {
     }) as never);
 
     await expect(backupAll()).rejects.toThrow("exit:1");
-    expect(errorSpy.mock.calls.flat().join("\n")).toContain(
+    const errorOutput = errorSpy.mock.calls.flat().join("\n");
+    expect(errorOutput).toContain("workspace");
+    expect(errorOutput).toContain(
       "Failed strict pre-upgrade backup at '/backups/alpha/timestamp' could not be removed",
     );
   });
