@@ -549,6 +549,16 @@ result while preserving the resource binding. Reapplying re-observes configurati
 and repeats bounded readiness checks. It does not force a replacement to rerun a
 probe. Dependencies that require readiness wait before their own mutation.
 
+The Spark sandbox now follows that boundary too: provider creation records its
+identity and launch specification before waiting for readiness. A terminal startup
+failure therefore leaves a normal binding, not a tainted resource or an invitation
+to create another sandbox. The pinned OpenShell 0.0.116 release treats `Error` as
+terminal and its start/stop APIs do not recover that phase. Reapply must retain the
+identity and report this condition. The early token-path failure required a
+controlled experiment-only repair; ordinary apply does not edit OpenShell's database
+or recreate a failed sandbox. Automatic recovery from this terminal phase remains
+an upstream lifecycle requirement, distinct from restarting stopped inference.
+
 Resource separation also needs a repair test. In the Ollama experiment, a service
 resource owns the container and volume, and a model resource queries its HTTP API.
 The model's implicit dependency orders initial creation correctly. When the service

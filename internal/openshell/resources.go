@@ -253,14 +253,6 @@ func Ensure(ctx context.Context, c Client, kind string, want Row) (Row, error) {
 			return nil, remoteError("update "+kind, err)
 		}
 	}
-	if kind == "sandbox" {
-		if _, err = c.Sandboxes().WaitReady(ctx, want["workspace"], want["name"]); err != nil {
-			return nil, remoteError("wait for sandbox", err)
-		}
-		if err = Ready(ctx, c, want["workspace"], want["name"], want["agent_name"]); err != nil {
-			return nil, err
-		}
-	}
 	got, err := Observe(ctx, c, kind, want["workspace"], want["name"])
 	if err != nil {
 		return nil, err

@@ -76,6 +76,9 @@ func Configuration(ctx context.Context, c Client, workspace, name, agent string)
 func Ready(ctx context.Context, c Client, workspace, name, agent string) error {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
+	if _, err := c.Sandboxes().WaitReady(ctx, workspace, name); err != nil {
+		return errors.New("sandbox readiness failed; established identity retained; inspect its OpenShell phase before reapplying")
+	}
 	probe := []string{"node", "-e", configurationProbe + `fetch('http://127.0.0.1:18789/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))`}
 	ticks := time.Tick(time.Second)
 	for {

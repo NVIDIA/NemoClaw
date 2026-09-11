@@ -36,6 +36,7 @@ type fixture struct {
 	creates       map[string]int
 	loseProvider  bool
 	blockSandbox  chan struct{}
+	sandboxPhase  pb.SandboxPhase
 	endpoint      string
 	execExit      int32
 	inferenceExit int32
@@ -192,6 +193,9 @@ func (f *fixture) CreateSandbox(ctx context.Context, q *pb.CreateSandboxRequest)
 		return nil, status.Error(codes.AlreadyExists, "collision")
 	}
 	s := &pb.Sandbox{Metadata: f.meta(q.Name, q.Workspace, q.Labels), Spec: proto.Clone(q.Spec).(*pb.SandboxSpec), Status: &pb.SandboxStatus{Phase: pb.SandboxPhase_SANDBOX_PHASE_READY}}
+	if f.sandboxPhase != pb.SandboxPhase_SANDBOX_PHASE_UNSPECIFIED {
+		s.Status.Phase = f.sandboxPhase
+	}
 	f.sandboxes[key] = s
 	f.creates["sandbox"]++
 	block := f.blockSandbox
