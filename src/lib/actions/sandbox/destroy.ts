@@ -41,7 +41,6 @@ import {
   SANDBOX_PROVIDER_SUFFIXES,
 } from "../../onboard/sandbox-provider-cleanup";
 import { validateName } from "../../runner";
-import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock";
 import {
   enforceRemovedImmutabilityMigrationBoundary,
   retireRemovedImmutabilityStateRecord,
@@ -70,6 +69,7 @@ import {
   isSameDestroyContainerIdentityProof,
   observeDestroyContainerIdentity,
 } from "./destroy-presence";
+import { withSandboxLifecycleLock } from "./lifecycle/lock";
 import {
   prepareSandboxDestroy,
   reportManagedVllmDestroyOutcome,
@@ -600,7 +600,7 @@ export async function destroySandbox(
   options: string[] | DestroySandboxOptions = {},
 ): Promise<void> {
   try {
-    return await withMcpLifecycleLock(sandboxName, () => {
+    return await withSandboxLifecycleLock(sandboxName, () => {
       const removedImmutabilityMigration = enforceRemovedImmutabilityMigrationBoundary(
         sandboxName,
         { allowStateRecord: true },
@@ -1144,7 +1144,9 @@ async function destroySandboxUnlocked(
     // The registry row is gone, so every remaining Local vLLM row in any
     // gateway state root is a peer that still needs the host-global container.
     reportManagedVllmDestroyOutcome(
-      retireManagedVllmForDestroyedSandbox(sandbox, { keepVllm: normalized.keepVllm }),
+      await retireManagedVllmForDestroyedSandbox(sandbox, {
+        keepVllm: normalized.keepVllm,
+      }),
       { log: console.log, warn: defaultDestroyWarn },
     );
   }

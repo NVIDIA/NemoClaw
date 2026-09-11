@@ -92,6 +92,7 @@ describe("managed vLLM retirement after the last Local vLLM sandbox", () => {
       argv[0] === "container" && argv[2] === HOST_LOCAL_VLLM_CONTAINER_NAME ? inspection : "",
     );
     return {
+      capture,
       forceRm,
       deps: {
         capture: capture as never,
@@ -188,6 +189,40 @@ describe("managed vLLM retirement after the last Local vLLM sandbox", () => {
     });
   });
 
+  it.each([
+    {
+      label: "a host-local runtime receipt",
+      prepare: (stateDir: string) =>
+        fs.writeFileSync(path.join(stateDir, HOST_LOCAL_VLLM_RUNTIME_RECEIPT_FILE), "{}\n", {
+          mode: 0o600,
+        }),
+      env: [] as string[],
+    },
+    {
+      label: "a VLLM_API_KEY environment entry",
+      prepare: (_stateDir: string) => undefined,
+      env: [`VLLM_API_KEY=${"a".repeat(64)}`],
+    },
+  ])("preserves a nominally bearerless container that retains $label", ({ prepare, env }) => {
+    const homeDir = temporaryHome();
+    const stateDir = managedVllmStateDir(homeDir);
+    fs.mkdirSync(stateDir, { mode: 0o700, recursive: true });
+    prepare(stateDir);
+    const { deps, forceRm } = retirementDeps(
+      ownedContainer(
+        HOST_LOCAL_VLLM_CONTAINER_NAME,
+        containerId,
+        { [HOST_LOCAL_VLLM_MANAGED_LABEL]: "true" },
+        env,
+      ),
+    );
+
+    const result = retireHostLocalVllmRuntime({ homeDir, deps });
+
+    expect(result).toMatchObject({ status: "preserved", removed: [] });
+    expect(forceRm).not.toHaveBeenCalled();
+  });
+
   it("keeps the container for full uninstall while a distributed vLLM receipt exists", () => {
     const homeDir = temporaryHome();
     const stateDir = managedVllmStateDir(homeDir);
@@ -252,6 +287,63 @@ describe("managed vLLM retirement after the last Local vLLM sandbox", () => {
     expect(forceRm).toHaveBeenCalledWith(containerId, { ignoreError: true, suppressOutput: true });
     expect(fs.existsSync(path.join(stateDir, HOST_LOCAL_VLLM_RUNTIME_RECEIPT_FILE))).toBe(false);
     expect(fs.existsSync(path.join(stateDir, "dual-station-vllm-api-key"))).toBe(false);
+  });
+
+  it("reports partial state cleanup after removal and finishes it safely when the container is absent", () => {
+    const homeDir = temporaryHome();
+    const stateDir = managedVllmStateDir(homeDir);
+    fs.mkdirSync(stateDir, { mode: 0o700, recursive: true });
+    const apiKey = "e".repeat(64);
+    const serving = {
+      catalogDigest: `sha256:${"1".repeat(64)}`,
+      presetId: "vllm.dgx-spark-gb10.single.example",
+      presetDigest: `sha256:${"2".repeat(64)}`,
+      recipeId: "vllm.dgx-spark-gb10.single.example",
+      recipeDigest: `sha256:${"3".repeat(64)}`,
+    } as const;
+    fs.writeFileSync(path.join(stateDir, "dual-station-vllm-api-key"), `${apiKey}\n`, {
+      mode: 0o600,
+    });
+    persistHostLocalVllmRuntimeReceipt(
+      { containerId, authFingerprint: runtimeAuthFingerprint(apiKey), serving },
+      stateDir,
+    );
+    const { capture, deps } = retirementDeps(
+      ownedContainer(
+        HOST_LOCAL_VLLM_CONTAINER_NAME,
+        containerId,
+        {
+          [HOST_LOCAL_VLLM_MANAGED_LABEL]: "true",
+          [HOST_LOCAL_VLLM_AUTH_LABEL]: runtimeAuthFingerprint(apiKey),
+          [HOST_LOCAL_VLLM_CATALOG_LABEL]: serving.catalogDigest,
+          [HOST_LOCAL_VLLM_PRESET_LABEL]: serving.presetId,
+          [HOST_LOCAL_VLLM_PRESET_DIGEST_LABEL]: serving.presetDigest,
+          [HOST_LOCAL_VLLM_RECIPE_LABEL]: serving.recipeId,
+          [HOST_LOCAL_VLLM_RECIPE_DIGEST_LABEL]: serving.recipeDigest,
+        },
+        [`VLLM_API_KEY=${apiKey}`],
+      ),
+    );
+    const unlink = vi.fn((filePath: fs.PathLike) => {
+      if (path.basename(String(filePath)) === HOST_LOCAL_VLLM_RUNTIME_RECEIPT_FILE) {
+        throw new Error("permission denied");
+      }
+      fs.unlinkSync(filePath);
+    });
+
+    expect(retireHostLocalVllmRuntime({ homeDir, deps: { ...deps, unlink } })).toEqual({
+      status: "partial",
+      containerId,
+      reason: `${HOST_LOCAL_VLLM_RUNTIME_RECEIPT_FILE}: permission denied`,
+      remaining: [HOST_LOCAL_VLLM_RUNTIME_RECEIPT_FILE],
+      removed: [`container:${containerId}`],
+    });
+    expect(fs.existsSync(path.join(stateDir, "dual-station-vllm-api-key"))).toBe(false);
+    expect(fs.existsSync(path.join(stateDir, HOST_LOCAL_VLLM_RUNTIME_RECEIPT_FILE))).toBe(true);
+
+    capture.mockReturnValue("");
+    expect(retireHostLocalVllmRuntime({ homeDir, deps })).toEqual({ status: "absent" });
+    expect(fs.existsSync(path.join(stateDir, HOST_LOCAL_VLLM_RUNTIME_RECEIPT_FILE))).toBe(false);
   });
 
   it("preserves an authenticated container whose key does not match the persisted state", () => {

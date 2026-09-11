@@ -7,6 +7,7 @@ import type { HostLocalVllmRetirementResult } from "../../inference/local-model-
 import type { HostGatewayRegistryEntry } from "../../state/gateway-registry";
 import type { SandboxEntry } from "../../state/registry";
 import {
+  type ManagedVllmDestroyDeps,
   type ManagedVllmDestroyOutcome,
   reportManagedVllmDestroyOutcome,
   retireManagedVllmForDestroyedSandbox,
@@ -47,37 +48,49 @@ function makeDeps(
 ) {
   const listHostRegistryEntries = vi.fn(() => remaining);
   const retireRuntime = vi.fn(() => retirement);
+  const hostLifecycleLockState = { calls: 0 };
+  const withHostLifecycleLock: NonNullable<ManagedVllmDestroyDeps["withHostLifecycleLock"]> =
+    async <T>(operation: () => Promise<T> | T): Promise<T> => {
+      hostLifecycleLockState.calls += 1;
+      return await operation();
+    };
   return {
+    hostLifecycleLockState,
     listHostRegistryEntries,
     retireRuntime,
+    withHostLifecycleLock,
     deps: {
       listHostRegistryEntries,
       retireRuntime,
       resolveHomeDir: () => "/home/user",
+      withHostLifecycleLock,
     },
   };
 }
 
 describe("managed vLLM retirement after sandbox destroy", () => {
-  it("retires the container when the destroyed sandbox was the last Local vLLM consumer", () => {
-    const { deps, retireRuntime } = makeDeps([registryEntry("beta", "nvidia-prod")]);
+  it("retires the container when the destroyed sandbox was the last Local vLLM consumer", async () => {
+    const { deps, hostLifecycleLockState, retireRuntime } = makeDeps([
+      registryEntry("beta", "nvidia-prod"),
+    ]);
 
-    expect(retireManagedVllmForDestroyedSandbox(sandbox(), deps)).toEqual({
+    expect(await retireManagedVllmForDestroyedSandbox(sandbox(), deps)).toEqual({
       kind: "retirement",
       status: "removed",
       containerId: CONTAINER_ID,
       removed: [`container:${CONTAINER_ID}`],
     });
+    expect(hostLifecycleLockState.calls).toBe(1);
     expect(retireRuntime).toHaveBeenCalledWith({ homeDir: "/home/user" });
   });
 
-  it("keeps the container while another gateway state root still registers a Local vLLM sandbox", () => {
+  it("keeps the container while another gateway state root still registers a Local vLLM sandbox", async () => {
     const { deps, retireRuntime } = makeDeps([
       registryEntry("beta", "nvidia-prod"),
       registryEntry("gamma", "vllm-local", 8091),
     ]);
 
-    expect(retireManagedVllmForDestroyedSandbox(sandbox(), deps)).toEqual({
+    expect(await retireManagedVllmForDestroyedSandbox(sandbox(), deps)).toEqual({
       kind: "kept",
       reason: "consumers",
       consumers: 1,
@@ -85,13 +98,13 @@ describe("managed vLLM retirement after sandbox destroy", () => {
     expect(retireRuntime).not.toHaveBeenCalled();
   });
 
-  it("keeps the container when the destroy requested --keep-vllm", () => {
-    const { deps, listHostRegistryEntries, retireRuntime } = makeDeps([]);
+  it("keeps the container when the destroy requested --keep-vllm", async () => {
+    const { deps, hostLifecycleLockState, listHostRegistryEntries, retireRuntime } = makeDeps([]);
 
-    expect(retireManagedVllmForDestroyedSandbox(sandbox(), { ...deps, keepVllm: true })).toEqual({
-      kind: "kept",
-      reason: "option",
-    });
+    expect(
+      await retireManagedVllmForDestroyedSandbox(sandbox(), { ...deps, keepVllm: true }),
+    ).toEqual({ kind: "kept", reason: "option" });
+    expect(hostLifecycleLockState.calls).toBe(0);
     expect(listHostRegistryEntries).not.toHaveBeenCalled();
     expect(retireRuntime).not.toHaveBeenCalled();
   });
@@ -104,37 +117,56 @@ describe("managed vLLM retirement after sandbox destroy", () => {
       label: "a runtime-provider host-local inference receipt",
       entry: sandbox({ hostLocalInferenceReceipt: '{"schemaVersion":2}' }),
     },
-  ])("does not apply to a destroyed sandbox with $label", ({ entry }) => {
-    const { deps, listHostRegistryEntries, retireRuntime } = makeDeps([]);
+  ])("does not apply to a destroyed sandbox with $label", async ({ entry }) => {
+    const { deps, hostLifecycleLockState, listHostRegistryEntries, retireRuntime } = makeDeps([]);
 
-    expect(retireManagedVllmForDestroyedSandbox(entry, deps)).toEqual({ kind: "not-applicable" });
+    expect(await retireManagedVllmForDestroyedSandbox(entry, deps)).toEqual({
+      kind: "not-applicable",
+    });
+    expect(hostLifecycleLockState.calls).toBe(0);
     expect(listHostRegistryEntries).not.toHaveBeenCalled();
     expect(retireRuntime).not.toHaveBeenCalled();
   });
 
-  it("preserves the container when a gateway registry cannot be read", () => {
+  it("preserves the container when a gateway registry cannot be read", async () => {
     const retireRuntime = vi.fn();
 
     expect(
-      retireManagedVllmForDestroyedSandbox(sandbox(), {
+      await retireManagedVllmForDestroyedSandbox(sandbox(), {
         listHostRegistryEntries: () => {
           throw new Error("sandboxes.json is not owner-only");
         },
         resolveHomeDir: () => "/home/user",
         retireRuntime: retireRuntime as never,
+        withHostLifecycleLock: async (operation) => await operation(),
       }),
     ).toEqual({ kind: "inventory-failed", detail: "sandboxes.json is not owner-only" });
     expect(retireRuntime).not.toHaveBeenCalled();
   });
 
-  it("passes a preserved runtime result through", () => {
+  it("preserves the container when the host lifecycle fence cannot be acquired", async () => {
+    const { deps, listHostRegistryEntries, retireRuntime } = makeDeps([]);
+
+    expect(
+      await retireManagedVllmForDestroyedSandbox(sandbox(), {
+        ...deps,
+        withHostLifecycleLock: async () => {
+          throw new Error("lock unavailable");
+        },
+      }),
+    ).toEqual({ kind: "inventory-failed", detail: "lock unavailable" });
+    expect(listHostRegistryEntries).not.toHaveBeenCalled();
+    expect(retireRuntime).not.toHaveBeenCalled();
+  });
+
+  it("passes a preserved runtime result through", async () => {
     const { deps } = makeDeps([], {
       status: "preserved",
       reason: "the container does not carry the NemoClaw managed vLLM label",
       removed: [],
     });
 
-    expect(retireManagedVllmForDestroyedSandbox(sandbox(), deps)).toEqual({
+    expect(await retireManagedVllmForDestroyedSandbox(sandbox(), deps)).toEqual({
       kind: "retirement",
       status: "preserved",
       reason: "the container does not carry the NemoClaw managed vLLM label",
@@ -205,5 +237,21 @@ describe("managed vLLM retirement report", () => {
     expect(preserved.warnings[0]).toContain("docker container inspect nemoclaw-vllm");
     expect(inventory.warnings[0]).toContain("registry unreadable");
     expect(inventory.warnings[0]).toContain("docker container inspect nemoclaw-vllm");
+  });
+
+  it("reports a removed container with retryable private state separately", () => {
+    const partial = render({
+      kind: "retirement",
+      status: "partial",
+      containerId: CONTAINER_ID,
+      reason: "host-local-vllm-runtime.json: permission denied",
+      remaining: ["host-local-vllm-runtime.json"],
+      removed: [`container:${CONTAINER_ID}`],
+    });
+
+    expect(partial.logs).toEqual([]);
+    expect(partial.warnings[0]).toContain(`was removed (${CONTAINER_ID.slice(0, 12)})`);
+    expect(partial.warnings[0]).toContain("private state cleanup is incomplete");
+    expect(partial.warnings[0]).toContain("Re-run uninstall");
   });
 });

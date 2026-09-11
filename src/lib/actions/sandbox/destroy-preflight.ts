@@ -26,6 +26,7 @@ import type {
   releaseOnboardLock,
   Session,
 } from "../../state/onboard-session";
+import { withCurrentPortableHostFence } from "../../state/portable-uninstall-retirement";
 import type { SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
 import { type DestroyRunOpenshell, selectGatewayForSandboxDestroy } from "./destroy-gateway";
@@ -121,6 +122,7 @@ export type ManagedVllmDestroyDeps = {
   listHostRegistryEntries?: typeof listHostGatewayRegistryEntries;
   resolveHomeDir?: () => string;
   retireRuntime?: typeof retireHostLocalVllmRuntime;
+  withHostLifecycleLock?: typeof withCurrentPortableHostFence;
 };
 
 /**
@@ -129,10 +131,10 @@ export type ManagedVllmDestroyDeps = {
  * still uses Local vLLM. A sandbox whose runtime provider owns a host-local
  * inference receipt retires its runtime through that provider instead.
  */
-export function retireManagedVllmForDestroyedSandbox(
+export async function retireManagedVllmForDestroyedSandbox(
   sandbox: SandboxEntry | null,
   deps: ManagedVllmDestroyDeps = {},
-): ManagedVllmDestroyOutcome {
+): Promise<ManagedVllmDestroyOutcome> {
   if (
     !sandbox ||
     sandbox.provider !== LOCAL_VLLM_PROVIDER ||
@@ -142,22 +144,23 @@ export function retireManagedVllmForDestroyedSandbox(
   }
   if (deps.keepVllm === true) return { kind: "kept", reason: "option" };
   const home = (deps.resolveHomeDir ?? (() => process.env.HOME || os.homedir()))();
-  let consumers: number;
   try {
-    consumers = (deps.listHostRegistryEntries ?? listHostGatewayRegistryEntries)(home).filter(
-      ({ entry }) => entry.provider === LOCAL_VLLM_PROVIDER,
-    ).length;
+    return await (deps.withHostLifecycleLock ?? withCurrentPortableHostFence)(() => {
+      const consumers = (deps.listHostRegistryEntries ?? listHostGatewayRegistryEntries)(
+        home,
+      ).filter(({ entry }) => entry.provider === LOCAL_VLLM_PROVIDER).length;
+      if (consumers > 0) return { kind: "kept", reason: "consumers", consumers };
+      return {
+        kind: "retirement",
+        ...(deps.retireRuntime ?? retireHostLocalVllmRuntime)({ homeDir: home }),
+      };
+    });
   } catch (error) {
     return {
       kind: "inventory-failed",
       detail: error instanceof Error ? error.message : String(error),
     };
   }
-  if (consumers > 0) return { kind: "kept", reason: "consumers", consumers };
-  return {
-    kind: "retirement",
-    ...(deps.retireRuntime ?? retireHostLocalVllmRuntime)({ homeDir: home }),
-  };
 }
 
 /** Report the retirement outcome; a preserved container is a warning because the sandbox is already gone. */
@@ -178,7 +181,7 @@ export function reportManagedVllmDestroyOutcome(
       return;
     case "inventory-failed":
       output.warn(
-        `Sandbox deletion succeeded, but NemoClaw could not read every gateway sandbox registry to confirm that no sandbox still uses Local vLLM: ${outcome.detail}. The managed vLLM container '${name}' was left in place. ${MANAGED_VLLM_INSPECT_HINT}`,
+        `Sandbox deletion succeeded, but NemoClaw could not safely confirm across the host that no sandbox still uses Local vLLM: ${outcome.detail}. The managed vLLM container '${name}' was left in place. ${MANAGED_VLLM_INSPECT_HINT}`,
       );
       return;
     case "retirement":
@@ -199,6 +202,11 @@ export function reportManagedVllmDestroyOutcome(
     case "preserved":
       output.warn(
         `Sandbox deletion succeeded, but the managed vLLM container '${name}' was left in place: ${outcome.reason}. ${MANAGED_VLLM_INSPECT_HINT}`,
+      );
+      return;
+    case "partial":
+      output.warn(
+        `Sandbox deletion succeeded and the managed vLLM container '${name}' ${outcome.containerId ? `was removed (${outcome.containerId.slice(0, 12)})` : "is absent"}, but its private state cleanup is incomplete: ${outcome.reason}. Remaining state: ${outcome.remaining.join(", ")}. Re-run uninstall to finish the retry-safe cleanup.`,
       );
   }
 }

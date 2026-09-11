@@ -78,6 +78,7 @@ export type DestroyHarness = {
   updateSessionSpy: MockInstance;
   warnSpy: MockInstance;
   withGatewayRouteMutationLockSpy: MockInstance;
+  withCurrentPortableHostFenceSpy: MockInstance;
   withModelRouterPortLifecycleLockSpy: MockInstance;
 };
 
@@ -218,6 +219,12 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
   const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
   const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
   const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+  const portableHostFence = requireSource(
+    "../../state/portable-uninstall-retirement.js",
+  ) as typeof import("../../src/lib/state/portable-uninstall-retirement");
+  const withCurrentPortableHostFenceSpy = vi
+    .spyOn(portableHostFence, "withCurrentPortableHostFence")
+    .mockImplementation(async (operation) => await operation());
 
   const resolve = requireSource("../../adapters/openshell/resolve.js");
   const runtime = requireSource("../../adapters/openshell/runtime.js");
@@ -283,7 +290,6 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
       }
     },
   );
-
   const executeSandboxDestroySpy = vi.spyOn(destroyExecution, "executeSandboxDestroy");
   if (options.executeSandboxDestroyResult) {
     executeSandboxDestroySpy.mockResolvedValue(options.executeSandboxDestroyResult);
@@ -769,6 +775,7 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     updateSessionSpy,
     warnSpy,
     withGatewayRouteMutationLockSpy,
+    withCurrentPortableHostFenceSpy,
     withModelRouterPortLifecycleLockSpy,
   };
 }
