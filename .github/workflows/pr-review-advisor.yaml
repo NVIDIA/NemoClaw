@@ -707,6 +707,7 @@ jobs:
             echo "REPAIR_OUTPUT_DIR=$RUNNER_TEMP/output"
             echo "RESOLUTION_WORKDIR=$RUNNER_TEMP/repo"
             echo "RESOLVER_CONFIG_DIR=$RUNNER_TEMP/pi-config"
+            echo "RESOLVER_STARTED_AT=$(date +%s)"
           } >> "$GITHUB_ENV"
 
       - name: Checkout trusted resolver code
@@ -773,10 +774,20 @@ jobs:
           cp -a "$RESOLUTION_WORKDIR" "$REPAIR_BASE_DIR"
           node --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/repair-resolve.mts" prepare
 
-      - name: Install OpenShell
+      - id: install
+        name: Install OpenShell
         run: |
-          env -u GITHUB_TOKEN -u GH_TOKEN -u PR_REVIEW_ADVISOR_API_KEY \
+          timeout --signal=TERM --kill-after=15s 10m env -u GITHUB_TOKEN -u GH_TOKEN -u PR_REVIEW_ADVISOR_API_KEY \
             NEMOCLAW_NON_INTERACTIVE=1 bash "$ADVISOR_DIR/scripts/install-openshell.sh"
+
+      - id: budget
+        name: Preserve the sandbox cleanup budget
+        run: |
+          elapsed_seconds=$(( $(date +%s) - RESOLVER_STARTED_AT ))
+          if (( elapsed_seconds > 900 )); then
+            echo "Resolver setup exceeded the 15-minute pre-sandbox budget." >&2
+            exit 1
+          fi
 
       - id: configure
         name: Configure inference on the trusted host
@@ -826,10 +837,12 @@ jobs:
         env:
           CLEANUP_OUTCOME: ${{ steps.cleanup.outcome }}
           CLEANUP_RECEIPT_FILE: ${{ runner.temp }}/repair-cleanup.json
+          BUDGET_OUTCOME: ${{ steps.budget.outcome }}
           CONFIGURE_OUTCOME: ${{ steps.configure.outcome }}
           CREATE_OUTCOME: ${{ steps.create.outcome }}
           DOWNLOAD_OUTCOME: ${{ steps.download.outcome }}
           EXPORT_OUTCOME: ${{ steps.export.outcome }}
+          INSTALL_OUTCOME: ${{ steps.install.outcome }}
           REPAIR_RUN_OUTCOME: ${{ steps.repair_run.outcome }}
           SANDBOX_NAME: ${{ env.SANDBOX_NAME }}
           UPLOAD_OUTCOME: ${{ steps.upload.outcome }}
@@ -837,6 +850,8 @@ jobs:
           node --no-warnings --input-type=module <<'NODE'
           import fs from "node:fs";
           const phases = [
+            ["install", process.env.INSTALL_OUTCOME],
+            ["budget", process.env.BUDGET_OUTCOME],
             ["configure", process.env.CONFIGURE_OUTCOME],
             ["create", process.env.CREATE_OUTCOME],
             ["run", process.env.REPAIR_RUN_OUTCOME],
