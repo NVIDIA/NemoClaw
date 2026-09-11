@@ -829,10 +829,119 @@ BOOL WINAPI create_tracker_pipe(PHANDLE read, PHANDLE write, LPSECURITY_ATTRIBUT
     return result;
 }
 
+#if defined(_M_X64)
+LONG observedAccessViolations = 0;
+PVOID faultObserver = nullptr;
+
+void logFaultFrame(DWORD event, unsigned frame, DWORD64 address) {
+    HMODULE module = nullptr;
+    WCHAR fullName[MAX_PATH] = {};
+    char name[96] = "unknown";
+    DWORD64 base = 0;
+    if (GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+            reinterpret_cast<LPCWSTR>(address), &module)) {
+        base = reinterpret_cast<DWORD64>(module);
+        const DWORD count = GetModuleFileNameW(module, fullName, MAX_PATH);
+        if (count && count < MAX_PATH) {
+            const WCHAR* leaf = fullName;
+            for (DWORD i = 0; i < count; ++i) if (fullName[i] == L'\\' || fullName[i] == L'/') leaf = fullName + i + 1;
+            unsigned i = 0;
+            for (; leaf[i] && i < sizeof(name) - 1; ++i) {
+                const WCHAR c = leaf[i];
+                name[i] = ((c >= L'a' && c <= L'z') || (c >= L'A' && c <= L'Z') ||
+                    (c >= L'0' && c <= L'9') || c == L'.' || c == L'_' || c == L'-') ? static_cast<char>(c) : '?';
+            }
+            name[i] = 0;
+        }
+    }
+    char line[448];
+    const int count = _snprintf_s(line, sizeof(line), _TRUNCATE,
+        "NEMOCLAW_MSYS_FAULT_FRAME={\"schemaVersion\":1,\"pid\":%lu,\"event\":%lu,\"frame\":%u,\"address\":\"0x%llx\",\"module\":\"%s\",\"moduleBase\":\"0x%llx\",\"rva\":\"0x%llx\"}\n",
+        GetCurrentProcessId(), event, frame, address, name, base, base ? address - base : 0);
+    DWORD written = 0;
+    if (count > 0) WriteFile(GetStdHandle(STD_ERROR_HANDLE), line, static_cast<DWORD>(count), &written, nullptr);
+}
+
+LONG CALLBACK observeAccessViolation(EXCEPTION_POINTERS* exception) {
+    const DWORD saved = GetLastError();
+    if (!exception || !exception->ExceptionRecord || !exception->ContextRecord ||
+        exception->ExceptionRecord->ExceptionCode != EXCEPTION_ACCESS_VIOLATION) return EXCEPTION_CONTINUE_SEARCH;
+    const LONG event = InterlockedIncrement(&observedAccessViolations);
+    if (event > 4) return EXCEPTION_CONTINUE_SEARCH;
+    // First-chance evidence only. Unwind a copy; never alter the fault context,
+    // handle the exception, record arbitrary memory contents, or write a dump.
+    __try {
+        const EXCEPTION_RECORD* record = exception->ExceptionRecord;
+        CONTEXT context = *exception->ContextRecord;
+        char line[448];
+        const int count = _snprintf_s(line, sizeof(line), _TRUNCATE,
+            "NEMOCLAW_MSYS_ACCESS_VIOLATION={\"schemaVersion\":1,\"pid\":%lu,\"event\":%ld,\"code\":\"0x%08lx\",\"firstChance\":true,\"accessKind\":%llu,\"target\":\"0x%llx\",\"rip\":\"0x%llx\",\"contextChanged\":false}\n",
+            GetCurrentProcessId(), event, record->ExceptionCode,
+            record->NumberParameters >= 1 ? static_cast<unsigned long long>(record->ExceptionInformation[0]) : 0,
+            record->NumberParameters >= 2 ? static_cast<unsigned long long>(record->ExceptionInformation[1]) : 0,
+            static_cast<unsigned long long>(context.Rip));
+        DWORD written = 0;
+        if (count > 0) WriteFile(GetStdHandle(STD_ERROR_HANDLE), line, static_cast<DWORD>(count), &written, nullptr);
+        ULONG_PTR stackLow = 0, stackHigh = 0;
+        GetCurrentThreadStackLimits(&stackLow, &stackHigh);
+        for (unsigned frame = 0; frame < 8 && context.Rip; ++frame) {
+            logFaultFrame(static_cast<DWORD>(event), frame, context.Rip);
+            if (frame == 7 || !stackLow || stackHigh <= stackLow || context.Rsp < stackLow ||
+                context.Rsp >= stackHigh || stackHigh - context.Rsp < sizeof(DWORD64)) break;
+            const DWORD64 previousRip = context.Rip, previousRsp = context.Rsp;
+            DWORD64 imageBase = 0, establisher = 0;
+            PVOID handlerData = nullptr;
+            PRUNTIME_FUNCTION function = RtlLookupFunctionEntry(context.Rip, &imageBase, nullptr);
+            if (function) {
+                RtlVirtualUnwind(UNW_FLAG_NHANDLER, imageBase, context.Rip, function, &context, &handlerData, &establisher, nullptr);
+            } else {
+                // A leaf frame has one return address. SEH bounds this read when
+                // the fault left an invalid stack; no stack bytes are recorded.
+                if (context.Rsp & 7) break;
+                context.Rip = *reinterpret_cast<const DWORD64*>(context.Rsp);
+                context.Rsp += 8;
+            }
+            if (context.Rsp <= previousRsp || context.Rsp < stackLow || context.Rsp >= stackHigh ||
+                context.Rip == previousRip) break;
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        // Diagnostic faults must never replace the original access violation.
+    }
+    SetLastError(saved);
+    return EXCEPTION_CONTINUE_SEARCH;
+}
+
+void installFaultObserver() {
+    const DWORD saved = GetLastError();
+    WCHAR ci[8] = {}, mode[16] = {};
+    if (GetEnvironmentVariableW(L"GITHUB_ACTIONS", ci, 8) == 4 && !wcscmp(ci, L"true") &&
+        GetEnvironmentVariableW(L"NEMOCLAW_MSYS_TOKEN_INSPECTION_HOLD", mode, 16) == 12 && !wcscmp(mode, L"repair-query")) {
+        faultObserver = AddVectoredExceptionHandler(1, observeAccessViolation);
+        const DWORD error = faultObserver ? 0 : GetLastError();
+        char line[192];
+        const int count = _snprintf_s(line, sizeof(line), _TRUNCATE,
+            "NEMOCLAW_MSYS_FAULT_OBSERVER={\"schemaVersion\":1,\"pid\":%lu,\"registered\":%s,\"error\":%lu}\n",
+            GetCurrentProcessId(), faultObserver ? "true" : "false", error);
+        DWORD written = 0;
+        if (count > 0) WriteFile(GetStdHandle(STD_ERROR_HANDLE), line, static_cast<DWORD>(count), &written, nullptr);
+    }
+    SetLastError(saved);
+}
+void removeFaultObserver() {
+    const DWORD saved = GetLastError();
+    if (faultObserver) { RemoveVectoredExceptionHandler(faultObserver); faultObserver = nullptr; }
+    SetLastError(saved);
+}
+#else
+void installFaultObserver() {}
+void removeFaultObserver() {}
+#endif
+
 } // namespace
 
 BOOL WINAPI DllMain(HINSTANCE self, DWORD reason, LPVOID reserved) {
     (void)reserved;
+    if (reason == DLL_PROCESS_DETACH) { removeFaultObserver(); return TRUE; }
     if (DetourIsHelperProcess()) return TRUE;
     if (reason != DLL_PROCESS_ATTACH) return TRUE;
     DetourRestoreAfterWith();
@@ -854,5 +963,6 @@ BOOL WINAPI DllMain(HINSTANCE self, DWORD reason, LPVOID reserved) {
         return initialization_result("hook-staging", error);
     }
     error = DetourTransactionCommit();
+    if (!error) installFaultObserver();
     return initialization_result(error ? "transaction-commit" : "attached", error);
 }
