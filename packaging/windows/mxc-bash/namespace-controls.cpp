@@ -173,6 +173,15 @@ int main() {
           !ordinary_pipe_name(ordinary, wcslen(ordinary) + 1, boundKey, 9784) &&
           !ordinary_pipe_name(ordinary, 96, boundKey, 9784), "native-ordinary-counted-name-bounds");
 
+    check(ordinary_create_contract(0x80100100, 3, 2, 0x20, 0, 0, 0, 1, 65536, 65536, true, -500000, 0) &&
+          ordinary_create_contract(0x80100100, 3, 2, 0x20, 0, 0, 0, 1, 65536, 65536, true, -500000, 2),
+          "ordinary-default-adaptation-preserves-inherit-choice");
+    check(!ordinary_create_contract(0x80100100, 3, 1, 0x20, 0, 0, 0, 1, 65536, 65536, true, -500000, 0) &&
+          !ordinary_create_contract(0x80100100, 3, 2, 0x20, 0, 0, 0, 2, 65536, 65536, true, -500000, 0) &&
+          !ordinary_create_contract(0x80100100, 3, 2, 0x20, 0, 0, 0, 1, 65536, 65536, false, -500000, 0) &&
+          !ordinary_create_contract(0x80100100, 3, 2, 0x20, 0, 0, 0, 1, 65536, 65536, true, -500000, 8),
+          "ordinary-default-adaptation-refuses-reopen-or-altered-contract");
+
 #ifdef _WIN32
     alignas(void*) BYTE world[SECURITY_MAX_SID_SIZE] = {};
     DWORD size = sizeof(world);

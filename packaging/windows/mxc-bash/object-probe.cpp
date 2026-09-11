@@ -129,6 +129,15 @@ class PipeProof {
   std::wstring key;
   std::string nonce;
   Handle server;
+  Handle npfs;
+  bool ordinary;
+  std::wstring originalOwner,originalGroup;
+  SECURITY_DESCRIPTOR_CONTROL originalControl=0;
+  bool originalDescriptorRead=false;
+  using NativeCreate=NTSTATUS(NTAPI*)(PHANDLE,ACCESS_MASK,POBJECT_ATTRIBUTES,PIO_STATUS_BLOCK,ULONG,ULONG,ULONG,ULONG,ULONG,ULONG,ULONG,ULONG,ULONG,PLARGE_INTEGER);
+  using NativeOpen=NTSTATUS(NTAPI*)(PHANDLE,ACCESS_MASK,POBJECT_ATTRIBUTES,PIO_STATUS_BLOCK,ULONG,ULONG);
+  NativeCreate nativeCreate=nullptr;
+  NativeOpen nativeOpen=nullptr;
   Handle connectEvent;
   OVERLAPPED connectOperation{};
   bool connectPending=false;
@@ -161,59 +170,91 @@ class PipeProof {
     while(GetTickCount64()<deadline){if(available())return;Sleep(1);}
     throw std::runtime_error("pipe-not-available");
   }
-  void roundtrip(HANDLE client,bool overlapped){
-    std::string bytes="NEMOCLAW_PIPE_"+nonce;DWORD written=0,read=0;std::array<char,128> actual{};
-    require(WriteFile(client,bytes.data(),static_cast<DWORD>(bytes.size()),&written,nullptr)!=0&&written==bytes.size(),"pipe-own-write");
-    if(!overlapped){require(ReadFile(server.value,actual.data(),static_cast<DWORD>(actual.size()),&read,nullptr)!=0,"pipe-sync-read");}
-    else{
-      Handle event;event.value=CreateEventW(nullptr,TRUE,FALSE,nullptr);require(event.value!=nullptr,"pipe-read-event");OVERLAPPED operation{};operation.hEvent=event.value;
-      BOOL ok=ReadFile(server.value,actual.data(),static_cast<DWORD>(actual.size()),nullptr,&operation);DWORD error=ok?0:GetLastError();
-      if(!ok){require(error==ERROR_IO_PENDING,"pipe-read-submit");
-        if(WaitForSingleObject(event.value,2000)!=WAIT_OBJECT_0){
-          if(!CancelIoEx(server.value,&operation)&&GetLastError()!=ERROR_NOT_FOUND)fatal_cleanup();
-          if(WaitForSingleObject(event.value,2000)!=WAIT_OBJECT_0)fatal_cleanup();DWORD ignored=0;BOOL drained=GetOverlappedResult(server.value,&operation,&ignored,FALSE);if(!drained&&GetLastError()!=ERROR_OPERATION_ABORTED)fatal_cleanup();
-          throw std::runtime_error("pipe-read-deadline");
-        }
+  DWORD transfer(HANDLE handle,bool write,bool asynchronous,void* buffer,DWORD count){
+    DWORD transferred=0;
+    if(!asynchronous){BOOL ok=write?WriteFile(handle,buffer,count,&transferred,nullptr):ReadFile(handle,buffer,count,&transferred,nullptr);require(ok!=0,"pipe-sync-transfer");return transferred;}
+    Handle event;event.value=CreateEventW(nullptr,TRUE,FALSE,nullptr);require(event.value!=nullptr,"pipe-transfer-event");OVERLAPPED operation{};operation.hEvent=event.value;
+    BOOL ok=write?WriteFile(handle,buffer,count,nullptr,&operation):ReadFile(handle,buffer,count,nullptr,&operation);DWORD error=ok?0:GetLastError();
+    if(!ok){require(error==ERROR_IO_PENDING,"pipe-transfer-submit");
+      if(WaitForSingleObject(event.value,2000)!=WAIT_OBJECT_0){
+        if(!CancelIoEx(handle,&operation)&&GetLastError()!=ERROR_NOT_FOUND)fatal_cleanup();
+        if(WaitForSingleObject(event.value,2000)!=WAIT_OBJECT_0)fatal_cleanup();DWORD ignored=0;BOOL drained=GetOverlappedResult(handle,&operation,&ignored,FALSE);if(!drained&&GetLastError()!=ERROR_OPERATION_ABORTED)fatal_cleanup();
+        throw std::runtime_error("pipe-transfer-deadline");
       }
-      require(GetOverlappedResult(server.value,&operation,&read,FALSE)!=0,"pipe-read-result");
     }
+    require(GetOverlappedResult(handle,&operation,&transferred,FALSE)!=0,"pipe-transfer-result");return transferred;
+  }
+  void roundtrip(HANDLE client,bool overlapped){
+    std::string bytes="NEMOCLAW_PIPE_"+nonce;std::array<char,128> actual{};
+    require(transfer(client,true,ordinary,bytes.data(),static_cast<DWORD>(bytes.size()))==bytes.size(),"pipe-own-write");
+    const DWORD read=transfer(server.value,false,overlapped,actual.data(),static_cast<DWORD>(actual.size()));
     require(read==bytes.size()&&memcmp(actual.data(),bytes.data(),read)==0,"pipe-own-readback");
   }
   void exact_sync_positive(){
-    Handle client;client.value=CreateFileW(name.c_str(),0x40000080,0,nullptr,OPEN_EXISTING,0,nullptr);require(client.value!=INVALID_HANDLE_VALUE,"pipe-exact-writer-open");roundtrip(client.value,false);
+    Handle client;open_client(name,false,client);require(client.value!=INVALID_HANDLE_VALUE,"pipe-exact-writer-open");roundtrip(client.value,false);
     require(CloseHandle(client.value)!=0,"pipe-sync-client-close");client.value=nullptr;require(CloseHandle(server.value)!=0,"pipe-sync-server-close");server.value=nullptr;exactSynchronousPositive=true;
   }
   void disconnect(){require(DisconnectNamedPipe(server.value)!=0,"pipe-disconnect");start_listener();}
-  void readback(){
-    PACL acl=nullptr;PSECURITY_DESCRIPTOR sd=nullptr;DWORD error=GetSecurityInfo(server.value,SE_KERNEL_OBJECT,DACL_SECURITY_INFORMATION,nullptr,nullptr,&acl,nullptr,&sd);
+  void readback(bool appended=true){
+    PACL acl=nullptr;PSID owner=nullptr,group=nullptr;PSECURITY_DESCRIPTOR sd=nullptr;DWORD error=GetSecurityInfo(server.value,SE_KERNEL_OBJECT,OWNER_SECURITY_INFORMATION|GROUP_SECURITY_INFORMATION|DACL_SECURITY_INFORMATION,&owner,&group,&acl,nullptr,&sd);
     require(error==ERROR_SUCCESS&&sd,"pipe-security-readback");
     try{
-      require(acl&&acl->AceCount==4,"pipe-readback-ace-count");SECURITY_DESCRIPTOR_CONTROL control=0;DWORD revision=0;require(GetSecurityDescriptorControl(sd,&control,&revision)!=0,"pipe-readback-control");
+      const DWORD expectedCount=appended?4:3;require(acl&&acl->AceCount==expectedCount,"pipe-readback-ace-count");SECURITY_DESCRIPTOR_CONTROL control=0;DWORD revision=0;require(GetSecurityDescriptorControl(sd,&control,&revision)!=0,"pipe-readback-control");
       std::array<PSID,4> sids={user,adminSid.data(),systemSid.data(),container};std::string fields;
-      for(DWORD index=0;index<4;++index){PVOID raw=nullptr;require(GetAce(acl,index,&raw)!=0,"pipe-readback-ace");auto ace=static_cast<ACCESS_ALLOWED_ACE*>(raw);
+      for(DWORD index=0;index<expectedCount;++index){PVOID raw=nullptr;require(GetAce(acl,index,&raw)!=0,"pipe-readback-ace");auto ace=static_cast<ACCESS_ALLOWED_ACE*>(raw);
         require(ace->Header.AceType==ACCESS_ALLOWED_ACE_TYPE&&ace->Header.AceFlags==0&&EqualSid(&ace->SidStart,sids[index]),"pipe-readback-principal");
         DWORD original=index==3?0x00120196:GENERIC_ALL,mapped=original;GENERIC_MAPPING mapping={FILE_GENERIC_READ,FILE_GENERIC_WRITE,FILE_GENERIC_EXECUTE,FILE_ALL_ACCESS};MapGenericMask(&mapped,&mapping);
         require(ace->Mask==original||ace->Mask==mapped,"pipe-readback-mask");if(index)fields+=",";fields+=std::to_string(ace->Mask);
       }
-      line("{\"kind\":\"pipe-descriptor\",\"rawProbeUnshimmed\":true,\"inputControl\":4,\"actualControl\":"+std::to_string(control)+",\"aceCount\":4,\"aceMasks\":["+fields+"],\"actualTokenSidsMatched\":true,\"genericMappingOnly\":true}");
+      LPWSTR ownerText=nullptr,groupText=nullptr;require(owner&&group&&ConvertSidToStringSidW(owner,&ownerText)!=0,"pipe-owner-readback");std::wstring ownerSid=ownerText;LocalFree(ownerText);require(ConvertSidToStringSidW(group,&groupText)!=0,"pipe-group-readback");std::wstring groupSid=groupText;LocalFree(groupText);
+      if(!originalDescriptorRead){originalOwner=ownerSid;originalGroup=groupSid;originalControl=control;originalDescriptorRead=true;}
+      else require(originalOwner==ownerSid&&originalGroup==groupSid&&originalControl==control,"pipe-owner-group-control-changed");
+      line("{\"kind\":\"pipe-descriptor\",\"fixture\":"+quote(ordinary?"ordinary-nt":"signal-win32")+",\"appended\":"+std::string(appended?"true":"false")+",\"rawProbeUnshimmed\":true,\"actualControl\":"+std::to_string(control)+",\"ownerSid\":"+quote(utf8(ownerSid))+",\"groupSid\":"+quote(utf8(groupSid))+",\"aceCount\":"+std::to_string(expectedCount)+",\"aceMasks\":["+fields+"],\"actualTokenSidsMatched\":true,\"ownerGroupControlPreserved\":true,\"genericMappingOnly\":true}");
     }catch(...){LocalFree(sd);throw;}LocalFree(sd);
   }
-  HANDLE create_server(DWORD mode){return CreateNamedPipeW(name.c_str(),mode,0x0000000c,1,65472,65472,0,&attributes);}
+  void default_template(PACL destination){
+    Handle token;require(OpenProcessToken(GetCurrentProcess(),TOKEN_QUERY,&token.value)!=0,"pipe-default-token");alignas(void*) std::array<BYTE,1024> buffer{};DWORD needed=0;
+    require(GetTokenInformation(token.value,TokenDefaultDacl,buffer.data(),static_cast<DWORD>(buffer.size()),&needed)!=0&&needed>=sizeof(TOKEN_DEFAULT_DACL)&&needed<=buffer.size(),"pipe-default-query");
+    PACL acl=reinterpret_cast<TOKEN_DEFAULT_DACL*>(buffer.data())->DefaultDacl;const uintptr_t begin=reinterpret_cast<uintptr_t>(buffer.data()),address=reinterpret_cast<uintptr_t>(acl);
+    require(acl&&address>=begin+sizeof(TOKEN_DEFAULT_DACL)&&address<=begin+needed-sizeof(ACL),"pipe-default-range");require(acl->AclSize>=sizeof(ACL)&&acl->AclSize<=512&&acl->AclSize<=begin+needed-address&&acl->AceCount==3&&IsValidAcl(acl),"pipe-default-shape");
+    DWORD body=0;std::array<PSID,3> expected={user,adminSid.data(),systemSid.data()};for(DWORD index=0;index<3;++index){PVOID raw=nullptr;require(GetAce(acl,index,&raw)!=0,"pipe-default-ace");auto ace=static_cast<ACCESS_ALLOWED_ACE*>(raw);require(ace->Header.AceType==ACCESS_ALLOWED_ACE_TYPE&&ace->Header.AceFlags==0&&ace->Mask==GENERIC_ALL&&ace->Header.AceSize==8+GetLengthSid(expected[index])&&EqualSid(&ace->SidStart,expected[index]),"pipe-default-template");body+=ace->Header.AceSize;}
+    require(AddAce(destination,ACL_REVISION,MAXDWORD,reinterpret_cast<BYTE*>(acl)+sizeof(ACL),body)!=0,"pipe-default-preserve-aces");
+    const BYTE* raw=reinterpret_cast<BYTE*>(acl);std::string hex;constexpr char digits[]="0123456789abcdef";for(DWORD n=0;n<acl->AclSize;++n){hex+=digits[raw[n]>>4];hex+=digits[raw[n]&15];}
+    line("{\"kind\":\"pipe-token-default\",\"fixture\":\"ordinary-nt\",\"aclBytes\":"+std::to_string(acl->AclSize)+",\"aclHex\":"+quote(hex)+",\"templateMatched\":true}");
+  }
+  HANDLE create_server(DWORD mode,bool useDefault=false){
+    if(!ordinary)return CreateNamedPipeW(name.c_str(),mode,0x0000000c,1,65472,65472,0,&attributes);
+    Name object(name,npfs.value,useDefault?nullptr:&descriptor,OBJ_INHERIT);IO_STATUS_BLOCK io{};LARGE_INTEGER timeout{};timeout.QuadPart=-500000;HANDLE result=nullptr;
+    NTSTATUS value=nativeCreate(&result,0x80100100,&object.attributes,&io,3,2,(mode&FILE_FLAG_OVERLAPPED)?0:0x20,0,0,0,1,65536,65536,&timeout);if(value==static_cast<NTSTATUS>(0x103))fatal_cleanup();
+    line("{\"kind\":\"pipe-native-server\",\"defaultInput\":"+std::string(useDefault?"true":"false")+",\"overlappedFixture\":"+std::string((mode&FILE_FLAG_OVERLAPPED)?"true":"false")+",\"status\":"+status(value)+"}");
+    if(value!=0){if(value>=0&&result)CloseHandle(result);return INVALID_HANDLE_VALUE;}return result;
+  }
+  DWORD open_client(const std::wstring& target,bool minimal,Handle& client){
+    if(!ordinary){client.value=CreateFileW(target.c_str(),minimal?FILE_WRITE_DATA:0x40000080,0,nullptr,OPEN_EXISTING,minimal?FILE_FLAG_OVERLAPPED:0,nullptr);return client.value==INVALID_HANDLE_VALUE?GetLastError():ERROR_SUCCESS;}
+    std::wstring copy=target;Name object(copy,npfs.value,nullptr,OBJ_INHERIT);IO_STATUS_BLOCK io{};NTSTATUS value=nativeOpen(&client.value,minimal?FILE_WRITE_DATA:0x40100080,&object.attributes,&io,0,0);if(value==static_cast<NTSTATUS>(0x103))fatal_cleanup();
+    line("{\"kind\":\"pipe-native-client\",\"minimalWriteData\":"+std::string(minimal?"true":"false")+",\"relativeName\":"+quote(utf8(target))+",\"status\":"+status(value)+"}");
+    if(value!=0){if(value>=0&&client.value)CloseHandle(client.value);client.value=INVALID_HANDLE_VALUE;}return static_cast<DWORD>(value);
+  }
  public:
   std::wstring name;
   std::wstring kernelName;
   bool exactSynchronousPositive=false,ownBefore=false,minimalBefore=false,ownAfter=false,minimalAfter=false;
-  PipeProof(const Identity& identity,Api& calls,const std::wstring& installationKey,const std::wstring& marker):id(identity),api(calls),key(installationKey),nonce(utf8(marker)){
+  PipeProof(const Identity& identity,Api& calls,const std::wstring& installationKey,const std::wstring& marker,bool ordinaryNt=false):id(identity),api(calls),key(installationKey),nonce(utf8(marker)),ordinary(ordinaryNt){
     queryFile=api.load<QueryFile>("NtQueryInformationFile");queryObject=api.load<QueryObject>("NtQueryObject");require(queryFile&&queryObject,"pipe-native-queries");
     try{
       require(ConvertStringSidToSidW(id.userSid.c_str(),&user)!=0&&ConvertStringSidToSidW(id.sid.c_str(),&container)!=0,"pipe-token-sids");
       DWORD size=static_cast<DWORD>(sizeof(adminSid));require(CreateWellKnownSid(WinBuiltinAdministratorsSid,nullptr,adminSid.data(),&size)!=0,"pipe-admin-sid");size=static_cast<DWORD>(sizeof(systemSid));require(CreateWellKnownSid(WinLocalSystemSid,nullptr,systemSid.data(),&size)!=0,"pipe-system-sid");
       const size_t aclBytes=sizeof(ACL)+4*(sizeof(ACCESS_ALLOWED_ACE)-sizeof(DWORD))+GetLengthSid(user)+GetLengthSid(adminSid.data())+GetLengthSid(systemSid.data())+GetLengthSid(container);require(aclBytes<=sizeof(aclStorage),"pipe-acl-bound");
       auto acl=reinterpret_cast<PACL>(aclStorage.data());require(InitializeAcl(acl,static_cast<DWORD>(aclBytes),ACL_REVISION)!=0,"pipe-acl-init");
-      for(PSID sid:std::array<PSID,3>{user,adminSid.data(),systemSid.data()})require(AddAccessAllowedAceEx(acl,ACL_REVISION,0,GENERIC_ALL,sid)!=0,"pipe-original-ace");
+      if(ordinary)default_template(acl);else for(PSID sid:std::array<PSID,3>{user,adminSid.data(),systemSid.data()})require(AddAccessAllowedAceEx(acl,ACL_REVISION,0,GENERIC_ALL,sid)!=0,"pipe-original-ace");
       require(AddAccessAllowedAceEx(acl,ACL_REVISION,0,0x00120196,container)!=0,"pipe-container-ace");
       require(InitializeSecurityDescriptor(&descriptor,SECURITY_DESCRIPTOR_REVISION)!=0&&SetSecurityDescriptorDacl(&descriptor,TRUE,acl,FALSE)!=0,"pipe-descriptor-init");attributes={sizeof(attributes),&descriptor,FALSE};
       name=L"\\\\.\\pipe\\msys-"+key+L"-"+std::to_wstring(GetCurrentProcessId())+L"-sigwait";
+      if(ordinary){
+        nativeCreate=api.load<NativeCreate>("NtCreateNamedPipeFile");nativeOpen=api.load<NativeOpen>("NtOpenFile");require(nativeCreate&&nativeOpen,"pipe-native-exports");std::wstring root=L"\\Device\\NamedPipe\\";Name object(root);IO_STATUS_BLOCK io{};NTSTATUS result=nativeOpen(&npfs.value,0x00100080,&object.attributes,&io,3,0);if(result==static_cast<NTSTATUS>(0x103))fatal_cleanup();require(result==0,"pipe-owned-npfs-root");
+        name=key+L"-"+std::to_wstring(GetCurrentProcessId())+L"-pipe-nt-0x1";
+        server.value=create_server(0x00080001,true);require(server.value!=INVALID_HANDLE_VALUE,"pipe-original-default-server");readback(false);Handle denied;const DWORD error=open_client(name,false,denied);require(error==0xc0000022u,"pipe-original-default-writer-not-denied");require(CloseHandle(server.value)!=0,"pipe-default-server-close");server.value=nullptr;
+      }
       server.value=create_server(0x00080001);require(server.value!=INVALID_HANDLE_VALUE,"pipe-exact-server-create");readback();exact_sync_positive();
       server.value=create_server(0x40080001);require(server.value!=INVALID_HANDLE_VALUE,"pipe-overlapped-server-create");connectEvent.value=CreateEventW(nullptr,TRUE,FALSE,nullptr);require(connectEvent.value!=nullptr,"pipe-connect-event-create");
       alignas(void*) std::array<BYTE,4096> buffer{};ULONG needed=0;NTSTATUS queried=queryObject(server.value,static_cast<OBJECT_INFORMATION_CLASS>(1),buffer.data(),static_cast<ULONG>(buffer.size()),&needed);require(queried==0,"pipe-handle-name-query");auto object=reinterpret_cast<UNICODE_STRING*>(buffer.data());
@@ -225,22 +266,23 @@ class PipeProof {
   ~PipeProof(){if(!closed){try{join_listener(true);}catch(...){fatal_cleanup();}}if(user)LocalFree(user);if(container)LocalFree(container);}
   bool available(){PipeLocal info{};IO_STATUS_BLOCK io{};NTSTATUS result=queryFile(server.value,&io,&info,sizeof(info),static_cast<FILE_INFORMATION_CLASS>(24));if(result==static_cast<NTSTATUS>(0x103))fatal_cleanup();return result==0&&info.state==2&&info.current==1;}
   void positive(bool minimal){
-    require(available(),"pipe-positive-server-not-free");Handle client;client.value=CreateFileW(name.c_str(),minimal?FILE_WRITE_DATA:0x40000080,0,nullptr,OPEN_EXISTING,minimal?FILE_FLAG_OVERLAPPED:0,nullptr);require(client.value!=INVALID_HANDLE_VALUE,"pipe-own-client-open");join_listener(false);require(connected,"pipe-own-connect");
+    require(available(),"pipe-positive-server-not-free");Handle client;open_client(name,minimal,client);require(client.value!=INVALID_HANDLE_VALUE,"pipe-own-client-open");join_listener(false);require(connected,"pipe-own-connect");
     if(!minimal)roundtrip(client.value,true);
     require(CloseHandle(client.value)!=0,"pipe-own-client-close");client.value=nullptr;disconnect();
   }
   void before(){start_listener();positive(false);ownBefore=true;positive(true);minimalBefore=true;require(available(),"pipe-before-not-free");}
   std::pair<DWORD,DWORD> foreign(const std::wstring& peer){
-    const std::wstring prefix=L"\\\\.\\pipe\\msys-"+key+L"-",suffix=L"-sigwait";require(peer.starts_with(prefix)&&peer.ends_with(suffix)&&peer!=name,"pipe-peer-name");
+    const std::wstring prefix=ordinary?key+L"-":L"\\\\.\\pipe\\msys-"+key+L"-",suffix=ordinary?L"-pipe-nt-0x1":L"-sigwait";require(peer.starts_with(prefix)&&peer.ends_with(suffix)&&peer!=name,"pipe-peer-name");
     auto pid=peer.substr(prefix.size(),peer.size()-prefix.size()-suffix.size());require(!pid.empty()&&pid.size()<=10&&pid[0]!=L'0'&&pid.find_first_not_of(L"0123456789")==std::wstring::npos,"pipe-peer-pid");
-    auto open=[&](bool minimal){Handle client;client.value=CreateFileW(peer.c_str(),minimal?FILE_WRITE_DATA:0x40000080,0,nullptr,OPEN_EXISTING,minimal?FILE_FLAG_OVERLAPPED:0,nullptr);return client.value==INVALID_HANDLE_VALUE?GetLastError():ERROR_SUCCESS;};
+    auto open=[&](bool minimal){Handle client;return open_client(peer,minimal,client);};
     DWORD writer=open(false),data=open(true);positive(false);ownAfter=true;positive(true);minimalAfter=true;require(available(),"pipe-after-not-free");return{writer,data};
   }
   void finish(){
     join_listener(true);require(CloseHandle(server.value)!=0,"pipe-server-close");server.value=nullptr;
-    Handle missingClient;missingClient.value=CreateFileW(name.c_str(),0x40000080,0,nullptr,OPEN_EXISTING,0,nullptr);DWORD missingError=missingClient.value==INVALID_HANDLE_VALUE?GetLastError():0;require(missingError==ERROR_FILE_NOT_FOUND,"pipe-last-handle-not-released");
+    Handle missingClient;DWORD missingError=open_client(name,false,missingClient);require(ordinary?(missingError==0xc0000034u||missingError==0xc000003au):missingError==ERROR_FILE_NOT_FOUND,"pipe-last-handle-not-released");
     Handle recreated;recreated.value=create_server(0x00080001);require(recreated.value!=INVALID_HANDLE_VALUE,"pipe-first-instance-not-reusable");require(CloseHandle(recreated.value)!=0,"pipe-recreated-close");recreated.value=nullptr;closed=true;
-    line("{\"kind\":\"pipe-cleanup\",\"pendingConnectCompleted\":true,\"lastHandleAbsent\":true,\"firstInstanceRecreatedAndClosed\":true}");
+    if(npfs.value){require(CloseHandle(npfs.value)!=0,"pipe-npfs-root-close");npfs.value=nullptr;}
+    line("{\"kind\":\"pipe-cleanup\",\"fixture\":"+quote(ordinary?"ordinary-nt":"signal-win32")+",\"pendingConnectCompleted\":true,\"lastHandleAbsent\":true,\"firstInstanceRecreatedAndClosed\":true}");
   }
 };
 
@@ -264,12 +306,13 @@ int wmain(int argc,wchar_t** argv){
     LARGE_INTEGER size{};size.QuadPart=4096;Name sectionName(sectionLeaf,g.value,&security);NTSTATUS ms=api.createSection(&section.value,0xf001f,&sectionName.attributes,&size,PAGE_READWRITE,SEC_COMMIT,nullptr);require(ms==0,"own-section-create");
     View view;view.value=MapViewOfFile(section.value,FILE_MAP_READ|FILE_MAP_WRITE,0,0,4096);require(view.value!=nullptr,"own-section-map");std::string marker="NEMOCLAW_SECTION_"+utf8(nonce);memcpy(view.value,marker.data(),marker.size());require(memcmp(view.value,marker.data(),marker.size())==0,"own-section-readback");
     PipeProof pipe(id,api,key,nonce);pipe.before();
-    line("{\"kind\":\"ready\","+identityFields(id)+",\"key\":"+quote(utf8(key))+",\"globalDirectory\":"+quote(utf8(gd))+",\"sessionDirectory\":"+quote(utf8(sd))+",\"nullDaclChildren\":true,\"ownEvent\":"+status(es)+",\"ownSection\":"+status(ms)+",\"ownSectionReadback\":true,\"pipeExactSynchronousPositive\":"+std::string(pipe.exactSynchronousPositive?"true":"false")+",\"pipeOverlappedFixture\":true,\"pipeName\":"+quote(utf8(pipe.name))+",\"pipeKernelName\":"+quote(utf8(pipe.kernelName))+",\"pipeAvailable\":true,\"pipeDescriptorMatched\":true}");
+    PipeProof ordinaryPipe(id,api,key,nonce,true);ordinaryPipe.before();
+    line("{\"kind\":\"ready\","+identityFields(id)+",\"key\":"+quote(utf8(key))+",\"globalDirectory\":"+quote(utf8(gd))+",\"sessionDirectory\":"+quote(utf8(sd))+",\"nullDaclChildren\":true,\"ownEvent\":"+status(es)+",\"ownSection\":"+status(ms)+",\"ownSectionReadback\":true,\"pipeExactSynchronousPositive\":"+std::string(pipe.exactSynchronousPositive?"true":"false")+",\"pipeOverlappedFixture\":true,\"pipeName\":"+quote(utf8(pipe.name))+",\"pipeKernelName\":"+quote(utf8(pipe.kernelName))+",\"pipeAvailable\":true,\"pipeDescriptorMatched\":true,\"ordinaryPipeName\":"+quote(utf8(ordinaryPipe.name))+",\"ordinaryPipeKernelName\":"+quote(utf8(ordinaryPipe.kernelName))+",\"ordinaryExactSynchronousPositive\":true,\"ordinaryOverlappedFixture\":true,\"ordinaryPipeAvailable\":true,\"ordinaryDescriptorMatched\":true}");
     bool checked=false;
     for(int count=0;count<3;++count){
       std::string command=readLine();
-      if(command=="stop"){pipe.finish();line("{\"kind\":\"closed\",\"checked\":"+std::string(checked?"true":"false")+"}");return 0;}
-      require(!checked&&command.starts_with("check "),"command");const size_t delimiter=command.find(' ',6);require(delimiter!=std::string::npos,"peer-pipe-command");std::wstring other(command.begin()+6,command.begin()+delimiter),peerPipe(command.begin()+delimiter+1,command.end());
+      if(command=="stop"){ordinaryPipe.finish();pipe.finish();line("{\"kind\":\"closed\",\"checked\":"+std::string(checked?"true":"false")+"}");return 0;}
+      require(!checked&&command.starts_with("check "),"command");const size_t delimiter=command.find(' ',6);require(delimiter!=std::string::npos,"peer-pipe-command");const size_t second=command.find(' ',delimiter+1);require(second!=std::string::npos,"peer-ordinary-command");std::wstring other(command.begin()+6,command.begin()+delimiter),peerPipe(command.begin()+delimiter+1,command.begin()+second),peerOrdinary(command.begin()+second+1,command.end());
       auto split=id.root.rfind(L'\\');require(split!=std::wstring::npos&&other.starts_with(id.root.substr(0,split+1))&&other!=id.root,"foreign-root");std::wstring sid=other.substr(split+1);PSID parsed=nullptr;require(ConvertStringSidToSidW(sid.c_str(),&parsed)!=0,"foreign-sid");bool valid=IsValidSid(parsed)&&sid.starts_with(L"S-1-15-2-");LocalFree(parsed);require(valid,"foreign-sid-family");
       std::wstring foreign=absolute(other,globalLeaf(key)),foreignSession=id.session?absolute(other,sessionLeaf(id.session,key)):foreign;
       std::wstring ep=absolute(foreign,eventLeaf),mp=absolute(foreign,sectionLeaf);
@@ -296,9 +339,9 @@ int wmain(int argc,wchar_t** argv){
       checks.emplace_back("originalGlobalCreate",api.createDirectory(&glob.value,0x2000f,&originalName.attributes));
       std::string fields;bool allDenied=true;constexpr auto denied=static_cast<NTSTATUS>(0xc0000022u);
       for(const auto& check:checks){fields+=","+quote(check.first)+":"+status(check.second);allDenied=allDenied&&check.second==denied;}
-      const auto pipeDenials=pipe.foreign(peerPipe);
-      line("{\"kind\":\"denials\","+identityFields(id)+",\"foreignRoot\":"+quote(utf8(other))+fields+",\"pipeForeignWriter\":"+std::to_string(pipeDenials.first)+",\"pipeForeignWriteData\":"+std::to_string(pipeDenials.second)+",\"pipeOwnBefore\":"+std::string(pipe.ownBefore?"true":"false")+",\"pipeOwnMinimalBefore\":"+std::string(pipe.minimalBefore?"true":"false")+",\"pipeOwnAfter\":"+std::string(pipe.ownAfter?"true":"false")+",\"pipeOwnMinimalAfter\":"+std::string(pipe.minimalAfter?"true":"false")+",\"pipeServerAvailableAfter\":true}");
-      require(allDenied&&pipeDenials.first==ERROR_ACCESS_DENIED&&pipeDenials.second==ERROR_ACCESS_DENIED,"isolation-denial-failed");checked=true;
+      const auto pipeDenials=pipe.foreign(peerPipe);const auto ordinaryDenials=ordinaryPipe.foreign(peerOrdinary);
+      line("{\"kind\":\"denials\","+identityFields(id)+",\"foreignRoot\":"+quote(utf8(other))+fields+",\"pipeForeignWriter\":"+std::to_string(pipeDenials.first)+",\"pipeForeignWriteData\":"+std::to_string(pipeDenials.second)+",\"pipeOwnBefore\":"+std::string(pipe.ownBefore?"true":"false")+",\"pipeOwnMinimalBefore\":"+std::string(pipe.minimalBefore?"true":"false")+",\"pipeOwnAfter\":"+std::string(pipe.ownAfter?"true":"false")+",\"pipeOwnMinimalAfter\":"+std::string(pipe.minimalAfter?"true":"false")+",\"pipeServerAvailableAfter\":true,\"ordinaryForeignWriter\":"+status(static_cast<NTSTATUS>(ordinaryDenials.first))+",\"ordinaryForeignWriteData\":"+status(static_cast<NTSTATUS>(ordinaryDenials.second))+",\"ordinaryOwnBefore\":"+std::string(ordinaryPipe.ownBefore?"true":"false")+",\"ordinaryOwnMinimalBefore\":"+std::string(ordinaryPipe.minimalBefore?"true":"false")+",\"ordinaryOwnAfter\":"+std::string(ordinaryPipe.ownAfter?"true":"false")+",\"ordinaryOwnMinimalAfter\":"+std::string(ordinaryPipe.minimalAfter?"true":"false")+",\"ordinaryServerAvailableAfter\":true}");
+      require(allDenied&&pipeDenials.first==ERROR_ACCESS_DENIED&&pipeDenials.second==ERROR_ACCESS_DENIED&&ordinaryDenials.first==0xc0000022u&&ordinaryDenials.second==0xc0000022u,"isolation-denial-failed");checked=true;
     }
     throw std::runtime_error("command-count");
   }catch(const std::exception& error){line("{\"kind\":\"failure\",\"error\":"+quote(error.what())+",\"win32\":"+std::to_string(GetLastError())+"}");return 1;}

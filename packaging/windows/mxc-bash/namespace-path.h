@@ -90,6 +90,16 @@ inline bool npfs_root_name(const wchar_t* input, size_t count) {
     return true;
 }
 
+inline bool ordinary_create_contract(uint32_t access, uint32_t share, uint32_t disposition,
+    uint32_t options, uint32_t pipe_type, uint32_t read_mode, uint32_t completion_mode,
+    uint32_t instances, uint32_t inbound, uint32_t outbound, bool timeout_readable,
+    int64_t timeout, uint32_t attributes) {
+    return access == 0x80100100 && share == 3 && disposition == 2 && options == 0x20 &&
+        pipe_type == 0 && read_mode == 0 && completion_mode == 0 && instances == 1 &&
+        inbound == 65536 && outbound == 65536 && timeout_readable && timeout == -500000 &&
+        (attributes == 0 || attributes == 2); // Preserve canonical OBJ_INHERIT.
+}
+
 enum class Family { none, global, session };
 struct Match {
     Family family;

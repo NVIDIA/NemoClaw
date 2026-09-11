@@ -92,6 +92,13 @@ test("all independent raw denial results must be access denied, including NULL-D
     pipeOwnAfter: true,
     pipeOwnMinimalAfter: true,
     pipeServerAvailableAfter: true,
+    ordinaryForeignWriter: "0xc0000022",
+    ordinaryForeignWriteData: "0xc0000022",
+    ordinaryOwnBefore: true,
+    ordinaryOwnMinimalBefore: true,
+    ordinaryOwnAfter: true,
+    ordinaryOwnMinimalAfter: true,
+    ordinaryServerAvailableAfter: true,
   };
   validateDenials(row, "other");
   for (const key of [
@@ -112,6 +119,17 @@ test("all independent raw denial results must be access denied, including NULL-D
     assert.throws(() => validateDenials({ ...row, [key]: "0xc0000034" }, "other"));
   assert.throws(() => validateDenials({ ...row, rawProbeUnshimmed: false }, "other"));
   assert.throws(() => validateDenials(row, "another"));
+  for (const key of ["ordinaryForeignWriter", "ordinaryForeignWriteData"])
+    for (const code of ["0x00000000", "0xc0000034", "0xc00000ae", "0xc00000b0"])
+      assert.throws(() => validateDenials({ ...row, [key]: code }, "other"));
+  for (const key of [
+    "ordinaryOwnBefore",
+    "ordinaryOwnMinimalBefore",
+    "ordinaryOwnAfter",
+    "ordinaryOwnMinimalAfter",
+    "ordinaryServerAvailableAfter",
+  ])
+    assert.throws(() => validateDenials({ ...row, [key]: false }, "other"));
   for (const key of ["pipeForeignWriter", "pipeForeignWriteData"])
     for (const code of [0, 2, 231, 233])
       assert.throws(() => validateDenials({ ...row, [key]: code }, "other"));

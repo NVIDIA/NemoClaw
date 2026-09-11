@@ -24,6 +24,14 @@ NativePipeCreate realNativePipeCreate = nullptr;
 NativeFileOpen realNativeFileOpen = nullptr;
 LONG nativePipeRecords = 0;
 LONG ordinaryAclRecords = 0;
+using CompareHandles = BOOL (WINAPI*)(HANDLE, HANDLE);
+CompareHandles sameKernelObject = nullptr;
+using QueryObject = NTSTATUS (NTAPI*)(HANDLE, OBJECT_INFORMATION_CLASS, PVOID, ULONG, PULONG);
+QueryObject queryKernelObject = nullptr;
+LONG npfsBindingState = 0;
+HANDLE heldNpfsRoot = nullptr;
+DWORD npfsBindingError = 0;
+const char* npfsBindingReason = "not-observed";
 decltype(&CreateNamedPipeA) realCreateSignalServer = CreateNamedPipeA;
 decltype(&CreateFileA) realOpenSignalWriter = CreateFileA;
 LONG pipeRecords = 0;
@@ -163,6 +171,11 @@ bool initialize_namespace() {
     if (!realNativePipeCreate) return context_result("ntdll-pipe-create-export", "win32", GetLastError());
     realNativeFileOpen = reinterpret_cast<NativeFileOpen>(GetProcAddress(ntdll, "NtOpenFile"));
     if (!realNativeFileOpen) return context_result("ntdll-file-open-export", "win32", GetLastError());
+    HMODULE kernelBase = GetModuleHandleW(L"kernelbase.dll");
+    if (kernelBase) sameKernelObject = reinterpret_cast<CompareHandles>(GetProcAddress(kernelBase, "CompareObjectHandles"));
+    if (!sameKernelObject) { npfsBindingError = GetLastError(); npfsBindingReason = "compare-unavailable"; }
+    queryKernelObject = reinterpret_cast<QueryObject>(GetProcAddress(ntdll, "NtQueryObject"));
+    if (!queryKernelObject) { npfsBindingError = GetLastError(); npfsBindingReason = "name-query-unavailable"; }
     // Validate the converted root through the original native API before any
     // hooks exist, requesting only traversal and creation of our subdirectories.
     UNICODE_STRING rootName = {};
@@ -429,6 +442,10 @@ struct NativePipeObservation {
     ULONG attributes = 0;
     bool npfsRoot = false;
     PipeSecurityObservation security = {};
+    OBJECT_ATTRIBUTES originalAttributes = {};
+    bool descriptorAppended = false;
+    HANDLE forwardedRoot = nullptr;
+    const char* adaptation = "not-requested";
 };
 
 bool observe_native_pipe_name(POBJECT_ATTRIBUTES input, NativePipeObservation& result) {
@@ -447,7 +464,9 @@ bool observe_native_pipe_name(POBJECT_ATTRIBUTES input, NativePipeObservation& r
             ordinary_pipe_name(copied, count, installationKey, GetCurrentProcessId()))) return false;
         for (size_t n = 0; n < count; ++n) result.name[n] = static_cast<char>(copied[n]);
         result.root = attributes.RootDirectory;
+        result.forwardedRoot = attributes.RootDirectory;
         result.attributes = attributes.Attributes;
+        result.originalAttributes = attributes;
         SECURITY_ATTRIBUTES security = {sizeof(SECURITY_ATTRIBUTES), attributes.SecurityDescriptor,
                                        (attributes.Attributes & OBJ_INHERIT) ? TRUE : FALSE};
         observe_pipe_security(&security, result.security);
@@ -483,18 +502,106 @@ void log_native_pipe(const NativePipeObservation& observation, const char* opera
     }
     char line[2560];
     const int count = _snprintf_s(line, sizeof(line), _TRUNCATE,
-        "NEMOCLAW_MSYS_NATIVE_PIPE={\"schemaVersion\":1,\"pid\":%lu,\"operation\":\"%s\",\"name\":\"%s\",\"rootHandle\":\"0x%llx\",\"objectAttributes\":\"0x%08lx\",\"access\":\"0x%08lx\",\"share\":%lu,\"disposition\":%lu,\"options\":\"0x%08lx\",\"pipeType\":%lu,\"readMode\":%lu,\"completionMode\":%lu,\"maxInstances\":%lu,\"inboundQuota\":%lu,\"outboundQuota\":%lu,\"timeoutReadable\":%s,\"timeout100ns\":%lld,\"ntStatus\":\"0x%08lx\",\"resultHandle\":\"0x%llx\",\"lastError\":%lu,\"securitySource\":\"OBJECT_ATTRIBUTES-input\",\"securityInspectionComplete\":%s,\"descriptorPresent\":%s,\"descriptorControl\":\"0x%04x\",\"daclPresent\":%s,\"nullDacl\":%s,\"aclBytes\":%lu,\"aceCount\":%lu,\"capturedAclBytes\":%lu,\"aclTruncated\":%s,\"aclHex\":\"%s\"}\n",
+        "NEMOCLAW_MSYS_NATIVE_PIPE={\"schemaVersion\":1,\"pid\":%lu,\"operation\":\"%s\",\"name\":\"%s\",\"rootHandle\":\"0x%llx\",\"objectAttributes\":\"0x%08lx\",\"access\":\"0x%08lx\",\"share\":%lu,\"disposition\":%lu,\"options\":\"0x%08lx\",\"pipeType\":%lu,\"readMode\":%lu,\"completionMode\":%lu,\"maxInstances\":%lu,\"inboundQuota\":%lu,\"outboundQuota\":%lu,\"timeoutReadable\":%s,\"timeout100ns\":%lld,\"ntStatus\":\"0x%08lx\",\"resultHandle\":\"0x%llx\",\"lastError\":%lu,\"securitySource\":\"%s\",\"securityInspectionComplete\":%s,\"descriptorPresent\":%s,\"descriptorControl\":\"0x%04x\",\"daclPresent\":%s,\"nullDacl\":%s,\"aclBytes\":%lu,\"aceCount\":%lu,\"capturedAclBytes\":%lu,\"aclTruncated\":%s,\"aclHex\":\"%s\",\"requestDescriptorAppended\":%s,\"appendedAccess\":\"0x%08lx\",\"forwardedRootHandle\":\"0x%llx\",\"npfsRootHeld\":%s,\"npfsBindingError\":%lu,\"npfsBindingReason\":\"%s\",\"adaptation\":\"%s\"}\n",
         GetCurrentProcessId(), operation, escaped, reinterpret_cast<unsigned long long>(observation.root), observation.attributes,
         access, share, disposition, options, pipeType, readMode, completionMode, instances, inbound, outbound,
         timeoutReadable ? "true" : "false", timeout, static_cast<ULONG>(status), handle, lastError,
+        observation.descriptorAppended ? "adapted-input" : "OBJECT_ATTRIBUTES-input",
         security.complete ? "true" : "false", security.descriptorPresent ? "true" : "false",
         static_cast<unsigned>(security.control), security.daclPresent ? "true" : "false", security.nullDacl ? "true" : "false",
         security.aclBytes, security.aceCount, security.capturedAclBytes,
-        security.capturedAclBytes < security.aclBytes ? "true" : "false", aclHex);
+        security.capturedAclBytes < security.aclBytes ? "true" : "false", aclHex,
+        observation.descriptorAppended ? "true" : "false", observation.descriptorAppended ? static_cast<ULONG>(signal_writer_access) : 0UL,
+        reinterpret_cast<unsigned long long>(observation.forwardedRoot),
+        InterlockedCompareExchange(&npfsBindingState, 2, 2) == 2 ? "true" : "false",
+        npfsBindingError, npfsBindingReason, observation.adaptation);
     DWORD written = 0;
     writingPipeDiagnostic = true;
     if (count > 0) WriteFile(GetStdHandle(STD_ERROR_HANDLE), line, static_cast<DWORD>(count), &written, nullptr);
     writingPipeDiagnostic = false;
+}
+
+bool verified_npfs_object_name(HANDLE handle, DWORD& error) {
+    alignas(void*) BYTE buffer[512] = {};
+    ULONG needed = 0;
+    const NTSTATUS status = queryKernelObject(handle, static_cast<OBJECT_INFORMATION_CLASS>(1),
+                                              buffer, sizeof(buffer), &needed);
+    error = static_cast<DWORD>(status);
+    if (status != 0) return false;
+    const auto name = reinterpret_cast<const UNICODE_STRING*>(buffer);
+    const uintptr_t begin = reinterpret_cast<uintptr_t>(buffer);
+    const uintptr_t address = reinterpret_cast<uintptr_t>(name->Buffer);
+    if (!name->Buffer || name->Length % sizeof(WCHAR) || name->Length > name->MaximumLength ||
+        address < begin + sizeof(UNICODE_STRING) || address > begin + sizeof(buffer) ||
+        name->Length > begin + sizeof(buffer) - address) return false;
+    return npfs_root_name(name->Buffer, name->Length / sizeof(WCHAR));
+}
+
+void retain_npfs_root(HANDLE original) {
+    if (!original || original == INVALID_HANDLE_VALUE || !sameKernelObject || !queryKernelObject ||
+        InterlockedCompareExchange(&npfsBindingState, 1, 0) != 0) return;
+    const char* rejected = nullptr;
+    DWORD error = 0;
+    HANDLE duplicate = nullptr;
+    if (!not_impersonating(rejected, error)) npfsBindingReason = rejected;
+    else if (!DuplicateHandle(GetCurrentProcess(), original, GetCurrentProcess(), &duplicate,
+                              0, FALSE, DUPLICATE_SAME_ACCESS)) {
+        error = GetLastError(); npfsBindingReason = "duplicate-failed";
+    } else if (!sameKernelObject(original, duplicate)) {
+        error = GetLastError(); npfsBindingReason = "duplicate-not-same-object";
+    } else if (!verified_npfs_object_name(duplicate, error)) {
+        npfsBindingReason = "npfs-object-name-not-verified";
+    } else {
+        // Noninheriting, same-access duplicate is owned for this injected
+        // process lifetime. Windows closes it on normal exit or job teardown.
+        heldNpfsRoot = duplicate;
+        npfsBindingReason = "held-same-object";
+        npfsBindingError = 0;
+        InterlockedExchange(&npfsBindingState, 2);
+        return;
+    }
+    if (duplicate) CloseHandle(duplicate);
+    npfsBindingError = error;
+    InterlockedExchange(&npfsBindingState, 0);
+}
+
+bool current_default_pipe_descriptor(SignalPipeDescriptor& output) {
+    HANDLE token = nullptr;
+    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) return false;
+    alignas(void*) BYTE data[1024] = {}, containerData[sizeof(TOKEN_APPCONTAINER_INFORMATION) + SECURITY_MAX_SID_SIZE] = {};
+    DWORD needed = 0;
+    bool result = false;
+    void* userAce = nullptr;
+    void* containerAce = nullptr;
+    auto identities = reinterpret_cast<PACL>(privateDescriptor.acl);
+    if (GetAce(identities, 0, &userAce) && GetAce(identities, 1, &containerAce) &&
+        GetTokenInformation(token, TokenAppContainerSid, containerData, sizeof(containerData), &needed)) {
+        PSID currentContainer = reinterpret_cast<TOKEN_APPCONTAINER_INFORMATION*>(containerData)->TokenAppContainer;
+        PSID expectedContainer = &static_cast<ACCESS_ALLOWED_ACE*>(containerAce)->SidStart;
+        if (currentContainer && IsValidSid(currentContainer) && EqualSid(currentContainer, expectedContainer) &&
+            GetTokenInformation(token, TokenDefaultDacl, data, sizeof(data), &needed) &&
+            needed >= sizeof(TOKEN_DEFAULT_DACL) && needed <= sizeof(data)) {
+            PACL acl = reinterpret_cast<TOKEN_DEFAULT_DACL*>(data)->DefaultDacl;
+            const uintptr_t begin = reinterpret_cast<uintptr_t>(data);
+            const uintptr_t address = reinterpret_cast<uintptr_t>(acl);
+            if (acl && address >= begin + sizeof(TOKEN_DEFAULT_DACL) && address <= begin + needed - sizeof(ACL) &&
+                acl->AclSize >= sizeof(ACL) && acl->AclSize <= 512 && acl->AclSize <= begin + needed - address) {
+                // Explicit DACL only; owner/group remain unset so Windows
+                // selects the same current token defaults as NULL-SD creation.
+                SECURITY_DESCRIPTOR descriptor = {};
+                SECURITY_ATTRIBUTES attributes = {sizeof(SECURITY_ATTRIBUTES), &descriptor, FALSE};
+                if (InitializeSecurityDescriptor(&descriptor, SECURITY_DESCRIPTOR_REVISION) &&
+                    SetSecurityDescriptorDacl(&descriptor, TRUE, acl, FALSE)) {
+                    PipeSecurityObservation snapshot = {};
+                    observe_pipe_security(&attributes, snapshot);
+                    result = append_signal_container_ace(snapshot,
+                        &static_cast<ACCESS_ALLOWED_ACE*>(userAce)->SidStart, expectedContainer, output);
+                }
+            }
+        }
+    }
+    CloseHandle(token);
+    return result;
 }
 
 NTSTATUS NTAPI observe_native_open(PHANDLE output, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes,
@@ -506,8 +613,12 @@ NTSTATUS NTAPI observe_native_open(PHANDLE output, ACCESS_MASK access, POBJECT_A
     SetLastError(before);
     const NTSTATUS status = realNativeFileOpen(output, access, attributes, io, share, options);
     const DWORD after = GetLastError();
+    const unsigned long long openedHandle = matched ? observed_native_handle(output, status) : 0;
+    if (matched && observed.npfsRoot && status == 0 && access == 0x00100080 && share == 3 && options == 0 &&
+        observed.attributes == 0 && !observed.security.descriptorPresent && !observed.originalAttributes.SecurityQualityOfService)
+        retain_npfs_root(reinterpret_cast<HANDLE>(openedHandle));
     if (matched) log_native_pipe(observed, observed.npfsRoot ? "npfs-root-open" : "ordinary-writer-open",
-        access, share, 0, options, 0, 0, 0, 0, 0, 0, false, 0, status, observed_native_handle(output, status), after);
+        access, share, 0, options, 0, 0, 0, 0, 0, 0, false, 0, status, openedHandle, after);
     SetLastError(after);
     return status;
 }
@@ -618,18 +729,51 @@ NTSTATUS NTAPI observe_native_create(PHANDLE output, ACCESS_MASK access, POBJECT
         __try { timeoutValue = timeout->QuadPart; timeoutReadable = true; }
         __except (EXCEPTION_EXECUTE_HANDLER) { timeoutReadable = false; }
     }
+    const bool originalNullDescriptor = matched && !observed.security.descriptorPresent;
+    const bool exact = originalNullDescriptor && !observed.originalAttributes.SecurityQualityOfService &&
+        ordinary_create_contract(access, share, disposition, options, pipeType, readMode, completionMode,
+                                 instances, inbound, outbound, timeoutReadable, timeoutValue, observed.attributes);
+    SignalPipeDescriptor descriptor = {};
+    OBJECT_ATTRIBUTES forwarded = observed.originalAttributes;
+    UNICODE_STRING privateName = {};
+    WCHAR wideName[maximum_signal_pipe_characters] = {};
+    LARGE_INTEGER privateTimeout = {};
+    privateTimeout.QuadPart = timeoutValue;
+    if (exact) {
+        observed.adaptation = "root-not-verified";
+        if (sameKernelObject && InterlockedCompareExchange(&npfsBindingState, 2, 2) == 2 &&
+            sameKernelObject(observed.root, heldNpfsRoot)) {
+            const char* rejected = nullptr;
+            DWORD identityError = 0;
+            if (!not_impersonating(rejected, identityError)) observed.adaptation = rejected;
+            else if (!current_default_pipe_descriptor(descriptor)) observed.adaptation = "token-default-not-admitted";
+            else {
+                const size_t count = strlen(observed.name);
+                for (size_t n = 0; n < count; ++n) wideName[n] = static_cast<WCHAR>(observed.name[n]);
+                privateName.Buffer = wideName;
+                privateName.Length = static_cast<USHORT>(count * sizeof(WCHAR));
+                privateName.MaximumLength = static_cast<USHORT>((count + 1) * sizeof(WCHAR));
+                forwarded.ObjectName = &privateName;
+                forwarded.RootDirectory = heldNpfsRoot;
+                forwarded.SecurityDescriptor = &descriptor.descriptor;
+                observed.forwardedRoot = heldNpfsRoot;
+                observed.descriptorAppended = true;
+                observed.adaptation = "new-server-default-template";
+                observed.security = {};
+                observe_pipe_security(&descriptor.attributes, observed.security);
+            }
+        }
+    }
     SetLastError(before);
-    const NTSTATUS status = realNativePipeCreate(output, access, attributes, io, share, disposition,
-        options, pipeType, readMode, completionMode, instances, inbound, outbound, timeout);
+    const NTSTATUS status = realNativePipeCreate(output, access, observed.descriptorAppended ? &forwarded : attributes,
+        io, share, disposition, options, pipeType, readMode, completionMode, instances, inbound, outbound,
+        observed.descriptorAppended ? &privateTimeout : timeout);
     const DWORD after = GetLastError();
     const unsigned long long createdHandle = matched ? observed_native_handle(output, status) : 0;
     if (matched) log_native_pipe(observed, "ordinary-server-create", access, share, disposition, options,
         pipeType, readMode, completionMode, instances, inbound, outbound, timeoutReadable, timeoutValue,
         status, createdHandle, after);
-    if (matched && status == 0 && !observed.security.descriptorPresent &&
-        access == 0x80100100 && share == 3 && disposition == 2 && options == 0x20 &&
-        pipeType == 0 && readMode == 0 && completionMode == 0 && instances == 1 &&
-        inbound == 65536 && outbound == 65536 && timeoutReadable && timeoutValue == -500000)
+    if (exact && status == 0)
         observe_ordinary_default_acl(reinterpret_cast<HANDLE>(createdHandle), observed.root);
     SetLastError(after);
     return status;

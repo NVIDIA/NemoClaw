@@ -126,6 +126,16 @@ export function validateDenials(row: any, other: string) {
     assert.equal(row[key], "0xc0000022", key);
   assert.equal(row.pipeForeignWriter, 5, "foreign canonical writer");
   assert.equal(row.pipeForeignWriteData, 5, "foreign minimal write data");
+  assert.equal(row.ordinaryForeignWriter, "0xc0000022", "ordinary canonical writer");
+  assert.equal(row.ordinaryForeignWriteData, "0xc0000022", "ordinary minimal write data");
+  for (const key of [
+    "ordinaryOwnBefore",
+    "ordinaryOwnMinimalBefore",
+    "ordinaryOwnAfter",
+    "ordinaryOwnMinimalAfter",
+    "ordinaryServerAvailableAfter",
+  ])
+    assert.equal(row[key], true, key);
   for (const key of [
     "pipeOwnBefore",
     "pipeOwnMinimalBefore",
@@ -425,6 +435,10 @@ async function worker(configFile: string) {
           "pipeOverlappedFixture",
           "pipeAvailable",
           "pipeDescriptorMatched",
+          "ordinaryExactSynchronousPositive",
+          "ordinaryOverlappedFixture",
+          "ordinaryPipeAvailable",
+          "ordinaryDescriptorMatched",
         ])
           assert.equal(ready[key], true, key);
         results.namespace = ready;
@@ -437,7 +451,12 @@ async function worker(configFile: string) {
             !/[\r\n]/u.test(cross.otherRoot),
         );
         assert(typeof cross.otherPipe === "string" && !/[\r\n ]/u.test(cross.otherPipe));
-        probe.child.stdin!.write("check " + cross.otherRoot + " " + cross.otherPipe + "\n");
+        assert(
+          typeof cross.otherOrdinaryPipe === "string" && !/[\r\n ]/u.test(cross.otherOrdinaryPipe),
+        );
+        probe.child.stdin!.write(
+          "check " + cross.otherRoot + " " + cross.otherPipe + " " + cross.otherOrdinaryPipe + "\n",
+        );
         const denied = await probe.line("denials");
         validateDenials(denied, cross.otherRoot);
         results.denials = denied;
@@ -639,12 +658,14 @@ async function main() {
       nonce,
       otherRoot: br.privateRoot,
       otherPipe: br.pipeName,
+      otherOrdinaryPipe: br.ordinaryPipeName,
     });
     await waitFile(path.join(a.c.share, "checked.json"), Date.now() + 20000);
     atomic(path.join(b.c.share, "cross.json"), {
       nonce,
       otherRoot: ar.privateRoot,
       otherPipe: ar.pipeName,
+      otherOrdinaryPipe: ar.ordinaryPipeName,
     });
     await waitFile(path.join(b.c.share, "checked.json"), Date.now() + 20000);
     atomic(path.join(a.c.share, "stop.json"), { nonce });
