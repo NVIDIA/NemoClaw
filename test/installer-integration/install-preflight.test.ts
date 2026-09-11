@@ -502,31 +502,32 @@ exit 89
       const npmLog = path.join(tmp, "npm.log");
       const openshellLog = path.join(tmp, "install-openshell.log");
       fs.mkdirSync(path.join(tmp, ".git"));
-
       writeNodeStub(fakeBin);
       writeDockerOkStub(fakeBin);
       writeSourceCheckoutNpmStub(fakeBin, { commandLog: true });
-
       writeSourceCheckoutPackages(tmp);
-
-      fs.mkdirSync(path.join(tmp, "scripts"), { recursive: true });
+      fs.mkdirSync(path.join(tmp, "scripts", "lib"), { recursive: true });
+      fs.copyFileSync(
+        path.join(import.meta.dirname, "../..", "scripts", "lib", "openshell-gateway.service.in"),
+        path.join(tmp, "scripts", "lib", "openshell-gateway.service.in"),
+      );
       writeExecutable(
         path.join(tmp, "scripts", "install-openshell.sh"),
         `#!/usr/bin/env bash
-printf 'install-openshell.sh invoked\\n' >> "$INSTALL_OPENSHELL_LOG"
+printf 'install-openshell.sh invoked\\n' >> "$INSTALL_OPENSHELL_LOG"; mkdir -p "$HOME/.local/bin"; for component in openshell openshell-gateway; do printf '%s\\n' '#!/usr/bin/env bash' 'if [ "\${1:-}" = "--version" ]; then echo "openshell 0.0.116"; fi' 'exit 0' > "$HOME/.local/bin/$component"; chmod 755 "$HOME/.local/bin/$component"; done
 exit 0
 `,
       );
       fs.mkdirSync(path.join(tmp, "bin", "lib"), { recursive: true });
       fs.writeFileSync(path.join(tmp, "bin", "lib", "usage-notice.js"), "process.exit(0);\n");
       fs.writeFileSync(path.join(tmp, "bin", "lib", "usage-notice.json"), "{}\n");
-
       const result = spawnSync("bash", [INSTALLER], {
         cwd: tmp,
         encoding: "utf-8",
         env: {
           ...process.env,
           HOME: tmp,
+          XDG_CONFIG_HOME: path.join(tmp, ".config"),
           PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
           NEMOCLAW_NON_INTERACTIVE: "1",
           NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
@@ -536,8 +537,7 @@ exit 0
           INSTALL_OPENSHELL_LOG: openshellLog,
         },
       });
-
-      expect(result.status).toBe(0);
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
       expect(fs.existsSync(openshellLog)).toBe(true);
       expect(fs.readFileSync(openshellLog, "utf-8")).toMatch(/install-openshell\.sh invoked/);
     },

@@ -578,7 +578,7 @@ describe("MCP adapter credential revision reconciliation failures", () => {
           {},
           "v11",
         ),
-      ).rejects.toThrow("did not expose a revision-scoped credential");
+      ).rejects.toThrow("did not expose a credential handle");
     },
   );
 
@@ -630,5 +630,41 @@ describe("MCP adapter credential revision reconciliation failures", () => {
       ),
     ).rejects.toThrow("credential revision did not stabilize");
     expect(mocks.writeSandboxConfig).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("native OpenClaw stable credential headers", () => {
+  const stable = `s${"a".repeat(64)}` as const;
+  const scoped = (generation: string, key = "GITHUB_TOKEN") => ({
+    Authorization: `Bearer openshell:resolve:env:${generation}_${key}`,
+  });
+
+  it("matches the exact stable handle and canonical key without accepting another handle", () => {
+    expect(openClawHeadersMatchExpected(scoped(stable), entryHeaders(baseEntry))).toBe(true);
+    expect(openClawHeadersMatchExpected(scoped(stable), entryHeaders(baseEntry, stable))).toBe(
+      true,
+    );
+    expect(
+      openClawHeadersMatchExpected(scoped(`s${"b".repeat(64)}`), entryHeaders(baseEntry, stable)),
+    ).toBe(false);
+  });
+
+  it.each([`s${"a".repeat(63)}`, `s${"a".repeat(65)}`, `s${"A".repeat(64)}`])(
+    "rejects malformed stable generation %s",
+    (generation) => {
+      expect(openClawHeadersMatchExpected(scoped(generation), entryHeaders(baseEntry))).toBe(false);
+    },
+  );
+
+  it("rejects a different key and every extra native header", () => {
+    expect(
+      openClawHeadersMatchExpected(scoped(stable, "OTHER_TOKEN"), entryHeaders(baseEntry)),
+    ).toBe(false);
+    expect(
+      openClawHeadersMatchExpected(
+        { ...scoped(stable), accept: "application/json, text/event-stream" },
+        entryHeaders(baseEntry),
+      ),
+    ).toBe(false);
   });
 });

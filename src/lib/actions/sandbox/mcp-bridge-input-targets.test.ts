@@ -376,6 +376,8 @@ require("./src/lib/actions/sandbox/mcp-bridge.js").addMcpBridge("alpha", {
     "attachment",
     "bound-policy",
     "adapter",
+    "adapter-stable-unauthorized",
+    "adapter-update-failed",
   ] as const)(
     "recovers a process-isolated add after the %s phase",
     (phase) => {
@@ -388,14 +390,18 @@ process.env.GITHUB_TOKEN = "host-only-secret";
 // must replay the committed public pins rather than deriving a new request.
 require("node:dns/promises").lookup = async () => [{ address: "1.1.1.1", family: 4 }];
 const phase = ${JSON.stringify(phase)};
-const expectFailure = phase === "policy-url-mismatch";
+const stableUnauthorized = phase === "adapter-stable-unauthorized";
+const updateFailed = phase === "adapter-update-failed";
+const seedPhase = stableUnauthorized || updateFailed ? "adapter" : phase;
+const expectFailure = phase === "policy-url-mismatch" || stableUnauthorized || updateFailed;
+let authorizationProbe;
 if (phase === "provider-hostless") delete process.env.GITHUB_TOKEN;
 const providerId = "11111111-2222-4333-8444-555555555555";
 const state = {
-  policy: ["policy", "policy-url-mismatch", "provider", "provider-hostless", "attachment"].includes(phase) ? "capability" : phase === "bound-policy" || phase === "adapter" ? "bound" : "absent",
-  provider: ["provider", "provider-hostless", "attachment", "bound-policy", "adapter"].includes(phase),
-  attachment: ["attachment", "bound-policy", "adapter"].includes(phase),
-  adapter: phase === "adapter",
+  policy: ["policy", "policy-url-mismatch", "provider", "provider-hostless", "attachment"].includes(seedPhase) ? "capability" : seedPhase === "bound-policy" || seedPhase === "adapter" ? "bound" : "absent",
+  provider: ["provider", "provider-hostless", "attachment", "bound-policy", "adapter"].includes(seedPhase),
+  attachment: ["attachment", "bound-policy", "adapter"].includes(seedPhase),
+  adapter: seedPhase === "adapter",
 };
 const replace = (module, name, value) => Object.defineProperty(module, name, {
   configurable: true, enumerable: true, value, writable: true,
@@ -418,7 +424,7 @@ const entry = () => ({
 replace(adapters, "assertAgentMcpMutationRuntimeCapability", () => {});
 replace(adapters, "inspectAgentAdapterRegistration", () => ({ state: state.adapter ? "registered" : "absent" }));
 replace(adapters, "registerAgentAdapterAtCurrentCredentialRevision", () => { state.adapter = true; return "v7"; });
-replace(adapters, "unregisterAgentAdapter", () => "removed");
+replace(adapters, "unregisterAgentAdapter", () => { state.adapter = false; return "removed"; });
 replace(bridgeState, "ensureSandboxGatewaySelected", async () => {});
 replace(validation, "assertMcpCredentialBoundaryRuntimeVersion", () => {});
 replace(provider, "getMcpProviderInspectionRuntimeSelection", () => ({ gatewayName: "nemoclaw", workspace: "default" }));
@@ -432,19 +438,25 @@ replace(provider, "inspectMcpProviderAttachments", () => ({
 replace(provider, "assertNoProviderCredentialCollisions", () => {});
 replace(provider, "assertMcpProviderRecoverable", () => provider.inspectMcpProvider());
 replace(provider, "ensureMcpBridgeProviderProfile", () => {});
-replace(provider, "upsertMcpProvider", (_name, _env, options) => {
+replace(provider, "upsertMcpProvider", async (_name, _env, options) => {
   const action = state.provider ? process.env.GITHUB_TOKEN ? "updated" : "reused" : "created";
-  if (action !== "reused") options.prepareMutation && options.prepareMutation(action === "updated" ? "update" : "create");
+  if (action !== "reused") await (options.prepareMutation && options.prepareMutation(action === "updated" ? "update" : "create"));
   state.provider = true;
+  if (updateFailed) throw new Error("provider update committed before transport failed");
   return { action, inspection: provider.inspectMcpProvider() };
 });
 replace(provider, "attachProvider", () => { state.attachment = true; });
-replace(provider, "observeMcpCredentialRevision", () => "v6");
-replace(provider, "waitForAttachedMcpCredential", () => "v7");
+const stable = "s" + "a".repeat(64);
+replace(provider, "observeMcpCredentialRevision", () => stableUnauthorized ? stable : "v6");
+replace(provider, "waitForAttachedMcpCredential", () => stableUnauthorized ? stable : "v7");
+if (stableUnauthorized) replace(require("./src/lib/actions/sandbox/mcp-bridge-status.js"), "statusMcpBridge", async (_sandbox, server, options) => {
+  authorizationProbe = { server, options };
+  return [{ provider: { credentialResolution: { ok: null, httpStatus: 401, controlHttpStatus: 401, detail: "updated credential remained unauthorized" } } }];
+});
 replace(provider, "refreshMcpProviderEnvironment", () => {});
 replace(policies, "getPresetContentGatewayState", (_sandbox, content) => {
   if (state.policy === "absent") return "absent";
-  if (expectFailure) return "drift";
+  if (phase === "policy-url-mismatch") return "drift";
   const expected = content.includes("credential_binding") ? "bound" : "capability";
   return state.policy === expected && content.includes("8.8.8.8") ? "match" : "drift";
 });
@@ -461,7 +473,7 @@ replace(sourceState, "inspectPolicyOnlyMcpEntry", () =>
     ? null
     : {
         ...entry(),
-        ...(expectFailure ? { url: "https://other.example/mcp" } : {}),
+        ...(phase === "policy-url-mismatch" ? { url: "https://other.example/mcp" } : {}),
         source: "policy",
         ...(state.policy === "capability" ? { providerName: undefined, providerId: undefined } : {}),
       },
@@ -482,7 +494,7 @@ require("./src/lib/actions/sandbox/mcp-bridge.js").addMcpBridge("alpha", {
   }
   process.stdout.write(JSON.stringify({
     message: String(error && error.message || error),
-    state,
+    state, authorizationProbe,
   }), () => process.exit(0));
 });
 `;
@@ -500,6 +512,7 @@ require("./src/lib/actions/sandbox/mcp-bridge.js").addMcpBridge("alpha", {
           timeout: 30_000,
         });
         expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+        expect(`${result.stdout}\n${result.stderr}`).not.toContain("host-only-secret");
         const outcome = JSON.parse(result.stdout) as {
           message?: string;
           state: Record<string, unknown>;
@@ -515,14 +528,34 @@ require("./src/lib/actions/sandbox/mcp-bridge.js").addMcpBridge("alpha", {
                   provider: false,
                 },
               }
-            : {
-                state: {
-                  adapter: true,
-                  attachment: true,
-                  policy: "bound",
-                  provider: true,
+            : phase === "adapter-stable-unauthorized" || phase === "adapter-update-failed"
+              ? {
+                  message: expect.stringContaining(
+                    phase === "adapter-stable-unauthorized"
+                      ? "did not authorize its unchanged stable credential handle after provider update"
+                      : "provider update committed before transport failed",
+                  ),
+                  state: { adapter: false, attachment: true, policy: "bound", provider: true },
+                  ...(phase === "adapter-stable-unauthorized"
+                    ? {
+                        authorizationProbe: {
+                          server: "github",
+                          options: expect.objectContaining({
+                            probeCredentialResolution: true,
+                            runtimeSelection: { gatewayName: "nemoclaw", workspace: "default" },
+                          }),
+                        },
+                      }
+                    : {}),
+                }
+              : {
+                  state: {
+                    adapter: true,
+                    attachment: true,
+                    policy: "bound",
+                    provider: true,
+                  },
                 },
-              },
         );
       } finally {
         fs.rmSync(home, { recursive: true, force: true });

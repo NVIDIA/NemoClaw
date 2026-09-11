@@ -117,7 +117,7 @@ export function pythonJsonLiteral(value: unknown): string {
   return JSON.stringify(JSON.stringify(value));
 }
 
-/** Compare native OpenClaw headers, tolerating only a revisioned form of the same resolver key. */
+/** Compare native OpenClaw headers, tolerating only a revisioned or stable-handle form of the same resolver key. */
 export function openClawHeadersMatchExpected(
   actual: unknown,
   expected: Record<string, string>,
@@ -141,7 +141,7 @@ export function openClawHeadersMatchExpected(
     const escapedEnvName = envName.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
     if (
       !new RegExp(
-        `^${canonicalPrefix.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")}v[0-9]{1,20}_${escapedEnvName}$`,
+        `^${canonicalPrefix.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")}(?:v[0-9]{1,20}|s[a-f0-9]{64})_${escapedEnvName}$`,
         "u",
       ).test(actualValue)
     ) {
@@ -253,12 +253,13 @@ export const MANAGED_HTTP_SERVER_MATCH_HELPERS = [
   "            continue",
   "        canonical_prefix = 'Bearer openshell:resolve:env:'",
   "        env_name = value[len(canonical_prefix):] if name.lower() == 'authorization' and isinstance(value, str) and value.startswith(canonical_prefix) else ''",
-  "        revision_prefix = canonical_prefix + 'v'",
   "        suffix = '_' + env_name",
-  "        if not env_name or not isinstance(actual_value, str) or not actual_value.startswith(revision_prefix) or not actual_value.endswith(suffix):",
+  "        if not env_name or not isinstance(actual_value, str) or not actual_value.startswith(canonical_prefix) or not actual_value.endswith(suffix):",
   "            return False",
-  "        revision = actual_value[len(revision_prefix):-len(suffix)]",
-  "        if not revision.isdigit() or not (1 <= len(revision) <= 20):",
+  "        generation = actual_value[len(canonical_prefix):-len(suffix)]",
+  "        revisioned = generation.startswith('v') and generation[1:].isdigit() and 1 <= len(generation[1:]) <= 20",
+  "        stable = generation.startswith('s') and len(generation[1:]) == 64 and all(char in '0123456789abcdef' for char in generation[1:])",
+  "        if not revisioned and not stable:",
   "            return False",
   "    return True",
 ];

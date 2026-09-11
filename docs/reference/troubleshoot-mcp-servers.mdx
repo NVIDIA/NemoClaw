@@ -53,9 +53,9 @@ If restart reports a missing provider, remove the native registration and re-add
 If restart or rebuild reports that the provider uses the profile-less legacy `generic` type, remove that server and add it again with the recorded credential variable exported.
 OpenShell cannot bind that provider to an MCP endpoint, and NemoClaw accepts it only for cleanup.
 
-## Rebuild or Destroy Cannot Prove a Credential Revision
+## Rebuild Cannot Prove a Credential Handle
 
-If rebuild or destroy reports that it could not prove a revision-scoped credential, a fresh sandbox process did not expose the exact OpenShell credential identity required for adapter cleanup.
+If rebuild reports that it could not prove a credential handle, a fresh sandbox process did not expose the exact OpenShell credential identity required for adapter cleanup.
 NemoClaw leaves the affected adapter and every provider unchanged.
 It attempts to restore adapter entries prepared earlier in the operation and reports rollback failures.
 
@@ -76,8 +76,9 @@ unset <CREDENTIAL_ENV>
 ```
 
 Run status again.
-Retry rebuild or destroy only after `provider.credentialReady` and `adapter.registered` are both `true`.
-If the re-add still cannot prove the revision, repair the reported OpenShell provider, policy, or adapter condition before retrying teardown.
+OpenShell can retain the same `s…` stable handle after a provider update; verify endpoint authorization with the named `mcp status` probe.
+Retry rebuild only after `provider.credentialReady` and `adapter.registered` are both `true`.
+If the re-add still cannot prove the credential handle, repair the reported OpenShell provider, policy, or adapter condition before retrying teardown.
 
 ## Add Transaction Is Incomplete
 

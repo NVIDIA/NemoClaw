@@ -242,6 +242,49 @@ ${body}
 }
 
 describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 }, () => {
+  it.each([
+    [200, 401, true],
+    [401, 401, false],
+    [400, 400, false],
+  ] as const)(
+    "requires wire authorization for an unchanged stable handle (%s/control %s)",
+    (probeHttpStatus, controlHttpStatus, accepted) => {
+      const home = createTempHome("nemoclaw-mcp-stable-authorization-");
+      const { stdout } = runHarness(
+        home,
+        String.raw`
+  const status = require("./src/lib/actions/sandbox/mcp-bridge-status.js");
+  const handle = "s" + "a".repeat(64);
+  providerCredentialObservation = handle;
+  let accepted = true;
+  let detail = "";
+  try {
+    await status.assertUnchangedStableMcpCredentialAuthorized(
+      "alpha", sourceEntry, { gatewayName: "nemoclaw", workspace: "default" }, handle, handle,
+    );
+  } catch (error) {
+    accepted = false;
+    detail = String(error.message);
+  }
+  writeHarnessResult(JSON.stringify({
+    accepted, detail, probed: executedSandboxCommands.some((command) => command.includes("NEMOCLAW_MCP_PROBE")),
+  }));
+`,
+        { probeHttpStatus, controlHttpStatus },
+      );
+      const result = JSON.parse(stdout) as { accepted: boolean; detail: string; probed: boolean };
+      expect(result.accepted).toBe(accepted);
+      expect(result.probed).toBe(true);
+      expect(result.detail).toEqual(
+        accepted
+          ? ""
+          : expect.stringContaining(
+              "did not authorize its unchanged stable credential handle after provider update",
+            ),
+      );
+    },
+  );
+
   it("inspects the attachment inventory once for a multi-server source read (#9806)", () => {
     const home = createTempHome("nemoclaw-mcp-status-attachments-");
     const { stdout } = runHarness(
@@ -381,7 +424,7 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
       "authorization: Bearer openshell:resolve:env:GITHUB_TOKEN",
     );
     expect(outcomes[1]?.probeCommand).toBeNull();
-    expect(outcomes[1]?.resolution.detail).toContain("revision-scoped placeholder");
+    expect(outcomes[1]?.resolution.detail).toContain("identityless credential placeholder");
     expect(outcomes.map((outcome) => outcome.credentialObservationCount)).toEqual([1, 1]);
   });
 

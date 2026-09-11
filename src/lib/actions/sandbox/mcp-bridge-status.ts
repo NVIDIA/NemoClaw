@@ -12,7 +12,7 @@ import {
 } from "./mcp-bridge-adapters";
 import { parseUnsafeDeepAgentsMcpConfigResult } from "./mcp-bridge-adapter-status";
 import { isAgentMcpAdapter, McpBridgeError, type McpBridgeStatus } from "./mcp-bridge-contracts";
-import { redactBridgeSecretsForDisplay } from "./mcp-bridge-output";
+import { redactBridgeFailureForDisplay, redactBridgeSecretsForDisplay } from "./mcp-bridge-output";
 import { getPolicyPresence } from "./mcp-bridge-policy";
 import {
   getMcpProviderInspectionRuntimeSelection,
@@ -65,6 +65,51 @@ const UNSUPPORTED_STORED_CREDENTIAL_WARNING =
   "This agent-source MCP credential name no longer satisfies the host-only credential boundary. Restart and rebuild fail closed for it; remove this server, then add it again with a dedicated service credential name.";
 const UNSUPPORTED_ATTACHED_CREDENTIAL_DETAIL =
   "the unsupported legacy credential may still be attached to fresh sandbox children";
+const AUTHORIZATION_DETAIL_MAX_LENGTH = 240;
+
+function authorizationDetailForDisplay(
+  detail: string,
+  entry: McpSourceEntry,
+  fallback: string,
+): string {
+  return (
+    redactBridgeFailureForDisplay(detail, entry).trim().slice(0, AUTHORIZATION_DETAIL_MAX_LENGTH) ||
+    fallback
+  );
+}
+
+/** Require endpoint authorization before accepting an unchanged stable credential handle. */
+export async function assertUnchangedStableMcpCredentialAuthorized(
+  sandboxName: string,
+  entry: McpSourceEntry,
+  runtimeSelection: McpProviderInspectionRuntimeSelection,
+  previousRevision: McpCredentialRevisionObservation | undefined,
+  credentialRevision: McpCredentialRevisionObservation,
+  inspectStatus: typeof statusMcpBridge = statusMcpBridge,
+): Promise<void> {
+  if (previousRevision !== credentialRevision || !credentialRevision.startsWith("s")) return;
+
+  let detail = "post-update wire-level credential verification did not return a result";
+  try {
+    const [status] = await inspectStatus(sandboxName, entry.server, {
+      allowCredentialProbeWithAdapterMismatch: true,
+      probeCredentialResolution: true,
+      runtimeSelection,
+    });
+    const probe = status?.provider.credentialResolution;
+    if (probe?.ok === true) return;
+    if (probe?.detail) detail = authorizationDetailForDisplay(probe.detail, entry, detail);
+  } catch (error) {
+    detail = authorizationDetailForDisplay(
+      error instanceof Error ? error.message : String(error),
+      entry,
+      "post-update credential status inspection failed",
+    );
+  }
+  throw new McpBridgeError(
+    `MCP server '${entry.server}' did not authorize its unchanged stable credential handle after provider update: ${detail}.`,
+  );
+}
 
 function storedUrlWarning(entry: McpSourceEntry): string | undefined {
   try {
@@ -188,7 +233,7 @@ function credentialObservationDetail(
     return "a fresh OpenShell exec did not expose the credential placeholder";
   }
   if (observation === "canonical") {
-    return "a fresh OpenShell exec exposed an identityless credential placeholder instead of a revision-scoped placeholder";
+    return "a fresh OpenShell exec exposed an identityless credential placeholder instead of a generation-scoped placeholder";
   }
   return undefined;
 }

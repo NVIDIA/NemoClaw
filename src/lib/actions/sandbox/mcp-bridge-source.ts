@@ -45,7 +45,7 @@ function sourcePayload(value: unknown): string {
 
 function commonPythonSourceReader(): string[] {
   return [
-    "import json, os, pathlib, stat",
+    "import json, os, pathlib, re, stat",
     "MAX_BYTES = 262144",
     "ENV_PREFIX = 'Bearer openshell:resolve:env:'",
     "def read_regular(path):",
@@ -73,8 +73,8 @@ function commonPythonSourceReader(): string[] {
     "    value = next((value for key, value in headers.items() if isinstance(key, str) and key.lower() == 'authorization'), None)",
     "    if not isinstance(value, str) or not value.startswith(ENV_PREFIX): return None",
     "    suffix = value[len(ENV_PREFIX):]",
-    "    if suffix.startswith('v') and '_' in suffix and suffix[1:suffix.index('_')].isdigit(): suffix = suffix[suffix.index('_') + 1:]",
-    "    return suffix if suffix and suffix.replace('_', 'A').isalnum() and not suffix[0].isdigit() else None",
+    "    suffix = re.sub(r'^(?:v[0-9]{1,20}|s[a-f0-9]{64})_', '', suffix)",
+    "    return suffix if re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]{0,127}', suffix) else None",
   ];
 }
 
@@ -129,7 +129,7 @@ function buildOpenClawSourceCommand(configDir: string): string {
     "  let fd; try { fd = fs.openSync(path, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW); } catch (error) { if (error && error.code === 'ENOENT') return null; throw error; }",
     "  try { const before = fs.fstatSync(fd); const linked = fs.lstatSync(path); if (!before.isFile() || !linked.isFile() || (before.uid !== 0 && before.uid !== process.getuid()) || before.nlink !== 1 || before.dev !== linked.dev || before.ino !== linked.ino || before.size > MAX_BYTES) throw new Error('unsafe MCP configuration source'); const raw = Buffer.alloc(before.size); let count = 0; while (count < raw.length) { const read = fs.readSync(fd, raw, count, raw.length - count, count); if (read === 0) break; count += read; } const after = fs.fstatSync(fd); if (count !== before.size || before.dev !== after.dev || before.ino !== after.ino || before.size !== after.size || before.mtimeMs !== after.mtimeMs || before.ctimeMs !== after.ctimeMs) throw new Error('MCP configuration changed while reading'); return JSON.parse(raw.toString('utf8')); } finally { fs.closeSync(fd); }",
     "}",
-    "function envName(headers) { if (!headers || typeof headers !== 'object' || Array.isArray(headers)) return null; const key = Object.keys(headers).find((name) => name.toLowerCase() === 'authorization'); const value = key ? headers[key] : null; if (typeof value !== 'string' || !value.startsWith(PREFIX)) return null; let suffix = value.slice(PREFIX.length); if (/^v[0-9]{1,20}_[A-Z_][A-Z0-9_]*$/.test(suffix)) suffix = suffix.slice(suffix.indexOf('_') + 1); return /^[A-Z_][A-Z0-9_]*$/.test(suffix) ? suffix : null; }",
+    "function envName(headers) { if (!headers || typeof headers !== 'object' || Array.isArray(headers)) return null; const key = Object.keys(headers).find((name) => name.toLowerCase() === 'authorization'); const value = key ? headers[key] : null; if (typeof value !== 'string' || !value.startsWith(PREFIX)) return null; let suffix = value.slice(PREFIX.length); if (/^(?:v[0-9]{1,20}|s[a-f0-9]{64})_[A-Z_][A-Z0-9_]*$/.test(suffix)) suffix = suffix.slice(suffix.indexOf('_') + 1); return /^[A-Z_][A-Z0-9_]*$/.test(suffix) ? suffix : null; }",
     "const records = [];",
     "const native = read(paths.nativePath); const nativeServers = native && native.mcp && native.mcp.servers; if (nativeServers && typeof nativeServers === 'object' && !Array.isArray(nativeServers)) for (const [server, value] of Object.entries(nativeServers)) if (value && typeof value === 'object' && typeof value.url === 'string') records.push({ server, url: value.url, env: envName(value.headers), source: 'native' });",
     "const legacy = read(paths.legacyPath); const legacyServers = legacy && legacy.mcpServers; if (legacyServers && typeof legacyServers === 'object' && !Array.isArray(legacyServers)) for (const [server, value] of Object.entries(legacyServers)) if (value && typeof value === 'object' && typeof value.baseUrl === 'string') records.push({ server, url: value.baseUrl, env: envName(value.headers), source: 'legacy' });",
@@ -220,11 +220,11 @@ function parseHermesSourceRecords(output: string): SourceRecord[] {
       typeof authorization === "string"
         ? (/^Bearer openshell:resolve:env:(.*)$/u.exec(authorization)?.[1] ?? "")
         : "";
-    const env = placeholder.replace(/^v[0-9]+_/u, "");
+    const env = placeholder.replace(/^(?:v[0-9]{1,20}|s[a-f0-9]{64})_/u, "");
     return {
       server,
       url: value.get("url"),
-      env: /^[A-Za-z_][A-Za-z0-9_]*$/u.test(env) ? env : null,
+      env: /^[A-Za-z_][A-Za-z0-9_]{0,127}$/u.test(env) ? env : null,
       source: "native",
     };
   });

@@ -74,7 +74,7 @@ describe("onboard gateway runtime helpers", () => {
     expect(isLinuxDockerDriverGatewayEnabled("darwin", "arm64")).toBe(true);
     expect(isLinuxDockerDriverGatewayEnabled("darwin", "x64")).toBe(false);
     expect(isLinuxDockerDriverGatewayEnabled("win32")).toBe(false);
-    const linuxEnv = getDockerDriverGatewayEnv("openshell 0.0.37", "linux");
+    const linuxEnv = getDockerDriverGatewayEnv("openshell 0.0.116", "linux");
     expect(linuxEnv.OPENSHELL_DRIVERS).toBe("docker");
     expect(linuxEnv.OPENSHELL_BIND_ADDRESS).toBe("127.0.0.1");
     expect(linuxEnv.OPENSHELL_GRPC_ENDPOINT).toBe("https://127.0.0.1:8080");
@@ -83,7 +83,9 @@ describe("onboard gateway runtime helpers", () => {
     );
     expect(linuxEnv.OPENSHELL_SSH_GATEWAY_HOST).toBe("127.0.0.1");
     expect(linuxEnv.OPENSHELL_CLUSTER_IMAGE).toBeUndefined();
-    expect(linuxEnv.OPENSHELL_DOCKER_SUPERVISOR_IMAGE).toContain(":0.0.37");
+    expect(linuxEnv.OPENSHELL_DOCKER_SUPERVISOR_IMAGE).toBe(
+      "ghcr.io/nvidia/openshell/supervisor@sha256:c8c42aef16c200063e32cbf72e553e4ead027085427b555efafd95063ecead42",
+    );
 
     const originalOverlayFix = process.env.NEMOCLAW_DISABLE_OVERLAY_FIX;
     process.env.NEMOCLAW_DISABLE_OVERLAY_FIX = "1";
@@ -193,7 +195,7 @@ describe("onboard gateway runtime helpers", () => {
   });
 
   it("detects stale Docker-driver gateway runtime state before reuse", () => {
-    const desiredEnv = getDockerDriverGatewayEnv("openshell 0.0.37", "linux");
+    const desiredEnv = getDockerDriverGatewayEnv("openshell 0.0.116", "linux");
     const gatewayBin = process.execPath;
 
     expect(
@@ -209,7 +211,7 @@ describe("onboard gateway runtime helpers", () => {
       getDockerDriverGatewayRuntimeDriftFromSnapshot({
         processEnv: {
           ...desiredEnv,
-          OPENSHELL_DOCKER_SUPERVISOR_IMAGE: "ghcr.io/nvidia/openshell/supervisor:0.0.36",
+          OPENSHELL_DOCKER_SUPERVISOR_IMAGE: "ghcr.io/nvidia/openshell/supervisor:0.0.115",
         },
         processExe: gatewayBin,
         desiredEnv,
@@ -249,7 +251,7 @@ describe("onboard gateway runtime helpers", () => {
   });
 
   it("reuses a healthy containerized-compat gateway whose parent is /usr/bin/docker (#4520)", () => {
-    const desiredEnv = getDockerDriverGatewayEnv("openshell 0.0.37", "linux");
+    const desiredEnv = getDockerDriverGatewayEnv("openshell 0.0.116", "linux");
 
     // The compat gateway is a `docker run ... /opt/nemoclaw/openshell-gateway`
     // parent, so /proc/<pid>/exe is /usr/bin/docker. The runtime identity sets
@@ -313,7 +315,7 @@ describe("onboard gateway runtime helpers", () => {
     ).toBe(false);
   });
 
-  it("recognizes Docker CDI and explicit dev-channel version gates", () => {
+  it("recognizes Docker CDI and rejects every above-maximum version", () => {
     expect(parseDockerCdiSpecDirs('["/etc/cdi","/var/run/cdi"]')).toEqual([
       "/etc/cdi",
       "/var/run/cdi",
@@ -323,7 +325,7 @@ describe("onboard gateway runtime helpers", () => {
       shouldAllowOpenshellAboveBlueprintMax("openshell 0.0.40.dev1+gabcdef", "linux", {
         NEMOCLAW_OPENSHELL_CHANNEL: "dev",
       }),
-    ).toBe(true);
+    ).toBe(false);
     expect(
       shouldAllowOpenshellAboveBlueprintMax("openshell 0.0.40.dev1+gabcdef", "linux", {
         NEMOCLAW_OPENSHELL_CHANNEL: "auto",

@@ -154,7 +154,7 @@ If the provider was deleted, restart reports the source as unbound. Remove and a
 
 Restart follows the live policy credential binding and reloads only when the current provider ID, type, attachment, and credential-key metadata agree with the agent registration. It does not recreate or update the provider and does not reapply policy. If a source is missing or conflicting, repair it explicitly or remove and add the server again.
 
-Running restart without a server name validates and reloads every managed server at its current credential revision. It does not rotate credentials.
+Running restart without a server name validates and reloads every managed server at its current credential handle. It does not rotate credentials.
 
 ## Change Denied Tools
 
@@ -219,7 +219,7 @@ If cleanup leaves a residual, the command reports the exact policy or attachment
 
 If rebuild instead reports a retained credential-bearing policy handoff, do not edit that handoff or retry rebuild. Follow the [unsafe retained policy handoff recovery](../operate-sandboxes/recover-and-rebuild-sandboxes#continue-an-interrupted-replacement).
 
-After this check, rebuild removes adapter entries and exact owned policies, then detaches providers before replacing the sandbox. Before changing each managed adapter, a fresh sandbox process must expose a revision-scoped OpenShell credential placeholder for that adapter. If an observation is absent, unscoped, or unavailable, NemoClaw leaves the affected adapter and every provider unchanged. It attempts to restore adapter entries prepared earlier in the operation and reports rollback failures. It does not substitute the provider resource version for the credential revision. Follow the reported [credential-revision recovery](../../reference/troubleshoot-mcp-servers#rebuild-or-destroy-cannot-prove-a-credential-revision), then retry rebuild. The rebuild handoff preserves the complete live policy, including denied-tool rules and exact address pins, while provider and adapter recovery uses the source-derived MCP entries. It does not reconstruct policy from registry MCP state.
+After this check, rebuild removes adapter entries and exact owned policies, then detaches providers before replacing the sandbox. Before changing each managed adapter, a fresh sandbox process must expose an OpenShell credential-handle placeholder for that adapter. If an observation is absent, unscoped, or unavailable, NemoClaw leaves the affected adapter and every provider unchanged. It attempts to restore adapter entries prepared earlier in the operation and reports rollback failures. It does not substitute the provider resource version for the observed credential handle. Follow the reported [credential-handle recovery](../../reference/troubleshoot-mcp-servers#rebuild-cannot-prove-a-credential-handle), then retry rebuild. The rebuild handoff preserves the complete live policy, including denied-tool rules and exact address pins, while provider and adapter recovery uses the source-derived MCP entries. It does not reconstruct policy from registry MCP state.
 
 <AgentOnly variant="deepagents">
 NemoClaw revalidates the prepared Deep Agents replacement after MCP preparation and before stopping inference or deleting the old sandbox.

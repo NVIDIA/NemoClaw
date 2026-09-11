@@ -79,7 +79,7 @@ describe("E2E workflow plan", () => {
       catalogue: E2E_TARGET_CATALOGUE.length,
       "typed-registry": 4,
       "shared-e2e": 2,
-      "retained-workflow": 18,
+      "retained-workflow": 15,
       staging: 1,
     });
     expect(plan.coverageMatrix.filter((row) => row.unresolvedReason !== "")).toEqual([
@@ -89,7 +89,7 @@ describe("E2E workflow plan", () => {
       }),
     ]);
     expect(plan.hermesSelected).toBe(true);
-    expect(plan.coverageMatrix).toHaveLength(88);
+    expect(plan.coverageMatrix).toHaveLength(85);
     expect(selectedWorkflowJobs(plan)).toEqual([
       "catalogue-brave-nvidia-inference",
       "catalogue-github-read",
@@ -103,7 +103,6 @@ describe("E2E workflow plan", () => {
       "managed-image-multiarch-startup",
       "managed-image-protected-runtime",
       "mcp-bridge",
-      "mcp-bridge-dev",
       "messaging-providers",
       "openclaw-plugin-runtime-exdev",
       "openshell-credential-generation-window",
@@ -114,6 +113,7 @@ describe("E2E workflow plan", () => {
     expect(plan.explicitOnlyJobs).toEqual([
       "staging-brev-launchable-identity",
       "external-gateway-health",
+      "mcp-bridge-dev",
     ]);
     expect(releaseRequiredWorkflowJobs()).toContain("live");
     expect(releaseRequiredWorkflowJobs()).toContain("staging-brev-launchable");
@@ -153,7 +153,6 @@ describe("E2E workflow plan", () => {
       "hermes-gpu-startup",
       "live",
       "mcp-bridge",
-      "mcp-bridge-dev",
       "messaging-providers",
       "openshell-credential-generation-window",
     ]);

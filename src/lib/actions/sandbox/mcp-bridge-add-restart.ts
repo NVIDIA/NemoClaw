@@ -20,6 +20,7 @@ import {
   unregisterAgentAdapter,
 } from "./mcp-bridge-adapters";
 import { type McpBridgeAddOptions, McpBridgeError } from "./mcp-bridge-contracts";
+import { assertUnchangedStableMcpCredentialAuthorized, statusMcpBridge } from "./mcp-bridge-status";
 import {
   applyGeneratedPolicy,
   assertGeneratedPolicyMutationSafe,
@@ -569,6 +570,7 @@ async function addMcpBridgeUnlocked(
   let policyApplied = false;
   let policyRebound = false;
   let adapterMutationAttempted = false;
+  let adapterWasRegistered = false;
   let previousCredentialRevision: McpCredentialRevisionObservation | undefined;
   try {
     await assertAgentMcpMutationRuntimeCapability(sandboxName, adapter, providerRuntimeSelection);
@@ -594,6 +596,7 @@ async function addMcpBridgeUnlocked(
       });
       policyApplied = true;
     }
+    adapterWasRegistered = recovery.adapterRegistered;
     const providerResult = await upsertMcpProvider(providerName ?? "", options.env, {
       // Existing provider identity is accepted only after the complete live
       // partial-state prefix above has tied it to this exact add request.
@@ -640,6 +643,8 @@ async function addMcpBridgeUnlocked(
       policyRebound = recovery.policyState === "capability";
     }
     let refreshedAfterObservedAbsence = false;
+    let authorizationPreviousRevision =
+      providerResult.action === "updated" ? previousCredentialRevision : undefined;
     let credentialRevision = await waitForAttachedMcpCredential(
       sandboxName,
       entry,
@@ -685,6 +690,7 @@ async function addMcpBridgeUnlocked(
       // bound policy is active and require a different observed revision.
       // This prevents a quick series of reads from accepting an intermediate
       // generation while the final credential-bearing update is still queued.
+      authorizationPreviousRevision = credentialRevision;
       await upsertMcpProvider(entry.providerName ?? "", options.env, {
         allowExisting: true,
         expectedProviderId: entry.providerId,
@@ -698,6 +704,14 @@ async function addMcpBridgeUnlocked(
         { previousRevision: credentialRevision },
       );
     }
+    await assertUnchangedStableMcpCredentialAuthorized(
+      sandboxName,
+      entry,
+      providerRuntimeSelection,
+      authorizationPreviousRevision,
+      credentialRevision,
+      statusMcpBridge,
+    );
     adapterMutationAttempted = true;
     await registerAgentAdapterAtCurrentCredentialRevision(
       sandboxName,
@@ -721,7 +735,7 @@ async function addMcpBridgeUnlocked(
     const rollbackProviderOwned =
       !!rollbackProviderInspection &&
       providerMatchesCredential(rollbackProviderInspection, entry.env[0], entry.providerId);
-    if (adapterMutationAttempted && !recovery.adapterRegistered) {
+    if ((adapterMutationAttempted && !recovery.adapterRegistered) || adapterWasRegistered) {
       await unregisterAgentAdapter(sandboxName, adapter, entry, providerRuntimeSelection, {
         force: false,
         bestEffort: true,

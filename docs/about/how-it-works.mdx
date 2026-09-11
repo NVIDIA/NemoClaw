@@ -118,7 +118,7 @@ This separation keeps host orchestration, agent-specific assets, and the sandbox
 ## Inspect an External OpenShell Gateway
 
 NemoClaw packages the experimental `nemoclaw-blueprint-runner` command for infrastructure that already owns an external OpenShell gateway.
-This path supports target planning and one credential-free public health request for OpenShell `0.0.106`.
+This path supports target planning and one credential-free public health request for OpenShell `0.0.116`.
 It does not manage the gateway or establish support for another OpenShell release.
 
 Create a blueprint directory with a `blueprint.yaml` file that contains one external target.
@@ -132,12 +132,12 @@ Neither operation creates or removes either administrator-owned file.
 
 ```yaml
 version: 1.0.0
-min_openshell_version: 0.0.106
-max_openshell_version: 0.0.106
+min_openshell_version: 0.0.116
+max_openshell_version: 0.0.116
 openshell_target:
   endpoint: https://openshell.example.test:8443
   workspace: default
-  expected_release: 0.0.106
+  expected_release: 0.0.116
   lifecycle: external
   trust:
     ca_file: /var/run/openshell-target/ca.pem
@@ -166,7 +166,7 @@ It makes one public health request through the official OpenShell SDK.
 NEMOCLAW_BLUEPRINT_PATH=/absolute/path/to/blueprint nemoclaw-blueprint-runner status --external-target
 ```
 
-A successful status result reports `healthy`, release `0.0.106`, and `compatible` in JSON.
+A successful status result reports `healthy`, release `0.0.116`, and `compatible` in JSON.
 The command does not access the authentication file or authenticate.
 The command supplies the validated CA bundle to the SDK and uses normal TLS hostname verification.
 
@@ -174,7 +174,7 @@ The command supplies the validated CA bundle to the SDK and uses normal TLS host
   This experimental path does not create, update, delete, or list gateways, workspaces, sandboxes, credentials, or policies.
   It does not establish workspace readiness or support machine authentication or Kubernetes.
   A failed status request makes no remote change, so correct the endpoint, CA bundle or its file metadata, gateway health, or release mismatch before you retry.
-  If status reports that the approved OpenShell SDK is unavailable, restore a NemoClaw installation that includes `@nvidia/openshell-sdk` `0.0.106` before retrying.
+  If status reports that the approved OpenShell SDK is unavailable, restore a NemoClaw installation that includes `@nvidia/openshell-sdk` `0.0.116` before retrying.
 </Warning>
 
 ## Readiness and Sandbox Creation

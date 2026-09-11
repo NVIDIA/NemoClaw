@@ -29,8 +29,8 @@ The integration has three parts:
 
 This integration depends on the OpenShell MCP/JSON-RPC L7 policy support from [NVIDIA/OpenShell#1865](https://github.com/NVIDIA/OpenShell/pull/1865).
 
-Current NemoClaw builds default to the pinned stable OpenShell `0.0.106` release, which exposes native `protocol: mcp` policy handling and provider-backed credential replacement.
-The optional OpenShell development channel is compatibility evidence only and is not a shipping target.
+Current NemoClaw builds require the pinned stable OpenShell `0.0.116` release, which exposes native `protocol: mcp` policy handling and endpoint-bound credential replacement.
+Development builds are rejected because they do not match the reviewed credential boundary for the supported managed runtime.
 
 NemoClaw accepts Streamable HTTP MCP endpoints only.
 It does not launch an MCP server, stdio adapter, bridge, credential proxy, data-plane relay, or listener on the host.
@@ -63,8 +63,8 @@ The agent stores only an OpenShell resolver placeholder for the recorded credent
 OpenShell keeps the raw credential in its provider store and combines credential replacement with generated MCP policy at egress.
 
 <AgentOnly variant="hermes">
-Hermes includes the credential revision from the readiness check in this placeholder.
-Registration, inspection, rollback, and lifecycle reconciliation preserve that revision while OpenShell still reports it.
+Hermes includes the stable credential handle from the readiness check in this placeholder.
+Registration, inspection, rollback, and lifecycle reconciliation preserve that handle while OpenShell still reports it.
 </AgentOnly>
 
 For the normal MCP client path, OpenShell evaluates the effective policy for the destination host and port, adapter binary, literal endpoint path, and MCP method before replacing placeholders in allowed HTTP request headers.
@@ -74,30 +74,30 @@ NemoClaw accepts canonical HTTPS MCP URLs and writes the credential placeholder 
 
 ### DNS Pinning Contract
 
-The MCP integration pins its OpenShell DNS enforcement contract to [`NVIDIA/OpenShell@c4b500a7de64d0b66e3ee8098f58d14299092162`](https://github.com/NVIDIA/OpenShell/tree/c4b500a7de64d0b66e3ee8098f58d14299092162).
+The MCP integration pins its OpenShell DNS enforcement contract to [`NVIDIA/OpenShell@d1155aa70042d3e2ee49dbfa15346b108b7c1d92`](https://github.com/NVIDIA/OpenShell/tree/d1155aa70042d3e2ee49dbfa15346b108b7c1d92).
 
 With `proxy_connect_by_hostname` disabled, OpenShell uses one socket-address list throughout resolution, validation, and connection:
 
-- [`crates/openshell-supervisor-network/src/proxy.rs:3070-3096`](https://github.com/NVIDIA/OpenShell/blob/c4b500a7de64d0b66e3ee8098f58d14299092162/crates/openshell-supervisor-network/src/proxy.rs#L3070-L3096) produces the list.
-- [`crates/openshell-supervisor-network/src/proxy.rs:3121-3160`](https://github.com/NVIDIA/OpenShell/blob/c4b500a7de64d0b66e3ee8098f58d14299092162/crates/openshell-supervisor-network/src/proxy.rs#L3121-L3160) validates every address.
-- [`crates/openshell-supervisor-network/src/proxy.rs:3193-3251`](https://github.com/NVIDIA/OpenShell/blob/c4b500a7de64d0b66e3ee8098f58d14299092162/crates/openshell-supervisor-network/src/proxy.rs#L3193-L3251) connects through the validated list.
+- [`crates/openshell-supervisor-network/src/proxy.rs:3857-3886`](https://github.com/NVIDIA/OpenShell/blob/d1155aa70042d3e2ee49dbfa15346b108b7c1d92/crates/openshell-supervisor-network/src/proxy.rs#L3857-L3886) produces the list.
+- [`crates/openshell-supervisor-network/src/proxy.rs:3911-3951`](https://github.com/NVIDIA/OpenShell/blob/d1155aa70042d3e2ee49dbfa15346b108b7c1d92/crates/openshell-supervisor-network/src/proxy.rs#L3911-L3951) validates every address.
+- [`crates/openshell-supervisor-network/src/proxy.rs:3983-4043`](https://github.com/NVIDIA/OpenShell/blob/d1155aa70042d3e2ee49dbfa15346b108b7c1d92/crates/openshell-supervisor-network/src/proxy.rs#L3983-L4043) connects through the validated list.
 
 The CONNECT path passes that validated connector to the direct or operator-configured upstream dial path.
-By default, direct connections and corporate-proxy CONNECT requests use the validated address list at [`crates/openshell-supervisor-network/src/proxy.rs:3193-3251`](https://github.com/NVIDIA/OpenShell/blob/c4b500a7de64d0b66e3ee8098f58d14299092162/crates/openshell-supervisor-network/src/proxy.rs#L3193-L3251).
-The explicit HTTP-forward path validates the destination before it connects at [`crates/openshell-supervisor-network/src/proxy.rs:4783-4850`](https://github.com/NVIDIA/OpenShell/blob/c4b500a7de64d0b66e3ee8098f58d14299092162/crates/openshell-supervisor-network/src/proxy.rs#L4783-L4850).
+By default, direct connections and corporate-proxy CONNECT requests use the validated address list at [`crates/openshell-supervisor-network/src/proxy.rs:3983-4043`](https://github.com/NVIDIA/OpenShell/blob/d1155aa70042d3e2ee49dbfa15346b108b7c1d92/crates/openshell-supervisor-network/src/proxy.rs#L3983-L4043).
+The explicit HTTP-forward path validates the destination before it connects at [`crates/openshell-supervisor-network/src/proxy.rs:5613-5655`](https://github.com/NVIDIA/OpenShell/blob/d1155aa70042d3e2ee49dbfa15346b108b7c1d92/crates/openshell-supervisor-network/src/proxy.rs#L5613-L5655).
 
 The exception is OpenShell's operator-controlled `proxy_connect_by_hostname` option.
-When enabled, OpenShell sends the requested hostname to the corporate proxy instead of the validated address, which reopens proxy-side DNS resolution; the upstream source records that residual risk at [`crates/openshell-supervisor-network/src/proxy.rs:3208-3240`](https://github.com/NVIDIA/OpenShell/blob/c4b500a7de64d0b66e3ee8098f58d14299092162/crates/openshell-supervisor-network/src/proxy.rs#L3208-L3240).
+When enabled, OpenShell sends the requested hostname to the corporate proxy instead of the validated address, which reopens proxy-side DNS resolution; the upstream source records that residual risk at [`crates/openshell-supervisor-network/src/proxy.rs:3998-4031`](https://github.com/NVIDIA/OpenShell/blob/d1155aa70042d3e2ee49dbfa15346b108b7c1d92/crates/openshell-supervisor-network/src/proxy.rs#L3998-L4031).
 NemoClaw does not enable or prohibit that host-level OpenShell option, so operators who require the pinned-address guarantee must leave it disabled and ensure their gateway configuration does not enable it.
 
-### Stable OpenShell 0.0.106 Limitations
+### Stable OpenShell 0.0.116 Limitations
 
-OpenShell v0.0.106 attributes network policy with `/proc/<pid>/exe` and process ancestors, so script-based adapters require Node or Python interpreter grants rather than immutable package-entrypoint identities.
+OpenShell v0.0.116 attributes network policy with `/proc/<pid>/exe` and process ancestors, so script-based adapters require Node or Python interpreter grants rather than immutable package-entrypoint identities.
 NemoClaw compensates by restricting each server to its HTTPS destination, path, MCP method profile, DNS pins, and unique least-privilege credential.
 
 Remove the interpreter grants when OpenShell exposes stable script or package entrypoint attribution.
 
-OpenShell v0.0.106 requires a static credential provider to have a complete endpoint binding before the supervisor projects its placeholder.
+OpenShell v0.0.116 requires a static credential provider to have a complete endpoint binding before the supervisor projects its stable credential handle.
 NemoClaw imports the endpointless `nemoclaw-mcp-v1` profile, creates a dedicated provider for each server, and binds that provider to one generated MCP endpoint with `credential_binding.provider`.
 OpenShell withholds the credential before the binding is active and outside the bound host, port, and path.
 
@@ -108,7 +108,7 @@ A managed MCP provider created by an earlier NemoClaw build can have the profile
 NemoClaw refuses to restart or rebuild that registration.
 Remove the MCP server, export its credential again, and add the server so NemoClaw recreates it with the endpointless profile.
 
-OpenShell v0.0.106 updates, attaches, detaches, and deletes providers by mutable name instead of an atomic immutable identity.
+OpenShell v0.0.116 updates, attaches, detaches, and deletes providers by mutable name instead of an atomic immutable identity.
 NemoClaw compensates with randomized provider names, the per-sandbox lifecycle lock, and immediate ownership checks against the recorded provider ID and credential-key metadata plus the expected provider type before mutations.
 
 NemoClaw fails closed and preserves retryable state when those checks do not match, but the checks do not provide compare-and-swap behavior against another OpenShell client.
@@ -139,11 +139,11 @@ mcp_servers:
       resources: true
       prompts: true
     headers:
-      Authorization: Bearer openshell:resolve:env:v12_GITHUB_MCP_TOKEN
+      Authorization: Bearer openshell:resolve:env:s0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef_GITHUB_MCP_TOKEN
 ```
 
-The `v12_` prefix is an illustrative OpenShell credential revision.
-Hermes records the revision that the readiness check proves for the live provider.
+The `s…_` prefix is an illustrative OpenShell stable credential handle.
+Hermes records the handle that the readiness check proves for the live provider.
 
 ### Verify the Hermes Reload
 

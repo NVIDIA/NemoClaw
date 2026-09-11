@@ -16,14 +16,23 @@ const DEFAULT_ENV: NodeJS.ProcessEnv = {};
 const agent = (name: string) => ({ name }) as AgentDefinition;
 
 describe("resolveDockerStartupCommandPatch", () => {
-  it.each(["openclaw", "hermes", "langchain-deepagents-code"])(
-    "keeps restart-safe persistence for %s on a default-profile docker-driver gateway",
+  it.each(["openclaw", "hermes"])(
+    "relies on the OpenShell canonical process for %s on a default-profile docker-driver gateway",
     (name) => {
       expect(resolveDockerStartupCommandPatch(agent(name), true, DEFAULT_ENV)).toMatchObject({
-        persistStartupCommand: true,
+        persistStartupCommand: false,
       });
     },
   );
+
+  it("keeps the DCode recreation required for exact Docker ulimits", () => {
+    expect(
+      resolveDockerStartupCommandPatch(agent("langchain-deepagents-code"), true, DEFAULT_ENV),
+    ).toEqual({
+      persistStartupCommand: true,
+      requiredUlimits: DCODE_DOCKER_ULIMITS,
+    });
+  });
 
   it.each(["openclaw", "hermes", "langchain-deepagents-code"])(
     "disables the Docker restart-safe recreation for %s under the portable profile (#9462)",
@@ -57,7 +66,7 @@ describe("resolveDockerStartupCommandPatch", () => {
       persistStartupCommand: false,
     });
     expect(resolveDockerStartupCommandPatch(null, true, DEFAULT_ENV)).toMatchObject({
-      persistStartupCommand: true,
+      persistStartupCommand: false,
     });
   });
 });

@@ -10,6 +10,7 @@ import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { type SandboxClient, trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
 import { expect } from "../fixtures/e2e-test.ts";
 import { MCP_BRIDGE_TEST_CREDENTIALS } from "../fixtures/mcp-bridge-credentials.ts";
+import { buildMcpCredentialHandleAuthorizationPattern } from "./mcp-provider-rewrite-probe.ts";
 
 const SERVER_NAME = "fake";
 const HOST_SECRET = MCP_BRIDGE_TEST_CREDENTIALS.host;
@@ -22,6 +23,7 @@ export async function assertHermesConfig(
   sandboxName: string,
   mcpUrl: string,
 ): Promise<void> {
+  const authorizationPattern = buildMcpCredentialHandleAuthorizationPattern("FAKE_MCP_SECRET");
   const script = [
     "set -eu",
     "/opt/hermes/.venv/bin/python - <<'PY'",
@@ -32,7 +34,7 @@ export async function assertHermesConfig(
     `entry = data['mcp_servers'][${JSON.stringify(SERVER_NAME)}]`,
     `assert entry['url'] == ${JSON.stringify(mcpUrl)}`,
     "authorization = entry['headers']['Authorization']",
-    "assert re.fullmatch(r'Bearer openshell:resolve:env:v[0-9]{1,20}_FAKE_MCP_SECRET', authorization)",
+    `assert re.fullmatch(r${JSON.stringify(authorizationPattern)}, authorization)`,
     `assert ${JSON.stringify(HOST_SECRET)} not in text`,
     "PY",
   ].join("\n");

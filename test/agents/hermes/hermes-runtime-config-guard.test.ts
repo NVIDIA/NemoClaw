@@ -621,14 +621,14 @@ describe("Hermes provider placeholder diagnostics", () => {
             channelId: "wechat",
             envKey: "WECHAT_BOT_TOKEN",
             targetEnvKey: "WEIXIN_TOKEN",
-            match: "^openshell:resolve:env:v[0-9]+_WECHAT_BOT_TOKEN$",
+            match: "^openshell:resolve:env:(?:v[0-9]{1,20}|s[a-f0-9]{64})_WECHAT_BOT_TOKEN$",
             value: "openshell:resolve:env:WECHAT_BOT_TOKEN",
           },
           {
             channelId: "teams",
             envKey: "MSTEAMS_APP_PASSWORD",
             targetEnvKey: "TEAMS_CLIENT_SECRET",
-            match: "^openshell:resolve:env:v[0-9]+_MSTEAMS_APP_PASSWORD$",
+            match: "^openshell:resolve:env:(?:v[0-9]{1,20}|s[a-f0-9]{64})_MSTEAMS_APP_PASSWORD$",
             value: "openshell:resolve:env:MSTEAMS_APP_PASSWORD",
           },
         ],
@@ -653,7 +653,7 @@ with tempfile.TemporaryDirectory() as tmp:
         json.dump(json.loads(${JSON.stringify(JSON.stringify(runtimeArtifact))}), handle)
 
     os.environ["WECHAT_BOT_TOKEN"] = "openshell:resolve:env:v222_WECHAT_BOT_TOKEN"
-    os.environ["MSTEAMS_APP_PASSWORD"] = "openshell:resolve:env:v333_MSTEAMS_APP_PASSWORD"
+    os.environ["MSTEAMS_APP_PASSWORD"] = "openshell:resolve:env:s" + ("b" * 64) + "_MSTEAMS_APP_PASSWORD"
     guard._validate_env_text_with_boundary = lambda *_args: None
     guard._write_existing = lambda path, text, *_args: open(path, "w", encoding="utf-8").write(text)
     guard.refresh_hashes = lambda *_args: None
@@ -673,13 +673,13 @@ with tempfile.TemporaryDirectory() as tmp:
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).toContain("WEIXIN_TOKEN=openshell:resolve:env:v222_WECHAT_BOT_TOKEN\n");
     expect(result.stdout).toContain(
-      "TEAMS_CLIENT_SECRET=openshell:resolve:env:v333_MSTEAMS_APP_PASSWORD\n",
+      `TEAMS_CLIENT_SECRET=openshell:resolve:env:s${"b".repeat(64)}_MSTEAMS_APP_PASSWORD\n`,
     );
     expect(result.stdout).toContain(
       "SOURCE_WECHAT_BOT_TOKEN=openshell:resolve:env:v222_WECHAT_BOT_TOKEN\n",
     );
     expect(result.stdout).toContain(
-      "SOURCE_MSTEAMS_APP_PASSWORD=openshell:resolve:env:v333_MSTEAMS_APP_PASSWORD\n",
+      `SOURCE_MSTEAMS_APP_PASSWORD=openshell:resolve:env:s${"b".repeat(64)}_MSTEAMS_APP_PASSWORD\n`,
     );
     expect(result.stderr).toContain(
       "[config] Refreshed Hermes provider placeholder for WEIXIN_TOKEN",
@@ -717,7 +717,9 @@ with tempfile.TemporaryDirectory() as tmp:
                     "channelId": ${JSON.stringify(channelId)},
                     "envKey": ${JSON.stringify(envKey)},
                     "targetEnvKey": ${JSON.stringify(targetEnvKey)},
-                    "match": ${JSON.stringify(`^openshell:resolve:env:v[0-9]+_${envKey}$`)},
+                    "match": ${JSON.stringify(
+                      `^openshell:resolve:env:(?:v[0-9]{1,20}|s[a-f0-9]{64})_${envKey}$`,
+                    )},
                     "value": ${JSON.stringify(`openshell:resolve:env:${envKey}`)},
                     "message": "Authorization: Bearer should-never-be-logged",
                 }],

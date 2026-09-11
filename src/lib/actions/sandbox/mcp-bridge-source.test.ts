@@ -21,7 +21,7 @@ vi.mock("../../agent/defs", () => ({
       openclaw: {
         name: "openclaw",
         displayName: "OpenClaw",
-        configPaths: { dir: "/sandbox/.openclaw" },
+        configPaths: { dir: `${mocks.configRoot}/.openclaw` },
         mcpCapability: { support: "bridge", adapter: "openclaw-config" },
       },
       hermes: {
@@ -92,36 +92,64 @@ network_policies:
   });
 
   it.each([
-    ["langchain-deepagents-code", ".deepagents", ".mcp.json", "mcpServers", "native"],
-    ["langchain-deepagents-code", ".deepagents", ".nemoclaw-mcp.json", "mcpServers", "legacy"],
-    ["hermes", ".hermes", "config.yaml", "mcp_servers", "native"],
+    ...(
+      [
+        ["langchain-deepagents-code", ".deepagents", ".mcp.json", "mcpServers", "native"],
+        ["langchain-deepagents-code", ".deepagents", ".nemoclaw-mcp.json", "mcpServers", "legacy"],
+        ["hermes", ".hermes", "config.yaml", "mcp_servers", "native"],
+        ["openclaw", ".openclaw", "openclaw.json", "servers", "native"],
+      ] as const
+    ).flatMap(([agent, directory, file, serverMap, source]) =>
+      ["v42", `s${"a".repeat(64)}`].map((generation) => ({
+        agent,
+        directory,
+        file,
+        serverMap,
+        source,
+        generation,
+        key: "GITHUB_TOKEN",
+      })),
+    ),
+    ...(
+      [
+        ["langchain-deepagents-code", ".deepagents", ".mcp.json", "mcpServers"],
+        ["hermes", ".hermes", "config.yaml", "mcp_servers"],
+      ] as const
+    ).map(([agent, directory, file, serverMap]) => ({
+      agent,
+      directory,
+      file,
+      serverMap,
+      source: "native",
+      generation: `s${"b".repeat(64)}`,
+      key: "service_token",
+    })),
   ])(
-    "reads %s from literal paths without sandbox Python packages (%s/%s)",
-    async (agent, directory, file, serverMap, source) => {
+    "reads $generation $agent credentials from literal paths ($source, $key)",
+    async ({ agent, directory, file, serverMap, source, generation, key }) => {
       const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-source-"quoted"-'));
       mocks.configRoot = root;
       try {
         fs.mkdirSync(path.join(root, directory));
+        const servers = {
+          github: {
+            url: "https://api.githubcopilot.com/mcp/",
+            headers: { Authorization: `Bearer openshell:resolve:env:${generation}_${key}` },
+          },
+        };
         fs.writeFileSync(
           path.join(root, directory, file),
-          JSON.stringify({
-            [serverMap]: {
-              github: {
-                url: "https://api.githubcopilot.com/mcp/",
-                headers: { Authorization: "Bearer openshell:resolve:env:v42_GITHUB_TOKEN" },
-              },
-            },
-          }),
+          JSON.stringify(agent === "openclaw" ? { mcp: { servers } } : { [serverMap]: servers }),
           { mode: 0o600 },
         );
         mocks.executeSandboxCommand.mockImplementation((_name: string, command: string) => {
-          const program = command.split("<<'PY'\n")[1].split("\nPY")[0];
-          const result = spawnSync("python3", ["-I", "-S", "-"], {
-            cwd: root,
-            input: program,
-            encoding: "utf8",
-            timeout: 10_000,
-          });
+          const marker = command.includes("<<'NODE'") ? "NODE" : "PY";
+          const program = command.split(`<<'${marker}'\n`)[1].split(`\n${marker}`)[0];
+          const result = spawnSync(
+            marker === "NODE" ? process.execPath : "python3",
+            marker === "NODE" ? ["-"] : ["-I", "-S", "-"],
+            { cwd: root, input: program, encoding: "utf8", timeout: 10_000 },
+          );
           return { status: result.status, stdout: result.stdout, stderr: result.stderr };
         });
         const observed = await inspectAgentMcpSources({ ...sandbox, agent }, runtimeSelection);
@@ -130,7 +158,7 @@ network_policies:
           agent,
           source,
           url: "https://api.githubcopilot.com/mcp/",
-          env: ["GITHUB_TOKEN"],
+          env: [key],
         });
       } finally {
         mocks.configRoot = "/sandbox";

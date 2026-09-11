@@ -23,7 +23,7 @@ It intentionally does not report GitHub mergeability, branch protection, CI stat
 3. Prepares the target PR as inert analysis data and executes the trusted Advisor entrypoint from the workflow checkout.
 4. Runs model analysis inside OpenShell. The sandbox receives neither a GitHub token nor the upstream model credential.
 5. Runs one required Pi session for each valid Markdown prompt in `tools/pr-review-advisor/specialists`. Each specialist reads repository evidence and records a native session trace.
-6. Each specialist publishes its complete Markdown review as the job summary and uploads the Markdown, native session trace, and validated E2E recommendation receipt as one artifact.
+6. Each specialist publishes its Markdown review as the job summary. Its artifact contains the Markdown, native session trace, E2E receipt, and shared review-queue context.
 7. After every specialist completes successfully, one publisher attempts to post a sticky comment that links to the workflow run. A failed specialist keeps the workflow failed and suppresses publication.
 
 `investigate-turn.mts` owns the shared investigation turn and deterministic context contract. `specialist-tools.mts` owns specialist tool policy and implementations. `specialists.mts` applies each specialist prompt and tool policy. `trusted-guidance.mts` owns the system prompt and checked-in review guidance. `turn-context.mts` and the context modules build bounded deterministic evidence. `run-specialist.mts` composes these modules and writes each specialist's Markdown review and native session trace.

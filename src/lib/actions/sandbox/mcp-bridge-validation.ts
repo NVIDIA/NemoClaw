@@ -27,7 +27,7 @@ import { normalizeMcpServerUrl } from "./mcp-bridge-url-validation";
 // must reject a missing or malformed security manifest instead of letting the
 // CLI start with a weakened credential-name denylist. Input, package, image,
 // and workflow contracts pin its structure, installed path, and version.
-import childVisibleCredentialManifest from "./openshell-child-visible-credentials.v0.0.106.json";
+import childVisibleCredentialManifest from "./openshell-child-visible-credentials.v0.0.116.json";
 
 export {
   MCP_SERVER_URL_MAX_LENGTH,
@@ -39,6 +39,7 @@ export {
 const VALID_SERVER_RE = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
 const VALID_ENV_RE = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/;
 const OPENSHELL_REVISIONED_CREDENTIAL_NAME_RE = /^v[0-9]+_[A-Za-z0-9_]+$/;
+const OPENSHELL_STABLE_CREDENTIAL_NAME_RE = /^s[a-f0-9]{64}_[A-Za-z0-9_]+$/;
 const OPENSHELL_VERSION_OUTPUT_RE =
   /^openshell\s+([0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?)$/;
 const OPENSHELL_VERSION_PROBE_TIMEOUT_MS = 5_000;
@@ -152,7 +153,7 @@ export function assertMcpCredentialBoundaryRuntimeVersion(
 // key and exposes or executes the provider value outside the intended request.
 // sourceBoundary: the versioned JSON manifest pins OpenShell-owned keys to the
 // shipped source commit; NemoClaw owns host and agent runtime-control rejects.
-// whyNotSourceFix: v0.0.106 exposes provider keys to every fresh sandbox exec
+// whyNotSourceFix: v0.0.116 intentionally projects bound credential placeholders
 // and does not advertise safe credential-name capabilities at runtime.
 // regressionTest: the mcp-bridge-input validation/runtime suites check every
 // pinned and runtime key; package contracts require version alignment.
@@ -162,7 +163,7 @@ const OPENSHELL_RAW_CHILD_ENV_KEYS = new Set(childVisibleCredentialManifest.rawC
 const OPENSHELL_REWRITTEN_CHILD_ENV_KEYS = new Set(
   childVisibleCredentialManifest.rewrittenChildValueKeys,
 );
-// OpenShell attaches provider keys to every fresh sandbox exec. A placeholder
+// OpenShell attaches bound provider placeholders to fresh sandbox execs. A placeholder
 // under one of these names can alter a loader, shell, or supported agent
 // runtime before the requested command starts (for example, PYTHONHOME makes
 // Python fail during initialization). Require operators to use a dedicated
@@ -213,6 +214,12 @@ export function validateMcpCredentialEnvName(name: string): void {
   if (OPENSHELL_REVISIONED_CREDENTIAL_NAME_RE.test(name)) {
     throw new McpBridgeError(
       `MCP credential environment name '${name}' is reserved for OpenShell credential revisions and would be skipped instead of attached. Use a dedicated secret name such as MY_SERVICE_MCP_TOKEN.`,
+      2,
+    );
+  }
+  if (OPENSHELL_STABLE_CREDENTIAL_NAME_RE.test(name)) {
+    throw new McpBridgeError(
+      `MCP credential environment name '${name}' is reserved for OpenShell stable credential handles and would be skipped instead of attached. Use a dedicated secret name such as MY_SERVICE_MCP_TOKEN.`,
       2,
     );
   }
