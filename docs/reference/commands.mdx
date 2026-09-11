@@ -478,7 +478,9 @@ Without the lock, it preserves the foreign reservation.
 
 #### `--apf-interceptor`
 
-Use this option to request a policyless sandbox creation for an APF-interceptor flow. This option currently supports providerless sandbox creation only. APF onboarding with an inference provider and model is not yet supported. APF onboarding with an OpenShell provider for a Model Context Protocol (MCP) server is also not yet supported. OpenShell cannot bind provider attachment to the new sandbox's verified immutable ID. If the prepared plan contains any provider, NemoClaw exits before it:
+Use this option to request sandbox creation without a NemoClaw-supplied policy.
+This option supports providerless onboarding only; NemoClaw does not configure an inference provider, model, or credential provider in this mode.
+If NemoClaw's prepared plan contains any provider, it exits before it:
 
 - Creates the sandbox.
 - Registers or changes credentials.
@@ -493,6 +495,12 @@ The option requires these conditions:
 - Do not select the Portable experimental profile.
 
 NemoClaw omits a caller policy from every sandbox creation attempt. After creation, NemoClaw binds the returned durable sandbox identity and verifies its effective policy. The policy must be sandbox-scoped and contain every policy entry required by the prepared configuration. NemoClaw stores no policy owner, receipt, or desired state; later policy commands read OpenShell directly. This verification does not establish that APF injected the policy.
+
+With one [registered external component](../deployment/register-external-component#select-interceptor-supplied-policy), the component supplies policy through the existing OpenShell interceptor contract.
+Required providers must resolve through existing OpenShell mechanisms before activation.
+NemoClaw activates the component only after verifying immutable sandbox identity and effective policy, then verifies them again after the response.
+Missing or invalid policy does not trigger a fallback to NemoClaw policy or ordinary onboarding.
+Registration alone does not select this option.
 
 ```bash
 $$nemoclaw onboard --fresh --apf-interceptor --name my-apf-sandbox
@@ -3564,13 +3572,40 @@ Register a provider credential with the OpenShell gateway by name and type. Each
 
 Registered providers are gateway-wide and attach to every sandbox you build or rebuild after the call. `nemoclaw credentials reset <PROVIDER>` removes the provider from the gateway and detaches it from every sandbox currently using it; it cannot limit the provider to selected sandboxes. To replace a credential, reset the provider, register the replacement, and rebuild each detached sandbox.
 
+Tavily requires a provider profile that permits the intended agent runtime.
+Use `--type tavily --agent hermes` to select the versioned `tavily-hermes-v1` profile for Hermes Python.
+The explicit `--type tavily-hermes-v1` form remains supported without `--agent`.
+OpenClaw and Deep Agents use the existing `tavily` profile with `--agent openclaw` or `--agent dcode`.
+Without `--agent`, `--type tavily` retains that profile and prints a warning that it does not authorise Hermes Python.
+
+`--agent` accepts `hermes`, `openclaw`, `langchain-deepagents-code`, and their aliases only for Tavily profiles.
+An explicit Hermes profile combined with a non-Hermes agent is rejected before gateway operations.
+This option selects a credential profile only: it does not select a sandbox or gateway, restrict gateway-wide attachment, enable web search, or apply egress policy.
+
+Register the credential for the intended runtime:
+
+<AgentOnly variant="hermes">
 ```bash
-$$nemoclaw credentials add tavily-search --type tavily --credential TAVILY_API_KEY
+$$nemoclaw credentials add tavily-search --type tavily --agent hermes --credential TAVILY_API_KEY
 ```
+
+For an existing incorrect binding, follow [Repair a Hermes Tavily Provider](../security/credential-rotation#repair-a-hermes-tavily-provider).
+</AgentOnly>
+<AgentOnly variant="openclaw">
+```bash
+$$nemoclaw credentials add tavily-search --type tavily --agent openclaw --credential TAVILY_API_KEY
+```
+</AgentOnly>
+<AgentOnly variant="deepagents">
+```bash
+$$nemoclaw credentials add tavily-search --type tavily --agent dcode --credential TAVILY_API_KEY
+```
+</AgentOnly>
 
 | Flag | Description |
 | --- | --- |
-| `--type <TYPE>` | Provider type (e.g. `tavily`, `nvidia`, `openai`, `anthropic`, `generic`) |
+| `--type <TYPE>` | Provider profile, such as `tavily`, `tavily-hermes-v1`, `nvidia`, `openai`, `anthropic`, or `generic` |
+| `--agent <AGENT>` | Agent name or alias for Tavily profile selection, such as `hermes` or `dcode`. Does not select or rebuild a sandbox |
 | `--credential <ENV_NAME>` | Env variable name whose value holds the credential. Repeatable |
 | `--config <K=V>` | Typed non-secret provider configuration. Supported: `OPENAI_BASE_URL=<http(s)://public-IP/path>` with `--type openai`. DNS hostnames are rejected because this gateway-wide credential path cannot enforce admission-time address pins. URLs with credentials, query parameters, fragments, loopback, link-local, private, internal, or reserved IP destinations are also rejected. Configure hostname-based and trusted private inference endpoints through onboarding so NemoClaw can preserve their trust and address pins. Repeatable |
 | `--from-existing` | Load credentials and config from existing local state after checking the provider profile for credential keys reserved by managed MCP servers |

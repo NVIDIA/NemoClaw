@@ -23,7 +23,7 @@ It intentionally does not report GitHub mergeability, branch protection, CI stat
 3. Prepares the target PR as inert analysis data and executes the trusted Advisor entrypoint from the workflow checkout.
 4. Runs model analysis inside OpenShell. The sandbox receives neither a GitHub token nor the upstream model credential.
 5. Runs one required Pi session for each valid Markdown prompt in `tools/pr-review-advisor/specialists`. Each specialist reads repository evidence and records a native session trace.
-6. Each specialist publishes its complete Markdown review as the job summary and uploads the Markdown and native session trace as one artifact.
+6. Each specialist publishes its complete Markdown review as the job summary and uploads the Markdown, native session trace, and validated E2E recommendation receipt as one artifact.
 7. After every specialist completes successfully, one publisher attempts to post a sticky comment that links to the workflow run. A failed specialist keeps the workflow failed and suppresses publication.
 
 `investigate-turn.mts` owns the shared investigation turn and deterministic context contract. `specialist-tools.mts` owns specialist tool policy and implementations. `specialists.mts` applies each specialist prompt and tool policy. `trusted-guidance.mts` owns the system prompt and checked-in review guidance. `turn-context.mts` and the context modules build bounded deterministic evidence. `run-specialist.mts` composes these modules and writes each specialist's Markdown review and native session trace.
@@ -127,7 +127,7 @@ The discovered specialists use the workflow-configured model and share the same 
 
 ## Artifacts
 
-Each specialist artifact contains a Markdown review and Pi's unchanged native JSONL session. The
+Each specialist artifact contains a Markdown review, Pi's unchanged native JSONL session, and an E2E recommendation receipt. The
 workflow run also displays each Markdown review as a job summary. Replace `<interest>` with the
 specialist interest and `<attempt>` with the workflow run attempt number, then download the artifact
 with `gh run download <run-id> --name pr-review-specialist-<interest>-<attempt>`.
@@ -188,3 +188,7 @@ database URLs for its gateway; it does not read or replace an existing gateway d
 Each specialist returns a Markdown review grounded in repository evidence and shared trusted
 guidance. No component combines findings or makes merge decisions. Specialist reviews are advisory.
 They do not replace required human review or change repository merge gates.
+
+Each specialist also records all additional E2E recommendations through a validated tool.
+The receipt preserves the deterministic floor, optional coverage, explicit empty decisions, and unresolved coverage.
+The [review queue contract](REVIEW-QUEUE.md) defines discovery, identity, dispatch, and result rules for read-only consumers.
