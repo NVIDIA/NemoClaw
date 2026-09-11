@@ -72,6 +72,8 @@ const ADVISOR_REPAIR_E2E_WORKFLOW = "e2e.yaml";
 const ADVISOR_REPAIR_E2E_CHECK = "advisor-repair-risk-plan-e2e";
 const MAX_E2E_RECEIPT_ARCHIVE_BYTES = 256 * 1024;
 const MAX_E2E_RECEIPT_BYTES = 16 * 1024;
+const GENERATED_HEAD_CONTROLLER_MAX_MINUTES = 330;
+const GITHUB_ARTIFACT_REQUEST_TIMEOUT_MILLISECONDS = 30_000;
 const E2E_WORKFLOW_PATH = path.join(
   path.dirname(fileURLToPath(import.meta.url)),
   "..",
@@ -801,6 +803,7 @@ async function githubArtifactArchive(
         Authorization: `Bearer ${token}`,
         "X-GitHub-Api-Version": "2026-03-10",
       },
+      signal: AbortSignal.timeout(GITHUB_ARTIFACT_REQUEST_TIMEOUT_MILLISECONDS),
     },
   );
   if (!response.ok) {
@@ -1059,9 +1062,9 @@ export async function waitForAdvisorRepairHead(input: {
     60,
     e2eControllerDeadlineMinutesForSelectors(riskPlan.requiredJobs),
   );
-  if (deadlineMinutes > 345)
+  if (deadlineMinutes > GENERATED_HEAD_CONTROLLER_MAX_MINUTES)
     throw new RepairError(
-      `generated-head E2E dependency graph requires ${deadlineMinutes} minutes and exceeds the bounded controller window`,
+      `generated-head E2E dependency graph requires ${deadlineMinutes} minutes and exceeds the controller window reserved for finalization`,
     );
   const attempts = input.attempts ?? deadlineMinutes * 2;
   const pendingDispatches: Awaited<ReturnType<typeof dispatchRepairValidation>>[] = [];

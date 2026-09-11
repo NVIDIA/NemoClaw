@@ -988,7 +988,7 @@ jobs:
       vars.PR_REVIEW_ADVISOR_REPAIR_ENABLED == 'true'
     environment: advisor-repair-publish
     permissions:
-      actions: read
+      actions: write
       contents: write
       pull-requests: read
     runs-on: ubuntu-24.04
@@ -1149,6 +1149,16 @@ jobs:
           SELECTION_FILE: ${{ env.PUBLISH_INPUT_DIR }}/context/selection.json
           STATE_FILE: ${{ runner.temp }}/publish-live/state.json
         run: node --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/repair-publish.mts" advisor-repair-publish
+
+      - name: Dispatch exact generated-head validation
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api --method POST \
+            "repos/$GITHUB_REPOSITORY/actions/workflows/pr-review-advisor-generated-head.yaml/dispatches" \
+            -f ref=main \
+            -f "inputs[source_run_id]=$GITHUB_RUN_ID" \
+            -f "inputs[source_run_attempt]=$GITHUB_RUN_ATTEMPT"
 
   repair-audit:
     name: Preserve bounded repair audit receipt

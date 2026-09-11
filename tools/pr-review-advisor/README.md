@@ -61,13 +61,14 @@ maintainer may select eligible finding IDs and request one two-turn repair attem
 workflow actor and triggering actor have `maintain` or `admin` permission. Pi can edit only a
 disposable checkout in a credential-free OpenShell sandbox; it cannot run tests, commit, push, or
 call GitHub. The resolver uploads only the disposable checkout and generated configuration, creates
-`/sandbox/output` inside the sandbox, and downloads only the bounded `proposal.json` from that
-output subtree. A separate secret-free job reconstructs and validates the patch. When publication
+`/sandbox/output` inside the sandbox, and downloads the reconstructed candidate repository plus the
+bounded `proposal.json`; only that proposal is accepted from the output subtree. A separate
+secret-free job reconstructs and validates the patch. When publication
 is explicitly requested, the protected deterministic publisher rechecks the live state and may make
 one verified, non-force, compare-and-swap branch update. A trusted-main reporter then runs and
 records the approved exact-generated-SHA checks without starting another repair attempt.
-The publisher seals the generated-head request before branch mutation, but the reporter receives
-it only from the completed, successful parent run after publication and its dependent audit finish.
+The publisher seals the generated-head request before branch mutation, then dispatches the reporter
+with the exact source run and attempt only after the compare-and-swap branch update succeeds.
 Only blocking `P0` and `P1` machine-ledger findings are eligible for this repair path; every other
 severity fails closed at the trusted selection boundary.
 
@@ -190,9 +191,10 @@ Authors and coding agents should follow the shared [PR CI and Review Follow-Up](
 - A separate trusted host step collects deterministic GitHub context with `github.token` and writes a bounded, identity-checked context file before model work. The sandbox receives that file, not the token.
 - The OpenShell gateway binds only to loopback and holds the upstream provider credential. The sandbox uses `https://inference.local/v1` with an inert SDK key, and receives neither the provider credential nor a GitHub token.
 - The advisory-comment publisher has pull-request write permission, but receives neither the model secret, specialist artifacts, nor the untrusted PR worktree. It rechecks the latest PR commit immediately before posting only the workflow-run link.
-- The protected repair publisher separately has `contents: write`. It receives no model credential,
-  rechecks the complete live PR state, creates one verified commit, and advances the contributor
-  branch once with a non-force compare-and-swap update.
+- The protected repair publisher separately has `contents: write` for the branch update and
+  `actions: write` only to dispatch exact generated-head validation after that update succeeds. It
+  receives no model credential, rechecks the complete live PR state, creates one verified commit,
+  and advances the contributor branch once with a non-force compare-and-swap update.
 - Sticky publication updates only a marker-bearing comment owned by `github-actions[bot]`; a user-authored marker cannot claim the update target. Publication errors remain visible in the publisher logs.
 - Ordinary review runs post advisory comments only; they do not approve, request changes, merge,
   push, label, or dispatch E2E. The manual repair pilot can perform its single protected branch

@@ -4,9 +4,6 @@
 name: Automation / PR Review Advisor Generated Head
 
 on:
-  workflow_run:
-    workflows: [Automation / PR Review Advisor]
-    types: [completed]
   workflow_dispatch:
     inputs:
       source_run_id:
@@ -22,7 +19,7 @@ on:
 permissions: {}
 
 concurrency:
-  group: advisor-repair-generated-head-${{ github.event_name == 'workflow_run' && github.event.workflow_run.id || inputs.source_run_id }}-${{ github.event_name == 'workflow_run' && github.event.workflow_run.run_attempt || inputs.source_run_attempt }}
+  group: advisor-repair-generated-head-${{ inputs.source_run_id }}-${{ inputs.source_run_attempt }}
   cancel-in-progress: false
 
 jobs:
@@ -30,11 +27,8 @@ jobs:
     name: Locate a trusted generated-head request
     if: >-
       github.repository == 'NVIDIA/NemoClaw' &&
-      (github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main') &&
-      (github.event_name == 'workflow_dispatch' ||
-      (github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.event == 'workflow_dispatch' &&
-      github.event.workflow_run.head_branch == 'main'))
+      github.event_name == 'workflow_dispatch' &&
+      github.ref == 'refs/heads/main'
     permissions:
       actions: read
       contents: read
@@ -60,16 +54,11 @@ jobs:
         name: Validate the source run and locate its exact request artifact
         env:
           GH_TOKEN: ${{ github.token }}
-          EVENT_SOURCE_RUN_ATTEMPT: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.run_attempt || '' }}
-          EVENT_SOURCE_RUN_ID: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.id || '' }}
-          EVENT_SOURCE_WORKFLOW_SHA: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || '' }}
-          INPUT_SOURCE_RUN_ATTEMPT: ${{ inputs.source_run_attempt || '' }}
-          INPUT_SOURCE_RUN_ID: ${{ inputs.source_run_id || '' }}
+          SOURCE_RUN_ATTEMPT: ${{ inputs.source_run_attempt }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
           VALIDATION_WORKFLOW_SHA: ${{ github.workflow_sha }}
         run: |
           set -euo pipefail
-          SOURCE_RUN_ID="${EVENT_SOURCE_RUN_ID:-$INPUT_SOURCE_RUN_ID}"
-          SOURCE_RUN_ATTEMPT="${EVENT_SOURCE_RUN_ATTEMPT:-$INPUT_SOURCE_RUN_ATTEMPT}"
           [[ "$SOURCE_RUN_ID" =~ ^[1-9][0-9]*$ ]]
           [[ "$SOURCE_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]
           gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID" > "$RUNNER_TEMP/source-run.json"
@@ -78,14 +67,13 @@ jobs:
           gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" > "$RUNNER_TEMP/main-ref.json"
           jq -e --arg sha "$VALIDATION_WORKFLOW_SHA" '.object.type == "commit" and .object.sha == $sha' \
             "$RUNNER_TEMP/main-ref.json" >/dev/null
-          jq -e --arg repo "$GITHUB_REPOSITORY" --arg event_sha "$EVENT_SOURCE_WORKFLOW_SHA" \
+          jq -e --arg repo "$GITHUB_REPOSITORY" \
             --argjson run "$SOURCE_RUN_ID" --argjson attempt "$SOURCE_RUN_ATTEMPT" \
             --slurpfile workflow "$RUNNER_TEMP/source-workflow.json" '
               .id == $run and .run_attempt == $attempt and .repository.full_name == $repo and
               .workflow_id == $workflow[0].id and .name == "Automation / PR Review Advisor" and
               .path == ".github/workflows/pr-review-advisor.yaml" and .event == "workflow_dispatch" and
-              .status == "completed" and .conclusion == "success" and .head_branch == "main" and
-              ($event_sha == "" or .head_sha == $event_sha)
+              .status == "completed" and .conclusion == "success" and .head_branch == "main"
             ' "$RUNNER_TEMP/source-run.json" >/dev/null
           gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID/artifacts?per_page=100" \
             --slurp > "$RUNNER_TEMP/source-artifact-pages.json"
@@ -94,7 +82,6 @@ jobs:
             "$RUNNER_TEMP/source-artifact-pages.json" > "$RUNNER_TEMP/request-artifacts.json"
           count="$(jq length "$RUNNER_TEMP/request-artifacts.json")"
           if [[ "$count" == 0 ]]; then
-            [[ -n "$EVENT_SOURCE_RUN_ID" ]] && exit 0
             echo "Manual reconciliation source run has no generated-head request artifact" >&2
             exit 1
           fi

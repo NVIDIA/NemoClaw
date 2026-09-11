@@ -118,12 +118,9 @@ function runLocator(
     env: {
       ...process.env,
       PATH: `${fakeBin}:${process.env.PATH}`,
-      EVENT_SOURCE_RUN_ATTEMPT: "",
-      EVENT_SOURCE_RUN_ID: "",
-      EVENT_SOURCE_WORKFLOW_SHA: "",
       VALIDATION_WORKFLOW_SHA: validationWorkflowSha,
-      INPUT_SOURCE_RUN_ATTEMPT: "2",
-      INPUT_SOURCE_RUN_ID: "77",
+      SOURCE_RUN_ATTEMPT: "2",
+      SOURCE_RUN_ID: "77",
       GITHUB_OUTPUT: output,
       GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
       RUNNER_TEMP: root,
@@ -194,7 +191,10 @@ describe("PR Review Advisor generated-head evidence", () => {
     const workflow = YAML.parse(
       readFileSync(".github/workflows/pr-review-advisor-generated-head.yaml", "utf8"),
     ) as {
-      on?: { workflow_dispatch?: { inputs?: Record<string, { required?: boolean }> } };
+      on?: {
+        workflow_dispatch?: { inputs?: Record<string, { required?: boolean }> };
+        workflow_run?: unknown;
+      };
       concurrency?: { group?: string };
       jobs?: Record<string, { if?: string }>;
     };
@@ -206,9 +206,10 @@ describe("PR Review Advisor generated-head evidence", () => {
         source_run_id: expect.objectContaining({ required: true }),
       }),
     );
+    expect(workflow.on?.workflow_run).toBeUndefined();
     expect(String(workflow.concurrency?.group)).toContain("inputs.source_run_id");
     expect(String(workflow.jobs?.locate?.if)).toContain("github.ref == 'refs/heads/main'");
-    expect(serialized).toContain("EVENT_SOURCE_WORKFLOW_SHA");
+    expect(serialized).not.toContain("github.event.workflow_run");
     expect(serialized).toContain("needs.locate.outputs.source-workflow-sha");
     expect(serialized).toContain("needs.locate.outputs.source-run-id");
     expect(serialized).toContain("source-artifact-pages.json");

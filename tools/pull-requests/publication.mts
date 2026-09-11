@@ -195,6 +195,7 @@ export async function updateVerifiedRef(input: {
 }
 
 export function githubClient(token: string): { graphql: GraphqlRequest; request: GitHubRequest } {
+  const requestTimeoutMilliseconds = 30_000;
   const headers = {
     Accept: "application/vnd.github+json",
     Authorization: `Bearer ${token}`,
@@ -228,6 +229,7 @@ export function githubClient(token: string): { graphql: GraphqlRequest; request:
           body: JSON.stringify({ query, variables }),
           headers,
           method: "POST",
+          signal: AbortSignal.timeout(requestTimeoutMilliseconds),
         }),
       ),
     request: async (method, apiPath, body) =>
@@ -236,6 +238,7 @@ export function githubClient(token: string): { graphql: GraphqlRequest; request:
           ...(body === undefined ? {} : { body: JSON.stringify(body) }),
           headers,
           method,
+          signal: AbortSignal.timeout(requestTimeoutMilliseconds),
         }),
       ),
   };
