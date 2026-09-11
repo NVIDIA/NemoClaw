@@ -110,11 +110,15 @@ interface EndpointProvenance {
 }
 
 export function isCoreFlowCompleteBeforeFinalization(result: {
-  readonly context: Pick<OnboardFlowContext, "providerlessApf" | "sandboxName">;
+  readonly context: Pick<
+    OnboardFlowContext,
+    "providerlessApf" | "sandboxName" | "externalComponent"
+  >;
   readonly session: { readonly machine: { readonly state: string } };
 }): boolean {
   return (
     result.context.providerlessApf === true &&
+    !result.context.externalComponent &&
     result.session.machine.state === "complete" &&
     Boolean(result.context.sandboxName)
   );
@@ -378,7 +382,6 @@ export function createSandboxOnboardFlowPhase<
       context: mergeSandboxCreatedContext(context, {
         session: sandboxStateResult.session,
         sandboxName: sandboxStateResult.sandboxName,
-        recreateJournalHandoff: Boolean(options.recreateJournalTargetIntentFingerprint),
         webSearchConfig: sandboxStateResult.webSearchConfig,
         webSearchConfigChanged: sandboxStateResult.webSearchConfigChanged,
         hermesToolGateways: sandboxStateResult.hermesToolGateways,

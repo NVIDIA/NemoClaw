@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { Command, Flags, type Interfaces } from "@oclif/core";
-import path from "node:path";
 import {
   assertHermesPortableCommandSupported,
   assertHermesPortableCommandUnavailable,
@@ -10,14 +9,13 @@ import {
   HERMES_PORTABLE_UNSUPPORTED_COMMAND_MESSAGE,
   HERMES_PORTABLE_UNSUPPORTED_DOCTOR_FIX_MESSAGE,
 } from "../onboard/experimental/portable-agent-lifecycle";
-import { hasHermesPortableReceiptCandidate } from "../onboard/experimental/hermes-portable-receipt";
 import { defaultPortableDemoStateDir } from "../onboard/experimental/portable-runtime-receipt-readiness";
 import { redactForLog } from "../security/redact";
 import {
   assertNoHermesPortableHostAuthority,
   withCurrentPortableHostFence,
 } from "../state/portable-uninstall-retirement";
-import { withMcpLifecycleLock } from "../state/mcp-lifecycle-lock";
+import { withSandboxLifecycleLock } from "../actions/sandbox/lifecycle/lock";
 import {
   enforceRemovedImmutabilityMigrationBoundary,
   reportRemovedImmutabilityUpgrade,
@@ -32,7 +30,7 @@ export type CommandExitResult = {
 
 export { HERMES_PORTABLE_UNSUPPORTED_COMMAND_MESSAGE };
 export { assertHermesPortableCommandUnavailable };
-export const withSandboxCommandLifecycleLock = withMcpLifecycleLock;
+export const withSandboxCommandLifecycleLock = withSandboxLifecycleLock;
 export { HERMES_PORTABLE_UNSUPPORTED_DOCTOR_FIX_MESSAGE };
 
 const REMOVED_IMMUTABILITY_REMEDIATION_COMMANDS = new Set([
@@ -143,28 +141,7 @@ export abstract class NemoClawCommand extends Command {
       }
       return super._run<T>();
     };
-    const usesHermesPortableHostAuthority =
-      (commandId === "sandbox:start" || this.isProbeOnlyConnect(commandId)) &&
-      hasHermesPortableReceiptCandidate(sandboxName, defaultPortableDemoStateDir(process.env));
-    const runWithLifecycleFence = async () => {
-      return await withMcpLifecycleLock(
-        sandboxName,
-        runLocked,
-        usesHermesPortableHostAuthority
-          ? { stateDir: path.join(defaultPortableDemoStateDir(process.env), "state") }
-          : {},
-      );
-    };
-    if (usesHermesPortableHostAuthority) {
-      return await withCurrentPortableHostFence(runWithLifecycleFence);
-    }
-    return await runWithLifecycleFence();
-  }
-
-  private isProbeOnlyConnect(commandId: string | undefined): boolean {
-    return (
-      commandId === "sandbox:connect" && this.lifecycleParserOutput?.flags["probe-only"] === true
-    );
+    return await withSandboxLifecycleLock(sandboxName, runLocked);
   }
 
   private isInteractiveConnect(commandId: string | undefined): boolean {

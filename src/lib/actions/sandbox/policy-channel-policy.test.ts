@@ -105,9 +105,9 @@ beforeEach(() => {
   );
 
   vi.spyOn(policies, "listPresets").mockReturnValue(POLICY_PRESETS);
-  vi.spyOn(policies, "listCustomPresets").mockReturnValue([]);
-  getAppliedPresetsMock = vi.spyOn(policies, "getAppliedPresets").mockReturnValue([]);
-  getGatewayPresetsMock = vi.spyOn(policies, "getGatewayPresets").mockReturnValue(null);
+  vi.spyOn(policies, "listCustomPresets").mockResolvedValue([]);
+  getAppliedPresetsMock = vi.spyOn(policies, "getAppliedPresets").mockResolvedValue([]);
+  getGatewayPresetsMock = vi.spyOn(policies, "getGatewayPresets").mockResolvedValue(null);
   selectFromListMock = vi.spyOn(policies, "selectFromList").mockResolvedValue("pypi");
   selectForRemovalMock = vi.spyOn(policies, "selectForRemoval").mockResolvedValue("pypi");
   vi.spyOn(policies, "loadPreset").mockImplementation((name: unknown) => {
@@ -116,12 +116,12 @@ beforeEach(() => {
   });
   loadPresetForSandboxMock = vi
     .spyOn(policies, "loadPresetForSandbox")
-    .mockImplementation((_sandboxName: unknown, name: unknown) => {
+    .mockImplementation(async (_sandboxName: unknown, name: unknown) => {
       const presetName = String(name);
       return `network_policies:\n  ${presetName}:\n    name: ${presetName}\n    endpoints:\n      - host: ${presetName}.example.com\n        port: 443\n        protocol: rest\n        rules:\n          - allow: { method: GET, path: "/**" }\n`;
     });
-  applyPresetMock = vi.spyOn(policies, "applyPreset").mockReturnValue(true);
-  removePresetMock = vi.spyOn(policies, "removePreset").mockReturnValue(true);
+  applyPresetMock = vi.spyOn(policies, "applyPreset").mockResolvedValue(true);
+  removePresetMock = vi.spyOn(policies, "removePreset").mockResolvedValue(true);
 });
 
 afterEach(() => {

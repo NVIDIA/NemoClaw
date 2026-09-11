@@ -95,7 +95,7 @@ afterEach(() => {
 });
 
 describe("uninstall selected gateway-port segregation (#3053)", () => {
-  it("does not treat the selected gateway's own port directory as a sibling (#7987)", () => {
+  it("does not treat the selected gateway's own port directory as a sibling (#7987)", async () => {
     const tmpHome = fs.mkdtempSync(path.join(process.cwd(), "nemoclaw-uninstall-self-sibling-"));
     try {
       const stateDir = path.join(tmpHome, ".nemoclaw");
@@ -115,7 +115,7 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
       writeScopedGatewayState(tmpHome);
       const logs: string[] = [];
       const openshellCalls: string[][] = [];
-      const result = runUninstallPlan(
+      const result = await runUninstallPlan(
         { assumeYes: true, deleteModels: false, destroyUserData: true, keepOpenShell: false },
         {
           commandExists: (command) => command === "openshell",
@@ -146,7 +146,7 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
     }
   });
 
-  it("still detects a live sibling alongside the selected gateway's own port directory (#7987)", () => {
+  it("still detects a live sibling alongside the selected gateway's own port directory (#7987)", async () => {
     const tmpHome = fs.mkdtempSync(
       path.join(process.cwd(), "nemoclaw-uninstall-self-and-sibling-"),
     );
@@ -166,7 +166,7 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
       writeScopedGatewayState(tmpHome);
       const logs: string[] = [];
       const openshellCalls: string[][] = [];
-      const result = runUninstallPlan(
+      const result = await runUninstallPlan(
         { assumeYes: true, deleteModels: false, destroyUserData: true, keepOpenShell: false },
         {
           commandExists: (command) => command === "openshell",
@@ -251,7 +251,7 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
         const openshellCalls: string[][] = [];
         const errors = vi.fn();
 
-        const result = runPortUninstall(
+        const result = await runPortUninstall(
           {
             assumeYes: true,
             deleteModels: false,
@@ -336,7 +336,7 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
       const calls: string[][] = [];
       const logs: string[] = [];
 
-      const result = runPortUninstall(
+      const result = await runPortUninstall(
         {
           assumeYes: true,
           deleteModels: false,
@@ -416,7 +416,7 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
       const logs: string[] = [];
       const run = vi.fn(() => ok());
 
-      const result = runPortUninstall(
+      const result = await runPortUninstall(
         {
           assumeYes: true,
           deleteModels: false,
@@ -469,7 +469,7 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
       const warnings = vi.fn();
 
       try {
-        const result = runPortUninstall(
+        const result = await runPortUninstall(
           {
             assumeYes: true,
             deleteModels: false,
@@ -521,7 +521,7 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
       writeScopedGatewayState(tmpHome, port, customGatewayState);
       let competingOnboardingWasBlocked = false;
 
-      const result = runPortUninstall(
+      const result = await runPortUninstall(
         {
           assumeYes: true,
           deleteModels: false,
@@ -609,7 +609,7 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
         restore = mutate(tmpHome, customGatewayState);
         const warnings = vi.fn();
 
-        const result = runPortUninstall(
+        const result = await runPortUninstall(
           {
             assumeYes: true,
             deleteModels: false,
@@ -667,7 +667,7 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
       });
       const warnings = vi.fn();
 
-      const result = runPortUninstall(
+      const result = await runPortUninstall(
         {
           assumeYes: true,
           deleteModels: false,
@@ -773,7 +773,7 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
         writeEvidence(customGatewayState);
         const errors = vi.fn();
 
-        const result = runPortUninstall(
+        const result = await runPortUninstall(
           {
             assumeYes: true,
             deleteModels: false,
@@ -830,7 +830,7 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
         const rmSync = vi.fn();
         const errors = vi.fn();
 
-        const result = runPortUninstall(
+        const result = await runPortUninstall(
           {
             assumeYes: true,
             deleteModels: false,
@@ -895,7 +895,7 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
       const openshellCalls: string[][] = [];
       const warnings = vi.fn();
 
-      const result = runPortUninstall(
+      const result = await runPortUninstall(
         {
           assumeYes: true,
           deleteModels: false,

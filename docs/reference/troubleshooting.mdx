@@ -382,7 +382,7 @@ Use `NEMOCLAW_GATEWAY_BIND_ADDRESS=0.0.0.0` only on supported gateway modes and 
 
 ### Older-glibc gateway compatibility container
 
-OpenShell 0.0.106 directly supports Linux hosts with glibc 2.39 or newer. On an older trusted host, `NEMOCLAW_OPENSHELL_GATEWAY_CONTAINER_PATCH=1` explicitly opts into NemoClaw's compatibility container. Leave it unset on supported hosts.
+OpenShell 0.0.116 directly supports Linux hosts with glibc 2.39 or newer. On an older trusted host, `NEMOCLAW_OPENSHELL_GATEWAY_CONTAINER_PATCH=1` explicitly opts into NemoClaw's compatibility container. Leave it unset on supported hosts.
 
 The compatibility container uses host networking and mounts the host Docker socket read-only. A read-only socket mount still permits privileged Docker API operations and can control the host, so do not enable this mode on an untrusted or shared host. The gateway remains loopback-bound, and startup fails closed unless the configured Unix socket answers as a Docker daemon. See [Gateway Compatibility Container](../security/security-controls/gateway-authentication-controls#gateway-compatibility-container) for the container boundary and removal conditions.
 
@@ -1751,7 +1751,7 @@ If it is missing, apply the preset, register the host-side credential, and rebui
 ```bash
 nemo-deepagents <name> policy add tavily --yes
 export TAVILY_API_KEY=tvly-...
-nemo-deepagents credentials add tavily-search --type tavily --credential TAVILY_API_KEY
+nemo-deepagents credentials add tavily-search --type tavily --agent dcode --credential TAVILY_API_KEY
 unset TAVILY_API_KEY
 nemo-deepagents <name> rebuild
 ```
@@ -4631,12 +4631,29 @@ TAVILY_API_KEY=<your-tavily-key> \
 
 NemoClaw writes `web.backend: tavily`, applies the `tavily` policy preset, and configures request-body credential rewriting for Hermes. If the same onboarding run selected the Nous-managed web gateway, Tavily replaces `nous-web` while selected Nous image, audio, browser, and code tools remain enabled.
 
+### Tavily authentication fails after registration or rebuild
+
+A Hermes Tavily provider needs both the `tavily-hermes-v1` profile and the current credential reference issued by OpenShell.
+Older images can save an unversioned `TAVILY_API_KEY` reference in `/sandbox/.hermes/.env`.
+Hermes loads that file over its process environment, replacing the current revision-scoped reference even after the correct provider is registered.
+A copied reference from an older provider can fail for the same reason.
+
+Current Hermes images omit `TAVILY_API_KEY` from generated gateway and dashboard dotenv files and retain the process-injected reference.
+Follow [Repair a Hermes Tavily Provider](../security/credential-rotation#repair-a-hermes-tavily-provider) to preserve supported state and rebuild with the current image.
+Keep an already-correct provider rather than resetting it solely to repair the old dotenv file.
+Do not save raw keys in the sandbox or broaden the provider's binary allowlist.
+
+The onboarding probe uses Hermes Python and the issued reference in a JSON `api_key` request.
+It refuses stale dotenv overrides and raw credentials, and reports successful egress only for HTTP `200` with search results.
+Configuration or network failures remain advisory; a detected raw credential blocks handoff.
+Confirm a real Hermes search after rebuilding.
+
 ### Langfuse works with raw keys but not OpenShell placeholders
 
 Do not replace an OpenShell placeholder with a raw Langfuse key in `~/.hermes/.env`.
 That workaround bypasses the sandbox credential boundary.
 
-OpenShell 0.0.106 resolves static credentials only at endpoints declared by their provider profile.
+OpenShell 0.0.116 resolves static credentials only at endpoints declared by their provider profile.
 Older provider-backed Langfuse setups could rely on destination-independent placeholder rewriting, so they can stop working after a NemoClaw upgrade or sandbox rebuild even though the Hermes placeholder validator still accepts the value.
 
 For Langfuse Cloud, register the two keys through the checked-in endpoint profile and rebuild the sandbox:
@@ -4659,7 +4676,7 @@ The provider must expose the exact `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KE
 
 For self-hosted Langfuse, import a separate reviewed profile that matches the exact HTTPS origin, including its port, before registering the provider.
 Set only the non-secret `HERMES_LANGFUSE_BASE_URL` in `~/.hermes/.env`.
-Remove any copied `HERMES_LANGFUSE_PUBLIC_KEY` or `HERMES_LANGFUSE_SECRET_KEY` line because a saved revision-scoped placeholder can shadow the current process-injected revision after rotation or rebuild.
+Remove any copied `HERMES_LANGFUSE_PUBLIC_KEY` or `HERMES_LANGFUSE_SECRET_KEY` line because a saved credential-handle placeholder can shadow the current process-injected value after rotation or rebuild.
 
 ### Re-onboarding asks every messaging prompt again
 

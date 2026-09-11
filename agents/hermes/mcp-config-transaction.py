@@ -74,8 +74,14 @@ ENV_PLACEHOLDER_RE = re.compile(
 REVISIONED_ENV_PLACEHOLDER_RE = re.compile(
     r"^Bearer openshell:resolve:env:(v[0-9]{1,20})_([A-Za-z_][A-Za-z0-9_]{0,127})$"
 )
+STABLE_ENV_PLACEHOLDER_RE = re.compile(
+    r"^Bearer openshell:resolve:env:(s[a-f0-9]{64})_([A-Za-z_][A-Za-z0-9_]{0,127})$"
+)
 OPENSHELL_REVISIONED_CREDENTIAL_NAME_RE = re.compile(r"^v[0-9]+_[A-Za-z0-9_]+$")
-BOUNDARY_MANIFEST_NAME = "openshell-child-visible-credentials.v0.0.106.json"
+OPENSHELL_STABLE_CREDENTIAL_NAME_RE = re.compile(
+    r"^s[a-f0-9]{64}_[A-Za-z0-9_]+$"
+)
+BOUNDARY_MANIFEST_NAME = "openshell-child-visible-credentials.v0.0.116.json"
 ANSI_ESCAPE_RE = re.compile(
     r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\)|[@-_])"
 )
@@ -199,7 +205,8 @@ def _load_credential_boundary_manifest() -> dict[str, object]:
     # corrupt, or wrong-version OpenShell boundary manifest.
     # sourceBoundary: NemoClaw owns one reviewed manifest installed beside this
     # helper in images; the second path is the deterministic source-checkout layout.
-    # whyNotSourceFix: OpenShell v0.0.106 has no machine-readable child-env contract.
+    # whyNotSourceFix: OpenShell v0.0.106 through v0.0.116 have no
+    # machine-readable child-env contract.
     # It also deliberately hides the supervisor identity mount from workload
     # children and the Hermes image contains no OpenShell CLI. Executing
     # ``openshell --version`` here would therefore either fail every real
@@ -227,7 +234,7 @@ def _load_credential_boundary_manifest() -> dict[str, object]:
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     if (
         not isinstance(manifest, dict)
-        or manifest.get("openshellVersion") != "0.0.106"
+        or manifest.get("openshellVersion") != "0.0.116"
     ):
         raise RuntimeError("Hermes MCP credential boundary manifest is invalid")
     return manifest
@@ -262,6 +269,7 @@ _RUNTIME_CONTROL_PREFIXES = _manifest_strings(
 def _credential_name_is_reserved(name: str) -> bool:
     return (
         OPENSHELL_REVISIONED_CREDENTIAL_NAME_RE.fullmatch(name) is not None
+        or OPENSHELL_STABLE_CREDENTIAL_NAME_RE.fullmatch(name) is not None
         or name in _RAW_CHILD_VALUE_KEYS
         or name in _REWRITTEN_CHILD_VALUE_KEYS
         or name in _RUNTIME_CONTROL_KEYS
@@ -411,7 +419,7 @@ def _validate_payload(action: str, payload: dict[str, object]) -> None:
     }
     if action == "add" and hostname in host_aliases:
         raise ValueError(
-            "Authenticated MCP OpenShell host aliases are unavailable with OpenShell v0.0.106"
+            "Authenticated MCP OpenShell host aliases are unavailable with OpenShell v0.0.116"
         )
     # Host preflight owns destination trust and binds every accepted endpoint to
     # exact OpenShell address pins. This in-sandbox check revalidates canonical
@@ -461,28 +469,39 @@ def _validate_payload(action: str, payload: dict[str, object]) -> None:
         if isinstance(authorization, str)
         else None
     )
+    stable_authorization_match = (
+        STABLE_ENV_PLACEHOLDER_RE.fullmatch(authorization)
+        if isinstance(authorization, str)
+        else None
+    )
     canonical_authorization_match = (
         ENV_PLACEHOLDER_RE.fullmatch(authorization)
         if isinstance(authorization, str)
         else None
     )
     authorization_match = (
-        revisioned_authorization_match or canonical_authorization_match
+        revisioned_authorization_match
+        or stable_authorization_match
+        or canonical_authorization_match
     )
     if authorization_match is None:
         raise ValueError(
             "Hermes MCP Authorization must contain an OpenShell environment placeholder"
         )
     credential_name = (
-        revisioned_authorization_match.group(2)
+        (revisioned_authorization_match or stable_authorization_match).group(2)
         if revisioned_authorization_match is not None
+        or stable_authorization_match is not None
         else canonical_authorization_match.group(1)
     )
-    if action == "add" and revisioned_authorization_match is not None:
+    if action == "add" and (
+        revisioned_authorization_match is not None
+        or stable_authorization_match is not None
+    ):
         expected_child_value = authorization.removeprefix("Bearer ")
         if os.environ.get(credential_name) != expected_child_value:
             raise ValueError(
-                "Hermes MCP Authorization revision does not match the OpenShell child environment"
+                "Hermes MCP Authorization generation does not match the OpenShell child environment"
             )
     if action == "add" and _credential_name_is_reserved(credential_name):
         raise ValueError(
@@ -537,16 +556,23 @@ def _managed_candidate_matches(
     if expected_match is None:
         return False
     expected_name = expected_match.group(1)
-    if OPENSHELL_REVISIONED_CREDENTIAL_NAME_RE.fullmatch(expected_name):
+    if (
+        OPENSHELL_REVISIONED_CREDENTIAL_NAME_RE.fullmatch(expected_name)
+        or OPENSHELL_STABLE_CREDENTIAL_NAME_RE.fullmatch(expected_name)
+    ):
         return False
     if not isinstance(actual_authorization, str):
         return False
-    prefix = "Bearer openshell:resolve:env:v"
     suffix = f"_{expected_name}"
-    if not actual_authorization.startswith(prefix) or not actual_authorization.endswith(suffix):
-        return False
-    revision = actual_authorization[len(prefix) : -len(suffix)]
-    return revision.isdigit() and 1 <= len(revision) <= 20
+    revision_prefix = "Bearer openshell:resolve:env:v"
+    if actual_authorization.startswith(revision_prefix) and actual_authorization.endswith(suffix):
+        revision = actual_authorization[len(revision_prefix) : -len(suffix)]
+        return revision.isdigit() and 1 <= len(revision) <= 20
+    stable_prefix = "Bearer openshell:resolve:env:s"
+    if actual_authorization.startswith(stable_prefix) and actual_authorization.endswith(suffix):
+        handle = actual_authorization[len(stable_prefix) : -len(suffix)]
+        return len(handle) == 64 and all(char in "0123456789abcdef" for char in handle)
+    return False
 
 
 _MANAGED_CANDIDATE_FIELDS = frozenset(
@@ -1439,7 +1465,7 @@ def _assert_non_root_lifecycle_identity() -> None:
     # topology.
     # sourceBoundary: OpenShell owns workload topology; NemoClaw owns the
     # immutable root-lifecycle marker and validates it before mutation.
-    # whyNotSourceFix: OpenShell 0.0.106 supports both topologies but exposes no
+    # whyNotSourceFix: OpenShell 0.0.116 supports both topologies but exposes no
     # attested same-UID capability that this packaged helper can query.
     # regressionTest: hermes-mcp-config-transaction.test.ts rejects both probe
     # and add when the root-lifecycle marker identifies the legacy topology.

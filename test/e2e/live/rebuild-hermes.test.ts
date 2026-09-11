@@ -17,7 +17,10 @@ import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { assertCleanupSucceededOrAbsent } from "../fixtures/cleanup-resources.ts";
 import { assertExitZero as expectExitZero } from "../fixtures/clients/command.ts";
 import { type HostCliClient, resultText } from "../fixtures/clients/index.ts";
-import { validateSandboxName } from "../fixtures/clients/sandbox.ts";
+import {
+  HISTORICAL_SANDBOX_MAIN_PROCESS,
+  validateSandboxName,
+} from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { runHermesAcpLiveScenario } from "../fixtures/hermes-acp-live.ts";
 import { expectSandboxProviderAttachment } from "../fixtures/gateway-providers.ts";
@@ -28,7 +31,7 @@ import {
   snapshotFile,
   writeJsonFile,
 } from "../fixtures/file-state.ts";
-import { CLI_ENTRYPOINT } from "../fixtures/paths.ts";
+import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import { listCredentialLeakPaths } from "../fixtures/phases/state-validation.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
@@ -848,8 +851,10 @@ test(
           "--provider",
           `${SANDBOX_NAME}-discord-bridge`,
           "--no-tty",
+          // OpenShell 0.0.116 treats this argv as the canonical main process,
+          // so the historical fixture must stay alive until NemoClaw rebuilds it.
           "--",
-          "true",
+          ...HISTORICAL_SANDBOX_MAIN_PROCESS,
         ],
         {
           artifactName: "phase-3-create-old-hermes-sandbox",
@@ -1180,6 +1185,7 @@ test(
     const hermesVersionText = resultText(hermesVersion);
     const actualHermesVersion = hermesVersionText.match(/v(\d+\.\d+\.\d+)/)?.[1];
     const acpInitializedAfterRebuild = await runHermesAcpLiveScenario({
+      adapterEntrypoint: path.join(REPO_ROOT, "dist/lib/acp/main.js"),
       artifacts,
       env: testEnv(apiKey),
       progress,

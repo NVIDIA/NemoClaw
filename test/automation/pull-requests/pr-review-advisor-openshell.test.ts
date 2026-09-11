@@ -986,6 +986,7 @@ describe("PR review advisor OpenShell wrapper", () => {
 
   it("registers the selected model while confining the upstream key to provider creation", async () => {
     const env = advisorEnvironment();
+    env.OPENSHELL_DB_URL = "sqlite:///existing-provider-state.db";
     const tools = advisorTools();
 
     const gateway = startAdvisorOpenShellInference(env, tools);
@@ -1023,6 +1024,10 @@ describe("PR review advisor OpenShell wrapper", () => {
     });
     expect(calls.filter(([, , options]) => options.env.OPENAI_API_KEY)).toHaveLength(1);
     expect(vi.mocked(tools.start).mock.calls[0]?.[2].env.OPENAI_API_KEY).toBeUndefined();
+    expect(vi.mocked(tools.start).mock.calls[0]?.[2].env.OPENSHELL_DB_URL).toBe(
+      "sqlite::memory:?cache=shared",
+    );
+    expect(env.OPENSHELL_DB_URL).toBe("sqlite:///existing-provider-state.db");
     const gatewayConfig = fs.readFileSync(
       path.join(env.RUNNER_TEMP as string, "openshell-gateway", "gateway.toml"),
       "utf8",
@@ -1033,6 +1038,10 @@ describe("PR review advisor OpenShell wrapper", () => {
 
   it("creates, runs, downloads, and deletes the sandbox without host credentials", async () => {
     const env = advisorEnvironment();
+    env.GITHUB_RUN_ID = "123456";
+    env.GITHUB_RUN_ATTEMPT = "2";
+    env.GITHUB_WORKFLOW_SHA = "c".repeat(40);
+    env.GITHUB_EVENT_NAME = "workflow_run";
     env.GIT_DIR = "/untrusted/ambient-git-dir";
     env.GIT_WORK_TREE = "/untrusted/ambient-worktree";
     const commandResponses = new Map([["openshell sandbox list --names", "pr-advisor-test\n"]]);
@@ -1142,6 +1151,10 @@ describe("PR review advisor OpenShell wrapper", () => {
         "GIT_DIR=/pr-workdir/.git",
         "GIT_WORK_TREE=/pr-workdir",
         "TARGET_REPO=NVIDIA/NemoClaw",
+        "GITHUB_RUN_ID=123456",
+        "GITHUB_RUN_ATTEMPT=2",
+        `GITHUB_WORKFLOW_SHA=${"c".repeat(40)}`,
+        "GITHUB_EVENT_NAME=workflow_run",
         "/advisor/tools/pr-review-advisor/run-specialist.mts",
         "--base",
         "target/base",

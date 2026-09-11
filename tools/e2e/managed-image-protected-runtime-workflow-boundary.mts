@@ -89,6 +89,7 @@ function requireOrderedSteps(
   }
 }
 
+/** Returns violations of the protected GPU job contract, including authorization, runtime bounds, and cleanup. */
 export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowRecord): string[] {
   const errors: string[] = [];
   const job = record(record(workflow.jobs)[JOB_ID]);
@@ -109,7 +110,7 @@ export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowR
   if (job["runs-on"] !== "linux-amd64-gpu-rtxpro6000-latest-1") {
     errors.push(`${JOB_ID} must run on the protected amd64 GPU runner`);
   }
-  if (job["timeout-minutes"] !== 300) errors.push(`${JOB_ID} must keep the 300 minute timeout`);
+  if (job["timeout-minutes"] !== 75) errors.push(`${JOB_ID} must keep the 75 minute timeout`);
   if (!isDeepStrictEqual(job.permissions, { contents: "read" })) {
     errors.push(`${JOB_ID} permissions must be exactly contents: read`);
   }
@@ -260,15 +261,25 @@ export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowR
     workflowSteps,
     "Validate protected runtime activation contract",
   );
+  if (activation?.id !== "runtime-contract") {
+    errors.push(`${JOB_ID} activation step must expose the reviewed runtime contract`);
+  }
   requireFragments(errors, activation, [
     'candidate_root=".candidate-runtime"',
     `activation="$candidate_root/${ACTIVATION_PATH}"`,
     '[[ "$(git -C "$candidate_root" rev-parse --verify HEAD)" == "$CHECKOUT_SHA" ]]',
     '[[ -f "$activation" && ! -L "$activation" ]]',
     '(keys | sort) == ["agents", "contractVersion", "jobId", "platform", "providers"]',
+    '(keys | sort) == ["agents", "contractVersion", "jobId", "platform", "providers", "runtimeUser"]',
+    ".contractVersion == 1",
+    ".contractVersion == 2",
+    '.runtimeUser == "sandbox"',
+    'then "root"',
+    'then "sandbox"',
     '.agents == ["openclaw", "hermes", "langchain-deepagents-code"]',
     '.platform == "linux/amd64"',
     '.providers == ["ollama", "nim", "vllm"]',
+    'printf \'runtime_user=%s\\n\' "$runtime_user" >> "$GITHUB_OUTPUT"',
   ]);
 
   const hermesBase = requireStep(
@@ -328,6 +339,7 @@ export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowR
     '--revision "$CHECKOUT_SHA"',
     '--cohort "$NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT"',
     "--platform linux/amd64",
+    '--runtime-user "$RUNTIME_USER"',
     '--source-root "$GITHUB_WORKSPACE/.candidate-runtime"',
     '--cache-from "$NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE"',
     '--audit-evidence-from "$GITHUB_WORKSPACE/.candidate-runtime/artifacts/reviewed-npm-audit"',
@@ -343,6 +355,7 @@ export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowR
   requireValues(errors, `${JOB_ID} protected runtime build bases`, record(build?.env), {
     BASE_HERMES:
       "ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@${{ steps.runtime-hermes-base.outputs.digest }}",
+    RUNTIME_USER: "${{ steps.runtime-contract.outputs.runtime_user }}",
   });
 
   const install = requireStep(errors, workflowSteps, "Install OpenShell CLI");

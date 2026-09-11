@@ -3,6 +3,48 @@
  * SPDX-License-Identifier: Apache-2.0
  */}
 
+## v0.0.123
+
+NemoClaw v0.0.123 expands configuration export for managed OpenClaw and Hermes sandboxes.
+It adds an experimental external-component onboarding contract and improves installer recovery, sandbox lifecycle handling, and inference diagnostics.
+
+- `nemoclaw config export` now exports canonical managed Hermes sandboxes, including verified API-key authentication and nondefault interface settings.
+  OAuth authentication and Hermes tool gateways remain outside the export contract.
+  Related changes: [PR #11323](https://github.com/NVIDIA/NemoClaw/pull/11323), [PR #11450](https://github.com/NVIDIA/NemoClaw/pull/11450), and [PR #11477](https://github.com/NVIDIA/NemoClaw/pull/11477).
+  Refer to the [NemoClaw CLI Commands Reference](/user-guide/hermes/reference/commands).
+- OpenClaw configuration export now preserves managed Brave Search references, proxy settings, hosted inference tuning, execution settings, dashboard settings, direct tool disclosure, and local conversation diagnostics.
+  It also supports one read-only secondary agent that shares the primary hosted inference route.
+  Local Ollama export preserves verified daemon and proxy ports.
+  Export verifies live and retained configuration evidence and writes credential references instead of secret values.
+  Related changes: [PR #11384](https://github.com/NVIDIA/NemoClaw/pull/11384), [PR #11387](https://github.com/NVIDIA/NemoClaw/pull/11387), [PR #11383](https://github.com/NVIDIA/NemoClaw/pull/11383), [PR #11429](https://github.com/NVIDIA/NemoClaw/pull/11429), [PR #11430](https://github.com/NVIDIA/NemoClaw/pull/11430), [PR #11431](https://github.com/NVIDIA/NemoClaw/pull/11431), [PR #11473](https://github.com/NVIDIA/NemoClaw/pull/11473), and [PR #11478](https://github.com/NVIDIA/NemoClaw/pull/11478).
+  Refer to the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands) for the supported export profiles and their limits.
+- Fresh onboarding on Linux can register one experimental external host component with a NemoClaw-managed Docker-driver gateway.
+  NemoClaw validates the declaration before gateway changes and verifies sandbox identity and effective policy before activation.
+  Failed or ambiguous activation preserves the sandbox and records incomplete state; resume and automatic activation retries are unsupported.
+  NemoClaw does not manage the component service or its credentials.
+  Related changes: [PR #11366](https://github.com/NVIDIA/NemoClaw/pull/11366) and [PR #11471](https://github.com/NVIDIA/NemoClaw/pull/11471).
+  Refer to [Register an External Component During Onboarding](/user-guide/openclaw/deployment/register-external-component).
+- The installer now attempts existing sandbox recovery before generic host admission and preserves each sandbox's recorded GPU selection.
+  It distinguishes confirmed recovery from missing sandboxes or unconfirmed recovery output, and reports warnings instead of claiming complete recovery.
+  Fresh onboarding and required DGX Station reconciliation still require host admission.
+  Related change: [PR #10397](https://github.com/NVIDIA/NemoClaw/pull/10397).
+  Refer to [Update Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/update-sandboxes).
+- Sandbox status now distinguishes an intentional stop from a failure, and connect directs you to start a stopped sandbox.
+  Portable Hermes start, stop, and recovery use OpenShell for lifecycle changes and verify the receipt-owned Podman container afterward.
+  Portable lifecycle operations share the same lock authority, including the host fence during startup.
+  Related changes: [PR #11211](https://github.com/NVIDIA/NemoClaw/pull/11211), [PR #11336](https://github.com/NVIDIA/NemoClaw/pull/11336), [PR #11482](https://github.com/NVIDIA/NemoClaw/pull/11482), and [PR #11490](https://github.com/NVIDIA/NemoClaw/pull/11490).
+  Refer to [Recover and Rebuild Sandboxes](/user-guide/hermes/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes).
+- NVIDIA Endpoints validation now checks the selected inference route.
+  Onboarding and sandbox status identify the account-access cause when NVIDIA returns a matching model-access 404, without exposing the response body in status diagnostics.
+  Docker readiness failures identify authority conflicts, and GPU-mode probe failures retain the Docker failure reason.
+  Non-interactive onboarding resolves the sandbox name before provider selection.
+  Related changes: [PR #10957](https://github.com/NVIDIA/NemoClaw/pull/10957), [PR #11393](https://github.com/NVIDIA/NemoClaw/pull/11393), [PR #11280](https://github.com/NVIDIA/NemoClaw/pull/11280), and [PR #11442](https://github.com/NVIDIA/NemoClaw/pull/11442).
+  Refer to [Verify the Sandbox Inference Route](/user-guide/openclaw/inference/validate-inference/verify-inference-route) and [System Readiness](/user-guide/openclaw/reference/system-readiness).
+- Removing Teams now removes Teams-owned Microsoft login credential bindings from matching Outlook policy endpoints.
+  It refuses to remove bindings owned by another integration.
+  Related change: [PR #10846](https://github.com/NVIDIA/NemoClaw/pull/10846).
+  Refer to the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
+
 ## v0.0.122
 
 NemoClaw v0.0.122 improves host detection and local inference selection for Docker, DGX Station, and N1x WSL.

@@ -112,6 +112,9 @@ function artifactLifecycle(stop = async (): Promise<void> => undefined): LocalRe
       fs.mkdirSync(output, { recursive: true });
       fs.writeFileSync(path.join(output, "pr-review-" + interest + "-summary.md"), "review\n");
       fs.writeFileSync(path.join(output, "pr-review-" + interest + "-session.jsonl"), "{}\n");
+      fs.writeFileSync(path.join(output, "pr-review-" + interest + "-e2e.json"), "{}\n");
+      fs.writeFileSync(path.join(output, "pr-review-" + interest + "-findings.json"), "{}\n");
+      fs.writeFileSync(path.join(output, "review-queue-context.json"), "{}\n");
     },
     remove: () => undefined,
   };
@@ -174,7 +177,7 @@ describe("local PR review advisor", () => {
     expect(ADVISOR_PI_IMAGE).toMatch(/@sha256:[0-9a-f]{64}$/u);
   });
 
-  it("installs origin/main dependencies without executing contributor node_modules (#10611)", () => {
+  it("installs trusted dependencies and runs the canonical entrypoint through a temporary symlink (#10611)", () => {
     const source = temporaryDirectory();
     git(source, ["init", "--initial-branch=main"]);
     git(source, ["config", "user.name", "Test"]);
@@ -198,13 +201,16 @@ describe("local PR review advisor", () => {
         'import fs from "node:fs";',
         'import path from "node:path";',
         'import { execFileSync } from "node:child_process";',
+        'import { pathToFileURL } from "node:url";',
         'import { hostValue } from "./trusted-host.mts";',
+        "if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {",
         "const source = process.argv[2];",
         'const gitHead = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();',
         'let detached = false; try { execFileSync("git", ["symbolic-ref", "-q", "HEAD"], { stdio: "ignore" }); } catch { detached = true; }',
         'const policy = fs.readFileSync(path.join(source, "tools/pr-review-advisor/policy.txt"), "utf8").trim();',
         'fs.writeFileSync(path.join(source, "bootstrap-result.txt"), [hostValue, policy].join("|") + "\\n");',
         'fs.writeFileSync(path.join(source, "trusted-child.json"), JSON.stringify({ pid: process.pid, nodeOptions: process.env.NODE_OPTIONS, nodePath: process.env.NODE_PATH, git: fs.existsSync(".git"), gitHead, detached }));',
+        "}",
       ].join("\n"),
     );
     const npmBin = installFakeNpm(source);
@@ -265,6 +271,9 @@ describe("local PR review advisor", () => {
       path.join(source, "node_modules", "malicious", "index.js"),
       'require("node:fs").writeFileSync("contributor-module-executed", "yes")\n',
     );
+    const trustedTemporaryDirectory = temporaryDirectory();
+    const temporaryAlias = path.join(temporaryDirectory(), "temporary-alias");
+    fs.symlinkSync(trustedTemporaryDirectory, temporaryAlias, "dir");
 
     const result = spawnSync(
       process.execPath,
@@ -280,6 +289,7 @@ describe("local PR review advisor", () => {
           NODE_OPTIONS: "--require=" + preload,
           NODE_PATH: maliciousBin,
           SECRET_TOKEN: "must-not-reach-npm",
+          TMPDIR: temporaryAlias,
           npm_config_cache: path.join(source, "npm-cache"),
         },
       },
@@ -495,6 +505,9 @@ describe("local PR review advisor", () => {
         fs.mkdirSync(out, { recursive: true });
         fs.writeFileSync(path.join(out, "pr-review-" + interest + "-summary.md"), "review\n");
         fs.writeFileSync(path.join(out, "pr-review-" + interest + "-session.jsonl"), "{}\n");
+        fs.writeFileSync(path.join(out, "pr-review-" + interest + "-e2e.json"), "{}\n");
+        fs.writeFileSync(path.join(out, "pr-review-" + interest + "-findings.json"), "{}\n");
+        fs.writeFileSync(path.join(out, "review-queue-context.json"), "{}\n");
       },
       remove: (env) => {
         calls.push("remove:" + env.PR_REVIEW_ADVISOR_INTEREST);
@@ -546,6 +559,17 @@ describe("local PR review advisor", () => {
     ],
   ])("removes its temporary root after %s (#10611)", async (_case, lifecycle, expected) => {
     const source = repository();
+    const external = temporaryDirectory();
+    const externalMode = fs.statSync(external).mode & 0o777;
+    const originalPrepare = lifecycle.prepare;
+    lifecycle.prepare = async (env) => {
+      await originalPrepare(env);
+      const readOnly = path.join(env.RUNNER_TEMP as string, "read-only");
+      fs.mkdirSync(readOnly);
+      fs.writeFileSync(path.join(readOnly, "artifact"), "review\n");
+      fs.symlinkSync(external, path.join(readOnly, "external"), "dir");
+      fs.chmodSync(readOnly, 0o500);
+    };
     let removedRoot = "";
     const [result] = await Promise.allSettled([
       runLocalReview({
@@ -562,6 +586,7 @@ describe("local PR review advisor", () => {
     expect(result).toMatchObject(expected);
     expect(path.basename(removedRoot)).toMatch(/^nemoclaw-local-review-/u);
     expect(fs.existsSync(removedRoot)).toBe(false);
+    expect(fs.statSync(external).mode & 0o777).toBe(externalMode);
   });
 
   it("stops between specialists and restores a received signal after cleanup (#10611)", async () => {
@@ -786,9 +811,13 @@ describe("local PR review advisor", () => {
   const interest = ADVISOR_SPECIALISTS[0]!.interest;
   const summary = `pr-review-${interest}-summary.md`;
   const session = `pr-review-${interest}-session.jsonl`;
+  const e2e = `pr-review-${interest}-e2e.json`;
+  const findings = `pr-review-${interest}-findings.json`;
   it.each([
     ["missing", [summary]],
-    ["extra", [summary, session, "extra.txt"]],
+    ["missing context", [summary, session, e2e, findings]],
+    ["missing findings", [summary, session, e2e, "review-queue-context.json"]],
+    ["extra", [summary, session, e2e, findings, "review-queue-context.json", "extra.txt"]],
   ])("rejects %s specialist artifact sets (#10611)", async (_case, files) => {
     const source = repository();
     const lifecycle: LocalReviewLifecycle = {
@@ -814,7 +843,8 @@ describe("local PR review advisor", () => {
     ).rejects.toMatchObject({
       message: expect.stringContaining("failed during validate"),
       cause: expect.objectContaining({
-        message: "Specialist artifacts do not match the existing Markdown and JSONL contract",
+        message:
+          "Specialist artifacts do not match the context, E2E, findings, Markdown, and JSONL contract",
       }),
     });
   });

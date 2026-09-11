@@ -1,18 +1,17 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { OpenShellSandboxPolicyReader } from "../../adapters/openshell/sandbox-policy";
+
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
 
 import { captureOpenshellCommand } from "../../adapters/openshell/client";
-import {
-  createCliOpenShellSandboxPolicyRead,
-  type CliOpenShellSandboxPolicyRead,
-} from "../../adapters/openshell/sandbox-policy-cli";
+import { createCliOpenShellSandboxPolicyReader } from "../../adapters/openshell/sandbox-policy-cli";
 import type { OpenShellSandboxError } from "../../adapters/openshell/sandbox-observer";
 import { PolicyObservationError } from "../../adapters/openshell/policy-state";
 import * as gatewayTarget from "./gateway-target";
@@ -21,7 +20,7 @@ import { getSandboxPolicy } from "./policy-get";
 type FakeOpenShell = {
   argsPath: string;
   output: string;
-  readPolicy: CliOpenShellSandboxPolicyRead;
+  readPolicy: OpenShellSandboxPolicyReader["readSandboxPolicy"];
 };
 
 const tempDirs: string[] = [];
@@ -43,21 +42,26 @@ function createFakeOpenShell(output: string, exitCode = 0): FakeOpenShell {
     ].join("\n"),
     { mode: 0o755 },
   );
-  const readPolicy = createCliOpenShellSandboxPolicyRead({
+  const readPolicy = createCliOpenShellSandboxPolicyReader({
     capture: (args, options) =>
       captureOpenshellCommand(executablePath, args, {
         ...options,
         cwd: tempDir,
       }),
   });
-  return { argsPath, output, readPolicy };
+  return { argsPath, output, readPolicy: readPolicy.readSandboxPolicy };
 }
 
-function failedPolicyRead(error: OpenShellSandboxError): CliOpenShellSandboxPolicyRead {
-  return vi.fn(async () => ({ result: { ok: false as const, error }, displayOutput: "" }));
+function failedPolicyRead(
+  error: OpenShellSandboxError,
+): OpenShellSandboxPolicyReader["readSandboxPolicy"] {
+  return vi.fn(async () => ({ ok: false as const, error }));
 }
 
 describe("getSandboxPolicy", () => {
+  beforeEach(() => {
+    vi.spyOn(gatewayTarget, "getKnownSandboxTargetGatewayName").mockReturnValue(null);
+  });
   afterEach(() => {
     vi.restoreAllMocks();
     vi.unstubAllEnvs();
