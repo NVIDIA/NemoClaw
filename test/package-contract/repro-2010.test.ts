@@ -21,6 +21,7 @@ const POLICIES_PATH = path.join(REPO_ROOT, "dist", "lib", "policy", "index.js");
 const RUNNER_PATH = path.join(REPO_ROOT, "dist", "lib", "runner.js");
 const CLI_PATH = path.join(REPO_ROOT, "bin", "nemoclaw.js");
 const REGISTRY_PATH = path.join(REPO_ROOT, "dist", "lib", "state", "registry.js");
+const CROSS_PORT_PATH = path.join(REPO_ROOT, "dist", "lib", "state", "registry", "cross-port.js");
 
 /**
  * Run a CJS script in a subprocess and return stdout.
@@ -221,11 +222,16 @@ network_policies:
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-repro-2010-"));
       const script = `
 const registry = require(${JSON.stringify(REGISTRY_PATH)});
+const crossPort = require(${JSON.stringify(CROSS_PORT_PATH)});
 const policies = require(${JSON.stringify(POLICIES_PATH)});
 const registryPresets = JSON.parse(process.env.TEST_REGISTRY_PRESETS || "[]");
 const gatewayPresets = process.env.TEST_GATEWAY_PRESETS ? JSON.parse(process.env.TEST_GATEWAY_PRESETS) : null;
 registry.getSandbox = (name) => (name === "test-sandbox" ? { name, policies: registryPresets } : null);
 registry.listSandboxes = () => ({ sandboxes: [{ name: "test-sandbox" }] });
+crossPort.findSandboxAcrossGatewayRoots = (name) =>
+  name === "test-sandbox"
+    ? { entry: { name, policies: registryPresets }, gatewayPort: null, registryFile: "test-registry" }
+    : null;
 policies.getAppliedPresets = () => registryPresets;
 policies.getGatewayPresets = () => gatewayPresets;
 process.argv = ["node", "nemoclaw.js", "test-sandbox", "policy-list"];
