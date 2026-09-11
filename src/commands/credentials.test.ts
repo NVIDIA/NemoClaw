@@ -1,7 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { parse as parseYaml } from "yaml";
 
 const mocks = vi.hoisted(() => ({
   prompt: vi.fn().mockResolvedValue("yes"),
@@ -44,6 +47,7 @@ import { runCredentialsAddAction } from "../lib/actions/credentials-add";
 import { runCredentialsListAction } from "../lib/actions/credentials/list";
 import { runCredentialsResetAction } from "../lib/actions/credentials/reset";
 import CredentialsCommand from "./credentials";
+import CredentialsAddCommand from "./credentials/add";
 import CredentialsListCommand from "./credentials/list";
 import CredentialsResetCommand from "./credentials/reset";
 
@@ -68,6 +72,7 @@ describe("credentials oclif adapter source coverage", () => {
 
   afterEach(() => {
     vi.unstubAllEnvs();
+    process.exitCode = undefined;
   });
 
   it("prints top-level credentials usage", async () => {
@@ -79,6 +84,237 @@ describe("credentials oclif adapter source coverage", () => {
     log.mockRestore();
     expect(output).toContain("Usage: nemoclaw credentials <subcommand>");
     expect(output).toContain("reset <PROVIDER> [--yes]");
+  });
+
+  it.each([
+    ["tavily", "hermes", "tavily-hermes-v1"],
+    ["TaViLy", "nemohermes", "tavily-hermes-v1"],
+    ["tavily-hermes-v1", "hermes", "tavily-hermes-v1"],
+    ["tavily-hermes-v1", undefined, "tavily-hermes-v1"],
+    ["tavily", "dcode", "tavily"],
+    ["tavily", "openclaw", "tavily"],
+  ] as const)(
+    "registers %s for %s using the intended runtime profile",
+    async (type, agent, profile) => {
+      vi.stubEnv("TAVILY_API_KEY", "host-only-tavily");
+      const exportedProfile = JSON.stringify(
+        parseYaml(
+          fs.readFileSync(
+            path.join(rootDir, "nemoclaw-blueprint/provider-profiles", `${profile}.yaml`),
+            "utf8",
+          ),
+        ),
+      );
+      mocks.runOpenshellProviderCommand.mockImplementation((args: string[]) => ({
+        status: 0,
+        stdout: args.includes("profile") ? exportedProfile : "",
+        stderr: "",
+      }));
+      const log = vi.spyOn(console, "log").mockImplementation(() => {});
+      try {
+        await CredentialsAddCommand.run(
+          [
+            "shared-search",
+            "--type",
+            type,
+            "--credential",
+            "TAVILY_API_KEY",
+            ...(agent ? ["--agent", agent] : []),
+          ],
+          rootDir,
+        );
+        expect(process.exitCode).not.toBe(1);
+        expect(mocks.runOpenshellProviderCommand).toHaveBeenCalledWith(
+          ["provider", "profile", "-g", "nemoclaw", "export", profile, "--output", "json"],
+          expect.any(Object),
+        );
+        expect(mocks.runOpenshellProviderCommand).toHaveBeenCalledWith(
+          [
+            "provider",
+            "create",
+            "-g",
+            "nemoclaw",
+            "--name",
+            "shared-search",
+            "--type",
+            profile,
+            "--credential",
+            "TAVILY_API_KEY",
+          ],
+          expect.objectContaining({
+            env: expect.objectContaining({ TAVILY_API_KEY: "host-only-tavily" }),
+          }),
+        );
+        expect(
+          JSON.stringify(mocks.runOpenshellProviderCommand.mock.calls.map(([args]) => args)),
+        ).not.toContain("host-only-tavily");
+        const output = log.mock.calls.flat().join("\n");
+        expect(output).not.toContain("host-only-tavily");
+        expect(output).not.toContain("Warning:");
+      } finally {
+        log.mockRestore();
+      }
+    },
+  );
+
+  it("warns about Hermes incompatibility while preserving legacy Tavily registration", async () => {
+    vi.stubEnv("TAVILY_API_KEY", "host-only-tavily");
+    const exportedProfile = JSON.stringify(
+      parseYaml(
+        fs.readFileSync(
+          path.join(rootDir, "nemoclaw-blueprint/provider-profiles/tavily.yaml"),
+          "utf8",
+        ),
+      ),
+    );
+    mocks.runOpenshellProviderCommand.mockImplementation((args: string[]) => ({
+      status: 0,
+      stdout: args.includes("profile") ? exportedProfile : "",
+      stderr: "",
+    }));
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      await CredentialsAddCommand.run(
+        ["shared-search", "--type", "tavily", "--credential", "TAVILY_API_KEY"],
+        rootDir,
+      );
+      expect(process.exitCode).not.toBe(1);
+      expect(mocks.runOpenshellProviderCommand).toHaveBeenCalledWith(
+        [
+          "provider",
+          "create",
+          "-g",
+          "nemoclaw",
+          "--name",
+          "shared-search",
+          "--type",
+          "tavily",
+          "--credential",
+          "TAVILY_API_KEY",
+        ],
+        expect.objectContaining({
+          env: expect.objectContaining({ TAVILY_API_KEY: "host-only-tavily" }),
+        }),
+      );
+      const output = log.mock.calls.flat().join("\n");
+      expect(output).toContain("Warning:");
+      expect(output).toContain("--agent hermes");
+      expect(output).toContain("tavily-hermes-v1");
+      expect(output).not.toContain("host-only-tavily");
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it.each([
+    ["tavily", "unknown-agent", "Unsupported Tavily agent"],
+    ["tavily", "../hermes", "Unsupported Tavily agent"],
+    ["tavily", "pi", "Unsupported Tavily agent"],
+    ["tavily-hermes-v1", "openclaw", "only compatible with Hermes"],
+    ["tavily-hermes-v1", "dcode", "only compatible with Hermes"],
+    ["openai", "hermes", "only with Tavily provider profiles"],
+  ])(
+    "rejects incompatible profile %s and agent %s before gateway effects",
+    async (type, agent, diagnostic) => {
+      vi.stubEnv("TAVILY_API_KEY", "host-only-tavily");
+      const error = vi.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        await CredentialsAddCommand.run(
+          ["shared-search", "--type", type, "--agent", agent, "--credential", "TAVILY_API_KEY"],
+          rootDir,
+        );
+        expect(process.exitCode).toBe(1);
+        expect(error.mock.calls.flat().join("\n")).toContain(diagnostic);
+        expect(error.mock.calls.flat().join("\n")).not.toContain("host-only-tavily");
+        expect(mocks.recoverNamedGatewayRuntime).not.toHaveBeenCalled();
+        expect(mocks.runOpenshellProviderCommand).not.toHaveBeenCalled();
+        expect(mocks.recordExtraProvider).not.toHaveBeenCalled();
+      } finally {
+        error.mockRestore();
+      }
+    },
+  );
+
+  it("checks the selected Hermes profile before importing existing credentials", async () => {
+    const exportedProfile = JSON.stringify(
+      parseYaml(
+        fs.readFileSync(
+          path.join(rootDir, "nemoclaw-blueprint/provider-profiles/tavily-hermes-v1.yaml"),
+          "utf8",
+        ),
+      ),
+    );
+    mocks.runOpenshellProviderCommand.mockImplementation((args: string[]) => ({
+      status: 0,
+      stdout: args.includes("profile") ? exportedProfile : "",
+      stderr: "",
+    }));
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      await CredentialsAddCommand.run(
+        ["shared-search", "--type", "tavily", "--agent", "hermes", "--from-existing"],
+        rootDir,
+      );
+      expect(process.exitCode).not.toBe(1);
+      const calls = mocks.runOpenshellProviderCommand.mock.calls.map(([args]) => args);
+      expect(calls).toEqual([
+        ["provider", "profile", "-g", "nemoclaw", "export", "tavily-hermes-v1", "--output", "json"],
+        ["provider", "profile", "-g", "nemoclaw", "export", "tavily-hermes-v1", "--output", "json"],
+        [
+          "provider",
+          "create",
+          "-g",
+          "nemoclaw",
+          "--name",
+          "shared-search",
+          "--type",
+          "tavily-hermes-v1",
+          "--from-existing",
+        ],
+      ]);
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it("refuses incompatible exported Hermes policy without falling back to the generic profile", async () => {
+    vi.stubEnv("TAVILY_API_KEY", "host-only-tavily");
+    mocks.runOpenshellProviderCommand.mockReturnValue({
+      status: 0,
+      stdout: JSON.stringify(
+        parseYaml(
+          fs.readFileSync(
+            path.join(rootDir, "nemoclaw-blueprint/provider-profiles/tavily.yaml"),
+            "utf8",
+          ),
+        ),
+      ),
+      stderr: "",
+    });
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      await CredentialsAddCommand.run(
+        [
+          "shared-search",
+          "--type",
+          "tavily",
+          "--agent",
+          "hermes",
+          "--credential",
+          "TAVILY_API_KEY",
+        ],
+        rootDir,
+      );
+      expect(process.exitCode).toBe(1);
+      expect(mocks.runOpenshellProviderCommand.mock.calls.map(([args]) => args)).toEqual([
+        ["provider", "profile", "-g", "nemoclaw", "export", "tavily-hermes-v1", "--output", "json"],
+      ]);
+      expect(error.mock.calls.flat().join("\n")).toContain("checked-in credential boundary");
+      expect(error.mock.calls.flat().join("\n")).not.toContain("host-only-tavily");
+      expect(mocks.recordExtraProvider).not.toHaveBeenCalled();
+    } finally {
+      error.mockRestore();
+    }
   });
 
   it("lists credential providers while hiding messaging bridge providers", async () => {
