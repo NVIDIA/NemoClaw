@@ -434,7 +434,6 @@ function openShellSandboxExecArguments(input: ExecOpenShellSandboxOptions): stri
     "exec",
     "--name",
     input.name,
-    "--no-login-shell",
     ...timeoutArgs,
     ...workdirArgs,
     ...environmentArgs,
