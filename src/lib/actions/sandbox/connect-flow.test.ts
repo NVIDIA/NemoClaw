@@ -1107,6 +1107,11 @@ describe("connectSandbox flow", () => {
     expect(harness.readSandboxConfigSpy).not.toHaveBeenCalled();
     expect(harness.writeSandboxConfigSpy).not.toHaveBeenCalled();
     expect(harness.recoverHermesPortableOllamaInferenceSpy).not.toHaveBeenCalled();
+    expect(
+      harness.captureResolvedOpenshellSpy.mock.calls.some(([args]) =>
+        Array.isArray(args) ? args[0] === "forward" && args[1] === "list" : false,
+      ),
+    ).toBe(true);
     expect(sandboxVersion.checkAgentVersion).not.toHaveBeenCalled();
     expect(brokerSpy).not.toHaveBeenCalled();
     expect(harness.startSandboxSessionSpy).toHaveBeenCalledWith({
