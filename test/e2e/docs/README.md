@@ -411,11 +411,10 @@ test/e2e/
   to upload its evidence artifact.
 - `.github/workflows/platform-vitest-main.yaml` publishes `CI / Platform Compatibility`.
   It runs the Ubuntu 26.04 compatibility contracts and four full-suite Vitest shards on each of macOS and WSL.
-  Each macOS shard installs the pinned OpenShell formula.
-  Shard 1 has a 150-minute job timeout. Its live E2E has a 70-minute timeout, and every other step shares the remaining job time.
-  The other shards have 30 minutes.
+  Each macOS Vitest shard has a 30-minute budget.
+  The independent `macos-live-e2e` job installs pinned OpenShell and has a 150-minute budget, including its 70-minute live test and cleanup.
   WSL shard 1 has a 180-minute budget for root-required contracts and live E2E; the other shards have 90 minutes.
-  On shard 1, the workflow runs focused macOS and WSL live E2E only when the run tests `main` and Docker is available.
+  The independent macOS job and WSL shard 1 run focused live E2E only when the run tests `main` and Docker is available.
   Otherwise, those live tests skip and the platform contracts remain as evidence.
   This conditional result is platform evidence, not `Release qualification`.
   The live steps give candidate test code the job-scoped `GITHUB_TOKEN` and repository `NVIDIA_INFERENCE_API_KEY`.

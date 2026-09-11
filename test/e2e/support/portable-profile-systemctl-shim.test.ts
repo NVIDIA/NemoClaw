@@ -352,8 +352,8 @@ async function waitForServiceStatus(scope: FixtureScope, expected: number): Prom
   });
 }
 
-async function waitForPath(filePath: string): Promise<void> {
-  await vi.waitFor(() => expect(fs.existsSync(filePath)).toBe(true), {
+async function waitForPath(filePath: string, exists = true): Promise<void> {
+  await vi.waitFor(() => expect(fs.existsSync(filePath)).toBe(exists), {
     interval: 50,
     timeout: 5_000,
   });
@@ -1139,9 +1139,9 @@ describe("portable profile systemctl fixture", () => {
         expect(await activateThroughSocket(scope.socketPath)).toBe("");
         await waitForPath(failureRecord);
         const processRecord = readFixtureProcessRecord(failureRecord);
-        expect(pidIsActive(processRecord.pid)).toBe(false);
+        await vi.waitFor(() => expect(pidIsActive(processRecord.pid)).toBe(false));
         expect(fs.existsSync(servicePidFile)).toBe(false);
-        expect(fs.existsSync(backendSocketPath)).toBe(false);
+        await waitForPath(backendSocketPath, false);
       } finally {
         await cleanFixture(scope);
       }

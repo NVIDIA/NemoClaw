@@ -196,7 +196,7 @@ function writeTraversalArchive(context: ArchiveFixtureContext): void {
     process.platform === "darwin"
       ? ["-s", "|^outside.txt$|dist/../outside.txt|"]
       : ["--transform=s|^outside.txt$|dist/../outside.txt|"];
-  execFileSync("tar", [
+  execFileSync(process.platform === "darwin" ? "/usr/bin/tar" : "tar", [
     "-cf",
     context.payload,
     ...transform,

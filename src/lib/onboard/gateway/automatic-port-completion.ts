@@ -42,7 +42,7 @@ export function completeAutomaticGatewayPortAfterOnboard(
       ...configuredPorts,
     },
     maxBuffer: 64 * 1024,
-    timeout: 5_000,
+    timeout: 15_000,
   });
   if (result.error || result.status !== 0 || result.signal) throw new Error(COMPLETION_ERROR);
   return true;

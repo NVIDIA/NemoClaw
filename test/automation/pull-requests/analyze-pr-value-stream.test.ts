@@ -106,7 +106,7 @@ else if (args.includes("/actions/runs/12/jobs")) value = {total_count:0,jobs:[]}
 else if (args.includes("/actions/runs/") && !args.includes("/jobs") && !args.includes("/artifacts")) { const id = Number(args.split("/actions/runs/")[1].split(" ")[0]); value={...run(id),run_attempt:1,html_url:""}; }
 else if (args.includes("/artifacts?") && scenario === "artifact-failure") { console.error("Authorization: secret-token"); process.exit(1); }
 else if (args.includes("/artifacts?")) value = {total_count:1,artifacts:[{id:31,name:"cli-blob-report-1",size_in_bytes:Number(process.env.VALUE_STREAM_ARTIFACT_SIZE),expired:false,workflow_run:{id:11,head_sha:sha},workflow_run_id:11,workflow_run_head_sha:sha}]};
-else if (args.includes("/actions/artifacts/31/zip")) { if (scenario === "artifact-cancel") setInterval(() => {}, 1000); else { process.stdout.write(fs.readFileSync(process.env.VALUE_STREAM_ARTIFACT)); process.exit(0); } }
+else if (args.includes("/actions/artifacts/31/zip")) { if (scenario === "artifact-cancel") { setInterval(() => {}, 1000); return; } else { process.stdout.write(fs.readFileSync(process.env.VALUE_STREAM_ARTIFACT)); process.exit(0); } }
 else if (args.includes("/check-runs?")) { const checks=scenario.startsWith("legacy-") ? [] : [{id:1,name:"required-a",status:"completed",conclusion:"success",created_at:"2026-01-01T00:00:35Z",started_at:"2026-01-01T00:00:45Z",completed_at:scenario === "early-check" ? "2026-01-01T00:00:20Z" : "2026-01-01T00:02:30Z",html_url:"",app:{id:scenario === "wrong-app" ? 8 : 7,slug:"actions"}}]; if (scenario === "duplicate-checks" && args.includes("filter=all")) checks.push({...checks[0],id:3,created_at:"2026-01-01T00:00:30Z"}); if (scenario !== "incomplete" && scenario !== "wrong-app" && scenario !== "any-app" && scenario !== "app-status-denied" && scenario !== "early-check" && !scenario.startsWith("legacy-")) checks.push({...checks[0],id:2,name:"required-b",created_at:"2026-01-01T00:00:40Z",completed_at:"2026-01-01T00:02:40Z"}); value=checks; }
 else if (args.includes("/status?")) {
   if (scenario === "app-status-denied") { console.error("Commit statuses forbidden"); process.exit(1); }
@@ -639,32 +639,51 @@ describe("pull request value-stream analysis", () => {
     await expect(stat(candidate)).rejects.toThrow();
   });
 
-  test("reclaims stale publication locks but preserves active locks (#10542)", async () => {
-    const publicationRoot = await mkdtemp(path.join(tmpdir(), "value-stream-lock-"));
+  test.runIf(process.platform === "linux")(
+    "reclaims stale publication locks but preserves active locks (#10542)",
+    async () => {
+      const publicationRoot = await mkdtemp(path.join(tmpdir(), "value-stream-lock-"));
+      temporaryDirectories.push(publicationRoot);
+      const lock = path.join(publicationRoot, "pr-42.lock");
+      await mkdir(lock);
+      const liveStart = await readFile("/proc/" + process.pid + "/stat", "utf8");
+      const liveIdentity =
+        liveStart
+          .slice(liveStart.lastIndexOf(")") + 2)
+          .trim()
+          .split(/\s+/u)[19] ?? null;
+      await writeFile(
+        path.join(lock, "owner.json"),
+        JSON.stringify({ pid: process.pid, startIdentity: liveIdentity }),
+      );
+      expect(await reclaimStalePublicationLock(lock)).toBe(false);
+      const stale = new Date(Date.now() - 6 * 60 * 1_000);
+      await utimes(lock, stale, stale);
+      expect(await reclaimStalePublicationLock(lock)).toBe(false);
+      await writeFile(path.join(lock, "owner.json"), JSON.stringify({ pid: process.pid }));
+      expect(await reclaimStalePublicationLock(lock)).toBe(false);
+      await writeFile(
+        path.join(lock, "owner.json"),
+        JSON.stringify({ pid: process.pid, startIdentity: "reused-owner" }),
+      );
+      expect(await reclaimStalePublicationLock(lock)).toBe(true);
+      await mkdir(lock);
+      await utimes(lock, stale, stale);
+      expect(await reclaimStalePublicationLock(lock)).toBe(true);
+      await expect(stat(lock)).rejects.toThrow();
+    },
+  );
+
+  test("preserves active locks without a Linux start identity", async () => {
+    const publicationRoot = await mkdtemp(path.join(tmpdir(), "value-stream-portable-lock-"));
     temporaryDirectories.push(publicationRoot);
     const lock = path.join(publicationRoot, "pr-42.lock");
     await mkdir(lock);
-    const liveStart = await readFile("/proc/" + process.pid + "/stat", "utf8");
-    const liveIdentity = liveStart
-      .slice(liveStart.lastIndexOf(")") + 2)
-      .trim()
-      .split(/\s+/u)[19];
-    await writeFile(
-      path.join(lock, "owner.json"),
-      JSON.stringify({ pid: process.pid, startIdentity: liveIdentity }),
-    );
-    expect(await reclaimStalePublicationLock(lock)).toBe(false);
     const stale = new Date(Date.now() - 6 * 60 * 1_000);
+    await writeFile(path.join(lock, "owner.json"), JSON.stringify({ pid: process.pid }));
     await utimes(lock, stale, stale);
     expect(await reclaimStalePublicationLock(lock)).toBe(false);
-    await writeFile(path.join(lock, "owner.json"), JSON.stringify({ pid: process.pid }));
-    expect(await reclaimStalePublicationLock(lock)).toBe(false);
-    await writeFile(
-      path.join(lock, "owner.json"),
-      JSON.stringify({ pid: process.pid, startIdentity: "reused-owner" }),
-    );
-    expect(await reclaimStalePublicationLock(lock)).toBe(true);
-    await mkdir(lock);
+    await writeFile(path.join(lock, "owner.json"), "{}\n");
     await utimes(lock, stale, stale);
     expect(await reclaimStalePublicationLock(lock)).toBe(true);
     await expect(stat(lock)).rejects.toThrow();

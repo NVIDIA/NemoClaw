@@ -565,7 +565,6 @@ import type { Session, SessionUpdates } from "./state/onboard-session";
 import type { SandboxEntry } from "./state/registry";
 import type { BackupResult } from "./state/sandbox";
 import type { ProbeRecovery } from "./validation-recovery";
-
 const EXPERIMENTAL = process.env.NEMOCLAW_EXPERIMENTAL === "1";
 const USE_COLOR = !process.env.NO_COLOR && !!process.stdout.isTTY;
 const DIM = USE_COLOR ? "\x1b[2m" : "";
@@ -577,6 +576,7 @@ const {
   clearDockerDriverGatewayRuntimeFiles,
   createGatewayServicePortOwnership,
   getDockerDriverGatewayEnv,
+  getDockerDriverGatewayPreparation,
   getDockerDriverGatewayPid,
   getDockerDriverGatewayPortListenerPid,
   getDockerDriverGatewayPortListenerScan,
@@ -1385,7 +1385,6 @@ const gatewayRegistration = createGatewayRegistration({
   runOpenshell,
   runQuietOpenshell,
 });
-
 const dockerDriverGatewayStart = createDockerDriverGatewayStart({
   SUPPORTED_OPENSHELL_FALLBACK_VERSION,
   checkGatewayPortAvailable,
@@ -1397,7 +1396,7 @@ const dockerDriverGatewayStart = createDockerDriverGatewayStart({
   gatewayName: () => GATEWAY_NAME,
   gatewayPort: () => GATEWAY_PORT,
   getDockerDriverGatewayEndpoint,
-  getDockerDriverGatewayEnv,
+  getDockerDriverGatewayPreparation,
   getDockerDriverGatewayPid,
   getDockerDriverGatewayPortListenerScan,
   getDockerDriverGatewayRuntimeDrift,

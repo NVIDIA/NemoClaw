@@ -96,6 +96,11 @@ export interface BuildDockerDriverGatewayEnvOptions {
   enableBindMounts?: boolean;
 }
 
+export interface DockerDriverGatewayPreparation {
+  gatewayEnv: Record<string, string>;
+  gatewayHostRuntime: RuntimeProviderGatewayHostRuntime;
+}
+
 export function configureDockerDriverGatewayExternalComponent(
   gatewayEnv: Record<string, string>,
   externalComponent: ExternalComponentGatewayConfiguration | null,
@@ -444,7 +449,7 @@ export function warnIfGatewayWildcardBindAddress(): void {
   );
 }
 
-export function buildDockerDriverGatewayEnv({
+export function prepareDockerDriverGatewayEnv({
   platform = process.platform,
   architecture = process.arch,
   gatewayPort = GATEWAY_PORT,
@@ -455,7 +460,7 @@ export function buildDockerDriverGatewayEnv({
   getDockerSupervisorImage,
   resolveSandboxBin,
   enableBindMounts = false,
-}: BuildDockerDriverGatewayEnvOptions): Record<string, string> {
+}: BuildDockerDriverGatewayEnvOptions): DockerDriverGatewayPreparation {
   const portable = isPortableExperimentalProfile();
   const runtime =
     gatewayHostRuntime ??
@@ -512,7 +517,13 @@ export function buildDockerDriverGatewayEnv({
       process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE === "1",
     gatewayRuntime: runtime,
   });
-  return env;
+  return { gatewayEnv: env, gatewayHostRuntime: runtime };
+}
+
+export function buildDockerDriverGatewayEnv(
+  options: BuildDockerDriverGatewayEnvOptions,
+): Record<string, string> {
+  return prepareDockerDriverGatewayEnv(options).gatewayEnv;
 }
 
 export function buildDockerGatewayDebEnvFile(

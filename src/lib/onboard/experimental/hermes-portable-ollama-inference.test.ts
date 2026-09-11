@@ -87,7 +87,9 @@ function snapshotExactTestFile(filePath: string) {
     const named = fs.lstatSync(filePath, { bigint: true });
     expect(exactTestFileIdentity(after)).toBe(exactTestFileIdentity(before));
     expect(exactTestFileIdentity(named)).toBe(exactTestFileIdentity(after));
-    return { contents, metadata: after };
+    // Reading may update access time on relatime filesystems without changing the file.
+    const { atimeNs: _atimeNs, atimeMs: _atimeMs, ...metadata } = after;
+    return { contents, metadata };
   } finally {
     fs.closeSync(descriptor);
   }

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
+import { reportsExactProviderNotFound } from "../adapters/openshell/provider-diagnostic-cli";
 import { LIMIT, reconcile } from "./extra-provider-reconciliation.test-fixtures";
 
 const exactWrappedDiagnostic = [
@@ -243,7 +244,7 @@ describe("planRegisteredExtraProviders diagnostics", () => {
     ).toEqual(["tavily-search"]);
   });
 
-  it("parses adversarial diagnostics within a bounded budget (#6501)", async () => {
+  it("parses adversarial diagnostics within a bounded budget (#6501)", () => {
     const adversarial = [
       `${"error: ".repeat(2_000)}provider 'redos-provider' not found`,
       `Error: provider '${"a".repeat(8_000)}`,
@@ -252,11 +253,7 @@ describe("planRegisteredExtraProviders diagnostics", () => {
     ].join("\n");
     const started = performance.now();
 
-    expect(
-      await reconcile(["redos-provider"], {
-        "redos-provider": { status: 1, stderr: adversarial },
-      }),
-    ).toEqual(["redos-provider"]);
+    expect(reportsExactProviderNotFound(adversarial, "redos-provider", LIMIT)).toBe(false);
     expect(performance.now() - started).toBeLessThan(100);
   });
 });

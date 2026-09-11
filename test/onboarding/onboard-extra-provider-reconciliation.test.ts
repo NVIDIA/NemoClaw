@@ -48,6 +48,8 @@ describe("onboard extra-provider reconciliation", () => {
         const script = String.raw`
 const registry = require(${registryPath});
 const fixtureMocks = require(${onboardScriptMocksPath});
+fixtureMocks.mockStandaloneGatewayTeardownAuthority();
+fixtureMocks.mockManagedStateVolumeOnboardLifecycle();
 const forwardService = fixtureMocks.installForwardServiceReachabilityFixture();
 registry.addExtraProvider("tavily-search");
 registry.addExtraProvider("brave-search");

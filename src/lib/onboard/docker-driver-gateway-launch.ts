@@ -145,6 +145,7 @@ export function buildDockerDriverGatewayLaunch(
     ensureDockerDriverGatewayLocalTlsBundle({
       env: baseEnv,
       gatewayBin: options.gatewayBin,
+      gatewayHostRuntime: options.gatewayHostRuntime,
       stateDir: options.stateDir,
     });
   }

@@ -62,14 +62,12 @@ describe("PR review advisor specialist prompts", () => {
   it("writes readable diff evidence in the prepared advisor context", async () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "specialist-context-"));
     onTestFinished(() => fs.rmSync(directory, { recursive: true, force: true }));
-    const expected = path.join(directory, "diff.patch");
+    const expected = path.join(fs.realpathSync(directory), "diff.patch");
 
     const file = writeSpecialistDiff(directory, "diff evidence");
 
-    expect(file).toBe(expected);
-    await expect(canonicalRepoReadPath(directory, "diff.patch")).resolves.toBe(
-      fs.realpathSync(expected),
-    );
+    expect(fs.realpathSync(file)).toBe(expected);
+    await expect(canonicalRepoReadPath(directory, "diff.patch")).resolves.toBe(expected);
     expect(fs.readFileSync(file, "utf8")).toBe("diff evidence");
     expect(fs.statSync(directory).mode & 0o777).toBe(0o700);
     expect(fs.statSync(file).mode & 0o777).toBe(0o600);

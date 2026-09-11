@@ -87,6 +87,13 @@ in a final suffix such as `(#1234)`.
 
 Some tests require GNU command-line tools that macOS does not provide. The `macos-vitest` job in
 [`.github/workflows/platform-vitest-main.yaml`](../.github/workflows/platform-vitest-main.yaml) owns
-the authoritative package list. Install those tools and put their GNU binaries first on `PATH`
-before running the suite on macOS. This job runs on pushes to `main` and manual dispatches, not on
-pull requests.
+the authoritative package list. The hosted runner must already provide `gtar`; the workflow verifies
+that prerequisite before Homebrew installs the other tools. It then puts the installed GNU binaries
+first on `PATH` and exposes `gtar` as `tar` only to the Vitest process through a private shim directory.
+This job runs on pushes to `main` and manual dispatches, not on pull requests.
+
+For manual platform validation off `main`, provide `sdk-artifact-run-id` from a completed
+PR CI run for the candidate commit. The workflow downloads its `openshell-sdk-package`
+artifact and verifies the reviewed archive before staging it in npm's cache. Branch
+validation does not receive the package credential. WSL installs `gnu-coreutils` for
+fixtures that require GNU utility behavior; it keeps Ubuntu's default utilities intact.

@@ -107,6 +107,10 @@ Get-WslCheckoutSyncScript -Checkout "/mnt/d/agent work/repo's" -Workdir "/tmp/ne
       expect(result.stdout).toContain(
         "chown -R 'nemoclaw-ci:nemoclaw-ci' '/tmp/nemoclaw-wsl-workdir/123-1'",
       );
+      expect(result.stdout).toContain("chmod -R go-w -- '/tmp/nemoclaw-wsl-workdir/123-1'");
+      expect(result.stdout).toContain(
+        "chmod 0755 '/tmp/nemoclaw-wsl-workdir' '/tmp/nemoclaw-wsl-workdir/123-1'",
+      );
     },
   );
 
@@ -116,7 +120,8 @@ Get-WslCheckoutSyncScript -Checkout "/mnt/d/agent work/repo's" -Workdir "/tmp/ne
 . ${JSON.stringify(WSL_CI_HELPER)}
 $workdirs = @(
   '/tmp/nemoclaw-wsl-workdir/123-1',
-  '/tmp/nemoclaw-wsl-vitest/123-1'
+  '/tmp/nemoclaw-wsl-vitest/123-1',
+  '/home/nemoclaw-ci/nemoclaw-wsl-vitest/123-1'
 )
 @(
   foreach ($workdir in $workdirs) {
@@ -131,6 +136,7 @@ $workdirs = @(
       expect(JSON.parse(result.stdout.trim())).toEqual([
         "/tmp/nemoclaw-wsl-workdir/123-1",
         "/tmp/nemoclaw-wsl-vitest/123-1",
+        "/home/nemoclaw-ci/nemoclaw-wsl-vitest/123-1",
       ]);
     },
   );
@@ -175,7 +181,7 @@ $messages | ConvertTo-Json -Compress
         "   ",
       ];
       const message =
-        "WSL sync workdir must use /tmp/nemoclaw-wsl-workdir or /tmp/nemoclaw-wsl-vitest with one <positive-run-id>-<positive-run-attempt> child. It must not overlap the checkout or contain traversal";
+        "WSL sync workdir must use a supported dedicated root with one <positive-run-id>-<positive-run-attempt> child. It must not overlap the checkout or contain traversal";
       expect(JSON.parse(result.stdout.trim())).toEqual(
         unsafeWorkdirs.map((workdir) => `${message}: '${workdir}'.`),
       );
@@ -197,7 +203,7 @@ try {
       expect(result.status).toBe(0);
       expect(result.stderr).toBe("");
       expect(result.stdout.trim()).toBe(
-        "WSL sync workdir must use /tmp/nemoclaw-wsl-workdir or /tmp/nemoclaw-wsl-vitest with one <positive-run-id>-<positive-run-attempt> child. It must not overlap the checkout or contain traversal: '/tmp/nemoclaw-wsl-workdir/123-1'.",
+        "WSL sync workdir must use a supported dedicated root with one <positive-run-id>-<positive-run-attempt> child. It must not overlap the checkout or contain traversal: '/tmp/nemoclaw-wsl-workdir/123-1'.",
       );
     },
   );

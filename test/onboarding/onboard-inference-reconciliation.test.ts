@@ -7,7 +7,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   clearPersistedOllamaHostIfUnused,
   loadPersistedOllamaHost,
@@ -53,6 +53,15 @@ const OPENAI_API_PROVIDER_METADATA = [
 ].join("\n");
 
 describe("onboard helpers", () => {
+  let fixtureHome: string;
+  beforeEach(() => {
+    fixtureHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-inference-reconciliation-"));
+    vi.stubEnv("HOME", fixtureHome);
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    fs.rmSync(fixtureHome, { recursive: true, force: true });
+  });
   it("reuses a registered Hermes Provider without re-collecting host credentials", async () => {
     await withProcessEnv(
       {
@@ -237,10 +246,18 @@ describe("onboard helpers", () => {
       const runtimeEffectfulPreflightPath = JSON.stringify(
         path.join(repoRoot, "src/lib/onboard/machine/runtime-effectful-preflight.ts"),
       );
+      const onboardScriptMocksPath = JSON.stringify(
+        path.join(repoRoot, "test", "helpers", "onboard-script-mocks.cjs"),
+      );
 
       fs.mkdirSync(fakeBin, { recursive: true });
       writeOkOpenshell(fakeBin);
       fs.writeFileSync(path.join(fakeBin, "brew"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+      fs.writeFileSync(
+        path.join(fakeBin, "docker"),
+        '#!/bin/sh\ncase "$1" in\n  info) printf \'%s\\n\' \'{"ServerVersion":"test"}\' ;;\n  version) printf \'%s\\n\' \'{"Server":{"Version":"test"}}\' ;;\n  *) printf \'unexpected docker command: %s\\n\' "$*" >&2; exit 1 ;;\nesac\n',
+        { mode: 0o755 },
+      );
 
       const script = String.raw`
 const runner = require(${runnerPath});
@@ -254,6 +271,9 @@ const dockerDriverPlatform = require(${dockerDriverPlatformPath});
 const gatewayGpuPassthrough = require(${gatewayGpuPassthroughPath});
 const onboardProbes = require(${onboardProbesPath});
 const preflight = require(${preflightPath});
+const fixtureMocks = require(${onboardScriptMocksPath});
+fixtureMocks.mockStandaloneGatewayTeardownAuthority();
+fixtureMocks.mockManagedStateVolumeOnboardLifecycle();
 preflight.assessHost = () => ({
   platform: "linux",
   isWsl: false,

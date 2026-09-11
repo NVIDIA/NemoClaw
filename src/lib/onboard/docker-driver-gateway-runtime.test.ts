@@ -5,7 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as dockerDriverGatewayEnv from "./docker-driver-gateway-env";
 import {
   gatewayIdForStateDir,
@@ -82,7 +82,14 @@ function withTemporaryGatewayState<T>(callback: () => T): T {
 }
 
 describe("docker-driver gateway runtime helpers", () => {
+  let stateRoot: string;
+  beforeEach(() => {
+    stateRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-runtime-state-"));
+    vi.stubEnv("NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR", path.join(stateRoot, "gateway"));
+  });
   afterEach(() => {
+    vi.unstubAllEnvs();
+    fs.rmSync(stateRoot, { recursive: true, force: true });
     vi.restoreAllMocks();
   });
 
@@ -385,6 +392,11 @@ describe("docker-driver gateway runtime helpers", () => {
               ...dockerDriverGatewayEnv,
               buildDockerDriverGatewayEnv: (options) =>
                 dockerDriverGatewayEnv.buildDockerDriverGatewayEnv({
+                  ...options,
+                  architecture: "arm64",
+                }),
+              prepareDockerDriverGatewayEnv: (options) =>
+                dockerDriverGatewayEnv.prepareDockerDriverGatewayEnv({
                   ...options,
                   architecture: "arm64",
                 }),

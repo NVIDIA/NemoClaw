@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { EventEmitter } from "node:events";
+import { EventEmitter, once } from "node:events";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -368,35 +368,48 @@ describe("CLI OpenShell sandbox command executor", () => {
       const pidPath = path.join(directory, "descendant.pid");
       const survivorPath = path.join(directory, "descendant-survived");
       let descendantPid: number | undefined;
+      fs.writeFileSync(pidPath, "");
+      const watcher = fs.watch(pidPath);
+      const realSetTimeout = setTimeout;
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
       try {
         const descendantScript = [
           "const fs = require('node:fs');",
           "process.on('SIGTERM', () => {});",
-          `setTimeout(() => fs.writeFileSync(${JSON.stringify(survivorPath)}, 'alive'), 500);`,
+          `setInterval(() => fs.writeFileSync(${JSON.stringify(survivorPath)}, 'alive'), 250);`,
+          `fs.writeFileSync(${JSON.stringify(`${pidPath}.tmp`)}, String(process.pid));`,
+          `fs.renameSync(${JSON.stringify(`${pidPath}.tmp`)}, ${JSON.stringify(pidPath)});`,
           "setInterval(() => {}, 1000);",
         ].join("");
         const parentScript = [
           "const { spawn } = require('node:child_process');",
-          "const fs = require('node:fs');",
-          `const child = spawn(process.execPath, ['-e', ${JSON.stringify(descendantScript)}], { stdio: 'ignore' });`,
-          `fs.writeFileSync(${JSON.stringify(pidPath)}, String(child.pid));`,
           "process.on('SIGTERM', () => process.exit(0));",
+          `spawn(process.execPath, ['-e', ${JSON.stringify(descendantScript)}], { stdio: 'ignore' });`,
           "setInterval(() => {}, 1000);",
         ].join("");
 
-        const result = await runCliOpenShellBufferedCommand(
-          process.execPath,
-          ["-e", parentScript],
-          {
-            timeoutMilliseconds: 250,
-          },
-        );
+        const readiness = once(watcher, "change", { signal: AbortSignal.timeout(1000) });
+        let result: Awaited<ReturnType<typeof runCliOpenShellBufferedCommand>> | undefined;
+        void runCliOpenShellBufferedCommand(process.execPath, ["-e", parentScript], {
+          timeoutMilliseconds: 250,
+        }).then((completed) => {
+          result = completed;
+        });
 
+        // Keep the deadline clock stopped until the descendant can handle SIGTERM.
+        await readiness;
         descendantPid = Number(fs.readFileSync(pidPath, "utf8"));
-        expect(result).toMatchObject({ status: null, signal: "SIGTERM", timedOut: true });
-        await new Promise((resolve) => setTimeout(resolve, 400));
+        await vi.advanceTimersByTimeAsync(250);
+        await expect
+          .poll(() => result)
+          .toMatchObject({ status: null, signal: "SIGTERM", timedOut: true });
+        fs.rmSync(survivorPath, { force: true });
+        await new Promise((resolve) => realSetTimeout(resolve, 400));
         expect(fs.existsSync(survivorPath)).toBe(false);
       } finally {
+        watcher.close();
+        await vi.runAllTimersAsync();
+        vi.useRealTimers();
         descendantPid === undefined || killTestProcess(descendantPid);
         fs.rmSync(directory, { recursive: true, force: true });
       }

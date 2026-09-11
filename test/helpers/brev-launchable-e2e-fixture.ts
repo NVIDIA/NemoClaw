@@ -44,6 +44,7 @@ export function fixture(
     brevExecStatus?: number;
     createAppearsAfterRefresh?: number;
     createStatus?: number;
+    delaySshReadinessLog?: boolean;
     deleteFails?: boolean;
     e2eDiagnosticTimesOut?: boolean;
     e2eFails?: boolean;
@@ -89,6 +90,18 @@ export function fixture(
   fs.mkdirSync(bin);
   fs.mkdirSync(workDir);
   fs.writeFileSync(timeoutBlock, "block\n");
+
+  if (options.delaySshReadinessLog) {
+    executable(
+      path.join(bin, "tee"),
+      `#!/usr/bin/env bash
+set -euo pipefail
+input="$(cat)"
+if [[ "$input" == 'Waiting up to '* ]]; then /bin/sleep 1; fi
+printf '%s\\n' "$input" | /usr/bin/tee "$@"
+`,
+    );
+  }
 
   executable(
     path.join(bin, "timeout"),

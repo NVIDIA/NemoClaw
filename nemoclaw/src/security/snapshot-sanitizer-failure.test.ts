@@ -209,7 +209,9 @@ describe("migration snapshot sanitizer fallbacks", () => {
     },
   );
 
-  it.runIf(process.platform !== "win32")(
+  // These adversarial races depend on Linux scheduler and inode timing. The
+  // portable descriptor behavior remains covered above on every host.
+  it.runIf(process.platform === "linux")(
     "rejects a persistent hard link created while sanitized config is installed",
     () => {
       const rootPath = makeRoot();
@@ -240,7 +242,7 @@ describe("migration snapshot sanitizer fallbacks", () => {
     },
   );
 
-  it.runIf(process.platform !== "win32")(
+  it.runIf(process.platform === "linux")(
     "rejects a transient hard-link mutation while sanitized config is installed",
     () => {
       const rootPath = makeRoot();

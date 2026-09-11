@@ -34,8 +34,6 @@ import {
   removeV00106OperationalTrust,
 } from "../helpers/openshell-installer-template";
 
-import { selectPreparedGatewayRuntime } from "../helpers/prepared-gateway-runtime";
-
 const REPO_ROOT = path.join(import.meta.dirname, "../..");
 const INSTALLER_TEMPLATE = fs.readFileSync(
   path.join(REPO_ROOT, "scripts/install-openshell.sh"),
@@ -983,7 +981,7 @@ describe("installer hash verification", () => {
     const runtimePath = "src/lib/onboard/docker-driver-gateway-runtime.ts";
     const candidatePins = fs.readFileSync(path.join(root, runtimePath), "utf8");
     const source = fs.readFileSync(path.join(REPO_ROOT, runtimePath), "utf8");
-    const prepared = selectPreparedGatewayRuntime(source).replace(
+    const prepared = source.replace(
       /const OPENSHELL_SUPERVISOR_MANIFEST_DIGESTS: Readonly<Record<string, string>> = \{[\s\S]*?\n\};/,
       candidatePins.trim(),
     );

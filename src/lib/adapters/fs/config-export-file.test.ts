@@ -31,7 +31,7 @@ afterEach(() => {
   for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
 });
 
-describe("publishExportFile", () => {
+describe.runIf(process.platform === "linux")("publishExportFile", () => {
   it("publishes all YAML bytes through a mode-0600 regular file (#10938)", () => {
     const root = temporaryRoot();
     const outputPath = path.join(root, "selected.yaml");
@@ -653,5 +653,17 @@ describe("publishExportFile", () => {
     publishExportFile(outputPath, "content");
 
     expect(calls).toEqual(["fsync", "publish", "fsync"]);
+  });
+});
+
+describe.runIf(process.platform !== "linux")("publishExportFile platform boundary", () => {
+  it("rejects publication without creating an output file", () => {
+    const root = temporaryRoot();
+    const outputPath = path.join(root, "selected.yaml");
+    expect(publishExportFile(outputPath, "content")).toMatchObject({
+      ok: false,
+      failure: { category: "unsafe-output" },
+    });
+    expect(fs.readdirSync(root)).toEqual([]);
   });
 });

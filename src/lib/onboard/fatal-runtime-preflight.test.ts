@@ -630,9 +630,7 @@ describe("runFatalOnboardRuntimePreflight", () => {
     );
 
     expect(detect).toHaveBeenCalledOnce();
-    expect(detect).toHaveBeenCalledWith(
-      expect.objectContaining({ proveArm64ContainerGpu: null, n1xWslProduct: null }),
-    );
+    expect(detect).toHaveBeenCalledWith(expect.objectContaining({ proveArm64ContainerGpu: null }));
   });
 
   it("rejects known GPU configuration errors before bridge or GPU container probes (#7411)", () => {

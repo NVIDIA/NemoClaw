@@ -5,6 +5,11 @@ name: CI / Platform Compatibility
 
 on:
   workflow_dispatch:
+    inputs:
+      sdk-artifact-run-id:
+        description: "Completed PR CI run supplying the reviewed SDK (required off main)"
+        type: string
+        required: false
   push:
     branches:
       - main
@@ -17,6 +22,8 @@ on:
 
 permissions:
   contents: read
+  actions: read
+  packages: read
 
 concurrency:
   group: platform-evidence-${{ github.ref }}
@@ -89,8 +96,7 @@ jobs:
       matrix:
         include:
           - shard: 1
-            # The live E2E has a 70m timeout; every other step shares the remaining job time.
-            timeout_minutes: 150
+            timeout_minutes: 30
           - shard: 2
             timeout_minutes: 30
           - shard: 3
@@ -120,6 +126,7 @@ jobs:
       - name: Install macOS test dependencies
         run: |
           set -euo pipefail
+          test -x "$(command -v gtar)"
           brew install bash coreutils fd gawk ripgrep
           printf '%s\n' \
             "$(brew --prefix bash)/bin" \
@@ -148,16 +155,31 @@ jobs:
           stat --version | head -n 1
           awk --version | head -n 1
 
-      - name: Install pinned OpenShell
-        env:
-          NEMOCLAW_NON_INTERACTIVE: "1"
-        run: env -u GH_TOKEN -u GITHUB_TOKEN bash scripts/install-openshell.sh
+      - name: Download reviewed SDK for branch validation
+        if: ${{ github.ref != 'refs/heads/main' }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.sdk-artifact-run-id }}
+          name: openshell-sdk-package
+          path: ${{ github.workspace }}/platform-sdk
 
       - name: Install dependencies
+        env:
+          NODE_AUTH_TOKEN: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.token || '' }}
         run: |
-          npm ci --ignore-scripts
-          cd nemoclaw
-          npm ci --ignore-scripts
+          if [[ -n "$NODE_AUTH_TOKEN" ]]; then
+            bash .github/actions/ci-install-dependencies.sh
+          else
+            mkdir -p "$HOME/.npm"
+            NEMOCLAW_CI_NPM_PACKAGE_MODE=artifact \
+              NEMOCLAW_CI_TARGET_ROOT="$PWD" \
+              NEMOCLAW_CI_NPM_CACHE="$HOME/.npm" \
+              NEMOCLAW_OPEN_SHELL_SDK_ARTIFACT_DIRECTORY="$GITHUB_WORKSPACE/platform-sdk" \
+              node scripts/checks/prepare-ci-npm-install.mts
+            npm ci --ignore-scripts --prefer-offline
+            npm --prefix nemoclaw ci --ignore-scripts --prefer-offline
+          fi
 
       - name: Build CLI and plugin
         run: |
@@ -166,11 +188,51 @@ jobs:
           npm run build
 
       - name: Run full Vitest suite on macOS
-        run: npx vitest run --testTimeout 60000 --shard="${{ matrix.shard }}/4"
+        env:
+          NEMOCLAW_EXEC_TIMEOUT: "60000"
+          NEMOCLAW_TEST_TIMEOUT: "60000"
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/nemoclaw-vitest-bin"
+          ln -s "$(command -v gtar)" "$RUNNER_TEMP/nemoclaw-vitest-bin/tar"
+          PATH="$RUNNER_TEMP/nemoclaw-vitest-bin:$PATH" \
+            npx vitest run --testTimeout 60000 --shard="${{ matrix.shard }}/4"
+
+  macos-live-e2e:
+    name: macOS live E2E
+    if: ${{ github.ref == 'refs/heads/main' }}
+    runs-on: macos-26
+    timeout-minutes: 150
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        env:
+          NODE_AUTH_TOKEN: ${{ github.token }}
+        run: bash .github/actions/ci-install-dependencies.sh
+
+      - name: Build CLI and plugin
+        run: |
+          npm run build:cli
+          npm --prefix nemoclaw run build
+
+      - name: Install pinned OpenShell
+        env:
+          NEMOCLAW_NON_INTERACTIVE: "1"
+        run: env -u GH_TOKEN -u GITHUB_TOKEN bash scripts/install-openshell.sh
 
       - id: macos_docker
         name: Detect Docker availability for macOS E2E
-        if: ${{ matrix.shard == 1 }}
         shell: bash
         run: |
           set -euo pipefail
@@ -183,7 +245,7 @@ jobs:
           fi
 
       - name: Run macOS live E2E
-        if: ${{ matrix.shard == 1 && steps.macos_docker.outputs.docker_ok == 'true' && github.ref == 'refs/heads/main' }}
+        if: ${{ steps.macos_docker.outputs.docker_ok == 'true' }}
         env:
           GITHUB_TOKEN: ${{ github.token }}
           NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
@@ -196,19 +258,13 @@ jobs:
           npx vitest run --project e2e-live test/e2e/live/full-e2e.test.ts --silent=false --reporter=default
 
       - name: Explain skipped macOS live E2E
-        if: ${{ matrix.shard == 1 && (steps.macos_docker.outputs.docker_ok != 'true' || github.ref != 'refs/heads/main') }}
-        shell: bash
+        if: ${{ steps.macos_docker.outputs.docker_ok != 'true' }}
         run: |
-          set -euo pipefail
-          if [[ "$GITHUB_REF" != "refs/heads/main" ]]; then
-            echo "The macOS live E2E did not run because this workflow does not test main."
-          else
-            echo "The macOS live E2E did not run because Docker is unavailable."
-          fi
-          echo "The macOS build and Vitest shard still provide platform evidence."
+          echo "The macOS live E2E did not run because Docker is unavailable."
+          echo "The macOS Vitest shards still provide platform evidence."
 
       - name: Upload macOS E2E logs on failure
-        if: ${{ matrix.shard == 1 && failure() }}
+        if: ${{ failure() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: macos-platform-evidence-logs
@@ -238,10 +294,6 @@ jobs:
       WSL_DISTRO: Ubuntu
       WSL_TEST_USER: nemoclaw-ci
       TRUSTED_WSL_HELPER: ${{ github.workspace }}\trusted-wsl-ci\tools\wsl\ci-helper.ps1
-      NEMOCLAW_NON_INTERACTIVE: "1"
-      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
-      NEMOCLAW_RECREATE_SANDBOX: "1"
-      NEMOCLAW_SANDBOX_NAME: "e2e-wsl"
     steps:
       - name: Force LF line endings for checkout
         shell: powershell
@@ -270,7 +322,7 @@ jobs:
           . "$env:TRUSTED_WSL_HELPER"
           $null = Set-WslWorkflowPaths `
             -Workspace "$env:GITHUB_WORKSPACE\source" `
-            -WorkdirPrefix '/tmp/nemoclaw-wsl-vitest' `
+            -WorkdirPrefix '/home/nemoclaw-ci/nemoclaw-wsl-vitest' `
             -RunId $env:GITHUB_RUN_ID `
             -RunAttempt $env:GITHUB_RUN_ATTEMPT `
             -EnvironmentFile $env:GITHUB_ENV
@@ -287,7 +339,9 @@ jobs:
           . "$env:TRUSTED_WSL_HELPER"
           $packages = @(
             'bash', 'ca-certificates', 'curl', 'git', 'jq', 'lsb-release', 'make',
-            'python3', 'python3-pip', 'python3-venv', 'ripgrep', 'rsync', 'tar', 'unzip', 'xz-utils'
+            'docker.io', 'gcc', 'gnu-coreutils', 'iproute2', 'libc6-dev', 'podman',
+            'procps', 'python3', 'python3-pip', 'python3-venv',
+            'ripgrep', 'rsync', 'tar', 'unzip', 'xz-utils', 'zip'
           )
           Install-WslUbuntuDependencies -Distro $env:WSL_DISTRO -Packages $packages -TestUser $env:WSL_TEST_USER
 
@@ -307,20 +361,46 @@ jobs:
             -Workdir $env:WSL_WORKDIR `
             -Owner $env:WSL_TEST_USER
 
+      - name: Download reviewed SDK for branch validation
+        if: ${{ github.ref != 'refs/heads/main' }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.sdk-artifact-run-id }}
+          name: openshell-sdk-package
+          path: ${{ github.workspace }}/platform-sdk
+
       - name: Install dependencies and build in WSL
         shell: powershell
+        env:
+          NODE_AUTH_TOKEN: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.token || '' }}
         run: |
           . "$env:TRUSTED_WSL_HELPER"
           $testUser = ConvertTo-BashLiteral -Value $env:WSL_TEST_USER
           $workdir = ConvertTo-BashLiteral -Value $env:WSL_WORKDIR
+          $nodeAuthToken = ConvertTo-BashLiteral -Value ([string]$env:NODE_AUTH_TOKEN)
+          $sdkArtifact = ConvertTo-BashLiteral -Value "$env:WSL_CHECKOUT_DIR/../platform-sdk"
           $script = @"
           set -euo pipefail
           id -un | grep -Fxq $testUser
           cd $workdir
-          npm ci --ignore-scripts
+          export NPM_CONFIG_CACHE="`$HOME/.npm"
+          export NODE_AUTH_TOKEN=$nodeAuthToken
+          if [ -n "`$NODE_AUTH_TOKEN" ]; then
+            bash .github/actions/ci-install-dependencies.sh
+          else
+            mkdir -p "`$NPM_CONFIG_CACHE"
+            NEMOCLAW_CI_NPM_PACKAGE_MODE=artifact \
+              NEMOCLAW_CI_TARGET_ROOT="`$PWD" \
+              NEMOCLAW_CI_NPM_CACHE="`$NPM_CONFIG_CACHE" \
+              NEMOCLAW_OPEN_SHELL_SDK_ARTIFACT_DIRECTORY=$sdkArtifact \
+              node scripts/checks/prepare-ci-npm-install.mts
+            npm ci --ignore-scripts --prefer-offline
+            npm --prefix nemoclaw ci --ignore-scripts --prefer-offline
+          fi
+          unset NODE_AUTH_TOKEN
           npm run build:cli
           cd nemoclaw
-          npm ci --ignore-scripts
           npm run build
           "@
           Invoke-WslScript -Distro $env:WSL_DISTRO -User $env:WSL_TEST_USER -Script $script
@@ -335,6 +415,7 @@ jobs:
           set -euo pipefail
           id -un | grep -Fxq $testUser
           cd $workdir
+          export NPM_CONFIG_CACHE="`$HOME/.npm"
           export NEMOCLAW_EXEC_TIMEOUT=60000
           export NEMOCLAW_TEST_TIMEOUT=60000
           npx vitest run --testTimeout 60000 --shard='${{ matrix.shard }}/4'
@@ -372,6 +453,22 @@ jobs:
           "@
           Invoke-WslScript -Distro $env:WSL_DISTRO -User root -Script $script
 
+      - name: Start the WSL container runtime
+        if: ${{ matrix.shard == 1 && github.ref == 'refs/heads/main' }}
+        shell: powershell
+        run: |
+          . "$env:TRUSTED_WSL_HELPER"
+          $testUser = ConvertTo-BashLiteral -Value $env:WSL_TEST_USER
+          $script = @"
+          set -euo pipefail
+          usermod -aG docker $testUser
+          service docker start
+          docker info
+          podman --version
+          ip -Version
+          "@
+          Invoke-WslScript -Distro $env:WSL_DISTRO -User root -Script $script
+
       - id: wsl_docker
         name: Detect Docker availability in WSL
         if: ${{ matrix.shard == 1 }}
@@ -385,7 +482,7 @@ jobs:
             echo DOCKER_OK=0
           fi
           '@
-          $result = Invoke-WslScript -Distro $env:WSL_DISTRO -Script $script -CaptureOutput
+          $result = Invoke-WslScript -Distro $env:WSL_DISTRO -User $env:WSL_TEST_USER -Script $script -CaptureOutput
           if ($result -match 'DOCKER_OK=1') {
             'docker_ok=true' | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
             Write-Host 'Docker is available in WSL'
@@ -400,6 +497,10 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+          NEMOCLAW_NON_INTERACTIVE: "1"
+          NEMOCLAW_RECREATE_SANDBOX: "1"
+          NEMOCLAW_SANDBOX_NAME: "e2e-wsl"
         run: |
           . "$env:TRUSTED_WSL_HELPER"
           $workdir = ConvertTo-BashLiteral -Value $env:WSL_WORKDIR
@@ -418,7 +519,7 @@ jobs:
           export NEMOCLAW_RUN_LIVE_E2E=1
           npx vitest run --project e2e-live test/e2e/live/full-e2e.test.ts --silent=false --reporter=default
           "@
-          Invoke-WslScript -Distro $env:WSL_DISTRO -Script $script
+          Invoke-WslScript -Distro $env:WSL_DISTRO -User $env:WSL_TEST_USER -Script $script
 
       - name: Explain skipped WSL live E2E
         if: ${{ matrix.shard == 1 && (steps.wsl_docker.outputs.docker_ok != 'true' || github.ref != 'refs/heads/main') }}

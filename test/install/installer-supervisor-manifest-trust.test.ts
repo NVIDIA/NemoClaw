@@ -14,8 +14,6 @@ import {
   V00116_SUPERVISOR_MANIFEST_DIGEST,
 } from "../helpers/openshell-release-fixtures";
 
-import { selectPreparedGatewayRuntime } from "../helpers/prepared-gateway-runtime";
-
 const REPO_ROOT = path.join(import.meta.dirname, "../..");
 const PARSER = path.join(REPO_ROOT, "scripts/checks/extract-installer-pins.mts");
 const INSTALLER_TEMPLATE = fs.readFileSync(
@@ -147,14 +145,14 @@ function runParser(options: RunOptions = {}) {
 
 describe("OpenShell supervisor manifest trust", () => {
   it("accepts the gateway runtime template that prepares the Docker driver environment (#11212)", () => {
-    const result = runParser({ transformSupervisor: selectPreparedGatewayRuntime });
+    const result = runParser();
     expect(result.status, result.stderr).toBe(0);
   });
 
   it("rejects a repository mutation of the gateway-preparation runtime template (#11212)", () => {
     const result = runParser({
       transformSupervisor: (source) =>
-        selectPreparedGatewayRuntime(source).replace(
+        source.replace(
           "ghcr.io/nvidia/openshell/supervisor@${manifestDigest}",
           "registry.invalid/openshell/supervisor@${manifestDigest}",
         ),

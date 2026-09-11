@@ -103,6 +103,10 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
     versionOutput?: string | null,
     platform?: NodeJS.Platform,
   ): Record<string, string>;
+  getDockerDriverGatewayPreparation(
+    versionOutput?: string | null,
+    platform?: NodeJS.Platform,
+  ): import("./docker-driver-gateway-env").DockerDriverGatewayPreparation;
   getDockerDriverGatewayPid(): number | null;
   getDockerDriverGatewayPidFile(): string;
   getDockerDriverGatewayPortListenerScan(
@@ -255,10 +259,10 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
     return qualifiedImage;
   }
 
-  function getDockerDriverGatewayEnv(
+  function getDockerDriverGatewayPreparation(
     versionOutput: string | null = null,
     platform: NodeJS.Platform = process.platform,
-  ): Record<string, string> {
+  ): import("./docker-driver-gateway-env").DockerDriverGatewayPreparation {
     const dockerHost = process.env.DOCKER_HOST;
     let podmanSocketPath: string | undefined;
     if (isPortableExperimentalProfile()) {
@@ -270,7 +274,7 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
       }
       podmanSocketPath = candidate.slice("unix://".length);
     }
-    const gatewayEnv = dockerDriverGatewayEnv.buildDockerDriverGatewayEnv({
+    const preparation = dockerDriverGatewayEnv.prepareDockerDriverGatewayEnv({
       platform,
       gatewayPort: currentGatewayPort(),
       stateDir: getDockerDriverGatewayStateDir(),
@@ -280,10 +284,17 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
       resolveSandboxBin: resolveOpenShellSandboxBinary,
       enableBindMounts: deps.enableBindMounts?.() === true,
     });
-    if (gatewayEnv.OPENSHELL_LOCAL_TLS_DIR) {
-      process.env.OPENSHELL_LOCAL_TLS_DIR = gatewayEnv.OPENSHELL_LOCAL_TLS_DIR;
+    if (preparation.gatewayEnv.OPENSHELL_LOCAL_TLS_DIR) {
+      process.env.OPENSHELL_LOCAL_TLS_DIR = preparation.gatewayEnv.OPENSHELL_LOCAL_TLS_DIR;
     }
-    return gatewayEnv;
+    return preparation;
+  }
+
+  function getDockerDriverGatewayEnv(
+    versionOutput: string | null = null,
+    platform: NodeJS.Platform = process.platform,
+  ): Record<string, string> {
+    return getDockerDriverGatewayPreparation(versionOutput, platform).gatewayEnv;
   }
 
   function isPidAlive(pid: number): boolean {
@@ -594,6 +605,7 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
     clearDockerDriverGatewayRuntimeFiles,
     createGatewayServicePortOwnership,
     getDockerDriverGatewayEnv,
+    getDockerDriverGatewayPreparation,
     getDockerDriverGatewayPid,
     getDockerDriverGatewayPidFile,
     getDockerDriverGatewayPortListenerScan,

@@ -28,7 +28,6 @@ import {
 } from "../helpers/installer-sourced-env";
 
 const INSTALLER = path.join(import.meta.dirname, "../..", "install.sh");
-const CURL_PIPE_INSTALLER = path.join(import.meta.dirname, "../..", "install.sh");
 const GITHUB_INSTALL_URL = "git+https://github.com/NVIDIA/NemoClaw.git";
 // This installer test owns the fake compiled-tree exemption.
 const INSTALLER_ONBOARD_MODULE_DIR = path.join("dist", "lib", "onboard");
@@ -505,6 +504,7 @@ exit 89
       writeNodeStub(fakeBin);
       writeDockerOkStub(fakeBin);
       writeSourceCheckoutNpmStub(fakeBin, { commandLog: true });
+      writeExecutable(path.join(fakeBin, "uname"), "#!/bin/sh\nprintf 'Linux\\n'\n");
       writeSourceCheckoutPackages(tmp);
       fs.mkdirSync(path.join(tmp, "scripts", "lib"), { recursive: true });
       fs.copyFileSync(
@@ -2367,7 +2367,7 @@ fi
 exit 0`,
     });
 
-    const result = spawnSync("bash", [CURL_PIPE_INSTALLER], {
+    const result = spawnSync("bash", [INSTALLER], {
       cwd: tmp,
       encoding: "utf-8",
       env: {
@@ -2414,7 +2414,7 @@ fi
 exit 0`,
     });
 
-    const result = spawnSync("bash", [CURL_PIPE_INSTALLER], {
+    const result = spawnSync("bash", [INSTALLER], {
       cwd: tmp,
       encoding: "utf-8",
       env: {
@@ -2441,7 +2441,7 @@ exit 0`,
     const repoLike = path.join(tmp, "repo");
     fs.mkdirSync(path.join(repoLike, "scripts"), { recursive: true });
     const rootInstaller = path.join(repoLike, "install.sh");
-    fs.copyFileSync(CURL_PIPE_INSTALLER, rootInstaller);
+    fs.copyFileSync(INSTALLER, rootInstaller);
     writeExecutable(
       path.join(repoLike, "scripts", "install.sh"),
       `#!/usr/bin/env bash
@@ -2492,7 +2492,7 @@ fi
 exit 0`,
     );
 
-    const installerInput = fs.readFileSync(CURL_PIPE_INSTALLER, "utf-8");
+    const installerInput = fs.readFileSync(INSTALLER, "utf-8");
     const result = spawnSync("bash", [], {
       cwd: tmp,
       input: installerInput,
@@ -2553,7 +2553,7 @@ fi
 exit 0`,
     });
 
-    const installerInput = fs.readFileSync(CURL_PIPE_INSTALLER, "utf-8");
+    const installerInput = fs.readFileSync(INSTALLER, "utf-8");
     const result = spawnSync("bash", [], {
       cwd: tmp,
       input: installerInput,
@@ -2615,7 +2615,7 @@ fi
 exit 0`,
     });
 
-    const installerInput = fs.readFileSync(CURL_PIPE_INSTALLER, "utf-8");
+    const installerInput = fs.readFileSync(INSTALLER, "utf-8");
     const result = spawnSync("bash", [], {
       cwd: tmp,
       input: installerInput,
