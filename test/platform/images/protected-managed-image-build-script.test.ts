@@ -346,13 +346,22 @@ describe("protected managed-image build-cache boundary", () => {
     expect(result.status, result.stderr).toBe(0);
     expect(recordedBuildInvocation("openclaw")).toContain("--platform linux/arm64");
     expect(recordedBuildInvocation("openclaw")).toContain("--build-arg TARGETARCH=arm64");
+    expect(recordedBuildInvocation("openclaw")).toContain(
+      "--build-arg NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=sandbox",
+    );
     expect(recordedBuildInvocation("hermes")).toContain("--platform linux/arm64");
     expect(recordedBuildInvocation("hermes")).toContain("--build-arg TARGETARCH=arm64");
+    expect(recordedBuildInvocation("hermes")).toContain(
+      "--build-arg NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=sandbox",
+    );
     expect(recordedBuildInvocation("langchain-deepagents-code")).toContain(
       "--platform linux/arm64",
     );
     expect(recordedBuildInvocation("langchain-deepagents-code")).toContain(
       "--build-arg TARGETARCH=arm64",
+    );
+    expect(recordedBuildInvocation("langchain-deepagents-code")).toContain(
+      "--build-arg NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=sandbox",
     );
   });
 

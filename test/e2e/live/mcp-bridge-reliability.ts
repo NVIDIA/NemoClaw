@@ -569,7 +569,7 @@ export async function readConcurrentMcpStatusAndConfirmHermesRegistration(option
         revision.signal !== null ||
         revision.timedOut ||
         revision.stderr.trim() !== "" ||
-        !/^v[0-9]{1,20}$/u.test(observedRevision) ||
+        !/^(?:v[0-9]{1,20}|s[a-f0-9]{64})$/u.test(observedRevision) ||
         entry === null
       ) {
         return { source: "direct-credential", result: revision } as const;

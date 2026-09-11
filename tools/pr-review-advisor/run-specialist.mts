@@ -23,7 +23,11 @@ import {
   writeAdvisorFindingLedger,
 } from "./finding-ledger.mts";
 import { trustedE2eRecommendationInventory } from "../advisors/e2e-recommendations.mts";
-import { buildSpecialistE2eReceipt, createE2eRecommendationRecorder } from "./e2e-receipt.mts";
+import {
+  buildReviewQueueContext,
+  buildSpecialistE2eReceipt,
+  createE2eRecommendationRecorder,
+} from "./e2e-receipt.mts";
 import { collectGitHubReviewContext } from "./github-context.mts";
 import {
   ADVISOR_SPECIALISTS,
@@ -134,6 +138,17 @@ async function main(): Promise<void> {
   });
   const findingController = createAdvisorFindingToolController({ headSha, interest });
   const inventory = trustedE2eRecommendationInventory();
+  const evidenceContext = {
+    baseSha: getHeadSha(baseRef),
+    expectedSpecialists: ADVISOR_SPECIALISTS.map((specialist) => specialist.interest),
+    riskPlan: deterministic.riskPlan,
+    inventory,
+  };
+  fs.writeFileSync(
+    path.join(outDir, "review-queue-context.json"),
+    `${JSON.stringify(buildReviewQueueContext(evidenceContext, process.env), null, 2)}\n`,
+    { flag: "wx", mode: 0o600 },
+  );
   const recommendations = createE2eRecommendationRecorder(inventory);
   const run = await runSpecialistAdvisor(
     interest,
@@ -163,12 +178,9 @@ async function main(): Promise<void> {
   const errors = advisorRunErrors(run);
   if (errors.length > 0) throw new Error(errors.join("; "));
   const receipt = buildSpecialistE2eReceipt({
-    baseSha: getHeadSha(baseRef),
+    ...evidenceContext,
     interest,
-    expectedSpecialists: ADVISOR_SPECIALISTS.map((specialist) => specialist.interest),
-    riskPlan: deterministic.riskPlan,
     advisor: recommendations.snapshot(),
-    inventory,
   });
   fs.writeFileSync(
     path.join(outDir, `pr-review-${interest}-e2e.json`),

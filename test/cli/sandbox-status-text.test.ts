@@ -610,6 +610,7 @@ describe("CLI sandbox status text output", () => {
                 `if [ -f ${JSON.stringify(stoppedState)} ] && [ "$1" = "sandbox" ] && [ "$2" = "get" ]; then echo 'NotFound: sandbox not found'; exit 1; fi`,
               ]
             : []),
+          `if [ "$1" = "sandbox" ] && [ "$2" = "stop" ]; then touch ${JSON.stringify(stoppedState)}; exit 0; fi`,
           'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && { [ "$3" = "alpha" ] || [ "$5" = "alpha" ]; }; then',
           "  echo 'Sandbox:'",
           "  echo",
