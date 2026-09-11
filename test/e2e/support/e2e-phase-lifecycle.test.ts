@@ -247,7 +247,7 @@ describe("LifecyclePhaseFixture.preparePostReboot", () => {
 });
 
 describe("LifecyclePhaseFixture.simulate post-reboot-recovery (stop-original)", () => {
-  it("stops the labeled container, restarts the gateway service, then runs status", async () => {
+  it("uses non-login helpers to stop and restart the gateway service before status (#10947)", async () => {
     const runner = new FakeRunner();
     const cleanup = new FakeCleanup();
     const prepared = await preparedPostRebootFixture(runner, cleanup, "staged");
@@ -290,6 +290,12 @@ describe("LifecyclePhaseFixture.simulate post-reboot-recovery (stop-original)", 
       "lifecycle.runtime-start:openshell-cluster-e2e-cloud-oc",
       "lifecycle.gateway-user-service-restart:systemd:nemoclaw-openshell-gateway.service",
     ]);
+    const userServiceCommands = runner.calls.filter((call) =>
+      ["lifecycle-gateway-user-service-stop", "lifecycle-gateway-user-service-restart"].includes(
+        call.options?.artifactName ?? "",
+      ),
+    );
+    expect(userServiceCommands.map((call) => call.args[0])).toEqual(["-c", "-c"]);
   });
 
   it("restarts the selected gateway service during cleanup after recovery fails (#10947)", async () => {
@@ -548,7 +554,7 @@ describe("LifecyclePhaseFixture gateway runtime restart helpers", () => {
     expect(runner.calls.map((call) => `${call.command} ${call.args.join(" ")}`)).toEqual([
       expect.stringContaining("sh -lc pid_file="),
       "sh -lc command -v openshell >/dev/null 2>&1 && openshell forward stop 18789 || true",
-      expect.stringContaining("bash -lc set -eu"),
+      expect.stringContaining("bash -c set -eu"),
       "sh -lc command -v openshell >/dev/null 2>&1 && openshell gateway stop -g nemoclaw || true",
       expect.stringContaining("sh -lc pid_file="),
       "docker container ps --format {{.ID}}\t{{.Names}}",

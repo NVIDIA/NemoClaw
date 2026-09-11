@@ -692,7 +692,7 @@ export class LifecyclePhaseFixture {
     const result = await this.host.command(
       "bash",
       [
-        "-lc",
+        "-c",
         buildOpenShellGatewayUserServiceStopScript(),
         "stop-openshell-gateway-user-service",
         NEMOCLAW_INSTALLER,
@@ -779,7 +779,7 @@ export class LifecyclePhaseFixture {
     const result = await this.host.command(
       "bash",
       [
-        "-lc",
+        "-c",
         buildOpenShellGatewayUserServiceRestartScript(),
         "restart-openshell-gateway-user-service",
         NEMOCLAW_INSTALLER,
