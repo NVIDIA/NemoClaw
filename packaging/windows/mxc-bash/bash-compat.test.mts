@@ -85,6 +85,13 @@ test("all independent raw denial results must be access denied, including NULL-D
     foreignEvent: "0xc0000022",
     foreignSection: "0xc0000022",
     originalGlobalCreate: "0xc0000022",
+    pipeForeignWriter: 5,
+    pipeForeignWriteData: 5,
+    pipeOwnBefore: true,
+    pipeOwnMinimalBefore: true,
+    pipeOwnAfter: true,
+    pipeOwnMinimalAfter: true,
+    pipeServerAvailableAfter: true,
   };
   validateDenials(row, "other");
   for (const key of [
@@ -105,6 +112,17 @@ test("all independent raw denial results must be access denied, including NULL-D
     assert.throws(() => validateDenials({ ...row, [key]: "0xc0000034" }, "other"));
   assert.throws(() => validateDenials({ ...row, rawProbeUnshimmed: false }, "other"));
   assert.throws(() => validateDenials(row, "another"));
+  for (const key of ["pipeForeignWriter", "pipeForeignWriteData"])
+    for (const code of [0, 2, 231, 233])
+      assert.throws(() => validateDenials({ ...row, [key]: code }, "other"));
+  for (const key of [
+    "pipeOwnBefore",
+    "pipeOwnMinimalBefore",
+    "pipeOwnAfter",
+    "pipeOwnMinimalAfter",
+    "pipeServerAvailableAfter",
+  ])
+    assert.throws(() => validateDenials({ ...row, [key]: false }, "other"));
 });
 test("actual child pipes preserve stdout/stderr and nonzero exit without forced cleanup", async () => {
   const child = new Owned(

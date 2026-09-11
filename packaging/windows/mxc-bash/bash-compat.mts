@@ -124,6 +124,16 @@ export function validateDenials(row: any, other: string) {
     "originalGlobalCreate",
   ])
     assert.equal(row[key], "0xc0000022", key);
+  assert.equal(row.pipeForeignWriter, 5, "foreign canonical writer");
+  assert.equal(row.pipeForeignWriteData, 5, "foreign minimal write data");
+  for (const key of [
+    "pipeOwnBefore",
+    "pipeOwnMinimalBefore",
+    "pipeOwnAfter",
+    "pipeOwnMinimalAfter",
+    "pipeServerAvailableAfter",
+  ])
+    assert.equal(row[key], true, key);
 }
 function write(file: string, value: unknown) {
   fs.writeFileSync(file, JSON.stringify(value, null, 2) + "\n", { flag: "wx" });
@@ -410,6 +420,13 @@ async function worker(configFile: string) {
         assert.equal(ready.rawProbeUnshimmed, true);
         assert.equal(ready.key, c.key);
         assert.equal(ready.nullDaclChildren, true);
+        for (const key of [
+          "pipeExactSynchronousPositive",
+          "pipeOverlappedFixture",
+          "pipeAvailable",
+          "pipeDescriptorMatched",
+        ])
+          assert.equal(ready[key], true, key);
         results.namespace = ready;
         atomic(path.join(c.share, "ready.json"), ready);
         const cross = await waitFile(path.join(c.share, "cross.json"), Date.now() + 45000);
@@ -419,7 +436,8 @@ async function worker(configFile: string) {
             cross.otherRoot !== ready.privateRoot &&
             !/[\r\n]/u.test(cross.otherRoot),
         );
-        probe.child.stdin!.write("check " + cross.otherRoot + "\n");
+        assert(typeof cross.otherPipe === "string" && !/[\r\n ]/u.test(cross.otherPipe));
+        probe.child.stdin!.write("check " + cross.otherRoot + " " + cross.otherPipe + "\n");
         const denied = await probe.line("denials");
         validateDenials(denied, cross.otherRoot);
         results.denials = denied;
@@ -450,7 +468,9 @@ async function worker(configFile: string) {
   } finally {
     for (const child of owned) if (!child.closed) await child.stop();
     results.cleanup.childrenClosed = owned.every((child) => child.closed);
-    results.cleanup.forced = owned.some((child) => child.forced);
+    results.cleanup.forced = owned.some(
+      (child) => child.forced || child.stderr().includes("NEMOCLAW_RAW_PIPE_CLEANUP_FAILED"),
+    );
     if (!results.cleanup.childrenClosed || results.cleanup.forced) results.passed = false;
     results.ownedChildren = owned.map((child) => child.result());
     save();
@@ -613,12 +633,20 @@ async function main() {
     assert.notEqual(ar.sid, br.sid);
     assert.notEqual(ar.privateRoot, br.privateRoot);
     assert.equal(ar.session, br.session);
-    atomic(path.join(a.c.share, "cross.json"), { nonce, otherRoot: br.privateRoot });
-    atomic(path.join(b.c.share, "cross.json"), { nonce, otherRoot: ar.privateRoot });
-    await Promise.all([
-      waitFile(path.join(a.c.share, "checked.json"), Date.now() + 20000),
-      waitFile(path.join(b.c.share, "checked.json"), Date.now() + 20000),
-    ]);
+    // Keep the foreign endpoint available: each check finishes its own after
+    // positives and restores listening before the other side is dispatched.
+    atomic(path.join(a.c.share, "cross.json"), {
+      nonce,
+      otherRoot: br.privateRoot,
+      otherPipe: br.pipeName,
+    });
+    await waitFile(path.join(a.c.share, "checked.json"), Date.now() + 20000);
+    atomic(path.join(b.c.share, "cross.json"), {
+      nonce,
+      otherRoot: ar.privateRoot,
+      otherPipe: ar.pipeName,
+    });
+    await waitFile(path.join(b.c.share, "checked.json"), Date.now() + 20000);
     atomic(path.join(a.c.share, "stop.json"), { nonce });
     atomic(path.join(b.c.share, "stop.json"), { nonce });
     await Promise.all([completed(a), completed(b)]);

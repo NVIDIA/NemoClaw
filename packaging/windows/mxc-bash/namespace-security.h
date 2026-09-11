@@ -110,7 +110,7 @@ inline bool append_signal_container_ace(const PipeSecurityObservation& original,
     ZeroMemory(&result, sizeof(result));
     auto next = reinterpret_cast<PACL>(result.acl);
     if (!InitializeAcl(next, sizeof(result.acl), ACL_REVISION) ||
-        !AddAce(next, ACL_REVISION, MAXDWORD, original.acl + sizeof(ACL), used - sizeof(ACL)) ||
+        !AddAce(next, ACL_REVISION, MAXDWORD, const_cast<BYTE*>(original.acl + sizeof(ACL)), used - static_cast<DWORD>(sizeof(ACL))) ||
         !AddAccessAllowedAceEx(next, ACL_REVISION, 0, signal_writer_access, container) ||
         !InitializeSecurityDescriptor(&result.descriptor, SECURITY_DESCRIPTOR_REVISION) ||
         !SetSecurityDescriptorDacl(&result.descriptor, TRUE, next, FALSE)) return false;
