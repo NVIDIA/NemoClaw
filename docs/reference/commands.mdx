@@ -205,7 +205,7 @@ Start a new shell session to refresh the cached sandbox names after creating or 
 
 ### `$$nemoclaw config export <sandbox>`
 
-Export a supported registered OpenClaw or Hermes sandbox as a secret-free `NemoClawConfig` document. The same command is available as `$$nemohermes config export <sandbox>`. The command reads the registry and current OpenShell state without changing the sandbox. It stops without writing output when required identity, policy, inference, or workload evidence is missing or inconsistent. If the source changes during observation, the command retries the complete observation once and stops without output if the retry also changes.
+Export a supported registered OpenClaw or Hermes sandbox as a secret-free `NemoClawConfig` document. The command reads the registry and current OpenShell state without changing the sandbox. It stops without writing output when required identity, policy, inference, or workload evidence is missing or inconsistent. If the source changes during observation, the command retries the complete observation once and stops without output if the retry also changes.
 
 The command reads the provider endpoint from the sandbox's OpenShell gateway and compares it with the registered endpoint.
 For NVIDIA Endpoints, it verifies the gateway's built-in NVIDIA provider profile and default endpoint.
@@ -242,8 +242,30 @@ Do not remove the requested output file to clean up a temporary link.
 
 Version 1 exports managed OpenClaw sandboxes and canonical managed Hermes sandboxes in the default workspace.
 Supported sandboxes use hosted external inference or the native NVIDIA hosted provider with its default endpoint, an immutable managed image, a NemoClaw-owned gateway, and an explicit representable policy.
-Hermes export also requires the default API configuration, a disabled dashboard, no Hermes tool gateways, and no Hermes-specific authentication settings.
-Other profiles fail with a diagnostic instead of producing an incomplete document.
+A managed OpenClaw sandbox can also use the verified managed local vLLM configuration.
+The managed vLLM export runs only on Linux x86_64 and requires its fixed managed serving identity and complete live runtime evidence.
+A managed OpenClaw sandbox can also export the verified local Ollama route on native Linux with the Docker driver.
+The export records the external Ollama daemon port, the NemoClaw-managed authentication proxy port, and the `qwen3.5:9b` model digest.
+It fails unless the live daemon, proxy, model, and sandbox route match the retained configuration.
+When a managed OpenClaw sandbox uses Brave Search, the export includes its `webSearch` integration and the `BRAVE_API_KEY` environment-variable reference, never the key.
+When retained managed proxy settings differ from the default, the export includes the validated host and port under `network.proxy`.
+For hosted OpenClaw inference, the export preserves nondefault managed context-window, maximum-token, reasoning, and reasoning-effort settings as route overrides.
+It preserves nondefault agent timeout and heartbeat settings under `execution`.
+For a Docker-managed OpenClaw sandbox with hosted inference, the export can include one secondary agent that shares the primary route.
+The secondary agent has a unique name and only `tools.allow: [read]`.
+The export rejects a secondary agent with a different model, tools, execution settings, primary-agent override, or default subagent setting.
+For OpenClaw, it preserves a nondefault managed dashboard port or bind address under `interfaces.dashboard`.
+When managed OpenClaw uses direct tool disclosure, the export includes `tools.disclosure: direct`.
+It omits the default progressive disclosure setting.
+When OpenClaw conversation diagnostics are enabled, the export includes the fixed local OTLP endpoint, service name, and sample rate under agent observability.
+It never includes collector credentials.
+It omits settings that equal the managed defaults.
+Hermes export fails when Hermes tool gateways are enabled.
+It preserves an enabled Hermes dashboard, nondefault dashboard or internal ports, enabled browser terminal UI, and a nondefault allocated API port under `interfaces`.
+A disabled dashboard and default API port are omitted.
+It exports Hermes API-key authentication only when the retained authentication proof matches the managed Hermes provider, OpenAI-compatible API, endpoint, and `NOUS_API_KEY` credential reference.
+The exported agent binds its API-key authentication to that provider reference.
+OAuth authentication and other unsupported profiles fail with a diagnostic instead of producing an incomplete document.
 
 ### `$$nemoclaw resources`
 
@@ -329,6 +351,13 @@ nemoclaw onboard --agent langchain-deepagents-code [options]
 </AgentOnly>
 
 `--agent` accepts the canonical manifest names from `$$nemoclaw agents list` plus common aliases. For example, `nemohermes` resolves to `hermes`, while `dcode`, `deepagents`, `deepagents-code`, and `langchain` resolve to `langchain-deepagents-code`.
+
+#### External Component Onboarding
+
+On Linux, NemoClaw can register one experimental external host component during fresh onboarding with a NemoClaw-managed Docker-driver gateway.
+Create the declaration before onboarding and use a new explicit sandbox name.
+NemoClaw rejects resume, recreation, reuse, repair, and externally supervised gateways.
+For the declaration, fixed interceptor settings, activation protocol, incomplete-state handling, and credential boundary, refer to [Register an External Component During Onboarding](../deployment/register-external-component).
 
 #### `--profile <name>`
 
@@ -1382,11 +1411,11 @@ NemoClaw does not stop an unproved owner and does not publish launch-readiness e
 For a published receipt-owned Portable Ollama runner, `recover` uses the same inference recovery path as [`connect --probe-only`](#$$nemoclaw-name-connect).
 Follow [Recover Portable Published Ollama](../manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes#recover-portable-published-ollama) for authority checks, route proof, rollback, and failure handling.
 
-For an active Portable Hermes receipt, `recover` starts only the exact receipt-owned Podman container when it is stopped.
+For an active Portable Hermes receipt, `recover` uses OpenShell to start only the receipt-owned sandbox when its Podman container is stopped.
 If authenticated health is not ready after that start, recovery launches the receipt-owned `nemoclaw-start` command once and waits for authenticated Hermes health.
-For an already-running container, recovery does not launch the startup command, does not stop the container, and only waits for authenticated health.
-If a container or OpenShell identity check, reconnect check, or health check later fails after recovery started the container, NemoClaw stops that exact container.
-It then requires Podman to report the container as `exited` and OpenShell to report `Error` or `Stopped`.
+For an already-running container, recovery does not launch the startup command, does not stop the sandbox, and only waits for authenticated health.
+If a container or OpenShell identity check, reconnect check, or health check later fails after recovery started the sandbox, NemoClaw uses OpenShell to stop it.
+It then requires Podman to report the receipt-owned container as `exited` and OpenShell to report `Error` or `Stopped`.
 If NemoClaw cannot prove that rollback, the command reports both the recovery failure and the rollback failure.
 
 `recover` re-evaluates the documented Hermes secret boundary against `/sandbox/.hermes/.env` and the supervisor runtime environment on every run, including when the gateway is already healthy.
@@ -1477,8 +1506,9 @@ $$nemoclaw my-assistant stop
 
 <AgentOnly variant="hermes">
 
-For an active Portable Hermes receipt, `stop` targets only the receipt-owned Podman container without using Docker as a fallback.
-It waits for Podman to report `exited` and OpenShell to report `Error` or `Stopped`.
+For an active Portable Hermes receipt, `stop` uses OpenShell to stop only the receipt-owned sandbox.
+It does not fall back to Docker.
+It waits for the receipt-owned Podman container to report `exited` and OpenShell to report `Error` or `Stopped`.
 If either state does not settle, the command exits nonzero.
 A `pending` or `configuring` receipt instead directs you to resume Portable onboarding.
 Portable Hermes does not run the Docker provider's channel hook or the generic post-stop dashboard-forward cleanup.
@@ -1516,8 +1546,9 @@ $$nemoclaw my-assistant start
 
 <AgentOnly variant="hermes">
 
-For an active Portable Hermes receipt, `start` follows the Podman container, supervisor, authenticated health, and rollback contract documented for [`recover`](#$$nemoclaw-name-recover).
-It then checks and repairs the recorded host forwards before reporting success.
+For an active Portable Hermes receipt, `start` uses OpenShell to start only the receipt-owned sandbox.
+It then verifies the receipt-owned Podman container, supervisor, authenticated health, and rollback contract documented for [`recover`](#$$nemoclaw-name-recover).
+It checks and repairs the recorded host forwards before reporting success.
 It does not fall back to Docker.
 A `pending` or `configuring` receipt instead directs you to resume Portable onboarding.
 
@@ -2337,7 +2368,7 @@ Slack requires both `SLACK_BOT_TOKEN` (bot user OAuth) and `SLACK_APP_TOKEN` (ap
 
 ### `$$nemoclaw <name> channels remove <channel>`
 
-Clear the stored credentials for a messaging channel and rebuild the sandbox so the image drops the channel. Running `remove` for a channel that was never configured is a no-op against the credentials file and still triggers the rebuild prompt. When the bridge provider is attached to a live sandbox, NemoClaw detaches it before deleting the provider from the OpenShell gateway. If deletion fails, NemoClaw attempts to restore the attachment before returning the failure. If restoration also fails, the diagnostic names the provider and sandbox and warns that channel delivery may remain interrupted. If the matching built-in policy preset is applied, NemoClaw also removes that preset from the current OpenShell policy so the upstream API is no longer allow-listed after the channel is gone. No session preset list exists to synchronize.
+Clear the stored credentials for a messaging channel and rebuild the sandbox so the image drops the channel. Running `remove` for a channel that was never configured is a no-op against the credentials file and still triggers the rebuild prompt. When the bridge provider is attached to a live sandbox, NemoClaw detaches it before deleting the provider from the OpenShell gateway. If deletion fails, NemoClaw attempts to restore the attachment before returning the failure. If restoration also fails, the diagnostic names the provider and sandbox and warns that channel delivery may remain interrupted. If the matching built-in policy preset is applied, NemoClaw also removes that preset from the current OpenShell policy so the upstream API is no longer allow-listed after the channel is gone. When removing Teams, NemoClaw removes Teams-owned Microsoft login credential bindings from matching Outlook policy endpoints. It refuses to remove a binding owned by another integration. No session preset list exists to synchronize.
 
 For QR-paired channels (today: WhatsApp), NemoClaw destructively clears the in-sandbox session directories before the rebuild so the `state_dirs` backup does not restore the auth blob and let the channel reconnect:
 
