@@ -71,6 +71,8 @@ func (r *Resource) managed(ctx context.Context, want oshell.Row, apply bool) (os
 	var o *managed.Observation
 	if apply {
 		o, err = d.Ensure(ctx, s, want["id"])
+	} else if r.destroy {
+		o, err = d.ObserveRemoval(ctx, s, want["id"])
 	} else {
 		o, err = d.Observe(ctx, s, want["id"])
 	}

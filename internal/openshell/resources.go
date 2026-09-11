@@ -63,6 +63,16 @@ func labels(r Row) map[string]string {
 // for the resource (or a route's workspace) returns nil, nil. Failed or incomplete
 // reads return an error and must never authorize state removal or export.
 func Observe(ctx context.Context, c Client, kind, workspace, name string) (Row, error) {
+	return observe(ctx, c, kind, workspace, name, false)
+}
+
+// ObserveRemoval accepts an established object's terminating lifecycle while
+// retaining the same configuration and ownership checks used by refresh.
+func ObserveRemoval(ctx context.Context, c Client, kind, workspace, name string) (Row, error) {
+	return observe(ctx, c, kind, workspace, name, true)
+}
+
+func observe(ctx context.Context, c Client, kind, workspace, name string, removing bool) (Row, error) {
 	if name == "" || (kind == "workspace") != (workspace == "") || strings.ContainsAny(name+workspace, "\x00") {
 		return nil, errors.New("invalid resource observation key")
 	}
@@ -81,7 +91,7 @@ func Observe(ctx context.Context, c Client, kind, workspace, name string) (Row, 
 		if w == nil {
 			return nil, errors.New("incomplete workspace response")
 		}
-		if w.DeletionTimestamp != nil || w.Phase != v1.WorkspaceActive {
+		if (!removing && w.DeletionTimestamp != nil) || (w.Phase != v1.WorkspaceActive && !(removing && w.Phase == v1.WorkspaceTerminating)) {
 			return nil, errors.New("workspace is not active")
 		}
 		row = base(w.Name, w.ID, w.Labels)
@@ -96,14 +106,14 @@ func Observe(ctx context.Context, c Client, kind, workspace, name string) (Row, 
 		if p == nil {
 			return nil, errors.New("incomplete provider response")
 		}
-		if p.DeletionTimestamp != nil || p.Type != "openai" {
+		if (!removing && p.DeletionTimestamp != nil) || p.Type != "openai" {
 			return nil, errors.New("provider type or lifecycle changed")
 		}
 		row = base(p.Name, p.ID, p.Labels)
 		row["endpoint"] = p.Spec.Config["OPENAI_BASE_URL"]
 		row["credential_env"] = p.Labels[CredentialLabel]
 	case "route":
-		w, err := Observe(ctx, c, "workspace", "", workspace)
+		w, err := observe(ctx, c, "workspace", "", workspace, removing)
 		if err != nil || w == nil {
 			return nil, err
 		}
@@ -129,7 +139,7 @@ func Observe(ctx context.Context, c Client, kind, workspace, name string) (Row, 
 		if s == nil {
 			return nil, errors.New("incomplete sandbox response")
 		}
-		if s.Spec.Template == nil || s.DeletionTimestamp != nil {
+		if s.Spec.Template == nil || (!removing && s.DeletionTimestamp != nil) {
 			return nil, errors.New("sandbox template or lifecycle is unavailable")
 		}
 		row = base(s.Name, s.ID, s.Labels)
@@ -145,7 +155,7 @@ func Observe(ctx context.Context, c Client, kind, workspace, name string) (Row, 
 		if !policyEqual(s.Spec.Policy, Policy()) {
 			return nil, errors.New("sandbox declared policy is missing or drifted")
 		}
-		if s.Status.Phase == v1.SandboxReady {
+		if s.Status.Phase == v1.SandboxReady && s.DeletionTimestamp == nil {
 			status, err := c.Policy().GetStatus(ctx, workspace, name)
 			if err != nil {
 				return nil, remoteError("read active sandbox policy", err)

@@ -39,6 +39,7 @@ func (*Provider) Metadata(_ context.Context, _ framework.MetadataRequest, r *fra
 }
 func (*Provider) Schema(_ context.Context, _ framework.SchemaRequest, r *framework.SchemaResponse) {
 	a := map[string]ps.Attribute{"endpoint": ps.StringAttribute{Required: true}}
+	a["destroy"] = ps.BoolAttribute{Optional: true}
 	for _, n := range []string{"credential_env", "tls_ca_env", "tls_certificate_env", "tls_key_env", "ollama_engine"} {
 		a[n] = ps.StringAttribute{Optional: true}
 	}
@@ -65,7 +66,9 @@ func (*Provider) Configure(ctx context.Context, q framework.ConfigureRequest, r 
 		r.Diagnostics.AddError("Gateway connection", err.Error())
 		return
 	}
-	clients := resourceClients{gateway: c}
+	var destroy types.Bool
+	r.Diagnostics.Append(q.Config.GetAttribute(ctx, path.Root("destroy"), &destroy)...)
+	clients := resourceClients{gateway: c, destroy: destroy.ValueBool()}
 	if endpoint := get("ollama_engine"); endpoint != "" {
 		clients.docker, err = ollama.NewDocker(endpoint)
 		if err != nil {
@@ -95,11 +98,13 @@ type Resource struct {
 	client         oshell.Client
 	docker         *ollama.Docker
 	runtimeFactory func(string) (*managed.Docker, error)
+	destroy        bool
 }
 
 type resourceClients struct {
 	gateway oshell.Client
 	docker  *ollama.Docker
+	destroy bool
 }
 
 func (r *Resource) Metadata(_ context.Context, _ resource.MetadataRequest, out *resource.MetadataResponse) {
@@ -134,6 +139,7 @@ func (r *Resource) Configure(_ context.Context, q resource.ConfigureRequest, out
 	}
 	r.client = c.gateway
 	r.docker = c.docker
+	r.destroy = c.destroy
 }
 
 type attributeReader interface {
@@ -192,7 +198,11 @@ func (r *Resource) Read(ctx context.Context, q resource.ReadRequest, out *resour
 		r.put(ctx, &out.State, got, &out.Diagnostics)
 		return
 	}
-	got, err := oshell.Observe(ctx, r.client, r.definition.Kind, want["workspace"], want["name"])
+	observe := oshell.Observe
+	if r.destroy {
+		observe = oshell.ObserveRemoval
+	}
+	got, err := observe(ctx, r.client, r.definition.Kind, want["workspace"], want["name"])
 	if err != nil {
 		out.Diagnostics.AddError("Resource observation", err.Error())
 		return
@@ -223,6 +233,10 @@ func (r *Resource) Update(ctx context.Context, q resource.UpdateRequest, out *re
 	r.apply(ctx, want, q.Plan, &out.State, &out.Diagnostics)
 }
 func (r *Resource) apply(ctx context.Context, want oshell.Row, plan tfsdk.Plan, state *tfsdk.State, diags *diag.Diagnostics) {
+	if r.destroy {
+		diags.AddError("Creation forbidden", "destroy cannot create or update resources")
+		return
+	}
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 	var got oshell.Row
@@ -259,8 +273,21 @@ func (r *Resource) Delete(ctx context.Context, q resource.DeleteRequest, out *re
 			return
 		}
 		defer d.Close()
-		if err = d.ReplaceContainer(ctx, s, want["id"]); err != nil {
+		remove := d.ReplaceContainer
+		if r.destroy {
+			remove = d.RemoveContainer
+		}
+		if err = remove(ctx, s, want["id"]); err != nil {
 			out.Diagnostics.AddError("Replacement incomplete", err.Error())
+		}
+		return
+	}
+	if r.destroy && slices.Contains([]string{"provider", "route", "sandbox"}, r.definition.Kind) {
+		want := r.values(ctx, q.State, &out.Diagnostics)
+		if !out.Diagnostics.HasError() {
+			if err := oshell.Remove(ctx, r.client, r.definition.Kind, want); err != nil {
+				out.Diagnostics.AddError("Destroy incomplete", err.Error()+"; retain state and rerun destroy")
+			}
 		}
 		return
 	}
