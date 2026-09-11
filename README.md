@@ -1,38 +1,18 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# Finished Windows ARM64 preview 0.1.3 for PR #10799
+# Windows ARM64 OpenClaw preview 0.1.4
 
-[Download the setup EXE](https://media.githubusercontent.com/media/NVIDIA/NemoClaw/8aa14e4d1c25e9c840d9cf5bdac57e6f5dcb8874/NemoClawSetup-0.1.3-windows-arm64.exe) · [Download the MSI](https://media.githubusercontent.com/media/NVIDIA/NemoClaw/8aa14e4d1c25e9c840d9cf5bdac57e6f5dcb8874/NemoClaw-0.1.3-windows-arm64.msi)
+[Download the setup EXE](https://media.githubusercontent.com/media/NVIDIA/NemoClaw/7c570e3f09bac5a48df7a5f2b85456e35cbe77ec/NemoClawSetup-0.1.4-windows-arm64.exe) · [Download the MSI](https://media.githubusercontent.com/media/NVIDIA/NemoClaw/7c570e3f09bac5a48df7a5f2b85456e35cbe77ec/NemoClaw-0.1.4-windows-arm64.msi)
 
-**The source acceptance run failed. This preview remains unqualified.** No complete native qualification passes are certified by this publication.
-This is a selected OpenClaw finished-application candidate, not a production release.
-It does not qualify other agents, physical hardware or live search.
+**Functional acceptance passed; the timing gate failed.** Fresh install took **30.245 seconds** against the strict **30-second** target. The source workflow remains **failed**, and full qualification remains incomplete. This preview packages OpenClaw; Hermes remains pending. There is no production or physical-hardware qualification claim.
 
-The original Windows ARM64 run measured a fresh install at **28.033 seconds**.
-A [later replay of these unchanged package bytes](https://github.com/NVIDIA/NemoClaw/actions/runs/34559667235)
-measured **25.719 seconds** for install and **27.694 seconds** for uninstall (both exit 0).
-Its first installed session passed a real NVIDIA reply, file write/read, a PowerShell
-command, packaged Node code execution and clean Stop with private state released.
-Both launches copied zero runtime bytes. The second launch reached the dashboard,
-but its tool turn failed on an explicit inference-service overload; the replay remains
-failed. A separate idle measurement found high contained-process CPU, under investigation.
-These are individual GitHub Windows ARM64 runner measurements, not a guarantee for every
-machine or a complete qualification. The original source acceptance failure remains
-recorded in its immutable publication receipt.
+This build fixes the 0.1.3 system-drive preparation failure: already-prepared systems use a read-only metadata inspection, and updates request only the rights they need. Setup retains helper failures and displays their failed stage and Windows error code. It also fixes empty installation-folder cleanup during uninstall.
 
-Both complete anonymous EXE/MSI downloads were verified against their published SHA-256
-hashes after publication. No privileged account or Actions artifact download is needed.
+The [Windows ARM64 run](https://github.com/NVIDIA/NemoClaw/actions/runs/34642501912) completed install and uninstall with exit 0. Both first and warm launches passed real NVIDIA replies, file write/read, PowerShell commands, packaged Node execution, Stop and private session cleanup. Uninstall removed the installation root. Both migration paths from published preview 0.1.3 preserved user data before onboarding and passed selective reset; native setup failure reporting also passed. The [separate actual MSI controls](https://github.com/NVIDIA/NemoClaw/actions/runs/34642504758) passed empty-root removal and preservation of foreign files.
 
-Built source: `491a3a3d5e7206d82c741198062b6e2aa98dc72c`. Separately reviewed PR head: `b0e29e11ab8280a33ffcc794571b73b568de2890`.
-The [source workflow, attempt 1](https://github.com/NVIDIA/NemoClaw/actions/runs/34555046495/attempts/1)
-completed the package build and downloadable preview upload. This status is the staging-time snapshot; the workflow may have advanced.
-Its linked results remain authoritative for later acceptance progress.
+The failed fresh-install measurement covers the whole setup process; it exceeded the unchanged target by **245 ms**. Uninstall measured **29.375 seconds**. On a separate migration runner, new-version Apply-to-ready measured **25.985 seconds** for conventional reinstall and **26.031 seconds** for native replacement. Those are different measurement intervals. First and warm launches reset agent state; response durations include browser, gateway and inference rather than isolated model latency. These GitHub ARM64 runner measurements do not establish performance on every machine. Detailed startup, response, tool and idle observations and the retained timing failure are in the [acceptance and measurement receipt](https://raw.githubusercontent.com/NVIDIA/NemoClaw/7c570e3f09bac5a48df7a5f2b85456e35cbe77ec/acceptance-measurements-0.1.4.json).
 
-The [publication receipt](https://raw.githubusercontent.com/NVIDIA/NemoClaw/8aa14e4d1c25e9c840d9cf5bdac57e6f5dcb8874/installer-receipt-0.1.3.json), [build receipt](https://raw.githubusercontent.com/NVIDIA/NemoClaw/8aa14e4d1c25e9c840d9cf5bdac57e6f5dcb8874/immutable-package-build-0.1.3.json) and
-[runtime identity](https://raw.githubusercontent.com/NVIDIA/NemoClaw/8aa14e4d1c25e9c840d9cf5bdac57e6f5dcb8874/runtime-identity-0.1.3.json) bind the two verified binaries to the exact source and sealed runtime.
-The complete original [Actions artifact](https://github.com/NVIDIA/NemoClaw/actions/runs/34555046495/artifacts/10182548159) was checked against GitHub's SHA256 digest.
-Git commit signatures do not certify Windows Authenticode signing or application qualification.
+Built from source `7935e0ccee812d365fd58d32e7291fd3286a98bf` for [PR #10799](https://github.com/NVIDIA/NemoClaw/pull/10799). The installer source is pinned independently of subsequent PR changes. The [publication receipt](https://raw.githubusercontent.com/NVIDIA/NemoClaw/7c570e3f09bac5a48df7a5f2b85456e35cbe77ec/installer-receipt-0.1.4.json), [original build receipt](https://raw.githubusercontent.com/NVIDIA/NemoClaw/7c570e3f09bac5a48df7a5f2b85456e35cbe77ec/immutable-package-build-0.1.4.json), [runtime identity](https://raw.githubusercontent.com/NVIDIA/NemoClaw/7c570e3f09bac5a48df7a5f2b85456e35cbe77ec/runtime-identity-0.1.4.json) and [SHA-256 checksums](https://raw.githubusercontent.com/NVIDIA/NemoClaw/7c570e3f09bac5a48df7a5f2b85456e35cbe77ec/SHA256SUMS) identify these exact package bytes. Git commit signatures do not certify Windows Authenticode signing.
 
-The previous 0.1.0, 0.1.1 and 0.1.2 binaries and metadata are retained unchanged as historical failed-preview evidence;
-they are not the downloads linked above. This artifact branch uses Git LFS. No GitHub Release is published.
+Both complete files were [downloaded anonymously and SHA-256 verified](anonymous-download-verification-0.1.4.json). The links serve complete binaries directly from the repository's Git LFS storage. Earlier 0.1.0–0.1.3 files remain unchanged as historical preview evidence. No GitHub Release is published.

@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "repository": "NVIDIA/NemoClaw",
+  "artifactBranch": "artifacts/windows-native-pr-10799",
+  "binaryCommit": "7c570e3f09bac5a48df7a5f2b85456e35cbe77ec",
+  "productVersion": "0.1.4",
+  "verification": "anonymous-full-byte-download",
+  "allFilesVerified": true,
+  "files": [
+    {
+      "file": "NemoClaw-0.1.4-windows-arm64.msi",
+      "url": "https://media.githubusercontent.com/media/NVIDIA/NemoClaw/7c570e3f09bac5a48df7a5f2b85456e35cbe77ec/NemoClaw-0.1.4-windows-arm64.msi",
+      "expectedBytes": 150983356,
+      "expectedSha256": "6fcbdef8cbe25157d473729d1ce4a8ad00dadf1bc6f31ed134ac27a7bee91225",
+      "method": "GET",
+      "authorizationHeaderSent": false,
+      "rangeHeaderSent": false,
+      "proxyFromEnvironmentUsed": false,
+      "complete": true,
+      "httpStatus": 200,
+      "responseContentLength": "150983356",
+      "bytes": 150983356,
+      "sha256": "6fcbdef8cbe25157d473729d1ce4a8ad00dadf1bc6f31ed134ac27a7bee91225",
+      "elapsedSeconds": 48.857,
+      "completedAt": "2026-09-11T20:48:22.260440+00:00"
+    },
+    {
+      "file": "NemoClawSetup-0.1.4-windows-arm64.exe",
+      "url": "https://media.githubusercontent.com/media/NVIDIA/NemoClaw/7c570e3f09bac5a48df7a5f2b85456e35cbe77ec/NemoClawSetup-0.1.4-windows-arm64.exe",
+      "expectedBytes": 204621797,
+      "expectedSha256": "99a1f9db86f9be25cf5b903545f6dce626f9f09700c0e51b0b4040f1fd82d750",
+      "method": "GET",
+      "authorizationHeaderSent": false,
+      "rangeHeaderSent": false,
+      "proxyFromEnvironmentUsed": false,
+      "complete": true,
+      "httpStatus": 200,
+      "responseContentLength": "204621797",
+      "bytes": 204621797,
+      "sha256": "99a1f9db86f9be25cf5b903545f6dce626f9f09700c0e51b0b4040f1fd82d750",
+      "elapsedSeconds": 57.093,
+      "completedAt": "2026-09-11T20:48:30.495789+00:00"
+    }
+  ],
+  "verifiedAt": "2026-09-11T20:48:30.496155+00:00"
+}
