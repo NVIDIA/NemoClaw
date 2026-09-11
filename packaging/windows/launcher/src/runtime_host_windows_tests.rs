@@ -143,9 +143,21 @@ fn owned_process_fixture() {
             } else {
                 std::env::var("NEMOCLAW_BROWSER_PROOF_ORIGIN").unwrap()
             };
-            channel
-                .write_all(format!("bind {origin}\n").as_bytes())
-                .unwrap();
+            let bind = channel.write_all(format!("bind {origin}\n").as_bytes());
+            if mode == "browser-foreign-child" {
+                if let Err(error) = bind {
+                    // Identity rejection can close the pipe before the first
+                    // write completes. The parent still requires the exact
+                    // native runtime-service-client result, not child failure.
+                    assert!(
+                        matches!(error.raw_os_error(), Some(109) | Some(232)),
+                        "{error}"
+                    );
+                    return;
+                }
+            } else {
+                bind.unwrap();
+            }
             let mut reader = std::io::BufReader::new(channel);
             let mut line = String::new();
             if mode != "browser-owned" {

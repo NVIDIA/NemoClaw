@@ -978,7 +978,6 @@ jobs:
         shell: powershell
         env:
           CARGO_TERM_COLOR: never
-          NEMOCLAW_BROWSER_PROOF: "1"
         run: |
           Set-StrictMode -Version Latest
           $ErrorActionPreference = 'Stop'
@@ -1001,6 +1000,7 @@ jobs:
         shell: powershell
         env:
           CARGO_TERM_COLOR: never
+          NEMOCLAW_BROWSER_PROOF: "1"
         run: |
           Set-StrictMode -Version Latest
           $ErrorActionPreference = 'Stop'
