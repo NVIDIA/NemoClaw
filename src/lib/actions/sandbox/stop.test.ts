@@ -106,6 +106,10 @@ function harness(overrides: StopHarnessOverrides = {}) {
   const captureSandboxLifecycle = vi.fn<
     DockerRuntimeProviderDependencies["captureSandboxLifecycle"]
   >(captureSandboxLifecycleOverride ?? (() => ({ status: 0, output: "stopped" })));
+  const withLifecycleLockSync: NonNullable<SandboxStopDeps["withLifecycleLockSync"]> = (
+    _sandboxName,
+    operation,
+  ) => operation();
   const teardownSandboxDashboardForward =
     vi.fn<NonNullable<SandboxStopDeps["teardownSandboxDashboardForward"]>>();
   const updateSandbox = vi.fn<NonNullable<SandboxStopDeps["updateSandbox"]>>((_name, updates) => {
@@ -125,6 +129,7 @@ function harness(overrides: StopHarnessOverrides = {}) {
         printRuntimeDownGuidance: printDockerRuntimeDownGuidance,
         stopContainer: dockerStop,
         stopPortableSandbox,
+        withLifecycleLockSync,
       }),
     ],
     ["kubernetes", createKubernetesRuntimeProviderBundle()],
@@ -143,7 +148,7 @@ function harness(overrides: StopHarnessOverrides = {}) {
       gatewayChecks: [],
     }),
     withOllamaModelOwnershipLock: (operation) => operation(),
-    withLifecycleLockSync: (_sandboxName, operation) => operation(),
+    withLifecycleLockSync,
     updateSandbox,
     ...actionOverrides,
   };
