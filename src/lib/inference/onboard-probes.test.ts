@@ -348,7 +348,7 @@ describe("OpenAI-compatible inference probes", () => {
     ["gemini-2.5-pro", 256, "max_tokens"],
     ["gpt-5.4", 256, "max_completion_tokens"],
   ])("accepts an explicit reply budget for %s", (model, replyBudget, field) => {
-    expect(getChatCompletionsProbePayload(model, replyBudget)[field]).toBe(replyBudget);
+    expect(getChatCompletionsProbePayload(model, { replyBudget })[field]).toBe(replyBudget);
   });
 
   it("bounds the hosted compatible inference probe for the served Nemotron model", () => {

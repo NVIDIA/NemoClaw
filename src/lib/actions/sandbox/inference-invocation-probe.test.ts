@@ -5,7 +5,7 @@ import { spawnSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { isNvcfFunctionNotFoundForAccount } from "../../inference/nvcf-model-access";
 
 import {
@@ -504,6 +504,7 @@ describe("sandbox inference invocation probe", () => {
 
   it("executes the Gemini sandbox request with the configured reply budget (#10260)", async () => {
     const tempDir = mkdtempSync(path.join(tmpdir(), "nemoclaw-gemini-probe-"));
+    onTestFinished(() => rmSync(tempDir, { recursive: true, force: true }));
     const fakeBin = path.join(tempDir, "bin");
     const capturedPayload = path.join(tempDir, "payload.json");
     mkdirSync(fakeBin);
@@ -562,6 +563,7 @@ printf '200'
       ok: false,
       detail: "sandbox inference invocation probe returned an invalid response body",
       httpStatus: 200,
+      endpoint: "https://inference.local/v1/chat/completions",
     });
   });
 

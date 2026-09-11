@@ -69,14 +69,8 @@ export function isKimiK26Model(model: unknown): boolean {
 
 export function getChatCompletionsProbePayload(
   model: string,
-  optionsOrReplyBudget:
-    | { useNvidiaEndpointProbePayload?: boolean; replyBudget?: number }
-    | number = {},
+  options: { useNvidiaEndpointProbePayload?: boolean; replyBudget?: number } = {},
 ): Record<string, unknown> {
-  const options =
-    typeof optionsOrReplyBudget === "number"
-      ? { replyBudget: optionsOrReplyBudget }
-      : optionsOrReplyBudget;
   const maxTokensField = resolveMaxTokensField(model);
   const defaultReplyBudget = options.replyBudget ?? MIN_PROBE_REPLY_TOKENS;
   const payload = {
