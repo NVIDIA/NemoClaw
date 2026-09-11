@@ -3,6 +3,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { ownChildProcess } from "../../helpers/child-process-lifecycle.ts";
 
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
@@ -10,10 +11,22 @@ import { resultText } from "../fixtures/clients/index.ts";
 import { type SandboxClient, validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect } from "../fixtures/e2e-test.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
+import { spawnObservedChild } from "../fixtures/observed-child-process.ts";
+import type { TestProgress } from "../fixtures/progress.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { stripAnsi } from "./json-envelope.ts";
 
 export { REPO_ROOT };
+
+/** The export fixture owns only this attached daemon; onboarding owns the auth proxy. */
+export function startAttachedOllama(progress: TestProgress, environment: NodeJS.ProcessEnv) {
+  const child = spawnObservedChild("ollama", ["serve"], {
+    activityLabel: "attached Ollama daemon",
+    progress,
+    spawn: { cwd: REPO_ROOT, env: environment, stdio: "ignore" },
+  });
+  return ownChildProcess(child);
+}
 
 export const CLI = CLI_ENTRYPOINT;
 export const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-gpu-ollama";

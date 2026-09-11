@@ -1,31 +1,46 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 
+import { createHermesPortableUninstallFixture } from "../../../../test/helpers/hermes-portable-uninstall-fixture";
 import { createConnectHarness } from "../../../../test/support/connect-flow-test-harness";
 import type { OpenShellSandboxBufferedCommandRequest } from "../../adapters/openshell/sandbox-command";
+import { hermesPortableReceiptDirectory } from "../../onboard/experimental/hermes-portable-receipt";
+import type { SandboxEntry } from "../../state/registry";
 import { HermesPortableForwardRecoveryError } from "./probe/hermes-portable-forward-recovery";
 
 const originalStdoutIsTty = process.stdout.isTTY;
 
-function acceptedHermesHarness(provider: string | null, model: string | null) {
-  const entry = {
-    name: "alpha",
-    agent: "hermes",
-    provider,
-    model,
-    policies: [],
-    openshellDriver: "docker",
-    gatewayName: "nemoclaw",
-    lifecycleGeneration: "generation-1",
-    lifecycleLiveIdentityFingerprint: "f".repeat(64),
-  } as never;
+function acceptedHermesHarness(
+  provider: string | null,
+  model: string | null,
+  options: { entry?: SandboxEntry; useRealPortableReceipt?: boolean } = {},
+) {
+  const entry =
+    options.entry ??
+    ({
+      name: "alpha",
+      agent: "hermes",
+      provider,
+      model,
+      policies: [],
+      openshellDriver: "docker",
+      gatewayName: "nemoclaw",
+      lifecycleGeneration: "generation-1",
+      lifecycleLiveIdentityFingerprint: "f".repeat(64),
+    } as never);
   const harness = createConnectHarness({
     agentName: "hermes",
     sessionAgent: { name: "hermes" },
     registryEntry: entry,
-    portableReceiptDisposition: { kind: "hermes", phase: "active" },
+    ...(options.useRealPortableReceipt
+      ? { useRealPortableReceipt: true }
+      : { portableReceiptDisposition: { kind: "hermes" as const, phase: "active" as const } }),
     readinessDecision: {
       kind: "accepted",
       category: "accepted",
@@ -44,13 +59,14 @@ function acceptedHermesHarness(provider: string | null, model: string | null) {
 
 function configureHealthyForward(harness: ReturnType<typeof acceptedHermesHarness>): void {
   const captureResolved = harness.captureResolvedOpenshellSpy.getMockImplementation()!;
+  const sandboxName = harness.registryEntries[0]!.name;
   harness.spawnSyncSpy.mockReturnValue({ status: 0, signal: null } as never);
   harness.captureResolvedOpenshellSpy.mockImplementation(((args: unknown, options: unknown) => {
     const argv = Array.isArray(args) ? args.map(String) : [];
     return argv[0] === "forward" && argv[1] === "list"
       ? {
           status: 0,
-          output: "SANDBOX BIND PORT PID STATUS\nalpha 127.0.0.1 18789 12345 running",
+          output: `SANDBOX BIND PORT PID STATUS\n${sandboxName} 127.0.0.1 18789 12345 running`,
         }
       : captureResolved(args, options);
   }) as never);
@@ -142,6 +158,43 @@ describe("Hermes accepted launch-readiness probe", () => {
     expect(harness.logSpy.mock.calls.flat().join("\n")).toMatch(
       /Probe timing: .*lifecycleAction=reused forwardAction=verified result=ready/,
     );
+  });
+
+  it("accepts only host-state Portable authority on a non-default gateway port", async () => {
+    const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-connect-portable-state-"));
+    vi.stubEnv("HOME", homeDir);
+    vi.stubEnv("NEMOCLAW_GATEWAY_PORT", "18080");
+    const fixture = await createHermesPortableUninstallFixture(homeDir);
+    const gatewayStateDir = path.join(homeDir, ".nemoclaw", "gateways", "18080");
+    const gatewayReceiptDirectory = hermesPortableReceiptDirectory(
+      fixture.targetRow.name,
+      gatewayStateDir,
+    );
+    fs.mkdirSync(path.dirname(gatewayReceiptDirectory), { recursive: true, mode: 0o700 });
+    fs.cpSync(
+      hermesPortableReceiptDirectory(fixture.targetRow.name, fixture.stateDir),
+      gatewayReceiptDirectory,
+      { recursive: true },
+    );
+
+    try {
+      const entry = { ...fixture.targetRow, gatewayPort: 18_080 };
+      const harness = acceptedHermesHarness(entry.provider ?? null, entry.model ?? null, {
+        entry,
+        useRealPortableReceipt: true,
+      });
+      configureHealthyForward(harness);
+
+      await expect(
+        harness.connectSandbox(entry.name, { probeOnly: true }),
+      ).resolves.toBeUndefined();
+
+      expect(harness.qualifyHermesPortableAcceptedReadinessAuthoritySpy).toHaveBeenCalled();
+      expect(harness.checkAndRecoverSpy).not.toHaveBeenCalled();
+    } finally {
+      fixture.restore();
+      fs.rmSync(homeDir, { recursive: true, force: true });
+    }
   });
 
   it("publishes missing readiness for one running exact runtime without recovery", async () => {
