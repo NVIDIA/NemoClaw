@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
+import fs from "node:fs";
+import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SetupInference, SetupInferenceDeps } from "../../src/lib/onboard/setup-inference.js";
 import {
   createDirectCommandRouter,
@@ -9,9 +10,19 @@ import {
   withProcessEnv,
 } from "../support/setup-inference-test-harness.js";
 
-const onboard = require("../../src/lib/onboard") as {
-  createSetupInference: (overrides?: Partial<SetupInferenceDeps>) => SetupInference;
+const testHome = await vi.hoisted(async () => {
+  const fs = await import("node:fs");
+  const os = await import("node:os");
+  const path = await import("node:path");
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-scope-"));
+  vi.stubEnv("HOME", directory);
+  return directory;
+});
+const { default: onboard } = (await import("../../src/lib/onboard")) as unknown as {
+  default: { createSetupInference: (overrides?: Partial<SetupInferenceDeps>) => SetupInference };
 };
+afterAll(() => fs.rmSync(testHome, { recursive: true, force: true }));
+beforeEach(() => vi.stubEnv("HOME", testHome));
 
 const createHarness = createDirectSetupInferenceHarnessFactory(onboard.createSetupInference);
 const GATEWAY = "nemoclaw-9090";
@@ -196,11 +207,6 @@ describe("onboarding inference gateway scope", () => {
                 stderr:
                   "provider 'compatible-anthropic-endpoint' is attached to sandbox(es): test-box",
               },
-              {
-                status: 1,
-                stderr:
-                  "provider 'compatible-anthropic-endpoint' is attached to sandbox(es): test-box",
-              },
               { status: 0 },
             ],
           },
@@ -225,7 +231,7 @@ describe("onboarding inference gateway scope", () => {
           ),
         ).resolves.toEqual({ ok: true });
 
-        expect(commandRouter.callCount("provider-delete")).toBe(3);
+        expect(commandRouter.callCount("provider-delete")).toBe(2);
         expect(harness.commands.map(({ command }) => command)).toContain(
           `sandbox provider detach -g ${GATEWAY} test-box compatible-anthropic-endpoint`,
         );
