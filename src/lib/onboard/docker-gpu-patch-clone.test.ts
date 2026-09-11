@@ -10,6 +10,7 @@ import {
   getDockerGpuPatchNetworkMode,
 } from "./docker-gpu-patch";
 import { shouldOmitOpenShellOciImageUser } from "./docker-gpu-patch-clone";
+import { openshellMainProcessSpecEnvValue } from "./docker-startup-command-env";
 
 const NEMOCLAW_STARTUP_ARGV = ["env", "/usr/local/bin/nemoclaw-start"] as const;
 
@@ -32,6 +33,68 @@ function openShellOciWorkspaceInspect() {
 }
 
 describe("Docker GPU clone envelope", () => {
+  it("rewrites the exact OpenShell 0.0.116 main-process argv without adding the legacy command", () => {
+    const inspect = inspectFixture();
+    inspect.Config!.Env = [
+      ...inspect.Config!.Env!.filter((entry) => !entry.startsWith("OPENSHELL_SANDBOX_COMMAND=")),
+      `OPENSHELL_MAIN_PROCESS_SPEC=${openshellMainProcessSpecEnvValue(["env", "hold"], true)}`,
+    ];
+
+    const args = buildDockerGpuCloneRunArgs(inspect, buildDockerGpuMode("startup-command"), {
+      openshellSandboxCommand: ["env", "VALUE=a b", "/usr/local/bin/nemoclaw-start"],
+    });
+
+    expect(args).toEqual(
+      expect.arrayContaining([
+        "--env",
+        `OPENSHELL_MAIN_PROCESS_SPEC=${openshellMainProcessSpecEnvValue(
+          ["env", "VALUE=a b", "/usr/local/bin/nemoclaw-start"],
+          true,
+        )}`,
+      ]),
+    );
+    expect(args.some((arg) => arg.startsWith("OPENSHELL_SANDBOX_COMMAND="))).toBe(false);
+  });
+
+  it("drops legacy startup metadata when the inspected container has both transports", () => {
+    const inspect = inspectFixture();
+    inspect.Config!.Env = [
+      ...inspect.Config!.Env!.filter(
+        (entry) =>
+          !entry.startsWith("OPENSHELL_SANDBOX_COMMAND=") &&
+          !entry.startsWith("OPENSHELL_MAIN_PROCESS_SPEC="),
+      ),
+      "OPENSHELL_SANDBOX_COMMAND=env stale-command",
+      `OPENSHELL_MAIN_PROCESS_SPEC=${openshellMainProcessSpecEnvValue(["env", "hold"], true)}`,
+    ];
+
+    const args = buildDockerGpuCloneRunArgs(inspect, buildDockerGpuMode("startup-command"), {
+      openshellSandboxCommand: NEMOCLAW_STARTUP_ARGV,
+    });
+
+    expect(args).toEqual(
+      expect.arrayContaining([
+        "--env",
+        `OPENSHELL_MAIN_PROCESS_SPEC=${openshellMainProcessSpecEnvValue(
+          NEMOCLAW_STARTUP_ARGV,
+          true,
+        )}`,
+      ]),
+    );
+    expect(args.some((arg) => arg.startsWith("OPENSHELL_SANDBOX_COMMAND="))).toBe(false);
+  });
+
+  it("rejects a malformed OpenShell 0.0.116 main-process transport before recreation", () => {
+    const inspect = inspectFixture();
+    inspect.Config!.Env = ['OPENSHELL_MAIN_PROCESS_SPEC={"version":2}'];
+
+    expect(() =>
+      buildDockerGpuCloneRunArgs(inspect, buildDockerGpuMode("startup-command"), {
+        openshellSandboxCommand: NEMOCLAW_STARTUP_ARGV,
+      }),
+    ).toThrow(/does not match the 0\.0\.116 Docker contract/u);
+  });
+
   it("omits only OpenShell's OCI-user marker at the exact NemoClaw workspace boundary (#8662)", () => {
     const inspect = openShellOciWorkspaceInspect();
     const args = buildDockerGpuCloneRunArgs(inspect, buildDockerGpuMode("startup-command"), {

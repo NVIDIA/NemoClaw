@@ -312,9 +312,41 @@ const NemoClawManagedInferenceProviderConfigSchema = Type.Object(
   { additionalProperties: false },
 );
 
+export const EXPORTED_OLLAMA_MODEL = "qwen3.5:9b" as const;
+export const NemoClawOllamaServingSchema = Type.Object(
+  {
+    backend: Type.Literal("ollama"),
+    daemon: Type.Object(
+      { management: Type.Literal("external"), hostPort: TcpPortSchema },
+      { additionalProperties: false },
+    ),
+    proxy: Type.Object(
+      { management: Type.Literal("nemoclaw"), hostPort: TcpPortSchema },
+      { additionalProperties: false },
+    ),
+    model: Type.Object(
+      { servedName: Type.Literal(EXPORTED_OLLAMA_MODEL), digest: ServingDigestSchema },
+      { additionalProperties: false },
+    ),
+  },
+  { additionalProperties: false },
+);
+export type NemoClawOllamaServing = TypeBoxModule.Type.Static<typeof NemoClawOllamaServingSchema>;
+
+const NemoClawOllamaInferenceProviderConfigSchema = Type.Object(
+  {
+    name: LocalResourceNameSchema,
+    provider: Type.Literal("ollama-local"),
+    api: Type.Literal("openai-completions"),
+    serving: NemoClawOllamaServingSchema,
+  },
+  { additionalProperties: false },
+);
+
 const NemoClawInferenceProviderConfigSchema = Type.Union([
   NemoClawHostedInferenceProviderConfigSchema,
   NemoClawManagedInferenceProviderConfigSchema,
+  NemoClawOllamaInferenceProviderConfigSchema,
 ]);
 
 const NemoClawRouteOverridesSchema = Type.Object(
@@ -331,7 +363,7 @@ const NemoClawInferenceRouteConfigSchema = Type.Object(
   { additionalProperties: false },
 );
 
-export const NemoClawAgentToolsConfigSchema = Type.Object(
+export const NemoClawAgentToolDisclosureSchema = Type.Object(
   { disclosure: Type.Union([Type.Literal("progressive"), Type.Literal("direct")]) },
   { additionalProperties: false },
 );
@@ -426,6 +458,32 @@ export const NemoClawOpenClawObservabilitySchema = Type.Object(
   },
   { additionalProperties: false },
 );
+
+export const NemoClawReadOnlyAgentToolsSchema = Type.Object(
+  { allow: Type.Array(Type.Literal("read"), { minItems: 1, maxItems: 1 }) },
+  { additionalProperties: false },
+);
+
+export const NemoClawAgentToolsConfigSchema = Type.Union([
+  NemoClawAgentToolDisclosureSchema,
+  NemoClawReadOnlyAgentToolsSchema,
+]);
+
+// Exported secondary names must also be valid runtime IDs; main maps to primary.
+const SecondaryAgentNameSchema = Type.String({
+  minLength: 1,
+  maxLength: 32,
+  pattern: "^(?!main$|primary$)[a-z](?:[a-z0-9-]*[a-z0-9])?$",
+});
+
+export const NemoClawAdditionalAgentSchema = Type.Object(
+  { name: SecondaryAgentNameSchema, tools: NemoClawReadOnlyAgentToolsSchema },
+  { additionalProperties: false },
+);
+
+export function isValidNemoClawSecondaryAgentName(value: unknown): value is string {
+  return Check(SecondaryAgentNameSchema, value);
+}
 
 const nemoClawAgentFields = {
   name: LocalResourceNameSchema,

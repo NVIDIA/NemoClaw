@@ -71,12 +71,14 @@ function failedUnload(
 }
 
 type StopHarnessOverrides = Partial<SandboxStopDeps> & {
+  captureSandboxLifecycle?: DockerRuntimeProviderDependencies["captureSandboxLifecycle"];
   dockerStop?: DockerRuntimeProviderDependencies["stopContainer"];
   findLabeledSandboxContainers?: DockerRuntimeProviderDependencies["findLabeledSandboxContainers"];
 };
 
 function harness(overrides: StopHarnessOverrides = {}) {
   const {
+    captureSandboxLifecycle: captureSandboxLifecycleOverride,
     dockerStop: dockerStopOverride,
     findLabeledSandboxContainers: findContainersOverride,
     ...actionOverrides
@@ -101,6 +103,13 @@ function harness(overrides: StopHarnessOverrides = {}) {
   const dockerStop = vi.fn<DockerRuntimeProviderDependencies["stopContainer"]>(
     dockerStopOverride ?? (() => ({ status: 0 })),
   );
+  const captureSandboxLifecycle = vi.fn<
+    DockerRuntimeProviderDependencies["captureSandboxLifecycle"]
+  >(captureSandboxLifecycleOverride ?? (() => ({ status: 0, output: "stopped" })));
+  const withLifecycleLockSync: NonNullable<SandboxStopDeps["withLifecycleLockSync"]> = (
+    _sandboxName,
+    operation,
+  ) => operation();
   const teardownSandboxDashboardForward =
     vi.fn<NonNullable<SandboxStopDeps["teardownSandboxDashboardForward"]>>();
   const updateSandbox = vi.fn<NonNullable<SandboxStopDeps["updateSandbox"]>>((_name, updates) => {
@@ -113,12 +122,14 @@ function harness(overrides: StopHarnessOverrides = {}) {
     [
       "docker",
       createDockerRuntimeProviderBundle({
+        captureSandboxLifecycle,
         findLabeledSandboxContainers,
         hasPortableLifecycleReceipt,
         isRuntimeDown: isDockerRuntimeDown,
         printRuntimeDownGuidance: printDockerRuntimeDownGuidance,
         stopContainer: dockerStop,
         stopPortableSandbox,
+        withLifecycleLockSync,
       }),
     ],
     ["kubernetes", createKubernetesRuntimeProviderBundle()],
@@ -137,11 +148,12 @@ function harness(overrides: StopHarnessOverrides = {}) {
       gatewayChecks: [],
     }),
     withOllamaModelOwnershipLock: (operation) => operation(),
-    withLifecycleLockSync: (_sandboxName, operation) => operation(),
+    withLifecycleLockSync,
     updateSandbox,
     ...actionOverrides,
   };
   return {
+    captureSandboxLifecycle,
     deps,
     dockerStop,
     teardownSandboxDashboardForward,
@@ -280,7 +292,7 @@ describe("discoverActiveOllamaSandboxNames", () => {
 });
 
 describe("stopSandbox", () => {
-  it("gracefully stops in-sandbox channels before stopping the container (#6026)", () => {
+  it("gracefully stops in-sandbox channels before stopping through OpenShell (#6026)", () => {
     const h = harness();
 
     const result = stopSandbox("my-sandbox", h.deps);
@@ -294,12 +306,14 @@ describe("stopSandbox", () => {
         warn: expect.any(Function),
       }),
     );
-    expect(h.dockerStop).toHaveBeenCalledWith("openshell-my-sandbox", {
-      ignoreError: true,
-      timeout: 30_000,
-    });
+    expect(h.captureSandboxLifecycle).toHaveBeenCalledWith(
+      "stop",
+      "my-sandbox",
+      "nemoclaw",
+      process.env,
+    );
     expect(h.stopSandboxChannels.mock.invocationCallOrder[0]).toBeLessThan(
-      h.dockerStop.mock.invocationCallOrder[0],
+      h.captureSandboxLifecycle.mock.invocationCallOrder[0],
     );
   });
 
@@ -311,7 +325,7 @@ describe("stopSandbox", () => {
     expect(result.exitCode).toBe(0);
     expect(h.teardownSandboxDashboardForward).toHaveBeenCalledWith("my-sandbox");
     // Release the forward only after the container is stopped, never before.
-    expect(h.dockerStop.mock.invocationCallOrder[0]).toBeLessThan(
+    expect(h.captureSandboxLifecycle.mock.invocationCallOrder[0]).toBeLessThan(
       h.teardownSandboxDashboardForward.mock.invocationCallOrder[0],
     );
   });
@@ -332,7 +346,9 @@ describe("stopSandbox", () => {
   });
 
   it("does not release the dashboard forward when the container failed to stop (#7227)", () => {
-    const h = harness({ dockerStop: vi.fn(() => ({ status: 1 })) });
+    const h = harness({
+      captureSandboxLifecycle: () => ({ status: 1, output: "gateway unavailable" }),
+    });
 
     const result = stopSandbox("my-sandbox", h.deps);
 
@@ -351,7 +367,9 @@ describe("stopSandbox", () => {
   });
 
   it("does not record stopped: true when container stop fails (#11025)", () => {
-    const h = harness({ dockerStop: vi.fn(() => ({ status: 1 })) });
+    const h = harness({
+      captureSandboxLifecycle: () => ({ status: 1, output: "gateway unavailable" }),
+    });
 
     const result = stopSandbox("my-sandbox", h.deps);
 
@@ -534,7 +552,7 @@ describe("stopSandbox", () => {
     });
   });
 
-  it("stops a paused container (#6026)", () => {
+  it("stops a paused container through OpenShell (#6026)", () => {
     const h = harness();
     h.findLabeledSandboxContainers.mockReturnValue([
       {
@@ -547,10 +565,11 @@ describe("stopSandbox", () => {
     const result = stopSandbox("my-sandbox", h.deps);
 
     expect(result.exitCode).toBe(0);
-    expect(h.dockerStop).toHaveBeenCalledTimes(1);
+    expect(h.captureSandboxLifecycle).toHaveBeenCalledTimes(1);
+    expect(h.dockerStop).not.toHaveBeenCalled();
   });
 
-  it("stops every running labeled container, including backup siblings (#6026)", () => {
+  it("stops the authoritative sandbox and an orphaned GPU backup sibling (#6026)", () => {
     const h = harness();
     h.findLabeledSandboxContainers.mockReturnValue([
       container("openshell-my-sandbox", true),
@@ -560,10 +579,15 @@ describe("stopSandbox", () => {
     const result = stopSandbox("my-sandbox", h.deps);
 
     expect(result.exitCode).toBe(0);
-    expect(h.dockerStop).toHaveBeenCalledTimes(2);
+    expect(h.captureSandboxLifecycle).toHaveBeenCalledTimes(1);
+    expect(h.dockerStop).toHaveBeenCalledTimes(1);
+    expect(h.dockerStop).toHaveBeenCalledWith(
+      "openshell-my-sandbox-nemoclaw-gpu-backup-1700000000000",
+      { ignoreError: true, timeout: 30_000 },
+    );
   });
 
-  it("continues to docker stop when the graceful channel stop throws (#6026)", () => {
+  it("continues to OpenShell stop when the graceful channel stop throws (#6026)", () => {
     const h = harness();
     h.stopSandboxChannels.mockImplementation(() => {
       throw new Error("gateway unreachable");
@@ -572,7 +596,7 @@ describe("stopSandbox", () => {
     const result = stopSandbox("my-sandbox", h.deps);
 
     expect(result.exitCode).toBe(0);
-    expect(h.dockerStop).toHaveBeenCalledTimes(1);
+    expect(h.captureSandboxLifecycle).toHaveBeenCalledTimes(1);
     const warned = h.warn.mock.calls.map(([line]) => line).join("\n");
     expect(warned).toContain("gateway unreachable");
   });
@@ -661,42 +685,39 @@ describe("stopSandbox", () => {
     expect(result.exitCode).toBe(0);
   });
 
-  it("surfaces a docker stop failure with the container name (#6026)", () => {
-    const h = harness();
-    h.dockerStop.mockReturnValue({ status: 125 });
+  it("surfaces an OpenShell stop failure with the sandbox name (#6026)", () => {
+    const h = harness({
+      captureSandboxLifecycle: () => ({ status: 125, output: "gateway unavailable" }),
+    });
 
     const result = stopSandbox("my-sandbox", h.deps);
 
     expect(result.exitCode).toBe(1);
-    expect(result.message).toContain("openshell-my-sandbox");
+    expect(result.message).toContain("my-sandbox");
     expect(result.message).toContain("125");
   });
 
-  it("attempts every container and aggregates failures when one stop fails (#6026)", () => {
-    const h = harness();
+  it("stops the authoritative sandbox even when an orphaned backup stop fails (#6026)", () => {
+    const h = harness({ dockerStop: () => ({ status: 137 }) });
     h.findLabeledSandboxContainers.mockReturnValue([
       container("openshell-my-sandbox", true),
       container("openshell-my-sandbox-nemoclaw-gpu-backup-1700000000000", true),
     ]);
-    // First container fails to stop; the sibling still must be attempted.
-    h.dockerStop.mockReturnValueOnce({ status: 137 }).mockReturnValueOnce({ status: 0 });
-
     const result = stopSandbox("my-sandbox", h.deps);
 
     expect(result.exitCode).toBe(1);
-    expect(h.dockerStop).toHaveBeenCalledTimes(2);
+    expect(h.captureSandboxLifecycle).toHaveBeenCalledTimes(1);
+    expect(h.dockerStop).toHaveBeenCalledTimes(1);
     expect(h.teardownSandboxDashboardForward).not.toHaveBeenCalled();
-    expect(h.dockerStop).toHaveBeenNthCalledWith(
-      2,
+    expect(h.dockerStop).toHaveBeenCalledWith(
       "openshell-my-sandbox-nemoclaw-gpu-backup-1700000000000",
       {
         ignoreError: true,
         timeout: 30_000,
       },
     );
-    expect(result.message).toContain("openshell-my-sandbox");
+    expect(result.message).toContain("gpu-backup");
     expect(result.message).toContain("137");
-    expect(result.message).not.toContain("gpu-backup");
   });
 
   it("never removes containers or touches the registry entry (#6026)", () => {
@@ -704,11 +725,9 @@ describe("stopSandbox", () => {
 
     stopSandbox("my-sandbox", h.deps);
 
-    // The deps surface has no removal lever at all; assert the only docker
-    // mutation issued is the stop of the labeled container.
-    expect(h.dockerStop.mock.calls).toEqual([
-      ["openshell-my-sandbox", { ignoreError: true, timeout: 30_000 }],
-    ]);
+    // The ordinary path must not mutate the OpenShell-owned container directly.
+    expect(h.dockerStop).not.toHaveBeenCalled();
+    expect(h.captureSandboxLifecycle).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -939,7 +958,10 @@ describe("stopSandbox Ollama GPU release", () => {
     const unloadOllamaModels = vi.fn(() => successfulUnload());
     const h = harness({ listSandboxes: registryOf(ollamaSandbox), unloadOllamaModels });
     h.getSandbox.mockReturnValue(ollamaSandbox);
-    h.dockerStop.mockReturnValue({ status: 125 });
+    h.captureSandboxLifecycle.mockReturnValue({
+      status: 125,
+      output: "gateway unavailable",
+    });
 
     const result = stopSandbox("my-sandbox", h.deps);
 

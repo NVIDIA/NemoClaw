@@ -27,6 +27,8 @@ import type {
 import { getLiveGatewayInference } from "../../inference/live";
 import { VLLM_LOCAL_CREDENTIAL_ENV } from "../../inference/serving/vllm-credential-contract";
 import { observeManagedVllmForExport } from "../../inference/serving/vllm-export-runtime";
+import { createOllamaExportProbe } from "../../inference/ollama/proxy";
+import { observeOllamaProxy } from "../../inference/ollama/proxy-observation";
 import { normalizeInferenceSelection } from "../../inference/selection";
 import { resolveGatewayName } from "../../onboard/gateway-binding/identity";
 import {
@@ -149,9 +151,32 @@ function inferenceTopology(
   managed: boolean,
 ): ObservedExportInference["topology"] {
   if (managed) return "managed";
+  if (entry.provider === "ollama-local") return "local";
   return entry.hostLocalInferenceReceipt || entry.hostLocalInferenceProvenance || entry.nimContainer
     ? "local"
     : "hosted";
+}
+
+function matchesProviderMetadata(
+  provider: Provider,
+  normalized: ReturnType<typeof normalizeInferenceSelection>,
+  routeProvider: string,
+  managed: boolean,
+): boolean {
+  const { type, configKey } = providerContract(normalized.preferredInferenceApi);
+  const builtin = provider.builtinInferenceEndpoint !== undefined;
+  return (
+    type !== null &&
+    isDeepStrictEqual(
+      [provider.name, provider.type, provider.credentialKeys, provider.configKeys],
+      [
+        routeProvider,
+        builtin ? "nvidia" : type,
+        expectedCredentialKeys(normalized.credentialEnv, managed),
+        builtin ? [] : [configKey],
+      ],
+    )
+  );
 }
 
 async function readProviderEvidence(
@@ -161,29 +186,23 @@ async function readProviderEvidence(
   signal: AbortSignal,
   managedServing?: ObservedManagedVllmRuntime,
 ): Promise<ObservedExportEndpointEvidence> {
-  const { type, configKey } = providerContract(normalized.preferredInferenceApi);
+  const { configKey } = providerContract(normalized.preferredInferenceApi);
+  const managedProfile = !!managedServing || routeProvider === "ollama-local";
   const provider = await createProviders().get({
     target: namedOpenShellGateway(gatewayName),
     workspace: "default",
     name: routeProvider,
-    ...(managedServing ? { profileContract: "openai" as const } : {}),
+    ...(managedProfile ? { profileContract: "openai" as const } : {}),
     configKeys: [configKey],
     signal,
   });
   if (!provider) throw new Error("The live inference provider is missing.");
-  const credentialKeys = expectedCredentialKeys(normalized.credentialEnv, !!managedServing);
   const builtin = provider.builtinInferenceEndpoint !== undefined;
-  if (
-    type === null ||
-    !isDeepStrictEqual(
-      [provider.name, provider.type, provider.credentialKeys, provider.configKeys],
-      [routeProvider, builtin ? "nvidia" : type, credentialKeys, builtin ? [] : [configKey]],
-    )
-  ) {
+  if (!matchesProviderMetadata(provider, normalized, routeProvider, !!managedServing)) {
     throw new Error("The live inference provider metadata does not match the registry.");
   }
   return {
-    provider: providerIdentity(provider, gatewayName, !!managedServing),
+    provider: providerIdentity(provider, gatewayName, managedProfile),
     endpoint: provider.builtinInferenceEndpoint ?? provider.config[configKey] ?? "",
     source: builtin
       ? { kind: "builtin-profile", profileId: "nvidia" }
@@ -193,14 +212,14 @@ async function readProviderEvidence(
 
 async function inferenceFor(
   entry: Readonly<SandboxEntry>,
-  beforeProviderRead: () => void,
+  beforeRead: (stage: ExportSnapshotReadStage) => void,
   signal: AbortSignal,
   managedServing?: ObservedManagedVllmRuntime,
 ): Promise<ObservedExportInference> {
   const normalized = normalizeInferenceSelection(entry);
   const gateway = resolveGatewayBinding(entry);
   const live = readInferenceRoute(entry, gateway.name);
-  beforeProviderRead();
+  beforeRead("provider-metadata");
   const endpointEvidence = await readProviderEvidence(
     normalized,
     live.provider,
@@ -208,6 +227,11 @@ async function inferenceFor(
     signal,
     managedServing,
   );
+  let ollamaServing: ObservedExportInference["ollamaServing"];
+  if (entry.provider === "ollama-local") {
+    beforeRead("ollama-serving");
+    ollamaServing = observeOllamaProxy({ model: live.model, ...createOllamaExportProbe() });
+  }
   return {
     topology: inferenceTopology(entry, !!managedServing),
     provider: live.provider,
@@ -217,6 +241,7 @@ async function inferenceFor(
     endpointEvidence,
     credentialEnv: normalized.credentialEnv,
     ...(managedServing ? { managedServing } : {}),
+    ...(ollamaServing ? { ollamaServing } : {}),
   };
 }
 
@@ -305,8 +330,8 @@ async function readSnapshot(sandboxName: string): Promise<RawExportSnapshot> {
     stage = "inference-route";
     const inference = await inferenceFor(
       entry,
-      () => {
-        stage = "provider-metadata";
+      (nextStage) => {
+        stage = nextStage;
       },
       signal,
       managedServing,

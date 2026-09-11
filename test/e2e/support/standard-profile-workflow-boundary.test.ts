@@ -136,6 +136,20 @@ describe("standard E2E execution profile", () => {
     );
   });
 
+  it("requires the SDK producer to include an available reviewed transition replacement", () => {
+    const workflow = readWorkflow() as {
+      jobs: Record<string, { steps: Array<{ env?: Record<string, string>; name?: string }> }>;
+    };
+    const packageStep = workflow.jobs["package-openshell-sdk"]!.steps.find(
+      (step) => step.name === "Download and verify reviewed OpenShell SDK packages",
+    )!;
+    delete packageStep.env!.NEMOCLAW_OPEN_SHELL_SDK_INCLUDE_AVAILABLE_REPLACEMENT;
+
+    expect(validateStandardProfileWorkflowBoundary(workflow)).toContain(
+      "catalogue SDK packaging must include an available reviewed transition replacement",
+    );
+  });
+
   it("rejects a catalogue caller that does not consume its SDK artifact", () => {
     const workflow = readWorkflow() as { jobs: Record<string, { with: Record<string, string> }> };
     workflow.jobs["catalogue-nvidia-inference"]!.with.openshell_sdk_artifact_name = "unrelated";

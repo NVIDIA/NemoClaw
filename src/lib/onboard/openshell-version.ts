@@ -7,7 +7,7 @@ import path from "node:path";
 import { resolveOpenshell } from "../adapters/openshell/resolve";
 import { ROOT, runCapture } from "../runner";
 
-export const SUPPORTED_OPENSHELL_FALLBACK_VERSION = "0.0.106";
+export const SUPPORTED_OPENSHELL_FALLBACK_VERSION = "0.0.116";
 
 export function getInstalledOpenshellVersion(versionOutput: string | null = null): string | null {
   const openshellBin = resolveOpenshell();
@@ -98,9 +98,9 @@ export function isOpenshellDevVersion(versionOutput: string | null | undefined):
 }
 
 export function shouldAllowOpenshellAboveBlueprintMax(
-  versionOutput: string | null | undefined,
-  platform: NodeJS.Platform = process.platform,
-  env: NodeJS.ProcessEnv = process.env,
+  _versionOutput: string | null | undefined,
+  _platform: NodeJS.Platform = process.platform,
+  _env: NodeJS.ProcessEnv = process.env,
 ): boolean {
-  return shouldUseOpenshellDevChannel(platform, env) && isOpenshellDevVersion(versionOutput);
+  return false;
 }

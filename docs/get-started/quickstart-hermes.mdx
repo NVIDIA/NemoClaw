@@ -151,7 +151,7 @@ Use these details when your first-run path needs more control.
     nemohermes my-hermes gateway restart
     ```
 
-    Hermes receives revision-scoped `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` placeholders.
+    Hermes receives OpenShell credential-handle `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` placeholders.
     OpenShell decodes the Langfuse Basic-auth header, replaces both placeholders only for `cloud.langfuse.com:443`, and re-encodes the header before forwarding it.
     The managed Hermes plugin rejects a Langfuse base URL that is not absolute HTTPS before it constructs the authenticated client.
     Do not put raw keys or copied `HERMES_LANGFUSE_PUBLIC_KEY` and `HERMES_LANGFUSE_SECRET_KEY` placeholders in `~/.hermes/.env`.
