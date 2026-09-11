@@ -338,6 +338,41 @@ describe("protected managed-image source-root boundary", () => {
 });
 
 describe("protected managed-image build-cache boundary", () => {
+  it("keeps the legacy root runtime contract unless a reviewed transition selects sandbox", () => {
+    stubBuildInvocation();
+
+    const legacy = runBuild(REPO_ROOT);
+
+    expect(legacy.status, legacy.stderr).toBe(0);
+    expect(recordedBuildInvocations()).toHaveLength(3);
+    expect(
+      recordedBuildInvocations().every((invocation) =>
+        invocation.includes("--build-arg NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root"),
+      ),
+    ).toBe(true);
+
+    writeFileSync(dockerLog, "", "utf8");
+    const transitioned = runBuild(REPO_ROOT, ["--runtime-user", "sandbox"]);
+
+    expect(transitioned.status, transitioned.stderr).toBe(0);
+    expect(recordedBuildInvocations()).toHaveLength(3);
+    expect(
+      recordedBuildInvocations().every((invocation) =>
+        invocation.includes("--build-arg NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=sandbox"),
+      ),
+    ).toBe(true);
+  });
+
+  it.each(["0", "Root", "sandbox\nroot"])(
+    "rejects unreviewed protected runtime user %j before invoking Docker",
+    (runtimeUser) => {
+      const result = runBuild(REPO_ROOT, ["--runtime-user", runtimeUser]);
+
+      expect(result.status, result.stderr).toBe(2);
+      expect(existsSync(dockerLog)).toBe(false);
+    },
+  );
+
   it("passes the selected Buildx architecture explicitly to every Dockerfile", () => {
     stubBuildInvocation();
 
@@ -347,12 +382,12 @@ describe("protected managed-image build-cache boundary", () => {
     expect(recordedBuildInvocation("openclaw")).toContain("--platform linux/arm64");
     expect(recordedBuildInvocation("openclaw")).toContain("--build-arg TARGETARCH=arm64");
     expect(recordedBuildInvocation("openclaw")).toContain(
-      "--build-arg NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=sandbox",
+      "--build-arg NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root",
     );
     expect(recordedBuildInvocation("hermes")).toContain("--platform linux/arm64");
     expect(recordedBuildInvocation("hermes")).toContain("--build-arg TARGETARCH=arm64");
     expect(recordedBuildInvocation("hermes")).toContain(
-      "--build-arg NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=sandbox",
+      "--build-arg NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root",
     );
     expect(recordedBuildInvocation("langchain-deepagents-code")).toContain(
       "--platform linux/arm64",
@@ -361,7 +396,7 @@ describe("protected managed-image build-cache boundary", () => {
       "--build-arg TARGETARCH=arm64",
     );
     expect(recordedBuildInvocation("langchain-deepagents-code")).toContain(
-      "--build-arg NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=sandbox",
+      "--build-arg NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root",
     );
   });
 
