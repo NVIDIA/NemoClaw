@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
+import { managedBraveProfile } from "../../../../test/fixtures/openshell-provider-profile";
 import { createProviders } from "./providers";
 import { createSandboxes } from "./sandboxes";
 import { createSandboxConfig } from "./sandbox-config";
@@ -33,6 +34,7 @@ const provider = () => ({
 });
 function fixture() {
   const raw = {
+    getProviderProfile: vi.fn(),
     getProvider: vi.fn().mockResolvedValue(provider()),
     getSandbox: vi.fn().mockResolvedValue({
       sandbox: {
@@ -64,6 +66,28 @@ function fixture() {
   return { raw, connect };
 }
 
+function nativeNvidiaFixture() {
+  const fixtureValue = fixture();
+  const profile = {
+    id: "nvidia",
+    source: "builtin",
+    scope: "",
+    resourceVersion: 0n,
+    inferenceCapable: true,
+    endpoints: [{ host: "integrate.api.nvidia.com", port: 443 }],
+  };
+  fixtureValue.raw.getProvider.mockResolvedValue({
+    provider: {
+      ...provider().provider,
+      type: "nvidia",
+      profileWorkspace: "",
+      config: {},
+    },
+  });
+  fixtureValue.raw.getProviderProfile.mockResolvedValue({ profile });
+  return { ...fixtureValue, profile };
+}
+
 describe("OpenShell provider evidence", () => {
   it("returns requested config values and credential names without secret material", async () => {
     const { connect, raw } = fixture();
@@ -89,6 +113,299 @@ describe("OpenShell provider evidence", () => {
     const response = await raw.getProvider.mock.results[0]!.value;
     response.provider.config.OPENAI_BASE_URL = "https://changed.example";
     expect(result?.config.OPENAI_BASE_URL).toBe("https://api.example/v1");
+  });
+
+  it("never evaluates credential or unrequested configuration values (#10904)", async () => {
+    const { connect, raw } = fixture();
+    const readSecret = vi.fn(() => {
+      throw new Error(canary);
+    });
+    const opaque = () => Object.defineProperty({}, "SECRET", { enumerable: true, get: readSecret });
+    raw.getProvider.mockResolvedValue({
+      provider: {
+        ...provider().provider,
+        credentials: opaque(),
+        credentialHandles: opaque(),
+        config: Object.assign(opaque(), { OPENAI_BASE_URL: "https://api.example/v1" }),
+      },
+    });
+    const result = await createProviders(connect).get(request());
+    expect(result?.credentialKeys).toEqual(["SECRET"]);
+    expect(result?.config).toEqual({ OPENAI_BASE_URL: "https://api.example/v1" });
+    expect(result?.configKeys).toEqual(["OPENAI_BASE_URL", "SECRET"]);
+    expect(readSecret).not.toHaveBeenCalled();
+    expect(JSON.stringify(result)).not.toContain(canary);
+  });
+
+  it.each([
+    { profileWorkspace: "default", source: "user", scope: "workspace", resourceVersion: 4n },
+    { profileWorkspace: "", source: "user", scope: "platform", resourceVersion: 7n },
+    { profileWorkspace: "", source: "builtin", scope: "", resourceVersion: 0n },
+  ])(
+    "qualifies exact managed Brave profile semantics at its binding %# (#10904)",
+    async ({ profileWorkspace, ...identity }) => {
+      const { connect, raw } = fixture();
+      const readSecret = vi.fn(() => {
+        throw new Error(canary);
+      });
+      raw.getProvider.mockResolvedValue({
+        provider: {
+          ...provider().provider,
+          type: "brave",
+          profileWorkspace,
+          credentials: Object.defineProperty({}, "BRAVE_API_KEY", {
+            enumerable: true,
+            get: readSecret,
+          }),
+          credentialHandles: {},
+          config: {},
+        },
+      });
+      raw.getProviderProfile.mockResolvedValue({
+        profile: { ...managedBraveProfile(), ...identity },
+      });
+      const input = { ...request(), configKeys: [], profileContract: "brave" as const };
+      const result = await createProviders(connect).get(input);
+      expect(result).toMatchObject({
+        profileWorkspace,
+        managedProfile: {
+          id: "brave",
+          ...identity,
+          resourceVersion: String(identity.resourceVersion),
+        },
+      });
+      expect(raw.getProviderProfile).toHaveBeenCalledExactlyOnceWith(
+        { id: "brave", workspace: profileWorkspace },
+        { signal: input.signal },
+      );
+      expect(readSecret).not.toHaveBeenCalled();
+      expect(Object.isFrozen(result?.managedProfile)).toBe(true);
+    },
+  );
+
+  it.each([
+    { label: "wrong identity", change: { id: "other" } },
+    { label: "unknown profile semantics", change: { $unknown: [{}] } },
+    {
+      label: "unknown binary semantics",
+      change: {
+        binaries: managedBraveProfile().binaries.map((binary) => ({ ...binary, $unknown: [{}] })),
+      },
+    },
+    { label: "unknown source", change: { source: "interceptor/foreign" } },
+    { label: "platform shadow", change: { scope: "platform" } },
+    { label: "builtin shadow", change: { source: "builtin", scope: "", resourceVersion: 0n } },
+    { label: "missing revision", change: { resourceVersion: undefined } },
+    { label: "zero custom revision", change: { resourceVersion: 0n } },
+    { label: "inference enabled", change: { inferenceCapable: true } },
+    { label: "missing credentials", change: { credentials: [] } },
+    { label: "missing binaries", change: { binaries: [] } },
+    { label: "discovery override", change: { discovery: {} } },
+  ])("rejects managed Brave profiles with $label (#10904)", async ({ change }) => {
+    const { connect, raw } = fixture();
+    raw.getProvider.mockResolvedValue({
+      provider: { ...provider().provider, type: "brave", profileWorkspace: "default" },
+    });
+    raw.getProviderProfile.mockResolvedValue({ profile: { ...managedBraveProfile(), ...change } });
+    await expect(
+      createProviders(connect).get({ ...request(), profileContract: "brave" }),
+    ).rejects.toMatchObject({ kind: "schema" });
+  });
+
+  it.each([
+    { $unknown: [{}] },
+    { host: "foreign.example" },
+    { port: 80 },
+    { ports: [80] },
+    { protocol: "" },
+    { access: "full" },
+    { enforcement: "audit" },
+    { allowedIps: ["10.0.0.1"] },
+    { requestBodyCredentialRewrite: true },
+    { credentialSigning: "sigv4" },
+    { signingService: "bedrock" },
+    { signingRegion: "us-east-1" },
+    { jsonRpcMaxBodyBytes: 100 },
+    { mcp: {} },
+    { credentialBinding: { provider: "foreign", credential: "OTHER_KEY" } },
+    { websocketCredentialRewrite: true },
+    { allowEncodedSlash: true },
+    { path: "/other" },
+  ])("rejects managed Brave endpoint drift %j (#10904)", async (change) => {
+    const { connect, raw } = fixture();
+    const profile = managedBraveProfile();
+    raw.getProvider.mockResolvedValue({
+      provider: { ...provider().provider, type: "brave", profileWorkspace: "default" },
+    });
+    raw.getProviderProfile.mockResolvedValue({
+      profile: { ...profile, endpoints: [{ ...profile.endpoints[0], ...change }] },
+    });
+    await expect(
+      createProviders(connect).get({ ...request(), profileContract: "brave" }),
+    ).rejects.toMatchObject({ kind: "schema" });
+  });
+
+  it.each([
+    { $unknown: [{}] },
+    { envVars: ["OTHER_KEY"] },
+    { authStyle: "bearer" },
+    { headerName: "Authorization" },
+    { queryParam: "token" },
+    { pathTemplate: "/token/{token}" },
+    { refresh: {} },
+    { tokenGrant: {} },
+  ])("rejects managed Brave credential declaration drift %j (#10904)", async (change) => {
+    const { connect, raw } = fixture();
+    const profile = managedBraveProfile();
+    raw.getProvider.mockResolvedValue({
+      provider: { ...provider().provider, type: "brave", profileWorkspace: "default" },
+    });
+    raw.getProviderProfile.mockResolvedValue({
+      profile: { ...profile, credentials: [{ ...profile.credentials[0], ...change }] },
+    });
+    await expect(
+      createProviders(connect).get({ ...request(), profileContract: "brave" }),
+    ).rejects.toMatchObject({ kind: "schema" });
+  });
+
+  it("qualifies the endpointless managed OpenAI profile only when requested (#10904)", async () => {
+    const { connect, raw } = fixture();
+    raw.getProvider.mockResolvedValue({
+      provider: { ...provider().provider, profileWorkspace: "default" },
+    });
+    raw.getProviderProfile.mockResolvedValue({
+      profile: {
+        id: "openai",
+        source: "user",
+        scope: "workspace",
+        resourceVersion: 4n,
+        inferenceCapable: true,
+        credentials: [],
+        endpoints: [],
+        binaries: [],
+      },
+    });
+    await createProviders(connect).get(request());
+    expect(raw.getProviderProfile).not.toHaveBeenCalled();
+    const result = await createProviders(connect).get({ ...request(), profileContract: "openai" });
+    expect(result?.managedProfile).toEqual({
+      id: "openai",
+      source: "user",
+      scope: "workspace",
+      resourceVersion: "4",
+    });
+  });
+
+  it.each([
+    { $unknown: [{}] },
+    { credentials: [{}] },
+    { endpoints: [{ host: "foreign.example", port: 443 }] },
+    { binaries: [{ path: "/usr/bin/curl" }] },
+    { inferenceCapable: false },
+    { discovery: {} },
+  ])("rejects managed OpenAI profile drift %j (#10904)", async (change) => {
+    const { connect, raw } = fixture();
+    raw.getProvider.mockResolvedValue({
+      provider: { ...provider().provider, profileWorkspace: "default" },
+    });
+    raw.getProviderProfile.mockResolvedValue({
+      profile: {
+        id: "openai",
+        source: "user",
+        scope: "workspace",
+        resourceVersion: 4n,
+        inferenceCapable: true,
+        credentials: [],
+        endpoints: [],
+        binaries: [],
+        ...change,
+      },
+    });
+    await expect(
+      createProviders(connect).get({ ...request(), profileContract: "openai" }),
+    ).rejects.toMatchObject({ kind: "schema" });
+  });
+
+  it("verifies the native NVIDIA endpoint through the named gateway profile", async () => {
+    const { connect, raw } = nativeNvidiaFixture();
+    const input = request();
+    const result = await createProviders(connect).get(input);
+    expect(result).toMatchObject({
+      type: "nvidia",
+      configKeys: [],
+      config: {},
+      builtinInferenceEndpoint: "https://integrate.api.nvidia.com/v1",
+    });
+    expect(raw.getProviderProfile).toHaveBeenCalledWith(
+      { id: "nvidia", workspace: "default" },
+      { signal: input.signal },
+    );
+    expect(connect).toHaveBeenCalledExactlyOnceWith(target);
+    expect(JSON.stringify(result)).not.toContain(canary);
+  });
+
+  it.each([
+    { label: "wrong identity", change: { id: "openai" } },
+    { label: "custom source", change: { source: "user" } },
+    { label: "interceptor source", change: { source: "interceptor/custom" } },
+    { label: "workspace scope", change: { scope: "workspace" } },
+    { label: "custom revision", change: { resourceVersion: 1n } },
+    { label: "missing revision", change: { resourceVersion: undefined } },
+    { label: "disabled inference", change: { inferenceCapable: false } },
+    { label: "missing endpoint", change: { endpoints: [] } },
+    { label: "changed host", change: { endpoints: [{ host: "different.example", port: 443 }] } },
+    {
+      label: "changed port",
+      change: { endpoints: [{ host: "integrate.api.nvidia.com", port: 80 }] },
+    },
+    {
+      label: "multiple endpoints",
+      change: {
+        endpoints: [
+          { host: "integrate.api.nvidia.com", port: 443 },
+          { host: "different.example", port: 443 },
+        ],
+      },
+    },
+  ])("rejects NVIDIA profile evidence with $label", async ({ change }) => {
+    const { connect, raw, profile } = nativeNvidiaFixture();
+    raw.getProviderProfile.mockResolvedValue({ profile: { ...profile, ...change } });
+    await expect(createProviders(connect).get(request())).rejects.toMatchObject({
+      kind: "schema",
+      message: "OpenShell read failed (schema).",
+    });
+  });
+
+  it.each([
+    { profileWorkspace: "default", config: {} },
+    { profileWorkspace: undefined, config: {} },
+    { profileWorkspace: "", config: { NVIDIA_BASE_URL: "https://different.example/v1" } },
+    { profileWorkspace: "", config: { UNUSED: canary } },
+  ])("does not infer a builtin endpoint for NVIDIA overrides %#", async (change) => {
+    const { connect, raw } = nativeNvidiaFixture();
+    raw.getProvider.mockResolvedValue({
+      provider: { ...provider().provider, type: "nvidia", ...change },
+    });
+    const result = await createProviders(connect).get(request());
+    expect(result).not.toHaveProperty("builtinInferenceEndpoint");
+    expect(raw.getProviderProfile).not.toHaveBeenCalled();
+    expect(JSON.stringify(result)).not.toContain(canary);
+  });
+
+  it.each([
+    { code: 5, kind: "transport" },
+    { code: 7, kind: "authentication" },
+    { code: 4, kind: "timeout" },
+    { code: 14, kind: "transport" },
+  ])("stops when NVIDIA profile verification fails with status $code", async ({ code, kind }) => {
+    const { connect, raw } = nativeNvidiaFixture();
+    raw.getProviderProfile.mockRejectedValue({ code, message: canary });
+    await expect(createProviders(connect).get(request())).rejects.toMatchObject({
+      kind,
+      message: `OpenShell read failed (${kind}).`,
+    });
+    expect(raw.getProvider).toHaveBeenCalledTimes(1);
+    expect(raw.getProviderProfile).toHaveBeenCalledTimes(1);
   });
 
   it.each([
@@ -152,6 +469,9 @@ describe("OpenShell provider evidence", () => {
 
   it.each([
     { credentials: [] },
+    { credentials: new Date() },
+    { credentialHandles: [] },
+    { credentialHandles: new Map() },
     { config: null },
     { credentialHandles: [] },
     { config: { OPENAI_BASE_URL: { secret: canary } } },
@@ -287,7 +607,7 @@ describe("OpenShell sandbox export evidence", () => {
         policySource,
         globalPolicyVersion: policySource === 2 ? 4 : 0,
       });
-      const result = await createSandboxConfig(connect).get(input);
+      const result = await createSandboxConfig(connect, async () => "version: 1\n").get(input);
       expect(result).toMatchObject({
         sandboxId: "verified-id",
         workspace: "default",
@@ -295,6 +615,7 @@ describe("OpenShell sandbox export evidence", () => {
         configRevision: "18446744073709551615",
         providerEnvRevision: "9007199254740993",
         policySource: policySource === 1 ? "sandbox" : "global",
+        policy: { document: "version: 1\n", appliedRevision: policySource === 1 ? 3 : 4 },
       });
       expect(raw.getSandboxConfig).toHaveBeenCalledWith(
         { sandboxId: "verified-id" },
@@ -303,6 +624,25 @@ describe("OpenShell sandbox export evidence", () => {
       expect(JSON.stringify(result)).not.toContain(canary);
     },
   );
+
+  it("does not serialize a configuration response that arrives after abort", async () => {
+    const { connect, raw } = fixture();
+    const response = await raw.getSandboxConfig();
+    const controller = new AbortController();
+    raw.getSandboxConfig.mockImplementation(async () => {
+      controller.abort();
+      return response;
+    });
+    const serialize = vi.fn(async () => "version: 1\n");
+    await expect(
+      createSandboxConfig(connect, serialize).get({
+        ...request(),
+        sandboxId: "verified-id",
+        signal: controller.signal,
+      }),
+    ).rejects.toMatchObject({ kind: "timeout" });
+    expect(serialize).not.toHaveBeenCalled();
+  });
 
   it.each([
     { workspace: "other" },

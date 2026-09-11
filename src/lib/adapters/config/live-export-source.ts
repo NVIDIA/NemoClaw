@@ -5,24 +5,30 @@ import os from "node:os";
 import { isDeepStrictEqual } from "node:util";
 import { isValidNemoClawPort } from "../../config/model";
 
-import { createProviders } from "../openshell/providers";
+import { createProviders, type Provider } from "../openshell/providers";
 import { createSandboxes, type Sandbox } from "../openshell/sandboxes";
 import { createSandboxConfig } from "../openshell/sandbox-config";
 import { captureSanitizedResolvedOpenshell } from "../openshell/sanitized-capture";
 import { fingerprintOpenShellSandboxId } from "../openshell/sandbox-identity";
 import { namedOpenShellGateway } from "../openshell/sandbox-observer";
-import { syncCliOpenShellSandboxPolicyReader } from "../openshell/sandbox-policy-cli";
 import { EXPORT_REGISTRY_EVIDENCE_KEYS } from "../../domain/config/export-evidence";
 import type {
   ExportSnapshotReadStage,
   ExportSnapshotReader,
   ObservedExportGateway,
   ObservedExportInference,
+  ObservedExportWebSearchProvider,
+  ObservedManagedVllmRuntime,
+  ObservedExportEndpointEvidence,
   ObservedExportRegistry,
   ObservedExportSandboxIdentity,
   RawExportSnapshot,
 } from "../../domain/config/export-evidence";
 import { getLiveGatewayInference } from "../../inference/live";
+import { VLLM_LOCAL_CREDENTIAL_ENV } from "../../inference/serving/vllm-credential-contract";
+import { observeManagedVllmForExport } from "../../inference/serving/vllm-export-runtime";
+import { createOllamaExportProbe } from "../../inference/ollama/proxy";
+import { observeOllamaProxy } from "../../inference/ollama/proxy-observation";
 import { normalizeInferenceSelection } from "../../inference/selection";
 import { resolveGatewayName } from "../../onboard/gateway-binding/identity";
 import {
@@ -122,104 +128,176 @@ function providerContract(api: string | null | undefined) {
   return { type, configKey: "OPENAI_BASE_URL" } as const;
 }
 
+function providerIdentity(provider: Provider, gatewayName: string, managed: boolean) {
+  return {
+    gatewayName,
+    workspace: provider.workspace,
+    name: provider.name,
+    id: provider.id,
+    resourceVersion: provider.resourceVersion,
+    ...(managed
+      ? { profileWorkspace: provider.profileWorkspace, managedProfile: provider.managedProfile }
+      : {}),
+  };
+}
+
+function expectedCredentialKeys(credentialEnv: string | null, managed: boolean): string[] {
+  if (managed) return [VLLM_LOCAL_CREDENTIAL_ENV];
+  return credentialEnv === null ? [] : [credentialEnv];
+}
+
+function inferenceTopology(
+  entry: Readonly<SandboxEntry>,
+  managed: boolean,
+): ObservedExportInference["topology"] {
+  if (managed) return "managed";
+  if (entry.provider === "ollama-local") return "local";
+  return entry.hostLocalInferenceReceipt || entry.hostLocalInferenceProvenance || entry.nimContainer
+    ? "local"
+    : "hosted";
+}
+
+function matchesProviderMetadata(
+  provider: Provider,
+  normalized: ReturnType<typeof normalizeInferenceSelection>,
+  routeProvider: string,
+  managed: boolean,
+): boolean {
+  const { type, configKey } = providerContract(normalized.preferredInferenceApi);
+  const builtin = provider.builtinInferenceEndpoint !== undefined;
+  return (
+    type !== null &&
+    isDeepStrictEqual(
+      [provider.name, provider.type, provider.credentialKeys, provider.configKeys],
+      [
+        routeProvider,
+        builtin ? "nvidia" : type,
+        expectedCredentialKeys(normalized.credentialEnv, managed),
+        builtin ? [] : [configKey],
+      ],
+    )
+  );
+}
+
 async function readProviderEvidence(
   normalized: ReturnType<typeof normalizeInferenceSelection>,
   routeProvider: string,
   gatewayName: string,
   signal: AbortSignal,
-) {
-  const { type, configKey } = providerContract(normalized.preferredInferenceApi);
+  managedServing?: ObservedManagedVllmRuntime,
+): Promise<ObservedExportEndpointEvidence> {
+  const { configKey } = providerContract(normalized.preferredInferenceApi);
+  const managedProfile = !!managedServing || routeProvider === "ollama-local";
   const provider = await createProviders().get({
     target: namedOpenShellGateway(gatewayName),
     workspace: "default",
     name: routeProvider,
+    ...(managedProfile ? { profileContract: "openai" as const } : {}),
     configKeys: [configKey],
     signal,
   });
   if (!provider) throw new Error("The live inference provider is missing.");
-  const credentialKeys = normalized.credentialEnv === null ? [] : [normalized.credentialEnv];
-  if (
-    type === null ||
-    !isDeepStrictEqual(
-      [provider.name, provider.type, provider.credentialKeys, provider.configKeys],
-      [routeProvider, type, credentialKeys, [configKey]],
-    )
-  ) {
+  const builtin = provider.builtinInferenceEndpoint !== undefined;
+  if (!matchesProviderMetadata(provider, normalized, routeProvider, !!managedServing)) {
     throw new Error("The live inference provider metadata does not match the registry.");
   }
   return {
-    endpoint: provider.config[configKey] ?? "",
-    gatewayName,
-    providerName: provider.name,
-    configKey,
-    providerId: provider.id,
-    workspace: provider.workspace,
-    resourceVersion: provider.resourceVersion,
+    provider: providerIdentity(provider, gatewayName, managedProfile),
+    endpoint: provider.builtinInferenceEndpoint ?? provider.config[configKey] ?? "",
+    source: builtin
+      ? { kind: "builtin-profile", profileId: "nvidia" }
+      : { kind: "provider-config", key: configKey },
   };
 }
 
 async function inferenceFor(
   entry: Readonly<SandboxEntry>,
-  beforeProviderRead: () => void,
+  beforeRead: (stage: ExportSnapshotReadStage) => void,
   signal: AbortSignal,
+  managedServing?: ObservedManagedVllmRuntime,
 ): Promise<ObservedExportInference> {
   const normalized = normalizeInferenceSelection(entry);
   const gateway = resolveGatewayBinding(entry);
   const live = readInferenceRoute(entry, gateway.name);
-  beforeProviderRead();
+  beforeRead("provider-metadata");
   const endpointEvidence = await readProviderEvidence(
     normalized,
     live.provider,
     gateway.name,
     signal,
+    managedServing,
   );
+  let ollamaServing: ObservedExportInference["ollamaServing"];
+  if (entry.provider === "ollama-local") {
+    beforeRead("ollama-serving");
+    ollamaServing = observeOllamaProxy({ model: live.model, ...createOllamaExportProbe() });
+  }
   return {
-    topology:
-      entry.hostLocalInferenceReceipt || entry.hostLocalInferenceProvenance || entry.nimContainer
-        ? "local"
-        : "hosted",
+    topology: inferenceTopology(entry, !!managedServing),
     provider: live.provider,
     model: live.model,
     api: normalized.preferredInferenceApi ?? "",
     endpoint: normalized.endpointUrl ?? "",
     endpointEvidence,
     credentialEnv: normalized.credentialEnv,
+    ...(managedServing ? { managedServing } : {}),
+    ...(ollamaServing ? { ollamaServing } : {}),
   };
 }
 
-async function effectivePolicy(
-  sandboxName: string,
-  gateway: ObservedExportGateway,
-  row: Sandbox,
+async function readWebSearchProvider(
+  entry: Readonly<SandboxEntry>,
+  gatewayName: string,
   signal: AbortSignal,
-) {
-  const configuration = await createSandboxConfig().get({
+): Promise<ObservedExportWebSearchProvider> {
+  const provider = await createProviders().get({
+    target: namedOpenShellGateway(gatewayName),
+    workspace: "default",
+    name: `${entry.name}-brave-search`,
+    configKeys: [],
+    profileContract: "brave",
+    signal,
+  });
+  if (!provider) throw new Error("The live web-search provider is missing.");
+  return {
+    gatewayName,
+    workspace: provider.workspace,
+    name: provider.name,
+    id: provider.id,
+    resourceVersion: provider.resourceVersion,
+    type: provider.type,
+    ...(provider.profileWorkspace === undefined
+      ? {}
+      : { profileWorkspace: provider.profileWorkspace }),
+    ...(provider.managedProfile === undefined ? {} : { profile: provider.managedProfile }),
+    credentialKeys: provider.credentialKeys,
+    configKeys: provider.configKeys,
+  };
+}
+
+async function effectivePolicy(gateway: ObservedExportGateway, row: Sandbox, signal: AbortSignal) {
+  const { policy, ...configuration } = await createSandboxConfig().get({
     target: namedOpenShellGateway(gateway.name),
     workspace: row.workspace,
     sandboxId: row.id,
     signal,
   });
-  const result = syncCliOpenShellSandboxPolicyReader.readSandboxPolicy({
-    target: namedOpenShellGateway(gateway.name),
-    sandboxName,
-    scope: "effective",
-  });
-  if (!result.ok || result.value.appliedRevision === null) {
+  if (policy.appliedRevision === null) {
     throw new Error("The effective OpenShell policy and its applied revision could not be read.");
   }
-  if (!isSandboxPolicyCredentialFree(result.value.document)) {
+  if (!isSandboxPolicyCredentialFree(policy.document)) {
     throw new Error("The effective OpenShell policy is not credential-free.");
   }
   if (
-    row.policyVersion !== result.value.appliedRevision ||
-    configuration.revision !== result.value.appliedRevision
+    row.policyVersion !== policy.appliedRevision ||
+    configuration.revision !== policy.appliedRevision
   ) {
     throw new Error("The effective OpenShell policy revision does not match the live sandbox.");
   }
   return {
     sandboxId: row.id,
-    revision: String(result.value.appliedRevision),
-    document: result.value.document,
+    revision: String(policy.appliedRevision),
+    document: policy.document,
     configuration,
   };
 }
@@ -244,16 +322,27 @@ async function readSnapshot(sandboxName: string): Promise<RawExportSnapshot> {
     if (!row) throw new Error("The live sandbox is missing.");
     stage = "sandbox-identity";
     const sandbox = sandboxIdentity(row);
+    stage = "managed-serving";
+    const managedServing =
+      entry.provider === "vllm-local" && entry.servingProfileProvenance
+        ? observeManagedVllmForExport(entry.servingProfileProvenance)
+        : undefined;
     stage = "inference-route";
     const inference = await inferenceFor(
       entry,
-      () => {
-        stage = "provider-metadata";
+      (nextStage) => {
+        stage = nextStage;
       },
       signal,
+      managedServing,
     );
+    let webSearchProvider: ObservedExportWebSearchProvider | undefined;
+    if (entry.webSearchEnabled === true && entry.webSearchProvider === "brave") {
+      stage = "web-search-provider";
+      webSearchProvider = await readWebSearchProvider(entry, gateway.name, signal);
+    }
     stage = "effective-policy";
-    const { configuration, ...policy } = await effectivePolicy(sandboxName, gateway, row, signal);
+    const { configuration, ...policy } = await effectivePolicy(gateway, row, signal);
     return {
       kind: "observed",
       sandboxName,
@@ -261,6 +350,7 @@ async function readSnapshot(sandboxName: string): Promise<RawExportSnapshot> {
       gateway,
       sandbox,
       inference,
+      ...(webSearchProvider === undefined ? {} : { webSearchProvider }),
       policy,
       configuration,
     };

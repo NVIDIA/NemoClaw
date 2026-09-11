@@ -23,7 +23,6 @@ const E2E_WORKFLOW_CONTRACTS = [
   "test/e2e/support/hermes-workflow-boundary.test.ts",
   "test/automation/pull-requests/hosted-runner-recovery-workflow.test.ts",
   "test/e2e/support/inference-switch-workflow-boundary.test.ts",
-  "test/e2e/support/llama-cpp-dgx-spark-qualification-workflow.test.ts",
   "test/e2e/support/jetson-workflow-boundary.test.ts",
   "test/e2e/support/managed-image-protected-runtime-workflow.test.ts",
   "test/e2e/support/mcp-workflow-boundary.test.ts",
@@ -315,9 +314,13 @@ describe("Vitest opaque-input watch triggers", () => {
       "test/e2e/support/e2e-manifests.test.ts",
     ]);
     expect(triggeredBy("test/e2e/manifests/openclaw-nvidia.yml")).toEqual([]);
-    expect(triggeredBy(".github/workflows/e2e.yaml")).toEqual(E2E_WORKFLOW_CONTRACTS);
+    expect(triggeredBy(".github/workflows/e2e.yaml")).toEqual([
+      ...E2E_WORKFLOW_CONTRACTS,
+      "test/e2e/support/openshell-sdk-install.test.ts",
+    ]);
     expect(triggeredBy(".github/workflows/e2e-standard-profile.yaml")).toEqual([
       "test/e2e/support/standard-profile-workflow-boundary.test.ts",
+      "test/e2e/support/openshell-sdk-install.test.ts",
     ]);
     expect(triggeredBy(".github/workflows/portable-profile-e2e.yaml")).toEqual([
       "test/e2e/support/portable-profile-rootless-runtime-workflow.test.ts",

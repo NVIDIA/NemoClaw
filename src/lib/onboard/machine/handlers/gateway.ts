@@ -6,6 +6,15 @@ import type { GatewayReuseState } from "../../../state/gateway";
 import type { Session } from "../../../state/onboard-session";
 import type { GatewayContainerState } from "../../gateway-container-running";
 import {
+  gatewayConfigurationForExternalComponent,
+  type PreparedExternalComponent,
+  type ExternalComponentGatewayConfiguration,
+} from "../../external-component";
+import {
+  prepareExternalComponentGateway,
+  type ExternalComponentGatewayPreparation,
+} from "../../external-component/activation";
+import {
   describeGatewayOwner,
   evaluateGatewayAttachment,
   type GatewayAttachmentProbe,
@@ -27,6 +36,7 @@ export interface GatewayStateOptions<Gpu> {
   requestedSandboxName: string | null;
   recreateSandbox: boolean;
   requiresBindMounts?: boolean;
+  externalComponent?: PreparedExternalComponent | null;
   deps: {
     /**
      * The single declared lifecycle authority for this run (#6576). Resolved
@@ -36,6 +46,10 @@ export interface GatewayStateOptions<Gpu> {
     resolveGatewayOwner(): GatewayOwner;
     probeGatewayAttachment(owner: GatewayOwner): Promise<GatewayAttachmentProbe>;
     attachGateway(owner: GatewayOwner, expectedProbe: GatewayAttachmentProbe): Promise<void>;
+    assertExternalComponentFreshSandbox(requestedSandboxName: string | null): void;
+    configureExternalComponentGateway(
+      component: ExternalComponentGatewayConfiguration | null,
+    ): ExternalComponentGatewayPreparation | void;
     refreshDockerDriverGatewayReuseState(state: GatewayReuseState): Promise<GatewayReuseState>;
     gatewayCliSupportsLifecycleCommands(): boolean;
     verifyGatewayContainerRunning(gatewayName: string): GatewayContainerState;
@@ -107,6 +121,7 @@ async function handleGatewayStatePhase<Gpu>({
   requestedSandboxName,
   recreateSandbox,
   requiresBindMounts = false,
+  externalComponent = null,
   deps,
 }: GatewayStateOptions<Gpu>): Promise<GatewayStateResult> {
   // Establish the lifecycle authority before anything in this phase can touch
@@ -115,6 +130,13 @@ async function handleGatewayStatePhase<Gpu>({
   // the port.
   const owner = deps.resolveGatewayOwner();
   if (isExternallySupervised(owner)) {
+    if (externalComponent) {
+      throw new GatewayOwnershipError(
+        "capability_unsupported",
+        "External component onboarding requires a NemoClaw-managed OpenShell gateway.",
+        owner,
+      );
+    }
     if (requiresBindMounts) {
       throw new GatewayOwnershipError(
         "capability_unsupported",
@@ -123,6 +145,29 @@ async function handleGatewayStatePhase<Gpu>({
       );
     }
     return attachToExternallySupervisedGateway(owner, deps);
+  }
+
+  if (externalComponent && !deps.isLinuxDockerDriverGatewayEnabled()) {
+    throw new GatewayOwnershipError(
+      "capability_unsupported",
+      "External component onboarding requires the supported Linux Docker-driver gateway.",
+      owner,
+    );
+  }
+
+  if (externalComponent) {
+    deps.assertExternalComponentFreshSandbox(requestedSandboxName);
+  }
+  externalComponent?.revalidateBeforeGateway();
+  if (deps.isLinuxDockerDriverGatewayEnabled()) {
+    const preparation = deps.configureExternalComponentGateway(
+      externalComponent
+        ? gatewayConfigurationForExternalComponent(externalComponent.declaration)
+        : null,
+    );
+    if (externalComponent?.declaration.schemaVersion === 2) {
+      await prepareExternalComponentGateway(externalComponent, gatewayName, preparation);
+    }
   }
 
   let gatewayReuseState = await deps.refreshDockerDriverGatewayReuseState(initialGatewayReuseState);
@@ -265,6 +310,8 @@ async function handleGatewayStatePhase<Gpu>({
     } else if (gatewayReuseState === "foreign-active") {
       gatewayReuseState = "missing";
     }
+    if (externalComponent?.declaration.schemaVersion === 2)
+      externalComponent.revalidateBeforeGateway();
     await deps.startGateway(gpu, { gpuPassthrough });
     session = await deps.recordStepComplete("gateway");
   }

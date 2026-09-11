@@ -23,12 +23,14 @@ import {
   ensureDockerDriverGatewayJwtBundle,
   gatewayIdForStateDir,
   hasStateScopedSandboxNamespace,
+  NEMOCLAW_EXTERNAL_COMPONENT_GATEWAY_IDENTITY_ENV,
   NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV,
   prepareDockerDriverGatewayConfigEnv,
 } from "./docker-driver-gateway-config";
 import { openRegularFileNoFollow } from "../adapters/fs/regular-file";
 import {
   buildDockerDriverGatewayRuntimeMarker,
+  hashDockerDriverGatewayEnv,
   writeDockerDriverGatewayRuntimeMarker,
 } from "./docker-driver-gateway-runtime-marker";
 import { prepareNativePodmanGatewayHostRuntime } from "./runtime-provider/podman-runtime-surfaces";
@@ -103,6 +105,103 @@ function writePreScopedGatewayConfig(
 }
 
 describe("docker-driver-gateway config TOML", () => {
+  it("renders only the fixed external component interceptor settings (#11340)", () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-component-"));
+    try {
+      fs.chmodSync(stateDir, 0o700);
+      const env = baseGatewayEnv(stateDir);
+      prepareDockerDriverGatewayConfigEnv(env, stateDir, "/usr/bin/openshell-sandbox", {
+        externalComponent: {
+          componentId: "policy-governance",
+          interceptorSocketPath: "/run/user/1000/component/interceptor.sock",
+        },
+      });
+
+      const toml = fs.readFileSync(path.join(stateDir, "openshell-gateway.toml"), "utf-8");
+      expect(toml).toContain("[[openshell.gateway.interceptors]]");
+      expect(toml).toContain('name = "policy-governance"');
+      expect(toml).toContain('grpc_endpoint = "unix:///run/user/1000/component/interceptor.sock"');
+      expect(toml).toContain("order = 10");
+      expect(toml).toContain('failure_policy = "fail_closed"');
+      expect(toml).toContain('binding_policy = "exact"');
+      expect(toml).toContain('timeout = "500ms"');
+      expect(toml).toContain("max_response_bytes = 1048576");
+      expect(toml).toContain("max_patches = 32");
+      expect(toml).toContain('rpc = "openshell.v1.OpenShell/CreateSandbox"');
+      expect(toml).toContain('phases = ["modify_operation", "validate"]');
+      expect(toml).toContain('rpc = "openshell.v1.OpenShell/UpdateConfig"');
+      expect(toml).toContain('phases = ["validate"]');
+      expect(toml).not.toMatch(/activation|credential|secret|token|password|api.?key/iu);
+      expect(toml).not.toContain("post_commit");
+      expect(toml).not.toContain("provider_profile_sources");
+      expect(env[NEMOCLAW_EXTERNAL_COMPONENT_GATEWAY_IDENTITY_ENV]).toMatch(/^[0-9a-f]{64}$/u);
+    } finally {
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves or removes only NemoClaw-generated interceptor configuration (#11340)", () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-component-"));
+    try {
+      fs.chmodSync(stateDir, 0o700);
+      const env = baseGatewayEnv(stateDir);
+      const component = {
+        componentId: "policy-governance",
+        interceptorSocketPath: "/run/user/1000/component/interceptor.sock",
+      };
+      prepareDockerDriverGatewayConfigEnv(env, stateDir, "/usr/bin/openshell-sandbox", {
+        externalComponent: component,
+      });
+      const componentRuntimeIdentity = hashDockerDriverGatewayEnv(env);
+      prepareDockerDriverGatewayConfigEnv(env, stateDir, "/usr/bin/openshell-sandbox");
+      expect(fs.readFileSync(env.OPENSHELL_GATEWAY_CONFIG, "utf-8")).toContain(
+        "[[openshell.gateway.interceptors]]",
+      );
+      expect(env[NEMOCLAW_EXTERNAL_COMPONENT_GATEWAY_IDENTITY_ENV]).toMatch(/^[0-9a-f]{64}$/u);
+
+      prepareDockerDriverGatewayConfigEnv(env, stateDir, "/usr/bin/openshell-sandbox", {
+        externalComponent: null,
+      });
+      expect(fs.readFileSync(env.OPENSHELL_GATEWAY_CONFIG, "utf-8")).not.toContain(
+        "[[openshell.gateway.interceptors]]",
+      );
+      expect(env[NEMOCLAW_EXTERNAL_COMPONENT_GATEWAY_IDENTITY_ENV]).toBe("none");
+      expect(hashDockerDriverGatewayEnv(env)).not.toBe(componentRuntimeIdentity);
+    } finally {
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ['failure_policy = "fail_closed"', 'failure_policy = "fail_open"'],
+    ['timeout = "500ms"', 'timeout = "30s"'],
+    ['phases = ["validate"]', 'phases = ["validate", "post_commit"]'],
+  ])("rejects edits to the fixed interceptor contract (%s) (#11340)", (allowed, replacement) => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-component-"));
+    try {
+      fs.chmodSync(stateDir, 0o700);
+      const env = baseGatewayEnv(stateDir);
+      prepareDockerDriverGatewayConfigEnv(env, stateDir, "/usr/bin/openshell-sandbox", {
+        externalComponent: {
+          componentId: "policy-governance",
+          interceptorSocketPath: "/run/user/1000/component/interceptor.sock",
+        },
+      });
+      const configPath = env.OPENSHELL_GATEWAY_CONFIG;
+      fs.writeFileSync(
+        configPath,
+        fs.readFileSync(configPath, "utf-8").replace(allowed, replacement),
+        { mode: 0o600 },
+      );
+
+      expect(() =>
+        prepareDockerDriverGatewayConfigEnv(env, stateDir, "/usr/bin/openshell-sandbox"),
+      ).toThrow(/interceptor configuration is invalid|does not match canonical content/iu);
+    } finally {
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+
   it("writes OpenShell 0.0.72 gateway JWT config into the managed state dir", () => {
     const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-config-"));
     try {

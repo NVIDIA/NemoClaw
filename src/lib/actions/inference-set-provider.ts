@@ -1,11 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import {
-  endpointlessProviderProfileFailureMessages,
-  OPENAI_GATEWAY_PROVIDER_TYPE,
-} from "../adapters/openshell/provider-profile-registration";
-import { endpointlessProviderProfilePath } from "../adapters/openshell/provider-profile";
 import type {
   OpenShellProviderAdapter,
   OpenShellProviderError,
@@ -13,7 +8,6 @@ import type {
 } from "../adapters/openshell/provider-adapter";
 import { createCliOpenShellProviderAdapter } from "../adapters/openshell/provider-adapter-cli";
 import { namedOpenShellGateway } from "../adapters/openshell/sandbox-observer";
-import { REPOSITORY_ROOT } from "../core/repository-root";
 import { retryUntilAsync } from "../core/retry";
 import { matchesGatewayProviderBinding } from "../onboard/gateway-provider-metadata";
 import { assertHermesPortableCommandUnavailable } from "../onboard/experimental/portable-agent-lifecycle";
@@ -43,7 +37,7 @@ export function createDefaultInferenceSetProviderAdapter(): OpenShellProviderAda
 
 export type InferenceSetSandboxRouteProbe = (
   input: SandboxInferenceInvocationInput,
-) => SandboxInferenceInvocationResult;
+) => Promise<SandboxInferenceInvocationResult>;
 
 // OpenShell 0.0.106 refreshes the sandbox route cache every five seconds.
 // A stale route can still return a valid 2xx response, so wait one complete
@@ -55,11 +49,11 @@ export function sleepInferenceSetRouteConvergence(milliseconds: number): Promise
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
-export function probeInferenceSetSandboxRoute(
+export async function probeInferenceSetSandboxRoute(
   input: SandboxInferenceInvocationInput,
-): SandboxInferenceInvocationResult {
+): Promise<SandboxInferenceInvocationResult> {
   const probe: typeof import("./sandbox/inference-invocation-probe") = require("./sandbox/inference-invocation-probe");
-  return probe.probeSandboxInferenceInvocation(
+  return await probe.probeSandboxInferenceInvocation(
     input,
     {},
     probe.READINESS_INFERENCE_INVOCATION_TIMEOUT_MS,
@@ -212,35 +206,6 @@ function assertProviderOwnership(options: {
     );
   }
   return "update";
-}
-
-function profileFailureMessage(error: OpenShellProviderError): string {
-  if (error.kind === "command" && error.reason === "profile_incompatible") {
-    return endpointlessProviderProfileFailureMessages("incompatible").join("\n").trim();
-  }
-  const recovery = (() => {
-    switch (error.kind) {
-      case "authentication":
-        return "Restore OpenShell authentication for the selected gateway, then rerun this command.";
-      case "timeout":
-        return "Confirm the selected OpenShell gateway is available, then rerun this command.";
-      case "schema":
-        return "Update OpenShell with `scripts/install-openshell.sh`, then rerun this command.";
-      case "validation":
-        return "Restore the checked-in OpenAI provider profile from this NemoClaw release, then rerun this command.";
-      case "transport":
-        if (error.reason === "unreachable") {
-          return "Start the selected OpenShell gateway with its owning deployment, then rerun this command.";
-        }
-        if (error.reason === "identity_mismatch") {
-          return "Reselect the intended OpenShell gateway and restore its recorded identity, then rerun this command.";
-        }
-        return "Repair OpenShell with `scripts/install-openshell.sh`, then rerun this command.";
-      case "command":
-        return "Fix the reported OpenShell provider profile error, then rerun this command.";
-    }
-  })();
-  return `OpenShell could not prepare NemoClaw's checked-in OpenAI provider profile. ${sentence(error.message)} ${recovery}`;
 }
 
 function sentence(message: string): string {
@@ -460,16 +425,6 @@ export async function prepareInferenceSetProviderBinding(options: {
   };
 
   const apply = async (): Promise<OpenShellProviderMetadata> => {
-    if (action === "update") await verifyUpdateRevision();
-    if (surface.type === OPENAI_GATEWAY_PROVIDER_TYPE) {
-      const profile = await providerAdapter.importProviderProfile({
-        target,
-        profilePath: endpointlessProviderProfilePath(REPOSITORY_ROOT, OPENAI_GATEWAY_PROVIDER_TYPE),
-      });
-      if (!profile.ok) {
-        throw new InferenceSetProviderCommitError(profileFailureMessage(profile.error), false);
-      }
-    }
     if (action === "update") await verifyUpdateRevision();
     const credentials = [{ name: binding.credentialEnv, value: binding.token }];
     const config = [{ key: surface.configKey, value: binding.baseUrl }];

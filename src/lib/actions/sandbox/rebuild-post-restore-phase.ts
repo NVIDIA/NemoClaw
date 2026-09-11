@@ -97,7 +97,7 @@ export interface RebuildPostRestorePhaseInput {
   hermesOperatorConfigRestore?: HermesOperatorConfigRestoreReport;
   hermesCronRestoreIdentity?: HermesCronRestoreIdentity;
   preparedBackupRecovery: boolean;
-  versionCheck: ReturnType<typeof sandboxVersion.checkAgentVersion>;
+  versionCheck: sandboxVersion.VersionCheckResult;
   log: RebuildLog;
   bail: RebuildBail;
 }
@@ -110,9 +110,9 @@ export function printHermesOperatorConfigRestoreReport(
   targetAgentName: string,
   report: HermesOperatorConfigRestoreReport | undefined,
 ): void {
-  if (targetAgentName !== "hermes") return;
-  const restored = report?.restoredKeys.join(", ") || "none";
-  const dropped = report?.droppedKeys.join(", ") || "none";
+  if (targetAgentName !== "hermes" || !report) return;
+  const restored = report.restoredKeys.join(", ") || "none";
+  const dropped = report.droppedKeys.join(", ") || "none";
   console.log(`    Restored Hermes operator config keys: ${restored}`);
   console.log(`    Dropped Hermes operator config keys: ${dropped}`);
 }
@@ -201,14 +201,43 @@ export async function runRebuildPostRestorePhase(
       }
     : {};
 
+  const repairMutableOpenClawConfigPermissions = (message: string): void => {
+    mutablePermsRepairUnverified = true;
+    mutableConfigPermissionsVerified = false;
+    log(message);
+    let permRepair: ReturnType<typeof repairMutableConfigPerms> | null = null;
+    try {
+      permRepair = repairMutableConfigPerms(sandboxName);
+    } catch (error) {
+      mutablePermsRepairUnverified = true;
+      console.error(
+        `  ${YW}\u26a0${R} Mutable config permission repair errored: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+    if (permRepair === null) {
+      // The thrown error was reported above.
+    } else if (!permRepair.applied) {
+      log(`Mutable config permission repair skipped: ${permRepair.reason}`);
+    } else if (permRepair.verified) {
+      mutablePermsRepairUnverified = false;
+      mutableConfigPermissionsVerified = true;
+      console.log(`  ${G}\u2713${R} Mutable config permissions restored`);
+    } else {
+      mutablePermsRepairUnverified = true;
+      console.error(
+        `  ${YW}\u26a0${R} Mutable config permission repair incomplete: ${permRepair.errors.join("; ")}`,
+      );
+    }
+  };
+
   if (targetAgentName === "openclaw") {
     log("Running openclaw doctor --fix inside sandbox for post-upgrade structure repair");
-    const doctorResult = executeSandboxExecCommand(
+    const doctorResult = await executeSandboxExecCommand(
       sandboxName,
       "openclaw doctor --fix",
       OPENCLAW_DOCTOR_TIMEOUT_MS,
       {
-        allowLocalDockerFallback: false,
+        localDockerFallbackPolicy: "never",
         ...(mcpRuntimeSelection ? { runtimeSelection: mcpRuntimeSelection } : {}),
       },
     );
@@ -229,7 +258,7 @@ export async function runRebuildPostRestorePhase(
 
     // #7102: clear stale per-session pinned models left over from an
     // `inference set` before this rebuild, while the gateway is still down.
-    reconcileStalePinnedSessionModelsAfterRebuild(sandboxName, log, mcpRuntimeSelection);
+    await reconcileStalePinnedSessionModelsAfterRebuild(sandboxName, log, mcpRuntimeSelection);
 
     try {
       await reapplyMessagingManifestAfterOpenClawDoctor(
@@ -247,29 +276,9 @@ export async function runRebuildPostRestorePhase(
       return;
     }
 
-    log("Restoring mutable OpenClaw config permissions after post-restore config writes");
-    let permRepair: ReturnType<typeof repairMutableConfigPerms> | null = null;
-    try {
-      permRepair = repairMutableConfigPerms(sandboxName);
-    } catch (error) {
-      mutablePermsRepairUnverified = true;
-      console.error(
-        `  ${YW}\u26a0${R} Mutable config permission repair errored: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
-    if (permRepair === null) {
-      // The thrown error was reported above.
-    } else if (!permRepair.applied) {
-      log(`Mutable config permission repair skipped: ${permRepair.reason}`);
-    } else if (permRepair.verified) {
-      mutableConfigPermissionsVerified = true;
-      console.log(`  ${G}\u2713${R} Mutable config permissions restored`);
-    } else {
-      mutablePermsRepairUnverified = true;
-      console.error(
-        `  ${YW}\u26a0${R} Mutable config permission repair incomplete: ${permRepair.errors.join("; ")}`,
-      );
-    }
+    repairMutableOpenClawConfigPermissions(
+      "Restoring mutable OpenClaw config permissions after post-restore config writes",
+    );
   }
 
   try {
@@ -301,7 +310,7 @@ export async function runRebuildPostRestorePhase(
   // Restart before restoring MCP. The Hermes MCP transaction performs an
   // acknowledged reload of its own; restarting afterwards would replace the
   // only runtime whose managed MCP configuration was proven to have loaded.
-  const hermesGatewayRestartState = restartHermesGatewayAfterStateRestore(
+  const hermesGatewayRestartState = await restartHermesGatewayAfterStateRestore(
     sandboxName,
     targetAgentName,
     hermesPostRestoreGatewayDeps,
@@ -311,20 +320,34 @@ export async function runRebuildPostRestorePhase(
     mcpEntries,
     mcpRuntimeSelection,
   ));
+  if (targetAgentName === "openclaw") {
+    // MCP restoration may write OpenClaw configuration after the earlier
+    // doctor/messaging repair. Re-establish the final mutable-config posture
+    // after that async writer has settled and before sealing the config hash.
+    repairMutableOpenClawConfigPermissions(
+      "Restoring mutable OpenClaw config permissions after MCP restoration",
+    );
+  }
   if (targetAgentName === "openclaw" && mcpBridgeRestoreUnverified) {
     mutableConfigHashRefreshUnverified = true;
   } else if (targetAgentName === "openclaw") {
     log("Refreshing mutable OpenClaw config hash after MCP restoration");
     if (
-      !refreshMutableOpenClawConfigHashAfterPostRestoreWrites(sandboxName, log, mcpRuntimeSelection)
+      !(await refreshMutableOpenClawConfigHashAfterPostRestoreWrites(
+        sandboxName,
+        log,
+        mcpRuntimeSelection,
+      ))
     ) {
       mutableConfigHashRefreshUnverified = true;
-    } else if (!verifyFinalMutableOpenClawConfigHash(sandboxName, log, mcpRuntimeSelection)) {
+    } else if (
+      !(await verifyFinalMutableOpenClawConfigHash(sandboxName, log, mcpRuntimeSelection))
+    ) {
       finalMutableConfigHashUnverified = true;
     }
   }
   const hermesGatewayVerification = hermesCronRestoreIdentity
-    ? verifyHermesGatewayAfterStateRestoreForCronGate(
+    ? await verifyHermesGatewayAfterStateRestoreForCronGate(
         sandboxName,
         targetAgentName,
         hermesGatewayRestartState,
@@ -332,7 +355,7 @@ export async function runRebuildPostRestorePhase(
         hermesPostRestoreGatewayDeps,
       )
     : {
-        state: verifyHermesGatewayAfterStateRestore(
+        state: await verifyHermesGatewayAfterStateRestore(
           sandboxName,
           targetAgentName,
           hermesGatewayRestartState,
@@ -348,7 +371,7 @@ export async function runRebuildPostRestorePhase(
     // version. Clear create-time bookkeeping before the forced live probe so a
     // failed probe cannot leave the requested version recorded as observed.
     registry.updateSandbox(sandboxName, { agentVersion: null });
-    const rebuiltVersion = probeRebuiltAgentVersion(sandboxName);
+    const rebuiltVersion = await probeRebuiltAgentVersion(sandboxName);
     if (
       rebuiltVersion.verificationFailed ||
       rebuiltVersion.sandboxVersion !== versionCheck.expectedVersion
@@ -467,7 +490,7 @@ export async function runRebuildPostRestorePhase(
     targetAgentName === "openclaw" &&
     !mcpBridgeRestoreUnverified &&
     !mutableConfigHashRefreshUnverified &&
-    !verifyFinalMutableOpenClawConfigHash(sandboxName, log, mcpRuntimeSelection)
+    !(await verifyFinalMutableOpenClawConfigHash(sandboxName, log, mcpRuntimeSelection))
   ) {
     finalMutableConfigHashUnverified = true;
   }
@@ -490,8 +513,7 @@ export async function runRebuildPostRestorePhase(
     mutableConfigPermissionsVerified = true;
     log(`Verified the rebuilt ${targetAgentName} terminal-agent mutable posture`);
   }
-  const postRestoreComplete =
-    genericPostRestoreComplete && mutableConfigPermissionsVerified;
+  const postRestoreComplete = genericPostRestoreComplete && mutableConfigPermissionsVerified;
   if (postRestoreComplete) {
     console.log(`  ${G}✓${R} Sandbox '${sandboxName}' rebuild completed`);
     if (versionCheck.expectedVersion) {

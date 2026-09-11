@@ -9,6 +9,7 @@ import path from "node:path";
 import { sleepSeconds, waitUntilAsync } from "../core/wait";
 import { isGatewayHealthy } from "../state/gateway";
 import { envInt } from "./env";
+import type { GatewayRecoveryOutput } from "./gateway-recovery";
 import {
   createGatewayHealthWaitOptions,
   formatGatewayHealthWaitLimit,
@@ -17,6 +18,7 @@ import { isDockerDriverGatewayHttpReady } from "./gateway-http-readiness";
 import {
   getBlueprintMaxOpenshellVersion,
   getBlueprintMinOpenshellVersion,
+  isOpenshellDevVersion,
   shouldAllowOpenshellAboveBlueprintMax,
   versionGte,
 } from "./openshell-version";
@@ -26,7 +28,7 @@ export const NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE = "nemoclaw-openshell-gatew
 export const OPENSHELL_GATEWAY_HOMEBREW_SERVICE = "openshell";
 export const OPENSHELL_GATEWAY_HOMEBREW_TAP = "nvidia/openshell";
 export const OPENSHELL_GATEWAY_HOMEBREW_FORMULA_SHA256 =
-  "f0f86519e227b3b326431410058ba690b1a7b83e5af7384014e4b96283d3a642";
+  "cf00a9441589702ffe006720fd6a9dffc0f0745b337036aad26dc53eb94c1558";
 export const NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER =
   "NEMOCLAW_MANAGED_OPENSHELL_GATEWAY=1";
 export const NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER_LINE = `# ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER}`;
@@ -130,6 +132,7 @@ export interface PackageManagedDockerDriverGatewayOptions {
   isDockerDriverGatewayReady?: () => Promise<boolean>;
   managedServiceLogCommand?: string;
   now?: () => number;
+  output?: Pick<GatewayRecoveryOutput, "error" | "log" | "warn">;
   prepareOpenShellGatewayUserServiceEnv?: () => void;
   preparePortForOpenShellGatewayUserServiceStart?: () => void;
   registerDockerDriverGatewayEndpoint: () => boolean;
@@ -146,7 +149,10 @@ export interface PackageManagedDockerDriverGatewayOptions {
   validatePortOwnerForOpenShellGatewayUserServiceStart?: () => void;
   verifySandboxBridgeGatewayReachableOrExit: (
     exitOnFailure: boolean,
-    options?: { skip?: boolean },
+    options?: {
+      output?: Pick<GatewayRecoveryOutput, "error" | "log" | "warn">;
+      skip?: boolean;
+    },
   ) => Promise<void>;
 }
 
@@ -275,6 +281,16 @@ export function checkUpstreamGatewayVersion(
       message:
         `  NemoClaw could not determine the package-managed OpenShell gateway version at ${binaryPath}. ` +
         "Restore the OpenShell package, then retry.",
+    };
+  }
+  if (isOpenshellDevVersion(versionOutput)) {
+    return {
+      supported: false,
+      binaryPath,
+      version,
+      message:
+        `  Refusing the system OpenShell gateway service: ${binaryPath} is a development build. ` +
+        "Install exact stable OpenShell 0.0.116 before retrying NemoClaw.",
     };
   }
   const bounds = (opts.getUpstreamGatewayVersionBounds ?? defaultUpstreamGatewayVersionBounds)();
@@ -1388,6 +1404,7 @@ export async function startPackageManagedDockerDriverGateway({
   isDockerDriverGatewayReady = isDockerDriverGatewayHttpReady,
   managedServiceLogCommand,
   now = Date.now,
+  output,
   prepareOpenShellGatewayUserServiceEnv,
   preparePortForOpenShellGatewayUserServiceStart,
   registerDockerDriverGatewayEndpoint,
@@ -1399,6 +1416,9 @@ export async function startPackageManagedDockerDriverGateway({
   validatePortOwnerForOpenShellGatewayUserServiceStart,
   verifySandboxBridgeGatewayReachableOrExit,
 }: PackageManagedDockerDriverGatewayOptions): Promise<boolean> {
+  const log = output?.log ?? console.log;
+  const warn = output?.warn ?? console.warn;
+  const printError = output?.error ?? console.error;
   const stopBeforeStandaloneFallback = () => {
     try {
       const stopped = stopService();
@@ -1414,7 +1434,7 @@ export async function startPackageManagedDockerDriverGateway({
       }
       if (stopped.attempted && !stopped.stopped) {
         const detail = stopped.reason ? ` (${stopped.reason})` : "";
-        console.warn(
+        warn(
           `  OpenShell gateway managed service could not be stopped${detail}; standalone startup will verify gateway port ownership.`,
         );
       }
@@ -1433,15 +1453,15 @@ export async function startPackageManagedDockerDriverGateway({
     if (!hasService()) return false;
   } catch (error) {
     if (error instanceof OpenShellGatewayServiceTrustError) throw error;
-    console.warn(
+    warn(
       `  OpenShell gateway managed service could not be inspected (${formatError(error)}); using standalone fallback.`,
     );
-    if (managedServiceLogCommand) console.warn(`  Logs: ${managedServiceLogCommand}`);
+    if (managedServiceLogCommand) warn(`  Logs: ${managedServiceLogCommand}`);
     stopBeforeStandaloneFallback();
     return false;
   }
 
-  console.log("  Starting OpenShell gateway via managed service...");
+  log("  Starting OpenShell gateway via managed service...");
   let serviceStart: OpenShellGatewayUserServiceStartResult;
   try {
     serviceStart = startService({
@@ -1456,26 +1476,26 @@ export async function startPackageManagedDockerDriverGateway({
     ) {
       throw error;
     }
-    console.warn(
+    warn(
       `  OpenShell gateway managed service startup failed (${formatError(error)}); using standalone fallback.`,
     );
-    if (managedServiceLogCommand) console.warn(`  Logs: ${managedServiceLogCommand}`);
+    if (managedServiceLogCommand) warn(`  Logs: ${managedServiceLogCommand}`);
     stopBeforeStandaloneFallback();
     return false;
   }
   const reportLogs = () => {
     const logCommand = serviceStart.logCommand ?? managedServiceLogCommand;
-    if (logCommand) console.warn(`  Logs: ${logCommand}`);
+    if (logCommand) warn(`  Logs: ${logCommand}`);
   };
   if (!serviceStart.started) {
     const detail = serviceStart.reason ? ` (${serviceStart.reason})` : "";
     if (serviceStart.standaloneFallbackBlocked || serviceStart.manager === "homebrew") {
       const message = `OpenShell gateway managed service failed to start${detail}.`;
-      console.error(`  ${message}`);
+      printError(`  ${message}`);
       if (exitOnFailure) process.exit(1);
       throw new Error(message);
     }
-    console.warn(
+    warn(
       `  OpenShell gateway managed service failed to start${detail}; using standalone fallback.`,
     );
     reportLogs();
@@ -1510,9 +1530,10 @@ export async function startPackageManagedDockerDriverGateway({
   if (healthy) {
     clearDockerDriverGatewayRuntimeFiles();
     await verifySandboxBridgeGatewayReachableOrExit(exitOnFailure, {
+      ...(output ? { output } : {}),
       skip: skipSandboxBridgeReachability,
     });
-    console.log("  ✓ OpenShell gateway managed service is healthy");
+    log("  ✓ OpenShell gateway managed service is healthy");
     return true;
   }
 
@@ -1520,8 +1541,8 @@ export async function startPackageManagedDockerDriverGateway({
     pollCount,
     pollInterval,
   )}; using standalone fallback.`;
-  console.warn(`  ${message}`);
-  console.warn(
+  warn(`  ${message}`);
+  warn(
     `  Last readiness check: endpoint registered=${lastReadiness.registered ? "yes" : "no"}, OpenShell CLI health=${lastReadiness.cliHealthy ? "yes" : "no"}, direct gRPC health=${lastReadiness.grpcHealthy ? "yes" : "no"}.`,
   );
   reportLogs();

@@ -48,20 +48,19 @@ describe("blueprint runtime identity schema", () => {
     expect(validate(blueprintWithIdentity({ okta: runtimeIdentity }))).toBe(false);
   });
 
-  it.each([
-    "NODE_OPTIONS",
-    "MYTOKEN",
-    "OPENSHELL_TOKEN",
-  ])("rejects unsafe secret-material name %s", (refreshTokenEnvironment) => {
-    expect(
-      validate(
-        blueprintWithIdentity({
-          ...runtimeIdentity,
-          refresh_token_env: refreshTokenEnvironment,
-        }),
-      ),
-    ).toBe(false);
-  });
+  it.each(["NODE_OPTIONS", "MYTOKEN", "OPENSHELL_TOKEN"])(
+    "rejects unsafe secret-material name %s",
+    (refreshTokenEnvironment) => {
+      expect(
+        validate(
+          blueprintWithIdentity({
+            ...runtimeIdentity,
+            refresh_token_env: refreshTokenEnvironment,
+          }),
+        ),
+      ).toBe(false);
+    },
+  );
 
   it("rejects identity values forwarded by the general subprocess allowlist", () => {
     expect(

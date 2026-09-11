@@ -6,8 +6,11 @@ import { pathToFileURL } from "node:url";
 
 import * as dockerRunNamespace from "../../../src/lib/adapters/docker/run.ts";
 import * as openshellRuntimeNamespace from "../../../src/lib/adapters/openshell/runtime.ts";
+import * as sandboxCommandCliNamespace from "../../../src/lib/adapters/openshell/sandbox-command-cli.ts";
+import * as dockerCommandResultNamespace from "../../../src/lib/onboard/docker-command-result.ts";
 import * as managedBootstrapAdapterNamespace from "../../../src/lib/onboard/managed-bootstrap/adapter.ts";
 import * as dockerGpuPatchCloneNamespace from "../../../src/lib/onboard/docker-gpu-patch-clone.ts";
+import * as dockerGpuPatchFinalizeNamespace from "../../../src/lib/onboard/docker-gpu-patch-finalize.ts";
 import type {
   DockerContainerInspect,
   DockerGpuPatchDeps,
@@ -38,12 +41,22 @@ const dockerGpuPatchClone = (
     : dockerGpuPatchCloneNamespace
 ) as typeof import("../../../src/lib/onboard/docker-gpu-patch-clone.ts");
 const { shouldOmitOpenShellOciImageUser } = dockerGpuPatchClone;
+const dockerGpuPatchFinalize = (
+  "default" in dockerGpuPatchFinalizeNamespace
+    ? dockerGpuPatchFinalizeNamespace.default
+    : dockerGpuPatchFinalizeNamespace
+) as typeof import("../../../src/lib/onboard/docker-gpu-patch-finalize.ts");
+const { finalizeDockerGpuPatchBackup } = dockerGpuPatchFinalize;
 const startupCommandEnv = (
   "default" in startupCommandEnvNamespace
     ? startupCommandEnvNamespace.default
     : startupCommandEnvNamespace
 ) as typeof import("../../../src/lib/onboard/docker-startup-command-env.ts");
-const { openshellSandboxCommandEnvValue } = startupCommandEnv;
+const {
+  openshellMainProcessSpecEnvValue,
+  openshellSandboxCommandEnvValue,
+  parseOpenShellMainProcessSpecEnvValue,
+} = startupCommandEnv;
 const startupCommandPatch = (
   "default" in startupCommandPatchNamespace
     ? startupCommandPatchNamespace.default
@@ -54,13 +67,25 @@ const dockerRun = (
   "default" in dockerRunNamespace ? dockerRunNamespace.default : dockerRunNamespace
 ) as typeof import("../../../src/lib/adapters/docker/run.ts");
 const { dockerCapture: defaultDockerCapture } = dockerRun;
+const dockerCommandResult = (
+  "default" in dockerCommandResultNamespace
+    ? dockerCommandResultNamespace.default
+    : dockerCommandResultNamespace
+) as typeof import("../../../src/lib/onboard/docker-command-result.ts");
+const { hasZeroDockerExitStatus } = dockerCommandResult;
 const openshellRuntime = (
   "default" in openshellRuntimeNamespace
     ? openshellRuntimeNamespace.default
     : openshellRuntimeNamespace
 ) as typeof import("../../../src/lib/adapters/openshell/runtime.ts");
+const { createCliOpenShellSandboxCommandExecutor } = (
+  "default" in sandboxCommandCliNamespace
+    ? sandboxCommandCliNamespace.default
+    : sandboxCommandCliNamespace
+) as typeof import("../../../src/lib/adapters/openshell/sandbox-command-cli.ts");
 
 type StartupCommandRecreate = typeof recreateOpenShellDockerSandboxWithStartupCommand;
+type DockerGpuPatchFinalize = typeof finalizeDockerGpuPatchBackup;
 type DockerCapture = NonNullable<DockerGpuPatchDeps["dockerCapture"]>;
 
 export type LegacyKeepaliveFixtureOptions = {
@@ -76,13 +101,16 @@ export type LegacyKeepaliveHandoffReceipt = {
 };
 
 export type LegacyKeepaliveFixtureDeps = {
+  commandExecutor: NonNullable<DockerGpuPatchDeps["commandExecutor"]>;
   recreate: StartupCommandRecreate;
   dockerCapture: DockerCapture;
   runOpenshell: NonNullable<DockerGpuPatchDeps["runOpenshell"]>;
   runCaptureOpenshell: NonNullable<DockerGpuPatchDeps["runCaptureOpenshell"]>;
+  finalize: DockerGpuPatchFinalize;
 };
 
 const defaultDeps: LegacyKeepaliveFixtureDeps = {
+  commandExecutor: createCliOpenShellSandboxCommandExecutor(),
   recreate: recreateOpenShellDockerSandboxWithStartupCommand,
   dockerCapture: defaultDockerCapture,
   runOpenshell: openshellRuntime.runOpenshell,
@@ -92,6 +120,7 @@ const defaultDeps: LegacyKeepaliveFixtureDeps = {
       includeStderr: true,
       timeout: typeof options?.timeout === "number" ? options.timeout : undefined,
     }).output,
+  finalize: finalizeDockerGpuPatchBackup,
 };
 
 function requireFixtureInput(condition: boolean, message: string): asserts condition {
@@ -105,16 +134,12 @@ function isLegacyKeepaliveHandoffReceiptCandidate(
     typeof value === "object" &&
     value !== null &&
     !Array.isArray(value) &&
-    ["oldContainerId", "newContainerId", "startupCommand"].some((key) =>
-      Object.hasOwn(value, key),
-    )
+    ["oldContainerId", "newContainerId", "startupCommand"].some((key) => Object.hasOwn(value, key))
   );
 }
 
 /** Read one final machine receipt without treating recreation progress as JSON. */
-export function parseLegacyKeepaliveHandoffReceipt(
-  output: string,
-): LegacyKeepaliveHandoffReceipt {
+export function parseLegacyKeepaliveHandoffReceipt(output: string): LegacyKeepaliveHandoffReceipt {
   const lines = output
     .split(/\r?\n/u)
     .map((line) => line.trim())
@@ -158,14 +183,40 @@ function reviewedManagedRuntimeWorkload(environment: unknown): string[] | null {
   if (!Array.isArray(environment) || !environment.every((entry) => typeof entry === "string")) {
     return null;
   }
-  const prefix = `${OPENSHELL_SANDBOX_COMMAND_ENV}=`;
+  const legacyPrefix = `${OPENSHELL_SANDBOX_COMMAND_ENV}=`;
+  const mainProcessSpecPrefix = `${startupCommandEnv.OPENSHELL_MAIN_PROCESS_SPEC_ENV}=`;
   const commandEntries = environment.filter(
-    (entry) => entry === OPENSHELL_SANDBOX_COMMAND_ENV || entry.startsWith(prefix),
+    (entry) =>
+      entry === OPENSHELL_SANDBOX_COMMAND_ENV ||
+      entry.startsWith(legacyPrefix) ||
+      entry === startupCommandEnv.OPENSHELL_MAIN_PROCESS_SPEC_ENV ||
+      entry.startsWith(mainProcessSpecPrefix),
   );
-  if (commandEntries.length !== 1 || !commandEntries[0].startsWith(prefix)) return null;
+  if (commandEntries.length !== 1) return null;
 
-  const command = commandEntries[0].slice(prefix.length);
-  const tokens = command.split(" ");
+  const entry = commandEntries[0];
+  let tokens: string[];
+  let hasCanonicalTransport: boolean;
+  if (entry.startsWith(legacyPrefix)) {
+    const command = entry.slice(legacyPrefix.length);
+    tokens = command.split(" ");
+    try {
+      hasCanonicalTransport = openshellSandboxCommandEnvValue(tokens) === command;
+    } catch {
+      return null;
+    }
+  } else if (entry.startsWith(mainProcessSpecPrefix)) {
+    const value = entry.slice(mainProcessSpecPrefix.length);
+    try {
+      const spec = parseOpenShellMainProcessSpecEnvValue(value);
+      tokens = [...spec.command];
+      hasCanonicalTransport = openshellMainProcessSpecEnvValue(tokens, spec.tty) === value;
+    } catch {
+      return null;
+    }
+  } else {
+    return null;
+  }
   if (tokens.length < 2 || tokens[0] !== "env" || tokens.at(-1) !== MANAGED_IMAGE_ENTRYPOINT[0]) {
     return null;
   }
@@ -181,7 +232,7 @@ function reviewedManagedRuntimeWorkload(environment: unknown): string[] | null {
       assertManagedBootstrapSafeProcessEnvironmentKey(key);
       assignmentKeys.add(key);
     }
-    return openshellSandboxCommandEnvValue(tokens) === command ? tokens : null;
+    return hasCanonicalTransport ? tokens : null;
   } catch {
     return null;
   }
@@ -310,10 +361,30 @@ function legacyKeepaliveDockerCapture(
   };
 }
 
-export function createLegacyKeepaliveFixture(
+function runFixtureLifecycleCommand(
+  runOpenshell: NonNullable<DockerGpuPatchDeps["runOpenshell"]>,
+  args: string[],
+  timeoutSecs: number,
+): boolean {
+  try {
+    return hasZeroDockerExitStatus(
+      runOpenshell(args, {
+        ignoreError: true,
+        killProcessTreeOnTimeout: true,
+        killSignal: "SIGKILL",
+        suppressOutput: true,
+        timeout: Math.max(1, Math.round(timeoutSecs * 1000)),
+      }),
+    );
+  } catch {
+    return false;
+  }
+}
+
+export async function createLegacyKeepaliveFixture(
   options: LegacyKeepaliveFixtureOptions,
   deps: Partial<LegacyKeepaliveFixtureDeps> = defaultDeps,
-): ReturnType<StartupCommandRecreate> {
+): Promise<Awaited<ReturnType<StartupCommandRecreate>>> {
   requireFixtureInput(options.sandboxName.trim() !== "", "sandbox name is required");
   requireFixtureInput(
     DOCKER_CONTAINER_ID_PATTERN.test(options.expectedContainerId),
@@ -324,19 +395,50 @@ export function createLegacyKeepaliveFixture(
   const dockerCapture = deps.dockerCapture ?? defaultDeps.dockerCapture;
   const runOpenshell = deps.runOpenshell ?? defaultDeps.runOpenshell;
   const runCaptureOpenshell = deps.runCaptureOpenshell ?? defaultDeps.runCaptureOpenshell;
-  const result = recreate(
-    {
-      sandboxName: options.sandboxName,
-      expectedOldContainerId: options.expectedContainerId,
-      openshellSandboxCommand: LEGACY_KEEPALIVE_COMMAND,
-      timeoutSecs: options.timeoutSecs ?? DEFAULT_RECREATE_TIMEOUT_SECS,
-    },
-    {
-      dockerCapture: legacyKeepaliveDockerCapture(options.expectedContainerId, dockerCapture),
-      runCaptureOpenshell,
-      runOpenshell,
-    },
+  const finalize = deps.finalize ?? defaultDeps.finalize;
+  const timeoutSecs = options.timeoutSecs ?? DEFAULT_RECREATE_TIMEOUT_SECS;
+  const commandExecutor = deps.commandExecutor ?? defaultDeps.commandExecutor;
+  const recreateDeps = {
+    commandExecutor,
+    dockerCapture: legacyKeepaliveDockerCapture(options.expectedContainerId, dockerCapture),
+    runCaptureOpenshell,
+    runOpenshell,
+  };
+
+  // OpenShell 0.0.116 treats exit of the registered main process while the
+  // sandbox is Running as terminal Error, even when the process exits zero.
+  // Move the durable row to Stopped before Docker replaces that process. The
+  // finalizer below then makes OpenShell own the exact replacement start and
+  // withholds success until both OpenShell Ready and Docker identity agree.
+  requireFixtureInput(
+    runFixtureLifecycleCommand(runOpenshell, ["sandbox", "stop", options.sandboxName], timeoutSecs),
+    "legacy keepalive fixture could not stop the sandbox through OpenShell before recreation",
   );
+
+  let result: Awaited<ReturnType<StartupCommandRecreate>> | undefined;
+  try {
+    result = await recreate(
+      {
+        sandboxName: options.sandboxName,
+        expectedOldContainerId: options.expectedContainerId,
+        openshellSandboxCommand: LEGACY_KEEPALIVE_COMMAND,
+        timeoutSecs,
+        waitForSupervisor: false,
+      },
+      recreateDeps,
+    );
+  } finally {
+    if (result === undefined) {
+      // The recreation helper restores the original Docker container before it
+      // rejects. Re-enter the OpenShell lifecycle here, while preserving the
+      // original failure as the authoritative error for the caller.
+      runFixtureLifecycleCommand(
+        runOpenshell,
+        ["sandbox", "start", options.sandboxName],
+        timeoutSecs,
+      );
+    }
+  }
 
   requireFixtureInput(
     result.oldContainerId === options.expectedContainerId,
@@ -351,19 +453,39 @@ export function createLegacyKeepaliveFixture(
     "legacy keepalive recreation did not replace the container",
   );
   requireFixtureInput(
-    result.backupRemoved,
-    "legacy keepalive recreation left the original container backup in place",
+    !result.backupRemoved,
+    "legacy keepalive recreation crossed the backup commit point before OpenShell handoff",
   );
-  return result;
+  const finalization = await finalize(
+    {
+      result,
+      supervisorReady: true,
+      sandboxName: options.sandboxName,
+      finalHandoffTimeoutSecs: timeoutSecs,
+    },
+    recreateDeps,
+  );
+  requireFixtureInput(
+    finalization.backupRemoved && finalization.finalHandoffAcknowledged === true,
+    `legacy keepalive fixture did not acknowledge the final replacement handoff${
+      finalization.lastSandboxPhase
+        ? `; last sandbox phase was ${finalization.lastSandboxPhase}`
+        : ""
+    }`,
+  );
+  return { ...result, backupRemoved: true };
 }
 
-function main(): void {
+async function main(): Promise<void> {
   const [sandboxName, expectedContainerId, ...extraArgs] = process.argv.slice(2);
   requireFixtureInput(
     sandboxName !== undefined && expectedContainerId !== undefined && extraArgs.length === 0,
     "usage: gateway-guard-legacy-keepalive-fixture <sandbox-name> <container-id>",
   );
-  const result = createLegacyKeepaliveFixture({ sandboxName, expectedContainerId });
+  const result = await createLegacyKeepaliveFixture({
+    sandboxName,
+    expectedContainerId,
+  });
   process.stdout.write(
     `${JSON.stringify({
       oldContainerId: result.oldContainerId,
@@ -377,11 +499,9 @@ const invokedAsScript =
   process.argv[1] !== undefined &&
   import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href;
 if (invokedAsScript) {
-  try {
-    main();
-  } catch (error: unknown) {
+  main().catch((error: unknown) => {
     const detail = error instanceof Error ? error.message : String(error);
     process.stderr.write(`${redactString(detail)}\n`);
     process.exitCode = 1;
-  }
+  });
 }

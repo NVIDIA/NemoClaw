@@ -48,7 +48,7 @@ vi.mock("../../../src/lib/actions/sandbox/process-recovery", () => ({
   executeSandboxExecCommand: mocks.executeSandboxExecCommand,
 }));
 
-const MATCHING_OPENSHELL = path.resolve("test/fixtures/openshell-v0.0.106");
+const MATCHING_OPENSHELL = path.resolve("test/fixtures/openshell-v0.0.116");
 const ORIGINAL_HOME = process.env.HOME;
 const ORIGINAL_GATEWAY_MANAGEMENT = process.env.NEMOCLAW_GATEWAY_MANAGEMENT;
 const ORIGINAL_OPENSHELL_BIN = process.env.NEMOCLAW_OPENSHELL_BIN;
@@ -201,24 +201,22 @@ beforeEach(() => {
     policyState = "absent";
     return true;
   });
-  mocks.captureRecordedSandboxBasePolicy
-    .mockReset()
-    .mockImplementation(() =>
-      policyState === "absent"
-        ? "version: 1\nnetwork_policies: {}\n"
-        : YAML.stringify({
-            version: 1,
-            network_policies: YAML.parse(
-              bridge.buildMcpBridgePolicyYaml(
-                "github",
-                "https://8.8.8.8/github",
-                "deepagents-config",
-                { addresses: ["8.8.8.8"] },
-                "alpha-mcp-github",
-              ),
-            ).network_policies,
-          }),
-    );
+  mocks.captureRecordedSandboxBasePolicy.mockReset().mockImplementation(() =>
+    policyState === "absent"
+      ? "version: 1\nnetwork_policies: {}\n"
+      : YAML.stringify({
+          version: 1,
+          network_policies: YAML.parse(
+            bridge.buildMcpBridgePolicyYaml(
+              "github",
+              "https://8.8.8.8/github",
+              "deepagents-config",
+              { addresses: ["8.8.8.8"] },
+              "alpha-mcp-github",
+            ),
+          ).network_policies,
+        }),
+  );
 
   mocks.executeGatewaySupervisorAction.mockReset();
   mocks.executeSandboxCommand

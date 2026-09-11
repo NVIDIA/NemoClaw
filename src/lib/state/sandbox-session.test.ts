@@ -2,6 +2,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+
+const mocks = vi.hoisted(() => ({
+  resolveOpenshell: vi.fn<() => string | null>(),
+}));
+
+vi.mock("../adapters/openshell/resolve", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../adapters/openshell/resolve")>()),
+  resolveOpenshell: mocks.resolveOpenshell,
+}));
+
 import {
   createSystemDeps,
   getActiveSandboxSessions,
@@ -11,6 +21,7 @@ import {
 
 afterEach(() => {
   vi.unstubAllEnvs();
+  mocks.resolveOpenshell.mockReset();
 });
 
 describe("parseSshProcesses", () => {
@@ -137,6 +148,68 @@ describe("parseSshProcesses", () => {
 });
 
 describe("getActiveSandboxSessions", () => {
+  it("uses the default OpenShell resolver for proxied session lookup", () => {
+    const sandboxId = "de7eab7a-002f-41e9-acad-5fd4749e07bb";
+    mocks.resolveOpenshell.mockReturnValue("/resolved/openshell");
+    const spawn = vi
+      .fn()
+      .mockReturnValueOnce({
+        status: 0,
+        stdout: `12345 ssh -o ProxyCommand=/resolved/openshell ssh-proxy --sandbox-id ${sandboxId} --token t -tt -o RequestTTY=force sandbox`,
+        stderr: "",
+      })
+      .mockReturnValueOnce({ status: 0, stdout: `Id: ${sandboxId}\n`, stderr: "" });
+
+    const result = getActiveSandboxSessions(
+      "my-sandbox",
+      createSystemDeps(undefined, { spawnSync: spawn as never }),
+    );
+
+    expect(mocks.resolveOpenshell).toHaveBeenCalledOnce();
+    expect(spawn).toHaveBeenNthCalledWith(
+      2,
+      "/resolved/openshell",
+      ["sandbox", "get", "my-sandbox"],
+      expect.any(Object),
+    );
+    expect(result.sessions).toEqual([
+      {
+        sandboxName: "my-sandbox",
+        pid: 12345,
+        sshHost: "openshell-my-sandbox.default",
+      },
+    ]);
+  });
+
+  it("preserves legacy session lookup when the default OpenShell resolver is unavailable", () => {
+    const sandboxId = "de7eab7a-002f-41e9-acad-5fd4749e07bb";
+    mocks.resolveOpenshell.mockReturnValue(null);
+    const spawn = vi.fn().mockReturnValue({
+      status: 0,
+      stdout: `12345 ssh -o ProxyCommand=/usr/local/bin/openshell ssh-proxy --sandbox-id ${sandboxId} --token t -tt -o RequestTTY=force sandbox
+67890 ssh -F /tmp/config openshell-my-sandbox.default`,
+      stderr: "",
+    });
+
+    const result = getActiveSandboxSessions(
+      "my-sandbox",
+      createSystemDeps(undefined, { spawnSync: spawn as never }),
+    );
+
+    expect(mocks.resolveOpenshell).toHaveBeenCalledOnce();
+    expect(spawn).toHaveBeenCalledOnce();
+    expect(result).toEqual({
+      detected: true,
+      sessions: [
+        {
+          sandboxName: "my-sandbox",
+          pid: 67890,
+          sshHost: "openshell-my-sandbox.default",
+        },
+      ],
+    });
+  });
+
   it("pins a proxied session lookup to the recorded OpenShell target (#10514)", () => {
     const sandboxId = "de7eab7a-002f-41e9-acad-5fd4749e07bb";
     vi.stubEnv("OPENSHELL_GATEWAY", "hostile-gateway");

@@ -13,8 +13,8 @@ function ok(stdout = ""): RunResult {
   return { status: 0, stdout, stderr: "" };
 }
 
-function runNvmSweep(tmpHome: string, existing: readonly string[], removed: string[]) {
-  return runUninstallPlan(
+async function runNvmSweep(tmpHome: string, existing: readonly string[], removed: string[]) {
+  return await runUninstallPlan(
     { assumeYes: true, deleteModels: false, keepOpenShell: false },
     {
       commandExists: (command) => command !== "docker" && command !== "lsof" && command !== "pgrep",
@@ -48,16 +48,17 @@ function runNvmSweep(tmpHome: string, existing: readonly string[], removed: stri
 }
 
 describe("uninstall NVM leftovers", () => {
-  it("removes package-owned CLI bins and preserves foreign same-named entries (#9500)", () => {
+  it("removes package-owned CLI bins and preserves foreign same-named entries (#9500)", async () => {
     const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-nvm-bins-"));
     const nodeVersionsDir = path.join(tmpHome, ".nvm", "versions", "node");
     const ownedVersion = path.join(nodeVersionsDir, "v22.19.0");
     const foreignVersion = path.join(nodeVersionsDir, "v20.20.0");
     const packageDir = path.join(ownedVersion, "lib", "node_modules", "nemoclaw");
     const nestedForeignBin = path.join(ownedVersion, "lib", "node_modules", "unrelated", "bin");
-    const cliNames = ["nemoclaw", "nemohermes", "nemo-deepagents"] as const;
+    const cliNames = ["nemoclaw", "nemoclaw-acp", "nemohermes", "nemo-deepagents"] as const;
     const declaredBins = {
       nemoclaw: "bin/nemoclaw.js",
+      "nemoclaw-acp": "dist/lib/acp/main.js",
       nemohermes: "bin/nemohermes.js",
       "nemo-deepagents": "bin/nemoclaw.js",
     } as const;
@@ -82,18 +83,18 @@ describe("uninstall NVM leftovers", () => {
     shims.forEach((entry) => fs.symlinkSync("/tmp/prefix/bin/cli", entry));
     const packageTarget = (entry: string) =>
       path.join(packageDir, declaredBins[path.basename(entry) as keyof typeof declaredBins]);
-    ownedBins.slice(0, 2).forEach((entry) => {
+    ownedBins.slice(0, -1).forEach((entry) => {
       const target = packageTarget(entry);
       fs.symlinkSync(path.relative(path.dirname(entry), target), entry);
     });
-    fs.linkSync(packageTarget(ownedBins[2]), ownedBins[2]);
+    fs.linkSync(packageTarget(ownedBins.at(-1)!), ownedBins.at(-1)!);
     kept.forEach((entry) => fs.symlinkSync("/tmp/foreign-package/bin/cli", entry));
-    expect(fs.lstatSync(ownedBins[1]).isSymbolicLink()).toBe(true);
-    expect(fs.existsSync(ownedBins[1])).toBe(false);
+    expect(fs.lstatSync(ownedBins[2]).isSymbolicLink()).toBe(true);
+    expect(fs.existsSync(ownedBins[2])).toBe(false);
 
     const removed: string[] = [];
     try {
-      const result = runNvmSweep(tmpHome, [...shims, nodeVersionsDir], removed);
+      const result = await runNvmSweep(tmpHome, [...shims, nodeVersionsDir], removed);
       expect(result.exitCode).toBe(0);
       expect(links.filter((entry) => removed.includes(entry))).toEqual([...shims, ...ownedBins]);
     } finally {
@@ -101,13 +102,14 @@ describe("uninstall NVM leftovers", () => {
     }
   });
 
-  it("preserves a linked package while removing its package-owned CLI bins", () => {
+  it("preserves a linked package while removing its package-owned CLI bins", async () => {
     const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-nvm-link-"));
     const versionDir = path.join(tmpHome, ".nvm", "versions", "node", "v22.19.0");
     const packageLink = path.join(versionDir, "lib", "node_modules", "nemoclaw");
     const linkedPackage = path.join(tmpHome, "linked-nemoclaw");
     const declaredBins = {
       nemoclaw: "bin/nemoclaw.js",
+      "nemoclaw-acp": "dist/lib/acp/main.js",
       nemohermes: "bin/nemohermes.js",
       "nemo-deepagents": "bin/nemo-deepagents.js",
     } as const;
@@ -120,6 +122,7 @@ describe("uninstall NVM leftovers", () => {
     fs.symlinkSync(linkedPackage, packageLink);
     const bins = Object.entries(declaredBins).map(([name, relativeTarget]) => {
       const packageTarget = path.join(linkedPackage, relativeTarget);
+      fs.mkdirSync(path.dirname(packageTarget), { recursive: true });
       fs.writeFileSync(packageTarget, "#!/usr/bin/env node\n");
       const bin = path.join(versionDir, "bin", name);
       fs.mkdirSync(path.dirname(bin), { recursive: true });
@@ -130,7 +133,7 @@ describe("uninstall NVM leftovers", () => {
     const removed: string[] = [];
     try {
       const nodeVersionsDir = path.join(tmpHome, ".nvm", "versions", "node");
-      expect(runNvmSweep(tmpHome, [nodeVersionsDir], removed).exitCode).toBe(0);
+      expect((await runNvmSweep(tmpHome, [nodeVersionsDir], removed)).exitCode).toBe(0);
       expect(new Set(removed)).toEqual(new Set(bins));
       bins.forEach((bin) => expect(fs.existsSync(bin)).toBe(false));
       expect(fs.readlinkSync(packageLink)).toBe(linkedPackage);
@@ -142,7 +145,7 @@ describe("uninstall NVM leftovers", () => {
 
   it.each(["versions", "modules", "bin"] as const)(
     "skips an unreadable NVM %s directory without deleting its bin",
-    (blockedDirectory) => {
+    async (blockedDirectory) => {
       const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-nvm-unreadable-"));
       const nodeVersionsDir = path.join(tmpHome, ".nvm", "versions", "node");
       const versionDir = path.join(nodeVersionsDir, "v22.19.0");
@@ -176,7 +179,7 @@ describe("uninstall NVM leftovers", () => {
       }) as typeof fs.readdirSync);
       try {
         const removed: string[] = [];
-        expect(runNvmSweep(tmpHome, [nodeVersionsDir], removed).exitCode).toBe(0);
+        expect((await runNvmSweep(tmpHome, [nodeVersionsDir], removed)).exitCode).toBe(0);
         expect(removed).not.toContain(bin);
       } finally {
         spy.mockRestore();

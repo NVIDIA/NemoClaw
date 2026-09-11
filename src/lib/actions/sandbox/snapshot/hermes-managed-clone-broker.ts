@@ -3,7 +3,8 @@
 
 import { randomBytes } from "node:crypto";
 
-import { checkOpenAiInferenceProviderProfile } from "../../../adapters/openshell/provider-profile-registration";
+import type { OpenShellProviderAdapter } from "../../../adapters/openshell/provider-adapter";
+import { createManagedProviderAdapter } from "../../../adapters/openshell/managed-provider-adapter";
 import { cloneAndDeepFreeze } from "../../../core/immutable";
 import {
   getHermesToolGatewayCloneBroker,
@@ -16,7 +17,6 @@ import {
   cleanupManagedCloneProviderTransaction,
   type ManagedCloneProviderBinding,
   type ManagedCloneProviderCleanupResult,
-  MANAGED_CLONE_PROVIDER_CREATE_TIMEOUT_MS,
   type ManagedCloneProviderRunner,
   type ManagedCloneProviderTransactionReceipt,
   type PreparedManagedCloneProviderTransaction,
@@ -156,14 +156,15 @@ function destinationHermesBindings(
   return hermesBindings(destination.name, broker);
 }
 
-export function prepareHermesManagedCloneBrokerTransaction(input: {
+export async function prepareHermesManagedCloneBrokerTransaction(input: {
   readonly handoff: HermesCloneHandoff;
   readonly destination: SandboxEntry | null;
   readonly environment?: NodeJS.ProcessEnv;
+  readonly providerAdapter?: OpenShellProviderAdapter;
   readonly runOpenshell: ManagedCloneProviderRunner;
   readonly broker?: HermesToolGatewayCloneBroker;
   readonly transactionId?: string;
-}): PreparedHermesManagedCloneBrokerTransaction {
+}): Promise<PreparedHermesManagedCloneBrokerTransaction> {
   if (!hermesEnabled(input.handoff)) {
     throw new Error("Hermes managed-tool broker preparation requires an enabled Hermes gateway");
   }
@@ -171,13 +172,14 @@ export function prepareHermesManagedCloneBrokerTransaction(input: {
   const destinationSandboxName = input.handoff.destinationSandboxName;
   broker.preflightHermesToolGatewayCloneBinding(destinationSandboxName);
   const bindings = hermesBindings(destinationSandboxName, broker);
-  const providerTransaction = prepareManagedCloneProviderTransaction({
+  const providerTransaction = await prepareManagedCloneProviderTransaction({
     handoff: input.handoff,
     destination: input.destination,
     additionalBindings: bindings,
     resolveAdditionalDestinationOwnedBindings: (destination) =>
       destinationHermesBindings(destination, broker),
     environment: input.environment,
+    providerAdapter: input.providerAdapter,
     runOpenshell: input.runOpenshell,
     transactionId: input.transactionId,
   });
@@ -199,28 +201,17 @@ function isUnknownActivationOutcome(error: unknown): boolean {
   );
 }
 
-function ensureHermesCloneInferenceProviderProfile(runOpenshell: ManagedCloneProviderRunner): void {
-  const profile = checkOpenAiInferenceProviderProfile({
-    runOpenshell: (args, options) =>
-      runOpenshell(args, {
-        ...options,
-        timeout: MANAGED_CLONE_PROVIDER_CREATE_TIMEOUT_MS,
-      }),
-  });
-  if (profile.ok) return;
-  throw new HermesManagedCloneBrokerTransactionError(profile.messages.join("\n"));
-}
-
-export function provisionHermesManagedCloneBrokerTransaction(
+export async function provisionHermesManagedCloneBrokerTransaction(
   prepared: PreparedHermesManagedCloneBrokerTransaction,
   input: {
     readonly environment?: NodeJS.ProcessEnv;
+    readonly providerAdapter?: OpenShellProviderAdapter;
     readonly runOpenshell: ManagedCloneProviderRunner;
     readonly readSandbox: ReadSandbox;
     readonly captureSnapshotRestoreAuthority?: CaptureSnapshotRestoreAuthority;
     readonly broker?: HermesToolGatewayCloneBroker;
   },
-): HermesManagedCloneBrokerReceipt {
+): Promise<HermesManagedCloneBrokerReceipt> {
   const broker = input.broker ?? getHermesToolGatewayCloneBroker();
   const environment = input.environment ?? process.env;
   const refreshToken = environment[HERMES_TOOL_GATEWAY_REFRESH_CREDENTIAL_ENV]
@@ -232,8 +223,8 @@ export function provisionHermesManagedCloneBrokerTransaction(
     );
   }
 
+  const providerAdapter = input.providerAdapter ?? createManagedProviderAdapter(input.runOpenshell);
   revalidateManagedCloneMutationAuthority(prepared.providerTransaction, input);
-  ensureHermesCloneInferenceProviderProfile(input.runOpenshell);
   let staged: ReturnType<HermesToolGatewayCloneBroker["stageHermesToolGatewayCloneBinding"]>;
   try {
     staged = broker.stageHermesToolGatewayCloneBinding(
@@ -250,9 +241,10 @@ export function provisionHermesManagedCloneBrokerTransaction(
   }
   let providerReceipt: ManagedCloneProviderTransactionReceipt | undefined;
   try {
-    providerReceipt = provisionManagedCloneProviderTransaction(prepared.providerTransaction, {
+    providerReceipt = await provisionManagedCloneProviderTransaction(prepared.providerTransaction, {
       ...input,
       environment,
+      providerAdapter,
       resolveCredential: (binding, applyEnvironment) =>
         binding.providerName === prepared.gatewayProviderName
           ? staged.brokerToken
@@ -278,7 +270,11 @@ export function provisionHermesManagedCloneBrokerTransaction(
       );
     }
     const cleanup = providerReceipt
-      ? cleanupManagedCloneProviderTransaction(providerReceipt, input.runOpenshell)
+      ? await cleanupManagedCloneProviderTransaction(
+          providerReceipt,
+          input.runOpenshell,
+          providerAdapter,
+        )
       : undefined;
     let discarded = false;
     try {

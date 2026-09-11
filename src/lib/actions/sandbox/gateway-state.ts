@@ -18,10 +18,6 @@ import {
 import { assertNoOpenShellGatewayEndpointOverride } from "../../openshell-gateway-endpoint-guard";
 import { isTerminalSandboxPhase, TERMINAL_SANDBOX_PHASES } from "../../state/gateway";
 export { isTerminalSandboxPhase, TERMINAL_SANDBOX_PHASES };
-import {
-  withMcpLifecycleLock,
-  withMcpLifecycleLockSync,
-} from "../../state/mcp-lifecycle-lock-acquisition";
 import { selectSandboxOwningGateway } from "./gateway-select";
 import {
   gatewayNamePattern,
@@ -76,6 +72,8 @@ import {
   assertHermesPortableAgentLifecycleAuthority,
   buildHermesPortableCommandEnvironment,
   buildHermesPortableCommandAuthority,
+  defaultPortableDemoStateDir,
+  hermesPortableLifecycleLockOptions,
   inspectPortableAgentReceiptDisposition,
   qualifyHermesPortableAcceptedReadinessAuthority,
   qualifyPortableAgentLifecycleAuthority,
@@ -136,6 +134,8 @@ export type {
 export {
   buildHermesPortableCommandAuthority,
   buildHermesPortableCommandEnvironment,
+  defaultPortableDemoStateDir,
+  hermesPortableLifecycleLockOptions,
   inspectPortableAgentReceiptDisposition,
   qualifyHermesPortableAcceptedReadinessAuthority,
   qualifyPortableAgentLifecycleAuthority,
@@ -143,9 +143,11 @@ export {
   requalifyPortableAgentSandboxAuthority,
   requireHermesPortableActiveLifecycleAuthority,
 };
-export const withSandboxLifecycleLock = withMcpLifecycleLock;
-export const withSandboxLifecycleLockSync = withMcpLifecycleLockSync;
-export const withConnectSandboxLifecycleLock = withMcpLifecycleLock;
+export {
+  withConnectSandboxLifecycleLock,
+  withSandboxLifecycleLock,
+  withSandboxLifecycleLockSync,
+} from "./lifecycle/lock";
 
 /** Capture one accepted-readiness observation through retained Hermes command authority. */
 export function captureHermesPortableAcceptedReadinessObservation(
@@ -929,6 +931,7 @@ export async function getReconciledSandboxGatewayState(
     return lookup;
   }
   if (lookup.state === "missing") {
+    if (gatewayRecovery === "observe") return lookup;
     return reconcileMissingAgainstNamedGateway(sandboxName, lookup, targetGatewayName);
   }
 

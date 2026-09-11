@@ -238,12 +238,19 @@ describe("Docker managed bootstrap journal", () => {
     );
 
     expect(store.transition(IDENTITY, "staged", "cutover").phase).toBe("cutover");
+    expect(() => store.transition(IDENTITY, "cutover", "shared-state-committed")).toThrow(
+      "unsupported",
+    );
     expect(store.recordCompletion(IDENTITY, finalization.commitReceipt).commitReceipt).toEqual(
       finalization.commitReceipt,
     );
-    expect(store.transition(IDENTITY, "cutover", "shared-state-committed").phase).toBe(
-      "shared-state-committed",
+    expect(store.transition(IDENTITY, "cutover", "bootstrap-complete").phase).toBe(
+      "bootstrap-complete",
     );
+    const restarted = createFileDockerManagedBootstrapJournalStore(root);
+    expect(
+      restarted.transition(IDENTITY, "bootstrap-complete", "shared-state-committed").phase,
+    ).toBe("shared-state-committed");
     store.remove(IDENTITY, ["shared-state-committed"]);
     expect(store.load(IDENTITY)).toBeNull();
   });
@@ -299,7 +306,7 @@ describe("Docker managed bootstrap journal", () => {
     fs.unlinkSync(`${file}.decision`);
     expect(store.load(IDENTITY)?.phase).toBe("rollback-authorized");
     expect(() => store.transition(IDENTITY, "cutover", "shared-state-committed")).toThrow(
-      "expected phase cutover",
+      "unsupported",
     );
     store.remove(IDENTITY, ["rollback-authorized"]);
   });
@@ -525,46 +532,53 @@ describe("Docker managed bootstrap journal", () => {
   it.each([
     [1, legacyJournalV1],
     [2, legacyJournalV2],
-  ] as const)("fails typed and closed for exact legacy journal schema %i", (schemaVersion, legacy) => {
-    const record = legacy();
-    const serialized = `${JSON.stringify(record)}\n`;
-    let failure: unknown;
-    try {
-      parseDockerManagedBootstrapJournal(serialized);
-    } catch (error) {
-      failure = error;
-    }
-    expect(failure).toBeInstanceOf(DockerManagedBootstrapLegacyRecordRequiresAgentError);
-    expect(failure).toMatchObject({
-      bootstrapIdentity: IDENTITY,
-      journalContext: {
-        schemaVersion,
-        phase: record.phase,
+  ] as const)(
+    "fails typed and closed for exact legacy journal schema %i",
+    (schemaVersion, legacy) => {
+      const record = legacy();
+      const serialized = `${JSON.stringify(record)}\n`;
+      let failure: unknown;
+      try {
+        parseDockerManagedBootstrapJournal(serialized);
+      } catch (error) {
+        failure = error;
+      }
+      expect(failure).toBeInstanceOf(DockerManagedBootstrapLegacyRecordRequiresAgentError);
+      expect(failure).toMatchObject({
         bootstrapIdentity: IDENTITY,
-        providerId: record.sandbox.driverId,
-        sandbox: record.sandbox,
-        originalRuntimeId: record.originalRuntimeId,
-        replacementRuntimeId: record.replacementRuntimeId,
-      },
-      recordKind: "journal",
-      schemaVersion,
-    });
-    const legacyFailure = failure as DockerManagedBootstrapLegacyRecordRequiresAgentError;
-    expect(Object.isFrozen(legacyFailure.journalContext)).toBe(true);
-    expect(Object.isFrozen(legacyFailure.journalContext?.sandbox)).toBe(true);
+        journalContext: {
+          schemaVersion,
+          phase: record.phase,
+          bootstrapIdentity: IDENTITY,
+          providerId: record.sandbox.driverId,
+          sandbox: record.sandbox,
+          originalRuntimeId: record.originalRuntimeId,
+          replacementRuntimeId: record.replacementRuntimeId,
+        },
+        recordKind: "journal",
+        schemaVersion,
+      });
+      const legacyFailure = failure as DockerManagedBootstrapLegacyRecordRequiresAgentError;
+      expect(Object.isFrozen(legacyFailure.journalContext)).toBe(true);
+      expect(Object.isFrozen(legacyFailure.journalContext?.sandbox)).toBe(true);
 
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-docker-journal-"));
-    roots.push(root);
-    const store = createFileDockerManagedBootstrapJournalStore(root);
-    expect(loadUnfinished(store)).toEqual([]);
-    const target = path.join(root, DOCKER_MANAGED_BOOTSTRAP_JOURNAL_DIRECTORY, `${IDENTITY}.json`);
-    fs.writeFileSync(target, serialized, { mode: 0o600 });
-    expect(store.listUnfinishedIdentities()).toEqual([IDENTITY]);
-    expect(() => store.load(IDENTITY)).toThrowError(
-      DockerManagedBootstrapLegacyRecordRequiresAgentError,
-    );
-    expect(readPinnedPrivateFile(target).text).toBe(serialized);
-  });
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-docker-journal-"));
+      roots.push(root);
+      const store = createFileDockerManagedBootstrapJournalStore(root);
+      expect(loadUnfinished(store)).toEqual([]);
+      const target = path.join(
+        root,
+        DOCKER_MANAGED_BOOTSTRAP_JOURNAL_DIRECTORY,
+        `${IDENTITY}.json`,
+      );
+      fs.writeFileSync(target, serialized, { mode: 0o600 });
+      expect(store.listUnfinishedIdentities()).toEqual([IDENTITY]);
+      expect(() => store.load(IDENTITY)).toThrowError(
+        DockerManagedBootstrapLegacyRecordRequiresAgentError,
+      );
+      expect(readPinnedPrivateFile(target).text).toBe(serialized);
+    },
+  );
 
   it("does not classify a malformed legacy journal as upgradeable authority", () => {
     const malformed = { ...legacyJournalV2(), agent: "hermes" };

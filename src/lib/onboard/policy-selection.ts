@@ -65,7 +65,7 @@ export type OnboardPolicyApplicationDeps = Omit<
   localInferenceProviders: readonly string[];
   withSandboxMutationLock: typeof import("../state/mcp-lifecycle-lock").withSandboxMutationLock;
   waitForSandboxReady(sandboxName: string): Promise<SandboxReadyWaitResult>;
-  waitForSandboxControlPlaneReady(sandboxName: string): boolean;
+  waitForSandboxControlPlaneReady(sandboxName: string): Promise<boolean>;
   parsePolicyPresetEnv(raw: string): string[];
   env: NodeJS.ProcessEnv;
 };
@@ -131,7 +131,7 @@ export type SetupPolicySelectionDeps = {
   note: (message: string) => void;
   isNonInteractive: () => boolean;
   waitForSandboxReady: (sandboxName: string) => Promise<SandboxReadyWaitResult>;
-  waitForSandboxControlPlaneReady: (sandboxName: string) => boolean;
+  waitForSandboxControlPlaneReady: (sandboxName: string) => Promise<boolean>;
   syncPresetSelection: (
     sandboxName: string,
     currentAppliedPresets: string[],
@@ -246,34 +246,44 @@ export function computeSetupPresetSuggestions(
   } = options;
   const known = Array.isArray(options.knownPresetNames) ? new Set(options.knownPresetNames) : null;
   const supportOptions = { webSearchSupported: options.webSearchSupported };
-  const suggestions = pruneInactiveMessagingPolicyPresets(
-    deps.tiers
-      .resolveTierPresets(tierName)
-      .map((preset) => preset.name)
-      .filter((name) => setupPolicyPresetAppliesToAgent(name, agent))
-      .filter(
-        (name) =>
-          !isStaleBuiltinWebSearchPolicyPreset(name, {
-            webSearchConfig,
-            customPresetNames: options.customPresetNames,
-            tierName,
-            agentName: agent,
-          }),
+  const tierPresetNames = deps.tiers
+    .resolveTierPresets(tierName)
+    .map((preset) => preset.name)
+    .filter((name) => setupPolicyPresetAppliesToAgent(name, agent))
+    .filter(
+      (name) =>
+        !isStaleBuiltinWebSearchPolicyPreset(name, {
+          webSearchConfig,
+          customPresetNames: options.customPresetNames,
+          tierName,
+          agentName: agent,
+        }),
+    )
+    .filter(
+      (name) =>
+        !isInactiveObservabilityPolicyPreset(name, {
+          agent,
+          observabilityEnabled,
+          customPresetNames: options.customPresetNames,
+          customOwnsObservability: options.customOwnsObservability,
+        }),
+    )
+    .filter((name) => deps.policies.setupPolicyPresetSupported(name, supportOptions))
+    .filter((name) => !known || known.has(name));
+  // A tier's own messaging presets (e.g. Open's slack/discord/telegram/wechat/
+  // whatsapp/teams) are tier egress defaults, not per-channel opt-ins, so they
+  // must not be pruned just because no channel is enabled yet -- matching the
+  // agent-conditional exemption `createUnavailablePolicyPresetPruner` already
+  // applies for OpenClaw. Only Hermes, whose recovery records the full enabled
+  // channel set, prunes tier defaults down to that set here.
+  const isHermesAgent = typeof agent === "string" && agent.trim().toLowerCase() === "hermes";
+  const suggestions = isHermesAgent
+    ? pruneInactiveMessagingPolicyPresets(
+        tierPresetNames,
+        enabledChannels,
+        options.customPresetNames,
       )
-      .filter(
-        (name) =>
-          !isInactiveObservabilityPolicyPreset(name, {
-            agent,
-            observabilityEnabled,
-            customPresetNames: options.customPresetNames,
-            customOwnsObservability: options.customOwnsObservability,
-          }),
-      )
-      .filter((name) => deps.policies.setupPolicyPresetSupported(name, supportOptions))
-      .filter((name) => !known || known.has(name)),
-    enabledChannels,
-    options.customPresetNames,
-  );
+    : tierPresetNames;
   const add = (name: string) => {
     if (!setupPolicyPresetAppliesToAgent(name, agent)) return;
     if (
@@ -360,7 +370,7 @@ async function requireSandboxReady(
     console.error(`  Sandbox '${sandboxName}' was not ready ${stage} policy application.`);
     process.exit(1);
   }
-  if (stage === "after" && !deps.waitForSandboxControlPlaneReady(sandboxName)) {
+  if (stage === "after" && !(await deps.waitForSandboxControlPlaneReady(sandboxName))) {
     console.error(
       `  Sandbox '${sandboxName}' did not re-register with OpenShell after policy application.`,
     );

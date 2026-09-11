@@ -3,6 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+import type { OpenShellSandboxBufferedCommandExecutor } from "../../src/lib/adapters/openshell/sandbox-command";
 import {
   createDockerFinalHandoffCaptureFixture,
   createDockerFinalHandoffRunFixture,
@@ -13,8 +14,35 @@ import { recreateOpenShellDockerSandboxWithStartupCommand } from "../../src/lib/
 const OLD_CONTAINER_ID = "a".repeat(64);
 const NEW_CONTAINER_ID = "b".repeat(64);
 
+function commandExecutorThrough(
+  runOpenshell: (
+    args: string[],
+    opts?: Record<string, unknown>,
+  ) => { status: number | null; stdout?: string; stderr?: string },
+): OpenShellSandboxBufferedCommandExecutor {
+  return {
+    runBuffered: vi.fn(async (request) => {
+      const result = runOpenshell(
+        ["sandbox", "exec", "-n", request.sandboxName, "--", ...request.command],
+        { ignoreError: true, suppressOutput: true },
+      );
+      return {
+        outcome:
+          result.status === null
+            ? {
+                kind: "failed" as const,
+                error: { kind: "invocation" as const, message: "failed" },
+              }
+            : { kind: "completed" as const, exitCode: result.status },
+        stdout: result.stdout ?? "",
+        stderr: result.stderr ?? "",
+      };
+    }),
+  };
+}
+
 describe("Docker final handoff lifecycle integration", () => {
-  it("commits only between authoritative OpenShell stop and start receipts (#10153)", () => {
+  it("commits only between authoritative OpenShell stop and start receipts (#10153)", async () => {
     const events: string[] = [];
     const dockerStop = vi.fn((containerId: string) => {
       events.push(
@@ -44,7 +72,7 @@ describe("Docker final handoff lifecycle integration", () => {
       return { status: 0 };
     });
 
-    const result = recreateOpenShellDockerSandboxWithStartupCommand(
+    const result = await recreateOpenShellDockerSandboxWithStartupCommand(
       {
         sandboxName: "alpha",
         expectedOldContainerId: OLD_CONTAINER_ID,
@@ -61,6 +89,7 @@ describe("Docker final handoff lifecycle integration", () => {
         dockerStart,
         runCaptureOpenshell,
         runOpenshell,
+        commandExecutor: commandExecutorThrough(runOpenshell),
         sleep: vi.fn(),
         now: () => new Date("2026-05-12T00:00:00Z"),
         detectSandboxFallbackDns: vi.fn(() => null),
@@ -89,7 +118,7 @@ describe("Docker final handoff lifecycle integration", () => {
     expect(dockerStart).not.toHaveBeenCalled();
   });
 
-  it("does not cross the final Docker commit when authoritative OpenShell stop fails (#10153)", () => {
+  it("does not cross the final Docker commit when authoritative OpenShell stop fails (#10153)", async () => {
     const dockerStop = vi.fn(() => ({ status: 0 }));
     const dockerRm = vi.fn(() => ({ status: 0 }));
     const dockerStart = vi.fn(() => ({ status: 0 }));
@@ -101,7 +130,7 @@ describe("Docker final handoff lifecycle integration", () => {
     let failure: unknown;
 
     try {
-      recreateOpenShellDockerSandboxWithStartupCommand(
+      await recreateOpenShellDockerSandboxWithStartupCommand(
         {
           sandboxName: "alpha",
           expectedOldContainerId: OLD_CONTAINER_ID,
@@ -118,6 +147,7 @@ describe("Docker final handoff lifecycle integration", () => {
           dockerStart,
           runCaptureOpenshell,
           runOpenshell,
+          commandExecutor: commandExecutorThrough(runOpenshell),
           sleep: vi.fn(),
           now: () => new Date("2026-05-12T00:00:00Z"),
           detectSandboxFallbackDns: vi.fn(() => null),

@@ -4,10 +4,7 @@
 import { createHash } from "node:crypto";
 import { posix } from "node:path";
 
-import Ajv2020, {
-  type AnySchema,
-  type ValidateFunction,
-} from "ajv/dist/2020.js";
+import Ajv2020, { type AnySchema, type ValidateFunction } from "ajv/dist/2020.js";
 import { parseDocument } from "yaml";
 
 import { compileLlamaCppGgufCachePlan } from "../llama-cpp/gguf-cache-plan";
@@ -42,8 +39,7 @@ const MODEL_SCHEMA_ID =
   "https://github.com/NVIDIA/NemoClaw/managed-inference/schemas/model.schema.json";
 const PRESET_SCHEMA_ID =
   "https://github.com/NVIDIA/NemoClaw/managed-inference/schemas/preset.schema.json";
-const CATALOG_SOURCE_PATTERN =
-  /^managed-inference\/(models|recipes|presets)\/.+\.ya?ml$/;
+const CATALOG_SOURCE_PATTERN = /^managed-inference\/(models|recipes|presets)\/.+\.ya?ml$/;
 
 interface CatalogValidators {
   catalog: ValidateFunction;
@@ -77,10 +73,7 @@ export type ServingCatalogSchemaCompatibility =
 export function checkServingCatalogSchemaVersion(
   schemaVersion: unknown,
 ): ServingCatalogSchemaCompatibility {
-  if (
-    typeof schemaVersion !== "string" ||
-    !/^\d+\.\d+\.\d+$/u.test(schemaVersion)
-  ) {
+  if (typeof schemaVersion !== "string" || !/^\d+\.\d+\.\d+$/u.test(schemaVersion)) {
     return {
       compatible: false,
       reason: "serving catalog schemaVersion must use major.minor.patch",
@@ -128,9 +121,7 @@ function createValidators(schemas: ServingCatalogSchemas): CatalogValidators {
   const recipe = ajv.getSchema(RECIPE_SCHEMA_ID);
   const preset = ajv.getSchema(PRESET_SCHEMA_ID);
   if (!model || !recipe || !preset) {
-    throw new ServingCatalogValidationError(
-      "Serving catalog schemas have invalid identifiers.",
-    );
+    throw new ServingCatalogValidationError("Serving catalog schemas have invalid identifiers.");
   }
   return {
     model,
@@ -142,10 +133,7 @@ function createValidators(schemas: ServingCatalogSchemas): CatalogValidators {
 
 function validationDetails(validate: ValidateFunction): string {
   return (validate.errors ?? [])
-    .map(
-      (error) =>
-        `${error.instancePath || "/"} ${error.message ?? "is invalid"}`,
-    )
+    .map((error) => `${error.instancePath || "/"} ${error.message ?? "is invalid"}`)
     .join("; ");
 }
 
@@ -153,9 +141,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-function parseTrustedYaml(
-  source: ServingCatalogSource,
-): Record<string, unknown> {
+function parseTrustedYaml(source: ServingCatalogSource): Record<string, unknown> {
   let document;
   try {
     document = parseDocument(source.contents, {
@@ -181,9 +167,7 @@ function parseTrustedYaml(
     );
   }
   if (!isRecord(value)) {
-    throw new ServingCatalogValidationError(
-      `${source.path} must contain one YAML mapping.`,
-    );
+    throw new ServingCatalogValidationError(`${source.path} must contain one YAML mapping.`);
   }
   return value;
 }
@@ -196,9 +180,7 @@ function definitionIdentity(
   const metadata = value.metadata;
   const id = isRecord(metadata) ? metadata.id : undefined;
   if (
-    (kind !== "ServingModel" &&
-      kind !== "ServingRecipe" &&
-      kind !== "ServingPreset") ||
+    (kind !== "ServingModel" && kind !== "ServingRecipe" && kind !== "ServingPreset") ||
     typeof id !== "string"
   ) {
     throw new ServingCatalogValidationError(
@@ -208,15 +190,11 @@ function definitionIdentity(
   return { kind, id };
 }
 
-function isLlamaCppServingRecipe(
-  recipe: ServingRecipe,
-): recipe is LlamaCppServingRecipe {
+function isLlamaCppServingRecipe(recipe: ServingRecipe): recipe is LlamaCppServingRecipe {
   return recipe.spec.providerId === "llama-cpp-local";
 }
 
-function isHostLocalVllmRecipe(
-  recipe: ServingRecipe,
-): recipe is HostLocalInferenceServingRecipe {
+function isHostLocalVllmRecipe(recipe: ServingRecipe): recipe is HostLocalInferenceServingRecipe {
   return (
     recipe.spec.backend === "vllm" &&
     recipe.spec.execution.materializerRef === "vllm.host-local/v1" &&
@@ -227,11 +205,7 @@ function isHostLocalVllmRecipe(
 function isReadinessRegistryEntry(
   registered: ServingReadinessRegistryValue,
 ): registered is ServingReadinessRegistryEntry {
-  return (
-    typeof registered === "object" &&
-    registered !== null &&
-    "kind" in registered
-  );
+  return typeof registered === "object" && registered !== null && "kind" in registered;
 }
 
 function readinessKindMatches(
@@ -253,8 +227,7 @@ function readinessDescriptor(
   registered: ServingReadinessRegistryValue | undefined,
   kind: ServingReadinessRequirement["readiness"]["kind"],
 ): ServingReadinessRegistryEntry | undefined {
-  if (registered === undefined || !readinessKindMatches(registered, kind))
-    return undefined;
+  if (registered === undefined || !readinessKindMatches(registered, kind)) return undefined;
   return isReadinessRegistryEntry(registered) ? registered : { kind };
 }
 
@@ -285,10 +258,7 @@ function validateRecipeSemantics(
     );
   }
   const stationPair = recipe.spec.execution.stationPair;
-  if (
-    (orchestrationRef === "vllm.station-pair-optional/v1") !==
-    (stationPair !== undefined)
-  ) {
+  if ((orchestrationRef === "vllm.station-pair-optional/v1") !== (stationPair !== undefined)) {
     throw new ServingCatalogValidationError(
       `Recipe ${recipe.metadata.id} must declare Station-pair configuration exactly when it selects the Station-pair orchestration.`,
     );
@@ -302,10 +272,7 @@ function validateRecipeSemantics(
   }
 
   const readinessContractRef = recipe.spec.readiness?.contractRef;
-  if (
-    readinessContractRef &&
-    !registries.readinessContracts.has(readinessContractRef)
-  ) {
+  if (readinessContractRef && !registries.readinessContracts.has(readinessContractRef)) {
     throw new ServingCatalogValidationError(
       `Recipe ${recipe.metadata.id} references unknown readiness contract ${readinessContractRef}.`,
     );
@@ -367,12 +334,7 @@ function validateRecipeSemantics(
         );
       }
       agents.add(agent.id);
-      if (
-        !readinessDescriptor(
-          registries.readiness.get(agent.qualificationRef),
-          "qualification",
-        )
-      ) {
+      if (!readinessDescriptor(registries.readiness.get(agent.qualificationRef), "qualification")) {
         throw new ServingCatalogValidationError(
           `Recipe ${recipe.metadata.id} references unknown agent qualification ${agent.qualificationRef} for ${agent.id}.`,
         );
@@ -387,9 +349,7 @@ function validateRecipeSemantics(
     registrationError = "does not satisfy its registered adapter contract";
   }
   if (registrationError) {
-    throw new ServingCatalogValidationError(
-      `Recipe ${recipe.metadata.id}: ${registrationError}.`,
-    );
+    throw new ServingCatalogValidationError(`Recipe ${recipe.metadata.id}: ${registrationError}.`);
   }
 }
 
@@ -398,19 +358,14 @@ function comparisonValueType(
 ): "boolean" | "number" | "string" | "version" | "mixed" {
   if (comparison.operator === "at-least") return "number";
   if (comparison.operator === "version-at-least") return "version";
-  const values =
-    comparison.operator === "one-of" ? comparison.values : [comparison.value];
+  const values = comparison.operator === "one-of" ? comparison.values : [comparison.value];
   const types = new Set(values.map((value) => typeof value));
   if (types.size !== 1) return "mixed";
   const [type] = types;
-  return type === "boolean" || type === "number" || type === "string"
-    ? type
-    : "mixed";
+  return type === "boolean" || type === "number" || type === "string" ? type : "mixed";
 }
 
-function readinessRequirementKey(
-  requirement: ServingReadinessRequirement,
-): string {
+function readinessRequirementKey(requirement: ServingReadinessRequirement): string {
   const readiness = requirement.readiness;
   return `${readiness.scope}:${readiness.kind}:${readiness.id}`;
 }
@@ -432,8 +387,7 @@ function validatePresetRequirements(
   for (const requirement of preset.spec.requirements?.all ?? []) {
     const requirementKey = canonicalServingCatalogJson(requirement);
     if (requirements.has(requirementKey)) {
-      const requirementLabel =
-        "readiness" in requirement ? "readiness requirement" : "requirement";
+      const requirementLabel = "readiness" in requirement ? "readiness requirement" : "requirement";
       throw new ServingCatalogValidationError(
         `Preset ${preset.metadata.id} repeats ${requirementLabel} ${requirementKey}.`,
       );
@@ -483,10 +437,7 @@ function validatePresetRequirements(
       continue;
     }
     const key = `${requirement.topologyQualification.id}@${String(requirement.topologyQualification.schemaVersion)}`;
-    if (
-      registries.topologyQualifications &&
-      !registries.topologyQualifications.has(key)
-    ) {
+    if (registries.topologyQualifications && !registries.topologyQualifications.has(key)) {
       throw new ServingCatalogValidationError(
         `Preset ${preset.metadata.id} references unknown topology qualification ${key}.`,
       );
@@ -494,18 +445,12 @@ function validatePresetRequirements(
   }
 }
 
-function canonicalReadinessComparison(
-  comparison: ServingReadinessComparison,
-): string {
-  if (comparison.operator !== "one-of")
-    return canonicalServingCatalogJson(comparison);
+function canonicalReadinessComparison(comparison: ServingReadinessComparison): string {
+  if (comparison.operator !== "one-of") return canonicalServingCatalogJson(comparison);
   return canonicalServingCatalogJson({
     ...comparison,
     values: [...comparison.values].sort((left, right) =>
-      compareCanonicalText(
-        canonicalServingCatalogJson(left),
-        canonicalServingCatalogJson(right),
-      ),
+      compareCanonicalText(canonicalServingCatalogJson(left), canonicalServingCatalogJson(right)),
     ),
   });
 }
@@ -517,10 +462,7 @@ function llamaCppReadinessComparisonMatches(
   expected: ServingReadinessComparison,
 ): boolean {
   if (role !== "architecture" || actual.operator !== "equals") {
-    return (
-      canonicalReadinessComparison(actual) ===
-      canonicalReadinessComparison(expected)
-    );
+    return canonicalReadinessComparison(actual) === canonicalReadinessComparison(expected);
   }
   const architecture = actual.value === "x64" ? "amd64" : actual.value;
   return (
@@ -536,24 +478,16 @@ function validateLlamaCppPreset(
   preset: ServingPreset,
   registries: ServingCatalogRegistries,
 ): void {
-  const expectedComparisons = new Map<
-    ServingReadinessObservationRole,
-    ServingReadinessComparison
-  >([
+  const expectedComparisons = new Map<ServingReadinessObservationRole, ServingReadinessComparison>([
     ["operating-system", { operator: "equals", value: "linux" }],
     [
       "architecture",
       {
         operator: "one-of",
-        values: recipe.spec.runtime.platforms.map((platform) =>
-          platform.slice("linux/".length),
-        ),
+        values: recipe.spec.runtime.platforms.map((platform) => platform.slice("linux/".length)),
       },
     ],
-    [
-      "gpu-count",
-      { operator: "at-least", value: recipe.spec.runtime.gpu.count },
-    ],
+    ["gpu-count", { operator: "at-least", value: recipe.spec.runtime.gpu.count }],
     [
       "driver-version",
       {
@@ -568,17 +502,12 @@ function validateLlamaCppPreset(
   for (const requirement of preset.spec.requirements?.all ?? []) {
     if (!("readiness" in requirement)) continue;
     const { readiness } = requirement;
-    if (
-      readiness.kind === "qualification" &&
-      readiness.status === "qualified"
-    ) {
+    if (readiness.kind === "qualification" && readiness.status === "qualified") {
       qualified.add(readiness.id);
     }
     const registered = registries.readiness.get(readiness.id);
-    if (registered === undefined || !isReadinessRegistryEntry(registered))
-      continue;
-    if (registered.kind !== "observation" || registered.role === undefined)
-      continue;
+    if (registered === undefined || !isReadinessRegistryEntry(registered)) continue;
+    if (registered.kind !== "observation" || registered.role === undefined) continue;
     const expected = expectedComparisons.get(registered.role);
     if (!expected) continue;
     if (seenRoles.has(registered.role)) {
@@ -589,12 +518,7 @@ function validateLlamaCppPreset(
     seenRoles.add(registered.role);
     if (
       !("comparison" in readiness) ||
-      !llamaCppReadinessComparisonMatches(
-        recipe,
-        registered.role,
-        readiness.comparison,
-        expected,
-      )
+      !llamaCppReadinessComparisonMatches(recipe, registered.role, readiness.comparison, expected)
     ) {
       throw new ServingCatalogValidationError(
         `Preset ${preset.metadata.id} must require ${registered.role} matching llama.cpp recipe ${recipe.metadata.id}.`,
@@ -659,9 +583,7 @@ function validateCatalogSemantics(
   presets: readonly ServingPreset[],
   registries: ServingCatalogRegistries,
 ): void {
-  const recipesById = new Map(
-    recipes.map((recipe) => [recipe.metadata.id, recipe]),
-  );
+  const recipesById = new Map(recipes.map((recipe) => [recipe.metadata.id, recipe]));
   for (const preset of presets) {
     const recipe = recipesById.get(preset.spec.plan.recipeRef);
     if (!recipe) {
@@ -675,10 +597,7 @@ function validateCatalogSemantics(
       );
     }
     const installPolicyRef = preset.spec.plan.installPolicyRef;
-    if (
-      installPolicyRef &&
-      !registries.installPolicies?.has(installPolicyRef)
-    ) {
+    if (installPolicyRef && !registries.installPolicies?.has(installPolicyRef)) {
       throw new ServingCatalogValidationError(
         `Preset ${preset.metadata.id} references unknown install policy ${installPolicyRef}.`,
       );
@@ -718,11 +637,7 @@ function validateCatalogSemantics(
         requirement.operator === "equals" &&
         typeof requirement.value === "number",
     );
-    if (
-      nodeCount &&
-      "fact" in nodeCount &&
-      recipe.spec.execution.nodeCount !== nodeCount.value
-    ) {
+    if (nodeCount && "fact" in nodeCount && recipe.spec.execution.nodeCount !== nodeCount.value) {
       throw new ServingCatalogValidationError(
         `Preset ${preset.metadata.id} node-count requirement does not match recipe ${recipe.metadata.id}.`,
       );
@@ -751,11 +666,7 @@ function validateCatalogSemantics(
 
   const modelVariants = new Map<string, string>();
   for (const preset of presets) {
-    if (
-      preset.spec.selection === "disabled" ||
-      preset.spec.plan.backend !== "vllm"
-    )
-      continue;
+    if (preset.spec.selection === "disabled" || preset.spec.plan.backend !== "vllm") continue;
     const recipe = recipesById.get(preset.spec.plan.recipeRef);
     if (!recipe || !isHostLocalVllmRecipe(recipe)) continue;
     const environmentValue = recipe.spec.model.environmentValue;
@@ -778,9 +689,7 @@ function validateCatalogSemantics(
   }
 }
 
-function catalogPayload(
-  catalog: CompiledServingCatalog,
-): CompiledServingCatalogPayload {
+function catalogPayload(catalog: CompiledServingCatalog): CompiledServingCatalogPayload {
   const { catalogDigest: _catalogDigest, ...payload } = catalog;
   return payload;
 }
@@ -811,20 +720,14 @@ export function compileTrustedServingCatalog(
       );
     }
     if (sourcePaths.has(source.path)) {
-      throw new ServingCatalogValidationError(
-        `Catalog source path ${source.path} is duplicated.`,
-      );
+      throw new ServingCatalogValidationError(`Catalog source path ${source.path} is duplicated.`);
     }
     sourcePaths.add(source.path);
 
     const value = parseTrustedYaml(source);
     const { kind, id } = definitionIdentity(source, value);
     const expectedDirectory =
-      kind === "ServingModel"
-        ? "models"
-        : kind === "ServingRecipe"
-          ? "recipes"
-          : "presets";
+      kind === "ServingModel" ? "models" : kind === "ServingRecipe" ? "recipes" : "presets";
     if (sourceMatch[1] !== expectedDirectory) {
       throw new ServingCatalogValidationError(
         `${source.path} must place ${kind} definitions under managed-inference/${expectedDirectory}.`,
@@ -842,14 +745,11 @@ export function compileTrustedServingCatalog(
       );
     }
     if (definitionIds.has(id)) {
-      throw new ServingCatalogValidationError(
-        `Serving definition ID ${id} is duplicated.`,
-      );
+      throw new ServingCatalogValidationError(`Serving definition ID ${id} is duplicated.`);
     }
     definitionIds.add(id);
 
-    if (kind === "ServingModel")
-      models.push(value as unknown as ServingModelDefinition);
+    if (kind === "ServingModel") models.push(value as unknown as ServingModelDefinition);
     else if (kind === "ServingRecipe") recipeValues.push(value);
     else presetValues.push(value);
     sources.push({
@@ -882,9 +782,7 @@ export function compileTrustedServingCatalog(
   for (const value of recipeValues) {
     const spec = value.spec;
     if (!isRecord(spec)) {
-      throw new ServingCatalogValidationError(
-        "Serving recipe spec must be an object.",
-      );
+      throw new ServingCatalogValidationError("Serving recipe spec must be an object.");
     }
     const modelRef = spec.modelRef;
     let resolved = value;
@@ -898,8 +796,7 @@ export function compileTrustedServingCatalog(
       referencedModels.add(modelRef);
       if (
         spec.model &&
-        canonicalServingCatalogJson(spec.model) !==
-          canonicalServingCatalogJson(model.spec)
+        canonicalServingCatalogJson(spec.model) !== canonicalServingCatalogJson(model.spec)
       ) {
         throw new ServingCatalogValidationError(
           `Recipe ${String((value.metadata as { id?: unknown } | undefined)?.id ?? "(unknown)")} model does not match ${modelRef}.`,
@@ -929,15 +826,9 @@ export function compileTrustedServingCatalog(
     }
   }
 
-  models.sort((left, right) =>
-    compareCanonicalText(left.metadata.id, right.metadata.id),
-  );
-  recipes.sort((left, right) =>
-    compareCanonicalText(left.metadata.id, right.metadata.id),
-  );
-  presets.sort((left, right) =>
-    compareCanonicalText(left.metadata.id, right.metadata.id),
-  );
+  models.sort((left, right) => compareCanonicalText(left.metadata.id, right.metadata.id));
+  recipes.sort((left, right) => compareCanonicalText(left.metadata.id, right.metadata.id));
+  presets.sort((left, right) => compareCanonicalText(left.metadata.id, right.metadata.id));
   validateCatalogSemantics(recipes, presets, options.registries);
 
   const payload: CompiledServingCatalogPayload = {
@@ -996,9 +887,7 @@ export function parseCompiledServingCatalogJson(
   return catalog;
 }
 
-export function serializeCompiledServingCatalog(
-  catalog: CompiledServingCatalog,
-): string {
+export function serializeCompiledServingCatalog(catalog: CompiledServingCatalog): string {
   return `${canonicalServingCatalogJson(catalog)}\n`;
 }
 

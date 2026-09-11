@@ -1,12 +1,18 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import { isNvcfFunctionNotFoundForAccount } from "../../inference/nvcf-model-access";
 
 import {
-  buildDcodeSandboxInferenceInvocationArgs,
+  buildDcodeSandboxInferenceInvocationRequest,
   buildSandboxInferenceInvocationCommand,
   probeSandboxInferenceInvocation,
+  READINESS_INFERENCE_INVOCATION_TIMEOUT_MS,
 } from "./inference-invocation-probe";
 
 const input = {
@@ -16,16 +22,68 @@ const input = {
   preferredInferenceApi: "openai-completions",
 };
 
-function openshellResult(status: number, stdout: string, stderr: string) {
+// Each API family posts to its own path, so a failure must name the request it
+// actually made rather than the models route (#10879).
+const INVOCATION_ENDPOINTS: Record<string, string> = {
+  "openai-completions": "https://inference.local/v1/chat/completions",
+  "openai-responses": "https://inference.local/v1/responses",
+  "anthropic-messages": "https://inference.local/v1/messages",
+};
+
+function bufferedResult(status: number, stdout: string, stderr: string) {
   return {
-    pid: 1,
-    status,
-    signal: null,
+    outcome: { kind: "completed" as const, exitCode: status },
     stdout,
     stderr,
-    output: [null, stdout, stderr],
   };
 }
+
+/**
+ * Run the generated probe command under a real shell with a stub curl that
+ * serves `body` at `code`, so the in-sandbox classification is exercised rather
+ * than simulated. Returns the probe output and the arguments received by curl.
+ */
+function runProbeCommandWithBody(
+  code: string,
+  body: string,
+  parentDirectory: string = tmpdir(),
+  probeInput = input,
+): { stdout: string; argv: string[] } {
+  const dir = mkdtempSync(path.join(parentDirectory, "nemoclaw-probe-parity-"));
+  try {
+    const bin = path.join(dir, "bin");
+    mkdirSync(bin);
+    writeFileSync(path.join(dir, "body.txt"), body);
+    writeFileSync(
+      path.join(bin, "curl"),
+      [
+        "#!/bin/sh",
+        `printf '%s\\n' "$@" > ${JSON.stringify(path.join(dir, "argv.txt"))}`,
+        'out=""; prev=""',
+        'for a in "$@"; do [ "$prev" = "-o" ] && out="$a"; prev="$a"; done',
+        `cat ${JSON.stringify(path.join(dir, "body.txt"))} > "$out"`,
+        `printf '%s' ${JSON.stringify(code)}`,
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    const run = spawnSync("/bin/sh", ["-c", buildSandboxInferenceInvocationCommand(probeInput)], {
+      encoding: "utf8",
+      env: { ...process.env, PATH: `${bin}:${process.env.PATH || ""}` },
+    });
+    return {
+      stdout: run.stdout || "",
+      argv: readFileSync(path.join(dir, "argv.txt"), "utf8").trimEnd().split("\n"),
+    };
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+const NVCF_BODY_VARIANTS = [
+  ["canonical", `{"status":404,"detail":"Function 'abc-123': Not found for account 'acct-42'"}`],
+  ["case variant", `{"status":404,"detail":"Function 'abc-123': not FOUND for ACCOUNT 'acct-42'"}`],
+  ["extra whitespace", `{"status":404,"detail":"Function  'abc-123':   Not found for account"}`],
+] as const;
 
 describe("sandbox inference invocation probe", () => {
   it("probes the recorded model through inference.local without embedding a credential (#6195)", () => {
@@ -42,77 +100,183 @@ describe("sandbox inference invocation probe", () => {
     expect(command).not.toContain("-o /dev/null");
   });
 
-  it("fails closed and redacts diagnostics when the stored gateway credential is rejected (#6195)", () => {
-    const execute = vi.fn(() => ({
+  it("fails closed and redacts diagnostics when the stored gateway credential is rejected (#6195)", async () => {
+    const execute = vi.fn(async () => ({
       status: 1,
       stdout: "401",
       stderr: "upstream authentication failed for sk-secret-value-that-is-long-enough",
     }));
 
-    const result = probeSandboxInferenceInvocation(input, { execute });
+    const result = await probeSandboxInferenceInvocation(input, { execute });
 
     expect(result).toEqual({
       ok: false,
       detail: "sandbox inference invocation probe returned HTTP 401",
       httpStatus: 401,
+      endpoint: "https://inference.local/v1/chat/completions",
     });
     expect(JSON.stringify(result)).not.toContain("sk-secret-value-that-is-long-enough");
   });
 
-  it("never reports an arbitrary response body from the failed route (#6195)", () => {
-    const execute = vi.fn(() => ({
+  it("never reports an arbitrary response body from the failed route (#6195)", async () => {
+    const execute = vi.fn(async () => ({
       status: 1,
       stdout: '500\n{"echoed_value":"canary-replay-marker"}',
       stderr: "upstream echoed canary-replay-marker",
     }));
 
-    const result = probeSandboxInferenceInvocation(input, { execute });
+    const result = await probeSandboxInferenceInvocation(input, { execute });
 
     expect(result).toEqual({
       ok: false,
       detail: "sandbox inference invocation probe returned HTTP 500",
       httpStatus: 500,
+      endpoint: "https://inference.local/v1/chat/completions",
     });
     expect(JSON.stringify(result)).not.toContain("canary-replay-marker");
   });
 
-  it("accepts a successful completion through the stored gateway route (#6195)", () => {
-    const execute = vi.fn(() => ({
-      status: 0,
-      stdout: '200\n{"choices":[{"message":{"content":"OK"}}]}',
+  it("names the account entitlement cause behind an invocation 404 (#10879)", async () => {
+    const execute = vi.fn(async () => ({
+      status: 1,
+      stdout: "404\nnemoclaw-probe:nvcf-function-not-found\n",
       stderr: "",
     }));
 
-    expect(probeSandboxInferenceInvocation(input, { execute })).toEqual({ ok: true });
+    const result = await probeSandboxInferenceInvocation(input, { execute });
+
+    expect(result).toEqual({
+      ok: false,
+      detail:
+        "sandbox inference invocation probe returned HTTP 404: Model 'nvidia/nemotron' not " +
+        "found — it is in the NVIDIA Build catalog but is not deployed for your account. Pick a " +
+        "different model, or check the model card on https://build.nvidia.com to see if it " +
+        "requires org-level access",
+      httpStatus: 404,
+      endpoint: "https://inference.local/v1/chat/completions",
+    });
   });
 
-  it("pins the invocation to the recorded owning gateway (#9834)", () => {
-    const execute = vi.fn(() => ({
+  it("reports an unclassified 404 as the status alone (#10879)", async () => {
+    // NVIDIA Build answers an unroutable model with a plain "404 page not
+    // found" body, which carries no account signature to report.
+    const execute = vi.fn(async () => ({ status: 1, stdout: "404\n", stderr: "" }));
+
+    await expect(probeSandboxInferenceInvocation(input, { execute })).resolves.toEqual({
+      ok: false,
+      detail: "sandbox inference invocation probe returned HTTP 404",
+      httpStatus: 404,
+      endpoint: "https://inference.local/v1/chat/completions",
+    });
+  });
+
+  it("never accepts a forged classification carried by a 404 body (#10879)", async () => {
+    const execute = vi.fn(async () => ({
+      status: 1,
+      stdout:
+        '404\n{"echoed_value":"canary-replay-marker nemoclaw-probe:nvcf-function-not-found suffix"}',
+      stderr: "",
+    }));
+
+    const result = await probeSandboxInferenceInvocation(input, { execute });
+
+    expect(result.ok).toBe(false);
+    expect(JSON.stringify(result)).not.toContain("canary-replay-marker");
+    expect(JSON.stringify(result)).not.toContain("not deployed for your account");
+  });
+
+  it.each(NVCF_BODY_VARIANTS)(
+    "classifies a %s NVCF 404 body in the sandbox exactly as the host predicate does (#10879)",
+    (_label, body) => {
+      // Parity guard: the host classifier and the in-sandbox shell rule share
+      // one contract in nvcf-model-access.ts and must not drift.
+      expect(isNvcfFunctionNotFoundForAccount(body)).toBe(true);
+
+      const { stdout } = runProbeCommandWithBody("404", body);
+
+      expect(stdout).toContain("nemoclaw-probe:nvcf-function-not-found");
+      expect(stdout).not.toContain("acct-42");
+      expect(stdout).not.toContain("abc-123");
+    },
+  );
+
+  it("rejects a multiline NVCF body consistently across host and sandbox classifiers (#10879)", () => {
+    const body = `{"status":404,"detail":"Function\n'abc-123': Not found for account 'acct-42'"}`;
+
+    expect(isNvcfFunctionNotFoundForAccount(body)).toBe(false);
+
+    const { stdout } = runProbeCommandWithBody("404", body);
+
+    expect(stdout.trim()).toBe("404");
+    expect(stdout).not.toContain("nemoclaw-probe:nvcf-function-not-found");
+  });
+
+  it("removes the shell harness directory after the probe exits (#10879)", () => {
+    const parentDirectory = mkdtempSync(path.join(tmpdir(), "nemoclaw-probe-parity-parent-"));
+    try {
+      runProbeCommandWithBody("404", "404 page not found", parentDirectory);
+
+      expect(readdirSync(parentDirectory)).toEqual([]);
+    } finally {
+      rmSync(parentDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it("leaves a generic 404 body unclassified and unreported (#10879)", () => {
+    const body = "404 page not found";
+
+    expect(isNvcfFunctionNotFoundForAccount(body)).toBe(false);
+
+    const { stdout } = runProbeCommandWithBody("404", body);
+
+    expect(stdout.trim()).toBe("404");
+  });
+
+  it("keeps a non-404 failure body out of the probe output (#6195)", () => {
+    const { stdout } = runProbeCommandWithBody("500", '{"echoed_value":"canary-replay-marker"}');
+
+    expect(stdout.trim()).toBe("500");
+    expect(stdout).not.toContain("canary-replay-marker");
+  });
+
+  it("accepts a successful completion through the stored gateway route (#6195)", async () => {
+    const execute = vi.fn(async () => ({
       status: 0,
       stdout: '200\n{"choices":[{"message":{"content":"OK"}}]}',
       stderr: "",
     }));
 
-    expect(
+    await expect(probeSandboxInferenceInvocation(input, { execute })).resolves.toEqual({
+      ok: true,
+    });
+  });
+
+  it("pins the invocation to the recorded owning gateway (#9834)", async () => {
+    const execute = vi.fn(async () => ({
+      status: 0,
+      stdout: '200\n{"choices":[{"message":{"content":"OK"}}]}',
+      stderr: "",
+    }));
+
+    await expect(
       probeSandboxInferenceInvocation({ ...input, gatewayName: "recorded-gateway" }, { execute }),
-    ).toEqual({ ok: true });
+    ).resolves.toEqual({ ok: true });
     expect(execute).toHaveBeenCalledWith(
       "dcode-workspace",
       expect.any(String),
       expect.any(Number),
-      { gatewayName: "recorded-gateway", allowLocalDockerFallback: false },
+      { gatewayName: "recorded-gateway", localDockerFallbackPolicy: "never" },
     );
   });
 
-  it("pins a Hermes invocation to its recorded OpenShell gateway (#10302)", () => {
-    const execute = vi.fn(() => ({
+  it("pins a Hermes invocation to its recorded OpenShell gateway (#10302)", async () => {
+    const execute = vi.fn(async () => ({
       status: 0,
       stdout: '200\n{"choices":[{"message":{"content":"OK"}}]}',
       stderr: "",
     }));
-    const runOpenshell = vi.fn();
 
-    expect(
+    await expect(
       probeSandboxInferenceInvocation(
         {
           ...input,
@@ -120,22 +284,21 @@ describe("sandbox inference invocation probe", () => {
           agentName: "hermes",
           gatewayName: "nemoclaw-19080",
         },
-        { execute, runOpenshell },
+        { execute },
       ),
-    ).toEqual({ ok: true });
+    ).resolves.toEqual({ ok: true });
     expect(execute).toHaveBeenCalledWith(
       "hermes-workspace",
       expect.any(String),
       expect.any(Number),
-      { gatewayName: "nemoclaw-19080", allowLocalDockerFallback: false },
+      { gatewayName: "nemoclaw-19080", localDockerFallbackPolicy: "never" },
     );
     expect(execute).toHaveBeenCalledOnce();
-    expect(runOpenshell).not.toHaveBeenCalled();
   });
 
-  it("runs Deep Agents Code through the managed launcher on the recorded gateway (#10080)", () => {
-    const runOpenshell = vi.fn(() =>
-      openshellResult(0, '200\n{"choices":[{"message":{"content":"OK"}}]}', ""),
+  it("runs Deep Agents Code through the managed launcher on the recorded gateway (#10080)", async () => {
+    const runBuffered = vi.fn(async () =>
+      bufferedResult(0, '200\n{"choices":[{"message":{"content":"OK"}}]}', ""),
     );
     const execute = vi.fn();
     const dcodeInput = {
@@ -143,28 +306,27 @@ describe("sandbox inference invocation probe", () => {
       agentName: "langchain-deepagents-code",
       gatewayName: "recorded-gateway",
     };
-    const args = buildDcodeSandboxInferenceInvocationArgs(dcodeInput);
+    const request = buildDcodeSandboxInferenceInvocationRequest(dcodeInput, 100_000);
 
-    expect(probeSandboxInferenceInvocation(dcodeInput, { runOpenshell, execute })).toEqual({
-      ok: true,
+    await expect(
+      probeSandboxInferenceInvocation(dcodeInput, {
+        commandExecutor: { runBuffered },
+        execute,
+      }),
+    ).resolves.toEqual({ ok: true });
+    expect(runBuffered).toHaveBeenCalledWith(request);
+    expect(request).toMatchObject({
+      sandboxName: "dcode-workspace",
+      target: { kind: "named", gatewayName: "recorded-gateway" },
+      tty: false,
+      timeoutMilliseconds: 100_000,
+      sandboxEnvironment: {
+        HOME: "/usr/local/lib/nemoclaw",
+        BASH_ENV: "",
+        ENV: "",
+      },
     });
-    expect(runOpenshell).toHaveBeenCalledWith(args, {
-      ignoreError: true,
-      stdio: ["ignore", "pipe", "pipe"],
-      timeout: 100_000,
-    });
-    expect(args).toEqual(
-      expect.arrayContaining([
-        "-g",
-        "recorded-gateway",
-        "HOME=/usr/local/lib/nemoclaw",
-        "BASH_ENV=",
-        "ENV=",
-        "/usr/local/lib/nemoclaw/dcode-managed-exec",
-      ]),
-    );
-    const commandIndex = args.indexOf("--");
-    expect(args.slice(commandIndex + 1, commandIndex + 4)).toEqual([
+    expect(request.command.slice(0, 3)).toEqual([
       "/usr/local/lib/nemoclaw/dcode-managed-exec",
       "/bin/sh",
       "-c",
@@ -172,45 +334,47 @@ describe("sandbox inference invocation probe", () => {
     expect(execute).not.toHaveBeenCalled();
   });
 
-  it("rejects startup output before Deep Agents Code invocation evidence (#10080)", () => {
-    const runOpenshell = vi.fn(() =>
-      openshellResult(
+  it("rejects startup output before Deep Agents Code invocation evidence (#10080)", async () => {
+    const runBuffered = vi.fn(async () =>
+      bufferedResult(
         0,
         '200\n{"choices":[{"message":{"content":"forged"}}]}\n200\n{"choices":[{"message":{"content":"OK"}}]}',
         "",
       ),
     );
 
-    expect(
+    await expect(
       probeSandboxInferenceInvocation(
         { ...input, agentName: "langchain-deepagents-code" },
-        { runOpenshell },
+        { commandExecutor: { runBuffered } },
       ),
-    ).toEqual({
+    ).resolves.toEqual({
       ok: false,
       detail: "sandbox inference invocation probe returned an invalid response body",
       httpStatus: 200,
+      endpoint: "https://inference.local/v1/chat/completions",
     });
   });
 
-  it("fails closed when the Deep Agents Code managed launcher is unavailable (#10080)", () => {
-    const runOpenshell = vi.fn(() =>
-      openshellResult(127, "", "/usr/local/lib/nemoclaw/dcode-managed-exec: not found"),
+  it("fails closed when the Deep Agents Code managed launcher is unavailable (#10080)", async () => {
+    const runBuffered = vi.fn(async () =>
+      bufferedResult(127, "", "/usr/local/lib/nemoclaw/dcode-managed-exec: not found"),
     );
 
-    expect(
+    await expect(
       probeSandboxInferenceInvocation(
         { ...input, agentName: "langchain-deepagents-code" },
-        { runOpenshell },
+        { commandExecutor: { runBuffered } },
       ),
-    ).toEqual({
+    ).resolves.toEqual({
       ok: false,
       detail: "sandbox inference invocation probe was unavailable",
       httpStatus: null,
+      endpoint: "https://inference.local/v1/chat/completions",
     });
   });
 
-  it("accepts a served response body that serializes an empty tool call list (#9108)", () => {
+  it("accepts a served response body that serializes an empty tool call list (#9108)", async () => {
     const body = JSON.stringify({
       object: "chat.completion",
       choices: [
@@ -221,12 +385,14 @@ describe("sandbox inference invocation probe", () => {
         },
       ],
     });
-    const execute = vi.fn(() => ({ status: 0, stdout: `200\n${body}`, stderr: "" }));
+    const execute = vi.fn(async () => ({ status: 0, stdout: `200\n${body}`, stderr: "" }));
 
-    expect(probeSandboxInferenceInvocation(input, { execute })).toEqual({ ok: true });
+    await expect(probeSandboxInferenceInvocation(input, { execute })).resolves.toEqual({
+      ok: true,
+    });
   });
 
-  it("accepts a reasoning-only response when the reply budget ends before content", () => {
+  it("accepts a reasoning-only response when the reply budget ends before content", async () => {
     const body = JSON.stringify({
       choices: [
         {
@@ -235,9 +401,11 @@ describe("sandbox inference invocation probe", () => {
         },
       ],
     });
-    const execute = vi.fn(() => ({ status: 0, stdout: `200\n${body}`, stderr: "" }));
+    const execute = vi.fn(async () => ({ status: 0, stdout: `200\n${body}`, stderr: "" }));
 
-    expect(probeSandboxInferenceInvocation(input, { execute })).toEqual({ ok: true });
+    await expect(probeSandboxInferenceInvocation(input, { execute })).resolves.toEqual({
+      ok: true,
+    });
   });
 
   it.each([
@@ -247,12 +415,12 @@ describe("sandbox inference invocation probe", () => {
       '{"output":[{"type":"message","content":[{"type":"output_text","text":"OK"}]}]}',
     ],
     ["anthropic-messages", '{"content":[{"type":"text","text":"OK"}]}'],
-  ])("accepts a valid %s response body", (preferredInferenceApi, body) => {
-    const execute = vi.fn(() => ({ status: 0, stdout: `200\n${body}`, stderr: "" }));
+  ])("accepts a valid %s response body", async (preferredInferenceApi, body) => {
+    const execute = vi.fn(async () => ({ status: 0, stdout: `200\n${body}`, stderr: "" }));
 
-    expect(
+    await expect(
       probeSandboxInferenceInvocation({ ...input, preferredInferenceApi }, { execute }),
-    ).toEqual({ ok: true });
+    ).resolves.toEqual({ ok: true });
   });
 
   it.each([
@@ -265,6 +433,12 @@ describe("sandbox inference invocation probe", () => {
       '200\n{"error":{"message":"provider failed"}}',
     ],
     ["Chat Completions", "openai-completions", "the wrong result shape", '200\n{"choices":[]}'],
+    [
+      "Chat Completions",
+      "openai-completions",
+      "null content",
+      '200\n{"choices":[{"message":{"content":null}}]}',
+    ],
     ["Responses", "openai-responses", "an empty response", "204\n"],
     ["Responses", "openai-responses", "malformed JSON", "200\nnot-json"],
     [
@@ -283,15 +457,16 @@ describe("sandbox inference invocation probe", () => {
       '200\n{"error":{"message":"provider failed"}}',
     ],
     ["Anthropic Messages", "anthropic-messages", "the wrong result shape", '200\n{"content":[]}'],
-  ])("rejects %s %s", (_api, preferredInferenceApi, _case, stdout) => {
-    const execute = vi.fn(() => ({ status: 0, stdout, stderr: "" }));
+  ])("rejects %s %s", async (_api, preferredInferenceApi, _case, stdout) => {
+    const execute = vi.fn(async () => ({ status: 0, stdout, stderr: "" }));
 
-    expect(
+    await expect(
       probeSandboxInferenceInvocation({ ...input, preferredInferenceApi }, { execute }),
-    ).toEqual({
+    ).resolves.toEqual({
       ok: false,
       detail: "sandbox inference invocation probe returned an invalid response body",
       httpStatus: Number.parseInt(stdout.slice(0, 3), 10),
+      endpoint: INVOCATION_ENDPOINTS[preferredInferenceApi],
     });
   });
 
@@ -315,6 +490,27 @@ describe("sandbox inference invocation probe", () => {
 
     expect(command).toContain('"max_tokens":16');
     expect(command).not.toContain('"max_completion_tokens"');
+  });
+
+  it.each([
+    ["gemini-api", "gemini-2.5-flash", 256],
+    ["compatible-endpoint", "nvidia/nemotron", 16],
+  ])("sends the %s budget through the shell request", (provider, model, maxTokens) => {
+    const { stdout, argv } = runProbeCommandWithBody(
+      "200",
+      '{"choices":[{"message":{"content":"OK"}}]}',
+      tmpdir(),
+      { ...input, provider, model },
+    );
+    expect(stdout).toContain('200\n{"choices":');
+    expect(JSON.parse(argv[argv.indexOf("--data-binary") + 1])).toMatchObject({
+      model,
+      max_tokens: maxTokens,
+    });
+    expect(argv[argv.indexOf("--max-time") + 1]).toBe("90");
+    expect(Number(argv[argv.indexOf("--max-time") + 1]) * 1000).toBeLessThan(
+      READINESS_INFERENCE_INVOCATION_TIMEOUT_MS,
+    );
   });
 
   it("sends max_output_tokens on the responses route", () => {

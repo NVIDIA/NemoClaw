@@ -36,6 +36,8 @@ export interface ForwardServiceLaunchOptions {
     environment: NodeJS.ProcessEnv,
   ) => ForwardServiceChild;
   readonly terminateProcessTree?: (child: ForwardServiceChild) => void;
+  /** Verify the bound forward before releasing the child from startup cleanup. */
+  readonly verifyReady?: () => void;
   readonly timeoutMs?: number;
 }
 
@@ -189,7 +191,7 @@ function linuxListenerPids(port: number, procRoot: string, workLimit: number): s
         fields[1]?.toUpperCase().endsWith(portSuffix) &&
         /^\d+$/u.test(fields[9] ?? "")
       ) {
-        socketInodes.add(fields[9]!);
+        socketInodes.add(fields[9]);
       }
     }
   } catch {
@@ -208,7 +210,7 @@ function linuxListenerPids(port: number, procRoot: string, workLimit: number): s
           if (++inspected > workLimit) return [];
           const link = readlinkSync(path.join(procRoot, entry.name, "fd", descriptor));
           const match = /^socket:\[(\d+)\]$/u.exec(link);
-          if (match && socketInodes.has(match[1]!)) {
+          if (match && socketInodes.has(match[1])) {
             pids.add(entry.name);
             break;
           }
@@ -273,8 +275,8 @@ export function isForwardServiceListenerOwner(
   const procRoot = options.procRoot ?? "/proc";
   const procWorkLimit = options.procWorkLimit ?? LINUX_PROC_WORK_LIMIT;
   const before = listenerPids(target.localPort, platform, procRoot, procWorkLimit, probe);
-  if (before.length !== 1 || !/^[1-9]\d*$/u.test(before[0]!)) return false;
-  const pid = before[0]!;
+  if (before.length !== 1 || !/^[1-9]\d*$/u.test(before[0])) return false;
+  const pid = before[0];
   if (!processExecutableMatches(pid, target, platform, procRoot, probe)) return false;
   const commandLine = probe("ps", ["-ww", "-p", pid, "-o", "args="]);
   if (commandLine.status !== 0) return false;
@@ -357,7 +359,7 @@ export function terminateForwardServiceProcessTree(
     throw new Error("OpenShell forward service child PID is unavailable");
   }
 
-  const signalProcess = dependencies.signalProcess ?? process.kill;
+  const signalProcess = dependencies.signalProcess ?? process.kill.bind(process);
   if ((dependencies.platform ?? process.platform) !== "win32") {
     try {
       signalProcess(-Number(pid), "SIGKILL");
@@ -427,16 +429,22 @@ export function launchForwardService(
   const sleep =
     options.sleep ?? ((milliseconds: number) => Atomics.wait(sleepBuffer, 0, 0, milliseconds));
   const deadline = Date.now() + (options.timeoutMs ?? START_TIMEOUT_MS);
+  let startupError = new Error(
+    `OpenShell forward service did not bind ${target.localHost}:${String(target.localPort)}`,
+  );
   while (Date.now() < deadline) {
     if (isReachable(target.localPort)) {
+      try {
+        options.verifyReady?.();
+      } catch (error) {
+        startupError = error instanceof Error ? error : new Error(String(error));
+        break;
+      }
       child.unref();
       return;
     }
     sleep(POLL_INTERVAL_MS);
   }
-  const startupError = new Error(
-    `OpenShell forward service did not bind ${target.localHost}:${String(target.localPort)}`,
-  );
   try {
     (options.terminateProcessTree ?? terminateForwardServiceProcessTree)(child);
     if (isReachable(target.localPort)) {

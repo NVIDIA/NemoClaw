@@ -42,6 +42,7 @@ const target: ForwardServiceTarget = {
 };
 
 const ownerTarget: ForwardServiceTarget = { ...target, executable: process.execPath };
+const detachedChildPid = process.pid + 1;
 const temporaryDirectories: string[] = [];
 const startedProcessGroups: number[] = [];
 const processSleepBuffer = new Int32Array(new SharedArrayBuffer(4));
@@ -251,6 +252,7 @@ describe("OpenShell forward service", () => {
 
   it("detaches the OpenShell child and waits for its local port", () => {
     const unref = vi.fn();
+    const verifyReady = vi.fn(() => expect(unref).not.toHaveBeenCalled());
     const spawnDetached = vi.fn(() => ({ unref }));
     const terminateProcessTree = vi.fn();
     let probes = 0;
@@ -260,6 +262,7 @@ describe("OpenShell forward service", () => {
       sleep: () => {},
       spawnDetached,
       terminateProcessTree,
+      verifyReady,
       timeoutMs: 1_000,
     });
 
@@ -269,6 +272,7 @@ describe("OpenShell forward service", () => {
       expect.any(Object),
     );
     expect(unref).toHaveBeenCalledOnce();
+    expect(verifyReady).toHaveBeenCalledOnce();
     expect(terminateProcessTree).not.toHaveBeenCalled();
   });
 
@@ -303,8 +307,55 @@ describe("OpenShell forward service", () => {
     expect(spawnDetached).not.toHaveBeenCalled();
   });
 
+  it.each([
+    {
+      cleanup: "terminated",
+      terminate: () => {},
+      remains: false,
+      expected: /Forward ownership changed/u,
+    },
+    {
+      cleanup: "termination-failed",
+      terminate: () => {
+        throw new Error("Child remained alive");
+      },
+      remains: false,
+      expected: ForwardServiceStartupCleanupError,
+    },
+    {
+      cleanup: "listener-remained",
+      terminate: () => {},
+      remains: true,
+      expected: ForwardServiceStartupCleanupError,
+    },
+  ])(
+    "rejects failed startup verification with cleanup $cleanup",
+    ({ terminate, remains, expected }) => {
+      const child = { pid: detachedChildPid, unref: vi.fn() };
+      const verificationError = new Error("Forward ownership changed");
+      const terminateProcessTree = vi.fn(terminate);
+      const launch = () =>
+        launchForwardService(target, {
+          isReachable: vi
+            .fn()
+            .mockReturnValueOnce(false)
+            .mockReturnValueOnce(true)
+            .mockReturnValue(remains),
+          spawnDetached: () => child,
+          terminateProcessTree,
+          verifyReady: () => {
+            throw verificationError;
+          },
+        });
+
+      expect(launch).toThrow(expected);
+      expect(terminateProcessTree).toHaveBeenCalledExactlyOnceWith(child);
+      expect(child.unref).not.toHaveBeenCalled();
+    },
+  );
+
   it("terminates a detached service that does not bind before the deadline", () => {
-    const child = { pid: 4_321, unref: vi.fn() };
+    const child = { pid: detachedChildPid, unref: vi.fn() };
     const terminateProcessTree = vi.fn();
 
     expect(() =>
@@ -326,7 +377,7 @@ describe("OpenShell forward service", () => {
     expect(() =>
       launchForwardService(target, {
         isReachable: () => false,
-        spawnDetached: () => ({ pid: 4_321, unref: vi.fn() }),
+        spawnDetached: () => ({ pid: detachedChildPid, unref: vi.fn() }),
         terminateProcessTree: () => {
           throw cleanupError;
         },
@@ -347,7 +398,7 @@ describe("OpenShell forward service", () => {
     const signalProcess = vi.fn();
 
     terminateForwardServiceProcessTree(
-      { pid: 4_321, unref: vi.fn() },
+      { pid: detachedChildPid, unref: vi.fn() },
       {
         platform: "linux",
         processGroupHasRunnableMember: () => false,
@@ -355,7 +406,7 @@ describe("OpenShell forward service", () => {
       },
     );
 
-    expect(signalProcess).toHaveBeenCalledWith(-4_321, "SIGKILL");
+    expect(signalProcess).toHaveBeenCalledWith(-detachedChildPid, "SIGKILL");
   });
 
   it("fails closed when POSIX process-group settlement is not proved", () => {
@@ -365,7 +416,7 @@ describe("OpenShell forward service", () => {
     expect(() =>
       launchForwardService(target, {
         isReachable: () => false,
-        spawnDetached: () => ({ pid: 4_321, unref: vi.fn() }),
+        spawnDetached: () => ({ pid: detachedChildPid, unref: vi.fn() }),
         terminateProcessTree: (child) =>
           terminateForwardServiceProcessTree(child, {
             now,
@@ -377,7 +428,7 @@ describe("OpenShell forward service", () => {
         timeoutMs: 0,
       }),
     ).toThrow(expect.objectContaining({ name: ForwardServiceStartupCleanupError.name }));
-    expect(signalProcess).toHaveBeenCalledWith(-4_321, "SIGKILL");
+    expect(signalProcess).toHaveBeenCalledWith(-detachedChildPid, "SIGKILL");
   });
 
   it("resolves Windows taskkill from SystemRoot while PATH is poisoned", () => {
@@ -386,7 +437,7 @@ describe("OpenShell forward service", () => {
     const trustedTaskkill = "C:\\Windows\\System32\\taskkill.exe";
 
     terminateForwardServiceProcessTree(
-      { pid: 4_321, unref: vi.fn() },
+      { pid: detachedChildPid, unref: vi.fn() },
       {
         environment: {
           PATH: "C:\\attacker-controlled",
@@ -399,7 +450,12 @@ describe("OpenShell forward service", () => {
       },
     );
 
-    expect(taskkill).toHaveBeenCalledWith(trustedTaskkill, ["/PID", "4321", "/T", "/F"]);
+    expect(taskkill).toHaveBeenCalledWith(trustedTaskkill, [
+      "/PID",
+      String(detachedChildPid),
+      "/T",
+      "/F",
+    ]);
     expect(signalProcess).not.toHaveBeenCalled();
   });
 
@@ -421,7 +477,7 @@ describe("OpenShell forward service", () => {
 
     expect(() =>
       terminateForwardServiceProcessTree(
-        { pid: 4_321, unref: vi.fn() },
+        { pid: detachedChildPid, unref: vi.fn() },
         {
           environment: {
             PATH: "C:\\attacker-controlled",
@@ -443,7 +499,7 @@ describe("OpenShell forward service", () => {
 
       expect(() =>
         terminateForwardServiceProcessTree(
-          { pid: 4_321, unref: vi.fn() },
+          { pid: detachedChildPid, unref: vi.fn() },
           {
             environment: {
               PATH: "C:\\attacker-controlled",
@@ -464,7 +520,7 @@ describe("OpenShell forward service", () => {
 
     expect(() =>
       terminateForwardServiceProcessTree(
-        { pid: 4_321, unref: vi.fn() },
+        { pid: detachedChildPid, unref: vi.fn() },
         {
           environment: { SystemRoot: "C:\\Windows" },
           isTrustedTaskkillExecutable: () => true,
@@ -549,7 +605,9 @@ setInterval(() => {}, 1000);
         launchError = error;
       }
 
-      expect(launchError).toEqual(expect.objectContaining({ message: expect.stringMatching(/did not bind/u) }));
+      expect(launchError).toEqual(
+        expect.objectContaining({ message: expect.stringMatching(/did not bind/u) }),
+      );
       expect(existsSync(markerPath)).toBe(true);
       expect(existsSync(releasePath)).toBe(true);
       const pids = JSON.parse(readFileSync(markerPath, "utf8")) as {

@@ -178,6 +178,11 @@
     },
     {
       "file": "test/automation/pull-requests/pr-workflow-contract.test.ts",
+      "test": "keeps %s plugin test typechecking after the trusted production build",
+      "category": "security"
+    },
+    {
+      "file": "test/automation/pull-requests/pr-workflow-contract.test.ts",
       "test": "passes only the base-packaged SDK archive to pull request dependency jobs",
       "category": "security"
     },
@@ -213,6 +218,11 @@
     },
     {
       "file": "test/agents/hermes/hermes-image-build-probes.test.ts",
+      "test": "binds every image build probe pin to its source digest",
+      "category": "security"
+    },
+    {
+      "file": "test/agents/hermes/hermes-image-build-probes.test.ts",
       "test": "binds the runtime environment validator to its source digest",
       "category": "security"
     },
@@ -243,7 +253,7 @@
     },
     {
       "file": "test/install/installer-homebrew-formula-reuse-trust.test.ts",
-      "test": "accepts the reviewed %s OpenShell 0.0.106 installer template",
+      "test": "accepts only the reviewed OpenShell 0.0.116 installer template",
       "category": "security"
     },
     {

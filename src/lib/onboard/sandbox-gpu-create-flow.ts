@@ -3,6 +3,7 @@
 
 import type { AgentDefinition } from "../agent/defs";
 import type { OpenShellSandboxObserver } from "../adapters/openshell/sandbox-observer";
+import type { OpenShellSandboxBufferedCommandExecutor } from "../adapters/openshell/sandbox-command";
 import { NEMOCLAW_CREATE_ATTEMPT_LABEL } from "../adapters/openshell/sandbox-identity";
 import type { StreamSandboxCreateResult } from "../sandbox/create-stream";
 import { redactFull } from "../security/redact";
@@ -17,6 +18,7 @@ import { renderCompatibilityFallbackCreateArgs } from "./docker-gpu-route";
 import { adaptDockerGpuRouteForPatch } from "./docker-gpu-route-patch-adapter";
 import { resolveDockerStartupCommandPatch } from "./docker-startup-command-agent";
 import {
+  bindHermesPortableOnboardingLifecycleLock,
   classifyHermesPortableRegistry,
   createHermesPortableChildEnvironment,
   createHermesPortableContainerDeps,
@@ -71,6 +73,7 @@ import { addTraceEvent } from "./tracing";
 
 export { resolveDockerStartupCommandPatch } from "./docker-startup-command-agent";
 export {
+  bindHermesPortableOnboardingLifecycleLock,
   classifyHermesPortableRegistry,
   createHermesPortableChildEnvironment,
   createHermesPortableContainerDeps,
@@ -302,6 +305,7 @@ export function refuseApfMutableNameFallbackCleanup(sandboxName: string) {
 }
 
 export interface SandboxGpuCreateFlowDeps {
+  commandExecutor: OpenShellSandboxBufferedCommandExecutor;
   runOpenshell: RunOpenshell;
   runCaptureOpenshell: RunCaptureOpenshell;
   sandboxObserver: OpenShellSandboxObserver;

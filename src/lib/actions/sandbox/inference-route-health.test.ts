@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
+import type { OpenShellSandboxBufferedCommandExecutor } from "../../adapters/openshell/sandbox-command";
 import {
   DCODE_MANAGED_EXEC_LAUNCHER,
   DCODE_MANAGED_EXEC_MISSING_DETAIL,
@@ -10,20 +11,24 @@ import {
   buildSandboxInferenceRouteHealth,
   isTransientInferenceInvocationFailure,
   probeSandboxInferenceGatewayHealth,
+  runSandboxInferenceInvocationProbe,
   type SandboxInferenceRouteHealth,
 } from "./inference-route-health";
 
 describe("sandbox inference route health", () => {
-  const makeCapture =
-    (output: string, status = 0) =>
-    async () =>
-      ({ status, output }) as never;
+  const makeExecutor = (stdout: string, status = 0): OpenShellSandboxBufferedCommandExecutor => ({
+    runBuffered: vi.fn(async () => ({
+      outcome: { kind: "completed" as const, exitCode: status },
+      stdout,
+      stderr: "",
+    })),
+  });
 
   it.each([200, 401, 403])(
     "reports a reachable route for final HTTP responses [case %#]",
     async (httpStatus) => {
       const result = await probeSandboxInferenceGatewayHealth("my-sandbox", {
-        captureOpenshellImpl: makeCapture(`OK ${httpStatus}`),
+        commandExecutor: makeExecutor(`OK ${httpStatus}`),
       });
 
       expect(result).toMatchObject({
@@ -37,7 +42,7 @@ describe("sandbox inference route health", () => {
 
   it("reports HTTP 5xx as an unhealthy authoritative route (#6192)", async () => {
     const result = await probeSandboxInferenceGatewayHealth("my-sandbox", {
-      captureOpenshellImpl: makeCapture("BROKEN 503"),
+      commandExecutor: makeExecutor("BROKEN 503"),
     });
 
     expect(result).toMatchObject({ ok: false, httpStatus: 503 });
@@ -46,7 +51,7 @@ describe("sandbox inference route health", () => {
 
   it("reports transport status 000 as unreachable", async () => {
     const result = await probeSandboxInferenceGatewayHealth("my-sandbox", {
-      captureOpenshellImpl: makeCapture("BROKEN 000"),
+      commandExecutor: makeExecutor("BROKEN 000"),
     });
 
     expect(result).toMatchObject({ ok: false, httpStatus: 0 });
@@ -56,58 +61,51 @@ describe("sandbox inference route health", () => {
   it("returns null when the authoritative probe is unavailable (#6192)", async () => {
     await expect(
       probeSandboxInferenceGatewayHealth("my-sandbox", {
-        captureOpenshellImpl: makeCapture("transport unavailable", 1),
+        commandExecutor: makeExecutor("transport unavailable", 1),
       }),
     ).resolves.toBeNull();
     await expect(
       probeSandboxInferenceGatewayHealth("my-sandbox", {
-        captureOpenshellImpl: async () => {
-          throw new Error("openshell unavailable");
+        commandExecutor: {
+          runBuffered: async () => {
+            throw new Error("openshell unavailable");
+          },
         },
       }),
     ).resolves.toBeNull();
   });
 
   it("uses the DCode agent path while reporting observable route health (#6192)", async () => {
-    const captureOpenshellImpl = vi.fn(makeCapture("OK 200"));
+    const commandExecutor = makeExecutor("OK 200");
     const getSessionAgentImpl = vi.fn(() => ({ name: "langchain-deepagents-code" }) as never);
 
     const result = await probeSandboxInferenceGatewayHealth("deep-code", {
-      captureOpenshellImpl,
+      commandExecutor,
       gatewayName: "recorded-gateway",
       getSessionAgentImpl,
     });
 
     expect(result).toMatchObject({ ok: true, httpStatus: 200 });
     expect(getSessionAgentImpl).toHaveBeenCalledWith("deep-code");
-    expect(captureOpenshellImpl).toHaveBeenCalledWith(
-      [
-        "sandbox",
-        "exec",
-        "--name",
-        "deep-code",
-        "-g",
-        "recorded-gateway",
-        "--no-tty",
-        "--env",
-        "HOME=/usr/local/lib/nemoclaw",
-        "--env",
-        "BASH_ENV=",
-        "--env",
-        "ENV=",
-        "--",
-        "/usr/local/lib/nemoclaw/dcode-managed-exec",
-        "/bin/sh",
-        "-c",
-        expect.stringContaining("/usr/bin/curl -q"),
-      ],
-      expect.objectContaining({ ignoreError: true }),
+    expect(commandExecutor.runBuffered).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sandboxName: "deep-code",
+        target: { kind: "named", gatewayName: "recorded-gateway" },
+        tty: false,
+        sandboxEnvironment: { HOME: "/usr/local/lib/nemoclaw", BASH_ENV: "", ENV: "" },
+        command: [
+          "/usr/local/lib/nemoclaw/dcode-managed-exec",
+          "/bin/sh",
+          "-c",
+          expect.stringContaining("/usr/bin/curl -q"),
+        ],
+      }),
     );
   });
 
   it("reports missing DCode helper as a failed compatibility boundary (#6192)", async () => {
     const result = await probeSandboxInferenceGatewayHealth("deep-code", {
-      captureOpenshellImpl: makeCapture(`exec: ${DCODE_MANAGED_EXEC_LAUNCHER}: not found`, 127),
+      commandExecutor: makeExecutor(`exec: ${DCODE_MANAGED_EXEC_LAUNCHER}: not found`, 127),
       getSessionAgentImpl: () => ({ name: "langchain-deepagents-code" }) as never,
     });
 
@@ -126,6 +124,98 @@ describe("buildSandboxInferenceRouteHealth (#10080)", () => {
     endpoint: "https://inference.local/v1/models",
     httpStatus,
     detail: `probe returned ${httpStatus}`,
+  });
+
+  it.each([
+    ["openai-completions", "https://inference.local/v1/chat/completions"],
+    ["openai-responses", "https://inference.local/v1/responses"],
+    ["anthropic-messages", "https://inference.local/v1/messages"],
+  ])("names the %s endpoint when the probe itself throws (#10879)", async (api, endpoint) => {
+    const invocation = await runSandboxInferenceInvocationProbe(
+      {
+        sandboxName: "alpha",
+        provider: "compatible-endpoint",
+        model: "nvidia/nemotron",
+        preferredInferenceApi: api,
+      },
+      () => {
+        throw new Error("openshell exec exploded");
+      },
+    );
+
+    expect(invocation).toMatchObject({ ok: false, httpStatus: null, endpoint });
+    expect(
+      buildSandboxInferenceRouteHealth(gateway(200), null, invocation, {
+        agentName: "openclaw",
+        provider: "compatible-endpoint",
+      }).endpoint,
+    ).toBe(endpoint);
+  });
+
+  it("names the request that failed, not the models route (#10879)", () => {
+    const result = buildSandboxInferenceRouteHealth(
+      gateway(200),
+      null,
+      {
+        ok: false,
+        detail: "sandbox inference invocation probe returned HTTP 404",
+        httpStatus: 404,
+        endpoint: "https://inference.local/v1/chat/completions",
+      },
+      { agentName: "openclaw", provider: "nvidia-prod" },
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.endpoint).toBe("https://inference.local/v1/chat/completions");
+    expect(result.subprobes?.[0]).toMatchObject({
+      probeLabel: "route reachability",
+      endpoint: "https://inference.local/v1/models",
+    });
+  });
+
+  it("falls back to the models route when the invocation reports no endpoint", () => {
+    const result = buildSandboxInferenceRouteHealth(
+      gateway(200),
+      null,
+      { ok: false, detail: "probe was unavailable", httpStatus: null },
+      { agentName: "openclaw", provider: "nvidia-prod" },
+    );
+
+    expect(result.endpoint).toBe("https://inference.local/v1/models");
+  });
+
+  it.each([404, 401, 403])(
+    "carries the models route status into the reachability hop for HTTP %s (#10879)",
+    (httpStatus) => {
+      const result = buildSandboxInferenceRouteHealth(
+        gateway(httpStatus),
+        null,
+        {
+          ok: false,
+          detail: "sandbox inference invocation probe returned HTTP 404",
+          httpStatus: 404,
+          endpoint: "https://inference.local/v1/chat/completions",
+        },
+        { agentName: "openclaw", provider: "nvidia-prod" },
+      );
+
+      expect(result.subprobes?.[0]).toMatchObject({
+        probeLabel: "route reachability",
+        ok: true,
+        okLabel: `reachable (HTTP ${httpStatus})`,
+      });
+    },
+  );
+
+  it("keeps the plain reachable label for a 2xx models route (#6846)", () => {
+    const result = buildSandboxInferenceRouteHealth(
+      gateway(200),
+      null,
+      { ok: true },
+      { agentName: "openclaw", provider: "nvidia-prod" },
+    );
+
+    expect(result.subprobes?.[0]).toMatchObject({ ok: true, okLabel: "reachable" });
   });
 
   it("fails closed for a non-DCode agent when the route 404s, even if invocation succeeds", () => {

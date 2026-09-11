@@ -147,7 +147,9 @@ describe("Pi candidate operational surfaces", () => {
     // source alone and never probe the OpenClaw gateway.
     expect(runOpenshell).toHaveBeenCalled();
     expect(exitCodes).toEqual([0]);
-    expect(runOpenshell.mock.calls.every(([args]) => !args.join(" ").includes("openclaw"))).toBe(true);
+    expect(runOpenshell.mock.calls.every(([args]) => !args.join(" ").includes("openclaw"))).toBe(
+      true,
+    );
     expect(agent.forwardPort).toBe(0);
     expect(agent.healthProbe).toBeNull();
   });

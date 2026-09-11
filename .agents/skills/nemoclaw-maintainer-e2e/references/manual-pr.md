@@ -4,9 +4,9 @@
 # Manual PR E2E
 
 Use this mode when a maintainer requests E2E for a pull request. The trusted workflow stays on
-`main` and first checks out the latest PR commit. Replay the same selector against the exact PR base
-only after a candidate failure remains unresolved. The result is advisory and does not create a
-required PR check.
+`main` and first checks out the latest commit of an open PR. It rejects an arbitrary or historical
+commit SHA. Replay the same selector against the exact PR base only after a candidate failure remains
+unresolved. The result is advisory and does not create a required PR check.
 
 Manual PR E2E accepts only source branches in `NVIDIA/NemoClaw`, including for base replay.
 Review and adopt fork contributions onto a repository branch before dispatch.
@@ -34,7 +34,7 @@ Before dispatch, review the complete candidate diff. After a failure:
 - remove resources that cleanup left behind; and
 - rotate or revoke exposed credentials when necessary.
 
-`Staging Brev Launchable` is available only when the source is a branch in
+`Exact staging Brev Launchable` is available only when the source is a branch in
 `NVIDIA/NemoClaw`. Its trusted host receives the Brev API key and image-dispatch token. The guest
 receives the NVIDIA inference API key. The protected managed-image and native-runtime qualification
 jobs define narrower trusted-host boundaries in the workflow.
@@ -86,7 +86,6 @@ gh workflow run .github/workflows/e2e.yaml \
   -f inference_mode=mock \
   -f "include_staging_brev_launchable=${INCLUDE_STAGING_BREV_LAUNCHABLE}" \
   -f "allow_jetson_dispatch=${ALLOW_JETSON_DISPATCH}" \
-  -f allow_dgx_spark_runner_queue=false \
   -f "pr_number=${PR_NUMBER}" \
   -f "checkout_sha=${HEAD_SHA}" \
   -f "checkout_repository=${HEAD_REPOSITORY}" \
@@ -184,7 +183,6 @@ gh workflow run .github/workflows/e2e.yaml \
   -f inference_mode=mock \
   -f "include_staging_brev_launchable=${INCLUDE_STAGING_BREV_LAUNCHABLE}" \
   -f allow_jetson_dispatch=false \
-  -f allow_dgx_spark_runner_queue=false \
   -f "pr_number=${PR_NUMBER}" \
   -f "checkout_sha=${BASE_SHA}" \
   -f "checkout_repository=${BASE_REPOSITORY}" \

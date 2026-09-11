@@ -3,7 +3,8 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import { buildOpenshellExecArgs, wrapOpenClawAgentCommandWithRuntimeEnv } from "../exec";
+import { wrapOpenClawAgentCommandWithRuntimeEnv } from "../exec";
+import type { OpenShellSandboxSessionRequest } from "../../../adapters/openshell/sandbox-session";
 import { runAgentJsonPassthrough } from "./passthrough-json";
 
 describe("runAgentJsonPassthrough", () => {
@@ -41,13 +42,10 @@ describe("runAgentJsonPassthrough", () => {
         payloads: [{ text: "Saved successfully." }],
       },
     });
-    const runDispatch = vi.fn(async () => ({
-      status: 0,
-      signal: null,
+    const runDispatch = vi.fn(async (_request: OpenShellSandboxSessionRequest) => ({
+      outcome: { kind: "exited" as const, exitCode: 0 },
       stdout: payload,
       stderr: "openclaw warning\n",
-      pid: 123,
-      output: [null, payload, "openclaw warning\n"],
     }));
     const { exit, proc, stderr, stdout } = makeProc();
 
@@ -60,15 +58,15 @@ describe("runAgentJsonPassthrough", () => {
       }),
     ).rejects.toThrow("__exit:0");
 
-    expect(runDispatch).toHaveBeenCalledWith(
-      "/usr/local/bin/openshell",
-      buildOpenshellExecArgs(
-        "alpha",
-        wrapOpenClawAgentCommandWithRuntimeEnv(["openclaw", "agent", "--json"]),
-        { tty: false },
-      ),
-      { stdinIsTty: false },
-    );
+    expect(runDispatch).toHaveBeenCalledWith({
+      kind: "command",
+      sandboxName: "alpha",
+      target: { kind: "selected" },
+      command: wrapOpenClawAgentCommandWithRuntimeEnv(["openclaw", "agent", "--json"]),
+      tty: false,
+      output: "capture",
+      timeoutSeconds: undefined,
+    });
     expect(stdout.join("")).toBe(payload);
     expect(() => JSON.parse(stdout.join(""))).not.toThrow();
     expect(stderr.join("")).toContain("openclaw warning");
@@ -78,9 +76,8 @@ describe("runAgentJsonPassthrough", () => {
   });
 
   it("bounds the host transport when the turn requests a deadline (#8723)", async () => {
-    const runDispatch = vi.fn(async (_binary: string, _args: readonly string[]) => ({
-      status: 0,
-      signal: null,
+    const runDispatch = vi.fn(async (_request: OpenShellSandboxSessionRequest) => ({
+      outcome: { kind: "exited" as const, exitCode: 0 },
       stdout: "{}",
       stderr: "openclaw banner\n",
     }));
@@ -95,17 +92,12 @@ describe("runAgentJsonPassthrough", () => {
       }),
     ).rejects.toThrow(/__exit:/);
 
-    const argv = [...(runDispatch.mock.calls[0]?.[1] ?? [])];
-    const transportFlags = argv.slice(0, argv.indexOf("--"));
-    // Outlasts the requested deadline so the turn still reports its own timeout.
-    expect(transportFlags).toContain("--timeout");
-    expect(transportFlags[transportFlags.indexOf("--timeout") + 1]).toBe("60");
+    expect(runDispatch.mock.calls[0]?.[0]).toMatchObject({ timeoutSeconds: 60 });
   });
 
   it("leaves the host transport unbounded when the turn requests no deadline (#8723)", async () => {
-    const runDispatch = vi.fn(async (_binary: string, _args: readonly string[]) => ({
-      status: 0,
-      signal: null,
+    const runDispatch = vi.fn(async (_request: OpenShellSandboxSessionRequest) => ({
+      outcome: { kind: "exited" as const, exitCode: 0 },
       stdout: "{}",
       stderr: "openclaw banner\n",
     }));
@@ -120,19 +112,19 @@ describe("runAgentJsonPassthrough", () => {
       }),
     ).rejects.toThrow(/__exit:/);
 
-    const argv = [...(runDispatch.mock.calls[0]?.[1] ?? [])];
-    expect(argv.slice(0, argv.indexOf("--"))).not.toContain("--timeout");
+    expect(runDispatch.mock.calls[0]?.[0]).toHaveProperty("timeoutSeconds", undefined);
   });
 
   it("surfaces spawn errors and exits with the computed transport failure code", async () => {
-    const runDispatch = vi.fn(async () => ({
-      status: null,
-      signal: null,
+    const runDispatch = vi.fn(async (_request: OpenShellSandboxSessionRequest) => ({
+      outcome: {
+        kind: "failed" as const,
+        reason: "unavailable" as const,
+        exitCode: 1,
+        message: "runDispatch openshell ENOENT",
+      },
       stdout: "",
       stderr: "",
-      error: new Error("runDispatch openshell ENOENT"),
-      pid: 0,
-      output: [null, "", ""],
     }));
     const { exit, proc, stderr } = makeProc();
 
@@ -164,13 +156,10 @@ describe("runAgentJsonPassthrough", () => {
         },
       ],
     });
-    const runDispatch = vi.fn(async () => ({
-      status: 0,
-      signal: null,
+    const runDispatch = vi.fn(async (_request: OpenShellSandboxSessionRequest) => ({
+      outcome: { kind: "exited" as const, exitCode: 0 },
       stdout: stdoutPayload,
       stderr: stderrPayload,
-      pid: 123,
-      output: [null, stdoutPayload, stderrPayload],
     }));
     const { proc, stderr } = makeProc();
 
@@ -189,13 +178,10 @@ describe("runAgentJsonPassthrough", () => {
 
   it("preserves forwarded output and remote exit code when provenance parsing fails", async () => {
     const stdoutPayload = JSON.stringify({ result: { payloads: [{ text: "OK" }] } });
-    const runDispatch = vi.fn(async () => ({
-      status: 7,
-      signal: null,
+    const runDispatch = vi.fn(async (_request: OpenShellSandboxSessionRequest) => ({
+      outcome: { kind: "exited" as const, exitCode: 7 },
       stdout: stdoutPayload,
       stderr: "openclaw warning",
-      pid: 123,
-      output: [null, stdoutPayload, "openclaw warning"],
     }));
     const { exit, proc, stderr, stdout } = makeProc();
 
@@ -221,20 +207,11 @@ describe("runAgentJsonPassthrough", () => {
 
   it("pins the sandbox's owning gateway in the dispatched argv", async () => {
     const payload = JSON.stringify({ result: { payloads: [{ text: "OK" }] } });
-    const runDispatch = vi.fn(
-      async (
-        _binary: string,
-        _args: readonly string[],
-        _options?: { maxBufferBytes?: number; stdinIsTty?: boolean },
-      ) => ({
-        status: 0,
-        signal: null,
-        stdout: payload,
-        stderr: "openclaw warning\n",
-        pid: 123,
-        output: [null, payload, "openclaw warning\n"],
-      }),
-    );
+    const runDispatch = vi.fn(async (_request: OpenShellSandboxSessionRequest) => ({
+      outcome: { kind: "exited" as const, exitCode: 0 },
+      stdout: payload,
+      stderr: "openclaw warning\n",
+    }));
     const { proc } = makeProc();
 
     await expect(
@@ -246,28 +223,19 @@ describe("runAgentJsonPassthrough", () => {
       }),
     ).rejects.toThrow("__exit:0");
 
-    expect(runDispatch.mock.calls[0]?.[1].slice(0, 6)).toEqual([
-      "sandbox",
-      "exec",
-      "--name",
-      "alpha",
-      "-g",
-      "nemoclaw-8081",
-    ]);
+    expect(runDispatch.mock.calls[0]?.[0]).toMatchObject({
+      sandboxName: "alpha",
+      target: { kind: "named", gatewayName: "nemoclaw-8081" },
+    });
   });
 
   it("withholds an interactive terminal from the non-interactive dispatch", async () => {
     const payload = JSON.stringify({ result: { payloads: [{ text: "OK" }] } });
-    const runDispatch = vi.fn(
-      async (_binary: string, _args: readonly string[], _options?: { stdinIsTty?: boolean }) => ({
-        status: 0,
-        signal: null,
-        stdout: payload,
-        stderr: "openclaw warning\n",
-        pid: 123,
-        output: [null, payload, "openclaw warning\n"],
-      }),
-    );
+    const runDispatch = vi.fn(async (_request: OpenShellSandboxSessionRequest) => ({
+      outcome: { kind: "exited" as const, exitCode: 0 },
+      stdout: payload,
+      stderr: "openclaw warning\n",
+    }));
     const { proc } = makeProc();
 
     await expect(
@@ -279,7 +247,7 @@ describe("runAgentJsonPassthrough", () => {
       }),
     ).rejects.toThrow("__exit:0");
 
-    expect(runDispatch.mock.calls[0]?.[2]).toEqual({ stdinIsTty: true });
+    expect(runDispatch.mock.calls[0]?.[0]).toMatchObject({ output: "capture", tty: false });
   });
 
   it("exits non-zero for a turn the payload marks incomplete, after preserving the trace", async () => {
@@ -296,13 +264,10 @@ describe("runAgentJsonPassthrough", () => {
         },
       },
     });
-    const runDispatch = vi.fn(async () => ({
-      status: 0,
-      signal: null,
+    const runDispatch = vi.fn(async (_request: OpenShellSandboxSessionRequest) => ({
+      outcome: { kind: "exited" as const, exitCode: 0 },
       stdout: payload,
       stderr: "openclaw warning\n",
-      pid: 123,
-      output: [null, payload, "openclaw warning\n"],
     }));
     const { exit, proc, stderr, stdout } = makeProc();
 
@@ -344,9 +309,8 @@ describe("runAgentJsonPassthrough", () => {
         },
       },
     });
-    const runDispatch = vi.fn(async () => ({
-      status: 0,
-      signal: null,
+    const runDispatch = vi.fn(async (_request: OpenShellSandboxSessionRequest) => ({
+      outcome: { kind: "exited" as const, exitCode: 0 },
       stdout: payload,
       stderr: "",
     }));
@@ -377,9 +341,8 @@ describe("runAgentJsonPassthrough", () => {
       result: { payloads: [{ text: "partial" }], meta: { timeoutPhase: "provider" } },
     });
     const payload = `tool {"name":"read"\n${response}`;
-    const runDispatch = vi.fn(async () => ({
-      status: 0,
-      signal: null,
+    const runDispatch = vi.fn(async (_request: OpenShellSandboxSessionRequest) => ({
+      outcome: { kind: "exited" as const, exitCode: 0 },
       stdout: payload,
       stderr: "",
     }));
@@ -405,13 +368,10 @@ describe("runAgentJsonPassthrough", () => {
       status: "ok",
       result: { meta: { error: { kind: "incomplete_turn" } } },
     });
-    const runDispatch = vi.fn(async () => ({
-      status: 0,
-      signal: null,
+    const runDispatch = vi.fn(async (_request: OpenShellSandboxSessionRequest) => ({
+      outcome: { kind: "exited" as const, exitCode: 0 },
       stdout: payload,
       stderr: "",
-      pid: 123,
-      output: [null, payload, ""],
     }));
     const { exit, proc, stdout } = makeProc();
 
@@ -434,13 +394,10 @@ describe("runAgentJsonPassthrough", () => {
       summary: "completed",
       result: { payloads: [{ text: "PONG" }], meta: { livenessState: "working" } },
     });
-    const runDispatch = vi.fn(async () => ({
-      status: 0,
-      signal: null,
+    const runDispatch = vi.fn(async (_request: OpenShellSandboxSessionRequest) => ({
+      outcome: { kind: "exited" as const, exitCode: 0 },
       stdout: payload,
       stderr: "",
-      pid: 123,
-      output: [null, payload, ""],
     }));
     const { exit, proc } = makeProc();
 
@@ -464,13 +421,10 @@ describe("runAgentJsonPassthrough", () => {
         result: { payloads: [{ text: "done" }], meta: { livenessState: "working" } },
       }),
     ].join("\n");
-    const runDispatch = vi.fn(async () => ({
-      status: 0,
-      signal: null,
+    const runDispatch = vi.fn(async (_request: OpenShellSandboxSessionRequest) => ({
+      outcome: { kind: "exited" as const, exitCode: 0 },
       stdout: payload,
       stderr: "",
-      pid: 123,
-      output: [null, payload, ""],
     }));
     const { exit, proc, stdout } = makeProc();
 
@@ -504,13 +458,10 @@ describe("runAgentJsonPassthrough", () => {
         payloads: [{ text: "done" }],
       },
     });
-    const runDispatch = vi.fn(async () => ({
-      status: 0,
-      signal: null,
+    const runDispatch = vi.fn(async (_request: OpenShellSandboxSessionRequest) => ({
+      outcome: { kind: "exited" as const, exitCode: 0 },
       stdout: payload,
       stderr: "",
-      pid: 123,
-      output: [null, payload, ""],
     }));
     const { exit, proc, stdout } = makeProc();
 
@@ -529,13 +480,10 @@ describe("runAgentJsonPassthrough", () => {
 
   it("preserves an upstream non-zero code instead of relabelling an incomplete turn", async () => {
     const payload = JSON.stringify({ result: { meta: { error: { kind: "incomplete_turn" } } } });
-    const runDispatch = vi.fn(async () => ({
-      status: 7,
-      signal: null,
+    const runDispatch = vi.fn(async (_request: OpenShellSandboxSessionRequest) => ({
+      outcome: { kind: "exited" as const, exitCode: 7 },
       stdout: payload,
       stderr: "",
-      pid: 123,
-      output: [null, payload, ""],
     }));
     const { exit, proc } = makeProc();
 
@@ -553,9 +501,8 @@ describe("runAgentJsonPassthrough", () => {
 
   it("returns exit 143 after preserving output from a SIGTERM-interrupted dispatch (#8723)", async () => {
     const partial = JSON.stringify({ event: "progress", status: "running" });
-    const runDispatch = vi.fn(async () => ({
-      status: null,
-      signal: "SIGTERM" as const,
+    const runDispatch = vi.fn(async (_request: OpenShellSandboxSessionRequest) => ({
+      outcome: { kind: "signalled" as const, signal: "SIGTERM" as const, exitCode: 143 },
       stdout: partial,
       stderr: "agent turn interrupted\n",
     }));
@@ -577,13 +524,10 @@ describe("runAgentJsonPassthrough", () => {
   });
 
   it("fails loud and keeps stdout empty when the dispatch delivers nothing", async () => {
-    const runDispatch = vi.fn(async () => ({
-      status: 0,
-      signal: null,
+    const runDispatch = vi.fn(async (_request: OpenShellSandboxSessionRequest) => ({
+      outcome: { kind: "exited" as const, exitCode: 0 },
       stdout: "",
       stderr: "",
-      pid: 123,
-      output: [null, "", ""],
     }));
     const { exit, proc, stderr, stdout } = makeProc();
 

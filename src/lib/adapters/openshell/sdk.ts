@@ -10,6 +10,7 @@ import {
   resolveGatewayStateDirForPort,
 } from "../../onboard/gateway/state-dir";
 import type { OpenShellGatewayTarget } from "./sandbox-observer";
+import { importOpenShellSdk } from "./sdk-import.mjs";
 
 const MAX_PEM_BYTES = 1024 * 1024;
 export class OpenShellSdkPreflightUnavailableError extends Error {}
@@ -63,8 +64,7 @@ export function gatewayPort(target: OpenShellGatewayTarget): number {
 async function loadOpenShellSdk(): Promise<OpenShellSdkModule> {
   // Keep the optional reviewed package load lazy so source-only development can
   // still compile before CI stages the private SDK artifact.
-  const packageName = "@nvidia/openshell-sdk";
-  return (await import(packageName)) as OpenShellSdkModule;
+  return (await importOpenShellSdk()) as OpenShellSdkModule;
 }
 
 /** Connect the SDK directly to one managed gateway, independent of compute provider. */

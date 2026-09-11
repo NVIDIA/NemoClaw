@@ -884,7 +884,7 @@ network_policies:
     "resumes an exact interrupted %s receipt prefix after process-style reentry (#9203)",
     async (phase) => {
       interruptReceiptWrite(
-        Buffer.from(`\"phase\":\"${phase}\"`),
+        Buffer.from(`"phase":"${phase}"`),
         `simulated process exit during ${phase} write`,
         () => 1,
       );
@@ -1434,7 +1434,7 @@ network_policies:
       gatewayPort: 8080,
       lifecycleGeneration: "generation-1",
       openshellDriver: "docker",
-      openshellVersion: "0.0.106",
+      openshellVersion: "0.0.116",
     };
 
     expect(classifyHermesPortableRegistry(receipt, null)).toEqual({ kind: "missing" });

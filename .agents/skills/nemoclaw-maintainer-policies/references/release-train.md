@@ -93,11 +93,10 @@ qualification` aggregate does not replace the candidate result.
 
 ## General E2E Decision
 
-The general E2E decision records whether the maintainer chooses focused tests, the full suite, or the
-displayed general E2E status. General E2E informs the maintainer; it does not decide whether a tag
-can exist. Show the newest full run's full SHA, status, conclusion, attempt, created, started, and
-last-updated timestamps, age at inspection, workflow URL, `Release qualification` URL, and any
-failed, cancelled, skipped, queued, or active results.
+General E2E informs the maintainer; it does not decide whether a tag can exist. Follow
+[Report the Release Context](../../nemoclaw-maintainer-e2e/SKILL.md#report-the-release-context)
+to inspect and report the newest full run and any maintainer-requested runs.
+Record that evidence in the release decision.
 
 Offer three choices:
 

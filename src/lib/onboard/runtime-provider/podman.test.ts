@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createPodmanHostLocalInferenceTestHarness } from "../../../../test/helpers/podman-host-local-inference-test-harness";
 import { startSandbox } from "../../actions/sandbox/start";
 import { stopSandbox } from "../../actions/sandbox/stop";
+import { withCurrentPortableHostFence } from "../../state/portable-uninstall-retirement";
 import type { ContainerEngineCommandResult } from "../../adapters/container-engine";
 import {
   createPodmanContainerEngine,
@@ -270,27 +271,32 @@ describe("managed Podman runtime provider", () => {
     async (agent) => {
       const runtime = providerHarness(agent);
       const verifyGateway = vi.fn(async () => undefined);
-      const restoreStartupState = vi.fn(() => SUCCESSFUL_RECOVERY);
+      const restoreStartupState = vi.fn(async () => SUCCESSFUL_RECOVERY);
       const stopSandboxChannels = vi.fn();
+      const updateSandbox = vi.fn(() => true);
 
       await expect(
         startSandbox(runtime.sandboxName, {
           getSandbox: () => runtime.entry,
+          updateSandbox,
           runtimeProviders: runtime.providers,
           restoreStartupState,
           verifyGateway,
           log: vi.fn(),
         }),
       ).resolves.toEqual({ exitCode: 0 });
-      expect(
-        stopSandbox(runtime.sandboxName, {
-          getSandbox: () => runtime.entry,
-          runtimeProviders: runtime.providers,
-          stopSandboxChannels,
-          teardownSandboxDashboardForward: vi.fn(),
-          log: vi.fn(),
-        }),
-      ).toEqual({ exitCode: 0 });
+      await expect(
+        withCurrentPortableHostFence(() =>
+          stopSandbox(runtime.sandboxName, {
+            getSandbox: () => runtime.entry,
+            updateSandbox,
+            runtimeProviders: runtime.providers,
+            stopSandboxChannels,
+            teardownSandboxDashboardForward: vi.fn(),
+            log: vi.fn(),
+          }),
+        ),
+      ).resolves.toEqual({ exitCode: 0 });
 
       expect(restoreStartupState).toHaveBeenCalledExactlyOnceWith(runtime.sandboxName);
       expect(verifyGateway).toHaveBeenCalledExactlyOnceWith(runtime.sandboxName);
@@ -313,7 +319,7 @@ describe("managed Podman runtime provider", () => {
       startSandbox(runtime.sandboxName, {
         getSandbox: () => runtime.entry,
         runtimeProviders: runtime.providers,
-        restoreStartupState: vi.fn(() => SUCCESSFUL_RECOVERY),
+        restoreStartupState: vi.fn(async () => SUCCESSFUL_RECOVERY),
         verifyGateway,
         log: vi.fn(),
       }),

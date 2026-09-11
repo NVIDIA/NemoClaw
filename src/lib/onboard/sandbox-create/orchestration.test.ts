@@ -47,7 +47,9 @@ describe("created Hermes credential environment reconciliation", () => {
         events.push("registration:complete");
         return { sandboxName: "alpha" };
       },
-      () => events.push("credentials:reconcile"),
+      async () => {
+        events.push("credentials:reconcile");
+      },
     );
 
     expect(events).toEqual([
@@ -57,11 +59,11 @@ describe("created Hermes credential environment reconciliation", () => {
     ]);
   });
 
-  it("restarts and rechecks the managed gateway after changing the env file", () => {
+  it("restarts and rechecks the managed gateway after changing the env file", async () => {
     const events: string[] = [];
     const restart = { status: 0, stdout: "managed completion", stderr: "" };
 
-    reconcileCreatedHermesCredentialEnvironment(
+    await reconcileCreatedHermesCredentialEnvironment(
       { sandboxName: "alpha", plan },
       {
         revalidateSandboxIdentity: (operation) => events.push(`identity:${operation}`),
@@ -77,7 +79,7 @@ describe("created Hermes credential environment reconciliation", () => {
           events.push("parse");
           return result === restart ? {} : null;
         },
-        waitForGateway: () => {
+        waitForGateway: async () => {
           events.push("wait");
           return true;
         },
@@ -96,11 +98,11 @@ describe("created Hermes credential environment reconciliation", () => {
     ]);
   });
 
-  it("does not restart when the env file was already reconciled", () => {
+  it("does not restart when the env file was already reconciled", async () => {
     const restartGateway = vi.fn();
     const waitForGateway = vi.fn();
 
-    reconcileCreatedHermesCredentialEnvironment(
+    await reconcileCreatedHermesCredentialEnvironment(
       { sandboxName: "alpha", plan },
       {
         revalidateSandboxIdentity: vi.fn(),
@@ -116,7 +118,7 @@ describe("created Hermes credential environment reconciliation", () => {
     expect(waitForGateway).not.toHaveBeenCalled();
   });
 
-  it("refuses a same-name replacement at the credential mutation edge (#9833)", () => {
+  it("refuses a same-name replacement at the credential mutation edge (#9833)", async () => {
     const expectedIdentity = "identity-a";
     let liveIdentity = expectedIdentity;
     const mutations: string[] = [];
@@ -128,7 +130,7 @@ describe("created Hermes credential environment reconciliation", () => {
       liveIdentity = "identity-b";
     });
 
-    expect(() =>
+    await expect(
       reconcileCreatedHermesCredentialEnvironment(
         { sandboxName: "alpha", plan },
         {
@@ -144,13 +146,13 @@ describe("created Hermes credential environment reconciliation", () => {
         },
         vi.fn(),
       ),
-    ).toThrow(/sandbox identity changed/u);
+    ).rejects.toThrow(/sandbox identity changed/u);
     expect(mutations).toEqual([]);
   });
 
-  it("fails onboarding when the changed gateway cannot prove restart completion", () => {
+  it("fails onboarding when the changed gateway cannot prove restart completion", async () => {
     const recordRecovery = vi.fn();
-    expect(() =>
+    await expect(
       reconcileCreatedHermesCredentialEnvironment(
         { sandboxName: "alpha", plan },
         {
@@ -162,7 +164,7 @@ describe("created Hermes credential environment reconciliation", () => {
         },
         recordRecovery,
       ),
-    ).toThrow("managed gateway restart did not complete");
+    ).rejects.toThrow("managed gateway restart did not complete");
     expect(recordRecovery).toHaveBeenCalledOnce();
   });
 });
@@ -438,7 +440,7 @@ describe("APF create policy selection", () => {
 });
 
 describe("deferred provider effect authority", () => {
-  it("carries identity authority through every provider cleanup effect (#9833)", () => {
+  it("carries identity authority through every provider cleanup effect (#9833)", async () => {
     let liveIdentity = "identity-a";
     const operations: string[] = [];
     const revalidateSandboxIdentity = vi.fn((operation: string) => {
@@ -448,7 +450,7 @@ describe("deferred provider effect authority", () => {
           throw new Error("sandbox identity changed");
         })();
     });
-    const runProviderPreDeleteCleanup = vi.fn((_sandboxName, deps) => {
+    const runProviderPreDeleteCleanup = vi.fn(async (_sandboxName, deps) => {
       expect(deps.revalidateSandboxIdentity).toBe(revalidateSandboxIdentity);
       deps.revalidateSandboxIdentity?.("detaching provider");
       liveIdentity = "identity-b";
@@ -456,7 +458,7 @@ describe("deferred provider effect authority", () => {
       return { detached: [], failures: [] };
     });
 
-    expect(() =>
+    await expect(
       runAuthorityBoundProviderCleanup({
         sandboxName: "alpha",
         revalidateSandboxIdentity,
@@ -464,7 +466,7 @@ describe("deferred provider effect authority", () => {
         runOpenshell: vi.fn(),
         redact: (value) => value,
       }),
-    ).toThrow(/sandbox identity changed/u);
+    ).rejects.toThrow(/sandbox identity changed/u);
     expect(runProviderPreDeleteCleanup).toHaveBeenCalledOnce();
     expect(operations).toEqual([
       "cleaning up providers for sandbox 'alpha'",
@@ -473,7 +475,7 @@ describe("deferred provider effect authority", () => {
     ]);
   });
 
-  it("refuses provider cleanup when a sandbox appears after verified absence (#9833)", () => {
+  it("refuses provider cleanup when a sandbox appears after verified absence (#9833)", async () => {
     let observationCount = 0;
     const revalidateSandboxIdentity = vi.fn();
     const runOpenshell = vi.fn(() => ({
@@ -485,7 +487,7 @@ describe("deferred provider effect authority", () => {
       signal: null,
     }));
 
-    expect(() =>
+    await expect(
       runAuthorityBoundProviderCleanup({
         sandboxName: "alpha",
         observeSandbox: () =>
@@ -498,7 +500,7 @@ describe("deferred provider effect authority", () => {
         redact: (value) => value,
         tolerateMissingSandbox: true,
       }),
-    ).toThrow(/appeared after absence was verified/u);
+    ).rejects.toThrow(/appeared after absence was verified/u);
     expect(revalidateSandboxIdentity).toHaveBeenCalledOnce();
     expect(runOpenshell).not.toHaveBeenCalled();
   });
@@ -679,8 +681,8 @@ describe("sandbox recreate registry authority", () => {
 describe("managed DCode sandbox create selection", () => {
   it.each([null, "https://openrouter.ai/api/v1"])(
     "passes the selected endpoint to live drift validation: %s (#9555)",
-    (endpointUrl) => {
-      const readDcodeSelectionDrift = vi.fn(() => ({
+    async (endpointUrl) => {
+      const readDcodeSelectionDrift = vi.fn(async () => ({
         changed: false,
         providerChanged: false,
         modelChanged: false,
@@ -689,7 +691,7 @@ describe("managed DCode sandbox create selection", () => {
         unknown: false,
       }));
 
-      readManagedDcodeCreateSelectionDrift(
+      await readManagedDcodeCreateSelectionDrift(
         {
           sandboxName: "saved",
           provider: "compatible-endpoint",

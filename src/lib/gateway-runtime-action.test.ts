@@ -245,6 +245,12 @@ describe("gateway-runtime-action per-sandbox gateway routing", () => {
     });
 
     it("starts recovery with the supplied gateway name and derived port", async () => {
+      const output = {
+        error: vi.fn(),
+        log: vi.fn(),
+        step: vi.fn(),
+        warn: vi.fn(),
+      };
       captureSpy
         .mockReturnValueOnce({ status: 0, output: "Status: Disconnected\nGateway: nemoclaw\n" })
         .mockReturnValueOnce({ status: 0, output: "" })
@@ -262,15 +268,45 @@ describe("gateway-runtime-action per-sandbox gateway routing", () => {
 
       const result = await gatewayRuntime.recoverNamedGatewayRuntime({
         gatewayName: "nemoclaw-8090",
+        output,
       });
 
       expect(startGatewaySpy).toHaveBeenCalledWith({
         gatewayName: "nemoclaw-8090",
         gatewayPort: 8090,
+        output,
       });
       expect(result.recovered).toBe(true);
       expect(result.via).toBe("start");
       expect(process.env.OPENSHELL_GATEWAY).toBe("nemoclaw-8090");
+    });
+
+    it("reports a redacted startup failure only after recovery remains unhealthy", async () => {
+      const output = {
+        error: vi.fn(),
+        log: vi.fn(),
+        step: vi.fn(),
+        warn: vi.fn(),
+      };
+      captureSpy.mockReturnValue({
+        status: 0,
+        output: "Status: Disconnected\nGateway: nemoclaw\n",
+      });
+      runSpy.mockReturnValue({ status: 0 } as never);
+      startGatewaySpy.mockRejectedValueOnce(
+        new Error("gateway start failed with Authorization: Bearer recovery-secret"),
+      );
+
+      const result = await gatewayRuntime.recoverNamedGatewayRuntime({
+        gatewayName: "nemoclaw-8090",
+        output,
+      });
+
+      expect(result).toMatchObject({ recovered: false, attempted: true });
+      expect(output.error).toHaveBeenCalledOnce();
+      expect(output.error.mock.calls[0]?.[0]).toContain("OpenShell gateway recovery failed");
+      expect(output.error.mock.calls[0]?.[0]).toContain("<REDACTED>");
+      expect(output.error.mock.calls[0]?.[0]).not.toContain("recovery-secret");
     });
 
     it("keeps recovery probes and startup on the frozen OpenShell target (#10514)", async () => {

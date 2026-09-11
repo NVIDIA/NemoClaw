@@ -92,10 +92,10 @@ function runOpenShellLifecycleCommand(
   }
 }
 
-export function finalizeDockerGpuPatchBackup(
+export async function finalizeDockerGpuPatchBackup(
   options: DockerGpuPatchFinalizeOptions,
   deps: DockerGpuPatchDeps = {},
-): DockerGpuPatchFinalizeOutcome {
+): Promise<DockerGpuPatchFinalizeOutcome> {
   const resolved = resolveDockerGpuPatchRollbackDeps(deps);
   const containerOpts = {
     ignoreError: true,
@@ -115,7 +115,7 @@ export function finalizeDockerGpuPatchBackup(
     // point; failures after it require a sandbox rebuild. Success is withheld
     // until OpenShell reports Ready and Docker still proves the exact
     // replacement is the sole running labeled container (#9531, #10153).
-    if (!deps.runOpenshell || !deps.runCaptureOpenshell) {
+    if (!deps.commandExecutor || !deps.runOpenshell || !deps.runCaptureOpenshell) {
       return {
         backupRemoved: false,
         rolledBack: false,
@@ -202,9 +202,9 @@ export function finalizeDockerGpuPatchBackup(
     );
     const acknowledgement =
       remainingHandoffTimeoutMs > 0
-        ? waitForOpenShellFinalHandoff(options.sandboxName, finalHandoffDeadlineMs, {
+        ? await waitForOpenShellFinalHandoff(options.sandboxName, finalHandoffDeadlineMs, {
+            commandExecutor: deps.commandExecutor,
             runCaptureOpenshell: deps.runCaptureOpenshell,
-            runOpenshell: deps.runOpenshell,
             sleep: deps.sleep,
             now,
             replacementIsExactAndRunning: (remainingMs) =>

@@ -2,11 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createHash } from "node:crypto";
-import {
-  LLAMA_CPP_DGX_SPARK_AGENT_QUALIFICATION_PATH,
-  LLAMA_CPP_DGX_SPARK_QUALIFICATION_ACTIVATION_PATH,
-} from "../../scripts/checks/llama-cpp-dgx-spark-qualification-paths.mts";
 import * as importedProtectedManagedImageContract from "../../scripts/checks/protected-managed-image-contract.ts";
+import { HERMES_ACP_E2E_OWNING_PATHS } from "../e2e/hermes-acp-owning-paths.mts";
 
 // The root TypeScript package is exposed as CJS under the exact
 // `node --import tsx` workflow execution mode, but as an ESM namespace under
@@ -21,7 +18,7 @@ const protectedManagedImageContract = (
 const { PROTECTED_MANAGED_IMAGE_ACTIVATION_PATH, PROTECTED_MANAGED_IMAGE_MULTIARCH_JOB_ID } =
   protectedManagedImageContract;
 
-export const RISK_PLAN_VERSION = 21 as const;
+export const RISK_PLAN_VERSION = 23 as const;
 
 export const PR_E2E_TYPED_TARGET_IDS = [
   "ubuntu-repo-cloud-langchain-deepagents-code",
@@ -75,6 +72,8 @@ const MANAGED_STARTUP_E2E_JOB_IDS = [
   "openclaw-inference-switch",
 ] as const;
 const HERMES_CLI_ADAPTER_E2E_JOB_IDS = ["channels-stop-start", "mcp-bridge"] as const;
+const HERMES_ACP_E2E_JOB_IDS = ["hermes-e2e", "rebuild-hermes"] as const;
+const HERMES_ACP_RUNTIME_FILES = new Set<string>(HERMES_ACP_E2E_OWNING_PATHS);
 const HERMES_CLI_ADAPTER_RUNTIME_FILES = new Set([
   "agents/hermes/hermes-cli-adapter-v1.json",
   "agents/hermes/hermes-wrapper.py",
@@ -167,7 +166,6 @@ const MANAGED_IMAGE_PROTECTED_RUNTIME_INPUT_PREFIXES = [
   "src/lib/onboard/workload/",
   "test/e2e/live/managed-image-protected-runtime.",
 ] as const;
-const LLAMA_CPP_DGX_SPARK_QUALIFICATION_JOB_ID = "llama-cpp-dgx-spark-qualification" as const;
 // The activation-only phase is complete. Any input that can change bytes or
 // startup policy in a shipped managed image must requalify the exact all-agent
 // amd64/arm64 cohort; the positive and adjacent-path cases in
@@ -215,7 +213,6 @@ export type RiskFamilyId =
   | "e2e-control-plane"
   | "managed-image-multiarch"
   | typeof MANAGED_IMAGE_PROTECTED_RUNTIME_JOB_ID
-  | typeof LLAMA_CPP_DGX_SPARK_QUALIFICATION_JOB_ID
   | "sandbox-boundary"
   | "focused-e2e";
 
@@ -371,6 +368,9 @@ export function focusedPrE2eJobsForChangedFiles(
       (file) => HERMES_CLI_ADAPTER_RUNTIME_FILES.has(file) && isRuntimeRelevant(file),
     ),
   );
+  const hermesAcpRuntimeFiles = stableUnique(
+    changedFiles.filter((file) => HERMES_ACP_RUNTIME_FILES.has(file) && isRuntimeRelevant(file)),
+  );
   const hermesCronRestoreFiles = stableUnique(
     changedFiles.filter(
       (file) => HERMES_CRON_RESTORE_RUNTIME_FILES.has(file) && isRuntimeRelevant(file),
@@ -417,6 +417,10 @@ export function focusedPrE2eJobsForChangedFiles(
     ...HERMES_CLI_ADAPTER_E2E_JOB_IDS.map((id) => ({
       id,
       matchedFiles: hermesCliAdapterFiles,
+    })),
+    ...HERMES_ACP_E2E_JOB_IDS.map((id) => ({
+      id,
+      matchedFiles: hermesAcpRuntimeFiles,
     })),
     ...HERMES_CRON_RESTORE_E2E_JOB_IDS.map((id) => ({
       id,
@@ -656,24 +660,6 @@ export const RISK_RULES: readonly RiskRule[] = [
     matches: (file) =>
       MANAGED_IMAGE_PROTECTED_RUNTIME_INPUTS.has(file) ||
       MANAGED_IMAGE_PROTECTED_RUNTIME_INPUT_PREFIXES.some((prefix) => file.startsWith(prefix)),
-  },
-  {
-    id: LLAMA_CPP_DGX_SPARK_QUALIFICATION_JOB_ID,
-    summary:
-      "Protected DGX Spark qualification must build and prove the exact NemoClaw-built llama.cpp ARM64 image candidate from declarative serving YAML.",
-    tier: 3,
-    requiredJobs: [LLAMA_CPP_DGX_SPARK_QUALIFICATION_JOB_ID],
-    invariants: [
-      "trusted main workflow code compiles candidate YAML and builds the exact PR head without executing candidate workflow code",
-      "one physical NVIDIA DGX Spark proves the exact model digest, image digest, server health, authenticated completion, and full GPU offload",
-      "the isolated registry, server container, network, credential file, and listener are removed before passing evidence is uploaded",
-    ],
-    // The trusted workflow and validators land while dormant. A later YAML-only
-    // activation candidate selects this protected lane after the Spark runner,
-    // approval environment, and verified local model path are provisioned.
-    matches: (file) =>
-      file === LLAMA_CPP_DGX_SPARK_QUALIFICATION_ACTIVATION_PATH ||
-      file === LLAMA_CPP_DGX_SPARK_AGENT_QUALIFICATION_PATH,
   },
   {
     id: "sandbox-boundary",

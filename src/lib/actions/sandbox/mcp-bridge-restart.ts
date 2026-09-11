@@ -5,7 +5,10 @@ import type { AgentMcpAdapter } from "../../agent/defs";
 import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock";
 import { assertHermesPortableCommandUnavailable } from "../../onboard/experimental/portable-agent-lifecycle";
 import type { McpBridgeEntry } from "../../state/registry";
-import { registerAgentAdapterAtCurrentCredentialRevision } from "./mcp-bridge-adapters";
+import {
+  registerAgentAdapterAtCurrentCredentialRevision,
+  unregisterAgentAdapter,
+} from "./mcp-bridge-adapters";
 import { McpBridgeError } from "./mcp-bridge-contracts";
 import { assertHermesMcpRuntimeIntent } from "./mcp-bridge-hermes-reconciliation";
 import { redactBridgeFailureForDisplay } from "./mcp-bridge-output";
@@ -46,7 +49,7 @@ import {
   nowIso,
   writeBridgeEntry,
 } from "./mcp-bridge-state";
-import { statusMcpBridge } from "./mcp-bridge-status";
+import { assertUnchangedStableMcpCredentialAuthorized, statusMcpBridge } from "./mcp-bridge-status";
 import type { McpBridgeTargetValidation } from "./mcp-bridge-url-validation";
 import {
   assertAuthenticatedBridgeEntry,
@@ -200,14 +203,14 @@ async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): P
   for (const entry of missingProviderEntries) {
     await detachMissingProviderReference(sandboxName, entry, providerRuntimeSelection);
   }
-  assertMcpAdapterMutationRuntimeCapabilities(
+  await assertMcpAdapterMutationRuntimeCapabilities(
     sandboxName,
     sandbox,
     targetEntries,
     providerRuntimeSelection,
   );
   for (const entry of missingProviderEntries) {
-    waitForDetachedMcpCredential(sandboxName, entry, providerRuntimeSelection);
+    await waitForDetachedMcpCredential(sandboxName, entry, providerRuntimeSelection);
   }
   // Inspect registered providers once before the first mutation. Per-entry
   // checks below inspect only attached providers at each mutation edge.
@@ -241,9 +244,9 @@ async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): P
       allowExisting: true,
       expectedProviderId: entry.providerId,
       runtimeSelection: providerRuntimeSelection,
-      prepareMutation: (action) => {
+      prepareMutation: async (action) => {
         if (action === "update") {
-          previousCredentialRevision = observeMcpCredentialRevision(
+          previousCredentialRevision = await observeMcpCredentialRevision(
             sandboxName,
             entry,
             providerRuntimeSelection,
@@ -291,7 +294,17 @@ async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): P
           : {}),
       },
     );
-    registerAgentAdapterAtCurrentCredentialRevision(
+    if (providerResult.action === "updated") {
+      await assertUnchangedStableMcpCredentialAuthorized(
+        sandboxName,
+        entry,
+        providerRuntimeSelection,
+        previousCredentialRevision,
+        credentialRevision,
+        statusMcpBridge,
+      );
+    }
+    await registerAgentAdapterAtCurrentCredentialRevision(
       sandboxName,
       entryAdapter,
       entry,
@@ -339,14 +352,14 @@ export async function restoreExistingMcpBridgeRuntime(
     // Deep Agents entry on the same old image it just scrubbed. New/rebuilt
     // images use the default path and must prove the current marker before any
     // policy, provider, attachment, or adapter mutation.
-    assertMcpAdapterTeardownRuntimeCapabilities(
+    await assertMcpAdapterTeardownRuntimeCapabilities(
       sandboxName,
       sandbox,
       entries,
       providerRuntimeSelection,
     );
   } else {
-    assertMcpAdapterMutationRuntimeCapabilities(
+    await assertMcpAdapterMutationRuntimeCapabilities(
       sandboxName,
       sandbox,
       entries,
@@ -388,13 +401,36 @@ export async function restoreExistingMcpBridgeRuntime(
       });
     }
     const adapter = (entry.adapter as AgentMcpAdapter | undefined) ?? defaultAdapter;
+    const previousCredentialRevision = await observeMcpCredentialRevision(
+      sandboxName,
+      entry,
+      providerRuntimeSelection,
+    );
     await refreshMcpProviderEnvironment(entry, providerRuntimeSelection);
     const credentialRevision = await waitForAttachedMcpCredential(
       sandboxName,
       entry,
       providerRuntimeSelection,
+      { previousRevision: previousCredentialRevision },
     );
-    registerAgentAdapterAtCurrentCredentialRevision(
+    try {
+      await assertUnchangedStableMcpCredentialAuthorized(
+        sandboxName,
+        entry,
+        providerRuntimeSelection,
+        previousCredentialRevision,
+        credentialRevision,
+        statusMcpBridge,
+      );
+    } catch (error) {
+      await unregisterAgentAdapter(sandboxName, adapter, entry, providerRuntimeSelection, {
+        bestEffort: true,
+        envValues: {},
+        force: false,
+      });
+      throw error;
+    }
+    await registerAgentAdapterAtCurrentCredentialRevision(
       sandboxName,
       adapter,
       entry,

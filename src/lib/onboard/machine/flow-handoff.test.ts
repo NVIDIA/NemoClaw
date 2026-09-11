@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { createSession, MACHINE_SNAPSHOT_VERSION, type Session } from "../../state/onboard-session";
 import type { OnboardFlowContext } from "./flow-context";
+import type { PreparedExternalComponent } from "../external-component";
 import { prepareCoreOnboardFlowContext, prepareFinalOnboardFlowContext } from "./flow-handoff";
 import type { OnboardMachineState } from "./types";
 
@@ -99,6 +100,70 @@ function context(): OnboardFlowContext & {
 }
 
 describe("onboard flow handoffs", () => {
+  const component = (): PreparedExternalComponent => ({
+    declaration: {
+      schemaVersion: 1,
+      componentId: "policy-governance",
+      interceptorSocketPath: "/run/component/interceptor.sock",
+      activationSocketPath: "/run/component/activation.sock",
+    },
+    revalidateBeforeGateway: vi.fn(),
+    revalidateBeforeActivation: vi.fn(),
+  });
+
+  it("accepts a providerless final handoff with explicit selection and registration (#11486)", () => {
+    expect(
+      prepareFinalOnboardFlowContext({
+        context: {
+          ...context(),
+          sandboxName: "ready",
+          providerlessApf: true,
+          externalComponent: component(),
+        },
+        session: createSession(),
+      }),
+    ).toMatchObject({ model: "", provider: "" });
+  });
+
+  it.each([
+    [false, false],
+    [false, true],
+    [true, false],
+  ])(
+    "rejects a providerless final handoff with selection=%s and registration=%s (#11486)",
+    (selected, registered) => {
+      expect(() =>
+        prepareFinalOnboardFlowContext({
+          context: {
+            ...context(),
+            sandboxName: "ready",
+            providerlessApf: selected ? true : undefined,
+            externalComponent: registered ? component() : null,
+          },
+          session: createSession(),
+        }),
+      ).toThrow("incomplete after sandbox setup");
+    },
+  );
+
+  it.each(["provider", "model"])(
+    "rejects conflicting %s state in a providerless final handoff (#11486)",
+    (field) => {
+      expect(() =>
+        prepareFinalOnboardFlowContext({
+          context: {
+            ...context(),
+            sandboxName: "ready",
+            providerlessApf: true,
+            externalComponent: component(),
+            [field]: "unexpected",
+          },
+          session: createSession(),
+        }),
+      ).toThrow("incomplete after sandbox setup");
+    },
+  );
+
   it("constructs core context from the initial result and requested name", () => {
     const initialContext = context();
     const persisted = createSession();
@@ -143,26 +208,24 @@ describe("onboard flow handoffs", () => {
       requestedSandboxName: null,
       checkpointedSandboxName: "checkpointed",
     },
-  ])("selects the $source sandbox name by precedence", ({
-    source,
-    recordedSandboxName,
-    requestedSandboxName,
-    checkpointedSandboxName,
-  }) => {
-    const assertSandboxNameAllowed = vi.fn();
+  ])(
+    "selects the $source sandbox name by precedence",
+    ({ source, recordedSandboxName, requestedSandboxName, checkpointedSandboxName }) => {
+      const assertSandboxNameAllowed = vi.fn();
 
-    const result = prepareCoreOnboardFlowContext({
-      initial: { context: context(), session: createSession() },
-      recordedSandboxName,
-      requestedSandboxName,
-      checkpointedSandboxName,
-      selectedMessagingChannels: [],
-      assertSandboxNameAllowed,
-    });
+      const result = prepareCoreOnboardFlowContext({
+        initial: { context: context(), session: createSession() },
+        recordedSandboxName,
+        requestedSandboxName,
+        checkpointedSandboxName,
+        selectedMessagingChannels: [],
+        assertSandboxNameAllowed,
+      });
 
-    expect(result.sandboxName).toBe(source);
-    expect(assertSandboxNameAllowed).toHaveBeenCalledWith(source);
-  });
+      expect(result.sandboxName).toBe(source);
+      expect(assertSandboxNameAllowed).toHaveBeenCalledWith(source);
+    },
+  );
 
   it("rejects a missing preflight GPU configuration", () => {
     const initialContext = { ...context(), sandboxGpuConfig: null };
@@ -180,60 +243,55 @@ describe("onboard flow handoffs", () => {
     ).toThrow("Preflight did not produce a sandbox GPU configuration.");
   });
 
-  it.each(
-    handoffResultCases,
-  )("preserves a $trace runner result at the initial-to-core handoff (#7706)", ({
-    trace,
-    resume,
-    fresh,
-    initialState,
-    status,
-  }) => {
-    const failure =
-      status === "failed"
-        ? {
-            step: "gateway",
-            message: "gateway failed",
-            recordedAt: TRACE_TIME,
-          }
-        : null;
-    const persisted = runnerSession(initialState, status, failure);
-    const endpointUrl = `https://${trace}.example.test`;
+  it.each(handoffResultCases)(
+    "preserves a $trace runner result at the initial-to-core handoff (#7706)",
+    ({ trace, resume, fresh, initialState, status }) => {
+      const failure =
+        status === "failed"
+          ? {
+              step: "gateway",
+              message: "gateway failed",
+              recordedAt: TRACE_TIME,
+            }
+          : null;
+      const persisted = runnerSession(initialState, status, failure);
+      const endpointUrl = `https://${trace}.example.test`;
 
-    const result = prepareCoreOnboardFlowContext({
-      initial: {
-        context: {
-          ...context(),
-          resume,
-          fresh,
-          endpointUrl,
+      const result = prepareCoreOnboardFlowContext({
+        initial: {
+          context: {
+            ...context(),
+            resume,
+            fresh,
+            endpointUrl,
+          },
+          session: persisted,
         },
-        session: persisted,
-      },
-      recordedSandboxName: null,
-      requestedSandboxName: null,
-      checkpointedSandboxName: null,
-      selectedMessagingChannels: ["slack"],
-      assertSandboxNameAllowed: vi.fn(),
-    });
+        recordedSandboxName: null,
+        requestedSandboxName: null,
+        checkpointedSandboxName: null,
+        selectedMessagingChannels: ["slack"],
+        assertSandboxNameAllowed: vi.fn(),
+      });
 
-    expect(result.session).toBe(persisted);
-    expect(result).toMatchObject({
-      resume,
-      fresh,
-      endpointUrl,
-      selectedMessagingChannels: ["slack"],
-    });
-    expect(result.session).toMatchObject({
-      status,
-      resumable: true,
-      failure,
-      machine: {
-        state: initialState,
-        revision: 7,
-      },
-    });
-  });
+      expect(result.session).toBe(persisted);
+      expect(result).toMatchObject({
+        resume,
+        fresh,
+        endpointUrl,
+        selectedMessagingChannels: ["slack"],
+      });
+      expect(result.session).toMatchObject({
+        status,
+        resumable: true,
+        failure,
+        machine: {
+          state: initialState,
+          revision: 7,
+        },
+      });
+    },
+  );
 
   it("constructs final context after sandbox identity and inference are complete", () => {
     const persisted = createSession();
@@ -261,29 +319,36 @@ describe("onboard flow handoffs", () => {
     });
   });
 
-  it.each(
-    handoffResultCases,
-  )("preserves a $trace runner result at the core-to-final handoff (#7706)", ({
-    trace,
-    resume,
-    fresh,
-    coreState,
-    status,
-  }) => {
-    const failure =
-      status === "failed"
-        ? {
-            step: "sandbox",
-            message: "sandbox failed",
-            recordedAt: TRACE_TIME,
-          }
-        : null;
-    const persisted = runnerSession(coreState, status, failure);
-    const endpointUrl = `https://${trace}.example.test`;
+  it.each(handoffResultCases)(
+    "preserves a $trace runner result at the core-to-final handoff (#7706)",
+    ({ trace, resume, fresh, coreState, status }) => {
+      const failure =
+        status === "failed"
+          ? {
+              step: "sandbox",
+              message: "sandbox failed",
+              recordedAt: TRACE_TIME,
+            }
+          : null;
+      const persisted = runnerSession(coreState, status, failure);
+      const endpointUrl = `https://${trace}.example.test`;
 
-    const result = prepareFinalOnboardFlowContext({
-      context: {
-        ...context(),
+      const result = prepareFinalOnboardFlowContext({
+        context: {
+          ...context(),
+          resume,
+          fresh,
+          sandboxName: "ready",
+          model: "model",
+          provider: "provider",
+          endpointUrl,
+          selectedMessagingChannels: ["slack"],
+        },
+        session: persisted,
+      });
+
+      expect(result.session).toBe(persisted);
+      expect(result).toMatchObject({
         resume,
         fresh,
         sandboxName: "ready",
@@ -291,49 +356,36 @@ describe("onboard flow handoffs", () => {
         provider: "provider",
         endpointUrl,
         selectedMessagingChannels: ["slack"],
-      },
-      session: persisted,
-    });
+      });
+      expect(result.session).toMatchObject({
+        status,
+        resumable: true,
+        failure,
+        machine: {
+          state: coreState,
+          revision: 7,
+        },
+      });
+    },
+  );
 
-    expect(result.session).toBe(persisted);
-    expect(result).toMatchObject({
-      resume,
-      fresh,
-      sandboxName: "ready",
-      model: "model",
-      provider: "provider",
-      endpointUrl,
-      selectedMessagingChannels: ["slack"],
-    });
-    expect(result.session).toMatchObject({
-      status,
-      resumable: true,
-      failure,
-      machine: {
-        state: coreState,
-        revision: 7,
-      },
-    });
-  });
+  it.each(["sandboxName", "model", "provider"] as const)(
+    "rejects final context when $field is missing",
+    (field) => {
+      const coreContext = {
+        ...context(),
+        sandboxName: "ready",
+        model: "model",
+        provider: "provider",
+        [field]: null,
+      };
 
-  it.each([
-    "sandboxName",
-    "model",
-    "provider",
-  ] as const)("rejects final context when $field is missing", (field) => {
-    const coreContext = {
-      ...context(),
-      sandboxName: "ready",
-      model: "model",
-      provider: "provider",
-      [field]: null,
-    };
-
-    expect(() =>
-      prepareFinalOnboardFlowContext({
-        context: coreContext,
-        session: createSession(),
-      }),
-    ).toThrow("Onboarding state is incomplete after sandbox setup.");
-  });
+      expect(() =>
+        prepareFinalOnboardFlowContext({
+          context: coreContext,
+          session: createSession(),
+        }),
+      ).toThrow("Onboarding state is incomplete after sandbox setup.");
+    },
+  );
 });

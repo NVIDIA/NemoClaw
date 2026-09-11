@@ -335,7 +335,9 @@ export function recoverPodmanSandbox(
     if (!verified.running || verified.paused) {
       throw new Error(`Podman ${operation} did not recover the exact managed container.`);
     }
-    input.log(`  Container '${container.name}' ${operation === "restart" ? "restarted" : "started"}.`);
+    input.log(
+      `  Container '${container.name}' ${operation === "restart" ? "restarted" : "started"}.`,
+    );
     return { exitCode: 0 };
   } catch (error) {
     return resultForFailure(error);

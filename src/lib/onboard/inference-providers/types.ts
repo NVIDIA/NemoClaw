@@ -16,6 +16,7 @@
 // duplicate every helper's exact signature.
 
 import type { TrustedPrivateEndpointCapability } from "../../inference/endpoint-ssrf-preflight";
+import type { OpenShellProviderAdapter } from "../../adapters/openshell/provider-adapter";
 import type { HermesAuthMethod } from "../hermes-auth";
 import type { OnboardInferenceCapabilityCache } from "../inference-capability-cache";
 
@@ -115,14 +116,7 @@ export type RemoteProviderDeps = CommonDeps & {
     apiKey: string,
     options?: Record<string, unknown>,
   ) => { ok: boolean; message?: string } | Promise<{ ok: boolean; message?: string }>;
-  readGatewayProviderMetadata?: (
-    name: string,
-    runOpenshell: RunOpenshell,
-  ) => { name: string; type: string; credentialKeys: string[]; configKeys: string[] } | null;
-  deleteGatewayProvider?: (
-    name: string,
-    deps: { runOpenshell: RunOpenshell; allowedSandboxes?: readonly string[] },
-  ) => { ok: boolean; status?: number | null; stderr?: string; stdout?: string };
+  providerAdapter?: OpenShellProviderAdapter;
   bedrockRuntimeOnboard: {
     setupBedrockRuntimeInference(input: {
       sandboxName: string | null;

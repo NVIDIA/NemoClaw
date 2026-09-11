@@ -10,12 +10,26 @@
 // branch re-adds it for both the probe and the registered base URL — keeping
 // the probed URL identical to the one OpenShell calls at runtime.
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import fs from "node:fs";
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SetupInference, SetupInferenceDeps } from "../../src/lib/onboard/setup-inference.js";
-import { createDirectSetupInferenceHarnessFactory } from "../support/setup-inference-test-harness.js";
+import {
+  createDirectSetupInferenceHarnessFactory,
+  createStaleAnthropicProviderRunner,
+} from "../support/setup-inference-test-harness.js";
 
-const onboard = require("../../src/lib/onboard") as {
-  createSetupInference: (overrides?: Partial<SetupInferenceDeps>) => SetupInference;
+const testHome = await vi.hoisted(async () => {
+  const fs = await import("node:fs");
+  const os = await import("node:os");
+  const path = await import("node:path");
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-remote-provider-"));
+  // The production registry captures its path when the harness imports onboarding.
+  vi.stubEnv("HOME", home);
+  return home;
+});
+
+const { default: onboard } = (await import("../../src/lib/onboard")) as unknown as {
+  default: { createSetupInference: (overrides?: Partial<SetupInferenceDeps>) => SetupInference };
 };
 const createDirectSetupInferenceHarness = createDirectSetupInferenceHarnessFactory(
   onboard.createSetupInference,
@@ -43,17 +57,47 @@ function commandStubs(routes: Record<string, { status: number; stderr?: string }
 /** Route `provider get` to "absent" so the real upsert takes the create path. */
 const providerAbsentRunner = commandStubs({ "provider get": { status: 1 } });
 
-const staleAnthropicMetadata = () => ({
-  name: PROVIDER,
-  type: "anthropic",
-  credentialKeys: [CREDENTIAL_ENV],
-  configKeys: ["ANTHROPIC_BASE_URL"],
-});
-
 describe("compatible-anthropic-endpoint registration for OpenAI-only agents (#6294)", () => {
+  beforeEach(() => {
+    vi.stubEnv("HOME", testHome);
+  });
   afterEach(() => {
     vi.unstubAllEnvs();
     vi.restoreAllMocks();
+  });
+  afterAll(() => fs.rmSync(testHome, { recursive: true, force: true }));
+
+  it.each<[string, string[]]>([
+    ["get", ["provider", "get", "other-provider"]],
+    ["delete", ["provider", "delete", "other-provider"]],
+    ["detach", ["sandbox", "provider", "detach", "test-box", "other-provider"]],
+  ])(
+    "rejects a mismatched provider name during fixture %s without changing its state",
+    (_operation, args) => {
+      const runner = createStaleAnthropicProviderRunner(PROVIDER, CREDENTIAL_ENV, ["test-box"]);
+      expect(runner(args)).toEqual({
+        status: 1,
+        stderr: "provider 'other-provider' not found",
+      });
+      expect(runner(["provider", "get", PROVIDER])?.status).toBe(0);
+      expect(runner(["provider", "delete", PROVIDER])).toEqual({
+        status: 1,
+        stderr: `provider '${PROVIDER}' is attached to sandbox(es): test-box`,
+      });
+    },
+  );
+
+  it.each<[string, string[]]>([
+    ["get", ["provider", "get", PROVIDER]],
+    ["delete", ["provider", "delete", PROVIDER]],
+    ["detach", ["sandbox", "provider", "detach", "test-box", PROVIDER]],
+  ])("reports provider absence during fixture %s after deletion", (_operation, args) => {
+    const runner = createStaleAnthropicProviderRunner(PROVIDER, CREDENTIAL_ENV);
+    expect(runner(["provider", "delete", PROVIDER])).toEqual({ status: 0 });
+    expect(runner(args)).toEqual({
+      status: 1,
+      stderr: `provider '${PROVIDER}' not found`,
+    });
   });
 
   it("registers the provider as type=openai on the /v1 surface after the probe passes", async () => {
@@ -90,11 +134,9 @@ describe("compatible-anthropic-endpoint registration for OpenAI-only agents (#62
   it("replaces an unattached stale Anthropic-surface registration with a plain delete", async () => {
     vi.stubEnv(CREDENTIAL_ENV, "hub-secret");
     const probeOpenAiLikeEndpoint = vi.fn(() => ({ ok: true }));
-    const readGatewayProviderMetadata = vi.fn(staleAnthropicMetadata);
-    const deleteGatewayProvider = vi.fn(() => ({ ok: true }));
     const harness = createDirectSetupInferenceHarness({
-      runOpenshell: providerAbsentRunner,
-      overrides: { probeOpenAiLikeEndpoint, readGatewayProviderMetadata, deleteGatewayProvider },
+      runOpenshell: createStaleAnthropicProviderRunner(PROVIDER, CREDENTIAL_ENV),
+      overrides: { probeOpenAiLikeEndpoint },
     });
 
     await harness.setupInference("test-box", MODEL, PROVIDER, ENDPOINT, CREDENTIAL_ENV, null, [], {
@@ -105,7 +147,7 @@ describe("compatible-anthropic-endpoint registration for OpenAI-only agents (#62
     expect(
       harness.commands.some(({ command }) => command === `provider delete -g nemoclaw ${PROVIDER}`),
     ).toBe(true);
-    expect(deleteGatewayProvider).not.toHaveBeenCalled();
+    expect(harness.commands.some(({ command }) => command.includes("provider detach"))).toBe(false);
     const createCommand = harness.commands.find(({ command }) =>
       command.startsWith("provider create"),
     );
@@ -115,24 +157,20 @@ describe("compatible-anthropic-endpoint registration for OpenAI-only agents (#62
   it("recovers the flip when the stale provider is attached only to the onboarding sandbox", async () => {
     vi.stubEnv(CREDENTIAL_ENV, "hub-secret");
     const probeOpenAiLikeEndpoint = vi.fn(() => ({ ok: true }));
-    const readGatewayProviderMetadata = vi.fn(staleAnthropicMetadata);
-    const deleteGatewayProvider = vi.fn(() => ({ ok: true }));
     const harness = createDirectSetupInferenceHarness({
-      runOpenshell: commandStubs({
-        "provider get": { status: 1 },
-        "provider delete": {
-          status: 1,
-          stderr: `provider '${PROVIDER}' is attached to sandbox(es): test-box`,
-        },
-      }),
-      overrides: { probeOpenAiLikeEndpoint, readGatewayProviderMetadata, deleteGatewayProvider },
+      runOpenshell: createStaleAnthropicProviderRunner(PROVIDER, CREDENTIAL_ENV, ["test-box"]),
+      overrides: { probeOpenAiLikeEndpoint },
     });
 
     await harness.setupInference("test-box", MODEL, PROVIDER, ENDPOINT, CREDENTIAL_ENV, null, [], {
       preferredInferenceApi: "openai-completions",
     });
 
-    expect(deleteGatewayProvider).toHaveBeenCalledWith(PROVIDER, expect.anything());
+    expect(harness.commands.filter(({ command }) => command.includes("provider detach"))).toEqual([
+      expect.objectContaining({
+        command: `sandbox provider detach -g nemoclaw test-box ${PROVIDER}`,
+      }),
+    ]);
     const createCommand = harness.commands.find(({ command }) =>
       command.startsWith("provider create"),
     );
@@ -143,20 +181,13 @@ describe("compatible-anthropic-endpoint registration for OpenAI-only agents (#62
     vi.stubEnv(CREDENTIAL_ENV, "hub-secret");
     const exitProcess = createInjectedExit();
     const probeOpenAiLikeEndpoint = vi.fn(() => ({ ok: true }));
-    const readGatewayProviderMetadata = vi.fn(staleAnthropicMetadata);
-    const deleteGatewayProvider = vi.fn(() => ({ ok: true }));
     const harness = createDirectSetupInferenceHarness({
-      runOpenshell: commandStubs({
-        "provider get": { status: 1 },
-        "provider delete": {
-          status: 1,
-          stderr: `provider '${PROVIDER}' is attached to sandbox(es): other-box, test-box`,
-        },
-      }),
+      runOpenshell: createStaleAnthropicProviderRunner(PROVIDER, CREDENTIAL_ENV, [
+        "other-box",
+        "test-box",
+      ]),
       overrides: {
         probeOpenAiLikeEndpoint,
-        readGatewayProviderMetadata,
-        deleteGatewayProvider,
         exitProcess,
         isNonInteractive: () => true,
       },
@@ -168,7 +199,7 @@ describe("compatible-anthropic-endpoint registration for OpenAI-only agents (#62
       }),
     ).rejects.toThrow("EXIT_CALLED:1");
 
-    expect(deleteGatewayProvider).not.toHaveBeenCalled();
+    expect(harness.commands.some(({ command }) => command.includes("provider detach"))).toBe(false);
     expect(
       harness.errors.some((message) =>
         message.includes("attached to other sandbox(es) (other-box)"),

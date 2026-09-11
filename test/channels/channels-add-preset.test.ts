@@ -293,14 +293,14 @@ beforeEach(() => {
 
   execSpy = vi
     .spyOn(processRecovery, "executeSandboxExecCommand")
-    .mockImplementation((_name, command) => {
+    .mockImplementation(async (_name, command) => {
       return command.includes("/sandbox/.openclaw/openclaw.json")
         ? { status: 0, stdout: JSON.stringify(testConfig), stderr: "" }
         : command.includes("tail -n 400") && command.includes("/tmp/gateway.log")
           ? { status: 0, stdout: testLog, stderr: "" }
           : { status: 0, stdout: "", stderr: "" };
     });
-  vi.spyOn(processRecovery, "executeSandboxCommand").mockReturnValue(null);
+  vi.spyOn(processRecovery, "executeSandboxCommand").mockResolvedValue(null);
 
   buildPlanSpy = vi
     .spyOn(MessagingWorkflowPlanner.prototype, "buildPlan")
@@ -431,6 +431,19 @@ describe("channels add applies a matching policy preset (#3437)", () => {
       expect(presetCallIndexes[1]).toBeLessThan(callOrder.indexOf("promptAndRebuild"));
     },
   );
+
+  it("rejects the Discord placeholder before changing channel state (#10668)", async () => {
+    process.env.DISCORD_BOT_TOKEN = "<your-discord-bot-token>";
+
+    await expectExit(() => addSandboxChannel("test-sb", { channel: "discord" }));
+
+    expect(providerSpy).not.toHaveBeenCalled();
+    expect(applyPresetSpy).not.toHaveBeenCalled();
+    expect(updateSandboxSpy).not.toHaveBeenCalled();
+    expect(saveCredentialSpy).not.toHaveBeenCalled();
+    expect(deleteCredentialSpy).not.toHaveBeenCalled();
+    expect(rebuildSpy).not.toHaveBeenCalled();
+  });
 
   it("applies the tokenless WhatsApp preset for Hermes before triggering rebuild", async () => {
     sandboxAgent = "hermes";
@@ -604,10 +617,9 @@ describe("channels add applies a matching policy preset (#3437)", () => {
       lifecycleGeneration: "generation-1",
       lifecycleLiveIdentityFingerprint: "fingerprint-1",
     } as SandboxEntry;
-    vi.spyOn(
-      policyChannelDependencies,
-      "inspectMessagingProviderAttachmentTarget",
-    ).mockReturnValue("fingerprint-1");
+    vi.spyOn(policyChannelDependencies, "inspectMessagingProviderAttachmentTarget").mockReturnValue(
+      "fingerprint-1",
+    );
     applyPresetSpy
       .mockImplementationOnce((_name, presetName) => {
         callOrder.push(`applyPreset:${presetName}`);

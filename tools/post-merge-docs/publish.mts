@@ -57,6 +57,7 @@ function sha(value: string, name: string): string {
 }
 type Approval = {
   patch: Buffer;
+  previousSha: string;
   rangeStartTag: string;
   targetReleaseTag: string;
 };
@@ -74,12 +75,14 @@ function approvedPatch(directory: string, repository: string, mainSha: string): 
   const review = value as Record<string, unknown>;
   if (
     Object.keys(review).sort().join() !==
-      "mainSha,outcome,patchSha256,rangeStartTag,repository,targetReleaseTag,version" ||
-    review.version !== 2 ||
+      "mainSha,outcome,patchSha256,previousSha,rangeStartTag,repository,targetReleaseTag,version" ||
+    review.version !== 3 ||
     review.repository !== repository ||
     review.mainSha !== mainSha ||
     review.patchSha256 !== createHash("sha256").update(patch).digest("hex") ||
     review.outcome !== "approved" ||
+    typeof review.previousSha !== "string" ||
+    (review.previousSha !== "" && !SHA.test(review.previousSha)) ||
     typeof review.rangeStartTag !== "string" ||
     typeof review.targetReleaseTag !== "string" ||
     nextPatchReleaseTag(
@@ -90,6 +93,7 @@ function approvedPatch(directory: string, repository: string, mainSha: string): 
     fail("review does not approve the exact patch and release target for this main commit");
   return {
     patch,
+    previousSha: review.previousSha,
     rangeStartTag: review.rangeStartTag,
     targetReleaseTag: review.targetReleaseTag,
   };
@@ -466,6 +470,10 @@ async function createPull(input: {
   return pull;
 }
 
+function noticeDraft(url: string): void {
+  console.log(`::notice::Documentation draft awaits maintainer review and merge: ${url}`);
+}
+
 export async function publishDocumentation(input: {
   artifactDirectory: string;
   expectedMainSha: string;
@@ -482,6 +490,8 @@ export async function publishDocumentation(input: {
   const title = pullTitle(target);
   const active = await checkpoint(repository, mainSha, request);
   if (active && !active.draft) return;
+  if ((active?.head.sha ?? "") !== approval.previousSha)
+    fail("managed documentation draft changed after authoring started");
   const temporary = fs.mkdtempSync(path.join(tmpdir(), "nemoclaw-docs-publish-"));
   try {
     const destination = path.join(temporary, "repository");
@@ -501,7 +511,7 @@ export async function publishDocumentation(input: {
       const current = await managedCommit(repository, active.head.sha, request);
       await requireCurrentPullMetadata(active, current, repository, rangeStartTag, target, request);
       if (!prepared.changes.length || current.tree?.sha === prepared.finalTree) {
-        fail(`Documentation remains pending in ${active.html_url}`);
+        return noticeDraft(active.html_url);
       }
     } else if (orphanSha) {
       requireSamePull(undefined, await checkpoint(repository, mainSha, request));
@@ -513,7 +523,7 @@ export async function publishDocumentation(input: {
         request,
         title,
       });
-      fail(`Documentation remains pending in ${pull.html_url}`);
+      return noticeDraft(pull.html_url);
     }
 
     const commitSha = await createCommit({
@@ -536,7 +546,7 @@ export async function publishDocumentation(input: {
         } | null;
         if (reconciled?.object?.sha !== commitSha) throw error;
       }
-      fail(`Documentation remains pending in ${active.html_url}`);
+      return noticeDraft(active.html_url);
     }
 
     try {
@@ -556,7 +566,7 @@ export async function publishDocumentation(input: {
     );
     requireSamePull(undefined, await checkpoint(repository, mainSha, request));
     const pull = await createPull({ body, branch, commitSha, repository, request, title });
-    fail(`Documentation remains pending in ${pull.html_url}`);
+    return noticeDraft(pull.html_url);
   } finally {
     fs.rmSync(temporary, { force: true, recursive: true });
   }

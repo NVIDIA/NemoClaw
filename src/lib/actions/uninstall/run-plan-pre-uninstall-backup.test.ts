@@ -134,10 +134,10 @@ describe("pre-uninstall sandbox backup", () => {
     expect(fixture.logs).toContain("Backing up current sandbox state before uninstall...");
   });
 
-  it("stops the synchronous entrypoint before protected sandbox deletion", () => {
+  it("stops the synchronous entrypoint before protected sandbox deletion", async () => {
     const fixture = createFixture();
 
-    const result = runUninstallPlan(
+    const result = await runUninstallPlan(
       { assumeYes: true, deleteModels: false, keepOpenShell: true },
       fixture.deps,
     );

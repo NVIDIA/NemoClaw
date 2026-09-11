@@ -1,30 +1,46 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
+import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
+
+import { createHermesPortableUninstallFixture } from "../../../../test/helpers/hermes-portable-uninstall-fixture";
 import { createConnectHarness } from "../../../../test/support/connect-flow-test-harness";
+import type { OpenShellSandboxBufferedCommandRequest } from "../../adapters/openshell/sandbox-command";
+import { hermesPortableReceiptDirectory } from "../../onboard/experimental/hermes-portable-receipt";
+import type { SandboxEntry } from "../../state/registry";
 import { HermesPortableForwardRecoveryError } from "./probe/hermes-portable-forward-recovery";
 
 const originalStdoutIsTty = process.stdout.isTTY;
 
-function acceptedHermesHarness(provider: string | null, model: string | null) {
-  const entry = {
-    name: "alpha",
-    agent: "hermes",
-    provider,
-    model,
-    policies: [],
-    openshellDriver: "docker",
-    gatewayName: "nemoclaw",
-    lifecycleGeneration: "generation-1",
-    lifecycleLiveIdentityFingerprint: "f".repeat(64),
-  } as never;
+function acceptedHermesHarness(
+  provider: string | null,
+  model: string | null,
+  options: { entry?: SandboxEntry; useRealPortableReceipt?: boolean } = {},
+) {
+  const entry =
+    options.entry ??
+    ({
+      name: "alpha",
+      agent: "hermes",
+      provider,
+      model,
+      policies: [],
+      openshellDriver: "docker",
+      gatewayName: "nemoclaw",
+      lifecycleGeneration: "generation-1",
+      lifecycleLiveIdentityFingerprint: "f".repeat(64),
+    } as never);
   const harness = createConnectHarness({
     agentName: "hermes",
     sessionAgent: { name: "hermes" },
     registryEntry: entry,
-    portableReceiptDisposition: { kind: "hermes", phase: "active" },
+    ...(options.useRealPortableReceipt
+      ? { useRealPortableReceipt: true }
+      : { portableReceiptDisposition: { kind: "hermes" as const, phase: "active" as const } }),
     readinessDecision: {
       kind: "accepted",
       category: "accepted",
@@ -43,13 +59,14 @@ function acceptedHermesHarness(provider: string | null, model: string | null) {
 
 function configureHealthyForward(harness: ReturnType<typeof acceptedHermesHarness>): void {
   const captureResolved = harness.captureResolvedOpenshellSpy.getMockImplementation()!;
+  const sandboxName = harness.registryEntries[0]!.name;
   harness.spawnSyncSpy.mockReturnValue({ status: 0, signal: null } as never);
   harness.captureResolvedOpenshellSpy.mockImplementation(((args: unknown, options: unknown) => {
     const argv = Array.isArray(args) ? args.map(String) : [];
     return argv[0] === "forward" && argv[1] === "list"
       ? {
           status: 0,
-          output: "SANDBOX BIND PORT PID STATUS\nalpha 127.0.0.1 18789 12345 running",
+          output: `SANDBOX BIND PORT PID STATUS\n${sandboxName} 127.0.0.1 18789 12345 running`,
         }
       : captureResolved(args, options);
   }) as never);
@@ -73,7 +90,7 @@ function missingHermesHarness(
     lifecycleLiveIdentityFingerprint: "f".repeat(64),
     hostLocalInferenceReceipt: "exact-receipt\n",
   } as never;
-  return createConnectHarness({
+  const harness = createConnectHarness({
     agentName: "hermes",
     sessionAgent: { name: "hermes" },
     registryEntry: entry,
@@ -90,6 +107,15 @@ function missingHermesHarness(
       recoveryBlocked: false,
     },
   });
+  harness.recoverHermesPortableOllamaInferenceSpy.mockImplementation((async (input: {
+    verifyRoute: () => Promise<unknown>;
+    prepareProbeDependency?: () => { release: () => void };
+  }) => {
+    await input.verifyRoute();
+    input.prepareProbeDependency?.().release();
+    return "reused";
+  }) as never);
+  return harness;
 }
 
 describe("Hermes accepted launch-readiness probe", () => {
@@ -132,6 +158,43 @@ describe("Hermes accepted launch-readiness probe", () => {
     expect(harness.logSpy.mock.calls.flat().join("\n")).toMatch(
       /Probe timing: .*lifecycleAction=reused forwardAction=verified result=ready/,
     );
+  });
+
+  it("accepts only host-state Portable authority on a non-default gateway port", async () => {
+    const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-connect-portable-state-"));
+    vi.stubEnv("HOME", homeDir);
+    vi.stubEnv("NEMOCLAW_GATEWAY_PORT", "18080");
+    const fixture = await createHermesPortableUninstallFixture(homeDir);
+    const gatewayStateDir = path.join(homeDir, ".nemoclaw", "gateways", "18080");
+    const gatewayReceiptDirectory = hermesPortableReceiptDirectory(
+      fixture.targetRow.name,
+      gatewayStateDir,
+    );
+    fs.mkdirSync(path.dirname(gatewayReceiptDirectory), { recursive: true, mode: 0o700 });
+    fs.cpSync(
+      hermesPortableReceiptDirectory(fixture.targetRow.name, fixture.stateDir),
+      gatewayReceiptDirectory,
+      { recursive: true },
+    );
+
+    try {
+      const entry = { ...fixture.targetRow, gatewayPort: 18_080 };
+      const harness = acceptedHermesHarness(entry.provider ?? null, entry.model ?? null, {
+        entry,
+        useRealPortableReceipt: true,
+      });
+      configureHealthyForward(harness);
+
+      await expect(
+        harness.connectSandbox(entry.name, { probeOnly: true }),
+      ).resolves.toBeUndefined();
+
+      expect(harness.qualifyHermesPortableAcceptedReadinessAuthoritySpy).toHaveBeenCalled();
+      expect(harness.checkAndRecoverSpy).not.toHaveBeenCalled();
+    } finally {
+      fixture.restore();
+      fs.rmSync(homeDir, { recursive: true, force: true });
+    }
   });
 
   it("publishes missing readiness for one running exact runtime without recovery", async () => {
@@ -433,7 +496,7 @@ describe("Hermes accepted launch-readiness probe", () => {
     expect(harness.inspectLaunchReadinessSpy).toHaveBeenCalledOnce();
     expect(harness.assertHermesPortableOperatingCommandCurrentSpy).toHaveBeenCalledTimes(10);
     expect(harness.checkAndRecoverSpy).not.toHaveBeenCalled();
-    expect(harness.runSandboxExecChildSpy).not.toHaveBeenCalled();
+    expect(harness.startSandboxSessionSpy).not.toHaveBeenCalled();
   });
 
   it("recovers a stopped schema-6 lifecycle before retrying accepted authority", async () => {
@@ -638,7 +701,7 @@ describe("Hermes accepted launch-readiness probe", () => {
 
     expect(harness.requalifyPortableAgentAuthoritySpy).toHaveBeenCalledOnce();
     expect(harness.checkAndRecoverSpy).not.toHaveBeenCalled();
-    expect(harness.runSandboxExecChildSpy).not.toHaveBeenCalled();
+    expect(harness.startSandboxSessionSpy).not.toHaveBeenCalled();
   });
 
   it("rejects retained operating-command authority drift before success", async () => {
@@ -655,7 +718,7 @@ describe("Hermes accepted launch-readiness probe", () => {
     expect(harness.requalifyPortableAgentAuthoritySpy).not.toHaveBeenCalled();
     expect(harness.recoverPortableDemoLifecycleSpy).not.toHaveBeenCalled();
     expect(harness.recoverHermesPortableOllamaInferenceSpy).not.toHaveBeenCalled();
-    expect(harness.runSandboxExecChildSpy).not.toHaveBeenCalled();
+    expect(harness.startSandboxSessionSpy).not.toHaveBeenCalled();
   });
 
   it("rejects a substituted registry row even when readiness accepts that row", async () => {
@@ -678,7 +741,7 @@ describe("Hermes accepted launch-readiness probe", () => {
     expect(harness.requalifyPortableAgentAuthoritySpy).not.toHaveBeenCalled();
     expect(harness.recoverPortableDemoLifecycleSpy).not.toHaveBeenCalled();
     expect(harness.recoverHermesPortableOllamaInferenceSpy).not.toHaveBeenCalled();
-    expect(harness.runSandboxExecChildSpy).not.toHaveBeenCalled();
+    expect(harness.startSandboxSessionSpy).not.toHaveBeenCalled();
   });
 
   it("routes every OpenShell-backed readiness observation through retained authority", async () => {
@@ -693,34 +756,50 @@ describe("Hermes accepted launch-readiness probe", () => {
         status: 0,
         output: "Name: alpha\nId: sandbox-generation-1\nPhase: Ready\n",
       } as never)
-      .mockImplementationOnce(((args: unknown) => {
-        const argv = Array.isArray(args) ? args.map(String) : [];
-        const marker = argv.join(" ").match(/__NEMOCLAW_SANDBOX_EXEC_STARTED___[0-9a-f]{32}/u)?.[0];
-        return { status: 0, output: `${marker ?? "missing-marker"}\nRUNNING` };
-      }) as never)
-      .mockReturnValueOnce({ status: 0, output: "OK 200" } as never)
       .mockReturnValueOnce({
         status: 0,
         output: "SANDBOX BIND PORT PID STATUS\nalpha 127.0.0.1 18789 12345 running",
       } as never);
+    const captureAuthorityDeltas: number[] = [];
+    const bufferedAuthorityDeltas: number[] = [];
+    const bufferedObservationRequests: OpenShellSandboxBufferedCommandRequest[] = [];
+    let boundRunBufferedSpy: MockInstance | null = null;
     harness.inspectLaunchReadinessSpy.mockImplementationOnce(async (_sandboxName, deps) => {
+      const commandExecutor = deps.commandExecutor!;
+      const runBuffered = commandExecutor.runBuffered.bind(commandExecutor);
+      boundRunBufferedSpy = vi
+        .spyOn(commandExecutor, "runBuffered")
+        .mockImplementation((request) => runBuffered(request));
       const authorityCalls = () =>
         harness.assertHermesPortableOperatingCommandCurrentSpy.mock.calls.length;
-      const assertBoundObservation = async (observe: () => unknown | Promise<unknown>) => {
+      const assertBoundCaptureObservation = async (observe: () => unknown | Promise<unknown>) => {
         const before = authorityCalls();
         await observe();
-        expect(authorityCalls() - before).toBe(2);
+        captureAuthorityDeltas.push(authorityCalls() - before);
       };
-      await assertBoundObservation(() => deps.capture?.(["policy", "get", "-g", "nemoclaw"]));
-      await assertBoundObservation(() =>
+      const assertBoundBufferedObservation = async (observe: () => unknown | Promise<unknown>) => {
+        const authorityBefore = authorityCalls();
+        const before = boundRunBufferedSpy!.mock.calls.length;
+        await observe();
+        bufferedAuthorityDeltas.push(authorityCalls() - authorityBefore);
+        bufferedObservationRequests.push(
+          ...boundRunBufferedSpy!.mock.calls
+            .slice(before)
+            .map(([request]) => request as OpenShellSandboxBufferedCommandRequest),
+        );
+      };
+      await assertBoundCaptureObservation(() =>
+        deps.capture?.(["policy", "get", "-g", "nemoclaw"]),
+      );
+      await assertBoundCaptureObservation(() =>
         deps.observeSandbox?.({
           sandboxName: "alpha",
           gatewayName: "nemoclaw",
           gatewayPort: 18789,
         }),
       );
-      await assertBoundObservation(() => deps.gatewayHealth?.("alpha", "nemoclaw"));
-      await assertBoundObservation(() =>
+      await assertBoundBufferedObservation(() => deps.gatewayHealth?.("alpha", "nemoclaw"));
+      await assertBoundBufferedObservation(() =>
         deps.inferenceProbe?.("alpha", { name: "hermes" } as never, "nemoclaw"),
       );
       return {
@@ -734,7 +813,23 @@ describe("Hermes accepted launch-readiness probe", () => {
     await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
 
     expect(harness.captureOpenshellSpy).not.toHaveBeenCalled();
-    expect(harness.captureResolvedOpenshellSpy).toHaveBeenCalledTimes(5);
+    expect(captureAuthorityDeltas).toEqual([2, 2]);
+    expect(bufferedAuthorityDeltas).toEqual([2, 2]);
+    expect(bufferedObservationRequests).toHaveLength(2);
+    expect(bufferedObservationRequests).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          sandboxName: "alpha",
+          target: { kind: "named", gatewayName: "nemoclaw" },
+        }),
+        expect.objectContaining({
+          sandboxName: "alpha",
+          target: { kind: "named", gatewayName: "nemoclaw" },
+        }),
+      ]),
+    );
+    expect(harness.captureResolvedOpenshellSpy).toHaveBeenCalledTimes(3);
+    expect(boundRunBufferedSpy).toHaveBeenCalledTimes(2);
     const exactOptions = {
       env: {
         HOME: "/home/test",
@@ -747,8 +842,6 @@ describe("Hermes accepted launch-readiness probe", () => {
     expect(harness.captureResolvedOpenshellSpy.mock.calls[0]?.[1]).toMatchObject(exactOptions);
     expect(harness.captureResolvedOpenshellSpy.mock.calls[1]?.[1]).toMatchObject(exactOptions);
     expect(harness.captureResolvedOpenshellSpy.mock.calls[2]?.[1]).toMatchObject(exactOptions);
-    expect(harness.captureResolvedOpenshellSpy.mock.calls[3]?.[1]).toMatchObject(exactOptions);
-    expect(harness.captureResolvedOpenshellSpy.mock.calls[4]?.[1]).toMatchObject(exactOptions);
   });
 
   it.each(["executable", "socket"])(

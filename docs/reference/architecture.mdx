@@ -86,8 +86,8 @@ Before adoption, NemoClaw asks systemd for the unit's effective `ExecStart`.
 When systemd returns the service identity, NemoClaw requires trusted package paths for both the unit and its effective binary.
 It then checks the effective binary's version against the blueprint range (`min_openshell_version` through `max_openshell_version`).
 This check prevents a supported user-local OpenShell install from hiding an out-of-range binary selected by the package unit's absolute `ExecStart`.
-NemoClaw rejects a known version below the minimum or a known stable version above the maximum.
-An above-maximum development build remains eligible when `NEMOCLAW_OPENSHELL_CHANNEL=dev`.
+NemoClaw rejects a known version below the minimum, above the maximum, or identified as a development build.
+Managed installations require exact stable OpenShell 0.0.116; the development channel is not eligible.
 An undetermined version or an unsupported version stops package-unit adoption.
 When the systemd identity query reports a recognized unavailable user manager, NemoClaw checks the standard user unit paths before standalone fallback.
 It checks `.wants`, `.requires`, and `.upholds` activation links for both gateway service names.
@@ -420,7 +420,7 @@ The following environment variables configure optional services and local access
 </AgentOnly>
 <AgentOnly variant="deepagents">
 | `NEMOCLAW_POLICY_TIER` | Optional non-interactive policy tier selection during onboarding. |
-| `TAVILY_API_KEY` | Host-side input for the optional managed Tavily provider. Register it with `$$nemoclaw credentials add tavily-search --type tavily --credential TAVILY_API_KEY` before attaching the provider to Deep Agents. |
+| `TAVILY_API_KEY` | Host-side input for the optional managed Tavily provider. Register it with `$$nemoclaw credentials add tavily-search --type tavily --agent dcode --credential TAVILY_API_KEY` before attaching the provider to Deep Agents. |
 </AgentOnly>
 
 For normal setup and reconfiguration, prefer `$$nemoclaw onboard` over editing these files by hand.

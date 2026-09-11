@@ -1,13 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { captureOpenshellForStatus, isCommandTimeout } from "../../adapters/openshell/runtime";
+import type { OpenShellSandboxBufferedCommandExecutor } from "../../adapters/openshell/sandbox-command";
+import { createCliOpenShellSandboxCommandExecutor } from "../../adapters/openshell/sandbox-command-cli";
 import { OPENSHELL_INFERENCE_ROUTE_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
 import * as agentRuntime from "../../agent/runtime";
+import { REPOSITORY_ROOT } from "../../core/repository-root";
 import type { ProviderHealthStatus } from "../../inference/health";
 import { RETRIABLE_HTTP_PROBE_STATUSES } from "../../inference/probe/transient-http-policy";
 import {
-  buildSandboxInferenceRouteProbeArgs,
+  buildSandboxInferenceRouteProbeRequest,
   classifyInferenceRouteFailureLabel,
   isDcodeManagedExecMissingDetail,
   parseSandboxInferenceRouteProbeResult,
@@ -15,6 +17,7 @@ import {
 import {
   probeSandboxInferenceInvocation,
   READINESS_INFERENCE_INVOCATION_TIMEOUT_MS,
+  resolveSandboxInferenceInvocationEndpoint,
   type SandboxInferenceInvocationInput,
   type SandboxInferenceInvocationResult,
 } from "./inference-invocation-probe";
@@ -41,32 +44,35 @@ export type SandboxInferenceRouteHealth = {
 export async function probeSandboxInferenceGatewayHealth(
   sandboxName: string,
   options: {
-    captureOpenshellImpl?: typeof captureOpenshellForStatus;
+    commandExecutor?: OpenShellSandboxBufferedCommandExecutor;
     gatewayName?: string;
     getSessionAgentImpl?: typeof agentRuntime.getSessionAgent;
   } = {},
 ): Promise<SandboxInferenceRouteHealth | null> {
   const endpoint = "https://inference.local/v1/models";
-  const capture = options.captureOpenshellImpl ?? captureOpenshellForStatus;
+  const commandExecutor =
+    options.commandExecutor ??
+    createCliOpenShellSandboxCommandExecutor({ hostCwd: REPOSITORY_ROOT });
   const getSessionAgent = options.getSessionAgentImpl ?? agentRuntime.getSessionAgent;
-  let result: Awaited<ReturnType<typeof captureOpenshellForStatus>>;
+  let result: { status: number; output: string; stderr: string };
   try {
-    result = await capture(
-      buildSandboxInferenceRouteProbeArgs(
+    const completed = await commandExecutor.runBuffered(
+      buildSandboxInferenceRouteProbeRequest(
         sandboxName,
         getSessionAgent(sandboxName),
         options.gatewayName,
+        OPENSHELL_INFERENCE_ROUTE_PROBE_TIMEOUT_MS,
       ),
-      {
-        ignoreError: true,
-        includeStreams: true,
-        timeout: OPENSHELL_INFERENCE_ROUTE_PROBE_TIMEOUT_MS,
-      },
     );
+    if (completed.outcome.kind !== "completed") return null;
+    result = {
+      status: completed.outcome.exitCode,
+      output: completed.stdout,
+      stderr: completed.stderr,
+    };
   } catch {
     return null;
   }
-  if (isCommandTimeout(result) || result.error) return null;
   const parsed = parseSandboxInferenceRouteProbeResult(result);
   if (!parsed.healthy && !parsed.broken) {
     return isDcodeManagedExecMissingDetail(parsed.detail)
@@ -179,6 +185,12 @@ function reachableRouteSubprobe(
   gateway: SandboxInferenceRouteHealth,
   endpoint: string,
 ): ProviderHealthStatus {
+  // The probe grades any final HTTP 200-499 as reachable, and the renderer
+  // prints an ok probe's label without its detail, so a bare "reachable" hid
+  // the status the models route actually returned — including a 404 catalog
+  // that validated nothing (#10879). Keep the hop green, because the route did
+  // answer, but carry the code in the label for any non-2xx answer.
+  const answered2xx = gateway.httpStatus >= 200 && gateway.httpStatus < 300;
   return {
     ok: true,
     probed: true,
@@ -186,7 +198,7 @@ function reachableRouteSubprobe(
     probeLabel: "route reachability",
     endpoint,
     detail: gateway.detail,
-    okLabel: "reachable",
+    okLabel: answered2xx ? "reachable" : `reachable (HTTP ${gateway.httpStatus})`,
   };
 }
 
@@ -215,7 +227,10 @@ function buildInvokedRouteHealth(
     ok: false,
     probed: true,
     providerLabel: "Inference route",
-    endpoint,
+    // The invocation is a POST to the selected API family's path, not the
+    // models route. Reporting the models endpoint here told operators the
+    // wrong request had failed (#10879).
+    endpoint: invocation.endpoint ?? endpoint,
     detail: `Inference gateway did not serve an inference request: ${invocation.detail}.`,
     failureLabel: classifyInferenceInvocationFailureLabel(invocation.httpStatus),
     subprobes: [reachableRouteSubprobe(gateway, endpoint)],
@@ -331,19 +346,23 @@ export function buildSandboxInferenceRouteHealth(
   return subprobes.length > 0 ? { ...routeHealth, subprobes } : routeHealth;
 }
 
-export function runSandboxInferenceInvocationProbe(
+export async function runSandboxInferenceInvocationProbe(
   input: SandboxInferenceInvocationInput,
   probe: ProbeSandboxInferenceInvocation = probeSandboxInferenceInvocation,
   onProbeError: (error: unknown) => void = () => {},
-): SandboxInferenceInvocationResult {
+): Promise<SandboxInferenceInvocationResult> {
   try {
-    return probe(input, {}, READINESS_INFERENCE_INVOCATION_TIMEOUT_MS);
+    return await probe(input, {}, READINESS_INFERENCE_INVOCATION_TIMEOUT_MS);
   } catch (error) {
     onProbeError(error);
     return {
       ok: false,
       detail: "sandbox inference invocation probe could not run",
       httpStatus: null,
+      // An abnormal probe still failed against the selected API family's path.
+      // Without this the row falls back to the models route and misdirects
+      // recovery to a request that never ran (#10879).
+      endpoint: resolveSandboxInferenceInvocationEndpoint(input),
     };
   }
 }

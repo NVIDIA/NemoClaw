@@ -4,19 +4,19 @@
 import { randomBytes } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 
+import type { OpenShellProviderAdapter } from "../../../adapters/openshell/provider-adapter";
+import { isValidOpenShellProviderCredentialName } from "../../../adapters/openshell/provider-adapter-cli";
+import { endpointlessProviderProfilePath } from "../../../adapters/openshell/provider-profile";
+import {
+  createManagedProviderAdapter,
+  managedProviderGatewayTarget,
+} from "../../../adapters/openshell/managed-provider-adapter";
 import { cloneAndDeepFreeze } from "../../../core/immutable";
 import { REPOSITORY_ROOT } from "../../../core/repository-root";
 import type { SandboxMessagingPlan } from "../../../messaging/manifest";
-import {
-  ensureMessagingCredentialProviderProfile,
-  MESSAGING_CREDENTIAL_PROVIDER_TYPE,
-} from "../../../messaging/provider-profile";
+import { MESSAGING_CREDENTIAL_PROVIDER_TYPE } from "../../../messaging/provider-profile";
 import { isValidName, isValidProviderName } from "../../../name-validation";
-import { reportsExactProviderNotFound } from "../../../adapters/openshell/provider-diagnostic-cli";
-import {
-  matchesGatewayCredentialOnlyProviderBinding,
-  parseGatewayProviderMetadata,
-} from "../../../onboard/gateway-provider-metadata";
+import { matchesGatewayCredentialOnlyProviderBinding } from "../../../onboard/gateway-provider-metadata";
 import type { ManagedStartupProfile } from "../../../onboard/managed-startup/profile";
 import { normalizeRuntimeProviderIdentity } from "../../../onboard/runtime-provider/registry";
 import { deleteProviderWithRecovery } from "../../../onboard/sandbox-provider-cleanup";
@@ -29,19 +29,17 @@ import {
 import type { SandboxEntry } from "../../../state/registry/types";
 import * as sandboxState from "../../../state/sandbox";
 
-const PROVIDER_PROBE_DIAGNOSTIC_LIMIT = 64 * 1024;
 export const MANAGED_CLONE_PROVIDER_CREATE_TIMEOUT_MS = 30_000;
 const PROVIDER_PROBE_TIMEOUT_MS = 5_000;
 const PROVIDER_TYPE_PATTERN = /^[A-Za-z0-9._:-]{1,64}$/u;
-const PROVIDER_ENV_KEY_PATTERN = /^[A-Z_][A-Z0-9_]{0,127}$/u;
 const TRANSACTION_ID_PATTERN = /^[a-f0-9]{32}$/u;
 
 export type ManagedCloneProviderCommandResult = {
   readonly status: number | null;
   readonly stdout?: string | Buffer | null;
   readonly stderr?: string | Buffer | null;
-  readonly error?: unknown;
-  readonly signal?: NodeJS.Signals | string | null;
+  readonly error?: Error;
+  readonly signal?: NodeJS.Signals | null;
 };
 
 export type ManagedCloneProviderRunner = (
@@ -145,34 +143,22 @@ function fail(message: string, cause?: unknown): never {
   );
 }
 
-function commandStreamText(value: string | Buffer | null | undefined): string {
-  return Buffer.isBuffer(value) ? value.toString("utf8") : (value ?? "");
-}
-
 type ProviderInspection =
   | { readonly kind: "collision" }
   | { readonly kind: "exact" }
   | { readonly kind: "missing" };
 
-function inspectProvider(
+async function inspectProvider(
   binding: ManagedCloneProviderBinding,
-  runOpenshell: ManagedCloneProviderRunner,
-): ProviderInspection {
-  const result = runOpenshell(["provider", "get", binding.providerName], {
-    ignoreError: true,
-    maxBuffer: PROVIDER_PROBE_DIAGNOSTIC_LIMIT,
-    stdio: ["ignore", "pipe", "pipe"],
-    suppressOutput: true,
-    timeout: PROVIDER_PROBE_TIMEOUT_MS,
+  providerAdapter: OpenShellProviderAdapter,
+): Promise<ProviderInspection> {
+  const result = await providerAdapter.getProvider({
+    providerName: binding.providerName,
+    target: managedProviderGatewayTarget,
+    timeoutMs: PROVIDER_PROBE_TIMEOUT_MS,
   });
-  if (result.error || result.signal || result.status !== 0) {
-    const output = `${commandStreamText(result.stdout)}\n${commandStreamText(result.stderr)}`;
-    if (
-      !result.error &&
-      !result.signal &&
-      result.status === 1 &&
-      reportsExactProviderNotFound(output, binding.providerName, PROVIDER_PROBE_DIAGNOSTIC_LIMIT)
-    ) {
+  if (!result.ok) {
+    if (result.error.kind === "command" && result.error.reason === "not_found") {
       return { kind: "missing" };
     }
     fail(
@@ -180,11 +166,7 @@ function inspectProvider(
         "refusing destination mutation",
     );
   }
-
-  const metadata = parseGatewayProviderMetadata(
-    `${commandStreamText(result.stdout)}\n${commandStreamText(result.stderr)}`,
-  );
-  return matchesGatewayCredentialOnlyProviderBinding(metadata, {
+  return matchesGatewayCredentialOnlyProviderBinding(result.value, {
     name: binding.providerName,
     type: binding.providerType,
     credentialKey: binding.providerEnvKey,
@@ -200,7 +182,10 @@ function validatedBinding(binding: ManagedCloneProviderBinding): ManagedClonePro
   if (!PROVIDER_TYPE_PATTERN.test(binding.providerType)) {
     fail(`provider '${binding.providerName}' has an invalid type`);
   }
-  if (!PROVIDER_ENV_KEY_PATTERN.test(binding.providerEnvKey)) {
+  if (
+    !isValidOpenShellProviderCredentialName(binding.providerEnvKey) ||
+    binding.providerEnvKey.length > 128
+  ) {
     fail(`provider '${binding.providerName}' has an invalid credential binding`);
   }
   if (
@@ -356,7 +341,7 @@ type CloneProviderHandoff = Pick<
  * credential rotation remains a separate explicit operation with its own
  * recovery contract.
  */
-export function prepareManagedCloneProviderTransaction(input: {
+export async function prepareManagedCloneProviderTransaction(input: {
   readonly handoff: CloneProviderHandoff;
   readonly destination: SandboxEntry | null;
   readonly additionalBindings?: readonly ManagedCloneProviderBinding[];
@@ -364,9 +349,10 @@ export function prepareManagedCloneProviderTransaction(input: {
     destination: Readonly<SandboxEntry>,
   ) => readonly ManagedCloneProviderBinding[];
   readonly environment?: NodeJS.ProcessEnv;
+  readonly providerAdapter?: OpenShellProviderAdapter;
   readonly runOpenshell: ManagedCloneProviderRunner;
   readonly transactionId?: string;
-}): PreparedManagedCloneProviderTransaction {
+}): Promise<PreparedManagedCloneProviderTransaction> {
   const destinationSandboxName = input.handoff.destinationSandboxName;
   if (
     !isValidName(input.handoff.sourceSandboxName) ||
@@ -405,6 +391,7 @@ export function prepareManagedCloneProviderTransaction(input: {
       ])
     : [];
   const environment = input.environment ?? process.env;
+  const providerAdapter = input.providerAdapter ?? createManagedProviderAdapter(input.runOpenshell);
   const providers: PreparedManagedCloneProvider[] = [];
   for (const binding of desired) {
     if (!hasCredential(environment, binding.providerEnvKey)) {
@@ -413,7 +400,7 @@ export function prepareManagedCloneProviderTransaction(input: {
           `credential in ${binding.providerEnvKey}`,
       );
     }
-    const inspection = inspectProvider(binding, input.runOpenshell);
+    const inspection = await inspectProvider(binding, providerAdapter);
     if (inspection.kind === "collision") {
       fail(`provider '${binding.providerName}' has an incompatible live binding`);
     }
@@ -514,10 +501,11 @@ function issueReceipt(
  * A non-zero create followed by an exact provider is explicitly ambiguous:
  * it is preserved and never claimed by this transaction.
  */
-export function provisionManagedCloneProviderTransaction(
+export async function provisionManagedCloneProviderTransaction(
   prepared: PreparedManagedCloneProviderTransaction,
   input: {
     readonly environment?: NodeJS.ProcessEnv;
+    readonly providerAdapter?: OpenShellProviderAdapter;
     readonly runOpenshell: ManagedCloneProviderRunner;
     readonly readSandbox: ReadSandbox;
     readonly captureSnapshotRestoreAuthority?: CaptureSnapshotRestoreAuthority;
@@ -527,8 +515,9 @@ export function provisionManagedCloneProviderTransaction(
       environment: NodeJS.ProcessEnv,
     ) => string | null | undefined;
   },
-): ManagedCloneProviderTransactionReceipt {
+): Promise<ManagedCloneProviderTransactionReceipt> {
   const environment = input.environment ?? process.env;
+  const providerAdapter = input.providerAdapter ?? createManagedProviderAdapter(input.runOpenshell);
   const confirmed: ManagedCloneProviderOwnershipReceipt[] = [];
   try {
     // Fence every shared gateway mutation, including provider profile import.
@@ -538,14 +527,31 @@ export function provisionManagedCloneProviderTransaction(
         (provider) => provider.binding.providerType === MESSAGING_CREDENTIAL_PROVIDER_TYPE,
       )
     ) {
-      ensureMessagingCredentialProviderProfile({
-        root: REPOSITORY_ROOT,
-        runOpenshell: input.runOpenshell,
+      const profile = await providerAdapter.importProviderProfile({
+        profilePath: endpointlessProviderProfilePath(
+          REPOSITORY_ROOT,
+          MESSAGING_CREDENTIAL_PROVIDER_TYPE,
+        ),
+        target: managedProviderGatewayTarget,
+        timeoutMs: MANAGED_CLONE_PROVIDER_CREATE_TIMEOUT_MS,
       });
+      if (!profile.ok) {
+        if (profile.operation === "import") {
+          fail("Could not import the OpenShell messaging credential profile.");
+        }
+        if (profile.error.kind === "command" && profile.error.reason === "profile_incompatible") {
+          fail(
+            `OpenShell provider profile '${MESSAGING_CREDENTIAL_PROVIDER_TYPE}' already exists but does not match NemoClaw's endpointless messaging credential contract.`,
+          );
+        }
+        fail(
+          `OpenShell provider profile '${MESSAGING_CREDENTIAL_PROVIDER_TYPE}' could not be exported for validation.`,
+        );
+      }
     }
     for (const provider of prepared.providers) {
       revalidateManagedCloneMutationAuthority(prepared, input);
-      const current = inspectProvider(provider.binding, input.runOpenshell);
+      const current = await inspectProvider(provider.binding, providerAdapter);
       if (provider.action === "reuse-destination-owned") {
         if (current.kind !== "exact") {
           fail(`destination-owned provider '${provider.binding.providerName}' changed before use`);
@@ -568,35 +574,17 @@ export function provisionManagedCloneProviderTransaction(
       if (!credential) {
         fail(`credential ${provider.binding.providerEnvKey} disappeared before provider creation`);
       }
-      let result: ManagedCloneProviderCommandResult;
-      try {
-        result = input.runOpenshell(
-          [
-            "provider",
-            "create",
-            "--name",
-            provider.binding.providerName,
-            "--type",
-            provider.binding.providerType,
-            "--credential",
-            provider.binding.providerEnvKey,
-          ],
-          {
-            ignoreError: true,
-            env: { [provider.binding.providerEnvKey]: credential },
-            maxBuffer: PROVIDER_PROBE_DIAGNOSTIC_LIMIT,
-            stdio: ["ignore", "pipe", "pipe"],
-            suppressOutput: true,
-            timeout: MANAGED_CLONE_PROVIDER_CREATE_TIMEOUT_MS,
-          },
-        );
-      } catch (error) {
-        // A thrown child-process adapter can still mean the gateway committed
-        // the create. Reconcile by exact metadata and preserve it as unowned.
-        result = { status: null, error };
-      }
-      const reconciled = inspectProvider(provider.binding, input.runOpenshell);
-      if (result.status !== 0 || result.error || result.signal) {
+      const result = await providerAdapter.createProvider({
+        config: [],
+        credentials: [{ name: provider.binding.providerEnvKey, value: credential }],
+        fromExisting: false,
+        name: provider.binding.providerName,
+        target: managedProviderGatewayTarget,
+        timeoutMs: MANAGED_CLONE_PROVIDER_CREATE_TIMEOUT_MS,
+        type: provider.binding.providerType,
+      });
+      const reconciled = await inspectProvider(provider.binding, providerAdapter);
+      if (!result.ok) {
         const state = reconciled.kind === "exact" ? "exact but unowned" : reconciled.kind;
         fail(
           `create for provider '${provider.binding.providerName}' had an ambiguous result ` +
@@ -614,7 +602,11 @@ export function provisionManagedCloneProviderTransaction(
     return issueReceipt(prepared, confirmed);
   } catch (cause) {
     const partialReceipt = issueReceipt(prepared, confirmed);
-    const rollback = cleanupManagedCloneProviderTransaction(partialReceipt, input.runOpenshell);
+    const rollback = await cleanupManagedCloneProviderTransaction(
+      partialReceipt,
+      input.runOpenshell,
+      providerAdapter,
+    );
     const detail = cause instanceof Error ? cause.message : String(cause);
     throw new ManagedCloneProviderTransactionError(detail, {
       cause,
@@ -629,10 +621,11 @@ export function provisionManagedCloneProviderTransaction(
  * receipt. Once a name is cleaned, the ledger never re-inspects it, preventing
  * a repeated cleanup from deleting a later same-name provider.
  */
-export function cleanupManagedCloneProviderTransaction(
+export async function cleanupManagedCloneProviderTransaction(
   receipt: ManagedCloneProviderTransactionReceipt,
   runOpenshell: ManagedCloneProviderRunner,
-): ManagedCloneProviderCleanupResult {
+  providerAdapter: OpenShellProviderAdapter = createManagedProviderAdapter(runOpenshell),
+): Promise<ManagedCloneProviderCleanupResult> {
   if (!issuedReceipts.has(receipt)) {
     fail("cleanup requires the exact process-local ownership receipt");
   }
@@ -654,7 +647,7 @@ export function cleanupManagedCloneProviderTransaction(
     }
     let inspection: ProviderInspection;
     try {
-      inspection = inspectProvider(provider.binding, runOpenshell);
+      inspection = await inspectProvider(provider.binding, providerAdapter);
     } catch {
       outcomes.push({ providerName, outcome: "inspection-failed" });
       continue;
@@ -668,8 +661,8 @@ export function cleanupManagedCloneProviderTransaction(
       outcomes.push({ providerName, outcome: "drift-preserved" });
       continue;
     }
-    const deletion = deleteProviderWithRecovery(providerName, {
-      runOpenshell,
+    const deletion = await deleteProviderWithRecovery(providerName, {
+      providerAdapter,
       allowedSandboxes: [receipt.destinationSandboxName],
     });
     if (!deletion.ok) {
@@ -677,7 +670,7 @@ export function cleanupManagedCloneProviderTransaction(
       continue;
     }
     try {
-      if (inspectProvider(provider.binding, runOpenshell).kind !== "missing") {
+      if ((await inspectProvider(provider.binding, providerAdapter)).kind !== "missing") {
         outcomes.push({ providerName, outcome: "delete-failed" });
         continue;
       }

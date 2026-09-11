@@ -59,10 +59,7 @@ function createFixture(opts: {
   const gatewayReadyMarker = path.join(tmpDir, "gateway-ready");
   const gatewayProcess = spawn(
     process.execPath,
-    [
-      path.join(REPO_ROOT, "test", "helpers", "ephemeral-gateway-listener.ts"),
-      gatewayReadyMarker,
-    ],
+    [path.join(REPO_ROOT, "test", "helpers", "ephemeral-gateway-listener.ts"), gatewayReadyMarker],
     { stdio: "ignore" },
   );
   gatewayProcesses.push(gatewayProcess);
@@ -181,7 +178,7 @@ wait();`,
 const fs = require("fs");
 const a = process.argv.slice(2);
 const requiredFeatures = "request-body-credential-rewrite websocket-credential-rewrite allow_all_known_mcp_methods";
-if (a[0] === "-V" || a[0] === "--version") { process.stdout.write("openshell 0.0.106\\n"); process.exit(0); }
+if (a[0] === "-V" || a[0] === "--version") { process.stdout.write("openshell 0.0.116\\n"); process.exit(0); }
 if (a[0] === "sandbox" && a[1] === "list") { process.stdout.write("${sandboxName} Ready\\n"); process.exit(0); }
 if (a[0] === "sandbox" && a[1] === "ssh-config") { process.stdout.write("${sshConfig}\\n"); process.exit(0); }
 if (a[0] === "sandbox" && a[1] === "get") {
@@ -215,7 +212,11 @@ if (a[0] === "gateway" && a[1] === "select") process.exit(0);
 if (a[0] === "inference" && a[1] === "get") { process.stdout.write("Gateway inference:\\n  Provider: ${provider}\\n  Model: meta/llama-3.3-70b-instruct\\n"); process.exit(0); }
 if (a[0] === "inference" && a[1] === "set") process.exit(0);
 if (a[0] === "provider" && a[1] === "get") {
-  if (!${providerRegistered ? "true" : "false"}) process.exit(1);
+  if (!${providerRegistered ? "true" : "false"}) {
+    process.stderr.write("Error: provider '${provider}' not found\\n");
+    process.exit(1);
+  }
+  process.stdout.write("Name: ${provider}\\nType: openai\\nCredential keys: ${credentialEnv}\\nConfig keys: OPENAI_BASE_URL\\n");
   process.exit(0);
 }
 if (a[0] === "provider") process.exit(0);
@@ -231,7 +232,7 @@ process.exit(0);
       path.join(tmpDir, component),
       `#!/usr/bin/env node
 const requiredFeatures = "request-body-credential-rewrite websocket-credential-rewrite allow_all_known_mcp_methods";
-if (process.argv[2] === "-V" || process.argv[2] === "--version") process.stdout.write("${component} 0.0.106\\n");
+if (process.argv[2] === "-V" || process.argv[2] === "--version") process.stdout.write("${component} 0.0.116\\n");
 process.exit(0);
 `,
       { mode: 0o755 },
@@ -300,7 +301,7 @@ if (a[0] === "inspect") {
   const format = formatIndex >= 0 ? a[formatIndex + 1] : "";
   if (format === "{{.State.Running}}") process.stdout.write("true\\n");
   if (format === "{{json .NetworkSettings.Ports}}") process.stdout.write(JSON.stringify({"${gatewayPort}/tcp":[{HostPort:"${gatewayPort}"}]}) + "\\n");
-  if (format === "{{.Config.Image}}") process.stdout.write("nvcr.io/nvidia/openshell/cluster:0.0.106\\n");
+  if (format === "{{.Config.Image}}") process.stdout.write("nvcr.io/nvidia/openshell/cluster:0.0.116\\n");
   process.exit(0);
 }
 if (a[0] === "ps") process.exit(0);
@@ -371,19 +372,31 @@ function registryHasSandbox(fixture: ReturnType<typeof createFixture>): boolean 
 }
 
 describe("atomic rebuild process contracts (#2273)", () => {
-  it("cancels interactive rebuild through stdin without entering preflight or backup", () => {
-    const fixture = createFixture({ providerRegistered: false });
+  it(
+    "cancels interactive rebuild through stdin without entering preflight or backup",
+    testTimeoutOptions(30_000),
+    () => {
+      const fixture = createFixture({ providerRegistered: false });
+      const providerGet = spawnSync(
+        process.execPath,
+        [path.join(fixture.tmpDir, "openshell"), "provider", "get", "nvidia-prod"],
+        { encoding: "utf-8", timeout: execTimeout(5_000) },
+      );
 
-    const result = runRebuild(fixture, {}, { yes: false, input: "n\n" });
-    const output = `${result.stderr || ""}${result.stdout || ""}`;
+      expect(providerGet.status, providerGet.stderr).toBe(1);
+      expect(providerGet.stderr).toBe("Error: provider 'nvidia-prod' not found\n");
 
-    expect(result.status, output).toBe(0);
-    expect(output).toContain("Proceed? [y/N]:");
-    expect(output).toContain("Cancelled.");
-    expect(output).not.toContain("preflight failed");
-    expect(output).not.toContain("Backing up sandbox state");
-    expect(registryHasSandbox(fixture)).toBe(true);
-  });
+      const result = runRebuild(fixture, {}, { yes: false, input: "n\n" });
+      const output = `${result.stderr || ""}${result.stdout || ""}`;
+
+      expect(result.status, output).toBe(0);
+      expect(output).toContain("Proceed? [y/N]:");
+      expect(output).toContain("Cancelled.");
+      expect(output).not.toContain("preflight failed");
+      expect(output).not.toContain("Backing up sandbox state");
+      expect(registryHasSandbox(fixture)).toBe(true);
+    },
+  );
 
   it(
     "keeps a Ready DCode sandbox usable when its stored route returns 401 (#6195)",

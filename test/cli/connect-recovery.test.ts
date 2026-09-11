@@ -290,6 +290,7 @@ describe("CLI connect recovery process contracts", () => {
         expect(calls.some((call) => call.startsWith("sandbox exec --name alpha -- sh -c"))).toBe(
           true,
         );
+        expect(calls.some((call) => call.includes("inference.local/v1/models"))).toBe(true);
         expect(calls).not.toContain("sandbox ssh-config alpha");
         expect(calls).not.toContain("sandbox connect alpha");
         expect(fs.existsSync(sshMarkerFile)).toBe(false);
@@ -487,7 +488,7 @@ describe("CLI connect recovery process contracts", () => {
     const calls = fs.readFileSync(markerFile, "utf8");
     expect(calls).toContain("sandbox list");
     expect(calls).toContain("sandbox get -g nemoclaw alpha");
-    expect(calls).toContain("sandbox connect alpha");
+    expect(calls).toContain("sandbox exec --name alpha --tty -- /bin/bash -i");
     const recoveredRegistry = JSON.parse(
       fs.readFileSync(path.join(nemoclawDir, "sandboxes.json"), "utf8"),
     );

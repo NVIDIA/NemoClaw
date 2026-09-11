@@ -17,7 +17,6 @@
 
 import type { OpenShellProviderAdapter } from "../../adapters/openshell/provider-adapter";
 import { endpointlessProviderProfilePath } from "../../adapters/openshell/provider-profile";
-import { OPENAI_GATEWAY_PROVIDER_TYPE } from "../../adapters/openshell/provider-profile-registration";
 import { REPOSITORY_ROOT } from "../../core/repository-root";
 import type { McpBridgeEntry } from "../../state/registry";
 import { McpBridgeError, type ParsedEnvReference } from "./mcp-bridge-contracts";
@@ -45,54 +44,12 @@ export {
   detachProvider,
 } from "./mcp-bridge-provider-attachments";
 
-/**
- * OpenShell 0.0.106 still accepts the legacy `openai` provider type without a
- * declarative profile. Its static-credential resolver then emits the provider
- * key without endpoint metadata, causing the supervisor to reject the whole
- * provider environment as unclassified when an MCP provider is attached.
- * Registering an endpointless profile makes the gateway-only inference key
- * explicitly non-injectable while preserving OpenShell's inference route.
- *
- * invalidState: an unprofiled gateway-only inference credential revokes the
- * otherwise valid endpoint-bound MCP credential snapshot.
- * sourceBoundary: OpenShell owns provider-environment classification and
- * rejects mixed snapshots atomically.
- * whyNotSourceFix: NemoClaw must remain compatible with the pinned OpenShell
- * 0.0.106 runtime, so it declares the missing profile contract before attach.
- * regressionTest: mcp-bridge-provider-profile.test.ts proves exact existing
- * profile validation and rejects credential, endpoint, and malformed drift.
- * removalCondition: remove this import when the minimum supported OpenShell
- * release classifies the `openai` inference credential as gateway-only itself.
- */
-async function ensureOpenAiGatewayProviderProfile(
-  runtimeSelection: McpProviderInspectionRuntimeSelection,
-  providerAdapter?: OpenShellProviderAdapter,
-): Promise<void> {
-  const { adapter, target } = createMcpProviderAdapterBoundary(runtimeSelection, providerAdapter);
-  const result = await adapter.importProviderProfile({
-    profilePath: endpointlessProviderProfilePath(REPOSITORY_ROOT, OPENAI_GATEWAY_PROVIDER_TYPE),
-    target,
-  });
-  if (result.ok) return;
-  if (result.error.kind === "command" && result.error.reason === "profile_incompatible") {
-    throw new McpBridgeError(
-      "OpenShell provider profile 'openai' already exists but does not match NemoClaw's endpointless inference contract.\n    Remove the conflicting profile, then retry this command.",
-    );
-  }
-  throw new McpBridgeError(
-    result.operation === "import"
-      ? "OpenShell could not import the checked-in 'openai' inference provider profile.\n    Confirm OpenShell is available and authorized, then retry this command."
-      : "OpenShell provider profile 'openai' could not be read for validation.\n    Confirm OpenShell is available, authorized, and the profile is readable, then retry this command.",
-  );
-}
-
 /** Ensure the endpointless profile required by OpenShell static credential binding. */
 export async function ensureMcpBridgeProviderProfile(
   runtimeSelection: McpProviderInspectionRuntimeSelection,
   providerAdapter?: OpenShellProviderAdapter,
 ): Promise<void> {
   const boundary = createMcpProviderAdapterBoundary(runtimeSelection, providerAdapter);
-  await ensureOpenAiGatewayProviderProfile(runtimeSelection, boundary.adapter);
   const result = await boundary.adapter.importProviderProfile({
     profilePath: endpointlessProviderProfilePath(REPOSITORY_ROOT, MCP_BRIDGE_PROVIDER_TYPE),
     target: boundary.target,
@@ -114,7 +71,7 @@ export async function upsertMcpProvider(
     allowExisting: boolean;
     expectedProviderId?: string;
     requireExisting?: boolean;
-    prepareMutation?: (action: "create" | "update") => void;
+    prepareMutation?: (action: "create" | "update") => void | Promise<void>;
     runtimeSelection: McpProviderInspectionRuntimeSelection;
     providerAdapter?: OpenShellProviderAdapter;
   },
@@ -184,7 +141,7 @@ export async function upsertMcpProvider(
   // Let callers establish policy and revision proofs only after the actual
   // mutation kind is known. The immediate reinspection below closes races
   // that occur while those fail-closed prerequisites are being prepared.
-  options.prepareMutation?.(action);
+  await options.prepareMutation?.(action);
   // invalidState: another OpenShell client replaces a mutable provider name
   // between inspection and mutation. sourceBoundary: OpenShell owns provider
   // compare-and-swap; v0.0.99 uses the version read inside the server but its
@@ -396,8 +353,7 @@ export async function deleteProvider(
       return;
     if (options.bestEffort) return;
     throw new McpBridgeError(
-      result.error.message ||
-        `Failed to delete MCP provider '${entry.providerName}'.`,
+      result.error.message || `Failed to delete MCP provider '${entry.providerName}'.`,
     );
   }
   const after = await inspectMcpProvider(

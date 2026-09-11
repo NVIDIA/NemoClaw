@@ -22,6 +22,7 @@ import {
   unregisterAgentAdapter,
 } from "./mcp-bridge-adapters";
 import { type McpBridgeAddOptions, McpBridgeError } from "./mcp-bridge-contracts";
+import { assertUnchangedStableMcpCredentialAuthorized, statusMcpBridge } from "./mcp-bridge-status";
 import { assertHermesMcpRuntimeIntent } from "./mcp-bridge-hermes-reconciliation";
 import {
   applyGeneratedPolicy,
@@ -105,7 +106,7 @@ async function assertPreparedMcpAddResourcesAbsent(
   target: McpBridgeTargetValidation,
   providerRuntimeSelection: ReturnType<typeof getMcpProviderInspectionRuntimeSelection>,
 ): Promise<void> {
-  const adapterInspection = inspectAgentAdapterRegistration(
+  const adapterInspection = await inspectAgentAdapterRegistration(
     sandboxName,
     adapter,
     entry,
@@ -442,6 +443,7 @@ async function addMcpBridgeUnlocked(
   let providerAttachAttempted = false;
   let policyApplied = false;
   let adapterMutationAttempted = false;
+  let adapterWasRegistered = false;
   let previousCredentialRevision: McpCredentialRevisionObservation | undefined;
   try {
     let detachedMissingProviderReference = false;
@@ -467,9 +469,9 @@ async function addMcpBridgeUnlocked(
         detachedMissingProviderReference = true;
       }
     }
-    assertAgentMcpMutationRuntimeCapability(sandboxName, adapter, providerRuntimeSelection);
+    await assertAgentMcpMutationRuntimeCapability(sandboxName, adapter, providerRuntimeSelection);
     if (detachedMissingProviderReference) {
-      waitForDetachedMcpCredential(sandboxName, entry, providerRuntimeSelection);
+      await waitForDetachedMcpCredential(sandboxName, entry, providerRuntimeSelection);
     }
     if (resumingPreflightedAdd && !Object.hasOwn(adapterEnvValues, entry.env[0])) {
       try {
@@ -500,12 +502,13 @@ async function addMcpBridgeUnlocked(
       // may therefore reuse only missing or exact resources, never drift.
       writeBridgeEntry(sandboxName, entry);
     }
-    const adapterInspection = inspectAgentAdapterRegistration(
+    const adapterInspection = await inspectAgentAdapterRegistration(
       sandboxName,
       adapter,
       entry,
       providerRuntimeSelection,
     );
+    adapterWasRegistered = adapterInspection.state === "registered";
     if (
       adapterInspection.state !== "absent" &&
       !(resumingPreflightedAdd && adapterInspection.state === "registered")
@@ -539,12 +542,12 @@ async function addMcpBridgeUnlocked(
       allowExisting: resumingPreflightedAdd,
       expectedProviderId: entry.providerId,
       runtimeSelection: providerRuntimeSelection,
-      prepareMutation: (action) => {
+      prepareMutation: async (action) => {
         // A fresh create has no prior revision to compare. Observe only the
         // bounded placeholder classification for an actual update, after the
         // running supervisor has accepted the authenticated MCP policy.
         if (action === "update") {
-          previousCredentialRevision = observeMcpCredentialRevision(
+          previousCredentialRevision = await observeMcpCredentialRevision(
             sandboxName,
             entry,
             providerRuntimeSelection,
@@ -578,6 +581,8 @@ async function addMcpBridgeUnlocked(
       runtimeSelection: providerRuntimeSelection,
     });
     let refreshedAfterObservedAbsence = false;
+    let authorizationPreviousRevision =
+      providerResult.action === "updated" ? previousCredentialRevision : undefined;
     let credentialRevision = await waitForAttachedMcpCredential(
       sandboxName,
       entry,
@@ -623,6 +628,7 @@ async function addMcpBridgeUnlocked(
       // bound policy is active and require a different observed revision.
       // This prevents a quick series of reads from accepting an intermediate
       // generation while the final credential-bearing update is still queued.
+      authorizationPreviousRevision = credentialRevision;
       await upsertMcpProvider(entry.providerName ?? "", options.env, {
         allowExisting: true,
         expectedProviderId: entry.providerId,
@@ -636,18 +642,33 @@ async function addMcpBridgeUnlocked(
         { previousRevision: credentialRevision },
       );
     }
+    await assertUnchangedStableMcpCredentialAuthorized(
+      sandboxName,
+      entry,
+      providerRuntimeSelection,
+      authorizationPreviousRevision,
+      credentialRevision,
+      statusMcpBridge,
+    );
     // The adapter was proven absent above, so cleanup is safe even when a
     // command commits config and then fails during its runtime reload.
     adapterMutationAttempted = true;
-    registerAgentAdapter(sandboxName, adapter, entry, providerRuntimeSelection, adapterEnvValues, {
-      // An exact adapter entry is evidence of a post-commit process death.
-      // Replacing it is idempotent and, for Hermes, re-verifies runtime reload.
-      // The wait above already proved the same revision stable in consecutive
-      // fresh execs, so repeating reconciliation here can outlive the caller's
-      // bounded provider-synchronization contract.
-      replaceExisting: resumingPreflightedAdd && adapterInspection.state === "registered",
-      credentialRevision,
-    });
+    await registerAgentAdapter(
+      sandboxName,
+      adapter,
+      entry,
+      providerRuntimeSelection,
+      adapterEnvValues,
+      {
+        // An exact adapter entry is evidence of a post-commit process death.
+        // Replacing it is idempotent and, for Hermes, re-verifies runtime reload.
+        // The wait above already proved the same revision stable in consecutive
+        // fresh execs, so repeating reconciliation here can outlive the caller's
+        // bounded provider-synchronization contract.
+        replaceExisting: resumingPreflightedAdd && adapterInspection.state === "registered",
+        credentialRevision,
+      },
+    );
     if (adapter === "hermes-config") {
       assertHermesMcpRuntimeIntent(sandboxName, {
         runtimeSelection: providerRuntimeSelection,
@@ -663,8 +684,8 @@ async function addMcpBridgeUnlocked(
     const rollbackProviderOwned =
       !!rollbackProviderInspection &&
       providerMatchesCredential(rollbackProviderInspection, entry.env[0], entry.providerId);
-    if (adapterMutationAttempted) {
-      unregisterAgentAdapter(sandboxName, adapter, entry, providerRuntimeSelection, {
+    if (adapterMutationAttempted || adapterWasRegistered) {
+      await unregisterAgentAdapter(sandboxName, adapter, entry, providerRuntimeSelection, {
         force: false,
         bestEffort: true,
         envValues: adapterEnvValues,
@@ -685,7 +706,7 @@ async function addMcpBridgeUnlocked(
     let reservationCleanupProved = !providerAttachAttempted;
     if (providerAttachAttempted && detachOutcome !== "unknown") {
       try {
-        waitForDetachedMcpCredential(sandboxName, entry, providerRuntimeSelection);
+        await waitForDetachedMcpCredential(sandboxName, entry, providerRuntimeSelection);
         reservationCleanupProved = true;
       } catch {
         reservationCleanupProved = false;

@@ -142,7 +142,7 @@ function stubRecreateJournal(): RebuildRecreateJournal {
   };
 }
 
-const MATCHING_OPENSHELL = path.resolve("test/fixtures/openshell-v0.0.106");
+const MATCHING_OPENSHELL = path.resolve("test/fixtures/openshell-v0.0.116");
 
 const bridgeEntries: Record<"github" | "slack", McpBridgeEntry> = {
   github: {
@@ -1023,7 +1023,7 @@ describe("authenticated MCP sandbox destroy lifecycle", () => {
     expect(result?.entries).toEqual([bridgeEntries.github]);
     expect(testState.executeSandboxExecCommand).toHaveBeenCalledOnce();
     expect(testState.executeSandboxExecCommand).toHaveBeenCalledWith("alpha", ":", undefined, {
-      allowLocalDockerFallback: false,
+      localDockerFallbackPolicy: "never",
       runtimeSelection: testState.runtimeSelection,
     });
     expect(testState.executeSandboxCommand).toHaveBeenCalledWith("alpha", ":", {
@@ -1319,7 +1319,7 @@ describe("authenticated MCP sandbox destroy lifecycle", () => {
 
       const message = await captureMessage(() => bridge[prepareFunction]("alpha"));
       expect(message).toContain(
-        "Could not prove a revision-scoped credential before removing the managed adapter entry for MCP server 'github'.",
+        "Could not prove a generation-scoped credential before removing the managed adapter entry for MCP server 'github'.",
       );
       expect([...testState.attachedProviders]).toEqual(["alpha-mcp-slack"]);
       expect(

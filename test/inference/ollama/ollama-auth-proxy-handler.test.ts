@@ -68,6 +68,60 @@ describe("ollama-auth-proxy request handler", () => {
     expect(backend?.captured).toHaveLength(0);
   });
 
+  it.each([undefined, "Bearer wrong-token"])(
+    "protects active configuration with the proxy token (#11435)",
+    async (auth) => {
+      const response = await request(proxyPort, { path: "/_nemoclaw/proxy-config", auth });
+      expect(response.status).toBe(401);
+      expect(backend?.captured).toHaveLength(0);
+    },
+  );
+
+  it("reports the active listener and backend without forwarding or credentials (#11435)", async () => {
+    const response = await request(proxyPort, {
+      path: "/_nemoclaw/proxy-config",
+      auth: `Bearer ${TOKEN}`,
+    });
+    expect(response.status).toBe(200);
+    expect(JSON.parse(response.body)).toEqual({
+      schemaVersion: 1,
+      pid: proxy?.pid,
+      listener: { address: "0.0.0.0", port: proxyPort },
+      backendOrigin: `http://localhost:${backend?.port}`,
+    });
+    expect(response.body).not.toContain(TOKEN);
+    expect(backend?.captured).toHaveLength(0);
+  });
+
+  it.each(["POST", "PUT", "DELETE"])(
+    "rejects %s for active configuration without forwarding (#11435)",
+    async (method) => {
+      const response = await request(proxyPort, {
+        path: "/_nemoclaw/proxy-config",
+        method,
+        auth: `Bearer ${TOKEN}`,
+        body: "{}",
+      });
+      expect(response.status).toBe(405);
+      expect(backend?.captured).toHaveLength(0);
+    },
+  );
+
+  it("omits backend userinfo, path, and query from active configuration (#11435)", async () => {
+    await terminate(proxy);
+    proxy = await startProxy(proxyPort, backend!.port, TOKEN, {
+      backendUrl: `http://user:secret@localhost:${backend!.port}/private?canary=value`,
+    });
+    const response = await request(proxyPort, {
+      path: "/_nemoclaw/proxy-config",
+      auth: `Bearer ${TOKEN}`,
+    });
+    expect(response.status).toBe(200);
+    expect(JSON.parse(response.body).backendOrigin).toBe(`http://localhost:${backend!.port}`);
+    expect(response.body).not.toMatch(/user|secret|private|canary|value/u);
+    expect(backend?.captured).toHaveLength(0);
+  });
+
   it("returns 401 for unauthenticated /api/tags — no health-check bypass (#3338)", async () => {
     const res = await request(proxyPort, { path: "/api/tags" });
     expect(res.status).toBe(401);

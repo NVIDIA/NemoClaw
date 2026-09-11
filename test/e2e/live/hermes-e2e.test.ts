@@ -13,6 +13,11 @@ import { resultText, shellQuote } from "../fixtures/clients/command.ts";
 import { trustedSandboxShellScript, validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import {
+  HERMES_ACP_LIFECYCLE_BUDGET_MS,
+  type HermesAcpLiveScenario,
+  runHermesAcpLiveScenario,
+} from "../fixtures/hermes-acp-live.ts";
+import {
   assertHermesHasNoRoutingSidecars,
   captureHermesRoutingTopology,
 } from "../fixtures/hermes-routing-topology.ts";
@@ -22,6 +27,7 @@ import {
   securityPostureEnabled,
   securityPostureModeEnv,
 } from "../fixtures/security-posture.ts";
+import { verifyHermesConfigExportLive } from "../fixtures/hermes-config-export-live.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { assertHermesCliAdapterLiveContract } from "./hermes-cli-adapter-live.ts";
 import { HERMES_E2E_PHASES } from "./hermes-e2e-phases.ts";
@@ -30,8 +36,9 @@ import { expectPackageDatabaseReadOnly } from "./package-database-read-only.ts";
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-hermes";
 validateSandboxName(SANDBOX_NAME);
-const HERMES_HEALTH_URL = "http://localhost:8642/health";
-const HERMES_HOST_HEALTH_URL = "http://127.0.0.1:8642/health";
+const HERMES_API_PORT = process.env.NEMOCLAW_HERMES_API_PORT ?? "8642";
+const HERMES_HEALTH_URL = `http://localhost:${HERMES_API_PORT}/health`;
+const HERMES_HOST_HEALTH_URL = `http://127.0.0.1:${HERMES_API_PORT}/health`;
 const HERMES_DASHBOARD_PORT = process.env.NEMOCLAW_DASHBOARD_PORT ?? "18789";
 const SESSION_FILE = path.join(os.homedir(), ".nemoclaw", "onboard-session.json");
 const REGISTRY_FILE = path.join(os.homedir(), ".nemoclaw", "sandboxes.json");
@@ -74,21 +81,16 @@ function commandEnv(inferenceEnv: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
     NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
     ...securityPostureModeEnv(),
   };
-  if (process.env.NEMOCLAW_E2E_HERMES_DASHBOARD) {
-    env.NEMOCLAW_E2E_HERMES_DASHBOARD = process.env.NEMOCLAW_E2E_HERMES_DASHBOARD;
-  }
-  if (process.env.NEMOCLAW_HERMES_DASHBOARD) {
-    env.NEMOCLAW_HERMES_DASHBOARD = process.env.NEMOCLAW_HERMES_DASHBOARD;
-  }
-  if (process.env.NEMOCLAW_HERMES_DASHBOARD_TUI) {
-    env.NEMOCLAW_HERMES_DASHBOARD_TUI = process.env.NEMOCLAW_HERMES_DASHBOARD_TUI;
-  }
-  if (process.env.NEMOCLAW_DASHBOARD_PORT) {
-    env.NEMOCLAW_DASHBOARD_PORT = process.env.NEMOCLAW_DASHBOARD_PORT;
-  }
-  if (process.env.NEMOCLAW_HERMES_DASHBOARD_INTERNAL_PORT) {
-    env.NEMOCLAW_HERMES_DASHBOARD_INTERNAL_PORT =
-      process.env.NEMOCLAW_HERMES_DASHBOARD_INTERNAL_PORT;
+  if (hermesDashboardE2eEnabled()) env.NEMOCLAW_HERMES_DASHBOARD = "1";
+  for (const key of [
+    "NEMOCLAW_HERMES_API_PORT",
+    "NEMOCLAW_HERMES_DASHBOARD_PORT",
+    "NEMOCLAW_E2E_HERMES_DASHBOARD",
+    "NEMOCLAW_HERMES_DASHBOARD_TUI",
+    "NEMOCLAW_DASHBOARD_PORT",
+    "NEMOCLAW_HERMES_DASHBOARD_INTERNAL_PORT",
+  ]) {
+    if (process.env[key]) env[key] = process.env[key];
   }
   return env;
 }
@@ -203,7 +205,16 @@ test(
     timeout: testTimeout(HERMES_E2E_TEST_TIMEOUT_MS),
     meta: { e2ePhases: HERMES_E2E_PHASES },
   },
-  async ({ artifacts, cleanup, host, inference, lifecycle, progress, runtimeProvider, sandbox }) => {
+  async ({
+    artifacts,
+    cleanup,
+    host,
+    inference,
+    lifecycle,
+    progress,
+    runtimeProvider,
+    sandbox,
+  }) => {
     await artifacts.target.declare({
       id: "hermes-e2e",
       boundary: `install.sh --non-interactive --fresh + Hermes sandbox runtime + ${inference.mode} inference adapter`,
@@ -449,6 +460,8 @@ test(
       timeoutMs: 30_000,
     });
     expect(hermesVersion.exitCode, resultText(hermesVersion)).toBe(0);
+    // The exact executable and version compatibility is exercised through the
+    // packaged ACP adapter below and classified by lower source tests.
 
     // Observe the first native diagnostic before editing profiles or repairing
     // anything. Other doctor findings remain visible for their owning issues.
@@ -530,11 +543,14 @@ test(
     let recoveredRootGatewayPid: string | undefined;
 
     if (rootSupervisorTopology) {
-      const stopApiForward = await sandbox.openshell(["forward", "stop", "8642", SANDBOX_NAME], {
-        artifactName: "phase-4-stop-hermes-api-forward-before-restart",
-        env: commandEnv(),
-        timeoutMs: 30_000,
-      });
+      const stopApiForward = await sandbox.openshell(
+        ["forward", "stop", HERMES_API_PORT, SANDBOX_NAME],
+        {
+          artifactName: "phase-4-stop-hermes-api-forward-before-restart",
+          env: commandEnv(),
+          timeoutMs: 30_000,
+        },
+      );
       expect(stopApiForward.exitCode, resultText(stopApiForward)).toBe(0);
 
       const restart = await host.command("nemohermes", [SANDBOX_NAME, "gateway", "restart"], {
@@ -677,11 +693,14 @@ test(
         expect(restoreManagedEnv.exitCode, resultText(restoreManagedEnv)).toBe(0);
       }
 
-      const stopApiForward = await sandbox.openshell(["forward", "stop", "8642", SANDBOX_NAME], {
-        artifactName: "phase-4-stop-managed-hermes-api-forward",
-        env: commandEnv(),
-        timeoutMs: 30_000,
-      });
+      const stopApiForward = await sandbox.openshell(
+        ["forward", "stop", HERMES_API_PORT, SANDBOX_NAME],
+        {
+          artifactName: "phase-4-stop-managed-hermes-api-forward",
+          env: commandEnv(),
+          timeoutMs: 30_000,
+        },
+      );
       expect(stopApiForward.exitCode, resultText(stopApiForward)).toBe(0);
 
       const restartManagedGateway = await host.command(
@@ -773,21 +792,79 @@ test(
         timeoutMs: 30_000,
       },
     );
-    expect(recoveredHealth.exitCode, resultText(recoveredHealth)).toBe(0);
-    expect(resultText(recoveredHealth)).toMatch(/"ok"/i);
+    expect(
+      recoveredHealth.exitCode === 0 &&
+        recoveredHealth.stderr === "" &&
+        /"ok"/i.test(recoveredHealth.stdout),
+      resultText(recoveredHealth),
+    ).toBe(true);
     await expectDashboardReachable("phase-4-dashboard-host-after-recover");
 
     // OpenClaw launch qualification now reads its structured JSONL session
     // store. Hermes owns a different SQLite contract, so this target must not
     // infer Hermes replies from terminal copy through the OpenClaw helper.
-    progress.phase("exercise hosted and inference.local routes");
-    // Phase 5: live inference through both the external provider and the
-    // sandbox's inference.local route.
+    progress.phase("exercise Hermes ACP lifecycle and inference routes");
+    // Phase 5: exercise the packaged host adapter against the managed Hermes
+    // ACP server, then retain the existing inference route coverage.
+    const acpDeadlineAtMs = Date.now() + HERMES_ACP_LIFECYCLE_BUDGET_MS;
+    const runAcpScenario = (scenario: HermesAcpLiveScenario) =>
+      runHermesAcpLiveScenario({
+        artifacts,
+        deadlineAtMs: acpDeadlineAtMs,
+        env,
+        progress,
+        sandbox,
+        sandboxName: SANDBOX_NAME,
+        scenario,
+      });
+    await lifecycle.stopGatewayRuntime();
+    const stoppedGatewayStatus = await host.command("openshell", ["status"], {
+      artifactName: "phase-5-openshell-gateway-stopped-before-acp-recovery",
+      env: commandEnv(),
+      timeoutMs: 30_000,
+    });
+    expect(
+      stoppedGatewayStatus.exitCode === 0 &&
+        /^Status:[ \t]*Disconnected[ \t]*\r?$/imu.test(stoppedGatewayStatus.stdout),
+      resultText(stoppedGatewayStatus),
+    ).toBe(true);
+    const gatewayRecoveryPassed = await runAcpScenario("gateway-recovery");
+    await lifecycle.waitForGatewayConnected();
+    const exchangePassed = await runAcpScenario("exchange");
+    const remoteExitPassed = await runAcpScenario("remote-exit");
+    const cancellationPassed = await runAcpScenario("cancel");
+    const clientDisconnectPassed = await runAcpScenario("client-disconnect");
+    const gatewayRestartPassed = await runHermesAcpLiveScenario({
+      artifacts,
+      deadlineAtMs: acpDeadlineAtMs,
+      env,
+      progress,
+      restartGateway: async () => {
+        await lifecycle.restartGatewayRuntime({ sandboxName: SANDBOX_NAME });
+        await lifecycle.waitForGatewayConnected();
+      },
+      sandbox,
+      sandboxName: SANDBOX_NAME,
+      scenario: "gateway-restart",
+    });
+    const postRestartInitializePassed = await runAcpScenario("initialize");
+    const acpLifecyclePassed =
+      gatewayRecoveryPassed &&
+      exchangePassed &&
+      remoteExitPassed &&
+      cancellationPassed &&
+      clientDisconnectPassed &&
+      gatewayRestartPassed &&
+      postRestartInitializePassed;
+
     const directChat = await inference.directChat("Reply with exactly one word: PONG", {
       artifactName: "phase-5-direct-inference-chat",
       maxTokens: 1024,
     });
-    expect(exhaustedReasoningBudget(directChat)).toBe(false);
+    expect(
+      exhaustedReasoningBudget(directChat) || !acpLifecyclePassed,
+      "Hermes ACP lifecycle failed or direct inference exhausted its reasoning budget; inspect the fixed ACP receipts and inference artifact",
+    ).toBe(false);
     expectPong(`${inference.mode} direct chat`, directChat);
 
     const sandboxChat = await sandbox.exec(
@@ -822,7 +899,19 @@ test(
       timeoutMs: 60_000,
     });
     expect(logs.exitCode, resultText(logs)).toBe(0);
-    expect(resultText(logs).trim().length).toBeGreaterThan(0);
+
+    const configExport = await verifyHermesConfigExportLive({
+      artifacts,
+      cleanup,
+      enabled: securityPostureEnabled() || hermesDashboardE2eEnabled(),
+      dashboardEnabled: hermesDashboardE2eEnabled(),
+      sandbox,
+      env: commandEnv(),
+      host,
+      redactionValues,
+      sandboxName: SANDBOX_NAME,
+    });
+    expect(configExport.passed).toBe(true);
 
     if (rootSupervisorTopology) {
       expect(recoveredRootGatewayPid).toBeDefined();
@@ -916,7 +1005,12 @@ test(
         hermesSkillDiscovered: true,
         hermesSkillUsedInFreshSession: true,
         standaloneRoutingSidecarsAbsentAfterRecovery: true,
+        hermesAcpInitializeSessionPromptPong: true,
+        hermesAcpRecoversStoppedOpenShellGatewayBeforeSession: true,
+        hermesAcpInterruptDisconnectAndRemoteExitClean: true,
+        hermesAcpCleansUpAndReconnectsAfterOpenShellGatewayRestart: true,
         dashboardChecked: hermesDashboardE2eEnabled(),
+        configExportChecked: configExport.checked,
         securityPostureChecked: securityPosture !== null,
       },
       securityPosture,
