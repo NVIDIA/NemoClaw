@@ -6,6 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import YAML from "yaml";
 
 import {
   ADVISOR_OPENAI_COMPATIBLE_BASE_URL,
@@ -524,6 +525,31 @@ describe("PR review advisor specialist lifecycle", () => {
 });
 
 describe("PR review advisor OpenShell wrapper", () => {
+  it("permits only the pinned image login files required by stable OpenShell exec", () => {
+    const policy = YAML.parse(
+      fs.readFileSync("tools/pr-review-advisor/openshell-policy.yaml", "utf8"),
+    ) as {
+      filesystem_policy: { read_only: string[]; read_write: string[] };
+    };
+
+    expect(policy.filesystem_policy).toEqual({
+      include_workdir: false,
+      read_only: [
+        "/usr/bin",
+        "/usr/lib",
+        "/usr/share/git-core",
+        "/etc",
+        "/sandbox/.bashrc",
+        "/sandbox/.profile",
+        "/advisor",
+        "/pr-workdir",
+        "/pr-review-advisor-context",
+        "/pr-review-advisor-tools",
+      ],
+      read_write: ["/dev", "/sandbox/pr-review-advisor-runtime"],
+    });
+  });
+
   it("dispatches sandbox runtime initialization", () => {
     const initialize = vi.fn();
 
@@ -1134,6 +1160,7 @@ describe("PR review advisor OpenShell wrapper", () => {
     expect(calls.some(([, args]) => args.slice(0, 2).join(" ") === "policy set")).toBe(false);
 
     const runArgs = vi.mocked(tools.runAsync).mock.calls[0]?.[1] ?? [];
+    expect(runArgs).not.toContain("--no-login-shell");
     expect(runArgs).toEqual(
       expect.arrayContaining([
         "sandbox",

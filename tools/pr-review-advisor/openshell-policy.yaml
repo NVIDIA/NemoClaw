@@ -10,6 +10,8 @@ filesystem_policy:
     - /usr/lib
     - /usr/share/git-core
     - /etc
+    - /sandbox/.bashrc
+    - /sandbox/.profile
     - /advisor
     - /pr-workdir
     - /pr-review-advisor-context
