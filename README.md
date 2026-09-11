@@ -157,7 +157,10 @@ directory and apply the same YAML. Reads reconcile resources using deployment
 UIDs, random generation labels, and recorded resource IDs. Mutations have no
 automatic retry loop. A lost response requires another explicit apply.
 
-Ordinary apply cannot delete or replace resources. Unknown fields, inline
+Ordinary apply rejects resource removal. The managed Spark variant permits replacing
+its inference container after an explicit service-specification change, or its
+gateway container after a versioned launch-layout correction. Both require
+verification of the separately retained storage binding. Unknown fields, inline
 credentials, foreign ownership, missing bound services/storage or OpenShell resources, and unsupported
 combinations stop the operation. There is no adoption, pruning, migration,
 automatic rollback, or lost-state recovery command.
@@ -175,6 +178,28 @@ portable desired settings, not conversation history, model weights, or agent fil
 Windows process cleanup and native macOS/Windows runtime behavior still require
 live qualification. Podman support is accepted in the schema but requires its
 own live runtime test.
+
+## Managed Spark recipe
+
+[examples/spark.yaml](examples/spark.yaml) declares a managed OpenShell gateway,
+the pinned Qwen3.8 Flash Next service, and an OpenClaw agent routed through it.
+This backend requires the local Linux ARM64 Docker engine on a GB10 DGX Spark.
+Build the local runtime artifact and bundle using [LOCAL_TEST.md](LOCAL_TEST.md),
+then apply the YAML. The service downloads and verifies the pinned snapshot,
+prepares packed PLE storage, and loads inference with a 30-minute startup budget.
+The CLI reports success only after an actual OpenClaw reply through OpenShell.
+
+Model and prepared data survive CLI interruption, stopped inference, and explicit
+runtime-image changes. Gateway storage retains its database, signing key,
+credential-encryption key, and bridge independently of the gateway container.
+A resident supervisor protects host memory after the CLI exits. Its shutdown is latched: Docker does not automatically restart it. Reapply
+checks capacity and restarts the same container. An unchanged running apply checks
+readiness without replacing resources or repeating completed artifact work.
+
+Planning performs observations only. Before the managed gateway exists, it reports
+the OpenShell graph as deferred. Apply first establishes runtime infrastructure,
+then plans OpenShell resources using that live gateway. Retain the entire selected
+state directory, including its `runtime/` child, for subsequent operations.
 
 ## Verify
 

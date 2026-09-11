@@ -48,6 +48,99 @@ platform bundles were rebuilt and their complete three-executable manifests
 verified. Other platform results remain cross-build evidence; live inference was
 not rerun during this transfer.
 
+## Managed DGX Spark experiment
+
+The recipe slice runs on this Linux ARM64 GB10 Spark with 121.7 GiB RAM,
+Docker 29.2.1, NVIDIA driver 580.142, OpenShell 0.0.116, and OpenClaw 2026.9.4.
+[examples/spark.yaml](examples/spark.yaml) contains the resolved runtime and model
+pins. Structured results and pseudonymized identities are in
+[evidence/spark-linux-arm64.json](evidence/spark-linux-arm64.json). Its manifest
+identifies the complete local logs by path and SHA-256; database backups and secret
+material are not committed. [LOCAL_TEST.md](LOCAL_TEST.md) has the build, apply,
+and retained-state test commands. Runtime images and weights remain local.
+The final bundle is `0.1.0-dev.g3ab242b52957`; all five platform manifests
+and their three executables were rebuilt and checksum-verified.
+
+The model snapshot contains 51 pinned files totaling 105,935,744,618 bytes.
+The packed PLE table has 320,001,536 rows of 90 bytes. Its full-row verification
+passed, and the live worker attached the 26.82 GiB mmap artifact. The first full
+inference load took about 11 minutes; the configured loading budget is 30 minutes,
+starting after download and preparation. No host tuning was performed.
+
+| Scenario | Retained result |
+| --- | --- |
+| Initial runtime plan | Gateway-dependent OpenShell graph deferred; no Docker resources created |
+| Exact snapshot and packed preparation | All file hashes/sizes verified; preparation published after full-row verification |
+| Interrupted real download | A 3.09 GB partial shard resumed in the same container; model volume retained |
+| CLI interruption | Runtime continued downloading and supervising memory after the CLI exited |
+| Initial complete path | Actual OpenClaw reply `FOUR` through OpenShell after correcting the early gateway layout |
+| Fresh gateway and sandbox | Six resources created with the corrected layout; actual reply `FOUR`; no repairs |
+| Unchanged apply | No resource changes, downloads, or preparation; actual reply `FOUR` |
+| Export/reapply | Same configuration pins, eight identities, and artifact receipts; actual reply `FOUR` |
+| Safe capacity rejection | A 64 GiB requested reserve rejected arithmetically; no allocation stress or resource changes |
+| Watchdog shutdown | `SIGUSR1` stopped the inference process group; no Docker automatic restart |
+| Explicit watchdog recovery | Read-only plan proposed one update; apply restarted the same container and returned `FOUR` |
+| Failed sandbox startup fixture | Normal binding retained; no taint or recreation; declared policy still checked |
+| Final runtime artifact change | Only inference container replaced; other seven identities and both receipts retained; actual reply, no-op, and export/reapply passed |
+
+The full Spark lifecycle harness passed in 653.012 seconds, preserving all eight
+bindings and both artifact receipt hashes and modification times through no-op,
+export/reapply, and watchdog recovery. It used the earlier runtime manifest
+`232af38c6451e1430e7dbcdea2ee23c284545a258318863ded5c4ac1069f2864`.
+The artifact-change harness passed in 663.004 seconds. The final manifest is
+`c76fd5c3a78f65fcc2dff2aba30f68ab27a880aec3b8a5f2647cd4d19736f8fb`;
+its updated source archive reflects the direct-reader branch, and its supervisor
+binary is byte-for-byte identical. Both manifests were independently reproduced
+with the build cache disabled. No image or model artifact was published.
+
+Deterministic Go fixtures cover interrupted and corrupt downloads, failed
+observations, capacity, supervised shutdown, ownership/generation/identity drift,
+retained storage, encryption-key handoff, and sandbox readiness failure. Five
+packaged Python tests execute the actual preparation tool and verifier against
+tiny safetensors with networking and GPU access disabled. Race tests, vet, and the
+native OpenTofu integration suite pass (26.496 seconds for the final integration
+run). Five-second host samples over 90 minutes observed at least 23.7 GiB of
+available memory; the resident watchdog samples independently every second.
+Cross-platform bundle builds establish
+compilation and artifact checksums only; this GPU backend is qualified here only
+on Linux ARM64 Docker on GB10.
+
+The first gateway layout had two concrete defects. Its sandbox tokens were written
+inside the gateway rootfs, while Docker mounted the corresponding host paths.
+It also kept the database encryption key outside persistent storage. Fixing only
+the signing-key and database paths did not preserve usable credentials. The final
+layout persists XDG state, and gateway identity includes both key fingerprints.
+The deletion guard copies and verifies a legacy encryption key before removing
+its container, since OpenTofu can destroy an old resource before creating a newly
+introduced storage dependency. The handoff stores the original key instead of generating a replacement.
+
+The early failed sandbox exposed an upstream lifecycle limitation: OpenShell
+0.0.116 latches `Error`, and start/stop cannot recover that phase. The experiment
+retained its failed filesystem, corrected the token mount, and performed an
+offline, version-checked status repair with a database backup. Its OpenShell ID
+survived; its failed physical container was replaced. The non-secret inference
+credential placeholder was reinstalled without changing provider identity after
+the early encryption-key loss. These were controlled repairs of the experimental
+layout, not successful automatic recovery or product behavior. The corrected
+fresh gateway/sandbox run needed no repair. Ordinary apply preserves terminal
+sandbox errors and reports them without editing OpenShell's database.
+
+Provider refresh and export use the shared direct readers introduced by the
+concurrent branch change. OpenShell configuration and policy use its SDK;
+managed containers, bridges, volumes, and offline file receipts use Docker.
+Hardware/capacity and the resident watchdog read `/proc/meminfo`, NVIDIA inventory,
+and filesystem capacity directly. Mutations, conditional-write version checks,
+active health/inference/agent probes, and local state/secret-reference access are
+direct. There is no osquery component in the current bundle.
+
+The complete model volume and prepared artifact are preserved. The primary
+experiment remains available; qualification-only gateways are stopped with their
+state/data retained. The existing `nemoradio-vllm` and `nemoradio-tts` containers
+and data were retained. Only the explicitly authorized radio stop was performed;
+no unrelated resources, host drivers, kernel settings, or system packages were
+changed. This evidence does not qualify Podman, Docker Desktop, other GPUs, or
+recovery of terminal OpenShell sandbox errors.
+
 ## Historical native runtime evidence
 
 The managed inference scenario passed on Linux ARM64 with Docker 29.2.1,

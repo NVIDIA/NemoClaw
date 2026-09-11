@@ -1,0 +1,546 @@
+{
+  "recorded": "2026-09-11T18:41:14.860302+00:00",
+  "implementationCommit": "9f8d23607ef11fbf625b8faba5779ee9c6c90d8e",
+  "scope": "Local Linux ARM64 Docker GB10 experiment; no published runtime artifacts",
+  "identityEncoding": "Resource and container IDs are SHA-256 pseudonyms; equality across captures remains checkable. No credentials or database payloads are included.",
+  "pins": {
+    "recipeRevision": "d03809008834124e80223c3482f2ddb59577a48f",
+    "recipeArchiveSHA256": "5c98f577c4f786cbfb976db9424efb01ad16f2136b357c139f8212081395681a",
+    "baseImage": "vllm/vllm-openai@sha256:3b0e188ffceb3d07e09c3cb5215433a0020eacf02d7f882ed3a8bfd15454477e",
+    "modelManifestSHA256": "c11c41935994dc9fd1d3c15e94bdcdcb0893052f55475b62e946e6a31adb4e61",
+    "preparerSHA256": "35da4312f5c9c442eea85445d6f6712c9bb3a3b7c6caccec412da57000b02475",
+    "sourceDateEpoch": 1788974180,
+    "go": "go1.27.1",
+    "nemoclaw-spark": "8f04ac6957af878d71cefb3ea0efd49c448fd93819d40d2d44cce3971177faf3",
+    "supervisor-source.tar.gz": "f225ae713a7957336e150ceae51da35607b490dcb0d32ef3caeb89cfcf0e62c0",
+    "runtime": "nc-prototype-qwen38@sha256:c76fd5c3a78f65fcc2dff2aba30f68ab27a880aec3b8a5f2647cd4d19736f8fb",
+    "modelRepository": "Mia-AiLab/Qwen3.8-Flash-Next-NVFP4",
+    "modelRevision": "925d7be6c14c6c9442ef83e8f05b5a3c39304f69"
+  },
+  "reproducibility": {
+    "cacheDisabled": true,
+    "manifestEqual": true,
+    "supervisorBinaryEqualToLifecycleArtifact": true
+  },
+  "platform": "Linux ARM64 GB10, 121.7 GiB RAM, Docker 29.2.1, NVIDIA 580.142, OpenShell 0.0.116, OpenClaw 2026.9.4",
+  "bundles": {
+    "linux_arm64": {
+      "runtimeQualified": true,
+      "manifest": {
+        "Version": "0.1.0-dev.g3ab242b52957",
+        "Go": "1.27.1",
+        "OpenTofu": "1.12.6",
+        "Files": {
+          "bin/nemoclaw": "94e8b5cacca969eabfc8b4a26f0e896ed6d96bd81bb858a3671561f9854d0110",
+          "libexec/tofu": "641c1eb92d089746dfe25c46e7ef99e1466de80656ed081b6c4bffd6eeb69a59",
+          "providers/registry.opentofu.org/nvidia/nemoclaw/0.1.0-dev.g3ab242b52957/linux_arm64/terraform-provider-nemoclaw_v0.1.0-dev.g3ab242b52957": "f93845019663f3f564b1f2df91bddd3b034cafd6765248c5449729de7a1d080e"
+        }
+      }
+    },
+    "linux_amd64": {
+      "runtimeQualified": false,
+      "manifest": {
+        "Version": "0.1.0-dev.g3ab242b52957",
+        "Go": "1.27.1",
+        "OpenTofu": "1.12.6",
+        "Files": {
+          "bin/nemoclaw": "7e4c09fcf83e9318194841518c1304717cd3d3d44bfa16be62ceaaf79b122d8e",
+          "libexec/tofu": "8f95cbe1523ef7b7913773634a6d6ac94c38f3c8eadba2e18b1e5b01567561ad",
+          "providers/registry.opentofu.org/nvidia/nemoclaw/0.1.0-dev.g3ab242b52957/linux_amd64/terraform-provider-nemoclaw_v0.1.0-dev.g3ab242b52957": "344693cebba344b5ed477adc01efb5ec9213525de2ad7e7a72bfe2a4b29dd5fd"
+        }
+      }
+    },
+    "darwin_arm64": {
+      "runtimeQualified": false,
+      "manifest": {
+        "Version": "0.1.0-dev.g3ab242b52957",
+        "Go": "1.27.1",
+        "OpenTofu": "1.12.6",
+        "Files": {
+          "bin/nemoclaw": "1a6a01251b0159108ab6e3ce54b577fad08d9bd4108b00b949e0b7fb9621ac50",
+          "libexec/tofu": "0445d7cc114d24440af150b1ddec600f4e4c3e6af16ba63a9a7d42054ae970e3",
+          "providers/registry.opentofu.org/nvidia/nemoclaw/0.1.0-dev.g3ab242b52957/darwin_arm64/terraform-provider-nemoclaw_v0.1.0-dev.g3ab242b52957": "cf855979ddfcf965a22fdcc7d795970f38ccb5bb7e1b4846f1f7d64bb6853dc8"
+        }
+      }
+    },
+    "darwin_amd64": {
+      "runtimeQualified": false,
+      "manifest": {
+        "Version": "0.1.0-dev.g3ab242b52957",
+        "Go": "1.27.1",
+        "OpenTofu": "1.12.6",
+        "Files": {
+          "bin/nemoclaw": "6717827bcee203ec168d5c0eb4b4fcd3aac10f1dcf2677d458adeea52a6c36fa",
+          "libexec/tofu": "742e2cb84174a4882e79a45bfec9c767d6006b2a29723110d508a7df46f859b0",
+          "providers/registry.opentofu.org/nvidia/nemoclaw/0.1.0-dev.g3ab242b52957/darwin_amd64/terraform-provider-nemoclaw_v0.1.0-dev.g3ab242b52957": "6082fb6953d19f78a3ec494e122e824001e472867008a56b8c3a67a2549ae55a"
+        }
+      }
+    },
+    "windows_amd64": {
+      "runtimeQualified": false,
+      "manifest": {
+        "Version": "0.1.0-dev.g3ab242b52957",
+        "Go": "1.27.1",
+        "OpenTofu": "1.12.6",
+        "Files": {
+          "bin/nemoclaw.exe": "7e930ce885325a5573212928ffd1cbe1632fc3ad5f89702e05d68ccb429df330",
+          "libexec/tofu.exe": "67bec4d5037c017d89126ee31bd684067b8a3dff1af7cbfae4989788fe221389",
+          "providers/registry.opentofu.org/nvidia/nemoclaw/0.1.0-dev.g3ab242b52957/windows_amd64/terraform-provider-nemoclaw_v0.1.0-dev.g3ab242b52957.exe": "232f83991692284c82e97166f6b99955948b5a9aa244ae1d0b26ea230aea2525"
+        }
+      }
+    }
+  },
+  "snapshot": {
+    "fileCount": 51,
+    "bytes": 105935744618,
+    "completionManifest": "d2f64e56b5a66a1ec6d0f6552f2f6c2b33551015bb3b343b55e824586a7b702c",
+    "receiptSHA256": "efc6ebdac28ac98f4fb9f25f18a2b99d40124183779489cebefc124a6f120b94"
+  },
+  "preparation": {
+    "key": "7490cd95548b14549dd11fe8aa9c48ddea9f3de01a4189785991cb342b827f43",
+    "files": [
+      {
+        "name": "language_model.model.layers.1.ple.ple_embedding.ngram_embedding.packed_u8",
+        "size": 28800138240,
+        "sha256": "e404177a577d4f27930df88d8055af66c4b66b5b2d0a194ef66f8a6c55fbefaf",
+        "modified": 1789147621871690448
+      },
+      {
+        "name": "language_model.model.layers.1.ple.ple_embedding.ngram_embedding.packed_u8.json",
+        "size": 192,
+        "sha256": "3111a87e65a108d8440bafca3ceff98710d25b7c68ed13a566084ad91b9e49e0",
+        "modified": 1789147621873808508
+      }
+    ]
+  },
+  "interruptedDownload": {
+    "stopped": {
+      "time": "2026-09-11T17:24:31.371920+00:00",
+      "containerID": "sha256:e723b89ee2c341ee5c879ce057e96e7ca3ea97cafc01292dc9be5e88afd70fd2",
+      "running": false,
+      "bindingsUnchanged": true,
+      "plan": {
+        "outcome": "planned",
+        "changes": [
+          {
+            "resource": "nemoclaw_inference_service.runtime",
+            "actions": [
+              "update"
+            ]
+          },
+          {
+            "resource": "nemoclaw_provider.inference",
+            "actions": [
+              "create"
+            ]
+          },
+          {
+            "resource": "nemoclaw_route.primary",
+            "actions": [
+              "create"
+            ]
+          },
+          {
+            "resource": "nemoclaw_sandbox.agent",
+            "actions": [
+              "create"
+            ]
+          },
+          {
+            "resource": "nemoclaw_workspace.deployment",
+            "actions": [
+              "create"
+            ]
+          }
+        ]
+      }
+    },
+    "resumed": {
+      "time": "2026-09-11T17:25:01.290691+00:00",
+      "containerID": "sha256:e723b89ee2c341ee5c879ce057e96e7ca3ea97cafc01292dc9be5e88afd70fd2",
+      "running": true,
+      "beforePartialBytes": 3091008027,
+      "afterPartialBytes": 3655748288,
+      "startedAt": "2026-09-11T17:24:33.636378805Z",
+      "restartPolicy": "no"
+    }
+  },
+  "CLIInterruption": {
+    "interruptedApplyLog": ".local/spark-runtime-6-apply.stderr",
+    "logModified": "2026-09-11T17:00:07.446776+00:00",
+    "observedAt": "2026-09-11T17:12:39.765352+00:00",
+    "containerID": "sha256:e723b89ee2c341ee5c879ce057e96e7ca3ea97cafc01292dc9be5e88afd70fd2",
+    "startedAt": "2026-09-11T16:53:39.531979314Z",
+    "running": true,
+    "restartCount": 0,
+    "image": "nc-prototype-qwen38@sha256:232af38c6451e1430e7dbcdea2ee23c284545a258318863ded5c4ac1069f2864"
+  },
+  "lifecycle": {
+    "after": {
+      "IDs": {
+        "nemoclaw_gateway_storage.runtime": "sha256:a106e877c77c38266f486519451ac0bdd49c7021a8c50186093b637b09279816",
+        "nemoclaw_inference_service.runtime": "sha256:4eb26ac3c3aa7e6878f7ed28bd77fe35a68fb5ee126cf757d7d3888495d90982",
+        "nemoclaw_inference_storage.runtime": "sha256:1d55ecce5ca346c1ce77e7ed7c8d67567c1bd5b73be1851f461ab2f9316665bd",
+        "nemoclaw_managed_gateway.runtime": "sha256:0bebac2d3bfebd098f657dfec726774acb2918e835ad7ef0729143826b7e0f28",
+        "nemoclaw_provider.inference": "sha256:6c47b9bb99e5c7aaedc70e0de4fc6efeaefb7819815d76a725178f497871a9bc",
+        "nemoclaw_route.primary": "sha256:39a2e69dafb213564319ad6c7e59da5d2ee0bcd910357b189b24e0b420a8217b",
+        "nemoclaw_sandbox.agent": "sha256:f97408cf2be7cdbd2628d68e8721f2993999009600aa4e2192d1eaca1cb382a6",
+        "nemoclaw_workspace.deployment": "sha256:3e545e241ec222719075c506304d838d766d10220d69fff88c2caf2b352caff1"
+      },
+      "Receipts": {
+        "/data/models/925d7be6c14c6c9442ef83e8f05b5a3c39304f69/.nemoclaw-complete.json": "efc6ebdac28ac98f4fb9f25f18a2b99d40124183779489cebefc124a6f120b94/2026-09-11T10:26:29.945753904-07:00",
+        "/data/prepared/7490cd95548b14549dd11fe8aa9c48ddea9f3de01a4189785991cb342b827f43/complete.json": "c38b43bdebc579835576841f4af2ee9ec49a4e0798e10bc568e1f1df6c4ca625/2026-09-11T10:27:37.887628851-07:00"
+      }
+    },
+    "before": {
+      "IDs": {
+        "nemoclaw_gateway_storage.runtime": "sha256:a106e877c77c38266f486519451ac0bdd49c7021a8c50186093b637b09279816",
+        "nemoclaw_inference_service.runtime": "sha256:4eb26ac3c3aa7e6878f7ed28bd77fe35a68fb5ee126cf757d7d3888495d90982",
+        "nemoclaw_inference_storage.runtime": "sha256:1d55ecce5ca346c1ce77e7ed7c8d67567c1bd5b73be1851f461ab2f9316665bd",
+        "nemoclaw_managed_gateway.runtime": "sha256:0bebac2d3bfebd098f657dfec726774acb2918e835ad7ef0729143826b7e0f28",
+        "nemoclaw_provider.inference": "sha256:6c47b9bb99e5c7aaedc70e0de4fc6efeaefb7819815d76a725178f497871a9bc",
+        "nemoclaw_route.primary": "sha256:39a2e69dafb213564319ad6c7e59da5d2ee0bcd910357b189b24e0b420a8217b",
+        "nemoclaw_sandbox.agent": "sha256:f97408cf2be7cdbd2628d68e8721f2993999009600aa4e2192d1eaca1cb382a6",
+        "nemoclaw_workspace.deployment": "sha256:3e545e241ec222719075c506304d838d766d10220d69fff88c2caf2b352caff1"
+      },
+      "Receipts": {
+        "/data/models/925d7be6c14c6c9442ef83e8f05b5a3c39304f69/.nemoclaw-complete.json": "efc6ebdac28ac98f4fb9f25f18a2b99d40124183779489cebefc124a6f120b94/2026-09-11T10:26:29.945753904-07:00",
+        "/data/prepared/7490cd95548b14549dd11fe8aa9c48ddea9f3de01a4189785991cb342b827f43/complete.json": "c38b43bdebc579835576841f4af2ee9ec49a4e0798e10bc568e1f1df6c4ca625/2026-09-11T10:27:37.887628851-07:00"
+      }
+    },
+    "capacityRejection": "requested GPU budget leaves less than the declared host memory reserve",
+    "deployment": "302ff5e1-088d-42ce-959f-4ff4c3570c13",
+    "exportReapply": {
+      "outcome": "succeeded",
+      "changes": [],
+      "agentResponse": "FOUR"
+    },
+    "finished": "2026-09-11T18:18:02.385386073Z",
+    "initialApply": {
+      "outcome": "succeeded",
+      "changes": [
+        {
+          "resource": "nemoclaw_managed_gateway.runtime",
+          "actions": [
+            "delete",
+            "create"
+          ]
+        },
+        {
+          "resource": "nemoclaw_sandbox.agent",
+          "actions": [
+            "create"
+          ]
+        }
+      ],
+      "agentResponse": "FOUR"
+    },
+    "passed": true,
+    "recoveryApply": {
+      "outcome": "succeeded",
+      "changes": [
+        {
+          "resource": "nemoclaw_inference_service.runtime",
+          "actions": [
+            "update"
+          ]
+        }
+      ],
+      "agentResponse": "FOUR"
+    },
+    "started": "2026-09-11T18:07:09.393714004Z",
+    "stoppedPlan": {
+      "outcome": "planned",
+      "changes": [
+        {
+          "resource": "nemoclaw_inference_service.runtime",
+          "actions": [
+            "update"
+          ]
+        }
+      ]
+    },
+    "unchangedApply": {
+      "outcome": "succeeded",
+      "changes": [],
+      "agentResponse": "FOUR"
+    },
+    "watchdogStop": {
+      "phase": "stopped",
+      "detail": "memory protection tripped by operator; explicit apply required",
+      "updated": "2026-09-11T18:08:52.693193038Z",
+      "pid": 0
+    }
+  },
+  "artifactChange": {
+    "after": {
+      "IDs": {
+        "nemoclaw_gateway_storage.runtime": "sha256:a106e877c77c38266f486519451ac0bdd49c7021a8c50186093b637b09279816",
+        "nemoclaw_inference_service.runtime": "sha256:8c4d48aff5a843e28f7728c20ceba82273f744e072d8356abd071833267c4246",
+        "nemoclaw_inference_storage.runtime": "sha256:1d55ecce5ca346c1ce77e7ed7c8d67567c1bd5b73be1851f461ab2f9316665bd",
+        "nemoclaw_managed_gateway.runtime": "sha256:0bebac2d3bfebd098f657dfec726774acb2918e835ad7ef0729143826b7e0f28",
+        "nemoclaw_provider.inference": "sha256:6c47b9bb99e5c7aaedc70e0de4fc6efeaefb7819815d76a725178f497871a9bc",
+        "nemoclaw_route.primary": "sha256:39a2e69dafb213564319ad6c7e59da5d2ee0bcd910357b189b24e0b420a8217b",
+        "nemoclaw_sandbox.agent": "sha256:f97408cf2be7cdbd2628d68e8721f2993999009600aa4e2192d1eaca1cb382a6",
+        "nemoclaw_workspace.deployment": "sha256:3e545e241ec222719075c506304d838d766d10220d69fff88c2caf2b352caff1"
+      },
+      "Receipts": {
+        "/data/models/925d7be6c14c6c9442ef83e8f05b5a3c39304f69/.nemoclaw-complete.json": "efc6ebdac28ac98f4fb9f25f18a2b99d40124183779489cebefc124a6f120b94/2026-09-11T10:26:29.945753904-07:00",
+        "/data/prepared/7490cd95548b14549dd11fe8aa9c48ddea9f3de01a4189785991cb342b827f43/complete.json": "c38b43bdebc579835576841f4af2ee9ec49a4e0798e10bc568e1f1df6c4ca625/2026-09-11T10:27:37.887628851-07:00"
+      }
+    },
+    "apply": {
+      "outcome": "succeeded",
+      "changes": [
+        {
+          "resource": "nemoclaw_inference_service.runtime",
+          "actions": [
+            "delete",
+            "create"
+          ]
+        }
+      ],
+      "agentResponse": "FOUR"
+    },
+    "before": {
+      "IDs": {
+        "nemoclaw_gateway_storage.runtime": "sha256:a106e877c77c38266f486519451ac0bdd49c7021a8c50186093b637b09279816",
+        "nemoclaw_inference_service.runtime": "sha256:4eb26ac3c3aa7e6878f7ed28bd77fe35a68fb5ee126cf757d7d3888495d90982",
+        "nemoclaw_inference_storage.runtime": "sha256:1d55ecce5ca346c1ce77e7ed7c8d67567c1bd5b73be1851f461ab2f9316665bd",
+        "nemoclaw_managed_gateway.runtime": "sha256:0bebac2d3bfebd098f657dfec726774acb2918e835ad7ef0729143826b7e0f28",
+        "nemoclaw_provider.inference": "sha256:6c47b9bb99e5c7aaedc70e0de4fc6efeaefb7819815d76a725178f497871a9bc",
+        "nemoclaw_route.primary": "sha256:39a2e69dafb213564319ad6c7e59da5d2ee0bcd910357b189b24e0b420a8217b",
+        "nemoclaw_sandbox.agent": "sha256:f97408cf2be7cdbd2628d68e8721f2993999009600aa4e2192d1eaca1cb382a6",
+        "nemoclaw_workspace.deployment": "sha256:3e545e241ec222719075c506304d838d766d10220d69fff88c2caf2b352caff1"
+      },
+      "Receipts": {
+        "/data/models/925d7be6c14c6c9442ef83e8f05b5a3c39304f69/.nemoclaw-complete.json": "efc6ebdac28ac98f4fb9f25f18a2b99d40124183779489cebefc124a6f120b94/2026-09-11T10:26:29.945753904-07:00",
+        "/data/prepared/7490cd95548b14549dd11fe8aa9c48ddea9f3de01a4189785991cb342b827f43/complete.json": "c38b43bdebc579835576841f4af2ee9ec49a4e0798e10bc568e1f1df6c4ca625/2026-09-11T10:27:37.887628851-07:00"
+      }
+    },
+    "exportReapply": {
+      "outcome": "succeeded",
+      "changes": [],
+      "agentResponse": "FOUR"
+    },
+    "finished": "2026-09-11T18:32:29.016777241Z",
+    "newImage": "nc-prototype-qwen38@sha256:c76fd5c3a78f65fcc2dff2aba30f68ab27a880aec3b8a5f2647cd4d19736f8fb",
+    "oldImage": "nc-prototype-qwen38@sha256:232af38c6451e1430e7dbcdea2ee23c284545a258318863ded5c4ac1069f2864",
+    "passed": true,
+    "plan": {
+      "outcome": "planned",
+      "changes": [
+        {
+          "resource": "nemoclaw_inference_service.runtime",
+          "actions": [
+            "delete",
+            "create"
+          ]
+        }
+      ]
+    },
+    "started": "2026-09-11T18:21:26.21687005Z",
+    "unchangedApply": {
+      "outcome": "succeeded",
+      "changes": [],
+      "agentResponse": "FOUR"
+    }
+  },
+  "finalCLIApply": {
+    "outcome": "succeeded",
+    "changes": [],
+    "agentResponse": "FOUR"
+  },
+  "cleanGateway": {
+    "plan": {
+      "outcome": "planned",
+      "changes": [
+        {
+          "resource": "nemoclaw_gateway_storage.runtime",
+          "actions": [
+            "create"
+          ]
+        },
+        {
+          "resource": "nemoclaw_managed_gateway.runtime",
+          "actions": [
+            "create"
+          ]
+        }
+      ],
+      "deferred": [
+        "OpenShell graph requires the new managed gateway; apply will plan it after runtime readiness"
+      ]
+    },
+    "apply": {
+      "outcome": "succeeded",
+      "changes": [
+        {
+          "resource": "nemoclaw_gateway_storage.runtime",
+          "actions": [
+            "create"
+          ]
+        },
+        {
+          "resource": "nemoclaw_managed_gateway.runtime",
+          "actions": [
+            "create"
+          ]
+        },
+        {
+          "resource": "nemoclaw_provider.inference",
+          "actions": [
+            "create"
+          ]
+        },
+        {
+          "resource": "nemoclaw_route.primary",
+          "actions": [
+            "create"
+          ]
+        },
+        {
+          "resource": "nemoclaw_sandbox.agent",
+          "actions": [
+            "create"
+          ]
+        },
+        {
+          "resource": "nemoclaw_workspace.deployment",
+          "actions": [
+            "create"
+          ]
+        }
+      ]
+    },
+    "agent": {
+      "deployment": "a90ce8e5-c59e-4082-a704-86999e3968f1",
+      "agentResponse": "FOUR",
+      "at": "2026-09-11T18:20:51.727049978Z",
+      "repairs": 0
+    },
+    "qualificationGatewayStoppedAfterwards": true
+  },
+  "memoryObservation": {
+    "samples": 1078,
+    "first": "2026-09-11T17:03:29.609570+00:00",
+    "last": "2026-09-11T18:33:28.835920+00:00",
+    "minimumAvailableGiB": 23.697,
+    "finalAvailableGiB": 27.807,
+    "stressAllocationUsed": false
+  },
+  "finalContainers": [
+    {
+      "name": "nc-68d203b0c7e6083f-inference",
+      "identity": "sha256:fb5b1b0e56167f05e9cf2136025c10ee783c2e00168ac3949b7620b878459c49",
+      "image": "nc-prototype-qwen38@sha256:c76fd5c3a78f65fcc2dff2aba30f68ab27a880aec3b8a5f2647cd4d19736f8fb",
+      "running": true,
+      "OOMKilled": false,
+      "restartCount": 0,
+      "restartPolicy": "no"
+    },
+    {
+      "name": "nc-68d203b0c7e6083f-gateway",
+      "identity": "sha256:cab2bb505e8203854a01ffd435bb82304226f704dcd636fadb665d27c89633c7",
+      "image": "ghcr.io/nvidia/openshell/gateway@sha256:3d08ad1e7d839a2ffb9ac85a66102b96dd6bc042c3a6f1eaa31351998fd65792",
+      "running": true,
+      "OOMKilled": false,
+      "restartCount": 0,
+      "restartPolicy": "no"
+    },
+    {
+      "name": "openshell-nc-68d203b0c7e6083f--assistant-2406c0bb-a315-43eb-bcda-9fa94682f8bc",
+      "identity": "sha256:04f1334657f3013f1809a1c1f6df6a48d045602bbe1de43eaadb3a6be9da3b35",
+      "image": "sha256:f73285851f5cc9d1862da7aaa603249f2c97fdf431bc4b03a5a435af897405f3",
+      "running": true,
+      "OOMKilled": false,
+      "restartCount": 0,
+      "restartPolicy": "no"
+    },
+    {
+      "name": "nemoradio-vllm",
+      "identity": "sha256:9c115f41549d36dc69bb64021a1d4b3c8c07bd47ae7ae5fe3f59a6ddec44b226",
+      "running": false,
+      "OOMKilled": false,
+      "restartCount": 0,
+      "restartPolicy": "unless-stopped"
+    },
+    {
+      "name": "nemoradio-tts",
+      "identity": "sha256:6062773c243e792c996c73466b997aa70842be9b7f90cb4339bf58c76501192b",
+      "running": false,
+      "OOMKilled": false,
+      "restartCount": 0,
+      "restartPolicy": "unless-stopped"
+    }
+  ],
+  "localEvidence": {
+    ".local/spark-final-unit-tests.log": {
+      "sha256": "79a1afccebb6c23ee287df57b4e58fef7a11ebd0bf5b405922aa97a291bfceda",
+      "bytes": 857
+    },
+    ".local/spark-final-vet.log": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    ".local/spark-final-integration-tests.log": {
+      "sha256": "c337919a7e4bcf773b7f2853c46c9e3a650e51595e20d43d4bd162cc09bd8848",
+      "bytes": 56
+    },
+    ".local/spark-final-packed-tests.log": {
+      "sha256": "c04093fbca79293dfc2f983b75499d6e4b6dd2593efa18806aa1b392eec5d529",
+      "bytes": 734
+    },
+    ".local/spark-live-key-fixed.log": {
+      "sha256": "645903df7f28bbe17e5dc36317db641988d09b5ecb4d140e409f9997a428e6af",
+      "bytes": 397
+    },
+    ".local/spark-final-artifact-live.log": {
+      "sha256": "f26e309eb91d339c1aa45543a6dc055602787621600a6ebcf1d33034ea811b05",
+      "bytes": 234
+    },
+    ".local/spark-runtime-build-7.log": {
+      "sha256": "3a6473dd85e714c7bdc3d215cb60631da6e1a91b4269120e21a373faafdec7b8",
+      "bytes": 2686
+    },
+    ".local/spark-runtime-repro-7.log": {
+      "sha256": "848b406f665b8d8d8f4dd21edff6802b40870339e1d426252db0c93f7eccb48a",
+      "bytes": 3324
+    },
+    ".local/spark-evidence/final-inference.log": {
+      "sha256": "4ccd314b8ec0fa127c6274eeeddf9beeb7a7d003c0ade61066859f033855de87",
+      "bytes": 52444
+    },
+    ".local/spark-evidence/final-gateway.log": {
+      "sha256": "53ad7f1f3810e911e90738819d9d87046ab04aa0760e6cd5184c07dfc90b6f41",
+      "bytes": 662494
+    },
+    ".local/spark-evidence/final-sandbox.log": {
+      "sha256": "907c9e62e1377ec29deb0708c37374a2ef4f7a053f6ef6c94cc6102c1eddc8fa",
+      "bytes": 79353
+    },
+    ".local/spark-evidence/memory-samples.jsonl": {
+      "sha256": "8b7be788fee7e9a27c56647f0ba7cf4f9da29b6f5b69f7b8d03de86088cec258",
+      "bytes": 286352
+    },
+    ".local/spark-evidence/final-cli-apply.json": {
+      "sha256": "064f1b19973bac16a2f2f52487bc39dd4b3b6abfa6ba065539bf9a4bc9b0c52a",
+      "bytes": 60
+    },
+    ".local/spark-evidence/final-cli-apply.stderr": {
+      "sha256": "bfb5d0271db66481053e3f26fdbdeb3e7441890038c647ae961534c6dd3731b6",
+      "bytes": 21
+    }
+  },
+  "earlyRepairs": {
+    "automaticRecovery": false,
+    "description": "The original gateway used non-persistent host-invisible token and credential-key paths. Its early sandbox required a preserved-rootfs physical replacement and a backed-up, version-checked offline Error-to-Provisioning repair. The non-secret provider placeholder was reinstalled without changing provider identity. Fresh corrected gateway/sandbox creation needed no repairs. OpenShell 0.0.116 does not expose recovery from terminal Error; ordinary apply retains that binding and diagnoses failure."
+  },
+  "limitations": [
+    "GPU execution qualified only on this Linux ARM64 GB10 Docker host.",
+    "Other bundle platforms are cross-builds only; Podman and Docker Desktop remain unqualified.",
+    "No automatic recovery of terminal OpenShell sandbox Error.",
+    "No host drivers, kernel settings, or system packages changed.",
+    "All model downloads, prepared data, and experiment state retained. Images and model weights remain local."
+  ]
+}
