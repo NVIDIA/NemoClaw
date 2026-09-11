@@ -489,6 +489,7 @@
     {
       "live": "test/e2e/live/double-onboard.test.ts",
       "fast": [
+        "test/cli/sandbox-status-text.test.ts",
         "src/lib/onboard/created-sandbox-finalization.test.ts",
         "src/lib/onboard/machine/core-flow-phases.test.ts",
         "src/lib/onboard/machine/handlers/sandbox-route-publication.test.ts",
