@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -9,36 +8,63 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
-  hasRequiredOpenshellMessagingFeatures,
-  REQUIRED_OPENSHELL_MCP_FEATURES,
-  REQUIRED_OPENSHELL_SANDBOX_MCP_FEATURE,
-} from "../../../src/lib/onboard/openshell-feature-gate.ts";
+  buildForwardServiceArgs,
+  isForwardServiceListenerOwner,
+  type ForwardServiceTarget,
+} from "../../../src/lib/adapters/openshell/forward-service.ts";
+import { patchStagedDockerfile } from "../../../src/lib/onboard/dockerfile-patch.ts";
 import { ordinaryOpenClawPairingIncompleteMessage } from "../../../src/lib/onboard/machine/finalization-deps.ts";
 import { CleanupRegistry } from "../fixtures/cleanup.ts";
 import { captureIssue4462FailureDiagnostics } from "../fixtures/issue-4462-diagnostics.ts";
 import { runOpenClawPluginWithFailureEvidence } from "../fixtures/openclaw-plugin-runtime-exdev-onboard.ts";
+import { withCanonicalOpenShellEnv } from "../../helpers/openshell-components.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
   acceptTrustedPluginFixturePrebuild,
-  createOpenShellTrustedImageWrapper,
+  buildOpenClawPluginLifecycleOnboardArgs,
+  createTrustedPluginFixtureHandoff,
+  createTrustedPluginFixtureHostMountSource,
   createTrustedPluginFixtureDockerfile,
+  crossDevicePluginInstall,
+  extractTrustedPluginFixtureToHost,
+  normalizeSandboxStdoutFrames,
+  parseCrossDeviceInstallEvidence,
   registerTrustedPluginFixtureImageCleanup,
+  renderTrustedPluginFixtureHandoffDockerfile,
+  TRUSTED_PLUGIN_FIXTURE_IMAGE_DIR,
+  TRUSTED_PLUGIN_FIXTURE_MOUNT_DIR,
   trustedExdevImageRef,
+  writeTrustedPluginFixtureHandoff,
 } from "../live/openclaw-plugin-runtime-exdev-trusted-prebuild.ts";
-import {
-  resolveOpenShellSiblingComponents,
-  withOpenShellDriverConfigWrapperEnv,
-} from "../live/openshell-driver-config-test-wrapper.ts";
 
 const IMAGE_ID = `sha256:${"a".repeat(64)}`;
+const IMAGE_ID_V2 = `sha256:${"b".repeat(64)}`;
+const CONTAINER_ID = "c".repeat(64);
 const ONBOARD_OPERATION = "openclaw-plugin-runtime-exdev.onboard-pairing";
 const RECREATE_OPERATION = "openclaw-plugin-runtime-exdev.recreate-pairing";
-const DRIVER_CONFIG_JSON = JSON.stringify({
-  docker: { mounts: [{ options: ["noexec"], target: "/tmp/exdev", type: "tmpfs" }] },
-  podman: { mounts: [{ options: ["noexec"], target: "/tmp/exdev", type: "tmpfs" }] },
-});
+
+function canonicalListenerProbe(commandLine: string) {
+  return vi
+    .fn()
+    .mockReturnValueOnce({ status: 0, stdout: "4321\n" })
+    .mockReturnValueOnce({ status: 0, stdout: `p4321\nftxt\nn${process.execPath}\n` })
+    .mockReturnValueOnce({ status: 0, stdout: commandLine })
+    .mockReturnValueOnce({ status: 0, stdout: "4321\n" });
+}
 
 afterEach(() => vi.unstubAllEnvs());
+
+it("restores sandbox as the generated Dockerfile's final user (#9844)", () => {
+  const dockerfile = createTrustedPluginFixtureDockerfile({
+    crossDeviceVersionSourceName: "weather-version-v2.ts",
+    pluginDirName: "weather-plugin",
+    source: "FROM ${BASE_IMAGE}\nUSER sandbox\n",
+    versionSourceName: "weather-version-v1.ts",
+  });
+
+  expect(dockerfile).toContain("FROM ${BASE_IMAGE} AS nemoclaw-runtime");
+  expect(dockerfile.trimEnd()).toMatch(/USER sandbox$/);
+});
 
 it("rejects a managed Dockerfile without the runtime anchor (#9844)", () => {
   expect(() =>
@@ -49,17 +75,6 @@ it("rejects a managed Dockerfile without the runtime anchor (#9844)", () => {
       versionSourceName: "weather-version-v1.ts",
     }),
   ).toThrow("trusted EXDEV fixture requires the managed runtime anchor");
-});
-
-it("restores sandbox as the generated Dockerfile's final user (#9844)", () => {
-  const dockerfile = createTrustedPluginFixtureDockerfile({
-    crossDeviceVersionSourceName: "weather-version-v2.ts",
-    pluginDirName: "weather-plugin",
-    source: "FROM ${BASE_IMAGE}\nUSER sandbox\n",
-    versionSourceName: "weather-version-v1.ts",
-  });
-
-  expect(dockerfile.trimEnd()).toMatch(/USER sandbox$/);
 });
 
 function onboardResult(exitCode: number, stderr = ""): ShellProbeResult {
@@ -251,347 +266,558 @@ describe("OpenClaw plugin recreation pairing evidence", () => {
   });
 });
 
-function createWrapperFixture(
-  canonicalCapabilityMarkers: readonly string[] = REQUIRED_OPENSHELL_MCP_FEATURES,
-  options: { imageInspectorTimeoutMs?: number } = {},
-) {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-exdev-wrapper-test-"));
-  const delegate = path.join(directory, "real-openshell");
-  const imageInspector = path.join(directory, "image-inspector");
-  const imageInspectorArgsPath = path.join(directory, "image-inspector-args.jsonl");
-  const imageInspectorFailurePath = path.join(directory, "image-inspector-failure");
-  const imageInspectorHangPath = path.join(directory, "image-inspector-hang");
-  const imageIdPath = path.join(directory, "resolved-image-id");
-  const nextImageIdPath = path.join(directory, "next-resolved-image-id");
-  const gateway = path.join(directory, "openshell-gateway");
-  const sandbox = path.join(directory, "openshell-sandbox");
-  fs.writeFileSync(imageIdPath, `${IMAGE_ID}\n`, { encoding: "utf8", mode: 0o600 });
-  const executableSource = `#!/bin/sh
-if [ "\${1:-}" = "--version" ]; then echo 'openshell 0.0.106'; exit 0; fi
-printf '%s\\n' "$@"
-`;
-  const canonicalCapabilityComments = canonicalCapabilityMarkers
-    .map((marker) => `# ${marker}`)
-    .join("\n");
-  fs.writeFileSync(delegate, `${executableSource}${canonicalCapabilityComments}\n`, {
-    encoding: "utf8",
-    mode: 0o700,
-  });
-  fs.writeFileSync(gateway, executableSource, { encoding: "utf8", mode: 0o700 });
-  fs.writeFileSync(sandbox, `${executableSource}# ${REQUIRED_OPENSHELL_SANDBOX_MCP_FEATURE}\n`, {
-    encoding: "utf8",
-    mode: 0o700,
-  });
-  fs.writeFileSync(
-    imageInspector,
-    `#!/usr/bin/env node
-const fs = require("node:fs");
-const args = process.argv.slice(2);
-fs.appendFileSync(${JSON.stringify(imageInspectorArgsPath)}, JSON.stringify(args) + "\\n");
-if (fs.existsSync(${JSON.stringify(imageInspectorFailurePath)})) process.exit(70);
-if (fs.existsSync(${JSON.stringify(imageInspectorHangPath)})) {
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 60_000);
-}
-process.stdout.write(fs.readFileSync(${JSON.stringify(imageIdPath)}, "utf8"));
-if (fs.existsSync(${JSON.stringify(nextImageIdPath)})) {
-  fs.renameSync(${JSON.stringify(nextImageIdPath)}, ${JSON.stringify(imageIdPath)});
-}
-`,
-    { encoding: "utf8", mode: 0o700 },
-  );
-  const components = resolveOpenShellSiblingComponents(delegate);
-  let wrapper: ReturnType<typeof createOpenShellTrustedImageWrapper>;
-  try {
-    wrapper = createOpenShellTrustedImageWrapper({
-      driverConfigJson: DRIVER_CONFIG_JSON,
-      imageInspectorPath: imageInspector,
-      imageInspectorTimeoutMs: options.imageInspectorTimeoutMs,
-      realOpenshellPath: components.cli,
-    });
-  } catch (error) {
-    fs.rmSync(directory, { force: true, recursive: true });
-    throw error;
-  }
-  return {
-    components,
-    directory,
-    failNextInspection: () => {
-      fs.writeFileSync(imageInspectorFailurePath, "fail\n", { encoding: "utf8", mode: 0o600 });
-    },
-    hangNextInspection: () => {
-      fs.writeFileSync(imageInspectorHangPath, "hang\n", { encoding: "utf8", mode: 0o600 });
-    },
-    readInspectorInvocations: (): string[][] =>
-      fs
-        .readFileSync(imageInspectorArgsPath, "utf8")
-        .trimEnd()
-        .split("\n")
-        .map((line) => JSON.parse(line) as string[]),
-    remove: () => {
-      wrapper.remove();
-      fs.rmSync(directory, { force: true, recursive: true });
-    },
-    setResolvedImageId: (imageId: string) => {
-      fs.writeFileSync(imageIdPath, `${imageId}\n`, { encoding: "utf8", mode: 0o600 });
-    },
-    retagAfterNextInspection: (imageId: string) => {
-      fs.writeFileSync(nextImageIdPath, `${imageId}\n`, { encoding: "utf8", mode: 0o600 });
-    },
-    wrapper,
-  };
-}
-
-describe("trusted EXDEV OpenShell wrapper", () => {
-  it("rejects canonical OpenShell components that lack a required MCP feature", () => {
-    expect(() => createWrapperFixture(REQUIRED_OPENSHELL_MCP_FEATURES.slice(1))).toThrow(
-      "trusted EXDEV image wrapper requires canonical OpenShell components with all required MCP features",
+describe("trusted EXDEV immutable image handoff", () => {
+  it("renders the validated immutable base and required tool-disclosure contract (#11547)", () => {
+    expect(renderTrustedPluginFixtureHandoffDockerfile(IMAGE_ID)).toBe(
+      `FROM ${IMAGE_ID}\nARG NEMOCLAW_TOOL_DISCLOSURE=progressive\nENV NEMOCLAW_TOOL_DISCLOSURE=\${NEMOCLAW_TOOL_DISCLOSURE}\n`,
     );
   });
 
-  it("rewrites sandbox creation to the verified image ID and injects driver configuration", () => {
-    const fixture = createWrapperFixture();
-    try {
-      const imageRef = trustedExdevImageRef("wrapper-contract-v1");
-      fixture.wrapper.selectImage({ imageId: IMAGE_ID, imageRef });
-      const result = spawnSync(
-        fixture.wrapper.executable,
-        ["sandbox", "create", "--from", "/tmp/staged/Dockerfile", "--name", "demo"],
-        { encoding: "utf8", killSignal: "SIGKILL", timeout: 30_000 },
-      );
+  it.each([
+    "openshell/nemoclaw-sandbox:test",
+    `sha256:${"A".repeat(64)}`,
+    `sha256:${"a".repeat(63)}`,
+  ])("rejects an untrusted immutable-image handoff value: %s (#11547)", (invalid) => {
+    expect(() => renderTrustedPluginFixtureHandoffDockerfile(invalid)).toThrow(
+      "trusted EXDEV fixture requires an immutable local image ID",
+    );
+  });
 
-      expect(result.status, result.stderr).toBe(0);
-      const forwarded = result.stdout.trimEnd().split("\n");
-      const valuesFor = (option: string) =>
-        forwarded.flatMap((argument, index) => (argument === option ? [forwarded[index + 1]] : []));
-      expect(forwarded.slice(0, 2)).toEqual(["sandbox", "create"]);
-      expect(valuesFor("--driver-config-json")).toEqual([DRIVER_CONFIG_JSON]);
-      expect(valuesFor("--from")).toEqual([IMAGE_ID]);
-      expect(valuesFor("--name")).toEqual(["demo"]);
-      expect(fixture.readInspectorInvocations()).toEqual([
-        ["image", "inspect", "--format", "{{.Id}}", imageRef],
+  it("keeps the image ID intact through custom Dockerfile patching and atomic replacement (#11547)", async () => {
+    const cleanup = new CleanupRegistry();
+    const handoff = createTrustedPluginFixtureHandoff(cleanup);
+    writeTrustedPluginFixtureHandoff(handoff, {
+      imageId: IMAGE_ID,
+      imageRef: trustedExdevImageRef("handoff-v1"),
+    });
+
+    patchStagedDockerfile(
+      handoff.dockerfilePath,
+      "fixture-model",
+      "http://127.0.0.1:18789",
+      "fixture-build",
+      "custom",
+      "openai-completions",
+      null,
+      null,
+      false,
+      null,
+      [],
+      { requireToolDisclosureContract: true, toolDisclosure: "direct" },
+    );
+    expect(fs.readFileSync(handoff.dockerfilePath, "utf8")).toBe(
+      `FROM ${IMAGE_ID}\nARG NEMOCLAW_TOOL_DISCLOSURE=direct\nENV NEMOCLAW_TOOL_DISCLOSURE=\${NEMOCLAW_TOOL_DISCLOSURE}\n`,
+    );
+
+    writeTrustedPluginFixtureHandoff(handoff, {
+      imageId: IMAGE_ID_V2,
+      imageRef: trustedExdevImageRef("handoff-v2"),
+    });
+    const replacement = fs.readFileSync(handoff.dockerfilePath, "utf8");
+    expect(replacement).toContain(`FROM ${IMAGE_ID_V2}`);
+    expect(replacement).not.toContain(IMAGE_ID);
+    expect(fs.readdirSync(handoff.directory)).toEqual(["Dockerfile"]);
+    expect(await cleanup.runAll()).toEqual({
+      failures: [],
+      passed: ["remove trusted EXDEV image handoff"],
+    });
+  });
+
+  it("selects the canonical CLI as the owner of a canonical listener (#11547)", () => {
+    const wrapper = "/tmp/openshell-wrapper";
+    const components = {
+      cli: process.execPath,
+      gateway: "/opt/openshell/bin/openshell-gateway",
+      sandbox: "/opt/openshell/bin/openshell-sandbox",
+    };
+    const environment = withCanonicalOpenShellEnv(
+      { PATH: "/usr/bin", NEMOCLAW_OPENSHELL_BIN: wrapper },
+      components,
+    );
+    const target: ForwardServiceTarget = {
+      executable: String(environment.NEMOCLAW_OPENSHELL_BIN),
+      gatewayName: "nemoclaw",
+      localHost: "127.0.0.1",
+      localPort: 18_789,
+      sandboxName: "e2e-oc-exdev",
+      targetHost: "127.0.0.1",
+      targetPort: 18_789,
+      workspace: "default",
+    };
+    const canonicalCommand = [components.cli, ...buildForwardServiceArgs(target)].join(" ");
+
+    expect(environment).toEqual({
+      PATH: "/usr/bin",
+      NEMOCLAW_OPENSHELL_BIN: components.cli,
+      NEMOCLAW_OPENSHELL_GATEWAY_BIN: components.gateway,
+      NEMOCLAW_OPENSHELL_SANDBOX_BIN: components.sandbox,
+    });
+    expect(
+      isForwardServiceListenerOwner(target, {
+        platform: "darwin",
+        probe: canonicalListenerProbe(`${canonicalCommand}\n`),
+      }),
+    ).toBe(true);
+    expect(
+      isForwardServiceListenerOwner(
+        { ...target, executable: wrapper },
+        {
+          platform: "darwin",
+          probe: canonicalListenerProbe(`${canonicalCommand}\n`),
+        },
+      ),
+    ).toBe(false);
+  });
+
+  it("constructs fresh and recreation commands with the same read-only host mount (#11547)", () => {
+    const options = {
+      cliEntrypoint: "/workspace/bin/nemoclaw.js",
+      dockerfilePath: "/tmp/handoff/Dockerfile",
+      hostMountSource: "/dev/shm/nemoclaw-exdev-source-test",
+      sandboxName: "e2e-oc-exdev",
+    };
+    const initial = buildOpenClawPluginLifecycleOnboardArgs({ ...options, recreate: false });
+    const recreate = buildOpenClawPluginLifecycleOnboardArgs({ ...options, recreate: true });
+
+    expect(initial).toEqual([
+      options.cliEntrypoint,
+      "onboard",
+      "--fresh",
+      "--non-interactive",
+      "--yes",
+      "--yes-i-accept-third-party-software",
+      "--name",
+      options.sandboxName,
+      "--agent",
+      "openclaw",
+      "--from",
+      options.dockerfilePath,
+      "--host-mount",
+      `${options.hostMountSource}:${TRUSTED_PLUGIN_FIXTURE_MOUNT_DIR}`,
+    ]);
+    expect(recreate).toEqual([
+      options.cliEntrypoint,
+      "onboard",
+      "--fresh",
+      "--recreate-sandbox",
+      ...initial.slice(3),
+    ]);
+  });
+
+  it("normalizes framed output and parses only explicit device evidence (#11547)", () => {
+    const normalized = normalizeSandboxStdoutFrames(
+      "[stdout] source_device=11 target_device=22\nstdout: installed\n",
+    );
+
+    expect(normalized).toBe("source_device=11 target_device=22\ninstalled\n");
+    expect(parseCrossDeviceInstallEvidence(normalized)).toEqual({
+      sourceDevice: "11",
+      targetDevice: "22",
+    });
+    expect(parseCrossDeviceInstallEvidence("installed without stat evidence")).toEqual({
+      sourceDevice: null,
+      targetDevice: null,
+    });
+    expect(String(crossDevicePluginInstall)).toContain(
+      `openclaw plugins install ${TRUSTED_PLUGIN_FIXTURE_MOUNT_DIR} --force`,
+    );
+    expect(String(crossDevicePluginInstall)).not.toMatch(/EXDEV guard|rm -rf|cp -R|tmpfs/);
+  });
+});
+
+function commandResult(exitCode = 0, stderr = "", stdout = ""): ShellProbeResult {
+  return {
+    artifacts: { result: "result.json", stderr: "stderr.txt", stdout: "stdout.txt" },
+    command: ["docker"],
+    exitCode,
+    signal: null,
+    stderr,
+    stdout,
+    timedOut: false,
+  };
+}
+
+function populateExtractedFixture(directory: string): void {
+  fs.mkdirSync(path.join(directory, "dist"));
+  fs.writeFileSync(path.join(directory, "package.json"), "{}\n");
+  fs.writeFileSync(path.join(directory, "openclaw.plugin.json"), "{}\n");
+  fs.writeFileSync(path.join(directory, "dist", "index.js"), "export {};\n");
+  fs.writeFileSync(path.join(directory, "dist", "version.js"), "export const version = 1;\n");
+}
+
+function writeContainerIdentity(args: string[], containerId = CONTAINER_ID): void {
+  const cidfile = args[args.indexOf("--cidfile") + 1]!;
+  fs.writeFileSync(cidfile, `${containerId}\n`);
+}
+
+const invalidExtractionDestinations = [
+  {
+    label: "non-empty",
+    prepare: (root: string, cleanup: CleanupRegistry) => {
+      const directory = createTrustedPluginFixtureHostMountSource(cleanup, root);
+      fs.writeFileSync(path.join(directory, "unexpected"), "occupied\n");
+      return directory;
+    },
+  },
+  {
+    label: "symbolic-link",
+    prepare: (root: string, cleanup: CleanupRegistry) => {
+      const directory = createTrustedPluginFixtureHostMountSource(cleanup, root);
+      const link = path.join(root, "source-link");
+      fs.symlinkSync(directory, link);
+      return link;
+    },
+  },
+];
+
+describe("trusted EXDEV host mount extraction", () => {
+  it("extracts by immutable container identity and removes the stopped container (#11547)", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-exdev-root-"));
+    const cleanup = new CleanupRegistry();
+    try {
+      const sourceDirectory = createTrustedPluginFixtureHostMountSource(cleanup, root);
+      const calls: string[][] = [];
+      const command = vi
+        .fn()
+        .mockImplementationOnce(async (_command: string, args: string[]) => {
+          calls.push(args);
+          writeContainerIdentity(args);
+          return commandResult(0, "", "ignored-create-stdout\n");
+        })
+        .mockImplementationOnce(async (_command: string, args: string[]) => {
+          calls.push(args);
+          populateExtractedFixture(sourceDirectory);
+          return commandResult();
+        })
+        .mockImplementationOnce(async (_command: string, args: string[]) => {
+          calls.push(args);
+          return commandResult();
+        });
+      const host = {
+        command,
+      };
+
+      await extractTrustedPluginFixtureToHost({
+        environment: { PATH: "/usr/bin" },
+        host,
+        image: { imageId: IMAGE_ID, imageRef: trustedExdevImageRef("extract-v1") },
+        sourceDirectory,
+      });
+
+      expect(calls).toEqual([
+        [
+          "create",
+          "--cidfile",
+          expect.stringMatching(/\/nemoclaw-exdev-container-identity-[^/]+\/container\.cid$/),
+          "--entrypoint",
+          "/bin/true",
+          IMAGE_ID,
+        ],
+        ["cp", `${CONTAINER_ID}:${TRUSTED_PLUGIN_FIXTURE_IMAGE_DIR}/.`, sourceDirectory],
+        ["rm", CONTAINER_ID],
       ]);
+      expect(fs.statSync(path.join(sourceDirectory, "dist", "index.js")).mode & 0o777).toBe(0o644);
+      expect(fs.existsSync(path.dirname(calls[0]![2]!))).toBe(false);
+      expect(await cleanup.runAll()).toEqual({
+        failures: [],
+        passed: ["remove trusted EXDEV host mount source"],
+      });
+      expect(fs.existsSync(sourceDirectory)).toBe(false);
     } finally {
-      fixture.remove();
+      fs.rmSync(root, { recursive: true, force: true });
     }
   });
 
-  it("rejects missing and untrusted selected image refs", () => {
-    const fixture = createWrapperFixture();
+  it("removes the temporary container after copy failure without using a mutable name (#11547)", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-exdev-root-"));
+    const cleanup = new CleanupRegistry();
     try {
-      const missingImage = spawnSync(
-        fixture.wrapper.executable,
-        ["sandbox", "create", "--from", "/tmp/staged/Dockerfile"],
-        { encoding: "utf8", killSignal: "SIGKILL", timeout: 30_000 },
-      );
-      expect(missingImage.status).toBe(64);
-      expect(missingImage.stderr).toContain("rejected the selected image ref");
-      expect(() =>
-        fixture.wrapper.selectImage({
-          imageId: IMAGE_ID,
-          imageRef: "docker.io/untrusted:latest",
+      const sourceDirectory = createTrustedPluginFixtureHostMountSource(cleanup, root);
+      const calls: string[][] = [];
+      const command = vi
+        .fn()
+        .mockImplementationOnce(async (_command: string, args: string[]) => {
+          calls.push(args);
+          writeContainerIdentity(args);
+          return commandResult();
+        })
+        .mockImplementationOnce(async (_command: string, args: string[]) => {
+          calls.push(args);
+          return commandResult(1, "copy failed");
+        })
+        .mockImplementationOnce(async (_command: string, args: string[]) => {
+          calls.push(args);
+          return commandResult();
+        });
+      const host = {
+        command,
+      };
+
+      await expect(
+        extractTrustedPluginFixtureToHost({
+          environment: { PATH: "/usr/bin" },
+          host,
+          image: { imageId: IMAGE_ID, imageRef: trustedExdevImageRef("extract-v1") },
+          sourceDirectory,
         }),
-      ).toThrow();
+      ).rejects.toThrow("copy failed");
+      expect(calls.at(-1)).toEqual(["rm", CONTAINER_ID]);
+      expect(await cleanup.runAll()).toEqual({
+        failures: [],
+        passed: ["remove trusted EXDEV host mount source"],
+      });
     } finally {
-      fixture.remove();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("reports both copy and immutable cleanup failures (#11547)", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-exdev-root-"));
+    const cleanup = new CleanupRegistry();
+    try {
+      const sourceDirectory = createTrustedPluginFixtureHostMountSource(cleanup, root);
+      const command = vi
+        .fn()
+        .mockImplementationOnce(async (_command: string, args: string[]) => {
+          writeContainerIdentity(args);
+          return commandResult();
+        })
+        .mockImplementationOnce(async () => commandResult(1, "copy failed"))
+        .mockImplementationOnce(async () => commandResult(1, "remove failed"));
+      const host = {
+        command,
+      };
+
+      await expect(
+        extractTrustedPluginFixtureToHost({
+          environment: { PATH: "/usr/bin" },
+          host,
+          image: { imageId: IMAGE_ID, imageRef: trustedExdevImageRef("extract-v1") },
+          sourceDirectory,
+        }),
+      ).rejects.toThrow(/copy failed[\s\S]*remove failed/);
+      await cleanup.runAll();
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("does not copy or remove by an unproven cidfile identity (#11547)", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-exdev-root-"));
+    const cleanup = new CleanupRegistry();
+    try {
+      const sourceDirectory = createTrustedPluginFixtureHostMountSource(cleanup, root);
+      const calls: string[][] = [];
+      const host = {
+        command: vi.fn(async (_command: string, args: string[]) => {
+          calls.push(args);
+          writeContainerIdentity(args, "short-container-id");
+          return commandResult(0, "", `${CONTAINER_ID}\n`);
+        }),
+      };
+
+      await expect(
+        extractTrustedPluginFixtureToHost({
+          environment: { PATH: "/usr/bin" },
+          host,
+          image: { imageId: IMAGE_ID, imageRef: trustedExdevImageRef("extract-v1") },
+          sourceDirectory,
+        }),
+      ).rejects.toThrow("returned an invalid identity");
+      expect(calls).toHaveLength(1);
+      expect(calls[0]?.[0]).toBe("create");
+      expect(await cleanup.runAll()).toEqual({
+        failures: [],
+        passed: ["remove trusted EXDEV host mount source"],
+      });
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("removes the exact cidfile container after create reports failure (#11547)", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-exdev-root-"));
+    const cleanup = new CleanupRegistry();
+    try {
+      const sourceDirectory = createTrustedPluginFixtureHostMountSource(cleanup, root);
+      const calls: string[][] = [];
+      const command = vi
+        .fn()
+        .mockImplementationOnce(async (_command: string, args: string[]) => {
+          calls.push(args);
+          writeContainerIdentity(args);
+          return commandResult(1, "create failed");
+        })
+        .mockImplementationOnce(async (_command: string, args: string[]) => {
+          calls.push(args);
+          return commandResult();
+        });
+      const host = {
+        command,
+      };
+
+      await expect(
+        extractTrustedPluginFixtureToHost({
+          environment: { PATH: "/usr/bin" },
+          host,
+          image: { imageId: IMAGE_ID, imageRef: trustedExdevImageRef("extract-v1") },
+          sourceDirectory,
+        }),
+      ).rejects.toThrow("trusted EXDEV fixture extraction failed");
+      expect(calls.map((args) => args[0])).toEqual(["create", "rm"]);
+      expect(calls.at(-1)).toEqual(["rm", CONTAINER_ID]);
+      expect(await cleanup.runAll()).toEqual({
+        failures: [],
+        passed: ["remove trusted EXDEV host mount source"],
+      });
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("reports a thrown container create without attempting copy or cleanup (#11547)", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-exdev-root-"));
+    const cleanup = new CleanupRegistry();
+    try {
+      const sourceDirectory = createTrustedPluginFixtureHostMountSource(cleanup, root);
+      const host = {
+        command: vi.fn(async () => {
+          throw new Error("docker unavailable");
+        }),
+      };
+
+      await expect(
+        extractTrustedPluginFixtureToHost({
+          environment: { PATH: "/usr/bin" },
+          host,
+          image: { imageId: IMAGE_ID, imageRef: trustedExdevImageRef("extract-v1") },
+          sourceDirectory,
+        }),
+      ).rejects.toThrow("trusted EXDEV fixture extraction failed");
+      expect(host.command).toHaveBeenCalledOnce();
+      expect(await cleanup.runAll()).toEqual({
+        failures: [],
+        passed: ["remove trusted EXDEV host mount source"],
+      });
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it.each(invalidExtractionDestinations)(
+    "rejects a $label extraction destination before invoking Docker (#11547)",
+    async ({ prepare }) => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-exdev-root-"));
+      const cleanup = new CleanupRegistry();
+      try {
+        const sourceDirectory = prepare(root, cleanup);
+        const host = { command: vi.fn() };
+
+        await expect(
+          extractTrustedPluginFixtureToHost({
+            environment: { PATH: "/usr/bin" },
+            host,
+            image: { imageId: IMAGE_ID, imageRef: trustedExdevImageRef("extract-v1") },
+            sourceDirectory,
+          }),
+        ).rejects.toThrow(
+          "trusted EXDEV extraction destination must be an empty canonical directory",
+        );
+        expect(host.command).not.toHaveBeenCalled();
+        await cleanup.runAll();
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it("rejects an untrusted image value before invoking Docker (#11547)", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-exdev-root-"));
+    const cleanup = new CleanupRegistry();
+    try {
+      const sourceDirectory = createTrustedPluginFixtureHostMountSource(cleanup, root);
+      const host = { command: vi.fn() };
+
+      await expect(
+        extractTrustedPluginFixtureToHost({
+          environment: { PATH: "/usr/bin" },
+          host,
+          image: { imageId: "--help", imageRef: trustedExdevImageRef("extract-v1") },
+          sourceDirectory,
+        }),
+      ).rejects.toThrow("trusted EXDEV fixture requires an immutable local image ID");
+      expect(host.command).not.toHaveBeenCalled();
+      await cleanup.runAll();
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
     }
   });
 
   it.each([
-    ["absent", ["sandbox", "create", "--name", "demo"]],
-    [
-      "repeated",
-      ["sandbox", "create", "--from", "/tmp/staged/Dockerfile", "--from", "/tmp/other/Dockerfile"],
-    ],
-    ["valueless", ["sandbox", "create", "--from"]],
-  ])("rejects a --from option that is %s", (_condition, args) => {
-    const fixture = createWrapperFixture();
-    try {
-      fixture.wrapper.selectImage({
-        imageId: IMAGE_ID,
-        imageRef: trustedExdevImageRef("wrapper-contract-v1"),
-      });
-      const result = spawnSync(fixture.wrapper.executable, args, {
-        encoding: "utf8",
-        killSignal: "SIGKILL",
-        timeout: 30_000,
-      });
-      expect(result.status, args.join(" ")).toBe(64);
-      expect(result.stderr).toContain("requires exactly one --from value");
-    } finally {
-      fixture.remove();
-    }
-  });
+    {
+      label: "missing required payload",
+      populate: (directory: string) => {
+        populateExtractedFixture(directory);
+        fs.rmSync(path.join(directory, "openclaw.plugin.json"));
+      },
+      message: "trusted EXDEV fixture is missing openclaw.plugin.json",
+    },
+    {
+      label: "symbolic link",
+      populate: (directory: string) => {
+        populateExtractedFixture(directory);
+        fs.symlinkSync("package.json", path.join(directory, "unexpected-link"));
+      },
+      message: "trusted EXDEV fixture contains an unsupported entry: unexpected-link",
+    },
+  ])(
+    "removes the exact container before rejecting a $label (#11547)",
+    async ({ populate, message }) => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-exdev-root-"));
+      const cleanup = new CleanupRegistry();
+      try {
+        const sourceDirectory = createTrustedPluginFixtureHostMountSource(cleanup, root);
+        const calls: string[][] = [];
+        const command = vi
+          .fn()
+          .mockImplementationOnce(async (_command: string, args: string[]) => {
+            calls.push(args);
+            writeContainerIdentity(args);
+            return commandResult();
+          })
+          .mockImplementationOnce(async (_command: string, args: string[]) => {
+            calls.push(args);
+            populate(sourceDirectory);
+            return commandResult();
+          })
+          .mockImplementationOnce(async (_command: string, args: string[]) => {
+            calls.push(args);
+            return commandResult();
+          });
+        const host = {
+          command,
+        };
 
-  it("rejects duplicate driver configuration", () => {
-    const fixture = createWrapperFixture();
-    try {
-      fixture.wrapper.selectImage({
-        imageId: IMAGE_ID,
-        imageRef: trustedExdevImageRef("wrapper-contract-v1"),
-      });
-      const duplicateConfig = spawnSync(
-        fixture.wrapper.executable,
-        ["sandbox", "create", "--from", "/tmp/staged/Dockerfile", "--driver-config-json", "{}"],
-        { encoding: "utf8", killSignal: "SIGKILL", timeout: 30_000 },
-      );
-      expect(duplicateConfig.status).toBe(64);
-      expect(duplicateConfig.stderr).toContain("refusing duplicate --driver-config-json");
-    } finally {
-      fixture.remove();
-    }
-  });
-
-  it("fails closed when the selected tag no longer resolves to its verified image ID", () => {
-    const fixture = createWrapperFixture();
-    try {
-      const imageRef = trustedExdevImageRef("wrapper-contract-v1");
-      fixture.wrapper.selectImage({ imageId: IMAGE_ID, imageRef });
-      fixture.setResolvedImageId(`sha256:${"b".repeat(64)}`);
-
-      const result = spawnSync(
-        fixture.wrapper.executable,
-        ["sandbox", "create", "--from", "/tmp/staged/Dockerfile", "--name", "demo"],
-        { encoding: "utf8", killSignal: "SIGKILL", timeout: 30_000 },
-      );
-
-      expect(result.status).toBe(64);
-      expect(result.stdout).toBe("");
-      expect(result.stderr).toContain("immutable identity mismatch");
-      expect(fixture.readInspectorInvocations()).toEqual([
-        ["image", "inspect", "--format", "{{.Id}}", imageRef],
-      ]);
-    } finally {
-      fixture.remove();
-    }
-  });
-
-  it("fails closed without delegation when image inspection fails", () => {
-    const fixture = createWrapperFixture();
-    try {
-      const imageRef = trustedExdevImageRef("wrapper-contract-v1");
-      fixture.wrapper.selectImage({ imageId: IMAGE_ID, imageRef });
-      fixture.failNextInspection();
-
-      const result = spawnSync(
-        fixture.wrapper.executable,
-        ["sandbox", "create", "--from", "/tmp/staged/Dockerfile", "--name", "demo"],
-        { encoding: "utf8", killSignal: "SIGKILL", timeout: 30_000 },
-      );
-
-      expect(result.status).toBe(64);
-      expect(result.stdout).toBe("");
-      expect(result.stderr).toContain("image inspection failed");
-      expect(fixture.readInspectorInvocations()).toEqual([
-        ["image", "inspect", "--format", "{{.Id}}", imageRef],
-      ]);
-    } finally {
-      fixture.remove();
-    }
-  });
-
-  it("times out image inspection with a redacted error and no delegation", () => {
-    const fixture = createWrapperFixture(REQUIRED_OPENSHELL_MCP_FEATURES, {
-      imageInspectorTimeoutMs: 25,
-    });
-    try {
-      const imageRef = trustedExdevImageRef("wrapper-contract-v1");
-      fixture.wrapper.selectImage({ imageId: IMAGE_ID, imageRef });
-      fixture.hangNextInspection();
-
-      const result = spawnSync(
-        fixture.wrapper.executable,
-        ["sandbox", "create", "--from", "/tmp/staged/Dockerfile", "--name", "demo"],
-        { encoding: "utf8", killSignal: "SIGKILL", timeout: 30_000 },
-      );
-
-      expect(result.status).toBe(64);
-      expect(result.stdout).toBe("");
-      expect(result.stderr).toBe("trusted EXDEV image inspection timed out\n");
-    } finally {
-      fixture.remove();
-    }
-  });
-
-  it("delegates the verified image ID when the selected tag changes after inspection", () => {
-    const fixture = createWrapperFixture();
-    try {
-      const imageRef = trustedExdevImageRef("wrapper-contract-v1");
-      fixture.wrapper.selectImage({ imageId: IMAGE_ID, imageRef });
-      fixture.retagAfterNextInspection(`sha256:${"b".repeat(64)}`);
-
-      const result = spawnSync(
-        fixture.wrapper.executable,
-        ["sandbox", "create", "--from", "/tmp/staged/Dockerfile", "--name", "demo"],
-        { encoding: "utf8", killSignal: "SIGKILL", timeout: 30_000 },
-      );
-
-      expect(result.status, result.stderr).toBe(0);
-      const forwarded = result.stdout.trimEnd().split("\n");
-      const fromIndex = forwarded.indexOf("--from");
-      expect(forwarded[fromIndex + 1]).toBe(IMAGE_ID);
-    } finally {
-      fixture.remove();
-    }
-  });
-
-  it("passes the OpenShell feature gate for a coherent component set", () => {
-    const fixture = createWrapperFixture();
-    try {
-      expect(
-        hasRequiredOpenshellMessagingFeatures({
-          openshellBin: fixture.components.cli,
-          gatewayBin: fixture.components.gateway,
-          sandboxBin: fixture.components.sandbox,
-        }),
-      ).toBe(true);
-      expect(
-        hasRequiredOpenshellMessagingFeatures({
-          openshellBin: fixture.wrapper.executable,
-          gatewayBin: fixture.components.gateway,
-          sandboxBin: fixture.components.sandbox,
-          allowExternalGatewayBin: true,
-          allowExternalSandboxBin: true,
-        }),
-      ).toBe(true);
-    } finally {
-      fixture.remove();
-    }
-    expect(fs.existsSync(fixture.wrapper.directory)).toBe(false);
-  });
-
-  it("prepends the wrapper path and sets OpenShell component variables", () => {
-    const fixture = createWrapperFixture();
-    try {
-      expect(
-        withOpenShellDriverConfigWrapperEnv(
-          { PATH: "/usr/bin" },
-          fixture.wrapper,
-          fixture.components,
-        ),
-      ).toMatchObject({
-        PATH: `${fixture.wrapper.directory}${path.delimiter}/usr/bin`,
-        NEMOCLAW_OPENSHELL_BIN: fixture.wrapper.executable,
-        NEMOCLAW_OPENSHELL_GATEWAY_BIN: fixture.components.gateway,
-        NEMOCLAW_OPENSHELL_SANDBOX_BIN: fixture.components.sandbox,
-      });
-    } finally {
-      fixture.remove();
-    }
-    expect(fs.existsSync(fixture.wrapper.directory)).toBe(false);
-  });
+        await expect(
+          extractTrustedPluginFixtureToHost({
+            environment: { PATH: "/usr/bin" },
+            host,
+            image: { imageId: IMAGE_ID, imageRef: trustedExdevImageRef("extract-v1") },
+            sourceDirectory,
+          }),
+        ).rejects.toThrow(message);
+        expect(calls.at(-1)).toEqual(["rm", CONTAINER_ID]);
+        expect(await cleanup.runAll()).toEqual({
+          failures: [],
+          passed: ["remove trusted EXDEV host mount source"],
+        });
+        expect(fs.existsSync(sourceDirectory)).toBe(false);
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
 });
-
-function commandResult(exitCode = 0, stderr = ""): ShellProbeResult {
-  return {
-    artifacts: { result: "result.json", stderr: "stderr.txt", stdout: "stdout.txt" },
-    command: ["docker", "image", "rm"],
-    exitCode,
-    signal: null,
-    stderr,
-    stdout: "",
-    timedOut: false,
-  };
-}
 
 describe("trusted EXDEV fixture image cleanup", () => {
   it("keeps gateway registration through managed destroy and continues through its failure", async () => {
@@ -615,6 +841,9 @@ describe("trusted EXDEV fixture image cleanup", () => {
       environment: { PATH: "/usr/bin" },
       host,
     });
+    createTrustedPluginFixtureHandoff(cleanup);
+    createTrustedPluginFixtureHostMountSource(cleanup, os.tmpdir());
+    expect(() => images.track("docker.io/untrusted:latest", "v1")).toThrow();
     const image = trustedExdevImageRef("cleanup-order");
     images.track(image, "v1");
     cleanup.trackGateway(host, "nemoclaw");
@@ -631,6 +860,8 @@ describe("trusted EXDEV fixture image cleanup", () => {
       passed: [
         "delete OpenShell sandbox fixture-sandbox",
         "remove gateway nemoclaw",
+        "remove trusted EXDEV host mount source",
+        "remove trusted EXDEV image handoff",
         "remove trusted EXDEV fixture images",
       ],
     });
@@ -679,7 +910,7 @@ describe("trusted EXDEV fixture image cleanup", () => {
         sandboxName: "fixture-sandbox",
         version: "v2",
       }),
-    ).toThrow("trusted EXDEV fixture prebuild must retain its immutable local image identity");
+    ).toThrow("trusted EXDEV fixture requires an immutable local image ID");
 
     expect(await cleanup.runAll()).toEqual({
       failures: [],

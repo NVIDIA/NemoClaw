@@ -6,34 +6,18 @@ import os from "node:os";
 import path from "node:path";
 
 import { shellQuote } from "../fixtures/clients/command.ts";
+import {
+  type OpenShellComponents,
+  resolveOpenShellSiblingComponents,
+} from "../../helpers/openshell-components.ts";
 
-export type OpenShellComponents = {
-  cli: string;
-  gateway: string;
-  sandbox: string;
-};
+export { type OpenShellComponents, resolveOpenShellSiblingComponents };
 
 export type OpenShellDriverConfigTestWrapper = {
   directory: string;
   executable: string;
   remove(): void;
 };
-
-export function resolveOpenShellSiblingComponents(openshellPath: string): OpenShellComponents {
-  const cli = fs.realpathSync(openshellPath);
-  fs.accessSync(cli, fs.constants.X_OK);
-  const installDirectory = path.dirname(cli);
-  const canonicalSibling = (name: string): string => {
-    const sibling = fs.realpathSync(path.join(installDirectory, name));
-    fs.accessSync(sibling, fs.constants.X_OK);
-    return sibling;
-  };
-  return {
-    cli,
-    gateway: canonicalSibling("openshell-gateway"),
-    sandbox: canonicalSibling("openshell-sandbox"),
-  };
-}
 
 export function createOpenShellDriverConfigTestWrapper(options: {
   delegatedCapabilityMarkers?: readonly string[];

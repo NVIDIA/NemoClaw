@@ -8,6 +8,7 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { resolveOpenShellSiblingComponents } from "../../helpers/openshell-components.ts";
 import { createOpenShellDriverConfigTestWrapper } from "../live/openshell-driver-config-test-wrapper.ts";
 import {
   EXACT_MAIN_DRIVER_CONFIG_JSON,
@@ -27,6 +28,23 @@ afterEach(() => {
 });
 
 describe("OpenShell driver configuration for main-branch E2E", () => {
+  it("resolves one canonical executable set for CLI, gateway, and sandbox (#11547)", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-components-"));
+    try {
+      fs.writeFileSync(path.join(directory, "openshell"), "#!/bin/sh\n", { mode: 0o700 });
+      fs.writeFileSync(path.join(directory, "openshell-gateway"), "#!/bin/sh\n", { mode: 0o700 });
+      fs.writeFileSync(path.join(directory, "openshell-sandbox"), "#!/bin/sh\n", { mode: 0o700 });
+
+      expect(resolveOpenShellSiblingComponents(path.join(directory, "openshell"))).toEqual({
+        cli: path.join(directory, "openshell"),
+        gateway: path.join(directory, "openshell-gateway"),
+        sandbox: path.join(directory, "openshell-sandbox"),
+      });
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   it("does nothing when the driver configuration check is disabled", async () => {
     delete process.env[EXACT_MAIN_DRIVER_CONFIG_PROOF_ENV];
     const add = vi.fn();

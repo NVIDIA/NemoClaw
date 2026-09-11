@@ -456,12 +456,29 @@ describe("deterministic PR risk plan", () => {
   it.each([
     "test/e2e/fixtures/openclaw-plugin-runtime-exdev-onboard.ts",
     "test/e2e/live/openclaw-plugin-runtime-exdev-trusted-prebuild.ts",
-  ])("maps %s changes to the EXDEV job (#10517)", (changedFile) => {
+  ])("maps %s changes to the EXDEV job (#10517, #11547)", (changedFile) => {
     expect(focusedE2eJobsForChangedFiles([changedFile])).toEqual([
       {
         id: "openclaw-plugin-runtime-exdev",
         matchedFiles: [changedFile],
       },
+    ]);
+  });
+
+  it("maps shared canonical OpenShell components to every live consumer (#11547)", () => {
+    const changedFile = "test/helpers/openshell-components.ts";
+
+    expect(focusedE2eJobsForChangedFiles([changedFile])).toEqual([
+      { id: "mcp-bridge", matchedFiles: [changedFile] },
+      { id: "openclaw-plugin-runtime-exdev", matchedFiles: [changedFile] },
+    ]);
+  });
+
+  it("maps the exact-main driver wrapper to its stable live consumer (#11547)", () => {
+    const changedFile = "test/e2e/live/openshell-driver-config-test-wrapper.ts";
+
+    expect(focusedE2eJobsForChangedFiles([changedFile])).toEqual([
+      { id: "mcp-bridge", matchedFiles: [changedFile] },
     ]);
   });
 

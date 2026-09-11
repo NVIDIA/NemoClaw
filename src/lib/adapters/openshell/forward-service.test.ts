@@ -164,6 +164,26 @@ describe("OpenShell forward service", () => {
     expect(isForwardServiceListenerOwner(ownerTarget, { platform: "darwin", probe })).toBe(false);
   });
 
+  it("rejects wrapper authority for a canonical OpenShell listener (#11547)", () => {
+    const canonicalCommand = [ownerTarget.executable, ...buildForwardServiceArgs(ownerTarget)].join(
+      " ",
+    );
+    const wrapperTarget = { ...ownerTarget, executable: "/tmp/openshell-wrapper" };
+
+    expect(
+      isForwardServiceListenerOwner(wrapperTarget, {
+        platform: "darwin",
+        probe: darwinOwnerProbe(`${canonicalCommand}\n`),
+      }),
+    ).toBe(false);
+    expect(
+      isForwardServiceListenerOwner(ownerTarget, {
+        platform: "darwin",
+        probe: darwinOwnerProbe(`${canonicalCommand}\n`),
+      }),
+    ).toBe(true);
+  });
+
   it("rejects ambiguous or changing listener ownership", () => {
     const expected = [ownerTarget.executable, ...buildForwardServiceArgs(ownerTarget)].join(" ");
     const probe = darwinOwnerProbe(`${expected}\n`, "9876\n");
