@@ -1,11 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
-import { createTempSshConfig } from "../../sandbox/temp-ssh-config";
 import type { OpenShellSandboxBufferedCommandExecutor } from "../openshell/sandbox-command";
 import { namedOpenShellGateway, selectedOpenShellGateway } from "../openshell/sandbox-observer";
-import { resolveOpenshellSandboxSshHost } from "../openshell/sandbox-ssh-host";
+import { createCliOpenShellSandboxSshCommandExecutor } from "../openshell/sandbox-ssh-cli";
+import type { OpenShellSandboxSshExecutor } from "../openshell/sandbox-ssh";
 
 export type SandboxCommandResult = {
   status: number;
@@ -34,16 +33,7 @@ export type SandboxSshCommandOptions = {
 export type CommandTransportDependencies = {
   buildSandboxExecMarkedCommand: (command: string) => string;
   buildSubprocessEnv: () => NodeJS.ProcessEnv;
-  captureSandboxSshConfig: (
-    sandboxName: string,
-    options: {
-      env?: NodeJS.ProcessEnv;
-      gatewayName?: string;
-      ignoreError: boolean;
-      replaceEnv?: boolean;
-      timeout: number;
-    },
-  ) => { output: string; status: number | null };
+  sshExecutor?: OpenShellSandboxSshExecutor;
   executePrivilegedSandboxCommand: (
     sandboxName: string,
     command: readonly string[],
@@ -57,7 +47,6 @@ export type CommandTransportDependencies = {
   extractSandboxExecCommandStdout: (output: string) => string | null;
   commandExecutor: OpenShellSandboxBufferedCommandExecutor;
   isDirectSandboxFallbackUnavailableError: (error: unknown) => boolean;
-  openshellProbeTimeoutMs: number;
 };
 
 export const DEFAULT_SANDBOX_EXEC_TIMEOUT_MS = 15000;
@@ -71,59 +60,30 @@ function permitsUnknownOutcomeFallback(policy: LocalDockerFallbackPolicy): boole
   return policy === "read-only" || policy === "reconciled";
 }
 
-export function executeSandboxCommandTransport(
+export async function executeSandboxCommandTransport(
   deps: CommandTransportDependencies,
   sandboxName: string,
   command: string,
   timeout = DEFAULT_SANDBOX_EXEC_TIMEOUT_MS,
   options: SandboxSshCommandOptions = {},
-): SandboxCommandResult | null {
-  const sshConfigResult = deps.captureSandboxSshConfig(sandboxName, {
-    ...(options.runtimeEnv ? { env: options.runtimeEnv, replaceEnv: true } : {}),
-    ...(options.gatewayName ? { gatewayName: options.gatewayName } : {}),
-    ignoreError: true,
-    timeout: deps.openshellProbeTimeoutMs,
+): Promise<SandboxCommandResult | null> {
+  const result = await (deps.sshExecutor ?? createCliOpenShellSandboxSshCommandExecutor()).run({
+    sandboxName,
+    target: options.gatewayName
+      ? namedOpenShellGateway(options.gatewayName)
+      : selectedOpenShellGateway(),
+    command,
+    environment: options.runtimeEnv ?? deps.buildSubprocessEnv(),
+    timeoutMilliseconds: timeout,
   });
-  if (sshConfigResult.status !== 0) return null;
-  if (!sshConfigResult.output.trim()) return null;
-  const sshHost = resolveOpenshellSandboxSshHost(sandboxName, sshConfigResult.output);
-  if (sshHost === null) return null;
-
-  const tmpSshConfig = createTempSshConfig(sshConfigResult.output, "nemoclaw-ssh-");
-  try {
-    const result = spawnSync(
-      "ssh",
-      [
-        "-F",
-        tmpSshConfig.file,
-        "-o",
-        "StrictHostKeyChecking=no",
-        "-o",
-        "UserKnownHostsFile=/dev/null",
-        "-o",
-        "ConnectTimeout=5",
-        "-o",
-        "LogLevel=ERROR",
-        sshHost,
-        command,
-      ],
-      {
-        encoding: "utf-8",
-        env: options.runtimeEnv ?? deps.buildSubprocessEnv(),
-        stdio: ["ignore", "pipe", "pipe"],
-        timeout,
-      },
-    );
-    return {
-      status: result.status ?? 1,
-      stdout: (result.stdout || "").trim(),
-      stderr: (result.stderr || "").trim(),
-    };
-  } catch {
-    return null;
-  } finally {
-    tmpSshConfig.cleanup();
-  }
+  const commandResult = result.kind === "completed" ? result : result.command;
+  return commandResult
+    ? {
+        status: commandResult.exitCode,
+        stdout: commandResult.stdout.trim(),
+        stderr: commandResult.stderr.trim(),
+      }
+    : null;
 }
 
 function parseSandboxCommandResult(

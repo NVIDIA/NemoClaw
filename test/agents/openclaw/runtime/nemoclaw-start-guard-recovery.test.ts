@@ -67,13 +67,13 @@ type Harness = {
 type RecoveryHarnessOptions = {
   attempts?: number;
   gatewayLogKind?: "regular" | "symlink" | "directory" | "missing";
-  missingCiaoSource?: boolean;
+  missingNemotronSource?: boolean;
 };
 
 function runRecoveryHarness({
   attempts = 1,
   gatewayLogKind = "regular",
-  missingCiaoSource = false,
+  missingNemotronSource = false,
 }: RecoveryHarnessOptions = {}): Harness {
   const source = fs.readFileSync(START_SCRIPT, "utf8");
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-guard-recovery-"));
@@ -99,18 +99,16 @@ function runRecoveryHarness({
     safety: path.join(tmpDir, "source-safety.js"),
     proxy: path.join(tmpDir, "source-proxy.js"),
     nemotron: path.join(tmpDir, "source-nemotron.js"),
-    ciao: path.join(tmpDir, "source-ciao.js"),
   };
   const targets = {
     safety: path.join(tmpDir, "target-safety.js"),
     proxy: path.join(tmpDir, "target-proxy.js"),
     nemotron: path.join(tmpDir, "target-nemotron.js"),
-    ciao: path.join(tmpDir, "target-ciao.js"),
     runtimeEnv: path.join(tmpDir, "nemoclaw-proxy-env.sh"),
   };
 
   const stagedSources = Object.entries(sources).filter(
-    ([name]) => !missingCiaoSource || name !== "ciao",
+    ([name]) => !missingNemotronSource || name !== "nemotron",
   );
   for (const [name, sourcePath] of stagedSources) {
     fs.writeFileSync(sourcePath, `module.exports = ${JSON.stringify(name)};\n`, { mode: 0o644 });
@@ -128,8 +126,6 @@ function runRecoveryHarness({
     `_PROXY_FIX_SOURCE=${JSON.stringify(sources.proxy)}`,
     `_NEMOTRON_FIX_SCRIPT=${JSON.stringify(targets.nemotron)}`,
     `_NEMOTRON_FIX_SOURCE=${JSON.stringify(sources.nemotron)}`,
-    `_CIAO_GUARD_SCRIPT=${JSON.stringify(targets.ciao)}`,
-    `_CIAO_GUARD_SOURCE=${JSON.stringify(sources.ciao)}`,
     `_RUNTIME_SHELL_ENV_FILE=${JSON.stringify(targets.runtimeEnv)}`,
     "OPENCLAW_RESTART_FAILURE_CODE=internal",
     "emit_sandbox_sourced_file() {",
@@ -149,7 +145,7 @@ function runRecoveryHarness({
     "}",
     "validate_nemoclaw_tmp_permissions() {",
     '  printf "validate\\n" >>"$EVENT_LOG"',
-    '  local target; for target in "$_SANDBOX_SAFETY_NET" "$_PROXY_FIX_SCRIPT" "$_NEMOTRON_FIX_SCRIPT" "$_CIAO_GUARD_SCRIPT" "$_RUNTIME_SHELL_ENV_FILE"; do',
+    '  local target; for target in "$_SANDBOX_SAFETY_NET" "$_PROXY_FIX_SCRIPT" "$_NEMOTRON_FIX_SCRIPT" "$_RUNTIME_SHELL_ENV_FILE"; do',
     '    [ -f "$target" ] && [ ! -L "$target" ] || return 1',
     "  done",
     "}",
@@ -172,7 +168,7 @@ function runRecoveryHarness({
     encoding: "utf8",
     env: {
       ...process.env,
-      RECOVERY_ATTEMPTS: String(missingCiaoSource ? 1 : attempts),
+      RECOVERY_ATTEMPTS: String(missingNemotronSource ? 1 : attempts),
     },
     timeout: 10_000,
   });
@@ -188,7 +184,7 @@ function runRecoveryHarness({
 }
 
 describe("OpenClaw PID 1 guard-chain recovery", () => {
-  it.each(["safety", "proxy", "nemotron", "ciao"])(
+  it.each(["safety", "proxy", "nemotron"])(
     "re-stages packaged guards identically across five recovery preparations [%s] (#7919)",
     (name) => {
       const attempts = 5;
@@ -210,7 +206,6 @@ describe("OpenClaw PID 1 guard-chain recovery", () => {
           "emit:target-safety.js",
           "emit:target-proxy.js",
           "emit:target-nemotron.js",
-          "emit:target-ciao.js",
           "write-messaging-plan",
           "messaging",
           "secret-scan",
@@ -392,12 +387,12 @@ describe("OpenClaw PID 1 guard-chain recovery", () => {
   });
 
   it("fails closed as preload-missing before validation when a packaged guard is absent", () => {
-    const harness = runRecoveryHarness({ missingCiaoSource: true });
+    const harness = runRecoveryHarness({ missingNemotronSource: true });
     try {
       expect(harness.result.status, harness.result.stderr).toBe(0);
       expect(harness.result.stdout).toContain("rc:1\n");
       expect(harness.result.stdout).toContain("failure-code:preload-missing\n");
-      expect(harness.result.stderr).toContain("source-ciao.js");
+      expect(harness.result.stderr).toContain("source-nemotron.js");
       const events = fs.readFileSync(harness.eventLog, "utf8");
       expect(events).toContain("guard:preflight-restart");
       expect(events).not.toContain("write-messaging-plan");

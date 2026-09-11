@@ -73,7 +73,7 @@ Follow the current collector help when those controls evolve.
 
 ## Keep Point-in-Time Review Records out of the Repository
 
-Do not commit point-in-time release ledgers, concern records, review reports, or qualification reports anywhere in the repository. Encode durable claims in executable configuration and tests. For a user-visible change, update the canonical `docs/` page with current supported behavior and operator action. Preserve historical executable fixtures only when they still support a current test.
+Do not commit or update point-in-time release ledgers, concern records, dependency-review reports, review reports, or qualification reports anywhere in the repository. This prohibition does not apply to durable, code-synchronized dependency contract documents owned by a component. Encode durable claims in executable configuration and tests. For a user-visible change, update the canonical `docs/` page with current supported behavior and operator action. Preserve historical executable fixtures only when they still support a current test.
 
 ## Resolve concerns
 

@@ -272,6 +272,8 @@ const HERMES_RESTART_SUCCESS_PREFIX = new RegExp(
   ].join("\n")}$`,
   "u",
 );
+const PORTABLE_HOST_LOCK_CONTENTION =
+  /^Error: Failed to acquire lock on \/[^\n]*\/\.nemoclaw-portable-host\.lock after 120 retries$/u;
 
 function normalizeHermesTransportDiagnostic(diagnostic: string): string {
   return diagnostic
@@ -665,7 +667,7 @@ export function isHermesRestartTransportFailure(adapter: string, diagnostic: str
   return HERMES_RESTART_SUCCESS_PREFIX.test(normalized.slice(0, -suffix.length));
 }
 
-export async function retryAfterHermesRestartTransportFailure<T>(options: {
+export async function retryAfterConcurrentAddTransientFailure<T>(options: {
   adapter: string;
   committedBridgeVerified: boolean;
   diagnostic: string;
@@ -673,11 +675,15 @@ export async function retryAfterHermesRestartTransportFailure<T>(options: {
   retry: () => Promise<T>;
 }): Promise<T> {
   if (!options.committedBridgeVerified) {
-    throw new Error("Hermes restart retry requires a verified committed bridge");
+    throw new Error("Concurrent add retry requires a verified committed bridge");
   }
   if (/already exists/iu.test(options.diagnostic)) return options.originalResult;
-  if (!isHermesRestartTransportFailure(options.adapter, options.diagnostic)) {
-    throw new Error("rejected concurrent add was not a known Hermes restart transport failure");
+  const diagnostic = normalizeHermesTransportDiagnostic(options.diagnostic);
+  if (
+    !PORTABLE_HOST_LOCK_CONTENTION.test(diagnostic) &&
+    !isHermesRestartTransportFailure(options.adapter, options.diagnostic)
+  ) {
+    throw new Error("rejected concurrent add was not a known transient failure");
   }
   return options.retry();
 }

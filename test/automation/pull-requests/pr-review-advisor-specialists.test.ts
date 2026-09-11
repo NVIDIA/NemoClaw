@@ -11,6 +11,7 @@ import { canonicalRepoReadPath } from "../../../tools/advisors/repo-read-only-to
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 
 import { TERMINOLOGY_TRACE_TOOL } from "../../../tools/pr-review-advisor/terminology.mts";
+import { E2E_RECEIPT_TOOL } from "../../../tools/pr-review-advisor/e2e-receipt.mts";
 import {
   runSpecialistAdvisor,
   writeSpecialistSummary,
@@ -205,7 +206,7 @@ describe("PR review advisor specialist prompts", () => {
         "pr_review_reconciliation_context",
         "pr_review_metadata",
       ]);
-      expect(turn.requiredToolNames).toEqual(contextToolNames);
+      expect(turn.requiredToolNames).toEqual([...contextToolNames, E2E_RECEIPT_TOOL]);
       expect(turn.requireToolsBeforeText).toEqual(contextToolNames);
       expect(turn.requireAssistantText).toBe(true);
       expect(turn.requiredReadOneOfPaths).toEqual([context.diffPath]);
@@ -237,7 +238,7 @@ describe("PR review advisor specialist prompts", () => {
     expect(wordChunks.map(({ content }) => content).join("")).toBe(largeWords);
     expect(wordChunks.every(({ content }) => !/[\uD800-\uDBFF]$/u.test(content))).toBe(true);
     const toolNames = results.map(({ toolName }) => toolName);
-    expect(turn.requiredToolNames).toEqual(toolNames);
+    expect(turn.requiredToolNames).toEqual([...toolNames, E2E_RECEIPT_TOOL]);
     expect(turn.requireToolsBeforeText).toEqual(toolNames);
   });
 
@@ -339,7 +340,7 @@ describe("PR review advisor specialist prompts", () => {
           ? ["read", "grep", "find", "ls", TERMINOLOGY_TRACE_TOOL]
           : ["read", "grep", "find", "ls"];
 
-      expect(turn.activeToolNames).toEqual(expected);
+      expect(turn.activeToolNames).toEqual([...expected, E2E_RECEIPT_TOOL]);
       expect(turn.activeToolNames).not.toContain("record_findings");
       expect(turn.activeToolNames).not.toContain("record_review_receipt");
       expect(turn.activeToolNames).not.toContain("recommend_e2e");

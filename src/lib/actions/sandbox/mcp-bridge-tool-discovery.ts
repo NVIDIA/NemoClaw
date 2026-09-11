@@ -303,13 +303,13 @@ export function classifyMcpToolDiscoveryResult(
   };
 }
 
-export function discoverMcpTools(
+export async function discoverMcpTools(
   sandboxName: string,
   entry: McpBridgeEntry,
   adapter: AgentMcpAdapter | undefined,
   readiness: McpToolDiscoveryReadiness,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
-): NonNullable<McpBridgeStatus["toolDiscovery"]> {
+): Promise<NonNullable<McpBridgeStatus["toolDiscovery"]>> {
   if (!adapter) {
     return mcpToolDiscoveryPreconditionFailure(
       "tool discovery skipped: MCP adapter is not declared",
@@ -329,7 +329,7 @@ export function discoverMcpTools(
     );
   }
   return classifyMcpToolDiscoveryResult(
-    executeSandboxCommand(sandboxName, discoveryCommand.command, { runtimeSelection }),
+    await executeSandboxCommand(sandboxName, discoveryCommand.command, { runtimeSelection }),
     entry,
     discoveryCommand.resultMarker,
   );

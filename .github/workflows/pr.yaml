@@ -544,7 +544,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Checkout trusted reviewed npm audit
+      - name: Checkout npm audit code from the base commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.pull_request.base.sha }}

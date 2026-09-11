@@ -21,12 +21,14 @@ const OTHER_SHA = "89abcdef0123456789abcdef0123456789abcdef";
 const ARCHITECTURE = os.arch() === "x64" ? "amd64" : "arm64";
 const describeLinux = process.platform === "linux" ? describe : describe.skip;
 
+/** Register cleanup when a fixture is created so failed assertions do not retain test state. */
 function temporaryDirectory(prefix: string): string {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   onTestFinished(() => fs.rmSync(directory, { recursive: true, force: true }));
   return directory;
 }
 
+/** Qualification must prove Docker absence without inheriting developer runtime selectors. */
 function dockerFreeEnvironment(): NodeJS.ProcessEnv {
   const environment = { ...process.env };
   for (const name of [
@@ -42,14 +44,17 @@ function dockerFreeEnvironment(): NodeJS.ProcessEnv {
   return environment;
 }
 
+/** Fixture commands must be executable before the qualification process invokes them. */
 function writeExecutable(filePath: string, contents: string): void {
   fs.writeFileSync(filePath, contents, { mode: 0o755 });
 }
 
+/** Keep fixture paths literal when they are embedded in Bash test bodies. */
 function shellQuote(value: string): string {
   return `'${value.replaceAll("'", `'"'"'`)}'`;
 }
 
+/** Stop candidate construction when Git fails instead of testing an incomplete checkout. */
 function runGit(repository: string, args: string[]): string {
   const result = spawnSync("git", args, {
     cwd: repository,
@@ -67,6 +72,7 @@ type CandidateFixture = {
   sourceMarker: string;
 };
 
+/** Supply real commit and installer digests while keeping installation effects inside the fixture. */
 function candidateFixture(
   options: {
     dockerState?: string;
@@ -134,6 +140,7 @@ install_nemoclaw_before_onboarding() {
   };
 }
 
+/** Exercise qualification guards with controlled host tools and optional publication races. */
 function runQualification(
   candidate: CandidateFixture,
   artifactDirectory: string,
@@ -192,6 +199,7 @@ run_native_runtime_installer_qualification "$@"
   );
 }
 
+/** Keep installer phase assertions on the shell boundary used by the qualification runner. */
 function phaseHarness(body: string, environment: NodeJS.ProcessEnv = {}) {
   return spawnSync("bash", ["-c", body], {
     encoding: "utf-8",
@@ -241,7 +249,7 @@ finalize_install() { record finalize-install; }
 clear_station_resume_after_completed_onboarding() { :; }
 main --non-interactive --yes-i-accept-third-party-software
 `,
-      { CALL_LOG: callLog, SETUP_DIRECTORY: setupDirectory },
+      { CALL_LOG: callLog, HOME: fixtureRoot, SETUP_DIRECTORY: setupDirectory },
     );
 
     expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);

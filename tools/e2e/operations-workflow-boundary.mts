@@ -81,10 +81,15 @@ const PUBLICATION_CLASSIFIER_SCRIPT =
   [
     "set -euo pipefail",
     'case "${REPOSITORY}:${REF}:${EVENT_NAME}:${CHECKOUT_SHA:+controller}" in',
-    "  NVIDIA/NemoClaw:refs/heads/main:push:|NVIDIA/NemoClaw:refs/heads/main:workflow_dispatch:)",
+    "  NVIDIA/NemoClaw:refs/heads/main:push:)",
     '    expected_sha="$WORKFLOW_SHA"',
     "    allow_non_head=0",
     "    select_nearest_successful=0",
+    "    ;;",
+    "  NVIDIA/NemoClaw:refs/heads/main:workflow_dispatch:)",
+    '    expected_sha="$WORKFLOW_SHA"',
+    "    allow_non_head=0",
+    "    select_nearest_successful=1",
     "    ;;",
     "  NVIDIA/NemoClaw:refs/heads/*:workflow_dispatch:controller)",
     '    [[ "$BASE_SHA" =~ ^[a-f0-9]{40}$ ]] || {',
@@ -1119,9 +1124,11 @@ function validateAggregation(errors: string[], workflow: OperationsWorkflow): vo
 function validateRelevantE2e(errors: string[], workflow: OperationsWorkflow): void {
   const job = workflow.jobs["relevant-e2e"] ?? {};
   const expectedCondition =
-    "${{ always() && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'push' }}";
+    "${{ always() && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '')) }}";
   if (job.name !== "Relevant E2E" || job.if !== expectedCondition) {
-    errors.push("relevant-e2e must be the stable aggregate check for main pushes");
+    errors.push(
+      "relevant-e2e must be the stable aggregate check for main pushes and trusted PR runs",
+    );
   }
   if (!isDeepStrictEqual(permissionMap(job.permissions), { contents: "read" })) {
     errors.push("relevant-e2e permissions must be contents: read");
@@ -1131,7 +1138,7 @@ function validateRelevantE2e(errors: string[], workflow: OperationsWorkflow): vo
   const steps = job.steps ?? [];
   requirePinnedAction(errors, checkout, "relevant-e2e checkout");
   if (
-    steps.length !== 3 ||
+    steps.length !== 4 ||
     steps[0] !== checkout ||
     steps[1] !== requireResults ||
     checkout.with?.ref !== "${{ github.workflow_sha }}" ||
@@ -1145,6 +1152,8 @@ function validateRelevantE2e(errors: string[], workflow: OperationsWorkflow): vo
     requireResults.env?.NEEDS_JSON !== "${{ toJSON(needs) }}" ||
     requireResults.env?.RELEASE_REQUIRED_JOBS !==
       "${{ needs.generate-matrix.outputs.selected_workflow_jobs }}" ||
+    requireResults.env?.E2E_RESULT_PATH !==
+      "${{ inputs.checkout_sha != '' && format('{0}/review-queue-e2e-result.json', runner.temp) || '' }}" ||
     requireResults.run !== "node --no-warnings tools/e2e/release-qualification.mts"
   ) {
     errors.push("relevant-e2e must evaluate planner-selected jobs from needs");
