@@ -292,6 +292,11 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     () => undefined,
   );
   const requestedPortableDisposition = options.portableReceiptDisposition ?? { kind: "absent" };
+  vi.spyOn(gatewayState, "hermesPortableLifecycleLockOptions").mockReturnValue(
+    requestedPortableDisposition.kind === "hermes"
+      ? { stateDir: "/home/test/.nemoclaw/state" }
+      : undefined,
+  );
   const portableDisposition =
     requestedPortableDisposition.kind === "hermes"
       ? {
