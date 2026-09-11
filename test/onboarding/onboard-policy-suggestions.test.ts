@@ -611,6 +611,42 @@ describe("onboard policy preset suggestions", () => {
     expect(suggestions.filter((name: string) => name === "slack")).toHaveLength(1);
   });
 
+  // The Open tier's own messaging channel presets are tier egress defaults
+  // (per the tier's documented preset list), not per-channel opt-ins, so
+  // OpenClaw must resolve every one of them even with no messaging channel
+  // enabled -- unlike Balanced/Restricted, which have no messaging defaults
+  // to begin with. Only Hermes recovery prunes tier defaults down to the
+  // recorded enabled set (see the Hermes-scoped tests below). (#11058)
+  it("resolves every Open tier default including messaging channel presets for OpenClaw with no channels enabled (#11058)", () => {
+    const knownOpenTierNames = [...known, "teams", "whatsapp", "wechat", "openclaw-pricing"];
+    const suggestions = computeSetupPresetSuggestions("open", {
+      agent: "openclaw",
+      enabledChannels: [],
+      knownPresetNames: knownOpenTierNames,
+    });
+
+    expect([...suggestions].sort()).toEqual(
+      [
+        "brave",
+        "brew",
+        "discord",
+        "huggingface",
+        "jira",
+        "npm",
+        "openclaw-pricing",
+        "outlook",
+        "public-reference",
+        "pypi",
+        "slack",
+        "teams",
+        "telegram",
+        "wechat",
+        "weather",
+        "whatsapp",
+      ].sort(),
+    );
+  });
+
   it("omits repository-owned Hermes messaging presets until their channels are active", () => {
     const inactive = computeSetupPresetSuggestions("open", {
       agent: "hermes",
@@ -650,26 +686,26 @@ describe("onboard policy preset suggestions", () => {
     expect(suggestions).not.toContain("discord");
   });
 
-  it.each(["openclaw", "hermes"])(
-    "omits credential-bound Discord egress for %s until the channel is selected",
-    (agent) => {
-      const inactive = computeSetupPresetSuggestions("open", {
-        agent,
-        enabledChannels: [],
-        knownPresetNames: known,
-        env: { DISCORD_BOT_TOKEN: "ambient-discord-token" },
-      });
-      const active = computeSetupPresetSuggestions("open", {
-        agent,
-        enabledChannels: ["discord"],
-        knownPresetNames: known,
-        env: { DISCORD_BOT_TOKEN: "selected-discord-token" },
-      });
+  // Hermes recovery records the full enabled-channel set, so it (unlike
+  // OpenClaw, see #11058 above) still prunes a tier-default messaging preset
+  // down to that set until the channel is selected.
+  it("omits credential-bound Discord egress for hermes until the channel is selected", () => {
+    const inactive = computeSetupPresetSuggestions("open", {
+      agent: "hermes",
+      enabledChannels: [],
+      knownPresetNames: known,
+      env: { DISCORD_BOT_TOKEN: "ambient-discord-token" },
+    });
+    const active = computeSetupPresetSuggestions("open", {
+      agent: "hermes",
+      enabledChannels: ["discord"],
+      knownPresetNames: known,
+      env: { DISCORD_BOT_TOKEN: "selected-discord-token" },
+    });
 
-      expect(inactive).not.toContain("discord");
-      expect(active).toContain("discord");
-    },
-  );
+    expect(inactive).not.toContain("discord");
+    expect(active).toContain("discord");
+  });
 
   it("drops channel names that are not known presets", () => {
     const suggestions = computeSetupPresetSuggestions("balanced", {

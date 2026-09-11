@@ -383,7 +383,7 @@ describe("OpenClaw WeChat provider placeholder refresh (#10079)", () => {
 
     expect(run.result.status).toBe(1);
     expect(run.account.token).toBe(rawToken);
-    expect(run.result.stderr).toContain("neither canonical nor revision-scoped");
+    expect(run.result.stderr).toContain("neither canonical nor generation-scoped");
     expect(run.result.stderr).not.toContain(rawToken);
   });
 

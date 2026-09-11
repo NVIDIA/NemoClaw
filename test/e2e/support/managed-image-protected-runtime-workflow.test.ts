@@ -54,6 +54,14 @@ describe("protected managed-image runtime workflow", () => {
     expect(validateManagedImageProtectedRuntimeWorkflow(workflow())).toEqual([]);
   });
 
+  it("rejects a runtime job that exceeds the 75 minute budget", () => {
+    const value = workflow();
+    runtimeJob(value)["timeout-minutes"] = 300;
+    expect(validateManagedImageProtectedRuntimeWorkflow(value)).toContain(
+      "managed-image-protected-runtime must keep the 75 minute timeout",
+    );
+  });
+
   // source-shape-contract: security -- The isolated registry must be gone before reporter-backed validations can publish passing risk evidence
   test("cleans the protected registry before passing risk evidence", () => {
     const steps = multiarchJob(workflow()).steps as Array<Record<string, unknown>>;
