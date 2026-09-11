@@ -406,6 +406,7 @@ export function findAvailableDashboardPort(
 
 export interface CreateSandboxDashboardPortInput {
   sandboxName: string;
+  ownsForward?(port: number): boolean;
   controlUiPort: number | null;
   chatUiUrlEnv: string | null | undefined;
   persistedPort: number | null;
@@ -488,8 +489,12 @@ export function resolveCreateSandboxDashboardPort(
   // dashboard port that already belongs to a sibling sandbox on a different
   // NemoClaw gateway. The allocator itself defaults to an empty map to keep
   // its unit tests independent of the caller's real `~/.nemoclaw/` state.
-  const registryOccupiedPorts =
-    input.registryOccupiedPorts ?? getRegistryOccupiedDashboardPorts(input.sandboxName);
+  const registryOccupiedPorts = new Map(
+    input.registryOccupiedPorts ?? getRegistryOccupiedDashboardPorts(input.sandboxName),
+  );
+  if (!registryOccupiedPorts.has(String(preferredPort)) && input.ownsForward?.(preferredPort)) {
+    registryOccupiedPorts.set(String(preferredPort), input.sandboxName);
+  }
   const effectivePort = (input.findAvailablePort ?? findAvailableDashboardPort)(
     input.sandboxName,
     preferredPort,
@@ -580,7 +585,10 @@ export async function reserveCreateSandboxDashboardPort(
       registryOccupiedPorts: occupied,
       warn: undefined,
     });
-    if (forwardOwner.get(String(result.effectivePort)) === input.sandboxName) {
+    if (
+      input.ownsForward?.(result.effectivePort) ||
+      forwardOwner.get(String(result.effectivePort)) === input.sandboxName
+    ) {
       if (result.effectivePort !== result.preferredPort) {
         input.warn?.(
           `  ! Port ${result.preferredPort} is taken. Using port ${result.effectivePort} instead.`,

@@ -940,7 +940,7 @@ test(
           retainedForwardAAfterStop.reachable &&
           stoppedStatusTextB.includes("Phase: Stopped") &&
           !stoppedStatusTextB.includes("sandbox_dashboard_port_conflict"),
-        staleRegistryRecovered: rebuild.exitCode === 0,
+        staleRegistryRecovered: cleanReplacement.exitCode === 0,
         gatewayStopGuidance:
           /Recovered NemoClaw gateway runtime|gateway is no longer configured after restart\/rebuild|gateway is still refusing connections after restart|gateway trust material rotated after restart|OpenShell could not reach the selected gateway/.test(
             postStopText,
