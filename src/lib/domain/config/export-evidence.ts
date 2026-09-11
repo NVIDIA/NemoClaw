@@ -13,7 +13,8 @@ import {
   NemoClawInferenceApiSchema,
   NemoClawOpenClawInterfacesSchema,
   NemoClawHermesInterfacesSchema,
-  NemoClawAgentToolsConfigSchema,
+  NemoClawAgentToolDisclosureSchema,
+  NemoClawAdditionalAgentSchema,
   NemoClawInferenceTuningSchema,
   NemoClawAgentExecutionSchema,
   NemoClawBraveSearchConfigSchema,
@@ -285,7 +286,10 @@ const ExportInferenceSchema = Type.Union([
 const exportSourceFields = {
   sandboxName: Type.Refine(SandboxNameSchema, isValidNemoClawSandboxName),
   execution: Type.Optional(NemoClawAgentExecutionSchema),
-  tools: Type.Optional(NemoClawAgentToolsConfigSchema),
+  tools: Type.Optional(NemoClawAgentToolDisclosureSchema),
+  additionalAgents: Type.Optional(
+    Type.Array(NemoClawAdditionalAgentSchema, { minItems: 1, maxItems: 1 }),
+  ),
   auth: Type.Optional(Type.Object({ method: Type.Literal("api-key") })),
   runtime: Type.Object({
     provider: RuntimeProviderSchema,
@@ -312,7 +316,10 @@ export const ExportSourceValuesSchema = Type.Refine(
     }),
   ]),
   (value) =>
-    value.agent === "openclaw" || (value.execution === undefined && value.tools === undefined),
+    value.agent === "openclaw" ||
+    (value.execution === undefined &&
+      value.tools === undefined &&
+      value.additionalAgents === undefined),
 );
 
 type ExportSourceValues = DeepReadonly<TypeBoxModule.Type.Static<typeof ExportSourceValuesSchema>>;

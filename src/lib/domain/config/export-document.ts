@@ -98,6 +98,19 @@ function exportAgent(source: VerifiedExportSource, providerName: string): NemoCl
   };
 }
 
+function exportAgents(source: VerifiedExportSource, providerName: string): NemoClawAgentConfig[] {
+  const primary = exportAgent(source, providerName);
+  return [
+    primary,
+    ...(source.additionalAgents ?? []).map((agent) => ({
+      name: agent.name,
+      type: "openclaw" as const,
+      tools: agent.tools,
+      inference: primary.inference,
+    })),
+  ];
+}
+
 export interface ExportConfigBuildIdentity {
   readonly documentName: NemoClawConfigDocumentName;
   readonly documentUid: NemoClawConfigDocumentUid;
@@ -134,7 +147,7 @@ export function buildExportConfig(
           ...(source.webSearch === undefined
             ? {}
             : { integrations: { webSearch: source.webSearch } }),
-          agents: [exportAgent(source, providerName)],
+          agents: exportAgents(source, providerName),
         },
       ],
     },
