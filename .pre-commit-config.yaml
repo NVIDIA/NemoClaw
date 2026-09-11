@@ -195,10 +195,11 @@ repos:
 
       - id: repository-checks
         name: Repository checks
-        entry: npm run checks:repository
+        entry: node --import tsx scripts/checks/run.mts --files
         language: system
-        files: ^(\.pre-commit-config\.yaml$|\.github/workflows/e2e\.yaml$|Dockerfile(?:\.base)?$|agents/openclaw/manifest\.yaml$|agents/hermes/(?:Dockerfile(?:\.base)?|manifest\.yaml|mcp-config-transaction\.py)$|ci/e2e-assertion-budget\.json$|docs/resources/starter-prompt\.md$|nemoclaw-blueprint/blueprint\.yaml$|nemoclaw/package\.json$|package\.json$|scripts/(?:brev-launchable-ci-cpu|check-installer-hash|install-openshell|update-hermes-agent)\.sh$|src/lib/actions/sandbox/openshell-child-visible-credentials\.v[0-9]+\.[0-9]+\.[0-9]+\.json$|bin/.*\.(cjs|js|mjs)$|src/.*\.(cts|mts|ts|tsx)$|scripts/.*\.(cjs|cts|js|mjs|mts|ts|tsx)$|test/.*\.(cjs|cts|js|mjs|mts|ts|tsx)$|nemoclaw/src/.*\.(cts|mts|ts|tsx)$)
-        pass_filenames: false
+        always_run: true
+        pass_filenames: true
+        require_serial: true
         priority: 10
 
       - id: env-var-docs
@@ -255,7 +256,7 @@ repos:
     hooks:
       - id: tsc-plugin
         name: TypeScript (plugin)
-        entry: npm --prefix nemoclaw run typecheck
+        entry: npx tsx scripts/checks/cached-command.mts tsc-plugin
         language: system
         pass_filenames: false
         files: ^nemoclaw/
@@ -264,7 +265,7 @@ repos:
 
       - id: tsc-js
         name: TypeScript (JS config)
-        entry: bash -c 'npm run build:cli && npx tsc -p jsconfig.json'
+        entry: npx tsx scripts/checks/cached-command.mts tsc-js
         language: system
         pass_filenames: false
         files: ^(bin|test|scripts)/.*\.js$|^(jsconfig\.json|package(-lock)?\.json)$
@@ -273,7 +274,7 @@ repos:
 
       - id: tsc-cli
         name: TypeScript (CLI)
-        entry: npm run typecheck:cli -- --incremental
+        entry: npx tsx scripts/checks/cached-command.mts tsc-cli
         language: system
         pass_filenames: false
         files: ^(agents/hermes|bin|scripts|src|test|tools|nemoclaw-blueprint/scripts)/.*\.(ts|tsx|mts|cts|json)$|^\.agents/skills/nemoclaw-maintainer-day/scripts/(check-gates|shared)\.ts$|^nemoclaw/src/(lib/subprocess-env|blueprint/private-networks)\.ts$|^(package(-lock)?\.json|tsconfig\.cli\.json|vitest\.config\.ts)$

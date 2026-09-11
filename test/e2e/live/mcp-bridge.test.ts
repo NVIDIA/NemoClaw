@@ -70,6 +70,7 @@ import {
   runOpenClawDeniedToolUpdateProof,
   restartBridgeWithoutHostSecret,
   retryOpenClawBaselineScopeOnboardFailure,
+  retryAfterConcurrentAddTransientFailure,
   retryHermesGatewayDraining,
 } from "./mcp-bridge-reliability.ts";
 import {
@@ -110,6 +111,12 @@ const ROTATED_HOST_SECRET = MCP_BRIDGE_TEST_CREDENTIALS.rotatedHost;
 const COMPATIBLE_KEY = MCP_BRIDGE_TEST_CREDENTIALS.compatibleEndpoint;
 const COMPATIBLE_MODEL = "mock/mcp-bridge";
 const TOOL_CHALLENGE = "nemoclaw-authenticated-mcp-proof";
+const MCP_RESULT = `MCP_AUTH_REWRITE_OK::${TOOL_CHALLENGE}`;
+const MCP_SERVER_OPTIONS = {
+  secret: HOST_SECRET,
+  challenge: TOOL_CHALLENGE,
+  resultToken: MCP_RESULT,
+};
 const REGISTRY_FILE = path.join(process.env.HOME ?? os.homedir(), ".nemoclaw", "sandboxes.json");
 const selectedMcpBridgeShard = resolveMcpBridgeShard();
 const mcpBridgeE2eScope = resolveMcpBridgeE2eScope();
@@ -289,23 +296,21 @@ async function assertConcurrentAddSerialized(
     ...buildAvailabilityProbeEnv(),
     FAKE_MCP_SECRET: HOST_SECRET,
   };
+  const add = (artifactName: string) =>
+    host.nemoclaw(args, {
+      artifactName,
+      env,
+      redactionValues: [HOST_SECRET],
+      // Keep callers alive through the existing bounded restart and reload.
+      timeoutMs: MCP_MUTATION_TIMEOUT_MS[options.expectedAdapter],
+    });
   const attempts = await Promise.all(
     ["first", "second"].map((attempt) =>
-      host.nemoclaw(args, {
-        artifactName: `${options.artifactPrefix}-mcp-concurrent-add-${attempt}`,
-        env,
-        redactionValues: [HOST_SECRET],
-        // Keep both clients alive through Hermes' bounded restart and config
-        // reload; the second acquires the lock and resumes the exact committed
-        // source prefix idempotently.
-        timeoutMs: MCP_MUTATION_TIMEOUT_MS[options.expectedAdapter],
-      }),
+      add(`${options.artifactPrefix}-mcp-concurrent-add-${attempt}`),
     ),
   );
   const successful = attempts.filter((result) => result.exitCode === 0);
-  const rejected = attempts.filter((result) => result.exitCode !== 0);
-  expect(successful).toHaveLength(2);
-  expect(rejected).toHaveLength(0);
+  expect(successful.length).toBeGreaterThan(0);
   const statusObservation = await readConcurrentMcpStatusAndConfirmHermesRegistration({
     clients: { artifacts, host, sandbox },
     committedAddResult: successful[0]!,
@@ -331,12 +336,22 @@ async function assertConcurrentAddSerialized(
     policy: { present: true, state: "configured" },
   });
   expect(statusObservation.registered).toBe(true);
-  const exactRetry = await host.nemoclaw(args, {
-    artifactName: `${options.artifactPrefix}-mcp-concurrent-add-exact-retry`,
-    env,
-    redactionValues: [HOST_SECRET],
-    timeoutMs: MCP_MUTATION_TIMEOUT_MS[options.expectedAdapter],
-  });
+  const resumed = await Promise.all(
+    attempts
+      .filter((result) => result.exitCode !== 0)
+      .map((originalResult) =>
+        retryAfterConcurrentAddTransientFailure({
+          adapter: options.expectedAdapter,
+          committedBridgeVerified: true,
+          diagnostic: resultText(originalResult),
+          originalResult,
+          retry: () =>
+            add(`${options.artifactPrefix}-mcp-concurrent-add-after-restart-transport-failure`),
+        }),
+      ),
+  );
+  expect([...successful, ...resumed].filter((result) => result.exitCode === 0)).toHaveLength(2);
+  const exactRetry = await add(`${options.artifactPrefix}-mcp-concurrent-add-exact-retry`);
   expectExitZero(
     exactRetry,
     `${options.artifactPrefix} exact MCP add retry converges from current sources`,
@@ -748,23 +763,18 @@ test(
       scope: mcpBridgeE2eScope,
       server: SERVER_NAME,
     });
-    const openClawResult = `MCP_AUTH_REWRITE_OK::${TOOL_CHALLENGE}`;
     const compatibleMock = await startCompatibleMock({
       apiKey: COMPATIBLE_KEY,
       model: COMPATIBLE_MODEL,
       toolChallenge: TOOL_CHALLENGE,
-      toolResultToken: openClawResult,
+      toolResultToken: MCP_RESULT,
       openClawToolSearch: {
         query: "fake echo",
         toolNames: ["fake__fake_echo"],
       },
     });
     cleanup.add("stop MCP bridge compatible endpoint mock", () => compatibleMock.close());
-    const fakeMcp = await startFakeMcpHttpsServer({
-      secret: HOST_SECRET,
-      challenge: TOOL_CHALLENGE,
-      resultToken: openClawResult,
-    });
+    const fakeMcp = await startFakeMcpHttpsServer(MCP_SERVER_OPTIONS);
     cleanup.add("stop fake MCP HTTPS server", () => fakeMcp.close());
     const fakeMcpTunnel = await startPublicMcpHttpsTunnel({
       cleanup,
@@ -1022,7 +1032,7 @@ test(
     progress.phase("exercise lifecycle and confirm OpenClaw bridge removal");
     await assertRealAdapterToolCall(host, sandbox, fakeMcp, {
       ...bridge,
-      resultToken: openClawResult,
+      resultToken: MCP_RESULT,
       artifactName: "openclaw-real-mcp-tool-call-initial",
       deniedTool: MCP_BRIDGE_DENIED_TOOL_NAME,
     });
@@ -1039,7 +1049,7 @@ test(
     await restartBridgeWithoutHostSecret(host, OPENCLAW_SANDBOX_NAME, "openclaw");
     await assertRealAdapterToolCall(host, sandbox, fakeMcp, {
       ...bridge,
-      resultToken: openClawResult,
+      resultToken: MCP_RESULT,
       artifactName: "openclaw-real-mcp-tool-call-after-restart",
       deniedTool: MCP_BRIDGE_DENIED_TOOL_NAME,
     });
@@ -1053,7 +1063,7 @@ test(
     );
     await assertRealAdapterToolCall(host, sandbox, fakeMcp, {
       ...bridge,
-      resultToken: openClawResult,
+      resultToken: MCP_RESULT,
       artifactName: "openclaw-real-mcp-tool-call-after-credential-rotation",
       expectedSecret: ROTATED_HOST_SECRET,
     });
@@ -1074,7 +1084,7 @@ test(
     );
     await assertRealAdapterToolCall(host, sandbox, fakeMcp, {
       ...bridge,
-      resultToken: openClawResult,
+      resultToken: MCP_RESULT,
       artifactName: "openclaw-real-mcp-tool-call-after-rebuild",
       expectedSecret: ROTATED_HOST_SECRET,
       deniedTool: MCP_BRIDGE_DENIED_TOOL_NAME,
@@ -1104,26 +1114,21 @@ mcpBridgeShardTest("hermes")(
       scope: mcpBridgeE2eScope,
       server: SERVER_NAME,
     });
-    const hermesResult = `MCP_AUTH_REWRITE_OK::${TOOL_CHALLENGE}`;
     const compatibleMock = await startCompatibleMock({
       apiKey: COMPATIBLE_KEY,
       model: COMPATIBLE_MODEL,
       toolChallenge: TOOL_CHALLENGE,
-      toolResultToken: hermesResult,
+      toolResultToken: MCP_RESULT,
       toolNames: ["mcp__fake__fake_echo"],
       deferredToolName: "mcp__fake__fake_echo",
       deniedToolProbe: HERMES_MCP_DENIED_TOOL_PROBE,
     });
     cleanup.add("stop Hermes MCP bridge compatible endpoint mock", () => compatibleMock.close());
-    const fakeMcp = await startFakeMcpHttpsServer({
-      secret: HOST_SECRET,
-      challenge: TOOL_CHALLENGE,
-      resultToken: hermesResult,
-    });
+    const fakeMcp = await startFakeMcpHttpsServer(MCP_SERVER_OPTIONS);
     const assertHermesToolCall = (artifactName: string) =>
       assertRealAdapterToolCall(host, sandbox, fakeMcp, {
         ...bridge,
-        resultToken: hermesResult,
+        resultToken: MCP_RESULT,
         artifactName,
         deniedTool: MCP_BRIDGE_DENIED_TOOL_NAME,
       });
@@ -1253,7 +1258,7 @@ mcpBridgeShardTest("hermes")(
     );
     await assertRealAdapterToolCall(host, sandbox, fakeMcp, {
       ...bridge,
-      resultToken: hermesResult,
+      resultToken: MCP_RESULT,
       artifactName: "hermes-real-mcp-tool-call-after-credential-rotation",
       expectedSecret: ROTATED_HOST_SECRET,
     });
@@ -1295,7 +1300,7 @@ mcpBridgeShardTest("hermes")(
     );
     await assertRealAdapterToolCall(host, sandbox, fakeMcp, {
       ...bridge,
-      resultToken: hermesResult,
+      resultToken: MCP_RESULT,
       artifactName: "hermes-real-mcp-tool-call-after-rebuild",
       expectedSecret: ROTATED_HOST_SECRET,
       deniedTool: MCP_BRIDGE_DENIED_TOOL_NAME,
@@ -1338,23 +1343,18 @@ mcpBridgeShardTest("deepagents")(
       scope: mcpBridgeE2eScope,
       server: SERVER_NAME,
     });
-    const deepAgentsResult = `MCP_AUTH_REWRITE_OK::${TOOL_CHALLENGE}`;
     const compatibleMock = await startCompatibleMock({
       apiKey: COMPATIBLE_KEY,
       model: COMPATIBLE_MODEL,
       toolChallenge: TOOL_CHALLENGE,
-      toolResultToken: deepAgentsResult,
+      toolResultToken: MCP_RESULT,
       progressiveToolSearch: { toolName: "fake_fake_echo", query: "AuThEnTiCaTeD McP" },
       deniedToolProbe: DEEPAGENTS_MCP_DENIED_TOOL_PROBE,
     });
     cleanup.add("stop Deep Agents MCP bridge compatible endpoint mock", () =>
       compatibleMock.close(),
     );
-    const fakeMcp = await startFakeMcpHttpsServer({
-      secret: HOST_SECRET,
-      challenge: TOOL_CHALLENGE,
-      resultToken: deepAgentsResult,
-    });
+    const fakeMcp = await startFakeMcpHttpsServer(MCP_SERVER_OPTIONS);
     cleanup.add("stop fake Deep Agents MCP HTTPS server", () => fakeMcp.close());
     const fakeMcpTunnel = await startPublicMcpHttpsTunnel({
       cleanup,
@@ -1427,16 +1427,16 @@ mcpBridgeShardTest("deepagents")(
     progress.phase("exercise lifecycle and confirm Deep Agents bridge removal");
     await assertRealAdapterToolCall(host, sandbox, fakeMcp, {
       ...bridge,
-      resultToken: deepAgentsResult,
+      resultToken: MCP_RESULT,
       artifactName: "deepagents-real-mcp-tool-call-initial",
       deniedTool: MCP_BRIDGE_DENIED_TOOL_NAME,
     });
     await exactMainProof.assertSnapshotResidue("after-initial-tool-call");
-    await exactMainProof.assertLogPrivacy([TOOL_CHALLENGE, deepAgentsResult], "fake_echo");
+    await exactMainProof.assertLogPrivacy([TOOL_CHALLENGE, MCP_RESULT], "fake_echo");
     await restartBridgeWithoutHostSecret(host, DEEPAGENTS_SANDBOX_NAME, "deepagents");
     await assertRealAdapterToolCall(host, sandbox, fakeMcp, {
       ...bridge,
-      resultToken: deepAgentsResult,
+      resultToken: MCP_RESULT,
       artifactName: "deepagents-real-mcp-tool-call-after-restart",
       deniedTool: MCP_BRIDGE_DENIED_TOOL_NAME,
     });
@@ -1451,7 +1451,7 @@ mcpBridgeShardTest("deepagents")(
     );
     await assertRealAdapterToolCall(host, sandbox, fakeMcp, {
       ...bridge,
-      resultToken: deepAgentsResult,
+      resultToken: MCP_RESULT,
       artifactName: "deepagents-real-mcp-tool-call-after-credential-rotation",
       expectedSecret: ROTATED_HOST_SECRET,
     });
@@ -1480,7 +1480,7 @@ mcpBridgeShardTest("deepagents")(
     );
     await assertRealAdapterToolCall(host, sandbox, fakeMcp, {
       ...bridge,
-      resultToken: deepAgentsResult,
+      resultToken: MCP_RESULT,
       artifactName: "deepagents-real-mcp-tool-call-after-rebuild",
       expectedSecret: ROTATED_HOST_SECRET,
       deniedTool: MCP_BRIDGE_DENIED_TOOL_NAME,

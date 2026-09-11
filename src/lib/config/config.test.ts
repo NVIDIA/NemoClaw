@@ -86,7 +86,115 @@ function renderInput(value: unknown) {
   return renderCanonicalNemoClawConfig(validateNemoClawConfig(value));
 }
 
+function twoAgentConfig() {
+  const value = config();
+  const primary = value.spec.sandboxes[0]!.agents[0]!;
+  const secondary = { ...structuredClone(primary), name: "researcher", tools: { allow: ["read"] } };
+  value.spec.sandboxes[0]!.agents.push(secondary);
+  return { value, primary, secondary };
+}
+
 describe("NemoClawConfig v1", () => {
+  it.each(["researcher", "reviewer-2", "a", "a".repeat(32)])(
+    "accepts secondary agent %s on the primary hosted route (#11434)",
+    (name) => {
+      const { value, primary, secondary } = twoAgentConfig();
+      secondary.name = name;
+      Object.assign(primary, { tools: { disclosure: "direct" } });
+      expect(validateNemoClawConfig(value)).toEqual(value);
+    },
+  );
+
+  it.each(["main", "primary", "0agent", "with_underscore", "with.dot", "agent-", "a".repeat(33)])(
+    "rejects unrepresentable secondary name %s (#11434)",
+    (name) => {
+      const { value, secondary } = twoAgentConfig();
+      secondary.name = name;
+      expect(() => validateNemoClawConfig(value)).toThrow();
+    },
+  );
+
+  it.each([
+    { allow: [] },
+    { allow: ["write"] },
+    { allow: ["read", "read"] },
+    { allow: ["read"], deny: ["exec"] },
+    { allow: ["read"], disclosure: "direct" },
+    { allow: ["read"], token: "credential-canary" },
+  ])("rejects unsupported secondary tools without revealing values (#11434)", (tools) => {
+    const { value, secondary } = twoAgentConfig();
+    Object.assign(secondary, { tools });
+    expect(() => validateNemoClawConfig(value)).toThrow();
+    try {
+      validateNemoClawConfig(value);
+    } catch (error) {
+      expect(String(error)).not.toContain("credential-canary");
+    }
+  });
+
+  it.each<{
+    field: string;
+    mutate: (context: ReturnType<typeof twoAgentConfig>) => void;
+  }>([
+    {
+      field: "route",
+      mutate: ({ secondary }) => {
+        secondary.inference.routes[0]!.providerRef = "other";
+      },
+    },
+    {
+      field: "model",
+      mutate: ({ secondary }) => {
+        secondary.inference.routes[0]!.overrides.model = "other";
+      },
+    },
+    {
+      field: "primary",
+      mutate: ({ primary }) => {
+        primary.name = "main";
+      },
+    },
+    {
+      field: "count",
+      mutate: ({ value, secondary }) => {
+        value.spec.sandboxes[0]!.agents.push({ ...secondary, name: "third" });
+      },
+    },
+    {
+      field: "order",
+      mutate: ({ value }) => {
+        value.spec.sandboxes[0]!.agents.reverse();
+      },
+    },
+    {
+      field: "runtime",
+      mutate: ({ value }) => {
+        value.spec.sandboxes[0]!.runtime.provider = "podman";
+      },
+    },
+    {
+      field: "execution",
+      mutate: ({ secondary }) => {
+        Object.assign(secondary, { execution: { timeoutSeconds: 1 } });
+      },
+    },
+  ])("rejects secondary configuration with incompatible $field (#11434)", ({ mutate }) => {
+    const context = twoAgentConfig();
+    mutate(context);
+    const { value } = context;
+    expect(() => validateNemoClawConfig(value)).toThrow(
+      "/spec/sandboxes/0/agents must pair primary with one read-only OpenClaw agent sharing its hosted route",
+    );
+  });
+
+  it("preserves existing v1 agent names and lists without an allowlist (#11434)", () => {
+    const value = config();
+    const primary = value.spec.sandboxes[0]!.agents[0]!;
+    primary.name = "main";
+    value.spec.sandboxes[0]!.agents.push({ ...structuredClone(primary), name: "another" });
+    expect(validateNemoClawConfig(value)).toEqual(value);
+  });
+
   it("preserves an earlier valid hosted document using the ollama-local label (#11435)", () => {
     const value = config();
     value.spec.inferenceProviders[0]!.provider = "ollama-local";
