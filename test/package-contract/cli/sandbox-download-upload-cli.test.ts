@@ -80,6 +80,62 @@ function buildStubOpenshell(
 }
 
 describe("sandbox download/upload CLI wrappers", () => {
+  it.each(["upload", "download"])("preserves missing-OpenShell guidance for %s", (direction) => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-transfer-unavailable-"));
+    try {
+      writeSandboxRegistry(home);
+      const preload = path.join(home, "unavailable.cjs");
+      fs.writeFileSync(
+        preload,
+        `const fs = require('node:fs');
+const access = fs.accessSync;
+fs.accessSync = (file, ...args) => {
+  if (String(file).endsWith('/openshell')) throw new Error('fixture executable unavailable');
+  return access(file, ...args);
+};
+require('node:module').syncBuiltinESMExports();
+`,
+      );
+      const result = runWithEnv(["alpha", direction, "/sandbox/file"], {
+        HOME: home,
+        PATH: home,
+        NEMOCLAW_OPENSHELL_BIN: "",
+        NODE_OPTIONS: `--require=${preload}`,
+      });
+      expect(result.code).toBe(1);
+      expect(result.out).toContain(
+        "openshell CLI not found. Install OpenShell before using sandbox commands.",
+      );
+      expect(result.out).not.toContain("exit null");
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it.each(["upload", "download"])(
+    "preserves terminal liveness diagnostics without starting %s",
+    (direction) => {
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-transfer-liveness-"));
+      try {
+        writeSandboxRegistry(home);
+        const calls = path.join(home, "calls.log");
+        const localBin = buildStubOpenshell(home, calls);
+        fs.writeFileSync(calls, "");
+        const result = runWithEnv(["alpha", direction, "/sandbox/file"], {
+          HOME: home,
+          PATH: `${localBin}:${process.env.PATH || ""}`,
+          OPENSHELL_GATEWAY_ENDPOINT: "https://invalid.example",
+        });
+        expect(result.code).toBe(1);
+        expect(result.out).toContain("Unset OPENSHELL_GATEWAY_ENDPOINT and retry.");
+        expect(result.out).not.toContain("Sandbox lifecycle operation requested exit");
+        expect(fs.readFileSync(calls, "utf8")).not.toMatch(/sandbox (upload|download)/);
+      } finally {
+        fs.rmSync(home, { recursive: true, force: true });
+      }
+    },
+  );
+
   it.each([
     ["upload", 7],
     ["download", 1],
