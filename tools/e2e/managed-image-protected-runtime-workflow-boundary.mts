@@ -89,6 +89,7 @@ function requireOrderedSteps(
   }
 }
 
+/** Returns violations of the protected GPU job contract, including authorization, runtime bounds, and cleanup. */
 export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowRecord): string[] {
   const errors: string[] = [];
   const job = record(record(workflow.jobs)[JOB_ID]);

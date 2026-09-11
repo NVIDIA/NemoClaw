@@ -289,6 +289,7 @@ function passesNeedsAsEnvironmentData(step: WorkflowStep): boolean {
   );
 }
 
+/** Appends violations of the trusted PR dispatch boundary, including source identity and credential custody. */
 function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow): void {
   const inputs = workflow.on?.workflow_dispatch?.inputs ?? {};
   for (const name of [
@@ -1105,6 +1106,7 @@ function validateAggregation(errors: string[], workflow: OperationsWorkflow): vo
   }
 }
 
+/** Appends violations that could let the aggregate check omit a selected E2E result. */
 function validateRelevantE2e(errors: string[], workflow: OperationsWorkflow): void {
   const job = workflow.jobs["relevant-e2e"] ?? {};
   const expectedCondition =
