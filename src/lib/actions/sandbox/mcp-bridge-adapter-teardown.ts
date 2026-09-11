@@ -39,12 +39,12 @@ export async function scrubManagedMcpAdapterOrThrow(
   const observation = await observeMcpCredentialRevision(sandboxName, entry, runtimeSelection);
   if (observation === "absent" || observation === "canonical") {
     throw new McpBridgeError(
-      `Could not prove a revision-scoped credential before removing the managed adapter entry for MCP server '${entry.server}'.`,
+      `Could not prove a generation-scoped credential before removing the managed adapter entry for MCP server '${entry.server}'.`,
     );
   }
   const credentialRevision: McpAttachedCredentialRevision = observation;
   const adapter = resolveManagedMcpAdapter(sandbox, entry);
-  const removal = unregisterAgentAdapter(sandboxName, adapter, entry, runtimeSelection, {
+  const removal = await unregisterAgentAdapter(sandboxName, adapter, entry, runtimeSelection, {
     envValues: {},
     teardown: true,
   });

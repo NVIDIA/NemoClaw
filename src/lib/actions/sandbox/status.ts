@@ -6,7 +6,7 @@ import { CLI_NAME } from "../../cli/branding";
 import { deferSandboxLifecycleExit, isSandboxLifecycleDeferredExit } from "../../core/process-exit";
 import { inspectManagedLlamaCppStatus } from "../../inference/llama-cpp/managed-status";
 import { getGatewayPresets } from "../../policy";
-import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock-acquisition";
+import { withSandboxLifecycleLock } from "./lifecycle/lock";
 import * as registry from "../../state/registry";
 import { findSandboxAcrossGatewayRoots } from "../../state/registry/cross-port";
 import { getSandboxDockerRuntime } from "./docker-health";
@@ -18,6 +18,7 @@ import { printSandboxGatewayLookupStatus } from "./status-lookup-rendering";
 import {
   getSandboxStatusPreflight,
   printSandboxStatusPreflightHeader,
+  resolveSandboxStatusPhase,
   withoutTerminalPhasePreflight,
 } from "./status-preflight";
 import {
@@ -43,6 +44,7 @@ export {
   isDockerDaemonUnreachableForStatus,
   printGatewayFailureLayerHeader,
   printSandboxStatusPreflightHeader,
+  resolveSandboxStatusPhase,
   type SandboxStatusFailureLayer,
   type SandboxStatusPreflightFailure,
   type SandboxStatusPreflightResult,
@@ -123,7 +125,7 @@ export async function getSandboxStatusReport(
   sandboxName: string,
   deps: Parameters<typeof getLegacySandboxStatusReport>[1] = {},
 ): Promise<SandboxStatusReport> {
-  return withMcpLifecycleLock(sandboxName, async () => {
+  return withSandboxLifecycleLock(sandboxName, async () => {
     const hermesPortable = inspectHermesPortableStatus(sandboxName);
     if (hermesPortable) {
       return hermesPortableStatusReport(
@@ -156,7 +158,7 @@ function maybeEnsureHermesToolGatewayBroker(sb: registry.SandboxEntry | null): v
 export async function showSandboxStatus(sandboxName: string): Promise<void> {
   let deferredExitCode: number | null = null;
   try {
-    await withMcpLifecycleLock(sandboxName, async () => {
+    await withSandboxLifecycleLock(sandboxName, async () => {
       const hermesPortable = inspectHermesPortableStatus(sandboxName);
       if (hermesPortable) {
         console.log(`  Sandbox: ${sandboxName}`);
@@ -198,7 +200,11 @@ async function showLegacySandboxStatus(sandboxName: string): Promise<void> {
   // Resolve the docker-driver container once: reused for the paused-container
   // recovery hint (#4495) and the Docker health line below (#3975).
   const dockerRuntime = lookup.state === "present" ? getSandboxDockerRuntime(sandboxName) : null;
-  const phase = lookup.state === "present" ? (lookup.phase ?? null) : null;
+  const observedPhase = lookup.state === "present" ? (lookup.phase ?? null) : null;
+  const phase = resolveSandboxStatusPhase(
+    observedPhase,
+    snapshot.postRecoveryPreflight ?? preflight,
+  );
   const effectivePreflight = withoutTerminalPhasePreflight(
     snapshot.postRecoveryPreflight ?? preflight,
     phase,
@@ -228,8 +234,9 @@ async function showLegacySandboxStatus(sandboxName: string): Promise<void> {
     terminalRuntimeHealth,
     servingProcessHealth,
     statusAgent,
+    phase,
   };
-  const textOutcome = printSandboxDetails(textContext);
+  const textOutcome = await printSandboxDetails(textContext);
   if (
     (textOutcome.exitCode || llamaCpp?.kind === "unavailable") &&
     (!process.exitCode || process.exitCode === 0)

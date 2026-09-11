@@ -8,7 +8,6 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { help } from "../../src/lib/actions/root-help.js";
-import { selectSandboxOwningGateway } from "../../src/lib/actions/sandbox/gateway-select.js";
 import { normalizeArgv } from "../../src/lib/cli/argv-normalizer.js";
 import { globalCommandTokens } from "../../src/lib/cli/command-registry.js";
 import { withDirectPublicDispatch } from "../support/public-dispatch-test-harness.js";
@@ -433,7 +432,7 @@ describe("CLI dispatch", () => {
         '  "sandbox get liost") printf "Name: liost\\nPhase: Ready\\nPolicy:\\n"; exit 0 ;;',
         `  "policy get"*) printf '%b' ${JSON.stringify(LAUNCH_READINESS_FIXTURE_POLICY)}; exit 0 ;;`,
         '  "inference get") exit 1 ;;',
-        '  "sandbox connect liost") echo "CONNECTED_LIOST"; exit 0 ;;',
+        '  "sandbox exec --name liost --tty -- /bin/bash -i") echo "CONNECTED_LIOST"; exit 0 ;;',
         "  *) exit 0 ;;",
         "esac",
       ].join("\n"),
@@ -456,6 +455,7 @@ describe("CLI dispatch", () => {
     // selected gateway (#7105).
     expect(calls).not.toContain("sandbox list");
     expect(calls).toContain("sandbox list -g nemoclaw");
+    expect(calls).toContain("sandbox exec --name liost --tty -- /bin/bash -i");
   });
 
   it("fails fast on gated NEMOCLAW_VLLM_MODEL without HF token before sandbox side effects", () => {
@@ -980,9 +980,17 @@ describe("CLI dispatch", () => {
     "migrates a legacy sandbox named doctor before $label connect (#10212)",
     async (testCase) => {
       await withDirectPublicDispatch(
-        async ({ dispatchCli, migrateLegacyPortState, runOclifCommandById, sandboxes, stderr }) => {
+        async ({
+          dispatchCli,
+          crossPortSandboxes,
+          migrateLegacyPortState,
+          runOclifCommandById,
+          sandboxes,
+          stderr,
+        }) => {
           migrateLegacyPortState.mockImplementation(() => {
             sandboxes.set("doctor", { name: "doctor" });
+            crossPortSandboxes.set("doctor", { name: "doctor" });
             return {
               migratedSandboxNames: ["doctor"],
               migratedSession: false,
@@ -1009,9 +1017,17 @@ describe("CLI dispatch", () => {
 
   it("recovers a live sandbox named after an action before reporting scope (#10212)", async () => {
     await withDirectPublicDispatch(
-      async ({ dispatchCli, recoverRegistryEntries, runOclifCommandById, sandboxes, stderr }) => {
+      async ({
+        dispatchCli,
+        crossPortSandboxes,
+        recoverRegistryEntries,
+        runOclifCommandById,
+        sandboxes,
+        stderr,
+      }) => {
         recoverRegistryEntries.mockImplementation(async () => {
           sandboxes.set("doctor", { name: "doctor" });
+          crossPortSandboxes.set("doctor", { name: "doctor" });
           return { sandboxes: [...sandboxes.values()], defaultSandbox: null };
         });
 
@@ -1218,32 +1234,78 @@ describe("CLI dispatch", () => {
     });
   });
 
-  it("routes connect for a sibling-port sandbox through its recorded gateway", async () => {
-    await withSiblingGatewayRegistry([{ port: 8245, name: "owner-a" }], async () => {
-      await withDirectPublicDispatch(
-        async ({ dispatchCli, recoverRegistryEntries, runOclifCommandById, stderr }) => {
-          const runGatewaySelect = vi.fn(() => ({ status: 0 }) as never);
-          runOclifCommandById.mockImplementationOnce(async (commandId: string, args: string[]) => {
-            expect(commandId).toBe("sandbox:connect");
-            expect(args).toEqual(["owner-a", "--probe-only"]);
-            expect(selectSandboxOwningGateway("owner-a", runGatewaySelect)).toEqual({
-              outcome: "selected",
-              gatewayName: "nemoclaw-8245",
-            });
-          });
+  it("public exec selects the gateway recorded by a sibling-port sandbox (#11410)", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-sibling-exec-"));
+    const localBin = path.join(home, "bin");
+    const openshellLog = path.join(home, "openshell-calls.log");
+    fs.mkdirSync(localBin, { recursive: true });
 
-          await dispatchCli(["owner-a", "connect", "--probe-only"]);
-
-          expect(stderr.join("\n")).not.toContain("does not exist");
-          expect(recoverRegistryEntries).not.toHaveBeenCalled();
-          expect(runGatewaySelect).toHaveBeenCalledWith(
-            ["gateway", "select", "nemoclaw-8245"],
-            expect.objectContaining({ ignoreError: true }),
-          );
+    const ownerARegistryDir = path.join(home, ".nemoclaw", "gateways", "8245");
+    fs.mkdirSync(ownerARegistryDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(ownerARegistryDir, "sandboxes.json"),
+      JSON.stringify({
+        defaultSandbox: "owner-a",
+        defaultSelectionRevision: 1,
+        sandboxes: {
+          "owner-a": {
+            name: "owner-a",
+            agent: "openclaw",
+            gatewayPort: 8245,
+            gpuEnabled: false,
+            model: "test-model",
+            policies: [],
+            provider: "nvidia-prod",
+          },
         },
-        { sandboxNames: ["owner-b"], preserveHome: true, connectFlags: ["--probe-only"] },
-      );
-    });
+      }),
+      { mode: 0o600 },
+    );
+    const ownerBRegistryDir = path.join(home, ".nemoclaw", "gateways", "8246");
+    fs.mkdirSync(ownerBRegistryDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(ownerBRegistryDir, "sandboxes.json"),
+      JSON.stringify({
+        defaultSandbox: "owner-b",
+        defaultSelectionRevision: 1,
+        sandboxes: {
+          "owner-b": {
+            name: "owner-b",
+            agent: "openclaw",
+            gatewayPort: 8246,
+            gpuEnabled: false,
+            model: "test-model",
+            policies: [],
+            provider: "nvidia-prod",
+          },
+        },
+      }),
+      { mode: 0o600 },
+    );
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      [
+        "#!/usr/bin/env bash",
+        "printf '%s\\n' \"$*\" >> " + JSON.stringify(openshellLog),
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    try {
+      const result = runWithEnv("owner-a exec -- echo hi", {
+        HOME: home,
+        PATH: localBin + ":" + (process.env.PATH || ""),
+        NEMOCLAW_GATEWAY_PORT: "8246",
+      });
+      const calls = fs.existsSync(openshellLog) ? fs.readFileSync(openshellLog, "utf8") : "";
+      expect(result, result.out + "\nOpenShell calls:\n" + calls).toMatchObject({ code: 0 });
+      expect(result.out).not.toContain("does not exist");
+      expect(calls).toContain("gateway select nemoclaw-8245");
+      expect(calls).not.toContain("gateway select nemoclaw-8246");
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
   });
 
   it("lists sibling-port registrations in missing-sandbox diagnostics", async () => {

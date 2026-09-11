@@ -262,6 +262,7 @@ describe("oclif compatibility dispatch", () => {
     await withDirectPublicDispatch(
       async ({
         dispatchCli,
+        crossPortSandboxes,
         findSandboxAcrossGatewayRoots,
         recoverRegistryEntries,
         runOclifArgv,
@@ -272,9 +273,9 @@ describe("oclif compatibility dispatch", () => {
         recoverRegistryEntries.mockImplementationOnce(
           async ({ requestedSandboxName }: { requestedSandboxName: string }) => {
             expect(requestedSandboxName).toBe("alpha");
-            sandboxes.set("alpha", { name: "alpha" });
+            crossPortSandboxes.set("alpha", { name: "alpha", gatewayPort: 8245 });
             return {
-              sandboxes: [...sandboxes.values()],
+              sandboxes: [...crossPortSandboxes.values()],
               defaultSandbox: "alpha",
               recoveredFromSession: true,
               recoveredFromGateway: 0,
@@ -285,6 +286,7 @@ describe("oclif compatibility dispatch", () => {
         await dispatchCli(["alpha", "connect"]);
 
         expect(recoverRegistryEntries).toHaveBeenCalledWith({ requestedSandboxName: "alpha" });
+        expect(sandboxes.has("alpha")).toBe(false);
         expect(findSandboxAcrossGatewayRoots.mock.results[0]?.value).toBeNull();
         expect(
           findSandboxAcrossGatewayRoots.mock.results

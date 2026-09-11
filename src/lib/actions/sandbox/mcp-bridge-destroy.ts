@@ -126,7 +126,7 @@ export async function prepareMcpBridgesForDestroy(
     };
   }
 
-  assertMcpAdapterTeardownRuntimeCapabilities(
+  await assertMcpAdapterTeardownRuntimeCapabilities(
     sandboxName,
     sandbox,
     entries,

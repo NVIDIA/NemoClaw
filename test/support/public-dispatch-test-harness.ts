@@ -7,7 +7,12 @@ import path from "node:path";
 
 import { vi } from "vitest";
 
-type SandboxStub = { name: string; pendingRouteReservation?: true; createdAt?: string };
+type SandboxStub = {
+  name: string;
+  pendingRouteReservation?: true;
+  createdAt?: string;
+  gatewayPort?: number;
+};
 
 export type DirectPublicDispatchHarness = {
   dispatchCli: (argv: string[]) => Promise<void>;
@@ -22,12 +27,15 @@ export type DirectPublicDispatchHarness = {
   resetObservedCalls: () => void;
   runOclifArgv: ReturnType<typeof vi.fn>;
   runOclifCommandById: ReturnType<typeof vi.fn>;
+  crossPortSandboxes: Map<string, SandboxStub>;
   sandboxes: Map<string, SandboxStub>;
   stderr: string[];
 };
 
 type DirectPublicDispatchOptions = {
   sandboxNames?: readonly string[];
+  /** Sandboxes returned by the host-wide registry reader. Defaults to sandboxNames. */
+  crossPortSandboxNames?: readonly string[];
   /** Stored default-sandbox pointer; the stub applies the production fallback contract. */
   defaultSandbox?: string | null;
   /** Registered route reservations that are not ready or default-eligible. */
@@ -92,13 +100,17 @@ export async function withDirectPublicDispatch(
     : fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-public-dispatch-"));
   if (isolatedHome) process.env.HOME = isolatedHome;
   const pendingSandboxNames = new Set(options.pendingSandboxNames ?? []);
+  const sandboxStub = (name: string): SandboxStub => ({
+    name,
+    ...(pendingSandboxNames.has(name) ? { pendingRouteReservation: true as const } : {}),
+  });
   const sandboxes = new Map<string, SandboxStub>(
-    (options.sandboxNames ?? []).map((name) => [
+    (options.sandboxNames ?? []).map((name) => [name, sandboxStub(name)]),
+  );
+  const crossPortSandboxes = new Map<string, SandboxStub>(
+    (options.crossPortSandboxNames ?? options.sandboxNames ?? []).map((name) => [
       name,
-      {
-        name,
-        ...(pendingSandboxNames.has(name) ? { pendingRouteReservation: true as const } : {}),
-      },
+      sandboxStub(name),
     ]),
   );
   const getSandbox = vi.fn((name: string) => {
@@ -107,7 +119,7 @@ export async function withDirectPublicDispatch(
   });
   const findSandboxAcrossGatewayRoots = vi.fn((name: string) => {
     if (options.registryReadError) throw options.registryReadError;
-    const entry = sandboxes.get(name);
+    const entry = crossPortSandboxes.get(name);
     return entry ? { entry, gatewayPort: null, registryFile: "/test/sandboxes.json" } : null;
   });
   const isPublishedSandboxRegistration = vi.fn(
@@ -171,11 +183,11 @@ export async function withDirectPublicDispatch(
     cacheModule(crossPortRegistryPath, {
       findSandboxAcrossGatewayRoots,
       listPublishedSandboxNamesAcrossGatewayRoots: () =>
-        [...sandboxes.values()]
+        [...crossPortSandboxes.values()]
           .filter(({ pendingRouteReservation }) => pendingRouteReservation !== true)
           .map(({ name }) => name),
       listPendingSandboxNamesAcrossGatewayRoots: () =>
-        [...sandboxes.values()]
+        [...crossPortSandboxes.values()]
           .filter(({ pendingRouteReservation }) => pendingRouteReservation === true)
           .map(({ name }) => name),
     });
@@ -210,6 +222,7 @@ export async function withDirectPublicDispatch(
       resetObservedCalls,
       runOclifArgv,
       runOclifCommandById,
+      crossPortSandboxes,
       sandboxes,
       stderr,
     });

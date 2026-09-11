@@ -161,7 +161,6 @@ function startScriptHeredoc(src: string, marker: string): string {
   const match = src.match(new RegExp(`<<'${marker}'[^\\n]*\\n([\\s\\S]*?)\\n${marker}`));
   if (match) return match[1];
   const preloadByMarker: Record<string, string> = {
-    CIAO_GUARD_EOF: "ciao-network-guard.js",
     SAFETY_NET_EOF: "sandbox-safety-net.js",
   };
   const preload = preloadByMarker[marker];
@@ -394,7 +393,6 @@ describe("nemoclaw-start gateway token export (#1114)", () => {
         '_SANDBOX_SAFETY_NET="/tmp/safety-net.js"',
         '_PROXY_FIX_SCRIPT="/tmp/http-proxy-fix.js"',
         '_NEMOTRON_FIX_SCRIPT="/tmp/nemotron-fix.js"',
-        '_CIAO_GUARD_SCRIPT="/tmp/ciao-guard.js"',
         "emit_messaging_connect_runtime_preload_exports() { :; }",
         "_TOOL_REDIRECTS=()",
         "set +u",
@@ -649,7 +647,6 @@ describe("nemoclaw-start configure guard behavior", () => {
       '_SANDBOX_SAFETY_NET="/tmp/safety-net.js"',
       '_PROXY_FIX_SCRIPT="/tmp/http-proxy-fix.js"',
       '_NEMOTRON_FIX_SCRIPT="/tmp/nemotron-fix.js"',
-      '_CIAO_GUARD_SCRIPT="/tmp/ciao-guard.js"',
       "emit_messaging_connect_runtime_preload_exports() { :; }",
       'export OPENCLAW_GATEWAY_URL="ws://127.0.0.1:18789"',
       'export OPENCLAW_GATEWAY_PORT="18789"',
@@ -2505,36 +2502,38 @@ describe("provider placeholder refresh (#4251)", () => {
     );
   });
 
-  it("does not warn when the Slack config alias matches an OpenShell runtime placeholder", () => {
-    const run = runRefresh(
-      {
-        channels: {
-          slack: {
-            accounts: {
-              default: {
-                botToken: "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
-                appToken: "xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN",
+  it.each(["v42", `s${"a".repeat(64)}`])(
+    "does not warn when the Slack config alias matches an OpenShell %s runtime placeholder",
+    (credentialHandle) => {
+      const run = runRefresh(
+        {
+          channels: {
+            slack: {
+              accounts: {
+                default: {
+                  botToken: "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
+                  appToken: "xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN",
+                },
               },
             },
           },
         },
-      },
-      {
-        SLACK_BOT_TOKEN: "openshell:resolve:env:v42_SLACK_BOT_TOKEN",
-        SLACK_APP_TOKEN: "openshell:resolve:env:v42_SLACK_APP_TOKEN",
-      },
-    );
+        {
+          SLACK_BOT_TOKEN: `openshell:resolve:env:${credentialHandle}_SLACK_BOT_TOKEN`,
+          SLACK_APP_TOKEN: `openshell:resolve:env:${credentialHandle}_SLACK_APP_TOKEN`,
+        },
+      );
 
-    expect(run.result.status, run.result.stderr).toBe(0);
-    expect(run.result.stderr).not.toContain("slack.default");
-    // The Bolt-compatible alias follows the revision-scoped runtime placeholder.
-    expect(run.config.channels.slack.accounts.default.botToken).toBe(
-      "xoxb-OPENSHELL-RESOLVE-ENV-v42_SLACK_BOT_TOKEN",
-    );
-    expect(run.config.channels.slack.accounts.default.appToken).toBe(
-      "xapp-OPENSHELL-RESOLVE-ENV-v42_SLACK_APP_TOKEN",
-    );
-  });
+      expect(run.result.status, run.result.stderr).toBe(0);
+      expect(run.result.stderr).not.toContain("slack.default");
+      expect(run.config.channels.slack.accounts.default.botToken).toBe(
+        `xoxb-OPENSHELL-RESOLVE-ENV-${credentialHandle}_SLACK_BOT_TOKEN`,
+      );
+      expect(run.config.channels.slack.accounts.default.appToken).toBe(
+        `xapp-OPENSHELL-RESOLVE-ENV-${credentialHandle}_SLACK_APP_TOKEN`,
+      );
+    },
+  );
 
   it("does not warn when the Slack runtime env holds a genuine xoxb-/xapp- token", () => {
     const run = runRefresh(
@@ -2584,8 +2583,6 @@ describe("provider placeholder refresh (#4251)", () => {
   });
 
   it("warns when the Slack runtime env resolves a different key than expected", () => {
-    // A placeholder for the wrong key must not look healthy — Bolt would still
-    // inherit a non-Slack placeholder and fail at startup.
     const run = runRefresh(
       {
         channels: {
@@ -3065,7 +3062,6 @@ describe("Telegram diagnostics (#2766)", () => {
         `_SANDBOX_SAFETY_NET=${JSON.stringify(path.join(tmpDir, "safety.js"))}`,
         `_PROXY_FIX_SCRIPT=${JSON.stringify(path.join(tmpDir, "proxy-fix.js"))}`,
         `_NEMOTRON_FIX_SCRIPT=${JSON.stringify(path.join(tmpDir, "nemotron-fix.js"))}`,
-        `_CIAO_GUARD_SCRIPT=${JSON.stringify(path.join(tmpDir, "ciao-guard.js"))}`,
         `validate_nemoclaw_tmp_permissions() { validate_tmp_permissions ${JSON.stringify(preloadPath)}; }`,
         "NEMOCLAW_CMD=()",
         '_nemoclaw_safe_create_tmp_file() { if [ "$1" = /tmp/auto-pair.log ]; then return 97; fi; : > "$1"; chmod "$2" "$1"; }',
@@ -3304,7 +3300,6 @@ process.stderr.write('FailoverError: token=123456:LATER\\n');
         `_SANDBOX_SAFETY_NET=${JSON.stringify(path.join(tmpDir, "safety.js"))}`,
         `_PROXY_FIX_SCRIPT=${JSON.stringify(path.join(tmpDir, "proxy-fix.js"))}`,
         `_NEMOTRON_FIX_SCRIPT=${JSON.stringify(path.join(tmpDir, "nemotron-fix.js"))}`,
-        `_CIAO_GUARD_SCRIPT=${JSON.stringify(path.join(tmpDir, "ciao-guard.js"))}`,
         `_MESSAGING_CONNECT_PRELOADS_FILE=${JSON.stringify(connectPreloadsPath)}`,
         extractShellFunctionFromSource(src, "emit_messaging_connect_runtime_preload_exports"),
         "_TOOL_REDIRECTS=()",
@@ -4301,7 +4296,6 @@ describe("direct-root entrypoint composition under CAP_DAC_OVERRIDE drop", () =>
         '_SANDBOX_SAFETY_NET=""',
         '_PROXY_FIX_SCRIPT=""',
         '_NEMOTRON_FIX_SCRIPT=""',
-        '_CIAO_GUARD_SCRIPT=""',
         "emit_messaging_connect_runtime_preload_exports() { :; }",
         '_TOOL_REDIRECTS=("NEMOCLAW_TEST_REDIRECT=/tmp/nemoclaw-test")',
         'NODE_USE_ENV_PROXY=""',

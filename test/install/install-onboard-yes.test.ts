@@ -16,6 +16,7 @@ type StubAssignments = {
   cliPath?: string;
 };
 
+/** Observe argument forwarding without invoking a real CLI or session classifier. */
 function runOnboardWithMockCli(
   env: Record<string, string>,
   assignments: StubAssignments = {},
@@ -59,6 +60,7 @@ function runOnboardWithMockCli(
   return captured.split("\n").filter((line) => line.length > 0);
 }
 
+/** Keep installed CLI path selection observable before the command is available on PATH. */
 function runOnboardWithStubAtPath(
   env: Record<string, string>,
   cliBinName: string,
@@ -99,10 +101,12 @@ function runOnboardWithStubAtPath(
   };
 }
 
-// Run run_onboard against a crafted ~/.nemoclaw/onboard-session.json so the
-// session classifier path runs. Unlike the helpers above (which stub
-// command_exists to false to skip classification), this keeps command_exists
-// real so `command_exists node` is true and the real node classifier runs.
+/**
+ * Run run_onboard against a crafted ~/.nemoclaw/onboard-session.json so the
+ * session classifier path runs. Unlike the helpers above (which stub
+ * command_exists to false to skip classification), this keeps command_exists
+ * real so `command_exists node` is true and the real node classifier runs.
+ */
 function runOnboardWithSession(
   env: Record<string, string>,
   session: Record<string, unknown>,
@@ -140,6 +144,7 @@ function runOnboardWithSession(
 type FailedPromptMode = "non-interactive" | "unreadable-tty" | "read-failure";
 type FailedSessionAgent = "" | "hermes" | "langchain-deepagents-code";
 
+/** Exercise recovery from a saved failed session without requiring an interactive terminal. */
 function runFailedSessionRecovery(mode: FailedPromptMode, agent: FailedSessionAgent = "") {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-failed-recovery-"));
   const home = path.join(tmp, "home");
@@ -581,6 +586,7 @@ type DeferredOnboardingMainOptions = {
   registeredSandboxCount?: number;
 };
 
+/** Observe deferred-onboarding decisions without installing software or creating a sandbox. */
 function runDeferredOnboardingMain(options: DeferredOnboardingMainOptions = {}) {
   const registeredSandboxCount = options.registeredSandboxCount ?? 0;
   const result = runInstallerSourcedBody(
@@ -748,8 +754,8 @@ describe("Hermes deferred onboarding", () => {
     const result = runDeferredOnboardingMain({ deferFlag: true, registeredSandboxCount: 1 });
 
     expect(result.result.status, result.output).toBe(0);
-    expect(result.calls).toContain("host-preflight");
     expect(result.calls).toContain("recover-preexisting");
+    expect(result.calls).not.toContain("host-preflight");
     expect(result.calls).not.toContain("onboard");
   });
 

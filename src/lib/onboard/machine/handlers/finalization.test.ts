@@ -4,6 +4,8 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { SessionUpdates } from "../../../state/onboard-session";
+import type { PreparedExternalComponent } from "../../external-component";
+import type { ExternalComponentActivationProof } from "../../external-component/activation";
 import {
   type FinalizationStateOptions,
   handleFinalizationState as handleFinalizationPhase,
@@ -23,6 +25,35 @@ type Agent = {
 } | null;
 type VerifyChain = { port: number };
 type VerificationResult = { ok: boolean };
+
+const sandboxIdentityFingerprint = `sha256:${"b".repeat(64)}`;
+const externalComponent: PreparedExternalComponent = {
+  declaration: {
+    schemaVersion: 1,
+    componentId: "policy-governance",
+    interceptorSocketPath: "/run/user/1000/component/interceptor.sock",
+    activationSocketPath: "/run/user/1000/component/activation.sock",
+  },
+  revalidateBeforeGateway: vi.fn(),
+  revalidateBeforeActivation: vi.fn(),
+};
+const activationProof: ExternalComponentActivationProof = {
+  gatewayName: "nemoclaw",
+  sandboxId: "sandbox-123",
+  sandboxIdentityFingerprint,
+  lifecycleGeneration: "generation-1",
+  policySource: "sandbox",
+  policyHash: `sha256:${"a".repeat(64)}`,
+  policyActiveVersion: 7,
+  revalidate: vi.fn(),
+};
+const activationEvidence = {
+  schemaVersion: 1 as const,
+  activationId: "4b5a8e18-f967-4e27-a3b2-f2cc315abe21",
+  componentId: "policy-governance",
+  lifecycleGeneration: "generation-1",
+  sandboxIdentityFingerprint,
+};
 
 function createDeps(
   overrides: Partial<FinalizationStateOptions<Agent, VerifyChain, VerificationResult>["deps"]> = {},
@@ -49,6 +80,10 @@ function createDeps(
     dashboard: vi.fn(),
     isHealthy: vi.fn(() => true),
     reportReadiness: vi.fn(),
+    createExternalComponentActivationProof: vi.fn(() => activationProof),
+    createExternalComponentActivationId: vi.fn(() => "4b5a8e18-f967-4e27-a3b2-f2cc315abe21"),
+    activateExternalComponent: vi.fn(async () => ({ kind: "activated" as const })),
+    setExternalComponentActivationEvidence: vi.fn(),
     error: vi.fn(),
     log: vi.fn(),
   };
@@ -56,6 +91,10 @@ function createDeps(
     calls,
     deps: {
       setDefaultSandbox: calls.setDefaultSandbox,
+      createExternalComponentActivationProof: calls.createExternalComponentActivationProof,
+      createExternalComponentActivationId: calls.createExternalComponentActivationId,
+      activateExternalComponent: calls.activateExternalComponent,
+      setExternalComponentActivationEvidence: calls.setExternalComponentActivationEvidence,
       toSessionUpdates: (updates: Record<string, unknown>) => updates as SessionUpdates,
       removeLegacyCredentialsFile: calls.removeLegacy,
       cleanupStaleHostFiles: calls.cleanupHost,
@@ -111,6 +150,119 @@ async function runFinalizationHandlers(
 }
 
 describe("finalization handlers", () => {
+  it("completes providerless component activation without ordinary setup (#11486)", async () => {
+    const { deps, calls } = createDeps();
+    const result = await handleFinalizationPhase({
+      ...baseOptions(deps),
+      externalComponent,
+      providerless: true,
+      provider: "",
+      model: "",
+    });
+    expect(result.stateResult).toMatchObject({ type: "transition", next: "post_verify" });
+    expect(calls.activateExternalComponent).toHaveBeenCalledOnce();
+    expect(calls.setExternalComponentActivationEvidence).toHaveBeenLastCalledWith(null);
+    expect(calls.setDefaultSandbox).not.toHaveBeenCalled();
+    expect(calls.removeLegacy).not.toHaveBeenCalled();
+    expect(calls.cleanupHost).not.toHaveBeenCalled();
+    expect(calls.recoverProcesses).not.toHaveBeenCalled();
+    expect(calls.verify).not.toHaveBeenCalled();
+    expect(calls.dashboard).not.toHaveBeenCalled();
+  });
+
+  it("activates the registered component before declaring the sandbox ready (#11340)", async () => {
+    const { deps, calls } = createDeps();
+
+    const result = await handleFinalizationPhase({
+      ...baseOptions(deps),
+      externalComponent,
+    });
+
+    expect(calls.createExternalComponentActivationProof).toHaveBeenCalledWith("my-assistant");
+    expect(calls.activateExternalComponent).toHaveBeenCalledWith(
+      externalComponent,
+      activationProof,
+      "4b5a8e18-f967-4e27-a3b2-f2cc315abe21",
+    );
+    expect(calls.setExternalComponentActivationEvidence).toHaveBeenNthCalledWith(1, {
+      ...activationEvidence,
+      resultClass: "ambiguous",
+    });
+    expect(calls.setExternalComponentActivationEvidence).toHaveBeenNthCalledWith(2, null);
+    expect(calls.setExternalComponentActivationEvidence.mock.invocationCallOrder[0]).toBeLessThan(
+      calls.activateExternalComponent.mock.invocationCallOrder[0],
+    );
+    expect(calls.activateExternalComponent.mock.invocationCallOrder[0]).toBeLessThan(
+      calls.setDefaultSandbox.mock.invocationCallOrder[0],
+    );
+    expect(result.stateResult).toMatchObject({
+      type: "transition",
+      next: "post_verify",
+    });
+  });
+
+  it.each([
+    ["rejected", "failed", false],
+    ["ambiguous", "ambiguous", false],
+    ["rejected", "failed", true],
+    ["ambiguous", "ambiguous", true],
+  ] as const)(
+    "preserves identity-bound incomplete state for %s activation (#11340)",
+    async (kind, resultClass, providerless) => {
+      const activationId = "4b5a8e18-f967-4e27-a3b2-f2cc315abe21";
+      const activate = vi.fn(async () =>
+        kind === "rejected"
+          ? ({ kind, activationId } as const)
+          : ({ kind, activationId, reason: "timeout" } as const),
+      );
+      const { deps, calls } = createDeps({ activateExternalComponent: activate });
+
+      const result = await handleFinalizationPhase({
+        ...baseOptions(deps),
+        externalComponent,
+        providerless,
+      });
+
+      expect(result.stateResult).toEqual({
+        type: "pause",
+        updates: {
+          externalComponentActivation: {
+            schemaVersion: 1,
+            activationId,
+            componentId: "policy-governance",
+            lifecycleGeneration: "generation-1",
+            sandboxIdentityFingerprint,
+            resultClass,
+          },
+        },
+        metadata: {
+          state: "finalizing",
+          reason: "external_component_activation_incomplete",
+        },
+      });
+      expect(result.stateResult.updates?.externalComponentActivation).not.toHaveProperty(
+        "sandboxName",
+      );
+      expect(calls.setDefaultSandbox).not.toHaveBeenCalled();
+      expect(calls.removeLegacy).not.toHaveBeenCalled();
+      expect(calls.cleanupHost).not.toHaveBeenCalled();
+      expect(calls.error).toHaveBeenCalledWith(
+        `  External component activation is incomplete. Reason class: ${resultClass}. The sandbox was preserved.`,
+      );
+      expect(JSON.stringify(calls.error.mock.calls)).not.toMatch(
+        /policy-governance|activation\.sock|credential|secret|token|password|api.?key/iu,
+      );
+      expect(calls.setExternalComponentActivationEvidence).toHaveBeenNthCalledWith(1, {
+        ...activationEvidence,
+        resultClass: "ambiguous",
+      });
+      expect(calls.setExternalComponentActivationEvidence).toHaveBeenLastCalledWith({
+        ...activationEvidence,
+        resultClass,
+      });
+    },
+  );
+
   it("advances to post verification before deployment verification runs", async () => {
     const { deps, calls } = createDeps();
 
@@ -495,37 +647,44 @@ describe("finalization handlers", () => {
     expect(calls.reportReadiness).toHaveBeenCalledWith(false);
   });
 
-  it("settles ordinary OpenClaw pairing after recovery and before verification (#9844)", async () => {
-    const { deps, calls } = createDeps();
+  it("waits for ordinary OpenClaw pairing after recovery and before verification (#10479)", async () => {
+    let releasePairing!: () => void;
+    const pairingPending = new Promise<void>((resolve) => {
+      releasePairing = resolve;
+    });
+    const events: string[] = [];
+    const settleOrdinaryPairing = vi.fn(async () => {
+      events.push("pairing-started");
+      await pairingPending;
+      events.push("pairing-settled");
+      return { kind: "settled" as const };
+    });
+    const verifyDeployment = vi.fn(async () => {
+      events.push("verify");
+      return { ok: true };
+    });
+    const { deps, calls } = createDeps({
+      settleOrdinaryOpenClawPairing: settleOrdinaryPairing,
+      verifyDeployment,
+    });
 
-    await runFinalizationHandlers(baseOptions(deps));
+    const finalization = runFinalizationHandlers(baseOptions(deps));
+    await vi.waitFor(() => expect(events).toContain("pairing-started"));
+    expect(verifyDeployment).not.toHaveBeenCalled();
+    releasePairing();
+    await finalization;
 
-    expect(calls.settleOrdinaryPairing).toHaveBeenCalledExactlyOnceWith("my-assistant");
-    expect(calls.settleOrdinaryPairing.mock.invocationCallOrder[0]).toBeGreaterThan(
+    expect(settleOrdinaryPairing).toHaveBeenCalledExactlyOnceWith("my-assistant");
+    expect(settleOrdinaryPairing.mock.invocationCallOrder[0]).toBeGreaterThan(
       calls.recoverProcesses.mock.invocationCallOrder[0],
     );
-    expect(calls.settleOrdinaryPairing.mock.invocationCallOrder[0]).toBeLessThan(
+    expect(settleOrdinaryPairing.mock.invocationCallOrder[0]).toBeLessThan(
       calls.recoverProcesses.mock.invocationCallOrder[1],
     );
     expect(calls.recoverProcesses.mock.invocationCallOrder[1]).toBeLessThan(
-      calls.verify.mock.invocationCallOrder[0],
+      verifyDeployment.mock.invocationCallOrder[0],
     );
-  });
-
-  it("does not settle ordinary OpenClaw pairing during an inner rebuild handoff (#9844)", async () => {
-    const { deps, calls } = createDeps();
-
-    const result = await runFinalizationHandlers({
-      ...baseOptions(deps),
-      recreateJournalHandoff: true,
-    });
-
-    expect(result.stateResult.type).toBe("complete");
-    expect(calls.settleOrdinaryPairing).not.toHaveBeenCalled();
-    expect(calls.recoverProcesses).toHaveBeenCalledExactlyOnceWith("my-assistant", {
-      quiet: true,
-    });
-    expect(calls.verify).toHaveBeenCalledOnce();
+    expect(events).toEqual(["pairing-started", "pairing-settled", "verify"]);
   });
 
   it("does not run OpenClaw pairing settlement for Hermes (#9844)", async () => {

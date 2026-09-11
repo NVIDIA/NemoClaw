@@ -74,6 +74,11 @@ export type TrustedSandboxShellScript = string & {
   readonly [trustedSandboxShellScriptBrand]: true;
 };
 
+// OpenShell records the create argv as the sandbox's canonical main process.
+// Historical rebuild fixtures therefore need a non-terminal process until the
+// real rebuild flow takes ownership of the sandbox lifecycle.
+export const HISTORICAL_SANDBOX_MAIN_PROCESS = ["sleep", "infinity"] as const;
+
 export function trustedSandboxShellScript(script: string): TrustedSandboxShellScript {
   if (script.length === 0) {
     throw new Error("sandbox shell script must not be empty");
@@ -217,7 +222,7 @@ export class SandboxClient {
    *
    * Used exclusively by recovery E2E targets (#2701). Removes:
    *   - /tmp/nemoclaw-proxy-env.sh (the NODE_OPTIONS chain export file)
-   *   - the five --require preload guard scripts written by the entrypoint
+   *   - the four --require preload guard scripts written by the entrypoint
    */
   async wipeGuardChain(
     name: string,
@@ -229,7 +234,6 @@ export class SandboxClient {
       "-f",
       "/tmp/nemoclaw-proxy-env.sh",
       "/tmp/nemoclaw-sandbox-safety-net.js",
-      "/tmp/nemoclaw-ciao-network-guard.js",
       "/tmp/nemoclaw-slack-channel-guard.js",
       "/tmp/nemoclaw-http-proxy-fix.js",
       "/tmp/nemoclaw-nemotron-inference-fix.js",

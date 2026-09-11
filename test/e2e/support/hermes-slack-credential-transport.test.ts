@@ -104,7 +104,7 @@ describe("Hermes Slack credential-fingerprint scan", () => {
     expect(leaked.status, leaked.stderr).toBe(0);
     expect(JSON.parse(leaked.stdout)).toEqual({ files: "LEAK", processes: "EMPTY" });
 
-    writeFileSync(fixture, "only revision-scoped placeholders remain");
+    writeFileSync(fixture, `only openshell:resolve:env:s${"a".repeat(64)}_SLACK_BOT_TOKEN remains`);
     const clean = scan();
     expect(clean.status, clean.stderr).toBe(0);
     expect(JSON.parse(clean.stdout)).toEqual({ files: "OK", processes: "EMPTY" });

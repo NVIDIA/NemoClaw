@@ -73,6 +73,7 @@ describe("createRebuildRegistryRollback", () => {
 
   it("restores an ordinary removal receipt only when no replacement exists", () => {
     const removed = sandboxEntry();
+    const restoreSandboxEntry = vi.fn();
     const restoreSandboxEntryIfMissing = vi.fn(() => true);
     const log = vi.fn();
     const rollback = createRebuildRegistryRollback(
@@ -83,7 +84,7 @@ describe("createRebuildRegistryRollback", () => {
         getRecoveryRegistrySnapshot: () => null,
         log,
       },
-      { restoreSandboxEntryIfMissing },
+      { restoreSandboxEntry, restoreSandboxEntryIfMissing },
     );
     rollback.recordRemoval(removalReceipt(removed));
 
@@ -101,6 +102,7 @@ describe("createRebuildRegistryRollback", () => {
   });
 
   it("keeps a replacement registered by failed onboarding", () => {
+    const restoreSandboxEntry = vi.fn();
     const restoreSandboxEntryIfMissing = vi.fn(() => false);
     const log = vi.fn();
     const rollback = createRebuildRegistryRollback(
@@ -111,7 +113,7 @@ describe("createRebuildRegistryRollback", () => {
         getRecoveryRegistrySnapshot: () => null,
         log,
       },
-      { restoreSandboxEntryIfMissing },
+      { restoreSandboxEntry, restoreSandboxEntryIfMissing },
     );
     rollback.recordRemoval(removalReceipt(sandboxEntry()));
 
@@ -145,6 +147,7 @@ describe("createRebuildRegistryRollback", () => {
   });
 
   it("can restore after an early no-op and contains restore failures", () => {
+    const restoreSandboxEntry = vi.fn();
     const restoreSandboxEntryIfMissing = vi.fn(() => {
       throw new Error("registry locked");
     });
@@ -157,7 +160,7 @@ describe("createRebuildRegistryRollback", () => {
         getRecoveryRegistrySnapshot: () => null,
         log,
       },
-      { restoreSandboxEntryIfMissing },
+      { restoreSandboxEntry, restoreSandboxEntryIfMissing },
     );
 
     rollback.restoreForRetry();
