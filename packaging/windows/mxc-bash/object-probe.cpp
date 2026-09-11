@@ -45,20 +45,20 @@ struct Name {
   }
 };
 using OpenDirectory=NTSTATUS(NTAPI*)(PHANDLE,ACCESS_MASK,POBJECT_ATTRIBUTES);
-using CreateDirectory=NTSTATUS(NTAPI*)(PHANDLE,ACCESS_MASK,POBJECT_ATTRIBUTES);
-using CreateEvent=NTSTATUS(NTAPI*)(PHANDLE,ACCESS_MASK,POBJECT_ATTRIBUTES,ULONG,BOOLEAN);
-using OpenEvent=NTSTATUS(NTAPI*)(PHANDLE,ACCESS_MASK,POBJECT_ATTRIBUTES);
+using NtCreateDirectoryFunction=NTSTATUS(NTAPI*)(PHANDLE,ACCESS_MASK,POBJECT_ATTRIBUTES);
+using NtCreateEventFunction=NTSTATUS(NTAPI*)(PHANDLE,ACCESS_MASK,POBJECT_ATTRIBUTES,ULONG,BOOLEAN);
+using NtOpenEventFunction=NTSTATUS(NTAPI*)(PHANDLE,ACCESS_MASK,POBJECT_ATTRIBUTES);
 using CreateSection=NTSTATUS(NTAPI*)(PHANDLE,ACCESS_MASK,POBJECT_ATTRIBUTES,PLARGE_INTEGER,ULONG,ULONG,HANDLE);
 using OpenSection=NTSTATUS(NTAPI*)(PHANDLE,ACCESS_MASK,POBJECT_ATTRIBUTES);
 struct Api {
   HMODULE nt=GetModuleHandleW(L"ntdll.dll");
-  OpenDirectory openDirectory;CreateDirectory createDirectory;CreateEvent createEvent;OpenEvent openEvent;CreateSection createSection;OpenSection openSection;
+  OpenDirectory openDirectory;NtCreateDirectoryFunction createDirectory;NtCreateEventFunction createEvent;NtOpenEventFunction openEvent;CreateSection createSection;OpenSection openSection;
   template<typename T> T load(const char* name){FARPROC value=GetProcAddress(nt,name);T function=nullptr;static_assert(sizeof(value)==sizeof(function));std::memcpy(&function,&value,sizeof(function));return function;}
   Api(){
     require(nt!=nullptr,"ntdll-missing");
     openDirectory=load<OpenDirectory>("NtOpenDirectoryObject");
-    createDirectory=load<CreateDirectory>("NtCreateDirectoryObject");
-    createEvent=load<CreateEvent>("NtCreateEvent");openEvent=load<OpenEvent>("NtOpenEvent");
+    createDirectory=load<NtCreateDirectoryFunction>("NtCreateDirectoryObject");
+    createEvent=load<NtCreateEventFunction>("NtCreateEvent");openEvent=load<NtOpenEventFunction>("NtOpenEvent");
     createSection=load<CreateSection>("NtCreateSection");openSection=load<OpenSection>("NtOpenSection");
     require(openDirectory&&createDirectory&&createEvent&&openEvent&&createSection&&openSection,"ntdll-export-missing");
   }

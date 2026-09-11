@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <wchar.h>
+#include <stdint.h>
 
 namespace {
 WCHAR moduleDirectory[MAX_PATH] = {};
@@ -17,6 +18,58 @@ decltype(&CreateProcessW) realCreateW = CreateProcessW;
 decltype(&CreateProcessA) realCreateA = CreateProcessA;
 decltype(&CreateProcessAsUserW) realCreateAsUserW = CreateProcessAsUserW;
 decltype(&CreateProcessAsUserA) realCreateAsUserA = CreateProcessAsUserA;
+
+uint16_t machineFromPeHeader(const unsigned char* header, size_t size) {
+    if (size < 26 || header[0] != 'P' || header[1] != 'E' || header[2] || header[3]) return 0;
+    const uint16_t machine = static_cast<uint16_t>(header[4] | (header[5] << 8));
+    const uint16_t optionalSize = static_cast<uint16_t>(header[20] | (header[21] << 8));
+    const uint16_t characteristics = static_cast<uint16_t>(header[22] | (header[23] << 8));
+    if (optionalSize < 2 || header[24] != 0x0b || header[25] != 0x02 ||
+        !(characteristics & 0x0002) || (characteristics & 0x2000)) return 0;
+    return machine == 0xaa64 || machine == 0x8664 ? machine : 0;
+}
+
+struct ProcessImageFile {
+    HANDLE handle = INVALID_HANDLE_VALUE;
+    ~ProcessImageFile() {
+        const DWORD error = GetLastError();
+        if (handle != INVALID_HANDLE_VALUE) CloseHandle(handle);
+        SetLastError(error);
+    }
+};
+
+BOOL readProcessImageMachine(HANDLE process, ProcessImageFile& image, USHORT& machine) {
+    WCHAR fileName[4096] = {};
+    DWORD count = static_cast<DWORD>(sizeof(fileName) / sizeof(fileName[0]));
+    if (!QueryFullProcessImageNameW(process, 0, fileName, &count)) return FALSE;
+    image.handle = CreateFileW(fileName, GENERIC_READ, FILE_SHARE_READ, nullptr,
+        OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+    if (image.handle == INVALID_HANDLE_VALUE) return FALSE;
+    BY_HANDLE_FILE_INFORMATION info = {};
+    if (!GetFileInformationByHandle(image.handle, &info)) return FALSE;
+    if (info.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)) {
+        SetLastError(ERROR_BAD_EXE_FORMAT); return FALSE;
+    }
+    BYTE dos[64] = {};
+    DWORD read = 0;
+    if (!ReadFile(image.handle, dos, sizeof(dos), &read, nullptr)) return FALSE;
+    if (read != sizeof(dos) || dos[0] != 'M' || dos[1] != 'Z') {
+        SetLastError(ERROR_BAD_EXE_FORMAT); return FALSE;
+    }
+    const DWORD offset = static_cast<DWORD>(dos[60]) | (static_cast<DWORD>(dos[61]) << 8) |
+        (static_cast<DWORD>(dos[62]) << 16) | (static_cast<DWORD>(dos[63]) << 24);
+    const ULONGLONG fileSize = (static_cast<ULONGLONG>(info.nFileSizeHigh) << 32) | info.nFileSizeLow;
+    if (offset < sizeof(dos) || offset > 1024 * 1024 || static_cast<ULONGLONG>(offset) + 26 > fileSize) {
+        SetLastError(ERROR_BAD_EXE_FORMAT); return FALSE;
+    }
+    LARGE_INTEGER position = {}; position.QuadPart = offset;
+    if (!SetFilePointerEx(image.handle, position, nullptr, FILE_BEGIN)) return FALSE;
+    BYTE header[26] = {};
+    if (!ReadFile(image.handle, header, sizeof(header), &read, nullptr)) return FALSE;
+    machine = machineFromPeHeader(header, read);
+    if (!machine) { SetLastError(ERROR_BAD_EXE_FORMAT); return FALSE; }
+    return TRUE;
+}
 
 BOOL processContainerSid(HANDLE process, BYTE* output) {
     HANDLE token = nullptr;
@@ -67,8 +120,24 @@ BOOL inject(HANDLE child) {
         SetLastError(error);
         return FALSE;
     }
-    if (!IsWow64Process2(child, &processMachine, &nativeMachine)) return FALSE;
-    USHORT machine = processMachine ? processMachine : nativeMachine;
+    // A suspended x64 process on ARM64 can still report UNKNOWN/native ARM64
+    // before loader initialization. Bind selection to its executable image.
+    const BOOL queried = IsWow64Process2(child, &processMachine, &nativeMachine);
+    const DWORD queryError = queried ? ERROR_SUCCESS : GetLastError();
+    ProcessImageFile image;
+    USHORT machine = 0;
+    if (!readProcessImageMachine(child, image, machine)) {
+        error = GetLastError();
+        logPropagation(GetProcessId(child), 0, TRUE, TRUE, FALSE, error);
+        SetLastError(error); return FALSE;
+    }
+    char line[512];
+    const int length = _snprintf_s(line, sizeof(line), _TRUNCATE,
+        "NEMOCLAW_MSYS_IMAGE_MACHINE={\"schemaVersion\":1,\"childPid\":%lu,\"peMachine\":%u,\"queryProcessMachine\":%u,\"queryNativeMachine\":%u,\"queryError\":%lu,\"source\":\"QueryFullProcessImageNameW/PE\"}\n",
+        GetProcessId(child), static_cast<unsigned>(machine), static_cast<unsigned>(processMachine),
+        static_cast<unsigned>(nativeMachine), queryError);
+    DWORD written = 0;
+    if (length > 0) WriteFile(GetStdHandle(STD_ERROR_HANDLE), line, static_cast<DWORD>(length), &written, nullptr);
     const WCHAR* file = machine == IMAGE_FILE_MACHINE_ARM64 ? L"NemoClawMsysCompat-arm64.dll"
         : machine == IMAGE_FILE_MACHINE_AMD64 ? L"NemoClawMsysCompat-x64.dll" : nullptr;
     if (!file) { SetLastError(ERROR_NOT_SUPPORTED); return FALSE; }
