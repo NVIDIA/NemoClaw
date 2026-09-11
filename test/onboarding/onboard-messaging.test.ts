@@ -21,6 +21,8 @@ import {
 import { runBoundedOnboardScript } from "../helpers/onboard-child-process-harness";
 import { writeOkOpenshell } from "../helpers/onboard-openshell-fixture";
 
+vi.setConfig({ maxConcurrency: 4 });
+
 type CommandEntry = {
   command: string;
   env?: Record<string, string | undefined>;
@@ -43,7 +45,7 @@ beforeEach(() => {
   vi.stubEnv("NEMOCLAW_TEST_FORWARD_SERVICE_FIXTURE", "1");
   vi.stubEnv("NEMOCLAW_SANDBOX_PREBUILD", "1");
 });
-describe("onboard messaging", () => {
+describe.concurrent("onboard messaging", () => {
   it(
     "creates providers for messaging tokens and attaches them to the sandbox",
     {
