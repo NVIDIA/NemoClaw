@@ -214,10 +214,15 @@ def verify_auxiliary_token_limit() -> None:
         **common,
         base_url="https://example.test/v1",
     )
+    external_moa = _build_call_kwargs(
+        **{**common, "task": "moa_reference"},
+        base_url="https://example.test/v1",
+    )
 
     assert managed.get("max_tokens") == 64, managed
     assert "max_tokens" not in external, external
     assert "max_completion_tokens" not in external, external
+    assert external_moa.get("max_tokens") == 64, external_moa
 
 
 def verify_neutral_platform_inertness() -> None:

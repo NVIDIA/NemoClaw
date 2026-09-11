@@ -456,7 +456,7 @@ COPY --from=hermes-agent-payload / /
 # published base can carry the expected Hermes version while omitting either
 # optional dependency group. This is a build-time package/import guard; live
 # protocol behavior remains a separate E2E concern.
-ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=e52443b42315fde3f1a1c7dd2e3c86a3fdea7c9bea73c57e67399f61d47bbbb7
+ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=5a3c5e9b51228649dc916aa36b3c51f2df8fa6807b139a35926844fd81b7a100
 # hadolint ignore=DL3059,DL4006
 RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256" /opt/nemoclaw-hermes-config/image-build-probes.py \
@@ -484,7 +484,7 @@ RUN find /opt/nemoclaw-hermes-config -type d -exec chmod 755 {} + \
 # same-version wheel selected by its lazy installer. Bind that production
 # boundary to NVIDIA/NemoClaw's reviewed wheel hashes.
 ARG NEMOCLAW_HERMES_HINDSIGHT_LAZY_INTEGRITY_PATCH_SHA256=5c619477c10e0b76cffd7adc214cbccf3beb77e7a1121f394c443502d9e0b736
-ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=e52443b42315fde3f1a1c7dd2e3c86a3fdea7c9bea73c57e67399f61d47bbbb7
+ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=5a3c5e9b51228649dc916aa36b3c51f2df8fa6807b139a35926844fd81b7a100
 # hadolint ignore=DL4006
 RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_HINDSIGHT_LAZY_INTEGRITY_PATCH_SHA256" /opt/nemoclaw-hermes-config/hindsight-lazy-integrity.patch \
@@ -683,13 +683,18 @@ RUN /usr/bin/python3 -I \
 ARG NEMOCLAW_HERMES_CRON_RUNTIME_PATCHER_SHA256=b8aae8925cacad654d7b09900bd1cc02d776feaec4662c06dde8f4b2f356e22e
 ARG NEMOCLAW_HERMES_CRON_EXECUTIONS_SOURCE_SHA256=b4a685a901abdffe2d1232099b3c27391775775a7011d52c90276cb15d3fd75d
 ARG NEMOCLAW_HERMES_BACKUP_SOURCE_SHA256=b0838c1f2e120d8f97076c6321297077edc1f150dc6d4b84ba3d13327fcbb156
+# Hermes v0.20.6 drops explicit auxiliary output limits on custom endpoints.
+# Preserve those limits on NemoClaw's managed inference route so session-title
+# generation cannot occupy Ollama's only inference slot until the context fills.
+ARG NEMOCLAW_HERMES_AUXILIARY_TOKEN_LIMIT_PATCHER_SHA256=d04ffc133e115caddd6a1243979e317a512a4ffd8b259ec2b053a5057c26ba93
 # hadolint ignore=DL4006
 RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_CRON_RUNTIME_PATCHER_SHA256" /opt/nemoclaw-hermes-config/patch-cron-execution-runtime.py \
         "$NEMOCLAW_HERMES_CRON_EXECUTIONS_SOURCE_SHA256" /opt/hermes/cron/executions.py \
         "$NEMOCLAW_HERMES_BACKUP_SOURCE_SHA256" /opt/hermes/hermes_cli/backup.py \
+        "$NEMOCLAW_HERMES_AUXILIARY_TOKEN_LIMIT_PATCHER_SHA256" /opt/nemoclaw-hermes-config/patch-auxiliary-token-limit.py \
     | sha256sum -c - \
-    || { echo "ERROR: Hermes cron execution runtime source identity mismatch" >&2; exit 1; }
+    || { echo "ERROR: Hermes cron or auxiliary token-limit source identity mismatch" >&2; exit 1; }
 RUN /usr/bin/python3 -I \
         /opt/nemoclaw-hermes-config/patch-cron-execution-runtime.py \
         --executions /opt/hermes/cron/executions.py \
@@ -699,25 +704,15 @@ RUN set -eu; \
     trap 'rm -rf "$probe_home"' EXIT; \
     HERMES_HOME="$probe_home" /opt/hermes/.venv/bin/python -I \
         /opt/nemoclaw-hermes-config/image-build-probes.py cron-runtime-source \
-    && rm /opt/nemoclaw-hermes-config/patch-gateway-runtime-metadata.py \
-        /opt/nemoclaw-hermes-config/patch-gateway-process-identity.py \
-        /opt/nemoclaw-hermes-config/patch-cron-execution-runtime.py \
-        /opt/nemoclaw-hermes-config/patch-cron-restore-drain.py
-
-# Hermes v0.20.6 drops explicit auxiliary output limits on custom endpoints.
-# Preserve those limits on NemoClaw's managed inference route so session-title
-# generation cannot occupy Ollama's only inference slot until the context fills.
-ARG NEMOCLAW_HERMES_AUXILIARY_TOKEN_LIMIT_PATCHER_SHA256=d04ffc133e115caddd6a1243979e317a512a4ffd8b259ec2b053a5057c26ba93
-# hadolint ignore=DL4006
-RUN printf '%s  %s\n' \
-        "$NEMOCLAW_HERMES_AUXILIARY_TOKEN_LIMIT_PATCHER_SHA256" /opt/nemoclaw-hermes-config/patch-auxiliary-token-limit.py \
-    | sha256sum -c - \
-    || { echo "ERROR: patch-auxiliary-token-limit.py hash mismatch (update NEMOCLAW_HERMES_AUXILIARY_TOKEN_LIMIT_PATCHER_SHA256)" >&2; exit 1; }; \
-    /usr/bin/python3 -I /opt/nemoclaw-hermes-config/patch-auxiliary-token-limit.py \
+    && /usr/bin/python3 -I /opt/nemoclaw-hermes-config/patch-auxiliary-token-limit.py \
     && /opt/hermes/.venv/bin/python -m py_compile /opt/hermes/agent/auxiliary_client.py \
     && /opt/hermes/.venv/bin/python -I \
         /opt/nemoclaw-hermes-config/image-build-probes.py auxiliary-token-limit \
-    && rm /opt/nemoclaw-hermes-config/patch-auxiliary-token-limit.py
+    && rm /opt/nemoclaw-hermes-config/patch-gateway-runtime-metadata.py \
+        /opt/nemoclaw-hermes-config/patch-gateway-process-identity.py \
+        /opt/nemoclaw-hermes-config/patch-cron-execution-runtime.py \
+        /opt/nemoclaw-hermes-config/patch-cron-restore-drain.py \
+        /opt/nemoclaw-hermes-config/patch-auxiliary-token-limit.py
 
 # Hermes v0.20.6 computes `sessions list` preview from the first user message.
 # Its workspace-aware titled table then hides the preview behind an automatic

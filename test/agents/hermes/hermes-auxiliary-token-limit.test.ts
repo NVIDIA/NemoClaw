@@ -62,7 +62,7 @@ function runPatcher(file: string) {
   });
 }
 
-function evaluate(file: string, baseUrl: string) {
+function evaluate(file: string, baseUrl: string, task = "title_generation") {
   const source = `
 import importlib.util
 import json
@@ -71,9 +71,9 @@ import sys
 spec = importlib.util.spec_from_file_location("fixture", sys.argv[1])
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
-print(json.dumps(module.build("custom", "qwen3-vl:4b", sys.argv[2], 64)))
+print(json.dumps(module.build("custom", "qwen3-vl:4b", sys.argv[2], 64, task=sys.argv[3])))
 `;
-  return spawnSync("python3", ["-I", "-c", source, file, baseUrl], {
+  return spawnSync("python3", ["-I", "-c", source, file, baseUrl, task], {
     encoding: "utf8",
     timeout: 5000,
   });
@@ -105,6 +105,16 @@ describe("Hermes managed auxiliary output limit", () => {
 
     expect(request.status, request.stderr).toBe(0);
     expect(JSON.parse(request.stdout)).toEqual({});
+  });
+
+  it("preserves the MoA reference limit on another custom endpoint", () => {
+    const file = fixtureFile();
+    expect(runPatcher(file).status).toBe(0);
+
+    const request = evaluate(file, "https://example.test/v1", "moa_reference");
+
+    expect(request.status, request.stderr).toBe(0);
+    expect(JSON.parse(request.stdout)).toEqual({ max_tokens: 64, model_seen: "qwen3-vl:4b" });
   });
 
   it("accepts one already-patched module without rewriting it", () => {
