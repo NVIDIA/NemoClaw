@@ -643,6 +643,62 @@ describe("PR review advisor specialist prompts", () => {
     ).toThrow("no opted-in finding is eligible for repair");
   });
 
+  it("fails closed when repair selection receives a non-blocking finding (#10791)", async () => {
+    const headSha = "a".repeat(40);
+    const ledger = buildAdvisorFindingLedger({
+      headSha,
+      interest: "reduction-simplification",
+      input: {
+        findings: [
+          {
+            severity: "P1",
+            kind: "correctness",
+            summary: "An optional cleanup is available.",
+            path: "src/lib/example.ts",
+            line: 4,
+            impact: "The current behavior remains valid.",
+            smallestSafeFix: "Apply the optional cleanup.",
+            regressionTest: "Keep the current behavior covered.",
+            exclusions: [],
+          },
+        ],
+        noFindingsReason: null,
+      },
+    });
+    const nonBlockingLedger = {
+      ...ledger,
+      findings: ledger.findings.map((finding) => ({ ...finding, severity: "warning" })),
+    } as unknown as typeof ledger;
+
+    expect(() =>
+      selectRepairFindings({
+        version: 1,
+        repository: "NVIDIA/NemoClaw",
+        prNumber: 42,
+        sourceHeadSha: headSha,
+        baseSha: "b".repeat(40),
+        headRef: "feature/fix",
+        repositoryId: "R_repo",
+        author: "maintainer",
+        actor: "maintainer",
+        triggeringActor: "maintainer",
+        workflowSha: "c".repeat(40),
+        advisor: {
+          runId: 7,
+          runAttempt: 1,
+          workflowSha: "d".repeat(40),
+          artifactIds: Array.from({ length: 10 }, (_, index) => index + 1),
+        },
+        stateDigest: `sha256:${"e".repeat(64)}`,
+        reviewDigest: `sha256:${"f".repeat(64)}`,
+        ledgers: [nonBlockingLedger],
+        optedFindingIds: [nonBlockingLedger.findings[0]!.id],
+        productScope: "accepted:#10791",
+        optIn: "manual-exact-head",
+      }),
+    ).toThrow("no opted-in finding is eligible for repair");
+  });
+
   it("never selects security findings from an otherwise eligible repair class (#10791)", async () => {
     const headSha = "a".repeat(40);
     const controller = createAdvisorFindingToolController({

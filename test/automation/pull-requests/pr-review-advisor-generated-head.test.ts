@@ -278,6 +278,7 @@ describe("PR Review Advisor generated-head evidence", () => {
     let changedPaths: string[] = [];
     let e2eConclusion = "success";
     let e2eMatrixConclusion = "success";
+    let e2eRunAttempt = 1;
     let e2eJobMode: "duplicate" | "failure" | "missing" | "skipped" | "success" = "success";
     let e2eArtifactMode: "duplicate" | "expired" | "missing" | "success" | "wrong-run" = "success";
     let e2eReceiptOverrides: Record<string, unknown> = {};
@@ -354,12 +355,12 @@ describe("PR Review Advisor generated-head evidence", () => {
               head_branch: "main",
               head_sha: "5".repeat(40),
               html_url: e2eUrl,
-              run_attempt: 1,
+              run_attempt: e2eRunAttempt,
             };
           case method === "GET" && apiPath.includes(`/actions/runs/${e2eRunId}/artifacts?`): {
             const artifact = {
               id: e2eArtifactId,
-              name: `e2e-dispatch-${e2eRunId}-1`,
+              name: `e2e-dispatch-${e2eRunId}-${e2eRunAttempt}`,
               size_in_bytes: e2eArchive.length,
               expired: e2eArtifactMode === "expired",
               digest: `sha256:${createHash("sha256").update(e2eArchive).digest("hex")}`,
@@ -374,14 +375,15 @@ describe("PR Review Advisor generated-head evidence", () => {
                   : [artifact];
             return { total_count: artifacts.length, artifacts };
           }
-          case method === "GET" && apiPath.includes(`/actions/runs/${e2eRunId}/attempts/1/jobs`): {
+          case method === "GET" &&
+            apiPath.includes(`/actions/runs/${e2eRunId}/attempts/${e2eRunAttempt}/jobs`): {
             const successfulRequiredE2eJobs = expectedE2eJobNames.map((name, index) => ({
               id: 992 + index,
               name,
               status: "completed",
               conclusion: "success",
               html_url: `${e2eUrl}/job/${992 + index}`,
-              run_attempt: 1,
+              run_attempt: e2eRunAttempt,
             }));
             const firstRequiredE2eJob = successfulRequiredE2eJobs[0]!;
             const requiredE2eJobs = {
@@ -406,7 +408,7 @@ describe("PR Review Advisor generated-head evidence", () => {
                   status: "completed",
                   conclusion: e2eMatrixConclusion,
                   html_url: `${e2eUrl}/job/991`,
-                  run_attempt: 1,
+                  run_attempt: e2eRunAttempt,
                 },
                 ...requiredE2eJobs,
               ],
@@ -485,7 +487,7 @@ describe("PR Review Advisor generated-head evidence", () => {
           baseSha: selection.baseSha,
           workflowSha: "5".repeat(40),
           workflowRunId: String(e2eRunId),
-          workflowRunAttempt: 1,
+          workflowRunAttempt: e2eRunAttempt,
           eventName: "workflow_dispatch",
           jobs: "onboard-repair,onboard-resume",
           targets: "",
@@ -610,6 +612,16 @@ describe("PR Review Advisor generated-head evidence", () => {
         correlationId: e2eCorrelationId,
       }),
     );
+    e2eRunAttempt = 2;
+    dispatchedWorkflows.clear();
+    await expect(verify()).resolves.toMatchObject({
+      e2e: {
+        runId: e2eRunId,
+        runAttempt: 2,
+        receipt: { name: `e2e-dispatch-${e2eRunId}-2` },
+      },
+    });
+    e2eRunAttempt = 1;
     e2eConclusion = "failure";
     dispatchedWorkflows.clear();
     await expect(verify()).rejects.toThrow("generated-head E2E run failed");

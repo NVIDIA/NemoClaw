@@ -638,14 +638,18 @@ async function completedWorkflowEvidence(
   return { ...dispatch, runAttempt: Number(run.run_attempt), receipt, jobs };
 }
 
-async function listE2eJobs(runId: number, request: GitHubRequest): Promise<WorkflowJob[]> {
+async function listE2eJobs(
+  runId: number,
+  runAttempt: number,
+  request: GitHubRequest,
+): Promise<WorkflowJob[]> {
   const jobs: WorkflowJob[] = [];
   const ids = new Set<number>();
   let totalCount: number | undefined;
   for (let page = 1; page <= 10; page += 1) {
     const response = (await request(
       "GET",
-      `/repos/${REPAIR_REPOSITORY}/actions/runs/${runId}/attempts/1/jobs?per_page=100&page=${page}`,
+      `/repos/${REPAIR_REPOSITORY}/actions/runs/${runId}/attempts/${runAttempt}/jobs?per_page=100&page=${page}`,
     )) as { total_count?: unknown; jobs?: unknown };
     if (
       !Number.isSafeInteger(response.total_count) ||
@@ -674,6 +678,7 @@ function requiredE2eJobEvidence(
   jobs: readonly WorkflowJob[],
   requiredJobs: readonly string[],
   runUrl: string,
+  runAttempt: number,
 ): Array<{ name: string; url: string }> {
   if (new Set(requiredJobs).size !== requiredJobs.length)
     throw new RepairError("generated-head E2E required job list is invalid");
@@ -694,7 +699,7 @@ function requiredE2eJobEvidence(
     if (
       job.status !== "completed" ||
       job.conclusion !== "success" ||
-      job.run_attempt !== 1 ||
+      job.run_attempt !== runAttempt ||
       !Number.isSafeInteger(job.id) ||
       Number(job.id) < 1 ||
       typeof job.html_url !== "string" ||
@@ -785,11 +790,12 @@ async function verifiedE2eDispatchReceipt(
     workflowSha: string;
     attemptKey: string;
     requiredJobs: readonly string[];
+    runAttempt: number;
     request: GitHubRequest;
     requestArchive: ArtifactArchiveRequest;
   },
 ): Promise<AdvisorRepairE2eEvidence["receipt"]> {
-  const artifactName = `e2e-dispatch-${runId}-1`;
+  const artifactName = `e2e-dispatch-${runId}-${input.runAttempt}`;
   const matches = (await listE2eArtifacts(runId, input.request)).filter(
     (artifact) => artifact.name === artifactName,
   );
@@ -839,7 +845,7 @@ async function verifiedE2eDispatchReceipt(
     receipt.baseSha !== input.baseSha ||
     receipt.workflowSha !== input.workflowSha ||
     receipt.workflowRunId !== String(runId) ||
-    receipt.workflowRunAttempt !== 1 ||
+    receipt.workflowRunAttempt !== input.runAttempt ||
     receipt.eventName !== "workflow_dispatch" ||
     receipt.jobs !== input.requiredJobs.join(",") ||
     receipt.targets !== "" ||
@@ -888,13 +894,15 @@ async function completedE2eEvidence(
     run.head_sha !== input.workflowSha ||
     run.display_title !== `E2E PR #${input.prNumber} (${dispatch.correlationId})` ||
     run.html_url !== url ||
-    run.run_attempt !== 1
+    !Number.isSafeInteger(run.run_attempt) ||
+    Number(run.run_attempt) < 1
   )
     throw new RepairError("generated-head E2E run evidence is invalid");
+  const runAttempt = Number(run.run_attempt);
   input.observe?.(run);
   if (run.status !== "completed") return null;
   if (run.conclusion !== "success") throw new RepairError("generated-head E2E run failed");
-  const jobs = await listE2eJobs(dispatch.runId, input.request);
+  const jobs = await listE2eJobs(dispatch.runId, runAttempt, input.request);
   const generateMatrixMatches = jobs.filter((job) => job.name === "generate-matrix");
   if (generateMatrixMatches.length !== 1)
     throw new RepairError("generated-head E2E generate-matrix job is ambiguous");
@@ -902,18 +910,18 @@ async function completedE2eEvidence(
   if (
     generateMatrixJob.status !== "completed" ||
     generateMatrixJob.conclusion !== "success" ||
-    generateMatrixJob.run_attempt !== 1 ||
+    generateMatrixJob.run_attempt !== runAttempt ||
     !Number.isSafeInteger(generateMatrixJob.id) ||
     Number(generateMatrixJob.id) < 1 ||
     typeof generateMatrixJob.html_url !== "string" ||
     !generateMatrixJob.html_url.startsWith(`${url}/job/`)
   )
     throw new RepairError("generated-head E2E generate-matrix job did not succeed");
-  const requiredJobEvidence = requiredE2eJobEvidence(jobs, input.requiredJobs, url);
-  const receipt = await verifiedE2eDispatchReceipt(dispatch.runId, input);
+  const requiredJobEvidence = requiredE2eJobEvidence(jobs, input.requiredJobs, url, runAttempt);
+  const receipt = await verifiedE2eDispatchReceipt(dispatch.runId, { ...input, runAttempt });
   return {
     ...dispatch,
-    runAttempt: 1,
+    runAttempt,
     url,
     receipt,
     generateMatrix: { name: "generate-matrix", url: generateMatrixJob.html_url },

@@ -331,6 +331,8 @@ const TRUSTED_REPAIR_CLASSES = {
 } as const;
 
 function findingSkipReason(finding: AdvisorFinding, sourceHeadSha: string): string | null {
+  if (finding.severity !== "P0" && finding.severity !== "P1")
+    return "excluded:non-blocking-finding";
   if (finding.kind === "security") return "excluded:security-finding";
   const repairClass =
     TRUSTED_REPAIR_CLASSES[finding.interest as keyof typeof TRUSTED_REPAIR_CLASSES];

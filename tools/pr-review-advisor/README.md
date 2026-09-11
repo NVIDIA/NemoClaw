@@ -64,6 +64,8 @@ call GitHub. A separate secret-free job reconstructs and validates the patch. Wh
 explicitly requested, the protected deterministic publisher rechecks the live state and may make
 one verified, non-force, compare-and-swap branch update. A trusted-main reporter then runs and
 records the approved exact-generated-SHA checks without starting another repair attempt.
+Only blocking `P0` and `P1` machine-ledger findings are eligible for this repair path; every other
+severity fails closed at the trusted selection boundary.
 
 `repair-contract.mts` owns the fixed validation plan, and `repair-validate.mts` executes that plan.
 It seals the repair patch and validation receipt only after every required command succeeds; a
@@ -88,7 +90,7 @@ inside its bounded workflow window. Each expected name must have one job record 
 status and a successful conclusion.
 Missing, skipped, failed, duplicate, or unmapped job evidence fails closed. The reporter also
 downloads the sole dispatch receipt, verifies its artifact digest, and requires its PR, commit,
-workflow, run, and selector fields to match the request. Workflow and E2E dispatch identities are
+workflow, run, current run attempt, and selector fields to match the request. Workflow and E2E dispatch identities are
 deterministic for the repair attempt and generated SHA. Reconciliation adopts the sole matching
 exact run and dispatches only missing work; an ambiguous identity fails closed. The version 3
 generated-head receipt records the risk plan, verified dispatch receipt, bounded workflow and E2E
