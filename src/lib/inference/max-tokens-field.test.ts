@@ -2,7 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
-import { requiresMaxCompletionTokensField, resolveMaxTokensField } from "./max-tokens-field";
+import {
+  requiresMaxCompletionTokensField,
+  resolveMaxTokensField,
+  resolveProbeReplyTokens,
+} from "./max-tokens-field";
 
 describe("resolveMaxTokensField", () => {
   it.each(["gpt-5", "gpt-5.4", "gpt-5.4-turbo", "GPT-5.4"])(
@@ -46,5 +50,16 @@ describe("resolveMaxTokensField", () => {
     expect(resolveMaxTokensField("")).toBe("max_tokens");
     expect(resolveMaxTokensField(null)).toBe("max_tokens");
     expect(resolveMaxTokensField(undefined)).toBe("max_tokens");
+  });
+});
+
+describe("resolveProbeReplyTokens", () => {
+  it.each([
+    ["gemini-api", 256],
+    ["openai-api", 16],
+    ["nvidia-prod", 16],
+    [null, 16],
+  ])("resolves the %s provider probe budget", (provider, expected) => {
+    expect(resolveProbeReplyTokens(provider)).toBe(expected);
   });
 });

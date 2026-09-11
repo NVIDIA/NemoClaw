@@ -2,16 +2,22 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { isNvcfFunctionNotFoundForAccount } from "../../inference/nvcf-model-access";
 
 import {
+  GEMINI_PROBE_REPLY_TOKENS,
+  MIN_PROBE_REPLY_TOKENS,
+} from "../../inference/max-tokens-field";
+import {
   buildDcodeSandboxInferenceInvocationRequest,
   buildSandboxInferenceInvocationCommand,
+  INFERENCE_INVOCATION_REQUEST_TIMEOUT_SECONDS,
   probeSandboxInferenceInvocation,
+  READINESS_INFERENCE_INVOCATION_TIMEOUT_MS,
 } from "./inference-invocation-probe";
 
 const input = {
@@ -80,6 +86,22 @@ const NVCF_BODY_VARIANTS = [
 ] as const;
 
 describe("sandbox inference invocation probe", () => {
+  it("keeps command reference budgets aligned with source values", () => {
+    const commands = readFileSync(
+      path.join(import.meta.dirname, "../../../../docs/reference/commands.mdx"),
+      "utf8",
+    );
+
+    expect(commands).toContain(`Ordinary providers request ${MIN_PROBE_REPLY_TOKENS} reply tokens`);
+    expect(commands).toContain(`Gemini requests ${GEMINI_PROBE_REPLY_TOKENS} reply tokens`);
+    expect(commands).toContain(
+      `The request allows up to ${INFERENCE_INVOCATION_REQUEST_TIMEOUT_SECONDS} seconds`,
+    );
+    expect(commands).toContain(
+      `the host wrapper allows ${READINESS_INFERENCE_INVOCATION_TIMEOUT_MS / 1000} seconds`,
+    );
+  });
+
   it("probes the recorded model through inference.local without embedding a credential (#6195)", () => {
     const command = buildSandboxInferenceInvocationCommand(input);
 
@@ -478,6 +500,69 @@ describe("sandbox inference invocation probe", () => {
 
     expect(command).toContain('"max_tokens":16');
     expect(command).not.toContain('"max_completion_tokens"');
+  });
+
+  it("executes the Gemini sandbox request with the configured reply budget (#10260)", async () => {
+    const tempDir = mkdtempSync(path.join(tmpdir(), "nemoclaw-gemini-probe-"));
+    const fakeBin = path.join(tempDir, "bin");
+    const capturedPayload = path.join(tempDir, "payload.json");
+    mkdirSync(fakeBin);
+    writeFileSync(
+      path.join(fakeBin, "curl"),
+      `#!/bin/sh
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --data-binary) printf '%s' "$2" > "$CAPTURED_PAYLOAD"; shift 2 ;;
+    -o) response_file="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+printf '%s' '{"choices":[{"message":{"content":"OK"}}]}' > "$response_file"
+printf '200'
+`,
+      { mode: 0o755 },
+    );
+    const execute = vi.fn(async (_sandboxName, command) => {
+      const result = spawnSync("/bin/sh", ["-c", command], {
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          CAPTURED_PAYLOAD: capturedPayload,
+          PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+        },
+      });
+      return { status: result.status ?? 1, stdout: result.stdout, stderr: result.stderr };
+    });
+
+    await expect(
+      probeSandboxInferenceInvocation(
+        { ...input, provider: "gemini-api", model: "gemini-2.5-flash" },
+        { execute },
+      ),
+    ).resolves.toEqual({ ok: true });
+    expect(execute).toHaveBeenCalledOnce();
+    const payload = JSON.parse(readFileSync(capturedPayload, "utf-8"));
+    expect(payload).toMatchObject({ model: "gemini-2.5-flash", max_tokens: 256 });
+    expect(payload).not.toHaveProperty("max_completion_tokens");
+  });
+
+  it("still rejects a structurally empty Gemini response (#10260)", async () => {
+    const execute = vi.fn(async () => ({
+      status: 0,
+      stdout: '200\n{"choices":[{"message":{"content":null}}]}',
+      stderr: "",
+    }));
+
+    await expect(
+      probeSandboxInferenceInvocation(
+        { ...input, provider: "gemini-api", model: "gemini-2.5-flash" },
+        { execute },
+      ),
+    ).resolves.toEqual({
+      ok: false,
+      detail: "sandbox inference invocation probe returned an invalid response body",
+      httpStatus: 200,
+    });
   });
 
   it("sends max_output_tokens on the responses route", () => {
