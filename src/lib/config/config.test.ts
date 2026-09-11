@@ -2,9 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import YAML from "yaml";
+import Ajv from "ajv/dist/2020.js";
 import { describe, expect, it } from "vitest";
 import { renderCanonicalNemoClawConfig, validateNemoClawConfig } from "./index";
 import {
+  EXPORTED_OLLAMA_MODEL,
   EXPORTED_VLLM_PROFILE_ID,
   EXPORTED_VLLM_RECIPE_ID,
   isCredentialEnvironmentReferenceName,
@@ -19,6 +21,10 @@ import {
   type NemoClawConfigDocumentName,
   type NemoClawConfigDocumentUid,
 } from "./model";
+
+const validateAgentSchema = new Ajv({ strict: false }).compile(
+  NemoClawConfigSchema.properties.spec.properties.sandboxes.items.properties.agents.items,
+);
 
 function config(uid = "11111111-1111-4111-8111-111111111111") {
   return {
@@ -81,6 +87,12 @@ function renderInput(value: unknown) {
 }
 
 describe("NemoClawConfig v1", () => {
+  it("preserves an earlier valid hosted document using the ollama-local label (#11435)", () => {
+    const value = config();
+    value.spec.inferenceProviders[0]!.provider = "ollama-local";
+    expect(validateNemoClawConfig(value)).toEqual(value);
+  });
+
   it.each(["progressive", "direct"])("validates tool disclosure %s", (disclosure) => {
     const value = config();
     Object.assign(value.spec.sandboxes[0]!.agents[0]!, { tools: { disclosure } });
@@ -219,6 +231,7 @@ describe("NemoClawConfig v1", () => {
       reasoningEffort: "default",
     });
     Object.assign(agent, { execution: { timeoutSeconds: 1000000000, heartbeatEvery: "0m" } });
+    expect(validateAgentSchema(agent)).toBe(true);
     expect(validateNemoClawConfig(value)).toEqual(value);
   });
 
@@ -252,12 +265,13 @@ describe("NemoClawConfig v1", () => {
     expect(() => validateNemoClawConfig(value)).toThrow();
   });
 
-  it("rejects OpenClaw execution settings on a Hermes agent", () => {
+  it("rejects Hermes execution settings in the agent schema and runtime", () => {
     const value = config();
     Object.assign(value.spec.sandboxes[0]!.agents[0]!, {
       type: "hermes",
       execution: { timeoutSeconds: 900 },
     });
+    expect(validateAgentSchema(value.spec.sandboxes[0]!.agents[0])).toBe(false);
     expect(() => validateNemoClawConfig(value)).toThrow();
   });
 
@@ -851,8 +865,79 @@ describe("fixed managed serving public contract", () => {
   });
 });
 
+function ollamaConfig() {
+  const value = config();
+  value.spec.sandboxes[0]!.agents[0]!.inference.routes[0]!.overrides.model = EXPORTED_OLLAMA_MODEL;
+  return {
+    ...value,
+    spec: {
+      ...value.spec,
+      inferenceProviders: [
+        {
+          name: "hosted-openai",
+          provider: "ollama-local",
+          api: "openai-completions",
+          serving: {
+            backend: "ollama",
+            daemon: { management: "external", hostPort: 11439 },
+            proxy: { management: "nemoclaw", hostPort: 11440 },
+            model: { servedName: EXPORTED_OLLAMA_MODEL, digest: `sha256:${"a".repeat(64)}` },
+          },
+        },
+      ],
+    },
+  };
+}
+
+describe("attached Ollama serving public contract", () => {
+  it("round trips the external daemon separately from its managed proxy (#11435)", () => {
+    const value = ollamaConfig();
+    const rendered = renderCanonicalNemoClawConfig(validateNemoClawConfig(value));
+    expect(validateNemoClawConfig(YAML.parse(rendered.yaml))).toEqual(value);
+  });
+
+  it.each([
+    { daemon: { management: "nemoclaw", hostPort: 11439 } },
+    { daemon: { management: "external", hostPort: 11440 } },
+    { proxy: { management: "external", hostPort: 11440 } },
+    { proxy: { management: "nemoclaw", hostPort: 65536 } },
+    { model: { servedName: "other:tag", digest: `sha256:${"a".repeat(64)}` } },
+    { model: { servedName: EXPORTED_OLLAMA_MODEL, digest: "not-a-digest" } },
+    { runtime: { image: { ref: "ollama:latest" } } },
+  ])("rejects unsupported lifecycle or model declarations %# (#11435)", (change) => {
+    const value = ollamaConfig();
+    Object.assign(value.spec.inferenceProviders[0]!.serving, change);
+    expect(() => validateNemoClawConfig(value)).toThrow();
+  });
+
+  it.each([
+    { endpoint: "http://127.0.0.1:11439/v1" },
+    { credential: { env: "NEMOCLAW_OLLAMA_PROXY_TOKEN" } },
+  ])(
+    "rejects internal transport or credential fields on the local branch %# (#11435)",
+    (change) => {
+      const value = ollamaConfig();
+      Object.assign(value.spec.inferenceProviders[0]!, change);
+      expect(() => validateNemoClawConfig(value)).toThrow();
+    },
+  );
+
+  it.each([
+    { agent: "hermes", runtime: "docker", model: EXPORTED_OLLAMA_MODEL },
+    { agent: "openclaw", runtime: "remote", model: EXPORTED_OLLAMA_MODEL },
+    { agent: "openclaw", runtime: "docker", model: "different-model" },
+  ])("rejects an unsupported local consumer %s (#11435)", (change) => {
+    const value = ollamaConfig();
+    const sandbox = value.spec.sandboxes[0]!;
+    sandbox.agents[0]!.type = change.agent;
+    sandbox.runtime.provider = change.runtime;
+    sandbox.agents[0]!.inference.routes[0]!.overrides.model = change.model;
+    expect(() => validateNemoClawConfig(value)).toThrow();
+  });
+});
+
 describe("OpenClaw dashboard configuration", () => {
-  it("rejects dashboard interfaces on Hermes (#10904)", () => {
+  it("rejects OpenClaw dashboard fields on Hermes (#10904)", () => {
     const value = config();
     Object.assign(value.spec.sandboxes[0]!.agents[0]!, {
       type: "hermes",
@@ -891,5 +976,65 @@ describe("OpenClaw dashboard configuration", () => {
     const value = config();
     Object.assign(value.spec.sandboxes[0]!.agents[0]!, { interfaces: { dashboard } });
     expect(() => validateNemoClawConfig(value)).toThrow("Invalid NemoClawConfig");
+  });
+});
+
+describe("Hermes interface configuration", () => {
+  const interfaces = (value: unknown) => {
+    const document = config();
+    Object.assign(document.spec.sandboxes[0]!.agents[0]!, { type: "hermes", interfaces: value });
+    return document;
+  };
+
+  it.each([
+    {
+      dashboard: { enabled: true, port: 19000, internalPort: 19120, tui: { enabled: true } },
+      api: { port: 8643 },
+    },
+    { dashboard: { enabled: true } },
+    { dashboard: { enabled: false } },
+    { dashboard: { enabled: true, tui: { enabled: false } } },
+    { api: { port: 8642 } },
+    { api: { port: 8652 } },
+  ])("round trips supported Hermes interfaces %j (#11433)", (value) => {
+    const document = interfaces(value);
+    expect(validateNemoClawConfig(YAML.parse(renderInput(document).yaml))).toEqual(document);
+  });
+
+  it.each([
+    {},
+    { dashboard: {} },
+    { api: {} },
+    { dashboard: { enabled: false, port: 19000 } },
+    { dashboard: { enabled: false, tui: { enabled: true } } },
+    { dashboard: { enabled: true, port: 19000, internalPort: 19000 } },
+    { dashboard: { enabled: true, port: 19119 } },
+    { dashboard: { enabled: true, internalPort: 18789 } },
+    { dashboard: { enabled: true, bind: "0.0.0.0" } },
+    { dashboard: { enabled: true, url: "https://dashboard.example.com" } },
+    { dashboard: { enabled: true, tui: { enabled: "true" } } },
+    { dashboard: { enabled: true, port: 8642 } },
+    { dashboard: { enabled: true, internalPort: 8652 } },
+    { dashboard: { enabled: true, port: 18642 } },
+    { dashboard: { enabled: true, internalPort: 18642 } },
+    { dashboard: { enabled: true, port: 1023 } },
+    { dashboard: { enabled: true, port: 65536 } },
+    { api: { port: 8641 } },
+    { api: { port: 8653 } },
+    { api: { port: "8643" } },
+    { api: { port: 8643, credential: "/sandbox/.hermes/.env" } },
+  ])("rejects unsupported Hermes interfaces %j (#11433)", (value) => {
+    expect(() => validateNemoClawConfig(interfaces(value))).toThrow("Invalid NemoClawConfig");
+  });
+
+  it.each([
+    { dashboard: { enabled: true } },
+    { dashboard: { internalPort: 19120 } },
+    { dashboard: { tui: { enabled: true } } },
+    { api: { port: 8643 } },
+  ])("rejects Hermes-only fields on OpenClaw %j (#11433)", (value) => {
+    const document = config();
+    Object.assign(document.spec.sandboxes[0]!.agents[0]!, { interfaces: value });
+    expect(() => validateNemoClawConfig(document)).toThrow("Invalid NemoClawConfig");
   });
 });

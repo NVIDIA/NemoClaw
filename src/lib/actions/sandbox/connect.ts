@@ -93,6 +93,7 @@ import {
   defaultPortableDemoStateDir,
   type HermesPortableActiveLifecycleAuthority,
   getNamedGatewayLifecycleState,
+  hermesPortableLifecycleLockOptions,
   printGatewayLifecycleHint,
   qualifyHermesPortableAcceptedReadinessAuthority,
   qualifyPortableAgentLifecycleAuthority,
@@ -1931,6 +1932,17 @@ export async function waitForSandboxReadyOrExit(
  * the express-vLLM model preflight, the owning-gateway pin, and the Docker
  * outage fast-fail. Runs before any probe or interactive work.
  */
+function withPortableConnectSandboxLifecycleLock<T>(
+  sandboxName: string,
+  operation: () => Promise<T> | T,
+): Promise<T> {
+  return withConnectSandboxLifecycleLock(
+    sandboxName,
+    operation,
+    hermesPortableLifecycleLockOptions(sandboxName, process.env),
+  );
+}
+
 async function runConnectEntryPreflight(
   sandboxName: string,
   {
@@ -1958,7 +1970,7 @@ async function runConnectEntryPreflight(
     probeTiming ? probeTiming.measure(stage, operation) : operation();
   const measureAsync = <T>(stage: "gateway", operation: () => Promise<T>): Promise<T> =>
     probeTiming ? probeTiming.measureAsync(stage, operation) : operation();
-  await withConnectSandboxLifecycleLock(sandboxName, async () => {
+  await withPortableConnectSandboxLifecycleLock(sandboxName, async () => {
     let hermesPortable = false;
     let requalify = () => undefined;
     try {
@@ -2314,7 +2326,7 @@ export async function connectSandbox(
   };
   if (probeTiming) process.once("exit", finishOnExit);
   try {
-    const started = await withConnectSandboxLifecycleLock(sandboxName, async () => {
+    const started = await withPortableConnectSandboxLifecycleLock(sandboxName, async () => {
       const prepared = await prepareConnectSandboxWithinLifecycleFence(
         sandboxName,
         options,
