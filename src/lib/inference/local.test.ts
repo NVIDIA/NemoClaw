@@ -639,8 +639,28 @@ describe("local inference helpers", () => {
     { recordedEndpointUrl: "http://host.openshell.internal/v1", reason: "no port" },
     { recordedEndpointUrl: "http://host.openshell.internal:80/v1", reason: "a privileged port" },
     {
+      recordedEndpointUrl: "http://example.com:46145/v1",
+      reason: "a foreign host",
+    },
+    {
+      recordedEndpointUrl: "http://user:secret@host.openshell.internal:46145/v1",
+      reason: "userinfo",
+    },
+    {
+      recordedEndpointUrl: "http://host.openshell.internal:46145/v1?probe=1",
+      reason: "a query string",
+    },
+    {
+      recordedEndpointUrl: "http://host.openshell.internal:46145/v1#probe",
+      reason: "a fragment",
+    },
+    {
       recordedEndpointUrl: "http://host.openshell.internal:46145/v1/chat",
       reason: "a non-route path",
+    },
+    {
+      recordedEndpointUrl: "http://host.openshell.internal:46145/v1/",
+      reason: "a non-canonical route path",
     },
     { recordedEndpointUrl: "not a url", reason: "a malformed URL" },
   ])(

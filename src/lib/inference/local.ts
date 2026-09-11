@@ -833,7 +833,17 @@ export function recordedLocalVllmHostPort(endpointUrl: string | null | undefined
   } catch {
     return null;
   }
-  if (parsed.protocol !== "http:" || !/^\/v1\/?$/.test(parsed.pathname)) return null;
+  if (
+    parsed.protocol !== "http:" ||
+    parsed.hostname !== "host.openshell.internal" ||
+    parsed.username ||
+    parsed.password ||
+    parsed.pathname !== "/v1" ||
+    parsed.search ||
+    parsed.hash
+  ) {
+    return null;
+  }
   const port = Number(parsed.port);
   return Number.isSafeInteger(port) && port >= 1024 && port <= 65_535 ? port : null;
 }
