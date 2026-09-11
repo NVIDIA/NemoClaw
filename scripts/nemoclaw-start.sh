@@ -221,11 +221,6 @@ _TOOL_REDIRECTS=(
   'npm_config_offline=false'
   'NPM_CONFIG_OFFLINE=false'
 )
-# The separate gateway UID cannot create files in the sandbox-owned HOME.
-# Retain its existing Git location without widening HOME permissions.
-if [ "$(id -u)" -eq 0 ]; then
-  _TOOL_REDIRECTS+=('GIT_CONFIG_GLOBAL=/tmp/.gitconfig')
-fi
 for _redir in "${_TOOL_REDIRECTS[@]}"; do
   export "${_redir?}"
 done
@@ -5101,8 +5096,10 @@ launch_openclaw_gateway_process() {
   case "$launch_identity" in
     current) ;;
     gateway)
+      # The gateway cannot create native Git config in the sandbox-owned HOME.
+      # Keep its fallback private so user commands retain native Git settings.
       gateway_launch_prefix=(
-        "${STEP_DOWN_PREFIX_GATEWAY[@]}" /usr/bin/env HOME=/sandbox PATH="$PATH:/sandbox/.local/bin" sh -c
+        "${STEP_DOWN_PREFIX_GATEWAY[@]}" /usr/bin/env HOME=/sandbox GIT_CONFIG_GLOBAL=/tmp/.gitconfig PATH="$PATH:/sandbox/.local/bin" sh -c
         'umask 0007; exec "$@"' sh
       )
       ;;

@@ -14,9 +14,13 @@ import { extractShellFunctionFromSource } from "../../../support/shell-function-
 const START_SCRIPT = path.resolve(import.meta.dirname, "../../../../scripts/nemoclaw-start.sh");
 
 describe("OpenClaw gateway credential environment", () => {
-  it.each(["truncate", "append"])(
-    "removes OPENCLAW_GATEWAY_TOKEN from the gateway environment without passing its value in argv when the log mode is %s (#8693)",
-    (logMode) => {
+  it.each([
+    ["truncate", "current"],
+    ["append", "current"],
+    ["append", "gateway"],
+  ])(
+    "keeps gateway tokens private and scopes Git config for %s logging as %s (#8693)",
+    (logMode, identity) => {
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-token-env-"));
       const gatewayLog = path.join(tmpDir, "gateway.log");
       const seed = "existing gateway output\n";
@@ -30,9 +34,11 @@ describe("OpenClaw gateway credential environment", () => {
         "set -euo pipefail",
         safeTmpHelpers(source),
         launch,
-        "export OPENCLAW_GATEWAY_TOKEN=gateway-secret",
-        `launch_openclaw_gateway_process ${logMode} current sh -c 'printf "ENV=%s\\nARGS=%s\\n" "\${OPENCLAW_GATEWAY_TOKEN-unset}" "$*"' sh`,
+        "export OPENCLAW_GATEWAY_TOKEN=gateway-secret GIT_CONFIG_GLOBAL=/nonexistent/native.gitconfig",
+        "STEP_DOWN_PREFIX_GATEWAY=(/usr/bin/env)",
+        `launch_openclaw_gateway_process ${logMode} ${identity} sh -c 'printf "ENV=%s\\nGIT=%s\\nARGS=%s\\n" "\${OPENCLAW_GATEWAY_TOKEN-unset}" "$GIT_CONFIG_GLOBAL" "$*"' sh`,
         'wait "$GATEWAY_PID"',
+        'printf "%s" "$GIT_CONFIG_GLOBAL"',
       ].join("\n");
 
       try {
@@ -41,7 +47,10 @@ describe("OpenClaw gateway credential environment", () => {
           timeout: 5000,
         });
         expect(result.status, result.stderr).toBe(0);
-        const expectedOutput = "ENV=unset\nARGS=\n";
+        expect(result.stdout).toBe("/nonexistent/native.gitconfig");
+        const gitConfig =
+          identity === "gateway" ? "/tmp/.gitconfig" : "/nonexistent/native.gitconfig";
+        const expectedOutput = `ENV=unset\nGIT=${gitConfig}\nARGS=\n`;
         expect(fs.readFileSync(gatewayLog, "utf8")).toBe(
           logMode === "append" ? `${seed}${expectedOutput}` : expectedOutput,
         );

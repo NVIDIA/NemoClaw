@@ -179,7 +179,8 @@ They survive normal container restarts, but NemoClaw deletes them when you destr
 OpenShell-managed OpenClaw uses its home, `/sandbox`, for user configuration in `~/.config` and `~/.gitconfig`, and application data in `~/.local/share` and `~/.local/state`.
 npm `--global` and Python `--user` installations use `~/.local`, with commands available through `~/.local/bin` on the agent's `PATH`.
 These settings and tools survive restarts of the same sandbox, but are excluded from rebuilds, upgrades, and snapshots, which preserve only declared agent state.
-The direct Docker topology with separate gateway and sandbox users retains `/tmp/.gitconfig` because the gateway cannot create files in the sandbox-owned home.
+The direct Docker topology’s separate gateway process retains `/tmp/.gitconfig` because it cannot create files in the sandbox-owned home.
+Connect sessions and one-shot commands use native Git configuration.
 Existing files in the old `/tmp` locations remain untouched.
 To retain older preferences, manually transfer only reviewed, non-secret values without overwriting current configuration.
 Do not copy authentication stores or raw credentials.

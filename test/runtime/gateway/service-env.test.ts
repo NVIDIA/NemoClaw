@@ -323,39 +323,32 @@ describe("service environment", () => {
   });
 
   describe("runtime npm online state", () => {
-    it.each([0, 998])(
-      "exports online npm settings and topology-appropriate Git config for UID %s",
-      (uid) => {
-        const block = extractToolRedirectsSnippet();
-        const tmpFile = join(tmpdir(), `nemoclaw-tool-redirects-npm-online-${process.pid}.sh`);
+    it("exports online npm settings for runtime tool installs", () => {
+      const block = extractToolRedirectsSnippet();
+      const tmpFile = join(tmpdir(), `nemoclaw-tool-redirects-npm-online-${process.pid}.sh`);
+      try {
+        writeFileSync(
+          tmpFile,
+          [
+            "#!/usr/bin/env bash",
+            "set -euo pipefail",
+            block,
+            'printf "npm_config_offline=%s\\n" "${npm_config_offline:-unset}"',
+            'printf "NPM_CONFIG_OFFLINE=%s\\n" "${NPM_CONFIG_OFFLINE:-unset}"',
+          ].join("\n"),
+          { mode: 0o700 },
+        );
+        const out = execFileSync("bash", [tmpFile], { encoding: "utf-8" });
+        expect(out).toContain("npm_config_offline=false");
+        expect(out).toContain("NPM_CONFIG_OFFLINE=false");
+      } finally {
         try {
-          writeFileSync(
-            tmpFile,
-            [
-              "#!/usr/bin/env bash",
-              "set -euo pipefail",
-              `id() { printf '%s\\n' ${uid}; }`,
-              "unset GIT_CONFIG_GLOBAL",
-              block,
-              'printf "GIT_CONFIG_GLOBAL=%s\\n" "${GIT_CONFIG_GLOBAL:-native}"',
-              'printf "npm_config_offline=%s\\n" "${npm_config_offline:-unset}"',
-              'printf "NPM_CONFIG_OFFLINE=%s\\n" "${NPM_CONFIG_OFFLINE:-unset}"',
-            ].join("\n"),
-            { mode: 0o700 },
-          );
-          const out = execFileSync("bash", [tmpFile], { encoding: "utf-8" });
-          expect(out).toContain("npm_config_offline=false");
-          expect(out).toContain("NPM_CONFIG_OFFLINE=false");
-          expect(out).toContain(`GIT_CONFIG_GLOBAL=${uid === 0 ? "/tmp/.gitconfig" : "native"}`);
-        } finally {
-          try {
-            unlinkSync(tmpFile);
-          } catch {
-            /* ignore */
-          }
+          unlinkSync(tmpFile);
+        } catch {
+          /* ignore */
         }
-      },
-    );
+      }
+    });
 
     it("a sandbox-connect shell sourcing the emitted proxy-env reports both npm offline env vars as false", () => {
       const persistBlock = extractRuntimeShellEnvSnippet();
@@ -530,10 +523,14 @@ describe("service environment", () => {
     });
 
     it.each(["sh", "bash"])(
-      "entrypoint writes proxy-env.sh that can be sourced by %s",
+      "root entrypoint preserves native Git defaults for %s connect shells",
       (sourceShell) => {
         const fakeDataDir = mkdtempSync(join(tmpdir(), "nemoclaw-data-test-"));
         const nativeHome = join(fakeDataDir, "home");
+        const nativeEnv = { HOME: nativeHome, PATH: process.env.PATH };
+        const legacyGitConfig = join(fakeDataDir, "legacy.gitconfig");
+        const legacyGitContent = "[user]\n\temail = legacy@example.invalid\n";
+        writeFileSync(legacyGitConfig, legacyGitContent);
         mkdirSync(join(nativeHome, ".config", "git"), { recursive: true });
         writeFileSync(
           join(nativeHome, ".config", "git", "config"),
@@ -542,12 +539,17 @@ describe("service environment", () => {
         const tmpFile = join(fakeDataDir, "write-proxy-env.sh");
         try {
           const persistBlock = extractRuntimeShellEnvSnippet();
-          const toolRedirects = extractToolRedirectsSnippet();
+          const toolRedirects = extractToolRedirectsSnippet().replaceAll(
+            "/tmp/.gitconfig",
+            legacyGitConfig,
+          );
           const wrapper = [
             "#!/usr/bin/env bash",
             sandboxInitSource,
-            'id() { if [ "${1:-}" = "-u" ]; then printf "998\\n"; else command id "$@"; fi; }',
+            'id() { if [ "${1:-}" = "-u" ]; then printf "0\\n"; else command id "$@"; fi; }',
+            "chown() { :; }",
             toolRedirects,
+            "git config --global --get user.email",
             'PROXY_HOST="10.200.0.1"',
             'PROXY_PORT="3128"',
             '_PROXY_URL="http://${PROXY_HOST}:${PROXY_PORT}"',
@@ -559,7 +561,9 @@ describe("service environment", () => {
               .replaceAll("/tmp/nemoclaw-proxy-env.sh", `${fakeDataDir}/proxy-env.sh`),
           ].join("\n");
           writeFileSync(tmpFile, wrapper, { mode: 0o700 });
-          execFileSync("bash", [tmpFile], { encoding: "utf-8" });
+          expect(
+            execFileSync("bash", [tmpFile], { encoding: "utf-8", env: nativeEnv }).trim(),
+          ).toBe("native@example.invalid");
 
           const envFile = readFileSync(join(fakeDataDir, "proxy-env.sh"), "utf-8");
           expect(envFile).toContain('export HTTP_PROXY="http://10.200.0.1:3128"');
@@ -599,7 +603,6 @@ describe("service environment", () => {
           const perms = (lstatSync(join(fakeDataDir, "proxy-env.sh")).mode & 0o777).toString(8);
           expect(perms).toBe("444");
 
-          const nativeEnv = { HOME: nativeHome, PATH: process.env.PATH };
           const pythonUserBase = execFileSync(
             "python3",
             ["-S", "-c", "import site; print(site.getuserbase())"],
@@ -631,6 +634,7 @@ describe("service environment", () => {
             pythonUserBase,
             "unset|unset",
           ]);
+          expect(readFileSync(legacyGitConfig, "utf-8")).toBe(legacyGitContent);
           expect(readFileSync(join(nativeHome, ".config", "git", "config"), "utf-8")).toContain(
             "name = Native Fixture",
           );
