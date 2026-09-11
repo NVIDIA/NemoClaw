@@ -156,3 +156,19 @@ it("writes a private ledger without replacing an existing file or symlink (#1148
   expect(() => writeAdvisorFindingLedger(directory, identity.interest, ledger)).toThrow();
   expect(fs.readFileSync(target, "utf8")).toBe("unchanged");
 });
+
+it("keeps recorded exclusions immutable after the finding ID is derived (#11489)", async () => {
+  const controller = createAdvisorFindingToolController(identity);
+  await controller.tools[0]!.execute(
+    "record",
+    { findings: [blocker], noFindingsReason: null },
+    undefined,
+    undefined,
+    undefined as never,
+  );
+  const snapshot = controller.snapshot();
+  const exclusions = snapshot.findings[0]!.exclusions as string[];
+  expect(() => exclusions.push("external-mutation")).toThrow(TypeError);
+  expect(controller.snapshot()).toEqual(snapshot);
+  expect(parseAdvisorFindingLedger(controller.snapshot(), identity)).toEqual(snapshot);
+});
