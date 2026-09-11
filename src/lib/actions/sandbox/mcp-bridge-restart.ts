@@ -5,7 +5,10 @@ import type { AgentMcpAdapter } from "../../agent/defs";
 import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock";
 import { assertHermesPortableCommandUnavailable } from "../../onboard/experimental/portable-agent-lifecycle";
 import type { McpBridgeEntry } from "../../state/registry";
-import { registerAgentAdapterAtCurrentCredentialRevision } from "./mcp-bridge-adapters";
+import {
+  registerAgentAdapterAtCurrentCredentialRevision,
+  unregisterAgentAdapter,
+} from "./mcp-bridge-adapters";
 import { McpBridgeError } from "./mcp-bridge-contracts";
 import { assertHermesMcpRuntimeIntent } from "./mcp-bridge-hermes-reconciliation";
 import { redactBridgeFailureForDisplay } from "./mcp-bridge-output";
@@ -46,7 +49,7 @@ import {
   nowIso,
   writeBridgeEntry,
 } from "./mcp-bridge-state";
-import { statusMcpBridge } from "./mcp-bridge-status";
+import { assertUnchangedStableMcpCredentialAuthorized, statusMcpBridge } from "./mcp-bridge-status";
 import type { McpBridgeTargetValidation } from "./mcp-bridge-url-validation";
 import {
   assertAuthenticatedBridgeEntry,
@@ -291,6 +294,16 @@ async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): P
           : {}),
       },
     );
+    if (providerResult.action === "updated") {
+      await assertUnchangedStableMcpCredentialAuthorized(
+        sandboxName,
+        entry,
+        providerRuntimeSelection,
+        previousCredentialRevision,
+        credentialRevision,
+        statusMcpBridge,
+      );
+    }
     await registerAgentAdapterAtCurrentCredentialRevision(
       sandboxName,
       entryAdapter,
@@ -388,12 +401,35 @@ export async function restoreExistingMcpBridgeRuntime(
       });
     }
     const adapter = (entry.adapter as AgentMcpAdapter | undefined) ?? defaultAdapter;
+    const previousCredentialRevision = await observeMcpCredentialRevision(
+      sandboxName,
+      entry,
+      providerRuntimeSelection,
+    );
     await refreshMcpProviderEnvironment(entry, providerRuntimeSelection);
     const credentialRevision = await waitForAttachedMcpCredential(
       sandboxName,
       entry,
       providerRuntimeSelection,
+      { previousRevision: previousCredentialRevision },
     );
+    try {
+      await assertUnchangedStableMcpCredentialAuthorized(
+        sandboxName,
+        entry,
+        providerRuntimeSelection,
+        previousCredentialRevision,
+        credentialRevision,
+        statusMcpBridge,
+      );
+    } catch (error) {
+      await unregisterAgentAdapter(sandboxName, adapter, entry, providerRuntimeSelection, {
+        bestEffort: true,
+        envValues: {},
+        force: false,
+      });
+      throw error;
+    }
     await registerAgentAdapterAtCurrentCredentialRevision(
       sandboxName,
       adapter,

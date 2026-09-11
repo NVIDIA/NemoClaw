@@ -9,6 +9,7 @@ import {
   ExternalComponentContractError,
   loadExternalComponentDeclaration,
   type PreparedExternalComponent,
+  type ExternalComponentGatewayConfiguration,
 } from "./index";
 import { activateExternalComponent, createExternalComponentActivationId } from "./activation";
 import { createExternalComponentActivationProof } from "./proof";
@@ -54,10 +55,7 @@ export function flowDeps(
     assertExternalComponentFreshSandbox: (requestedSandboxName: string | null) =>
       assertExternalComponentFreshSandbox(requestedSandboxName, inspectSandboxForCreate),
     configureExternalComponentGateway: (
-      externalComponent: {
-        readonly componentId: string;
-        readonly interceptorSocketPath: string;
-      } | null,
+      externalComponent: ExternalComponentGatewayConfiguration | null,
     ) =>
       configureDockerDriverGatewayExternalComponent(getDockerDriverGatewayEnv(), externalComponent),
     prepareExternalComponent,

@@ -430,8 +430,18 @@ function sessionArgs(request: OpenShellSandboxSessionRequest): string[] {
     throw new Error("Invalid OpenShell session target");
   }
   if (request.kind === "connect") {
-    const gateway = request.target.kind === "named" ? ["-g", request.target.gatewayName] : [];
-    return ["sandbox", "connect", ...gateway, request.sandboxName];
+    // OpenShell 0.0.116 changed `sandbox connect` from opening a fresh SSH
+    // shell to attaching the sandbox's registered main process. NemoClaw's
+    // main process is its non-interactive supervisor, so shell input would be
+    // sent to that long-running process and wait indefinitely. Use OpenShell's
+    // explicit exec transport to preserve NemoClaw connect's shell contract
+    // across both old and current OpenShell releases.
+    return buildCliOpenShellSandboxExecArgs({
+      sandboxName: request.sandboxName,
+      target: request.target,
+      command: ["/bin/bash", "-i"],
+      tty: true,
+    });
   }
   if (request.command.some((arg) => arg.includes("\0")) || /[\0\r\n]/.test(request.workdir ?? "")) {
     throw new Error("Invalid OpenShell session command or working directory");
