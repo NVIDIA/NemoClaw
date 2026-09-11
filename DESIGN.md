@@ -49,6 +49,18 @@ continue; ordinary apply has no implicit repair outside the plan.
 
 ## Acceptance evidence
 
+The next accepted local experiment is the pinned Qwen3.8 Flash Next recipe on
+this DGX Spark. It owns a managed gateway, inference container and persistent
+model/preparation storage, and the OpenClaw sandbox. cv remains accountable for
+this experimental scope; it does not establish a supported product integration.
+Validation must cover an actual agent reply, unchanged apply, interrupted
+download/preparation, failed startup with retained identities, export/reapply,
+safe capacity rejection, and watchdog shutdown followed by explicit recovery.
+The runtime retains the upstream licenses and source notices. Host drivers,
+kernel settings, system packages, and unrelated resources are outside its scope.
+The implementation may correct the RFC's resource boundaries when recovery
+evidence shows that a boundary prevents the parent runtime from being repaired.
+
 1. Create a working agent from YAML against a real local OpenShell gateway.
 2. Apply unchanged YAML with no resource changes.
 3. Change the inference model without replacing the sandbox.
