@@ -507,6 +507,7 @@ describe("sandbox inference invocation probe", () => {
       model,
       max_tokens: maxTokens,
     });
+    expect(argv[argv.indexOf("--max-time") + 1]).toBe("90");
     expect(Number(argv[argv.indexOf("--max-time") + 1]) * 1000).toBeLessThan(
       READINESS_INFERENCE_INVOCATION_TIMEOUT_MS,
     );

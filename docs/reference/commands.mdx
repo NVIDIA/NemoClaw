@@ -3405,10 +3405,11 @@ If the in-sandbox config write or integrity hash update fails, the OpenShell rou
 Supported provider names are `nvidia-prod`, `nvidia-nim`, `nvidia-router`, `openai-api`, `openrouter-api`, `anthropic-prod`, `compatible-anthropic-endpoint`, `gemini-api`, `compatible-endpoint`, `hermes-provider`, `ollama-local`, and `vllm-local`.
 Use `--no-verify` only when OpenShell cannot verify the provider at switch time but you have already confirmed the provider and credential.
 When you explicitly supply a direct compatible endpoint at `http://host.openshell.internal:<port>`, NemoClaw skips OpenShell's host-side provider probe because that hostname resolves only inside the sandbox network.
-Before it persists the route in the NemoClaw registry or agent config, the command sends a validation request from the target sandbox with a 16-token output limit.
+Before it persists the route in the NemoClaw registry or agent config, the command sends a validation request from the target sandbox.
+The output limit is 16 tokens for ordinary providers and 256 tokens for Google Gemini.
 When the switch changes the API family and that request returns HTTP `400` or `404`, NemoClaw retries up to two times after delays of 2 and 4 seconds.
 NemoClaw uses the same retry schedule when validation fails before it receives an HTTP status, such as while the gateway route is reloading.
-Each retry has the same 16-token output limit.
+Each retry uses the same output limit for the selected provider.
 Other HTTP failures are not retried.
 If provider verification or that request fails, the command leaves or restores the previous OpenShell selection and removes the provider only when it can verify the revision created by this switch.
 If removal was not attempted or could not be confirmed, rerun onboarding before using that provider route or retrying the switch.
