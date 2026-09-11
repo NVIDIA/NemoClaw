@@ -50,8 +50,13 @@ const NEMOCLAW_OPENSHELL_INSTALLER = fileURLToPath(
   new URL("../../../../scripts/install-openshell.sh", import.meta.url),
 );
 const USER_SERVICE_STAGE_RESULT_PREFIX = "NEMOCLAW_E2E_GATEWAY_USER_SERVICE=";
+const USER_SERVICE_STOP_RESULT_PREFIX = "NEMOCLAW_E2E_STOPPED_GATEWAY_USER_SERVICE=";
 
 type UserServiceStageResult = "upstream" | "existing" | "staged";
+type UserServiceSelection =
+  | "homebrew:openshell"
+  | "systemd:nemoclaw-openshell-gateway.service"
+  | "systemd:openshell-gateway.service";
 
 export function buildOpenShellGatewayUserServiceStageScript(): string {
   return [
@@ -126,72 +131,39 @@ export function buildOpenShellGatewayUserServiceRemovalScript(): string {
 export function buildOpenShellGatewayUserServiceStopScript(): string {
   return [
     "set -eu",
-    'if [ "$(uname -s)" = Darwin ] && command -v brew >/dev/null 2>&1 && brew list --formula openshell >/dev/null 2>&1; then',
-    '  brew info --json=v2 openshell | grep -Eq \'"tap"[[:space:]]*:[[:space:]]*"nvidia/openshell"\' || exit 1',
-    "  brew services stop openshell",
+    "installer=$1",
+    'if [ ! -f "$installer" ] || [ -L "$installer" ]; then',
+    '  printf "NemoClaw installer is unavailable: %s\\n" "$installer" >&2',
+    "  exit 1",
+    "fi",
+    'source "$installer"',
+    "selection=",
+    "if stop_active_openshell_gateway_user_service selection; then",
+    '  case "$selection" in',
+    "    homebrew:openshell|systemd:nemoclaw-openshell-gateway.service|systemd:openshell-gateway.service) ;;",
+    "    *) exit 1 ;;",
+    "  esac",
+    `  printf '%s%s\\n' '${USER_SERVICE_STOP_RESULT_PREFIX}' "$selection"`,
     "  exit 0",
-    "fi",
-    `if ! command -v systemctl >/dev/null 2>&1; then exit ${USER_SERVICE_UNAVAILABLE_EXIT}; fi`,
-    "service=",
-    'if upstream_metadata="$(LC_ALL=C systemctl --user show openshell-gateway.service --property=ActiveState --property=FragmentPath --property=ExecStart 2>/dev/null)"; then',
-    "  active_state=\"$(printf '%s\\n' \"$upstream_metadata\" | sed -n 's/^ActiveState=//p')\"",
-    "  fragment_path=\"$(printf '%s\\n' \"$upstream_metadata\" | sed -n 's/^FragmentPath=//p')\"",
-    "  exec_start=\"$(printf '%s\\n' \"$upstream_metadata\" | sed -n 's/^ExecStart=//p')\"",
-    "  gateway_bin=\"$(printf '%s\\n' \"$exec_start\" | grep -oE 'path=[^ ;}]+' | sed 's/^path=//' || true)\"",
-    "  upstream_trusted=1",
-    '  case "$fragment_path" in',
-    "    /usr/local/lib/systemd/user/openshell-gateway.service|/usr/lib/systemd/user/openshell-gateway.service|/lib/systemd/user/openshell-gateway.service) ;;",
-    "    *) upstream_trusted=0 ;;",
-    "  esac",
-    '  case "$gateway_bin" in',
-    "    /usr/local/bin/openshell-gateway|/usr/bin/openshell-gateway) ;;",
-    "    *) upstream_trusted=0 ;;",
-    "  esac",
-    '  if [ "$active_state" = active ] && [ "$upstream_trusted" -eq 1 ]; then service=openshell-gateway; fi',
     "else",
-    "  systemctl --user show-environment >/dev/null",
+    "  status=$?",
+    `  if [ "$status" -eq 1 ]; then exit ${USER_SERVICE_UNAVAILABLE_EXIT}; fi`,
+    '  exit "$status"',
     "fi",
-    'if [ -z "$service" ]; then',
-    '  case "${XDG_CONFIG_HOME:-}" in',
-    '    /*) config_home="$XDG_CONFIG_HOME" ;;',
-    '    *) config_home="$HOME/.config" ;;',
-    "  esac",
-    '  unit="$config_home/systemd/user/nemoclaw-openshell-gateway.service"',
-    `  if [ -L "$unit" ] || [ ! -f "$unit" ]; then exit ${USER_SERVICE_UNAVAILABLE_EXIT}; fi`,
-    `  grep -Fxq '${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER_LINE}' "$unit" || exit ${USER_SERVICE_UNAVAILABLE_EXIT}`,
-    "  service=nemoclaw-openshell-gateway",
-    '  if ! systemctl --user is-active --quiet "$service"; then',
-    "    systemctl --user show-environment >/dev/null",
-    `    exit ${USER_SERVICE_UNAVAILABLE_EXIT}`,
-    "  fi",
-    "fi",
-    'systemctl --user stop "$service"',
   ].join("\n");
 }
 
 export function buildOpenShellGatewayUserServiceRestartScript(): string {
   return [
     "set -eu",
-    'if [ "$(uname -s)" = Darwin ] && command -v brew >/dev/null 2>&1 && brew list --formula openshell >/dev/null 2>&1; then',
-    '  brew info --json=v2 openshell | grep -Eq \'"tap"[[:space:]]*:[[:space:]]*"nvidia/openshell"\' || exit 1',
-    "  brew services restart openshell",
-    "  exit 0",
+    "installer=$1",
+    "selection=$2",
+    'if [ ! -f "$installer" ] || [ -L "$installer" ]; then',
+    '  printf "NemoClaw installer is unavailable: %s\\n" "$installer" >&2',
+    "  exit 1",
     "fi",
-    `if ! command -v systemctl >/dev/null 2>&1; then exit ${USER_SERVICE_UNAVAILABLE_EXIT}; fi`,
-    "service=openshell-gateway",
-    'if ! systemctl --user cat "$service" >/dev/null 2>&1; then',
-    '  case "${XDG_CONFIG_HOME:-}" in',
-    '    /*) config_home="$XDG_CONFIG_HOME" ;;',
-    '    *) config_home="$HOME/.config" ;;',
-    "  esac",
-    '  unit="$config_home/systemd/user/nemoclaw-openshell-gateway.service"',
-    `  if [ ! -f "$unit" ]; then exit ${USER_SERVICE_UNAVAILABLE_EXIT}; fi`,
-    `  grep -Fxq '${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER_LINE}' "$unit" || exit ${USER_SERVICE_UNAVAILABLE_EXIT}`,
-    "  service=nemoclaw-openshell-gateway",
-    "fi",
-    'systemctl --user is-enabled "$service" >/dev/null',
-    "systemctl --user daemon-reload",
-    'systemctl --user restart "$service"',
+    'source "$installer"',
+    'restart_selected_openshell_gateway_user_service "$selection"',
   ].join("\n");
 }
 
@@ -276,6 +248,7 @@ function instanceName(instance: NemoClawInstance | string): string {
 export class LifecyclePhaseFixture {
   private postRebootUserServiceStage: UserServiceStageResult | undefined;
   private readonly runtimeProvider: RuntimeProviderPrerequisite;
+  private stoppedOpenShellGatewayUserService: UserServiceSelection | null = null;
 
   constructor(
     private readonly host: HostCliClient,
@@ -713,16 +686,35 @@ export class LifecyclePhaseFixture {
   }
 
   private async stopOpenShellGatewayUserService(): Promise<boolean> {
+    this.stoppedOpenShellGatewayUserService = null;
     const result = await this.host.command(
-      "sh",
-      ["-lc", buildOpenShellGatewayUserServiceStopScript()],
+      "bash",
+      [
+        "-lc",
+        buildOpenShellGatewayUserServiceStopScript(),
+        "stop-openshell-gateway-user-service",
+        NEMOCLAW_INSTALLER,
+      ],
       {
         artifactName: "lifecycle-gateway-user-service-stop",
         env: buildAvailabilityProbeEnv(),
         timeoutMs: 120_000,
       },
     );
-    if (result.exitCode === 0) return true;
+    if (result.exitCode === 0) {
+      const match = result.stdout.match(
+        new RegExp(
+          `(?:^|\\n)${USER_SERVICE_STOP_RESULT_PREFIX}` +
+            `(homebrew:openshell|systemd:nemoclaw-openshell-gateway\\.service|systemd:openshell-gateway\\.service)(?:\\n|$)`,
+          "u",
+        ),
+      );
+      if (!match) {
+        throw new Error("OpenShell gateway user service stop did not report its selection.");
+      }
+      this.stoppedOpenShellGatewayUserService = match[1] as UserServiceSelection;
+      return true;
+    }
     if (result.exitCode === USER_SERVICE_UNAVAILABLE_EXIT) return false;
     throw new Error(
       `OpenShell gateway user service stop failed during lifecycle qualification: ` +
@@ -769,16 +761,32 @@ export class LifecyclePhaseFixture {
   private async startOpenShellGatewayUserService(options: {
     requireAvailable?: boolean;
   }): Promise<ShellProbeResult | null> {
+    if (!this.stoppedOpenShellGatewayUserService) {
+      if (!options.requireAvailable) return null;
+      throw new Error(
+        `OpenShell gateway user service is not available for reboot lifecycle recovery.`,
+      );
+    }
+    const selection = this.stoppedOpenShellGatewayUserService;
     const result = await this.host.command(
-      "sh",
-      ["-lc", buildOpenShellGatewayUserServiceRestartScript()],
+      "bash",
+      [
+        "-lc",
+        buildOpenShellGatewayUserServiceRestartScript(),
+        "restart-openshell-gateway-user-service",
+        NEMOCLAW_INSTALLER,
+        selection,
+      ],
       {
         artifactName: "lifecycle-gateway-user-service-restart",
         env: buildAvailabilityProbeEnv(),
         timeoutMs: 120_000,
       },
     );
-    if (result.exitCode === 0) return result;
+    if (result.exitCode === 0) {
+      this.stoppedOpenShellGatewayUserService = null;
+      return result;
+    }
     if (result.exitCode === USER_SERVICE_UNAVAILABLE_EXIT && !options.requireAvailable) {
       return null;
     }

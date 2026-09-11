@@ -19,12 +19,114 @@ import {
 
 const installer = fileURLToPath(new URL("../../../scripts/install.sh", import.meta.url));
 const upstreamServiceShow =
-  "--user show openshell-gateway.service --property=ActiveState --property=FragmentPath --property=ExecStart";
-const trustedActiveUpstreamMetadata = [
-  "ActiveState=active",
-  "FragmentPath=/usr/lib/systemd/user/openshell-gateway.service",
-  "ExecStart={ path=/usr/bin/openshell-gateway ; argv[]=/usr/bin/openshell-gateway ; }",
-].join("\n");
+  "--user show openshell-gateway.service --property=FragmentPath --property=ExecStart";
+const stoppedServicePrefix = "NEMOCLAW_E2E_STOPPED_GATEWAY_USER_SERVICE=";
+
+function runStopScript(installerPath: string, env: NodeJS.ProcessEnv) {
+  return spawnSync(
+    "bash",
+    ["-c", buildOpenShellGatewayUserServiceStopScript(), "stop-service", installerPath],
+    { encoding: "utf8", env, killSignal: "SIGKILL", timeout: 30_000 },
+  );
+}
+
+function runRestartScript(installerPath: string, selection: string, env: NodeJS.ProcessEnv) {
+  return spawnSync(
+    "bash",
+    [
+      "-c",
+      buildOpenShellGatewayUserServiceRestartScript(),
+      "restart-service",
+      installerPath,
+      selection,
+    ],
+    { encoding: "utf8", env, killSignal: "SIGKILL", timeout: 30_000 },
+  );
+}
+
+function writeTrustedInstaller(
+  root: string,
+  trustedUnit: string,
+  trustedGatewayBin: string,
+): string {
+  const trustedInstaller = path.join(root, "trusted-installer.sh");
+  fs.writeFileSync(
+    trustedInstaller,
+    [
+      `source ${JSON.stringify(installer)}`,
+      `trusted_upstream_openshell_gateway_unit_for_service() { [ "$1" = ${JSON.stringify(trustedUnit)} ]; }`,
+      `trusted_upstream_openshell_gateway_bin_for_service() { [ "$1" = ${JSON.stringify(trustedGatewayBin)} ]; }`,
+    ].join("\n"),
+  );
+  return trustedInstaller;
+}
+
+function writeMacServiceStubs(root: string, trustedProgram: boolean) {
+  const home = path.join(root, "home");
+  const bin = path.join(root, "bin");
+  const brewPrefix = path.join(root, "homebrew");
+  const serviceLabel = "sh.brew.openshell";
+  const serviceDomain = `gui/501/${serviceLabel}`;
+  const servicePath = path.join(home, "Library", "LaunchAgents", `${serviceLabel}.plist`);
+  const serviceProgram = path.join(
+    brewPrefix,
+    "opt",
+    "openshell",
+    "libexec",
+    "openshell-gateway-homebrew-service",
+  );
+  const selectedProgram = trustedProgram ? serviceProgram : path.join(root, "foreign-gateway");
+  const active = path.join(root, "homebrew-active");
+  const launchctlLog = path.join(root, "launchctl.log");
+  const brewLog = path.join(root, "brew.log");
+
+  fs.mkdirSync(path.dirname(servicePath), { recursive: true });
+  fs.mkdirSync(path.dirname(serviceProgram), { recursive: true });
+  fs.mkdirSync(bin, { recursive: true });
+  fs.writeFileSync(servicePath, "test plist\n");
+  fs.writeFileSync(serviceProgram, "#!/bin/sh\n", { mode: 0o755 });
+  fs.writeFileSync(active, "active\n");
+  fs.writeFileSync(path.join(bin, "uname"), "#!/bin/sh\nprintf 'Darwin\\n'\n", { mode: 0o755 });
+  fs.writeFileSync(path.join(bin, "id"), "#!/bin/sh\nprintf '501\\n'\n", { mode: 0o755 });
+  fs.writeFileSync(
+    path.join(bin, "brew"),
+    [
+      "#!/bin/sh",
+      `printf "%s\\n" "$*" >> ${JSON.stringify(brewLog)}`,
+      `if [ "$*" = "--prefix" ]; then printf '%s\\n' ${JSON.stringify(brewPrefix)}; exit 0; fi`,
+      "exit 97",
+    ].join("\n"),
+    { mode: 0o755 },
+  );
+  fs.writeFileSync(
+    path.join(bin, "plutil"),
+    [
+      "#!/bin/sh",
+      `if [ "$2" = "Label" ]; then printf '%s\\n' ${JSON.stringify(serviceLabel)}; exit 0; fi`,
+      `if [ "$2" = "ProgramArguments.0" ]; then printf '%s\\n' ${JSON.stringify(selectedProgram)}; exit 0; fi`,
+      "exit 97",
+    ].join("\n"),
+    { mode: 0o755 },
+  );
+  fs.writeFileSync(
+    path.join(bin, "launchctl"),
+    [
+      "#!/bin/sh",
+      `printf "%s\\n" "$*" >> ${JSON.stringify(launchctlLog)}`,
+      `if [ "$1" = "print" ] && [ "$2" = ${JSON.stringify(serviceDomain)} ]; then`,
+      `  test -f ${JSON.stringify(active)} || exit 1`,
+      "  printf 'state = running\\n'",
+      `  printf 'program = %s\\n' ${JSON.stringify(serviceProgram)}`,
+      "  exit 0",
+      "fi",
+      `if [ "$1" = "bootout" ] && [ "$2" = ${JSON.stringify(serviceDomain)} ]; then rm -f ${JSON.stringify(active)}; exit 0; fi`,
+      "exit 1",
+    ].join("\n"),
+    { mode: 0o755 },
+  );
+
+  return { active, bin, brewLog, home, launchctlLog, serviceDomain };
+}
 
 describe("reboot lifecycle OpenShell gateway user-service fixture", () => {
   it("stages, enables, and removes the repository service without installer cleanup", () => {
@@ -204,28 +306,55 @@ describe("reboot lifecycle OpenShell gateway user-service fixture", () => {
 });
 
 describe("managed OpenShell gateway user-service restart", () => {
-  it("selects a marked unit from an absolute custom XDG config root", () => {
+  it("restarts the marked service selected when the trusted upstream service is inactive (#10947)", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-lifecycle-service-"));
     const home = path.join(root, "home");
     const configHome = path.join(root, "config");
     const bin = path.join(root, "bin");
     const log = path.join(root, "systemctl.log");
     const unitDir = path.join(configHome, "systemd", "user");
+    const unit = path.join(unitDir, "nemoclaw-openshell-gateway.service");
+    const gatewayBin = path.join(home, ".local", "bin", "openshell-gateway");
+    const upstreamUnit = path.join(
+      root,
+      "usr",
+      "lib",
+      "systemd",
+      "user",
+      "openshell-gateway.service",
+    );
+    const upstreamGatewayBin = path.join(root, "usr", "bin", "openshell-gateway");
+    const active = path.join(root, "managed-active");
+    const trustedInstaller = writeTrustedInstaller(root, upstreamUnit, upstreamGatewayBin);
 
     fs.mkdirSync(home, { recursive: true });
     fs.mkdirSync(bin, { recursive: true });
     fs.mkdirSync(unitDir, { recursive: true });
-    fs.writeFileSync(
-      path.join(unitDir, "nemoclaw-openshell-gateway.service"),
-      "# NEMOCLAW_MANAGED_OPENSHELL_GATEWAY=1\n",
-    );
+    fs.mkdirSync(path.dirname(gatewayBin), { recursive: true });
+    fs.mkdirSync(path.dirname(upstreamGatewayBin), { recursive: true });
+    fs.writeFileSync(unit, "# NEMOCLAW_MANAGED_OPENSHELL_GATEWAY=1\n");
+    fs.writeFileSync(gatewayBin, "#!/bin/sh\n", { mode: 0o755 });
+    fs.writeFileSync(upstreamGatewayBin, "#!/bin/sh\n", { mode: 0o755 });
+    fs.writeFileSync(active, "active\n");
+    fs.writeFileSync(path.join(bin, "uname"), "#!/bin/sh\nprintf 'Linux\\n'\n", { mode: 0o755 });
     fs.writeFileSync(
       path.join(bin, "systemctl"),
       [
         "#!/bin/sh",
         `printf "%s\\n" "$*" >> ${JSON.stringify(log)}`,
-        'if [ "$*" = "--user cat openshell-gateway" ]; then exit 1; fi',
-        "exit 0",
+        `if [ "$*" = ${JSON.stringify(upstreamServiceShow)} ]; then`,
+        `  printf 'FragmentPath=%s\\n' ${JSON.stringify(upstreamUnit)}`,
+        `  printf 'ExecStart={ path=%s ; argv[]=%s ; }\\n' ${JSON.stringify(upstreamGatewayBin)} ${JSON.stringify(upstreamGatewayBin)}`,
+        "  exit 0",
+        "fi",
+        'if [ "$*" = "--user is-active --quiet openshell-gateway.service" ]; then exit 1; fi',
+        `if [ "$*" = "--user show nemoclaw-openshell-gateway.service --property=FragmentPath --value" ]; then printf '%s\\n' ${JSON.stringify(unit)}; exit 0; fi`,
+        `if [ "$*" = "--user show nemoclaw-openshell-gateway.service --property=ExecStart --value" ]; then printf '{ path=%s ; argv[]=%s ; }\\n' ${JSON.stringify(gatewayBin)} ${JSON.stringify(gatewayBin)}; exit 0; fi`,
+        `if [ "$*" = "--user is-active --quiet nemoclaw-openshell-gateway.service" ]; then test -f ${JSON.stringify(active)}; exit $?; fi`,
+        `if [ "$*" = "--user stop nemoclaw-openshell-gateway.service" ]; then rm -f ${JSON.stringify(active)}; exit 0; fi`,
+        `if [ "$*" = "--user restart nemoclaw-openshell-gateway.service" ]; then touch ${JSON.stringify(active)}; exit 0; fi`,
+        'if [ "$*" = "--user show-environment" ] || [ "$*" = "--user is-enabled nemoclaw-openshell-gateway.service" ] || [ "$*" = "--user daemon-reload" ]; then exit 0; fi',
+        "exit 97",
       ].join("\n"),
       { mode: 0o755 },
     );
@@ -235,20 +364,38 @@ describe("managed OpenShell gateway user-service restart", () => {
         HOME: home,
         PATH: `${bin}:/usr/bin:/bin`,
         XDG_CONFIG_HOME: configHome,
+        NEMOCLAW_GATEWAY_PORT: "8080",
       });
-      execFileSync("sh", ["-lc", buildOpenShellGatewayUserServiceRestartScript()], {
+      const stopped = runStopScript(trustedInstaller, env);
+      expect(stopped.status, stopped.stdout + stopped.stderr).toBe(0);
+      expect(stopped.stdout).toContain(
+        `${stoppedServicePrefix}systemd:nemoclaw-openshell-gateway.service`,
+      );
+
+      const restarted = runRestartScript(
+        trustedInstaller,
+        "systemd:nemoclaw-openshell-gateway.service",
         env,
-        killSignal: "SIGKILL",
-        timeout: 30_000,
-      });
+      );
+      expect(restarted.status, restarted.stdout + restarted.stderr).toBe(0);
 
       expect(env.XDG_CONFIG_HOME).toBe(configHome);
       expect(fs.readFileSync(log, "utf8").trim().split("\n")).toEqual([
-        "--user cat openshell-gateway",
-        "--user is-enabled nemoclaw-openshell-gateway",
+        upstreamServiceShow,
+        "--user is-active --quiet openshell-gateway.service",
+        "--user show-environment",
+        "--user is-active --quiet nemoclaw-openshell-gateway.service",
+        "--user show nemoclaw-openshell-gateway.service --property=FragmentPath --value",
+        "--user show nemoclaw-openshell-gateway.service --property=ExecStart --value",
+        "--user stop nemoclaw-openshell-gateway.service",
+        "--user is-active --quiet nemoclaw-openshell-gateway.service",
+        "--user show nemoclaw-openshell-gateway.service --property=FragmentPath --value",
+        "--user show nemoclaw-openshell-gateway.service --property=ExecStart --value",
+        "--user is-enabled nemoclaw-openshell-gateway.service",
         "--user daemon-reload",
-        "--user restart nemoclaw-openshell-gateway",
+        "--user restart nemoclaw-openshell-gateway.service",
       ]);
+      expect(fs.existsSync(active)).toBe(true);
     } finally {
       fs.rmSync(root, { force: true, recursive: true });
     }
@@ -263,22 +410,30 @@ describe("managed OpenShell gateway user-service stop", () => {
     const bin = path.join(root, "bin");
     const log = path.join(root, "systemctl.log");
     const unitDir = path.join(configHome, "systemd", "user");
+    const unit = path.join(unitDir, "nemoclaw-openshell-gateway.service");
+    const gatewayBin = path.join(home, ".local", "bin", "openshell-gateway");
+    const active = path.join(root, "managed-active");
 
     fs.mkdirSync(home, { recursive: true });
     fs.mkdirSync(bin, { recursive: true });
     fs.mkdirSync(unitDir, { recursive: true });
+    fs.mkdirSync(path.dirname(gatewayBin), { recursive: true });
     fs.writeFileSync(path.join(bin, "uname"), "#!/bin/sh\nprintf 'Linux\\n'\n", { mode: 0o755 });
-    fs.writeFileSync(
-      path.join(unitDir, "nemoclaw-openshell-gateway.service"),
-      "# NEMOCLAW_MANAGED_OPENSHELL_GATEWAY=1\n",
-    );
+    fs.writeFileSync(unit, "# NEMOCLAW_MANAGED_OPENSHELL_GATEWAY=1\n");
+    fs.writeFileSync(gatewayBin, "#!/bin/sh\n", { mode: 0o755 });
+    fs.writeFileSync(active, "active\n");
     fs.writeFileSync(
       path.join(bin, "systemctl"),
       [
         "#!/bin/sh",
         `printf "%s\\n" "$*" >> ${JSON.stringify(log)}`,
         `if [ "$*" = ${JSON.stringify(upstreamServiceShow)} ]; then exit 1; fi`,
-        "exit 0",
+        'if [ "$*" = "--user show-environment" ]; then exit 0; fi',
+        `if [ "$*" = "--user show nemoclaw-openshell-gateway.service --property=FragmentPath --value" ]; then printf '%s\\n' ${JSON.stringify(unit)}; exit 0; fi`,
+        `if [ "$*" = "--user show nemoclaw-openshell-gateway.service --property=ExecStart --value" ]; then printf '{ path=%s ; argv[]=%s ; }\\n' ${JSON.stringify(gatewayBin)} ${JSON.stringify(gatewayBin)}; exit 0; fi`,
+        `if [ "$*" = "--user is-active --quiet nemoclaw-openshell-gateway.service" ]; then test -f ${JSON.stringify(active)}; exit $?; fi`,
+        `if [ "$*" = "--user stop nemoclaw-openshell-gateway.service" ]; then rm -f ${JSON.stringify(active)}; exit 0; fi`,
+        "exit 97",
       ].join("\n"),
       { mode: 0o755 },
     );
@@ -288,18 +443,22 @@ describe("managed OpenShell gateway user-service stop", () => {
         HOME: home,
         PATH: `${bin}:/usr/bin:/bin`,
         XDG_CONFIG_HOME: configHome,
+        NEMOCLAW_GATEWAY_PORT: "8080",
       });
-      execFileSync("sh", ["-c", buildOpenShellGatewayUserServiceStopScript()], {
-        env,
-        killSignal: "SIGKILL",
-        timeout: 30_000,
-      });
+      const result = runStopScript(installer, env);
 
+      expect(result.status, result.stdout + result.stderr).toBe(0);
+      expect(result.stdout).toContain(
+        `${stoppedServicePrefix}systemd:nemoclaw-openshell-gateway.service`,
+      );
       expect(fs.readFileSync(log, "utf8").trim().split("\n")).toEqual([
         upstreamServiceShow,
         "--user show-environment",
-        "--user is-active --quiet nemoclaw-openshell-gateway",
-        "--user stop nemoclaw-openshell-gateway",
+        "--user is-active --quiet nemoclaw-openshell-gateway.service",
+        "--user show nemoclaw-openshell-gateway.service --property=FragmentPath --value",
+        "--user show nemoclaw-openshell-gateway.service --property=ExecStart --value",
+        "--user stop nemoclaw-openshell-gateway.service",
+        "--user is-active --quiet nemoclaw-openshell-gateway.service",
       ]);
     } finally {
       fs.rmSync(root, { force: true, recursive: true });
@@ -311,9 +470,20 @@ describe("managed OpenShell gateway user-service stop", () => {
     const home = path.join(root, "home");
     const bin = path.join(root, "bin");
     const log = path.join(root, "systemctl.log");
+    const unit = path.join(root, "usr", "lib", "systemd", "user", "openshell-gateway.service");
+    const gatewayBin = path.join(root, "usr", "bin", "openshell-gateway");
+    const active = path.join(root, "upstream-active");
+    const trustedInstaller = writeTrustedInstaller(root, unit, gatewayBin);
+    const metadata = [
+      `FragmentPath=${unit}`,
+      `ExecStart={ path=${gatewayBin} ; argv[]=${gatewayBin} ; }`,
+    ].join("\n");
 
     fs.mkdirSync(home, { recursive: true });
     fs.mkdirSync(bin, { recursive: true });
+    fs.mkdirSync(path.dirname(gatewayBin), { recursive: true });
+    fs.writeFileSync(gatewayBin, "#!/bin/sh\n", { mode: 0o755 });
+    fs.writeFileSync(active, "active\n");
     fs.writeFileSync(path.join(bin, "uname"), "#!/bin/sh\nprintf 'Linux\\n'\n", { mode: 0o755 });
     fs.writeFileSync(
       path.join(bin, "systemctl"),
@@ -321,9 +491,13 @@ describe("managed OpenShell gateway user-service stop", () => {
         "#!/bin/sh",
         `printf "%s\\n" "$*" >> ${JSON.stringify(log)}`,
         `if [ "$*" = ${JSON.stringify(upstreamServiceShow)} ]; then`,
-        `  printf "%b\\n" ${JSON.stringify(trustedActiveUpstreamMetadata)}`,
+        `  printf "%b\\n" ${JSON.stringify(metadata)}`,
+        "  exit 0",
         "fi",
-        "exit 0",
+        `if [ "$*" = "--user is-active --quiet openshell-gateway.service" ]; then test -f ${JSON.stringify(active)}; exit $?; fi`,
+        `if [ "$*" = "--user stop openshell-gateway.service" ]; then rm -f ${JSON.stringify(active)}; exit 0; fi`,
+        'if [ "$*" = "--user show-environment" ]; then exit 0; fi',
+        "exit 97",
       ].join("\n"),
       { mode: 0o755 },
     );
@@ -333,15 +507,15 @@ describe("managed OpenShell gateway user-service stop", () => {
         HOME: home,
         PATH: `${bin}:/usr/bin:/bin`,
       });
-      execFileSync("sh", ["-c", buildOpenShellGatewayUserServiceStopScript()], {
-        env,
-        killSignal: "SIGKILL",
-        timeout: 30_000,
-      });
+      const result = runStopScript(trustedInstaller, env);
 
+      expect(result.status, result.stdout + result.stderr).toBe(0);
+      expect(result.stdout).toContain(`${stoppedServicePrefix}systemd:openshell-gateway.service`);
       expect(fs.readFileSync(log, "utf8").trim().split("\n")).toEqual([
         upstreamServiceShow,
-        "--user stop openshell-gateway",
+        "--user is-active --quiet openshell-gateway.service",
+        "--user stop openshell-gateway.service",
+        "--user is-active --quiet openshell-gateway.service",
       ]);
     } finally {
       fs.rmSync(root, { force: true, recursive: true });
@@ -350,93 +524,52 @@ describe("managed OpenShell gateway user-service stop", () => {
 
   it("uses the NVIDIA OpenShell Homebrew service on macOS (#10947)", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-lifecycle-stop-homebrew-"));
-    const home = path.join(root, "home");
-    const bin = path.join(root, "bin");
-    const log = path.join(root, "brew.log");
-
-    fs.mkdirSync(home, { recursive: true });
-    fs.mkdirSync(bin, { recursive: true });
-    fs.writeFileSync(path.join(bin, "uname"), "#!/bin/sh\nprintf 'Darwin\\n'\n", { mode: 0o755 });
-    fs.writeFileSync(
-      path.join(bin, "brew"),
-      [
-        "#!/bin/sh",
-        `printf "%s\\n" "$*" >> ${JSON.stringify(log)}`,
-        'if [ "$*" = "list --formula openshell" ]; then exit 0; fi',
-        'if [ "$*" = "info --json=v2 openshell" ]; then',
-        '  printf \'%s\\n\' \'{"formulae":[{"tap":"nvidia/openshell"}]}\'',
-        "  exit 0",
-        "fi",
-        'if [ "$*" = "services stop openshell" ]; then exit 0; fi',
-        "exit 1",
-      ].join("\n"),
-      { mode: 0o755 },
+    const { active, bin, brewLog, home, launchctlLog, serviceDomain } = writeMacServiceStubs(
+      root,
+      true,
     );
 
     try {
       const env = buildAvailabilityProbeEnv({
         HOME: home,
         PATH: `${bin}:/usr/bin:/bin`,
+        NEMOCLAW_GATEWAY_PORT: "8080",
       });
-      execFileSync("sh", ["-c", buildOpenShellGatewayUserServiceStopScript()], {
-        env,
-        killSignal: "SIGKILL",
-        timeout: 30_000,
-      });
+      const result = runStopScript(installer, env);
 
-      expect(fs.readFileSync(log, "utf8").trim().split("\n")).toEqual([
-        "list --formula openshell",
-        "info --json=v2 openshell",
-        "services stop openshell",
+      expect(result.status, result.stdout + result.stderr).toBe(0);
+      expect(result.stdout).toContain(`${stoppedServicePrefix}homebrew:openshell`);
+      expect(fs.readFileSync(brewLog, "utf8").trim()).toBe("--prefix");
+      expect(fs.readFileSync(launchctlLog, "utf8").trim().split("\n")).toEqual([
+        `print ${serviceDomain}`,
+        "print gui/501/homebrew.mxcl.openshell",
+        `bootout ${serviceDomain}`,
+        `print ${serviceDomain}`,
       ]);
+      expect(fs.existsSync(active)).toBe(false);
     } finally {
       fs.rmSync(root, { force: true, recursive: true });
     }
   });
 
-  it("rejects a non-NVIDIA OpenShell Homebrew service without stopping it (#10947)", () => {
+  it("rejects an untrusted OpenShell Homebrew service without stopping it (#10947)", () => {
     const root = fs.mkdtempSync(
       path.join(os.tmpdir(), "nemoclaw-lifecycle-stop-homebrew-foreign-"),
     );
-    const home = path.join(root, "home");
-    const bin = path.join(root, "bin");
-    const log = path.join(root, "brew.log");
-
-    fs.mkdirSync(home, { recursive: true });
-    fs.mkdirSync(bin, { recursive: true });
-    fs.writeFileSync(path.join(bin, "uname"), "#!/bin/sh\nprintf 'Darwin\\n'\n", { mode: 0o755 });
-    fs.writeFileSync(
-      path.join(bin, "brew"),
-      [
-        "#!/bin/sh",
-        `printf "%s\\n" "$*" >> ${JSON.stringify(log)}`,
-        'if [ "$*" = "list --formula openshell" ]; then exit 0; fi',
-        'if [ "$*" = "info --json=v2 openshell" ]; then',
-        '  printf \'%s\\n\' \'{"formulae":[{"tap":"homebrew/core"}]}\'',
-        "  exit 0",
-        "fi",
-        "exit 1",
-      ].join("\n"),
-      { mode: 0o755 },
-    );
+    const { active, bin, home, launchctlLog } = writeMacServiceStubs(root, false);
 
     try {
       const env = buildAvailabilityProbeEnv({
         HOME: home,
         PATH: `${bin}:/usr/bin:/bin`,
+        NEMOCLAW_GATEWAY_PORT: "8080",
       });
-      const result = spawnSync("sh", ["-c", buildOpenShellGatewayUserServiceStopScript()], {
-        encoding: "utf8",
-        env,
-        killSignal: "SIGKILL",
-        timeout: 30_000,
-      });
+      const result = runStopScript(installer, env);
 
       expect(result.status).toBe(1);
-      expect(fs.readFileSync(log, "utf8").trim().split("\n")).toEqual([
-        "list --formula openshell",
-        "info --json=v2 openshell",
-      ]);
+      expect(result.stderr).toContain("untrusted executable");
+      expect(fs.readFileSync(launchctlLog, "utf8")).not.toContain("bootout");
+      expect(fs.existsSync(active)).toBe(true);
     } finally {
       fs.rmSync(root, { force: true, recursive: true });
     }
@@ -450,7 +583,6 @@ describe("managed OpenShell gateway user-service stop", () => {
     const bin = path.join(root, "bin");
     const log = path.join(root, "systemctl.log");
     const untrustedMetadata = [
-      "ActiveState=active",
       `FragmentPath=${home}/.config/systemd/user/openshell-gateway.service`,
       "ExecStart={ path=/usr/bin/openshell-gateway ; argv[]=/usr/bin/openshell-gateway ; }",
     ].join("\n");
@@ -467,7 +599,8 @@ describe("managed OpenShell gateway user-service stop", () => {
         `  printf "%b\\n" ${JSON.stringify(untrustedMetadata)}`,
         "  exit 0",
         "fi",
-        "exit 1",
+        'if [ "$*" = "--user show-environment" ]; then exit 0; fi',
+        "exit 97",
       ].join("\n"),
       { mode: 0o755 },
     );
@@ -477,30 +610,29 @@ describe("managed OpenShell gateway user-service stop", () => {
         HOME: home,
         PATH: `${bin}:/usr/bin:/bin`,
       });
-      const result = spawnSync("sh", ["-c", buildOpenShellGatewayUserServiceStopScript()], {
-        env,
-        killSignal: "SIGKILL",
-        timeout: 30_000,
-      });
+      const result = runStopScript(installer, env);
 
       expect(result.status).toBe(75);
-      expect(fs.readFileSync(log, "utf8").trim()).toBe(upstreamServiceShow);
+      expect(fs.readFileSync(log, "utf8").trim().split("\n")).toEqual([
+        upstreamServiceShow,
+        "--user show-environment",
+      ]);
     } finally {
       fs.rmSync(root, { force: true, recursive: true });
     }
   });
 
-  it("falls back when the trusted upstream OpenShell user service is inactive (#10947)", () => {
+  it("rejects an untrusted upstream executable independently of its trusted unit (#10947)", () => {
     const root = fs.mkdtempSync(
-      path.join(os.tmpdir(), "nemoclaw-lifecycle-stop-upstream-inactive-"),
+      path.join(os.tmpdir(), "nemoclaw-lifecycle-stop-upstream-executable-foreign-"),
     );
     const home = path.join(root, "home");
     const bin = path.join(root, "bin");
     const log = path.join(root, "systemctl.log");
-    const inactiveMetadata = trustedActiveUpstreamMetadata.replace(
-      "ActiveState=active",
-      "ActiveState=inactive",
-    );
+    const metadata = [
+      "FragmentPath=/usr/lib/systemd/user/openshell-gateway.service",
+      "ExecStart={ path=/tmp/foreign/openshell-gateway ; argv[]=/tmp/foreign/openshell-gateway ; }",
+    ].join("\n");
 
     fs.mkdirSync(home, { recursive: true });
     fs.mkdirSync(bin, { recursive: true });
@@ -511,10 +643,11 @@ describe("managed OpenShell gateway user-service stop", () => {
         "#!/bin/sh",
         `printf "%s\\n" "$*" >> ${JSON.stringify(log)}`,
         `if [ "$*" = ${JSON.stringify(upstreamServiceShow)} ]; then`,
-        `  printf "%b\\n" ${JSON.stringify(inactiveMetadata)}`,
+        `  printf "%b\\n" ${JSON.stringify(metadata)}`,
         "  exit 0",
         "fi",
-        "exit 1",
+        'if [ "$*" = "--user show-environment" ]; then exit 0; fi',
+        "exit 97",
       ].join("\n"),
       { mode: 0o755 },
     );
@@ -524,14 +657,147 @@ describe("managed OpenShell gateway user-service stop", () => {
         HOME: home,
         PATH: `${bin}:/usr/bin:/bin`,
       });
-      const result = spawnSync("sh", ["-c", buildOpenShellGatewayUserServiceStopScript()], {
-        env,
-        killSignal: "SIGKILL",
-        timeout: 30_000,
-      });
+      const result = runStopScript(installer, env);
 
       expect(result.status).toBe(75);
-      expect(fs.readFileSync(log, "utf8").trim()).toBe(upstreamServiceShow);
+      expect(fs.readFileSync(log, "utf8").trim().split("\n")).toEqual([
+        upstreamServiceShow,
+        "--user show-environment",
+      ]);
+    } finally {
+      fs.rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  it("rejects trusted upstream metadata when the selected executable is unavailable (#10947)", () => {
+    const root = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-lifecycle-stop-upstream-executable-missing-"),
+    );
+    const home = path.join(root, "home");
+    const bin = path.join(root, "bin");
+    const log = path.join(root, "systemctl.log");
+    const unit = path.join(root, "usr", "lib", "systemd", "user", "openshell-gateway.service");
+    const missingGatewayBin = path.join(root, "usr", "bin", "openshell-gateway");
+    const trustedInstaller = writeTrustedInstaller(root, unit, missingGatewayBin);
+    const metadata = [
+      `FragmentPath=${unit}`,
+      `ExecStart={ path=${missingGatewayBin} ; argv[]=${missingGatewayBin} ; }`,
+    ].join("\n");
+
+    fs.mkdirSync(home, { recursive: true });
+    fs.mkdirSync(bin, { recursive: true });
+    fs.writeFileSync(path.join(bin, "uname"), "#!/bin/sh\nprintf 'Linux\\n'\n", { mode: 0o755 });
+    fs.writeFileSync(
+      path.join(bin, "systemctl"),
+      [
+        "#!/bin/sh",
+        `printf "%s\\n" "$*" >> ${JSON.stringify(log)}`,
+        `if [ "$*" = ${JSON.stringify(upstreamServiceShow)} ]; then`,
+        `  printf "%b\\n" ${JSON.stringify(metadata)}`,
+        "  exit 0",
+        "fi",
+        'if [ "$*" = "--user show-environment" ]; then exit 0; fi',
+        "exit 97",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    try {
+      const env = buildAvailabilityProbeEnv({
+        HOME: home,
+        PATH: `${bin}:/usr/bin:/bin`,
+      });
+      const result = runStopScript(trustedInstaller, env);
+
+      expect(result.status).toBe(75);
+      expect(fs.readFileSync(log, "utf8").trim().split("\n")).toEqual([
+        upstreamServiceShow,
+        "--user show-environment",
+      ]);
+    } finally {
+      fs.rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  it("falls back to an active marked service when the trusted upstream service is inactive (#10947)", () => {
+    const root = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-lifecycle-stop-upstream-inactive-"),
+    );
+    const home = path.join(root, "home");
+    const configHome = path.join(root, "config");
+    const bin = path.join(root, "bin");
+    const log = path.join(root, "systemctl.log");
+    const unit = path.join(configHome, "systemd", "user", "nemoclaw-openshell-gateway.service");
+    const gatewayBin = path.join(home, ".local", "bin", "openshell-gateway");
+    const upstreamUnit = path.join(
+      root,
+      "usr",
+      "lib",
+      "systemd",
+      "user",
+      "openshell-gateway.service",
+    );
+    const upstreamGatewayBin = path.join(root, "usr", "bin", "openshell-gateway");
+    const active = path.join(root, "managed-active");
+    const trustedInstaller = writeTrustedInstaller(root, upstreamUnit, upstreamGatewayBin);
+    const metadata = [
+      `FragmentPath=${upstreamUnit}`,
+      `ExecStart={ path=${upstreamGatewayBin} ; argv[]=${upstreamGatewayBin} ; }`,
+    ].join("\n");
+
+    fs.mkdirSync(home, { recursive: true });
+    fs.mkdirSync(bin, { recursive: true });
+    fs.mkdirSync(path.dirname(unit), { recursive: true });
+    fs.mkdirSync(path.dirname(gatewayBin), { recursive: true });
+    fs.mkdirSync(path.dirname(upstreamGatewayBin), { recursive: true });
+    fs.writeFileSync(unit, "# NEMOCLAW_MANAGED_OPENSHELL_GATEWAY=1\n");
+    fs.writeFileSync(gatewayBin, "#!/bin/sh\n", { mode: 0o755 });
+    fs.writeFileSync(upstreamGatewayBin, "#!/bin/sh\n", { mode: 0o755 });
+    fs.writeFileSync(active, "active\n");
+    fs.writeFileSync(path.join(bin, "uname"), "#!/bin/sh\nprintf 'Linux\\n'\n", { mode: 0o755 });
+    fs.writeFileSync(
+      path.join(bin, "systemctl"),
+      [
+        "#!/bin/sh",
+        `printf "%s\\n" "$*" >> ${JSON.stringify(log)}`,
+        `if [ "$*" = ${JSON.stringify(upstreamServiceShow)} ]; then`,
+        `  printf "%b\\n" ${JSON.stringify(metadata)}`,
+        "  exit 0",
+        "fi",
+        'if [ "$*" = "--user is-active --quiet openshell-gateway.service" ]; then exit 1; fi',
+        'if [ "$*" = "--user show-environment" ]; then exit 0; fi',
+        `if [ "$*" = "--user show nemoclaw-openshell-gateway.service --property=FragmentPath --value" ]; then printf '%s\\n' ${JSON.stringify(unit)}; exit 0; fi`,
+        `if [ "$*" = "--user show nemoclaw-openshell-gateway.service --property=ExecStart --value" ]; then printf '{ path=%s ; argv[]=%s ; }\\n' ${JSON.stringify(gatewayBin)} ${JSON.stringify(gatewayBin)}; exit 0; fi`,
+        `if [ "$*" = "--user is-active --quiet nemoclaw-openshell-gateway.service" ]; then test -f ${JSON.stringify(active)}; exit $?; fi`,
+        `if [ "$*" = "--user stop nemoclaw-openshell-gateway.service" ]; then rm -f ${JSON.stringify(active)}; exit 0; fi`,
+        "exit 97",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    try {
+      const env = buildAvailabilityProbeEnv({
+        HOME: home,
+        PATH: `${bin}:/usr/bin:/bin`,
+        XDG_CONFIG_HOME: configHome,
+        NEMOCLAW_GATEWAY_PORT: "8080",
+      });
+      const result = runStopScript(trustedInstaller, env);
+
+      expect(result.status, result.stdout + result.stderr).toBe(0);
+      expect(result.stdout).toContain(
+        `${stoppedServicePrefix}systemd:nemoclaw-openshell-gateway.service`,
+      );
+      expect(fs.readFileSync(log, "utf8").trim().split("\n")).toEqual([
+        upstreamServiceShow,
+        "--user is-active --quiet openshell-gateway.service",
+        "--user show-environment",
+        "--user is-active --quiet nemoclaw-openshell-gateway.service",
+        "--user show nemoclaw-openshell-gateway.service --property=FragmentPath --value",
+        "--user show nemoclaw-openshell-gateway.service --property=ExecStart --value",
+        "--user stop nemoclaw-openshell-gateway.service",
+        "--user is-active --quiet nemoclaw-openshell-gateway.service",
+      ]);
     } finally {
       fs.rmSync(root, { force: true, recursive: true });
     }
@@ -567,15 +833,12 @@ describe("managed OpenShell gateway user-service stop", () => {
         HOME: home,
         PATH: `${bin}:/usr/bin:/bin`,
         XDG_CONFIG_HOME: configHome,
+        NEMOCLAW_GATEWAY_PORT: "8080",
       });
-      const result = spawnSync("sh", ["-c", buildOpenShellGatewayUserServiceStopScript()], {
-        encoding: "utf8",
-        env,
-        killSignal: "SIGKILL",
-        timeout: 30_000,
-      });
+      const result = runStopScript(installer, env);
 
-      expect(result.status).toBe(75);
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("non-NemoClaw user service");
       expect(fs.readFileSync(unit, "utf8")).toBe("[Service]\nExecStart=/tmp/foreign\n");
       expect(fs.readFileSync(log, "utf8").trim().split("\n")).toEqual([
         upstreamServiceShow,
@@ -615,14 +878,9 @@ describe("managed OpenShell gateway user-service stop", () => {
         HOME: home,
         PATH: `${bin}:/usr/bin:/bin`,
       });
-      const result = spawnSync("sh", ["-c", buildOpenShellGatewayUserServiceStopScript()], {
-        encoding: "utf8",
-        env,
-        killSignal: "SIGKILL",
-        timeout: 30_000,
-      });
+      const result = runStopScript(installer, env);
 
-      expect(result.status).toBe(1);
+      expect(result.status).toBe(2);
       expect(result.stderr).toContain("Failed to connect to bus");
       expect(fs.readFileSync(log, "utf8").trim().split("\n")).toEqual([
         upstreamServiceShow,

@@ -3951,10 +3951,10 @@ stop_macos_openshell_gateway_user_service() {
   return 0
 }
 
-stop_nemoclaw_openshell_gateway_user_service() {
+inspect_nemoclaw_openshell_gateway_user_service() {
   [ "$(uname -s)" = "Linux" ] || return 1
 
-  local gateway_port service_name service_path fragment_path gateway_bin
+  local mode="${1:-}" gateway_port service_name service_path fragment_path gateway_bin
   gateway_port="$(resolve_nemoclaw_gateway_port)" || return 1
   [ "$gateway_port" -eq 8080 ] || return 1
   command_exists systemctl || return 1
@@ -3963,26 +3963,101 @@ stop_nemoclaw_openshell_gateway_user_service() {
   service_path="$(openshell_user_config_home)/systemd/user/${service_name}"
   [ -f "$service_path" ] || return 1
   if [ -L "$service_path" ] || ! [ -O "$service_path" ]; then
-    error "Refusing to retire the OpenShell gateway from an untrusted user service: ${service_path}"
+    error "Refusing to control the OpenShell gateway through an untrusted user service: ${service_path}"
   fi
   is_nemoclaw_openshell_gateway_user_service "$service_path" \
-    || error "Refusing to retire the OpenShell gateway from a non-NemoClaw user service: ${service_path}"
-  systemctl --user is-active --quiet "$service_name" 2>/dev/null || return 1
+    || error "Refusing to control the OpenShell gateway through a non-NemoClaw user service: ${service_path}"
+  if [ "$mode" = "active" ]; then
+    systemctl --user is-active --quiet "$service_name" 2>/dev/null || return 1
+  fi
 
   fragment_path="$(systemctl --user show "$service_name" --property=FragmentPath --value 2>/dev/null)" \
     || return 1
   [ "$fragment_path" = "$service_path" ] \
-    || error "Refusing to retire the OpenShell gateway because the active user service does not match ${service_path}."
+    || error "Refusing to control the OpenShell gateway because the user service does not match ${service_path}."
   gateway_bin="$(resolve_openshell_gateway_bin_for_user_service "$service_name")" \
     || return 1
   trusted_openshell_gateway_bin_for_service "$gateway_bin" \
-    || error "Refusing to retire an OpenShell gateway user service with an untrusted binary: ${gateway_bin}"
+    || error "Refusing to control an OpenShell gateway user service with an untrusted binary: ${gateway_bin}"
+}
+
+stop_nemoclaw_openshell_gateway_user_service() {
+  local service_name
+  inspect_nemoclaw_openshell_gateway_user_service active || return 1
+  service_name="${NEMOCLAW_GATEWAY_SERVICE_NAME}.service"
 
   systemctl --user stop "$service_name" \
     || error "Could not stop the trusted NemoClaw OpenShell gateway user service. Run 'systemctl --user status ${service_name}' for details."
   systemctl --user is-active --quiet "$service_name" 2>/dev/null \
     && error "The trusted NemoClaw OpenShell gateway user service remained active after the stop command."
   return 0
+}
+
+stop_active_openshell_gateway_user_service() {
+  local selection_variable="${1:-}" platform inspect_status
+  [[ "$selection_variable" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]] || return 1
+  platform="$(uname -s)" || return 1
+
+  if [ "$platform" = "Darwin" ]; then
+    if stop_macos_openshell_gateway_user_service; then
+      printf -v "$selection_variable" '%s' "homebrew:openshell"
+      return 0
+    fi
+    return 1
+  fi
+  [ "$platform" = "Linux" ] || return 1
+  command_exists systemctl || return 1
+
+  if inspect_upstream_openshell_gateway_user_service; then
+    if systemctl --user is-active --quiet openshell-gateway.service 2>/dev/null; then
+      systemctl --user stop openshell-gateway.service \
+        || error "Could not stop the trusted upstream OpenShell gateway user service. Run 'systemctl --user status openshell-gateway.service' for details."
+      systemctl --user is-active --quiet openshell-gateway.service 2>/dev/null \
+        && error "The trusted upstream OpenShell gateway user service remained active after the stop command."
+      printf -v "$selection_variable" '%s' "systemd:openshell-gateway.service"
+      return 0
+    fi
+    systemctl --user show-environment >/dev/null || return 2
+  else
+    inspect_status=$?
+    [ "$inspect_status" -ne 2 ] || return 2
+    systemctl --user show-environment >/dev/null || return 2
+  fi
+
+  if stop_nemoclaw_openshell_gateway_user_service; then
+    printf -v "$selection_variable" '%s' "systemd:${NEMOCLAW_GATEWAY_SERVICE_NAME}.service"
+    return 0
+  fi
+  return 1
+}
+
+restart_selected_openshell_gateway_user_service() {
+  local selection="${1:-}" inspect_status service_name
+  case "$selection" in
+    systemd:openshell-gateway.service)
+      if inspect_upstream_openshell_gateway_user_service; then
+        service_name="openshell-gateway.service"
+      else
+        inspect_status=$?
+        [ "$inspect_status" -ne 2 ] || return 2
+        return 1
+      fi
+      ;;
+    "systemd:${NEMOCLAW_GATEWAY_SERVICE_NAME}.service")
+      service_name="${NEMOCLAW_GATEWAY_SERVICE_NAME}.service"
+      inspect_nemoclaw_openshell_gateway_user_service || return 1
+      ;;
+    homebrew:openshell)
+      macos_openshell_homebrew_gateway_service_installed || return 1
+      brew services restart openshell
+      return 0
+      ;;
+    *) return 1 ;;
+  esac
+
+  systemctl --user is-enabled "$service_name" >/dev/null || return 1
+  systemctl --user daemon-reload
+  systemctl --user restart "$service_name"
 }
 
 preinstall_backup_and_retire_legacy_gateway() {

@@ -1153,7 +1153,7 @@ describe("install.sh OpenShell gateway service", () => {
     const calls = fs.readFileSync(systemctl.log, "utf-8");
 
     expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain("active user service does not match");
+    expect(result.stderr).toContain("user service does not match");
     expect(calls).not.toContain("--user stop nemoclaw-openshell-gateway.service");
   });
 
