@@ -19,6 +19,7 @@ const RESTORE_SCRIPT = path.resolve("scripts/e2e/restore-cli-artifact.sh");
 type RunProcessOptions = {
   cwd?: string;
   env?: NodeJS.ProcessEnv;
+  timeoutMs?: number;
 };
 
 type RunProcessResult = {
@@ -37,7 +38,13 @@ function runProcess(
     execFile(
       file,
       [...args],
-      { cwd: options.cwd, encoding: "utf8", env: options.env },
+      {
+        cwd: options.cwd,
+        encoding: "utf8",
+        env: options.env,
+        killSignal: "SIGKILL",
+        timeout: options.timeoutMs ?? 20_000,
+      },
       (error, stdout, stderr) => {
         const signal = error?.signal ?? null;
         resolve({
@@ -508,6 +515,16 @@ async function expectRestoreFailure(
 }
 
 describe.concurrent("exact-commit CLI artifact restore", () => {
+  it("bounds stalled artifact helper processes", async ({ expect }) => {
+    const result = await runProcess(
+      process.execPath,
+      ["--eval", "setInterval(() => undefined, 1_000)"],
+      { timeoutMs: 50 },
+    );
+    expect(result.status).toBeNull();
+    expect(result.signal).toBe("SIGKILL");
+  });
+
   it("accepts matching artifact, candidate source, and workflow identities", async ({ expect }) => {
     const result = await runIdentityValidation();
     expect(result.status, "matching artifact identity validation failed").toBe(0);
