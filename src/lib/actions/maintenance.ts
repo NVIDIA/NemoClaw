@@ -92,7 +92,20 @@ async function retainStrictPreUpgradePolicy(
   result: sandboxState.BackupResult,
   enabled: boolean,
 ): Promise<sandboxState.BackupResult> {
-  if (!enabled || !result.success) return result;
+  if (!enabled) return result;
+  if (!result.success) {
+    const backupPath = result.manifest?.backupPath;
+    if (!backupPath) return result;
+    if (sandboxState.removeSandboxStateBackup(sandboxName, backupPath)) {
+      const { manifest: _removedManifest, ...withoutPartialBackup } = result;
+      return withoutPartialBackup;
+    }
+    const cleanupError = `Failed strict pre-upgrade backup at '${backupPath}' could not be removed`;
+    return {
+      ...result,
+      error: result.error ? `${result.error}. ${cleanupError}` : cleanupError,
+    };
+  }
   if (!result.manifest) {
     throw new Error(
       `Strict pre-upgrade backup for '${sandboxName}' completed without a published manifest`,
@@ -378,7 +391,8 @@ export async function backupAllUnderPortableHostFence(
         [...result.failedDirs, ...result.failedFiles],
         result.failedDirReasons,
       );
-      console.error(`  ${RD}✗${R} ${sb.name}: backup failed (${failedItems})`);
+      const failureDetail = [failedItems, result.error].filter(Boolean).join("; ");
+      console.error(`  ${RD}✗${R} ${sb.name}: backup failed (${failureDetail})`);
       failed++;
     }
   };

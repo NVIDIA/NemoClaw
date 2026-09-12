@@ -11,6 +11,7 @@ import {
   mkdirSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -20,18 +21,15 @@ import { createServer } from "node:net";
 import { join, resolve } from "node:path";
 
 import { expect, it, vi } from "vitest";
-import {
-  isSubprocessEnvNameAllowed,
-  SUBPROCESS_ENV_ALLOWED_NAMES,
-  SUBPROCESS_ENV_ALLOWED_PREFIXES,
-} from "../../../src/lib/subprocess-env";
+import { wrapExecCommandWithRuntimeEnv } from "../../../src/lib/actions/sandbox/runtime-env";
+import { isSubprocessEnvNameAllowed } from "../../../src/lib/subprocess-env";
 import { testTimeout } from "../../helpers/timeouts";
 import { cleanLaunchState, runLaunchCommand } from "./launch-agent-turn-process.ts";
 import {
   LAUNCH_TURN_SCRIPT,
   OPENCLAW_LAUNCH_READINESS_LEASE_ACCEPTANCE_TIMEOUT_MS,
   OPENCLAW_LAUNCH_READINESS_LEASE_MAXIMUM_MS,
-  OPENCLAW_LAUNCH_OPENSHELL_SHIM_SCRIPT,
+  OPENCLAW_LAUNCH_OPENSHELL_PRELOAD_SCRIPT,
   OPENCLAW_LAUNCH_RUNTIME_ENV_SCRIPT,
   OPENCLAW_PROVIDER_UNAVAILABLE_MARKER,
   OPENCLAW_PTY_MONITOR_STARTER_SCRIPT,
@@ -173,50 +171,19 @@ const readline = require("node:readline");
 
 const mode = process.env.NEMOCLAW_FIXTURE_MODE;
 const exitWithStatus = process.exit.bind(process);
-if (process.argv[2] !== "tui") {
-  const allowedNames = new Set(${JSON.stringify(SUBPROCESS_ENV_ALLOWED_NAMES)});
-  const allowedPrefixes = ${JSON.stringify(SUBPROCESS_ENV_ALLOWED_PREFIXES)};
-  const subprocessEnv = Object.fromEntries(
-    Object.entries(process.env).filter(
-      ([name, value]) =>
-        value !== undefined &&
-        (allowedNames.has(name) ||
-          allowedPrefixes.some((prefix) => name.startsWith(prefix)) ||
-          name.startsWith("NEMOCLAW_FIXTURE_")),
-    ),
-  );
-  const args = [
-    "sandbox",
-    "exec",
-    "--name",
-    process.argv[3],
-    "-g",
-    "fixture-gateway",
-    "--tty",
-    "--timeout",
-    "0",
-    "--",
-    "/bin/bash",
-    "--noprofile",
-    "--norc",
-    "-p",
-    "-c",
-    process.env.NEMOCLAW_LAUNCH_RUNTIME_ENV_SCRIPT,
-    "nemoclaw-runtime-env",
-    "bash",
-    "-lc",
-    "openclaw tui",
-  ];
-  const result = childProcess.spawnSync(process.env.NEMOCLAW_OPENSHELL_BIN, args, {
-    env: subprocessEnv,
-    stdio: "inherit",
-    timeout: 14_000,
-    killSignal: "SIGKILL",
-  });
-  process.exit(result.status ?? 66);
-}
-
 (async () => {
+  if (process.argv[2] !== "tui") {
+    const args = ${JSON.stringify(openShellLaunchArgv("sandbox", ["-g", "fixture-gateway"]))};
+    args[3] = process.argv[3];
+    const child = childProcess.spawn(process.env.NEMOCLAW_OPENSHELL_BIN, args, {
+      stdio: "inherit",
+      timeout: 14_000,
+      killSignal: "SIGKILL",
+    });
+    child.once("error", () => exitWithStatus(66));
+    child.once("exit", (status) => exitWithStatus(status ?? 66));
+    return;
+  }
   if (!process.stdin.isTTY || !process.stdout.isTTY) process.exit(64);
   fs.appendFileSync(process.env.NEMOCLAW_FIXTURE_TUI_PIDS, process.pid + "\n");
   const monitorRoot = process.env.NEMOCLAW_FIXTURE_PTY_MONITOR_ROOT;
@@ -424,10 +391,11 @@ node -e '
 const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
+const executable = path.join(process.env.NEMOCLAW_FIXTURE_BIN_ROOT, "openshell");
+require("node:assert/strict").equal(process.env.NEMOCLAW_OPENSHELL_BIN ?? executable, executable);
 const authorityNames = Object.keys(process.env)
   .filter(
     (name) =>
-      name === "NEMOCLAW_OPENSHELL_BIN" ||
       name === "NEMOCLAW_OPENSHELL_COMMAND" ||
       name.startsWith("NEMOCLAW_LAUNCH_") ||
       name.startsWith("OPENSHELL_NEMOCLAW_LAUNCH_"),
@@ -521,7 +489,7 @@ exec "$@"
       NEMOCLAW_LAUNCH_EXIT_COMMAND: invocationEnv.NEMOCLAW_LAUNCH_EXIT_COMMAND ?? "/exit",
       NEMOCLAW_LAUNCH_FIRST_INPUT: invocationEnv.NEMOCLAW_LAUNCH_FIRST_INPUT ?? "first input",
       NEMOCLAW_LAUNCH_HOST_TMP_ROOT: fixtureRoot,
-      NEMOCLAW_LAUNCH_OPENSHELL_SHIM_SCRIPT: OPENCLAW_LAUNCH_OPENSHELL_SHIM_SCRIPT,
+      NEMOCLAW_LAUNCH_OPENSHELL_PRELOAD_SCRIPT: OPENCLAW_LAUNCH_OPENSHELL_PRELOAD_SCRIPT,
       NEMOCLAW_LAUNCH_PTY_MONITOR_STARTER_SCRIPT: ptyMonitorStarterScript,
       NEMOCLAW_LAUNCH_RUN_ID: runId,
       NEMOCLAW_LAUNCH_RUNTIME_ENV_SCRIPT: OPENCLAW_LAUNCH_RUNTIME_ENV_SCRIPT,
@@ -623,23 +591,15 @@ function openShellLaunchArgv(sandboxName: string, gatewayArgs: string[]): string
     "--timeout",
     "0",
     "--",
-    "/bin/bash",
-    "--noprofile",
-    "--norc",
-    "-p",
-    "-c",
-    OPENCLAW_LAUNCH_RUNTIME_ENV_SCRIPT,
-    "nemoclaw-runtime-env",
-    "bash",
-    "-lc",
-    "openclaw tui",
+    ...wrapExecCommandWithRuntimeEnv(["bash", "-lc", "openclaw tui"]),
   ];
 }
 
-function runOpenShellShimFixture(gatewayArgs: string[]) {
-  const fixtureRoot = mkdtempSync(join(tmpdir(), "nemoclaw-launch-shim-"));
+function runOpenShellPreloadFixture(gatewayArgs: string[]) {
+  const fixtureRoot = mkdtempSync(join(tmpdir(), "nemoclaw-launch preload-"));
   const realOpenShell = join(fixtureRoot, "openshell-real");
-  const shim = join(fixtureRoot, "openshell-shim");
+  const preload = join(fixtureRoot, "openshell-preload.cjs");
+  const driver = join(fixtureRoot, "launch.mjs");
   const callsPath = join(fixtureRoot, "calls.jsonl");
   const interceptPath = join(fixtureRoot, "intercept.json");
   const runId = randomUUID().replaceAll("-", "");
@@ -654,30 +614,36 @@ require("node:fs").appendFileSync(
     authorityNames: Object.keys(process.env)
       .filter(
         (name) =>
-          name === "NEMOCLAW_OPENSHELL_BIN" ||
           name === "NEMOCLAW_OPENSHELL_COMMAND" ||
           name.startsWith("NEMOCLAW_LAUNCH_") ||
           name.startsWith("OPENSHELL_NEMOCLAW_LAUNCH_"),
       )
       .sort(),
+    binOverride: process.env.NEMOCLAW_OPENSHELL_BIN ?? null,
+    nodeOptions: process.env.NODE_OPTIONS ?? null,
   }) + "\n",
 );
 `,
   );
-  writeFileSync(shim, OPENCLAW_LAUNCH_OPENSHELL_SHIM_SCRIPT);
+  writeFileSync(preload, OPENCLAW_LAUNCH_OPENSHELL_PRELOAD_SCRIPT);
+  writeFileSync(
+    driver,
+    `import { spawn } from "node:child_process";
+import { once } from "node:events";
+import { Worker } from "node:worker_threads";
+const [workerStatus] = await once(new Worker("", { eval: true }), "exit");
+if (workerStatus) process.exit(workerStatus);
+const executable = process.env.NEMOCLAW_OPENSHELL_BIN ?? ${JSON.stringify(realOpenShell)};
+const child = spawn(executable, process.argv.slice(2), { stdio: "inherit" });
+child.once("error", () => process.exit(66));
+child.once("exit", (code) => { console.log(JSON.stringify({ executable })); process.exitCode = code ?? 66; });
+`,
+  );
   chmodSync(realOpenShell, 0o755);
-  chmodSync(shim, 0o755);
   const hostEnv = {
     ...process.env,
     NEMOCLAW_LAUNCH_COMMAND: "nemoclaw",
-    NEMOCLAW_LAUNCH_FIRST_INPUT: "fixture input",
-    NEMOCLAW_LAUNCH_INTERCEPT_PATH: interceptPath,
-    NEMOCLAW_LAUNCH_PTY_MONITOR_STARTER_SCRIPT: OPENCLAW_PTY_MONITOR_STARTER_SCRIPT,
-    NEMOCLAW_LAUNCH_RUN_ID: runId,
-    NEMOCLAW_LAUNCH_RUNTIME_ENV_SCRIPT: OPENCLAW_LAUNCH_RUNTIME_ENV_SCRIPT,
-    NEMOCLAW_LAUNCH_SANDBOX: sandboxName,
-    NEMOCLAW_LAUNCH_SESSION_EVIDENCE_SCRIPT: OPENCLAW_SESSION_EVIDENCE_SCRIPT,
-    NEMOCLAW_OPENSHELL_BIN: shim,
+    NEMOCLAW_OPENSHELL_BIN: realOpenShell,
     NEMOCLAW_OPENSHELL_COMMAND: realOpenShell,
     OPENSHELL_NEMOCLAW_LAUNCH_INTERCEPT_PATH: interceptPath,
     OPENSHELL_NEMOCLAW_LAUNCH_FIRST_INPUT: "fixture input",
@@ -693,48 +659,68 @@ require("node:fs").appendFileSync(
         entry[1] !== undefined && isSubprocessEnvNameAllowed(entry[0]),
     ),
   );
-  const runShim = (args: string[], childEnv: NodeJS.ProcessEnv = env) =>
-    spawnSync(process.execPath, [shim, ...args], {
+  const runPreload = (args: string[], childEnv: NodeJS.ProcessEnv = env) =>
+    spawnSync(process.execPath, [driver, ...args], {
       encoding: "utf8",
-      env: childEnv,
+      env: {
+        ...childEnv,
+        NODE_OPTIONS: `${childEnv.NODE_OPTIONS ?? ""} --require ${JSON.stringify(realpathSync(preload))}`,
+      },
       timeout: 2_000,
       killSignal: "SIGKILL",
     });
+  const exactArgv = openShellLaunchArgv(sandboxName, gatewayArgs);
+  const commandSeparator = exactArgv.indexOf("--");
   const passThroughArgv = ["sandbox", "exec", "--name", sandboxName, "--", "true"];
   const ttyPassThroughArgv = [
-    "sandbox",
-    "exec",
-    "--name",
-    sandboxName,
-    "--tty",
-    "--timeout",
-    "0",
-    "--",
+    ...exactArgv.slice(0, commandSeparator + 1),
     "bash",
     "-lc",
     "printf '%s\\n' --tty",
   ];
-  const exactArgv = openShellLaunchArgv(sandboxName, gatewayArgs);
+  const forwardArgv = [
+    "forward",
+    "service",
+    sandboxName,
+    "--target-port",
+    "18789",
+    "--local",
+    "127.0.0.1:18789",
+  ];
   const malformedArgv = [...exactArgv];
   const ttyIndex = malformedArgv.indexOf("--tty");
   malformedArgv.splice(ttyIndex, 3, "--timeout", "0", "--tty");
   try {
-    const passThrough = runShim(passThroughArgv, hostEnv);
-    const ttyPassThrough = runShim(ttyPassThroughArgv);
-    const malformed = runShim(malformedArgv);
-    const invalidFirstInput = runShim(exactArgv, {
+    const passThrough = runPreload(passThroughArgv, hostEnv);
+    const ttyPassThrough = runPreload(ttyPassThroughArgv);
+    const forward = runPreload(forwardArgv);
+    const malformed = runPreload(malformedArgv);
+    const invalidFirstInput = runPreload(exactArgv, {
       ...env,
       OPENSHELL_NEMOCLAW_LAUNCH_FIRST_INPUT: "",
     });
-    const intercepted = runShim(exactArgv);
-    const duplicate = runShim(exactArgv);
+    const intercepted = runPreload(exactArgv);
+    const duplicate = runPreload(exactArgv);
     const records = readFileSync(callsPath, "utf8")
       .trim()
       .split("\n")
       .filter(Boolean)
-      .map((line) => JSON.parse(line) as { argv: string[]; authorityNames: string[] });
+      .map(
+        (line) =>
+          JSON.parse(line) as {
+            argv: string[];
+            authorityNames: string[];
+            binOverride: string | null;
+            nodeOptions: string | null;
+          },
+      );
     return {
       authorityNames: records.map((record) => record.authorityNames),
+      binOverrides: records.map((record) => record.binOverride),
+      nodeOptions: records.map((record) => record.nodeOptions),
+      realOpenShell,
+      forward,
+      forwardArgv,
       calls: records.map((record) => record.argv),
       duplicate,
       exactArgv,
@@ -757,7 +743,7 @@ require("node:fs").appendFileSync(
 it.each([[], ["-g", "fixture-gateway"]].map((gatewayArgs) => [gatewayArgs] as const))(
   "intercepts one OpenClaw launch, preserves pass-through argv, and strips launch authority from filtered and inherited environments [case %#] (#9160)",
   (gatewayArgs) => {
-    const fixture = runOpenShellShimFixture(gatewayArgs);
+    const fixture = runOpenShellPreloadFixture(gatewayArgs);
     const separator = fixture.exactArgv.indexOf("--");
     const expectedRemote = fixture.exactArgv.slice(separator + 1);
     expect(fixture.passThrough.status, fixture.passThrough.stderr).toBe(0);
@@ -766,20 +752,29 @@ it.each([[], ["-g", "fixture-gateway"]].map((gatewayArgs) => [gatewayArgs] as co
     expect(fixture.malformed.stderr).toContain('"reason":"openshell_launch_invocation_invalid"');
     expect(fixture.invalidFirstInput.status).toBe(73);
     expect(fixture.invalidFirstInput.stderr).toContain(
-      '"reason":"openshell_shim_first_input_invalid"',
+      '"reason":"openshell_preload_first_input_invalid"',
     );
     expect(fixture.intercepted.status, fixture.intercepted.stderr).toBe(0);
     expect(fixture.duplicate.status).toBe(73);
     expect(fixture.duplicate.stderr).toContain('"reason":"openshell_launch_intercept_duplicate"');
     expect(fixture.interceptMode).toBe(0o600);
-    expect(fixture.calls).toHaveLength(3);
-    expect(fixture.authorityNames).toEqual([[], [], []]);
+    expect(fixture.forward.status, fixture.forward.stderr).toBe(0);
+    expect(
+      [fixture.passThrough, fixture.ttyPassThrough, fixture.forward, fixture.intercepted].map(
+        (result) => JSON.parse(result.stdout),
+      ),
+    ).toEqual(Array(4).fill({ executable: fixture.realOpenShell }));
+    expect(fixture.calls).toHaveLength(4);
+    expect(fixture.authorityNames).toEqual([[], [], [], []]);
+    expect(fixture.binOverrides).toEqual([fixture.realOpenShell, null, null, null]);
+    expect(fixture.nodeOptions).toEqual([process.env.NODE_OPTIONS || null, null, null, null]);
     expect(fixture.calls[0]).toEqual(fixture.passThroughArgv);
     expect(fixture.calls[1]).toEqual(fixture.ttyPassThroughArgv);
-    expect(fixture.calls[2]?.slice(0, separator + 1)).toEqual(
+    expect(fixture.calls[2]).toEqual(fixture.forwardArgv);
+    expect(fixture.calls[3]?.slice(0, separator + 1)).toEqual(
       fixture.exactArgv.slice(0, separator + 1),
     );
-    expect(fixture.calls[2]?.slice(separator + 1)).toEqual([
+    expect(fixture.calls[3]?.slice(separator + 1)).toEqual([
       "node",
       "-e",
       OPENCLAW_PTY_MONITOR_STARTER_SCRIPT,
@@ -1488,8 +1483,8 @@ it.runIf(process.platform === "linux")(
       expect(call.env?.NEMOCLAW_LAUNCH_SESSION_EVIDENCE_SCRIPT).toBe(
         OPENCLAW_SESSION_EVIDENCE_SCRIPT,
       );
-      expect(call.env?.NEMOCLAW_LAUNCH_OPENSHELL_SHIM_SCRIPT).toBe(
-        OPENCLAW_LAUNCH_OPENSHELL_SHIM_SCRIPT,
+      expect(call.env?.NEMOCLAW_LAUNCH_OPENSHELL_PRELOAD_SCRIPT).toBe(
+        OPENCLAW_LAUNCH_OPENSHELL_PRELOAD_SCRIPT,
       );
       expect(call.env?.NEMOCLAW_LAUNCH_PTY_MONITOR_STARTER_SCRIPT).toBe(
         OPENCLAW_PTY_MONITOR_STARTER_SCRIPT,

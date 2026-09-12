@@ -30,6 +30,7 @@ import {
   validateExternalComponentGatewaySettings,
 } from "./external-component/gateway-config";
 import type { ExternalComponentGatewayPreparation } from "./external-component/activation";
+import { externalComponentDockerSocket } from "./external-component/network";
 import type { RuntimeProviderGatewayHostRuntime } from "./runtime-provider/contract";
 import {
   resolveConfiguredRuntimeProvider,
@@ -845,7 +846,12 @@ function buildDockerDriverGatewayConfigTomlForIdentity(
     ],
     ["grpc_endpoint", gatewayEnv.OPENSHELL_GRPC_ENDPOINT],
     ["host_gateway_ip", runtime.gatewayConfig.hostGatewayIp ?? undefined],
-    ["socket_path", runtime.socketPath ?? undefined],
+    [
+      "socket_path",
+      externalComponent && "interceptor" in externalComponent
+        ? externalComponentDockerSocket(runtime, gatewayEnv)
+        : (runtime.socketPath ?? undefined),
+    ],
     ["network_name", gatewayEnv.OPENSHELL_DOCKER_NETWORK_NAME],
     ["supervisor_image", gatewayEnv.OPENSHELL_DOCKER_SUPERVISOR_IMAGE],
     // OpenShell 0.0.99 accepts supervisor_bin only for the Docker driver.
@@ -1100,7 +1106,7 @@ export function readExternalComponentGatewayPreparation(
     const expected = snapshot();
     return {
       gateway: expected.gateway,
-      network: expected.network,
+      network: { gatewayIp: expected.network.gatewayIp, subnet: expected.network.subnet },
       revalidate() {
         try {
           if (!isDeepStrictEqual(snapshot(), expected))

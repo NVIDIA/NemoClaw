@@ -308,7 +308,7 @@ describe("handleGatewayState", () => {
       revalidate: vi.fn(),
     };
     const { deps, calls } = createDeps({ isLinuxDockerDriverGatewayEnabled: vi.fn(() => true) });
-    calls.configureExternalComponentGateway.mockReturnValue(preparation);
+    calls.configureExternalComponentGateway.mockResolvedValue(preparation);
     const acknowledge = vi.fn((request: { preparationId: string; componentId: string }) => ({
       schemaVersion: 2,
       preparationId: request.preparationId,
@@ -366,6 +366,31 @@ describe("handleGatewayState", () => {
       await new Promise<void>((resolve) => server.close(() => resolve()));
       fs.rmSync(directory, { recursive: true, force: true });
     }
+  });
+
+  it("waits for network preparation and preserves gateway state on failure", async () => {
+    const prepare = vi.spyOn(componentActivation, "prepareExternalComponentGateway");
+    const { deps, calls } = createDeps({ isLinuxDockerDriverGatewayEnabled: vi.fn(() => true) });
+    let rejectPreparation!: (reason: Error) => void;
+    calls.configureExternalComponentGateway.mockReturnValue(
+      new Promise((_resolve, reject) => {
+        rejectPreparation = reject;
+      }),
+    );
+    const pending = handleGatewayState({
+      ...baseOptions(deps, "missing"),
+      externalComponent: preparedConnectionComponent(),
+    });
+    await vi.waitFor(() => expect(calls.configureExternalComponentGateway).toHaveBeenCalledOnce());
+    expect(prepare).not.toHaveBeenCalled();
+    expect(calls.refresh).not.toHaveBeenCalled();
+    expect(calls.startGateway).not.toHaveBeenCalled();
+    rejectPreparation(new Error("preparation_failed"));
+    await expect(pending).rejects.toThrow("preparation_failed");
+    expect(prepare).not.toHaveBeenCalled();
+    expect(calls.refresh).not.toHaveBeenCalled();
+    expect(calls.startGateway).not.toHaveBeenCalled();
+    expect(calls.complete).not.toHaveBeenCalled();
   });
 
   it("preserves gateway state when component preparation fails (#11507)", async () => {

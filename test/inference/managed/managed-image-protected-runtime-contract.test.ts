@@ -19,6 +19,7 @@ import {
 } from "../../../scripts/checks/managed-image-protected-runtime-contract.ts";
 import {
   assertExactSandboxImage,
+  assertOpenClawHeartbeatStart,
   assertFailedBootstrapOwnerCleanupRetention,
   assertFailedSandboxOwnerCleanupRetention,
   createProtectedManagedImageBootstrapInput,
@@ -30,6 +31,7 @@ import {
   managedImageOpenShellBasePolicyPath,
   managedImageOpenShellCommittedProbe,
   managedImageOpenShellProbe,
+  managedOpenClawHeartbeatProbe,
   parseManagedImageOpenShellE2eInputs,
   protectedManagedStateRootDriverConfig,
   removeManagedImageGatewayStateIfSafe,
@@ -92,6 +94,32 @@ function createManagedImageCommandRunner(
   };
 }
 
+function runManagedOpenClawHeartbeatProbe(
+  heartbeat: { every: string; isolatedSession: boolean },
+  postHashAppend = "",
+) {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-heartbeat-'$HOME`pwd`-"));
+  const configPath = path.join(directory, "openclaw.json");
+  try {
+    fs.writeFileSync(configPath, JSON.stringify({ agents: { defaults: { heartbeat } } }));
+    const hash = spawnSync("sha256sum", ["openclaw.json"], {
+      cwd: directory,
+      encoding: "utf8",
+    });
+    expect(hash.status, hash.stderr).toBe(0);
+    fs.writeFileSync(path.join(directory, ".config-hash"), hash.stdout);
+    fs.appendFileSync(configPath, postHashAppend);
+
+    return spawnSync(
+      "/bin/sh",
+      ["-c", managedOpenClawHeartbeatProbe(configPath, process.execPath, "sha256sum")],
+      { encoding: "utf8" },
+    );
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+}
+
 describe("protected managed-image runtime contract", () => {
   it("projects declared managed state roots through the selected provider driver", () => {
     const mount = {
@@ -111,6 +139,42 @@ describe("protected managed-image runtime contract", () => {
     expect(() =>
       protectedManagedStateRootDriverConfig({ workload: {} } as typeof provider, [mount]),
     ).toThrow("provider-owned mount projection");
+  });
+
+  it("requires the exact managed OpenClaw heartbeat interval in startup logs (#10262)", () => {
+    const containerId = "a".repeat(64);
+    const runCommand = vi.fn<ManagedImageCommandRunner>(() => ({
+      status: 0,
+      stdout: "",
+      stderr: '{"msg":"heartbeat: started","intervalMs":120000}\n',
+    }));
+
+    expect(() => assertOpenClawHeartbeatStart(containerId, {}, runCommand)).not.toThrow();
+    expect(runCommand).toHaveBeenCalledWith(["docker", "logs", containerId], {}, 15_000);
+
+    runCommand.mockReturnValue({
+      status: 0,
+      stdout: "heartbeat: started intervalMs=1800000\n",
+      stderr: "",
+    });
+    expect(() => assertOpenClawHeartbeatStart(containerId, {}, runCommand)).toThrow(
+      "managed OpenClaw did not start with the requested 120000 ms heartbeat",
+    );
+  });
+
+  it("does not expose JSON credentials when managed OpenClaw startup logs cannot be read", () => {
+    const containerId = "a".repeat(64);
+    const secret = "json-api-key-secret";
+    const runCommand = vi.fn<ManagedImageCommandRunner>(() => ({
+      status: 1,
+      stdout: JSON.stringify({ apiKey: secret }),
+      stderr: JSON.stringify({ nested: { apiKey: secret } }),
+    }));
+
+    expect(() => assertOpenClawHeartbeatStart(containerId, {}, runCommand)).toThrow(
+      "could not read managed OpenClaw startup logs (status=1, spawnError=false)",
+    );
+    expect(() => assertOpenClawHeartbeatStart(containerId, {}, runCommand)).not.toThrow(secret);
   });
 
   it("binds the rollback failure adapter to the canonical managed-bootstrap state root", async () => {
@@ -532,6 +596,27 @@ describe("protected managed-image runtime contract", () => {
       );
     },
   );
+
+  it("accepts an isolated OpenClaw heartbeat with a matching configuration hash (#10262)", () => {
+    const result = runManagedOpenClawHeartbeatProbe({ every: "2m", isolatedSession: true });
+
+    expect(result.status, result.stderr).toBe(0);
+  });
+
+  it.each([
+    ["a main-session heartbeat", { every: "2m", isolatedSession: false }],
+    ["another heartbeat interval", { every: "30m", isolatedSession: true }],
+  ])("rejects %s in the managed OpenClaw probe (#10262)", (_case, heartbeat) => {
+    const result = runManagedOpenClawHeartbeatProbe(heartbeat);
+
+    expect(result.status).toBe(1);
+  });
+
+  it("rejects a stale managed OpenClaw configuration hash (#10262)", () => {
+    const result = runManagedOpenClawHeartbeatProbe({ every: "2m", isolatedSession: true }, "\n");
+
+    expect(result.status).toBe(1);
+  });
 
   it("rewrites only the inference route while preserving the managed agent profile", () => {
     const profile = managedStartupE2eProfile("hermes", false, true, true);

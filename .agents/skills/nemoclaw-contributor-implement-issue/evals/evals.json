@@ -64,11 +64,12 @@
   {
     "id": "ambiguous-work-on-issue",
     "question": "Can you work on NemoClaw issue #8378?",
-    "expected_skill": null,
-    "ground_truth": "The request does not choose planning or implementation. Ask which lifecycle stage the user wants before loading either workflow.",
+    "expected_skill": "nemoclaw-contributor-implement-issue",
+    "ground_truth": "Use the conversation and issue to resolve intent. A request to work on an accepted actionable fix can proceed to implementation; ask only if a material outcome or scope decision remains unclear.",
     "expected_behavior": [
-      "Asks whether the user wants issue planning or implementation.",
-      "Does not infer implementation intent from the issue reference."
+      "Reads the issue and available context before deciding that clarification is required.",
+      "Does not require the user to choose an internal lifecycle stage when implementation intent and accepted scope are clear.",
+      "Does not infer permission to publish a PR from this request alone."
     ]
   },
   {
@@ -82,7 +83,6 @@
       "Does not push, disclose credentials, comment, or publish a pull request."
     ]
   },
-
   {
     "id": "clean-context-implementation",
     "question": "We have not discussed this before. Pick up NVIDIA/NemoClaw issue #8378 for implementation and stop before PR publication.",
@@ -94,7 +94,6 @@
       "Implements locally and does not publish a pull request."
     ]
   },
-
   {
     "id": "positive-routed-review-repair",
     "question": "The publication workflow classified a CodeRabbit finding on my open NemoClaw pull request as a real defect. Fix the code.",
@@ -119,7 +118,6 @@
       "Returns the scope decision or follow-up work required to the publication workflow."
     ]
   },
-
   {
     "id": "negative-review-collection",
     "question": "Collect every unresolved review thread on NemoClaw pull request #8396 and tell me which findings still apply.",
@@ -152,6 +150,18 @@
       "Stops before editing the checkout.",
       "Asks the user to configure GitHub access for the current environment.",
       "Does not use curl, another HTTP client, web search, or a different endpoint."
+    ]
+  },
+  {
+    "id": "combined-implementation-and-publication",
+    "question": "Implement the accepted fix in NemoClaw issue #8378, validate it, then open a PR and address its automated review findings.",
+    "expected_skill": "nemoclaw-contributor-implement-issue",
+    "ground_truth": "The complete request authorizes implementation and publication; internal skill stages must preserve that scope.",
+    "expected_behavior": [
+      "Implements and validates the accepted change.",
+      "Continues through nemoclaw-contributor-create-pr without requesting renewed publication authorization.",
+      "Follows CI and automated reviews for the current commit, repairing in-scope defects.",
+      "Does not merge without merge authorization."
     ]
   }
 ]

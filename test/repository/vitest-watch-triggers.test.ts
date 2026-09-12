@@ -379,6 +379,11 @@ describe("Vitest opaque-input watch triggers", () => {
     expect(triggeredBy(".agents/skills/nemoclaw-maintainer-cut-release-tag/SKILL.md")).toEqual([
       "test/automation/releases/release-post-tag-follow-through.test.ts",
     ]);
+    expect(
+      triggeredBy(
+        ".agents/skills/nemoclaw-maintainer-cut-release-tag/references/cut-and-follow-through.md",
+      ),
+    ).toEqual(["test/automation/releases/release-post-tag-follow-through.test.ts"]);
     expect(triggeredBy(".agents/skills/nemoclaw-maintainer-evening/SKILL.md")).toEqual([
       "test/automation/releases/release-post-tag-follow-through.test.ts",
     ]);
