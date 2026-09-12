@@ -147,6 +147,8 @@ uint16_t machineFromPeHeader(const unsigned char* header, size_t size) {
 
 struct ProcessImageFile {
     HANDLE handle = INVALID_HANDLE_VALUE;
+    WCHAR path[4096] = {};
+    BY_HANDLE_FILE_INFORMATION information = {};
     ~ProcessImageFile() {
         const DWORD error = GetLastError();
         if (handle != INVALID_HANDLE_VALUE) CloseHandle(handle);
@@ -155,13 +157,13 @@ struct ProcessImageFile {
 };
 
 BOOL readProcessImageMachine(HANDLE process, ProcessImageFile& image, USHORT& machine) {
-    WCHAR fileName[4096] = {};
-    DWORD count = static_cast<DWORD>(sizeof(fileName) / sizeof(fileName[0]));
+    WCHAR* fileName = image.path;
+    DWORD count = static_cast<DWORD>(sizeof(image.path) / sizeof(image.path[0]));
     if (!QueryFullProcessImageNameW(process, 0, fileName, &count)) return FALSE;
     image.handle = CreateFileW(fileName, GENERIC_READ, FILE_SHARE_READ, nullptr,
         OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
     if (image.handle == INVALID_HANDLE_VALUE) return FALSE;
-    BY_HANDLE_FILE_INFORMATION info = {};
+    BY_HANDLE_FILE_INFORMATION& info = image.information;
     if (!GetFileInformationByHandle(image.handle, &info)) return FALSE;
     if (info.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)) {
         SetLastError(ERROR_BAD_EXE_FORMAT); return FALSE;
@@ -518,6 +520,87 @@ BOOL requestHostQueryRepair(HANDLE child) {
     return recheck;
 }
 
+// Chrome's locked renderer/utility leaf has no MSYS work or descendant to
+// propagate into. Its own Win32k/no-child policies remain fully unchanged.
+struct ChromeLeafReadback {
+    bool sameFile = false, win32kKnown = false, childPolicyKnown = false, omitted = false;
+    DWORD identityError = 0, win32kError = 0, childPolicyError = 0;
+    DWORD win32kFlags = 0, childPolicyFlags = 0;
+};
+LONG chromeLeafRecords = 0;
+
+void logChromeLeaf(HANDLE child, const ChromeLeafReadback& result) {
+    const DWORD saved = GetLastError();
+    if (InterlockedIncrement(&chromeLeafRecords) <= 8) {
+        char line[1024];
+        const int length = _snprintf_s(line, sizeof(line), _TRUNCATE,
+            "NEMOCLAW_MSYS_CHROME_IMPORT={\"schemaVersion\":1,\"parentPid\":%lu,\"childPid\":%lu,\"sameAppContainerAndJobChecked\":true,\"sameHeldImageFile\":%s,\"identityError\":%lu,\"win32kKnown\":%s,\"win32kFlags\":%lu,\"win32kError\":%lu,\"childPolicyKnown\":%s,\"childPolicyFlags\":%lu,\"childPolicyError\":%lu,\"importOmitted\":%s,\"policiesChanged\":false,\"tokenChanged\":false}\n",
+            GetCurrentProcessId(), GetProcessId(child), result.sameFile ? "true" : "false",
+            result.identityError, result.win32kKnown ? "true" : "false", result.win32kFlags,
+            result.win32kError, result.childPolicyKnown ? "true" : "false", result.childPolicyFlags,
+            result.childPolicyError, result.omitted ? "true" : "false");
+        if (length > 0 && length < static_cast<int>(sizeof(line))) {
+            // The broker may discard stderr. Existing debug observation can
+            // retain this bounded record without changing process behavior.
+            OutputDebugStringA(line);
+            if (NemoClawMsysDiagnosticsEnabled()) {
+                DWORD written = 0;
+                WriteFile(GetStdHandle(STD_ERROR_HANDLE), line, static_cast<DWORD>(length), &written, nullptr);
+            }
+        }
+    }
+    SetLastError(saved);
+}
+
+bool omitLockedChromeImport(HANDLE child, const ProcessImageFile& image, USHORT machine) {
+    const DWORD saved = GetLastError();
+    WCHAR selected[4096] = {};
+    const DWORD count = GetEnvironmentVariableW(L"AGENT_BROWSER_EXECUTABLE_PATH", selected, 4096);
+    const WCHAR* selectedLeaf = count && count < 4096 ? wcsrchr(selected, L'\\') : nullptr;
+    const WCHAR* childLeaf = wcsrchr(image.path, L'\\');
+    if (machine != IMAGE_FILE_MACHINE_AMD64 || !selectedLeaf || !childLeaf ||
+        selected[1] != L':' || selected[2] != L'\\' ||
+        _wcsicmp(selectedLeaf + 1, L"chrome.exe") || _wcsicmp(childLeaf + 1, L"chrome.exe")) {
+        SetLastError(saved);
+        return false;
+    }
+    ChromeLeafReadback result;
+    ProcessImageFile expected;
+    expected.handle = CreateFileW(selected, GENERIC_READ, FILE_SHARE_READ, nullptr,
+        OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+    if (expected.handle == INVALID_HANDLE_VALUE) result.identityError = GetLastError();
+    else if (!GetFileInformationByHandle(expected.handle, &expected.information))
+        result.identityError = GetLastError();
+    else if (expected.information.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT))
+        result.identityError = ERROR_INVALID_DATA;
+    else {
+        result.sameFile = image.information.dwVolumeSerialNumber == expected.information.dwVolumeSerialNumber &&
+            image.information.nFileIndexHigh == expected.information.nFileIndexHigh &&
+            image.information.nFileIndexLow == expected.information.nFileIndexLow;
+        if (!result.sameFile) result.identityError = ERROR_INVALID_DATA;
+    }
+    if (result.sameFile) {
+        PROCESS_MITIGATION_SYSTEM_CALL_DISABLE_POLICY win32k = {};
+        PROCESS_MITIGATION_CHILD_PROCESS_POLICY childPolicy = {};
+        static_assert(sizeof(win32k) == sizeof(DWORD) && sizeof(childPolicy) == sizeof(DWORD));
+        result.win32kKnown = GetProcessMitigationPolicy(child, ProcessSystemCallDisablePolicy,
+            &win32k, sizeof(win32k)) != FALSE;
+        result.win32kError = result.win32kKnown ? 0 : GetLastError();
+        if (result.win32kKnown) result.win32kFlags = win32k.Flags;
+        result.childPolicyKnown = GetProcessMitigationPolicy(child, ProcessChildProcessPolicy,
+            &childPolicy, sizeof(childPolicy)) != FALSE;
+        result.childPolicyError = result.childPolicyKnown ? 0 : GetLastError();
+        if (result.childPolicyKnown) result.childPolicyFlags = childPolicy.Flags;
+        // Bit0 enforces Win32k disable / no child creation. Exclude the
+        // AllowSecureProcessCreation exception (bit2) from this leaf route.
+        result.omitted = result.win32kKnown && result.childPolicyKnown &&
+            (result.win32kFlags & 1) && (result.childPolicyFlags & 1) && !(result.childPolicyFlags & 4);
+    }
+    logChromeLeaf(child, result);
+    SetLastError(saved);
+    return result.omitted;
+}
+
 BOOL inject(HANDLE child) {
     alignas(SID) BYTE actualSid[SECURITY_MAX_SID_SIZE] = {};
     USHORT processMachine = 0, nativeMachine = 0;
@@ -566,6 +649,12 @@ BOOL inject(HANDLE child) {
         static_cast<unsigned>(nativeMachine), queryError);
     DWORD written = 0;
     if (length > 0 && NemoClawMsysDiagnosticsEnabled()) WriteFile(GetStdHandle(STD_ERROR_HANDLE), line, static_cast<DWORD>(length), &written, nullptr);
+    // The exact already admitted Chrome leaf keeps its own restrictive
+    // startup policies. Do not add an unused MSYS/USER32 import to that image.
+    if (omitLockedChromeImport(child, image, machine)) {
+        SetLastError(ERROR_SUCCESS);
+        return TRUE;
+    }
     const WCHAR* file = machine == IMAGE_FILE_MACHINE_ARM64 ? L"NemoClawMsysCompat-arm64.dll"
         : machine == IMAGE_FILE_MACHINE_AMD64 ? L"NemoClawMsysCompat-x64.dll" : nullptr;
     if (!file) { SetLastError(ERROR_NOT_SUPPORTED); return FALSE; }
