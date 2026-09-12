@@ -73,6 +73,7 @@ function runProcessGroup(
   }).then((result) => ({
     error:
       result.spawnError ??
+      result.cleanupError ??
       (result.timedOut
         ? new Error(`${command} timed out after ${options.timeoutMs}ms`)
         : outputAbort.signal.reason instanceof Error
