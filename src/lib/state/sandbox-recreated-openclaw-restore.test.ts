@@ -348,6 +348,60 @@ describe("recreated OpenClaw state restore", { timeout: 30_000 }, () => {
     });
   });
 
+  it("keeps the configured heartbeat during an ordinary sandbox re-create (#10244)", () => {
+    const result = runRestoreScenario({
+      previousPluginInstalls: [],
+      freshPluginInstalls: [],
+      backupExtensionDirs: [],
+      backupConfig: {
+        agents: {
+          defaults: {
+            heartbeat: { every: "30m" },
+            thinkingDefault: "off",
+          },
+        },
+      },
+      freshConfig: {
+        agents: { defaults: { heartbeat: { every: "2m" } } },
+      },
+    });
+
+    expectSuccessfulRestore(result);
+    expect(result.restoredConfig.agents).toEqual({
+      defaults: {
+        heartbeat: { every: "2m" },
+        thinkingDefault: "off",
+      },
+    });
+  });
+
+  it("drops a backed-up heartbeat when the fresh profile configures none (#10244)", () => {
+    const result = runRestoreScenario({
+      previousPluginInstalls: [],
+      freshPluginInstalls: [],
+      backupExtensionDirs: [],
+      backupConfig: {
+        agents: {
+          defaults: {
+            heartbeat: { every: "30m" },
+            thinkingDefault: "off",
+          },
+        },
+      },
+      freshConfig: {
+        agents: { defaults: { model: { primary: "inference/fresh-model" } } },
+      },
+    });
+
+    expectSuccessfulRestore(result);
+    expect(result.restoredConfig.agents).toEqual({
+      defaults: {
+        model: { primary: "inference/fresh-model" },
+        thinkingDefault: "off",
+      },
+    });
+  });
+
   it("reconciles populated previous and fresh image-plugin provenance during config restore", () => {
     const previousWeather = imageInstall("weather", "weather-v1");
     const freshWeather = imageInstall("weather", "weather-v2");
