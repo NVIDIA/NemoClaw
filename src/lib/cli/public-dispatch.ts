@@ -24,6 +24,11 @@ const {
 
 import { hasMigratableLegacySandbox, migrateLegacyPortState } from "../state/legacy-port-migration";
 import {
+  findSandboxAcrossGatewayRoots,
+  listPendingSandboxNamesAcrossGatewayRoots,
+  listPublishedSandboxNamesAcrossGatewayRoots,
+} from "../state/registry/cross-port";
+import {
   isGlobalCommandInvocation,
   type NormalizedArgv,
   type NormalizedGlobalArgv,
@@ -80,9 +85,14 @@ function isPublicSandboxConnectFlag(arg: string | undefined): boolean {
   return sandboxConnect().isSandboxConnectFlag(arg);
 }
 
+/** A sandbox registered under any gateway-port root on this host is addressable by name. */
+function findKnownSandboxEntry(name: string): import("../state/registry").SandboxEntry | null {
+  return findSandboxAcrossGatewayRoots(name)?.entry ?? null;
+}
+
 function hasRegisteredSandbox(name: string): boolean {
   try {
-    return registry().getSandbox(name) !== null;
+    return findKnownSandboxEntry(name) !== null;
   } catch {
     // Global doctor owns the registry-readability diagnostic. If dispatch
     // cannot inspect the registry, keep routing the bare token there.
@@ -187,10 +197,22 @@ function sandboxRegistrationNames(): { published: string[]; pending: string[] } 
   const sandboxes = registryApi.listSandboxes().sandboxes;
   return {
     // Suggestions must use the same published inventory as `list` and global `status`.
-    published: sandboxes.filter(registryApi.isPublishedSandboxRegistration).map(({ name }) => name),
-    pending: sandboxes
-      .filter(({ pendingRouteReservation }) => pendingRouteReservation === true)
-      .map(({ name }) => name),
+    // Sandboxes registered under a sibling gateway-port root are reachable through
+    // their recorded binding, so they belong in diagnostics too.
+    published: [
+      ...new Set([
+        ...sandboxes.filter(registryApi.isPublishedSandboxRegistration).map(({ name }) => name),
+        ...listPublishedSandboxNamesAcrossGatewayRoots(),
+      ]),
+    ],
+    pending: [
+      ...new Set([
+        ...sandboxes
+          .filter(({ pendingRouteReservation }) => pendingRouteReservation === true)
+          .map(({ name }) => name),
+        ...listPendingSandboxNamesAcrossGatewayRoots(),
+      ]),
+    ],
   };
 }
 
@@ -359,7 +381,7 @@ async function recoverRequestedSandboxIfNeeded(
   action: string,
   rawArgsAfterSandboxName: string[],
 ): Promise<void> {
-  if (registry().getSandbox(sandboxName)) return;
+  if (findKnownSandboxEntry(sandboxName)) return;
   const namesSandboxAction = isKnownSandboxAction(sandboxName);
   const hasExplicitSandboxAction =
     rawArgsAfterSandboxName.length > 0 && isKnownSandboxAction(rawArgsAfterSandboxName[0] ?? "");
@@ -376,7 +398,7 @@ async function recoverRequestedSandboxIfNeeded(
 
   validateName(sandboxName, "sandbox name");
   await registryRecovery().recoverRegistryEntries({ requestedSandboxName: sandboxName });
-  if (registry().getSandbox(sandboxName)) return;
+  if (findKnownSandboxEntry(sandboxName)) return;
 
   // Recovery runs first so a live sandbox named after an action stays reachable
   // through the name-first grammar. A token that recovery cannot resolve is a
@@ -557,7 +579,7 @@ async function dispatchSandboxArgv(
   // `nemoclaw term` (which normalizes to sandboxName=term, action=connect)
   // doesn't get swallowed by the recovery's "Sandbox does not exist" exit.
   const openshellHint = getOpenShellCommandHint(argv);
-  if (openshellHint && !registry().getSandbox(cmd)) {
+  if (openshellHint && !findKnownSandboxEntry(cmd)) {
     printOpenShellCommandHint(openshellHint);
   }
 
@@ -565,7 +587,7 @@ async function dispatchSandboxArgv(
   // command, attempt recovery — the sandbox may still be live with a stale registry.
   await recoverRequestedSandboxIfNeeded(cmd, requestedSandboxAction, rawArgsAfterCmd);
 
-  const sandbox = registry().getSandbox(cmd);
+  const sandbox = findKnownSandboxEntry(cmd);
   if (!sandbox) {
     const suggestion = suggestGlobalCommand(cmd);
     if (suggestion) {
