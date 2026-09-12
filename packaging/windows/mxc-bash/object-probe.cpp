@@ -462,10 +462,22 @@ class PipeProof {
     line("{\"kind\":\"tracker-proof\",\"originalSuccess\":"+std::string(originalResult?"true":"false")+",\"originalError\":"+std::to_string(originalError)+",\"adaptedSuccess\":true,\"readType\":"+std::to_string(readType)+",\"writeType\":"+std::to_string(writeType)+",\"initialReadFlags\":0,\"initialWriteFlags\":0,\"finalReadFlags\":"+std::to_string(readFlags)+",\"finalWriteFlags\":"+std::to_string(writeFlags)+",\"transferBytes\":16,\"writerClosedBeforeEof\":true,\"eofError\":"+std::to_string(eofError)+",\"handlesClosed\":true,\"failedOutputsInspected\":false}");
   }
 
-  std::pair<DWORD,DWORD> foreign(const std::wstring& peer){
-    const std::wstring prefix=ordinary?key+L"-":L"\\\\.\\pipe\\msys-"+key+L"-",suffix=ordinary?L"-pipe-nt-0x1":L"-sigwait";require(peer.starts_with(prefix)&&peer.ends_with(suffix)&&peer!=name,"pipe-peer-name");
+  std::pair<DWORD,DWORD> foreign(const std::wstring& peer,const std::wstring& peerRoot){
+    // The ready record names an existing held object in the peer's NPFS root.
+    // A Win32/relative leaf would instead resolve in this caller's namespace.
+    const std::wstring prefix=L"\\Device\\NamedPipe"+peerRoot+L"\\"+(ordinary?key+L"-":L"msys-"+key+L"-"),suffix=ordinary?L"-pipe-nt-0x1":L"-sigwait";
+    require(peerRoot!=id.root&&peer.starts_with(prefix)&&peer.ends_with(suffix)&&peer!=kernelName,"pipe-peer-kernel-name");
     auto pid=peer.substr(prefix.size(),peer.size()-prefix.size()-suffix.size());require(!pid.empty()&&pid.size()<=10&&pid[0]!=L'0'&&pid.find_first_not_of(L"0123456789")==std::wstring::npos,"pipe-peer-pid");
-    auto open=[&](bool minimal){Handle client;return open_client(peer,minimal,client);};
+    require(std::stoull(pid)<=MAXDWORD,"pipe-peer-pid-bound");
+    auto openNative=api.load<NativeOpen>("NtOpenFile");using NativeError=ULONG(NTAPI*)(NTSTATUS);auto dosError=api.load<NativeError>("RtlNtStatusToDosError");require(openNative&&dosError,"pipe-peer-native-exports");
+    auto open=[&](bool minimal){
+      std::wstring target=peer;Name object(target,nullptr,nullptr,ordinary?OBJ_INHERIT:0);IO_STATUS_BLOCK io{};HANDLE output=nullptr;
+      const ACCESS_MASK access=minimal?FILE_WRITE_DATA:0x40100080u;const ULONG options=(!ordinary&&!minimal)?0x20u:0u;
+      const NTSTATUS value=openNative(&output,access,&object.attributes,&io,0,options);if(value==static_cast<NTSTATUS>(0x103))fatal_cleanup();
+      Handle client;if(value>=0)client.value=output; // Failed NT outputs are indeterminate.
+      const DWORD result=ordinary?static_cast<DWORD>(value):dosError(value);
+      line("{\"kind\":\"pipe-foreign-target\",\"ordinary\":"+std::string(ordinary?"true":"false")+",\"target\":"+quote(utf8(peer))+",\"peerRoot\":"+quote(utf8(peerRoot))+",\"absoluteKernelTarget\":true,\"access\":"+std::to_string(access)+",\"options\":"+std::to_string(options)+",\"objectAttributes\":"+std::to_string(object.attributes.Attributes)+",\"minimalWriteData\":"+std::string(minimal?"true":"false")+",\"nativeStatus\":"+status(value)+",\"reportedResult\":"+std::to_string(result)+"}");return result;
+    };
     DWORD writer=open(false),data=open(true);positive(false);ownAfter=true;positive(true);minimalAfter=true;require(available(),"pipe-after-not-free");return{writer,data};
   }
   void finish(){
@@ -545,7 +557,7 @@ int wmain(int argc,wchar_t** argv){
       checks.emplace_back("originalGlobalCreate",api.createDirectory(&glob.value,0x2000f,&originalName.attributes));
       std::string fields;bool allDenied=true;constexpr auto denied=static_cast<NTSTATUS>(0xc0000022u);
       for(const auto& check:checks){fields+=","+quote(check.first)+":"+status(check.second);allDenied=allDenied&&check.second==denied;}
-      const auto pipeDenials=pipe.foreign(peerPipe);const auto ordinaryDenials=ordinaryPipe.foreign(peerOrdinary);
+      const auto pipeDenials=pipe.foreign(peerPipe,other);const auto ordinaryDenials=ordinaryPipe.foreign(peerOrdinary,other);
       line("{\"kind\":\"denials\","+identityFields(id)+",\"foreignRoot\":"+quote(utf8(other))+fields+",\"pipeForeignWriter\":"+std::to_string(pipeDenials.first)+",\"pipeForeignWriteData\":"+std::to_string(pipeDenials.second)+",\"pipeOwnBefore\":"+std::string(pipe.ownBefore?"true":"false")+",\"pipeOwnMinimalBefore\":"+std::string(pipe.minimalBefore?"true":"false")+",\"pipeOwnAfter\":"+std::string(pipe.ownAfter?"true":"false")+",\"pipeOwnMinimalAfter\":"+std::string(pipe.minimalAfter?"true":"false")+",\"pipeServerAvailableAfter\":true,\"ordinaryForeignWriter\":"+status(static_cast<NTSTATUS>(ordinaryDenials.first))+",\"ordinaryForeignWriteData\":"+status(static_cast<NTSTATUS>(ordinaryDenials.second))+",\"ordinaryOwnBefore\":"+std::string(ordinaryPipe.ownBefore?"true":"false")+",\"ordinaryOwnMinimalBefore\":"+std::string(ordinaryPipe.minimalBefore?"true":"false")+",\"ordinaryOwnAfter\":"+std::string(ordinaryPipe.ownAfter?"true":"false")+",\"ordinaryOwnMinimalAfter\":"+std::string(ordinaryPipe.minimalAfter?"true":"false")+",\"ordinaryServerAvailableAfter\":true}");
       require(allDenied&&pipeDenials.first==ERROR_ACCESS_DENIED&&pipeDenials.second==ERROR_ACCESS_DENIED&&ordinaryDenials.first==0xc0000022u&&ordinaryDenials.second==0xc0000022u,"isolation-denial-failed");checked=true;
     }

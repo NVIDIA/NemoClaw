@@ -232,6 +232,28 @@ export function parseJsonLines(text: string) {
   lines.pop();
   return lines.filter(Boolean).map((line) => JSON.parse(line));
 }
+export function foreignPipeTargets(ready: any, key: string) {
+  assert.equal(ready.rawProbeUnshimmed, true);
+  assert.equal(ready.key, key);
+  assert.match(key, /^[a-f0-9]{16}$/u);
+  assert(Number.isSafeInteger(ready.pid) && ready.pid > 0 && ready.pid <= 0xffffffff);
+  assert(Number.isSafeInteger(ready.session) && ready.session >= 0 && ready.session <= 0xffffffff);
+  assert.match(ready.sid, /^S-1-15-2-(?:[0-9]+-){6}[0-9]+$/u);
+  const root = "\\Sessions\\" + ready.session + "\\AppContainerNamedObjects\\" + ready.sid;
+  assert.equal(ready.privateRoot, root);
+  const signal = `msys-${key}-${ready.pid}-sigwait`;
+  const ordinary = `${key}-${ready.pid}-pipe-nt-0x1`;
+  assert.equal(ready.pipeName, "\\\\.\\pipe\\" + signal);
+  assert.equal(ready.ordinaryPipeName, ordinary);
+  assert.equal(ready.pipeKernelName, "\\Device\\NamedPipe" + root + "\\" + signal);
+  assert.equal(ready.ordinaryPipeKernelName, "\\Device\\NamedPipe" + root + "\\" + ordinary);
+  return {
+    otherRoot: root,
+    otherPipe: ready.pipeKernelName,
+    otherOrdinaryPipe: ready.ordinaryPipeKernelName,
+  };
+}
+
 export function validateDenials(row: any, other: string) {
   assert.equal(row.kind, "denials");
   assert.equal(row.rawProbeUnshimmed, true);
@@ -919,16 +941,12 @@ async function main() {
     // positives and restores listening before the other side is dispatched.
     atomic(path.join(a.c.share, "cross.json"), {
       nonce,
-      otherRoot: br.privateRoot,
-      otherPipe: br.pipeName,
-      otherOrdinaryPipe: br.ordinaryPipeName,
+      ...foreignPipeTargets(br, key),
     });
     await waitFile(path.join(a.c.share, "checked.json"), Date.now() + 20000);
     atomic(path.join(b.c.share, "cross.json"), {
       nonce,
-      otherRoot: ar.privateRoot,
-      otherPipe: ar.pipeName,
-      otherOrdinaryPipe: ar.ordinaryPipeName,
+      ...foreignPipeTargets(ar, key),
     });
     await waitFile(path.join(b.c.share, "checked.json"), Date.now() + 20000);
     atomic(path.join(a.c.share, "stop.json"), { nonce });
