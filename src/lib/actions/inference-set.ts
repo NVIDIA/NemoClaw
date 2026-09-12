@@ -83,7 +83,10 @@ import {
   requireInferenceSetRuntimeAuthority,
   sleepInferenceSetRouteConvergence,
 } from "./inference-set-provider";
-import { buildInferenceSetFailure } from "./inference-set-provider-diagnostics";
+import {
+  buildInferenceSetFailure,
+  queryRegisteredGatewayProviders,
+} from "./inference-set-provider-diagnostics";
 import {
   applyOpenClawAnthropicReplyBudget,
   readOpenClawPrimaryReplyBudget,
@@ -224,6 +227,7 @@ const SUPPORTED_PROVIDER_NAMES = [
   "gemini-api",
   "compatible-endpoint",
   "hermes-provider",
+  "llama-cpp-local",
   "ollama-local",
   "vllm-local",
 ] as const;
@@ -262,6 +266,7 @@ const INSTALLER_PROVIDER_ALIASES: Readonly<Record<string, string>> = {
   nous: "hermes-provider",
   "nous-portal": "hermes-provider",
   custom: "compatible-endpoint",
+  "llama-cpp": "llama-cpp-local",
   ollama: "ollama-local",
   vllm: "vllm-local",
   nim: "nvidia-nim",
@@ -337,12 +342,28 @@ function trimRequired(value: string | null | undefined, label: string): string {
   return trimmed;
 }
 
-function assertSupportedProvider(provider: string, model: string): void {
+/**
+ * Reject an unsupported provider with suggestions from the selected gateway.
+ * Falls back to supported provider names only when the read-only gateway query fails.
+ */
+async function assertSupportedProvider(
+  provider: string,
+  model: string,
+  gatewayName: string,
+  deps: Pick<InferenceSetDeps, "providerAdapter" | "log">,
+): Promise<void> {
   if (getProviderSelectionConfig(provider, model) || provider === "nvidia-router") return;
-  throw new InferenceSetError(
-    `Unsupported provider '${provider}'. Supported providers: ${SUPPORTED_PROVIDER_NAMES.join(", ")}.`,
-    2,
+  const registeredProviders = await queryRegisteredGatewayProviders(gatewayName, deps);
+  const selectableProviders = registeredProviders?.filter((name) =>
+    SUPPORTED_PROVIDER_NAMES.some((supportedName) => supportedName === name),
   );
+  const providerGuidance =
+    selectableProviders === undefined
+      ? `Supported provider names: ${SUPPORTED_PROVIDER_NAMES.join(", ")}.`
+      : selectableProviders.length > 0
+        ? `Selectable providers registered on gateway '${gatewayName}': ${selectableProviders.join(", ")}.`
+        : `No selectable providers are registered on gateway '${gatewayName}'.`;
+  throw new InferenceSetError(`Unsupported provider '${provider}'. ${providerGuidance}`, 2);
 }
 
 function assertInferenceSetRuntimeAuthority(
@@ -839,7 +860,7 @@ async function runInferenceSetWithoutHostLock(
   const provider = normalizeInferenceSetProvider(trimRequired(options.provider, "provider"));
   const model = trimRequired(options.model, "model");
   const reasoningEffortRequest = resolveScopedReasoningEffortRequest(options.reasoningEffort);
-  assertSupportedProvider(provider, model);
+  await assertSupportedProvider(provider, model, expectedGatewayName, deps);
   assertReasoningEffortProvider(reasoningEffortRequest, provider);
   if (!isSafeModelId(model)) {
     throw new InferenceSetError(
