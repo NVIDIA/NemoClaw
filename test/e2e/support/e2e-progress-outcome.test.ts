@@ -58,7 +58,7 @@ function runFixture(
   return resultPromise;
 }
 
-vi.setConfig({ maxConcurrency: 4 });
+vi.setConfig({ maxConcurrency: 6 });
 
 describe.concurrent("automatic E2E phase outcomes", () => {
   it("redacts target identities and explicit progress events before console output", async (context) => {
