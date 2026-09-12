@@ -98,38 +98,50 @@ async function runProcessWithStatus(
 
 vi.setConfig({ maxConcurrency: 3 });
 
-async function writePackageArchive(
-  root: string,
-  name: string,
-  dependencies: Record<string, string> = {},
-  version = "1.0.0",
-) {
-  const source = path.join(root, `${name.replaceAll("/", "-")}-${version}`);
-  fs.mkdirSync(source);
-  fs.writeFileSync(
-    path.join(source, "package.json"),
-    JSON.stringify({
-      name,
-      version,
-      type: "module",
-      exports: "./index.js",
-      dependencies,
-      scripts: {
-        preinstall: "node -e \"require('node:fs').writeFileSync('lifecycle-ran', 'yes')\"",
-      },
-    }),
-  );
-  fs.writeFileSync(
-    path.join(source, "index.js"),
-    name === "@nvidia/openshell-sdk"
-      ? 'import { version } from "fixture-transport"; if (process.env.NODE_AUTH_TOKEN || process.env.GITHUB_TOKEN || process.env.GH_TOKEN) throw new Error("Unexpected credential"); export class OpenShellClient { static connect() { return version; } }'
-      : `export const version = ${JSON.stringify(version)};`,
-  );
+type PackageDefinition = {
+  dependencies?: Record<string, string>;
+  name: string;
+  version?: string;
+};
+
+async function writePackageArchives(root: string, packages: readonly PackageDefinition[]) {
+  const sources = packages.map(({ dependencies = {}, name, version = "1.0.0" }) => {
+    const source = path.join(root, `${name.replaceAll("/", "-")}-${version}`);
+    fs.mkdirSync(source);
+    fs.writeFileSync(
+      path.join(source, "package.json"),
+      JSON.stringify({
+        name,
+        version,
+        type: "module",
+        exports: "./index.js",
+        dependencies,
+        scripts: {
+          preinstall: "node -e \"require('node:fs').writeFileSync('lifecycle-ran', 'yes')\"",
+        },
+      }),
+    );
+    fs.writeFileSync(
+      path.join(source, "index.js"),
+      name === "@nvidia/openshell-sdk"
+        ? 'import { version } from "fixture-transport"; if (process.env.NODE_AUTH_TOKEN || process.env.GITHUB_TOKEN || process.env.GH_TOKEN) throw new Error("Unexpected credential"); export class OpenShellClient { static connect() { return version; } }'
+        : `export const version = ${JSON.stringify(version)};`,
+    );
+    return { dependencies, name, source, version };
+  });
   const packed = JSON.parse(
     (
       await runSuccessfulProcess(
         "npm",
-        ["pack", source, "--pack-destination", root, "--json", "--offline", "--ignore-scripts"],
+        [
+          "pack",
+          ...sources.map(({ source }) => source),
+          "--pack-destination",
+          root,
+          "--json",
+          "--offline",
+          "--ignore-scripts",
+        ],
         {
           cwd: root,
           env: {
@@ -141,18 +153,24 @@ async function writePackageArchive(
         },
       )
     ).stdout,
-  ) as Array<{ filename: string }>;
-  const archive = path.join(root, packed[0]!.filename);
-  return {
-    archive,
-    lock: {
-      version,
-      hasInstallScript: true,
-      resolved: `https://registry.example.invalid/${path.basename(archive)}`,
-      integrity: `sha512-${createHash("sha512").update(fs.readFileSync(archive)).digest("base64")}`,
-      dependencies,
-    },
-  };
+  ) as Array<{ filename: string; name: string; version: string }>;
+  return sources.map(({ dependencies, name, version }) => {
+    const filename = packed.find(
+      (archive) => archive.name === name && archive.version === version,
+    )?.filename;
+    assert.ok(filename, `npm pack did not return ${name}@${version}`);
+    const archive = path.join(root, filename);
+    return {
+      archive,
+      lock: {
+        version,
+        hasInstallScript: true,
+        resolved: `https://registry.example.invalid/${filename}`,
+        integrity: `sha512-${createHash("sha512").update(fs.readFileSync(archive)).digest("base64")}`,
+        dependencies,
+      },
+    };
+  });
 }
 
 const npmFixture = `#!/usr/bin/env node
@@ -191,18 +209,20 @@ describe.concurrent("catalogue OpenShell SDK installation", () => {
     async ({ lockedSdkVersion, script }, { expect }) => {
       const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-sdk-real-npm-"));
       try {
-        const sdk = await writePackageArchive(root, "@nvidia/openshell-sdk", {
-          "fixture-transport": "^1.0.0",
-        });
-        const previousSdk = await writePackageArchive(
-          root,
-          "@nvidia/openshell-sdk",
-          { "fixture-transport": "^1.0.0" },
-          "0.9.0",
-        );
+        const [sdk, previousSdk, transport, sibling] = await writePackageArchives(root, [
+          {
+            name: "@nvidia/openshell-sdk",
+            dependencies: { "fixture-transport": "^1.0.0" },
+          },
+          {
+            name: "@nvidia/openshell-sdk",
+            version: "0.9.0",
+            dependencies: { "fixture-transport": "^1.0.0" },
+          },
+          { name: "fixture-transport" },
+          { name: "fixture-sibling" },
+        ]);
         const selectedSdk = lockedSdkVersion === "1.0.0" ? sdk : previousSdk;
-        const transport = await writePackageArchive(root, "fixture-transport");
-        const sibling = await writePackageArchive(root, "fixture-sibling");
         const workspace = path.join(root, "workspace");
         fs.mkdirSync(workspace);
         const manifest = JSON.stringify({
