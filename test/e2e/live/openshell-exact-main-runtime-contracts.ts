@@ -844,11 +844,20 @@ export async function assertExactMainPolicyNftAndIdentityContracts(options: {
       containerId,
       "exact-main-nft-rules-before-restart",
     );
-    const restart = await options.host.command("docker", ["restart", containerId], {
-      artifactName: "exact-main-sandbox-container-restart",
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: POLICY_TIMEOUT_MS,
-    });
+    const restart = await options.host.command(
+      "bash",
+      [
+        "-euc",
+        'openshell sandbox stop "$1"\nexec openshell sandbox start "$1"',
+        "nemoclaw-e2e-restart",
+        options.sandboxName,
+      ],
+      {
+        artifactName: "exact-main-sandbox-container-restart",
+        env: buildAvailabilityProbeEnv(),
+        timeoutMs: POLICY_TIMEOUT_MS,
+      },
+    );
     expectExitZero(restart, "restart exact-main OpenShell sandbox container");
     const restartedContainerId = await findSandboxContainer(
       options.host,
