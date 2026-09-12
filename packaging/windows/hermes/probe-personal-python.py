@@ -221,6 +221,176 @@ def browser_log_tail(file, state):
     return record
 
 
+def browser_agent_state(state, expected, launches):
+    """Failure-only query of the exact CLI session before canonical cleanup."""
+    from nemoclaw_native_windows import NativeStartupRefusal
+    import re
+
+    observation = {
+        "diagnosticOnly": True,
+        "snapshotOnly": True,
+        "historicalProcessExitsObserved": False,
+        "commands": [],
+        "processes": [],
+        "errors": [],
+    }
+    started = time.monotonic()
+
+    def record_file(file):
+        target = owned_file(file, state)
+        with target.open("rb") as stream:
+            data = stream.read(513)
+        if len(data) > 512:
+            raise ValueError("Session observation file exceeds 512 bytes")
+        return {
+            "path": str(file),
+            "bytes": len(data),
+            "sha256": hashlib.sha256(data).hexdigest(),
+            "text": data.decode("utf-8"),
+        }
+
+    try:
+        import psutil
+
+        for argv, env, socket_dir, proc, launched_at in launches[:2]:
+            row = {
+                "argv": argv,
+                "pid": proc.pid,
+                # Read the result already collected by the canonical caller;
+                # do not poll/wait, signal or change its returned exception.
+                "returncode": proc.returncode,
+                "elapsedSinceSpawnMs": int((time.monotonic() - launched_at) * 1000),
+                "environment": env,
+                "sessionDirectory": socket_dir,
+                "files": {},
+            }
+            observation["commands"].append(row)
+            session = argv[argv.index("--session") + 1]
+            directory = Path(socket_dir)
+            directory.relative_to(state)
+            if (
+                Path(argv[0]) != expected
+                or not re.fullmatch(r"h_[0-9a-f]{10}", session)
+                or directory.name != "agent-browser-" + session
+                or env.get("AGENT_BROWSER_SOCKET_DIR") != socket_dir
+            ):
+                raise ValueError("Unexpected canonical agent-browser session identity")
+            for extension in ("pid", "port", "version"):
+                try:
+                    row["files"][extension] = record_file(
+                        directory / (session + "." + extension)
+                    )
+                except (Exception, NativeStartupRefusal) as error:
+                    row["files"][extension] = {"readError": repr(error)[:256]}
+            pid_text = row["files"]["pid"].get("text", "").strip()
+            if not pid_text.isdigit() or not 0 < int(pid_text) < 2**32:
+                continue
+            daemon = psutil.Process(int(pid_text))
+            created = daemon.create_time()
+            daemon_env = daemon.environ()
+            if (
+                Path(daemon.exe()) != expected
+                or daemon_env.get("AGENT_BROWSER_SOCKET_DIR") != socket_dir
+                or daemon_env.get("AGENT_BROWSER_SESSION") != session
+            ):
+                raise ValueError(
+                    "Daemon PID is not bound to the exact canonical session"
+                )
+            row["daemonIdentityBound"] = True
+            queue = [(daemon, None, created)]
+            seen = set()
+            while queue and len(observation["processes"]) < 8:
+                if time.monotonic() - started > 2:
+                    observation["queryBudgetExhausted"] = True
+                    break
+                current, parent, creation = queue.pop(0)
+                if current.pid in seen:
+                    continue
+                seen.add(current.pid)
+                try:
+                    if current.create_time() != creation or not current.is_running():
+                        raise ValueError("Process identity changed during observation")
+                    executable = current.exe()
+                    command = current.cmdline()
+                    parent_pid = current.ppid()
+                    relation = parent is None or (
+                        parent_pid == parent[0] and creation >= parent[1]
+                    )
+                    if not relation or not current.is_running():
+                        raise ValueError("Observed child no longer matches its parent")
+                    selected = [
+                        arg
+                        for arg in command
+                        if arg.startswith(
+                            (
+                                "--type=",
+                                "--utility-sub-type=",
+                                "--user-data-dir=",
+                                "--remote-debugging-",
+                                "--headless",
+                                "--enable-logging",
+                            )
+                        )
+                    ]
+                    record = {
+                        "pid": current.pid,
+                        "parentPid": parent_pid,
+                        "creationTime": creation,
+                        "parentCreationTime": parent[1] if parent else None,
+                        "executable": executable,
+                        "status": current.status(),
+                        "identityRechecked": True,
+                        "parentRelationVerified": relation,
+                        "commandLineSha256": hashlib.sha256(
+                            json.dumps(command).encode()
+                        ).hexdigest(),
+                        "commandLineArgumentCount": len(command),
+                        "selectedArguments": [arg[:512] for arg in selected[:8]],
+                        "selectedArgumentsTruncated": len(selected) > 8
+                        or any(len(arg) > 512 for arg in selected),
+                    }
+                    observation["processes"].append(record)
+                    for argument in command:
+                        if argument.startswith("--user-data-dir="):
+                            try:
+                                record["devToolsActivePort"] = record_file(
+                                    Path(argument.split("=", 1)[1])
+                                    / "DevToolsActivePort"
+                                )
+                            except (Exception, NativeStartupRefusal) as error:
+                                record["devToolsActivePort"] = {
+                                    "readError": repr(error)[:256]
+                                }
+                    # No machine-wide name search: traverse only this verified
+                    # session daemon's live descendants, capped at eight rows.
+                    for child in current.children(recursive=False)[:8]:
+                        queue.append(
+                            (child, (current.pid, creation), child.create_time())
+                        )
+                except (Exception, NativeStartupRefusal) as error:
+                    observation["errors"].append(
+                        {"pid": current.pid, "error": repr(error)[:256]}
+                    )
+            if queue:
+                observation["processesTruncated"] = True
+    except (Exception, NativeStartupRefusal) as error:
+        observation["errors"].append({"error": repr(error)[:256]})
+    observation["elapsedMs"] = int((time.monotonic() - started) * 1000)
+    # Reserve room for the original error, page/shutdown records and both logs
+    # inside the unchanged 12 KiB aggregate browser-diagnostic ceiling.
+    while len(json.dumps(observation).encode()) > 6 * 1024:
+        observation["aggregateTruncated"] = True
+        if observation["processes"]:
+            observation["processes"].pop()
+        elif observation["commands"]:
+            observation["commands"].pop()
+        elif observation["errors"]:
+            observation["errors"].pop()
+        else:
+            break
+    return observation
+
+
 def bounded_browser_diagnostics(value):
     value["serializedLimitBytes"] = 12 * 1024
     value["aggregateTruncated"] = False
@@ -565,6 +735,7 @@ def browser_check(root, nonce):
     from tools.browser_use_cli import browser_exec, _backend_cache_key
     from tools.browser_tool_install import _find_agent_browser
     from tools.browser_tool_lifecycle import cleanup_browser
+    from tools import browser_tool_session
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
     import threading
 
@@ -602,6 +773,37 @@ def browser_check(root, nonce):
     primary = None
     result = None
     raw = None
+    launches = []
+    original_spawn = browser_tool_session._popen_agent_browser
+
+    def observed_spawn(argv, env, socket_dir, tag):
+        proc = original_spawn(argv, env, socket_dir, tag)
+        if (
+            tag == "get"
+            and argv[-3:] == ["--json", "get", "cdp-url"]
+            and len(launches) < 2
+        ):
+            launches.append(
+                (
+                    list(argv),
+                    {
+                        key: env[key]
+                        for key in (
+                            "AGENT_BROWSER_SOCKET_DIR",
+                            "AGENT_BROWSER_EXECUTABLE_PATH",
+                            "AGENT_BROWSER_ARGS",
+                            "CHROME_LOG_FILE",
+                        )
+                        if key in env
+                    },
+                    socket_dir,
+                    proc,
+                    time.monotonic(),
+                )
+            )
+        return proc
+
+    browser_tool_session._popen_agent_browser = observed_spawn
     try:
         code = browser_page_code(
             "http://127.0.0.1:" + str(server.server_port) + "/", nonce
@@ -621,8 +823,12 @@ def browser_check(root, nonce):
         error.add_note("Browser Use raw response: " + repr(raw))
         primary = error
     finally:
+        browser_tool_session._popen_agent_browser = original_spawn
         diagnostics["pageObservation"] = browser_page_observation(result)
         if primary:
+            diagnostics["agentBrowserState"] = browser_agent_state(
+                state, expected, launches
+            )
             diagnostics["logs"]["chrome"] = browser_log_tail(chrome_log, state)
         try:
             # The Browser Use daemon is a distinct owner from agent-browser.

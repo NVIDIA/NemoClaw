@@ -487,5 +487,204 @@ class BrowserHarnessShutdown(unittest.TestCase):
         self.assertTrue(port and pid)
 
 
+class AgentBrowserState(unittest.TestCase):
+    def fixture(self, state, *, foreign=False, denied=False):
+        session = "h_0123456789"
+        directory = state / ("agent-browser-" + session)
+        directory.mkdir()
+        executable = state / "runtime/agent-browser.exe"
+        environment = {
+            "AGENT_BROWSER_SESSION": session,
+            "AGENT_BROWSER_SOCKET_DIR": str(directory),
+        }
+        for extension, text in [
+            ("pid", "101"),
+            ("port", "50123"),
+            ("version", "0.26.0"),
+        ]:
+            (directory / (session + "." + extension)).write_text(text)
+        profile = state / "chrome-profile"
+        profile.mkdir()
+        (profile / "DevToolsActivePort").write_text("50124\n/devtools/browser/owned")
+        calls = []
+
+        def process(pid, parent, created, command, children=()):
+            return SimpleNamespace(
+                pid=pid,
+                create_time=lambda: created,
+                is_running=lambda: True,
+                exe=lambda: (
+                    str(executable) if pid == 101 else str(state / "runtime/chrome.exe")
+                ),
+                environ=lambda: (
+                    {**environment, "AGENT_BROWSER_SESSION": "foreign"}
+                    if foreign
+                    else environment
+                ),
+                cmdline=lambda: command,
+                ppid=lambda: parent,
+                status=lambda: "running",
+                children=lambda recursive: list(children),
+            )
+
+        renderer = process(103, 102, 12.0, ["chrome.exe", "--type=renderer"])
+        browser = process(
+            102,
+            101,
+            11.0,
+            ["chrome.exe", "--headless=new", "--user-data-dir=" + str(profile)],
+            [renderer],
+        )
+        daemon = process(101, 100, 10.0, [str(executable)], [browser])
+
+        def selected(pid):
+            calls.append(pid)
+            if denied:
+                raise PermissionError("query denied")
+            self.assertEqual(pid, 101)
+            return daemon
+
+        launch = (
+            [str(executable), "--session", session, "--json", "get", "cdp-url"],
+            environment,
+            str(directory),
+            SimpleNamespace(pid=100, returncode=1),
+            1.0,
+        )
+        native = ModuleType("nemoclaw_native_windows")
+        native.NativeStartupRefusal = type("NativeStartupRefusal", (SystemExit,), {})
+        return executable, launch, SimpleNamespace(Process=selected), native, calls
+
+    def test_exact_session_daemon_tree_endpoint_and_cli_result_before_cleanup(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = Path(directory)
+            expected, launch, psutil, native, calls = self.fixture(state)
+            with (
+                patch.dict(
+                    sys.modules, {"psutil": psutil, "nemoclaw_native_windows": native}
+                ),
+                patch.object(
+                    owner, "owned_file", side_effect=lambda file, root: Path(file)
+                ),
+            ):
+                result = owner.browser_agent_state(state, expected, [launch])
+            self.assertEqual(calls, [101])
+            self.assertEqual(result["errors"], [])
+            self.assertEqual([p["pid"] for p in result["processes"]], [101, 102, 103])
+            self.assertTrue(result["commands"][0]["daemonIdentityBound"])
+            self.assertEqual(result["commands"][0]["returncode"], 1)
+            self.assertEqual(result["commands"][0]["argv"], launch[0])
+            self.assertEqual(
+                result["processes"][1]["devToolsActivePort"]["text"],
+                "50124\n/devtools/browser/owned",
+            )
+            self.assertEqual(
+                result["processes"][2]["selectedArguments"], ["--type=renderer"]
+            )
+            self.assertFalse(result["historicalProcessExitsObserved"])
+            self.assertTrue((Path(launch[2]) / "h_0123456789.pid").exists())
+
+    def test_foreign_daemon_or_query_denial_never_traverses_or_replaces_primary(self):
+        for options in [{"foreign": True}, {"denied": True}]:
+            with (
+                self.subTest(options=options),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                state = Path(directory)
+                expected, launch, psutil, native, _ = self.fixture(state, **options)
+                primary = ValueError("original get-CDP10060")
+                with (
+                    patch.dict(
+                        sys.modules,
+                        {"psutil": psutil, "nemoclaw_native_windows": native},
+                    ),
+                    patch.object(
+                        owner, "owned_file", side_effect=lambda file, root: Path(file)
+                    ),
+                ):
+                    primary.nemoclaw_browser_diagnostics = owner.browser_agent_state(
+                        state, expected, [launch]
+                    )
+                self.assertEqual(str(primary), "original get-CDP10060")
+                self.assertEqual(primary.nemoclaw_browser_diagnostics["processes"], [])
+                self.assertTrue(primary.nemoclaw_browser_diagnostics["errors"])
+
+    def test_optional_record_refusal_and_aggregate_limit_remain_diagnostic(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = Path(directory)
+            expected, launch, psutil, native, calls = self.fixture(state)
+
+            def refuse(*_):
+                raise native.NativeStartupRefusal("missing owned record")
+
+            with (
+                patch.dict(
+                    sys.modules, {"psutil": psutil, "nemoclaw_native_windows": native}
+                ),
+                patch.object(owner, "owned_file", side_effect=refuse),
+            ):
+                result = owner.browser_agent_state(state, expected, [launch])
+            self.assertEqual(calls, [])
+            self.assertIn(
+                "missing owned record",
+                result["commands"][0]["files"]["pid"]["readError"],
+            )
+            self.assertLessEqual(len(json.dumps(result).encode()), 6 * 1024)
+
+    def test_observer_forwards_exact_spawn_then_restores_before_snapshot_and_cleanup(
+        self,
+    ):
+        import ast
+
+        source = ast.parse(Path(owner.__file__).read_text())
+        function = next(
+            node
+            for node in source.body
+            if isinstance(node, ast.FunctionDef) and node.name == "browser_check"
+        )
+        observer = next(
+            node
+            for node in function.body
+            if isinstance(node, ast.FunctionDef) and node.name == "observed_spawn"
+        )
+        calls = []
+        proc = SimpleNamespace(pid=77, returncode=1)
+        arguments = (
+            ["owned.exe", "--session", "h_0123456789", "--json", "get", "cdp-url"],
+            {"AGENT_BROWSER_SOCKET_DIR": "owned", "SECRET_KEY": "never retained"},
+            "owned",
+            "get",
+        )
+        context = {
+            "original_spawn": lambda *args: calls.append(args) or proc,
+            "launches": [],
+            "time": SimpleNamespace(monotonic=lambda: 1.0),
+        }
+        exec(
+            compile(
+                ast.fix_missing_locations(ast.Module(body=[observer], type_ignores=[])),
+                owner.__file__,
+                "exec",
+            ),
+            context,
+        )
+        self.assertIs(context["observed_spawn"](*arguments), proc)
+        self.assertEqual(calls, [arguments])
+        self.assertEqual(
+            context["launches"][0][1], {"AGENT_BROWSER_SOCKET_DIR": "owned"}
+        )
+        operation = next(node for node in function.body if isinstance(node, ast.Try))
+        self.assertEqual(
+            ast.unparse(operation.finalbody[0]),
+            "browser_tool_session._popen_agent_browser = original_spawn",
+        )
+        final_source = ast.unparse(operation)
+        self.assertLess(
+            final_source.index("browser_agent_state("),
+            final_source.index("cleanup_browser("),
+        )
+        self.assertIn("timeout_s=45", final_source)
+
+
 if __name__ == "__main__":
     unittest.main()
