@@ -19,6 +19,7 @@ import {
   trustedSandboxShellScript,
 } from "../fixtures/clients/sandbox.ts";
 import { expect } from "../fixtures/e2e-test.ts";
+import { MCP_BRIDGE_TEST_CREDENTIALS } from "../fixtures/mcp-bridge-credentials.ts";
 
 const EXACT_MAIN_POLICY_KEY = "exact_main_live_exe_identity";
 const LIVE_EXE_PATH = "/tmp/nemoclaw-exact-main-live-exe/live-bash";
@@ -723,6 +724,22 @@ async function assertDirectBypassDenied(options: {
         timeoutMs: 30_000,
       },
     );
+    if (probe.exitCode !== 0) {
+      await Promise.allSettled([
+        Promise.resolve().then(() =>
+          options.sandbox.openshell(
+            ["logs", options.sandboxName, "-n", "500", "--since", "2m", "--source", "all"],
+            {
+              artifactName: "exact-main-post-restart-failure-logs",
+              captureLimitBytes: 32_768,
+              env: sandboxAccessEnv(),
+              redactionValues: Object.values(MCP_BRIDGE_TEST_CREDENTIALS),
+              timeoutMs: 30_000,
+            },
+          ),
+        ),
+      ]);
+    }
     expectExitZero(probe, "deny direct IPv4 TCP and UDP bypass to controlled listeners");
     const parsed: unknown = JSON.parse(probe.stdout);
     if (!isRecord(parsed)) throw new Error("direct bypass probe must return a JSON object");
