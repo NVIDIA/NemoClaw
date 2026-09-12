@@ -82,6 +82,7 @@ import {
   recoverInstalledManagedClusterVllmEndpoint,
 } from "./serving/managed-cluster-runtime-receipt";
 import {
+  observeManagedVllmHostPort,
   recoverHostLocalManagedVllmEndpoint,
   resolveManagedVllmBridgeHost,
 } from "./serving/vllm-host-local-lifecycle";
@@ -1229,7 +1230,7 @@ export function getLocalProviderBaseUrl(
         if (managed.kind === "unavailable") return null;
         if (managed.binding) return managed.binding.baseUrl;
       }
-      return `${hostUrl}:${VLLM_PORT}/v1`;
+      return `${hostUrl}:${managedVllmPublishedPort()}/v1`;
     }
     case "ollama-local":
       // Containers reach Ollama through the auth proxy, not directly.
@@ -1239,6 +1240,20 @@ export function getLocalProviderBaseUrl(
   }
 }
 
+/**
+ * Published host port for the managed vLLM listener.
+ *
+ * `NEMOCLAW_VLLM_PORT` is read once from this process's environment, so a
+ * status or routing call made from a shell that does not carry the onboarding
+ * override would otherwise address the default port while the container
+ * publishes another one. Observing the container's own binding keeps every
+ * derived URL on the port the listener actually serves, and the ambient value
+ * remains the answer when no managed container is published.
+ */
+function managedVllmPublishedPort(): number {
+  return observeManagedVllmHostPort() ?? VLLM_PORT;
+}
+
 export function getLocalProviderValidationBaseUrl(provider: string): string | null {
   switch (provider) {
     case "vllm-local": {
@@ -1246,7 +1261,7 @@ export function getLocalProviderValidationBaseUrl(provider: string): string | nu
       if (managed.kind === "unavailable") return null;
       return managed.binding
         ? (managed.binding.validationBaseUrl ?? managed.binding.baseUrl)
-        : `http://127.0.0.1:${VLLM_PORT}/v1`;
+        : `http://127.0.0.1:${managedVllmPublishedPort()}/v1`;
     }
     case "ollama-local":
       return `http://${getResolvedOllamaHost()}:${OLLAMA_PORT}/v1`;
@@ -1265,7 +1280,7 @@ export function getLocalProviderHealthEndpoint(provider: string): string | null 
         : null;
       return managedBaseUrl
         ? `${managedBaseUrl}/models`
-        : `http://127.0.0.1:${VLLM_PORT}/v1/models`;
+        : `http://127.0.0.1:${managedVllmPublishedPort()}/v1/models`;
     }
     case "ollama-local":
       return `http://${getResolvedOllamaHost()}:${OLLAMA_PORT}/api/tags`;
@@ -1286,7 +1301,7 @@ export function getLocalProviderAvailabilityEndpoint(provider: string): string |
       );
       return `${validationRoot}/health`;
     }
-    return `http://127.0.0.1:${VLLM_PORT}/v1/models`;
+    return `http://127.0.0.1:${managedVllmPublishedPort()}/v1/models`;
   }
   return getLocalProviderHealthEndpoint(provider);
 }
@@ -1523,7 +1538,7 @@ export function probeLocalProviderHealth(
   const endpoint = managedValidationBaseUrl
     ? `${managedValidationBaseUrl}/models`
     : provider === "vllm-local"
-      ? `http://127.0.0.1:${VLLM_PORT}/v1/models`
+      ? `http://127.0.0.1:${managedVllmPublishedPort()}/v1/models`
       : getLocalProviderHealthEndpoint(provider);
   if (!endpoint) return null;
 
@@ -1674,7 +1689,7 @@ export function getLocalProviderContainerReachabilityCheck(
         ...(managedBaseUrl ? ["-w", "%{http_code}"] : []),
         managedBaseUrl
           ? `${managedBaseUrl}/health`
-          : `http://host.openshell.internal:${VLLM_PORT}/v1/models`,
+          : `http://host.openshell.internal:${managedVllmPublishedPort()}/v1/models`,
       ];
     }
     case "ollama-local": {
@@ -1943,7 +1958,7 @@ function getContainerCheckUrl(provider: string): string | null {
       const managedBaseUrl = managed.binding?.baseUrl.replace(/\/v1\/?$/, "") ?? null;
       return managedBaseUrl
         ? `${managedBaseUrl}/health`
-        : `http://host.openshell.internal:${VLLM_PORT}/v1/models`;
+        : `http://host.openshell.internal:${managedVllmPublishedPort()}/v1/models`;
     }
     case "ollama-local":
       return `http://host.openshell.internal:${getOllamaContainerPort()}/api/tags`;
