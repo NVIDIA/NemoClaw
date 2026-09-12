@@ -2061,6 +2061,136 @@ HWINSTA WINAPI create_browser_station(LPCWSTR name, DWORD flags, ACCESS_MASK acc
     return returned ? static_cast<HWINSTA>(duplicate) : nullptr;
 }
 
+// Open only the fixed host-retained desktop route proved by the native gate.
+enum class HostedBrowserDesktop { Default, Low };
+decltype(&CreateDesktopW) realCreateBrowserDesktop = CreateDesktopW;
+LONG browserDesktopRecords = 0;
+
+bool hosted_browser_desktop_name(HostedBrowserDesktop variant, WCHAR (&result)[256]) {
+    const WCHAR* suffix = nullptr;
+    switch (variant) {
+        case HostedBrowserDesktop::Default: suffix = L"-default"; break;
+        case HostedBrowserDesktop::Low: suffix = L"-low"; break;
+        default: return false;
+    }
+    // initialize_namespace populated this bounded string directly from the
+    // validated process TokenAppContainerSid, never an environment override.
+    const char* sid = contextDiagnostic.tokenSid;
+    if (strncmp(sid, "S-1-15-2-", 9) != 0) return false;
+    size_t length = 9;
+    unsigned groups = 1, digits = 0;
+    for (; length < sizeof(contextDiagnostic.tokenSid) && sid[length]; ++length) {
+        if (sid[length] >= '0' && sid[length] <= '9') { ++digits; continue; }
+        if (sid[length] != '-' || !digits) return false;
+        ++groups;
+        digits = 0;
+    }
+    if (length == sizeof(contextDiagnostic.tokenSid) || !digits || groups != 7) return false;
+    constexpr WCHAR prefix[] = L"NemoClawHermesDesktop-";
+    const size_t prefixLength = sizeof(prefix) / sizeof(WCHAR) - 1;
+    const size_t suffixLength = wcslen(suffix);
+    if (prefixLength + length + suffixLength + 1 > 256) return false;
+    memcpy(result, prefix, prefixLength * sizeof(WCHAR));
+    for (size_t n = 0; n < length; ++n) result[prefixLength + n] = static_cast<WCHAR>(sid[n]);
+    memcpy(result + prefixLength + length, suffix, (suffixLength + 1) * sizeof(WCHAR));
+    return true;
+}
+
+void log_browser_desktop(HostedBrowserDesktop variant, DWORD mask, DWORD operationError,
+    bool nameMatches, bool flagsKnown, bool noninheritable, bool sameContext,
+    bool returned, DWORD cleanupError) {
+    if (InterlockedIncrement(&browserDesktopRecords) > 2) return;
+    char line[1024];
+    const int count = _snprintf_s(line, sizeof(line), _TRUNCATE,
+        "NEMOCLAW_MSYS_CHROME_DESKTOP={\"schemaVersion\":1,\"pid\":%lu,\"variant\":\"%s\",\"originalError\":5,\"requestedAccess\":917507,\"openAccess\":917507,\"uiMask\":%lu,\"nameMatches\":%s,\"flagSource\":\"UOI_FLAGS\",\"flagsKnown\":%s,\"nonInheritable\":%s,\"sameCurrentContext\":%s,\"returnedOwnedHandle\":%s,\"operationError\":%lu,\"cleanupError\":%lu,\"borrowedHandleClosed\":false,\"existingObjectAclChanged\":false,\"sharedCurrentStation\":true,\"separateStationIsolation\":false}\n",
+        GetCurrentProcessId(), variant == HostedBrowserDesktop::Low ? "low" : "default", mask,
+        nameMatches ? "true" : "false", flagsKnown ? "true" : "false",
+        noninheritable ? "true" : "false", sameContext ? "true" : "false",
+        returned ? "true" : "false", operationError, cleanupError);
+    if (count > 0 && count < static_cast<int>(sizeof(line))) {
+        DWORD written = 0;
+        WriteFile(GetStdHandle(STD_ERROR_HANDLE), line, static_cast<DWORD>(count), &written, nullptr);
+    }
+}
+
+// The detour below supplies a fixed route; no environment selector or retry list.
+HDESK create_browser_desktop_for_variant(LPCWSTR name, LPCWSTR device, DEVMODEW* mode,
+    DWORD flags, ACCESS_MASK access, LPSECURITY_ATTRIBUTES attributes, HostedBrowserDesktop variant) {
+    HDESK created = realCreateBrowserDesktop(name, device, mode, flags, access, attributes);
+    const DWORD originalError = GetLastError();
+    if (created || originalError != ERROR_ACCESS_DENIED) return created;
+    WCHAR canonicalName[64] = {}, hostedName[256] = {};
+    const int canonicalLength = _snwprintf_s(canonicalName, 64, _TRUNCATE,
+        L"sbox_alternate_desktop_0x%X", GetCurrentProcessId());
+    if (!name || canonicalLength <= 0 || device || mode || flags || access != 0x000e0003 ||
+        contextDiagnostic.isContainer != 1 || !selected_browser_gui() || !sameKernelObject ||
+        !canonical_browser_station_attributes(attributes) ||
+        !hosted_browser_desktop_name(variant, hostedName)) {
+        SetLastError(originalError);
+        return nullptr;
+    }
+    bool canonical = false;
+    __try { canonical = wcscmp(name, canonicalName) == 0; }
+    __except (EXCEPTION_EXECUTE_HANDLER) { canonical = false; }
+    if (!canonical) { SetLastError(originalError); return nullptr; }
+    JOBOBJECT_BASIC_UI_RESTRICTIONS restrictions = {};
+    DWORD operationError = 0, cleanupError = 0;
+    if (!QueryInformationJobObject(nullptr, JobObjectBasicUIRestrictions, &restrictions,
+            sizeof(restrictions), nullptr)) operationError = GetLastError();
+    const DWORD mask = restrictions.UIRestrictionsClass;
+    if (!operationError && mask != 0xbf && mask != 0x1bf && mask != 0x3bf)
+        operationError = ERROR_ACCESS_DENIED;
+    const HWINSTA borrowedStation = operationError ? nullptr : GetProcessWindowStation();
+    const HDESK borrowedDesktop = operationError ? nullptr : GetThreadDesktop(GetCurrentThreadId());
+    if (!operationError && (!borrowedStation || !borrowedDesktop)) operationError = ERROR_INVALID_HANDLE;
+    HDESK opened = nullptr;
+    bool nameMatches = false, flagsKnown = false, noninheritable = false, sameContext = false;
+    if (!operationError) {
+        opened = OpenDesktopW(hostedName, 0, FALSE, access);
+        if (!opened) operationError = GetLastError();
+        else if (opened == borrowedDesktop || opened == INVALID_HANDLE_VALUE) operationError = ERROR_INVALID_HANDLE;
+        else {
+            WCHAR actualName[256] = {};
+            DWORD needed = 0;
+            if (!GetUserObjectInformationW(opened, UOI_NAME, actualName, sizeof(actualName), &needed))
+                operationError = GetLastError();
+            else {
+                const size_t expectedBytes = (wcslen(hostedName) + 1) * sizeof(WCHAR);
+                nameMatches = needed == expectedBytes && needed <= sizeof(actualName) &&
+                    memcmp(actualName, hostedName, expectedBytes) == 0;
+                if (!nameMatches) operationError = ERROR_INVALID_STATE;
+            }
+            USEROBJECTFLAGS information = {};
+            needed = 0;
+            flagsKnown = GetUserObjectInformationW(opened, UOI_FLAGS, &information,
+                sizeof(information), &needed) != FALSE;
+            if (!flagsKnown) operationError = GetLastError();
+            else if (needed != sizeof(information)) { flagsKnown = false; operationError = ERROR_BAD_LENGTH; }
+            noninheritable = flagsKnown && !information.fInherit;
+            if (!noninheritable && !operationError) operationError = ERROR_INVALID_STATE;
+            const HWINSTA currentStation = GetProcessWindowStation();
+            const HDESK currentDesktop = GetThreadDesktop(GetCurrentThreadId());
+            sameContext = currentStation && currentDesktop &&
+                (borrowedStation == currentStation || sameKernelObject(borrowedStation, currentStation)) &&
+                (borrowedDesktop == currentDesktop || sameKernelObject(borrowedDesktop, currentDesktop));
+            if (!sameContext) operationError = ERROR_INVALID_STATE;
+        }
+    }
+    const bool returned = !operationError && nameMatches && flagsKnown && noninheritable && sameContext;
+    if (!returned && opened && opened != borrowedDesktop && opened != INVALID_HANDLE_VALUE &&
+        !CloseDesktop(opened)) cleanupError = GetLastError();
+    log_browser_desktop(variant, mask, operationError, nameMatches, flagsKnown, noninheritable,
+        sameContext, returned, cleanupError);
+    SetLastError(returned ? ERROR_SUCCESS : originalError);
+    return returned ? opened : nullptr;
+}
+
+HDESK WINAPI create_browser_desktop(LPCWSTR name, LPCWSTR device, DEVMODEW* mode,
+    DWORD flags, ACCESS_MASK access, LPSECURITY_ATTRIBUTES attributes) {
+    return create_browser_desktop_for_variant(name, device, mode, flags, access, attributes,
+        HostedBrowserDesktop::Default);
+}
+
 } // namespace
 
 BOOL WINAPI DllMain(HINSTANCE self, DWORD reason, LPVOID reserved) {
@@ -2080,6 +2210,7 @@ BOOL WINAPI DllMain(HINSTANCE self, DWORD reason, LPVOID reserved) {
     if (!error) error = NemoClawStageProcessPropagation();
     // Staging only: no USER32 function is called under DllMain's loader lock.
     if (!error && selected_browser_gui()) error = DetourAttach(&realCreateBrowserStation, create_browser_station);
+    if (!error && selected_browser_gui()) error = DetourAttach(&realCreateBrowserDesktop, create_browser_desktop);
     if (!error) error = DetourAttach(&realCreate, create_directory);
     if (!error) error = DetourAttach(&realOpen, open_directory);
     if (!error) error = DetourAttach(&realCreateSharedSection, create_shared_section);

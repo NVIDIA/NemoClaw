@@ -439,7 +439,7 @@ new file mode 100644
 +}
 +
 +fn diagnostic_desktop_requested(private_desktop: bool, container: &str) -> bool {
-+    private_desktop && container.ends_with("-d")
++    private_desktop && (container.ends_with("-d") || container.ends_with("-start"))
 +        && std::env::var("GITHUB_ACTIONS").as_deref() == Ok("true")
 +        && std::env::var("NEMOCLAW_MSYS_TOKEN_INSPECTION").as_deref() == Ok("repair-query")
 +}
@@ -487,8 +487,8 @@ new file mode 100644
 +        return Err("inspection expected AppContainer identity is invalid".into());
 +    }
 +    let directory = pin_directory(&root)?;
-+    // New desktops on the unchanged current station are a CI fixture only.
-+    // Personal -start and installed hermes-query never enter this branch.
++    // New desktops on the unchanged current station serve CI -d and -start.
++    // Installed hermes-query and all other roles remain excluded.
 +    let desktops = if diagnostic_desktop_requested(private_desktop, container) {
 +        crate::msys_token_readback::prepare_private_desktops(job, root_process, expected_sid)?
 +    } else { Vec::new() };
