@@ -781,24 +781,6 @@ function requireRunContains(
   }
 }
 
-function requireRunFragmentBefore(
-  errors: string[],
-  step: WorkflowStep | undefined,
-  before: string,
-  after: string,
-): void {
-  if (!step) return;
-  const run = stringValue(step.run);
-  const beforeIndex = run.indexOf(before);
-  const afterIndex = run.indexOf(after);
-  if (beforeIndex === -1 || afterIndex === -1) return;
-  if (beforeIndex > afterIndex) {
-    errors.push(
-      `step '${step.name ?? "<unnamed>"}' run script must include ${before} before ${after}`,
-    );
-  }
-}
-
 function requireRunDoesNotContain(
   errors: string[],
   step: WorkflowStep | undefined,
@@ -963,22 +945,6 @@ function validateLargerRunnerRouting(
         "only the trusted larger-runner routing step may consume E2E_LARGER_RUNNER_LABEL",
       );
     }
-  }
-}
-
-function requireUploadPathContains(errors: string[], uploadPath: string, expected: string): void {
-  if (!uploadPath.includes(expected)) {
-    errors.push(`artifact upload path must include ${expected}`);
-  }
-}
-
-function requireUploadPathDoesNotContain(
-  errors: string[],
-  uploadPath: string,
-  forbidden: string,
-): void {
-  if (uploadPath.includes(forbidden)) {
-    errors.push(`artifact upload path must not include ${forbidden}`);
   }
 }
 
@@ -1431,12 +1397,9 @@ function validateDockerHubAuthBoundary(errors: string[], jobs: WorkflowRecord): 
     }
   }
 
-  const imageJobNames = [
-    "live",
-    ...e2eJobNames.filter((jobName) => !NO_IMAGE_E2E_JOBS.has(jobName)),
-  ];
-  const liveSteps = asSteps(asRecord(jobs.live).steps);
-  const canonicalAuth = namedStep(liveSteps, DOCKER_HUB_AUTH_STEP);
+  const imageJobNames = e2eJobNames.filter((jobName) => !NO_IMAGE_E2E_JOBS.has(jobName));
+  const authContractSteps = asSteps(asRecord(jobs["openshell-gateway-auth-contract"]).steps);
+  const canonicalAuth = namedStep(authContractSteps, DOCKER_HUB_AUTH_STEP);
   requireCanonicalDockerHubAuthRun(errors, canonicalAuth);
 
   for (const jobName of imageJobNames) {
@@ -2626,10 +2589,10 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   if (liveTargets.name !== "${{ matrix.label }}") {
     errors.push("live job name must expose the semantic matrix label");
   }
-  if (liveTargets["runs-on"] !== "${{ matrix.runner }}") {
+  if (asRecord(liveTargets.with).runner !== "${{ matrix.runner }}") {
     errors.push("live job must run on the matrix runner");
   }
-  if (liveTargets["timeout-minutes"] !== "${{ matrix.timeout_minutes }}") {
+  if (asRecord(liveTargets.with).timeout_minutes !== "${{ matrix.timeout_minutes }}") {
     errors.push("live job timeout must come from the typed target matrix");
   }
   if (!isDeepStrictEqual(liveTargets.needs, ["base-image-publication", "generate-matrix"])) {
@@ -2647,300 +2610,48 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
     errors.push("live matrix.include must come from generate-matrix output");
   }
 
-  const jobEnv = asRecord(liveTargets.env);
-  if (jobEnv.NEMOCLAW_RUN_LIVE_E2E !== "1") {
-    errors.push("live job must set NEMOCLAW_RUN_LIVE_E2E=1");
+  const typedInputs = asRecord(liveTargets.with);
+  if (liveTargets.uses !== "./.github/workflows/e2e-standard-profile.yaml") {
+    errors.push("live job must use the standard E2E profile");
   }
-  validateHostedCompatibleInferenceFlag(errors, "live", jobEnv);
-  if (!stringValue(jobEnv.E2E_ARTIFACT_DIR).includes("e2e-artifacts/live")) {
-    errors.push("live job must write artifacts under e2e-artifacts/live");
+  for (const [name, expected] of Object.entries({
+    target_id: "${{ matrix.id }}",
+    catalogue_id: "${{ matrix.id }}",
+    execution_id: "${{ matrix.execution_id }}",
+    coverage_variant: "${{ matrix.coverage_variant }}",
+    runtime_provider: "${{ matrix.runtime_provider }}",
+    test_file: "test/e2e/live/registry-targets.test.ts",
+    openshell_sdk_artifact_name: "",
+    restore_cli: true,
+    install_mode: "none",
+    install_non_interactive: false,
+    cloudflared: false,
+    host_preparation: "none",
+    runner_comparison: false,
+    compatible_api_key: false,
+    github_token: false,
+    candidate_repository: "${{ inputs.checkout_repository || github.repository }}",
+    candidate_sha: "${{ inputs.checkout_sha || github.sha }}",
+    checkout_sha: "${{ inputs.checkout_sha }}",
+    risk_signal_correlation_id: "${{ inputs.correlation_id }}",
+    shard: "default",
+    artifact_layout: "target-shard",
+    host_packages:
+      "${{ matrix.id == 'ubuntu-repo-cloud-langchain-deepagents-code' && 'expect' || '' }}",
+  })) {
+    if (typedInputs[name] !== expected) errors.push(`live job must preserve typed input ${name}`);
   }
-  if (stringValue(jobEnv.E2E_ARTIFACT_DIR).includes("${{ matrix.id }}")) {
-    errors.push("live job E2E_ARTIFACT_DIR must be the Vitest artifact parent");
-  }
-  if (!stringValue(jobEnv.NEMOCLAW_CLI_BIN).includes("bin/nemoclaw.js")) {
-    errors.push("live job must point NEMOCLAW_CLI_BIN at the repo CLI");
-  }
-  requireEnvDoesNotExposeSecret(errors, "live job", jobEnv, "NVIDIA_INFERENCE_API_KEY");
-
-  const steps = asSteps(liveTargets.steps);
-  requireNoDispatchInputInterpolation(errors, steps);
-  for (const step of steps) {
-    if (step.name !== "Run live E2E tests") {
-      requireEnvDoesNotExposeSecret(
-        errors,
-        `step '${step.name ?? step.uses ?? "<unnamed>"}'`,
-        asRecord(step.env),
-        "NVIDIA_INFERENCE_API_KEY",
-      );
-    }
-  }
-
-  const checkout = steps.find((step) => stringValue(step.uses).startsWith("actions/checkout@"));
-  if (!checkout) errors.push("live job missing checkout step");
-  requireFullShaAction(errors, checkout, "checkout");
-  if (asRecord(checkout?.with)["persist-credentials"] !== false) {
-    errors.push("checkout step must set persist-credentials=false");
-  }
-
-  const dcodeTargetIf = "${{ matrix.id == 'ubuntu-repo-cloud-langchain-deepagents-code' }}";
-  const dcodeDockerTargetIf =
-    "${{ matrix.id == 'ubuntu-repo-cloud-langchain-deepagents-code' && matrix.runtime_provider == 'docker' }}";
-  const configureTrace = requireStep(errors, steps, "Configure live E2E trace directory");
-  const configureTraceEnv = asRecord(configureTrace?.env);
-  if (configureTraceEnv.TARGET_ID !== "${{ matrix.id }}") {
-    errors.push("live trace setup step must pass matrix.id through TARGET_ID env");
-  }
-  if (configureTrace?.["if"] !== undefined) {
-    errors.push("live trace setup step must run before live E2E tests without an if condition");
-  }
-  if (stringValue(jobEnv.NEMOCLAW_TRACE_DIR).length > 0) {
-    errors.push("live job must not set NEMOCLAW_TRACE_DIR at job scope");
-  }
-  requireRunContains(errors, configureTrace, "NEMOCLAW_TRACE_DIR=%s");
-  requireRunContains(errors, configureTrace, "${RUNNER_TEMP}/nemoclaw-e2e-traces/${TARGET_ID}");
-  requireRunContains(errors, configureTrace, '>> "${GITHUB_ENV}"');
-
-  const dcodeHostDependencies = requireStep(
-    errors,
-    steps,
-    "Install Deep Agents Code TUI host dependencies",
-  );
-  validateHostDependencyActionStep(
-    errors,
-    "live",
-    steps,
-    "Install Deep Agents Code TUI host dependencies",
-    ["expect"],
-  );
-  if (dcodeHostDependencies?.if !== dcodeTargetIf) {
-    errors.push("live DCode TUI host dependencies must be scoped to the typed DCode target");
-  }
-
-  const prepareWorkspace = requireStep(errors, steps, "Prepare E2E workspace");
-  if (
-    dcodeHostDependencies &&
-    prepareWorkspace &&
-    steps.indexOf(dcodeHostDependencies) >= steps.indexOf(prepareWorkspace)
-  ) {
-    errors.push("live DCode TUI host dependencies must be installed before workspace prep");
-  }
-
-  const dcodeProfileImportGate = requireStep(
-    errors,
-    steps,
-    "Verify DCode profile import gate rejects missing base dependencies",
-  );
-  if (
-    Object.hasOwn(asRecord(dcodeProfileImportGate?.env), "NEMOCLAW_DCODE_PROFILE_GATE_BASE_IMAGE")
-  ) {
-    errors.push(
-      "live DCode profile import gate must build the reviewed repository base without an override",
-    );
-  }
-  if (dcodeProfileImportGate?.["if"] !== dcodeDockerTargetIf) {
-    errors.push("live DCode profile import gate must be scoped to the typed DCode target");
-  }
-  if (dcodeProfileImportGate?.shell !== "bash") {
-    errors.push("live DCode profile import gate must use bash");
+  if (asRecord(liveTargets.secrets).NVIDIA_INFERENCE_API_KEY !== GUARDED_LIVE_E2E_INFERENCE_KEY) {
+    errors.push("live job must preserve the guarded inference credential");
   }
   if (
-    stringValue(dcodeProfileImportGate?.run).trim() !==
-    "bash scripts/check-dcode-profile-import-gate.sh"
+    !isDeepStrictEqual(Object.keys(asRecord(liveTargets.secrets)).sort(), [
+      "DOCKERHUB_TOKEN",
+      "DOCKERHUB_USERNAME",
+      "NVIDIA_INFERENCE_API_KEY",
+    ])
   ) {
-    errors.push("live DCode profile import gate must run the reviewed negative-build script");
-  }
-  const dcodeGateIndex = dcodeProfileImportGate
-    ? steps.indexOf(dcodeProfileImportGate)
-    : steps.length;
-  const routesDcodeBuildsThroughBuildx = steps.slice(0, dcodeGateIndex).some((step) => {
-    const stepCanRunForDcode =
-      step["if"] === undefined ||
-      step["if"] === dcodeTargetIf ||
-      step["if"] === dcodeDockerTargetIf;
-    const run = stringValue(step.run);
-    return (
-      stepCanRunForDcode &&
-      (stringValue(step.uses).startsWith("docker/setup-buildx-action@") ||
-        /BUILDX_BUILDER(?:=|<<)/u.test(run) ||
-        /docker\s+buildx\s+use(?:\s|$)/u.test(run))
-    );
-  });
-  if (
-    Object.hasOwn(jobEnv, "BUILDX_BUILDER") ||
-    Object.hasOwn(asRecord(dcodeProfileImportGate?.env), "BUILDX_BUILDER") ||
-    routesDcodeBuildsThroughBuildx
-  ) {
-    errors.push(
-      "live DCode profile import gate must keep its local image chain on the Docker engine",
-    );
-  }
-
-  const runVitest = requireStep(errors, steps, "Run live E2E tests");
-  if (
-    prepareWorkspace &&
-    dcodeProfileImportGate &&
-    steps.indexOf(prepareWorkspace) >= steps.indexOf(dcodeProfileImportGate)
-  ) {
-    errors.push("live DCode profile import gate must run after workspace prep");
-  }
-  if (
-    dcodeProfileImportGate &&
-    runVitest &&
-    steps.indexOf(dcodeProfileImportGate) >= steps.indexOf(runVitest)
-  ) {
-    errors.push("live DCode profile import gate must run before live E2E tests");
-  }
-  const runVitestEnv = asRecord(runVitest?.env);
-  if (runVitestEnv.E2E_TARGET_ID !== "${{ matrix.id }}") {
-    errors.push("live E2E step must bind risk-signal identity to matrix.id");
-  }
-  if (runVitestEnv.TARGET_ID !== "${{ matrix.id }}") {
-    errors.push("live E2E step must pass matrix.id through TARGET_ID env");
-  }
-  if (runVitestEnv.NVIDIA_INFERENCE_API_KEY !== GUARDED_LIVE_E2E_INFERENCE_KEY) {
-    errors.push(
-      "live E2E step must guard NVIDIA_INFERENCE_API_KEY behind a trusted main run or an authorized NVIDIA-owned PR dispatch",
-    );
-  }
-  requireRunContains(errors, runVitest, "tools/e2e/live-vitest-invocation.mts run --test-path");
-  requireRunContains(errors, runVitest, "test/e2e/live/registry-targets.test.ts");
-  requireRunContains(errors, runVitest, '"^${TARGET_ID}:"');
-
-  const sanitizeTrace = requireStep(errors, steps, "Build trusted live E2E timing summary");
-  const sanitizeTraceEnv = asRecord(sanitizeTrace?.env);
-  if (sanitizeTrace?.["if"] !== "always()") {
-    errors.push("live trace sanitizer must always run");
-  }
-  if (sanitizeTraceEnv.TARGET_ID !== "${{ matrix.id }}") {
-    errors.push("live trace sanitizer must pass matrix.id through TARGET_ID env");
-  }
-  requireRunContains(errors, sanitizeTrace, "${RUNNER_TEMP}/nemoclaw-e2e-traces/${TARGET_ID}");
-  requireRunContains(
-    errors,
-    sanitizeTrace,
-    '[ "${NEMOCLAW_TRACE_DIR}" != "${expected_trace_dir}" ]',
-  );
-  requireRunContains(errors, sanitizeTrace, "scripts/e2e/sanitize-trace-timing.py");
-  requireRunFragmentBefore(
-    errors,
-    sanitizeTrace,
-    'expected_trace_dir="${RUNNER_TEMP}/nemoclaw-e2e-traces/${TARGET_ID}"',
-    "python3 scripts/e2e/sanitize-trace-timing.py",
-  );
-  requireRunFragmentBefore(
-    errors,
-    sanitizeTrace,
-    '[ "${NEMOCLAW_TRACE_DIR}" != "${expected_trace_dir}" ]',
-    "python3 scripts/e2e/sanitize-trace-timing.py",
-  );
-  requireRunContains(errors, sanitizeTrace, '"${NEMOCLAW_TRACE_DIR}"');
-  requireRunContains(errors, sanitizeTrace, '"${E2E_ARTIFACT_DIR}/${TARGET_ID}"');
-
-  const deleteTrace = requireStep(errors, steps, "Delete raw live E2E traces");
-  const deleteTraceEnv = asRecord(deleteTrace?.env);
-  if (deleteTrace?.["if"] !== "always()") {
-    errors.push("live raw trace cleanup must always run");
-  }
-  if (deleteTraceEnv.TARGET_ID !== "${{ matrix.id }}") {
-    errors.push("live raw trace cleanup must pass matrix.id through TARGET_ID env");
-  }
-  requireRunContains(errors, deleteTrace, "${RUNNER_TEMP}/nemoclaw-e2e-traces/${TARGET_ID}");
-  requireRunContains(errors, deleteTrace, '[ "${NEMOCLAW_TRACE_DIR}" != "${expected_trace_dir}" ]');
-  requireRunContains(errors, deleteTrace, 'rm -rf -- "${NEMOCLAW_TRACE_DIR}"');
-
-  const configureTraceIndex = steps.indexOf(configureTrace as WorkflowStep);
-  const runVitestIndex = steps.indexOf(runVitest as WorkflowStep);
-  const sanitizeTraceIndex = steps.indexOf(sanitizeTrace as WorkflowStep);
-  const deleteTraceIndex = steps.indexOf(deleteTrace as WorkflowStep);
-  const prepareWorkspaceIndex = steps.indexOf(prepareWorkspace as WorkflowStep);
-  if (
-    configureTraceIndex === -1 ||
-    prepareWorkspaceIndex === -1 ||
-    runVitestIndex === -1 ||
-    sanitizeTraceIndex === -1 ||
-    deleteTraceIndex === -1 ||
-    !(
-      configureTraceIndex < prepareWorkspaceIndex &&
-      prepareWorkspaceIndex < runVitestIndex &&
-      runVitestIndex < sanitizeTraceIndex &&
-      sanitizeTraceIndex < deleteTraceIndex
-    )
-  ) {
-    errors.push(
-      "live trace setup, workspace preparation, Vitest run, sanitizer, and cleanup steps must stay in order",
-    );
-  }
-
-  const summary = requireStep(errors, steps, "Summarize artifacts");
-  const summaryEnv = asRecord(summary?.env);
-  if (summaryEnv.TARGET_ID !== "${{ matrix.id }}") {
-    errors.push("summary step must pass matrix.id through TARGET_ID env");
-  }
-  if (summaryEnv.TARGET_LABEL !== "${{ matrix.label }}") {
-    errors.push("summary step must pass matrix.label through TARGET_LABEL env");
-  }
-  requireRunContains(errors, summary, "run-plan.json");
-  requireRunContains(
-    errors,
-    summary,
-    'Path(os.environ["E2E_ARTIFACT_DIR"]) / os.environ["TARGET_ID"]',
-  );
-  requireRunContains(errors, summary, "| Target | Manifest | Expected state | Suites | Phases |");
-  requireRunContains(errors, summary, "TARGET_ID");
-
-  const upload = requireStep(errors, steps, "Upload E2E artifacts");
-  const uploadWith = asRecord(upload?.with);
-  if (uploadWith.name !== "e2e-${{ matrix.execution_id }}") {
-    errors.push("artifact upload name must include matrix.execution_id");
-  }
-  const uploadPath = stringValue(uploadWith.path);
-  requireUploadPathContains(
-    errors,
-    uploadPath,
-    "e2e-artifacts/live/${{ matrix.id }}/run-plan.json",
-  );
-  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/live/${{ matrix.id }}/target.json");
-  requireUploadPathContains(
-    errors,
-    uploadPath,
-    "e2e-artifacts/live/${{ matrix.id }}/target-result.json",
-  );
-  requireUploadPathContains(
-    errors,
-    uploadPath,
-    "e2e-artifacts/live/${{ matrix.id }}/test-progress.json",
-  );
-  requireUploadPathContains(
-    errors,
-    uploadPath,
-    "e2e-artifacts/live/${{ matrix.id }}/environment.result.json",
-  );
-  requireUploadPathContains(
-    errors,
-    uploadPath,
-    "e2e-artifacts/live/${{ matrix.id }}/onboarding.result.json",
-  );
-  requireUploadPathContains(
-    errors,
-    uploadPath,
-    "e2e-artifacts/live/${{ matrix.id }}/state-validation.result.json",
-  );
-  requireUploadPathContains(
-    errors,
-    uploadPath,
-    "e2e-artifacts/live/${{ matrix.id }}/cloud-onboard-trace-timing-summary.json",
-  );
-  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/live/risk-signal.json");
-  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/live/${{ matrix.id }}/actions/");
-  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/live/${{ matrix.id }}/logs/");
-  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/live/${{ matrix.id }}/shell/");
-  requireUploadPathDoesNotContain(errors, uploadPath, "nemoclaw-e2e-traces");
-  requireUploadPathDoesNotContain(errors, uploadPath, "NEMOCLAW_TRACE_DIR");
-  for (const line of uploadPath.split("\n")) {
-    if (line.trim() === "e2e-artifacts/live/${{ matrix.id }}/") {
-      errors.push("artifact upload path must not list the whole matrix artifact directory");
-    }
+    errors.push("live job must pass only Docker Hub and inference credentials");
   }
 
   const cloudOnboardSteps = asSteps(asRecord(jobs["cloud-onboard"]).steps);

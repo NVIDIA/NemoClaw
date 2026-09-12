@@ -1067,7 +1067,10 @@ export function validateMcpOpenShellWorkflowBoundary(
   const workflowText = fs.readFileSync(workflowPath, "utf8");
   const workflow = asRecord(YAML.parse(workflowText));
   const jobs = asRecord(workflow.jobs);
-  const canonicalDockerAuth = namedStep(asRecord(jobs.live), "Authenticate to Docker Hub");
+  const canonicalDockerAuth = namedStep(
+    asRecord(jobs["openshell-gateway-auth-contract"]),
+    "Authenticate to Docker Hub",
+  );
   const inputs = asRecord(asRecord(asRecord(workflow.on).workflow_dispatch).inputs);
   const globalEnv = asRecord(workflow.env);
 

@@ -38,7 +38,7 @@ interface WorkflowStep {
 }
 
 interface Workflow {
-  jobs: Record<string, { steps: WorkflowStep[] }>;
+  jobs: Record<string, { steps: WorkflowStep[]; with: Record<string, unknown> }>;
 }
 
 function readWorkflow(): Workflow {
@@ -80,11 +80,6 @@ function writeExecutable(filePath: string, source: string): void {
 describe("E2E host dependency action boundary (#6961)", () => {
   it.each([
     {
-      jobName: "live",
-      stepName: "Install Deep Agents Code TUI host dependencies",
-      packages: "expect",
-    },
-    {
       jobName: "cloud-onboard",
       stepName: "Install cloud-onboard DCode TUI host dependencies",
       packages: "expect",
@@ -100,36 +95,33 @@ describe("E2E host dependency action boundary (#6961)", () => {
 
   it("rejects host dependency setup that abandons the pinned action", () => {
     const workflow = readWorkflow();
-    const install = workflow.jobs.live?.steps.find(
-      (step) => step.name === "Install Deep Agents Code TUI host dependencies",
+    const install = workflow.jobs["cloud-onboard"]?.steps.find(
+      (step) => step.name === "Install cloud-onboard DCode TUI host dependencies",
     )!;
     install.with = undefined;
     install.uses =
       "NVIDIA/NemoClaw/.github/actions/host-dependency-setup@0000000000000000000000000000000000000000";
     expect(validateE2eWorkflow(workflow)).toContain(
-      `live host dependency setup must invoke only ${ACTION_USES}`,
+      `cloud-onboard host dependency setup must invoke only ${ACTION_USES}`,
     );
   });
 
   it("rejects host dependency setup that tolerates failure with continue-on-error", () => {
     const workflow = readWorkflow();
-    const install = workflow.jobs.live?.steps.find(
-      (step) => step.name === "Install Deep Agents Code TUI host dependencies",
+    const install = workflow.jobs["cloud-onboard"]?.steps.find(
+      (step) => step.name === "Install cloud-onboard DCode TUI host dependencies",
     )!;
     install["continue-on-error"] = true;
-    expect(validateE2eWorkflow(workflow)).toContain("live host dependency setup must fail closed");
+    expect(validateE2eWorkflow(workflow)).toContain(
+      "cloud-onboard host dependency setup must fail closed",
+    );
   });
 
   it("keeps DCode TUI dependencies available on every selected runtime", () => {
     const workflow = readWorkflow();
-    const install = workflow.jobs.live?.steps.find(
-      (step) => step.name === "Install Deep Agents Code TUI host dependencies",
-    )!;
-    const expectedError =
-      "live DCode TUI host dependencies must be scoped to the typed DCode target";
+    const expectedError = "live job must preserve typed input host_packages";
     expect(validateE2eWorkflow(workflow)).not.toContain(expectedError);
-    install.if =
-      "${{ matrix.id == 'ubuntu-repo-cloud-langchain-deepagents-code' && matrix.runtime_provider == 'docker' }}";
+    workflow.jobs.live.with.host_packages = "";
 
     expect(validateE2eWorkflow(workflow)).toContain(expectedError);
   });
@@ -263,18 +255,18 @@ exit 64
     );
   });
 
-  it.each([
-    ["live", "Run live E2E tests"],
-    ["shared-e2e", "Run tagged credential-free test"],
-  ] as const)("rejects Docker restoration before %s workload execution", (jobName, runStep) => {
-    const workflow = readWorkflow();
-    const steps = workflow.jobs[jobName].steps;
-    const restoreIndex = requireStepIndex(steps, "Restore Docker CLI after native Podman E2E");
-    const [restore] = steps.splice(restoreIndex, 1);
-    steps.splice(requireStepIndex(steps, runStep), 0, restore!);
+  it.each([["shared-e2e", "Run tagged credential-free test"]] as const)(
+    "rejects Docker restoration before %s workload execution",
+    (jobName, runStep) => {
+      const workflow = readWorkflow();
+      const steps = workflow.jobs[jobName].steps;
+      const restoreIndex = requireStepIndex(steps, "Restore Docker CLI after native Podman E2E");
+      const [restore] = steps.splice(restoreIndex, 1);
+      steps.splice(requireStepIndex(steps, runStep), 0, restore!);
 
-    expect(validateE2eWorkflow(workflow)).toContain(
-      `${jobName} must keep Docker unavailable through result artifact upload`,
-    );
-  });
+      expect(validateE2eWorkflow(workflow)).toContain(
+        `${jobName} must keep Docker unavailable through result artifact upload`,
+      );
+    },
+  );
 });

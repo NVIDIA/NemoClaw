@@ -107,7 +107,7 @@ export function validatePrepareE2eInvocations(workflow: WorkflowRecord): string[
         const job = record(value);
         return (
           !PREINSTALLED_E2E_JOBS.has(jobName) &&
-          (jobName === "generate-matrix" || jobName === "live" || record(job.env).E2E_JOB === "1")
+          (jobName === "generate-matrix" || record(job.env).E2E_JOB === "1")
         );
       })
       .map(([jobName]) => jobName),

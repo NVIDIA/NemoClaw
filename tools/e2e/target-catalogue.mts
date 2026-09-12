@@ -6,9 +6,20 @@ import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { catalogueTarget } from "./target-inventory.mts";
+import { catalogueTarget, requireTargets } from "./target-inventory.mts";
 
 export async function runCatalogueTarget(id: string, testFile: string): Promise<number> {
+  const { runLiveVitestCommand } = await import("./live-vitest-invocation.mts");
+  if (testFile === "test/e2e/live/registry-targets.test.ts") {
+    requireTargets([id]);
+    Object.assign(process.env, {
+      TARGET_ID: id,
+      E2E_TARGET_ID: id,
+      NEMOCLAW_CLI_BIN: path.join(process.cwd(), "bin", "nemoclaw.js"),
+      NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1",
+    });
+    return runLiveVitestCommand(["run", "--test-path", testFile, "--selector", `^${id}:`]);
+  }
   const entry = catalogueTarget(id);
   if (entry.testFile !== testFile) {
     throw new Error(`E2E target ${id} does not own test file ${testFile}`);
@@ -51,7 +62,6 @@ export async function runCatalogueTarget(id: string, testFile: string): Promise<
     runPressureCommand("snapshot");
     runPressureCommand("initialize-evidence");
   }
-  const { runLiveVitestCommand } = await import("./live-vitest-invocation.mts");
   const selector = entry.selector ? ["--selector", entry.selector] : [];
   const exitCode = await runLiveVitestCommand(["run", "--test-path", entry.testFile, ...selector]);
   if (entry.runnerPressure && exitCode !== 0) {

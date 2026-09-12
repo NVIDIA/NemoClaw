@@ -2687,255 +2687,52 @@ jobs:
     name: ${{ matrix.label }}
     needs: [base-image-publication, generate-matrix]
     if: ${{ needs.generate-matrix.outputs.matrix != '[]' }}
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: ${{ matrix.timeout_minutes }}
     strategy:
       fail-fast: false
       matrix:
         include: ${{ fromJSON(needs.generate-matrix.outputs.matrix) }}
-    env:
-      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live
-      E2E_EXECUTION_ID: ${{ matrix.execution_id }}
-      E2E_MANAGED_IMAGE_REVISION: ${{ needs.base-image-publication.outputs.managed_image_revision }}
-      E2E_MANAGED_IMAGE_COHORT_RECEIPT: ${{ needs.base-image-publication.outputs.managed_image_receipt }}
-      E2E_WORKLOAD_SOURCE: ${{ needs.generate-matrix.outputs.workload_source }}
-      NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON: ${{ needs.base-image-publication.outputs.managed_image_catalog }}
-      NEMOCLAW_LANGCHAIN_DEEPAGENTS_CODE_SANDBOX_BASE_IMAGE_REF: ${{ needs.generate-matrix.outputs.workload_source == 'managed-image' && needs.base-image-publication.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.dcode_base_ref || '' }}
-      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
-      NEMOCLAW_RUN_LIVE_E2E: "1"
-      NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
-      NEMOCLAW_GATEWAY_RUNTIME: ${{ matrix.runtime_provider }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: ${{ inputs.checkout_repository || github.repository }}
-          ref: ${{ inputs.checkout_sha || github.sha }}
-          fetch-depth: 0
-          persist-credentials: false
-
-      # Keep only the credential-bearing step anchored. Cleanup mappings stay
-      # explicit because strict YAML decoders reject 100 or more aliases here.
-      - &dockerhub-auth
-        name: Authenticate to Docker Hub
-        uses: NVIDIA/NemoClaw/.github/actions/docker-auth-setup@05fa6b810017752ab21148cb7e9d82d12a88c92f
-        with:
-          auth-required: ${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main') && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && '1' || '0' }}
-          username: ${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main') && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && secrets.DOCKERHUB_USERNAME || '' }}
-          token: ${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main') && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && secrets.DOCKERHUB_TOKEN || '' }}
-
-      - name: Configure live E2E trace directory
-        env:
-          TARGET_ID: ${{ matrix.id }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          printf 'NEMOCLAW_TRACE_DIR=%s\n' "${RUNNER_TEMP}/nemoclaw-e2e-traces/${TARGET_ID}" >> "${GITHUB_ENV}"
-
-      # invalidState: the selected PR-modifiable TUI check needs a PTY driver,
-      # but the fixed GitHub-hosted runner image does not provide expect.
-      # sourceBoundary: privileged host setup runs from the first-party
-      # host-dependency-setup action pinned to an immutable full SHA, never the
-      # PR-controlled target ref; the check only consumes expect without privilege.
-      # whyNotSourceFix: GitHub-hosted jobs cannot use a repository-owned host
-      # image, and caching privileged dpkg state between clean runners is not
-      # supported.
-      # regressionTest: the workflow-boundary suite pins this target, condition,
-      # ordering, action provenance, and package mapping.
-      # removalCondition: remove the install when the hosted runner supplies
-      # expect or the acceptance check no longer requires a PTY.
-      - name: Install Deep Agents Code TUI host dependencies
-        if: ${{ matrix.id == 'ubuntu-repo-cloud-langchain-deepagents-code' }}
-        uses: NVIDIA/NemoClaw/.github/actions/host-dependency-setup@4def1501b34ce586f83b91af50a66b5d22b31d75
-        with:
-          packages: expect
-
-      # Configure NEMOCLAW_TRACE_DIR before workspace prep so every child
-      # command writes raw traces under runner temp, never under upload roots.
-      - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
-        with:
-          build-cli: "false"
-
-      - name: Record immutable Deep Agents Code base evidence
-        if: ${{ matrix.id == 'ubuntu-repo-cloud-langchain-deepagents-code' && needs.generate-matrix.outputs.workload_source == 'managed-image' && needs.base-image-publication.outputs.managed_image_catalog == '' }}
-        env:
-          BASE_CONTRACT: ${{ needs.base-image-publication.outputs.dcode_base_contract }}
-          CANDIDATE_SHA: ${{ inputs.checkout_sha || github.sha }}
-          TARGET_ID: ${{ matrix.id }}
-          TARGET_LABEL: ${{ matrix.label }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          evidence_dir="${E2E_ARTIFACT_DIR}/${TARGET_ID}"
-          install -d -m 0700 "${evidence_dir}"
-          jq -e -n \
-            --arg candidateSha "${CANDIDATE_SHA}" \
-            --argjson baseContract "${BASE_CONTRACT}" \
-            '{contractVersion: 1, candidateSha: $candidateSha, base: $baseContract}
-              | select(
-                (.candidateSha | test("^[0-9a-f]{40}$"))
-                and (.base.reference | test("@sha256:[0-9a-f]{64}$"))
-              )' >"${evidence_dir}/dcode-base-image.json"
-          test_artifact_name="$(node -e '
-            const slug = process.argv[1]
-              .trim()
-              .toLowerCase()
-              .replace(/[^a-z0-9._-]+/g, "-")
-              .replace(/^-+|-+$/g, "");
-            process.stdout.write(slug || "unnamed-test");
-          ' "${TARGET_LABEL}")"
-          test_evidence_dir="${E2E_ARTIFACT_DIR}/${test_artifact_name}"
-          install -d -m 0700 "${test_evidence_dir}"
-          install -m 0600 \
-            "${evidence_dir}/dcode-base-image.json" \
-            "${test_evidence_dir}/dcode-base-image.json"
-
-      - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@17759906bd7f80319c58af759dd60cfb893109bf
-        with:
-          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
-
-      - name: Prepare native Podman E2E runtime
-        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@b39c9ee2bba1bffaabcfe97ae4a7787a5c603ee8
-        with:
-          enabled: ${{ matrix.runtime_provider == 'podman' && 'true' || 'false' }}
-
-      # invalidState: a profile plugin installed with --no-deps can import even
-      # when an incomplete base image omitted its required upstream packages.
-      # sourceBoundary: this trusted workflow scopes the repo-owned stripped-base
-      # build to the exact DCode target; the production Dockerfile must reject it
-      # at the isolated import gate before its later dependency-consistency check.
-      # whyNotSourceFix: dependency completeness belongs to the hash-locked base;
-      # resolving dependencies during local plugin install would duplicate that
-      # trust boundary, so the regression constructs the invalid input instead.
-      # regressionTest: workflow-boundary tests pin the target, script, and
-      # ordering; build-gate tests pin the base build and failure contract.
-      # removalCondition: remove only if package installation no longer uses
-      # --no-deps or an equivalent earlier build gate proves both imports.
-      - name: Verify DCode profile import gate rejects missing base dependencies
-        if: ${{ matrix.id == 'ubuntu-repo-cloud-langchain-deepagents-code' && matrix.runtime_provider == 'docker' }}
-        shell: bash
-        run: bash scripts/check-dcode-profile-import-gate.sh
-
-      - name: Run live E2E tests
-        env:
-          E2E_TARGET_ID: ${{ matrix.id }}
-          NVIDIA_INFERENCE_API_KEY: ${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main') && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && secrets.NVIDIA_INFERENCE_API_KEY || '' }}
-          TARGET_ID: ${{ matrix.id }}
-        run: |
-          set -euo pipefail
-          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/registry-targets.test.ts --selector "^${TARGET_ID}:"
-
-      # The sanitizer reads raw traces only after checking the workflow-owned
-      # runner-temp path, then writes the timing-only file into upload roots.
-      - name: Build trusted live E2E timing summary
-        if: always()
-        env:
-          TARGET_ID: ${{ matrix.id }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          NEMOCLAW_TRACE_DIR="${NEMOCLAW_TRACE_DIR:-}"
-          expected_trace_dir="${RUNNER_TEMP}/nemoclaw-e2e-traces/${TARGET_ID}"
-          if [ -z "${RUNNER_TEMP}" ] || [ "${NEMOCLAW_TRACE_DIR}" != "${expected_trace_dir}" ]; then
-            echo "::error title=E2E trace sanitization refused::NEMOCLAW_TRACE_DIR does not match its workflow-owned RUNNER_TEMP path. No raw traces were read or uploaded. Correct the trace path configuration before rerunning." >&2
-            printf 'Expected trace path: %s\n' "${expected_trace_dir}" >&2
-            exit 1
-          fi
-          python3 scripts/e2e/sanitize-trace-timing.py \
-            "${NEMOCLAW_TRACE_DIR}" \
-            "${E2E_ARTIFACT_DIR}/${TARGET_ID}"
-
-      # Cleanup intentionally runs after sanitization and before upload so raw
-      # trace JSON never becomes part of the uploaded artifact surface.
-      - name: Delete raw live E2E traces
-        if: always()
-        env:
-          TARGET_ID: ${{ matrix.id }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          NEMOCLAW_TRACE_DIR="${NEMOCLAW_TRACE_DIR:-}"
-          expected_trace_dir="${RUNNER_TEMP}/nemoclaw-e2e-traces/${TARGET_ID}"
-          if [ -z "${RUNNER_TEMP}" ] || [ "${NEMOCLAW_TRACE_DIR}" != "${expected_trace_dir}" ]; then
-            echo "::error title=E2E trace cleanup refused::NEMOCLAW_TRACE_DIR does not match its workflow-owned RUNNER_TEMP path. No files were deleted. Correct the trace path configuration before rerunning." >&2
-            printf 'Expected trace path: %s\n' "${expected_trace_dir}" >&2
-            exit 1
-          fi
-          rm -rf -- "${NEMOCLAW_TRACE_DIR}"
-
-      - name: Summarize artifacts
-        if: always()
-        env:
-          TARGET_ID: ${{ matrix.id }}
-          TARGET_LABEL: ${{ matrix.label }}
-        run: |
-          python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
-          import json
-          import os
-          from pathlib import Path
-
-          root = Path(os.environ["E2E_ARTIFACT_DIR"]) / os.environ["TARGET_ID"]
-          plan_path = root / "run-plan.json"
-          print("## E2E Targets")
-          print()
-          print("- Project: `e2e-live`")
-          print(f"- Target: `{os.environ['TARGET_ID']}`")
-          print(f"- Label: `{os.environ['TARGET_LABEL']}`")
-          print(f"- Artifact root: `{root}`")
-          print()
-          print("| Target | Manifest | Expected state | Suites | Phases |")
-          print("| --- | --- | --- | --- | --- |")
-          if plan_path.exists():
-              plan = json.loads(plan_path.read_text(encoding="utf-8"))
-              suites = ", ".join(plan.get("suiteIds") or []) or "(none)"
-              phases = ", ".join(plan.get("phases") or []) or "(none)"
-              print(
-                  "| "
-                  f"`{plan.get('targetId') or os.environ['TARGET_ID']}` | "
-                  f"`{plan.get('manifestPath') or 'not-yet-defined'}` | "
-                  f"`{plan.get('expectedStateId') or 'not-yet-defined'}` | "
-                  f"{suites} | {phases} |"
-              )
-          else:
-              print(
-                  "| "
-                  f"`{os.environ['TARGET_ID']}` | `(missing run-plan.json)` | "
-                  "`(missing run-plan.json)` | `(missing)` | `(missing)` |"
-              )
-          PY
-
-      - name: Upload E2E artifacts
-        if: always()
-        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
-        with:
-          name: e2e-${{ matrix.execution_id }}
-          path: |
-            e2e-artifacts/live/${{ matrix.id }}/run-plan.json
-            e2e-artifacts/live/${{ matrix.id }}/target.json
-            e2e-artifacts/live/${{ matrix.id }}/target-result.json
-            e2e-artifacts/live/${{ matrix.id }}/test-progress.json
-            e2e-artifacts/live/${{ matrix.id }}/environment.result.json
-            e2e-artifacts/live/${{ matrix.id }}/onboarding.result.json
-            e2e-artifacts/live/${{ matrix.id }}/state-validation.result.json
-            e2e-artifacts/live/${{ matrix.id }}/dcode-base-image.json
-            e2e-artifacts/live/${{ matrix.id }}/cloud-onboard-trace-timing-summary.json
-            e2e-artifacts/live/${{ matrix.id }}/onboard-progress-budget.json
-            e2e-artifacts/live/risk-signal.json
-            e2e-artifacts/live/${{ matrix.id }}/actions/
-            e2e-artifacts/live/${{ matrix.id }}/logs/
-            e2e-artifacts/live/${{ matrix.id }}/shell/
-
-      - name: Restore Docker CLI after native Podman E2E
-        if: ${{ always() && matrix.runtime_provider == 'podman' }}
-        uses: NVIDIA/NemoClaw/.github/actions/restore-native-podman-e2e@b39c9ee2bba1bffaabcfe97ae4a7787a5c603ee8
-        with:
-          enabled: "true"
-
-      - name: Clean up Docker auth
-        if: always()
-        shell: bash
-        run: bash .github/scripts/docker-auth-cleanup.sh
+    uses: ./.github/workflows/e2e-standard-profile.yaml
+    with:
+      candidate_repository: ${{ inputs.checkout_repository || github.repository }}
+      candidate_sha: ${{ inputs.checkout_sha || github.sha }}
+      runtime_provider: ${{ matrix.runtime_provider }}
+      execution_id: ${{ matrix.execution_id }}
+      coverage_variant: ${{ matrix.coverage_variant }}
+      risk_signal_expected_sha: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.checkout_sha || '' }}
+      risk_signal_correlation_id: ${{ inputs.correlation_id }}
+      cli_artifact_provenance: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
+      openshell_sdk_artifact_name: ""
+      managed_image_revision: ${{ needs.base-image-publication.outputs.managed_image_revision }}
+      managed_image_receipt: ${{ needs.base-image-publication.outputs.managed_image_receipt }}
+      managed_image_catalog: ${{ needs.base-image-publication.outputs.managed_image_catalog }}
+      workload_source: ${{ needs.generate-matrix.outputs.workload_source }}
+      credential_boundary: typed target
+      target_label: ${{ matrix.label }}
+      dcode_base_ref: ${{ needs.generate-matrix.outputs.workload_source == 'managed-image' && needs.base-image-publication.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.dcode_base_ref || '' }}
+      dcode_base_contract: ${{ needs.base-image-publication.outputs.dcode_base_contract }}
+      target_id: ${{ matrix.id }}
+      catalogue_id: ${{ matrix.id }}
+      runner: ${{ matrix.runner }}
+      checkout_sha: ${{ inputs.checkout_sha }}
+      workflow_sha: ${{ inputs.workflow_sha }}
+      test_file: test/e2e/live/registry-targets.test.ts
+      timeout_minutes: ${{ matrix.timeout_minutes }}
+      install_mode: none
+      install_non_interactive: false
+      restore_cli: true
+      cloudflared: false
+      host_packages: ${{ matrix.id == 'ubuntu-repo-cloud-langchain-deepagents-code' && 'expect' || '' }}
+      host_preparation: none
+      runner_comparison: false
+      compatible_api_key: false
+      github_token: false
+      shard: default
+      artifact_layout: target-shard
+      trusted_main: ${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main') && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') }}
+    secrets:
+      DOCKERHUB_USERNAME: ${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && secrets.DOCKERHUB_USERNAME || '' }}
+      DOCKERHUB_TOKEN: ${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && secrets.DOCKERHUB_TOKEN || '' }}
+      NVIDIA_INFERENCE_API_KEY: ${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main') && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && secrets.NVIDIA_INFERENCE_API_KEY || '' }}
 
   # Credential-free tests opt in with a tag beside the test. Discovery supplies
   # only a validated test ID, file, and Vitest project; this E2E workflow owns
@@ -3270,7 +3067,13 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - *dockerhub-auth
+      - &dockerhub-auth
+        name: Authenticate to Docker Hub
+        uses: NVIDIA/NemoClaw/.github/actions/docker-auth-setup@05fa6b810017752ab21148cb7e9d82d12a88c92f
+        with:
+          auth-required: ${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main') && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && '1' || '0' }}
+          username: ${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main') && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && secrets.DOCKERHUB_USERNAME || '' }}
+          token: ${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main') && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && secrets.DOCKERHUB_TOKEN || '' }}
 
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75

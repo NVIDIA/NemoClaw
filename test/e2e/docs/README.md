@@ -93,11 +93,10 @@ protects the registry-target catalogue when collection includes
 `npm run test:e2e-phases:check` include that file, but a collection command that
 omits it does not run this guard.
 
-A declared target that is not wired for live fixtures still collects. The
-typed-registry matrix reports it as skipped with its `[not wired]` reason and
-exits 0. That exit-0 skip is specific to the typed-registry matrix; the
-catalogue path sets `NEMOCLAW_E2E_REQUIRE_EXECUTED_TEST=1` and exits nonzero
-when its selection runs no tests.
+The shared execution command sets `NEMOCLAW_E2E_REQUIRE_EXECUTED_TEST=1` for
+typed and catalogue targets. An empty or entirely skipped selection exits
+nonzero. Collection can report unsupported runtime prerequisites without
+executing a target; collection alone does not certify live execution.
 
 ## Run Live E2E Locally
 

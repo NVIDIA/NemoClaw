@@ -2,85 +2,66 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 import YAML from "yaml";
 
-import { validateE2eWorkflowBoundary } from "../../../tools/e2e/workflow-boundary.mts";
+import { validateStandardProfileWorkflowBoundary } from "../../../tools/e2e/standard-profile-workflow-boundary.mts";
 import { readWorkflow } from "../../helpers/e2e-workflow-contract";
 
 type E2eWorkflow = {
   jobs: Record<string, { name?: string; steps: Array<Record<string, unknown>> }>;
 };
 
-function validateMutatedWorkflow(mutator: (workflow: E2eWorkflow) => void): string[] {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-workflow-"));
-  const workflowPath = path.join(tmp, "workflow.yaml");
-  const workflow = readWorkflow() as E2eWorkflow;
-  try {
-    mutator(workflow);
-    fs.writeFileSync(workflowPath, YAML.stringify(workflow));
-    return validateE2eWorkflowBoundary(workflowPath);
-  } finally {
-    fs.rmSync(tmp, { recursive: true, force: true });
-  }
-}
-
 function liveStep(workflow: E2eWorkflow, name: string): Record<string, unknown> {
-  const step = workflow.jobs.live.steps.find((entry) => entry.name === name);
+  const step = workflow.jobs.run.steps.find((entry) => entry.name === name);
   expect(step).toEqual(expect.any(Object));
   return step!;
 }
 
 describe("e2e workflow live job boundary", () => {
-  it("rejects a live job that hides the semantic matrix label (#9167)", () => {
-    const errors = validateMutatedWorkflow((workflow) => {
-      workflow.jobs.live.name = "Live E2E";
-    });
-
-    expect(errors).toContain("live job name must expose the semantic matrix label");
-  });
-
   it.each([
     "Configure live E2E trace directory",
     "Build trusted live E2E timing summary",
     "Delete raw live E2E traces",
   ])("rejects a missing live trace boundary step: %s", (name) => {
-    const errors = validateMutatedWorkflow((workflow) => {
-      workflow.jobs.live.steps = workflow.jobs.live.steps.filter((step) => step.name !== name);
-    });
+    const workflow = YAML.parse(
+      fs.readFileSync(".github/workflows/e2e-standard-profile.yaml", "utf8"),
+    ) as E2eWorkflow;
+    workflow.jobs.run.steps = workflow.jobs.run.steps.filter((step) => step.name !== name);
+    const errors = validateStandardProfileWorkflowBoundary(readWorkflow(), workflow);
 
-    expect(errors).toContain(`run-target job missing step: ${name}`);
+    expect(errors).toContain(`standard E2E profile must define one '${name}' step`);
   });
 
   it("rejects live sanitizer and cleanup steps without always guards", () => {
-    const errors = validateMutatedWorkflow((workflow) => {
-      liveStep(workflow, "Build trusted live E2E timing summary").if = undefined;
-      liveStep(workflow, "Delete raw live E2E traces").if = undefined;
-    });
+    const workflow = YAML.parse(
+      fs.readFileSync(".github/workflows/e2e-standard-profile.yaml", "utf8"),
+    ) as E2eWorkflow;
+    liveStep(workflow, "Build trusted live E2E timing summary").if = undefined;
+    liveStep(workflow, "Delete raw live E2E traces").if = undefined;
+    const errors = validateStandardProfileWorkflowBoundary(readWorkflow(), workflow);
 
     expect(errors).toEqual(
       expect.arrayContaining([
         "live trace sanitizer must always run",
-        "live raw trace cleanup must always run",
+        "live trace raw trace cleanup must always run",
       ]),
     );
   });
 
   it("rejects live trace setup after workspace preparation", () => {
-    const errors = validateMutatedWorkflow((workflow) => {
-      const steps = workflow.jobs.live.steps;
-      const configureIndex = steps.findIndex(
-        (step) => step.name === "Configure live E2E trace directory",
-      );
-      expect(configureIndex).toBeGreaterThanOrEqual(0);
-      const [configureStep] = steps.splice(configureIndex, 1);
-      const prepareIndex = steps.findIndex((step) => step.name === "Prepare E2E workspace");
-      expect(prepareIndex).toBeGreaterThanOrEqual(0);
-      steps.splice(prepareIndex + 1, 0, configureStep);
-    });
+    const workflow = YAML.parse(
+      fs.readFileSync(".github/workflows/e2e-standard-profile.yaml", "utf8"),
+    ) as E2eWorkflow;
+    const steps = workflow.jobs.run.steps;
+    const configureIndex = steps.findIndex(
+      (step) => step.name === "Configure live E2E trace directory",
+    );
+    const [configureStep] = steps.splice(configureIndex, 1);
+    const prepareIndex = steps.findIndex((step) => step.name === "Prepare E2E workspace");
+    steps.splice(prepareIndex + 1, 0, configureStep);
+    const errors = validateStandardProfileWorkflowBoundary(readWorkflow(), workflow);
 
     expect(errors).toContain(
       "live trace setup, workspace preparation, Vitest run, sanitizer, and cleanup steps must stay in order",
@@ -88,56 +69,49 @@ describe("e2e workflow live job boundary", () => {
   });
 
   it("rejects live trace sanitizer without the workflow-owned source guard", () => {
-    const errors = validateMutatedWorkflow((workflow) => {
-      const sanitizeStep = liveStep(workflow, "Build trusted live E2E timing summary");
-      expect(sanitizeStep.run).toEqual(expect.any(String));
-      sanitizeStep.run = String(sanitizeStep.run)
-        .replace('expected_trace_dir="${RUNNER_TEMP}/nemoclaw-e2e-traces/${TARGET_ID}"\n', "")
-        .replace(TRACE_SOURCE_GUARD, "");
-    });
+    const workflow = YAML.parse(
+      fs.readFileSync(".github/workflows/e2e-standard-profile.yaml", "utf8"),
+    ) as E2eWorkflow;
+    const sanitizeStep = liveStep(workflow, "Build trusted live E2E timing summary");
+    sanitizeStep.run = String(sanitizeStep.run)
+      .replace('expected_trace_dir="${RUNNER_TEMP}/nemoclaw-e2e-traces/${TARGET_ID}"\n', "")
+      .replace(TRACE_SOURCE_GUARD, "");
+    const errors = validateStandardProfileWorkflowBoundary(readWorkflow(), workflow);
 
-    expect(errors).toEqual(
-      expect.arrayContaining([
-        "step 'Build trusted live E2E timing summary' run script must include ${RUNNER_TEMP}/nemoclaw-e2e-traces/${TARGET_ID}",
-        'step \'Build trusted live E2E timing summary\' run script must include [ "${NEMOCLAW_TRACE_DIR}" != "${expected_trace_dir}" ]',
-      ]),
+    expect(errors).toContain(
+      "typed trace sanitizer must reject a foreign trace directory before accessing it",
     );
   });
 
   it("rejects live trace sanitizer when the source guard moves after Python reads traces", () => {
-    const errors = validateMutatedWorkflow((workflow) => {
-      const sanitizeStep = liveStep(workflow, "Build trusted live E2E timing summary");
-      expect(sanitizeStep.run).toEqual(expect.any(String));
-      sanitizeStep.run =
-        String(sanitizeStep.run).replace(TRACE_SOURCE_ASSIGNMENT + TRACE_SOURCE_GUARD, "") +
-        TRACE_SOURCE_ASSIGNMENT +
-        TRACE_SOURCE_GUARD;
-    });
+    const workflow = YAML.parse(
+      fs.readFileSync(".github/workflows/e2e-standard-profile.yaml", "utf8"),
+    ) as E2eWorkflow;
+    const sanitizeStep = liveStep(workflow, "Build trusted live E2E timing summary");
+    sanitizeStep.run =
+      String(sanitizeStep.run).replace(TRACE_SOURCE_ASSIGNMENT + TRACE_SOURCE_GUARD, "") +
+      TRACE_SOURCE_ASSIGNMENT +
+      TRACE_SOURCE_GUARD;
+    const errors = validateStandardProfileWorkflowBoundary(readWorkflow(), workflow);
 
-    expect(errors).toEqual(
-      expect.arrayContaining([
-        "step 'Build trusted live E2E timing summary' run script must include " +
-          'expected_trace_dir="${RUNNER_TEMP}/nemoclaw-e2e-traces/${TARGET_ID}" before ' +
-          "python3 scripts/e2e/sanitize-trace-timing.py",
-        "step 'Build trusted live E2E timing summary' run script must include " +
-          '[ "${NEMOCLAW_TRACE_DIR}" != "${expected_trace_dir}" ] before ' +
-          "python3 scripts/e2e/sanitize-trace-timing.py",
-      ]),
+    expect(errors).toContain(
+      "typed trace sanitizer must reject a foreign trace directory before accessing it",
     );
   });
 
   it("rejects live trace sanitizer script path drift", () => {
-    const errors = validateMutatedWorkflow((workflow) => {
-      const sanitizeStep = liveStep(workflow, "Build trusted live E2E timing summary");
-      expect(sanitizeStep.run).toEqual(expect.any(String));
-      sanitizeStep.run = String(sanitizeStep.run).replace(
-        "scripts/e2e/sanitize-trace-timing.py",
-        "scripts/e2e/renamed-sanitize-trace-timing.py",
-      );
-    });
+    const workflow = YAML.parse(
+      fs.readFileSync(".github/workflows/e2e-standard-profile.yaml", "utf8"),
+    ) as E2eWorkflow;
+    const sanitizeStep = liveStep(workflow, "Build trusted live E2E timing summary");
+    sanitizeStep.run = String(sanitizeStep.run).replace(
+      "scripts/e2e/sanitize-trace-timing.py",
+      "scripts/e2e/renamed-sanitize-trace-timing.py",
+    );
+    const errors = validateStandardProfileWorkflowBoundary(readWorkflow(), workflow);
 
     expect(errors).toContain(
-      "step 'Build trusted live E2E timing summary' run script must include scripts/e2e/sanitize-trace-timing.py",
+      "typed trace sanitizer must reject a foreign trace directory before accessing it",
     );
   });
 });
