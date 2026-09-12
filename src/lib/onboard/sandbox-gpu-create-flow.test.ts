@@ -67,12 +67,6 @@ vi.mock("../adapters/docker/exec", async (importOriginal) => ({
   dockerSpawnSync: mocks.dockerSpawnSync,
 }));
 
-vi.mock("../platform", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../platform")>()),
-  isWsl: (opts: { env?: NodeJS.ProcessEnv; isWsl?: boolean } = {}) =>
-    typeof opts.isWsl === "boolean" ? opts.isWsl : Boolean(opts.env?.WSL_DISTRO_NAME),
-}));
-
 import {
   createGpuFlowDeps as createDeps,
   createGpuFlowInput as createInput,
@@ -110,7 +104,7 @@ const {
   DEFAULT_RUNTIME_SNAPSHOT,
   PORTABLE_RUNTIME_AUTHORITY,
   MANAGED_CREATE_SANDBOX_ENV,
-  managedDockerConfigPreservationCases,
+  managedDockerClientSelectionCases,
   readySandboxGetResult,
   createSequencedOpenShellRunner,
   failNativeCreate,
@@ -133,44 +127,10 @@ beforeEach(setupHarness);
 afterEach(resetHarness);
 
 describe("runSandboxGpuCreateFlow provider-owned managed create", () => {
-  it("isolates an unavailable WSL Docker Desktop helper during managed create (#10349)", async () => {
-    const dockerConfig = writeDesktopCredsStore();
-    const input = createInput();
-    attachManagedBootstrap(input);
-    input.hostEnv = { PATH: "/usr/bin", DOCKER_CONFIG: dockerConfig };
-    input.sandboxEnv = { ...MANAGED_CREATE_SANDBOX_ENV };
-    const captured = captureCreateEnv();
-    const deps = createDeps();
-    vi.mocked(deps.runCaptureOpenshell).mockImplementation((args) =>
-      args[1] === "get" ? "ID: alpha-sandbox-id\nState: Ready\n" : "alpha Ready",
-    );
-
-    await runSandboxGpuCreateFlow(input, deps);
-
-    expect(captured.env.DOCKER_CONFIG).toContain("nemoclaw-wsl-buildkit-docker-config-");
-    expect(captured.env.PATH).toBe("/usr/bin");
-    expect(captured.env.OPENSHELL_GATEWAY).toBe("1");
-    expect(captured.env).not.toHaveProperty("DOCKER_CONTEXT");
-    expect(captured.configExisted).toBe(true);
-    expect(fs.existsSync(String(captured.env.DOCKER_CONFIG))).toBe(false);
-    const contextShowEnv = mocks.dockerSpawnSync.mock.calls[0]?.[1]?.env;
-    expect(contextShowEnv?.DOCKER_CONFIG).toBe(dockerConfig);
-    expect(contextShowEnv).not.toHaveProperty("DOCKER_CONTEXT");
-    expect(contextShowEnv).not.toHaveProperty("DOCKER_HOST");
-    expect(mocks.streamSandboxCreate).toHaveBeenCalledOnce();
-  });
-
-  it.each(managedDockerConfigPreservationCases)(
-    "keeps the caller Docker config when $title (#10349)",
+  it.each(managedDockerClientSelectionCases)(
+    "hands the managed lifecycle the caller Docker selection when $title and leaves the create environment unchanged (#11533)",
     async (row) => {
       const dockerConfig = writeDesktopCredsStore();
-      mocks.helperResponds.mockReturnValue(row.helperResponds);
-      mocks.dockerSpawnSync.mockReturnValue({
-        status: 0,
-        error: undefined,
-        stdout: row.contextStdout,
-        stderr: "",
-      });
       const input = createInput();
       const { createLifecycle } = attachManagedBootstrap(input);
       input.hostEnv = { PATH: "/usr/bin", DOCKER_CONFIG: dockerConfig, ...row.callerSelection };
@@ -183,18 +143,18 @@ describe("runSandboxGpuCreateFlow provider-owned managed create", () => {
 
       await runSandboxGpuCreateFlow(input, deps);
 
-      expect(captured.env).not.toHaveProperty("DOCKER_CONFIG");
-      expect(captured.env).not.toHaveProperty("DOCKER_CONTEXT");
-      expect(captured.env.PATH).toBe("/usr/bin");
-      expect(captured.env.OPENSHELL_GATEWAY).toBe("1");
+      expect(captured.env).toEqual({ ...MANAGED_CREATE_SANDBOX_ENV, ...row.sandboxSelection });
+      expect(mocks.streamSandboxCreate).toHaveBeenCalledOnce();
+      expect(mocks.dockerSpawnSync).not.toHaveBeenCalled();
+      expect(mocks.helperResponds).not.toHaveBeenCalled();
       expect(fs.existsSync(dockerConfig)).toBe(true);
-      expect(mocks.dockerSpawnSync).toHaveBeenCalledTimes(row.contextShowCalls);
       const dockerClientEnv = createLifecycle.mock.calls[0]?.[0]?.dockerClientEnv ?? {};
       expect(dockerClientEnv.DOCKER_HOST).toBe(row.callerSelection.DOCKER_HOST);
       expect(dockerClientEnv.DOCKER_CONTEXT).toBe(row.callerSelection.DOCKER_CONTEXT);
       expect(dockerClientEnv.DOCKER_CONFIG).toBe(
         row.clientConfigForwarded ? dockerConfig : undefined,
       );
+      expect(dockerClientEnv.WSL_DISTRO_NAME).toBe(MANAGED_CREATE_SANDBOX_ENV.WSL_DISTRO_NAME);
     },
   );
 

@@ -228,51 +228,30 @@ export function createGpuFlowTestHarness(mocks: Record<string, ReturnType<typeof
     WSL_DISTRO_NAME: "Ubuntu",
   } as const;
   const remoteDockerHost = "tcp://remote-builder.example:2376";
-  const managedDockerConfigPreservationCases: readonly {
+  const managedDockerClientSelectionCases: readonly {
     readonly title: string;
-    readonly helperResponds: boolean;
     /** Docker selection in the caller environment of the nemoclaw command. */
     readonly callerSelection: { readonly DOCKER_HOST?: string; readonly DOCKER_CONTEXT?: string };
     /** The allowlisted part of that selection that reaches the sandbox create env. */
     readonly sandboxSelection: { readonly DOCKER_HOST?: string };
-    readonly contextStdout: string;
-    readonly contextShowCalls: number;
     readonly clientConfigForwarded: boolean;
   }[] = [
     {
-      title: "the Desktop helper responds",
-      helperResponds: true,
+      title: "the default context selects an unavailable Docker Desktop helper",
       callerSelection: {},
       sandboxSelection: {},
-      contextStdout: "default\n",
-      contextShowCalls: 1,
-      clientConfigForwarded: true,
-    },
-    {
-      title: "the persisted Docker context is not default",
-      helperResponds: false,
-      callerSelection: {},
-      sandboxSelection: {},
-      contextStdout: "remote-builder\n",
-      contextShowCalls: 1,
       clientConfigForwarded: true,
     },
     {
       title: "the caller selects a non-default DOCKER_CONTEXT",
-      helperResponds: false,
       callerSelection: { DOCKER_CONTEXT: "qa-explicit-host" },
       sandboxSelection: {},
-      contextStdout: "default\n",
-      contextShowCalls: 0,
       clientConfigForwarded: true,
     },
     {
       title: "an explicit remote Docker host is selected",
-      helperResponds: false,
       callerSelection: { DOCKER_HOST: remoteDockerHost },
       sandboxSelection: { DOCKER_HOST: remoteDockerHost },
-      contextStdout: "default\n",
-      contextShowCalls: 0,
       clientConfigForwarded: false,
     },
   ];
@@ -404,14 +383,10 @@ export function createGpuFlowTestHarness(mocks: Record<string, ReturnType<typeof
     return { createLifecycle };
   }
 
-  function captureCreateEnv(): {
-    env: NodeJS.ProcessEnv;
-    configExisted: boolean;
-  } {
-    const captured = { env: {} as NodeJS.ProcessEnv, configExisted: false };
+  function captureCreateEnv(): { env: NodeJS.ProcessEnv } {
+    const captured = { env: {} as NodeJS.ProcessEnv };
     mocks.streamSandboxCreate.mockImplementation((_exe, _args, env: NodeJS.ProcessEnv) => {
       captured.env = env;
-      captured.configExisted = fs.existsSync(String(env.DOCKER_CONFIG));
       return Promise.resolve({
         status: 0,
         output: "Created sandbox: alpha",
@@ -450,7 +425,7 @@ export function createGpuFlowTestHarness(mocks: Record<string, ReturnType<typeof
     DEFAULT_RUNTIME_SNAPSHOT: defaultRuntimeSnapshot,
     PORTABLE_RUNTIME_AUTHORITY: portableRuntimeAuthority,
     MANAGED_CREATE_SANDBOX_ENV: managedCreateSandboxEnv,
-    managedDockerConfigPreservationCases,
+    managedDockerClientSelectionCases,
     readySandboxGetResult,
     createSequencedOpenShellRunner,
     failNativeCreate,
