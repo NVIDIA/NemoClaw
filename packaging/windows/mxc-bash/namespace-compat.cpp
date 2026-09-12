@@ -1831,6 +1831,105 @@ void installFaultObserver() {}
 void removeFaultObserver() {}
 #endif
 
+// Chrome's GUI browser starts Crashpad from WinMain, after this DLL attaches.
+// Crashpad omits NUL (CHAR) handles from its explicit inherited-handle list but
+// copies their numbers into STARTF_USESTDHANDLES. Represent only the selected
+// browser's already-discarded NUL input/output as absent GUI streams instead.
+bool selected_browser_gui() {
+    WCHAR selected[4096] = {}, actual[4096] = {};
+    const DWORD length = GetEnvironmentVariableW(L"AGENT_BROWSER_EXECUTABLE_PATH", selected, 4096);
+    if (!length || length >= 4096 || selected[1] != L':' || selected[2] != L'\\') return false;
+    const DWORD count = GetModuleFileNameW(nullptr, actual, 4096);
+    if (!count || count >= 4096 || _wcsicmp(selected, actual)) return false;
+    const WCHAR* leaf = wcsrchr(actual, L'\\');
+    if (!leaf || _wcsicmp(leaf + 1, L"chrome.exe")) return false;
+    __try {
+        const BYTE* base = reinterpret_cast<const BYTE*>(GetModuleHandleW(nullptr));
+        if (!base) return false;
+        const auto dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
+        if (dos->e_magic != IMAGE_DOS_SIGNATURE || dos->e_lfanew < 64 || dos->e_lfanew > 1024) return false;
+        const auto pe = reinterpret_cast<const IMAGE_NT_HEADERS64*>(base + dos->e_lfanew);
+        return pe->Signature == IMAGE_NT_SIGNATURE && pe->OptionalHeader.Magic == IMAGE_NT_OPTIONAL_HDR64_MAGIC &&
+            pe->OptionalHeader.Subsystem == IMAGE_SUBSYSTEM_WINDOWS_GUI;
+    } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+
+struct BrowserStdHandle {
+    DWORD slot = 0;
+    HANDLE before = nullptr, after = nullptr;
+    DWORD handleError = 0, fileType = 0, fileTypeError = 0, setError = 0;
+    NTSTATUS nameStatus = 0;
+    bool nameQueried = false, nullDevice = false, setAttempted = false, setSucceeded = false;
+};
+
+BrowserStdHandle observe_browser_std_handle(DWORD slot) {
+    BrowserStdHandle value;
+    value.slot = slot;
+    value.before = value.after = GetStdHandle(slot);
+    if (value.before == INVALID_HANDLE_VALUE) { value.handleError = GetLastError(); return value; }
+    if (!value.before) return value;
+    SetLastError(ERROR_SUCCESS);
+    value.fileType = GetFileType(value.before);
+    value.fileTypeError = GetLastError();
+    if (value.fileType != FILE_TYPE_CHAR || !queryKernelObject) return value;
+    alignas(void*) BYTE buffer[256] = {};
+    ULONG needed = 0;
+    value.nameQueried = true;
+    value.nameStatus = queryKernelObject(value.before, static_cast<OBJECT_INFORMATION_CLASS>(1), buffer, sizeof(buffer), &needed);
+    if (value.nameStatus != 0) return value;
+    const auto name = reinterpret_cast<const UNICODE_STRING*>(buffer);
+    const uintptr_t begin = reinterpret_cast<uintptr_t>(buffer), address = reinterpret_cast<uintptr_t>(name->Buffer);
+    constexpr WCHAR expected[] = L"\\Device\\Null";
+    constexpr size_t bytes = sizeof(expected) - sizeof(WCHAR);
+    value.nullDevice = name->Buffer && name->Length == bytes && name->MaximumLength >= bytes &&
+        address >= begin + sizeof(UNICODE_STRING) && address <= begin + sizeof(buffer) &&
+        bytes <= begin + sizeof(buffer) - address && memcmp(name->Buffer, expected, bytes) == 0;
+    return value;
+}
+
+void log_browser_std_handle(const BrowserStdHandle& value, bool pairMatched, HANDLE stderrBefore, DWORD error) {
+    char line[1024];
+    const int count = _snprintf_s(line, sizeof(line), _TRUNCATE,
+        "NEMOCLAW_MSYS_CHROME_STDIO={\"schemaVersion\":1,\"pid\":%lu,\"stream\":\"%s\",\"selectedGuiBrowser\":true,\"nulPairMatched\":%s,\"beforeHandle\":\"0x%llx\",\"afterHandle\":\"0x%llx\",\"handleError\":%lu,\"fileType\":%lu,\"fileTypeError\":%lu,\"nameQueried\":%s,\"nameStatus\":\"0x%08lx\",\"nullDevice\":%s,\"setAttempted\":%s,\"setSucceeded\":%s,\"setError\":%lu,\"stderrUnchanged\":%s,\"originalHandlesClosed\":false,\"error\":%lu}\n",
+        GetCurrentProcessId(), value.slot == STD_INPUT_HANDLE ? "stdin" : "stdout", pairMatched ? "true" : "false",
+        reinterpret_cast<unsigned long long>(value.before), reinterpret_cast<unsigned long long>(value.after),
+        value.handleError, value.fileType, value.fileTypeError, value.nameQueried ? "true" : "false", static_cast<ULONG>(value.nameStatus),
+        value.nullDevice ? "true" : "false", value.setAttempted ? "true" : "false", value.setSucceeded ? "true" : "false", value.setError,
+        GetStdHandle(STD_ERROR_HANDLE) == stderrBefore ? "true" : "false", error);
+    DWORD written = 0;
+    // At most two records for an actual matched adaptation, including failures
+    // in quiet mode. Absent/non-NUL streams produce no additional stderr.
+    if (count > 0) WriteFile(stderrBefore, line, static_cast<DWORD>(count), &written, nullptr);
+}
+
+DWORD adapt_browser_discarded_stdio() {
+    const DWORD saved = GetLastError();
+    if (!selected_browser_gui()) { SetLastError(saved); return ERROR_SUCCESS; }
+    const HANDLE stderrBefore = GetStdHandle(STD_ERROR_HANDLE);
+    BrowserStdHandle streams[] = {observe_browser_std_handle(STD_INPUT_HANDLE), observe_browser_std_handle(STD_OUTPUT_HANDLE)};
+    const bool matched = streams[0].nullDevice && streams[1].nullDevice;
+    DWORD error = ERROR_SUCCESS;
+    if (matched) {
+        for (auto& stream : streams) {
+            if (GetStdHandle(stream.slot) != stream.before || GetStdHandle(STD_ERROR_HANDLE) != stderrBefore) {
+                error = ERROR_INVALID_STATE; break;
+            }
+            stream.setAttempted = true;
+            stream.setSucceeded = SetStdHandle(stream.slot, nullptr) != FALSE;
+            stream.setError = stream.setSucceeded ? ERROR_SUCCESS : GetLastError();
+            stream.after = GetStdHandle(stream.slot);
+            if (!stream.setSucceeded || stream.after != nullptr) {
+                error = stream.setError ? stream.setError : ERROR_INVALID_HANDLE; break;
+            }
+        }
+    }
+    // Keep the original NUL objects alive: earlier CRT-cached handles remain
+    // valid. Only future GetStdHandle lookups (including Crashpad's) change.
+    if (matched || error) for (const auto& stream : streams) log_browser_std_handle(stream, matched, stderrBefore, error);
+    SetLastError(error ? error : saved);
+    return error;
+}
+
 } // namespace
 
 BOOL WINAPI DllMain(HINSTANCE self, DWORD reason, LPVOID reserved) {
@@ -1841,6 +1940,8 @@ BOOL WINAPI DllMain(HINSTANCE self, DWORD reason, LPVOID reserved) {
     DetourRestoreAfterWith();
     if (!initialize_namespace()) return initialization_result("namespace-context", GetLastError() ? GetLastError() : ERROR_DLL_INIT_FAILED);
     if (!NemoClawInitializeProcessContext(self)) return initialization_result("process-context", GetLastError() ? GetLastError() : ERROR_DLL_INIT_FAILED);
+    const DWORD browserError = adapt_browser_discarded_stdio();
+    if (browserError) return initialization_result("chrome-discarded-stdio", browserError);
     NemoClawLogCurrentImageLayout();
     LONG error = DetourTransactionBegin();
     if (error) return initialization_result("transaction-begin", error);
