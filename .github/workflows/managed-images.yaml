@@ -3101,9 +3101,10 @@ jobs:
 
           # Record the intended root pointers for every shipped agent in its
           # exact contract. They are not moved until all v2 evidence artifacts
-          # are durable. Hermes ships alongside OpenClaw (#11228); Deep Agents
-          # Code stays cohort-only until its own publication decision.
-          shipped_agents=(openclaw hermes)
+          # are durable. Hermes ships alongside OpenClaw (#11228), and Deep
+          # Agents Code alongside both (#11341), matching
+          # SHIPPED_MANAGED_IMAGE_AGENTS in src/lib/onboard/managed-image.
+          shipped_agents=(openclaw hermes langchain-deepagents-code)
           release_tag="$(jq -r '.[0].release // empty' "$CANDIDATE_SET")"
 
           while IFS= read -r candidate; do
@@ -3347,12 +3348,14 @@ jobs:
             exit 1
           fi
           cohort="$PUBLICATION_COHORT"
-          # Root pointers move for every shipped agent: OpenClaw and, per
-          # #11228, Hermes. Deep Agents Code stays cohort-only. Every shipped
-          # agent's contract and exact cohort bytes are validated before any
-          # pointer moves. A registry failure can leave an earlier agent's
-          # pointers moved; rerunning this job reconciles them to this cohort.
-          shipped_agents=(openclaw hermes)
+          # Root pointers move for every shipped agent: OpenClaw, Hermes
+          # (#11228), and Deep Agents Code (#11341), matching
+          # SHIPPED_MANAGED_IMAGE_AGENTS in src/lib/onboard/managed-image.
+          # Every shipped agent's contract and exact cohort bytes are validated
+          # before any pointer moves. A registry failure can leave an earlier
+          # agent's pointers moved; rerunning this job reconciles them to this
+          # cohort.
+          shipped_agents=(openclaw hermes langchain-deepagents-code)
           release_tag="$(jq -r '.source.release // empty' "$cohort_contract")"
           if [[ ! "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]; then
             echo "ERROR: durable managed image pointer identity is invalid." >&2
@@ -3397,7 +3400,7 @@ jobs:
             expected_digest="$(jq -er --arg agent "$agent" '.agents[$agent].digest' "$cohort_contract")"
             expected_size="$(jq -er --arg agent "$agent" '.agents[$agent].descriptor.size | tostring' "$cohort_contract")"
             if [ "$image" != "ghcr.io/nvidia/nemoclaw/${agent}-sandbox" ] ||
-               [[ ! "$exact_reference" =~ ^ghcr\.io/nvidia/nemoclaw/(openclaw|hermes)-sandbox@sha256:[0-9a-f]{64}$ ]] ||
+               [[ ! "$exact_reference" =~ ^ghcr\.io/nvidia/nemoclaw/(openclaw|hermes|langchain-deepagents-code)-sandbox@sha256:[0-9a-f]{64}$ ]] ||
                [ "${exact_reference%@*}" != "$image" ]; then
               echo "ERROR: durable managed image pointer identity is invalid for ${agent}." >&2
               exit 1
