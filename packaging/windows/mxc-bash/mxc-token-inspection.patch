@@ -187,7 +187,7 @@ diff --git a/src/backends/appcontainer/common/src/msys_token_inspection.rs b/src
 new file mode 100644
 --- /dev/null
 +++ b/src/backends/appcontainer/common/src/msys_token_inspection.rs
-@@ -0,0 +1,334 @@
+@@ -0,0 +1,330 @@
 +// Copyright (c) NVIDIA Corporation.
 +// Licensed under the MIT License.
 +// CI-only exact-owned-job token inspection or explicitly selected TOKEN_QUERY repair.
@@ -314,10 +314,6 @@ new file mode 100644
 +        return Err("private desktop creation requires the explicit Hermes CI request".into());
 +    }
 +    trusted_root(cwd, writable, container)?;
-+    let begin = 2 + "\\NemoClawMsysProof-".len();
-+    if cwd[begin..begin + 12] != container[3..15] {
-+        return Err("desktop state nonce differs from the admitted job".into());
-+    }
 +    Ok(true)
 +}
 +
