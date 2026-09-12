@@ -47,6 +47,7 @@ type FinalDestroyGatewayCleanupDeps = {
   dockerCapture?: DockerCaptureProbe;
   listSandboxes?: SandboxListProvider;
   liveSandboxProbe?: LiveSandboxProbe;
+  now?: () => number;
   resolveRuntimeProvider?: typeof resolveRegisteredRuntimeProvider;
   retryDelaysMs?: readonly number[];
   sleep?: (ms: number) => Promise<void>;
@@ -55,7 +56,9 @@ type FinalDestroyGatewayCleanupDeps = {
 
 // OpenShell keeps listing a deleted sandbox until its runtime finishes
 // terminating, so the final probe waits for that one row before it treats the
-// row as a live sandbox that blocks gateway cleanup.
+// row as a live sandbox that blocks gateway cleanup. The retry schedule caps
+// the attempts; the deadline caps the wall-clock wait when each list probe is
+// slow, so the wait cannot multiply the probe timeout by the attempt count.
 const DELETED_SANDBOX_ABSENCE_TIMEOUT_MS = 30_000;
 const DELETED_SANDBOX_ABSENCE_RETRY_DELAY_MS = 2_000;
 const DELETED_SANDBOX_ABSENCE_RETRY_DELAYS_MS: readonly number[] = Array.from(
@@ -187,8 +190,11 @@ export async function resolveFinalDestroyGatewayCleanup(
   input: FinalDestroyGatewayCleanupInput,
   deps: FinalDestroyGatewayCleanupDeps = {},
 ): Promise<FinalDestroyGatewayCleanupVerdict> {
+  const now = deps.now ?? Date.now;
+  const deadline = now() + DELETED_SANDBOX_ABSENCE_TIMEOUT_MS;
   return retryUntilAsync(() => resolveFinalDestroyGatewayCleanupOnce(input, deps), {
-    accept: (verdict) => !onlyDeletedSandboxRemains(verdict, input.sandboxName),
+    accept: (verdict) =>
+      !onlyDeletedSandboxRemains(verdict, input.sandboxName) || now() >= deadline,
     onRetry: (_verdict, _delayMs, attempt) => {
       if (attempt === 1) {
         console.log(

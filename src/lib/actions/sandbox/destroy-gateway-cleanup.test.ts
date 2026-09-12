@@ -189,6 +189,29 @@ describe("resolveFinalDestroyGatewayCleanup", () => {
     expect(sleep).toHaveBeenCalledTimes(2);
   });
 
+  it("stops waiting at the deadline when slow list probes consume the wait budget", async () => {
+    let clock = 0;
+    const captureOpenshell = vi.fn(() => {
+      clock += 20_000;
+      return liveList("alpha             now                  Terminating\n");
+    });
+    const sleep = vi.fn(async (_ms: number) => undefined);
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    await expect(
+      resolveFinalDestroyGatewayCleanup(confirmedFinalDestroy, {
+        captureOpenshell,
+        dockerCapture: () => "",
+        listSandboxes: () => ({ sandboxes: [] }),
+        now: () => clock,
+        retryDelaysMs: [5, 5, 5, 5],
+        sleep,
+      }),
+    ).resolves.toEqual({ status: "live-sandboxes", sandboxNames: ["alpha"] });
+    expect(captureOpenshell).toHaveBeenCalledTimes(2);
+    expect(sleep).toHaveBeenCalledOnce();
+  });
+
   it("does not wait when another live sandbox blocks cleanup alongside the deleted one", async () => {
     const captureOpenshell = vi.fn(() =>
       liveList(
