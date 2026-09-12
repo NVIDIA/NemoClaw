@@ -212,6 +212,10 @@ export async function requireLaunchSemanticHealth(
   inferenceConfigured: boolean,
   deps: LaunchReadinessHealthDeps,
 ): Promise<void> {
+  if (agentName === "langchain-deepagents-code" && !inferenceConfigured) {
+    recordLaunchReadinessObservationFailure(deps, "inference-route");
+    throw new LaunchReadinessEvidenceError();
+  }
   if (isTerminalAgent(agent)) {
     const smoke = deps.smoke
       ? await deps.smoke(sandboxName, agent)
@@ -287,14 +291,14 @@ export async function requireLaunchSemanticHealth(
     }
     const strictRouteHealth =
       inference.healthy && inference.httpStatus >= 200 && inference.httpStatus < 300;
-    if (strictRouteHealth) return;
+    if (strictRouteHealth && agentName !== "langchain-deepagents-code") return;
     const openRouterDcodeModelsRouteUnsupported =
       inference.healthy &&
       isDcodeOpenRouterModelsRoute404(
         { agentName, provider: entry.provider ?? null },
         inference.httpStatus,
       );
-    if (openRouterDcodeModelsRouteUnsupported) {
+    if (strictRouteHealth || openRouterDcodeModelsRouteUnsupported) {
       const provider = normalizedString(entry.provider);
       const model = normalizedString(entry.model);
       if (!provider || !model) {
