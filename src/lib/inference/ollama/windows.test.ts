@@ -361,8 +361,14 @@ describe("Windows Ollama helper", () => {
           : []),
       ];
       // Execute the production producer in PowerShell, with only process inventory supplied by the fixture.
+      const fixtureProcesses = processes
+        .map(
+          (entry) =>
+            `[pscustomobject]@{ProcessName='${entry.ProcessName}';Path=${entry.Path === null ? "$null" : `'${entry.Path.replace(/'/g, "''")}'`}}`,
+        )
+        .join("; ");
       const fixture =
-        `$fixtureProcesses = @('${JSON.stringify(processes).replace(/'/g, "''")}' | ConvertFrom-Json); ` +
+        `$fixtureProcesses = @(${fixtureProcesses}); ` +
         "function Get-Process { [CmdletBinding()] param([string]$Name); " +
         (scenario.denied
           ? "throw 'process query denied'"
@@ -395,7 +401,7 @@ describe("Windows Ollama helper", () => {
           ok: false,
           reason: rejected ? "snapshot" : "binding",
         });
-        const snapshot = JSON.parse(captured || "null");
+        const snapshot = rejected ? null : JSON.parse(captured);
         expect(snapshot?.watcherPath).toBe(
           rejected ? undefined : scenario.watcher ? watcherPath : null,
         );
