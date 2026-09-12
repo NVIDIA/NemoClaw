@@ -143,6 +143,46 @@ describe("validation reuse", () => {
       expect(options.execute).toHaveBeenCalledTimes(1);
     },
   );
+
+  it.skipIf(process.platform === "win32")(
+    "accepts an internal directory symlink when the repository root is aliased",
+    () => {
+      symlinkSync("src", path.join(root, "alias"));
+      fixtureGit(root, "add", "alias");
+      fixtureGit(root, "commit", "-m", "test: internal directory symlink");
+      const aliasedRoot = `${root}-alias`;
+      symlinkSync(root, aliasedRoot, "dir");
+      try {
+        expect(() =>
+          validationFingerprint(aliasedRoot, [process.execPath, "--version"], {}),
+        ).not.toThrow();
+      } finally {
+        rmSync(aliasedRoot);
+      }
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "rejects an external directory symlink when the repository root is aliased",
+    () => {
+      const externalRoot = `${root}-external`;
+      const aliasedRoot = `${root}-alias`;
+      fs.mkdirSync(externalRoot);
+      symlinkSync(externalRoot, path.join(root, "external"), "dir");
+      fixtureGit(root, "add", "external");
+      fixtureGit(root, "commit", "-m", "test: external directory symlink");
+      symlinkSync(root, aliasedRoot, "dir");
+      try {
+        expect(() =>
+          validationFingerprint(aliasedRoot, [process.execPath, "--version"], {}),
+        ).toThrow("External or cyclic directory symlinks prevent validation reuse");
+      } finally {
+        rmSync(aliasedRoot);
+        rmSync(externalRoot, { recursive: true });
+      }
+    },
+  );
+
   it("executes once for identical successful input bytes", () => {
     const options = check();
     expect(runCachedCommand(options)).toBe(0);
