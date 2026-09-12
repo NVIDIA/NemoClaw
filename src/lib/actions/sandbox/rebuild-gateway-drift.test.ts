@@ -80,7 +80,11 @@ describe("rebuild gateway drift preflight", () => {
       } as never);
     getNamedGatewayLifecycleStateSpy = vi
       .spyOn(gatewayRuntime, "getNamedGatewayLifecycleState")
-      .mockReturnValue({ state: "healthy_named", activeGateway: "nemoclaw", status: "" } as never);
+      .mockResolvedValue({
+        state: "healthy_named",
+        activeGateway: "nemoclaw",
+        status: "",
+      } as never);
     recoverDockerDriverSandboxSpy = vi
       .spyOn(dockerDriverRecovery, "recoverDockerDriverSandbox")
       .mockReturnValue({ recovered: false, via: null });
@@ -181,7 +185,7 @@ describe("rebuild gateway drift preflight", () => {
       captureOpenshellSpy
         .mockReturnValueOnce({ status: 0, output: "" })
         .mockReturnValueOnce({ status: 1, output: "Error:   × Not Found: sandbox not found" });
-      getNamedGatewayLifecycleStateSpy.mockReturnValue({
+      getNamedGatewayLifecycleStateSpy.mockResolvedValue({
         state: "connected_other",
         activeGateway,
         status: `Gateway: ${activeGateway}\nStatus: Connected`,
@@ -229,7 +233,7 @@ describe("rebuild gateway drift preflight", () => {
       captureOpenshellSpy
         .mockReturnValueOnce({ status: 0, output: "beta Ready" })
         .mockReturnValueOnce({ status: 1, output: "Error:   × Not Found: sandbox not found" });
-      getNamedGatewayLifecycleStateSpy.mockReturnValue({
+      getNamedGatewayLifecycleStateSpy.mockResolvedValue({
         state: "healthy_named",
         activeGateway: gatewayName,
         status: `Gateway: ${gatewayName}\nStatus: Connected`,

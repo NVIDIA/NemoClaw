@@ -84,7 +84,7 @@ describe("sandbox gateway state drift guard", () => {
       .mockReturnValue(driftIssue);
     getNamedGatewayLifecycleStateSpy = vi
       .spyOn(gatewayRuntime, "getNamedGatewayLifecycleState")
-      .mockReturnValue({
+      .mockResolvedValue({
         state: "healthy_named",
         status: "",
       } as never);
@@ -175,7 +175,7 @@ describe("sandbox gateway state drift guard", () => {
       status: 1,
       output: 'Error: status: NotFound, message: "sandbox not found"',
     });
-    getNamedGatewayLifecycleStateSpy.mockReturnValue({
+    getNamedGatewayLifecycleStateSpy.mockResolvedValue({
       state: "healthy_named",
       status: "Gateway: nemoclaw\nStatus: Connected",
     });
@@ -201,7 +201,7 @@ describe("sandbox gateway state drift guard", () => {
       status: 1,
       output: 'Error: status: NotFound, message: "sandbox not found"',
     });
-    getNamedGatewayLifecycleStateSpy.mockReturnValue({
+    getNamedGatewayLifecycleStateSpy.mockResolvedValue({
       state: "connected_other",
       activeGateway: "openshell",
       status: "Gateway: openshell\nStatus: Connected",
@@ -242,7 +242,7 @@ describe("sandbox gateway state drift guard", () => {
         status: 1,
         output: 'Error: status: NotFound, message: "sandbox not found"',
       });
-      getNamedGatewayLifecycleStateSpy.mockReturnValue(lifecycle);
+      getNamedGatewayLifecycleStateSpy.mockResolvedValue(lifecycle);
 
       await expect(gatewayState.ensureLiveSandboxOrExit("alpha")).rejects.toThrow(
         "process.exit(1)",
@@ -254,7 +254,7 @@ describe("sandbox gateway state drift guard", () => {
   );
 
   it("propagates schema mismatch after selecting the named gateway", async () => {
-    getNamedGatewayLifecycleStateSpy.mockReturnValue({
+    getNamedGatewayLifecycleStateSpy.mockResolvedValue({
       state: "connected_other",
       activeGateway: "openshell",
       status: "Gateway: openshell\nStatus: Connected",
@@ -275,7 +275,7 @@ describe("sandbox gateway state drift guard", () => {
   });
 
   it("does not select a gateway when its lifecycle probe blocks recovery (#10421)", async () => {
-    getNamedGatewayLifecycleStateSpy.mockReturnValue({
+    getNamedGatewayLifecycleStateSpy.mockResolvedValue({
       state: "connected_other",
       activeGateway: "openshell",
       status: "",
@@ -358,7 +358,7 @@ describe("sandbox gateway state drift guard", () => {
       gatewayName: "nemoclaw",
       gatewayPort: 8080,
     });
-    getNamedGatewayLifecycleStateSpy.mockReturnValue({
+    getNamedGatewayLifecycleStateSpy.mockResolvedValue({
       state: "connected_other",
       activeGateway: "nemoclaw-8081",
       status: "Gateway: nemoclaw-8081\nStatus: Connected",

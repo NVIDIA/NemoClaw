@@ -25,7 +25,7 @@ describe("getReconciledSandboxGatewayState owning-gateway guard", () => {
       outcome: "selected",
       gatewayName: "nemoclaw-8091",
     });
-    vi.spyOn(gatewayRuntime, "getNamedGatewayLifecycleState").mockReturnValue({
+    vi.spyOn(gatewayRuntime, "getNamedGatewayLifecycleState").mockResolvedValue({
       state: "connected_other",
       activeGateway: "sibling",
       status: "Gateway: sibling\nStatus: Connected",
