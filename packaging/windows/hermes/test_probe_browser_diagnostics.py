@@ -488,7 +488,16 @@ class BrowserHarnessShutdown(unittest.TestCase):
 
 
 class AgentBrowserState(unittest.TestCase):
-    def fixture(self, state, *, foreign=False, denied=False):
+    def fixture(
+        self,
+        state,
+        *,
+        foreign=False,
+        denied=False,
+        root_relative=False,
+        dos_denied=False,
+        dos_mismatch=False,
+    ):
         session = "h_0123456789"
         directory = state / ("agent-browser-" + session)
         directory.mkdir()
@@ -514,7 +523,12 @@ class AgentBrowserState(unittest.TestCase):
                 create_time=lambda: created,
                 is_running=lambda: True,
                 exe=lambda: (
-                    str(executable) if pid == 101 else str(state / "runtime/chrome.exe")
+                    ("\\" if root_relative else "")
+                    + (
+                        str(executable)
+                        if pid == 101
+                        else str(state / "runtime/chrome.exe")
+                    )
                 ),
                 environ=lambda: (
                     {**environment, "AGENT_BROWSER_SESSION": "foreign"}
@@ -536,6 +550,36 @@ class AgentBrowserState(unittest.TestCase):
             [renderer],
         )
         daemon = process(101, 100, 10.0, [str(executable)], [browser])
+
+        processes = {101: daemon, 102: browser, 103: renderer}
+
+        class RetainedImage:
+            def __init__(self, pid):
+                self.pid = pid
+
+            def identity(self):
+                return self.pid, str(processes[self.pid].create_time())
+
+            def wait(self, seconds):
+                return False
+
+            def image(self):
+                if dos_denied:
+                    raise PermissionError("DOS image query denied")
+                if dos_mismatch:
+                    return str(state / "runtime/other.exe")
+                return (
+                    str(executable)
+                    if self.pid == 101
+                    else str(state / "runtime/chrome.exe")
+                )
+
+            def close(self):
+                pass
+
+        images = patch.object(owner, "BrowserHarnessProcess", RetainedImage)
+        images.start()
+        self.addCleanup(images.stop)
 
         def selected(pid):
             calls.append(pid)
@@ -583,6 +627,49 @@ class AgentBrowserState(unittest.TestCase):
             )
             self.assertFalse(result["historicalProcessExitsObserved"])
             self.assertTrue((Path(launch[2]) / "h_0123456789.pid").exists())
+
+    def test_root_relative_psutil_path_requires_observed_matching_dos_image(self):
+        for options, accepted in [
+            ({"root_relative": True}, True),
+            ({"root_relative": True, "dos_denied": True}, False),
+            ({"root_relative": True, "dos_mismatch": True}, False),
+        ]:
+            with (
+                self.subTest(options=options),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                state = Path(directory)
+                expected, launch, psutil, native, _ = self.fixture(state, **options)
+                with (
+                    patch.dict(
+                        sys.modules,
+                        {"psutil": psutil, "nemoclaw_native_windows": native},
+                    ),
+                    patch.object(
+                        owner, "owned_file", side_effect=lambda file, root: Path(file)
+                    ),
+                ):
+                    result = owner.browser_agent_state(state, expected, [launch])
+                row = result["commands"][0]
+                self.assertTrue(
+                    row["daemonExecutableObserved"]["value"].startswith("\\")
+                )
+                self.assertEqual(
+                    row["daemonIdentityChecks"]["executableMatches"], accepted
+                )
+                self.assertEqual(bool(result["processes"]), accepted)
+                if accepted:
+                    self.assertEqual(
+                        result["processes"][1]["executable"],
+                        str(state / "runtime/chrome.exe"),
+                    )
+                    self.assertTrue(
+                        result["processes"][1]["psutilExecutableObserved"][
+                            "value"
+                        ].startswith("\\")
+                    )
+                else:
+                    self.assertTrue(result["errors"])
 
     def test_foreign_daemon_or_query_denial_never_traverses_or_replaces_primary(self):
         for options in [{"foreign": True}, {"denied": True}]:

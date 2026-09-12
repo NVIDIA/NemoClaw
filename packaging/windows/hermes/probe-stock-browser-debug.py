@@ -791,7 +791,7 @@ class DebugJob(owner.WindowsJob):
                 else ("mbcs" if os.name == "nt" else "latin-1")
             )
             row["text"] = (
-                bytes(storage[:count]).decode(encoding, errors="replace").rstrip("\0")
+                bytes(storage[:count]).decode(encoding, errors="replace").split("\0", 1)[0]
             )
         except Exception as error:
             row["error"] = owner.detail(error)

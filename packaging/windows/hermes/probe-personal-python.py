@@ -221,6 +221,70 @@ def browser_log_tail(file, state):
     return record
 
 
+def browser_process_dos_image(process, creation):
+    """Read the existing observed PID's DOS image while retaining its generation."""
+    record = {
+        "api": "QueryFullProcessImageNameW",
+        "flags": 0,
+        "pid": process.pid,
+        "creationFiletime": None,
+        "queryAttempted": False,
+        "querySucceeded": False,
+        "identityRechecked": False,
+        "value": None,
+        "handleAccess": "0x00101000",
+        "handleClosed": True,
+        "complete": False,
+        "error": None,
+    }
+    held = None
+    stage = "retain-observed-process"
+    try:
+        held = BrowserHarnessProcess(process.pid)
+        record["handleClosed"] = False
+        identity = held.identity()
+        if (
+            identity[0] != process.pid
+            or held.wait(0)
+            or process.create_time() != creation
+        ):
+            raise ValueError("Observed process generation changed before image query")
+        record["creationFiletime"] = identity[1]
+        stage = "query-dos-image"
+        record["queryAttempted"] = True
+        value = held.image()
+        record["querySucceeded"] = True
+        stage = "recheck-observed-process"
+        if (
+            held.identity() != identity
+            or held.wait(0)
+            or process.create_time() != creation
+        ):
+            raise ValueError("Observed process generation changed during image query")
+        record["identityRechecked"] = True
+        record["value"] = value
+    except Exception as error:
+        record["error"] = {
+            "stage": stage,
+            "error": repr(error)[:256],
+            "winerror": getattr(error, "winerror", None),
+        }
+    finally:
+        if held is not None:
+            try:
+                held.close()
+                record["handleClosed"] = True
+            except Exception as error:
+                record["closeError"] = repr(error)[:256]
+    record["complete"] = (
+        record["querySucceeded"]
+        and record["identityRechecked"]
+        and record["handleClosed"]
+        and record["error"] is None
+    )
+    return record
+
+
 def browser_agent_state(state, expected, launches):
     """Failure-only query of the exact CLI session before canonical cleanup."""
     from nemoclaw_native_windows import NativeStartupRefusal
@@ -294,8 +358,10 @@ def browser_agent_state(state, expected, launches):
                 "characters": len(daemon_executable),
                 "truncated": len(daemon_executable) > 512,
             }
+            row["daemonDosImage"] = browser_process_dos_image(daemon, created)
             row["daemonIdentityChecks"] = {
-                "executableMatches": Path(daemon_executable) == expected,
+                "executableMatches": row["daemonDosImage"]["complete"]
+                and Path(row["daemonDosImage"]["value"]) == expected,
                 "socketDirectoryMatches": daemon_env.get("AGENT_BROWSER_SOCKET_DIR")
                 == socket_dir,
                 "sessionMatches": daemon_env.get("AGENT_BROWSER_SESSION") == session,
@@ -318,7 +384,14 @@ def browser_agent_state(state, expected, launches):
                 try:
                     if current.create_time() != creation or not current.is_running():
                         raise ValueError("Process identity changed during observation")
-                    executable = current.exe()
+                    psutil_executable = current.exe()
+                    dos_image = browser_process_dos_image(current, creation)
+                    if not dos_image["complete"]:
+                        observation["errors"].append(
+                            {"pid": current.pid, "dosImage": dos_image}
+                        )
+                        raise ValueError("Observed process DOS image is unavailable")
+                    executable = dos_image["value"]
                     command = current.cmdline()
                     parent_pid = current.ppid()
                     relation = parent is None or (
@@ -346,6 +419,12 @@ def browser_agent_state(state, expected, launches):
                         "creationTime": creation,
                         "parentCreationTime": parent[1] if parent else None,
                         "executable": executable,
+                        "psutilExecutableObserved": {
+                            "value": psutil_executable[:512],
+                            "characters": len(psutil_executable),
+                            "truncated": len(psutil_executable) > 512,
+                        },
+                        "dosImage": dos_image,
                         "status": current.status(),
                         "identityRechecked": True,
                         "parentRelationVerified": relation,
@@ -457,7 +536,6 @@ def browser_cdp_selection(root, state, observation):
             process.create_time() != row["creationTime"]
             or not process.is_running()
             or process.ppid() != row["parentPid"]
-            or Path(process.exe()) != expected
             or hashlib.sha256(json.dumps(command).encode()).hexdigest()
             != row["commandLineSha256"]
         ):
@@ -490,10 +568,16 @@ def browser_cdp_selection(root, state, observation):
         held = BrowserHarnessProcess(row["pid"])
         try:
             pid, created = held.identity()
+            image = held.image()
+            if Path(image) != expected:
+                raise ValueError(
+                    "Observed Chrome DOS image changed before CDP observation"
+                )
             if (
                 pid != row["pid"]
                 or held.wait(0)
                 or process.create_time() != row["creationTime"]
+                or held.identity() != (pid, created)
             ):
                 raise ValueError("Chrome exited or changed during identity binding")
             return {
@@ -800,6 +884,29 @@ class BrowserHarnessProcess:
         ):
             raise self.ctypes.WinError(self.ctypes.get_last_error())
         return pid, str((values[0].high << 32) | values[0].low)
+
+    def image(self):
+        # Flags0 requests the DOS image path from the same retained handle.
+        # No drive prefix is inferred from the caller's environment or cwd.
+        query = self.kernel.QueryFullProcessImageNameW
+        query.argtypes = [
+            self.ctypes.c_void_p,
+            self.ctypes.c_uint32,
+            self.ctypes.POINTER(self.ctypes.c_wchar),
+            self.ctypes.POINTER(self.ctypes.c_uint32),
+        ]
+        query.restype = self.ctypes.c_int
+        buffer = self.ctypes.create_unicode_buffer(4096)
+        length = self.ctypes.c_uint32(4096)
+        if not query(self.handle, 0, buffer, self.ctypes.byref(length)):
+            raise self.ctypes.WinError(self.ctypes.get_last_error())
+        value = buffer.value
+        if (
+            not 0 < length.value < 4096
+            or len(value.encode("utf-16-le", "surrogatepass")) != length.value * 2
+        ):
+            raise ValueError("Observed DOS image path is incomplete or unbounded")
+        return value
 
     def wait(self, seconds):
         value = self.kernel.WaitForSingleObject(
