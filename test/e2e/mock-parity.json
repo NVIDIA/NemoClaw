@@ -727,6 +727,7 @@
       "live": "test/e2e/live/openclaw-inference-switch.test.ts",
       "liveSources": ["test/e2e/live/openclaw-inference-switch-helpers.ts"],
       "fast": [
+        "test/e2e/support/e2e-http-protocol.test.ts",
         "src/lib/actions/inference-set-compatible-provider.test.ts",
         "test/e2e/support/retry-policy.test.ts",
         "test/e2e/support/compatible-anthropic-switch.test.ts",

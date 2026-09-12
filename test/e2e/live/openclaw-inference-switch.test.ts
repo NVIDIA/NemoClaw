@@ -11,7 +11,7 @@
  */
 
 import fs from "node:fs";
-import http, { type Server } from "node:http";
+import http from "node:http";
 import type { AddressInfo } from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -38,6 +38,7 @@ import {
   type FakeOpenAiCompatibleServer,
   startFakeOpenAiCompatibleServer,
 } from "../fixtures/fake-openai-compatible.ts";
+import { closeServer, writeJsonResponse, writeSseEvents } from "../fixtures/http-protocol.ts";
 import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
 import {
   inferenceResponseModel,
@@ -306,49 +307,22 @@ async function resetOpenClawInferenceSwitchState(
   );
 }
 
-function jsonResponse(res: http.ServerResponse, status: number, payload: unknown): void {
-  const body = JSON.stringify(payload);
-  res.writeHead(status, {
-    "content-type": "application/json",
-    "content-length": Buffer.byteLength(body),
-  });
-  res.end(body);
-}
-
-function sseResponse(res: http.ServerResponse, events: Array<[string, unknown]>): void {
-  res.writeHead(200, {
-    "content-type": "text/event-stream",
-    "cache-control": "no-cache",
-  });
-  for (const [name, payload] of events) {
-    res.write(`event: ${name}\n`);
-    res.write(`data: ${JSON.stringify(payload)}\n\n`);
-  }
-  res.end();
-}
-
-function closeServer(server: Server): Promise<void> {
-  return new Promise((resolve, reject) => {
-    server.close((error) => (error ? reject(error) : resolve()));
-  });
-}
-
 async function startMockAnthropicProvider(): Promise<MockAnthropicProvider> {
   const server = http.createServer((req, res) => {
     const url = new URL(req.url ?? "/", "http://mock.local");
     if (req.method === "GET" && url.pathname === "/health") {
-      jsonResponse(res, 200, { ok: true });
+      writeJsonResponse(res, 200, { ok: true });
       return;
     }
     if (
       req.method === "GET" &&
       ["/v1/models", "/v1/models/mock-anthropic-model"].includes(url.pathname)
     ) {
-      jsonResponse(res, 200, { data: [{ id: "mock-anthropic-model" }] });
+      writeJsonResponse(res, 200, { data: [{ id: "mock-anthropic-model" }] });
       return;
     }
     if (req.method !== "POST" || url.pathname !== "/v1/messages") {
-      jsonResponse(res, 404, { error: "not found", path: url.pathname });
+      writeJsonResponse(res, 404, { error: "not found", path: url.pathname });
       return;
     }
 
@@ -376,7 +350,7 @@ async function startMockAnthropicProvider(): Promise<MockAnthropicProvider> {
           stop_sequence: null,
           usage: { input_tokens: 1, output_tokens: 0 },
         };
-        sseResponse(res, [
+        writeSseEvents(res, [
           ["message_start", { type: "message_start", message }],
           [
             "content_block_start",
@@ -403,7 +377,7 @@ async function startMockAnthropicProvider(): Promise<MockAnthropicProvider> {
         ]);
         return;
       }
-      jsonResponse(res, 200, {
+      writeJsonResponse(res, 200, {
         id: "msg_mock",
         type: "message",
         role: "assistant",
