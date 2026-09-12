@@ -8,6 +8,7 @@ import * as openshellRuntime from "../../adapters/openshell/runtime";
 import * as dockerDriverRecovery from "../../onboard/docker-driver-sandbox-recovery";
 import * as portableAgentLifecycle from "../../onboard/experimental/portable-agent-lifecycle";
 import * as registry from "../../state/registry";
+import * as crossPortRegistry from "../../state/registry/cross-port";
 import * as gatewaySelect from "./gateway-select";
 import {
   captureHermesPortableInferenceRecoveryGateway,
@@ -21,12 +22,17 @@ describe("getReconciledSandboxGatewayState observe mode", () => {
       outcome: "selected",
       gatewayName: "nemoclaw-8091",
     });
-    vi.spyOn(gatewayRuntime, "getNamedGatewayLifecycleState").mockReturnValue({
+    vi.spyOn(gatewayRuntime, "getNamedGatewayLifecycleState").mockResolvedValue({
       state: "healthy_named",
       activeGateway: "nemoclaw-8091",
       status: "Gateway: nemoclaw-8091\nStatus: Connected",
     } as never);
     vi.spyOn(registry, "getSandbox").mockReturnValue({ gatewayPort: 8091 } as never);
+    vi.spyOn(crossPortRegistry, "findSandboxAcrossGatewayRoots").mockReturnValue({
+      entry: { name: "beta", gatewayPort: 8091 } as never,
+      gatewayPort: 8091,
+      registryFile: "/test/sandboxes.json",
+    });
   });
 
   afterEach(() => {
