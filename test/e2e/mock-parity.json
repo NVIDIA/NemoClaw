@@ -883,6 +883,13 @@
     {
       "live": "test/e2e/live/spark-express-vllm.test.ts",
       "fast": [
+        "src/lib/actions/sandbox/connect-route-repair.test.ts",
+        "src/lib/actions/sandbox/destroy-managed-vllm-flow.test.ts",
+        "src/lib/actions/sandbox/destroy-managed-vllm.test.ts",
+        "src/lib/actions/sandbox/doctor-inference.test.ts",
+        "src/lib/actions/sandbox/status.test.ts",
+        "src/lib/inference/local-model-profile/cleanup.test.ts",
+        "src/lib/inference/local.test.ts",
         "src/lib/inference/serving/catalog.test.ts",
         "src/lib/inference/serving/host-local-vllm-selection.test.ts",
         "src/lib/inference/vllm-models.test.ts",
