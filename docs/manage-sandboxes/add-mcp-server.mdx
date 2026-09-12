@@ -51,6 +51,14 @@ OpenShell resolves the placeholder at egress.
 After `mcp add` commits, NemoClaw performs a fresh status inspection and runs the gated credential-resolution probe once unless you pass `--no-probe`.
 If readiness is inconclusive, the command reports a probe skip without failing the committed add.
 
+The generated egress policy is binary-scoped. It permits the selected agent's adapter binaries to reach the MCP endpoint, but it does not permit `/usr/bin/curl`. A failed `curl` request from an interactive sandbox shell therefore does not show that the MCP route is broken. Use the managed status probe to verify policy readiness, in-sandbox endpoint reachability, and credential resolution:
+
+```bash
+$$nemoclaw my-sandbox mcp status github
+```
+
+The managed probe sends a bounded MCP `initialize` request from inside the sandbox through the selected agent adapter. Adapter binaries differ between OpenClaw, Hermes, and Deep Agents Code, so do not substitute a generic shell command for this check.
+
 Pass `--deny-tool` once for each exact tool name or OpenShell glob pattern to block at the MCP proxy:
 
 ```bash
