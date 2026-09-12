@@ -46,6 +46,33 @@ describe("semantic E2E phase checker", () => {
     expect(validateWindowsMxcControlBoundarySource(source)).toEqual([]);
   });
 
+  test("accepts the provider-owned Windows MXC lifecycle without direct sandbox commands", () => {
+    const source = `
+      async function qualify(input) {
+        const lifecycle = createWindowsMxcInactiveOnboardingLifecycle(input);
+        await lifecycle.run();
+        await lifecycle.recover();
+      }
+    `;
+
+    expect(validateWindowsMxcControlBoundarySource(source)).toEqual([]);
+  });
+
+  test("rejects mixing provider-owned and direct Windows MXC lifecycle commands", () => {
+    const source = `
+      async function qualify(input, runOpenShellCommand, sandboxName) {
+        const lifecycle = createWindowsMxcInactiveOnboardingLifecycle(input);
+        await lifecycle.run();
+        await runOpenShellCommand(["sandbox", "delete", sandboxName], "delete");
+        await lifecycle.recover();
+      }
+    `;
+
+    expect(validateWindowsMxcControlBoundarySource(source)).toEqual([
+      "provider-owned composition must not mix direct sandbox lifecycle commands",
+    ]);
+  });
+
   test("rejects direct wxc-exec control and delete-before-create for Windows MXC", () => {
     const source = `
       async function qualify(cli, env, progress, sandboxName, wxcExecPath) {
