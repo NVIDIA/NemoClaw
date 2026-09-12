@@ -517,69 +517,11 @@ export type Config = {
   script: string;
 };
 export function validatePrivateDesktop(rows: any[], nonce: string) {
-  const tokens = rows.filter((row) => row.kind === "hermes-desktop-token");
-  assert.equal(tokens.length, 1);
-  assert.equal(tokens[0].nonce, nonce);
-  assert.equal(tokens[0].diagnosticOnly, true);
-  assert.equal(tokens[0].cleanupPassed, true);
-  assert.equal(tokens[0].cleanupError, 0);
-  assert.equal(tokens[0].restrictedCodeSid, "S-1-5-12");
-  assert.deepEqual(
-    tokens[0].groups.map((row: any) => row.class),
-    ["TokenGroups", "TokenRestrictedSids"],
-  );
-  for (const group of tokens[0].groups) {
-    assert.equal(typeof group.queried, "boolean");
-    if (group.queried) assert.equal(typeof group.containsRestrictedCode, "boolean");
-    else assert.equal(group.containsRestrictedCode, null);
-  }
-  const stationRows = rows.filter((row) => row.kind === "hermes-private-station-create");
-  assert.equal(stationRows.length, 1);
-  const station = stationRows[0];
-  assert.equal(station.route, "contained-null-station");
-  assert.equal(station.diagnosticOnly, true);
-  assert.equal(station.nonce, nonce);
-  assert.equal(station.cleanupPassed, true);
-  assert.equal(station.cleanupError, 0);
-  assert.equal(station.originalContextUnchanged, true);
-  assert.equal(station.interactiveSwitchAttempted, false);
-  assert.equal(station.hostDesktopGrantsAdded, false);
-  assert.equal(station.rawProbeUnshimmed, true);
-  if (station.created) assert.equal(station.closed, true);
-  const duplicates = rows.filter((row) => row.kind === "hermes-current-station-duplicate");
-  assert.deepEqual(
-    duplicates.map((row) => row.desiredAccess),
-    [0x80000008, 0xa],
-  );
-  for (const row of duplicates) {
-    assert.equal(row.nonce, nonce);
-    assert.equal(row.rawProbeUnshimmed, true);
-    assert.equal(row.duplicateOptions, 0);
-    assert.equal(row.inheritRequested, false);
-    assert.equal(row.borrowedHandleClosed, false);
-    assert.equal(row.originalContextUnchanged, true);
-    assert.equal(row.cleanupPassed, true);
-    assert.equal(row.cleanupError, 0);
-    if (row.created) assert.equal(row.closed, true);
-    if (row.passed) {
-      assert(
-        row.created &&
-          row.closed &&
-          row.noninheritable &&
-          row.sameObject &&
-          row.currentMatchesOriginalAfterClose,
-      );
-      assert.equal(row.stage, "complete");
-      assert.equal(row.win32Error, 0);
-    } else assert.equal(row.passed, false);
-  }
   const desktops = rows.filter((row) => row.kind === "hermes-private-desktop");
-  assert.equal(desktops.length, 4);
-  for (let index = 0; index < desktops.length; ++index) {
-    const row = desktops[index];
-    const canonical = index % 2 === 0;
-    const hostOwned = index >= 2;
-    assert.equal(row.route, hostOwned ? "host-owned-station" : "current-station");
+  assert.equal(desktops.length, 2);
+  for (const [index, row] of desktops.entries()) {
+    const canonical = index === 0;
+    assert.equal(row.route, "direct-current-station");
     assert.equal(row.accessVariant, canonical ? "canonical-e0003" : "documented-e0083");
     assert.equal(
       row.descriptorVariant,
@@ -589,7 +531,7 @@ export function validatePrivateDesktop(rows: any[], nonce: string) {
     assert.equal(row.desiredAccess, canonical ? 0xe0003 : 0xe0083);
     assert.equal(row.restrictedCodeDenyMask, canonical ? 0xd013e : 0);
     assert.equal(row.requiredPass, false);
-    assert([0xbf, 0x1bf, 0x3bf].includes(row.effectiveUiMask));
+    if (row.effectiveUiMask !== null) assert([0xbf, 0x1bf, 0x3bf].includes(row.effectiveUiMask));
     assert.equal(row.interactiveSwitchAttempted, false);
     assert.equal(row.hostDesktopGrantsAdded, false);
     assert.equal(row.borrowedStationHandleClosed, false);
@@ -600,29 +542,24 @@ export function validatePrivateDesktop(rows: any[], nonce: string) {
     assert(Array.isArray(row.attempts) && row.attempts.length > 0 && row.attempts.length <= 24);
     for (const attempt of row.attempts) {
       assert(typeof attempt.stage === "string" && attempt.stage.length > 0);
+      assert(
+        !/DuplicateHandle|SetProcessWindowStation|OpenWindowStation/u.test(attempt.stage),
+        "A direct desktop observation acquired a station prerequisite.",
+      );
       assert.equal(typeof attempt.succeeded, "boolean");
       assert(Number.isSafeInteger(attempt.win32Error) && attempt.win32Error >= 0);
     }
     if (row.created) assert.equal(row.closed, true);
     if (row.passed) {
       assert(row.created && row.closed);
-      assert(row.stationSelectionSucceeded && row.stationRestored && row.stationClosed);
       assert.equal(row.originalDesktopDaclCopied, canonical);
       assert.equal(row.restrictedCodeDenyApplied, canonical);
       assert.equal(row.nullDaclUnsupported, false);
-      if (hostOwned) {
-        assert(row.stationNoninteractive && row.stationRestored && row.stationClosed);
-        assert.equal(row.stationNameVerified, true);
-        assert.match(row.sid, /^S-1-15-2-(?:[0-9]+-)*[0-9]+$/u);
-        assert.equal(row.expectedStationName, "NemoClawHermes-" + row.sid);
-      } else {
-        assert([0x80000008, 0xa].includes(row.currentRouteDuplicateAccess));
-        assert(
-          row.currentRouteDuplicateVerified &&
-            row.currentRouteDuplicateNoninheritable &&
-            row.currentMatchesOriginalAfterClose,
-        );
-      }
+      assert(
+        row.attempts.some(
+          (attempt: any) => attempt.stage === "CreateDesktopW" && attempt.succeeded,
+        ),
+      );
       assert.equal(row.stage, "complete");
       assert.equal(row.win32Error, 0);
     } else {
@@ -630,40 +567,78 @@ export function validatePrivateDesktop(rows: any[], nonce: string) {
       assert(typeof row.error === "string" && row.error.length > 0);
     }
   }
+  const duplicates = rows.filter((row) => row.kind === "hermes-current-station-duplicate");
+  assert.equal(duplicates.length, 1);
+  const duplicate = duplicates[0];
+  assert.equal(duplicate.nonce, nonce);
+  assert.equal(duplicate.rawProbeUnshimmed, true);
+  assert.equal(duplicate.desiredAccess, 0);
+  assert.equal(duplicate.duplicateOptions, 2);
+  assert.equal(duplicate.inheritRequested, false);
+  assert.equal(duplicate.borrowedHandleClosed, false);
+  assert.equal(duplicate.originalContextUnchanged, true);
+  assert.equal(duplicate.cleanupPassed, true);
+  assert.equal(duplicate.cleanupError, 0);
+  assert(
+    rows.indexOf(duplicate) > rows.indexOf(desktops[1]),
+    "Duplicate observation ran before direct desktop calls.",
+  );
+  for (const basic of [duplicate.originalObjectBasic, duplicate.duplicateObjectBasic]) {
+    assert.equal(typeof basic.attempted, "boolean");
+    if (basic.status !== null) assert.match(basic.status, /^0x[0-9a-f]{8}$/u);
+    assert(Number.isSafeInteger(basic.returnedBytes) && basic.returnedBytes >= 0);
+    for (const key of ["grantedAccess", "attributes"]) {
+      if (basic[key] !== null) {
+        assert.equal(basic.status, "0x00000000");
+        assert(basic.returnedBytes >= 56);
+        assert(Number.isSafeInteger(basic[key]) && basic[key] >= 0 && basic[key] <= 0xffffffff);
+      }
+    }
+  }
+  for (const metadata of [
+    duplicate.duplicateUserObjectFlags,
+    duplicate.duplicateHandleInformation,
+  ]) {
+    assert.equal(typeof metadata.queried, "boolean");
+    assert(Number.isSafeInteger(metadata.win32Error) && metadata.win32Error >= 0);
+  }
+  if (duplicate.created) assert.equal(duplicate.closed, true);
+  if (duplicate.passed) {
+    assert(
+      duplicate.created &&
+        duplicate.closed &&
+        duplicate.sameObject &&
+        duplicate.currentMatchesOriginalAfterClose,
+    );
+    assert.equal(duplicate.duplicateUserObjectFlags.queried, true);
+    assert.equal(duplicate.duplicateUserObjectFlags.inherit, false);
+    // Generic handle metadata is diagnostic-only for WindowStation handles.
+    if (
+      duplicate.originalObjectBasic.grantedAccess !== null &&
+      duplicate.duplicateObjectBasic.grantedAccess !== null
+    )
+      assert.equal(
+        duplicate.duplicateObjectBasic.grantedAccess,
+        duplicate.originalObjectBasic.grantedAccess,
+      );
+    assert.equal(duplicate.stage, "complete");
+    assert.equal(duplicate.win32Error, 0);
+  } else assert.equal(duplicate.passed, false);
   const summaries = rows.filter((row) => row.kind === "hermes-private-desktop-summary");
   assert.equal(summaries.length, 1);
   const summary = summaries[0];
   assert.equal(summary.nonce, nonce);
   assert.equal(summary.observationsCompleted, true);
   assert.equal(summary.allCleanupPassed, true);
-  assert.equal(
-    summary.currentStationPassed,
-    desktops.slice(0, 2).some((row) => row.passed),
-  );
-  assert.equal(
-    summary.hostStationPassed,
-    desktops.slice(2).some((row) => row.passed),
-  );
-  assert.equal(summary.currentStationCanonicalPassed, desktops[0].passed);
-  assert.equal(
-    summary.currentStationCanonicalFallbackPassed,
-    desktops[0].passed && duplicates.some((row) => row.passed),
-  );
-  assert.equal(
-    summary.currentStationDuplicatePassed,
-    duplicates.some((row) => row.passed),
-  );
-  assert.equal(
-    summary.currentStationFallbackReady,
-    summary.currentStationPassed && summary.currentStationDuplicatePassed,
-  );
-  assert.equal(summary.hostStationCanonicalPassed, desktops[2].passed);
-  assert.equal(summary.canonicalDesktopCallPassed, desktops[0].passed || desktops[2].passed);
+  assert.equal(summary.directCurrentCanonicalPassed, desktops[0].passed);
+  assert.equal(summary.directCurrentExplicitPassed, desktops[1].passed);
+  assert.equal(summary.sameAccessDuplicatePassed, duplicate.passed);
   assert.equal(summary.canonicalChromeSupportQualified, false);
+  assert.notEqual(summary.currentStationCanonicalFallbackPassed, true);
   assert.equal(summary.passed, true);
   assert(
-    summary.currentStationFallbackReady || summary.hostStationPassed,
-    "No usable desktop route",
+    desktops.some((row) => row.passed),
+    "Neither direct desktop creation succeeded.",
   );
   return desktops;
 }
