@@ -7,6 +7,8 @@ Direct E2E coverage runs through Vitest.
 
 Fake inference providers share JSON responses, SSE event framing, and server shutdown through
 `fixtures/http-protocol.ts`. Provider request handling and lifecycle decisions stay with each provider.
+Slack and Discord share frame encoding and decoding through `lib/websocket-frames.mts`.
+Each provider owns its handshake ordering, authentication, messages, and connection state.
 
 Interactive TUI targets require `expect`. The unified workflow installs it
 before those targets run; local runners must provide it themselves.
