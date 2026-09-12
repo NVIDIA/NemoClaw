@@ -162,48 +162,98 @@ function executor(
 
 describe("inactive trusted Windows OpenShell executor", () => {
   it.each([
-    ["attachment", "boundary-error"],
-    ["artifact-tree", "boundary-error"],
-    ["artifact-tree", "identity-drift"],
-    ["pin-acquire", "boundary-error"],
-    ["pin-acquire", "timeout"],
-    ["pinned-tree", "boundary-error"],
-    ["pin-release", "boundary-error"],
-  ] as const)(
-    "records sanitized %s verification failures classified as %s (#10585)",
-    async (stage, errorClass) => {
-      const request = await issuedRequest();
-      const test = runtime(request);
-      const secret = "must-not-log-token-or-private-path";
-      const failure = new Error(secret);
-      if (stage === "attachment")
+    {
+      stage: "attachment",
+      errorClass: "boundary-error",
+      status: "artifact-verification-failed",
+      runs: 0,
+      releases: 0,
+      configure(test: ReturnType<typeof runtime>, failure: Error) {
         vi.mocked(test.runtime.observeFileDigest).mockRejectedValue(failure);
-      if (stage === "artifact-tree") {
-        if (errorClass === "identity-drift") {
-          vi.mocked(test.runtime.observeArtifactTree).mockReturnValue({
-            ...test.tree,
-            sha256: "f".repeat(64),
-          });
-        } else
-          vi.mocked(test.runtime.observeArtifactTree).mockImplementation(() => {
-            throw failure;
-          });
-      }
-      if (stage === "pin-acquire") {
+      },
+    },
+    {
+      stage: "artifact-tree",
+      errorClass: "boundary-error",
+      status: "artifact-verification-failed",
+      runs: 0,
+      releases: 0,
+      configure(test: ReturnType<typeof runtime>, failure: Error) {
+        vi.mocked(test.runtime.observeArtifactTree).mockImplementation(() => {
+          throw failure;
+        });
+      },
+    },
+    {
+      stage: "artifact-tree",
+      errorClass: "identity-drift",
+      status: "artifact-verification-failed",
+      runs: 0,
+      releases: 0,
+      configure(test: ReturnType<typeof runtime>) {
+        vi.mocked(test.runtime.observeArtifactTree).mockReturnValue({
+          ...test.tree,
+          sha256: "f".repeat(64),
+        });
+      },
+    },
+    {
+      stage: "pin-acquire",
+      errorClass: "boundary-error",
+      status: "artifact-verification-failed",
+      runs: 0,
+      releases: 0,
+      configure(test: ReturnType<typeof runtime>, failure: Error) {
+        vi.mocked(test.runtime.acquirePins).mockRejectedValue(failure);
+      },
+    },
+    {
+      stage: "pin-acquire",
+      errorClass: "timeout",
+      status: "artifact-verification-failed",
+      runs: 0,
+      releases: 0,
+      configure(test: ReturnType<typeof runtime>, failure: Error) {
         vi.mocked(test.runtime.acquirePins).mockRejectedValue(
-          errorClass === "timeout"
-            ? new MxcWindowsOpenShellExecutorError(secret, "not-started", { stage, errorClass })
-            : failure,
+          new MxcWindowsOpenShellExecutorError(failure.message, "not-started", {
+            stage: "pin-acquire",
+            errorClass: "timeout",
+          }),
         );
-      }
-      if (stage === "pinned-tree") {
+      },
+    },
+    {
+      stage: "pinned-tree",
+      errorClass: "boundary-error",
+      status: "artifact-verification-failed",
+      runs: 0,
+      releases: 1,
+      configure(test: ReturnType<typeof runtime>, failure: Error) {
         vi.mocked(test.runtime.observeArtifactTree)
           .mockReturnValueOnce(test.tree)
           .mockImplementationOnce(() => {
             throw failure;
           });
-      }
-      if (stage === "pin-release") test.release.mockRejectedValue(failure);
+      },
+    },
+    {
+      stage: "pin-release",
+      errorClass: "boundary-error",
+      status: "unknown",
+      runs: 1,
+      releases: 1,
+      configure(test: ReturnType<typeof runtime>, failure: Error) {
+        test.release.mockRejectedValue(failure);
+      },
+    },
+  ] as const)(
+    "records sanitized $stage verification failures classified as $errorClass (#10585)",
+    async ({ stage, errorClass, status, runs, releases, configure }) => {
+      const request = await issuedRequest();
+      const test = runtime(request);
+      const secret = "must-not-log-token-or-private-path";
+      const failure = new Error(secret);
+      configure(test, failure);
       const recordFailure = vi.fn();
       const result = await executor(
         test.runtime,
@@ -216,9 +266,7 @@ describe("inactive trusted Windows OpenShell executor", () => {
         request,
         command: createCommand(request),
       });
-      expect(result.status).toBe(
-        stage === "pin-release" ? "unknown" : "artifact-verification-failed",
-      );
+      expect(result.status).toBe(status);
       expect(recordFailure).toHaveBeenCalledOnce();
       expect(recordFailure).toHaveBeenCalledWith({
         contractVersion: 1,
@@ -232,10 +280,8 @@ describe("inactive trusted Windows OpenShell executor", () => {
       const recorded = recordFailure.mock.calls[0]![0];
       expect(recorded.verification.elapsedMs).toBeGreaterThanOrEqual(0);
       expect(JSON.stringify(recorded)).not.toContain(secret);
-      expect(test.runtime.runCommand).toHaveBeenCalledTimes(stage === "pin-release" ? 1 : 0);
-      expect(test.release).toHaveBeenCalledTimes(
-        stage === "pinned-tree" || stage === "pin-release" ? 1 : 0,
-      );
+      expect(test.runtime.runCommand).toHaveBeenCalledTimes(runs);
+      expect(test.release).toHaveBeenCalledTimes(releases);
     },
   );
 

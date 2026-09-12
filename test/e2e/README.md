@@ -666,6 +666,12 @@ directories beneath the writable share; it does not expose the corresponding
 host directories to the sandbox. Host-only configuration remains outside the
 sandbox share.
 
+The provider validates the staged tree and Node.js digest, pins its files, and
+rechecks the tree before issuing sandbox creation. Gateway and forward readiness
+both require a loopback listener owned by the spawned process ID. A listener
+owned by another process cannot satisfy readiness. Listener queries remain
+bounded, and the target separately validates each process identity.
+
 ```powershell
 npx tsx tools/e2e/windows-mxc-openclaw-artifact-tree.mts $env:NEMOCLAW_WINDOWS_MXC_OPENCLAW_ROOT
 ```

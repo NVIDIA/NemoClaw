@@ -823,15 +823,6 @@ export function createWindowsMxcOpenShellAttachmentObservationRequest(
   });
 }
 
-export function sandboxListContainsExactName(output: string, sandboxName: string): boolean {
-  const parsed: unknown = JSON.parse(output);
-  if (!Array.isArray(parsed)) throw new Error("OpenShell sandbox list JSON must be an array");
-  return parsed.some(
-    (entry) =>
-      typeof entry === "object" && entry !== null && "name" in entry && entry.name === sandboxName,
-  );
-}
-
 export function parseWindowsProcessIdentity(output: string): WindowsProcessIdentity | null {
   if (!output.trim()) return null;
   const value: unknown = JSON.parse(output);
@@ -916,7 +907,7 @@ export function assertExpectedOpenClawProcessIdentity(
     !commandLineHasExactArgumentPair(
       identity.child.commandLine,
       "--import",
-      pathToFileURL(expected.compatibilityPreloadPath).href,
+      pathToFileURL(expected.compatibilityPreloadPath, { windows: true }).href,
     ) ||
     !commandLineHasExactArgument(identity.child.commandLine, "gateway") ||
     !commandLineHasExactArgumentPair(identity.child.commandLine, "--port", String(expected.port)) ||
@@ -1395,10 +1386,7 @@ export function parseWindowsMxcInteractiveHostContext(
   } catch {
     throw new Error("Windows host launch-context output is invalid");
   }
-  if (value === null || typeof value !== "object") {
-    throw new Error("Windows host launch-context output is invalid");
-  }
-  const { processElevated, processSessionId, processUserInteractive } = value as Record<
+  const { processElevated, processSessionId, processUserInteractive } = (value ?? {}) as Record<
     string,
     unknown
   >;
@@ -1458,11 +1446,11 @@ async function waitForOwnedLoopbackListener(input: {
     ],
     input.environment,
     input.progress,
-    "command: windows-mxc-openshell-forward-listener-owner",
+    "command: windows-mxc-openshell-listener-owner",
     COMMAND_TIMEOUT_MS + 5000,
   );
   if (result.exitCode !== 0) {
-    throw new Error("OpenShell forward did not own the expected loopback listener");
+    throw new Error("OpenShell process did not own the expected loopback listener");
   }
 }
 
@@ -1558,30 +1546,6 @@ async function waitForTrustedProcessExit(
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
   return !(await trustedProcessIsAlive(identity, powershellPath, environment, progress));
-}
-
-async function waitForPort(port: number, child: ChildProcess): Promise<void> {
-  const deadline = Date.now() + COMMAND_TIMEOUT_MS;
-  while (Date.now() < deadline) {
-    if (child.exitCode !== null) throw new Error("long-running process exited before listening");
-    const connected = await new Promise<boolean>((resolve) => {
-      const socket = net.createConnection({ host: "127.0.0.1", port });
-      socket.setTimeout(250);
-      socket.once("connect", () => {
-        socket.destroy();
-        resolve(true);
-      });
-      const finish = () => {
-        socket.destroy();
-        resolve(false);
-      };
-      socket.once("error", finish);
-      socket.once("timeout", finish);
-    });
-    if (connected) return;
-    await new Promise((resolve) => setTimeout(resolve, 200));
-  }
-  throw new Error(`loopback service did not listen within ${COMMAND_TIMEOUT_MS}ms`);
 }
 
 async function freeDistinctLoopbackPorts(count: number): Promise<readonly number[]> {
@@ -1916,11 +1880,6 @@ export function assertExactArtifactIdentities(inputs: WindowsMxcOpenClawQualific
   }
 }
 
-function assertExactIdentities(inputs: WindowsMxcOpenClawQualificationInputs): void {
-  assertCurrentCheckoutIdentity(inputs.expected.nemoClawRevision);
-  assertExactArtifactIdentities(inputs);
-}
-
 function createWindowsMxcOpenClawQualificationWorkload(
   inputs: WindowsMxcOpenClawQualificationInputs,
   probeAgentPath: string,
@@ -2112,24 +2071,7 @@ async function prepareWindowsMxcOpenClawLocalSetup(input: {
         ),
         version: input.inputs.openClaw.version,
       });
-      if (
-        sha256WindowsOpenClawArtifactTree(stagedOpenClaw.root) !==
-        input.inputs.expected.openClawArtifactTreeSha256
-      ) {
-        throw new Error(
-          "staged OpenClaw artifact tree does not match the reviewed source identity",
-        );
-      }
-      assertExactFileIdentity(
-        stagedOpenClaw.nodePath,
-        input.inputs.expected.nodeSha256,
-        "stagedNodeSha256",
-      );
-      assertExactFileIdentity(
-        stagedOpenClaw.entryPath,
-        input.inputs.expected.openClawEntrySha256,
-        "stagedOpenClawEntrySha256",
-      );
+      // The provider verifies this tree and executable, then pins and rechecks all files before create.
 
       const gatewayConfigPath = path.join(runRoot, "gateway.toml");
       const policyPath = path.join(runRoot, "policy.yaml");
@@ -2341,22 +2283,18 @@ export async function runWindowsMxcOpenClawProcessContainerQualification(
   environment: NodeJS.ProcessEnv = process.env,
 ): Promise<WindowsMxcOpenClawQualificationReceipt> {
   const observedNativeArchitecture = observeWindowsNativeArchitecture(environment);
-  if (process.platform !== "win32" || observedNativeArchitecture === null) {
-    throw new Error(
-      "Windows MXC OpenClaw qualification requires a native Windows x64 or ARM64 host",
-    );
-  }
   const host = assessWindowsMxcProcessContainerCandidate(
     {
       platform: process.platform,
-      nativeArchitecture: observedNativeArchitecture,
+      nativeArchitecture: observedNativeArchitecture ?? "unknown",
       release: os.release(),
     },
-    observedNativeArchitecture,
+    observedNativeArchitecture ?? undefined,
   );
   if (!host.candidate) throw new Error(host.detail);
   requireWindowsDriveRoot(inputs.workDirectory);
-  assertExactIdentities(inputs);
+  assertCurrentCheckoutIdentity(inputs.expected.nemoClawRevision);
+  assertExactArtifactIdentities(inputs);
   const powershellPath = trustedWindowsSystemExecutable(
     environment,
     ["System32", "WindowsPowerShell", "v1.0", "powershell.exe"],
@@ -2600,8 +2538,14 @@ export async function runWindowsMxcOpenClawProcessContainerQualification(
         },
       },
     );
-    await waitForPort(gatewayPort, gateway);
     if (gateway.pid === undefined) throw new Error("OpenShell gateway did not report a process ID");
+    await waitForOwnedLoopbackListener({
+      environment: controlEnvironment,
+      port: gatewayPort,
+      powershellPath,
+      processId: gateway.pid,
+      progress,
+    });
     trustedGatewayProcess = await observeWindowsProcessIdentity(
       gateway.pid,
       powershellPath,
@@ -3132,7 +3076,7 @@ export async function runWindowsMxcOpenClawProcessContainerQualification(
     },
     identities: {
       host: {
-        architecture: observedNativeArchitecture,
+        architecture: host.nativeArchitecture,
         ...hostLaunchContext,
         platform: "win32",
         release: os.release(),

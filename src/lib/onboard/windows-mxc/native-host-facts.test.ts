@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { observeWindowsMxcNativeHostFacts } from "./native-host-facts";
 
@@ -55,17 +55,12 @@ describe("inactive native Windows MXC host observation", () => {
   });
 
   it("uses the ARM processor identity when ARM64 Windows omits the WOW64 marker (#10585)", () => {
-    const previousArchitecture = process.env.PROCESSOR_ARCHITEW6432;
-    const previousIdentifier = process.env.PROCESSOR_IDENTIFIER;
     try {
-      delete process.env.PROCESSOR_ARCHITEW6432;
-      process.env.PROCESSOR_IDENTIFIER = "ARMv8 (64-bit) Family 8 Model D87 Revision 1, NVIDIA";
+      vi.stubEnv("PROCESSOR_ARCHITEW6432", undefined);
+      vi.stubEnv("PROCESSOR_IDENTIFIER", "ARMv8 (64-bit) Family 8 Model D87 Revision 1, NVIDIA");
       expect(observeWindowsMxcNativeHostFacts()).toMatchObject({ nativeArchitecture: "arm64" });
     } finally {
-      if (previousArchitecture === undefined) delete process.env.PROCESSOR_ARCHITEW6432;
-      else process.env.PROCESSOR_ARCHITEW6432 = previousArchitecture;
-      if (previousIdentifier === undefined) delete process.env.PROCESSOR_IDENTIFIER;
-      else process.env.PROCESSOR_IDENTIFIER = previousIdentifier;
+      vi.unstubAllEnvs();
     }
   });
 });
