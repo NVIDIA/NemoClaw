@@ -254,6 +254,15 @@ repos:
   # ── pre-push hooks ─────────────────────────────────────────────────────────
   - repo: local
     hooks:
+      - id: publication-validation
+        name: Publication validation
+        entry: npx tsx scripts/checks/validate-pr.mts --pre-push
+        language: system
+        always_run: true
+        pass_filenames: false
+        stages: [pre-push]
+        priority: 1
+
       - id: tsc-plugin
         name: TypeScript (plugin)
         entry: npx tsx scripts/checks/cached-command.mts tsc-plugin
