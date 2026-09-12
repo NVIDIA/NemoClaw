@@ -18,7 +18,7 @@ import { expect } from "../fixtures/e2e-test.ts";
 import type { E2EInferenceAdapter } from "../fixtures/inference-adapter.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import type { TestProgress } from "../fixtures/progress.ts";
-import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
+import type { ShellProbeResult, ShellProbeRunOptions } from "../fixtures/shell-probe.ts";
 import { isTransientProviderValidationFailure } from "./network-policy-transient-provider.ts";
 
 // The injected E2E inference adapter (#5745) is the single source of the
@@ -173,6 +173,7 @@ export type OpenClawAgentDurationEvidence =
 export interface OpenClawFirstTurnLatencyEvidence {
   firstTurnAgentDuration: OpenClawAgentDurationEvidence;
   firstTurnCommandMs: number;
+  firstTurnHostOverheadMs?: number;
 }
 
 /**
@@ -210,9 +211,14 @@ export function buildOpenClawFirstTurnLatencyEvidence(
   ) {
     throw new Error("first-turn command duration is invalid");
   }
+  const firstTurnAgentDuration = extractOpenClawAgentDurationEvidence(output);
   return {
-    firstTurnAgentDuration: extractOpenClawAgentDurationEvidence(output),
+    firstTurnAgentDuration,
     firstTurnCommandMs,
+    ...(firstTurnAgentDuration.status === "available" &&
+    firstTurnAgentDuration.durationMs <= firstTurnCommandMs
+      ? { firstTurnHostOverheadMs: firstTurnCommandMs - firstTurnAgentDuration.durationMs }
+      : {}),
   };
 }
 
@@ -446,28 +452,33 @@ export async function route(
 }
 
 export async function openclawTurn(
-  sandbox: SandboxClient,
+  host: HostCliClient,
   inference: AgentTurnInference,
-  progress?: Pick<TestProgress, "onOutput">,
+  progress: Pick<TestProgress, "onOutput">,
   options: {
-    artifactName?: string;
-    prompt?: string;
-    sessionId?: string;
-  } = {},
+    artifactName: string;
+    args: string[];
+    stdin?: ShellProbeRunOptions["stdin"];
+  },
 ): Promise<{ result: ShellProbeResult; elapsedMs: number }> {
-  const prompt =
-    options.prompt ?? "What is 6 multiplied by 7? Reply with only the integer, no extra words.";
-  const sessionId = options.sessionId ?? "e2e-turn-latency";
   const started = process.hrtime.bigint();
-  const result = await sandbox.execShell(
-    OPENCLAW_SANDBOX,
-    trustedSandboxShellScript(
-      `openclaw agent --agent main --json --thinking off --session-id ${shellQuote(sessionId)} -m ${shellQuote(prompt)}`,
-    ),
+  const result = await host.nemoclaw(
+    [
+      OPENCLAW_SANDBOX,
+      "agent",
+      "--agent",
+      "main",
+      "--thinking",
+      "off",
+      "--session-id",
+      "e2e-turn-latency",
+      ...options.args,
+    ],
     {
-      artifactName: options.artifactName ?? "openclaw-agent-turn",
+      stdin: options.stdin,
+      artifactName: options.artifactName,
       env: env(OPENCLAW_SANDBOX, "openclaw", inference),
-      onOutput: progress?.onOutput,
+      onOutput: progress.onOutput,
       redactionValues: inference.redactionValues(),
       timeoutMs: (MAX_TURN_SECONDS + 30) * 1000,
     },

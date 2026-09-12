@@ -112,6 +112,9 @@ function artifactLifecycle(stop = async (): Promise<void> => undefined): LocalRe
       fs.mkdirSync(output, { recursive: true });
       fs.writeFileSync(path.join(output, "pr-review-" + interest + "-summary.md"), "review\n");
       fs.writeFileSync(path.join(output, "pr-review-" + interest + "-session.jsonl"), "{}\n");
+      fs.writeFileSync(path.join(output, "pr-review-" + interest + "-e2e.json"), "{}\n");
+      fs.writeFileSync(path.join(output, "pr-review-" + interest + "-findings.json"), "{}\n");
+      fs.writeFileSync(path.join(output, "review-queue-context.json"), "{}\n");
     },
     remove: () => undefined,
   };
@@ -502,6 +505,9 @@ describe("local PR review advisor", () => {
         fs.mkdirSync(out, { recursive: true });
         fs.writeFileSync(path.join(out, "pr-review-" + interest + "-summary.md"), "review\n");
         fs.writeFileSync(path.join(out, "pr-review-" + interest + "-session.jsonl"), "{}\n");
+        fs.writeFileSync(path.join(out, "pr-review-" + interest + "-e2e.json"), "{}\n");
+        fs.writeFileSync(path.join(out, "pr-review-" + interest + "-findings.json"), "{}\n");
+        fs.writeFileSync(path.join(out, "review-queue-context.json"), "{}\n");
       },
       remove: (env) => {
         calls.push("remove:" + env.PR_REVIEW_ADVISOR_INTEREST);
@@ -805,9 +811,13 @@ describe("local PR review advisor", () => {
   const interest = ADVISOR_SPECIALISTS[0]!.interest;
   const summary = `pr-review-${interest}-summary.md`;
   const session = `pr-review-${interest}-session.jsonl`;
+  const e2e = `pr-review-${interest}-e2e.json`;
+  const findings = `pr-review-${interest}-findings.json`;
   it.each([
     ["missing", [summary]],
-    ["extra", [summary, session, "extra.txt"]],
+    ["missing context", [summary, session, e2e, findings]],
+    ["missing findings", [summary, session, e2e, "review-queue-context.json"]],
+    ["extra", [summary, session, e2e, findings, "review-queue-context.json", "extra.txt"]],
   ])("rejects %s specialist artifact sets (#10611)", async (_case, files) => {
     const source = repository();
     const lifecycle: LocalReviewLifecycle = {
@@ -833,7 +843,8 @@ describe("local PR review advisor", () => {
     ).rejects.toMatchObject({
       message: expect.stringContaining("failed during validate"),
       cause: expect.objectContaining({
-        message: "Specialist artifacts do not match the existing Markdown and JSONL contract",
+        message:
+          "Specialist artifacts do not match the context, E2E, findings, Markdown, and JSONL contract",
       }),
     });
   });

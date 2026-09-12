@@ -10,7 +10,6 @@ import { hydrateDerivedSandboxMessagingPlanFields } from "../messaging/hydration
 import type { SandboxMessagingHostForwardPlan } from "../messaging/manifest";
 import { parseSandboxMessagingPlan } from "../messaging/plan-validation";
 import * as registry from "../state/registry";
-import { retireProductionLegacySandboxForwards } from "./forward-service-migration";
 
 type GatewayBinding =
   | {
@@ -38,7 +37,6 @@ export function productionForwardServiceRegistryContext() {
     getSandbox: registry.getSandbox,
     listSandboxes: registry.listSandboxes,
     resolveGatewayName: resolveProductionForwardServiceGatewayName,
-    retireLegacy: retireProductionLegacySandboxForwards,
   };
 }
 

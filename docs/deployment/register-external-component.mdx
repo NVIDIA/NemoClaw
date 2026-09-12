@@ -30,12 +30,14 @@ The component owner must operate its service, sockets, credentials, resources, a
 Version 1 does not support these operations or configurations:
 
 - Resume, reuse, repair, rebuild, recreation, or migration.
-- Providerless Agent Policy Framework (APF) interceptor onboarding.
+- Providerless component onboarding with NemoClaw-supplied initial policy.
 - An externally supervised OpenShell gateway.
 - More than one registered component.
 - Generic shell commands, repository commands, vendor adapters, or a new OpenShell provider attachment API.
 
 Onboarding without the declaration uses the existing onboarding behavior.
+Registration alone does not select providerless onboarding.
+Ordinary onboarding with a registered component keeps NemoClaw's initial policy and provider setup.
 
 ## Create the Declaration
 
@@ -128,6 +130,32 @@ The policy must contain the NemoClaw policy requirements and have a valid hash a
 The policy version must match the live sandbox observation.
 
 NemoClaw sends identity to the component only after these checks pass.
+
+<AgentOnly variant="openclaw">
+
+### Select Interceptor-Supplied Policy
+
+To use the registered component for fresh providerless onboarding, explicitly select `--apf-interceptor`:
+
+```bash
+nemoclaw onboard --fresh --apf-interceptor --name component-sandbox
+```
+
+The component must supply sandbox policy through the existing OpenShell `CreateSandbox` interceptor contract.
+A generic component can implement this contract; no specific policy framework is required.
+The [providerless onboarding prerequisites](../reference/commands#--apf-interceptor) also apply.
+
+NemoClaw supplies no initial policy, creates no providers, and handles no component credentials in this flow.
+Any providers required by the component's policy must resolve through existing OpenShell mechanisms before activation.
+Missing, invalid, or unresolved policy or provider requirements stop onboarding before activation.
+NemoClaw does not substitute its own policy or switch to ordinary onboarding.
+
+After OpenShell creates the sandbox, NemoClaw verifies its immutable identity and effective policy before invoking the same activation endpoint described below.
+Completion requires successful bounded activation and post-response verification.
+This flow skips ordinary agent configuration, policy selection, and inference setup.
+Providerless onboarding without a registered component retains its existing behavior.
+
+</AgentOnly>
 
 ## Implement the Activation Endpoint
 

@@ -36,7 +36,11 @@ interface ExternalComponentProofDeps {
     readonly lifecycleGeneration?: string;
     readonly lifecycleLiveIdentityFingerprint?: string;
   } | null;
-  inspectPolicy(name: string, operation: string, gatewayName: string): PolicyContext;
+  inspectPolicy(
+    name: string,
+    operation: string,
+    gatewayName: string,
+  ): PolicyContext | Promise<PolicyContext>;
   listSandboxes(gatewayName: string): string;
 }
 
@@ -50,11 +54,11 @@ interface ProofSnapshot {
   readonly sandboxIdentityFingerprint: string;
 }
 
-function captureProofSnapshotUnchecked(
+async function captureProofSnapshotUnchecked(
   sandboxName: string,
   expectedGatewayName: string,
   deps: ExternalComponentProofDeps,
-): ProofSnapshot {
+): Promise<ProofSnapshot> {
   const entry = deps.getSandbox(sandboxName);
   if (
     !entry ||
@@ -76,16 +80,17 @@ function captureProofSnapshotUnchecked(
   if (fingerprint !== entry.lifecycleLiveIdentityFingerprint) {
     throw new ExternalComponentProofError();
   }
-  const policy = deps.inspectPolicy(
+  const policy = await deps.inspectPolicy(
     sandboxName,
     "verify external component activation policy",
     expectedGatewayName,
   );
+  const policyDigest = policy.inspection.policyIdentity.hash.replace(/^sha256:/u, "");
   if (
     policy.gatewayName !== expectedGatewayName ||
     policy.inspection.policySource !== "sandbox" ||
     row.current_policy_version !== policy.inspection.policyIdentity.activeVersion ||
-    !/^sha256:[0-9a-f]{64}$/u.test(policy.inspection.policyIdentity.hash)
+    !/^[0-9a-f]{64}$/u.test(policyDigest)
   ) {
     throw new ExternalComponentProofError();
   }
@@ -101,35 +106,35 @@ function captureProofSnapshotUnchecked(
     gatewayName: expectedGatewayName,
     lifecycleGeneration: entry.lifecycleGeneration,
     policyActiveVersion: policy.inspection.policyIdentity.activeVersion,
-    policyHash: policy.inspection.policyIdentity.hash,
+    policyHash: `sha256:${policyDigest}`,
     policySource: policy.inspection.policySource,
     sandboxId: row.id,
     sandboxIdentityFingerprint: `sha256:${fingerprint}`,
   };
 }
 
-function captureProofSnapshot(
+async function captureProofSnapshot(
   sandboxName: string,
   expectedGatewayName: string,
   deps: ExternalComponentProofDeps,
-): ProofSnapshot {
+): Promise<ProofSnapshot> {
   try {
-    return captureProofSnapshotUnchecked(sandboxName, expectedGatewayName, deps);
+    return await captureProofSnapshotUnchecked(sandboxName, expectedGatewayName, deps);
   } catch {
     throw new ExternalComponentProofError();
   }
 }
 
-export function createExternalComponentActivationProof(
+export async function createExternalComponentActivationProof(
   sandboxName: string,
   gatewayName: string,
   deps: ExternalComponentProofDeps,
-): ExternalComponentActivationProof {
-  const initial = captureProofSnapshot(sandboxName, gatewayName, deps);
+): Promise<ExternalComponentActivationProof> {
+  const initial = await captureProofSnapshot(sandboxName, gatewayName, deps);
   return {
     ...initial,
-    revalidate: () => {
-      if (!isDeepStrictEqual(captureProofSnapshot(sandboxName, gatewayName, deps), initial)) {
+    revalidate: async () => {
+      if (!isDeepStrictEqual(await captureProofSnapshot(sandboxName, gatewayName, deps), initial)) {
         throw new ExternalComponentProofError();
       }
     },

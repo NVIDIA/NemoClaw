@@ -34,8 +34,8 @@ export interface FinalizationStateOptions<Agent, VerifyChain, VerificationResult
   webSearchEnabled: boolean;
   webSearchProvider: WebSearchVerifyProvider | null;
   portableProfileSelected?: boolean;
-  recreateJournalHandoff?: boolean;
   externalComponent?: PreparedExternalComponent | null;
+  providerless?: boolean;
   deps: {
     /**
      * Mark this sandbox as the default. Called here (not at sandbox creation) so
@@ -43,7 +43,9 @@ export interface FinalizationStateOptions<Agent, VerifyChain, VerificationResult
      * registered as default (#4614).
      */
     setDefaultSandbox(sandboxName: string): void;
-    createExternalComponentActivationProof?(sandboxName: string): ExternalComponentActivationProof;
+    createExternalComponentActivationProof?(
+      sandboxName: string,
+    ): ExternalComponentActivationProof | Promise<ExternalComponentActivationProof>;
     createExternalComponentActivationId?(): string;
     activateExternalComponent?(
       component: PreparedExternalComponent,
@@ -198,6 +200,7 @@ export async function handleFinalizationState<Agent, VerifyChain, VerificationRe
   stagedLegacyKeys,
   migratedLegacyKeys,
   externalComponent = null,
+  providerless = false,
   deps,
 }: FinalizationStateOptions<
   Agent,
@@ -205,6 +208,9 @@ export async function handleFinalizationState<Agent, VerifyChain, VerificationRe
   VerificationResult
 >): Promise<FinalizationStateResult> {
   const manageDashboard = shouldManageDashboardForAgent(agent as DashboardRuntimeAgent);
+  if (providerless && !externalComponent) {
+    throw new Error("Providerless finalization requires a registered external component.");
+  }
   if (externalComponent) {
     if (
       !deps.createExternalComponentActivationProof ||
@@ -214,7 +220,7 @@ export async function handleFinalizationState<Agent, VerifyChain, VerificationRe
     ) {
       throw new Error("External component activation is unavailable.");
     }
-    const proof = deps.createExternalComponentActivationProof(sandboxName);
+    const proof = await deps.createExternalComponentActivationProof(sandboxName);
     const activationId = deps.createExternalComponentActivationId();
     const evidence = (resultClass: "failed" | "ambiguous") => ({
       schemaVersion: 1 as const,
@@ -244,6 +250,12 @@ export async function handleFinalizationState<Agent, VerifyChain, VerificationRe
       };
     }
     deps.setExternalComponentActivationEvidence(null);
+  }
+  if (providerless) {
+    return {
+      stateResult: advanceTo("post_verify", { metadata: { state: "finalizing" } }),
+      unmigratedLegacyKeys: stagedLegacyKeys.filter((key) => !migratedLegacyKeys.has(key)),
+    };
   }
   // Reaching finalization means the policy-preset step was confirmed, so it is
   // now safe to register this sandbox as the default (#4614).
@@ -287,7 +299,6 @@ export async function handlePostVerifyState<Agent, VerifyChain, VerificationResu
   webSearchEnabled,
   webSearchProvider,
   portableProfileSelected,
-  recreateJournalHandoff,
   deps,
 }: FinalizationStateOptions<
   Agent,
@@ -302,9 +313,7 @@ export async function handlePostVerifyState<Agent, VerifyChain, VerificationResu
     deps.readRegistryAgent,
   );
   const ordinaryOpenClawPairingRequired =
-    portableAgent === "ordinary" &&
-    selectedAgentName(agent) === "openclaw" &&
-    recreateJournalHandoff !== true;
+    portableAgent === "ordinary" && selectedAgentName(agent) === "openclaw";
   let verificationDiagnostics: string[] = [];
   let deploymentHealthy = true;
   if (portableAgent !== "ordinary") {

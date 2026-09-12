@@ -355,9 +355,6 @@ test/e2e/
   that own the changed files. Each trusted push also selects the CPU-only
   `jetson-nvmap-gpu` proof. If no other retained E2E owns a changed file,
   `Relevant E2E` requires only the Jetson proof.
-  Push runs skip `llama-cpp-dgx-spark-plan` and
-  `llama-cpp-dgx-spark-qualification` because a push event cannot set their
-  required workflow dispatch flag.
   Runner, credential, evidence, and cleanup requirements remain job-specific.
   A maintainer can also dispatch the trusted `main` workflow against the latest
   commit from an open PR whose source branch is in `NVIDIA/NemoClaw`. The manual path validates the actor,
@@ -382,10 +379,7 @@ test/e2e/
   For a PR revision run, leave `jobs` and `targets` empty for all default-selected
   workflow E2E, catalogue profiles, shared tests, and registry targets.
   `Exact staging Brev Launchable` requires its separate opt-in.
-  Keep `allow_jetson_dispatch=false` and `allow_dgx_spark_runner_queue=false` for
-  the default selection. If the DGX Spark flag is `true`, GitHub can pause the
-  qualification job for the `approve-dgx-spark-image-qualification` environment.
-  An authorized environment reviewer must approve it before qualification starts.
+  Keep `allow_jetson_dispatch=false` for the default selection.
   Supported jobs and targets can also be selected individually.
   Refer to [NemoClaw E2E CI](../README.md).
 
