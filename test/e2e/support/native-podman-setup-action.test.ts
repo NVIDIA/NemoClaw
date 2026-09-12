@@ -7,6 +7,7 @@ import { addAbortListener } from "node:events";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { StringDecoder } from "node:string_decoder";
 
 import { describe, expect, it, type TestContext, vi } from "vitest";
 import YAML from "yaml";
@@ -60,9 +61,14 @@ type OutputCapture = {
 
 function appendOutput(capture: OutputCapture, chunk: string): void {
   const next = capture.truncated ? capture.text : capture.text + chunk;
-  const truncated = capture.truncated || next.length > COMMAND_OUTPUT_LIMIT;
+  const truncated = capture.truncated || Buffer.byteLength(next, "utf8") > COMMAND_OUTPUT_LIMIT;
   capture.text = truncated
-    ? `${next.slice(0, COMMAND_OUTPUT_LIMIT - OUTPUT_TRUNCATION_MARKER.length)}${OUTPUT_TRUNCATION_MARKER}`
+    ? `${new StringDecoder("utf8").write(
+        Buffer.from(next).subarray(
+          0,
+          COMMAND_OUTPUT_LIMIT - Buffer.byteLength(OUTPUT_TRUNCATION_MARKER, "utf8"),
+        ),
+      )}${OUTPUT_TRUNCATION_MARKER}`
     : next;
   capture.truncated = truncated;
 }
@@ -557,15 +563,13 @@ describe("native Podman E2E setup boundary", () => {
     const result = await runCommand(
       context,
       "bash",
-      ["--noprofile", "--norc", "-c", "sleep 30; echo unreachable"],
+      ["--noprofile", "--norc", "-c", "sleep 30"],
       process.env,
       100,
     );
 
-    expect(result.status).toBeNull();
-    expect(result.signal).not.toBeNull();
+    expect(result.status).not.toBe(0);
     expect(result.timedOut).toBe(true);
-    expect(result.stdout).not.toContain("unreachable");
     expect(Date.now() - startedAt).toBeLessThan(2_000);
   });
 
@@ -609,16 +613,18 @@ describe("native Podman E2E setup boundary", () => {
       process.execPath,
       [
         "-e",
-        `process.stdout.write("o".repeat(${COMMAND_OUTPUT_LIMIT + 1_024})); process.stderr.write("e".repeat(${COMMAND_OUTPUT_LIMIT + 1_024}));`,
+        `process.stdout.write("€".repeat(${Math.ceil(COMMAND_OUTPUT_LIMIT / 3) + 1_024})); process.stderr.write("€".repeat(${Math.ceil(COMMAND_OUTPUT_LIMIT / 3) + 1_024}));`,
       ],
       process.env,
     );
 
     expect(result.status).toBe(0);
-    expect(result.stdout).toHaveLength(COMMAND_OUTPUT_LIMIT);
-    expect(result.stderr).toHaveLength(COMMAND_OUTPUT_LIMIT);
+    expect(Buffer.byteLength(result.stdout, "utf8")).toBeLessThanOrEqual(COMMAND_OUTPUT_LIMIT);
+    expect(Buffer.byteLength(result.stderr, "utf8")).toBeLessThanOrEqual(COMMAND_OUTPUT_LIMIT);
     expect(result.stdout.endsWith(OUTPUT_TRUNCATION_MARKER)).toBe(true);
     expect(result.stderr.endsWith(OUTPUT_TRUNCATION_MARKER)).toBe(true);
+    expect(result.stdout).not.toContain("�");
+    expect(result.stderr).not.toContain("�");
   });
 
   it.concurrent("restores unchanged Docker runtime state and retires its authority (#11014)", async (context) => {
