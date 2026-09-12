@@ -1,0 +1,34 @@
+{
+  "kind": "nemoclaw-review-queue-context-v1",
+  "headSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "baseSha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "expectedSpecialists": ["first", "second"],
+  "deterministic": {
+    "version": 23,
+    "headSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "planHash": "59382646287943f44ab820a5ebb0e8be6b177140c960ff97847d542488bb8048",
+    "changedFiles": ["docs/example.mdx"],
+    "tier": 0,
+    "families": [],
+    "requiredJobs": [],
+    "requiredTargets": []
+  },
+  "selectorInventory": {
+    "workflow": "e2e.yaml",
+    "fanoutId": "e2e-all",
+    "selectorTypes": ["all", "job", "target"],
+    "allowedJobIds": ["device-auth-health"],
+    "manualOnlyJobIds": ["hardware-check"],
+    "liveSupportedTargetIds": ["sample-target"]
+  },
+  "provenance": {
+    "repository": "NVIDIA/NemoClaw",
+    "prNumber": 11489,
+    "workflowRepository": "NVIDIA/NemoClaw",
+    "workflowSha": "cccccccccccccccccccccccccccccccccccccccc",
+    "workflowPath": ".github/workflows/pr-review-advisor.yaml",
+    "eventName": "workflow_run",
+    "runId": "123456",
+    "runAttempt": "2"
+  }
+}

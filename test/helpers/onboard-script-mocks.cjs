@@ -96,8 +96,12 @@ function installForwardServiceReachabilityFixture(initiallyReachable = false) {
   const listener = require(
     path.resolve(__dirname, "../../src/lib/adapters/openshell/local-forward-listener.ts"),
   );
+  const forwardService = require(
+    path.resolve(__dirname, "../../src/lib/adapters/openshell/forward-service.ts"),
+  );
   let reachable = initiallyReachable;
   listener.probeLocalForwardListener = () => reachable;
+  forwardService.isForwardServiceListenerOwner = () => reachable;
   return {
     recordSpawn(args) {
       const argv = Array.isArray(args[1]) ? args[1] : [];
@@ -240,10 +244,7 @@ function mockEndpointlessProviderProfileRun(command, profileId, inferenceCapable
 }
 
 function mockManagedEndpointlessProviderProfileRun(command) {
-  return (
-    mockEndpointlessProviderProfileRun(command, "openai", true) ??
-    mockEndpointlessProviderProfileRun(command, "nemoclaw-mcp-v1", false)
-  );
+  return mockEndpointlessProviderProfileRun(command, "nemoclaw-mcp-v1", false);
 }
 
 function mockProviderPreparationRun(command, gatewayName, profileId, inferenceCapable) {

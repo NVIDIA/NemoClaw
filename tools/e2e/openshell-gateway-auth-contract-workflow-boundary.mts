@@ -12,7 +12,7 @@ import { UPLOAD_E2E_ARTIFACTS_ACTION } from "./upload-e2e-artifacts-workflow-bou
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_WORKFLOW_PATH = join(REPO_ROOT, ".github", "workflows", "e2e.yaml");
 const JOB_NAME = "openshell-gateway-auth-contract";
-const OPENSHELL_RELEASE_VERSION = "0.0.106";
+const OPENSHELL_RELEASE_VERSION = "0.0.116";
 const OPENSHELL_INSTALL_RUN =
   "env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_API_KEY -u NVIDIA_INFERENCE_API_KEY -u GITHUB_TOKEN bash scripts/install-openshell.sh";
 const FULL_SHA_ACTION = /^[^\s@]+@[0-9a-f]{40}$/u;

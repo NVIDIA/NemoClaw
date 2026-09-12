@@ -82,8 +82,11 @@ export interface PoliciesStateOptions<Agent, WebSearchConfig> {
         webSearchSupported: boolean;
         tierName?: string | null;
       },
-    ): PolicyResumeSelection;
-    arePolicyPresetsApplied(sandboxName: string, selectedPresets: string[]): boolean;
+    ): PolicyResumeSelection | Promise<PolicyResumeSelection>;
+    arePolicyPresetsApplied(
+      sandboxName: string,
+      selectedPresets: string[],
+    ): boolean | Promise<boolean>;
     skippedStepMessage(stepName: string, detail?: string | null): void;
     recordStateSkipped(
       state: "policies",
@@ -209,7 +212,7 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
   }
   if (!hostLocalInferenceRouteOnly) await verifySandboxInferenceRoute();
 
-  const policyResumeSelection = deps.preparePolicyPresetResumeSelection(sandboxName, {
+  const policyResumeSelection = await deps.preparePolicyPresetResumeSelection(sandboxName, {
     disabledChannels,
     enabledChannels: policyMessagingChannels,
     hermesToolGateways,
@@ -222,14 +225,15 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
   });
   const livePolicyPresetsForSupport = policyResumeSelection.policyPresets;
   const staleLocalInferencePolicy =
-    hostLocalInferenceRouteOnly && deps.arePolicyPresetsApplied(sandboxName, ["local-inference"]);
+    hostLocalInferenceRouteOnly &&
+    (await deps.arePolicyPresetsApplied(sandboxName, ["local-inference"]));
   const resumePolicies =
     resume &&
     !staleLocalInferencePolicy &&
     !policyResumeSelection.livePolicyPresetsNeedUpdate &&
     !policyResumeSelection.disabledMessagingPolicyPresetApplied &&
     !policyResumeSelection.suppressedAgentRequiredPresetsLive &&
-    deps.arePolicyPresetsApplied(sandboxName, livePolicyPresetsForSupport);
+    (await deps.arePolicyPresetsApplied(sandboxName, livePolicyPresetsForSupport));
 
   let appliedPolicyPresets = livePolicyPresetsForSupport;
   let session: Session | null;

@@ -42,7 +42,7 @@ function executableAuthorityHarness() {
     resolve: (env) => env.NEMOCLAW_OPENSHELL_BIN ?? AUTHORITY_BINARY,
     runVersion: () => ({
       status: 0,
-      stdout: "openshell 0.0.106\n",
+      stdout: "openshell 0.0.116\n",
       stderr: "",
     }),
   };
@@ -191,7 +191,7 @@ describe("lib/resolve-openshell", () => {
 describe("Hermes portable OpenShell executable authority", () => {
   const childEnv = { HOME: "/home/test", PATH: "/opt/nemoclaw/bin" };
 
-  it("captures and reuses the exact canonical OpenShell 0.0.106 generation (#9211)", () => {
+  it("captures and reuses the exact canonical OpenShell 0.0.116 generation (#9211)", () => {
     const harness = executableAuthorityHarness();
     const authority = captureHermesPortableOpenShellExecutableAuthority(
       AUTHORITY_BINARY,
@@ -200,7 +200,7 @@ describe("Hermes portable OpenShell executable authority", () => {
       harness.deps,
     );
 
-    expect(authority.version).toBe("0.0.106");
+    expect(authority.version).toBe("0.0.116");
     expect(authority.executable.executablePath).toBe(AUTHORITY_BINARY);
     expect(
       assertHermesPortableOpenShellExecutableAuthority(authority, childEnv, childEnv, harness.deps),
@@ -284,7 +284,7 @@ describe("Hermes portable OpenShell executable authority", () => {
         ...harness.deps,
         runVersion: () => ({ status: 0, stdout: "openshell 0.0.101\n", stderr: "" }),
       }),
-    ).toThrow("requires OpenShell 0.0.106");
+    ).toThrow("requires OpenShell 0.0.116");
 
     const reuseHarness = executableAuthorityHarness();
     const authority = captureHermesPortableOpenShellExecutableAuthority(
@@ -298,6 +298,6 @@ describe("Hermes portable OpenShell executable authority", () => {
         ...reuseHarness.deps,
         runVersion: () => ({ status: 0, stdout: "openshell 0.0.101\n", stderr: "" }),
       }),
-    ).toThrow("requires OpenShell 0.0.106");
+    ).toThrow("requires OpenShell 0.0.116");
   });
 });

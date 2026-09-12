@@ -87,10 +87,13 @@ const PROFILE_JOBS = {
 
 const SDK_INSTALL_SCRIPT = [
   "set -euo pipefail",
-  "mapfile -t archives < <(find \"$RUNNER_TEMP/openshell-sdk\" -maxdepth 1 -type f -name '*.tgz' -print)",
-  'test "${#archives[@]}" -eq 1',
-  "env -u NODE_AUTH_TOKEN -u GITHUB_TOKEN -u GH_TOKEN \\",
-  '  npm cache add "${archives[0]}" --offline --ignore-scripts',
+  "mapfile -t archives < <(find \"$RUNNER_TEMP/openshell-sdk\" -maxdepth 1 -type f -name '*.tgz' -print | sort)",
+  'test "${#archives[@]}" -ge 1',
+  'test "${#archives[@]}" -le 2',
+  'for archive in "${archives[@]}"; do',
+  "  env -u NODE_AUTH_TOKEN -u GITHUB_TOKEN -u GH_TOKEN \\",
+  '    npm cache add "$archive" --offline --ignore-scripts',
+  "done",
   "env -u NODE_AUTH_TOKEN -u GITHUB_TOKEN -u GH_TOKEN \\",
   "  npm ci --ignore-scripts --prefer-offline --no-audit --no-fund",
   "env -u NODE_AUTH_TOKEN -u GITHUB_TOKEN -u GH_TOKEN \\",
@@ -134,6 +137,15 @@ function validateProfileCallers(errors: string[], workflow: WorkflowRecord): voi
   if (sdkPackage.if !== undefined || record(sdkPackage.permissions).packages !== "read") {
     errors.push(
       "catalogue profiles require SDK packaging for every E2E run with package-read permission",
+    );
+  }
+  const sdkPackageStep = namedStep(
+    steps(sdkPackage.steps),
+    "Download and verify reviewed OpenShell SDK packages",
+  );
+  if (record(sdkPackageStep?.env).NEMOCLAW_OPEN_SHELL_SDK_INCLUDE_AVAILABLE_REPLACEMENT !== "1") {
+    errors.push(
+      "catalogue SDK packaging must include an available reviewed transition replacement",
     );
   }
   for (const profile of E2E_EXECUTION_PROFILES) {

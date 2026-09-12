@@ -192,25 +192,85 @@ function buildTavilyEgressProbeCommand(apiKey: string): string {
     .join(" ");
 }
 
-function buildTavilyBodyEgressProbeCommand(apiKey: string): string {
-  return [
-    "curl",
-    "-sS",
-    "--compressed",
-    "--max-time",
-    "20",
-    "-X",
-    "POST",
-    "https://api.tavily.com/search",
-    "-H",
-    "Content-Type: application/json",
-    "--data",
-    JSON.stringify({ api_key: apiKey, query: "NVIDIA", max_results: 1 }),
-    "-w",
-    "\nHTTP_STATUS:%{http_code}\n",
-  ]
-    .map(shellQuote)
-    .join(" ");
+const HERMES_TAVILY_PROBE_MARKER = "__nemoclaw_tavily__:";
+
+function buildTavilyBodyEgressProbeCommand(): string[] {
+  const script = [
+    "import json, os, re",
+    "def probe():",
+    "    import httpx",
+    "    from dotenv import dotenv_values",
+    "    issued = os.environ.get('TAVILY_API_KEY', '')",
+    "    saved = dotenv_values('/sandbox/.hermes/.env').get('TAVILY_API_KEY')",
+    "    effective = issued if saved is None else saved",
+    "    if any(value and not value.startswith('openshell:resolve:env:') for value in (issued, effective)):",
+    "        return {'kind': 'raw-secret'}",
+    "    if not re.fullmatch(r'openshell:resolve:env:v[0-9]{1,20}_TAVILY_API_KEY', issued):",
+    "        return {'kind': 'unavailable'}",
+    "    if effective != issued:",
+    "        return {'kind': 'overridden'}",
+    "    response = httpx.post('https://api.tavily.com/search', json={'api_key': issued, 'query': 'NVIDIA', 'max_results': 1}, timeout=20)",
+    "    body = response.json() if response.status_code == 200 else {}",
+    "    results = body.get('results') if isinstance(body, dict) else None",
+    "    return {'kind': 'response', 'status': response.status_code, 'has_results': isinstance(results, list) and bool(results)}",
+    "try:",
+    "    result = probe()",
+    "except Exception:",
+    "    result = {'kind': 'request-failed'}",
+    `print('${HERMES_TAVILY_PROBE_MARKER}' + json.dumps(result))`,
+  ].join("\n");
+  return ["/opt/hermes/.venv/bin/python", "-I", "-c", script];
+}
+
+async function verifyHermesTavilyEgress(
+  sandboxName: string,
+  deps: WebSearchVerifyDeps,
+  log: (message?: string) => void,
+  warn: (message?: string) => void,
+): Promise<boolean> {
+  const probe = await runSandboxCommand(
+    deps,
+    sandboxName,
+    buildTavilyBodyEgressProbeCommand(),
+    30_000,
+  );
+  let result: { kind?: unknown; status?: unknown; has_results?: unknown } | null = null;
+  try {
+    const line = probe?.split("\n").find((value) => value.startsWith(HERMES_TAVILY_PROBE_MARKER));
+    result = JSON.parse(line?.slice(HERMES_TAVILY_PROBE_MARKER.length) ?? "null");
+  } catch {
+    result = null;
+  }
+  if (result?.kind === "raw-secret") {
+    warn("  SECURITY: Hermes Tavily environment contains a raw credential; refusing handoff.");
+    return false;
+  }
+  if (result?.kind === "overridden") {
+    warn(
+      "  Hermes Tavily dotenv overrides the gateway-issued credential reference; rebuild the sandbox with the current NemoClaw version.",
+    );
+    return true;
+  }
+  if (result?.kind === "unavailable") {
+    warn("  No current versioned Tavily credential reference is available in the Hermes runtime.");
+    return true;
+  }
+  const status =
+    result?.kind === "response" &&
+    typeof result.status === "number" &&
+    Number.isInteger(result.status) &&
+    result.status >= 100 &&
+    result.status <= 599
+      ? result.status
+      : null;
+  if (status === 200 && result?.has_results === true) {
+    log("  ✓ Tavily Search egress verified inside sandbox");
+  } else if (status !== null) {
+    warn(`  ⚠ Tavily Search config exists, but egress verification returned HTTP ${status}.`);
+  } else {
+    warn("  ⚠ Tavily Search config exists, but the egress verification request failed.");
+  }
+  return true;
 }
 
 function hasTavilyResult(body: string): boolean {
@@ -279,25 +339,7 @@ export async function verifyWebSearchInsideSandbox(
         return true;
       }
 
-      const placeholder = "openshell:resolve:env:TAVILY_API_KEY";
-      const probe = await runSandboxCommand(
-        deps,
-        sandboxName,
-        ["sh", "-lc", buildTavilyBodyEgressProbeCommand(placeholder)],
-        30_000,
-      );
-      if (!probe) {
-        warn("  ⚠ Tavily Search config exists, but the egress verification request failed.");
-        return true;
-      }
-      const statusMatch = probe.match(/(?:^|\n)HTTP_STATUS:(\d{3})(?:\n|$)/);
-      const status = statusMatch?.[1] || "unknown";
-      const body = probe.replace(/(?:^|\n)HTTP_STATUS:\d{3}\s*$/m, "").trim();
-      if (status === "200" && hasTavilyResult(body)) {
-        log("  ✓ Tavily Search egress verified inside sandbox");
-      } else {
-        warn(`  ⚠ Tavily Search config exists, but egress verification returned HTTP ${status}.`);
-      }
+      return await verifyHermesTavilyEgress(sandboxName, deps, log, warn);
     } else if (agentName === "openclaw") {
       // OpenClaw: verify tools.web.search exists, then prove the selected
       // provider placeholder works at egress through its credential header.

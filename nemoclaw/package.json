@@ -26,7 +26,7 @@
     "lint:fix": "oxlint --fix --type-aware src",
     "format": "npm --prefix .. run format",
     "format:check": "npm --prefix .. run format:check",
-    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.test.json",
+    "typecheck": "tsc --noEmit --incremental --tsBuildInfoFile node_modules/.cache/typecheck-production.tsbuildinfo -p tsconfig.json && tsc --noEmit --incremental --tsBuildInfoFile node_modules/.cache/typecheck-tests.tsbuildinfo -p tsconfig.test.json",
     "check": "npm run lint && npm run format:check && npm run typecheck",
     "clean": "rm -rf dist/"
   },

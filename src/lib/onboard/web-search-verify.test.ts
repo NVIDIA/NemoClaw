@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
 import { describe, expect, it, vi } from "vitest";
 import type { OpenShellSandboxBufferedCommandExecutor } from "../adapters/openshell/sandbox-command";
 
@@ -45,9 +46,9 @@ describe("verifyWebSearchInsideSandbox", () => {
     // Before config diagnostics and the egress probe, the secret-boundary check
     // classifies the selected env var in-sandbox.
     const d = deps([
-      "__nemoclaw_wsenv__:absent",
+      "__nemoclaw_wsenv__:placeholder",
       "web:\n  backend: tavily\n",
-      JSON.stringify({ results: [{ title: "NVIDIA" }] }) + "\nHTTP_STATUS:200\n",
+      '__nemoclaw_tavily__:{"kind":"response","status":200,"has_results":true}\n',
     ]);
 
     await verifyWebSearchInsideSandbox("alpha", { name: "hermes" }, "tavily", d);
@@ -70,11 +71,7 @@ describe("verifyWebSearchInsideSandbox", () => {
     expect(d.runBuffered.mock.calls[2][0]).toMatchObject({
       sandboxName: "alpha",
       target: { kind: "selected" },
-      command: [
-        "sh",
-        "-lc",
-        expect.stringContaining('"api_key":"openshell:resolve:env:TAVILY_API_KEY"'),
-      ],
+      command: ["/opt/hermes/.venv/bin/python", "-I", "-c", expect.any(String)],
     });
     expect(d.log).toHaveBeenCalledWith("  ✓ Tavily Search egress verified inside sandbox");
     expect(d.warn).not.toHaveBeenCalled();
@@ -459,6 +456,168 @@ describe("verifyWebSearchInsideSandbox", () => {
       true,
     );
     expect(d.log).toHaveBeenCalledWith("  ✓ Brave Search egress verified inside sandbox");
+  });
+});
+
+type HermesProbeFixture = {
+  credential: string;
+  dotenv?: Record<string, string | null>;
+  status?: number;
+  body?: unknown;
+  error?: string;
+};
+
+type HermesProbeRequest = { url: string; json: Record<string, unknown>; timeout: number };
+
+function executeHermesProbe(command: readonly string[], fixture: HermesProbeFixture) {
+  const driver = [
+    "import json, sys, types",
+    "fixture = json.loads(sys.argv[1])",
+    "requests = []",
+    "def post(url, **kwargs):",
+    "    requests.append(dict(url=url, **kwargs))",
+    "    if fixture.get('error'):",
+    "        raise RuntimeError(fixture['error'])",
+    "    return types.SimpleNamespace(status_code=fixture.get('status', 200), json=lambda: fixture.get('body', {'results': [{}]}))",
+    "sys.modules['httpx'] = types.SimpleNamespace(post=post)",
+    "sys.modules['dotenv'] = types.SimpleNamespace(dotenv_values=lambda path: fixture.get('dotenv', {}))",
+    "exec(compile(sys.argv[2], '<Hermes Tavily probe>', 'exec'), {'__name__': '__main__'})",
+    "print('__requests__:' + json.dumps(requests))",
+  ].join("\n");
+  const result = spawnSync("python3", ["-I", "-", JSON.stringify(fixture), command[3]!], {
+    input: driver,
+    env: { PATH: process.env.PATH ?? "", TAVILY_API_KEY: fixture.credential },
+    encoding: "utf8",
+    timeout: 10_000,
+  });
+  expect(result.status, result.stderr).toBe(0);
+  const [stdout, requests] = result.stdout.split("__requests__:");
+  return { stdout: stdout ?? "", requests: JSON.parse(requests!) as HermesProbeRequest[] };
+}
+
+async function verifyHermesProbe(fixture: HermesProbeFixture) {
+  const d = deps([]);
+  let execution: ReturnType<typeof executeHermesProbe> | undefined;
+  d.runBuffered
+    .mockResolvedValueOnce({
+      outcome: { kind: "completed", exitCode: 0 },
+      stdout: "__nemoclaw_wsenv__:placeholder",
+      stderr: "",
+    })
+    .mockResolvedValueOnce({
+      outcome: { kind: "completed", exitCode: 0 },
+      stdout: "web:\n  backend: tavily\n",
+      stderr: "",
+    })
+    .mockImplementationOnce(async ({ command }) => {
+      execution = executeHermesProbe(command, fixture);
+      return {
+        outcome: { kind: "completed", exitCode: 0 },
+        stdout: execution.stdout,
+        stderr: "",
+      };
+    });
+  const safe = await verifyWebSearchInsideSandbox("alpha", { name: "hermes" }, "tavily", d);
+  expect(d.runBuffered.mock.calls[2]![0].command.slice(0, 3)).toEqual([
+    "/opt/hermes/.venv/bin/python",
+    "-I",
+    "-c",
+  ]);
+  expect(execution).toBeDefined();
+  return { d, safe, execution: execution! };
+}
+
+describe("Hermes Tavily issued credential probe", () => {
+  it.each(["openshell:resolve:env:v17_TAVILY_API_KEY", "openshell:resolve:env:v29_TAVILY_API_KEY"])(
+    "uses the currently issued reference %s in the native JSON request",
+    async (credential) => {
+      const { d, safe, execution } = await verifyHermesProbe({
+        credential,
+        body: { results: [{ title: "upstream-body-must-stay-in-sandbox" }] },
+      });
+
+      expect(safe).toBe(true);
+      expect(execution.requests).toEqual([
+        {
+          url: "https://api.tavily.com/search",
+          json: { api_key: credential, query: "NVIDIA", max_results: 1 },
+          timeout: 20,
+        },
+      ]);
+      expect(d.runBuffered.mock.calls[2]![0].command.join("\n")).not.toContain(credential);
+      expect(execution.stdout).not.toContain(credential);
+      expect(execution.stdout).not.toContain("upstream-body-must-stay-in-sandbox");
+      expect(d.log).toHaveBeenCalledWith(expect.stringContaining("Tavily Search egress verified"));
+      expect(d.warn).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    { credential: "", safe: true },
+    { credential: "openshell:resolve:env:TAVILY_API_KEY", safe: true },
+    { credential: "openshell:resolve:env:v17_OTHER_API_KEY", safe: true },
+    { credential: "tvly-runtime-test-secret", safe: false },
+    {
+      credential: "tvly-runtime-test-secret",
+      dotenv: { TAVILY_API_KEY: "openshell:resolve:env:v29_TAVILY_API_KEY" },
+      safe: false,
+    },
+  ])("does not send an invalid runtime credential [case %#]", async ({ safe, ...fixture }) => {
+    const result = await verifyHermesProbe(fixture);
+
+    expect(result.safe).toBe(safe);
+    expect(result.execution.requests).toEqual([]);
+    expect(result.execution.stdout).not.toContain("tvly-runtime-test-secret");
+    expect(result.d.warn).toHaveBeenCalled();
+    expect(result.d.log).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { override: "openshell:resolve:env:TAVILY_API_KEY", safe: true },
+    { override: "openshell:resolve:env:v17_TAVILY_API_KEY", safe: true },
+    { override: "tvly-dotenv-test-secret", safe: false },
+  ])(
+    "refuses a dotenv override after provider replacement [case %#]",
+    async ({ override, safe }) => {
+      const result = await verifyHermesProbe({
+        credential: "openshell:resolve:env:v29_TAVILY_API_KEY",
+        dotenv: { TAVILY_API_KEY: override },
+      });
+
+      expect(result.safe).toBe(safe);
+      expect(result.execution.requests).toEqual([]);
+      expect(result.execution.stdout).not.toContain(override);
+      expect(result.d.warn).toHaveBeenCalled();
+      expect(result.d.log).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    { status: 401, body: { detail: "rejected" } },
+    { status: 200, body: { results: [] } },
+  ])("does not claim search success for HTTP $status without results", async (response) => {
+    const result = await verifyHermesProbe({
+      credential: "openshell:resolve:env:v29_TAVILY_API_KEY",
+      ...response,
+    });
+
+    expect(result.safe).toBe(true);
+    expect(result.execution.requests).toHaveLength(1);
+    expect(result.d.warn).toHaveBeenCalledWith(expect.stringContaining(`HTTP ${response.status}`));
+    expect(result.d.log).not.toHaveBeenCalled();
+  });
+
+  it("redacts request failures while retaining advisory egress behaviour", async () => {
+    const result = await verifyHermesProbe({
+      credential: "openshell:resolve:env:v29_TAVILY_API_KEY",
+      error: "transport-test-secret-must-not-escape",
+    });
+
+    expect(result.safe).toBe(true);
+    expect(result.execution.requests).toHaveLength(1);
+    expect(result.execution.stdout).not.toContain("transport-test-secret-must-not-escape");
+    expect(result.d.warn).toHaveBeenCalledWith(expect.stringContaining("request failed"));
+    expect(result.d.log).not.toHaveBeenCalled();
   });
 });
 

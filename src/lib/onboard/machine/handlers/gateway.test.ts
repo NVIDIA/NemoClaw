@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import http from "node:http";
+import { generateKeyPairSync } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -10,6 +12,7 @@ import { createSession, type Session } from "../../../state/onboard-session";
 import { flushTrace, resetTraceForTests, TRACE_FILE_ENV, type TraceArtifact } from "../../../trace";
 import type { GatewayContainerState } from "../../gateway-container-running";
 import type { PreparedExternalComponent } from "../../external-component";
+import * as componentActivation from "../../external-component/activation";
 import {
   type GatewayAttachmentProbe,
   type GatewayOwner,
@@ -50,6 +53,36 @@ function preparedExternalComponent(revalidateBeforeGateway = vi.fn()): PreparedE
     },
     revalidateBeforeGateway,
     revalidateBeforeActivation: vi.fn(),
+  };
+}
+
+function preparedConnectionComponent(
+  activationSocketPath = "/run/component/activate.sock",
+): PreparedExternalComponent {
+  let revalidateGateway = () => {};
+  return {
+    ...preparedExternalComponent(),
+    setGatewayRevalidation: vi.fn((revalidate: () => void) => {
+      revalidateGateway = revalidate;
+    }),
+    revalidateBeforeGateway: vi.fn(() => revalidateGateway()),
+    revalidateBeforeActivation: vi.fn(() => revalidateGateway()),
+    declaration: {
+      schemaVersion: 2,
+      componentId: "generic-policy",
+      activationSocketPath,
+      interceptor: {
+        endpoint: "https://127.0.0.1:9443",
+        caCertificatePath: "/run/component/ca.pem",
+        audience: "urn:generic:admission",
+      },
+      middleware: {
+        name: "generic-middleware",
+        endpoint: "https://host.openshell.internal:9444",
+        caCertificatePath: "/run/component/ca.pem",
+        audience: "urn:generic:middleware",
+      },
+    },
   };
 }
 
@@ -255,6 +288,100 @@ describe("handleGatewayState", () => {
     expect(calls.configureExternalComponentGateway.mock.invocationCallOrder[0]).toBeLessThan(
       calls.refresh.mock.invocationCallOrder[0],
     );
+  });
+
+  it("starts the gateway after component preparation succeeds (#11507)", async () => {
+    const directory = fs.mkdtempSync(path.join(path.dirname(process.cwd()), "nc-prepare-"));
+    const socketPath = path.join(directory, "activate.sock");
+    const component = preparedConnectionComponent(socketPath);
+    const preparation: componentActivation.ExternalComponentGatewayPreparation = {
+      gateway: {
+        id: "generic-gateway",
+        issuer: "openshell-gateway:generic-gateway",
+        publicKeyPem: generateKeyPairSync("ed25519")
+          .publicKey.export({ type: "spki", format: "pem" })
+          .toString(),
+        kid: "generic-key",
+        extensionTokenTtlSecs: 900,
+      },
+      network: { gatewayIp: "172.30.115.1", subnet: "172.30.115.0/24" },
+      revalidate: vi.fn(),
+    };
+    const { deps, calls } = createDeps({ isLinuxDockerDriverGatewayEnabled: vi.fn(() => true) });
+    calls.configureExternalComponentGateway.mockReturnValue(preparation);
+    const acknowledge = vi.fn((request: { preparationId: string; componentId: string }) => ({
+      schemaVersion: 2,
+      preparationId: request.preparationId,
+      componentId: request.componentId,
+      result: "prepared",
+    }));
+    const received: unknown[] = [];
+    const server = http.createServer((request, reply) => {
+      let body = "";
+      request.on("data", (chunk) => {
+        body += String(chunk);
+      });
+      request.on("end", () => {
+        const payload = JSON.parse(body);
+        received.push({ method: request.method, url: request.url, body: payload });
+        const response = JSON.stringify(acknowledge(payload));
+        reply.writeHead(200, {
+          "content-length": Buffer.byteLength(response),
+          connection: "close",
+        });
+        reply.end(response);
+      });
+    });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        server.once("error", reject);
+        server.listen(socketPath, resolve);
+      });
+      await handleGatewayState({ ...baseOptions(deps, "missing"), externalComponent: component });
+      expect(received).toEqual([
+        {
+          method: "POST",
+          url: "/v2/prepare",
+          body: expect.objectContaining({
+            schemaVersion: 2,
+            componentId: component.declaration.componentId,
+            gateway: { name: "nemoclaw", ...preparation.gateway },
+            network: preparation.network,
+          }),
+        },
+      ]);
+      expect(component.setGatewayRevalidation).toHaveBeenCalledOnce();
+      expect(preparation.revalidate).toHaveBeenCalled();
+      expect(calls.configureExternalComponentGateway).toHaveBeenCalledWith(
+        expect.objectContaining({ schemaVersion: 2 }),
+      );
+      expect(calls.configureExternalComponentGateway.mock.invocationCallOrder[0]).toBeLessThan(
+        acknowledge.mock.invocationCallOrder[0]!,
+      );
+      expect(acknowledge.mock.invocationCallOrder[0]).toBeLessThan(
+        calls.startGateway.mock.invocationCallOrder[0]!,
+      );
+      expect(calls.startGateway).toHaveBeenCalledOnce();
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves gateway state when component preparation fails (#11507)", async () => {
+    vi.spyOn(componentActivation, "prepareExternalComponentGateway").mockRejectedValue(
+      new Error("preparation_failed"),
+    );
+    const { deps, calls } = createDeps({ isLinuxDockerDriverGatewayEnabled: vi.fn(() => true) });
+    await expect(
+      handleGatewayState({
+        ...baseOptions(deps, "missing"),
+        externalComponent: preparedConnectionComponent(),
+      }),
+    ).rejects.toThrow("preparation_failed");
+    expect(calls.refresh).not.toHaveBeenCalled();
+    expect(calls.startGateway).not.toHaveBeenCalled();
+    expect(calls.complete).not.toHaveBeenCalled();
   });
 
   it("removes a prior component before evaluating managed gateway reuse (#11340)", async () => {

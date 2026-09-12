@@ -54,6 +54,6 @@ export const E2E_ACTION_PROVENANCE = {
 
 export const E2E_JOB_POLICY = {
   cliArtifactProducer: "generate-matrix",
-  prepareNoBuild: ["llama-cpp-dgx-spark-qualification", "managed-image-multiarch-startup"],
+  prepareNoBuild: ["managed-image-multiarch-startup"],
   prepareTrustedBuild: ["managed-image-protected-runtime"],
 } as const;

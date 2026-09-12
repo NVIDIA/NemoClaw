@@ -4,7 +4,7 @@
 import { vi } from "vitest";
 import { resolveTestAgentBaselinePolicy } from "../../../../test/support/snapshot-policy-test-fixture";
 import type { MutableConfigRepairResult } from "../../sandbox/mutable-config-perms";
-import type { SyncOpenShellSandboxPolicyReader } from "../../adapters/openshell/sandbox-policy";
+import type { OpenShellSandboxPolicyReader } from "../../adapters/openshell/sandbox-policy";
 import type {
   SandboxEntry,
   SandboxHostLocalInferenceProvenance,
@@ -149,8 +149,8 @@ export const loadAgentMock = vi.fn((name: string) => ({
 export const captureOpenshellMock = vi.fn<
   (args: string[], opts?: Record<string, unknown>) => OpenshellCaptureResult
 >((args) => defaultOpenshellResponses(args));
-export const readSandboxPolicyMock = vi.fn<SyncOpenShellSandboxPolicyReader["readSandboxPolicy"]>(
-  () => ({
+export const readSandboxPolicyMock = vi.fn<OpenShellSandboxPolicyReader["readSandboxPolicy"]>(
+  async () => ({
     ok: true,
     value: {
       document: "version: 1\nnetwork_policies: {}\n",
@@ -246,7 +246,7 @@ vi.mock("../../adapters/openshell/runtime", () => ({
 
 vi.mock("../../adapters/openshell/sandbox-policy-cli", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../adapters/openshell/sandbox-policy-cli")>()),
-  syncCliOpenShellSandboxPolicyReader: {
+  cliOpenShellSandboxPolicyReader: {
     inspectSandboxPolicy: vi.fn(),
     readSandboxPolicy: readSandboxPolicyMock,
     readSandboxPolicyRevision: vi.fn(),
@@ -388,7 +388,7 @@ export function resetSnapshotRestoreMocks(): void {
   });
   lifecycleMock.events.length = 0;
   captureOpenshellMock.mockImplementation((args) => defaultOpenshellResponses(args));
-  readSandboxPolicyMock.mockReturnValue({
+  readSandboxPolicyMock.mockResolvedValue({
     ok: true,
     value: {
       document: "version: 1\nnetwork_policies: {}\n",

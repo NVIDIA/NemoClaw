@@ -45,6 +45,7 @@ export type ConnectHarness = {
   connectSandbox: ConnectSandbox;
   ensureOllamaAuthProxySpy: MockInstance;
   findReachableOllamaHostSpy: MockInstance;
+  forwardReachabilitySpy: MockInstance;
   forwardServiceOwnerSpy: MockInstance;
   launchForwardServiceSpy: MockInstance;
   ensureLiveSandboxSpy: MockInstance;
@@ -139,6 +140,7 @@ export type ConnectHarnessOptions = {
         gatewayName?: string;
         lifecycleGeneration?: string;
       };
+  useRealPortableReceipt?: boolean;
   dockerRuntime?: {
     health?: string;
     paused?: boolean;
@@ -197,6 +199,9 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
   const agentRuntime = requireDist("../../src/lib/agent/runtime.js");
   const dns = requireDist("../../src/lib/actions/dns/index.js");
   const gatewayState = requireDist("../../src/lib/actions/sandbox/gateway-state.js");
+  const gatewayTeardownAuthority = requireDist(
+    "../../src/lib/onboard/gateway-teardown-authority.js",
+  );
   const hermesInferenceRecovery = requireDist(
     "../../src/lib/actions/sandbox/probe/hermes-portable-inference-recovery.js",
   );
@@ -224,6 +229,7 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
   const sandboxVersion = requireDist("../../src/lib/sandbox/version.js");
   const sandboxConfig = requireDist("../../src/lib/sandbox/config.js");
   const registry = requireDist("../../src/lib/state/registry.js");
+  const crossPortRegistry = requireDist("../../src/lib/state/registry/cross-port.js");
   const sandboxSession = requireDist("../../src/lib/state/sandbox-session.js");
   const vmDnsMonkeypatch = requireDist("../../src/lib/actions/sandbox/vm-dns-monkeypatch.js");
   const launchReadiness = requireDist("../../src/lib/actions/sandbox/launch-readiness.js");
@@ -247,6 +253,22 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     _sandboxName: string,
     operation: () => Promise<unknown>,
   ) => operation()) as never);
+  vi.spyOn(gatewayTeardownAuthority, "resolveGatewayForwardAuthority").mockImplementation((({
+    gatewayName,
+    gatewayPort,
+  }: {
+    gatewayName: string;
+    gatewayPort: number;
+  }) => ({
+    gatewayName,
+    gatewayPort,
+    mode: "nemoclaw-managed",
+    source: "standalone",
+    endpoint: null,
+    stateDir: null,
+    supervisor: null,
+    requiredCapabilities: [],
+  })) as never);
   vi.spyOn(gatewayState, "buildHermesPortableCommandEnvironment").mockReturnValue({
     HOME: "/home/test",
     XDG_CONFIG_HOME: "/home/test/.config",
@@ -292,6 +314,11 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     () => undefined,
   );
   const requestedPortableDisposition = options.portableReceiptDisposition ?? { kind: "absent" };
+  vi.spyOn(gatewayState, "hermesPortableLifecycleLockOptions").mockReturnValue(
+    requestedPortableDisposition.kind === "hermes"
+      ? { stateDir: "/home/test/.nemoclaw/state" }
+      : undefined,
+  );
   const portableDisposition =
     requestedPortableDisposition.kind === "hermes"
       ? {
@@ -307,32 +334,45 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
           liveIdentityFingerprint: "f".repeat(64),
         }
       : requestedPortableDisposition;
-  const inspectPortableReceiptDispositionSpy = vi
-    .spyOn(portableAgentLifecycle, "inspectPortableAgentReceiptDisposition")
-    .mockReturnValue(portableDisposition);
+  const inspectPortableReceiptDispositionSpy = vi.spyOn(
+    portableAgentLifecycle,
+    "inspectPortableAgentReceiptDisposition",
+  );
+  if (!options.useRealPortableReceipt) {
+    inspectPortableReceiptDispositionSpy.mockReturnValue(portableDisposition);
+  }
   let registryEntries: SandboxEntry[] = [];
   const qualifyPortableAgentLifecycleAuthority =
     portableAgentLifecycle.qualifyPortableAgentLifecycleAuthority;
   const requireHermesPortableActiveLifecycleAuthority =
     portableAgentLifecycle.requireHermesPortableActiveLifecycleAuthority;
   const portableAuthorityDeps = () => ({
-    inspectReceiptDisposition: (sandboxName: string) =>
-      portableAgentLifecycle.inspectPortableAgentReceiptDisposition(sandboxName),
+    ...(options.useRealPortableReceipt
+      ? {}
+      : {
+          inspectReceiptDisposition: (sandboxName: string) =>
+            portableAgentLifecycle.inspectPortableAgentReceiptDisposition(sandboxName),
+        }),
     readRegistry: (sandboxName: string) =>
       registryEntries.find((candidate) => candidate.name === sandboxName) ?? null,
   });
   vi.spyOn(gatewayState, "qualifyPortableAgentLifecycleAuthority").mockImplementation(((
     sandboxName: string,
-  ) => qualifyPortableAgentLifecycleAuthority(sandboxName, portableAuthorityDeps())) as never);
+    deps: object,
+  ) =>
+    qualifyPortableAgentLifecycleAuthority(sandboxName, {
+      ...deps,
+      ...portableAuthorityDeps(),
+    })) as never);
   vi.spyOn(gatewayState, "requireHermesPortableActiveLifecycleAuthority").mockImplementation(((
     sandboxName: string,
     expected: unknown,
+    deps: object,
   ) =>
-    requireHermesPortableActiveLifecycleAuthority(
-      sandboxName,
-      expected,
-      portableAuthorityDeps(),
-    )) as never);
+    requireHermesPortableActiveLifecycleAuthority(sandboxName, expected, {
+      ...deps,
+      ...portableAuthorityDeps(),
+    })) as never);
   const recoverHermesPortableOllamaInferenceSpy = vi
     .spyOn(hermesInferenceRecovery, "recoverHermesPortableInferenceForConnectProbe")
     .mockImplementation((async (input: {
@@ -425,6 +465,13 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
   const inferenceProbeResponses = [...(options.inferenceProbeResponses ?? [])];
   const listOutputs = [...(options.listOutputs ?? [])];
   const sandboxRunBufferedSpy = vi.fn(async (request: OpenShellSandboxBufferedCommandRequest) => {
+    if (request.command.join(" ").includes("/v1/chat/completions")) {
+      return {
+        outcome: { kind: "completed", exitCode: 0 },
+        stdout: '200\n{"choices":[{"message":{"content":"OK"}}]}',
+        stderr: "",
+      } satisfies OpenShellSandboxBufferedCommandCompletion;
+    }
     if (!request.command.join(" ").includes("inference.local/v1/models")) {
       return {
         outcome: { kind: "completed", exitCode: 0 },
@@ -533,10 +580,12 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
   const checkAndRecoverSpy = vi
     .spyOn(processRecovery, "checkAndRecoverSandboxProcesses")
     .mockReturnValue(options.processCheck ?? { checked: true, wasRunning: true, recovered: false });
-  vi.spyOn(forwardHealth, "isLocalForwardReachable").mockReturnValue(true);
+  const forwardReachabilitySpy = vi
+    .spyOn(forwardHealth, "isLocalForwardReachable")
+    .mockReturnValue(true);
   const forwardServiceOwnerSpy = vi
     .spyOn(forwardService, "isForwardServiceListenerOwner")
-    .mockReturnValue(false);
+    .mockReturnValue(true);
   const launchForwardServiceSpy = vi
     .spyOn(forwardService, "launchForwardService")
     .mockImplementation(() => undefined);
@@ -577,6 +626,9 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     agent: options.agentName ?? "openclaw",
     provider: options.agentName === "hermes" ? "ollama-local" : null,
     model: options.agentName === "hermes" ? "qwen3-vl:4b" : null,
+    ...(options.agentName === "langchain-deepagents-code"
+      ? { provider: "nvidia-prod", model: "nvidia/nemotron-3-super-120b-a12b" }
+      : {}),
     lifecycleLiveIdentityFingerprint:
       portableDisposition.kind === "hermes"
         ? portableDisposition.liveIdentityFingerprint
@@ -607,6 +659,18 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     : [primaryRegistryEntry];
   vi.spyOn(registry, "getSandbox").mockImplementation(
     (name: unknown) => registryEntries.find((candidate) => candidate.name === String(name)) ?? null,
+  );
+  vi.spyOn(crossPortRegistry, "findSandboxAcrossGatewayRoots").mockImplementation(
+    (name: unknown) => {
+      const entry = registryEntries.find((candidate) => candidate.name === String(name));
+      return entry
+        ? {
+            entry,
+            gatewayPort: entry.gatewayPort ?? null,
+            registryFile: "/test/.nemoclaw/sandboxes.json",
+          }
+        : null;
+    },
   );
   vi.spyOn(registry, "listSandboxes").mockReturnValue({
     sandboxes: registryEntries,
@@ -667,6 +731,7 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     connectSandbox: requireDist(connectModulePath).connectSandbox,
     ensureOllamaAuthProxySpy,
     findReachableOllamaHostSpy,
+    forwardReachabilitySpy,
     forwardServiceOwnerSpy,
     launchForwardServiceSpy,
     ensureLiveSandboxSpy,

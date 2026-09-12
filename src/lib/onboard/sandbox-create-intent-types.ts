@@ -104,7 +104,9 @@ export type MaterializeSandboxCreatePlanInput = {
   messagingTokenDefs: MessagingTokenDef[];
   /** Non-secret config captured in the messaging plan that owns exact policy endpoints. */
   messagingConfig?: MessagingChannelConfig | null;
-  runProviderPreDeleteCleanup(revalidateSandboxIdentity?: (operation: string) => void): void;
+  runProviderPreDeleteCleanup(
+    revalidateSandboxIdentity?: (operation: string) => void,
+  ): Promise<void>;
   upsertMessagingProviders(
     tokenDefs: MessagingTokenDef[],
     options: {

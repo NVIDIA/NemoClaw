@@ -253,7 +253,7 @@
     },
     {
       "file": "test/install/installer-homebrew-formula-reuse-trust.test.ts",
-      "test": "accepts the reviewed %s OpenShell 0.0.106 installer template",
+      "test": "accepts only the reviewed OpenShell 0.0.116 installer template",
       "category": "security"
     },
     {

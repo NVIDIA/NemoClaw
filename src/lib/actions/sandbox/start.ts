@@ -14,7 +14,7 @@ import {
   READINESS_INFERENCE_INVOCATION_TIMEOUT_MS,
   type SandboxInferenceInvocationResult,
 } from "./inference-invocation-probe";
-import { withSandboxLifecycleLock } from "./gateway-state";
+import { hermesPortableLifecycleLockOptions, withSandboxLifecycleLock } from "./gateway-state";
 import { getPersistedSandboxTargetGatewayName } from "./gateway-target";
 import {
   resolveSandboxLifecycleProvider,
@@ -161,8 +161,11 @@ export async function startSandbox(
   sandboxName: string,
   deps: SandboxStartDeps = {},
 ): Promise<SandboxLifecycleResult> {
-  return (deps.withLifecycleLock ?? withSandboxLifecycleLock)(sandboxName, () =>
-    startSandboxWithinLifecycleFence(sandboxName, deps),
+  const environment = deps.environment ?? process.env;
+  return (deps.withLifecycleLock ?? withSandboxLifecycleLock)(
+    sandboxName,
+    () => startSandboxWithinLifecycleFence(sandboxName, deps),
+    hermesPortableLifecycleLockOptions(sandboxName, environment),
   );
 }
 

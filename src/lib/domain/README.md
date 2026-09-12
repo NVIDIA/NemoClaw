@@ -31,11 +31,33 @@ admitting disclosure must not admit extra tool gateways or minimal-bootstrap set
 Hermes keeps its canonical export without `tools`; a retained direct selection or
 profile is unsupported even when those two sources agree.
 
+One read-only secondary OpenClaw agent can share the primary hosted route on Docker.
+Runtime `main` remains the sole default and exports as `primary`; the secondary keeps
+its compatible, nonreserved ID and exports `tools: {allow: [read]}`. The generator
+and exporter use the same manifest normalizer in `src/lib/extra-agents-validation.ts`.
+Canonical workspace paths stay implicit. Verify the whole retained manifest before
+admitting that leaf in the residual profile comparison; other agent settings still
+need their own supported projection. Apply the new pair and route constraints only
+to documents using `tools.allow`, preserving existing v1 agent shapes.
+
 Managed OpenClaw exports `agents[].interfaces.dashboard` when the retained port agrees with the
 registry and remote bind agrees with recorded preparation. Port 18789 and loopback bind are omitted.
 Legacy registry entries may omit the port only for the canonical loopback/default-port profile.
 Custom URLs, WSL exposure and device-auth changes remain unsupported. Export does not establish
 that a dashboard listener is currently running.
+
+`config/verify-agent-interfaces.ts` owns retained dashboard and API checks for both agents.
+Each agent has a closed `interfaces` schema; Hermes adds dashboard enablement, internal port,
+browser TUI and API port. Enabled Hermes dashboards require matching registry settings and an
+allocated API port. The existing registry row publishes that allocation with the lifecycle
+generation and sandbox fingerprint, which the export verifier checks against live identity.
+Pending reservations and mismatched or changing evidence cannot authorize export.
+
+Hermes omits disabled dashboards, false TUI, public port 18789, internal port 19119 and API port
+8642 from canonical output. Legacy disabled profiles may omit the API allocation; enabling the
+dashboard requires an explicit allocation. Dashboard ports retain the onboarding parser's
+restrictions, including API ports 8642–8652, port 18642 and equal public/internal ports. Export
+describes retained intent and does not inspect current processes or require a running host forward.
 
 OpenClaw telemetry supports an enabled local OTLP/HTTP collector at
 `http://host.openshell.internal:4318`, a printable ASCII service name of 1–256 characters without

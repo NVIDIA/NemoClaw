@@ -17,6 +17,7 @@ import {
   LLAMA_CPP_HOST_LOCAL_MATERIALIZER_REF,
 } from "../serving/adapter-registry";
 import { loadManagedInferenceCatalog } from "../serving/catalog-loader";
+import { NEMOCLAW_SERVING_PRESET_ENV } from "../serving/managed-cluster-discovery";
 import { resolveManagedInferenceServing } from "../serving/resolver";
 import type {
   CompiledManagedInferenceCatalog,
@@ -73,6 +74,18 @@ function dockerQualifiedPresetRuntimeFailure(
   return requiresDocker && resolvedProvider && resolvedProvider !== "docker"
     ? `Managed llama.cpp preset ${selection.preset.metadata.id} requires the Docker runtime provider selected by its readiness qualification; the resolved runtime provider is ${resolvedProvider}.`
     : null;
+}
+
+/**
+ * Serving preset the environment requests from managed llama.cpp, or an empty
+ * string. `--profile` exports the preset for every backend, so a preset that a
+ * different backend owns is left to that backend's selection. An unknown preset
+ * stays requested so resolution rejects it instead of selecting automatically.
+ */
+function requestedPresetId(env: NodeJS.ProcessEnv, catalog: CompiledManagedInferenceCatalog) {
+  const presetId = String(env[NEMOCLAW_SERVING_PRESET_ENV] ?? "").trim();
+  const preset = catalog.presets.find(({ metadata }) => metadata.id === presetId);
+  return preset && preset.spec.plan.backend !== "install-llama-cpp" ? "" : presetId;
 }
 
 function selectablePresetsForRecipe(
@@ -169,21 +182,53 @@ export function listManagedLlamaCppSelectionChoices(
   return Object.freeze([...byRecipe.values()]);
 }
 
-function managedLlamaCppChoiceEligibilityFailure(
-  choice: ManagedLlamaCppSelectionChoice,
+function managedLlamaCppSelectionEligibilityFailure(
+  selection: ResolvedLlamaCppInferenceSelection,
   env: NodeJS.ProcessEnv,
   options: ManagedLlamaCppSelectionOptions,
 ): string | null {
-  const runtimeFailure = dockerQualifiedPresetRuntimeFailure(
-    options.runtimeProviderId,
-    choice.selection,
-  );
+  const runtimeFailure = dockerQualifiedPresetRuntimeFailure(options.runtimeProviderId, selection);
   if (runtimeFailure) return runtimeFailure;
   return (
-    (choice.selection.recipe.metadata.id === N1X_WSL_RECIPE_ID &&
+    (selection.recipe.metadata.id === N1X_WSL_RECIPE_ID &&
       n1xWslDockerLocalityFailure(env, options)) ||
     null
   );
+}
+
+function resolveRequestedPresetSelection(
+  env: NodeJS.ProcessEnv,
+  catalog: CompiledManagedInferenceCatalog,
+  report: SystemReadinessReport,
+  options: ManagedLlamaCppSelectionOptions,
+  presetId: string,
+  requestedRecipeId: string,
+): ManagedLlamaCppSelectionResult {
+  const preset = catalog.presets.find(({ metadata }) => metadata.id === presetId);
+  if (preset && requestedRecipeId && preset.spec.plan.recipeRef !== requestedRecipeId) {
+    return {
+      kind: "rejected",
+      reason: `${NEMOCLAW_SERVING_PRESET_ENV} ${presetId} selects recipe ${preset.spec.plan.recipeRef}, not ${LLAMA_CPP_RECIPE_ENV} ${requestedRecipeId}.`,
+    };
+  }
+  const validated = validatedLlamaCppSelection(
+    resolveManagedInferenceServing(
+      {
+        readinessReports: [{ nodeId: os.hostname(), report }],
+        topologyQualifications: [],
+        intent: { provider: "install-llama-cpp", preset: presetId },
+      },
+      catalog,
+    ),
+    preset?.spec.plan.recipeRef ?? presetId,
+  );
+  if (validated.kind === "rejected") return validated;
+  const eligibilityFailure = managedLlamaCppSelectionEligibilityFailure(
+    validated.selection,
+    env,
+    options,
+  );
+  return eligibilityFailure ? { kind: "rejected", reason: eligibilityFailure } : validated;
 }
 
 function resolveManagedLlamaCppSelectionFromChoices(
@@ -195,6 +240,7 @@ function resolveManagedLlamaCppSelectionFromChoices(
   automaticChoiceFailures?: ReadonlyMap<string, string | null>,
 ): ManagedLlamaCppSelectionResult {
   const requestedRecipeId = String(env[LLAMA_CPP_RECIPE_ENV] ?? "").trim();
+  const presetId = requestedPresetId(env, catalog);
   if (requestedRecipeId === N1X_WSL_RECIPE_ID) {
     const localityFailure = n1xWslDockerLocalityFailure(env, options);
     if (localityFailure) return { kind: "rejected", reason: localityFailure };
@@ -202,8 +248,18 @@ function resolveManagedLlamaCppSelectionFromChoices(
   if (String(env.NEMOCLAW_MODEL ?? "").trim()) {
     return {
       kind: "rejected",
-      reason: `NEMOCLAW_MODEL cannot override the served model in ${LLAMA_CPP_RECIPE_ENV}.`,
+      reason: `NEMOCLAW_MODEL cannot override the served model in ${presetId && !requestedRecipeId ? NEMOCLAW_SERVING_PRESET_ENV : LLAMA_CPP_RECIPE_ENV}.`,
     };
+  }
+  if (presetId) {
+    return resolveRequestedPresetSelection(
+      env,
+      catalog,
+      report,
+      options,
+      presetId,
+      requestedRecipeId,
+    );
   }
   if (!requestedRecipeId) {
     if (automaticChoices.length === 0) {
@@ -227,7 +283,7 @@ function resolveManagedLlamaCppSelectionFromChoices(
     const selection = highestPriorityChoices[0]!.selection;
     const choiceFailure = automaticChoiceFailures?.has(selection.preset.metadata.id)
       ? automaticChoiceFailures.get(selection.preset.metadata.id)
-      : managedLlamaCppChoiceEligibilityFailure(highestPriorityChoices[0]!, env, options);
+      : managedLlamaCppSelectionEligibilityFailure(selection, env, options);
     if (choiceFailure) return { kind: "rejected", reason: choiceFailure };
     return {
       kind: "selected",
@@ -315,7 +371,9 @@ export function discoverManagedLlamaCppSelections(
   options: ManagedLlamaCppSelectionOptions = {},
 ): ManagedLlamaCppDiscoveryResult {
   const explicitRequest = Boolean(
-    String(env[LLAMA_CPP_RECIPE_ENV] ?? "").trim() || String(env.NEMOCLAW_MODEL ?? "").trim(),
+    String(env[LLAMA_CPP_RECIPE_ENV] ?? "").trim() ||
+    String(env.NEMOCLAW_MODEL ?? "").trim() ||
+    requestedPresetId(env, catalog),
   );
   if (explicitRequest) {
     const resolution = resolveManagedLlamaCppSelectionFromChoices(
@@ -345,7 +403,7 @@ export function discoverManagedLlamaCppSelections(
   const choiceFailures = new Map(
     choices.map((choice) => [
       choice.selection.preset.metadata.id,
-      managedLlamaCppChoiceEligibilityFailure(choice, env, options),
+      managedLlamaCppSelectionEligibilityFailure(choice.selection, env, options),
     ]),
   );
   const eligibleChoices = choices.filter(

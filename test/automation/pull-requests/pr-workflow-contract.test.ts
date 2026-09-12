@@ -455,6 +455,10 @@ describe("pull request and main workflow contracts", () => {
   const sdkPackageWorkflow = readYaml<SdkPackageWorkflow>(
     ".github/workflows/openshell-sdk-package-pr.yaml",
   );
+  const reviewedNpmAudit = JSON.parse(readFileSync("ci/reviewed-npm-audit.json", "utf8")) as Record<
+    string,
+    unknown
+  >;
   const sdkPackageJob = sdkPackageWorkflow.jobs["package-openshell-sdk"];
 
   const installerHashAction = readYaml<InstallerHashAction>(
@@ -976,7 +980,6 @@ describe("pull request and main workflow contracts", () => {
     );
     expect(fetch.env).toEqual({
       NEMOCLAW_OPEN_SHELL_SDK_OUTPUT_DIRECTORY: "${{ runner.temp }}/openshell-sdk",
-      NEMOCLAW_OPEN_SHELL_SDK_INCLUDE_REPLACEMENT: "1",
       NODE_AUTH_TOKEN: "${{ github.token }}",
     });
     expect(fetch.run).toContain("node scripts/checks/package-openshell-sdk-for-pr.mts");
@@ -1006,6 +1009,12 @@ describe("pull request and main workflow contracts", () => {
     const serialized = JSON.stringify(sdkPackageWorkflow);
     expect(serialized).not.toContain("@nvidia/openshell-sdk@0.0.106");
     expect(serialized).not.toContain("nvidia-openshell-sdk-0.0.106.tgz");
+    expect(serialized).not.toContain("NEMOCLAW_OPEN_SHELL_SDK_INCLUDE_REPLACEMENT");
+    expect(reviewedNpmAudit.sourceRegistryPackage).toMatchObject({
+      artifactName: "nvidia-openshell-sdk-0.0.116.tgz",
+      packageSpec: "@nvidia/openshell-sdk@0.0.116",
+    });
+    expect(reviewedNpmAudit).not.toHaveProperty("sourceRegistryPackageReplacement");
   });
 
   // source-shape-contract: security -- PR base SHA action execution prevents pull-request code from authorizing installer hashes

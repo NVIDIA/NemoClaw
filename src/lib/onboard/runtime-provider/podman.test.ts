@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createPodmanHostLocalInferenceTestHarness } from "../../../../test/helpers/podman-host-local-inference-test-harness";
 import { startSandbox } from "../../actions/sandbox/start";
 import { stopSandbox } from "../../actions/sandbox/stop";
+import { withCurrentPortableHostFence } from "../../state/portable-uninstall-retirement";
 import type { ContainerEngineCommandResult } from "../../adapters/container-engine";
 import {
   createPodmanContainerEngine,
@@ -284,16 +285,18 @@ describe("managed Podman runtime provider", () => {
           log: vi.fn(),
         }),
       ).resolves.toEqual({ exitCode: 0 });
-      expect(
-        stopSandbox(runtime.sandboxName, {
-          getSandbox: () => runtime.entry,
-          updateSandbox,
-          runtimeProviders: runtime.providers,
-          stopSandboxChannels,
-          teardownSandboxDashboardForward: vi.fn(),
-          log: vi.fn(),
-        }),
-      ).toEqual({ exitCode: 0 });
+      await expect(
+        withCurrentPortableHostFence(() =>
+          stopSandbox(runtime.sandboxName, {
+            getSandbox: () => runtime.entry,
+            updateSandbox,
+            runtimeProviders: runtime.providers,
+            stopSandboxChannels,
+            teardownSandboxDashboardForward: vi.fn(),
+            log: vi.fn(),
+          }),
+        ),
+      ).resolves.toEqual({ exitCode: 0 });
 
       expect(restoreStartupState).toHaveBeenCalledExactlyOnceWith(runtime.sandboxName);
       expect(verifyGateway).toHaveBeenCalledExactlyOnceWith(runtime.sandboxName);

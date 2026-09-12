@@ -9,6 +9,7 @@ import type { WebSearchConfig } from "../../inference/web-search";
 import { isN1xManagedVllmProviderModel } from "../../domain/sandbox/n1x-managed-vllm-rebuild";
 import type { DcodeAutoApprovalMode } from "../dcode-auto-approval";
 import { assertProviderlessInterceptorEnvironment } from "../entry-options";
+import { assertProviderlessSandboxAgent } from "../sandbox-agent";
 import type {
   createProviderRecoveryReceiptLedger,
   ProviderRecoveryReceipt,
@@ -110,21 +111,21 @@ interface EndpointProvenance {
 }
 
 export function isCoreFlowCompleteBeforeFinalization(result: {
-  readonly context: Pick<OnboardFlowContext, "providerlessApf" | "sandboxName">;
+  readonly context: Pick<
+    OnboardFlowContext,
+    "providerlessApf" | "sandboxName" | "externalComponent"
+  >;
   readonly session: { readonly machine: { readonly state: string } };
 }): boolean {
   return (
     result.context.providerlessApf === true &&
+    !result.context.externalComponent &&
     result.session.machine.state === "complete" &&
     Boolean(result.context.sandboxName)
   );
 }
 
 function hasProviderBackedApfIntent(context: OnboardFlowContext): boolean {
-  const requestedAgentName = (context.agent as { readonly name?: unknown } | null)?.name;
-  const requestsNondefaultAgent =
-    typeof requestedAgentName === "string" &&
-    requestedAgentName.trim().toLowerCase() !== "openclaw";
   const routeValues = [
     context.provider,
     context.model,
@@ -137,7 +138,6 @@ function hasProviderBackedApfIntent(context: OnboardFlowContext): boolean {
     context.nimContainer,
   ];
   return (
-    requestsNondefaultAgent ||
     routeValues.some((value) => typeof value === "string" && value.trim().length > 0) ||
     context.endpointSource != null ||
     context.selectedMessagingChannels.length > 0 ||
@@ -193,6 +193,7 @@ export function createProviderInferenceOnboardFlowPhase<
       context.session?.apfInterceptorRequested === true
     ) {
       assertProviderlessInterceptorEnvironment(true, options.env);
+      assertProviderlessSandboxAgent(context.agent);
       if (hasProviderBackedApfIntent(context)) {
         throw new Error(
           "Interceptor onboarding supports providerless sandbox creation only. No sandbox or provider was created.",
@@ -378,7 +379,6 @@ export function createSandboxOnboardFlowPhase<
       context: mergeSandboxCreatedContext(context, {
         session: sandboxStateResult.session,
         sandboxName: sandboxStateResult.sandboxName,
-        recreateJournalHandoff: Boolean(options.recreateJournalTargetIntentFingerprint),
         webSearchConfig: sandboxStateResult.webSearchConfig,
         webSearchConfigChanged: sandboxStateResult.webSearchConfigChanged,
         hermesToolGateways: sandboxStateResult.hermesToolGateways,

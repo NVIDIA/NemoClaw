@@ -121,6 +121,7 @@ describe("credential actions use typed OpenShell provider results", () => {
       fromExisting: false,
       timeoutMs: 30_000,
     });
+    expect(adapter.importProviderProfile).not.toHaveBeenCalled();
     expect(JSON.stringify(result)).not.toContain("credential-value");
   });
 
@@ -311,7 +312,7 @@ describe("credential actions use typed OpenShell provider results", () => {
     },
   );
 
-  it("imports the bundled OpenAI profile through the provider adapter (#9806)", async () => {
+  it("does not import a compatibility profile for the OpenAI provider (#11229)", async () => {
     vi.stubEnv("OPENAI_API_KEY", "host-only-value");
     const adapter = providerAdapter();
 
@@ -327,15 +328,11 @@ describe("credential actions use typed OpenShell provider results", () => {
     );
 
     expect(result.exitCode).toBe(0);
-    expect(adapter.importProviderProfile).toHaveBeenCalledWith({
-      target: { kind: "named", gatewayName: "nemoclaw" },
-      profilePath: expect.stringMatching(/provider-profiles\/openai\.yaml$/u),
-      timeoutMs: 30_000,
-    });
+    expect(adapter.importProviderProfile).not.toHaveBeenCalled();
     expect(adapter.createProvider).toHaveBeenCalledOnce();
   });
 
-  it("canonicalizes a mixed-case bundled profile through provider creation (#9806)", async () => {
+  it("does not import a compatibility profile for a mixed-case OpenAI type (#11229)", async () => {
     const adapter = providerAdapter();
 
     const result = await runCredentialsAddAction(
@@ -350,11 +347,7 @@ describe("credential actions use typed OpenShell provider results", () => {
     );
 
     expect(result.exitCode).toBe(0);
-    expect(adapter.importProviderProfile).toHaveBeenCalledWith({
-      target: { kind: "named", gatewayName: "nemoclaw" },
-      profilePath: expect.stringMatching(/provider-profiles\/openai\.yaml$/u),
-      timeoutMs: 30_000,
-    });
+    expect(adapter.importProviderProfile).not.toHaveBeenCalled();
     expect(adapter.inspectProviderProfile).toHaveBeenCalledWith({
       target: { kind: "named", gatewayName: "nemoclaw" },
       profileType: "openai",
@@ -466,36 +459,6 @@ describe("credential actions use typed OpenShell provider results", () => {
     expect(forgetExtraProvider).toHaveBeenCalledTimes(testCase.forgetCalls);
   });
 
-  it("does not create an OpenAI provider after profile import fails (#9806)", async () => {
-    vi.stubEnv("OPENAI_API_KEY", "host-only-value");
-    const importProviderProfile: OpenShellProviderAdapter["importProviderProfile"] = async () => ({
-      ok: false,
-      error: {
-        kind: "command",
-        reason: "profile_incompatible",
-        message: "The OpenShell provider profile does not match the checked-in boundary.",
-      },
-    });
-    const adapter = providerAdapter({ importProviderProfile: vi.fn(importProviderProfile) });
-
-    const result = await runCredentialsAddAction(
-      {
-        provider: "openai-prod",
-        type: "openai",
-        credentials: ["OPENAI_API_KEY"],
-        configPairs: [],
-        fromExisting: false,
-      },
-      { providerAdapter: adapter },
-    );
-
-    expect(result.exitCode).toBe(1);
-    expect(result.failureLines).toContain(
-      "  OpenShell provider profile 'openai' does not match NemoClaw's checked-in credential boundary.",
-    );
-    expect(adapter.createProvider).not.toHaveBeenCalled();
-  });
-
   it("does not create a provider from an incompatible bundled profile (#9806)", async () => {
     vi.stubEnv("TAVILY_API_KEY", "host-only-value");
     const importProviderProfile: OpenShellProviderAdapter["importProviderProfile"] = async () => ({
@@ -525,77 +488,6 @@ describe("credential actions use typed OpenShell provider results", () => {
     );
     expect(adapter.createProvider).not.toHaveBeenCalled();
   });
-
-  it.each([
-    [
-      "authentication",
-      {
-        kind: "authentication",
-        message: "OpenShell could not authenticate the provider operation.",
-      },
-      ["  Restore OpenShell authentication for the selected gateway, then retry."],
-    ],
-    [
-      "unreachable gateway",
-      {
-        kind: "transport",
-        reason: "unreachable",
-        message: "OpenShell could not reach the selected gateway.",
-      },
-      ["  Start the gateway again with `nemoclaw onboard`.", "  Then retry this command."],
-    ],
-    [
-      "timeout",
-      { kind: "timeout", message: "The OpenShell provider operation timed out." },
-      ["  Confirm the selected OpenShell gateway is available, then retry."],
-    ],
-    [
-      "schema mismatch",
-      {
-        kind: "schema",
-        message: "The OpenShell CLI and gateway provider schemas do not match.",
-      },
-      ["  Update OpenShell with scripts/install-openshell.sh, then retry."],
-    ],
-    [
-      "invalid bundled profile",
-      {
-        kind: "validation",
-        message: "The checked-in OpenShell provider profile is invalid or unreadable.",
-      },
-      ["  Restore the bundled provider profile from this NemoClaw release, then retry."],
-    ],
-  ] satisfies ReadonlyArray<readonly [string, OpenShellProviderError, readonly string[]]>)(
-    "gives actionable recovery for a typed %s profile import failure (#9806)",
-    async (_case, error, recoveryLines) => {
-      vi.stubEnv("OPENAI_API_KEY", "host-only-value");
-      const importProviderProfile: OpenShellProviderAdapter["importProviderProfile"] =
-        async () => ({
-          ok: false,
-          error,
-        });
-      const adapter = providerAdapter({ importProviderProfile: vi.fn(importProviderProfile) });
-
-      const result = await runCredentialsAddAction(
-        {
-          provider: "openai-prod",
-          type: "openai",
-          credentials: ["OPENAI_API_KEY"],
-          configPairs: [],
-          fromExisting: false,
-        },
-        { providerAdapter: adapter },
-      );
-
-      expect(result.exitCode).toBe(1);
-      expect(result.failureLines).toEqual([
-        "  Could not import bundled provider profile 'openai'.",
-        ...recoveryLines,
-        `  ${error.message}`,
-      ]);
-      expect(adapter.createProvider).not.toHaveBeenCalled();
-    },
-  );
 
   it("does not create from existing credentials when profile identity is unverified (#9806)", async () => {
     const inspectProviderProfile: OpenShellProviderAdapter["inspectProviderProfile"] =

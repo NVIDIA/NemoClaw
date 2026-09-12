@@ -180,6 +180,11 @@ All hooks managed by [prek](https://prek.j178.dev/) (installed via `npm install`
 | **commit-msg** | commitlint (Conventional Commits) |
 | **pre-push** | Path-scoped incremental CLI/plugin TypeScript checks and checked-JavaScript checks |
 
+`npm run validate:pr` requires a clean committed tree and runs read-only formatting checks.
+The repository-check runner reports durations and selects checks from changed paths, including deletions.
+Compiler hooks share content-based local result reuse with explicit validation. Changed or unavailable
+inputs require execution; reuse does not replace trusted validation or independent CI.
+
 ## Working with This Repo
 
 ### Before Making Changes

@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { resolveOnboardingProbeReplyBudget } from "./openai-probe-models";
 import { captureAuthConfigPath } from "../adapters/http/auth-config-test-helpers";
 import { buildOllamaProbeOptions, resetOllamaHostCache } from "./local";
 import {
@@ -298,6 +299,7 @@ describe("OpenAI-compatible inference probe response parsing", () => {
 
 describe("OpenAI-compatible inference probes", () => {
   it("uses the NVIDIA Build request shape for DeepSeek V4 Pro", () => {
+    expect(resolveOnboardingProbeReplyBudget({ provider: "nvidia-prod" })).toBeUndefined();
     expect(getChatCompletionsProbePayload("deepseek-ai/deepseek-v4-pro")).toEqual({
       model: "deepseek-ai/deepseek-v4-pro",
       messages: [{ role: "user", content: "Reply with exactly: OK" }],
@@ -986,7 +988,10 @@ exit 0
       });
     });
 
-    it("preserves query-param auth on doubled-timeout chat-completions retry", () => {
+    it.each([
+      ["openai-api", "test-model", 16],
+      ["gemini-api", "gemini-2.5-flash", 256],
+    ])("preserves %s auth and budget on timeout retry", (provider, model, maxTokens) => {
       const script = `#!/usr/bin/env bash
 outfile=""
 n=$(cat "${HARNESS_COUNTER}")
@@ -1020,15 +1025,19 @@ exit 0
         ({ counter, tmpDir }) => {
           const result = probeOpenAiLikeEndpoint(
             "https://api.example.com/v1",
-            "test-model",
+            model,
             "secret key",
-            { skipResponsesProbe: true, authMode: "query-param" },
+            { skipResponsesProbe: true, authMode: "query-param", provider },
           );
 
           expect(result).toMatchObject({ ok: true, api: "openai-completions" });
           expect(fs.readFileSync(counter, "utf8").trim()).toBe("2");
           const firstArgs = fs.readFileSync(path.join(tmpDir, "args-1.txt"), "utf8");
           const retryArgs = fs.readFileSync(path.join(tmpDir, "args-2.txt"), "utf8");
+          const initial = firstArgs.split("\n");
+          const retried = retryArgs.split("\n");
+          expect(JSON.parse(initial[initial.indexOf("-d") + 1]).max_tokens).toBe(maxTokens);
+          expect(JSON.parse(retried[retried.indexOf("-d") + 1]).max_tokens).toBe(maxTokens);
           const combinedArgs = `${firstArgs}\n${retryArgs}`;
           expect(combinedArgs).toContain("https://api.example.com/v1/chat/completions");
           expect(combinedArgs).not.toContain("?key=");
@@ -1450,39 +1459,37 @@ exit 0
 });
 
 describe("onboard inference smoke abort cleanup", () => {
-  it("uses the legacy NVIDIA Endpoints payload before cleaning up a failed smoke (#10880)", async () => {
+  it.each([
+    ["nvidia-nim", "nvidia/nemotron-3-super-120b-a12b", true],
+    ["gemini-api", "gemini-2.5-flash", false],
+  ])("forwards %s smoke policy", async (provider, model, nvidiaPayload) => {
     const optimizedProbe = vi.fn().mockResolvedValue({ ok: false, message: "smoke failed" });
     const teardownOrphanManagedGatewayOnAbort = vi.fn();
     const exit = vi.spyOn(process, "exit").mockImplementation((() => undefined) as never);
-    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
     vi.stubEnv("VITEST", "false");
 
-    try {
-      await verifyOnboardInferenceSmoke(
-        {
-          endpointUrl: "https://inference.example.com/v1",
-          forceOpenAiLike: true,
-          model: "nvidia/nemotron-3-super-120b-a12b",
-          provider: "nvidia-nim",
-        },
-        {
-          probeOpenAiLikeEndpointOptimized: optimizedProbe,
-          teardownOrphanManagedGatewayOnAbort,
-        },
-      );
+    await verifyOnboardInferenceSmoke(
+      {
+        endpointUrl: "https://inference.example.com/v1",
+        forceOpenAiLike: true,
+        model,
+        provider,
+      },
+      {
+        probeOpenAiLikeEndpointOptimized: optimizedProbe,
+        teardownOrphanManagedGatewayOnAbort,
+      },
+    );
 
-      expect(optimizedProbe.mock.calls[0]?.[3]).toMatchObject({
-        useNvidiaEndpointProbePayload: true,
-      });
-      expect(teardownOrphanManagedGatewayOnAbort).toHaveBeenCalledOnce();
-      expect(exit).toHaveBeenCalledWith(1);
-      expect(teardownOrphanManagedGatewayOnAbort.mock.invocationCallOrder[0]).toBeLessThan(
-        exit.mock.invocationCallOrder[0],
-      );
-    } finally {
-      vi.unstubAllEnvs();
-      error.mockRestore();
-      exit.mockRestore();
-    }
+    expect(optimizedProbe.mock.calls[0]?.[3]).toMatchObject({
+      provider,
+      useNvidiaEndpointProbePayload: nvidiaPayload,
+    });
+    expect(teardownOrphanManagedGatewayOnAbort).toHaveBeenCalledOnce();
+    expect(exit).toHaveBeenCalledWith(1);
+    expect(teardownOrphanManagedGatewayOnAbort.mock.invocationCallOrder[0]).toBeLessThan(
+      exit.mock.invocationCallOrder[0],
+    );
   });
 });

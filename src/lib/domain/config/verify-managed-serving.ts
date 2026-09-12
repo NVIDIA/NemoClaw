@@ -64,7 +64,7 @@ function validProfileVersion(version: string): boolean {
   return /^(0|[1-9][0-9]{0,19})$/.test(version) && BigInt(version) <= 18446744073709551615n;
 }
 
-function hasManagedOpenAiProfile(evidence: ObservedExportEndpointEvidence | null): boolean {
+export function hasManagedOpenAiProfile(evidence: ObservedExportEndpointEvidence | null): boolean {
   if (!evidence) return false;
   const { provider } = evidence;
   const profile = provider.managedProfile;

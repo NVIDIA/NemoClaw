@@ -142,7 +142,7 @@ describe("export config builder", () => {
 
   it("preserves the verified Hermes agent type (#11286)", () => {
     const result = buildExportConfig(
-      { ...source, agent: "hermes" },
+      { ...source, agent: "hermes", interfaces: undefined },
       {
         documentName: alphaDocumentName,
         documentUid: firstUid,
@@ -158,6 +158,7 @@ describe("export config builder", () => {
       {
         ...source,
         agent: "hermes",
+        interfaces: undefined,
         auth: { method: "api-key" },
         inference: {
           provider: "hermes-provider",

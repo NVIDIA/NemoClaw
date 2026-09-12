@@ -89,6 +89,7 @@ export async function runCapturedProcess(
   options: {
     maxBufferBytes?: number;
     stdinIsTty?: boolean;
+    stdin?: boolean;
   } = {},
   deps: CapturedProcessRunDeps = {},
 ): Promise<CapturedProcessResult> {
@@ -98,33 +99,34 @@ export async function runCapturedProcess(
   let overflowError: Error | undefined;
   const maxBufferBytes = options.maxBufferBytes ?? DEFAULT_CAPTURE_LIMIT_BYTES;
   const spawnChild = deps.spawnChild ?? defaultCapturedProcessSpawner;
-  const result = await superviseProcessSession(() => {
-    const child = spawnChild(
-      binary,
-      args,
-      capturedProcessStdio(options.stdinIsTty ?? isStdinTty()),
-    );
-    const setOverflowError = (error: Error) => {
-      overflowError ??= error;
-    };
-    captureProcessStream(
-      child.stdout,
-      child,
-      stdoutChunks,
-      maxBufferBytes,
-      captureBudget,
-      setOverflowError,
-    );
-    captureProcessStream(
-      child.stderr,
-      child,
-      stderrChunks,
-      maxBufferBytes,
-      captureBudget,
-      setOverflowError,
-    );
-    return child;
-  }, deps.signalSource);
+  const stdinIsTty = options.stdinIsTty ?? isStdinTty();
+  const result = await superviseProcessSession(
+    () => {
+      const child = spawnChild(binary, args, capturedProcessStdio(stdinIsTty, options.stdin));
+      const setOverflowError = (error: Error) => {
+        overflowError ??= error;
+      };
+      captureProcessStream(
+        child.stdout,
+        child,
+        stdoutChunks,
+        maxBufferBytes,
+        captureBudget,
+        setOverflowError,
+      );
+      captureProcessStream(
+        child.stderr,
+        child,
+        stderrChunks,
+        maxBufferBytes,
+        captureBudget,
+        setOverflowError,
+      );
+      return child;
+    },
+    deps.signalSource,
+    { forwardSigint: !stdinIsTty },
+  );
   try {
     return {
       status: result.status,
@@ -140,9 +142,12 @@ export async function runCapturedProcess(
 
 /**
  * Stdio for a non-interactive agent dispatch. An interactive terminal is
- * withheld from fd 0; a genuine pipe or redirect is still forwarded so
- * scripted stdin keeps working.
+ * withheld from fd 0. Callers can close unused input explicitly; other pipes
+ * and redirects retain their original bytes.
  */
-export function capturedProcessStdio(stdinIsTty: boolean = isStdinTty()): StdioOptions {
-  return [stdinIsTty ? "ignore" : "inherit", "pipe", "pipe"];
+export function capturedProcessStdio(
+  stdinIsTty: boolean = isStdinTty(),
+  stdin = true,
+): StdioOptions {
+  return [stdinIsTty || !stdin ? "ignore" : "inherit", "pipe", "pipe"];
 }

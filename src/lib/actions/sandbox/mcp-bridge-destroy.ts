@@ -142,7 +142,7 @@ export async function prepareMcpBridgesForDestroy(
       );
     }
     for (const entry of entries) {
-      removeGeneratedPolicy(sandboxName, entry, {
+      await removeGeneratedPolicy(sandboxName, entry, {
         runtimeSelection: providerRuntimeSelection,
       });
       removedPolicies.push(entry);

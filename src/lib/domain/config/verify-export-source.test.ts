@@ -13,6 +13,8 @@ import {
   managedWorkload,
   entry,
   snapshot,
+  verify,
+  changeRetainedProfile,
   tunedEnvironment,
   hermesSnapshot,
   hermesManagedAuthSnapshot,
@@ -31,7 +33,7 @@ import { type NemoClawConfig } from "../../config/model";
 import { observeStableExportSource } from "../../actions/config/observe-export-source";
 import type { ManagedStartupProfileBuilderInput } from "../../onboard/managed-startup/profile-builder";
 import type { SandboxEntry, SandboxWorkloadReceipt } from "../../state/registry/types";
-import type { ObservedExportSnapshot, QualifiedExportSnapshot } from "./export-evidence";
+import type { ObservedExportSnapshot } from "./export-evidence";
 import { classifyExportRegistry, verifyExportSource } from "./verify-export-source";
 import { buildChain } from "../../dashboard/contract";
 
@@ -42,21 +44,6 @@ function findings(result: ReturnType<typeof verifyExportSource>) {
 function verifiedSource(result: ReturnType<typeof verifyExportSource>) {
   expect(result.kind).toBe("verified");
   return (result as Extract<typeof result, { kind: "verified" }>).source;
-}
-
-function verify(
-  value: ObservedExportSnapshot,
-  requestedSandboxName = "alpha",
-  policyRepresentable = true,
-) {
-  const identity = { sandboxId: value.policy.sandboxId, revision: value.policy.revision };
-  const qualified = {
-    ...value,
-    policy: policyRepresentable
-      ? { ...identity, kind: "verified", canonical: canonicalPolicy }
-      : { ...identity, kind: "not-representable" },
-  } as QualifiedExportSnapshot;
-  return verifyExportSource(requestedSandboxName, qualified);
 }
 
 function primaryOpenClawAgent(config: NemoClawConfig) {
@@ -773,21 +760,10 @@ describe("config export source verification (#10938)", () => {
       "spec.sandboxes[].agents[0].tools",
     ],
     [
-      "Hermes dashboard",
-      { hermesDashboardEnabled: true, hermesDashboardPort: 18_790 },
-      "spec.sandboxes[].agents[0].dashboard",
-    ],
-    [
-      "invalid Hermes dashboard port evidence",
-      { hermesDashboardPort: 0 },
-      "spec.sandboxes[].agents[0].dashboard",
-    ],
-    [
       "Hermes inference provider",
       { hermesInferenceProvider: "hermes-provider" },
       "spec.sandboxes[].agents[0].auth",
     ],
-    ["non-default Hermes API port", { hermesApiPort: 8643 }, "spec.sandboxes[].agents[0].api"],
   ])("rejects excluded %s state (#11286)", (_case, registryOverrides, field) => {
     expect(findings(verify(hermesSnapshot(registryOverrides)))).toContainEqual(
       expect.objectContaining({ category: "unsupported", field }),
@@ -823,7 +799,7 @@ describe("config export source verification (#10938)", () => {
           agent: "hermes",
           mode: "loopback-forwarded",
           url: "http://127.0.0.1:19189",
-          browserUrl: "http://127.0.0.1:19189",
+          browserUrl: "https://dashboard.example.com",
           publicPort: 19_189,
           internalPort: 29_189,
           tuiEnabled: false,
@@ -1190,32 +1166,6 @@ function dashboardSnapshot(
   });
 }
 
-function changeDashboardProfile(
-  observed: ObservedExportSnapshot,
-  change: (profile: Record<string, Record<string, unknown>>) => void,
-) {
-  const workload = observed.registry.workload as Extract<
-    SandboxWorkloadReceipt,
-    { kind: "managed-image" }
-  >;
-  expect(workload?.kind).toBe("managed-image");
-  const value = JSON.parse(Buffer.from(workload.encodedProfile, "base64url").toString("utf8"));
-  change(value);
-  const serialized = JSON.stringify(value);
-  const encodedProfile = Buffer.from(serialized).toString("base64url");
-  return {
-    ...observed,
-    registry: {
-      ...observed.registry,
-      workload: {
-        ...workload,
-        encodedProfile,
-        startupProfileSha256: createHash("sha256").update(encodedProfile).digest("hex"),
-      },
-    },
-  };
-}
-
 describe("dashboard settings export", () => {
   it("keeps canonical Hermes export free of dashboard interfaces (#10904)", async () => {
     const exported = await exportSnapshots([hermesSnapshot()]);
@@ -1232,26 +1182,26 @@ describe("dashboard settings export", () => {
     });
   });
 
-  it.each([
-    { hermesDashboardEnabled: true, hermesDashboardPort: 19000 },
-    { dashboardRemoteBindPrepared: true },
-  ])("does not publish unsupported Hermes dashboard state %j (#10904)", async (registry) => {
-    const exported = await exportSnapshots([hermesSnapshot(registry)]);
-    expect(exported.outcome).toMatchObject({
-      ok: false,
-      failure: {
-        kind: "observation",
-        findings: expect.arrayContaining([
-          expect.objectContaining({
-            category: "unsupported",
-            field: "spec.sandboxes[].agents[0].dashboard",
-          }),
-        ]),
-      },
-    });
-    expect(exported.writeStdout).not.toHaveBeenCalled();
-    expect(exported.publish).not.toHaveBeenCalled();
-  });
+  it.each([{ dashboardRemoteBindPrepared: true }])(
+    "does not publish unsupported Hermes dashboard state %j (#10904)",
+    async (registry) => {
+      const exported = await exportSnapshots([hermesSnapshot(registry)]);
+      expect(exported.outcome).toMatchObject({
+        ok: false,
+        failure: {
+          kind: "observation",
+          findings: expect.arrayContaining([
+            expect.objectContaining({
+              category: "unsupported",
+              field: "spec.sandboxes[].agents[0].dashboard",
+            }),
+          ]),
+        },
+      });
+      expect(exported.writeStdout).not.toHaveBeenCalled();
+      expect(exported.publish).not.toHaveBeenCalled();
+    },
+  );
 
   it.each([
     [19000, "0.0.0.0", { port: 19000, bind: "0.0.0.0" }],
@@ -1411,7 +1361,7 @@ describe("dashboard settings export", () => {
   ] as const)(
     "rejects retained %s without output or private values (#10904)",
     async (label, change) => {
-      const outcome = await exportSnapshots([changeDashboardProfile(dashboardSnapshot(), change)]);
+      const outcome = await exportSnapshots([changeRetainedProfile(dashboardSnapshot(), change)]);
       const category = ["malformed port", "URL credential"].includes(label)
         ? "missing-provenance"
         : "unsupported";

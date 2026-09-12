@@ -17,6 +17,7 @@ import { hashCredential } from "../../security/credential-hash";
 import * as onboardSession from "../../state/onboard-session";
 import type { SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
+import * as crossPortRegistry from "../../state/registry/cross-port";
 import * as messagingHostForwardLifecycle from "./messaging-host-forward-lifecycle";
 import { addSandboxChannel, startSandboxChannel } from "./policy-channel";
 import { policyChannelDependencies } from "./policy-channel-dependencies";
@@ -344,6 +345,14 @@ beforeEach(() => {
 
   // Registry seam.
   getSandboxMock = vi.spyOn(registry, "getSandbox").mockReturnValue(null);
+  vi.spyOn(crossPortRegistry, "findSandboxAcrossGatewayRoots").mockImplementation(
+    (name: string) => {
+      const entry = registry.getSandbox(name);
+      return entry
+        ? { entry, gatewayPort: entry.gatewayPort ?? null, registryFile: "/test/sandboxes.json" }
+        : null;
+    },
+  );
   getDisabledChannelsMock = vi.spyOn(registry, "getDisabledChannels").mockReturnValue([]);
   listSandboxesMock = vi
     .spyOn(registry, "listSandboxes")
@@ -353,16 +362,17 @@ beforeEach(() => {
   // Lazy legacy-provider seam: no onboarding graph is loaded for this suite.
   upsertMock = vi.spyOn(policyChannelDependencies, "upsertMessagingProviders").mockReturnValue([]);
   vi.spyOn(policyChannelDependencies, "revalidateChannelProviderPolicy").mockImplementation(
-    () => undefined,
+    async () => undefined,
   );
 
   // openshell runtime + gateway recovery.
   runOpenshellMock = vi.spyOn(runtime, "runOpenshell").mockReturnValue(successfulOpenshellResult());
   const healthyGatewayState = {
     state: "healthy_named",
-    status: "",
-    gatewayInfo: "",
     activeGateway: "nemoclaw",
+    diagnostic: "",
+    recoveryBlocked: false,
+    unavailable: false,
   } as const;
   vi.spyOn(gatewayRuntime, "recoverNamedGatewayRuntime").mockResolvedValue({
     recovered: true,
@@ -387,12 +397,12 @@ beforeEach(() => {
   vi.spyOn(policy, "loadPreset").mockReturnValue("network_policies:\n  stub: {}\n");
   vi.spyOn(policy, "parsePresetPolicyKeys").mockReturnValue(["stub"]);
   vi.spyOn(policy, "listPresets").mockReturnValue([]);
-  vi.spyOn(policy, "getPresetContentGatewayState").mockReturnValue("absent");
+  vi.spyOn(policy, "getPresetContentGatewayState").mockResolvedValue("absent");
   scopeDisclosureMock = vi
     .spyOn(policy, "logPresetScopeForState")
     .mockImplementation(() => undefined);
-  applyPresetMock = vi.spyOn(policy, "applyPreset").mockReturnValue(true);
-  vi.spyOn(policy, "getAppliedPresets").mockReturnValue([]);
+  applyPresetMock = vi.spyOn(policy, "applyPreset").mockResolvedValue(true);
+  vi.spyOn(policy, "getAppliedPresets").mockResolvedValue([]);
 
   // Downstream rebuild is not under test.
   rebuildSandboxMock = vi
@@ -585,8 +595,8 @@ describe("addSandboxChannel cross-sandbox conflict check (#4305)", () => {
     vi.mocked(policy.listPresets).mockReturnValue([
       { file: "telegram.yaml", name: "telegram", description: "Telegram" },
     ]);
-    vi.mocked(policy.getAppliedPresets).mockReturnValue(["telegram"]);
-    const removePresetMock = vi.spyOn(policy, "removePreset").mockReturnValue(true);
+    vi.mocked(policy.getAppliedPresets).mockResolvedValue(["telegram"]);
+    const removePresetMock = vi.spyOn(policy, "removePreset").mockResolvedValue(true);
     runOpenshellMock.mockReturnValue(successfulOpenshellResult());
 
     await expect(addSandboxChannel("alpha", { channel: "telegram" })).rejects.toThrow(

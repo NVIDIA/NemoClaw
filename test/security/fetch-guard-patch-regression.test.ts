@@ -192,6 +192,10 @@ function runOpenClawUpgradeBlock(currentVersion: string) {
     "# OPENCLAW_VERSION is the NemoClaw runtime build target",
     "# Patch OpenClaw media fetch",
   )
+    .replaceAll(
+      "bash /scripts/lib/verify-mcporter-audit.sh",
+      "node /scripts/lib/reviewed-npm-audit.mts --directory /usr/local/lib/nemoclaw/mcporter-runtime --exceptions /scripts/npm-audit-exceptions.json --graph mcporter-runtime --threshold high",
+    )
     .replaceAll("/opt/nemoclaw-blueprint/blueprint.yaml", blueprint)
     .replaceAll("/usr/local/lib/node_modules/openclaw", openclawInstall)
     .replaceAll(

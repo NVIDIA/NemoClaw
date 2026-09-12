@@ -37,8 +37,8 @@ import {
 } from "../../onboard/runtime-provider/access";
 import {
   emitProviderDetachResidualHint,
+  deleteSandboxProviderRegistrations,
   removeManagedAgentStateVolumes,
-  SANDBOX_PROVIDER_SUFFIXES,
 } from "../../onboard/sandbox-provider-cleanup";
 import { validateName } from "../../runner";
 import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock";
@@ -222,11 +222,11 @@ async function resolveCleanupGatewayDecision(options: DestroySandboxOptions): Pr
   return trimmed === "y" || trimmed === "yes";
 }
 
-export function cleanupSandboxServices(
+export async function cleanupSandboxServices(
   sandboxName: string,
   { stopHostServices = false }: { stopHostServices?: boolean } = {},
   deps: CleanupSandboxServicesDeps = {},
-): void {
+): Promise<void> {
   // Source boundary: this exported helper can be called independently of CLI
   // dispatch, including from forced local recovery. Validate once before every
   // host and provider cleanup side effect, then derive the PID path from that
@@ -442,12 +442,7 @@ export function cleanupSandboxServices(
   // onboard rebuild path's pre-delete detach via
   // `src/lib/onboard/sandbox-provider-cleanup.ts` so the two paths can't
   // drift on which providers count as per-sandbox state.
-  for (const suffix of SANDBOX_PROVIDER_SUFFIXES) {
-    runOpenshell(["provider", "delete", `${validatedSandboxName}-${suffix}`], {
-      ignoreError: true,
-      stdio: ["ignore", "ignore", "ignore"],
-    });
-  }
+  await deleteSandboxProviderRegistrations(validatedSandboxName, "all", { runOpenshell });
 }
 
 /**
@@ -1002,13 +997,13 @@ async function destroySandboxUnlocked(
       }
     }
   }
-  abortPreparedCleanupOnError(() => {
+  try {
     const shouldStopHostServices = shouldStopHostServicesAfterDestroy({
       deleteSucceededOrAlreadyGone,
       registeredSandboxCount: registry.listSandboxes().sandboxes.length,
       sandboxStillRegistered: !!registry.getSandbox(sandboxName),
     });
-    cleanupSandboxServices(
+    await cleanupSandboxServices(
       sandboxName,
       {
         stopHostServices: shouldStopHostServices,
@@ -1017,7 +1012,10 @@ async function destroySandboxUnlocked(
         runOpenshell: cleanupRunOpenshell,
       },
     );
-  });
+  } catch (error) {
+    preparedManagedLlamaCppCleanup?.abort();
+    throw error;
+  }
   if (deleteSucceededOrAlreadyGone && commonLlamaCppAuthorityRetired === true) {
     preparedManagedLlamaCppCleanup?.abort();
   } else if (deleteSucceededOrAlreadyGone) {

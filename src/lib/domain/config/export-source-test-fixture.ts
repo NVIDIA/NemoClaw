@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from "node:crypto";
+import { expect } from "vitest";
+import { verifyExportSource } from "./verify-export-source";
 import { resolveManagedStartupInferenceRoute } from "../../inference/gateway/route-contract";
 import { fingerprintOpenShellSandboxId } from "../sandbox/openshell-identity";
 import {
@@ -8,7 +11,11 @@ import {
   type ManagedStartupProfileBuilderInput,
 } from "../../onboard/managed-startup/profile-builder";
 import type { SandboxEntry, SandboxWorkloadReceipt } from "../../state/registry/types";
-import type { CanonicalExportPolicy, ObservedExportSnapshot } from "./export-evidence";
+import type {
+  CanonicalExportPolicy,
+  ObservedExportSnapshot,
+  QualifiedExportSnapshot,
+} from "./export-evidence";
 
 export const sandboxId = "018f47e2-9d93-7d15-9c41-3ecf70b2550f";
 export const fingerprint = fingerprintOpenShellSandboxId(sandboxId)!;
@@ -189,9 +196,6 @@ export function snapshot(overrides: Partial<ObservedExportSnapshot> = {}): Obser
   };
 }
 
-const nousEndpoint = "https://inference-api.nousresearch.com/v1";
-const model = "moonshotai/kimi-k2.6";
-
 export function braveSnapshot(): ObservedExportSnapshot {
   const value = snapshot();
   return {
@@ -235,6 +239,50 @@ export function hermesSnapshot(
   });
 }
 
+export function verify(
+  value: ObservedExportSnapshot,
+  requestedSandboxName = "alpha",
+  policyRepresentable = true,
+) {
+  const identity = { sandboxId: value.policy.sandboxId, revision: value.policy.revision };
+  const qualified = {
+    ...value,
+    policy: policyRepresentable
+      ? { ...identity, kind: "verified", canonical: canonicalPolicy }
+      : { ...identity, kind: "not-representable" },
+  } as QualifiedExportSnapshot;
+  return verifyExportSource(requestedSandboxName, qualified);
+}
+
+export function changeRetainedProfile(
+  observed: ObservedExportSnapshot,
+  change: (profile: Record<string, Record<string, unknown>>) => void,
+) {
+  const workload = observed.registry.workload as Extract<
+    SandboxWorkloadReceipt,
+    { kind: "managed-image" }
+  >;
+  expect(workload?.kind).toBe("managed-image");
+  const value = JSON.parse(Buffer.from(workload.encodedProfile, "base64url").toString("utf8"));
+  change(value);
+  const serialized = JSON.stringify(value);
+  const encodedProfile = Buffer.from(serialized).toString("base64url");
+  return {
+    ...observed,
+    registry: {
+      ...observed.registry,
+      workload: {
+        ...workload,
+        encodedProfile,
+        startupProfileSha256: createHash("sha256").update(encodedProfile).digest("hex"),
+      },
+    },
+  };
+}
+
+const nousEndpoint = "https://inference-api.nousresearch.com/v1";
+const hermesAuthModel = "moonshotai/kimi-k2.6";
+
 export function hermesManagedAuthSnapshot(
   registryOverrides: Partial<SandboxEntry> = {},
 ): ObservedExportSnapshot {
@@ -249,7 +297,7 @@ export function hermesManagedAuthSnapshot(
       inference: {
         routeProvider: "inference",
         upstreamProvider: "hermes-provider",
-        model,
+        model: hermesAuthModel,
         routedBaseUrl: "https://inference.local/v1",
         upstreamEndpointUrl: null,
         api,
@@ -261,7 +309,7 @@ export function hermesManagedAuthSnapshot(
   );
   const value = hermesSnapshot({
     provider: "hermes-provider",
-    model,
+    model: hermesAuthModel,
     preferredInferenceApi: api,
     endpointUrl,
     credentialEnv: "NOUS_API_KEY",
@@ -274,7 +322,7 @@ export function hermesManagedAuthSnapshot(
     inference: {
       topology: "hosted",
       provider: "hermes-provider",
-      model,
+      model: hermesAuthModel,
       api,
       endpoint: endpointUrl,
       endpointEvidence: {

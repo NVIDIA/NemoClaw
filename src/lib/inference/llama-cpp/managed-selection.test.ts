@@ -6,9 +6,9 @@ import {
   type CollectHostObservationsOptions,
   createHostReadinessReport,
 } from "../../readiness/host";
-import type { SystemReadinessReport } from "../../readiness/types";
 import { loadManagedInferenceCatalog } from "../serving/catalog-loader";
-import type { ManagedInferenceServingPreset } from "../serving/types";
+import { NEMOCLAW_SERVING_PRESET_ENV } from "../serving/managed-cluster-discovery";
+import { readinessReportForPreset } from "../serving/readiness-report.test-support";
 import { LLAMA_CPP_RECIPE_ENV } from "./contract";
 import {
   discoverManagedLlamaCppSelections,
@@ -29,58 +29,11 @@ const LOCAL_DOCKER_SELECTION = {
   runtimeProviderId: "docker",
 } as const;
 
-function readinessReport(
-  preset: ManagedInferenceServingPreset,
-  overrides: Partial<SystemReadinessReport> = {},
-): SystemReadinessReport {
-  const requirements = preset.spec.requirements.all.flatMap((requirement) =>
-    "readiness" in requirement ? [requirement.readiness] : [],
-  );
-  return {
-    schemaVersion: "1.1.0",
-    mutated: false,
-    provenance: {
-      nemoclawVersion: "0.1.0",
-      sourceRevision: "a".repeat(40),
-      observedAt: new Date().toISOString(),
-    },
-    observations: requirements.flatMap((requirement) =>
-      requirement.kind !== "observation"
-        ? []
-        : "state" in requirement
-          ? [{ id: requirement.id, state: requirement.state }]
-          : [
-              {
-                id: requirement.id,
-                state: "present" as const,
-                value:
-                  requirement.comparison.operator === "one-of"
-                    ? requirement.comparison.values[0]
-                    : requirement.comparison.value,
-              },
-            ],
-    ),
-    capabilities: requirements.flatMap((requirement) =>
-      requirement.kind === "capability" ? [{ id: requirement.id, state: requirement.state }] : [],
-    ),
-    qualifications: requirements.flatMap((requirement) =>
-      requirement.kind === "qualification"
-        ? [{ id: requirement.id, status: requirement.status }]
-        : [],
-    ),
-    findings: [],
-    evidence: [],
-    status: "supported",
-    exitCode: 0,
-    ...overrides,
-  } as SystemReadinessReport;
-}
-
 function fixture(presetId = SPARK_PRESET_ID) {
   const catalog = loadManagedInferenceCatalog();
   const preset = catalog.presets.find(({ metadata }) => metadata.id === presetId);
   expect(preset, "Shipped managed llama.cpp preset is missing.").toBeDefined();
-  return { catalog, preset: preset!, report: readinessReport(preset!) };
+  return { catalog, preset: preset!, report: readinessReportForPreset(preset!) };
 }
 
 function n1xCollectionOptions(): Omit<
@@ -537,6 +490,86 @@ describe("managed llama.cpp selection", () => {
     });
   });
 
+  it("selects the explicit-only Muse preset that NEMOCLAW_SERVING_PRESET names", () => {
+    const { catalog, report } = fixture();
+
+    const discovered = discoverManagedLlamaCppSelections(
+      { [NEMOCLAW_SERVING_PRESET_ENV]: MUSE_PRESET_ID },
+      catalog,
+      report,
+      LOCAL_DOCKER_SELECTION,
+    );
+
+    expect(discovered.resolution).toMatchObject({
+      kind: "selected",
+      selection: {
+        selection: "explicit",
+        recipe: { metadata: { id: MUSE_RECIPE_ID } },
+        preset: { metadata: { id: MUSE_PRESET_ID } },
+      },
+    });
+    expect(discovered.choices.map(({ selection }) => selection.preset.metadata.id)).toEqual([
+      MUSE_PRESET_ID,
+    ]);
+  });
+
+  it("rejects NEMOCLAW_SERVING_PRESET when NEMOCLAW_LLAMACPP_RECIPE names another recipe", () => {
+    const { catalog, report } = fixture();
+
+    expect(
+      resolveManagedLlamaCppSelection(
+        { [NEMOCLAW_SERVING_PRESET_ENV]: MUSE_PRESET_ID, [LLAMA_CPP_RECIPE_ENV]: RECIPE_ID },
+        catalog,
+        report,
+      ),
+    ).toEqual({
+      kind: "rejected",
+      reason: `NEMOCLAW_SERVING_PRESET ${MUSE_PRESET_ID} selects recipe ${MUSE_RECIPE_ID}, not NEMOCLAW_LLAMACPP_RECIPE ${RECIPE_ID}.`,
+    });
+    expect(
+      resolveManagedLlamaCppSelection(
+        { [NEMOCLAW_SERVING_PRESET_ENV]: MUSE_PRESET_ID, NEMOCLAW_MODEL: "other-model" },
+        catalog,
+        report,
+      ),
+    ).toEqual({
+      kind: "rejected",
+      reason: "NEMOCLAW_MODEL cannot override the served model in NEMOCLAW_SERVING_PRESET.",
+    });
+  });
+
+  it("rejects an unknown NEMOCLAW_SERVING_PRESET instead of selecting automatically", () => {
+    const { catalog, report } = fixture();
+
+    expect(
+      resolveManagedLlamaCppSelection(
+        { [NEMOCLAW_SERVING_PRESET_ENV]: "llama-cpp.unknown" },
+        catalog,
+        report,
+      ),
+    ).toEqual({
+      kind: "rejected",
+      reason: "Unknown managed inference preset llama-cpp.unknown.",
+    });
+  });
+
+  it("keeps automatic selection when NEMOCLAW_SERVING_PRESET names another backend's preset", () => {
+    const { catalog, report } = fixture();
+    const vllmPreset = catalog.presets.find(({ spec }) => spec.plan.backend === "vllm");
+    expect(vllmPreset, "Shipped managed vLLM preset is missing.").toBeDefined();
+
+    expect(
+      resolveManagedLlamaCppSelection(
+        { [NEMOCLAW_SERVING_PRESET_ENV]: vllmPreset!.metadata.id },
+        catalog,
+        report,
+      ),
+    ).toMatchObject({
+      kind: "selected",
+      selection: { selection: "automatic", preset: { metadata: { id: SPARK_PRESET_ID } } },
+    });
+  });
+
   it("selects the generic Linux amd64 NVIDIA GPU preset from the same declarative recipe", () => {
     const { catalog } = fixture(GENERIC_PRESET_ID);
     const now = new Date();
@@ -650,7 +683,7 @@ describe("managed llama.cpp selection", () => {
 
   it("rejects stale host readiness before activation", () => {
     const { catalog, preset } = fixture();
-    const stale = readinessReport(preset, {
+    const stale = readinessReportForPreset(preset, {
       provenance: {
         nemoclawVersion: "0.1.0",
         sourceRevision: "a".repeat(40),

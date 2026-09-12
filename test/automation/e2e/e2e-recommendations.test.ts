@@ -135,7 +135,6 @@ describe("E2E recommendation normalizer", () => {
         "tools/e2e/openshell-gateway-upgrade-fixture.mts",
         "tools/e2e/selector-aliases.mts",
         "tools/e2e/target-catalogue.mts",
-        "scripts/checks/llama-cpp-dgx-spark-qualification-paths.mts",
         "scripts/checks/protected-managed-image-contract.ts",
         "tools/e2e/module-tags.mts",
         ".github/workflows/e2e.yaml",

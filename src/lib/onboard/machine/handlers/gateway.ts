@@ -5,7 +5,15 @@ import type { NvidiaPlatform } from "../../../inference/nim";
 import type { GatewayReuseState } from "../../../state/gateway";
 import type { Session } from "../../../state/onboard-session";
 import type { GatewayContainerState } from "../../gateway-container-running";
-import type { PreparedExternalComponent } from "../../external-component";
+import {
+  gatewayConfigurationForExternalComponent,
+  type PreparedExternalComponent,
+  type ExternalComponentGatewayConfiguration,
+} from "../../external-component";
+import {
+  prepareExternalComponentGateway,
+  type ExternalComponentGatewayPreparation,
+} from "../../external-component/activation";
 import {
   describeGatewayOwner,
   evaluateGatewayAttachment,
@@ -40,11 +48,8 @@ export interface GatewayStateOptions<Gpu> {
     attachGateway(owner: GatewayOwner, expectedProbe: GatewayAttachmentProbe): Promise<void>;
     assertExternalComponentFreshSandbox(requestedSandboxName: string | null): void;
     configureExternalComponentGateway(
-      component: {
-        readonly componentId: string;
-        readonly interceptorSocketPath: string;
-      } | null,
-    ): void;
+      component: ExternalComponentGatewayConfiguration | null,
+    ): ExternalComponentGatewayPreparation | void;
     refreshDockerDriverGatewayReuseState(state: GatewayReuseState): Promise<GatewayReuseState>;
     gatewayCliSupportsLifecycleCommands(): boolean;
     verifyGatewayContainerRunning(gatewayName: string): GatewayContainerState;
@@ -155,14 +160,14 @@ async function handleGatewayStatePhase<Gpu>({
   }
   externalComponent?.revalidateBeforeGateway();
   if (deps.isLinuxDockerDriverGatewayEnabled()) {
-    deps.configureExternalComponentGateway(
+    const preparation = deps.configureExternalComponentGateway(
       externalComponent
-        ? {
-            componentId: externalComponent.declaration.componentId,
-            interceptorSocketPath: externalComponent.declaration.interceptorSocketPath,
-          }
+        ? gatewayConfigurationForExternalComponent(externalComponent.declaration)
         : null,
     );
+    if (externalComponent?.declaration.schemaVersion === 2) {
+      await prepareExternalComponentGateway(externalComponent, gatewayName, preparation);
+    }
   }
 
   let gatewayReuseState = await deps.refreshDockerDriverGatewayReuseState(initialGatewayReuseState);
@@ -305,6 +310,8 @@ async function handleGatewayStatePhase<Gpu>({
     } else if (gatewayReuseState === "foreign-active") {
       gatewayReuseState = "missing";
     }
+    if (externalComponent?.declaration.schemaVersion === 2)
+      externalComponent.revalidateBeforeGateway();
     await deps.startGateway(gpu, { gpuPassthrough });
     session = await deps.recordStepComplete("gateway");
   }

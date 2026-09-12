@@ -120,6 +120,15 @@ export default defineConfig({
       },
     },
     {
+      files: ["src/lib/extra-agents-validation.ts"],
+      rules: {
+        "no-unused-vars": "error",
+        "typescript/no-explicit-any": "error",
+        "typescript/consistent-type-exports": "error",
+        "typescript/consistent-type-imports": ["error", { disallowTypeAnnotations: false }],
+      },
+    },
+    {
       files: ["src/lib/adapters/**/*.{cts,mts,ts,tsx}", "nemoclaw/src/**/*.{cts,mts,ts,tsx}"],
       rules: {
         "no-unused-vars": "error",

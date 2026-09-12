@@ -594,6 +594,10 @@ describe("OpenShell MCP provider state", () => {
     { value: "openshell:resolve:env:GITHUB_TOKEN", observation: "canonical" },
     { value: "openshell:resolve:env:v11_GITHUB_TOKEN", observation: "v11" },
     { value: "openshell:resolve:env:v0_GITHUB_TOKEN", observation: "v0" },
+    {
+      value: `openshell:resolve:env:s${"a".repeat(64)}_GITHUB_TOKEN`,
+      observation: `s${"a".repeat(64)}`,
+    },
   ] as const)("emits the bounded $observation credential revision", ({ value, observation }) => {
     const command = buildMcpCredentialRevisionObservationCommand("GITHUB_TOKEN");
     const result = spawnSync("/bin/sh", ["-c", command], {
@@ -611,6 +615,9 @@ describe("OpenShell MCP provider state", () => {
     "openshell:resolve:env:v11_OTHER_TOKEN",
     "openshell:resolve:env:v11x_GITHUB_TOKEN",
     `openshell:resolve:env:v${"1".repeat(21)}_GITHUB_TOKEN`,
+    `openshell:resolve:env:s${"a".repeat(63)}_GITHUB_TOKEN`,
+    `openshell:resolve:env:s${"A".repeat(64)}_GITHUB_TOKEN`,
+    `openshell:resolve:env:s${"a".repeat(64)}_OTHER_TOKEN`,
   ])("rejects an unbounded credential revision [case %#]", (value) => {
     const command = buildMcpCredentialRevisionObservationCommand("GITHUB_TOKEN");
     const result = spawnSync("/bin/sh", ["-c", command], {
@@ -1049,5 +1056,34 @@ describe("OpenShell MCP provider state", () => {
       }),
     ).rejects.toThrow(/did not synchronize the expected credential revision/);
     expect(exec).toHaveBeenCalledTimes(1);
+  });
+
+  it("accepts a stable credential handle retained across provider updates", async () => {
+    const stableHandle = `s${"a".repeat(64)}` as const;
+    const exec = vi.spyOn(processRecovery, "executeSandboxExecCommand").mockResolvedValue({
+      status: 0,
+      stdout: stableHandle,
+      stderr: "",
+    });
+
+    await expect(
+      waitForAttachedMcpCredential(
+        "alpha",
+        {
+          server: "github",
+          agent: "openclaw",
+          adapter: "mcporter",
+          url: "https://mcp.example.test/mcp",
+          env: ["GITHUB_TOKEN"],
+          providerName: "alpha-mcp-github-0123456789abcdef",
+          providerId: "11111111-2222-4333-8444-555555555555",
+          policyName: "mcp-bridge-github",
+          addedAt: "2026-06-01T00:00:00.000Z",
+        },
+        runtimeSelection,
+        { previousRevision: stableHandle },
+      ),
+    ).resolves.toBe(stableHandle);
+    expect(exec).toHaveBeenCalledTimes(2);
   });
 });

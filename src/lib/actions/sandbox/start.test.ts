@@ -61,6 +61,9 @@ function harness(overrides: Partial<SandboxStartDeps> = {}) {
       containerName: "openshell-my-sandbox",
     }),
   );
+  const captureSandboxLifecycle = vi.fn<
+    DockerRuntimeProviderDependencies["captureSandboxLifecycle"]
+  >(() => ({ status: 0, output: "started" }));
   const dockerUnpause = vi.fn<DockerRuntimeProviderDependencies["unpauseContainer"]>(() => ({
     status: 0,
   }));
@@ -82,6 +85,7 @@ function harness(overrides: Partial<SandboxStartDeps> = {}) {
     [
       "docker",
       createDockerRuntimeProviderBundle({
+        captureSandboxLifecycle,
         findLabeledSandboxContainers,
         hasPortableLifecycleReceipt,
         isRuntimeDown: isDockerRuntimeDown,
@@ -105,6 +109,7 @@ function harness(overrides: Partial<SandboxStartDeps> = {}) {
     ...overrides,
   };
   return {
+    captureSandboxLifecycle,
     deps,
     dockerUnpause,
     findLabeledSandboxContainers,
@@ -167,7 +172,7 @@ describe("startSandbox", () => {
 
     expect(result.exitCode).toBe(0);
     const order = [
-      h.recoverDockerDriverSandbox.mock.invocationCallOrder[0],
+      h.captureSandboxLifecycle.mock.invocationCallOrder[0],
       waitForSandboxReady.mock.invocationCallOrder[0],
       restoreProcesses.mock.invocationCallOrder[0],
       h.verifyGateway.mock.invocationCallOrder[0],
@@ -238,12 +243,15 @@ describe("startSandbox", () => {
     const result = await startSandbox("my-sandbox", h.deps);
 
     expect(result.exitCode).toBe(0);
-    expect(h.recoverDockerDriverSandbox).toHaveBeenCalledWith("my-sandbox", {
-      readiness: "runtime-running",
-    });
+    expect(h.captureSandboxLifecycle).toHaveBeenCalledWith(
+      "start",
+      "my-sandbox",
+      "nemoclaw",
+      process.env,
+    );
     expect(h.restoreStartupState).toHaveBeenCalledWith("my-sandbox");
     expect(h.verifyGateway).toHaveBeenCalledWith("my-sandbox");
-    expect(h.recoverDockerDriverSandbox.mock.invocationCallOrder[0]).toBeLessThan(
+    expect(h.captureSandboxLifecycle.mock.invocationCallOrder[0]).toBeLessThan(
       h.restoreStartupState.mock.invocationCallOrder[0],
     );
     expect(h.restoreStartupState.mock.invocationCallOrder[0]).toBeLessThan(
@@ -490,13 +498,13 @@ describe("startSandbox", () => {
     expect(h.verifyGateway).not.toHaveBeenCalled();
   });
 
-  it("reports the started container by name (#6026)", async () => {
+  it("reports the OpenShell-owned sandbox start (#6026)", async () => {
     const h = harness();
 
     await startSandbox("my-sandbox", h.deps);
 
     const output = h.log.mock.calls.map(([line]) => line).join("\n");
-    expect(output).toContain("openshell-my-sandbox");
+    expect(output).toContain("Sandbox 'my-sandbox' started through OpenShell");
   });
 
   it("uses recorded Podman authority instead of ambient Docker for a portable receipt (#9070)", async () => {
@@ -630,6 +638,13 @@ describe("startSandbox", () => {
 
   it("restores a gpu-backup sibling through the recovery rename path (#6026)", async () => {
     const h = harness();
+    h.findLabeledSandboxContainers.mockReturnValue([
+      {
+        name: "openshell-my-sandbox-nemoclaw-gpu-backup-1700000000000",
+        status: "Exited (0) 2 hours ago",
+        running: false,
+      },
+    ]);
     h.recoverDockerDriverSandbox.mockReturnValue({
       recovered: true,
       via: "renamed-and-started-backup",
@@ -768,7 +783,7 @@ describe("startSandbox", () => {
         preferredInferenceApi: "openai-completions",
       },
       {},
-      30_000,
+      95_000,
     );
     expect(probeInferenceInvocation).toHaveBeenCalledOnce();
     expect(probeInferenceInvocation.mock.invocationCallOrder[0]).toBeGreaterThan(
@@ -801,7 +816,7 @@ describe("startSandbox", () => {
         preferredInferenceApi: "openai-completions",
       },
       {},
-      30_000,
+      95_000,
     );
     expect(probeInferenceInvocation).toHaveBeenCalledOnce();
     expect(probeInferenceInvocation.mock.invocationCallOrder[0]).toBeGreaterThan(
