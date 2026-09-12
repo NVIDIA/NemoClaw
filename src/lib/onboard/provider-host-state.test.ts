@@ -2,7 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
-import { detectLocalTcpListener } from "../inference/local";
+import {
+  buildOllamaProbeOptions,
+  detectLocalTcpListener,
+  resetOllamaHostCache,
+  setResolvedOllamaHost,
+} from "../inference/local";
 import { MIN_OLLAMA_VERSION } from "../inference/ollama-version";
 import { getWindowsHostOllamaDockerRequirement } from "./local-inference-topology";
 import {
@@ -74,7 +79,7 @@ function buildDeps(
 }
 
 function detectWithDeps(
-  deps: DetectInferenceProviderHostStateDeps,
+  deps: Partial<DetectInferenceProviderHostStateDeps>,
   gpu: InferenceProviderHostGpu | null = null,
   env: NodeJS.ProcessEnv = {},
 ) {
@@ -609,7 +614,10 @@ describe("detectInferenceProviderHostState", () => {
       );
       const deps = buildDeps({
         isWsl: vi.fn(() => true),
-        findReachableOllamaHost: vi.fn(() => discoveredHost),
+        findReachableOllamaHost: vi.fn(() => {
+          discoveredHost && setResolvedOllamaHost(discoveredHost);
+          return discoveredHost;
+        }),
         detectWindowsHostOllama: vi.fn(() => ({
           installed: false,
           installedPath: "",
@@ -618,16 +626,22 @@ describe("detectInferenceProviderHostState", () => {
         probeWindowsHostOllamaRouteProtection,
       });
 
-      const state = detectWithDeps(deps);
+      resetOllamaHostCache();
+      try {
+        const state = detectWithDeps({ ...deps, setResolvedOllamaHost: undefined });
 
-      expect(state.hasWindowsOllama).toBe(false);
-      expect(state.isWindowsHostOllama).toBe(true);
-      expect(state.ollamaHost).toBe("host.docker.internal");
-      expect(state.ollamaRunning).toBe(true);
-      expect(state.ollamaInstallMenu.entry).toBeNull();
-      expect(vi.mocked(deps.setResolvedOllamaHost).mock.calls).toEqual(
-        discoveredHost === null ? [["host.docker.internal"]] : [],
-      );
+        expect(state.hasWindowsOllama).toBe(false);
+        expect(state.isWindowsHostOllama).toBe(true);
+        expect(state.ollamaHost).toBe("host.docker.internal");
+        expect(state.ollamaRunning).toBe(true);
+        expect(state.ollamaInstallMenu.entry).toBeNull();
+        expect(buildOllamaProbeOptions(false)).toMatchObject({
+          allowHostDockerInternal: true,
+          probeFromDocker: { expectedPort: 11434 },
+        });
+      } finally {
+        resetOllamaHostCache();
+      }
     },
   );
 
