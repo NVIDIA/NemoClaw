@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { workflowExecutionSelection } from "./target-inventory.mts";
+import { listExecutionTargets, workflowExecutionSelection } from "./target-inventory.mts";
 import fs from "node:fs";
 import path from "node:path";
 import { Writable } from "node:stream";
@@ -2878,9 +2878,44 @@ function quietStream(): Writable {
   });
 }
 
+export function reconcileLiveTargetDiscovery(liveFiles: readonly string[]): string[] {
+  const registered = new Set<string>();
+  for (const entry of listExecutionTargets()) {
+    const files =
+      entry.route === "profile"
+        ? [entry.definition.testFile]
+        : entry.route === "typed"
+          ? [REGISTRY_TARGET_TEST]
+          : entry.route === "shared"
+            ? [entry.definition.file]
+            : entry.route === "workflow"
+              ? entry.definition.testFiles
+              : entry.definition.tests.map(({ file }) => file);
+    for (const file of files) {
+      if (file.startsWith("test/e2e/live/")) registered.add(file);
+    }
+  }
+  const discovered = new Set(liveFiles);
+  return [
+    ...liveFiles
+      .filter((file) => !registered.has(file))
+      .map(
+        (file) => `${file}: live E2E module has no execution target; register its execution route`,
+      ),
+    ...[...registered]
+      .filter((file) => !discovered.has(file))
+      .map((file) => `${file}: execution target references a missing live E2E module`),
+  ];
+}
+
 export async function checkSemanticPhaseCoverage(): Promise<SemanticPhaseCoverage> {
   process.env.NEMOCLAW_RUN_LIVE_E2E = "1";
   process.env.NEMOCLAW_E2E_PHASE_COLLECTION = "1";
+  const liveFiles = fs
+    .globSync("**/*.test.ts", { cwd: LIVE_ROOT })
+    .map((file) => path.join("test/e2e/live", file).split(path.sep).join("/"));
+  const registrationFailures = reconcileLiveTargetDiscovery(liveFiles);
+  if (registrationFailures.length) throw new Error(registrationFailures.join("\n"));
   const workflowModules = semanticPhaseCoverageModules();
   const expectedProjects = [...new Set(workflowModules.map(({ project }) => project))];
   const projectByFile = new Map(workflowModules.map(({ file, project }) => [file, project]));

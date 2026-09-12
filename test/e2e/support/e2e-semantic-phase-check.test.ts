@@ -7,6 +7,7 @@ import path from "node:path";
 import { describe, expect, test } from "vitest";
 
 import {
+  reconcileLiveTargetDiscovery,
   scanDirectChildProcessSource,
   scanLiveSourceGraph,
   semanticPhaseCoverageModules,
@@ -32,6 +33,29 @@ const TEST_PROGRESS_SOURCE = path.join(REPO_ROOT, "test/e2e/fixtures/progress.ts
 const FAKE_OPENAI_SOURCE = path.join(REPO_ROOT, "test/e2e/fixtures/fake-openai-compatible.ts");
 
 describe("semantic E2E phase checker", () => {
+  const liveFiles = fs
+    .globSync("**/*.test.ts", { cwd: path.join(REPO_ROOT, "test/e2e/live") })
+    .map((file) => `test/e2e/live/${file.split(path.sep).join("/")}`);
+
+  test("accounts for every discovered live module, including manual qualifications", () => {
+    expect(reconcileLiveTargetDiscovery(liveFiles)).toEqual([]);
+  });
+
+  test("rejects a discovered live module without an execution target", () => {
+    expect(
+      reconcileLiveTargetDiscovery([...liveFiles, "test/e2e/live/unregistered.test.ts"]),
+    ).toEqual([
+      "test/e2e/live/unregistered.test.ts: live E2E module has no execution target; register its execution route",
+    ]);
+  });
+
+  test("rejects a registration after its live module is removed", () => {
+    const removed = "test/e2e/live/bootstrap-install-smoke.test.ts";
+    expect(reconcileLiveTargetDiscovery(liveFiles.filter((file) => file !== removed))).toEqual([
+      `${removed}: execution target references a missing live E2E module`,
+    ]);
+  });
+
   test("accepts formatted OpenShell create-then-delete control flow for Windows MXC", () => {
     const source = `
       async function qualify(runOpenShellCommand, sandboxName) {

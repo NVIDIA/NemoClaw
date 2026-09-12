@@ -408,6 +408,8 @@ unchanged because this contract replaces a redundant nonempty-log assertion in t
 
 `tools/e2e/target-inventory.mts` owns target identity and lookup for reusable-profile, shared, typed-driver, specialized workflow, external workflow, and manual executions.
 Typed scenario definitions remain beside the live driver. The inventory rejects duplicate IDs across these routes.
+The semantic-phase check compares live files with every inventory route before collection.
+It rejects unregistered live files and registrations whose live file is missing.
 List all registered routes, including workflow owners, Vitest projects, and manual prerequisites:
 
 ```bash
