@@ -40,8 +40,9 @@ jobs:
           New-Item -ItemType Directory -Force "$env:GITHUB_WORKSPACE\evidence" | Out-Null
           Get-CimInstance Win32_OperatingSystem | Select-Object Caption, Version, OSArchitecture | ConvertTo-Json | Set-Content "$env:GITHUB_WORKSPACE\evidence\windows.json"
           Ensure-WslDistro -Distro $env:WSL_DISTRO
-          & wsl --set-version $env:WSL_DISTRO 2
-          if ($LASTEXITCODE -ne 0) { throw 'WSL2 is required' }
+          $kernel = & wsl -d $env:WSL_DISTRO -- uname -r
+          Write-Host $kernel
+          if ($LASTEXITCODE -ne 0 -or $kernel -notmatch 'WSL2') { throw 'A running WSL2 kernel is required' }
           & wsl --list --verbose
           Install-WslUbuntuDependencies -Distro $env:WSL_DISTRO -TestUser $env:WSL_TEST_USER -Packages @('bash','ca-certificates','curl','git','jq','python3','python3-pexpect','rsync','xz-utils','unzip','procps','iproute2')
           Install-WslNode -Distro $env:WSL_DISTRO
