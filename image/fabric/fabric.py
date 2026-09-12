@@ -13,10 +13,12 @@ REQUEST_LIMIT = 512 * 1024  # accommodates JSON escaping of a 64 KiB prompt
 RESULT_LIMIT = 4 * 1024 * 1024
 
 
-def configuration(name):
+def configuration(name, harness="deepagents"):
+    adapter = {"deepagents": "nvidia.fabric.langchain.deepagents",
+               "hermes": "nvidia.fabric.hermes"}[harness]
     return {
         "metadata": {"name": name},
-        "harness": {"adapter_id": "nvidia.fabric.langchain.deepagents"},
+        "harness": {"adapter_id": adapter},
         "models": {"default": {
             "provider": "openai", "model": "primary",
             "base_url": "https://inference.local/v1", "api_key_env": "OPENAI_API_KEY",
@@ -32,7 +34,8 @@ async def serve():
     os.umask(0o077)
     for directory in ("/sandbox/tmp", "/sandbox/workspace", "/sandbox/artifacts"):
         Path(directory).mkdir(parents=True, exist_ok=True)
-    config = configuration(os.environ["NEMOCLAW_AGENT_NAME"])
+    config = configuration(os.environ["NEMOCLAW_AGENT_NAME"],
+                           os.environ.get("NEMOCLAW_FABRIC_HARNESS", "deepagents"))
     runtime = await Fabric().start_runtime(FabricConfig.model_validate(config), base_dir="/sandbox")
     busy = False
 
@@ -82,7 +85,7 @@ async def serve():
         Path(SOCKET).unlink(missing_ok=True)
 
 
-async def client(operation, argument):
+async def client(operation, argument, harness="deepagents"):
     reader, writer = await asyncio.open_unix_connection(SOCKET, limit=RESULT_LIMIT)
     try:
         request = {"operation": operation}
@@ -93,7 +96,7 @@ async def client(operation, argument):
         result = json.loads(await asyncio.wait_for(reader.readline(), 320))
         if operation == "check":
             return 0 if (result.get("ready") and result.get("runtime_id")
-                         and result.get("config") == configuration(argument)) else 2
+                         and result.get("config") == configuration(argument, harness)) else 2
         print(json.dumps(result))
         return 0 if result.get("status") == "succeeded" else 1
     finally:
@@ -106,5 +109,7 @@ if __name__ == "__main__":
         asyncio.run(serve())
     elif len(sys.argv) == 3 and sys.argv[1] in ("invoke", "check"):
         sys.exit(asyncio.run(client(sys.argv[1], sys.argv[2])))
+    elif len(sys.argv) == 4 and sys.argv[1] == "check" and sys.argv[3] == "hermes":
+        sys.exit(asyncio.run(client("check", sys.argv[2], "hermes")))
     else:
-        sys.exit("usage: fabric.py serve | check NAME | invoke PROMPT")
+        sys.exit("usage: fabric.py serve | check NAME [hermes] | invoke PROMPT")

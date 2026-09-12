@@ -233,8 +233,8 @@ func (d Document) Validate() error {
 	if !slug.MatchString(a.Name) {
 		return errors.New("agent requires a lowercase name")
 	}
-	if !((a.Type == "openclaw" && a.Harness == "") || (a.Type == "fabric" && a.Harness == "deepagents")) {
-		return errors.New("agent requires openclaw without harness, or fabric with harness deepagents")
+	if !((a.Type == "openclaw" && a.Harness == "") || (a.Type == "fabric" && (a.Harness == "deepagents" || a.Harness == "hermes"))) {
+		return errors.New("agent requires openclaw without harness, or fabric with harness deepagents or hermes")
 	}
 	if a.Type == "fabric" && (g.Management != "external" || p.Ollama != nil || p.Service != nil) {
 		return errors.New("this Fabric slice requires external gateway and inference services")
@@ -330,7 +330,7 @@ func (d Document) YAML() ([]byte, error) { return yaml.Marshal(d) }
 // Runtime identifies the sandbox entrypoint. Empty preserves existing OpenClaw bindings.
 func (a Agent) Runtime() string {
 	if a.Type == "fabric" {
-		return "fabric-deepagents"
+		return "fabric-" + a.Harness
 	}
 	return ""
 }

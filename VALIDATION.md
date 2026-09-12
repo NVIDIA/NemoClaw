@@ -337,3 +337,27 @@ answer assertion was preserved and the final test used Qwen3 1.7B. Startup testi
 also exposed the need for an explicit adapter interpreter and a locally present
 immutable image digest. The failed experiment sandboxes were explicitly cleaned
 up; no automatic recovery or migration was added.
+
+## Fabric Hermes, 2026-09-12
+
+[evidence/fabric-hermes-linux-arm64.json](evidence/fabric-hermes-linux-arm64.json)
+records the native Hermes 0.21.0 run through Fabric's pinned Hermes adapter.
+The final image passed `TestLiveFabric` in 16.06 seconds against the same
+OpenShell/Ollama/Qwen3 1.7B setup. Both requests answered `FOUR`, with one
+runtime ID and different invocation IDs. Unchanged apply and export/reapply
+had no resource changes. The second result retained the first user/assistant
+exchange in its conversation history. Sandbox, route and provider teardown passed.
+
+Hermes is installed from the source revision pinned by Fabric, with a verified
+archive and separate dependency lock. Its source layout is needed for bundled
+assets. The first live run passed but attempted optional dependency downloads
+that the sandbox blocked; the final image disables Hermes lazy installs.
+Auxiliary title generation emitted a nonfatal missing-provider warning.
+Hermes returned no normalized token usage for these requests.
+
+The unchanged Deep Agents image passed the same live test with the new native
+bundle in 13.19 seconds. Deterministic integration coverage now runs for both
+harnesses, including refusal to replace a harness during ordinary apply. All Go
+unit tests, the full native provider integration suite, and vet passed. This
+qualifies chat and runtime lifecycle; it does not qualify optional tools, tool-use
+accuracy, MCP, skills, streaming or other platforms.

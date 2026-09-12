@@ -57,16 +57,22 @@ func TestExistingOpenClawStateDefaultsRuntimeWithoutReplacement(t *testing.T) {
 }
 
 func TestFabricDeploymentAndInvocationBoundary(t *testing.T) {
+	for _, harness := range []string{"deepagents", "hermes"} {
+		t.Run(harness, func(t *testing.T) { testFabricDeploymentAndInvocationBoundary(t, harness) })
+	}
+}
+
+func testFabricDeploymentAndInvocationBoundary(t *testing.T, harness string) {
 	e, f, d, out := setup(t)
 	d.Spec.Sandboxes[0].Agents[0].Type = "fabric"
-	d.Spec.Sandboxes[0].Agents[0].Harness = "deepagents"
+	d.Spec.Sandboxes[0].Agents[0].Harness = harness
 	if err := invoke(t, e, "apply", d); err != nil {
 		t.Fatal(err)
 	}
 	f.mu.Lock()
 	sandbox := f.sandboxes[d.Workspace()+"/assistant"]
 	id := sandbox.Metadata.Id
-	if sandbox.Metadata.Labels[oshell.AgentRuntimeLabel] != "fabric-deepagents" || sandbox.Spec.Command[0] != "/opt/fabric/bin/python" {
+	if sandbox.Metadata.Labels[oshell.AgentRuntimeLabel] != "fabric-"+harness || sandbox.Spec.Command[0] != "/opt/fabric/bin/python" {
 		t.Fatal("did not provision Fabric")
 	}
 	f.fabricResult = `{"status":"succeeded","runtime_id":"runtime-one","invocation_id":"turn-one","output":{"response":"hello"}}`
@@ -104,6 +110,13 @@ func TestFabricDeploymentAndInvocationBoundary(t *testing.T) {
 	if err != nil || exported.Digest() != d.Digest() {
 		t.Fatal("Fabric export changed config", err)
 	}
+	// Harness selection is immutable: ordinary apply cannot discard conversation state.
+	d.Spec.Sandboxes[0].Agents[0].Harness = map[string]string{"hermes": "deepagents", "deepagents": "hermes"}[harness]
+	effects := f.count()
+	if err := invoke(t, e, "apply", d); err == nil || f.count() != effects {
+		t.Fatal("harness switch permitted replacement or other effects")
+	}
+	d.Spec.Sandboxes[0].Agents[0].Harness = harness
 	// A failing normalized result reaches the caller without automatic replay.
 	f.mu.Lock()
 	f.fabricResult = `{"status":"failed","runtime_id":"runtime-one","invocation_id":"turn-two","error":{"code":"failure"}}`

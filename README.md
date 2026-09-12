@@ -1,6 +1,6 @@
 # NemoClaw desired-state prototype
 
-This local experiment creates an OpenClaw agent or a Fabric-managed Deep Agents
+This local experiment creates an OpenClaw agent or a Fabric-managed Deep Agents or Hermes
 runtime from YAML using Go, OpenTofu, and OpenShell. It has an independent Git root and contains no source
 from the previous NemoClaw implementation. See [DESIGN.md](DESIGN.md) for scope.
 
@@ -24,15 +24,22 @@ destroy select the recorded deployment through `--state-dir`; they accept no YAM
 stdin or `--file`. It currently supports Fabric deployments only and writes the
 normalized Fabric result as JSON, including a failed result when available.
 
-## Fabric with Deep Agents
+## Fabric with Deep Agents or Hermes
 
-This first slice requires an external gateway and external inference service.
+This slice requires an external gateway and external inference service.
 Build the native Linux ARM64 image with `python3 image/fabric/build.py`, rebuild
 the bundle, and copy [examples/fabric.yaml](examples/fabric.yaml). Use the image
 digest printed by the builder, a fresh deployment UUID, and your external gateway
 and inference endpoint. The recipe builds the pinned Fabric source revision and
 installs Deep Agents 0.7.13 with hash-locked dependencies; no runtime installation
 or ordinary network egress is required inside the sandbox.
+
+For Hermes, run `python3 image/fabric/build.py --harness hermes` and use
+[examples/fabric-hermes.yaml](examples/fabric-hermes.yaml) with the resulting digest.
+Its separate image includes Hermes 0.21.0 at the revision pinned by Fabric,
+`29112bef099274229cadff79cdff7bf7b99c4b77`, installed from checksum-verified source
+with hash-locked dependencies. Hermes needs the source layout for bundled assets;
+the image retains it under `/opt/hermes` and disables lazy dependency installs.
 
 ```sh
 dist/linux_arm64/bin/nemoclaw apply --state-dir .local/fabric --file deployment.yaml
@@ -44,7 +51,7 @@ The relevant agent configuration is:
 ```yaml
 name: main
 type: fabric
-harness: deepagents
+harness: deepagents # or hermes, with the corresponding image
 ```
 
 Keep the `inference` route from the example. NemoClaw supplies Fabric with the
@@ -52,13 +59,13 @@ stable `primary` model alias at `https://inference.local/v1`; OpenShell owns the
 upstream credential. Fabric and its persistent adapter run inside the sandbox.
 The explicit adapter interpreter is `/opt/fabric/bin/python`. A Unix socket,
 accessed through OpenShell exec, accepts one invocation at a time. Successful
-requests expose `runtime_id`, `invocation_id`, `output`, usage and artifact
-references. Artifact paths refer to files inside the sandbox.
+requests expose `runtime_id`, `invocation_id`, `output` and artifact
+references; usage reporting depends on the adapter. Artifact paths refer to files inside the sandbox.
 
 An unchanged apply or export/reapply preserves the running Fabric runtime and
 conversation. A process crash is terminal for that runtime; requests are never
 automatically replayed. Sandbox replacement and teardown delete conversation
-state and artifacts. Switching between OpenClaw and Fabric requires explicit
+state and artifacts. Switching between OpenClaw, Fabric Deep Agents and Fabric Hermes requires explicit
 teardown and reapply. There is no automatic migration of existing agents.
 
 See [LOCAL_TEST.md](LOCAL_TEST.md) for the opt-in real Fabric/inference test.

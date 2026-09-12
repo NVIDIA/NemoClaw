@@ -21,6 +21,10 @@ func TestFabricHarnessValidation(t *testing.T) {
 	if d.Spec.Sandboxes[0].Agents[0].Runtime() != "fabric-deepagents" {
 		t.Fatal("wrong runtime")
 	}
+	d.Spec.Sandboxes[0].Agents[0].Harness = "hermes"
+	if err := d.Validate(); err != nil || d.Spec.Sandboxes[0].Agents[0].Runtime() != "fabric-hermes" {
+		t.Fatal("Hermes runtime validation failed", err)
+	}
 	for _, pair := range [][2]string{{"fabric", ""}, {"fabric", "unknown"}, {"openclaw", "deepagents"}, {"unknown", ""}} {
 		d.Spec.Sandboxes[0].Agents[0].Type = pair[0]
 		d.Spec.Sandboxes[0].Agents[0].Harness = pair[1]

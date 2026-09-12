@@ -147,7 +147,7 @@ func observe(ctx context.Context, c Client, kind, workspace, name string, removi
 		row["image"] = s.Spec.Template.Image
 		row["agent_name"] = s.Labels[AgentLabel]
 		row["agent_runtime"] = s.Labels[AgentRuntimeLabel]
-		if row["agent_runtime"] != "" && row["agent_runtime"] != "fabric-deepagents" {
+		if row["agent_runtime"] != "" && !isFabric([]string{row["agent_runtime"]}) {
 			return nil, errors.New("unsupported sandbox agent runtime")
 		}
 		row["phase"] = string(s.Status.Phase)

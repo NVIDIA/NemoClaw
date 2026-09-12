@@ -13,16 +13,16 @@ No existing NemoClaw source or documentation is copied into this branch.
 ## Fabric experiment
 
 Authorized locally by cv on 2026-09-12: provision Fabric inside an OpenShell
-sandbox and delegate harness execution to it. The first adapter is Deep Agents, using an external gateway and external
-inference endpoint; managed inference/gateway combinations remain a later slice.
+sandbox and delegate harness execution to it. The supported adapters are Deep
+Agents and Hermes, using an external gateway and external inference endpoint; managed inference/gateway combinations remain a later slice.
 NemoClaw owns infrastructure, ownership checks, desired state and teardown;
 Fabric owns one persistent harness runtime, ordered invocations and run results.
 The image builds Fabric revision `51a28c1aefec56abd877070b6973d0a32a1e3003`
 from a checksum-verified archive, with locked Python dependencies. This is a
 source build because the published packages lag that revision.
 
-`type: fabric` with `harness: deepagents` selects the immutable sandbox launch
-specification. Existing OpenClaw configuration and launch specifications remain
+`type: fabric` with `harness: deepagents` or `harness: hermes` selects the immutable
+sandbox launch specification. Existing OpenClaw configuration and launch specifications remain
 valid. Changing harness on an established sandbox requires explicit teardown;
 ordinary apply cannot replace it. A Unix socket inside the sandbox exposes the
 Fabric runtime to the OpenShell exec transport used by `nemoclaw invoke`.
@@ -34,7 +34,11 @@ a conversation turn. The live test checks actual agent replies, stable resource
 and runtime identities across unchanged apply and export/reapply, and teardown.
 Fabric artifacts and conversation state stay inside the sandbox and are removed
 with it. There is no session recovery after runtime death, public service API,
-streaming transport, configurable MCP/skills, or second harness in this slice.
+streaming transport, or configurable MCP/skills in this slice.
+Hermes uses Fabric's pinned revision `29112bef099274229cadff79cdff7bf7b99c4b77`
+in a separate image. NemoClaw selects the adapter through Fabric configuration;
+only Fabric imports and runs the Hermes harness. The source checkout is retained
+for Hermes's bundled assets. Relay metadata propagation is not configured.
 The native image recipe is limited to Linux ARM64 with Python 3.13. Keep its live
 evidence distinct from deterministic protocol fixtures and cross-platform builds.
 

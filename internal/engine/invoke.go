@@ -21,7 +21,7 @@ func (e *Engine) invoke(ctx context.Context, r Record, input io.Reader) error {
 	}
 	s := d.Spec.Sandboxes[0]
 	a := s.Agents[0]
-	if a.Runtime() != "fabric-deepagents" {
+	if a.Type != "fabric" {
 		return errors.New("invoke currently supports Fabric deployments only")
 	}
 	prompt, err := io.ReadAll(io.LimitReader(input, (64<<10)+1))

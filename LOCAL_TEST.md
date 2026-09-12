@@ -2,13 +2,17 @@
 
 ## Fabric integration
 
-The first Fabric image is a native Linux ARM64 build using Python 3.13. It requires
+The Fabric images are native Linux ARM64 builds using Python 3.13. They require
 Docker, uv and the host build toolchain; maturin can provision Rust in its cache.
 Run `python3 image/fabric/build.py` and then `go run ./tools/bundle`. The builder
 prints the immutable local image reference. Copy `examples/fabric.yaml`, set that
 reference, choose a fresh UUID, and configure an OpenShell 0.0.116 gateway and an
 OpenAI-compatible inference endpoint using the external-gateway setup below.
-The sample uses ports 17681 and 11446; adjust them to your chosen test topology.
+For Hermes, build with `python3 image/fabric/build.py --harness hermes` and copy
+`examples/fabric-hermes.yaml`. Each harness has its own image tag and dependency
+lock. The Hermes source revision and archive checksum are pinned in the builder;
+its editable install is performed offline using the full source checkout.
+The samples use ports 17681 and 11446; adjust them to your chosen test topology.
 
 The retained Linux ARM64 test used the pinned Ollama image below, Qwen3 1.7B,
 and GPU access (`--gpus all`) on DGX Spark. Wait for the model download and a
@@ -28,7 +32,8 @@ unchanged apply, export/reapply, and identical Fabric runtime IDs with distinct
 invocation IDs. On success it destroys only its sandbox, route and provider;
 the workspace, external gateway and inference service remain. Failure retains
 the deployment for inspection. The deterministic `TestFabricDeploymentAndInvocationBoundary`
-test separately checks arbitrary prompt transport, failure without replay and
+test runs for both harnesses and separately checks arbitrary prompt transport,
+immutable harness selection, failure without replay and
 refusal to invoke drifted configuration; its gateway/exec responses are fixtures.
 
 The runtime must use the pinned image from the current build. Rebuilding a local

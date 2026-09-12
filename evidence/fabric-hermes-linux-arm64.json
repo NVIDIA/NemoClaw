@@ -1,0 +1,123 @@
+{
+  "date": "2026-09-12",
+  "kind": "native OpenShell + Fabric + Hermes + real inference",
+  "platform": "linux_arm64",
+  "fabric_revision": "51a28c1aefec56abd877070b6973d0a32a1e3003",
+  "source_sha256": "14fab1b7094e41f2056051316cff7f84bd7e0f294b2c6aa1c09a30085b4406cf",
+  "harness": "hermes",
+  "version": "0.21.0",
+  "hermes_revision": "29112bef099274229cadff79cdff7bf7b99c4b77",
+  "hermes_source_sha256": "76b99a8be9b77d66833c3cfe2b35c6d6f6a58e4ff9637ef8effcfc1f420ab35a",
+  "requirements_sha256": "287a4aee31f28e9d0947eb0b5db860b3830fcf0fc7f22b68924c4c9c7b443011",
+  "image": "nc-prototype-fabric@sha256:22e0c2ddf37b8ee46c89341af7fd26f913072309630924038b62ad220dff0d40",
+  "openshell": "0.0.116",
+  "inference": "Ollama 0.34.0; Qwen3 1.7B; DGX Spark GPU",
+  "bundle_manifest_sha256": "dafc25f4794aa250d19b6f2eaabe546d4d6063ae20f8457d059e9a1e481cdc0d",
+  "test": "TestLiveFabric",
+  "passed": true,
+  "duration_seconds": 16.06,
+  "retained_evidence": ".local/fabric-live-415a7de4-e5ff-4d69-839c-f90b41a85a27",
+  "requests": [
+    {
+      "runtime_id": "runtime-1789242171584-53-2",
+      "invocation_id": "invocation-1789242175044-53-5",
+      "adapter_id": "nvidia.fabric.hermes",
+      "status": "succeeded",
+      "response": "FOUR",
+      "usage": null
+    },
+    {
+      "runtime_id": "runtime-1789242171584-53-2",
+      "invocation_id": "invocation-1789242180684-53-9",
+      "adapter_id": "nvidia.fabric.hermes",
+      "status": "succeeded",
+      "response": "FOUR",
+      "usage": null
+    }
+  ],
+  "unchanged_apply_changes": [],
+  "export_reapply_changes": [],
+  "same_runtime": true,
+  "distinct_invocations": true,
+  "retained_conversation": [
+    {
+      "role": "user",
+      "content": "Reply with exactly the word FOUR."
+    },
+    {
+      "role": "assistant",
+      "content": "FOUR"
+    },
+    {
+      "role": "user",
+      "content": "What is two plus two? Reply with the English word only."
+    },
+    {
+      "role": "assistant",
+      "content": "FOUR"
+    }
+  ],
+  "cleanup": {
+    "outcome": "destroyed",
+    "changes": [
+      {
+        "resource": "nemoclaw_provider.inference",
+        "actions": [
+          "delete"
+        ]
+      },
+      {
+        "resource": "nemoclaw_route.primary",
+        "actions": [
+          "delete"
+        ]
+      },
+      {
+        "resource": "nemoclaw_sandbox.agent",
+        "actions": [
+          "delete"
+        ]
+      }
+    ],
+    "retained": [
+      "nemoclaw_workspace.deployment"
+    ]
+  },
+  "deepagents_regression": {
+    "image": "nc-prototype-fabric@sha256:a6a0e5cf53501e765ae43457212989ff4716c6224352dc109ebd49c3780450cd",
+    "passed": true,
+    "duration_seconds": 13.19,
+    "retained_evidence": ".local/fabric-live-19922fe3-80e4-4a2d-90db-a481b72f8649",
+    "responses": [
+      "FOUR",
+      "FOUR"
+    ],
+    "same_runtime": true,
+    "distinct_invocations": true
+  },
+  "deterministic_checks": [
+    "go test ./...",
+    "go vet ./...",
+    "go test -tags=integration ./internal/engine -count=1",
+    "go vet -tags=integration ./internal/engine",
+    "go vet -tags=live ./internal/engine"
+  ],
+  "findings": [
+    "Hermes requires its source layout for bundled assets; verified source retained and editable-installed offline, with separately hash-locked dependencies.",
+    "Initial live pass took 49.24 seconds and attempted blocked optional dependency downloads; final image sets HERMES_DISABLE_LAZY_INSTALLS=1.",
+    "Hermes adapter emitted a nonfatal auxiliary title-generation warning: no separately configured provider for that task.",
+    "Hermes preserves prior user and assistant messages in the second normalized invocation result."
+  ],
+  "limits": [
+    "External gateway and inference only; native Linux ARM64 image.",
+    "Basic chat and persistent runtime lifecycle qualified; tool-use accuracy, optional tools, MCP, skills and streaming not qualified.",
+    "Hermes adapter reports no normalized token usage for these requests.",
+    "No conversation recovery after process death or automatic request replay."
+  ],
+  "test_prerequisites_cleanup": {
+    "gateway": "stopped",
+    "ollama_container": "removed",
+    "docker_network": "removed",
+    "model_cache_and_gateway_database": "retained under .local/fabric-runtime"
+  }
+}

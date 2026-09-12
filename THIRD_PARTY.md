@@ -11,8 +11,9 @@ respective licenses. `go.mod`, `go.sum`, and `versions.json` identify the inputs
 | Terraform plugin framework | Provider protocol implementation | MPL-2.0 |
 | OpenShell and its Go SDK | Gateway, isolation, and typed API | Apache-2.0 |
 | OpenClaw | Agent image | MIT |
-| NeMo Fabric | Agent runtime, adapter contract and Deep Agents adapter | Apache-2.0 |
+| NeMo Fabric | Agent runtime, adapter contract, Deep Agents and Hermes adapters | Apache-2.0 |
 | LangChain Deep Agents | Fabric-managed agent harness | MIT |
+| Nous Research Hermes Agent | Fabric-managed agent harness | MIT |
 | Ollama | Managed inference service and live-test server | MIT |
 | Moby Go client and API | Docker engine resource operations | Apache-2.0 |
 | MiaAI Lab Qwen3.8 Spark recipe | Model-specific patches and preparation | AGPL-3.0-or-later |

@@ -17,7 +17,7 @@ import (
 // model alias and owns upstream credentials. No upstream key is attached here.
 func Environment(name string, runtime ...string) map[string]string {
 	if isFabric(runtime) {
-		return fabricEnvironment(name)
+		return fabricEnvironment(name, runtime...)
 	}
 	c := map[string]any{
 		"gateway": map[string]any{"mode": "local", "bind": "loopback", "port": 18789, "auth": map[string]any{"mode": "none"}, "controlUi": map[string]any{"enabled": false}},
@@ -73,7 +73,7 @@ const configurationProbe = `const fs=require('node:fs'),u=require('node:util');t
 
 func Configuration(ctx context.Context, c Client, workspace, name, agent string, runtime ...string) error {
 	if isFabric(runtime) {
-		return fabricCheck(ctx, c, workspace, name, agent)
+		return fabricCheck(ctx, c, workspace, name, agent, runtime...)
 	}
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
@@ -92,7 +92,7 @@ func Ready(ctx context.Context, c Client, workspace, name, agent string, runtime
 	}
 	if isFabric(runtime) {
 		for {
-			if err := fabricCheck(ctx, c, workspace, name, agent); err == nil {
+			if err := fabricCheck(ctx, c, workspace, name, agent, runtime...); err == nil {
 				return nil
 			}
 			select {

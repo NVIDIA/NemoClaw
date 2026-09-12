@@ -12,10 +12,12 @@ import (
 	v1 "github.com/NVIDIA/OpenShell/sdk/go/openshell/v1"
 )
 
-func isFabric(runtime []string) bool { return len(runtime) > 0 && runtime[0] == "fabric-deepagents" }
+func isFabric(runtime []string) bool {
+	return len(runtime) > 0 && (runtime[0] == "fabric-deepagents" || runtime[0] == "fabric-hermes")
+}
 
-func fabricEnvironment(name string) map[string]string {
-	return map[string]string{
+func fabricEnvironment(name string, runtime ...string) map[string]string {
+	env := map[string]string{
 		"ADAPTER_PYTHON": "/opt/fabric/bin/python",
 		"HOME":           "/sandbox", "TMPDIR": "/sandbox/tmp", "XDG_CACHE_HOME": "/sandbox/.cache",
 		"NEMOCLAW_AGENT_NAME": name, "OPENAI_API_KEY": "openshell-placeholder",
@@ -23,12 +25,20 @@ func fabricEnvironment(name string) map[string]string {
 		"NODE_EXTRA_CA_CERTS":     "/etc/ssl/certs/ca-certificates.crt",
 		"PYTHONDONTWRITEBYTECODE": "1", "PATH": "/opt/fabric/bin:/usr/local/bin:/usr/bin:/bin",
 	}
+	if len(runtime) > 0 && runtime[0] == "fabric-hermes" {
+		env["NEMOCLAW_FABRIC_HARNESS"] = "hermes"
+	}
+	return env
 }
 
-func fabricCheck(ctx context.Context, c Client, workspace, sandbox, agent string) error {
+func fabricCheck(ctx context.Context, c Client, workspace, sandbox, agent string, runtime ...string) error {
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
-	r, err := c.Exec().Run(ctx, workspace, sandbox, []string{"/opt/fabric/bin/python", "/opt/nemoclaw/fabric.py", "check", agent}, v1.ExecOptions{})
+	command := []string{"/opt/fabric/bin/python", "/opt/nemoclaw/fabric.py", "check", agent}
+	if len(runtime) > 0 && runtime[0] == "fabric-hermes" {
+		command = append(command, "hermes")
+	}
+	r, err := c.Exec().Run(ctx, workspace, sandbox, command, v1.ExecOptions{})
 	if err != nil || r.ExitCode != 0 {
 		return errors.New("Fabric runtime or configuration cannot be independently established")
 	}

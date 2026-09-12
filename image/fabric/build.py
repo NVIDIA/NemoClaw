@@ -5,6 +5,7 @@
 Requires Docker, uv, and a native C/Rust build toolchain (maturin can provision
 Rust in its cache). Python and Rust build tools remain development dependencies.
 """
+import argparse
 import hashlib
 import json
 import os
@@ -18,7 +19,8 @@ import urllib.request
 REVISION = "51a28c1aefec56abd877070b6973d0a32a1e3003"
 SOURCE_HASH = "14fab1b7094e41f2056051316cff7f84bd7e0f294b2c6aa1c09a30085b4406cf"
 ROOT = Path(__file__).resolve().parents[2]
-BUILD = ROOT / ".build/fabric"
+HERMES_REVISION = "29112bef099274229cadff79cdff7bf7b99c4b77"
+HERMES_HASH = "76b99a8be9b77d66833c3cfe2b35c6d6f6a58e4ff9637ef8effcfc1f420ab35a"
 
 
 def run(*args, **kwargs):
@@ -26,6 +28,10 @@ def run(*args, **kwargs):
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--harness", choices=("deepagents", "hermes"), default="deepagents")
+    harness = parser.parse_args().harness
+    BUILD = ROOT / (".build/fabric" if harness == "deepagents" else ".build/fabric-hermes")
     if platform.system() != "Linux" or platform.machine() != "aarch64":
         raise SystemExit("This first image recipe is qualified only for native Linux ARM64")
     BUILD.mkdir(parents=True, exist_ok=True)
@@ -42,12 +48,13 @@ def main():
     own_wheels.mkdir(exist_ok=True)
     env = dict(os.environ, SOURCE_DATE_EPOCH="1789171200")
     for package in ("sdk/python/nemo-fabric-runtime", "adapter-contract/python",
-                    "adapters/python/common", "adapters/python/deepagents"):
+                    "adapters/python/common", f"adapters/python/{harness}"):
         args = ["uv", "build", "--python", "3.13", "--wheel", "--out-dir", str(own_wheels)]
         if package.endswith("nemo-fabric-runtime"):
             args += ["--config-setting", "build-args=--locked"]
         run(*args, str(source / package), env=env)
-    lock = (ROOT / "image/fabric/dependencies.lock").read_text()
+    lock_name = "dependencies.lock" if harness == "deepagents" else "hermes-dependencies.lock"
+    lock = (ROOT / "image/fabric" / lock_name).read_text()
     wheels = sorted(own_wheels.glob("*.whl"))
     if len(wheels) != 4:
         raise SystemExit("Expected exactly four native/source Fabric wheels")
@@ -60,15 +67,27 @@ def main():
     run("uv", "pip", "install", "--python", python, "pip==26.2.1")
     run(python, "-m", "pip", "download", "--only-binary=:all:", "--require-hashes",
         "--find-links", str(own_wheels), "-r", str(BUILD / "requirements.txt"), "-d", str(BUILD / "wheels"))
-    for name in ("Dockerfile", "fabric.py"):
-        shutil.copyfile(ROOT / "image/fabric" / name, BUILD / name)
+    dockerfile = "Dockerfile" if harness == "deepagents" else "Dockerfile.hermes"
+    shutil.copyfile(ROOT / "image/fabric" / dockerfile, BUILD / "Dockerfile")
+    shutil.copyfile(ROOT / "image/fabric/fabric.py", BUILD / "fabric.py")
+    if harness == "hermes":
+        archive = BUILD / "hermes-source.tar.gz"
+        if not archive.exists():
+            with urllib.request.urlopen(f"https://codeload.github.com/NousResearch/hermes-agent/tar.gz/{HERMES_REVISION}", timeout=60) as response:
+                archive.write_bytes(response.read())
+        if hashlib.sha256(archive.read_bytes()).hexdigest() != HERMES_HASH:
+            raise SystemExit("Hermes source checksum mismatch")
+        with tarfile.open(archive) as source:
+            source.extractall(BUILD, filter="data")
     (BUILD / "provenance.json").write_text(json.dumps({
         "fabric_revision": REVISION, "source_sha256": SOURCE_HASH,
-        "harness": "deepagents", "version": "0.7.13",
+        "harness": harness, "version": "0.7.13" if harness == "deepagents" else "0.21.0",
+        **({"hermes_revision": HERMES_REVISION, "hermes_source_sha256": HERMES_HASH}
+           if harness == "hermes" else {}),
         "requirements_sha256": hashlib.sha256(lock.encode()).hexdigest(),
     }, indent=2) + "\n")
-    run("docker", "build", "-t", "nc-prototype-fabric:deepagents", str(BUILD))
-    run("docker", "image", "inspect", "nc-prototype-fabric:deepagents", "--format", "{{index .RepoDigests 0}}")
+    run("docker", "build", "-t", f"nc-prototype-fabric:{harness}", str(BUILD))
+    run("docker", "image", "inspect", f"nc-prototype-fabric:{harness}", "--format", "{{index .RepoDigests 0}}")
 
 
 if __name__ == "__main__":

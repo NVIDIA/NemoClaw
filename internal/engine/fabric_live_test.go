@@ -36,8 +36,8 @@ func TestLiveFabric(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if d.Spec.Gateway.Management != "external" || d.Spec.InferenceProviders[0].Ollama != nil || d.Spec.InferenceProviders[0].Service != nil || d.Spec.Sandboxes[0].Agents[0].Runtime() != "fabric-deepagents" {
-		t.Fatal("Fabric live test requires external gateway/inference and Fabric Deep Agents")
+	if d.Spec.Gateway.Management != "external" || d.Spec.InferenceProviders[0].Ollama != nil || d.Spec.InferenceProviders[0].Service != nil || d.Spec.Sandboxes[0].Agents[0].Type != "fabric" {
+		t.Fatal("Fabric live test requires external gateway/inference and a Fabric harness")
 	}
 	d.Metadata.UID = uuid.NewV4().String()
 	state, err := filepath.Abs("../../.local/fabric-live-" + d.Metadata.UID)
@@ -83,9 +83,10 @@ func TestLiveFabric(t *testing.T) {
 		InvocationID string `json:"invocation_id"`
 		Output       struct {
 			Response string `json:"response"`
+			Harness  string `json:"harness"`
 		} `json:"output"`
 	}
-	if err := json.Unmarshal(out.Bytes(), &first); err != nil || first.RuntimeID == "" || !strings.Contains(strings.ToUpper(first.Output.Response), "FOUR") {
+	if err := json.Unmarshal(out.Bytes(), &first); err != nil || first.RuntimeID == "" || first.Output.Harness != d.Spec.Sandboxes[0].Agents[0].Harness || !strings.Contains(strings.ToUpper(first.Output.Response), "FOUR") {
 		t.Fatal("no actual expected agent response", err)
 	}
 	run("apply", b, "unchanged-apply.json")
