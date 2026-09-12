@@ -578,7 +578,188 @@ export function directBrowserRequest(
 export function stockBrowserEnvironment(environment: NodeJS.ProcessEnv) {
   const stock = { ...environment };
   delete stock.NEMOCLAW_MSYS_TOKEN_INSPECTION;
+  delete stock.NEMOCLAW_HERMES_PRIVATE_DESKTOP;
   return stock;
+}
+
+export function validateHermesDesktopMask(stderr: string) {
+  const prefix = "NEMOCLAW_HERMES_DESKTOP_MASK=";
+  const rows = stderr.split(/\r?\n/u).filter((line) => line.startsWith(prefix));
+  assert.equal(rows.length, 1, "Expected one host-owned Hermes desktop mask record.");
+  assert(Buffer.byteLength(rows[0]!, "utf8") <= 2048);
+  const row = JSON.parse(rows[0]!.slice(prefix.length));
+  assert.equal(row.schemaVersion, 1);
+  assert.equal(row.classification, "admitted-Hermes-desktop-creation");
+  assert([0xff, 0x1ff, 0x3ff].includes(row.beforeMask));
+  assert.equal(row.afterMask, row.beforeMask & ~0x40);
+  assert.equal(row.removedMask, 0x40);
+  assert.equal(row.bundledCreateAndSwitch, true);
+  assert.equal(row.logoutRestrictionPreserved, true);
+  assert.equal(row.everyOtherUiBitPreserved, true);
+  assert.equal(row.hostDesktopGrantsAdded, false);
+  assert.equal(row.childResumed, false);
+  return row;
+}
+
+export function inspectHermesDesktopCleanup(
+  execution: ReturnType<typeof personalCommand> extends Promise<infer T> ? T : never,
+  binding: { executable: string; policyFile: string; requestSha256: string; containerId: string },
+) {
+  const record: any = {
+    schemaVersion: 1,
+    classification: "closed-Personal-executor-desktop-cleanup",
+    binding: { ...binding, executorPid: execution.pid },
+    stage: "closed-executor-binding",
+    rows: [],
+    ownedNames: [],
+    rootIdentityCrossChecked: false,
+    passed: false,
+    error: null,
+  };
+  try {
+    // Only the already retained output of this exact owned execution is read.
+    // No path or claimed identity supplied by a workload selects evidence.
+    assert.equal(execution.childClosed, true, "Desktop cleanup awaits executor closure.");
+    assert.equal(execution.executable, binding.executable);
+    assert.equal(execution.args[0], binding.policyFile);
+    assert.equal(execution.args[1], "--log-file");
+    assert.equal(execution.args.length, 3);
+    assert(Number.isSafeInteger(execution.pid) && execution.pid! > 0);
+    assert.match(binding.requestSha256, /^[a-f0-9]{64}$/u);
+    assert.match(binding.containerId, /^nm-[a-f0-9]{12}-(?:start|d)$/u);
+    record.stderrSha256 = createHash("sha256").update(execution.stderr).digest("hex");
+    record.stage = "owner-records";
+    const prefix = "NEMOCLAW_HERMES_DESKTOP=";
+    for (const line of execution.stderr.split(/\r?\n/u)) {
+      if (!line.startsWith(prefix)) continue;
+      assert(record.rows.length < 4, "Too many desktop owner records for one execution.");
+      // Each constructor may contain three ACL snapshots and two descriptors.
+      assert(Buffer.byteLength(line, "utf8") <= 64 * 1024, "Desktop owner row exceeds its bound.");
+      const row = JSON.parse(line.slice(prefix.length));
+      assert(row && typeof row === "object" && !Array.isArray(row));
+      record.rows.push(row);
+      assert.equal(row.schemaVersion, 1);
+      assert.equal(row.classification, "owned-Hermes-desktop");
+    }
+    assert.equal(execution.outputExceeded, false, "Executor output was truncated.");
+    assert.equal(execution.nativeOutputExceeded, false, "Native owner output was truncated.");
+    assert(record.rows.length > 0, "No desktop owner preparation evidence was retained.");
+    const constructors = record.rows.filter((row: any) => row.stage !== "owner-close");
+    assert(constructors.length > 0 && constructors.length <= 2);
+    const first = constructors[0];
+    assert(
+      Number.isSafeInteger(first.rootPid) && first.rootPid > 0 && first.rootPid !== execution.pid,
+    );
+    assert.match(first.appContainerSid, /^S-1-15-2-(?:[0-9]+-)*[0-9]+$/u);
+    assert(first.appContainerSid.length <= 184);
+    record.rootPid = first.rootPid;
+    record.appContainerSid = first.appContainerSid;
+    for (const row of constructors) {
+      assert.equal(row.rootPid, record.rootPid);
+      assert.equal(row.appContainerSid, record.appContainerSid);
+      assert.equal(row.actualJobAndAppContainerBound, true);
+      assert.equal(row.hostDesktopSelected, false);
+      assert.equal(row.existingObjectSecurityChanged, false);
+    }
+    // Existing host token readback supplies an independent same-execution
+    // tuple when a contained Bash operation reached the inspection owner.
+    const nativePrefix = "NEMOCLAW_MSYS_HOST_TOKEN_INSPECTION=";
+    let nativeRows = 0;
+    const seenNativeRows = new Set<string>();
+    for (const text of [execution.nativeStderr, execution.stderr]) {
+      for (const line of text.split(/\r?\n/u)) {
+        if (!line.startsWith(nativePrefix)) continue;
+        if (seenNativeRows.has(line)) continue;
+        seenNativeRows.add(line);
+        assert(
+          ++nativeRows <= 33 && Buffer.byteLength(line, "utf8") <= nativePrefix.length + 16 * 1024,
+        );
+        const row = JSON.parse(line.slice(nativePrefix.length));
+        if (row.exactJobAndGenerationsBound !== true || row.appContainerSid === undefined) continue;
+        assert.equal(
+          row.rootPid,
+          record.rootPid,
+          "Desktop owner root differs from token readback.",
+        );
+        assert.equal(
+          row.appContainerSid,
+          record.appContainerSid,
+          "Desktop owner SID differs from token readback.",
+        );
+        record.rootIdentityCrossChecked = true;
+      }
+    }
+    record.stage = "constructor-ownership";
+    const globalRefusal =
+      constructors.length === 1 && ["host-context", "desktop-descriptor"].includes(first.stage);
+    if (globalRefusal) {
+      assert.notEqual(first.openedOrCreated, true);
+      assert.equal(record.rows.length, 1);
+      record.provisioning = "refused-before-desktop-creation";
+    } else {
+      assert.deepEqual(
+        constructors.map((row: any) => row.labelVariant),
+        ["default", "low"],
+      );
+      for (const row of constructors) {
+        assert(["prepared", "prepare-failed"].includes(row.stage));
+        assert.equal(
+          row.desktopName,
+          `NemoClawHermesDesktop-${record.appContainerSid}-${row.labelVariant}`,
+        );
+        assert.equal(row.requestedAccess, 0xe0083);
+        assert.equal(row.inheritHandle, false);
+        if (row.preexistingOpened === true) {
+          assert.equal(
+            row.preexistingHandleClosed,
+            true,
+            "Preexisting desktop lookup handle did not close.",
+          );
+          assert.equal(row.preexistingCloseError, 0);
+        }
+        if (row.stage === "prepared") {
+          assert.equal(row.createAttempted, true);
+          assert.equal(row.openedOrCreated, true);
+        }
+        if (row.stage === "prepared" || row.openedOrCreated === true)
+          record.ownedNames.push(row.desktopName);
+      }
+      record.provisioning = record.ownedNames.length
+        ? "desktops-owned"
+        : "constructors-failed-without-handles";
+    }
+    record.stage = "owner-close-and-absence";
+    const closes = record.rows.filter((row: any) => row.stage === "owner-close");
+    assert.equal(
+      closes.length,
+      record.ownedNames.length,
+      "Every owned desktop needs exactly one close record.",
+    );
+    assert.equal(new Set(closes.map((row: any) => row.desktopName)).size, closes.length);
+    for (const row of closes) {
+      assert(record.ownedNames.includes(row.desktopName), "Unmatched desktop close record.");
+      const prepared = constructors.find((entry: any) => entry.desktopName === row.desktopName);
+      assert(record.rows.indexOf(row) > record.rows.indexOf(prepared));
+      assert.equal(row.hostDesktopSelected, false);
+      assert.equal(row.closed, true, "Host CloseDesktop did not succeed.");
+      assert.equal(row.closeError, 0);
+      assert.equal(row.presenceHandleClosed, true, "Post-close lookup handle did not close.");
+      assert.equal(
+        row.absentAfterOwnerClose,
+        true,
+        "Desktop absence was not observed after owner close.",
+      );
+      assert(
+        [2, 3].includes(row.absenceError),
+        "Desktop absence must be a missing-object result, not an unavailable lookup.",
+      );
+    }
+    record.stage = "complete";
+    record.passed = true;
+  } catch (error) {
+    record.error = errorDetail(error);
+  }
+  return record;
 }
 
 export function primaryDebugRequest(
@@ -665,6 +846,7 @@ export async function directBrowserDiagnostic(
     profileDeletionClosed: true,
     profileDeleted: true,
     ownedRootRemoved: true,
+    ...(primaryPlan ? { hostDesktopsReleased: false } : {}),
   };
   const record: Record<string, any> = {
     schemaVersion: 1,
@@ -676,7 +858,7 @@ export async function directBrowserDiagnostic(
     debuggerAttached: debugged,
     debuggerMayChangeBehavior: debugged,
     hostEnvironmentDifferences: executorVariant.startsWith("stock")
-      ? ["NEMOCLAW_MSYS_TOKEN_INSPECTION omitted"]
+      ? ["NEMOCLAW_MSYS_TOKEN_INSPECTION omitted", "NEMOCLAW_HERMES_PRIVATE_DESKTOP omitted"]
       : [],
     compatibilityLauncherUsed: primaryPlan !== null,
     dllAbsenceIndependentlyVerified: false,
@@ -725,6 +907,7 @@ export async function directBrowserDiagnostic(
     if (executorVariant.startsWith("stock")) {
       validateStockBrowserExecutor(record.executor);
       assert.equal(environment.NEMOCLAW_MSYS_TOKEN_INSPECTION, undefined);
+      assert.equal(environment.NEMOCLAW_HERMES_PRIVATE_DESKTOP, undefined);
       record.stockSdk = {
         version: "0.8.0",
         archiveSha256: "06bb2399d7e98ab1907acf851e12a4e44748dd467b79d3e53c2f2fbf569da14e",
@@ -792,6 +975,17 @@ export async function directBrowserDiagnostic(
     );
     record.execution = execution;
     cleanup.executorClosed = execution.childClosed;
+    if (primaryPlan && execution.childClosed) {
+      record.hostDesktopCleanup = inspectHermesDesktopCleanup(execution, {
+        executable: mxc,
+        policyFile: policy,
+        requestSha256: record.requestSha256,
+        containerId: request.containerId,
+      });
+      cleanup.hostDesktopsReleased = record.hostDesktopCleanup.passed === true;
+      if (!cleanup.hostDesktopsReleased)
+        record.cleanupErrors.push({ hostDesktopCleanup: record.hostDesktopCleanup.error });
+    }
     if (primaryPlan) {
       const workloadFile = path.win32.join(share, "result.json");
       const workload = JSON.parse(fs.readFileSync(workloadFile, "utf8"));
@@ -850,6 +1044,7 @@ export async function directBrowserDiagnostic(
       record.childrenClosed &&
       cleanup.profileDeleted &&
       cleanup.ownedRootRemoved &&
+      (!primaryPlan || cleanup.hostDesktopsReleased === true) &&
       (!controllerOwned || record.controllerRemoved === true) &&
       record.cleanupErrors.length === 0;
     if (outputOwned) {
@@ -1234,8 +1429,10 @@ async function main() {
   environment.PATH = path.join(windowsRoot, "System32");
   environment.GITHUB_ACTIONS = "true";
   environment.NEMOCLAW_MSYS_TOKEN_INSPECTION = "repair-query";
+  environment.NEMOCLAW_HERMES_PRIVATE_DESKTOP = "1";
   const cleanup = {
     executorClosed: false,
+    hostDesktopsReleased: false,
     hostDiagnosticChildrenClosed: true,
     profileDeleted: false,
     ownedRootsRemoved: false,
@@ -1417,6 +1614,24 @@ async function main() {
     );
     receipt.execution = execution;
     cleanup.executorClosed = execution.childClosed;
+    if (execution.childClosed) {
+      const desktopCleanup = inspectHermesDesktopCleanup(execution, {
+        executable: mxc,
+        policyFile: policy,
+        requestSha256: receipt.requestSha256 as string,
+        containerId: request.containerId,
+      });
+      receipt.hostDesktopCleanup = desktopCleanup;
+      cleanup.hostDesktopsReleased = desktopCleanup.passed === true;
+      if (!cleanup.hostDesktopsReleased) errors.push({ hostDesktopCleanup: desktopCleanup.error });
+    }
+    let desktopMaskFailure: unknown;
+    try {
+      receipt.desktopJobMask = validateHermesDesktopMask(execution.stderr);
+    } catch (error) {
+      desktopMaskFailure = error;
+      receipt.desktopJobMaskError = errorDetail(error);
+    }
     const result = path.join(share, "result.json");
     if (fs.existsSync(result)) {
       fs.copyFileSync(result, path.join(output, "workload.json"));
@@ -1468,6 +1683,7 @@ async function main() {
       | undefined;
     if (workload?.nonce !== nonce || workload.passed !== true || workload.components?.length !== 4)
       throw new Error("One or more canonical Personal component operations failed.");
+    if (desktopMaskFailure) throw desktopMaskFailure;
     const log = fs
       .readFileSync(path.join(output, "mxc-native.log"), "utf8")
       .replace(/\[\d+\][ \t]*/gu, "");

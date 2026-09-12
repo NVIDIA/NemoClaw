@@ -14,6 +14,8 @@ import {
   primaryDebugRequest,
   directBrowserDiagnostic,
   stockBrowserEnvironment,
+  validateHermesDesktopMask,
+  inspectHermesDesktopCleanup,
   validateStockBrowserExecutor,
   hostBrowserCompletion,
   stockDebugCompletion,
@@ -29,6 +31,265 @@ const browserRuntime = "C:\\NemoClawHermesProbe-274d797050ea";
 const browserOriginalNonce = "00112233445566778899aabb";
 const browserNewNonce = "ffeeddccbbaa998877665544";
 const browserController = "C:\\NemoClawPersonalNode-001122334455";
+
+const desktopOwnerBinding = {
+  executable: "C:\\native\\wxc-exec.exe",
+  policyFile: "C:\\owned\\personal-request.json",
+  requestSha256: "a".repeat(64),
+  containerId: "nm-0123456789ab-start",
+};
+const desktopOwnerSid = "S-1-15-2-123-456-789";
+const desktopOwnerLine = (row: any) => "NEMOCLAW_HERMES_DESKTOP=" + JSON.stringify(row) + "\n";
+function desktopOwnerRows(): any[] {
+  const prepared = ["default", "low"].map((labelVariant) => ({
+    schemaVersion: 1,
+    classification: "owned-Hermes-desktop",
+    stage: "prepared",
+    rootPid: 400,
+    appContainerSid: desktopOwnerSid,
+    actualJobAndAppContainerBound: true,
+    hostDesktopSelected: false,
+    existingObjectSecurityChanged: false,
+    desktopName: `NemoClawHermesDesktop-${desktopOwnerSid}-${labelVariant}`,
+    labelVariant,
+    requestedAccess: 0xe0083,
+    inheritHandle: false,
+    createAttempted: true,
+    openedOrCreated: true,
+  }));
+  return [
+    ...prepared,
+    ...prepared.map(({ desktopName }) => ({
+      schemaVersion: 1,
+      classification: "owned-Hermes-desktop",
+      stage: "owner-close",
+      desktopName,
+      closed: true,
+      closeError: 0,
+      absentAfterOwnerClose: true,
+      absenceError: 2,
+      presenceHandleClosed: true,
+      hostDesktopSelected: false,
+    })),
+  ];
+}
+function desktopOwnerExecution(
+  rows = desktopOwnerRows(),
+): Awaited<ReturnType<typeof personalCommand>> {
+  return {
+    executable: desktopOwnerBinding.executable,
+    args: [desktopOwnerBinding.policyFile, "--log-file", "C:\\owned\\mxc.log"],
+    pid: 42,
+    exitCode: 0,
+    signal: null,
+    childClosed: true,
+    timedOut: false,
+    outputExceeded: false,
+    stdout: "",
+    stderr: rows.map(desktopOwnerLine).join(""),
+    elapsedMs: 1,
+    error: null,
+    nativeStderr:
+      "NEMOCLAW_MSYS_HOST_TOKEN_INSPECTION=" +
+      JSON.stringify({
+        exactJobAndGenerationsBound: true,
+        rootPid: 400,
+        appContainerSid: desktopOwnerSid,
+      }) +
+      "\n",
+    nativeStderrBytes: 0,
+    nativeStderrSha256: "",
+    nativeRecordCount: 1,
+    nativeOutputExceeded: false,
+    nativeParseErrors: [],
+  };
+}
+
+test("closed-executor desktop cleanup binds both constructor variants and actual token identity", () => {
+  const execution = desktopOwnerExecution();
+  const result = inspectHermesDesktopCleanup(execution, desktopOwnerBinding);
+  assert.equal(result.passed, true);
+  assert.equal(result.ownedNames.length, 2);
+  assert.equal(result.rootIdentityCrossChecked, true);
+  assert.equal(result.binding.executorPid, 42);
+  // Primary-debug retains the token rows in its combined stderr instead.
+  const debug = {
+    ...execution,
+    stderr: execution.stderr + execution.nativeStderr,
+    nativeStderr: "",
+  };
+  assert.equal(inspectHermesDesktopCleanup(debug, desktopOwnerBinding).passed, true);
+  assert.equal(
+    inspectHermesDesktopCleanup(
+      { ...debug, nativeStderr: execution.nativeStderr },
+      desktopOwnerBinding,
+    ).passed,
+    true,
+  );
+  for (const changed of [
+    { childClosed: false },
+    { pid: null },
+    { executable: "C:\\other\\wxc-exec.exe" },
+    { args: ["C:\\unrelated\\request.json", "--log-file", "C:\\owned\\mxc.log"] },
+    { outputExceeded: true },
+    { nativeOutputExceeded: true },
+    { nativeStderr: execution.nativeStderr.replace('"rootPid":400', '"rootPid":401') },
+    { nativeStderr: execution.nativeStderr.replace(desktopOwnerSid, "S-1-15-2-999") },
+  ])
+    assert.equal(
+      inspectHermesDesktopCleanup({ ...execution, ...changed }, desktopOwnerBinding).passed,
+      false,
+    );
+  assert.equal(
+    inspectHermesDesktopCleanup({ ...execution, childClosed: false }, desktopOwnerBinding).rows
+      .length,
+    0,
+  );
+});
+
+test("desktop close and observed absence are mandatory for every prepared handle", () => {
+  for (const change of [
+    { closed: false, closeError: 5 },
+    { closeError: 5 },
+    { presenceHandleClosed: false },
+    { absentAfterOwnerClose: false },
+    { absenceError: 5 },
+    { absenceError: null },
+    { desktopName: "NemoClawHermesDesktop-S-1-15-2-999-default" },
+  ]) {
+    const rows = desktopOwnerRows();
+    rows[2] = { ...rows[2], ...change };
+    const result = inspectHermesDesktopCleanup(desktopOwnerExecution(rows), desktopOwnerBinding);
+    assert.equal(result.passed, false);
+    assert.equal(result.rows.length, 4);
+    assert(result.error);
+  }
+  for (const rows of [
+    desktopOwnerRows().slice(0, 3),
+    [...desktopOwnerRows().slice(0, 3), desktopOwnerRows()[2]],
+    [],
+  ])
+    assert.equal(
+      inspectHermesDesktopCleanup(desktopOwnerExecution(rows), desktopOwnerBinding).passed,
+      false,
+    );
+});
+
+test("failed desktop constructors need no close while partial and global preparation stay explicit", () => {
+  const rows = desktopOwnerRows();
+  rows[1] = {
+    ...rows[1],
+    stage: "prepare-failed",
+    openedOrCreated: false,
+    error: "CreateDesktopW: Win32 5",
+  };
+  rows.pop();
+  const result = inspectHermesDesktopCleanup(desktopOwnerExecution(rows), desktopOwnerBinding);
+  assert.equal(result.passed, true);
+  assert.deepEqual(result.ownedNames, [rows[0].desktopName]);
+  const failed = rows
+    .slice(0, 2)
+    .map((row) => ({ ...row, stage: "prepare-failed", openedOrCreated: false }));
+  const none = inspectHermesDesktopCleanup(desktopOwnerExecution(failed), desktopOwnerBinding);
+  assert.equal(none.passed, true);
+  assert.equal(none.provisioning, "constructors-failed-without-handles");
+  assert.equal(
+    inspectHermesDesktopCleanup(
+      desktopOwnerExecution([{ ...failed[0], stage: "host-context", openedOrCreated: false }]),
+      desktopOwnerBinding,
+    ).passed,
+    true,
+  );
+  failed[0].preexistingOpened = true;
+  failed[0].preexistingHandleClosed = false;
+  assert.equal(
+    inspectHermesDesktopCleanup(desktopOwnerExecution(failed), desktopOwnerBinding).passed,
+    false,
+  );
+  const lateFailure = desktopOwnerRows();
+  lateFailure[0].stage = "prepare-failed";
+  assert.equal(
+    inspectHermesDesktopCleanup(desktopOwnerExecution(lateFailure), desktopOwnerBinding).passed,
+    true,
+  );
+  assert.equal(
+    inspectHermesDesktopCleanup(desktopOwnerExecution(lateFailure.slice(0, 2)), desktopOwnerBinding)
+      .passed,
+    false,
+  );
+});
+
+test("desktop and token parser bounds accommodate actual source rows and reject ambiguous ownership", () => {
+  const rows = desktopOwnerRows();
+  rows[0].baselineDaclHex = "aa".repeat(20_000);
+  assert.equal(
+    inspectHermesDesktopCleanup(desktopOwnerExecution(rows), desktopOwnerBinding).passed,
+    true,
+  );
+  rows[0].baselineDaclHex = "a".repeat(64 * 1024);
+  assert.equal(
+    inspectHermesDesktopCleanup(desktopOwnerExecution(rows), desktopOwnerBinding).passed,
+    false,
+  );
+  assert.equal(
+    inspectHermesDesktopCleanup(
+      desktopOwnerExecution([...desktopOwnerRows(), desktopOwnerRows()[0]]),
+      desktopOwnerBinding,
+    ).passed,
+    false,
+  );
+  const mismatched = desktopOwnerRows();
+  mismatched[1].appContainerSid = "S-1-15-2-999";
+  assert.equal(
+    inspectHermesDesktopCleanup(desktopOwnerExecution(mismatched), desktopOwnerBinding).passed,
+    false,
+  );
+  const execution = desktopOwnerExecution();
+  const token = {
+    exactJobAndGenerationsBound: true,
+    rootPid: 400,
+    appContainerSid: desktopOwnerSid,
+    padding: "",
+  };
+  token.padding = "x".repeat(16 * 1024 - Buffer.byteLength(JSON.stringify(token)));
+  execution.nativeStderr = "NEMOCLAW_MSYS_HOST_TOKEN_INSPECTION=" + JSON.stringify(token) + "\n";
+  assert.equal(inspectHermesDesktopCleanup(execution, desktopOwnerBinding).passed, true);
+});
+
+test("a desktop cleanup failure remains secondary in the published component failure receipt", () => {
+  const rows = desktopOwnerRows();
+  rows[2].absenceError = 5;
+  rows[2].absentAfterOwnerClose = false;
+  const primary = new Error("original browser component failure");
+  const execution = {
+    ...desktopOwnerExecution(rows),
+    exitCode: 1,
+    error: { message: primary.message },
+  };
+  const cleanup = inspectHermesDesktopCleanup(execution, desktopOwnerBinding);
+  assert.equal(cleanup.passed, false);
+  assert.equal(execution.error.message, primary.message);
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "desktop-cleanup-receipt-"));
+  try {
+    const file = path.join(root, "receipt.json");
+    const reports: unknown[] = [];
+    const receipt = {
+      error: primary.message,
+      hostDesktopCleanup: cleanup,
+      cleanupErrors: [{ hostDesktopCleanup: cleanup.error }],
+      feasibilityPassed: false,
+    };
+    assert.equal(
+      publishPersonalReceipt(file, receipt, primary, (row) => reports.push(row)),
+      true,
+    );
+    assert.equal(JSON.parse(fs.readFileSync(file, "utf8")).error, primary.message);
+    assert.match(JSON.stringify(reports[0]), /original browser component failure/u);
+    assert.equal(receipt.cleanupErrors.length, 1);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test("primary debugger keeps current native bytes and four-component command while rebinding only owned controller/state", () => {
   const native = "C:\\NemoClawPersonalCompat-001122334455";
@@ -139,17 +400,19 @@ test("direct browser comparison preserves policy and environment except fresh ow
   );
 });
 
-test("stock MXC browser comparison removes only the host repair opt-in and requires the exact ARM64 executor", () => {
+test("stock MXC browser comparison removes both host opt-ins and requires the exact ARM64 executor", () => {
   const original = {
     GITHUB_ACTIONS: "true",
     PATH: "C:\\Windows\\System32",
     NEMOCLAW_MSYS_TOKEN_INSPECTION: "repair-query",
+    NEMOCLAW_HERMES_PRIVATE_DESKTOP: "1",
   };
   assert.deepEqual(stockBrowserEnvironment(original), {
     GITHUB_ACTIONS: "true",
     PATH: "C:\\Windows\\System32",
   });
   assert.equal(original.NEMOCLAW_MSYS_TOKEN_INSPECTION, "repair-query");
+  assert.equal(original.NEMOCLAW_HERMES_PRIVATE_DESKTOP, "1");
   const identity = {
     path: "C:\\stock\\wxc-exec.exe",
     bytes: 1,
@@ -375,6 +638,7 @@ function browserControl(
   const patchedEnvironment = {
     GITHUB_ACTIONS: "true",
     NEMOCLAW_MSYS_TOKEN_INSPECTION: "repair-query",
+    NEMOCLAW_HERMES_PRIVATE_DESKTOP: "1",
   };
   const environment =
     mode === "stock-mismatch" ? stockBrowserEnvironment(patchedEnvironment) : patchedEnvironment;
@@ -730,6 +994,40 @@ test("Personal request matches the existing driver profile and keeps filesystem 
   assert(request.process.env.includes("NEMOCLAW_MSYS_DIAGNOSTICS=0"));
   assert(request.process.env.includes("AGENT_BROWSER_ARGS=--enable-logging=stderr"));
   assert(!request.process.env.some((entry) => entry.startsWith("NEMOCLAW_MSYS_TOKEN_INSPECTION=")));
+  assert(
+    !request.process.env.some((entry) => entry.startsWith("NEMOCLAW_HERMES_PRIVATE_DESKTOP=")),
+  );
+});
+test("one bounded host desktop mask row permits only the bundled0x40 removal", () => {
+  const row = {
+    schemaVersion: 1,
+    classification: "admitted-Hermes-desktop-creation",
+    beforeMask: 0x3ff,
+    afterMask: 0x3bf,
+    removedMask: 0x40,
+    bundledCreateAndSwitch: true,
+    logoutRestrictionPreserved: true,
+    everyOtherUiBitPreserved: true,
+    hostDesktopGrantsAdded: false,
+    childResumed: false,
+  };
+  const line = (value: any) => "NEMOCLAW_HERMES_DESKTOP_MASK=" + JSON.stringify(value) + "\n";
+  assert.deepEqual(validateHermesDesktopMask("ordinary stderr\n" + line(row)), row);
+  for (const change of [
+    { afterMask: 0x33f },
+    { beforeMask: 0 },
+    { removedMask: 0xc0 },
+    { logoutRestrictionPreserved: false },
+    { everyOtherUiBitPreserved: false },
+    { hostDesktopGrantsAdded: true },
+    { childResumed: true },
+    { classification: "other" },
+    { extra: "x".repeat(2048) },
+  ])
+    assert.throws(() => validateHermesDesktopMask(line({ ...row, ...change })));
+  assert.throws(() => validateHermesDesktopMask(""));
+  assert.throws(() => validateHermesDesktopMask(line(row) + line(row)));
+  assert.throws(() => validateHermesDesktopMask("NEMOCLAW_HERMES_DESKTOP_MASK=invalid\n"));
 });
 test("the fixed request rejects a command-line quote or invalid nonce", () => {
   assert.throws(
