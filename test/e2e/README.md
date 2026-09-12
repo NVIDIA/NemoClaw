@@ -453,7 +453,7 @@ The retired-selector compatibility job and replacement-test helper are also remo
 Its controller cutoff is canonical main `06c10fb67402707ee714a750852eed23f6952fc8` and its pinned actions.
 Retired selectors fail in manual PR runs, including requests mixed with active selectors.
 Their replacement tests remain in the ordinary test projects.
-The `hermes-dashboard` alias remains because the Hermes workflow still calls it.
+The `hermes-dashboard` selector is retired; use `hermes-e2e`.
 
 Coverage descriptions and agent/environment labels belong to the execution inventory.
 Workflow YAML retains execution parameters, matrix variants, credentials, dependencies, and artifact controls.
@@ -833,9 +833,7 @@ $receipt = Get-Content "C:\path\to\receipt.json" -Raw | ConvertFrom-Json
 & $env:NEMOCLAW_WINDOWS_MXC_OPENSHELL_CLI sandbox delete $receipt.cleanup.retainedSandboxName
 ```
 
-The retired `hermes-dashboard` selector remains a compatibility alias for
-`hermes-e2e` in both selector inputs. Reports use the canonical
-`hermes-e2e` name. That lane always enables dashboard coverage while preserving
+The `hermes-e2e` lane always enables dashboard coverage while preserving
 the manually selected `mock`, `internal-nvidia`, or `public-nvidia` inference
 mode.
 

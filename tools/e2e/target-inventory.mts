@@ -33,7 +33,6 @@ import {
 } from "./onboard-timeout-contract.mts";
 import { HERMES_ACP_E2E_OWNING_PATHS } from "./hermes-acp-owning-paths.mts";
 import { REVIEWED_GATEWAY_UPGRADE_FIXTURE } from "./openshell-gateway-upgrade-fixture.mts";
-import { normalizeE2eSelectorId } from "./selector-aliases.mts";
 
 export const E2E_EXECUTION_PROFILES = [
   "standard",
@@ -2120,8 +2119,7 @@ export function requireTargets(ids: string[]): TargetDefinition[] {
 }
 
 export function catalogueTarget(id: string): E2eCatalogueTarget {
-  const canonicalId = normalizeE2eSelectorId(id);
-  const entry = executionInventory.get(canonicalId);
+  const entry = executionInventory.get(id);
   if (entry?.route !== "profile") throw new Error(`Unknown catalogue E2E target: ${id}`);
   return entry.definition;
 }

@@ -26,7 +26,6 @@ import {
   SHARED_E2E_JOB_ID,
 } from "./credential-free-tests.mts";
 import { JETSON_DISPATCH_TARGET } from "./jetson-dispatch-contract.mts";
-import { normalizeE2eSelectorIds } from "./selector-aliases.mts";
 import {
   catalogueExclusionReason,
   catalogueMatrix,
@@ -522,7 +521,14 @@ function selectorIds(value: string | undefined, label: "jobs" | "targets"): stri
       `Invalid ${label} input; use comma-separated ids containing only letters, numbers, underscores, and hyphens`,
     );
   }
-  return normalizeE2eSelectorIds(value.split(","));
+  return [
+    ...new Set(
+      value
+        .split(",")
+        .map((id) => id.trim())
+        .filter(Boolean),
+    ),
+  ];
 }
 
 function selectTestRows(

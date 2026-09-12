@@ -861,31 +861,15 @@ describe("E2E workflow plan", () => {
   });
 
   it.each(["jobs", "targets"] as const)(
-    "maps the retired Hermes dashboard %s selector to the canonical lane",
+    "rejects the retired Hermes dashboard %s selector",
     (kind) => {
-      const legacyPlan = buildE2eWorkflowPlan({ [kind]: "hermes-dashboard" });
-      const canonicalPlan = buildE2eWorkflowPlan({ [kind]: "hermes-e2e" });
-      const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-workflow-plan-alias-"));
-      const output = path.join(directory, "github-output");
-      const summary = path.join(directory, "summary.md");
-
-      try {
-        writeE2eWorkflowPlanCiOutput(
-          { [kind]: "hermes-dashboard" },
-          {
-            GITHUB_OUTPUT: output,
-            GITHUB_STEP_SUMMARY: summary,
-            INFERENCE_MODE: "mock",
-          },
-        );
-
-        expect(legacyPlan).toEqual(canonicalPlan);
-        expect(legacyPlan.hermesSelected).toBe(true);
-        expect(readFileSync(output, "utf8")).toContain("hermes_selected=true\n");
-        expect(workflowExecutionSelection().allowedJobs).not.toContain("hermes-dashboard");
-      } finally {
-        rmSync(directory, { force: true, recursive: true });
-      }
+      expect(() => buildE2eWorkflowPlan({ [kind]: "hermes-dashboard" })).toThrow(
+        "hermes-dashboard",
+      );
+      expect(() => buildE2eWorkflowPlan({ [kind]: "hermes-e2e,hermes-dashboard" })).toThrow(
+        "hermes-dashboard",
+      );
+      expect(buildE2eWorkflowPlan({ [kind]: "hermes-e2e" }).hermesSelected).toBe(true);
     },
   );
 

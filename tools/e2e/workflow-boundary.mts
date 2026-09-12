@@ -42,7 +42,6 @@ import {
   validateE2eOperationsWorkflow,
 } from "./operations-workflow-boundary.mts";
 import { validateRunnerComparisonWorkflowBoundary } from "./runner-comparison-workflow-boundary.mts";
-import { normalizeE2eSelectorIds } from "./selector-aliases.mts";
 import {
   E2E_RUNTIME_AGNOSTIC,
   E2E_GATEWAY_RUNTIMES as SUPPORTED_E2E_GATEWAY_RUNTIMES,
@@ -629,9 +628,7 @@ export function evaluateE2eWorkflowDispatchSelectors(input: {
   const targets = input.targets ?? "";
   const errors: string[] = [];
   const jobsMatchSelectorPattern = !jobs || SELECTOR_PATTERN.test(jobs);
-  const normalizedJobs = jobsMatchSelectorPattern
-    ? normalizeE2eSelectorIds(splitSelector(jobs))
-    : [];
+  const normalizedJobs = jobsMatchSelectorPattern ? [...new Set(splitSelector(jobs))] : [];
 
   if (targets && !SELECTOR_PATTERN.test(targets)) {
     errors.push("Invalid target input");
@@ -669,7 +666,7 @@ export function evaluateE2eWorkflowDispatchSelectors(input: {
 
   const selectedFreeStandingJobs = new Set(normalizedJobs);
   const registryTargets: string[] = [];
-  for (const target of normalizeE2eSelectorIds(splitSelector(targets))) {
+  for (const target of new Set(splitSelector(targets))) {
     const job = freeStandingTargetToJob.get(target);
     if (job) selectedFreeStandingJobs.add(target);
     else registryTargets.push(target);
@@ -2800,11 +2797,6 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
         !stringValue(checkoutWith["sparse-checkout"]).includes("tools/e2e/report-e2e-results.mts")
       ) {
         errors.push("report-to-pr report helper checkout must sparse-checkout the report helper");
-      }
-      if (
-        !stringValue(checkoutWith["sparse-checkout"]).includes("tools/e2e/selector-aliases.mts")
-      ) {
-        errors.push("report-to-pr report helper checkout must sparse-checkout selector aliases");
       }
       const reportStepIndex = reportSteps.findIndex(
         (step) => asRecord(step).name === "Post E2E target results to PR",
