@@ -125,9 +125,10 @@ specialist and path combination, or any nonempty exclusion list, fails closed.
 Selection also rebuilds the risk plan and rejects a finding when its path would require any E2E
 selector that the authoritative planner cannot prove credential-free, including `cloud-inference`
 and `cloud-onboard`. The planner derives that eligibility from the credential-free test registry
-and catalogue metadata; unknown, free-standing, hosted, and credential-bearing selectors fail
-closed. The generated-head reporter repeats that guard before dispatching any validation workflow,
-so repair validation remains credential-free.
+only. Catalogue targets fail closed because their shared OpenShell SDK package prerequisite requires
+repository package credentials; unknown, free-standing, hosted, and other credential-bearing
+selectors also fail closed. The generated-head reporter repeats that guard before dispatching any
+validation workflow, so repair validation remains credential-free.
 
 Before dispatch, configure the `advisor-repair-publish` environment with required reviewers limited
 to users or teams that hold `maintain` or `admin` permission, plus the intended self-review policy,

@@ -120,6 +120,7 @@ env:
 
 jobs:
   package-openshell-sdk:
+    if: ${{ !inputs.repair_validation }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:

@@ -282,7 +282,7 @@ describe("PR Review Advisor generated-head evidence", () => {
     let e2eMatrixConclusion = "success";
     let e2eRunAttempt = 1;
     let e2eJobMode: "duplicate" | "failure" | "missing" | "skipped" | "success" = "success";
-    let e2eArtifactMode: "duplicate" | "expired" | "missing" | "success" | "wrong-run" = "success";
+    const e2eArtifactMode = String("success");
     let e2eReceiptOverrides: Record<string, unknown> = {};
     let e2eArchive: Buffer<ArrayBufferLike> = Buffer.alloc(0);
     const e2eRunId = 99;
@@ -290,8 +290,8 @@ describe("PR Review Advisor generated-head evidence", () => {
     const e2eUrl = `https://github.com/${selection.repository}/actions/runs/${e2eRunId}`;
     const e2eArtifactId = 990;
     const expectedE2eJobNames = e2eEvidenceJobNamesForSelectors([
-      "onboard-repair",
-      "onboard-resume",
+      "inference-routing",
+      "network-policy",
     ]);
     const dispatchedWorkflows = new Set<string>();
     const dispatchE2e = vi.fn(async () => ({
@@ -514,7 +514,7 @@ describe("PR Review Advisor generated-head evidence", () => {
           workflowRunId: String(e2eRunId),
           workflowRunAttempt: e2eRunAttempt,
           eventName: "workflow_dispatch",
-          jobs: "onboard-repair,onboard-resume",
+          jobs: "inference-routing,network-policy",
           targets: "",
           allowDgxSparkRunnerQueue: false,
           allowJetsonDispatch: false,
@@ -592,6 +592,13 @@ describe("PR Review Advisor generated-head evidence", () => {
     );
     expect(dispatchedWorkflows.size).toBe(0);
     expect(dispatchE2e).not.toHaveBeenCalled();
+    changedPaths = ["src/lib/onboard/sandbox-create-step.ts"];
+    dispatchedWorkflows.clear();
+    await expect(verify()).rejects.toThrow(
+      "generated-head repair validation requires credential-bearing E2E job onboard-repair",
+    );
+    expect(dispatchedWorkflows.size).toBe(0);
+    expect(dispatchE2e).not.toHaveBeenCalled();
     changedPaths = [];
     workflowHeadSha = "6".repeat(40);
     dispatchedWorkflows.clear();
@@ -627,90 +634,13 @@ describe("PR Review Advisor generated-head evidence", () => {
     dispatchedWorkflows.add("openshell-sdk-package-pr.yaml");
     await expect(verify()).rejects.toThrow("run identity is ambiguous");
     correlationMode = "one";
-    changedPaths = ["src/lib/onboard/sandbox-create-step.ts"];
-    dispatchedWorkflows.clear();
-    await expect(verify()).resolves.toMatchObject({
-      version: 3,
-      outcome: "success",
-      riskPlan: { requiredJobs: ["onboard-repair", "onboard-resume"] },
-      e2e: {
-        correlationId: e2eCorrelationId,
-        runId: e2eRunId,
-        receipt: { name: `e2e-dispatch-${e2eRunId}-1` },
-        requiredJobs: ["onboard-repair", "onboard-resume"],
-        jobs: expectedE2eJobNames.map((name) => ({ name })),
-      },
-      checks: { length: 6 },
-      checkpoint: {
-        workflows: { length: 7 },
-        e2e: { runId: e2eRunId, status: "completed", conclusion: "success" },
-      },
-    });
-    expect(dispatchE2e).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        generatedHeadSha,
-        requiredJobs: ["onboard-repair", "onboard-resume"],
-        correlationId: e2eCorrelationId,
-      }),
-    );
-    e2eRunAttempt = 2;
-    dispatchedWorkflows.clear();
-    await expect(verify()).resolves.toMatchObject({
-      e2e: {
-        runId: e2eRunId,
-        runAttempt: 2,
-        receipt: { name: `e2e-dispatch-${e2eRunId}-2` },
-      },
-    });
-    e2eRunAttempt = 1;
-    e2eConclusion = "failure";
-    dispatchedWorkflows.clear();
-    await expect(verify()).rejects.toThrow("generated-head E2E run failed");
-    e2eConclusion = "success";
-    e2eMatrixConclusion = "failure";
+    changedPaths = ["src/lib/inference/health.ts"];
     dispatchedWorkflows.clear();
     await expect(verify()).rejects.toThrow(
-      "generated-head E2E generate-matrix job did not succeed",
+      "generated-head repair validation requires credential-bearing E2E job inference-routing",
     );
-    e2eMatrixConclusion = "success";
-    e2eJobMode = "missing";
-    dispatchedWorkflows.clear();
-    await expect(verify()).rejects.toThrow("generated-head E2E job");
-    e2eJobMode = "skipped";
-    dispatchedWorkflows.clear();
-    await expect(verify()).rejects.toThrow("generated-head E2E job");
-    e2eJobMode = "failure";
-    dispatchedWorkflows.clear();
-    await expect(verify()).rejects.toThrow("generated-head E2E job");
-    e2eJobMode = "duplicate";
-    dispatchedWorkflows.clear();
-    await expect(verify()).rejects.toThrow("generated-head E2E job");
-    e2eJobMode = "success";
-    e2eArtifactMode = "missing";
-    dispatchedWorkflows.clear();
-    await expect(verify()).rejects.toThrow("dispatch receipt is missing or ambiguous");
-    e2eArtifactMode = "duplicate";
-    dispatchedWorkflows.clear();
-    await expect(verify()).rejects.toThrow("dispatch receipt is missing or ambiguous");
-    e2eArtifactMode = "expired";
-    dispatchedWorkflows.clear();
-    await expect(verify()).rejects.toThrow("dispatch receipt identity is invalid");
-    e2eArtifactMode = "wrong-run";
-    dispatchedWorkflows.clear();
-    await expect(verify()).rejects.toThrow("dispatch receipt identity is invalid");
-    e2eArtifactMode = "success";
-    e2eReceiptOverrides = { candidateSha: "6".repeat(40) };
-    dispatchedWorkflows.clear();
-    await expect(verify()).rejects.toThrow("dispatch receipt content is invalid");
-    e2eReceiptOverrides = { jobs: "onboard-repair" };
-    dispatchedWorkflows.clear();
-    await expect(verify()).rejects.toThrow("dispatch receipt content is invalid");
-    e2eReceiptOverrides = { repairValidation: false };
-    dispatchedWorkflows.clear();
-    await expect(verify()).rejects.toThrow("dispatch receipt content is invalid");
-    e2eReceiptOverrides = { repairAttemptKey: `sha256:${"0".repeat(64)}` };
-    dispatchedWorkflows.clear();
-    await expect(verify()).rejects.toThrow("dispatch receipt content is invalid");
+    expect(dispatchedWorkflows.size).toBe(0);
+    expect(dispatchE2e).not.toHaveBeenCalled();
   });
 
   it("derives stable dispatch identity and a deadline beyond the selected dependency graph (#10791)", () => {

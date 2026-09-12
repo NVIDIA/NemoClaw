@@ -583,7 +583,7 @@ describe("E2E workflow plan", () => {
     },
   );
 
-  it("plans credential-free Advisor repair E2E while rejecting credential-required jobs (#10791)", () => {
+  it("plans credential-free Advisor repair E2E while rejecting package and credential jobs (#10791)", () => {
     const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-workflow-plan-repair-"));
     const output = path.join(directory, "github-output");
     const summary = path.join(directory, "summary.md");
@@ -596,11 +596,14 @@ describe("E2E workflow plan", () => {
       NEMOCLAW_E2E_REPAIR_VALIDATION: "true",
     };
     try {
+      const credentialFreeTest = firstId(discoverCredentialFreeTests(), "credential-free test");
       expect(() =>
-        writeE2eWorkflowPlanCiOutput({ jobs: "onboard-repair" }, environment),
+        writeE2eWorkflowPlanCiOutput({ jobs: credentialFreeTest }, environment),
       ).not.toThrow();
-      expect(readFileSync(output, "utf8")).toContain(
-        'selected_workflow_jobs=["catalogue-standard"]',
+      expect(readFileSync(output, "utf8")).toContain('selected_workflow_jobs=["shared-e2e"]');
+
+      expect(() => writeE2eWorkflowPlanCiOutput({ jobs: "onboard-repair" }, environment)).toThrow(
+        "Advisor repair E2E cannot select credential-required job: onboard-repair",
       );
 
       expect(() =>

@@ -721,30 +721,12 @@ export function e2eEvidenceJobNamesForSelectors(requiredJobs: readonly string[])
   );
 }
 
-function isCredentialFreeRepairCatalogueTarget(target: E2eCatalogueTarget): boolean {
-  return (
-    target.profile === "standard" &&
-    target.requiredOptionalCredentials.length === 0 &&
-    !target.compatibleApiKey &&
-    target.environment.NEMOCLAW_E2E_USE_HOSTED_INFERENCE !== "1"
-  );
-}
-
 export function repairValidationCredentialRequiredE2eJob(
   requiredJobs: readonly string[],
 ): string | null {
   const credentialFreeTests = new Set(discoverCredentialFreeTests().map(({ id }) => id));
   for (const job of requiredJobs) {
     if (credentialFreeTests.has(job)) continue;
-    const catalogueTargets = E2E_TARGET_CATALOGUE.filter(
-      (target) => target.id === job || target.targetId === job,
-    );
-    if (
-      catalogueTargets.length > 0 &&
-      catalogueTargets.every(isCredentialFreeRepairCatalogueTarget)
-    ) {
-      continue;
-    }
     return job;
   }
   return null;
