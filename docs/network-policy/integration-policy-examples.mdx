@@ -175,12 +175,15 @@ $$nemoclaw my-assistant policy add slack --yes
 For Discord:
 
 ```bash
-export DISCORD_BOT_TOKEN=<your-discord-bot-token>
+export DISCORD_BOT_TOKEN="<your-discord-bot-token>"
 export DISCORD_SERVER_ID=<your-discord-server-id>
 NEMOCLAW_NON_INTERACTIVE=1 $$nemoclaw my-assistant channels add discord
 $$nemoclaw my-assistant rebuild
 $$nemoclaw my-assistant policy add discord --yes
 ```
+
+Replace `<your-discord-bot-token>` with the real token before you add the channel.
+NemoClaw rejects the literal placeholder and does not configure Discord.
 
 If you enabled Slack or Discord during onboarding, apply only the matching preset:
 
