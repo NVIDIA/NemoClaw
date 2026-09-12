@@ -12,7 +12,7 @@ import {
 describe("Hermes dashboard config", () => {
   it("defaults to disabled dashboard settings", () => {
     expect(readHermesDashboardConfig({})).toEqual({
-      enabled: false,
+      enabled: true,
       port: HERMES_DASHBOARD_DEFAULT_PORT,
       internalPort: HERMES_DASHBOARD_DEFAULT_INTERNAL_PORT,
       tuiEnabled: false,
