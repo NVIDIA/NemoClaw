@@ -877,7 +877,7 @@ async function runRuntimeIdentityE2EScenario(
       },
       { interval: 2_000, timeout: 35_000 },
     )
-    .toMatch(new RegExp(`^openshell:resolve:env:v[0-9]+_${credentialKey}$`));
+    .toMatch(placeholderPattern);
   expect(placeholderAfterRotation).not.toBe(placeholder);
   for (const secret of redactionValues) expect(placeholderAfterRotation).not.toContain(secret);
   await expectProtectedResourceVersion(
