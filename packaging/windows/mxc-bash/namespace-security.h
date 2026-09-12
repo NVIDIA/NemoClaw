@@ -146,10 +146,11 @@ inline bool append_pid_link_container_ace(const PipeSecurityObservation& origina
 }
 
 // Only the observed canonical three-ACE descriptor is eligible. Preserve its
-// existing ACE bytes/order, then append the actual AppContainer writer rights.
-// This describes a new first-instance pipe; it never changes an existing ACL.
+// existing ACE bytes/order, then append only the requested AppContainer access.
+// Pipe callers keep writer rights; the user section requests query/read/write7.
+// This describes a new owned object; it never changes an existing ACL.
 inline bool append_signal_container_ace(const PipeSecurityObservation& original, PSID user, PSID container,
-                                         SignalPipeDescriptor& result) {
+                                         SignalPipeDescriptor& result, ACCESS_MASK containerAccess = signal_writer_access) {
     if (!user || !container || !IsValidSid(user) || !IsValidSid(container) || EqualSid(user, container) ||
         !original.complete || !original.attributesPresent || original.attributesLength != sizeof(SECURITY_ATTRIBUTES) ||
         original.inheritedHandle || !original.descriptorPresent || original.control != SE_DACL_PRESENT ||
@@ -182,7 +183,7 @@ inline bool append_signal_container_ace(const PipeSecurityObservation& original,
     auto next = reinterpret_cast<PACL>(result.acl);
     if (!InitializeAcl(next, sizeof(result.acl), ACL_REVISION) ||
         !AddAce(next, ACL_REVISION, MAXDWORD, const_cast<BYTE*>(original.acl + sizeof(ACL)), used - static_cast<DWORD>(sizeof(ACL))) ||
-        !AddAccessAllowedAceEx(next, ACL_REVISION, 0, signal_writer_access, container) ||
+        !AddAccessAllowedAceEx(next, ACL_REVISION, 0, containerAccess, container) ||
         !InitializeSecurityDescriptor(&result.descriptor, SECURITY_DESCRIPTOR_REVISION) ||
         !SetSecurityDescriptorDacl(&result.descriptor, TRUE, next, FALSE)) return false;
     next->AclSize = static_cast<WORD>(used + offsetof(ACCESS_ALLOWED_ACE, SidStart) + GetLengthSid(container));

@@ -50,6 +50,9 @@ void observe_failed_private_mutant(POBJECT_ATTRIBUTES, ACCESS_MASK, BOOLEAN, NTS
 HANDLE heldSharedDirectory = nullptr;
 LONG sharedDirectoryState = 0;
 LONG sharedSectionRecords = 0;
+WCHAR userSectionName[192] = {};
+char userSectionLabel[192] = {};
+USHORT userSectionNameBytes = 0;
 void bind_shared_directory(PHANDLE output);
 
 using NativePipeCreate = NTSTATUS (NTAPI*)(PHANDLE, ACCESS_MASK, POBJECT_ATTRIBUTES, PIO_STATUS_BLOCK,
@@ -112,6 +115,30 @@ void describe_token_sid(PSID sid) {
         if (count < 0) { contextDiagnostic.tokenSid[0] = 0; return; }
         at += static_cast<size_t>(count);
     }
+}
+
+// Canonical get_windows_id() is the effective SID string. This native
+// Personal profile does not impersonate; bind USER_VERSION 1 to TokenUser.
+bool initialize_user_section_name(PSID sid) {
+    if (!sid || !IsValidSid(sid)) return false;
+    const auto authority = GetSidIdentifierAuthority(sid);
+    unsigned long long identifier = 0;
+    for (size_t n = 0; n < 6; ++n) identifier = (identifier << 8) | authority->Value[n];
+    int count = _snprintf_s(userSectionLabel, sizeof(userSectionLabel), _TRUNCATE,
+        "S-%u-%llu", static_cast<unsigned>(SID_REVISION), identifier);
+    if (count < 0) return false;
+    size_t at = static_cast<size_t>(count);
+    for (DWORD n = 0; n < *GetSidSubAuthorityCount(sid); ++n) {
+        count = _snprintf_s(userSectionLabel + at, sizeof(userSectionLabel) - at,
+            _TRUNCATE, "-%lu", *GetSidSubAuthority(sid, n));
+        if (count < 0) return false;
+        at += static_cast<size_t>(count);
+    }
+    if (at + 3 > sizeof(userSectionLabel)) return false;
+    userSectionLabel[at++] = '.'; userSectionLabel[at++] = '1'; userSectionLabel[at] = 0;
+    for (size_t n = 0; n <= at; ++n) userSectionName[n] = static_cast<WCHAR>(userSectionLabel[n]);
+    userSectionNameBytes = static_cast<USHORT>(at * sizeof(WCHAR));
+    return true;
 }
 
 bool root_has_sid_suffix(size_t count) {
@@ -181,6 +208,7 @@ bool initialize_namespace() {
         stage = "token-user";
         if (!GetTokenInformation(token, TokenUser, userBuffer, sizeof(userBuffer), &needed)) { error = GetLastError(); break; }
         auto user = reinterpret_cast<TOKEN_USER*>(userBuffer)->User.Sid;
+        if (!initialize_user_section_name(user)) { stage = "token-user-section-name"; kind = "validation"; error = 0; break; }
         stage = "token-session";
         if (!GetTokenInformation(token, TokenSessionId, &ownSession, sizeof(ownSession), &needed)) { error = GetLastError(); break; }
         stage = "appcontainer-named-object-path";
@@ -639,7 +667,7 @@ void retain_npfs_root(HANDLE original) {
     InterlockedExchange(&npfsBindingState, 0);
 }
 
-bool current_default_pipe_descriptor(SignalPipeDescriptor& output) {
+bool current_default_pipe_descriptor(SignalPipeDescriptor& output, ACCESS_MASK containerAccess = signal_writer_access) {
     HANDLE token = nullptr;
     if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) return false;
     alignas(void*) BYTE data[1024] = {}, containerData[sizeof(TOKEN_APPCONTAINER_INFORMATION) + SECURITY_MAX_SID_SIZE] = {};
@@ -669,7 +697,7 @@ bool current_default_pipe_descriptor(SignalPipeDescriptor& output) {
                     PipeSecurityObservation snapshot = {};
                     observe_pipe_security(&attributes, snapshot);
                     result = append_signal_container_ace(snapshot,
-                        &static_cast<ACCESS_ALLOWED_ACE*>(userAce)->SidStart, expectedContainer, output);
+                        &static_cast<ACCESS_ALLOWED_ACE*>(userAce)->SidStart, expectedContainer, output, containerAccess);
                 }
             }
         }
@@ -908,9 +936,10 @@ struct SharedSectionRequest {
     bool bound = false;
     bool exact = false;
     bool pinfo = false;
+    bool userShared = false;
     DWORD cygpid = 0;
-    WCHAR name[24] = L"shared.5";
-    char label[24] = "shared.5";
+    WCHAR name[192] = L"shared.5";
+    char label[192] = "shared.5";
     USHORT nameBytes = 16;
     ULONG attributes = 0;
     LONGLONG size = 0;
@@ -958,11 +987,20 @@ SharedSectionRequest inspect_shared_section(ACCESS_MASK access, POBJECT_ATTRIBUT
         const bool shared = input->ObjectName->Length == 16 && input->ObjectName->MaximumLength >= 16 &&
             input->ObjectName->Buffer && memcmp(input->ObjectName->Buffer, L"shared.5", 16) == 0;
         if (!shared) {
-            if (!pid_link_number(input->ObjectName, L"cygpid.", 7, 2, 4194303,
-                                 result.cygpid, result.name, result.nameBytes)) return result;
-            result.pinfo = true;
-            for (USHORT n = 0; n < result.nameBytes / sizeof(WCHAR); ++n) result.label[n] = static_cast<char>(result.name[n]);
-            result.label[result.nameBytes / sizeof(WCHAR)] = 0;
+            if (userSectionNameBytes && input->ObjectName->Length == userSectionNameBytes &&
+                input->ObjectName->MaximumLength >= userSectionNameBytes && input->ObjectName->Buffer &&
+                memcmp(input->ObjectName->Buffer, userSectionName, userSectionNameBytes) == 0) {
+                result.userShared = true;
+                result.nameBytes = userSectionNameBytes;
+                memcpy(result.name, userSectionName, userSectionNameBytes + sizeof(WCHAR));
+                memcpy(result.label, userSectionLabel, userSectionNameBytes / sizeof(WCHAR) + 1);
+            } else {
+                if (!pid_link_number(input->ObjectName, L"cygpid.", 7, 2, 4194303,
+                                     result.cygpid, result.name, result.nameBytes)) return result;
+                result.pinfo = true;
+                for (USHORT n = 0; n < result.nameBytes / sizeof(WCHAR); ++n) result.label[n] = static_cast<char>(result.name[n]);
+                result.label[result.nameBytes / sizeof(WCHAR)] = 0;
+            }
         }
         result.bound = true;
         result.attributes = input->Attributes;
@@ -974,13 +1012,20 @@ SharedSectionRequest inspect_shared_section(ACCESS_MASK access, POBJECT_ATTRIBUT
         const auto& sd = result.security;
         const char* rejected = nullptr;
         DWORD identityError = 0;
-        result.exact = access == 0x000f0007 && input->Attributes == (OBJ_OPENIF | OBJ_CASE_INSENSITIVE) &&
+        ULONG expectedAttributes = OBJ_OPENIF | OBJ_CASE_INSENSITIVE;
+        if (result.userShared) expectedAttributes |= OBJ_INHERIT;
+        result.exact = access == 0x000f0007 && input->Attributes == expectedAttributes &&
             !input->SecurityQualityOfService && size && result.size > 0 && result.size <= MAXDWORD &&
             protection == PAGE_READWRITE && allocation == SEC_COMMIT && !file &&
-            sd.complete && sd.descriptorPresent && sd.control == SE_DACL_PRESENT &&
+            sd.complete && not_impersonating(rejected, identityError);
+        if (result.userShared) {
+            // sec_none has a NULL descriptor and inherit=TRUE. Snapshot and
+            // preserve the admitted canonical token default, not a NULL DACL.
+            result.exact = result.exact && !sd.descriptorPresent && pinfoDescriptor &&
+                current_default_pipe_descriptor(*pinfoDescriptor, shared_section_container_access);
+        } else result.exact = result.exact && sd.descriptorPresent && sd.control == SE_DACL_PRESENT &&
             sd.revision == SECURITY_DESCRIPTOR_REVISION && !sd.ownerPresent && !sd.groupPresent &&
-            !sd.ownerDefaulted && !sd.groupDefaulted &&
-            not_impersonating(rejected, identityError);
+            !sd.ownerDefaulted && !sd.groupDefaulted;
         if (result.pinfo) {
             // The pinned _pinfo is explicitly kept below one 64 KiB allocation.
             // Preserve the requested size; validate every original ACE before appending.
@@ -989,7 +1034,7 @@ SharedSectionRequest inspect_shared_section(ACCESS_MASK access, POBJECT_ATTRIBUT
                 GetAce(reinterpret_cast<PACL>(privateDescriptor.acl), 0, &userAce) &&
                 append_pinfo_container_ace(sd, &static_cast<ACCESS_ALLOWED_ACE*>(userAce)->SidStart,
                                           worldSid, pidLinkContainerSid, *pinfoDescriptor);
-        } else result.exact = result.exact && sd.nullDacl;
+        } else if (!result.userShared) result.exact = result.exact && sd.nullDacl;
     } __except (EXCEPTION_EXECUTE_HANDLER) { result.exact = false; }
     return result;
 }
@@ -1014,10 +1059,10 @@ void log_shared_section(const SharedSectionRequest& request, ACCESS_MASK access,
         }
     char line[6144];
     const int count = _snprintf_s(line, sizeof(line), _TRUNCATE,
-        "NEMOCLAW_MSYS_SHARED_SECTION={\"schemaVersion\":1,\"pid\":%lu,\"name\":\"%s\",\"pinfo\":%s,\"cygpid\":%lu,\"parentHandleBound\":true,\"exactContract\":%s,\"requestDescriptorAdapted\":%s,\"sectionUserAccess\":%lu,\"sectionContainerAccess\":%lu,\"access\":\"0x%08lx\",\"objectAttributes\":\"0x%08lx\",\"requestedSize\":%lld,\"protection\":%lu,\"allocation\":%lu,\"inputSecurityComplete\":%s,\"inputDescriptorPresent\":%s,\"inputControl\":%u,\"inputRevision\":%lu,\"inputOwnerPresent\":%s,\"inputGroupPresent\":%s,\"inputNullDacl\":%s,\"inputAceCount\":%lu,\"originalStatus\":\"0x%08lx\",\"finalStatus\":\"0x%08lx\",\"existingOnlyOpenAttempted\":%s,\"openAccess\":7,\"openStatus\":\"0x%08lx\",\"queryStatus\":\"0x%08lx\",\"actualSectionSize\":%lld,\"actualAllocation\":%lu,\"existingSectionReused\":%s,\"originalResultDescriptorAttempted\":%s,\"originalResultDescriptorRead\":%s,\"descriptorError\":%lu,\"descriptorRequiredBytes\":%lu,\"descriptorHex\":\"%s\"}\n",
-        GetCurrentProcessId(), request.label, request.pinfo ? "true" : "false", request.cygpid,
+        "NEMOCLAW_MSYS_SHARED_SECTION={\"schemaVersion\":1,\"pid\":%lu,\"name\":\"%s\",\"pinfo\":%s,\"userShared\":%s,\"cygpid\":%lu,\"parentHandleBound\":true,\"exactContract\":%s,\"requestDescriptorAdapted\":%s,\"sectionUserAccess\":%lu,\"sectionContainerAccess\":%lu,\"access\":\"0x%08lx\",\"objectAttributes\":\"0x%08lx\",\"requestedSize\":%lld,\"protection\":%lu,\"allocation\":%lu,\"inputSecurityComplete\":%s,\"inputDescriptorPresent\":%s,\"inputControl\":%u,\"inputRevision\":%lu,\"inputOwnerPresent\":%s,\"inputGroupPresent\":%s,\"inputNullDacl\":%s,\"inputAceCount\":%lu,\"originalStatus\":\"0x%08lx\",\"finalStatus\":\"0x%08lx\",\"existingOnlyOpenAttempted\":%s,\"openAccess\":7,\"openStatus\":\"0x%08lx\",\"queryStatus\":\"0x%08lx\",\"actualSectionSize\":%lld,\"actualAllocation\":%lu,\"existingSectionReused\":%s,\"originalResultDescriptorAttempted\":%s,\"originalResultDescriptorRead\":%s,\"descriptorError\":%lu,\"descriptorRequiredBytes\":%lu,\"descriptorHex\":\"%s\"}\n",
+        GetCurrentProcessId(), request.label, request.pinfo ? "true" : "false", request.userShared ? "true" : "false", request.cygpid,
         request.exact ? "true" : "false", descriptorAdapted ? "true" : "false",
-        descriptorAdapted ? (request.pinfo ? GENERIC_ALL : shared_section_user_access) : 0UL,
+        descriptorAdapted ? ((request.pinfo || request.userShared) ? GENERIC_ALL : shared_section_user_access) : 0UL,
         descriptorAdapted ? shared_section_container_access : 0UL,
         access, request.attributes,
         request.size, protection, allocation, request.security.complete ? "true" : "false",
@@ -1044,7 +1089,7 @@ NTSTATUS NTAPI create_shared_section(PHANDLE output, ACCESS_MASK access, POBJECT
     const bool descriptorAdapted = request.exact;
     UNICODE_STRING name = {request.nameBytes, static_cast<USHORT>(request.nameBytes + 2), const_cast<PWSTR>(request.name)};
     if (descriptorAdapted) {
-        adapted.SecurityDescriptor = request.pinfo
+        adapted.SecurityDescriptor = (request.pinfo || request.userShared)
             ? &pinfoDescriptor.descriptor : &sharedSectionDescriptor.descriptor;
         adapted.RootDirectory = heldSharedDirectory;
         adapted.ObjectName = &name;
@@ -1070,6 +1115,7 @@ NTSTATUS NTAPI create_shared_section(PHANDLE output, ACCESS_MASK access, POBJECT
         attributes.RootDirectory = heldSharedDirectory;
         attributes.ObjectName = &name;
         attributes.Attributes = OBJ_CASE_INSENSITIVE;
+        if (request.userShared) attributes.Attributes |= OBJ_INHERIT;
         HANDLE existing = nullptr;
         attempted = true;
         openStatus = realOpenSharedSection(&existing, 0x7, &attributes);
