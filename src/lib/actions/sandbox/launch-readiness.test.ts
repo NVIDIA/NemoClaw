@@ -842,8 +842,15 @@ describe("launch readiness validation", () => {
   });
 
   it("uses terminal-agent smoke health for a supported non-OpenClaw runtime", async () => {
-    sandbox = entry("langchain-deepagents-code");
+    sandbox = {
+      ...entry("langchain-deepagents-code"),
+      provider: "nvidia-prod",
+      model: "model-a",
+      credentialEnv: "NVIDIA_API_KEY",
+    };
+    routeOutput = "Gateway Inference:\n\n  Provider: nvidia-prod\n  Model: model-a\n";
     const currentDeps = deps();
+    currentDeps.inferenceInvocationProbe = async () => ({ ok: true });
     const gatewayHealth = vi.fn(async () => true);
     const smoke = vi.fn(async () => ({ ok: true }) as const);
     currentDeps.gatewayHealth = gatewayHealth;
@@ -858,6 +865,40 @@ describe("launch readiness validation", () => {
     expect(gatewayHealth).not.toHaveBeenCalled();
     expect(externalEvents).not.toContain("pairing-qualification");
     expect(publishedIdentity?.session).toBeNull();
+  });
+
+  it("rejects a Deep Agents Code lease when model discovery succeeds but inference fails (#11520)", async () => {
+    sandbox = {
+      ...entry("langchain-deepagents-code"),
+      provider: "nvidia-prod",
+      model: "model-a",
+      credentialEnv: "NVIDIA_API_KEY",
+    };
+    routeOutput = "Gateway Inference:\n\n  Provider: nvidia-prod\n  Model: model-a\n";
+    const currentDeps = deps();
+    currentDeps.inferenceInvocationProbe = vi.fn(async () => ({ ok: true }) as const);
+    await createAcceptedLease(currentDeps);
+    await expect(inspectLaunchReadiness(SANDBOX, currentDeps)).resolves.toMatchObject({
+      kind: "accepted",
+    });
+
+    currentDeps.inferenceInvocationProbe = vi.fn(async () => ({
+      ok: false as const,
+      detail: "sandbox inference invocation probe returned HTTP 503",
+      httpStatus: 503,
+    }));
+    const decision = await inspectLaunchReadiness(SANDBOX, currentDeps);
+    expect(decision).toMatchObject({ kind: "fallback", category: "health", fenceFailed: false });
+    await expect(
+      publishLaunchReadiness(publicationFromDecision(SANDBOX, decision), currentDeps),
+    ).resolves.toMatchObject({ kind: "validation-failed", category: "health" });
+    expect(currentDeps.inferenceInvocationProbe).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sandboxName: SANDBOX,
+        gatewayName: GATEWAY_NAME,
+        model: "model-a",
+      }),
+    );
   });
 
   it("uses ordinary terminal smoke health for feature-gated NemoCUA (#9649)", async () => {

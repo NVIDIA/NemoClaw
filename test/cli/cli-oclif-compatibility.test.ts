@@ -29,11 +29,13 @@ describe("oclif compatibility dispatch", () => {
   it("renders native sandbox help without registry recovery", async () => {
     const cliPath = require.resolve("../../src/nemoclaw.js");
     const registryPath = require.resolve("../../src/lib/state/registry.js");
+    const crossPortRegistryPath = require.resolve("../../src/lib/state/registry/cross-port.js");
     const registryRecoveryPath = require.resolve("../../src/lib/registry-recovery-action.js");
     const runnerPath = require.resolve("../../src/lib/runner.js");
 
     const priorCli = require.cache[cliPath];
     const priorRegistry = require.cache[registryPath];
+    const priorCrossPortRegistry = require.cache[crossPortRegistryPath];
     const priorRegistryRecovery = require.cache[registryRecoveryPath];
     const priorRunner = require.cache[runnerPath];
     const priorDisableAutoDispatch = process.env.NEMOCLAW_DISABLE_AUTO_DISPATCH;
@@ -79,6 +81,17 @@ describe("oclif compatibility dispatch", () => {
       },
     } as any;
 
+    requireCache[crossPortRegistryPath] = {
+      id: crossPortRegistryPath,
+      filename: crossPortRegistryPath,
+      loaded: true,
+      exports: {
+        findSandboxAcrossGatewayRoots: vi.fn(() => null),
+        listPublishedSandboxNamesAcrossGatewayRoots: vi.fn(() => []),
+        listPendingSandboxNamesAcrossGatewayRoots: vi.fn(() => []),
+      },
+    } as any;
+
     requireCache[registryRecoveryPath] = {
       id: registryRecoveryPath,
       filename: registryRecoveryPath,
@@ -110,6 +123,7 @@ describe("oclif compatibility dispatch", () => {
 
       restoreCache(cliPath, priorCli);
       restoreCache(registryPath, priorRegistry);
+      restoreCache(crossPortRegistryPath, priorCrossPortRegistry);
       restoreCache(registryRecoveryPath, priorRegistryRecovery);
       restoreCache(runnerPath, priorRunner);
     }
@@ -118,6 +132,7 @@ describe("oclif compatibility dispatch", () => {
   it("hands exact public sandbox execution to oclif by command id", async () => {
     const cliPath = require.resolve("../../src/nemoclaw.js");
     const registryPath = require.resolve("../../src/lib/state/registry.js");
+    const crossPortRegistryPath = require.resolve("../../src/lib/state/registry/cross-port.js");
     const registryRecoveryPath = require.resolve("../../src/lib/registry-recovery-action.js");
     const runnerPath = require.resolve("../../src/lib/runner.js");
     const publicDispatchPath = require.resolve("../../src/lib/cli/public-dispatch.js");
@@ -126,6 +141,7 @@ describe("oclif compatibility dispatch", () => {
 
     const priorCli = require.cache[cliPath];
     const priorRegistry = require.cache[registryPath];
+    const priorCrossPortRegistry = require.cache[crossPortRegistryPath];
     const priorRegistryRecovery = require.cache[registryRecoveryPath];
     const priorRunner = require.cache[runnerPath];
     const priorPublicDispatch = require.cache[publicDispatchPath];
@@ -156,6 +172,21 @@ describe("oclif compatibility dispatch", () => {
       exports: {
         getSandbox: vi.fn((name: string) => (name === "alpha" ? { name: "alpha" } : null)),
         listSandboxes: vi.fn(() => ({ sandboxes: [{ name: "alpha" }] })),
+      },
+    } as any;
+
+    requireCache[crossPortRegistryPath] = {
+      id: crossPortRegistryPath,
+      filename: crossPortRegistryPath,
+      loaded: true,
+      exports: {
+        findSandboxAcrossGatewayRoots: vi.fn((name: string) =>
+          name === "alpha"
+            ? { entry: { name: "alpha" }, gatewayPort: null, registryFile: "/test/sandboxes.json" }
+            : null,
+        ),
+        listPublishedSandboxNamesAcrossGatewayRoots: vi.fn(() => ["alpha"]),
+        listPendingSandboxNamesAcrossGatewayRoots: vi.fn(() => []),
       },
     } as any;
 
@@ -218,6 +249,7 @@ describe("oclif compatibility dispatch", () => {
 
       restoreCache(cliPath, priorCli);
       restoreCache(registryPath, priorRegistry);
+      restoreCache(crossPortRegistryPath, priorCrossPortRegistry);
       restoreCache(registryRecoveryPath, priorRegistryRecovery);
       restoreCache(runnerPath, priorRunner);
       restoreCache(publicDispatchPath, priorPublicDispatch);
@@ -230,7 +262,8 @@ describe("oclif compatibility dispatch", () => {
     await withDirectPublicDispatch(
       async ({
         dispatchCli,
-        getSandbox,
+        crossPortSandboxes,
+        findSandboxAcrossGatewayRoots,
         recoverRegistryEntries,
         runOclifArgv,
         runOclifCommandById,
@@ -240,9 +273,9 @@ describe("oclif compatibility dispatch", () => {
         recoverRegistryEntries.mockImplementationOnce(
           async ({ requestedSandboxName }: { requestedSandboxName: string }) => {
             expect(requestedSandboxName).toBe("alpha");
-            sandboxes.set("alpha", { name: "alpha" });
+            crossPortSandboxes.set("alpha", { name: "alpha", gatewayPort: 8245 });
             return {
-              sandboxes: [...sandboxes.values()],
+              sandboxes: [...crossPortSandboxes.values()],
               defaultSandbox: "alpha",
               recoveredFromSession: true,
               recoveredFromGateway: 0,
@@ -253,9 +286,12 @@ describe("oclif compatibility dispatch", () => {
         await dispatchCli(["alpha", "connect"]);
 
         expect(recoverRegistryEntries).toHaveBeenCalledWith({ requestedSandboxName: "alpha" });
-        expect(getSandbox.mock.results[0]?.value).toBeNull();
+        expect(sandboxes.has("alpha")).toBe(false);
+        expect(findSandboxAcrossGatewayRoots.mock.results[0]?.value).toBeNull();
         expect(
-          getSandbox.mock.results.slice(1).some((result) => result.value?.name === "alpha"),
+          findSandboxAcrossGatewayRoots.mock.results
+            .slice(1)
+            .some((result) => result.value?.entry.name === "alpha"),
         ).toBe(true);
         expect(runOclifCommandById).toHaveBeenCalledWith(
           "sandbox:connect",
@@ -310,6 +346,7 @@ describe("oclif compatibility dispatch", () => {
   it("forwards exec command help flags after -- instead of rendering NemoClaw help", async () => {
     const cliPath = require.resolve("../../src/nemoclaw.js");
     const registryPath = require.resolve("../../src/lib/state/registry.js");
+    const crossPortRegistryPath = require.resolve("../../src/lib/state/registry/cross-port.js");
     const registryRecoveryPath = require.resolve("../../src/lib/registry-recovery-action.js");
     const runnerPath = require.resolve("../../src/lib/runner.js");
     const publicDispatchPath = require.resolve("../../src/lib/cli/public-dispatch.js");
@@ -317,6 +354,7 @@ describe("oclif compatibility dispatch", () => {
 
     const priorCli = require.cache[cliPath];
     const priorRegistry = require.cache[registryPath];
+    const priorCrossPortRegistry = require.cache[crossPortRegistryPath];
     const priorRegistryRecovery = require.cache[registryRecoveryPath];
     const priorRunner = require.cache[runnerPath];
     const priorPublicDispatch = require.cache[publicDispatchPath];
@@ -358,6 +396,21 @@ describe("oclif compatibility dispatch", () => {
       },
     } as any;
 
+    requireCache[crossPortRegistryPath] = {
+      id: crossPortRegistryPath,
+      filename: crossPortRegistryPath,
+      loaded: true,
+      exports: {
+        findSandboxAcrossGatewayRoots: vi.fn(() => ({
+          entry: { name: "alpha" },
+          gatewayPort: null,
+          registryFile: "/test/sandboxes.json",
+        })),
+        listPublishedSandboxNamesAcrossGatewayRoots: vi.fn(() => ["alpha"]),
+        listPendingSandboxNamesAcrossGatewayRoots: vi.fn(() => []),
+      },
+    } as any;
+
     requireCache[registryRecoveryPath] = {
       id: registryRecoveryPath,
       filename: registryRecoveryPath,
@@ -396,6 +449,7 @@ describe("oclif compatibility dispatch", () => {
 
       restoreCache(cliPath, priorCli);
       restoreCache(registryPath, priorRegistry);
+      restoreCache(crossPortRegistryPath, priorCrossPortRegistry);
       restoreCache(registryRecoveryPath, priorRegistryRecovery);
       restoreCache(runnerPath, priorRunner);
       restoreCache(publicDispatchPath, priorPublicDispatch);
