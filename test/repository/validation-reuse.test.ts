@@ -143,6 +143,52 @@ describe("validation reuse", () => {
       expect(options.execute).toHaveBeenCalledTimes(1);
     },
   );
+
+  it.skipIf(process.platform === "win32")(
+    "accepts an internal directory symlink when the repository root is aliased",
+    () => {
+      symlinkSync("src", path.join(root, "alias"));
+      fixtureGit(root, "add", "alias");
+      fixtureGit(root, "commit", "-m", "test: internal directory symlink");
+      const aliasedRoot = `${root}-alias`;
+      symlinkSync(root, aliasedRoot, "dir");
+      try {
+        const command = [process.execPath, "--version"];
+        expect(validationFingerprint(aliasedRoot, command, {})).toEqual(
+          validationFingerprint(root, command, {}),
+        );
+        const execute = vi.fn(() => 0);
+        const options = check(execute);
+        expect(runCachedCommand(options)).toBe(0);
+        expect(runCachedCommand({ ...options, root: aliasedRoot })).toBe(0);
+        expect(execute).toHaveBeenCalledTimes(1);
+      } finally {
+        rmSync(aliasedRoot);
+      }
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "rejects an external directory symlink when the repository root is aliased",
+    () => {
+      const externalRoot = `${root}-external`;
+      const aliasedRoot = `${root}-alias`;
+      fs.mkdirSync(externalRoot);
+      symlinkSync(externalRoot, path.join(root, "external"), "dir");
+      fixtureGit(root, "add", "external");
+      fixtureGit(root, "commit", "-m", "test: external directory symlink");
+      symlinkSync(root, aliasedRoot, "dir");
+      try {
+        expect(() =>
+          validationFingerprint(aliasedRoot, [process.execPath, "--version"], {}),
+        ).toThrow("External or cyclic directory symlinks prevent validation reuse");
+      } finally {
+        rmSync(aliasedRoot);
+        rmSync(externalRoot, { recursive: true });
+      }
+    },
+  );
+
   it("executes once for identical successful input bytes", () => {
     const options = check();
     expect(runCachedCommand(options)).toBe(0);
@@ -205,7 +251,7 @@ describe("validation reuse", () => {
     const options = check();
     runCachedCommand(options);
     runCachedCommand({ ...options, command: [process.execPath, "--help"] });
-    runCachedCommand({ ...options, env: { NODE_OPTIONS: "--max-old-space-size=5120" } });
+    runCachedCommand({ ...options, env: { NODE_OPTIONS: "--trace-warnings" } });
     expect(options.execute).toHaveBeenCalledTimes(3);
   });
 
@@ -298,8 +344,14 @@ describe("validation reuse", () => {
       }),
     ).toEqual({
       PATH: ["/tools", "/usr/bin"].join(path.delimiter),
-      NODE_OPTIONS: "--max-old-space-size=5120",
+      NODE_OPTIONS: "--max-old-space-size=8192",
       npm_config_yes: "false",
+    });
+  });
+
+  it("adds the validation heap limit when NODE_OPTIONS is absent", () => {
+    expect(validationEnvironment({})).toMatchObject({
+      NODE_OPTIONS: "--max-old-space-size=8192",
     });
   });
 });

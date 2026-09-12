@@ -386,7 +386,7 @@ describe("contributor environment doctor", () => {
 
     expect(result.status).toBe(1);
     expect(result.output).toContain("CLI type check: ran out of Node.js heap");
-    expect(result.output).toContain("--max-old-space-size=5120");
+    expect(result.output).toContain("--max-old-space-size=8192");
     expect(result.output).not.toContain("tsc-path-that-must-not-be-reported");
   });
 
@@ -410,7 +410,7 @@ describe("contributor environment doctor", () => {
 
     expect(result.status).toBe(1);
     expect(result.output).toContain("CLI type check: ran out of Node.js heap");
-    expect(result.output).toContain("--max-old-space-size=5120");
+    expect(result.output).toContain("--max-old-space-size=8192");
     expect(result.output).not.toContain("large-tsc-path-that-must-not-be-reported");
   });
 
@@ -563,7 +563,7 @@ describe("contributor environment doctor", () => {
     expect(result.status).toBe(1);
     expect(result.output).toContain("CLI type check: ran out of Node.js heap");
     expect(result.output).toContain(
-      "Next: Run: NODE_OPTIONS=--max-old-space-size=5120 npm run typecheck:cli",
+      "Next: Run: NODE_OPTIONS=--max-old-space-size=8192 npm run typecheck:cli",
     );
     expect(result.output).not.toContain("Native stack trace");
   });
@@ -577,7 +577,7 @@ describe("contributor environment doctor", () => {
     expect(result.status).toBe(1);
     expect(result.output).toContain("Plugin type check: ran out of Node.js heap");
     expect(result.output).toContain(
-      "Next: Run: NODE_OPTIONS=--max-old-space-size=5120 npm --prefix nemoclaw run build",
+      "Next: Run: NODE_OPTIONS=--max-old-space-size=8192 npm --prefix nemoclaw run build",
     );
     expect(result.output).not.toContain("Native stack trace");
   });
@@ -837,7 +837,7 @@ describe("contributor repository setup", () => {
     expect(result.status).toBe(1);
     expect(result.output).toContain("Node.js exhausted its V8 heap while running this type check.");
     expect(result.output).toContain(
-      "Next: Run: NODE_OPTIONS=--max-old-space-size=5120 npm run typecheck:cli",
+      "Next: Run: NODE_OPTIONS=--max-old-space-size=8192 npm run typecheck:cli",
     );
     expect(result.output).toContain("Setup stopped while attempting: Type-check the CLI");
     expect(result.output).not.toContain("Native stack trace");
@@ -854,7 +854,7 @@ describe("contributor repository setup", () => {
     expect(result.status).toBe(1);
     expect(result.output).toContain("Node.js exhausted its V8 heap while running this type check.");
     expect(result.output).toContain(
-      "Next: Run: NODE_OPTIONS=--max-old-space-size=5120 npm --prefix nemoclaw run build",
+      "Next: Run: NODE_OPTIONS=--max-old-space-size=8192 npm --prefix nemoclaw run build",
     );
     expect(result.output).toContain(
       "Setup stopped while attempting: Type-check the plugin without emitting files",

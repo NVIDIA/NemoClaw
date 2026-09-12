@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Exact-target gateway authority resolution for rebuild, teardown, and provider credential mutations.
+ * Exact-target gateway authority resolution for rebuild, teardown, forward recovery,
+ * and provider credential mutations.
  *
  * Onboarding binds authority before gateway effects. Credentials add and reset,
  * stop, final-sandbox cleanup, and uninstall can run after onboarding exits.
@@ -55,7 +56,7 @@ export type GatewayTeardownAuthorityResolver = (
   deps?: GatewayTeardownAuthorityDeps,
 ) => GatewayOwner;
 
-type GatewayAuthorityEffect = "credential mutation" | "rebuild" | "teardown";
+type GatewayAuthorityEffect = "credential mutation" | "forward recovery" | "rebuild" | "teardown";
 
 const FRESH_ONBOARDING_CHECKPOINT_RECOVERY =
   " Start a fresh onboarding run to replace the invalid checkpoint before retrying.";
@@ -164,7 +165,9 @@ function resolveGatewayEffectAuthority(
       ? "gateway teardown"
       : effect === "rebuild"
         ? "sandbox rebuild"
-        : "provider credential mutation";
+        : effect === "forward recovery"
+          ? "sandbox forward recovery"
+          : "provider credential mutation";
   if (resolveGatewayName(target.gatewayPort) !== target.gatewayName) {
     throw new GatewayAuthorityError(
       `Refusing ${operation} for noncanonical target '${target.gatewayName}@${String(target.gatewayPort)}'.`,
@@ -241,6 +244,14 @@ export function resolveGatewayRebuildAuthority(
   deps: GatewayTeardownAuthorityDeps = {},
 ): GatewayOwner {
   return resolveGatewayEffectAuthority(target, "rebuild", deps);
+}
+
+/** Revalidate the exact checkpointed authority before a host forward is inspected or launched. */
+export function resolveGatewayForwardAuthority(
+  target: GatewayTeardownTarget,
+  deps: GatewayTeardownAuthorityDeps = {},
+): GatewayOwner {
+  return resolveGatewayEffectAuthority(target, "forward recovery", deps);
 }
 
 /** Revalidate the exact checkpointed authority before a provider credential mutation. */

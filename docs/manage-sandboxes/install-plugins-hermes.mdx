@@ -83,7 +83,7 @@ Verify the provider and dependency after the restart:
 
 ```bash
 nemohermes <name> exec -- hermes memory status
-nemohermes <name> exec -- python -c 'import os, sys; sys.path.insert(0, os.environ["HERMES_LAZY_INSTALL_TARGET"]); import hindsight_client; print(hindsight_client.__version__)'
+nemohermes <name> exec -- python -c 'import os, sys; sys.path.insert(0, os.environ["HERMES_LAZY_INSTALL_TARGET"]); import hindsight_client; from importlib.metadata import version; print(version("hindsight-client"))'
 nemohermes <name> status
 ```
 
