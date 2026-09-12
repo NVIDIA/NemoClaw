@@ -12,10 +12,25 @@ The component supplies policy. OpenShell validates effective policy and enforces
 
 This v2 implementation requires authenticated interceptor and middleware APIs,
 and interceptor-backed provider profiles.
-The current shared runtime pin does not contain all required behavior.
-Qualify the accepted behavior against a released runtime before claiming integration support.
+The shared runtime pin is OpenShell 0.0.116.
+Qualify the accepted behavior against that release before claiming integration support.
 Keep runtime qualification and shared version pins in their existing owner.
 Dynamic registration is the accepted v2 contract. Do not add an insecure transport fallback.
+
+## Agent selection
+
+Providerless onboarding accepts OpenClaw and Hermes through the existing agent definitions and startup adapters.
+Reject other agents before preflight effects, component preparation, or gateway startup.
+The requested agent and resolved agent must agree before sandbox creation.
+Provider, model, endpoint, credential, and messaging inputs remain incompatible with this path.
+Do not discover stored messaging credentials during providerless creation.
+
+Both agents use the same preparation, externally supplied policy, identity proof, and bounded activation lifecycle.
+Each agent retains its managed image, configuration generator, and startup integration.
+Providerless onboarding does not create an ordinary inference provider; the agent still requires a managed inference route.
+This path does not add a requirement to configure that route before sandbox creation.
+Verify agent startup and inference after activation with real OpenShell before claiming live qualification.
+Failed or ambiguous activation retains incomplete state and does not retry.
 
 ## Declaration
 
@@ -101,5 +116,6 @@ NemoClaw does not install or supervise those services.
 
 `connections.test.ts` covers declaration restrictions, trust files, generated configuration, drift, and preparation.
 Existing activation and gateway-handler tests cover bounded transport, incomplete activation, and unchanged v1 behavior.
+The creation and finalization tests share an OpenClaw/Hermes matrix for image identity, startup configuration, policy proof, and activation failures.
 Real OpenShell registration, policy and profile delivery, sandbox identity, and middleware outcomes require live evidence.
 Record NemoClaw, OpenShell, and combined #11486 revisions separately. Mocked results do not qualify the integration.
