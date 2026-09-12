@@ -2,7 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -86,6 +94,30 @@ const NVCF_BODY_VARIANTS = [
 ] as const;
 
 describe("sandbox inference invocation probe", () => {
+  it("ignores personal curl configuration when an inference request fails (#11520)", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "nemoclaw-curl-config-"));
+    try {
+      const trace = path.join(dir, "hostile-trace");
+      writeFileSync(path.join(dir, ".curlrc"), `trace = "${trace}"\n`);
+      // Keep the real curl process local; this tests config loading, not routing.
+      const command = buildSandboxInferenceInvocationCommand(input).replace(
+        "https://inference.local/v1/chat/completions",
+        "http://127.0.0.1:1/v1/chat/completions",
+      );
+      const result = spawnSync("/bin/sh", ["-c", command], {
+        encoding: "utf8",
+        env: { PATH: process.env.PATH, HOME: dir, CURL_HOME: dir, XDG_CONFIG_HOME: dir },
+        timeout: 10_000,
+      });
+
+      expect(result.status).not.toBe(0);
+      expect(result.stdout).toMatch(/^curl-error:\d+\n$/);
+      expect(existsSync(trace)).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("probes the recorded model through inference.local without embedding a credential (#6195)", () => {
     const command = buildSandboxInferenceInvocationCommand(input);
 

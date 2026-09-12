@@ -7,6 +7,7 @@ import type { OpenShellSandboxBufferedCommandExecutor } from "../../adapters/ope
 import { loadAgent } from "../../agent/defs";
 import type { SandboxEntry } from "../../state/registry";
 import {
+  LaunchReadinessEvidenceError,
   LaunchReadinessObservationError,
   requireLaunchSemanticHealth,
   type LaunchReadinessHealthDeps,
@@ -78,11 +79,11 @@ const GATEWAY = "nemoclaw";
 const MODEL = "nvidia/nemotron-3-ultra-550b-a55b";
 const dcodeAgent = loadAgent("langchain-deepagents-code");
 
-function dcodeEntry(): SandboxEntry {
+function dcodeEntry(provider = "openrouter-api"): SandboxEntry {
   return {
     name: SANDBOX,
     agent: "langchain-deepagents-code",
-    provider: "openrouter-api",
+    provider,
     model: MODEL,
     preferredInferenceApi: null,
   } as SandboxEntry;
@@ -92,21 +93,22 @@ function dcodeHealthDeps(
   invocation: Awaited<
     ReturnType<NonNullable<LaunchReadinessHealthDeps["inferenceInvocationProbe"]>>
   >,
+  httpStatus = 404,
 ): LaunchReadinessHealthDeps {
   return {
     smoke: vi.fn(async () => ({ ok: true }) as const),
     inferenceProbe: vi.fn(async () => ({
       healthy: true,
       broken: false,
-      httpStatus: 404,
-      detail: "OK 404",
+      httpStatus,
+      detail: `OK ${httpStatus}`,
     })),
     inferenceInvocationProbe: vi.fn(async () => invocation),
   };
 }
 
-describe("Deep Agents Code OpenRouter launch readiness", () => {
-  it("accepts an injected terminal smoke without constructing a command executor", async () => {
+describe("Deep Agents Code launch readiness", () => {
+  it("rejects unconfigured inference before terminal smoke (#11520)", async () => {
     const smoke = vi.fn(async () => ({ ok: true }) as const);
 
     await expect(
@@ -119,20 +121,23 @@ describe("Deep Agents Code OpenRouter launch readiness", () => {
         false,
         { smoke },
       ),
-    ).resolves.toBeUndefined();
+    ).rejects.toBeInstanceOf(LaunchReadinessEvidenceError);
 
-    expect(smoke).toHaveBeenCalledWith(SANDBOX, dcodeAgent);
+    expect(smoke).not.toHaveBeenCalled();
   });
 
-  it("accepts readiness after an inference request succeeds (#9834)", async () => {
-    const currentDeps = dcodeHealthDeps({ ok: true });
+  it.each([
+    ["openrouter-api", 404],
+    ["nvidia-prod", 200],
+  ])("accepts %s readiness after an inference request succeeds", async (provider, httpStatus) => {
+    const currentDeps = dcodeHealthDeps({ ok: true }, httpStatus);
 
     await expect(
       requireLaunchSemanticHealth(
         SANDBOX,
         GATEWAY,
         "langchain-deepagents-code",
-        dcodeEntry(),
+        dcodeEntry(provider),
         dcodeAgent,
         true,
         currentDeps,
@@ -142,25 +147,31 @@ describe("Deep Agents Code OpenRouter launch readiness", () => {
       sandboxName: SANDBOX,
       gatewayName: GATEWAY,
       agentName: "langchain-deepagents-code",
-      provider: "openrouter-api",
+      provider,
       model: MODEL,
       preferredInferenceApi: null,
     });
   });
 
-  it("rejects readiness and names the inference request when invocation fails (#9834)", async () => {
-    const currentDeps = dcodeHealthDeps({
-      ok: false,
-      detail: "sandbox inference invocation probe returned HTTP 401",
-      httpStatus: 401,
-    });
+  it.each([
+    ["openrouter-api", 404],
+    ["nvidia-prod", 200],
+  ])("rejects %s readiness when the inference request fails", async (provider, httpStatus) => {
+    const currentDeps = dcodeHealthDeps(
+      {
+        ok: false,
+        detail: "sandbox inference invocation probe returned HTTP 401",
+        httpStatus: 401,
+      },
+      httpStatus,
+    );
 
     await expect(
       requireLaunchSemanticHealth(
         SANDBOX,
         GATEWAY,
         "langchain-deepagents-code",
-        dcodeEntry(),
+        dcodeEntry(provider),
         dcodeAgent,
         true,
         currentDeps,

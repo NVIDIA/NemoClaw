@@ -111,7 +111,7 @@ describe("terminal-agent connect inference route", () => {
     );
   });
 
-  it("lets dcode continue to terminal smoke checks when its route probe is inconclusive (#6191)", async () => {
+  it("refuses dcode smoke checks when its inference route is unverified (#11520)", async () => {
     const capture = vi.fn(() => ({
       status: 0,
       output: "NEMOCLAW_AGENT_SMOKE_BEGIN\ndcode 0.1.12\nNEMOCLAW_AGENT_SMOKE_EXIT:0\n",
@@ -126,14 +126,12 @@ describe("terminal-agent connect inference route", () => {
         ensureInferenceRoute,
         sandboxName: "deep-code",
       }),
-    ).resolves.toBeUndefined();
+    ).rejects.toThrow("process.exit(1)");
 
     expect(ensureInferenceRoute).toHaveBeenCalledWith("deep-code", { quiet: true });
-    expect(capture).toHaveBeenCalledOnce();
-    expect(exitSpy).not.toHaveBeenCalled();
-    expect(logSpy).toHaveBeenCalledWith(
-      "  Probe complete: LangChain Deep Agents Code terminal smoke checks passed (dcode).",
-    );
+    expect(capture).not.toHaveBeenCalled();
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(logSpy).not.toHaveBeenCalled();
   });
 
   it("fails dcode connect when a hostile profile forges markers before a nonzero exit (#8624)", async () => {

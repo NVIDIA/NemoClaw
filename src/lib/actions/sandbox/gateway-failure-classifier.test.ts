@@ -10,6 +10,15 @@ vi.mock("../../state/registry", () => ({
   listSandboxes: vi.fn(() => ({ sandboxes: [] })),
 }));
 
+vi.mock("../../state/registry/cross-port", () => ({
+  findSandboxAcrossGatewayRoots: (...args: unknown[]) => {
+    const entry = getSandboxMock(...args);
+    return entry
+      ? { entry, gatewayPort: entry.gatewayPort ?? null, registryFile: "/test/sandboxes.json" }
+      : null;
+  },
+}));
+
 import {
   classifyGatewayFailure,
   classifyObservedSandboxContainerFailure,

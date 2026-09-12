@@ -53,6 +53,7 @@ import {
   removedImmutabilityMigration,
   rebuildUsageNotice,
   registry,
+  crossPortRegistry,
   registryPersistence,
   registerHarnessRebuildBackup,
   resolve,
@@ -443,13 +444,24 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   };
   const readCurrentSandboxEntry = () => structuredClone(currentSandboxEntry);
   let sandboxEntryReadCount = 0;
-  vi.spyOn(registry, "getSandbox").mockImplementation(() => {
+  const readSandboxEntry = () => {
     const configuredReads = overrides.sandboxEntryReads ?? [];
     return (
       sandboxEntryReadCount < configuredReads.length
         ? configuredReads[sandboxEntryReadCount++]
         : readCurrentSandboxEntry()
     ) as never;
+  };
+  vi.spyOn(registry, "getSandbox").mockImplementation(readSandboxEntry);
+  vi.spyOn(crossPortRegistry, "findSandboxAcrossGatewayRoots").mockImplementation(() => {
+    const entry = readSandboxEntry() as typeof currentSandboxEntry | null;
+    return entry
+      ? {
+          entry,
+          gatewayPort: entry.gatewayPort ?? null,
+          registryFile: "/test/.nemoclaw/sandboxes.json",
+        }
+      : null;
   });
   const initialDefaultSandbox = overrides.defaultSandbox ?? null;
   const preDeleteDefaultSandbox =

@@ -27,6 +27,6 @@ export default class StatusCommand extends NemoClawCommand {
       return report;
     }
 
-    showStatusCommand(deps);
+    await showStatusCommand(deps);
   }
 }
