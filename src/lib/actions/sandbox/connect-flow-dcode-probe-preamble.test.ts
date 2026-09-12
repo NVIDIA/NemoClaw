@@ -100,6 +100,7 @@ describe("connectSandbox DCode probe preamble boundary", () => {
       expect(harness.startSandboxSessionSpy).not.toHaveBeenCalled();
       expect(harness.runAutoPairSpy).not.toHaveBeenCalled();
       expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain("inference request");
+      expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain("alpha doctor");
     },
   );
 

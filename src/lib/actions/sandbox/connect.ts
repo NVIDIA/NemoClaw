@@ -1677,6 +1677,7 @@ async function ensureSandboxInferenceRouteUnlocked(
         },
         sandboxCommandExecutor,
       );
+      if (!routeReady) console.error(`  Run:  ${CLI_NAME} ${sandboxName} doctor`);
     }
     return { sandbox: sb, routeHealthy: routeReady };
   } catch (error) {
