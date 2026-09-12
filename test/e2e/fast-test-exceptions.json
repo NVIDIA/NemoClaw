@@ -3,6 +3,23 @@
   "version": 1,
   "entries": [
     {
+      "live": "test/e2e/live/bootstrap-install-smoke.test.ts",
+      "fast": [
+        "test/automation/e2e/brev-launchable-ci-cpu-checksum.test.ts",
+        "test/e2e/support/e2e-live-target-gating.test.ts",
+        "test/e2e/support/e2e-progress-fixture.test.ts",
+        "test/e2e/support/e2e-progress-outcome.test.ts",
+        "test/e2e/support/e2e-semantic-phase-check.test.ts",
+        "test/e2e/support/workflow-e2e-progress.test.ts",
+        "test/e2e/support/prepare-e2e-workflow-boundary.test.ts",
+        "test/e2e/support/openclaw-agent-assertion.test.ts",
+        "test/install/installer-hash-check.test.ts",
+        "test/e2e-runtime/runner.test.ts",
+        "test/e2e/support/openclaw-agent-output.test.ts",
+        "test/helpers/e2e-answer-assertions.test.ts"
+      ]
+    },
+    {
       "live": "test/e2e/live/brev-workspace-cleanup.test.ts",
       "fast": [
         "test/e2e/support/brev-launchable-fixture.test.ts"
