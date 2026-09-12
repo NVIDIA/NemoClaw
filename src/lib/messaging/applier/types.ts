@@ -118,6 +118,8 @@ export type MessagingCredentialApplyOptions = MessagingSetupEnvOptions &
     target?: OpenShellGatewayTarget;
     definitions?: readonly MessagingCredentialProviderEphemeralInput[];
     refreshes?: readonly MessagingProviderRefreshEphemeralInput[];
+    /** Caller-owned, process-local hashes of successful refresh registrations. */
+    refreshReceipts?: Map<string, string>;
     requireCompleteBindings?: boolean;
     replaceExisting?: boolean;
     allowedSandboxes?: readonly string[];

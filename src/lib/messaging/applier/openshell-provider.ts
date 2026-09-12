@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from "node:crypto";
+
 import type {
   OpenShellProviderAdapter,
   OpenShellProviderError,
@@ -878,45 +880,56 @@ async function configureRefreshes(
   const sleep = options.sleep ?? defaultSleep;
   const now = options.now ?? Date.now;
   for (const refresh of refreshes) {
+    const receiptKey = JSON.stringify([target, refresh.providerName, refresh.credentialKey]);
+    const previousReceipt = options.refreshReceipts?.get(receiptKey);
+    options.refreshReceipts?.delete(receiptKey);
+    const beforeRefresh = options.refreshReceipts
+      ? await refreshReceipt(refresh, target, providerAdapter)
+      : null;
+    const reuse = Boolean(previousReceipt && previousReceipt === beforeRefresh);
     options.revalidateSandboxIdentity?.(
       `configure gateway token minting for messaging provider ${JSON.stringify(refresh.providerName)}`,
     );
-    let configured: Awaited<ReturnType<OpenShellProviderAdapter["configureProviderRefresh"]>>;
-    try {
-      configured = await providerAdapter.configureProviderRefresh({
-        target,
-        providerName: refresh.providerName,
-        credentialKey: refresh.credentialKey,
-        strategy: refresh.strategy,
-        material: refresh.material,
-        secretMaterial: refresh.secretMaterial,
-      });
-    } catch (error) {
-      const message = redactStandaloneSecretsFull(
-        error instanceof Error ? error.message : String(error),
-      );
-      throw new MessagingProviderApplyError({
-        message: `Could not configure gateway token minting for messaging provider '${refresh.providerName}': ${message}`,
-        mutatedProviderNames: [refresh.providerName],
-      });
-    }
-    if (!configured.ok) {
-      throw new MessagingProviderApplyError({
-        message: `Could not configure gateway token minting for messaging provider '${refresh.providerName}': ${providerErrorMessage(configured.error)}`,
-        mutatedProviderNames: [refresh.providerName],
-      });
-    }
-    try {
-      options.revalidateSandboxIdentity?.(
-        `confirm gateway token minting configuration for messaging provider ${JSON.stringify(refresh.providerName)}`,
-      );
-    } catch (error) {
-      throw withMutationEvidence(error, [refresh.providerName], []);
+    if (!reuse) {
+      let configured: Awaited<ReturnType<OpenShellProviderAdapter["configureProviderRefresh"]>>;
+      try {
+        configured = await providerAdapter.configureProviderRefresh({
+          target,
+          providerName: refresh.providerName,
+          credentialKey: refresh.credentialKey,
+          strategy: refresh.strategy,
+          material: refresh.material,
+          secretMaterial: refresh.secretMaterial,
+        });
+      } catch (error) {
+        const message = redactStandaloneSecretsFull(
+          error instanceof Error ? error.message : String(error),
+        );
+        throw new MessagingProviderApplyError({
+          message: `Could not configure gateway token minting for messaging provider '${refresh.providerName}': ${message}`,
+          mutatedProviderNames: [refresh.providerName],
+        });
+      }
+      if (!configured.ok) {
+        throw new MessagingProviderApplyError({
+          message: `Could not configure gateway token minting for messaging provider '${refresh.providerName}': ${providerErrorMessage(configured.error)}`,
+          mutatedProviderNames: [refresh.providerName],
+        });
+      }
+      try {
+        options.revalidateSandboxIdentity?.(
+          `confirm gateway token minting configuration for messaging provider ${JSON.stringify(refresh.providerName)}`,
+        );
+      } catch (error) {
+        throw withMutationEvidence(error, [refresh.providerName], []);
+      }
     }
     options.log?.(`Waiting for the gateway to mint ${refresh.credentialKey}.`);
     const deadline = now() + REFRESH_DEADLINE_MS;
     let status: string | null = null;
     let observationError: OpenShellProviderError | null = null;
+    let receipt: string | null = null;
+    let ready = false;
     for (let attempt = 0; attempt < REFRESH_POLL_ATTEMPTS && now() < deadline; attempt += 1) {
       const observed = await providerAdapter.getProviderRefreshStatus({
         target,
@@ -930,23 +943,64 @@ async function configureRefreshes(
       } else {
         observationError = observed.error;
       }
-      if (status === "refreshed") break;
+      if (observed.ok && status === "refreshed") {
+        if (beforeRefresh) {
+          receipt = await refreshReceipt(refresh, target, providerAdapter).catch(
+            (error: unknown) => {
+              throw withMutationEvidence(error, reuse ? [] : [refresh.providerName], []);
+            },
+          );
+          if (reuse && receipt !== previousReceipt) {
+            throw new MessagingProviderApplyError({
+              message: `Messaging provider '${refresh.providerName}' changed while confirming its refresh registration.`,
+            });
+          }
+        }
+        ready = !beforeRefresh || Boolean(receipt && (reuse || receipt !== beforeRefresh));
+      }
+      if (ready) break;
       if (attempt + 1 < REFRESH_POLL_ATTEMPTS && now() < deadline) {
         await sleep(REFRESH_POLL_INTERVAL_MS);
       }
     }
-    if (status === "refreshed") continue;
+    if (ready) {
+      if (receipt) options.refreshReceipts?.set(receiptKey, receipt);
+      continue;
+    }
     if (observationError) {
       throw new MessagingProviderApplyError({
         message: `Could not observe gateway token minting for messaging provider '${refresh.providerName}': ${providerErrorMessage(observationError)}`,
-        mutatedProviderNames: [refresh.providerName],
+        mutatedProviderNames: reuse ? [] : [refresh.providerName],
       });
     }
     throw new MessagingProviderApplyError({
-      message: `Gateway token minting did not complete for messaging provider '${refresh.providerName}' (last status '${status ?? "unknown"}').`,
-      mutatedProviderNames: [refresh.providerName],
+      message:
+        status === "refreshed"
+          ? `Gateway reported a refresh without confirming a provider update for messaging provider '${refresh.providerName}'.`
+          : `Gateway token minting did not complete for messaging provider '${refresh.providerName}' (last status '${status ?? "unknown"}').`,
+      mutatedProviderNames: reuse ? [] : [refresh.providerName],
     });
   }
+}
+
+async function refreshReceipt(
+  refresh: MessagingProviderRefreshEphemeralInput,
+  target: OpenShellGatewayTarget,
+  providerAdapter: OpenShellProviderAdapter,
+): Promise<string | null> {
+  const observed = await providerAdapter.getProvider({
+    target,
+    providerName: refresh.providerName,
+  });
+  if (!observed.ok) {
+    throw new MessagingProviderApplyError({
+      message: `Could not inspect messaging provider '${refresh.providerName}': ${providerErrorMessage(observed.error)}`,
+    });
+  }
+  if (!observed.value.revision) return null;
+  return createHash("sha256")
+    .update(JSON.stringify([target, refresh, observed.value.revision]))
+    .digest("hex");
 }
 
 async function attachProviders(
