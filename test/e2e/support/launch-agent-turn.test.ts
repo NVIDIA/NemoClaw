@@ -21,6 +21,7 @@ import { createServer } from "node:net";
 import { join, resolve } from "node:path";
 
 import { expect, it, vi } from "vitest";
+import { wrapExecCommandWithRuntimeEnv } from "../../../src/lib/actions/sandbox/runtime-env";
 import { isSubprocessEnvNameAllowed } from "../../../src/lib/subprocess-env";
 import { testTimeout } from "../../helpers/timeouts";
 import { cleanLaunchState, runLaunchCommand } from "./launch-agent-turn-process.ts";
@@ -590,16 +591,7 @@ function openShellLaunchArgv(sandboxName: string, gatewayArgs: string[]): string
     "--timeout",
     "0",
     "--",
-    "/bin/bash",
-    "--noprofile",
-    "--norc",
-    "-p",
-    "-c",
-    OPENCLAW_LAUNCH_RUNTIME_ENV_SCRIPT,
-    "nemoclaw-runtime-env",
-    "bash",
-    "-lc",
-    "openclaw tui",
+    ...wrapExecCommandWithRuntimeEnv(["bash", "-lc", "openclaw tui"]),
   ];
 }
 
@@ -637,6 +629,10 @@ require("node:fs").appendFileSync(
   writeFileSync(
     driver,
     `import { spawn } from "node:child_process";
+import { once } from "node:events";
+import { Worker } from "node:worker_threads";
+const [workerStatus] = await once(new Worker("", { eval: true }), "exit");
+if (workerStatus) process.exit(workerStatus);
 const executable = process.env.NEMOCLAW_OPENSHELL_BIN ?? ${JSON.stringify(realOpenShell)};
 const child = spawn(executable, process.argv.slice(2), { stdio: "inherit" });
 child.once("error", () => process.exit(66));

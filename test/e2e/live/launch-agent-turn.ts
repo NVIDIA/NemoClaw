@@ -366,7 +366,9 @@ fail("pty_execve_failed");
 `;
 
 // Intercept only the final TUI spawn; forward ownership still sees the real binary.
-export const OPENCLAW_LAUNCH_OPENSHELL_PRELOAD_SCRIPT = String.raw`const childProcess = require("node:child_process");
+export const OPENCLAW_LAUNCH_OPENSHELL_PRELOAD_SCRIPT = String.raw`// Health-probe Workers replay startup preloads without the CLI's launch authority.
+if (!require("node:worker_threads").isMainThread) return;
+const childProcess = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
 const { syncBuiltinESMExports } = require("node:module");
@@ -395,8 +397,9 @@ function arraysEqual(left, right) {
 }
 
 if (!path.isAbsolute(realOpenShell || "")) fail("openshell_preload_authority_invalid");
-if (!/^[0-9a-f]{32}$/.test(runId || "")) fail("openshell_preload_run_id_invalid");
-if (!path.isAbsolute(interceptPath || "")) fail("openshell_preload_intercept_path_invalid");
+if (!/^[0-9a-f]{32}$/.test(runId || "") || !path.isAbsolute(interceptPath || "")) {
+  fail("openshell_preload_receipt_invalid");
+}
 if (!monitorStarterScript || !runtimeEnvScript) fail("openshell_preload_script_missing");
 
 // Do not forward test authority or recursively preload it in child Node processes.
