@@ -399,6 +399,7 @@ export function createOpenShellSandbox(
   const driverConfigArgs = input.driverConfig
     ? ["--driver-config-json", JSON.stringify(input.driverConfig)]
     : [];
+  const commandArgs = input.command.length > 0 ? ["--", ...input.command] : [];
   tools.run(
     "openshell",
     [
@@ -413,8 +414,7 @@ export function createOpenShellSandbox(
       input.policyPath,
       ...uploadOptions,
       "--no-tty",
-      "--",
-      ...input.command,
+      ...commandArgs,
     ],
     { env: credentialFreeEnvironment(env) },
   );

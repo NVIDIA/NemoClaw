@@ -8,6 +8,7 @@ import { pathToFileURL } from "node:url";
 
 import {
   configureOpenShellInference as configureSharedOpenShellInference,
+  credentialFreeEnvironment,
   createOpenShellSandbox,
   defaultOpenShellTools,
   deleteOpenShellSandbox,
@@ -151,10 +152,12 @@ export function createResolutionSandbox(
   env: NodeJS.ProcessEnv,
   tools: ResolverTools = defaultOpenShellTools,
 ): void {
+  const sandboxName = required(env.SANDBOX_NAME, "SANDBOX_NAME");
+  const startupCommand = ["/usr/bin/git", "-C", "/sandbox/repo", "status", "--short"];
   createOpenShellSandbox(
     env,
     {
-      name: required(env.SANDBOX_NAME, "SANDBOX_NAME"),
+      name: sandboxName,
       image: required(env.PI_IMAGE, "PI_IMAGE"),
       policyPath: path.join(
         required(env.TRUSTED_CHECKOUT, "TRUSTED_CHECKOUT"),
@@ -172,8 +175,13 @@ export function createResolutionSandbox(
           destination: "/sandbox",
         },
       ],
-      command: ["/usr/bin/git", "-C", "/sandbox/repo", "status", "--short"],
+      command: [],
     },
+    tools,
+  );
+  execOpenShellSandbox(
+    credentialFreeEnvironment(env),
+    { command: startupCommand, name: sandboxName },
     tools,
   );
 }
