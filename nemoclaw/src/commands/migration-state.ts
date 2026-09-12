@@ -823,6 +823,11 @@ export function createSnapshotBundle(
   let parentDir = "";
 
   try {
+    for (const directory of [path.join(hostState.homeDir, ".nemoclaw"), snapshotsDir]) {
+      if (existsSync(directory) && lstatSync(directory).isSymbolicLink()) {
+        throw new Error(`Snapshot ancestor is a symbolic link: ${directory}`);
+      }
+    }
     parentDir = reserveSnapshotDir(snapshotsDir, Date.now());
     const timestamp = path.basename(parentDir);
     const snapshotStateDir = path.join(parentDir, "openclaw");
