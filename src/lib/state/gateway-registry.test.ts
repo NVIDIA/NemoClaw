@@ -69,6 +69,63 @@ describe("host gateway registry index", () => {
     }
   });
 
+  it("rejects a malformed persisted dashboardExternalUrl (#11439)", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-index-exturl-"));
+    try {
+      const root = path.join(home, ".nemoclaw", "gateways", "9123");
+      fs.mkdirSync(root, { recursive: true });
+      fs.writeFileSync(
+        path.join(root, "sandboxes.json"),
+        JSON.stringify({
+          defaultSandbox: "instance-a",
+          sandboxes: {
+            "instance-a": {
+              name: "instance-a",
+              gatewayName: "nemoclaw-9123",
+              gatewayPort: 9123,
+              dashboardPort: 18789,
+              dashboardExternalUrl: "not a url",
+            },
+          },
+        }),
+      );
+
+      expect(() => listHostGatewayRegistryEntries(home)).toThrow(/invalid dashboardExternalUrl/);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("accepts a valid persisted dashboardExternalUrl (#11439)", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-index-exturl-ok-"));
+    try {
+      const root = path.join(home, ".nemoclaw", "gateways", "9123");
+      fs.mkdirSync(root, { recursive: true });
+      fs.writeFileSync(
+        path.join(root, "sandboxes.json"),
+        JSON.stringify({
+          defaultSandbox: "instance-a",
+          sandboxes: {
+            "instance-a": {
+              name: "instance-a",
+              gatewayName: "nemoclaw-9123",
+              gatewayPort: 9123,
+              dashboardPort: 18789,
+              dashboardExternalUrl: "https://dash.example.com:18789",
+            },
+          },
+        }),
+      );
+
+      const entries = listHostGatewayRegistryEntries(home);
+
+      expect(entries).toHaveLength(1);
+      expect(entries[0].entry.dashboardExternalUrl).toBe("https://dash.example.com:18789");
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   it("treats a zero persisted dashboard port as no dashboard instead of blocking the registry (#7020)", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-index-zero-port-"));
     try {

@@ -216,6 +216,40 @@ describe("sandbox registry normalization", () => {
     });
   });
 
+  it("round-trips the persisted external dashboard URL (#11439)", async () => {
+    const registry = await loadRegistryWith({});
+    registry.registerSandbox({
+      name: "proxied",
+      dashboardPort: 18_789,
+      dashboardExternalUrl: "https://dash.example.com:18789",
+    });
+
+    vi.resetModules();
+    const reloadedRegistry = await import("./registry");
+    expect(reloadedRegistry.getSandbox("proxied")).toMatchObject({
+      dashboardPort: 18_789,
+      dashboardExternalUrl: "https://dash.example.com:18789",
+    });
+  });
+
+  it("preserves a persisted external dashboard URL when only the port is updated (#11439)", async () => {
+    const registry = await loadRegistryWith({});
+    registry.registerSandbox({
+      name: "proxied",
+      dashboardPort: 18_789,
+      dashboardExternalUrl: "https://dash.example.com:18789",
+    });
+
+    // Mirror the non-clearing persistDashboardPort update: a loopback re-onboard
+    // must not overwrite the external URL with null.
+    registry.updateSandbox("proxied", { dashboardPort: 18_790 });
+
+    expect(registry.getSandbox("proxied")).toMatchObject({
+      dashboardPort: 18_790,
+      dashboardExternalUrl: "https://dash.example.com:18789",
+    });
+  });
+
   it("backfills a lifecycle generation only for the unchanged legacy Docker row (#8584)", async () => {
     const registry = await loadRegistryWith({});
     const { compareAndSetLegacySandboxLifecycleGeneration } =
