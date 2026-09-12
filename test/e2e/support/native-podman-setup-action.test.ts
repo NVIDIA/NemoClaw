@@ -44,6 +44,7 @@ type RestoreFixtureKind = "valid" | "regular-file" | "symlink";
 type CommandResult = {
   readonly status: number | null;
   readonly signal: NodeJS.Signals | null;
+  readonly timedOut: boolean;
   readonly stdout: string;
   readonly stderr: string;
 };
@@ -55,18 +56,20 @@ function runCommand(
   command: string,
   args: readonly string[],
   env: NodeJS.ProcessEnv,
+  timeoutMs = 15_000,
 ): Promise<CommandResult> {
   ownerContext.signal.throwIfAborted();
   return new Promise((resolve) => {
     const child = execFile(
       command,
       [...args],
-      { encoding: "utf8", env, killSignal: "SIGKILL", timeout: 15_000 },
+      { encoding: "utf8", env },
       (error, stdout, stderr) => {
         void owner.closed.then(() =>
           resolve({
             status: error ? (typeof error.code === "number" ? error.code : null) : 0,
             signal: child.signalCode ?? error?.signal ?? null,
+            timedOut,
             stdout,
             stderr,
           }),
@@ -74,9 +77,24 @@ function runCommand(
       },
     );
     const owner = ownChildProcess(child);
-    ownerContext.onTestFinished(owner.terminate);
-    const abort = addAbortListener(ownerContext.signal, () => child.kill("SIGKILL"));
-    child.once("close", () => abort[Symbol.dispose]());
+    let timedOut = false;
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      child.kill("SIGKILL");
+    }, timeoutMs);
+    timeout.unref();
+    ownerContext.onTestFinished(async () => {
+      clearTimeout(timeout);
+      await owner.terminate();
+    });
+    const abort = addAbortListener(ownerContext.signal, () => {
+      clearTimeout(timeout);
+      child.kill("SIGKILL");
+    });
+    child.once("close", () => {
+      clearTimeout(timeout);
+      abort[Symbol.dispose]();
+    });
   });
 }
 
@@ -511,6 +529,21 @@ describe("native Podman E2E setup boundary", () => {
 
     expect(result.status).toBeNull();
     expect(result.signal).toBe("SIGTERM");
+    expect(result.timedOut).toBe(false);
+  });
+
+  it.concurrent("reports hard timeouts separately from cancellation", async (context) => {
+    const result = await runCommand(
+      context,
+      process.execPath,
+      ["-e", "setInterval(() => {}, 1_000)"],
+      process.env,
+      20,
+    );
+
+    expect(result.status).toBeNull();
+    expect(result.signal).toBe("SIGKILL");
+    expect(result.timedOut).toBe(true);
   });
 
   it.concurrent("restores unchanged Docker runtime state and retires its authority (#11014)", async (context) => {
