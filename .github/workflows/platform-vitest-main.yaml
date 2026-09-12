@@ -1,185 +1,124 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 name: CI / Platform Compatibility
-run-name: Issue 11401 Windows state capture on main e4e6391870
+run-name: Issue 11401 Windows regression comparison
 on:
   workflow_dispatch:
+    inputs:
+      base_sha:
+        description: Full reviewed base commit
+        required: true
+        type: string
+      candidate_sha:
+        description: Full reviewed candidate commit
+        required: true
+        type: string
 permissions:
   contents: read
 concurrency:
   group: verify-11401-${{ github.ref }}
   cancel-in-progress: false
 jobs:
-  reproduce:
-    name: Issue 11401 on Windows x64 and WSL2
+  windows-regression:
+    name: Windows PowerShell and WSL regression (${{ matrix.role }})
     runs-on: windows-latest
-    timeout-minutes: 60
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        role: [base, candidate]
     env:
       WSL_DISTRO: Ubuntu-24.04
       WSL_TEST_USER: nemoclaw-ci
+      TARGET_SHA: ${{ matrix.role == 'base' && inputs.base_sha || inputs.candidate_sha }}
+      CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+      ROLE: ${{ matrix.role }}
     steps:
-      - name: Preserve Linux line endings
+      - name: Validate commit identities and preserve Linux line endings
         shell: powershell
-        run: git config --global core.autocrlf false
-      - name: Check out the diagnostic harness
+        run: |
+          if ($env:TARGET_SHA -cnotmatch '^[0-9a-f]{40}$' -or $env:CANDIDATE_SHA -cnotmatch '^[0-9a-f]{40}$') { throw 'Full commit SHAs are required' }
+          git config --global core.autocrlf false
+          New-Item -ItemType Directory -Force "$env:GITHUB_WORKSPACE\evidence" | Out-Null
+          Get-CimInstance Win32_OperatingSystem | Select-Object Caption,Version,OSArchitecture | ConvertTo-Json | Set-Content "$env:GITHUB_WORKSPACE\evidence\windows.json"
+      - name: Check out the production revision under test
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          path: harness
-          persist-credentials: false
-      - name: Check out main at the verified commit
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          ref: e4e6391870bef3834cd30cdd997529e5361f89a5
+          ref: ${{ env.TARGET_SHA }}
           path: source
-          fetch-depth: 0
           persist-credentials: false
-      - name: Prepare real WSL and Node
+      - name: Check out the common regression tests
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ inputs.candidate_sha }}
+          path: witness
+          persist-credentials: false
+          sparse-checkout: |
+            src/lib/inference/ollama/windows.test.ts
+            src/lib/onboard/provider-host-state.test.ts
+          sparse-checkout-cone-mode: false
+      - name: Prepare Windows PowerShell and Ubuntu WSL2
         shell: powershell
         run: |
           . "$env:GITHUB_WORKSPACE\source\tools\wsl\ci-helper.ps1"
-          New-Item -ItemType Directory -Force "$env:GITHUB_WORKSPACE\evidence" | Out-Null
-          Get-CimInstance Win32_OperatingSystem | Select-Object Caption, Version, OSArchitecture | ConvertTo-Json | Set-Content "$env:GITHUB_WORKSPACE\evidence\windows.json"
+          $PSVersionTable.PSVersion.ToString() | Set-Content "$env:GITHUB_WORKSPACE\evidence\powershell-version.txt"
           Ensure-WslDistro -Distro $env:WSL_DISTRO
           $kernel = & wsl -d $env:WSL_DISTRO -- uname -r
-          Write-Host $kernel
           if ($LASTEXITCODE -ne 0 -or $kernel -notmatch 'WSL2') { throw 'A running WSL2 kernel is required' }
-          & wsl --list --verbose
-          Install-WslUbuntuDependencies -Distro $env:WSL_DISTRO -TestUser $env:WSL_TEST_USER -Packages @('bash','ca-certificates','curl','git','jq','python3','python3-pexpect','rsync','xz-utils','unzip','procps','iproute2')
+          Install-WslUbuntuDependencies -Distro $env:WSL_DISTRO -TestUser $env:WSL_TEST_USER -Packages @('bash','ca-certificates','curl','git','python3','rsync','xz-utils')
           Install-WslNode -Distro $env:WSL_DISTRO
-          Set-WslWorkflowPaths -Workspace "$env:GITHUB_WORKSPACE\source" -WorkdirPrefix '/tmp/nemoclaw-wsl-vitest' -RunId $env:GITHUB_RUN_ID -RunAttempt $env:GITHUB_RUN_ATTEMPT -EnvironmentFile $env:GITHUB_ENV
-      - name: Start real Windows Ollama with an installed model
+          $paths = Set-WslWorkflowPaths -Workspace "$env:GITHUB_WORKSPACE\source" -WorkdirPrefix '/tmp/nemoclaw-wsl-vitest' -RunId $env:GITHUB_RUN_ID -RunAttempt $env:GITHUB_RUN_ATTEMPT -EnvironmentFile $env:GITHUB_ENV
+          Sync-WslCheckout -Distro $env:WSL_DISTRO -Checkout $paths.Checkout -Workdir $paths.Workdir -Owner $env:WSL_TEST_USER
+          Invoke-WslScript -Distro $env:WSL_DISTRO -User root -Script 'mv "$1" /home/nemoclaw-ci/issue-11401-main' -ScriptArguments @($paths.Workdir)
+      - name: Run common tests against the pinned production revision
         shell: powershell
-        timeout-minutes: 12
-        run: |
-          $root = "$env:RUNNER_TEMP\issue-11401-ollama"
-          New-Item -ItemType Directory -Force $root | Out-Null
-          $zip = "$root\ollama.zip"
-          & curl.exe -fSL --connect-timeout 30 --max-time 600 'https://github.com/ollama/ollama/releases/download/v0.34.0/ollama-windows-amd64.zip' -o $zip
-          if ($LASTEXITCODE -ne 0) { throw 'Ollama download failed' }
-          if ((Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant() -ne 'a7dd1b174f39d3d1b8a25d4cbc86045d0e190b17187bfdcbe2f2ee3b5a11470e') { throw 'Ollama checksum mismatch' }
-          & 'C:\Program Files\7-Zip\7z.exe' e $zip "-o$root" ollama.exe -y
-          if ($LASTEXITCODE -ne 0) { throw 'Ollama extraction failed' }
-          Remove-Item $zip
-          $env:OLLAMA_HOST = '127.0.0.1:11434'
-          $env:OLLAMA_MODELS = "$root\models"
-          $process = Start-Process "$root\ollama.exe" -ArgumentList serve -PassThru -RedirectStandardOutput "$env:GITHUB_WORKSPACE\evidence\ollama.stdout.log" -RedirectStandardError "$env:GITHUB_WORKSPACE\evidence\ollama.stderr.log"
-          $process.Id | Set-Content "$env:GITHUB_WORKSPACE\evidence\ollama.pid.before.txt"
-          $ready = $false
-          for ($i=0; $i -lt 30; $i++) {
-            try { $null = Invoke-RestMethod 'http://127.0.0.1:11434/api/tags'; $ready=$true; break } catch { Start-Sleep 2 }
-          }
-          if (-not $ready) { throw 'Windows Ollama did not start' }
-          & "$root\ollama.exe" pull smollm2:135m
-          if ($LASTEXITCODE -ne 0) { throw 'Model pull failed' }
-          Invoke-RestMethod 'http://127.0.0.1:11434/api/tags' | ConvertTo-Json -Depth 8 | Set-Content "$env:GITHUB_WORKSPACE\evidence\windows-tags.json"
-          Get-NetTCPConnection -LocalPort 11434 -State Listen | Select-Object LocalAddress,LocalPort,OwningProcess | ConvertTo-Json | Set-Content "$env:GITHUB_WORKSPACE\evidence\windows-listener.json"
-      - name: Install Docker Desktop for the reported route
-        if: false
-        id: desktop
-        continue-on-error: true
-        timeout-minutes: 12
-        shell: powershell
-        run: |
-          $installer = "$env:RUNNER_TEMP\Docker-Desktop-Installer.exe"
-          & curl.exe -fSL --connect-timeout 30 --max-time 600 'https://desktop.docker.com/win/main/amd64/Docker%20Desktop%20Installer.exe' -o $installer
-          if ($LASTEXITCODE -ne 0) { throw 'Docker Desktop download failed' }
-          $signature = Get-AuthenticodeSignature $installer
-          if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -notmatch 'Docker') { throw 'Docker installer signature is invalid' }
-          $process = Start-Process $installer -ArgumentList 'install','--quiet','--accept-license','--backend=wsl-2' -PassThru
-          if (-not $process.WaitForExit(360000)) { $process.Kill(); throw 'Docker Desktop installer timed out' }
-          "exit=$($process.ExitCode)" | Set-Content "$env:GITHUB_WORKSPACE\evidence\desktop-install.txt"
-          if ($process.ExitCode -ne 0) { throw 'Docker Desktop installation failed' }
-          $settingsRoot = "$env:APPDATA\Docker"
-          New-Item -ItemType Directory -Force $settingsRoot | Out-Null
-          $settingsPath = "$settingsRoot\settings-store.json"
-          $settings = if (Test-Path $settingsPath) { Get-Content $settingsPath -Raw | ConvertFrom-Json } else { [pscustomobject]@{} }
-          $updates = @{wslEngineEnabled=$true;integratedWslDistros=@($env:WSL_DISTRO);enableIntegrationWithDefaultWslDistro=$true}
-          foreach ($entry in $updates.GetEnumerator()) { $settings | Add-Member -MemberType NoteProperty -Name $entry.Key -Value $entry.Value -Force }
-          [IO.File]::WriteAllText($settingsPath, ($settings | ConvertTo-Json -Depth 32), (New-Object System.Text.UTF8Encoding $false))
-      - name: Build the unmodified main CLI in WSL
-        shell: powershell
-        timeout-minutes: 15
         run: |
           . "$env:GITHUB_WORKSPACE\source\tools\wsl\ci-helper.ps1"
-          Sync-WslCheckout -Distro $env:WSL_DISTRO -Checkout $env:WSL_CHECKOUT_DIR -Workdir $env:WSL_WORKDIR -Owner $env:WSL_TEST_USER
-          $workdir = ConvertTo-BashLiteral $env:WSL_WORKDIR
-          $script = @"
+          $witness = ConvertTo-WslPath "$env:GITHUB_WORKSPACE\witness"
+          $evidence = ConvertTo-WslPath "$env:GITHUB_WORKSPACE\evidence"
+          $script = @'
           set -euo pipefail
-          cd $workdir
-          test "`$(git rev-parse HEAD)" = e4e6391870bef3834cd30cdd997529e5361f89a5
-          npm ci --ignore-scripts
-          npm run build:cli
-          "@
-          Invoke-WslScript -Distro $env:WSL_DISTRO -User $env:WSL_TEST_USER -Script $script
-          Invoke-WslScript -Distro $env:WSL_DISTRO -User root -Script "mv $workdir /home/nemoclaw-ci/issue-11401-main"
-          'WSL_WORKDIR=/home/nemoclaw-ci/issue-11401-main' | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-      - name: Run real discovery and provider-menu probes
-        shell: powershell
-        timeout-minutes: 12
-        env:
-          DESKTOP_SETUP: ${{ steps.desktop.outcome }}
-        run: |
-          . "$env:GITHUB_WORKSPACE\source\tools\wsl\ci-helper.ps1"
-          $dockerExe = 'C:\Program Files\Docker\Docker\resources\bin\docker.exe'
-          if (Test-Path $dockerExe) {
-            $ErrorActionPreference = 'Continue'
-            & $dockerExe desktop start --timeout 120 2>&1 | Tee-Object "$env:GITHUB_WORKSPACE\evidence\desktop-start.log"
-            & $dockerExe --context desktop-linux info 2>&1 | Tee-Object "$env:GITHUB_WORKSPACE\evidence\desktop-engine.log"
-            $ErrorActionPreference = 'Stop'
-          }
-          $root = "$env:RUNNER_TEMP\issue-11401-ollama"
-          $env:OLLAMA_HOST = '127.0.0.1:11434'
-          $env:OLLAMA_MODELS = "$root\models"
-          $existing = @(Get-Process ollama -ErrorAction SilentlyContinue)
-          if ($existing.Count -eq 0) {
-            $daemon = Start-Process "$root\ollama.exe" -ArgumentList serve -PassThru -RedirectStandardOutput "$env:GITHUB_WORKSPACE\evidence\ollama-live.stdout.log" -RedirectStandardError "$env:GITHUB_WORKSPACE\evidence\ollama-live.stderr.log"
-          }
-          $ready=$false
-          for ($i=0; $i -lt 20; $i++) {
-            try { $tags=Invoke-RestMethod 'http://127.0.0.1:11434/api/tags'; if ($tags.models.Count -gt 0) { $ready=$true; break } } catch { }
-            Start-Sleep 1
-          }
-          if (-not $ready) { throw 'The real Windows daemon and installed model must be present during the probes' }
-          Get-Process ollama | Select-Object Id,Path,StartTime | ConvertTo-Json | Set-Content "$env:GITHUB_WORKSPACE\evidence\ollama-live.before.json"
-          $tags | ConvertTo-Json -Depth 8 | Set-Content "$env:GITHUB_WORKSPACE\evidence\windows-live-tags.json"
-          $harness = ConvertTo-BashLiteral (ConvertTo-WslPath "$env:GITHUB_WORKSPACE\harness\tools\wsl\verify-11401.cts")
-          $evidence = ConvertTo-BashLiteral (ConvertTo-WslPath "$env:GITHUB_WORKSPACE\evidence")
-          $workdir = ConvertTo-BashLiteral $env:WSL_WORKDIR
-          $script = @"
-          set -euo pipefail
-          cd $workdir
-          uname -a
-          cat /etc/os-release
+          cd /home/nemoclaw-ci/issue-11401-main
+          test "$(git rev-parse HEAD)" = "$1"
+          test -n "$WSL_DISTRO_NAME"
           command -v powershell.exe
-          if command -v ollama; then echo 'Unexpected WSL-native Ollama'; exit 1; fi
-          ss -ltnp 'sport = :11434'
-          node $harness $workdir $evidence '$env:DESKTOP_SETUP'
-          "@
-          Invoke-WslScript -Distro $env:WSL_DISTRO -User $env:WSL_TEST_USER -Script $script
-          Get-Process ollama | Select-Object Id,Path,StartTime | ConvertTo-Json | Set-Content "$env:GITHUB_WORKSPACE\evidence\ollama-live.after.json"
-          Invoke-RestMethod 'http://127.0.0.1:11434/api/tags' | ConvertTo-Json -Depth 8 | Set-Content "$env:GITHUB_WORKSPACE\evidence\windows-live-tags.after.json"
-      - name: Record the Windows process after the probes
-        if: always()
-        shell: powershell
-        run: |
-          Get-Process ollama -ErrorAction SilentlyContinue | Select-Object Id,Path,StartTime | ConvertTo-Json | Set-Content "$env:GITHUB_WORKSPACE\evidence\ollama.after.json"
-          Get-ChildItem "$env:LOCALAPPDATA\Docker" -Filter '*install*.txt' -ErrorAction SilentlyContinue | Copy-Item -Destination "$env:GITHUB_WORKSPACE\evidence" -ErrorAction SilentlyContinue
-          Get-ChildItem "$env:LOCALAPPDATA\Docker\log\host" -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -match 'backend|lifecycle|desktop' } | ForEach-Object { Get-Content $_.FullName -Tail 120 | Set-Content (Join-Path "$env:GITHUB_WORKSPACE\evidence" $_.Name) }
-          & wsl --list --verbose
-          Add-Type -AssemblyName System.Windows.Forms
-          Add-Type -AssemblyName System.Drawing
-          $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
-          $bitmap = New-Object System.Drawing.Bitmap $bounds.Width,$bounds.Height
-          $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
-          $graphics.CopyFromScreen($bounds.Location,[System.Drawing.Point]::Empty,$bounds.Size)
-          $bitmap.Save("$env:GITHUB_WORKSPACE\evidence\desktop.png")
-          $graphics.Dispose()
-          $bitmap.Dispose()
-      - name: Upload reproduction evidence
+          cp "$3/src/lib/inference/ollama/windows.test.ts" src/lib/inference/ollama/windows.test.ts
+          cp "$3/src/lib/onboard/provider-host-state.test.ts" src/lib/onboard/provider-host-state.test.ts
+          git diff --name-only > "$4/overlaid-test-paths.txt"
+          git diff --exit-code -- src/lib/inference/ollama/windows.ts src/lib/onboard/provider-host-state.ts
+          printf '%s\n' "$1" > "$4/source-commit.txt"
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm run catalog:compile
+          npm run build:policy-boundary
+          set +e
+          ./node_modules/.bin/vitest run --project cli src/lib/inference/ollama/windows.test.ts src/lib/onboard/provider-host-state.test.ts -t '#11401' --reporter=json --outputFile="$4/vitest.json" > "$4/vitest.log" 2>&1
+          result=$?
+          set -e
+          python3 - "$4/vitest.json" "$2" "$result" <<'VERIFY'
+          import json,sys
+          from pathlib import Path
+          report=json.loads(Path(sys.argv[1]).read_text())
+          failures=[a['fullName'] for suite in report['testResults'] for a in suite['assertionResults'] if a['status']=='failed']
+          expected=[
+            'captures Windows process state with daemon only (#11401)',
+            'captures Windows process state with tray only (#11401)',
+            'captures Windows process state with no Ollama processes (#11401)',
+            'reuses a protected Windows route after initial discovery returns null without an executable path (#11401)',
+          ]
+          print(json.dumps({'role':sys.argv[2],'passed':report['numPassedTests'],'failed':report['numFailedTests'],'failures':failures},indent=2))
+          assert report['numPassedTests']+report['numFailedTests']==11, 'All eleven regressions must execute'
+          if sys.argv[2]=='base':
+            assert int(sys.argv[3])==1 and len(failures)==4, 'Base must fail the four known regression cases'
+            assert all(any(name.endswith(want) for name in failures) for want in expected), 'Unexpected baseline failure'
+          else:
+            assert int(sys.argv[3])==0 and report['numFailedTests']==0, 'Candidate must pass every regression'
+          VERIFY
+          '@
+          Invoke-WslScript -Distro $env:WSL_DISTRO -User $env:WSL_TEST_USER -Script $script -ScriptArguments @($env:TARGET_SHA,$env:ROLE,$witness,$evidence)
+      - name: Upload source identities and Windows regression evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: issue-11401-main-windows-wsl
+          name: issue-11401-${{ matrix.role }}
           path: evidence
-          if-no-files-found: warn
-          retention-days: 7
+          retention-days: 14
