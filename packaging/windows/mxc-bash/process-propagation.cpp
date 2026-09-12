@@ -131,7 +131,7 @@ void logMsysCreationLayout(HANDLE child, bool requested, bool applied, bool pres
         module.base, module.preferred, module.size, static_cast<unsigned>(module.characteristics), module.exactShape ? "true" : "false", module.caps,
         executable.base, executable.preferred, static_cast<unsigned>(executable.characteristics));
     DWORD written = 0;
-    if (count > 0) WriteFile(GetStdHandle(STD_ERROR_HANDLE), line, static_cast<DWORD>(count), &written, nullptr);
+    if (count > 0 && NemoClawMsysDiagnosticsEnabled()) WriteFile(GetStdHandle(STD_ERROR_HANDLE), line, static_cast<DWORD>(count), &written, nullptr);
     SetLastError(saved);
 }
 
@@ -261,7 +261,7 @@ void logTokenProof(HANDLE child, const TokenProof& proof, BOOL queried, BOOL sam
             initialized ? "true" : "false", initialized ? "true" : "false", queried ? "true" : "false", sameSid ? "true" : "false",
             jobKnown ? "true" : "false", inJob ? "true" : "false", jobError);
         DWORD written = 0;
-        if (length > 0) WriteFile(GetStdHandle(STD_ERROR_HANDLE), line, static_cast<DWORD>(length), &written, nullptr);
+        if (length > 0 && NemoClawMsysDiagnosticsEnabled()) WriteFile(GetStdHandle(STD_ERROR_HANDLE), line, static_cast<DWORD>(length), &written, nullptr);
     }
     SetLastError(saved);
 }
@@ -273,7 +273,7 @@ void logPropagation(DWORD pid, USHORT machine, BOOL sameSid, BOOL inJob, BOOL in
         GetCurrentProcessId(), pid, static_cast<unsigned>(machine), sameSid ? "true" : "false",
         inJob ? "true" : "false", injected ? "true" : "false", error);
     DWORD written = 0;
-    if (length > 0) WriteFile(GetStdHandle(STD_ERROR_HANDLE), line, static_cast<DWORD>(length), &written, nullptr);
+    if (length > 0 && NemoClawMsysDiagnosticsEnabled()) WriteFile(GetStdHandle(STD_ERROR_HANDLE), line, static_cast<DWORD>(length), &written, nullptr);
 }
 
 // Failure-only readback of the existing process handle and current caller.
@@ -347,7 +347,7 @@ void logTokenOpenDenial(HANDLE child) {
         typeKnown ? "true" : "false", threadType, typeError, levelKnown ? "true" : "false", threadLevel, levelError,
         appKnown ? "true" : "false", threadAppContainer, appError, closeError);
     DWORD written = 0;
-    if (length > 0) WriteFile(GetStdHandle(STD_ERROR_HANDLE), line, static_cast<DWORD>(length), &written, nullptr);
+    if (length > 0 && NemoClawMsysDiagnosticsEnabled()) WriteFile(GetStdHandle(STD_ERROR_HANDLE), line, static_cast<DWORD>(length), &written, nullptr);
     SetLastError(saved);
 }
 
@@ -399,7 +399,7 @@ void holdFailedForkForInspection(HANDLE child) {
         GetCurrentProcessId(), GetProcessId(child), parentTime, childTime, published ? "true" : "false",
         acknowledged ? "true" : "false", elapsed, error);
     DWORD written = 0;
-    if (length > 0) WriteFile(GetStdHandle(STD_ERROR_HANDLE), line, static_cast<DWORD>(length), &written, nullptr);
+    if (length > 0 && NemoClawMsysDiagnosticsEnabled()) WriteFile(GetStdHandle(STD_ERROR_HANDLE), line, static_cast<DWORD>(length), &written, nullptr);
     SetLastError(saved);
 }
 
@@ -513,7 +513,7 @@ BOOL requestHostQueryRepair(HANDLE child) {
     // not. Preserve the existing bound without stopping successful repairs.
     static LONG records = 0;
     if (length > 0 && InterlockedCompareExchange(&records, 32, 32) < 32 && InterlockedIncrement(&records) <= 32)
-        WriteFile(GetStdHandle(STD_ERROR_HANDLE), line, static_cast<DWORD>(length), &written, nullptr);
+        if (NemoClawMsysDiagnosticsEnabled()) WriteFile(GetStdHandle(STD_ERROR_HANDLE), line, static_cast<DWORD>(length), &written, nullptr);
     SetLastError(saved);
     return recheck;
 }
@@ -565,7 +565,7 @@ BOOL inject(HANDLE child) {
         GetProcessId(child), static_cast<unsigned>(machine), static_cast<unsigned>(processMachine),
         static_cast<unsigned>(nativeMachine), queryError);
     DWORD written = 0;
-    if (length > 0) WriteFile(GetStdHandle(STD_ERROR_HANDLE), line, static_cast<DWORD>(length), &written, nullptr);
+    if (length > 0 && NemoClawMsysDiagnosticsEnabled()) WriteFile(GetStdHandle(STD_ERROR_HANDLE), line, static_cast<DWORD>(length), &written, nullptr);
     const WCHAR* file = machine == IMAGE_FILE_MACHINE_ARM64 ? L"NemoClawMsysCompat-arm64.dll"
         : machine == IMAGE_FILE_MACHINE_AMD64 ? L"NemoClawMsysCompat-x64.dll" : nullptr;
     if (!file) { SetLastError(ERROR_NOT_SUPPORTED); return FALSE; }
@@ -605,7 +605,7 @@ BOOL failedChild(PROCESS_INFORMATION* child, DWORD error) {
         child->dwProcessId, terminated ? "true" : "false", terminationError, waited,
         waited == WAIT_OBJECT_0 ? "true" : "false");
     DWORD written = 0;
-    if (length > 0) WriteFile(GetStdHandle(STD_ERROR_HANDLE), line, static_cast<DWORD>(length), &written, nullptr);
+    if (length > 0 && NemoClawMsysDiagnosticsEnabled()) WriteFile(GetStdHandle(STD_ERROR_HANDLE), line, static_cast<DWORD>(length), &written, nullptr);
     if (waited == WAIT_OBJECT_0) {
         CloseHandle(child->hThread);
         CloseHandle(child->hProcess);
@@ -741,5 +741,5 @@ extern "C" void NemoClawLogLaunch(DWORD childPid, DWORD exitCode, BOOL exited, D
         "NEMOCLAW_MSYS_LAUNCH={\"schemaVersion\":1,\"parentPid\":%lu,\"childPid\":%lu,\"childExited\":%s,\"exitCode\":%lu,\"error\":%lu}\n",
         GetCurrentProcessId(), childPid, exited ? "true" : "false", exitCode, error);
     DWORD written = 0;
-    if (length > 0) WriteFile(GetStdHandle(STD_ERROR_HANDLE), line, static_cast<DWORD>(length), &written, nullptr);
+    if (length > 0 && (error || !exited || exitCode || NemoClawMsysDiagnosticsEnabled())) WriteFile(GetStdHandle(STD_ERROR_HANDLE), line, static_cast<DWORD>(length), &written, nullptr);
 }

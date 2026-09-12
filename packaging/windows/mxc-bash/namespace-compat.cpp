@@ -174,7 +174,7 @@ bool context_result(const char* stage, const char* kind, DWORD error) {
         trailing && root_has_sid_suffix(count - 1) ? "true" : "false", pathHex,
         contextDiagnostic.ntRootOpened ? "true" : "false", contextDiagnostic.ntRootStatus);
     DWORD written = 0;
-    if (length > 0) WriteFile(GetStdHandle(STD_ERROR_HANDLE), line, static_cast<DWORD>(length), &written, nullptr);
+    if (length > 0 && NemoClawMsysDiagnosticsEnabled()) WriteFile(GetStdHandle(STD_ERROR_HANDLE), line, static_cast<DWORD>(length), &written, nullptr);
     SetLastError(error);
     return false;
 }
@@ -360,7 +360,7 @@ void log_result(const Match& match, bool create, NTSTATUS status) {
         match.family == Family::global ? "global" : "session", key,
         create ? "true" : "false", static_cast<ULONG>(status));
     DWORD written = 0;
-    if (count > 0) WriteFile(GetStdHandle(STD_ERROR_HANDLE), line, static_cast<DWORD>(count), &written, nullptr);
+    if (count > 0 && NemoClawMsysDiagnosticsEnabled()) WriteFile(GetStdHandle(STD_ERROR_HANDLE), line, static_cast<DWORD>(count), &written, nullptr);
 }
 
 void log_rejected(const Match& match, bool create, ACCESS_MASK access, ULONG flags,
@@ -375,7 +375,7 @@ void log_rejected(const Match& match, bool create, ACCESS_MASK access, ULONG fla
         match.family == Family::global ? "global" : "session", key, reason,
         access, flags, error, static_cast<ULONG>(status));
     DWORD written = 0;
-    if (count > 0) WriteFile(GetStdHandle(STD_ERROR_HANDLE), line, static_cast<DWORD>(count), &written, nullptr);
+    if (count > 0 && NemoClawMsysDiagnosticsEnabled()) WriteFile(GetStdHandle(STD_ERROR_HANDLE), line, static_cast<DWORD>(count), &written, nullptr);
 }
 
 BOOL initialization_result(const char* stage, DWORD error) {
@@ -384,7 +384,7 @@ BOOL initialization_result(const char* stage, DWORD error) {
         "NEMOCLAW_MSYS_INIT={\"schemaVersion\":1,\"pid\":%lu,\"stage\":\"%s\",\"error\":%lu}\n",
         GetCurrentProcessId(), stage, error);
     DWORD written = 0;
-    if (count > 0) WriteFile(GetStdHandle(STD_ERROR_HANDLE), line, static_cast<DWORD>(count), &written, nullptr);
+    if (count > 0 && (error != ERROR_SUCCESS || NemoClawMsysDiagnosticsEnabled())) WriteFile(GetStdHandle(STD_ERROR_HANDLE), line, static_cast<DWORD>(count), &written, nullptr);
     SetLastError(error);
     return error == ERROR_SUCCESS;
 }
@@ -473,7 +473,7 @@ void log_signal_pipe(const char* name, const char* operation, DWORD access, DWOR
         appended ? "adapted-input" : "original-input", adaptation);
     DWORD written = 0;
     writingPipeDiagnostic = true;
-    if (count > 0) WriteFile(GetStdHandle(STD_ERROR_HANDLE), line, static_cast<DWORD>(count), &written, nullptr);
+    if (count > 0 && NemoClawMsysDiagnosticsEnabled()) WriteFile(GetStdHandle(STD_ERROR_HANDLE), line, static_cast<DWORD>(count), &written, nullptr);
     writingPipeDiagnostic = false;
 }
 
@@ -619,7 +619,7 @@ void log_native_pipe(const NativePipeObservation& observation, const char* opera
         npfsBindingError, npfsBindingReason, observation.adaptation);
     DWORD written = 0;
     writingPipeDiagnostic = true;
-    if (count > 0) WriteFile(GetStdHandle(STD_ERROR_HANDLE), line, static_cast<DWORD>(count), &written, nullptr);
+    if (count > 0 && NemoClawMsysDiagnosticsEnabled()) WriteFile(GetStdHandle(STD_ERROR_HANDLE), line, static_cast<DWORD>(count), &written, nullptr);
     writingPipeDiagnostic = false;
 }
 
@@ -812,7 +812,7 @@ void observe_ordinary_default_acl(HANDLE server, HANDLE root) {
         static_cast<unsigned>(effectiveControl), effectiveHeaderError, effectiveValidationException, effectiveHex);
     DWORD written = 0;
     writingPipeDiagnostic = true;
-    if (count > 0) WriteFile(GetStdHandle(STD_ERROR_HANDLE), line, static_cast<DWORD>(count), &written, nullptr);
+    if (count > 0 && NemoClawMsysDiagnosticsEnabled()) WriteFile(GetStdHandle(STD_ERROR_HANDLE), line, static_cast<DWORD>(count), &written, nullptr);
     writingPipeDiagnostic = false;
     SetLastError(saved);
 }
@@ -922,7 +922,7 @@ BOOL WINAPI create_tracker_pipe(PHANDLE read, PHANDLE write, LPSECURITY_ATTRIBUT
             appended ? "true" : "false", appended ? static_cast<ULONG>(signal_writer_access) : 0UL, adaptation);
         DWORD written = 0;
         writingPipeDiagnostic = true;
-        if (count > 0) WriteFile(GetStdHandle(STD_ERROR_HANDLE), line, static_cast<DWORD>(count), &written, nullptr);
+        if (count > 0 && NemoClawMsysDiagnosticsEnabled()) WriteFile(GetStdHandle(STD_ERROR_HANDLE), line, static_cast<DWORD>(count), &written, nullptr);
         writingPipeDiagnostic = false;
     }
     SetLastError(after);
@@ -968,7 +968,7 @@ void bind_shared_directory(PHANDLE output) {
         GetCurrentProcessId(), copy ? "true" : "false", kind, error);
     DWORD written = 0;
     writingPipeDiagnostic = true;
-    if (count > 0) WriteFile(GetStdHandle(STD_ERROR_HANDLE), line, static_cast<DWORD>(count), &written, nullptr);
+    if (count > 0 && NemoClawMsysDiagnosticsEnabled()) WriteFile(GetStdHandle(STD_ERROR_HANDLE), line, static_cast<DWORD>(count), &written, nullptr);
     writingPipeDiagnostic = false;
     SetLastError(before);
 }
@@ -1075,7 +1075,7 @@ void log_shared_section(const SharedSectionRequest& request, ACCESS_MASK access,
         descriptorRead ? "true" : "false", descriptorError, required, descriptorHex);
     DWORD written = 0;
     writingPipeDiagnostic = true;
-    if (count > 0) WriteFile(GetStdHandle(STD_ERROR_HANDLE), line, static_cast<DWORD>(count), &written, nullptr);
+    if (count > 0 && NemoClawMsysDiagnosticsEnabled()) WriteFile(GetStdHandle(STD_ERROR_HANDLE), line, static_cast<DWORD>(count), &written, nullptr);
     writingPipeDiagnostic = false;
 }
 
@@ -1160,7 +1160,7 @@ NTSTATUS NTAPI observe_pinfo_section_open(PHANDLE output, ACCESS_MASK access, PO
             GetCurrentProcessId(), cygpid, access, static_cast<ULONG>(status));
         DWORD written = 0;
         writingPipeDiagnostic = true;
-        if (count > 0) WriteFile(GetStdHandle(STD_ERROR_HANDLE), line, static_cast<DWORD>(count), &written, nullptr);
+        if (count > 0 && NemoClawMsysDiagnosticsEnabled()) WriteFile(GetStdHandle(STD_ERROR_HANDLE), line, static_cast<DWORD>(count), &written, nullptr);
         writingPipeDiagnostic = false;
     }
     SetLastError(after);
@@ -1237,7 +1237,7 @@ void log_shared_mutex(const SharedMutexRequest& request, ACCESS_MASK access, BOO
         originalHandle ? "true" : "false", descriptorRead ? "true" : "false", descriptorError, required, descriptorHex);
     DWORD written = 0;
     writingPipeDiagnostic = true;
-    if (count > 0) WriteFile(GetStdHandle(STD_ERROR_HANDLE), line, static_cast<DWORD>(count), &written, nullptr);
+    if (count > 0 && NemoClawMsysDiagnosticsEnabled()) WriteFile(GetStdHandle(STD_ERROR_HANDLE), line, static_cast<DWORD>(count), &written, nullptr);
     writingPipeDiagnostic = false;
 }
 
@@ -1372,7 +1372,7 @@ void log_io_observation(const IoObservation& record) {
         record.status == 0x103 ? "true" : "false", record.unusualOutcome ? "true" : "false", record.completionKnown ? "true" : "false",
         static_cast<ULONG>(record.completionStatus), static_cast<unsigned long long>(record.transferred));
     DWORD written = 0;
-    if (count > 0) WriteFile(GetStdHandle(STD_ERROR_HANDLE), line, static_cast<DWORD>(count), &written, nullptr);
+    if (count > 0 && NemoClawMsysDiagnosticsEnabled()) WriteFile(GetStdHandle(STD_ERROR_HANDLE), line, static_cast<DWORD>(count), &written, nullptr);
     for (ULONG index = 0; record.status != 0x103 && index < record.handleCount; ++index) {
         const HANDLE handle = record.handles[index];
         PUBLIC_OBJECT_BASIC_INFORMATION basic = {};
@@ -1412,7 +1412,7 @@ void log_io_observation(const IoObservation& record) {
             inherited ? "true" : "false", inherited ? inheritance : 0UL, inheritanceError, static_cast<ULONG>(typeStatus), type,
             fileType, fileTypeError, pipeQueryAttempted ? "true" : "false", pipeInfoKnown ? "true" : "false",
             pipeInfoError, pipeInfoKnown ? pipeFlags : 0UL, pipeInfoKnown && (pipeFlags & PIPE_SERVER_END) ? "true" : "false");
-        if (count > 0) WriteFile(GetStdHandle(STD_ERROR_HANDLE), line, static_cast<DWORD>(count), &written, nullptr);
+        if (count > 0 && NemoClawMsysDiagnosticsEnabled()) WriteFile(GetStdHandle(STD_ERROR_HANDLE), line, static_cast<DWORD>(count), &written, nullptr);
     }
     writingPipeDiagnostic = false;
 }
@@ -1644,7 +1644,7 @@ void log_pid_link(const char* operation, DWORD winpid, DWORD cygpid, bool target
         static_cast<ULONG>(status), adapted ? "true" : "false", queryBound ? "true" : "false",
         clock.qpc.QuadPart, clock.qpcFrequency.QuadPart, descriptorRead ? "true" : "false", error, required, hex);
     DWORD written = 0;
-    if (count > 0) WriteFile(GetStdHandle(STD_ERROR_HANDLE), line, static_cast<DWORD>(count), &written, nullptr);
+    if (count > 0 && NemoClawMsysDiagnosticsEnabled()) WriteFile(GetStdHandle(STD_ERROR_HANDLE), line, static_cast<DWORD>(count), &written, nullptr);
     writingPipeDiagnostic = false;
 }
 
@@ -1817,7 +1817,7 @@ void installFaultObserver() {
             "NEMOCLAW_MSYS_FAULT_OBSERVER={\"schemaVersion\":1,\"pid\":%lu,\"registered\":%s,\"error\":%lu}\n",
             GetCurrentProcessId(), faultObserver ? "true" : "false", error);
         DWORD written = 0;
-        if (count > 0) WriteFile(GetStdHandle(STD_ERROR_HANDLE), line, static_cast<DWORD>(count), &written, nullptr);
+        if (count > 0 && (error != ERROR_SUCCESS || NemoClawMsysDiagnosticsEnabled())) WriteFile(GetStdHandle(STD_ERROR_HANDLE), line, static_cast<DWORD>(count), &written, nullptr);
     }
     SetLastError(saved);
 }

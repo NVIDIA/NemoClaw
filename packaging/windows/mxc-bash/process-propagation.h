@@ -3,6 +3,17 @@
 #pragma once
 #include <windows.h>
 
+// Explicit quiet capture suppresses only our own verbose native records.
+// Unset/1 preserve the standalone compatibility gate's existing diagnostics.
+inline bool NemoClawMsysDiagnosticsEnabled() {
+    const DWORD saved = GetLastError();
+    WCHAR value[2] = {};
+    const DWORD length = GetEnvironmentVariableW(L"NEMOCLAW_MSYS_DIAGNOSTICS", value, 2);
+    const bool enabled = length != 1 || value[0] != L'0';
+    SetLastError(saved);
+    return enabled;
+}
+
 // The context is derived from this process's token and this module's location.
 // No caller-supplied SID, namespace, or arbitrary DLL path is accepted.
 extern "C" BOOL NemoClawInitializeProcessContext(HMODULE self);

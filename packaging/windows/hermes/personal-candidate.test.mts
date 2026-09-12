@@ -230,6 +230,8 @@ test("Personal request matches the existing driver profile and keeps filesystem 
   assert(request.process.env.includes("TEMP=C:\\NemoClawMsysProof-1234567890ab-state-start\\temp"));
   assert(request.process.env.includes("HERMES_GIT_BASH_PATH=C:\\runtime\\git\\bin\\bash.exe"));
   assert(request.process.env.includes("NEMOCLAW_MSYS_TOKEN_INSPECTION_HOLD=repair-query"));
+  assert(request.process.env.includes("NEMOCLAW_MSYS_DIAGNOSTICS=0"));
+  assert(request.process.env.includes("AGENT_BROWSER_ARGS=--enable-logging=stderr"));
   assert(!request.process.env.some((entry) => entry.startsWith("NEMOCLAW_MSYS_TOKEN_INSPECTION=")));
 });
 test("the fixed request rejects a command-line quote or invalid nonce", () => {

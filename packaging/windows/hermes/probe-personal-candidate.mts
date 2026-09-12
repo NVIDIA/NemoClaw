@@ -337,6 +337,8 @@ export function personalRequest(
   const environment = {
     GITHUB_ACTIONS: "true",
     NEMOCLAW_MSYS_TOKEN_INSPECTION_HOLD: "repair-query",
+    NEMOCLAW_MSYS_DIAGNOSTICS: "0",
+    AGENT_BROWSER_ARGS: "--enable-logging=stderr",
     NEMOCLAW_MSYS_ASLR_METADATA: "1",
     NODE_DISABLE_COMPILE_CACHE: "1",
     PYTHONDONTWRITEBYTECODE: "1",
