@@ -16,13 +16,17 @@ $definitions = @($ast.FindAll({ param($node)
 if ($definitions.Count -ne 1) { throw 'The actual phase result validator was not found exactly once.' }
 . ([scriptblock]::Create($definitions[0].Extent.Text))
 $fixture = @'
-{"schemaVersion":1,"status":"python-provisioned","installedTier":"hash-verified (uv.lock)","upstream":{"commit":"2237be355906fbe6065ce1815711eee52b2d646e"},"completeRuntime":false,"installedAcceptance":false,"python":{"cryptographyVersion":"50.0.0","opensslVersion":"OpenSSL 3.5.8 25 Aug 2026","imports":["hermes_cli.main","tools.terminal_tool","tools.file_tools","tools.web_tools","fastapi","uvicorn","winpty"],"packages":[{"name":"hermes-agent","version":"0.21.1"},{"name":"pywinpty","version":"2.0.15"}]}}
+{"schemaVersion":1,"status":"python-provisioned","installedTier":"hash-verified (uv.lock)","upstream":{"commit":"2237be355906fbe6065ce1815711eee52b2d646e"},"completeRuntime":false,"installedAcceptance":false,"python":{"conpty":{"schemaVersion":1,"classification":"ci-built-pywinpty-conpty-smoke","status":"pass","backend":"ConPTY","pywinptyVersion":"2.0.15","pythonVersion":"3.11.16","nativeModuleMachine":"0xaa64","nativeModuleSha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","exitCode":0,"constructorSucceeded":true,"spawnSucceeded":true,"outputContainsSentinel":true,"childExitObserved":true,"cleanupPassed":true},"cryptographyVersion":"50.0.0","opensslVersion":"OpenSSL 3.5.8 25 Aug 2026","imports":["hermes_cli.main","tools.terminal_tool","tools.file_tools","tools.web_tools","fastapi","uvicorn","winpty"],"packages":[{"name":"hermes-agent","version":"0.21.1"},{"name":"pywinpty","version":"2.0.15"}]}}
 '@
 Assert-PythonPhaseResult -Result ($fixture | ConvertFrom-Json)
 $duplicate = $fixture | ConvertFrom-Json
 $duplicate.python.packages += [pscustomobject]@{ name = 'hermes-agent'; version = '0.21.1' }
 Assert-PythonPhaseResult -Result $duplicate
 $controls = @(
+    @{ Name = 'missing compiled ConPTY backend'; Mutate = { param($value) $value.python.conpty.constructorSucceeded = $false } },
+    @{ Name = 'ConPTY child not exited'; Mutate = { param($value) $value.python.conpty.childExitObserved = $false } },
+    @{ Name = 'foreign ConPTY extension'; Mutate = { param($value) $value.python.conpty.nativeModuleMachine = '0x8664' } },
+    @{ Name = 'coercible ConPTY status'; Mutate = { param($value) $value.python.conpty.spawnSucceeded = 'true' } },
     @{ Name = 'mixed Hermes metadata versions'; Mutate = { param($value) $value.python.packages += [pscustomobject]@{ name = 'hermes-agent'; version = '0.21.0' } } },
     @{ Name = 'foreign OpenSSL'; Mutate = { param($value) $value.python.opensslVersion = 'OpenSSL 4.0.2' } },
     @{ Name = 'substituted cryptography'; Mutate = { param($value) $value.python.cryptographyVersion = '49.0.0' } },
@@ -42,4 +46,4 @@ foreach ($control in $controls) {
     try { Assert-PythonPhaseResult -Result $value } catch { $rejected = $true }
     if (-not $rejected) { throw "The actual result gate accepted $($control.Name)." }
 }
-Write-Host 'Official Python result contract: 13 controls passed; no runtime execution claimed.'
+Write-Host 'Official Python result contract: 17 controls passed; no runtime execution claimed.'

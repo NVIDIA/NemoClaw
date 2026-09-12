@@ -72,6 +72,11 @@ if ($StageWorker) {
     & (Join-Path $PSScriptRoot 'test-official-native-dispatch.ps1') `
         -UvPath (Join-Path $runtimeBuildRoot 'bin\uv.exe') -PythonPath $runtimeBuildPython `
         -ReceiptPath (Join-Path $runtimeBuildEvidence 'native-dispatch.json')
+    $runtimeBuildFeatureRecord = Get-Content -LiteralPath (Join-Path $runtimeBuildEvidence 'pywinpty-build-settings.json') -Raw | ConvertFrom-Json
+    if ($env:UV_CONFIG_FILE -cne (Join-Path $runtimeBuildEvidence 'pywinpty-build.uv.toml') -or
+        (Get-FileHash -LiteralPath $env:UV_CONFIG_FILE -Algorithm SHA256).Hash.ToLowerInvariant() -cne $runtimeBuildFeatureRecord.configurationSha256) {
+        throw 'The package-scoped ConPTY build configuration changed.'
+    }
     # The official installer explicitly supports dot-sourcing. Invoke its real
     # stage and inspect the tier in that same process, without replacing helpers.
     $runtimeBuildBefore = (Get-FileHash -LiteralPath (Join-Path $runtimeBuildSource 'package-lock.json') -Algorithm SHA256).Hash
@@ -107,6 +112,14 @@ if ($StageWorker) {
     if ((Get-FileHash -LiteralPath (Join-Path $runtimeBuildSource 'package-lock.json') -Algorithm SHA256).Hash -cne $runtimeBuildBefore) {
         throw 'The Python stage changed the official npm lock.'
     }
+    $runtimeBuildConptyReceipt = Join-Path $runtimeBuildEvidence 'pywinpty-conpty-smoke.json'
+    Invoke-NativeWithRelaxedErrorAction { & $runtimeBuildPython -I (Join-Path $PSScriptRoot 'pywinpty-conpty.py') smoke --receipt $runtimeBuildConptyReceipt }
+    if ($LASTEXITCODE -ne 0) { throw 'The built pywinpty did not pass its explicit ConPTY spawn/read/exit smoke.' }
+    $runtimeBuildFeatureRecord = Get-Content -LiteralPath (Join-Path $runtimeBuildEvidence 'pywinpty-build-settings.json') -Raw | ConvertFrom-Json
+    if ($env:UV_CONFIG_FILE -cne (Join-Path $runtimeBuildEvidence 'pywinpty-build.uv.toml') -or
+        (Get-FileHash -LiteralPath $env:UV_CONFIG_FILE -Algorithm SHA256).Hash.ToLowerInvariant() -cne $runtimeBuildFeatureRecord.configurationSha256) {
+        throw 'The package-scoped ConPTY build configuration changed.'
+    }
     $runtimeBuildCheck = @'
 import importlib, importlib.metadata, json, os, sys
 expected = sys.argv[1]
@@ -120,9 +133,9 @@ import cryptography
 from cryptography.hazmat.backends.openssl.backend import backend
 assert cryptography.__version__ == '50.0.0', cryptography.__version__
 assert backend.openssl_version_text().startswith('OpenSSL 3.5.8 '), backend.openssl_version_text()
-print(json.dumps({'cryptographyVersion':cryptography.__version__,'opensslVersion':backend.openssl_version_text(),'executable':sys.executable,'baseExecutable':sys._base_executable,'basePrefix':sys.base_prefix,'version':sys.version,'imports':modules,'packages':sorted([{'name':d.metadata['Name'],'version':d.version} for d in importlib.metadata.distributions()],key=lambda x:x['name'].lower())}))
+print(json.dumps({'cryptographyVersion':cryptography.__version__,'opensslVersion':backend.openssl_version_text(),'executable':sys.executable,'baseExecutable':sys._base_executable,'basePrefix':sys.base_prefix,'version':sys.version,'imports':modules,'conpty':json.load(open(sys.argv[2],encoding='utf-8')),'packages':sorted([{'name':d.metadata['Name'],'version':d.version} for d in importlib.metadata.distributions()],key=lambda x:x['name'].lower())}))
 '@
-    $runtimeBuildImportText = Invoke-NativeWithRelaxedErrorAction { & $runtimeBuildPython -I -c $runtimeBuildCheck $runtimeBuildBase }
+    $runtimeBuildImportText = Invoke-NativeWithRelaxedErrorAction { & $runtimeBuildPython -I -c $runtimeBuildCheck $runtimeBuildBase $runtimeBuildConptyReceipt }
     if ($LASTEXITCODE -ne 0) { throw 'The official full Python environment failed its exact interpreter/import checks.' }
     $runtimeBuildImport = ($runtimeBuildImportText | Select-Object -Last 1) | ConvertFrom-Json
     Write-PythonBuildJson -Value ([ordered]@{
@@ -164,6 +177,12 @@ try {
     if ($env:GITHUB_ACTIONS -cne 'true' -or [string]::IsNullOrEmpty($env:RUNNER_TEMP)) {
         throw 'Registry PATH preparation is restricted to the disposable GitHub Windows build runner.'
     }
+    $runtimeBuildFeatureConfig = Join-Path $runtimeBuildEvidence 'pywinpty-build.uv.toml'
+    $runtimeBuildFeatureReceipt = Join-Path $runtimeBuildEvidence 'pywinpty-build-settings.json'
+    & $runtimeBuildPython -I (Join-Path $PSScriptRoot 'pywinpty-conpty.py') configuration `
+        --project (Join-Path $runtimeBuildSource 'pyproject.toml') --output $runtimeBuildFeatureConfig --receipt $runtimeBuildFeatureReceipt
+    if ($LASTEXITCODE -ne 0) { throw 'The package-scoped ConPTY build configuration could not be prepared.' }
+    $runtimeBuildReceipt['pywinptyBuildSettings'] = Get-Content -LiteralPath $runtimeBuildFeatureReceipt -Raw | ConvertFrom-Json
     # Preflight both handles/values before either mutation. The official stage
     # merges User and Machine PATH, so sanitizing User alone admits host Git.
     $runtimeBuildRegistryScopes += New-BuildRegistryPathScope -Name 'User' `
@@ -186,6 +205,8 @@ try {
     $runtimeBuildStart.RedirectStandardOutput = $true
     $runtimeBuildStart.RedirectStandardError = $true
     $runtimeBuildStart.EnvironmentVariables.Clear()
+    # The parent already admitted this disposable GitHub build runner.
+    $runtimeBuildStart.EnvironmentVariables['GITHUB_ACTIONS'] = 'true'
     foreach ($name in @('SystemRoot','SystemDrive','WINDIR','COMSPEC','OS','TEMP','TMP','LOCALAPPDATA','APPDATA','USERPROFILE','PROCESSOR_ARCHITECTURE','PROCESSOR_ARCHITEW6432','NUMBER_OF_PROCESSORS','INCLUDE','LIB','LIBPATH','VCINSTALLDIR','VCToolsInstallDir','WindowsSdkDir','WindowsSDKVersion','WindowsSdkVerBinPath','UniversalCRTSdkDir','UCRTVersion','VSCMD_ARG_TGT_ARCH','VSCMD_ARG_HOST_ARCH','CARGO_HOME','RUSTUP_HOME','RUNNER_TRACKING_ID','OPENSSL_DIR','OPENSSL_STATIC')) {
         $value = [Environment]::GetEnvironmentVariable($name)
         if ($null -ne $value) { $runtimeBuildStart.EnvironmentVariables[$name] = $value }
@@ -202,6 +223,9 @@ try {
     $runtimeBuildStart.EnvironmentVariables['UV_CACHE_DIR'] = (Join-Path $runtimeBuildEvidence 'uv-cache')
     $runtimeBuildStart.EnvironmentVariables['UV_PYTHON_DOWNLOADS'] = 'never'
     $runtimeBuildStart.EnvironmentVariables['UV_KEYRING_PROVIDER'] = 'disabled'
+    # Scope the declared Cargo feature to pywinpty's PEP517 backend only. The
+    # generated file retains every pinned upstream uv setting unchanged.
+    $runtimeBuildStart.EnvironmentVariables['UV_CONFIG_FILE'] = $runtimeBuildFeatureConfig
     $runtimeBuildStart.EnvironmentVariables['UV_BUILD_CONSTRAINT'] = (Join-Path $PSScriptRoot 'official-python-build.requirements.txt')
     if ($env:UV_FIND_LINKS) { $runtimeBuildStart.EnvironmentVariables['UV_FIND_LINKS'] = $env:UV_FIND_LINKS }
     $runtimeBuildOutputFile = [IO.File]::Open((Join-Path $runtimeBuildEvidence 'dependencies.stdout.log'), [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::Read)

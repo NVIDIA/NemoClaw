@@ -14,7 +14,7 @@ $downloads=Join-Path $output 'downloads'
 $null=New-Item -ItemType Directory -Path $downloads
 $root=[IO.Path]::GetPathRoot([Environment]::SystemDirectory)
 $runtime=Join-Path $root ('NemoClawHermesProbe-'+[guid]::NewGuid().ToString('N').Substring(0,12))
-$primary=$null;$mxcAttempted=$false
+$primary=$null;$mxcAttempted=$false;$reuseAttempted=$false
 $receipt=[ordered]@{schemaVersion=1;classification='canonical-personal-mxc-candidate-feasibility';sourceRevision=$env:GITHUB_SHA;
     candidateSource='47d890728482cca05e840edd27e33e3d495aeabf';artifactId=10181796438;status='failed';
     installedAcceptance=$false;fullAgentQualified=$false;runtimeRoot=$runtime;cleanupErrors=@()}
@@ -49,7 +49,37 @@ try {
     if($original -ceq $runtime -or (Test-Path -LiteralPath $original)){throw 'The original build root must be absent during moved-root execution.'}
     $receipt['originalBuildRoot']=$original
     $receipt['originalBuildRootAbsent']=$true
-    Invoke-PersonalChecked $python @('-I',(Join-Path $PSScriptRoot 'prepare-native-runtime.py'),'--runtime-root',$runtime,'--source-root',$original,'--target-root',$runtime,'--environment','hermes-agent/venv','--environment','tools/browser-use','--receipt',(Join-Path $output 'relocation.json')) 'Recorded generated-metadata relocation'
+    $compatZip=Join-Path $downloads 'passed-bash-compatibility.zip'
+    $headers=@{Authorization=('Bearer '+$env:GH_TOKEN);Accept='application/vnd.github+json'}
+    Invoke-WebRequest -Uri 'https://api.github.com/repos/NVIDIA/NemoClaw/actions/artifacts/10288059569/zip' -Headers $headers -OutFile $compatZip -TimeoutSec 120
+    if((Get-Item -LiteralPath $compatZip).Length -ne 11201736 -or (Get-FileHash -LiteralPath $compatZip -Algorithm SHA256).Hash.ToLowerInvariant() -cne '28603c3a374e1f1235ff697e5658641c97ef90b201d548703588db0e36e96c44'){throw 'The passed Bash artifact changed.'}
+    $compatExtract=Join-Path $downloads 'passed-bash'
+    $zip=[IO.Compression.ZipFile]::OpenRead($compatZip)
+    try{
+        if($zip.Entries.Count -ne 85 -or ($zip.Entries|Measure-Object -Property Length -Sum).Sum -ne 33566339){throw 'The passed Bash archive layout changed.'}
+        foreach($entry in $zip.Entries){
+            $target=[IO.Path]::GetFullPath((Join-Path $compatExtract $entry.FullName))
+            if(-not $target.StartsWith($compatExtract+'\',[StringComparison]::OrdinalIgnoreCase)){throw 'The passed Bash archive path escapes its owned output.'}
+        }
+    }finally{$zip.Dispose()}
+    Expand-Archive -LiteralPath $compatZip -DestinationPath $compatExtract
+    $compatEvidence=Join-Path $compatExtract 'bash-compat-evidence'
+    Remove-Item Env:GH_TOKEN -ErrorAction SilentlyContinue
+    $rustc=(& rustup which --toolchain 1.95.0 rustc|Out-String).Trim()
+    if($LASTEXITCODE -ne 0){throw 'Pinned native Rust is unavailable.'}
+    $cargo=(& rustup which --toolchain 1.95.0 cargo|Out-String).Trim()
+    if($LASTEXITCODE -ne 0){throw 'Pinned native Cargo is unavailable.'}
+    $reuseInputs=Join-Path $output 'canonical-reuse-inputs.json'
+    $reuse=[ordered]@{bootstrapPython=$python;bootstrapNode=$node;sourceArchive=$source;baseZip=(Join-Path $downloads 'candidate.zip');
+        originalBuildRoot=$original;compatibilityEvidence=$compatEvidence;rustBinDirectory=(Split-Path -Parent $cargo)}
+    [IO.File]::WriteAllText($reuseInputs,($reuse|ConvertTo-Json -Depth 5)+"`n",[Text.UTF8Encoding]::new($false))
+    $reuseAttempted=$true
+    & (Join-Path $PSScriptRoot 'prepare-official-runtime.ps1') -RuntimeRoot $runtime -ArtifactDirectory (Join-Path $output 'reused-python-phase') `
+        -ComponentEvidenceDirectory $output -RustcPath $rustc -CargoPath $cargo -ControllerSource $env:GITHUB_SHA -ReuseInputsPath $reuseInputs
+    $candidate=Join-Path $output 'official-hermes-runtime-candidate'
+    $receipt['derivedCandidateReceiptSha256']=(Get-FileHash -LiteralPath (Join-Path $candidate 'runtime-candidate.json') -Algorithm SHA256).Hash.ToLowerInvariant()
+    $receipt['compatibilityProofSource']='645a04fe0c60ed6e4410bdb03dea62959be15ecb'
+    $receipt['completeBaseReused']=$true
     $sdk=Join-Path $downloads 'mxc-sdk.tgz'
     Invoke-WebRequest -Uri 'https://registry.npmjs.org/@microsoft/mxc-sdk/-/mxc-sdk-0.8.0.tgz' -OutFile $sdk -TimeoutSec 60
     if((Get-FileHash -LiteralPath $sdk -Algorithm SHA256).Hash.ToLowerInvariant() -cne '06bb2399d7e98ab1907acf851e12a4e44748dd467b79d3e53c2f2fbf569da14e'){throw 'The MXC SDK differs from the exact archive.'}
@@ -59,7 +89,12 @@ try {
     $systemProof=Get-Content -LiteralPath (Join-Path $output 'system-root-proof\system-root-mxc-proof.json') -Raw|ConvertFrom-Json
     if($systemProof.status -cne 'pass'){throw 'The same-run system-root/MXC proof failed.'}
     $mxcAttempted=$true
-    Invoke-PersonalChecked $node @('--experimental-strip-types','--no-warnings',(Join-Path $PSScriptRoot 'probe-personal-candidate.mts'),'--runtime-root',$runtime,'--mxc',(Join-Path $mxc 'wxc-exec.exe'),'--output',(Join-Path $output 'personal-mxc')) 'Canonical Personal component execution'
+    $patchedMxc=Join-Path $compatEvidence 'mxc-token-inspection-build'
+    Invoke-PersonalChecked $node @('--experimental-strip-types','--no-warnings',(Join-Path $PSScriptRoot 'probe-personal-candidate.mts'),
+        '--runtime-root',$runtime,'--mxc',(Join-Path $patchedMxc 'wxc-exec.exe'),'--output',(Join-Path $output 'personal-mxc'),
+        '--compatibility-root',(Join-Path $runtime 'mxc-compat'),'--compatibility-receipt',(Join-Path $runtime 'mxc-compat/build-receipt.json'),
+        '--compatibility-proof',(Join-Path $compatEvidence 'result.json'),'--mxc-build-receipt',(Join-Path $patchedMxc 'mxc-token-inspection-build.json'),
+        '--derived-runtime-receipt',(Join-Path $candidate 'runtime-candidate.json')) 'Canonical Personal component execution'
     if(Test-Path -LiteralPath $original){throw 'The original build root became available during execution.'}
     $receipt.status='pass'
 }catch{$primary=$_;$receipt['error']=$_.Exception.Message}
@@ -72,6 +107,21 @@ finally{
         }catch{$receipt.cleanupErrors+=@('Runtime retained: executor completion receipt unavailable. '+$_.Exception.Message)}
     }
     $receipt['runtimeRetainedForUnclosedExecutor']= -not $removeRuntime
+    $receipt['runtimeRetainedForUnclosedBuild']=$false
+    if($reuseAttempted){
+        $buildClosed=$false;$buildError=$null
+        try{
+            $phase=Get-Content -LiteralPath (Join-Path $output 'official-hermes-runtime-phase.json') -Raw|ConvertFrom-Json
+            $buildClosed=$phase.schemaVersion -eq 1 -and $phase.classification -ceq 'official-hermes-runtime-build-phase' -and
+                $phase.controllerSource -ceq $env:GITHUB_SHA -and $phase.runtimeRoot -ceq $runtime -and $phase.buildProcessesClosed -ceq $true
+        }catch{$buildError=$_.Exception.Message}
+        if(-not $buildClosed){
+            $receipt.cleanupErrors+=@('Runtime retained: build process closure was not confirmed. '+$buildError)
+            if($null -eq $primary){$primary=[InvalidOperationException]::new('Targeted build process closure was not confirmed.')}
+        }
+        $receipt['runtimeRetainedForUnclosedBuild']= -not $buildClosed
+        $removeRuntime=$removeRuntime -and $buildClosed
+    }
     try{if($removeRuntime -and (Test-Path -LiteralPath $runtime)){Remove-Item -LiteralPath $runtime -Recurse -Force}}
     catch{$receipt.cleanupErrors+=@($_.Exception.Message);if($null -eq $primary){$primary=$_}}
     $receipt['runtimeRootRemoved']= -not (Test-Path -LiteralPath $runtime)

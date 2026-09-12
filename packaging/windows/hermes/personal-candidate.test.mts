@@ -12,7 +12,70 @@ import {
   removePersonalRoots,
   publishPersonalReceipt,
 } from "./probe-personal-candidate.mts";
-import { parseComponent } from "./probe-personal-workload.mts";
+import { parseComponent, personalCommand } from "./probe-personal-workload.mts";
+
+test("Personal capture keeps native diagnostics separate from primary Python output", async () => {
+  const result = await personalCommand(
+    process.execPath,
+    [
+      "-e",
+      `for(let i=0;i<100;i++)process.stderr.write('NEMOCLAW_MSYS_CONTEXT='+JSON.stringify({pid:process.pid,data:'x'.repeat(1000)})+'\\n');process.stdout.write('RESULT\\n');process.stderr.write('primary failure detail\\n');`,
+    ],
+    process.env,
+    process.cwd(),
+  );
+  assert.equal(result.exitCode, 0);
+  assert.equal(result.childClosed, true);
+  assert.equal(result.error, null);
+  assert.equal(result.stdout, "RESULT\n");
+  assert.equal(result.stderr, "primary failure detail\n");
+  assert.equal(result.nativeRecordCount, 100);
+  assert(result.nativeStderrBytes > 64 * 1024);
+  assert.equal(result.outputExceeded, false);
+  assert.equal(result.nativeOutputExceeded, false);
+  assert(Number.isSafeInteger(result.pid) && result.pid! > 0);
+});
+
+test("Personal capture retains the primary 64 KiB bound and rejects malformed native evidence", async () => {
+  const large = await personalCommand(
+    process.execPath,
+    ["-e", "process.stderr.write('x'.repeat(70000))"],
+    process.env,
+    process.cwd(),
+  );
+  assert.equal(large.outputExceeded, true);
+  assert.equal(Buffer.byteLength(large.stderr), 64 * 1024);
+  const malformed = await personalCommand(
+    process.execPath,
+    ["-e", "process.stderr.write('NEMOCLAW_MSYS_CONTEXT={bad}\\n')"],
+    process.env,
+    process.cwd(),
+  );
+  assert.equal(malformed.nativeParseErrors.length, 1);
+  assert(malformed.error);
+  assert.equal(malformed.nativeStderr, "NEMOCLAW_MSYS_CONTEXT={bad}\n");
+});
+
+test("Personal capture preserves an actual failure exit and reaps a timed out owned child", async () => {
+  const failed = await personalCommand(
+    process.execPath,
+    ["-e", "process.stderr.write('actual exception\\n');process.exitCode=23"],
+    process.env,
+    process.cwd(),
+  );
+  assert.equal(failed.exitCode, 23);
+  assert.equal(failed.childClosed, true);
+  assert.equal(failed.stderr, "actual exception\n");
+  const timed = await personalCommand(
+    process.execPath,
+    ["-e", "setInterval(()=>{},1000)"],
+    process.env,
+    process.cwd(),
+    50,
+  );
+  assert.equal(timed.timedOut, true);
+  assert.equal(timed.childClosed, true);
+});
 
 const verifier = fileURLToPath(new URL("./verify-personal-candidate.py", import.meta.url));
 const control = String.raw`
@@ -22,6 +85,9 @@ root=pathlib.Path(sys.argv[2]);mode=sys.argv[3]
 sha=lambda b:hashlib.sha256(b).hexdigest()
 hooks=['hermes-agent/venv/Lib/site-packages/nemoclaw_native_windows.py','hermes-agent/.hermes-runtime/python/cpython-3.11.16-windows-aarch64-none/Lib/site-packages/nemoclaw_native_windows.py','tools/browser-use/Lib/site-packages/nemoclaw_native_windows.py']
 data=pathlib.Path(sys.argv[1]).with_name('nemoclaw_native_windows.py').read_bytes()
+# This fixture's adapter bytes follow the current source; the production
+# verifier keeps its immutable pin for the actual historical base artifact.
+m.ADAPTER=sha(data)
 files={name:data for name in hooks};files['asset.dat']=b'correct payload'
 dirs=sorted({p.as_posix() for n in files for p in pathlib.PurePosixPath(n).parents if str(p)!='.'}|{'empty'},key=lambda n:(n.count('/'),n))
 rows=[{'path':name,'bytes':len(value),'sha256':sha(value)} for name,value in files.items()]
@@ -124,7 +190,7 @@ test("Personal request matches the existing driver profile and keeps filesystem 
     "C:\\node\\node.exe",
     "C:\\node\\worker.mts",
     "C:\\runtime",
-    "C:\\share",
+    "C:\\NemoClawMsysProof-1234567890ab-state-start",
     "1234567890abcdef12345678",
     "C:\\Windows",
   );
@@ -140,9 +206,15 @@ test("Personal request matches the existing driver profile and keeps filesystem 
   });
   assert.deepEqual(request.filesystem, {
     readonlyPaths: ["C:\\runtime", "C:\\node"],
-    readwritePaths: ["C:\\share"],
+    readwritePaths: ["C:\\NemoClawMsysProof-1234567890ab-state-start"],
   });
   assert.equal(request.ui.disable, false);
+  assert.equal(request.containerId, "nm-1234567890ab-start");
+  assert(
+    request.process.commandLine.startsWith(
+      '"C:\\runtime\\mxc-compat\\NemoClawMsysLauncher.exe" "--" "C:\\node\\node.exe"',
+    ),
+  );
   assert.equal(request.process.timeout, 120_000);
   assert(
     !request.process.env.some(
@@ -150,6 +222,15 @@ test("Personal request matches the existing driver profile and keeps filesystem 
     ),
   );
   assert(request.process.env.includes("HERMES_DISABLE_LAZY_INSTALLS=1"));
+  assert(
+    request.process.env.includes(
+      "NEMOCLAW_AGENT_HOME=C:\\NemoClawMsysProof-1234567890ab-state-start",
+    ),
+  );
+  assert(request.process.env.includes("TEMP=C:\\NemoClawMsysProof-1234567890ab-state-start\\temp"));
+  assert(request.process.env.includes("HERMES_GIT_BASH_PATH=C:\\runtime\\git\\bin\\bash.exe"));
+  assert(request.process.env.includes("NEMOCLAW_MSYS_TOKEN_INSPECTION_HOLD=repair-query"));
+  assert(!request.process.env.some((entry) => entry.startsWith("NEMOCLAW_MSYS_TOKEN_INSPECTION=")));
 });
 test("the fixed request rejects a command-line quote or invalid nonce", () => {
   assert.throws(

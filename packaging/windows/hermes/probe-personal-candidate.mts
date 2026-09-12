@@ -2,11 +2,313 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { randomBytes, createHash } from "node:crypto";
+import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { command, errorDetail, fileIdentity } from "./probe-component-workload.mts";
-import { bashDiagnostics } from "./probe-personal-workload.mts";
+import { errorDetail, fileIdentity } from "./probe-component-workload.mts";
+import {
+  bashDiagnostics,
+  personalCommand,
+  personalCriticalFiles,
+  validatePersonalWorkloadInput,
+} from "./probe-personal-workload.mts";
+import {
+  binaryPins,
+  validateDerivedMetadata,
+  validateMxcInspectionBuild,
+} from "../mxc-bash/bash-compat.mts";
+
+export function validatePersonalCompatibility(
+  proof: any,
+  build: any,
+  mxcBuild: any,
+  patchSha256: string,
+) {
+  assert.equal(proof.passed, true);
+  assert.equal(proof.normalCleanup, true);
+  assert.equal(proof.phase, "two-container-isolation");
+  assert.match(proof.sourceRevision, /^[a-f0-9]{40}$/u);
+  assert.equal(build.schemaVersion, 1);
+  assert.equal(build.classification, "mxc-msys-compatibility-prototype-build");
+  assert.equal(build.status, "built");
+  assert.equal(build.sourceRevision, proof.sourceRevision);
+  assert.equal(mxcBuild.candidateRevision, proof.sourceRevision);
+  assert.deepEqual(build, proof.inputs.compatibility);
+  assert.deepEqual(mxcBuild, proof.inputs.mxcBuild);
+  const mxcFile = validateMxcInspectionBuild(mxcBuild, patchSha256);
+  assert.equal(mxcFile.sha256, proof.inputs.mxcSha256);
+  const expected = new Map([
+    ["NemoClawMsysLauncher.exe", "arm64"],
+    ["NemoClawMsysCompat-arm64.dll", "arm64"],
+    ["NemoClawMsysCompat-x64.dll", "x64"],
+  ]);
+  assert.equal(build.files.length, expected.size);
+  assert.equal(new Set(build.files.map((file: any) => file.file)).size, expected.size);
+  for (const file of build.files) {
+    assert.equal(file.machine, expected.get(file.file));
+    assert(expected.has(file.file));
+    assert(Number.isSafeInteger(file.bytes) && file.bytes > 0);
+    assert.match(file.sha256, /^[a-f0-9]{64}$/u);
+  }
+  assert.equal(build.license.file, "DETOURS-LICENSE.txt");
+  assert(Number.isSafeInteger(build.license.bytes) && build.license.bytes > 0);
+  assert.match(build.license.sha256, /^[a-f0-9]{64}$/u);
+  // This validates the already-passed raw prototype receipt only. The new
+  // initialized canonical tree has its own distinct derivation contract.
+  validateDerivedMetadata(proof.inputs.gitDerivation, proof.sourceRevision);
+  assert.deepEqual(proof.inputs.git, binaryPins);
+  return {
+    sourceRevision: proof.sourceRevision,
+    files: build.files,
+    license: build.license,
+    mxcFile,
+    gitPins: proof.inputs.git,
+  };
+}
+
+export function validateInitializedPersonalGit(git: any, proof: any) {
+  assert.equal(git.schemaVersion, 1);
+  assert.equal(git.classification, "ci-derived-initialized-canonical-hermes-git");
+  assert.equal(git.baseCandidateSource, "47d890728482cca05e840edd27e33e3d495aeabf");
+  assert.equal(
+    git.baseInventorySha256,
+    "777f6a6fcbefa3790130e795b611aff086775f23682ae109c16cac2f1ff1acd0",
+  );
+  assert.equal(git.upstreamCommit, "2237be355906fbe6065ce1815711eee52b2d646e");
+  assert.equal(git.fileCount, 7835);
+  assert.equal(git.filesReplacedAtBuild, 3);
+  assert.equal(git.allOtherFilesUnchanged, true);
+  assert.equal(git.firstLaunchSetupAllowed, false);
+  assert.equal(git.fullAgentQualified, false);
+  assert.equal(git.installedAcceptance, false);
+  assert.deepEqual(git.initializedFilesPreserved, [
+    "clangarm64/libexec/git-core/dlls-copied",
+    "etc/hosts",
+    "etc/mtab",
+    "etc/networks",
+    "etc/protocols",
+    "etc/services",
+  ]);
+  assert.match(git.beforeInventorySha256, /^[a-f0-9]{64}$/u);
+  assert.match(git.afterInventorySha256, /^[a-f0-9]{64}$/u);
+  assert.equal(git.files.length, 3);
+  assert.equal(new Set(git.files.map((file: any) => file.path)).size, 3);
+  for (const file of git.files) {
+    const qualified = proof.inputs.gitDerivation.files.find((row: any) => row.path === file.path);
+    assert(qualified, "The initialized Git image was not part of the passed prototype.");
+    for (const field of [
+      "beforeSha256",
+      "afterSha256",
+      "beforeBytes",
+      "bytes",
+      "beforeFlags",
+      "afterFlags",
+      "onlyMetadataChanged",
+    ])
+      assert.equal(file[field], qualified[field]);
+    assert.equal(file.afterSha256, proof.inputs.git[file.path]);
+    assert.deepEqual(file.sections, qualified.sections);
+  }
+  return git;
+}
+
+function receiptDocument(file: string) {
+  const stat = fs.lstatSync(file);
+  assert(stat.isFile() && !stat.isSymbolicLink() && stat.size <= 256 * 1024 * 1024);
+  const bytes = fs.readFileSync(file);
+  return {
+    path: file,
+    bytes: bytes.length,
+    sha256: createHash("sha256").update(bytes).digest("hex"),
+    value: JSON.parse(bytes.toString("utf8")),
+  };
+}
+
+export function validateDerivedPersonalHeader(
+  candidate: any,
+  derivation: any,
+  inventory: any,
+  wheel: any,
+  git: any,
+  sourceRevision: string,
+  runtime: string,
+  adapterSha256: string,
+  proof: any,
+) {
+  assert.match(sourceRevision, /^[a-f0-9]{40}$/u);
+  assert.match(adapterSha256, /^[a-f0-9]{64}$/u);
+  assert.equal(candidate.schemaVersion, 1);
+  assert.equal(candidate.classification, "official-hermes-runtime-candidate-build");
+  assert.equal(candidate.status, "candidate-bytes-exported");
+  assert.equal(candidate.controllerSource, sourceRevision);
+  assert.equal(candidate.upstreamCommit, "2237be355906fbe6065ce1815711eee52b2d646e");
+  assert.equal(candidate.completeByteInventory, true);
+  for (const key of ["runtimeExecutionQualified", "installedAcceptance", "activationAllowed"])
+    assert.equal(candidate[key], false);
+  assert.equal(candidate.startupAdapterSha256, adapterSha256);
+  assert.match(candidate.archive.sha256, /^[a-f0-9]{64}$/u);
+  assert(Number.isSafeInteger(candidate.archive.bytes) && candidate.archive.bytes > 0);
+  assert.equal(candidate.archive.file, "official-hermes-runtime-candidate.tar.gz");
+  assert.equal(derivation.schemaVersion, 1);
+  assert.equal(derivation.classification, "reused-complete-canonical-hermes-runtime");
+  assert.equal(derivation.runtimeRootAtExport, runtime);
+  assert.match(derivation.originalBuildRoot, /^[A-Za-z]:\\NemoClawHermesProbe-[a-f0-9]{12}$/u);
+  assert.notEqual(derivation.originalBuildRoot, runtime);
+  assert.equal(derivation.onlyRecordedChanges, true);
+  assert.equal(derivation.completeCanonicalBaseVerified, true);
+  assert.equal(derivation.fullAgentQualified, false);
+  assert.equal(derivation.installedAcceptance, false);
+  assert.equal(derivation.base.artifactId, 10181796438);
+  assert.equal(derivation.base.runId, 34551706967);
+  assert.equal(derivation.base.sourceRevision, "47d890728482cca05e840edd27e33e3d495aeabf");
+  assert.equal(
+    derivation.base.zipSha256,
+    "b6e3683f4248b62e6ba3594d8ecab11d6958a23f161b526a1d11ec07d146d6ed",
+  );
+  assert.equal(
+    derivation.base.inventorySha256,
+    "777f6a6fcbefa3790130e795b611aff086775f23682ae109c16cac2f1ff1acd0",
+  );
+  assert.equal(candidate.buildReceiptSha256, derivation.base.buildReceiptSha256);
+  assert.equal(derivation.adapterUpgrade.afterSha256, adapterSha256);
+  assert.equal(derivation.adapterUpgrade.baseCandidateSource, derivation.base.sourceRevision);
+  assert.equal(wheel.schemaVersion, 1);
+  assert.equal(wheel.classification, "ci-targeted-pywinpty-conpty-rebuild");
+  assert.equal(wheel.status, "pass");
+  assert.deepEqual(wheel.base, derivation.base);
+  for (const key of [
+    "allOtherFilesUnchanged",
+    "allOtherDirectoriesUnchanged",
+    "buildToolsOutsideRuntime",
+    "noRuntimeDependencyResolution",
+    "allOwnedProcessesClosed",
+  ])
+    assert.equal(wheel[key], true);
+  assert.equal(wheel.installedAcceptance, false);
+  assert.equal(wheel.fullAgentQualified, false);
+  assert.equal(wheel.configuration.maturinBuildArgs, "--features winpty-rs/conpty --locked");
+  assert.equal(wheel.configuration.upstreamUvSettingsPreserved, true);
+  assert.equal(wheel.configuration.globalRustFlagsChanged, false);
+  assert.equal(wheel.configuration.upstreamSourcesChanged, false);
+  validateInitializedPersonalGit(git, proof);
+  assert.equal(candidate.fileCount, inventory.files.length);
+  assert.equal(
+    candidate.logicalBytes,
+    inventory.files.reduce((sum: number, file: any) => sum + (file.bytes ?? 0), 0),
+  );
+  const indexed = new Map<string, any>();
+  for (const file of inventory.files) {
+    assert.equal(typeof file.path, "string");
+    assert(file.path && !file.path.startsWith("/") && !/[\\:]/u.test(file.path));
+    assert(file.path.split("/").every((part: string) => part && part !== "." && part !== ".."));
+    assert(!indexed.has(file.path));
+    indexed.set(file.path, file);
+  }
+  assert(
+    Array.isArray(wheel.replacement.installedFiles) && wheel.replacement.installedFiles.length > 0,
+  );
+  assert.equal(
+    new Set(wheel.replacement.installedFiles.map((file: any) => file.path)).size,
+    wheel.replacement.installedFiles.length,
+  );
+  for (const file of wheel.replacement.installedFiles) {
+    const expected = indexed.get(file.path);
+    assert(expected && expected.bytes === file.bytes && expected.sha256 === file.sha256);
+  }
+  return indexed;
+}
+
+function loadDerivedPersonalInputs(
+  file: string,
+  runtime: string,
+  sourceRevision: string,
+  proof: any,
+  build: any,
+  mxcBuild: any,
+) {
+  const candidate = receiptDocument(file);
+  const directory = path.dirname(file);
+  const referenced = (reference: any, expectedName: string) => {
+    assert.equal(reference.file, expectedName);
+    assert(Number.isSafeInteger(reference.bytes) && reference.bytes > 0);
+    assert.match(reference.sha256, /^[a-f0-9]{64}$/u);
+    const document = receiptDocument(path.join(directory, expectedName));
+    assert.equal(document.bytes, reference.bytes);
+    assert.equal(document.sha256, reference.sha256);
+    return document;
+  };
+  const derivation = referenced(candidate.value.derivation, "candidate-derivation.json");
+  const wheel = referenced(derivation.value.pywinpty, "pywinpty-rebuild.json");
+  const git = referenced(derivation.value.git, "canonical-git-derivation.json");
+  const compatibility = referenced(derivation.value.compatibility, "msys-build.json");
+  const compatibilityProof = referenced(
+    derivation.value.compatibilityProof,
+    "bash-compatibility-proof.json",
+  );
+  const mxc = referenced(derivation.value.mxc, "mxc-build.json");
+  assert.deepEqual(compatibility.value, build);
+  assert.deepEqual(compatibilityProof.value, proof);
+  assert.deepEqual(mxc.value, mxcBuild);
+  const inventory = receiptDocument(path.join(directory, "payload-inventory.json"));
+  assert.equal(inventory.sha256, candidate.value.inventorySha256);
+  const adapterSha256 = fileIdentity(
+    fileURLToPath(new URL("./nemoclaw_native_windows.py", import.meta.url)),
+  ).sha256;
+  const indexed = validateDerivedPersonalHeader(
+    candidate.value,
+    derivation.value,
+    inventory.value,
+    wheel.value,
+    git.value,
+    sourceRevision,
+    runtime,
+    adapterSha256,
+    proof,
+  );
+  assert.equal(
+    fs.existsSync(derivation.value.originalBuildRoot),
+    false,
+    "The original canonical build root must remain absent.",
+  );
+  const marker = receiptDocument(path.join(runtime, "nemoclaw-windows-runtime.json"));
+  assert.deepEqual(marker.value.startupAdapterUpgrade, derivation.value.adapterUpgrade);
+  const hooks = [
+    "hermes-agent/.hermes-runtime/python/cpython-3.11.16-windows-aarch64-none/Lib/site-packages/nemoclaw_native_windows.py",
+    "hermes-agent/venv/Lib/site-packages/nemoclaw_native_windows.py",
+    "tools/browser-use/Lib/site-packages/nemoclaw_native_windows.py",
+  ];
+  assert.deepEqual(derivation.value.adapterUpgrade.hookPaths, hooks);
+  const inspect = new Set<string>([
+    ...personalCriticalFiles,
+    ...hooks,
+    ...wheel.value.replacement.installedFiles.map((row: any) => row.path),
+    ...build.files.map((row: any) => "mxc-compat/" + row.file),
+    "mxc-compat/DETOURS-LICENSE.txt",
+    "mxc-compat/build-receipt.json",
+    "nemoclaw-windows-runtime.json",
+  ]);
+  for (const name of inspect) {
+    const expected = indexed.get(name);
+    assert(
+      expected && Number.isSafeInteger(expected.bytes) && /^[a-f0-9]{64}$/u.test(expected.sha256),
+    );
+    const actual = fileIdentity(path.join(runtime, name));
+    assert.equal(actual.bytes, expected.bytes, name);
+    assert.equal(actual.sha256, expected.sha256, name);
+    if (hooks.includes(name)) assert.equal(actual.sha256, adapterSha256);
+  }
+  return {
+    candidate,
+    derivation,
+    documents: [wheel, git, compatibility, compatibilityProof, mxc, inventory].map((document) => ({
+      path: document.path,
+      bytes: document.bytes,
+      sha256: document.sha256,
+    })),
+    criticalFiles: personalCriticalFiles.map((name) => indexed.get(name)),
+  };
+}
 
 export function personalRequest(
   node: string,
@@ -21,13 +323,26 @@ export function personalRequest(
     [node, worker, runtime, share, windows].some((value) => /["\r\n]/u.test(value))
   )
     throw new Error("Invalid Personal probe identity or path.");
+  if (
+    share !==
+      path.win32.join(
+        path.win32.parse(runtime).root,
+        `NemoClawMsysProof-${nonce.slice(0, 12)}-state-start`,
+      ) ||
+    path.win32.dirname(node) !== path.win32.dirname(worker)
+  )
+    throw new Error("Invalid admitted Personal probe state or launcher path.");
   const home = path.win32.join(share, "home");
   const temp = path.win32.join(share, "temp");
   const environment = {
+    GITHUB_ACTIONS: "true",
+    NEMOCLAW_MSYS_TOKEN_INSPECTION_HOLD: "repair-query",
+    NEMOCLAW_MSYS_ASLR_METADATA: "1",
     NODE_DISABLE_COMPILE_CACHE: "1",
     PYTHONDONTWRITEBYTECODE: "1",
     COMSPEC: path.win32.join(windows, "System32/cmd.exe"),
     HERMES_HOME: home,
+    NEMOCLAW_AGENT_HOME: share,
     HOME: home,
     USERPROFILE: home,
     APPDATA: home,
@@ -51,10 +366,12 @@ export function personalRequest(
   };
   return {
     version: "0.6.0-alpha",
-    containerId: `hp-${nonce.slice(0, 12)}`,
+    containerId: `nm-${nonce.slice(0, 12)}-start`,
     containment: "processcontainer",
     process: {
       commandLine: [
+        path.win32.join(runtime, "mxc-compat/NemoClawMsysLauncher.exe"),
+        "--",
         node,
         "--experimental-strip-types",
         "--no-warnings",
@@ -62,6 +379,7 @@ export function personalRequest(
         runtime,
         path.win32.join(share, "result.json"),
         nonce,
+        path.win32.join(path.win32.dirname(worker), "personal-workload-input.json"),
       ]
         .map((value) => `"${value}"`)
         .join(" "),
@@ -130,11 +448,17 @@ async function main() {
   if (
     process.platform !== "win32" ||
     process.arch !== "arm64" ||
-    process.env.GITHUB_ACTIONS !== "true"
+    process.env.GITHUB_ACTIONS !== "true" ||
+    !/^[a-f0-9]{40}$/u.test(process.env.GITHUB_SHA ?? "")
   )
     throw new Error("The Personal candidate probe requires disposable Windows ARM64 CI.");
   const runtime = fs.realpathSync(argument("--runtime-root"));
   const mxc = argument("--mxc");
+  const compatibilityRoot = fs.realpathSync(argument("--compatibility-root"));
+  const compatibilityReceipt = argument("--compatibility-receipt");
+  const compatibilityProof = argument("--compatibility-proof");
+  const mxcBuildReceipt = argument("--mxc-build-receipt");
+  const derivedRuntimeReceipt = argument("--derived-runtime-receipt");
   const output = argument("--output");
   const windows = path.dirname(process.env.ComSpec ?? process.env.COMSPEC ?? "");
   const windowsRoot = path.dirname(windows);
@@ -143,11 +467,13 @@ async function main() {
     !/^[A-Za-z]:\\Windows$/iu.test(windowsRoot)
   )
     throw new Error("The candidate and Windows roots differ from the owned probe contract.");
+  if (compatibilityRoot !== path.join(runtime, "mxc-compat"))
+    throw new Error("Compatibility binaries must remain inside the read-only canonical runtime.");
   fs.mkdirSync(output);
   const nonce = randomBytes(12).toString("hex");
   const root = path.parse(runtime).root;
   const launcher = path.join(root, `NemoClawPersonalNode-${nonce.slice(0, 12)}`);
-  const share = path.join(root, `NemoClawPersonalShare-${nonce.slice(0, 12)}`);
+  const share = path.join(root, `NemoClawMsysProof-${nonce.slice(0, 12)}-state-start`);
   const hostScratch = path.join(root, `NemoClawBashHost-${nonce.slice(0, 12)}`);
   const environment: NodeJS.ProcessEnv = {};
   for (const key of [
@@ -166,6 +492,8 @@ async function main() {
   ])
     if (process.env[key]) environment[key] = process.env[key];
   environment.PATH = path.join(windowsRoot, "System32");
+  environment.GITHUB_ACTIONS = "true";
+  environment.NEMOCLAW_MSYS_TOKEN_INSPECTION = "repair-query";
   const cleanup = {
     executorClosed: false,
     hostDiagnosticChildrenClosed: true,
@@ -176,10 +504,10 @@ async function main() {
     schemaVersion: 1,
     classification: "canonical-personal-mxc-feasibility",
     sourceRevision: process.env.GITHUB_SHA,
-    candidateSource: "47d890728482cca05e840edd27e33e3d495aeabf",
     runtime,
     installedAcceptance: false,
     fullAgentQualified: false,
+    privateStateLeaseTested: false,
     feasibilityPassed: false,
     cleanup,
   };
@@ -187,15 +515,60 @@ async function main() {
   let attempted = false;
   let failure: unknown = null;
   let request: ReturnType<typeof personalRequest> | undefined;
+  let compatibility: ReturnType<typeof validatePersonalCompatibility> | undefined;
   try {
+    const proof = JSON.parse(fs.readFileSync(compatibilityProof, "utf8"));
+    const build = JSON.parse(fs.readFileSync(compatibilityReceipt, "utf8"));
+    const mxcBuild = JSON.parse(fs.readFileSync(mxcBuildReceipt, "utf8"));
+    compatibility = validatePersonalCompatibility(
+      proof,
+      build,
+      mxcBuild,
+      fileIdentity(
+        fileURLToPath(new URL("../mxc-bash/mxc-token-inspection.patch", import.meta.url)),
+      ).sha256,
+    );
+    assert(Array.isArray(build.sourceFiles) && build.sourceFiles.length > 0);
+    for (const source of build.sourceFiles) {
+      assert.equal(path.basename(source.path), source.path);
+      assert.equal(
+        fileIdentity(fileURLToPath(new URL("../mxc-bash/" + source.path, import.meta.url))).sha256,
+        source.sha256,
+      );
+    }
+    const derived = loadDerivedPersonalInputs(
+      derivedRuntimeReceipt,
+      runtime,
+      process.env.GITHUB_SHA!,
+      proof,
+      build,
+      mxcBuild,
+    );
+    receipt.candidateSource = derived.candidate.value.controllerSource;
+    receipt.derivedRuntime = derived;
+    for (const file of [...compatibility.files, compatibility.license]) {
+      const actual = fileIdentity(path.join(compatibilityRoot, file.file));
+      if (actual.sha256 !== file.sha256 || actual.bytes !== file.bytes)
+        throw new Error(`A proved compatibility file changed: ${file.file}`);
+      if (file.machine && actual.architecture !== file.machine)
+        throw new Error(`A proved compatibility architecture changed: ${file.file}`);
+    }
     const nodeIdentity = fileIdentity(process.execPath);
     const mxcIdentity = fileIdentity(mxc);
     if (
       nodeIdentity.sha256 !== "97cce5301a815d2dce07ac5bfd1e6039eae88185ec1d10ae4f8cb712f1732878" ||
-      mxcIdentity.sha256 !== "dde1c592270e9a659b01dccad70362da7b99fec114885fa4d625507aa775a503"
+      mxcIdentity.sha256 !== compatibility.mxcFile.sha256 ||
+      mxcIdentity.bytes !== compatibility.mxcFile.bytes ||
+      mxcIdentity.peMachine !== 0xaa64
     )
       throw new Error("An executed host binary differs from its immutable pin.");
-    receipt.hostInputs = { node: nodeIdentity, mxc: mxcIdentity };
+    receipt.hostInputs = { node: nodeIdentity, mxc: mxcIdentity, compatibility };
+    receipt.inputReceipts = [
+      compatibilityProof,
+      compatibilityReceipt,
+      mxcBuildReceipt,
+      derivedRuntimeReceipt,
+    ].map(fileIdentity);
     fs.mkdirSync(launcher);
     fs.mkdirSync(share);
     fs.mkdirSync(hostScratch);
@@ -211,6 +584,23 @@ async function main() {
         fileURLToPath(new URL("./" + name, import.meta.url)),
         path.join(launcher, name),
       );
+    const workloadInput = validatePersonalWorkloadInput(
+      {
+        schemaVersion: 1,
+        nonce,
+        runtime,
+        compatibilityProofSource: compatibility.sourceRevision,
+        gitPins: compatibility.gitPins,
+        files: derived.criticalFiles,
+      },
+      runtime,
+      nonce,
+    );
+    fs.writeFileSync(
+      path.join(launcher, "personal-workload-input.json"),
+      JSON.stringify(workloadInput, null, 2) + "\n",
+      { flag: "wx" },
+    );
     request = personalRequest(
       path.join(launcher, "node.exe"),
       path.join(launcher, "probe-personal-workload.mts"),
@@ -224,7 +614,7 @@ async function main() {
     fs.writeFileSync(policy, bytes, { flag: "wx" });
     receipt.requestSha256 = createHash("sha256").update(bytes).digest("hex");
     attempted = true;
-    const execution = await command(
+    const execution = await personalCommand(
       mxc,
       [policy, "--log-file", path.join(output, "mxc-native.log")],
       environment,
@@ -257,6 +647,7 @@ async function main() {
         nonce,
         hostEnvironment,
         "host",
+        compatibility.gitPins,
       );
       receipt.hostBashDiagnostic = diagnostic;
       cleanup.hostDiagnosticChildrenClosed = diagnostic.childrenClosed;
@@ -290,7 +681,7 @@ async function main() {
   } finally {
     if (attempted && cleanup.executorClosed && request) {
       try {
-        const deletion = await command(
+        const deletion = await personalCommand(
           mxc,
           ["--delete", "--containername", request.containerId],
           environment,

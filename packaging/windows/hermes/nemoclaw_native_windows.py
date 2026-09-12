@@ -26,6 +26,7 @@ _MODULES = {
     "tools.environments.local": "tools/environments/local.py",
     "tools.lazy_deps": "tools/lazy_deps.py",
     "tools.browser_tool_install": "tools/browser_tool_install.py",
+    "tools.browser_tool_session": "tools/browser_tool_session.py",
     "hermes_cli.update_contract": "hermes_cli/update_contract.py",
 }
 _active_root: Path | None = None
@@ -226,6 +227,51 @@ def _install_temp_directories() -> None:
     tempfile._os = _TempfileOs(tempfile._os)
 
 
+class _BrowserSessionOs:
+    """Keep the canonical browser algorithm, inheriting its owned state's DACL."""
+
+    def __init__(self, original, socket_root):
+        self.original = original
+        self.socket_root = socket_root
+
+    def makedirs(self, name, mode=0o777, exist_ok=False):
+        authority = os.environ.get("NEMOCLAW_AGENT_HOME")
+        if mode != 0o700 or not authority:
+            return self.original.makedirs(name, mode=mode, exist_ok=exist_ok)
+        # This is the host-supplied private writable state root, already bound
+        # by the native state owner/MXC policy. The canonical socket root may be
+        # the state root itself or its temp child; do not assume a TMP spelling.
+        state = _absolute_path(Path(authority))
+        root = _absolute_path(Path(self.socket_root()))
+        target = _absolute_path(Path(name))
+        try:
+            root.relative_to(state)
+        except ValueError:
+            _refuse("the browser socket root is outside its owned private state.")
+        if (
+            target.parent != root
+            or not re.fullmatch(r"agent-browser-[A-Za-z0-9_-]{1,64}", target.name)
+            or exist_ok is not True
+        ):
+            _refuse("the browser session directory identity is unsupported.")
+        for current in (*reversed(target.parents), target):
+            try:
+                kind = _path_kind(current)
+            except FileNotFoundError:
+                if current == target:
+                    break
+                raise
+            if kind != "directory":
+                _refuse("the browser directory has an invalid filesystem identity.")
+        # Python 3.11.10+ turns 0700 into an explicit owner/admin-only Windows
+        # DACL, dropping the inherited sandbox capability. Ordinary creation
+        # inherits the already restricted parent; no existing ACL is rewritten.
+        return self.original.makedirs(name, mode=0o777, exist_ok=exist_ok)
+
+    def __getattr__(self, name):
+        return getattr(self.original, name)
+
+
 def _adapt_module(module: ModuleType, root: Path, bash: Path) -> None:
     if module.__name__ == "tools.environments.local":
         original = module._find_bash
@@ -270,6 +316,8 @@ def _adapt_module(module: ModuleType, root: Path, bash: Path) -> None:
             return result
 
         module._find_agent_browser = owned_browser
+    elif module.__name__ == "tools.browser_tool_session":
+        module.os = _BrowserSessionOs(module.os, module._bt._socket_safe_tmpdir)
     elif module.__name__ == "tools.lazy_deps":
         # Config security.allow_lazy_installs:false and the upstream environment
         # switch remain set by the launcher. This native deployment admission

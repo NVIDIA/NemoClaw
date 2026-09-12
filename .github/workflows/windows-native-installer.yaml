@@ -800,7 +800,9 @@ jobs:
     name: Canonical Hermes candidate Personal MXC feasibility (Windows ARM64)
     if: ${{ github.event_name == 'workflow_dispatch' && !inputs.run_windows_native_installer && inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'personal-candidate' && !inputs.test_native_windows_runtime && !inputs.profile_native_windows }}
     runs-on: windows-11-vs2026-arm
-    timeout-minutes: 25
+    # Includes a CI-only targeted wheel build and full candidate byte export.
+    # The contained component/startup deadlines remain unchanged.
+    timeout-minutes: 60
     permissions:
       contents: read
       actions: read
@@ -835,10 +837,16 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          & packaging/windows/hermes/probe-personal-candidate.ps1 `
-            -ArtifactDirectory "$env:RUNNER_TEMP\official-hermes-personal" `
-            -BootstrapDirectory "$env:RUNNER_TEMP\personal-bootstrap" `
-            -HelperDirectory "$env:RUNNER_TEMP\personal-helper"
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+          $vsDevCmd = (& $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.ARM64 -find 'Common7\Tools\VsDevCmd.bat' | Select-Object -First 1)
+          if ($LASTEXITCODE -ne 0 -or -not $vsDevCmd) { throw 'The pinned ARM64 compiler environment is unavailable.' }
+          $pwsh = Join-Path $PSHOME 'pwsh.exe'
+          foreach ($value in @($vsDevCmd, $pwsh, $env:GITHUB_WORKSPACE, $env:RUNNER_TEMP)) {
+            if ($value -match '["%&|<>^\r\n]') { throw 'A CI invocation path contains command delimiters.' }
+          }
+          $command = 'call "' + $vsDevCmd + '" -no_logo -arch=arm64 -host_arch=arm64 -vcvars_ver=14.51.36231 -winsdk=10.0.26100.0 && "' + $pwsh + '" -NoProfile -File "' + $env:GITHUB_WORKSPACE + '\packaging\windows\hermes\probe-personal-candidate.ps1" -ArtifactDirectory "' + $env:RUNNER_TEMP + '\official-hermes-personal" -BootstrapDirectory "' + $env:RUNNER_TEMP + '\personal-bootstrap" -HelperDirectory "' + $env:RUNNER_TEMP + '\personal-helper"'
+          & $env:ComSpec /d /s /c $command
+          if ($LASTEXITCODE -ne 0) { throw 'The canonical runtime reuse/Personal phase failed; its receipts are retained.' }
       - name: Preserve small exact-candidate feasibility evidence
         if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -847,12 +855,35 @@ jobs:
           path: |
             ${{ runner.temp }}/official-hermes-personal/
             !${{ runner.temp }}/official-hermes-personal/downloads/
+            !${{ runner.temp }}/official-hermes-personal/official-hermes-runtime-build/pywinpty/tools/
+            !${{ runner.temp }}/official-hermes-personal/official-hermes-runtime-build/pywinpty/downloads/
+            !${{ runner.temp }}/official-hermes-personal/official-hermes-runtime-build/pywinpty/source/
+            !${{ runner.temp }}/official-hermes-personal/official-hermes-runtime-build/pywinpty/cargo-home/
+            !${{ runner.temp }}/official-hermes-personal/official-hermes-runtime-build/pywinpty/build-env/
+            !${{ runner.temp }}/official-hermes-personal/official-hermes-runtime-build/pywinpty/target/
+            !${{ runner.temp }}/official-hermes-personal/official-hermes-runtime-build/pywinpty/uv-cache/
+            !${{ runner.temp }}/official-hermes-personal/official-hermes-runtime-build/pywinpty/npm-cache/
+            !${{ runner.temp }}/official-hermes-personal/official-hermes-runtime-candidate/*.tar.gz
+            !${{ runner.temp }}/official-hermes-personal/official-hermes-runtime-candidate/*.tar.gz.partial
             ${{ runner.temp }}/personal-bootstrap/export-controls.json
             ${{ runner.temp }}/personal-bootstrap/results/
             ${{ runner.temp }}/personal-controls/
             ${{ runner.temp }}/personal-helper/build-receipt.json
             ${{ runner.temp }}/personal-helper/build.log
           if-no-files-found: error
+          retention-days: 7
+
+      - name: Preserve the complete CI-prepared canonical candidate
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: official-hermes-derived-candidate-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/official-hermes-personal/official-hermes-runtime-candidate/
+            !${{ runner.temp }}/official-hermes-personal/official-hermes-runtime-candidate/*.tar.gz.partial
+            ${{ runner.temp }}/official-hermes-personal/official-hermes-runtime-build/official-runtime-build.json
+            ${{ runner.temp }}/official-hermes-personal/official-hermes-runtime-build/native-adaptation.json
+          if-no-files-found: warn
           retention-days: 7
 
   official-hermes-components:

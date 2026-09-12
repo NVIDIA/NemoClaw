@@ -96,6 +96,17 @@ function Assert-PythonPhaseResult {
     if ($Result.python.cryptographyVersion -cne '50.0.0' -or $Result.python.opensslVersion -cnotmatch '^OpenSSL 3\.5\.8(?: |$)') {
         throw 'The locked cryptography module did not load its pinned built OpenSSL.'
     }
+    $conpty = $Result.python.conpty
+    if ($conpty.schemaVersion -ne 1 -or $conpty.classification -cne 'ci-built-pywinpty-conpty-smoke' -or
+        $conpty.status -cne 'pass' -or $conpty.backend -cne 'ConPTY' -or
+        $conpty.pywinptyVersion -cne '2.0.15' -or $conpty.pythonVersion -cne '3.11.16' -or
+        $conpty.nativeModuleMachine -cne '0xaa64' -or $conpty.nativeModuleSha256 -cnotmatch '^[a-f0-9]{64}$' -or
+        ($conpty.exitCode -isnot [int] -and $conpty.exitCode -isnot [long]) -or $conpty.exitCode -ne 0) {
+        throw 'The built native pywinpty did not execute its explicit ConPTY backend.'
+    }
+    foreach ($name in @('constructorSucceeded','spawnSucceeded','outputContainsSentinel','childExitObserved','cleanupPassed')) {
+        if ($conpty.$name -isnot [bool] -or -not $conpty.$name) { throw 'The actual ConPTY child did not complete its build smoke.' }
+    }
     $imports = @($Result.python.imports)
     foreach ($name in @('hermes_cli.main','tools.terminal_tool','tools.file_tools','tools.web_tools','fastapi','uvicorn','winpty')) {
         if ($imports -cnotcontains $name) { throw "The official Python phase did not import $name." }

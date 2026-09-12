@@ -8,12 +8,17 @@ param(
     [Parameter(Mandatory)][string]$RustcPath,
     [Parameter(Mandatory)][string]$CargoPath,
     [Parameter(Mandatory)][string]$ControllerSource,
-    [string]$LockPath = ''
+    [string]$LockPath = '',
+    [string]$ReuseInputsPath = ''
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
 if($env:GITHUB_ACTIONS -cne 'true' -or $env:OS -cne 'Windows_NT' -or $ControllerSource -cnotmatch '^[a-f0-9]{40}$'){
     throw 'Complete runtime provisioning is an explicit Windows CI build phase.'
+}
+if(-not [string]::IsNullOrEmpty($ReuseInputsPath)){
+    & (Join-Path $PSScriptRoot 'prepare-reused-runtime.ps1') -RuntimeRoot $RuntimeRoot -ArtifactDirectory $ArtifactDirectory -ControllerSource $ControllerSource -InputFile $ReuseInputsPath
+    return
 }
 if([string]::IsNullOrEmpty($LockPath)){$LockPath=Join-Path $PSScriptRoot 'official-python.lock.json'}
 $build=Join-Path (Split-Path -Parent $ArtifactDirectory) 'official-hermes-runtime-build'

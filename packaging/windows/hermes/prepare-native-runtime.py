@@ -22,6 +22,7 @@ import os
 from pathlib import Path
 import re
 import stat
+import sys
 import uuid
 
 REVISION = "2237be355906fbe6065ce1815711eee52b2d646e"
@@ -29,6 +30,34 @@ MARKER = "nemoclaw-windows-runtime.json"
 HOOK = "nemoclaw_native_windows.py"
 PTH = "000_nemoclaw_native_windows.pth"
 MAX_METADATA = 1024 * 1024
+
+# One explicit CI transition from the complete canonical candidate (47d8907).
+PREVIOUS_ADAPTER_SHA256 = (
+    "3f8f0b14af77dedee4504bc112869a90fe89b0c8f93c434d0f29313e74bfd1fd"
+)
+UPGRADED_ADAPTER_SHA256 = (
+    "b0eca663b0b9937702c3f0418c7bc7340a39c8152c0d5ba76e87e70bca63936d"
+)
+PREVIOUS_MARKER_SHA256 = (
+    "659227b44a6a75ac8436c995ab5b8e719b2ad06f5116c49f19032a14b0b09136"
+)
+UPGRADE_HOOK_PATHS = (
+    "hermes-agent/.hermes-runtime/python/cpython-3.11.16-windows-aarch64-none/Lib/site-packages/"
+    + HOOK,
+    "hermes-agent/venv/Lib/site-packages/" + HOOK,
+    "tools/browser-use/Lib/site-packages/" + HOOK,
+)
+
+
+def adapter_upgrade_record():
+    return {
+        "schemaVersion": 1,
+        "baseCandidateSource": "47d890728482cca05e840edd27e33e3d495aeabf",
+        "previousMarkerSha256": PREVIOUS_MARKER_SHA256,
+        "beforeSha256": PREVIOUS_ADAPTER_SHA256,
+        "afterSha256": UPGRADED_ADAPTER_SHA256,
+        "hookPaths": list(UPGRADE_HOOK_PATHS),
+    }
 
 
 class AdaptationError(Exception):
@@ -185,6 +214,8 @@ def prepare_plan(
     target_root: Path,
     environments: list[str],
     browser_use_outer_inventory: dict | None = None,
+    *,
+    ci_upgrade_startup_adapter: bool = False,
 ) -> tuple[dict[Path, bytes], dict]:
     root = runtime_root.resolve(strict=True)
     if not source_root.is_absolute() or not target_root.is_absolute():
@@ -198,9 +229,30 @@ def prepare_plan(
     runtime_project = root / "hermes-agent"
     hook_bytes = (Path(__file__).parent / HOOK).read_bytes()
     prepared = None
+    upgrade = None
     marker_path = root / MARKER
+    if ci_upgrade_startup_adapter and (
+        sys.platform != "win32"
+        or os.environ.get("GITHUB_ACTIONS") != "true"
+        or target_root != root
+        or environments != ["hermes-agent/venv", "tools/browser-use"]
+        or not marker_path.is_file()
+    ):
+        raise AdaptationError(
+            "Startup adapter upgrade requires the complete CI copy before relocation."
+        )
     if marker_path.exists():
-        prepared = json.loads(read_metadata(marker_path, root))
+        marker_bytes = read_metadata(marker_path, root)
+        prepared = json.loads(marker_bytes)
+        if ci_upgrade_startup_adapter:
+            if (
+                hashlib.sha256(marker_bytes).hexdigest() != PREVIOUS_MARKER_SHA256
+                or hashlib.sha256(hook_bytes).hexdigest() != UPGRADED_ADAPTER_SHA256
+            ):
+                raise AdaptationError(
+                    "Startup adapter upgrade does not match the pinned old/new candidate bytes."
+                )
+            upgrade = adapter_upgrade_record()
         if (
             type(prepared.get("schemaVersion")) is not int
             or prepared.get("schemaVersion") != 1
@@ -208,12 +260,36 @@ def prepare_plan(
             or prepared.get("hermesRevision") != REVISION
             or prepared.get("layoutVersion") != 1
             or prepared.get("startupAdapterSha256")
-            != hashlib.sha256(hook_bytes).hexdigest()
+            != (
+                PREVIOUS_ADAPTER_SHA256
+                if upgrade
+                else hashlib.sha256(hook_bytes).hexdigest()
+            )
             or prepared.get("environments") != environments
             or not isinstance(prepared.get("generatedFiles"), dict)
         ):
             raise AdaptationError(
                 "Existing native adaptation metadata does not match this adapter."
+            )
+        if upgrade and (
+            sorted(
+                path for path in prepared["generatedFiles"] if path.endswith("/" + HOOK)
+            )
+            != list(UPGRADE_HOOK_PATHS)
+            or any(
+                prepared["generatedFiles"].get(path) != PREVIOUS_ADAPTER_SHA256
+                for path in UPGRADE_HOOK_PATHS
+            )
+        ):
+            raise AdaptationError(
+                "Startup adapter upgrade requires the exact three prior hooks."
+            )
+        if (
+            "startupAdapterUpgrade" in prepared
+            and prepared["startupAdapterUpgrade"] != adapter_upgrade_record()
+        ):
+            raise AdaptationError(
+                "The recorded startup adapter upgrade provenance changed."
             )
         for relative, digest in prepared["generatedFiles"].items():
             if (
@@ -472,10 +548,18 @@ def prepare_plan(
             ),
         ):
             path = directory / name
-            if path.exists() and read_required(path) != data:
-                raise AdaptationError(
-                    "An additive startup file collides with existing runtime content."
+            if path.exists():
+                before = read_required(path)
+                reviewed_upgrade = (
+                    upgrade is not None
+                    and name == HOOK
+                    and path.relative_to(root).as_posix() in UPGRADE_HOOK_PATHS
+                    and hashlib.sha256(before).hexdigest() == PREVIOUS_ADAPTER_SHA256
                 )
+                if before != data and not reviewed_upgrade:
+                    raise AdaptationError(
+                        "An additive startup file collides with existing runtime content."
+                    )
             changes[path] = data
     marker = {
         "schemaVersion": 1,
@@ -495,6 +579,9 @@ def prepare_plan(
             for path, data in changes.items()
         },
     }
+    lineage = upgrade or (prepared or {}).get("startupAdapterUpgrade")
+    if lineage:
+        marker["startupAdapterUpgrade"] = lineage
     if len(json.dumps(marker).encode("utf-8")) > 16 * 1024:
         raise AdaptationError("The native startup marker exceeds its bound.")
     changes[root / MARKER] = (json.dumps(marker, indent=2) + "\n").encode("utf-8")
@@ -518,6 +605,9 @@ def prepare_plan(
             for path, data in changes.items()
         ],
     }
+    if lineage:
+        report["startupAdapterUpgrade"] = lineage
+        report["startupAdapterUpgradeApplied"] = upgrade is not None
     return changes, report
 
 
@@ -599,6 +689,7 @@ def main():
     parser.add_argument("--receipt", type=Path, required=True)
     parser.add_argument("--diagnostics-directory", type=Path)
     parser.add_argument("--browser-use-outer-inventory", type=Path)
+    parser.add_argument("--ci-upgrade-startup-adapter", action="store_true")
     args = parser.parse_args()
     outer_inventory = (
         json.loads(
@@ -616,6 +707,7 @@ def main():
         args.target_root,
         args.environment or ["hermes-agent/venv"],
         outer_inventory,
+        ci_upgrade_startup_adapter=args.ci_upgrade_startup_adapter,
     )
     apply_plan(
         changes,

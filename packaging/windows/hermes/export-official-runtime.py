@@ -13,6 +13,7 @@ import stat
 import sys
 import re
 import tarfile
+import shutil
 
 
 def load_inventory():
@@ -88,6 +89,222 @@ def validate_current_adaptation(runtime, report):
     module_sha = digest(Path(__file__).with_name("nemoclaw_native_windows.py"))
     validate_adaptation(runtime, report, module_sha)
     return module_sha
+
+
+def git_inventory_summary(files):
+    """Match the canonical Git producer's sorted-directory DFS and JSON bytes."""
+    rows = [
+        {"path": name[4:], "bytes": value["bytes"], "sha256": value["sha256"]}
+        for name, value in files.items()
+        if name.startswith("git/")
+    ]
+    rows.sort(
+        key=lambda row: tuple(
+            part.encode("utf-16-be", "surrogatepass") for part in row["path"].split("/")
+        )
+    )
+    encoded = json.dumps(rows, ensure_ascii=False, separators=(",", ":")).encode(
+        "utf-8"
+    )
+    return (
+        len(rows),
+        sum(row["bytes"] for row in rows),
+        hashlib.sha256(encoded).hexdigest(),
+    )
+
+
+def validate_reuse(runtime, inputs, output, inventory_owner, *, payload=None):
+    """Bind the one-package rebuild and exact Git/compat changes to the full base."""
+    if sys.platform != "win32" or os.environ.get("GITHUB_ACTIONS") != "true":
+        raise ValueError("Complete runtime reuse requires Windows CI")
+    here = Path(__file__).parent
+    spec = importlib.util.spec_from_file_location(
+        "targeted_pywinpty", here / "rebuild-pywinpty-conpty.py"
+    )
+    wheel_owner = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(wheel_owner)
+    wheel_evidence = Path(inputs["pywinptyEvidence"])
+    wheel_receipt_path = wheel_evidence / "pywinpty-rebuild.json"
+    wheel_receipt = json.loads(wheel_receipt_path.read_text(encoding="utf-8"))
+    wheel_owner.validate_rebuild_receipt(runtime, wheel_receipt, wheel_evidence)
+    before = json.loads((wheel_evidence / "after-inventory.json").read_text())
+    expected = wheel_owner.identities(before)
+    git_path = Path(inputs["gitReceipt"])
+    git = json.loads(git_path.read_text(encoding="utf-8"))
+    if (
+        git.get("schemaVersion") != 1
+        or git.get("classification") != "ci-derived-initialized-canonical-hermes-git"
+        or git.get("baseCandidateSource") != wheel_receipt["base"]["sourceRevision"]
+        or git.get("baseInventorySha256") != wheel_receipt["base"]["inventorySha256"]
+        or git.get("allOtherFilesUnchanged") is not True
+        or git.get("firstLaunchSetupAllowed") is not False
+        or git.get("fileCount") != 7835
+        or git.get("fullAgentQualified") is not False
+        or git.get("installedAcceptance") is not False
+        or git.get("filesReplacedAtBuild") != 3
+        or git.get("personalLoginShellQualificationRequired") is not True
+        or git.get("initializedFilesPreserved")
+        != [
+            "clangarm64/libexec/git-core/dlls-copied",
+            "etc/hosts",
+            "etc/mtab",
+            "etc/networks",
+            "etc/protocols",
+            "etc/services",
+        ]
+    ):
+        raise ValueError("Initialized canonical Git derivation differs")
+    if git_inventory_summary(expected) != (
+        git["fileCount"],
+        git["beforeLogicalBytes"],
+        git["beforeInventorySha256"],
+    ):
+        raise ValueError("Canonical Git before-inventory binding differs")
+    if any(
+        name == "git/post-install.bat" or name.startswith("git/etc/post-install/")
+        for name in expected
+    ):
+        raise ValueError("First-launch Git setup returned to the runtime")
+    proof_path = Path(inputs["compatibilityProof"])
+    if (
+        digest(proof_path)
+        != "db7621fb538c4dca295a485599609391f77e9f821b75727622a0bd91a57386f0"
+    ):
+        raise ValueError("The exact passed Windows compatibility proof changed")
+    proof = json.loads(proof_path.read_text(encoding="utf-8"))
+    compat_path = Path(inputs["compatibilityReceipt"])
+    compat = json.loads(compat_path.read_text(encoding="utf-8"))
+    mxc_path = Path(inputs["mxcBuildReceipt"])
+    mxc = json.loads(mxc_path.read_text(encoding="utf-8"))
+    if (
+        proof.get("classification") != "small-msys-appcontainer-compatibility-proof"
+        or proof.get("sourceRevision") != "645a04fe0c60ed6e4410bdb03dea62959be15ecb"
+        or proof.get("passed") is not True
+        or proof.get("normalCleanup") is not True
+        or proof["inputs"]["compatibility"] != compat
+        or proof["inputs"]["mxcBuild"] != mxc
+        or compat.get("status") != "built"
+    ):
+        raise ValueError(
+            "The reused compatibility bytes lack their passed Windows proof"
+        )
+    source_directory = here.parent / "mxc-bash"
+    for row in compat["sourceFiles"]:
+        if (
+            Path(row["path"]).name != row["path"]
+            or digest(source_directory / row["path"]) != row["sha256"]
+        ):
+            raise ValueError("Compatibility source changed after its Windows proof")
+    if digest(source_directory / "mxc-token-inspection.patch") != mxc["patchSha256"]:
+        raise ValueError("The tested MXC patch changed")
+    proved_images = {
+        row["path"]: row for row in proof["inputs"]["gitDerivation"]["files"]
+    }
+    if len(git.get("files", [])) != 3 or {r["path"] for r in git["files"]} != set(
+        proved_images
+    ):
+        raise ValueError("The canonical Git image set changed")
+    for row in git["files"]:
+        proved = proved_images[row["path"]]
+        for key in (
+            "beforeSha256",
+            "afterSha256",
+            "beforeBytes",
+            "bytes",
+            "onlyMetadataChanged",
+            "sections",
+        ):
+            if row[key] != proved[key]:
+                raise ValueError("A Git image differs from its native proof")
+        name = "git/" + row["path"]
+        if expected[name] != {
+            "bytes": row["beforeBytes"],
+            "sha256": row["beforeSha256"],
+        }:
+            raise ValueError("Git no longer matches the canonical base")
+        expected[name] = {"bytes": row["bytes"], "sha256": row["afterSha256"]}
+    if git_inventory_summary(expected) != (
+        git["fileCount"],
+        git["afterLogicalBytes"],
+        git["afterInventorySha256"],
+    ):
+        raise ValueError("Canonical Git after-inventory binding differs")
+    copied = [
+        *compat["files"],
+        compat["license"],
+        {
+            "file": "build-receipt.json",
+            "bytes": compat_path.stat().st_size,
+            "sha256": digest(compat_path),
+        },
+    ]
+    if len(copied) != 5 or {r["file"] for r in copied} != {
+        "NemoClawMsysLauncher.exe",
+        "NemoClawMsysCompat-arm64.dll",
+        "NemoClawMsysCompat-x64.dll",
+        "DETOURS-LICENSE.txt",
+        "build-receipt.json",
+    }:
+        raise ValueError("Unexpected compatibility runtime member")
+    for row in copied:
+        name = "mxc-compat/" + row["file"]
+        if name in expected:
+            raise ValueError("Compatibility collides with the canonical runtime")
+        expected[name] = {"bytes": row["bytes"], "sha256": row["sha256"]}
+    actual = inventory_owner.inventory(runtime) if payload is None else payload
+    if wheel_owner.identities(actual) != expected:
+        raise ValueError(
+            "The complete runtime changed outside the recorded composition"
+        )
+    if set(actual["directories"]) != set(before["directories"]) | {"mxc-compat"}:
+        raise ValueError("Unrecorded runtime directory changes")
+    original = Path(inputs["originalBuildRoot"])
+    if (
+        original == runtime
+        or original.exists()
+        or not re.fullmatch(
+            r"[A-Za-z]:\\NemoClawHermesProbe-[a-f0-9]{12}", str(original)
+        )
+    ):
+        raise ValueError("The original canonical build root must be absent")
+    documents = {}
+    for key, source, filename in (
+        ("pywinpty", wheel_receipt_path, "pywinpty-rebuild.json"),
+        ("git", git_path, "canonical-git-derivation.json"),
+        ("compatibility", compat_path, "msys-build.json"),
+        ("compatibilityProof", proof_path, "bash-compatibility-proof.json"),
+        ("mxc", mxc_path, "mxc-build.json"),
+    ):
+        destination = output / filename
+        if destination.exists():
+            raise ValueError("Derivation evidence output must be fresh")
+        shutil.copyfile(source, destination)
+        documents[key] = {
+            "file": filename,
+            "bytes": destination.stat().st_size,
+            "sha256": digest(destination),
+        }
+    marker = json.loads((runtime / "nemoclaw-windows-runtime.json").read_text())
+    result = {
+        "schemaVersion": 1,
+        "classification": "reused-complete-canonical-hermes-runtime",
+        "base": wheel_receipt["base"],
+        "runtimeRootAtExport": str(runtime),
+        "originalBuildRoot": str(original),
+        "adapterUpgrade": marker["startupAdapterUpgrade"],
+        "onlyRecordedChanges": True,
+        "completeCanonicalBaseVerified": True,
+        "fullAgentQualified": False,
+        "installedAcceptance": False,
+        **documents,
+    }
+    destination = output / "candidate-derivation.json"
+    save(destination, result)
+    return {
+        "file": destination.name,
+        "bytes": destination.stat().st_size,
+        "sha256": digest(destination),
+    }
 
 
 class HashedReader:
@@ -175,6 +392,7 @@ def main():
     parser.add_argument("--adaptation-receipt", type=Path, required=True)
     parser.add_argument("--output-directory", type=Path, required=True)
     parser.add_argument("--controller-source", required=True)
+    parser.add_argument("--derivation-inputs", type=Path)
     args = parser.parse_args()
     runtime = args.runtime_root.resolve(strict=True)
     output = args.output_directory.resolve()
@@ -215,6 +433,14 @@ def main():
         )
         source_files = inventory.verify_official_source(runtime, args.source_archive)
         payload = inventory.inventory(runtime)
+        if args.derivation_inputs:
+            result["derivation"] = validate_reuse(
+                runtime,
+                json.loads(args.derivation_inputs.read_text(encoding="utf-8")),
+                output,
+                inventory,
+                payload=payload,
+            )
         save(output / "payload-inventory.json", payload)
         save(
             output / "upstream-locked-inputs.json",

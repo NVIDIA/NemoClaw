@@ -237,7 +237,7 @@ export function imageEvidenceNames(relative: string) {
   };
 }
 
-function inventory(root: string) {
+export function inventory(root: string) {
   const files: { path: string; bytes: number; sha256: string }[] = [];
   function visit(directory: string) {
     for (const name of fs.readdirSync(directory).sort()) {
