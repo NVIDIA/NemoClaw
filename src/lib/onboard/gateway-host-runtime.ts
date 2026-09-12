@@ -125,6 +125,11 @@ export interface GatewayHostRuntime {
     persistOwner?: (owner: GatewayOwner) => void,
   ): GatewayOwner;
   bindGatewayOwner(owner: GatewayOwner): void;
+  /** Exact endpoint and optional client TLS bundle for a direct host forward. */
+  getGatewayForwardRuntimeAuthority(): {
+    readonly gatewayEndpoint: string;
+    readonly localTlsDir?: string;
+  };
   /** Local endpoint of the gateway this process operates. */
   getGatewayLocalEndpoint(): string;
   getGatewayOwner(): GatewayOwner;
@@ -555,12 +560,27 @@ export function createGatewayHostRuntime(deps: GatewayHostRuntimeDeps): GatewayH
     boundOwner = owner;
   }
 
-  function getGatewayLocalEndpoint(): string {
-    const owner = getGatewayOwner();
+  function gatewayEndpointForOwner(owner: GatewayOwner): string {
     if (isExternallySupervised(owner) && owner.endpoint) return owner.endpoint;
     const { getGatewayHttpsEndpoint } =
       require("./docker-driver-gateway-env") as typeof import("./docker-driver-gateway-env");
-    return getGatewayHttpsEndpoint(deps.gatewayPort());
+    return new URL(getGatewayHttpsEndpoint(owner.gatewayPort)).origin;
+  }
+
+  function getGatewayForwardRuntimeAuthority(): {
+    readonly gatewayEndpoint: string;
+    readonly localTlsDir?: string;
+  } {
+    const owner = getGatewayOwner();
+    const localTlsDir = getExternalGatewayClientEnv(owner)?.OPENSHELL_LOCAL_TLS_DIR;
+    return {
+      gatewayEndpoint: gatewayEndpointForOwner(owner),
+      ...(localTlsDir ? { localTlsDir } : {}),
+    };
+  }
+
+  function getGatewayLocalEndpoint(): string {
+    return gatewayEndpointForOwner(getGatewayOwner());
   }
 
   function getGatewayStartEnv(): Record<string, string> {
@@ -592,6 +612,7 @@ export function createGatewayHostRuntime(deps: GatewayHostRuntimeDeps): GatewayH
     assertGatewayStartAllowed,
     attachGateway,
     bindGatewayOwner,
+    getGatewayForwardRuntimeAuthority,
     getGatewayLocalEndpoint,
     getGatewayOwner,
     getGatewayStartEnv,

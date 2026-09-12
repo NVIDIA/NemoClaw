@@ -48,6 +48,15 @@ It also compares that alias with `model_alias` in `/props` when `/props` returns
 NemoClaw refuses the attachment when the two values differ.
 If `/props` omits `model_alias`, NemoClaw attaches the server using the remaining native evidence.
 
+<AgentOnly variant="openclaw,hermes">
+
+After validation, NemoClaw uses the selected model's `meta.n_ctx` value from the authenticated `/v1/models` response as the served context window.
+It does not use `meta.n_ctx_train`, and it does not adopt missing, malformed, or out-of-range context metadata.
+A valid `NEMOCLAW_CONTEXT_WINDOW` value takes precedence over the detected value.
+Refer to [Configure Model Limits](../manage-inference/configure-model-limits) for context-window behavior and overrides.
+
+</AgentOnly>
+
 For interactive onboarding, run:
 
 ```bash

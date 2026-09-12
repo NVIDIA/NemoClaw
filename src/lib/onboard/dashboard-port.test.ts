@@ -20,6 +20,7 @@ import {
   preflightDashboardPortRangeAvailability,
   reserveCreateSandboxDashboardPort,
   reserveDashboardPort,
+  reservePortAfterOwnedForwardDelete,
   resolveCreateSandboxDashboardPort,
   withDashboardPortReservationLock,
   withDashboardPortReservationScope,
@@ -441,6 +442,83 @@ describe("dashboard port reservation", () => {
     assert.deepEqual(warnings, ["  ! Port 18789 is taken. Using port 18790 instead."]);
     await result.reservation?.release();
     assert.deepEqual(released, [18790]);
+  });
+
+  it("defers a persisted port reservation only for the exact owned forward", async () => {
+    const findAvailablePort = vi.fn(() => 18790);
+    const reservePort = vi.fn();
+    const ownsExistingForward = vi.fn((port: number) => port === 18789);
+
+    const result = await reserveCreateSandboxDashboardPort(
+      {
+        sandboxName: "cursor",
+        controlUiPort: null,
+        chatUiUrlEnv: null,
+        persistedPort: 18789,
+        agentForwardPort: null,
+        forwardListOutput: "",
+        registryOccupiedPorts: new Map(),
+        findAvailablePort,
+        ownsExistingForward,
+      },
+      reservePort,
+    );
+
+    expect(result).toMatchObject({
+      effectivePort: 18789,
+      preferredPort: 18789,
+      reservation: null,
+    });
+    expect(ownsExistingForward).toHaveBeenCalledExactlyOnceWith(18789);
+    expect(findAvailablePort).not.toHaveBeenCalled();
+    expect(reservePort).not.toHaveBeenCalled();
+  });
+
+  it("retries only EADDRINUSE while an owned forward listener retires", async () => {
+    const release = vi.fn(async () => undefined);
+    const reservePort = vi
+      .fn()
+      .mockRejectedValueOnce(Object.assign(new Error("still bound"), { code: "EADDRINUSE" }))
+      .mockRejectedValueOnce(Object.assign(new Error("still bound"), { code: "EADDRINUSE" }))
+      .mockResolvedValueOnce({ port: 18789, release });
+    const sleep = vi.fn();
+
+    const reservation = await reservePortAfterOwnedForwardDelete(18789, {
+      reservePort,
+      sleep,
+    });
+
+    expect(reservation.port).toBe(18789);
+    expect(reservePort.mock.calls).toEqual([[18789], [18789], [18789]]);
+    expect(sleep.mock.calls).toEqual([[1000], [1000]]);
+    await reservation.release();
+    expect(release).toHaveBeenCalledOnce();
+  });
+
+  it("does not retry a non-collision reservation failure", async () => {
+    const failure = Object.assign(new Error("permission denied"), { code: "EACCES" });
+    const reservePort = vi.fn().mockRejectedValue(failure);
+    const sleep = vi.fn();
+
+    await expect(reservePortAfterOwnedForwardDelete(18789, { reservePort, sleep })).rejects.toBe(
+      failure,
+    );
+    expect(reservePort).toHaveBeenCalledOnce();
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it("rebinds only a dashboard port deferred for an owned forward", async () => {
+    const release = vi.fn(async () => undefined);
+    const reservePort = vi.fn(async (port: number) => ({ port, release }));
+
+    await withDashboardPortReservationScope(async (scope) => {
+      scope.deferOwnedForwardPort(18789);
+      await scope.rebindAfterOwnedForwardDelete({ reservePort, sleep: vi.fn() });
+      expect(scope.current?.port).toBe(18789);
+    });
+
+    expect(reservePort).toHaveBeenCalledExactlyOnceWith(18789);
+    expect(release).toHaveBeenCalledOnce();
   });
 });
 
