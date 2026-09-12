@@ -425,7 +425,8 @@ function Get-WslCheckoutSyncScript {
         "git -C $workdirLiteral clean -ffdx"
         $ownerCommand
         "chmod -R go-w -- $workdirLiteral"
-        "chmod 0755 $workdirRootLiteral $workdirLiteral"
+        "chmod 0711 $workdirRootLiteral"
+        "chmod 0700 $workdirLiteral"
         "git -C $workdirLiteral status --short"
         "echo 'WSL ext4 workspace is ready'"
     ) -join "`n"

@@ -992,8 +992,10 @@ describe("focused staging Brev Launchable lane", () => {
 
   it("reports readiness diagnostics when the initial budget expires while logging", () => {
     const { calls, env, state, workDir } = fixture({
+      brevExecStatus: 0,
       delayWorkspaceSshLog: true,
       sshAliasQueryStatus: 42,
+      sshProbeStatus: 0,
       sshReadyAfter: Number.MAX_SAFE_INTEGER,
     });
     const result = run({ ...env, BREV_SSH_TIMEOUT_SECONDS: "1" });
@@ -1001,7 +1003,12 @@ describe("focused staging Brev Launchable lane", () => {
     const output = emittedOutput(result, workDir);
     expect(output).toContain("Readiness Brev refresh last failure: none");
     expect(output).toContain("Readiness SSH alias nclaw-e2e-test-1: unavailable");
-    expect(fs.readFileSync(calls, "utf8")).not.toContain("ssh readiness attempt");
+    expect(output).toContain("Readiness Brev refresh: not run before the readiness deadline");
+    expect(output).toContain("Readiness classification: direct SSH recovered during diagnostics");
+    expect(output).not.toContain("Readiness classification: Brev refresh/configuration failure");
+    const commands = fs.readFileSync(calls, "utf8");
+    expect(commands).not.toContain("timeout 1s brev refresh");
+    expect(commands).not.toContain("ssh readiness attempt");
     expect(fs.existsSync(state)).toBe(false);
     expect(JSON.parse(fs.readFileSync(path.join(workDir, "cleanup.json"), "utf8"))).toMatchObject({
       status: "ABSENT",

@@ -1252,7 +1252,6 @@ const { createSandbox } = require(${onboardPath});
       const registryPath = JSON.stringify(
         path.join(repoRoot, "src", "lib", "state", "registry.ts"),
       );
-
       fs.mkdirSync(fakeBin, { recursive: true });
       writeOkOpenshell(fakeBin);
 
@@ -1286,6 +1285,7 @@ registry.getSandbox = () => fixtureMocks.sandboxLifecycleFixture(
   { name: "my-assistant", toolDisclosure: "progressive" },
   { sandboxId: existingSandbox.state.sandboxId },
 );
+require(${JSON.stringify(path.join(repoRoot, "src", "lib", "onboard", "dashboard-port.ts"))}).isPortBoundOnHost = () => false;
 const { createSandbox } = require(${onboardPath});
 
 (async () => {

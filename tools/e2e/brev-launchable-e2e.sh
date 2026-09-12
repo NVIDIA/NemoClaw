@@ -353,8 +353,15 @@ run_connectivity_diagnostics() {
   local exec_error exec_status ssh_error ssh_status
   local workspace_alias
   local deadline=$((SECONDS + timeout_seconds))
+  local refresh_failed=0
 
   log "Readiness diagnostics budget: up to $timeout_seconds seconds"
+
+  if [ "$refresh_status" = "not-run" ]; then
+    log "Readiness Brev refresh: not run before the readiness deadline"
+  elif [ "$refresh_status" -ne 0 ]; then
+    refresh_failed=1
+  fi
 
   ssh_alias_status "$deadline" "$INSTANCE_NAME" workspace_alias
   log "Readiness SSH alias $INSTANCE_NAME: $workspace_alias"
@@ -369,7 +376,7 @@ run_connectivity_diagnostics() {
 
   if [ "$exec_status" = "not-run" ] || [ "$ssh_status" = "not-run" ]; then
     log "Readiness classification: incomplete diagnostics; inspect available bounded probe results"
-  elif [ "$refresh_status" -ne 0 ]; then
+  elif [ "$refresh_failed" -eq 1 ]; then
     log "Readiness classification: Brev refresh/configuration failure"
   elif [ "$exec_status" -eq 0 ] && [ "$ssh_status" -ne 0 ]; then
     log "Readiness classification: Brev execution works but direct SSH fails"
@@ -387,7 +394,7 @@ wait_for_workspace_ssh() {
   local deadline=$((SECONDS + timeout_seconds))
   local remaining refresh_timeout sleep_seconds ssh_timeout refresh_error ssh_error
   local attempts=0
-  local refresh_status=1 ssh_status=1
+  local refresh_status="not-run" ssh_status=1
   local last_refresh_error="" last_refresh_failure_status=""
   local last_ssh_error="" last_ssh_failure_status=""
   log "Waiting up to $timeout_seconds seconds for workspace SSH access"

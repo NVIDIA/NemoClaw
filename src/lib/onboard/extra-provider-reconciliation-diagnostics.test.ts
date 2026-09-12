@@ -244,7 +244,7 @@ describe("planRegisteredExtraProviders diagnostics", () => {
     ).toEqual(["tavily-search"]);
   });
 
-  it("parses adversarial diagnostics within a bounded budget (#6501)", () => {
+  it("parses adversarial diagnostics within a bounded budget (#6501)", async () => {
     const adversarial = [
       `${"error: ".repeat(2_000)}provider 'redos-provider' not found`,
       `Error: provider '${"a".repeat(8_000)}`,
@@ -255,5 +255,10 @@ describe("planRegisteredExtraProviders diagnostics", () => {
 
     expect(reportsExactProviderNotFound(adversarial, "redos-provider", LIMIT)).toBe(false);
     expect(performance.now() - started).toBeLessThan(100);
+    expect(
+      await reconcile(["redos-provider"], {
+        "redos-provider": { status: 1, stderr: adversarial },
+      }),
+    ).toEqual(["redos-provider"]);
   });
 });
