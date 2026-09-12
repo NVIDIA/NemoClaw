@@ -3,122 +3,165 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { MessagingSetupApplier } from "../messaging/applier/setup-applier";
-import type { SandboxMessagingPlan } from "../messaging/manifest";
-import type { Session } from "../state/onboard-session";
 import {
-  type CredentialProviderRegistrationDeps,
-  createCredentialProviderRegistration,
-} from "./credential-provider-registration";
-import { MESSAGING_BRIDGE_PENDING_VALUE } from "./messaging-bridge-provider";
+  credentialKey,
+  plan,
+  privateKey,
+  providerName,
+  refreshLifecycle,
+} from "../../../test/support/credential-provider-refresh";
+import { MessagingSetupApplier } from "../messaging/applier/setup-applier";
 
-const providerName = "alpha-googlechat-bridge";
+const providerRequest = {
+  target: { kind: "named" as const, gatewayName: "test-gateway" },
+  providerName,
+};
 
-function googleChatPlan(): SandboxMessagingPlan {
-  return {
-    schemaVersion: 1,
-    sandboxName: "alpha",
-    agent: "openclaw",
-    workflow: "onboard",
-    channels: [],
-    disabledChannels: [],
-    credentialBindings: [],
-    networkPolicy: { presets: [], entries: [] },
-    agentRender: [],
-    buildSteps: [],
-    stateUpdates: [],
-    healthChecks: [],
-  };
-}
+describe("onboarding provider refresh", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+  });
 
-describe("onboarding provider refresh forwarding", () => {
-  afterEach(() => vi.restoreAllMocks());
+  it("registers once across staging and creation when refresh status precedes the provider write", async () => {
+    const flow = refreshLifecycle();
+    await flow.stage();
+    await expect(flow.materialize()).resolves.toEqual([providerName]);
 
-  it("forwards Google Chat refresh material to the messaging applier (#9806)", async () => {
-    const privateKey = "test-google-chat-private-key";
-    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    const serviceAccount = JSON.stringify({
-      client_email: "bot@example.test",
-      private_key: privateKey,
-    });
-    const session = { stagedCredentialProviders: [] } as unknown as Session;
-    const runOpenshell = vi.fn();
-    const deps: CredentialProviderRegistrationDeps = {
-      root: process.cwd(),
-      runOpenshell: runOpenshell as unknown as CredentialProviderRegistrationDeps["runOpenshell"],
-      getGatewayName: () => "test-gateway",
-      getCredential: (key) => (key === "GOOGLECHAT_SERVICE_ACCOUNT" ? serviceAccount : null),
-      updateSession: vi.fn(
-        (mutator: (current: Session) => Session | void): Session => mutator(session) ?? session,
-      ),
-      stagedLegacyValues: new Map(),
-      migratedLegacyKeys: new Set(),
-      persistMigratedLegacyKeys: vi.fn(),
-    };
-    const apply = vi.spyOn(MessagingSetupApplier, "applyCredentialsAtOpenShell").mockResolvedValue({
-      upserted: [],
-      reused: [
-        {
-          channelId: "googlechat",
-          credentialId: "GOOGLE_CHAT_ACCESS_TOKEN",
-          providerName,
-          envKey: "GOOGLE_CHAT_ACCESS_TOKEN",
-        },
+    expect(flow.adapter.createProvider).toHaveBeenCalledOnce();
+    expect(flow.adapter.deleteProvider).not.toHaveBeenCalled();
+    expect(flow.adapter.configureProviderRefresh).toHaveBeenCalledExactlyOnceWith({
+      ...providerRequest,
+      credentialKey,
+      strategy: "google_service_account_jwt",
+      material: [
+        { key: "client_email", value: "bot@example.test" },
+        { key: "scope", value: "https://www.googleapis.com/auth/chat.bot" },
       ],
-      missing: [],
-      replacedProviderNames: [],
-      providerNames: [providerName],
-      sandboxCreateProviderArgs: ["--provider", providerName],
+      secretMaterial: [{ key: "private_key", value: privateKey }],
     });
-    const registration = createCredentialProviderRegistration(deps);
-    const plan = googleChatPlan();
-
-    const providerNames = await registration.applyMessagingProviders(
-      [
-        {
-          name: providerName,
-          envKey: "GOOGLE_CHAT_ACCESS_TOKEN",
-          token: MESSAGING_BRIDGE_PENDING_VALUE,
-          providerType: "google-chat-bridge",
-        },
-      ],
-      {},
-      deps.runOpenshell,
-      plan,
-    );
-
-    expect(providerNames).toEqual([providerName]);
-    expect(apply).toHaveBeenCalledExactlyOnceWith(
-      plan,
-      expect.objectContaining({
-        refreshes: [
-          {
-            channelId: "googlechat",
-            providerName,
-            credentialKey: "GOOGLE_CHAT_ACCESS_TOKEN",
-            strategy: "google_service_account_jwt",
-            material: [
-              { key: "client_email", value: "bot@example.test" },
-              { key: "scope", value: "https://www.googleapis.com/auth/chat.bot" },
-            ],
-            secretMaterial: [{ key: "private_key", value: privateKey }],
-          },
-        ],
-      }),
-    );
-    const applyOptions = apply.mock.calls[0]?.[1];
-    expect(applyOptions?.refreshes?.flatMap(({ secretMaterial }) => secretMaterial)).toEqual([
-      { key: "private_key", value: privateKey },
+    expect(flow.session.stagedCredentialProviders).toEqual([providerName]);
+    expect([...flow.options().refreshReceipts!.values()]).toEqual([
+      expect.stringMatching(/^[a-f0-9]{64}$/u),
     ]);
-    expect(JSON.stringify(applyOptions).split(privateKey)).toHaveLength(2);
-    expect(JSON.stringify(applyOptions?.definitions)).not.toContain(privateKey);
     expect(
-      JSON.stringify(applyOptions?.refreshes?.flatMap(({ material }) => material)),
+      JSON.stringify([
+        plan,
+        flow.session,
+        flow.log.mock.calls,
+        [...flow.options().refreshReceipts!],
+        flow.options().definitions,
+        flow.options().refreshes![0].material,
+      ]),
     ).not.toContain(privateKey);
-    expect(JSON.stringify({ providerNames, diagnostics: consoleError.mock.calls })).not.toContain(
-      privateKey,
+  });
+
+  it.each([
+    ["secretMaterial", { key: "private_key", value: "replacement-key" }],
+    ["material", { key: "scope", value: "changed-scope" }],
+  ] as const)("reconfigures refresh when %s changes", async (field, entry) => {
+    const flow = refreshLifecycle();
+    await flow.stage();
+    const options = flow.options();
+
+    await expect(
+      MessagingSetupApplier.applyCredentialsAtOpenShell(plan, {
+        ...options,
+        refreshes: [{ ...options.refreshes![0], [field]: [entry] }],
+      }),
+    ).rejects.toThrow("last status 'configured'");
+    expect(flow.adapter.configureProviderRefresh).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not reuse a staged refresh on another gateway", async () => {
+    const flow = refreshLifecycle();
+    await flow.stage();
+
+    await expect(
+      MessagingSetupApplier.applyCredentialsAtOpenShell(plan, {
+        ...flow.options(),
+        target: { kind: "named", gatewayName: "other-gateway" },
+      }),
+    ).rejects.toThrow("last status 'configured'");
+    expect(flow.adapter.configureProviderRefresh).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not reuse a staged refresh after the provider revision changes", async () => {
+    const flow = refreshLifecycle();
+    await flow.stage();
+    await flow.adapter.updateProvider({ ...providerRequest, credentials: [], config: [] });
+
+    await expect(flow.materialize()).rejects.toThrow("last status 'configured'");
+    expect(flow.adapter.configureProviderRefresh).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects provider revision changes during reuse verification", async () => {
+    const flow = refreshLifecycle();
+    await flow.stage();
+    vi.mocked(flow.adapter.getProviderRefreshStatus).mockImplementationOnce(async () => {
+      await flow.adapter.updateProvider({ ...providerRequest, credentials: [], config: [] });
+      return { ok: true, value: { status: "refreshed" } };
+    });
+
+    await expect(flow.materialize()).rejects.toThrow(
+      "changed while confirming its refresh registration",
     );
-    expect(JSON.stringify({ plan, session })).not.toContain(privateKey);
-    expect(deps.persistMigratedLegacyKeys).not.toHaveBeenCalled();
+    expect(flow.adapter.configureProviderRefresh).toHaveBeenCalledOnce();
+  });
+
+  it("cleans up an initial pending mint without retaining a receipt", async () => {
+    const flow = refreshLifecycle();
+    vi.mocked(flow.adapter.getProviderRefreshStatus).mockResolvedValue({
+      ok: true,
+      value: { status: "configured" },
+    });
+
+    await expect(flow.stage()).rejects.toMatchObject({
+      message: expect.stringContaining("last status 'configured'"),
+      mutatedProviderNames: [],
+    });
+    expect(flow.options().refreshReceipts?.size).toBe(0);
+    expect(flow.adapter.configureProviderRefresh).toHaveBeenCalledOnce();
+    expect(flow.adapter.deleteProvider).toHaveBeenCalledOnce();
+  });
+
+  it("rejects a pending reused mint without deleting its provider", async () => {
+    const flow = refreshLifecycle();
+    await flow.stage();
+    vi.mocked(flow.adapter.getProviderRefreshStatus).mockResolvedValue({
+      ok: true,
+      value: { status: "configured" },
+    });
+
+    await expect(flow.materialize()).rejects.toMatchObject({
+      message: expect.stringContaining("last status 'configured'"),
+      mutatedProviderNames: [],
+    });
+    expect(flow.options().refreshReceipts?.size).toBe(0);
+    expect(flow.adapter.configureProviderRefresh).toHaveBeenCalledOnce();
+    expect(flow.adapter.deleteProvider).not.toHaveBeenCalled();
+  });
+
+  it("rejects a lost refresh observation while waiting for token publication", async () => {
+    const flow = refreshLifecycle();
+    const status = vi.mocked(flow.adapter.getProviderRefreshStatus);
+    const firstObservation = status.getMockImplementation()!;
+    status.mockResolvedValue({
+      ok: false,
+      error: { kind: "transport", reason: "unreachable", message: "gateway unavailable" },
+    });
+    status.mockImplementationOnce(firstObservation);
+
+    await expect(flow.stage()).rejects.toThrow("Could not observe gateway token minting");
+    expect(flow.options().refreshReceipts?.size).toBe(0);
+    expect(flow.adapter.configureProviderRefresh).toHaveBeenCalledOnce();
+    expect(flow.adapter.deleteProvider).toHaveBeenCalledOnce();
+  });
+
+  it("rejects refreshed status when the token never reaches the provider", async () => {
+    const flow = refreshLifecycle(false);
+    await expect(flow.stage()).rejects.toThrow("without confirming a provider update");
+    expect(flow.options().refreshReceipts?.size).toBe(0);
+    expect(flow.session.stagedCredentialProviders).toEqual([]);
   });
 });
