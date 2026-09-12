@@ -99,8 +99,10 @@ describe("downloadFromSandbox", () => {
     });
 
     expect(captureMock).toHaveBeenCalledTimes(2);
-    expect(captureMock.mock.calls[0]?.[0]).toEqual(expect.arrayContaining(["./-payload"]));
-    expect(captureMock.mock.calls[1]?.[0]).toEqual(expect.arrayContaining(["./-payload"]));
+    // The probe script reads the source as "$1", which is the final argv entry,
+    // so assert that position rather than mere presence in the argument list.
+    expect((captureMock.mock.calls[0]?.[0] as string[])?.at(-1)).toBe("./-payload");
+    expect((captureMock.mock.calls[1]?.[0] as string[])?.at(-1)).toBe("./-payload");
     expect(runMock).toHaveBeenCalledWith(
       ["sandbox", "download", "alpha", "./-payload", stagedArtifact],
       expect.objectContaining({
