@@ -204,7 +204,8 @@ Do not set Windows `OLLAMA_HOST` to `0.0.0.0:11434`; the wildcard listener is un
 Do not run both the Windows and WSL Ollama instances on port `11434` at the same time.
 Use one instance, or move one of them to a different port before running `$$nemoclaw onboard`.
 On a WSL RTX Spark N1x, NemoClaw ranks installed Ollama models with capacity from the selected Docker or Podman provider's CUDA proof.
-The proof-backed GPU identity qualifies the host; a Windows chassis model that reports `RTX Spark N1X` also qualifies it.
+The proof-backed GPU identity or a Windows chassis model that reports `RTX Spark N1X` qualifies the host for this ranking.
+The chassis model does not establish N1x WSL identity.
 Both providers run the same pinned CUDA workload and capacity query; their provider implementation owns the GPU injection arguments.
 When `qwen3.6:35b` is installed and that proof reports at least 30,000 MiB available, NemoClaw selects it before `qwen3.5:9b`.
 Other Windows on Arm GPUs remain compute-constrained and select `qwen3.5:9b` instead of the 30B and 35B starter models.
