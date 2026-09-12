@@ -8,8 +8,11 @@ import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
 import { withModelRouterPortLifecycleLock } from "../../inference/gateway-route-mutation-lock";
 import {
+  clearPendingHostLocalVllmRetirement,
   HOST_LOCAL_VLLM_CONTAINER_NAME,
   type HostLocalVllmRetirementResult,
+  readPendingHostLocalVllmRetirement,
+  recordPendingHostLocalVllmRetirement,
   retireHostLocalVllmRuntime,
 } from "../../inference/local-model-profile/cleanup";
 import { DEFAULT_MODEL_ROUTER_PORT, isRoutedInferenceProvider } from "../../onboard/model-router";
@@ -108,7 +111,7 @@ export function stopSandboxInferenceResources(
 }
 
 const LOCAL_VLLM_PROVIDER = "vllm-local";
-const MANAGED_VLLM_INSPECT_HINT = `Inspect it with 'docker container inspect ${HOST_LOCAL_VLLM_CONTAINER_NAME}' before you stop it.`;
+const MANAGED_VLLM_INSPECT_HINT = `Inspect it with 'docker container inspect ${HOST_LOCAL_VLLM_CONTAINER_NAME}' before you stop it, or resolve the cause and rerun this destroy to retire it.`;
 
 export type ManagedVllmDestroyOutcome =
   | { kind: "not-applicable" }
@@ -119,31 +122,85 @@ export type ManagedVllmDestroyOutcome =
 
 export type ManagedVllmDestroyDeps = {
   keepVllm?: boolean;
+  clearPendingRetirement?: typeof clearPendingHostLocalVllmRetirement;
   listHostRegistryEntries?: typeof listHostGatewayRegistryEntries;
+  readPendingRetirement?: typeof readPendingHostLocalVllmRetirement;
+  recordPendingRetirement?: typeof recordPendingHostLocalVllmRetirement;
   resolveHomeDir?: () => string;
   retireRuntime?: typeof retireHostLocalVllmRuntime;
   withHostLifecycleLock?: typeof withCurrentPortableHostFence;
 };
 
+function resolveDestroyHomeDir(deps: ManagedVllmDestroyDeps): string {
+  return (deps.resolveHomeDir ?? (() => process.env.HOME || os.homedir()))();
+}
+
+/** A sandbox whose runtime provider owns a host-local inference receipt retires its runtime through that provider. */
+function consumesManagedVllm(sandbox: SandboxEntry | null): sandbox is SandboxEntry {
+  return (
+    sandbox !== null &&
+    sandbox.provider === LOCAL_VLLM_PROVIDER &&
+    typeof sandbox.hostLocalInferenceReceipt !== "string"
+  );
+}
+
+/**
+ * Record the pending retirement before the registry row is removed. The row is
+ * the only proof that the sandbox used the container, so a destroy retry after
+ * an interrupted or preserved retirement needs this record to retire it.
+ */
+export function recordManagedVllmRetirementPending(
+  sandbox: SandboxEntry | null,
+  deps: ManagedVllmDestroyDeps = {},
+): boolean {
+  if (deps.keepVllm === true || !consumesManagedVllm(sandbox)) return false;
+  (deps.recordPendingRetirement ?? recordPendingHostLocalVllmRetirement)(
+    sandbox.name,
+    resolveDestroyHomeDir(deps),
+  );
+  return true;
+}
+
+/** A settled outcome leaves no retirement for a retry to finish. */
+function managedVllmRetirementSettled(outcome: ManagedVllmDestroyOutcome): boolean {
+  return (
+    outcome.kind === "kept" ||
+    (outcome.kind === "retirement" &&
+      outcome.status !== "preserved" &&
+      outcome.status !== "partial")
+  );
+}
+
 /**
  * Retire the host-global managed vLLM container after the destroyed sandbox's
  * registry row is gone and no registered sandbox in any gateway state root
- * still uses Local vLLM. A sandbox whose runtime provider owns a host-local
- * inference receipt retires its runtime through that provider instead.
+ * still uses Local vLLM. A retry whose row is already gone owns the retirement
+ * only through the pending record for the same sandbox name.
  */
 export async function retireManagedVllmForDestroyedSandbox(
+  sandboxName: string,
   sandbox: SandboxEntry | null,
   deps: ManagedVllmDestroyDeps = {},
 ): Promise<ManagedVllmDestroyOutcome> {
+  const home = resolveDestroyHomeDir(deps);
   if (
-    !sandbox ||
-    sandbox.provider !== LOCAL_VLLM_PROVIDER ||
-    typeof sandbox.hostLocalInferenceReceipt === "string"
+    !consumesManagedVllm(sandbox) &&
+    (deps.readPendingRetirement ?? readPendingHostLocalVllmRetirement)(home) !== sandboxName
   ) {
     return { kind: "not-applicable" };
   }
+  const outcome = await decideManagedVllmRetirement(home, deps);
+  if (managedVllmRetirementSettled(outcome)) {
+    (deps.clearPendingRetirement ?? clearPendingHostLocalVllmRetirement)(home);
+  }
+  return outcome;
+}
+
+async function decideManagedVllmRetirement(
+  home: string,
+  deps: ManagedVllmDestroyDeps,
+): Promise<ManagedVllmDestroyOutcome> {
   if (deps.keepVllm === true) return { kind: "kept", reason: "option" };
-  const home = (deps.resolveHomeDir ?? (() => process.env.HOME || os.homedir()))();
   try {
     return await (deps.withHostLifecycleLock ?? withCurrentPortableHostFence)(() => {
       const consumers = (deps.listHostRegistryEntries ?? listHostGatewayRegistryEntries)(

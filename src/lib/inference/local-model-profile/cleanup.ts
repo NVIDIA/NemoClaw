@@ -67,7 +67,11 @@ import {
 } from "../serving/vllm-host-local-lifecycle";
 import { loadManagedVllmApiKey, managedVllmStateDir } from "../vllm-api-key";
 
-export { HOST_LOCAL_VLLM_CONTAINER_NAME, HOST_LOCAL_VLLM_MANAGED_LABEL };
+export {
+  HOST_LOCAL_VLLM_CONTAINER_NAME,
+  HOST_LOCAL_VLLM_MANAGED_LABEL,
+  HOST_LOCAL_VLLM_RUNTIME_RECEIPT_FILE,
+};
 
 const LLAMA_MANAGED_LABEL = "io.nvidia.nemoclaw.host-local-inference.managed";
 const LLAMA_PROVIDER_LABEL = "io.nvidia.nemoclaw.host-local-inference.provider";
@@ -218,7 +222,6 @@ function cleanupHostLocalVllm(
   removed: string[],
 ): HostLocalVllmRetirementResult {
   const hasDistributedReceipt = distributedReceiptPresent(stateDir);
-  const runtimeReceiptPath = path.join(stateDir, HOST_LOCAL_VLLM_RUNTIME_RECEIPT_FILE);
   const inspected = inspectOwnedResource(
     "container",
     HOST_LOCAL_VLLM_CONTAINER_NAME,
@@ -227,7 +230,8 @@ function cleanupHostLocalVllm(
     deps.capture,
   );
   if (inspected.kind === "absent") {
-    if (!fs.existsSync(runtimeReceiptPath)) return { status: "absent" };
+    // The key and receipt belong to this container alone; a key that outlives
+    // the container is a credential with no runtime.
     const cleanup = cleanupRetiredHostLocalVllmState(stateDir, deps);
     return cleanup.ok
       ? { status: "absent" }
@@ -1575,6 +1579,47 @@ export function retireHostLocalVllmRuntime(
   } catch (error) {
     return { status: "preserved", reason: (error as Error).message, removed };
   }
+}
+
+export const HOST_LOCAL_VLLM_PENDING_RETIREMENT_FILE =
+  "host-local-vllm-pending-retirement.json" as const;
+
+function pendingHostLocalVllmRetirementPath(homeDir: string | undefined): string {
+  return path.join(
+    managedVllmStateDir(canonicalCleanupHomeDir(homeDir ?? os.homedir())),
+    HOST_LOCAL_VLLM_PENDING_RETIREMENT_FILE,
+  );
+}
+
+/**
+ * Record that a destroyed Local vLLM sandbox leaves the host-global container
+ * without a registry row. The row is the only proof that the sandbox used the
+ * container, so a destroy retry after an interrupted or preserved retirement
+ * reads this record instead.
+ */
+export function recordPendingHostLocalVllmRetirement(sandboxName: string, homeDir?: string): void {
+  const filePath = pendingHostLocalVllmRetirementPath(homeDir);
+  fs.mkdirSync(path.dirname(filePath), { mode: 0o700, recursive: true });
+  fs.writeFileSync(filePath, `${JSON.stringify({ sandboxName })}\n`, { mode: 0o600 });
+}
+
+/** Sandbox name whose managed vLLM retirement is pending, or null. */
+export function readPendingHostLocalVllmRetirement(homeDir?: string): string | null {
+  try {
+    const parsed = JSON.parse(
+      fs.readFileSync(pendingHostLocalVllmRetirementPath(homeDir), "utf-8"),
+    ) as { sandboxName?: unknown } | null;
+    return typeof parsed?.sandboxName === "string" && parsed.sandboxName !== ""
+      ? parsed.sandboxName
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+/** One settled retirement decision covers the single host-global container, whichever sandbox recorded it. */
+export function clearPendingHostLocalVllmRetirement(homeDir?: string): void {
+  fs.rmSync(pendingHostLocalVllmRetirementPath(homeDir), { force: true });
 }
 
 /** Remove only exact owned host-local runtime resources before uninstall deletes state. */

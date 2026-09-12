@@ -59,9 +59,20 @@ describe("destroySandbox managed vLLM retirement", () => {
       await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
 
       expect(harness.retireHostLocalVllmRuntimeSpy).toHaveBeenCalledOnce();
+      expect(harness.recordPendingVllmRetirementSpy).toHaveBeenCalledWith(
+        "alpha",
+        expect.any(String),
+      );
+      expect(harness.recordPendingVllmRetirementSpy.mock.invocationCallOrder[0]).toBeLessThan(
+        harness.removeSandboxSpy.mock.invocationCallOrder[0],
+      );
       expect(harness.removeSandboxSpy.mock.invocationCallOrder[0]).toBeLessThan(
         harness.retireHostLocalVllmRuntimeSpy.mock.invocationCallOrder[0],
       );
+      expect(harness.clearPendingVllmRetirementSpy.mock.invocationCallOrder[0]).toBeGreaterThan(
+        harness.retireHostLocalVllmRuntimeSpy.mock.invocationCallOrder[0],
+      );
+      expect(harness.pendingVllmRetirement.sandboxName).toBeNull();
       expect(retirementOrder).toEqual([
         "host-fence-enter",
         "host-fence-enter",
@@ -103,6 +114,7 @@ describe("destroySandbox managed vLLM retirement", () => {
     ).resolves.toBeUndefined();
 
     expect(harness.retireHostLocalVllmRuntimeSpy).not.toHaveBeenCalled();
+    expect(harness.recordPendingVllmRetirementSpy).not.toHaveBeenCalled();
     expect(loggedLines(harness)).toContain("preserved (--keep-vllm)");
   });
 
@@ -132,6 +144,7 @@ describe("destroySandbox managed vLLM retirement", () => {
 
     expect(harness.removeSandboxSpy).toHaveBeenCalledWith("alpha");
     expect(harness.retireHostLocalVllmRuntimeSpy).not.toHaveBeenCalled();
+    expect(harness.pendingVllmRetirement.sandboxName).toBe("alpha");
   });
 
   it("warns and leaves the managed vLLM container in place when its ownership cannot be proven", async () => {
@@ -147,6 +160,41 @@ describe("destroySandbox managed vLLM retirement", () => {
     expect(harness.warnSpy).toHaveBeenCalledWith(
       expect.stringContaining("does not carry the NemoClaw managed vLLM label"),
     );
+    expect(harness.clearPendingVllmRetirementSpy).not.toHaveBeenCalled();
+    expect(harness.pendingVllmRetirement.sandboxName).toBe("alpha");
     expect(loggedLines(harness)).toContain("Sandbox 'alpha' destroyed");
+  });
+
+  it("retires the managed vLLM container on a retry whose registry row is already gone", async () => {
+    const containerId = "c".repeat(64);
+    const harness = createDestroyHarness({
+      pendingVllmRetirement: "alpha",
+      registryEntryPresent: false,
+      sandboxPresent: false,
+    });
+    harness.retireHostLocalVllmRuntimeSpy.mockReturnValue({
+      status: "removed",
+      containerId,
+      removed: [`container:${containerId}`],
+    });
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
+
+    expect(harness.recordPendingVllmRetirementSpy).not.toHaveBeenCalled();
+    expect(harness.listHostGatewayRegistryEntriesSpy).toHaveBeenCalledOnce();
+    expect(harness.retireHostLocalVllmRuntimeSpy).toHaveBeenCalledOnce();
+    expect(harness.pendingVllmRetirement.sandboxName).toBeNull();
+    expect(loggedLines(harness)).toContain(
+      `Removed managed vLLM container 'nemoclaw-vllm' (${containerId.slice(0, 12)})`,
+    );
+  });
+
+  it("does not touch the managed vLLM container on a retry without a pending retirement", async () => {
+    const harness = createDestroyHarness({ registryEntryPresent: false, sandboxPresent: false });
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
+
+    expect(harness.listHostGatewayRegistryEntriesSpy).not.toHaveBeenCalled();
+    expect(harness.retireHostLocalVllmRuntimeSpy).not.toHaveBeenCalled();
   });
 });

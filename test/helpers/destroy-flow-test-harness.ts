@@ -41,6 +41,10 @@ export type DestroyHarness = {
   listHostGatewayRegistryEntriesSpy: MockInstance;
   logSpy: MockInstance;
   mcpRuntimeSelectionSpy: MockInstance;
+  /** In-memory pending managed vLLM retirement record; null when none is recorded. */
+  pendingVllmRetirement: { sandboxName: string | null };
+  clearPendingVllmRetirementSpy: MockInstance;
+  recordPendingVllmRetirementSpy: MockInstance;
   prepareMcpBridgesForAbsentSandboxDestroySpy: MockInstance;
   prepareMcpBridgesForDestroySpy: MockInstance;
   prepareManagedLlamaCppRuntimeCleanupSpy: MockInstance;
@@ -122,6 +126,7 @@ type DestroyHarnessOptions = {
     workspace: string;
   };
   openshellDriver?: string;
+  pendingVllmRetirement?: string;
   portableCommandError?: string;
   portableDestroyAuthority?: boolean;
   portableDestroyPrepareError?: string;
@@ -435,6 +440,20 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
   const retireHostLocalVllmRuntimeSpy = vi
     .spyOn(localModelProfileCleanup, "retireHostLocalVllmRuntime")
     .mockReturnValue({ status: "absent" });
+  const pendingVllmRetirement = { sandboxName: options.pendingVllmRetirement ?? null };
+  const recordPendingVllmRetirementSpy = vi
+    .spyOn(localModelProfileCleanup, "recordPendingHostLocalVllmRetirement")
+    .mockImplementation((sandboxName: unknown) => {
+      pendingVllmRetirement.sandboxName = String(sandboxName);
+    });
+  vi.spyOn(localModelProfileCleanup, "readPendingHostLocalVllmRetirement").mockImplementation(
+    () => pendingVllmRetirement.sandboxName,
+  );
+  const clearPendingVllmRetirementSpy = vi
+    .spyOn(localModelProfileCleanup, "clearPendingHostLocalVllmRetirement")
+    .mockImplementation(() => {
+      pendingVllmRetirement.sandboxName = null;
+    });
   vi.spyOn(modelRouterProcess, "doesModelRouterProcessOwnPort").mockReturnValue(false);
   vi.spyOn(modelRouterProcess, "inspectModelRouterProcessForPort").mockReturnValue({
     status: "absent",
@@ -739,6 +758,9 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     listHostGatewayRegistryEntriesSpy,
     logSpy,
     mcpRuntimeSelectionSpy,
+    pendingVllmRetirement,
+    clearPendingVllmRetirementSpy,
+    recordPendingVllmRetirementSpy,
     prepareMcpBridgesForAbsentSandboxDestroySpy,
     prepareMcpBridgesForDestroySpy,
     prepareManagedLlamaCppRuntimeCleanupSpy,

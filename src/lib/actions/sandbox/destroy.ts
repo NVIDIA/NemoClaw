@@ -72,6 +72,7 @@ import {
 import { withSandboxLifecycleLock } from "./lifecycle/lock";
 import {
   prepareSandboxDestroy,
+  recordManagedVllmRetirementPending,
   reportManagedVllmDestroyOutcome,
   resolveSandboxDestroyGatewayName,
   resolveSandboxDestroyRuntimeSelection,
@@ -1058,6 +1059,15 @@ async function destroySandboxUnlocked(
   if (deleteSucceededOrAlreadyGone && retireRemovedImmutabilityState) {
     retireRemovedImmutabilityStateRecord(sandboxName, "sandbox-destroyed");
   }
+  if (deleteSucceededOrAlreadyGone) {
+    try {
+      recordManagedVllmRetirementPending(sandbox, { keepVllm: normalized.keepVllm });
+    } catch (error) {
+      defaultDestroyWarn(
+        `Could not record the pending managed vLLM retirement for '${sandboxName}': ${redactDestroyError(error)}. A destroy retry cannot retire the container if this retirement does not complete.`,
+      );
+    }
+  }
   const removalOutcome = removeSandboxRegistryEntryOutcome(sandboxName);
   const removed = removalOutcome.removed;
   // A retry after successful registry removal still owns final gateway cleanup.
@@ -1139,10 +1149,13 @@ async function destroySandboxUnlocked(
           `that still owns the matching port and model-router command line.`,
       );
     }
-    // The registry row is gone, so every remaining Local vLLM row in any
-    // gateway state root is a peer that still needs the host-global container.
+  }
+  // The registry row is gone, so every remaining Local vLLM row in any gateway
+  // state root is a peer that still needs the host-global container. A retry
+  // that finds no row owns the retirement only through its pending record.
+  if (deleteSucceededOrAlreadyGone && (removed || (!sandbox && registryEntryAbsent))) {
     reportManagedVllmDestroyOutcome(
-      await retireManagedVllmForDestroyedSandbox(sandbox, {
+      await retireManagedVllmForDestroyedSandbox(sandboxName, sandbox, {
         keepVllm: normalized.keepVllm,
       }),
       { log: console.log, warn: defaultDestroyWarn },

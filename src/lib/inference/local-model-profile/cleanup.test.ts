@@ -82,6 +82,13 @@ function ownedContainer(
 
 describe("managed vLLM retirement after the last Local vLLM sandbox", () => {
   const containerId = "f".repeat(64);
+  const serving = {
+    catalogDigest: `sha256:${"1".repeat(64)}`,
+    presetId: "vllm.dgx-spark-gb10.single.example",
+    presetDigest: `sha256:${"2".repeat(64)}`,
+    recipeId: "vllm.dgx-spark-gb10.single.example",
+    recipeDigest: `sha256:${"3".repeat(64)}`,
+  } as const;
 
   function retirementDeps(
     inspection: string,
@@ -124,6 +131,18 @@ describe("managed vLLM retirement after the last Local vLLM sandbox", () => {
 
     expect(retireHostLocalVllmRuntime({ homeDir, deps })).toEqual({ status: "absent" });
     expect(forceRm).not.toHaveBeenCalled();
+  });
+
+  it("removes a host-global key that outlives an absent container", () => {
+    const homeDir = temporaryHome();
+    const keyPath = path.join(managedVllmStateDir(homeDir), "dual-station-vllm-api-key");
+    fs.mkdirSync(path.dirname(keyPath), { mode: 0o700, recursive: true });
+    fs.writeFileSync(keyPath, `${"e".repeat(64)}\n`, { mode: 0o600 });
+    const { deps, forceRm } = retirementDeps("");
+
+    expect(retireHostLocalVllmRuntime({ homeDir, deps })).toEqual({ status: "absent" });
+    expect(forceRm).not.toHaveBeenCalled();
+    expect(fs.existsSync(keyPath)).toBe(false);
   });
 
   it.each<{ reason: string; labels: Record<string, string> }>([
@@ -248,13 +267,6 @@ describe("managed vLLM retirement after the last Local vLLM sandbox", () => {
     const stateDir = managedVllmStateDir(homeDir);
     fs.mkdirSync(stateDir, { mode: 0o700, recursive: true });
     const apiKey = "e".repeat(64);
-    const serving = {
-      catalogDigest: `sha256:${"1".repeat(64)}`,
-      presetId: "vllm.dgx-spark-gb10.single.example",
-      presetDigest: `sha256:${"2".repeat(64)}`,
-      recipeId: "vllm.dgx-spark-gb10.single.example",
-      recipeDigest: `sha256:${"3".repeat(64)}`,
-    } as const;
     fs.writeFileSync(path.join(stateDir, "dual-station-vllm-api-key"), `${apiKey}\n`, {
       mode: 0o600,
     });
@@ -294,13 +306,6 @@ describe("managed vLLM retirement after the last Local vLLM sandbox", () => {
     const stateDir = managedVllmStateDir(homeDir);
     fs.mkdirSync(stateDir, { mode: 0o700, recursive: true });
     const apiKey = "e".repeat(64);
-    const serving = {
-      catalogDigest: `sha256:${"1".repeat(64)}`,
-      presetId: "vllm.dgx-spark-gb10.single.example",
-      presetDigest: `sha256:${"2".repeat(64)}`,
-      recipeId: "vllm.dgx-spark-gb10.single.example",
-      recipeDigest: `sha256:${"3".repeat(64)}`,
-    } as const;
     fs.writeFileSync(path.join(stateDir, "dual-station-vllm-api-key"), `${apiKey}\n`, {
       mode: 0o600,
     });
