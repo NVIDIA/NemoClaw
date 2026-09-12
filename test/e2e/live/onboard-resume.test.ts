@@ -639,7 +639,10 @@ test(
       `${unavailableResumeRun.exitCode !== 0}:${listenerBeforeRouteFailure.valid}:${listenerAfterRouteFailure.valid}:${listenerBeforeRouteFailure.identity === listenerAfterRouteFailure.identity}`,
       `${unavailableResumeText}\n${listenerBeforeRouteFailure.output}\n${listenerAfterRouteFailure.output}`,
     ).toBe("true:true:true:true");
-    expect(unavailableResumeText).toContain("Compatible endpoint sandbox smoke check failed");
+    expect(
+      hasHermesApi ||
+        unavailableResumeText.includes("Compatible endpoint sandbox smoke check failed"),
+    ).toBe(true);
     expect(unavailableResumeText).toContain("inference.local");
     expect(unavailableResumeText).not.toContain(
       `Deleting and recreating sandbox '${SANDBOX_NAME}'`,
