@@ -15,6 +15,9 @@ const OPENSHELL_PATH = JSON.stringify(
   path.join(REPO_ROOT, "dist", "lib", "adapters", "openshell", "client.js"),
 );
 const REGISTRY_PATH = JSON.stringify(path.join(REPO_ROOT, "dist", "lib", "state", "registry.js"));
+const CROSS_PORT_PATH = JSON.stringify(
+  path.join(REPO_ROOT, "dist", "lib", "state", "registry", "cross-port.js"),
+);
 const LIFECYCLE_LOCK_PATH = JSON.stringify(
   path.join(REPO_ROOT, "dist", "lib", "state", "mcp-lifecycle-lock.js"),
 );
@@ -44,6 +47,13 @@ function runConfigSetWithInput(input: string) {
     "install(" + REGISTRY_PATH + ", {",
     '  getSandbox: (name) => (name === "prompt-eof" ? { name } : null),',
     '  listSandboxes: () => ({ sandboxes: [{ name: "prompt-eof" }] }),',
+    "});",
+    "install(" + CROSS_PORT_PATH + ", {",
+    '  findSandboxAcrossGatewayRoots: (name) => name === "prompt-eof"',
+    '    ? { entry: { name }, gatewayPort: null, registryFile: "test-registry" }',
+    "    : null,",
+    '  listPublishedSandboxNamesAcrossGatewayRoots: () => ["prompt-eof"],',
+    "  listPendingSandboxNamesAcrossGatewayRoots: () => [],",
     "});",
     "install(" + OPENSHELL_PATH + ", {",
     "  captureOpenshellCommand: () => ({",

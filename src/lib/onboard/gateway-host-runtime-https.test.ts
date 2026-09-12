@@ -100,6 +100,18 @@ describe("externally supervised HTTPS gateway readiness", () => {
     expect(fs.accessSync).toHaveBeenCalledTimes(3);
   });
 
+  it("exposes the authority-selected endpoint and TLS bundle for direct forwards", () => {
+    declareHttpsExternalSupervision();
+    const runtime = createGatewayHostRuntime(createDeps());
+
+    expect(runtime.getGatewayForwardRuntimeAuthority()).toEqual({
+      gatewayEndpoint: "https://127.0.0.1:8080",
+      localTlsDir: `${STATE_DIR}/tls`,
+    });
+    expect(fs.statSync).toHaveBeenCalledTimes(3);
+    expect(fs.accessSync).toHaveBeenCalledTimes(3);
+  });
+
   it("disables both readiness trace spans for an observation-only probe (#7411)", async () => {
     declareHttpsExternalSupervision();
     const runtime = createGatewayHostRuntime({
