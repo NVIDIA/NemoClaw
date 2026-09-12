@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   launchForwardService,
@@ -15,6 +15,7 @@ import type { ListSandboxesFn } from "../../src/lib/onboard/dashboard-port";
 function harness(options: {
   forwardList?: string;
   listSandboxes: ListSandboxesFn;
+  isWsl?: boolean;
   isPortBound?: (port: number) => boolean;
   ownsForward?: (target: ForwardServiceTarget) => boolean;
   launch?: typeof launchForwardService;
@@ -39,7 +40,7 @@ function harness(options: {
     agentProductName: () => "NemoClaw",
     getProviderLabel: (provider) => provider,
     note: vi.fn(),
-    isWsl: () => false,
+    isWsl: () => options.isWsl ?? false,
     redact: String,
     sleep: vi.fn(),
     printAgentDashboardUi: vi.fn(),
@@ -56,7 +57,76 @@ function harness(options: {
   return { helpers, launch, owns, runCaptureOpenshell, runOpenshell };
 }
 
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
+
 describe("finalization dashboard ForwardTcp launch", () => {
+  it("proves exact ForwardTcp ownership for pre-delete port reservation", () => {
+    const { helpers, owns } = harness({
+      listSandboxes: () => ({
+        sandboxes: [{ name: "reonboard-test", dashboardPort: 18790, hermesApiPort: 8643 }],
+      }),
+      ownsForward: (target) => target.localPort === 8643,
+    });
+
+    expect(helpers.ownsForwardServicePort("reonboard-test", 8643)).toBe(true);
+    expect(helpers.ownsForwardServicePort("reonboard-test", 8644)).toBe(false);
+    expect(owns).toHaveBeenNthCalledWith(1, {
+      executable: "/usr/local/bin/openshell",
+      gatewayEndpoint: "https://127.0.0.1:8080",
+      gatewayName: "nemoclaw",
+      workspace: "default",
+      sandboxName: "reonboard-test",
+      localHost: "127.0.0.1",
+      localPort: 8643,
+      targetHost: "127.0.0.1",
+      targetPort: 8643,
+    });
+  });
+
+  it.each([
+    { name: "WSL", isWsl: true, dashboardBind: undefined },
+    { name: "remote dashboard bind", isWsl: false, dashboardBind: "0.0.0.0" },
+  ])(
+    "keeps Hermes forward ownership loopback-only during $name resume",
+    ({ isWsl, dashboardBind }) => {
+      vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", dashboardBind);
+      const { helpers, owns } = harness({
+        isWsl,
+        listSandboxes: () => ({
+          sandboxes: [{ name: "reonboard-test", dashboardPort: 18790, hermesApiPort: 8643 }],
+        }),
+        ownsForward: () => true,
+      });
+
+      expect(helpers.ownsForwardServicePort("reonboard-test", 8643, "loopback")).toBe(true);
+      expect(owns).toHaveBeenCalledWith({
+        executable: "/usr/local/bin/openshell",
+        gatewayEndpoint: "https://127.0.0.1:8080",
+        gatewayName: "nemoclaw",
+        workspace: "default",
+        sandboxName: "reonboard-test",
+        localHost: "127.0.0.1",
+        localPort: 8643,
+        targetHost: "127.0.0.1",
+        targetPort: 8643,
+      });
+      expect(helpers.ownsForwardServicePort("reonboard-test", 8643)).toBe(true);
+      expect(owns).toHaveBeenLastCalledWith({
+        executable: "/usr/local/bin/openshell",
+        gatewayEndpoint: "https://127.0.0.1:8080",
+        gatewayName: "nemoclaw",
+        workspace: "default",
+        sandboxName: "reonboard-test",
+        localHost: "0.0.0.0",
+        localPort: 8643,
+        targetHost: "127.0.0.1",
+        targetPort: 8643,
+      });
+    },
+  );
+
   it("launches the persisted dashboard port and publishes its URL", () => {
     vi.stubEnv("CHAT_UI_URL", undefined);
     const { helpers, launch } = harness({

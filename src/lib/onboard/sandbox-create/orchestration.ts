@@ -1554,6 +1554,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       normalizeHermesAuthMethod,
       normalizeHermesToolGatewaySelections,
       note,
+      ownsForwardServicePort,
       observabilityCommandFlag,
       observabilityPolicy,
       onboardHermesDashboard,
@@ -1682,6 +1683,8 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         env: process.env,
         getSandbox: registry.getSandbox,
         captureForwardList: () => runCaptureOpenshell(["forward", "list"], { ignoreError: true }),
+        ownsExistingForward: (port: number) =>
+          ownsForwardServicePort(sandboxName, port, "loopback"),
         warn: (message: string) => console.warn(message),
       };
     if (manageDashboard) {
@@ -1693,10 +1696,12 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         agentForwardPort: dashboardRuntime.getAgentPrimaryForwardPort(agent, DASHBOARD_PORT),
         defaultPort: DASHBOARD_PORT,
         forwardListOutput: runCaptureOpenshell(["forward", "list"], { ignoreError: true }),
+        ownsExistingForward: (port) => ownsForwardServicePort(sandboxName, port),
         warn: (message: string) => console.warn(message),
       });
       ({ effectivePort, chatUiUrl } = dashboardSelection);
       dashboardPortReservationScope.current = dashboardSelection.reservation;
+      dashboardPortReservationScope.deferOwnedForwardPort(effectivePort);
     }
     const hermesDashboardForwarding = onboardHermesDashboard.createHermesDashboardOnboardForwarding(
       {
@@ -2297,9 +2302,10 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           (root) => root.mountTarget === MANAGED_HERMES_STATE_ROOT,
         ),
       );
-      await hermesApiPortReservationScope.rebindAfterOwnedForwardDelete(
-        hermesApiPortReservationInput,
-      );
+      await Promise.all([
+        dashboardPortReservationScope.rebindAfterOwnedForwardDelete(),
+        hermesApiPortReservationScope.rebindAfterOwnedForwardDelete(hermesApiPortReservationInput),
+      ]);
     }
     if (resumingVerifiedCreate) {
       await hermesApiPortReservationScope.selectAndReserve(hermesApiPortReservationInput);
