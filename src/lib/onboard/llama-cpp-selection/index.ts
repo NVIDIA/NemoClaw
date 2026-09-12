@@ -9,6 +9,7 @@ import {
   type LlamaCppAttachmentResult,
 } from "../../inference/llama-cpp";
 import type { SetupNimSelectionResult, SetupNimSelectionState } from "../setup-nim-flow";
+import { applyDetectedEndpointContextWindow } from "../../inference/compatible-endpoint-context";
 
 type CredentialNavigation = string | Readonly<{ kind: string }>;
 
@@ -47,7 +48,7 @@ export function createLlamaCppSelectionHandler(
   requestedModel: string | null,
   recoveredModel: string | null,
 ) => Promise<SetupNimSelectionResult> {
-  return async function handleLlamaCppSelection(
+  return /** Validate server identity and inference before applying the selected model and context. */ async function handleLlamaCppSelection(
     state,
     requestedModel,
     recoveredModel,
@@ -108,6 +109,7 @@ export function createLlamaCppSelectionHandler(
     }
     state.preferredInferenceApi = "openai-completions";
     deps.log(`  Attached Local llama.cpp with served model alias: ${attachment.model}`);
+    applyDetectedEndpointContextWindow(attachment.contextWindow);
     return "selected";
   };
 }
