@@ -4,6 +4,8 @@
 # NemoClaw E2E CI
 
 Direct E2E coverage runs through Vitest.
+The live Vitest invocation helper requires at least one executed test.
+An empty or all-skipped selection fails, including explicit manual invocations through that helper.
 
 Interactive TUI targets require `expect`. The unified workflow installs it
 before those targets run; local runners must provide it themselves.

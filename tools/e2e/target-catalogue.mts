@@ -52,7 +52,6 @@ export async function runCatalogueTarget(id: string, testFile: string): Promise<
     runPressureCommand("initialize-evidence");
   }
   const { runLiveVitestCommand } = await import("./live-vitest-invocation.mts");
-  process.env.NEMOCLAW_E2E_REQUIRE_EXECUTED_TEST = "1";
   const selector = entry.selector ? ["--selector", entry.selector] : [];
   const exitCode = await runLiveVitestCommand(["run", "--test-path", entry.testFile, ...selector]);
   if (entry.runnerPressure && exitCode !== 0) {

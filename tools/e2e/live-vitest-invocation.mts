@@ -46,7 +46,7 @@ export interface LiveVitestSpawnResult {
 export type LiveVitestSpawner = (
   command: string,
   args: string[],
-  options: { stdio: "inherit" },
+  options: { stdio: "inherit"; env: NodeJS.ProcessEnv },
 ) => LiveVitestSpawnResult;
 
 const LIVE_VITEST_OPTIONS = {
@@ -184,7 +184,12 @@ export function runLiveVitestCli(
   const testPath = validateLiveTestPath(invocation.testPath);
   const selector = resolveLiveSelector(testPath, invocation.selector, env);
   const argv = buildLiveVitestArgs({ ...invocation, testPath, selector });
-  return spawnResultExitCode(spawn("npx", argv, { stdio: "inherit" }));
+  return spawnResultExitCode(
+    spawn("npx", argv, {
+      stdio: "inherit",
+      env: { ...env, NEMOCLAW_E2E_REQUIRE_EXECUTED_TEST: "1" },
+    }),
+  );
 }
 
 export function runLiveVitestCommand(
