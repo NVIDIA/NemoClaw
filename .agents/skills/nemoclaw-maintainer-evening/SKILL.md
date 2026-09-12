@@ -1,6 +1,6 @@
 ---
 name: nemoclaw-maintainer-evening
-description: Runs the end-of-day NemoClaw release handoff and optionally cuts a release tag. Use for evening, handoff, wrap-up, or ship requests.
+description: "Complete the NemoClaw end-of-day documentation and release handoff. Cut a release tag only when requested."
 user_invocable: true
 ---
 
@@ -32,6 +32,10 @@ Do not silently convert the answer into a patch, minor, or major bump. If nothin
 whether to stop without a tag.
 
 ## 2. Finish One Cumulative Documentation Change
+
+Start the [release kickoff checks](../nemoclaw-maintainer-cut-release-tag/references/candidate-evidence.md#start-independent-checks-at-kickoff)
+for the intended range. Report independent prerequisites together, and continue authorized docs
+preparation and review during image waits. These preliminary reads do not select the tag candidate.
 
 Inspect the current `Docs / Author Post-Merge Catch-Up` state. The Pi workflow owns documentation catch-up
 for merged changes. Continue its managed draft PR when one exists. If no managed PR exists and the

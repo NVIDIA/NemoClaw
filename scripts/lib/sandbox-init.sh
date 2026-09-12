@@ -42,7 +42,6 @@ source "${_SANDBOX_INIT_DIR}/sandbox-rlimits.sh"
 # /tmp/nemoclaw-plugin-refresh.log sandbox 600   sandbox  sandbox   no (OpenClaw refresh output)
 # /tmp/.npm-cache/             sandbox    755   sandbox  sandbox   no (tool data)
 # /tmp/.cache/                 sandbox    755   sandbox  sandbox   no (tool data)
-# /tmp/.config/                sandbox    755   sandbox  sandbox   no (tool data)
 # /tmp/.gnupg/                 sandbox    700   sandbox  sandbox   no (key data)
 #
 # * In non-root mode the sandbox user owns and opens auto-pair.log. In root

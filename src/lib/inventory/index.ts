@@ -163,7 +163,7 @@ export interface ShowStatusCommandDeps {
    * diagnostic and sets `process.exitCode = 1` so shell and CI callers can
    * detect the degraded state from `$?` (#3386).
    */
-  getGatewayHealth?: () => GatewayHealth;
+  getGatewayHealth?: () => GatewayHealth | Promise<GatewayHealth>;
   /** Render lifecycle-aware recovery guidance after an unhealthy gateway probe. */
   getGatewayStartGuidance?: () => string;
   /** Last authority durably selected by onboarding, with secret-free identity fields. */
@@ -590,7 +590,7 @@ export async function getStatusReport(deps: ShowStatusCommandDeps): Promise<Stat
   const liveInference = sandboxes.length > 0 && !hasHermesPortable ? deps.getLiveInference() : null;
   const gatewayHealth =
     deps.getGatewayHealth && sandboxes.length > 0 && !hasHermesPortable
-      ? deps.getGatewayHealth()
+      ? await deps.getGatewayHealth()
       : null;
   const services = !hasHermesPortable
     ? (deps
@@ -636,7 +636,7 @@ export async function getStatusReport(deps: ShowStatusCommandDeps): Promise<Stat
  * from the stored onboarded model a `(onboarded: …)` line is appended.
  * Non-default rows and the unreachable-gateway case fall back to stored.
  */
-export function showStatusCommand(deps: ShowStatusCommandDeps): void {
+export async function showStatusCommand(deps: ShowStatusCommandDeps): Promise<void> {
   const log = deps.log ?? console.log;
   const sandboxList = deps.listSandboxes();
   // Pending registrations are recovery state, not normal sandbox inventory.
@@ -726,7 +726,7 @@ export function showStatusCommand(deps: ShowStatusCommandDeps): void {
   // sandboxes has no expectation of a configured gateway, so the check is
   // suppressed in that case to avoid a spurious failure exit code.
   if (deps.getGatewayHealth && sandboxes.length > 0 && !hasHermesPortable) {
-    const health = deps.getGatewayHealth();
+    const health = await deps.getGatewayHealth();
     if (!health.healthy) {
       log("");
       const detail = health.reason ? ` (${health.reason})` : "";
