@@ -26,7 +26,6 @@ import {
   SHARED_E2E_JOB_ID,
 } from "./credential-free-tests.mts";
 import { JETSON_DISPATCH_TARGET } from "./jetson-dispatch-contract.mts";
-import { selectedRetiredControllerJobs } from "./retired-selector-compatibility.mts";
 import { normalizeE2eSelectorIds } from "./selector-aliases.mts";
 import {
   catalogueExclusionReason,
@@ -85,11 +84,6 @@ type WorkflowPlanOptions = {
 type WorkflowPlanCliOptions = WorkflowPlanSelectors & {
   ciOutput: boolean;
   summary: boolean;
-};
-
-type TrustedControllerSelectorMap = {
-  retiredSelectorSelected: boolean;
-  selectors: WorkflowPlanSelectors;
 };
 
 const SAFE_SELECTOR_LIST_PATTERN = /^[A-Za-z0-9_-]+(?:,[A-Za-z0-9_-]+)*$/;
@@ -540,61 +534,6 @@ function selectTestRows(
   return rows.filter((row) => selected.has(row.id));
 }
 
-function mapTrustedControllerJobs(
-  selectors: WorkflowPlanSelectors,
-  environment: NodeJS.ProcessEnv,
-): TrustedControllerSelectorMap {
-  if (!COMMIT_SHA_PATTERN.test(environment.NEMOCLAW_E2E_EXPECTED_SHA ?? "")) {
-    return { retiredSelectorSelected: false, selectors };
-  }
-
-  const inventory = workflowExecutionSelection();
-  const jobs = selectorIds(selectors.jobs, "jobs");
-  const targets = selectorIds(selectors.targets, "targets");
-  const retiredJobs = new Set<string>(
-    selectedRetiredControllerJobs({
-      allowedJobs: inventory.allowedJobs,
-      expectedSha: environment.NEMOCLAW_E2E_EXPECTED_SHA,
-      jobs: jobs.join(","),
-    }),
-  );
-  const retiredTargets = new Set<string>(
-    selectedRetiredControllerJobs({
-      allowedJobs: inventory.allowedJobs,
-      expectedSha: environment.NEMOCLAW_E2E_EXPECTED_SHA,
-      targets: targets.join(","),
-    }),
-  );
-  const compatibleJobs = jobs.filter((job) => !retiredJobs.has(job));
-  const compatibleTargets = targets.filter((target) => !retiredTargets.has(target));
-
-  // Trusted main can select a renamed or newly retired job until the candidate
-  // workflow becomes the controller. Keep the raw IDs for evidence, but plan
-  // only jobs that still execute in the candidate.
-  return {
-    retiredSelectorSelected: retiredJobs.size > 0 || retiredTargets.size > 0,
-    selectors: {
-      ...selectors,
-      jobs: compatibleJobs.join(","),
-      targets: compatibleTargets.join(","),
-    },
-  };
-}
-
-function emptyE2eWorkflowPlan(gatewayRuntimes: readonly E2eGatewayRuntime[]): E2eWorkflowPlan {
-  return {
-    gatewayRuntimes: [...gatewayRuntimes],
-    matrix: [],
-    testMatrix: [],
-    catalogueMatrices: emptyCatalogueMatrices(),
-    coverageMatrix: [],
-    selectedJobs: [],
-    runtimeProvidersByJob: {},
-    hermesSelected: false,
-    explicitOnlyJobs: workflowExecutionSelection().explicitOnlyJobs,
-  };
-}
-
 type E2eWorkflowPlanWithoutCoverage = Omit<E2eWorkflowPlan, "coverageMatrix">;
 
 function coverageMatrixForPlan(
@@ -1038,15 +977,12 @@ export function validateE2eWorkflowPlan(plan: unknown): E2eWorkflowPlan {
   return plan as E2eWorkflowPlan;
 }
 
-function expectedHermesSelection(
-  selectors: WorkflowPlanSelectors,
-  retiredSelectorSelected: boolean,
-): boolean {
+function expectedHermesSelection(selectors: WorkflowPlanSelectors): boolean {
   const selected = [
     ...selectorIds(selectors.jobs, "jobs"),
     ...selectorIds(selectors.targets, "targets"),
   ];
-  return (selected.length === 0 && !retiredSelectorSelected) || selected.includes(HERMES_JOB_ID);
+  return selected.length === 0 || selected.includes(HERMES_JOB_ID);
 }
 
 export function withoutUnavailableOptionalCredentialTargets(
@@ -1217,17 +1153,12 @@ export function writeE2eWorkflowPlanCiOutput(
   ) {
     throw new Error("Manual PR E2E requires an authorized source branch in NVIDIA/NemoClaw");
   }
-  const controllerMap = mapTrustedControllerJobs(selectors, environment);
-  const plannerSelectors = controllerMap.selectors;
   const gatewayRuntimes = e2eGatewayRuntimes(
     environment.NEMOCLAW_GATEWAY_RUNTIMES ?? environment.NEMOCLAW_GATEWAY_RUNTIME,
   );
-  const hasPlannerSelectors = Boolean(plannerSelectors.jobs || plannerSelectors.targets);
+  const hasPlannerSelectors = Boolean(selectors.jobs || selectors.targets);
   const changedFiles = hasPlannerSelectors ? undefined : changedFilesFromEnvironment(environment);
-  const planned =
-    controllerMap.retiredSelectorSelected && !hasPlannerSelectors
-      ? emptyE2eWorkflowPlan(gatewayRuntimes)
-      : buildE2eWorkflowPlan(plannerSelectors, { changedFiles, gatewayRuntimes });
+  const planned = buildE2eWorkflowPlan(selectors, { changedFiles, gatewayRuntimes });
   const availableOptionalCredentials = new Set<E2eOptionalCredential>(
     E2E_OPTIONAL_CREDENTIALS.filter(
       (credential) => environment[`NEMOCLAW_E2E_${credential}_AVAILABLE`] !== "false",
@@ -1237,10 +1168,7 @@ export function writeE2eWorkflowPlanCiOutput(
     ? planned
     : withoutUnavailableOptionalCredentialTargets(planned, availableOptionalCredentials);
   const plan = validateE2eWorkflowPlan(availabilityScopedPlan);
-  const expectedHermes = expectedHermesSelection(
-    plannerSelectors,
-    controllerMap.retiredSelectorSelected,
-  );
+  const expectedHermes = expectedHermesSelection(selectors);
   if (!changedFiles && plan.hermesSelected !== expectedHermes) {
     throw new Error("E2E planner changed the trusted Hermes selection");
   }

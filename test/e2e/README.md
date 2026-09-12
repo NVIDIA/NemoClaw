@@ -441,7 +441,11 @@ The `launchable-smoke`, `sandbox-rlimits-connect`, and
 The controller cutoff is canonical main `b8337ce01231264726b028d1147dc2634fd85885` and its pinned actions.
 Those controllers no longer invoke the old bootstrap or resource-limit files.
 The bootstrap forwarder and the semantic-phase checker's zero-test exception are removed.
-Other compatibility routes remain under audit for #11407.
+The retired-selector compatibility job and replacement-test helper are also removed.
+Its controller cutoff is canonical main `06c10fb67402707ee714a750852eed23f6952fc8` and its pinned actions.
+Retired selectors fail in manual PR runs, including requests mixed with active selectors.
+Their replacement tests remain in the ordinary test projects.
+The `hermes-dashboard` alias remains because the Hermes workflow still calls it.
 
 `tools/e2e/target-catalogue.mts` runs the selected profile target; it does not register targets.
 Each profile target shares one execution shape.
