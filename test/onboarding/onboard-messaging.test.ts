@@ -1238,7 +1238,7 @@ const { createSandbox } = require(${onboardPath});
     );
   });
 
-  it(
+  it.sequential(
     "reuses sandbox without refreshing unselected ambient messaging providers (#10277)",
     {
       timeout: 60_000,
