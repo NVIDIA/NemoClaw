@@ -746,16 +746,107 @@ BOOL WINAPI hookedCreateA(LPCSTR app, LPSTR args, LPSECURITY_ATTRIBUTES processA
     return TRUE;
 }
 
+LONG chromeAsUserCalls = 0;
+struct ChromeAsUserObservation {
+    LONG sequence = 0;
+    bool appMatched = false, appNull = false, parentQueried = false, parentMatched = false;
+};
+
+bool configuredChromeParentMatches(const WCHAR* selected) {
+    ProcessImageFile parent, expected;
+    USHORT machine = 0;
+    if (!readProcessImageMachine(GetCurrentProcess(), parent, machine) || machine != IMAGE_FILE_MACHINE_AMD64)
+        return false;
+    expected.handle = CreateFileW(selected, GENERIC_READ, FILE_SHARE_READ, nullptr,
+        OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+    if (expected.handle == INVALID_HANDLE_VALUE ||
+        !GetFileInformationByHandle(expected.handle, &expected.information) ||
+        (expected.information.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)))
+        return false;
+    return parent.information.dwVolumeSerialNumber == expected.information.dwVolumeSerialNumber &&
+        parent.information.nFileIndexHigh == expected.information.nFileIndexHigh &&
+        parent.information.nFileIndexLow == expected.information.nFileIndexLow;
+}
+
+ChromeAsUserObservation chromeAsUserCall(LPCWSTR app) {
+    const DWORD saved = GetLastError();
+    ChromeAsUserObservation value;
+    value.appNull = app == nullptr;
+    if (InterlockedCompareExchange(&chromeAsUserCalls, 0, 0) >= 4) return value;
+    WCHAR selected[4096] = {};
+    bool configured = false;
+    __try {
+        const DWORD count = GetEnvironmentVariableW(L"AGENT_BROWSER_EXECUTABLE_PATH", selected, 4096);
+        size_t length = 0;
+        if (app) while (length < 4096 && app[length]) ++length;
+        const WCHAR* leaf = count && count < 4096 ? wcsrchr(selected, L'\\') : nullptr;
+        configured = initialized && leaf && selected[1] == L':' && selected[2] == L'\\' &&
+            !_wcsicmp(leaf + 1, L"chrome.exe");
+        value.appMatched = configured && app && length && length < 4096 && !_wcsicmp(app, selected);
+    } __except (EXCEPTION_EXECUTE_HANDLER) { configured = false; }
+    if (configured && !value.appMatched) {
+        value.parentQueried = true;
+        value.parentMatched = configuredChromeParentMatches(selected);
+    }
+    if (value.appMatched || value.parentMatched) {
+        const LONG sequence = InterlockedIncrement(&chromeAsUserCalls);
+        if (sequence > 0 && sequence <= 4) value.sequence = sequence;
+    }
+    SetLastError(saved);
+    return value;
+}
+
+void logChromeAsUser(const ChromeAsUserObservation& call, bool returned, DWORD callerFlags, DWORD actualFlags,
+    BOOL inherit, bool nested, BOOL result, DWORD error, LPPROCESS_INFORMATION output) {
+    if (!call.sequence) return;
+    const DWORD saved = GetLastError();
+    DWORD pid = 0;
+    __try { if (returned && output) pid = output->dwProcessId; }
+    __except (EXCEPTION_EXECUTE_HANDLER) { pid = 0; }
+    char line[1024];
+    const int length = _snprintf_s(line, sizeof(line), _TRUNCATE,
+        "NEMOCLAW_MSYS_CHROME_ASUSER={\"schemaVersion\":1,\"callId\":%lu,\"parentPid\":%lu,\"threadId\":%lu,\"tickMs\":%llu,\"api\":\"CreateProcessAsUserW\",\"stage\":\"%s\",\"callerFlags\":%lu,\"actualFlags\":%lu,\"inheritValue\":%d,\"withinCreateOnEntry\":%s,\"appMatched\":%s,\"appNull\":%s,\"parentIdentityQueried\":%s,\"parentMatched\":%s,\"apiReturned\":%s,\"result\":%s,\"lastError\":%lu,\"lastErrorIsFailure\":%s,\"returnedPid\":%lu,\"boundTrampoline\":\"0x%llx\",\"diagnosticOnly\":true}\n",
+        static_cast<DWORD>(call.sequence), GetCurrentProcessId(), GetCurrentThreadId(), GetTickCount64(),
+        returned ? "return" : "entry", callerFlags, actualFlags, inherit, nested ? "true" : "false",
+        call.appMatched ? "true" : "false", call.appNull ? "true" : "false",
+        call.parentQueried ? "true" : "false", call.parentMatched ? "true" : "false",
+        returned ? "true" : "false", returned ? (result ? "true" : "false") : "null", error,
+        returned && !result ? "true" : "false", pid,
+        static_cast<unsigned long long>(reinterpret_cast<uintptr_t>(realCreateAsUserW)));
+    if (length > 0 && length < static_cast<int>(sizeof(line))) {
+        OutputDebugStringA(line);
+        if (NemoClawMsysDiagnosticsEnabled()) {
+            DWORD written = 0;
+            WriteFile(GetStdHandle(STD_ERROR_HANDLE), line, static_cast<DWORD>(length), &written, nullptr);
+        }
+    }
+    SetLastError(saved);
+}
+
 BOOL WINAPI hookedAsUserW(HANDLE token, LPCWSTR app, LPWSTR args, LPSECURITY_ATTRIBUTES processAttributes,
     LPSECURITY_ATTRIBUTES threadAttributes, BOOL inherit, DWORD flags, LPVOID environment,
     LPCWSTR directory, LPSTARTUPINFOW startup, LPPROCESS_INFORMATION output) {
-    if (withinCreate) return realCreateAsUserW(token,app,args,processAttributes,threadAttributes,inherit,flags,environment,directory,startup,output);
+    if (withinCreate) {
+        const ChromeAsUserObservation call = chromeAsUserCall(app);
+        logChromeAsUser(call, false, flags, flags, inherit, true, FALSE, 0, nullptr);
+        const BOOL created = realCreateAsUserW(token,app,args,processAttributes,threadAttributes,inherit,flags,environment,directory,startup,output);
+        const DWORD error = GetLastError();
+        logChromeAsUser(call, true, flags, flags, inherit, true, created, error, output);
+        SetLastError(error);
+        return created;
+    }
     if (!allowed(output, flags)) return FALSE;
     CreationScope scope;
     PROCESS_INFORMATION child = {};
     MsysCreationLayout<STARTUPINFOW, STARTUPINFOEXW> layout;
     if (!layout.ready(startup, flags | CREATE_SUSPENDED)) return FALSE;
-    if (!realCreateAsUserW(token,app,args,processAttributes,threadAttributes,inherit,layout.flags,environment,directory,layout.startup,&child)) return FALSE;
+    const ChromeAsUserObservation call = chromeAsUserCall(app);
+    logChromeAsUser(call, false, flags, layout.flags, inherit, false, FALSE, 0, nullptr);
+    const BOOL created = realCreateAsUserW(token,app,args,processAttributes,threadAttributes,inherit,layout.flags,environment,directory,layout.startup,&child);
+    const DWORD error = GetLastError();
+    logChromeAsUser(call, true, flags, layout.flags, inherit, false, created, error, &child);
+    SetLastError(error);
+    if (!created) return FALSE;
     logMsysCreationLayout(child.hProcess, layout.requested, layout.applied, layout.preservedExtended);
     if (!NemoClawCompleteSuspendedChild(&child, flags)) return FALSE;
     *output = child;
