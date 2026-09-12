@@ -288,11 +288,13 @@ def browser_agent_state(state, expected, launches):
             daemon = psutil.Process(int(pid_text))
             created = daemon.create_time()
             daemon_env = daemon.environ()
-            if (
-                Path(daemon.exe()) != expected
-                or daemon_env.get("AGENT_BROWSER_SOCKET_DIR") != socket_dir
-                or daemon_env.get("AGENT_BROWSER_SESSION") != session
-            ):
+            row["daemonIdentityChecks"] = {
+                "executableMatches": Path(daemon.exe()) == expected,
+                "socketDirectoryMatches": daemon_env.get("AGENT_BROWSER_SOCKET_DIR")
+                == socket_dir,
+                "sessionMatches": daemon_env.get("AGENT_BROWSER_SESSION") == session,
+            }
+            if not all(row["daemonIdentityChecks"].values()):
                 raise ValueError(
                     "Daemon PID is not bound to the exact canonical session"
                 )
@@ -412,6 +414,347 @@ def bounded_browser_diagnostics(value):
         row["renderedTailTruncated"] = True
         value["aggregateTruncated"] = True
     return value
+
+
+def browser_cdp_selection(root, state, observation):
+    """Recheck one already observed canonical browser; never discover by name."""
+    from nemoclaw_native_windows import NativeStartupRefusal
+    import psutil
+    import re
+
+    try:
+        daemon_pids = {
+            int(row["files"]["pid"]["text"])
+            for row in observation.get("commands", [])
+            if row.get("daemonIdentityBound") is True
+        }
+        expected = owned_file(os.environ["AGENT_BROWSER_EXECUTABLE_PATH"], root)
+        candidates = [
+            row
+            for row in observation.get("processes", [])
+            if row.get("parentPid") in daemon_pids
+            and row.get("executable") == str(expected)
+            and row.get("identityRechecked") is True
+            and row.get("parentRelationVerified") is True
+            and not row.get("selectedArgumentsTruncated")
+            and not any(
+                arg.startswith("--type=") for arg in row.get("selectedArguments", [])
+            )
+            and "--remote-debugging-port=0" in row.get("selectedArguments", [])
+        ]
+        if len(candidates) != 1:
+            raise ValueError("No single identity-bound main Chrome endpoint")
+        row = candidates[0]
+        process = psutil.Process(row["pid"])
+        command = process.cmdline()
+        if (
+            process.create_time() != row["creationTime"]
+            or not process.is_running()
+            or process.ppid() != row["parentPid"]
+            or Path(process.exe()) != expected
+            or hashlib.sha256(json.dumps(command).encode()).hexdigest()
+            != row["commandLineSha256"]
+        ):
+            raise ValueError("Observed Chrome process identity changed")
+        profiles = [
+            arg.split("=", 1)[1]
+            for arg in command
+            if arg.startswith("--user-data-dir=")
+        ]
+        if len(profiles) != 1:
+            raise ValueError("Observed Chrome profile is ambiguous")
+        port_file = owned_file(Path(profiles[0]) / "DevToolsActivePort", state)
+        with port_file.open("rb") as stream:
+            data = stream.read(513)
+        observed = row["devToolsActivePort"]
+        if (
+            len(data) > 512
+            or len(data) != observed["bytes"]
+            or hashlib.sha256(data).hexdigest() != observed["sha256"]
+        ):
+            raise ValueError("Owned Chrome endpoint changed after observation")
+        lines = data.decode("ascii").splitlines()
+        if (
+            len(lines) != 2
+            or not lines[0].isdigit()
+            or not 0 < int(lines[0]) < 65536
+            or not re.fullmatch(r"/devtools/browser/[A-Za-z0-9-]{1,128}", lines[1])
+        ):
+            raise ValueError("Invalid owned Chrome DevTools endpoint")
+        held = BrowserHarnessProcess(row["pid"])
+        try:
+            pid, created = held.identity()
+            if (
+                pid != row["pid"]
+                or held.wait(0)
+                or process.create_time() != row["creationTime"]
+            ):
+                raise ValueError("Chrome exited or changed during identity binding")
+            return {
+                "endpoint": "ws://127.0.0.1:" + lines[0] + lines[1],
+                "pid": pid,
+                "creationFiletime": created,
+                "endpointFile": str(port_file),
+                "endpointSha256": hashlib.sha256(data).hexdigest(),
+                "processIdentityRechecked": True,
+            }
+        finally:
+            held.close()
+    except (Exception, NativeStartupRefusal) as error:
+        return {"skipped": repr(error)[:256]}
+
+
+def raw_cdp_endpoint(endpoint):
+    from urllib.parse import urlsplit
+
+    try:
+        value = urlsplit(endpoint)
+        if (
+            not isinstance(endpoint, str)
+            or len(endpoint) > 512
+            or value.scheme != "ws"
+            or value.hostname not in {"127.0.0.1", "::1"}
+            or not value.port
+            or value.username
+            or value.password
+            or value.query
+            or value.fragment
+        ):
+            return None
+        return {
+            "url": endpoint,
+            "scheme": value.scheme,
+            "host": value.hostname,
+            "port": value.port,
+            "path": value.path,
+            "sha256": hashlib.sha256(endpoint.encode()).hexdigest(),
+        }
+    except (TypeError, ValueError, AttributeError):
+        return None
+
+
+async def raw_cdp_diagnostic(selection, budget):
+    """One new blank target only; never replace the normal Browser Use result."""
+    import asyncio
+    import re
+    import websockets
+
+    endpoint = selection.get("endpoint")
+    result = {
+        "process": {
+            key: selection.get(key)
+            for key in ("pid", "creationFiletime", "endpointSha256")
+        },
+        "diagnosticOnly": True,
+        "canonicalQualification": False,
+        "endpoint": raw_cdp_endpoint(endpoint),
+        "budgetMs": budget * 1000,
+        "commands": [],
+        "attachedEvents": [],
+        "waitingForDebuggerObserved": False,
+        "waitingForDebugger": None,
+        "targetCreationAttempted": False,
+        "targetCreationUncertain": False,
+        "targetCreated": False,
+        "targetClosed": False,
+        "webSocketClosed": False,
+        "error": None,
+    }
+    if result["endpoint"] is None or not 4 <= budget <= 8:
+        result["skipped"] = (
+            "No eligible loopback WebSocket endpoint or diagnostic time budget"
+        )
+        return result
+    began = time.monotonic()
+    deadline = began + budget
+    work_deadline = deadline - 1
+    ws = None
+    process = None
+    target = session = None
+    sequence = frames = 0
+    pending = {}
+
+    def small(value):
+        encoded = json.dumps(value).encode()
+        return (
+            value
+            if len(encoded) <= 512
+            else {
+                "responseTruncated": True,
+                "bytes": len(encoded),
+                "sha256": hashlib.sha256(encoded).hexdigest(),
+            }
+        )
+
+    async def command(method, params=None, session_id=None, closing=False):
+        nonlocal sequence, frames
+        sequence += 1
+        identifier = sequence
+        message = {"id": identifier, "method": method, "params": params or {}}
+        if session_id is not None:
+            message["sessionId"] = session_id
+        record = {
+            "id": identifier,
+            "method": method,
+            "sessionId": session_id,
+            "params": params or {},
+            "response": None,
+            "timedOut": False,
+            "error": None,
+        }
+        result["commands"].append(record)
+        started = time.monotonic()
+        until = min(deadline if closing else work_deadline, started + 1)
+        try:
+            if until <= started:
+                raise TimeoutError("Diagnostic budget exhausted")
+            await asyncio.wait_for(
+                ws.send(json.dumps(message)), until - time.monotonic()
+            )
+            while identifier not in pending:
+                remaining = until - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError("CDP response deadline")
+                if frames >= 48:
+                    raise ValueError("Diagnostic frame count exceeded")
+                raw = await asyncio.wait_for(ws.recv(), remaining)
+                frames += 1
+                value = json.loads(raw)
+                if not isinstance(value, dict):
+                    raise ValueError("Unexpected diagnostic CDP frame")
+                if type(value.get("id")) is int and 0 < value["id"] <= sequence:
+                    pending[value["id"]] = value
+                elif value.get("method") == "Target.attachedToTarget":
+                    params = value.get("params", {})
+                    if (
+                        params.get("targetInfo", {}).get("targetId") == target
+                        and len(result["attachedEvents"]) < 1
+                    ):
+                        event_session = params.get("sessionId")
+                        result["attachedEvents"].append(
+                            {
+                                "targetId": target,
+                                "sessionId": event_session
+                                if isinstance(event_session, str)
+                                and len(event_session) <= 128
+                                else None,
+                                "waitingForDebugger": params.get("waitingForDebugger"),
+                            }
+                        )
+            response = pending.pop(identifier)
+            record["response"] = small(response)
+            return response
+        except (TimeoutError, asyncio.TimeoutError) as error:
+            record["timedOut"] = True
+            record["error"] = str(error)[:128]
+        except Exception as error:
+            record["error"] = repr(error)[:128]
+        finally:
+            record["elapsedMs"] = (time.monotonic() - started) * 1000
+        return {}
+
+    try:
+        process = BrowserHarnessProcess(selection["pid"])
+        if process.identity() != (
+            selection["pid"],
+            selection["creationFiletime"],
+        ) or process.wait(0):
+            raise ValueError("Owned Chrome identity changed before CDP observation")
+        result["processIdentityReconfirmed"] = True
+        ws = await asyncio.wait_for(
+            websockets.connect(
+                endpoint, proxy=None, max_size=65536, open_timeout=1, close_timeout=0.25
+            ),
+            1,
+        )
+        await command("Browser.getVersion")
+        await command("Target.getTargets")
+        result["targetCreationAttempted"] = True
+        created = await command(
+            "Target.createTarget", {"url": "about:blank", "background": True}
+        )
+        target = created.get("result", {}).get("targetId")
+        if not isinstance(target, str) or not re.fullmatch(
+            r"[A-Za-z0-9_-]{1,128}", target
+        ):
+            result["targetCreationUncertain"] = (
+                "result" not in created and "error" not in created
+            )
+            raise ValueError("Diagnostic did not create a valid owned target")
+        result["targetId"] = target
+        result["targetCreated"] = True
+        attached = await command(
+            "Target.attachToTarget", {"targetId": target, "flatten": True}
+        )
+        session = attached.get("result", {}).get("sessionId")
+        if not isinstance(session, str) or not re.fullmatch(
+            r"[A-Za-z0-9_-]{1,128}", session
+        ):
+            raise ValueError("Diagnostic did not attach to its owned target")
+        result["sessionId"] = session
+        await command("Page.enable", session_id=session)
+        await command("Runtime.enable", session_id=session)
+        if time.monotonic() < work_deadline:
+            await command("Network.enable", session_id=session)
+        else:
+            result["networkEnableSkipped"] = (
+                "No remaining diagnostic work budget; target cleanup reserved"
+            )
+        evaluate = {
+            "expression": "({value:1+1,url:location.href,readyState:document.readyState})",
+            "returnByValue": True,
+        }
+        await command("Runtime.evaluate", evaluate, session)
+    except Exception as error:
+        result["error"] = repr(error)[:128]
+    finally:
+        if ws is not None:
+            if result["targetCreated"]:
+                closed = await command(
+                    "Target.closeTarget", {"targetId": target}, closing=True
+                )
+                result["targetClosed"] = closed.get("result", {}).get("success") is True
+            try:
+                await asyncio.wait_for(
+                    ws.close(), max(0.001, min(0.3, deadline - time.monotonic()))
+                )
+                result["webSocketClosed"] = True
+            except Exception as error:
+                result["webSocketCloseError"] = repr(error)[:128]
+        for event in result["attachedEvents"]:
+            if (
+                event["sessionId"] == session
+                and type(event["waitingForDebugger"]) is bool
+            ):
+                result["waitingForDebuggerObserved"] = True
+                result["waitingForDebugger"] = event["waitingForDebugger"]
+        if process is not None:
+            try:
+                result["processStillRunning"] = not process.wait(0)
+                process.close()
+                result["processHandleClosed"] = True
+            except Exception as error:
+                result["processCloseError"] = repr(error)[:128]
+        result["elapsedMs"] = (time.monotonic() - began) * 1000
+        result["serializedLimitBytes"] = 4096
+        while len(json.dumps(result).encode()) > 4096:
+            candidates = [
+                r
+                for r in result["commands"]
+                if isinstance(r.get("response"), dict)
+                and not r["response"].get("responseTruncated")
+            ]
+            if not candidates:
+                result["metadataExceeded"] = True
+                break
+            record = max(candidates, key=lambda r: len(json.dumps(r["response"])))
+            encoded = json.dumps(record["response"]).encode()
+            record["response"] = {
+                "responseTruncated": True,
+                "bytes": len(encoded),
+                "sha256": hashlib.sha256(encoded).hexdigest(),
+            }
+    return result
 
 
 class BrowserHarnessProcess:
@@ -652,7 +995,7 @@ def shutdown_browser_harness(
     return record
 
 
-def browser_shutdown_code(session, state, retain_log):
+def browser_shutdown_code(session, state, retain_log, cdp_selection=None, cdp_budget=0):
     code = (
         "import importlib.util,json,pathlib\nfrom browser_harness import _ipc as ipc\n"
         + "spec=importlib.util.spec_from_file_location('nc_browser_log',"
@@ -660,6 +1003,16 @@ def browser_shutdown_code(session, state, retain_log):
         + ")\n"
         + "observer=importlib.util.module_from_spec(spec);spec.loader.exec_module(observer)\n"
     )
+    if cdp_selection and cdp_budget:
+        code += (
+            "try:\n import asyncio\n raw=asyncio.run(observer.raw_cdp_diagnostic("
+            + repr(cdp_selection)
+            + ","
+            + repr(cdp_budget)
+            + "))\n"
+            + "except Exception as error:\n raw={'diagnosticOnly':True,'canonicalQualification':False,'error':repr(error)[:256]}\n"
+            + "print('NEMOCLAW_RAW_CDP_DIAGNOSTIC='+json.dumps(raw))\n"
+        )
     if retain_log:
         # Reuse this small reader in the existing shutdown interpreter. Its
         # canonical package resolves the real log path; .port tokens are never read.
@@ -732,6 +1085,7 @@ def browser_page_observation(result):
 
 
 def browser_check(root, nonce):
+    component_started = time.monotonic()
     from tools.browser_use_cli import browser_exec, _backend_cache_key
     from tools.browser_tool_install import _find_agent_browser
     from tools.browser_tool_lifecycle import cleanup_browser
@@ -825,11 +1179,27 @@ def browser_check(root, nonce):
     finally:
         browser_tool_session._popen_agent_browser = original_spawn
         diagnostics["pageObservation"] = browser_page_observation(result)
+        cdp_selection, cdp_budget = None, 0
         if primary:
             diagnostics["agentBrowserState"] = browser_agent_state(
                 state, expected, launches
             )
             diagnostics["logs"]["chrome"] = browser_log_tail(chrome_log, state)
+            cdp_selection = browser_cdp_selection(
+                root, state, diagnostics["agentBrowserState"]
+            )
+            cdp_budget = min(
+                8.0, max(0.0, 60.0 - (time.monotonic() - component_started))
+            )
+            if cdp_selection.get("skipped") or cdp_budget < 4:
+                cdp_budget = 0
+            diagnostics["rawCdp"] = {
+                "diagnosticOnly": True,
+                "canonicalQualification": False,
+                "selection": cdp_selection,
+                "skipped": cdp_selection.get("skipped")
+                or "Insufficient remaining component budget",
+            }
         try:
             # The Browser Use daemon is a distinct owner from agent-browser.
             # Its official shutdown checks PID/start identity; no process-name kill.
@@ -840,12 +1210,29 @@ def browser_check(root, nonce):
                     "-I",
                     "-B",
                     "-c",
-                    browser_shutdown_code(session, state, primary is not None),
+                    browser_shutdown_code(
+                        session, state, primary is not None, cdp_selection, cdp_budget
+                    ),
                 ],
                 capture_output=True,
                 text=True,
-                timeout=15,
+                timeout=15 + cdp_budget,
             )
+            if cdp_budget:
+                cdp_rows = [
+                    line.split("=", 1)[1]
+                    for line in shutdown.stdout.splitlines()
+                    if line.startswith("NEMOCLAW_RAW_CDP_DIAGNOSTIC=")
+                ]
+                diagnostics["rawCdp"] = (
+                    json.loads(cdp_rows[0])
+                    if len(cdp_rows) == 1
+                    else {
+                        "diagnosticOnly": True,
+                        "canonicalQualification": False,
+                        "error": "Raw CDP observer did not return exactly one record",
+                    }
+                )
             shutdown_rows = [
                 line.split("=", 1)[1]
                 for line in shutdown.stdout.splitlines()

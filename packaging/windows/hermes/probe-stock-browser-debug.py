@@ -442,6 +442,14 @@ class DebugJob(owner.WindowsJob):
                     )
                     role = re.search(r'(?:^|\s)"?--type=([a-z-]+)"?(?:\s|$)', command)
                     value["chromeRole"] = role.group(1) if role else None
+                    if value["chromeRole"] == "utility":
+                        services = re.findall(
+                            r'(?:^|\s)"?--utility-sub-type=([A-Za-z0-9_.-]{1,128})"?(?=\s|$)',
+                            command,
+                        )
+                        value["utilitySubType"] = (
+                            services[0] if len(services) == 1 else None
+                        )
                     if value["chromeRole"] == "crashpad-handler":
                         value["initialClientHandles"] = initial_client_handles(command)
         return value
@@ -647,6 +655,100 @@ class DebugJob(owner.WindowsJob):
             }
         return result
 
+    def chrome_startup_metadata(self, handle, image, metadata):
+        # Optional metadata on the already owned CREATE_PROCESS handle only.
+        # Capture failures consume their slot and never become observer failures.
+        if (image.get("name") or "").lower() != "chrome.exe" or metadata.get(
+            "ownedJobMember"
+        ) is not True:
+            return None
+        role = metadata.get("chromeRole")
+        if role is None:
+            role = "browser" if "chromeRole" in metadata else "unknown"
+        counts = getattr(self, "startup_policy_counts", {})
+        if counts.get(role, 0) >= 2 or sum(counts.values()) >= 10:
+            return None
+        counts[role] = counts.get(role, 0) + 1
+        self.startup_policy_counts = counts
+        result = {
+            "stage": "CREATE_PROCESS_DEBUG_EVENT",
+            "readOnly": True,
+            "chromeRole": role,
+            "utilitySubType": metadata.get("utilitySubType"),
+            "roleSample": counts[role],
+            "totalSample": sum(counts.values()),
+            "architecture": {
+                "api": "IsWow64Process2",
+                "available": False,
+                "attempted": False,
+                "succeeded": False,
+                "win32Error": None,
+                "processMachine": None,
+                "nativeMachine": None,
+            },
+            "policies": {},
+        }
+        architecture = result["architecture"]
+        try:
+            query = getattr(self.kernel, "IsWow64Process2", None)
+            architecture["available"] = query is not None
+            if query is not None:
+                query.argtypes = [
+                    c.c_void_p,
+                    c.POINTER(c.c_uint16),
+                    c.POINTER(c.c_uint16),
+                ]
+                query.restype = c.c_int
+                process_machine, native_machine = c.c_uint16(), c.c_uint16()
+                architecture["attempted"] = True
+                ok = bool(
+                    query(handle, c.byref(process_machine), c.byref(native_machine))
+                )
+                architecture["succeeded"] = ok
+                architecture["win32Error"] = 0 if ok else c.get_last_error()
+                if ok:
+                    architecture["processMachine"] = f"0x{process_machine.value:04x}"
+                    architecture["nativeMachine"] = f"0x{native_machine.value:04x}"
+        except Exception as error:
+            architecture["error"] = owner.detail(error)
+        for name, policy in (
+            ("dynamicCode", 2),
+            ("win32k", 4),
+            ("cfg", 7),
+            ("signature", 8),
+            ("imageLoad", 10),
+            ("childProcess", 13),
+        ):
+            row = {
+                "enum": policy,
+                "bufferBytes": 4,
+                "available": False,
+                "attempted": False,
+                "succeeded": False,
+                "win32Error": None,
+                "flags": None,
+                "flagsHex": None,
+            }
+            result["policies"][name] = row
+            try:
+                query = getattr(self.kernel, "GetProcessMitigationPolicy", None)
+                row["available"] = query is not None
+                if query is None:
+                    continue
+                query.argtypes = [c.c_void_p, c.c_int, c.c_void_p, c.c_size_t]
+                query.restype = c.c_int
+                flags = c.c_uint32()
+                row["attempted"] = True
+                ok = bool(query(handle, policy, c.byref(flags), c.sizeof(flags)))
+                row["succeeded"] = ok
+                row["win32Error"] = 0 if ok else c.get_last_error()
+                if ok:
+                    row["flags"] = flags.value
+                    row["flagsHex"] = f"0x{flags.value:08x}"
+            except Exception as error:
+                row["error"] = owner.detail(error)
+        return result
+
     def debug_string(self, process, info):
         # Optional secondary evidence only. Never let an unreadable debug
         # string replace the actual exception or stop event continuation.
@@ -744,6 +846,9 @@ class DebugJob(owner.WindowsJob):
                     "debugStrings": 0,
                 }
                 row.update(image=image, **metadata)
+                startup = self.chrome_startup_metadata(info.process, image, metadata)
+                if startup is not None:
+                    row["startupPolicies"] = startup
                 if metadata.get("chromeRole") == "crashpad-handler":
                     parent = self.processes.get(metadata.get("parentPid"), {}).get(
                         "handle"
@@ -1077,6 +1182,14 @@ def validate(request):
 def capture(request, native):
     command, state = validate(request)
     started = time.monotonic()
+    # The full Personal executor emits both application and native owner
+    # evidence. Match its existing 64 KiB + 256 KiB channel budgets in this
+    # merged diagnostic pipe; stock browser-only capture stays at 64 KiB.
+    primary = request.get("classification") == "personal-MXC-browser-debug-request"
+    capture_limits = [
+        owner.CAPTURE_BYTES,
+        owner.CAPTURE_BYTES + (256 * 1024 if primary else 0),
+    ]
     result = {
         "schemaVersion": 1,
         "classification": "personal-MXC-browser-debug-result"
@@ -1087,6 +1200,7 @@ def capture(request, native):
         "nonce": request["nonce"],
         "policySha256": request["policySha256"],
         "nativeProofSha256": request.get("nativeProof", {}).get("sha256"),
+        "captureLimits": dict(zip(("stdout", "stderr"), capture_limits)),
         "debuggerMayChangeBehavior": True,
         "execution": {
             "executable": command[0],
@@ -1110,8 +1224,8 @@ def capture(request, native):
         "cleanupComplete": False,
     }
     buffers = [
-        {"bytes": bytearray(), "eof": False, "error": None, "total": 0}
-        for _ in range(2)
+        {"bytes": bytearray(), "eof": False, "error": None, "total": 0, "limit": limit}
+        for limit in capture_limits
     ]
     readers = []
     stop = threading.Event()
@@ -1121,7 +1235,7 @@ def capture(request, native):
     def read(stream, item):
         try:
             while data := stream.read(8192):
-                remaining = max(0, owner.CAPTURE_BYTES - len(item["bytes"]))
+                remaining = max(0, item["limit"] - len(item["bytes"]))
                 item["bytes"].extend(data[:remaining])
                 item["total"] += len(data)
                 if len(data) > remaining:
@@ -1230,7 +1344,7 @@ def capture(request, native):
             "utf-8", errors="replace"
         )
     result["execution"]["outputExceeded"] = any(
-        x["total"] > owner.CAPTURE_BYTES for x in buffers
+        x["total"] > x["limit"] for x in buffers
     )
     result["execution"]["elapsedMs"] = (time.monotonic() - started) * 1000
     result["events"] = native.events
