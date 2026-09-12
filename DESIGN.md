@@ -10,6 +10,34 @@ The experiment tests whether Go, OpenTofu, and OpenShell can implement
 NemoClaw's desired-state workflow with a small amount of new code.
 No existing NemoClaw source or documentation is copied into this branch.
 
+## Fabric experiment
+
+Authorized locally by cv on 2026-09-12: provision Fabric inside an OpenShell
+sandbox and delegate harness execution to it. The first adapter is Deep Agents, using an external gateway and external
+inference endpoint; managed inference/gateway combinations remain a later slice.
+NemoClaw owns infrastructure, ownership checks, desired state and teardown;
+Fabric owns one persistent harness runtime, ordered invocations and run results.
+The image builds Fabric revision `51a28c1aefec56abd877070b6973d0a32a1e3003`
+from a checksum-verified archive, with locked Python dependencies. This is a
+source build because the published packages lag that revision.
+
+`type: fabric` with `harness: deepagents` selects the immutable sandbox launch
+specification. Existing OpenClaw configuration and launch specifications remain
+valid. Changing harness on an established sandbox requires explicit teardown;
+ordinary apply cannot replace it. A Unix socket inside the sandbox exposes the
+Fabric runtime to the OpenShell exec transport used by `nemoclaw invoke`.
+The CLI verifies deployment bindings and observed configuration before invocation.
+It never retries a request whose result is lost. No external listener is added.
+
+Unchanged apply checks the initialized runtime and inference route without adding
+a conversation turn. The live test checks actual agent replies, stable resource
+and runtime identities across unchanged apply and export/reapply, and teardown.
+Fabric artifacts and conversation state stay inside the sandbox and are removed
+with it. There is no session recovery after runtime death, public service API,
+streaming transport, configurable MCP/skills, or second harness in this slice.
+The native image recipe is limited to Linux ARM64 with Python 3.13. Keep its live
+evidence distinct from deterministic protocol fixtures and cross-platform builds.
+
 The configuration analysis in issue #10904 supplies the resource vocabulary and
 the constraints: explicit deployment UID, strict fields, secret references,
 ownership checks, non-destructive omission, and recovery after partial effects.

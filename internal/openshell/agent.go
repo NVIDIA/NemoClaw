@@ -15,7 +15,10 @@ import (
 
 // Only non-secret configuration reaches the agent. OpenShell routes the stable
 // model alias and owns upstream credentials. No upstream key is attached here.
-func Environment(name string) map[string]string {
+func Environment(name string, runtime ...string) map[string]string {
+	if isFabric(runtime) {
+		return fabricEnvironment(name)
+	}
 	c := map[string]any{
 		"gateway": map[string]any{"mode": "local", "bind": "loopback", "port": 18789, "auth": map[string]any{"mode": "none"}, "controlUi": map[string]any{"enabled": false}},
 		"models":  map[string]any{"mode": "replace", "providers": map[string]any{"openshell": map[string]any{"baseUrl": "https://inference.local/v1", "api": "openai-completions", "apiKey": "openshell-placeholder", "models": []any{map[string]any{"id": "primary", "name": "OpenShell route", "contextWindow": 32768, "maxTokens": 2048, "input": []string{"text"}, "reasoning": false}}}}},
@@ -26,7 +29,12 @@ func Environment(name string) map[string]string {
 	return map[string]string{"TMPDIR": "/sandbox/tmp", "OPENCLAW_HOME": "/sandbox", "XDG_CACHE_HOME": "/sandbox/.cache", "OPENCLAW_CONFIG_PATH": "/sandbox/.openclaw/openclaw.json", "OPENCLAW_STATE_DIR": "/sandbox/.openclaw", "NEMOCLAW_AGENT_CONFIG": string(b), "NODE_EXTRA_CA_CERTS": "/etc/ssl/certs/ca-certificates.crt"}
 }
 
-func Command() []string { return []string{"node", "-e", bootstrap} }
+func Command(runtime ...string) []string {
+	if isFabric(runtime) {
+		return []string{"/opt/fabric/bin/python", "/opt/nemoclaw/fabric.py", "serve"}
+	}
+	return []string{"node", "-e", bootstrap}
+}
 
 const bootstrap = `const fs=require('node:fs');
 const cp=require('node:child_process');
@@ -63,7 +71,10 @@ func policyEqual(a, b *v1.SandboxPolicy) bool {
 
 const configurationProbe = `const fs=require('node:fs'),u=require('node:util');try{const actual=JSON.parse(fs.readFileSync('/sandbox/.openclaw/openclaw.json','utf8'));const expected=JSON.parse(process.env.NEMOCLAW_EXPECTED_CONFIG);for(const k of Object.keys(expected))if(!u.isDeepStrictEqual(actual[k],expected[k]))process.exit(2);}catch{process.exit(2);}`
 
-func Configuration(ctx context.Context, c Client, workspace, name, agent string) error {
+func Configuration(ctx context.Context, c Client, workspace, name, agent string, runtime ...string) error {
+	if isFabric(runtime) {
+		return fabricCheck(ctx, c, workspace, name, agent)
+	}
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 	r, err := c.Exec().Run(ctx, workspace, name, []string{"node", "-e", configurationProbe + "process.exit(0)"}, v1.ExecOptions{Env: map[string]string{"NEMOCLAW_EXPECTED_CONFIG": Environment(agent)["NEMOCLAW_AGENT_CONFIG"]}})
@@ -73,11 +84,23 @@ func Configuration(ctx context.Context, c Client, workspace, name, agent string)
 	return nil
 }
 
-func Ready(ctx context.Context, c Client, workspace, name, agent string) error {
+func Ready(ctx context.Context, c Client, workspace, name, agent string, runtime ...string) error {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 	if _, err := c.Sandboxes().WaitReady(ctx, workspace, name); err != nil {
 		return errors.New("sandbox readiness failed; established identity retained; inspect its OpenShell phase before reapplying")
+	}
+	if isFabric(runtime) {
+		for {
+			if err := fabricCheck(ctx, c, workspace, name, agent); err == nil {
+				return nil
+			}
+			select {
+			case <-ctx.Done():
+				return errors.New("Fabric did not become ready; resources retained")
+			case <-time.After(time.Second):
+			}
+		}
 	}
 	probe := []string{"node", "-e", configurationProbe + `fetch('http://127.0.0.1:18789/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))`}
 	ticks := time.Tick(time.Second)

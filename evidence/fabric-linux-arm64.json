@@ -1,0 +1,97 @@
+{
+  "date": "2026-09-12",
+  "kind": "native OpenShell + Fabric + Deep Agents + real inference",
+  "platform": "linux_arm64",
+  "fabric_revision": "51a28c1aefec56abd877070b6973d0a32a1e3003",
+  "fabric_source_sha256": "14fab1b7094e41f2056051316cff7f84bd7e0f294b2c6aa1c09a30085b4406cf",
+  "image": "nc-prototype-fabric@sha256:a6a0e5cf53501e765ae43457212989ff4716c6224352dc109ebd49c3780450cd",
+  "deepagents": "0.7.13",
+  "openshell": "0.0.116",
+  "inference": "Ollama 0.34.0; Qwen3 1.7B; DGX Spark GPU",
+  "bundle_manifest_sha256": "528da542a56d34dfcdd4392e9dcc8dfb09d13023fa61fb1c51023dfaaa11c7e6",
+  "test": "TestLiveFabric",
+  "passed": true,
+  "duration_seconds": 27.81,
+  "retained_evidence": ".local/fabric-live-00d0a480-8cd7-468e-8c67-003ad24e82b0",
+  "requests": [
+    {
+      "runtime_id": "runtime-1789240790515-52-2",
+      "invocation_id": "invocation-1789240794712-52-5",
+      "status": "succeeded",
+      "response": "FOUR",
+      "usage": {
+        "input_tokens": 2345,
+        "output_tokens": 236,
+        "total_tokens": 2581,
+        "metadata": {}
+      }
+    },
+    {
+      "runtime_id": "runtime-1789240790515-52-2",
+      "invocation_id": "invocation-1789240803303-52-9",
+      "status": "succeeded",
+      "response": "FOUR",
+      "usage": {
+        "input_tokens": 2370,
+        "output_tokens": 94,
+        "total_tokens": 2464,
+        "metadata": {}
+      }
+    }
+  ],
+  "unchanged_apply_changes": [],
+  "export_reapply_changes": [],
+  "same_runtime": true,
+  "distinct_invocations": true,
+  "cleanup": {
+    "outcome": "destroyed",
+    "changes": [
+      {
+        "resource": "nemoclaw_provider.inference",
+        "actions": [
+          "delete"
+        ]
+      },
+      {
+        "resource": "nemoclaw_route.primary",
+        "actions": [
+          "delete"
+        ]
+      },
+      {
+        "resource": "nemoclaw_sandbox.agent",
+        "actions": [
+          "delete"
+        ]
+      }
+    ],
+    "retained": [
+      "nemoclaw_workspace.deployment"
+    ]
+  },
+  "deterministic_checks": [
+    "go test ./...",
+    "go vet ./...",
+    "go test -tags=integration ./internal/engine -count=1",
+    "go vet -tags=integration ./internal/engine",
+    "go vet -tags=live ./internal/engine"
+  ],
+  "earlier_findings": [
+    "Source packages had to be built: inspected Fabric is 0.4.0; PyPI has 0.2.0.",
+    "Set ADAPTER_PYTHON explicitly; native interpreter fallback selected system Python outside the image venv.",
+    "An initial local image digest disappeared when the build tag was replaced; failed experiment sandbox was explicitly removed and recreated.",
+    "Qwen3.5 0.8B passed one run but answered TO END THE QUESTION: in another; retained under .local/fabric-live-997647f1-14fa-4be2-aa9b-5c27974c8c42; test was not weakened, final qualification uses Qwen3 1.7B."
+  ],
+  "limits": [
+    "One Deep Agents harness; external gateway and inference only",
+    "Native Linux ARM64 image; no Windows/macOS/Podman qualification",
+    "No session recovery after process death; no automatic invocation replay",
+    "No tool-use, streaming, MCP or cross-harness qualification in this slice"
+  ],
+  "test_prerequisites_cleanup": {
+    "gateway": "stopped",
+    "ollama_container": "removed",
+    "docker_network": "removed",
+    "model_cache_and_gateway_database": "retained under .local/fabric-runtime"
+  }
+}

@@ -18,6 +18,7 @@ import (
 const OwnerLabel = "nemoclaw.nvidia.com/uid"
 const GenerationLabel = "nemoclaw.nvidia.com/generation"
 const CredentialLabel = "nemoclaw.nvidia.com/credential-env"
+const AgentRuntimeLabel = "nemoclaw.nvidia.com/agent-runtime"
 const AgentLabel = "nemoclaw.nvidia.com/agent"
 
 // Row contains the non-secret attributes shared by resource readers, provider
@@ -32,7 +33,7 @@ var Definitions = []Definition{
 	{"workspace", []string{"name", "owner", "generation"}, nil},
 	{"provider", []string{"workspace", "name", "owner", "generation", "endpoint", "credential_env"}, []string{"endpoint", "credential_env"}},
 	{"route", []string{"workspace", "name", "owner", "generation", "provider_name", "model"}, []string{"provider_name", "model"}},
-	{"sandbox", []string{"workspace", "name", "owner", "generation", "image", "agent_name"}, nil},
+	{"sandbox", []string{"workspace", "name", "owner", "generation", "image", "agent_name", "agent_runtime"}, nil},
 }
 
 type Client interface {
@@ -145,11 +146,15 @@ func observe(ctx context.Context, c Client, kind, workspace, name string, removi
 		row = base(s.Name, s.ID, s.Labels)
 		row["image"] = s.Spec.Template.Image
 		row["agent_name"] = s.Labels[AgentLabel]
+		row["agent_runtime"] = s.Labels[AgentRuntimeLabel]
+		if row["agent_runtime"] != "" && row["agent_runtime"] != "fabric-deepagents" {
+			return nil, errors.New("unsupported sandbox agent runtime")
+		}
 		row["phase"] = string(s.Status.Phase)
 		if row["phase"] == "" {
 			return nil, errors.New("incomplete sandbox phase")
 		}
-		if !slices.Equal(s.Spec.Command, Command()) || !maps.Equal(s.Spec.Environment, Environment(row["agent_name"])) {
+		if !slices.Equal(s.Spec.Command, Command(row["agent_runtime"])) || !maps.Equal(s.Spec.Environment, Environment(row["agent_name"], row["agent_runtime"])) {
 			return nil, errors.New("sandbox launch specification drifted")
 		}
 		if !policyEqual(s.Spec.Policy, Policy()) {
@@ -171,7 +176,7 @@ func observe(ctx context.Context, c Client, kind, workspace, name string, removi
 		row["workspace"] = workspace
 	}
 	for _, field := range append(slices.Clone(DefinitionFor(kind).Fields), "id") {
-		if field != "credential_env" && row[field] == "" {
+		if field != "credential_env" && field != "agent_runtime" && row[field] == "" {
 			return nil, fmt.Errorf("incomplete %s response", kind)
 		}
 	}
@@ -233,7 +238,10 @@ func Ensure(ctx context.Context, c Client, kind string, want Row) (Row, error) {
 		case "sandbox":
 			l := labels(want)
 			l[AgentLabel] = want["agent_name"]
-			_, err = c.Sandboxes().Create(ctx, want["workspace"], want["name"], &v1.SandboxSpec{Template: &v1.SandboxTemplate{Image: want["image"]}, Environment: Environment(want["agent_name"]), Command: Command(), Policy: Policy()}, l)
+			if want["agent_runtime"] != "" {
+				l[AgentRuntimeLabel] = want["agent_runtime"]
+			}
+			_, err = c.Sandboxes().Create(ctx, want["workspace"], want["name"], &v1.SandboxSpec{Template: &v1.SandboxTemplate{Image: want["image"]}, Environment: Environment(want["agent_name"], want["agent_runtime"]), Command: Command(want["agent_runtime"]), Policy: Policy()}, l)
 		}
 		if err != nil {
 			return nil, remoteError("create "+kind, err)

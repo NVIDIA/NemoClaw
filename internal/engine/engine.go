@@ -51,8 +51,8 @@ type ResourceChange struct {
 }
 
 func (e *Engine) Run(ctx context.Context, operation string, input io.Reader) error {
-	if !slices.Contains([]string{"apply", "plan", "export", "destroy", "plan-destroy"}, operation) {
-		return errors.New("expected apply, plan, export, or destroy")
+	if !slices.Contains([]string{"apply", "plan", "export", "destroy", "plan-destroy", "invoke"}, operation) {
+		return errors.New("expected apply, plan, export, destroy, or invoke")
 	}
 	var d config.Document
 	var err error
@@ -94,6 +94,9 @@ func (e *Engine) Run(ctx context.Context, operation string, input io.Reader) err
 	}
 	if record.Destroying {
 		return errors.New("unfinished destroy; rerun destroy before any other operation")
+	}
+	if operation == "invoke" {
+		return e.invoke(ctx, record, input)
 	}
 	if operation == "export" {
 		return e.export(ctx, record)
@@ -231,7 +234,7 @@ func (e *Engine) Run(ctx context.Context, operation string, input io.Reader) err
 	if err = saveJSON(filepath.Join(e.StateDir, "intent.json"), record); err != nil {
 		return err
 	}
-	if err = oshell.Ready(ctx, c, d.Workspace(), d.Spec.Sandboxes[0].Name, d.Spec.Sandboxes[0].Agents[0].Name); err != nil {
+	if err = oshell.Ready(ctx, c, d.Workspace(), d.Spec.Sandboxes[0].Name, d.Spec.Sandboxes[0].Agents[0].Name, d.Spec.Sandboxes[0].Agents[0].Runtime()); err != nil {
 		return err
 	}
 	if err = oshell.InferenceReady(ctx, c, d.Workspace(), d.Spec.Sandboxes[0].Name); err != nil {

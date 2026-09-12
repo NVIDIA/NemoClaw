@@ -33,7 +33,7 @@ func Targets(d config.Document, generations map[string]string) []Target {
 		{"workspace", "nemoclaw_workspace.deployment", oshell.Row{"name": w, "owner": owner, "generation": generations["workspace"]}},
 		{"provider", "nemoclaw_provider.inference", oshell.Row{"workspace": w, "name": p.Name, "owner": owner, "generation": generations["provider"], "endpoint": d.InferenceEndpoint(), "credential_env": credential}},
 		{"route", "nemoclaw_route.primary", oshell.Row{"workspace": w, "name": "primary", "owner": owner, "generation": generations["workspace"], "provider_name": p.Name, "model": a.Inference.Routes[0].Overrides.Model}},
-		{"sandbox", "nemoclaw_sandbox.agent", oshell.Row{"workspace": w, "name": s.Name, "owner": owner, "generation": generations["sandbox"], "image": s.Image.Ref, "agent_name": a.Name}},
+		{"sandbox", "nemoclaw_sandbox.agent", oshell.Row{"workspace": w, "name": s.Name, "owner": owner, "generation": generations["sandbox"], "image": s.Image.Ref, "agent_name": a.Name, "agent_runtime": a.Runtime()}},
 	}
 }
 

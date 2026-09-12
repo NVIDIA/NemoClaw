@@ -1,0 +1,110 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+"""One sandbox-owned Fabric runtime; requests arrive only over a local Unix socket."""
+import asyncio
+import json
+import os
+from pathlib import Path
+import signal
+import sys
+
+SOCKET = "/sandbox/fabric.sock"
+REQUEST_LIMIT = 512 * 1024  # accommodates JSON escaping of a 64 KiB prompt
+RESULT_LIMIT = 4 * 1024 * 1024
+
+
+def configuration(name):
+    return {
+        "metadata": {"name": name},
+        "harness": {"adapter_id": "nvidia.fabric.langchain.deepagents"},
+        "models": {"default": {
+            "provider": "openai", "model": "primary",
+            "base_url": "https://inference.local/v1", "api_key_env": "OPENAI_API_KEY",
+        }},
+        "environment": {"workspace": "/sandbox/workspace"},
+        "runtime": {"max_turns": 8, "timeout_seconds": 300, "artifacts": "/sandbox/artifacts"},
+    }
+
+
+async def serve():
+    from nemo_fabric import Fabric, FabricConfig, RuntimeStatus
+
+    os.umask(0o077)
+    for directory in ("/sandbox/tmp", "/sandbox/workspace", "/sandbox/artifacts"):
+        Path(directory).mkdir(parents=True, exist_ok=True)
+    config = configuration(os.environ["NEMOCLAW_AGENT_NAME"])
+    runtime = await Fabric().start_runtime(FabricConfig.model_validate(config), base_dir="/sandbox")
+    busy = False
+
+    async def handle(reader, writer):
+        nonlocal busy
+        try:
+            raw = await asyncio.wait_for(reader.readline(), 10)
+            request = json.loads(raw)
+            if request == {"operation": "check"}:
+                response = {"config": config, "runtime_id": runtime.runtime_id,
+                            "ready": runtime.status == RuntimeStatus.ACTIVE}
+            elif (isinstance(request, dict) and set(request) == {"operation", "input"}
+                  and request["operation"] == "invoke" and isinstance(request["input"], str)
+                  and 0 < len(request["input"].encode()) <= 65536):
+                if busy:
+                    raise ValueError("runtime is busy; request was not submitted")
+                busy = True
+                try:
+                    response = (await runtime.invoke(input=request["input"])).to_mapping()
+                finally:
+                    busy = False
+            else:
+                raise ValueError("invalid request")
+            encoded = json.dumps(response).encode() + b"\n"
+            if len(encoded) > RESULT_LIMIT:
+                raise ValueError("result exceeded limit; invocation may have had effects")
+        except Exception as error:
+            encoded = json.dumps({"error": str(error)}).encode() + b"\n"
+        try:
+            writer.write(encoded)
+            await writer.drain()
+        finally:
+            writer.close()
+            await writer.wait_closed()
+
+    stop = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        loop.add_signal_handler(sig, stop.set)
+    # A stale socket can remain after process death. No retry/replay of invocations.
+    Path(SOCKET).unlink(missing_ok=True)
+    try:
+        async with await asyncio.start_unix_server(handle, SOCKET, limit=REQUEST_LIMIT):
+            await stop.wait()
+    finally:
+        await runtime.stop()
+        Path(SOCKET).unlink(missing_ok=True)
+
+
+async def client(operation, argument):
+    reader, writer = await asyncio.open_unix_connection(SOCKET, limit=RESULT_LIMIT)
+    try:
+        request = {"operation": operation}
+        if operation == "invoke":
+            request["input"] = argument
+        writer.write(json.dumps(request).encode() + b"\n")
+        await writer.drain()
+        result = json.loads(await asyncio.wait_for(reader.readline(), 320))
+        if operation == "check":
+            return 0 if (result.get("ready") and result.get("runtime_id")
+                         and result.get("config") == configuration(argument)) else 2
+        print(json.dumps(result))
+        return 0 if result.get("status") == "succeeded" else 1
+    finally:
+        writer.close()
+        await writer.wait_closed()
+
+
+if __name__ == "__main__":
+    if len(sys.argv) == 2 and sys.argv[1] == "serve":
+        asyncio.run(serve())
+    elif len(sys.argv) == 3 and sys.argv[1] in ("invoke", "check"):
+        sys.exit(asyncio.run(client(sys.argv[1], sys.argv[2])))
+    else:
+        sys.exit("usage: fabric.py serve | check NAME | invoke PROMPT")

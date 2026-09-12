@@ -1,7 +1,7 @@
 # NemoClaw desired-state prototype
 
-This local experiment creates an OpenClaw agent from YAML using Go, OpenTofu,
-and OpenShell. It has an independent Git root and contains no source
+This local experiment creates an OpenClaw agent or a Fabric-managed Deep Agents
+runtime from YAML using Go, OpenTofu, and OpenShell. It has an independent Git root and contains no source
 from the previous NemoClaw implementation. See [DESIGN.md](DESIGN.md) for scope.
 
 The supported prototype commands are:
@@ -12,6 +12,7 @@ nemoclaw apply < deployment.yaml
 nemoclaw export > exported.yaml
 nemoclaw plan --destroy
 nemoclaw destroy
+nemoclaw invoke --file prompt.txt
 ```
 
 Each command accepts `--state-dir DIR`, which defaults to `.nemoclaw` in the
@@ -19,6 +20,48 @@ current directory. Keep this directory: it contains deployment identity,
 unfinished intent, the OpenTofu state, and the provider lock file.
 On PowerShell, use `--file deployment.yaml` for plan/apply input. Export and
 destroy select the recorded deployment through `--state-dir`; they accept no YAML.
+`invoke` selects that same state directory and reads a plain-text prompt from
+stdin or `--file`. It currently supports Fabric deployments only and writes the
+normalized Fabric result as JSON, including a failed result when available.
+
+## Fabric with Deep Agents
+
+This first slice requires an external gateway and external inference service.
+Build the native Linux ARM64 image with `python3 image/fabric/build.py`, rebuild
+the bundle, and copy [examples/fabric.yaml](examples/fabric.yaml). Use the image
+digest printed by the builder, a fresh deployment UUID, and your external gateway
+and inference endpoint. The recipe builds the pinned Fabric source revision and
+installs Deep Agents 0.7.13 with hash-locked dependencies; no runtime installation
+or ordinary network egress is required inside the sandbox.
+
+```sh
+dist/linux_arm64/bin/nemoclaw apply --state-dir .local/fabric --file deployment.yaml
+dist/linux_arm64/bin/nemoclaw invoke --state-dir .local/fabric --file prompt.txt
+```
+
+The relevant agent configuration is:
+
+```yaml
+name: main
+type: fabric
+harness: deepagents
+```
+
+Keep the `inference` route from the example. NemoClaw supplies Fabric with the
+stable `primary` model alias at `https://inference.local/v1`; OpenShell owns the
+upstream credential. Fabric and its persistent adapter run inside the sandbox.
+The explicit adapter interpreter is `/opt/fabric/bin/python`. A Unix socket,
+accessed through OpenShell exec, accepts one invocation at a time. Successful
+requests expose `runtime_id`, `invocation_id`, `output`, usage and artifact
+references. Artifact paths refer to files inside the sandbox.
+
+An unchanged apply or export/reapply preserves the running Fabric runtime and
+conversation. A process crash is terminal for that runtime; requests are never
+automatically replayed. Sandbox replacement and teardown delete conversation
+state and artifacts. Switching between OpenClaw and Fabric requires explicit
+teardown and reapply. There is no automatic migration of existing agents.
+
+See [LOCAL_TEST.md](LOCAL_TEST.md) for the opt-in real Fabric/inference test.
 
 ## Build
 
@@ -197,7 +240,7 @@ credentials, foreign ownership, missing bound services/storage or OpenShell reso
 combinations stop the operation. There is no adoption, pruning, migration,
 automatic rollback, or lost-state recovery command.
 
-This schema permits one provider, one sandbox, one OpenClaw agent, and one route.
+This schema permits one provider, one sandbox, one agent, and one route.
 It is a `v1alpha1` subset of the #10904 analysis. The isolated policy allows no
 ordinary network egress; OpenShell handles inference routing separately.
 Landlock uses upstream `best_effort` mode, so filesystem enforcement depends on

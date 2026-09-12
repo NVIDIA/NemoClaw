@@ -87,6 +87,7 @@ type Network struct {
 type Agent struct {
 	Name      string    `yaml:"name" json:"name"`
 	Type      string    `yaml:"type" json:"type"`
+	Harness   string    `yaml:"harness,omitempty" json:"harness,omitempty"`
 	Inference Inference `yaml:"inference" json:"inference"`
 }
 type Inference struct {
@@ -229,8 +230,14 @@ func (d Document) Validate() error {
 		return errors.New("this slice requires exactly one agent")
 	}
 	a := s.Agents[0]
-	if !slug.MatchString(a.Name) || a.Type != "openclaw" {
-		return errors.New("agent requires a lowercase name and openclaw type")
+	if !slug.MatchString(a.Name) {
+		return errors.New("agent requires a lowercase name")
+	}
+	if !((a.Type == "openclaw" && a.Harness == "") || (a.Type == "fabric" && a.Harness == "deepagents")) {
+		return errors.New("agent requires openclaw without harness, or fabric with harness deepagents")
+	}
+	if a.Type == "fabric" && (g.Management != "external" || p.Ollama != nil || p.Service != nil) {
+		return errors.New("this Fabric slice requires external gateway and inference services")
 	}
 	if len(a.Inference.Routes) != 1 {
 		return errors.New("this slice requires exactly one primary inference route")
@@ -319,3 +326,11 @@ func (d Document) Workspace() string {
 	return "nc-" + hex.EncodeToString(h[:8])
 }
 func (d Document) YAML() ([]byte, error) { return yaml.Marshal(d) }
+
+// Runtime identifies the sandbox entrypoint. Empty preserves existing OpenClaw bindings.
+func (a Agent) Runtime() string {
+	if a.Type == "fabric" {
+		return "fabric-deepagents"
+	}
+	return ""
+}

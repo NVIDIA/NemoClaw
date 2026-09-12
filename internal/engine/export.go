@@ -108,7 +108,7 @@ func (e *Engine) export(ctx context.Context, r Record) error {
 			}
 			d.Spec.Sandboxes[0].Agents[0].Inference.Routes[0].Overrides.Model = got["model"]
 		case "sandbox":
-			if got["image"] != t.Values["image"] || got["agent_name"] != t.Values["agent_name"] {
+			if got["image"] != t.Values["image"] || got["agent_name"] != t.Values["agent_name"] || got["agent_runtime"] != t.Values["agent_runtime"] {
 				return errors.New("sandbox configuration drift requires inspection")
 			}
 		}
@@ -128,7 +128,7 @@ func (e *Engine) export(ctx context.Context, r Record) error {
 	if err = d.Validate(); err != nil {
 		return err
 	}
-	if err = oshell.Configuration(ctx, c, d.Workspace(), d.Spec.Sandboxes[0].Name, d.Spec.Sandboxes[0].Agents[0].Name); err != nil {
+	if err = oshell.Configuration(ctx, c, d.Workspace(), d.Spec.Sandboxes[0].Name, d.Spec.Sandboxes[0].Agents[0].Name, d.Spec.Sandboxes[0].Agents[0].Runtime()); err != nil {
 		return err
 	}
 	b, err := d.YAML()

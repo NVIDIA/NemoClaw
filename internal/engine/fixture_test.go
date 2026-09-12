@@ -41,6 +41,8 @@ type fixture struct {
 	blockSandbox  chan struct{}
 	sandboxPhase  pb.SandboxPhase
 	endpoint      string
+	fabricInputs  []string
+	fabricResult  string
 	execExit      int32
 	inferenceExit int32
 	readFailure   map[string]codes.Code
@@ -218,7 +220,17 @@ func (f *fixture) ExecSandbox(q *pb.ExecSandboxRequest, s grpc.ServerStreamingSe
 	if strings.Contains(strings.Join(q.Command, " "), "/v1/chat/completions") {
 		exit = f.inferenceExit
 	}
+	var output string
+	if len(q.Command) == 4 && q.Command[1] == "/opt/nemoclaw/fabric.py" && q.Command[2] == "invoke" {
+		f.fabricInputs = append(f.fabricInputs, q.Command[3])
+		output = f.fabricResult
+	}
 	f.mu.Unlock()
+	if output != "" {
+		if err := s.Send(&pb.ExecSandboxEvent{Payload: &pb.ExecSandboxEvent_Stdout{Stdout: &pb.ExecSandboxStdout{Data: []byte(output)}}}); err != nil {
+			return err
+		}
+	}
 	return s.Send(&pb.ExecSandboxEvent{Payload: &pb.ExecSandboxEvent_Exit{Exit: &pb.ExecSandboxExit{ExitCode: exit}}})
 }
 

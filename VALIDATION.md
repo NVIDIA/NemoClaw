@@ -312,3 +312,28 @@ inspection instead of private state parsing, a complete plan-action allowlist,
 credential installation versions, platform qualification, migration, adoption,
 and measured maintenance reduction. No automatic rollback or lost-state adoption
 is implemented. The implementation remains a local experiment.
+# Fabric integration, 2026-09-12
+
+Native Linux ARM64 evidence is recorded in
+[evidence/fabric-linux-arm64.json](evidence/fabric-linux-arm64.json).
+The pinned Fabric source build and Deep Agents 0.7.13 ran inside a real
+OpenShell 0.0.116 sandbox, using Qwen3 1.7B through Ollama 0.34.0 on DGX Spark.
+`TestLiveFabric` passed in 27.81 seconds. The first request answered `FOUR`;
+unchanged apply and export/reapply had empty change lists. The second invocation
+had the same Fabric runtime ID and a distinct invocation ID. All resource IDs
+remained stable across unchanged apply. The test then destroyed its sandbox,
+route and provider, retaining the workspace and local evidence.
+
+The final source also passed `go test ./...`, `go vet ./...`, the full native
+OpenTofu/provider integration suite, and vet with integration and live tags.
+Deterministic coverage includes old OpenClaw state without the new runtime field,
+Fabric configuration/export, unchanged apply, exact prompt transport, failed
+results without replay, and refusal to invoke after observed configuration drift.
+
+This qualification does not establish tool-use accuracy or portability across
+harnesses or platforms. An earlier Qwen3.5 0.8B run returned unrelated text despite
+a successful invocation status; its result is retained separately. The expected
+answer assertion was preserved and the final test used Qwen3 1.7B. Startup testing
+also exposed the need for an explicit adapter interpreter and a locally present
+immutable image digest. The failed experiment sandboxes were explicitly cleaned
+up; no automatic recovery or migration was added.

@@ -1,5 +1,43 @@
 # Run the Linux Docker experiment
 
+## Fabric integration
+
+The first Fabric image is a native Linux ARM64 build using Python 3.13. It requires
+Docker, uv and the host build toolchain; maturin can provision Rust in its cache.
+Run `python3 image/fabric/build.py` and then `go run ./tools/bundle`. The builder
+prints the immutable local image reference. Copy `examples/fabric.yaml`, set that
+reference, choose a fresh UUID, and configure an OpenShell 0.0.116 gateway and an
+OpenAI-compatible inference endpoint using the external-gateway setup below.
+The sample uses ports 17681 and 11446; adjust them to your chosen test topology.
+
+The retained Linux ARM64 test used the pinned Ollama image below, Qwen3 1.7B,
+and GPU access (`--gpus all`) on DGX Spark. Wait for the model download and a
+successful inference response before applying; route registration validates the
+endpoint. CPU cold-start latency can exceed the gateway validation deadline.
+For a local gateway binary, check `openshell-gateway --version` before starting
+it: a different globally installed version may have incompatible CLI flags.
+
+```sh
+NEMOCLAW_LIVE_FABRIC_CONFIG="$(pwd)/deployment.yaml" \
+  go test -tags=live ./internal/engine -run '^TestLiveFabric$' -count=1 -timeout=20m -v
+```
+
+This creates a fresh deployment UUID and retains YAML, native OpenTofu state and
+JSON results under `.local/fabric-live-UUID`. It checks actual agent replies,
+unchanged apply, export/reapply, and identical Fabric runtime IDs with distinct
+invocation IDs. On success it destroys only its sandbox, route and provider;
+the workspace, external gateway and inference service remain. Failure retains
+the deployment for inspection. The deterministic `TestFabricDeploymentAndInvocationBoundary`
+test separately checks arbitrary prompt transport, failure without replay and
+refusal to invoke drifted configuration; its gateway/exec responses are fixtures.
+
+The runtime must use the pinned image from the current build. Rebuilding a local
+tag can remove an older digest from the engine; do not rebuild the tag while a
+deployment still needs that older image for creation. A sandbox that reaches
+OpenShell's terminal Error state requires explicit teardown before fresh creation.
+
+## External gateway and inference
+
 Use Go 1.27.1, Docker, and the OpenShell 0.0.116 `openshell-gateway` executable.
 For the external-gateway variants below, the gateway is a test prerequisite,
 separate from the NemoClaw bundle. The managed Spark variant provisions it. Choose

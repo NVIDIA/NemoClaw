@@ -11,6 +11,8 @@ respective licenses. `go.mod`, `go.sum`, and `versions.json` identify the inputs
 | Terraform plugin framework | Provider protocol implementation | MPL-2.0 |
 | OpenShell and its Go SDK | Gateway, isolation, and typed API | Apache-2.0 |
 | OpenClaw | Agent image | MIT |
+| NeMo Fabric | Agent runtime, adapter contract and Deep Agents adapter | Apache-2.0 |
+| LangChain Deep Agents | Fabric-managed agent harness | MIT |
 | Ollama | Managed inference service and live-test server | MIT |
 | Moby Go client and API | Docker engine resource operations | Apache-2.0 |
 | MiaAI Lab Qwen3.8 Spark recipe | Model-specific patches and preparation | AGPL-3.0-or-later |
@@ -21,6 +23,14 @@ Generated bundles and images are local artifacts and are not committed. A
 distribution release still needs the complete transitive license inventory,
 notices, corresponding-source obligations where applicable, signing, and
 platform packaging. This file does not establish redistribution readiness.
+
+The Fabric image source revision and archive checksum are recorded in
+`image/fabric/build.py`. `image/fabric/dependencies.lock` pins the third-party
+Linux ARM64 Python wheels and their hashes. Fabric's four wheels are built from
+that verified source and receive hashes in the generated installation lock.
+Installed wheel license metadata remains in `/opt/fabric`; source provenance and
+the installation-lock hash are in `/opt/nemoclaw/provenance.json`. The verified
+source archive and extracted source remain under `.build/fabric` on the builder.
 
 The model-specific runtime retains its recipe archive, complete source, patches,
 original and modified files, licenses, preparation tools, and supervisor source.

@@ -23,8 +23,8 @@ func main() {
 	}
 }
 func run() error {
-	if len(os.Args) < 2 || !slices.Contains([]string{"apply", "plan", "export", "destroy"}, os.Args[1]) {
-		return fmt.Errorf("usage: nemoclaw {apply|plan|export|destroy} [--state-dir DIR] [--file YAML]; plan --destroy previews teardown")
+	if len(os.Args) < 2 || !slices.Contains([]string{"apply", "plan", "export", "destroy", "invoke"}, os.Args[1]) {
+		return fmt.Errorf("usage: nemoclaw {apply|plan|export|destroy|invoke} [--state-dir DIR] [--file YAML]; plan --destroy previews teardown")
 	}
 	operation := os.Args[1]
 	exe, err := os.Executable()
@@ -34,7 +34,7 @@ func run() error {
 	f := flag.NewFlagSet(os.Args[1], flag.ContinueOnError)
 	state := f.String("state-dir", ".nemoclaw", "persistent deployment state directory")
 	bundle := f.String("bundle", filepath.Dir(filepath.Dir(exe)), "private bundle directory")
-	file := f.String("file", "", "read YAML from a file instead of stdin")
+	file := f.String("file", "", "read YAML or an invoke prompt from a file instead of stdin")
 	var destroy bool
 	if operation == "plan" {
 		f.BoolVar(&destroy, "destroy", false, "preview teardown of the selected deployment, retaining persistent data")
@@ -50,7 +50,7 @@ func run() error {
 	}
 	input := os.Stdin
 	if *file != "" {
-		if operation != "plan" && operation != "apply" {
+		if operation != "plan" && operation != "apply" && operation != "invoke" {
 			return fmt.Errorf("%s uses the selected state directory and does not accept YAML input", os.Args[1])
 		}
 		input, err = os.Open(*file)
