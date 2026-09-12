@@ -12,7 +12,7 @@ import { readYaml, type WorkflowJob, type WorkflowStep } from "../../helpers/e2e
 const REPO_ROOT = path.join(import.meta.dirname, "../../..");
 const CODEX_ACP_TARBALL =
   "https://registry.npmjs.org/@zed-industries/codex-acp/-/codex-acp-0.11.1.tgz";
-const OPENCLAW_TARBALL = "https://registry.npmjs.org/openclaw/-/openclaw-2026.7.1.tgz";
+const OPENCLAW_TARBALL = "https://registry.npmjs.org/openclaw/-/openclaw-2026.9.1.tgz";
 const MESSAGING_BUILD_APPLIER = path.join(
   REPO_ROOT,
   "src",
@@ -127,7 +127,7 @@ function runBaseImageBuildArgGuard(
   }
 }
 
-describe("OpenClaw 2026.6.10 dependency review contract", () => {
+describe("OpenClaw 2026.9.1 dependency review contract", () => {
   it("keeps every reviewed archive boundary on the shared invariant matrix (#5896)", () => {
     const result = spawnSync(
       "bash",
@@ -179,8 +179,8 @@ for dockerfile in Dockerfile Dockerfile.base; do
     Dockerfile) end_marker='# Patch OpenClaw media fetch' ;;
     Dockerfile.base) end_marker='# Baseline health check.' ;;
   esac
-  openclaw_block="$(sed -n "/ARG OPENCLAW_VERSION=2026.7.1/,/$end_marker/p" "$dockerfile")"
-  check_contains "$openclaw_block" "ARG OPENCLAW_2026_7_1_TARBALL=${OPENCLAW_TARBALL}" "$dockerfile tarball arg"
+  openclaw_block="$(sed -n "/ARG OPENCLAW_VERSION=2026.9.1/,/$end_marker/p" "$dockerfile")"
+  check_contains "$openclaw_block" "ARG OPENCLAW_2026_9_1_TARBALL=${OPENCLAW_TARBALL}" "$dockerfile tarball arg"
   check_contains "$openclaw_block" '/scripts/lib/reviewed-npm-archive.mts' "$dockerfile shared helper"
   check_contains "$openclaw_block" '--package-spec "openclaw@\${OPENCLAW_VERSION}" --integrity "$EXPECTED_INTEGRITY"' "$dockerfile reviewed identity"
   check_contains "$openclaw_block" '--tarball-url "$EXPECTED_TARBALL"' "$dockerfile reviewed tarball"
@@ -226,7 +226,7 @@ check_contains "$optional_plugin_block" '/scripts/lib/reviewed-npm-archive.mts' 
 check_contains "$optional_plugin_block" '--package-spec "$plugin_spec" --integrity "$expected_integrity"' "optional plugin reviewed identity"
 check_contains "$optional_plugin_block" '--tarball-url "$expected_tarball"' "optional plugin reviewed tarball"
 check_contains "$optional_plugin_block" '/scripts/lib/openclaw-npm-remediation.mts' "optional plugin remediation helper"
-check_contains "$optional_plugin_block" '"@openclaw/diagnostics-otel@2026.7.1")' "diagnostics remediation identity"
+  check_contains "$optional_plugin_block" '"@openclaw/diagnostics-otel@2026.9.1")' "diagnostics remediation identity"
 check_contains "$optional_plugin_block" '--working-directory "$plugin_work_root"' "diagnostics remediation workspace"
 check_contains "$optional_plugin_block" 'if (!value.remediated || typeof value.archivePath !== "string")' "diagnostics remediation result guard"
 check_contains "$optional_plugin_block" 'plugin_source_root="$(dirname "$plugin_archive")"' "optional plugin source root"
@@ -259,9 +259,9 @@ check_not_contains "$optional_plugin_block" 'pack_reviewed_npm_tarball' "optiona
 		'@openclaw/diagnostics-otel@2026.6.10' \
 		'@openclaw/slack@2026.6.10' \
 		'@openclaw/msteams@2026.6.10' \
-		'@openclaw/diagnostics-otel@2026.7.1' \
-		'@openclaw/slack@2026.7.1' \
-		'@openclaw/msteams@2026.7.1'; do
+		'@openclaw/diagnostics-otel@2026.9.1' \
+		'@openclaw/slack@2026.9.1' \
+		'@openclaw/msteams@2026.9.1'; do
 		grep -Fq "$package_spec" "$remediation_helper"
 	done
 	grep -Fq 'validateArchiveMembers(archivePath' "$remediation_helper"

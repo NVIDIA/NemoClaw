@@ -13,7 +13,7 @@ const ROOT = path.resolve(import.meta.dirname, "../../..");
 const BRAVE_INTEGRITY =
   "sha512-7Z+GZ/6K6a8LlkTsWVnAZ1hv8EarORzHQvFHD7ekcg033FGJOXYPEZSbvvE3qR9vM+vnoZplNjMZ7vFMRcvQgw==";
 const BRAVE_TARBALL =
-  "https://registry.npmjs.org/@openclaw/brave-plugin/-/brave-plugin-2026.7.1.tgz";
+  "https://registry.npmjs.org/@openclaw/brave-plugin/-/brave-plugin-2026.9.1.tgz";
 
 it("pins Brave web-search and preserves its placeholder during build-time doctor", () => {
   const dockerfile = fs.readFileSync(path.join(ROOT, "Dockerfile"), "utf-8");
@@ -29,7 +29,7 @@ it("pins Brave web-search and preserves its placeholder during build-time doctor
     writeReviewedNpmFixture(npmFixture, log, [
       {
         integrity: BRAVE_INTEGRITY,
-        packageSpec: "@openclaw/brave-plugin@2026.7.1",
+        packageSpec: "@openclaw/brave-plugin@2026.9.1",
         tarballUrl: BRAVE_TARBALL,
       },
     ]);
@@ -59,13 +59,13 @@ it("pins Brave web-search and preserves its placeholder during build-time doctor
         NEMOCLAW_WEB_SEARCH_ENABLED: "1",
         NEMOCLAW_WEB_SEARCH_PROVIDER: "brave",
         NODE_OPTIONS: "",
-        OPENCLAW_BRAVE_PLUGIN_2026_7_1_INTEGRITY: BRAVE_INTEGRITY,
-        OPENCLAW_VERSION: "2026.7.1",
+        OPENCLAW_BRAVE_PLUGIN_2026_9_1_INTEGRITY: BRAVE_INTEGRITY,
+        OPENCLAW_VERSION: "2026.9.1",
       },
     });
     const calls = fs.readFileSync(log, "utf-8");
     expect(result.status, result.stderr).toBe(0);
-    expect(calls).toContain("npm view @openclaw/brave-plugin@2026.7.1 dist.integrity");
+    expect(calls).toContain("npm view @openclaw/brave-plugin@2026.9.1 dist.integrity");
     expect(calls).toContain(`npm pack ${BRAVE_TARBALL} --pack-destination`);
     expect(calls).toContain("plugins install npm-pack:");
     expect(calls).toContain(
@@ -146,7 +146,7 @@ it.each([
       {
         env: {
           NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION: union,
-          OPENCLAW_VERSION: "2026.7.1",
+          OPENCLAW_VERSION: "2026.9.1",
         },
       },
     );

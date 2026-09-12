@@ -15,11 +15,11 @@ import {
 const REPO_ROOT = path.join(import.meta.dirname, "../../..");
 const RUNTIME_DIRECTORY = path.join(REPO_ROOT, "agents", "openclaw", "openclaw-runtime");
 const LOCKFILE = path.join(RUNTIME_DIRECTORY, "package-lock.json");
-const PACKAGE_SPEC = "openclaw@2026.7.1";
+const PACKAGE_SPEC = "openclaw@2026.9.1";
 const INTEGRITY =
-  "sha512-ge/Xss99CHAjPL/ikmH/UFoiOrjcxDB4sW3y9mhyCD+dYW3wzV7TKbAVdkrXFgAG2d2BjpJofP97zUZ+umxo8g==";
-const TARBALL = "https://registry.npmjs.org/openclaw/-/openclaw-2026.7.1.tgz";
-const LOCK_SHA256 = "248d881ca125bb83da293c4b3f40b46d057095a9fe90b5165255da0de78af9f9";
+  "sha512-0Ve0631CdgkJDwd4NNG1BawIdF5yCL2sO+Tts8amStw+H6vKURTj0K4rOa4+hFpJk1Dnw5LyKl5twzwX1VtA2w==";
+const TARBALL = "https://registry.npmjs.org/openclaw/-/openclaw-2026.9.1.tgz";
+const LOCK_SHA256 = "9f99aa4f5d10280b4d809e0d54f20bcbe786d4140d30fc10ed502b1305ff9a8d";
 const MCPORTER_PACKAGE_SPEC = "mcporter@0.7.3";
 const MCP_TOOL_DISCOVERY_PACKAGE_SPEC = "@modelcontextprotocol/sdk@1.30.0";
 const MCP_TOOL_DISCOVERY_LOCK_SHA256 =
@@ -34,7 +34,7 @@ function lockRequest(lockfilePath = LOCKFILE, expectedLockSha256 = LOCK_SHA256) 
   return {
     expectedIntegrity: INTEGRITY,
     expectedLockSha256,
-    label: "OpenClaw 2026.7.1 locked runtime graph",
+    label: "OpenClaw 2026.9.1 locked runtime graph",
     lockfilePath,
     packageSpec: PACKAGE_SPEC,
     registryOrigin: "https://registry.npmjs.org/",
@@ -174,14 +174,14 @@ afterEach(() => {
 describe("locked OpenClaw production installation (#5896)", () => {
   it("binds the reviewed root artifact to the complete committed closure", () => {
     const verified = verifyReviewedNpmLock(lockRequest(), reviewedMetadata);
-    expect(verified).toHaveLength(307);
+    expect(verified).toHaveLength(366);
     expect(verified).toContain(PACKAGE_SPEC);
     expect(verified).toContain("brace-expansion@5.0.9");
     expect(verified).toContain("fast-uri@3.1.6");
 
     expect(verified).not.toContain("fast-uri@3.1.5");
     expect(verified).toContain("hono@4.12.34");
-    expect(verified).toContain("ip-address@10.3.1");
+    expect(verified).toContain("ip-address@10.7.0");
     expect(verified).toContain("tar@7.5.21");
     expect(verified).not.toContain("tar@7.5.19");
     expect(verified).toContain("undici@8.10.0");
@@ -191,8 +191,7 @@ describe("locked OpenClaw production installation (#5896)", () => {
   // source-shape-contract: security -- The committed production lock digest must fail before any registry-controlled metadata is consulted
   it("rejects any lock byte tamper before registry metadata is consulted", () => {
     const lockfilePath = mutatedLock((lock) => {
-      lock.packages["node_modules/openclaw/node_modules/chalk"].integrity =
-        `sha512-${"A".repeat(88)}`;
+      lock.packages["node_modules/chalk"].integrity = `sha512-${"A".repeat(88)}`;
     });
     let npmCalled = false;
     expect(() =>
@@ -207,21 +206,21 @@ describe("locked OpenClaw production installation (#5896)", () => {
   // source-shape-contract: security -- Mutating the shipped lock proves every reviewed transitive identity remains bound to committed production bytes
   it.each([
     {
-      expected: "root must depend only on openclaw@2026.7.1",
+      expected: "root must depend only on openclaw@2026.9.1",
       mutate: (lock: any) => {
         lock.packages[""].dependencies.openclaw = "2026.7.2";
       },
       name: "root version drift",
     },
     {
-      expected: "root must depend only on openclaw@2026.7.1",
+      expected: "root must depend only on openclaw@2026.9.1",
       mutate: (lock: any) => {
         lock.packages[""].optionalDependencies = { "left-pad": "1.3.0" };
       },
       name: "root optional dependency injection",
     },
     {
-      expected: "lock integrity mismatch for openclaw@2026.7.1",
+      expected: "lock integrity mismatch for openclaw@2026.9.1",
       mutate: (lock: any) => {
         lock.packages["node_modules/openclaw"].integrity = `sha512-${"B".repeat(88)}`;
       },
@@ -237,14 +236,14 @@ describe("locked OpenClaw production installation (#5896)", () => {
     {
       expected: "must use a committed sha512 npm integrity value",
       mutate: (lock: any) => {
-        delete lock.packages["node_modules/openclaw/node_modules/chalk"].integrity;
+        delete lock.packages["node_modules/chalk"].integrity;
       },
       name: "missing transitive integrity",
     },
     {
       expected: "must use the reviewed registry",
       mutate: (lock: any) => {
-        lock.packages["node_modules/openclaw/node_modules/chalk"].resolved =
+        lock.packages["node_modules/chalk"].resolved =
           "https://packages.invalid/chalk-5.6.2.tgz";
       },
       name: "malicious transitive registry substitution",
@@ -253,7 +252,7 @@ describe("locked OpenClaw production installation (#5896)", () => {
       expected: "conflicting package identity: safe-buffer@5.1.2",
       mutate: (lock: any) => {
         lock.packages[
-          "node_modules/openclaw/node_modules/string_decoder/node_modules/safe-buffer"
+          "node_modules/string_decoder/node_modules/safe-buffer"
         ].integrity = `sha512-${"C".repeat(88)}`;
       },
       name: "conflicting duplicate package identity",

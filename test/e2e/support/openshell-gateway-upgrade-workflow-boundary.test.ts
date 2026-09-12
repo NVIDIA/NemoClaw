@@ -48,6 +48,8 @@ describe("OpenShell gateway upgrade boundary", () => {
       sandboxBaseImageRef: environment.NEMOCLAW_OLD_SANDBOX_BASE_IMAGE_REF,
       openShellVersion: environment.NEMOCLAW_OLD_OPENSHELL_VERSION,
       openClawVersion: environment.NEMOCLAW_OLD_OPENCLAW_VERSION,
+      currentOpenClawVersion: environment.NEMOCLAW_CURRENT_OPENCLAW_VERSION,
+      stateUpgradeProof: environment.NEMOCLAW_OPENCLAW_STATE_UPGRADE_PROOF,
     }).toEqual({
       runner: "ubuntu-latest",
       shard: "v0-0-89-x86-64",
@@ -57,6 +59,8 @@ describe("OpenShell gateway upgrade boundary", () => {
       sandboxBaseImageRef: REVIEWED_GATEWAY_UPGRADE_FIXTURE.sandboxBaseImageRef,
       openShellVersion: REVIEWED_GATEWAY_UPGRADE_FIXTURE.openShellVersion,
       openClawVersion: REVIEWED_GATEWAY_UPGRADE_FIXTURE.openclawVersion,
+      currentOpenClawVersion: "2026.9.1",
+      stateUpgradeProof: "1",
     });
   });
 

@@ -3,12 +3,26 @@
 
 import { describe, expect, it } from "vitest";
 
-import { verifyNemoClawRefFidelity } from "../live/openclaw-tui-ref-fidelity.ts";
+import {
+  resolveExpectedOpenClawVersion,
+  verifyNemoClawRefFidelity,
+} from "../live/openclaw-tui-ref-fidelity.ts";
 
 const EXPECTED_REF = "0123456789abcdef0123456789abcdef01234567";
 const CLI_PATH = "/repo/bin/nemoclaw.js";
 
 describe("OpenClaw TUI NemoClaw ref fidelity", () => {
+  it("derives the regression version from the manifest unless explicitly overridden", () => {
+    expect(resolveExpectedOpenClawVersion({ manifestVersion: "2026.9.1" })).toBe("2026.9.1");
+    expect(
+      resolveExpectedOpenClawVersion({
+        manifestVersion: "2026.9.1",
+        override: "2027.1.0",
+      }),
+    ).toBe("2027.1.0");
+    expect(resolveExpectedOpenClawVersion({ manifestVersion: undefined })).toBe("");
+  });
+
   it("records the exact checkout that produced the tested CLI", () => {
     expect(
       verifyNemoClawRefFidelity({

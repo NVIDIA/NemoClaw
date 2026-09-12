@@ -39,6 +39,14 @@ const RUNTIME_MODULE_FILE_PATTERNS = new Map<string, Readonly<Record<RuntimeFunc
         applyToolSearchCatalog: /^tool-search-.*\.js$/,
       },
     ],
+    [
+      "2026.9.1",
+      {
+        resolveToolSearchConfig: /^tool-search-.*\.js$/,
+        createOpenClawCodingTools: /^agent-tools-.*\.js$/,
+        applyToolSearchCatalog: /^tool-search-.*\.js$/,
+      },
+    ],
   ],
 );
 type ExpectedMode = "progressive" | "direct";
