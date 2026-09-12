@@ -45,6 +45,7 @@ export type ConnectHarness = {
   connectSandbox: ConnectSandbox;
   ensureOllamaAuthProxySpy: MockInstance;
   findReachableOllamaHostSpy: MockInstance;
+  forwardReachabilitySpy: MockInstance;
   forwardServiceOwnerSpy: MockInstance;
   launchForwardServiceSpy: MockInstance;
   ensureLiveSandboxSpy: MockInstance;
@@ -198,6 +199,9 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
   const agentRuntime = requireDist("../../src/lib/agent/runtime.js");
   const dns = requireDist("../../src/lib/actions/dns/index.js");
   const gatewayState = requireDist("../../src/lib/actions/sandbox/gateway-state.js");
+  const gatewayTeardownAuthority = requireDist(
+    "../../src/lib/onboard/gateway-teardown-authority.js",
+  );
   const hermesInferenceRecovery = requireDist(
     "../../src/lib/actions/sandbox/probe/hermes-portable-inference-recovery.js",
   );
@@ -248,6 +252,22 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     _sandboxName: string,
     operation: () => Promise<unknown>,
   ) => operation()) as never);
+  vi.spyOn(gatewayTeardownAuthority, "resolveGatewayForwardAuthority").mockImplementation((({
+    gatewayName,
+    gatewayPort,
+  }: {
+    gatewayName: string;
+    gatewayPort: number;
+  }) => ({
+    gatewayName,
+    gatewayPort,
+    mode: "nemoclaw-managed",
+    source: "standalone",
+    endpoint: null,
+    stateDir: null,
+    supervisor: null,
+    requiredCapabilities: [],
+  })) as never);
   vi.spyOn(gatewayState, "buildHermesPortableCommandEnvironment").mockReturnValue({
     HOME: "/home/test",
     XDG_CONFIG_HOME: "/home/test/.config",
@@ -559,10 +579,12 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
   const checkAndRecoverSpy = vi
     .spyOn(processRecovery, "checkAndRecoverSandboxProcesses")
     .mockReturnValue(options.processCheck ?? { checked: true, wasRunning: true, recovered: false });
-  vi.spyOn(forwardHealth, "isLocalForwardReachable").mockReturnValue(true);
+  const forwardReachabilitySpy = vi
+    .spyOn(forwardHealth, "isLocalForwardReachable")
+    .mockReturnValue(true);
   const forwardServiceOwnerSpy = vi
     .spyOn(forwardService, "isForwardServiceListenerOwner")
-    .mockReturnValue(false);
+    .mockReturnValue(true);
   const launchForwardServiceSpy = vi
     .spyOn(forwardService, "launchForwardService")
     .mockImplementation(() => undefined);
@@ -696,6 +718,7 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     connectSandbox: requireDist(connectModulePath).connectSandbox,
     ensureOllamaAuthProxySpy,
     findReachableOllamaHostSpy,
+    forwardReachabilitySpy,
     forwardServiceOwnerSpy,
     launchForwardServiceSpy,
     ensureLiveSandboxSpy,

@@ -527,11 +527,11 @@ exec "$@"
       NEMOCLAW_LAUNCH_RUNTIME_ENV_SCRIPT: OPENCLAW_LAUNCH_RUNTIME_ENV_SCRIPT,
       NEMOCLAW_LAUNCH_SANDBOX: invocationEnv.NEMOCLAW_LAUNCH_SANDBOX ?? "sandbox",
       NEMOCLAW_LAUNCH_SESSION_BUDGET_SECONDS:
-        mode === "restored-canonical-timeout"
+        mode === "restored-canonical-timeout" || mode === "supervisor-timeout"
           ? "10"
           : mode === "pty-socket-timeout"
             ? "5"
-            : mode.endsWith("-timeout") && mode !== "supervisor-timeout"
+            : mode.endsWith("-timeout")
               ? "2"
               : (invocationEnv.NEMOCLAW_LAUNCH_SESSION_BUDGET_SECONDS ?? "230"),
       NEMOCLAW_LAUNCH_SECOND_INPUT: invocationEnv.NEMOCLAW_LAUNCH_SECOND_INPUT ?? "second input",
