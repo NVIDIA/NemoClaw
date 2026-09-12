@@ -5,6 +5,7 @@ import { vi } from "vitest";
 
 import {
   createDockerLlamaCppManagedLifecycle,
+  type DockerLlamaCppManagedLifecycleDependencies,
   type DockerLlamaCppManagedLifecycleOptions,
 } from "./docker-llama-cpp-managed-lifecycle";
 import { invariant } from "./docker-llama-cpp-managed-lifecycle.test-support";
@@ -23,7 +24,7 @@ export function privateBridgeFixture() {
 
 export function createTestDockerLlamaCppManagedLifecycle(
   lifecycleOptions: DockerLlamaCppManagedLifecycleOptions,
-  dependencies: { readonly now?: () => number } = {},
+  dependencies: Omit<DockerLlamaCppManagedLifecycleDependencies, "privateBridge"> = {},
   privateBridge = privateBridgeFixture(),
 ) {
   return createDockerLlamaCppManagedLifecycle(lifecycleOptions, {

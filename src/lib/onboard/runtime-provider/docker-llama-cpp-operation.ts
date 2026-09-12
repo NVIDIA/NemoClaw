@@ -7,6 +7,7 @@ import {
 } from "../../adapters/container-engine";
 import { prependInstalledUserLocalOpenshellPath } from "../openshell-pin";
 import { getFutureShellPathHint } from "../remediation";
+import { detectWslDockerDesktopStatus } from "../wsl-docker-desktop-gpu";
 import {
   createDockerLlamaCppManagedLifecycle,
   type DockerLlamaCppManagedLifecycle,
@@ -100,7 +101,16 @@ export function createDockerLlamaCppHostLocalOperation(
     bindingSha256: dockerLlamaCppBindingSha256(authority.engine),
     assertAuthority: authority.assertAuthority,
     spawn: authority.spawn,
-    createLlamaCppLifecycle: createLifecycle,
+    // Docker Desktop WSL isolates the VM loopback from the distro loopback, so
+    // the bridge loopback proof runs from this CLI process instead of a
+    // host-network probe container.
+    createLlamaCppLifecycle: (input: Parameters<typeof createDockerLlamaCppManagedLifecycle>[0]) =>
+      createLifecycle({
+        ...input,
+        loopbackProbe:
+          input.loopbackProbe ??
+          (detectWslDockerDesktopStatus() === "docker-desktop" ? "host-process" : undefined),
+      }),
   });
 }
 
