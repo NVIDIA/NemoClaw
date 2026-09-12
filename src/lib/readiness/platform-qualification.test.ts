@@ -137,6 +137,46 @@ describe("platform readiness qualification (#7410)", () => {
     expect(result.evidence).toEqual([]);
   });
 
+  it("collects OS release identity for a generic Linux host (#11026)", () => {
+    const missing = (): never => {
+      const error = new Error("missing fixture") as NodeJS.ErrnoException;
+      error.code = "ENOENT";
+      throw error;
+    };
+    const files = new Map([
+      ["/fixtures/os-release", 'ID=ubuntu\nVERSION_ID="24.04"\nPRETTY_NAME="Ubuntu 24.04.4 LTS"\n'],
+    ]);
+    const identity = collectPlatformIdentity({
+      osReleasePath: "/fixtures/os-release",
+      readFile: (filePath) => files.get(filePath) ?? missing(),
+      readdir: missing,
+      openFile: missing,
+    });
+
+    expect(identity).toMatchObject({
+      osId: "ubuntu",
+      osVersionId: "24.04",
+      osPrettyName: "Ubuntu 24.04.4 LTS",
+    });
+  });
+
+  it("rejects NUL-bearing OS release evidence as malformed (#11026)", () => {
+    const missing = (): never => {
+      const error = new Error("missing fixture") as NodeJS.ErrnoException;
+      error.code = "ENOENT";
+      throw error;
+    };
+    const identity = collectPlatformIdentity({
+      readFile: () => "",
+      readdir: () => [],
+      openFile: missing,
+      readBoundedOsRelease: () => 'ID=ubu\0ntu\nVERSION_ID="24.04"\n',
+    });
+
+    expect(identity.osId).toBeUndefined();
+    expect(identity.osVersionId).toBeUndefined();
+  });
+
   it.each([
     ["Docker Desktop integration", true, true, "docker-desktop", "present", "absent", "present"],
     ["native Docker", true, true, "docker", "absent", "present", "present"],
