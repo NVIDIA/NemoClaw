@@ -361,11 +361,17 @@ EOF
     afterEach(() => rmSync(workDir, { recursive: true, force: true }));
 
     function runDrop({
-      caps = QA_CAPBND as string | null,
+      caps = QA_CAPBND,
       strict = false,
       sentinel = "",
       capsh = "unavailable",
       afterDrop = caps,
+    }: {
+      caps?: string | null;
+      strict?: boolean;
+      sentinel?: string;
+      capsh?: string;
+      afterDrop?: string | null;
     } = {}) {
       const entrypoint = join(workDir, "entrypoint");
       for (const name of ["reads", "calls", "args"]) writeFileSync(join(workDir, name), "");
