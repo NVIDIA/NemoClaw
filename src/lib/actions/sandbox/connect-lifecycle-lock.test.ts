@@ -43,6 +43,7 @@ describe("connectSandbox lifecycle lock", () => {
       portableReceiptDisposition: { kind: "hermes", phase: "active" },
       portableRecoveryResult: { kind: "already-running" },
     });
+    harness.forwardServiceOwnerSpy.mockReturnValue(true);
     const gatewayState = requireDist(
       "../../src/lib/actions/sandbox/gateway-state.js",
     ) as typeof import("./gateway-state");
