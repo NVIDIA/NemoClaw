@@ -3,6 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 import {
+  discoverMockParity,
   filterMockParityRelevantChangedFiles,
   isMockParityRelevantSourceChange,
   type MockParityManifest,
@@ -122,7 +123,7 @@ describe("changed live E2E mock parity", () => {
         changedFiles: relevantFiles,
         fileExists: exists,
       }),
-    ).toEqual([`${live}: change at least one mapped fast PR test with the live E2E`]);
+    ).toEqual([`${live}: change at least one mapped fast PR test with the live source`]);
   });
 
   it("accepts a changed live E2E mapped to a fast PR test", () => {
@@ -142,23 +143,23 @@ describe("changed live E2E mock parity", () => {
         changedFiles: [live],
         fileExists: exists,
       }),
-    ).toEqual([`${live}: change at least one mapped fast PR test with the live E2E`]);
+    ).toEqual([`${live}: change at least one mapped fast PR test with the live source`]);
   });
 
   it("requires mapped fast coverage when a declared live E2E helper changes", () => {
     expect(
       validateMockParity({
-        manifest: manifest([{ live, liveSources: [liveHelper], fast: [fast] }]),
+        manifest: manifest([{ live: liveHelper, fast: [fast] }]),
         changedFiles: [liveHelper],
         fileExists: exists,
       }),
-    ).toEqual([`${liveHelper}: change at least one fast PR test mapped from ${live}`]);
+    ).toEqual([`${liveHelper}: change at least one mapped fast PR test with the live source`]);
   });
 
   it("accepts a changed live E2E helper with a changed mapped fast test", () => {
     expect(
       validateMockParity({
-        manifest: manifest([{ live, liveSources: [liveHelper], fast: [fast] }]),
+        manifest: manifest([{ live: liveHelper, fast: [fast] }]),
         changedFiles: [liveHelper, fast],
         fileExists: exists,
       }),
@@ -173,7 +174,7 @@ describe("changed live E2E mock parity", () => {
         fileExists: exists,
       }),
     ).toEqual([
-      `${liveHelper}: changed live E2E helper needs an owning entry in test/e2e/mock-parity.json`,
+      `${liveHelper}: changed live E2E source needs a discovered fast test or an exception in test/e2e/fast-test-exceptions.json`,
     ]);
   });
 
@@ -194,7 +195,7 @@ describe("changed live E2E mock parity", () => {
       title: "retains a token-changing mapped fast test",
     },
     {
-      expected: [`${live}: change at least one mapped fast PR test with the live E2E`],
+      expected: [`${live}: change at least one mapped fast PR test with the live source`],
       fastHead: "// formatting only\n\nexport const fastBehavior = 1;\n",
       title: "filters a comment-and-whitespace-only mapped fast test",
     },
@@ -225,7 +226,9 @@ describe("changed live E2E mock parity", () => {
   it("rejects a changed live E2E without a parity decision", () => {
     expect(
       validateMockParity({ manifest: manifest([]), changedFiles: [live], fileExists: exists }),
-    ).toEqual([`${live}: changed live E2E needs an entry in test/e2e/mock-parity.json`]);
+    ).toEqual([
+      `${live}: changed live E2E source needs a discovered fast test or an exception in test/e2e/fast-test-exceptions.json`,
+    ]);
   });
 
   it("rejects mappings to missing or non-PR tests", () => {
@@ -259,5 +262,81 @@ describe("changed live E2E mock parity", () => {
         fileExists: exists,
       }),
     ).toEqual([`${live}: liveOnlyReason must be a string`]);
+  });
+});
+
+describe("discovered live E2E fast tests", () => {
+  it("uses a matching support test without a ledger entry", () => {
+    const sources = new Map([
+      [live, "export {};"],
+      [fast, "export {};"],
+    ]);
+    const discovered = discoverMockParity(sources, manifest([]));
+    expect(
+      validateMockParity({ manifest: discovered, changedFiles: [live, fast], fileExists: exists }),
+    ).toEqual([]);
+    expect(
+      validateMockParity({ manifest: discovered, changedFiles: [live], fileExists: exists }),
+    ).toHaveLength(1);
+  });
+
+  it("finds fast tests through imported helpers and terminates on import cycles", () => {
+    const indirect = "test/e2e/live/indirect.ts";
+    const sources = new Map([
+      [live, 'import "./example-helper.ts";'],
+      [liveHelper, 'import "./indirect.ts";'],
+      [indirect, 'import "./example-helper.ts";'],
+      [fast, 'import "../live/indirect.ts";'],
+    ]);
+    const discovered = discoverMockParity(sources, manifest([]));
+    expect(
+      validateMockParity({
+        manifest: discovered,
+        changedFiles: [liveHelper, fast],
+        fileExists: (file) => sources.has(file),
+      }),
+    ).toEqual([]);
+    expect(
+      validateMockParity({
+        manifest: discovered,
+        changedFiles: [liveHelper],
+        fileExists: (file) => sources.has(file),
+      }),
+    ).toHaveLength(1);
+  });
+
+  it("rejects a new helper with no discovered fast test or explicit exception", () => {
+    const sources = new Map([
+      [liveHelper, "export {};"],
+      [fast, "export {};"],
+    ]);
+    const discovered = discoverMockParity(sources, manifest([]));
+    expect(
+      validateMockParity({
+        manifest: discovered,
+        changedFiles: [liveHelper, fast],
+        fileExists: (file) => sources.has(file),
+      }),
+    ).toEqual([
+      `${liveHelper}: changed live E2E source needs a discovered fast test or an exception in test/e2e/fast-test-exceptions.json`,
+    ]);
+  });
+
+  it("retains an explicit live-only decision without executing candidate code", () => {
+    const sources = new Map([
+      [live, 'throw new Error("must never run");'],
+      [fast, "export {};"],
+    ]);
+    const discovered = discoverMockParity(
+      sources,
+      manifest([{ live, liveOnlyReason: "Requires a real sandbox" }]),
+    );
+    expect(
+      validateMockParity({
+        manifest: discovered,
+        changedFiles: [live],
+        fileExists: (file) => sources.has(file),
+      }),
+    ).toEqual([]);
   });
 });
