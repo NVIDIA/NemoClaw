@@ -330,9 +330,10 @@ export function createPhases(
   });
 }
 
-export function createProviderlessComponentFlow() {
+export function createProviderlessComponentFlow(agentName = "openclaw") {
   const order: string[] = [];
-  const harness = createRuntimeHarness(sessionAt("openclaw"));
+  const branchState = agentName === "openclaw" ? "openclaw" : "agent_setup";
+  const harness = createRuntimeHarness(sessionAt(branchState));
   const revalidate = vi.fn();
   const revalidateEndpoint = vi.fn();
   const proof: ExternalComponentActivationProof = {
@@ -370,7 +371,7 @@ export function createProviderlessComponentFlow() {
     order.push("verify-proof");
     return proof;
   });
-  const phases = createPhases("openclaw", order, {
+  const phases = createPhases(branchState, order, {
     finalizationDeps: {
       createExternalComponentActivationProof: createProof,
       createExternalComponentActivationId: () => activationId,
@@ -389,6 +390,7 @@ export function createProviderlessComponentFlow() {
   });
   const initial = prepareFinalOnboardFlowContext({
     context: context({
+      agent: { name: agentName },
       providerlessApf: true,
       externalComponent: component,
       model: null,

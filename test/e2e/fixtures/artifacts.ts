@@ -131,8 +131,12 @@ export class ArtifactSink {
   async writeText(relativePath: string, text: string): Promise<string> {
     const target = this.pathFor(relativePath);
     await fs.mkdir(path.dirname(target), { recursive: true });
-    await fs.writeFile(target, redactString(text, this.redactionValues), "utf8");
+    await fs.writeFile(target, this.redact(text), "utf8");
     return target;
+  }
+
+  redact(text: string): string {
+    return redactString(text, this.redactionValues);
   }
 
   async writeJson(relativePath: string, value: unknown): Promise<string> {

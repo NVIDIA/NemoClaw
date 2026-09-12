@@ -338,7 +338,10 @@ describe("focused staging Brev Launchable failure diagnostics", () => {
     expect(laneLog).toContain("[REDACTED PRIVATE KEY]");
     expect(laneLog).toContain("[REDACTED LONG LINE]");
     expect(laneLog).toContain("Full E2E failure diagnostic gateway lifecycle: status 0; output:");
-    expect(laneLog).toContain("Full E2E failure diagnostic port 8080 listener: status 0; output:");
+    expect(laneLog).toContain(
+      "Full E2E failure diagnostic declared gateway listener: status 0; output:",
+    );
+    expect(laneLog).toContain("declared gateway port: 18080");
     const commands = fs.readFileSync(calls, "utf8");
     expect(commands.indexOf("ssh full-e2e diagnostic platform state")).toBeLessThan(
       commands.indexOf("ssh full-e2e diagnostic gateway lifecycle"),
@@ -369,72 +372,72 @@ describe("focused staging Brev Launchable failure diagnostics", () => {
     ["absent", "", ["listener presence: absent"]],
     [
       "expected owner",
-      'LISTEN 0 4096 127.0.0.1:8080 0.0.0.0:* users:(("openshell-gateway",pid=98,fd=3))',
+      'LISTEN 0 4096 127.0.0.1:18080 0.0.0.0:* users:(("openshell-gateway",pid=98,fd=3))',
       ["listener presence: present", "listener owner: openshell-gateway"],
     ],
     [
       "expected owner in a v2 descendant cgroup",
-      'LISTEN 0 4096 127.0.0.1:8080 0.0.0.0:* users:(("openshell-gateway",pid=97,fd=3))',
+      'LISTEN 0 4096 127.0.0.1:18080 0.0.0.0:* users:(("openshell-gateway",pid=97,fd=3))',
       ["listener presence: present", "listener owner: openshell-gateway"],
     ],
     [
       "expected owner in an exact v1 cgroup",
-      'LISTEN 0 4096 127.0.0.1:8080 0.0.0.0:* users:(("openshell-gateway",pid=96,fd=3))',
+      'LISTEN 0 4096 127.0.0.1:18080 0.0.0.0:* users:(("openshell-gateway",pid=96,fd=3))',
       ["listener presence: present", "listener owner: openshell-gateway"],
     ],
     [
       "expected owner in a v1 descendant cgroup",
-      'LISTEN 0 4096 127.0.0.1:8080 0.0.0.0:* users:(("openshell-gateway",pid=95,fd=3))',
+      'LISTEN 0 4096 127.0.0.1:18080 0.0.0.0:* users:(("openshell-gateway",pid=95,fd=3))',
       ["listener presence: present", "listener owner: openshell-gateway"],
     ],
     [
       "mixed owners",
       [
-        'LISTEN 0 4096 127.0.0.1:8080 0.0.0.0:* users:(("openshell-gateway",pid=98,fd=3))',
-        'LISTEN 0 4096 172.18.0.1:8080 0.0.0.0:* users:(("s3cr3t",pid=99,fd=4))',
+        'LISTEN 0 4096 127.0.0.1:18080 0.0.0.0:* users:(("openshell-gateway",pid=98,fd=3))',
+        'LISTEN 0 4096 172.18.0.1:18080 0.0.0.0:* users:(("s3cr3t",pid=99,fd=4))',
       ].join("\n"),
       ["listener presence: present", "listener owner: mixed"],
     ],
     [
       "mixed owners in one socket record",
-      'LISTEN 0 4096 127.0.0.1:8080 0.0.0.0:* users:(("openshell-gateway",pid=98,fd=3),("s3cr3t",pid=99,fd=4))',
+      'LISTEN 0 4096 127.0.0.1:18080 0.0.0.0:* users:(("openshell-gateway",pid=98,fd=3),("s3cr3t",pid=99,fd=4))',
       ["listener presence: present", "listener owner: mixed"],
     ],
     [
       "unexpected owner",
-      'LISTEN 0 4096 127.0.0.1:8080 0.0.0.0:* users:(("openshell-gatew",pid=94,fd=3))',
+      'LISTEN 0 4096 127.0.0.1:18080 0.0.0.0:* users:(("openshell-gatew",pid=94,fd=3))',
       ["listener presence: present", "listener owner: unexpected"],
     ],
     [
       "unrelated cgroup",
-      'LISTEN 0 4096 127.0.0.1:8080 0.0.0.0:* users:(("other-process",pid=93,fd=3))',
+      'LISTEN 0 4096 127.0.0.1:18080 0.0.0.0:* users:(("other-process",pid=93,fd=3))',
       ["listener presence: present", "listener owner: unexpected"],
     ],
     [
       "owner unavailable",
-      "LISTEN 0 4096 127.0.0.1:8080 0.0.0.0:*",
+      "LISTEN 0 4096 127.0.0.1:18080 0.0.0.0:*",
       ["listener presence: present", "listener owner: unavailable"],
     ],
     [
       "PID-like text inside a process label",
-      'LISTEN 0 4096 127.0.0.1:8080 0.0.0.0:* users:(("s3cr3t,pid=7,fd=8",pid=98,fd=3))',
+      'LISTEN 0 4096 127.0.0.1:18080 0.0.0.0:* users:(("s3cr3t,pid=7,fd=8",pid=98,fd=3))',
       ["listener presence: present", "listener owner: openshell-gateway"],
     ],
     [
       "an injected owner tuple inside a process label",
-      'LISTEN 0 4096 127.0.0.1:8080 0.0.0.0:* users:(("s3cr3t",pid=98,fd=3",pid=99,fd=4))',
+      'LISTEN 0 4096 127.0.0.1:18080 0.0.0.0:* users:(("s3cr3t",pid=98,fd=3",pid=99,fd=4))',
       ["listener presence: present", "listener owner: unavailable"],
     ],
     [
       "one socket record without owner metadata",
       [
-        'LISTEN 0 4096 127.0.0.1:8080 0.0.0.0:* users:(("openshell-gateway",pid=98,fd=3))',
-        "LISTEN 0 4096 172.18.0.1:8080 0.0.0.0:*",
+        'LISTEN 0 4096 127.0.0.1:18080 0.0.0.0:* users:(("openshell-gateway",pid=98,fd=3))',
+        "LISTEN 0 4096 172.18.0.1:18080 0.0.0.0:*",
       ].join("\n"),
       ["listener presence: present", "listener owner: unavailable"],
     ],
   ])(
-    "classifies port 8080 listener evidence with %s (#6409)",
+    "classifies declared gateway listener evidence with %s (#6409)",
     (_name, listenerOutput, expectedEvidence) => {
       const { env, workDir } = fixture({
         e2eFails: true,
@@ -501,7 +504,7 @@ describe("focused staging Brev Launchable failure diagnostics", () => {
       "Full E2E failure diagnostic platform state: not run; output: diagnostic budget exhausted",
     );
     expect(laneLog).toContain(
-      "Full E2E failure diagnostic port 8080 listener: not run; output: diagnostic budget exhausted",
+      "Full E2E failure diagnostic declared gateway listener: not run; output: diagnostic budget exhausted",
     );
     const commands = fs.readFileSync(calls, "utf8");
     expect(commands).not.toContain("ssh full-e2e diagnostic platform state");

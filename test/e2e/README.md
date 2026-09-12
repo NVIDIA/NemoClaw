@@ -484,6 +484,13 @@ The standard layout writes product evidence and `evidence-manifest.json` under `
 When `shard` is not `default`, the standard layout adds the shard directory.
 The security-posture matrix uses the reviewed flat-shard layout to preserve its existing artifact names.
 The `gpu-double-onboard`, `gpu-e2e`, and `llama-cpp-generic-gpu` targets keep the standard layout and select `linux-amd64-gpu-rtxpro6000-latest-1` through the catalogue.
+The llama.cpp target compares the selected model's authenticated `/v1/models` `meta.n_ctx`
+with the generated OpenClaw primary model's context window, with no explicit context override.
+It retains the compared values in `qualification-evidence.json`. The existing agent turn proves
+inference through the managed route and backend, replacing two duplicate raw chat smoke tests.
+The GPU memory-offload assertion also rejects a missing matching process because its memory value
+is then `NaN`; a separate process-existence assertion is unnecessary. Authentication denial,
+runtime ownership, Ready state, and cleanup assertions remain unchanged.
 The `gpu-e2e` target also qualifies configuration export for an attached native Linux Ollama daemon.
 A separate OpenClaw scenario disables direct sandbox GPU, starts a fixture-owned daemon on port
 11439, and uses normal onboarding to create the managed proxy on port 11440. It exports twice through
@@ -1157,6 +1164,22 @@ phase artifact created before exit. A preparation failure can produce no
 artifact. A later early failure can retain only `lane.log`. A successful job
 contains `launchable-e2e.json`, `full-e2e.log`, and `cleanup.json`;
 `cleanup.json` exists only after the job confirms workspace absence.
+The preinstalled suite resolves its gateway name and port from the external
+gateway declaration before registering cleanup. It removes its sandbox but
+does not remove the platform gateway registration or service. Source-install
+runs retain their test-owned gateway cleanup.
+The Launchable controller enables `NEMOCLAW_E2E_COMMAND_EVIDENCE=1` to retain
+completed command records in `full-e2e.log`. Each `NEMOCLAW_E2E_COMMAND` JSON
+line contains redacted argv, UTC start and finish timestamps, duration, exit
+status, signal, and timeout state. Spawn failures also emit a record. Commands
+that explicitly disable artifact persistence emit none. Output bodies remain
+in guest artifacts; this stream does not export them. Oversized command argv
+is omitted with `commandOmitted: "size-limit"`. Abrupt guest or transport loss
+can leave no completion record for an active command. Older baked suites may
+emit no records; the controller reports that absence rather than inferring
+command times from phase reports.
+The preinstalled suite does not run the source-install cold-onboarding budget
+and does not declare that budget as tested coverage.
 When the preinstalled full E2E fails after SSH succeeds, the job attempts to
 append bounded, redacted host state and fixed lifecycle classifications to
 `lane.log` before cleanup. On the host, the SSH command reads the system journal
@@ -1166,6 +1189,10 @@ GitHub-hosted runner or `lane.log`. If a probe fails or the shared budget
 expires, `lane.log` records that result and cleanup continues. The diagnostic
 phase is read-only, uses one 30-second budget, and does not retry the failed E2E
 or repair the workspace.
+The listener diagnostic uses the baked suite's gateway resolver, including its
+declaration path, loopback endpoint parsing, port checks, and conflict checks.
+An unavailable resolver or rejected declaration leaves that probe failed;
+it does not substitute port 8080 or prevent workspace cleanup.
 
 Manual ordinary and full runs exclude the Jetson nvmap job unless `allow_jetson_dispatch` is `true`.
 Set `allow_jetson_dispatch=true` to select `jetson-nvmap-gpu` after the
@@ -1420,7 +1447,7 @@ Separate installer tests own those earlier boundaries.
 The live target refuses to replace either of its two sandbox names, a pre-existing `nemoclaw-vllm` container, or a listener on its non-default test port.
 It preserves the shared Hugging Face cache, records the created sandbox and container identities, and revalidates each identity before cleanup.
 If onboarding exits nonzero, the target captures the managed-container log tail and sandbox details before cleanup.
-After the first onboard, it runs `status` and `doctor` without carrying `NEMOCLAW_VLLM_PORT` forward and verifies that they use the route's recorded port. It then gives `connect --probe-only` a verified-unused fallback port and proves the recorded healthy route wins. It destroys the final consumer, proves that the exact managed container and listener are absent, then onboards a second sandbox on the released port and proves inference again. The successful second managed-vLLM start is the GPU-resource reacquisition evidence.
+After the first onboard, it runs `status` and `doctor` without carrying `NEMOCLAW_VLLM_PORT` forward and verifies that they use the route's recorded port. It then runs `connect --probe-only` with `NEMOCLAW_VLLM_PORT` set to a verified-unused port. The probe succeeds because `connect` does not read that variable on a healthy route. `src/lib/actions/sandbox/connect-route-repair.test.ts` covers the repair path that reads the recorded port. It destroys the final consumer, proves that the exact managed container and listener are absent, then onboards a second sandbox on the released port and proves inference again. The successful second managed-vLLM start is the GPU-resource reacquisition evidence.
 The standard E2E artifacts retain bounded command output.
 
 Run the target from a clean candidate checkout on the Spark host:
@@ -1434,7 +1461,7 @@ npx tsx tools/e2e/live-vitest-invocation.mts run \
   --test-path test/e2e/live/spark-express-vllm.test.ts
 ```
 
-A passing target establishes that the source-checkout option-2 path selects the fixed vLLM preset and recipe, the managed container carries catalog provenance and the catalog-derived serve command, the recorded custom port drives later health and recovery commands, final-consumer destroy retires the managed container and listener, a subsequent managed-vLLM onboard reacquires the GPU resource, `inference.local` completes a chat request after reacquisition, and unrelated sandbox egress receives an HTTP `403` response.
+A passing target establishes that the source-checkout option-2 path selects the fixed vLLM preset and recipe, the managed container carries catalog provenance and the catalog-derived serve command, the recorded custom port drives later `status` and `doctor` health checks, `connect --probe-only` succeeds without `NEMOCLAW_VLLM_PORT` naming that port, final-consumer destroy retires the managed container and listener, a subsequent managed-vLLM onboard reacquires the GPU resource, `inference.local` completes a chat request after reacquisition, and unrelated sandbox egress receives an HTTP `403` response.
 
 The checker preserves coverage for every file under `test/e2e/live/` and adds
 workflow-selected integration files from the authoritative shared-job planner.

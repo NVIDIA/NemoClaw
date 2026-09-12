@@ -88,9 +88,9 @@ interface SessionStateComplete {
 }
 
 interface SessionStateRetryableFailure {
-  status: "failed";
+  status: "failed" | "in_progress";
   resumable: true;
-  machine: { state: "failed" };
+  machine: { state: "failed" | "post_verify" };
 }
 
 interface MutableSessionState extends Record<string, unknown> {
@@ -639,21 +639,26 @@ test(
       `${unavailableResumeRun.exitCode !== 0}:${listenerBeforeRouteFailure.valid}:${listenerAfterRouteFailure.valid}:${listenerBeforeRouteFailure.identity === listenerAfterRouteFailure.identity}`,
       `${unavailableResumeText}\n${listenerBeforeRouteFailure.output}\n${listenerAfterRouteFailure.output}`,
     ).toBe("true:true:true:true");
-    expect(unavailableResumeText).toContain("Compatible endpoint sandbox smoke check failed");
+    expect(
+      hasHermesApi ||
+        unavailableResumeText.includes("Compatible endpoint sandbox smoke check failed"),
+    ).toBe(true);
     expect(unavailableResumeText).toContain("inference.local");
     expect(unavailableResumeText).not.toContain(
       `Deleting and recreating sandbox '${SANDBOX_NAME}'`,
     );
 
     const paused = readSession<SessionStateRetryableFailure>(SESSION_FILE);
+    const expectedPausedStatus = hasHermesApi ? "in_progress" : "failed";
+    const expectedPausedMachineState = hasHermesApi ? "post_verify" : "failed";
     await artifacts.writeJson("phase-3-5-session-route-unavailable.json", {
       status: paused.status,
       resumable: paused.resumable,
       machineState: paused.machine.state,
     });
-    expect(paused.status).toBe("failed");
+    expect(paused.status).toBe(expectedPausedStatus);
     expect(paused.resumable).toBe(true);
-    expect(paused.machine.state).toBe("failed");
+    expect(paused.machine.state).toBe(expectedPausedMachineState);
 
     fake = await startFakeOpenAiCompatibleServer({
       apiKey: FAKE_COMPATIBLE_AUTH_VALUE,

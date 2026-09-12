@@ -21,7 +21,8 @@ The vLLM `/v1/responses` endpoint does not run the configured tool-call parser, 
 <Warning>
 Local vLLM does not require authentication by default.
 Existing-server and single-host managed-vLLM paths use `NEMOCLAW_VLLM_PORT`, which defaults to `8000`, on host loopback for validation and on the OpenShell Docker bridge for sandbox traffic.
-After onboarding, `status`, `doctor`, and `connect` probe the host port recorded in the sandbox registry, so those commands do not need `NEMOCLAW_VLLM_PORT` in their environment.
+After onboarding, `status` and `doctor` probe the host port recorded in the sandbox registry, and `connect` reads that recorded port only when it repairs the route.
+None of these commands need `NEMOCLAW_VLLM_PORT` in their environment.
 Use a host firewall with default-deny inbound rules.
 Allow the configured TCP port only from the OpenShell Docker subnet to its gateway address, keep loopback access, and deny the port on every other interface.
 Do not expose the port to your LAN or the internet.
