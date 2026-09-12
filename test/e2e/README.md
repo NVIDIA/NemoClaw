@@ -184,6 +184,9 @@ managed-image build, startup, publication, and checked-in receipt. The receipt r
 the Linux AMD64 and Linux ARM64 receipts to identify one source revision, release, and publication
 cohort.
 
+The gateway restart fixture restarts the user service it stopped, or starts the named OpenShell gateway when no service was selected.
+A failed start ends the test before health polling. Sandbox readiness, retained state, and agent turns remain separate assertions.
+
 #### Timing Baseline
 
 The pre-change baseline uses GitHub Actions `Build CLI` step timings from these workflow runs:
