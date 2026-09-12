@@ -880,7 +880,13 @@ describe("readiness-gated runtime preflight", () => {
     expect(result.gpu?.n1xWslProduct).toBe(true);
   });
 
-  it("carries a real provider capture through real GPU detection to Ollama selection", async () => {
+  const ACCEPTED_N1X_GPU_NAME = "NVIDIA RTX Spark N1X (6144-core Blackwell RTX GPU)";
+  const UNLISTED_N1X_GPU_NAME = "NVIDIA RTX Spark N1X Laptop GPU";
+
+  async function runRealProviderPreflight(gpuName: string, n1xWslProduct: boolean | undefined) {
+    // The proof phase lets `detectGpu()` detect WSL itself, and the N1x
+    // classification requires WSL.
+    vi.stubEnv("WSL_DISTRO_NAME", "Ubuntu");
     const captureHostCommand = vi
       .fn()
       .mockReturnValueOnce({
@@ -890,7 +896,6 @@ describe("readiness-gated runtime preflight", () => {
       })
       .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" });
     const provider = createDockerRuntimeProviderBundle({ captureHostCommand });
-    const gpuName = "NVIDIA RTX Spark N1X (6144-core Blackwell RTX GPU)";
     const runCaptureImpl = vi.fn((command: readonly string[]) =>
       command[0] === "nvidia-smi" && command.some((arg) => arg.includes("name,memory.total"))
         ? `${gpuName}, 999999, 999999\n`
@@ -905,7 +910,7 @@ describe("readiness-gated runtime preflight", () => {
           collectGatewayReadiness: async () => collectedGatewayReadiness(),
           assessHost: wslDockerDesktopHost,
           runCaptureImpl,
-          collectN1xWslProduct: vi.fn(() => true),
+          collectN1xWslProduct: vi.fn(() => n1xWslProduct),
           createArm64ContainerGpuProver: () =>
             createArm64ContainerGpuProver({
               platform: "linux",
@@ -919,21 +924,54 @@ describe("readiness-gated runtime preflight", () => {
         },
       ),
     );
+    return { gpu: result.gpu, captureHostCommand };
+  }
 
-    expect(captureHostCommand).toHaveBeenCalledTimes(2);
-    expect(captureHostCommand).toHaveBeenNthCalledWith(
-      2,
-      "docker",
-      expect.arrayContaining(["ps", "--all", "--no-trunc"]),
-      expect.any(Number),
-    );
-    expect(result.gpu).toMatchObject({
+  it.each([
+    ["an accepted GPU identity and a qualifying chassis model", ACCEPTED_N1X_GPU_NAME, true, "n1x"],
+    ["an accepted GPU identity and an OEM chassis model", ACCEPTED_N1X_GPU_NAME, false, "n1x"],
+    [
+      "an accepted GPU identity and an inconclusive chassis probe",
+      ACCEPTED_N1X_GPU_NAME,
+      undefined,
+      "n1x",
+    ],
+    ["an unlisted GPU name and a qualifying chassis model", UNLISTED_N1X_GPU_NAME, true, "linux"],
+  ])(
+    "carries a real provider capture through real GPU detection to Ollama selection with %s",
+    async (_label, gpuName, n1xWslProduct, platform) => {
+      const { gpu, captureHostCommand } = await runRealProviderPreflight(gpuName, n1xWslProduct);
+
+      expect(captureHostCommand).toHaveBeenCalledTimes(2);
+      expect(captureHostCommand).toHaveBeenNthCalledWith(
+        2,
+        "docker",
+        expect.arrayContaining(["ps", "--all", "--no-trunc"]),
+        expect.any(Number),
+      );
+      expect(gpu).toMatchObject({
+        platform,
+        containerGpuProof: { providerId: "docker", passed: true },
+        n1xWslProduct: n1xWslProduct ?? null,
+        totalMemoryMB: 63_936,
+        availableMemoryMB: 60_000,
+      });
+      expect(gpu?.computeConstrained).toBeUndefined();
+      expect(selectDefaultOllamaModel(["qwen3.5:9b", "qwen3.6:35b"], gpu)).toBe("qwen3.6:35b");
+    },
+  );
+
+  it("keeps an unlisted GPU name compute-constrained through runtime preflight when the chassis model does not qualify", async () => {
+    const { gpu } = await runRealProviderPreflight(UNLISTED_N1X_GPU_NAME, false);
+
+    expect(gpu).toMatchObject({
+      platform: "linux",
       containerGpuProof: { providerId: "docker", passed: true },
-      n1xWslProduct: true,
-      totalMemoryMB: 63_936,
-      availableMemoryMB: 60_000,
+      n1xWslProduct: false,
+      totalMemoryMB: 999_999,
+      computeConstrained: true,
     });
-    expect(selectDefaultOllamaModel(["qwen3.5:9b", "qwen3.6:35b"], result.gpu)).toBe("qwen3.6:35b");
+    expect(selectDefaultOllamaModel(["qwen3.5:9b", "qwen3.6:35b"], gpu)).toBe("qwen3.5:9b");
   });
 
   it("preserves a failed bounded WSL GPU proof as an absent readiness capability (#7411)", async () => {
