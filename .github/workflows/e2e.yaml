@@ -2995,6 +2995,7 @@ jobs:
       matrix:
         include: ${{ fromJSON(needs.generate-matrix.outputs.test_matrix) }}
     env:
+      NEMOCLAW_E2E_REQUIRE_EXECUTED_TEST: "1"
       CHECK_DOC_LINKS_REMOTE: "0"
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/${{ matrix.execution_id }}
       E2E_EXECUTION_ID: ${{ matrix.execution_id }}
@@ -3822,6 +3823,7 @@ jobs:
       matrix:
         runtime_provider: ${{ fromJSON(needs.generate-matrix.outputs.runtime_providers_by_job)['openshell-credential-generation-window'] }}
     env:
+      NEMOCLAW_E2E_REQUIRE_EXECUTED_TEST: "1"
       E2E_MANAGED_IMAGE_REVISION: ${{ needs.base-image-publication.outputs.managed_image_revision }}
       E2E_MANAGED_IMAGE_COHORT_RECEIPT: ${{ needs.base-image-publication.outputs.managed_image_receipt }}
       E2E_WORKLOAD_SOURCE: ${{ needs.generate-matrix.outputs.workload_source }}
@@ -4235,6 +4237,7 @@ jobs:
             environment_or_inference_endpoint: "Arm64 Ubuntu; exact managed image startup"
             coverage_variant: linux-arm64
     env:
+      NEMOCLAW_E2E_REQUIRE_EXECUTED_TEST: "1"
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/managed-image-multiarch-startup/${{ matrix.shard }}
       E2E_JOB: "1"
       E2E_GATEWAY_RUNTIMES: docker

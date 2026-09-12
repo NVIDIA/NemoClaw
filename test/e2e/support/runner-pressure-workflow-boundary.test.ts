@@ -63,7 +63,6 @@ describe("runner-pressure catalogue boundary", () => {
         "E2E_TERMINAL_CLASSIFICATION_FILE",
         "E2E_TEST_OUTCOME_FILE",
         "NEMOCLAW_CLI_BIN",
-        "NEMOCLAW_E2E_REQUIRE_EXECUTED_TEST",
       ];
       environmentNames.forEach((name) => {
         vi.stubEnv(name, process.env[name] ?? "");
@@ -79,7 +78,6 @@ describe("runner-pressure catalogue boundary", () => {
           "--test-path",
           target.testFile,
         ]);
-        expect(process.env.NEMOCLAW_E2E_REQUIRE_EXECUTED_TEST).toBe("1");
         expect(mocks.spawnSync.mock.calls.map((call) => call[1].at(-1))).toEqual([
           "snapshot",
           "initialize-evidence",
