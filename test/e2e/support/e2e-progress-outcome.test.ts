@@ -1,12 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
+import { execFile } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, it, type TestContext, vi } from "vitest";
 import { E2E_TEARDOWN_PHASE } from "../fixtures/e2e-test.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import type { ProgressSummary } from "../fixtures/progress.ts";
@@ -14,31 +14,72 @@ import type { ProgressSummary } from "../fixtures/progress.ts";
 const VITEST = path.join(REPO_ROOT, "node_modules", "vitest", "vitest.mjs");
 const FIXTURE = "test/e2e/support/fixtures/e2e-progress-outcome.fixture.test.ts";
 
-describe("automatic E2E phase outcomes", () => {
-  it("redacts target identities and explicit progress events before console output", () => {
+type RunFixtureResult = {
+  signal: NodeJS.Signals | null;
+  status: number | null;
+  stderr: string;
+  stdout: string;
+};
+
+function runFixture(
+  env: NodeJS.ProcessEnv,
+  owner: Pick<TestContext, "onTestFinished" | "signal">,
+  timeoutMs = 20_000,
+): Promise<RunFixtureResult> {
+  let finish: (result: RunFixtureResult) => void = () => undefined;
+  const resultPromise = new Promise<RunFixtureResult>((resolve) => {
+    finish = resolve;
+  });
+  const child = execFile(
+    process.execPath,
+    [VITEST, "run", "--project", "e2e-support", FIXTURE, "--reporter=default"],
+    {
+      cwd: REPO_ROOT,
+      encoding: "utf8",
+      env,
+      killSignal: "SIGKILL",
+      signal: owner.signal,
+      timeout: timeoutMs,
+    },
+    (error, stdout, stderr) => {
+      const signal =
+        child.signalCode ?? error?.signal ?? (error?.code === "ABORT_ERR" ? "SIGKILL" : null);
+      finish({
+        signal,
+        status: signal ? null : Number(error?.code) || (error ? -1 : 0),
+        stderr,
+        stdout,
+      });
+    },
+  );
+  owner.onTestFinished(async () => {
+    child.kill("SIGKILL");
+    await resultPromise;
+  });
+  return resultPromise;
+}
+
+vi.setConfig({ maxConcurrency: 7, testTimeout: 30_000 });
+
+describe.concurrent("automatic E2E phase outcomes", () => {
+  it("redacts target identities and explicit progress events before console output", async (context) => {
     const artifactDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-progress-redaction-"));
     const secret = "progress-event-secret-value";
     try {
-      const result = spawnSync(
-        process.execPath,
-        [VITEST, "run", "--project", "e2e-support", FIXTURE, "--reporter=default"],
+      const result = await runFixture(
         {
-          cwd: REPO_ROOT,
-          encoding: "utf8",
-          killSignal: "SIGKILL",
-          timeout: 20_000,
-          env: {
-            ...process.env,
-            E2E_ARTIFACT_DIR: artifactDir,
-            E2E_TARGET_ID: `redaction-target-${secret}`,
-            NEMOCLAW_E2E_PROGRESS_EVENT_SECRET: secret,
-            NEMOCLAW_E2E_PROGRESS_OUTCOME_FIXTURE: "redacted-event",
-            NEMOCLAW_RUN_LIVE_E2E: "1",
-          },
+          ...process.env,
+          E2E_ARTIFACT_DIR: artifactDir,
+          E2E_TARGET_ID: `redaction-target-${secret}`,
+          NEMOCLAW_E2E_PROGRESS_EVENT_SECRET: secret,
+          NEMOCLAW_E2E_PROGRESS_OUTCOME_FIXTURE: "redacted-event",
+          NEMOCLAW_RUN_LIVE_E2E: "1",
         },
+        context,
       );
 
       const output = `${result.stdout}\n${result.stderr}`;
+      const { expect } = context;
       expect(result.status, output).toBe(0);
       expect(output).not.toContain(secret);
       expect(output).toContain('target="redaction-target-[REDACTED]"');
@@ -48,7 +89,44 @@ describe("automatic E2E phase outcomes", () => {
     }
   });
 
-  it.each([
+  it(
+    "reports the signal when a nested fixture exceeds its deadline",
+    { timeout: 15_000 },
+    async (context) => {
+      const artifactDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-progress-signal-"));
+      const timeoutReady = path.join(artifactDir, "timeout-ready");
+      const deadline = new AbortController();
+      const resultPromise = runFixture(
+        {
+          ...process.env,
+          E2E_ARTIFACT_DIR: artifactDir,
+          NEMOCLAW_E2E_PROGRESS_OUTCOME_FIXTURE: "cleanup-stalled",
+          NEMOCLAW_E2E_PROGRESS_TIMEOUT_READY: timeoutReady,
+          NEMOCLAW_RUN_LIVE_E2E: "1",
+        },
+        {
+          onTestFinished: (handler) => context.onTestFinished(handler),
+          signal: AbortSignal.any([context.signal, deadline.signal]),
+        },
+      );
+      try {
+        await vi.waitFor(() => context.expect(fs.existsSync(timeoutReady)).toBe(true), {
+          interval: 10,
+          timeout: 10_000,
+        });
+        deadline.abort();
+        const result = await resultPromise;
+        context.expect(result.status).toBeNull();
+        context.expect(result.signal).toBe("SIGKILL");
+      } finally {
+        deadline.abort();
+        await resultPromise;
+        fs.rmSync(artifactDir, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.for([
     [
       "failed",
       1,
@@ -88,34 +166,24 @@ describe("automatic E2E phase outcomes", () => {
     ],
   ] as const)(
     "records a real Vitest %s result on the originating phase",
-    (
-      mode,
-      status,
-      slug,
-      phaseLabel,
-      expectedOutcome,
-      expectedTeardownOutcome,
-      minimumDurationMs,
+    { timeout: 30_000 },
+    async (
+      [mode, status, slug, phaseLabel, expectedOutcome, expectedTeardownOutcome, minimumDurationMs],
+      context,
     ) => {
       const artifactDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-progress-outcome-"));
       try {
-        const result = spawnSync(
-          process.execPath,
-          [VITEST, "run", "--project", "e2e-support", FIXTURE, "--reporter=default"],
+        const result = await runFixture(
           {
-            cwd: REPO_ROOT,
-            encoding: "utf8",
-            killSignal: "SIGKILL",
-            timeout: 20_000,
-            env: {
-              ...process.env,
-              E2E_ARTIFACT_DIR: artifactDir,
-              NEMOCLAW_E2E_PROGRESS_OUTCOME_FIXTURE: mode,
-              NEMOCLAW_RUN_LIVE_E2E: "1",
-            },
+            ...process.env,
+            E2E_ARTIFACT_DIR: artifactDir,
+            NEMOCLAW_E2E_PROGRESS_OUTCOME_FIXTURE: mode,
+            NEMOCLAW_RUN_LIVE_E2E: "1",
           },
+          context,
         );
 
+        const { expect } = context;
         expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(status);
         const summary = JSON.parse(
           fs.readFileSync(path.join(artifactDir, slug, "test-progress.json"), "utf8"),
@@ -134,6 +202,5 @@ describe("automatic E2E phase outcomes", () => {
         fs.rmSync(artifactDir, { recursive: true, force: true });
       }
     },
-    30_000,
   );
 });
