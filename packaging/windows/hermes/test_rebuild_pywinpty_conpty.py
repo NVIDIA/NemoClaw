@@ -10,11 +10,13 @@ import hashlib
 import importlib.util
 import io
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 import zipfile
 
 HERE = Path(__file__).parent
@@ -351,6 +353,130 @@ class TargetedPywinpty(unittest.TestCase):
         )
         self.assertNotEqual(result.returncode, 0)
         self.assertFalse(output.exists())
+
+    def test_bootstrap_install_excludes_runtime_overrides_until_target_build(self):
+        provision = helper.load("provision-official-runtime")
+        with patch.dict(
+            os.environ,
+            SystemRoot=str(self.root / "Windows"),
+            UV_CONFIG_FILE="unrelated-host-config",
+            UV_BUILD_CONSTRAINT="unrelated-host-constraints",
+        ):
+            environment = provision.clean_environment(self.runtime, self.evidence, [])
+        self.assertNotIn("UV_CONFIG_FILE", environment)
+        self.assertNotIn("UV_BUILD_CONSTRAINT", environment)
+        tree = ast.parse((HERE / "rebuild-pywinpty-conpty.py").read_text())
+        main = next(
+            node
+            for node in tree.body
+            if isinstance(node, ast.FunctionDef) and node.name == "main"
+        )
+        body = next(node.body for node in main.body if isinstance(node, ast.Try))
+        start = next(
+            i + 1
+            for i, node in enumerate(body)
+            if isinstance(node, ast.Assign)
+            and ast.unparse(node.targets[0]) == "receipt['configuration']"
+        )
+
+        def run_label(node):
+            if (
+                isinstance(node, ast.Expr)
+                and isinstance(node.value, ast.Call)
+                and isinstance(node.value.func, ast.Name)
+                and node.value.func.id == "run"
+            ):
+                return node.value.args[2].value
+            return None
+
+        end = next(
+            i + 1 for i, node in enumerate(body) if run_label(node) == "build-wheel"
+        )
+        config = self.evidence / "pywinpty-build.uv.toml"
+        config_bytes = b'override-dependencies = ["pynacl>=1.6,<1.7"]\n[config-settings-package.pywinpty]\nbuild-args = "--features winpty-rs/conpty --locked"\n'
+        config.write_bytes(config_bytes)
+        lock = json.loads((HERE / "official-python.lock.json").read_text())
+        calls = []
+
+        def record(executable, arguments, label, **kwargs):
+            calls.append((label, executable, arguments, dict(environment), kwargs))
+
+        context = {
+            "run": record,
+            "environment": environment,
+            "config": config,
+            "HERE": HERE,
+            "lock": lock,
+            "uv": self.evidence / "tools/uv.exe",
+            "bootstrap": self.root / "bootstrap/python.exe",
+            "build_env": self.evidence / "build-env",
+            "downloads": self.evidence / "downloads",
+            "wheels": self.evidence / "wheels",
+            "source": self.evidence / "source",
+        }
+        exec(
+            compile(
+                ast.Module(body=body[start:end], type_ignores=[]),
+                str(HERE / "rebuild-pywinpty-conpty.py"),
+                "exec",
+            ),
+            context,
+        )
+        self.assertEqual(
+            [row[0] for row in calls],
+            ["build-environment", "build-requirements", "build-wheel"],
+        )
+        for call in calls[:2]:
+            self.assertNotIn("UV_CONFIG_FILE", call[3])
+            self.assertNotIn("UV_BUILD_CONSTRAINT", call[3])
+        requirements = HERE / lock["requirementsFile"]
+        self.assertEqual(
+            calls[1][2],
+            [
+                "pip",
+                "install",
+                "--python",
+                context["build_env"] / "Scripts/python.exe",
+                "--no-index",
+                "--find-links",
+                context["downloads"],
+                "--require-hashes",
+                "-r",
+                requirements,
+            ],
+        )
+        self.assertEqual(helper.digest(requirements), lock["requirementsSha256"])
+        self.assertEqual(len(lock["artifacts"]), 4)
+        self.assertEqual(calls[2][3]["UV_CONFIG_FILE"], str(config))
+        self.assertEqual(calls[2][3]["UV_BUILD_CONSTRAINT"], str(requirements))
+        self.assertEqual(calls[2][2][:3], ["-I", "-B", "-c"])
+        self.assertEqual(calls[2][4], {"cwd": context["source"]})
+        replacement = next(
+            node for node in body if run_label(node) == "replace-pywinpty"
+        )
+        context.update(runtime=self.runtime, wheel=self.wheel)
+        exec(
+            compile(
+                ast.Module(body=[replacement], type_ignores=[]), "replacement", "exec"
+            ),
+            context,
+        )
+        self.assertEqual(
+            calls[3][2],
+            [
+                "pip",
+                "install",
+                "--python",
+                self.runtime / "hermes-agent/venv/Scripts/python.exe",
+                "--no-index",
+                "--no-deps",
+                "--reinstall-package",
+                "pywinpty",
+                self.wheel,
+            ],
+        )
+        self.assertEqual(calls[3][3], calls[2][3])
+        self.assertEqual(config.read_bytes(), config_bytes)
 
     def test_reused_conpty_child_disables_bytecode_without_changing_smoke_gate(self):
         tree = ast.parse((HERE / "pywinpty-conpty.py").read_text())

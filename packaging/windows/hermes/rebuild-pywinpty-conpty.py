@@ -741,8 +741,6 @@ def main():
             config,
             output / "configuration.json",
         )
-        environment["UV_CONFIG_FILE"] = str(config)
-        environment["UV_BUILD_CONSTRAINT"] = str(HERE / lock["requirementsFile"])
         run(uv, ["venv", "--python", bootstrap, build_env], "build-environment")
         build_python = build_env / "Scripts/python.exe"
         run(
@@ -761,6 +759,9 @@ def main():
             ],
             "build-requirements",
         )
+        # Runtime overrides do not apply to the separate pinned build-tool graph.
+        environment["UV_CONFIG_FILE"] = str(config)
+        environment["UV_BUILD_CONSTRAINT"] = str(HERE / lock["requirementsFile"])
         script = "import importlib.metadata,sys,tomllib,maturin; assert importlib.metadata.version('maturin')=='1.15.0'; settings=tomllib.load(open(sys.argv[2],'rb'))['config-settings-package']['pywinpty']; assert settings=={'build-args':'--features winpty-rs/conpty --locked'}; print(maturin.build_wheel(sys.argv[1],settings))"
         run(
             build_python,
