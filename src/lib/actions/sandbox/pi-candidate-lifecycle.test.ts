@@ -122,13 +122,13 @@ describe("Pi candidate operational surfaces", () => {
     expect(report.agentLoadError).toContain("release candidate");
   });
 
-  it("keeps a recorded Pi sandbox off the gateway log source (#7927)", () => {
+  it("keeps a recorded Pi sandbox off the gateway log source (#7927)", async () => {
     const env = qualify();
     const agent = loadAgent("pi", env);
     const runOpenshell = vi.fn((args: string[]) => ({ status: 0, stdout: args.join(" ") }));
     const exitCodes: number[] = [];
 
-    showSandboxLogsWithDeps(
+    await showSandboxLogsWithDeps(
       SANDBOX,
       { follow: false, lines: "50", since: null },
       {

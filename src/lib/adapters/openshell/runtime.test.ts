@@ -11,10 +11,10 @@ import * as registry from "../../state/registry";
 import { inspectOpenShellSandboxIdentityFingerprint } from "./sandbox-identity-cli";
 import { namedOpenShellGateway } from "./sandbox-observer";
 import {
-  readCliOpenShellSandboxPolicy,
-  syncCliOpenShellSandboxPolicyWriter,
+  cliOpenShellSandboxPolicyReader,
+  cliOpenShellSandboxPolicyWriter,
 } from "./sandbox-policy-cli";
-import { captureResolvedOpenshell, runOpenshell } from "./runtime";
+import { captureResolvedOpenshell, captureResolvedOpenshellAsync, runOpenshell } from "./runtime";
 
 const directories: string[] = [];
 
@@ -112,6 +112,23 @@ describe("captureResolvedOpenshell", () => {
   });
 });
 
+describe("captureResolvedOpenshellAsync", () => {
+  it("bounds captured output from the selected executable", async () => {
+    const result = await captureResolvedOpenshellAsync([], {
+      openshellBinary: largeOutputExecutable("openshell"),
+      ignoreError: true,
+      outputLimitBytes: 64,
+      includeStreams: true,
+    });
+
+    expect((result.error as NodeJS.ErrnoException | undefined)?.code).toBe(
+      "ERR_CHILD_PROCESS_STDIO_MAXBUFFER",
+    );
+    expect(result.stdout).toBe("x".repeat(64));
+    expect(result.status).not.toBe(0);
+  });
+});
+
 describe("sanitized OpenShell capture", () => {
   it("gives policy and identity reads the same gateway-pinned sanitized environment", async () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-env-test-"));
@@ -142,13 +159,13 @@ describe("sanitized OpenShell capture", () => {
     vi.stubEnv("AWS_SECRET_ACCESS_KEY", "must-not-reach-openshell");
 
     await expect(
-      readCliOpenShellSandboxPolicy({
+      cliOpenShellSandboxPolicyReader.readSandboxPolicy({
         target: namedOpenShellGateway("nemoclaw"),
         sandboxName: "alpha",
         scope: "base",
         runtimeSelection,
       }),
-    ).resolves.toMatchObject({ result: { ok: true } });
+    ).resolves.toMatchObject({ ok: true });
     expect(
       inspectOpenShellSandboxIdentityFingerprint({
         sandboxName: "alpha",
@@ -156,10 +173,10 @@ describe("sanitized OpenShell capture", () => {
         runtimeSelection,
       }),
     ).toHaveLength(64);
-    syncCliOpenShellSandboxPolicyWriter.setSandboxPolicy({
+    await cliOpenShellSandboxPolicyWriter.setSandboxPolicy({
       target: namedOpenShellGateway("nemoclaw"),
       sandboxName: "alpha",
-      policyPath: path.join(directory, "policy.yaml"),
+      document: "version: 1\nnetwork_policies: {}",
       runtimeSelection,
     });
 
@@ -180,7 +197,36 @@ describe("sanitized OpenShell capture", () => {
     expect(environments[0]).not.toHaveProperty("AWS_SECRET_ACCESS_KEY");
   });
 
-  it("keeps a policy mutation on one selected OpenShell runtime", () => {
+  it.each(["SIGINT", "SIGTERM"] as const)(
+    "settles a cancelled policy submission and removes its private material on %s",
+    async (signal) => {
+      vi.stubEnv("NEMOCLAW_OPENSHELL_BIN", blockingExecutable("openshell"));
+      const before = process.listeners(signal);
+      const makeDirectory = vi.spyOn(fs, "mkdtempSync");
+      const pending = cliOpenShellSandboxPolicyWriter.setSandboxPolicy({
+        target: namedOpenShellGateway("nemoclaw"),
+        sandboxName: "alpha",
+        document: "version: 1\nnetwork_policies: {}",
+        timeoutMs: 1_000,
+      });
+      try {
+        const submissionDirectory = makeDirectory.mock.results[0]?.value as string;
+        expect(fs.existsSync(submissionDirectory)).toBe(true);
+        const forward = process.listeners(signal).find((listener) => !before.includes(listener));
+        expect(forward).toBeTypeOf("function");
+        forward!(signal);
+        const result = await pending;
+        expect(result.status).toBe(1);
+        expect(result.outcome.kind).not.toBe("applied");
+        expect(fs.existsSync(submissionDirectory)).toBe(false);
+        expect(process.listeners(signal)).toEqual(before);
+      } finally {
+        await pending;
+      }
+    },
+  );
+
+  it("keeps a policy mutation on one selected OpenShell runtime", async () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-runtime-test-"));
     directories.push(directory);
     const captureLog = path.join(directory, "capture.jsonl");
@@ -231,7 +277,7 @@ describe("sanitized OpenShell capture", () => {
       network_policies: { selected: { endpoints: [{ host: "example.com", port: 443 }] } },
     });
     expect(
-      setPolicyDocument(sandboxName, desiredPolicy, { nonFatal: true, runtimeSelection }),
+      await setPolicyDocument(sandboxName, desiredPolicy, { nonFatal: true, runtimeSelection }),
     ).toBe(true);
 
     const records = fs

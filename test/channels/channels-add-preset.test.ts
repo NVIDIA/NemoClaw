@@ -204,7 +204,7 @@ beforeEach(() => {
     throw new ExitError(code);
   }) as never);
   vi.spyOn(policyChannelDependencies, "revalidateChannelProviderPolicy").mockImplementation(
-    () => undefined,
+    async () => undefined,
   );
 
   vi.spyOn(registry, "getSandbox").mockImplementation(() => registryEntry);
@@ -219,11 +219,11 @@ beforeEach(() => {
 
   loadPresetForSandboxSpy = vi
     .spyOn(policies, "loadPresetForSandbox")
-    .mockImplementation((sandboxName, presetName) => {
+    .mockImplementation(async (sandboxName, presetName) => {
       callOrder.push(`loadPresetForSandbox:${sandboxName}:${presetName}`);
       return presetContent;
     });
-  vi.spyOn(policies, "getPresetContentGatewayState").mockReturnValue("absent");
+  vi.spyOn(policies, "getPresetContentGatewayState").mockResolvedValue("absent");
   vi.spyOn(policies, "listPresets").mockImplementation(() =>
     ["telegram", "slack", "discord", "whatsapp", "npm", "github"].map((name) => ({
       name,
@@ -231,15 +231,19 @@ beforeEach(() => {
       description: `${name} test preset`,
     })),
   );
-  applyPresetSpy = vi.spyOn(policies, "applyPreset").mockImplementation((name, presetName) => {
-    callOrder.push(`applyPreset:${presetName}`);
-    return applyPresetResult;
-  });
-  removePresetSpy = vi.spyOn(policies, "removePreset").mockImplementation((_name, presetName) => {
-    callOrder.push(`removePreset:${presetName}`);
-    return true;
-  });
-  vi.spyOn(policies, "getAppliedPresets").mockImplementation(() => appliedPresets);
+  applyPresetSpy = vi
+    .spyOn(policies, "applyPreset")
+    .mockImplementation(async (name, presetName) => {
+      callOrder.push(`applyPreset:${presetName}`);
+      return applyPresetResult;
+    });
+  removePresetSpy = vi
+    .spyOn(policies, "removePreset")
+    .mockImplementation(async (_name, presetName) => {
+      callOrder.push(`removePreset:${presetName}`);
+      return true;
+    });
+  vi.spyOn(policies, "getAppliedPresets").mockImplementation(async () => appliedPresets);
 
   getCredentialSpy = vi
     .spyOn(store, "getCredential")
@@ -431,6 +435,19 @@ describe("channels add applies a matching policy preset (#3437)", () => {
       expect(presetCallIndexes[1]).toBeLessThan(callOrder.indexOf("promptAndRebuild"));
     },
   );
+
+  it("rejects the Discord placeholder before changing channel state (#10668)", async () => {
+    process.env.DISCORD_BOT_TOKEN = "<your-discord-bot-token>";
+
+    await expectExit(() => addSandboxChannel("test-sb", { channel: "discord" }));
+
+    expect(providerSpy).not.toHaveBeenCalled();
+    expect(applyPresetSpy).not.toHaveBeenCalled();
+    expect(updateSandboxSpy).not.toHaveBeenCalled();
+    expect(saveCredentialSpy).not.toHaveBeenCalled();
+    expect(deleteCredentialSpy).not.toHaveBeenCalled();
+    expect(rebuildSpy).not.toHaveBeenCalled();
+  });
 
   it("applies the tokenless WhatsApp preset for Hermes before triggering rebuild", async () => {
     sandboxAgent = "hermes";
@@ -838,8 +855,8 @@ describe("channels add verifies bridge startup after rebuild (#4314, #4390)", ()
 describe("channel preset source-of-truth", () => {
   it.each(knownChannelNames())(
     "channel $name ships a preset that parsePresetPolicyKeys accepts",
-    (name) => {
-      const content = policies.loadPresetForSandbox("test-sb", name);
+    async (name) => {
+      const content = await policies.loadPresetForSandbox("test-sb", name);
       expect(content, `${name}: preset YAML not found on disk`).not.toBeNull();
       expect(
         policies.parsePresetPolicyKeys(content!).length,

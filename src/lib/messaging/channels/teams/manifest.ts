@@ -118,7 +118,7 @@ export const teamsManifest = {
         value: {
           enabled: true,
           appId: "{{teamsConfig.appId}}",
-          // No appPassword here: OpenShell 0.0.106 injects
+          // No appPassword here: OpenShell 0.0.116 injects
           // MSTEAMS_APP_PASSWORD as a revision-scoped placeholder and rejects
           // the canonical form once the policy binds the credential. The
           // OpenClaw Teams token resolver falls back to
@@ -208,7 +208,7 @@ export const teamsManifest = {
         {
           envKey: "MSTEAMS_APP_PASSWORD",
           targetEnvKey: "TEAMS_CLIENT_SECRET",
-          match: "^openshell:resolve:env:v[0-9]+_MSTEAMS_APP_PASSWORD$",
+          match: "^openshell:resolve:env:(?:v[0-9]{1,20}|s[a-f0-9]{64})_MSTEAMS_APP_PASSWORD$",
           value: "openshell:resolve:env:MSTEAMS_APP_PASSWORD",
         },
       ],
@@ -300,4 +300,5 @@ export const teamsManifest = {
       ],
     },
   ],
+  state: {},
 } as const satisfies ChannelManifest;

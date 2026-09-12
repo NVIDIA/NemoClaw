@@ -49,6 +49,8 @@ interface AuthorizedChatModelOptions {
   probeModel?: ProbeModel;
 }
 
+type ConsoleLog = typeof console.log;
+
 function fail(message: string): never {
   throw new Error(`authorized model selection failed: ${message}`);
 }
@@ -115,13 +117,25 @@ export async function selectAuthorizedChatModel({
   fail(`none of the first ${candidates.length} listed chat models passed validation`);
 }
 
+export async function selectAuthorizedChatModelForCli(
+  options: AuthorizedChatModelOptions,
+): Promise<string> {
+  const stdoutLog: ConsoleLog = console.log;
+  console.log = console.error;
+  try {
+    return await selectAuthorizedChatModel(options);
+  } finally {
+    console.log = stdoutLog;
+  }
+}
+
 async function main() {
   const args = process.argv.slice(2);
   const value = (name: string): string | undefined => {
     const index = args.indexOf(name);
     return index >= 0 ? args[index + 1] : undefined;
   };
-  const selected = await selectAuthorizedChatModel({
+  const selected = await selectAuthorizedChatModelForCli({
     apiKey: process.env.COMPATIBLE_API_KEY,
     currentModel: value("--current-model"),
     endpoint: value("--endpoint"),

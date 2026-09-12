@@ -108,7 +108,7 @@ export function withOpenShellDriverConfigWrapperEnv(
   return {
     ...env,
     PATH: `${wrapper.directory}${path.delimiter}${env.PATH ?? ""}`,
-    NEMOCLAW_OPENSHELL_BIN: wrapper.executable,
+    NEMOCLAW_OPENSHELL_BIN: components.cli,
     NEMOCLAW_OPENSHELL_GATEWAY_BIN: components.gateway,
     NEMOCLAW_OPENSHELL_SANDBOX_BIN: components.sandbox,
   };

@@ -1453,7 +1453,7 @@ _PREEXISTING_SANDBOX_RECOVERY_UNCONFIRMED=false
 # preserved). The final summary must not claim those sandboxes were recovered.
 _PREEXISTING_SANDBOX_ORPHANED=false
 _LEGACY_MANAGED_RECOVERY_NAMES_JSON="[]"
-# OpenShell v0.0.106 routes sandbox and workspace identities through labels
+# OpenShell v0.0.116 routes sandbox and workspace identities through labels
 # capped at 19 characters. Keep this installer-only raw-registry preflight in
 # sync with NAME_MAX_LENGTH in nemoclaw/src/shared/sandbox-name.cts. The
 # current CLI cannot be prepared safely until legacy names are checked.
@@ -1681,14 +1681,21 @@ upstream_openshell_gateway_user_service_installed() {
 }
 
 resolve_openshell_gateway_bin_for_user_service() {
-  local service_name="${1:-}" exec_start gateway_bin
+  local service_name="${1:-}" exec_start gateway_bin service_output service_status
   local -a gateway_bins=()
   case "$service_name" in
     openshell-gateway.service | "${NEMOCLAW_GATEWAY_SERVICE_NAME}.service") ;;
     *) return 1 ;;
   esac
-  exec_start="$(systemctl --user show "$service_name" --property=ExecStart --value 2>/dev/null)" \
-    || return 1
+  if service_output="$(LC_ALL=C systemctl --user show "$service_name" \
+    --property=ExecStart --value 2>&1)"; then
+    exec_start="$service_output"
+  else
+    service_status=$?
+    printf 'Could not inspect the systemd user service executable for %s: %s\n' \
+      "$service_name" "${service_output:-systemctl exited with status ${service_status}}" >&2
+    return 2
+  fi
   while IFS= read -r gateway_bin; do
     gateway_bins+=("$gateway_bin")
   done < <(
@@ -1722,6 +1729,23 @@ systemd_user_manager_unavailable_diagnostic() {
   [[ "$recognized" -eq 1 ]]
 }
 
+# Return 0 only for active, 1 only for confirmed inactive, and 2 when service state is unknown.
+systemd_user_service_is_active() {
+  local service_name="${1:-}" service_output service_status
+  [ -n "$service_name" ] || return 2
+  if service_output="$(LC_ALL=C systemctl --user is-active --quiet "$service_name" 2>&1)"; then
+    return 0
+  else
+    service_status=$?
+  fi
+  if [ "$service_status" -eq 3 ] && [ -z "$service_output" ]; then
+    return 1
+  fi
+  printf 'Could not inspect the systemd user service state for %s: %s\n' \
+    "$service_name" "${service_output:-systemctl exited with status ${service_status}}" >&2
+  return 2
+}
+
 trusted_upstream_openshell_gateway_unit_for_service() {
   case "${1:-}" in
     /usr/local/lib/systemd/user/openshell-gateway.service | \
@@ -1746,12 +1770,22 @@ trusted_upstream_openshell_gateway_bin_for_service() {
   esac
 }
 
+supported_openshell_gateway_user_service_candidate_exists() {
+  upstream_openshell_gateway_user_service_installed && return 0
+  local service_path
+  service_path="$(openshell_user_config_home)/systemd/user/${NEMOCLAW_GATEWAY_SERVICE_NAME}.service" \
+    || return 1
+  [ -e "$service_path" ] || [ -L "$service_path" ]
+}
+
 inspect_upstream_openshell_gateway_user_service() {
+  local mode="${1:-inspection}"
   local service_output service_status line fragment_path="" exec_start="" gateway_bin
   local fragment_count=0 exec_start_count=0
   local -a gateway_bins=()
   UPSTREAM_OPENSHELL_GATEWAY_SERVICE_BIN=""
   UPSTREAM_OPENSHELL_GATEWAY_SERVICE_ERROR=""
+  upstream_openshell_gateway_user_service_installed || return 1
 
   if service_output="$(LC_ALL=C systemctl --user show openshell-gateway.service \
     --property=FragmentPath --property=ExecStart 2>&1)"; then
@@ -1759,7 +1793,8 @@ inspect_upstream_openshell_gateway_user_service() {
   else
     service_status=$?
     UPSTREAM_OPENSHELL_GATEWAY_SERVICE_ERROR="systemctl --user show openshell-gateway.service failed: ${service_output:-exit ${service_status}}"
-    if systemd_user_manager_unavailable_diagnostic "$service_output"; then
+    if systemd_user_manager_unavailable_diagnostic "$service_output" \
+      || [ "$mode" = "service-control" ]; then
       return 2
     fi
     return 1
@@ -2280,9 +2315,212 @@ maybe_install_openshell_during_install() {
   install_nemoclaw_openshell_gateway_user_service
 }
 
+is_installer_managed_cli_shim() {
+  local shim_path="${1:-}" cli_bin="${2:-}" canonical_cli_path="${3:-}"
+  local line path_line node_dir path_dir exec_line shim_cli_path
+  local path_prefix path_middle path_suffix exec_prefix exec_suffix
+  local -a lines=()
+
+  [[ -n "$shim_path" && -n "$cli_bin" && -n "$canonical_cli_path" ]] || return 1
+  [[ -f "$shim_path" && ! -L "$shim_path" && -e "$canonical_cli_path" ]] || return 1
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    lines[${#lines[@]}]="$line"
+    [[ "${#lines[@]}" -le 3 ]] || return 1
+  done <"$shim_path" || return 1
+  [[ "${#lines[@]}" -eq 3 && "${lines[0]}" == "#!/usr/bin/env bash" ]] || return 1
+
+  path_line="${lines[1]}"
+  path_prefix='export PATH="'
+  # shellcheck disable=SC2016 # Match the literal $PATH emitted by the managed shim.
+  path_suffix=':$PATH"'
+  if [[ "$path_line" == "$path_prefix"*"$path_suffix" ]]; then
+    path_dir="${path_line#"$path_prefix"}"
+    path_dir="${path_dir%"$path_suffix"}"
+    [[ -n "$path_dir" ]] || return 1
+  else
+    # shellcheck disable=SC2016 # Match the literal command substitution emitted by the shim.
+    path_prefix='[[ "$(command -v node 2>/dev/null)" == "'
+    path_middle='/node" ]] || export PATH="'
+    [[ "$path_line" == "$path_prefix"*"$path_middle"*"$path_suffix" ]] || return 1
+    node_dir="${path_line#"$path_prefix"}"
+    node_dir="${node_dir%%"$path_middle"*}"
+    path_dir="${path_line#*"$path_middle"}"
+    path_dir="${path_dir%"$path_suffix"}"
+    [[ -n "$node_dir" && "$node_dir" == "$path_dir" ]] || return 1
+  fi
+
+  exec_prefix='exec "'
+  exec_suffix='" "$@"'
+  exec_line="${lines[2]}"
+  [[ "$exec_line" == "$exec_prefix"*"$exec_suffix" ]] || return 1
+  shim_cli_path="${exec_line#"$exec_prefix"}"
+  shim_cli_path="${shim_cli_path%"$exec_suffix"}"
+  [[ "$shim_cli_path" == */"$cli_bin" && -e "$shim_cli_path" ]] || return 1
+  [[ "$shim_cli_path" -ef "$canonical_cli_path" ]]
+}
+
+is_npm_managed_nemoclaw_acp_link() {
+  local shim_path="${1:-}" cli_path="${2:-}" link_target
+  [[ -n "$shim_path" && -n "$cli_path" && "$shim_path" == "$cli_path" && -L "$shim_path" ]] \
+    || return 1
+  link_target="$(readlink "$shim_path")" || return 1
+  [[ "$link_target" == "../lib/node_modules/nemoclaw/dist/lib/acp/main.js" ]]
+}
+
+assert_nemoclaw_acp_shim_replaceable() {
+  local cli_bin="${1:-}" cli_path="${2:-}" shim_path before_identity after_identity
+  _NEMOCLAW_ACP_SHIM_REPLACE_IDENTITY=""
+  [[ "$cli_bin" == "nemoclaw-acp" ]] || return 0
+  shim_path="${NEMOCLAW_SHIM_DIR}/${cli_bin}"
+
+  if [[ ! -e "$shim_path" && ! -L "$shim_path" ]]; then
+    _NEMOCLAW_ACP_SHIM_REPLACE_IDENTITY="absent"
+    return 0
+  fi
+  before_identity="$(cli_shim_entry_identity "$shim_path")" \
+    || error "Installation stopped because NemoClaw could not inspect $shim_path without following symbolic links. NemoClaw left it unchanged."
+  if ! is_installer_managed_cli_shim "$shim_path" "$cli_bin" "$cli_path" \
+    && ! is_npm_managed_nemoclaw_acp_link "$shim_path" "$cli_path"; then
+    error "Installation stopped because $shim_path already exists and is not a NemoClaw-managed shim. NemoClaw left it unchanged. Move or remove that path, then rerun the installer."
+  fi
+  after_identity="$(cli_shim_entry_identity "$shim_path")" \
+    || error "Installation stopped because NemoClaw could not recheck $shim_path. NemoClaw left it unchanged."
+  [[ "$before_identity" == "$after_identity" ]] \
+    || error "Installation stopped because $shim_path changed while NemoClaw checked it. NemoClaw left the current path unchanged. Rerun the installer."
+  _NEMOCLAW_ACP_SHIM_REPLACE_IDENTITY="$before_identity"
+}
+
+cli_shim_entry_identity() {
+  local shim_path="${1:-}" identity
+  [[ -n "$shim_path" ]] || return 1
+  if [[ ! -e "$shim_path" && ! -L "$shim_path" ]]; then
+    printf 'absent'
+    return 0
+  fi
+  if identity="$(stat -c '%d:%i' -- "$shim_path" 2>/dev/null)"; then
+    :
+  elif identity="$(stat -f '%d:%i' "$shim_path" 2>/dev/null)"; then
+    :
+  else
+    return 1
+  fi
+  printf '%s' "$identity"
+}
+
+assert_nemoclaw_acp_shim_unchanged() {
+  local cli_bin="${1:-}" cli_path="${2:-}" expected_identity="${3:-}" shim_path current_identity
+  [[ "$cli_bin" == "nemoclaw-acp" ]] || return 0
+  shim_path="${NEMOCLAW_SHIM_DIR}/${cli_bin}"
+  current_identity="$(cli_shim_entry_identity "$shim_path")" \
+    || error "Installation stopped because NemoClaw could not recheck $shim_path. NemoClaw left it unchanged."
+  [[ -n "$expected_identity" && "$current_identity" == "$expected_identity" ]] \
+    || error "Installation stopped because $shim_path changed while NemoClaw prepared its shim. NemoClaw left the current path unchanged. Rerun the installer."
+  if [[ "$expected_identity" != "absent" ]]; then
+    is_installer_managed_cli_shim "$shim_path" "$cli_bin" "$cli_path" \
+      || is_npm_managed_nemoclaw_acp_link "$shim_path" "$cli_path" \
+      || error "Installation stopped because $shim_path is no longer a NemoClaw-managed shim. NemoClaw left it unchanged. Rerun the installer."
+  fi
+}
+
+preflight_nemoclaw_acp_shim() {
+  local shim_path="${NEMOCLAW_SHIM_DIR}/nemoclaw-acp" npm_bin="" cli_path=""
+  [[ -e "$shim_path" || -L "$shim_path" ]] || return 0
+  npm_bin="$(resolve_npm_bin)" \
+    || error "Installation stopped because NemoClaw could not resolve the active npm prefix to verify $shim_path. NemoClaw left it unchanged. Fix the npm configuration, then rerun the installer."
+  cli_path="${npm_bin:+${npm_bin}/nemoclaw-acp}"
+  if [[ -n "$cli_path" && "$cli_path" != "$shim_path" && -e "$cli_path" &&
+    "$cli_path" -ef "$shim_path" ]]; then
+    return 0
+  fi
+  is_installer_managed_cli_shim "$shim_path" "nemoclaw-acp" "$cli_path" && return 0
+  is_npm_managed_nemoclaw_acp_link "$shim_path" "$cli_path" && return 0
+  error "Installation stopped because $shim_path already exists and is not a NemoClaw-managed shim. NemoClaw left it unchanged. Move or remove that path, then rerun the installer."
+}
+
+publish_cli_shim_no_clobber() {
+  local source_path="${1:-}" destination_path="${2:-}" node_path="${3:-}"
+  [[ -n "$source_path" && -n "$destination_path" && -x "$node_path" ]] || return 1
+  "$node_path" -e '
+const fs = require("node:fs");
+try {
+  fs.linkSync(process.argv[1], process.argv[2]);
+} catch {
+  process.exitCode = 1;
+}
+' "$source_path" "$destination_path"
+}
+
+refresh_managed_nemoclaw_acp_shim() {
+  local source_path="${1:-}" destination_path="${2:-}" node_path="${3:-}"
+  local expected_identity="${4:-}"
+  [[ -n "$source_path" && -n "$destination_path" && -x "$node_path" &&
+    -n "$expected_identity" && "$expected_identity" != "absent" ]] || return 1
+  # shellcheck disable=SC2016 # JavaScript template literals are evaluated by Node.js.
+  "$node_path" -e '
+const fs = require("node:fs");
+const { O_NOFOLLOW, O_RDONLY, O_RDWR } = fs.constants;
+let destination;
+let original;
+let originalMode;
+let source;
+let wroteDestination = false;
+
+function identity(stat) {
+  return `${stat.dev}:${stat.ino}`;
+}
+
+function writeAll(fd, contents) {
+  let offset = 0;
+  while (offset < contents.length) {
+    offset += fs.writeSync(fd, contents, offset, contents.length - offset, offset);
+  }
+}
+
+try {
+  source = fs.openSync(process.argv[1], O_RDONLY | O_NOFOLLOW);
+  const sourceStat = fs.fstatSync(source, { bigint: true });
+  if (!sourceStat.isFile()) throw new Error("invalid source");
+  const contents = fs.readFileSync(source);
+
+  destination = fs.openSync(process.argv[2], O_RDWR | O_NOFOLLOW);
+  const before = fs.fstatSync(destination, { bigint: true });
+  if (!before.isFile() || before.nlink !== 1n || identity(before) !== process.argv[3]) {
+    throw new Error("destination changed");
+  }
+  original = fs.readFileSync(destination);
+  originalMode = Number(before.mode & 0o777n);
+
+  fs.ftruncateSync(destination, 0);
+  wroteDestination = true;
+  writeAll(destination, contents);
+  fs.fchmodSync(destination, 0o755);
+  fs.fsyncSync(destination);
+
+  const current = fs.lstatSync(process.argv[2], { bigint: true });
+  if (!current.isFile() || identity(current) !== process.argv[3]) {
+    throw new Error("destination changed");
+  }
+} catch {
+  if (destination !== undefined && wroteDestination && original !== undefined) {
+    try {
+      fs.ftruncateSync(destination, 0);
+      writeAll(destination, original);
+      fs.fchmodSync(destination, originalMode);
+      fs.fsyncSync(destination);
+    } catch {}
+  }
+  process.exitCode = 1;
+} finally {
+  if (destination !== undefined) fs.closeSync(destination);
+  if (source !== undefined) fs.closeSync(source);
+}
+' "$source_path" "$destination_path" "$expected_identity"
+}
+
 ensure_cli_shim() {
   local cli_bin="${1:-$_CLI_BIN}"
-  local npm_bin shim_path node_path node_dir cli_path expected_shim
+  local npm_bin shim_path node_path node_dir cli_path expected_shim temp_shim=""
+  local replace_identity=""
   npm_bin="$(resolve_npm_bin)" || true
   shim_path="${NEMOCLAW_SHIM_DIR}/${cli_bin}"
 
@@ -2305,7 +2543,15 @@ ensure_cli_shim() {
   # npm_config_prefix=$HOME/.local), writing a shim would overwrite the real
   # binary with a script that exec's itself — an infinite loop.  In that case
   # the binary is already where it needs to be; skip shim creation.
-  if [[ "$cli_path" -ef "$shim_path" ]]; then
+  if [[ "$cli_path" != "$shim_path" && -e "$shim_path" && "$cli_path" -ef "$shim_path" ]]; then
+    refresh_path
+    ensure_local_bin_in_profile
+    return 0
+  fi
+
+  assert_nemoclaw_acp_shim_replaceable "$cli_bin" "$cli_path"
+  replace_identity="${_NEMOCLAW_ACP_SHIM_REPLACE_IDENTITY:-}"
+  if [[ "$cli_path" == "$shim_path" ]]; then
     refresh_path
     ensure_local_bin_in_profile
     return 0
@@ -2319,15 +2565,51 @@ exec "$cli_path" "\$@"
 EOF
   )"
 
-  if [[ -x "$shim_path" ]] && cmp -s "$shim_path" <(printf '%s\n' "$expected_shim"); then
+  if [[ "$cli_bin" == "nemoclaw-acp" && "$replace_identity" != "absent" ]]; then
+    assert_nemoclaw_acp_shim_unchanged "$cli_bin" "$cli_path" "$replace_identity"
+    if cmp -s "$shim_path" <(printf '%s\n' "$expected_shim"); then
+      refresh_path
+      ensure_local_bin_in_profile
+      return 0
+    fi
+  fi
+
+  if [[ "$cli_bin" != "nemoclaw-acp" && -x "$shim_path" ]] \
+    && cmp -s "$shim_path" <(printf '%s\n' "$expected_shim"); then
     refresh_path
     ensure_local_bin_in_profile
     return 0
   fi
 
   mkdir -p "$NEMOCLAW_SHIM_DIR"
-  printf '%s\n' "$expected_shim" >"$shim_path"
-  chmod +x "$shim_path"
+  temp_shim="$(mktemp "${shim_path}.tmp.XXXXXX")" \
+    || error "Could not create a temporary shim beside $shim_path."
+  _cleanup_files+=("$temp_shim")
+  if ! printf '%s\n' "$expected_shim" >"$temp_shim" || ! chmod 755 "$temp_shim"; then
+    rm -f "$temp_shim"
+    error "Could not prepare the user-local shim for $cli_bin."
+  fi
+  assert_nemoclaw_acp_shim_unchanged "$cli_bin" "$cli_path" "$replace_identity"
+  if [[ "$cli_bin" == "nemoclaw-acp" ]]; then
+    if [[ "$replace_identity" == "absent" ]]; then
+      if ! publish_cli_shim_no_clobber "$temp_shim" "$shim_path" "$node_path"; then
+        rm -f "$temp_shim"
+        if [[ -e "$shim_path" || -L "$shim_path" ]]; then
+          error "Installation stopped because $shim_path changed while NemoClaw published its shim. NemoClaw left the current path unchanged. Rerun the installer."
+        fi
+        error "Could not publish the user-local shim at $shim_path."
+      fi
+    elif ! refresh_managed_nemoclaw_acp_shim \
+      "$temp_shim" "$shim_path" "$node_path" "$replace_identity"; then
+      rm -f "$temp_shim"
+      error "Installation stopped because NemoClaw could not safely refresh $shim_path. NemoClaw did not replace the current path. Rerun the installer."
+    fi
+    rm -f "$temp_shim" \
+      || error "NemoClaw published $shim_path but could not remove its temporary shim."
+  elif ! mv -f -- "$temp_shim" "$shim_path"; then
+    rm -f "$temp_shim"
+    error "Could not publish the user-local shim at $shim_path."
+  fi
   refresh_path
   ensure_local_bin_in_profile
   info "Created user-local shim at $shim_path"
@@ -2336,6 +2618,7 @@ EOF
 
 ensure_nemoclaw_shim() {
   local cli_bin status=0
+  preflight_nemoclaw_acp_shim
   ensure_cli_shim "$_CLI_BIN" || status=$?
   for cli_bin in nemoclaw nemoclaw-acp nemohermes nemo-deepagents; do
     [[ "$cli_bin" == "$_CLI_BIN" ]] && continue
@@ -2794,6 +3077,7 @@ install_nemoclaw() {
   local repo_root package_json
   repo_root="$(resolve_repo_root)"
   package_json="${repo_root}/package.json"
+  preflight_nemoclaw_acp_shim
   # Tell prepare not to run npm link — the installer handles linking explicitly.
   export NEMOCLAW_INSTALLING=1
 
@@ -3254,7 +3538,7 @@ require_openshell_compatible_sandbox_names() {
 
   cat <<EOF
 
-  ${incompatible_count} existing sandbox name(s) cannot be recreated by OpenShell 0.0.106:
+  ${incompatible_count} existing sandbox name(s) cannot be recreated by OpenShell 0.0.116:
 EOF
   while IFS= read -r sandbox_name; do
     [[ -n "$sandbox_name" ]] && printf "    %s\n" "$sandbox_name"
@@ -3276,7 +3560,7 @@ EOF
   ' "$incompatible_json")
   cat <<EOF
 
-  OpenShell 0.0.106 caps routed sandbox names at
+  OpenShell 0.0.116 caps routed sandbox names at
   ${_OPENSHELL_SANDBOX_NAME_MAX_LENGTH} characters and rejects consecutive
   hyphens. Current NemoClaw names must use 1-${_OPENSHELL_SANDBOX_NAME_MAX_LENGTH}
   lowercase letters, numbers, and single internal hyphens, starting with a
@@ -3292,7 +3576,7 @@ EOF
   OpenShell runtime and gateway before migrating the sandbox state.
 
 EOF
-  error "OpenShell 0.0.106 upgrade blocked by incompatible existing sandbox names."
+  error "OpenShell 0.0.116 upgrade blocked by incompatible existing sandbox names."
 }
 
 normalize_legacy_managed_confirmation_json() {
@@ -3651,40 +3935,63 @@ stop_legacy_openshell_gateway_process() {
   rm -f "$pid_file"
 }
 
+inspect_macos_openshell_homebrew_gateway_user_service() {
+  local service_label="${1:-}" output_variable="${2:-}"
+  local gateway_port brew_prefix service_path trusted_program service_program
+  [ "$(uname -s)" = "Darwin" ] || return 1
+  [[ "$output_variable" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]] || return 1
+  case "$service_label" in
+    sh.brew.openshell | homebrew.mxcl.openshell) ;;
+    *) return 1 ;;
+  esac
+  gateway_port="$(resolve_nemoclaw_gateway_port)" || return 1
+  [ "$gateway_port" -eq 8080 ] || return 1
+  command_exists brew || return 1
+  command_exists plutil || return 1
+
+  brew_prefix="$(brew --prefix 2>/dev/null || true)"
+  [ -n "$brew_prefix" ] || return 1
+  trusted_program="${brew_prefix%/}/opt/openshell/libexec/openshell-gateway-homebrew-service"
+  service_path="${HOME}/Library/LaunchAgents/${service_label}.plist"
+  [ -f "$service_path" ] \
+    || error "Refusing to control the OpenShell gateway without its expected macOS user service file: ${service_path}"
+  if [ -L "$service_path" ] || ! [ -O "$service_path" ]; then
+    error "Refusing to control the OpenShell gateway through an untrusted macOS user service: ${service_path}"
+  fi
+
+  service_program="$(plutil -extract ProgramArguments.0 raw -o - "$service_path" 2>/dev/null || true)"
+  [ "$(plutil -extract Label raw -o - "$service_path" 2>/dev/null || true)" = "$service_label" ] \
+    || error "Refusing to control the OpenShell gateway through a macOS user service with an unexpected label: ${service_path}"
+  if [ "$service_program" != "$trusted_program" ] || ! [ -x "$service_program" ]; then
+    error "Refusing to control the OpenShell gateway through a macOS user service with an untrusted executable: ${service_program:-<empty>}"
+  fi
+  printf -v "$output_variable" '%s' "$trusted_program"
+}
+
 stop_macos_openshell_gateway_user_service() {
   [ "$(uname -s)" = "Darwin" ] || return 1
 
-  local gateway_port service_domain=""
-  local brew_prefix expected_program
-  local candidate_label candidate_path candidate_program candidate_domain candidate_service
+  local selection_variable="${1:-}" gateway_port service_domain="" selected_label=""
+  local expected_program
+  local candidate_label candidate_domain candidate_service
   local candidate_active_program candidate_state
+  if [ -n "$selection_variable" ] \
+    && ! [[ "$selection_variable" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]]; then
+    return 1
+  fi
   gateway_port="$(resolve_nemoclaw_gateway_port)" || return 1
   [ "$gateway_port" -eq 8080 ] || return 1
   command_exists brew || return 1
   command_exists launchctl || return 1
   command_exists plutil || return 1
 
-  brew_prefix="$(brew --prefix 2>/dev/null || true)"
-  [ -n "$brew_prefix" ] || return 1
-  expected_program="${brew_prefix%/}/opt/openshell/libexec/openshell-gateway-homebrew-service"
   for candidate_label in sh.brew.openshell homebrew.mxcl.openshell; do
     candidate_domain="gui/$(id -u)/${candidate_label}"
     candidate_service="$(launchctl print "$candidate_domain" 2>/dev/null)" || continue
     candidate_state="$(printf '%s\n' "$candidate_service" | sed -n 's/^[[:space:]]*state = //p' | head -1)"
     [ "$candidate_state" = "running" ] || continue
-    candidate_path="${HOME}/Library/LaunchAgents/${candidate_label}.plist"
-    [ -f "$candidate_path" ] \
-      || error "Refusing to retire the active OpenShell gateway without its expected macOS user service file: ${candidate_path}"
-    if [ -L "$candidate_path" ] || ! [ -O "$candidate_path" ]; then
-      error "Refusing to retire the OpenShell gateway from an untrusted macOS user service: ${candidate_path}"
-    fi
-
-    candidate_program="$(plutil -extract ProgramArguments.0 raw -o - "$candidate_path" 2>/dev/null || true)"
-    [ "$(plutil -extract Label raw -o - "$candidate_path" 2>/dev/null || true)" = "$candidate_label" ] \
-      || error "Refusing to retire an OpenShell gateway from a macOS user service with an unexpected label: ${candidate_path}"
-    if [ "$candidate_program" != "$expected_program" ] || ! [ -x "$candidate_program" ]; then
-      error "Refusing to retire an OpenShell gateway from a macOS user service with an untrusted executable: ${candidate_program:-<empty>}"
-    fi
+    inspect_macos_openshell_homebrew_gateway_user_service "$candidate_label" expected_program \
+      || return 1
 
     candidate_active_program="$(printf '%s\n' "$candidate_service" | sed -n 's/^[[:space:]]*program = //p' | head -1)"
     [ "$candidate_active_program" = "$expected_program" ] \
@@ -3693,19 +4000,34 @@ stop_macos_openshell_gateway_user_service() {
       error "Refusing to retire an OpenShell gateway because multiple trusted Homebrew user services are active: ${service_domain} and ${candidate_domain}. Inspect both with 'launchctl print ${service_domain}' and 'launchctl print ${candidate_domain}', stop the obsolete service, then rerun the installer."
     fi
     service_domain="$candidate_domain"
+    selected_label="$candidate_label"
   done
   [ -n "$service_domain" ] || return 1
+
+  inspect_macos_openshell_homebrew_gateway_user_service "$selected_label" expected_program \
+    || return 1
+  candidate_service="$(launchctl print "$service_domain" 2>/dev/null)" \
+    || error "Refusing to stop the trusted OpenShell Homebrew gateway user service because it is no longer active: ${service_domain}"
+  candidate_state="$(printf '%s\n' "$candidate_service" | sed -n 's/^[[:space:]]*state = //p' | head -1)"
+  [ "$candidate_state" = "running" ] \
+    || error "Refusing to stop the trusted OpenShell Homebrew gateway user service because it is no longer running: ${service_domain}"
+  candidate_active_program="$(printf '%s\n' "$candidate_service" | sed -n 's/^[[:space:]]*program = //p' | head -1)"
+  [ "$candidate_active_program" = "$expected_program" ] \
+    || error "Refusing to stop the trusted OpenShell Homebrew gateway user service because its active executable changed: ${candidate_active_program:-<empty>}"
   launchctl bootout "$service_domain" >/dev/null 2>&1 \
     || error "Could not stop the trusted OpenShell Homebrew gateway user service. Run 'launchctl print ${service_domain}' for details."
   launchctl print "$service_domain" >/dev/null 2>&1 \
     && error "The trusted OpenShell Homebrew gateway user service remained active after the stop command."
+  if [ -n "$selection_variable" ]; then
+    printf -v "$selection_variable" '%s' "$selected_label"
+  fi
   return 0
 }
 
-stop_nemoclaw_openshell_gateway_user_service() {
+inspect_nemoclaw_openshell_gateway_user_service() {
   [ "$(uname -s)" = "Linux" ] || return 1
 
-  local gateway_port service_name service_path fragment_path gateway_bin
+  local mode="${1:-}" gateway_port service_name service_path fragment_path gateway_bin inspect_status
   gateway_port="$(resolve_nemoclaw_gateway_port)" || return 1
   [ "$gateway_port" -eq 8080 ] || return 1
   command_exists systemctl || return 1
@@ -3714,26 +4036,197 @@ stop_nemoclaw_openshell_gateway_user_service() {
   service_path="$(openshell_user_config_home)/systemd/user/${service_name}"
   [ -f "$service_path" ] || return 1
   if [ -L "$service_path" ] || ! [ -O "$service_path" ]; then
-    error "Refusing to retire the OpenShell gateway from an untrusted user service: ${service_path}"
+    error "Refusing to control the OpenShell gateway through an untrusted user service: ${service_path}"
   fi
   is_nemoclaw_openshell_gateway_user_service "$service_path" \
-    || error "Refusing to retire the OpenShell gateway from a non-NemoClaw user service: ${service_path}"
-  systemctl --user is-active --quiet "$service_name" 2>/dev/null || return 1
+    || error "Refusing to control the OpenShell gateway through a non-NemoClaw user service: ${service_path}"
+  if [ "$mode" = "active" ]; then
+    if systemd_user_service_is_active "$service_name"; then
+      :
+    else
+      inspect_status=$?
+      return "$inspect_status"
+    fi
+  fi
 
-  fragment_path="$(systemctl --user show "$service_name" --property=FragmentPath --value 2>/dev/null)" \
-    || return 1
+  if fragment_path="$(LC_ALL=C systemctl --user show "$service_name" \
+    --property=FragmentPath --value 2>&1)"; then
+    :
+  else
+    inspect_status=$?
+    printf 'Could not inspect the systemd user service unit path for %s: %s\n' \
+      "$service_name" "${fragment_path:-systemctl exited with status ${inspect_status}}" >&2
+    return 2
+  fi
   [ "$fragment_path" = "$service_path" ] \
-    || error "Refusing to retire the OpenShell gateway because the active user service does not match ${service_path}."
-  gateway_bin="$(resolve_openshell_gateway_bin_for_user_service "$service_name")" \
-    || return 1
+    || error "Refusing to control the OpenShell gateway because the user service does not match ${service_path}."
+  if gateway_bin="$(resolve_openshell_gateway_bin_for_user_service "$service_name")"; then
+    :
+  else
+    inspect_status=$?
+    [ "$inspect_status" -ne 2 ] || return 2
+    error "Refusing to control the OpenShell gateway because the user service executable metadata is invalid: ${service_name}"
+  fi
   trusted_openshell_gateway_bin_for_service "$gateway_bin" \
-    || error "Refusing to retire an OpenShell gateway user service with an untrusted binary: ${gateway_bin}"
+    || error "Refusing to control an OpenShell gateway user service with an untrusted binary: ${gateway_bin}"
+}
+
+stop_nemoclaw_openshell_gateway_user_service() {
+  local service_name inspect_status
+  inspect_nemoclaw_openshell_gateway_user_service active || return $?
+  service_name="${NEMOCLAW_GATEWAY_SERVICE_NAME}.service"
 
   systemctl --user stop "$service_name" \
     || error "Could not stop the trusted NemoClaw OpenShell gateway user service. Run 'systemctl --user status ${service_name}' for details."
-  systemctl --user is-active --quiet "$service_name" 2>/dev/null \
-    && error "The trusted NemoClaw OpenShell gateway user service remained active after the stop command."
+  if systemd_user_service_is_active "$service_name"; then
+    error "The trusted NemoClaw OpenShell gateway user service remained active after the stop command."
+  else
+    inspect_status=$?
+    [ "$inspect_status" -eq 1 ] || return "$inspect_status"
+  fi
   return 0
+}
+
+stop_active_openshell_gateway_user_service() {
+  local selection_variable="${1:-}" platform inspect_status macos_service_label
+  [[ "$selection_variable" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]] || return 1
+  platform="$(uname -s)" || return 1
+
+  if [ "$platform" = "Darwin" ]; then
+    if stop_macos_openshell_gateway_user_service macos_service_label; then
+      printf -v "$selection_variable" '%s' "homebrew:${macos_service_label}"
+      return 0
+    fi
+    return 1
+  fi
+  [ "$platform" = "Linux" ] || return 1
+  command_exists systemctl || return 1
+  systemctl --user show-environment >/dev/null || return 2
+  if ! supported_openshell_gateway_user_service_candidate_exists; then
+    printf -v "$selection_variable" '%s' "unavailable"
+    return 0
+  fi
+
+  if inspect_upstream_openshell_gateway_user_service service-control; then
+    if systemd_user_service_is_active openshell-gateway.service; then
+      systemctl --user stop openshell-gateway.service \
+        || error "Could not stop the trusted upstream OpenShell gateway user service. Run 'systemctl --user status openshell-gateway.service' for details."
+      if systemd_user_service_is_active openshell-gateway.service; then
+        error "The trusted upstream OpenShell gateway user service remained active after the stop command."
+      else
+        inspect_status=$?
+        [ "$inspect_status" -eq 1 ] || return "$inspect_status"
+      fi
+      printf -v "$selection_variable" '%s' "systemd:openshell-gateway.service"
+      return 0
+    else
+      inspect_status=$?
+      [ "$inspect_status" -eq 1 ] || return "$inspect_status"
+    fi
+  else
+    inspect_status=$?
+    if [ "$inspect_status" -eq 2 ]; then
+      printf 'Could not inspect the effective upstream OpenShell gateway user service: %s\n' \
+        "$UPSTREAM_OPENSHELL_GATEWAY_SERVICE_ERROR" >&2
+      return 2
+    fi
+  fi
+
+  if stop_nemoclaw_openshell_gateway_user_service; then
+    printf -v "$selection_variable" '%s' "systemd:${NEMOCLAW_GATEWAY_SERVICE_NAME}.service"
+    return 0
+  else
+    inspect_status=$?
+    [ "$inspect_status" -eq 1 ] || return "$inspect_status"
+  fi
+  return 1
+}
+
+restart_selected_openshell_gateway_user_service() {
+  local selection="${1:-}" inspect_status service_name macos_service_label expected_program
+  local macos_service_domain_prefix macos_service_domain macos_service_path macos_service_output
+  local macos_service_state macos_service_program
+  case "$selection" in
+    systemd:openshell-gateway.service)
+      if inspect_upstream_openshell_gateway_user_service service-control; then
+        service_name="openshell-gateway.service"
+      else
+        inspect_status=$?
+        if [ "$inspect_status" -eq 2 ]; then
+          printf 'Could not inspect the effective upstream OpenShell gateway user service: %s\n' \
+            "$UPSTREAM_OPENSHELL_GATEWAY_SERVICE_ERROR" >&2
+          return 2
+        fi
+        return 1
+      fi
+      ;;
+    "systemd:${NEMOCLAW_GATEWAY_SERVICE_NAME}.service")
+      service_name="${NEMOCLAW_GATEWAY_SERVICE_NAME}.service"
+      if inspect_nemoclaw_openshell_gateway_user_service; then
+        :
+      else
+        inspect_status=$?
+        return "$inspect_status"
+      fi
+      ;;
+    homebrew:sh.brew.openshell | homebrew:homebrew.mxcl.openshell)
+      macos_service_label="${selection#homebrew:}"
+      macos_openshell_homebrew_gateway_service_installed || return 1
+      command_exists launchctl || return 1
+      inspect_macos_openshell_homebrew_gateway_user_service "$macos_service_label" expected_program \
+        || return 1
+      macos_service_domain_prefix="gui/$(id -u)"
+      macos_service_domain="${macos_service_domain_prefix}/${macos_service_label}"
+      macos_service_path="${HOME}/Library/LaunchAgents/${macos_service_label}.plist"
+      launchctl bootstrap "$macos_service_domain_prefix" "$macos_service_path" >/dev/null 2>&1 \
+        || error "Could not restart the trusted OpenShell Homebrew gateway user service. Run 'launchctl bootstrap ${macos_service_domain_prefix} ${macos_service_path}' for details."
+      if macos_service_output="$(launchctl print "$macos_service_domain" 2>/dev/null)"; then
+        :
+      else
+        launchctl bootout "$macos_service_domain" >/dev/null 2>&1 || true
+        error "The trusted OpenShell Homebrew gateway user service could not be verified after restart: ${macos_service_domain}"
+      fi
+      macos_service_state="$(printf '%s\n' "$macos_service_output" | sed -n 's/^[[:space:]]*state = //p' | head -1)"
+      macos_service_program="$(printf '%s\n' "$macos_service_output" | sed -n 's/^[[:space:]]*program = //p' | head -1)"
+      if [ "$macos_service_state" != "running" ] \
+        || [ "$macos_service_program" != "$expected_program" ]; then
+        launchctl bootout "$macos_service_domain" >/dev/null 2>&1 || true
+        error "The trusted OpenShell Homebrew gateway user service did not restart with its expected identity: ${macos_service_domain}"
+      fi
+      return 0
+      ;;
+    *) return 1 ;;
+  esac
+
+  systemctl --user daemon-reload
+  systemctl --user restart "$service_name"
+  if systemd_user_service_is_active "$service_name"; then
+    return 0
+  else
+    inspect_status=$?
+  fi
+  if [ "$inspect_status" -eq 1 ]; then
+    printf 'The trusted OpenShell gateway user service did not become active after restart: %s\n' \
+      "$service_name" >&2
+  fi
+  return "$inspect_status"
+}
+
+stop_openshell_gateway_for_upgrade_retirement() {
+  local stop_status
+  if stop_nemoclaw_openshell_gateway_user_service; then
+    return 0
+  else
+    stop_status=$?
+    [ "$stop_status" -eq 1 ] || return "$stop_status"
+  fi
+  if stop_macos_openshell_gateway_user_service; then
+    return 0
+  else
+    stop_status=$?
+    [ "$stop_status" -eq 1 ] || return "$stop_status"
+  fi
+  stop_legacy_openshell_gateway_process
 }
 
 preinstall_backup_and_retire_legacy_gateway() {
@@ -3812,17 +4305,13 @@ preinstall_backup_and_retire_legacy_gateway() {
     if [ "$gateway_name" = "nemoclaw" ]; then
       openshell gateway destroy -g "$gateway_name" >/dev/null 2>&1 \
         || openshell gateway destroy >/dev/null 2>&1 \
-        || { { stop_nemoclaw_openshell_gateway_user_service \
-          || stop_macos_openshell_gateway_user_service \
-          || stop_legacy_openshell_gateway_process; } \
+        || { { stop_openshell_gateway_for_upgrade_retirement; } \
           && { openshell gateway remove "$gateway_name" >/dev/null 2>&1 \
             || warn "The legacy gateway process stopped, but its OpenShell registration could not be removed; onboarding will replace the stale registration."; }; } \
         || error "Could not retire the legacy OpenShell gateway after backup. Installed OpenShell lifecycle commands failed, and no trusted active user service or PID-file gateway could be stopped. The installer stopped with the sandbox backups preserved."
     else
       openshell gateway destroy -g "$gateway_name" >/dev/null 2>&1 \
-        || { { stop_nemoclaw_openshell_gateway_user_service \
-          || stop_macos_openshell_gateway_user_service \
-          || stop_legacy_openshell_gateway_process; } \
+        || { { stop_openshell_gateway_for_upgrade_retirement; } \
           && { openshell gateway remove "$gateway_name" >/dev/null 2>&1 \
             || warn "Legacy gateway ${gateway_name} stopped, but its OpenShell registration could not be removed; onboarding will replace only that stale registration."; }; } \
         || error "Could not retire legacy gateway ${gateway_name} after backup. Installed OpenShell lifecycle commands failed, and no trusted active user service or PID-file gateway could be stopped. The installer stopped with the sandbox backups preserved."
@@ -6548,6 +7037,7 @@ install_nemoclaw_before_onboarding() {
   # `nemoclaw onboard` (the install-ollama / install-vllm branches).
   # install.sh stays focused on dependency setup.
   fix_npm_permissions
+  preflight_nemoclaw_acp_shim
   preinstall_backup_and_retire_legacy_gateway
   install_nemoclaw
   verify_nemoclaw

@@ -19,6 +19,7 @@ import {
   resolveSandboxGatewayName,
 } from "./onboard/gateway-binding";
 import type { GatewayRecoveryOutput } from "./onboard/gateway-recovery";
+import { sanitizeReadinessText } from "./readiness/sanitize";
 
 export { resolveGatewayName, resolveSandboxGatewayName };
 
@@ -247,6 +248,7 @@ export async function recoverNamedGatewayRuntime(options: RecoverNamedGatewayRun
   const shouldStartGateway = [before.state, after.state].some((state) =>
     recoverableStates.has(state),
   );
+  let startFailure: unknown = null;
 
   if (shouldStartGateway) {
     try {
@@ -256,9 +258,8 @@ export async function recoverNamedGatewayRuntime(options: RecoverNamedGatewayRun
         ...(options.output ? { output: options.output } : {}),
         ...(options.runtimeSelection ? { runtimeSelection: options.runtimeSelection } : {}),
       });
-    } catch {
-      // Fall through to the lifecycle re-check below so we preserve the
-      // existing recovery result shape and emit the correct classification.
+    } catch (error) {
+      startFailure = error;
     }
     gatewayRuntimeDependencies.runOpenshell(
       ["gateway", "select", gatewayName],
@@ -276,6 +277,16 @@ export async function recoverNamedGatewayRuntime(options: RecoverNamedGatewayRun
       process.env.OPENSHELL_GATEWAY = gatewayName;
       return { recovered: true, before, after, attempted: true, via: "start" };
     }
+  }
+
+  if (startFailure !== null && options.output) {
+    const detail = sanitizeReadinessText(
+      startFailure instanceof Error ? startFailure.message : String(startFailure),
+      240,
+    )
+      .replace(/\s+/gu, " ")
+      .trim();
+    options.output.error(`OpenShell gateway recovery failed${detail ? `: ${detail}` : "."}`);
   }
 
   return { recovered: false, before, after, attempted: true };
