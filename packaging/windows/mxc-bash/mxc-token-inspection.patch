@@ -438,7 +438,7 @@ new file mode 100644
 +    eprintln!("NEMOCLAW_MSYS_ROOT_IMAGE_LAYOUT={record}");
 +}
 +
-+fn diagnostic_station_requested(private_desktop: bool, container: &str) -> bool {
++fn diagnostic_desktop_requested(private_desktop: bool, container: &str) -> bool {
 +    private_desktop && container.ends_with("-d")
 +        && std::env::var("GITHUB_ACTIONS").as_deref() == Ok("true")
 +        && std::env::var("NEMOCLAW_MSYS_TOKEN_INSPECTION").as_deref() == Ok("repair-query")
@@ -449,7 +449,7 @@ new file mode 100644
 +    worker: Option<JoinHandle<()>>,
 +    // Retained through the existing owner lifetime; Drop stops/joins the token
 +    // observer first. The runner already kills/reaps the job before teardown.
-+    _station: Option<crate::msys_token_readback::PrivateWindowStation>,
++    _desktops: Vec<crate::msys_token_readback::PrivateDesktop>,
 +}
 +impl Drop for OwnerGuard {
 +    fn drop(&mut self) {
@@ -487,11 +487,11 @@ new file mode 100644
 +        return Err("inspection expected AppContainer identity is invalid".into());
 +    }
 +    let directory = pin_directory(&root)?;
-+    // Named station creation is an administrator-sensitive diagnostic only.
++    // New desktops on the unchanged current station are a CI fixture only.
 +    // Personal -start and installed hermes-query never enter this branch.
-+    let station = if diagnostic_station_requested(private_desktop, container) {
-+        crate::msys_token_readback::prepare_private_windowstation(job, root_process, expected_sid)?
-+    } else { None };
++    let desktops = if diagnostic_desktop_requested(private_desktop, container) {
++        crate::msys_token_readback::prepare_private_desktops(job, root_process, expected_sid)?
++    } else { Vec::new() };
 +    // JOB_OBJECT_QUERY only; never assign, terminate, or set attributes.
 +    let job = duplicate(job, 0x0004)?;
 +    let process = duplicate(
@@ -532,14 +532,14 @@ new file mode 100644
 +    Ok(Some(OwnerGuard {
 +        stop,
 +        worker: Some(worker),
-+        _station: station,
++        _desktops: desktops,
 +    }))
 +}
 diff --git a/src/backends/appcontainer/common/src/msys_token_readback.rs b/src/backends/appcontainer/common/src/msys_token_readback.rs
 new file mode 100644
 --- /dev/null
 +++ b/src/backends/appcontainer/common/src/msys_token_readback.rs
-@@ -0,0 +1,1163 @@
+@@ -0,0 +1,1326 @@
 +// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 +// SPDX-License-Identifier: Apache-2.0
 +// Disposable Windows CI inspection and explicit exact-TOKEN_QUERY repair.
@@ -606,6 +606,8 @@ new file mode 100644
 +unsafe extern "system" {
 +    fn GetLastError() -> u32;
 +    fn GetCurrentProcess() -> RawHandle;
++    fn GetCurrentThreadId() -> u32;
++    fn SetLastError(error: u32);
 +    fn LocalFree(value: RawHandle) -> RawHandle;
 +    fn GetModuleHandleW(name: *const u16) -> RawHandle;
 +    fn GetProcAddress(module: RawHandle, name: *const u8) -> *const c_void;
@@ -649,6 +651,12 @@ new file mode 100644
 +    fn ConvertStringSecurityDescriptorToSecurityDescriptorW(
 +        text: *const u16, revision: u32, output: *mut RawHandle, size: *mut u32,
 +    ) -> i32;
++    fn SetEntriesInAclW(count: u32, entries: *const DesktopAccess, old: RawHandle, output: *mut RawHandle) -> u32;
++    fn GetSecurityDescriptorDacl(descriptor: *const c_void, present: *mut i32, acl: *mut RawHandle, defaulted: *mut i32) -> i32;
++    fn GetSecurityDescriptorSacl(descriptor: *const c_void, present: *mut i32, acl: *mut RawHandle, defaulted: *mut i32) -> i32;
++    fn SetSecurityDescriptorSacl(descriptor: *mut c_void, present: i32, acl: RawHandle, defaulted: i32) -> i32;
++    fn GetSecurityDescriptorControl(descriptor: *const c_void, control: *mut u16, revision: *mut u32) -> i32;
++    fn SetSecurityDescriptorControl(descriptor: *mut c_void, interest: u16, control: u16) -> i32;
 +    fn OpenProcessToken(process: RawHandle, access: u32, token: *mut RawHandle) -> i32;
 +    fn GetTokenInformation(
 +        token: RawHandle,
@@ -725,123 +733,278 @@ new file mode 100644
 +    reserved: i32,
 +    flags: u32,
 +}
++#[repr(C)]
++struct DesktopTrustee {
++    multiple: RawHandle,
++    operation: u32,
++    form: u32,
++    kind: u32,
++    sid: RawHandle,
++}
++#[repr(C)]
++struct DesktopAccess {
++    mask: u32,
++    mode: u32,
++    inheritance: u32,
++    trustee: DesktopTrustee,
++}
 +#[link(name = "user32")]
 +unsafe extern "system" {
-+    fn CreateWindowStationW(name: *const u16, flags: u32, access: u32, attributes: *const StationAttributes) -> RawHandle;
-+    fn OpenWindowStationW(name: *const u16, inherit: i32, access: u32) -> RawHandle;
-+    fn CloseWindowStation(station: RawHandle) -> i32;
++    fn GetProcessWindowStation() -> RawHandle;
++    fn GetThreadDesktop(thread: u32) -> RawHandle;
++    fn CreateDesktopW(name: *const u16, device: *const u16, mode: *const c_void, flags: u32, access: u32, attributes: *const StationAttributes) -> RawHandle;
++    fn OpenDesktopW(name: *const u16, flags: u32, inherit: i32, access: u32) -> RawHandle;
++    fn CloseDesktop(desktop: RawHandle) -> i32;
 +    fn GetUserObjectInformationW(object: RawHandle, class: i32, output: *mut c_void, size: u32, needed: *mut u32) -> i32;
++    fn GetUserObjectSecurity(object: RawHandle, information: *mut u32, output: *mut c_void, size: u32, needed: *mut u32) -> i32;
 +}
-+
-+// Only an explicitly admitted job can own this resource. No thread selects
-+// the station in the host; the returned guest handle is opened independently.
-+pub(crate) struct PrivateWindowStation {
-+    handle: RawHandle,
-+    name: String,
++struct DesktopAllocation(RawHandle);
++impl Drop for DesktopAllocation {
++    fn drop(&mut self) { unsafe { LocalFree(self.0); } }
 +}
-+// This owner never selects the station in a host thread. Its process-global
-+// handle is retained/closed by exactly one owner, including after a move.
-+unsafe impl Send for PrivateWindowStation {}
-+impl Drop for PrivateWindowStation {
++// The host never selects these desktops. The exact admitted child opens its own
++// handles; this guard retains the new objects until the existing owner ends.
++pub(crate) struct PrivateDesktop { handle: RawHandle, name: String }
++unsafe impl Send for PrivateDesktop {}
++impl Drop for PrivateDesktop {
 +    fn drop(&mut self) {
-+        let closed = unsafe { CloseWindowStation(self.handle) } != 0;
++        let closed = unsafe { CloseDesktop(self.handle) } != 0;
 +        let close_error = if closed { 0 } else { unsafe { GetLastError() } };
-+        let characters: Vec<u16> = self.name.encode_utf16().chain(Some(0)).collect();
++        let name: Vec<u16> = self.name.encode_utf16().chain(Some(0)).collect();
 +        let mut absent = false;
 +        let mut absence_error = None;
 +        let mut presence_handle_closed = true;
 +        if closed {
-+            let found = unsafe { OpenWindowStationW(characters.as_ptr(), 0, 0x0002) };
++            let found = unsafe { OpenDesktopW(name.as_ptr(), 0, 0, 0x0002_0000) };
 +            if found.is_null() {
 +                let error = unsafe { GetLastError() };
 +                absent = matches!(error, 2 | 3);
 +                absence_error = Some(error);
 +            } else {
-+                presence_handle_closed = unsafe { CloseWindowStation(found) } != 0;
++                presence_handle_closed = unsafe { CloseDesktop(found) } != 0;
 +            }
 +        }
-+        let record = json!({"schemaVersion":1,"classification":"owned-Hermes-windowstation",
-+            "stage":"owner-close","stationName":self.name,"closed":closed,"closeError":close_error,
++        let record = json!({"schemaVersion":1,"classification":"owned-Hermes-desktop",
++            "stage":"owner-close","desktopName":self.name,"closed":closed,"closeError":close_error,
 +            "absentAfterOwnerClose":absent,"absenceError":absence_error,
-+            "presenceHandleClosed":presence_handle_closed,"hostStationSelected":false});
-+        eprintln!("NEMOCLAW_HERMES_WINDOWSTATION={record}");
++            "presenceHandleClosed":presence_handle_closed,"hostDesktopSelected":false});
++        eprintln!("NEMOCLAW_HERMES_DESKTOP={record}");
 +    }
 +}
-+
-+pub(crate) fn prepare_private_windowstation(
++fn desktop_name(handle: RawHandle) -> Result<String, String> {
++    let mut name = [0u16; 256];
++    let mut needed = 0;
++    require(unsafe { GetUserObjectInformationW(handle, 2, name.as_mut_ptr().cast(), 512, &mut needed) } != 0,
++        &error("GetUserObjectInformationW name"))?;
++    require(needed >= 2 && needed <= 512 && needed % 2 == 0, "desktop object name size differs")?;
++    let end = name[..needed as usize / 2].iter().position(|c| *c == 0).ok_or("desktop object name not terminated")?;
++    String::from_utf16(&name[..end]).map_err(|_| "desktop object name encoding differs".into())
++}
++fn desktop_security(handle: RawHandle, information: u32) -> Result<Vec<u64>, String> {
++    let mut bytes = vec![0u64; 512];
++    let mut needed = 0;
++    let mut requested = information;
++    require(unsafe { GetUserObjectSecurity(handle, &mut requested, bytes.as_mut_ptr().cast(), 4096, &mut needed) } != 0,
++        &error("GetUserObjectSecurity"))?;
++    require(needed >= 20 && needed <= 4096, "desktop descriptor size exceeds bound")?;
++    require(unsafe { IsValidSecurityDescriptor(bytes.as_ptr().cast()) } != 0,
++        "desktop descriptor invalid")?;
++    let actual = unsafe { GetSecurityDescriptorLength(bytes.as_ptr().cast()) };
++    require(actual >= 20 && actual <= needed, "desktop descriptor length differs")?;
++    bytes.truncate((needed as usize + 7) / 8);
++    Ok(bytes)
++}
++fn desktop_hex(bytes: &[u8]) -> String {
++    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
++}
++fn desktop_acl_hex(acl: RawHandle) -> Result<String, String> {
++    require(!acl.is_null(), "NULL desktop DACL is not adapted")?;
++    let head = unsafe { std::slice::from_raw_parts(acl.cast::<u8>(), 8) };
++    let size = u16::from_le_bytes([head[2], head[3]]) as usize;
++    require(size >= 8 && size <= 4096, "desktop ACL exceeds bound")?;
++    let bytes = unsafe { std::slice::from_raw_parts(acl.cast::<u8>(), size) };
++    let count = u16::from_le_bytes([head[4], head[5]]);
++    let mut used = 8usize;
++    for _ in 0..count {
++        require(used + 4 <= size, "desktop ACE header exceeds ACL")?;
++        let length = u16::from_le_bytes([bytes[used + 2], bytes[used + 3]]) as usize;
++        require(length >= 4 && used + length <= size, "desktop ACE exceeds ACL")?;
++        used += length;
++    }
++    // Do not record unused allocation slack after the last ACE.
++    Ok(desktop_hex(&bytes[..used]))
++}
++fn desktop_merge(acl: RawHandle, sid: &str, mask: u32, mode: u32) -> Result<DesktopAllocation, String> {
++    let mut bytes = sid_bytes(sid)?;
++    let access = DesktopAccess { mask, mode, inheritance: 0, trustee: DesktopTrustee {
++        multiple: std::ptr::null_mut(), operation: 0, form: 0, kind: 0, sid: bytes.as_mut_ptr().cast(),
++    }};
++    let mut output = std::ptr::null_mut();
++    let status = unsafe { SetEntriesInAclW(1, &access, acl, &mut output) };
++    if status != 0 || output.is_null() {
++        if !output.is_null() { unsafe { LocalFree(output); } }
++        return Err(format!("SetEntriesInAclW: Win32 {status}; outputPresent={}", !output.is_null()));
++    }
++    Ok(DesktopAllocation(output))
++}
++fn desktop_readback(handle: RawHandle, information: u32) -> Value {
++    match desktop_security(handle, information) {
++        Ok(bytes) => {
++            let length = unsafe { GetSecurityDescriptorLength(bytes.as_ptr().cast()) } as usize;
++            let raw = unsafe { std::slice::from_raw_parts(bytes.as_ptr().cast::<u8>(), length) };
++            json!({"information":information,"supported":true,"descriptorHex":desktop_hex(raw)})
++        }
++        Err(error) => json!({"information":information,"supported":false,"error":error}),
++    }
++}
++pub(crate) fn prepare_private_desktops(
 +    job: HANDLE, root_process: HANDLE, expected_sid: &str,
-+) -> Result<Option<PrivateWindowStation>, String> {
++) -> Result<Vec<PrivateDesktop>, String> {
 +    member(root_process.0, job.0)?;
 +    let root_token = token(root_process.0, 8)?;
 +    let actual_sid = sid(root_token.0, 31)?;
 +    require(number(root_token.0, 29)? == 1 && actual_sid == expected_sid,
-+        "windowstation root differs from the actual owned AppContainer")?;
++        "desktop root differs from the actual owned AppContainer")?;
 +    let host_token = token(unsafe { GetCurrentProcess() }, 8)?;
-+    require(number(host_token.0, 29)? == 0, "windowstation creator is not a host process")?;
++    require(number(host_token.0, 29)? == 0, "desktop creator is not a host process")?;
 +    let user = sid(host_token.0, 1)?;
 +    let elevated = number(host_token.0, 20);
 +    let elevation_type = number(host_token.0, 18);
-+    let name = format!("NemoClawHermes-{actual_sid}");
-+    require(name.len() < 240 && !name.contains('\\'), "windowstation name exceeds the owned contract")?;
-+    let mut record = json!({"schemaVersion":1,"classification":"owned-Hermes-windowstation",
++    let host_session = number(host_token.0, 12);
++    let root_session = number(root_token.0, 12);
++    let host_integrity = sid(host_token.0, 25);
++    let root_integrity = sid(root_token.0, 25);
++    let station = unsafe { GetProcessWindowStation() };
++    let desktop = unsafe { GetThreadDesktop(GetCurrentThreadId()) };
++    let station_name = desktop_name(station);
++    let current_desktop = desktop_name(desktop);
++    let mut record = json!({"schemaVersion":1,"classification":"owned-Hermes-desktop",
 +        "stage":"prepare","rootPid":unsafe { GetProcessId(root_process.0) },
-+        "actualJobAndAppContainerBound":true,"appContainerSid":actual_sid,"stationName":name,
++        "actualJobAndAppContainerBound":true,"appContainerSid":actual_sid,
 +        "hostUserSid":user,"hostTokenElevation":elevated.as_ref().ok(),
 +        "hostTokenElevationError":elevated.as_ref().err(),"hostTokenElevationType":elevation_type.as_ref().ok(),
 +        "hostTokenElevationTypeError":elevation_type.as_ref().err(),
-+        "namedCreationRequiresAdministrator":true,"unelevatedSupportQualified":false,
-+        "requestedAccess":0x8000_0008u32,"createOnly":true,"inheritHandle":false,
-+        "hostExistingObjectGrantsChanged":false,"mandatoryLabelChanged":false,"created":false});
-+    // Windows restricts explicit station names to Administrators. Keep API
-+    // failure as feasibility evidence; do not elevate or modify an old object.
-+    let text: Vec<u16> = format!("D:P(A;;0x80000008;;;{user})(A;;0x80000008;;;{actual_sid})")
-+        .encode_utf16().chain(Some(0)).collect();
-+    let mut descriptor = std::ptr::null_mut();
-+    let converted = unsafe { ConvertStringSecurityDescriptorToSecurityDescriptorW(text.as_ptr(), 1, &mut descriptor, std::ptr::null_mut()) } != 0;
-+    if !converted || descriptor.is_null() {
-+        record["stage"] = json!("descriptor");
-+        record["win32Error"] = json!(if converted { 0 } else { unsafe { GetLastError() } });
-+        record["descriptorPresent"] = json!(converted && !descriptor.is_null());
-+        eprintln!("NEMOCLAW_HERMES_WINDOWSTATION={record}");
-+        return Ok(None);
++        "hostSession":host_session.as_ref().ok(),"rootSession":root_session.as_ref().ok(),
++        "hostSessionError":host_session.as_ref().err(),"rootSessionError":root_session.as_ref().err(),
++        "hostIntegritySid":host_integrity.as_ref().ok(),"rootIntegritySid":root_integrity.as_ref().ok(),
++        "stationName":station_name.as_ref().ok(),"currentDesktopName":current_desktop.as_ref().ok(),
++        "stationNameError":station_name.as_ref().err(),"currentDesktopNameError":current_desktop.as_ref().err(),
++        "childStartupDesktop":"winsta0\\default","hostDesktopSelected":false,
++        "requestedAccess":0x000e_0083u32,"inheritHandle":false,
++        "existingObjectSecurityChanged":false,"unelevatedSupportQualified":false});
++    // appcontainer_runner uses winsta0\default. No host station/thread switch is
++    // permitted here; an unexpected service/desktop context remains diagnostic.
++    let context_matches = station_name.as_ref().is_ok_and(|v| v.eq_ignore_ascii_case("WinSta0"))
++        && current_desktop.as_ref().is_ok_and(|v| v.eq_ignore_ascii_case("Default"))
++        && host_session.is_ok() && host_session.as_ref().ok() == root_session.as_ref().ok();
++    record["contextMatched"] = json!(context_matches);
++    if !context_matches {
++        record["stage"] = json!("host-context");
++        eprintln!("NEMOCLAW_HERMES_DESKTOP={record}");
++        return Ok(Vec::new());
 +    }
-+    let attributes = StationAttributes { length: size_of::<StationAttributes>() as u32, descriptor, inherit: 0 };
-+    let characters: Vec<u16> = name.encode_utf16().chain(Some(0)).collect();
-+    let handle = unsafe { CreateWindowStationW(characters.as_ptr(), 1, 0x8000_0008, &attributes) };
-+    let create_error = if handle.is_null() { unsafe { GetLastError() } } else { 0 };
-+    unsafe { LocalFree(descriptor) };
-+    record["stage"] = json!("CreateWindowStationW");
-+    record["win32Error"] = json!(create_error);
-+    if handle.is_null() {
-+        eprintln!("NEMOCLAW_HERMES_WINDOWSTATION={record}");
-+        return Ok(None);
++    let prepared = (|| -> Result<(Vec<u64>, DesktopAllocation, DesktopAllocation, u16), String> {
++        let baseline = desktop_security(desktop, 4)?;
++        let mut present = 0;
++        let mut defaulted = 0;
++        let mut acl = std::ptr::null_mut();
++        require(unsafe { GetSecurityDescriptorDacl(baseline.as_ptr().cast(), &mut present, &mut acl, &mut defaulted) } != 0,
++            &error("GetSecurityDescriptorDacl"))?;
++        require(present != 0 && !acl.is_null(), "Absent/NULL current desktop DACL is not adapted")?;
++        record["baselineDaclHex"] = json!(desktop_acl_hex(acl)?);
++        // Chrome window.cc applies this exact RestrictedCode reduction to the
++        // copied current DACL. Preserve all baseline principals/ACE semantics;
++        // then add only the exact admitted AppContainer desktop access.
++        let reduced = desktop_merge(acl, "S-1-5-12", 0x000d_013e, 3)?;
++        record["restrictedCodeReducedDaclHex"] = json!(desktop_acl_hex(reduced.0)?);
++        let granted = desktop_merge(reduced.0, &actual_sid, 0x000e_0083, 1)?;
++        record["newDesktopDaclHex"] = json!(desktop_acl_hex(granted.0)?);
++        record["changes"] = json!([{"sid":"S-1-5-12","mode":"DENY_ACCESS","mask":0x000d_013eu32},
++            {"sid":actual_sid,"mode":"GRANT_ACCESS","mask":0x000e_0083u32}]);
++        let mut control = 0;
++        let mut revision = 0;
++        require(unsafe { GetSecurityDescriptorControl(baseline.as_ptr().cast(), &mut control, &mut revision) } != 0,
++            &error("GetSecurityDescriptorControl"))?;
++        Ok((baseline, reduced, granted, control))
++    })();
++    let (baseline, reduced, granted, control) = match prepared {
++        Ok(value) => value,
++        Err(error) => {
++            record["stage"] = json!("desktop-descriptor"); record["error"] = json!(error);
++            eprintln!("NEMOCLAW_HERMES_DESKTOP={record}"); return Ok(Vec::new());
++        }
++    };
++    let mut desktops = Vec::new();
++    for variant in ["default", "low"] {
++        let name = format!("NemoClawHermesDesktop-{actual_sid}-{variant}");
++        require(name.len() < 240 && !name.contains('\\'), "desktop name exceeds owned contract")?;
++        let mut row = record.clone();
++        row["desktopName"] = json!(name); row["labelVariant"] = json!(variant);
++        let result = (|| -> Result<Option<PrivateDesktop>, String> {
++            let characters: Vec<u16> = name.encode_utf16().chain(Some(0)).collect();
++            let found = unsafe { OpenDesktopW(characters.as_ptr(), 0, 0, 0x0002_0000) };
++            if !found.is_null() {
++                let closed = unsafe { CloseDesktop(found) } != 0;
++                row["preexistingOpened"] = json!(true); row["preexistingHandleClosed"] = json!(closed);
++                row["preexistingCloseError"] = json!(if closed {0} else {unsafe {GetLastError()}});
++                return Err("preexisting desktop refused".into());
++            }
++            let lookup_error = unsafe { GetLastError() };
++            row["preexistingOpened"] = json!(false); row["lookupError"] = json!(lookup_error);
++            row["exclusiveCreationClaimed"] = json!(false);
++            let mut descriptor = [0u64; 5];
++            require(unsafe { InitializeSecurityDescriptor(descriptor.as_mut_ptr().cast(), 1) } != 0,
++                &error("InitializeSecurityDescriptor"))?;
++            require(unsafe { SetSecurityDescriptorDacl(descriptor.as_mut_ptr().cast(), 1, granted.0, 0) } != 0,
++                &error("SetSecurityDescriptorDacl new object"))?;
++            require(unsafe { SetSecurityDescriptorControl(descriptor.as_mut_ptr().cast(), 0x1500, control & 0x1500) } != 0,
++                &error("SetSecurityDescriptorControl new object"))?;
++            let mut label = None;
++            if variant == "low" {
++                let text: Vec<u16> = "S:(ML;;NW;;;LW)".encode_utf16().chain(Some(0)).collect();
++                let mut output = std::ptr::null_mut();
++                let converted = unsafe { ConvertStringSecurityDescriptorToSecurityDescriptorW(text.as_ptr(), 1, &mut output, std::ptr::null_mut()) } != 0;
++                let converted_error = if converted {0} else {unsafe {GetLastError()}};
++                if !output.is_null() { label = Some(DesktopAllocation(output)); }
++                require(converted && label.is_some(), &format!("LOW label constructor: Win32 {converted_error}"))?;
++                let mut present = 0; let mut defaulted = 0; let mut sacl = std::ptr::null_mut();
++                require(unsafe { GetSecurityDescriptorSacl(output, &mut present, &mut sacl, &mut defaulted) } != 0,
++                    &error("GetSecurityDescriptorSacl LOW constructor"))?;
++                require(present != 0 && !sacl.is_null(), "LOW constructor label missing")?;
++                require(unsafe { SetSecurityDescriptorSacl(descriptor.as_mut_ptr().cast(), 1, sacl, 0) } != 0,
++                    &error("SetSecurityDescriptorSacl new object"))?;
++            }
++            let attributes = StationAttributes {length:size_of::<StationAttributes>() as u32, descriptor:descriptor.as_mut_ptr().cast(), inherit:0};
++            unsafe { SetLastError(0); }
++            let handle = unsafe { CreateDesktopW(characters.as_ptr(), std::ptr::null(), std::ptr::null(), 0, 0x000e_0083, &attributes) };
++            let create_error = unsafe { GetLastError() };
++            row["createAttempted"] = json!(true); row["createLastError"] = json!(create_error);
++            row["openedOrCreated"] = json!(!handle.is_null());
++            drop(label);
++            if handle.is_null() { return Err(format!("CreateDesktopW: Win32 {create_error}")); }
++            let owned = PrivateDesktop {handle, name:name.clone()};
++            row["dacl"] = desktop_readback(handle, 4);
++            row["label"] = desktop_readback(handle, 0x10);
++            let actual_name = desktop_name(handle);
++            let mut flags = StationFlags::default(); let mut needed = 0;
++            let known = unsafe { GetUserObjectInformationW(handle, 1, (&mut flags as *mut StationFlags).cast(), size_of::<StationFlags>() as u32, &mut needed) } != 0;
++            let flags_error = if known {0} else {unsafe {GetLastError()}};
++            row["actualName"] = json!(actual_name.as_ref().ok()); row["actualNameError"] = json!(actual_name.as_ref().err());
++            row["inheritanceKnown"] = json!(known); row["inheritHandleObserved"] = json!(if known {Some(flags.inherit != 0)} else {None});
++            row["flagsError"] = json!(flags_error);
++            // Readbacks are observations. The guest independently proves exact
++            // open/use/restore/close; an unavailable host read cannot suppress it.
++            Ok(Some(owned))
++        })();
++        match result {
++            Ok(Some(owned)) => { row["stage"] = json!("prepared"); desktops.push(owned); }
++            Ok(None) => unreachable!(),
++            Err(error) => { row["stage"] = json!("prepare-failed"); row["error"] = json!(error); }
++        }
++        eprintln!("NEMOCLAW_HERMES_DESKTOP={row}");
 +    }
-+    let owned = PrivateWindowStation { handle, name };
-+    record["created"] = json!(true);
-+    let mut flags = StationFlags::default();
-+    let mut needed = 0;
-+    let known = unsafe { GetUserObjectInformationW(handle, 1, &mut flags as *mut _ as *mut _, size_of::<StationFlags>() as u32, &mut needed) } != 0;
-+    let flags_error = if known { 0 } else { unsafe { GetLastError() } };
-+    let mut actual_name = [0u16; 256];
-+    let named = unsafe { GetUserObjectInformationW(handle, 2, actual_name.as_mut_ptr() as *mut _, 512, &mut needed) } != 0;
-+    let name_error = if named { 0 } else { unsafe { GetLastError() } };
-+    let name_matches = named && needed <= 512 && actual_name.iter().position(|c| *c == 0)
-+        .and_then(|end| String::from_utf16(&actual_name[..end]).ok()).as_deref() == Some(owned.name.as_str());
-+    let noninteractive = known && flags.flags & 1 == 0;
-+    record["stationFlagsError"] = json!(flags_error);
-+    record["stationNameError"] = json!(name_error);
-+    record["noninteractive"] = json!(noninteractive);
-+    record["nameMatched"] = json!(name_matches);
-+    record["available"] = json!(noninteractive && name_matches);
-+    record["stage"] = json!("prepared");
-+    eprintln!("NEMOCLAW_HERMES_WINDOWSTATION={record}");
-+    if !noninteractive || !name_matches {
-+        // This route is supplemental. Close a refused object before the child
-+        // resumes, then still allow the independent current-desktop observation.
-+        drop(owned);
-+        return Ok(None);
-+    }
-+    Ok(Some(owned))
++    drop((baseline, reduced, granted));
++    Ok(desktops)
 +}
 +fn error(stage: &str) -> String {
 +    format!("{stage}: Win32 {}", unsafe { GetLastError() })

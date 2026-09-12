@@ -1944,18 +1944,45 @@ bool canonical_browser_station_attributes(LPSECURITY_ATTRIBUTES attributes) {
     } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
 }
 
+struct StationObjectBasic {
+    ULONG attributes = 0;
+    ACCESS_MASK granted = 0;
+    ULONG handles = 0, pointers = 0, reserved[10] = {};
+};
+static_assert(sizeof(StationObjectBasic) == 56);
+struct StationGrant {
+    NTSTATUS status = static_cast<NTSTATUS>(0xc00000bbu);
+    ULONG returned = 0;
+    ACCESS_MASK granted = 0;
+    bool known = false;
+};
+StationGrant station_grant(HANDLE handle) {
+    StationGrant result;
+    if (!handle || !queryKernelObject) return result;
+    StationObjectBasic basic = {};
+    result.status = queryKernelObject(handle, static_cast<OBJECT_INFORMATION_CLASS>(0),
+        &basic, sizeof(basic), &result.returned);
+    result.known = result.status == 0 && result.returned == sizeof(basic);
+    if (result.known) result.granted = basic.granted;
+    return result;
+}
+
 void log_browser_station(ACCESS_MASK requested, DWORD mask, HANDLE borrowed, HANDLE duplicate,
     bool sameObject, bool sameContext, DWORD operationError, bool returned, DWORD cleanupError,
-    bool flagsKnown = false, DWORD duplicateFlags = 0) {
+    bool flagsKnown = false, bool noninheritable = false,
+    const StationGrant& originalGrant = {}, const StationGrant& duplicateGrant = {}) {
     if (InterlockedIncrement(&browserStationRecords) > 2) return;
-    char line[1024];
+    char line[1536];
     const int count = _snprintf_s(line, sizeof(line), _TRUNCATE,
-        "NEMOCLAW_MSYS_CHROME_WINSTATION={\"schemaVersion\":1,\"pid\":%lu,\"requestedAccess\":%lu,\"originalError\":5,\"uiMask\":%lu,\"borrowedHandle\":\"0x%llx\",\"ownedDuplicate\":\"0x%llx\",\"sameObject\":%s,\"sameCurrentContext\":%s,\"duplicateFlagsKnown\":%s,\"nonInheritable\":%s,\"operationError\":%lu,\"returnedDuplicate\":%s,\"cleanupError\":%lu,\"borrowedHandleClosed\":false,\"sharedCurrentStation\":true,\"separateStationIsolation\":false,\"existingObjectAclChanged\":false}\n",
+        "NEMOCLAW_MSYS_CHROME_WINSTATION={\"schemaVersion\":1,\"pid\":%lu,\"requestedAccess\":%lu,\"originalError\":5,\"uiMask\":%lu,\"borrowedHandle\":\"0x%llx\",\"ownedDuplicate\":\"0x%llx\",\"sameObject\":%s,\"sameCurrentContext\":%s,\"flagSource\":\"UOI_FLAGS\",\"duplicateFlagsKnown\":%s,\"nonInheritable\":%s,\"duplicateOptions\":2,\"originalGrantKnown\":%s,\"originalGrantedAccess\":%lu,\"originalGrantStatus\":\"0x%08lx\",\"duplicateGrantKnown\":%s,\"duplicateGrantedAccess\":%lu,\"duplicateGrantStatus\":\"0x%08lx\",\"grantedAccessPreserved\":%s,\"newAuthorityReturned\":false,\"requestedRightsGrantedClaimed\":false,\"operationError\":%lu,\"returnedDuplicate\":%s,\"cleanupError\":%lu,\"borrowedHandleClosed\":false,\"sharedCurrentStation\":true,\"separateStationIsolation\":false,\"existingObjectAclChanged\":false}\n",
         GetCurrentProcessId(), requested, mask,
         reinterpret_cast<unsigned long long>(borrowed), reinterpret_cast<unsigned long long>(duplicate),
         sameObject ? "true" : "false", sameContext ? "true" : "false",
-        flagsKnown ? "true" : "false", flagsKnown && !(duplicateFlags & HANDLE_FLAG_INHERIT) ? "true" : "false", operationError,
-        returned ? "true" : "false", cleanupError);
+        flagsKnown ? "true" : "false", noninheritable ? "true" : "false",
+        originalGrant.known ? "true" : "false", originalGrant.granted, static_cast<ULONG>(originalGrant.status),
+        duplicateGrant.known ? "true" : "false", duplicateGrant.granted, static_cast<ULONG>(duplicateGrant.status),
+        originalGrant.known && duplicateGrant.known && originalGrant.granted == duplicateGrant.granted ? "true" : "false",
+        operationError, returned ? "true" : "false", cleanupError);
     DWORD written = 0;
     if (count > 0) WriteFile(GetStdHandle(STD_ERROR_HANDLE), line, static_cast<DWORD>(count), &written, nullptr);
 }
@@ -1989,30 +2016,47 @@ HWINSTA WINAPI create_browser_station(LPCWSTR name, DWORD flags, ACCESS_MASK acc
     }
     const HWINSTA borrowed = GetProcessWindowStation();
     HANDLE duplicate = nullptr;
-    DWORD operationError = 0, cleanupError = 0, duplicateFlags = 0;
-    bool sameObject = false, sameContext = false, flagsKnown = false;
+    DWORD operationError = 0, cleanupError = 0;
+    StationGrant originalGrant = {}, duplicateGrant = {};
+    bool sameObject = false, sameContext = false, flagsKnown = false, noninheritable = false;
     if (!borrowed) operationError = GetLastError();
-    else if (!DuplicateHandle(GetCurrentProcess(), borrowed, GetCurrentProcess(), &duplicate,
-            access, FALSE, 0)) operationError = GetLastError();
-    else if (!duplicate || duplicate == borrowed || duplicate == INVALID_HANDLE_VALUE)
-        operationError = ERROR_INVALID_HANDLE;
     else {
-        flagsKnown = GetHandleInformation(duplicate, &duplicateFlags) != FALSE;
-        if (!flagsKnown) operationError = GetLastError();
-        else if (duplicateFlags & HANDLE_FLAG_INHERIT) operationError = ERROR_INVALID_STATE;
-        sameObject = sameKernelObject(borrowed, duplicate) != FALSE;
-        const HWINSTA current = GetProcessWindowStation();
-        sameContext = current && sameKernelObject(borrowed, current);
-        if (!sameObject || !sameContext) operationError = ERROR_INVALID_STATE;
+        originalGrant = station_grant(borrowed);
+        // Preserve the current station grant exactly; requesting no new access
+        // cannot manufacture an absent WINSTA_CREATEDESKTOP right.
+        if (!originalGrant.known)
+            operationError = ERROR_NOT_SUPPORTED;
+        else if (!DuplicateHandle(GetCurrentProcess(), borrowed, GetCurrentProcess(), &duplicate,
+                0, FALSE, DUPLICATE_SAME_ACCESS)) operationError = GetLastError();
+        else if (!duplicate || duplicate == borrowed || duplicate == INVALID_HANDLE_VALUE)
+            operationError = ERROR_INVALID_HANDLE;
+        else {
+            duplicateGrant = station_grant(duplicate);
+            if (!duplicateGrant.known || duplicateGrant.granted != originalGrant.granted)
+                operationError = ERROR_INVALID_STATE;
+            USEROBJECTFLAGS information = {};
+            DWORD needed = 0;
+            flagsKnown = GetUserObjectInformationW(duplicate, UOI_FLAGS, &information,
+                sizeof(information), &needed) != FALSE;
+            if (!flagsKnown) operationError = GetLastError();
+            else if (needed != sizeof(information)) { flagsKnown = false; operationError = ERROR_BAD_LENGTH; }
+            noninheritable = flagsKnown && !information.fInherit;
+            if (!noninheritable && !operationError) operationError = ERROR_INVALID_STATE;
+            sameObject = sameKernelObject(borrowed, duplicate) != FALSE;
+            const HWINSTA current = GetProcessWindowStation();
+            sameContext = current && sameKernelObject(borrowed, current);
+            if (!sameObject || !sameContext) operationError = ERROR_INVALID_STATE;
+        }
     }
-    const bool returned = operationError == ERROR_SUCCESS && flagsKnown &&
-        !(duplicateFlags & HANDLE_FLAG_INHERIT) && sameObject && sameContext;
-    // Chrome owns a successful duplicate. The borrowed current handle is never
-    // closed and no station selection or existing-object descriptor is changed.
+    const bool returned = operationError == ERROR_SUCCESS && flagsKnown && noninheritable &&
+        originalGrant.known && duplicateGrant.known && originalGrant.granted == duplicateGrant.granted &&
+        sameObject && sameContext;
+    // Chrome owns only a SAME_ACCESS clone. No extra station authority is
+    // added, and this cannot by itself repair the denied CreateDesktop call.
     if (!returned && duplicate && duplicate != borrowed && duplicate != INVALID_HANDLE_VALUE &&
         !CloseWindowStation(static_cast<HWINSTA>(duplicate))) cleanupError = GetLastError();
     log_browser_station(access, mask, borrowed, duplicate, sameObject, sameContext,
-        operationError, returned, cleanupError, flagsKnown, duplicateFlags);
+        operationError, returned, cleanupError, flagsKnown, noninheritable, originalGrant, duplicateGrant);
     SetLastError(returned ? ERROR_SUCCESS : originalError);
     return returned ? static_cast<HWINSTA>(duplicate) : nullptr;
 }

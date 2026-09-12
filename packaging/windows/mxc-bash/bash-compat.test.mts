@@ -31,49 +31,69 @@ const c: Config = {
   key: "0".repeat(16),
   script: "C:\\owned\\control\\proof.sh",
 };
-function desktopRows(canonical = true, duplicatePassed = false) {
+function desktopRows(passIndex = 2, duplicatePassed = true) {
   const common = {
     nonce: c.nonce,
-    effectiveUiMask: 0x3bf,
-    interactiveSwitchAttempted: false,
-    hostDesktopGrantsAdded: false,
+    sid: "S-1-15-2-123-456",
     rawProbeUnshimmed: true,
     cleanupError: 0,
     cleanupPassed: true,
     originalContextUnchanged: true,
   };
-  const desktops = [true, false].map((isCanonical) => {
-    const passed = isCanonical === canonical;
+  const unavailable = { queried: false, win32Error: 5, value: null };
+  const desktops = Array.from({ length: 4 }, (_, index) => {
+    const canonical = index % 2 === 0,
+      label = index < 2 ? "default" : "low",
+      passed = index === passIndex;
+    const stages = passed
+      ? [
+          "OpenDesktopW-host-owned",
+          "SetThreadDesktop-host-owned",
+          "SetThreadDesktop-restore-original",
+          "CloseDesktop-opened",
+        ]
+      : ["OpenDesktopW-host-owned"];
     return {
       ...common,
       kind: "hermes-private-desktop",
-      route: "direct-current-station",
-      accessVariant: isCanonical ? "canonical-e0003" : "documented-e0083",
-      descriptorVariant: isCanonical
-        ? "copied-current-desktop-dacl-restricted-deny"
-        : "explicit-user-appsid",
-      originalDesktopDaclCopied: isCanonical,
-      restrictedCodeDenyApplied: isCanonical,
-      restrictedCodeDenyMask: isCanonical ? 0xd013e : 0,
-      nullDaclUnsupported: false,
-      desiredAccess: isCanonical ? 0xe0003 : 0xe0083,
-      requiredPass: false,
-      created: passed,
+      route: "host-provisioned-current-station",
+      labelVariant: label,
+      accessVariant: canonical ? "canonical-e0003" : "documented-e0083",
+      desktopName: "NemoClawHermesDesktop-" + common.sid + "-" + label,
+      desiredAccess: canonical ? 0xe0003 : 0xe0083,
+      openFlags: 0,
+      inheritRequested: false,
+      openAttempted: true,
+      opened: passed,
+      attachAttempted: passed,
+      attached: passed,
+      attachmentObserved: passed,
+      restoreAttempted: passed,
+      restored: passed,
       closed: passed,
       passed,
+      actualName: { ...unavailable },
+      userObjectFlags: { ...unavailable, inherit: null, flags: null },
+      dacl: { ...unavailable },
+      label: { ...unavailable },
+      borrowedDesktopHandleClosed: false,
       borrowedStationHandleClosed: false,
-      stage: passed ? "complete" : "CreateDesktopW",
-      error: passed ? "" : "desktop-create-denied",
+      stationSelectionAttempted: false,
+      interactiveSwitchAttempted: false,
+      hostExistingObjectGrantsChanged: false,
+      mandatoryLabelChanged: false,
+      stage: passed ? "complete" : "OpenDesktopW-host-owned",
+      error: passed ? "" : "host-owned-desktop-open",
       win32Error: passed ? 0 : 5,
-      attempts: [{ stage: "CreateDesktopW", succeeded: passed, win32Error: passed ? 0 : 5 }],
+      attempts: stages.map((stage) => ({ stage, succeeded: passed, win32Error: passed ? 0 : 5 })),
     };
   });
-  const unknown = {
+  const basic = {
     attempted: true,
-    status: "0xc0000008",
-    returnedBytes: 0,
-    grantedAccess: null,
-    attributes: null,
+    status: "0x00000000",
+    returnedBytes: 56,
+    grantedAccess: 0x20327,
+    attributes: 0,
   };
   const duplicate = {
     ...common,
@@ -87,86 +107,79 @@ function desktopRows(canonical = true, duplicatePassed = false) {
     passed: duplicatePassed,
     sameObject: duplicatePassed,
     currentMatchesOriginalAfterClose: true,
-    originalObjectBasic: { ...unknown },
-    duplicateObjectBasic: {
-      ...unknown,
-      attempted: duplicatePassed,
-      status: duplicatePassed ? unknown.status : null,
-    },
+    originalObjectBasic: { ...basic },
+    duplicateObjectBasic: duplicatePassed
+      ? { ...basic }
+      : { attempted: false, status: null, returnedBytes: 0, grantedAccess: null, attributes: null },
     duplicateUserObjectFlags: {
       queried: duplicatePassed,
       win32Error: 0,
       inherit: duplicatePassed ? false : null,
     },
     duplicateHandleInformation: { queried: false, win32Error: 6, flags: null },
-    stage: duplicatePassed ? "complete" : "DuplicateHandle-current-station",
+    stage: duplicatePassed ? "complete" : "DuplicateHandle-current-station-same-access",
     win32Error: duplicatePassed ? 0 : 5,
   };
   const summary = {
     kind: "hermes-private-desktop-summary",
     nonce: c.nonce,
     observationsCompleted: true,
-    directCurrentCanonicalPassed: canonical,
-    directCurrentExplicitPassed: !canonical,
+    hostDefaultCanonicalPassed: passIndex === 0,
+    hostDefaultExplicitPassed: passIndex === 1,
+    hostLowCanonicalPassed: passIndex === 2,
+    hostLowExplicitPassed: passIndex === 3,
     sameAccessDuplicatePassed: duplicatePassed,
     allCleanupPassed: true,
     canonicalChromeSupportQualified: false,
-    passed: true,
+    passed: passIndex >= 0,
   };
   return [...desktops, duplicate, summary];
 }
-test("direct desktop results are independent of failed station duplicate and optional metadata", () => {
-  for (const canonical of [true, false]) {
-    const rows = desktopRows(canonical, false);
-    assert.equal(validatePrivateDesktop(rows, c.nonce).length, 2);
-    assert.equal(
-      validatePrivateDesktop(
-        rows.map((row) =>
-          row.kind === "hermes-private-desktop"
-            ? { ...row, effectiveUiMask: null, uiMaskQueryError: 5 }
-            : row,
-        ),
-        c.nonce,
-      ).length,
-      2,
-    );
+test("host desktop handoffs retain all label/access outcomes despite unavailable metadata and duplicate failure", () => {
+  for (const passIndex of [0, 1, 2, 3]) {
+    assert.equal(validatePrivateDesktop(desktopRows(passIndex, false), c.nonce).length, 4);
+    assert.equal(validatePrivateDesktop(desktopRows(passIndex, true), c.nonce).length, 4);
   }
-  const rows = desktopRows(true, true);
-  assert.equal(validatePrivateDesktop(rows, c.nonce).length, 2); // Generic GetHandleInformation and NtQueryObject are unavailable.
-  const changed = structuredClone(rows);
-  Object.assign(changed[2], {
-    originalObjectBasic: {
-      attempted: true,
-      status: "0x00000000",
-      returnedBytes: 56,
-      grantedAccess: 0x2030b,
-      attributes: 2,
-    },
-    duplicateObjectBasic: {
-      attempted: true,
-      status: "0x00000000",
-      returnedBytes: 56,
-      grantedAccess: 0x2030b,
-      attributes: 0,
-    },
-  });
-  assert.equal(validatePrivateDesktop(changed, c.nonce).length, 2);
+  const rows = desktopRows(2);
+  const attachmentDenied = {
+    ...rows[0],
+    opened: true,
+    closed: true,
+    attachAttempted: true,
+    stage: "SetThreadDesktop-host-owned",
+    error: "host-owned-desktop-attach",
+    attempts: [
+      { stage: "OpenDesktopW-host-owned", succeeded: true, win32Error: 0 },
+      { stage: "SetThreadDesktop-host-owned", succeeded: false, win32Error: 5 },
+      { stage: "CloseDesktop-opened", succeeded: true, win32Error: 0 },
+    ],
+  };
+  assert.equal(validatePrivateDesktop([attachmentDenied, ...rows.slice(1)], c.nonce).length, 4);
+  assert.throws(() => validatePrivateDesktop(desktopRows(-1), c.nonce));
 });
-test("direct/SAME_ACCESS evidence keeps exact API contracts, cleanup and no fallback qualification", () => {
-  const rows = desktopRows(true, true);
+test("host desktop proof requires exact owned names, actual attachment, restore and closure without Chrome qualification", () => {
+  const rows = desktopRows(2);
   for (const change of [
-    { effectiveUiMask: 0x3ff },
+    { labelVariant: "default" },
+    { desktopName: "NemoClawHermesDesktop-S-1-15-2-999-low" },
+    { desiredAccess: 0xe0083 },
+    { inheritRequested: true },
+    { attached: false },
+    { attachmentObserved: false },
+    { restored: false },
+    { closed: false },
     { cleanupError: 5 },
     { cleanupPassed: false },
     { originalContextUnchanged: false },
-    { restrictedCodeDenyApplied: false },
-    { desiredAccess: 0xe0083 },
+    { borrowedDesktopHandleClosed: true },
     { borrowedStationHandleClosed: true },
-    { attempts: [{ stage: "DuplicateHandle-current-route", succeeded: false, win32Error: 5 }] },
+    { stationSelectionAttempted: true },
+    { mandatoryLabelChanged: true },
+    { attempts: [{ stage: "SwitchDesktop", succeeded: true, win32Error: 0 }] },
   ])
     assert.throws(() =>
       validatePrivateDesktop(
-        rows.map((row, i) => (i === 0 ? { ...row, ...change } : row)),
+        rows.map((row, index) => (index === 2 ? { ...row, ...change } : row)),
         c.nonce,
       ),
     );
@@ -176,35 +189,26 @@ test("direct/SAME_ACCESS evidence keeps exact API contracts, cleanup and no fall
     { sameObject: false },
     { closed: false },
     { duplicateUserObjectFlags: { queried: true, win32Error: 0, inherit: true } },
-    {
-      duplicateObjectBasic: {
-        attempted: true,
-        status: "0xc0000008",
-        returnedBytes: 0,
-        grantedAccess: 0x2030b,
-        attributes: 0,
-      },
-    },
   ])
     assert.throws(() =>
       validatePrivateDesktop(
-        rows.map((row, i) => (i === 2 ? { ...row, ...change } : row)),
+        rows.map((row, index) => (index === 4 ? { ...row, ...change } : row)),
         c.nonce,
       ),
     );
   for (const change of [
-    { directCurrentCanonicalPassed: false },
+    { hostLowCanonicalPassed: false },
     { canonicalChromeSupportQualified: true },
     { allCleanupPassed: false },
     { currentStationCanonicalFallbackPassed: true },
   ])
     assert.throws(() =>
       validatePrivateDesktop(
-        rows.map((row, i) => (i === 3 ? { ...row, ...change } : row)),
+        rows.map((row, index) => (index === 5 ? { ...row, ...change } : row)),
         c.nonce,
       ),
     );
-  assert.throws(() => validatePrivateDesktop([rows[2], rows[0], rows[1], rows[3]], c.nonce));
+  assert.throws(() => validatePrivateDesktop([rows[4], ...rows.slice(0, 4), rows[5]], c.nonce));
   assert.throws(() => validatePrivateDesktop(rows.slice(1), c.nonce));
 });
 test("Personal request grants only fixed inputs and its own share, without profile destruction before explicit cleanup", () => {

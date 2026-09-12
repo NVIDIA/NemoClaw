@@ -194,6 +194,11 @@ CompareUserObjects desktop_compare_objects(){
   HMODULE kernel=GetModuleHandleW(L"kernelbase.dll");FARPROC exported=kernel?GetProcAddress(kernel,"CompareObjectHandles"):nullptr;
   static_assert(sizeof(exported)==sizeof(compare));std::memcpy(&compare,&exported,sizeof(compare));return compare;
 }
+bool same_user_object(HANDLE first,HANDLE second){
+  if(!first||!second)return false;
+  if(first==second)return true;
+  const auto compare=desktop_compare_objects();return compare&&compare(first,second)!=0;
+}
 std::string desktop_object_basic(HANDLE object){
   struct Basic {ULONG attributes;ACCESS_MASK access;ULONG handles,pointers,reserved[10];};
   static_assert(sizeof(Basic)==56);
@@ -239,71 +244,68 @@ std::pair<bool,bool> current_station_duplicate_observation(const Identity& id,co
   line("{\"kind\":\"hermes-current-station-duplicate\",\"nonce\":"+quote(utf8(nonce))+","+identityFields(id)+",\"desiredAccess\":0,\"duplicateOptions\":2,\"inheritRequested\":false,\"created\":"+(copied?"true":"false")+",\"closed\":"+(closed?"true":"false")+",\"originalObjectBasic\":"+originalBasic+",\"duplicateObjectBasic\":"+duplicateBasic+",\"duplicateUserObjectFlags\":{\"queried\":"+(uiQueried?"true":"false")+",\"win32Error\":"+std::to_string(uiError)+",\"returnedBytes\":"+std::to_string(uiBytes)+",\"inherit\":"+(uiQueried?(ui.fInherit?"true":"false"):"null")+"},\"duplicateHandleInformation\":{\"queried\":"+(handleQueried?"true":"false")+",\"win32Error\":"+std::to_string(handleError)+",\"flags\":"+(handleQueried?std::to_string(flags):"null")+"},\"noninheritable\":"+(noninheritable?"true":"false")+",\"sameObject\":"+(same?"true":"false")+",\"currentMatchesOriginalAfterClose\":"+(currentMatches?"true":"false")+",\"originalContextUnchanged\":"+(unchanged?"true":"false")+",\"borrowedHandleClosed\":false,\"cleanupPassed\":"+(clean?"true":"false")+","+observation.fields()+",\"passed\":"+(passed?"true":"false")+"}");
   return {passed,clean};
 }
-std::pair<bool,bool> private_desktop_proof(const Identity& id,const std::wstring& nonce,HDESK original,HWINSTA station,bool canonical){
-  const std::wstring name=L"NemoClaw-Hermes-"+nonce+L"-direct-"+(canonical?L"canonical-":L"explicit-")+std::to_wstring(GetCurrentProcessId());
+std::string desktop_security_metadata(HDESK desktop,SECURITY_INFORMATION information,DesktopObservation& observation,const char* cleanupName){
+  PSECURITY_DESCRIPTOR descriptor=nullptr;LPWSTR text=nullptr;DWORD count=0;
+  const DWORD queried=GetSecurityInfo(desktop,SE_WINDOW_OBJECT,information,nullptr,nullptr,nullptr,nullptr,&descriptor);
+  bool rendered=false,bounded=false;DWORD renderError=0;std::string value="null";
+  if(queried==ERROR_SUCCESS&&descriptor){
+    rendered=ConvertSecurityDescriptorToStringSecurityDescriptorW(descriptor,SDDL_REVISION_1,information,&text,&count)!=0;renderError=rendered?0:GetLastError();
+    bounded=rendered&&text&&count>0&&count<=2048&&wcsnlen(text,count)==count-1;
+    if(bounded)value=quote(utf8(std::wstring(text,count-1)));
+  }
+  if(rendered&&text)observation.cleanup("free-desktop-security-text",LocalFree(text)==nullptr);
+  if(queried==ERROR_SUCCESS&&descriptor)observation.cleanup(cleanupName,LocalFree(descriptor)==nullptr);
+  return "{\"queried\":"+std::string(queried==ERROR_SUCCESS?"true":"false")+",\"win32Error\":"+std::to_string(queried)+",\"rendered\":"+(rendered?"true":"false")+",\"renderError\":"+std::to_string(renderError)+",\"bounded\":"+(bounded?"true":"false")+",\"value\":"+value+"}";
+}
+std::pair<bool,bool> private_desktop_proof(const Identity& id,const std::wstring& nonce,HDESK original,HWINSTA station,bool low,bool canonical){
+  const std::wstring name=L"NemoClawHermesDesktop-"+id.sid+(low?L"-low":L"-default");
   const ACCESS_MASK access=DESKTOP_CREATEWINDOW|DESKTOP_READOBJECTS|READ_CONTROL|WRITE_DAC|WRITE_OWNER|(canonical?0:DESKTOP_WRITEOBJECTS);
-  DesktopObservation observation;HDESK desktop=nullptr,prior=nullptr;PSECURITY_DESCRIPTOR descriptor=nullptr;PACL reducedAcl=nullptr;
-  SECURITY_DESCRIPTOR copied{};PSECURITY_DESCRIPTOR createDescriptor=nullptr;JOBOBJECT_BASIC_UI_RESTRICTIONS limits{};
-  bool attempted=false,created=false,closed=false,copiedDacl=false,reducedDacl=false,nullDaclUnsupported=false,nameAbsenceObserved=false;DWORD nameLookupError=0,createLastError=0;
-  const bool uiQueried=QueryInformationJobObject(nullptr,JobObjectBasicUIRestrictions,&limits,sizeof(limits),nullptr)!=0;const DWORD uiError=uiQueried?0:GetLastError();
-  observation.record("query-ui-mask-diagnostic",uiQueried,uiError);
+  DesktopObservation observation;HDESK desktop=nullptr;
+  bool openAttempted=false,opened=false,attachAttempted=false,attached=false,attachmentObserved=false,restoreAttempted=false,restored=false,closed=false;
+  bool nameQueried=false,nameBounded=false,flagsQueried=false;DWORD nameError=0,flagsError=0,nameBytes=0,flagsBytes=0;USEROBJECTFLAGS flags{};std::string actualName="null";
+  const std::string unavailable="{\"queried\":false,\"win32Error\":0,\"rendered\":false,\"renderError\":0,\"bounded\":false,\"value\":null}";
+  std::string dacl=unavailable,label=unavailable;
   try{
-    require(original&&station&&GetThreadDesktop(GetCurrentThreadId())==original&&GetProcessWindowStation()==station,"desktop-original-context");
-    if(canonical){
-      PACL dacl=nullptr;DWORD code=GetSecurityInfo(original,SE_WINDOW_OBJECT,DACL_SECURITY_INFORMATION,nullptr,nullptr,&dacl,nullptr,&descriptor);
-      if(!observation.record("query-original-desktop-dacl",code==ERROR_SUCCESS,code))throw std::runtime_error("desktop-dacl-query");
-      // Chrome 151's exact new-desktop reduction; refuse its broad NULL-DACL
-      // special case without altering any existing station or desktop.
-      nullDaclUnsupported=dacl==nullptr;
-      if(!observation.record("validate-original-desktop-dacl",dacl&&IsValidAcl(dacl),nullDaclUnsupported?ERROR_NOT_SUPPORTED:ERROR_INVALID_ACL))throw std::runtime_error("desktop-source-dacl-unsupported");copiedDacl=true;
-      std::array<BYTE,SECURITY_MAX_SID_SIZE> restricted{};DWORD sidBytes=static_cast<DWORD>(restricted.size());
-      observation.checked("restricted-code-sid",CreateWellKnownSid(WinRestrictedCodeSid,nullptr,restricted.data(),&sidBytes));
-      EXPLICIT_ACCESSW deny{};deny.grfAccessPermissions=0x000d013e;deny.grfAccessMode=DENY_ACCESS;deny.grfInheritance=NO_INHERITANCE;BuildTrusteeWithSidW(&deny.Trustee,restricted.data());
-      code=SetEntriesInAclW(1,&deny,dacl,&reducedAcl);
-      if(!observation.record("merge-canonical-restricted-code-deny",code==ERROR_SUCCESS,code,deny.grfAccessPermissions))throw std::runtime_error("desktop-restricted-deny-merge");
-      if(!observation.record("validate-reduced-desktop-dacl",reducedAcl&&IsValidAcl(reducedAcl),ERROR_INVALID_ACL))throw std::runtime_error("desktop-reduced-dacl-invalid");reducedDacl=true;
-      observation.checked("initialize-desktop-descriptor",InitializeSecurityDescriptor(&copied,SECURITY_DESCRIPTOR_REVISION));
-      observation.checked("set-reduced-desktop-dacl",SetSecurityDescriptorDacl(&copied,TRUE,reducedAcl,FALSE));createDescriptor=&copied;
-    }else{
-      const std::wstring sddl=L"D:P(A;;0x000e0083;;;"+id.userSid+L")(A;;0x000e0083;;;"+id.sid+L")";
-      observation.checked("explicit-user-appsid-descriptor",ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl.c_str(),SDDL_REVISION_1,&descriptor,nullptr));createDescriptor=descriptor;
-    }
-    prior=OpenDesktopW(name.c_str(),0,FALSE,DESKTOP_READOBJECTS);nameLookupError=prior?0:GetLastError();
-    nameAbsenceObserved=!prior&&(nameLookupError==ERROR_FILE_NOT_FOUND||nameLookupError==ERROR_PATH_NOT_FOUND);
-    observation.record("OpenDesktopW-fresh-name-diagnostic",prior!=nullptr,nameLookupError,DESKTOP_READOBJECTS);require(!prior,"desktop-name-already-exists");
-    // An inaccessible lookup cannot suppress this fresh nonce/PID diagnostic.
-    // CreateDesktop never replaces an existing object's security descriptor;
-    // record its result without claiming exclusive creation from a failed lookup.
-    SECURITY_ATTRIBUTES attributes{sizeof(attributes),createDescriptor,FALSE};
-    SetLastError(ERROR_SUCCESS);attempted=true;desktop=CreateDesktopW(name.c_str(),nullptr,nullptr,0,access,&attributes);createLastError=GetLastError();
-    if(!observation.record("CreateDesktopW",desktop!=nullptr,desktop?0:createLastError,access))throw std::runtime_error("owned-desktop-create");created=true;
-    require(GetThreadDesktop(GetCurrentThreadId())==original&&GetProcessWindowStation()==station,"desktop-context-changed");
-    std::array<wchar_t,256> actual{};DWORD needed=0;
-    observation.checked("query-created-name",GetUserObjectInformationW(desktop,UOI_NAME,actual.data(),static_cast<DWORD>(sizeof(actual)),&needed));
-    require(needed<=sizeof(actual)&&wcsnlen(actual.data(),actual.size())<actual.size()&&name==actual.data(),"desktop-name-mismatch");
+    require(original&&station&&same_user_object(GetThreadDesktop(GetCurrentThreadId()),original)&&same_user_object(GetProcessWindowStation(),station),"desktop-original-context");
+    openAttempted=true;desktop=OpenDesktopW(name.c_str(),0,FALSE,access);
+    if(!observation.record("OpenDesktopW-host-owned",desktop!=nullptr,desktop?0:GetLastError(),access))throw std::runtime_error("host-owned-desktop-open");opened=true;
+    require(desktop!=original,"desktop-open-returned-borrowed-handle");
+    // These bounded readbacks cannot prevent the actual thread attachment.
+    std::array<wchar_t,256> text{};
+    nameQueried=GetUserObjectInformationW(desktop,UOI_NAME,text.data(),static_cast<DWORD>(sizeof(text)),&nameBytes)!=0;nameError=nameQueried?0:GetLastError();
+    nameBounded=nameQueried&&nameBytes<=sizeof(text)&&wcsnlen(text.data(),text.size())<text.size();
+    if(nameBounded)actualName=quote(utf8(std::wstring(text.data())));
+    flagsQueried=GetUserObjectInformationW(desktop,UOI_FLAGS,&flags,sizeof(flags),&flagsBytes)!=0;flagsError=flagsQueried?0:GetLastError();
+    dacl=desktop_security_metadata(desktop,DACL_SECURITY_INFORMATION,observation,"free-desktop-dacl");
+    label=desktop_security_metadata(desktop,LABEL_SECURITY_INFORMATION,observation,"free-desktop-label");
+    attachAttempted=true;attached=SetThreadDesktop(desktop)!=0;
+    if(!observation.record("SetThreadDesktop-host-owned",attached,attached?0:GetLastError()))throw std::runtime_error("host-owned-desktop-attach");
+    attachmentObserved=same_user_object(GetThreadDesktop(GetCurrentThreadId()),desktop);
+    require(attachmentObserved&&same_user_object(GetProcessWindowStation(),station),"attached-desktop-context-mismatch");
   }catch(const std::exception& caught){observation.error=caught.what();}
   const std::string failedStage=observation.stage;const DWORD failure=observation.failure;
-  if(desktop)closed=observation.cleanup("CloseDesktop",CloseDesktop(desktop));
-  if(prior)observation.cleanup("close-preexisting-desktop",CloseDesktop(prior));
-  if(reducedAcl)observation.cleanup("free-reduced-desktop-acl",LocalFree(reducedAcl)==nullptr);
-  if(descriptor)observation.cleanup("free-desktop-descriptor",LocalFree(descriptor)==nullptr);
-  const bool unchanged=original&&station&&GetThreadDesktop(GetCurrentThreadId())==original&&GetProcessWindowStation()==station;
-  const bool clean=unchanged&&!observation.cleanupError&&(!desktop||closed);
-  const bool passed=observation.error.empty()&&created&&closed&&clean;
+  if(original&&(attached||!same_user_object(GetThreadDesktop(GetCurrentThreadId()),original))){
+    restoreAttempted=true;restored=observation.cleanup("SetThreadDesktop-restore-original",SetThreadDesktop(original));
+  }
+  if(desktop&&desktop!=original)closed=observation.cleanup("CloseDesktop-opened",CloseDesktop(desktop));
+  const bool unchanged=original&&station&&same_user_object(GetThreadDesktop(GetCurrentThreadId()),original)&&same_user_object(GetProcessWindowStation(),station);
+  const bool clean=unchanged&&!observation.cleanupError&&(!opened||closed);
+  const bool passed=observation.error.empty()&&opened&&attached&&attachmentObserved&&restored&&closed&&clean;
   observation.stage=passed?"complete":failedStage;observation.failure=failure;
   if(!clean&&observation.error.empty()){observation.error="desktop-cleanup-failed";observation.stage=observation.cleanupStage.empty()?"verify-original-context":observation.cleanupStage;observation.failure=observation.cleanupError;}
-  line("{\"kind\":\"hermes-private-desktop\",\"nonce\":"+quote(utf8(nonce))+","+identityFields(id)+",\"route\":\"direct-current-station\",\"descriptorVariant\":"+quote(canonical?"copied-current-desktop-dacl-restricted-deny":"explicit-user-appsid")+",\"accessVariant\":"+quote(canonical?"canonical-e0003":"documented-e0083")+",\"originalDesktopDaclCopied\":"+(copiedDacl?"true":"false")+",\"restrictedCodeDenyApplied\":"+(reducedDacl?"true":"false")+",\"restrictedCodeDenyMask\":"+std::to_string(canonical?0x000d013e:0)+",\"nullDaclUnsupported\":"+(nullDaclUnsupported?"true":"false")+",\"borrowedStationHandleClosed\":false,\"stationDuplicationAttempted\":false,\"stationSelectionAttempted\":false,\"requiredPass\":false,\"uiMaskQuerySucceeded\":"+(uiQueried?"true":"false")+",\"uiMaskQueryError\":"+std::to_string(uiError)+",\"effectiveUiMask\":"+(uiQueried?std::to_string(limits.UIRestrictionsClass):"null")+",\"desktopName\":"+quote(utf8(name))+",\"desiredAccess\":"+std::to_string(access)+",\"nameAbsenceObserved\":"+(nameAbsenceObserved?"true":"false")+",\"nameLookupError\":"+std::to_string(nameLookupError)+",\"exclusiveCreationClaimed\":false,\"createSuccessLastError\":"+(created?std::to_string(createLastError):"null")+",\"createReportedAlreadyExists\":"+((created&&createLastError==ERROR_ALREADY_EXISTS)?"true":"false")+",\"createAttempted\":"+(attempted?"true":"false")+",\"created\":"+(created?"true":"false")+",\"closed\":"+(closed?"true":"false")+",\"cleanupPassed\":"+(clean?"true":"false")+",\"absenceAfterCloseIndependentlyVerified\":false,\"originalContextUnchanged\":"+(unchanged?"true":"false")+",\"interactiveSwitchAttempted\":false,\"hostDesktopGrantsAdded\":false,"+observation.fields()+",\"passed\":"+(passed?"true":"false")+"}");
+  line("{\"kind\":\"hermes-private-desktop\",\"nonce\":"+quote(utf8(nonce))+","+identityFields(id)+",\"route\":\"host-provisioned-current-station\",\"labelVariant\":"+quote(low?"low":"default")+",\"accessVariant\":"+quote(canonical?"canonical-e0003":"documented-e0083")+",\"desktopName\":"+quote(utf8(name))+",\"desiredAccess\":"+std::to_string(access)+",\"openFlags\":0,\"inheritRequested\":false,\"openAttempted\":"+(openAttempted?"true":"false")+",\"opened\":"+(opened?"true":"false")+",\"attachAttempted\":"+(attachAttempted?"true":"false")+",\"attached\":"+(attached?"true":"false")+",\"attachmentObserved\":"+(attachmentObserved?"true":"false")+",\"restoreAttempted\":"+(restoreAttempted?"true":"false")+",\"restored\":"+(restored?"true":"false")+",\"closed\":"+(closed?"true":"false")+",\"actualName\":{\"queried\":"+(nameQueried?"true":"false")+",\"win32Error\":"+std::to_string(nameError)+",\"bounded\":"+(nameBounded?"true":"false")+",\"value\":"+actualName+"},\"userObjectFlags\":{\"queried\":"+(flagsQueried?"true":"false")+",\"win32Error\":"+std::to_string(flagsError)+",\"returnedBytes\":"+std::to_string(flagsBytes)+",\"inherit\":"+(flagsQueried?(flags.fInherit?"true":"false"):"null")+",\"flags\":"+(flagsQueried?std::to_string(flags.dwFlags):"null")+"},\"dacl\":"+dacl+",\"label\":"+label+",\"borrowedDesktopHandleClosed\":false,\"borrowedStationHandleClosed\":false,\"stationSelectionAttempted\":false,\"interactiveSwitchAttempted\":false,\"hostExistingObjectGrantsChanged\":false,\"mandatoryLabelChanged\":false,\"cleanupPassed\":"+(clean?"true":"false")+",\"originalContextUnchanged\":"+(unchanged?"true":"false")+","+observation.fields()+",\"passed\":"+(passed?"true":"false")+"}");
   return {passed,clean};
 }
 void private_desktop_observations(const Identity& id,const std::wstring& nonce){
   const HDESK original=GetThreadDesktop(GetCurrentThreadId());const HWINSTA station=GetProcessWindowStation();
-  // Direct calls come first and remain independent of duplication/readback.
-  const auto canonical=private_desktop_proof(id,nonce,original,station,true);
-  const auto explicitAcl=private_desktop_proof(id,nonce,original,station,false);
-  const auto duplicate=current_station_duplicate_observation(id,nonce,original,station);
-  const bool clean=canonical.second&&explicitAcl.second&&duplicate.second,passed=clean&&(canonical.first||explicitAcl.first);
-  line("{\"kind\":\"hermes-private-desktop-summary\",\"nonce\":"+quote(utf8(nonce))+",\"observationsCompleted\":true,\"directCurrentCanonicalPassed\":"+(canonical.first?"true":"false")+",\"directCurrentExplicitPassed\":"+(explicitAcl.first?"true":"false")+",\"sameAccessDuplicatePassed\":"+(duplicate.first?"true":"false")+",\"canonicalChromeSupportQualified\":false,\"allCleanupPassed\":"+(clean?"true":"false")+",\"passed\":"+(passed?"true":"false")+"}");
-  require(passed,"private-desktop-controls-failed");
+  std::array<bool,4> passed{};bool clean=true;size_t index=0;
+  for(bool low:{false,true})for(bool canonical:{true,false}){
+    const auto result=private_desktop_proof(id,nonce,original,station,low,canonical);passed[index++]=result.first;clean=clean&&result.second;
+  }
+  const auto duplicate=current_station_duplicate_observation(id,nonce,original,station);clean=clean&&duplicate.second;
+  const bool complete=clean&&std::any_of(passed.begin(),passed.end(),[](bool value){return value;});
+  line("{\"kind\":\"hermes-private-desktop-summary\",\"nonce\":"+quote(utf8(nonce))+",\"observationsCompleted\":true,\"hostDefaultCanonicalPassed\":"+(passed[0]?"true":"false")+",\"hostDefaultExplicitPassed\":"+(passed[1]?"true":"false")+",\"hostLowCanonicalPassed\":"+(passed[2]?"true":"false")+",\"hostLowExplicitPassed\":"+(passed[3]?"true":"false")+",\"sameAccessDuplicatePassed\":"+(duplicate.first?"true":"false")+",\"canonicalChromeSupportQualified\":false,\"allCleanupPassed\":"+(clean?"true":"false")+",\"passed\":"+(complete?"true":"false")+"}");
+  require(complete,"host-desktop-controls-failed");
 }
 int job_proof_native_child(int argc,wchar_t** argv){
   const bool desktop=argc==9&&std::wstring(argv[8])==L"desktop";
