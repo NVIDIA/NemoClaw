@@ -12,7 +12,7 @@ import { UPLOAD_E2E_ARTIFACTS_ACTION } from "./upload-e2e-artifacts-workflow-bou
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_WORKFLOW_PATH = join(REPO_ROOT, ".github", "workflows", "e2e.yaml");
 const JOB_NAME = "openshell-gateway-auth-contract";
-const OPENSHELL_RELEASE_VERSION = "0.0.106";
+const OPENSHELL_RELEASE_VERSION = "0.0.116";
 const OPENSHELL_INSTALL_RUN =
   "env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_API_KEY -u NVIDIA_INFERENCE_API_KEY -u GITHUB_TOKEN bash scripts/install-openshell.sh";
 const FULL_SHA_ACTION = /^[^\s@]+@[0-9a-f]{40}$/u;
@@ -23,7 +23,7 @@ const ARTIFACT_SAFETY_GATED_UPLOAD =
   "${{ always() && steps.artifact_safety.outcome == 'success' && steps.artifact_safety.outputs.approved_path != '' }}";
 const APPROVED_ARTIFACT_PATH = "${{ steps.artifact_safety.outputs.approved_path }}";
 const ARTIFACT_SAFETY_COMMAND =
-  'node --experimental-strip-types --no-warnings tools/e2e/openshell-gateway-auth-artifact-safety.mts "$E2E_ARTIFACT_DIR"';
+  'node --no-warnings tools/e2e/openshell-gateway-auth-artifact-safety.mts "$E2E_ARTIFACT_DIR"';
 
 type WorkflowStep = {
   env?: Record<string, unknown>;
@@ -110,9 +110,7 @@ export function validateOpenShellGatewayAuthContractWorkflow(
   }
   const pinVersion = env.NEMOCLAW_OPENSHELL_PIN_VERSION;
   if (pinVersion !== OPENSHELL_RELEASE_VERSION) {
-    errors.push(
-      `${JOB_NAME} must set NEMOCLAW_OPENSHELL_PIN_VERSION=${OPENSHELL_RELEASE_VERSION}`,
-    );
+    errors.push(`${JOB_NAME} must set NEMOCLAW_OPENSHELL_PIN_VERSION=${OPENSHELL_RELEASE_VERSION}`);
   }
   for (const secret of [
     "DOCKERHUB_USERNAME",

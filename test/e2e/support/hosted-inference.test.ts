@@ -15,6 +15,7 @@ import { ProviderClient, trustedProviderEndpoint } from "../fixtures/clients/pro
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
 import {
   buildHostedInferenceModelsProbe,
+  hostedInferenceCredentialReferencePattern,
   requireHostedInferenceConfig,
   stagePortableHostedInferenceDescriptor,
 } from "../fixtures/hosted-inference.ts";
@@ -187,6 +188,52 @@ printf 'modelFn=%s\n' "$(nemoclaw_e2e_hosted_inference_model)"
 }
 
 describe("hosted inference E2E config", () => {
+  it("accepts canonical OpenShell credential references", () => {
+    const pattern = hostedInferenceCredentialReferencePattern("E2E_ACCESS_TOKEN");
+    const stableRevision = `s${"a".repeat(64)}`;
+
+    expect("openshell:resolve:env:E2E_ACCESS_TOKEN").toMatch(pattern);
+    expect("openshell:resolve:env:v42_E2E_ACCESS_TOKEN").toMatch(pattern);
+    expect(`openshell:resolve:env:${stableRevision}_E2E_ACCESS_TOKEN`).toMatch(pattern);
+    expect("openshell:resolve:env:v123456789012345678901_E2E_ACCESS_TOKEN").not.toMatch(pattern);
+    expect(`openshell:resolve:env:s${"a".repeat(63)}_E2E_ACCESS_TOKEN`).not.toMatch(pattern);
+    expect(() => hostedInferenceCredentialReferencePattern("E2E-ACCESS-TOKEN")).toThrow(
+      /invalid hosted inference credential environment name/u,
+    );
+  });
+
+  it("uses the public NVIDIA route for preinstalled Launchable onboarding", () => {
+    const cfg = requireHostedInferenceConfig(
+      secrets({ NVIDIA_INFERENCE_API_KEY: "nvapi-launchable-test" }),
+      {
+        NEMOCLAW_MODEL: "nvidia/launchable-model",
+        NEMOCLAW_ENDPOINT_URL: "https://inference-api.nvidia.com/v1",
+      },
+      { provider: "build" },
+    );
+
+    expect(cfg.provider).toBe("build");
+    expect(cfg.providerName).toBe("nvidia-prod");
+    expect(cfg.credentialEnv).toBe("NVIDIA_INFERENCE_API_KEY");
+    expect(cfg.endpointUrl).toBe("https://integrate.api.nvidia.com/v1");
+    expect(cfg.model).toBe("nvidia/launchable-model");
+    expect(cfg.env).toEqual({
+      NEMOCLAW_PROVIDER: "build",
+      NEMOCLAW_MODEL: "nvidia/launchable-model",
+      NVIDIA_INFERENCE_API_KEY: "nvapi-launchable-test",
+    });
+  });
+
+  it("rejects an Inference Hub credential for the public NVIDIA route", () => {
+    expect(() =>
+      requireHostedInferenceConfig(
+        secrets({ NVIDIA_INFERENCE_API_KEY: "sk-inference-hub-test" }),
+        {},
+        { provider: "build" },
+      ),
+    ).toThrow("Invalid NVIDIA API key. Must start with nvapi-");
+  });
+
   it("uses NVIDIA_INFERENCE_API_KEY as the hosted compatible endpoint source secret", () => {
     const cfg = requireHostedInferenceConfig(
       secrets({ NVIDIA_INFERENCE_API_KEY: "repo-hosted-key" }),

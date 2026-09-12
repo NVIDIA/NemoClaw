@@ -23,6 +23,41 @@ export const DEFAULT_OPENCLAW_CONFIG_DIR = "/sandbox/.openclaw";
 export const HERMES_MCP_TRANSACTION_HELPER =
   "/usr/local/lib/nemoclaw/hermes-mcp-config-transaction.py";
 
+/** Build the runtime classifier shared by Deep Agents status, repair, rollback, and teardown. */
+export function buildDeepAgentsRuntimeKindCommandLines(
+  initialKind: "auto" | "v2" = "auto",
+): string[] {
+  return [
+    `runtime_kind = "${initialKind}"  # NEMOCLAW_DEEPAGENTS_RUNTIME_TEST_ANCHOR`,
+    "if runtime_kind == 'auto':",
+    "    runtime_kind = 'unknown'",
+    "    try:",
+    "        from deepagents_code import _nemoclaw_managed as managed",
+    "        runtime_path = str(getattr(managed, '_MCP_CONFIG_FILE', ''))",
+    "        if runtime_path == str(managed_path):",
+    "            runtime_kind = 'v2'",
+    "        elif runtime_path == str(legacy_path):",
+    "            runtime_kind = 'legacy'",
+    "    except Exception:",
+    "        pass",
+    "if runtime_kind not in ('v2', 'legacy'):",
+    "    print('Could not identify the managed Deep Agents MCP runtime', file=sys.stderr)",
+    "    raise SystemExit(2)",
+  ];
+}
+
+export function buildDeepAgentsMcpRuntimeKindCommand(): string {
+  return [
+    "/opt/venv/bin/python3 -I - <<'PY'",
+    "import pathlib, sys",
+    `managed_path = pathlib.Path(${JSON.stringify(DEEPAGENTS_MCP_CONFIG_PATH)})`,
+    `legacy_path = pathlib.Path(${JSON.stringify(DEEPAGENTS_LEGACY_MCP_CONFIG_PATH)})`,
+    ...buildDeepAgentsRuntimeKindCommandLines(),
+    "print(runtime_kind)",
+    "PY",
+  ].join("\n");
+}
+
 /** Resolve Mcporter's project root beneath an OpenClaw agent configuration directory. */
 export function openClawMcporterRoot(configDir = DEFAULT_OPENCLAW_CONFIG_DIR): string {
   return `${configDir.replace(/\/+$/, "")}/workspace`;
@@ -91,8 +126,8 @@ export function pythonJsonLiteral(value: unknown): string {
  * header, even when that header is absent from the persisted config. Treat
  * only that synthesized header as equivalent; every persisted/other header
  * remains part of the ownership fingerprint. When the expected placeholder is
- * canonical, a strictly bounded revisioned form of the same credential is also
- * equivalent. A revisioned expectation remains exact.
+ * canonical, a strictly bounded revisioned or stable-handle form of the same
+ * credential is also equivalent. A generation-scoped expectation remains exact.
  *
  * This function is also serialized into the in-sandbox inspection commands,
  * so keep it self-contained (no references to module-scope values).
@@ -120,7 +155,7 @@ export function mcporterHeadersMatchExpected(
     const escapedEnvName = envName.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
     if (
       !new RegExp(
-        `^${canonicalPrefix.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")}v[0-9]{1,20}_${escapedEnvName}$`,
+        `^${canonicalPrefix.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")}(?:v[0-9]{1,20}|s[a-f0-9]{64})_${escapedEnvName}$`,
         "u",
       ).test(actualValue)
     ) {
@@ -239,12 +274,13 @@ export const MANAGED_HTTP_SERVER_MATCH_HELPERS = [
   "            continue",
   "        canonical_prefix = 'Bearer openshell:resolve:env:'",
   "        env_name = value[len(canonical_prefix):] if name.lower() == 'authorization' and isinstance(value, str) and value.startswith(canonical_prefix) else ''",
-  "        revision_prefix = canonical_prefix + 'v'",
   "        suffix = '_' + env_name",
-  "        if not env_name or not isinstance(actual_value, str) or not actual_value.startswith(revision_prefix) or not actual_value.endswith(suffix):",
+  "        if not env_name or not isinstance(actual_value, str) or not actual_value.startswith(canonical_prefix) or not actual_value.endswith(suffix):",
   "            return False",
-  "        revision = actual_value[len(revision_prefix):-len(suffix)]",
-  "        if not revision.isdigit() or not (1 <= len(revision) <= 20):",
+  "        generation = actual_value[len(canonical_prefix):-len(suffix)]",
+  "        revisioned = generation.startswith('v') and generation[1:].isdigit() and 1 <= len(generation[1:]) <= 20",
+  "        stable = generation.startswith('s') and len(generation[1:]) == 64 and all(char in '0123456789abcdef' for char in generation[1:])",
+  "        if not revisioned and not stable:",
   "            return False",
   "    return True",
 ];
@@ -268,21 +304,7 @@ export function buildDeepAgentsMcpStatusCommand(
     ...DEEPAGENTS_MANAGED_PROJECTION_READ_HELPERS,
     ...DEEPAGENTS_LEGACY_CONFIG_HELPERS,
     ...MANAGED_HTTP_SERVER_MATCH_HELPERS,
-    `runtime_kind = "auto"  # NEMOCLAW_DEEPAGENTS_RUNTIME_TEST_ANCHOR`,
-    "if runtime_kind == 'auto':",
-    "    runtime_kind = 'unknown'",
-    "    try:",
-    "        from deepagents_code import _nemoclaw_managed as managed",
-    "        runtime_path = str(getattr(managed, '_MCP_CONFIG_FILE', ''))",
-    "        if runtime_path == str(managed_path):",
-    "            runtime_kind = 'v2'",
-    "        elif runtime_path == str(legacy_path):",
-    "            runtime_kind = 'legacy'",
-    "    except Exception:",
-    "        pass",
-    "if runtime_kind not in ('v2', 'legacy'):",
-    "    print('Could not identify the managed Deep Agents MCP runtime', file=sys.stderr)",
-    "    raise SystemExit(2)",
+    ...buildDeepAgentsRuntimeKindCommandLines(),
     "is_v2 = runtime_kind == 'v2'",
     "config_path = managed_path if is_v2 else legacy_path",
     "try:",

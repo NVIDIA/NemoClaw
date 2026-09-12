@@ -69,8 +69,9 @@ import {
   type RecordRetainedSandboxRecoveryInput,
   type RetainedSandboxRecoveryRecord,
   type RetainedSandboxRecoveryReason,
+  validSafeEvidence,
 } from "./onboard-session/retained-sandbox-recovery";
-import type { SandboxHostMount } from "./registry/types";
+import type { SandboxEntry, SandboxHostMount } from "./registry/types";
 import { hasUnsafeHostMountTerminalText } from "./registry/host-mount";
 import { nemoclawStateRoot } from "./state-root";
 
@@ -93,6 +94,7 @@ const SAFE_VLLM_INSTALL_MODEL = /^[A-Za-z0-9._:/-]+$/;
 
 export class InvalidPersistedApfInterceptorIntentError extends Error {}
 export class InvalidPersistedCancellationRecoveryError extends Error {}
+export class InvalidPersistedExternalComponentActivationError extends Error {}
 
 // Session-specific aliases for the shared JSON types.
 type SessionJsonValue = JsonValue;
@@ -136,6 +138,15 @@ export interface SessionCancellationRecovery {
   readonly lifecycleGeneration: string;
   readonly createAttemptNonce: string;
   readonly recordedAt: string;
+}
+
+export interface ExternalComponentActivationIncomplete {
+  readonly schemaVersion: 1;
+  readonly activationId: string;
+  readonly componentId: string;
+  readonly lifecycleGeneration: string;
+  readonly sandboxIdentityFingerprint: string;
+  readonly resultClass: "failed" | "ambiguous";
 }
 
 function sameCancellationRecovery(
@@ -254,6 +265,8 @@ export interface Session {
   lastCompletedStep: string | null;
   failure: SessionFailure | null;
   cancellationRecovery: SessionCancellationRecovery | null;
+  /** Secret-free evidence for one activation that did not reach verified success. */
+  externalComponentActivation: ExternalComponentActivationIncomplete | null;
   agent: string | null;
   sandboxName: string | null;
   provider: string | null;
@@ -372,6 +385,7 @@ export interface SessionUpdates {
   gpuPassthrough?: boolean;
   telegramConfig?: TelegramConfig | null;
   wechatConfig?: WechatConfig | null;
+  externalComponentActivation?: ExternalComponentActivationIncomplete | null;
   metadata?: { gatewayName?: string; fromDockerfile?: string | null };
   /** Ephemeral vLLM checkpoint proof consumed by Station provider binding; never persisted. */
   stationExpressModelIdentity?: string;
@@ -408,6 +422,7 @@ export interface DebugSessionSummary {
   lastCompletedStep: string | null;
   failure: SessionFailure | null;
   cancellationRecovery: SessionCancellationRecovery | null;
+  externalComponentActivation: ExternalComponentActivationIncomplete | null;
   gatewayAuthority: GatewayOwnerDescription | null;
   machine: OnboardMachineSnapshot;
   steps: Record<string, StepState>;
@@ -842,6 +857,49 @@ function parseSessionCancellationRecovery(
   };
 }
 
+function parseExternalComponentActivation(
+  value: SessionJsonValue | undefined,
+): ExternalComponentActivationIncomplete | null {
+  if (!isObject(value)) return null;
+  const activationId = readString(value.activationId);
+  const componentId = readString(value.componentId);
+  const lifecycleGeneration = readString(value.lifecycleGeneration);
+  const sandboxIdentityFingerprint = readString(value.sandboxIdentityFingerprint);
+  if (
+    value.schemaVersion !== 1 ||
+    !activationId ||
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(activationId) ||
+    !componentId ||
+    !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/u.test(componentId) ||
+    !lifecycleGeneration ||
+    !validSafeEvidence(lifecycleGeneration) ||
+    !sandboxIdentityFingerprint ||
+    !/^sha256:[0-9a-f]{64}$/u.test(sandboxIdentityFingerprint) ||
+    (value.resultClass !== "failed" && value.resultClass !== "ambiguous") ||
+    Object.keys(value).some(
+      (field) =>
+        ![
+          "schemaVersion",
+          "activationId",
+          "componentId",
+          "lifecycleGeneration",
+          "sandboxIdentityFingerprint",
+          "resultClass",
+        ].includes(field),
+    )
+  ) {
+    return null;
+  }
+  return {
+    schemaVersion: 1,
+    activationId,
+    componentId,
+    lifecycleGeneration,
+    sandboxIdentityFingerprint,
+    resultClass: value.resultClass,
+  };
+}
+
 // ── Session CRUD ─────────────────────────────────────────────────
 
 function createMachineSnapshot(
@@ -940,6 +998,9 @@ export function createSession(overrides: Partial<Session> = {}): Session {
     failure: overrides.failure ?? null,
     cancellationRecovery: parseSessionCancellationRecovery(
       overrides.cancellationRecovery as SessionJsonValue | undefined,
+    ),
+    externalComponentActivation: parseExternalComponentActivation(
+      overrides.externalComponentActivation as SessionJsonValue | undefined,
     ),
     agent: overrides.agent ?? null,
     sandboxName: overrides.sandboxName ?? null,
@@ -1067,6 +1128,18 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
       "Refusing to load the onboarding session: saved recovery authority is incomplete.",
     );
   }
+  const externalComponentActivation = parseExternalComponentActivation(
+    data.externalComponentActivation,
+  );
+  if (
+    hasOwn(data, "externalComponentActivation") &&
+    data.externalComponentActivation !== null &&
+    !externalComponentActivation
+  ) {
+    throw new InvalidPersistedExternalComponentActivationError(
+      "Refusing to load the onboarding session: saved external component activation evidence is incomplete.",
+    );
+  }
 
   const normalized = createSession({
     sessionId: readString(data.sessionId) ?? undefined,
@@ -1109,6 +1182,7 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
     lastCompletedStep: readString(data.lastCompletedStep),
     failure: sanitizeFailure(isObject(data.failure) ? data.failure : null),
     cancellationRecovery,
+    externalComponentActivation,
     metadata: parseSessionMetadata(data.metadata),
     checkpoint: data.checkpoint as unknown as OnboardCheckpoint | null,
   });
@@ -1220,7 +1294,10 @@ export function loadSession(): Session | null {
     if (lockOwned) assertOnboardLockOwned();
     return normalized;
   } catch (error) {
-    if (error instanceof InvalidPersistedApfInterceptorIntentError) {
+    if (
+      error instanceof InvalidPersistedApfInterceptorIntentError ||
+      error instanceof InvalidPersistedExternalComponentActivationError
+    ) {
       throw error;
     }
     if (lockOwned) throw error;
@@ -1231,8 +1308,10 @@ export function loadSession(): Session | null {
 }
 
 function serializeSessionForDisk(session: Session): Record<string, unknown> {
+  const { externalComponentActivation, ...persistentSession } = session;
   return {
-    ...session,
+    ...persistentSession,
+    ...(externalComponentActivation ? { externalComponentActivation } : {}),
     messagingPlan: session.messagingPlan
       ? compactSandboxMessagingPlanForPersistence(session.messagingPlan)
       : session.messagingPlan,
@@ -1695,24 +1774,8 @@ export function releaseOnboardLock(): void {
     return;
   }
 
-  // Fallback (no fd held — e.g., a test wrote the lock file directly,
-  // or a previous release already ran): preserve the legacy pid-based
-  // behavior so we never unlink a malformed lock and never unlink a
-  // lock owned by another pid.
-  try {
-    let snapshot: LockFileSnapshot;
-    try {
-      snapshot = readLockFileSnapshot();
-    } catch (error) {
-      if (isErrnoException(error) && error.code === "ENOENT") return;
-      throw error;
-    }
-    if (!snapshot.info) return;
-    if (snapshot.info.pid !== process.pid) return;
-    unlinkIfInodeMatches(LOCK_FILE, snapshot.inode);
-  } catch {
-    return;
-  }
+  // A PID match does not prove ownership across hosts or PID namespaces.
+  // Without the retained descriptor, this process has no cleanup authority.
 }
 
 // ── Step management ──────────────────────────────────────────────
@@ -1896,6 +1959,14 @@ export function filterSafeUpdates(updates: SessionUpdates): Partial<Session> {
   } else if (updates.wechatConfig === null) {
     safe.wechatConfig = null;
   }
+  if (updates.externalComponentActivation === null) {
+    safe.externalComponentActivation = null;
+  } else {
+    const activation = parseExternalComponentActivation(
+      updates.externalComponentActivation as SessionJsonValue | undefined,
+    );
+    if (activation) safe.externalComponentActivation = activation;
+  }
   if (isObject(updates.metadata) && typeof updates.metadata.gatewayName === "string") {
     safe.metadata = {
       gatewayName: updates.metadata.gatewayName,
@@ -1993,6 +2064,82 @@ export function listRetainedSandboxRecoveryRecords(): readonly RetainedSandboxRe
   });
 }
 
+const safeRecoveryEvidence = (value: unknown): string[] =>
+  validSafeEvidence(value) ? [value] : [];
+
+function pendingCreateRecoveryResources(
+  entry: SandboxEntry,
+): RecordRetainedSandboxRecoveryInput["resources"] {
+  return {
+    sharedInferenceProviders: safeRecoveryEvidence(entry.provider),
+    sandboxScopedProviders: safeRecoveryEvidence(entry.hermesInferenceProvider),
+    credentialEnvironmentVariables: safeRecoveryEvidence(entry.credentialEnv),
+  };
+}
+
+function retainedRecoveryMatchesPendingCreate(
+  record: RetainedSandboxRecoveryRecord,
+  entry: SandboxEntry,
+): boolean {
+  const checkpoint = entry.pendingCreateIdentity;
+  return Boolean(
+    checkpoint &&
+    record.sandboxName === checkpoint.sandboxName &&
+    record.sandboxIdentityFingerprint === checkpoint.sandboxIdentityFingerprint &&
+    record.gatewayName === checkpoint.gatewayName &&
+    record.gatewayPort === checkpoint.gatewayPort &&
+    record.lifecycleGeneration === checkpoint.lifecycleGeneration &&
+    record.createAttemptNonce === checkpoint.createAttemptNonce,
+  );
+}
+
+/**
+ * Reconstruct the independent retained-sandbox record when the verified-create
+ * registry checkpoint is the only recovery authority that survived a crash.
+ */
+export function reconstructRetainedSandboxRecoveryFromPendingCreate(
+  entry: SandboxEntry,
+): RetainedSandboxRecoveryRecord | null {
+  const checkpoint = entry.pendingCreateIdentity;
+  const createAttemptNonce = checkpoint?.createAttemptNonce;
+  if (!checkpoint || entry.pendingRouteReservation !== true || !createAttemptNonce) {
+    return null;
+  }
+  if (
+    entry.name !== checkpoint.sandboxName ||
+    entry.gatewayName !== checkpoint.gatewayName ||
+    entry.gatewayPort !== checkpoint.gatewayPort ||
+    entry.lifecycleGeneration !== checkpoint.lifecycleGeneration ||
+    entry.lifecycleLiveIdentityFingerprint !== checkpoint.sandboxIdentityFingerprint
+  ) {
+    throw new Error(
+      `Cannot reconstruct retained sandbox recovery for '${entry.name}': its verified create checkpoint does not match the registry lifecycle authority.`,
+    );
+  }
+  return withOwnedOnboardLock("nemoclaw retained sandbox recovery reconstruction", () => {
+    const records = readRetainedSandboxRecoveryRecords(RETAINED_SANDBOX_RECOVERY_FILE);
+    const sameName = records.filter((record) => record.sandboxName === entry.name);
+    if (sameName.length === 1 && retainedRecoveryMatchesPendingCreate(sameName[0]!, entry)) {
+      return sameName[0]!;
+    }
+    if (sameName.length > 0) {
+      throw new Error(
+        `Cannot reconstruct retained sandbox recovery for '${entry.name}': its independent recovery authority conflicts with the verified create checkpoint.`,
+      );
+    }
+    return writeRetainedSandboxRecovery(RETAINED_SANDBOX_RECOVERY_FILE, {
+      sandboxName: checkpoint.sandboxName,
+      sandboxIdentityFingerprint: checkpoint.sandboxIdentityFingerprint,
+      gatewayName: checkpoint.gatewayName,
+      gatewayPort: checkpoint.gatewayPort,
+      lifecycleGeneration: checkpoint.lifecycleGeneration,
+      createAttemptNonce,
+      resources: pendingCreateRecoveryResources(entry),
+      reason: "retained_after_sandbox_creation_failure",
+    });
+  });
+}
+
 export function recordRetainedSandboxRecovery(
   input: RecordRetainedSandboxRecoveryInput,
 ): RetainedSandboxRecoveryRecord {
@@ -2071,7 +2218,7 @@ export function markCancellationRecovery(
       session.failure = {
         step: session.lastStepStarted,
         message:
-          "Onboarding was cancelled after sandbox creation; administrator recovery is required.",
+          "Onboarding was cancelled after sandbox creation; retained recovery blocks this sandbox name until destroy confirms absence and completes cleanup.",
         recordedAt,
         interrupted: true,
       };
@@ -2317,6 +2464,29 @@ export function checkpointVllmInstallModel(modelId: string): Session {
   });
 }
 
+/** Persist the exact profile needed to retry an interrupted managed llama.cpp install. */
+export function checkpointManagedLlamaCppSelection(input: {
+  model: string;
+  servingProfileProvenance: ServingProfileProvenance;
+}): Session {
+  const model = parseVllmInstallModel(input.model);
+  const provenance = parseServingProfileProvenance(input.servingProfileProvenance);
+  if (!model || provenance?.recipe.backend !== "install-llama-cpp") {
+    throw new Error("Managed llama.cpp install produced an invalid selection checkpoint.");
+  }
+  return updateSession((session) => {
+    const providerStep = session.steps.provider_selection;
+    if (providerStep?.status !== "in_progress") {
+      throw new Error(
+        "Managed llama.cpp selection can only be checkpointed during provider selection.",
+      );
+    }
+    session.provider = "llama-cpp-local";
+    session.model = model;
+    session.servingProfileProvenance = provenance;
+  });
+}
+
 /**
  * Single synchronous terminal-failure owner for process-exit / backstop paths.
  *
@@ -2526,6 +2696,7 @@ export function summarizeForDebug(
     lastCompletedStep: session.lastCompletedStep,
     failure: sanitizeFailure(session.failure),
     cancellationRecovery: session.cancellationRecovery,
+    externalComponentActivation: session.externalComponentActivation,
     gatewayAuthority,
     machine: session.machine,
     steps: Object.fromEntries(

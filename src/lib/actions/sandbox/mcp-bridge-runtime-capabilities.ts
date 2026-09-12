@@ -8,6 +8,7 @@ import {
   assertAgentMcpTeardownRuntimeCapability,
 } from "./mcp-bridge-adapters";
 import { isAgentMcpAdapter } from "./mcp-bridge-contracts";
+import type { McpProviderInspectionRuntimeSelection } from "./mcp-bridge-provider-inspection";
 import { getBridgeAdapter, getSandboxAgent } from "./mcp-bridge-state";
 
 function adaptersForEntries(
@@ -21,22 +22,30 @@ function adaptersForEntries(
   );
 }
 
-export function assertMcpAdapterMutationRuntimeCapabilities(
+export async function assertMcpAdapterMutationRuntimeCapabilities(
   sandboxName: string,
   sandbox: SandboxEntry,
   entries: readonly McpBridgeEntry[],
-): void {
+  runtimeSelection: McpProviderInspectionRuntimeSelection,
+): Promise<void> {
   for (const adapter of adaptersForEntries(sandbox, entries)) {
-    assertAgentMcpMutationRuntimeCapability(sandboxName, adapter);
+    await assertAgentMcpMutationRuntimeCapability(sandboxName, adapter, runtimeSelection);
   }
 }
 
-export function assertMcpAdapterTeardownRuntimeCapabilities(
+/**
+ * Prove host-visible config mutability without requiring a capability marker
+ * from the image being torn down. Deep Agents entries created by an older
+ * NemoClaw release remain safe to scrub because their exact persisted adapter
+ * definition is still ownership-checked by unregisterAgentAdapter.
+ */
+export async function assertMcpAdapterTeardownRuntimeCapabilities(
   sandboxName: string,
   sandbox: SandboxEntry,
   entries: readonly McpBridgeEntry[],
-): void {
+  runtimeSelection: McpProviderInspectionRuntimeSelection,
+): Promise<void> {
   for (const adapter of adaptersForEntries(sandbox, entries)) {
-    assertAgentMcpTeardownRuntimeCapability(sandboxName, adapter);
+    await assertAgentMcpTeardownRuntimeCapability(sandboxName, adapter, runtimeSelection);
   }
 }

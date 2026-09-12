@@ -24,6 +24,7 @@ import * as registry from "../../state/registry";
 import * as sandboxState from "../../state/sandbox";
 import * as sandboxSession from "../../state/sandbox-session";
 import * as destroy from "./destroy";
+import * as mcpBridgeProvider from "./mcp-bridge-provider";
 import { rebuildSandbox } from "./rebuild";
 import * as rebuildImagePreflight from "./rebuild-custom-image-preflight";
 import { rebuildOnboardDependencies } from "./rebuild-onboard-dependencies";
@@ -33,7 +34,7 @@ import * as rebuildUsageNotice from "./rebuild-usage-notice";
 import * as policyGet from "./policy-get";
 
 const policyBoundaryMocks = vi.hoisted(() => ({
-  inspectSandboxPolicy: vi.fn(() => ({
+  inspectSandboxPolicy: vi.fn(async () => ({
     ok: true as const,
     value: {
       policySource: "sandbox" as const,
@@ -41,7 +42,7 @@ const policyBoundaryMocks = vi.hoisted(() => ({
       policyIdentity: { hash: "sha256:resume-policy", activeVersion: 1 },
     },
   })),
-  readSandboxPolicy: vi.fn(() => ({
+  readSandboxPolicy: vi.fn(async () => ({
     ok: true as const,
     value: {
       document: "version: 1\nnetwork_policies: {}\n",
@@ -52,7 +53,7 @@ const policyBoundaryMocks = vi.hoisted(() => ({
 
 vi.mock("../../adapters/openshell/sandbox-policy-cli", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../adapters/openshell/sandbox-policy-cli")>()),
-  syncCliOpenShellSandboxPolicyReader: {
+  cliOpenShellSandboxPolicyReader: {
     inspectSandboxPolicy: policyBoundaryMocks.inspectSandboxPolicy,
     readSandboxPolicy: policyBoundaryMocks.readSandboxPolicy,
     readSandboxPolicyRevision: vi.fn(),
@@ -155,8 +156,20 @@ describe("rebuild resume snapshot repair", () => {
         .mockImplementation(resolveGatewayAuthority),
       vi.spyOn(gatewayRuntime, "recoverNamedGatewayRuntime").mockResolvedValue({
         recovered: true,
-        before: { state: "healthy_named", status: "", gatewayInfo: "", activeGateway: null },
-        after: { state: "healthy_named", status: "", gatewayInfo: "", activeGateway: null },
+        before: {
+          state: "healthy_named",
+          activeGateway: null,
+          diagnostic: "",
+          recoveryBlocked: false,
+          unavailable: false,
+        },
+        after: {
+          state: "healthy_named",
+          activeGateway: null,
+          diagnostic: "",
+          recoveryBlocked: false,
+          unavailable: false,
+        },
         attempted: false,
       }),
       vi.spyOn(sandboxList, "captureSandboxListWithGatewayRecovery").mockResolvedValue({
@@ -203,6 +216,10 @@ describe("rebuild resume snapshot repair", () => {
       } as never),
       vi.spyOn(registry, "updateSandbox").mockReturnValue(true),
       vi.spyOn(registry, "listSandboxes").mockReturnValue({ sandboxes: [] } as never),
+      vi.spyOn(mcpBridgeProvider, "getMcpProviderInspectionRuntimeSelection").mockReturnValue({
+        gatewayName: "nemoclaw",
+        workspace: "default",
+      }),
       vi.spyOn(rebuildRoutePreflight, "commitRebuildRoutePreflight").mockReturnValue({
         ok: true,
         receipt: {
@@ -225,7 +242,7 @@ describe("rebuild resume snapshot repair", () => {
         detected: false,
         sessions: [],
       }),
-      vi.spyOn(sandboxVersion, "checkAgentVersion").mockReturnValue({
+      vi.spyOn(sandboxVersion, "checkAgentVersion").mockResolvedValue({
         expectedVersion: "0.1.0",
         sandboxVersion: "0.0.1",
       } as never),

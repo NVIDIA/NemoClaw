@@ -677,12 +677,12 @@ describe("finalizationHandlerDeps.waitForSandboxControlPlaneReady", () => {
     vi.unstubAllEnvs();
   });
 
-  it("delegates timeout selection to the recovery readiness helper", () => {
+  it("delegates timeout selection to the recovery readiness helper", async () => {
     vi.stubEnv("NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS", "75");
     vi.stubEnv("NEMOCLAW_SANDBOX_READY_TIMEOUT", "180");
     let effectiveTimeoutSeconds: number | undefined;
     const waitForRecreatedSandboxOpenShellReady = vi.fn(
-      (_name: string, options: { timeoutSeconds?: number } = {}) => {
+      async (_name: string, options: { timeoutSeconds?: number } = {}) => {
         const requestedTimeoutSeconds = options.timeoutSeconds ?? 120;
         effectiveTimeoutSeconds = Number(
           process.env.NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS ?? requestedTimeoutSeconds,
@@ -695,7 +695,9 @@ describe("finalizationHandlerDeps.waitForSandboxControlPlaneReady", () => {
       waitForRecreatedSandboxOpenShellReady,
     });
 
-    expect(finalizationHandlerDeps.waitForSandboxControlPlaneReady("policy-box")).toBe(true);
+    await expect(
+      finalizationHandlerDeps.waitForSandboxControlPlaneReady("policy-box"),
+    ).resolves.toBe(true);
     expect(waitForRecreatedSandboxOpenShellReady).toHaveBeenCalledWith("policy-box");
     expect(effectiveTimeoutSeconds).toBe(75);
   });

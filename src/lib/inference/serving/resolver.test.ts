@@ -37,6 +37,7 @@ import type {
 const NOW = new Date("2026-08-02T18:00:00.000Z");
 const SOURCE_REVISION = "a".repeat(40);
 const N1X_VLLM_PRESET_ID = "vllm.n1x.single.qwen3-6-35b-a3b-nvfp4";
+const N1X_VLLM_MINIMUM_GPU_MEMORY_BYTES = 64_000_000_000;
 const LINUX_VLLM_PROFILES = [
   {
     presetId: "vllm.linux-amd64-nvidia.single.muse-glimmer-30b-nvfp4-w4a4",
@@ -220,6 +221,21 @@ function readinessReport(
   } as SystemReadinessReport;
 }
 
+function withGpuMemoryCapacity(
+  report: SystemReadinessReport,
+  memoryBytes: number,
+): SystemReadinessReport {
+  return {
+    ...report,
+    observations: report.observations.map((observation) =>
+      observation.id === "host.gpu.memory_total_bytes" ||
+      observation.id === "host.gpu.memory_per_device_bytes"
+        ? { ...observation, value: memoryBytes }
+        : observation,
+    ),
+  };
+}
+
 function readinessSources(): ManagedInferenceReadinessSource[] {
   return [
     { nodeId: "spark-head", report: readinessReport() },
@@ -272,9 +288,7 @@ function deferredN1xReadinessReport(
     ...report,
     capabilities: [
       ...report.capabilities.map((capability) =>
-        capability.id === "host.platform.n1x"
-          ? { ...capability, state: n1xState }
-          : capability,
+        capability.id === "host.platform.n1x" ? { ...capability, state: n1xState } : capability,
       ),
       { id: "host.platform.supported", state: "absent" as const },
     ],
@@ -314,9 +328,7 @@ function deferredN1xWithRemediableStorageReport(
             ? { ...capability, state: "present" as const }
             : capability,
       ),
-      ...(report.capabilities.some(
-        ({ id }) => id === "host.docker.storage_remediation_available",
-      )
+      ...(report.capabilities.some(({ id }) => id === "host.docker.storage_remediation_available")
         ? []
         : [{ id: "host.docker.storage_remediation_available", state: "present" as const }]),
     ],
@@ -469,32 +481,32 @@ describe("managed inference resolver", () => {
     },
   );
 
-  it.each([
-    "MUSE-GLIMMER-30B",
-    "INFERACT/MUSE-GLIMMER-30B-NVFP4-W4A4",
-  ])("matches documented model aliases case-insensitively: %s", (model) => {
-    const catalog = shippedCatalog();
-    const { presetId, recipeId } = LINUX_VLLM_PROFILES[0];
-    const preset = catalog.presets.find(({ metadata }) => metadata.id === presetId);
-    expect(preset).toBeDefined();
+  it.each(["MUSE-GLIMMER-30B", "INFERACT/MUSE-GLIMMER-30B-NVFP4-W4A4"])(
+    "matches documented model aliases case-insensitively: %s",
+    (model) => {
+      const catalog = shippedCatalog();
+      const { presetId, recipeId } = LINUX_VLLM_PROFILES[0];
+      const preset = catalog.presets.find(({ metadata }) => metadata.id === presetId);
+      expect(preset).toBeDefined();
 
-    expect(
-      resolveManagedInferenceServing(
-        {
-          readinessReports: [{ nodeId: "linux-host", report: readinessReport({}, preset!) }],
-          topologyQualifications: [],
-          intent: { provider: "vllm", vllmModel: model },
-          now: NOW,
-        },
-        catalog,
-      ),
-    ).toMatchObject({
-      outcome: "selected",
-      selection: "explicit",
-      preset: { metadata: { id: presetId } },
-      recipe: { metadata: { id: recipeId } },
-    });
-  });
+      expect(
+        resolveManagedInferenceServing(
+          {
+            readinessReports: [{ nodeId: "linux-host", report: readinessReport({}, preset!) }],
+            topologyQualifications: [],
+            intent: { provider: "vllm", vllmModel: model },
+            now: NOW,
+          },
+          catalog,
+        ),
+      ).toMatchObject({
+        outcome: "selected",
+        selection: "explicit",
+        preset: { metadata: { id: presetId } },
+        recipe: { metadata: { id: recipeId } },
+      });
+    },
+  );
 
   it.each(LINUX_VLLM_PROFILES)(
     "enforces the Linux amd64 $model GPU memory boundary (#9673)",
@@ -780,6 +792,47 @@ describe("managed inference resolver", () => {
     });
   });
 
+  it.each([false, true] as const)(
+    "reports the highest-priority runtime failure (explicit: %s)",
+    (explicit) => {
+      const { catalog: baseCatalog, secondRecipeId } = catalogWithSecondProfile({
+        firstPriority: 100,
+        secondPriority: 200,
+      });
+      const model = shippedCompiledRecipe(baseCatalog).spec.model;
+      const catalog: CompiledManagedInferenceCatalog = {
+        ...baseCatalog,
+        recipes: baseCatalog.recipes.map(
+          (recipe) =>
+            ({
+              ...recipe,
+              spec: {
+                ...recipe.spec,
+                model,
+                readiness: { ...recipe.spec.readiness, expectedModel: model.servedName },
+                runtime: {
+                  ...recipe.spec.runtime,
+                  minimumGpuMemoryBytes:
+                    recipe.metadata.id === secondRecipeId ? 700_000_000_000 : 600_000_000_000,
+                },
+              },
+            }) as CompiledManagedInferenceCatalog["recipes"][number],
+        ),
+      };
+
+      expect(
+        resolveManagedInferenceServing(
+          resolverInput(explicit ? { intent: { vllmModel: model.servedName } } : {}),
+          catalog,
+        ),
+      ).toMatchObject({
+        outcome: explicit ? "rejected" : "no-match",
+        message:
+          "spark-head: GPU memory capacity 500000000000 is below the recipe minimum 700000000000 bytes.",
+      });
+    },
+  );
+
   it("rejects equal-priority automatic matches as ambiguous", () => {
     const { catalog, secondPresetId } = catalogWithSecondProfile({
       firstPriority: 100,
@@ -1043,7 +1096,11 @@ describe("managed inference resolver", () => {
         resolverInput({ readinessReports: reports }),
         customizedCatalog,
       ),
-    ).toMatchObject({ outcome: "no-match", code: "requirements-not-met" });
+    ).toMatchObject({
+      outcome: "no-match",
+      code: "requirements-not-met",
+      message: "No automatic managed inference preset matched.",
+    });
   });
 
   it("returns an immutable topology snapshot", () => {
@@ -1188,9 +1245,13 @@ describe("managed inference resolver", () => {
   });
 
   it("selects the N1x managed-vLLM preset with explicit Deferred preview intent (#9902)", () => {
+    const report = withGpuMemoryCapacity(
+      deferredN1xReadinessReport(),
+      N1X_VLLM_MINIMUM_GPU_MEMORY_BYTES,
+    );
     expect(
       resolveManagedInferenceServing({
-        readinessReports: [{ nodeId: "n1x-host", report: deferredN1xReadinessReport() }],
+        readinessReports: [{ nodeId: "n1x-host", report }],
         topologyQualifications: [],
         intent: { provider: "vllm" },
         now: NOW,
@@ -1201,6 +1262,24 @@ describe("managed inference resolver", () => {
       recipe: {
         metadata: { id: "vllm.qwen3-6-35b-a3b-nvfp4.n1x-single.v1" },
       },
+    });
+  });
+
+  it("surfaces the N1x memory failure during automatic selection", () => {
+    const availableMemoryBytes = N1X_VLLM_MINIMUM_GPU_MEMORY_BYTES - 1;
+    const report = withGpuMemoryCapacity(deferredN1xReadinessReport(), availableMemoryBytes);
+
+    expect(
+      resolveManagedInferenceServing({
+        readinessReports: [{ nodeId: "n1x-host", report }],
+        topologyQualifications: [],
+        intent: { provider: "vllm" },
+        now: NOW,
+      }),
+    ).toMatchObject({
+      outcome: "no-match",
+      code: "requirements-not-met",
+      message: `n1x-host: GPU memory capacity ${String(availableMemoryBytes)} is below the recipe minimum ${String(N1X_VLLM_MINIMUM_GPU_MEMORY_BYTES)} bytes.`,
     });
   });
 

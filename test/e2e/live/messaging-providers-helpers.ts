@@ -521,6 +521,7 @@ export async function runSandboxNode(
   options: {
     artifactName: string;
     env?: Record<string, string>;
+    preserveSymlinks?: boolean;
     redactionValues: string[];
     sandboxName?: string;
     timeoutMs?: number;
@@ -543,6 +544,7 @@ export function buildSandboxNodeInvocation(
   options: {
     artifactName: string;
     env?: Record<string, string>;
+    preserveSymlinks?: boolean;
   },
 ): string[] {
   const environment = Object.entries(options.env ?? {}).map(([key, value]) => {
@@ -552,11 +554,12 @@ export function buildSandboxNodeInvocation(
     return `export ${key}=${shellQuote(value)}`;
   });
   const scriptName = `/tmp/nemoclaw-${options.artifactName.replace(/[^a-zA-Z0-9_.-]/g, "-")}.mjs`;
+  const nodeOptions = options.preserveSymlinks === false ? "" : " --preserve-symlinks";
   return buildSandboxShellInvocation(`
 set -eu
 ${environment.join("\n")}
 printf '%s' ${shellQuote(base64(source))} | base64 -d > ${shellQuote(scriptName)}
-node --preserve-symlinks ${shellQuote(scriptName)}
+node${nodeOptions} ${shellQuote(scriptName)}
 `);
 }
 

@@ -44,6 +44,13 @@ config:
   config_file: openclaw.json
   format: json
 
+# Static integration metadata only. OpenClaw remains the authority on which
+# skills are visible or active.
+skills:
+  writable_root: /sandbox/.openclaw/workspace/skills
+  list_command: [skills, list, --agent, main]
+  add_command: [skills, install, "{source}", --agent, main, --force]
+
 # ── State directories ──────────────────────────────────────────
 state_dirs:
   - agents

@@ -4,6 +4,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const phaseMocks = vi.hoisted(() => ({
+  clearHermesHandoff: vi.fn(),
   clearPolicyHandoff: vi.fn(),
   clearRecoveryBackup: vi.fn(),
   cleanupPolicySource: vi.fn(),
@@ -20,6 +21,12 @@ const phaseMocks = vi.hoisted(() => ({
   runPostRestore: vi.fn(),
   runPreflight: vi.fn(),
   runRestore: vi.fn(),
+  recordSandboxStopIntent: vi.fn(),
+}));
+
+vi.mock("../../state/registry", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../state/registry")>()),
+  recordSandboxStopIntent: phaseMocks.recordSandboxStopIntent,
 }));
 
 vi.mock("../../onboard/temp-files", async (importOriginal) => ({
@@ -60,6 +67,7 @@ vi.mock("./rebuild-recreate-journal", () => ({
 
 vi.mock("./rebuild-backup-phase", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./rebuild-backup-phase")>()),
+  clearHermesOperatorConfigHandoff: phaseMocks.clearHermesHandoff,
   runRebuildBackupPhase: phaseMocks.runBackup,
 }));
 
@@ -109,6 +117,9 @@ describe("Hermes accepted replacement recovery", () => {
     vi.clearAllMocks();
     vi.spyOn(console, "error").mockImplementation(() => {});
     vi.spyOn(console, "log").mockImplementation(() => {});
+    phaseMocks.clearHermesHandoff.mockImplementation((manifest) =>
+      Reflect.deleteProperty(manifest, "hermesOperatorConfigHandoff"),
+    );
     phaseMocks.clearPolicyHandoff.mockImplementation((manifest, options) =>
       options?.retainRetirement === true && manifest.rebuildPolicyHandoff
         ? Boolean(Object.assign(manifest.rebuildPolicyHandoff, { retired: true }))
@@ -123,6 +134,7 @@ describe("Hermes accepted replacement recovery", () => {
     phaseMocks.isRecoveryCleanupOnly.mockReturnValue(false);
     phaseMocks.markRecoveryCleanupOnly.mockImplementation(() => undefined);
     phaseMocks.runRestore.mockReturnValue({ restoreSucceeded: true });
+    phaseMocks.recordSandboxStopIntent.mockReturnValue(true);
     phaseMocks.runPostRestore.mockResolvedValue({ mutableConfigPermissionsVerified: true });
     phaseMocks.retireRemovedImmutabilityStateRecord.mockReturnValue(true);
     phaseMocks.enforceRemovedImmutabilityMigrationBoundary.mockReturnValue({
@@ -193,7 +205,7 @@ describe("Hermes accepted replacement recovery", () => {
     vi.restoreAllMocks();
   });
 
-  it("recovers a stranded cron gate without a current gate plan before accepting the replacement (#7806)", async () => {
+  it("restores accepted replacement state before reopening cron dispatch (#7806)", async () => {
     const events: string[] = [];
     phaseMocks.recoverCronRestore.mockImplementation(() => {
       events.push("recover");
@@ -223,9 +235,9 @@ describe("Hermes accepted replacement recovery", () => {
     ).resolves.toBeUndefined();
 
     expect(events).toEqual([
-      "recover",
       "restore",
       "post-restore",
+      "recover",
       "retire-removed-immutability",
       "clear-recovery",
       "complete",
@@ -245,10 +257,37 @@ describe("Hermes accepted replacement recovery", () => {
       "alpha",
       "mutable-rebuild",
     );
+    expect(phaseMocks.recordSandboxStopIntent).toHaveBeenCalledWith(
+      "alpha",
+      false,
+      expect.any(Function),
+    );
     expect(phaseMocks.clearPolicyHandoff).toHaveBeenCalledTimes(2);
     expect(phaseMocks.cleanupPolicySource).not.toHaveBeenCalled();
     expect(console.log).toHaveBeenCalledWith("  Recovered the accepted replacement for 'alpha'.");
     expect(console.log).toHaveBeenCalledWith(`  Backup is preserved at: ${recoveryBackupPath}`);
+  });
+
+  it("retries intentional-stop cleanup before accepting recovered replacement", async () => {
+    phaseMocks.recordSandboxStopIntent.mockReturnValueOnce(false).mockReturnValueOnce(true);
+
+    await expect(
+      rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).resolves.toBeUndefined();
+
+    expect(bail).toHaveBeenCalledWith(
+      "Sandbox 'alpha' was recovered, but NemoClaw could not clear its intentional-stop record. Retry 'nemoclaw alpha rebuild --yes' before another lifecycle command.",
+    );
+    expect(phaseMocks.runRestore).not.toHaveBeenCalled();
+    expect(completeAcceptedTarget).not.toHaveBeenCalled();
+
+    await expect(
+      rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).resolves.toBeUndefined();
+
+    expect(phaseMocks.recordSandboxStopIntent).toHaveBeenCalledTimes(2);
+    expect(phaseMocks.runRestore).toHaveBeenCalledOnce();
+    expect(completeAcceptedTarget).toHaveBeenCalledOnce();
   });
 
   it("retains removed Shields state when the rebuilt Hermes mutable posture is unverified", async () => {
@@ -340,6 +379,57 @@ describe("Hermes accepted replacement recovery", () => {
     expect(recoveryManifest).not.toHaveProperty("rebuildPolicyHandoff");
     expect(completeAcceptedTarget).toHaveBeenCalledOnce();
     expect(console.log).toHaveBeenCalledWith("  Completed retained recovery cleanup for 'alpha'.");
+  });
+
+  it("retries a retired Hermes config handoff as cleanup without restoring twice", async () => {
+    const recoveryManifest = {
+      backupPath: recoveryBackupPath,
+      timestamp: "2026-08-28T00-00-00-000Z",
+      agentType: "hermes",
+      hermesOperatorConfigHandoff: {
+        file: `hermes-operator-config-handoff.${"c".repeat(64)}.json`,
+        sha256: "c".repeat(64),
+      },
+      rebuildPolicyHandoff: { file: "recovery.yaml", sha256: "b".repeat(64) },
+    };
+    phaseMocks.findRecoveryBackup.mockReturnValue(recoveryManifest);
+    phaseMocks.clearHermesHandoff.mockImplementationOnce((manifest) => {
+      Object.assign(manifest.hermesOperatorConfigHandoff, { retired: true });
+      return false;
+    });
+
+    await expect(
+      rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).resolves.toBeUndefined();
+
+    expect(recoveryManifest.hermesOperatorConfigHandoff).toMatchObject({ retired: true });
+    expect(phaseMocks.runRestore).toHaveBeenCalledOnce();
+    expect(completeAcceptedTarget).not.toHaveBeenCalled();
+    expect(bail).toHaveBeenCalledWith(
+      "The Hermes operator config handoff could not be retired after recovery.",
+    );
+
+    const firstPreflight = await phaseMocks.runPreflight.mock.results[0]!.value;
+    phaseMocks.runPreflight.mockResolvedValue({
+      ...firstPreflight,
+      recoveryManifest,
+    });
+    phaseMocks.clearHermesHandoff.mockImplementation((manifest) =>
+      Reflect.deleteProperty(manifest, "hermesOperatorConfigHandoff"),
+    );
+
+    await expect(
+      rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).resolves.toBeUndefined();
+
+    expect(phaseMocks.runBackup).toHaveBeenCalledOnce();
+    expect(phaseMocks.runRestore).toHaveBeenCalledOnce();
+    expect(phaseMocks.runPostRestore).toHaveBeenCalledOnce();
+    expect(phaseMocks.runDestroy).not.toHaveBeenCalled();
+    expect(recoveryManifest).not.toHaveProperty("hermesOperatorConfigHandoff");
+    expect(recoveryManifest).not.toHaveProperty("rebuildPolicyHandoff");
+    expect(phaseMocks.clearRecoveryBackup).toHaveBeenCalledOnce();
+    expect(completeAcceptedTarget).toHaveBeenCalledOnce();
   });
 
   it("retains cleanup authority when final policy-handoff cleanup fails", async () => {

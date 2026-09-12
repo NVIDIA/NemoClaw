@@ -8,6 +8,8 @@ import {
   stripAnsi,
 } from "../adapters/openshell/client";
 import { captureOpenshell } from "../adapters/openshell/runtime";
+import { buildSelectedOpenShellSubprocessEnv } from "../adapters/openshell/command-argv";
+import type { OpenShellRuntimeSelection } from "../adapters/openshell/runtime-selection";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../adapters/openshell/timeouts";
 import { parseSandboxPhase } from "../state/gateway";
 import {
@@ -50,6 +52,9 @@ export function isExplicitMissingSandboxGatewayOutput(
   sandboxName: string,
 ): boolean {
   const clean = stripAnsi(String(output)).replace(/\r/g, "").trim();
+  // Miette wraps long OpenShell 0.0.116 diagnostics onto a `│` continuation
+  // line. Collapse only that renderer-owned boundary before exact matching.
+  const structured = clean.replace(/\n\s*│\s*/g, " ");
   const exactNoSpec =
     /^(?:error:\s*)?status:\s*Internal,\s*message:\s*["']sandbox has no spec["'](?:,\s*details:\s*\[\])?(?:,\s*metadata:\s*MetadataMap\s*\{\s*\})?$/i;
   if (exactNoSpec.test(clean)) return true;
@@ -58,10 +63,10 @@ export function isExplicitMissingSandboxGatewayOutput(
   // transport diagnostics remain ambiguous.
   const exactStructuredNotFound =
     /^(?:error:\s*)?(?:×\s*)?code:\s*["']Some requested entity was not found["']\s*,\s*message:\s*["']sandbox not found["']$/i;
-  if (exactStructuredNotFound.test(clean)) return true;
+  if (exactStructuredNotFound.test(structured)) return true;
 
   const escapedName = sandboxName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const namedSandbox = `(?:['\"]${escapedName}['\"]|${escapedName})`;
+  const namedSandbox = `(?:['"]${escapedName}['"]|${escapedName})`;
   return (
     new RegExp(
       `^(?:error:\\s*)?sandbox\\s+${namedSandbox}\\s+(?:(?:is\\s+)?not\\s+(?:found|present)|does\\s+not\\s+exist)[.!]?$`,
@@ -97,12 +102,24 @@ export function observeSandboxPresenceOnGateway(
 export function observeSandboxOnGateway(
   target: SandboxRecreateTarget,
   capture: SandboxRecreateCapture = captureOpenshell,
+  runtimeSelection?: OpenShellRuntimeSelection,
 ): SandboxRecreateObservation {
+  if (runtimeSelection && runtimeSelection.gatewayName !== target.gatewayName) {
+    throw new Error(
+      `Cannot journal sandbox '${target.sandboxName}' replacement: selected gateway does not match the recorded target.`,
+    );
+  }
   const probe = capture(["sandbox", "get", "-g", target.gatewayName, target.sandboxName], {
     ignoreError: true,
     includeStderr: true,
     includeStreams: true,
     timeout: OPENSHELL_PROBE_TIMEOUT_MS,
+    ...(runtimeSelection
+      ? {
+          env: buildSelectedOpenShellSubprocessEnv(runtimeSelection),
+          replaceEnv: true,
+        }
+      : {}),
   });
   const stdout = String(probe.stdout ?? (probe.status === 0 ? probe.output : "")).trim();
   const combined = `${stdout}\n${String(probe.stderr ?? probe.output ?? "")}`.trim();

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { ChildProcess } from "node:child_process";
-import { spawnSync } from "node:child_process";
+import { execFile, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -156,12 +156,24 @@ export function run(args: string): CliRunResult {
   return runWithEnv(args);
 }
 
+export function runAsync(args: string): Promise<CliRunResult> {
+  return runWithEnvAsync(args);
+}
+
 export function runWithEnv(
   args: string,
   env: Record<string, string | undefined> = {},
   timeout: number = execTimeout(),
 ): CliRunResult {
   return runWithEnvInternal(args, env, timeout);
+}
+
+export function runWithEnvAsync(
+  args: string,
+  env: Record<string, string | undefined> = {},
+  timeout: number = execTimeout(),
+): Promise<CliRunResult> {
+  return runWithEnvInternalAsync(args, env, timeout);
 }
 
 export function runWithInput(
@@ -212,6 +224,51 @@ function runWithEnvInternal(
       return { code, out: mergeStderrOnSuccess ? `${stdout}${stderr}` : stdout };
     }
     return { code, out: `${stdout}${stderr}${errorOutput}` };
+  } finally {
+    if (implicitHome) fs.rmSync(implicitHome, { force: true, recursive: true });
+  }
+}
+
+async function runWithEnvInternalAsync(
+  args: string,
+  env: Record<string, string | undefined>,
+  timeout: number,
+): Promise<CliRunResult> {
+  const parsedArgs = splitCliArgs(args);
+  const mergeStderrOnSuccess = parsedArgs.includes("2>&1");
+  const cliArgs = parsedArgs.filter((token) => token !== "2>&1");
+  const implicitHome = Object.hasOwn(env, "HOME")
+    ? null
+    : fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-test-"));
+  try {
+    return await new Promise<CliRunResult>((resolve) => {
+      const child = execFile(
+        process.execPath,
+        [CLI, ...cliArgs],
+        {
+          encoding: "utf-8",
+          timeout,
+          env: {
+            ...process.env,
+            ...(implicitHome ? { HOME: implicitHome } : {}),
+            NEMOCLAW_HEALTH_POLL_COUNT: "1",
+            NEMOCLAW_HEALTH_POLL_INTERVAL: "0",
+            NEMOCLAW_GATEWAY_RECOVERY_SETTLE_SECONDS: "0",
+            ...env,
+          },
+        },
+        (error, stdout, stderr) => {
+          const code = typeof error?.code === "number" ? error.code : error ? 1 : 0;
+          if (code === 0) {
+            resolve({ code, out: mergeStderrOnSuccess ? `${stdout}${stderr}` : stdout });
+            return;
+          }
+          const errorOutput = error && typeof error.code !== "number" ? String(error) : "";
+          resolve({ code, out: `${stdout}${stderr}${errorOutput}` });
+        },
+      );
+      child.stdin?.end();
+    });
   } finally {
     if (implicitHome) fs.rmSync(implicitHome, { force: true, recursive: true });
   }
@@ -319,7 +376,12 @@ export function writeHealthyDockerStub(localBin: string): void {
  * stub. The general sandbox transport writes an exec marker before the HTTP
  * response. The managed DCode launcher returns the HTTP response directly.
  */
-export function inferenceInvocationStubLines(httpStatus = "200", exitCode = 0): string[] {
+export function inferenceInvocationStubLines(
+  httpStatus = "200",
+  exitCode = 0,
+  /** Extra probe stdout after the status line, e.g. a failure classification token. */
+  extraStdout: readonly string[] = [],
+): string[] {
   const bodyLines =
     new Map<number, string[]>([
       [
@@ -350,6 +412,7 @@ export function inferenceInvocationStubLines(httpStatus = "200", exitCode = 0): 
     "      esac",
     `      printf '%s\\n' ${JSON.stringify(httpStatus)}`,
     ...bodyLines,
+    ...extraStdout.map((line) => `      printf '%s\\n' ${JSON.stringify(line)}`),
     `      exit ${String(exitCode)}`,
     "      ;;",
     "  esac",
@@ -515,7 +578,11 @@ export function createDebugCommandTestEnv(
   fs.mkdirSync(localBin, { recursive: true });
   // Register the env-sourced sandbox plus any extra names supplied via the
   // --sandbox flag so the validation gate accepts them.
-  writeSandboxRegistry(home, sandboxName, options.gatewayPort ? { gatewayPort: options.gatewayPort } : {});
+  writeSandboxRegistry(
+    home,
+    sandboxName,
+    options.gatewayPort ? { gatewayPort: options.gatewayPort } : {},
+  );
   if (options.extraSandboxNames && options.extraSandboxNames.length > 0) {
     const registryPath = path.join(home, ".nemoclaw", "sandboxes.json");
     const current = JSON.parse(fs.readFileSync(registryPath, "utf-8")) as {

@@ -58,6 +58,12 @@ function exactSha(value: string | undefined, name: string): string {
   return SHA.test(sha) ? sha : fail(`${name} must be a full commit SHA`);
 }
 
+function previousSha(env: NodeJS.ProcessEnv): string {
+  return env.POST_MERGE_DOCS_PREVIOUS_SHA
+    ? exactSha(env.POST_MERGE_DOCS_PREVIOUS_SHA, "POST_MERGE_DOCS_PREVIOUS_SHA")
+    : "";
+}
+
 function git(repository: string, args: readonly string[]): string {
   return execFileSync("git", ["-C", repository, ...args], {
     encoding: "utf8",
@@ -134,10 +140,15 @@ function prompt(env: NodeJS.ProcessEnv, current: Phase): string {
   const main = exactSha(env.GITHUB_SHA, "GITHUB_SHA");
   const rules =
     "Read AGENTS.md, WRITING.md, docs/AGENTS.md, docs/CONTRIBUTING.md, .agents/skills/nemoclaw-contributor-update-docs/SKILL.md, and .agents/skills/_shared/documentation-writing-review.md.";
+  const previous = previousSha(env);
+  const continuity = previous
+    ? `The staged changes include the draft at ${previous} merged with main. Preserve its documentation. Check every revision or removal against current source and tests.`
+    : "";
   if (current === "review") {
     return [
       `Independently review documentation coverage for ${range}..${main}.`,
       rules,
+      continuity,
       "Inspect the committed range and staged candidate. Do not edit the repository.",
       "Approve only if it completely and accurately covers user-visible changes, follows DORI and writing rules, and makes no unsupported claim.",
       "An empty patch is valid only when no documentation update is needed.",
@@ -149,6 +160,8 @@ function prompt(env: NodeJS.ProcessEnv, current: Phase): string {
   return [
     `Update NemoClaw documentation for committed changes from ${tag} (${range}) through ${main}.`,
     rules,
+    continuity,
+    "Extend the staged documentation changes. Do not regenerate the draft from scratch.",
     `Inspect git history and git diff ${range}..${main}, then verify behavior in source and tests.`,
     "Update only public docs/ files, fern/docs.yml, or files under fern/assets/.",
     "Do not change fern/fern.config.json, docs/_build, dependencies, or code.",
@@ -159,7 +172,17 @@ function prompt(env: NodeJS.ProcessEnv, current: Phase): string {
 function prepare(env: NodeJS.ProcessEnv): void {
   const current = phase(env);
   const repository = prepareRepository(env);
-  if (current === "review") applyPatch(repository, patchPath(env));
+  const main = exactSha(env.GITHUB_SHA, "GITHUB_SHA");
+  const previous = previousSha(env);
+  if (previous) {
+    const merged = git(repository, ["merge-tree", "--write-tree", main, previous]);
+    git(repository, ["read-tree", "--reset", "-u", exactSha(merged, "merged draft tree")]);
+    validateCandidate(repository);
+  }
+  if (current === "review") {
+    git(repository, ["read-tree", "--reset", "-u", main]);
+    applyPatch(repository, patchPath(env));
+  }
   const output = path.join(
     required(env.POST_MERGE_DOCS_WORKDIR, "POST_MERGE_DOCS_WORKDIR"),
     "output",
@@ -316,10 +339,12 @@ function exportArtifact(env: NodeJS.ProcessEnv, tools: OpenShellTools): void {
     const patch = download(env, PATCH_FILE, tools);
     const file = path.join(artifact, PATCH_FILE);
     write(file, patch);
-    applyPatch(
-      path.join(required(env.POST_MERGE_DOCS_WORKDIR, "POST_MERGE_DOCS_WORKDIR"), "repo"),
-      file,
+    const repository = path.join(
+      required(env.POST_MERGE_DOCS_WORKDIR, "POST_MERGE_DOCS_WORKDIR"),
+      "repo",
     );
+    git(repository, ["read-tree", "--reset", "-u", exactSha(env.GITHUB_SHA, "GITHUB_SHA")]);
+    applyPatch(repository, file);
     return;
   }
   const decision = download(env, "decision.json", tools).toString("utf8").trim();
@@ -337,13 +362,14 @@ function exportArtifact(env: NodeJS.ProcessEnv, tools: OpenShellTools): void {
       mainSha: exactSha(env.GITHUB_SHA, "GITHUB_SHA"),
       outcome: "approved",
       patchSha256: createHash("sha256").update(patch).digest("hex"),
+      previousSha: previousSha(env),
       rangeStartTag: required(env.RANGE_START_TAG, "RANGE_START_TAG"),
       repository: required(env.GITHUB_REPOSITORY, "GITHUB_REPOSITORY"),
       targetReleaseTag: nextPatchReleaseTag(
         required(env.RANGE_START_TAG, "RANGE_START_TAG"),
         "RANGE_START_TAG cannot produce a release target",
       ),
-      version: 2,
+      version: 3,
     })}\n`,
   );
 }

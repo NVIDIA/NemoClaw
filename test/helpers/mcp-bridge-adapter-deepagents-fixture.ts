@@ -25,8 +25,11 @@ export interface DeepAgentsConfigCommandResult {
   stdout: string;
   stderr: string;
   configExists: boolean;
+  configIsRegularFile: boolean;
+  configMode: number | null;
   config: Record<string, unknown> | null;
   configText: string | null;
+  managedDirectoryEntries: string[] | null;
   legacyConfigExists: boolean;
   legacyConfig: Record<string, unknown> | null;
   legacyConfigText: string | null;
@@ -35,6 +38,7 @@ export interface DeepAgentsConfigCommandResult {
 }
 
 export interface DeepAgentsManagedFixtureOptions {
+  danglingSymlink?: boolean;
   directory?: boolean;
   fifo?: boolean;
   mode?: number;
@@ -67,9 +71,11 @@ export function runDeepAgentsConfigCommand(
       { mode },
     );
   };
-  const managedInitialPath = managedOptions.symlink ? managedSymlinkTarget : configPath;
+  const usesManagedSymlink = managedOptions.symlink || managedOptions.danglingSymlink;
+  const managedInitialPath = usesManagedSymlink ? managedSymlinkTarget : configPath;
   if (managedOptions.directory) {
     fs.mkdirSync(configPath, { recursive: true });
+    fs.writeFileSync(path.join(configPath, "preserved.txt"), "preserved\n");
   } else if (managedOptions.fifo) {
     fs.mkdirSync(path.dirname(configPath), { recursive: true });
     const fifo = spawnSync("mkfifo", [configPath], { encoding: "utf-8", timeout: 5000 });
@@ -78,7 +84,7 @@ export function runDeepAgentsConfigCommand(
   } else {
     initializeConfig(managedInitialPath, initialConfig, managedOptions.mode);
     if (initialConfig !== undefined) fs.chmodSync(managedInitialPath, managedOptions.mode ?? 0o600);
-    if (managedOptions.symlink) {
+    if (usesManagedSymlink) {
       fs.mkdirSync(path.dirname(configPath), { recursive: true });
       fs.symlinkSync(managedSymlinkTarget, configPath);
     }
@@ -107,8 +113,12 @@ export function runDeepAgentsConfigCommand(
     });
     const configExists = fs.existsSync(configPath);
     const legacyConfigExists = fs.existsSync(legacyConfigPath);
-    const configIsRegularFile = configExists && fs.lstatSync(configPath).isFile();
+    const configMetadata = configExists ? fs.lstatSync(configPath) : null;
+    const configIsRegularFile = configMetadata?.isFile() === true;
     const configText = configIsRegularFile ? fs.readFileSync(configPath, "utf-8") : null;
+    const managedDirectoryEntries = configMetadata?.isDirectory()
+      ? fs.readdirSync(configPath).sort()
+      : null;
     const managedSymlinkTargetExists = fs.existsSync(managedSymlinkTarget);
     const managedSymlinkTargetText = managedSymlinkTargetExists
       ? fs.readFileSync(managedSymlinkTarget, "utf-8")
@@ -119,8 +129,11 @@ export function runDeepAgentsConfigCommand(
       stdout: result.stdout,
       stderr: result.stderr,
       configExists,
+      configIsRegularFile,
+      configMode: configMetadata ? configMetadata.mode & 0o777 : null,
       config: configText ? (JSON.parse(configText) as Record<string, unknown>) : null,
       configText,
+      managedDirectoryEntries,
       legacyConfigExists,
       legacyConfig: legacyConfigText
         ? (JSON.parse(legacyConfigText) as Record<string, unknown>)

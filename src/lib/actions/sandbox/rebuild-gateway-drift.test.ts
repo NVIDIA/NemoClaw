@@ -8,6 +8,7 @@ import * as openshellRuntime from "../../adapters/openshell/runtime";
 import * as gatewayRuntime from "../../gateway-runtime-action";
 import * as dockerDriverRecovery from "../../onboard/docker-driver-sandbox-recovery";
 import * as registry from "../../state/registry";
+import * as crossPortRegistry from "../../state/registry/cross-port";
 import * as registryPersistence from "../../state/registry/persistence";
 import { type RebuildSandboxEntry, resolveRebuildLiveState } from "./rebuild-flow-helpers";
 import {
@@ -79,11 +80,23 @@ describe("rebuild gateway drift preflight", () => {
       } as never);
     getNamedGatewayLifecycleStateSpy = vi
       .spyOn(gatewayRuntime, "getNamedGatewayLifecycleState")
-      .mockReturnValue({ state: "healthy_named", activeGateway: "nemoclaw", status: "" } as never);
+      .mockResolvedValue({
+        state: "healthy_named",
+        activeGateway: "nemoclaw",
+        status: "",
+      } as never);
     recoverDockerDriverSandboxSpy = vi
       .spyOn(dockerDriverRecovery, "recoverDockerDriverSandbox")
       .mockReturnValue({ recovered: false, via: null });
     vi.spyOn(registry, "getSandbox").mockReturnValue(makeSandboxEntry() as never);
+    vi.spyOn(crossPortRegistry, "findSandboxAcrossGatewayRoots").mockImplementation(
+      (name: string) => {
+        const entry = registry.getSandbox(name);
+        return entry
+          ? { entry, gatewayPort: entry.gatewayPort ?? null, registryFile: "/test/sandboxes.json" }
+          : null;
+      },
+    );
     vi.spyOn(registryPersistence, "load").mockReturnValue({
       sandboxes: { alpha: makeSandboxEntry() },
     } as never);
@@ -117,6 +130,22 @@ describe("rebuild gateway drift preflight", () => {
     expect(confirmIntent).not.toHaveBeenCalled();
     expect(captureOpenshellSpy).not.toHaveBeenCalled();
     expect(recoverNamedGatewayRuntimeSpy).not.toHaveBeenCalled();
+  });
+
+  it("binds gateway schema preflight to the frozen runtime target (#10514)", () => {
+    const runtimeSelection = {
+      gatewayName: "nemoclaw",
+      localTlsDir: "/authority/tls",
+      workspace: "default",
+    };
+
+    expect(
+      checkRebuildGatewaySchemaPreflight("alpha", makeSandboxEntry(), bail, runtimeSelection),
+    ).toBe(true);
+    expect(gatewayDrift.detectOpenShellStateRpcPreflightIssue).toHaveBeenCalledWith({
+      gatewayName: "nemoclaw",
+      runtimeSelection,
+    });
   });
 
   it("prints the safe-abort diagnostic before bailing on gateway schema drift (#7794)", () => {
@@ -156,7 +185,7 @@ describe("rebuild gateway drift preflight", () => {
       captureOpenshellSpy
         .mockReturnValueOnce({ status: 0, output: "" })
         .mockReturnValueOnce({ status: 1, output: "Error:   × Not Found: sandbox not found" });
-      getNamedGatewayLifecycleStateSpy.mockReturnValue({
+      getNamedGatewayLifecycleStateSpy.mockResolvedValue({
         state: "connected_other",
         activeGateway,
         status: `Gateway: ${activeGateway}\nStatus: Connected`,
@@ -204,7 +233,7 @@ describe("rebuild gateway drift preflight", () => {
       captureOpenshellSpy
         .mockReturnValueOnce({ status: 0, output: "beta Ready" })
         .mockReturnValueOnce({ status: 1, output: "Error:   × Not Found: sandbox not found" });
-      getNamedGatewayLifecycleStateSpy.mockReturnValue({
+      getNamedGatewayLifecycleStateSpy.mockResolvedValue({
         state: "healthy_named",
         activeGateway: gatewayName,
         status: `Gateway: ${gatewayName}\nStatus: Connected`,

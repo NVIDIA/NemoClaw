@@ -28,6 +28,37 @@ export function removeSandboxUnlessSessionReservation(
   registry.removeSandbox(sandboxName);
 }
 
+/**
+ * Release a route-only reservation that no live onboarding session owns.
+ *
+ * `reserveSandboxInferenceRoute` refuses a pending reservation whose
+ * `reservationSessionId` differs from the caller's and reports it as belonging
+ * to "another onboarding session". A reservation left behind by a run that
+ * never reached sandbox creation carries a session id just like a live one, so
+ * that field alone cannot tell the two apart, and `onboard --fresh` failed at
+ * the inference step naming a session that no longer exists (#11051). Nothing
+ * released it earlier: `removeSandboxUnlessSessionReservation` runs at sandbox
+ * creation, one step after the reservation is written.
+ *
+ * The onboard lock is the mutual exclusion between onboarding runs. While this
+ * process holds it no other session can be reserving against this gateway, so
+ * a foreign-session route-only row is abandoned rather than contended.
+ *
+ * The scope is deliberately narrow. Only a row with no `createdAt` is
+ * considered, `removeSandboxRouteReservationIfCurrent` refuses one carrying a
+ * verified create checkpoint, and its removal is an exact compare-and-delete of
+ * the observed row, so a reservation that gains sandbox authority between the
+ * read and the write survives.
+ */
+export function releaseAbandonedRouteReservation(sandboxName: string): boolean {
+  const entry = registry.getSandbox(sandboxName);
+  if (!entry || !registry.isRouteOnlySandboxReservation(entry)) return false;
+  const session = onboardSession.loadSession();
+  if (!session || !onboardSession.isOnboardLockHeldByCurrentProcess()) return false;
+  if (registry.isPendingReservationForSession(entry, session.sessionId)) return false;
+  return registry.removeSandboxRouteReservationIfCurrent(entry);
+}
+
 export interface SandboxLifecycleDeps {
   runCaptureOpenshell(args: string[], opts?: Record<string, unknown>): string | null;
   getGatewayName(): string;

@@ -6,6 +6,8 @@ import { accessSync, constants } from "node:fs";
 
 import { buildSubprocessEnv, isSubprocessEnvNameAllowed } from "../../subprocess-env";
 
+export { buildSubprocessEnv as buildOpenShellCommandBaseEnv };
+
 export interface ResolveOpenshellOptions {
   /** Mock result for `command -v` (undefined = run real command). */
   commandVResult?: string | null;
@@ -32,11 +34,7 @@ export function openshellNotFoundDiagnosticLines(
   if (sourceEnv.HOME?.startsWith("/")) {
     checked.push(`${sourceEnv.HOME}/.local/bin/openshell`);
   }
-  checked.push(
-    "/opt/homebrew/bin/openshell",
-    "/usr/local/bin/openshell",
-    "/usr/bin/openshell",
-  );
+  checked.push("/opt/homebrew/bin/openshell", "/usr/local/bin/openshell", "/usr/bin/openshell");
   return [
     "  openshell binary not found. Checked:",
     ...checked.map((location) => `    - ${location}`),

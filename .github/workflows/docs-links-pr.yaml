@@ -17,6 +17,7 @@ permissions:
 
 jobs:
   markdown-links:
+    name: Docs / Check changed Markdown links
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

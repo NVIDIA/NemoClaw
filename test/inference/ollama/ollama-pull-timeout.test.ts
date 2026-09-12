@@ -58,6 +58,15 @@ const { PassThrough } = require("stream");
 const childProcess = require("child_process");
 const localInference = require(${localInferencePath});
 
+localInference.prepareOllamaApiExecution = (command, host, options = {}) => ({
+  command:
+    command[0] === "curl"
+      ? localInference.getOllamaApiCommand(command.slice(1), host)
+      : [...command],
+  env: options.env,
+  cleanup() {},
+});
+
 let captured = null;
 childProcess.spawn = (cmd, args) => {
   captured = { cmd, args };

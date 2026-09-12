@@ -212,10 +212,7 @@ function createPlan(
 ): { plan: Record<string, string>; result: ReturnType<typeof spawnSync> } {
   const result = runScript(
     fixture.work,
-    [
-      "node", "--experimental-strip-types", "--no-warnings", planScriptPath,
-      "--version", version, "--output", planPath,
-    ],
+    ["node", "--no-warnings", planScriptPath, "--version", version, "--output", planPath],
     { NEMOCLAW_RELEASE_ALLOW_NON_CANONICAL: "1" },
   );
 
@@ -227,13 +224,20 @@ function createPlan(
     previousTagCommit: remoteCommit(fixture, "refs/tags/v0.0.1"),
     nextTag: version,
     originMainCommit: releaseCommit,
-    candidateCommit: releaseCommit, candidateSelection: "current-main",
+    candidateCommit: releaseCommit,
+    candidateSelection: "current-main",
     historicalCandidateException: "None",
   });
   expect(plan.originMainHeadline).toMatch(/^[0-9a-f]+ planned release commit$/u);
   expect(Object.keys(plan).sort()).toEqual([
-    "candidateCommit", "candidateSelection", "historicalCandidateException", "nextTag",
-    "originMainCommit", "originMainHeadline", "previousTag", "previousTagCommit",
+    "candidateCommit",
+    "candidateSelection",
+    "historicalCandidateException",
+    "nextTag",
+    "originMainCommit",
+    "originMainHeadline",
+    "previousTag",
+    "previousTagCommit",
     "previousTagObject",
   ]);
   return { plan, result };
@@ -368,48 +372,22 @@ describe("release-latest-tag.sh", () => {
 
     const missing = runScript(
       fixture.work,
-      ["node", "--experimental-strip-types", "--no-warnings", planScriptPath, "--output", planPath],
+      ["node", "--no-warnings", planScriptPath, "--output", planPath],
       { NEMOCLAW_RELEASE_ALLOW_NON_CANONICAL: "1" },
     );
     const derived = runScript(
       fixture.work,
-      [
-        "node",
-        "--experimental-strip-types",
-        "--no-warnings",
-        planScriptPath,
-        "--bump",
-        "patch",
-        "--output",
-        planPath,
-      ],
+      ["node", "--no-warnings", planScriptPath, "--bump", "patch", "--output", planPath],
       { NEMOCLAW_RELEASE_ALLOW_NON_CANONICAL: "1" },
     );
     const leadingZero = runScript(
       fixture.work,
-      [
-        "node",
-        "--experimental-strip-types",
-        "--no-warnings",
-        planScriptPath,
-        "--version",
-        "v0.01.0",
-        "--output",
-        planPath,
-      ],
+      ["node", "--no-warnings", planScriptPath, "--version", "v0.01.0", "--output", planPath],
       { NEMOCLAW_RELEASE_ALLOW_NON_CANONICAL: "1" },
     );
     const missingOutput = runScript(
       fixture.work,
-      [
-        "node",
-        "--experimental-strip-types",
-        "--no-warnings",
-        planScriptPath,
-        "--version",
-        "v0.0.2",
-        "--output",
-      ],
+      ["node", "--no-warnings", planScriptPath, "--version", "v0.0.2", "--output"],
       { NEMOCLAW_RELEASE_ALLOW_NON_CANONICAL: "1" },
     );
 
@@ -437,16 +415,7 @@ describe("release-latest-tag.sh", () => {
 
     const result = runScript(
       fixture.work,
-      [
-        "node",
-        "--experimental-strip-types",
-        "--no-warnings",
-        planScriptPath,
-        "--version",
-        "v0.0.2",
-        "--output",
-        planPath,
-      ],
+      ["node", "--no-warnings", planScriptPath, "--version", "v0.0.2", "--output", planPath],
       { NEMOCLAW_RELEASE_ALLOW_NON_CANONICAL: "1" },
     );
 
@@ -469,7 +438,6 @@ describe("release-latest-tag.sh", () => {
       fixture.work,
       [
         "node",
-        "--experimental-strip-types",
         "--no-warnings",
         planScriptPath,
         "--version",
@@ -507,16 +475,7 @@ describe("release-latest-tag.sh", () => {
 
     const result = runScript(
       fixture.work,
-      [
-        "node",
-        "--experimental-strip-types",
-        "--no-warnings",
-        planScriptPath,
-        "--version",
-        "v0.0.2",
-        "--output",
-        planPath,
-      ],
+      ["node", "--no-warnings", planScriptPath, "--version", "v0.0.2", "--output", planPath],
       { NEMOCLAW_RELEASE_ALLOW_NON_CANONICAL: "1" },
     );
 
@@ -580,16 +539,7 @@ describe("release-latest-tag.sh", () => {
     const planPath = path.join(fixture.root, "release", "plan.json");
     const result = runScript(
       fixture.work,
-      [
-        "node",
-        "--experimental-strip-types",
-        "--no-warnings",
-        planScriptPath,
-        "--version",
-        nextTag,
-        "--output",
-        planPath,
-      ],
+      ["node", "--no-warnings", planScriptPath, "--version", nextTag, "--output", planPath],
       { NEMOCLAW_RELEASE_ALLOW_NON_CANONICAL: "1" },
     );
     const plan = readJson(planPath) as Record<string, string>;
@@ -1401,16 +1351,7 @@ describe("release-latest-tag.sh", () => {
 
     const result = runScript(
       fixture.work,
-      [
-        "node",
-        "--experimental-strip-types",
-        "--no-warnings",
-        planScriptPath,
-        "--version",
-        "v0.0.2",
-        "--output",
-        planPath,
-      ],
+      ["node", "--no-warnings", planScriptPath, "--version", "v0.0.2", "--output", planPath],
       { NEMOCLAW_RELEASE_ALLOW_NON_CANONICAL: "1" },
     );
 

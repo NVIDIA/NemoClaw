@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createBearerAuthConfig } from "../../adapters/http/auth-config";
+import { MAX_AUTODETECTED_OLLAMA_CONTEXT_WINDOW } from "../ollama-runtime-context";
 import {
   type CurlProbeOptions,
   type CurlProbeResult,
@@ -42,7 +43,7 @@ export type LlamaCppAttachmentFailureReason =
   | "conflicting-fingerprint";
 
 export type LlamaCppAttachmentResult =
-  | { ok: true; model: string }
+  | { ok: true; model: string; contextWindow?: number }
   | {
       ok: false;
       reason: LlamaCppAttachmentFailureReason;
@@ -408,7 +409,18 @@ export function probeLlamaCppAttachment(
         "The llama.cpp metrics endpoint returned neither llama.cpp metrics nor the native metrics-not-supported response.",
       );
     }
-    return { ok: true, model };
+    const meta = modelEntry.meta as Record<string, unknown> | undefined;
+    const contextWindow = meta?.n_ctx;
+    return {
+      ok: true,
+      model,
+      ...(typeof contextWindow === "number" &&
+      Number.isSafeInteger(contextWindow) &&
+      contextWindow > 0 &&
+      contextWindow <= MAX_AUTODETECTED_OLLAMA_CONTEXT_WINDOW
+        ? { contextWindow }
+        : {}),
+    };
   } finally {
     auth.cleanup();
   }

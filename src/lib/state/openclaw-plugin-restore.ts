@@ -49,6 +49,7 @@ export type CompleteOpenClawImagePluginInstall = Omit<OpenClawImagePluginInstall
 };
 
 export interface OpenClawPluginDiscoveryDeps {
+  env?: NodeJS.ProcessEnv;
   getSshConfig(sandboxName: string): string | null;
   sshArgs(configFile: string, sandboxName: string): string[];
 }
@@ -145,6 +146,7 @@ function readFreshOpenClawPluginInstallIndex(
     "ssh",
     [...deps.sshArgs(configFile, sandboxName), buildFreshOpenClawPluginIndexSqliteReadCommand(dir)],
     {
+      ...(deps.env ? { env: deps.env } : {}),
       stdio: ["ignore", "pipe", "pipe"],
       timeout: 30000,
       maxBuffer: OPENCLAW_PLUGIN_INSTALL_REGISTRY_MAX_BYTES,
@@ -156,6 +158,7 @@ function readFreshOpenClawPluginInstallIndex(
     "ssh",
     [...deps.sshArgs(configFile, sandboxName), buildLegacyOpenClawPluginIndexReadCommand(dir)],
     {
+      ...(deps.env ? { env: deps.env } : {}),
       stdio: ["ignore", "pipe", "pipe"],
       timeout: 30000,
       maxBuffer: OPENCLAW_PLUGIN_INSTALL_REGISTRY_MAX_BYTES,

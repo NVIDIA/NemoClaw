@@ -909,6 +909,29 @@ export function planSandboxRecreateRecovery(
     ) {
       return reject("the replacement registry row does not match the journaled live identity");
     }
+    const pendingCreateIdentity =
+      registryEntry.pendingRouteReservation === true
+        ? registryEntry.pendingCreateIdentity
+        : undefined;
+    if (pendingCreateIdentity) {
+      if (
+        pendingCreateIdentity.sandboxName !== transaction.sandboxName ||
+        pendingCreateIdentity.gatewayName !== transaction.gatewayName ||
+        pendingCreateIdentity.gatewayPort !== transaction.gatewayPort ||
+        pendingCreateIdentity.lifecycleGeneration !== transaction.targetGeneration ||
+        pendingCreateIdentity.sandboxIdentityFingerprint !==
+          transaction.targetLiveIdentityFingerprint
+      ) {
+        return reject("the pending create checkpoint does not match the journaled replacement");
+      }
+      if (observation.state === "missing") {
+        return reject("the journaled pending replacement is missing");
+      }
+      if (observation.liveIdentityFingerprint !== transaction.targetLiveIdentityFingerprint) {
+        return reject("the live same-name sandbox is not the journaled pending replacement");
+      }
+      return { action: "accept_target" };
+    }
     if (observation.state !== "ready") {
       return reject("the journaled replacement is registered but is not ready");
     }

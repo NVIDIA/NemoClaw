@@ -24,7 +24,7 @@ export function createPolicyHandlerDeps(
     unconfiguredChannels: vi.fn(
       (_planChannels: readonly string[], _selectedChannels: readonly string[]) => [] as string[],
     ),
-    providerMatchesGatewayCredential: vi.fn(() => false),
+    inspectGatewayCredential: vi.fn(() => ({ kind: "missing" as const })),
     smoke: vi.fn(),
     prepareResume: vi.fn(
       (
@@ -60,7 +60,7 @@ export function createPolicyHandlerDeps(
       getActiveSandbox: calls.activeSandbox,
       mergePolicyMessagingChannels: calls.mergeChannels,
       detectUnconfiguredMessagingChannels: calls.unconfiguredChannels,
-      providerMatchesGatewayCredential: calls.providerMatchesGatewayCredential,
+      inspectGatewayCredential: calls.inspectGatewayCredential,
       verifyCompatibleEndpointSandboxSmoke: calls.smoke,
       preparePolicyPresetResumeSelection: calls.prepareResume,
       arePolicyPresetsApplied: calls.appliedCheck,

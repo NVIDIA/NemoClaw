@@ -7,6 +7,7 @@ import {
   collectN1xIdentity,
   isN1xFastOsRelease,
   isN1xPciDisplayDevice,
+  isN1xWslGpuName,
   parseTrustedFastOsPlatform,
   isTrustedN1xFastOsMarker,
 } from "./n1x";
@@ -52,6 +53,23 @@ function unexpectedFixturePath(filePath: string): never {
 }
 
 describe("N1x identity", () => {
+  it("recognizes the bounded N1x GPU name reported through WSL (#10962)", () => {
+    expect(isN1xWslGpuName("NVIDIA RTX Spark N1X (6144-core Blackwell RTX GPU)")).toBe(true);
+    expect(isN1xWslGpuName("NVIDIA RTX Spark N1X")).toBe(true);
+  });
+
+  it.each([
+    "NVIDIA RTX Spark",
+    "NVIDIA RTX Spark N1X2",
+    "Prototype NVIDIA RTX Spark N1X",
+    "NVIDIA RTX Spark N1X prototype",
+    "NVIDIA RTX Spark N1X (6144-core Blackwell RTX GPU) prototype",
+    `NVIDIA RTX Spark N1X\nforged`,
+    `NVIDIA RTX Spark N1X ${"x".repeat(256)}`,
+  ])("rejects a noncanonical N1x WSL GPU identity %s (#10962)", (name) => {
+    expect(isN1xWslGpuName(name)).toBe(false);
+  });
+
   it("accepts an NVIDIA display device without pinning its PCI device ID (#10076)", () => {
     expect(n1xFixture()).toEqual({
       candidate: true,

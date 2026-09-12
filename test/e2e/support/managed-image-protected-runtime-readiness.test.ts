@@ -34,6 +34,7 @@ vi.mock("../../../src/lib/inference/nim.ts", () => ({
 }));
 vi.mock("../../../src/lib/inference/ollama/proxy.ts", () => ({
   getOllamaProxyToken: () => undefined,
+  isProxyHealthy: () => false,
   killStaleProxy: () => undefined,
   persistAndProbeOllamaProxy: async () => undefined,
   startOllamaAuthProxy: () => false,

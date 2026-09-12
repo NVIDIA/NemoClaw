@@ -2,6 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { WebSearchConfig } from "../inference/web-search";
+import { createCliOpenShellProviderAdapter } from "../adapters/openshell/provider-adapter-cli";
+import { namedOpenShellGateway } from "../adapters/openshell/sandbox-observer";
+import {
+  isMessagingProviderMutationFailure,
+  MessagingProviderApplyError,
+} from "../messaging/applier/openshell-provider";
+import { buildMessagingProviderApplication } from "../messaging/applier/provider-application";
+import { MessagingSetupApplier } from "../messaging/applier/setup-applier";
+import type { SandboxMessagingPlan } from "../messaging/manifest";
 import type { CheckpointProviderBinding } from "../state/onboard-checkpoint-types";
 import type { Session } from "../state/onboard-session";
 import * as gatewayProviderMetadata from "./gateway-provider-metadata";
@@ -11,17 +20,6 @@ import type { OpenshellCliHelpers } from "./openshell-cli";
 import { createGatewayScopedOpenshellRunner } from "./setup-inference";
 
 const providers = require("./providers");
-
-/** Late-bound provider upsert seam used by live credential fixtures. */
-export const credentialProviderRegistrationDependencies = {
-  upsertMessagingProviders(
-    tokenDefs: MessagingTokenDef[],
-    runOpenshell: OpenshellCliHelpers["runOpenshell"],
-    options: MessagingProviderRegistrationOptions,
-  ): string[] {
-    return providers.upsertMessagingProviders(tokenDefs, runOpenshell, options) as string[];
-  },
-};
 
 export interface StageSandboxCredentialProvidersInput<Agent> {
   sandboxName: string;
@@ -35,7 +33,6 @@ export interface StageSandboxCredentialProvidersInput<Agent> {
 
 export interface MessagingProviderRegistrationOptions {
   replaceExisting?: boolean;
-  bestEffort?: boolean;
   allowedSandboxes?: readonly string[];
   revalidateSandboxIdentity?(operation: string): void;
 }
@@ -104,6 +101,93 @@ const EXISTING_BINDING_ERROR =
   "An existing credential provider does not match the required binding.";
 const MISSING_BINDING_ERROR =
   "A required credential provider is missing and no credential is available to recreate it.";
+const BINDING_INSPECTION_ERROR =
+  "The required credential provider could not be inspected through the selected gateway.";
+
+async function rethrowAfterCreatedProviderCleanup(
+  error: unknown,
+  input: {
+    readonly providerAdapter: ReturnType<typeof createCliOpenShellProviderAdapter>;
+    readonly gatewayName: string;
+    readonly allowedSandboxes?: readonly string[];
+    readonly revalidateSandboxIdentity?: (operation: string) => void;
+    readonly createdProviderNames?: readonly string[];
+    readonly replacedProviderNames?: readonly string[];
+  },
+): Promise<never> {
+  const existingCreatedProviderNames = providerMutationNames(error, "createdProviderNames");
+  const existingMutatedProviderNames = providerMutationNames(error, "mutatedProviderNames");
+  const existingReplacedProviderNames = providerMutationNames(error, "replacedProviderNames");
+  const createdProviderNames = uniqueProviderNames([
+    ...existingCreatedProviderNames,
+    ...(input.createdProviderNames ?? []),
+  ]);
+  const replacedProviderNames = uniqueProviderNames([
+    ...existingReplacedProviderNames,
+    ...(input.replacedProviderNames ?? []),
+  ]);
+  if (createdProviderNames.length === 0 && replacedProviderNames.length === 0) throw error;
+  const mutationError = new MessagingProviderApplyError({
+    message: error instanceof Error ? error.message : "Provider registration failed.",
+    mutatedProviderNames: uniqueProviderNames([
+      ...existingMutatedProviderNames,
+      ...createdProviderNames,
+      ...replacedProviderNames,
+    ]),
+    createdProviderNames,
+    replacedProviderNames,
+    cause: error,
+  });
+  if (createdProviderNames.length === 0) throw mutationError;
+  const cleanup = await MessagingSetupApplier.cleanupProvidersAtOpenShell(createdProviderNames, {
+    providerAdapter: input.providerAdapter,
+    target: namedOpenShellGateway(input.gatewayName),
+    allowedSandboxes: input.allowedSandboxes,
+    revalidateSandboxIdentity: input.revalidateSandboxIdentity,
+  });
+  const createdProviders = new Set(createdProviderNames);
+  const replacedProviders = new Set(replacedProviderNames);
+  const residualProviderNames = uniqueProviderNames(
+    cleanup.residualProviders.map(({ providerName }) => providerName),
+  );
+  const residualMessage = cleanup.residualProviders
+    .map(
+      ({ providerName, error: cleanupError }) =>
+        `Automatic cleanup could not remove ${JSON.stringify(providerName)}: ${cleanupError.message}. ` +
+        `Run \`openshell provider delete -g ${JSON.stringify(input.gatewayName)} ${JSON.stringify(providerName)}\`, then retry onboarding.`,
+    )
+    .join(" ");
+  throw new MessagingProviderApplyError({
+    message: [mutationError.message, residualMessage].filter(Boolean).join(" "),
+    mutatedProviderNames: [
+      ...mutationError.mutatedProviderNames.filter(
+        (providerName) =>
+          !createdProviders.has(providerName) || replacedProviders.has(providerName),
+      ),
+      ...residualProviderNames,
+    ],
+    createdProviderNames: residualProviderNames,
+    replacedProviderNames,
+    cause: error,
+  });
+}
+
+function providerMutationNames(
+  error: unknown,
+  field: "createdProviderNames" | "mutatedProviderNames" | "replacedProviderNames",
+): string[] {
+  if (!(error instanceof Error) || !isMessagingProviderMutationFailure(error)) {
+    return [];
+  }
+  const value = Reflect.get(error, field);
+  return Array.isArray(value)
+    ? value.filter((name): name is string => typeof name === "string" && name.length > 0)
+    : [];
+}
+
+function uniqueProviderNames(names: readonly string[]): string[] {
+  return [...new Set(names)];
+}
 
 function isCanonicalBinding(binding: CheckpointProviderBinding): boolean {
   return [binding.name, binding.type, binding.credentialEnv].every(
@@ -150,7 +234,7 @@ function validatePlannedCredentialProviderBindings(
 export function createCredentialProviderRegistration(deps: CredentialProviderRegistrationDeps) {
   const gatewayRunner = (gatewayName = deps.getGatewayName()) =>
     createGatewayScopedOpenshellRunner(deps.runOpenshell, gatewayName);
-  function upsertProvider(
+  async function upsertProvider(
     name: string,
     type: string,
     credentialEnv: string,
@@ -159,7 +243,7 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
     gatewayName = deps.getGatewayName(),
     options: MessagingProviderRegistrationOptions = {},
   ) {
-    const result = providers.upsertProvider(
+    const result = await providers.upsertProvider(
       name,
       type,
       credentialEnv,
@@ -186,79 +270,148 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
     return result;
   }
 
-  function upsertMessagingProviders(
+  async function applyMessagingProviders(
     tokenDefs: MessagingTokenDef[],
     options: MessagingProviderRegistrationOptions = {},
     runOpenshell: OpenshellCliHelpers["runOpenshell"] = deps.runOpenshell,
-  ): string[] {
-    const upserted = credentialProviderRegistrationDependencies.upsertMessagingProviders(
+    applicationPlan: SandboxMessagingPlan = MessagingSetupApplier.readPlanFromEnv() ??
+      emptyMessagingPlan(),
+  ): Promise<string[]> {
+    const application = buildMessagingProviderApplication({
       tokenDefs,
-      runOpenshell,
-      options,
+      root: deps.root,
+      agent: applicationPlan.agent,
+      getCredential: deps.getCredential,
+      env: process.env,
+      channelIdForCredential: (envKey, providerName) =>
+        channelIdForProvider(applicationPlan, envKey, providerName),
+    });
+    const gatewayName = deps.getGatewayName();
+    const providerAdapter = createCliOpenShellProviderAdapter({ run: runOpenshell });
+    const typedResult = await MessagingSetupApplier.applyCredentialsAtOpenShell(applicationPlan, {
+      providerAdapter,
+      target: namedOpenShellGateway(gatewayName),
+      definitions: application.definitions,
+      refreshes: application.refreshes,
+      requireCompleteBindings: true,
+      replaceExisting: options.replaceExisting,
+      allowedSandboxes: options.allowedSandboxes,
+      revalidateSandboxIdentity: options.revalidateSandboxIdentity,
+      log: (message) => console.error(`  ${message}`),
+    }).catch((error: unknown) =>
+      rethrowAfterCreatedProviderCleanup(error, {
+        providerAdapter,
+        gatewayName,
+        allowedSandboxes: options.allowedSandboxes,
+        revalidateSandboxIdentity: options.revalidateSandboxIdentity,
+      }),
     );
-    recordMigratedLegacyMessagingCredentials(
-      tokenDefs,
-      upserted,
-      deps,
-      options.revalidateSandboxIdentity,
-    );
-    return upserted;
+    const typedCreatedProviderNames = typedResult.upserted
+      .filter(({ action }) => action === "create")
+      .map(({ providerName }) => providerName);
+    try {
+      if (typedResult.missing.length > 0) throw new Error(MISSING_BINDING_ERROR);
+      const appliedNames = new Set(typedResult.providerNames);
+      const applied = tokenDefs.map(({ name }) => name).filter((name) => appliedNames.has(name));
+      recordMigratedLegacyMessagingCredentials(
+        tokenDefs,
+        applied,
+        deps,
+        options.revalidateSandboxIdentity,
+      );
+      return applied;
+    } catch (error) {
+      return rethrowAfterCreatedProviderCleanup(error, {
+        providerAdapter,
+        gatewayName,
+        allowedSandboxes: options.allowedSandboxes,
+        revalidateSandboxIdentity: options.revalidateSandboxIdentity,
+        createdProviderNames: typedCreatedProviderNames,
+        replacedProviderNames: typedResult.replacedProviderNames,
+      });
+    }
   }
 
-  function credentialBindingMatchesGateway(
+  async function credentialBindingMatchesGateway(
     binding: CheckpointProviderBinding,
     runOpenshell: OpenshellCliHelpers["runOpenshell"],
-  ): boolean {
-    const staticProfile = messagingBridgeProvider.inspectRegisteredStaticMessagingProfile(
+  ): Promise<boolean> {
+    return (await inspectGatewayCredentialBinding(binding, runOpenshell)).kind === "exact";
+  }
+
+  async function inspectGatewayCredentialBinding(
+    binding: CheckpointProviderBinding,
+    runOpenshell: OpenshellCliHelpers["runOpenshell"],
+  ): Promise<gatewayProviderMetadata.GatewayCredentialOnlyProviderInspection> {
+    const profileMatches = messagingBridgeProvider.matchesRegisteredMessagingBridgeProfile(
       binding.type,
       { root: deps.root, runOpenshell },
     );
-    if (staticProfile.kind === "indeterminate") {
-      throw new Error(
-        `Could not inspect static provider profile '${binding.type}' on OpenShell gateway '${deps.getGatewayName()}'. Verify the gateway is reachable, then retry the command.`,
-      );
+    if (profileMatches === false) return { kind: "indeterminate" };
+    const observed = await createCliOpenShellProviderAdapter({ run: runOpenshell }).getProvider({
+      target: { kind: "selected" },
+      providerName: binding.name,
+    });
+    if (!observed.ok) {
+      return observed.error.kind === "command" && observed.error.reason === "not_found"
+        ? { kind: "missing" }
+        : { kind: "indeterminate" };
     }
-    if (staticProfile.kind === "collision") return false;
-
-    const provider = gatewayProviderMetadata.inspectGatewayCredentialFamilyProviderBinding(
-      {
-        name: binding.name,
-        type: binding.type,
-        credentialKey: binding.credentialEnv,
-      },
-      runOpenshell,
-    );
-    if (provider.kind === "indeterminate") {
-      throw new Error(
-        `Could not inspect credential provider '${binding.name}' on OpenShell gateway '${deps.getGatewayName()}'. Verify the gateway is reachable, then retry the command.`,
-      );
-    }
-    return provider.kind === "exact";
+    return gatewayProviderMetadata.matchesGatewayCredentialFamilyProviderBinding(observed.value, {
+      name: binding.name,
+      type: binding.type,
+      credentialKey: binding.credentialEnv,
+    })
+      ? { kind: "exact" }
+      : { kind: "collision" };
   }
 
-  function providerMatchesGatewayCredential(
+  async function inspectGatewayCredential(
     name: string,
     type: string,
     credentialEnv: string,
-  ): boolean {
+  ): Promise<gatewayProviderMetadata.GatewayCredentialOnlyProviderInspection> {
+    return inspectGatewayCredentialBinding({ name, type, credentialEnv }, gatewayRunner());
+  }
+
+  async function providerMatchesGatewayCredential(
+    name: string,
+    type: string,
+    credentialEnv: string,
+  ): Promise<boolean> {
     return credentialBindingMatchesGateway({ name, type, credentialEnv }, gatewayRunner());
   }
 
-  function preflightRequiredCredentialProviderBindings(
+  async function preflightRequiredCredentialProviderBindings(
     requiredBindings: readonly CheckpointProviderBinding[],
     plannedTokenDefs: ReadonlyMap<string, MessagingTokenDef>,
     runOpenshell: OpenshellCliHelpers["runOpenshell"],
     replaceExisting: boolean,
-  ): void {
+  ): Promise<void> {
+    const adapter = createCliOpenShellProviderAdapter({ run: runOpenshell });
+    const target = namedOpenShellGateway(deps.getGatewayName());
     for (const binding of requiredBindings) {
-      if (!providers.providerExistsInGateway(binding.name, runOpenshell)) {
+      const observed = await adapter.getProvider({ target, providerName: binding.name });
+      if (
+        !observed.ok &&
+        observed.error.kind === "command" &&
+        observed.error.reason === "not_found"
+      ) {
         const tokenDef = plannedTokenDefs.get(binding.name);
         if (!tokenDef || !hasConfiguredMessagingCredential(tokenDef)) {
           throw new Error(MISSING_BINDING_ERROR);
         }
         continue;
       }
-      const matches = credentialBindingMatchesGateway(binding, runOpenshell);
+      if (!observed.ok) throw new Error(BINDING_INSPECTION_ERROR);
+      const matches = gatewayProviderMetadata.matchesGatewayCredentialFamilyProviderBinding(
+        observed.value,
+        {
+          name: binding.name,
+          type: binding.type,
+          credentialKey: binding.credentialEnv,
+        },
+      );
       if (matches) continue;
       const tokenDef = plannedTokenDefs.get(binding.name);
       if (!replaceExisting || !tokenDef || !hasConfiguredMessagingCredential(tokenDef)) {
@@ -281,9 +434,15 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
     const plannedTokenDefs = new Map(
       messaging.messagingTokenDefs.map((tokenDef) => [tokenDef.name, tokenDef]),
     );
-    const tokenDefs = messaging.messagingTokenDefs.filter(hasConfiguredMessagingCredential);
-    const runOpenshell = gatewayRunner();
-    preflightRequiredCredentialProviderBindings(
+    const tokenDefs = messaging.messagingTokenDefs.filter(({ name }) => plannedBindings.has(name));
+    const configuredProviderNames = new Set(
+      tokenDefs.filter(hasConfiguredMessagingCredential).map((tokenDef) => tokenDef.name),
+    );
+    const runOpenshell = deps.runOpenshell;
+    const applicationPlan =
+      MessagingSetupApplier.readPlanFromEnv() ??
+      emptyMessagingPlan(input.sandboxName, agentNameForMessagingPlan(input.agent));
+    await preflightRequiredCredentialProviderBindings(
       input.requiredBindings,
       plannedTokenDefs,
       runOpenshell,
@@ -291,11 +450,11 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
     );
     input.revalidateSandboxIdentity?.("clear staged credential provider receipts");
     setStagedCredentialProviderReceipts(
-      tokenDefs.map((tokenDef) => tokenDef.name),
+      tokenDefs.filter(hasConfiguredMessagingCredential).map((tokenDef) => tokenDef.name),
       false,
       deps,
     );
-    const registered = upsertMessagingProviders(
+    const applied = await applyMessagingProviders(
       tokenDefs,
       {
         replaceExisting: input.replaceExisting === true,
@@ -303,7 +462,9 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
         revalidateSandboxIdentity: input.revalidateSandboxIdentity,
       },
       runOpenshell,
+      applicationPlan,
     );
+    const registered = applied.filter((name) => configuredProviderNames.has(name));
     input.revalidateSandboxIdentity?.("record staged credential provider receipts");
     setStagedCredentialProviderReceipts(registered, true, deps);
     return registered.map((name) => {
@@ -314,9 +475,48 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
   }
 
   return {
+    inspectGatewayCredential,
     providerMatchesGatewayCredential,
+    applyMessagingProviders,
     stageSandboxCredentialProviders,
     upsertProvider,
-    upsertMessagingProviders,
   };
+}
+
+function emptyMessagingPlan(
+  sandboxName = "provider-application",
+  agent: SandboxMessagingPlan["agent"] = "openclaw",
+): SandboxMessagingPlan {
+  return {
+    schemaVersion: 1,
+    sandboxName,
+    agent,
+    workflow: "onboard",
+    channels: [],
+    disabledChannels: [],
+    credentialBindings: [],
+    networkPolicy: { presets: [], entries: [] },
+    agentRender: [],
+    buildSteps: [],
+    stateUpdates: [],
+    healthChecks: [],
+  };
+}
+
+function agentNameForMessagingPlan(value: unknown): SandboxMessagingPlan["agent"] {
+  if (!value || typeof value !== "object") return "openclaw";
+  const name = Reflect.get(value, "name");
+  return name === "hermes" ? "hermes" : "openclaw";
+}
+
+function channelIdForProvider(
+  plan: SandboxMessagingPlan,
+  envKey: string,
+  providerName: string,
+): string | null {
+  return (
+    plan.credentialBindings.find(
+      (binding) => binding.providerName === providerName || binding.providerEnvKey === envKey,
+    )?.channelId ?? null
+  );
 }

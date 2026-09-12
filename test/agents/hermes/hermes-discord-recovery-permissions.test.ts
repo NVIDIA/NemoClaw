@@ -56,7 +56,10 @@ function runPatcher(file: string) {
   });
 }
 
-function runCrossUidParentRepair(name: "gateway" | "runtime", kind: "symlink" | "file") {
+function runCrossUidParentRepair(
+  name: "sessions" | "gateway" | "runtime",
+  kind: "symlink" | "file",
+) {
   const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-shared-parent-"));
   fixtures.push(fixture);
   const hermesHome = path.join(fixture, ".hermes");
@@ -94,7 +97,7 @@ afterEach(() => {
   }
 });
 
-describe("Hermes cross-UID ledger permissions", () => {
+describe("Hermes Discord recovery permissions", () => {
   it("patches only the exact pinned upstream chmod shape", () => {
     const file = fixtureFile();
     const result = runPatcher(file);
@@ -151,15 +154,16 @@ describe("Hermes cross-UID ledger permissions", () => {
   });
 
   it.each([baseDockerfile, dockerfile])(
-    "prepares both setgid cross-UID parents in both image layouts [case %#]",
+    "prepares all setgid cross-UID parents in both image layouts [case %#]",
     (source) => {
       expect(source).toContain("/sandbox/.hermes/cron");
+      expect(source).toContain("/sandbox/.hermes/sessions");
       expect(source).toContain("/sandbox/.hermes/gateway");
       expect(source).toMatch(
-        /chown gateway:sandbox \\\n\s+\/sandbox\/[.]hermes\/cron \\\n\s+\/sandbox\/[.]hermes\/gateway \\\n\s+\/sandbox\/[.]hermes\/runtime/,
+        /chown gateway:sandbox \\\n\s+\/sandbox\/[.]hermes\/sessions \\\n\s+\/sandbox\/[.]hermes\/cron \\\n\s+\/sandbox\/[.]hermes\/gateway \\\n\s+\/sandbox\/[.]hermes\/runtime/,
       );
       expect(source).toMatch(
-        /chmod 2770 \\\n(?:[\s\S]*?)\/sandbox\/[.]hermes\/cron \\\n\s+\/sandbox\/[.]hermes\/gateway \\\n\s+\/sandbox\/[.]hermes\/runtime/,
+        /chmod 2770 \\\n(?:[\s\S]*?)\/sandbox\/[.]hermes\/sessions \\\n\s+\/sandbox\/[.]hermes\/cron \\\n\s+\/sandbox\/[.]hermes\/gateway \\\n\s+\/sandbox\/[.]hermes\/runtime/,
       );
     },
   );
@@ -200,7 +204,7 @@ describe("Hermes cross-UID ledger permissions", () => {
     expect(dockerfile).toContain(`discord_message_recovery.db)" = "sandbox:sandbox 660"`);
   });
 
-  it("requires descriptor-relative, no-follow repair for both writable parents", () => {
+  it("requires descriptor-relative, no-follow repair for all writable parents", () => {
     expect(startScript).toContain("ensure_hermes_cross_uid_state_dir() {");
     expect(startScript).toContain('name = os.environ["NEMOCLAW_HERMES_STATE_DIR_NAME"]');
     expect(startScript).toContain("os.O_DIRECTORY | os.O_NOFOLLOW");
@@ -209,23 +213,20 @@ describe("Hermes cross-UID ledger permissions", () => {
     expect(startScript).toContain("os.fchown(gateway_fd, gateway_uid, sandbox_gid)");
     expect(startScript).toContain("os.fchmod(gateway_fd, desired_mode)");
     const repairStart = startScript.indexOf("repair_hermes_startup_layout() {");
-    const gatewayRepair = startScript.indexOf(
-      "if ! ensure_hermes_cross_uid_state_dir gateway; then",
-      repairStart,
-    );
-    const runtimeRepair = startScript.indexOf(
-      "if ! ensure_hermes_cross_uid_state_dir runtime; then",
+    const sharedStateRepair = startScript.indexOf(
+      "for state_dir in sessions gateway runtime; do",
       repairStart,
     );
     const configRootRepair = startScript.indexOf("ensure_hermes_config_root_mode", repairStart);
     expect(repairStart).toBeGreaterThanOrEqual(0);
-    expect(gatewayRepair).toBeGreaterThan(repairStart);
-    expect(runtimeRepair).toBeGreaterThan(gatewayRepair);
-    expect(runtimeRepair).toBeLessThan(configRootRepair);
+    expect(sharedStateRepair).toBeGreaterThan(repairStart);
+    expect(sharedStateRepair).toBeLessThan(configRootRepair);
     expect(startScript).not.toContain("ensure_hermes_cross_uid_state_dir cron");
   });
 
   it.each([
+    ["sessions", "symlink", "is a symlink"],
+    ["sessions", "file", "is not a directory"],
     ["gateway", "symlink", "is a symlink"],
     ["gateway", "file", "is not a directory"],
     ["runtime", "symlink", "is a symlink"],

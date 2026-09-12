@@ -86,24 +86,16 @@ export function parseCheckedInProviderProfileContract(
 }
 
 /** Compare an exported gateway profile with its checked-in credential boundary. */
-export function compareExportedProviderProfileWithContract(
-  exported: string,
-  expected: CheckedInProviderProfileContract,
-): boolean | null {
-  try {
-    const actual = providerProfileBoundary(JSON.parse(exported) as unknown);
-    return actual === null ? null : isDeepStrictEqual(actual, expected.boundary);
-  } catch {
-    return null;
-  }
-}
-
-/** Compare an exported gateway profile with its checked-in credential boundary. */
 export function exportedProviderProfileMatchesContract(
   exported: string,
   expected: CheckedInProviderProfileContract,
 ): boolean {
-  return compareExportedProviderProfileWithContract(exported, expected) === true;
+  try {
+    const actual = providerProfileBoundary(JSON.parse(exported) as unknown);
+    return actual !== null && isDeepStrictEqual(actual, expected.boundary);
+  } catch {
+    return false;
+  }
 }
 
 export function isMissingProviderProfile(output: string, profileId: string): boolean {
@@ -114,7 +106,7 @@ export function isMissingProviderProfile(output: string, profileId: string): boo
     .trim();
   const escapedProfileId = profileId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const missingMessage = new RegExp(
-    `^(?:(?:custom )?provider )?profile(?: ['\"]${escapedProfileId}['\"])? not found[.!]?$`,
+    `^(?:(?:custom )?provider )?profile(?: ['"]${escapedProfileId}['"])? not found[.!]?$`,
     "iu",
   );
   if (missingMessage.test(normalized)) return true;

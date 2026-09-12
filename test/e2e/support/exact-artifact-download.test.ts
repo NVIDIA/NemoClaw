@@ -96,7 +96,7 @@ describe("exact artifact download (#9340)", () => {
 
   it("binds another exact contract name without weakening artifact identity", () => {
     const bytes = archive();
-    const name = "managed-pr-contract-7001-2-openclaw";
+    const name = "managed-pr-contract-7001-openclaw";
     const value = metadata(bytes, { name });
 
     expect(bindNamedExactArtifact(value, EXPECTED, name)).toMatchObject({

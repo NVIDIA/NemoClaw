@@ -142,7 +142,7 @@ describe("deterministic PR risk plan", () => {
     const second = plan("src/lib/onboard.ts", "src/lib/state/registry.ts");
 
     expect(first).toEqual(second);
-    expect(first.version).toBe(21);
+    expect(first.version).toBe(23);
     expect(first.headSha).toBe(HEAD_SHA);
     expect(first.planHash).toMatch(/^[a-f0-9]{64}$/u);
     expect(first.changedFiles).toEqual(["src/lib/onboard.ts", "src/lib/state/registry.ts"]);
@@ -453,9 +453,10 @@ describe("deterministic PR risk plan", () => {
     expect(result.requiredJobs).toEqual([]);
   });
 
-  it("maps trusted prebuild helper changes to the EXDEV job (#10517)", () => {
-    const changedFile = "test/e2e/live/openclaw-plugin-runtime-exdev-trusted-prebuild.ts";
-
+  it.each([
+    "test/e2e/fixtures/openclaw-plugin-runtime-exdev-onboard.ts",
+    "test/e2e/live/openclaw-plugin-runtime-exdev-trusted-prebuild.ts",
+  ])("maps %s changes to the EXDEV job (#10517)", (changedFile) => {
     expect(focusedE2eJobsForChangedFiles([changedFile])).toEqual([
       {
         id: "openclaw-plugin-runtime-exdev",
@@ -463,6 +464,24 @@ describe("deterministic PR risk plan", () => {
       },
     ]);
   });
+
+  it.each([
+    "src/lib/acp/main.ts",
+    "src/lib/acp/command.ts",
+    "src/lib/adapters/openshell/hermes-acp-ssh-cli.ts",
+    "src/lib/adapters/openshell/hermes-acp-ssh.ts",
+  ])(
+    "maps Hermes ACP adapter changes to its lifecycle and rebuild jobs for %s (#10947)",
+    (changedFile) => {
+      expect(focusedE2eJobsForChangedFiles([changedFile])).toEqual([
+        { id: "hermes-e2e", matchedFiles: [changedFile] },
+      ]);
+      expect(catalogueTargetsForChangedFiles([changedFile]).map(({ id }) => id)).toContain(
+        "rebuild-hermes",
+      );
+      expect(riskPlanRequiredJobIds(plan(changedFile))).toEqual(["hermes-e2e", "rebuild-hermes"]);
+    },
+  );
 
   it("maps a shared gateway live test to every catalogue fixture (#7921)", () => {
     const changedFiles = ["test/e2e/live/openshell-gateway-upgrade.test.ts"];
@@ -576,6 +595,7 @@ describe("deterministic PR risk plan", () => {
     "scripts/checks/build-protected-managed-images.sh",
     "src/lib/actions/sandbox/mcp-bridge-adapter-openclaw.ts",
     "src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.106.json",
+    "src/lib/extra-agents-validation.ts",
     "src/lib/core/json-types.ts",
     "src/lib/core/ports.ts",
     "src/lib/messaging/runtime.ts",
@@ -640,37 +660,12 @@ describe("deterministic PR risk plan", () => {
     ).toBe(false);
   });
 
-  it("keeps protected llama.cpp DGX Spark qualification activation-only until trusted (#8260)", () => {
-    const activation = "ci/llama-cpp-dgx-spark-qualification-v1.yaml";
-    const agentQualification =
-      "managed-inference/qualifications/llama-cpp.openclaw.spark-single.v1.yaml";
-    const result = plan(activation);
-    const dormantImplementation = plan(
-      "scripts/checks/run-llama-cpp-dgx-spark-qualification.mts",
-      "test/e2e/live/llama-cpp-dgx-spark-qualification.test.ts",
+  it("does not recommend the removed DGX Spark workflow job", () => {
+    const result = plan(
+      "ci/llama-cpp-dgx-spark-qualification-v1.yaml",
+      "managed-inference/qualifications/llama-cpp.openclaw.spark-single.v1.yaml",
     );
-
-    expect(result.families).toContainEqual(
-      expect.objectContaining({
-        id: "llama-cpp-dgx-spark-qualification",
-        matchedFiles: [activation],
-        requiredJobs: ["llama-cpp-dgx-spark-qualification"],
-      }),
-    );
-    expect(riskPlanRequiredJobIds(result)).toEqual(["llama-cpp-dgx-spark-qualification"]);
-    expect(riskPlanRequiredJobIds(plan(agentQualification))).toContain(
-      "llama-cpp-dgx-spark-qualification",
-    );
-    expect(
-      riskPlanRequiredJobIds(
-        plan("managed-inference/qualifications/llama-cpp.other.spark-single.v1.yaml"),
-      ),
-    ).not.toContain("llama-cpp-dgx-spark-qualification");
-    expect(
-      dormantImplementation.families.some(
-        (family) => family.id === "llama-cpp-dgx-spark-qualification",
-      ),
-    ).toBe(false);
+    expect(riskPlanRequiredJobIds(result)).not.toContain("llama-cpp-dgx-spark-qualification");
   });
 
   it("loads protected multiarch identifiers through the workflow node loader (#7744)", () => {
@@ -1008,7 +1003,7 @@ describe("deterministic PR risk plan", () => {
     "tools/e2e/job-map.txt",
     "test/e2e/registry/runtime-support.ts",
     "test/e2e/risk-signal-reporter.ts",
-    "test/e2e/lib/security-posture-assertions.sh",
+    "test/e2e/fixtures/security-posture.ts",
     "test/e2e/lib/redact-text.py",
     "test/e2e/lib/fake-slack-api.cjs",
     "test/e2e/fixtures/runtime-input.txt",

@@ -5,6 +5,10 @@ import path from "node:path";
 
 import { dockerContainerInspectFormat } from "../adapters/docker";
 import { getGatewayClusterContainerName } from "../adapters/openshell/gateway-drift";
+import {
+  type OpenShellRuntimeSelection,
+  withSelectedOpenShellCommandOptions,
+} from "../adapters/openshell/command-argv";
 import { getGatewayHttpEndpoint } from "../core/gateway-address";
 import {
   BEDROCK_RUNTIME_ADAPTER_PORT,
@@ -39,16 +43,28 @@ import {
 export type StartGatewayForRecoveryOptions = {
   gatewayName?: string;
   gatewayPort?: number;
+  output?: GatewayRecoveryOutput;
+  runtimeSelection?: OpenShellRuntimeSelection;
 };
+
+export type GatewayRecoveryOutput = Readonly<{
+  error(message: string): void;
+  log(message: string): void;
+  step(current: number, total: number, label: string): void;
+  warn(message: string): void;
+}>;
 
 type RunOpenshellOptions = {
   ignoreError?: boolean;
   env?: Record<string, string>;
+  replaceEnv?: boolean;
   suppressOutput?: boolean;
 };
 
 type RunCaptureOpenshellOptions = {
   ignoreError?: boolean;
+  env?: Record<string, string>;
+  replaceEnv?: boolean;
 };
 
 type GatewayStartResult = {
@@ -67,7 +83,14 @@ export type GatewayRecoveryDeps = {
   getGatewayClusterContainerState?(gatewayName: string): string;
   runCaptureOpenshell(args: string[], opts?: RunCaptureOpenshellOptions): string;
   runOpenshell(args: string[], opts?: RunOpenshellOptions): GatewayStartResult;
-  startGatewayWithOptions(gpu: never, options: { exitOnFailure: false }): Promise<void>;
+  startGatewayWithOptions(
+    gpu: never,
+    options: {
+      exitOnFailure: false;
+      output?: GatewayRecoveryOutput;
+      runtimeSelection?: OpenShellRuntimeSelection;
+    },
+  ): Promise<void>;
   isLinuxDockerDriverGatewayEnabled?(): boolean;
   sleepSeconds?(seconds: number): void;
   // Injected so caller-level tests can exercise the success + retry-success
@@ -162,8 +185,18 @@ function getGatewayRecoveryWaitBudgetMs(pollCount: number, pollIntervalSeconds: 
 async function startTargetGatewayForRecovery(
   { gatewayName, gatewayPort }: { gatewayName: string; gatewayPort: number },
   deps: GatewayRecoveryDeps,
+  runtimeSelection?: OpenShellRuntimeSelection,
+  output?: GatewayRecoveryOutput,
 ): Promise<void> {
-  deps.runOpenshell(["gateway", "select", gatewayName], { ignoreError: true });
+  const runtimeOptions = withSelectedOpenShellCommandOptions({}, runtimeSelection);
+  const runOptions = {
+    ...runtimeOptions,
+    ...(output ? { suppressOutput: true } : {}),
+  };
+  deps.runOpenshell(["gateway", "select", gatewayName], {
+    ...runOptions,
+    ignoreError: true,
+  });
 
   const recoveryWait = getGatewayHealthWaitConfig(
     0,
@@ -191,11 +224,18 @@ async function startTargetGatewayForRecovery(
   const healthy =
     waitOptions !== null &&
     (await waitUntilAsync(async () => {
-      const status = deps.runCaptureOpenshell(["status"], { ignoreError: true });
-      const namedInfo = deps.runCaptureOpenshell(["gateway", "info", "-g", gatewayName], {
+      const status = deps.runCaptureOpenshell(["status"], {
+        ...runtimeOptions,
         ignoreError: true,
       });
-      const currentInfo = deps.runCaptureOpenshell(["gateway", "info"], { ignoreError: true });
+      const namedInfo = deps.runCaptureOpenshell(["gateway", "info", "-g", gatewayName], {
+        ...runtimeOptions,
+        ignoreError: true,
+      });
+      const currentInfo = deps.runCaptureOpenshell(["gateway", "info"], {
+        ...runtimeOptions,
+        ignoreError: true,
+      });
       return (
         status.includes("Connected") &&
         gatewayHealthyImpl(status, namedInfo, currentInfo, gatewayName) &&
@@ -232,6 +272,11 @@ export async function startGatewayForRecovery(
   deps: GatewayRecoveryDeps,
 ): Promise<void> {
   const target = resolveGatewayRecoveryTarget(options);
+  if (options.runtimeSelection && options.runtimeSelection.gatewayName !== target.gatewayName) {
+    throw new Error(
+      `Gateway recovery target '${target.gatewayName}' does not match runtime selection '${options.runtimeSelection.gatewayName}'`,
+    );
+  }
   // Guard every recovery branch. The cross-port / non-default-name path below
   // bypasses startGatewayWithOptions. It reselects an already-running gateway
   // and waits for health instead of starting a gateway process. Resolve and
@@ -249,7 +294,11 @@ export async function startGatewayForRecovery(
   // case where the user re-runs with the same NEMOCLAW_GATEWAY_PORT).
   if (target.gatewayPort === GATEWAY_PORT) {
     if (target.gatewayName === resolveDefaultGatewayName() || linuxDockerDriverEnabled) {
-      return deps.startGatewayWithOptions(undefined as never, { exitOnFailure: false });
+      return deps.startGatewayWithOptions(undefined as never, {
+        exitOnFailure: false,
+        ...(options.output ? { output: options.output } : {}),
+        ...(options.runtimeSelection ? { runtimeSelection: options.runtimeSelection } : {}),
+      });
     }
   }
   // Cross-port recovery on a Linux Docker-driver gateway cannot share this
@@ -265,5 +314,5 @@ export async function startGatewayForRecovery(
         `Re-run with NEMOCLAW_GATEWAY_PORT=${target.gatewayPort} so the docker-driver setup can restamp the runtime marker, registration, and sandbox bridge.`,
     );
   }
-  return startTargetGatewayForRecovery(target, deps);
+  return startTargetGatewayForRecovery(target, deps, options.runtimeSelection, options.output);
 }

@@ -17,6 +17,8 @@ const PREPARE_E2E_ACTION_PROVENANCE = E2E_ACTION_PROVENANCE.prepareWorkspace;
 
 export const PREPARE_E2E_ACTION = PREPARE_E2E_ACTION_PROVENANCE.reference;
 export const PREPARE_E2E_STEP = "Prepare E2E workspace";
+export const PREPARE_COMPILED_ARTIFACT_ACTION =
+  "./.trusted-ci-actions/.github/actions/ci-compile-artifacts";
 
 const CHECKOUT_LOCAL_PREPARE_E2E_ACTION = "./.github/actions/prepare-e2e";
 export const CLI_ARTIFACT_PRODUCER_JOB = E2E_JOB_POLICY.cliArtifactProducer;
@@ -133,7 +135,34 @@ export function validatePrepareE2eInvocations(workflow: WorkflowRecord): string[
     if (jobSteps.some((step) => step.uses === CHECKOUT_LOCAL_PREPARE_E2E_ACTION)) {
       errors.push(`${jobName} must not load prepare-e2e from the target checkout`);
     }
-    const prepareSteps = jobSteps.filter((step) => step.uses === PREPARE_E2E_ACTION);
+    const expectedAction =
+      jobName === CLI_ARTIFACT_PRODUCER_JOB ? PREPARE_COMPILED_ARTIFACT_ACTION : PREPARE_E2E_ACTION;
+    const prepareSteps = jobSteps.filter((step) => step.uses === expectedAction);
+    if (jobName === CLI_ARTIFACT_PRODUCER_JOB) {
+      const trustedCheckoutIndex = jobSteps.findIndex(
+        (step) => step.name === "Check out trusted compiled artifact action",
+      );
+      const trustedCheckout = jobSteps[trustedCheckoutIndex];
+      const checkoutInputs = record(trustedCheckout?.with);
+      const candidateIndex = jobSteps.findIndex((step) => step.name === "Check out E2E candidate");
+      if (
+        trustedCheckout?.uses !== "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" ||
+        checkoutInputs.repository !== "${{ github.repository }}" ||
+        checkoutInputs.ref !== "${{ github.workflow_sha }}" ||
+        checkoutInputs.path !== ".trusted-ci-actions" ||
+        checkoutInputs["persist-credentials"] !== false ||
+        !String(checkoutInputs["sparse-checkout"])
+          .split("\n")
+          .includes(".github/actions/ci-compile-artifacts") ||
+        trustedCheckoutIndex <= candidateIndex ||
+        candidateIndex < 0 ||
+        trustedCheckoutIndex >= jobSteps.findIndex((step) => step.uses === expectedAction)
+      ) {
+        errors.push(
+          "generate-matrix must load the shared compiler from the trusted workflow checkout after candidate checkout",
+        );
+      }
+    }
     if (!expectedJobs.has(jobName)) {
       if (prepareSteps.length > 0) errors.push(`${jobName} must not use prepare-e2e`);
       continue;

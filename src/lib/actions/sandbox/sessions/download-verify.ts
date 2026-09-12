@@ -491,6 +491,27 @@ function publishEntry(source: string, destination: string): void {
 }
 
 /**
+ * Reject existing symlinks and special files before publication starts, so a
+ * fresh destination is not created before rejection (#10636). `publishEntry`
+ * repeats the checks to catch later changes.
+ */
+function assertStagedTreeIsPublishable(source: string): void {
+  const sourceStat = fs.lstatSync(source);
+  if (sourceStat.isSymbolicLink()) {
+    throw new Error(`Refusing to publish symbolic link from staged artifact '${source}'.`);
+  }
+  if (sourceStat.isDirectory()) {
+    for (const entry of fs.readdirSync(source)) {
+      assertStagedTreeIsPublishable(path.join(source, entry));
+    }
+    return;
+  }
+  if (!sourceStat.isFile()) {
+    throw new Error(`Refusing to publish unsupported staged artifact '${source}'.`);
+  }
+}
+
+/**
  * Publish a verified staging artifact without following destination symlinks.
  * Parent directories are pinned and revalidated, and file writes target a
  * private O_EXCL descriptor (plus O_NOFOLLOW where available) before an atomic
@@ -508,5 +529,6 @@ export function publishDownloadArtifact(
   if (sourceKind === "file" && stagedStat.isDirectory()) {
     throw new Error(`Refusing to publish directory staged artifact '${stagedArtifact}' as a file.`);
   }
+  assertStagedTreeIsPublishable(stagedArtifact);
   publishEntry(stagedArtifact, expectedArtifact);
 }

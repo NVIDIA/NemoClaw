@@ -35,9 +35,8 @@ vi.mock("node:fs", async (importOriginal) => {
   };
 });
 
-const { getNetworkEntries, getPrivateNetworks, isPrivateHostname, resetCache } = await import(
-  "./private-networks.js"
-);
+const { getNetworkEntries, getPrivateNetworks, isPrivateHostname, resetCache } =
+  await import("./private-networks.js");
 
 const VALID_YAML = `
 ipv4:

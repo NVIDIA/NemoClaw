@@ -19,7 +19,8 @@ vi.mock("node:child_process", () => ({
 vi.mock("../../adapters/docker/volume", () => ({
   dockerRemoveVolumesByPrefix: mocks.dockerRemoveVolumesByPrefix,
 }));
-vi.mock("../../onboard/gateway-teardown-authority", () => ({
+vi.mock("../../onboard/gateway-teardown-authority", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../onboard/gateway-teardown-authority")>()),
   resolveGatewayTeardownAuthority: mocks.resolveGatewayTeardownAuthority,
 }));
 import { cleanupGatewayAfterLastSandbox } from "./destroy-gateway";

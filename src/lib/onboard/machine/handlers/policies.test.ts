@@ -94,15 +94,16 @@ describe("policy state handler", () => {
         },
       ],
     });
-    const providerMatcher = vi.fn(
-      (name: string, type: string, credentialEnv: string) =>
-        name === "my-assistant-discord-bridge" &&
-        type === "discord-hermes-static-v1" &&
-        credentialEnv === "DISCORD_BOT_TOKEN",
+    const providerMatcher = vi.fn(async (name: string, type: string, credentialEnv: string) =>
+      name === "my-assistant-discord-bridge" &&
+      type === "discord-hermes-static-v1" &&
+      credentialEnv === "DISCORD_BOT_TOKEN"
+        ? { kind: "exact" as const }
+        : { kind: "missing" as const },
     );
     const { deps, calls } = createPolicyHandlerDeps({
       getActiveSandbox: vi.fn(() => ({ messaging: { plan: discordPlan } })),
-      providerMatchesGatewayCredential: providerMatcher,
+      inspectGatewayCredential: providerMatcher,
     });
     calls.unconfiguredChannels.mockImplementation((_planChannels, configuredChannels) =>
       configuredChannels.includes("discord") ? [] : ["discord"],
@@ -132,20 +133,22 @@ describe("policy state handler", () => {
   it.each([
     {
       condition: "both bindings match",
-      providerMatchesGatewayCredential: () => true,
+      inspectGatewayCredential: async () => ({ kind: "exact" as const }),
       expectedEnabled: ["slack"],
       expectedDisabled: [] as string[],
     },
     {
       condition: "one binding is missing",
-      providerMatchesGatewayCredential: (_name: string, _type: string, credentialEnv: string) =>
-        credentialEnv === "SLACK_BOT_TOKEN",
+      inspectGatewayCredential: async (_name: string, _type: string, credentialEnv: string) =>
+        credentialEnv === "SLACK_BOT_TOKEN"
+          ? { kind: "exact" as const }
+          : { kind: "missing" as const },
       expectedEnabled: [] as string[],
       expectedDisabled: ["slack"],
     },
   ])(
     "requires every Slack binding before retaining its policy when $condition (#10667)",
-    async ({ providerMatchesGatewayCredential, expectedEnabled, expectedDisabled }) => {
+    async ({ inspectGatewayCredential, expectedEnabled, expectedDisabled }) => {
       const slackPlan = makeMessagingPlan({
         channels: ["slack"],
         agent: "hermes",
@@ -170,10 +173,10 @@ describe("policy state handler", () => {
           },
         ],
       });
-      const providerMatcher = vi.fn(providerMatchesGatewayCredential);
+      const providerMatcher = vi.fn(inspectGatewayCredential);
       const { deps, calls } = createPolicyHandlerDeps({
         getActiveSandbox: vi.fn(() => ({ messaging: { plan: slackPlan } })),
-        providerMatchesGatewayCredential: providerMatcher,
+        inspectGatewayCredential: providerMatcher,
       });
       calls.unconfiguredChannels.mockImplementation((_planChannels, configuredChannels) =>
         configuredChannels.includes("slack") ? [] : ["slack"],
@@ -203,15 +206,16 @@ describe("policy state handler", () => {
     "keeps Google Chat in %s policy requirements when its gateway-minted bridge provider matches",
     async (agent, providerType) => {
       const googlechatPlan = makeMessagingPlan({ channels: ["googlechat"], agent });
-      const providerMatcher = vi.fn(
-        (name: string, type: string, credentialEnv: string) =>
-          name === "my-assistant-googlechat-bridge" &&
-          type === providerType &&
-          credentialEnv === "GOOGLE_CHAT_ACCESS_TOKEN",
+      const providerMatcher = vi.fn(async (name: string, type: string, credentialEnv: string) =>
+        name === "my-assistant-googlechat-bridge" &&
+        type === providerType &&
+        credentialEnv === "GOOGLE_CHAT_ACCESS_TOKEN"
+          ? { kind: "exact" as const }
+          : { kind: "missing" as const },
       );
       const { deps, calls } = createPolicyHandlerDeps({
         getActiveSandbox: vi.fn(() => ({ messaging: { plan: googlechatPlan } })),
-        providerMatchesGatewayCredential: providerMatcher,
+        inspectGatewayCredential: providerMatcher,
       });
       calls.unconfiguredChannels.mockImplementation((_planChannels, configuredChannels) =>
         configuredChannels.includes("googlechat") ? [] : ["googlechat"],
@@ -234,6 +238,26 @@ describe("policy state handler", () => {
       );
     },
   );
+
+  it("stops before policy reconciliation when gateway credential inspection fails", async () => {
+    const plan = makeMessagingPlan({ channels: ["googlechat"], agent: "hermes" });
+    const { deps, calls } = createPolicyHandlerDeps({
+      getActiveSandbox: vi.fn(() => ({ messaging: { plan } })),
+      inspectGatewayCredential: vi.fn().mockResolvedValue({ kind: "indeterminate" }),
+    });
+
+    await expect(
+      handlePoliciesState({
+        ...basePolicyHandlerOptions(deps),
+        selectedMessagingChannels: [],
+        agent: { name: "hermes" },
+      }),
+    ).rejects.toThrow("Could not inspect gateway credentials for messaging channel 'googlechat'");
+
+    expect(calls.unconfiguredChannels).not.toHaveBeenCalled();
+    expect(calls.setupPolicies).not.toHaveBeenCalled();
+    expect(calls.complete).not.toHaveBeenCalled();
+  });
 
   it("merges live messaging channels into policy requirements", async () => {
     const { deps, calls } = createPolicyHandlerDeps();

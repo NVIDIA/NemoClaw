@@ -4,7 +4,7 @@
 import path from "node:path";
 
 import { GATEWAY_PORT } from "../../core/ports";
-import { resolveGatewayStateDirForPort } from "../../onboard/gateway-binding";
+import { resolveGatewayStateDirForPort } from "../../onboard/gateway/state-dir";
 import { nemoclawStateRoot } from "../../state/state-root";
 
 export const DEFAULT_GATEWAY_NAME = "nemoclaw";
@@ -30,8 +30,8 @@ export interface UninstallPathOptions {
   xdgBinHome?: string;
 }
 
-/** Agent-alias CLI shims installed alongside `nemoclaw` (e.g. nemohermes). */
-export const AGENT_ALIAS_CLI_BINARIES = ["nemohermes", "nemo-deepagents"] as const;
+/** CLI shims installed alongside the primary `nemoclaw` executable. */
+export const SIBLING_CLI_BINARIES = ["nemoclaw-acp", "nemohermes", "nemo-deepagents"] as const;
 
 export interface UninstallPaths {
   helperServiceGlob: string;
@@ -39,8 +39,8 @@ export interface UninstallPaths {
   managedSwapMarkerPath: string;
   nemoclawConfigDir: string;
   nemoclawShimPath: string;
-  /** Sibling agent-alias shims (nemohermes, nemo-deepagents) in the same bin dir. */
-  agentAliasShimPaths: Array<{ binName: string; path: string }>;
+  /** Sibling CLI shims in the same user-local bin directory. */
+  siblingCliShimPaths: Array<{ binName: string; path: string }>;
   nemoclawStateDir: string;
   gatewayLocalStateDir: string;
   selectedGatewayLocalStateDir: string;
@@ -72,7 +72,7 @@ export function defaultUninstallPaths(options: UninstallPathOptions): UninstallP
     managedSwapMarkerPath: path.join(options.home, ".nemoclaw", "managed_swap"),
     nemoclawConfigDir: path.join(options.home, ".config", "nemoclaw"),
     nemoclawShimPath: path.join(options.home, ".local", "bin", "nemoclaw"),
-    agentAliasShimPaths: AGENT_ALIAS_CLI_BINARIES.map((binName) => ({
+    siblingCliShimPaths: SIBLING_CLI_BINARIES.map((binName) => ({
       binName,
       path: path.join(options.home, ".local", "bin", binName),
     })),

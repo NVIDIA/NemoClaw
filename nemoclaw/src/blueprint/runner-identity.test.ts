@@ -427,6 +427,20 @@ describe("blueprint identity wrapper", () => {
     ).not.toContain("refresh configure");
   });
 
+  it("fails closed before create when existing-sandbox inspection is inconclusive", async () => {
+    responseQueue([["sandbox get test-sandbox", [failureResult("gateway transport unavailable")]]]);
+
+    await expect(actionApply("default", blueprint({ identity: oktaIdentity() }))).rejects.toThrow(
+      /Failed to inspect sandbox 'test-sandbox'.*gateway transport unavailable/su,
+    );
+
+    const commands = mockExeca.mock.calls.map(([, args]) => (args ?? []).join(" "));
+    expect(commands).not.toContain(
+      "sandbox create -g test-gateway --from openclaw --name test-sandbox --policy /tmp/nemoclaw-test-policy.yaml --forward 18789",
+    );
+    expect(commands.some((command) => command.startsWith("provider create "))).toBe(false);
+  });
+
   it("reuses the ANSI-formatted OpenShell v0.0.99 inference route", async () => {
     process.env.OKTA_CLIENT_ID = "client-id";
     process.env.OKTA_REFRESH_TOKEN = "refresh-secret";
@@ -471,6 +485,9 @@ describe("blueprint identity wrapper", () => {
     await actionApply("default", blueprint({ identity: oktaIdentity() }));
 
     const commands = mockExeca.mock.calls.map(([, args]) => (args ?? []).join(" "));
+    expect(commands).not.toContain(
+      "sandbox create -g test-gateway --from openclaw --name test-sandbox --policy /tmp/nemoclaw-test-policy.yaml --forward 18789",
+    );
     expect(commands).not.toContain("inference set --provider test-provider --model test-model");
     expect(commands).toContain("sandbox provider attach test-sandbox acme-okta-runtime");
   });
@@ -749,10 +766,7 @@ describe("blueprint identity wrapper", () => {
     process.env.OKTA_REFRESH_TOKEN = "refresh-secret";
     process.env.OKTA_CLIENT_SECRET = "client-secret";
     responseQueue([
-      [
-        "sandbox get test-sandbox",
-        [{ exitCode: 0, stdout: "Name: test-sandbox\nPhase: Ready", stderr: "" }],
-      ],
+      ["sandbox get test-sandbox", [failureResult("sandbox not found")]],
       [
         "provider get test-provider",
         [{ exitCode: 0, stdout: matchingInferenceProvider, stderr: "" }],
@@ -839,10 +853,7 @@ describe("blueprint identity wrapper", () => {
     process.env.OKTA_REFRESH_TOKEN = "refresh-secret";
     process.env.OKTA_CLIENT_SECRET = "client-secret";
     responseQueue([
-      [
-        "sandbox get test-sandbox",
-        [{ exitCode: 0, stdout: "Name: test-sandbox\nPhase: Ready", stderr: "" }],
-      ],
+      ["sandbox get test-sandbox", [failureResult("sandbox not found")]],
       ["provider get test-provider", [failureResult("provider not found")]],
       [
         "provider get acme-okta-runtime",

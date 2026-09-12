@@ -10,8 +10,12 @@ import {
   ensureDockerDriverGatewayJwtBundle,
   gatewayIdForStateDir,
 } from "../docker-driver-gateway-config";
+import * as dockerDriverGatewayLaunch from "../docker-driver-gateway-launch";
 import * as gatewayBinding from "../gateway-binding";
-import { createDockerDriverGatewayStart } from "./docker-driver-start";
+import {
+  createDockerDriverGatewayStart,
+  resolveDockerDriverGatewayRuntimeMarkerEndpoint,
+} from "./docker-driver-start";
 import { createGatewayRecoveryOrchestration } from "./recovery";
 import { createGatewayRegistration } from "./registration";
 import * as gatewayStateLifecycleLock from "./state-lifecycle-lock";
@@ -20,6 +24,24 @@ const runResult = (status = 0) =>
   ({ status, stdout: "", stderr: "" }) as ReturnType<typeof import("../../runner").run>;
 
 describe("gateway lifecycle late binding", () => {
+  it("records the selected runtime's advertised gateway endpoint", () => {
+    const fallback = vi.fn(() => "https://127.0.0.1:8080");
+
+    expect(
+      resolveDockerDriverGatewayRuntimeMarkerEndpoint(
+        { OPENSHELL_GRPC_ENDPOINT: "https://169.254.2.2:8080" },
+        fallback,
+      ),
+    ).toBe("https://169.254.2.2:8080");
+    expect(fallback).not.toHaveBeenCalled();
+  });
+
+  it("retains the Docker gateway endpoint fallback for legacy launch environments", () => {
+    expect(
+      resolveDockerDriverGatewayRuntimeMarkerEndpoint({}, () => "https://127.0.0.1:8080"),
+    ).toBe("https://127.0.0.1:8080");
+  });
+
   it("uses the current binding for select, add, and health commands", () => {
     let name = "initial";
     const runCaptureOpenshell = vi.fn((args: string[]) => args.join(" "));
@@ -51,6 +73,111 @@ describe("gateway lifecycle late binding", () => {
     expect(runOpenshell).toHaveBeenCalledWith(
       ["gateway", "select", "resumed"],
       expect.objectContaining({ ignoreError: true }),
+    );
+  });
+
+  it("keeps Docker-driver registration on the frozen OpenShell target (#10514)", () => {
+    vi.stubEnv("OPENSHELL_GATEWAY", "hostile-gateway");
+    vi.stubEnv("OPENSHELL_WORKSPACE", "hostile-workspace");
+    vi.stubEnv("OPENSHELL_GATEWAY_ENDPOINT", "https://hostile.invalid");
+    vi.stubEnv("OPENSHELL_TOKEN", "hostile-token");
+    vi.stubEnv("OPENSHELL_LOCAL_TLS_DIR", "/hostile/tls");
+    vi.stubEnv("OPENSHELL_DISABLE_TLS", "1");
+    vi.stubEnv("OPENSHELL_DISABLE_GATEWAY_AUTH", "1");
+    const runCaptureOpenshell = vi.fn(
+      (_args: string[], _options?: Record<string, unknown>) => "Connected",
+    );
+    const runOpenshell = vi.fn((_args: string[], _options?: Record<string, unknown>) =>
+      runResult(),
+    );
+    const runQuietOpenshell = vi.fn(() => runResult());
+    const registration = createGatewayRegistration({
+      gatewayName: () => "nemoclaw-8090",
+      getDockerDriverGatewayEndpointArg: () => "https://127.0.0.1:8090",
+      getGatewayLocalEndpoint: () => "https://127.0.0.1:8090",
+      hasStaleGateway: () => false,
+      isGatewayHealthy: () => true,
+      isLinuxDockerDriverGatewayEnabled: () => true,
+      removeDockerDriverGatewayRegistration: () => true,
+      runCaptureOpenshell,
+      runOpenshell,
+      runQuietOpenshell,
+    });
+
+    try {
+      expect(
+        registration.registerDockerDriverGatewayEndpoint({
+          gatewayName: "nemoclaw-8090",
+          workspace: "default",
+          localTlsDir: "/recorded/tls",
+        }),
+      ).toBe(true);
+
+      expect(runQuietOpenshell).not.toHaveBeenCalled();
+      expect(runOpenshell).toHaveBeenCalledTimes(1);
+      expect(runCaptureOpenshell).toHaveBeenCalledTimes(3);
+      const selectedOptions = runOpenshell.mock.calls[0]?.[1] as
+        | { env?: Record<string, string>; replaceEnv?: boolean }
+        | undefined;
+      expect(selectedOptions).toMatchObject({
+        env: expect.objectContaining({
+          OPENSHELL_GATEWAY: "nemoclaw-8090",
+          OPENSHELL_WORKSPACE: "default",
+          OPENSHELL_LOCAL_TLS_DIR: "/recorded/tls",
+        }),
+        replaceEnv: true,
+      });
+      expect(runCaptureOpenshell.mock.calls[0]?.[1]?.env).toEqual(selectedOptions?.env);
+      expect(runCaptureOpenshell.mock.calls[1]?.[1]?.env).toEqual(selectedOptions?.env);
+      expect(runCaptureOpenshell.mock.calls[2]?.[1]?.env).toEqual(selectedOptions?.env);
+      expect(selectedOptions?.env).not.toHaveProperty("OPENSHELL_GATEWAY_ENDPOINT");
+      expect(selectedOptions?.env).not.toHaveProperty("OPENSHELL_TOKEN");
+      expect(selectedOptions?.env).not.toHaveProperty("OPENSHELL_DISABLE_TLS");
+      expect(selectedOptions?.env).not.toHaveProperty("OPENSHELL_DISABLE_GATEWAY_AUTH");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("does not retry registration or use legacy destroy after a current remove failure", () => {
+    const outcomes = new Map<string, ReturnType<typeof runResult>>([
+      ["gateway select nemoclaw", runResult(1)],
+      ["gateway add https://127.0.0.1:8080 --local --name nemoclaw", runResult(1)],
+      [
+        "gateway remove nemoclaw",
+        { status: 1, stdout: "", stderr: "connection refused" } as ReturnType<
+          typeof import("../../runner").run
+        >,
+      ],
+    ]);
+    const runOpenshell = vi.fn((args: string[]) => outcomes.get(args.join(" ")) ?? runResult());
+    const registration = createGatewayRegistration({
+      gatewayName: () => "nemoclaw",
+      getDockerDriverGatewayEndpointArg: () => "https://127.0.0.1:8080",
+      getGatewayLocalEndpoint: () => "https://127.0.0.1:8080",
+      hasStaleGateway: () => false,
+      isGatewayHealthy: () => false,
+      isLinuxDockerDriverGatewayEnabled: () => true,
+      removeDockerDriverGatewayRegistration: () => true,
+      runCaptureOpenshell: vi.fn(() => ""),
+      runOpenshell,
+      runQuietOpenshell: vi.fn(() => runResult()),
+    });
+
+    expect(
+      registration.registerDockerDriverGatewayEndpoint({
+        gatewayName: "nemoclaw",
+        workspace: "default",
+      }),
+    ).toBe(false);
+    expect(runOpenshell.mock.calls.map(([args]) => args)).toEqual([
+      ["gateway", "select", "nemoclaw"],
+      ["gateway", "add", "https://127.0.0.1:8080", "--local", "--name", "nemoclaw"],
+      ["gateway", "remove", "nemoclaw"],
+    ]);
+    expect(runOpenshell).not.toHaveBeenCalledWith(
+      ["gateway", "destroy", "-g", "nemoclaw"],
+      expect.anything(),
     );
   });
 
@@ -109,6 +236,7 @@ describe("gateway lifecycle late binding", () => {
           typeof import("../docker-driver-gateway-env").startPackageManagedDockerDriverGatewayWithEnvOverride
         >[0],
       ) => {
+        options.runCaptureOpenshell(["status"], { ignoreError: true });
         await options.verifySandboxBridgeGatewayReachableOrExit(false, {});
         return true;
       },
@@ -129,6 +257,15 @@ describe("gateway lifecycle late binding", () => {
       ).toBeNull();
       return { OPENSHELL_SERVER_PORT: String(port) };
     });
+    const runCaptureOpenshell = vi.fn((_args: string[], _options?: Record<string, unknown>) => "");
+    const runtimeIdentitySpy = vi
+      .spyOn(dockerDriverGatewayLaunch, "buildDockerDriverGatewayRuntimeIdentity")
+      .mockImplementation((options) => ({
+        launch: null,
+        desiredEnv: {},
+        driftGatewayBin: null,
+        identityGatewayBin: options.gatewayBin,
+      }));
     const start = createDockerDriverGatewayStart({
       SUPPORTED_OPENSHELL_FALLBACK_VERSION: "0.0.0",
       checkGatewayPortAvailable: async () => ({ ok: true }),
@@ -166,9 +303,9 @@ describe("gateway lifecycle late binding", () => {
       logDockerDriverGatewayRestart: vi.fn(),
       registerDockerDriverGatewayEndpoint: () => true,
       rememberDockerDriverGatewayPid: vi.fn(),
-      resolveOpenShellGatewayBinary: () => null,
+      resolveOpenShellGatewayBinary: () => "/opt/openshell/openshell-gateway",
       resolveOpenShellSandboxBinary: () => null,
-      runCaptureOpenshell: () => "",
+      runCaptureOpenshell,
       sleepSeconds: vi.fn(),
       verifySandboxBridgeGatewayReachableOrExit: verifyReachability,
     });
@@ -195,12 +332,57 @@ describe("gateway lifecycle late binding", () => {
       fs.existsSync(path.join(stateDir, gatewayBinding.MANAGED_GATEWAY_STATE_ROOT_MARKER)),
     ).toBe(false);
     vi.stubEnv("NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR", `  ${stateDir}  `);
+    vi.stubEnv("OPENSHELL_GATEWAY", "hostile-gateway");
+    vi.stubEnv("OPENSHELL_WORKSPACE", "hostile-workspace");
+    vi.stubEnv("OPENSHELL_GATEWAY_ENDPOINT", "https://hostile.invalid");
+    vi.stubEnv("OPENSHELL_TOKEN", "hostile-token");
+    vi.stubEnv("OPENSHELL_LOCAL_TLS_DIR", "/hostile/tls");
+    vi.stubEnv("OPENSHELL_DISABLE_TLS", "1");
+    vi.stubEnv("OPENSHELL_DISABLE_GATEWAY_AUTH", "1");
     try {
-      await start.startDockerDriverGateway();
+      await start.startDockerDriverGateway({
+        runtimeSelection: {
+          gatewayName: "resumed",
+          workspace: "default",
+          localTlsDir: path.join(stateDir, "tls"),
+        },
+      });
 
       expect(managedStart).toHaveBeenCalledWith(
         expect.objectContaining({ gatewayName: "resumed" }),
       );
+      const runtimeIdentityOptions = runtimeIdentitySpy.mock.calls[0]?.[0];
+      const managedOptions = managedStart.mock.calls[0]?.[0];
+      expect(runtimeIdentityOptions?.env).toEqual(managedOptions?.env);
+      expect(runtimeIdentityOptions?.env).toEqual(
+        expect.objectContaining({
+          OPENSHELL_GATEWAY: "resumed",
+          OPENSHELL_LOCAL_TLS_DIR: path.join(stateDir, "tls"),
+          OPENSHELL_WORKSPACE: "default",
+        }),
+      );
+      expect(runtimeIdentityOptions?.env?.OPENSHELL_GATEWAY_ENDPOINT).toBeUndefined();
+      expect(runtimeIdentityOptions?.env?.OPENSHELL_TOKEN).toBeUndefined();
+      expect(runtimeIdentityOptions?.env?.OPENSHELL_DISABLE_TLS).toBeUndefined();
+      expect(runtimeIdentityOptions?.env?.OPENSHELL_DISABLE_GATEWAY_AUTH).toBeUndefined();
+      expect(runCaptureOpenshell).toHaveBeenCalledTimes(2);
+      const versionOptions = runCaptureOpenshell.mock.calls[0]?.[1] as
+        | { env?: Record<string, string>; replaceEnv?: boolean }
+        | undefined;
+      const statusOptions = runCaptureOpenshell.mock.calls[1]?.[1] as typeof versionOptions;
+      expect(versionOptions).toMatchObject({
+        env: expect.objectContaining({
+          OPENSHELL_GATEWAY: "resumed",
+          OPENSHELL_WORKSPACE: "default",
+          OPENSHELL_LOCAL_TLS_DIR: path.join(stateDir, "tls"),
+        }),
+        replaceEnv: true,
+      });
+      expect(statusOptions?.env).toEqual(versionOptions?.env);
+      expect(versionOptions?.env).not.toHaveProperty("OPENSHELL_GATEWAY_ENDPOINT");
+      expect(versionOptions?.env).not.toHaveProperty("OPENSHELL_TOKEN");
+      expect(versionOptions?.env).not.toHaveProperty("OPENSHELL_DISABLE_TLS");
+      expect(versionOptions?.env).not.toHaveProperty("OPENSHELL_DISABLE_GATEWAY_AUTH");
       expect(verifyReachability).toHaveBeenCalledWith(
         false,
         expect.objectContaining({ port: 9777 }),
@@ -244,6 +426,7 @@ describe("gateway lifecycle late binding", () => {
       expect(getDockerDriverGatewayEnv).toHaveBeenCalledTimes(1);
       expect(managedStart).toHaveBeenCalledTimes(1);
     } finally {
+      runtimeIdentitySpy.mockRestore();
       vi.unstubAllEnvs();
       fs.rmSync(root, { force: true, recursive: true });
     }

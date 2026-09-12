@@ -4,7 +4,7 @@
 export const CUA_FEATURE_ENV = "NEMOCLAW_CUA_ENABLED" as const;
 export const CUA_SANDBOX_IMAGE_ENV = "NEMOCLAW_CUA_SANDBOX_IMAGE_REF" as const;
 
-const SANDBOX_IMAGE_REF = /^[A-Za-z0-9][A-Za-z0-9._:@/+\-]{0,511}$/;
+const SANDBOX_IMAGE_REF = /^[A-Za-z0-9][A-Za-z0-9._:@/+-]{0,511}$/;
 
 export function isCuaEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
   return env[CUA_FEATURE_ENV] === "1";

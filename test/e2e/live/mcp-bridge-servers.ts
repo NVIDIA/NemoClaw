@@ -29,6 +29,8 @@ export interface StartedHttpServer {
   close(): Promise<void>;
 }
 
+export const FAKE_MCP_STATUS_RESULT_TOKEN = "MCP_STATUS_OK";
+
 export interface FakeMcpRequest {
   method: string;
   path: string;
@@ -37,6 +39,7 @@ export interface FakeMcpRequest {
   sessionId: string;
   protocolVersion: string;
   rpcMethod?: string;
+  rpcToolName?: string;
   responseStatus?: number;
   responseHasResult?: boolean;
   negotiatedSessionId?: string;
@@ -111,12 +114,15 @@ const CLOUDFLARED_ENV_NAMES = new Set([
   "LANG",
   "HTTP_PROXY",
   "HTTPS_PROXY",
+  "ALL_PROXY",
   "NO_PROXY",
   "http_proxy",
   "https_proxy",
+  "all_proxy",
   "no_proxy",
   "SSL_CERT_FILE",
   "SSL_CERT_DIR",
+  "CURL_CA_BUNDLE",
 ]);
 
 const EMPTY_TASK = {
@@ -203,11 +209,7 @@ function queueLegacyMcpResponse(
   requestId: string | number | null,
   payload: unknown,
 ): LegacyQueueResult {
-  if (
-    session.phase === "closed" ||
-    session.response.destroyed ||
-    session.response.writableEnded
-  ) {
+  if (session.phase === "closed" || session.response.destroyed || session.response.writableEnded) {
     return { ok: false, status: 410, message: "legacy MCP event stream is closed" };
   }
   const requestIdKey = jsonRpcIdKey(requestId);
@@ -246,7 +248,7 @@ function queueLegacyMcpResponse(
   return { ok: true, sequence };
 }
 
-function buildCloudflaredSubprocessEnv(): Record<string, string> {
+function buildPublicTunnelSubprocessEnv(): Record<string, string> {
   const env: Record<string, string> = {
     // Do not let quick-tunnel discovery consume a developer's named-tunnel
     // credentials or config. The CI runner temp directory is job-isolated.
@@ -258,6 +260,27 @@ function buildCloudflaredSubprocessEnv(): Record<string, string> {
     if (CLOUDFLARED_ENV_NAMES.has(name) || name.startsWith("LC_")) env[name] = value;
   }
   return env;
+}
+
+function buildPublicTunnelProbeArgs(url: string): string[] {
+  return [
+    "--disable",
+    "--silent",
+    "--show-error",
+    "--head",
+    "--proto",
+    "=https",
+    "--tlsv1.2",
+    "--connect-timeout",
+    "5",
+    "--max-time",
+    "5",
+    "--output",
+    "/dev/null",
+    "--write-out",
+    "%{http_code}",
+    url,
+  ];
 }
 
 function waitForExit(child: ChildProcess): Promise<void> {
@@ -314,35 +337,6 @@ export function buildCloudflaredQuickTunnelArgs(port: number): string[] {
   ];
 }
 
-async function probePublicTunnel(
-  origin: string,
-  readinessPath: string,
-  readinessStatus: number,
-): Promise<{
-  ready: boolean;
-  diagnostic: string;
-}> {
-  try {
-    const response = await fetch(`${origin}${readinessPath}`, {
-      method: "HEAD",
-      redirect: "manual",
-      signal: AbortSignal.timeout(5_000),
-    });
-    await response.body?.cancel();
-    return {
-      ready: response.status === readinessStatus,
-      diagnostic: `public HEAD ${readinessPath} returned HTTP ${response.status}`,
-    };
-  } catch (error) {
-    return {
-      ready: false,
-      // Avoid reflecting request URLs or child output here. The error class is
-      // enough to distinguish DNS/transport failure without risking headers.
-      diagnostic: `public HEAD ${readinessPath} failed (${error instanceof Error ? error.name : "unknown error"})`,
-    };
-  }
-}
-
 /**
  * Publishes a local HTTPS origin behind a real `trycloudflare.com` quick
  * tunnel: a genuinely public, DNS-resolvable, publicly-trusted-certificate
@@ -357,6 +351,7 @@ export async function startPublicMcpHttpsTunnel(options: {
   progress: Pick<TestProgress, "activity" | "event" | "onOutput"> & TestProgressCapability;
   server: StartedHttpServer;
   cloudflaredBin?: string;
+  curlBin?: string;
   readinessPath?: string;
   readinessStatus?: number;
 }): Promise<StartedPublicMcpTunnel> {
@@ -390,7 +385,7 @@ export async function startPublicMcpHttpsTunnel(options: {
       progress: options.progress,
       spawn: {
         detached: true,
-        env: buildCloudflaredSubprocessEnv(),
+        env: buildPublicTunnelSubprocessEnv(),
         stdio: ["ignore", "pipe", "pipe"],
       },
     });
@@ -427,7 +422,61 @@ export async function startPublicMcpHttpsTunnel(options: {
         break;
       }
       if (origin) {
-        const probe = await probePublicTunnel(origin, readinessPath, readinessStatus);
+        let probeOutput = "";
+        let probeOutputExceededLimit = false;
+        let probeSpawnError = false;
+        const probeChild = spawnObservedChild(
+          options.curlBin ?? "curl",
+          buildPublicTunnelProbeArgs(`${origin}${readinessPath}`),
+          {
+            activityLabel: "command: public tunnel readiness probe",
+            progress: options.progress,
+            spawn: {
+              env: buildPublicTunnelSubprocessEnv(),
+              stdio: ["ignore", "pipe", "pipe"],
+            },
+          },
+        );
+        probeChild.stdout?.setEncoding("utf8");
+        probeChild.stdout?.on("data", (chunk: string) => {
+          if (probeOutputExceededLimit) return;
+          probeOutput += chunk;
+          if (probeOutput.length > 16) {
+            probeOutput = "";
+            probeOutputExceededLimit = true;
+          }
+        });
+        probeChild.once("error", () => {
+          probeSpawnError = true;
+        });
+        const probeExited = waitForExit(probeChild);
+        const probeCompleted = await Promise.race([
+          probeExited.then(() => true),
+          delay(6_000).then(() => false),
+        ]);
+        if (!probeCompleted) {
+          probeChild.kill("SIGKILL");
+          await probeExited;
+        }
+        const probeStatus = Number.parseInt(probeOutput, 10);
+        const probe =
+          !probeCompleted || probeSpawnError || probeChild.exitCode !== 0
+            ? {
+                ready: false,
+                // curl stderr can contain proxy details. Keep transport failures opaque.
+                diagnostic: `public HEAD ${readinessPath} failed (curl transport error)`,
+              }
+            : probeOutputExceededLimit ||
+                !/^\d{3}$/u.test(probeOutput) ||
+                !Number.isInteger(probeStatus)
+              ? {
+                  ready: false,
+                  diagnostic: `public HEAD ${readinessPath} returned an invalid status`,
+                }
+              : {
+                  ready: probeStatus === readinessStatus,
+                  diagnostic: `public HEAD ${readinessPath} returned HTTP ${probeStatus}`,
+                };
         if (probe.ready) {
           consecutiveReadyProbes += 1;
           if (consecutiveReadyProbes >= QUICK_TUNNEL_CONSECUTIVE_READY_PROBES) {
@@ -475,6 +524,15 @@ export async function startCompatibleMock(options: {
   toolNames?: string[];
   deferredToolName?: string;
   progressiveToolSearch?: { toolName: string; query: string };
+  deniedToolProbe?:
+    | { mode: "bridge"; promptMarker: string; resultToken: string; toolName: string }
+    | {
+        mode: "progressive";
+        promptMarker: string;
+        query: string;
+        resultToken: string;
+        toolName: string;
+      };
 }): Promise<StartedHttpServer> {
   const server = http.createServer(async (req, res) => {
     const requestPath = new URL(req.url ?? "/", "http://compatible.mock").pathname;
@@ -508,6 +566,10 @@ export async function startCompatibleMock(options: {
       );
       const toolResults = (body.messages ?? []).filter((message) => message.role === "tool");
       const toolResultCount = toolResults.length;
+      const deniedToolProbe = options.deniedToolProbe;
+      const deniedToolProbeRequested =
+        deniedToolProbe !== undefined &&
+        JSON.stringify(body.messages ?? []).includes(deniedToolProbe.promptMarker);
       const sawAuthenticatedToolResult = toolResults.some((message) =>
         JSON.stringify(message.content).includes(options.toolResultToken ?? "__never__"),
       );
@@ -537,34 +599,77 @@ export async function startCompatibleMock(options: {
           return undefined;
         }
       };
+      const isDeniedBridgeToolResult = (index: number, toolCallId: string) => {
+        const message = toolResults[index];
+        if (message?.tool_call_id !== toolCallId) return false;
+        return /policy_denied|blocked by deny rule/iu.test(JSON.stringify(message.content));
+      };
       const classifyHermesSearchResult = (
         index: number,
         toolName: string,
       ): "target" | "miss" | "invalid" => {
         const parsed = parsedToolResult(index, "call_hermes_tool_search");
-        if (!Array.isArray(parsed?.matches)) return "invalid";
-        const matches = parsed.matches;
-        const hasValidEntries = matches.every(
-          (match) =>
-            match &&
-            typeof match === "object" &&
-            !Array.isArray(match) &&
-            typeof (match as Record<string, unknown>).name === "string",
+        if (!parsed) return "invalid";
+        if (
+          !Array.isArray(parsed.queries) ||
+          parsed.queries.length !== 1 ||
+          parsed.queries[0] !== toolName ||
+          !Number.isInteger(parsed.total_available) ||
+          (parsed.total_available as number) < 0 ||
+          !Array.isArray(parsed.results) ||
+          parsed.results.length !== 1 ||
+          !parsed.tools ||
+          typeof parsed.tools !== "object" ||
+          Array.isArray(parsed.tools)
+        ) {
+          return "invalid";
+        }
+        const result = parsed.results[0];
+        if (!result || typeof result !== "object" || Array.isArray(result)) return "invalid";
+        const resultRecord = result as Record<string, unknown>;
+        if (resultRecord.query !== toolName || !Array.isArray(resultRecord.matches)) {
+          return "invalid";
+        }
+        const names = resultRecord.matches.map((match) =>
+          typeof match === "string" ? match : undefined,
         );
-        if (!hasValidEntries) return "invalid";
-        return matches.some((match) => (match as Record<string, unknown>).name === toolName)
-          ? "target"
-          : "miss";
+        if (names.some((name) => name === undefined)) return "invalid";
+        const tools = parsed.tools as Record<string, unknown>;
+        if (
+          names.some(
+            (name) =>
+              !name ||
+              !Object.hasOwn(tools, name) ||
+              !tools[name] ||
+              typeof tools[name] !== "object" ||
+              Array.isArray(tools[name]),
+          )
+        ) {
+          return "invalid";
+        }
+        return names.includes(toolName) ? "target" : "miss";
       };
       const hasExpectedHermesDescription = (index: number, toolName: string) => {
         const parsed = parsedToolResult(index, "call_hermes_tool_describe");
-        const parameters = parsed?.parameters;
+        const tools = parsed?.tools;
+        const describedTool =
+          tools && typeof tools === "object" && !Array.isArray(tools)
+            ? (tools as Record<string, unknown>)[toolName]
+            : undefined;
+        const parameters =
+          describedTool && typeof describedTool === "object" && !Array.isArray(describedTool)
+            ? (describedTool as Record<string, unknown>).parameters
+            : undefined;
+        const description =
+          describedTool && typeof describedTool === "object" && !Array.isArray(describedTool)
+            ? (describedTool as Record<string, unknown>).description
+            : undefined;
         const properties =
           parameters && typeof parameters === "object" && !Array.isArray(parameters)
             ? (parameters as Record<string, unknown>).properties
             : undefined;
         return (
-          parsed?.name === toolName &&
+          typeof description === "string" &&
           properties !== null &&
           typeof properties === "object" &&
           !Array.isArray(properties) &&
@@ -575,8 +680,60 @@ export async function startCompatibleMock(options: {
         | { id: string; name: string; arguments: Record<string, unknown> }
         | undefined;
       let protocolError: string | undefined;
+      let deniedToolProbeComplete = false;
 
-      if (!sawAuthenticatedToolResult && options.progressiveToolSearch) {
+      if (deniedToolProbeRequested && deniedToolProbe) {
+        if (deniedToolProbe.mode === "bridge") {
+          if (toolResultCount === 0 && !visibleToolNames.has("tool_call")) {
+            protocolError = "denied-tool probe requires the tool_call bridge";
+          } else if (toolResultCount === 0) {
+            plannedToolCall = {
+              id: "call_denied_tool_bridge",
+              name: "tool_call",
+              arguments: { name: deniedToolProbe.toolName, arguments: {} },
+            };
+          } else if (toolResultCount === 1) {
+            deniedToolProbeComplete = isDeniedBridgeToolResult(0, "call_denied_tool_bridge");
+            if (!deniedToolProbeComplete) {
+              protocolError = "denied-tool bridge call did not report a policy denial";
+            }
+          } else {
+            protocolError = "denied-tool bridge returned an unexpected result sequence";
+          }
+        } else if (toolResultCount === 0 && visibleToolNames.has(deniedToolProbe.toolName)) {
+          protocolError = `denied progressive target ${deniedToolProbe.toolName} was visible before search_tools`;
+        } else if (toolResultCount === 0 && !visibleToolNames.has("search_tools")) {
+          protocolError = "denied-tool probe requires search_tools";
+        } else if (toolResultCount === 0) {
+          plannedToolCall = {
+            id: "call_denied_tool_search",
+            name: "search_tools",
+            arguments: { query: deniedToolProbe.query },
+          };
+        } else if (
+          toolResultCount === 1 &&
+          !hasExpectedToolResult(0, "call_denied_tool_search", [`- ${deniedToolProbe.toolName}:`])
+        ) {
+          protocolError = "search_tools did not return the denied progressive target";
+        } else if (toolResultCount === 1 && !visibleToolNames.has(deniedToolProbe.toolName)) {
+          protocolError = "denied progressive target was not visible after search_tools";
+        } else if (toolResultCount === 1) {
+          plannedToolCall = {
+            id: "call_denied_progressive_tool",
+            name: deniedToolProbe.toolName,
+            arguments: {},
+          };
+        } else if (toolResultCount === 2) {
+          deniedToolProbeComplete =
+            toolResults[1]?.tool_call_id === "call_denied_progressive_tool" &&
+            /policy_denied|blocked by deny rule/iu.test(JSON.stringify(toolResults[1]?.content));
+          if (!deniedToolProbeComplete) {
+            protocolError = "denied progressive tool call did not report a policy denial";
+          }
+        } else {
+          protocolError = "denied progressive tool returned an unexpected result sequence";
+        }
+      } else if (!sawAuthenticatedToolResult && options.progressiveToolSearch) {
         const { query, toolName } = options.progressiveToolSearch;
         if (toolResultCount === 0 && visibleToolNames.has(toolName)) {
           protocolError = `progressive target ${toolName} was visible before search_tools`;
@@ -612,7 +769,7 @@ export async function startCompatibleMock(options: {
           plannedToolCall = {
             id: "call_hermes_tool_search",
             name: "tool_search",
-            arguments: { query: options.deferredToolName },
+            arguments: { queries: [options.deferredToolName] },
           };
         } else if (toolResultCount === 1) {
           const searchResult = classifyHermesSearchResult(0, options.deferredToolName);
@@ -620,7 +777,7 @@ export async function startCompatibleMock(options: {
             plannedToolCall = {
               id: "call_hermes_tool_describe",
               name: "tool_describe",
-              arguments: { name: options.deferredToolName },
+              arguments: { names: [options.deferredToolName] },
             };
           } else if (searchResult === "miss") {
             protocolError = HERMES_DEFERRED_TOOL_SEARCH_MISS;
@@ -658,30 +815,32 @@ export async function startCompatibleMock(options: {
           };
         }
       }
-      const responseMessage = sawAuthenticatedToolResult
-        ? {
-            role: "assistant",
-            content: options.toolResultToken,
-          }
-        : protocolError
-          ? { role: "assistant", content: `mock protocol error: ${protocolError}` }
-          : plannedToolCall && options.toolChallenge
-            ? {
-                role: "assistant",
-                content: null,
-                tool_calls: [
-                  {
-                    index: 0,
-                    id: plannedToolCall.id,
-                    type: "function",
-                    function: {
-                      name: plannedToolCall.name,
-                      arguments: JSON.stringify(plannedToolCall.arguments),
+      const responseMessage = deniedToolProbeComplete
+        ? { role: "assistant", content: deniedToolProbe?.resultToken }
+        : sawAuthenticatedToolResult
+          ? {
+              role: "assistant",
+              content: options.toolResultToken,
+            }
+          : protocolError
+            ? { role: "assistant", content: `mock protocol error: ${protocolError}` }
+            : plannedToolCall && (deniedToolProbeRequested || options.toolChallenge)
+              ? {
+                  role: "assistant",
+                  content: null,
+                  tool_calls: [
+                    {
+                      index: 0,
+                      id: plannedToolCall.id,
+                      type: "function",
+                      function: {
+                        name: plannedToolCall.name,
+                        arguments: JSON.stringify(plannedToolCall.arguments),
+                      },
                     },
-                  },
-                ],
-              }
-            : { role: "assistant", content: "ok" };
+                  ],
+                }
+              : { role: "assistant", content: "ok" };
       const finishReason = "tool_calls" in responseMessage ? "tool_calls" : "stop";
       if (body.stream) {
         res.writeHead(200, {
@@ -820,6 +979,9 @@ export async function startFakeMcpHttpsServer(options: {
     if (observedRequestId !== undefined) recordedObservation.rpcId = observedRequestId;
     if (typeof parsedPayload?.method === "string") {
       recordedObservation.rpcMethod = parsedPayload.method;
+    }
+    if (parsedPayload?.method === "tools/call" && typeof parsedPayload.params?.name === "string") {
+      recordedObservation.rpcToolName = parsedPayload.params.name;
     }
     // The public quick-tunnel readiness probe uses HEAD /mcp. Keep it out of
     // the protocol request ledger so zero-upstream decoy and policy-denial
@@ -970,10 +1132,13 @@ export async function startFakeMcpHttpsServer(options: {
     }
     const requestId = jsonRpcId(parsedPayload.id);
     const isNotification =
-      typeof parsedPayload.method === "string" && MCP_NOTIFICATION_METHODS.has(parsedPayload.method);
+      typeof parsedPayload.method === "string" &&
+      MCP_NOTIFICATION_METHODS.has(parsedPayload.method);
     if (legacySession) {
       if (sessionId !== "") {
-        respondJson(400, { error: { message: "legacy MCP requests must not mix session headers" } });
+        respondJson(400, {
+          error: { message: "legacy MCP requests must not mix session headers" },
+        });
         return;
       }
       if (parsedPayload.method === "initialize") {
@@ -1099,27 +1264,35 @@ export async function startFakeMcpHttpsServer(options: {
         return;
       }
     } else if (parsedPayload.method === "tools/call") {
+      const toolName = parsedPayload.params?.name;
       const challenge = parsedPayload.params?.arguments?.challenge;
-      if (
-        parsedPayload.params?.name !== "fake_echo" ||
-        (options.challenge !== undefined && challenge !== options.challenge)
-      ) {
-        respondRpc(responseId, {
-          jsonrpc: "2.0",
-          id: responseId,
-          error: { code: -32602, message: "invalid fake_echo challenge" },
-        });
-        return;
+      if (toolName === "fake_status") {
+        result = {
+          content: [{ type: "text", text: FAKE_MCP_STATUS_RESULT_TOKEN }],
+          isError: false,
+        };
+      } else {
+        if (
+          toolName !== "fake_echo" ||
+          (options.challenge !== undefined && challenge !== options.challenge)
+        ) {
+          respondRpc(responseId, {
+            jsonrpc: "2.0",
+            id: responseId,
+            error: { code: -32602, message: "invalid fake_echo challenge" },
+          });
+          return;
+        }
+        result = {
+          content: [
+            {
+              type: "text",
+              text: options.resultToken ?? `MCP_AUTH_REWRITE_OK::${String(challenge ?? "")}`,
+            },
+          ],
+          isError: false,
+        };
       }
-      result = {
-        content: [
-          {
-            type: "text",
-            text: options.resultToken ?? `MCP_AUTH_REWRITE_OK::${String(challenge ?? "")}`,
-          },
-        ],
-        isError: false,
-      };
     } else if (
       typeof parsedPayload.method === "string" &&
       Object.prototype.hasOwnProperty.call(MCP_EMPTY_RESULT_BY_METHOD, parsedPayload.method)

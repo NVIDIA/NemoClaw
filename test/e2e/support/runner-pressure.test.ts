@@ -67,7 +67,7 @@ const LINK_CREATORS = {
 } as const;
 
 function runHelper(args: string[], env: Record<string, string>) {
-  return spawnSync(process.execPath, ["--experimental-strip-types", HELPER, ...args], {
+  return spawnSync(process.execPath, [HELPER, ...args], {
     encoding: "utf-8",
     env: { ...process.env, ...env },
   });

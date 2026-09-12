@@ -12,6 +12,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
+import { syntheticForwardNodeOptions } from "../helpers/platform-override-node-options";
 import { execTimeout } from "../helpers/timeouts";
 
 const CLI = path.join(import.meta.dirname, "../..", "bin", "nemoclaw.js");
@@ -334,6 +335,7 @@ function makeVmRestoreToEnv(
 
   return {
     HOME: home,
+    NODE_OPTIONS: syntheticForwardNodeOptions(home),
     NEMOCLAW_OPENSHELL_BIN: path.join(localBin, "openshell"),
     NEMOCLAW_GATEWAY_RECOVERY_SETTLE_SECONDS: "0",
     NEMOCLAW_TEST_SNAPSHOT_RESTORE_MARKER: snapshotRestoreMarker,

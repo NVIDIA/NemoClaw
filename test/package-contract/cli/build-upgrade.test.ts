@@ -78,11 +78,9 @@ describe("CLI source-checkout upgrade build", () => {
         path.join(REPOSITORY_ROOT, "nemoclaw", "tsconfig.runner.json"),
         path.join(policyRoot, "tsconfig.runner.json"),
       );
-      cpSync(
-        path.join(REPOSITORY_ROOT, "nemoclaw", "src"),
-        path.join(policyRoot, "src"),
-        { recursive: true },
-      );
+      cpSync(path.join(REPOSITORY_ROOT, "nemoclaw", "src"), path.join(policyRoot, "src"), {
+        recursive: true,
+      });
 
       const blueprintRoot = path.join(fixtureRoot, "nemoclaw-blueprint");
       mkdirSync(blueprintRoot);
@@ -199,10 +197,7 @@ describe("CLI source-checkout upgrade build", () => {
         "junction",
       );
 
-      const previousShieldsPluginPath = path.join(
-        pluginRoot,
-        PREVIOUS_SHIELDS_PLUGIN_ARTIFACT,
-      );
+      const previousShieldsPluginPath = path.join(pluginRoot, PREVIOUS_SHIELDS_PLUGIN_ARTIFACT);
       mkdirSync(path.dirname(previousShieldsPluginPath), { recursive: true });
       writeFileSync(previousShieldsPluginPath, "module.exports = {};\n");
 

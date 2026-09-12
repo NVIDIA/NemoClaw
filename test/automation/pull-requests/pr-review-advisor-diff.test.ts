@@ -126,7 +126,6 @@ describe("PR review advisor diff", () => {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   });
-
 });
 
 function commit(cwd: string, message: string): void {

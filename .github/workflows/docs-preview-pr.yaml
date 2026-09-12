@@ -30,6 +30,7 @@ env:
 
 jobs:
   preview:
+    name: Docs / Validate and publish PR preview
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

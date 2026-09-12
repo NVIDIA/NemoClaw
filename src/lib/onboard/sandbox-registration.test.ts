@@ -10,8 +10,8 @@ import {
   serializedHostLocalInferenceReceipt,
   serializedLlamaCppHostLocalInferenceReceipt,
 } from "../../../test/helpers/host-local-inference-receipt";
-import type { SandboxWorkloadReceipt } from "../state/registry/types";
 import { createSandboxHostLocalInferenceProvenance } from "../state/registry/host-local-inference";
+import type { SandboxWorkloadReceipt } from "../state/registry/types";
 import {
   MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION,
   MANAGED_IMAGE_REPOSITORIES,
@@ -22,9 +22,14 @@ import { encodeManagedStartupProfile } from "./managed-startup/profile";
 
 const requireDist = createRequire(import.meta.url);
 const onboardSession = requireDist("../state/onboard-session.js");
-const { buildCreatedSandboxRegistryEntry, registerCreatedSandbox, selection } = requireDist(
-  "./sandbox-registration.ts",
-) as typeof import("./sandbox-registration");
+const {
+  buildCreatedSandboxRegistryEntry,
+  prepareCreatedSandboxRegistration,
+  registerCreatedSandbox,
+  registerPreparedCreatedSandbox,
+  revalidatePreparedCreatedSandboxRegistration,
+  selection,
+} = requireDist("./sandbox-registration.ts") as typeof import("./sandbox-registration");
 
 const runtimeFields = {
   gpuEnabled: true,
@@ -516,6 +521,38 @@ describe("registerCreatedSandbox", () => {
     runtimeDir: "/run/user/1001",
     socketPath: "/run/user/1001/podman/podman.sock",
   };
+
+  it("publishes the exact prepared row only after revalidation (#10546)", () => {
+    const registerSandbox = vi.fn();
+    const input = {
+      ...createdRegistryEntryInput({ lifecycleGeneration: "generation-1" }),
+      registerSandbox,
+    };
+
+    const prepared = prepareCreatedSandboxRegistration(input);
+
+    expect(registerSandbox).not.toHaveBeenCalled();
+    expect(registerPreparedCreatedSandbox(input, prepared)).toBe(prepared);
+    expect(registerSandbox).toHaveBeenCalledExactlyOnceWith(prepared);
+  });
+
+  it("rejects changed registration authority before publishing a prepared row (#10546)", () => {
+    const registerSandbox = vi.fn();
+    const input = {
+      ...createdRegistryEntryInput({ lifecycleGeneration: "generation-1" }),
+      registerSandbox,
+    };
+    const prepared = prepareCreatedSandboxRegistration(input);
+    const changed = { ...input, lifecycleGeneration: "generation-2" };
+
+    expect(() => revalidatePreparedCreatedSandboxRegistration(changed, prepared)).toThrow(
+      /registration authority.*changed before publication/u,
+    );
+    expect(() => registerPreparedCreatedSandbox(changed, prepared)).toThrow(
+      /registration authority.*changed before publication/u,
+    );
+    expect(registerSandbox).not.toHaveBeenCalled();
+  });
 
   it("persists explicit OpenClaw identity for a matching Portable lifecycle receipt (#9207)", () => {
     const registerSandbox = vi.fn();

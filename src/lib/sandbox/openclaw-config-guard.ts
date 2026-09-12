@@ -76,8 +76,8 @@ export function validateOpenClawConfigCandidate(
     [
       ...SCHEMA_VALIDATION_TIMEOUT,
       "/usr/bin/setpriv",
-      "--reuid=gateway",
-      "--regid=gateway",
+      "--reuid=sandbox",
+      "--regid=sandbox",
       "--init-groups",
       "--",
       "sh",
@@ -158,7 +158,30 @@ export function writeOpenClawConfigCandidate(
     ],
     input,
   );
+  return readConfigGuardResult(result, "write-config");
+}
+
+export function verifyOpenClawConfigPosture(privileged: PrivilegedExec) {
+  return readConfigGuardResult(
+    privileged.run([
+      ...SCHEMA_VALIDATION_TIMEOUT,
+      "python3",
+      "-I",
+      CONTAINER_HELPER,
+      "preflight-restart",
+      "--config-dir",
+      OPENCLAW_CONFIG_DIR,
+    ]),
+    "preflight-restart",
+  );
+}
+
+function readConfigGuardResult(
+  result: PrivilegedExecResult,
+  action: "write-config" | "preflight-restart",
+): OpenClawConfigWriteResult & { repairable?: true } {
   const issues: string[] = [];
+  let permissionIssueCount = 0;
   let summary: Record<string, unknown> | null = null;
   for (const line of result.stdout.split("\n")) {
     const trimmed = line.trim();
@@ -184,15 +207,37 @@ export function writeOpenClawConfigCandidate(
       typeof value.detail === "string"
     ) {
       issues.push(
-        `OpenClaw config guard write-config [${printableExcerpt(value.code, 64)}] ${printableExcerpt(value.path, 256)}: ${printableExcerpt(value.detail, 2048)}`,
+        `OpenClaw config guard ${action} [${printableExcerpt(value.code, 64)}] ${printableExcerpt(value.path, 256)}: ${printableExcerpt(value.detail, 2048)}`,
       );
-    } else if (value.type === "result" && value.action === "write-config") {
+      if (
+        ["invalid-restart-posture", "config-not-mutable"].includes(value.code) &&
+        [
+          OPENCLAW_CONFIG_DIR,
+          `${OPENCLAW_CONFIG_DIR}/openclaw.json`,
+          `${OPENCLAW_CONFIG_DIR}/.config-hash`,
+        ].includes(value.path)
+      )
+        permissionIssueCount += 1;
+    } else if (value.type === "result" && value.action === action) {
       if (summary) issues.push("OpenClaw config guard returned multiple result records");
       summary = value;
     } else {
       issues.push("OpenClaw config guard returned an unknown record");
     }
   }
+  // These owner verdicts exclude readiness, JSON, ownership, flags, and transaction failures.
+  if (
+    action === "preflight-restart" &&
+    summary?.status === "failed" &&
+    Object.keys(summary).length === 3 &&
+    result.status === 1 &&
+    result.signal === null &&
+    !result.error &&
+    !result.stderr.trim() &&
+    permissionIssueCount > 0 &&
+    permissionIssueCount === issues.length
+  )
+    return { issues, repairable: true };
   if (!summary) issues.push("OpenClaw config guard returned no result record");
   if (summary?.status !== "ok") issues.push("OpenClaw config guard did not report success");
   if (summary?.configDir !== OPENCLAW_CONFIG_DIR) {
@@ -214,7 +259,10 @@ export function writeOpenClawConfigCandidate(
     issues.push(`OpenClaw config guard wrote unexpected stderr: ${result.stderr.trim()}`);
   }
   const configSha256 = summary?.configSha256;
-  if (typeof configSha256 !== "string" || !/^[0-9a-f]{64}$/.test(configSha256)) {
+  if (
+    action === "write-config" &&
+    (typeof configSha256 !== "string" || !/^[0-9a-f]{64}$/.test(configSha256))
+  ) {
     issues.push("OpenClaw config guard returned an invalid config SHA-256");
   }
   return {

@@ -461,6 +461,18 @@ describe("effective built-in policy contracts", () => {
       );
       expect(browserHosts.length > 0).toBe(presetName === "nous-browser");
     });
+
+    const browser = requireNetworkPolicy(effective, "nous_browser");
+    expect(binaries(browser)).toEqual(
+      expect.arrayContaining([
+        "/sandbox/.hermes/node/bin/node*",
+        "/sandbox/.hermes/node/bin/npx*",
+        "/sandbox/.hermes/node/bin/agent-browser*",
+      ]),
+    );
+    expect(
+      binaries(browser).filter((binary) => binary.startsWith("/sandbox/.hermes-data/")),
+    ).toEqual([]);
   });
 
   it("keeps OpenClaw messaging credentials and WebSockets inside inspected endpoints", () => {
@@ -642,9 +654,12 @@ describe("effective built-in policy contracts", () => {
     expect(binaries(claude)).not.toContain("/**");
     // OpenShell enforces on the resolved /proc/<pid>/exe, so the npm-installed
     // launcher (not just the bin/claude shim) must be allowlisted or egress is
-    // denied for the documented `--prefix /tmp/npm-global` install (#7579).
-    expect(binaries(claude)).toContain(
-      "/tmp/npm-global/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe",
+    // denied for native user installs and existing temporary installs (#7579).
+    expect(binaries(claude)).toEqual(
+      expect.arrayContaining([
+        "/sandbox/.local/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe",
+        "/tmp/npm-global/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe",
+      ]),
     );
   });
 

@@ -242,7 +242,9 @@ describe("credentials oclif commands", () => {
 
     expect(output.stdout).toContain("Usage: nemoclaw credentials <subcommand>");
     expect(output.stdout).toMatch(/list\s+List provider credentials/);
-    expect(output.stdout).toMatch(/add <PROVIDER> --type <TYPE>\s+Register a provider credential/);
+    expect(output.stdout).toMatch(
+      /add <PROVIDER> --type <TYPE> \[--agent <AGENT>\]\s+Register a provider credential/,
+    );
     expect(output.stdout).toContain("reset <PROVIDER> [--yes]");
   });
 
@@ -272,6 +274,7 @@ describe("credentials oclif commands", () => {
         opts: {
           env: expect.any(Object),
           ignoreError: true,
+          maxBuffer: 64 * 1024,
           replaceEnv: true,
           stdio: ["ignore", "pipe", "pipe"],
           timeout: 30_000,
@@ -351,6 +354,7 @@ describe("credentials oclif commands", () => {
           ignoreError: true,
           replaceEnv: true,
           stdio: ["ignore", "pipe", "pipe"],
+          suppressOutput: true,
           timeout: 30_000,
         },
       },
@@ -466,8 +470,10 @@ describe("credentials oclif commands", () => {
           opts: {
             env: expect.any(Object),
             ignoreError: true,
+            maxBuffer: 64 * 1024,
             replaceEnv: true,
             stdio: ["ignore", "pipe", "pipe"],
+            suppressOutput: true,
             timeout: 30_000,
           },
         },

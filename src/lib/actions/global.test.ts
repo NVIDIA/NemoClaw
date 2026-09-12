@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -38,6 +42,7 @@ import {
 
 describe("global cli action facade", () => {
   beforeEach(() => {
+    vi.unstubAllEnvs();
     vi.clearAllMocks();
     setGlobalCliActionRuntimeHooksForTest({});
   });
@@ -55,6 +60,34 @@ describe("global cli action facade", () => {
     expect(mocks.garbageCollectImages).toHaveBeenCalledWith({ dryRun: true });
     expect(mocks.help).toHaveBeenCalledWith();
     expect(mocks.version).toHaveBeenCalledWith();
+  });
+
+  it("completes automatic port state at the shared onboard alias boundary (#10824)", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-action-port-"));
+    const root = path.join(home, ".nemoclaw");
+    const gateways = path.join(root, "gateways");
+    const stateDir = path.join(gateways, "8990");
+    const pending = path.join(stateDir, "automatic-gateway-port.pending");
+    const completed = path.join(stateDir, "automatic-gateway-port");
+    try {
+      fs.mkdirSync(stateDir, { recursive: true, mode: 0o700 });
+      fs.chmodSync(root, 0o700);
+      fs.chmodSync(gateways, 0o700);
+      fs.chmodSync(stateDir, 0o700);
+      fs.writeFileSync(pending, "8990\n", { mode: 0o600 });
+      vi.stubEnv("HOME", home);
+      vi.stubEnv("NEMOCLAW_GATEWAY_PORT", "8990");
+      vi.stubEnv("_NEMOCLAW_AUTOMATIC_GATEWAY_PORT", "1");
+
+      await runOnboardAction({ "non-interactive": true });
+
+      expect(mocks.runOnboardAction).toHaveBeenCalledWith({ "non-interactive": true }, {});
+      expect(fs.existsSync(pending)).toBe(false);
+      expect(fs.readFileSync(completed, "utf8")).toBe("8990\n");
+    } finally {
+      vi.unstubAllEnvs();
+      fs.rmSync(home, { recursive: true, force: true });
+    }
   });
 
   it("uses injected runtime hooks for gateway recovery and upgrades", async () => {

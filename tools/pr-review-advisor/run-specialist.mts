@@ -17,6 +17,17 @@ import {
   type RunReadOnlyAdvisorOptions,
 } from "../advisors/session.mts";
 import { collectDeterministicContext } from "./deterministic-context.mts";
+import {
+  createAdvisorFindingToolController,
+  type AdvisorFindingToolController,
+  writeAdvisorFindingLedger,
+} from "./finding-ledger.mts";
+import { trustedE2eRecommendationInventory } from "../advisors/e2e-recommendations.mts";
+import {
+  buildReviewQueueContext,
+  buildSpecialistE2eReceipt,
+  createE2eRecommendationRecorder,
+} from "./e2e-receipt.mts";
 import { collectGitHubReviewContext } from "./github-context.mts";
 import {
   ADVISOR_SPECIALISTS,
@@ -56,13 +67,21 @@ export function writeSpecialistSummary(
 
 export function runSpecialistAdvisor(
   interest: AdvisorInterest,
-  refs: { baseRef: string; headRef: string },
-  options: Omit<RunReadOnlyAdvisorOptions, "customTools">,
+  refs: { baseRef: string; headRef: string; headSha: string },
+  options: RunReadOnlyAdvisorOptions,
   run: (options: RunReadOnlyAdvisorOptions) => Promise<RunAdvisorResult> = runReadOnlyAdvisor,
+  findingController: AdvisorFindingToolController = createAdvisorFindingToolController({
+    headSha: refs.headSha,
+    interest,
+  }),
 ): Promise<RunAdvisorResult> {
   return run({
     ...options,
-    customTools: specialistCustomTools(interest, { ...refs, cwd: options.cwd }),
+    customTools: [
+      ...specialistCustomTools(interest, { ...refs, cwd: options.cwd }),
+      ...(options.customTools ?? []),
+      ...findingController.tools,
+    ],
   });
 }
 
@@ -117,13 +136,28 @@ async function main(): Promise<void> {
     operations: buildOperationsTurnContext(deterministic),
     reconciliation: buildReconciliationTurnContext(deterministic),
   });
+  const findingController = createAdvisorFindingToolController({ headSha, interest });
+  const inventory = trustedE2eRecommendationInventory();
+  const evidenceContext = {
+    baseSha: getHeadSha(baseRef),
+    expectedSpecialists: ADVISOR_SPECIALISTS.map((specialist) => specialist.interest),
+    riskPlan: deterministic.riskPlan,
+    inventory,
+  };
+  fs.writeFileSync(
+    path.join(outDir, "review-queue-context.json"),
+    `${JSON.stringify(buildReviewQueueContext(evidenceContext, process.env), null, 2)}\n`,
+    { flag: "wx", mode: 0o600 },
+  );
+  const recommendations = createE2eRecommendationRecorder(inventory);
   const run = await runSpecialistAdvisor(
     interest,
-    { baseRef, headRef },
+    { baseRef, headRef, headSha },
     {
       cwd: process.cwd(),
       additionalReadRoots: [path.dirname(diffPath)],
       promptTurns: [turn],
+      customTools: [recommendations.tool],
       systemPrompt: buildSystemPrompt(),
       configDir,
       timeoutMs: parsePositiveInt(process.env.PR_REVIEW_ADVISOR_TIMEOUT_MS, 900000),
@@ -138,10 +172,23 @@ async function main(): Promise<void> {
       logPrefix: `pr-review-${interest}`,
       logProgress: (message) => console.log(`[pr-review-${interest}] ${message}`),
     },
+    runReadOnlyAdvisor,
+    findingController,
   );
   const errors = advisorRunErrors(run);
   if (errors.length > 0) throw new Error(errors.join("; "));
+  const receipt = buildSpecialistE2eReceipt({
+    ...evidenceContext,
+    interest,
+    advisor: recommendations.snapshot(),
+  });
+  fs.writeFileSync(
+    path.join(outDir, `pr-review-${interest}-e2e.json`),
+    `${JSON.stringify(receipt, null, 2)}\n`,
+    { flag: "wx", mode: 0o600 },
+  );
   writeSpecialistSummary(outDir, interest, run.text);
+  writeAdvisorFindingLedger(outDir, interest, findingController.snapshot());
   if (!run.sessionFile) throw new Error("Pi did not persist a specialist JSONL session");
   const sessionStat = fs.lstatSync(run.sessionFile);
   if (!sessionStat.isFile() || sessionStat.isSymbolicLink()) {

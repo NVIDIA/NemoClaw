@@ -26,7 +26,7 @@ const SCRIPT_PATH = path.join(
   "scripts",
   "generate-openclaw-config.mts",
 );
-const SCRIPT_ARGS = ["--experimental-strip-types", SCRIPT_PATH];
+const SCRIPT_ARGS = [SCRIPT_PATH];
 
 /** Minimal env vars required for a valid config generation run. */
 const BASE_ENV = baseOpenClawGenerationEnv();
@@ -218,7 +218,7 @@ describe("generate-openclaw-config.mts: config generation", () => {
     expect(config.agents).toBeDefined();
   });
 
-  it("runs as a node --experimental-strip-types executable", () => {
+  it("runs as a node executable", () => {
     const config = runConfigSubprocess();
     expect(config.gateway).toBeDefined();
     expect(config.models).toBeDefined();
@@ -777,14 +777,14 @@ describe("generate-openclaw-config.mts: config generation", () => {
     expect(config.agents.defaults.heartbeat).toBeUndefined();
   });
 
-  it("propagates heartbeat cadence into agents.defaults.heartbeat.every", () => {
+  it("runs a configured heartbeat in an isolated session (#10262)", () => {
     const config = runConfigScript({ NEMOCLAW_AGENT_HEARTBEAT_EVERY: "30m" });
-    expect(config.agents.defaults.heartbeat).toEqual({ every: "30m" });
+    expect(config.agents.defaults.heartbeat).toEqual({ every: "30m", isolatedSession: true });
   });
 
   it("disables heartbeat when set to 0m (#2880)", () => {
     const config = runConfigScript({ NEMOCLAW_AGENT_HEARTBEAT_EVERY: "0m" });
-    expect(config.agents.defaults.heartbeat).toEqual({ every: "0m" });
+    expect(config.agents.defaults.heartbeat).toEqual({ every: "0m", isolatedSession: true });
   });
 
   it("rejects malformed heartbeat values, preserves OpenClaw default, and warns on stderr", () => {

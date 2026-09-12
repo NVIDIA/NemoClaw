@@ -87,8 +87,8 @@ beforeEach(() => {
     key === "nous_research" ? NOUS_ENTRY : null,
   );
   vi.spyOn(policies, "getSandboxBaselineEntryDigest").mockReturnValue("digest-1");
-  excludeBaselineEntryMock = vi.spyOn(policies, "excludeBaselineEntry").mockReturnValue(true);
-  restoreBaselineEntryMock = vi.spyOn(policies, "restoreBaselineEntry").mockReturnValue(true);
+  excludeBaselineEntryMock = vi.spyOn(policies, "excludeBaselineEntry").mockResolvedValue(true);
+  restoreBaselineEntryMock = vi.spyOn(policies, "restoreBaselineEntry").mockResolvedValue(true);
 });
 
 afterEach(() => {

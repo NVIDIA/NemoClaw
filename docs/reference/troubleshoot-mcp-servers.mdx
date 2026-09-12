@@ -50,9 +50,9 @@ If restart reports a missing provider and the original credential is not registe
 If restart or rebuild reports that the provider uses the profile-less legacy `generic` type, remove that server and add it again with the recorded credential variable exported.
 OpenShell cannot bind that provider to an MCP endpoint, and NemoClaw accepts it only for cleanup.
 
-## Rebuild or Destroy Cannot Prove a Credential Revision
+## Rebuild or Destroy Cannot Prove a Credential Handle
 
-If rebuild or destroy reports that it could not prove a revision-scoped credential, a fresh sandbox process did not expose the exact OpenShell credential identity required for adapter cleanup.
+If rebuild or destroy reports that it could not prove a credential handle, a fresh sandbox process did not expose the exact OpenShell credential identity required for adapter cleanup.
 NemoClaw leaves the affected adapter and every provider unchanged.
 It attempts to restore adapter entries prepared earlier in the operation and reports rollback failures.
 
@@ -63,7 +63,7 @@ $$nemoclaw <sandbox> mcp status <server> --json
 ```
 
 If status cannot reach the sandbox, repair the reported gateway condition first.
-Export the recorded environment variable, then restart the server to publish and verify a fresh credential revision:
+Export the recorded environment variable, then restart the server to publish the current credential and verify endpoint authorization for its credential handle:
 
 ```bash
 export <CREDENTIAL_ENV>='replacement-value'
@@ -72,12 +72,13 @@ unset <CREDENTIAL_ENV>
 ```
 
 Run status again.
+An ordinary credential refresh can retain the same `s…` stable handle; restart proves current authorization and does not need to mint a different handle.
 Retry rebuild or destroy only after `provider.credentialReady` and `adapter.registered` are both `true`.
-If restart still cannot prove the revision, repair the reported OpenShell provider, policy, or adapter condition before retrying teardown.
+If restart still cannot prove credential readiness, repair the reported OpenShell provider, policy, or adapter condition before retrying teardown.
 
 ## Add Transaction Is Incomplete
 
-If status reports an incomplete add transaction, rerun the original `mcp add` command with the same URL and environment-variable name.
+If status reports an incomplete add transaction, rerun the original `mcp add` command with the same URL, environment-variable name, and any `--deny-tool` options.
 Re-export the value if the provider still needs to be created.
 
 To abandon the transaction, run `mcp remove <server> --force`.
@@ -107,6 +108,22 @@ Use `nemo-deepagents <name> mcp ...` for servers that need OpenShell credential 
 If a Hermes sandbox is alive but its gateway is not running after a supervisor or container restart, run `$$nemoclaw <sandbox> recover` before retrying the MCP command.
 Recovery re-establishes the managed service lifecycle, API forwarding, and the exit-75 reload loop used for transactional MCP configuration changes.
 </AgentOnly>
+
+## Collect Sandbox Logs
+
+Read recent sandbox logs while you reproduce an MCP failure:
+
+```bash
+$$nemoclaw <sandbox> logs --tail 200
+```
+
+<AgentOnly variant="openclaw,hermes">
+The command reads agent gateway output and OpenShell audit events, so policy denials appear beside gateway logs.
+</AgentOnly>
+<AgentOnly variant="deepagents">
+The command reads OpenShell logs, including audit events, so policy denials appear with other OpenShell log entries.
+</AgentOnly>
+If NemoClaw cannot enable OpenShell audit logs, it prints a warning and the policy denial events can be missing.
 
 <AgentOnly variant="openclaw">
 
@@ -245,14 +262,7 @@ $$nemoclaw <sandbox> rebuild
 Verify that later successful MCP requests emit no `managed_transport_shadow` line groups.
 
 To find the matching sandbox audit record, read the sandbox log for the same endpoint around the failure time.
-The `logs` command reads both OpenClaw gateway output and OpenShell audit events, so it needs no separate audit flag.
-
-```bash
-$$nemoclaw <sandbox> logs --tail 200
-```
-
 Match on `target` and the timestamp.
-If NemoClaw cannot enable OpenShell audit logs, it prints a warning and the policy denial events can be missing from the output.
 `diagnostic_id` is a local identifier created for one line group when identifier generation succeeds.
 NemoClaw attempts to create it before the request starts, but does not add it to the request.
 It is not a distributed trace identifier and does not appear in OpenShell audit events.
@@ -393,7 +403,7 @@ Do not treat matching DNS pins as evidence that the path, method, adapter identi
 
 ## Lifecycle Lock Times Out
 
-Confirm that no `mcp add`, `mcp restart`, `mcp remove`, `rebuild`, or `destroy` command for the sandbox is still running, then retry the original command.
+Confirm that no `mcp add`, `mcp update`, `mcp restart`, `mcp remove`, `rebuild`, or `destroy` command for the sandbox is still running, then retry the original command.
 NemoClaw recovers a lock only when its local process is provably dead or its PID has a different process-start identity.
 
 It does not expose a force-unlock flag.

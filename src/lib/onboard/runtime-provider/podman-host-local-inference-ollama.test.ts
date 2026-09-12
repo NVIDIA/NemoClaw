@@ -158,9 +158,7 @@ describe("Podman managed Ollama lifecycle", () => {
 
       expect(() =>
         prepareManagedOllama(fixture, { ...fixture.input, ollamaContextLength }),
-      ).toThrow(
-        "Podman managed Ollama context length is invalid",
-      );
+      ).toThrow("Podman managed Ollama context length is invalid");
       expect(fixture.harness.events.some((event) => event.startsWith("podman:run "))).toBe(false);
     },
   );
@@ -201,9 +199,7 @@ describe("Podman managed Ollama lifecycle", () => {
     expect(harness.events).toContainEqual(
       expect.stringContaining(`--publish ${PORTABLE_HOST_GATEWAY_IP}:11434:11434`),
     );
-    expect(harness.events).toContainEqual(
-      expect.stringContaining("--env OLLAMA_CONTEXT_LENGTH"),
-    );
+    expect(harness.events).toContainEqual(expect.stringContaining("--env OLLAMA_CONTEXT_LENGTH"));
     expect(harness.state.capturedEnvironmentValues).toContainEqual({
       OLLAMA_CONTEXT_LENGTH: "64000",
     });

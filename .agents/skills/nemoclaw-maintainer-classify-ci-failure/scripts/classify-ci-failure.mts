@@ -107,6 +107,10 @@ const SYSTEM_EXECUTABLES = {
   tail: "/usr/bin/tail",
   wc: "/usr/bin/wc",
 } as const;
+const NPM_AUDIT_FAILURE_PATTERN =
+  /npm audit (?:threshold failed|scan remained incomplete|failed without vulnerability findings|requires npm [^\n;]+; running npm)|unused npm audit exceptions|\d+ unaccepted at or above (?:high|critical)/i;
+const NPM_BOOTSTRAP_FAILURE_PATTERN =
+  /npm(?:@[0-9A-Za-z.-]+ archive (?:integrity mismatch|package\/package\.json is missing or invalid)| archive version [0-9A-Za-z.-]+ does not match reviewed npm@[0-9A-Za-z.-]+| audit configuration (?:is not valid JSON|has an invalid npm(?:Version|Integrity|ArchiveSha256)))/i;
 
 type TrustedExecutableStat = {
   isFile: () => boolean;
@@ -801,7 +805,12 @@ async function classifyCiFailureWithRuntime(
   const selectedIndexes = new Set<number>();
   let matchedLines = 0;
   for (let index = 0; index < logLines.length; index += 1) {
-    if (!logPattern.test(logLines[index])) continue;
+    if (
+      !logPattern.test(logLines[index]) &&
+      !NPM_AUDIT_FAILURE_PATTERN.test(logLines[index]) &&
+      !NPM_BOOTSTRAP_FAILURE_PATTERN.test(logLines[index])
+    )
+      continue;
     matchedLines += 1;
     const first = Math.max(0, index - 20);
     const last = Math.min(logLines.length - 1, index + 20);
@@ -1079,14 +1088,19 @@ async function classifyCiFailureWithRuntime(
       "The environment-variable documentation gate failed.",
       "Document the new NEMOCLAW_* variable in the required reference or remove it.",
     );
-  if (
-    /reviewed-npm-audit/i.test(job.name) ||
-    /reviewed npm audit|npm audit report|audit-reviewed-npm-graph/i.test(text)
-  )
+  const hasNpmAuditFailure = NPM_AUDIT_FAILURE_PATTERN.test(text);
+  const hasNpmBootstrapFailure = NPM_BOOTSTRAP_FAILURE_PATTERN.test(text);
+  if (hasNpmBootstrapFailure)
+    add(
+      "reviewed-npm-bootstrap",
+      "The reviewed npm bootstrap rejected the pinned npm archive or identity.",
+      "Inspect the pinned npm identity and downloaded archive; do not change the advisory exception baseline.",
+    );
+  else if (hasNpmAuditFailure)
     add(
       "reviewed-npm-audit",
-      "The reviewed npm audit check reported advisory drift.",
-      "Determine whether this is live advisory drift or update the reviewed baseline through the security process.",
+      "The npm audit check reported advisory drift.",
+      "Determine whether this is live advisory drift or update the accepted baseline through the security process.",
     );
   if (/docs-review|Documentation writer review/i.test(text))
     add(

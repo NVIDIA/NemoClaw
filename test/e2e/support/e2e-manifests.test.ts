@@ -52,5 +52,4 @@ describe("NemoClawInstance manifests", () => {
       /raw secret|credentialRefs/i,
     );
   });
-
 });

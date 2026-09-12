@@ -99,12 +99,12 @@ const DRIFT_CASES = [
   },
 ] as const;
 
-it.each(DRIFT_CASES)("rejects retired-selector compatibility drift in $name (#7615)", ({
-  mutate,
-  error,
-}) => {
-  const { steps, workflow } = compatibilitySteps();
-  mutate(steps, workflow);
+it.each(DRIFT_CASES)(
+  "rejects retired-selector compatibility drift in $name (#7615)",
+  ({ mutate, error }) => {
+    const { steps, workflow } = compatibilitySteps();
+    mutate(steps, workflow);
 
-  expect(validateE2eWorkflow(workflow)).toContain(error);
-});
+    expect(validateE2eWorkflow(workflow)).toContain(error);
+  },
+);

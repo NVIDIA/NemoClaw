@@ -131,6 +131,86 @@ export function queryOpenShellDockerSandboxContainers(
   );
 }
 
+/**
+ * Prove that one durable replacement ID is the sole OpenShell-owned Docker
+ * runtime for its immutable sandbox namespace. Resume callers use the stopped
+ * form before a name-scoped OpenShell start and the running form before
+ * acknowledging the recovered handoff.
+ */
+export function isExactOpenShellDockerSandboxReplacement(
+  sandboxName: string,
+  replacementContainerId: string,
+  requireRunning: boolean,
+  deps: DockerSandboxContainerQueryDeps = {},
+  timeoutMs: number = DOCKER_SANDBOX_QUERY_TIMEOUT_MS,
+  now: () => Date = () => new Date(),
+): boolean {
+  const expectedContainerId = replacementContainerId.trim().toLowerCase();
+  if (!/^[0-9a-f]{64}$/u.test(expectedContainerId) || timeoutMs <= 0) return false;
+  const run = deps.dockerRun ?? dockerRun;
+  try {
+    const deadline = now().getTime() + timeoutMs;
+    const namespace = run(
+      [
+        "inspect",
+        "--type",
+        "container",
+        "--format",
+        `{{ index .Config.Labels "${OPENSHELL_SANDBOX_NAMESPACE_LABEL}" }}`,
+        expectedContainerId,
+      ],
+      {
+        ignoreError: true,
+        suppressOutput: true,
+        timeout: Math.min(DOCKER_SANDBOX_QUERY_TIMEOUT_MS, timeoutMs),
+      },
+    );
+    const sandboxNamespace = String(namespace.stdout ?? "").trim();
+    if (
+      Number(namespace.status ?? 1) !== 0 ||
+      !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/u.test(sandboxNamespace)
+    ) {
+      return false;
+    }
+    let remainingMs = deadline - now().getTime();
+    if (remainingMs <= 0) return false;
+    const containers = queryOpenShellDockerSandboxContainers(
+      sandboxName,
+      { dockerRun: run },
+      remainingMs,
+      sandboxNamespace,
+    );
+    if (
+      !containers.ok ||
+      containers.ids.length !== 1 ||
+      containers.ids[0]?.trim().toLowerCase() !== expectedContainerId
+    ) {
+      return false;
+    }
+    if (!requireRunning) return true;
+    remainingMs = deadline - now().getTime();
+    if (remainingMs <= 0) return false;
+    const inspect = run(
+      [
+        "inspect",
+        "--type",
+        "container",
+        "--format",
+        "{{json .State.Running}}",
+        expectedContainerId,
+      ],
+      {
+        ignoreError: true,
+        suppressOutput: true,
+        timeout: Math.min(DOCKER_SANDBOX_QUERY_TIMEOUT_MS, remainingMs),
+      },
+    );
+    return Number(inspect.status ?? 1) === 0 && String(inspect.stdout ?? "").trim() === "true";
+  } catch {
+    return false;
+  }
+}
+
 type StaleDockerOrphanCleanupDeps = {
   queryContainers?: typeof queryOpenShellDockerSandboxContainers;
   forceRemove?: (containerId: string) => { status?: number | null };

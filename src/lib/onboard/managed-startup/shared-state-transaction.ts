@@ -383,7 +383,10 @@ function managedOutputDevice(expectedAgent: ManagedStartupAgent, options: Resolv
   if (stat.isSymbolicLink() || !stat.isDirectory()) {
     fail(`managed output root is unsafe: ${outputRoot}`);
   }
-  if (!isDeclaredAgentStateRoot(expectedAgent, outputRoot, options) && stat.dev !== sandboxStat.dev) {
+  if (
+    !isDeclaredAgentStateRoot(expectedAgent, outputRoot, options) &&
+    stat.dev !== sandboxStat.dev
+  ) {
     fail(`managed output root crosses a nested filesystem mount: ${outputRoot}`);
   }
   return stat.dev;
@@ -442,7 +445,6 @@ function managedOutputTargets(
     case "langchain-deepagents-code":
       files.add(path.join(root, "config.toml"));
       directories.add(path.join(root, ".state"));
-      directories.add(path.join(root, "skills"));
       break;
     case "pi":
       directories.add(path.join(root, "agent"));

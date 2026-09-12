@@ -4,6 +4,7 @@
 import { Buffer } from "node:buffer";
 import { createHash, X509Certificate } from "node:crypto";
 
+import { assertNoPerAgentMaxSpawnDepth } from "../../extra-agents-validation";
 import { MAX_AUTODETECTED_OLLAMA_CONTEXT_WINDOW } from "../../inference/ollama-runtime-context";
 import { hydrateDerivedSandboxMessagingPlanFields } from "../../messaging/hydration";
 import { parseSandboxMessagingPlan } from "../../messaging/plan-validation";
@@ -301,6 +302,7 @@ function normalizeExtraAgentsCandidate(value: unknown): ManagedStartupExtraAgent
   if (value === null || value === undefined) {
     return { agents: [], defaults: emptyDefaults, main: {} };
   }
+  assertNoPerAgentMaxSpawnDepth(value);
   if (Array.isArray(value)) {
     return {
       agents: normalizeExtraAgentList(value, "NEMOCLAW_EXTRA_AGENTS_JSON"),

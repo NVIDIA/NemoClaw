@@ -98,8 +98,8 @@ describe("Hermes changed launch-readiness epoch", () => {
     expect(harness.captureOpenshellSpy).not.toHaveBeenCalled();
     expect(harness.inspectLaunchReadinessSpy).toHaveBeenCalledTimes(2);
     expect(harness.qualifyHermesPortableAcceptedReadinessAuthoritySpy).toHaveBeenCalledTimes(2);
-    expect(harness.captureResolvedOpenshellSpy).toHaveBeenCalledOnce();
-    expect(harness.captureResolvedOpenshellSpy.mock.calls[0]?.[1]).toMatchObject({
+    expect(harness.captureResolvedOpenshellSpy).toHaveBeenCalledTimes(2);
+    const exactOptions = {
       env: {
         HOME: "/home/test",
         XDG_CONFIG_HOME: "/home/test/.config",
@@ -107,7 +107,9 @@ describe("Hermes changed launch-readiness epoch", () => {
       },
       openshellBinary: "/usr/bin/openshell",
       replaceEnv: true,
-    });
+    };
+    expect(harness.captureResolvedOpenshellSpy.mock.calls[0]?.[1]).toMatchObject(exactOptions);
+    expect(harness.captureResolvedOpenshellSpy.mock.calls[1]?.[1]).toMatchObject(exactOptions);
     expect(harness.publishLaunchReadinessSpy).not.toHaveBeenCalled();
     expect(harness.logSpy.mock.calls.flat().join("\n")).toContain(
       "Probe complete: launch readiness is healthy for 'alpha'.",

@@ -8,7 +8,7 @@
  * queries GitHub for open PRs/issues carrying version labels older than
  * the target. Output is JSON.
  *
- * Usage: node --experimental-strip-types --no-warnings .agents/skills/nemoclaw-maintainer-day/scripts/version-target.ts [--repo OWNER/REPO]
+ * Usage: node --no-warnings .agents/skills/nemoclaw-maintainer-day/scripts/version-target.ts [--repo OWNER/REPO]
  */
 
 import { run, parseStringArg } from "./shared.ts";

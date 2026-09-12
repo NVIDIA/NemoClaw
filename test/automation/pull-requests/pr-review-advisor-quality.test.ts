@@ -15,7 +15,6 @@ describe("PR review advisor", () => {
     vi.restoreAllMocks();
   });
 
-
   it("loads the security rubric from the trusted module checkout, not cwd", () => {
     const originalCwd = process.cwd();
     const tmp = fs.mkdtempSync(path.join(ROOT, ".tmp-pr-advisor-cwd-"));
@@ -62,21 +61,22 @@ describe("PR review advisor", () => {
     [
       "a duplicate category name",
       (rubric: string) =>
-        rubric.replace("## Category 2: Input Validation and Data Sanitization", "## Category 2: Secrets and Credentials"),
+        rubric.replace(
+          "## Category 2: Input Validation and Data Sanitization",
+          "## Category 2: Secrets and Credentials",
+        ),
       "category names must be unique",
     ],
     [
       "an empty category section",
       (rubric: string) =>
-        rubric.replace(
-          /### Meaning\n\nKeep credentials[^\n]*\n/u,
-          "### Meaning\n\n",
-        ),
+        rubric.replace(/### Meaning\n\nKeep credentials[^\n]*\n/u, "### Meaning\n\n"),
       "category 1 has empty Meaning",
     ],
     [
       "a different final category",
-      (rubric: string) => rubric.replace("## Category 9: System Security", "## Category 9: Host Security"),
+      (rubric: string) =>
+        rubric.replace("## Category 9: System Security", "## Category 9: Host Security"),
       "category 9 must be System Security",
     ],
     [
@@ -94,5 +94,4 @@ describe("PR review advisor", () => {
 
     expect(() => readTrustedSecurityRubric()).toThrow(message);
   });
-
 });

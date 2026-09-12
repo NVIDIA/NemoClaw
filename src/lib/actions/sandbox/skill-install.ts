@@ -1,64 +1,28 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { captureSandboxSshConfig } from "../../adapters/openshell/runtime";
-import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
+
+import { buildCliOpenShellSandboxExecArgs } from "../../adapters/openshell/sandbox-command-cli";
+import { createSdkOpenShellSandboxCommandExecutor } from "../../adapters/openshell/sandbox-command-sdk";
+import {
+  captureOpenshell,
+  OPENSHELL_OPERATION_TIMEOUT_MS,
+  runOpenshell,
+} from "../../adapters/openshell/runtime";
 import * as agentRuntime from "../../agent/runtime";
+import { renderAgentSkillCommand } from "../../agent/skill-integration";
 import { CLI_NAME } from "../../cli/branding";
-import { D, G, R, YW } from "../../cli/terminal-style";
-import { createTempSshConfig } from "../../sandbox/temp-ssh-config";
+import { D, G, R } from "../../cli/terminal-style";
 import * as skillInstall from "../../skill-install";
 import { ensureLiveSandboxOrExit } from "./gateway-state";
+import { getSandboxTargetGatewayName } from "./gateway-target";
+import { wrapExecCommandWithRuntimeEnv } from "./runtime-env";
 
-export function printSkillInstallUsage(): void {
-  console.log("");
-  console.log(`  Usage: ${CLI_NAME} <sandbox> skill install <path>`);
-  console.log(`         ${CLI_NAME} <sandbox> skill remove <name>`);
-  console.log("");
-  console.log("  Deploy or remove a skill in a running sandbox.");
-  console.log("");
-  console.log("  install <path>  Deploy a skill directory to the sandbox.");
-  console.log(
-    "    <path> must be a skill directory containing a SKILL.md (with 'name:' frontmatter),",
-  );
-  console.log(
-    "    or a direct path to a SKILL.md file. All non-dot files in the directory are uploaded.",
-  );
-  console.log("");
-  console.log("  remove <name>   Remove an installed skill from the sandbox by name.");
-  console.log("    <name> is the skill name from SKILL.md frontmatter (e.g. my-skill).");
-  console.log("");
-}
-
-export function looksLikeOpenClawPlugin(candidatePath: string): boolean {
-  const dir =
-    fs.existsSync(candidatePath) && fs.statSync(candidatePath).isDirectory()
-      ? candidatePath
-      : path.dirname(candidatePath);
-  if (!fs.existsSync(dir)) return false;
-  if (fs.existsSync(path.join(dir, "openclaw.plugin.json"))) return true;
-
-  const packageJsonPath = path.join(dir, "package.json");
-  if (!fs.existsSync(packageJsonPath)) return false;
-  try {
-    const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf-8"));
-    const openclawBlock = packageJson?.openclaw;
-    return Boolean(
-      packageJson?.["openclaw.plugin"] === true ||
-      openclawBlock === true ||
-      (typeof openclawBlock === "object" &&
-        openclawBlock !== null &&
-        (openclawBlock.plugin === true ||
-          typeof openclawBlock.entry === "string" ||
-          typeof openclawBlock.main === "string" ||
-          (Array.isArray(openclawBlock.extensions) && openclawBlock.extensions.length > 0))),
-    );
-  } catch {
-    return false;
-  }
-}
+const SKILL_COMMAND_TIMEOUT_SECONDS = 120;
+const skillCommandExecutor = createSdkOpenShellSandboxCommandExecutor();
 
 export type SkillInstallRequest = {
   command?: string;
@@ -72,6 +36,53 @@ export type SkillRemoveRequest = {
   extraArgs?: string[];
 };
 
+export type SkillListRequest = {
+  extraArgs?: string[];
+};
+
+export function printSkillInstallUsage(): void {
+  console.log("");
+  console.log(`  Usage: ${CLI_NAME} <sandbox> skill install <path>`);
+  console.log(`         ${CLI_NAME} <sandbox> skill remove <name>`);
+  console.log(`         ${CLI_NAME} <sandbox> skill list [agent-skill-list-flags...]`);
+  console.log("");
+  console.log("  Delegate skill state to the selected agent.");
+  console.log("");
+  console.log(
+    "  install <path>  Add a local SKILL.md tree through the agent's declared integration.",
+  );
+  console.log(
+    "  remove <name>   Remove through the native command or only from its canonical writable root.",
+  );
+  console.log("  list            Stream the selected agent's native skill list.");
+  console.log("");
+}
+
+export function looksLikeOpenClawPlugin(candidatePath: string): boolean {
+  const dir =
+    fs.existsSync(candidatePath) && fs.statSync(candidatePath).isDirectory()
+      ? candidatePath
+      : path.dirname(candidatePath);
+  if (!fs.existsSync(dir)) return false;
+  if (fs.existsSync(path.join(dir, "openclaw.plugin.json"))) return true;
+  try {
+    const packageJson = JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8"));
+    const openclaw = packageJson?.openclaw;
+    return Boolean(
+      packageJson?.["openclaw.plugin"] === true ||
+      openclaw === true ||
+      (openclaw &&
+        typeof openclaw === "object" &&
+        (openclaw.plugin === true ||
+          typeof openclaw.entry === "string" ||
+          typeof openclaw.main === "string" ||
+          (Array.isArray(openclaw.extensions) && openclaw.extensions.length > 0))),
+    );
+  } catch {
+    return false;
+  }
+}
+
 function lstatOrNull(candidatePath: string): fs.Stats | null {
   try {
     return fs.lstatSync(candidatePath);
@@ -80,153 +91,258 @@ function lstatOrNull(candidatePath: string): fs.Stats | null {
   }
 }
 
-type RegularFileRead =
-  | { content: string; success: true }
-  | { reason: "invalid" | "missing"; success: false };
-
-function readRegularFileNoFollow(candidatePath: string): RegularFileRead {
-  const noFollow = fs.constants.O_NOFOLLOW;
-  const nonblock = fs.constants.O_NONBLOCK;
-  if (typeof noFollow !== "number" || typeof nonblock !== "number") {
-    return { reason: "invalid", success: false };
-  }
-
+function readRegularFileNoFollow(candidatePath: string): string | null {
   let descriptor: number | undefined;
   try {
-    descriptor = fs.openSync(candidatePath, fs.constants.O_RDONLY | noFollow | nonblock);
-    if (!fs.fstatSync(descriptor).isFile()) return { reason: "invalid", success: false };
-    return { content: fs.readFileSync(descriptor, "utf8"), success: true };
-  } catch (error) {
-    return {
-      reason:
-        error instanceof Error && "code" in error && error.code === "ENOENT"
-          ? "missing"
-          : "invalid",
-      success: false,
-    };
+    descriptor = fs.openSync(
+      candidatePath,
+      fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK,
+    );
+    if (!fs.fstatSync(descriptor).isFile()) return null;
+    return fs.readFileSync(descriptor, "utf8");
+  } catch {
+    return null;
   } finally {
     if (descriptor !== undefined) fs.closeSync(descriptor);
   }
 }
 
-export function printPluginInstallHint(): void {
-  console.error("  This looks like an OpenClaw plugin, not a SKILL.md agent skill.");
-  console.error("  `skill install` only accepts skill directories or direct SKILL.md paths.");
-  console.error(
-    "  To use an OpenClaw plugin today, bake it into a custom sandbox image with `nemoclaw onboard --from <Dockerfile>`.",
+function resolveSelectedSkillAgent(sandboxName: string) {
+  const resolution = agentRuntime.resolveSessionAgentDefinition(
+    sandboxName,
+    agentRuntime.getSessionAgent(sandboxName),
+  );
+  if (!resolution.resolved) {
+    console.error(
+      `  Registered agent '${resolution.requestedName}' could not be resolved from a trusted manifest.`,
+    );
+    process.exitCode = 1;
+    return null;
+  }
+  const integration = resolution.agent.skillIntegration;
+  const binary = resolution.agent.binary_path;
+  if (!integration || !binary) {
+    console.error(`  Agent '${resolution.agent.name}' has no safe skill integration metadata.`);
+    process.exitCode = 1;
+    return null;
+  }
+  return { binary, integration };
+}
+
+function rejectsAgentOverride(extraArgs: readonly string[]): boolean {
+  return (
+    extraArgs.includes("--") ||
+    extraArgs.some((argument) => argument === "--agent" || argument.startsWith("--agent="))
   );
 }
 
-/**
- * Remove an installed skill from a live sandbox by name.
- */
+function runCliSandboxCommand(
+  sandboxName: string,
+  gatewayName: string,
+  command: readonly string[],
+): number {
+  const result = runOpenshell(
+    buildCliOpenShellSandboxExecArgs({
+      sandboxName,
+      target: { kind: "named", gatewayName },
+      command,
+      tty: false,
+      timeoutSeconds: SKILL_COMMAND_TIMEOUT_SECONDS,
+    }),
+    {
+      ignoreError: true,
+      killProcessTreeOnTimeout: true,
+      stdio: ["ignore", "inherit", "inherit"],
+      timeout: SKILL_COMMAND_TIMEOUT_SECONDS * 1000,
+    },
+  );
+  return result.status ?? 1;
+}
+
+async function runSandboxCommand(
+  sandboxName: string,
+  gatewayName: string,
+  command: readonly string[],
+): Promise<number> {
+  const completion = await skillCommandExecutor.runStreaming({
+    sandboxName,
+    target: { kind: "named", gatewayName },
+    command,
+    tty: false,
+    timeoutSeconds: SKILL_COMMAND_TIMEOUT_SECONDS,
+  });
+  try {
+    if (completion.outcome.kind === "completed") return completion.outcome.exitCode;
+    if (completion.outcome.error.kind === "unavailable") {
+      return runCliSandboxCommand(sandboxName, gatewayName, command);
+    }
+    console.error(`  OpenShell SDK execution failed: ${completion.outcome.error.message}`);
+    return 1;
+  } finally {
+    completion.release();
+  }
+}
+
+async function cleanupRemoteStage(
+  sandboxName: string,
+  gatewayName: string,
+  stageDirectory: string,
+): Promise<boolean> {
+  const exitCode = await runSandboxCommand(sandboxName, gatewayName, [
+    "/bin/sh",
+    "-c",
+    skillInstall.buildCleanupSkillStageCommand(stageDirectory),
+  ]);
+  if (exitCode !== 0) console.error("  Private skill staging cleanup failed.");
+  return exitCode === 0;
+}
+
+function runAgentSkillCommand(
+  sandboxName: string,
+  gatewayName: string,
+  command: readonly string[],
+): Promise<number> {
+  return runSandboxCommand(sandboxName, gatewayName, wrapExecCommandWithRuntimeEnv(command));
+}
+
+async function runSkillCommandWithStageCleanup(
+  sandboxName: string,
+  gatewayName: string,
+  stageDirectory: string,
+  command: readonly string[],
+): Promise<void> {
+  const commandExit = await runAgentSkillCommand(sandboxName, gatewayName, command);
+  const cleaned = await cleanupRemoteStage(sandboxName, gatewayName, stageDirectory);
+  process.exitCode = cleaned || commandExit !== 0 ? commandExit : 1;
+}
+
+/** Stream the unmodified selected agent's native skill list. */
+export async function listSandboxSkills(
+  sandboxName: string,
+  request: SkillListRequest = {},
+): Promise<void> {
+  await ensureLiveSandboxOrExit(sandboxName, { selectOwningGateway: false });
+  const selected = resolveSelectedSkillAgent(sandboxName);
+  if (!selected) return;
+  const extraArgs = request.extraArgs ?? [];
+  if (rejectsAgentOverride(extraArgs)) {
+    console.error("  `skill list` is bound to the sandbox's selected agent.");
+    process.exitCode = 2;
+    return;
+  }
+  const gatewayName = getSandboxTargetGatewayName(sandboxName);
+  process.exitCode = await runAgentSkillCommand(sandboxName, gatewayName, [
+    ...renderAgentSkillCommand(selected.binary, selected.integration.listCommand),
+    ...extraArgs,
+  ]);
+}
+
+/** Invoke native removal when available; otherwise delete only the canonical-root copy. */
 export async function removeSandboxSkill(
   sandboxName: string,
   request: SkillRemoveRequest = {},
 ): Promise<void> {
   const skillName = request.name;
-  const extraArgs = request.extraArgs ?? [];
   if (skillName === "--help" || skillName === "-h") {
     printSkillInstallUsage();
     return;
   }
-  if (extraArgs.length > 0) {
-    console.error(`  Unknown argument(s) for skill remove: ${extraArgs.join(", ")}`);
+  if (!skillName || (request.extraArgs ?? []).length > 0) {
     console.error(`  Usage: ${CLI_NAME} <sandbox> skill remove <name>`);
-    process.exit(1);
-  }
-  if (!skillName) {
-    console.error(`  Usage: ${CLI_NAME} <sandbox> skill remove <name>`);
-    console.error("  <name> is the skill name from the SKILL.md frontmatter.");
-    process.exit(1);
+    process.exit(2);
   }
   if (!skillInstall.validateSkillName(skillName)) {
     console.error(`  Invalid skill name: '${skillName}'`);
-    console.error("  Skill names must match [A-Za-z0-9._-] and must not be '.' or '..'.");
-    process.exit(1);
+    process.exit(2);
   }
 
-  await ensureLiveSandboxOrExit(sandboxName);
+  await ensureLiveSandboxOrExit(sandboxName, { selectOwningGateway: false });
+  const selected = resolveSelectedSkillAgent(sandboxName);
+  if (!selected) return;
+  const native = selected.integration.removeCommand;
+  const command = native
+    ? renderAgentSkillCommand(selected.binary, native, { name: skillName })
+    : skillInstall.buildCanonicalSkillRemoveCommand(selected.integration.writableRoot, skillName);
+  process.exitCode = await runAgentSkillCommand(
+    sandboxName,
+    getSandboxTargetGatewayName(sandboxName),
+    command,
+  );
+}
 
-  const agent = agentRuntime.getSessionAgent(sandboxName);
-  const paths = skillInstall.resolveSkillPaths(agent, skillName);
-  if (paths.uploadDirSharedWithAgent) {
-    console.error(
-      "  Automatic removal is unavailable for Deep Agents skills because the destination is shared with agent-authored content.",
-    );
-    console.error(
-      "  Inspect and remove the skill with the agent's native or manual workflow after confirming ownership.",
-    );
-    process.exitCode = 1;
-    return;
+function resolveLocalSkill(skillPath: string): {
+  directory: string;
+  name: string;
+  rootIdentity: skillInstall.SkillRootIdentity;
+} | null {
+  const resolvedPath = path.resolve(skillPath);
+  const resolvedStat = lstatOrNull(resolvedPath);
+  if (resolvedStat?.isSymbolicLink()) {
+    console.error(`  Skill path '${resolvedPath}' must not be a symbolic link.`);
+    return null;
   }
-
-  const sshConfigResult = captureSandboxSshConfig(sandboxName, {
-    ignoreError: true,
-    timeout: OPENSHELL_PROBE_TIMEOUT_MS,
-  });
-  if (sshConfigResult.status !== 0) {
-    console.error("  Failed to obtain SSH configuration for the sandbox.");
-    process.exit(1);
+  const directory = resolvedStat?.isDirectory()
+    ? resolvedPath
+    : resolvedStat?.isFile() && path.basename(resolvedPath) === "SKILL.md"
+      ? path.dirname(resolvedPath)
+      : null;
+  if (!directory) {
+    console.error(`  No SKILL.md found at '${resolvedPath}'.`);
+    if (looksLikeOpenClawPlugin(resolvedPath)) printPluginInstallHint();
+    return null;
   }
-
-  const tmpSshConfig = createTempSshConfig(sshConfigResult.output, "nemoclaw-ssh-skill-");
-
+  const directoryStat = lstatOrNull(directory);
+  if (!directoryStat?.isDirectory() || directoryStat.isSymbolicLink()) {
+    console.error(`  Skill directory '${directory}' must remain a regular directory.`);
+    return null;
+  }
+  const skillFile = path.join(directory, "SKILL.md");
+  if (!lstatOrNull(skillFile)) {
+    console.error(`  No SKILL.md found in '${directory}'.`);
+    if (looksLikeOpenClawPlugin(directory)) printPluginInstallHint();
+    return null;
+  }
+  const source = readRegularFileNoFollow(skillFile);
+  if (source === null) {
+    console.error(`  SKILL.md in '${directory}' must be a regular file.`);
+    return null;
+  }
   try {
-    const ctx = { configFile: tmpSshConfig.file, sandboxName };
-
-    const existsCheck = skillInstall.checkExisting(ctx, paths);
-    if (existsCheck === null) {
-      console.error(
-        `  Could not check if skill '${skillName}' exists — sandbox may be unreachable.`,
-      );
-      process.exitCode = 1;
-      return;
-    }
-    if (!existsCheck) {
-      console.error(`  Skill '${skillName}' is not installed in sandbox '${sandboxName}'.`);
-      process.exitCode = 1;
-      return;
-    }
-
-    const result = skillInstall.removeSkill(ctx, paths);
-    for (const msg of result.messages) {
-      if (msg.startsWith("Warning:")) {
-        console.error(`  ${YW}${msg}${R}`);
-      } else {
-        console.log(`  ${D}${msg}${R}`);
-      }
-    }
-
-    const gone = skillInstall.verifyRemove(ctx, paths);
-    if (gone) {
-      console.log(`  ${G}✓${R} Skill '${skillName}' removed`);
-    } else {
-      console.error("  Skill removal could not be verified.");
-      console.error("  The sandbox may be unreachable, or the skill directory may still exist.");
-      process.exitCode = 1;
-      return;
-    }
-  } finally {
-    tmpSshConfig.cleanup();
+    return {
+      directory,
+      name: skillInstall.parseFrontmatter(source).name,
+      rootIdentity: { dev: directoryStat.dev, ino: directoryStat.ino },
+    };
+  } catch (error) {
+    console.error(`  ${error instanceof Error ? error.message : String(error)}`);
+    return null;
   }
 }
 
-/**
- * Install or update a local skill directory into a live sandbox and perform
- * any agent-specific post-install refresh needed for the new content to load.
- */
+export function printPluginInstallHint(): void {
+  console.error("  This looks like an OpenClaw plugin, not a SKILL.md agent skill.");
+  console.error("  `skill install` accepts only agent skills.");
+}
+
+/** Validate and stage a local tree, then invoke native add or one canonical-root placement. */
 export async function installSandboxSkill(
   sandboxName: string,
   request: SkillInstallRequest = {},
 ): Promise<void> {
-  const sub = request.command;
-  if (!sub || sub === "help" || sub === "--help" || sub === "-h") {
+  const subcommand = request.command;
+  if (!subcommand || ["help", "--help", "-h"].includes(subcommand)) {
     printSkillInstallUsage();
     return;
   }
-
-  if (sub === "remove") {
+  if (subcommand === "list") {
+    await listSandboxSkills(sandboxName, {
+      extraArgs: [request.path, ...(request.extraArgs ?? [])].filter(
+        (value): value is string => typeof value === "string",
+      ),
+    });
+    return;
+  }
+  if (subcommand === "remove") {
     await removeSandboxSkill(sandboxName, {
       command: "remove",
       name: request.path,
@@ -234,212 +350,110 @@ export async function installSandboxSkill(
     });
     return;
   }
-
-  if (sub !== "install") {
-    console.error(`  Unknown skill subcommand: ${sub}`);
-    console.error("  Valid subcommands: install, remove");
-    process.exit(1);
+  if (subcommand !== "install") {
+    console.error(`  Unknown skill subcommand: ${subcommand}`);
+    process.exit(2);
+  }
+  if (!request.path || (request.extraArgs ?? []).length > 0) {
+    console.error(`  Usage: ${CLI_NAME} <sandbox> skill install <path>`);
+    process.exit(2);
   }
 
-  const skillPath = request.path;
-  const extraArgs = request.extraArgs ?? [];
-  if (skillPath === "--help" || skillPath === "-h" || skillPath === "help") {
-    printSkillInstallUsage();
+  const local = resolveLocalSkill(request.path);
+  if (!local) {
+    process.exitCode = 1;
     return;
   }
-  if (extraArgs.length > 0) {
-    console.error(`  Unknown argument(s) for skill install: ${extraArgs.join(", ")}`);
-    console.error(`  Usage: ${CLI_NAME} <sandbox> skill install <path>`);
-    process.exit(1);
-  }
-  if (!skillPath) {
-    console.error(`  Usage: ${CLI_NAME} <sandbox> skill install <path>`);
-    console.error("  <path> must be a directory containing a SKILL.md file.");
-    process.exit(1);
-  }
-
-  const resolvedPath = path.resolve(skillPath);
-  const resolvedStat = lstatOrNull(resolvedPath);
-  if (resolvedStat?.isSymbolicLink()) {
-    console.error(`  Skill path '${resolvedPath}' must not be a symbolic link.`);
-    process.exit(1);
-  }
-
-  // Accept a directory containing SKILL.md, or a direct path to SKILL.md.
-  let skillDir: string;
-  let skillMdPath: string;
-  if (resolvedStat?.isDirectory()) {
-    skillDir = resolvedPath;
-    skillMdPath = path.join(resolvedPath, "SKILL.md");
-  } else if (resolvedStat?.isFile() && resolvedPath.endsWith("SKILL.md")) {
-    skillDir = path.dirname(resolvedPath);
-    skillMdPath = resolvedPath;
-  } else {
-    console.error(`  No SKILL.md found at '${resolvedPath}'.`);
-    console.error("  <path> must be a skill directory or a direct path to SKILL.md.");
-    if (looksLikeOpenClawPlugin(resolvedPath)) {
-      printPluginInstallHint();
-    }
-    process.exit(1);
-  }
-
-  const skillDirStat = lstatOrNull(skillDir);
-  if (!skillDirStat?.isDirectory() || skillDirStat.isSymbolicLink()) {
-    console.error(`  Skill directory '${skillDir}' must remain a regular directory.`);
-    process.exit(1);
-  }
-  const expectedRootIdentity = { dev: skillDirStat.dev, ino: skillDirStat.ino };
-
-  const skillMdRead = readRegularFileNoFollow(skillMdPath);
-  if (!skillMdRead.success && skillMdRead.reason === "missing") {
-    console.error(`  No SKILL.md found in '${skillDir}'.`);
-    console.error("  The skill directory must contain a SKILL.md file.");
-    if (looksLikeOpenClawPlugin(skillDir)) {
-      printPluginInstallHint();
-    }
-    process.exit(1);
-  }
-  if (!skillMdRead.success) {
-    console.error(`  SKILL.md at '${skillMdPath}' must be a regular file, not a symbolic link.`);
-    process.exit(1);
-  }
-
-  // 1. Validate frontmatter
-  let frontmatter;
-  try {
-    frontmatter = skillInstall.parseFrontmatter(skillMdRead.content);
-  } catch (err) {
-    const errorMessage = err instanceof Error ? err.message : String(err);
-    console.error(`  ${errorMessage}`);
-    process.exit(1);
-  }
-
-  const collected = skillInstall.collectFiles(skillDir);
-  if (collected.unsafePaths.length > 0) {
-    console.error("  Skill directory contains files with unsafe characters:");
-    for (const p of collected.unsafePaths) console.error(`    ${p}`);
-    console.error("  File names must match [A-Za-z0-9._-/]. Rename or remove them.");
-    process.exit(1);
-  }
-  if (collected.unsupportedPaths.length > 0) {
-    console.error("  Skill directory contains unsupported non-regular paths:");
-    for (const p of collected.unsupportedPaths) console.error(`    ${p}`);
-    console.error("  Skills may contain only regular files and directories.");
-    process.exit(1);
-  }
-  if (collected.skippedDotfiles.length > 0) {
-    console.log(
-      `  ${D}Skipping ${collected.skippedDotfiles.length} hidden path(s): ${collected.skippedDotfiles.join(", ")}${R}`,
-    );
-  }
-  const fileLabel = collected.files.length === 1 ? "1 file" : `${collected.files.length} files`;
-  console.log(`  ${G}✓${R} Validated SKILL.md (name: ${frontmatter.name}, ${fileLabel})`);
-
-  // 2. Ensure sandbox is live
-  await ensureLiveSandboxOrExit(sandboxName);
-
-  // 3. Resolve agent and paths
-  const agent = agentRuntime.getSessionAgent(sandboxName);
-  const paths = skillInstall.resolveSkillPaths(agent, frontmatter.name);
-
-  // 4. Get SSH config
-  const sshConfigResult = captureSandboxSshConfig(sandboxName, {
-    ignoreError: true,
-    timeout: OPENSHELL_PROBE_TIMEOUT_MS,
-  });
-  if (sshConfigResult.status !== 0) {
-    console.error("  Failed to obtain SSH configuration for the sandbox.");
-    process.exit(1);
-  }
-
-  const tmpSshConfig = createTempSshConfig(sshConfigResult.output, "nemoclaw-ssh-skill-");
-
-  try {
-    const ctx = { configFile: tmpSshConfig.file, sandboxName };
-
-    if (paths.uploadDirSharedWithAgent) {
-      const fresh = skillInstall.installFreshSharedSkill(ctx, skillDir, paths, {
-        expectedRootIdentity,
-      });
-      if (!fresh.success || !fresh.contentDigest) {
-        if (fresh.reason === "destination_exists") {
-          console.error(
-            `  Refusing to replace '${frontmatter.name}': the Deep Agents skill destination already exists.`,
-          );
-          console.error(
-            "  Deep Agents skill install supports fresh names only because that directory also contains agent-authored skills.",
-          );
-        } else if (fresh.reason === "snapshot_failed") {
-          console.error("  Failed to create an exact regular-file snapshot of the local skill.");
-        } else {
-          console.error(
-            "  The remote install did not confirm whether the Deep Agents skill was committed.",
-          );
-          console.error(
-            `  Inspect ${paths.uploadDir} before retrying; NemoClaw will not replace or delete shared agent content.`,
-          );
-        }
-        process.exitCode = 1;
-        return;
-      }
-      console.log(`  ${G}✓${R} Installed ${fresh.uploaded} file(s) into the agent skill directory`);
-      console.log(`  ${G}✓${R} Skill '${frontmatter.name}' installed`);
-      console.log(`  ${D}Content digest (SHA-256): ${fresh.contentDigest}${R}`);
-      console.log(`  ${D}Start a new Deep Agents session to load the skill.${R}`);
-      return;
-    }
-
-    // 5. Check if skill already exists (update vs fresh install). This probe is
-    //    advisory for install only: stale SSH config files and transient remote
-    //    shell startup failures can make the stat probe inconclusive even when a
-    //    subsequent upload succeeds. Upload plus verifyInstall() remain the
-    //    source of truth for install success; remove keeps null fatal because it
-    //    is destructive. Once OpenShell exposes a typed stat API or SSH probe
-    //    failures are reliably distinguishable from absent dirs across supported
-    //    versions, remove this fallback and fail before upload.
-    const existingCheck = skillInstall.checkExisting(ctx, paths);
-    if (existingCheck === null) {
+  const snapshotResult = skillInstall.createStatelessSkillSnapshot(
+    local.directory,
+    local.name,
+    local.rootIdentity,
+  );
+  if (!snapshotResult.success) {
+    if (snapshotResult.reason === "limit-exceeded") {
       console.error(
-        `  ${YW}Warning: could not check sandbox for existing skill — treating as fresh install.${R}`,
+        `  Skill exceeds the ${skillInstall.SKILL_SNAPSHOT_MAX_FILES}-file or ${String(skillInstall.SKILL_SNAPSHOT_MAX_BYTES / (1024 * 1024))} MiB limit.`,
       );
-    }
-    const isUpdate = existingCheck === true;
-
-    // 6. Upload skill directory
-    const { uploaded, failed } = skillInstall.uploadDirectory(ctx, skillDir, paths.uploadDir);
-    if (failed.length > 0) {
-      console.error(`  Failed to upload ${failed.length} file(s): ${failed.join(", ")}`);
-      process.exitCode = 1;
-      return;
-    }
-    console.log(`  ${G}✓${R} Uploaded ${uploaded} file(s) to sandbox`);
-
-    // 7. Post-install (OpenClaw mirror + refresh, or agent-specific activation guidance).
-    //    OpenClaw caches skill content per session, so always refresh the
-    //    session index after an install/update to avoid stale SKILL.md data.
-    const post = skillInstall.postInstall(ctx, paths, skillDir);
-    for (const msg of post.messages) {
-      if (msg.startsWith("Warning:")) {
-        console.error(`  ${YW}${msg}${R}`);
-      } else {
-        console.log(`  ${D}${msg}${R}`);
-      }
-    }
-
-    // 8. Verify
-    const verified = skillInstall.verifyInstall(ctx, paths);
-    if (verified) {
-      const verb = isUpdate ? "updated" : "installed";
-      console.log(`  ${G}✓${R} Skill '${frontmatter.name}' ${verb}`);
+    } else if (snapshotResult.reason === "invalid-tree") {
+      console.error(
+        `  Skill contains an unsafe, symbolic-link, or special path${snapshotResult.paths?.length ? `: ${snapshotResult.paths.join(", ")}` : "."}`,
+      );
     } else {
-      console.error(
-        `  Skill uploaded but verification failed: SKILL.md missing at ${paths.uploadDir}` +
-          (paths.mirrorDir ? ` or its agent mirror ${paths.mirrorDir}` : ""),
-      );
+      console.error("  Skill source changed while it was being read; no sandbox add began.");
+    }
+    process.exitCode = 1;
+    return;
+  }
+
+  const snapshot = snapshotResult.snapshot;
+  if (snapshot.skippedDotfiles.length > 0) {
+    console.log(`  ${D}Skipping hidden paths: ${snapshot.skippedDotfiles.join(", ")}${R}`);
+  }
+  console.log(
+    `  ${G}✓${R} Validated SKILL.md (name: ${local.name}, ${String(snapshot.files.length)} file(s))`,
+  );
+
+  const stageDirectory = `/sandbox/.nemoclaw-skill-stage.${randomBytes(16).toString("hex")}`;
+  const stagedSkillDirectory = `${stageDirectory}/${local.name}`;
+  let gatewayName = "";
+  let stageCreated = false;
+  try {
+    await ensureLiveSandboxOrExit(sandboxName, { selectOwningGateway: false });
+    const selected = resolveSelectedSkillAgent(sandboxName);
+    if (!selected) return;
+    gatewayName = getSandboxTargetGatewayName(sandboxName);
+    const prepareExit = await runSandboxCommand(sandboxName, gatewayName, [
+      "/bin/sh",
+      "-c",
+      skillInstall.buildPrepareSkillStageCommand(stageDirectory),
+    ]);
+    if (prepareExit !== 0) {
+      console.error("  Private skill staging failed.");
       process.exitCode = 1;
       return;
     }
+    stageCreated = true;
+
+    const upload = captureOpenshell(
+      // OpenShell SDK 0.0.106 has sandbox exec but no upload/sync API. Keep
+      // only this bounded transfer on the existing provider-neutral CLI path.
+      [
+        "sandbox",
+        "upload",
+        "-g",
+        gatewayName,
+        sandboxName,
+        snapshot.skillDirectory,
+        `${stageDirectory}/`,
+      ],
+      {
+        ignoreError: true,
+        includeStderr: true,
+        includeStreams: true,
+        timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
+      },
+    );
+    if (upload.status !== 0) {
+      const detail = upload.output.trim();
+      console.error(`  Skill snapshot upload failed${detail ? `: ${detail}` : "."}`);
+      process.exitCode = 1;
+      return;
+    }
+
+    const native = selected.integration.addCommand;
+    const command = native
+      ? renderAgentSkillCommand(selected.binary, native, { source: stagedSkillDirectory })
+      : skillInstall.buildCanonicalSkillAddCommand(
+          selected.integration.writableRoot,
+          local.name,
+          stagedSkillDirectory,
+        );
+    await runSkillCommandWithStageCleanup(sandboxName, gatewayName, stageDirectory, command);
+    stageCreated = false;
   } finally {
-    tmpSshConfig.cleanup();
+    if (stageCreated && gatewayName) {
+      await cleanupRemoteStage(sandboxName, gatewayName, stageDirectory);
+    }
+    snapshot.cleanup();
   }
 }

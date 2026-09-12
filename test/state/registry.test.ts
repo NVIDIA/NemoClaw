@@ -196,6 +196,8 @@ describe("registry", () => {
             adapter: "mcporter",
             url: "https://api.githubcopilot.com/mcp/",
             env: ["GITHUB_TOKEN"],
+            denyTools: ["delete_*", "doordash_submit_order"],
+            pendingDenyTools: ["replacement_*"],
             providerName: "alpha-mcp-github",
             providerId: "11111111-2222-4333-8444-555555555555",
             policyName: "mcp-bridge-github",
@@ -211,6 +213,8 @@ describe("registry", () => {
     expect(entry).toMatchObject({
       url: "https://api.githubcopilot.com/mcp/",
       env: ["GITHUB_TOKEN"],
+      denyTools: ["delete_*", "doordash_submit_order"],
+      pendingDenyTools: ["replacement_*"],
       providerName: "alpha-mcp-github",
       providerId: "11111111-2222-4333-8444-555555555555",
       policyName: "mcp-bridge-github",
@@ -219,6 +223,34 @@ describe("registry", () => {
     expect(entry.command).toBeUndefined();
     expect(entry.port).toBeUndefined();
     expect(raw.sandboxes.alpha.mcp.managedServerNames).toEqual(["github"]);
+  });
+
+  it.each([
+    ["invalid selector", ["tool name"]],
+    ["duplicate selector", ["delete_*", "delete_*"]],
+    ["non-canonical selector order", ["doordash_submit_order", "delete_*"]],
+  ])("rejects %s from durable MCP denied-tool intent (#11115)", (_label, denyTools) => {
+    registry.registerSandbox({
+      name: "invalid-denied-tools",
+      agent: "openclaw",
+      mcp: {
+        bridges: {
+          github: {
+            server: "github",
+            agent: "openclaw",
+            adapter: "mcporter",
+            url: "https://api.githubcopilot.com/mcp/",
+            env: ["GITHUB_TOKEN"],
+            denyTools,
+            providerName: "invalid-denied-tools-mcp-github",
+            policyName: "mcp-bridge-github",
+            addedAt: new Date(0).toISOString(),
+          },
+        },
+      },
+    });
+
+    expect(registry.getSandbox("invalid-denied-tools").mcp?.bridges.github).toBeUndefined();
   });
 
   it("persists canonical trusted-private MCP intent and exact pins (#8267)", () => {
