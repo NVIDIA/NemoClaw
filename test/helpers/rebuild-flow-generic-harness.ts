@@ -17,8 +17,8 @@ import {
   destroy,
   dockerImage,
   dockerInspect,
-  gatewayDrift,
   forwardRecovery,
+  gatewayDrift,
   gatewayRuntime,
   gatewayState,
   gatewayTeardownAuthority,
@@ -34,11 +34,11 @@ import {
   onboardCredentialEnv,
   onboardSession,
   openshellRuntime,
-  providerCommand,
   policies,
   policyGet,
   policyState,
   processRecovery,
+  providerCommand,
   purgeRebuildModule,
   type RebuildFlowHarness,
   type RebuildFlowOverrides,
@@ -50,12 +50,12 @@ import {
   rebuildOnboardDependencies,
   rebuildPreparedImageContext,
   rebuildRoutePreflight,
-  removedImmutabilityMigration,
   rebuildUsageNotice,
+  registerHarnessRebuildBackup,
   registry,
   crossPortRegistry,
   registryPersistence,
-  registerHarnessRebuildBackup,
+  removedImmutabilityMigration,
   resolve,
   sandboxList,
   sandboxSession,
@@ -64,6 +64,7 @@ import {
   sourceSandboxGateway,
 } from "./rebuild-flow-harness";
 
+export type { RebuildFlowHarness, RebuildFlowOverrides } from "./rebuild-flow-harness";
 export {
   createHarnessTempDir,
   installRebuildFlowTestHooks,
@@ -75,7 +76,6 @@ export {
   tempFiles,
 } from "./rebuild-flow-harness";
 export { makePreparedRecoveryManifest };
-export type { RebuildFlowHarness, RebuildFlowOverrides } from "./rebuild-flow-harness";
 
 function expectPolicyCaptureOptions() {
   return {
@@ -744,6 +744,11 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
           stdout: "",
           stderr: "sandbox alpha not found",
         };
+      }
+      if (argv[0] === "provider" && argv[1] === "list") {
+        const provider = String(currentSandboxEntry.provider ?? "compatible-endpoint");
+        const output = JSON.stringify([{ name: provider }]);
+        return { status: 0, output, stdout: output, stderr: "" };
       }
       return argv[0] === "provider" && argv[1] === "get"
         ? {

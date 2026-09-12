@@ -77,6 +77,8 @@ export type OpenShellProviderMetadata = Readonly<{
   type: string;
   credentialKeys: readonly string[];
   configKeys: readonly string[];
+  /** Present only when the caller requests OpenShell's non-secret expiry metadata. */
+  credentialExpiresAtMs?: Readonly<Record<string, number>>;
   revision?: Readonly<{
     id: string;
     resourceVersion: number;
@@ -99,10 +101,12 @@ export type CreateOpenShellProviderRequest = OpenShellProviderRequest &
 export type GetOpenShellProviderRequest = OpenShellProviderRequest &
   Readonly<{
     providerName: string;
+    includeCredentialExpirations?: boolean;
   }>;
 
-export type UpdateOpenShellProviderRequest = GetOpenShellProviderRequest &
+export type UpdateOpenShellProviderRequest = OpenShellProviderRequest &
   Readonly<{
+    providerName: string;
     credentials: readonly Readonly<{ name: string; value: string }>[];
     config: readonly Readonly<{ key: string; value: string }>[];
   }>;

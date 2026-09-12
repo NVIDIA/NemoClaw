@@ -58,6 +58,10 @@ export function setGatewayProviderMetadata(harness: RebuildFlowHarness, stdout: 
         stderr: "sandbox alpha not found",
       };
     }
+    if (argv[0] === "provider" && argv[1] === "list") {
+      const output = JSON.stringify([{ name: "compatible-endpoint" }]);
+      return { status: 0, output, stdout: output, stderr: "" };
+    }
     return argv[0] === "provider" && argv[1] === "get"
       ? { status: 0, stdout, stderr: "" }
       : { status: 0, output: "" };

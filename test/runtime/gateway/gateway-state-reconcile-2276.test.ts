@@ -179,6 +179,11 @@ if (args[0] === "provider" && args[1] === "get") {
   process.exit(0);
 }
 
+if (args[0] === "provider" && args[1] === "list") {
+  process.stdout.write('[{"name":"nvidia-prod"}]\\n');
+  process.exit(0);
+}
+
 // forward stop/start, provider delete, logs, etc. — no-op success
 process.exit(0);
 `;

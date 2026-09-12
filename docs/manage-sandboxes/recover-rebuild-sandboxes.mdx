@@ -291,10 +291,16 @@ If verification fails, NemoClaw exits nonzero and does not report a successful r
 
 Before it backs up or deletes the existing sandbox, `rebuild` validates the recorded sandbox, gateway, inference route, policy, MCP, agent, and operation-lock state. When one of these checks fails, NemoClaw prints `Rebuild preflight failed`, explains how to recover, and ends with `Aborting rebuild`. At this boundary, the existing sandbox is unchanged and no sandbox data has been removed.
 
+For a remote inference provider, preflight checks the selected credential's non-secret expiration metadata from OpenShell.
+An expired credential or expiration metadata that NemoClaw cannot verify stops rebuild before backup or deletion, including with `--force`.
+A credential with no expiration or a future expiration continues through the remaining preflight checks.
+
 Use the recovery guidance that matches the reported check:
 
 - Verify the sandbox name when its registry entry is missing.
 - Follow the printed OpenShell gateway recovery steps when the gateway schema is incompatible.
+- Refresh the named OpenShell credential or rerun `$$nemoclaw onboard` when rebuild reports an expired provider credential.
+- Restore gateway connectivity and authentication when rebuild cannot verify the recorded provider.
 - Restore access to the current OpenShell policy when rebuild reports that the live policy cannot be read, then rerun `rebuild`. NemoClaw does not reconstruct policy from registry state.
 - Replace literal policy credentials with supported OpenShell credential bindings or resolver placeholders when rebuild refuses the policy handoff. NemoClaw stops before it creates the handoff or changes sandbox resources.
 - Resolve an incomplete MCP destroy transaction before retrying.

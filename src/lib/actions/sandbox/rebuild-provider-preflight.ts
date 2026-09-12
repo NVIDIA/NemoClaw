@@ -1,13 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { OpenShellProviderAdapter } from "../../adapters/openshell/provider-adapter";
-import type { RunProviderCommand } from "../../adapters/openshell/provider-adapter-cli";
-import { runOpenshellProviderCommand } from "../../adapters/openshell/provider-command";
 import {
   createManagedProviderAdapter,
   managedProviderGatewayTarget,
 } from "../../adapters/openshell/managed-provider-adapter";
+import type { OpenShellProviderAdapter } from "../../adapters/openshell/provider-adapter";
+import type { RunProviderCommand } from "../../adapters/openshell/provider-adapter-cli";
+import { runOpenshellProviderCommand } from "../../adapters/openshell/provider-command";
 import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime-selection";
 import { RD as _RD, R } from "../../cli/terminal-style";
 import {
@@ -37,7 +37,11 @@ const { REMOTE_PROVIDER_CONFIG } = require("../../onboard/providers") as {
   >;
 };
 
-export type RebuildGatewayProviderRegistration = "registered" | "missing" | "indeterminate";
+export type RebuildGatewayProviderRegistration =
+  | "registered"
+  | "expired"
+  | "missing"
+  | "indeterminate";
 
 function rebuildProviderAdapter(
   runtimeSelection?: OpenShellRuntimeSelection,
@@ -59,23 +63,35 @@ export async function inspectRebuildGatewayProviderRegistration(
   phase = "Preflight",
   runtimeSelection?: OpenShellRuntimeSelection,
   providerAdapter = rebuildProviderAdapter(runtimeSelection),
+  credentialKey?: string | null,
 ): Promise<RebuildGatewayProviderRegistration> {
   const result = await providerAdapter.getProvider({
     providerName: provider,
     target: managedProviderGatewayTarget,
+    ...(credentialKey ? { includeCredentialExpirations: true } : {}),
   });
+  const expiresAtMs = result.ok && credentialKey ? result.value.credentialExpiresAtMs : undefined;
+  const credentialExpiresAtMs = credentialKey ? expiresAtMs?.[credentialKey] : undefined;
   const registration = result.ok
-    ? "registered"
+    ? credentialKey && expiresAtMs === undefined
+      ? "indeterminate"
+      : credentialExpiresAtMs !== undefined &&
+          credentialExpiresAtMs > 0 &&
+          credentialExpiresAtMs <= Date.now()
+        ? "expired"
+        : "registered"
     : result.error.kind === "command" && result.error.reason === "not_found"
       ? "missing"
       : "indeterminate";
   log(
-    `${phase} gateway provider check: provider '${provider}' is ${
+    `${phase} gateway provider check: provider '${provider}' ${
       registration === "registered"
-        ? "registered"
-        : registration === "missing"
-          ? "explicitly missing"
-          : "indeterminate"
+        ? "is registered"
+        : registration === "expired"
+          ? `has expired credential ${credentialKey}`
+          : registration === "missing"
+            ? "is explicitly missing"
+            : "could not be verified"
     } in OpenShell`,
   );
   return registration;
@@ -109,6 +125,21 @@ function printIndeterminateRebuildGatewayProvider(provider: string): void {
   );
   console.error("  The provider lookup did not return an explicit not-found response.");
   console.error("  Check gateway connectivity and authentication, then retry rebuild.");
+  console.error("  Sandbox is untouched — no data was lost.");
+}
+
+function printExpiredRebuildGatewayProviderCredential(
+  provider: string,
+  credentialKey: string,
+): void {
+  console.error("");
+  console.error(
+    `  ${_RD}Rebuild preflight failed:${R} provider '${provider}' credential ${credentialKey} is expired in OpenShell.`,
+  );
+  console.error(
+    "  Rebuild will not destroy a sandbox that it cannot restore to working inference.",
+  );
+  console.error(`  Refresh ${credentialKey} in OpenShell or rerun onboard, then retry rebuild.`);
   console.error("  Sandbox is untouched — no data was lost.");
 }
 
@@ -152,8 +183,20 @@ export async function checkRebuildGatewayProviderOrBail(
 ): Promise<boolean> {
   if (!shouldVerifyRebuildGatewayProvider(provider)) return true;
 
-  const registration = await inspectRebuildGatewayProviderRegistration(provider, log);
+  const registration = await inspectRebuildGatewayProviderRegistration(
+    provider,
+    log,
+    "Preflight",
+    undefined,
+    rebuildProviderAdapter(),
+    credentialEnv,
+  );
   if (registration === "registered") return true;
+  if (registration === "expired" && credentialEnv) {
+    printExpiredRebuildGatewayProviderCredential(provider, credentialEnv);
+    bail(`Expired gateway provider credential: ${provider}/${credentialEnv}`);
+    return false;
+  }
   if (
     registration === "missing" &&
     options.allowProviderReconfigure &&
