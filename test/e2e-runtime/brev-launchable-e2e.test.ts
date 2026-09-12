@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -29,6 +30,27 @@ function identitySmokeEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 }
 
 describe("focused staging Brev Launchable lane", () => {
+  it("preserves multiline output through the delayed readiness log fixture", () => {
+    const { bin, env, workDir } = fixture({ delayWorkspaceSshLog: true });
+    const laneLog = path.join(workDir, "lane.log");
+    const input = [
+      "Waiting up to 1 seconds for workspace SSH access",
+      "Readiness diagnostic detail",
+      "Readiness classification detail",
+      "",
+    ].join("\n");
+
+    const result = spawnSync(path.join(bin, "tee"), ["-a", laneLog], {
+      encoding: "utf8",
+      env,
+      input,
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toBe(input);
+    expect(fs.readFileSync(laneLog, "utf8")).toBe(input);
+  });
+
   it("retains real guest ShellProbe evidence through Vitest and SSH capture (#9851)", () => {
     const { env, workDir } = fixture({ realCommandEvidence: true });
     const startedAt = Date.now();

@@ -200,11 +200,12 @@ exec "$@"
       path.join(bin, "tee"),
       `#!/usr/bin/env bash
 set -euo pipefail
-IFS= read -r line || true
-if [[ "$line" == "Waiting up to "*" seconds for workspace SSH access" ]]; then
-  /bin/sleep 1
-fi
-printf '%s\n' "$line" | ${JSON.stringify(REAL_TEE)} "$@"
+while IFS= read -r line || [ -n "$line" ]; do
+  if [[ "$line" == "Waiting up to "*" seconds for workspace SSH access" ]]; then
+    /bin/sleep 1
+  fi
+  printf '%s\n' "$line"
+done | ${JSON.stringify(REAL_TEE)} "$@"
 `,
     );
   }
@@ -654,7 +655,7 @@ printf 'NEMOCLAW_FULL_E2E_PASSED\\n'
   ]) {
     delete env[key];
   }
-  return { calls, env, gatewayLifecycleCommand, refreshAttempts, sshAttempts, state, workDir };
+  return { bin, calls, env, gatewayLifecycleCommand, refreshAttempts, sshAttempts, state, workDir };
 }
 
 export function run(env: NodeJS.ProcessEnv, args: string[] = []) {
