@@ -305,6 +305,31 @@ describe("discovered live E2E fast tests", () => {
     ).toHaveLength(1);
   });
 
+  it("finds fast tests for a shared fixture outside the live directory", () => {
+    const fixture = "test/e2e/fixtures/http-protocol.ts";
+    const fixtureTest = "test/e2e/support/e2e-http-protocol.test.ts";
+    const sources = new Map([
+      [live, 'import "../fixtures/http-protocol.ts";'],
+      [fixture, "export {};"],
+      [fixtureTest, 'import "../fixtures/http-protocol.ts";'],
+    ]);
+    const discovered = discoverMockParity(sources, manifest([]));
+    expect(
+      validateMockParity({
+        manifest: discovered,
+        changedFiles: [live, fixtureTest],
+        fileExists: (file) => sources.has(file),
+      }),
+    ).toEqual([]);
+    expect(
+      validateMockParity({
+        manifest: discovered,
+        changedFiles: [live],
+        fileExists: (file) => sources.has(file),
+      }),
+    ).toHaveLength(1);
+  });
+
   it("rejects a new helper with no discovered fast test or explicit exception", () => {
     const sources = new Map([
       [liveHelper, "export {};"],

@@ -221,7 +221,9 @@ export function discoverMockParity(
   const liveSources = [...sources.keys()].filter(
     (file) => LIVE_TEST.test(file) || LIVE_HELPER.test(file),
   );
-  const defaults = new Map<string, Set<string>>(liveSources.map((file) => [file, new Set()]));
+  const defaults = new Map<string, Set<string>>(
+    [...sources.keys()].map((file) => [file, new Set()]),
+  );
   for (const fast of [...sources.keys()].filter(isFastPrTest)) {
     for (const dependency of reachable(fast)) defaults.get(dependency)?.add(fast);
   }
