@@ -15,6 +15,7 @@ type Row = {
   managedBy?: string;
   workspace?: string;
   sandboxId?: string;
+  managedAlt?: string;
 };
 
 function observeRows(rows: Row[], malformedRows = 0) {
@@ -25,6 +26,7 @@ function observeRows(rows: Row[], malformedRows = 0) {
       managedBy: row.managedBy ?? "",
       workspace: row.workspace ?? "",
       sandboxId: row.sandboxId ?? "",
+      managedAlt: row.managedAlt ?? "",
     })),
     malformedRows,
   };
@@ -35,6 +37,7 @@ const MANAGED = {
   managedBy: "openshell",
   workspace: "default",
   sandboxId: "sb-real",
+  managedAlt: "",
 } as const;
 
 const FOREIGN = {
@@ -42,6 +45,7 @@ const FOREIGN = {
   managedBy: "",
   workspace: "foreign",
   sandboxId: "",
+  managedAlt: "",
 } as const;
 
 function expectAmbiguous(
@@ -77,6 +81,47 @@ describe("classifyDestroyContainerIdentity", () => {
       expectAmbiguous(classifyDestroyContainerIdentity("destroytest", observeRows([podmanManaged])))
         .foreign,
     ).toEqual([podmanManaged]);
+  });
+
+  it("is clear for a container carrying only OpenShell's Podman-driver ownership marker (#11139)", () => {
+    // Verified against a live OpenShell 0.0.106 Podman-driver sandbox create:
+    // the container carries `openshell.managed=true` and never carries
+    // `openshell.ai/managed-by` at all.
+    const podmanManaged = { ...MANAGED, managedBy: "", managedAlt: "true" };
+
+    expect(classifyDestroyContainerIdentity("destroytest", observeRows([podmanManaged]))).toEqual({
+      status: "clear",
+      identity: podmanManaged,
+    });
+  });
+
+  it("still refuses a container whose Podman-driver marker has the wrong value", () => {
+    const podmanManaged = { ...MANAGED, managedBy: "", managedAlt: "false" };
+
+    expect(
+      expectAmbiguous(classifyDestroyContainerIdentity("destroytest", observeRows([podmanManaged])))
+        .foreign,
+    ).toEqual([podmanManaged]);
+  });
+
+  it("refuses a foreign container even when it borrows the Podman marker's label key with an unmatched value", () => {
+    const spoofed = { ...FOREIGN, managedAlt: "TRUE" };
+
+    expect(
+      expectAmbiguous(classifyDestroyContainerIdentity("destroytest", observeRows([spoofed])))
+        .foreign,
+    ).toEqual([spoofed]);
+  });
+
+  it("refuses when a foreign container shares the sandbox-name label with a Podman-managed sandbox", () => {
+    const podmanManaged = { ...MANAGED, managedBy: "", managedAlt: "true" };
+    const verdict = expectAmbiguous(
+      classifyDestroyContainerIdentity("destroytest", observeRows([podmanManaged, FOREIGN])),
+    );
+    expect(verdict.foreign).toHaveLength(1);
+    expect(verdict.foreign[0].id).toBe(FOREIGN.id);
+    expect(verdict.managed).toHaveLength(1);
+    expect(verdict.managed[0].id).toBe(podmanManaged.id);
   });
 
   it("refuses when a foreign container shares the sandbox-name label (#8999)", () => {

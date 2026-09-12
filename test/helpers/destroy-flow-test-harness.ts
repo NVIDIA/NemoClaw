@@ -580,12 +580,14 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     options.onDockerRun?.(identityProbeCall);
     const defaultIdentityResult = {
       status: 0,
-      stdout: sandboxPresent ? "aaaaaaaaaaaa\topenshell\tdefault\tsb-alpha" : "",
+      stdout: sandboxPresent ? "aaaaaaaaaaaa\topenshell\tdefault\tsb-alpha\t\tend" : "",
     };
     const sequencedResult = options.dockerRunResultSequence?.[identityProbeCall - 1];
     const exactCleanupResult = {
       status: options.dockerOrphanQueryStatus ?? 0,
-      stdout: dockerNameLabeledIds.map((id) => `${id}\topenshell\tdefault\tsb-alpha`).join("\n"),
+      stdout: dockerNameLabeledIds
+        .map((id) => `${id}\topenshell\tdefault\tsb-alpha\t\tend`)
+        .join("\n"),
       stderr: "",
     };
     const result =

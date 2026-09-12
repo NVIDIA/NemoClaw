@@ -6,6 +6,7 @@ import {
   OPENSHELL_SANDBOX_NAME_LABEL,
   OPENSHELL_SANDBOX_WORKSPACE_LABEL,
   inspectDockerSandboxNameLabeledContainers,
+  isOpenShellSandboxOwnershipMarker,
   resolveOpenShellSandboxOwnershipLabel,
 } from "../../onboard/openshell-docker-sandbox-containers";
 import { fingerprintOpenShellSandboxId } from "../../adapters/openshell/sandbox-identity";
@@ -31,6 +32,7 @@ export type SandboxNameLabeledContainer = {
   managedBy: string;
   workspace: string;
   sandboxId: string;
+  managedAlt: string;
 };
 
 /** Verdict for whether destroy resolved one complete managed container identity. */
@@ -99,8 +101,10 @@ export function classifyDestroyContainerIdentity(
 
   const { malformedRows, rows } = observation;
   const ownership = resolveOpenShellSandboxOwnershipLabel();
-  const managed = rows.filter((row) => row.managedBy === ownership.value);
-  const foreign = rows.filter((row) => row.managedBy !== ownership.value);
+  // Ownership policy is owned by the onboarding container module so destroy
+  // cannot drift from the rest of the lifecycle (#11139).
+  const managed = rows.filter((row) => isOpenShellSandboxOwnershipMarker(row));
+  const foreign = rows.filter((row) => !isOpenShellSandboxOwnershipMarker(row));
 
   if (malformedRows > 0) {
     return {

@@ -1231,10 +1231,14 @@ function mockDockerSandboxLifecycleReleaseFromRunner() {
       normalized.includes("label=openshell.ai/sandbox-name=my-assistant") &&
       normalized.includes("openshell.ai/sandbox-id")
     ) {
-      const row = `${ONBOARD_SANDBOX_NEW_CONTAINER_ID}\topenshell\talpha\t${state.sandboxId || ONBOARD_READY_SANDBOX_ID}\n`;
+      // Docker-driver containers carry no Podman ownership marker, and the
+      // identity row ends with a literal terminator column (#11139).
+      const identity = (containerId) =>
+        `${containerId}\topenshell\talpha\t${state.sandboxId || ONBOARD_READY_SANDBOX_ID}\t\tend\n`;
+      const row = identity(ONBOARD_SANDBOX_NEW_CONTAINER_ID);
       return state.finalCommitReleased || state.legacyRecoverySandboxId
         ? row
-        : `${ONBOARD_SANDBOX_OLD_CONTAINER_ID}\topenshell\talpha\t${state.sandboxId || ONBOARD_READY_SANDBOX_ID}\n${row}`;
+        : `${identity(ONBOARD_SANDBOX_OLD_CONTAINER_ID)}${row}`;
     }
     if (
       (state.finalCommitReleased || state.legacyRecoverySandboxId) &&
