@@ -637,7 +637,8 @@ async function assertRealAdapterToolCall(
         };
   assertResponse();
   const calls = fakeMcp.requests.filter((request) => request.rpcMethod === "tools/call");
-  expect(calls).toHaveLength(before + 1);
+  const details = ["rpcId", "rpcToolName", "responseStatus", "responseHasResult"];
+  expect(calls, JSON.stringify(calls.slice(before), details)).toHaveLength(before + 1);
   expect(calls.at(-1)).toMatchObject({
     auth: `Bearer ${options.expectedSecret ?? HOST_SECRET}`,
     path: "/mcp",
