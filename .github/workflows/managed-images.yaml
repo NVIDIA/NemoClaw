@@ -204,6 +204,7 @@ jobs:
           done
           for support_relative in \
             scripts/lib/bundled-npm-package.mts \
+            scripts/security/build-native-security-packages.sh \
             scripts/security/patches/perl-5.44.0-net-ping-capability-tests.patch
           do
             support_source="$candidate_root/$support_relative"
