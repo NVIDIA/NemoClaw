@@ -1332,10 +1332,12 @@ const char* observed_io_image() {
 void log_io_observation(const IoObservation& record) {
     if (writingPipeDiagnostic || !GetModuleHandleW(L"msys-2.0.dll")) return;
     // Failures have their own budget, so ordinary startup traffic cannot hide
-    // the first failed write/wait/event. These counters do not change any API.
+    // the first failed write/wait/event. Keep only two successful read/write
+    // samples per process; the full pipeline otherwise exhausts the evidence cap.
+    // These counters do not change any API.
     LONG* successBudget = strcmp(record.operation, "NtReadFile") == 0 ? &ioReadSuccessRecords : &ioSuccessRecords;
     if ((record.status < 0 || record.unusualOutcome) ? InterlockedIncrement(&ioFailureRecords) > 32 :
-                            InterlockedIncrement(successBudget) > 16) return;
+                            InterlockedIncrement(successBudget) > 2) return;
     writingPipeDiagnostic = true;
     const LONG sequence = InterlockedIncrement(&ioRecordSequence);
     HMODULE callerModule = nullptr;
