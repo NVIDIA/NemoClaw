@@ -194,7 +194,6 @@
     "test/runtime/sandbox/reboot-identity-drift.test.ts": 13632,
     "test/runtime/sandbox/sandbox-agent-surface-parity.test.ts": 6276,
     "test/runtime/sandbox/sandbox-build-context.test.ts": 33488,
-    "test/runtime/sandbox/sandbox-download-upload-cli.test.ts": 6982,
     "test/runtime/sandbox/sandbox-sessions-admin-agent-cli.test.ts": 7935,
     "test/runtime/sandbox/sandbox-sessions-export-cli.test.ts": 20387,
     "test/runtime/sandbox/sandbox-stuck-recovery.test.ts": 8760,
