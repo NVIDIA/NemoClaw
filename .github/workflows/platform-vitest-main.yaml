@@ -90,7 +90,11 @@ jobs:
           if ($process.ExitCode -ne 0) { throw 'Docker Desktop installation failed' }
           $settingsRoot = "$env:APPDATA\Docker"
           New-Item -ItemType Directory -Force $settingsRoot | Out-Null
-          @{configurationFileVersion=43;wslEngineEnabled=$true;integratedWslDistros=@($env:WSL_DISTRO);enableIntegrationWithDefaultWslDistro=$true} | ConvertTo-Json | Set-Content "$settingsRoot\settings-store.json"
+          $settingsPath = "$settingsRoot\settings-store.json"
+          $settings = if (Test-Path $settingsPath) { Get-Content $settingsPath -Raw | ConvertFrom-Json } else { [pscustomobject]@{} }
+          $updates = @{wslEngineEnabled=$true;integratedWslDistros=@($env:WSL_DISTRO);enableIntegrationWithDefaultWslDistro=$true}
+          foreach ($entry in $updates.GetEnumerator()) { $settings | Add-Member -MemberType NoteProperty -Name $entry.Key -Value $entry.Value -Force }
+          [IO.File]::WriteAllText($settingsPath, ($settings | ConvertTo-Json -Depth 32), (New-Object System.Text.UTF8Encoding $false))
       - name: Build the unmodified main CLI in WSL
         shell: powershell
         timeout-minutes: 15
@@ -115,8 +119,10 @@ jobs:
           . "$env:GITHUB_WORKSPACE\source\tools\wsl\ci-helper.ps1"
           $dockerExe = 'C:\Program Files\Docker\Docker\resources\bin\docker.exe'
           if (Test-Path $dockerExe) {
+            $ErrorActionPreference = 'Continue'
             & $dockerExe desktop start --timeout 120 2>&1 | Tee-Object "$env:GITHUB_WORKSPACE\evidence\desktop-start.log"
             & $dockerExe --context desktop-linux info 2>&1 | Tee-Object "$env:GITHUB_WORKSPACE\evidence\desktop-engine.log"
+            $ErrorActionPreference = 'Stop'
           }
           $root = "$env:RUNNER_TEMP\issue-11401-ollama"
           $env:OLLAMA_HOST = '127.0.0.1:11434'
