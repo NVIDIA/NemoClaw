@@ -11,9 +11,11 @@ import { captureOpenshell } from "../adapters/openshell/runtime";
 import { buildSelectedOpenShellSubprocessEnv } from "../adapters/openshell/command-argv";
 import type { OpenShellRuntimeSelection } from "../adapters/openshell/runtime-selection";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../adapters/openshell/timeouts";
+import { observeOpenShellSandboxIdentity } from "../adapters/openshell/sandbox-presence";
 import { parseSandboxPhase } from "../state/gateway";
 import {
   fingerprintSandboxLiveIdentity,
+  fingerprintSandboxRecreateValue,
   type SandboxRecreateObservation,
 } from "./sandbox-recreate-transaction";
 
@@ -109,7 +111,7 @@ export function observeSandboxOnGateway(
       `Cannot journal sandbox '${target.sandboxName}' replacement: selected gateway does not match the recorded target.`,
     );
   }
-  const probe = capture(["sandbox", "get", "-g", target.gatewayName, target.sandboxName], {
+  const captureOptions = {
     ignoreError: true,
     includeStderr: true,
     includeStreams: true,
@@ -120,7 +122,11 @@ export function observeSandboxOnGateway(
           replaceEnv: true,
         }
       : {}),
-  });
+  } as const;
+  const probe = capture(
+    ["sandbox", "get", "-g", target.gatewayName, target.sandboxName],
+    captureOptions,
+  );
   const stdout = String(probe.stdout ?? (probe.status === 0 ? probe.output : "")).trim();
   const combined = `${stdout}\n${String(probe.stderr ?? probe.output ?? "")}`.trim();
   const failedCleanly =
@@ -139,6 +145,20 @@ export function observeSandboxOnGateway(
     return {
       state: phase === "Ready" || phase === "Running" ? "ready" : "not_ready",
       liveIdentityFingerprint,
+    };
+  }
+  // `sandbox get` also reads the sandbox config. A gateway upgrade can retain
+  // the sandbox identity before its legacy config can be read. The structured
+  // inventory proves presence without depending on that extra config read.
+  const inventory = capture(
+    ["sandbox", "list", "-g", target.gatewayName, "-o", "json"],
+    captureOptions,
+  );
+  const listed = observeOpenShellSandboxIdentity(target.sandboxName, inventory);
+  if (listed.kind === "present") {
+    return {
+      state: listed.phase === "Ready" || listed.phase === "Running" ? "ready" : "not_ready",
+      liveIdentityFingerprint: fingerprintSandboxRecreateValue(listed.id),
     };
   }
   throw new Error(

@@ -99,6 +99,25 @@ function absentProbe() {
   };
 }
 
+function listedPresentProbe(phase = "Ready") {
+  return {
+    status: 0,
+    output: "",
+    stdout: JSON.stringify([
+      {
+        id: SANDBOX_ID,
+        name: "alpha",
+        labels: {},
+        resource_version: 1,
+        created_at: "2026-09-12T00:00:00Z",
+        phase,
+        current_policy_version: 1,
+      },
+    ]),
+    stderr: "",
+  };
+}
+
 describe("non-resumed onboard replacement journal (#7735)", () => {
   let session: Session;
 
@@ -329,6 +348,45 @@ describe("non-resumed onboard replacement journal (#7735)", () => {
       stdout: "",
       stderr: "Error: connection refused",
     });
+
+    expect(() => open()).toThrow(/neither a live sandbox nor explicit absence/);
+    expect(session.checkpoint?.sandboxRecreate ?? null).toBeNull();
+  });
+
+  it("uses structured inventory when a gateway upgrade cannot read the legacy config", () => {
+    const configFailure = {
+      status: 1,
+      output: "",
+      stdout: "",
+      stderr: "Error: legacy sandbox config is unavailable",
+    };
+    mocks.captureOpenshell
+      .mockReturnValueOnce(configFailure)
+      .mockReturnValueOnce(listedPresentProbe())
+      .mockReturnValueOnce(configFailure)
+      .mockReturnValueOnce(listedPresentProbe());
+
+    open();
+
+    expect(session.checkpoint?.sandboxRecreate).toMatchObject({
+      phase: "planned",
+      sourceLiveIdentityFingerprint: SANDBOX_FINGERPRINT,
+    });
+    expect(mocks.captureOpenshell).toHaveBeenCalledWith(
+      ["sandbox", "list", "-g", "nemoclaw-9090", "-o", "json"],
+      expect.objectContaining({ timeout: 15_000 }),
+    );
+  });
+
+  it("does not infer deletion from an empty inventory after a config read fails", () => {
+    mocks.captureOpenshell
+      .mockReturnValueOnce({
+        status: 1,
+        output: "",
+        stdout: "",
+        stderr: "Error: legacy sandbox config is unavailable",
+      })
+      .mockReturnValueOnce({ status: 0, output: "", stdout: "[]", stderr: "" });
 
     expect(() => open()).toThrow(/neither a live sandbox nor explicit absence/);
     expect(session.checkpoint?.sandboxRecreate ?? null).toBeNull();
