@@ -67,6 +67,19 @@ type RaceTiming = "watcher-first" | "host-first";
 
 vi.setConfig({ maxConcurrency: 4 });
 
+describe("runOpenclaw", () => {
+  it("preserves signal termination separately from exit status", async () => {
+    const run = await runOpenclaw(
+      process.execPath,
+      ["-e", "process.kill(process.pid, 'SIGTERM')"],
+      { encoding: "utf-8" },
+    );
+
+    expect(run.status).toBeNull();
+    expect(run.signal).toBe("SIGTERM");
+  });
+});
+
 describe.concurrent("nemoclaw-start initial CLI auto-pair bootstrap (#6113)", () => {
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
 

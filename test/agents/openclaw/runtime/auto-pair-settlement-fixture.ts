@@ -15,11 +15,18 @@ type RunProcessOptions = {
   timeout?: number;
 };
 
+type RunProcessResult = {
+  status: number | null;
+  signal: NodeJS.Signals | null;
+  stdout: string;
+  stderr: string;
+};
+
 export function runOpenclaw(
   file: string,
   args: readonly string[],
   options: RunProcessOptions,
-): Promise<{ status: number; stdout: string; stderr: string }> {
+): Promise<RunProcessResult> {
   return new Promise((resolve) => {
     execFile(
       file,
@@ -29,12 +36,15 @@ export function runOpenclaw(
         env: options.env,
         timeout: options.timeout,
       },
-      (error, stdout, stderr) =>
+      (error, stdout, stderr) => {
+        const signal = error?.signal ?? null;
         resolve({
-          status: Number(error?.code) || (error ? -1 : 0),
+          status: signal ? null : Number(error?.code) || (error ? -1 : 0),
+          signal,
           stdout,
           stderr,
-        }),
+        });
+      },
     );
   });
 }
