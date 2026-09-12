@@ -417,7 +417,7 @@ diff --git a/src/backends/appcontainer/common/src/msys_token_readback.rs b/src/b
 new file mode 100644
 --- /dev/null
 +++ b/src/backends/appcontainer/common/src/msys_token_readback.rs
-@@ -0,0 +1,995 @@
+@@ -0,0 +1,1026 @@
 +// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 +// SPDX-License-Identifier: Apache-2.0
 +// Disposable Windows CI inspection and explicit exact-TOKEN_QUERY repair.
@@ -1249,20 +1249,43 @@ new file mode 100644
 +    stop: &AtomicBool,
 +) -> Result<Value, String> {
 +    let mut previous = None;
-+    for processed in 0..if repair { 32 } else { 1 } {
++    let mut processed = 0u64;
++    let mut failed = 0u64;
++    let mut emitted = 0u32;
++    let mut last_failure = None;
++    loop {
++        if !repair && processed >= 1 {
++            return Ok(
++                json!({"status":"owner-request-bound","requestsProcessed":processed,"repairMode":repair}),
++            );
++        }
 +        let candidate = loop {
-+            if stop.load(Ordering::Acquire) {
++            if stop.load(Ordering::Acquire)
++                || (repair && unsafe { WaitForSingleObject(root_process.0, 0) } != 258)
++            {
 +                return Ok(
-+                    json!({"status":"owner-stopped","requestsProcessed":processed,"repairMode":repair}),
++                    json!({"status":"owner-stopped","requestsProcessed":processed,"requestsFailed":failed,
++                        "diagnosticsEmitted":emitted,"lastFailure":last_failure,"repairMode":repair,"lifetimeRepair":repair}),
 +                );
 +            }
-+            if let Some(value) = request(request_directory.0)? {
++            let request = match request(request_directory.0) {
++                Ok(value) => value,
++                Err(error) if repair => {
++                    return Ok(json!({"status":"inspection-failed","error":error,
++                        "requestsProcessed":processed,"requestsFailed":failed,
++                        "diagnosticsEmitted":emitted,"lastFailure":last_failure,
++                        "repairMode":repair,"lifetimeRepair":true}));
++                }
++                Err(error) => return Err(error),
++            };
++            if let Some(value) = request {
 +                if previous != Some(value) {
 +                    break value;
 +                }
 +            }
 +            std::thread::sleep(Duration::from_millis(10));
 +        };
++        processed = processed.saturating_add(1);
 +        previous = Some(candidate);
 +        let [parent_pid, parent_time, child_pid, child_time] = candidate;
 +        let mut record = json!({"schemaVersion":1,"classification":"owned-MXC-child-token-readback","status":"failed","parentPid":parent_pid,"parentCreationFiletime":parent_time.to_string(),"childPid":child_pid,"childCreationFiletime":child_time.to_string(),"tokenMutated":false,"childResumed":false});
@@ -1409,7 +1432,15 @@ new file mode 100644
 +            encoded.len() <= 16 * 1024,
 +            "Repair diagnostic exceeds fixed bound",
 +        )?;
-+        eprintln!("NEMOCLAW_MSYS_HOST_TOKEN_INSPECTION={encoded}");
++        if !verified || record.get("acknowledgementError").is_some() {
++            failed = failed.saturating_add(1);
++            last_failure = Some(record.clone());
++        }
++        // Repair service follows the retained job's lifetime, rather than
++        // exhausting a fork count. Detail storage remains bounded per owner.
++        if !repair || emitted < 32 {
++            eprintln!("NEMOCLAW_MSYS_HOST_TOKEN_INSPECTION={encoded}");
++            emitted = emitted.saturating_add(1);
++        }
 +    }
-+    Ok(json!({"status":"owner-request-bound","requestsProcessed":32,"repairMode":repair}))
 +}

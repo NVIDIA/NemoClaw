@@ -413,8 +413,6 @@ BOOL requestHostQueryRepair(HANDLE child) {
     WCHAR mode[16] = {};
     const DWORD modeLength = GetEnvironmentVariableW(L"NEMOCLAW_MSYS_TOKEN_INSPECTION_HOLD", mode, 16);
     if (!modeLength || modeLength >= 16 || wcscmp(mode, L"repair-query")) { SetLastError(saved); return FALSE; }
-    static LONG attempts = 0;
-    if (InterlockedIncrement(&attempts) > 32) { SetLastError(saved); return FALSE; }
     const ULONGLONG started = GetTickCount64();
     BOOL published = FALSE, verified = FALSE, ackRemoved = FALSE, requestRemoved = FALSE, replySeen = FALSE;
     DWORD error = 0;
@@ -511,7 +509,11 @@ BOOL requestHostQueryRepair(HANDLE child) {
         "NEMOCLAW_MSYS_QUERY_REPAIR_WAIT={\"schemaVersion\":1,\"parentPid\":%lu,\"childPid\":%lu,\"requestPublished\":%s,\"matchingVerifiedAck\":%s,\"ackRemoved\":%s,\"requestRemoved\":%s,\"elapsedMs\":%llu,\"error\":%lu,\"actualSidRecheckRequired\":true,\"childResumed\":false}\n",
         GetCurrentProcessId(), GetProcessId(child), published ? "true" : "false", verified ? "true" : "false", ackRemoved ? "true" : "false", requestRemoved ? "true" : "false", GetTickCount64() - started, error);
     DWORD written = 0;
-    if (length > 0) WriteFile(GetStdHandle(STD_ERROR_HANDLE), line, static_cast<DWORD>(length), &written, nullptr);
+    // Requests follow the real owned session lifetime; diagnostic detail does
+    // not. Preserve the existing bound without stopping successful repairs.
+    static LONG records = 0;
+    if (length > 0 && InterlockedCompareExchange(&records, 32, 32) < 32 && InterlockedIncrement(&records) <= 32)
+        WriteFile(GetStdHandle(STD_ERROR_HANDLE), line, static_cast<DWORD>(length), &written, nullptr);
     SetLastError(saved);
     return recheck;
 }

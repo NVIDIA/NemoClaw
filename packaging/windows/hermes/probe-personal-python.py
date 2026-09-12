@@ -166,6 +166,7 @@ def browser_check(root, nonce):
     errors = []
     primary = None
     result = None
+    raw = None
     try:
         code = (
             "new_tab('http://127.0.0.1:"
@@ -177,11 +178,16 @@ def browser_check(root, nonce):
         raw = browser_exec(code, session=session, task_id=task, timeout_s=45)
         result = json.loads(raw) if isinstance(raw, str) else raw
         assert (
-            result["success"] is True
-            and result["exit_code"] == 0
+            isinstance(result, dict)
+            and result.get("success") is True
+            and type(result.get("exit_code")) is int
+            and result.get("exit_code") == 0
+            and result.get("error") is None
+            and isinstance(result.get("output"), str)
             and "BROWSER_PERSONAL_OK" in result["output"]
-        ), repr(result)
+        ), "Browser response did not satisfy the complete success contract"
     except BaseException as error:
+        error.add_note("Browser Use raw response: " + repr(raw))
         primary = error
     finally:
         try:

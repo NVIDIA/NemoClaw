@@ -297,3 +297,52 @@ test("a real receipt write failure preserves the primary error and reports its o
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("browser probe retains error-only responses and requires the complete success envelope", () => {
+  const check = String.raw`
+import ast,json,pathlib,sys,traceback
+source=pathlib.Path(sys.argv[1]);tree=ast.parse(source.read_text())
+function=next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=='browser_check')
+operation=next(n for n in function.body if isinstance(n,ast.Try))
+# Execute the exact response/assertion/handler slice only. No native browser,
+# localhost server or cleanup process is executed by this portable control.
+body=operation.body[1:]
+assert isinstance(body[0],ast.Assign) and body[0].targets[0].id=='raw'
+trial=ast.Try(body=body,handlers=operation.handlers,orelse=[],finalbody=[])
+module=ast.fix_missing_locations(ast.Module(body=[trial],type_ignores=[]))
+code=compile(module,str(source),'exec')
+normal={'success':True,'exit_code':0,'output':'BROWSER_PERSONAL_OK'}
+responses=[normal,{'error':'controlled exact upstream error-only response'},
+ {'success':True,'output':'BROWSER_PERSONAL_OK'},
+ {'success':True,'exit_code':False,'output':'BROWSER_PERSONAL_OK'},
+ {'success':True,'exit_code':1,'output':'BROWSER_PERSONAL_OK'},
+ {'success':True,'exit_code':0,'output':123},
+ {'success':True,'exit_code':0,'output':'BROWSER_PERSONAL_OK','error':'failed'},
+ {'success':False,'exit_code':0,'output':'BROWSER_PERSONAL_OK'},
+ {'success':True,'exit_code':0,'output':'missing marker'}, ['not-an-envelope']]
+for index,value in enumerate(responses):
+ raw=json.dumps(value);context={'json':json,'browser_exec':lambda *a,**k:raw,'code':'not executed','session':'fixture','task':'fixture','result':None,'raw':None,'primary':None}
+ exec(code,context)
+ if index==0:assert context['primary']is None
+ else:
+  failure=context['primary'];assert isinstance(failure,AssertionError),type(failure)
+  assert failure.__notes__==['Browser Use raw response: '+repr(raw)]
+  assert raw in ''.join(traceback.format_exception(failure))
+context={'json':json,'browser_exec':lambda *a,**k:'not json','code':'not executed','session':'fixture','task':'fixture','result':None,'raw':None,'primary':None}
+exec(code,context);assert isinstance(context['primary'],json.JSONDecodeError);assert 'not json' in context['primary'].__notes__[0]
+print(json.dumps({'responseCases':11,'nativeBrowserExecuted':False,'errorOnlyResponsePreserved':True}))
+`;
+  const result = spawnSync(
+    process.env.NEMOCLAW_TEST_PYTHON ?? "python3",
+    [
+      "-I",
+      "-B",
+      "-c",
+      check,
+      fileURLToPath(new URL("./probe-personal-python.py", import.meta.url)),
+    ],
+    { encoding: "utf8", timeout: 10000 },
+  );
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(JSON.parse(result.stdout).responseCases, 11);
+});
