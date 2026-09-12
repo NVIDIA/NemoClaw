@@ -24,6 +24,7 @@ describe("config set CLI dispatch", () => {
   it("awaits configSet before completing the dispatcher", async () => {
     const cliPath = require.resolve("../../../dist/nemoclaw.js");
     const publicDispatchPath = require.resolve("../../../dist/lib/cli/public-dispatch.js");
+    const crossPortPath = require.resolve("../../../dist/lib/state/registry/cross-port.js");
     const configSetCommandPath = require.resolve("../../../dist/commands/sandbox/config/set.js");
     const registryPath = require.resolve("../../../dist/lib/state/registry.js");
     const sandboxConfigPath = require.resolve("../../../dist/lib/sandbox/config.js");
@@ -31,6 +32,7 @@ describe("config set CLI dispatch", () => {
 
     const priorCli = require.cache[cliPath];
     const priorPublicDispatch = require.cache[publicDispatchPath];
+    const priorCrossPort = require.cache[crossPortPath];
     const priorConfigSetCommand = require.cache[configSetCommandPath];
     const priorRegistry = require.cache[registryPath];
     const priorSandboxConfig = require.cache[sandboxConfigPath];
@@ -71,6 +73,21 @@ describe("config set CLI dispatch", () => {
       exports: {
         getSandbox: vi.fn((name: string) => (name === "test-sandbox" ? { name } : null)),
         listSandboxes: vi.fn(() => ({ sandboxes: [{ name: "test-sandbox" }] })),
+      },
+    } as any;
+
+    requireCache[crossPortPath] = {
+      id: crossPortPath,
+      filename: crossPortPath,
+      loaded: true,
+      exports: {
+        findSandboxAcrossGatewayRoots: vi.fn((name: string) =>
+          name === "test-sandbox"
+            ? { entry: { name }, gatewayPort: null, registryFile: "test-registry" }
+            : null,
+        ),
+        listPublishedSandboxNamesAcrossGatewayRoots: vi.fn(() => ["test-sandbox"]),
+        listPendingSandboxNamesAcrossGatewayRoots: vi.fn(() => []),
       },
     } as any;
 
@@ -129,6 +146,7 @@ describe("config set CLI dispatch", () => {
 
       restoreCachedModule(cliPath, priorCli);
       restoreCachedModule(publicDispatchPath, priorPublicDispatch);
+      restoreCachedModule(crossPortPath, priorCrossPort);
       restoreCachedModule(configSetCommandPath, priorConfigSetCommand);
       restoreCachedModule(registryPath, priorRegistry);
       restoreCachedModule(sandboxConfigPath, priorSandboxConfig);
