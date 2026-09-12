@@ -223,6 +223,7 @@ class DebugJob(owner.WindowsJob):
         self.live_debug_pids = set()
         self.events = []
         self.event_count = 0
+        self.event_history_exceeded = False
         self.observation_errors = []
         self.debug_started = False
         self.saw_process = False
@@ -810,6 +811,9 @@ class DebugJob(owner.WindowsJob):
                 return
             raise c.WinError(error)
         self.event_count += 1
+        # Budget exhaustion loses history, not the identity of the original
+        # CREATE_PROCESS handles. Continue tracking/forwarding during cleanup.
+        self.event_history_exceeded |= self.event_count > MAX_EVENTS
         disposition = DBG_NOT_HANDLED if event.kind == 1 else DBG_CONTINUE
         row = {
             "sequence": self.event_count,
@@ -945,9 +949,6 @@ class DebugJob(owner.WindowsJob):
                 self.events
             ) < MAX_EVENTS:
                 self.events.append(row)
-            owner.require(
-                self.event_count != MAX_EVENTS + 1, "Debug event bound exceeded"
-            )
         except Exception as error:
             if len(self.observation_errors) < 8:
                 self.observation_errors.append(owner.detail(error))
@@ -1267,6 +1268,9 @@ def capture(request, native):
                 not native.observation_errors,
                 "Debug event observation failed; see exact metadata error",
             )
+            owner.require(
+                not native.event_history_exceeded, "Debug event history bound exceeded"
+            )
             if stop.is_set() or time.monotonic() - started >= 120:
                 result["execution"]["timedOut"] = time.monotonic() - started >= 120
                 break
@@ -1348,6 +1352,19 @@ def capture(request, native):
     )
     result["execution"]["elapsedMs"] = (time.monotonic() - started) * 1000
     result["events"] = native.events
+    result["eventHistory"] = {
+        "eventLimit": MAX_EVENTS,
+        "eventsObserved": native.event_count,
+        "rowsRetained": len(native.events),
+        "exceeded": native.event_history_exceeded,
+    }
+    if native.event_history_exceeded and result["execution"]["error"] is None:
+        # Overflow can first occur on an EXIT or during cleanup. It still
+        # fails this diagnostic, while actual handle closure remains provable.
+        result["execution"]["error"] = {
+            **owner.detail(ValueError("Debug event history bound exceeded")),
+            "stage": "debug-events",
+        }
     result["lastForwardedException"] = native.last_fault
     result["firstForwardedException"] = native.first_fault
     result["firstUnhandledException"] = native.first_unhandled

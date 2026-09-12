@@ -288,8 +288,14 @@ def browser_agent_state(state, expected, launches):
             daemon = psutil.Process(int(pid_text))
             created = daemon.create_time()
             daemon_env = daemon.environ()
+            daemon_executable = daemon.exe()
+            row["daemonExecutableObserved"] = {
+                "value": daemon_executable[:512],
+                "characters": len(daemon_executable),
+                "truncated": len(daemon_executable) > 512,
+            }
             row["daemonIdentityChecks"] = {
-                "executableMatches": Path(daemon.exe()) == expected,
+                "executableMatches": Path(daemon_executable) == expected,
                 "socketDirectoryMatches": daemon_env.get("AGENT_BROWSER_SOCKET_DIR")
                 == socket_dir,
                 "sessionMatches": daemon_env.get("AGENT_BROWSER_SESSION") == session,

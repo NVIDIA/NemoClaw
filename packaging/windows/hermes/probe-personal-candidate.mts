@@ -1699,7 +1699,7 @@ async function main() {
     failure = error;
   } finally {
     receipt.supplementalDiagnosticDisposition = failure
-      ? "primary failed; primary-debug, stock-debug and host comparisons only"
+      ? "primary failed; host, primary-debug and stock-debug comparisons only"
       : "primary passed; supplemental comparisons skipped";
     if (
       failure &&
@@ -1709,7 +1709,7 @@ async function main() {
       request
     ) {
       // This supplementary control cannot replace the primary component result.
-      // Both comparisons share the one final immutable inventory check.
+      // All comparisons share the one final immutable inventory check.
       try {
         const python = (receipt.derivedRuntime as any).criticalFiles.find(
           (file: any) => file.path === "hermes-agent/venv/Scripts/python.exe",
@@ -1720,6 +1720,34 @@ async function main() {
             skipped:
               "Unchanged direct-Python comparison omitted; retained prior9675 evidence remains separate.",
           };
+        // Run the independent host comparison before the debugger can reach
+        // its history bound. The same closure gate still owns every successor.
+        if (browserDiagnosticChildrenClosed) {
+          const host = await hostBrowserDiagnostic(
+            request,
+            runtime,
+            path.join(launcher, "probe-personal-python.py"),
+            hostControllerPython,
+            environment,
+            path.join(output, "browser-host-diagnostic"),
+            python,
+          );
+          receipt.hostBrowserDiagnostic = host;
+          browserDiagnosticChildrenClosed = host.childrenClosed;
+          cleanup.browserDiagnosticComplete &&= host.cleanupComplete;
+          if (!host.cleanupComplete)
+            errors.push({
+              browserDiagnostic: "host",
+              error: host.error,
+              cleanup: host.receipt?.value?.cleanup,
+            });
+        } else {
+          receipt.hostBrowserDiagnostic = {
+            diagnosticOnly: true,
+            canonicalQualification: false,
+            skipped: "A previous diagnostic child did not close.",
+          };
+        }
         for (const [key, directory, executor, hostEnvironment, variant] of [
           [
             "primaryDebugBrowserDiagnostic",
@@ -1774,32 +1802,6 @@ async function main() {
           cleanup.browserDiagnosticComplete &&= diagnostic.cleanupComplete;
           if (!diagnostic.cleanupComplete)
             errors.push({ browserDiagnostic: key, cleanup: diagnostic.cleanup });
-        }
-        if (browserDiagnosticChildrenClosed) {
-          const host = await hostBrowserDiagnostic(
-            request,
-            runtime,
-            path.join(launcher, "probe-personal-python.py"),
-            hostControllerPython,
-            environment,
-            path.join(output, "browser-host-diagnostic"),
-            python,
-          );
-          receipt.hostBrowserDiagnostic = host;
-          browserDiagnosticChildrenClosed = host.childrenClosed;
-          cleanup.browserDiagnosticComplete &&= host.cleanupComplete;
-          if (!host.cleanupComplete)
-            errors.push({
-              browserDiagnostic: "host",
-              error: host.error,
-              cleanup: host.receipt?.value?.cleanup,
-            });
-        } else {
-          receipt.hostBrowserDiagnostic = {
-            diagnosticOnly: true,
-            canonicalQualification: false,
-            skipped: "A previous diagnostic child did not close.",
-          };
         }
       } catch (error) {
         // Before the helper returns, uncertain ownership must retain the runtime.

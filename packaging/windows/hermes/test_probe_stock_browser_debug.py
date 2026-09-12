@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import ctypes as c
+import ast
 import importlib.util
 import io
 import json
@@ -224,6 +225,7 @@ class DebugOwnerControls(unittest.TestCase):
         job.processes = {}
         job.live_debug_pids = set()
         job.event_count = 0
+        job.event_history_exceeded = False
         job.observation_errors = []
         job.chrome_seen = False
         job.appcontainer_seen = False
@@ -322,7 +324,8 @@ class DebugOwnerControls(unittest.TestCase):
                 job.pump(0)
         self.assertTrue(job.debug_complete)
         self.assertEqual(len(job.events), 1)
-        self.assertEqual(len(job.observation_errors), 1)
+        self.assertTrue(job.event_history_exceeded)
+        self.assertEqual(len(job.observation_errors), 0)
         self.assertEqual(job.first_fault["code"], "0xc0000409")
 
     def test_chrome_debug_strings_are_bounded_secondary_reads_and_events_continue(self):
@@ -411,6 +414,113 @@ class DebugOwnerControls(unittest.TestCase):
         self.assertTrue(job.reconciled_exits[0]["closureProved"])
         self.assertEqual(len(job.continued), 1)  # No synthetic EXIT or close call.
 
+    def reconcile_at_capture_cleanup_boundary(self, job, active=0, closed=True):
+        # Execute the real capture caller's guard, without starting a Windows
+        # executor or duplicating its cleanup logic in this fixture.
+        tree = ast.parse(Path(debug.__file__).read_text())
+        guards = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.If)
+            and any(
+                isinstance(statement, ast.Expr)
+                and isinstance(statement.value, ast.Call)
+                and isinstance(statement.value.func, ast.Attribute)
+                and statement.value.func.attr == "reconcile_exited_processes"
+                for statement in node.body
+            )
+        ]
+        self.assertEqual(len(guards), 1)
+        code = compile(ast.Module(body=guards, type_ignores=[]), debug.__file__, "exec")
+        exec(
+            code,
+            {"__builtins__": {}},
+            {
+                "native": job,
+                "result": {
+                    "execution": {"childClosed": closed},
+                    "cleanup": {"activeProcesses": active},
+                },
+            },
+        )
+
+    def test_history_overflow_preserves_identity_and_requires_same_signaled_handle(
+        self,
+    ):
+        self.assertEqual(debug.MAX_EVENTS, 8192)
+        for wait_result, query_result, proved in (
+            (0, 1, True),
+            (258, 1, False),
+            (0, 0, False),
+        ):
+            job = self.job([self.event(3), self.event(1)])
+            with mock.patch.object(debug, "MAX_EVENTS", 1):
+                job.pump(0)
+                job.pump(0)
+            self.assertTrue(job.event_history_exceeded)
+            self.assertEqual(job.observation_errors, [])
+            calls = []
+
+            def wait(handle, timeout):
+                calls.append(("wait", handle, timeout))
+                return wait_result
+
+            def exited(handle, code):
+                calls.append(("exit", handle))
+                c.cast(code, c.POINTER(c.c_uint32))[0] = 1
+                return query_result
+
+            job.kernel.WaitForSingleObject = wait
+            job.kernel.GetExitCodeProcess = exited
+            with mock.patch.object(
+                debug.c, "get_last_error", return_value=6, create=True
+            ):
+                self.reconcile_at_capture_cleanup_boundary(job)
+            self.assertEqual(calls[0], ("wait", 11, 0))
+            self.assertEqual(len(calls), 2 if wait_result == 0 else 1)
+            self.assertEqual(job.reconciled_exits[0]["closureProved"], proved)
+            self.assertEqual(job.reconciled_exits[0]["createdSequence"], 1)
+            self.assertEqual(job.debug_complete, proved)
+            self.assertEqual(job.live_debug_pids, set() if proved else {8})
+            self.assertTrue(job.event_history_exceeded)  # Diagnostic remains failed.
+            self.assertEqual(job.first_fault["code"], "0xc0000409")
+            self.assertEqual(job.continued[1][2], debug.DBG_NOT_HANDLED)
+            self.assertEqual(len(job.continued), 2)  # No invented EXIT event.
+
+    def test_reconciliation_still_refuses_identity_errors_or_unclosed_nonempty_job(
+        self,
+    ):
+        for failure, active, closed in (
+            (True, 0, True),
+            (False, 1, True),
+            (False, None, True),
+            (False, 0, False),
+        ):
+            job = self.job([self.event(3), self.event(1)])
+            if failure:
+                job.process_metadata = mock.Mock(
+                    side_effect=RuntimeError("actual identity read failed")
+                )
+            with mock.patch.object(debug, "MAX_EVENTS", 1):
+                job.pump(0)
+                job.pump(0)
+            self.assertTrue(job.event_history_exceeded)
+            if failure:
+                self.assertTrue(job.observation_errors)
+            job.kernel.WaitForSingleObject = mock.Mock(
+                side_effect=AssertionError("unqualified handle wait")
+            )
+            job.kernel.GetExitCodeProcess = mock.Mock(
+                side_effect=AssertionError("unqualified exit query")
+            )
+            self.reconcile_at_capture_cleanup_boundary(
+                job, active=active, closed=closed
+            )
+            job.kernel.WaitForSingleObject.assert_not_called()
+            job.kernel.GetExitCodeProcess.assert_not_called()
+            self.assertEqual(job.reconciled_exits, [])
+            self.assertIn(8, job.live_debug_pids)
+
     def test_job_absence_wait_timeout_and_query_failures_cannot_prove_exit(self):
         for wait_result, query_result in ((258, 1), (0xFFFFFFFF, 1), (0, 0)):
             job = self.job([self.event(3)])
@@ -462,6 +572,8 @@ class DebugOwnerControls(unittest.TestCase):
         class Native:
             process = job = thread = None
             pid = 9
+            event_count = 0
+            event_history_exceeded = False
             events = []
             observation_errors = []
             handle_cleanup_errors = []
