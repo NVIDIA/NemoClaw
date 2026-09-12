@@ -618,6 +618,7 @@ describe("runFatalOnboardRuntimePreflight", () => {
 
   it("disables the container-backed WSL GPU prover during host admission", () => {
     const detect = vi.fn((_deps?: DetectGpuDeps): GpuDetection | null => null);
+    const collectN1xWslProduct = vi.fn(() => undefined);
 
     runFatalOnboardRuntimePreflight(
       {},
@@ -626,11 +627,15 @@ describe("runFatalOnboardRuntimePreflight", () => {
         deferEffectfulChecks: true,
         assessHost: wslDockerDesktopHost,
         detectGpu: detect,
+        collectN1xWslProduct,
       },
     );
 
+    expect(collectN1xWslProduct).toHaveBeenCalledOnce();
     expect(detect).toHaveBeenCalledOnce();
-    expect(detect).toHaveBeenCalledWith(expect.objectContaining({ proveArm64ContainerGpu: null }));
+    expect(detect).toHaveBeenCalledWith(
+      expect.objectContaining({ proveArm64ContainerGpu: null, n1xWslProduct: null }),
+    );
   });
 
   it("rejects known GPU configuration errors before bridge or GPU container probes (#7411)", () => {
