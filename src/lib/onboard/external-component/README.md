@@ -147,17 +147,19 @@ Record exact NemoClaw and OpenShell revisions and both agents’ results separat
 
 ### Network preparation evidence
 
-On 2026-09-12 UTC, commit `87ead4ed71f87b38e913c1f6b36bc0e003cb8a59` passed isolated Linux network and gateway checks.
+On 2026-09-12 UTC, commit `f68e5d386f37bf9faecb6f27cac53745450a9cab` passed isolated Linux network and gateway checks.
 The fixture used Docker 29.5.3 with overlay2, Node.js 22.23.1, and checksum-verified OpenShell 0.0.116 release binaries.
 The OpenShell source revision was `d1155aa70042d3e2ee49dbfa15346b108b7c1d92`.
 
 Both OpenClaw and Hermes provisioned a missing network and reused it without changing its identity or addressing.
 Each successful run completed component preparation, two authenticated registration calls, and an authenticated mTLS gateway health check.
-A selected Docker context also passed; generated configuration retained its selected socket.
+OpenClaw selected a Docker context; Hermes selected a socket with `DOCKER_HOST`. Both configurations retained the selected socket.
 Both agents rejected preparation before gateway launch. Rejected registration authentication prevented a healthy gateway.
 Each network had one creation event and no deletion event, including after failures and gateway shutdown.
 
-The first OpenClaw observer queried an unconfigured gateway name. A separate check verified the selected gateway over mTLS.
-The corrected observer passed subsequent runs. No product change was required for that fixture error.
+The public onboarding command ran all eight cases, including the gateway configuration created before component preparation.
+A prior local repair rejected that initial configuration before preparation or startup. Its network and state were preserved.
+A regression now covers that failure; the corrected commit passed all eight cases.
+The evidence-only documentation update after the tested commit does not change executable source.
 Positive runs stopped after gateway verification. Image completion, activation, agent startup, inference, and workload policy outcomes were not qualified.
 These results establish the network and gateway boundary only. The providerless image fix and full lifecycle qualification retain their separate owners.
