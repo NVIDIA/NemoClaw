@@ -1567,7 +1567,7 @@ exit 0
     }
   }, 30_000);
 
-  it("retries a transient approve timeout instead of permanently handling the requestId", async () => {
+  it.sequential("retries a transient approve timeout instead of permanently handling the requestId", async () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auto-pair-aretry-"));
     const fakeOpenclaw = path.join(tmpDir, "openclaw");
     const stateFile = path.join(tmpDir, "approve-count");
