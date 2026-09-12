@@ -12,6 +12,9 @@
 #include "namespace-path.h"
 #include "namespace-security.h"
 #include "process-propagation.h"
+// This system import also affects non-Chrome compatibility-DLL hosts. The
+// complete canonical Bash regression must qualify it before activation.
+#pragma comment(lib, "user32.lib")
 
 namespace {
 using namespace nemoclaw_msys;
@@ -1930,6 +1933,90 @@ DWORD adapt_browser_discarded_stdio() {
     return error;
 }
 
+decltype(&CreateWindowStationW) realCreateBrowserStation = CreateWindowStationW;
+LONG browserStationRecords = 0;
+
+bool canonical_browser_station_attributes(LPSECURITY_ATTRIBUTES attributes) {
+    __try {
+        return attributes && attributes->nLength == sizeof(SECURITY_ATTRIBUTES) &&
+            !attributes->bInheritHandle && attributes->lpSecurityDescriptor &&
+            IsValidSecurityDescriptor(attributes->lpSecurityDescriptor);
+    } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+
+void log_browser_station(ACCESS_MASK requested, DWORD mask, HANDLE borrowed, HANDLE duplicate,
+    bool sameObject, bool sameContext, DWORD operationError, bool returned, DWORD cleanupError,
+    bool flagsKnown = false, DWORD duplicateFlags = 0) {
+    if (InterlockedIncrement(&browserStationRecords) > 2) return;
+    char line[1024];
+    const int count = _snprintf_s(line, sizeof(line), _TRUNCATE,
+        "NEMOCLAW_MSYS_CHROME_WINSTATION={\"schemaVersion\":1,\"pid\":%lu,\"requestedAccess\":%lu,\"originalError\":5,\"uiMask\":%lu,\"borrowedHandle\":\"0x%llx\",\"ownedDuplicate\":\"0x%llx\",\"sameObject\":%s,\"sameCurrentContext\":%s,\"duplicateFlagsKnown\":%s,\"nonInheritable\":%s,\"operationError\":%lu,\"returnedDuplicate\":%s,\"cleanupError\":%lu,\"borrowedHandleClosed\":false,\"sharedCurrentStation\":true,\"separateStationIsolation\":false,\"existingObjectAclChanged\":false}\n",
+        GetCurrentProcessId(), requested, mask,
+        reinterpret_cast<unsigned long long>(borrowed), reinterpret_cast<unsigned long long>(duplicate),
+        sameObject ? "true" : "false", sameContext ? "true" : "false",
+        flagsKnown ? "true" : "false", flagsKnown && !(duplicateFlags & HANDLE_FLAG_INHERIT) ? "true" : "false", operationError,
+        returned ? "true" : "false", cleanupError);
+    DWORD written = 0;
+    if (count > 0) WriteFile(GetStdHandle(STD_ERROR_HANDLE), line, static_cast<DWORD>(count), &written, nullptr);
+}
+
+HWINSTA WINAPI create_browser_station(LPCWSTR name, DWORD flags, ACCESS_MASK access,
+    LPSECURITY_ATTRIBUTES attributes) {
+    HWINSTA created = realCreateBrowserStation(name, flags, access, attributes);
+    const DWORD originalError = GetLastError();
+    if (created || originalError != ERROR_ACCESS_DENIED) return created;
+    // Exactly the two canonical GUI-Chrome attempts; never a named station,
+    // empty-string alias, inherited object, different process, or other mask.
+    if (name || flags || (access != 0x80000008 && access != 0x0000000a) ||
+        contextDiagnostic.isContainer != 1 || !selected_browser_gui() ||
+        !canonical_browser_station_attributes(attributes) || !sameKernelObject) {
+        SetLastError(originalError);
+        return nullptr;
+    }
+    JOBOBJECT_BASIC_UI_RESTRICTIONS restrictions = {};
+    if (!QueryInformationJobObject(nullptr, JobObjectBasicUIRestrictions, &restrictions,
+            sizeof(restrictions), nullptr)) {
+        const DWORD error = GetLastError();
+        log_browser_station(access, 0, nullptr, nullptr, false, false, error, false, 0);
+        SetLastError(originalError);
+        return nullptr;
+    }
+    const DWORD mask = restrictions.UIRestrictionsClass;
+    if (mask != 0x000000bf && mask != 0x000001bf && mask != 0x000003bf) {
+        log_browser_station(access, mask, nullptr, nullptr, false, false, ERROR_ACCESS_DENIED, false, 0);
+        SetLastError(originalError);
+        return nullptr;
+    }
+    const HWINSTA borrowed = GetProcessWindowStation();
+    HANDLE duplicate = nullptr;
+    DWORD operationError = 0, cleanupError = 0, duplicateFlags = 0;
+    bool sameObject = false, sameContext = false, flagsKnown = false;
+    if (!borrowed) operationError = GetLastError();
+    else if (!DuplicateHandle(GetCurrentProcess(), borrowed, GetCurrentProcess(), &duplicate,
+            access, FALSE, 0)) operationError = GetLastError();
+    else if (!duplicate || duplicate == borrowed || duplicate == INVALID_HANDLE_VALUE)
+        operationError = ERROR_INVALID_HANDLE;
+    else {
+        flagsKnown = GetHandleInformation(duplicate, &duplicateFlags) != FALSE;
+        if (!flagsKnown) operationError = GetLastError();
+        else if (duplicateFlags & HANDLE_FLAG_INHERIT) operationError = ERROR_INVALID_STATE;
+        sameObject = sameKernelObject(borrowed, duplicate) != FALSE;
+        const HWINSTA current = GetProcessWindowStation();
+        sameContext = current && sameKernelObject(borrowed, current);
+        if (!sameObject || !sameContext) operationError = ERROR_INVALID_STATE;
+    }
+    const bool returned = operationError == ERROR_SUCCESS && flagsKnown &&
+        !(duplicateFlags & HANDLE_FLAG_INHERIT) && sameObject && sameContext;
+    // Chrome owns a successful duplicate. The borrowed current handle is never
+    // closed and no station selection or existing-object descriptor is changed.
+    if (!returned && duplicate && duplicate != borrowed && duplicate != INVALID_HANDLE_VALUE &&
+        !CloseWindowStation(static_cast<HWINSTA>(duplicate))) cleanupError = GetLastError();
+    log_browser_station(access, mask, borrowed, duplicate, sameObject, sameContext,
+        operationError, returned, cleanupError, flagsKnown, duplicateFlags);
+    SetLastError(returned ? ERROR_SUCCESS : originalError);
+    return returned ? static_cast<HWINSTA>(duplicate) : nullptr;
+}
+
 } // namespace
 
 BOOL WINAPI DllMain(HINSTANCE self, DWORD reason, LPVOID reserved) {
@@ -1947,6 +2034,8 @@ BOOL WINAPI DllMain(HINSTANCE self, DWORD reason, LPVOID reserved) {
     if (error) return initialization_result("transaction-begin", error);
     error = DetourUpdateThread(GetCurrentThread());
     if (!error) error = NemoClawStageProcessPropagation();
+    // Staging only: no USER32 function is called under DllMain's loader lock.
+    if (!error && selected_browser_gui()) error = DetourAttach(&realCreateBrowserStation, create_browser_station);
     if (!error) error = DetourAttach(&realCreate, create_directory);
     if (!error) error = DetourAttach(&realOpen, open_directory);
     if (!error) error = DetourAttach(&realCreateSharedSection, create_shared_section);

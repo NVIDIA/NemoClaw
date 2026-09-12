@@ -102,7 +102,7 @@ diff --git a/src/backends/appcontainer/common/src/appcontainer_runner.rs b/src/b
              job.assign_process(process_handle.get())?;
              Ok(job)
          })() {
-@@ -1124,6 +1166,33 @@
+@@ -1124,6 +1166,34 @@
                      let _ = TerminateProcess(process_handle.get(), u32::MAX);
                  }
                  return Err(e);
@@ -126,6 +126,7 @@ diff --git a/src/backends/appcontainer/common/src/appcontainer_runner.rs b/src/b
 +            &self.get_principal_id(),
 +            HANDLE(job.handle_value() as *mut std::ffi::c_void),
 +            process_handle.get(),
++            desktop_creation,
 +        ) {
 +            Ok(owner) => owner,
 +            Err(error) => {
@@ -136,7 +137,7 @@ diff --git a/src/backends/appcontainer/common/src/appcontainer_runner.rs b/src/b
              }
          };
 
-@@ -1216,6 +1285,7 @@
+@@ -1216,6 +1286,7 @@
          Ok(SpawnedChild {
              process: process_handle,
              thread: thread_handle,
@@ -144,7 +145,7 @@ diff --git a/src/backends/appcontainer/common/src/appcontainer_runner.rs b/src/b
              job,
              pid: pi.dwProcessId,
              capture_session,
-@@ -1263,6 +1333,8 @@
+@@ -1263,6 +1334,8 @@
  struct SpawnedChild {
      process: OwnedHandle,
      thread: OwnedHandle,
@@ -153,7 +154,7 @@ diff --git a/src/backends/appcontainer/common/src/appcontainer_runner.rs b/src/b
      job: UiJobObject,
      /// OS process id of the child.
      pid: u32,
-@@ -1646,6 +1718,7 @@
+@@ -1646,6 +1719,7 @@
  struct AppContainerSandboxProcess {
      process: SendOwnedHandle,
      _thread: SendOwnedHandle,
@@ -161,7 +162,7 @@ diff --git a/src/backends/appcontainer/common/src/appcontainer_runner.rs b/src/b
      job: crate::job_object::UiJobObject,
      pid: u32,
      stdin: Option<PipeWriter>,
-@@ -1711,6 +1784,7 @@
+@@ -1711,6 +1785,7 @@
          Self {
              process,
              _thread: thread,
@@ -187,7 +188,7 @@ diff --git a/src/backends/appcontainer/common/src/msys_token_inspection.rs b/src
 new file mode 100644
 --- /dev/null
 +++ b/src/backends/appcontainer/common/src/msys_token_inspection.rs
-@@ -0,0 +1,330 @@
+@@ -0,0 +1,346 @@
 +// Copyright (c) NVIDIA Corporation.
 +// Licensed under the MIT License.
 +// CI-only exact-owned-job token inspection or explicitly selected TOKEN_QUERY repair.
@@ -437,9 +438,18 @@ new file mode 100644
 +    eprintln!("NEMOCLAW_MSYS_ROOT_IMAGE_LAYOUT={record}");
 +}
 +
++fn diagnostic_station_requested(private_desktop: bool, container: &str) -> bool {
++    private_desktop && container.ends_with("-d")
++        && std::env::var("GITHUB_ACTIONS").as_deref() == Ok("true")
++        && std::env::var("NEMOCLAW_MSYS_TOKEN_INSPECTION").as_deref() == Ok("repair-query")
++}
++
 +pub(crate) struct OwnerGuard {
 +    stop: Arc<AtomicBool>,
 +    worker: Option<JoinHandle<()>>,
++    // Retained through the existing owner lifetime; Drop stops/joins the token
++    // observer first. The runner already kills/reaps the job before teardown.
++    _station: Option<crate::msys_token_readback::PrivateWindowStation>,
 +}
 +impl Drop for OwnerGuard {
 +    fn drop(&mut self) {
@@ -461,6 +471,7 @@ new file mode 100644
 +    expected_sid: &str,
 +    job: HANDLE,
 +    root_process: HANDLE,
++    private_desktop: bool,
 +) -> Result<Option<OwnerGuard>, String> {
 +    let repair = match std::env::var("NEMOCLAW_MSYS_TOKEN_INSPECTION") {
 +        Err(std::env::VarError::NotPresent) => return Ok(None),
@@ -476,6 +487,11 @@ new file mode 100644
 +        return Err("inspection expected AppContainer identity is invalid".into());
 +    }
 +    let directory = pin_directory(&root)?;
++    // Named station creation is an administrator-sensitive diagnostic only.
++    // Personal -start and installed hermes-query never enter this branch.
++    let station = if diagnostic_station_requested(private_desktop, container) {
++        crate::msys_token_readback::prepare_private_windowstation(job, root_process, expected_sid)?
++    } else { None };
 +    // JOB_OBJECT_QUERY only; never assign, terminate, or set attributes.
 +    let job = duplicate(job, 0x0004)?;
 +    let process = duplicate(
@@ -516,13 +532,14 @@ new file mode 100644
 +    Ok(Some(OwnerGuard {
 +        stop,
 +        worker: Some(worker),
++        _station: station,
 +    }))
 +}
 diff --git a/src/backends/appcontainer/common/src/msys_token_readback.rs b/src/backends/appcontainer/common/src/msys_token_readback.rs
 new file mode 100644
 --- /dev/null
 +++ b/src/backends/appcontainer/common/src/msys_token_readback.rs
-@@ -0,0 +1,1026 @@
+@@ -0,0 +1,1163 @@
 +// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 +// SPDX-License-Identifier: Apache-2.0
 +// Disposable Windows CI inspection and explicit exact-TOKEN_QUERY repair.
@@ -588,6 +605,8 @@ new file mode 100644
 +#[link(name = "kernel32")]
 +unsafe extern "system" {
 +    fn GetLastError() -> u32;
++    fn GetCurrentProcess() -> RawHandle;
++    fn LocalFree(value: RawHandle) -> RawHandle;
 +    fn GetModuleHandleW(name: *const u16) -> RawHandle;
 +    fn GetProcAddress(module: RawHandle, name: *const u8) -> *const c_void;
 +    fn CloseHandle(handle: RawHandle) -> i32;
@@ -627,6 +646,9 @@ new file mode 100644
 +}
 +#[link(name = "advapi32")]
 +unsafe extern "system" {
++    fn ConvertStringSecurityDescriptorToSecurityDescriptorW(
++        text: *const u16, revision: u32, output: *mut RawHandle, size: *mut u32,
++    ) -> i32;
 +    fn OpenProcessToken(process: RawHandle, access: u32, token: *mut RawHandle) -> i32;
 +    fn GetTokenInformation(
 +        token: RawHandle,
@@ -688,6 +710,138 @@ new file mode 100644
 +            CloseHandle(self.0);
 +        }
 +    }
++}
++
++#[repr(C)]
++struct StationAttributes {
++    length: u32,
++    descriptor: RawHandle,
++    inherit: i32,
++}
++#[repr(C)]
++#[derive(Default)]
++struct StationFlags {
++    inherit: i32,
++    reserved: i32,
++    flags: u32,
++}
++#[link(name = "user32")]
++unsafe extern "system" {
++    fn CreateWindowStationW(name: *const u16, flags: u32, access: u32, attributes: *const StationAttributes) -> RawHandle;
++    fn OpenWindowStationW(name: *const u16, inherit: i32, access: u32) -> RawHandle;
++    fn CloseWindowStation(station: RawHandle) -> i32;
++    fn GetUserObjectInformationW(object: RawHandle, class: i32, output: *mut c_void, size: u32, needed: *mut u32) -> i32;
++}
++
++// Only an explicitly admitted job can own this resource. No thread selects
++// the station in the host; the returned guest handle is opened independently.
++pub(crate) struct PrivateWindowStation {
++    handle: RawHandle,
++    name: String,
++}
++// This owner never selects the station in a host thread. Its process-global
++// handle is retained/closed by exactly one owner, including after a move.
++unsafe impl Send for PrivateWindowStation {}
++impl Drop for PrivateWindowStation {
++    fn drop(&mut self) {
++        let closed = unsafe { CloseWindowStation(self.handle) } != 0;
++        let close_error = if closed { 0 } else { unsafe { GetLastError() } };
++        let characters: Vec<u16> = self.name.encode_utf16().chain(Some(0)).collect();
++        let mut absent = false;
++        let mut absence_error = None;
++        let mut presence_handle_closed = true;
++        if closed {
++            let found = unsafe { OpenWindowStationW(characters.as_ptr(), 0, 0x0002) };
++            if found.is_null() {
++                let error = unsafe { GetLastError() };
++                absent = matches!(error, 2 | 3);
++                absence_error = Some(error);
++            } else {
++                presence_handle_closed = unsafe { CloseWindowStation(found) } != 0;
++            }
++        }
++        let record = json!({"schemaVersion":1,"classification":"owned-Hermes-windowstation",
++            "stage":"owner-close","stationName":self.name,"closed":closed,"closeError":close_error,
++            "absentAfterOwnerClose":absent,"absenceError":absence_error,
++            "presenceHandleClosed":presence_handle_closed,"hostStationSelected":false});
++        eprintln!("NEMOCLAW_HERMES_WINDOWSTATION={record}");
++    }
++}
++
++pub(crate) fn prepare_private_windowstation(
++    job: HANDLE, root_process: HANDLE, expected_sid: &str,
++) -> Result<Option<PrivateWindowStation>, String> {
++    member(root_process.0, job.0)?;
++    let root_token = token(root_process.0, 8)?;
++    let actual_sid = sid(root_token.0, 31)?;
++    require(number(root_token.0, 29)? == 1 && actual_sid == expected_sid,
++        "windowstation root differs from the actual owned AppContainer")?;
++    let host_token = token(unsafe { GetCurrentProcess() }, 8)?;
++    require(number(host_token.0, 29)? == 0, "windowstation creator is not a host process")?;
++    let user = sid(host_token.0, 1)?;
++    let elevated = number(host_token.0, 20);
++    let elevation_type = number(host_token.0, 18);
++    let name = format!("NemoClawHermes-{actual_sid}");
++    require(name.len() < 240 && !name.contains('\\'), "windowstation name exceeds the owned contract")?;
++    let mut record = json!({"schemaVersion":1,"classification":"owned-Hermes-windowstation",
++        "stage":"prepare","rootPid":unsafe { GetProcessId(root_process.0) },
++        "actualJobAndAppContainerBound":true,"appContainerSid":actual_sid,"stationName":name,
++        "hostUserSid":user,"hostTokenElevation":elevated.as_ref().ok(),
++        "hostTokenElevationError":elevated.as_ref().err(),"hostTokenElevationType":elevation_type.as_ref().ok(),
++        "hostTokenElevationTypeError":elevation_type.as_ref().err(),
++        "namedCreationRequiresAdministrator":true,"unelevatedSupportQualified":false,
++        "requestedAccess":0x8000_0008u32,"createOnly":true,"inheritHandle":false,
++        "hostExistingObjectGrantsChanged":false,"mandatoryLabelChanged":false,"created":false});
++    // Windows restricts explicit station names to Administrators. Keep API
++    // failure as feasibility evidence; do not elevate or modify an old object.
++    let text: Vec<u16> = format!("D:P(A;;0x80000008;;;{user})(A;;0x80000008;;;{actual_sid})")
++        .encode_utf16().chain(Some(0)).collect();
++    let mut descriptor = std::ptr::null_mut();
++    let converted = unsafe { ConvertStringSecurityDescriptorToSecurityDescriptorW(text.as_ptr(), 1, &mut descriptor, std::ptr::null_mut()) } != 0;
++    if !converted || descriptor.is_null() {
++        record["stage"] = json!("descriptor");
++        record["win32Error"] = json!(if converted { 0 } else { unsafe { GetLastError() } });
++        record["descriptorPresent"] = json!(converted && !descriptor.is_null());
++        eprintln!("NEMOCLAW_HERMES_WINDOWSTATION={record}");
++        return Ok(None);
++    }
++    let attributes = StationAttributes { length: size_of::<StationAttributes>() as u32, descriptor, inherit: 0 };
++    let characters: Vec<u16> = name.encode_utf16().chain(Some(0)).collect();
++    let handle = unsafe { CreateWindowStationW(characters.as_ptr(), 1, 0x8000_0008, &attributes) };
++    let create_error = if handle.is_null() { unsafe { GetLastError() } } else { 0 };
++    unsafe { LocalFree(descriptor) };
++    record["stage"] = json!("CreateWindowStationW");
++    record["win32Error"] = json!(create_error);
++    if handle.is_null() {
++        eprintln!("NEMOCLAW_HERMES_WINDOWSTATION={record}");
++        return Ok(None);
++    }
++    let owned = PrivateWindowStation { handle, name };
++    record["created"] = json!(true);
++    let mut flags = StationFlags::default();
++    let mut needed = 0;
++    let known = unsafe { GetUserObjectInformationW(handle, 1, &mut flags as *mut _ as *mut _, size_of::<StationFlags>() as u32, &mut needed) } != 0;
++    let flags_error = if known { 0 } else { unsafe { GetLastError() } };
++    let mut actual_name = [0u16; 256];
++    let named = unsafe { GetUserObjectInformationW(handle, 2, actual_name.as_mut_ptr() as *mut _, 512, &mut needed) } != 0;
++    let name_error = if named { 0 } else { unsafe { GetLastError() } };
++    let name_matches = named && needed <= 512 && actual_name.iter().position(|c| *c == 0)
++        .and_then(|end| String::from_utf16(&actual_name[..end]).ok()).as_deref() == Some(owned.name.as_str());
++    let noninteractive = known && flags.flags & 1 == 0;
++    record["stationFlagsError"] = json!(flags_error);
++    record["stationNameError"] = json!(name_error);
++    record["noninteractive"] = json!(noninteractive);
++    record["nameMatched"] = json!(name_matches);
++    record["available"] = json!(noninteractive && name_matches);
++    record["stage"] = json!("prepared");
++    eprintln!("NEMOCLAW_HERMES_WINDOWSTATION={record}");
++    if !noninteractive || !name_matches {
++        // This route is supplemental. Close a refused object before the child
++        // resumes, then still allow the independent current-desktop observation.
++        drop(owned);
++        return Ok(None);
++    }
++    Ok(Some(owned))
 +}
 +fn error(stage: &str) -> String {
 +    format!("{stage}: Win32 {}", unsafe { GetLastError() })

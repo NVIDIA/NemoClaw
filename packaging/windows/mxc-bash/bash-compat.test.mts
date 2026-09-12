@@ -31,56 +31,188 @@ const c: Config = {
   key: "0".repeat(16),
   script: "C:\\owned\\control\\proof.sh",
 };
-test("private desktop control retains the exact canonical failure and requires the documented create/restore/close contract", () => {
+function desktopRows(passIndex = 3) {
   const common = {
-    kind: "hermes-private-desktop",
     nonce: c.nonce,
+    sid: "S-1-15-2-123-456",
     effectiveUiMask: 0x3bf,
     interactiveSwitchAttempted: false,
     hostDesktopGrantsAdded: false,
     rawProbeUnshimmed: true,
     cleanupError: 0,
+    cleanupPassed: true,
+    originalContextUnchanged: true,
   };
-  const canonical = {
+  const station = {
     ...common,
-    accessVariant: "canonical-e0003",
-    desiredAccess: 0xe0003,
-    requiredPass: false,
-    passed: false,
+    kind: "hermes-private-station-create",
+    route: "contained-null-station",
+    diagnosticOnly: true,
     created: false,
-    error: "owned-desktop-create",
     win32Error: 5,
   };
-  const documented = {
+  const desktops = Array.from({ length: 4 }, (_, index) => {
+    const canonical = index % 2 === 0;
+    const passed = index === passIndex;
+    return {
+      ...common,
+      kind: "hermes-private-desktop",
+      route: index >= 2 ? "host-owned-station" : "current-station",
+      descriptorVariant: canonical
+        ? "copied-current-desktop-dacl-restricted-deny"
+        : "explicit-user-appsid",
+      originalDesktopDaclCopied: canonical,
+      restrictedCodeDenyApplied: canonical,
+      restrictedCodeDenyMask: canonical ? 0xd013e : 0,
+      nullDaclUnsupported: false,
+      accessVariant: canonical ? "canonical-e0003" : "documented-e0083",
+      desiredAccess: canonical ? 0xe0003 : 0xe0083,
+      requiredPass: false,
+      passed,
+      created: passed,
+      closed: passed,
+      borrowedStationHandleClosed: false,
+      currentRouteDuplicateAccess: index < 2 ? 0x80000008 : 0,
+      currentRouteDuplicateVerified: index < 2 && passed,
+      currentRouteDuplicateNoninheritable: index < 2 && passed,
+      currentMatchesOriginalAfterClose: index < 2 && passed,
+      stationSelectionSucceeded: passed,
+      stationNoninteractive: index >= 2 && passed,
+      stationRestored: passed,
+      stationClosed: passed,
+      stationNameVerified: index >= 2 && passed,
+      expectedStationName: index >= 2 ? "NemoClawHermes-" + common.sid : null,
+      stage: passed ? "complete" : "CreateDesktopW",
+      error: passed ? "" : "owned-desktop-create",
+      win32Error: passed ? 0 : 5,
+      attempts: [{ stage: "CreateDesktopW", succeeded: passed, win32Error: passed ? 0 : 5 }],
+    };
+  });
+  const summary = {
+    kind: "hermes-private-desktop-summary",
+    nonce: c.nonce,
+    observationsCompleted: true,
+    currentStationPassed: passIndex >= 0 && passIndex < 2,
+    currentStationDuplicatePassed: true,
+    currentStationFallbackReady: passIndex >= 0 && passIndex < 2,
+    hostStationPassed: passIndex >= 2,
+    currentStationCanonicalPassed: passIndex === 0,
+    currentStationCanonicalFallbackPassed: passIndex === 0,
+    hostStationCanonicalPassed: passIndex === 2,
+    canonicalDesktopCallPassed: passIndex === 0 || passIndex === 2,
+    canonicalChromeSupportQualified: false,
+    allCleanupPassed: true,
+    passed: passIndex >= 0,
+  };
+  const token = {
     ...common,
-    accessVariant: "documented-e0083",
-    desiredAccess: 0xe0083,
-    requiredPass: true,
+    kind: "hermes-desktop-token",
+    diagnosticOnly: true,
+    restrictedCodeSid: "S-1-5-12",
+    groups: ["TokenGroups", "TokenRestrictedSids"].map((name) => ({
+      class: name,
+      queried: true,
+      containsRestrictedCode: true,
+    })),
+  };
+  const duplicates = [0x80000008, 0xa].map((access) => ({
+    ...common,
+    kind: "hermes-current-station-duplicate",
+    desiredAccess: access,
+    duplicateOptions: 0,
+    inheritRequested: false,
+    borrowedHandleClosed: false,
     passed: true,
     created: true,
     closed: true,
-    originalContextUnchanged: true,
-    stationNoninteractive: true,
-    stationRestored: true,
-    stationClosed: true,
+    noninheritable: true,
+    sameObject: true,
+    currentMatchesOriginalAfterClose: true,
     stage: "complete",
     win32Error: 0,
-  };
-  assert.equal(validatePrivateDesktop([canonical, documented], c.nonce).length, 2);
+  }));
+  return [station, ...desktops, token, ...duplicates, summary];
+}
+test("desktop feasibility requires complete route observations, owned cleanup, and exact canonical attribution", () => {
+  const rows = desktopRows();
+  assert.equal(validatePrivateDesktop(rows, c.nonce).length, 4);
   for (const change of [
     { effectiveUiMask: 0x33f },
     { effectiveUiMask: 0x3ff },
     { stationRestored: false },
     { stationClosed: false },
+    { stationNameVerified: false },
+    { expectedStationName: "NemoClawHermes-S-1-15-2-999" },
     { interactiveSwitchAttempted: true },
     { passed: false },
     { created: false },
     { cleanupError: 5 },
+    { originalContextUnchanged: false },
+    { attempts: [] },
+    { originalDesktopDaclCopied: true },
+    { restrictedCodeDenyApplied: true },
   ])
-    assert.throws(() => validatePrivateDesktop([canonical, { ...documented, ...change }], c.nonce));
-  assert.throws(() => validatePrivateDesktop([canonical], c.nonce));
+    assert.throws(() =>
+      validatePrivateDesktop(
+        rows.map((row, index) => (index === 4 ? { ...row, ...change } : row)),
+        c.nonce,
+      ),
+    );
+  assert.throws(() => validatePrivateDesktop(rows.slice(1), c.nonce));
   assert.throws(() =>
-    validatePrivateDesktop([{ ...canonical, created: true }, documented], c.nonce),
+    validatePrivateDesktop(
+      rows.filter((_, index) => index !== 2),
+      c.nonce,
+    ),
+  );
+  for (const change of [
+    { canonicalDesktopCallPassed: true },
+    { canonicalChromeSupportQualified: true },
+    { allCleanupPassed: false },
+    { observationsCompleted: false },
+  ])
+    assert.throws(() =>
+      validatePrivateDesktop([...rows.slice(0, -1), { ...rows.at(-1), ...change }], c.nonce),
+    );
+});
+test("a direct current-station canonical pass survives host-owned station denial without qualifying Chrome", () => {
+  const rows = desktopRows(0);
+  for (let index = 3; index <= 4; ++index) {
+    Object.assign(rows[index], {
+      stage: "OpenWindowStationW",
+      error: "host-owned-windowstation-open",
+      attempts: [{ stage: "OpenWindowStationW", succeeded: false, win32Error: 5 }],
+    });
+  }
+  assert.equal(validatePrivateDesktop(rows, c.nonce).length, 4);
+  assert.throws(() =>
+    validatePrivateDesktop(
+      rows.map((row, index) => (index === 1 ? { ...row, restrictedCodeDenyApplied: false } : row)),
+      c.nonce,
+    ),
+  );
+  assert.throws(() => validatePrivateDesktop(desktopRows(-1), c.nonce));
+  assert.throws(() =>
+    validatePrivateDesktop(
+      rows.map((row) =>
+        row.kind === "hermes-current-station-duplicate" ? { ...row, sameObject: false } : row,
+      ),
+      c.nonce,
+    ),
+  );
+  assert.throws(() =>
+    validatePrivateDesktop(
+      rows.map((row) =>
+        row.kind === "hermes-current-station-duplicate" ? { ...row, noninheritable: false } : row,
+      ),
+      c.nonce,
+    ),
+  );
+  assert.throws(() =>
+    validatePrivateDesktop(
+      rows.map((row, index) => (index === 3 ? { ...row, cleanupPassed: false } : row)),
+      c.nonce,
+    ),
   );
 });
 test("Personal request grants only fixed inputs and its own share, without profile destruction before explicit cleanup", () => {
