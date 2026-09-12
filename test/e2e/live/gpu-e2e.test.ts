@@ -12,7 +12,6 @@ import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/index.ts";
 import { trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
-import { pollUntil } from "../fixtures/polling.ts";
 import {
   assertAgentExecutionSucceeded,
   assertGpuInstallProofs,
@@ -33,6 +32,7 @@ import {
   restartProxy,
   SANDBOX_NAME,
   startAttachedOllama,
+  waitForAttachedOllama,
 } from "./gpu-e2e-helpers.ts";
 import { assertHermesFollowUpReplies } from "./hermes-cli-adapter-live.ts";
 
@@ -433,7 +433,6 @@ test(
       NEMOCLAW_SANDBOX_GPU: "0",
       NEMOCLAW_SANDBOX_GPU_DEVICE: "",
       NEMOCLAW_OLLAMA_PORT: "11439",
-      NEMOCLAW_OLLAMA_PROXY_PORT: "11440",
       NEMOCLAW_MODEL: "qwen3.5:9b",
       NEMOCLAW_WEB_SEARCH_PROVIDER: "none",
       OLLAMA_HOST: "127.0.0.1:11439",
@@ -473,22 +472,11 @@ test(
       env: exportEnv,
       timeoutMs: 120000,
     });
-    // Only connection refusal is transient while this fixture's child starts. Every read is recorded.
-    await pollUntil({
-      artifactPrefix: "export-daemon-ready",
-      attempts: 20,
-      delayMs: 500,
-      probe: (_attempt, artifactName) =>
-        host.command(
-          "curl",
-          ["-q", "--noproxy", "*", "-fsS", "--max-time", "2", "http://127.0.0.1:11439/api/tags"],
-          { artifactName, env: exportEnv, timeoutMs: 5000 },
-        ),
-      accept: (result) => result.exitCode === 0,
-      terminal: (result) =>
-        result.exitCode !== 0 && result.exitCode !== 7
-          ? "The attached daemon readiness read failed."
-          : undefined,
+    await waitForAttachedOllama(host, exportEnv);
+    await host.command("ollama", ["pull", "qwen3.5:9b"], {
+      artifactName: "export-prepare-attached-model",
+      env: exportEnv,
+      timeoutMs: execTimeout(30 * 60000),
     });
 
     progress.phase("onboard OpenClaw without sandbox GPU");
@@ -503,6 +491,12 @@ test(
       },
     );
     expect(onboard.exitCode, resultText(onboard)).toBe(0);
+    // Onboarding can restart the installer service; only the attached child may own this fixture.
+    await host.command("sudo", ["-n", "systemctl", "stop", "ollama.service"], {
+      artifactName: "export-stop-competing-service",
+      env: exportEnv,
+      timeoutMs: 60000,
+    });
 
     progress.phase("export and compare the active Ollama configuration");
     const firstPath = path.join(directory, "first.yaml");
@@ -533,7 +527,7 @@ test(
         : undefined;
     expect(exportedProvider.provider).toBe("ollama-local");
     expect(serving?.daemon.hostPort).toBe(11439);
-    expect(serving?.proxy.hostPort).toBe(11440);
+    expect(serving?.proxy.hostPort).toBe(Number(PROXY_PORT));
     expect(serving?.model.digest).toBe(`sha256:${model?.digest.replace(/^sha256:/u, "")}`);
     const entry = loadRegistry().sandboxes[SANDBOX_NAME];
     expect(document.spec.sandboxes[0].runtime.image.ref).toBe(
@@ -567,7 +561,7 @@ test(
     await artifacts.writeJson("ollama-config-export-evidence.json", {
       sandboxName: SANDBOX_NAME,
       daemonPort: 11439,
-      proxyPort: 11440,
+      proxyPort: Number(PROXY_PORT),
       model: "qwen3.5:9b",
       image: document.spec.sandboxes[0].runtime.image.ref,
       repeatedSpecMatches: true,

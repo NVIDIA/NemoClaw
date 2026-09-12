@@ -11,7 +11,7 @@ import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
-import type { HostCliClient } from "../fixtures/clients/host.ts";
+import { HostCliClient } from "../fixtures/clients/host.ts";
 import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 import {
   assertAgentExecutionSucceeded,
@@ -22,6 +22,7 @@ import {
   openClawModelConfigProjectionScript,
   REPO_ROOT,
   startAttachedOllama,
+  waitForAttachedOllama,
 } from "../live/gpu-e2e-helpers.ts";
 import * as observedChild from "../fixtures/observed-child-process.ts";
 import { startTestProgress } from "../fixtures/progress.ts";
@@ -164,6 +165,40 @@ const invalidExecutionProofs: Array<{
 ];
 
 describe("GPU E2E helpers", () => {
+  it.each([
+    { name: "waits through refused connections and curl timeouts", codes: [7, 28, 0], attempts: 3 },
+    { name: "stops after 20 curl timeouts", codes: [28], attempts: 20, reason: "exhausted" },
+    { name: "rejects an HTTP failure immediately", codes: [22], attempts: 1, reason: "terminal" },
+    {
+      name: "rejects a terminated probe immediately",
+      codes: [null],
+      attempts: 1,
+      reason: "terminal",
+    },
+  ])("$name during attached Ollama readiness", async ({ codes, attempts, reason }) => {
+    vi.useFakeTimers();
+    let index = 0;
+    const run = vi.fn(async () => ({
+      command: ["curl"],
+      exitCode: codes[Math.min(index++, codes.length - 1)],
+      signal: null,
+      timedOut: false,
+      stdout: "",
+      stderr: "",
+      artifacts: { stdout: "", stderr: "", result: "" },
+    }));
+    try {
+      const ready = waitForAttachedOllama(new HostCliClient({ run }), {});
+      const checked = reason
+        ? expect(ready).rejects.toMatchObject({ reason, lastAttempt: { attempt: attempts } })
+        : expect(ready).resolves.toMatchObject({ attempt: attempts, value: { exitCode: 0 } });
+      await Promise.all([checked, vi.runAllTimersAsync()]);
+      expect(run).toHaveBeenCalledTimes(attempts);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("owns the attached Ollama daemon with the supplied listener and cleanup (#11435)", async () => {
     const progress = startTestProgress(
       "attached Ollama helper",
