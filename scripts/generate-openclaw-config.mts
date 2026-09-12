@@ -1058,7 +1058,7 @@ export function buildConfig(env: Env = process.env): JsonObject {
   const agentDefaults: JsonObject = {
     model: { primary: primaryModelRef },
     timeoutSeconds: agentTimeout,
-    ...(agentHeartbeat ? { heartbeat: { every: agentHeartbeat } } : {}),
+    ...(agentHeartbeat ? { heartbeat: { every: agentHeartbeat, isolatedSession: true } } : {}),
     skipBootstrap: true,
     thinkingDefault: "off",
   };
