@@ -305,7 +305,7 @@ beforeEach(() => {
   registryLog = path.join(testRoot, "registry.log");
   registryStatus = "404";
   teeFailureMode = "";
-  imageUser = "root";
+  imageUser = "sandbox";
   mkdirSync(stubBin);
   writeExecutable(
     "docker",
@@ -353,28 +353,33 @@ describe("protected managed-image source-root boundary", () => {
 });
 
 describe("protected managed-image build-cache boundary", () => {
-  it("keeps the legacy root runtime contract unless a reviewed transition selects sandbox", () => {
+  it.each(["linux/amd64", "linux/arm64"])(
+    "builds every agent as sandbox by default on %s",
+    (platform) => {
+      stubBuildInvocation();
+
+      const result = runBuild(REPO_ROOT, [], platform);
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(recordedBuildInvocations()).toHaveLength(3);
+      expect(
+        recordedBuildInvocations().every((invocation) =>
+          invocation.includes("--build-arg NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=sandbox"),
+        ),
+      ).toBe(true);
+    },
+  );
+
+  it("preserves an explicitly selected runtime user", () => {
     stubBuildInvocation();
+    imageUser = "root";
+    const result = runBuild(REPO_ROOT, ["--runtime-user", "root"]);
 
-    const legacy = runBuild(REPO_ROOT);
-
-    expect(legacy.status, legacy.stderr).toBe(0);
+    expect(result.status, result.stderr).toBe(0);
     expect(recordedBuildInvocations()).toHaveLength(3);
     expect(
       recordedBuildInvocations().every((invocation) =>
         invocation.includes("--build-arg NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root"),
-      ),
-    ).toBe(true);
-
-    writeFileSync(dockerLog, "", "utf8");
-    imageUser = "sandbox";
-    const transitioned = runBuild(REPO_ROOT, ["--runtime-user", "sandbox"]);
-
-    expect(transitioned.status, transitioned.stderr).toBe(0);
-    expect(recordedBuildInvocations()).toHaveLength(3);
-    expect(
-      recordedBuildInvocations().every((invocation) =>
-        invocation.includes("--build-arg NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=sandbox"),
       ),
     ).toBe(true);
   });
@@ -383,7 +388,7 @@ describe("protected managed-image build-cache boundary", () => {
     stubBuildInvocation();
     imageUser = "root";
 
-    const result = runBuild(REPO_ROOT, ["--runtime-user", "sandbox"]);
+    const result = runBuild(REPO_ROOT);
 
     expect(result.status, result.stderr).toBe(1);
     expect(recordedBuildInvocations()).toHaveLength(1);
@@ -411,12 +416,12 @@ describe("protected managed-image build-cache boundary", () => {
     expect(recordedBuildInvocation("openclaw")).toContain("--platform linux/arm64");
     expect(recordedBuildInvocation("openclaw")).toContain("--build-arg TARGETARCH=arm64");
     expect(recordedBuildInvocation("openclaw")).toContain(
-      "--build-arg NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root",
+      "--build-arg NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=sandbox",
     );
     expect(recordedBuildInvocation("hermes")).toContain("--platform linux/arm64");
     expect(recordedBuildInvocation("hermes")).toContain("--build-arg TARGETARCH=arm64");
     expect(recordedBuildInvocation("hermes")).toContain(
-      "--build-arg NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root",
+      "--build-arg NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=sandbox",
     );
     expect(recordedBuildInvocation("langchain-deepagents-code")).toContain(
       "--platform linux/arm64",
@@ -425,7 +430,7 @@ describe("protected managed-image build-cache boundary", () => {
       "--build-arg TARGETARCH=arm64",
     );
     expect(recordedBuildInvocation("langchain-deepagents-code")).toContain(
-      "--build-arg NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root",
+      "--build-arg NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=sandbox",
     );
   });
 
