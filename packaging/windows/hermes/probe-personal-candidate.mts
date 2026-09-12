@@ -598,7 +598,7 @@ export async function directBrowserDiagnostic(
   nonce: string,
   expectedPython: { bytes: number; sha256: string },
   command: typeof personalCommand = personalCommand,
-  executorVariant: "patched" | "stock" = "patched",
+  executorVariant: "patched" | "stock" | "stock-debug" = "patched",
 ) {
   const request = directBrowserRequest(primary, runtime, script, nonce);
   const share = request.process.cwd;
@@ -616,8 +616,10 @@ export async function directBrowserDiagnostic(
     classification: "canonical-Personal-direct-Python-browser-diagnostic",
     diagnosticOnly: true,
     executorVariant,
+    debuggerAttached: executorVariant === "stock-debug",
+    debuggerMayChangeBehavior: executorVariant === "stock-debug",
     hostEnvironmentDifferences:
-      executorVariant === "stock" ? ["NEMOCLAW_MSYS_TOKEN_INSPECTION omitted"] : [],
+      executorVariant !== "patched" ? ["NEMOCLAW_MSYS_TOKEN_INSPECTION omitted"] : [],
     compatibilityLauncherUsed: false,
     dllAbsenceIndependentlyVerified: false,
     changedDimensions: [
@@ -625,6 +627,9 @@ export async function directBrowserDiagnostic(
       "intermediate Node controller omitted",
       "no concurrent sibling probes",
       "fresh owned state and profile",
+      ...(executorVariant === "stock-debug"
+        ? ["DEBUG_PROCESS observer and owned kill-on-close Job"]
+        : []),
     ],
     comparisonLimits: [
       "Direct Python also omits the intermediate Node controller and concurrent sibling probes.",
@@ -650,7 +655,7 @@ export async function directBrowserDiagnostic(
     assert.equal(python.peMachine, 0xaa64);
     record.python = python;
     record.executor = fileIdentity(mxc);
-    if (executorVariant === "stock") {
+    if (executorVariant !== "patched") {
       validateStockBrowserExecutor(record.executor);
       assert.equal(environment.NEMOCLAW_MSYS_TOKEN_INSPECTION, undefined);
       record.stockSdk = {
@@ -736,6 +741,119 @@ export async function directBrowserDiagnostic(
     }
   }
   return record;
+}
+
+export function stockDebugCompletion(record: any, request: any, supervisorClosed: boolean) {
+  assert.equal(record.schemaVersion, 1);
+  assert.equal(record.classification, "stock-MXC-browser-debug-result");
+  assert.equal(record.diagnosticOnly, true);
+  assert.equal(record.canonicalQualification, false);
+  assert.equal(record.nonce, request.nonce);
+  assert.equal(record.policySha256, request.policySha256);
+  assert.equal(
+    record.executorIdentityAfter?.sha256,
+    "dde1c592270e9a659b01dccad70362da7b99fec114885fa4d625507aa775a503",
+  );
+  const closed =
+    supervisorClosed &&
+    record.childrenClosed === true &&
+    record.cleanupComplete === true &&
+    record.cleanup?.captureClosed === true &&
+    record.cleanup?.handlesClosed === true &&
+    record.cleanup?.activeProcesses === 0 &&
+    Array.isArray(record.cleanup?.errors) &&
+    record.cleanup.errors.length === 0 &&
+    Array.isArray(record.remainingDebugProcesses) &&
+    record.remainingDebugProcesses.length === 0;
+  return closed;
+}
+
+function stockDebugCommand(
+  controllerPython: string,
+  runtime: string,
+  probe: string,
+  nonce: string,
+): typeof personalCommand {
+  return async (executable, args, environment, cwd, timeout) => {
+    // The existing direct-browser owner still owns profile deletion/state cleanup.
+    if (args[0] === "--delete") return personalCommand(executable, args, environment, cwd, timeout);
+    assert.equal(args.length, 3);
+    assert.equal(args[1], "--log-file");
+    const directory = path.dirname(args[0]!);
+    const helper = fileURLToPath(new URL("./probe-stock-browser-debug.py", import.meta.url));
+    const sharedOwner = fileURLToPath(new URL("./probe-host-browser.py", import.meta.url));
+    const controller = fileIdentity(controllerPython);
+    assert.equal(
+      controller.sha256,
+      "54e17da389d3aae8c56b08a06fea5cd2f5acd57d2a7acb4061fc572964d4108b",
+    );
+    const ownerInputs = {
+      controller,
+      helper: fileIdentity(helper),
+      sharedOwner: fileIdentity(sharedOwner),
+    };
+    const request = {
+      schemaVersion: 1,
+      classification: "stock-MXC-browser-debug-request",
+      executor: executable,
+      policyFile: args[0],
+      policySha256: fileIdentity(args[0]!).sha256,
+      logFile: args[2],
+      environment,
+      runtimeRoot: runtime,
+      probeFile: probe,
+      nonce,
+    };
+    const requestFile = path.join(directory, "debug-owner-request.json");
+    const resultFile = path.join(directory, "debug-owner-result.json");
+    fs.writeFileSync(requestFile, JSON.stringify(request, null, 2) + "\n", { flag: "wx" });
+    const identity = fileIdentity(requestFile);
+    const supervisor = await personalCommand(
+      controllerPython,
+      ["-I", "-B", helper, "--request", requestFile, "--output", resultFile],
+      environment,
+      path.win32.parse(runtime).root,
+      135_000,
+    );
+    fs.writeFileSync(
+      path.join(directory, "debug-owner-supervisor.json"),
+      JSON.stringify(
+        {
+          schemaVersion: 1,
+          diagnosticOnly: true,
+          ownerInputs,
+          requestIdentity: identity,
+          supervisor,
+        },
+        null,
+        2,
+      ) + "\n",
+      { flag: "wx" },
+    );
+    const receipt = receiptDocument(resultFile);
+    assert.equal(receipt.value.requestSha256, identity.sha256);
+    const childClosed = stockDebugCompletion(receipt.value, request, supervisor.childClosed);
+    const native = receipt.value.execution;
+    assert.equal(native.executable, executable);
+    assert.deepEqual(native.args, args);
+    assert.equal(typeof native.stdout, "string");
+    assert.equal(typeof native.stderr, "string");
+    return {
+      ...native,
+      signal: null,
+      childClosed,
+      timedOut: native.timedOut || supervisor.timedOut,
+      outputExceeded: native.outputExceeded || supervisor.outputExceeded,
+      error: native.error ?? supervisor.error,
+      nativeStderr: "",
+      nativeStderrBytes: 0,
+      nativeStderrSha256: "",
+      nativeRecordCount: 0,
+      nativeOutputExceeded: false,
+      nativeParseErrors: [],
+      debugOwner: { ownerInputs, requestIdentity: identity, receipt, supervisor },
+    };
+  };
 }
 
 export function removePersonalRoots(
@@ -1226,6 +1344,13 @@ async function main() {
             stockBrowserEnvironment(environment),
             "stock",
           ],
+          [
+            "stockDebugBrowserDiagnostic",
+            "browser-stock-debug-diagnostic",
+            stockMxc,
+            stockBrowserEnvironment(environment),
+            "stock-debug",
+          ],
         ] as const) {
           if (!browserDiagnosticChildrenClosed) {
             receipt[key] = {
@@ -1235,16 +1360,22 @@ async function main() {
             };
             continue;
           }
+          const diagnosticNonce = randomBytes(12).toString("hex");
+          const probe = path.join(launcher, "probe-personal-python.py");
+          const command =
+            variant === "stock-debug"
+              ? stockDebugCommand(hostControllerPython, runtime, probe, diagnosticNonce)
+              : personalCommand;
           const diagnostic = await directBrowserDiagnostic(
             request,
             runtime,
-            path.join(launcher, "probe-personal-python.py"),
+            probe,
             executor,
             hostEnvironment,
             path.join(output, directory),
-            randomBytes(12).toString("hex"),
+            diagnosticNonce,
             python,
-            personalCommand,
+            command,
             variant,
           );
           receipt[key] = diagnostic;

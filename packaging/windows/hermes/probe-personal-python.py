@@ -3,6 +3,7 @@
 """Fixed canonical tool operations, invoked only inside the owned MXC workload."""
 
 import importlib.metadata
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -177,6 +178,101 @@ def conpty_check(_root, nonce):
         pty = None
 
 
+def configure_browser_logging():
+    state = Path(os.environ["NEMOCLAW_AGENT_HOME"])
+    if Path(os.environ["TEMP"]) != state / "temp":
+        raise ValueError("The browser log must stay in its owned temporary state")
+    if os.environ.get("AGENT_BROWSER_ARGS") not in {
+        "--enable-logging=stderr",
+        "--enable-logging",
+    }:
+        raise ValueError("Unexpected canonical browser diagnostic arguments")
+    # agent-browser 0.26 retains Chrome's stderr pipe without draining it after
+    # DevToolsActivePort succeeds. Keep logging, directed to our owned file.
+    log = state / "temp/chrome.log"
+    os.environ["AGENT_BROWSER_ARGS"] = "--enable-logging"
+    os.environ["CHROME_LOG_FILE"] = str(log)
+    return state, log
+
+
+def browser_log_tail(file, state):
+    from nemoclaw_native_windows import NativeStartupRefusal
+
+    record = {"path": str(file), "present": False}
+    try:
+        target = owned_file(file, state)
+        with target.open("rb") as stream:
+            size = os.fstat(stream.fileno()).st_size
+            start = max(0, size - 4096)
+            stream.seek(start)
+            data = stream.read(min(size, 4096))
+        record.update(
+            present=True,
+            totalBytesObserved=size,
+            observedTailOffset=start,
+            observedTailBytes=len(data),
+            observedTailSha256=hashlib.sha256(data).hexdigest(),
+            truncated=start > 0,
+            text=data.decode("utf-8", errors="replace"),
+        )
+    except FileNotFoundError:
+        pass
+    except (Exception, NativeStartupRefusal) as error:
+        record["readError"] = repr(error)[:512]
+    return record
+
+
+def bounded_browser_diagnostics(value):
+    value["serializedLimitBytes"] = 12 * 1024
+    value["aggregateTruncated"] = False
+    while len(json.dumps(value).encode("utf-8")) > 12 * 1024:
+        fields = [
+            (row, key)
+            for row in value["logs"].values()
+            for key in ["text", "readError"]
+            if isinstance(row.get(key), str) and row[key]
+        ]
+        if not fields:
+            return {
+                "serializedLimitBytes": 12 * 1024,
+                "aggregateTruncated": True,
+                "readError": "Browser diagnostic metadata exceeded its fixed bound",
+            }
+        row, key = max(fields, key=lambda pair: len(pair[0][pair[1]]))
+        row[key] = row[key][len(row[key]) // 2 + 1 :]
+        row["renderedTailTruncated"] = True
+        value["aggregateTruncated"] = True
+    return value
+
+
+def browser_shutdown_code(session, state, retain_log):
+    code = "from browser_harness.admin import restart_daemon, ipc\n"
+    if retain_log:
+        # Reuse this small reader in the existing shutdown interpreter. Its
+        # canonical package resolves the real log path; .port tokens are never read.
+        code += (
+            "import importlib.util,json,pathlib\ntry:\n"
+            + " spec=importlib.util.spec_from_file_location('nc_browser_log',"
+            + repr(__file__)
+            + ")\n"
+            + " observer=importlib.util.module_from_spec(spec);spec.loader.exec_module(observer)\n"
+            + " record=observer.browser_log_tail(ipc.log_path("
+            + repr(session)
+            + "),pathlib.Path("
+            + repr(str(state))
+            + "))\n"
+            + "except Exception as error:\n record={'readError':repr(error)[:512]}\n"
+            + "print('NEMOCLAW_BROWSER_HARNESS_LOG='+json.dumps(record))\n"
+        )
+    return code + (
+        "restart_daemon(name="
+        + repr(session)
+        + ");assert not ipc.ping("
+        + repr(session)
+        + ",timeout=1.0);print('HARNESS_STOPPED')"
+    )
+
+
 def browser_check(root, nonce):
     from tools.browser_use_cli import browser_exec, _backend_cache_key
     from tools.browser_tool_install import _find_agent_browser
@@ -188,6 +284,11 @@ def browser_check(root, nonce):
     assert owned_file(_find_agent_browser(validate=True), root) == owned_file(
         expected, root
     )
+    state, chrome_log = configure_browser_logging()
+    diagnostics = {
+        "chromeLogging": {"arguments": "--enable-logging", "file": str(chrome_log)},
+        "logs": {},
+    }
     page = (
         "<!doctype html><title>Hermes Personal proof</title><p id='sentinel'>"
         + nonce
@@ -236,6 +337,8 @@ def browser_check(root, nonce):
         error.add_note("Browser Use raw response: " + repr(raw))
         primary = error
     finally:
+        if primary:
+            diagnostics["logs"]["chrome"] = browser_log_tail(chrome_log, state)
         try:
             # The Browser Use daemon is a distinct owner from agent-browser.
             # Its official shutdown checks PID/start identity; no process-name kill.
@@ -246,16 +349,25 @@ def browser_check(root, nonce):
                     "-I",
                     "-B",
                     "-c",
-                    "from browser_harness.admin import restart_daemon, ipc;restart_daemon(name='"
-                    + session
-                    + "');assert not ipc.ping('"
-                    + session
-                    + "',timeout=1.0);print('HARNESS_STOPPED')",
+                    browser_shutdown_code(session, state, primary is not None),
                 ],
                 capture_output=True,
                 text=True,
                 timeout=15,
             )
+            if primary:
+                rows = [
+                    line.split("=", 1)[1]
+                    for line in shutdown.stdout.splitlines()
+                    if line.startswith("NEMOCLAW_BROWSER_HARNESS_LOG=")
+                ]
+                diagnostics["logs"]["browserHarness"] = (
+                    json.loads(rows[0])
+                    if len(rows) == 1
+                    else {
+                        "readError": "The shutdown observer did not return exactly one log record"
+                    }
+                )
             assert shutdown.returncode == 0 and "HARNESS_STOPPED" in shutdown.stdout, (
                 repr(shutdown)
             )
@@ -272,12 +384,14 @@ def browser_check(root, nonce):
             errors.append("Owned localhost server did not stop")
     if primary:
         primary.add_note("Browser cleanup: " + repr(errors))
+        primary.nemoclaw_browser_diagnostics = bounded_browser_diagnostics(diagnostics)
         raise primary
     assert not errors, repr(errors)
     return {
         "browserUseResult": result,
         "selectedAgentBrowser": str(expected),
         "chromiumPath": os.environ.get("AGENT_BROWSER_EXECUTABLE_PATH"),
+        "chromeLogging": diagnostics["chromeLogging"],
         "browserHarnessEndpointClosed": True,
         "browserHarnessProcessExitIndependentlyVerified": False,
         "canonicalBrowserCleanupCalled": True,
@@ -317,8 +431,10 @@ def main():
             "browser": browser_check,
         }[kind](root, nonce)
         result["passed"] = True
-    except BaseException:
+    except BaseException as error:
         result["error"] = traceback.format_exc()[-16000:]
+        if hasattr(error, "nemoclaw_browser_diagnostics"):
+            result["browserDiagnostics"] = error.nemoclaw_browser_diagnostics
     print("NEMOCLAW_PERSONAL_RESULT=" + json.dumps(result))
     return 0 if result["passed"] else 1
 

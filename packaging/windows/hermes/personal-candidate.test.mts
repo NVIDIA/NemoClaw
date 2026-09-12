@@ -15,6 +15,7 @@ import {
   stockBrowserEnvironment,
   validateStockBrowserExecutor,
   hostBrowserCompletion,
+  stockDebugCompletion,
   completedPersonalReplayPin,
   validatePersonalReplayInput,
   verifyPersonalReplayInventory,
@@ -181,6 +182,56 @@ test("host browser receipt requires actual job zero, capture and handles closed 
   );
   assert.throws(() =>
     hostBrowserCompletion({ ...record, canonicalQualification: true }, request, true),
+  );
+});
+
+test("stock debugger completion requires exact request and executor identity plus drained debug exits", () => {
+  const request = { nonce: browserNewNonce, policySha256: "a".repeat(64) };
+  const record = {
+    schemaVersion: 1,
+    classification: "stock-MXC-browser-debug-result",
+    diagnosticOnly: true,
+    canonicalQualification: false,
+    ...request,
+    executorIdentityAfter: {
+      sha256: "dde1c592270e9a659b01dccad70362da7b99fec114885fa4d625507aa775a503",
+    },
+    childrenClosed: true,
+    cleanupComplete: true,
+    remainingDebugProcesses: [],
+    cleanup: { captureClosed: true, handlesClosed: true, activeProcesses: 0, errors: [] },
+  };
+  assert.equal(stockDebugCompletion(record, request, true), true);
+  assert.equal(stockDebugCompletion(record, request, false), false);
+  assert.equal(
+    stockDebugCompletion({ ...record, remainingDebugProcesses: [42] }, request, true),
+    false,
+  );
+  assert.equal(
+    stockDebugCompletion(
+      { ...record, cleanup: { ...record.cleanup, activeProcesses: 1 } },
+      request,
+      true,
+    ),
+    false,
+  );
+  assert.equal(
+    stockDebugCompletion(
+      { ...record, cleanup: { ...record.cleanup, captureClosed: false } },
+      request,
+      true,
+    ),
+    false,
+  );
+  assert.throws(() =>
+    stockDebugCompletion({ ...record, policySha256: "b".repeat(64) }, request, true),
+  );
+  assert.throws(() =>
+    stockDebugCompletion(
+      { ...record, executorIdentityAfter: { sha256: "0".repeat(64) } },
+      request,
+      true,
+    ),
   );
 });
 

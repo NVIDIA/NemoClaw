@@ -158,6 +158,8 @@ class Accounting(ctypes.Structure):
 class WindowsJob:
     """Only the Win32 calls needed by this fixed CI browser owner."""
 
+    creation_flags = 0x4 | 0x08000000
+
     def __init__(self):
         import _winapi
 
@@ -242,7 +244,7 @@ class WindowsJob:
                 None,
                 None,
                 True,
-                0x4 | 0x08000000,
+                self.creation_flags,
                 environment,
                 cwd,
                 startup,
