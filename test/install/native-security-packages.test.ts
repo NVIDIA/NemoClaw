@@ -114,11 +114,10 @@ function runPythonFixPackageHarness(architecture: "amd64" | "arm64", sourceHashF
       "-c",
       [
         "set -euo pipefail",
-        'build_script="$1"',
-        'harness_output="$2"',
-        'architecture="$3"',
+        'harness_output="$1"',
+        'architecture="$2"',
         'set -- "$harness_output"',
-        'source "$build_script"',
+        "source scripts/security/build-native-security-packages.sh",
         'download() { printf "download %s\\n" "$1" >>"$HARNESS_LOG/calls"; : >"$2"; }',
         'verify_sha256() { printf "verify %s %s\\n" "$1" "${2##*/}" >>"$HARNESS_LOG/calls"; if [[ "${FAIL_SOURCE_HASH:-0}" == "1" && "$2" == *python-stdlib-original.deb ]]; then return 1; fi; }',
         "dpkg-deb() {",
@@ -135,11 +134,11 @@ function runPythonFixPackageHarness(architecture: "amd64" | "arm64", sourceHashF
         'cp "$build_root/python-htmlparser-fix/DEBIAN/control" "$HARNESS_LOG/control"',
       ].join("\n"),
       "python-fix-harness",
-      BUILD_SCRIPT,
       outputDir,
       architecture,
     ],
     {
+      cwd: ROOT,
       encoding: "utf-8",
       env: {
         ...process.env,
