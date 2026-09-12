@@ -76,6 +76,30 @@ NemoClaw does not distribute profiles or evaluate profile content.
 
 ## Preparation
 
+Issue #11606 authorizes NemoClaw to provision a missing Docker bridge before authenticated v2 preparation.
+NemoClaw resolves the selected local Docker connection and configured network name through its runtime adapter.
+A successful, complete network listing must establish absence before NemoClaw creates one attachable bridge.
+Existing compatible networks retain their identity and configuration. NemoClaw does not start a temporary gateway or sandbox.
+OpenShell reuses the inspected network and retains sandbox lifecycle and policy enforcement.
+Ordinary onboarding, v1 components, and non-Docker paths do not use this provisioning operation.
+
+Preparation requires one local, non-internal bridge with exactly one private IPv4 subnet and a usable gateway in that subnet.
+Missing identities, multiple networks, ambiguous IPAM, incompatible drivers, inspection failures, replacement, and address drift stop onboarding.
+Network commands use the selected Unix socket. Generated v2 gateway configuration pins that socket so OpenShell cannot select another daemon.
+TCP and SSH Docker endpoints remain unsupported. A changed Docker connection stops preparation or startup.
+
+Read operations have a 10-second deadline; creation has a 30-second deadline. Each command has a 16 KiB output limit and a forced-kill deadline.
+NemoClaw attempts creation once. After a failure, timeout, or competing creation, it inspects the retained network to reconcile the result.
+Only a compatible inspected network can proceed. A successful creation must return the same identity as inspection.
+An unresolved result stops onboarding with `preparation_failed`; service diagnostics are not forwarded.
+NemoClaw never deletes, repairs, or recreates the network during preparation or failure handling.
+The network also remains after rejected component preparation, authentication failure, or a later startup failure.
+
+This path does not depend on an OpenShell network-preparation command. Runtime pins are unchanged.
+Other authenticated component compatibility requirements still apply; network reuse alone does not qualify the full integration.
+Issue #11606 retains the follow-up to agree on network ownership, compatibility, and a long-term preparation interface with OpenShell maintainers.
+No upstream agreement or delivery date is assumed. Evaluate any agreed interface in a separate reviewed change.
+
 The component must create its CA files and protected activation socket before onboarding.
 CA files must contain currently valid CA certificates only, with protected parents and no symlinks or hardlinks.
 Root or the current user must own the files. Group and other users must not have write access.
@@ -108,14 +132,34 @@ The component associates the later activation with the prepared `componentId` an
 It verifies the sandbox against the prepared gateway identity before acknowledging activation.
 The existing activation UUID, effective-policy proof, failure classification, and incomplete-activation state remain unchanged.
 
-NemoClaw revalidates declaration, socket, CA files, generated configuration, gateway keys, and bridge addressing.
+NemoClaw revalidates declaration, socket, CA files, generated configuration, gateway keys, and bridge identity and addressing.
 OpenShell performs authenticated registration after successful preparation and rejects missing or incompatible services.
 NemoClaw does not install or supervise those services.
 
 ## Validation
 
-`connections.test.ts` covers declaration restrictions, trust files, generated configuration, drift, and preparation.
+`network.test.ts` covers bridge validation, bounded creation, uncertain results, and connection or address drift.
+`connections.test.ts` covers declaration restrictions, trust files, generated configuration, network reuse, and preparation.
 Existing activation and gateway-handler tests cover bounded transport, incomplete activation, and unchanged v1 behavior.
 The creation and finalization tests share an OpenClaw/Hermes matrix for image identity, startup configuration, policy proof, and activation failures.
 Real OpenShell registration, policy and profile delivery, sandbox identity, and middleware outcomes require live evidence.
-Record NemoClaw, OpenShell, and combined #11486 revisions separately. Mocked results do not qualify the integration.
+Record exact NemoClaw and OpenShell revisions and both agents’ results separately. Mocked results do not qualify the integration.
+
+### Network preparation evidence
+
+On 2026-09-12 UTC, commit `f68e5d386f37bf9faecb6f27cac53745450a9cab` passed isolated Linux network and gateway checks.
+The fixture used Docker 29.5.3 with overlay2, Node.js 22.23.1, and checksum-verified OpenShell 0.0.116 release binaries.
+The OpenShell source revision was `d1155aa70042d3e2ee49dbfa15346b108b7c1d92`.
+
+Both OpenClaw and Hermes provisioned a missing network and reused it without changing its identity or addressing.
+Each successful run completed component preparation, two authenticated registration calls, and an authenticated mTLS gateway health check.
+OpenClaw selected a Docker context; Hermes selected a socket with `DOCKER_HOST`. Both configurations retained the selected socket.
+Both agents rejected preparation before gateway launch. Rejected registration authentication prevented a healthy gateway.
+Each network had one creation event and no deletion event, including after failures and gateway shutdown.
+
+The public onboarding command ran all eight cases, including the gateway configuration created before component preparation.
+A prior local repair rejected that initial configuration before preparation or startup. Its network and state were preserved.
+A regression now covers that failure; the corrected commit passed all eight cases.
+The evidence-only documentation update after the tested commit does not change executable source.
+Positive runs stopped after gateway verification. Image completion, activation, agent startup, inference, and workload policy outcomes were not qualified.
+These results establish the network and gateway boundary only. The providerless image fix and full lifecycle qualification retain their separate owners.
