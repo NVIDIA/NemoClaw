@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { execFile } from "node:child_process";
+import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { addAbortListener } from "node:events";
 import fs from "node:fs";
@@ -11,7 +11,7 @@ import path from "node:path";
 import { describe, expect, it, type TestContext, vi } from "vitest";
 import YAML from "yaml";
 
-import { ownChildProcess } from "../../helpers/child-process-lifecycle.ts";
+import { superviseChild } from "../../helpers/process-supervisor.ts";
 
 import {
   validateNativePodmanRestoreAction,
@@ -51,7 +51,7 @@ type CommandResult = {
 
 type ProcessOwner = Pick<TestContext, "signal" | "onTestFinished">;
 
-function runCommand(
+async function runCommand(
   ownerContext: ProcessOwner,
   command: string,
   args: readonly string[],
@@ -59,42 +59,39 @@ function runCommand(
   timeoutMs = 15_000,
 ): Promise<CommandResult> {
   ownerContext.signal.throwIfAborted();
-  return new Promise((resolve) => {
-    const child = execFile(
-      command,
-      [...args],
-      { encoding: "utf8", env },
-      (error, stdout, stderr) => {
-        void owner.closed.then(() =>
-          resolve({
-            status: error ? (typeof error.code === "number" ? error.code : null) : 0,
-            signal: child.signalCode ?? error?.signal ?? null,
-            timedOut,
-            stdout,
-            stderr,
-          }),
-        );
-      },
-    );
-    const owner = ownChildProcess(child);
-    let timedOut = false;
-    const timeout = setTimeout(() => {
-      timedOut = child.exitCode === null && child.signalCode === null && child.kill("SIGKILL");
-    }, timeoutMs);
-    timeout.unref();
-    ownerContext.onTestFinished(async () => {
-      clearTimeout(timeout);
-      await owner.terminate();
-    });
-    const abort = addAbortListener(ownerContext.signal, () => {
-      clearTimeout(timeout);
-      child.kill("SIGKILL");
-    });
-    child.once("close", () => {
-      clearTimeout(timeout);
-      abort[Symbol.dispose]();
-    });
+  let stdout = "";
+  let stderr = "";
+  const child = spawn(command, [...args], { detached: true, env });
+  const finishController = new AbortController();
+  const abort = addAbortListener(ownerContext.signal, () => finishController.abort());
+  const supervision = superviseChild(child, {
+    killGraceMs: 0,
+    onStderr: (chunk) => {
+      stderr += chunk;
+    },
+    onStdout: (chunk) => {
+      stdout += chunk;
+    },
+    signal: finishController.signal,
+    timeoutMs,
   });
+  ownerContext.onTestFinished(async () => {
+    finishController.abort();
+    await supervision;
+  });
+
+  try {
+    const result = await supervision;
+    return {
+      status: result.exitCode,
+      signal: result.signal,
+      timedOut: result.timedOut,
+      stdout,
+      stderr,
+    };
+  } finally {
+    abort[Symbol.dispose]();
+  }
 }
 
 async function runRestoreFixture(
@@ -539,18 +536,55 @@ describe("native Podman E2E setup boundary", () => {
     expect(result.timedOut).toBe(false);
   });
 
-  it.concurrent("reports hard timeouts separately from cancellation", async (context) => {
+  it.concurrent("terminates a timed-out subprocess group", async (context) => {
+    const startedAt = Date.now();
     const result = await runCommand(
       context,
-      process.execPath,
-      ["-e", "setInterval(() => {}, 1_000)"],
+      "bash",
+      ["--noprofile", "--norc", "-c", "sleep 30; echo unreachable"],
       process.env,
-      20,
+      100,
     );
 
     expect(result.status).toBeNull();
-    expect(result.signal).toBe("SIGKILL");
+    expect(result.signal).not.toBeNull();
     expect(result.timedOut).toBe(true);
+    expect(result.stdout).not.toContain("unreachable");
+    expect(Date.now() - startedAt).toBeLessThan(2_000);
+  });
+
+  it.concurrent("reports external cancellation separately from timeout", async (context) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-podman-cancel-"));
+    const readyFile = path.join(root, "ready");
+    const controller = new AbortController();
+    const ownerContext: ProcessOwner = {
+      onTestFinished: (cleanup, timeout) => context.onTestFinished(cleanup, timeout),
+      signal: controller.signal,
+    };
+
+    try {
+      const resultPromise = runCommand(
+        ownerContext,
+        process.execPath,
+        [
+          "-e",
+          'const fs = require("node:fs"); fs.writeFileSync(process.argv[1], "ready"); process.on("SIGTERM", () => {}); setInterval(() => {}, 1_000);',
+          readyFile,
+        ],
+        process.env,
+        2_000,
+      );
+      await vi.waitFor(() => expect(fs.existsSync(readyFile)).toBe(true));
+      controller.abort();
+      const result = await resultPromise;
+
+      expect(result.status).toBeNull();
+      expect(result.signal).toBe("SIGKILL");
+      expect(result.timedOut).toBe(false);
+    } finally {
+      controller.abort();
+      fs.rmSync(root, { force: true, recursive: true });
+    }
   });
 
   it.concurrent("restores unchanged Docker runtime state and retires its authority (#11014)", async (context) => {
