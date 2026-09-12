@@ -95,7 +95,7 @@ function writeSystemctlStub(
       `printf '%s\\n' "$*" >> ${JSON.stringify(log)}`,
       'case "$*" in',
       '  "--user is-active --quiet nemoclaw-openshell-gateway.service")',
-      `    test -f ${JSON.stringify(active)}`,
+      `    test -f ${JSON.stringify(active)} || exit 3`,
       "    ;;",
       '  "--user show nemoclaw-openshell-gateway.service --property=FragmentPath --value")',
       options.failedMetadataProperty === "FragmentPath"
@@ -389,6 +389,7 @@ describe("install.sh OpenShell gateway service", () => {
     const result = runInstallHelper(
       home,
       [
+        "upstream_openshell_gateway_user_service_installed() { return 0; }",
         `trusted_upstream_openshell_gateway_unit_for_service() { [[ "$1" == ${JSON.stringify(upstreamUnit)} ]]; }`,
         `trusted_upstream_openshell_gateway_bin_for_service() { [[ "$1" == ${JSON.stringify(overriddenGatewayBin)} ]]; }`,
         "resolve_upstream_openshell_gateway_bin_for_service",
@@ -422,6 +423,7 @@ describe("install.sh OpenShell gateway service", () => {
     const result = runInstallHelper(
       home,
       [
+        "upstream_openshell_gateway_user_service_installed() { return 0; }",
         `trusted_upstream_openshell_gateway_unit_for_service() { [[ "$1" == ${JSON.stringify(upstreamUnit)} ]]; }`,
         `trusted_upstream_openshell_gateway_bin_for_service() { [[ "$1" == ${JSON.stringify(gatewayBin)} ]]; }`,
         'inspect_upstream_openshell_gateway_user_service || { printf "%s\\n" "$UPSTREAM_OPENSHELL_GATEWAY_SERVICE_ERROR" >&2; exit 1; }',
@@ -1109,8 +1111,48 @@ describe("install.sh OpenShell gateway service", () => {
     ]);
   });
 
+  it("stops upgrade retirement when the gateway user service cannot be inspected (#10947)", () => {
+    const home = makeTempRoot();
+    const stateDir = path.join(home, "state");
+    const registry = path.join(stateDir, "sandboxes.json");
+    const log = path.join(home, "retirement.log");
+    fs.mkdirSync(stateDir, { recursive: true });
+    fs.writeFileSync(registry, "{}\n");
+
+    const result = runInstallHelper(
+      home,
+      [
+        `nemoclaw_state_dir() { printf '%s\\n' ${JSON.stringify(stateDir)}; }`,
+        "nemoclaw_gateway_name() { printf 'nemoclaw\\n'; }",
+        "registered_sandbox_count() { printf '1\\n'; }",
+        "require_openshell_compatible_sandbox_names() { :; }",
+        "confirm_legacy_managed_image_recovery() { :; }",
+        `run_preupgrade_backup() { printf 'backup\\n' >> ${JSON.stringify(log)}; }`,
+        "installed_openshell_version() { printf '0.0.85\\n'; }",
+        "legacy_openshell_gateway_upgrade_needed() { return 1; }",
+        "resolve_current_openshell_version_range() { printf '0.0.106 0.0.106\\n'; }",
+        "version_gte() { return 1; }",
+        `openshell() { printf 'openshell %s\\n' "$*" >> ${JSON.stringify(log)}; return 1; }`,
+        `stop_nemoclaw_openshell_gateway_user_service() { printf 'service\\n' >> ${JSON.stringify(log)}; return 2; }`,
+        `stop_macos_openshell_gateway_user_service() { printf 'macos\\n' >> ${JSON.stringify(log)}; return 0; }`,
+        `stop_legacy_openshell_gateway_process() { printf 'pid\\n' >> ${JSON.stringify(log)}; return 0; }`,
+        "preinstall_backup_and_retire_legacy_gateway",
+      ].join("\n"),
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("Could not retire the legacy OpenShell gateway");
+    expect(fs.readFileSync(log, "utf-8").trim().split(/\r?\n/)).toEqual([
+      "backup",
+      "openshell gateway destroy -g nemoclaw",
+      "openshell gateway destroy",
+      "service",
+    ]);
+    expect(fs.existsSync(registry)).toBe(true);
+  });
+
   it.each(["FragmentPath", "ExecStart"] as const)(
-    "returns control for the PID-file fallback when %s service metadata is unavailable (#8800)",
+    "returns an unknown-state status when %s service metadata cannot be inspected (#10947)",
     (failedMetadataProperty) => {
       const home = makeTempRoot();
       const gatewayBin = userGatewayBin(home);
@@ -1123,7 +1165,14 @@ describe("install.sh OpenShell gateway service", () => {
 
       const result = runInstallHelper(
         home,
-        "stop_nemoclaw_openshell_gateway_user_service || printf 'pid-file-fallback\\n'",
+        [
+          "set +e",
+          "stop_nemoclaw_openshell_gateway_user_service",
+          "stop_status=$?",
+          "set -e",
+          "printf 'stop-status=%s\\n' \"$stop_status\"",
+          '[ "$stop_status" -eq 2 ]',
+        ].join("\n"),
         { PATH: `${systemctl.bin}:${path.dirname(process.execPath)}:${TEST_SYSTEM_PATH}` },
       );
       const calls = fs.readFileSync(systemctl.log, "utf-8");
@@ -1132,7 +1181,7 @@ describe("install.sh OpenShell gateway service", () => {
       expect(calls).toContain(
         `--user show nemoclaw-openshell-gateway.service --property=${failedMetadataProperty} --value`,
       );
-      expect(result.stdout).toContain("pid-file-fallback");
+      expect(result.stdout).toContain("stop-status=2");
       expect(calls).not.toContain("--user stop nemoclaw-openshell-gateway.service");
     },
   );
@@ -1153,7 +1202,7 @@ describe("install.sh OpenShell gateway service", () => {
     const calls = fs.readFileSync(systemctl.log, "utf-8");
 
     expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain("active user service does not match");
+    expect(result.stderr).toContain("user service does not match");
     expect(calls).not.toContain("--user stop nemoclaw-openshell-gateway.service");
   });
 

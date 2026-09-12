@@ -90,8 +90,8 @@ export function finalDeps(
   runCaptureOpenshell: CaptureOpenShell,
 ) {
   return {
-    createExternalComponentActivationProof: (sandboxName: string) =>
-      createExternalComponentActivationProof(sandboxName, gatewayName, {
+    createExternalComponentActivationProof: async (sandboxName: string) =>
+      await createExternalComponentActivationProof(sandboxName, gatewayName, {
         getSandbox: registry.getSandbox,
         inspectPolicy: inspectPolicyMutationContext,
         listSandboxes: (selectedGatewayName: string) =>

@@ -34,6 +34,7 @@ import ssl
 import httpx
 from deepagents_code import model_config
 from deepagents_code.client import non_interactive as target
+from langgraph.pregel import remote as graph_remote
 from langgraph_sdk import errors as graph_errors
 
 logging.basicConfig(level=logging.WARNING, format="%(message)s")
@@ -122,8 +123,23 @@ os.unlink(db_path)
 }
 
 describe("managed non-interactive error reporting", () => {
+  it("disables unsupported OpenAI prompt cache affinity (#10549)", () => {
+    const result = runPatchedNonInteractive(`
+from deepagents_code import config
+assert config.is_openai_prompt_cache_key_enabled() is False
+`);
+
+    expect(result.status, result.stderr).toBe(0);
+  });
+
   it("classifies every trusted exact exception type (#8121)", () => {
     const cases = [
+      [
+        "graph_remote.RemoteException({'message': 'token=runtime-secret'})",
+        "RemoteError",
+        "agent_remote_failure",
+        "false",
+      ],
       [
         "graph_errors.RateLimitError('token=runtime-secret')",
         "RateLimited",

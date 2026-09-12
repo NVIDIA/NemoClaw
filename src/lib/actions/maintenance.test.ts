@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   listSandboxes: vi.fn(),
   getSandbox: vi.fn(),
   backupSandboxState: vi.fn(),
+  removeSandboxStateBackup: vi.fn(),
   captureRecordedSandboxBasePolicy: vi.fn(),
   writeRebuildPolicyHandoff: vi.fn(),
   captureSandboxListWithGatewayPreflightOrExit: vi.fn(),
@@ -53,6 +54,7 @@ vi.mock("../state/registry", () => ({
 }));
 vi.mock("../state/sandbox", () => ({
   backupSandboxState: mocks.backupSandboxState,
+  removeSandboxStateBackup: mocks.removeSandboxStateBackup,
   writeRebuildPolicyHandoff: mocks.writeRebuildPolicyHandoff,
   BackupResult: {},
 }));
@@ -119,6 +121,7 @@ describe("backupAll", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.backupStartedSandboxState.mockReset();
+    mocks.removeSandboxStateBackup.mockReturnValue(true);
     mocks.captureRecordedSandboxBasePolicy.mockReturnValue("version: 1\nnetwork_policies: {}\n");
     mocks.writeRebuildPolicyHandoff.mockImplementation((manifest) => ({
       ...manifest,
@@ -455,6 +458,67 @@ describe("backupAll", () => {
     expect(errorSpy.mock.calls.flat().join("\n")).toContain(
       "backup failed (credentials (permission denied))",
     );
+    expect(mocks.removeSandboxStateBackup).not.toHaveBeenCalled();
+  });
+
+  it("removes a failed strict pre-upgrade backup before aborting (#11469)", async () => {
+    mocks.listSandboxes.mockReturnValue({
+      sandboxes: [{ name: "alpha" }],
+      defaultSandbox: "alpha",
+    });
+    readySandboxNames = new Set(["alpha"]);
+    mocks.backupSandboxState.mockReturnValue({
+      success: false,
+      backedUpDirs: [],
+      failedDirs: ["workspace"],
+      backedUpFiles: [],
+      failedFiles: [],
+      unreachable: true,
+      manifest: { backupPath: "/backups/alpha/timestamp" },
+    });
+    process.env.NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS = "1";
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`exit:${code}`);
+    }) as never);
+
+    await expect(backupAll()).rejects.toThrow("exit:1");
+
+    expect(mocks.removeSandboxStateBackup).toHaveBeenCalledWith(
+      "alpha",
+      "/backups/alpha/timestamp",
+    );
+  });
+
+  it("reports a failed strict-backup cleanup without hiding the backup failure (#11469)", async () => {
+    mocks.listSandboxes.mockReturnValue({
+      sandboxes: [{ name: "alpha" }],
+      defaultSandbox: "alpha",
+    });
+    readySandboxNames = new Set(["alpha"]);
+    mocks.backupSandboxState.mockReturnValue({
+      success: false,
+      backedUpDirs: [],
+      failedDirs: ["workspace"],
+      backedUpFiles: [],
+      failedFiles: [],
+      manifest: { backupPath: "/backups/alpha/timestamp" },
+    });
+    mocks.removeSandboxStateBackup.mockReturnValue(false);
+    process.env.NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS = "1";
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`exit:${code}`);
+    }) as never);
+
+    await expect(backupAll()).rejects.toThrow("exit:1");
+    const errorOutput = errorSpy.mock.calls.flat().join("\n");
+    expect(errorOutput).toContain("workspace");
+    expect(errorOutput).toContain(
+      "Failed strict pre-upgrade backup at '/backups/alpha/timestamp' could not be removed",
+    );
   });
 
   it("fails installer-strict backup when a registered sandbox is not Ready (#6114)", async () => {
@@ -656,7 +720,8 @@ describe("backupAll", () => {
         manifest,
       };
     });
-    mocks.captureRecordedSandboxBasePolicy.mockImplementation(() => {
+    mocks.captureRecordedSandboxBasePolicy.mockImplementation(async () => {
+      await Promise.resolve();
       expect(lockActive).toBe(true);
       events.push("capture-policy");
       return "version: 1\nnetwork_policies: {}\n";
