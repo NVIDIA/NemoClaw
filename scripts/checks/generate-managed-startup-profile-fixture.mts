@@ -19,6 +19,7 @@ const AGENTS = new Set<ManagedStartupAgent>(MANAGED_STARTUP_AGENTS);
 export const MANAGED_STARTUP_E2E_HTTP_PROXY = "http://fixture-http-proxy.example.test:18080";
 export const MANAGED_STARTUP_E2E_HTTPS_PROXY = "http://fixture-https-proxy.example.test:18443";
 export const MANAGED_STARTUP_E2E_NO_PROXY = ["localhost", "127.0.0.1", ".example.test"] as const;
+export const MANAGED_STARTUP_E2E_OPENCLAW_HEARTBEAT_EVERY = "2m";
 
 // Real self-signed X.509 CA used by the no-network managed-image lifecycle
 // gate. DCode additionally proves its hardened fetch transport selects the
@@ -95,7 +96,7 @@ export function managedStartupE2eProfile(
             sampleRate: 1,
           },
           agentTimeoutSeconds: 600,
-          heartbeatEvery: null,
+          heartbeatEvery: MANAGED_STARTUP_E2E_OPENCLAW_HEARTBEAT_EVERY,
           extraAgents: { agents: [], defaults: {}, main: {} },
           deviceAuth: { disabled: true, optOutSource: "managed-onboard" },
           minimalBootstrap: true,

@@ -99,6 +99,8 @@ export function resolveLiveE2eWorkloadSourceEnv(input: NodeJS.ProcessEnv): NodeJ
 
 export interface ShellProbeResult {
   command: string[];
+  startedAt?: string;
+  finishedAt?: string;
   /** Wall-clock command duration, persisted for CI bottleneck analysis. */
   durationMs?: number;
   exitCode: number | null;
@@ -260,6 +262,28 @@ export class ShellProbe {
       result: Omit<ShellProbeResult, "artifacts">,
     ): Promise<ShellProbeResult["artifacts"]> => {
       if (options.persistArtifacts === false) return { stdout: "", stderr: "", result: "" };
+      if (process.env.NEMOCLAW_E2E_COMMAND_EVIDENCE === "1") {
+        // Preserve completed command metadata through the existing remote log transport.
+        // Output bodies stay in redacted guest artifacts, outside this metadata-only stream.
+        const record = {
+          schemaVersion: 1,
+          artifactName: this.artifacts.redact(activityName).slice(0, 256),
+          command: result.command.map((argument) => this.artifacts.redact(argument)),
+          startedAt: result.startedAt,
+          finishedAt: result.finishedAt,
+          durationMs: result.durationMs,
+          exitCode: result.exitCode,
+          signal: result.signal,
+          timedOut: result.timedOut,
+        };
+        let encoded = this.artifacts.redact(JSON.stringify(record));
+        if (Buffer.byteLength(encoded) > 65_536) {
+          encoded = this.artifacts.redact(
+            JSON.stringify({ ...record, command: [], commandOmitted: "size-limit" }),
+          );
+        }
+        process.stderr.write(`NEMOCLAW_E2E_COMMAND ${encoded}\n`);
+      }
       return {
         stdout: await this.artifacts.writeText(`${artifactBase}.stdout.txt`, result.stdout),
         stderr: await this.artifacts.writeText(`${artifactBase}.stderr.txt`, result.stderr),
@@ -311,13 +335,18 @@ export class ShellProbe {
 
     const redactedStdout = renderCapturedText(stdout);
     const redactedStderr = renderCapturedText(stderr);
-    const durationMs = Date.now() - startedAtMs;
+    const finishedAtMs = Date.now();
+    const timing = {
+      startedAt: new Date(startedAtMs).toISOString(),
+      finishedAt: new Date(finishedAtMs).toISOString(),
+      durationMs: finishedAtMs - startedAtMs,
+    };
     if (supervised.spawnError) {
       const redactedMessage = redactProbeText(errorMessage(supervised.spawnError));
       const stderrWithError = [redactedStderr, redactedMessage].filter(Boolean).join("\n");
       await writeArtifacts({
         command: redactedCommand,
-        durationMs,
+        ...timing,
         exitCode: null,
         signal: null,
         timedOut: supervised.timedOut,
@@ -329,7 +358,7 @@ export class ShellProbe {
 
     const result: Omit<ShellProbeResult, "artifacts"> = {
       command: redactedCommand,
-      durationMs,
+      ...timing,
       exitCode: supervised.exitCode,
       signal: supervised.signal,
       timedOut: supervised.timedOut,
