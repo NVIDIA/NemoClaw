@@ -41,6 +41,7 @@ export function refreshLifecycle(publishToken = true) {
   let tokenExpiresAt = 0;
   let status: string | null = null;
   let writePending = false;
+  let includeRevision = true;
   const adapter: providerAdapters.CliOpenShellProviderAdapter = {
     ...providerAdapters.createCliOpenShellProviderAdapter({
       run: () => {
@@ -62,7 +63,7 @@ export function refreshLifecycle(publishToken = true) {
         type: tokenDef.providerType,
         credentialKeys: [credentialKey],
         configKeys: [],
-        revision: { id: "provider-1", resourceVersion: revision },
+        revision: includeRevision ? { id: "provider-1", resourceVersion: revision } : null,
       };
       if (writePending && publishToken) {
         revision += 1;
@@ -135,5 +136,8 @@ export function refreshLifecycle(publishToken = true) {
       allowedSandboxes: ["alpha"],
     });
   const options = () => apply.mock.calls[0]![1];
-  return { adapter, stage, materialize, options, session, log };
+  const omitProviderRevision = () => {
+    includeRevision = false;
+  };
+  return { adapter, stage, materialize, options, session, log, omitProviderRevision };
 }

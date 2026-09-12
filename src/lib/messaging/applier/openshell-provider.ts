@@ -987,7 +987,7 @@ async function refreshReceipt(
   refresh: MessagingProviderRefreshEphemeralInput,
   target: OpenShellGatewayTarget,
   providerAdapter: OpenShellProviderAdapter,
-): Promise<string | null> {
+): Promise<string> {
   const observed = await providerAdapter.getProvider({
     target,
     providerName: refresh.providerName,
@@ -997,7 +997,11 @@ async function refreshReceipt(
       message: `Could not inspect messaging provider '${refresh.providerName}': ${providerErrorMessage(observed.error)}`,
     });
   }
-  if (!observed.value.revision) return null;
+  if (!observed.value.revision) {
+    throw new MessagingProviderApplyError({
+      message: `OpenShell did not report a revision for messaging provider '${refresh.providerName}'; cannot verify refresh registration.`,
+    });
+  }
   return createHash("sha256")
     .update(JSON.stringify([target, refresh, observed.value.revision]))
     .digest("hex");

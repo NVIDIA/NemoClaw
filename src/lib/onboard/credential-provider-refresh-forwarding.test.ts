@@ -164,4 +164,51 @@ describe("onboarding provider refresh", () => {
     expect(flow.options().refreshReceipts?.size).toBe(0);
     expect(flow.session.stagedCredentialProviders).toEqual([]);
   });
+
+  it("rejects missing provider revision before configuring refresh (#11623)", async () => {
+    const flow = refreshLifecycle();
+    flow.omitProviderRevision();
+
+    await expect(flow.stage()).rejects.toThrow("did not report a revision");
+
+    expect(flow.adapter.configureProviderRefresh).not.toHaveBeenCalled();
+    expect(flow.adapter.getProviderRefreshStatus).not.toHaveBeenCalled();
+    expect(flow.adapter.deleteProvider).toHaveBeenCalledOnce();
+    expect(flow.options().refreshReceipts?.size).toBe(0);
+    expect(flow.session.stagedCredentialProviders).toEqual([]);
+  });
+
+  it("clears the staged receipt without reconfiguring when provider revision disappears (#11623)", async () => {
+    const flow = refreshLifecycle();
+    await flow.stage();
+    expect(flow.options().refreshReceipts?.size).toBe(1);
+    flow.omitProviderRevision();
+
+    await expect(flow.materialize()).rejects.toMatchObject({
+      message: expect.stringContaining("did not report a revision"),
+      mutatedProviderNames: [],
+    });
+
+    expect(flow.adapter.configureProviderRefresh).toHaveBeenCalledOnce();
+    expect(flow.adapter.deleteProvider).not.toHaveBeenCalled();
+    expect(flow.options().refreshReceipts?.size).toBe(0);
+  });
+
+  it("rejects a minted refresh without a provider revision to confirm it (#11623)", async () => {
+    const flow = refreshLifecycle();
+    const readStatus = vi.mocked(flow.adapter.getProviderRefreshStatus).getMockImplementation()!;
+    vi.mocked(flow.adapter.getProviderRefreshStatus).mockImplementationOnce(async (request) => {
+      const observed = await readStatus(request);
+      flow.omitProviderRevision();
+      return observed;
+    });
+
+    await expect(flow.stage()).rejects.toThrow("did not report a revision");
+
+    expect(flow.adapter.configureProviderRefresh).toHaveBeenCalledOnce();
+    expect(flow.adapter.getProviderRefreshStatus).toHaveBeenCalledOnce();
+    expect(flow.adapter.deleteProvider).toHaveBeenCalledOnce();
+    expect(flow.options().refreshReceipts?.size).toBe(0);
+    expect(flow.session.stagedCredentialProviders).toEqual([]);
+  });
 });
