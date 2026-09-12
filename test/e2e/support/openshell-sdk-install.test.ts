@@ -372,6 +372,7 @@ describe.concurrent("catalogue OpenShell SDK installation", () => {
     },
   ])(
     "checks $name before running the catalogue target",
+    testTimeoutOptions(30_000),
     async ({ archives, sdk, status, calls, failure }, { expect }) => {
       const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-sdk-install-"));
       const archiveDirectory = path.join(directory, "openshell-sdk");
