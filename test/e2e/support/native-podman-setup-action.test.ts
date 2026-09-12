@@ -107,12 +107,33 @@ async function runCommand(
 
   try {
     const result = await supervision;
+    const cleanupDiagnostic = result.cleanupError ? `${result.cleanupError.message}\n` : "";
+    const stderrContent = stderr.truncated
+      ? stderr.text.slice(0, -OUTPUT_TRUNCATION_MARKER.length)
+      : stderr.text;
+    const stderrNeedsTruncation =
+      result.cleanupError !== undefined &&
+      (stderr.truncated ||
+        Buffer.byteLength(stderrContent + cleanupDiagnostic, "utf8") > COMMAND_OUTPUT_LIMIT);
+    const stderrPrefixBudget = Math.max(
+      0,
+      COMMAND_OUTPUT_LIMIT -
+        Buffer.byteLength(cleanupDiagnostic, "utf8") -
+        Buffer.byteLength(OUTPUT_TRUNCATION_MARKER, "utf8"),
+    );
+    const boundedStderrPrefix = new StringDecoder("utf8").write(
+      Buffer.from(stderrContent).subarray(0, stderrPrefixBudget),
+    );
     return {
       status: result.cleanupError ? -1 : result.exitCode,
       signal: result.signal,
       timedOut: result.timedOut,
       stdout: stdout.text,
-      stderr: result.cleanupError ? `${stderr.text}${result.cleanupError.message}\n` : stderr.text,
+      stderr: result.cleanupError
+        ? stderrNeedsTruncation
+          ? `${boundedStderrPrefix}${cleanupDiagnostic}${OUTPUT_TRUNCATION_MARKER}`
+          : `${stderrContent}${cleanupDiagnostic}`
+        : stderr.text,
     };
   } finally {
     abort[Symbol.dispose]();
@@ -616,7 +637,7 @@ describe("native Podman E2E setup boundary", () => {
       process.execPath,
       [
         "-e",
-        `process.stdout.write("€".repeat(${Math.ceil(COMMAND_OUTPUT_LIMIT / 3) + 1_024})); process.stderr.write("€".repeat(${Math.ceil(COMMAND_OUTPUT_LIMIT / 3) + 1_024}));`,
+        `process.stdout.write("€".repeat(${Math.ceil(COMMAND_OUTPUT_LIMIT / 3) + 1_024})); process.stderr.write("€".repeat(${Math.ceil(COMMAND_OUTPUT_LIMIT / 3) + 1_024})); setTimeout(() => process.stdout.write("later output"), 25);`,
       ],
       process.env,
     );
@@ -626,6 +647,9 @@ describe("native Podman E2E setup boundary", () => {
     expect(Buffer.byteLength(result.stderr, "utf8")).toBeLessThanOrEqual(COMMAND_OUTPUT_LIMIT);
     expect(result.stdout.endsWith(OUTPUT_TRUNCATION_MARKER)).toBe(true);
     expect(result.stderr.endsWith(OUTPUT_TRUNCATION_MARKER)).toBe(true);
+    expect(result.stdout.startsWith("€")).toBe(true);
+    expect(result.stdout).not.toContain("later output");
+    expect(result.stdout.match(/\[output truncated\]/gu)).toHaveLength(1);
     expect(result.stdout).not.toContain("�");
     expect(result.stderr).not.toContain("�");
   });
