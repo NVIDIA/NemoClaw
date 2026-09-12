@@ -4509,6 +4509,7 @@ jobs:
             --revision "$CHECKOUT_SHA" \
             --cohort "$NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT" \
             --platform "$NEMOCLAW_PROTECTED_MANAGED_IMAGE_PLATFORM" \
+            --runtime-user sandbox \
             --openclaw-base "$BASE_OPENCLAW" \
             --hermes-base "$BASE_HERMES" \
             --dcode-base "$BASE_DCODE" \

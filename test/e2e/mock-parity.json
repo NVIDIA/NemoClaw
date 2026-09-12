@@ -115,6 +115,7 @@
     {
       "live": "test/e2e/live/hermes-gpu-startup.test.ts",
       "liveSources": [
+        "test/e2e/live/hermes-gpu-startup-integrity.ts",
         "test/e2e/live/hermes-gpu-startup-fallback.ts",
         "test/e2e/live/hermes-gpu-startup-proof.ts"
       ],
@@ -632,6 +633,7 @@
         "test/e2e/live/mcp-bridge-trusted-private.ts",
         "test/e2e/live/mcp-provider-rewrite-probe.ts",
         "test/e2e/live/openshell-allowed-ips-rebinding.ts",
+        "test/e2e/live/openshell-exact-main-exec.ts",
         "test/e2e/live/openshell-exact-main-runtime-contracts.ts"
       ],
       "fast": [
@@ -653,6 +655,7 @@
         "test/e2e/support/mcp-bridge-tool-discovery.test.ts",
         "test/e2e/support/mcp-provider-rewrite-probe.test.ts",
         "test/e2e/support/mcp-workflow-boundary.test.ts",
+        "test/e2e/support/openshell-exact-main-child-contracts.test.ts",
         "test/e2e/support/openshell-exact-main-runtime-contracts.test.ts",
         "test/mcp/mcp-bridge-servers.test.ts"
       ]

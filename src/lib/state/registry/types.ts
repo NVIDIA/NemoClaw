@@ -8,7 +8,6 @@ import type { DcodeAutoApprovalMode } from "../../onboard/dcode-auto-approval";
 import type { NativeArtifactWorkloadReceiptV1 } from "../../onboard/workload/native-artifact";
 import type { ToolDisclosure } from "../../tool-disclosure";
 import type { OpenClawImagePluginInstall } from "../openclaw-plugin-restore";
-import type { SandboxMcpState } from "../registry-mcp";
 import type { SandboxMessagingState } from "../registry-messaging";
 
 /** Bounded identity checkpoint for one incomplete sandbox create. */
@@ -133,7 +132,6 @@ export interface SandboxEntry extends Partial<InferenceSelection> {
   /** Explicit Deferred N1x managed-vLLM choice retained after successful onboarding. */
   deferredN1xManagedVllmAccepted?: true;
   messaging?: SandboxMessagingState;
-  mcp?: SandboxMcpState;
   hermesToolGateways?: string[];
   /** Destination-scoped provider holding the host-minted Hermes inference key. */
   hermesInferenceProvider?: string;

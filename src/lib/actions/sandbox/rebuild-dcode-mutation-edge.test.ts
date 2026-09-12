@@ -88,7 +88,10 @@ describe("rebuildSandbox DCode flow: mutation edge", () => {
     expect(harness.disposePreparedDcodeRebuildImageSpy).toHaveBeenCalledWith(
       harness.preparedDcodeBuildContext,
     );
-    expect(harness.restoreMcpBridgesAfterRebuildSpy).toHaveBeenCalledWith("alpha", [mcpEntry]);
+    expect(harness.restoreMcpBridgesAfterRebuildSpy).toHaveBeenCalledWith("alpha", [mcpEntry], {
+      gatewayName: "nemoclaw",
+      workspace: "default",
+    });
   });
 
   it("retires removed Shields state after a complete DCode terminal-agent rebuild", async () => {
@@ -159,12 +162,16 @@ describe("rebuildSandbox DCode flow: mutation edge", () => {
       harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
     ).rejects.toThrow("the prepared DCode replacement inputs changed before deletion");
 
-    expect(harness.prepareMcpBridgesForRebuildSpy).toHaveBeenCalledWith("alpha");
+    expect(harness.prepareMcpBridgesForRebuildSpy).toHaveBeenCalledWith(
+      "alpha",
+      { gatewayName: "nemoclaw", workspace: "default" },
+      [detached],
+    );
     expect(harness.reattachMcpProvidersAfterRebuildAbortSpy).toHaveBeenCalledWith(
       "alpha",
       [detached],
       [scrubbed],
-      undefined,
+      { gatewayName: "nemoclaw", workspace: "default" },
     );
     expectNoSandboxDelete(harness.runOpenshellSpy);
     expect(harness.onboardSpy).not.toHaveBeenCalled();

@@ -490,9 +490,9 @@ with tempfile.TemporaryDirectory(prefix="hermes-mcp-failed-reload-race-") as roo
     expect(proof.returned).toBeNull();
     expect(proof.error).toContain("Hermes MCP runtime reload failed");
     expect(proof.error).toContain("gateway stopped before managed MCP reload");
-    expect(proof.error).toContain("config/hash rollback failed");
+    expect(proof.error).toContain("config and hashes were restored");
     expect(proof.final_config_is_original).toBe(true);
-    expect(proof.integrity_error).toContain("hash does not match persisted inputs");
-    expect(proof.reload_calls).toBe(1);
+    expect(proof.integrity_error).toBe("");
+    expect(proof.reload_calls).toBe(2);
   });
 });

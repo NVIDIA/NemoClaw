@@ -78,7 +78,7 @@ print("supervisor-identity-boundary-ok")
   );
 
   it.runIf(process.platform === "linux")(
-    "treats only the exact empty managed projection as an absent snapshot",
+    "treats only the exact empty native config as an absent snapshot",
     () => {
       const result = runManagedHelper(String.raw`
 import importlib.util
@@ -302,7 +302,7 @@ def blocked_memfd(*_args, **_kwargs):
     raise PermissionError(errno.EPERM, "blocked by seccomp")
 
 with tempfile.TemporaryDirectory() as tempdir:
-    managed._MCP_CONFIG_FILE = Path(tempdir) / ".nemoclaw-mcp.json"
+    managed._MCP_CONFIG_FILE = Path(tempdir) / ".mcp.json"
     managed._read_managed_mcp_config = lambda: raw
     managed.os.memfd_create = blocked_memfd
     snapshot_path = managed.managed_mcp_config_path()
@@ -462,7 +462,7 @@ def blocked_memfd(*_args, **_kwargs):
     raise PermissionError(errno.EPERM, "blocked by seccomp")
 
 with tempfile.TemporaryDirectory() as tempdir:
-    managed._MCP_CONFIG_FILE = Path(tempdir) / ".nemoclaw-mcp.json"
+    managed._MCP_CONFIG_FILE = Path(tempdir) / ".mcp.json"
     private_directory = Path(tempdir) / "private-tmpfs"
     private_directory.mkdir(mode=0o1777)
     managed._MCP_PRIVATE_ANONYMOUS_DIRECTORY = private_directory

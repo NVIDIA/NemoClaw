@@ -122,7 +122,6 @@ describe("Vitest opaque-input watch triggers", () => {
         "test/onboarding/onboard-fresh-create-identity.test.ts",
         "test/onboarding/onboard-installer-restore-intent.test.ts",
         "test/onboarding/onboard-managed-image-buildless-e2e.test.ts",
-        "test/onboarding/onboard-mcp-observability-redirect.test.ts",
         "test/onboarding/onboard-messaging.test.ts",
         "test/onboarding/onboard-prepared-build-context.test.ts",
         "test/onboarding/onboard-reservation-recreate.test.ts",

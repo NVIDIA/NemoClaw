@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
 
 import {
@@ -26,11 +26,13 @@ import {
 
 import {
   bindRebuildPolicyProvidersToCreateArgs,
+  beginRecreateDeleteAfterPolicyPreflight,
   resolveRebuildMessagingPolicyDeltas,
   resolveRebuildObservabilityPolicyDelta,
   resolveRebuildPolicyProviderAuthority,
   selectRebuildCreatePolicy,
 } from "./orchestration";
+import { readValidatedRebuildPolicySource } from "./rebuild-policy-handoff";
 
 const tempRoots: string[] = [];
 
@@ -430,38 +432,87 @@ describe("rebuild policy provider handoff", () => {
             },
           ],
         },
-        preservedMcpState,
-        managedMcpRebuildHandoff: true,
+        policyDocument: YAML.stringify({
+          version: 1,
+          network_policies: {
+            mcp_bridge_github: {
+              name: "mcp_bridge_github",
+              endpoints: [
+                {
+                  host: "api.githubcopilot.com",
+                  port: 443,
+                  path: "/mcp/",
+                  protocol: "mcp",
+                  credential_binding: { provider: "alpha-mcp-github" },
+                  mcp: {
+                    max_body_bytes: 131_072,
+                    strict_tool_names: true,
+                    allow_all_known_mcp_methods: false,
+                  },
+                  rules: [{ allow: { method: "tools/list" } }],
+                },
+              ],
+              binaries: [{ path: "/usr/bin/node" }],
+            },
+          },
+        }),
       }),
     ).toEqual(["inference-provider", "alpha-telegram-bridge", "alpha-mcp-github"]);
   });
 
-  it("does not authorize MCP registry names without the managed rebuild handoff", () => {
+  it("does not authorize MCP providers absent from the source policy", () => {
     expect(
       resolveRebuildPolicyProviderAuthority({
         createArgs: [],
         messagingPlan: null,
-        preservedMcpState,
-        managedMcpRebuildHandoff: false,
+        policyDocument: YAML.stringify({
+          version: 1,
+          network_policies: {
+            host_preserved: {
+              name: "host_preserved",
+              endpoints: [
+                {
+                  host: "example.com",
+                  port: 443,
+                  protocol: "rest",
+                  rules: [{ allow: { method: "GET", path: "/**" } }],
+                },
+              ],
+              binaries: [{ path: "/usr/bin/curl" }],
+            },
+          },
+        }),
       }),
     ).toEqual([]);
   });
 
-  it("ignores incomplete MCP add records even with a managed rebuild handoff", () => {
-    expect(
+  it("rejects malformed policy before any provider authority can be used", () => {
+    expect(() =>
       resolveRebuildPolicyProviderAuthority({
         createArgs: [],
         messagingPlan: null,
-        preservedMcpState: {
-          bridges: {
-            github: {
-              ...preservedMcpState.bridges.github,
-              addState: "prepared",
-            },
-          },
-        },
-        managedMcpRebuildHandoff: true,
+        policyDocument: "network_policies:\n  broken: [\n",
       }),
-    ).toEqual([]);
+    ).toThrow();
+  });
+
+  it.each([
+    ["malformed YAML", "network_policies:\n  broken: [\n", /malformed/iu],
+    [
+      "invalid policy shape",
+      "version: 1\nnetwork_policies:\n  broken:\n    name: broken\n    endpoints: []\n",
+      /schema/iu,
+    ],
+  ])("rejects %s before the delete boundary", (_case, document, expected) => {
+    const policyPath = tempPolicy(document);
+    const beginDelete = vi.fn();
+
+    expect(() => {
+      beginRecreateDeleteAfterPolicyPreflight({
+        capturePolicySource: () => readValidatedRebuildPolicySource(policyPath),
+        beginDelete,
+      });
+    }).toThrow(expected);
+    expect(beginDelete).not.toHaveBeenCalled();
   });
 });

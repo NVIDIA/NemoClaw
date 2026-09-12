@@ -22,7 +22,7 @@ from urllib.parse import urljoin, urlparse, urlsplit
 _MANAGED_STATE_DIR = Path("/sandbox/.deepagents/.state")
 _AUTH_FILE = _MANAGED_STATE_DIR / "auth.json"
 _CODEX_AUTH_FILE = _MANAGED_STATE_DIR / "chatgpt-auth.json"
-_MCP_CONFIG_FILE = Path("/sandbox/.deepagents/.nemoclaw-mcp.json")
+_MCP_CONFIG_FILE = Path("/sandbox/.deepagents/.mcp.json")
 _INFERENCE_BASE_URL_FILE = Path(
     "/usr/local/share/nemoclaw/dcode-inference-base-url"
 )

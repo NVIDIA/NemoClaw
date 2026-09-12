@@ -67,7 +67,7 @@ function fakeHost() {
     host: {
       command,
       nemoclaw,
-      openshellCommandPath: "/reviewed/openshell",
+      commandPath: "/reviewed/nemoclaw",
     } as unknown as HostCliClient,
     nemoclaw,
   };
@@ -115,7 +115,7 @@ describe("OpenShell exact-main child contracts", () => {
     }
   });
 
-  it("proves entrypoint, exec, and forced-TTY connect children independently", async () => {
+  it("proves entrypoint, exec, and NemoClaw connect children", async () => {
     const { command, host, nemoclaw } = fakeHost();
     command
       .mockResolvedValueOnce(containerDiscovery())
@@ -148,10 +148,10 @@ describe("OpenShell exact-main child contracts", () => {
     expect(command.mock.calls[2]?.[0]).toBe("bash");
     expect(command.mock.calls[2]?.[1]).toEqual([
       "-lc",
-      'printf \'%s\\n\' "$1" | "$2" sandbox connect "$3"',
+      'printf \'%s\\n\' "$1" | "$2" "$3" connect',
       "exact-main-connect-child",
       CONNECT_CHILD_PROBE,
-      "/reviewed/openshell",
+      "/reviewed/nemoclaw",
       SANDBOX_NAME,
     ]);
     expect(CONNECT_CHILD_PROBE).toContain('"/proc/$$/status"');

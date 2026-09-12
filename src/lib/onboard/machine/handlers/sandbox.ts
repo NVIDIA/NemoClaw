@@ -113,7 +113,6 @@ import {
   hasCompatibleEndpointReasoningDrift,
   hasHermesCompatibleAnthropicInferenceRouteDrift,
   hasHostMountConfigDrift,
-  mcpRegistryRemovalBlockReason,
   replacesSameNameSandbox,
   requiresSandboxRecreation,
   resolveToolDisclosureResumeSignals,
@@ -2374,16 +2373,6 @@ class SandboxStateFlow<
     state: SandboxStepState<WebSearchConfig>,
     decision: SandboxCreationDecision,
   ): Promise<SandboxStepState<WebSearchConfig>> {
-    const mcpBlockReason = mcpRegistryRemovalBlockReason(
-      decision,
-      state.sandboxName,
-      state.webSearchConfig as unknown as SharedWebSearchConfig | null,
-      this.deps.getSandboxRegistryEntry,
-    );
-    if (mcpBlockReason) {
-      this.deps.error(mcpBlockReason);
-      return this.deps.exitProcess(1);
-    }
     this.assertExistingMessagingPlanTargetsSandbox(state);
     let nextState = state.sandboxName
       ? this.checkpointSandboxName(state, state.sandboxName)

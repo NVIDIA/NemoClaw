@@ -4432,18 +4432,11 @@ Then run `nemohermes inference get` and verify Dashboard Chat uses the selected 
 Hermes configuration is mutable.
 A current Hermes supervisor does not refuse startup, restart, recovery, or automatic respawn only because `config.yaml` or `.env` changed.
 It validates the secret boundary and records one stable snapshot before a replacement gateway consumes the config.
-A direct MCP change becomes pending and is marked as applied only after gateway health passes.
+The native `mcp_servers` map in that snapshot is authoritative, including direct edits.
 
 An unsafe config or metadata path reports `unsafe config path`.
 A missing, malformed, mismatched, or raced hash or restart metadata file reports `config hash mismatch`.
 Do not edit either hash file manually.
-
-If the error reports an MCP reconciliation refusal, restore the managed MCP projection and retry recovery:
-
-```bash
-nemohermes <name> mcp restart
-nemohermes <name> recover
-```
 
 If the error reports `secret-boundary refusal`, inspect `/sandbox/.hermes/.env` for raw secret-shaped values.
 Replace them through the supported credential flow so the file contains `openshell:resolve:env:<name>` placeholders, then run `nemohermes <name> recover`.

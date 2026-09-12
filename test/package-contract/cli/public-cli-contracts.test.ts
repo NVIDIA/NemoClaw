@@ -255,6 +255,7 @@ describe("public compiled CLI contracts", () => {
           "custom-help\tplaceholder-sandbox\tagents\tlist\t--help",
           "custom-help\tplaceholder-sandbox\tmcp\tadd\t--help",
           "custom-help\tplaceholder-sandbox\tmcp\tlist\t--help",
+          "custom-help\tplaceholder-sandbox\tmcp\tmigrate\t--help",
           "custom-help\tplaceholder-sandbox\tmcp\tremove\t--help",
           "custom-help\tplaceholder-sandbox\tmcp\trestart\t--help",
           "custom-help\tplaceholder-sandbox\tmcp\tstatus\t--help",

@@ -68,7 +68,6 @@ export const EXPORT_REGISTRY_EVIDENCE_KEYS = [
   "imageTag",
   "lifecycleGeneration",
   "lifecycleLiveIdentityFingerprint",
-  "mcp",
   "messaging",
   "model",
   "name",

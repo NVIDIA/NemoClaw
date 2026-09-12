@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { isDeepStrictEqual } from "node:util";
+import fs from "node:fs";
 
 import { createHermesCredentialEnvReconciliationRuntime } from "../../actions/sandbox/runtime/hermes-lifecycle";
 import type { SandboxCreateOrchestrationRuntime } from "../../onboard";
@@ -25,7 +26,7 @@ import {
 import { RESTRICTED_TIER_NAME } from "../policy-tier-suppression";
 import type { BackupResult } from "../../state/sandbox";
 import type { RetainedSandboxRecoveryContext, Session } from "../../state/onboard-session";
-import type { SandboxEntry, SandboxMcpState } from "../../state/registry";
+import type { SandboxEntry } from "../../state/registry";
 import type {
   PendingSandboxCreateIdentity,
   QualifiedPendingSandboxCreateReservation,
@@ -79,7 +80,11 @@ import {
   publishAttachedProvidersBeforeDockerSandboxCreation,
   validateAttachedMessagingProvidersBeforeSandboxCreation,
 } from "./provider-publication";
-import { materializeRebuildPolicyHandoff } from "./rebuild-policy-handoff";
+import {
+  materializeRebuildPolicyHandoff,
+  parseRebuildPolicyProviderNames,
+  readValidatedRebuildPolicySource,
+} from "./rebuild-policy-handoff";
 
 function cancelRecoveryIdentity(
   liveExists: boolean,
@@ -113,21 +118,22 @@ export function bindRebuildPolicyProvidersToCreateArgs(
   return result;
 }
 
-/**
- * Admit credential providers only from replacement inputs that were validated
- * independently of the live policy document. The live policy remains the
- * policy source of truth; this list only proves that each provider attachment
- * it references already belongs to the exact create, messaging, or managed MCP
- * replacement transaction.
- */
+export function beginRecreateDeleteAfterPolicyPreflight<T>(input: {
+  readonly capturePolicySource: () => unknown;
+  readonly beginDelete: () => T;
+}): T {
+  input.capturePolicySource();
+  return input.beginDelete();
+}
+
 export function resolveRebuildPolicyProviderAuthority(input: {
   readonly createArgs: readonly string[];
   readonly messagingPlan:
     | Pick<SandboxMessagingPlan, "credentialBindings" | "disabledChannels">
     | null
     | undefined;
-  readonly preservedMcpState: SandboxMcpState | undefined;
-  readonly managedMcpRebuildHandoff: boolean;
+  readonly policyDocument?: string | null;
+  readonly policyProviders?: readonly string[];
 }): string[] {
   const providers = new Set(
     input.createArgs.flatMap((value, index, args) =>
@@ -139,12 +145,9 @@ export function resolveRebuildPolicyProviderAuthority(input: {
     if (disabledChannels.has(binding.channelId)) continue;
     providers.add(binding.providerName);
   }
-  if (input.managedMcpRebuildHandoff) {
-    for (const entry of Object.values(input.preservedMcpState?.bridges ?? {})) {
-      if (entry.addState || !entry.providerName || !entry.providerId) continue;
-      providers.add(entry.providerName);
-    }
-  }
+  for (const provider of input.policyProviders ??
+    (input.policyDocument ? parseRebuildPolicyProviderNames(input.policyDocument) : []))
+    providers.add(provider);
   return [...providers];
 }
 
@@ -257,6 +260,7 @@ export function selectRebuildCreatePolicy(
   messagingConfig: MessagingChannelConfig | null | undefined,
   sandboxName: string,
   authorizedCredentialBindingProviders: readonly string[],
+  policySource?: string,
 ): import("../initial-policy").InitialSandboxPolicy {
   const requiredNetworkPolicySources = requiredNetworkPolicyPresetNames.map((presetName) => {
     const source = loadMessagingChannelPolicyPreset(presetName, {
@@ -274,6 +278,7 @@ export function selectRebuildCreatePolicy(
   return materializeRebuildPolicyHandoff({
     sandboxName,
     livePolicyPath: policySourcePath,
+    ...(policySource === undefined ? {} : { livePolicySource: policySource }),
     replacementPolicy: generatedPolicy,
     requiredNetworkPolicyKeys,
     removedNetworkPolicyKeys,
@@ -1153,20 +1158,6 @@ export function hasManagedMcpRebuildHandoff(
   return Boolean(handoff && createIntent?.recreateTransaction?.targetIntentFingerprint === handoff);
 }
 
-function shouldRefuseManagedMcpRecreate(
-  preservedMcpState: unknown,
-  managedMcpRebuildHandoff: boolean,
-): boolean {
-  return Boolean(preservedMcpState) && !managedMcpRebuildHandoff;
-}
-
-function hasPreservedManagedMcpRebuildHandoff(
-  preservedMcpState: unknown,
-  createIntent: SandboxCreateIntent | null | undefined,
-): boolean {
-  return Boolean(preservedMcpState) && hasManagedMcpRebuildHandoff(createIntent);
-}
-
 async function validatePortableManagedWorkloadSelection(input: {
   readonly portableLifecycle: boolean;
   readonly selectionNeedsValidation: boolean;
@@ -1718,7 +1709,6 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
 
     const {
       existingEntry,
-      preservedMcpState,
       liveExists,
       effectiveToolDisclosure,
       toolDisclosureMigrationNeeded,
@@ -1856,6 +1846,21 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       prepareWorkload: ensurePreparedSandboxWorkload,
     });
     const apfInterceptorRequested = createIntent?.apfInterceptorRequested === true;
+    let capturedRebuildPolicySource:
+      | { readonly document: string; readonly providers: readonly string[] }
+      | null
+      | undefined;
+    const captureRebuildPolicySource = () => {
+      if (capturedRebuildPolicySource !== undefined) return capturedRebuildPolicySource;
+      if (!createIntent?.rebuildPolicySourcePath) {
+        capturedRebuildPolicySource = null;
+        return capturedRebuildPolicySource;
+      }
+      capturedRebuildPolicySource = readValidatedRebuildPolicySource(
+        createIntent.rebuildPolicySourcePath,
+      );
+      return capturedRebuildPolicySource;
+    };
     let verifiedCreateBoundary: VerifiedSandboxCreateBoundary | null = null;
     let pendingCreateIdentity: PendingSandboxCreateIdentity | null = null;
     let admittedCreateReservation: QualifiedPendingSandboxCreateReservation | null = null;
@@ -2213,24 +2218,6 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         },
         { formatSandboxAgentName, note },
       );
-      const managedMcpRebuildHandoff = hasPreservedManagedMcpRebuildHandoff(
-        preservedMcpState,
-        createIntent,
-      );
-      if (shouldRefuseManagedMcpRecreate(preservedMcpState, managedMcpRebuildHandoff)) {
-        for (const hint of recreateJournal.managedMcpRecreateRefusalHints({
-          sandboxName,
-          cliName: cliName(),
-          toolDisclosure: effectiveToolDisclosure,
-          rebuildFlag: dcodeAutoApprovalPlan.rebuildFlag,
-          observabilityFlag: observabilityCommandFlag.explicitObservabilityFlag(
-            createIntent?.observabilityEnabled === true,
-            createIntent?.observabilityRequestedExplicitly === true,
-          ),
-        }))
-          console.error(hint);
-        process.exit(1);
-      }
       // Resolve and validate immutable workload authority before opening a recreate journal or
       // mutating a live sandbox.
       preparedSandboxWorkload = await ensurePreparedSandboxWorkload();
@@ -2264,11 +2251,18 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         pendingStateRestore = result.backup;
       }
 
+      // Parse and freeze the rebuild policy while the source sandbox is still
+      // intact. A malformed or raced policy must not fail after deletion.
       managedStateVolumeLifecycle = prepareManagedStateVolumeLifecycle(preparedSandboxWorkload);
       note(`  Deleting and recreating sandbox '${sandboxName}'...`);
 
       revalidateSandboxIdentity(true, `recreating sandbox '${sandboxName}'`);
-      if (recreateRuntime.beginDelete() === "source") {
+      if (
+        beginRecreateDeleteAfterPolicyPreflight({
+          capturePolicySource: captureRebuildPolicySource,
+          beginDelete: recreateRuntime.beginDelete,
+        }) === "source"
+      ) {
         await runAuthorityBoundProviderCleanup({
           sandboxName,
           revalidateSandboxIdentity: (operation) => revalidateSandboxIdentity(true, operation),
@@ -2527,11 +2521,17 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       explicitlyRequested: createIntent?.observabilityRequestedExplicitly,
       tierName: createIntent?.policyTier,
     });
+    const rebuildPolicySource = captureRebuildPolicySource();
+    const rebuildPolicyDocument =
+      rebuildPolicySource?.document ??
+      materializedInitialSandboxPolicy.sourceBytes?.toString("utf8") ??
+      fs.readFileSync(materializedInitialSandboxPolicy.policyPath, "utf8");
     const rebuildPolicyProviderAuthority = resolveRebuildPolicyProviderAuthority({
       createArgs: materializedCreateArgv,
       messagingPlan: plannedMessagingState?.plan,
-      preservedMcpState,
-      managedMcpRebuildHandoff: hasManagedMcpRebuildHandoff(createIntent),
+      ...(rebuildPolicySource
+        ? { policyProviders: rebuildPolicySource.providers }
+        : { policyDocument: rebuildPolicyDocument }),
     });
     const initialSandboxPolicy = createIntent?.rebuildPolicySourcePath
       ? selectRebuildCreatePolicy(
@@ -2550,6 +2550,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           effectiveMessagingConfig,
           sandboxName,
           rebuildPolicyProviderAuthority,
+          rebuildPolicySource?.document,
         )
       : materializedInitialSandboxPolicy;
     const createArgv = createIntent?.rebuildPolicySourcePath
@@ -3053,7 +3054,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         dcodeAutoApprovalMode: dcodeAutoApprovalPlan.mode,
       },
       { webSearchConfig, hermesAuthMethod: normalizeHermesAuthMethod(hermesAuthMethod) },
-      { plannedMessagingState, preservedMcpState, hermesToolGateways },
+      { plannedMessagingState, hermesToolGateways },
       hermesApiPortReservationScope.effectivePort,
       { gatewayName: GATEWAY_NAME, gatewayPort: GATEWAY_PORT },
       {

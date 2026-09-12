@@ -365,7 +365,6 @@ function runHermesRootStartupMutableRootPreflight() {
       'id() { [ "${1:-}" = "-u" ] && printf "1000\\n" || command id "$@"; }',
       'dir_mode() { python3 -I -c "import os,sys; print(oct(os.stat(sys.argv[1]).st_mode & 0o7777)[2:])" "$HERMES_DIR"; }',
       'refresh_hermes_runtime_config_hashes() { printf "adopt mode=%s args=%s\\n" "$(dir_mode)" "$*"; }',
-      'inspect_hermes_mcp_integrity() { printf "mcp-integrity mode=%s\\n" "$(dir_mode)"; }',
       'prepare_hermes_lazy_dependencies() { printf "lazy mode=%s\\n" "$(dir_mode)"; }',
       'ensure_hermes_runtime_api_server_key() { printf "api-key mode=%s\\n" "$(dir_mode)"; }',
       "validate_hermes_env_secret_boundary() { :; }",
@@ -1104,7 +1103,7 @@ describe("agents/hermes/start.sh env secret boundary", () => {
     },
   );
 
-  it("adopts mutable config after the env boundary and before MCP integrity (#11108)", () => {
+  it("adopts mutable config after the env boundary before runtime preparation (#11108)", () => {
     const source = fs.readFileSync(START_SCRIPT, "utf-8");
     const result = spawnSync(
       "bash",
@@ -1115,7 +1114,6 @@ describe("agents/hermes/start.sh env secret boundary", () => {
           "hash_state=stale",
           'trace() { printf "%s\\n" "$1"; }',
           "validate_hermes_env_secret_boundary() { trace env-boundary; }",
-          'inspect_hermes_mcp_integrity() { [ "$hash_state" = current ] || return 1; trace mcp-integrity; }',
           "prepare_hermes_lazy_dependencies() { trace lazy-dependencies; }",
           "ensure_hermes_runtime_api_server_key() { trace api-key; }",
           "validate_hermes_runtime_env_secret_boundary() { trace runtime-boundary; }",
@@ -1135,14 +1133,12 @@ describe("agents/hermes/start.sh env secret boundary", () => {
     expect(result.stdout.trim().split("\n")).toEqual([
       "env-boundary",
       "hashes:compat:adopt",
-      "mcp-integrity",
       "lazy-dependencies",
       "api-key",
       "env-boundary",
       "runtime-boundary",
       "placeholders",
       "hashes:compat:preserve",
-      "mcp-integrity",
       "channels",
       "tirith",
     ]);
@@ -1464,7 +1460,6 @@ describe("agents/hermes/start.sh Tirith marker bootstrap", () => {
 
     expect(run.result.status).toBe(0);
     expect(run.result.stdout).toContain("adopt mode=750 args=both adopt");
-    expect(run.result.stdout).toContain("mcp-integrity mode=750");
     expect(run.result.stdout).toContain("lazy mode=750");
     expect(run.result.stdout).toContain("api-key mode=3770");
     expect(run.result.stdout).toContain("tirith-state=0");

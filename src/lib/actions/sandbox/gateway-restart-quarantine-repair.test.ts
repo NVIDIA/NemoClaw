@@ -8,6 +8,7 @@ import {
   isGatewayTerminalRepairLayer,
   printGatewayRestartFailure,
 } from "./gateway-restart";
+import { printGatewayTerminalRepairGuidance } from "./connect-boundary-refusal";
 
 // The exact lines the in-sandbox Hermes supervisor emits when it stops
 // attempting relaunch. `scripts/managed-gateway-control.py` allowlists these
@@ -59,7 +60,7 @@ describe("supervisor relaunch quarantine classification (#7801)", () => {
   it("keeps the pre-existing layers for output without a quarantine line", () => {
     expect(classify("GATEWAY_HEALTH_TIMEOUT")).toMatchObject({ layer: "health timeout" });
     expect(classify("HERMES_MCP_CONFIG_DRIFT")).toMatchObject({
-      layer: "MCP reconciliation refusal",
+      layer: "mcp configuration drift",
     });
     expect(classify("GATEWAY_CONFIG_HASH_MISMATCH")).toMatchObject({
       layer: "config hash mismatch",
@@ -78,6 +79,7 @@ describe("terminal restart repair guidance (#7801)", () => {
   it("recognizes the terminal repair layers", () => {
     expect(isGatewayTerminalRepairLayer("relaunch quarantined")).toBe(true);
     expect(isGatewayTerminalRepairLayer("config hash mismatch")).toBe(true);
+    expect(isGatewayTerminalRepairLayer("mcp configuration drift")).toBe(true);
     expect(isGatewayTerminalRepairLayer("health timeout")).toBe(false);
     expect(isGatewayTerminalRepairLayer("launch failure")).toBe(false);
     expect(isGatewayTerminalRepairLayer(null)).toBe(false);
@@ -104,6 +106,23 @@ describe("terminal restart repair guidance (#7801)", () => {
     const lines = gatewayTerminalRepairLines("alpha", "config hash mismatch").join("\n");
     expect(lines).toContain("integrity metadata");
     expect(lines).not.toContain("nemoclaw alpha stop");
+  });
+
+  it("gives source-specific repair guidance for Hermes MCP drift", () => {
+    const lines = gatewayTerminalRepairLines("alpha", "mcp configuration drift").join("\n");
+    expect(lines).toContain("nemoclaw alpha mcp status --json");
+    expect(lines).toContain("nemoclaw alpha mcp migrate --apply");
+    expect(lines).toContain("remove and add");
+    expect(lines).not.toContain("mcp restart");
+  });
+
+  it("preserves MCP-specific guidance through the connect recovery wrapper", () => {
+    const lines = captureStderr(() =>
+      printGatewayTerminalRepairGuidance("alpha", "mcp configuration drift"),
+    ).join("\n");
+    expect(lines).toContain("nemoclaw alpha mcp status --json");
+    expect(lines).toContain("nemoclaw alpha mcp migrate --apply");
+    expect(lines).not.toContain("mcp restart");
   });
 });
 
@@ -132,12 +151,5 @@ describe("printGatewayRestartFailure repair guidance (#7801)", () => {
     ).join("\n");
     expect(timeout).not.toContain("rebuild --yes");
     expect(launch).not.toContain("rebuild --yes");
-  });
-
-  it("keeps the MCP reconciliation remediation it already emitted", () => {
-    const lines = captureStderr(() =>
-      printGatewayRestartFailure("repro-7801", "MCP reconciliation refusal", "mcp-integrity"),
-    ).join("\n");
-    expect(lines).toContain("nemoclaw repro-7801 mcp restart");
   });
 });

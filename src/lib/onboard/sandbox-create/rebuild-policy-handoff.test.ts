@@ -15,6 +15,7 @@ import { allMessagingChannelPolicyPresets } from "../messaging-policy-presets";
 import {
   materializeRebuildPolicyHandoff,
   mergeReplacementPolicyAccess,
+  readValidatedRebuildPolicySource,
 } from "./rebuild-policy-handoff";
 
 const roots: string[] = [];
@@ -48,6 +49,27 @@ afterEach(() => {
 });
 
 describe("rebuild policy handoff", () => {
+  it("accepts the read-only endpoint access emitted by OpenShell policy update", () => {
+    const policyPath = tempPolicy(
+      "read-only-host-edit.yaml",
+      `version: 1
+network_policies:
+  host_edit:
+    name: host_edit
+    endpoints:
+      - host: host-edit.example.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        access: read-only
+    binaries:
+      - path: /usr/bin/curl
+`,
+    );
+
+    expect(readValidatedRebuildPolicySource(policyPath).providers).toEqual([]);
+  });
+
   it("adds missing replacement access while preserving OpenShell's live choices", () => {
     const live = `
 version: 1
@@ -434,6 +456,23 @@ network_policies:
     expect(cleanupReplacement).toHaveBeenCalledOnce();
     expect(fs.existsSync(handoff.policyPath)).toBe(false);
     expect(fs.existsSync(livePath)).toBe(true);
+  });
+
+  it("materializes captured policy bytes even when the source path changes", () => {
+    const source = "version: 1\nnetwork_policies:\n  host_edit: {}\n";
+    const livePath = tempPolicy("live-captured.yaml", source);
+    const replacementPath = tempPolicy("replacement-captured.yaml", source);
+    fs.writeFileSync(livePath, "network_policies:\n  broken: [\n", "utf8");
+
+    const handoff = materializeRebuildPolicyHandoff({
+      livePolicyPath: livePath,
+      livePolicySource: source,
+      replacementPolicy: { policyPath: replacementPath, appliedPresets: [] },
+    });
+
+    expect(handoff.policyPath).not.toBe(livePath);
+    expect(fs.readFileSync(handoff.policyPath, "utf8")).toBe(source);
+    expect(handoff.cleanup?.()).toBe(true);
   });
 
   it("rejects live credential bindings outside the verified replacement plan", () => {

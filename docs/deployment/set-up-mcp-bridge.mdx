@@ -51,8 +51,8 @@ Host-side MCP bridges, proxies, relays, listeners, and stdio translation are exp
 | Credential boundary | OpenShell stores the raw value and resolves a sandbox placeholder only on an authorized request. | A NemoClaw host process would receive and retain the raw value while proxying traffic. |
 | Policy enforcement | OpenShell evaluates the destination, path, adapter identity, pinned addresses, and MCP methods before credential replacement. | The proxy would become a second authorization implementation outside OpenShell policy. |
 | Data-plane exposure | The sandbox connects through OpenShell's existing egress path; NemoClaw leaves no host listener or MCP traffic process. | A host listener and stdio-to-HTTP relay would expand the data plane and local attack surface. |
-| Failure behavior | Provider, policy, and adapter mutations fail closed and preserve retryable registry state when ownership or readiness cannot be proven. | Proxy failure could strand a listener, subprocess, or partially persisted secret-bearing launch state. |
-| Crash recovery | Randomized provider ownership records and per-sandbox lifecycle locks let lifecycle commands reconcile durable state. | Recovery would also have to discover orphan host processes and reconstruct their secret-bearing invocation state. |
+| Failure behavior | Provider, policy, and adapter mutations fail closed when source state or live ownership cannot be proven. | Proxy failure could strand a listener, subprocess, or partially persisted secret-bearing launch state. |
+| Crash recovery | Agent-native configuration plus live OpenShell resources are re-read under the per-sandbox lifecycle lock; no MCP registry or destroy marker is required. | Recovery would also have to discover orphan host processes and reconstruct their secret-bearing invocation state. |
 
 The decision record is tracked in [NVIDIA/NemoClaw#566](https://github.com/NVIDIA/NemoClaw/issues/566), and [NVIDIA/NemoClaw#5876](https://github.com/NVIDIA/NemoClaw/pull/5876) implements it.
 
@@ -123,7 +123,7 @@ This does not expose the raw credential to the sandbox before the request is aut
 ## Agent Adapters
 
 <AgentOnly variant="openclaw">
-OpenClaw uses `mcporter config add` in the sandbox.
+OpenClaw writes the native `openclaw.json` `mcp.servers` map in the sandbox. Older managed Mcporter entries are accepted only by the explicit `mcp migrate` path.
 </AgentOnly>
 <AgentOnly variant="hermes">
 Hermes writes managed HTTP entries under `/sandbox/.hermes/config.yaml`.
@@ -158,24 +158,15 @@ The command carries no MCP traffic or raw service credential, and its payload co
 </AgentOnly>
 <AgentOnly variant="openclaw">
 
-OpenClaw stores its managed MCP servers in the Mcporter config under the writable `workspace` state root.
-Use the host-side MCP commands so provider, policy, attachment, and adapter state change in one serialized transaction.
-
-`destroy --force` can continue only when every retained MCP adapter entry is an OpenClaw Mcporter entry.
-NemoClaw keeps the managed MCP policy and provider until OpenShell confirms deletion.
-If deletion fails, run `destroy --force` again.
-Do not onboard a same-name replacement.
-A successful workspace wipe removes the adapter entry.
-If the wipe does not complete successfully, use a different sandbox name to avoid the retained config.
-A destroy that was interrupted after its MCP phase already completed retries without this refusal, because that pass scrubs no adapter entry.
+OpenClaw stores MCP servers in the native `openclaw.json` `mcp.servers` map. Run `nemoclaw <name> mcp migrate` before the first mutation when an older sandbox still contains a managed Mcporter entry. The migration preview calls out that materializing the native entry activates behavior OpenClaw previously did not load.
 
 </AgentOnly>
 <AgentOnly variant="deepagents">
-The managed image pins Deep Agents Code `0.1.55` and keeps NemoClaw definitions in `/sandbox/.deepagents/.nemoclaw-mcp.json`.
+The managed image pins Deep Agents Code `0.1.55` and uses its native `/sandbox/.deepagents/.mcp.json` configuration.
 The launcher validates canonical HTTPS endpoints and OpenShell credential placeholders, then supplies Deep Agents Code with a process-local, integrity-bound snapshot for server starts and restarts.
 
 It prefers a sealed in-memory file when available; the anonymous read-only descriptor fallback verifies inode, size, and SHA-256 digest and fails closed on drift.
-NemoClaw never auto-loads user-owned `/sandbox/.deepagents/.mcp.json` or project MCP files into managed configuration.
+NemoClaw mutates only the named server and preserves unrelated native entries. Legacy `.nemoclaw-mcp.json` projections require explicit migration and are never layered with native state.
 
 ```json
 {
@@ -191,7 +182,7 @@ NemoClaw never auto-loads user-owned `/sandbox/.deepagents/.mcp.json` or project
 }
 ```
 
-External credential values remain in OpenShell provider state, not sandbox files or the NemoClaw registry.
+External credential values remain in OpenShell provider state, not sandbox files or NemoClaw state.
 </AgentOnly>
 
 ## Next Steps

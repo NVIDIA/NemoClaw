@@ -882,6 +882,7 @@ export function buildConfig(env: Env = process.env): JsonObject {
   };
   const openclawTools: JsonObject = {
     ...openclawToolOverrides,
+    alsoAllow: ["bundle-mcp"],
     // An explicit direct request is authoritative. Compatibility manifests may
     // downgrade progressive mode to false, but may never re-enable search over
     // a user's direct selection.

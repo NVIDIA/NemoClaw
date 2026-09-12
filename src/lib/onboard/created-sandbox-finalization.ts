@@ -603,7 +603,6 @@ type OnboardInferenceSelection = {
 };
 type OnboardMessagingRegistration = {
   readonly plannedMessagingState: RegistrationSeed["plannedMessagingState"];
-  readonly preservedMcpState: RegistrationSeed["preservedMcpState"];
   readonly hermesToolGateways: string[];
 };
 type OnboardCreationFidelity = {

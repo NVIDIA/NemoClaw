@@ -8,7 +8,7 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import type { McpBridgeEntry } from "../../state/registry";
+import type { McpSourceEntry } from "./mcp-bridge-contracts";
 import {
   buildHermesMcpExecArgs,
   buildHermesMcpProbeCommand,
@@ -16,7 +16,7 @@ import {
 } from "./mcp-bridge-adapter-hermes";
 import { buildHermesMcpStatusCommand } from "./mcp-bridge-adapter-status";
 
-const baseEntry: McpBridgeEntry = {
+const baseEntry: McpSourceEntry = {
   server: "github",
   agent: "hermes",
   adapter: "hermes-config",
@@ -24,7 +24,6 @@ const baseEntry: McpBridgeEntry = {
   env: ["GITHUB_TOKEN"],
   providerName: "alpha-mcp-github",
   policyName: "mcp-bridge-github",
-  addedAt: new Date(0).toISOString(),
 };
 
 describe("Hermes MCP config adapter", () => {

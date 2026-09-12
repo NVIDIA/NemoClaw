@@ -139,30 +139,6 @@ export function requiresSandboxRecreation(
   return explicitlyRequested || decision.kind !== "create";
 }
 
-export function mcpRegistryRemovalBlockReason(
-  decision: SandboxResumeDecision,
-  sandboxName: string | null,
-  webSearchConfig: WebSearchConfig | null,
-  getSandboxRegistryEntry: (sandboxName: string) => SandboxEntry | null,
-): string | null {
-  if (decision.kind !== "recreate" || !decision.removeRegistryEntry || !sandboxName) return null;
-  const mcpState = getSandboxRegistryEntry(sandboxName)?.mcp;
-  if (!mcpState) return null;
-
-  const selectedProvider = webSearchConfig ? webSearchProviderForConfig(webSearchConfig) : null;
-  if (selectedProvider) {
-    const credentialEnv = webSearchEnvFor(selectedProvider);
-    const collidingBridge = Object.values(mcpState.bridges).find((entry) =>
-      entry.env.includes(credentialEnv),
-    );
-    if (collidingBridge) {
-      return `  Cannot enable ${webSearchLabelFor(selectedProvider)}: MCP server '${collidingBridge.server}' already owns ${credentialEnv}. Use a distinct credential name.`;
-    }
-  }
-
-  return `  Sandbox '${sandboxName}' has managed MCP state. Use the transactional rebuild command before changing settings that recreate the sandbox.`;
-}
-
 function canReuseSandbox(signals: SandboxResumeSignals): boolean {
   return (
     !signals.resumeAgentChanged &&

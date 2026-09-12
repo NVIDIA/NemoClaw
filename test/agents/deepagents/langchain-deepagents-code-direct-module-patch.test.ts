@@ -624,7 +624,7 @@ check("disabled", False)
     "passes sealed and anonymous MCP snapshots through ServerProcess restart [%s]",
     (snapshotKind) => {
       const tempDir = createPatchedPackageFixture();
-      const configPath = path.join(tempDir, ".nemoclaw-mcp.json");
+      const configPath = path.join(tempDir, ".mcp.json");
       const managedConfig = {
         mcpServers: {
           github: {

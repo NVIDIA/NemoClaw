@@ -14,7 +14,7 @@ import {
   normalizeTrustedPrivateHost,
   parseTrustedPrivateHosts,
 } from "../../security/trusted-private-endpoint";
-import type { McpBridgeEntry } from "../../state/registry";
+import type { McpSourceEntry } from "./mcp-bridge-contracts";
 import { buildSubprocessEnv, isSubprocessEnvNameAllowed } from "../../subprocess-env";
 import {
   McpBridgeError,
@@ -469,7 +469,7 @@ export function assertAuthenticatedCredentialReference(env: readonly ParsedEnvRe
   validateMcpCredentialEnvName(env[0].name);
 }
 
-export function assertPersistedAuthenticatedBridgeEntry(entry: McpBridgeEntry): void {
+export function assertPersistedAuthenticatedBridgeEntry(entry: McpSourceEntry): void {
   if (!Array.isArray(entry.env) || entry.env.length !== 1 || !entry.providerName) {
     throw new McpBridgeError(
       `MCP server '${entry.server}' has no complete authenticated credential binding. Remove it with --force, then add it again with --env KEY.`,
@@ -479,7 +479,7 @@ export function assertPersistedAuthenticatedBridgeEntry(entry: McpBridgeEntry): 
   validatePersistedMcpCredentialEnvName(entry.env[0]);
 }
 
-export function assertAuthenticatedBridgeEntry(entry: McpBridgeEntry): void {
+export function assertAuthenticatedBridgeEntry(entry: McpSourceEntry): void {
   assertPersistedAuthenticatedBridgeEntry(entry);
   validateMcpCredentialEnvName(entry.env[0]);
 }

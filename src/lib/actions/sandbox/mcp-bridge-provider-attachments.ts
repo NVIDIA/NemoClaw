@@ -8,7 +8,7 @@
  */
 
 import type { OpenShellProviderAdapter } from "../../adapters/openshell/provider-adapter";
-import type { McpBridgeEntry } from "../../state/registry";
+import type { McpSourceEntry } from "./mcp-bridge-contracts";
 import { McpBridgeError } from "./mcp-bridge-contracts";
 import {
   createMcpProviderAdapterBoundary,
@@ -28,7 +28,7 @@ import {
 
 async function exactAttachment(
   sandboxName: string,
-  entry: McpBridgeEntry,
+  entry: McpSourceEntry,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
   providerAdapter?: OpenShellProviderAdapter,
 ): Promise<{ inspection: McpProviderAttachmentInspection; attachment?: McpProviderAttachment }> {
@@ -47,7 +47,7 @@ async function exactAttachment(
 
 function attachmentMatchesCurrentProviderSnapshot(
   attachment: McpProviderAttachment | undefined,
-  entry: McpBridgeEntry,
+  entry: McpSourceEntry,
 ): boolean {
   return (
     !!attachment &&
@@ -60,7 +60,7 @@ function attachmentMatchesCurrentProviderSnapshot(
 
 export async function attachProvider(
   sandboxName: string,
-  entry: McpBridgeEntry,
+  entry: McpSourceEntry,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
   providerAdapter?: OpenShellProviderAdapter,
 ): Promise<void> {
@@ -124,7 +124,7 @@ const MCP_PROVIDER_DETACH_ATTEMPTS = 2;
 
 export async function detachProvider(
   sandboxName: string,
-  entry: McpBridgeEntry,
+  entry: McpSourceEntry,
   options: {
     allowLegacyGeneric?: boolean;
     bestEffort?: boolean;
@@ -221,7 +221,7 @@ export async function detachProvider(
  */
 export async function detachMissingProviderReference(
   sandboxName: string,
-  entry: McpBridgeEntry,
+  entry: McpSourceEntry,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
   providerAdapter?: OpenShellProviderAdapter,
 ): Promise<ProviderDetachOutcome> {

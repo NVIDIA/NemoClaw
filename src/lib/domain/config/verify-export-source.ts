@@ -259,7 +259,6 @@ function classifyExcludedCapabilities(entry: ObservedExportRegistry): ExportFind
       "web search",
     ],
     ["spec.sandboxes[].integrations.messaging", entry.messaging, "messaging"],
-    ["spec.sandboxes[].integrations.mcp", entry.mcp, "managed tools"],
     [
       "spec.sandboxes[].agents.secondary",
       entry.openclawImagePluginInstalls,

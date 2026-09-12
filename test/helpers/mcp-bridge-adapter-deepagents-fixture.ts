@@ -7,9 +7,9 @@ import os from "node:os";
 import path from "node:path";
 
 import { DEEPAGENTS_MCP_CONFIG_PATH } from "../../src/lib/actions/sandbox/mcp-bridge-adapter-status";
-import type { McpBridgeEntry } from "../../src/lib/state/registry";
+import type { McpSourceEntry } from "../../src/lib/actions/sandbox/mcp-bridge-contracts";
 
-export const baseEntry: McpBridgeEntry = {
+export const baseEntry: McpSourceEntry = {
   server: "github",
   agent: "langchain-deepagents-code",
   adapter: "deepagents-config",
@@ -17,7 +17,6 @@ export const baseEntry: McpBridgeEntry = {
   env: ["GITHUB_TOKEN"],
   providerName: "alpha-mcp-github",
   policyName: "mcp-bridge-github",
-  addedAt: new Date(0).toISOString(),
 };
 
 export interface DeepAgentsConfigCommandResult {

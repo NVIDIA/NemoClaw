@@ -7,7 +7,7 @@
 set -euo pipefail
 
 if [ "${1:-}" = "--nemoclaw-mcp-capability" ] && [ "$#" -eq 1 ]; then
-  printf '%s\n' 'NEMOCLAW_DEEPAGENTS_MCP_CAPABILITY=2'
+  printf '%s\n' 'NEMOCLAW_DEEPAGENTS_MCP_CAPABILITY=3'
   exit 0
 fi
 

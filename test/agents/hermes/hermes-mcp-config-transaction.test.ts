@@ -1489,8 +1489,9 @@ else:
       });
       expect(result.stdout).toContain("re-kick sent: yes");
       expect(fs.readFileSync(configPath, "utf8")).toBe(config);
-      expect(fs.readFileSync(compatHash, "utf8")).toBe(originalHash);
-      expect(fs.readFileSync(strictHash, "utf8")).toBe(originalHash);
+      const nativeHash = `${originalHash.split("\n").slice(0, 2).join("\n")}\n`;
+      expect(fs.readFileSync(compatHash, "utf8")).toBe(nativeHash);
+      expect(fs.readFileSync(strictHash, "utf8")).toBe(nativeHash);
     } finally {
       fs.rmSync(temp, { recursive: true, force: true });
     }

@@ -101,7 +101,7 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
     expect(output).toContain("Restored 1 directories, 1 files");
   });
 
-  it("repairs an empty managed projection but leaves custom-image MCP state to the image (#10756)", async () => {
+  it("repairs an empty native config but leaves custom-image MCP state to the image (#10756)", async () => {
     f.getLatestBackupMock.mockReturnValue({
       snapshotVersion: 4,
       name: "stable",
@@ -112,13 +112,13 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
 
     f.getSandboxMock.mockReturnValue({ name: "alpha", agent: "langchain-deepagents-code" });
     await runSandboxSnapshot("alpha", { kind: "restore" });
-    expect(f.restoreDeepAgentsManagedMcpProjectionMock).toHaveBeenCalledWith("alpha", [], {
+    expect(f.restoreDeepAgentsNativeMcpConfigMock).toHaveBeenCalledWith("alpha", [], {
       gatewayName: "nemoclaw-8091",
       workspace: "default",
     });
     expect(f.restoreSandboxStateMock).toHaveBeenCalledWith("alpha", "/tmp/backup-alpha");
 
-    f.restoreDeepAgentsManagedMcpProjectionMock.mockClear();
+    f.restoreDeepAgentsNativeMcpConfigMock.mockClear();
     f.getSandboxMock.mockReturnValue({
       name: "alpha",
       agent: "langchain-deepagents-code",
@@ -133,13 +133,12 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
             env: ["GITHUB_TOKEN"],
             providerName: "alpha-mcp-github",
             policyName: "mcp-bridge-github",
-            addedAt: "2026-06-01T00:00:00.000Z",
           },
         },
       },
     });
     await runSandboxSnapshot("alpha", { kind: "restore" });
-    expect(f.restoreDeepAgentsManagedMcpProjectionMock).not.toHaveBeenCalled();
+    expect(f.restoreDeepAgentsNativeMcpConfigMock).not.toHaveBeenCalled();
     expect(f.restoreSandboxStateMock).toHaveBeenCalledWith("alpha", "/tmp/backup-alpha");
     expect(f.restoreSandboxStateMock).toHaveBeenCalledTimes(2);
   });
@@ -164,7 +163,6 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
             env: ["GITHUB_TOKEN"],
             providerName: "alpha-mcp-github",
             policyName: "mcp-bridge-github",
-            addedAt: "2026-06-01T00:00:00.000Z",
           },
           jira: {
             server: "jira",
@@ -174,22 +172,20 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
             env: ["JIRA_MCP_TOKEN"],
             providerName: "alpha-mcp-jira",
             policyName: "mcp-bridge-jira",
-            addedAt: "2026-06-01T00:00:00.000Z",
           },
           slack: {
             server: "slack",
             agent: "openclaw",
-            adapter: "mcporter",
+            adapter: "openclaw-config",
             url: "https://mcp.slack.com/v1/",
             env: ["SLACK_MCP_TOKEN"],
             providerName: "alpha-mcp-slack",
             policyName: "mcp-bridge-slack",
-            addedAt: "2026-06-01T00:00:00.000Z",
           },
         },
       },
     });
-    f.restoreDeepAgentsManagedMcpProjectionMock.mockImplementation(async () => {
+    f.restoreDeepAgentsNativeMcpConfigMock.mockImplementation(() => {
       f.lifecycleMock.events.push("restore-mcp-projection");
     });
     f.restoreSandboxStateMock.mockImplementation(() => {
@@ -206,7 +202,7 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
 
     await runSandboxSnapshot("alpha", { kind: "restore" });
 
-    expect(f.restoreDeepAgentsManagedMcpProjectionMock).toHaveBeenCalledWith(
+    expect(f.restoreDeepAgentsNativeMcpConfigMock).toHaveBeenCalledWith(
       "alpha",
       [expect.objectContaining({ server: "github" }), expect.objectContaining({ server: "jira" })],
       { gatewayName: "nemoclaw-8091", workspace: "default" },
@@ -217,8 +213,8 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
   it("preserves an occupied recovery path and reports an unused location before retry (#10756)", async () => {
     const sandboxRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-snapshot-recovery-"));
     tempHomes.push(sandboxRoot);
-    const occupiedRecoveryPath = path.join(sandboxRoot, ".nemoclaw-mcp.json.recovery");
-    const projectionPath = path.join(sandboxRoot, ".deepagents", ".nemoclaw-mcp.json");
+    const occupiedRecoveryPath = path.join(sandboxRoot, ".mcp.json.recovery");
+    const projectionPath = path.join(sandboxRoot, ".deepagents", ".mcp.json");
     const sandboxName = "alpha $(printf injected)";
     fs.mkdirSync(occupiedRecoveryPath, { recursive: true });
     fs.writeFileSync(path.join(occupiedRecoveryPath, "keep.txt"), "existing recovery\n");
@@ -244,14 +240,13 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
             env: ["GITHUB_TOKEN"],
             providerName: "alpha-mcp-github",
             policyName: "mcp-bridge-github",
-            addedAt: "2026-06-01T00:00:00.000Z",
           },
         },
       },
     });
-    f.restoreDeepAgentsManagedMcpProjectionMock
-      .mockImplementationOnce(async () => {
-        throw new Error("managed MCP projection path is a directory");
+    f.restoreDeepAgentsNativeMcpConfigMock
+      .mockImplementationOnce(() => {
+        throw new Error("native MCP configuration path is a directory");
       })
       .mockImplementationOnce(() => {});
     const { runSandboxSnapshot, SnapshotCommandError } = await import("./snapshot");
@@ -264,7 +259,7 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
       exitCode: 1,
       lines: [
         `Snapshot files were not restored into '${sandboxName}'.`,
-        expect.stringContaining("managed MCP projection path is a directory"),
+        expect.stringContaining("native MCP configuration path is a directory"),
         expect.any(String),
       ],
     });
@@ -292,9 +287,7 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
     expect(staleRecoveryResult.stderr).toContain("is no longer a directory");
     expect(fs.readFileSync(projectionPath, "utf8")).toBe(validProjection);
     expect(
-      fs
-        .readdirSync(sandboxRoot)
-        .filter((entry) => entry.startsWith(".nemoclaw-mcp.json.recovery.")),
+      fs.readdirSync(sandboxRoot).filter((entry) => entry.startsWith(".mcp.json.recovery.")),
     ).toEqual([]);
 
     fs.rmSync(projectionPath);
@@ -308,22 +301,22 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
     );
     const recoveryDirectories = fs
       .readdirSync(sandboxRoot)
-      .filter((entry) => entry.startsWith(".nemoclaw-mcp.json.recovery."));
+      .filter((entry) => entry.startsWith(".mcp.json.recovery."));
     expect(recoveryDirectories).toHaveLength(1);
     const recoveredProjectionPath = path.join(sandboxRoot, recoveryDirectories[0], "projection");
     expect(fs.readFileSync(path.join(recoveredProjectionPath, "managed.json"), "utf8")).toBe(
       '{"managed":true}\n',
     );
     expect(recoveryResult.stdout).toBe(
-      `Moved managed MCP projection to ${recoveredProjectionPath}\n`,
+      `Moved native MCP configuration to ${recoveredProjectionPath}\n`,
     );
     expect(recoveryScript).toContain(`recovery_dir=$(mktemp -d ${occupiedRecoveryPath}.XXXXXX)`);
     expect(recoveryGuidance).toContain('mv -- "$projection" "$recovery_dir/projection"');
     expect(recoveryGuidance).toContain(
-      'printf "Moved managed MCP projection to %s\\n" "$recovery_dir/projection"',
+      'printf "Moved native MCP configuration to %s\\n" "$recovery_dir/projection"',
     );
     expect(recoveryGuidance).not.toContain(
-      "mv -- /sandbox/.deepagents/.nemoclaw-mcp.json /sandbox/.nemoclaw-mcp.json.recovery",
+      "mv -- /sandbox/.deepagents/.mcp.json /sandbox/.mcp.json.recovery",
     );
     expect(f.restoreSandboxStateMock).not.toHaveBeenCalled();
 

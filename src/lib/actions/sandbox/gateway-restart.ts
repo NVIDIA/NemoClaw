@@ -5,7 +5,6 @@ import { GATEWAY_RESTART_MARKERS as MARKERS } from "../../agent/gateway-restart-
 import * as agentRuntime from "../../agent/runtime";
 import { G, R } from "../../cli/terminal-style";
 import { redactFullWithUrls } from "../../security/redact";
-import { hermesMcpReconciliationRemediationLines } from "./mcp-bridge-hermes-reconciliation";
 import { assertHermesPortableCommandUnavailable } from "../../onboard/experimental/portable-agent-lifecycle";
 import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock-acquisition";
 
@@ -65,7 +64,7 @@ export type GatewayRestartFailureLayer =
   | "secret-boundary refusal"
   | "unsafe config path"
   | "config hash mismatch"
-  | "MCP reconciliation refusal"
+  | "mcp configuration drift"
   | "relaunch quarantined"
   | "launch failure"
   | "health timeout"
@@ -259,14 +258,10 @@ export function classifyGatewayRestartFailure(result: GatewayRestartCommandResul
       detail: detail || "the in-sandbox supervisor quarantined gateway relaunch",
     };
   }
-  if (
-    output.includes("mcp-integrity") ||
-    output.includes("mcp-reconcile-required") ||
-    output.includes("HERMES_MCP_CONFIG_DRIFT")
-  ) {
+  if (output.includes("HERMES_MCP_CONFIG_DRIFT")) {
     return {
-      layer: "MCP reconciliation refusal",
-      detail: detail || "Hermes MCP reconciliation refused",
+      layer: "mcp configuration drift",
+      detail: detail || "Hermes MCP configuration integrity check failed",
     };
   }
   if (
@@ -287,14 +282,18 @@ export function classifyGatewayRestartFailure(result: GatewayRestartCommandResul
 
 export function isGatewayTerminalRepairLayer(
   layer: GatewayRestartFailureLayer | null | undefined,
-): layer is "config hash mismatch" | "relaunch quarantined" {
-  return layer === "config hash mismatch" || layer === "relaunch quarantined";
+): layer is "config hash mismatch" | "mcp configuration drift" | "relaunch quarantined" {
+  return (
+    layer === "config hash mismatch" ||
+    layer === "mcp configuration drift" ||
+    layer === "relaunch quarantined"
+  );
 }
 
 /** Report terminal restart repair without treating process quarantine as config drift. */
 export function gatewayTerminalRepairLines(
   sandboxName: string,
-  layer: "config hash mismatch" | "relaunch quarantined",
+  layer: "config hash mismatch" | "mcp configuration drift" | "relaunch quarantined",
 ): readonly string[] {
   if (layer === "relaunch quarantined") {
     return [
@@ -302,6 +301,14 @@ export function gatewayTerminalRepairLines(
       `Inspect the Hermes failure with \`nemoclaw ${sandboxName} logs --tail 50\`.`,
       `After correcting the cause, reset the supervisor with \`nemoclaw ${sandboxName} stop\`, then \`nemoclaw ${sandboxName} start\`.`,
       `If the sandbox still cannot start, rebuild it with \`nemoclaw ${sandboxName} rebuild --yes\`.`,
+    ];
+  }
+  if (layer === "mcp configuration drift") {
+    return [
+      "Hermes refused the gateway restart because its native MCP configuration is missing, conflicting, or not reconciled.",
+      `Inspect the source-backed state with \`nemoclaw ${sandboxName} mcp status --json\`.`,
+      `Migrate legacy entries with \`nemoclaw ${sandboxName} mcp migrate --apply\`; repair a missing or conflicting entry explicitly, or remove and add it again.`,
+      "Retry the gateway restart only after MCP status reports configured policy and provider sources.",
     ];
   }
   return [
@@ -344,11 +351,6 @@ export function printGatewayRestartFailure(
   }
   // Remediation is emitted outside the detail guard: an empty controller detail
   // is exactly the case where the operator has nothing else to go on.
-  if (layer === "MCP reconciliation refusal") {
-    for (const line of hermesMcpReconciliationRemediationLines(sandboxName)) {
-      console.error(`  ${line}`);
-    }
-  }
   if (gatewayLogTail.length > 0) {
     console.error("  Hermes gateway log tail (sanitized):");
     for (const line of gatewayLogTail) console.error(`  ${line}`);

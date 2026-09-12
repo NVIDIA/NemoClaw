@@ -32,7 +32,7 @@ export function prepareSandboxToolDisclosure(
   inspectSandboxForCreate: SandboxLifecycleHelpers["inspectSandboxForCreate"],
   desiredToolDisclosure: ToolDisclosure | null = null,
 ) {
-  const { existingEntry, preservedMcpState, liveExists } = inspectSandboxForCreate(sandboxName);
+  const { existingEntry, liveExists } = inspectSandboxForCreate(sandboxName);
   let mode: ToolDisclosure;
   try {
     mode = resolveSandboxToolDisclosure({
@@ -69,7 +69,6 @@ export function prepareSandboxToolDisclosure(
   );
   return {
     existingEntry,
-    preservedMcpState,
     liveExists,
     effectiveToolDisclosure: mode,
     toolDisclosureMigrationNeeded: migrationNeeded,
@@ -99,7 +98,6 @@ export function prepareHermesPortableToolDisclosure(
   }
   return {
     existingEntry: null,
-    preservedMcpState: undefined,
     liveExists: false,
     effectiveToolDisclosure: mode,
     toolDisclosureMigrationNeeded: false,

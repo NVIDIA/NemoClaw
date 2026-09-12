@@ -25,7 +25,9 @@ import {
   type GatewayOwner,
 } from "../../onboard/gateway-ownership";
 import { replayTrustedPrivateEndpoint } from "../../security/trusted-private-endpoint";
-import { listExtraProviders, type McpBridgeEntry, type SandboxEntry } from "../../state/registry";
+import { listExtraProviders } from "../../state/registry/extra-providers";
+import type { SandboxEntry } from "../../state/registry/types";
+import type { McpSourceEntry } from "./mcp-bridge-contracts";
 import { getPersistedSandboxTargetGateway } from "./gateway-target";
 import { McpBridgeError } from "./mcp-bridge-contracts";
 import type { McpBridgeTargetValidation } from "./mcp-bridge-url-validation";
@@ -239,7 +241,7 @@ export async function inspectMcpProviderAttachments(
 
 export async function assertNoAttachedProviderCredentialCollisions(
   sandboxName: string,
-  entries: readonly McpBridgeEntry[],
+  entries: readonly McpSourceEntry[],
   runtimeSelection: McpProviderInspectionRuntimeSelection,
 ): Promise<void> {
   if (entries.length === 0) return;
@@ -266,7 +268,7 @@ export async function assertNoAttachedProviderCredentialCollisions(
 }
 
 export async function assertNoRegisteredProviderCredentialCollisions(
-  entries: readonly McpBridgeEntry[],
+  entries: readonly McpSourceEntry[],
   deps: {
     listExtraProviders?: () => string[];
     inspectProvider?: (providerName: string) => Promise<McpProviderInspection>;
@@ -275,6 +277,9 @@ export async function assertNoRegisteredProviderCredentialCollisions(
 ): Promise<void> {
   if (entries.length === 0) return;
   for (const entry of entries) assertAuthenticatedBridgeEntry(entry);
+  // Only registry-configured extra providers are guaranteed to attach during
+  // rebuild. A conservatively retained MCP provider is inert once its native
+  // agent source is removed and must not reserve its credential key forever.
   const queryExtraProviders = deps.listExtraProviders ?? listExtraProviders;
   const inspectProvider =
     deps.inspectProvider ??
@@ -285,7 +290,7 @@ export async function assertNoRegisteredProviderCredentialCollisions(
     if (provider.exists !== true || !provider.id || !provider.credentialKeys) {
       throw new McpBridgeError(
         provider.error ??
-          `Could not inspect registered provider '${providerName}' before managed MCP reconciliation.`,
+          `Could not inspect registered provider '${providerName}' during the live MCP collision check.`,
       );
     }
     for (const entry of entries) {
@@ -295,7 +300,7 @@ export async function assertNoRegisteredProviderCredentialCollisions(
         !(providerName === entry.providerName && provider.id === entry.providerId)
       ) {
         throw new McpBridgeError(
-          `Credential key '${credentialKey}' is already supplied by registered provider '${providerName}' with ID '${provider.id}'. Refusing to continue managed MCP because this provider will attach during sandbox rebuild.`,
+          `Credential key '${credentialKey}' is already supplied by configured extra provider '${providerName}' with ID '${provider.id}'. Refusing to continue managed MCP because this provider will attach during sandbox rebuild.`,
         );
       }
     }
@@ -304,7 +309,7 @@ export async function assertNoRegisteredProviderCredentialCollisions(
 
 export async function assertNoProviderCredentialCollisions(
   sandboxName: string,
-  entries: readonly McpBridgeEntry[],
+  entries: readonly McpSourceEntry[],
   runtimeSelection: McpProviderInspectionRuntimeSelection,
 ): Promise<void> {
   await assertNoAttachedProviderCredentialCollisions(sandboxName, entries, runtimeSelection);
@@ -357,8 +362,8 @@ export function providerShapeDetail(
   const id = inspection.id ?? "unparseable";
   if (!expectedProviderId) {
     return inspection.exists
-      ? `The registry entry has no stable OpenShell provider ID; live provider ID is '${id}'.`
-      : "The registry entry has no stable OpenShell provider ID.";
+      ? `The source linkage has no stable OpenShell provider ID; live provider ID is '${id}'.`
+      : "The source linkage has no stable OpenShell provider ID.";
   }
   if (!inspection.exists) return undefined;
   if (providerMatchesCredential(inspection, expectedCredential, expectedProviderId)) {
@@ -383,7 +388,7 @@ export function providerShapeDetail(
 }
 
 export async function assertMcpProviderRecoverable(
-  entry: McpBridgeEntry,
+  entry: McpSourceEntry,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
 ): Promise<McpProviderInspection> {
   assertAuthenticatedBridgeEntry(entry);
@@ -426,7 +431,7 @@ export async function assertMcpProviderRecoverable(
 }
 
 export async function preflightMcpEntryTargets(
-  entries: readonly McpBridgeEntry[],
+  entries: readonly McpSourceEntry[],
 ): Promise<Map<string, McpBridgeTargetValidation>> {
   for (const entry of entries) assertAuthenticatedBridgeEntry(entry);
   const results = await Promise.all(

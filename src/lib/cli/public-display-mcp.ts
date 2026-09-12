@@ -44,8 +44,15 @@ export const SANDBOX_MCP_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLa
       group: "MCP Servers",
       order: 25.6,
       usage: "nemoclaw <name> mcp remove",
-      description: "Remove an MCP server, provider, and generated policy",
+      description: "Remove an agent registration and detach its provider",
       flags: "<server> [--force]",
+    },
+    {
+      group: "MCP Servers",
+      order: 25.6,
+      usage: "nemoclaw <name> mcp migrate",
+      description: "Preview or apply legacy-to-native MCP migration",
+      flags: "[--apply] [--json]",
     },
   ],
 };

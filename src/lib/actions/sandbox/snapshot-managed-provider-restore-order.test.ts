@@ -58,7 +58,7 @@ const providerRestore = vi.hoisted(() => {
     events.push("provider-restore-proof");
     return { phase: "validated" };
   });
-  const restoreDeepAgentsManagedMcpProjection = vi.fn();
+  const restoreDeepAgentsNativeMcpConfig = vi.fn();
   return {
     events,
     source,
@@ -67,7 +67,7 @@ const providerRestore = vi.hoisted(() => {
     requireCurrentSnapshotRuntimeProvider,
     prepareSandboxRuntimeRestore,
     confirmSandboxRuntimeRestore,
-    restoreDeepAgentsManagedMcpProjection,
+    restoreDeepAgentsNativeMcpConfig,
   };
 });
 
@@ -80,12 +80,29 @@ vi.mock("./snapshot/dependencies", () => ({
     gatewayName: "nemoclaw",
     workspace: "default",
   })),
+  inspectAgentMcpSources: vi.fn((sandbox: { agent?: string | null }) => ({
+    native:
+      sandbox.agent === "langchain-deepagents-code"
+        ? {
+            github: {
+              server: "github",
+              agent: "langchain-deepagents-code",
+              adapter: "deepagents-config",
+              url: "https://api.githubcopilot.com/mcp/",
+              env: ["GITHUB_TOKEN"],
+              providerName: "alpha-mcp-github",
+              policyName: "mcp-bridge-github",
+            },
+          }
+        : {},
+    legacy: {},
+  })),
   prepareManagedSnapshotProfileRestore: providerRestore.prepareManagedSnapshotProfileRestore,
   prepareSandboxRuntimeRestore: providerRestore.prepareSandboxRuntimeRestore,
   readManagedSnapshotProfileAuthority: providerRestore.readManagedSnapshotProfileAuthority,
   rejectManagedSnapshotCloneUntilRebind: vi.fn(),
   requireCurrentSnapshotRuntimeProvider: providerRestore.requireCurrentSnapshotRuntimeProvider,
-  restoreDeepAgentsManagedMcpProjection: providerRestore.restoreDeepAgentsManagedMcpProjection,
+  restoreDeepAgentsNativeMcpConfig: providerRestore.restoreDeepAgentsNativeMcpConfig,
 }));
 
 function managedWorkload(agent: ShippedManagedImageAgent = "openclaw") {
@@ -124,9 +141,22 @@ beforeEach(() => {
   providerRestore.readManagedSnapshotProfileAuthority.mockClear();
   providerRestore.prepareManagedSnapshotProfileRestore.mockClear();
   providerRestore.requireCurrentSnapshotRuntimeProvider.mockClear();
-  providerRestore.prepareSandboxRuntimeRestore.mockClear();
+  providerRestore.prepareSandboxRuntimeRestore.mockReset().mockImplementation(() => {
+    providerRestore.events.push("provider-preflight");
+    return {
+      phase: "preflighted",
+      targetProviderId: "docker",
+      targetSandboxName: "alpha",
+      source: providerRestore.source,
+      preflight: {},
+      managedProfile: {
+        agent: "openclaw",
+        profileFingerprint: "a".repeat(64),
+      },
+    };
+  });
   providerRestore.confirmSandboxRuntimeRestore.mockClear();
-  providerRestore.restoreDeepAgentsManagedMcpProjection.mockClear();
+  providerRestore.restoreDeepAgentsNativeMcpConfig.mockClear();
   fixture.getLatestBackupMock.mockReturnValue(managedSnapshot());
   fixture.getSandboxMock.mockReturnValue({
     name: "alpha",
@@ -232,7 +262,7 @@ describe("managed snapshot provider restore ordering", () => {
     expect(providerRestore.confirmSandboxRuntimeRestore).not.toHaveBeenCalled();
   });
 
-  it("rejects changed provider authority before repairing the managed MCP projection (#10756)", async () => {
+  it("rejects changed provider authority before repairing the native MCP configuration (#10756)", async () => {
     fixture.getLatestBackupMock.mockReturnValue(managedSnapshot("langchain-deepagents-code"));
     fixture.getSandboxMock.mockReturnValue({
       name: "alpha",
@@ -248,7 +278,6 @@ describe("managed snapshot provider restore ordering", () => {
             env: ["GITHUB_TOKEN"],
             providerName: "alpha-mcp-github",
             policyName: "mcp-bridge-github",
-            addedAt: "2026-06-01T00:00:00.000Z",
           },
         },
       },
@@ -279,7 +308,7 @@ describe("managed snapshot provider restore ordering", () => {
       })
       .mockImplementationOnce(() => {
         providerRestore.events.push("provider-preflight-rejected");
-        throw new Error("runtime changed before projection repair");
+        throw new Error("runtime changed before native config repair");
       });
     const { runSandboxSnapshot } = await import("./snapshot");
 
@@ -288,12 +317,12 @@ describe("managed snapshot provider restore ordering", () => {
     });
 
     expect(providerRestore.events).toEqual(["provider-preflight", "provider-preflight-rejected"]);
-    expect(providerRestore.restoreDeepAgentsManagedMcpProjection).not.toHaveBeenCalled();
+    expect(providerRestore.restoreDeepAgentsNativeMcpConfig).not.toHaveBeenCalled();
     expect(fixture.restoreSandboxStateMock).not.toHaveBeenCalled();
     expect(console.error).toHaveBeenCalledWith("  Destination 'alpha' was not changed.");
   });
 
-  it("rejects changed snapshot content before repairing the managed MCP projection (#10756)", async () => {
+  it("rejects changed snapshot content before repairing the native MCP configuration (#10756)", async () => {
     fixture.getLatestBackupMock.mockReturnValue(managedSnapshot("langchain-deepagents-code"));
     fixture.getSandboxMock.mockReturnValue({
       name: "alpha",
@@ -326,7 +355,7 @@ describe("managed snapshot provider restore ordering", () => {
       exitCode: 1,
     });
 
-    expect(providerRestore.restoreDeepAgentsManagedMcpProjection).not.toHaveBeenCalled();
+    expect(providerRestore.restoreDeepAgentsNativeMcpConfig).not.toHaveBeenCalled();
     expect(fixture.restoreSandboxStateMock).not.toHaveBeenCalled();
     expect(console.error).toHaveBeenCalledWith(
       expect.stringContaining("Selected snapshot content changed before filesystem mutation"),

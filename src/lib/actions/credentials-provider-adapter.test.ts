@@ -87,7 +87,6 @@ describe("credential actions use typed OpenShell provider results", () => {
       recoverNamedGatewayRuntime: async () => ({ recovered: true }),
       recordExtraProvider: () => true,
       forgetExtraProvider: () => true,
-      listManagedMcpCredentialReservations: () => [],
     });
   });
 
@@ -426,16 +425,17 @@ describe("credential actions use typed OpenShell provider results", () => {
       recoverNamedGatewayRuntime: async () => ({ recovered: true }),
       recordExtraProvider: () => true,
       forgetExtraProvider,
-      listManagedMcpCredentialReservations: () => [],
     });
     const createProvider: OpenShellProviderAdapter["createProvider"] = async () => ({
       ok: false,
       error: testCase.createError,
     });
-    const listProviders: OpenShellProviderAdapter["listProviders"] = async () => testCase.inventory;
+    const listProviders = vi
+      .fn<OpenShellProviderAdapter["listProviders"]>()
+      .mockResolvedValue(testCase.inventory);
     const adapter = providerAdapter({
       createProvider: vi.fn(createProvider),
-      listProviders: vi.fn(listProviders),
+      listProviders,
     });
 
     const result = await runCredentialsAddAction(
@@ -524,23 +524,26 @@ describe("credential actions use typed OpenShell provider results", () => {
     expect(adapter.createProvider).not.toHaveBeenCalled();
   });
 
-  it("creates from existing credentials when inspected keys do not overlap managed MCP reservations (#9806)", async () => {
-    setGlobalCliActionRuntimeHooksForTest({
-      recoverNamedGatewayRuntime: async () => ({ recovered: true }),
-      recordExtraProvider: () => true,
-      forgetExtraProvider: () => true,
-      listManagedMcpCredentialReservations: () => [
-        {
-          sandboxName: "hermes",
-          server: "maas-glean",
-          credentialKeys: ["MAAS_GLEAN_TOKEN"],
-        },
-      ],
-    });
+  it("creates from existing credentials when live MCP provider keys do not overlap (#9806)", async () => {
     const inspectProviderProfile = vi.fn<OpenShellProviderAdapter["inspectProviderProfile"]>(
       async () => ({ ok: true, value: { credentialKeys: ["CUSTOM_TOKEN"] } }),
     );
-    const adapter = providerAdapter({ inspectProviderProfile });
+    const adapter = providerAdapter({
+      inspectProviderProfile,
+      listProviders: vi.fn<OpenShellProviderAdapter["listProviders"]>(async () => ({
+        ok: true,
+        value: { names: ["hermes-mcp-maas"] },
+      })),
+      getProvider: vi.fn<OpenShellProviderAdapter["getProvider"]>(async () => ({
+        ok: true,
+        value: {
+          name: "hermes-mcp-maas",
+          type: "nemoclaw-mcp-v1",
+          credentialKeys: ["MAAS_GLEAN_TOKEN"],
+          configKeys: [],
+        },
+      })),
+    });
 
     const result = await runCredentialsAddAction(
       {
@@ -555,26 +558,31 @@ describe("credential actions use typed OpenShell provider results", () => {
 
     expect(result.exitCode).toBe(0);
     expect(adapter.inspectProviderProfile).toHaveBeenCalledOnce();
+    expect(adapter.listProviders).not.toHaveBeenCalled();
+    expect(adapter.getProvider).not.toHaveBeenCalled();
     expect(adapter.createProvider).toHaveBeenCalledOnce();
   });
 
-  it("rejects existing credentials whose inspected key overlaps a managed MCP reservation (#9806)", async () => {
-    setGlobalCliActionRuntimeHooksForTest({
-      recoverNamedGatewayRuntime: async () => ({ recovered: true }),
-      recordExtraProvider: () => true,
-      forgetExtraProvider: () => true,
-      listManagedMcpCredentialReservations: () => [
-        {
-          sandboxName: "hermes",
-          server: "maas-glean",
-          credentialKeys: ["MAAS_GLEAN_TOKEN"],
-        },
-      ],
-    });
+  it("defers overlapping retained-provider checks until an actual sandbox attachment (#9806)", async () => {
     const inspectProviderProfile = vi.fn<OpenShellProviderAdapter["inspectProviderProfile"]>(
       async () => ({ ok: true, value: { credentialKeys: ["MAAS_GLEAN_TOKEN"] } }),
     );
-    const adapter = providerAdapter({ inspectProviderProfile });
+    const adapter = providerAdapter({
+      inspectProviderProfile,
+      listProviders: vi.fn<OpenShellProviderAdapter["listProviders"]>(async () => ({
+        ok: true,
+        value: { names: ["destination-telegram-bridge"] },
+      })),
+      getProvider: vi.fn<OpenShellProviderAdapter["getProvider"]>(async () => ({
+        ok: true,
+        value: {
+          name: "destination-telegram-bridge",
+          type: "nemoclaw-mcp-v1",
+          credentialKeys: ["MAAS_GLEAN_TOKEN"],
+          configKeys: [],
+        },
+      })),
+    });
 
     const result = await runCredentialsAddAction(
       {
@@ -587,12 +595,11 @@ describe("credential actions use typed OpenShell provider results", () => {
       { providerAdapter: adapter },
     );
 
-    expect(result.exitCode).toBe(1);
-    expect(result.failureLines.join("\n")).toContain(
-      "Credential key 'MAAS_GLEAN_TOKEN' is reserved by managed MCP server 'maas-glean' on sandbox 'hermes'",
-    );
+    expect(result.exitCode).toBe(0);
     expect(adapter.inspectProviderProfile).toHaveBeenCalledOnce();
-    expect(adapter.createProvider).not.toHaveBeenCalled();
+    expect(adapter.listProviders).not.toHaveBeenCalled();
+    expect(adapter.getProvider).not.toHaveBeenCalled();
+    expect(adapter.createProvider).toHaveBeenCalledOnce();
   });
 
   it("lists credentials separately from messaging bridge providers (#9806)", async () => {
@@ -721,7 +728,6 @@ describe("credential actions use typed OpenShell provider results", () => {
       recoverNamedGatewayRuntime,
       recordExtraProvider: () => true,
       forgetExtraProvider: () => true,
-      listManagedMcpCredentialReservations: () => [],
     });
     const promptSpy = vi.spyOn(readline, "createInterface").mockImplementation(() => {
       throw new Error("credentials reset prompted for an invalid provider name");
@@ -922,7 +928,6 @@ describe("credential actions use typed OpenShell provider results", () => {
       recoverNamedGatewayRuntime: async () => ({ recovered: true }),
       recordExtraProvider: () => true,
       forgetExtraProvider,
-      listManagedMcpCredentialReservations: () => [],
     });
     const deleteProvider = vi
       .fn<OpenShellProviderAdapter["deleteProvider"]>()
@@ -968,7 +973,6 @@ describe("credential actions use typed OpenShell provider results", () => {
       recoverNamedGatewayRuntime: async () => ({ recovered: true }),
       recordExtraProvider: () => true,
       forgetExtraProvider,
-      listManagedMcpCredentialReservations: () => [],
     });
     const deleteProvider = vi
       .fn<OpenShellProviderAdapter["deleteProvider"]>()
@@ -1014,7 +1018,6 @@ describe("credential actions use typed OpenShell provider results", () => {
       recoverNamedGatewayRuntime: async () => ({ recovered: true }),
       recordExtraProvider: () => true,
       forgetExtraProvider,
-      listManagedMcpCredentialReservations: () => [],
     });
     const deleteProvider = vi
       .fn<OpenShellProviderAdapter["deleteProvider"]>()

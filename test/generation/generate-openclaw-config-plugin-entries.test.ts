@@ -77,6 +77,7 @@ describe("generate-openclaw-config.mts: default plugin entries", () => {
   it("adds the installed NemoClaw plugin to the default OpenClaw allowlist (#8975)", () => {
     const config = buildConfig({ ...BASE_ENV });
     expect(config.plugins.allow).toEqual(["nemoclaw"]);
+    expect(config.tools.alsoAllow).toEqual(["bundle-mcp"]);
   });
 
   it("allows the enabled diagnostics plugin (#8975)", () => {

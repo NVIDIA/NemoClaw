@@ -2,14 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { isDeepStrictEqual } from "node:util";
+import YAML from "yaml";
 
-import type { AgentMcpAdapter } from "../../agent/defs";
 import * as policies from "../../policy";
-import {
-  assertTrustedPrivateEndpointCapability,
-  replayTrustedPrivateEndpoint,
-} from "../../security/trusted-private-endpoint";
-import type { McpBridgeEntry } from "../../state/registry";
+import { assertTrustedPrivateEndpointCapability } from "../../security/trusted-private-endpoint";
+import type { McpSourceEntry } from "./mcp-bridge-contracts";
 import {
   isAgentMcpAdapter,
   MCP_BRIDGE_POLICY_SOURCE,
@@ -26,6 +23,7 @@ import type { McpBridgeTargetValidation } from "./mcp-bridge-url-validation";
 
 export { MCP_BRIDGE_POLICY_SOURCE } from "./mcp-bridge-contracts";
 export {
+  buildMcpBridgeCapabilityPolicyYaml,
   buildMcpBridgePolicyKey,
   buildMcpBridgePolicyName,
   buildMcpBridgePolicyYaml,
@@ -33,59 +31,45 @@ export {
   MCP_BRIDGE_POLICY_MAX_BODY_BYTES,
 } from "./mcp-bridge-policy-render";
 
-export function materializePendingMcpDenyTools(entry: McpBridgeEntry): McpBridgeEntry {
-  if (entry.pendingDenyTools === undefined) return entry;
-  const {
-    denyTools: _previousDenyTools,
-    pendingDenyTools,
-    ...entryWithoutDenyToolTransition
-  } = entry;
-  return {
-    ...entryWithoutDenyToolTransition,
-    ...(pendingDenyTools.length > 0 ? { denyTools: [...pendingDenyTools] } : {}),
-  };
-}
-
 export async function applyGeneratedPolicy(
   sandboxName: string,
-  entry: McpBridgeEntry,
+  entry: McpSourceEntry,
   target: McpBridgeTargetValidation,
   options: {
     bindCredential?: boolean;
     runtimeSelection: McpProviderInspectionRuntimeSelection;
   },
 ): Promise<void> {
-  const policyEntry = materializePendingMcpDenyTools(entry);
-  const addresses = assertMcpBridgePolicyTarget(policyEntry, target);
+  const addresses = assertMcpBridgePolicyTarget(entry, target);
   if (addresses.length === 0) {
     throw new McpBridgeError(
-      `Refusing to apply generated MCP policy '${policyEntry.policyName}' without address pins.`,
+      `Refusing to apply generated MCP policy '${entry.policyName}' without address pins.`,
     );
   }
-  const adapter = isAgentMcpAdapter(policyEntry.adapter) ? policyEntry.adapter : "mcporter";
+  const adapter = isAgentMcpAdapter(entry.adapter) ? entry.adapter : "openclaw-config";
   const content =
     options.bindCredential === false
       ? buildMcpBridgeCapabilityPolicyYaml(
-          policyEntry.server,
-          policyEntry.url,
+          entry.server,
+          entry.url,
           adapter,
           target,
-          policyEntry.denyTools,
+          entry.denyTools,
         )
       : buildMcpBridgePolicyYaml(
-          policyEntry.server,
-          policyEntry.url,
+          entry.server,
+          entry.url,
           adapter,
           target,
-          policyEntry.providerName ?? "",
-          policyEntry.denyTools,
+          entry.providerName ?? "",
+          entry.denyTools,
         );
-  await applyGeneratedPolicyContent(sandboxName, policyEntry, content, options.runtimeSelection);
+  await applyGeneratedPolicyContent(sandboxName, entry, content, options.runtimeSelection);
 }
 
 async function applyGeneratedPolicyContent(
   sandboxName: string,
-  entry: McpBridgeEntry,
+  entry: McpSourceEntry,
   content: string,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
 ): Promise<void> {
@@ -105,21 +89,8 @@ async function applyGeneratedPolicyContent(
   }
 }
 
-export async function applyRecordedGeneratedPolicy(
-  sandboxName: string,
-  entry: McpBridgeEntry,
-  runtimeSelection: McpProviderInspectionRuntimeSelection,
-): Promise<void> {
-  await applyGeneratedPolicyContent(
-    sandboxName,
-    entry,
-    generatedPolicyContent(entry),
-    runtimeSelection,
-  );
-}
-
 export function assertMcpBridgePolicyTarget(
-  entry: McpBridgeEntry,
+  entry: McpSourceEntry,
   target: McpBridgeTargetValidation,
 ): readonly string[] {
   if (target.addresses.length === 0) {
@@ -161,61 +132,18 @@ export function assertMcpBridgePolicyTarget(
   return recordedPins;
 }
 
-function recordedMcpTarget(entry: McpBridgeEntry): McpBridgeTargetValidation {
-  if (entry.trustedPrivateHost) {
-    const replay = replayTrustedPrivateEndpoint(entry.trustedPrivateHost, entry.allowedIps ?? [], {
-      requireAllPrivate: true,
-    });
-    return {
-      addresses: [...replay.addresses],
-      trustedPrivateCapability: replay.trustedPrivateCapability,
-      trustedPrivateHost: replay.host,
-    };
-  }
-  return { addresses: [...(entry.allowedIps ?? [])] };
-}
-
-function generatedPolicyContent(
-  entry: McpBridgeEntry,
-  adapter: AgentMcpAdapter = isAgentMcpAdapter(entry.adapter) ? entry.adapter : "mcporter",
-  target: McpBridgeTargetValidation = recordedMcpTarget(entry),
-): string {
-  const policyEntry = materializePendingMcpDenyTools(entry);
-  assertMcpBridgePolicyTarget(policyEntry, target);
-  return buildMcpBridgePolicyYaml(
-    policyEntry.server,
-    policyEntry.url,
-    adapter,
-    target,
-    policyEntry.providerName ?? "",
-    policyEntry.denyTools,
-  );
-}
-
 export function assertGeneratedPolicyMutationSafe(
   _sandboxName: string,
-  entry: McpBridgeEntry,
+  entry: McpSourceEntry,
 ): void {
   if (entry.policyName !== buildMcpBridgePolicyName(entry.server)) {
     throw new McpBridgeError("Generated MCP policy name does not match its bridge definition.");
   }
 }
 
-export function assertGeneratedPolicyRegistrationMutationSafe(
-  _sandboxName: string,
-  entry: McpBridgeEntry,
-) {
-  assertGeneratedPolicyMutationSafe(_sandboxName, entry);
-  return {
-    name: entry.policyName,
-    content: generatedPolicyContent(entry),
-    sourcePath: MCP_BRIDGE_POLICY_SOURCE,
-  };
-}
-
 export async function removeGeneratedPolicy(
   sandboxName: string,
-  entry: McpBridgeEntry,
+  entry: McpSourceEntry,
   options: {
     bestEffort?: boolean;
     runtimeSelection: McpProviderInspectionRuntimeSelection;
@@ -233,33 +161,25 @@ export async function removeGeneratedPolicy(
   throw new McpBridgeError(`Failed to remove generated MCP policy '${entry.policyName}'.`);
 }
 
-export function getRegisteredGeneratedPolicy(
-  _sandboxName: string,
-  entry: McpBridgeEntry | undefined,
-) {
-  if (!entry?.policyName) return undefined;
-  try {
-    return {
-      name: entry.policyName,
-      content: generatedPolicyContent(entry),
-      sourcePath: MCP_BRIDGE_POLICY_SOURCE,
-    };
-  } catch {
-    return undefined;
-  }
-}
-
-export async function getPolicyGatewayState(
+export async function getPolicyPresence(
   sandboxName: string,
-  entry: McpBridgeEntry | undefined,
+  entry: McpSourceEntry | undefined,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
-): Promise<"absent" | "drift" | "match" | null> {
-  const registered = getRegisteredGeneratedPolicy(sandboxName, entry);
-  if (!registered) return entry ? null : "absent";
-  return await policies.getPresetContentGatewayState(
-    sandboxName,
-    registered.content,
-    undefined,
-    runtimeSelection,
-  );
+): Promise<boolean | null> {
+  if (!entry) return false;
+  try {
+    const document = YAML.parse(
+      await policies.captureRecordedSandboxBasePolicy(
+        sandboxName,
+        "inspect current MCP policy",
+        runtimeSelection,
+      ),
+    ) as { network_policies?: Record<string, unknown> } | null;
+    return Boolean(
+      document?.network_policies &&
+      Object.hasOwn(document.network_policies, buildMcpBridgePolicyKey(entry.server)),
+    );
+  } catch {
+    return null;
+  }
 }

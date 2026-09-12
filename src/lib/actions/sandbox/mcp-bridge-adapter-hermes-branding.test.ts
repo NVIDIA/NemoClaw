@@ -4,7 +4,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { setProviderCommandRuntimeHooksForTest } from "../../adapters/openshell/provider-command";
-import type { McpBridgeEntry } from "../../state/registry";
+import type { McpSourceEntry } from "./mcp-bridge-contracts";
 
 const mocks = vi.hoisted(() => ({
   getSandboxOrThrow: vi.fn(),
@@ -20,7 +20,7 @@ import {
   unregisterHermesAdapter,
 } from "./mcp-bridge-adapter-hermes";
 
-const entry: McpBridgeEntry = {
+const entry: McpSourceEntry = {
   server: "github",
   agent: "hermes",
   adapter: "hermes-config",
@@ -29,7 +29,6 @@ const entry: McpBridgeEntry = {
   providerName: "alpha-mcp-github",
   providerId: "11111111-2222-4333-8444-555555555555",
   policyName: "mcp-bridge-github",
-  addedAt: new Date(0).toISOString(),
 };
 
 const runtimeSelection = { gatewayName: "nemoclaw-8091", workspace: "default" };

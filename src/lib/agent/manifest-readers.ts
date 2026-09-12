@@ -316,12 +316,12 @@ export function readMcpCapability(record: ManifestRecord): AgentMcpCapability {
   const adapter = readString(mcp, "adapter");
   if (
     adapter !== undefined &&
-    adapter !== "mcporter" &&
+    adapter !== "openclaw-config" &&
     adapter !== "hermes-config" &&
     adapter !== "deepagents-config"
   ) {
     throw new Error(
-      "Agent manifest field 'mcp.adapter' must be mcporter, hermes-config, or deepagents-config",
+      "Agent manifest field 'mcp.adapter' must be openclaw-config, hermes-config, or deepagents-config",
     );
   }
   if (support === "bridge" && !adapter) {

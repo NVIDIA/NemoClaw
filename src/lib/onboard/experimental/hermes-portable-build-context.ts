@@ -31,7 +31,6 @@ const CONTEXT_DOCKERFILE_RELATIVE_PATH = "Dockerfile" as const;
 
 const LOCAL_COPY_SOURCES = [
   "agents/hermes/a2a-neutral.patch",
-  "agents/hermes/build-mcp-digest.py",
   "agents/hermes/config/",
   "agents/hermes/cron-restore-control.py",
   "agents/hermes/dashboard-external-host.patch",

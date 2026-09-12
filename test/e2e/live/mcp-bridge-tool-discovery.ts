@@ -46,15 +46,15 @@ export function shouldRetryMcpDiscoveryAfterRestart(
 
 type McpToolDiscoveryStatusJson = {
   provider: Record<string, unknown> & {
-    registryPresent: boolean;
-    gatewayPresent: boolean | null;
+    present: boolean | null;
+    state: string;
     attached: boolean | null;
     credentialReady: boolean | null;
     credentialResolution?: unknown;
   };
   policy: Record<string, unknown> & {
-    registryPresent: boolean;
-    gatewayPresent: boolean | null;
+    present: boolean | null;
+    state: string;
   };
   adapter: Record<string, unknown> & {
     registered: boolean | null;
@@ -89,13 +89,13 @@ function isMcpToolDiscoveryStatusJson(value: unknown): value is McpToolDiscovery
   const { provider, policy, adapter, trustedPrivateTarget, toolDiscovery } = value;
   return (
     isJsonRecord(provider) &&
-    typeof provider.registryPresent === "boolean" &&
-    isBooleanOrNull(provider.gatewayPresent) &&
+    isBooleanOrNull(provider.present) &&
+    typeof provider.state === "string" &&
     isBooleanOrNull(provider.attached) &&
     isBooleanOrNull(provider.credentialReady) &&
     isJsonRecord(policy) &&
-    typeof policy.registryPresent === "boolean" &&
-    isBooleanOrNull(policy.gatewayPresent) &&
+    isBooleanOrNull(policy.present) &&
+    typeof policy.state === "string" &&
     isJsonRecord(adapter) &&
     isBooleanOrNull(adapter.registered) &&
     (trustedPrivateTarget === undefined ||
@@ -144,15 +144,15 @@ function buildMcpToolDiscoveryDiagnostics(
 ): Record<string, unknown> {
   return {
     provider: {
-      registryPresent: status.provider.registryPresent,
-      gatewayPresent: status.provider.gatewayPresent,
+      present: status.provider.present,
+      state: status.provider.state,
       attached: status.provider.attached,
       credentialReady: status.provider.credentialReady,
       credentialResolutionPresent: status.provider.credentialResolution !== undefined,
     },
     policy: {
-      registryPresent: status.policy.registryPresent,
-      gatewayPresent: status.policy.gatewayPresent,
+      present: status.policy.present,
+      state: status.policy.state,
     },
     adapter: {
       registered: status.adapter.registered,

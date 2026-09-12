@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { McpBridgeEntry } from "../../state/registry";
+import type { McpSourceEntry } from "./mcp-bridge-contracts";
 import { runDeepAgentsAdapterCommand } from "./mcp-bridge-adapter-deepagents-command";
 import type { McpProviderInspectionRuntimeSelection } from "./mcp-bridge-provider-inspection";
 import {
@@ -9,9 +9,9 @@ import {
   DEEPAGENTS_LEGACY_MCP_CONFIG_PATH,
 } from "./mcp-bridge/deepagents-legacy-config";
 import {
-  DEEPAGENTS_MANAGED_PROJECTION_HELPERS,
+  DEEPAGENTS_NATIVE_MCP_CONFIG_HELPERS,
   DEEPAGENTS_STRICT_JSON_HELPERS,
-} from "./mcp-bridge-adapter-deepagents-projection";
+} from "./mcp-bridge-adapter-deepagents-native-config";
 import type {
   AdapterMutationOptions,
   AdapterRemovalOutcome,
@@ -25,7 +25,7 @@ import {
 } from "./mcp-bridge-adapter-status";
 
 export function buildDeepAgentsMcpRemoveCommand(
-  entry: McpBridgeEntry,
+  entry: McpSourceEntry,
   force = false,
   adaptiveTeardown = false,
 ): string {
@@ -41,7 +41,7 @@ export function buildDeepAgentsMcpRemoveCommand(
     `managed_path = pathlib.Path(${JSON.stringify(DEEPAGENTS_MCP_CONFIG_PATH)})`,
     `legacy_path = pathlib.Path(${JSON.stringify(DEEPAGENTS_LEGACY_MCP_CONFIG_PATH)})`,
     ...DEEPAGENTS_STRICT_JSON_HELPERS,
-    ...DEEPAGENTS_MANAGED_PROJECTION_HELPERS,
+    ...DEEPAGENTS_NATIVE_MCP_CONFIG_HELPERS,
     ...DEEPAGENTS_LEGACY_CONFIG_HELPERS,
     ...MANAGED_HTTP_SERVER_MATCH_HELPERS,
     ...buildDeepAgentsRuntimeKindCommandLines(adaptiveTeardown ? "auto" : "v2"),
@@ -51,18 +51,18 @@ export function buildDeepAgentsMcpRemoveCommand(
     "managed_descriptor = None",
     "legacy_identity = None",
     "def finish(outcome):",
-    "    close_managed_projection_descriptor(managed_descriptor)",
+    "    close_native_mcp_config_descriptor(managed_descriptor)",
     "    print('NEMOCLAW_DEEPAGENTS_MCP_REMOVAL=' + outcome)",
     "    raise SystemExit(0)",
     "def fail_teardown(message):",
-    "    close_managed_projection_descriptor(managed_descriptor)",
+    "    close_native_mcp_config_descriptor(managed_descriptor)",
     "    print(message, file=sys.stderr)",
     "    raise SystemExit(2)",
-    "def repair_v2_projection(identity, descriptor):",
+    "def repair_native_config(identity, descriptor):",
     "    try:",
-    "        write_managed_projection(config_path, {'mcpServers': {}}, identity, descriptor)",
+    "        write_native_mcp_config(config_path, {'mcpServers': {}}, identity, descriptor)",
     "    except (OSError, ValueError) as exc:",
-    "        fail_teardown(f'Refusing unsafe managed MCP v2 repair at {config_path}: {exc}')",
+    "        fail_teardown(f'Refusing unsafe native MCP v3 repair at {config_path}: {exc}')",
     "def write_legacy_data(value):",
     "    tmp_fd, tmp_name = tempfile.mkstemp(prefix='.nemoclaw-mcp.', dir=config_path.parent)",
     "    try:",
@@ -85,18 +85,18 @@ export function buildDeepAgentsMcpRemoveCommand(
     "            pass",
     "if is_v2:",
     "    try:",
-    "        raw, managed_identity, managed_descriptor = open_managed_projection(config_path, True)",
+    "        raw, managed_identity, managed_descriptor = open_native_mcp_config(config_path, True)",
     "    except (OSError, ValueError) as exc:",
-    "        fail_teardown(f'Invalid managed MCP v2 projection at {config_path}: {exc}')",
+    "        fail_teardown(f'Invalid native MCP v3 config at {config_path}: {exc}')",
     "    if managed_descriptor is None:",
     "        finish('absent')",
     "    try:",
-    "        data = decode_managed_projection(raw)",
+    "        data = decode_native_mcp_config(raw)",
     "    except (UnicodeDecodeError, ValueError) as exc:",
     "        if payload['force']:",
-    "            repair_v2_projection(managed_identity, managed_descriptor)",
+    "            repair_native_config(managed_identity, managed_descriptor)",
     "            finish('removed')",
-    "        fail_teardown(f'Invalid managed MCP v2 projection at {config_path}: {exc}')",
+    "        fail_teardown(f'Invalid native MCP v3 config at {config_path}: {exc}')",
     "else:",
     "    if not os.path.lexists(config_path):",
     "        finish('absent')",
@@ -106,29 +106,29 @@ export function buildDeepAgentsMcpRemoveCommand(
     "        finish('unowned')",
     "if not isinstance(data, dict):",
     "    if is_v2 and payload['force']:",
-    "        repair_v2_projection(managed_identity, managed_descriptor)",
+    "        repair_native_config(managed_identity, managed_descriptor)",
     "        finish('removed')",
     "    if is_v2:",
-    "        fail_teardown(f'Invalid managed MCP v2 projection at {config_path}: expected object')",
+    "        fail_teardown(f'Invalid native MCP v3 config at {config_path}: expected object')",
     "    finish('unowned')",
     "servers = data.get('mcpServers')",
     "if not isinstance(servers, dict):",
     "    if not is_v2 and 'mcpServers' not in data:",
     "        finish('absent')",
     "    if is_v2 and payload['force']:",
-    "        repair_v2_projection(managed_identity, managed_descriptor)",
+    "        repair_native_config(managed_identity, managed_descriptor)",
     "        finish('removed')",
     "    if is_v2:",
-    "        fail_teardown(f'Invalid managed MCP v2 server map at {config_path}')",
+    "        fail_teardown(f'Invalid native MCP v3 server map at {config_path}')",
     "    finish('unowned')",
     "present = payload['server'] in servers",
     "current = servers.get(payload['server'])",
     "if is_v2:",
     "    if data and set(data) != {'mcpServers'}:",
     "        if payload['force']:",
-    "            repair_v2_projection(managed_identity, managed_descriptor)",
+    "            repair_native_config(managed_identity, managed_descriptor)",
     "            finish('removed')",
-    "        fail_teardown(f'Invalid managed MCP v2 projection at {config_path}: only mcpServers is allowed')",
+    "        fail_teardown(f'Invalid native MCP v3 config at {config_path}: only mcpServers is allowed')",
     "    if present and not payload['force'] and not managed_http_server_matches(current, payload['expected'], True):",
     "        fail_teardown(f\"Refusing to remove modified MCP server '{payload['server']}' from {config_path}. Use --force to remove it.\")",
     "    if not present:",
@@ -146,8 +146,8 @@ export function buildDeepAgentsMcpRemoveCommand(
     "if data:",
     "    try:",
     "        if is_v2:",
-    "            write_managed_projection(config_path, data, managed_identity, managed_descriptor)",
-    "            persisted = read_managed_projection(config_path)[0]",
+    "            write_native_mcp_config(config_path, data, managed_identity, managed_descriptor)",
+    "            persisted = read_native_mcp_config(config_path)[0]",
     "        else:",
     "            write_legacy_data(data)",
     "            persisted = read_legacy_config(config_path)[0]",
@@ -167,7 +167,7 @@ export function buildDeepAgentsMcpRemoveCommand(
 
 export async function unregisterDeepAgentsAdapter(
   sandboxName: string,
-  entry: McpBridgeEntry,
+  entry: McpSourceEntry,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
   options: AdapterMutationOptions = {},
 ): Promise<AdapterRemovalOutcome> {

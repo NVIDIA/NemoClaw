@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { shellQuote } from "../../runner";
-import type { McpBridgeEntry } from "../../state/registry";
+import type { McpSourceEntry } from "./mcp-bridge-contracts";
 import { McpBridgeError } from "./mcp-bridge-contracts";
 import type { McpProviderInspectionRuntimeSelection } from "./mcp-bridge-provider-inspection";
 import { waitForMcpBridgeConditionAsync } from "./mcp-bridge/timing";
@@ -149,7 +149,7 @@ function describeMcpCredentialRevisionAttempt(attempt: McpCredentialRevisionAtte
 
 export async function observeMcpCredentialRevision(
   sandboxName: string,
-  entry: McpBridgeEntry,
+  entry: McpSourceEntry,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
 ): Promise<McpCredentialRevisionObservation> {
   assertAuthenticatedBridgeEntry(entry);
@@ -168,7 +168,7 @@ export async function observeMcpCredentialRevision(
 
 export async function waitForAttachedMcpCredential(
   sandboxName: string,
-  entry: McpBridgeEntry,
+  entry: McpSourceEntry,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
   options: {
     previousRevision?: McpCredentialRevisionObservation;
@@ -261,7 +261,7 @@ export function buildMcpCredentialDetachedCommand(envName: string): string {
 
 export async function waitForDetachedMcpCredential(
   sandboxName: string,
-  entry: McpBridgeEntry,
+  entry: McpSourceEntry,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
 ): Promise<void> {
   assertPersistedAuthenticatedBridgeEntry(entry);

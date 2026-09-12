@@ -27,6 +27,8 @@ import {
   listHarnessRebuildBackups,
   loadRebuildSandbox,
   mcpBridge,
+  mcpBridgeProviderInspection,
+  mcpBridgeSource,
   messaging,
   messagingHostForwardLifecycle,
   mutableConfigPerms,
@@ -965,22 +967,70 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   const ensureMessagingHostForwardAfterRebuildSpy = vi
     .spyOn(messagingHostForwardLifecycle, "ensureMessagingHostForwardAfterRebuild")
     .mockReturnValue(true);
+  const defaultMcpAdapter =
+    agentName === "hermes"
+      ? "hermes-config"
+      : agentName === "langchain-deepagents-code"
+        ? "deepagents-config"
+        : "openclaw-config";
+  for (const entry of overrides.mcpPreparation?.entries ?? []) {
+    if (!entry || typeof entry !== "object") continue;
+    for (const retiredField of ["addState", "addedAt", "createdAt", "updatedAt"]) {
+      delete (entry as Record<string, unknown>)[retiredField];
+    }
+    Object.assign(entry, {
+      agent: "agent" in entry ? entry.agent : agentName,
+      adapter: "adapter" in entry ? entry.adapter : defaultMcpAdapter,
+      url: "url" in entry ? entry.url : "https://mcp.example.test/mcp",
+      env: "env" in entry ? entry.env : ["GITHUB_TOKEN"],
+      policyName: "policyName" in entry ? entry.policyName : `mcp-bridge-${String(entry.server)}`,
+    });
+  }
+  const mcpSourceEntries = overrides.mcpPreparation?.entries ?? [];
+  vi.spyOn(mcpBridgeProviderInspection, "getMcpProviderInspectionRuntimeSelection").mockReturnValue(
+    {
+      gatewayName: "nemoclaw",
+      workspace: "default",
+    },
+  );
+  const nativeMcpSources = Object.fromEntries(
+    mcpSourceEntries.map((entry) => [String(entry.server), structuredClone(entry)]),
+  );
+  vi.spyOn(mcpBridgeSource, "inspectAgentMcpSources").mockReturnValue({
+    native: nativeMcpSources,
+    legacy: {},
+  });
+  vi.spyOn(mcpBridgeSource, "joinMcpEntriesToOpenShell").mockReturnValue(nativeMcpSources);
+  const defaultMcpPreparation = (
+    runtimeSelection?: Parameters<typeof mcpBridge.prepareMcpBridgesForRebuild>[1],
+  ) => {
+    return {
+      entries: [],
+      detachedProviderEntries: [],
+      scrubbedAdapterEntries: [],
+      ...(runtimeSelection ? { runtimeSelection } : {}),
+    };
+  };
+  const configuredMcpPreparation = (
+    runtimeSelection?: Parameters<typeof mcpBridge.prepareMcpBridgesForRebuild>[1],
+  ) =>
+    overrides.mcpPreparation
+      ? {
+          ...overrides.mcpPreparation,
+          ...(runtimeSelection && !overrides.mcpPreparation.runtimeSelection
+            ? { runtimeSelection }
+            : {}),
+        }
+      : defaultMcpPreparation(runtimeSelection);
   const prepareMcpBridgesForRebuildSpy = vi
     .spyOn(mcpBridge, "prepareMcpBridgesForRebuild")
-    .mockResolvedValue(
-      overrides.mcpPreparation ?? {
-        entries: [],
-        detachedProviderEntries: [],
-      },
+    .mockImplementation(async (_sandboxName, runtimeSelection) =>
+      configuredMcpPreparation(runtimeSelection),
     );
   const prepareMcpBridgesForAbsentSandboxRebuildSpy = vi
     .spyOn(mcpBridge, "prepareMcpBridgesForAbsentSandboxRebuild")
-    .mockResolvedValue(
-      overrides.mcpPreparation ?? {
-        entries: [],
-        detachedProviderEntries: [],
-        scrubbedAdapterEntries: [],
-      },
+    .mockImplementation(async (_sandboxName, runtimeSelection) =>
+      configuredMcpPreparation(runtimeSelection),
     );
   const reattachMcpProvidersAfterRebuildAbortSpy = vi
     .spyOn(mcpBridge, "reattachMcpProvidersAfterRebuildAbort")

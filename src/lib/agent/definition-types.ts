@@ -101,7 +101,7 @@ export interface AgentInference {
 }
 
 export type AgentMcpSupport = "bridge" | "disabled";
-export type AgentMcpAdapter = "mcporter" | "hermes-config" | "deepagents-config";
+export type AgentMcpAdapter = "openclaw-config" | "hermes-config" | "deepagents-config";
 
 export interface AgentMcpCapability {
   support: AgentMcpSupport;

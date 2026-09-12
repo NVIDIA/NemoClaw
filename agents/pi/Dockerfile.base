@@ -25,7 +25,7 @@ ARG NEMOCLAW_CORPORATE_CA_B64
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential=12.12 \
         ca-certificates=20250419 \
-        curl=8.14.1-2+deb13u4 \
+        curl=8.14.1-2+deb13u5 \
         git=1:2.47.3-0+deb13u1 \
         libssl-dev=3.5.7-1~deb13u2 \
         openssh-server=1:10.0p1-7+deb13u4 \
@@ -91,7 +91,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
 # hadolint ignore=DL3001,DL4006
 RUN apt-get update && apt-get install -y --no-install-recommends \
         python3=3.13.5-1 \
-        curl=8.14.1-2+deb13u4 \
+        curl=8.14.1-2+deb13u5 \
         git=1:2.47.3-0+deb13u1 \
         ca-certificates=20250419 \
         iproute2=6.15.0-1 \

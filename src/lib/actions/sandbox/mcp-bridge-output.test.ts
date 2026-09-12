@@ -3,18 +3,17 @@
 
 import { describe, expect, it } from "vitest";
 
-import type { McpBridgeEntry } from "../../state/registry";
+import type { McpSourceEntry } from "./mcp-bridge-contracts";
 import { commandOutput, redactBridgeSecretsForDisplay } from "./mcp-bridge-output";
 
-const baseEntry: McpBridgeEntry = {
+const baseEntry: McpSourceEntry = {
   server: "github",
   agent: "openclaw",
-  adapter: "mcporter",
+  adapter: "openclaw-config",
   url: "https://api.githubcopilot.com/mcp/",
   env: ["GITHUB_TOKEN"],
   providerName: "alpha-mcp-github",
   policyName: "mcp-bridge-github",
-  addedAt: new Date(0).toISOString(),
 };
 
 describe("MCP adapter output redaction", () => {
