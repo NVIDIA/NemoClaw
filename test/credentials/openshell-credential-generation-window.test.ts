@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import { EventEmitter } from "node:events";
+import { runInNewContext } from "node:vm";
 
 import { describe, expect, it } from "vitest";
 
@@ -44,7 +46,6 @@ describe("OpenShell exact-main credential generation-window proof", () => {
     expect(script).toContain('"^openshell:resolve:env:(v[0-9]{1,20})_" + config.envName + "$"');
     expect(script).toContain('authorization: "Bearer " + credentialPlaceholder');
     expect(script).toContain('response.statusCode === 200 ? "allowed" : "denied"');
-    expect(script).toContain('outbound.on("error", () => resolve("denied"))');
     expect(script).toContain("outbound.setTimeout(30_000");
     expect(script).toContain(JSON.stringify(CREDENTIAL_WINDOW_PATHS.acknowledgement));
     expect(script).toContain(JSON.stringify(CREDENTIAL_WINDOW_STEPS.allowedBeforeExpiry));
@@ -93,6 +94,50 @@ describe("OpenShell exact-main credential generation-window proof", () => {
     );
     expect(script).not.toContain(MCP_BRIDGE_TEST_CREDENTIALS.generationWindow);
   });
+
+  it.each(["ECONNRESET", "ERR_PROXY_TUNNEL", "SENSITIVE_ERROR_VALUE"])(
+    "reports only safe request metadata for %s",
+    (code) => {
+      const secret = "SENSITIVE_ERROR_VALUE";
+      let stderr = "";
+      const outbound = Object.assign(new EventEmitter(), {
+        setTimeout: (milliseconds: number) => expect(milliseconds).toBe(30_000),
+        end: () =>
+          outbound.emit("error", {
+            code,
+            name: secret,
+            message: secret,
+            statusCode: code === "ERR_PROXY_TUNNEL" ? 403 : secret,
+          }),
+      });
+      const childProcess = {
+        env: { FAKE_MCP_SECRET: "openshell:resolve:env:v123_FAKE_MCP_SECRET" },
+        argv: ["node", "https://credential-window.example.test/mcp", "request-id"],
+        stdout: {
+          write: () => {
+            throw new Error("failed request must not report success");
+          },
+        },
+        stderr: {
+          write: (value: string) => {
+            stderr += value;
+          },
+        },
+        exitCode: 0,
+      };
+      runInNewContext(buildCredentialWindowOneShotScript(), {
+        URL,
+        Buffer,
+        process: childProcess,
+        require: () => ({ request: () => outbound }),
+      });
+      expect(JSON.parse(stderr)).toEqual({
+        transportCode: code === secret ? "UNKNOWN" : code,
+        ...(code === "ERR_PROXY_TUNNEL" ? { httpStatus: 403 } : {}),
+      });
+      expect(childProcess.exitCode).toBe(1);
+    },
+  );
 
   it("keeps the live target on the reviewed agent and mutation boundaries", () => {
     const liveTarget = fs.readFileSync(
