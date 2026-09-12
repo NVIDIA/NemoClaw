@@ -48,7 +48,8 @@ describe("fresh create identity", () => {
         expectedOutcome: "managed-provider" as const,
       },
       {
-        title: "rejects provider-backed APF creation before sandbox or provider effects (#9833)",
+        title:
+          "rejects provider-backed external-component creation before sandbox or provider effects (#9833)",
         apfInterceptorRequested: true,
         provider: "nvidia-prod",
         model: "gpt-5.4",
@@ -75,7 +76,7 @@ describe("fresh create identity", () => {
       },
       {
         title:
-          "registers providerless APF only after identity, policy, and checkpoint verification (#9833)",
+          "registers providerless external-component onboarding only after identity, policy, and checkpoint verification (#9833)",
         apfInterceptorRequested: true,
         provider: null,
         model: null,
@@ -965,10 +966,14 @@ if (${JSON.stringify(
           "NEMOCLAW_INFERENCE_BASE_URL",
           "NEMOCLAW_INFERENCE_PROVIDER_ID",
           "NEMOCLAW_UPSTREAM_PROVIDER",
-          "NEMOCLAW_PRIMARY_MODEL_REF",
+          "NEMOCLAW_INFERENCE_API",
         ]) {
-          assert.ok(!startup.configurationEnvironment[key]);
+          assert.equal(startup.configurationEnvironment[key], "");
         }
+        assert.equal(
+          startup.configurationEnvironment.NEMOCLAW_PRIMARY_MODEL_REF,
+          profile.agent === "openclaw" ? "" : undefined,
+        );
       };
       const assertManagedProviderCreation = () => {
         const { profile, startup } = assertSuccessfulCreation();

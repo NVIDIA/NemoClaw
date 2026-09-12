@@ -105,6 +105,8 @@ export function withManagedImageLocalInferenceProfile(
   return {
     ...profile,
     inference: {
+      compatibility: profile.agent === "openclaw" ? {} : null,
+      inputModalities: profile.agent === "openclaw" ? ["text"] : null,
       ...profile.inference,
       routeProvider: "inference",
       upstreamProvider: route.providerName,
