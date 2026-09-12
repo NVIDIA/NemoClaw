@@ -37,7 +37,6 @@ describe("focused staging Brev Launchable lane", () => {
       "Waiting up to 1 seconds for workspace SSH access",
       "Readiness diagnostic detail",
       "Readiness classification detail",
-      "",
     ].join("\n");
 
     const result = spawnSync(path.join(bin, "tee"), ["-a", laneLog], {

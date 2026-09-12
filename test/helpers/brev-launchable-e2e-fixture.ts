@@ -200,11 +200,21 @@ exec "$@"
       path.join(bin, "tee"),
       `#!/usr/bin/env bash
 set -euo pipefail
-while IFS= read -r line || [ -n "$line" ]; do
+while :; do
+  line=""
+  if IFS= read -r line; then
+    newline_terminated=1
+  elif [ -n "$line" ]; then
+    newline_terminated=0
+  else
+    break
+  fi
   if [[ "$line" == "Waiting up to "*" seconds for workspace SSH access" ]]; then
     /bin/sleep 1
   fi
-  printf '%s\n' "$line"
+  printf '%s' "$line"
+  [ "$newline_terminated" -eq 0 ] || printf '\n'
+  [ "$newline_terminated" -eq 1 ] || break
 done | ${JSON.stringify(REAL_TEE)} "$@"
 `,
     );
