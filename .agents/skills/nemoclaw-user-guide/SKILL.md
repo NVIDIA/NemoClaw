@@ -44,6 +44,7 @@ Use these pages first for common onboarding flows:
 - Deep Agents quickstart: `https://docs.nvidia.com/nemoclaw/latest/user-guide/deepagents/get-started/quickstart.md`.
 - Pi home: `https://docs.nvidia.com/nemoclaw/latest/user-guide/pi/home.md`.
 - Pi quickstart: `https://docs.nvidia.com/nemoclaw/latest/user-guide/pi/get-started/quickstart.md`.
+- Pi model limits: `https://docs.nvidia.com/nemoclaw/latest/user-guide/pi/inference/configure-model-limits.md`.
 - Pi operations: `https://docs.nvidia.com/nemoclaw/latest/user-guide/pi/manage-sandboxes/run-pi.md`.
 - Pi support and security: `https://docs.nvidia.com/nemoclaw/latest/user-guide/pi/reference/pi-support.md`.
 - Pi command reference: `https://docs.nvidia.com/nemoclaw/latest/user-guide/pi/reference/commands.md`.

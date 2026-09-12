@@ -26,11 +26,13 @@ Pi remains a release candidate. Ordinary installations reject `--agent pi` until
 | Command | Purpose |
 |---|---|
 | `nemoclaw onboard --agent pi --name <name>` | Create a Pi sandbox after activation |
+| `nemoclaw onboard --resume` | Continue an incomplete recorded onboarding session |
+| `nemoclaw onboard --agent pi --name <name> --fresh --recreate-sandbox` | Replace a completed Pi sandbox with new startup selections |
 | `nemoclaw list` | List registered sandboxes and agents |
 | `nemoclaw <name> status` | Check Pi, inference, policy, and runtime state |
 | `nemoclaw <name> logs` | Read bounded sandbox logs |
 | `nemoclaw <name> doctor` | Diagnose Pi sandbox state; this command does not recover Pi |
-| `nemoclaw <name> recover` | Repair a stopped Pi gateway and its host forwards |
+| `nemoclaw <name> recover` | Re-enter sandbox readiness checks; Pi has no agent gateway or host forward |
 
 ## Run Pi
 
@@ -39,18 +41,33 @@ Pi remains a release candidate. Ordinary installations reject `--agent pi` until
 | `nemoclaw launch <name>` | Run launch preflight and open interactive Pi |
 | `nemoclaw <name> connect` | Open a shell in the sandbox |
 | `nemoclaw <name> exec --workdir /sandbox --no-tty -- pi --no-approve --print "<task>"` | Run one headless task from the host |
-| `nemoclaw <name> exec --workdir /sandbox --no-tty -- pi --no-approve --mode json --print "<task>"` | Emit newline-delimited JSON task events |
+| `nemoclaw <name> exec --workdir /sandbox --no-tty -- pi --no-approve --no-context-files --mode json --print "<task>"` | Emit newline-delimited JSON task events |
 
 Inside a connected sandbox:
 
 ```bash
 pi
 pi --no-approve --print "Review the current changes"
-pi --no-approve --mode json --print --tools read "Read README.md"
+pi --no-approve --no-context-files --mode json --print --tools read "Read README.md"
 pi --no-context-files
 ```
 
-`--no-approve` ignores project-local executable resources. It does not disable `AGENTS.md` or `CLAUDE.md`; use `--no-context-files` for that boundary.
+`--no-approve` ignores project-local executable resources.
+It does not disable `AGENTS.md` or `CLAUDE.md`.
+Use `--no-context-files` when project instructions must not enter the prompt.
+
+## Configure Model Metadata
+
+Set supported Pi model metadata before onboarding or a fresh replacement.
+
+```bash
+export NEMOCLAW_CONTEXT_WINDOW=65536
+export NEMOCLAW_MAX_TOKENS=8192
+export NEMOCLAW_REASONING=true
+nemoclaw onboard --agent pi --name <name>
+```
+
+Pi supports a positive `NEMOCLAW_CONTEXT_WINDOW` no larger than `4194304`, a `NEMOCLAW_MAX_TOKENS` value from `1` to `1000000000`, and `true` or `false` for `NEMOCLAW_REASONING`. It does not support `NEMOCLAW_REASONING_EFFORT` or the runtime `inference set` command. A normal rebuild replays the recorded values.
 
 ## Preserve and Replace State
 
@@ -67,12 +84,25 @@ Review the selected version, name, or timestamp before restore replaces sandbox 
 nemoclaw <name> snapshot restore <version-or-name-or-timestamp>
 ```
 
-Rebuild validates recorded authority and resolves the current release's Pi image.
+Rebuild validates recorded authority and selects the immutable Pi image authorised by the protected qualification receipt.
 
 ```bash
 nemoclaw <name> rebuild --yes
 nemoclaw <name> recover
 ```
+
+## Update the Host and Sandbox
+
+After updating NemoClaw, inspect registered sandboxes before rebuilding Pi.
+
+```bash
+nemoclaw update --yes
+nemoclaw upgrade-sandboxes --check
+nemoclaw <name> rebuild --yes
+```
+
+The host update does not self-update Pi inside a running sandbox.
+While Pi remains a candidate, rebuild uses the protected qualification receipt rather than the installed release catalogue.
 
 ## Stop or Remove the Sandbox
 
