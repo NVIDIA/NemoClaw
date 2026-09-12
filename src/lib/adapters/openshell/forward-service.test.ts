@@ -77,14 +77,49 @@ function createLinuxOwnerFixture(actualExecutable?: string) {
   return { procRoot, target: { ...target, executable } };
 }
 
+// A loopback forward (127.0.0.1 on 0x4965 = 18789) whose port is also bound on
+// an external interface by a different process (a reverse proxy). The external
+// entry's inode belongs to pid 9876; ownership must ignore it and count only
+// the loopback owner pid 4321 (#11439).
+function createLinuxOwnerFixtureWithExternalCoListener() {
+  const root = mkdtempSync(path.join(os.tmpdir(), "nemoclaw-forward-owner-ext-"));
+  temporaryDirectories.push(root);
+  const procRoot = path.join(root, "proc");
+  const binRoot = path.join(root, "bin");
+  mkdirSync(path.join(procRoot, "net"), { recursive: true });
+  mkdirSync(path.join(procRoot, "4321", "fd"), { recursive: true });
+  mkdirSync(path.join(procRoot, "9876", "fd"), { recursive: true });
+  mkdirSync(binRoot);
+  const executable = path.join(binRoot, "openshell");
+  writeFileSync(executable, "");
+  writeFileSync(
+    path.join(procRoot, "net", "tcp"),
+    // Loopback listener (0100007F) owned by the forward, plus an
+    // external-interface listener (0F90630A) owned by the reverse proxy.
+    "  0: 0100007F:4965 00000000:0000 0A 00000000:00000000 00:00000000 00000000  998 0 12345 1\n" +
+      "  1: 0F90630A:4965 00000000:0000 0A 00000000:00000000 00:00000000 00000000  998 0 55555 1\n",
+  );
+  writeFileSync(path.join(procRoot, "net", "tcp6"), "");
+  symlinkSync("socket:[12345]", path.join(procRoot, "4321", "fd", "7"));
+  symlinkSync("socket:[55555]", path.join(procRoot, "9876", "fd", "8"));
+  symlinkSync(executable, path.join(procRoot, "4321", "exe"));
+  return { procRoot, target: { ...target, executable } };
+}
+
+// Loopback forwards probe with `lsof -FpPn`, pairing each pid with its bind
+// endpoint so external-interface-only listeners are excluded (#11439).
+function loopbackListenerField(pid: string, port = 18_789): string {
+  return `p${pid}\nPTCP\nn127.0.0.1:${port}\n`;
+}
+
 function darwinOwnerProbe(
   commandLine: string,
-  finalListener = "4321\n",
+  finalListener = loopbackListenerField("4321"),
   executable = process.execPath,
 ) {
   return vi
     .fn()
-    .mockReturnValueOnce({ status: 0, stdout: "4321\n" })
+    .mockReturnValueOnce({ status: 0, stdout: loopbackListenerField("4321") })
     .mockReturnValueOnce({ status: 0, stdout: `${executable}\n/mach_kernel\n` })
     .mockReturnValueOnce({ status: 0, stdout: commandLine })
     .mockReturnValueOnce({ status: 0, stdout: finalListener });
@@ -255,7 +290,10 @@ describe("OpenShell forward service", () => {
   it("rejects a foreign Darwin executable even when it maps the trusted binary", () => {
     const expected = [ownerTarget.executable, ...buildForwardServiceArgs(ownerTarget)].join(" ");
     const responses = new Map([
-      [JSON.stringify(["lsof", "-ti4TCP:18789", "-sTCP:LISTEN"]), { status: 0, stdout: "4321\n" }],
+      [
+        JSON.stringify(["lsof", "-i4TCP:18789", "-sTCP:LISTEN", "-P", "-n", "-FpPn"]),
+        { status: 0, stdout: loopbackListenerField("4321") },
+      ],
       [
         JSON.stringify(["lsof", "-a", "-p", "4321", "-d", "txt", "-Fn"]),
         {
@@ -299,7 +337,7 @@ describe("OpenShell forward service", () => {
 
   it("rejects ambiguous or changing listener ownership", () => {
     const expected = [ownerTarget.executable, ...buildForwardServiceArgs(ownerTarget)].join(" ");
-    const probe = darwinOwnerProbe(`${expected}\n`, "9876\n");
+    const probe = darwinOwnerProbe(`${expected}\n`, loopbackListenerField("9876"));
 
     expect(isForwardServiceListenerOwner(ownerTarget, { platform: "darwin", probe })).toBe(false);
   });
@@ -312,7 +350,7 @@ describe("OpenShell forward service", () => {
 
     const psTimeout = vi
       .fn()
-      .mockReturnValueOnce({ status: 0, stdout: "4321\n" })
+      .mockReturnValueOnce({ status: 0, stdout: loopbackListenerField("4321") })
       .mockReturnValueOnce({ status: 0, stdout: `${process.execPath}\n/mach_kernel\n` })
       .mockReturnValueOnce({ status: null, stdout: "" });
     expect(
@@ -341,8 +379,68 @@ describe("OpenShell forward service", () => {
       }),
     ).toBe(true);
     expect(probe).toHaveBeenCalledTimes(3);
-    expect(probe).toHaveBeenCalledWith("lsof", ["-ti4TCP:18789", "-sTCP:LISTEN"]);
+    expect(probe).toHaveBeenCalledWith("lsof", [
+      "-i4TCP:18789",
+      "-sTCP:LISTEN",
+      "-P",
+      "-n",
+      "-FpPn",
+    ]);
     expect(probe).toHaveBeenCalledWith("ps", ["-ww", "-p", "4321", "-o", "args="]);
+  });
+
+  it("ignores an external-interface-only co-listener for a loopback forward (#11439)", () => {
+    const expected = [ownerTarget.executable, ...buildForwardServiceArgs(ownerTarget)].join(" ");
+    // Field-mode lsof reports the reverse proxy on an external interface plus
+    // NemoClaw's own loopback forward. Only the loopback pid may count.
+    const listenerField = `p3529439\nPTCP\nn10.63.144.115:18789\n` + loopbackListenerField("4321");
+    const probe = vi
+      .fn()
+      .mockReturnValueOnce({ status: 0, stdout: listenerField })
+      .mockReturnValueOnce({ status: 0, stdout: `${ownerTarget.executable}\n/mach_kernel\n` })
+      .mockReturnValueOnce({ status: 0, stdout: `${expected}\n` })
+      .mockReturnValueOnce({ status: 0, stdout: listenerField });
+
+    expect(isForwardServiceListenerOwner(ownerTarget, { platform: "darwin", probe })).toBe(true);
+  });
+
+  it("still rejects a genuine second loopback co-listener for a loopback forward", () => {
+    const listenerField = loopbackListenerField("4321") + loopbackListenerField("9999");
+    const probe = vi.fn().mockReturnValue({ status: 0, stdout: listenerField });
+
+    expect(isForwardServiceListenerOwner(ownerTarget, { platform: "darwin", probe })).toBe(false);
+  });
+
+  it("counts every interface for a remote-exposed (0.0.0.0) forward", () => {
+    const remoteTarget: ForwardServiceTarget = { ...ownerTarget, localHost: "0.0.0.0" };
+    // A 0.0.0.0 forward must keep the interface-agnostic `-ti` count so any
+    // co-listener still blocks ownership.
+    const probe = vi.fn().mockReturnValue({ status: 0, stdout: "4321\n3529439\n" });
+
+    expect(isForwardServiceListenerOwner(remoteTarget, { platform: "darwin", probe })).toBe(false);
+    expect(probe).toHaveBeenCalledWith("lsof", ["-ti4TCP:18789", "-sTCP:LISTEN"]);
+  });
+
+  it("ignores an external-interface-only /proc listener for a loopback forward (#11439)", () => {
+    const fixture = createLinuxOwnerFixtureWithExternalCoListener();
+    const expected = [fixture.target.executable, ...buildForwardServiceArgs(fixture.target)].join(
+      " ",
+    );
+    const responses = {
+      lsof: { status: null, stdout: "" },
+      ps: { status: 0, stdout: `${expected}\n` },
+    };
+    const probe = vi.fn(
+      (executable: string) => responses[executable as keyof typeof responses] ?? responses.lsof,
+    );
+
+    expect(
+      isForwardServiceListenerOwner(fixture.target, {
+        platform: "linux",
+        probe,
+        procRoot: fixture.procRoot,
+      }),
+    ).toBe(true);
   });
 
   it("rejects spoofed arguments when the Linux executable is different", () => {

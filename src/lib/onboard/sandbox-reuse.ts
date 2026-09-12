@@ -4,6 +4,7 @@
 import type { AgentDefinition } from "../agent/defs";
 import type { SandboxEntry } from "../state/registry";
 import * as registry from "../state/registry";
+import { resolveExternalDashboardUrlForPort } from "../dashboard/url";
 import { canReuseDashboardForwardForAgent } from "./dashboard-runtime";
 import {
   getHermesDashboardRegistryFields,
@@ -135,6 +136,10 @@ export function applyReusedSandboxDashboardState(
   input: ReusedSandboxDashboardStateInput,
 ): ReusedSandboxDashboardStateResult {
   const manageDashboard = input.manageDashboard ?? true;
+  // Capture the operator's external origin before the loopback rewrite below
+  // overwrites `input.env.CHAT_UI_URL`, so the persisted external URL reflects
+  // the browser-facing address rather than the internal loopback bind (#11439).
+  const externalDashboardOrigin = input.env.CHAT_UI_URL;
   if (
     manageDashboard &&
     input.env.NEMOCLAW_DASHBOARD_BIND === "0.0.0.0" &&
@@ -191,8 +196,17 @@ export function applyReusedSandboxDashboardState(
   input.revalidateSandboxIdentity?.(
     `record reused dashboard state for sandbox '${input.sandboxName}'`,
   );
+  // Persist (or clear) the browser-facing external dashboard URL derived from
+  // the operator's `CHAT_UI_URL`, rebinding its port to the effective dashboard
+  // port, so a re-onboard that adds, changes, or removes an external origin
+  // keeps status/dashboard-url/list accurate rather than reporting a stale or
+  // missing URL (#11439). Only meaningful when this run manages the dashboard.
+  const externalDashboardUrl = manageDashboard
+    ? resolveExternalDashboardUrlForPort(externalDashboardOrigin, dashboardPort)
+    : null;
   (input.updateSandbox ?? registry.updateSandbox)(input.sandboxName, {
     ...getHermesDashboardRegistryFields(hermesDashboardState),
+    ...(manageDashboard ? { dashboardExternalUrl: externalDashboardUrl } : {}),
     gatewayName: input.gatewayName,
     gatewayPort: input.gatewayPort,
   });

@@ -183,6 +183,52 @@ describe("dashboard-url command helpers", () => {
     expect(sinks.err).toEqual([]);
   });
 
+  it("prints the persisted external dashboard URL for a session-auth agent (#11439)", () => {
+    const sinks = makeSinks();
+
+    runDashboardUrlCommand(
+      "hermes",
+      { quiet: true },
+      {
+        fetchToken: () => null,
+        getSandbox: () => ({
+          agent: "hermes",
+          dashboardPort: 18789,
+          dashboardExternalUrl: "https://dash.example.com:18789",
+        }),
+        getAgentDashboardAuth: () => "session",
+        // A host access URL must not override the persisted external origin.
+        getAccessUrl: () => "http://172.22.1.1:18789",
+        log: sinks.log,
+        error: sinks.error,
+      },
+    );
+
+    expect(sinks.out).toEqual(["https://dash.example.com:18789/"]);
+  });
+
+  it("embeds the token in the persisted external dashboard URL for token-auth agents (#11439)", () => {
+    const sinks = makeSinks();
+
+    runDashboardUrlCommand(
+      "agent-ui",
+      { quiet: true },
+      {
+        fetchToken: () => "agent-token",
+        getSandbox: () => ({
+          agent: "agent-ui",
+          dashboardPort: 19001,
+          dashboardExternalUrl: "https://dash.example.com:19001",
+        }),
+        getAgentDashboardAuth: () => "url_token",
+        log: sinks.log,
+        error: sinks.error,
+      },
+    );
+
+    expect(sinks.out).toEqual(["https://dash.example.com:19001/#token=agent-token"]);
+  });
+
   it("fetches a token for non-OpenClaw agents with token-auth dashboards", () => {
     const sinks = makeSinks();
     const fetchToken = vi.fn(() => "agent-token");

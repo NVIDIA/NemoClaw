@@ -149,6 +149,13 @@ export interface SandboxEntry extends Partial<InferenceSelection> {
    */
   hermesApiPort?: number | null;
   dashboardPort?: number | null;
+  /**
+   * Browser-facing external dashboard URL resolved from `CHAT_UI_URL` at
+   * onboard time (host + scheme with the effective dashboard port). Persisted
+   * only when an external origin was configured; a plain loopback dashboard is
+   * left unset and reported as `http://127.0.0.1:<dashboardPort>/` (#11439).
+   */
+  dashboardExternalUrl?: string | null;
   /** Remote dashboard exposure was included in the sandbox's generated config. */
   dashboardRemoteBindPrepared?: boolean;
   /** Generation proving which durable same-name recreate registered this row. */

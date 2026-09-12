@@ -17,7 +17,9 @@ export interface DashboardUrlCommandDeps {
   /** Pull gateway.auth.token from the sandbox config (host-side helper). */
   fetchToken: (sandboxName: string) => string | null;
   /** Read sandbox metadata such as agent name and recorded dashboard port. */
-  getSandbox?: (sandboxName: string) => Pick<SandboxEntry, "agent" | "dashboardPort"> | null;
+  getSandbox?: (
+    sandboxName: string,
+  ) => Pick<SandboxEntry, "agent" | "dashboardPort" | "dashboardExternalUrl"> | null;
   /** Resolve the browser-facing dashboard base URL for this host, when known. */
   getAccessUrl?: (port: number) => string | null;
   /** Resolve a registered agent's dashboard auth contract. */
@@ -63,6 +65,21 @@ function resolveDashboardPort(sandbox: Pick<SandboxEntry, "dashboardPort"> | nul
   return typeof port === "number" && Number.isInteger(port) && port >= 1 && port <= 65535
     ? port
     : DASHBOARD_PORT;
+}
+
+/**
+ * Prefer the persisted external dashboard URL (the browser-facing HTTPS reverse
+ * proxy origin resolved from `CHAT_UI_URL` at onboard time) over any
+ * host-derived access URL, falling back to the loopback form only when no
+ * external origin was configured (#11439).
+ */
+function resolveDashboardBaseUrl(
+  sandbox: Pick<SandboxEntry, "dashboardExternalUrl"> | null,
+  accessUrl: string | null,
+): string | null {
+  const external = sandbox?.dashboardExternalUrl;
+  if (typeof external === "string" && external.length > 0) return external;
+  return accessUrl;
 }
 
 export function buildDashboardUrl(
@@ -141,7 +158,7 @@ export function runDashboardUrlCommand(
     for (const line of hint) log(line);
   };
 
-  let sandbox: Pick<SandboxEntry, "agent" | "dashboardPort"> | null = null;
+  let sandbox: Pick<SandboxEntry, "agent" | "dashboardPort" | "dashboardExternalUrl"> | null = null;
   if (deps.getSandbox) {
     try {
       sandbox = deps.getSandbox(sandboxName);
@@ -170,7 +187,7 @@ export function runDashboardUrlCommand(
   }
   if (dashboardAuth === "session" || dashboardAuth === "none") {
     const port = resolveDashboardPort(sandbox);
-    const accessUrl = deps.getAccessUrl?.(port) ?? null;
+    const accessUrl = resolveDashboardBaseUrl(sandbox, deps.getAccessUrl?.(port) ?? null);
     const url = buildPlainDashboardUrl(port, accessUrl ?? undefined);
     if (options.quiet) {
       log(url);
@@ -197,7 +214,7 @@ export function runDashboardUrlCommand(
   }
 
   const port = resolveDashboardPort(sandbox);
-  const accessUrl = deps.getAccessUrl?.(port) ?? null;
+  const accessUrl = resolveDashboardBaseUrl(sandbox, deps.getAccessUrl?.(port) ?? null);
   const url = buildDashboardUrl(token, port, accessUrl ?? undefined);
   if (options.quiet) {
     log(url);

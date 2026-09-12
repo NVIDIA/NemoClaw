@@ -218,21 +218,68 @@ function captureProcess(executable: string, args: readonly string[]) {
   return { status: result.status, stdout: result.stdout ?? "" };
 }
 
-function lsofListenerPids(port: number, probe: ForwardServiceOwnerProbe): string[] | null {
-  const result = probe("lsof", [`-ti4TCP:${String(port)}`, "-sTCP:LISTEN"]);
-  if (result.status === null) return null;
-  if (result.status !== 0) return [];
-  return [
-    ...new Set(
-      result.stdout
-        .split(/\r?\n/u)
-        .map((line) => line.trim())
-        .filter(Boolean),
-    ),
-  ];
+/**
+ * A loopback forward binds `127.0.0.1`, so only loopback and wildcard listeners
+ * actually contend for that socket. An `lsof -n` NAME reporting a listener bound
+ * solely to an external interface (e.g. a TLS reverse proxy fronting
+ * `CHAT_UI_URL` on the same port number) does not, and must not count toward
+ * forward ownership on the loopback bind (#11439). Wildcard binds (`*`,
+ * `0.0.0.0`) include loopback and always count; docker-proxy / loopback
+ * detection (#3260) is preserved. When the forward itself binds `0.0.0.0`
+ * (operator-opted remote exposure), every listener on the port contends, so no
+ * filtering applies.
+ */
+function lsofNameContendsWithLoopback(name: string): boolean {
+  // NAME is the bind endpoint, e.g. "127.0.0.1:18789", "*:18789", or
+  // "10.0.0.5:18789". Strip the trailing ":port" (IPv4 only here).
+  const address = name.replace(/:\d+$/u, "");
+  if (address === "*" || address === "0.0.0.0") return true;
+  return address.startsWith("127.");
 }
 
-function linuxListenerPids(port: number, procRoot: string, workLimit: number): string[] {
+function lsofListenerPids(
+  port: number,
+  probe: ForwardServiceOwnerProbe,
+  loopbackOnly: boolean,
+): string[] | null {
+  if (!loopbackOnly) {
+    const result = probe("lsof", [`-ti4TCP:${String(port)}`, "-sTCP:LISTEN"]);
+    if (result.status === null) return null;
+    if (result.status !== 0) return [];
+    return [
+      ...new Set(
+        result.stdout
+          .split(/\r?\n/u)
+          .map((line) => line.trim())
+          .filter(Boolean),
+      ),
+    ];
+  }
+  // Field-mode output pairs each PID (`p<pid>`) with the bind endpoint
+  // (`n<addr>:<port>`) so external-interface-only listeners can be excluded
+  // before counting owners.
+  const result = probe("lsof", [`-i4TCP:${String(port)}`, "-sTCP:LISTEN", "-P", "-n", "-FpPn"]);
+  if (result.status === null) return null;
+  if (result.status !== 0) return [];
+  const pids = new Set<string>();
+  let currentPid: string | null = null;
+  for (const rawLine of result.stdout.split(/\r?\n/u)) {
+    const line = rawLine.trim();
+    if (line.startsWith("p")) {
+      currentPid = /^p[1-9]\d*$/u.test(line) ? line.slice(1) : null;
+    } else if (line.startsWith("n") && currentPid !== null) {
+      if (lsofNameContendsWithLoopback(line.slice(1))) pids.add(currentPid);
+    }
+  }
+  return [...pids];
+}
+
+function linuxListenerPids(
+  port: number,
+  procRoot: string,
+  workLimit: number,
+  loopbackOnly: boolean,
+): string[] {
   if (!Number.isSafeInteger(workLimit) || workLimit < 1) return [];
   const portSuffix = `:${port.toString(16).padStart(4, "0").toUpperCase()}`;
   const socketInodes = new Set<string>();
@@ -244,6 +291,17 @@ function linuxListenerPids(port: number, procRoot: string, workLimit: number): s
         fields[1]?.toUpperCase().endsWith(portSuffix) &&
         /^\d+$/u.test(fields[9] ?? "")
       ) {
+        // Local address is HEXIP:HEXPORT (little-endian IP). A loopback forward
+        // only contends with wildcard (`00000000`) or loopback (`7F......`)
+        // binds; an external-interface-only listener on the same port is
+        // ignored (#11439).
+        if (loopbackOnly) {
+          const hexIp = (fields[1] ?? "").split(":")[0]?.toUpperCase() ?? "";
+          const isWildcard = hexIp === "00000000";
+          // 127.0.0.0/8 → least-significant byte 0x7F in little-endian order.
+          const isLoopback = hexIp.length === 8 && hexIp.endsWith("7F");
+          if (!isWildcard && !isLoopback) continue;
+        }
         socketInodes.add(fields[9]);
       }
     }
@@ -284,10 +342,11 @@ function listenerPids(
   procRoot: string,
   procWorkLimit: number,
   probe: ForwardServiceOwnerProbe,
+  loopbackOnly: boolean,
 ): string[] {
-  const lsof = lsofListenerPids(port, probe);
+  const lsof = lsofListenerPids(port, probe, loopbackOnly);
   if (lsof !== null || platform !== "linux") return lsof ?? [];
-  return linuxListenerPids(port, procRoot, procWorkLimit);
+  return linuxListenerPids(port, procRoot, procWorkLimit, loopbackOnly);
 }
 
 function executableMatches(actualExecutable: string, expectedExecutable: string): boolean {
@@ -330,7 +389,19 @@ export function isForwardServiceListenerOwner(
   const probe = options.probe ?? captureProcess;
   const procRoot = options.procRoot ?? "/proc";
   const procWorkLimit = options.procWorkLimit ?? LINUX_PROC_WORK_LIMIT;
-  const before = listenerPids(target.localPort, platform, procRoot, procWorkLimit, probe);
+  // A loopback forward only owns the loopback socket; an external-interface-only
+  // listener on the same port number (e.g. a reverse proxy fronting CHAT_UI_URL)
+  // must not defeat ownership. A remote-exposed (`0.0.0.0`) forward keeps the
+  // interface-agnostic count so any co-listener still blocks ownership (#11439).
+  const loopbackOnly = target.localHost === "127.0.0.1";
+  const before = listenerPids(
+    target.localPort,
+    platform,
+    procRoot,
+    procWorkLimit,
+    probe,
+    loopbackOnly,
+  );
   const [pid] = before;
   if (before.length !== 1 || pid === undefined || !/^[1-9]\d*$/u.test(pid)) return false;
   if (!processExecutableMatches(pid, target, platform, procRoot, probe)) return false;
@@ -338,7 +409,14 @@ export function isForwardServiceListenerOwner(
   if (commandLine.status !== 0) return false;
   const expected = [target.executable, ...buildForwardServiceArgs(target)].join(" ");
   if (commandLine.stdout.trim() !== expected) return false;
-  const after = listenerPids(target.localPort, platform, procRoot, procWorkLimit, probe);
+  const after = listenerPids(
+    target.localPort,
+    platform,
+    procRoot,
+    procWorkLimit,
+    probe,
+    loopbackOnly,
+  );
   return after.length === 1 && after[0] === pid;
 }
 

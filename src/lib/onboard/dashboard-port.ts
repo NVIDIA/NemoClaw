@@ -125,26 +125,89 @@ export function probePortBoundSync(port: number): boolean {
 }
 
 /**
- * Synchronous check whether a TCP port has an active listener on the host.
+ * Classify an `lsof -n` NAME bind address as one that would block a loopback
+ * dashboard bind. NemoClaw binds its dashboard forward on `127.0.0.1`
+ * (see {@link reserveDashboardPort} and {@link probePortBoundSync}), so a
+ * listener only conflicts when it already owns the loopback interface or a
+ * wildcard address that includes it. A listener bound solely to an external
+ * interface (e.g. a TLS reverse proxy in front of `CHAT_UI_URL`) leaves the
+ * loopback socket free and must not be treated as blocking (#11439).
+ */
+function bindAddressBlocksLoopback(address: string): boolean {
+  const addr = address.replace(/^\[/, "").replace(/\]$/, "").toLowerCase();
+  // Wildcard binds (all interfaces) always include loopback.
+  if (addr === "*" || addr === "0.0.0.0" || addr === "::" || addr === "0:0:0:0:0:0:0:0") {
+    return true;
+  }
+  // IPv4 loopback (127.0.0.0/8) and IPv6 loopback (::1), including the
+  // IPv4-mapped form docker-proxy can report.
+  if (addr.startsWith("127.")) return true;
+  if (addr === "::1" || addr === "0:0:0:0:0:0:0:1") return true;
+  if (addr.startsWith("::ffff:127.")) return true;
+  return false;
+}
+
+/**
+ * Decide whether `lsof -sTCP:LISTEN -P -n` output shows a listener on `port`
+ * that would block a loopback dashboard bind. Only loopback and wildcard binds
+ * count; an external-interface-only listener does not. Returns false when no
+ * matching loopback/wildcard listener is present so callers fall through to the
+ * authoritative `127.0.0.1` bind probe (#11439). Preserves docker-proxy /
+ * loopback / `0.0.0.0` detection (#3260), which report wildcard or loopback
+ * addresses.
+ */
+export function lsofOutputBlocksLoopbackBind(
+  output: string | null | undefined,
+  port: number,
+): boolean {
+  if (!output) return false;
+  for (const rawLine of output.split("\n")) {
+    const line = rawLine.trim();
+    if (!/\(LISTEN\)$/.test(line)) continue;
+    // NAME column holds the bind endpoint, e.g. "TCP 127.0.0.1:18789 (LISTEN)",
+    // "TCP *:18789 (LISTEN)", or "TCP [::1]:18789 (LISTEN)".
+    const match = line.match(/\s(\S+):(\d+)\s+\(LISTEN\)$/);
+    if (!match) continue;
+    if (Number(match[2]) !== port) continue;
+    if (bindAddressBlocksLoopback(match[1])) return true;
+  }
+  return false;
+}
+
+/**
+ * Synchronous check whether a TCP port has an active listener that would block
+ * NemoClaw's dashboard bind.
+ *
+ * The default loopback dashboard forward binds `127.0.0.1`, so the decision is
+ * interface-specific: an external-interface-only listener on the same port
+ * number does not count. When `loopbackOnly` is false — an operator opted into a
+ * remote (`0.0.0.0`) bind via `NEMOCLAW_DASHBOARD_BIND` — the forward binds all
+ * interfaces, so any listener on the port (including an external-interface-only
+ * one) genuinely conflicts and counts (#3259, #11439).
  *
  * Detection chain — any positive signal short-circuits:
  *   1. `lsof` — finds listeners owned by the current user.
  *   2. `sudo -n lsof` — catches root-owned listeners (e.g., docker-proxy on
- *      macOS) that the unprivileged lsof can't see. Silently no-ops when
- *      the user can't escalate non-interactively.
- *   3. Node `net` bind probe — authoritative fallback when both lsof
- *      invocations come up empty, mirroring the direct ForwardTcp bind.
+ *      macOS) that the unprivileged lsof can't see. Silently no-ops when the
+ *      user can't escalate non-interactively.
+ *   3. Node `net` bind probe — authoritative `127.0.0.1` check, run whenever the
+ *      lsof invocations show no blocking listener, mirroring the direct
+ *      ForwardTcp loopback bind.
  *
  * Returns false (optimistic) when every probe is inconclusive. The detached
  * OpenShell launch performs the final bind check.
  */
-export function isPortBoundOnHost(port: number): boolean {
+export function isPortBoundOnHost(port: number, loopbackOnly = true): boolean {
+  const blocks = (output: ReturnType<RunCaptureFn>): boolean =>
+    loopbackOnly
+      ? lsofOutputBlocksLoopbackBind(output, port)
+      : Boolean(output && output.trim().length > 0);
   try {
     const out: ReturnType<RunCaptureFn> = runCapture(
       ["lsof", "-i", `:${port}`, "-sTCP:LISTEN", "-P", "-n"],
       { ignoreError: true },
     );
-    if (out && out.trim().length > 0) return true;
+    if (blocks(out)) return true;
   } catch {
     /* fall through to the next probe */
   }
@@ -154,7 +217,7 @@ export function isPortBoundOnHost(port: number): boolean {
       ["sudo", "-n", "lsof", "-i", `:${port}`, "-sTCP:LISTEN", "-P", "-n"],
       { ignoreError: true },
     );
-    if (sudoOut && sudoOut.trim().length > 0) return true;
+    if (blocks(sudoOut)) return true;
   } catch {
     /* fall through to the bind probe */
   }
