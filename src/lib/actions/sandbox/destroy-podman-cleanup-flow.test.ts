@@ -46,8 +46,8 @@ it("passes registered Podman authority through final gateway cleanup", async () 
     "alpha",
     expect.objectContaining({ providerId: "podman" }),
   );
-  expect(harness.shouldCleanupGatewaySpy).toHaveBeenCalledWith(
-    expect.objectContaining({ runtimeProviderId: "podman" }),
+  expect(harness.resolveFinalGatewayCleanupSpy).toHaveBeenCalledWith(
+    expect.objectContaining({ runtimeProviderId: "podman", sandboxName: "alpha" }),
     {},
   );
   expect(harness.cleanupGatewaySpy).toHaveBeenCalledWith(
@@ -84,7 +84,7 @@ it("recovers Podman authority when final cleanup is retried after registry remov
     "alpha",
     expect.objectContaining({ providerId: "podman", sandbox: null }),
   );
-  expect(harness.shouldCleanupGatewaySpy).toHaveBeenCalledWith(
+  expect(harness.resolveFinalGatewayCleanupSpy).toHaveBeenCalledWith(
     expect.objectContaining({ removedRegistryEntry: true, runtimeProviderId: "podman" }),
     {},
   );
