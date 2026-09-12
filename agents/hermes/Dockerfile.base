@@ -468,7 +468,9 @@ RUN mkdir -p /opt/hermes \
     && printf '%s  /tmp/hermes.tar.gz\n' "${HERMES_TARBALL_SHA256}" > /tmp/hermes.tar.gz.sha256 \
     && sha256sum -c /tmp/hermes.tar.gz.sha256 \
     && tar -xzf /tmp/hermes.tar.gz -C /opt/hermes --strip-components=1 \
-    && rm -rf /opt/hermes/tests \
+    && rm -rf \
+        /opt/hermes/tests \
+        /opt/hermes/apps/desktop/src/store/suggestion-providers/github.test.ts \
     && printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_RUNTIME_BOUNDARIES_PATCH_SHA256" /tmp/hermes-runtime-boundaries.patch \
         "$NEMOCLAW_HERMES_SECURE_DIR_PATCH_SHA256" /tmp/hermes-secure-dir-skip-chmod.patch \
@@ -719,7 +721,13 @@ RUN test -r /opt/hermes/.venv/pyvenv.cfg \
 
 # Reject build-only paths before the base image can be published.
 RUN set -eu; \
-    for build_only_path in /opt/hermes/tests /root/.npm /root/.cache/electron /root/.cache/node-gyp /root/.cache/uv; do \
+    for build_only_path in \
+        /opt/hermes/tests \
+        /opt/hermes/apps/desktop/src/store/suggestion-providers/github.test.ts \
+        /root/.npm \
+        /root/.cache/electron \
+        /root/.cache/node-gyp \
+        /root/.cache/uv; do \
         if [ -e "$build_only_path" ] || [ -L "$build_only_path" ]; then \
             echo "ERROR: build-only Hermes path leaked into the base image: $build_only_path" >&2; \
             exit 1; \

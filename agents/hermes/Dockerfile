@@ -409,6 +409,7 @@ RUN set -eu; \
             exit 1; \
         fi; \
     fi; \
+    rm -f /opt/hermes/apps/desktop/src/store/suggestion-providers/github.test.ts; \
     rm -rf /root/.npm /root/.cache/electron /root/.cache/node-gyp /root/.cache/uv; \
     test -d "$hermes_web_dist"
 
@@ -1651,6 +1652,7 @@ RUN check_metadata() { \
         hermes_log_metadata='sandbox:sandbox 2770'; \
     fi; \
     check_absent /opt/hermes/tests \
+    && check_absent /opt/hermes/apps/desktop/src/store/suggestion-providers/github.test.ts \
     && check_absent /opt/nemoclaw-hermes-config/image-build-probes.py \
     && check_absent /opt/nemoclaw-hermes-config/finalize-image-layout.sh \
     && check_absent /opt/nemoclaw-hermes-config/patch-gateway-runtime-metadata.py \
