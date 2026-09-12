@@ -52,12 +52,14 @@ async function runProcess(
   });
   const finishController = new AbortController();
   const append = (current: string, chunk: string, stream: string): string => {
-    if (outputError) return current;
     const next = current + chunk;
-    if (Buffer.byteLength(next, "utf8") <= PROCESS_OUTPUT_LIMIT) return next;
-    outputError = new Error(`${stream} exceeded the process output limit`);
-    finishController.abort();
-    return current;
+    const limitError =
+      !outputError && Buffer.byteLength(next, "utf8") > PROCESS_OUTPUT_LIMIT
+        ? new Error(`${stream} exceeded the process output limit`)
+        : undefined;
+    outputError ??= limitError;
+    void (limitError ? finishController.abort() : undefined);
+    return outputError ? current : next;
   };
   const signal = options.owner
     ? AbortSignal.any([options.owner.signal, finishController.signal])
@@ -78,15 +80,16 @@ async function runProcess(
     await resultPromise;
   });
   const result = await resultPromise;
+  const processError = outputError ?? result.spawnError ?? result.cleanupError;
   return {
-    status: outputError
+    status: processError
       ? -1
       : result.signal
         ? null
         : (result.exitCode ?? (result.spawnError ? -1 : null)),
     signal: result.signal,
     stdout,
-    stderr: outputError ? `${stderr}${outputError.message}\n` : stderr,
+    stderr: processError ? `${stderr}${processError.message}\n` : stderr,
   };
 }
 
