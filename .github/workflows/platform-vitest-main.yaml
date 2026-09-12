@@ -177,6 +177,15 @@ jobs:
           persist-credentials: false
           sparse-checkout: tools/wsl/verify-11401.cts
           sparse-checkout-cone-mode: false
+      - name: Install WSL on the Windows 11 ARM image
+        if: ${{ runner.arch == 'ARM64' }}
+        shell: powershell
+        timeout-minutes: 10
+        run: |
+          $ErrorActionPreference='Continue'
+          & wsl --install --no-distribution --web-download 2>&1 | Tee-Object "$env:GITHUB_WORKSPACE\evidence\wsl-bootstrap.log"
+          & wsl --version 2>&1 | Tee-Object "$env:GITHUB_WORKSPACE\evidence\wsl-version.log"
+          $ErrorActionPreference='Stop'
       - name: Install the pinned Docker Desktop release
         if: ${{ inputs.docker_desktop }}
         shell: powershell
