@@ -133,8 +133,8 @@ describe("CLI root status JSON", () => {
         sandboxes: [
           {
             name: sandboxName,
-            model: "nvidia/nemotron",
-            provider: "nvidia-prod",
+            model: "configured-model",
+            provider: "configured-provider",
             gpuEnabled: true,
             agent: "openclaw",
             dashboardPort: 18789,

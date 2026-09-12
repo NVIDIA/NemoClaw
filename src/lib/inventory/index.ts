@@ -481,13 +481,10 @@ export async function listSandboxesCommand(deps: ListSandboxesCommandDeps): Prom
 async function buildStatusSandboxRow(
   sandbox: SandboxEntry,
   defaultSandbox: string | null,
-  liveInference: GatewayInference | null,
   portablePhase: "pending" | "configuring" | "active" | null,
   getPolicyPresets?: (sandboxName: string) => string[] | Promise<string[]>,
 ): Promise<StatusSandboxRow> {
   const isDefault = sandbox.name === defaultSandbox;
-  const liveModel = isDefault ? liveInference?.model : null;
-  const liveProvider = isDefault ? liveInference?.provider : null;
   const inference = getSandboxEntryDisplayInference(sandbox);
   const dashboardPort =
     typeof sandbox.dashboardPort === "number" && Number.isFinite(sandbox.dashboardPort)
@@ -499,8 +496,8 @@ async function buildStatusSandboxRow(
       : sandbox.gpuEnabled === true;
   return {
     name: safeStatusString(sandbox.name) || sandbox.name,
-    model: safeStatusString(liveModel || inference.model),
-    provider: safeStatusString(liveProvider || inference.provider),
+    model: safeStatusString(inference.model),
+    provider: safeStatusString(inference.provider),
     gpuEnabled: sandbox.gpuEnabled === true,
     hostGpuDetected: sandbox.hostGpuDetected === true,
     sandboxGpuEnabled,
@@ -603,7 +600,6 @@ export async function getStatusReport(deps: ShowStatusCommandDeps): Promise<Stat
       buildStatusSandboxRow(
         sandbox,
         resolvedDefault,
-        liveInference,
         portablePhases.get(sandbox.name) ?? null,
         deps.getPolicyPresets,
       ),
@@ -670,12 +666,10 @@ export async function showStatusCommand(deps: ShowStatusCommandDeps): Promise<vo
       // Prefer the live gateway model for the default sandbox so `status`
       // agrees with `openshell inference get` (#2369).
       const liveModel = isDefault && live ? live.model : null;
-      const liveProvider = isDefault && live ? live.provider : null;
       const inference = getSandboxEntryDisplayInference(sb);
-      const model = liveModel || inference.model;
-      const provider = liveProvider || inference.provider;
+      const displayModel = liveModel || inference.model;
       const portSuffix = sb.dashboardPort != null ? ` :${sb.dashboardPort}` : "";
-      log(`    ${sb.name}${def}${model ? ` (${model})` : ""}${portSuffix}`);
+      log(`    ${sb.name}${def}${displayModel ? ` (${displayModel})` : ""}${portSuffix}`);
       const portablePhase = portablePhases.get(sb.name);
       if (portablePhase) log(`      agent: hermes  phase: ${portablePhase}`);
       if (isDefault && liveModel && liveModel !== inference.model) {
@@ -685,8 +679,8 @@ export async function showStatusCommand(deps: ShowStatusCommandDeps): Promise<vo
       // SSH-session count as labeled fields. Bare `nemoclaw status` previously
       // only had the model in parens above — users had to run
       // `nemoclaw <name> status` to see provider and session state.
-      if (provider || model) {
-        const parts = [provider, model].filter(Boolean).join(" / ");
+      if (inference.provider || inference.model) {
+        const parts = [inference.provider, inference.model].filter(Boolean).join(" / ");
         log(`      Inference (configured): ${parts}`);
       }
       if (deps.getActiveSessionCount && !portablePhase) {
