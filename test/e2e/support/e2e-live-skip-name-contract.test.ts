@@ -4,7 +4,6 @@
 import { describe, expect, it } from "vitest";
 
 import { target } from "../registry/builder.ts";
-import { listTargets } from "../registry/registry.ts";
 import { liveTargetSupport, liveTargetTestTitle } from "../registry/runtime-support.ts";
 import type { TargetDefinition } from "../registry/types.ts";
 
@@ -31,25 +30,12 @@ function syntheticTarget(platform: string): TargetDefinition {
     : definition;
 }
 
-/**
- * Locks the contract that the live registry-targets test file registers
- * each target under a title prefixed by `target.id`, so the workflow's stable
- * ID filter matches supported and unsupported entries identically. Without
- * this contract, explicit unsupported selections on `workflow_dispatch` would
- * match zero tests and Vitest would exit non-zero with no structured skip reason.
- */
-describe("live registry-targets skip-name contract", () => {
-  it("keeps an unsupported target selectable by stable ID with an unresolved title", () => {
+describe("live registry target titles", () => {
+  it("rejects an unsupported target before registering a test title", () => {
     const unsupported = syntheticTarget("synthetic-unwired-platform");
-    const support = liveTargetSupport(unsupported);
-    expect(support.supported).toBe(false);
-
-    const title = liveTargetTestTitle(unsupported);
-    const filter = new RegExp(`^${unsupported.id}:`);
-    expect(title).toBe(`${unsupported.id}: unresolved [unresolved; unresolved]`);
-    expect(filter.test(title)).toBe(true);
-    expect(new RegExp(`^other-target:`).test(title)).toBe(false);
-    expect(title).not.toMatch(/\[not wired:/);
+    expect(() => liveTargetTestTitle(unsupported)).toThrow(
+      "is not executable: platform 'synthetic-unwired-platform' is not wired for live fixtures",
+    );
   });
 
   it("keeps a supported target selectable by stable ID with its semantic title", () => {

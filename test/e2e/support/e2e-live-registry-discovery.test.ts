@@ -81,18 +81,11 @@ describe("live target registry discovery support", () => {
     });
   });
 
-  it("reports a missing-environment declaration without resolving a runner (#9167)", () => {
+  it("rejects a missing-environment declaration before reporting execution coverage", () => {
     const declaration = target("synthetic-no-environment").expectedState("synthetic-ready").build();
-
-    expect(liveTargetInventoryEntry(declaration)).toEqual({
-      id: declaration.id,
-      agentRuntime: "unresolved",
-      observableOutcome: "unresolved",
-      environmentOrInferenceEndpoint: "unresolved",
-      unresolvedReason: "This typed registry declaration has no executable owner",
-      supported: false,
-      supportReasons: ["missing environment"],
-    });
+    expect(() => liveTargetInventoryEntry(declaration)).toThrow(
+      "E2E target synthetic-no-environment is not executable: missing environment",
+    );
   });
 
   it("compiles a run plan from synthetic target behavior", () => {

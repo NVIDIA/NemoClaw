@@ -79,6 +79,9 @@ function parseArgs(argv: string[]): Args {
         .split(",")
         .map((id) => id.trim())
         .filter(Boolean);
+      if (args.targets.length === 0) {
+        throw new Error("--targets requires at least one target ID");
+      }
       i += 1;
       continue;
     }
@@ -131,10 +134,6 @@ export function liveTargetInventoryEntry(
   };
 }
 
-export function buildLiveTargetInventory(): LiveTargetInventoryEntry[] {
-  return listTargets().map((target) => liveTargetInventoryEntry(target));
-}
-
 export function liveTargetGatewayRuntimes(target: TargetDefinition): E2eGatewayRuntimeSupport {
   return target.gatewayRuntimes ?? ["docker"];
 }
@@ -143,21 +142,14 @@ export function buildLiveTargetMatrix(
   ids: string[] = [],
   gatewayRuntimes: readonly E2eGatewayRuntime[] = ["docker"],
 ): LiveTargetMatrixEntry[] {
-  if (ids.length === 0) {
-    return listTargets().flatMap((target) => {
-      const support = liveTargetSupport(target);
-      return support.supported
-        ? e2eRuntimeProviders(liveTargetGatewayRuntimes(target), gatewayRuntimes).map(
-            (runtimeProvider) => liveMatrixEntry(target, support, runtimeProvider),
-          )
-        : [];
-    });
-  }
-  return requireTargets(ids).flatMap((target) =>
-    e2eRuntimeProviders(liveTargetGatewayRuntimes(target), gatewayRuntimes).map((runtimeProvider) =>
-      liveMatrixEntry(target, liveTargetSupport(target), runtimeProvider),
-    ),
-  );
+  const targets = ids.length === 0 ? listTargets() : requireTargets(ids);
+  return targets.flatMap((target) => {
+    const support = liveTargetSupport(target);
+    liveTargetExecutionCoverage(target, support);
+    return e2eRuntimeProviders(liveTargetGatewayRuntimes(target), gatewayRuntimes).map(
+      (runtimeProvider) => liveMatrixEntry(target, support, runtimeProvider),
+    );
+  });
 }
 
 function emitLiveMatrix(ids: string[]) {

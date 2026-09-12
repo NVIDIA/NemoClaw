@@ -38,10 +38,6 @@ const E2E_CLOUD_EXPERIMENTAL_CHECKS_DIR = path.join(
 );
 process.env.NEMOCLAW_CLI_BIN ??= CLI_ENTRYPOINT;
 
-// The workflow filters by the stable target ID prefix via `-t "^${TARGET_ID}:"`.
-// When that env is set, surface the structured `[not wired]` reason for the
-// targeted unsupported target at module load so the job log/summary
-// captures it before Vitest reports the skipped test by ID.
 const SELECTED_TARGET_ID = process.env.TARGET_ID;
 // That selector matches nothing when the ID names no registered target, and an
 // empty ID builds the selector `-t "^$"`, which also matches nothing. Vitest
@@ -68,22 +64,6 @@ const REGISTRY_TARGET_PHASES = [
 for (const [targetIndex, target] of listTargets().entries()) {
   const support = liveTargetSupport(target);
   const timeoutContract = liveTargetTimeoutContract(target.environment?.lifecycle);
-  if (!support.supported) {
-    if (SELECTED_TARGET_ID === target.id) {
-      console.warn(`[not wired] ${target.id}: ${support.reasons.join("; ")}`);
-    }
-    test.skip(
-      liveTargetTestTitle(target, support),
-      {
-        meta: {
-          e2eArtifactRootId: target.id,
-          e2ePhases: REGISTRY_TARGET_PHASES,
-        },
-      },
-      () => {},
-    );
-    continue;
-  }
 
   test(
     liveTargetTestTitle(target, support),

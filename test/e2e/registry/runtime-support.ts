@@ -70,20 +70,15 @@ export function liveTargetExecutionCoverage(
   target: TargetDefinition,
   support = liveTargetSupport(target),
 ): E2eExecutionMetadata {
-  if (support.supported && !target.executionCoverage) {
+  if (!support.supported) {
+    throw new Error(`E2E target ${target.id} is not executable: ${support.reasons.join("; ")}`);
+  }
+  if (!target.executionCoverage) {
     throw new Error(
       `Executable typed E2E target ${target.id} requires execution coverage metadata`,
     );
   }
-  return validateE2eExecutionMetadata(
-    target.executionCoverage ?? {
-      agentRuntime: "unresolved",
-      observableOutcome: "unresolved",
-      environmentOrInferenceEndpoint: "unresolved",
-      unresolvedReason: "This typed registry declaration has no executable owner",
-    },
-    `Typed E2E target ${target.id}`,
-  );
+  return validateE2eExecutionMetadata(target.executionCoverage, `Typed E2E target ${target.id}`);
 }
 
 /**

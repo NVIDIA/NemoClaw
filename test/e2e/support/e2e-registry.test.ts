@@ -25,7 +25,7 @@ describe("deterministic target registry", () => {
     const first = target("duplicate-id")
       .manifest("test/e2e/manifests/openclaw-nvidia.yaml")
       .build();
-    const second = target("duplicate-id").manifest("test/e2e/manifests/hermes-nvidia.yaml").build();
+    const second = target("duplicate-id").manifest("synthetic/second-manifest.yaml").build();
 
     expect(() => buildTargetRegistry([first, second])).toThrow(/duplicate-id/);
   });

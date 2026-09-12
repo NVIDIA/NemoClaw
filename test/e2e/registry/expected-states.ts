@@ -17,20 +17,6 @@ const cloudOpenclawReady: ExpectedState = {
   credentials: { expected: "present" },
 };
 
-const cloudOpenclawCustomPoliciesReady: ExpectedState = {
-  ...cloudOpenclawReady,
-  id: "cloud-openclaw-custom-policies-ready",
-};
-
-const cloudHermesReady: ExpectedState = {
-  id: "cloud-hermes-ready",
-  cli: { installed: true },
-  gateway: { expected: "present", health: "healthy" },
-  sandbox: { expected: "present", status: "running", agent: "hermes" },
-  inference: { expected: "available", provider: "nvidia" },
-  credentials: { expected: "present" },
-};
-
 // Deep Agents Code is a terminal-agent runtime, not an OpenClaw dashboard
 // runtime. The P0-E parity target is sandbox policy/egress behavior, so the
 // live typed target must not require a host dashboard forward on 18789 before
@@ -69,20 +55,6 @@ const preflightFailureNoSandbox: ExpectedState = {
   sandbox: { expected: "absent" },
 };
 
-const onboardingFailureInvalidNvidiaKey: ExpectedState = {
-  id: "onboarding-failure-invalid-nvidia-key",
-  cli: { installed: true },
-  gateway: { expected: "absent" },
-  sandbox: { expected: "absent" },
-};
-
-const onboardingFailureGatewayPortConflict: ExpectedState = {
-  id: "onboarding-failure-gateway-port-conflict",
-  cli: { installed: true },
-  gateway: { expected: "absent" },
-  sandbox: { expected: "absent" },
-};
-
 const onboardingFailurePolicyPresetsRequired: ExpectedState = {
   id: "onboarding-failure-policy-presets-required",
   cli: { installed: true },
@@ -113,14 +85,10 @@ const postRebootRecoveryReady: ExpectedState = {
 
 const REGISTRY: readonly ExpectedState[] = [
   cloudOpenclawReady,
-  cloudOpenclawCustomPoliciesReady,
-  cloudHermesReady,
   cloudDeepAgentsCodeReady,
   localOllamaOpenclawReady,
   macosCliReadyDockerOptional,
   preflightFailureNoSandbox,
-  onboardingFailureInvalidNvidiaKey,
-  onboardingFailureGatewayPortConflict,
   onboardingFailurePolicyPresetsRequired,
   postRebootRecoveryReady,
 ];

@@ -6,10 +6,8 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 import { target } from "../registry/builder.ts";
-import { listTargets } from "../registry/registry.ts";
 import { buildLiveTargetMatrix } from "../registry/run.ts";
 import { resolveRunnerForTarget } from "../registry/runner-routing.ts";
-import { liveTargetSupport } from "../registry/runtime-support.ts";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const RUN_TARGETS = path.join(REPO_ROOT, "test/e2e/registry/run.ts");
@@ -21,12 +19,6 @@ function runEmitLiveMatrix(args: string[] = []) {
     encoding: "utf8",
     timeout: Number(process.env.E2E_SPAWN_TIMEOUT_MS ?? 60_000),
   });
-}
-
-function requireUnsupportedTarget() {
-  const unsupported = listTargets().find((entry) => !liveTargetSupport(entry).supported);
-  expect(unsupported, "expected at least one unsupported live E2E target").toBeDefined();
-  return unsupported!;
 }
 
 function expectExecutableTypedTargetCoverage(): void {
@@ -92,21 +84,21 @@ describe("live E2E target matrix", () => {
     expect(() => resolveRunnerForTarget(broken)).toThrow(/no default for platform/);
   });
 
-  it("keeps explicitly selected unsupported live targets in the matrix with skip reasons", () => {
-    const unsupported = requireUnsupportedTarget();
-    const support = liveTargetSupport(unsupported);
+  it("rejects a removed placeholder instead of producing an empty execution", () => {
+    expect(() => buildLiveTargetMatrix(["ubuntu-repo-cloud-hermes"])).toThrow(
+      "Unknown target 'ubuntu-repo-cloud-hermes'",
+    );
+    const result = runEmitLiveMatrix(["--targets", "ubuntu-repo-cloud-hermes"]);
+    expect(result.status).not.toBe(0);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toContain("Unknown target 'ubuntu-repo-cloud-hermes'");
+  });
 
-    expect(buildLiveTargetMatrix([unsupported.id])).toEqual([
-      expect.objectContaining({
-        id: unsupported.id,
-        agentRuntime: "unresolved",
-        observableOutcome: "unresolved",
-        environmentOrInferenceEndpoint: "unresolved",
-        unresolvedReason: "This typed registry declaration has no executable owner",
-        supported: false,
-        supportReasons: support.reasons,
-      }),
-    ]);
+  it("rejects an empty explicit selection instead of selecting every target", () => {
+    const result = runEmitLiveMatrix(["--targets", " , "]);
+    expect(result.status).not.toBe(0);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toContain("--targets requires at least one target ID");
   });
 
   it("exposes execution coverage for every executable typed target (#9167)", () => {
@@ -141,14 +133,6 @@ describe("live E2E target matrix", () => {
     expect(lines.length, "live matrix output must be a single line").toBe(1);
     const parsed = JSON.parse(lines[0]);
     expect(parsed).toEqual(buildLiveTargetMatrix());
-  });
-
-  it("honors explicit target selections for --emit-live-matrix", () => {
-    const unsupported = requireUnsupportedTarget();
-    const result = runEmitLiveMatrix(["--targets", unsupported.id]);
-    expect(result.status, result.stderr).toBe(0);
-    const parsed = JSON.parse(result.stdout.trim());
-    expect(parsed).toEqual(buildLiveTargetMatrix([unsupported.id]));
   });
 
   it("rejects retired typed-shell runner flags", () => {
