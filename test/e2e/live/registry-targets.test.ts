@@ -13,7 +13,7 @@ import {
   type LifecycleProfile,
   readRegistrySandboxEntry,
 } from "../fixtures/phases/index.ts";
-import { listTargets, requireTargets } from "../registry/registry.ts";
+import { listTargets, requireTargets } from "../../../tools/e2e/target-inventory.mts";
 import { liveTargetSupport, liveTargetTestTitle } from "../registry/runtime-support.ts";
 import { runE2eCloudExperimentalChecks } from "./cloud-experimental-checks.ts";
 import {

@@ -21,7 +21,7 @@ import {
   E2E_TARGET_CATALOGUE,
   isPrCandidateCatalogueTarget,
   validateE2eTargetCatalogue,
-} from "../../../tools/e2e/target-catalogue.mts";
+} from "../../../tools/e2e/target-inventory.mts";
 import { readFreeStandingJobsInventory } from "../../../tools/e2e/workflow-boundary.mts";
 import {
   buildE2eWorkflowPlan,

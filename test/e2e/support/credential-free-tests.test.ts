@@ -14,6 +14,7 @@ import {
   discoverCredentialFreeTestRows,
   discoverCredentialFreeTests,
 } from "../../../tools/e2e/credential-free-tests.mts";
+import { reconcileSharedTargetDiscovery } from "../../../tools/e2e/target-inventory.mts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 
 const CREDENTIAL_FREE_TESTS_CLI = path.join(REPO_ROOT, "tools", "e2e", "credential-free-tests.mts");
@@ -129,6 +130,30 @@ describe("credential-free test discovery", () => {
         module({ file: "test/e2e/live/example.test.ts", project: "integration" }),
       ),
     ).toThrow("integration credential-free test must not live under test/e2e/");
+  });
+
+  it("rejects a discovered shared test without an inventory disposition", () => {
+    expect(() =>
+      reconcileSharedTargetDiscovery(
+        [{ id: "new-proof", file: "test/new-proof.test.ts", project: "integration" }],
+        [],
+      ),
+    ).toThrow("new-proof has no inventory disposition");
+  });
+
+  it.each([
+    ["missing file", []],
+    ["wrong project", [{ id: "proof", file: "test/proof.test.ts", project: "e2e-live" as const }]],
+    [
+      "different file",
+      [{ id: "proof", file: "test/moved/proof.test.ts", project: "integration" as const }],
+    ],
+  ])("rejects shared target discovery with %s", (_condition, discovered) => {
+    expect(() =>
+      reconcileSharedTargetDiscovery(discovered, [
+        { id: "proof", file: "test/proof.test.ts", project: "integration" },
+      ]),
+    ).toThrow("proof does not match discovered file and project");
   });
 
   it("discovers the tagged repository files through their real Vitest projects", () => {

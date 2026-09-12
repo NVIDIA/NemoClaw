@@ -5,6 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { runCatalogueTarget } from "../../../tools/e2e/target-catalogue.mts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -20,9 +21,8 @@ vi.mock("../../../tools/e2e/live-vitest-invocation.mts", () => ({
 import {
   catalogueTarget,
   E2E_TARGET_CATALOGUE,
-  runCatalogueTarget,
   validateE2eTargetCatalogue,
-} from "../../../tools/e2e/target-catalogue.mts";
+} from "../../../tools/e2e/target-inventory.mts";
 
 describe("runner-pressure catalogue boundary", () => {
   afterEach(() => {

@@ -6,7 +6,11 @@ import path from "node:path";
 
 // These modules resolve relative to the trusted advisor implementation, not
 // the analyzed PR worktree. PR-provided TypeScript is never imported.
-import { getTarget, listTargets } from "../../test/e2e/registry/registry.ts";
+import {
+  getTarget,
+  listTargets,
+  reconcileSharedTargetDiscovery,
+} from "../e2e/target-inventory.mts";
 import { liveTargetSupport } from "../../test/e2e/registry/runtime-support.ts";
 import {
   credentialFreeTestProjectForFile,
@@ -18,7 +22,7 @@ import {
   catalogueRecommendationSelectorIds,
   E2E_TARGET_CATALOGUE,
   isPrAdvisorSelectableCatalogueTarget,
-} from "../e2e/target-catalogue.mts";
+} from "../e2e/target-inventory.mts";
 import { containsCommandShapedE2eText } from "./e2e-text.mts";
 import { enumValue, recordItems, stringOrUndefined } from "./json.mts";
 import { buildRiskPlan, isPrE2ePlanningJob, type RiskPlan } from "./risk-plan.mts";
@@ -469,7 +473,7 @@ function changedCredentialFreeTestRow(
 }
 function discoverTrustedCredentialFreeTests(): E2eChangedCredentialFreeTest[] {
   if (trustedCredentialFreeTests) return [...trustedCredentialFreeTests];
-  const rows: E2eChangedCredentialFreeTest[] = [];
+  const rows: (E2eChangedCredentialFreeTest & { project: CredentialFreeTestProject })[] = [];
   const testRoot = path.join(TRUSTED_REPO_ROOT, "test");
   const pending = [testRoot];
   while (pending.length > 0) {
@@ -486,10 +490,13 @@ function discoverTrustedCredentialFreeTests(): E2eChangedCredentialFreeTest[] {
       const project = credentialFreeTestProjectForFile(file);
       if (!project) continue;
       const row = changedCredentialFreeTestRow(file, project, fs.readFileSync(absolute, "utf8"));
-      if (row) rows.push(row);
+      if (row) rows.push({ ...row, project });
     }
   }
-  trustedCredentialFreeTests = rows.sort((left, right) => left.id.localeCompare(right.id));
+  trustedCredentialFreeTests = reconcileSharedTargetDiscovery(rows).map(({ id, file }) => ({
+    id,
+    file,
+  }));
   return [...trustedCredentialFreeTests];
 }
 

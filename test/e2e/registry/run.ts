@@ -15,7 +15,7 @@ import {
   runtimeExecutionId,
 } from "../../../tools/e2e/gateway-runtime.mts";
 
-import { listTargets, requireTargets } from "./registry.ts";
+import { listTargets, requireTargets } from "../../../tools/e2e/target-inventory.mts";
 import { resolveRunnerForTarget } from "./runner-routing.ts";
 import {
   liveTargetExecutionCoverage,

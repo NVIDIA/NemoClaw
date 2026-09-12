@@ -406,7 +406,10 @@ credential values. It then changes the fixture's recorded sandbox fingerprint an
 launchers to fail without publishing a file before restoring the registry. The assertion budget is
 unchanged because this contract replaces a redundant nonempty-log assertion in the same scenario.
 
-`tools/e2e/target-catalogue.mts` declares live E2E targets that share one execution shape.
+`tools/e2e/target-inventory.mts` owns target identity and lookup for reusable-profile, shared, and typed-driver executions.
+Typed scenario definitions remain beside the live driver. The inventory rejects duplicate IDs across these routes.
+`tools/e2e/target-catalogue.mts` runs the selected profile target; it does not register targets.
+Each profile target shares one execution shape.
 Each entry owns these target properties:
 
 - Stable catalogue ID, target ID, shard, and Vitest file.
@@ -569,9 +572,10 @@ evidence boundary visible in Vitest and GitHub Actions.
 
 Keep coverage metadata with the execution owner:
 
-- Catalogue targets declare it in `tools/e2e/target-catalogue.mts`.
+- Catalogue targets declare it in `tools/e2e/target-inventory.mts`.
 - Executable typed targets declare it in `test/e2e/registry/definitions/baseline.ts`.
-- Shared credential-free tests declare it in `tools/e2e/credential-free-tests.mts`.
+- Shared credential-free tests declare it in `tools/e2e/target-inventory.mts`.
+  Module-tag discovery must match each registered file and Vitest project.
 - Retained workflow jobs and staging Brev declare it in `.github/workflows/e2e.yaml`.
 
 Single workflow jobs use the `E2E_AGENT_RUNTIME`, `E2E_OBSERVABLE_OUTCOME`,

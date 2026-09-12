@@ -17,7 +17,7 @@ import {
 import {
   catalogueTargetsForChangedFiles,
   E2E_TARGET_CATALOGUE,
-} from "../../../tools/e2e/target-catalogue.mts";
+} from "../../../tools/e2e/target-inventory.mts";
 import {
   focusedE2eJobsForChangedFiles,
   readFreeStandingJobsInventory,

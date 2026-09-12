@@ -5,7 +5,7 @@ import fs from "node:fs";
 
 import { describe, expect, it } from "vitest";
 
-import { catalogueTarget, E2E_TARGET_CATALOGUE } from "../../../tools/e2e/target-catalogue.mts";
+import { catalogueTarget, E2E_TARGET_CATALOGUE } from "../../../tools/e2e/target-inventory.mts";
 import { buildE2eWorkflowPlan, selectedWorkflowJobs } from "../../../tools/e2e/workflow-plan.mts";
 
 describe("Shields retirement upgrade workflow plan", () => {

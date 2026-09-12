@@ -12,7 +12,7 @@ import {
   requireExpectedState,
 } from "../registry/expected-states.ts";
 import { loadManifest } from "../registry/manifests.ts";
-import { listTargets } from "../registry/registry.ts";
+import { listTargets } from "../../../tools/e2e/target-inventory.mts";
 import type { ExpectedState, StateProbeId } from "../registry/types.ts";
 
 describe("typed expected-state registry behavior", () => {

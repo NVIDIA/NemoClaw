@@ -134,11 +134,12 @@ describe("E2E recommendation normalizer", () => {
         "tools/e2e/onboard-timeout-contract.mts",
         "tools/e2e/openshell-gateway-upgrade-fixture.mts",
         "tools/e2e/selector-aliases.mts",
-        "tools/e2e/target-catalogue.mts",
+        "tools/e2e/target-inventory.mts",
         "scripts/checks/protected-managed-image-contract.ts",
         "tools/e2e/module-tags.mts",
         ".github/workflows/e2e.yaml",
         "test/platform/images/vllm-docker-storage.test.ts",
+        "test/onboarding/onboard-managed-image-buildless-e2e.test.ts",
       ]) {
         const destination = path.join(tmp, file);
         fs.mkdirSync(path.dirname(destination), { recursive: true });

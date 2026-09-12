@@ -14,7 +14,7 @@ import { LIVE_E2E_ROOT, REPO_ROOT } from "../fixtures/paths.ts";
 import { startTestProgress } from "../fixtures/progress.ts";
 import { buildChildEnv, redactString } from "../fixtures/redaction.ts";
 import { ShellProbe, trustedShellCommand } from "../fixtures/shell-probe.ts";
-import { listTargets } from "../registry/registry.ts";
+import { listTargets } from "../../../tools/e2e/target-inventory.mts";
 
 const VITEST = path.join(REPO_ROOT, "node_modules", "vitest", "vitest.mjs");
 const COLLECTION_ENV = [

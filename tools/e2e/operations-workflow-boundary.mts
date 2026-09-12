@@ -10,7 +10,7 @@ import ts from "typescript";
 import YAML from "yaml";
 import { RISK_RULES } from "../advisors/risk-plan.mts";
 import { validateStandardProfileWorkflowBoundary } from "./standard-profile-workflow-boundary.mts";
-import { catalogueTarget, E2E_TARGET_CATALOGUE } from "./target-catalogue.mts";
+import { catalogueTarget, E2E_TARGET_CATALOGUE } from "./target-inventory.mts";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_WORKFLOW_PATH = join(REPO_ROOT, ".github", "workflows", "e2e.yaml");

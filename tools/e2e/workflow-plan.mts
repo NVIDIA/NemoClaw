@@ -11,7 +11,7 @@ import {
   liveTargetGatewayRuntimes,
   type LiveTargetMatrixEntry,
 } from "../../test/e2e/registry/run.ts";
-import { listTargets } from "../../test/e2e/registry/registry.ts";
+import { listTargets } from "./target-inventory.mts";
 import { buildRiskPlan } from "../advisors/risk-plan.mts";
 import {
   type CredentialFreeTestDefinitionRow,
@@ -39,7 +39,7 @@ import {
   type E2eExecutionProfile,
   type E2eOptionalCredential,
   pathMatches,
-} from "./target-catalogue.mts";
+} from "./target-inventory.mts";
 import {
   focusedE2eJobsForChangedFiles,
   readFreeStandingJobsInventory,

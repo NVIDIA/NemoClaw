@@ -24,7 +24,7 @@ import {
 import {
   catalogueTarget,
   catalogueTargetsForChangedFiles,
-} from "../../../tools/e2e/target-catalogue.mts";
+} from "../../../tools/e2e/target-inventory.mts";
 import { DEFAULT_CLEANUP_TIMEOUT_MS } from "../fixtures/cleanup.ts";
 import { readWorkflow } from "../../helpers/e2e-workflow-contract.ts";
 

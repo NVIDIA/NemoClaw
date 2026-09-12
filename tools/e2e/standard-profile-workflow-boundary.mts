@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 
 import YAML from "yaml";
-import { E2E_EXECUTION_PROFILES } from "./target-catalogue.mts";
+import { E2E_EXECUTION_PROFILES } from "./target-inventory.mts";
 import { TRUSTED_HERMES_SWAP_SCRIPT } from "./trusted-hermes-swap-workflow-boundary.mts";
 import { E2E_ACTION_PROVENANCE } from "./workflow-boundary-policy.mts";
 

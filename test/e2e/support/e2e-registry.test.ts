@@ -6,7 +6,11 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { target } from "../registry/builder.ts";
-import { buildTargetRegistry, listTargets } from "../registry/registry.ts";
+import {
+  buildExecutionInventory,
+  listTargets,
+  sharedTarget,
+} from "../../../tools/e2e/target-inventory.mts";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const RUN_TARGETS = path.join(REPO_ROOT, "test/e2e/registry/run.ts");
@@ -27,13 +31,34 @@ describe("deterministic target registry", () => {
       .build();
     const second = target("duplicate-id").manifest("synthetic/second-manifest.yaml").build();
 
-    expect(() => buildTargetRegistry([first, second])).toThrow(/duplicate-id/);
+    expect(() =>
+      buildExecutionInventory(
+        [first, second].map((definition) => ({
+          id: definition.id,
+          route: "typed" as const,
+          definition,
+        })),
+      ),
+    ).toThrow(/duplicate-id/);
+  });
+
+  it("rejects a typed target that reuses a shared target ID", () => {
+    const shared = sharedTarget("vllm-docker-storage");
+    const typed = target(shared.id).build();
+    expect(() =>
+      buildExecutionInventory([
+        { id: shared.id, route: "shared", definition: shared },
+        { id: typed.id, route: "typed", definition: typed },
+      ]),
+    ).toThrow("Duplicate target IDs: vllm-docker-storage");
   });
 
   it("should reject target IDs that are unsafe for workflow regex filters and artifact paths", () => {
     const unsafe = target("bad.id").manifest("test/e2e/manifests/openclaw-nvidia.yaml").build();
 
-    expect(() => buildTargetRegistry([unsafe])).toThrow(/not safe for workflow regex filters/);
+    expect(() =>
+      buildExecutionInventory([{ id: unsafe.id, route: "typed", definition: unsafe }]),
+    ).toThrow(/not safe for workflow regex filters/);
 
     const result = runTargetCli(["--emit-live-matrix", "--targets", "../escape"]);
     expect(result.status).not.toBe(0);
