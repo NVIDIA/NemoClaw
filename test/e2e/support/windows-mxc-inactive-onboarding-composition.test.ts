@@ -199,6 +199,28 @@ describe("inactive Windows MXC qualification composition", () => {
     expect(runtime.runCommand).not.toHaveBeenCalled();
   });
 
+  it.each([
+    { field: "artifact tree", treeDigest: "f".repeat(64), executableDigest: "c".repeat(64) },
+    { field: "executable", treeDigest: "a".repeat(64), executableDigest: "f".repeat(64) },
+  ])(
+    "rejects staged $field drift before acquiring pins or creating a sandbox (#10585)",
+    async ({ treeDigest, executableDigest }) => {
+      const runtime = executorRuntime();
+      vi.mocked(runtime.observeArtifactTree).mockReturnValue({
+        directories: ["C:\\openclaw-2026-7-1"],
+        files: [{ path: "C:\\openclaw-2026-7-1\\node\\node.exe", sha256: executableDigest }],
+        sha256: treeDigest,
+      });
+
+      await expect(runComposedBootstrap(runtime)).resolves.toMatchObject({
+        outcome: "not-created",
+        resourceState: "absent",
+      });
+      expect(runtime.acquirePins).not.toHaveBeenCalled();
+      expect(runtime.runCommand).not.toHaveBeenCalled();
+    },
+  );
+
   it("reconciles ambiguous creation without issuing a second create (#10585)", async () => {
     const runtime = executorRuntime();
     vi.mocked(runtime.runCommand).mockImplementation(async (command) => {

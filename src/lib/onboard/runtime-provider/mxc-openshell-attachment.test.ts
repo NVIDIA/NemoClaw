@@ -359,122 +359,121 @@ describe("inactive OpenShell MXC installation attachment", () => {
     });
   });
 
-  it("qualifies the restacked MR 108 package without accepting substituted identities (#10585)", () => {
-    const distributionAuthority = createMxcOpenShellDistributionAuthority(
-      "openshell-v0-0-59-dev-925-mr108-mxc-v0-8-0-qualification",
-    );
-    const authority = resolveMxcOpenShellDistributionAuthority(distributionAuthority);
-    const observation: MxcOpenShellAttachmentObservation = {
-      ...mxcOpenShellAttachmentFixture().observation,
-      distribution: {
+  describe.each([
+    {
+      name: "restacked MR 108",
+      profileId: "openshell-v0-0-59-dev-925-mr108-mxc-v0-8-0-qualification",
+      previousProfileId: "openshell-v0-0-59-dev-909-mr108-mxc-v0-8-0-qualification",
+      previousDistribution: {
+        version: "0.0.59-dev.909+g0c1e7ba92",
+        revision: "0c1e7ba92dde5e3a30c57e5e3729e182d67492de",
+        sha256: "0".repeat(64),
+      },
+      observation: {
+        ...mxcOpenShellAttachmentFixture().observation,
+        distribution: {
+          version: "0.0.59-dev.925+g28fc07191",
+          revision: "28fc0719168dbc1698ee4701d6a7af2c19262be1",
+          sha256: "6751269e91dc245163de6ee46c4b548aaaa46a89eee680b8a77a7042b5ee287d",
+        },
+        components: {
+          cliSha256: "d742b5d9fe44a2a0008ceca02d810407f6f8499a49a804ef30e4a5c07f92ab02",
+          gatewaySha256: "be9ba6118a969f91014312ffee5e77f6ffa07333d12f2771ae71edaf49d1bc2a",
+          wxcExecSha256: "dde1c592270e9a659b01dccad70362da7b99fec114885fa4d625507aa775a503",
+        },
+        gateway: {
+          configSha256: "cafc36920c9caba0a1c540c00e91b3f8ecec95e02fbe7c30cf9ca6603fcb79a4",
+          driver: "mxc",
+          backend: "process_container",
+        },
+      } satisfies MxcOpenShellAttachmentObservation,
+    },
+    {
+      name: "MR 105 review-fix",
+      profileId: "openshell-v0-0-59-dev-927-mr105-mxc-v0-8-0-qualification",
+      previousProfileId: "openshell-v0-0-59-dev-925-mr108-mxc-v0-8-0-qualification",
+      previousDistribution: {
         version: "0.0.59-dev.925+g28fc07191",
         revision: "28fc0719168dbc1698ee4701d6a7af2c19262be1",
-        sha256: "6751269e91dc245163de6ee46c4b548aaaa46a89eee680b8a77a7042b5ee287d",
+        sha256: "0".repeat(64),
       },
-      components: {
-        cliSha256: "d742b5d9fe44a2a0008ceca02d810407f6f8499a49a804ef30e4a5c07f92ab02",
-        gatewaySha256: "be9ba6118a969f91014312ffee5e77f6ffa07333d12f2771ae71edaf49d1bc2a",
-        wxcExecSha256: "dde1c592270e9a659b01dccad70362da7b99fec114885fa4d625507aa775a503",
-      },
-      gateway: {
-        configSha256: "cafc36920c9caba0a1c540c00e91b3f8ecec95e02fbe7c30cf9ca6603fcb79a4",
-        driver: "mxc",
-        backend: "process_container",
-      },
-    };
+      observation: {
+        ...mxcOpenShellAttachmentFixture().observation,
+        distribution: {
+          version: "0.0.59-dev.927+g01053b261",
+          revision: "01053b261ab38f5a9458f331009a374805fe28ec",
+          sha256: "21f216568f4884a5bcfedf43620dde64455c21e88c7d012a99bc4c9fafcb93d9",
+        },
+        components: {
+          cliSha256: "459f4cb5fabbb2bdb52e3d3d8f1690cdf9ed2e854e2c84182d5c9088ff19dfd1",
+          gatewaySha256: "f8c35961f08290282ef18b3fb2c59bc8ec43c328e9e411e8afc83300b65a4bff",
+          wxcExecSha256: "dde1c592270e9a659b01dccad70362da7b99fec114885fa4d625507aa775a503",
+        },
+        gateway: {
+          configSha256: "cafc36920c9caba0a1c540c00e91b3f8ecec95e02fbe7c30cf9ca6603fcb79a4",
+          driver: "mxc",
+          backend: "process_container",
+        },
+      } satisfies MxcOpenShellAttachmentObservation,
+    },
+  ] as const)(
+    "$name package",
+    ({ profileId, previousProfileId, previousDistribution, observation }) => {
+      it("qualifies only the pinned package as inactive ARM64 qualification authority (#10585)", () => {
+        const distributionAuthority = createMxcOpenShellDistributionAuthority(profileId);
+        const authority = resolveMxcOpenShellDistributionAuthority(distributionAuthority);
+        expect(qualifyMxcOpenShellAttachment(authority, observation)).toMatchObject({
+          acceptance: "qualification",
+          distributionProfileId: profileId,
+          distribution: observation.distribution,
+        });
+        expect(distributionAuthority).toMatchObject({
+          acceptance: "qualification",
+          nativeArchitecture: "arm64",
+        });
+        expect(Object.isFrozen(distributionAuthority)).toBe(true);
+      });
 
-    expect(qualifyMxcOpenShellAttachment(authority, observation)).toMatchObject({
-      acceptance: "qualification",
-      distributionProfileId: "openshell-v0-0-59-dev-925-mr108-mxc-v0-8-0-qualification",
-      distribution: observation.distribution,
-    });
-    expect(distributionAuthority).toMatchObject({
-      acceptance: "qualification",
-      nativeArchitecture: "arm64",
-    });
-    expect(Object.isFrozen(distributionAuthority)).toBe(true);
-    for (const distribution of [
-      { ...observation.distribution, version: "0.0.59-dev.909+g0c1e7ba92" },
-      { ...observation.distribution, revision: "0c1e7ba92dde5e3a30c57e5e3729e182d67492de" },
-      { ...observation.distribution, sha256: "0".repeat(64) },
-    ]) {
-      expect(() =>
-        qualifyMxcOpenShellAttachment(authority, { ...observation, distribution }),
-      ).toThrow(/observed distribution identity does not match/u);
-    }
-    for (const component of ["cliSha256", "gatewaySha256", "wxcExecSha256"] as const) {
-      expect(() =>
-        qualifyMxcOpenShellAttachment(authority, {
-          ...observation,
-          components: { ...observation.components, [component]: "0".repeat(64) },
-        }),
-      ).toThrow(/observed distribution identity does not match/u);
-    }
-    const previousAuthority = resolveMxcOpenShellDistributionAuthority(
-      createMxcOpenShellDistributionAuthority(
-        MXC_OPENSHELL_V0_0_59_DEV_909_MR108_MXC_V0_8_0_QUALIFICATION_PROFILE_ID,
-      ),
-    );
-    expect(() => qualifyMxcOpenShellAttachment(previousAuthority, observation)).toThrow(
-      /observed distribution identity does not match/u,
-    );
-  });
+      it.each(["version", "revision", "sha256"] as const)(
+        "rejects a substituted distribution %s (#10585)",
+        (field) => {
+          const authority = resolveMxcOpenShellDistributionAuthority(
+            createMxcOpenShellDistributionAuthority(profileId),
+          );
+          expect(() =>
+            qualifyMxcOpenShellAttachment(authority, {
+              ...observation,
+              distribution: { ...observation.distribution, [field]: previousDistribution[field] },
+            }),
+          ).toThrow(/observed distribution identity does not match/u);
+        },
+      );
 
-  it("qualifies the MR 105 review-fix package and rejects other package identities (#10585)", () => {
-    const distributionAuthority = createMxcOpenShellDistributionAuthority(
-      "openshell-v0-0-59-dev-927-mr105-mxc-v0-8-0-qualification",
-    );
-    const authority = resolveMxcOpenShellDistributionAuthority(distributionAuthority);
-    const observation: MxcOpenShellAttachmentObservation = {
-      ...mxcOpenShellAttachmentFixture().observation,
-      distribution: {
-        version: "0.0.59-dev.927+g01053b261",
-        revision: "01053b261ab38f5a9458f331009a374805fe28ec",
-        sha256: "21f216568f4884a5bcfedf43620dde64455c21e88c7d012a99bc4c9fafcb93d9",
-      },
-      components: {
-        cliSha256: "459f4cb5fabbb2bdb52e3d3d8f1690cdf9ed2e854e2c84182d5c9088ff19dfd1",
-        gatewaySha256: "f8c35961f08290282ef18b3fb2c59bc8ec43c328e9e411e8afc83300b65a4bff",
-        wxcExecSha256: "dde1c592270e9a659b01dccad70362da7b99fec114885fa4d625507aa775a503",
-      },
-      gateway: {
-        configSha256: "cafc36920c9caba0a1c540c00e91b3f8ecec95e02fbe7c30cf9ca6603fcb79a4",
-        driver: "mxc",
-        backend: "process_container",
-      },
-    };
-    expect(qualifyMxcOpenShellAttachment(authority, observation)).toMatchObject({
-      acceptance: "qualification",
-      distributionProfileId: "openshell-v0-0-59-dev-927-mr105-mxc-v0-8-0-qualification",
-      distribution: observation.distribution,
-    });
-    expect(Object.isFrozen(distributionAuthority)).toBe(true);
-    for (const distribution of [
-      { ...observation.distribution, version: "0.0.59-dev.925+g28fc07191" },
-      { ...observation.distribution, revision: "28fc0719168dbc1698ee4701d6a7af2c19262be1" },
-      { ...observation.distribution, sha256: "0".repeat(64) },
-    ]) {
-      expect(() =>
-        qualifyMxcOpenShellAttachment(authority, { ...observation, distribution }),
-      ).toThrow(/observed distribution identity does not match/u);
-    }
-    for (const component of ["cliSha256", "gatewaySha256", "wxcExecSha256"] as const) {
-      expect(() =>
-        qualifyMxcOpenShellAttachment(authority, {
-          ...observation,
-          components: { ...observation.components, [component]: "0".repeat(64) },
-        }),
-      ).toThrow(/observed distribution identity does not match/u);
-    }
-    const previousAuthority = resolveMxcOpenShellDistributionAuthority(
-      createMxcOpenShellDistributionAuthority(
-        "openshell-v0-0-59-dev-925-mr108-mxc-v0-8-0-qualification",
-      ),
-    );
-    expect(() => qualifyMxcOpenShellAttachment(previousAuthority, observation)).toThrow(
-      /observed distribution identity does not match/u,
-    );
-  });
+      it.each(["cliSha256", "gatewaySha256", "wxcExecSha256"] as const)(
+        "rejects a substituted component %s (#10585)",
+        (field) => {
+          const authority = resolveMxcOpenShellDistributionAuthority(
+            createMxcOpenShellDistributionAuthority(profileId),
+          );
+          expect(() =>
+            qualifyMxcOpenShellAttachment(authority, {
+              ...observation,
+              components: { ...observation.components, [field]: "0".repeat(64) },
+            }),
+          ).toThrow(/observed distribution identity does not match/u);
+        },
+      );
+
+      it("rejects the package under the previous distribution authority (#10585)", () => {
+        const previousAuthority = resolveMxcOpenShellDistributionAuthority(
+          createMxcOpenShellDistributionAuthority(previousProfileId),
+        );
+        expect(() => qualifyMxcOpenShellAttachment(previousAuthority, observation)).toThrow(
+          /observed distribution identity does not match/u,
+        );
+      });
+    },
+  );
 
   it("rejects caller configuration hashes instead of letting observations mint authority (#10585)", () => {
     const profile = MXC_OPENSHELL_V0_0_30_MXC_V0_8_0_ACCEPTED_PROFILE;

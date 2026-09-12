@@ -174,7 +174,11 @@ export function createMxcRuntimeProviderBundle({
       providerId: MXC_PROVIDER_ID,
       supported: true,
       inspectHost: () =>
-        inspectMxcHost(hostFacts, openshellAttachmentAuthority.nativeArchitecture, qualifyAttachment),
+        inspectMxcHost(
+          hostFacts,
+          openshellAttachmentAuthority.nativeArchitecture,
+          qualifyAttachment,
+        ),
       validateSandboxGpu: (config, exitProcess) =>
         exitOnSandboxGpuConfigErrors(config, exitProcess),
       preflightLifecycle: () => ({ exitCode: 1, message: lifecycleReason }),
