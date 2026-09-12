@@ -180,8 +180,7 @@ def conpty_check(_root, nonce):
 
 def configure_browser_logging():
     state = Path(os.environ["NEMOCLAW_AGENT_HOME"])
-    if Path(os.environ["TEMP"]) != state / "temp":
-        raise ValueError("The browser log must stay in its owned temporary state")
+    # Derive logs from the admitted state even when TEMP differs.
     if os.environ.get("AGENT_BROWSER_ARGS") not in {
         "--enable-logging=stderr",
         "--enable-logging",

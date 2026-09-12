@@ -66,8 +66,10 @@ class BrowserDiagnostics(unittest.TestCase):
                 {**env, "TEMP": str(Path(directory) / "foreign")},
                 clear=True,
             ):
-                with self.assertRaises(ValueError):
-                    owner.configure_browser_logging()
+                selected, file = owner.configure_browser_logging()
+                self.assertEqual(selected, state)
+                self.assertEqual(file, state / "temp/chrome.log")
+                self.assertEqual(os.environ["CHROME_LOG_FILE"], str(file))
 
     def test_log_reads_are_bounded_and_record_the_observed_tail_without_mutating_it(
         self,
