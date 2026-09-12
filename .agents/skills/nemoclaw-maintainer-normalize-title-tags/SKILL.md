@@ -1,6 +1,6 @@
 ---
 name: nemoclaw-maintainer-normalize-title-tags
-description: Normalizes GitHub issue and PR titles by removing any bracketed [NemoClaw] tag case-insensitively, even when the tag appears later in the title. Use when cleaning issue tags, bulk-renaming titles, or normalizing repo title hygiene.
+description: "Remove bracketed NemoClaw tags from GitHub issue and PR titles. Use for a requested title cleanup."
 user_invocable: true
 ---
 
@@ -24,17 +24,6 @@ Preview and optionally apply bulk title cleanup for bracketed NemoClaw tags in G
 
 ## Workflow
 
-Copy this checklist and track progress:
-
-```text
-Title tag cleanup progress:
-- [ ] Step 1: Verify GitHub auth
-- [ ] Step 2: Preview proposed title changes
-- [ ] Step 3: Confirm scope
-- [ ] Step 4: Apply changes
-- [ ] Step 5: Verify no matching tags remain in scope
-```
-
 ## Step 1: Verify GitHub Auth
 
 ```bash
@@ -53,7 +42,7 @@ It prints a dry-run summary by default. Review the proposed renames with the use
 
 ## Step 3: Confirm Scope
 
-Ask the user which scope they want:
+Use the scope already supplied by the user. If the preview requires a scope decision, ask before applying it:
 
 - **Default** — all open and closed issues and PRs in `NVIDIA/NemoClaw`
 - **State filter** — optionally limit to `open` or `closed`

@@ -1063,7 +1063,7 @@ export function buildConfig(env: Env = process.env): JsonObject {
   const agentDefaults: JsonObject = {
     ...(providerless ? {} : { model: { primary: primaryModelRef } }),
     timeoutSeconds: agentTimeout,
-    ...(agentHeartbeat ? { heartbeat: { every: agentHeartbeat } } : {}),
+    ...(agentHeartbeat ? { heartbeat: { every: agentHeartbeat, isolatedSession: true } } : {}),
     skipBootstrap: true,
     thinkingDefault: "off",
   };

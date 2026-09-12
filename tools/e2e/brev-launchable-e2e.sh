@@ -304,8 +304,8 @@ capture_full_e2e_failure_diagnostics() {
   # shellcheck disable=SC2016
   run_budgeted_diagnostic_probe "$deadline" diagnostic_output diagnostic_status \
     ssh "${SSH_PROBE_OPTIONS[@]}" "$INSTANCE_NAME" \
-    'set -eu; listeners=$(sudo -n ss -H -ltnp "sport = :8080"); if [ -z "$listeners" ]; then printf "listener presence: absent\n"; else printf "listener presence: present\n"; pids=; if parsed_pids=$(printf "%s\n" "$listeners" | awk "function reject(){bad=1;exit} { marker=\"users:(\"; at=index(\$0,marker); if(!at) reject(); s=substr(\$0,at+length(marker)); sub(/[[:space:]]+\$/, \"\", s); parsed=0; while(match(s,/^\\(\"[^\"]*\",pid=[0-9]+,fd=[0-9]+\\)/)){ tuple=substr(s,1,RLENGTH); pid=tuple; sub(/^.*\",pid=/,\"\",pid); sub(/,fd=.*/,\"\",pid); seen[pid]=1; total++; parsed++; s=substr(s,RLENGTH+1); if(s==\")\"){s=\"\";break} if(substr(s,1,1)!=\",\") reject(); s=substr(s,2) } if(!parsed||s!=\"\") reject() } END{if(bad||!total) exit 1; for(pid in seen) print pid}"); then pids=$parsed_pids; fi; gateway_cgroup=$(sudo -n systemctl show --no-pager --property=ControlGroup --value openshell-gateway.service); if [ -z "$pids" ] || [ -z "$gateway_cgroup" ]; then printf "listener owner: unavailable\n"; else gateway_owner=0; other_owner=0; unavailable_owner=0; for pid in $pids; do if cgroup=$(sudo -n cat "/proc/$pid/cgroup" 2>/dev/null); then if printf "%s\n" "$cgroup" | awk -F: -v wanted="$gateway_cgroup" "\$3 == wanted || (wanted != \"/\" && index(\$3, wanted \"/\") == 1) { found=1 } END { exit !found }"; then gateway_owner=1; else other_owner=1; fi; else unavailable_owner=1; fi; done; if [ "$unavailable_owner" -eq 1 ]; then printf "listener owner: unavailable\n"; elif [ "$gateway_owner" -eq 1 ] && [ "$other_owner" -eq 1 ]; then printf "listener owner: mixed\n"; elif [ "$gateway_owner" -eq 1 ]; then printf "listener owner: openshell-gateway\n"; elif [ "$other_owner" -eq 1 ]; then printf "listener owner: unexpected\n"; else printf "listener owner: unavailable\n"; fi; fi; fi'
-  report_full_e2e_failure_diagnostic "port 8080 listener" "$diagnostic_status" "$diagnostic_output"
+    'set -eu; cd /opt/nemoclaw-image/NemoClaw; port=$(node --import tsx -e "console.log(require(\"./test/e2e/fixtures/full-e2e-gateway.ts\").fullE2eGateway(true).env.NEMOCLAW_GATEWAY_PORT)"); printf "declared gateway port: %s\n" "$port"; listeners=$(sudo -n ss -H -ltnp "sport = :$port"); if [ -z "$listeners" ]; then printf "listener presence: absent\n"; else printf "listener presence: present\n"; pids=; if parsed_pids=$(printf "%s\n" "$listeners" | awk "function reject(){bad=1;exit} { marker=\"users:(\"; at=index(\$0,marker); if(!at) reject(); s=substr(\$0,at+length(marker)); sub(/[[:space:]]+\$/, \"\", s); parsed=0; while(match(s,/^\\(\"[^\"]*\",pid=[0-9]+,fd=[0-9]+\\)/)){ tuple=substr(s,1,RLENGTH); pid=tuple; sub(/^.*\",pid=/,\"\",pid); sub(/,fd=.*/,\"\",pid); seen[pid]=1; total++; parsed++; s=substr(s,RLENGTH+1); if(s==\")\"){s=\"\";break} if(substr(s,1,1)!=\",\") reject(); s=substr(s,2) } if(!parsed||s!=\"\") reject() } END{if(bad||!total) exit 1; for(pid in seen) print pid}"); then pids=$parsed_pids; fi; gateway_cgroup=$(sudo -n systemctl show --no-pager --property=ControlGroup --value openshell-gateway.service); if [ -z "$pids" ] || [ -z "$gateway_cgroup" ]; then printf "listener owner: unavailable\n"; else gateway_owner=0; other_owner=0; unavailable_owner=0; for pid in $pids; do if cgroup=$(sudo -n cat "/proc/$pid/cgroup" 2>/dev/null); then if printf "%s\n" "$cgroup" | awk -F: -v wanted="$gateway_cgroup" "\$3 == wanted || (wanted != \"/\" && index(\$3, wanted \"/\") == 1) { found=1 } END { exit !found }"; then gateway_owner=1; else other_owner=1; fi; else unavailable_owner=1; fi; done; if [ "$unavailable_owner" -eq 1 ]; then printf "listener owner: unavailable\n"; elif [ "$gateway_owner" -eq 1 ] && [ "$other_owner" -eq 1 ]; then printf "listener owner: mixed\n"; elif [ "$gateway_owner" -eq 1 ]; then printf "listener owner: openshell-gateway\n"; elif [ "$other_owner" -eq 1 ]; then printf "listener owner: unexpected\n"; else printf "listener owner: unavailable\n"; fi; fi; fi'
+  report_full_e2e_failure_diagnostic "declared gateway listener" "$diagnostic_status" "$diagnostic_output"
 }
 
 report_probe() {
@@ -995,6 +995,7 @@ cd "$NEMOCLAW_SOURCE_PATH"
 test -x ./node_modules/.bin/vitest
 export CI=true GITHUB_ACTIONS=true E2E_TARGET_ID=staging-brev-launchable
 export NEMOCLAW_E2E_SETUP_MODE=preinstalled-launchable NEMOCLAW_RUN_LIVE_E2E=1
+export NEMOCLAW_E2E_COMMAND_EVIDENCE=1
 export NEMOCLAW_MODEL="$(node /usr/local/lib/nemoclaw/launchable-config.mjs /usr/local/share/nemoclaw/launchable-agents.json openclaw cloudModel)"
 export NEMOCLAW_SANDBOX_NAME=e2e-staging
 ./node_modules/.bin/vitest run --project e2e-live test/e2e/live/full-e2e.test.ts --silent=false --reporter=default
@@ -1016,6 +1017,9 @@ Path(target).write_bytes(Path(source).read_bytes().replace(secret.encode(), b"[R
 Path(source).unlink(missing_ok=True)
 PY
 raw_log=""
+if ! grep -q '^NEMOCLAW_E2E_COMMAND ' "$WORK_DIR/full-e2e.log"; then
+  log "Completed command metadata unavailable: the guest emitted no command records"
+fi
 if [ "$e2e_status" -ne 0 ] || ! grep -q '^NEMOCLAW_FULL_E2E_PASSED$' "$WORK_DIR/full-e2e.log"; then
   jq '.fullE2e = "failed" | .validation.fullE2E = "failed"' \
     "$WORK_DIR/launchable-e2e.json" >"$WORK_DIR/launchable-e2e.tmp"
