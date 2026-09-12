@@ -168,7 +168,7 @@ def validate_reuse(runtime, inputs, output, inventory_owner, *, payload=None):
     proof_path = Path(inputs["compatibilityProof"])
     if (
         digest(proof_path)
-        != "db7621fb538c4dca295a485599609391f77e9f821b75727622a0bd91a57386f0"
+        != "85925f15463e3105a2a6c245c1f4843e8c0ad4235a333e00dda7377d4b853801"
     ):
         raise ValueError("The exact passed Windows compatibility proof changed")
     proof = json.loads(proof_path.read_text(encoding="utf-8"))
@@ -178,7 +178,7 @@ def validate_reuse(runtime, inputs, output, inventory_owner, *, payload=None):
     mxc = json.loads(mxc_path.read_text(encoding="utf-8"))
     if (
         proof.get("classification") != "small-msys-appcontainer-compatibility-proof"
-        or proof.get("sourceRevision") != "645a04fe0c60ed6e4410bdb03dea62959be15ecb"
+        or proof.get("sourceRevision") != "d9c4bde145a4180d704bbca7f957e362e58030f2"
         or proof.get("passed") is not True
         or proof.get("normalCleanup") is not True
         or proof["inputs"]["compatibility"] != compat
