@@ -21,6 +21,8 @@ import {
 const RESTORE_ACTION = path.resolve(".github/actions/restore-native-podman-e2e/action.yaml");
 const SETUP_ACTION = path.resolve(".github/actions/setup-native-podman-e2e/action.yaml");
 const FIXED_RESTORE_ROOT = "/usr/lib/nemoclaw-native-podman-e2e/docker-cli-restore";
+const COMMAND_OUTPUT_LIMIT = 64 * 1024;
+const OUTPUT_TRUNCATION_MARKER = "\n[output truncated]\n";
 
 vi.setConfig({ maxConcurrency: 5 });
 
@@ -51,6 +53,20 @@ type CommandResult = {
 
 type ProcessOwner = Pick<TestContext, "signal" | "onTestFinished">;
 
+type OutputCapture = {
+  text: string;
+  truncated: boolean;
+};
+
+function appendOutput(capture: OutputCapture, chunk: string): void {
+  const next = capture.truncated ? capture.text : capture.text + chunk;
+  const truncated = capture.truncated || next.length > COMMAND_OUTPUT_LIMIT;
+  capture.text = truncated
+    ? `${next.slice(0, COMMAND_OUTPUT_LIMIT - OUTPUT_TRUNCATION_MARKER.length)}${OUTPUT_TRUNCATION_MARKER}`
+    : next;
+  capture.truncated = truncated;
+}
+
 async function runCommand(
   ownerContext: ProcessOwner,
   command: string,
@@ -59,18 +75,18 @@ async function runCommand(
   timeoutMs = 15_000,
 ): Promise<CommandResult> {
   ownerContext.signal.throwIfAborted();
-  let stdout = "";
-  let stderr = "";
+  const stdout: OutputCapture = { text: "", truncated: false };
+  const stderr: OutputCapture = { text: "", truncated: false };
   const child = spawn(command, [...args], { detached: true, env });
   const finishController = new AbortController();
   const abort = addAbortListener(ownerContext.signal, () => finishController.abort());
   const supervision = superviseChild(child, {
     killGraceMs: 0,
     onStderr: (chunk) => {
-      stderr += chunk;
+      appendOutput(stderr, chunk);
     },
     onStdout: (chunk) => {
-      stdout += chunk;
+      appendOutput(stdout, chunk);
     },
     signal: finishController.signal,
     timeoutMs,
@@ -86,8 +102,8 @@ async function runCommand(
       status: result.exitCode,
       signal: result.signal,
       timedOut: result.timedOut,
-      stdout,
-      stderr,
+      stdout: stdout.text,
+      stderr: stderr.text,
     };
   } finally {
     abort[Symbol.dispose]();
@@ -568,7 +584,7 @@ describe("native Podman E2E setup boundary", () => {
         process.execPath,
         [
           "-e",
-          'const fs = require("node:fs"); fs.writeFileSync(process.argv[1], "ready"); process.on("SIGTERM", () => {}); setInterval(() => {}, 1_000);',
+          'const fs = require("node:fs"); process.on("SIGTERM", () => {}); fs.writeFileSync(process.argv[1], "ready"); setInterval(() => {}, 1_000);',
           readyFile,
         ],
         process.env,
@@ -585,6 +601,24 @@ describe("native Podman E2E setup boundary", () => {
       controller.abort();
       fs.rmSync(root, { force: true, recursive: true });
     }
+  });
+
+  it.concurrent("bounds captured subprocess output", async (context) => {
+    const result = await runCommand(
+      context,
+      process.execPath,
+      [
+        "-e",
+        `process.stdout.write("o".repeat(${COMMAND_OUTPUT_LIMIT + 1_024})); process.stderr.write("e".repeat(${COMMAND_OUTPUT_LIMIT + 1_024}));`,
+      ],
+      process.env,
+    );
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toHaveLength(COMMAND_OUTPUT_LIMIT);
+    expect(result.stderr).toHaveLength(COMMAND_OUTPUT_LIMIT);
+    expect(result.stdout.endsWith(OUTPUT_TRUNCATION_MARKER)).toBe(true);
+    expect(result.stderr.endsWith(OUTPUT_TRUNCATION_MARKER)).toBe(true);
   });
 
   it.concurrent("restores unchanged Docker runtime state and retires its authority (#11014)", async (context) => {
