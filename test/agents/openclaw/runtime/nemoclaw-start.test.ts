@@ -1178,7 +1178,7 @@ describe.concurrent("nemoclaw-start auto-pair slow-mode keepalive (#4263)", () =
     return autoPairPythonScript(src);
   }
 
-  it("stays fast through browser pairing and slows only after the canonical CLI baseline", async () => {
+  it("stays fast through browser pairing and slows only after the canonical CLI baseline", async (t) => {
     const { tmpDir, fakeOpenclaw, approveLog, stateDir } = setupLateCliFixture(
       "nemoclaw-auto-pair-slow-",
     );
@@ -1197,22 +1197,22 @@ describe.concurrent("nemoclaw-start auto-pair slow-mode keepalive (#4263)", () =
         },
         timeout: 30_000,
       });
-      expect(run.stdout).toContain(
+      t.expect(run.stdout).toContain(
         "[auto-pair] approved request=browser-pair client=openclaw-control-ui mode=webchat",
       );
-      expect(run.stdout).not.toContain("browser pairing converged");
+      t.expect(run.stdout).not.toContain("browser pairing converged");
       // Concurrent late wave is handled before the fast-to-slow transition.
-      expect(run.stdout).toContain("[auto-pair] approved request=late-cli client=cli mode=cli");
-      expect(run.stdout).toContain("[auto-pair] approved request=late-cli-b client=cli mode=cli");
-      expect(run.stdout).toContain("watcher deadline reached approvals=3");
-      expect(run.stdout).toContain(
+      t.expect(run.stdout).toContain("[auto-pair] approved request=late-cli client=cli mode=cli");
+      t.expect(run.stdout).toContain("[auto-pair] approved request=late-cli-b client=cli mode=cli");
+      t.expect(run.stdout).toContain("watcher deadline reached approvals=3");
+      t.expect(run.stdout).toContain(
         "[auto-pair] canonical CLI baseline settled; entering slow-mode approvals=3",
       );
-      expect(run.stdout).toContain("[auto-pair] fast-reentry bumped polls=3 approved=3 mode=fast");
+      t.expect(run.stdout).toContain("[auto-pair] fast-reentry bumped polls=3 approved=3 mode=fast");
       const approvedAt = run.stdout.indexOf("approved request=late-cli-b");
       const settledAt = run.stdout.indexOf("canonical CLI baseline settled");
-      expect(settledAt).toBeGreaterThan(approvedAt);
-      expect(fs.readFileSync(approveLog, "utf-8").trim().split("\n")).toEqual([
+      t.expect(settledAt).toBeGreaterThan(approvedAt);
+      t.expect(fs.readFileSync(approveLog, "utf-8").trim().split("\n")).toEqual([
         "browser-pair",
         "late-cli",
         "late-cli-b",
@@ -1222,7 +1222,7 @@ describe.concurrent("nemoclaw-start auto-pair slow-mode keepalive (#4263)", () =
     }
   }, 40_000);
 
-  it("rejects unknown clients in slow-mode keepalive", async () => {
+  it("rejects unknown clients in slow-mode keepalive", async (t) => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auto-pair-slow-evil-"));
     const fakeOpenclaw = path.join(tmpDir, "openclaw");
     const stateDir = path.join(tmpDir, "state");
@@ -1282,18 +1282,18 @@ exit 2
         },
         timeout: 30_000,
       });
-      expect(run.stdout).toContain(
+      t.expect(run.stdout).toContain(
         "[auto-pair] canonical CLI baseline settled; entering slow-mode approvals=0",
       );
-      expect(run.stdout).toContain("[auto-pair] rejected unknown client=evil-client mode=unknown");
+      t.expect(run.stdout).toContain("[auto-pair] rejected unknown client=evil-client mode=unknown");
       // Critical: never approved.
-      expect(fs.existsSync(approveLog)).toBe(false);
+      t.expect(fs.existsSync(approveLog)).toBe(false);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   }, 40_000);
 
-  it("rejects malformed CLI scope request payloads", async () => {
+  it("rejects malformed CLI scope request payloads", async (t) => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auto-pair-malformed-"));
     const fakeOpenclaw = path.join(tmpDir, "openclaw");
     const approveLog = path.join(tmpDir, "approvals.log");
@@ -1339,17 +1339,17 @@ exit 2
         },
         timeout: 20_000,
       });
-      expect(run.stdout).toContain(
+      t.expect(run.stdout).toContain(
         "[auto-pair] rejected malformed scopes client=openclaw-cli mode=cli",
       );
-      expect(run.stdout).toContain("watcher deadline reached approvals=0");
-      expect(fs.existsSync(approveLog)).toBe(false);
+      t.expect(run.stdout).toContain("watcher deadline reached approvals=0");
+      t.expect(fs.existsSync(approveLog)).toBe(false);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   }, 30_000);
 
-  it("rejects disallowed CLI admin scope requests", async () => {
+  it("rejects disallowed CLI admin scope requests", async (t) => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auto-pair-admin-"));
     const fakeOpenclaw = path.join(tmpDir, "openclaw");
     const maliciousPolicyDir = path.join(tmpDir, "malicious-policy");
@@ -1409,17 +1409,17 @@ exit 2
         },
         timeout: 20_000,
       });
-      expect(run.stdout).toContain(
+      t.expect(run.stdout).toContain(
         "[auto-pair] rejected disallowed scopes=['operator.admin'] client=openclaw-cli mode=cli",
       );
-      expect(run.stdout).toContain("watcher deadline reached approvals=0");
-      expect(fs.existsSync(approveLog)).toBe(false);
+      t.expect(run.stdout).toContain("watcher deadline reached approvals=0");
+      t.expect(fs.existsSync(approveLog)).toBe(false);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   }, 30_000);
 
-  it("keeps fast polling when no canonical CLI baseline appears (#10269)", async () => {
+  it("keeps fast polling when no canonical CLI baseline appears (#10269)", async (t) => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auto-pair-slow-fastdl-"));
     const fakeOpenclaw = path.join(tmpDir, "openclaw");
     const approveLog = path.join(tmpDir, "approvals.log");
@@ -1455,18 +1455,18 @@ exit 2
         },
         timeout: 20_000,
       });
-      expect(run.stdout).not.toContain("entering slow-mode");
-      expect(run.stdout).toContain(
+      t.expect(run.stdout).not.toContain("entering slow-mode");
+      t.expect(run.stdout).toContain(
         '[auto-pair-status] {"schemaVersion":1,"state":"request-not-produced"}',
       );
-      expect(run.stdout).toContain("watcher deadline reached approvals=0");
-      expect(fs.existsSync(approveLog)).toBe(false);
+      t.expect(run.stdout).toContain("watcher deadline reached approvals=0");
+      t.expect(fs.existsSync(approveLog)).toBe(false);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   }, 30_000);
 
-  it("keeps a rejected sticky request in fast mode without approving it (#10269)", async () => {
+  it("keeps a rejected sticky request in fast mode without approving it (#10269)", async (t) => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auto-pair-sticky-"));
     const fakeOpenclaw = path.join(tmpDir, "openclaw");
     const approveLog = path.join(tmpDir, "approvals.log");
@@ -1511,17 +1511,17 @@ exit 2
         },
         timeout: 20_000,
       });
-      expect(run.stdout).not.toContain("entering slow-mode");
-      expect(run.stdout).toContain("[auto-pair] rejected unknown client=evil-client mode=unknown");
-      expect(run.stdout).toContain("watcher deadline reached approvals=0");
+      t.expect(run.stdout).not.toContain("entering slow-mode");
+      t.expect(run.stdout).toContain("[auto-pair] rejected unknown client=evil-client mode=unknown");
+      t.expect(run.stdout).toContain("watcher deadline reached approvals=0");
       // Unknown client was never approved.
-      expect(fs.existsSync(approveLog)).toBe(false);
+      t.expect(fs.existsSync(approveLog)).toBe(false);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   }, 30_000);
 
-  it("bounds the openclaw CLI invocation so a wedged child cannot pin the watcher", async () => {
+  it("bounds the openclaw CLI invocation so a wedged child cannot pin the watcher", async (t) => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auto-pair-runto-"));
     const fakeOpenclaw = path.join(tmpDir, "openclaw");
 
@@ -1556,18 +1556,18 @@ exit 0
       });
       const elapsedMs = Date.now() - start;
       // The watcher exited via DEADLINE, not via a wedged subprocess.
-      expect(run.stdout).toContain("watcher deadline reached approvals=0");
+      t.expect(run.stdout).toContain("watcher deadline reached approvals=0");
       // Timeout log was emitted for at least one stuck `devices list`.
-      expect(run.stdout).toContain("[auto-pair] timeout calling devices list");
+      t.expect(run.stdout).toContain("[auto-pair] timeout calling devices list");
       // Sanity: if the timeout didn't fire, the first `sleep 2` would
       // already exceed this cap before the watcher could reach its deadline.
-      expect(elapsedMs).toBeLessThan(1_800);
+      t.expect(elapsedMs).toBeLessThan(1_800);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   }, 30_000);
 
-  it.sequential("retries a transient approve timeout instead of permanently handling the requestId", async () => {
+  it.sequential("retries a transient approve timeout instead of permanently handling the requestId", async (t) => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auto-pair-aretry-"));
     const fakeOpenclaw = path.join(tmpDir, "openclaw");
     const stateFile = path.join(tmpDir, "approve-count");
@@ -1631,20 +1631,20 @@ exit 2
         timeout: 30_000,
       });
       // Timeout was logged for the first attempt.
-      expect(run.stdout).toContain("[auto-pair] timeout calling devices approve");
+      t.expect(run.stdout).toContain("[auto-pair] timeout calling devices approve");
       // Retry succeeded on the second attempt.
-      expect(run.stdout).toContain(
+      t.expect(run.stdout).toContain(
         "[auto-pair] approved request=flaky-cli client=openclaw-cli mode=cli",
       );
       // The approve log records exactly one successful approval (the
       // retry, not the hung first attempt).
-      expect(fs.readFileSync(approveLog, "utf-8").trim().split("\n")).toEqual(["flaky-cli"]);
+      t.expect(fs.readFileSync(approveLog, "utf-8").trim().split("\n")).toEqual(["flaky-cli"]);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   }, 40_000);
 
-  it("retries a non-zero approve failure without counting it as approved or re-arming fast-reentry", async () => {
+  it("retries a non-zero approve failure without counting it as approved or re-arming fast-reentry", async (t) => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auto-pair-afail-"));
     const fakeOpenclaw = path.join(tmpDir, "openclaw");
     const stateFile = path.join(tmpDir, "approve-count");
@@ -1701,18 +1701,18 @@ exit 2
         },
         timeout: 20_000,
       });
-      expect(run.stdout).toContain(
+      t.expect(run.stdout).toContain(
         "[auto-pair] approve failed request=retry-cli: temporary approve failure",
       );
-      expect(run.stdout).toContain(
+      t.expect(run.stdout).toContain(
         "[auto-pair] approved request=retry-cli client=openclaw-cli mode=cli",
       );
-      expect(run.stdout).toContain("watcher deadline reached approvals=1");
-      expect(fs.readFileSync(stateFile, "utf-8").trim()).toBe("2");
-      expect(fs.readFileSync(approveLog, "utf-8").trim().split("\n")).toEqual(["retry-cli"]);
+      t.expect(run.stdout).toContain("watcher deadline reached approvals=1");
+      t.expect(fs.readFileSync(stateFile, "utf-8").trim()).toBe("2");
+      t.expect(fs.readFileSync(approveLog, "utf-8").trim().split("\n")).toEqual(["retry-cli"]);
       const markerRe = /fast-reentry bumped polls=3 /g;
-      expect(run.stdout.match(markerRe)?.length).toBe(1);
-      expect(run.stdout).toContain("[auto-pair] fast-reentry bumped polls=3 approved=0 mode=fast");
+      t.expect(run.stdout.match(markerRe)?.length).toBe(1);
+      t.expect(run.stdout).toContain("[auto-pair] fast-reentry bumped polls=3 approved=0 mode=fast");
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
