@@ -182,9 +182,20 @@ jobs:
         shell: powershell
         timeout-minutes: 10
         run: |
+          $wslInstaller="$env:RUNNER_TEMP\wsl-arm64.msi"
+          & curl.exe -fSL --connect-timeout 30 --max-time 300 'https://github.com/microsoft/WSL/releases/download/2.7.14/wsl.2.7.14.0.arm64.msi' -o $wslInstaller
+          if ($LASTEXITCODE -ne 0) { throw 'WSL MSI download failed' }
+          if ((Get-FileHash $wslInstaller -Algorithm SHA256).Hash.ToLowerInvariant() -ne '3456d37b2f009fb075a1e35366e8b46ce13a7f8355df63e278d68fce319c790a') { throw 'WSL MSI checksum mismatch' }
+          $install=Start-Process msiexec.exe -ArgumentList '/i', $wslInstaller, '/quiet', '/norestart', '/l*v', "$env:GITHUB_WORKSPACE\evidence\wsl-msi.log" -PassThru
+          if (-not $install.WaitForExit(300000)) { $install.Kill(); throw 'WSL MSI installation timed out' }
+          if ($install.ExitCode -notin @(0,3010)) { throw "WSL MSI installation failed: $($install.ExitCode)" }
           $ErrorActionPreference='Continue'
-          & wsl --install --no-distribution --web-download 2>&1 | Tee-Object "$env:GITHUB_WORKSPACE\evidence\wsl-bootstrap.log"
-          & wsl --version 2>&1 | Tee-Object "$env:GITHUB_WORKSPACE\evidence\wsl-version.log"
+          & dism.exe /online /enable-feature /featurename:VirtualMachinePlatform /all /norestart 2>&1 | Tee-Object "$env:GITHUB_WORKSPACE\evidence\virtual-machine-platform.log"
+          $wslBinary=if(Test-Path 'C:\Program Files\WSL\wsl.exe'){'C:\Program Files\WSL\wsl.exe'}else{'C:\Windows\System32\wsl.exe'}
+          & $wslBinary --version 2>&1 | Tee-Object "$env:GITHUB_WORKSPACE\evidence\wsl-version.log"
+          Get-WindowsOptionalFeature -Online -FeatureName VirtualMachinePlatform | Select-Object FeatureName,State | ConvertTo-Json | Set-Content "$env:GITHUB_WORKSPACE\evidence\virtualization-feature.json"
+          Get-CimInstance Win32_Processor | Select-Object Name,VirtualizationFirmwareEnabled,VMMonitorModeExtensions,SecondLevelAddressTranslationExtensions | ConvertTo-Json | Set-Content "$env:GITHUB_WORKSPACE\evidence\processor-virtualization.json"
+          'C:\Program Files\WSL' | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
           $ErrorActionPreference='Stop'
       - name: Install the pinned Docker Desktop release
         if: ${{ inputs.docker_desktop }}
