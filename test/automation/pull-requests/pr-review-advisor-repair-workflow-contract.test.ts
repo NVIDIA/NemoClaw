@@ -5,6 +5,8 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 import { readYaml, type WorkflowJob } from "../../helpers/e2e-workflow-contract";
+import { MAX_REPAIR_FILES } from "../../../tools/pr-review-advisor/repair-contract.mts";
+import { ADVISOR_INTERESTS } from "../../../tools/pr-review-advisor/specialist-catalog.mts";
 
 type AdvisorWorkflow = {
   concurrency?: { group?: string; "cancel-in-progress"?: boolean };
@@ -21,6 +23,25 @@ describe("PR Review Advisor repair workflow contracts", () => {
     ".github/workflows/pr-review-advisor-generated-head.yaml",
     "utf8",
   );
+
+  it("keeps validation schema collection limits synchronized with repair constants (#10791)", () => {
+    const schema = JSON.parse(
+      readFileSync("tools/pr-review-advisor/repair-validation.schema.json", "utf8"),
+    ) as {
+      $defs: { strings: { maxItems: number } };
+      properties: {
+        advisor: { properties: { artifactIds: { maxItems: number; minItems: number } } };
+        changedPaths: { maxItems: number };
+      };
+    };
+    const artifactCount = ADVISOR_INTERESTS.length + 1;
+    expect(schema.properties.advisor.properties.artifactIds).toMatchObject({
+      maxItems: artifactCount,
+      minItems: artifactCount,
+    });
+    expect(schema.properties.changedPaths.maxItems).toBe(MAX_REPAIR_FILES);
+    expect(schema.$defs.strings.maxItems).toBe(MAX_REPAIR_FILES);
+  });
 
   // source-shape-contract: security -- Job permissions and artifact routing are the executable privilege boundary for Advisor repair.
   it("keeps Phase 0 Advisor repair manual, credential-separated, and non-publishing (#10791)", () => {
@@ -93,6 +114,8 @@ describe("PR Review Advisor repair workflow contracts", () => {
     expect(String(advisorWorkflow.concurrency?.group)).toContain("github.run_id");
     expect(selectText).toContain("PR Review Advisor repair attempt");
     expect(selectText).toContain("external_id");
+    expect(selectText).toContain("await import(");
+    expect(selectText).not.toMatch(/import[^;]+from\s+`/u);
     expect(resolveText).toContain("secrets.PR_REVIEW_ADVISOR_API_KEY");
     expect(validateText).not.toMatch(/secrets[.]|OPENAI_API_KEY|GITHUB_TOKEN/u);
     expect(resolveText.match(/repair-resolve[.]mts[^\n]* run/gu)).toHaveLength(1);

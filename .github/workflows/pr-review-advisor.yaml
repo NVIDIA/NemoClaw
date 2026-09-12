@@ -565,8 +565,7 @@ jobs:
             node --no-warnings --input-type=module <<'NODE'
           import fs from "node:fs";
           import path from "node:path";
-          import { readBoundedFile } from `${process.env.ADVISOR_DIR}/tools/post-merge-docs/contract.mts`;
-          import { ADVISOR_INTERESTS } from `${process.env.ADVISOR_DIR}/tools/pr-review-advisor/specialist-catalog.mts`;
+          const { ADVISOR_INTERESTS } = await import(`${process.env.ADVISOR_DIR}/tools/pr-review-advisor/specialist-catalog.mts`);
           const run = JSON.parse(fs.readFileSync(path.join(process.env.LIVE, "run.json"), "utf8"));
           const artifacts = JSON.parse(fs.readFileSync(path.join(process.env.LIVE, "artifacts.json"), "utf8")).artifacts;
           const names = [`pr-review-advisor-context-${run.id}`, ...ADVISOR_INTERESTS.map((value) => `pr-review-specialist-${value}-${run.run_attempt}`)];
@@ -619,10 +618,10 @@ jobs:
             node --no-warnings --input-type=module <<'NODE'
           import fs from "node:fs";
           import path from "node:path";
-          import { readBoundedFile } from `${process.env.ADVISOR_DIR}/tools/post-merge-docs/contract.mts`;
-          import { ADVISOR_INTERESTS } from `${process.env.ADVISOR_DIR}/tools/pr-review-advisor/specialist-catalog.mts`;
-          import { parseAdvisorFindingLedger } from `${process.env.ADVISOR_DIR}/tools/pr-review-advisor/finding-ledger.mts`;
-          import { bindRepairSelection, readJson, repairModelContext } from `${process.env.ADVISOR_DIR}/tools/pr-review-advisor/repair-contract.mts`;
+          const { readBoundedFile } = await import(`${process.env.ADVISOR_DIR}/tools/post-merge-docs/contract.mts`);
+          const { ADVISOR_INTERESTS } = await import(`${process.env.ADVISOR_DIR}/tools/pr-review-advisor/specialist-catalog.mts`);
+          const { parseAdvisorFindingLedger } = await import(`${process.env.ADVISOR_DIR}/tools/pr-review-advisor/finding-ledger.mts`);
+          const { bindRepairSelection, readJson, repairModelContext } = await import(`${process.env.ADVISOR_DIR}/tools/pr-review-advisor/repair-contract.mts`);
           const read = (name) => readJson(path.join(process.env.LIVE, name));
           const artifacts = read("artifacts.json").artifacts;
           const ledgers = ADVISOR_INTERESTS.map((interest) => parseAdvisorFindingLedger(

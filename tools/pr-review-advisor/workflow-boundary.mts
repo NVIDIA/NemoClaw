@@ -29,6 +29,7 @@ type WorkflowStep = {
   with?: Record<string, unknown>;
 };
 type WorkflowJob = {
+  environment?: string;
   env?: Record<string, unknown>;
   if?: string;
   needs?: unknown;
@@ -66,6 +67,7 @@ export function validatePrReviewAdvisorWorkflow(workflowPath = DEFAULT_WORKFLOW_
   const errors: string[] = [];
   const source = readFileSync(workflowPath, "utf8");
   const advisor = YAML.parse(source) as AdvisorWorkflow;
+  const repairPublish = advisor.jobs?.["repair-publish"] ?? {};
   const dispatchJob = advisor.jobs?.["repair-dispatch-generated-head"] ?? {};
   const dispatchSteps = dispatchJob.steps ?? [];
   const dispatchStep = dispatchSteps.find(
@@ -74,6 +76,13 @@ export function validatePrReviewAdvisorWorkflow(workflowPath = DEFAULT_WORKFLOW_
   const jobsWithActionsWrite = Object.entries(advisor.jobs ?? {})
     .filter(([, job]) => permissionMap(job.permissions).actions === "write")
     .map(([name]) => name);
+  if (
+    repairPublish.environment !== "advisor-repair-publish" ||
+    JSON.stringify(repairPublish).includes("PR_REVIEW_ADVISOR_API_KEY") ||
+    JSON.stringify(dispatchJob).includes("PR_REVIEW_ADVISOR_API_KEY")
+  ) {
+    errors.push("Unified advisor repair publication must retain its protected credential boundary");
+  }
   if (
     advisor.permissions === "write-all" ||
     permissionMap(advisor.permissions).actions === "write" ||

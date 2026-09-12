@@ -517,6 +517,7 @@ async function dispatchRepairValidation(
       run.path === `.github/workflows/${workflow}` &&
       run.event === "workflow_dispatch" &&
       run.head_branch === "main" &&
+      run.head_sha === input.workflowSha &&
       run.display_title === runName &&
       run.html_url === `https://github.com/${REPAIR_REPOSITORY}/actions/runs/${run.id}`,
   );
@@ -554,6 +555,7 @@ async function dispatchRepairValidation(
     run.path !== `.github/workflows/${workflow}` ||
     run.event !== "workflow_dispatch" ||
     run.head_branch !== "main" ||
+    run.head_sha !== input.workflowSha ||
     run.display_title !== runName ||
     run.html_url !== dispatched.html_url
   )
@@ -648,14 +650,14 @@ async function completedWorkflowEvidence(
   if (run.status !== "completed") return null;
   if (run.conclusion !== "success")
     throw new RepairError(`generated-head ${dispatch.workflow} run failed`);
-  const response = (await request(
-    "GET",
-    `/repos/${REPAIR_REPOSITORY}/actions/runs/${dispatch.runId}/attempts/${run.run_attempt}/jobs?per_page=100`,
-  )) as { jobs?: unknown };
-  if (!Array.isArray(response.jobs) || response.jobs.length > 100)
-    throw new RepairError(`generated-head ${dispatch.workflow} job listing is invalid`);
+  const jobsForRun = await listWorkflowJobs(
+    dispatch.runId,
+    Number(run.run_attempt),
+    request,
+    `generated-head ${dispatch.workflow}`,
+  );
   const requireSuccessfulJob = (name: string): { name: string; url: string } => {
-    const matches = (response.jobs as WorkflowJob[]).filter((job) => job.name === name);
+    const matches = jobsForRun.filter((job) => job.name === name);
     if (matches.length !== 1)
       throw new RepairError(`generated-head ${dispatch.workflow} job ${name} is ambiguous`);
     const [job] = matches;
@@ -676,10 +678,11 @@ async function completedWorkflowEvidence(
   return { ...dispatch, runAttempt: Number(run.run_attempt), receipt, jobs };
 }
 
-async function listE2eJobs(
+async function listWorkflowJobs(
   runId: number,
   runAttempt: number,
   request: GitHubRequest,
+  label: string,
 ): Promise<WorkflowJob[]> {
   const jobs: WorkflowJob[] = [];
   const ids = new Set<number>();
@@ -697,19 +700,27 @@ async function listE2eJobs(
       response.jobs.length > 100 ||
       (totalCount !== undefined && response.total_count !== totalCount)
     )
-      throw new RepairError("generated-head E2E job listing is invalid");
+      throw new RepairError(`${label} job listing is invalid`);
     totalCount ??= Number(response.total_count);
     for (const job of response.jobs as WorkflowJob[]) {
       if (!Number.isSafeInteger(job.id) || Number(job.id) < 1 || ids.has(Number(job.id)))
-        throw new RepairError("generated-head E2E job listing is invalid");
+        throw new RepairError(`${label} job listing is invalid`);
       ids.add(Number(job.id));
       jobs.push(job);
     }
     if (jobs.length === totalCount) return jobs;
     if (jobs.length > totalCount || response.jobs.length < 100)
-      throw new RepairError("generated-head E2E job listing is incomplete");
+      throw new RepairError(`${label} job listing is incomplete`);
   }
-  throw new RepairError("generated-head E2E job listing exceeds one thousand jobs");
+  throw new RepairError(`${label} job listing exceeds one thousand jobs`);
+}
+
+async function listE2eJobs(
+  runId: number,
+  runAttempt: number,
+  request: GitHubRequest,
+): Promise<WorkflowJob[]> {
+  return listWorkflowJobs(runId, runAttempt, request, "generated-head E2E");
 }
 
 function requiredE2eJobEvidence(

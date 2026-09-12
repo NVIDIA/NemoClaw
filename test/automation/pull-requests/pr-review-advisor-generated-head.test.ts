@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -54,25 +53,6 @@ const sourceArtifact = {
   workflow_run: { id: 77 },
 };
 const validationWorkflowSha = "b".repeat(40);
-
-function zipEntries(entries: Record<string, string>): Buffer {
-  const root = mkdtempSync(join(tmpdir(), "nemoclaw-advisor-e2e-receipt-"));
-  const archive = join(root, "artifact.zip");
-  const result = spawnSync(
-    "python3",
-    [
-      "-c",
-      "import json,sys,zipfile; entries=json.loads(sys.argv[2]); z=zipfile.ZipFile(sys.argv[1], 'w', compression=zipfile.ZIP_DEFLATED); [z.writestr(name, text) for name, text in entries.items()]; z.close()",
-      archive,
-      JSON.stringify(entries),
-    ],
-    { encoding: "utf8" },
-  );
-  expect(result.status, result.stderr).toBe(0);
-  const bytes = readFileSync(archive);
-  rmSync(root, { recursive: true, force: true });
-  return bytes;
-}
 
 function locatorStep(): LocatorStep {
   const workflow = YAML.parse(
@@ -277,27 +257,9 @@ describe("PR Review Advisor generated-head evidence", () => {
     let workflowHeadSha = "5".repeat(40);
     let correlationMode: "one" | "zero" | "ambiguous" = "one";
     let mismatchedReceipt = false;
+    let paginateWorkflowJobs = false;
     let changedPaths: string[] = [];
-    let e2eConclusion = "success";
-    let e2eMatrixConclusion = "success";
-    let e2eRunAttempt = 1;
-    let e2eJobMode: "duplicate" | "failure" | "missing" | "skipped" | "success" = "success";
-    const e2eArtifactMode = String("success");
-    let e2eReceiptOverrides: Record<string, unknown> = {};
-    let e2eArchive: Buffer<ArrayBufferLike> = Buffer.alloc(0);
-    const e2eRunId = 99;
-    const e2eCorrelationId = "01234567-89ab-4cde-8fab-0123456789ab";
-    const e2eUrl = `https://github.com/${selection.repository}/actions/runs/${e2eRunId}`;
-    const e2eArtifactId = 990;
-    const expectedE2eJobNames = e2eEvidenceJobNamesForSelectors([
-      "inference-routing",
-      "network-policy",
-    ]);
     const dispatchedWorkflows = new Set<string>();
-    const dispatchE2e = vi.fn(async () => ({
-      runId: e2eRunId,
-      source: "dispatch-response" as const,
-    }));
     const request = vi.fn(
       async (method: string, apiPath: string, body?: unknown): Promise<unknown> => {
         const workflow = [
@@ -361,76 +323,6 @@ describe("PR Review Advisor generated-head evidence", () => {
               html_url: `https://github.com/${selection.repository}/actions/runs/${runId}`,
             };
           }
-          case method === "GET" && apiPath.endsWith(`/actions/runs/${e2eRunId}`):
-            return {
-              id: e2eRunId,
-              event: "workflow_dispatch",
-              path: ".github/workflows/e2e.yaml",
-              status: "completed",
-              conclusion: e2eConclusion,
-              display_title: `E2E PR #${selection.prNumber} (${e2eCorrelationId})`,
-              head_branch: "main",
-              head_sha: "5".repeat(40),
-              html_url: e2eUrl,
-              run_attempt: e2eRunAttempt,
-            };
-          case method === "GET" && apiPath.includes(`/actions/runs/${e2eRunId}/artifacts?`): {
-            const artifact = {
-              id: e2eArtifactId,
-              name: `e2e-dispatch-${e2eRunId}-${e2eRunAttempt}`,
-              size_in_bytes: e2eArchive.length,
-              expired: e2eArtifactMode === "expired",
-              digest: `sha256:${createHash("sha256").update(e2eArchive).digest("hex")}`,
-              archive_download_url: `https://api.github.com/repos/${selection.repository}/actions/artifacts/${e2eArtifactId}/zip`,
-              workflow_run: { id: e2eArtifactMode === "wrong-run" ? e2eRunId + 1 : e2eRunId },
-            };
-            const artifacts =
-              e2eArtifactMode === "missing"
-                ? []
-                : e2eArtifactMode === "duplicate"
-                  ? [artifact, { ...artifact, id: e2eArtifactId + 1 }]
-                  : [artifact];
-            return { total_count: artifacts.length, artifacts };
-          }
-          case method === "GET" &&
-            apiPath.includes(`/actions/runs/${e2eRunId}/attempts/${e2eRunAttempt}/jobs`): {
-            const successfulRequiredE2eJobs = expectedE2eJobNames.map((name, index) => ({
-              id: 992 + index,
-              name,
-              status: "completed",
-              conclusion: "success",
-              html_url: `${e2eUrl}/job/${992 + index}`,
-              run_attempt: e2eRunAttempt,
-            }));
-            const firstRequiredE2eJob = successfulRequiredE2eJobs[0]!;
-            const requiredE2eJobs = {
-              duplicate: [...successfulRequiredE2eJobs, { ...firstRequiredE2eJob }],
-              failure: [
-                { ...firstRequiredE2eJob, conclusion: "failure" },
-                ...successfulRequiredE2eJobs.slice(1),
-              ],
-              missing: successfulRequiredE2eJobs.slice(1),
-              skipped: [
-                { ...firstRequiredE2eJob, conclusion: "skipped" },
-                ...successfulRequiredE2eJobs.slice(1),
-              ],
-              success: successfulRequiredE2eJobs,
-            }[e2eJobMode];
-            return {
-              total_count: 1 + requiredE2eJobs.length,
-              jobs: [
-                {
-                  id: 991,
-                  name: "generate-matrix",
-                  status: "completed",
-                  conclusion: e2eMatrixConclusion,
-                  html_url: `${e2eUrl}/job/991`,
-                  run_attempt: e2eRunAttempt,
-                },
-                ...requiredE2eJobs,
-              ],
-            };
-          }
           case method === "GET" && runMatch !== null: {
             const runId = Number(runMatch[1]);
             const specification = ADVISOR_REPAIR_HEAD_WORKFLOWS[runId - 1];
@@ -462,26 +354,34 @@ describe("PR Review Advisor generated-head evidence", () => {
             const specification = ADVISOR_REPAIR_HEAD_WORKFLOWS[runId - 1];
             expect(specification).toBeDefined();
             expect(Number(jobsMatch[2])).toBe(1);
-            return {
-              jobs: [
-                {
-                  id: runId * 10,
-                  name: mismatchedReceipt ? `${receiptName}-mismatch` : receiptName,
-                  status: "completed",
-                  conclusion: "success",
-                  html_url: `https://github.com/${selection.repository}/actions/runs/${runId}/job/${runId * 10}`,
-                  run_attempt: 1,
-                },
-                ...(specification?.checks ?? []).map((name, index) => ({
-                  id: runId * 10 + index + 1,
-                  name,
-                  status: "completed",
-                  conclusion: "success",
-                  html_url: `https://github.com/${selection.repository}/actions/runs/${runId}/job/${runId * 10 + index + 1}`,
-                  run_attempt: 1,
-                })),
-              ],
-            };
+            const jobs = [
+              {
+                id: runId * 10,
+                name: mismatchedReceipt ? `${receiptName}-mismatch` : receiptName,
+                status: "completed",
+                conclusion: "success",
+                html_url: `https://github.com/${selection.repository}/actions/runs/${runId}/job/${runId * 10}`,
+                run_attempt: 1,
+              },
+              ...(specification?.checks ?? []).map((name, index) => ({
+                id: runId * 10 + index + 1,
+                name,
+                status: "completed",
+                conclusion: "success",
+                html_url: `https://github.com/${selection.repository}/actions/runs/${runId}/job/${runId * 10 + index + 1}`,
+                run_attempt: 1,
+              })),
+            ];
+            const page = Number(
+              new URL(apiPath, "https://api.github.test").searchParams.get("page"),
+            );
+            const filler = Array.from({ length: 100 }, (_, index) => ({
+              id: runId * 10_000 + index,
+              name: `unrelated-${index}`,
+            }));
+            return paginateWorkflowJobs
+              ? { total_count: filler.length + jobs.length, jobs: page === 1 ? filler : jobs }
+              : { total_count: jobs.length, jobs };
           }
           case method === "GET" && apiPath.includes("/check-runs?"):
             return { check_runs: [] };
@@ -501,32 +401,8 @@ describe("PR Review Advisor generated-head evidence", () => {
         }
       },
     );
-    const verify = (checkpoint = createAdvisorRepairHeadCheckpoint()) => {
-      e2eArchive = zipEntries({
-        "dispatch.json": JSON.stringify({
-          kind: "nemoclaw-e2e-dispatch-v2",
-          repository: selection.repository,
-          prNumber: selection.prNumber,
-          candidateRepository: selection.repository,
-          candidateSha: generatedHeadSha,
-          baseSha: selection.baseSha,
-          workflowSha: "5".repeat(40),
-          workflowRunId: String(e2eRunId),
-          workflowRunAttempt: e2eRunAttempt,
-          eventName: "workflow_dispatch",
-          jobs: "inference-routing,network-policy",
-          targets: "",
-          allowDgxSparkRunnerQueue: false,
-          allowJetsonDispatch: false,
-          allowJetsonRunnerQueue: false,
-          includeStagingBrevLaunchable: false,
-          repairValidation: true,
-          repairAttemptKey: selection.attemptKey,
-          emptySelectors: false,
-          ...e2eReceiptOverrides,
-        }),
-      });
-      return waitForAdvisorRepairHead({
+    const verify = (checkpoint = createAdvisorRepairHeadCheckpoint()) =>
+      waitForAdvisorRepairHead({
         prNumber: selection.prNumber,
         sourceHeadSha: selection.sourceHeadSha,
         baseSha: selection.baseSha,
@@ -535,18 +411,9 @@ describe("PR Review Advisor generated-head evidence", () => {
         changedPaths,
         attemptKey: selection.attemptKey,
         request: request as GitHubRequest,
-        requestArchive: async (artifactId, maxBytes) => {
-          expect(artifactId).toBe(e2eArtifactId);
-          expect(e2eArchive.length).toBeLessThanOrEqual(maxBytes);
-          return e2eArchive;
-        },
-        token: "token",
-        dispatchE2e,
-        correlationId: () => e2eCorrelationId,
         attempts: 1,
         checkpoint,
       });
-    };
 
     await expect(verify()).resolves.toMatchObject({
       version: 3,
@@ -557,7 +424,6 @@ describe("PR Review Advisor generated-head evidence", () => {
       checks: { length: 5 },
       checkpoint: { workflows: { length: 7 }, e2e: null },
     });
-    expect(dispatchE2e).not.toHaveBeenCalled();
     expect(dispatchedWorkflows).toContain("openshell-sdk-package-pr.yaml");
     const workflowDispatchCalls = () =>
       request.mock.calls.filter(
@@ -570,6 +436,10 @@ describe("PR Review Advisor generated-head evidence", () => {
     const dispatchCount = workflowDispatchCalls();
     await expect(verify()).resolves.toMatchObject({ outcome: "success" });
     expect(workflowDispatchCalls()).toBe(dispatchCount);
+    paginateWorkflowJobs = true;
+    await expect(verify()).resolves.toMatchObject({ outcome: "success" });
+    expect(request.mock.calls.some(([, apiPath]) => String(apiPath).includes("page=2"))).toBe(true);
+    paginateWorkflowJobs = false;
     const publishedChecks = checkRunPublicationCalls();
     prerequisiteStatus = "queued";
     dispatchedWorkflows.clear();
@@ -584,28 +454,22 @@ describe("PR Review Advisor generated-head evidence", () => {
       "generated-head repair validation requires credential-bearing E2E job cloud-inference",
     );
     expect(dispatchedWorkflows.size).toBe(0);
-    expect(dispatchE2e).not.toHaveBeenCalled();
     changedPaths = ["src/lib/platform.ts"];
     dispatchedWorkflows.clear();
     await expect(verify()).rejects.toThrow(
       "generated-head repair validation requires credential-bearing E2E job cloud-onboard",
     );
     expect(dispatchedWorkflows.size).toBe(0);
-    expect(dispatchE2e).not.toHaveBeenCalled();
     changedPaths = ["src/lib/onboard/sandbox-create-step.ts"];
     dispatchedWorkflows.clear();
     await expect(verify()).rejects.toThrow(
       "generated-head repair validation requires credential-bearing E2E job onboard-repair",
     );
     expect(dispatchedWorkflows.size).toBe(0);
-    expect(dispatchE2e).not.toHaveBeenCalled();
     changedPaths = [];
     workflowHeadSha = "6".repeat(40);
     dispatchedWorkflows.clear();
-    await expect(verify()).resolves.toMatchObject({
-      outcome: "success",
-      workflows: expect.arrayContaining([expect.objectContaining({ workflowSha: "6".repeat(40) })]),
-    });
+    await expect(verify()).rejects.toThrow("dispatched run identity is invalid");
     workflowHeadSha = "5".repeat(40);
     failedWorkflow = "pr.yaml";
     dispatchedWorkflows.clear();
@@ -640,7 +504,6 @@ describe("PR Review Advisor generated-head evidence", () => {
       "generated-head repair validation requires credential-bearing E2E job inference-routing",
     );
     expect(dispatchedWorkflows.size).toBe(0);
-    expect(dispatchE2e).not.toHaveBeenCalled();
   });
 
   it("derives stable dispatch identity and a deadline beyond the selected dependency graph (#10791)", () => {

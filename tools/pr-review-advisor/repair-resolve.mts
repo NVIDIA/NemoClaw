@@ -6,9 +6,12 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   copyFileSync,
+  closeSync,
   existsSync,
   lstatSync,
   mkdirSync,
+  openSync,
+  readSync,
   readdirSync,
   rmSync,
   writeFileSync,
@@ -252,11 +255,19 @@ function regularFileInventory(root: string): Map<string, string> {
         totalBytes += stat.size;
         if (totalBytes > 128 * 1024 * 1024)
           throw new RepairError("sandbox tree exceeds the inventory limit");
-        const content = readBoundedFile(path.join(root, relative), 2_000_000, true);
-        inventory.set(
-          relative,
-          `${stat.mode & 0o777}:${createHash("sha256").update(content).digest("hex")}`,
-        );
+        const hash = createHash("sha256");
+        const buffer = Buffer.allocUnsafe(64 * 1024);
+        const descriptor = openSync(path.join(root, relative), "r");
+        try {
+          for (;;) {
+            const bytesRead = readSync(descriptor, buffer, 0, buffer.length, null);
+            if (bytesRead === 0) break;
+            hash.update(buffer.subarray(0, bytesRead));
+          }
+        } finally {
+          closeSync(descriptor);
+        }
+        inventory.set(relative, `${stat.mode & 0o777}:${hash.digest("hex")}`);
       } else throw new RepairError("sandbox tree contains a non-regular object");
     }
   };

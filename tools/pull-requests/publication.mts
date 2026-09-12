@@ -77,6 +77,8 @@ function optionalTreeEntry(
 function treeEntry(repository: string, tree: string, filePath: string): GitTreeEntry {
   const entry = optionalTreeEntry(repository, tree, filePath);
   if (!entry) throw new Error(`Git tree does not contain ${filePath}`);
+  if (entry.mode !== "100644" || entry.type !== "blob")
+    throw new Error(`Git tree entry is not a mode-100644 file: ${filePath}`);
   return entry;
 }
 
@@ -101,7 +103,11 @@ export async function createGitHubTree(input: {
       entries.push({ ...entry, sha: null });
       continue;
     }
+    entries.push(entry);
+  }
+  for (const entry of entries) {
     if (
+      entry.sha !== null &&
       entry.type === "blob" &&
       !parentContainsBlob(input.repository, input.headSha, entry) &&
       !parentContainsBlob(input.repository, input.baseSha, entry)
@@ -114,10 +120,15 @@ export async function createGitHubTree(input: {
       if (created.sha !== entry.sha)
         throw new Error(`GitHub returned an unexpected blob SHA for ${entry.path}`);
     }
-    entries.push(entry);
   }
+  const baseTree = fullSha(
+    gitBuffer(input.repository, ["rev-parse", `${input.baseSha}^{tree}`])
+      .toString("utf8")
+      .trim(),
+    "base tree SHA",
+  );
   const created = (await input.request("POST", `/repos/${input.repositoryName}/git/trees`, {
-    base_tree: input.baseSha,
+    base_tree: baseTree,
     tree: entries,
   })) as { sha?: string };
   if (created.sha !== input.finalTree)

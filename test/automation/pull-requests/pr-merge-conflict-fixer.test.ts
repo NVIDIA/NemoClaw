@@ -680,7 +680,9 @@ describe("PR merge conflict fixer", () => {
       base_tree: string;
       tree: Array<{ mode: string; path: string; sha: string | null; type: string }>;
     };
-    expect(treeBody.base_tree).toBe(entry.base_sha);
+    expect(treeBody.base_tree).toBe(
+      git(fixture.repository, ["rev-parse", `${entry.base_sha}^{tree}`]),
+    );
     expect(treeBody.tree.map((item) => item.path)).toEqual([
       "clean-merge.txt",
       "conflict.txt",
@@ -1081,6 +1083,9 @@ describe("PR merge conflict fixer", () => {
     const head = git(source, ["rev-parse", "HEAD"]);
     write(base, "src/lib/example.ts", "before\n");
     write(candidate, "src/lib/example.ts", "after\n");
+    const unchangedLargeFile = Buffer.alloc(3 * 1024 * 1024, "x");
+    fs.writeFileSync(path.join(base, "unchanged-large.bin"), unchangedLargeFile);
+    fs.writeFileSync(path.join(candidate, "unchanged-large.bin"), unchangedLargeFile);
     const selection = repairSelection(head, head);
     fs.writeFileSync(selectionFile, JSON.stringify(selection));
     const proposalFile = repairProposal(selection);
