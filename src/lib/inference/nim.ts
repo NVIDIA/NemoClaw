@@ -633,11 +633,15 @@ export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
         // a mixed-GPU host would otherwise be misreported as `Nx <firstName>`.
         const allSameName = !!firstName && trusted.every((p: ParsedGpu) => p.name === firstName);
         const verifiedCapacity = boundedCudaProof?.verifiedCapacity;
+        // OEM N1X units report chassis models such as `SKU 1` or `83N7`, so
+        // the proof-backed GPU identity qualifies on its own; the chassis
+        // observation remains an alternative for a GPU name outside the
+        // accepted N1X identities.
         const n1xWslOllamaEligible =
           containerGpuProofPassed &&
           verifiedCapacity !== undefined &&
           verifiedCapacity.availableMemoryMB >= 30_000 &&
-          deps.n1xWslProduct === true;
+          (platform === "n1x" || deps.n1xWslProduct === true);
         // Keep the 30B/35B timeout protection except for the planned
         // identity-qualified WSL RTX Spark N1X path (#10954).
         const computeConstrained =
