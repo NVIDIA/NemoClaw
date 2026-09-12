@@ -8,7 +8,7 @@ import path from "node:path";
 
 import { DOCKER_DESKTOP_CREDENTIAL_STORE_NAMES } from "../../domain/docker-host";
 import { isWsl } from "../../platform";
-import { buildSubprocessEnv } from "../../subprocess-env";
+import { buildDockerSubprocessEnv, buildSubprocessEnv } from "../../subprocess-env";
 import {
   dockerDesktopCredentialHelperResponds,
   readDockerCredentialStore,
@@ -52,6 +52,23 @@ export function createCredentialFreeDockerConfig(purpose: "portable" | "wsl-buil
     mode: 0o600,
   });
   return directory;
+}
+
+/**
+ * Docker client selection for the Docker commands NemoClaw runs during a
+ * sandbox create. The subprocess env forwards only DOCKER_HOST, while the
+ * Docker runner also honours the caller's DOCKER_CONTEXT and DOCKER_CONFIG, so
+ * credential isolation must detect against that selection.
+ */
+export function dockerClientSelectionEnv(
+  subprocessEnv: NodeJS.ProcessEnv,
+  hostEnv: NodeJS.ProcessEnv,
+): Record<string, string> {
+  const extra: Record<string, string> = {};
+  for (const [key, value] of Object.entries(subprocessEnv)) {
+    if (value !== undefined) extra[key] = value;
+  }
+  return buildDockerSubprocessEnv(hostEnv, extra.DOCKER_HOST ?? hostEnv.DOCKER_HOST, extra);
 }
 
 /** Restrict the host Docker build to environment values used by Docker itself. */
