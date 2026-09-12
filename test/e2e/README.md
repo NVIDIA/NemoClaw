@@ -493,7 +493,7 @@ is then `NaN`; a separate process-existence assertion is unnecessary. Authentica
 runtime ownership, Ready state, and cleanup assertions remain unchanged.
 The `gpu-e2e` target also qualifies configuration export for an attached native Linux Ollama daemon.
 A separate OpenClaw scenario disables direct sandbox GPU, starts a fixture-owned daemon on port
-11439, and uses normal onboarding to create the managed proxy on port 11440. It exports twice through
+11439, and uses normal onboarding to create the managed proxy on the target's shared port. It exports twice through
 the candidate CLI and real SDK, validates both documents, compares their specs and model digest,
 checks credential omission, and requires a stopped daemon to prevent publication. Private YAML is
 removed through the cleanup registry; retained evidence contains only the selected model, ports,
