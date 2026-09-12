@@ -21,6 +21,7 @@ const installer = fileURLToPath(new URL("../../../scripts/install.sh", import.me
 const upstreamServiceShow =
   "--user show openshell-gateway.service --property=FragmentPath --property=ExecStart";
 const stoppedServicePrefix = "NEMOCLAW_E2E_STOPPED_GATEWAY_USER_SERVICE=";
+const linuxDescribe = process.platform === "linux" ? describe : describe.skip;
 
 function runStopScript(installerPath: string, env: NodeJS.ProcessEnv) {
   return spawnSync(
@@ -177,8 +178,7 @@ function writeMacServiceStubs(
     servicePath,
   };
 }
-
-describe("reboot lifecycle OpenShell gateway user-service fixture", () => {
+linuxDescribe("reboot lifecycle OpenShell gateway user-service fixture", () => {
   it("stages, enables, and removes the repository service without installer cleanup", () => {
     const root = fs.mkdtempSync(
       path.join(os.tmpdir(), "nemoclaw-installer-lifecycle-stage-service-"),
@@ -213,7 +213,7 @@ describe("reboot lifecycle OpenShell gateway user-service fixture", () => {
       env.NEMOCLAW_INSTALLER_STAGED = installerCleanupSentinel;
       const staged = execFileSync(
         "bash",
-        ["-lc", buildOpenShellGatewayUserServiceStageScript(), "stage-service", installer],
+        ["-c", buildOpenShellGatewayUserServiceStageScript(), "stage-service", installer],
         { encoding: "utf8", env, killSignal: "SIGKILL", timeout: 30_000 },
       );
 
@@ -222,7 +222,7 @@ describe("reboot lifecycle OpenShell gateway user-service fixture", () => {
       expect(fs.readFileSync(unit, "utf8")).toContain(`ExecStart=${bin}/openshell-gateway`);
       expect(fs.statSync(unit).mode & 0o777).toBe(0o600);
 
-      execFileSync("sh", ["-lc", buildOpenShellGatewayUserServiceRemovalScript()], {
+      execFileSync("sh", ["-c", buildOpenShellGatewayUserServiceRemovalScript()], {
         env,
         killSignal: "SIGKILL",
         timeout: 30_000,
@@ -260,7 +260,7 @@ describe("reboot lifecycle OpenShell gateway user-service fixture", () => {
       });
       const output = execFileSync(
         "bash",
-        ["-lc", buildOpenShellGatewayUserServiceStageScript(), "stage-service", installer],
+        ["-c", buildOpenShellGatewayUserServiceStageScript(), "stage-service", installer],
         { encoding: "utf8", env, killSignal: "SIGKILL", timeout: 30_000 },
       );
 
@@ -305,7 +305,7 @@ describe("reboot lifecycle OpenShell gateway user-service fixture", () => {
       expect(() =>
         execFileSync(
           "bash",
-          ["-lc", buildOpenShellGatewayUserServiceStageScript(), "stage-service", installer],
+          ["-c", buildOpenShellGatewayUserServiceStageScript(), "stage-service", installer],
           { env, killSignal: "SIGKILL", stdio: "pipe", timeout: 30_000 },
         ),
       ).toThrow();
@@ -344,7 +344,7 @@ describe("reboot lifecycle OpenShell gateway user-service fixture", () => {
       expect(() =>
         execFileSync(
           "bash",
-          ["-lc", buildOpenShellGatewayUserServiceStageScript(), "stage-service", installer],
+          ["-c", buildOpenShellGatewayUserServiceStageScript(), "stage-service", installer],
           { env, killSignal: "SIGKILL", stdio: "pipe", timeout: 30_000 },
         ),
       ).toThrow();

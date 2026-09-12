@@ -117,7 +117,7 @@ describe("validation reuse", () => {
           label: "fixture",
           command: [command, "literal & argument"],
           env: {
-            PATH: [directory, process.env.PATH].join(path.delimiter),
+            PATH: directory,
             ComSpec: "/must-not-run",
           },
           report: vi.fn(),

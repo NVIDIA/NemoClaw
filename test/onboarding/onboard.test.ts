@@ -749,6 +749,7 @@ childProcess.spawn = (...args) => {
   return child;
 };
 
+require(${JSON.stringify(path.join(repoRoot, "src", "lib", "platform.ts"))}).isWsl = () => false;
 const { createSandbox } = require(${onboardPath});
 
 (async () => {

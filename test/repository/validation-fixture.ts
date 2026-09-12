@@ -32,7 +32,7 @@ export function writeFixture(root: string, file: string, contents: string): void
 }
 
 export function validationFixture(): string {
-  const root = mkdtempSync(path.join(os.tmpdir(), "nemoclaw-validation-test-"));
+  const root = fs.realpathSync(mkdtempSync(path.join(os.tmpdir(), "nemoclaw-validation-test-")));
   fixtureGit(root, "init", "--initial-branch=main");
   writeFixture(
     root,

@@ -6,7 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createContextCapture as contextCapture,
   createDriftingContextCapture,
@@ -40,6 +40,12 @@ function fakeDockerScript(script: string): string {
   writeFakeExecutable(root, "docker", script);
   return root;
 }
+
+beforeEach(() => {
+  const executableRoot = fakeDocker("qualified");
+  writeFakeExecutable(executableRoot, "ssh", "exit 0");
+  vi.stubEnv("PATH", executableRoot);
+});
 
 afterEach(() => {
   vi.unstubAllEnvs();
