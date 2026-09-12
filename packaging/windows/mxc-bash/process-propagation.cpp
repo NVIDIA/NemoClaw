@@ -484,15 +484,24 @@ BOOL requestHostQueryRepair(HANDLE child) {
     // Delete only the exact file object this request created. Ack is removed
     // first; the request lock is released last. A replaced file is never deleted.
     if (requestOwned && !requestRemoved && (!replySeen || ackRemoved)) {
-        HANDLE owned = CreateFileW(request, DELETE | FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-            nullptr, OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT | FILE_ATTRIBUTE_NORMAL, nullptr);
+        HANDLE owned = INVALID_HANDLE_VALUE;
+        // The host holds READ-only sharing while validating this request. Wait
+        // for that short read using the original budget, then recheck identity.
+        do {
+            owned = CreateFileW(request, DELETE | FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                nullptr, OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT | FILE_ATTRIBUTE_NORMAL, nullptr);
+            if (owned != INVALID_HANDLE_VALUE) break;
+            error = GetLastError();
+            if (error != ERROR_SHARING_VIOLATION || GetTickCount64() - started >= 5000) break;
+            Sleep(10);
+        } while (GetTickCount64() - started < 5000);
         if (owned != INVALID_HANDLE_VALUE) {
             BY_HANDLE_FILE_INFORMATION current = {};
             if (!GetFileInformationByHandle(owned, &current)) error = GetLastError();
             else if (current.dwVolumeSerialNumber != requestIdentity.dwVolumeSerialNumber ||
                 current.nFileIndexHigh != requestIdentity.nFileIndexHigh || current.nFileIndexLow != requestIdentity.nFileIndexLow ||
                 (current.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT))) error = ERROR_INVALID_DATA;
-            else { requestRemoved = removeInspectionHandle(owned); if (!requestRemoved) error = GetLastError(); }
+            else { requestRemoved = removeInspectionHandle(owned); error = requestRemoved ? 0 : GetLastError(); }
             if (!CloseHandle(owned)) { error = GetLastError(); requestRemoved = FALSE; }
         } else error = GetLastError();
     }

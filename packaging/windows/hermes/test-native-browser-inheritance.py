@@ -122,6 +122,35 @@ class BrowserInheritanceControls(unittest.TestCase):
         self.assertIs(module.os.original, os)
         self.assertIsNot(module.os, os)
 
+    def test_session_loader_defers_origin_lookup_until_lifecycle_import_finishes(self):
+        lifecycle = ModuleType("tools.browser_tool_lifecycle")
+        lookups = []
+
+        class OriginProxy:
+            def __getattr__(_, name):
+                lookups.append(name)
+                # This callback exists only after the importing lifecycle module
+                # has finished importing browser_tool_session.
+                lifecycle._emergency_cleanup_all_sessions
+                return lambda: str(self.root)
+
+        module = ModuleType("tools.browser_tool_session")
+        module.os = self.proxy.original
+        module._bt = OriginProxy()
+        loader = adapter._NativeLoader(
+            SimpleNamespace(exec_module=lambda module: None),
+            self.root,
+            self.root / "unused-bash",
+        )
+        loader.exec_module(module)
+        self.assertEqual(lookups, [])
+        lifecycle._emergency_cleanup_all_sessions = lambda: None
+        target = self.root / "agent-browser-after_import"
+        module.os.makedirs(target, mode=0o700, exist_ok=True)
+        self.assertEqual(lookups, ["_socket_safe_tmpdir"])
+        self.assertTrue(target.is_dir())
+        self.assertEqual(self.calls[-1][1], {"mode": 0o777, "exist_ok": True})
+
     def test_actual_pinned_prepare_algorithm_and_owner_record_remain(self):
         text = SOURCE.read_text()
         self.assertEqual(hashlib.sha256(text.encode()).hexdigest(), EXPECTED_SOURCE)

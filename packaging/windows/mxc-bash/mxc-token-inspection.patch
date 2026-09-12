@@ -417,7 +417,7 @@ diff --git a/src/backends/appcontainer/common/src/msys_token_readback.rs b/src/b
 new file mode 100644
 --- /dev/null
 +++ b/src/backends/appcontainer/common/src/msys_token_readback.rs
-@@ -0,0 +1,989 @@
+@@ -0,0 +1,995 @@
 +// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 +// SPDX-License-Identifier: Apache-2.0
 +// Disposable Windows CI inspection and explicit exact-TOKEN_QUERY repair.
@@ -626,14 +626,17 @@ new file mode 100644
 +            &mut io,
 +            std::ptr::null(),
 +            0x80,
-+            if reply { 1 } else { 5 },
++            // Exclude writers and deletion while the request's metadata and
++            // bytes are checked. Guest cleanup retries sharing within its
++            // existing budget; it cannot retire the file during this read.
++            1,
 +            if reply { 2 } else { 1 },
 +            0x0020_0060,
 +            std::ptr::null(),
 +            0,
 +        )
 +    };
-+    if !reply && matches!(status as u32, 0xc0000034 | 0xc0000043) {
++    if !reply && matches!(status as u32, 0xc0000034 | 0xc0000043 | 0xc0000056) {
 +        return Ok(None);
 +    }
 +    require(
@@ -1173,7 +1176,10 @@ new file mode 100644
 +            && metadata.size_high == 0
 +            && metadata.size_low > 0
 +            && metadata.size_low <= 128,
-+        "Inspection request is not a bounded ordinary single-link file",
++        &format!(
++            "Inspection request is not a bounded ordinary single-link file: attributes=0x{:08x}, links={}, sizeHigh={}, sizeLow={}",
++            metadata.attributes, metadata.links, metadata.size_high, metadata.size_low
++        ),
 +    )?;
 +    let mut bytes = [0u8; 128];
 +    let mut count = 0;

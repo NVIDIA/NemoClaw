@@ -317,7 +317,10 @@ def _adapt_module(module: ModuleType, root: Path, bash: Path) -> None:
 
         module._find_agent_browser = owned_browser
     elif module.__name__ == "tools.browser_tool_session":
-        module.os = _BrowserSessionOs(module.os, module._bt._socket_safe_tmpdir)
+        # The upstream origin proxy may still be inside the lifecycle import.
+        module.os = _BrowserSessionOs(
+            module.os, lambda: module._bt._socket_safe_tmpdir()
+        )
     elif module.__name__ == "tools.lazy_deps":
         # Config security.allow_lazy_installs:false and the upstream environment
         # switch remain set by the launcher. This native deployment admission
