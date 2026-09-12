@@ -366,7 +366,7 @@ After a model fails validation, NemoClaw excludes it from the next installed-mod
 
 On Windows on Arm N1X systems with a Snapdragon X processor, automatic selection omits the 30B and 35B starter models and selects `qwen3.5:9b`.
 On a WSL RTX Spark N1x, NemoClaw can select an installed `qwen3.6:35b` only when the selected Docker or Podman provider's CUDA proof reports at least 30,000 MiB available.
-The proof must validate exactly one GPU.
+NemoClaw runs the proof only when `nvidia-smi` reports exactly one GPU row.
 NemoClaw treats the host as N1x when that GPU's normalized identity is `NVIDIA RTX Spark N1X` or `NVIDIA RTX Spark N1X (6144-core Blackwell RTX GPU)`, or when the Windows chassis model reports `RTX Spark N1X`.
 The proof runs one pinned CUDA workload and capacity query through the provider abstraction; Docker supplies its GPU flag and Podman supplies its NVIDIA CDI device without a separate model-selection path.
 Missing, malformed, or insufficient proof capacity retains the `qwen3.5:9b` fallback.
