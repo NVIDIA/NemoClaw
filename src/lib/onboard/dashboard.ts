@@ -181,6 +181,11 @@ export interface OnboardDashboardHelpers {
     chatUiUrl?: string,
     options?: Parameters<typeof dashboardAccess.getDashboardForwardTarget>[1],
   ): string;
+  ownsForwardServicePort(
+    sandboxName: string,
+    port: number,
+    targetKind?: "dashboard" | "loopback",
+  ): boolean;
   printDashboard(
     sandboxName: string,
     model: string,
@@ -307,10 +312,35 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
       sandboxName,
       gatewayName,
       port,
-      getDashboardForwardTarget(chatUiUrl),
+      getDashboardForwardTarget(chatUiUrl, { isWsl: deps.isWsl() }),
       authority,
     );
     if (forwardService?.owns?.(target) !== true) return false;
+    assertForwardGatewayCurrent(authority);
+    return true;
+  }
+
+  function ownsForwardServicePort(
+    sandboxName: string,
+    port: number,
+    targetKind: "dashboard" | "loopback" = "dashboard",
+  ): boolean {
+    const gatewayName = resolveForwardServiceGateway(sandboxName);
+    if (gatewayName === null) return false;
+    const target =
+      targetKind === "loopback"
+        ? `127.0.0.1:${String(port)}`
+        : buildChain({
+            chatUiUrl: `http://127.0.0.1:${String(port)}`,
+            port,
+            ...dashboardAccess.resolveDashboardPlatformHints({
+              isWsl: deps.isWsl(),
+              runCapture: deps.runCapture,
+            }),
+          }).forwardTarget;
+    const authority = getForwardRuntimeAuthority();
+    const serviceTarget = forwardTarget(sandboxName, gatewayName, port, target, authority);
+    if (forwardService?.owns?.(serviceTarget) !== true) return false;
     assertForwardGatewayCurrent(authority);
     return true;
   }
@@ -877,6 +907,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     fetchAgentWebAuthTokenFromSandbox,
     getDashboardForwardPort,
     getDashboardForwardTarget,
+    ownsForwardServicePort,
     printDashboard,
     stopAllDashboardForwards,
   };

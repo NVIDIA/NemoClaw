@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -20,7 +21,7 @@ const request = (timeoutSeconds = 120) =>
   }) as const;
 
 function tlsBundle(): string {
-  const stateDir = fs.mkdtempSync(path.join(process.cwd(), "nemoclaw-sdk-test-"));
+  const stateDir = fs.mkdtempSync(path.join(os.homedir(), ".nemoclaw-sdk-test-"));
   roots.push(stateDir);
   ensureManagedGatewayStateRoot({
     gatewayName: "nemoclaw-9443",
@@ -32,6 +33,17 @@ function tlsBundle(): string {
   fs.writeFileSync(path.join(stateDir, "tls", "client", "tls.crt"), "cert");
   fs.writeFileSync(path.join(stateDir, "tls", "client", "tls.key"), "key");
   return stateDir;
+}
+
+function unmarkedDefaultTlsBundle(): { homeDir: string; stateDir: string } {
+  const homeDir = fs.mkdtempSync(path.join(os.homedir(), ".nemoclaw-sdk-default-test-"));
+  roots.push(homeDir);
+  const stateDir = path.join(homeDir, ".local", "state", "nemoclaw", "openshell-docker-gateway");
+  fs.mkdirSync(path.join(stateDir, "tls", "client"), { mode: 0o700, recursive: true });
+  fs.writeFileSync(path.join(stateDir, "tls", "ca.crt"), "ca");
+  fs.writeFileSync(path.join(stateDir, "tls", "client", "tls.crt"), "cert");
+  fs.writeFileSync(path.join(stateDir, "tls", "client", "tls.key"), "key");
+  return { homeDir, stateDir };
 }
 
 afterEach(() => {
@@ -58,6 +70,42 @@ describe("OpenShell SDK sandbox command executor", () => {
       clientCert: Buffer.from("cert"),
       clientKey: Buffer.from("key"),
     });
+  });
+
+  it("connects to the owner-private canonical default state created before markers", async () => {
+    const { homeDir } = unmarkedDefaultTlsBundle();
+    const connect = vi.fn().mockResolvedValue({ sandbox: {} });
+
+    await connectManagedOpenShellSdk(
+      { kind: "named", gatewayName: "nemoclaw" },
+      {
+        env: { HOME: homeDir },
+        homeDir,
+        loadSdk: async () => ({ OpenShellClient: { connect } }),
+      },
+    );
+
+    expect(connect).toHaveBeenCalledWith({
+      gateway: "https://127.0.0.1:8080",
+      caCert: Buffer.from("ca"),
+      clientCert: Buffer.from("cert"),
+      clientKey: Buffer.from("key"),
+    });
+  });
+
+  it("rejects an unmarked explicit gateway state override", async () => {
+    const { stateDir } = unmarkedDefaultTlsBundle();
+
+    await expect(
+      connectManagedOpenShellSdk(
+        { kind: "named", gatewayName: "nemoclaw" },
+        {
+          env: { NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: stateDir },
+          homeDir: "/unused",
+          loadSdk: async () => ({ OpenShellClient: { connect: vi.fn() } }),
+        },
+      ),
+    ).rejects.toThrow(/managed gateway state root marker/u);
   });
 
   it("streams native output and preserves the exit status", async () => {
