@@ -15,6 +15,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 import zipfile
@@ -326,6 +327,120 @@ class TargetedPywinpty(unittest.TestCase):
         (self.evidence / "conpty-smoke.json").write_text("{}")
         with self.assertRaises(ValueError):
             helper.validate_rebuild_receipt(self.runtime, receipt, self.evidence)
+
+    def test_exact_uv_cache_metadata_requires_valid_record_and_rejects_other_extras(
+        self,
+    ):
+        relative = helper.DIST + "uv_cache.json"
+        name = helper.SITE + relative
+        cache = self.runtime / name
+        content = b'{"timestamp":{"secs_since_epoch":1,"nanos_since_epoch":0}}'
+        cache.write_bytes(content)
+        record = self.runtime / (helper.SITE + helper.DIST + "RECORD")
+        output = io.StringIO()
+        encoded = "sha256=" + base64.urlsafe_b64encode(
+            hashlib.sha256(content).digest()
+        ).decode().rstrip("=")
+        csv.writer(output, lineterminator="\n").writerow(
+            [relative, encoded, len(content)]
+        )
+        record.write_text(record.read_text() + output.getvalue())
+        self.after["files"].append({"path": name, **identity(content)})
+        next(
+            row
+            for row in self.after["files"]
+            if row["path"] == helper.SITE + helper.DIST + "RECORD"
+        ).update(identity(record.read_bytes()))
+        self.replacement = helper.validate_delta(
+            self.before, self.after, self.wheel_files
+        )
+        receipt = self.successful_receipt()
+        helper.validate_rebuild_receipt(self.runtime, receipt, self.evidence)
+        cache.write_bytes(content + b" ")
+        with self.assertRaisesRegex(ValueError, "Current pywinpty closure changed"):
+            helper.validate_rebuild_receipt(self.runtime, receipt, self.evidence)
+        cache.write_bytes(content)
+        original_record = record.read_text()
+        for changed in [
+            original_record.replace(encoded, "sha256=" + "A" * 43),
+            original_record.replace(
+                output.getvalue(),
+                output.getvalue().replace(str(len(content)), str(len(content) + 1)),
+            ),
+        ]:
+            record.write_text(changed)
+            with self.assertRaisesRegex(
+                ValueError, "Installed RECORD hash/size mismatch"
+            ):
+                helper.validate_installed_record(
+                    self.runtime, self.replacement["installedFiles"]
+                )
+        record.write_text(original_record)
+        changed = copy.deepcopy(self.after)
+        changed["files"].append(
+            {"path": helper.SITE + helper.DIST + "unrelated.json", **identity(b"{}")}
+        )
+        with self.assertRaisesRegex(ValueError, "Unlisted new pywinpty file"):
+            helper.validate_delta(self.before, changed, self.wheel_files)
+
+    def test_rejected_delta_retains_exact_after_inventory_and_installed_record(self):
+        after = copy.deepcopy(self.after)
+        unexpected = helper.SITE + helper.DIST + "unlisted-metadata.json"
+        after["files"].append({"path": unexpected, **identity(b"unexpected")})
+        tree = ast.parse((HERE / "rebuild-pywinpty-conpty.py").read_text())
+        main = next(
+            node
+            for node in tree.body
+            if isinstance(node, ast.FunctionDef) and node.name == "main"
+        )
+        body = next(node.body for node in main.body if isinstance(node, ast.Try))
+        start = next(
+            i
+            for i, node in enumerate(body)
+            if isinstance(node, ast.Assign) and ast.unparse(node.targets[0]) == "after"
+        )
+        end = next(
+            i + 1
+            for i, node in enumerate(body)
+            if isinstance(node, ast.Assign)
+            and ast.unparse(node.targets[0]) == "receipt['replacement']"
+        )
+        receipt = {}
+        context = {
+            "owner": SimpleNamespace(inventory=lambda runtime: after),
+            "runtime": self.runtime,
+            "output": self.evidence,
+            "receipt": receipt,
+            "before": self.before,
+            "wheel_files": self.wheel_files,
+            "save": helper.save,
+            "digest": helper.digest,
+            "validate_delta": helper.validate_delta,
+            "SITE": helper.SITE,
+            "DIST": helper.DIST,
+        }
+        with self.assertRaises(ValueError) as caught:
+            exec(
+                compile(
+                    ast.Module(body=body[start:end], type_ignores=[]),
+                    str(HERE / "rebuild-pywinpty-conpty.py"),
+                    "exec",
+                ),
+                context,
+            )
+        self.assertIn(unexpected, str(caught.exception))
+        self.assertNotIn("replacement", receipt)
+        self.assertNotIn("status", receipt)
+        inventory = self.evidence / "after-inventory.json"
+        self.assertEqual(json.loads(inventory.read_text()), after)
+        self.assertEqual(receipt["afterInventorySha256"], helper.digest(inventory))
+        installed = self.evidence / receipt["installedRecord"]["file"]
+        self.assertEqual(
+            installed.read_bytes(),
+            (self.runtime / (helper.SITE + helper.DIST + "RECORD")).read_bytes(),
+        )
+        self.assertEqual(receipt["installedRecord"]["bytes"], installed.stat().st_size)
+        self.assertEqual(receipt["installedRecord"]["sha256"], helper.digest(installed))
 
     def test_platform_guard_prevents_any_local_build_or_runtime_mutation(self):
         if sys.platform == "win32":

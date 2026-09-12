@@ -40,7 +40,14 @@ NATIVE = SITE + "winpty/winpty.cp311-win_arm64.pyd"
 OLD_NATIVE_SHA = "c81591d40779ef1a66b6ad60eac31f23834b34d0b82164c4f1342850ad33f374"
 INSTALL_METADATA = {
     SITE + DIST + name
-    for name in ("INSTALLER", "REQUESTED", "direct_url.json", "uv_build.json", "RECORD")
+    for name in (
+        "INSTALLER",
+        "REQUESTED",
+        "direct_url.json",
+        "uv_cache.json",
+        "uv_build.json",
+        "RECORD",
+    )
 }
 
 
@@ -97,7 +104,10 @@ def validate_delta(before, after, wheel_files):
         if "/__pycache__/" in name and name.endswith(".pyc")
     }
     permitted = caches | set(wheel_files) | INSTALL_METADATA
-    require(new_package <= permitted, "Unlisted new pywinpty file")
+    require(
+        new_package <= permitted,
+        "Unlisted new pywinpty file: " + json.dumps(sorted(new_package - permitted)),
+    )
     require(
         {k: v for k, v in old.items() if not in_package(k)}
         == {k: v for k, v in new.items() if not in_package(k)},
@@ -823,9 +833,17 @@ def main():
             timeout=45,
         )
         after = owner.inventory(runtime)
-        receipt["replacement"] = validate_delta(before, after, wheel_files)
         save(output / "after-inventory.json", after)
         receipt["afterInventorySha256"] = digest(output / "after-inventory.json")
+        installed_record = output / "installed-pywinpty-RECORD.csv"
+        with installed_record.open("xb") as stream:
+            stream.write((runtime / (SITE + DIST + "RECORD")).read_bytes())
+        receipt["installedRecord"] = {
+            "file": installed_record.name,
+            "bytes": installed_record.stat().st_size,
+            "sha256": digest(installed_record),
+        }
+        receipt["replacement"] = validate_delta(before, after, wheel_files)
         smoke = json.loads((output / "conpty-smoke.json").read_text())
         receipt["smoke"] = {
             "file": "conpty-smoke.json",
