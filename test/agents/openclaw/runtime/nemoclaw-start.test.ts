@@ -42,7 +42,7 @@ const JSON5_MODULE = path.join(
   "node_modules",
   "json5",
 );
-const execFileAsync = promisify(execFile);
+const runCommand = promisify(execFile);
 
 // Concurrent process fixtures are independent, but keep their host load bounded.
 vi.setConfig({ maxConcurrency: 4 });
@@ -1183,7 +1183,7 @@ describe.concurrent("nemoclaw-start auto-pair slow-mode keepalive (#4263)", () =
       "nemoclaw-auto-pair-slow-",
     );
     try {
-      const run = await execFileAsync("python3", ["-c", buildAutoPairScript()], {
+      const run = await runCommand("python3", ["-c", buildAutoPairScript()], {
         encoding: "utf-8",
         env: {
           ...process.env,
@@ -1271,7 +1271,7 @@ exit 2
     );
 
     try {
-      const run = await execFileAsync("python3", ["-c", buildAutoPairScript()], {
+      const run = await runCommand("python3", ["-c", buildAutoPairScript()], {
         encoding: "utf-8",
         env: {
           ...process.env,
@@ -1329,7 +1329,7 @@ exit 2
     );
 
     try {
-      const run = await execFileAsync("python3", ["-c", buildAutoPairScript()], {
+      const run = await runCommand("python3", ["-c", buildAutoPairScript()], {
         encoding: "utf-8",
         env: {
           ...process.env,
@@ -1398,7 +1398,7 @@ exit 2
     );
 
     try {
-      const run = await execFileAsync("python3", ["-c", buildAutoPairScript()], {
+      const run = await runCommand("python3", ["-c", buildAutoPairScript()], {
         encoding: "utf-8",
         env: {
           ...process.env,
@@ -1445,7 +1445,7 @@ exit 2
     );
 
     try {
-      const run = await execFileAsync("python3", ["-c", buildAutoPairScript()], {
+      const run = await runCommand("python3", ["-c", buildAutoPairScript()], {
         encoding: "utf-8",
         env: {
           ...process.env,
@@ -1501,7 +1501,7 @@ exit 2
     );
 
     try {
-      const run = await execFileAsync("python3", ["-c", buildAutoPairScript()], {
+      const run = await runCommand("python3", ["-c", buildAutoPairScript()], {
         encoding: "utf-8",
         env: {
           ...process.env,
@@ -1541,7 +1541,7 @@ exit 0
       // semantics so subprocess.run(..., timeout=...) actually fires.
       const watcherSrc = localApprovalPolicyPythonScript(fs.readFileSync(START_SCRIPT, "utf-8"));
       const start = Date.now();
-      const run = await execFileAsync("python3", ["-c", watcherSrc], {
+      const run = await runCommand("python3", ["-c", watcherSrc], {
         encoding: "utf-8",
         env: {
           ...process.env,
@@ -1619,7 +1619,7 @@ exit 2
 
     try {
       const watcherSrc = localApprovalPolicyPythonScript(fs.readFileSync(START_SCRIPT, "utf-8"));
-      const run = await execFileAsync("python3", ["-c", watcherSrc], {
+      const run = await runCommand("python3", ["-c", watcherSrc], {
         encoding: "utf-8",
         env: {
           ...process.env,
@@ -1689,7 +1689,7 @@ exit 2
     );
 
     try {
-      const run = await execFileAsync("python3", ["-c", buildAutoPairScript()], {
+      const run = await runCommand("python3", ["-c", buildAutoPairScript()], {
         encoding: "utf-8",
         env: {
           ...process.env,
