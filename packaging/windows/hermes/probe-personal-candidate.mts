@@ -575,6 +575,19 @@ export function directBrowserRequest(
   return request;
 }
 
+export function stockBrowserEnvironment(environment: NodeJS.ProcessEnv) {
+  const stock = { ...environment };
+  delete stock.NEMOCLAW_MSYS_TOKEN_INSPECTION;
+  return stock;
+}
+
+export function validateStockBrowserExecutor(identity: ReturnType<typeof fileIdentity>) {
+  assert.equal(identity.sha256, "dde1c592270e9a659b01dccad70362da7b99fec114885fa4d625507aa775a503");
+  assert.equal(identity.peMachine, 0xaa64);
+  assert(Number.isSafeInteger(identity.bytes) && identity.bytes > 0);
+  return identity;
+}
+
 export async function directBrowserDiagnostic(
   primary: ReturnType<typeof personalRequest>,
   runtime: string,
@@ -585,6 +598,7 @@ export async function directBrowserDiagnostic(
   nonce: string,
   expectedPython: { bytes: number; sha256: string },
   command: typeof personalCommand = personalCommand,
+  executorVariant: "patched" | "stock" = "patched",
 ) {
   const request = directBrowserRequest(primary, runtime, script, nonce);
   const share = request.process.cwd;
@@ -601,6 +615,9 @@ export async function directBrowserDiagnostic(
     schemaVersion: 1,
     classification: "canonical-Personal-direct-Python-browser-diagnostic",
     diagnosticOnly: true,
+    executorVariant,
+    hostEnvironmentDifferences:
+      executorVariant === "stock" ? ["NEMOCLAW_MSYS_TOKEN_INSPECTION omitted"] : [],
     compatibilityLauncherUsed: false,
     dllAbsenceIndependentlyVerified: false,
     changedDimensions: [
@@ -633,6 +650,14 @@ export async function directBrowserDiagnostic(
     assert.equal(python.peMachine, 0xaa64);
     record.python = python;
     record.executor = fileIdentity(mxc);
+    if (executorVariant === "stock") {
+      validateStockBrowserExecutor(record.executor);
+      assert.equal(environment.NEMOCLAW_MSYS_TOKEN_INSPECTION, undefined);
+      record.stockSdk = {
+        version: "0.8.0",
+        archiveSha256: "06bb2399d7e98ab1907acf851e12a4e44748dd467b79d3e53c2f2fbf569da14e",
+      };
+    }
     record.probe = fileIdentity(script);
     fs.mkdirSync(share);
     owned = true;
@@ -731,6 +756,144 @@ export function removePersonalRoots(
   return { removed: directories.every((directory) => !fs.existsSync(directory)), errors };
 }
 
+export function hostBrowserCompletion(record: any, request: any, supervisorClosed: boolean) {
+  assert.equal(record.schemaVersion, 1);
+  assert.equal(record.classification, "canonical-host-browser-diagnostic");
+  assert.equal(record.diagnosticOnly, true);
+  assert.equal(record.canonicalQualification, false);
+  assert.equal(record.installedAcceptance, false);
+  for (const key of ["nonce", "runtimeRoot", "stateRoot"]) assert.equal(record[key], request[key]);
+  if (record.result) {
+    assert.equal(record.result.schemaVersion, 1);
+    assert.equal(record.result.component, "browser");
+    assert.equal(record.result.nonce, request.nonce);
+  }
+  const childClosed =
+    record.processCreated === false ||
+    (record.processCreated === true &&
+      record.execution?.childClosed === true &&
+      record.job?.created === true &&
+      record.job.limitFlags === 8192 &&
+      record.job.assignedBeforeResume === true &&
+      record.job.rootMembershipVerified === true &&
+      record.job.activeAfterCleanup === 0 &&
+      record.cleanup?.captureClosed === true);
+  const childrenClosed = supervisorClosed && record.childrenClosed === true && childClosed;
+  const cleanupComplete =
+    childrenClosed &&
+    record.cleanupComplete === true &&
+    [
+      "captureClosed",
+      "processHandleClosed",
+      "threadHandleClosed",
+      "jobHandleClosed",
+      "stateRemoved",
+    ].every((key) => record.cleanup?.[key] === true) &&
+    Array.isArray(record.cleanup?.errors) &&
+    record.cleanup.errors.length === 0;
+  return { childrenClosed, cleanupComplete };
+}
+
+async function hostBrowserDiagnostic(
+  primary: ReturnType<typeof personalRequest>,
+  runtime: string,
+  script: string,
+  controllerPython: string,
+  environment: NodeJS.ProcessEnv,
+  output: string,
+  expectedPython: { bytes: number; sha256: string },
+) {
+  const nonce = randomBytes(12).toString("hex");
+  const stateRoot = path.win32.join(
+    path.win32.parse(runtime).root,
+    `NemoClawBrowserHost-${nonce.slice(0, 12)}`,
+  );
+  const result: Record<string, any> = {
+    schemaVersion: 1,
+    classification: "Personal-host-browser-controller",
+    executionContext: "ordinary host token inside an owned kill-on-close Job",
+    diagnosticOnly: true,
+    canonicalQualification: false,
+    installedAcceptance: false,
+    childrenClosed: true,
+    cleanupComplete: true,
+    operationSucceeded: false,
+    execution: null,
+    result: null,
+    error: null,
+    browserOperationTimeoutMs: 120_000,
+    supervisorTimeoutMs: 135_000,
+    supervisorBudget:
+      "120s diagnostic work + 5s cleanup + startup/receipt margin; no agent startup timeout change",
+  };
+  try {
+    fs.mkdirSync(output);
+    const controller = fileIdentity(controllerPython);
+    assert.equal(
+      controller.sha256,
+      "54e17da389d3aae8c56b08a06fea5cd2f5acd57d2a7acb4061fc572964d4108b",
+    );
+    result.controllerPython = controller;
+    const helper = fileURLToPath(new URL("./probe-host-browser.py", import.meta.url));
+    result.ownerHelper = fileIdentity(helper);
+    const probe = fileIdentity(script);
+    const hostEnvironment = Object.fromEntries(
+      primary.process.env.map((entry) => {
+        const split = entry.indexOf("=");
+        return [entry.slice(0, split), entry.slice(split + 1)];
+      }),
+    );
+    for (const key of ["HOME", "HERMES_HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA"])
+      hostEnvironment[key] = path.win32.join(stateRoot, "home");
+    hostEnvironment.NEMOCLAW_AGENT_HOME = stateRoot;
+    for (const key of ["TEMP", "TMP"]) hostEnvironment[key] = path.win32.join(stateRoot, "temp");
+    const request = {
+      schemaVersion: 1,
+      classification: "canonical-host-browser-request",
+      runtimeRoot: runtime,
+      probeFile: script,
+      stateRoot,
+      nonce,
+      environment: hostEnvironment,
+      pythonIdentity: { bytes: expectedPython.bytes, sha256: expectedPython.sha256 },
+      probeIdentity: { bytes: probe.bytes, sha256: probe.sha256 },
+    };
+    const policy = path.join(output, "request.json"),
+      destination = path.join(output, "result.json");
+    fs.writeFileSync(policy, JSON.stringify(request, null, 2) + "\n", { flag: "wx" });
+    result.request = fileIdentity(policy);
+    result.childrenClosed = false;
+    result.cleanupComplete = false;
+    const execution = await personalCommand(
+      controllerPython,
+      ["-I", "-B", helper, "--request", policy, "--output", destination],
+      stockBrowserEnvironment(environment),
+      path.win32.parse(runtime).root,
+      135_000,
+    );
+    result.execution = execution;
+    const receipt = receiptDocument(destination);
+    result.receipt = receipt;
+    assert.equal(receipt.value.requestSha256, result.request.sha256);
+    Object.assign(result, hostBrowserCompletion(receipt.value, request, execution.childClosed));
+    result.result = receipt.value.result;
+    result.operationSucceeded =
+      result.childrenClosed &&
+      result.cleanupComplete &&
+      receipt.value.result?.passed === true &&
+      receipt.value.execution?.exitCode === 0 &&
+      receipt.value.execution?.timedOut === false &&
+      receipt.value.execution?.outputExceeded === false &&
+      execution.exitCode === 0 &&
+      !execution.timedOut &&
+      !execution.outputExceeded &&
+      !execution.error;
+  } catch (error) {
+    result.error = errorDetail(error);
+  }
+  return result;
+}
+
 export function publishPersonalReceipt(
   file: string,
   receipt: Record<string, unknown>,
@@ -757,6 +920,8 @@ async function main() {
     throw new Error("The Personal candidate probe requires disposable Windows ARM64 CI.");
   const runtime = fs.realpathSync(argument("--runtime-root"));
   const mxc = argument("--mxc");
+  const stockMxc = argument("--stock-mxc");
+  const hostControllerPython = argument("--host-controller-python");
   const compatibilityRoot = fs.realpathSync(argument("--compatibility-root"));
   const compatibilityReceipt = argument("--compatibility-receipt");
   const compatibilityProof = argument("--compatibility-proof");
@@ -1047,26 +1212,73 @@ async function main() {
   } finally {
     if (attempted && cleanup.executorClosed && cleanup.hostDiagnosticChildrenClosed && request) {
       // This supplementary control cannot replace the primary component result.
-      // It shares the final immutable inventory check, after both executors close.
+      // Both comparisons share the one final immutable inventory check.
       try {
         const python = (receipt.derivedRuntime as any).criticalFiles.find(
           (file: any) => file.path === "hermes-agent/venv/Scripts/python.exe",
         );
-        const diagnostic = await directBrowserDiagnostic(
-          request,
-          runtime,
-          path.join(launcher, "probe-personal-python.py"),
-          mxc,
-          environment,
-          path.join(output, "browser-direct-diagnostic"),
-          randomBytes(12).toString("hex"),
-          python,
-        );
-        receipt.directBrowserDiagnostic = diagnostic;
-        browserDiagnosticChildrenClosed = diagnostic.childrenClosed;
-        cleanup.browserDiagnosticComplete = diagnostic.cleanupComplete;
-        if (!diagnostic.cleanupComplete)
-          errors.push({ browserDiagnosticCleanup: diagnostic.cleanup });
+        for (const [key, directory, executor, hostEnvironment, variant] of [
+          ["directBrowserDiagnostic", "browser-direct-diagnostic", mxc, environment, "patched"],
+          [
+            "stockBrowserDiagnostic",
+            "browser-stock-diagnostic",
+            stockMxc,
+            stockBrowserEnvironment(environment),
+            "stock",
+          ],
+        ] as const) {
+          if (!browserDiagnosticChildrenClosed) {
+            receipt[key] = {
+              diagnosticOnly: true,
+              canonicalQualification: false,
+              skipped: "A previous diagnostic child did not close.",
+            };
+            continue;
+          }
+          const diagnostic = await directBrowserDiagnostic(
+            request,
+            runtime,
+            path.join(launcher, "probe-personal-python.py"),
+            executor,
+            hostEnvironment,
+            path.join(output, directory),
+            randomBytes(12).toString("hex"),
+            python,
+            personalCommand,
+            variant,
+          );
+          receipt[key] = diagnostic;
+          browserDiagnosticChildrenClosed = diagnostic.childrenClosed;
+          cleanup.browserDiagnosticComplete &&= diagnostic.cleanupComplete;
+          if (!diagnostic.cleanupComplete)
+            errors.push({ browserDiagnostic: key, cleanup: diagnostic.cleanup });
+        }
+        if (browserDiagnosticChildrenClosed) {
+          const host = await hostBrowserDiagnostic(
+            request,
+            runtime,
+            path.join(launcher, "probe-personal-python.py"),
+            hostControllerPython,
+            environment,
+            path.join(output, "browser-host-diagnostic"),
+            python,
+          );
+          receipt.hostBrowserDiagnostic = host;
+          browserDiagnosticChildrenClosed = host.childrenClosed;
+          cleanup.browserDiagnosticComplete &&= host.cleanupComplete;
+          if (!host.cleanupComplete)
+            errors.push({
+              browserDiagnostic: "host",
+              error: host.error,
+              cleanup: host.receipt?.value?.cleanup,
+            });
+        } else {
+          receipt.hostBrowserDiagnostic = {
+            diagnosticOnly: true,
+            canonicalQualification: false,
+            skipped: "A previous diagnostic child did not close.",
+          };
+        }
       } catch (error) {
         // Before the helper returns, uncertain ownership must retain the runtime.
         browserDiagnosticChildrenClosed = false;

@@ -12,6 +12,9 @@ import {
   personalRequest,
   directBrowserRequest,
   directBrowserDiagnostic,
+  stockBrowserEnvironment,
+  validateStockBrowserExecutor,
+  hostBrowserCompletion,
   completedPersonalReplayPin,
   validatePersonalReplayInput,
   verifyPersonalReplayInventory,
@@ -77,6 +80,110 @@ test("direct browser comparison preserves policy and environment except fresh ow
   );
 });
 
+test("stock MXC browser comparison removes only the host repair opt-in and requires the exact ARM64 executor", () => {
+  const original = {
+    GITHUB_ACTIONS: "true",
+    PATH: "C:\\Windows\\System32",
+    NEMOCLAW_MSYS_TOKEN_INSPECTION: "repair-query",
+  };
+  assert.deepEqual(stockBrowserEnvironment(original), {
+    GITHUB_ACTIONS: "true",
+    PATH: "C:\\Windows\\System32",
+  });
+  assert.equal(original.NEMOCLAW_MSYS_TOKEN_INSPECTION, "repair-query");
+  const identity = {
+    path: "C:\\stock\\wxc-exec.exe",
+    bytes: 1,
+    sha256: "dde1c592270e9a659b01dccad70362da7b99fec114885fa4d625507aa775a503",
+    peMachine: 0xaa64,
+    architecture: "arm64",
+  };
+  assert.equal(validateStockBrowserExecutor(identity), identity);
+  assert.throws(() => validateStockBrowserExecutor({ ...identity, sha256: "0".repeat(64) }));
+  assert.throws(() => validateStockBrowserExecutor({ ...identity, peMachine: 0x8664 }));
+});
+
+test("host browser receipt requires actual job zero, capture and handles closed in addition to supervisor closure", () => {
+  const request = {
+    nonce: browserNewNonce,
+    runtimeRoot: browserRuntime,
+    stateRoot: "C:\\NemoClawBrowserHost-ffeeddccbbaa",
+  };
+  const record = {
+    schemaVersion: 1,
+    classification: "canonical-host-browser-diagnostic",
+    diagnosticOnly: true,
+    canonicalQualification: false,
+    installedAcceptance: false,
+    ...request,
+    processCreated: true,
+    childrenClosed: true,
+    cleanupComplete: true,
+    execution: { childClosed: true },
+    result: { schemaVersion: 1, component: "browser", nonce: browserNewNonce, passed: false },
+    job: {
+      created: true,
+      limitFlags: 8192,
+      assignedBeforeResume: true,
+      rootMembershipVerified: true,
+      activeAfterCleanup: 0,
+    },
+    cleanup: {
+      captureClosed: true,
+      processHandleClosed: true,
+      threadHandleClosed: true,
+      jobHandleClosed: true,
+      stateRemoved: true,
+      errors: [],
+    },
+  };
+  assert.deepEqual(hostBrowserCompletion(record, request, true), {
+    childrenClosed: true,
+    cleanupComplete: true,
+  });
+  assert.deepEqual(hostBrowserCompletion(record, request, false), {
+    childrenClosed: false,
+    cleanupComplete: false,
+  });
+  for (const mutate of [
+    (r: any) => {
+      r.job.activeAfterCleanup = 1;
+    },
+    (r: any) => {
+      r.job.assignedBeforeResume = false;
+    },
+    (r: any) => {
+      r.execution.childClosed = false;
+    },
+    (r: any) => {
+      r.cleanup.captureClosed = false;
+    },
+  ]) {
+    const changed = structuredClone(record);
+    mutate(changed);
+    assert.deepEqual(hostBrowserCompletion(changed, request, true), {
+      childrenClosed: false,
+      cleanupComplete: false,
+    });
+  }
+  for (const key of [
+    "processHandleClosed",
+    "threadHandleClosed",
+    "jobHandleClosed",
+    "stateRemoved",
+  ]) {
+    const changed: any = structuredClone(record);
+    changed.cleanup[key] = false;
+    assert.equal(hostBrowserCompletion(changed, request, true).cleanupComplete, false);
+  }
+  assert.throws(() =>
+    hostBrowserCompletion({ ...record, nonce: browserOriginalNonce }, request, true),
+  );
+  assert.throws(() =>
+    hostBrowserCompletion({ ...record, canonicalQualification: true }, request, true),
+  );
+});
+
 function browserControl(
   t: TestContext,
   mode:
@@ -85,7 +192,8 @@ function browserControl(
     | "parse-failure"
     | "unclosed"
     | "delete-failure"
-    | "existing",
+    | "existing"
+    | "stock-mismatch",
 ) {
   const primary = browserPrimary();
   const files = new Map<string, Buffer>();
@@ -128,7 +236,12 @@ function browserControl(
     for (const directory of directories)
       if (directory.startsWith(browserShare)) directories.delete(directory);
   });
-  const environment = { GITHUB_ACTIONS: "true", NEMOCLAW_MSYS_TOKEN_INSPECTION: "repair-query" };
+  const patchedEnvironment = {
+    GITHUB_ACTIONS: "true",
+    NEMOCLAW_MSYS_TOKEN_INSPECTION: "repair-query",
+  };
+  const environment =
+    mode === "stock-mismatch" ? stockBrowserEnvironment(patchedEnvironment) : patchedEnvironment;
   const command: typeof personalCommand = async (exe, args, env, cwd, timeout) => {
     assert.equal(exe, executor);
     assert.equal(env, environment);
@@ -194,6 +307,7 @@ function browserControl(
         browserNewNonce,
         { bytes: pe.length, sha256: createHash("sha256").update(pe).digest("hex") },
         command,
+        mode === "stock-mismatch" ? "stock" : "patched",
       ),
   };
 }
@@ -222,6 +336,7 @@ for (const mode of [
   "unclosed",
   "delete-failure",
   "existing",
+  "stock-mismatch",
 ] as const) {
   test(`direct browser ${mode} preserves result and exact resource ownership`, async (t) => {
     const control = browserControl(t, mode);
@@ -245,11 +360,17 @@ for (const mode of [
       assert.equal(result.cleanupComplete, false);
       assert.equal(result.cleanup.profileDeleted, false);
       assert.equal(result.cleanupErrors.length, 1);
-    } else {
+    } else if (mode === "existing") {
       assert.equal(result.attempted, false);
       assert(result.error);
       assert(control.directories.has(browserShare));
       assert.deepEqual(control.events, []);
+    } else {
+      assert.equal(result.attempted, false);
+      assert.equal(result.executorVariant, "stock");
+      assert(result.error);
+      assert.deepEqual(control.events, []);
+      assert(!control.directories.has(browserShare));
     }
   });
 }

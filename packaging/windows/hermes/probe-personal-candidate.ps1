@@ -76,7 +76,7 @@ try {
     $mxcAttempted=$true
     $patchedMxc=Join-Path $compatEvidence 'mxc-token-inspection-build'
     Invoke-PersonalChecked $node @('--experimental-strip-types','--no-warnings',(Join-Path $PSScriptRoot 'probe-personal-candidate.mts'),
-        '--runtime-root',$runtime,'--mxc',(Join-Path $patchedMxc 'wxc-exec.exe'),'--output',(Join-Path $output 'personal-mxc'),
+        '--runtime-root',$runtime,'--mxc',(Join-Path $patchedMxc 'wxc-exec.exe'),'--stock-mxc',(Join-Path $mxc 'wxc-exec.exe'),'--host-controller-python',$python,'--output',(Join-Path $output 'personal-mxc'),
         '--compatibility-root',(Join-Path $compatEvidence 'compatibility-build'),'--compatibility-receipt',(Join-Path $compatEvidence 'compatibility-build/build-receipt.json'),
         '--compatibility-proof',(Join-Path $compatEvidence 'result.json'),'--mxc-build-receipt',(Join-Path $patchedMxc 'mxc-token-inspection-build.json'),
         '--derived-runtime-receipt',(Join-Path $candidate 'runtime-candidate.json'),'--replay-receipt',(Join-Path $candidate 'replay-input.json')) 'Canonical Personal component execution'
@@ -88,7 +88,7 @@ finally{
     if($mxcAttempted){
         try{
             $completed=Get-Content -LiteralPath (Join-Path $output 'personal-mxc\personal-feasibility.json') -Raw|ConvertFrom-Json
-            $removeRuntime=$runtimeOwned -and $completed.schemaVersion -eq 1 -and $completed.classification -ceq 'canonical-personal-mxc-feasibility' -and $completed.runtime -ceq $runtime -and ($completed.executorAttempted -ceq $false -or ($completed.cleanup.executorClosed -ceq $true -and $completed.cleanup.hostDiagnosticChildrenClosed -ceq $true))
+            $removeRuntime=$runtimeOwned -and $completed.schemaVersion -eq 1 -and $completed.classification -ceq 'canonical-personal-mxc-feasibility' -and $completed.runtime -ceq $runtime -and ($completed.executorAttempted -ceq $false -or ($completed.cleanup.executorClosed -ceq $true -and $completed.cleanup.hostDiagnosticChildrenClosed -ceq $true -and $completed.rootsRetainedForUnclosedExecutor -ceq $false))
         }catch{$receipt.cleanupErrors+=@('Runtime retained: executor completion receipt unavailable. '+$_.Exception.Message)}
     }
     $receipt['runtimeRetainedForUnclosedExecutor']=$runtimeOwned -and -not $removeRuntime
