@@ -45,6 +45,43 @@ describe("workflow execution discovery", () => {
     ]);
   });
 
+  it.each([
+    `# npx vitest run ${file}`,
+    `echo "npx vitest run ${file}"`,
+    `npx vitest run test/e2e/live/other.test.ts # ${file}`,
+    `# ${file}\nnpx vitest run test/e2e/live/other.test.ts`,
+  ])("does not count comments or printed commands as a registered test call: %s", (run) => {
+    expect(reconcileWorkflowConsumers(source(run), [target], () => true)).toContain(
+      `proof: workflow job no longer references ${file}`,
+    );
+  });
+
+  it("does not combine a runner step with a filename printed by another step", () => {
+    const workflows = new Map([
+      [
+        workflow,
+        YAML.stringify({
+          jobs: {
+            proof: {
+              steps: [
+                { run: "npx vitest run test/e2e/live/other.test.ts" },
+                { run: `echo ${file}` },
+              ],
+            },
+          },
+        }),
+      ],
+    ]);
+    expect(reconcileWorkflowConsumers(workflows, [target], () => true)).toContain(
+      `proof: workflow job no longer references ${file}`,
+    );
+  });
+
+  it("recognizes continued runner commands with a literal test-path variable", () => {
+    const run = `live_test="${file}"\nnpx vitest run \\\n  "$live_test"`;
+    expect(reconcileWorkflowConsumers(source(run), [target], () => true)).toEqual([]);
+  });
+
   it("rejects a missing registered test file", () => {
     expect(
       reconcileWorkflowConsumers(source(`npx vitest run ${file}`), [target], () => false),

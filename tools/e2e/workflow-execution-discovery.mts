@@ -9,6 +9,43 @@ import { listExecutionTargets, type E2eInventoryTarget } from "./target-inventor
 type Job = { steps?: { run?: string }[] };
 type Workflow = { jobs?: Record<string, Job> };
 
+function commandLines(run: string): string[] {
+  const joined = run.replace(/\\\r?\n/gu, " ");
+  const paths = new Map(
+    [
+      ...joined.matchAll(
+        /^\s*([A-Za-z_][A-Za-z0-9_]*)=["'](test\/e2e(?:\/live|-runtime)\/[\w./-]+\.test\.ts)["']\s*$/gmu,
+      ),
+    ].map(([, name, file]) => [name!, file!]),
+  );
+  return joined
+    .split(/\r?\n/u)
+    .filter((line) => !/^\s*(?:#|echo\b|printf\b)/u.test(line))
+    .map((line) =>
+      line
+        .replace(/[ \t]+#.*$/u, "")
+        .replace(
+          /\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)/gu,
+          (original, braced: string | undefined, plain: string | undefined) =>
+            paths.get(braced ?? plain ?? "") ?? original,
+        ),
+    );
+}
+
+function directTests(job: Job): Set<string> {
+  return new Set(
+    (job.steps ?? []).flatMap(({ run = "" }) =>
+      commandLines(run)
+        .filter((line) => /\b(?:vitest["']?|live-vitest-invocation\.mts)\s+run\b/u.test(line))
+        .flatMap((line) =>
+          [...line.matchAll(/test\/e2e(?:\/live|-runtime)\/[\w./-]+\.test\.ts/gu)].map(
+            ([file]) => file,
+          ),
+        ),
+    ),
+  );
+}
+
 /** Inspect workflow consumers without running candidate commands or importing tests. */
 export function reconcileWorkflowConsumers(
   workflows: ReadonlyMap<string, string>,
@@ -35,16 +72,18 @@ export function reconcileWorkflowConsumers(
       tests = target.definition.tests.map(({ file }) => file);
       const entrypoint = target.definition.entrypoint;
       if (entrypoint) {
-        const runs = (jobs.get(owner)?.steps ?? []).map(({ run }) => run ?? "").join("\n");
+        const runs = (jobs.get(owner)?.steps ?? [])
+          .flatMap(({ run = "" }) => commandLines(run))
+          .join("\n");
         if (!fileExists(entrypoint) || !runs.includes(entrypoint)) {
           errors.push(
             `${target.id}: delegated entry point is missing from its workflow job: ${entrypoint}`,
           );
         }
       } else {
-        const runs = (jobs.get(owner)?.steps ?? []).map(({ run }) => run ?? "").join("\n");
+        const calls = directTests(jobs.get(owner) ?? {});
         for (const file of tests) {
-          if (!/\b(?:vitest|live-vitest-invocation\.mts)\b/u.test(runs) || !runs.includes(file))
+          if (!calls.has(file))
             errors.push(`${target.id}: workflow job no longer references ${file}`);
         }
       }
@@ -64,13 +103,10 @@ export function reconcileWorkflowConsumers(
     registered.set(owner, files);
   }
   for (const [owner, job] of jobs) {
-    for (const { run = "" } of job.steps ?? []) {
-      if (!/\b(?:vitest|live-vitest-invocation\.mts)\b/u.test(run)) continue;
-      for (const [file] of run.matchAll(/test\/e2e(?:\/live|-runtime)\/[\w./-]+\.test\.ts/gu)) {
-        if (!file.startsWith("test/e2e/live/") && !packagedTests.has(file)) continue;
-        if (!registered.get(owner)?.has(file)) {
-          errors.push(`${owner}: test consumer has no inventory route: ${file}`);
-        }
+    for (const file of directTests(job)) {
+      if (!file.startsWith("test/e2e/live/") && !packagedTests.has(file)) continue;
+      if (!registered.get(owner)?.has(file)) {
+        errors.push(`${owner}: test consumer has no inventory route: ${file}`);
       }
     }
   }

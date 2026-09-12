@@ -433,6 +433,8 @@ External workflow routes retain scheduling, prerequisites, artifact identity, an
 Their inventory IDs do not select jobs in the main E2E workflow or the typed driver.
 The inventory also records live packaged-image checks in the `integration` project.
 The registration check scans direct live test calls across workflow files and checks registered packaged-image consumers.
+It matches paths within runner commands, including continued lines and literal test-path variables.
+Comments, printed commands, and filenames in other steps do not establish a test call.
 It rejects missing workflow jobs, missing test files, and test calls without an inventory route.
 Delegated routes name their script entry point; the check verifies that the owning job still calls it.
 These static checks do not certify remote execution or replace environment-gated collection checks.
