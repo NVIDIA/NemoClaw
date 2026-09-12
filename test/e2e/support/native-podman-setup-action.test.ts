@@ -60,18 +60,20 @@ type OutputCapture = {
 };
 
 function appendOutput(capture: OutputCapture, chunk: string): void {
-  if (capture.truncated) return;
-  const next = capture.text + chunk;
-  const truncated = Buffer.byteLength(next, "utf8") > COMMAND_OUTPUT_LIMIT;
-  capture.text = truncated
-    ? `${new StringDecoder("utf8").write(
-        Buffer.from(next).subarray(
-          0,
-          COMMAND_OUTPUT_LIMIT - Buffer.byteLength(OUTPUT_TRUNCATION_MARKER, "utf8"),
-        ),
-      )}${OUTPUT_TRUNCATION_MARKER}`
-    : next;
-  capture.truncated = truncated;
+  const next = capture.truncated ? capture.text : capture.text + chunk;
+  const newlyTruncated =
+    !capture.truncated && Buffer.byteLength(next, "utf8") > COMMAND_OUTPUT_LIMIT;
+  capture.text = capture.truncated
+    ? capture.text
+    : newlyTruncated
+      ? `${new StringDecoder("utf8").write(
+          Buffer.from(next).subarray(
+            0,
+            COMMAND_OUTPUT_LIMIT - Buffer.byteLength(OUTPUT_TRUNCATION_MARKER, "utf8"),
+          ),
+        )}${OUTPUT_TRUNCATION_MARKER}`
+      : next;
+  capture.truncated ||= newlyTruncated;
 }
 
 async function runCommand(
@@ -106,11 +108,11 @@ async function runCommand(
   try {
     const result = await supervision;
     return {
-      status: result.exitCode,
+      status: result.cleanupError ? -1 : result.exitCode,
       signal: result.signal,
       timedOut: result.timedOut,
       stdout: stdout.text,
-      stderr: stderr.text,
+      stderr: result.cleanupError ? `${stderr.text}${result.cleanupError.message}\n` : stderr.text,
     };
   } finally {
     abort[Symbol.dispose]();
@@ -626,6 +628,17 @@ describe("native Podman E2E setup boundary", () => {
     expect(result.stderr.endsWith(OUTPUT_TRUNCATION_MARKER)).toBe(true);
     expect(result.stdout).not.toContain("�");
     expect(result.stderr).not.toContain("�");
+  });
+
+  it.concurrent("keeps the output truncation marker stable across later chunks", () => {
+    const capture: OutputCapture = { text: "", truncated: false };
+    appendOutput(capture, "€".repeat(Math.ceil(COMMAND_OUTPUT_LIMIT / 3) + 1));
+    const truncated = capture.text;
+    appendOutput(capture, "later output");
+
+    expect(capture.text).toBe(truncated);
+    expect(capture.text.endsWith(OUTPUT_TRUNCATION_MARKER)).toBe(true);
+    expect(capture.text.match(/\[output truncated\]/gu)).toHaveLength(1);
   });
 
   it.concurrent("restores unchanged Docker runtime state and retires its authority (#11014)", async (context) => {
