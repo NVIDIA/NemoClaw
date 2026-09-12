@@ -426,7 +426,25 @@ describe("managed gateway connection configuration", () => {
     expect(() => preparation!.revalidate()).toThrow();
   });
 
-  it("rejects a context switch during configuration before writing connections (#11606)", async () => {
+  it("adds connections to the gateway configuration created earlier in onboarding (#11606)", async () => {
+    const f = fixture();
+    f.select();
+    prepareDockerDriverGatewayConfigEnv(f.env, f.state, "/usr/bin/openshell-sandbox", {
+      gatewayRuntime: f.runtime,
+      externalComponent: null,
+    });
+    expect(fs.readFileSync(f.env.OPENSHELL_GATEWAY_CONFIG!, "utf-8")).not.toContain("socket_path");
+    const deps = flowDeps({ collectGatewayReadiness: async () => undefined }, () => f.env, vi.fn());
+    const preparation = await deps.configureExternalComponentGateway(f.settings);
+    expect(preparation?.network).toEqual({ gatewayIp: "172.30.115.1", subnet: "172.30.115.0/24" });
+    expect(fs.readFileSync(f.env.OPENSHELL_GATEWAY_CONFIG!, "utf-8")).toContain(
+      'socket_path = "/var/run/docker.sock"',
+    );
+    preparation!.revalidate();
+    expect(f.run.mock.calls.some(([args]) => args[1] === "create" || args[1] === "rm")).toBe(false);
+  });
+
+  it("keeps the prepared socket when the context switches during configuration (#11606)", async () => {
     const f = fixture();
     f.select();
     vi.stubEnv("DOCKER_HOST", undefined);
@@ -447,7 +465,9 @@ describe("managed gateway connection configuration", () => {
     );
     const deps = flowDeps({ collectGatewayReadiness: async () => undefined }, () => f.env, vi.fn());
     await expect(deps.configureExternalComponentGateway(f.settings)).rejects.toThrow();
-    expect(fs.existsSync(f.env.OPENSHELL_GATEWAY_CONFIG!)).toBe(false);
+    const config = fs.readFileSync(f.env.OPENSHELL_GATEWAY_CONFIG!, "utf-8");
+    expect(config).toContain('socket_path = "/run/selected/docker.sock"');
+    expect(config).not.toContain("/run/other/docker.sock");
     expect(f.run.mock.calls.some(([args]) => args[1] === "create" || args[1] === "rm")).toBe(false);
   });
 

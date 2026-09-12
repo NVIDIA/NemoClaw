@@ -53,9 +53,12 @@ function networkIdentity(id: unknown, name: unknown, expectedName: string) {
 const commandOptions = { maxOutputBytes: 16 * 1024 };
 
 /** Resolve Docker's selected connection before using it in both adapters and gateway configuration. */
-export function externalComponentDockerSocket(runtime: RuntimeProviderGatewayHostRuntime): string {
+export function externalComponentDockerSocket(
+  runtime: RuntimeProviderGatewayHostRuntime,
+  environment: NodeJS.ProcessEnv = process.env,
+): string {
   if (runtime.openShellDriver !== "docker") throw restricted();
-  let host = process.env.DOCKER_HOST;
+  let host = environment.DOCKER_HOST ?? process.env.DOCKER_HOST;
   if (!host) {
     const result = runtime.network.run(
       ["context", "inspect", "--format", "{{.Endpoints.docker.Host}}"],
@@ -88,8 +91,9 @@ function runNetworkCommand(
 export function inspectExternalComponentNetwork(
   name: string,
   runtime: RuntimeProviderGatewayHostRuntime,
+  environment?: NodeJS.ProcessEnv,
 ): Network {
-  return inspectNetwork(name, runtime, externalComponentDockerSocket(runtime));
+  return inspectNetwork(name, runtime, externalComponentDockerSocket(runtime, environment));
 }
 
 function inspectNetwork(
@@ -142,7 +146,7 @@ function inspectNetwork(
 export async function prepareExternalComponentNetwork(
   env: Record<string, string>,
   runtime: RuntimeProviderGatewayHostRuntime,
-): Promise<{ runtime: RuntimeProviderGatewayHostRuntime; revalidate: () => void }> {
+): Promise<{ socketPath: string; revalidate: () => void }> {
   try {
     const name = env.OPENSHELL_DOCKER_NETWORK_NAME;
     if (!name || !/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,254}$/u.test(name)) throw restricted();
@@ -186,7 +190,7 @@ export async function prepareExternalComponentNetwork(
     const expected = inspectNetwork(name, runtime, socket);
     if (createdId !== undefined && createdId !== expected.id) throw restricted();
     return {
-      runtime: { ...runtime, socketPath: socket },
+      socketPath: socket,
       revalidate() {
         if (
           externalComponentDockerSocket(runtime) !== socket ||

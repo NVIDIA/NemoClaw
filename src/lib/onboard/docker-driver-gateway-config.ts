@@ -849,7 +849,7 @@ function buildDockerDriverGatewayConfigTomlForIdentity(
     [
       "socket_path",
       externalComponent && "interceptor" in externalComponent
-        ? externalComponentDockerSocket(runtime)
+        ? externalComponentDockerSocket(runtime, gatewayEnv)
         : (runtime.socketPath ?? undefined),
     ],
     ["network_name", gatewayEnv.OPENSHELL_DOCKER_NETWORK_NAME],

@@ -70,11 +70,8 @@ export function flowDeps(
             )
           : undefined;
       network?.revalidate();
-      const preparation = configureDockerDriverGatewayExternalComponent(
-        env,
-        externalComponent,
-        network?.runtime,
-      );
+      if (network) env.DOCKER_HOST = `unix://${network.socketPath}`;
+      const preparation = configureDockerDriverGatewayExternalComponent(env, externalComponent);
       if (!preparation || !network) return preparation;
       const revalidate = () => {
         network.revalidate();

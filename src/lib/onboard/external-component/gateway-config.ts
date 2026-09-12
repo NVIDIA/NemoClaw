@@ -39,7 +39,7 @@ export function externalComponentGatewayNetwork(
   ) {
     throw new ExternalComponentContractError("endpoint_restricted");
   }
-  return inspectExternalComponentNetwork(name, runtime);
+  return inspectExternalComponentNetwork(name, runtime, env);
 }
 
 export function renderExternalComponentConnections(

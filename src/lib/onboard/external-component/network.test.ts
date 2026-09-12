@@ -174,7 +174,7 @@ describe("Docker network provisioning", () => {
       })
       .mockReturnValue({ status: 0, stdout: JSON.stringify([f.network]), stderr: "" });
     await expect(prepareExternalComponentNetwork(f.env, f.runtime)).resolves.toMatchObject({
-      runtime: { socketPath: "/run/user/1000/docker.sock" },
+      socketPath: "/run/user/1000/docker.sock",
       revalidate: expect.any(Function),
     });
     expect(f.run.mock.calls.map(([args]) => args[1])).toEqual(["ls", "create", "inspect"]);
@@ -233,7 +233,7 @@ describe("Docker network provisioning", () => {
       .mockReturnValueOnce({ ...failure, timedOut: true, signal: "SIGKILL" })
       .mockReturnValue({ status: 0, stdout: JSON.stringify([f.network]), stderr: "" });
     await expect(prepareExternalComponentNetwork(f.env, f.runtime)).resolves.toMatchObject({
-      runtime: { socketPath: "/run/user/1000/docker.sock" },
+      socketPath: "/run/user/1000/docker.sock",
       revalidate: expect.any(Function),
     });
     expect(f.run.mock.calls.map(([args]) => args[1])).toEqual(["ls", "create", "inspect"]);
