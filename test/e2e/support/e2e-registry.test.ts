@@ -127,8 +127,29 @@ describe("deterministic target registry", () => {
       expect(() =>
         buildExecutionInventory([{ ...entry, definition: { ...entry.definition, entrypoint } }]),
       ).toThrow("invalid script entry point");
+      const workflowEntry = WORKFLOW_FIXTURE;
+      expect(() =>
+        buildExecutionInventory([
+          { ...workflowEntry, definition: { ...workflowEntry.definition, entrypoint } },
+        ]),
+      ).toThrow("invalid script entry point");
     },
   );
+
+  it("requires an executable script when a workflow route has no Vitest files", () => {
+    const entry = {
+      ...WORKFLOW_FIXTURE,
+      definition: { ...WORKFLOW_FIXTURE.definition, testFiles: [] },
+    };
+    expect(() => buildExecutionInventory([entry])).toThrow(
+      "requires a test file or script entry point",
+    );
+    const scripted = {
+      ...entry,
+      definition: { ...entry.definition, entrypoint: "tools/e2e/launchable.sh" },
+    };
+    expect([...buildExecutionInventory([scripted]).values()]).toEqual([scripted]);
+  });
 
   it("rejects an external target without tests", () => {
     const entry = EXTERNAL_WORKFLOW_FIXTURE;

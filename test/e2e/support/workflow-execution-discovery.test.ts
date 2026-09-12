@@ -99,6 +99,36 @@ describe("workflow execution discovery", () => {
     );
   });
 
+  it("rejects missing or substituted scripts for workflow routes without Vitest files", () => {
+    const entrypoint = "tools/e2e/launchable.sh";
+    const shellTarget: E2eInventoryTarget = {
+      id: "proof",
+      route: "workflow",
+      definition: {
+        id: "proof",
+        workflow,
+        entrypoint,
+        targetId: null,
+        defaultEnabled: false,
+        gatewayRuntimes: "agnostic",
+        testFiles: [],
+        owningPaths: [],
+        coverage: [],
+      },
+    };
+    const error = `proof: delegated entry point is missing from its workflow job: ${entrypoint}`;
+    expect(reconcileWorkflowConsumers(source(entrypoint), [shellTarget], () => true)).toEqual([]);
+    expect(reconcileWorkflowConsumers(source(entrypoint), [shellTarget], () => false)).toContain(
+      error,
+    );
+    expect(
+      reconcileWorkflowConsumers(source(`${entrypoint}.backup`), [shellTarget], () => true),
+    ).toContain(error);
+    expect(
+      reconcileWorkflowConsumers(source(`echo ${entrypoint}`), [shellTarget], () => true),
+    ).toContain(error);
+  });
+
   it("rejects another workflow invoking a registered packaged-image test", () => {
     const packaged = "test/e2e-runtime/image.test.ts";
     const registration: E2eInventoryTarget = {

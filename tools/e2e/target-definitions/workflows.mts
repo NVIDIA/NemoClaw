@@ -6,6 +6,7 @@ import type { WorkflowE2eTarget } from "../target-inventory.mts";
 export const workflowTargets: readonly WorkflowE2eTarget[] = [
   {
     id: "staging-brev-launchable",
+    entrypoint: "tools/e2e/brev-launchable-e2e.sh",
     workflow: ".github/workflows/e2e.yaml",
     targetId: null,
     defaultEnabled: true,
@@ -29,6 +30,7 @@ export const workflowTargets: readonly WorkflowE2eTarget[] = [
   },
   {
     id: "staging-brev-launchable-identity",
+    entrypoint: "tools/e2e/brev-launchable-e2e.sh",
     workflow: ".github/workflows/e2e.yaml",
     targetId: null,
     defaultEnabled: false,

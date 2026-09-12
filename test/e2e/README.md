@@ -437,6 +437,7 @@ It matches paths within runner commands, including continued lines and literal t
 Comments, printed commands, and filenames in other steps do not establish a test call.
 It rejects missing workflow jobs, missing test files, and test calls without an inventory route.
 Delegated routes name their script entry point; the check verifies that the owning job still calls it.
+Workflow routes without Vitest files must name a script entry point, including both staging Brev Launchable routes.
 These static checks do not certify remote execution or replace environment-gated collection checks.
 Manual entries link to their instructions and summarize prerequisites; the tests retain the prerequisite checks.
 Listing a manual qualification does not schedule it or establish product support.

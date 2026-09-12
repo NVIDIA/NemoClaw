@@ -70,28 +70,30 @@ export function reconcileWorkflowConsumers(
     } else if (target.route === "external-workflow") {
       owner = `${target.definition.workflow}:${target.definition.job}`;
       tests = target.definition.tests.map(({ file }) => file);
+    } else if (target.route === "typed") {
+      owner = ".github/workflows/e2e.yaml:live";
+      tests = ["test/e2e/live/registry-targets.test.ts"];
+    } else {
+      continue;
+    }
+    if (target.route === "workflow" || target.route === "external-workflow") {
       const entrypoint = target.definition.entrypoint;
       if (entrypoint) {
         const runs = (jobs.get(owner)?.steps ?? [])
           .flatMap(({ run = "" }) => commandLines(run))
           .join("\n");
-        if (!fileExists(entrypoint) || !runs.includes(entrypoint)) {
+        if (!fileExists(entrypoint) || !runs.split(/[\s"']/u).includes(entrypoint)) {
           errors.push(
             `${target.id}: delegated entry point is missing from its workflow job: ${entrypoint}`,
           );
         }
-      } else {
+      } else if (target.route === "external-workflow") {
         const calls = directTests(jobs.get(owner) ?? {});
         for (const file of tests) {
           if (!calls.has(file))
             errors.push(`${target.id}: workflow job no longer references ${file}`);
         }
       }
-    } else if (target.route === "typed") {
-      owner = ".github/workflows/e2e.yaml:live";
-      tests = ["test/e2e/live/registry-targets.test.ts"];
-    } else {
-      continue;
     }
     if (!jobs.has(owner)) errors.push(`${target.id}: registered workflow job is missing: ${owner}`);
     const files = registered.get(owner) ?? new Set<string>();

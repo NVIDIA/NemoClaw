@@ -1807,6 +1807,7 @@ const sharedTargets: SharedE2eTarget[] = [
 
 export interface WorkflowE2eTarget {
   id: string;
+  entrypoint?: string;
   workflow: string;
   targetId: string | null;
   defaultEnabled: boolean;
@@ -1859,13 +1860,16 @@ export function buildExecutionInventory(
     assertSafeTargetId(entry.id);
     if (entry.id !== entry.definition.id)
       throw new Error(`Execution target identity differs: ${entry.id}`);
-    if (entry.route === "external-workflow") {
-      const { workflow, job, entrypoint } = entry.definition;
+    if (entry.route === "external-workflow" || entry.route === "workflow") {
+      const { entrypoint } = entry.definition;
       if (
         entrypoint !== undefined &&
-        !/^(?:scripts|tools)\/[a-zA-Z0-9_/-]+\.[cm]?[jt]s$/.test(entrypoint)
+        !/^(?:scripts|tools)\/[a-zA-Z0-9_/-]+\.(?:[cm]?[jt]s|sh)$/.test(entrypoint)
       )
-        throw new Error(`External workflow target ${entry.id} has an invalid script entry point`);
+        throw new Error(`Workflow target ${entry.id} has an invalid script entry point`);
+    }
+    if (entry.route === "external-workflow") {
+      const { workflow, job } = entry.definition;
       if (!/^\.github\/workflows\/[a-zA-Z0-9_-]+\.ya?ml$/.test(workflow) || !job.trim())
         throw new Error(`External workflow target ${entry.id} requires a workflow job owner`);
     }
@@ -1887,6 +1891,8 @@ export function buildExecutionInventory(
       }
     }
     if (entry.route === "workflow") {
+      if (entry.definition.testFiles.length === 0 && !entry.definition.entrypoint)
+        throw new Error(`Workflow target ${entry.id} requires a test file or script entry point`);
       if (entry.definition.coverage.length === 0)
         throw new Error(`Workflow target ${entry.id} requires execution coverage`);
       if (entry.definition.targetId !== null)
