@@ -484,6 +484,13 @@ The standard layout writes product evidence and `evidence-manifest.json` under `
 When `shard` is not `default`, the standard layout adds the shard directory.
 The security-posture matrix uses the reviewed flat-shard layout to preserve its existing artifact names.
 The `gpu-double-onboard`, `gpu-e2e`, and `llama-cpp-generic-gpu` targets keep the standard layout and select `linux-amd64-gpu-rtxpro6000-latest-1` through the catalogue.
+The llama.cpp target compares the selected model's authenticated `/v1/models` `meta.n_ctx`
+with the generated OpenClaw primary model's context window, with no explicit context override.
+It retains the compared values in `qualification-evidence.json`. The existing agent turn proves
+inference through the managed route and backend, replacing two duplicate raw chat smoke tests.
+The GPU memory-offload assertion also rejects a missing matching process because its memory value
+is then `NaN`; a separate process-existence assertion is unnecessary. Authentication denial,
+runtime ownership, Ready state, and cleanup assertions remain unchanged.
 The `gpu-e2e` target also qualifies configuration export for an attached native Linux Ollama daemon.
 A separate OpenClaw scenario disables direct sandbox GPU, starts a fixture-owned daemon on port
 11439, and uses normal onboarding to create the managed proxy on port 11440. It exports twice through
