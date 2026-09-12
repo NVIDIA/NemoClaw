@@ -19,9 +19,13 @@ import {
   projectMxcOpenShellCreateRequest,
   type MxcOpenShellCreateRequest,
 } from "./mxc-openshell-create-request";
-import type { MxcOpenShellLiveCommand } from "./mxc-openshell-live-operations";
+import type {
+  MxcOpenShellLiveCommand,
+  MxcOpenShellLiveFailureRecord,
+} from "./mxc-openshell-live-operations";
 import {
   createMxcWindowsOpenShellExecutor,
+  MxcWindowsOpenShellExecutorError,
   type MxcWindowsOpenShellArtifactTree,
   type MxcWindowsOpenShellExecutorRuntime,
 } from "./mxc-windows-openshell-executor";
@@ -37,7 +41,9 @@ const REQUIRED_ENVIRONMENT = [
   "USERPROFILE",
 ] as const;
 
-async function issuedRequest(): Promise<MxcOpenShellCreateRequest> {
+async function issuedRequest(
+  environmentNames: readonly string[] = REQUIRED_ENVIRONMENT,
+): Promise<MxcOpenShellCreateRequest> {
   let plan: RuntimeProviderNativeArtifactBootstrapPlan | undefined;
   const workload = nativeArtifactWorkloadReceiptFixture(
     encodeManagedStartupProfile(managedStartupE2eProfile("openclaw")),
@@ -60,7 +66,7 @@ async function issuedRequest(): Promise<MxcOpenShellCreateRequest> {
     artifactRoot: "C:\\openclaw-2026-7-1",
     workload: {
       ...workload,
-      launch: { ...workload.launch, environmentNames: REQUIRED_ENVIRONMENT },
+      launch: { ...workload.launch, environmentNames },
     },
   });
   return projectMxcOpenShellCreateRequest(plan!);
@@ -114,6 +120,8 @@ function runtime(
     environment: {
       SystemRoot: "C:\\Windows",
       PATH: "C:\\Windows\\System32",
+      XDG_CONFIG_HOME: "C:\\qualification\\config",
+      XDG_STATE_HOME: "C:\\qualification\\state",
       OPENAI_API_KEY: "must-not-reach-openshell",
     },
     observeFileDigest: vi.fn(async (filePath) => {
@@ -135,16 +143,124 @@ function runtime(
   return { release, runtime: value, tree };
 }
 
-function executor(testRuntime: MxcWindowsOpenShellExecutorRuntime) {
+function executor(
+  testRuntime: MxcWindowsOpenShellExecutorRuntime,
+  allowDiagnosticNameDeletion = false,
+  environmentReferences: readonly string[] = ["PATH"],
+  recordFailure?: (record: MxcOpenShellLiveFailureRecord) => void,
+) {
   const distribution = mxcOpenShellDistributionTestFixture();
   return createMxcWindowsOpenShellExecutor({
+    allowDiagnosticNameDeletion,
     distributionAuthority: distribution.authority,
     observationRequest: mxcOpenShellAttachmentObservationRequest(distribution.observation),
+    environmentReferences,
     runtime: testRuntime,
+    recordFailure,
   });
 }
 
 describe("inactive trusted Windows OpenShell executor", () => {
+  it.each([
+    ["attachment", "boundary-error"],
+    ["artifact-tree", "boundary-error"],
+    ["artifact-tree", "identity-drift"],
+    ["pin-acquire", "boundary-error"],
+    ["pin-acquire", "timeout"],
+    ["pinned-tree", "boundary-error"],
+    ["pin-release", "boundary-error"],
+  ] as const)(
+    "records sanitized %s verification failures classified as %s (#10585)",
+    async (stage, errorClass) => {
+      const request = await issuedRequest();
+      const test = runtime(request);
+      const secret = "must-not-log-token-or-private-path";
+      const failure = new Error(secret);
+      if (stage === "attachment")
+        vi.mocked(test.runtime.observeFileDigest).mockRejectedValue(failure);
+      if (stage === "artifact-tree") {
+        if (errorClass === "identity-drift") {
+          vi.mocked(test.runtime.observeArtifactTree).mockReturnValue({
+            ...test.tree,
+            sha256: "f".repeat(64),
+          });
+        } else
+          vi.mocked(test.runtime.observeArtifactTree).mockImplementation(() => {
+            throw failure;
+          });
+      }
+      if (stage === "pin-acquire") {
+        vi.mocked(test.runtime.acquirePins).mockRejectedValue(
+          errorClass === "timeout"
+            ? new MxcWindowsOpenShellExecutorError(secret, "not-started", { stage, errorClass })
+            : failure,
+        );
+      }
+      if (stage === "pinned-tree") {
+        vi.mocked(test.runtime.observeArtifactTree)
+          .mockReturnValueOnce(test.tree)
+          .mockImplementationOnce(() => {
+            throw failure;
+          });
+      }
+      if (stage === "pin-release") test.release.mockRejectedValue(failure);
+      const recordFailure = vi.fn();
+      const result = await executor(
+        test.runtime,
+        false,
+        ["PATH"],
+        recordFailure,
+      ).verifyAndRunCreate({
+        attachment: attachment(),
+        policy: { path: "C:\\policy\\openclaw.yaml", sha256: "b".repeat(64) },
+        request,
+        command: createCommand(request),
+      });
+      expect(result.status).toBe(
+        stage === "pin-release" ? "unknown" : "artifact-verification-failed",
+      );
+      expect(recordFailure).toHaveBeenCalledOnce();
+      expect(recordFailure).toHaveBeenCalledWith({
+        contractVersion: 1,
+        providerId: "mxc",
+        operation: "create",
+        errorClass,
+        sandboxName: request.sandboxName,
+        lifecycleGeneration: request.lifecycleGeneration,
+        verification: { stage, elapsedMs: expect.any(Number) },
+      });
+      const recorded = recordFailure.mock.calls[0]![0];
+      expect(recorded.verification.elapsedMs).toBeGreaterThanOrEqual(0);
+      expect(JSON.stringify(recorded)).not.toContain(secret);
+      expect(test.runtime.runCommand).toHaveBeenCalledTimes(stage === "pin-release" ? 1 : 0);
+      expect(test.release).toHaveBeenCalledTimes(
+        stage === "pinned-tree" || stage === "pin-release" ? 1 : 0,
+      );
+    },
+  );
+
+  it("keeps a pre-create rejection when its diagnostic recorder throws (#10585)", async () => {
+    const request = await issuedRequest();
+    const test = runtime(request, {
+      acquirePins: vi.fn(async () => {
+        throw new Error("private diagnostic");
+      }),
+    });
+    const recordFailure = vi.fn(() => {
+      throw new Error("recorder failed");
+    });
+    await expect(
+      executor(test.runtime, false, ["PATH"], recordFailure).verifyAndRunCreate({
+        attachment: attachment(),
+        policy: { path: "C:\\policy\\openclaw.yaml", sha256: "b".repeat(64) },
+        request,
+        command: createCommand(request),
+      }),
+    ).resolves.toEqual({ status: "artifact-verification-failed" });
+    expect(recordFailure).toHaveBeenCalledOnce();
+    expect(test.runtime.runCommand).not.toHaveBeenCalled();
+  });
+
   it("rejects unsupported hosts and copied provider authority before observation (#10584)", async () => {
     const request = await issuedRequest();
     const test = runtime(request);
@@ -164,6 +280,14 @@ describe("inactive trusted Windows OpenShell executor", () => {
         runtime: test.runtime,
       }),
     ).toThrow(/not provider-owned/u);
+    expect(() =>
+      createMxcWindowsOpenShellExecutor({
+        distributionAuthority: distribution.authority,
+        observationRequest: mxcOpenShellAttachmentObservationRequest(distribution.observation),
+        environment: { HOME: "C:\\qualification-home" },
+        runtime: test.runtime,
+      }),
+    ).toThrow(/mutually exclusive/u);
     expect(test.runtime.observeFileDigest).not.toHaveBeenCalled();
   });
 
@@ -194,7 +318,95 @@ describe("inactive trusted Windows OpenShell executor", () => {
     expect(vi.mocked(test.runtime.runCommand).mock.calls[0]![1]).not.toHaveProperty(
       "OPENAI_API_KEY",
     );
+    expect(vi.mocked(test.runtime.runCommand).mock.calls[0]![1]).toMatchObject({
+      XDG_CONFIG_HOME: "C:\\qualification\\config",
+      XDG_STATE_HOME: "C:\\qualification\\state",
+    });
     expect(test.release).toHaveBeenCalledOnce();
+  });
+
+  it("passes only explicitly authorized host environment references to OpenShell (#10585)", async () => {
+    const referenceName = "NEMOCLAW_QUALIFICATION_VALUE";
+    const referenceValue = "qualification-value";
+    const request = await issuedRequest([...REQUIRED_ENVIRONMENT, referenceName]);
+    const test = runtime(request, {
+      environment: {
+        SystemRoot: "C:\\Windows",
+        PATH: "C:\\Windows\\System32",
+        [referenceName]: referenceValue,
+        OPENAI_API_KEY: "must-not-reach-openshell",
+      },
+    });
+    const operation = {
+      attachment: attachment(),
+      policy: { path: "C:\\policy\\openclaw.yaml", sha256: "b".repeat(64) },
+      request,
+      command: createCommand(request),
+    };
+
+    await expect(executor(test.runtime).verifyAndRunCreate(operation)).resolves.toEqual({
+      status: "artifact-verification-failed",
+    });
+    expect(test.runtime.runCommand).not.toHaveBeenCalled();
+
+    await expect(
+      executor(test.runtime, false, request.hostEnvironmentReferences).verifyAndRunCreate(
+        operation,
+      ),
+    ).resolves.toMatchObject({ status: "completed" });
+    const commandEnvironment = vi.mocked(test.runtime.runCommand).mock.calls[0]![1];
+    expect(commandEnvironment[referenceName]).toBe(referenceValue);
+    expect(commandEnvironment).not.toHaveProperty("OPENAI_API_KEY");
+  });
+
+  it("permits the bounded MXC relay-readiness timeout and rejects anything longer (#10585)", async () => {
+    const request = await issuedRequest();
+    const accepted = runtime(request);
+    const command = { ...createCommand(request), timeoutMs: 10 * 60_000 };
+
+    await expect(
+      executor(accepted.runtime).verifyAndRunCreate({
+        attachment: attachment(),
+        policy: { path: "C:\\policy\\openclaw.yaml", sha256: "b".repeat(64) },
+        request,
+        command,
+      }),
+    ).resolves.toMatchObject({ status: "completed" });
+    expect(accepted.runtime.runCommand).toHaveBeenCalledWith(
+      command,
+      expect.anything(),
+      expect.any(AbortSignal),
+    );
+
+    const rejected = runtime(request);
+    await expect(
+      executor(rejected.runtime).verifyAndRunCreate({
+        attachment: attachment(),
+        policy: { path: "C:\\policy\\openclaw.yaml", sha256: "b".repeat(64) },
+        request,
+        command: { ...command, timeoutMs: 10 * 60_000 + 1 },
+      }),
+    ).resolves.toEqual({ status: "artifact-verification-failed" });
+    expect(rejected.runtime.runCommand).not.toHaveBeenCalled();
+  });
+
+  it("preserves an observed nonzero create result for bounded provider diagnostics (#10585)", async () => {
+    const request = await issuedRequest();
+    const test = runtime(request, {
+      runCommand: vi.fn(async () => ({ status: 1, stdout: "", stderr: "sensitive detail" })),
+    });
+
+    await expect(
+      executor(test.runtime).verifyAndRunCreate({
+        attachment: attachment(),
+        policy: { path: "C:\\policy\\openclaw.yaml", sha256: "b".repeat(64) },
+        request,
+        command: createCommand(request),
+      }),
+    ).resolves.toMatchObject({
+      status: "completed",
+      command: { status: 1 },
+    });
   });
 
   it("fails before mutation when the fresh attachment observation drifts (#10584)", async () => {
@@ -386,7 +598,7 @@ describe("inactive trusted Windows OpenShell executor", () => {
     expect(test.runtime.runCommand).not.toHaveBeenCalled();
   });
 
-  it("refuses name-only deletion when OpenShell cannot bind it to the exact sandbox ID (#10584)", async () => {
+  it("rejects a delete command that is not bound to the exact sandbox ID (#10584)", async () => {
     const request = await issuedRequest();
     const test = runtime(request);
 
@@ -401,7 +613,64 @@ describe("inactive trusted Windows OpenShell executor", () => {
           timeoutMs: 30_000,
         },
       }),
-    ).resolves.toEqual({ status: 1, stdout: "", stderr: "" });
+    ).rejects.toThrow(/not bound to the exact immutable sandbox ID/u);
     expect(test.runtime.runCommand).not.toHaveBeenCalled();
+  });
+
+  it("runs deletion through OpenShell with the exact immutable sandbox ID (#10585)", async () => {
+    const request = await issuedRequest();
+    const test = runtime(request);
+    const command: MxcOpenShellLiveCommand = {
+      executablePath: attachment().components.cli.path,
+      arguments: [
+        "--gateway",
+        "local",
+        "--workspace",
+        "default",
+        "sandbox",
+        "delete",
+        request.sandboxName,
+        "--expected-id",
+        "sandbox-id-1",
+      ],
+      timeoutMs: 30_000,
+    };
+
+    await expect(
+      executor(test.runtime).deleteExact({
+        attachment: attachment(),
+        request,
+        sandboxId: "sandbox-id-1",
+        command,
+      }),
+    ).resolves.toMatchObject({ status: 0 });
+    expect(test.runtime.runCommand).toHaveBeenCalledWith(
+      command,
+      expect.not.objectContaining({ OPENAI_API_KEY: expect.anything() }),
+      expect.any(AbortSignal),
+    );
+  });
+
+  it("permits explicitly marked name deletion only for temporary physical diagnostics (#10585)", async () => {
+    const request = await issuedRequest();
+    const test = runtime(request);
+
+    await expect(
+      executor(test.runtime, true).deleteExact({
+        attachment: attachment(),
+        request,
+        sandboxId: "sandbox-id-1",
+        command: {
+          executablePath: attachment().components.cli.path,
+          arguments: ["sandbox", "delete", request.sandboxName, "--expected-id", "sandbox-id-1"],
+          timeoutMs: 30_000,
+        },
+      }),
+    ).resolves.toMatchObject({ status: 0 });
+    expect(test.runtime.runCommand).toHaveBeenCalledWith(
+      expect.objectContaining({ arguments: ["sandbox", "delete", request.sandboxName] }),
+      expect.anything(),
+      expect.any(AbortSignal),
+    );
   });
 });

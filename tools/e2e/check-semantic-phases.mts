@@ -132,6 +132,9 @@ export function validateWindowsMxcControlBoundarySource(source: string): string[
   let createPosition: number | null = null;
   let createRequestsExec = false;
   const deletePositions: number[] = [];
+  let createsProviderOwnedLifecycle = false;
+  let runsProviderOwnedLifecycle = false;
+  let recoversProviderOwnedLifecycle = false;
 
   function containsWxcExecPath(node: ts.Node): boolean {
     let found = false;
@@ -190,6 +193,13 @@ export function validateWindowsMxcControlBoundarySource(source: string): string[
       if (name && controlCalls.has(name) && node.arguments.some(containsWxcExecPath)) {
         failures.push("wxc-exec must not be invoked outside the OpenShell control boundary");
       }
+      if (name === "createWindowsMxcInactiveOnboardingLifecycle") {
+        createsProviderOwnedLifecycle = true;
+      }
+      if (ts.isPropertyAccessExpression(node.expression)) {
+        if (node.expression.name.text === "run") runsProviderOwnedLifecycle = true;
+        if (node.expression.name.text === "recover") recoversProviderOwnedLifecycle = true;
+      }
       const kind = commandKind(node);
       if (kind === "create" && createPosition === null) createPosition = node.getStart(sourceFile);
       if (kind === "delete") deletePositions.push(node.getStart(sourceFile));
@@ -198,13 +208,23 @@ export function validateWindowsMxcControlBoundarySource(source: string): string[
   }
   inspect(sourceFile);
 
-  if (createPosition === null) failures.push("OpenShell sandbox create command is missing");
+  const composedCreate = createsProviderOwnedLifecycle && runsProviderOwnedLifecycle;
+  const composedDelete = createsProviderOwnedLifecycle && recoversProviderOwnedLifecycle;
+  if (createsProviderOwnedLifecycle && (createPosition !== null || deletePositions.length > 0)) {
+    failures.push("provider-owned composition must not mix direct sandbox lifecycle commands");
+  }
+  if (createPosition === null && !composedCreate) {
+    failures.push("OpenShell sandbox create command is missing");
+  }
   if (createRequestsExec) {
     failures.push("OpenShell process_container create must not request in-sandbox exec");
   }
-  if (deletePositions.length === 0) failures.push("OpenShell sandbox delete command is missing");
+  if (deletePositions.length === 0 && !composedDelete) {
+    failures.push("OpenShell sandbox delete command is missing");
+  }
   const observedCreatePosition = createPosition;
   if (
+    !createsProviderOwnedLifecycle &&
     observedCreatePosition !== null &&
     deletePositions.some((position) => position < observedCreatePosition)
   ) {
@@ -2472,6 +2492,10 @@ function propertyNameText(name: ts.PropertyName | undefined): string | undefined
   return undefined;
 }
 
+function repositoryRelativePath(file: string): string {
+  return path.relative(REPO_ROOT, file).split(path.sep).join("/");
+}
+
 function hasE2EPhaseMetadata(node: ts.CallExpression): boolean {
   return node.arguments.some(
     (argument) =>
@@ -2505,7 +2529,7 @@ function phaseCallFromNode(
   const argument = node.arguments[0];
   const location = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile));
   return {
-    file: path.relative(REPO_ROOT, file),
+    file: repositoryRelativePath(file),
     label: argument && ts.isStringLiteralLike(argument) ? argument.text : null,
     line: location.line + 1,
   };
@@ -2562,7 +2586,7 @@ function collectTestPhaseBodies(file: string, sourceFile: ts.SourceFile): TestPh
       }
       const location = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile));
       bodies.push({
-        file: path.relative(REPO_ROOT, file),
+        file: repositoryRelativePath(file),
         line: location.line + 1,
         phaseCalls,
         skipped:

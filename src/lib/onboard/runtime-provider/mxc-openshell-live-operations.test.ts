@@ -37,7 +37,12 @@ const REQUIRED_ENVIRONMENT = [
   "USERPROFILE",
 ] as const;
 
-async function request() {
+function labelDigest(value: string): string {
+  const encoded = Buffer.from(value, "hex").toString("base64url");
+  return /^[A-Za-z0-9]/u.test(encoded) ? encoded : `h${encoded}`;
+}
+
+async function request(lifecycleGeneration = "generation-7") {
   let plan: RuntimeProviderNativeArtifactBootstrapPlan | undefined;
   const workload = nativeArtifactWorkloadReceiptFixture(
     encodeManagedStartupProfile(managedStartupE2eProfile("openclaw")),
@@ -55,7 +60,7 @@ async function request() {
   await surface.run({
     providerId: "mxc",
     sandboxName: "alpha",
-    lifecycleGeneration: "generation-7",
+    lifecycleGeneration,
     driveRoot: "C:\\",
     artifactRoot: "C:\\openclaw-2026-7-1",
     workload: {
@@ -114,13 +119,13 @@ function sandbox(
     workspace: "default",
     labels: {
       "nemoclaw-provider": "mxc",
-      "nemoclaw-attachment-sha256": fixture().authoritySha256,
-      "nemoclaw-authority-sha256": liveRequest.authoritySha256,
-      "nemoclaw-policy-sha256": "6".repeat(64),
-      "nemoclaw-request-sha256": liveRequest.requestSha256,
-      "nemoclaw-lifecycle-sha256": createHash("sha256")
-        .update(liveRequest.lifecycleGeneration, "utf8")
-        .digest("hex"),
+      "nemoclaw-attachment-sha256": labelDigest(fixture().authoritySha256),
+      "nemoclaw-authority-sha256": labelDigest(liveRequest.authoritySha256),
+      "nemoclaw-policy-sha256": labelDigest("6".repeat(64)),
+      "nemoclaw-request-sha256": labelDigest(liveRequest.requestSha256),
+      "nemoclaw-lifecycle-sha256": labelDigest(
+        createHash("sha256").update(liveRequest.lifecycleGeneration, "utf8").digest("hex"),
+      ),
       ...labelOverrides,
     },
     phase,
@@ -167,6 +172,7 @@ describe("inactive OpenShell MXC live operations", () => {
       sha256: "6".repeat(64),
     });
     expect(input.command.executablePath).toBe(input.attachment.components.cli.path);
+    expect(input.command.timeoutMs).toBe(10 * 60_000);
     expect(input.command.arguments).toEqual(
       expect.arrayContaining([
         "--gateway",
@@ -189,20 +195,55 @@ describe("inactive OpenShell MXC live operations", () => {
     );
     expect(labelArguments(input.command)).toMatchObject({
       "nemoclaw-provider": "mxc",
-      "nemoclaw-attachment-sha256": input.attachment.authoritySha256,
-      "nemoclaw-authority-sha256": liveRequest.authoritySha256,
-      "nemoclaw-policy-sha256": "6".repeat(64),
-      "nemoclaw-request-sha256": liveRequest.requestSha256,
-      "nemoclaw-lifecycle-sha256": createHash("sha256")
-        .update(liveRequest.lifecycleGeneration, "utf8")
-        .digest("hex"),
+      "nemoclaw-attachment-sha256": labelDigest(input.attachment.authoritySha256),
+      "nemoclaw-authority-sha256": labelDigest(liveRequest.authoritySha256),
+      "nemoclaw-policy-sha256": labelDigest("6".repeat(64)),
+      "nemoclaw-request-sha256": labelDigest(liveRequest.requestSha256),
+      "nemoclaw-lifecycle-sha256": labelDigest(
+        createHash("sha256").update(liveRequest.lifecycleGeneration, "utf8").digest("hex"),
+      ),
     });
     expect(input.command.arguments).toContain(`HOME=${liveRequest.environment.HOME}`);
     expect(liveRequest.hostEnvironmentReferences.length).toBeGreaterThan(0);
     liveRequest.hostEnvironmentReferences.forEach((name) => {
       expect(input.command.arguments.some((entry) => entry.startsWith(`${name}=`))).toBe(false);
+      expect(input.command.arguments).toContain(name);
+      expect(input.command.arguments[input.command.arguments.indexOf(name) - 1]).toBe("--env-from");
     });
     expect(run).not.toHaveBeenCalled();
+  });
+
+  it("makes leading-symbol digest labels valid for create and recovery (#10585)", async () => {
+    const liveRequest = await request("leading-symbol-15");
+    const rawRequestLabel = Buffer.from(liveRequest.requestSha256, "hex").toString("base64url");
+    expect(rawRequestLabel).toBe("_L0dR3VVaq9sU5M1qTd_V8WEuhgMG_ZzIDVnjWz2Yck");
+    const attempt12Digest = "fe33a3082f70157204fa554d4940853833d7eb39b1e63fb4a6b7f88066df5e18";
+    expect(Buffer.from(attempt12Digest, "hex").toString("base64url")).toBe(
+      "_jOjCC9wFXIE-lVNSUCFODPX6zmx5j-0prf4gGbfXhg",
+    );
+    const verifyAndRunCreate = vi.fn<MxcOpenShellLiveHostBoundary["verifyAndRunCreate"]>(
+      async () => ({ status: "create-rejected" }),
+    );
+    const run = vi
+      .fn<MxcOpenShellLiveHostBoundary["run"]>()
+      .mockImplementationOnce(async () => result("", 1))
+      .mockImplementationOnce(async () => result([]));
+    const live = operations({ verifyAndRunCreate, run });
+
+    await expect(live.verifyAndCreate(liveRequest)).resolves.toEqual({
+      status: "not-created",
+      reason: "create-rejected",
+    });
+    await expect(live.recoverCreate(liveRequest)).resolves.toEqual({ status: "absent" });
+
+    const expected = `h${rawRequestLabel}`;
+    expect(labelArguments(verifyAndRunCreate.mock.calls[0]![0].command)).toMatchObject({
+      "nemoclaw-request-sha256": expected,
+    });
+    expect(run.mock.calls[1]![0].command.arguments).toEqual(
+      expect.arrayContaining(["--selector", `nemoclaw-request-sha256=${expected}`]),
+    );
+    expect(expected).toMatch(/^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/u);
   });
 
   it("does not create when the trusted boundary rejects artifact verification (#8178)", async () => {
@@ -395,7 +436,7 @@ describe("inactive OpenShell MXC live operations", () => {
         "--limit",
         "2",
         "--selector",
-        expect.stringMatching(/^nemoclaw-request-sha256=[a-f0-9]{64}$/u),
+        expect.stringMatching(/^nemoclaw-request-sha256=[A-Za-z0-9_-]{43}$/u),
       ]),
     );
   });
@@ -449,6 +490,8 @@ describe("inactive OpenShell MXC live operations", () => {
       "sandbox",
       "delete",
       "alpha",
+      "--expected-id",
+      "sandbox-id-1",
     ]);
   });
 

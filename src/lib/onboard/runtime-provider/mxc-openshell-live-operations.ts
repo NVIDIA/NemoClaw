@@ -23,7 +23,10 @@ const NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
 const CONTROL_CHARACTER_PATTERN = /[\u0000-\u001f\u007f-\u009f]/u;
 const MAX_PATH_BYTES = 4096;
 const MAX_OUTPUT_BYTES = 512 * 1024;
-const CREATE_TIMEOUT_MS = 5 * 60_000;
+// OpenShell's MXC control-channel flow can spend up to 120 seconds waiting for
+// the relay, 120 seconds acknowledging launch, and 310 seconds proving the
+// target listener. Keep the caller bounded while covering that full contract.
+const CREATE_TIMEOUT_MS = 10 * 60_000;
 const COMMAND_TIMEOUT_MS = 30_000;
 
 const LABEL_PROVIDER = "nemoclaw-provider";
@@ -66,6 +69,26 @@ export type MxcOpenShellLiveFailureClass =
   | "timeout"
   | "unknown-result";
 
+export interface MxcOpenShellVerificationFailure {
+  readonly stage:
+    | "environment"
+    | "attachment"
+    | "artifact-tree"
+    | "executable"
+    | "policy"
+    | "command"
+    | "pin-acquire"
+    | "pin-initialize"
+    | "pin-payload"
+    | "pin-directory"
+    | "pin-file"
+    | "pin-protocol"
+    | "pinned-tree"
+    | "pin-release";
+  readonly errorClass: MxcOpenShellLiveFailureClass;
+  readonly nativeErrorCode?: number;
+}
+
 export interface MxcOpenShellLiveFailureRecord {
   readonly contractVersion: 1;
   readonly providerId: "mxc";
@@ -74,6 +97,11 @@ export interface MxcOpenShellLiveFailureRecord {
   readonly sandboxName: string;
   readonly lifecycleGeneration: string;
   readonly sandboxId?: string;
+  readonly verification?: Readonly<{
+    stage: MxcOpenShellVerificationFailure["stage"];
+    elapsedMs: number;
+    nativeErrorCode?: number;
+  }>;
 }
 
 export type MxcOpenShellVerifiedCreateResult =
@@ -146,6 +174,15 @@ function sha256(value: string): string {
   return createHash("sha256").update(value, "utf8").digest("hex");
 }
 
+function labelDigest(value: string): string {
+  const encoded = Buffer.from(requireSha256(value, "label digest"), "hex").toString("base64url");
+  // OpenShell validates Kubernetes-style label values before create-side effects.
+  // A base64url digest can begin with '-' or '_', which is not a valid label
+  // boundary. Preserve existing valid encodings for recovery compatibility and
+  // prefix only the otherwise-invalid values with one deterministic letter.
+  return /^[A-Za-z0-9]/u.test(encoded) ? encoded : `h${encoded}`;
+}
+
 function requireName(value: unknown, label: string): string {
   if (typeof value !== "string" || !NAME_PATTERN.test(value)) {
     throw new MxcOpenShellLiveOperationsError(`${label} is invalid`);
@@ -184,11 +221,11 @@ function labelsFor(
 ): Readonly<Record<string, string>> {
   return cloneAndDeepFreeze({
     [LABEL_PROVIDER]: "mxc",
-    [LABEL_ATTACHMENT]: attachment.authoritySha256,
-    [LABEL_AUTHORITY]: request.authoritySha256,
-    [LABEL_POLICY]: policy.sha256,
-    [LABEL_REQUEST]: request.requestSha256,
-    [LABEL_LIFECYCLE]: sha256(request.lifecycleGeneration),
+    [LABEL_ATTACHMENT]: labelDigest(attachment.authoritySha256),
+    [LABEL_AUTHORITY]: labelDigest(request.authoritySha256),
+    [LABEL_POLICY]: labelDigest(policy.sha256),
+    [LABEL_REQUEST]: labelDigest(request.requestSha256),
+    [LABEL_LIFECYCLE]: labelDigest(sha256(request.lifecycleGeneration)),
   });
 }
 
@@ -224,6 +261,9 @@ function createCommand(
   }
   for (const [name, value] of Object.entries(input.request.environment)) {
     argumentsList.push("--env", `${name}=${value}`);
+  }
+  for (const name of input.request.hostEnvironmentReferences) {
+    argumentsList.push("--env-from", name);
   }
   argumentsList.push("--output", "json");
   return cloneAndDeepFreeze({
@@ -268,7 +308,7 @@ function listCommand(
       "--limit",
       "2",
       "--selector",
-      `${LABEL_REQUEST}=${request.requestSha256}`,
+      `${LABEL_REQUEST}=${labelDigest(request.requestSha256)}`,
       "--output",
       "json",
     ],
@@ -281,10 +321,18 @@ function deleteCommand(
   gatewayName: string,
   workspace: string,
   sandboxName: string,
+  sandboxId: string,
 ): MxcOpenShellLiveCommand {
   return cloneAndDeepFreeze({
     executablePath: attachment.components.cli.path,
-    arguments: [...baseArguments(gatewayName, workspace), "sandbox", "delete", sandboxName],
+    arguments: [
+      ...baseArguments(gatewayName, workspace),
+      "sandbox",
+      "delete",
+      sandboxName,
+      "--expected-id",
+      sandboxId,
+    ],
     timeoutMs: COMMAND_TIMEOUT_MS,
   });
 }
@@ -660,7 +708,13 @@ export function createMxcOpenShellLiveOperations(
             attachment,
             request,
             sandboxId: candidate.id,
-            command: deleteCommand(attachment, gatewayName, workspace, request.sandboxName),
+            command: deleteCommand(
+              attachment,
+              gatewayName,
+              workspace,
+              request.sandboxName,
+              candidate.id,
+            ),
           });
         } catch {
           const error = new MxcOpenShellLiveOperationsError(

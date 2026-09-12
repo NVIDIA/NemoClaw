@@ -14,6 +14,7 @@ import type {
   RuntimeProviderNativeArtifactReadinessEvidence,
   RuntimeProviderNativeArtifactBootstrapSurface,
 } from "./contract";
+import { resolveMxcNativeArtifactShareDirectory } from "./mxc-bootstrap";
 import { createMxcRuntimeProviderBundle } from "./mxc";
 import { mxcOpenShellAttachmentFixture } from "./mxc-openshell-attachment-test-fixture";
 
@@ -109,6 +110,16 @@ function verifiedCreateOutcome(plan: RuntimeProviderNativeArtifactBootstrapPlan)
 }
 
 describe("inactive MXC native-artifact bootstrap", () => {
+  it("resolves the lifecycle-bound writable share before local qualification setup (#10585)", () => {
+    expect(
+      resolveMxcNativeArtifactShareDirectory({
+        driveRoot: "C:\\",
+        sandboxName: "alpha",
+        lifecycleGeneration: LIFECYCLE_GENERATION,
+      }),
+    ).toBe(SHARE_DIRECTORY);
+  });
+
   it("preserves drive-root launch authority across atomic create and readiness checks (#8178)", async () => {
     let observedPlan: RuntimeProviderNativeArtifactBootstrapPlan | null = null;
     const operations: RuntimeProviderNativeArtifactBootstrapOperations = {

@@ -46,7 +46,7 @@ describe("native Windows/MXC process_container host qualification", () => {
     ).toMatchObject({ candidate: false, reason: "non-windows-host" });
   });
 
-  it("rejects an emulated x64 process on a native ARM64 host (#8178)", () => {
+  it("rejects ARM64 when the selected profile requires native x64 (#8178)", () => {
     expect(
       assessWindowsMxcProcessContainerCandidate({
         platform: "win32",
@@ -54,6 +54,19 @@ describe("native Windows/MXC process_container host qualification", () => {
         release: "10.0.28000",
       }),
     ).toMatchObject({ candidate: false, reason: "unqualified-architecture" });
+  });
+
+  it("accepts ARM64 when the selected qualification profile requires it (#10585)", () => {
+    expect(
+      assessWindowsMxcProcessContainerCandidate(
+        {
+          platform: "win32",
+          nativeArchitecture: "arm64",
+          release: "10.0.28000.30169",
+        },
+        "arm64",
+      ),
+    ).toMatchObject({ candidate: true, nativeArchitecture: "arm64", windowsBuild: 28000 });
   });
 
   it("fails closed below the process_container candidate build floor (#8178)", () => {

@@ -38,4 +38,34 @@ describe("inactive native Windows MXC host observation", () => {
       release: "6.6.87.2-microsoft-standard-WSL2",
     });
   });
+
+  it("uses Windows' native architecture marker under x64 emulation (#10585)", () => {
+    expect(
+      observeWindowsMxcNativeHostFacts({
+        platform: "win32",
+        machine: () => "x86_64",
+        nativeArchitectureOverride: () => "ARM64",
+        release: () => "10.0.28000.30169",
+      }),
+    ).toEqual({
+      platform: "win32",
+      nativeArchitecture: "arm64",
+      release: "10.0.28000.30169",
+    });
+  });
+
+  it("uses the ARM processor identity when ARM64 Windows omits the WOW64 marker (#10585)", () => {
+    const previousArchitecture = process.env.PROCESSOR_ARCHITEW6432;
+    const previousIdentifier = process.env.PROCESSOR_IDENTIFIER;
+    try {
+      delete process.env.PROCESSOR_ARCHITEW6432;
+      process.env.PROCESSOR_IDENTIFIER = "ARMv8 (64-bit) Family 8 Model D87 Revision 1, NVIDIA";
+      expect(observeWindowsMxcNativeHostFacts()).toMatchObject({ nativeArchitecture: "arm64" });
+    } finally {
+      if (previousArchitecture === undefined) delete process.env.PROCESSOR_ARCHITEW6432;
+      else process.env.PROCESSOR_ARCHITEW6432 = previousArchitecture;
+      if (previousIdentifier === undefined) delete process.env.PROCESSOR_IDENTIFIER;
+      else process.env.PROCESSOR_IDENTIFIER = previousIdentifier;
+    }
+  });
 });
