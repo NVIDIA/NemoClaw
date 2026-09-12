@@ -157,6 +157,11 @@ describe("validation reuse", () => {
         expect(validationFingerprint(aliasedRoot, command, {})).toEqual(
           validationFingerprint(root, command, {}),
         );
+        const execute = vi.fn(() => 0);
+        const options = check(execute);
+        expect(runCachedCommand(options)).toBe(0);
+        expect(runCachedCommand({ ...options, root: aliasedRoot })).toBe(0);
+        expect(execute).toHaveBeenCalledTimes(1);
       } finally {
         rmSync(aliasedRoot);
       }
