@@ -23,6 +23,14 @@ on:
         required: false
         default: false
         type: boolean
+      windows_runner:
+        description: Existing GitHub Windows runner image
+        required: false
+        default: windows-latest
+        type: choice
+        options:
+          - windows-latest
+          - windows-11-vs2026-arm
 permissions:
   contents: read
 concurrency:
@@ -32,7 +40,7 @@ jobs:
   windows-regression:
     if: ${{ !inputs.live_daemon }}
     name: Windows PowerShell and WSL regression (${{ matrix.role }})
-    runs-on: windows-latest
+    runs-on: ${{ inputs.windows_runner || 'windows-latest' }}
     timeout-minutes: 25
     strategy:
       fail-fast: false
@@ -73,7 +81,7 @@ jobs:
         run: |
           . "$env:GITHUB_WORKSPACE\source\tools\wsl\ci-helper.ps1"
           $PSVersionTable.PSVersion.ToString() | Set-Content "$env:GITHUB_WORKSPACE\evidence\powershell-version.txt"
-          Ensure-WslDistro -Distro $env:WSL_DISTRO
+          Ensure-WslDistro -Distro $env:WSL_DISTRO -MaxAttempts 1
           $kernel = & wsl -d $env:WSL_DISTRO -- uname -r
           if ($LASTEXITCODE -ne 0 -or $kernel -notmatch 'WSL2') { throw 'A running WSL2 kernel is required' }
           Install-WslUbuntuDependencies -Distro $env:WSL_DISTRO -TestUser $env:WSL_TEST_USER -Packages @('bash','ca-certificates','curl','git','python3','rsync','xz-utils')
@@ -137,7 +145,7 @@ jobs:
   live-daemon:
     if: ${{ inputs.live_daemon }}
     name: Real Windows Ollama snapshot (${{ matrix.role }})
-    runs-on: windows-latest
+    runs-on: ${{ inputs.windows_runner || 'windows-latest' }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -175,9 +183,11 @@ jobs:
         timeout-minutes: 10
         run: |
           $installer = "$env:RUNNER_TEMP\Docker-Desktop-Installer.exe"
-          & curl.exe -fSL --connect-timeout 30 --max-time 300 'https://desktop.docker.com/win/main/amd64/238018/Docker%20Desktop%20Installer.exe' -o $installer
+          $dockerArch=if($env:RUNNER_ARCH -eq 'ARM64'){'arm64'}else{'amd64'}
+          $dockerHash=if($env:RUNNER_ARCH -eq 'ARM64'){'a423c8cb01fb4e5c507237c5981e6ddc8ce1f06740d7507a1aadfb8f9805b3a3'}else{'854626704af28a160d5af68b96b3e32eacf08ab397ce6c12eb02a04788d73681'}
+          & curl.exe -fSL --connect-timeout 30 --max-time 300 "https://desktop.docker.com/win/main/$dockerArch/238018/Docker%20Desktop%20Installer.exe" -o $installer
           if ($LASTEXITCODE -ne 0) { throw 'Docker Desktop download failed' }
-          if ((Get-FileHash $installer -Algorithm SHA256).Hash.ToLowerInvariant() -ne '854626704af28a160d5af68b96b3e32eacf08ab397ce6c12eb02a04788d73681') { throw 'Docker Desktop checksum mismatch' }
+          if ((Get-FileHash $installer -Algorithm SHA256).Hash.ToLowerInvariant() -ne $dockerHash) { throw 'Docker Desktop checksum mismatch' }
           $process = Start-Process $installer -ArgumentList 'install','--quiet','--accept-license','--backend=wsl-2' -PassThru
           if (-not $process.WaitForExit(360000)) { $process.Kill(); throw 'Docker Desktop installation timed out' }
           if ($process.ExitCode -ne 0) { throw "Docker Desktop installation failed: $($process.ExitCode)" }
@@ -187,7 +197,7 @@ jobs:
         run: |
           . "$env:GITHUB_WORKSPACE\source\tools\wsl\ci-helper.ps1"
           Get-CimInstance Win32_OperatingSystem | Select-Object Caption,Version,OSArchitecture | ConvertTo-Json | Set-Content "$env:GITHUB_WORKSPACE\evidence\windows.json"
-          Ensure-WslDistro -Distro $env:WSL_DISTRO
+          Ensure-WslDistro -Distro $env:WSL_DISTRO -MaxAttempts 1
           $kernel = & wsl -d $env:WSL_DISTRO -- uname -r
           if ($LASTEXITCODE -ne 0 -or $kernel -notmatch 'WSL2') { throw 'A running WSL2 kernel is required' }
           Install-WslUbuntuDependencies -Distro $env:WSL_DISTRO -TestUser $env:WSL_TEST_USER -Packages @('bash','ca-certificates','curl','git','python3','rsync','xz-utils')
@@ -224,9 +234,11 @@ jobs:
           $root = "$env:RUNNER_TEMP\issue-11401-ollama"
           New-Item -ItemType Directory -Force $root | Out-Null
           $zip = "$root\ollama.zip"
-          & curl.exe -fSL --connect-timeout 30 --max-time 600 'https://github.com/ollama/ollama/releases/download/v0.34.0/ollama-windows-amd64.zip' -o $zip
+          $ollamaArch=if($env:RUNNER_ARCH -eq 'ARM64'){'arm64'}else{'amd64'}
+          $ollamaHash=if($env:RUNNER_ARCH -eq 'ARM64'){'a5ce957f750dbe85b34c9da81440969f4b9c7f747a3bb629ce50ac6cd2a63536'}else{'a7dd1b174f39d3d1b8a25d4cbc86045d0e190b17187bfdcbe2f2ee3b5a11470e'}
+          & curl.exe -fSL --connect-timeout 30 --max-time 600 "https://github.com/ollama/ollama/releases/download/v0.34.0/ollama-windows-$ollamaArch.zip" -o $zip
           if ($LASTEXITCODE -ne 0) { throw 'Ollama download failed' }
-          if ((Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant() -ne 'a7dd1b174f39d3d1b8a25d4cbc86045d0e190b17187bfdcbe2f2ee3b5a11470e') { throw 'Ollama checksum mismatch' }
+          if ((Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant() -ne $ollamaHash) { throw 'Ollama checksum mismatch' }
           & 'C:\Program Files\7-Zip\7z.exe' x $zip "-o$root" -y
           if ($LASTEXITCODE -ne 0) { throw 'Ollama extraction failed' }
           Remove-Item $zip
