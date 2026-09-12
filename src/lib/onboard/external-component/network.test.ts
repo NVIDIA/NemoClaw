@@ -143,7 +143,7 @@ describe("Docker network provisioning", () => {
       const f = fixture();
       const guard = await prepareExternalComponentNetwork(f.env, f.runtime);
       change(f);
-      expect(guard).toThrow("endpoint_restricted");
+      expect(guard.revalidate).toThrow("endpoint_restricted");
       expect(f.run.mock.calls.every(([args]) => ["ls", "inspect"].includes(args[1]!))).toBe(true);
     },
   );
@@ -173,7 +173,10 @@ describe("Docker network provisioning", () => {
         throw new Error("transport failed after request");
       })
       .mockReturnValue({ status: 0, stdout: JSON.stringify([f.network]), stderr: "" });
-    await expect(prepareExternalComponentNetwork(f.env, f.runtime)).resolves.toBeTypeOf("function");
+    await expect(prepareExternalComponentNetwork(f.env, f.runtime)).resolves.toMatchObject({
+      runtime: { socketPath: "/run/user/1000/docker.sock" },
+      revalidate: expect.any(Function),
+    });
     expect(f.run.mock.calls.map(([args]) => args[1])).toEqual(["ls", "create", "inspect"]);
     expect(f.run).toHaveBeenCalledWith(
       ["network", "create", "--driver", "bridge", "--attachable", f.network.Name],
@@ -229,7 +232,10 @@ describe("Docker network provisioning", () => {
       .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" })
       .mockReturnValueOnce({ ...failure, timedOut: true, signal: "SIGKILL" })
       .mockReturnValue({ status: 0, stdout: JSON.stringify([f.network]), stderr: "" });
-    await expect(prepareExternalComponentNetwork(f.env, f.runtime)).resolves.toBeTypeOf("function");
+    await expect(prepareExternalComponentNetwork(f.env, f.runtime)).resolves.toMatchObject({
+      runtime: { socketPath: "/run/user/1000/docker.sock" },
+      revalidate: expect.any(Function),
+    });
     expect(f.run.mock.calls.map(([args]) => args[1])).toEqual(["ls", "create", "inspect"]);
   });
 

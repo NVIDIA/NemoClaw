@@ -99,6 +99,7 @@ export interface BuildDockerDriverGatewayEnvOptions {
 export function configureDockerDriverGatewayExternalComponent(
   gatewayEnv: Record<string, string>,
   externalComponent: ExternalComponentGatewayConfiguration | null,
+  gatewayRuntime?: RuntimeProviderGatewayHostRuntime,
 ): ExternalComponentGatewayPreparation | void {
   const configPath = gatewayEnv.OPENSHELL_GATEWAY_CONFIG;
   if (!configPath) {
@@ -110,10 +111,11 @@ export function configureDockerDriverGatewayExternalComponent(
     gatewayEnv.OPENSHELL_DOCKER_SUPERVISOR_BIN,
     {
       externalComponent,
+      gatewayRuntime,
     },
   );
   if (externalComponent && "interceptor" in externalComponent) {
-    return readExternalComponentGatewayPreparation(gatewayEnv, externalComponent);
+    return readExternalComponentGatewayPreparation(gatewayEnv, externalComponent, gatewayRuntime);
   }
 }
 

@@ -305,7 +305,7 @@ describe("managed gateway connection configuration", () => {
         stderr: "untrusted diagnostics",
       }));
       const guard = await prepareExternalComponentNetwork(f.env, f.runtime);
-      guard();
+      guard.revalidate();
       expect(f.run.mock.calls.filter(([args]) => args[1] === "create")).toHaveLength(1);
       expect(
         f.run.mock.calls.every(([args]) => ["ls", "create", "inspect"].includes(args[1]!)),
@@ -424,6 +424,31 @@ describe("managed gateway connection configuration", () => {
     );
     vi.stubEnv("DOCKER_HOST", "unix:///another/docker.sock");
     expect(() => preparation!.revalidate()).toThrow();
+  });
+
+  it("rejects a context switch during configuration before writing connections (#11606)", async () => {
+    const f = fixture();
+    f.select();
+    vi.stubEnv("DOCKER_HOST", undefined);
+    const original = f.run.getMockImplementation()!;
+    const contexts = [
+      "unix:///run/selected/docker.sock",
+      "unix:///run/selected/docker.sock",
+      "unix:///run/other/docker.sock",
+    ];
+    f.run.mockImplementation((args, timeout) =>
+      args[0] === "context"
+        ? {
+            status: 0,
+            stdout: `${contexts.shift() ?? "unix:///run/selected/docker.sock"}\n`,
+            stderr: "",
+          }
+        : original(args, timeout),
+    );
+    const deps = flowDeps({ collectGatewayReadiness: async () => undefined }, () => f.env, vi.fn());
+    await expect(deps.configureExternalComponentGateway(f.settings)).rejects.toThrow();
+    expect(fs.existsSync(f.env.OPENSHELL_GATEWAY_CONFIG!)).toBe(false);
+    expect(f.run.mock.calls.some(([args]) => args[1] === "create" || args[1] === "rm")).toBe(false);
   });
 
   it.each(["podman", "kubernetes"])(

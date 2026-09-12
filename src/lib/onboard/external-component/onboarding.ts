@@ -62,18 +62,22 @@ export function flowDeps(
       externalComponent: ExternalComponentGatewayConfiguration | null,
     ) => {
       const env = getDockerDriverGatewayEnv();
-      const revalidateNetwork =
+      const network =
         externalComponent && "interceptor" in externalComponent
           ? await prepareExternalComponentNetwork(
               env,
               observeConfiguredGatewayHostRuntime({ environment: env }),
             )
           : undefined;
-      revalidateNetwork?.();
-      const preparation = configureDockerDriverGatewayExternalComponent(env, externalComponent);
-      if (!preparation || !revalidateNetwork) return preparation;
+      network?.revalidate();
+      const preparation = configureDockerDriverGatewayExternalComponent(
+        env,
+        externalComponent,
+        network?.runtime,
+      );
+      if (!preparation || !network) return preparation;
       const revalidate = () => {
-        revalidateNetwork();
+        network.revalidate();
         preparation.revalidate();
       };
       revalidate();

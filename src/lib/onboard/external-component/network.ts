@@ -142,7 +142,7 @@ function inspectNetwork(
 export async function prepareExternalComponentNetwork(
   env: Record<string, string>,
   runtime: RuntimeProviderGatewayHostRuntime,
-): Promise<() => void> {
+): Promise<{ runtime: RuntimeProviderGatewayHostRuntime; revalidate: () => void }> {
   try {
     const name = env.OPENSHELL_DOCKER_NETWORK_NAME;
     if (!name || !/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,254}$/u.test(name)) throw restricted();
@@ -185,13 +185,16 @@ export async function prepareExternalComponentNetwork(
     }
     const expected = inspectNetwork(name, runtime, socket);
     if (createdId !== undefined && createdId !== expected.id) throw restricted();
-    return () => {
-      if (
-        externalComponentDockerSocket(runtime) !== socket ||
-        env.OPENSHELL_DOCKER_NETWORK_NAME !== name ||
-        !isDeepStrictEqual(inspectNetwork(name, runtime, socket), expected)
-      )
-        throw restricted();
+    return {
+      runtime: { ...runtime, socketPath: socket },
+      revalidate() {
+        if (
+          externalComponentDockerSocket(runtime) !== socket ||
+          env.OPENSHELL_DOCKER_NETWORK_NAME !== name ||
+          !isDeepStrictEqual(inspectNetwork(name, runtime, socket), expected)
+        )
+          throw restricted();
+      },
     };
   } catch {
     throw new ExternalComponentContractError("preparation_failed");
