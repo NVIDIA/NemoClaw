@@ -369,10 +369,13 @@ jobs:
           '
 
       - name: Prove pinned OpenShell activation and registered-agent Podman CPU lifecycle
+        env:
+          NEMOCLAW_E2E_REQUIRE_EXECUTED_TEST: "1"
         run: |
           npx vitest run --project e2e-live \
             test/e2e/live/podman-cpu-lifecycle.test.ts \
-            test/e2e/live/podman-portable-uninstall.test.ts
+            test/e2e/live/podman-portable-uninstall.test.ts \
+            --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
 
       - name: Verify Docker stayed unavailable
         if: always()
