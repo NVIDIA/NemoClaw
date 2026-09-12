@@ -41,7 +41,13 @@ const INSTALLER_TEMPLATE = fs.readFileSync(
   path.join(REPO_ROOT, "scripts/install-openshell.sh"),
   "utf8",
 );
-const BREV_TEMPLATE = fs.readFileSync(
+// Historical release-table scenarios use the already-trusted Node 22 template.
+// The live installer-hash check validates the current production bootstrap.
+const BREV_TEMPLATE = `#!/usr/bin/env bash\n${fs.readFileSync(
+  path.join(REPO_ROOT, "test/fixtures/brev-node22-bootstrap.fixture"),
+  "utf8",
+)}`;
+const PRODUCTION_BREV_TEMPLATE = fs.readFileSync(
   path.join(REPO_ROOT, "scripts/brev-launchable-ci-cpu.sh"),
   "utf8",
 );
@@ -129,6 +135,7 @@ type FixtureMode =
   | "partial"
   | "partial-asset-missing"
   | "partial-manifest-missing"
+  | "production-brev"
   | "pr-checker-bypass"
   | "pr-parser-bypass"
   | "brev-stable-version-drift"
@@ -149,6 +156,7 @@ type PinFormatting =
 const corruptFirstBrevPin = (source: string): string =>
   source.replace(ASSET_DIGESTS.get(ASSETS[0]) ?? "missing", "0".repeat(64));
 const BREV_MUTATIONS: Partial<Record<FixtureMode, (source: string) => string>> = {
+  "production-brev": () => PRODUCTION_BREV_TEMPLATE,
   "brev-bypassed-comparison": (source) =>
     source.replace('[[ "$release_sha" == "$expected_sha" ]]', "true"),
   "brev-changed-asset": (source) =>
@@ -909,6 +917,13 @@ function expectTrustedRelease(
 describe("installer hash verification", () => {
   it("verifies all installer and Brev pins from token-free checksum manifests", () => {
     const result = runFixture("complete");
+
+    expect(result.status, result.stdout).toBe(0);
+    expect(result.stdout).toContain("All installer hashes are current");
+  });
+
+  it("validates the current production Brev bootstrap against the trusted template", () => {
+    const result = runFixture("production-brev", "0.0.116");
 
     expect(result.status, result.stdout).toBe(0);
     expect(result.stdout).toContain("All installer hashes are current");

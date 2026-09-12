@@ -749,6 +749,10 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
         with: {},
       },
       {
+        name: "Install reviewed npm",
+        uses: "./.github/actions/setup-reviewed-npm",
+      },
+      {
         id: "select_pr_source",
         name: "Resolve exact PR managed-image publication",
         if: "${{ inputs.pr_number != '' }}",

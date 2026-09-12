@@ -50,6 +50,19 @@ export function dockerRunCommandBetween(
     .replace(/^(?:--[a-z-]+=[^\s]+\s+)+/u, "");
 }
 
+export function shellCommandSegmentBetween(
+  command: string,
+  startMarker: string,
+  endMarker: string,
+): string {
+  const start = command.indexOf(startMarker);
+  const end = command.indexOf(endMarker, start);
+  if (start === -1 || end === -1 || end <= start) {
+    throw new Error(`Expected shell command segment between ${startMarker} and ${endMarker}`);
+  }
+  return command.slice(start, end).trim();
+}
+
 function shellEnvironment(
   overrides: Record<string, string | undefined> | undefined,
 ): NodeJS.ProcessEnv | undefined {

@@ -20,7 +20,7 @@ import {
 } from "node:fs";
 import { basename, join, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
-import { packReviewedNpmArchive } from "./reviewed-npm-archive.mts";
+import { packReviewedNpmArchive, singleNpmPackResult } from "./reviewed-npm-archive.mts";
 
 type JsonObject = Record<string, any>;
 
@@ -138,25 +138,25 @@ const REMEDIATIONS: Readonly<Record<string, Remediation>> = Object.freeze({
   // #7337: remove this branch only after a reviewed diagnostics release ships a safe SDK graph.
   "@openclaw/diagnostics-otel@2026.7.1": {
     expectedPatchedTreeIntegrity:
-      "sha512-2qyDTRPqNs97jo/pAWWfxAkVZyCXYqui/IjrGf4eEfYop1eGN8qBMJ/Kp/bJ/V18RNnYpMxHi5ECFelekVxcAQ==",
+      "sha512-p3TthwGT081xMnHkZNwh6WwObk/OHkNtjImllLRuTezaro09kk6uShJDHpcwRtiW5C9RdbXN5DV/QS2lGoG/zQ==",
     kind: "jaeger",
     version: "2026.7.1",
   },
   "@openclaw/discord@2026.7.1": {
     expectedPatchedTreeIntegrity:
-      "sha512-w+F8FrRl0wPd0EN2RnLyu6yfixel7BT8Iex4wLLQDvfIac8rLhuksNpFU4uZa8W9wXgh47hguq0F9NSN0BZfOQ==",
+      "sha512-KUDcFJnqI3O7yKiBUh20ZijM7J7gkbpKGDw4bb8y+uO8s914US6PieyzwAzgycRXWfXPxHQx5CTDrg28PdKfaw==",
     kind: "undici",
     version: "2026.7.1",
   },
   "@openclaw/msteams@2026.7.1": {
     expectedPatchedTreeIntegrity:
-      "sha512-FL4l65gEbbwtDd9Ogr69+xBNzIfE4YS8Hib36G+kcmX+T0oB1zL+/qs6b4bJc+ygTsh60H3yqpFbXoQeN05JYQ==",
+      "sha512-qk1PXcRU5r/7zWIJlwHGTBmKIuLoBYHhv6hA1w+mYs0H9JX0nBk6WccahcmiWVzu2SsryCQ4Sck6j4Fbu6kcHg==",
     kind: "axios",
     version: "2026.7.1",
   },
   "@openclaw/slack@2026.7.1": {
     expectedPatchedTreeIntegrity:
-      "sha512-4ThnsNS+yBlFSkTaQn2xosxrDu1s0vrxcqka5QqFj+8dCEaTa9JVLRgNniYV/QNhO53wc7a2R5oQFElzYspT2w==",
+      "sha512-A23af8PA4KuO8vju0viceyj1Y0M7ywF66TxKZZ8rI21L/TSn8RrzqiSaOV4UewV3/PLjDz+lY5lY+qbycOCBfg==",
     kind: "axios",
     version: "2026.7.1",
   },
@@ -168,9 +168,12 @@ const REMEDIATIONS: Readonly<Record<string, Remediation>> = Object.freeze({
   },
   // openclaw/openclaw#113584: remove after a supported OpenClaw archive
   // publishes every corrected dependency identity in its manifest and shrinkwrap.
+  // npm 12 no longer packs or honors npm-shrinkwrap.json. The reviewed archive
+  // still ships the complete bundleDependencies tree, and this digest pins that
+  // exact npm 12 packed tree so either a packlist or bundled-graph change fails.
   "openclaw@2026.7.1": {
     expectedPatchedTreeIntegrity:
-      "sha512-PzF1Lyw0yIo3mr7mNGql7azYoioDP+jQ47gERww6vgb9iyKnEWcscScsvv1IOt9yCp6BJTLxcRYYe7X0s95BnA==",
+      "sha512-j/ArEzhwh+FDiIqgKQBFMiDUk5wHOHzGxbvl5hnh2W8X0nTpJ5oW/VzO8T5B7HqI6MVlQp4NLadFveN209TLLg==",
     kind: "current-core",
     version: "2026.7.1",
   },
@@ -1379,10 +1382,11 @@ export function buildRemediatedOpenClawPluginArchive(
     env,
   );
   const packed = JSON.parse(packedJson);
-  if (!Array.isArray(packed) || packed.length !== 1 || typeof packed[0]?.filename !== "string") {
+  const packedResult = singleNpmPackResult(packed);
+  if (typeof packedResult?.filename !== "string") {
     throw new Error(`npm pack returned an invalid remediation result for ${request.packageSpec}`);
   }
-  const archivePath = resolve(outputDirectory, basename(packed[0].filename));
+  const archivePath = resolve(outputDirectory, basename(packedResult.filename));
   validateArchiveMembers(archivePath, remediationRoot, env);
   const packedPackage = extractArchive(
     archivePath,

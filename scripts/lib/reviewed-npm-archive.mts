@@ -81,6 +81,18 @@ export type ReviewedNpmArchiveFileRequest = Readonly<{
 
 type NpmRunner = (args: readonly string[], request: ReviewedNpmArchiveRequest) => string;
 
+export function singleNpmPackResult(value: unknown): Record<string, unknown> | undefined {
+  const entries = Array.isArray(value)
+    ? value
+    : typeof value === "object" && value !== null
+      ? Object.values(value)
+      : [];
+  const entry = entries.length === 1 ? entries[0] : undefined;
+  return typeof entry === "object" && entry !== null
+    ? (entry as Record<string, unknown>)
+    : undefined;
+}
+
 function runNpm(args: readonly string[], request: ReviewedNpmArchiveRequest): string {
   const result = spawnSync(request.npmExecutable ?? "npm", args, {
     encoding: "utf-8",
@@ -211,7 +223,7 @@ export function packReviewedNpmArchive(
   );
   try {
     const packJson = npmRunner(
-      ["pack", request.tarballUrl, "--pack-destination", rootDirectory, "--json"],
+      ["pack", request.packageSpec, "--pack-destination", rootDirectory, "--json"],
       request,
     );
     let parsed: unknown;
@@ -220,7 +232,7 @@ export function packReviewedNpmArchive(
     } catch (error) {
       throw new Error(`npm pack ${request.packageSpec} did not return JSON: ${String(error)}`);
     }
-    const entry = Array.isArray(parsed) && parsed.length === 1 ? parsed[0] : undefined;
+    const entry = singleNpmPackResult(parsed);
     const filename =
       typeof entry === "object" && entry !== null && "filename" in entry
         ? String(entry.filename ?? "")

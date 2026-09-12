@@ -9,6 +9,14 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 const SCRIPT = path.join(import.meta.dirname, "../../..", "scripts", "brev-launchable-ci-cpu.sh");
+const REVIEWED_RUNTIME = JSON.parse(
+  fs.readFileSync(
+    path.join(import.meta.dirname, "../../..", "ci", "reviewed-npm-audit.json"),
+    "utf8",
+  ),
+) as { nodeVersion: string; npmVersion: string };
+const REVIEWED_NODE_VERSION = REVIEWED_RUNTIME.nodeVersion;
+const REVIEWED_NPM_VERSION = REVIEWED_RUNTIME.npmVersion;
 const BREV_LIFECYCLE_SCRIPT_MAX_BYTES = 16 * 1024;
 const ASSET = "openshell-x86_64-unknown-linux-musl.tar.gz";
 const PINNED_ASSET_SHA256 = "4fb4476d80a1875a0b83547ec3aba999cf0a2e2d75f95f2f709b622e2103520e";
@@ -25,6 +33,7 @@ type FakeSystemOptions = {
     | "traversal";
   checksum: "match" | "mismatch" | "unpinned";
   nodeSourceChecksumTool?: boolean;
+  reviewedNpmFailure?: boolean;
   openshellVersion?: string;
 };
 
@@ -50,6 +59,7 @@ function makeFakeSystem(options: FakeSystemOptions): {
   fakeBin: string;
   launchLog: string;
   sudoLog: string;
+  npmTmpLog: string;
   tarLog: string;
 } {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-brev-checksum-"));
@@ -59,6 +69,7 @@ function makeFakeSystem(options: FakeSystemOptions): {
   const curlLog = path.join(root, "curl.log");
   const dockerLog = path.join(root, "docker.log");
   const sudoLog = path.join(root, "sudo.log");
+  const npmTmpLog = path.join(root, "npm-tmp.log");
   const tarLog = path.join(root, "tar.log");
   fs.mkdirSync(fakeBin);
 
@@ -114,14 +125,14 @@ exec bash -c "\${1:-}"
   writeExecutable(
     path.join(fakeBin, "node"),
     `#!/usr/bin/env bash
-if [ "\${1:-}" = "-p" ]; then printf '${options.nodeSourceChecksumTool === false ? "20" : "22"}\\n'; exit 0; fi
-if [ "\${1:-}" = "--version" ]; then printf 'v22.19.0\\n'; exit 0; fi
+if [ "\${1:-}" = "--version" ]; then printf '${options.nodeSourceChecksumTool === false ? "v22.19.0" : `v${REVIEWED_NODE_VERSION}`}\\n'; exit 0; fi
 exit 0
 `,
   );
   writeExecutable(
     path.join(fakeBin, "npm"),
     `#!/usr/bin/env bash
+if [ "\${1:-}" = "--version" ]; then printf '${REVIEWED_NPM_VERSION}\\n'; exit 0; fi
 printf 'npm stub %s\\n' "$*"
 exit 0
 `,
@@ -169,6 +180,10 @@ exec /usr/bin/tar "$@"
     path.join(fakeBin, "sudo"),
     `#!/usr/bin/env bash
 printf '%s\\n' "$*" >> ${JSON.stringify(sudoLog)}
+if [[ "$*" == *setup-reviewed-npm/verify-and-install-npm.sh* ]]; then
+  printf '%s\\n' "$*" | sed -n 's/.*RUNNER_TEMP=\\([^ ]*\\).*/\\1/p' > ${JSON.stringify(npmTmpLog)}
+  exit ${options.reviewedNpmFailure ? 42 : 0}
+fi
 if [ "\${1:-}" = "install" ]; then
   shift
   if [ "\${1:-}" = "-m" ]; then shift 2; fi
@@ -252,6 +267,7 @@ exec /usr/bin/sha256sum "$@"
     fakeBin,
     launchLog,
     sudoLog,
+    npmTmpLog,
     tarLog,
   };
 }
@@ -285,6 +301,34 @@ function combinedLaunchableOutput(result: ReturnType<typeof spawnSync>, launchLo
 describe("brev-launchable-ci-cpu.sh OpenShell checksum gate", { timeout: 30_000 }, () => {
   it("fits within Brev's lifecycle setup-script limit", () => {
     expect(fs.statSync(SCRIPT).size).toBeLessThanOrEqual(BREV_LIFECYCLE_SCRIPT_MAX_BYTES);
+  });
+
+  it("removes temporary npm bootstrap state when installation fails", () => {
+    const { fake, result } = runLaunchable({ checksum: "match", reviewedNpmFailure: true });
+    try {
+      expect(result.status, combinedLaunchableOutput(result, fake.launchLog)).toBe(42);
+      const temporaryDirectory = fs.readFileSync(fake.npmTmpLog, "utf8").trim();
+      expect(temporaryDirectory).not.toBe("");
+      expect(fs.existsSync(temporaryDirectory)).toBe(false);
+    } finally {
+      fake.cleanup();
+    }
+  });
+
+  it("pins both reviewed Node.js archives and installs the canonical reviewed npm", () => {
+    const source = fs.readFileSync(SCRIPT, "utf8");
+    expect(source).toContain(`NODE_VERSION="${REVIEWED_NODE_VERSION}"`);
+    expect(source).toContain(
+      'node_sha256="9f5eb6ac21845a66c493c91a253b1da32fd684e89e9b7202d4936982336be4ca"',
+    );
+    expect(source).toContain(
+      'node_sha256="df224555a083b918e46260cc969838501b9f9a87140c1195e5b9597b56d5dae2"',
+    );
+    expect(source).toContain(
+      "bash .github/actions/setup-reviewed-npm/verify-and-install-npm.sh ci/reviewed-npm-audit.json",
+    );
+    expect(source).toContain(`[[ "$(npm --version)" == "${REVIEWED_NPM_VERSION}" ]]`);
+    expect(source).not.toContain("deb.nodesource.com");
   });
 
   it("rejects malformed OPENSHELL_VERSION before downloads or privileged setup", () => {
@@ -338,7 +382,7 @@ describe("brev-launchable-ci-cpu.sh OpenShell checksum gate", { timeout: 30_000 
     }
   });
 
-  it("refuses to run the NodeSource installer as root when no SHA-256 tool is available", () => {
+  it("refuses to extract the Node.js archive when no SHA-256 tool is available", () => {
     const { fake, result } = runLaunchable({
       checksum: "match",
       nodeSourceChecksumTool: false,
@@ -349,10 +393,10 @@ describe("brev-launchable-ci-cpu.sh OpenShell checksum gate", { timeout: 30_000 
       expect(result.status, out).toBe(1);
       expect(out).toContain("No SHA-256 tool available (sha256sum/shasum)");
       expect(fs.readFileSync(fake.curlLog, "utf-8")).toContain(
-        "https://deb.nodesource.com/setup_22.x",
+        `https://nodejs.org/dist/v${REVIEWED_NODE_VERSION}/node-v${REVIEWED_NODE_VERSION}-linux-x64.tar.gz`,
       );
-      expect(sudoLog).not.toMatch(/^-E bash /m);
-      expect(out).not.toContain("NodeSource installer integrity verified");
+      expect(sudoLog).not.toMatch(/^tar -xzf /m);
+      expect(out).not.toContain(`Node.js v${REVIEWED_NODE_VERSION} installed`);
     } finally {
       fake.cleanup();
     }

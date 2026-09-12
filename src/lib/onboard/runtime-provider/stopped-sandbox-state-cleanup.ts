@@ -14,7 +14,7 @@ const FULL_CONTAINER_ID_RE = /^[a-f0-9]{64}$/u;
 const VOLUME_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,254}$/u;
 const STATE_PATH_RE = /^\/sandbox\/\.(?:openclaw|hermes)\/[A-Za-z0-9_-]+$/u;
 const CLEANUP_IMAGE =
-  "node:22-trixie-slim@sha256:db8a96a63e5264607ada2d206758876ebbed6a12be2ada7517793cbfb0c2a29c";
+  "node:24.18.1-trixie-slim@sha256:ac39e4b5fcb2b1b34b20364fd58b2e898f3bb80731ee6f62a7536f9df3d6aadc";
 const CLEANUP_LABEL = "com.nvidia.nemoclaw.channel-cleanup";
 const CLEANUP_OWNER_LABEL = `${CLEANUP_LABEL}.owner`;
 const CLEANUP_VOLUME_LABEL = `${CLEANUP_LABEL}.volume`;

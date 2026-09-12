@@ -6,6 +6,7 @@ import { cpSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
+import { npmPackFilePaths } from "../helpers/npm-pack-result";
 import { createPackageFixture } from "./helpers/package-fixture";
 
 const REPOSITORY_ROOT = path.join(import.meta.dirname, "..", "..");
@@ -28,13 +29,12 @@ describe("compiled config schema consumer", () => {
       ],
     });
     try {
-      const report = JSON.parse(
+      const files = npmPackFilePaths(
         execFileSync("npm", ["pack", "--dry-run", "--json", "--ignore-scripts"], {
           cwd: fixtureRoot,
           encoding: "utf8",
         }),
-      ) as Array<{ files: Array<{ path: string }> }>;
-      const files = report[0]?.files.map((file) => file.path) ?? [];
+      );
       expect(files).toEqual(
         expect.arrayContaining([
           "schemas/nemoclaw-config-v1.schema.json",

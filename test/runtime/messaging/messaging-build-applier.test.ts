@@ -81,11 +81,11 @@ function fakeOpenClawPluginNpmPackScriptLines(): string[] {
     'if [ "${1:-}" = "pack" ]; then',
     '  pack_dir="${4:-}";',
     '  case "${2:-}" in',
-    `    "https://registry.npmjs.org/@openclaw/discord/-/discord-2026.7.1.tgz") pack_file="discord-2026.7.1.tgz"; pack_integrity="\${OPENCLAW_DISCORD_INTEGRITY:-\${OPENCLAW_DISCORD_2026_7_1_INTEGRITY:-}}" ;;`,
-    `    "https://registry.npmjs.org/@tencent-weixin/openclaw-weixin/-/openclaw-weixin-2.4.3.tgz") pack_file="openclaw-weixin-2.4.3.tgz"; pack_integrity="\${TENCENT_WEIXIN_2_4_3_INTEGRITY:-}" ;;`,
-    `    "https://registry.npmjs.org/@openclaw/slack/-/slack-2026.7.1.tgz") pack_file="slack-2026.7.1.tgz"; pack_integrity="\${OPENCLAW_SLACK_INTEGRITY:-\${OPENCLAW_SLACK_2026_7_1_INTEGRITY:-}}" ;;`,
-    `    "https://registry.npmjs.org/@openclaw/whatsapp/-/whatsapp-2026.7.1.tgz") pack_file="whatsapp-2026.7.1.tgz"; pack_integrity="\${OPENCLAW_WHATSAPP_2026_7_1_INTEGRITY:-}" ;;`,
-    `    "https://registry.npmjs.org/@openclaw/msteams/-/msteams-2026.7.1.tgz") pack_file="msteams-2026.7.1.tgz"; pack_integrity="\${OPENCLAW_MSTEAMS_2026_7_1_INTEGRITY:-}" ;;`,
+    `    "@openclaw/discord@2026.7.1") pack_file="discord-2026.7.1.tgz"; pack_integrity="\${OPENCLAW_DISCORD_INTEGRITY:-\${OPENCLAW_DISCORD_2026_7_1_INTEGRITY:-}}" ;;`,
+    `    "@tencent-weixin/openclaw-weixin@2.4.3") pack_file="openclaw-weixin-2.4.3.tgz"; pack_integrity="\${TENCENT_WEIXIN_2_4_3_INTEGRITY:-}" ;;`,
+    `    "@openclaw/slack@2026.7.1") pack_file="slack-2026.7.1.tgz"; pack_integrity="\${OPENCLAW_SLACK_INTEGRITY:-\${OPENCLAW_SLACK_2026_7_1_INTEGRITY:-}}" ;;`,
+    `    "@openclaw/whatsapp@2026.7.1") pack_file="whatsapp-2026.7.1.tgz"; pack_integrity="\${OPENCLAW_WHATSAPP_2026_7_1_INTEGRITY:-}" ;;`,
+    `    "@openclaw/msteams@2026.7.1") pack_file="msteams-2026.7.1.tgz"; pack_integrity="\${OPENCLAW_MSTEAMS_2026_7_1_INTEGRITY:-}" ;;`,
     "    *) exit 1 ;;",
     "  esac",
     '  test -n "$pack_dir"; test -n "$pack_integrity";',
@@ -678,9 +678,7 @@ describe("messaging-build-applier.mts: agent-install", () => {
       expect(applyMessagingBuildPhase(serializedPlan, "agent-install", env)).toEqual([]);
       const trace = fs.readFileSync(tracePath, "utf-8");
       expect(trace).toContain("npm|view|@openclaw/discord@2026.7.1|dist.integrity");
-      expect(trace).toContain(
-        "npm|pack|https://registry.npmjs.org/@openclaw/discord/-/discord-2026.7.1.tgz|--pack-destination",
-      );
+      expect(trace).toContain("npm|pack|@openclaw/discord@2026.7.1|--pack-destination");
       expect(trace).toContain("plugins|install|npm-pack:");
       expect(trace).toContain("discord-2026.7.1.tgz|ignore-scripts=true/true");
     } finally {
@@ -708,7 +706,7 @@ describe("messaging-build-applier.mts: agent-install", () => {
         "  process.stdout.write('https://registry.npmjs.org/@openclaw/msteams/-/msteams-2026.7.1.tgz\\n');",
         "  process.exit(0);",
         "}",
-        "if (command === 'pack' && packageSpec === 'https://registry.npmjs.org/@openclaw/msteams/-/msteams-2026.7.1.tgz') {",
+        "if (command === 'pack' && packageSpec === '@openclaw/msteams@2026.7.1') {",
         "  const packFile = 'msteams-2026.7.1.tgz';",
         "  fs.writeFileSync(path.join(destination, packFile), 'fake plugin tarball');",
         "  process.stdout.write(JSON.stringify([{ filename: packFile, integrity: process.env.OPENCLAW_MSTEAMS_2026_7_1_INTEGRITY }]) + '\\n');",
@@ -748,9 +746,7 @@ describe("messaging-build-applier.mts: agent-install", () => {
       const trace = fs.readFileSync(tracePath, "utf-8");
       expect(trace).toContain("npm|view|@openclaw/msteams@2026.7.1|dist.integrity");
       expect(trace).toContain("npm|view|@openclaw/msteams@2026.7.1|dist.tarball");
-      expect(trace).toContain(
-        "npm|pack|https://registry.npmjs.org/@openclaw/msteams/-/msteams-2026.7.1.tgz|--pack-destination",
-      );
+      expect(trace).toContain("npm|pack|@openclaw/msteams@2026.7.1|--pack-destination");
       expect(trace).toContain("openclaw|plugins|install|npm-pack:");
       expect(trace).toContain("msteams-2026.7.1.tgz|");
       expect(remediateReviewedArchive).toHaveBeenCalledWith(
@@ -976,7 +972,7 @@ describe("messaging-build-applier.mts: agent-install", () => {
 
         expect(trace).toContain(`npm|view|${packageSpec}|dist.integrity`);
         expect(trace).toContain(`npm|view|${packageSpec}|dist.tarball`);
-        expect(trace).toContain(`npm|pack|${tarballUrl}|--pack-destination`);
+        expect(trace).toContain(`npm|pack|${packageSpec}|--pack-destination`);
         expect(trace).toContain("plugins|install|npm-pack:");
         expect(trace).toContain(`${archiveName}||||`);
 
@@ -1033,9 +1029,7 @@ describe("messaging-build-applier.mts: agent-install", () => {
       const trace = fs.readFileSync(tracePath, "utf-8");
       expect(trace).toContain("npm|view|@openclaw/slack@2026.7.1|dist.integrity");
       expect(trace).toContain("npm|view|@openclaw/slack@2026.7.1|dist.tarball");
-      expect(trace).toContain(
-        "npm|pack|https://registry.npmjs.org/@openclaw/slack/-/slack-2026.7.1.tgz|--pack-destination",
-      );
+      expect(trace).toContain("npm|pack|@openclaw/slack@2026.7.1|--pack-destination");
       expect(trace).toContain("openclaw|plugins|install|npm-pack:");
       expect(trace).toContain("slack-2026.7.1.tgz|");
       expect(remediateReviewedArchive).toHaveBeenCalledWith(

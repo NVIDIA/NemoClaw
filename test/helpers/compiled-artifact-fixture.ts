@@ -86,6 +86,7 @@ export function runCompiledArtifactPreparation(
   for (const [index, step] of action.runs.steps.entries()) {
     if (!enabled(step.if) || (failure && step.if !== "always()")) continue;
     if (step.uses?.startsWith("actions/setup-node@")) continue;
+    if (step.uses?.startsWith("NVIDIA/NemoClaw/.github/actions/setup-reviewed-npm@")) continue;
     if (step.uses?.startsWith("actions/cache/restore@")) {
       restored++;
       outputs[step.id!] = { "cache-hit": String(cacheHit) };

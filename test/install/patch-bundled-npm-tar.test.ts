@@ -33,7 +33,10 @@ function writeJson(file: string, value: object): void {
   fs.writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`);
 }
 
-function fixture(npmVersion: "10.9.7" | "11.13.0" | "11.16.0" | "11.18.0", tarVersion: string) {
+function fixture(
+  npmVersion: "10.9.7" | "11.13.0" | "11.16.0" | "11.18.0" | "12.0.2",
+  tarVersion: string,
+) {
   const root = temporaryDirectory();
   const npmRoot = path.join(root, "npm");
   const replacementRoot = path.join(root, "replacement");
@@ -42,7 +45,11 @@ function fixture(npmVersion: "10.9.7" | "11.13.0" | "11.16.0" | "11.18.0", tarVe
     version: npmVersion,
     dependencies: {
       tar:
-        npmVersion === "11.18.0" ? "^7.5.19" : npmVersion.startsWith("10.") ? "^7.5.11" : "^7.5.13",
+        npmVersion === "11.18.0" || npmVersion === "12.0.2"
+          ? "^7.5.19"
+          : npmVersion.startsWith("10.")
+            ? "^7.5.11"
+            : "^7.5.13",
     },
     bundleDependencies: ["other", "tar"],
   });
@@ -82,6 +89,7 @@ describe("npm bundled node-tar remediation", () => {
     ["Node.js 24.18 npm", "11.16.0", "7.5.15"],
     ["reviewed npm advisory release", "11.18.0", "7.5.19"],
     ["reviewed npm affected boundary", "11.18.0", "7.5.20"],
+    ["reviewed npm 12 release", "12.0.2", "7.5.19"],
   ] as const)("replaces the complete affected tree for %s", (_label, npmVersion, tarVersion) => {
     const target = fixture(npmVersion, tarVersion);
 
@@ -274,7 +282,7 @@ describe("npm bundled node-tar remediation", () => {
     const drifted = fixture("10.9.7", "7.5.11");
     const manifestPath = path.join(drifted.npmRoot, "package.json");
     const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
-    manifest.version = "12.0.0";
+    manifest.version = "13.0.0";
     writeJson(manifestPath, manifest);
     expect(() => patchBundledNpmTar(drifted)).toThrow("layout has drifted");
 

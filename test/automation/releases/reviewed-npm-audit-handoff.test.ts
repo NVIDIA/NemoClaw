@@ -14,6 +14,13 @@ import { emitAuditReceipt } from "../../../scripts/audit-reviewed-npm-graph.mts"
 import { prepareReviewedNpmBootstrap } from "../../support/reviewed-npm-bootstrap";
 
 const REPO_ROOT = path.join(import.meta.dirname, "../../..");
+const NPM_INTEGRITY =
+  "sha512-uIXokLlBj6FpNUTQX1PmT5pz7BlIN9QlixX+zdaSNHsd0qUXsbDLr50xzY6Sw7cJVr0uzHKDOle0swmPW/p5Qw==";
+const REVIEWED_NPM_IDENTITY = {
+  npmArchiveSha256: "5dbb86c71d07a1957f2e90734092dd6a58bdcd9ebc2d8d41ca1c6e6a21d364e1",
+  npmIntegrity: NPM_INTEGRITY,
+  npmVersion: "12.0.2",
+} as const;
 const TRUSTED_WORKFLOWS = [
   "e2e.yaml",
   "managed-images.yaml",
@@ -157,14 +164,7 @@ describe("npm audit handoff", () => {
       fs.writeFileSync(packageLockFile, packageLock);
       fs.writeFileSync(rawReportFile, rawReport);
       fs.writeFileSync(exceptionFile, exceptionPolicy);
-      fs.writeFileSync(
-        auditConfigFile,
-        JSON.stringify({
-          npmArchiveSha256: "0".repeat(64),
-          npmIntegrity: `sha512-${Buffer.alloc(64).toString("base64")}`,
-          npmVersion: "10.9.4",
-        }),
-      );
+      fs.writeFileSync(auditConfigFile, JSON.stringify(REVIEWED_NPM_IDENTITY));
       fs.writeFileSync(
         path.join(root, "report.provenance.json"),
         JSON.stringify({ run: { startedAt: new Date().toISOString() } }),
@@ -172,11 +172,7 @@ describe("npm audit handoff", () => {
       const receiptFile = emitAuditReceipt({
         artifactDirectory: root,
         graphId: "temporary-graph",
-        reviewedNpmIdentity: {
-          npmArchiveSha256: "0".repeat(64),
-          npmIntegrity: `sha512-${Buffer.alloc(64).toString("base64")}`,
-          npmVersion: "10.9.4",
-        },
+        reviewedNpmIdentity: REVIEWED_NPM_IDENTITY,
         packageJsonFile,
         packageLockFile,
         preserveInputs: true,
@@ -234,11 +230,7 @@ describe("npm audit handoff", () => {
       fs.rmSync(resultFile);
       fs.writeFileSync(
         auditConfigFile,
-        JSON.stringify({
-          npmArchiveSha256: "0".repeat(64),
-          npmIntegrity: `sha512-${Buffer.alloc(64).toString("base64")}`,
-          npmVersion: "11.18.0",
-        }),
+        JSON.stringify({ ...REVIEWED_NPM_IDENTITY, npmVersion: "11.18.0" }),
       );
       const rejected = spawnSync(process.execPath, verifierArgs, { encoding: "utf8" });
       expect(rejected.status).not.toBe(0);
@@ -407,8 +399,6 @@ describe("npm audit handoff", () => {
         "https://registry.yarnpkg.com",
         "--threshold",
         "high",
-        "--legacy-audit",
-        "true",
         "--result",
         trustedPolicyResult,
       ];

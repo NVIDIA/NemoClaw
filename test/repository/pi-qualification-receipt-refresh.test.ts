@@ -75,6 +75,7 @@ describe("Pi qualification receipt refresh", () => {
       accepted?: ReadonlySet<string>;
       headRevision?: string;
       sourceParity?: boolean;
+      stagedPaths?: readonly string[];
     } = {},
   ): void {
     checkPiQualificationReceiptRefresh({
@@ -84,7 +85,10 @@ describe("Pi qualification receipt refresh", () => {
         args[0] === "merge-base"
           ? { status: 0, stdout: "base\n" }
           : args.includes("--name-only")
-            ? { status: 0, stdout: `${changedPaths.join("\0")}\0` }
+            ? {
+                status: 0,
+                stdout: `${(args.includes("--cached") ? (options.stagedPaths ?? []) : changedPaths).join("\0")}\0`,
+              }
             : args.includes("--quiet")
               ? args[3] === (options.headRevision ?? "HEAD")
                 ? { status: options.sourceParity === false ? 1 : 0, stdout: "" }
@@ -126,6 +130,14 @@ describe("Pi qualification receipt refresh", () => {
   it("accepts refreshed receipts when image sources match the receipt revision", () => {
     expect(() =>
       run(["protected/app/config.json", ...RECEIPTS.map(({ path: receiptPath }) => receiptPath)]),
+    ).not.toThrow();
+  });
+
+  it("accepts a staged receipt refresh after a committed image source change", () => {
+    expect(() =>
+      run(["protected/app/config.json"], {
+        stagedPaths: RECEIPTS.map(({ path: receiptPath }) => receiptPath),
+      }),
     ).not.toThrow();
   });
 

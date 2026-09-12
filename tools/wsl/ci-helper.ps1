@@ -302,15 +302,17 @@ function Install-WslUbuntuDependencies {
 function Get-WslNodeInstallScript {
     return @'
 set -euo pipefail
-node_version="22.23.2"
+node_version="24.18.1"
+npm_version="12.0.2"
+expected_npm_integrity="sha512-uIXokLlBj6FpNUTQX1PmT5pz7BlIN9QlixX+zdaSNHsd0qUXsbDLr50xzY6Sw7cJVr0uzHKDOle0swmPW/p5Qw=="
 case "$(uname -m)" in
   x86_64)
     node_arch="x64"
-    node_sha256="d60acfe00a2932254bb0ad20e01b0d74397a0875595de719654b214f4b03f307"
+    node_sha256="d6c664df3f3f61458e8c277585571328522d705166723a7c7823a9253a4d15a0"
     ;;
   aarch64 | arm64)
     node_arch="arm64"
-    node_sha256="fff4078c5def658577f92c88db7db3bc0072924bfb93fe52c1e744a54e94abb8"
+    node_sha256="7201e3a09dc825bac57867c81913e2b8f0ef87d04cb9082af4cda82f6ff3d88c"
     ;;
   *)
     echo "Unsupported Node.js architecture: $(uname -m)" >&2
@@ -332,6 +334,29 @@ printf '%s  %s\n' "$node_sha256" "$archive" | sha256sum --check --status || {
 }
 tar --extract --xz --file "$archive" --directory /usr/local --strip-components=1
 test "$(node --version)" = "v${node_version}"
+env -u NODE_AUTH_TOKEN -u NPM_TOKEN -u NPM_CONFIG__AUTH_TOKEN \
+  npm pack "npm@${npm_version}" \
+  --pack-destination "$temp_dir" \
+  --userconfig /dev/null \
+  --registry https://registry.npmjs.org/ \
+  --ignore-scripts --no-audit --no-fund >/dev/null
+npm_archive="$temp_dir/npm-${npm_version}.tgz"
+actual_npm_integrity="sha512-$(
+  node -e '
+    const fs = require("node:fs");
+    const crypto = require("node:crypto");
+    process.stdout.write(crypto.createHash("sha512").update(fs.readFileSync(process.argv[1])).digest("base64"));
+  ' "$npm_archive"
+)"
+test "$actual_npm_integrity" = "$expected_npm_integrity" || {
+  echo "npm@${npm_version} archive integrity verification failed" >&2
+  exit 1
+}
+env -u NODE_AUTH_TOKEN -u NPM_TOKEN -u NPM_CONFIG__AUTH_TOKEN \
+  npm install --global "$npm_archive" \
+  --userconfig /dev/null \
+  --ignore-scripts --no-audit --no-fund --offline
+test "$(npm --version)" = "$npm_version"
 node --version
 npm --version
 '@

@@ -271,11 +271,13 @@ const SKILL_LIFECYCLE_OWNING_PATHS = [
 const PI_IMAGE_SOURCE_OWNING_PATHS = [
   ".dockerignore",
   "agents/pi/",
+  "ci/reviewed-npm-audit.json",
   "nemoclaw-blueprint/",
   "scripts/lib/bundled-npm-package.mts",
   "scripts/lib/entrypoint-env-wrapper.sh",
   "scripts/lib/patch-bundled-npm-ip-address.mts",
   "scripts/lib/reviewed-npm-archive.mts",
+  "scripts/lib/reviewed-npm-identity.mts",
   "scripts/lib/sandbox-rlimits.sh",
   "scripts/managed-bootstrap-entrypoint.c",
   "scripts/managed-bootstrap-trampoline.sh",

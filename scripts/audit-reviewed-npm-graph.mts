@@ -201,6 +201,14 @@ export function parseAuditConfig(contents: string): AuditConfig {
     parsed.archiveTarVersion !== "7.5.21" ||
     typeof parsed.exceptionFile !== "string" ||
     !parsed.exceptionFile ||
+    typeof parsed.npmVersion !== "string" ||
+    !/^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$/.test(parsed.npmVersion) ||
+    /[\r\n]/.test(parsed.npmVersion) ||
+    typeof parsed.npmArchiveSha256 !== "string" ||
+    !/^[a-f0-9]{64}$/.test(parsed.npmArchiveSha256) ||
+    typeof parsed.npmIntegrity !== "string" ||
+    !/^sha512-[A-Za-z0-9+/]+={0,2}$/.test(parsed.npmIntegrity) ||
+    /[\r\n]/.test(parsed.npmIntegrity) ||
     typeof parsed.registryOrigin !== "string" ||
     !parsed.registryOrigin ||
     !Array.isArray(parsed.archivePackages) ||
@@ -282,6 +290,25 @@ export function reviewedArchiveGraphManifest(archiveTarVersion: unknown) {
   } as const;
 }
 
+export function stageReviewedArchiveForInstall(
+  graphDirectory: string,
+  archivePath: string,
+  index: number,
+): string {
+  if (!Number.isSafeInteger(index) || index < 0) {
+    throw new Error("reviewed archive install index must be a non-negative integer");
+  }
+  const filename = path.basename(archivePath);
+  if (!filename.endsWith(".tgz") || filename === ".tgz") {
+    throw new Error(`reviewed archive install filename is invalid: ${filename}`);
+  }
+  const relativeArchivePath = path.join("reviewed-archives", `${index}-${filename}`);
+  const archiveDirectory = path.join(graphDirectory, "reviewed-archives");
+  fs.mkdirSync(archiveDirectory, { recursive: true });
+  fs.copyFileSync(archivePath, path.join(graphDirectory, relativeArchivePath));
+  return `.${path.sep}${relativeArchivePath}`;
+}
+
 function materializeArchiveGraph(
   packages: readonly ReviewedPackage[],
   tempRoot: string,
@@ -293,7 +320,7 @@ function materializeArchiveGraph(
     path.join(graphDirectory, "package.json"),
     `${JSON.stringify(reviewedArchiveGraphManifest(archiveTarVersion), null, 2)}\n`,
   );
-  const archives = packages.map((reviewed) => {
+  const archives = packages.map((reviewed, index) => {
     const archive = packReviewedNpmArchive({
       expectedIntegrity: reviewed.integrity,
       label: reviewed.label,
@@ -301,22 +328,16 @@ function materializeArchiveGraph(
       tarballUrl: reviewed.tarballUrl,
       tempDirectory: tempRoot,
     });
-    return remediateReviewedOpenClawPluginArchive({
+    const remediated = remediateReviewedOpenClawPluginArchive({
       archivePath: archive.archivePath,
       packageSpec: reviewed.packageSpec,
       workingDirectory: archive.rootDirectory,
     });
+    return stageReviewedArchiveForInstall(graphDirectory, remediated.archivePath, index);
   });
   run(
     "npm",
-    [
-      "install",
-      "--ignore-scripts",
-      "--omit=dev",
-      "--no-audit",
-      "--no-fund",
-      ...archives.map((archive) => archive.archivePath),
-    ],
+    ["install", "--ignore-scripts", "--omit=dev", "--no-audit", "--no-fund", ...archives],
     graphDirectory,
   );
   return graphDirectory;
@@ -724,6 +745,7 @@ function auditLockedGraph(
     provenance: {
       label: graph.label,
       nodeVersion: process.version,
+      npmIntegrity: config.npmIntegrity,
       npmVersion: config.npmVersion,
       packageSpecs: [graph.packageSpec],
     },
@@ -805,6 +827,7 @@ export function auditMaterializedSourceGraph(
     provenance: {
       label: SOURCE_GRAPH.label,
       nodeVersion: process.version,
+      npmIntegrity: options.reviewedNpmIdentity.npmIntegrity,
       npmVersion: options.reviewedNpmIdentity.npmVersion,
       packageSpecs: [options.packageSpec],
     },
@@ -937,6 +960,7 @@ function main(): void {
       provenance: {
         label: "reviewed archive graph",
         nodeVersion: process.version,
+        npmIntegrity: config.npmIntegrity,
         npmVersion,
         packageSpecs: config.archivePackages.map((reviewed) => reviewed.packageSpec),
       },

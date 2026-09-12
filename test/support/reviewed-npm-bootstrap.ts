@@ -10,7 +10,7 @@ import path from "node:path";
 const REPO_ROOT = path.join(import.meta.dirname, "../..");
 const BOOTSTRAP = path.join(
   REPO_ROOT,
-  ".github/actions/ci-reviewed-npm-audit/verify-and-install-npm.sh",
+  ".github/actions/setup-reviewed-npm/verify-and-install-npm.sh",
 );
 
 export type ReviewedNpmIdentity = Record<
@@ -23,6 +23,7 @@ type FixtureOptions = {
   command?: string;
   configFile?: (root: string) => string;
   environment?: (root: string) => NodeJS.ProcessEnv;
+  installedVersion?: string;
   mutateIdentity?: (identity: ReviewedNpmIdentity) => ReviewedNpmIdentity;
   prepare?: (root: string) => void;
 };
@@ -84,6 +85,7 @@ case "$1" in
     exit 2
     ;;
   install) : > "$NEMOCLAW_TEST_INSTALL_MARKER" ;;
+  --version) printf '%s\n' "$NEMOCLAW_TEST_INSTALLED_VERSION" ;;
   *) exit 2 ;;
 esac
 `,
@@ -103,6 +105,7 @@ esac
         ...options.environment?.(root),
         NEMOCLAW_TEST_ARCHIVE_FILE: archiveFile,
         NEMOCLAW_TEST_INSTALL_MARKER: installMarker,
+        NEMOCLAW_TEST_INSTALLED_VERSION: options.installedVersion ?? "12.0.2",
         NEMOCLAW_TEST_NPM_LOG: npmLog,
         PATH: `${bin}:${process.env.PATH ?? ""}`,
         RUNNER_TEMP: root,

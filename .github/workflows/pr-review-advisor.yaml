@@ -167,9 +167,12 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: ">=22.19.0 <23"
+          node-version: "24.18.1"
           cache: npm
           cache-dependency-path: advisor/package-lock.json
+      - name: Install reviewed npm
+        uses: ./advisor/.github/actions/setup-reviewed-npm
+
       - name: Install locked runtime
         run: |
           set -euo pipefail
@@ -272,9 +275,12 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: ">=22.19.0 <23"
+          node-version: "24.18.1"
           cache: npm
           cache-dependency-path: advisor/package-lock.json
+
+      - name: Install reviewed npm
+        uses: ./advisor/.github/actions/setup-reviewed-npm
 
       - name: Load advisor runtime image
         run: node --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/export-runtime-env.mts"
@@ -403,7 +409,10 @@ jobs:
       - name: Setup Node for trusted publisher
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: ">=22.19.0 <23"
+          node-version: "24.18.1"
+
+      - name: Install reviewed npm
+        uses: ./advisor/.github/actions/setup-reviewed-npm
 
       - name: Post PR review advisor link
         env:

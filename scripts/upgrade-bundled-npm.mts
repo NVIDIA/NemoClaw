@@ -23,23 +23,32 @@ import {
   readJsonObject as readJson,
   requireRealDirectory as realDirectory,
 } from "./lib/bundled-npm-package.mts";
+import {
+  REVIEWED_NPM_ARCHIVE_SHA256,
+  REVIEWED_NPM_INTEGRITY,
+  REVIEWED_NPM_TARBALL,
+  REVIEWED_NPM_VERSION,
+} from "./lib/reviewed-npm-identity.mts";
 
-export const REVIEWED_NPM_VERSION = "11.18.0";
-export const REVIEWED_NPM_INTEGRITY =
-  "sha512-T67M4L5wNm0cZ7EBLErcEkY1SmzEW/WJ+SADBzsFUY1UdAPfFHXFQtZ6SEXiK0+vzXysCvAsepbMaBTwnrAD+w==";
-export const REVIEWED_NPM_TARBALL = "https://registry.npmjs.org/npm/-/npm-11.18.0.tgz";
+export {
+  REVIEWED_NPM_ARCHIVE_SHA256,
+  REVIEWED_NPM_INTEGRITY,
+  REVIEWED_NPM_TARBALL,
+  REVIEWED_NPM_VERSION,
+};
 
 // This is the immutable upstream archive inventory, not the completed image
-// state. npm 11.18.0 includes affected tar 7.5.19, so every image composition
+// state. npm 12.0.2 includes affected tar 7.5.19, so every image composition
 // patches the private tar tree again after installing this reviewed archive.
 export const REVIEWED_NPM_PACKAGES = {
   "brace-expansion": "5.0.7",
-  picomatch: "4.0.4",
-  sigstore: "4.1.1",
+  "ip-address": "10.2.0",
+  picomatch: "4.0.5",
+  sigstore: "5.0.0",
   tar: "7.5.19",
 } as const;
 
-const REPLACEABLE_NPM_VERSIONS = new Set(["10.9.8", "11.13.0", "11.16.0"]);
+const REPLACEABLE_NPM_VERSIONS = new Set(["10.9.8", "11.13.0", "11.16.0", "11.18.0"]);
 
 function npmVersion(npmRoot: string): string {
   const manifest = readJson(join(npmRoot, "package.json"), "npm package manifest");
@@ -111,6 +120,7 @@ export function verifyReviewedNpm(npmRoot: string): ReviewedNpmState {
     npmVersion: version,
     packages: {
       "brace-expansion": packages.get("brace-expansion") ?? [],
+      "ip-address": packages.get("ip-address") ?? [],
       picomatch: packages.get("picomatch") ?? [],
       sigstore: packages.get("sigstore") ?? [],
       tar: packages.get("tar") ?? [],
@@ -183,6 +193,7 @@ function prepareReviewedNpmArchive(commandRunner: BundledNpmCommandRunner): Prep
 }
 
 export type BundledNpmUpgradeDependencies = Readonly<{
+  archivePath?: string;
   commandRunner?: BundledNpmCommandRunner;
   installArchive?: (archivePath: string, commandRunner: BundledNpmCommandRunner) => void;
   prepareArchive?: (commandRunner: BundledNpmCommandRunner) => PreparedArchive;
@@ -192,10 +203,13 @@ function installReviewedNpm(archivePath: string, commandRunner: BundledNpmComman
   commandRunner("npm", [
     "install",
     "--global",
+    archivePath,
+    "--userconfig",
+    "/dev/null",
     "--ignore-scripts",
     "--no-audit",
     "--no-fund",
-    archivePath,
+    "--offline",
   ]);
 }
 
@@ -207,19 +221,31 @@ export function upgradeBundledNpm(
   const currentVersion = npmVersion(root);
   const commandRunner = dependencies.commandRunner ?? run;
 
-  if (currentVersion === REVIEWED_NPM_VERSION) {
+  if (dependencies.archivePath !== undefined && dependencies.prepareArchive !== undefined) {
+    throw new Error("reviewed npm upgrade cannot select both archivePath and prepareArchive");
+  }
+
+  const explicitArchiveSource =
+    dependencies.archivePath !== undefined || dependencies.prepareArchive !== undefined;
+  if (currentVersion === REVIEWED_NPM_VERSION && !explicitArchiveSource) {
     const reviewed = verifyReviewedNpm(root);
     commandRunner("npm", ["--version"]);
     commandRunner("npx", ["--version"]);
     return reviewed;
   }
-  if (!REPLACEABLE_NPM_VERSIONS.has(currentVersion)) {
+  if (currentVersion !== REVIEWED_NPM_VERSION && !REPLACEABLE_NPM_VERSIONS.has(currentVersion)) {
     throw new Error(
       `npm@${currentVersion} is outside the reviewed upgrade path to npm@${REVIEWED_NPM_VERSION}`,
     );
   }
 
-  const prepared = (dependencies.prepareArchive ?? prepareReviewedNpmArchive)(commandRunner);
+  const prepared = dependencies.archivePath
+    ? (() => {
+        const archivePath = resolve(dependencies.archivePath);
+        verifyReviewedNpmArchive(archivePath);
+        return { archivePath, cleanup: () => undefined };
+      })()
+    : (dependencies.prepareArchive ?? prepareReviewedNpmArchive)(commandRunner);
   try {
     (dependencies.installArchive ?? installReviewedNpm)(prepared.archivePath, commandRunner);
     const reviewed = verifyReviewedNpm(root);
@@ -238,13 +264,23 @@ function argument(name: string): string {
   return value;
 }
 
+function optionalArgument(name: string): string | undefined {
+  const index = process.argv.indexOf(name);
+  const value = index >= 0 ? process.argv[index + 1] : undefined;
+  if (index >= 0 && (!value || value.startsWith("--"))) throw new Error(`${name} requires a value`);
+  return value;
+}
+
 function isMainModule(): boolean {
   return process.argv[1] ? fileURLToPath(import.meta.url) === resolve(process.argv[1]) : false;
 }
 
 if (isMainModule()) {
   try {
-    const result = upgradeBundledNpm(argument("--npm-root"));
+    const archivePath = optionalArgument("--archive");
+    const result = upgradeBundledNpm(argument("--npm-root"), {
+      ...(archivePath ? { archivePath } : {}),
+    });
     process.stdout.write(
       `Verified npm@${result.npmVersion} with ${Object.entries(result.packages)
         .map(([name, versions]) => `${name}@${versions.join(",")}`)

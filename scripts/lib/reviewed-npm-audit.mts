@@ -107,8 +107,13 @@ export type AuditCacheEvidence = Readonly<{
 }>;
 
 export type AuditProvenance = Readonly<{
-  schemaVersion: 1;
-  scanner: Readonly<{ name: "npm audit"; npmVersion: string; nodeVersion: string }>;
+  schemaVersion: 2;
+  scanner: Readonly<{
+    name: "npm audit";
+    npmIntegrity: string;
+    npmVersion: string;
+    nodeVersion: string;
+  }>;
   registry: AuditEndpoints;
   run: Readonly<{ startedAt: string; finishedAt: string }>;
   graph: Readonly<{ label: string; packageSpecs: readonly string[] }>;
@@ -121,6 +126,7 @@ export type AuditProvenance = Readonly<{
 export type AuditProvenanceContext = Readonly<{
   label: string;
   nodeVersion: string;
+  npmIntegrity: string;
   npmVersion: string;
   packageSpecs: readonly string[];
 }>;
@@ -632,6 +638,7 @@ export function buildAuditProvenance(
     finishedAt: string;
     label: string;
     nodeVersion: string;
+    npmIntegrity: string;
     npmVersion: string;
     packageSpecs: readonly string[];
     rawReportPath: string;
@@ -641,8 +648,13 @@ export function buildAuditProvenance(
   }>,
 ): AuditProvenance {
   return {
-    schemaVersion: 1,
-    scanner: { name: "npm audit", npmVersion: input.npmVersion, nodeVersion: input.nodeVersion },
+    schemaVersion: 2,
+    scanner: {
+      name: "npm audit",
+      npmIntegrity: input.npmIntegrity,
+      npmVersion: input.npmVersion,
+      nodeVersion: input.nodeVersion,
+    },
     registry: deriveAuditEndpoints(input.registry),
     run: { startedAt: input.startedAt, finishedAt: input.finishedAt },
     graph: { label: input.label, packageSpecs: input.packageSpecs },
@@ -761,6 +773,7 @@ function parseAuditCacheRecord(source: string): AuditCacheRecord {
       throw new Error(`npm audit cache input.${key} is invalid`);
   }
   if (
+    !/^sha512-[A-Za-z0-9+/]+={0,2}$/u.test(String(input.npmIntegrity)) ||
     input.parserIdentity !== NPM_AUDIT_PARSER_IDENTITY ||
     canonicalRegistryOrigin(String(input.registryOrigin)) !== input.registryOrigin
   )
@@ -1094,6 +1107,7 @@ export function runReviewedNpmAudit(
       finishedAt,
       label: options.provenance.label,
       nodeVersion: options.provenance.nodeVersion,
+      npmIntegrity: options.provenance.npmIntegrity,
       npmVersion: options.provenance.npmVersion,
       packageSpecs: options.provenance.packageSpecs,
       rawReportPath: path.basename(options.reportFile),

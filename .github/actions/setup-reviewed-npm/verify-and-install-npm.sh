@@ -38,15 +38,18 @@ npm pack "npm@$version" \
   --ignore-scripts --no-audit --no-fund >/dev/null
 
 archive="$download_dir/npm-$version.tgz"
-IFS=$'\t' read -r actual_sha512 actual_sha256 < <(node -e '
+actual_hashes="$download_dir/actual-hashes"
+node -e '
   const fs = require("node:fs");
   const crypto = require("node:crypto");
   const archive = fs.readFileSync(process.argv[1]);
   process.stdout.write(
-    crypto.createHash("sha512").update(archive).digest("base64") + "\t" +
+    crypto.createHash("sha512").update(archive).digest("base64") + "\n" +
     crypto.createHash("sha256").update(archive).digest("hex") + "\n",
   );
-' "$archive")
+' "$archive" >"$actual_hashes"
+IFS= read -r actual_sha512 <"$actual_hashes"
+IFS= read -r actual_sha256 < <(sed -n '2p' "$actual_hashes")
 actual_integrity="sha512-$actual_sha512"
 if [ "$actual_integrity" != "$expected_integrity" ] || [ "$actual_sha256" != "$expected_sha256" ]; then
   echo "ERROR: npm@$version archive integrity mismatch." >&2
@@ -71,3 +74,9 @@ fi
 npm install --global "$archive" \
   --userconfig /dev/null \
   --ignore-scripts --no-audit --no-fund --offline
+
+installed_version="$(npm --version)"
+if [ "$installed_version" != "$version" ]; then
+  echo "ERROR: installed npm@$installed_version does not match reviewed npm@$version." >&2
+  exit 1
+fi

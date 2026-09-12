@@ -71,10 +71,11 @@ const CANONICAL_POST_GENERATOR_INSTRUCTION_SHA256 = new Set([
   "c682148fc7efec9f947c326c6029181cd879b7cba3e8361246aba7d0e6fe70a3",
   "2801e488822e10a39a5586bd150279e54df4612e30c2fa782453534a466def59",
   "8f0861e48c0cec37faa662fccd130ab21f972ac3ed2a0ce5f4e5a1e9ec223130",
-  // Reviewed late messaging inputs, metadata setup, and runtime assertions.
+  // Reviewed late messaging inputs, metadata setup, npm 12 helper, and runtime assertions.
   "7e5f7e1dfb90e5e4b863afdfb9ba58e57e3693bdc6f47ac8c13e80bdc9eff56b",
   "8f5966da093ef75cefd35c2b7f1361fbf5b32e63a4a8a34cb3ac7f76a1330e5e",
   "4c2f29cb433ff14ca386e71373b53e88c705e2ed255b435715681a0dd64e43f9",
+  "f6a70c469bc8658fd78c2e07adfb7fb9d78aa1189b0966c0bbf5f1d1f1b49e32",
   "761ea4fbb0da5cf3390ee8f2e56f3703a7da88c96ac47fea89d0fff800f728ae",
   "9026e48d7294a60abe57d7fed77aaf27e8088d29c48421a0f2d1260e7a6d5bdc",
   // COPY --from=openclaw-runtime-payload / /

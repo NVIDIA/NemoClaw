@@ -206,7 +206,12 @@ describe("base-image publication workflow boundary (#7372)", () => {
     ["Node condition", (value) => (gateSteps(value)[2].if = "${{ always() }}")],
     ["Node pin", (value) => (gateSteps(value)[2].uses = "actions/setup-node@v6")],
     ["Node dependency cache", (value) => (gateSteps(value)[2].with!.cache = "npm")],
-    ["verifier condition", (value) => (gateSteps(value)[3].if = "${{ always() }}")],
+    [
+      "verifier condition",
+      (value) =>
+        (gateStep(value, "Select base and optional managed-image publication").if =
+          "${{ always() }}"),
+    ],
     [
       "base publication selection condition",
       (value) =>
@@ -221,19 +226,30 @@ describe("base-image publication workflow boundary (#7372)", () => {
       "base contract validation condition",
       (value) => (gateStep(value, "Validate immutable Deep Agents Code base").if = "${{ false }}"),
     ],
-    ["verifier token", (value) => (gateSteps(value)[3].env!.GITHUB_TOKEN = "${{ secrets.TOKEN }}")],
+    [
+      "verifier token",
+      (value) =>
+        (gateStep(value, "Select base and optional managed-image publication").env!.GITHUB_TOKEN =
+          "${{ secrets.TOKEN }}"),
+    ],
     [
       "verifier SHA",
-      (value) => (gateSteps(value)[3].env!.EXPECTED_SHA = "${{ inputs.checkout_sha }}"),
+      (value) =>
+        (gateStep(value, "Select base and optional managed-image publication").env!.EXPECTED_SHA =
+          "${{ inputs.checkout_sha }}"),
     ],
     [
       "managed-image publication requirement",
-      (value) => (gateSteps(value)[3].env!.REQUIRE_MANAGED_IMAGE_PUBLICATION = "0"),
+      (value) =>
+        (gateStep(value, "Select base and optional managed-image publication").env![
+          "REQUIRE_MANAGED_IMAGE_PUBLICATION"
+        ] = "0"),
     ],
     [
       "verifier command",
       (value) => {
-        gateSteps(value)[3].run = "node tools/e2e/base-image-publication.mts";
+        gateStep(value, "Select base and optional managed-image publication").run =
+          "node tools/e2e/base-image-publication.mts";
       },
     ],
     [

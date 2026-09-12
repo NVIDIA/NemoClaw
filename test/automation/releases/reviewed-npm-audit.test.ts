@@ -6,6 +6,10 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  reviewedArchiveGraphManifest,
+  stageReviewedArchiveForInstall,
+} from "../../../scripts/audit-reviewed-npm-graph.mts";
+import {
   type AuditExceptionRegistry,
   NPM_AUDIT_ARGV,
   NPM_AUDIT_ATTEMPT_TIMEOUT_MS,
@@ -40,11 +44,49 @@ const CONFIG = JSON.parse(
 ) as {
   severityThreshold: "info" | "low" | "moderate" | "high" | "critical";
 };
+
+describe("reviewed archive graph materialization", () => {
+  it("rejects an affected tar release", () => {
+    expect(() => reviewedArchiveGraphManifest("7.5.20")).toThrow(
+      "reviewed archive graph tar version must be exactly 7.5.21",
+    );
+  });
+
+  it("stages archives at deterministic graph-relative paths", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-reviewed-archive-stage-"));
+    try {
+      const firstGraph = path.join(root, "first-random-root", "graph");
+      const secondGraph = path.join(root, "second-random-root", "graph");
+      const firstArchive = path.join(root, "first-random-root", "fixture-1.0.0.tgz");
+      const secondArchive = path.join(root, "second-random-root", "fixture-1.0.0.tgz");
+      fs.mkdirSync(firstGraph, { recursive: true });
+      fs.mkdirSync(secondGraph, { recursive: true });
+      fs.writeFileSync(firstArchive, "reviewed archive bytes");
+      fs.writeFileSync(secondArchive, "reviewed archive bytes");
+
+      const firstInstallPath = stageReviewedArchiveForInstall(firstGraph, firstArchive, 0);
+      const secondInstallPath = stageReviewedArchiveForInstall(secondGraph, secondArchive, 0);
+
+      expect(firstInstallPath).toBe(
+        `.${path.sep}${path.join("reviewed-archives", "0-fixture-1.0.0.tgz")}`,
+      );
+      expect(secondInstallPath).toBe(firstInstallPath);
+      expect(firstInstallPath).not.toContain(root);
+      expect(fs.readFileSync(path.join(firstGraph, firstInstallPath))).toEqual(
+        fs.readFileSync(path.join(secondGraph, secondInstallPath)),
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
 const CHECKED_IN_POLICY = parseAuditExceptionRegistry(
   fs.readFileSync(path.join(REPO_ROOT, "ci", "npm-audit-exceptions.json"), "utf-8"),
 );
 const EMPTY_POLICY: AuditExceptionRegistry = { schemaVersion: 1, exceptions: [] };
 const NOW = new Date("2026-07-21T12:00:00Z");
+const NPM_INTEGRITY =
+  "sha512-uIXokLlBj6FpNUTQX1PmT5pz7BlIN9QlixX+zdaSNHsd0qUXsbDLr50xzY6Sw7cJVr0uzHKDOle0swmPW/p5Qw==";
 
 function withInstalledGraph(
   packages: Readonly<Record<string, string>>,
@@ -605,6 +647,12 @@ describe("npm audit raw cache", () => {
     );
   });
 
+  it("rejects a standalone npm integrity argument", () => {
+    expect(() =>
+      parseReviewedNpmAuditCliArgs(cliArgs(".", "--npm-integrity", npmIdentity.npmIntegrity), {}),
+    ).toThrow("unknown npm audit arguments: --npm-integrity");
+  });
+
   it("rejects a truncated reviewed npm SHA-512 integrity", () => {
     expect(() => parseReviewedNpmIdentity({ ...npmIdentity, npmIntegrity: "sha512-A" })).toThrow(
       "npm audit configuration has an invalid npmIntegrity",
@@ -809,8 +857,9 @@ describe("npm audit provenance", () => {
     const provenance = buildAuditProvenance({
       finishedAt: "2026-07-21T20:09:41.000Z",
       label: "reviewed archive graph",
-      nodeVersion: "v22.22.2",
-      npmVersion: "10.9.7",
+      nodeVersion: "v24.18.1",
+      npmIntegrity: NPM_INTEGRITY,
+      npmVersion: "12.0.2",
       packageSpecs: ["openclaw@2026.6.10", "@openclaw/slack@2026.6.10"],
       rawReportPath: "reviewed-archive-graph.json",
       registry: "https://registry.npmjs.org/",
@@ -818,8 +867,13 @@ describe("npm audit provenance", () => {
       startedAt: "2026-07-21T20:09:12.000Z",
     });
     expect(provenance).toEqual({
-      schemaVersion: 1,
-      scanner: { name: "npm audit", npmVersion: "10.9.7", nodeVersion: "v22.22.2" },
+      schemaVersion: 2,
+      scanner: {
+        name: "npm audit",
+        npmIntegrity: NPM_INTEGRITY,
+        npmVersion: "12.0.2",
+        nodeVersion: "v24.18.1",
+      },
       registry: deriveAuditEndpoints("https://registry.npmjs.org/"),
       run: { startedAt: "2026-07-21T20:09:12.000Z", finishedAt: "2026-07-21T20:09:41.000Z" },
       graph: {
@@ -837,8 +891,9 @@ describe("npm audit provenance", () => {
       failure: "npm audit failed without vulnerability findings: ECONNREFUSED",
       finishedAt: "2026-07-21T20:09:41.000Z",
       label: "reviewed archive graph",
-      nodeVersion: "v22.22.2",
-      npmVersion: "10.9.7",
+      nodeVersion: "v24.18.1",
+      npmIntegrity: NPM_INTEGRITY,
+      npmVersion: "12.0.2",
       packageSpecs: ["openclaw@2026.6.10"],
       rawReportPath: "reviewed-archive-graph.json",
       registry: "https://registry.npmjs.org/",
@@ -894,8 +949,9 @@ describe("npm audit provenance", () => {
           graph: "fixture-graph",
           provenance: {
             label: "fixture graph",
-            nodeVersion: "v22.22.2",
-            npmVersion: "10.9.7",
+            nodeVersion: "v24.18.1",
+            npmIntegrity: NPM_INTEGRITY,
+            npmVersion: "12.0.2",
             packageSpecs: ["fixture@1.0.0"],
           },
           reportFile: reportPath,
