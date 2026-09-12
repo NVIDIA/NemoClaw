@@ -18,6 +18,11 @@ on:
         required: false
         default: false
         type: boolean
+      docker_desktop:
+        description: Also verify the real Docker Desktop provider flow using Docker Desktop 4.89
+        required: false
+        default: false
+        type: boolean
 permissions:
   contents: read
 concurrency:
@@ -137,12 +142,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        role: [base, candidate]
+        role: ${{ fromJSON(inputs.docker_desktop && '["candidate"]' || '["base","candidate"]') }}
     env:
       WSL_DISTRO: Ubuntu-24.04
       WSL_TEST_USER: nemoclaw-ci
       TARGET_SHA: ${{ matrix.role == 'base' && inputs.base_sha || inputs.candidate_sha }}
       ROLE: ${{ matrix.role }}
+      TRY_DESKTOP: ${{ inputs.docker_desktop }}
     steps:
       - name: Validate source identity and preserve Linux line endings
         shell: powershell
@@ -163,6 +169,19 @@ jobs:
           persist-credentials: false
           sparse-checkout: tools/wsl/verify-11401.cts
           sparse-checkout-cone-mode: false
+      - name: Install the pinned Docker Desktop release
+        if: ${{ inputs.docker_desktop }}
+        shell: powershell
+        timeout-minutes: 10
+        run: |
+          $installer = "$env:RUNNER_TEMP\Docker-Desktop-Installer.exe"
+          & curl.exe -fSL --connect-timeout 30 --max-time 300 'https://desktop.docker.com/win/main/amd64/238018/Docker%20Desktop%20Installer.exe' -o $installer
+          if ($LASTEXITCODE -ne 0) { throw 'Docker Desktop download failed' }
+          if ((Get-FileHash $installer -Algorithm SHA256).Hash.ToLowerInvariant() -ne '854626704af28a160d5af68b96b3e32eacf08ab397ce6c12eb02a04788d73681') { throw 'Docker Desktop checksum mismatch' }
+          $process = Start-Process $installer -ArgumentList 'install','--quiet','--accept-license','--backend=wsl-2' -PassThru
+          if (-not $process.WaitForExit(360000)) { $process.Kill(); throw 'Docker Desktop installation timed out' }
+          if ($process.ExitCode -ne 0) { throw "Docker Desktop installation failed: $($process.ExitCode)" }
+          Remove-Item $installer
       - name: Build the pinned CLI in a persistent WSL workspace
         shell: powershell
         run: |
@@ -173,6 +192,19 @@ jobs:
           if ($LASTEXITCODE -ne 0 -or $kernel -notmatch 'WSL2') { throw 'A running WSL2 kernel is required' }
           Install-WslUbuntuDependencies -Distro $env:WSL_DISTRO -TestUser $env:WSL_TEST_USER -Packages @('bash','ca-certificates','curl','git','python3','rsync','xz-utils')
           Install-WslNode -Distro $env:WSL_DISTRO
+          if ($env:TRY_DESKTOP -eq 'true') {
+            $settingsRoot="$env:APPDATA\Docker"
+            New-Item -ItemType Directory -Force $settingsRoot | Out-Null
+            $settingsPath="$settingsRoot\settings-store.json"
+            $settings=if(Test-Path $settingsPath){Get-Content $settingsPath -Raw | ConvertFrom-Json}else{[pscustomobject]@{}}
+            $updates=@{wslEngineEnabled=$true;integratedWslDistros=@($env:WSL_DISTRO);enableIntegrationWithDefaultWslDistro=$true}
+            foreach($entry in $updates.GetEnumerator()){$settings | Add-Member -MemberType NoteProperty -Name $entry.Key -Value $entry.Value -Force}
+            [IO.File]::WriteAllText($settingsPath,($settings | ConvertTo-Json -Depth 32),(New-Object System.Text.UTF8Encoding $false))
+            $ErrorActionPreference='Continue'
+            & 'C:\Program Files\Docker\Docker\resources\bin\docker.exe' desktop start --timeout 180 2>&1 | Tee-Object "$env:GITHUB_WORKSPACE\evidence\desktop-start.log"
+            & 'C:\Program Files\Docker\Docker\resources\bin\docker.exe' --context desktop-linux info 2>&1 | Tee-Object "$env:GITHUB_WORKSPACE\evidence\desktop-engine.log"
+            $ErrorActionPreference='Stop'
+          }
           $paths = Set-WslWorkflowPaths -Workspace "$env:GITHUB_WORKSPACE\source" -WorkdirPrefix '/tmp/nemoclaw-wsl-vitest' -RunId $env:GITHUB_RUN_ID -RunAttempt $env:GITHUB_RUN_ATTEMPT -EnvironmentFile $env:GITHUB_ENV
           Sync-WslCheckout -Distro $env:WSL_DISTRO -Checkout $paths.Checkout -Workdir $paths.Workdir -Owner $env:WSL_TEST_USER
           Invoke-WslScript -Distro $env:WSL_DISTRO -User root -Script 'mv "$1" /home/nemoclaw-ci/issue-11401-main' -ScriptArguments @($paths.Workdir)
@@ -195,10 +227,11 @@ jobs:
           & curl.exe -fSL --connect-timeout 30 --max-time 600 'https://github.com/ollama/ollama/releases/download/v0.34.0/ollama-windows-amd64.zip' -o $zip
           if ($LASTEXITCODE -ne 0) { throw 'Ollama download failed' }
           if ((Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant() -ne 'a7dd1b174f39d3d1b8a25d4cbc86045d0e190b17187bfdcbe2f2ee3b5a11470e') { throw 'Ollama checksum mismatch' }
-          & 'C:\Program Files\7-Zip\7z.exe' e $zip "-o$root" ollama.exe -y
+          & 'C:\Program Files\7-Zip\7z.exe' x $zip "-o$root" -y
           if ($LASTEXITCODE -ne 0) { throw 'Ollama extraction failed' }
           Remove-Item $zip
           $env:OLLAMA_HOST = '127.0.0.1:11434'
+          $env:OLLAMA_CONTEXT_LENGTH = '64000'
           $env:OLLAMA_MODELS = "$root\models"
           $daemon = Start-Process "$root\ollama.exe" -ArgumentList serve -PassThru -RedirectStandardOutput "$env:GITHUB_WORKSPACE\evidence\ollama.stdout.log" -RedirectStandardError "$env:GITHUB_WORKSPACE\evidence\ollama.stderr.log"
           try {
@@ -207,21 +240,32 @@ jobs:
               try { $null=Invoke-RestMethod 'http://127.0.0.1:11434/api/tags'; $ready=$true; break } catch { Start-Sleep 1 }
             }
             if (-not $ready) { throw 'Ollama API did not become ready' }
-            & "$root\ollama.exe" pull smollm2:135m
+            $model = if($env:TRY_DESKTOP -eq 'true'){'qwen3.5:0.8b'}else{'smollm2:135m'}
+            & "$root\ollama.exe" pull $model
             if ($LASTEXITCODE -ne 0) { throw 'Model pull failed' }
+            if ($env:TRY_DESKTOP -eq 'true') {
+              $warmup=@{model=$model;prompt='Hello';stream=$false;options=@{num_ctx=64000;num_predict=1};keep_alive='10m'} | ConvertTo-Json -Depth 5
+              Invoke-RestMethod -Method Post -ContentType 'application/json' -Body $warmup -Uri 'http://127.0.0.1:11434/api/generate' -TimeoutSec 180 | ConvertTo-Json -Depth 6 | Set-Content "$env:GITHUB_WORKSPACE\evidence\model-warmup.json"
+            }
             $before=Get-Process -Id $daemon.Id
             $tagsBefore=Invoke-RestMethod 'http://127.0.0.1:11434/api/tags'
             $before | Select-Object Id,Path,StartTime | ConvertTo-Json | Set-Content "$env:GITHUB_WORKSPACE\evidence\daemon-before.json"
             $tagsBefore | ConvertTo-Json -Depth 8 | Set-Content "$env:GITHUB_WORKSPACE\evidence\tags-before.json"
             $harness=ConvertTo-WslPath "$env:GITHUB_WORKSPACE\harness\tools\wsl\verify-11401.cts"
             $evidence=ConvertTo-WslPath "$env:GITHUB_WORKSPACE\evidence"
-            Invoke-WslScript -Distro $env:WSL_DISTRO -User $env:WSL_TEST_USER -Script 'node "$1" /home/nemoclaw-ci/issue-11401-main "$2" "$3" "$4"' -ScriptArguments @($harness,$evidence,$env:ROLE,$env:TARGET_SHA)
+            Invoke-WslScript -Distro $env:WSL_DISTRO -User $env:WSL_TEST_USER -Script 'node "$1" /home/nemoclaw-ci/issue-11401-main "$2" "$3" "$4" "$5"' -ScriptArguments @($harness,$evidence,$env:ROLE,$env:TARGET_SHA,$env:TRY_DESKTOP)
             $after=Get-Process -Id $daemon.Id
             $tagsAfter=Invoke-RestMethod 'http://127.0.0.1:11434/api/tags'
             if ($before.StartTime -ne $after.StartTime -or ($tagsBefore | ConvertTo-Json -Depth 8) -ne ($tagsAfter | ConvertTo-Json -Depth 8)) { throw 'The running daemon or model inventory changed' }
             $after | Select-Object Id,Path,StartTime | ConvertTo-Json | Set-Content "$env:GITHUB_WORKSPACE\evidence\daemon-after.json"
             $tagsAfter | ConvertTo-Json -Depth 8 | Set-Content "$env:GITHUB_WORKSPACE\evidence\tags-after.json"
           } finally { Stop-Process -Id $daemon.Id -ErrorAction SilentlyContinue }
+      - name: Retain Docker Desktop failure diagnostics
+        if: ${{ always() && inputs.docker_desktop }}
+        shell: powershell
+        run: |
+          Get-ChildItem "$env:LOCALAPPDATA\Docker\log\host" -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -match 'backend|desktop' } | ForEach-Object { Get-Content $_.FullName -Tail 150 | Set-Content (Join-Path "$env:GITHUB_WORKSPACE\evidence" $_.Name) }
+          Get-WinEvent -FilterHashtable @{LogName='Application';StartTime=(Get-Date).AddMinutes(-30)} -ErrorAction SilentlyContinue | Where-Object { $_.ProviderName -in @('Application Error','.NET Runtime','Windows Error Reporting') } | Select-Object -First 15 TimeCreated,Id,ProviderName,Message | ConvertTo-Json -Depth 5 | Set-Content "$env:GITHUB_WORKSPACE\evidence\application-errors.json"
       - name: Upload live daemon and snapshot evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a

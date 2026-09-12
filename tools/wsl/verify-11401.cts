@@ -4,7 +4,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
-const [root, evidence, role, sourceSha] = process.argv.slice(2);
+const [root, evidence, role, sourceSha, requireDesktop] = process.argv.slice(2);
 process.chdir(root);
 assert.equal(
   spawnSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).stdout.trim(),
@@ -80,4 +80,59 @@ if (role === "base") {
   assert.equal(snapshot.watcherPath, null);
   assert.equal(outcome.reason, "binding");
   assert.ok(suppressedMutations > 0);
+}
+
+if (requireDesktop === "true") {
+  const tags = spawnSync(
+    "curl",
+    [
+      "--noproxy",
+      "*",
+      "-fsS",
+      "--connect-timeout",
+      "5",
+      "--max-time",
+      "15",
+      "http://host.docker.internal:11434/api/tags",
+    ],
+    { encoding: "utf8", timeout: 20000 },
+  );
+  assert.equal(tags.status, 0, tags.stderr);
+  assert.ok(JSON.parse(tags.stdout).models.length > 0);
+  const { detectInferenceProviderHostState } = require(
+    path.join(root, "dist/lib/onboard/provider-host-state.js"),
+  );
+  const state = detectInferenceProviderHostState({
+    gpu: null,
+    experimental: false,
+    probeVllm: false,
+  });
+  fs.writeFileSync(path.join(evidence, "desktop-discovery.json"), JSON.stringify(state, null, 2));
+  assert.equal(state.isWindowsHostOllama, true);
+  assert.equal(state.ollamaRunning, true);
+  assert.equal(state.ollamaHost, "host.docker.internal");
+  const program = `process.chdir(${JSON.stringify(root)}); const fs=require('node:fs'); const {setupNim}=require(${JSON.stringify(path.join(root, "dist/lib/onboard.js"))}); const {loadAgent}=require(${JSON.stringify(path.join(root, "dist/lib/agent/defs.js"))}); Promise.resolve(setupNim(null,null,loadAgent('hermes'))).then(result=>{fs.writeFileSync(${JSON.stringify(path.join(evidence, "provider-result.json"))},JSON.stringify(result,null,2));}).catch(error=>{console.error(error.stack);process.exitCode=1;});`;
+  const programPath = path.join(evidence, "provider-stage.cjs");
+  fs.writeFileSync(programPath, program);
+  const selection = spawnSync(process.execPath, [programPath], {
+    cwd: root,
+    encoding: "utf8",
+    timeout: 300000,
+    env: {
+      ...process.env,
+      NEMOCLAW_NON_INTERACTIVE: "1",
+      NEMOCLAW_PROVIDER: "install-windows-ollama",
+      NEMOCLAW_MODEL: "qwen3.5:0.8b",
+      NEMOCLAW_AGENT: "hermes",
+      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
+    },
+  });
+  fs.writeFileSync(
+    path.join(evidence, "provider-selection.log"),
+    String(selection.stdout ?? "") + String(selection.stderr ?? ""),
+  );
+  assert.equal(selection.status, 0, selection.stderr);
+  const selected = JSON.parse(fs.readFileSync(path.join(evidence, "provider-result.json"), "utf8"));
+  assert.equal(selected.provider, "ollama-local");
+  assert.equal(selected.model, "qwen3.5:0.8b");
 }
