@@ -10,9 +10,13 @@ workflow run.
 
 After a required `CI / Pull Request` run whose name ends in `gate true` succeeds, it runs every specialist prompt in `tools/pr-review-advisor/specialists`. Other completed CI runs do not schedule the Advisor. Each prompt owns a distinct review concern and defines its purpose, investigation method, evidence expectations, and finding threshold.
 
-Specialists inspect their assigned concern and recommend the smallest direct correction. They run independently and publish separate reports. The advisor does not select, aggregate, or summarize their findings.
+Specialists inspect their assigned concern and recommend the smallest direct correction. They run
+independently and publish separate reports. Ordinary analysis does not select, aggregate, or
+summarize their findings. The manually dispatched repair path separately selects eligible findings
+from their machine-readable ledgers.
 
-It intentionally does not report GitHub mergeability, branch protection, CI status, reviewer state, CodeRabbit state, or E2E pass/fail status; those are handled elsewhere in the PR UI.
+Ordinary analysis intentionally does not report GitHub mergeability, branch protection, CI status,
+reviewer state, CodeRabbit state, or E2E pass/fail status; those are handled elsewhere in the PR UI.
 
 ## Workflow
 
@@ -36,8 +40,9 @@ used by the merge-conflict fixer.
 
 Provider failures, timeouts, and missing specialist artifacts fail closed. Workflow logs retain orchestration diagnostics.
 
-The workflow is advisory and must not be configured as an E2E-required status check. Its comment
-links to the specialist reviews and does not dispatch or report pass/fail for E2E jobs.
+The ordinary automatic `workflow_run` analysis is advisory and must not be configured as an
+E2E-required status check. Its comment links to the specialist reviews and does not dispatch or
+report pass/fail for E2E jobs.
 Model availability must not become the authority
 for whether a pull request can merge.
 For PRs from this repository, the PR E2E controller separately rebuilds the plan from GitHub's
@@ -48,16 +53,137 @@ On automatic runs, the gate accepts a successful `CI / Pull Request` run whose n
 `gate true`. It uses the source repository, branch, and commit to resolve one open PR through the
 GitHub API. Manual dispatch does not require CI-run evidence.
 
+### Manual repair pilot
+
+Accepted issue #10791 adds a separate, default-disabled repair path to the trusted manual dispatch.
+For an open, same-repository, non-draft PR whose exact head and base match the selection, a
+maintainer may select eligible finding IDs and request one two-turn repair attempt when both the
+workflow actor and triggering actor have `maintain` or `admin` permission. Pi can edit only a
+disposable checkout in a credential-free OpenShell sandbox; it cannot run tests, commit, push, or
+call GitHub. The resolver uploads only the disposable checkout and generated configuration, creates
+`/sandbox/output` inside the sandbox, and downloads the reconstructed candidate repository plus the
+bounded `proposal.json`; only that proposal is accepted from the output subtree. A separate
+secret-free job reconstructs and validates the patch. When publication
+is explicitly requested, the protected deterministic publisher rechecks the live state and may make
+one verified, non-force, compare-and-swap branch update. A trusted-main reporter then runs and
+records the approved exact-generated-SHA checks without starting another repair attempt.
+The publisher seals the generated-head request before branch mutation, then dispatches the reporter
+with the exact source run and attempt only after the compare-and-swap branch update succeeds.
+Only blocking `P0` and `P1` machine-ledger findings are eligible for this repair path; every other
+severity fails closed at the trusted selection boundary.
+
+`repair-contract.mts` owns the fixed validation plan, and `repair-validate.mts` executes that plan.
+It seals the repair patch and validation receipt only after every required command succeeds; a
+failed command produces neither file. Validation subprocesses receive a positive environment
+allowlist with isolated home, temporary, npm configuration, and npm cache directories; GitHub,
+Actions, repository, and provider credentials are not inherited. Generated-head validation also dispatches the
+credential-bearing SDK packager from trusted `main`; `CI / Pull Request` accepts its artifact only
+when the workflow-dispatch identity, attempt key, generated SHA, and artifact name match the repair
+being checked.
+
+The generated-head request carries the sealed validation receipt, and reconciliation requires its
+attempt, workflow, source head, base, finding IDs, and selected paths to match the trusted selection.
+The reporter first binds its generated-head code to the current trusted `main`. For each validation
+workflow dispatched from `main`, it captures the returned run ID and that run's actual immutable
+workflow SHA, then requires later evidence to match both. It rebuilds the checked-in risk plan from
+the receipt's changed paths and the generated SHA. When that plan requires E2E jobs, it dispatches
+only those jobs through the trusted `main` workflow, bound to the exact repair attempt. Repair E2E
+cannot cancel an earlier run, uses mock inference, posts nothing to Slack, receives no E2E
+credentials, and cannot select protected or dedicated infrastructure. The authoritative E2E
+planner and workflow metadata determine the expected job names and the longest selected dependency
+path. The controller adds a
+reporting margin to that path, keeps a sixty-minute minimum, and rejects a plan that cannot finish
+inside its bounded workflow window. Each expected name must have one job record with completed
+status and a successful conclusion.
+Missing, skipped, failed, duplicate, or unmapped job evidence fails closed. The reporter also
+downloads the sole dispatch receipt, verifies its artifact digest, and requires its PR, commit,
+workflow, run, current run attempt, and selector fields to match the request. Workflow and E2E dispatch identities are
+deterministic for the repair attempt and generated SHA. Reconciliation adopts the sole matching
+exact run and dispatches only missing work; an ambiguous identity fails closed. The version 3
+generated-head receipt records the risk plan, verified dispatch receipt, bounded workflow and E2E
+checkpoint status and URLs, each required job URL, workflow evidence, and published checks. Failure
+receipts preserve the partial checkpoint so a maintainer can identify work that already ran. One
+`advisor-repair-risk-plan-e2e` check represents the complete successful E2E set on the generated
+commit.
+
+All six generated-head validation workflows call the same trusted reusable live-target validator.
+That validator binds the open, non-draft same-repository PR, exact generated head, exact base, and
+repair attempt key before a dispatched workflow can inspect the generated commit. `CI / Pull
+Request` additionally retains its distinct single-parent check that binds the generated commit to
+the selected source head.
+
+Trusted selection accepts a finding only when its specialist and path match one of these pairs and
+its exclusion list is empty:
+
+- `reduction-simplification`: JavaScript or TypeScript under `src/` or `nemoclaw/src/`
+- `verification-mistake-proofing`: non-E2E JavaScript or TypeScript under `test/`
+- `documentation-standard-work`: Markdown or MDX under `docs/`
+
+Security findings are never eligible for automated repair, even when their specialist and path
+otherwise match an allowed pair. The model-provided finding kind cannot widen this list. Every other
+specialist and path combination, or any nonempty exclusion list, fails closed.
+Selection also rebuilds the risk plan and rejects a finding when its path would require any E2E
+selector that the authoritative planner cannot prove credential-free, including `cloud-inference`
+and `cloud-onboard`. The planner derives that eligibility from the credential-free test registry
+only. Catalogue targets fail closed because their shared OpenShell SDK package prerequisite requires
+repository package credentials; unknown, free-standing, hosted, and other credential-bearing
+selectors also fail closed. The generated-head reporter repeats that guard before dispatching any
+validation workflow, so repair validation remains credential-free.
+
+Before dispatch, configure the `advisor-repair-publish` environment with required reviewers limited
+to users or teams that hold `maintain` or `admin` permission, plus the intended self-review policy,
+and set the repository variable `PR_REVIEW_ADVISOR_REPAIR_ENABLED=true`. Dispatch the workflow from
+`main` with `target_repo`, `target_pr`, `target_base`, the exact
+`repair_head_sha` and `repair_base_sha`, `repair_finding_ids_json`, and explicit
+`repair_egress_authorized=true`; set `repair_publish=true` only for Phase 1. Selection requires a
+maintainer-triggered, open, same-repository, non-draft PR whose exact head is current and whose
+source branch is owned by `NVIDIA/NemoClaw`. The source PR may change other paths. The repair patch
+may change only the selected allowlisted paths, and validation rejects any other repair change. The
+initial workflow actor (`github.actor`) and workflow-run initiator (`github.triggering_actor`) must
+each have `maintain` or `admin` permission. Selection checks both identities, and publication
+rechecks their current permissions before updating the branch. A rerun of one repair workflow run
+is rejected. A repeat manual dispatch that resolves to the same repository, PR, source and base
+SHAs, Advisor run and attempt, and selected finding IDs is also rejected because it has the same
+attempt key. A later PR head or a different bound Advisor run and finding set creates a distinct
+eligible attempt. If automatic generated-head observation is missed, dispatch `Automation / PR
+Review Advisor Generated Head` from `main` with the successful source `source_run_id` and exact
+`source_run_attempt`; reconciliation revalidates and reuses that run's content-addressed request
+without creating another repair attempt.
+
+The repair path retains bounded proposal, validation, publication, generated-head, and diagnostic
+artifacts. The redacted audit receipt preserves the primary resolver failure stage and separately
+records the sanitized cleanup outcome and run-named sandbox identity, so cleanup failure does not
+hide the original failure. The workflow fails visibly when it cannot write or upload that receipt.
+The resolver runs on an ephemeral GitHub-hosted `ubuntu-24.04` runner: its `always()` step attempts
+to delete the run-named sandbox after ordinary failures, while cancellation or job timeout retires
+the runner-local gateway and sandbox with the runner. Moving this job to a persistent or self-hosted
+runner requires a separate external reconciliation design.
+
+Automatic `workflow_run` analysis jobs remain advisory-only and read-only. The advisory-comment
+publisher can update only its sticky workflow-link comment.
+
+The Advisor owns eligibility, finding identity, resolution, publication, and lifecycle orchestration
+in `repair-contract.mts`, `repair-resolve.mts`, `repair-validate.mts`, `repair-publish.mts`, and the
+two Advisor workflows.
+It reuses the existing OpenShell runtime and the neutral pull-request Git publication primitives;
+the conflict fixer retains only conflict discovery, resolution, and publication commands.
+
 ## Author and agent follow-up
 
 Authors and coding agents should follow the shared [PR CI and Review Follow-Up](../../.agents/skills/_shared/pr-follow-up.md) workflow after opening a PR or pushing follow-up commits. If SSH, authentication, remote access, authorization, or permission problems prevent reading comments or pushing fixes, follow [Git and GitHub Access Hard Stop](../../.agents/skills/_shared/git-github-hard-stop.md).
 
 ## Safety model
 
-- Static analysis only.
-- PR-provided scripts, tests, package lifecycle hooks, and build tools are never executed.
+- Ordinary Advisor review runs perform static analysis only. The manually dispatched repair pilot
+  follows the separate bounded lifecycle above.
+- Ordinary review and model-bearing jobs never execute PR-provided scripts, tests, package
+  lifecycle hooks, or build tools. The manual repair validator may run only trusted-selected checks
+  against the reconstructed candidate in its disposable, secret-free job.
 - The model session runs in a digest-pinned OpenShell sandbox under a hard-required Landlock policy with no direct network policy and no ambient workdir. Four canonical host inputs are mounted read-only through the advisor's ephemeral Docker gateway outside `/sandbox`, so OpenShell v0.0.99 applies the final immutable boundary before the first process starts. Landlock independently grants those inputs read-only access. It grants application-data writes only to a bounded runtime tmpfs; required device access remains writable under `/dev`. The sandbox pins Git to `/pr-workdir/.git` and `/pr-workdir` instead of relying on cross-UID repository discovery. A startup proof must read every input canary, resolve the checkout and `HEAD`, fail chmod, overwrite, replacement, and creation in each input, and complete runtime writes. The model-facing Advisor tools remain repository-confined and read-only; generated configuration and artifacts use the dedicated runtime subtree.
-- The advisor receives repo-confined read-only repository tools plus deterministic context tools. Repository paths must remain inside the checked-out analysis workspace after lexical and symlink resolution. None of these tools can change repository or GitHub state.
+- Ordinary specialists receive repo-confined read-only repository tools plus deterministic context
+  tools. The repair conversation additionally receives confined edit/write tools for its disposable
+  checkout. Repository paths must remain inside the relevant workspace after lexical and symlink
+  resolution; no model-facing tool can change GitHub state.
 - PR bodies, comments, titles, branch names, and diffs are treated as untrusted evidence, never as instructions.
 - Manual target analysis validates the repository token, decimal PR number, and base-ref token before running any `git` command.
 - Generated Pi configuration is written under the sandbox's runtime-only configuration directory, not uploaded artifacts.
@@ -65,12 +191,20 @@ Authors and coding agents should follow the shared [PR CI and Review Follow-Up](
 - The gate uses a job-scoped GitHub token to read open PR identity. It receives no model credential.
 - A separate trusted host step collects deterministic GitHub context with `github.token` and writes a bounded, identity-checked context file before model work. The sandbox receives that file, not the token.
 - The OpenShell gateway binds only to loopback and holds the upstream provider credential. The sandbox uses `https://inference.local/v1` with an inert SDK key, and receives neither the provider credential nor a GitHub token.
-- The separate publisher has pull-request write permission, but receives neither the model secret, specialist artifacts, nor the untrusted PR worktree. It rechecks the latest PR commit immediately before posting only the workflow-run link.
+- The advisory-comment publisher has pull-request write permission, but receives neither the model secret, specialist artifacts, nor the untrusted PR worktree. It rechecks the latest PR commit immediately before posting only the workflow-run link.
+- The protected repair publisher separately has `contents: write` for the branch update. After a
+  successful update, an isolated job with only `actions: write` dispatches exact generated-head
+  validation. Neither receives a model credential; the publisher rechecks the complete live PR
+  state, creates one verified commit, and advances the contributor branch once with a non-force
+  compare-and-swap update.
 - Sticky publication updates only a marker-bearing comment owned by `github-actions[bot]`; a user-authored marker cannot claim the update target. Publication errors remain visible in the publisher logs.
-- The workflow posts advisory comments only; it does not approve, request changes, merge, push, label, or dispatch E2E.
+- Ordinary review runs post advisory comments only; they do not approve, request changes, merge,
+  push, label, or dispatch E2E. The manual repair pilot can perform its single protected branch
+  update and trusted exact-SHA validation, but never approves or merges the PR.
 - The checked-in risk plan is deterministic and additive. PR Review Advisor reviews every listed invariant and required job for missing evidence. The PR E2E controller separately dispatches every listed job without consuming advisor output.
 
-Risk plan version 20 selects the `gateway-topology` family for the production paths in the canonical `GATEWAY_TOPOLOGY_FILES` inventory in `tools/advisors/risk-plan.mts`.
+The current checked-in risk plan selects the `gateway-topology` family for the production paths in
+the canonical `GATEWAY_TOPOLOGY_FILES` inventory in `tools/advisors/risk-plan.mts`.
 
 The family requires PR Review Advisor to check this invariant against the diff, sibling consumers,
 and checked-in evidence:
@@ -132,7 +266,7 @@ workflow run also displays each Markdown review as a job summary. Replace `<inte
 specialist interest and `<attempt>` with the workflow run attempt number, then download the artifact
 with `gh run download <run-id> --name pr-review-specialist-<interest>-<attempt>`.
 
-The publisher has the only pull-request write permission. It receives neither the model credential
+The advisory-comment publisher has the only pull-request write permission. It receives neither the model credential
 nor the specialist artifacts. It posts only the workflow-run link.
 
 ## Local run
@@ -186,8 +320,9 @@ database URLs for its gateway; it does not read or replace an existing gateway d
 ## Output contract
 
 Each specialist returns a Markdown review grounded in repository evidence and shared trusted
-guidance. No component combines findings or makes merge decisions. Specialist reviews are advisory.
-They do not replace required human review or change repository merge gates.
+guidance. Specialist reports remain separate. The manual repair path selects eligible findings from
+their ledgers; it does not make merge decisions. Specialist reviews are advisory. They do not
+replace required human review or change repository merge gates.
 
 Each specialist also records all additional E2E recommendations through a validated tool.
 The receipt preserves the deterministic floor, optional coverage, explicit empty decisions, and unresolved coverage.

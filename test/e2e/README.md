@@ -1727,7 +1727,8 @@ A repository-authorized user decides whether to dispatch this trusted selection 
 For API-confirmed same-repository sources, the selection may include secret-backed targets such as `network-policy`.
 Fork contributions require maintainer review and adoption onto a repository branch before manual E2E.
 The Advisor comment labels the requested coverage, but does not restrict a same-repository PR to that recommendation.
-No PR E2E controller dispatches the risk plan.
+No ordinary PR E2E controller dispatches the risk plan. The trusted generated-head repair reporter
+dispatches only the required jobs for an exact repair attempt.
 
 The `full-e2e` target enforces a separate hard acceptance contract for the
 first fresh onboarding path in that job. It measures from the onboard root span

@@ -281,6 +281,11 @@ export function writeAdvisorFindingLedger(
   return file;
 }
 
+export function advisorFindingLedgerDigest(ledgers: readonly AdvisorFindingLedger[]): string {
+  const canonical = [...ledgers].sort((left, right) => left.interest.localeCompare(right.interest));
+  return `sha256:${sha256(canonicalJson(canonical))}`;
+}
+
 function safeEvidencePath(value: string): string {
   const result = boundedText(value, "path", 512);
   if (

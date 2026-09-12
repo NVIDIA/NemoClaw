@@ -11,9 +11,16 @@ import { canonicalRepoReadPath } from "../../../tools/advisors/repo-read-only-to
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 
 import {
+  buildAdvisorFindingLedger,
   createAdvisorFindingToolController,
   RECORD_ADVISOR_FINDINGS_TOOL,
 } from "../../../tools/pr-review-advisor/finding-ledger.mts";
+import {
+  allowedRepairPath,
+  bindRepairSelection,
+  parseProposal,
+  selectRepairFindings,
+} from "../../../tools/pr-review-advisor/repair-contract.mts";
 import { TERMINOLOGY_TRACE_TOOL } from "../../../tools/pr-review-advisor/terminology.mts";
 import { E2E_RECEIPT_TOOL } from "../../../tools/pr-review-advisor/e2e-receipt.mts";
 import {
@@ -439,5 +446,454 @@ describe("PR review advisor specialist prompts", () => {
         undefined as never,
       ),
     ).rejects.toThrow("already has a committed receipt");
+  });
+  it("selects only exact opted-in source, test, and documentation findings (#10791)", async () => {
+    const headSha = "a".repeat(40);
+    const controller = createAdvisorFindingToolController({
+      headSha,
+      interest: "reduction-simplification",
+    });
+    const record = controller.tools[0] as CallableTool;
+    await record.execute(
+      "record",
+      {
+        findings: [
+          {
+            severity: "P1",
+            kind: "correctness",
+            summary: "Source behavior is wrong.",
+            path: "src/lib/example.ts",
+            line: 4,
+            impact: "The result is wrong.",
+            smallestSafeFix: "Correct the expression.",
+            regressionTest: "Cover the corrected result.",
+            exclusions: [],
+          },
+          {
+            severity: "P1",
+            kind: "dependency",
+            summary: "The lockfile is old.",
+            path: "package-lock.json",
+            line: 1,
+            impact: "Dependencies differ.",
+            smallestSafeFix: "Update the lockfile.",
+            regressionTest: "Run the dependency gate.",
+            exclusions: ["dependency-change"],
+          },
+          {
+            severity: "P1",
+            kind: "correctness",
+            summary: "Credential selection is wrong.",
+            path: "src/lib/credentials/example.ts",
+            line: 4,
+            impact: "Generated-head validation would require hosted inference credentials.",
+            smallestSafeFix: "Leave the credential-sensitive repair to a maintainer.",
+            regressionTest: "Prove credential-bearing validation classes remain ineligible.",
+            exclusions: [],
+          },
+          {
+            severity: "P1",
+            kind: "correctness",
+            summary: "Platform selection is wrong.",
+            path: "src/lib/platform.ts",
+            line: 4,
+            impact: "Generated-head validation would require credential-bearing cloud onboarding.",
+            smallestSafeFix: "Leave the credential-sensitive repair to a maintainer.",
+            regressionTest: "Prove E2E-owned credential eligibility gates repair selection.",
+            exclusions: [],
+          },
+        ],
+        noFindingsReason: null,
+      },
+      undefined,
+      undefined,
+      undefined as never,
+    );
+    const ledger = controller.snapshot();
+    const eligible = ledger.findings.find(({ path: file }) => file === "src/lib/example.ts")!;
+    const excluded = ledger.findings.find(({ path: file }) => file === "package-lock.json")!;
+    const credentialBearing = ledger.findings.find(
+      ({ path: file }) => file === "src/lib/credentials/example.ts",
+    )!;
+    const platformCredentialBearing = ledger.findings.find(
+      ({ path: file }) => file === "src/lib/platform.ts",
+    )!;
+    const selection = selectRepairFindings({
+      version: 1,
+      repository: "NVIDIA/NemoClaw",
+      prNumber: 42,
+      sourceHeadSha: headSha,
+      baseSha: "b".repeat(40),
+      headRef: "feature/fix",
+      repositoryId: "R_repo",
+      author: "maintainer",
+      actor: "maintainer",
+      triggeringActor: "maintainer",
+      workflowSha: "c".repeat(40),
+      advisor: {
+        runId: 7,
+        runAttempt: 1,
+        workflowSha: "d".repeat(40),
+        artifactIds: Array.from({ length: 10 }, (_, index) => index + 1),
+      },
+      stateDigest: `sha256:${"e".repeat(64)}`,
+      reviewDigest: `sha256:${"f".repeat(64)}`,
+      ledgers: [ledger],
+      optedFindingIds: [
+        eligible.id,
+        excluded.id,
+        credentialBearing.id,
+        platformCredentialBearing.id,
+      ],
+      productScope: "accepted:#10791",
+      optIn: "manual-exact-head",
+    });
+
+    expect(selection.findingIds).toEqual([eligible.id]);
+    expect(selection.selectedPaths).toEqual(["src/lib/example.ts"]);
+    expect(selection.decisions).toContainEqual({
+      id: excluded.id,
+      selected: false,
+      reason: "excluded:implementation-path-mismatch",
+    });
+    expect(selection.decisions).toContainEqual({
+      id: credentialBearing.id,
+      selected: false,
+      reason: "excluded:repair-validation-requires-cloud-inference",
+    });
+    expect(selection.decisions).toContainEqual({
+      id: platformCredentialBearing.id,
+      selected: false,
+      reason: "excluded:repair-validation-requires-cloud-onboard",
+    });
+    expect(() =>
+      parseProposal(
+        {
+          version: 1,
+          findingIds: selection.findingIds,
+          unresolvedFindingIds: [],
+          changedPaths: [".github/workflows/pr.yaml"],
+          summary: "Changed workflow controls.",
+          outcome: "proposed",
+        },
+        selection,
+      ),
+    ).toThrow("selected findings");
+    expect(allowedRepairPath("test/example.test.ts")).toBe(true);
+    expect(allowedRepairPath("docs/example.mdx")).toBe(true);
+    expect(allowedRepairPath("tools/example.mts")).toBe(false);
+    expect(allowedRepairPath("test/e2e/example.test.ts")).toBe(false);
+  });
+
+  it("fails closed when an ineligible specialist labels a security-sensitive repair as correctness (#10791)", async () => {
+    const headSha = "a".repeat(40);
+    const controller = createAdvisorFindingToolController({
+      headSha,
+      interest: "customer-value-behavior",
+    });
+    const record = controller.tools[0] as CallableTool;
+    await record.execute(
+      "record",
+      {
+        findings: [
+          {
+            severity: "P1",
+            kind: "correctness",
+            summary: "The selector permits a security-sensitive repair.",
+            path: "src/lib/example.ts",
+            line: 4,
+            impact: "Trusted publication can advance an unsafe candidate.",
+            smallestSafeFix: "Reject the finding through trusted classification.",
+            regressionTest: "Prove non-security metadata cannot make it eligible.",
+            exclusions: [],
+          },
+        ],
+        noFindingsReason: null,
+      },
+      undefined,
+      undefined,
+      undefined as never,
+    );
+    const finding = controller.snapshot().findings[0]!;
+
+    expect(() =>
+      selectRepairFindings({
+        version: 1,
+        repository: "NVIDIA/NemoClaw",
+        prNumber: 42,
+        sourceHeadSha: headSha,
+        baseSha: "b".repeat(40),
+        headRef: "feature/fix",
+        repositoryId: "R_repo",
+        author: "maintainer",
+        actor: "maintainer",
+        triggeringActor: "maintainer",
+        workflowSha: "c".repeat(40),
+        advisor: {
+          runId: 7,
+          runAttempt: 1,
+          workflowSha: "d".repeat(40),
+          artifactIds: Array.from({ length: 10 }, (_, index) => index + 1),
+        },
+        stateDigest: `sha256:${"e".repeat(64)}`,
+        reviewDigest: `sha256:${"f".repeat(64)}`,
+        ledgers: [controller.snapshot()],
+        optedFindingIds: [finding.id],
+        productScope: "accepted:#10791",
+        optIn: "manual-exact-head",
+      }),
+    ).toThrow("no opted-in finding is eligible for repair");
+  });
+
+  it("fails closed when repair selection receives a non-blocking finding (#10791)", async () => {
+    const headSha = "a".repeat(40);
+    const ledger = buildAdvisorFindingLedger({
+      headSha,
+      interest: "reduction-simplification",
+      input: {
+        findings: [
+          {
+            severity: "P1",
+            kind: "correctness",
+            summary: "An optional cleanup is available.",
+            path: "src/lib/example.ts",
+            line: 4,
+            impact: "The current behavior remains valid.",
+            smallestSafeFix: "Apply the optional cleanup.",
+            regressionTest: "Keep the current behavior covered.",
+            exclusions: [],
+          },
+        ],
+        noFindingsReason: null,
+      },
+    });
+    const nonBlockingLedger = {
+      ...ledger,
+      findings: ledger.findings.map((finding) => ({ ...finding, severity: "warning" })),
+    } as unknown as typeof ledger;
+
+    expect(() =>
+      selectRepairFindings({
+        version: 1,
+        repository: "NVIDIA/NemoClaw",
+        prNumber: 42,
+        sourceHeadSha: headSha,
+        baseSha: "b".repeat(40),
+        headRef: "feature/fix",
+        repositoryId: "R_repo",
+        author: "maintainer",
+        actor: "maintainer",
+        triggeringActor: "maintainer",
+        workflowSha: "c".repeat(40),
+        advisor: {
+          runId: 7,
+          runAttempt: 1,
+          workflowSha: "d".repeat(40),
+          artifactIds: Array.from({ length: 10 }, (_, index) => index + 1),
+        },
+        stateDigest: `sha256:${"e".repeat(64)}`,
+        reviewDigest: `sha256:${"f".repeat(64)}`,
+        ledgers: [nonBlockingLedger],
+        optedFindingIds: [nonBlockingLedger.findings[0]!.id],
+        productScope: "accepted:#10791",
+        optIn: "manual-exact-head",
+      }),
+    ).toThrow("no opted-in finding is eligible for repair");
+  });
+
+  it("never selects security findings from an otherwise eligible repair class (#10791)", async () => {
+    const headSha = "a".repeat(40);
+    const controller = createAdvisorFindingToolController({
+      headSha,
+      interest: "customer-value-behavior",
+    });
+    const record = controller.tools[0] as CallableTool;
+    await record.execute(
+      "record",
+      {
+        findings: [
+          {
+            severity: "P1",
+            kind: "security",
+            summary: "The eligible source path exposes a security boundary.",
+            path: "src/lib/example.ts",
+            line: 4,
+            impact: "Automation could publish a security-sensitive change.",
+            smallestSafeFix: "Leave the repair to a maintainer.",
+            regressionTest: "Prove security findings remain ineligible.",
+            exclusions: [],
+          },
+        ],
+        noFindingsReason: null,
+      },
+      undefined,
+      undefined,
+      undefined as never,
+    );
+    const finding = controller.snapshot().findings[0]!;
+
+    expect(() =>
+      selectRepairFindings({
+        version: 1,
+        repository: "NVIDIA/NemoClaw",
+        prNumber: 42,
+        sourceHeadSha: headSha,
+        baseSha: "b".repeat(40),
+        headRef: "feature/fix",
+        repositoryId: "R_repo",
+        author: "maintainer",
+        actor: "maintainer",
+        triggeringActor: "maintainer",
+        workflowSha: "c".repeat(40),
+        advisor: {
+          runId: 7,
+          runAttempt: 1,
+          workflowSha: "d".repeat(40),
+          artifactIds: Array.from({ length: 10 }, (_, index) => index + 1),
+        },
+        stateDigest: `sha256:${"e".repeat(64)}`,
+        reviewDigest: `sha256:${"f".repeat(64)}`,
+        ledgers: [controller.snapshot()],
+        optedFindingIds: [finding.id],
+        productScope: "accepted:#10791",
+        optIn: "manual-exact-head",
+      }),
+    ).toThrow("no opted-in finding is eligible for repair");
+  });
+
+  it("binds Phase 0 to the exact manual run, PR revisions, artifacts, and same-repository owner (#10791)", () => {
+    const headSha = "a".repeat(40);
+    const baseSha = "b".repeat(40);
+    const workflowSha = "c".repeat(40);
+    const ledgers = ADVISOR_INTERESTS.map((interest) =>
+      buildAdvisorFindingLedger({
+        headSha,
+        interest,
+        input:
+          interest === "reduction-simplification"
+            ? {
+                findings: [
+                  {
+                    severity: "P1",
+                    kind: "correctness",
+                    summary: "The selected behavior is wrong.",
+                    path: "src/lib/example.ts",
+                    line: 4,
+                    impact: "The command returns the wrong value.",
+                    smallestSafeFix: "Correct the selected expression.",
+                    regressionTest: "Cover the corrected result.",
+                    exclusions: [],
+                  },
+                ],
+                noFindingsReason: null,
+              }
+            : { findings: [], noFindingsReason: "No blocker in this specialist area." },
+      }),
+    );
+    const findingId = ledgers.flatMap(({ findings }) => findings)[0]!.id;
+    const artifactNames = [
+      "pr-review-advisor-context-77",
+      ...ADVISOR_INTERESTS.map((interest) => `pr-review-specialist-${interest}-1`),
+    ];
+    const pullRequest = {
+      state: "open",
+      draft: false,
+      // GitHub exposes maintainer_can_modify only for cross-repository fork PRs.
+      maintainer_can_modify: false,
+      user: { login: "contributor" },
+      head: { ref: "feature/fix", sha: headSha, repo: { full_name: "NVIDIA/NemoClaw" } },
+      base: {
+        ref: "main",
+        sha: baseSha,
+        repo: { full_name: "NVIDIA/NemoClaw", node_id: "R_repo" },
+      },
+    };
+    const request = {
+      repository: "NVIDIA/NemoClaw",
+      prNumber: 42,
+      sourceHeadSha: headSha,
+      sourceBaseSha: baseSha,
+      workflowSha,
+      actor: "maintainer",
+      triggeringActor: "maintainer",
+      currentRunId: 77,
+      currentRunAttempt: 1,
+      optedFindingIds: [findingId],
+      pullRequest,
+      sourceCommit: { commit: { message: "fix: correct the selected behavior" } },
+      advisorRun: {
+        id: 77,
+        run_attempt: 1,
+        event: "workflow_dispatch",
+        status: "in_progress",
+        conclusion: null,
+        path: ".github/workflows/pr-review-advisor.yaml",
+        workflow_sha: workflowSha,
+        repository: { full_name: "NVIDIA/NemoClaw" },
+        pull_requests: [],
+      },
+      artifacts: artifactNames.map((name, index) => ({
+        id: index + 100,
+        name,
+        expired: false,
+        workflow_run: { id: 77 },
+      })),
+      ledgers,
+      state: { open: true },
+      reviews: [],
+      permissions: {
+        actor: { permission: "write", role_name: "maintain" },
+        triggeringActor: { permission: "admin", role_name: "admin" },
+      },
+    };
+
+    expect(bindRepairSelection(request)).toMatchObject({
+      sourceHeadSha: headSha,
+      baseSha,
+      findingIds: [findingId],
+      optIn: "manual-exact-head",
+    });
+    expect(() => bindRepairSelection({ ...request, sourceBaseSha: "d".repeat(40) })).toThrow(
+      "not eligible",
+    );
+    expect(() => bindRepairSelection({ ...request, currentRunId: 78 })).toThrow(
+      "successful trusted workflow revision",
+    );
+    expect(() =>
+      bindRepairSelection({
+        ...request,
+        permissions: {
+          ...request.permissions,
+          triggeringActor: { permission: "write", role_name: "write" },
+        },
+      }),
+    ).toThrow("not eligible");
+    expect(() =>
+      bindRepairSelection({
+        ...request,
+        pullRequest: {
+          ...pullRequest,
+          head: { ...pullRequest.head, repo: { full_name: "contributor/NemoClaw" } },
+        },
+      }),
+    ).toThrow("not eligible");
+    expect(() =>
+      bindRepairSelection({
+        ...request,
+        sourceCommit: {
+          commit: {
+            message: `fix: generated repair\n\nAdvisor-Repair-Attempt: sha256:${"0".repeat(64)}`,
+          },
+        },
+      }),
+    ).toThrow("not eligible");
+    expect(() =>
+      bindRepairSelection({
+        ...request,
+        artifacts: request.artifacts.map((artifact, index) =>
+          index === 0 ? { ...artifact, expired: true } : artifact,
+        ),
+      }),
+    ).toThrow("artifact set is incomplete");
   });
 });

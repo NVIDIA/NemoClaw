@@ -791,6 +791,61 @@ export function readFreeStandingJobsInventory(
   return inventory;
 }
 
+export function readE2eWorkflowJobEvidenceNames(
+  input: {
+    jobIds: readonly string[];
+    runtimeProvidersByJob: Readonly<Record<string, readonly string[]>>;
+  },
+  workflowPath = DEFAULT_E2E_WORKFLOW_PATH,
+): string[] {
+  const jobs = asRecord(readWorkflowRecord(workflowPath).jobs);
+  const names: string[] = [];
+  for (const jobId of input.jobIds) {
+    const job = asRecord(jobs[jobId]);
+    if (Object.keys(job).length === 0) {
+      throw new Error(`E2E workflow evidence job is missing: ${jobId}`);
+    }
+    const template = typeof job.name === "string" ? job.name : jobId;
+    const runtimeToken = "${{ matrix.runtime_provider }}";
+    const platformToken = "${{ matrix.platform }}";
+    if (template.includes(runtimeToken)) {
+      const providers = input.runtimeProvidersByJob[jobId] ?? [];
+      if (providers.length === 0) {
+        throw new Error(`E2E workflow evidence job has no runtime providers: ${jobId}`);
+      }
+      for (const provider of providers) names.push(template.replaceAll(runtimeToken, provider));
+      continue;
+    }
+    if (template.includes(platformToken)) {
+      const strategy = asRecord(job.strategy);
+      const matrix = asRecord(strategy.matrix);
+      const include = matrix.include;
+      if (!Array.isArray(include)) {
+        throw new Error(`E2E workflow evidence job has no platform matrix: ${jobId}`);
+      }
+      const platforms = include.map((row) => asRecord(row).platform);
+      if (
+        platforms.length === 0 ||
+        platforms.some((platform) => typeof platform !== "string" || platform.length === 0)
+      ) {
+        throw new Error(`E2E workflow evidence job has an invalid platform matrix: ${jobId}`);
+      }
+      for (const platform of platforms as string[]) {
+        names.push(template.replaceAll(platformToken, platform));
+      }
+      continue;
+    }
+    if (template.includes("${{")) {
+      throw new Error(`E2E workflow evidence job has an unsupported dynamic name: ${jobId}`);
+    }
+    names.push(template);
+  }
+  if (new Set(names).size !== names.length) {
+    throw new Error("E2E workflow evidence job names are ambiguous");
+  }
+  return names;
+}
+
 const RESTORED_GATEWAY_PAIRING_RUNTIME_FILES = new Set([
   "src/lib/actions/sandbox/auto-pair-approval.ts",
   "src/lib/actions/sandbox/restore-gateway-pairing.ts",
@@ -2065,15 +2120,29 @@ function validateInferenceModeGeneration(
 function validateFullE2eConcurrency(errors: string[], workflow: WorkflowRecord): void {
   const concurrency = asRecord(workflow.concurrency);
   const expectedGroup =
-    "e2e-${{ github.ref }}-${{ (inputs.jobs == 'staging-brev-launchable' || inputs.jobs == 'staging-brev-launchable-identity' || inputs.include_staging_brev_launchable) && format('launchable-{0}', github.run_id) || inputs.checkout_sha != '' && format('pr-{0}', inputs.pr_number) || inputs.targets || 'supported' }}-${{ inputs.checkout_sha != '' && 'manual-pr' || inputs.jobs || 'all-jobs' }}";
+    "e2e-${{ github.ref }}-${{ inputs.repair_validation && format('repair-{0}', inputs.repair_attempt_key) || (inputs.jobs == 'staging-brev-launchable' || inputs.jobs == 'staging-brev-launchable-identity' || inputs.include_staging_brev_launchable) && format('launchable-{0}', github.run_id) || inputs.checkout_sha != '' && format('pr-{0}', inputs.pr_number) || inputs.targets || 'supported' }}-${{ inputs.checkout_sha != '' && 'manual-pr' || inputs.jobs || 'all-jobs' }}";
   if (concurrency.group !== expectedGroup) {
     errors.push("workflow concurrency must isolate each Launchable dispatch with github.run_id");
   }
   if (
     concurrency["cancel-in-progress"] !==
-    "${{ inputs.checkout_sha != '' && !inputs.allow_jetson_dispatch && !contains(format(',{0},', inputs.jobs), ',staging-brev-launchable,') && !contains(format(',{0},', inputs.jobs), ',staging-brev-launchable-identity,') && !inputs.include_staging_brev_launchable }}"
+    "${{ !inputs.repair_validation && inputs.checkout_sha != '' && !inputs.allow_jetson_dispatch && !contains(format(',{0},', inputs.jobs), ',staging-brev-launchable,') && !contains(format(',{0},', inputs.jobs), ',staging-brev-launchable-identity,') && !inputs.include_staging_brev_launchable }}"
   ) {
     errors.push("workflow concurrency must not cancel an active Jetson or Launchable dispatch");
+  }
+}
+
+function validateRepairDispatchInputs(
+  errors: string[],
+  dispatchInputs: Record<string, unknown>,
+): void {
+  const repairValidationInput = requireInput(errors, dispatchInputs, "repair_validation");
+  if (repairValidationInput.type !== "boolean" || repairValidationInput.default !== false) {
+    errors.push("workflow_dispatch repair_validation input must be boolean and default to false");
+  }
+  const repairAttemptInput = requireInput(errors, dispatchInputs, "repair_attempt_key");
+  if (repairAttemptInput.type !== "string" || repairAttemptInput.default !== "") {
+    errors.push("workflow_dispatch repair_attempt_key input must be string and default to empty");
   }
 }
 
@@ -2601,6 +2670,8 @@ function validateTrustedE2eDispatchReceipt(
     INCLUDE_STAGING_BREV_LAUNCHABLE:
       "${{ inputs.include_staging_brev_launchable && 'true' || 'false' }}",
     PR_NUMBER: "${{ inputs.checkout_sha != '' && inputs.pr_number || '' }}",
+    REPAIR_ATTEMPT_KEY: "${{ inputs.repair_attempt_key }}",
+    REPAIR_VALIDATION: "${{ inputs.repair_validation && 'true' || 'false' }}",
     REPOSITORY: "${{ github.repository }}",
     RUN_ATTEMPT: "${{ github.run_attempt }}",
     RUN_ID: "${{ github.run_id }}",
@@ -2633,6 +2704,8 @@ function validateTrustedE2eDispatchReceipt(
     "allowJetsonDispatch: $allowJetsonDispatch",
     "allowJetsonRunnerQueue: $allowJetsonRunnerQueue",
     "includeStagingBrevLaunchable: $includeStagingBrevLaunchable",
+    "repairValidation: $repairValidation",
+    "repairAttemptKey: $repairAttemptKey",
     "triggeringActor: $triggeringActor",
     'emptySelectors: ($jobs == "" and $targets == "")',
     '>"$DISPATCH_RECEIPT_DIR/dispatch.json"',
@@ -2690,6 +2763,12 @@ function validateTrustedE2ePlannerBoundary(
   generate: WorkflowRecord | undefined,
   candidateCheckout: WorkflowRecord | undefined,
 ): void {
+  const credentialAuthorization = requireStep(errors, generateSteps, "Authorize E2E credentials");
+  requireRunContains(
+    errors,
+    credentialAuthorization,
+    'REPAIR_VALIDATION="${REPAIR_VALIDATION:-false}"',
+  );
   const trustedPlannerCheckout = requireStep(
     errors,
     generateSteps,
@@ -2745,9 +2824,11 @@ function validateTrustedE2ePlannerBoundary(
   const generateEnv = asRecord(generate?.env);
   if (
     generateEnv.NEMOCLAW_E2E_CREDENTIALS_ALLOWED !==
-    "${{ (inputs.checkout_sha == '' || steps.candidate_authorization.outputs.nvidia_owned == 'true') && 'true' || 'false' }}"
+    "${{ !inputs.repair_validation && (inputs.checkout_sha == '' || steps.candidate_authorization.outputs.nvidia_owned == 'true') && 'true' || 'false' }}"
   ) {
-    errors.push("matrix generation step must bind NVIDIA-owned candidate authorization");
+    errors.push(
+      "matrix generation step must bind NVIDIA-owned candidate authorization and deny repair credentials",
+    );
   }
 }
 
@@ -2844,6 +2925,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
 
   const dispatchInputs = asRecord(workflowDispatch.inputs);
   requireInput(errors, dispatchInputs, "targets");
+  validateRepairDispatchInputs(errors, dispatchInputs);
   validateFullE2eConcurrency(errors, workflow);
   validateStagingBrevLaunchableInput(errors, dispatchInputs);
   validateInferenceModeInput(errors, workflow, dispatchInputs);
@@ -2915,6 +2997,35 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   requireNoDispatchInputInterpolation(errors, generateSteps);
   const generateCheckout = requireStep(errors, generateSteps, "Check out E2E candidate");
   if (!generateCheckout) errors.push("generate-matrix job missing checkout step");
+  const candidateAuthorization = generateSteps.find(
+    (step) => stringValue(step.id) === "candidate_authorization",
+  );
+  const candidateAuthorizationEnv = asRecord(candidateAuthorization?.env);
+  if (
+    candidateAuthorizationEnv.REPAIR_ATTEMPT_KEY !== "${{ inputs.repair_attempt_key }}" ||
+    candidateAuthorizationEnv.REPAIR_VALIDATION !==
+      "${{ inputs.repair_validation && 'true' || 'false' }}"
+  ) {
+    errors.push("manual PR authentication must receive the exact repair validation identity");
+  }
+  for (const fragment of [
+    'REPAIR_ATTEMPT_KEY="${REPAIR_ATTEMPT_KEY:-}"',
+    'REPAIR_VALIDATION="${REPAIR_VALIDATION:-false}"',
+    '[[ "$WORKFLOW_REF" == "refs/heads/main" ]]',
+    '[[ "$REPAIR_ATTEMPT_KEY" =~ ^sha256:[a-f0-9]{64}$ ]]',
+    '[[ -n "$JOBS" && -z "$TARGETS" ]]',
+    '[[ "$INFERENCE_MODE" == "mock" && "$POST_TO_SLACK" != "true" ]]',
+    '[[ -z "$REPAIR_ATTEMPT_KEY" ]]',
+  ]) {
+    requireRunContains(errors, candidateAuthorization, fragment);
+  }
+  if (
+    candidateAuthorization &&
+    generateCheckout &&
+    generateSteps.indexOf(candidateAuthorization) >= generateSteps.indexOf(generateCheckout)
+  ) {
+    errors.push("manual PR authentication must run before candidate checkout");
+  }
   requireFullShaAction(errors, generateCheckout, "generate-matrix checkout");
   if (asRecord(generateCheckout?.with)["persist-credentials"] !== false) {
     errors.push("generate-matrix checkout step must set persist-credentials=false");

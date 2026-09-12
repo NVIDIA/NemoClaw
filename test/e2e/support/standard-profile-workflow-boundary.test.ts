@@ -130,9 +130,9 @@ describe("standard E2E execution profile", () => {
 
   it("rejects a catalogue SDK dependency that is restricted to another target", () => {
     const workflow = readWorkflow() as { jobs: Record<string, { if?: string }> };
-    workflow.jobs["package-openshell-sdk"]!.if = "${{ inputs.jobs == 'external-gateway-health' }}";
+    delete workflow.jobs["package-openshell-sdk"]!.if;
     expect(validateStandardProfileWorkflowBoundary(workflow)).toContain(
-      "catalogue profiles require SDK packaging for every E2E run with package-read permission",
+      "catalogue profiles require SDK packaging with package-read permission outside repair validation",
     );
   });
 

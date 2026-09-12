@@ -13,15 +13,23 @@ const DEFAULT_WORKFLOW_PATH = join(REPO_ROOT, ".github", "workflows", "pr-review
 const EXPECTED_GATE_CONDITION =
   "${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.path == '.github/workflows/pr.yaml' && endsWith(github.event.workflow_run.display_title, ' gate true'))) }}";
 const EXPECTED_ENTRY_CONDITION = "${{ github.repository == 'NVIDIA/NemoClaw' }}";
+const EXPECTED_DISCOVERY_CONDITION =
+  "${{ always() && github.repository == 'NVIDIA/NemoClaw' && needs.require-green-checks.result == 'success' && (inputs.repair_attempt_key == '' || needs.validate-repair-target.result == 'success') }}";
+const EXPECTED_AUTOMATIC_PREPARATION_CONDITION =
+  "${{ github.event_name == 'workflow_run' || (github.event_name == 'workflow_dispatch' && (inputs.target_repo != '' || inputs.target_pr != '') && inputs.repair_attempt_key == '' && inputs.repair_finding_ids_json == '[]') }}";
+const EXPECTED_REPAIR_PREPARATION_CONDITION =
+  "${{ github.event_name == 'workflow_dispatch' && (inputs.repair_attempt_key != '' || inputs.repair_finding_ids_json != '[]') }}";
 
 type WorkflowPermissions = Record<string, unknown> | string;
 type WorkflowStep = {
   env?: Record<string, unknown>;
+  if?: string;
   name?: string;
   run?: string;
   with?: Record<string, unknown>;
 };
 type WorkflowJob = {
+  environment?: string;
   env?: Record<string, unknown>;
   if?: string;
   needs?: unknown;
@@ -59,20 +67,47 @@ export function validatePrReviewAdvisorWorkflow(workflowPath = DEFAULT_WORKFLOW_
   const errors: string[] = [];
   const source = readFileSync(workflowPath, "utf8");
   const advisor = YAML.parse(source) as AdvisorWorkflow;
-  const permissionBlocks = [
-    advisor.permissions,
-    ...Object.values(advisor.jobs ?? {}).map((job) => job.permissions),
-  ];
+  const repairPublish = advisor.jobs?.["repair-publish"] ?? {};
+  const dispatchJob = advisor.jobs?.["repair-dispatch-generated-head"] ?? {};
+  const dispatchSteps = dispatchJob.steps ?? [];
+  const dispatchStep = dispatchSteps.find(
+    (step) => step.name === "Dispatch exact generated-head validation",
+  );
+  const jobsWithActionsWrite = Object.entries(advisor.jobs ?? {})
+    .filter(([, job]) => permissionMap(job.permissions).actions === "write")
+    .map(([name]) => name);
   if (
-    permissionBlocks.some(
-      (permissions) =>
-        permissions === "write-all" || permissionMap(permissions).actions === "write",
-    )
+    repairPublish.environment !== "advisor-repair-publish" ||
+    JSON.stringify(repairPublish).includes("PR_REVIEW_ADVISOR_API_KEY") ||
+    JSON.stringify(dispatchJob).includes("PR_REVIEW_ADVISOR_API_KEY")
   ) {
-    errors.push("Unified advisor must not hold actions: write");
+    errors.push("Unified advisor repair publication must retain its protected credential boundary");
   }
-  if (/createWorkflowDispatch|workflow_dispatches/u.test(source)) {
-    errors.push("Unified advisor must not auto-dispatch workflows");
+  if (
+    advisor.permissions === "write-all" ||
+    permissionMap(advisor.permissions).actions === "write" ||
+    !isDeepStrictEqual(jobsWithActionsWrite, ["repair-dispatch-generated-head"]) ||
+    !isDeepStrictEqual(permissionMap(dispatchJob.permissions), { actions: "write" }) ||
+    !sameMembers(needs(dispatchJob), ["repair-publish"]) ||
+    dispatchJob.if !==
+      "needs.repair-publish.result == 'success' && needs.repair-publish.outputs.published-sha != ''" ||
+    dispatchSteps.length !== 1 ||
+    dispatchStep?.env?.GH_TOKEN !== "${{ github.token }}" ||
+    !String(dispatchStep.run ?? "").includes(
+      "actions/workflows/pr-review-advisor-generated-head.yaml/dispatches",
+    ) ||
+    !String(dispatchStep.run ?? "").includes('-f "inputs[source_run_id]=$GITHUB_RUN_ID"') ||
+    !String(dispatchStep.run ?? "").includes('-f "inputs[source_run_attempt]=$GITHUB_RUN_ATTEMPT"')
+  ) {
+    errors.push("Unified advisor must isolate exact generated-head dispatch after publication");
+  }
+  if (
+    (
+      source.match(/actions\/workflows\/pr-review-advisor-generated-head[.]yaml\/dispatches/gu) ??
+      []
+    ).length !== 1
+  ) {
+    errors.push("Unified advisor must contain only the exact generated-head dispatch");
   }
   if (
     advisor.on?.pull_request_target !== undefined ||
@@ -83,16 +118,22 @@ export function validatePrReviewAdvisorWorkflow(workflowPath = DEFAULT_WORKFLOW_
     errors.push("Unified advisor must retain completed CI / Pull Request identity");
   }
   const gate = advisor.jobs?.["require-green-checks"] ?? {};
-  const entryJobs = ["discover-specialists", "build-advisor-runtime", "review-specialists"];
   if (
-    !sameMembers(needs(advisor.jobs?.["discover-specialists"] ?? {}), ["require-green-checks"]) ||
+    !sameMembers(needs(advisor.jobs?.["discover-specialists"] ?? {}), [
+      "require-green-checks",
+      "validate-repair-target",
+    ]) ||
     !sameMembers(needs(advisor.jobs?.["build-advisor-runtime"] ?? {}), ["require-green-checks"]) ||
     !needs(advisor.jobs?.["review-specialists"] ?? {}).includes("require-green-checks") ||
     !needs(advisor.jobs?.publish ?? {}).includes("require-green-checks")
   ) {
     errors.push("Unified advisor entry jobs must depend on the green checks gate");
   }
-  if (entryJobs.some((name) => advisor.jobs?.[name]?.if !== EXPECTED_ENTRY_CONDITION)) {
+  if (
+    advisor.jobs?.["discover-specialists"]?.if !== EXPECTED_DISCOVERY_CONDITION ||
+    advisor.jobs?.["build-advisor-runtime"]?.if !== EXPECTED_ENTRY_CONDITION ||
+    advisor.jobs?.["review-specialists"]?.if !== EXPECTED_ENTRY_CONDITION
+  ) {
     errors.push("Unified advisor entry jobs must retain fail-closed conditions");
   }
   if (gate.if !== EXPECTED_GATE_CONDITION) {
@@ -148,6 +189,7 @@ export function validatePrReviewAdvisorWorkflow(workflowPath = DEFAULT_WORKFLOW_
     (step) => step.name === "Prepare isolated analysis workspace",
   );
   if (
+    targetPreparation?.if !== EXPECTED_AUTOMATIC_PREPARATION_CONDITION ||
     targetPreparation?.env?.TARGET_REPO !==
       "${{ github.event_name == 'workflow_run' && github.repository || inputs.target_repo }}" ||
     targetPreparation.env?.TARGET_PR !==
@@ -160,6 +202,19 @@ export function validatePrReviewAdvisorWorkflow(workflowPath = DEFAULT_WORKFLOW_
       "${{ github.event_name == 'workflow_run' && needs.require-green-checks.outputs.head_sha || '' }}"
   ) {
     errors.push("Unified advisor must prepare the PR revision from the successful checks run");
+  }
+  const repairPreparation = specialistSteps.find(
+    (step) => step.name === "Prepare exact repair analysis workspace",
+  );
+  if (
+    repairPreparation?.if !== EXPECTED_REPAIR_PREPARATION_CONDITION ||
+    repairPreparation.env?.TARGET_REPO !== "${{ inputs.target_repo }}" ||
+    repairPreparation.env?.TARGET_PR !== "${{ inputs.target_pr }}" ||
+    repairPreparation.env?.TARGET_BASE !== "${{ inputs.target_base }}" ||
+    repairPreparation.env?.PR_BASE_SHA !== "${{ inputs.repair_base_sha }}" ||
+    repairPreparation.env?.EXPECTED_HEAD_SHA !== "${{ inputs.repair_head_sha }}"
+  ) {
+    errors.push("Unified advisor must bind exact repair dispatch inputs separately");
   }
   const specialistEnv = specialist.env ?? {};
   if (

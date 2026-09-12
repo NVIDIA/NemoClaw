@@ -43,6 +43,7 @@ import {
 } from "./target-catalogue.mts";
 import {
   focusedE2eJobsForChangedFiles,
+  readE2eWorkflowJobEvidenceNames,
   readFreeStandingJobsInventory,
 } from "./workflow-boundary.mts";
 import {
@@ -694,6 +695,43 @@ export function selectedWorkflowJobs(plan: E2eWorkflowPlan): string[] {
   return [...jobs].sort();
 }
 
+export function e2eEvidenceJobNames(plan: E2eWorkflowPlan, workflowPath?: string): string[] {
+  const names = [
+    ...plan.testMatrix.map((row) => `Shared E2E (${row.execution_id})`),
+    ...Object.values(plan.catalogueMatrices).flatMap((rows) =>
+      rows.map((row) => `${row.display_name} (${row.runtime_provider})`),
+    ),
+    ...readE2eWorkflowJobEvidenceNames(
+      {
+        jobIds: plan.selectedJobs.filter((job) => job !== SHARED_E2E_JOB_ID),
+        runtimeProvidersByJob: plan.runtimeProvidersByJob,
+      },
+      workflowPath,
+    ),
+  ];
+  if (new Set(names).size !== names.length) {
+    throw new Error("E2E evidence job names are ambiguous");
+  }
+  return names;
+}
+
+export function e2eEvidenceJobNamesForSelectors(requiredJobs: readonly string[]): string[] {
+  return e2eEvidenceJobNames(
+    buildE2eWorkflowPlan({ jobs: requiredJobs.join(",") }, { gatewayRuntimes: ["docker"] }),
+  );
+}
+
+export function repairValidationCredentialRequiredE2eJob(
+  requiredJobs: readonly string[],
+): string | null {
+  const credentialFreeTests = new Set(discoverCredentialFreeTests().map(({ id }) => id));
+  for (const job of requiredJobs) {
+    if (credentialFreeTests.has(job)) continue;
+    return job;
+  }
+  return null;
+}
+
 export function buildE2eWorkflowPlan(
   selectors: WorkflowPlanSelectors = {},
   options: WorkflowPlanOptions = {},
@@ -1234,17 +1272,30 @@ export function writeE2eWorkflowPlanCiOutput(
   environment: NodeJS.ProcessEnv = process.env,
 ): void {
   const inferenceMode = environment.INFERENCE_MODE ?? "";
+  const repairValidation = environment.NEMOCLAW_E2E_REPAIR_VALIDATION === "true";
   if (!INFERENCE_MODES.has(inferenceMode)) {
     throw new Error(`Invalid inference_mode: ${inferenceMode}`);
   }
   if (
     COMMIT_SHA_PATTERN.test(environment.NEMOCLAW_E2E_EXPECTED_SHA ?? "") &&
-    environment.NEMOCLAW_E2E_CREDENTIALS_ALLOWED !== "true"
+    environment.NEMOCLAW_E2E_CREDENTIALS_ALLOWED !== "true" &&
+    !repairValidation
   ) {
     throw new Error("Manual PR E2E requires an authorized source branch in NVIDIA/NemoClaw");
   }
   const controllerMap = mapTrustedControllerJobs(selectors, environment);
   const plannerSelectors = controllerMap.selectors;
+  if (repairValidation) {
+    const credentialRequiredJob = repairValidationCredentialRequiredE2eJob([
+      ...selectorIds(plannerSelectors.jobs, "jobs"),
+      ...selectorIds(plannerSelectors.targets, "targets"),
+    ]);
+    if (credentialRequiredJob) {
+      throw new Error(
+        `Advisor repair E2E cannot select credential-required job: ${credentialRequiredJob}`,
+      );
+    }
+  }
   const gatewayRuntimes = e2eGatewayRuntimes(
     environment.NEMOCLAW_GATEWAY_RUNTIMES ?? environment.NEMOCLAW_GATEWAY_RUNTIME,
   );

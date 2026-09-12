@@ -142,6 +142,31 @@
       "category": "security"
     },
     {
+      "file": "test/automation/pull-requests/pr-merge-conflict-fixer.test.ts",
+      "test": "rejects out-of-scope and non-regular sandbox output before host mutation (#10791)",
+      "category": "security"
+    },
+    {
+      "file": "test/automation/pull-requests/pr-repair-dispatch-guard.test.ts",
+      "test": "rejects a %s generated-head parent set",
+      "category": "security"
+    },
+    {
+      "file": "test/automation/pull-requests/pr-review-advisor-generated-head.test.ts",
+      "test": "allows only trusted-main manual reconciliation of an exact source run (#10791)",
+      "category": "security"
+    },
+    {
+      "file": "test/automation/pull-requests/pr-review-advisor-repair-workflow-contract.test.ts",
+      "test": "keeps Phase 0 Advisor repair manual, credential-separated, and non-publishing (#10791)",
+      "category": "security"
+    },
+    {
+      "file": "test/automation/pull-requests/pr-workflow-contract.test.ts",
+      "test": "runs generated-head validation only through trusted exact-SHA dispatches (#10791)",
+      "category": "security"
+    },
+    {
       "file": "test/automation/pull-requests/pr-workflow-contract.test.ts",
       "test": "executes pull request installer hash checks only from the PR base SHA",
       "category": "security"
@@ -152,7 +177,7 @@
       "category": "security"
     },
     {
-      "file": "test/automation/pull-requests/pr-workflow-contract.test.ts",
+      "file": "test/automation/pull-requests/pr-sdk-package-credential.test.ts",
       "test": "keeps package access out of pull request controlled execution",
       "category": "security"
     },

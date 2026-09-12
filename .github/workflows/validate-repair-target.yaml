@@ -1,0 +1,57 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: Security / Validate Generated Repair Target
+
+on:
+  workflow_call:
+    inputs:
+      repair_pr_number:
+        required: true
+        type: string
+      repair_head_sha:
+        required: true
+        type: string
+      repair_base_sha:
+        required: true
+        type: string
+      repair_attempt_key:
+        required: true
+        type: string
+
+permissions: {}
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Accept ordinary workflow execution
+        if: ${{ inputs.repair_attempt_key == '' }}
+        run: echo "No generated repair target was requested."
+
+      - name: Bind validation to the live generated head
+        if: ${{ inputs.repair_attempt_key != '' }}
+        env:
+          BASE_SHA: ${{ inputs.repair_base_sha }}
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ inputs.repair_head_sha }}
+          PR_NUMBER: ${{ inputs.repair_pr_number }}
+          REPAIR_ATTEMPT_KEY: ${{ inputs.repair_attempt_key }}
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REF" == refs/heads/main ]]
+          [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]]
+          [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$REPAIR_ATTEMPT_KEY" =~ ^sha256:[0-9a-f]{64}$ ]]
+          gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" |
+            jq -e --arg head "$HEAD_SHA" --arg base "$BASE_SHA" '
+              .state == "open" and .draft == false and
+              .head.sha == $head and .head.repo.full_name == "NVIDIA/NemoClaw" and
+              .base.sha == $base and .base.ref == "main" and
+              .base.repo.full_name == "NVIDIA/NemoClaw"
+            ' >/dev/null

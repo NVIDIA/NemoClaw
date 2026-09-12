@@ -3,34 +3,90 @@
 
 name: Security / Package OpenShell SDK for PR
 
-run-name: "OpenShell SDK PR #${{ github.event.pull_request.number }} head ${{ github.event.pull_request.head.sha }} base ${{ github.event.pull_request.base.sha }}"
+run-name: >-
+  ${{ inputs.repair_attempt_key != '' &&
+  format('Repair validation {0} head {1}', inputs.repair_attempt_key, inputs.repair_head_sha) ||
+  format('OpenShell SDK PR #{0} head {1} base {2}', github.event.pull_request.number,
+  github.event.pull_request.head.sha, github.event.pull_request.base.sha) }}
 
 # This workflow is loaded from the pull request base branch. It must never
 # check out or execute pull request content because its token can read packages.
 on:
   pull_request_target:
     types: [opened, synchronize, reopened, edited]
+  workflow_dispatch:
+    inputs:
+      repair_pr_number:
+        required: false
+        type: string
+        default: ""
+      repair_head_sha:
+        required: false
+        type: string
+        default: ""
+      repair_source_head_sha:
+        required: false
+        type: string
+        default: ""
+      repair_base_sha:
+        required: false
+        type: string
+        default: ""
+      repair_attempt_key:
+        required: false
+        type: string
+        default: ""
 
 permissions:
   contents: read
 
 concurrency:
-  group: openshell-sdk-package-${{ github.event.pull_request.number }}-${{ github.event.action != 'edited' || github.event.changes.base != null }}
-  cancel-in-progress: true
+  group: openshell-sdk-package-${{ inputs.repair_attempt_key || github.event.pull_request.number }}-${{ github.event.action != 'edited' || github.event.changes.base != null }}
+  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
 
 jobs:
   package-openshell-sdk:
-    if: ${{ github.event.pull_request.head.repo.full_name == github.repository && (github.event.action != 'edited' || github.event.changes.base != null) }}
+    if: ${{ github.event_name == 'workflow_dispatch' || (github.event.pull_request.head.repo.full_name == github.repository && (github.event.action != 'edited' || github.event.changes.base != null)) }}
     permissions:
       contents: read
       packages: read
+      pull-requests: read
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
+      - name: Bind package production to the live generated head
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        env:
+          BASE_SHA: ${{ inputs.repair_base_sha }}
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ inputs.repair_head_sha }}
+          SOURCE_HEAD_SHA: ${{ inputs.repair_source_head_sha }}
+          PR_NUMBER: ${{ inputs.repair_pr_number }}
+          REPAIR_ATTEMPT_KEY: ${{ inputs.repair_attempt_key }}
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REF" == refs/heads/main ]]
+          [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]]
+          [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$SOURCE_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$REPAIR_ATTEMPT_KEY" =~ ^sha256:[0-9a-f]{64}$ ]]
+          gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" |
+            jq -e --arg head "$HEAD_SHA" --arg base "$BASE_SHA" '
+              .state == "open" and .draft == false and
+              .head.sha == $head and .head.repo.full_name == "NVIDIA/NemoClaw" and
+              .base.sha == $base and .base.ref == "main" and
+              .base.repo.full_name == "NVIDIA/NemoClaw"
+            ' >/dev/null
+          gh api "repos/$GITHUB_REPOSITORY/commits/$HEAD_SHA" |
+            jq -e --arg parent "$SOURCE_HEAD_SHA" '
+              (.parents | length) == 1 and .parents[0].sha == $parent
+            ' >/dev/null
+
       - name: Checkout base-controlled package verifier
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
+          ref: ${{ inputs.repair_attempt_key != '' && inputs.repair_base_sha || github.event.pull_request.base.sha }}
           persist-credentials: false
           sparse-checkout: |
             ci/reviewed-npm-audit.json
@@ -64,7 +120,7 @@ jobs:
       - name: Upload verified OpenShell SDK archive
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: openshell-sdk-${{ github.event.pull_request.head.sha }}
+          name: openshell-sdk-${{ inputs.repair_attempt_key != '' && inputs.repair_head_sha || github.event.pull_request.head.sha }}
           path: ${{ steps.package.outputs.artifact_path }}
           if-no-files-found: error
           retention-days: 1

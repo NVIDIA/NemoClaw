@@ -134,9 +134,12 @@ function requirePinnedAction(errors: string[], step: WorkflowStep | undefined, n
 function validateProfileCallers(errors: string[], workflow: WorkflowRecord): void {
   const jobs = record(workflow.jobs);
   const sdkPackage = record(jobs["package-openshell-sdk"]);
-  if (sdkPackage.if !== undefined || record(sdkPackage.permissions).packages !== "read") {
+  if (
+    sdkPackage.if !== "${{ !inputs.repair_validation }}" ||
+    record(sdkPackage.permissions).packages !== "read"
+  ) {
     errors.push(
-      "catalogue profiles require SDK packaging for every E2E run with package-read permission",
+      "catalogue profiles require SDK packaging with package-read permission outside repair validation",
     );
   }
   const sdkPackageStep = namedStep(

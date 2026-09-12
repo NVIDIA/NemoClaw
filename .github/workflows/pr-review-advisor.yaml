@@ -3,7 +3,11 @@
 
 name: Automation / PR Review Advisor
 run-name: >-
-  ${{ github.event_name == 'workflow_run' && format('Advisor after {0}', github.event.workflow_run.display_title) || 'PR Review Advisor manual dispatch' }}
+  ${{ inputs.repair_attempt_key != '' &&
+  format('Repair validation {0} head {1}', inputs.repair_attempt_key, inputs.repair_head_sha) ||
+  github.event_name == 'workflow_run' &&
+  format('Advisor after {0}', github.event.workflow_run.display_title) ||
+  'PR Review Advisor manual dispatch' }}
 
 on:
   # Run model-backed review only after the unprivileged PR checks workflow completes.
@@ -37,12 +41,57 @@ on:
         required: false
         type: string
         default: main
+      repair_head_sha:
+        description: Exact PR head for an optional Phase 0 repair
+        required: false
+        type: string
+        default: ""
+      repair_base_sha:
+        description: Exact PR base for an optional Phase 0 repair
+        required: false
+        type: string
+        default: ""
+      repair_finding_ids_json:
+        description: Exact finding IDs; empty disables Phase 0 repair
+        required: false
+        type: string
+        default: "[]"
+      repair_egress_authorized:
+        description: Confirm inference egress for an optional Phase 0 repair
+        required: false
+        type: boolean
+        default: false
+      repair_publish:
+        description: Request protected Phase 1 publication of the validated repair
+        required: false
+        type: boolean
+        default: false
+      repair_attempt_key:
+        description: Bound attempt identity for generated-head validation only
+        required: false
+        type: string
+        default: ""
 # Each job declares its own privilege domain. In particular, no model-bearing
 # job can write to a pull request, and the publisher never receives the model
 # credential or the untrusted PR worktree.
 permissions: {}
 
+concurrency:
+  group: pr-review-advisor-repair-${{ github.event_name == 'workflow_dispatch' && inputs.target_pr || github.run_id }}
+  cancel-in-progress: false
+
 jobs:
+  validate-repair-target:
+    uses: ./.github/workflows/validate-repair-target.yaml
+    with:
+      repair_pr_number: ${{ inputs.target_pr }}
+      repair_head_sha: ${{ inputs.repair_head_sha }}
+      repair_base_sha: ${{ inputs.repair_base_sha }}
+      repair_attempt_key: ${{ inputs.repair_attempt_key }}
+    permissions:
+      contents: read
+      pull-requests: read
+
   require-green-checks:
     name: Require green PR checks
     if: >-
@@ -101,8 +150,8 @@ jobs:
 
   discover-specialists:
     name: Discover review specialists and collect GitHub context
-    if: ${{ github.repository == 'NVIDIA/NemoClaw' }}
-    needs: require-green-checks
+    needs: [require-green-checks, validate-repair-target]
+    if: ${{ always() && github.repository == 'NVIDIA/NemoClaw' && needs.require-green-checks.result == 'success' && (inputs.repair_attempt_key == '' || needs.validate-repair-target.result == 'success') }}
     permissions:
       contents: read
       issues: read
@@ -129,6 +178,15 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: node --no-warnings tools/pr-review-advisor/github-context.mts
+      - name: Enforce generated-head advisor scope
+        if: ${{ inputs.repair_attempt_key != '' }}
+        env:
+          FINDING_IDS: ${{ inputs.repair_finding_ids_json }}
+          PUBLISH_REQUESTED: ${{ inputs.repair_publish }}
+        run: |
+          set -euo pipefail
+          [[ "$FINDING_IDS" == '[]' ]]
+          [[ "$PUBLISH_REQUESTED" == 'false' ]]
       - name: Upload GitHub review context
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -285,13 +343,33 @@ jobs:
       # fetch/validation logic lives in the trusted, unit-tested helper and is
       # executed only from $ADVISOR_DIR (github.workflow_sha checkout).
       - name: Prepare isolated analysis workspace
-        if: ${{ github.event_name == 'workflow_run' || (github.event_name == 'workflow_dispatch' && (inputs.target_repo != '' || inputs.target_pr != '')) }}
+        if: >-
+          ${{ github.event_name == 'workflow_run' ||
+          (github.event_name == 'workflow_dispatch' &&
+          (inputs.target_repo != '' || inputs.target_pr != '') &&
+          inputs.repair_attempt_key == '' && inputs.repair_finding_ids_json == '[]') }}
         env:
           TARGET_REPO: ${{ github.event_name == 'workflow_run' && github.repository || inputs.target_repo }}
           TARGET_PR: ${{ github.event_name == 'workflow_run' && needs.require-green-checks.outputs.pr_number || inputs.target_pr }}
           TARGET_BASE: ${{ github.event_name == 'workflow_run' && 'main' || inputs.target_base }}
           PR_BASE_SHA: ${{ github.event_name == 'workflow_run' && needs.require-green-checks.outputs.base_sha || '' }}
           EXPECTED_HEAD_SHA: ${{ github.event_name == 'workflow_run' && needs.require-green-checks.outputs.head_sha || '' }}
+          GIT_LFS_SKIP_SMUDGE: "1"
+          TARGET_DIR: ${{ github.workspace }}/pr-workdir
+        run: |
+          node \
+            "$ADVISOR_DIR/tools/pr-review-advisor/prepare-target-pr.mts"
+
+      - name: Prepare exact repair analysis workspace
+        if: >-
+          ${{ github.event_name == 'workflow_dispatch' &&
+          (inputs.repair_attempt_key != '' || inputs.repair_finding_ids_json != '[]') }}
+        env:
+          TARGET_REPO: ${{ inputs.target_repo }}
+          TARGET_PR: ${{ inputs.target_pr }}
+          TARGET_BASE: ${{ inputs.target_base }}
+          PR_BASE_SHA: ${{ inputs.repair_base_sha }}
+          EXPECTED_HEAD_SHA: ${{ inputs.repair_head_sha }}
           GIT_LFS_SKIP_SMUDGE: "1"
           TARGET_DIR: ${{ github.workspace }}/pr-workdir
         run: |
@@ -413,3 +491,725 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --pr "$PR_NUMBER" \
             --marker "$PR_REVIEW_ADVISOR_COMMENT_MARKER"
+
+  repair-validation-receipt:
+    name: ${{ format('Repair receipt {0} PR {1} head {2} base {3}', inputs.repair_attempt_key, inputs.target_pr, inputs.repair_head_sha, inputs.repair_base_sha) }}
+    needs: review-specialists
+    if: ${{ inputs.repair_attempt_key != '' && needs.review-specialists.result == 'success' }}
+    permissions: {}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 1
+    steps:
+      - name: Record exact validation receipt
+        run: echo 'Trusted validation completed for the exact repair inputs.'
+
+  repair-select:
+    name: Select exact-head Phase 0 findings
+    needs: review-specialists
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.ref == 'refs/heads/main' &&
+      github.run_attempt == 1 &&
+      inputs.target_repo == 'NVIDIA/NemoClaw' &&
+      inputs.target_pr != '' &&
+      inputs.repair_head_sha != '' &&
+      inputs.repair_base_sha != '' &&
+      inputs.repair_finding_ids_json != '[]' &&
+      inputs.repair_egress_authorized &&
+      vars.PR_REVIEW_ADVISOR_REPAIR_ENABLED == 'true' &&
+      needs.review-specialists.result == 'success'
+    permissions:
+      actions: read
+      checks: write
+      contents: read
+      pull-requests: read
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      context-artifact-id: ${{ steps.upload.outputs.artifact-id }}
+    env:
+      ADVISOR_DIR: ${{ github.workspace }}/advisor
+    steps:
+      - name: Checkout trusted selection code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: NVIDIA/NemoClaw
+          ref: ${{ github.workflow_sha }}
+          path: advisor
+          persist-credentials: false
+          lfs: false
+          submodules: false
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ">=22.19.0 <23"
+          cache: npm
+          cache-dependency-path: advisor/package-lock.json
+
+      - name: Install trusted dependencies
+        run: npm --prefix "$ADVISOR_DIR" ci --ignore-scripts --no-audit --no-fund
+
+      - id: inspect
+        name: Record exact same-run artifact identities
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          live="$RUNNER_TEMP/live"
+          mkdir -m 700 "$live"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" > "$live/run.json"
+          gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?per_page=100" \
+            --slurp | jq '{artifacts: [.[].artifacts[]]}' > "$live/artifacts.json"
+          ADVISOR_DIR="$ADVISOR_DIR" LIVE="$live" GITHUB_OUTPUT="$GITHUB_OUTPUT" \
+            node --no-warnings --input-type=module <<'NODE'
+          import fs from "node:fs";
+          import path from "node:path";
+          const { ADVISOR_INTERESTS } = await import(`${process.env.ADVISOR_DIR}/tools/pr-review-advisor/specialist-catalog.mts`);
+          const run = JSON.parse(fs.readFileSync(path.join(process.env.LIVE, "run.json"), "utf8"));
+          const artifacts = JSON.parse(fs.readFileSync(path.join(process.env.LIVE, "artifacts.json"), "utf8")).artifacts;
+          const names = [`pr-review-advisor-context-${run.id}`, ...ADVISOR_INTERESTS.map((value) => `pr-review-specialist-${value}-${run.run_attempt}`)];
+          const ids = names.map((name) => {
+            const found = artifacts.filter((artifact) => artifact.name === name && !artifact.expired && artifact.workflow_run?.id === run.id);
+            if (found.length !== 1) throw new Error(`Advisor artifact is missing or ambiguous: ${name}`);
+            return found[0].id;
+          });
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `artifact_ids=${ids.join(",")}\n`);
+          NODE
+
+      - name: Download exact same-run Advisor artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ steps.inspect.outputs.artifact_ids }}
+          merge-multiple: true
+          path: ${{ runner.temp }}/advisor-artifacts
+
+      - name: Bind live PR, review, and ownership state
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ inputs.target_pr }}
+          SOURCE_HEAD_SHA: ${{ inputs.repair_head_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]]
+          [[ "$SOURCE_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
+          live="$RUNNER_TEMP/live"
+          gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" > "$live/pull.json"
+          gh api "repos/$GITHUB_REPOSITORY/commits/$SOURCE_HEAD_SHA" > "$live/commit.json"
+          gh api "repos/$GITHUB_REPOSITORY/collaborators/$GITHUB_ACTOR/permission" > "$live/permission.json"
+          gh api "repos/$GITHUB_REPOSITORY/collaborators/$GITHUB_TRIGGERING_ACTOR/permission" > "$live/triggering-permission.json"
+          gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/reviews?per_page=100" --slurp | jq 'add' > "$live/reviews.json"
+          gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments?per_page=100" --slurp | jq 'add' > "$live/comments.json"
+          gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/comments?per_page=100" --slurp | jq 'add' > "$live/review-comments.json"
+          jq -n --slurpfile pull "$live/pull.json" --slurpfile comments "$live/comments.json" \
+            --slurpfile reviewComments "$live/review-comments.json" \
+            --slurpfile actorPermission "$live/permission.json" \
+            --slurpfile triggeringPermission "$live/triggering-permission.json" \
+            '{pull:$pull[0], comments:$comments[0], reviewComments:$reviewComments[0], actorPermission:$actorPermission[0], triggeringPermission:$triggeringPermission[0]}' > "$live/state.json"
+
+      - name: Create immutable selection and identity-free model context
+        env:
+          FINDING_IDS_JSON: ${{ inputs.repair_finding_ids_json }}
+          PR_NUMBER: ${{ inputs.target_pr }}
+          SOURCE_BASE_SHA: ${{ inputs.repair_base_sha }}
+          SOURCE_HEAD_SHA: ${{ inputs.repair_head_sha }}
+        run: |
+          LIVE="$RUNNER_TEMP/live" ARTIFACTS="$RUNNER_TEMP/advisor-artifacts" OUTPUT="$RUNNER_TEMP/repair-context" \
+            node --no-warnings --input-type=module <<'NODE'
+          import fs from "node:fs";
+          import path from "node:path";
+          const { readBoundedFile } = await import(`${process.env.ADVISOR_DIR}/tools/post-merge-docs/contract.mts`);
+          const { ADVISOR_INTERESTS } = await import(`${process.env.ADVISOR_DIR}/tools/pr-review-advisor/specialist-catalog.mts`);
+          const { parseAdvisorFindingLedger } = await import(`${process.env.ADVISOR_DIR}/tools/pr-review-advisor/finding-ledger.mts`);
+          const { bindRepairSelection, readJson, repairModelContext } = await import(`${process.env.ADVISOR_DIR}/tools/pr-review-advisor/repair-contract.mts`);
+          const read = (name) => readJson(path.join(process.env.LIVE, name));
+          const artifacts = read("artifacts.json").artifacts;
+          const ledgers = ADVISOR_INTERESTS.map((interest) => parseAdvisorFindingLedger(
+            readJson(path.join(process.env.ARTIFACTS, `pr-review-${interest}-findings.json`)),
+            { headSha: process.env.SOURCE_HEAD_SHA, interest },
+          ));
+          const state = read("state.json");
+          const reviews = read("reviews.json");
+          const selection = bindRepairSelection({
+            repository: process.env.GITHUB_REPOSITORY, prNumber: Number(process.env.PR_NUMBER),
+            sourceHeadSha: process.env.SOURCE_HEAD_SHA, sourceBaseSha: process.env.SOURCE_BASE_SHA,
+            workflowSha: process.env.GITHUB_WORKFLOW_SHA,
+            actor: process.env.GITHUB_ACTOR, triggeringActor: process.env.GITHUB_TRIGGERING_ACTOR,
+            currentRunId: Number(process.env.GITHUB_RUN_ID), currentRunAttempt: Number(process.env.GITHUB_RUN_ATTEMPT),
+            optedFindingIds: JSON.parse(process.env.FINDING_IDS_JSON), pullRequest: read("pull.json"),
+            sourceCommit: read("commit.json"),
+            advisorRun: read("run.json"), artifacts, ledgers, state,
+            reviews, permissions: {
+              actor: read("permission.json"),
+              triggeringActor: read("triggering-permission.json"),
+            },
+          });
+          const specialistSummaries = Object.fromEntries(ADVISOR_INTERESTS.map((interest) => [
+            interest,
+            readBoundedFile(path.join(process.env.ARTIFACTS, `pr-review-${interest}-summary.md`), 512 * 1024).toString("utf8"),
+          ]));
+          fs.mkdirSync(process.env.OUTPUT, { mode: 0o700 });
+          fs.writeFileSync(path.join(process.env.OUTPUT, "selection.json"), `${JSON.stringify(selection)}\n`, { mode: 0o600 });
+          fs.writeFileSync(path.join(process.env.OUTPUT, "model-context.json"), `${JSON.stringify(repairModelContext(selection, { state, reviews, specialistSummaries }))}\n`, { mode: 0o600 });
+          NODE
+
+      - name: Claim the exact repair attempt once
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          selection="$RUNNER_TEMP/repair-context/selection.json"
+          attempt="$(jq -er '.attemptKey | select(test("^sha256:[0-9a-f]{64}$"))' "$selection")"
+          head="$(jq -er '.sourceHeadSha | select(test("^[0-9a-f]{40}$"))' "$selection")"
+          existing="$(gh api --paginate "repos/$GITHUB_REPOSITORY/commits/$head/check-runs?filter=all&per_page=100" \
+            --slurp | jq --arg attempt "$attempt" '[.[].check_runs[] | select(.external_id == $attempt)] | length')"
+          test "$existing" = 0
+          jq -n --arg attempt "$attempt" --arg head "$head" \
+            '{name:"PR Review Advisor repair attempt",head_sha:$head,status:"completed",conclusion:"neutral",external_id:$attempt,output:{title:"Advisor repair attempt claimed",summary:"One bounded repair attempt was claimed for this exact source head."}}' \
+            | gh api --method POST "repos/$GITHUB_REPOSITORY/check-runs" --input - > /dev/null
+
+      - id: upload
+        name: Upload exact repair context
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: advisor-repair-context-${{ github.run_id }}
+          path: ${{ runner.temp }}/repair-context/
+          if-no-files-found: error
+          retention-days: 1
+
+  repair-resolve:
+    name: Run one credential-free Phase 0 repair
+    needs: repair-select
+    permissions:
+      actions: read
+      contents: read
+    runs-on: ubuntu-24.04
+    # Keep the job deadline outside every bounded sandbox-owning phase so the
+    # runner-local cleanup step gets a deterministic chance to execute.
+    timeout-minutes: 60
+    outputs:
+      candidate-artifact-id: ${{ steps.upload.outputs.artifact-id }}
+      cleanup-receipt: ${{ steps.outcome.outputs.cleanup-receipt }}
+      failure-stage: ${{ steps.outcome.outputs.failure-stage }}
+    env:
+      ADVISOR_DIR: ${{ github.workspace }}/advisor
+      OPENSHELL_GATEWAY_ENDPOINT: http://127.0.0.1:8080
+      PI_IMAGE: ghcr.io/nvidia/openshell-community/sandboxes/pi@sha256:00d0c5e9e733f94f6db3eaa2ab70d4fd75bcc4aace6b13a54535cbf2dd20dfcd
+      SANDBOX_NAME: advisor-repair-${{ github.run_id }}
+    steps:
+      - name: Set runner-local repair paths
+        run: |
+          {
+            echo "ARTIFACT_DIR=$RUNNER_TEMP/repair-artifact"
+            echo "REPAIR_BASE_DIR=$RUNNER_TEMP/repo-base"
+            echo "REPAIR_DOWNLOAD_DIR=$RUNNER_TEMP/download"
+            echo "RESOLUTION_WORKDIR=$RUNNER_TEMP/repo"
+            echo "RESOLVER_CONFIG_DIR=$RUNNER_TEMP/pi-config"
+            echo "RESOLVER_STARTED_AT=$(date +%s)"
+          } >> "$GITHUB_ENV"
+
+      - name: Checkout trusted resolver code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: NVIDIA/NemoClaw
+          ref: ${{ github.workflow_sha }}
+          path: advisor
+          persist-credentials: false
+          lfs: false
+          submodules: false
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ">=22.19.0 <23"
+          cache: npm
+          cache-dependency-path: advisor/package-lock.json
+
+      - name: Install trusted dependencies
+        run: npm --prefix "$ADVISOR_DIR" ci --ignore-scripts --no-audit --no-fund
+
+      - name: Download exact same-run repair context
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.repair-select.outputs.context-artifact-id }}
+          path: ${{ runner.temp }}/repair-context
+
+      - id: identity
+        name: Read the bound source identity
+        env:
+          SELECTION_FILE: ${{ runner.temp }}/repair-context/selection.json
+        run: |
+          node --no-warnings --input-type=module <<'NODE'
+          import fs from "node:fs";
+          import path from "node:path";
+          import { assertRepairArtifactDirectory, parseSelection, readJson } from "./advisor/tools/pr-review-advisor/repair-contract.mts";
+          assertRepairArtifactDirectory(path.dirname(process.env.SELECTION_FILE), {
+            "model-context.json": 10 * 1024 * 1024,
+            "selection.json": 1024 * 1024,
+          });
+          const selection = parseSelection(readJson(process.env.SELECTION_FILE));
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `base=${selection.baseSha}\nhead=${selection.sourceHeadSha}\npr=${selection.prNumber}\n`);
+          NODE
+
+      - name: Fetch the exact PR as inert data
+        env:
+          EXPECTED_HEAD_SHA: ${{ steps.identity.outputs.head }}
+          PR_BASE_SHA: ${{ steps.identity.outputs.base }}
+          TARGET_BASE: main
+          TARGET_DIR: ${{ runner.temp }}/pr-workdir
+          TARGET_PR: ${{ steps.identity.outputs.pr }}
+          TARGET_REPO: NVIDIA/NemoClaw
+        run: node --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/prepare-target-pr.mts"
+
+      - name: Prepare identity-free sandbox inputs
+        env:
+          MODEL_CONTEXT_FILE: ${{ runner.temp }}/repair-context/model-context.json
+          SELECTION_FILE: ${{ runner.temp }}/repair-context/selection.json
+        run: |
+          set -euo pipefail
+          rsync -a --exclude=.git "$RUNNER_TEMP/pr-workdir/" "$RESOLUTION_WORKDIR/"
+          find "$RESOLUTION_WORKDIR" -type l -delete
+          cp -a "$RESOLUTION_WORKDIR" "$REPAIR_BASE_DIR"
+          node --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/repair-resolve.mts" prepare
+
+      - id: install
+        name: Install OpenShell
+        run: |
+          timeout --signal=TERM --kill-after=15s 10m env -u GITHUB_TOKEN -u GH_TOKEN -u PR_REVIEW_ADVISOR_API_KEY \
+            NEMOCLAW_NON_INTERACTIVE=1 bash "$ADVISOR_DIR/scripts/install-openshell.sh"
+
+      - id: budget
+        name: Preserve the sandbox cleanup budget
+        run: |
+          elapsed_seconds=$(( $(date +%s) - RESOLVER_STARTED_AT ))
+          if (( elapsed_seconds > 900 )); then
+            echo "Resolver setup exceeded the 15-minute pre-sandbox budget." >&2
+            exit 1
+          fi
+
+      - id: configure
+        name: Configure inference on the trusted host
+        env:
+          OPENAI_API_KEY: ${{ secrets.PR_REVIEW_ADVISOR_API_KEY }}
+        run: node --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/repair-resolve.mts" configure
+
+      - id: create
+        name: Create the credential-free sandbox
+        run: timeout --signal=TERM --kill-after=15s 5m node --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/repair-resolve.mts" create
+
+      - id: repair_run
+        name: Run exactly two Pi turns
+        run: timeout --signal=TERM --kill-after=15s 22m node --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/repair-resolve.mts" run
+
+      - id: download
+        name: Download the candidate and proposal
+        run: timeout --signal=TERM --kill-after=15s 5m node --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/repair-resolve.mts" download
+
+      - id: cleanup
+        name: Delete the sandbox
+        if: always()
+        continue-on-error: true
+        env:
+          CLEANUP_RECEIPT_FILE: ${{ runner.temp }}/repair-cleanup.json
+        run: timeout --signal=TERM --kill-after=15s 5m node --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/repair-resolve.mts" delete
+
+      - id: export
+        name: Export the exact-path patch on the trusted host
+        env:
+          SELECTION_FILE: ${{ runner.temp }}/repair-context/selection.json
+          SOURCE_REPOSITORY: ${{ runner.temp }}/pr-workdir
+        run: node --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/repair-resolve.mts" export
+
+      - id: upload
+        name: Upload untrusted repair artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: advisor-repair-candidate-${{ github.run_id }}
+          path: ${{ env.ARTIFACT_DIR }}/
+          if-no-files-found: error
+          retention-days: 1
+
+      - id: outcome
+        name: Preserve resolver and cleanup outcomes
+        if: always()
+        env:
+          CLEANUP_OUTCOME: ${{ steps.cleanup.outcome }}
+          CLEANUP_RECEIPT_FILE: ${{ runner.temp }}/repair-cleanup.json
+          BUDGET_OUTCOME: ${{ steps.budget.outcome }}
+          CONFIGURE_OUTCOME: ${{ steps.configure.outcome }}
+          CREATE_OUTCOME: ${{ steps.create.outcome }}
+          DOWNLOAD_OUTCOME: ${{ steps.download.outcome }}
+          EXPORT_OUTCOME: ${{ steps.export.outcome }}
+          INSTALL_OUTCOME: ${{ steps.install.outcome }}
+          REPAIR_RUN_OUTCOME: ${{ steps.repair_run.outcome }}
+          SANDBOX_NAME: ${{ env.SANDBOX_NAME }}
+          UPLOAD_OUTCOME: ${{ steps.upload.outcome }}
+        run: |
+          node --no-warnings --input-type=module <<'NODE'
+          import fs from "node:fs";
+          const phases = [
+            ["install", process.env.INSTALL_OUTCOME],
+            ["budget", process.env.BUDGET_OUTCOME],
+            ["configure", process.env.CONFIGURE_OUTCOME],
+            ["create", process.env.CREATE_OUTCOME],
+            ["run", process.env.REPAIR_RUN_OUTCOME],
+            ["download", process.env.DOWNLOAD_OUTCOME],
+            ["export", process.env.EXPORT_OUTCOME],
+            ["upload", process.env.UPLOAD_OUTCOME],
+          ];
+          const primary = phases.find(([, outcome]) => outcome === "failure" || outcome === "cancelled");
+          let cleanup = {
+            version: 1,
+            sandboxName: process.env.SANDBOX_NAME,
+            outcome: process.env.CLEANUP_OUTCOME === "success" ? "success" : process.env.CLEANUP_OUTCOME === "failure" ? "failure" : "not-run",
+            error: null,
+          };
+          if (fs.existsSync(process.env.CLEANUP_RECEIPT_FILE)) {
+            const stat = fs.statSync(process.env.CLEANUP_RECEIPT_FILE);
+            if (!stat.isFile() || stat.size > 4096) throw new Error("repair cleanup receipt is invalid");
+            cleanup = JSON.parse(fs.readFileSync(process.env.CLEANUP_RECEIPT_FILE, "utf8"));
+          }
+          const failureStage = primary?.[0] ?? (cleanup.outcome === "failure" ? "cleanup" : "");
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `failure-stage=${failureStage}\ncleanup-receipt=${JSON.stringify(cleanup)}\n`);
+          if (cleanup.outcome === "failure") process.exitCode = 1;
+          NODE
+
+  repair-validate:
+    name: Validate Phase 0 candidate without secrets
+    needs: [repair-select, repair-resolve]
+    permissions:
+      actions: read
+      contents: read
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    outputs:
+      validated-artifact-id: ${{ steps.upload.outputs.artifact-id }}
+    env:
+      ADVISOR_DIR: ${{ github.workspace }}/advisor
+    steps:
+      - name: Set runner-local validation paths
+        run: |
+          echo "CANDIDATE_DIR=$RUNNER_TEMP/candidate" >> "$GITHUB_ENV"
+          echo "INPUT_DIR=$RUNNER_TEMP/repair-inputs" >> "$GITHUB_ENV"
+
+      - name: Checkout trusted validator code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: NVIDIA/NemoClaw
+          ref: ${{ github.workflow_sha }}
+          path: advisor
+          persist-credentials: false
+          lfs: false
+          submodules: false
+
+      - name: Validate exact source input
+        env:
+          SOURCE_HEAD_SHA: ${{ inputs.repair_head_sha }}
+        run: '[[ "$SOURCE_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]'
+
+      - name: Checkout exact source head as inert data
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: NVIDIA/NemoClaw
+          ref: ${{ inputs.repair_head_sha }}
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+          lfs: false
+          submodules: false
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ">=22.19.0 <23"
+          cache: npm
+          cache-dependency-path: advisor/package-lock.json
+
+      - name: Install trusted dependencies
+        run: npm --prefix "$ADVISOR_DIR" ci --ignore-scripts --no-audit --no-fund
+
+      - name: Download exact same-run context
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.repair-select.outputs.context-artifact-id }}
+          path: ${{ env.INPUT_DIR }}/context
+
+      - name: Download exact same-run candidate
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.repair-resolve.outputs.candidate-artifact-id }}
+          path: ${{ env.INPUT_DIR }}/candidate
+
+      - id: reconstruct
+        name: Reconstruct and inspect the candidate independently
+        env:
+          SOURCE_DIR: ${{ github.workspace }}/source
+        run: |
+          node --no-warnings --input-type=module <<'NODE'
+          import fs from "node:fs";
+          import path from "node:path";
+          import { assertRepairArtifactDirectory, parseSelection, readJson, validateRepairPatch } from "./advisor/tools/pr-review-advisor/repair-contract.mts";
+          const context = path.join(process.env.INPUT_DIR, "context");
+          const candidateArtifact = path.join(process.env.INPUT_DIR, "candidate");
+          assertRepairArtifactDirectory(context, { "model-context.json": 10 * 1024 * 1024, "selection.json": 1024 * 1024 });
+          assertRepairArtifactDirectory(candidateArtifact, { "proposal.json": 512 * 1024, "repair.patch": 2 * 1024 * 1024 });
+          const selection = parseSelection(readJson(path.join(context, "selection.json")));
+          const candidate = validateRepairPatch({
+            sourceCheckout: process.env.SOURCE_DIR,
+            destination: process.env.CANDIDATE_DIR,
+            selection,
+            patchFile: path.join(candidateArtifact, "repair.patch"),
+            proposalFile: path.join(candidateArtifact, "proposal.json"),
+          });
+          fs.writeFileSync(path.join(process.env.INPUT_DIR, "candidate.json"), `${JSON.stringify(candidate)}\n`, { mode: 0o600 });
+          NODE
+
+      - name: Run the trusted validation plan and seal the unchanged candidate
+        env:
+          OUTPUT_DIR: ${{ runner.temp }}/validated
+        run: node --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/repair-validate.mts"
+
+      - id: upload
+        name: Upload trusted validation artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: advisor-repair-validated-${{ github.run_id }}
+          path: ${{ runner.temp }}/validated/
+          if-no-files-found: error
+          retention-days: 1
+
+  repair-publish:
+    name: Publish the exact validated repair
+    needs: [repair-select, repair-validate]
+    if: >-
+      inputs.repair_publish &&
+      needs.repair-validate.result == 'success' &&
+      vars.PR_REVIEW_ADVISOR_REPAIR_ENABLED == 'true'
+    environment: advisor-repair-publish
+    permissions:
+      actions: read
+      contents: write
+      pull-requests: read
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    outputs:
+      published-sha: ${{ steps.publish.outputs.published-sha }}
+    env:
+      ADVISOR_DIR: ${{ github.workspace }}/advisor
+      PUBLISH_SOURCE_DIR: ${{ github.workspace }}/source
+    steps:
+      - name: Set runner-local publication paths
+        run: |
+          echo "PUBLISH_INPUT_DIR=$RUNNER_TEMP/publish-inputs" >> "$GITHUB_ENV"
+          echo "PUBLISH_REPORT_DIR=$RUNNER_TEMP/generated-head-request" >> "$GITHUB_ENV"
+          echo "PUBLISH_WORK_DIR=$RUNNER_TEMP/published-candidate" >> "$GITHUB_ENV"
+
+      - name: Checkout trusted publisher code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: NVIDIA/NemoClaw
+          ref: ${{ github.workflow_sha }}
+          path: advisor
+          persist-credentials: false
+          lfs: false
+          submodules: false
+
+      - name: Checkout the exact source head as inert data
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: NVIDIA/NemoClaw
+          ref: ${{ inputs.repair_head_sha }}
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+          lfs: false
+          submodules: false
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ">=22.19.0 <23"
+          cache: npm
+          cache-dependency-path: advisor/package-lock.json
+
+      - name: Install trusted dependencies
+        run: npm --prefix "$ADVISOR_DIR" ci --ignore-scripts --no-audit --no-fund
+
+      - name: Download the exact same-run context
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.repair-select.outputs.context-artifact-id }}
+          path: ${{ env.PUBLISH_INPUT_DIR }}/context
+
+      - name: Download the exact same-run validation
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.repair-validate.outputs.validated-artifact-id }}
+          path: ${{ env.PUBLISH_INPUT_DIR }}/validated
+
+      - id: identity
+        name: Verify the protected publication inputs
+        env:
+          EXPECTED_HEAD_SHA: ${{ inputs.repair_head_sha }}
+        run: |
+          node --no-warnings --input-type=module <<'NODE'
+          import fs from "node:fs";
+          import path from "node:path";
+          import { assertRepairArtifactDirectory, parseSelection, readJson } from "./advisor/tools/pr-review-advisor/repair-contract.mts";
+          const context = path.join(process.env.PUBLISH_INPUT_DIR, "context");
+          const validated = path.join(process.env.PUBLISH_INPUT_DIR, "validated");
+          assertRepairArtifactDirectory(context, { "model-context.json": 10 * 1024 * 1024, "selection.json": 1024 * 1024 });
+          assertRepairArtifactDirectory(validated, { "repair.patch": 2 * 1024 * 1024, "validation.json": 1024 * 1024 });
+          const selection = parseSelection(readJson(path.join(context, "selection.json")));
+          if (selection.sourceHeadSha !== process.env.EXPECTED_HEAD_SHA) throw new Error("protected publication head input changed");
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `pr=${selection.prNumber}\n`);
+          NODE
+
+      - name: Rebind the complete live pull request state
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ steps.identity.outputs.pr }}
+        run: |
+          set -euo pipefail
+          live="$RUNNER_TEMP/publish-live"
+          mkdir -m 700 "$live"
+          gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" > "$live/pull.json"
+          gh api "repos/$GITHUB_REPOSITORY/collaborators/$GITHUB_ACTOR/permission" > "$live/permission.json"
+          gh api "repos/$GITHUB_REPOSITORY/collaborators/$GITHUB_TRIGGERING_ACTOR/permission" > "$live/triggering-permission.json"
+          gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/reviews?per_page=100" --slurp | jq 'add' > "$live/reviews.json"
+          gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments?per_page=100" --slurp | jq 'add' > "$live/comments.json"
+          gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/comments?per_page=100" --slurp | jq 'add' > "$live/review-comments.json"
+          jq -n --slurpfile pull "$live/pull.json" --slurpfile comments "$live/comments.json" \
+            --slurpfile reviewComments "$live/review-comments.json" \
+            --slurpfile actorPermission "$live/permission.json" \
+            --slurpfile triggeringPermission "$live/triggering-permission.json" \
+            '{pull:$pull[0], comments:$comments[0], reviewComments:$reviewComments[0], actorPermission:$actorPermission[0], triggeringPermission:$triggeringPermission[0]}' > "$live/state.json"
+
+      - id: prepare
+        name: Create and verify the one-parent repair commit
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PATCH_FILE: ${{ env.PUBLISH_INPUT_DIR }}/validated/repair.patch
+          RECEIPT_FILE: ${{ env.PUBLISH_INPUT_DIR }}/validated/validation.json
+          REVIEWS_FILE: ${{ runner.temp }}/publish-live/reviews.json
+          SELECTION_FILE: ${{ env.PUBLISH_INPUT_DIR }}/context/selection.json
+          SOURCE_REPOSITORY: ${{ env.PUBLISH_SOURCE_DIR }}
+          STATE_FILE: ${{ runner.temp }}/publish-live/state.json
+          WORK_DIRECTORY: ${{ env.PUBLISH_WORK_DIR }}
+        run: node --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/repair-publish.mts" advisor-repair-prepare
+
+      - name: Prepare the trusted generated-head request
+        env:
+          GENERATED_HEAD_SHA: ${{ steps.prepare.outputs.prepared-sha }}
+          SELECTION_FILE: ${{ env.PUBLISH_INPUT_DIR }}/context/selection.json
+          SOURCE_WORKFLOW_SHA: ${{ github.workflow_sha }}
+        run: |
+          mkdir -m 700 "$PUBLISH_REPORT_DIR"
+          cp "$SELECTION_FILE" "$PUBLISH_REPORT_DIR/selection.json"
+          cp "$PUBLISH_INPUT_DIR/validated/validation.json" "$PUBLISH_REPORT_DIR/validation.json"
+          jq -n --arg head "$GENERATED_HEAD_SHA" --arg run "$GITHUB_RUN_ID" \
+            --arg attempt "$GITHUB_RUN_ATTEMPT" --arg workflow "$SOURCE_WORKFLOW_SHA" \
+            '{version:1, generatedHeadSha:$head, sourceRunId:($run|tonumber), sourceRunAttempt:($attempt|tonumber), sourceWorkflowSha:$workflow}' \
+            > "$PUBLISH_REPORT_DIR/generated-head.json"
+
+      - name: Upload the generated-head validation request
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: advisor-repair-generated-head-request-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.PUBLISH_REPORT_DIR }}/
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Rebind live state immediately before branch update
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ steps.identity.outputs.pr }}
+        run: |
+          set -euo pipefail
+          live="$RUNNER_TEMP/publish-live"
+          gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" > "$live/pull.json"
+          gh api "repos/$GITHUB_REPOSITORY/collaborators/$GITHUB_ACTOR/permission" > "$live/permission.json"
+          gh api "repos/$GITHUB_REPOSITORY/collaborators/$GITHUB_TRIGGERING_ACTOR/permission" > "$live/triggering-permission.json"
+          gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/reviews?per_page=100" --slurp | jq 'add' > "$live/reviews.json"
+          gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments?per_page=100" --slurp | jq 'add' > "$live/comments.json"
+          gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/comments?per_page=100" --slurp | jq 'add' > "$live/review-comments.json"
+          jq -n --slurpfile pull "$live/pull.json" --slurpfile comments "$live/comments.json" \
+            --slurpfile reviewComments "$live/review-comments.json" \
+            --slurpfile actorPermission "$live/permission.json" \
+            --slurpfile triggeringPermission "$live/triggering-permission.json" \
+            '{pull:$pull[0], comments:$comments[0], reviewComments:$reviewComments[0], actorPermission:$actorPermission[0], triggeringPermission:$triggeringPermission[0]}' > "$live/state.json"
+
+      - id: publish
+        name: Compare-and-swap the prepared repair commit
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PREPARED_SHA: ${{ steps.prepare.outputs.prepared-sha }}
+          REVIEWS_FILE: ${{ runner.temp }}/publish-live/reviews.json
+          SELECTION_FILE: ${{ env.PUBLISH_INPUT_DIR }}/context/selection.json
+          STATE_FILE: ${{ runner.temp }}/publish-live/state.json
+        run: node --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/repair-publish.mts" advisor-repair-publish
+
+  repair-dispatch-generated-head:
+    name: Dispatch exact generated-head validation
+    needs: repair-publish
+    if: >-
+      needs.repair-publish.result == 'success' &&
+      needs.repair-publish.outputs.published-sha != ''
+    permissions:
+      actions: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Dispatch exact generated-head validation
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api --method POST \
+            "repos/$GITHUB_REPOSITORY/actions/workflows/pr-review-advisor-generated-head.yaml/dispatches" \
+            -f ref=main \
+            -f "inputs[source_run_id]=$GITHUB_RUN_ID" \
+            -f "inputs[source_run_attempt]=$GITHUB_RUN_ATTEMPT"
+
+  repair-audit:
+    name: Preserve bounded repair audit receipt
+    if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.repair_finding_ids_json != '[]' }}
+    needs: [repair-select, repair-resolve, repair-validate, repair-publish, repair-dispatch-generated-head]
+    permissions: {}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Write bounded redacted receipt
+        env:
+          TARGET_PR: ${{ inputs.target_pr }}
+          RESOLVE_CLEANUP: ${{ needs.repair-resolve.outputs.cleanup-receipt || 'null' }}
+          RESOLVE_FAILURE_STAGE: ${{ needs.repair-resolve.outputs.failure-stage }}
+          RESOLVE_RESULT: ${{ needs.repair-resolve.result }}
+          SELECT_RESULT: ${{ needs.repair-select.result }}
+          VALIDATE_RESULT: ${{ needs.repair-validate.result }}
+          PUBLISH_REQUESTED: ${{ inputs.repair_publish }}
+          PUBLISH_RESULT: ${{ needs.repair-publish.result }}
+          DISPATCH_RESULT: ${{ needs.repair-dispatch-generated-head.result }}
+        run: |
+          mkdir -m 700 "$RUNNER_TEMP/advisor-repair-audit"
+          jq -n \
+            --arg run "$GITHUB_RUN_ID" --arg attempt "$GITHUB_RUN_ATTEMPT" \
+            --arg pr "$(printf '%s' "$TARGET_PR" | tr -cd '0-9' | cut -c1-10)" \
+            --arg select "$SELECT_RESULT" --arg resolve "$RESOLVE_RESULT" --arg validate "$VALIDATE_RESULT" \
+            --arg publish "$PUBLISH_RESULT" --arg dispatch "$DISPATCH_RESULT" --arg publishRequested "$PUBLISH_REQUESTED" \
+            --arg resolveFailureStage "$RESOLVE_FAILURE_STAGE" --argjson resolveCleanup "$RESOLVE_CLEANUP" \
+            '{version:1, phase:(if $publishRequested == "true" then 1 else 0 end), runId:$run, runAttempt:$attempt, prNumber:$pr, jobs:{select:$select, resolve:$resolve, validate:$validate, publish:$publish, dispatch:$dispatch, cleanup:$resolveCleanup}} |
+             . + (if $select == "failure" or $select == "cancelled" then {failure:{stage:"select", reason:"repair selection did not produce an eligible exact-head attempt"}}
+                  elif $resolve == "failure" or $resolve == "cancelled" then {failure:{stage:"resolve", phase:(if $resolveFailureStage == "" then "unknown" else $resolveFailureStage end), reason:"sandboxed repair did not produce a complete bounded proposal"}}
+                  elif $validate == "failure" or $validate == "cancelled" then {failure:{stage:"validate", reason:"trusted validation rejected or could not verify the candidate"}}
+                  elif $publish == "failure" or $publish == "cancelled" then {failure:{stage:"publish", reason:"current-head-safe publication did not complete"}}
+                  elif $dispatch == "failure" or $dispatch == "cancelled" then {failure:{stage:"dispatch", reason:"exact generated-head validation was not dispatched"}}
+                  else {} end)' \
+            > "$RUNNER_TEMP/advisor-repair-audit/attempt.json"
+
+      - name: Upload audit receipt
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: advisor-repair-audit-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/advisor-repair-audit/attempt.json
+          if-no-files-found: error
+          retention-days: 14

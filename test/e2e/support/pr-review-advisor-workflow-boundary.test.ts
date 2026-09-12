@@ -91,6 +91,36 @@ it.each([
     "needs.require-green-checks.outputs.base_sha || ''",
     "Unified advisor must prepare the PR revision from the successful checks run",
   ],
+  [
+    "generated-head dispatch dependency",
+    "needs: repair-publish\n    if: >-\n      needs.repair-publish.result == 'success'",
+    "needs: []\n    if: >-\n      needs.repair-publish.result == 'success'",
+    "Unified advisor must isolate exact generated-head dispatch after publication",
+  ],
+  [
+    "generated-head dispatch target",
+    "pr-review-advisor-generated-head.yaml/dispatches",
+    "pr-review-advisor.yaml/dispatches",
+    "Unified advisor must contain only the exact generated-head dispatch",
+  ],
+  [
+    "repair publication environment",
+    "environment: advisor-repair-publish",
+    "environment: unprotected",
+    "Unified advisor repair publication must retain its protected credential boundary",
+  ],
+  [
+    "repair publication Advisor credential",
+    "PUBLISH_SOURCE_DIR: ${{ github.workspace }}/source",
+    "PUBLISH_SOURCE_DIR: ${{ github.workspace }}/source\n      PR_REVIEW_ADVISOR_API_KEY: ${{ secrets.PR_REVIEW_ADVISOR_API_KEY }}",
+    "Unified advisor repair publication must retain its protected credential boundary",
+  ],
+  [
+    "generated-head dispatch Advisor credential",
+    "permissions:\n      actions: write\n    runs-on: ubuntu-24.04\n    timeout-minutes: 5",
+    "permissions:\n      actions: write\n    env:\n      PR_REVIEW_ADVISOR_API_KEY: ${{ secrets.PR_REVIEW_ADVISOR_API_KEY }}\n    runs-on: ubuntu-24.04\n    timeout-minutes: 5",
+    "Unified advisor repair publication must retain its protected credential boundary",
+  ],
 ])("rejects an unsafe Advisor %s mutation", (_case, before, after, error) => {
   const directory = mkdtempSync(join(tmpdir(), "nemoclaw-pr-review-advisor-"));
   const advisorPath = join(directory, "advisor.yaml");
