@@ -52,6 +52,7 @@ def python_check(root, nonce):
         [
             sys.executable,
             "-I",
+            "-B",
             "-c",
             "import pathlib,tempfile;\nwith tempfile.TemporaryDirectory() as d:\n p=pathlib.Path(d)/'child';p.write_text('CHILD_TEMP_OK');assert p.read_text()=='CHILD_TEMP_OK';p.unlink()\nassert not pathlib.Path(d).exists();print('CHILD_TEMP_OK')",
         ],
@@ -109,7 +110,9 @@ def conpty_check(_root, nonce):
 
     assert importlib.metadata.version("pywinpty") == "2.0.15"
     pty = PTY(80, 24, backend=Backend.ConPTY)
-    command = " " + subprocess.list2cmdline(["-I", "-c", "print('" + nonce + "')"])
+    command = " " + subprocess.list2cmdline(
+        ["-I", "-B", "-c", "print('" + nonce + "')"]
+    )
     output = ""
     details = {
         "backend": "ConPTY",
@@ -241,6 +244,7 @@ def browser_check(root, nonce):
                 [
                     str(tool_python),
                     "-I",
+                    "-B",
                     "-c",
                     "from browser_harness.admin import restart_daemon, ipc;restart_daemon(name='"
                     + session
