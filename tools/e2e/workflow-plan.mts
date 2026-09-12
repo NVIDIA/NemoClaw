@@ -1290,17 +1290,30 @@ export function writeE2eWorkflowPlanCiOutput(
   environment: NodeJS.ProcessEnv = process.env,
 ): void {
   const inferenceMode = environment.INFERENCE_MODE ?? "";
+  const repairValidation = environment.NEMOCLAW_E2E_REPAIR_VALIDATION === "true";
   if (!INFERENCE_MODES.has(inferenceMode)) {
     throw new Error(`Invalid inference_mode: ${inferenceMode}`);
   }
   if (
     COMMIT_SHA_PATTERN.test(environment.NEMOCLAW_E2E_EXPECTED_SHA ?? "") &&
-    environment.NEMOCLAW_E2E_CREDENTIALS_ALLOWED !== "true"
+    environment.NEMOCLAW_E2E_CREDENTIALS_ALLOWED !== "true" &&
+    !repairValidation
   ) {
     throw new Error("Manual PR E2E requires an authorized source branch in NVIDIA/NemoClaw");
   }
   const controllerMap = mapTrustedControllerJobs(selectors, environment);
   const plannerSelectors = controllerMap.selectors;
+  if (repairValidation) {
+    const credentialRequiredJob = repairValidationCredentialRequiredE2eJob([
+      ...selectorIds(plannerSelectors.jobs, "jobs"),
+      ...selectorIds(plannerSelectors.targets, "targets"),
+    ]);
+    if (credentialRequiredJob) {
+      throw new Error(
+        `Advisor repair E2E cannot select credential-required job: ${credentialRequiredJob}`,
+      );
+    }
+  }
   const gatewayRuntimes = e2eGatewayRuntimes(
     environment.NEMOCLAW_GATEWAY_RUNTIMES ?? environment.NEMOCLAW_GATEWAY_RUNTIME,
   );

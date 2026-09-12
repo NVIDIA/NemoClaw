@@ -685,6 +685,7 @@ jobs:
           BEFORE_SHA: ${{ github.event.before }}
           CANDIDATE_SHA: ${{ github.sha }}
           NEMOCLAW_E2E_CREDENTIALS_ALLOWED: ${{ !inputs.repair_validation && (inputs.checkout_sha == '' || steps.candidate_authorization.outputs.nvidia_owned == 'true') && 'true' || 'false' }}
+          NEMOCLAW_E2E_REPAIR_VALIDATION: ${{ inputs.repair_validation && 'true' || 'false' }}
           NEMOCLAW_E2E_BRAVE_API_KEY_AVAILABLE: ${{ secrets.BRAVE_API_KEY != '' && 'true' || 'false' }}
         run: |
           set -euo pipefail

@@ -583,6 +583,36 @@ describe("E2E workflow plan", () => {
     },
   );
 
+  it("plans credential-free Advisor repair E2E while rejecting credential-required jobs (#10791)", () => {
+    const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-workflow-plan-repair-"));
+    const output = path.join(directory, "github-output");
+    const summary = path.join(directory, "summary.md");
+    const environment = {
+      GITHUB_OUTPUT: output,
+      GITHUB_STEP_SUMMARY: summary,
+      INFERENCE_MODE: "mock",
+      NEMOCLAW_E2E_CREDENTIALS_ALLOWED: "false",
+      NEMOCLAW_E2E_EXPECTED_SHA: "a".repeat(40),
+      NEMOCLAW_E2E_REPAIR_VALIDATION: "true",
+    };
+    try {
+      expect(() =>
+        writeE2eWorkflowPlanCiOutput({ jobs: "onboard-repair" }, environment),
+      ).not.toThrow();
+      expect(readFileSync(output, "utf8")).toContain(
+        'selected_workflow_jobs=["catalogue-standard"]',
+      );
+
+      expect(() =>
+        writeE2eWorkflowPlanCiOutput({ jobs: "managed-image-protected-runtime" }, environment),
+      ).toThrow(
+        "Advisor repair E2E cannot select credential-required job: managed-image-protected-runtime",
+      );
+    } finally {
+      rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
   it("classifies only standard-profile targets as credential-free PR candidates", () => {
     expect(
       Object.fromEntries(
