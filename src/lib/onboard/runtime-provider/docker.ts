@@ -121,8 +121,19 @@ function dockerGatewayUsesHostGatewayRoute(): boolean {
   return /Docker Desktop|com\.docker\.desktop\./iu.test(info);
 }
 
-function runDockerGatewayCommand(args: readonly string[], timeoutMs: number) {
+function runDockerGatewayCommand(
+  args: readonly string[],
+  timeoutMs: number,
+  options?: { maxOutputBytes: number; environment?: Record<string, string> },
+) {
   const result = dockerRun([...args], {
+    ...(options
+      ? {
+          maxBuffer: options.maxOutputBytes,
+          killSignal: "SIGKILL" as const,
+          env: options.environment,
+        }
+      : {}),
     timeout: timeoutMs,
     ignoreError: true,
     suppressOutput: true,
