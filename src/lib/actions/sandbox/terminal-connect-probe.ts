@@ -6,6 +6,26 @@ import type { AgentDefinition } from "../../agent/defs";
 import * as agentRuntime from "../../agent/runtime";
 import { runAgentSmokeCommands } from "../../agent/terminal-smoke";
 import { redact } from "../../runner";
+import {
+  probeSandboxInferenceInvocation,
+  READINESS_INFERENCE_INVOCATION_TIMEOUT_MS,
+  type SandboxInferenceInvocationInput,
+} from "./inference-invocation-probe";
+
+export async function verifyDcodeConnectInference(
+  input: Omit<SandboxInferenceInvocationInput, "agentName">,
+  commandExecutor: OpenShellSandboxBufferedCommandExecutor,
+): Promise<boolean> {
+  const result = await probeSandboxInferenceInvocation(
+    { ...input, agentName: "langchain-deepagents-code" },
+    { commandExecutor },
+    READINESS_INFERENCE_INVOCATION_TIMEOUT_MS,
+  );
+  if (!result.ok) {
+    console.error(`  Connect failed: Deep Agents Code inference request failed: ${result.detail}.`);
+  }
+  return result.ok;
+}
 
 export type EnsureTerminalInferenceRoute = (
   sandboxName: string,
@@ -26,18 +46,8 @@ export async function runTerminalAgentConnectProbe({
   sandboxName: string;
 }): Promise<void> {
   const routeResult = ensureInferenceRoute(sandboxName, { quiet: true });
-  // Dcode is the terminal runtime whose configured inference.local route is
-  // itself part of readiness. Keep this fail-fast agent-scoped so terminal
-  // runtimes without the dcode managed-proxy contract retain legacy smoke-only
-  // behavior when their route result is absent or inconclusive.
-  //
-  // routeHealthy tri-state: `true` = route probe ran and succeeded,
-  // `false` = route probe ran and explicitly failed (broken managed proxy),
-  // `null` = probe was not run or was indeterminate. Only an explicit `false`
-  // from the dcode probe short-circuits the connect flow — `null` falls
-  // through to the smoke command so non-dcode agents (and dcode runs where
-  // the probe genuinely could not be executed) are not spuriously blocked.
-  if (agent.name === "langchain-deepagents-code" && routeResult.routeHealthy === false) {
+  // DCode requires verified managed inference; a version smoke cannot prove it.
+  if (agent.name === "langchain-deepagents-code" && routeResult.routeHealthy !== true) {
     console.error(
       `  Probe failed: ${agentName} could not reach the managed inference.local route in '${sandboxName}'.`,
     );
