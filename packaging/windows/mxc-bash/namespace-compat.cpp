@@ -28,6 +28,12 @@ using MutantCreate = NTSTATUS (NTAPI*)(PHANDLE, ACCESS_MASK, POBJECT_ATTRIBUTES,
 MutantCreate realCreateSharedMutex = nullptr;
 SectionOpen realOpenSharedMutex = nullptr;
 LONG sharedMutexRecords = 0;
+using PidLinkCreate = NTSTATUS (NTAPI*)(PHANDLE, ACCESS_MASK, POBJECT_ATTRIBUTES, PUNICODE_STRING);
+using PidLinkQueryCall = NTSTATUS (NTAPI*)(HANDLE, PUNICODE_STRING, PULONG);
+PidLinkCreate realCreatePidLink = nullptr;
+SectionOpen realOpenPidLink = nullptr;
+PidLinkQueryCall realQueryPidLink = nullptr;
+LONG pidLinkRecords = 0;
 using NativeIoApc = VOID (NTAPI*)(PVOID, PIO_STATUS_BLOCK, ULONG);
 using NativeIoWrite = NTSTATUS (NTAPI*)(HANDLE, HANDLE, NativeIoApc, PVOID, PIO_STATUS_BLOCK, PVOID, ULONG, PLARGE_INTEGER, PULONG);
 using NativeIoWaitMany = NTSTATUS (NTAPI*)(ULONG, PHANDLE, ULONG, BOOLEAN, PLARGE_INTEGER);
@@ -72,6 +78,7 @@ WCHAR apiRoot[maximum_root_characters] = {};
 size_t privateRootLength = 0;
 DWORD ownSession = 0;
 alignas(void*) BYTE worldSid[SECURITY_MAX_SID_SIZE] = {};
+alignas(void*) BYTE pidLinkContainerSid[SECURITY_MAX_SID_SIZE] = {};
 ScopedDescriptor privateDescriptor = {};
 ScopedDescriptor sharedSectionDescriptor = {};
 ScopedDescriptor sharedMutexDescriptor = {};
@@ -169,6 +176,8 @@ bool initialize_namespace() {
         auto container = reinterpret_cast<TOKEN_APPCONTAINER_INFORMATION*>(containerBuffer)->TokenAppContainer;
         if (!container || !IsValidSid(container)) { stage = "token-sid-validation"; kind = "validation"; break; }
         describe_token_sid(container);
+        stage = "pid-link-container-copy";
+        if (!CopySid(sizeof(pidLinkContainerSid), pidLinkContainerSid, container)) { error = GetLastError(); break; }
         stage = "token-user";
         if (!GetTokenInformation(token, TokenUser, userBuffer, sizeof(userBuffer), &needed)) { error = GetLastError(); break; }
         auto user = reinterpret_cast<TOKEN_USER*>(userBuffer)->User.Sid;
@@ -226,6 +235,11 @@ bool initialize_namespace() {
     realCreateIoEvent = reinterpret_cast<NativeIoEvent>(GetProcAddress(ntdll, "NtCreateEvent"));
     if (!realWriteIoFile || !realReadIoFile || !realWaitIoMany || !realWaitIoOne || !realCreateIoEvent)
         return context_result("ntdll-io-observer-exports", "win32", GetLastError());
+    realCreatePidLink = reinterpret_cast<PidLinkCreate>(GetProcAddress(ntdll, "NtCreateSymbolicLinkObject"));
+    realOpenPidLink = reinterpret_cast<SectionOpen>(GetProcAddress(ntdll, "NtOpenSymbolicLinkObject"));
+    realQueryPidLink = reinterpret_cast<PidLinkQueryCall>(GetProcAddress(ntdll, "NtQuerySymbolicLinkObject"));
+    if (!realCreatePidLink || !realOpenPidLink || !realQueryPidLink)
+        return context_result("ntdll-pid-link-exports", "win32", GetLastError());
     realNativePipeCreate = reinterpret_cast<NativePipeCreate>(GetProcAddress(ntdll, "NtCreateNamedPipeFile"));
     if (!realNativePipeCreate) return context_result("ntdll-pipe-create-export", "win32", GetLastError());
     realNativeFileOpen = reinterpret_cast<NativeFileOpen>(GetProcAddress(ntdll, "NtOpenFile"));
@@ -1425,6 +1439,180 @@ void observe_failed_private_mutant(POBJECT_ATTRIBUTES input, ACCESS_MASK access,
     log_io_observation(record);
 }
 
+struct PidLinkRequest {
+    bool bound = false;
+    bool exact = false;
+    DWORD winpid = 0;
+    DWORD cygpid = 0;
+    WCHAR name[24] = {};
+    WCHAR target[24] = {};
+    USHORT nameBytes = 0;
+    USHORT targetBytes = 0;
+    OBJECT_ATTRIBUTES attributes = {};
+    PipeSecurityObservation security = {};
+};
+struct PidLinkQuery {
+    HANDLE handle;
+    DWORD winpid;
+    WCHAR name[24];
+    USHORT nameBytes;
+};
+__declspec(thread) PidLinkQuery pendingPidLink = {};
+
+bool pid_link_number(PUNICODE_STRING input, const WCHAR* prefix, size_t prefixLength,
+                     DWORD minimum, DWORD maximum, DWORD& number, WCHAR* copy, USHORT& bytes) {
+    __try {
+        if (!input || !input->Buffer || input->Length % sizeof(WCHAR) || input->Length > 46 ||
+            input->Length > input->MaximumLength || input->Length <= prefixLength * sizeof(WCHAR)) return false;
+        const size_t count = input->Length / sizeof(WCHAR);
+        if (prefixLength && memcmp(input->Buffer, prefix, prefixLength * sizeof(WCHAR)) != 0) return false;
+        if (input->Buffer[prefixLength] == L'0') return false;
+        DWORD parsed = 0;
+        for (size_t n = prefixLength; n < count; ++n) {
+            const WCHAR c = input->Buffer[n];
+            if (c < L'0' || c > L'9') return false;
+            const DWORD digit = static_cast<DWORD>(c - L'0');
+            if (parsed > (maximum - digit) / 10) return false;
+            parsed = parsed * 10 + digit;
+        }
+        if (parsed < minimum || parsed > maximum) return false;
+        for (size_t n = 0; n < count; ++n) copy[n] = input->Buffer[n];
+        copy[count] = 0;
+        number = parsed; bytes = input->Length;
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+
+PidLinkRequest inspect_pid_link(ACCESS_MASK access, POBJECT_ATTRIBUTES input, PUNICODE_STRING target, bool create) {
+    PidLinkRequest result = {};
+    __try {
+        if (InterlockedCompareExchange(&sharedDirectoryState, 2, 2) != 2 || !sameKernelObject ||
+            !input || input->Length != sizeof(OBJECT_ATTRIBUTES) || !input->RootDirectory ||
+            !sameKernelObject(input->RootDirectory, heldSharedDirectory) ||
+            !pid_link_number(input->ObjectName, L"winpid.", 7, 1, MAXDWORD, result.winpid, result.name, result.nameBytes)) return result;
+        result.bound = true;
+        result.attributes = *input;
+        const char* rejected = nullptr;
+        DWORD error = 0;
+        result.exact = input->Attributes == OBJ_CASE_INSENSITIVE && !input->SecurityQualityOfService &&
+            access == (create ? 0x000f0001 : 1) && not_impersonating(rejected, error);
+        if (create) {
+            // thisproc assigns myself_initial.dwProcessId (current process),
+            // including in a forkee, before create_winpid_symlink.
+            result.exact = result.exact && result.winpid == GetCurrentProcessId() &&
+                pid_link_number(target, L"", 0, 2, 4194303, result.cygpid, result.target, result.targetBytes);
+            SECURITY_ATTRIBUTES attributes = {sizeof(SECURITY_ATTRIBUTES), input->SecurityDescriptor, FALSE};
+            observe_pipe_security(&attributes, result.security);
+        } else result.exact = result.exact && input->SecurityDescriptor == nullptr;
+    } __except (EXCEPTION_EXECUTE_HANDLER) { result.exact = false; }
+    return result;
+}
+
+void log_pid_link(const char* operation, DWORD winpid, DWORD cygpid, bool targetObserved,
+                  NTSTATUS status, bool adapted, bool queryBound, HANDLE createdHandle = nullptr) {
+    if (InterlockedIncrement(&pidLinkRecords) > 32) return;
+    IoObservation clock = {};
+    stamp_io_observation(clock);
+    alignas(void*) BYTE descriptor[512] = {};
+    DWORD required = 0, error = 0;
+    bool descriptorRead = false;
+    writingPipeDiagnostic = true;
+    if (createdHandle) {
+        descriptorRead = GetKernelObjectSecurity(createdHandle,
+            OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION | LABEL_SECURITY_INFORMATION,
+            descriptor, sizeof(descriptor), &required) != FALSE;
+        if (!descriptorRead) error = GetLastError();
+    }
+    char hex[1025] = {};
+    constexpr char digits[] = "0123456789abcdef";
+    if (descriptorRead && required <= sizeof(descriptor))
+        for (DWORD n = 0; n < required; ++n) { hex[n * 2] = digits[descriptor[n] >> 4]; hex[n * 2 + 1] = digits[descriptor[n] & 15]; }
+    char line[2048];
+    const int count = _snprintf_s(line, sizeof(line), _TRUNCATE,
+        "NEMOCLAW_MSYS_PID_LINK={\"schemaVersion\":1,\"pid\":%lu,\"tid\":%lu,\"operation\":\"%s\",\"winpid\":%lu,\"cygpid\":%lu,\"targetObserved\":%s,\"nativeStatus\":\"0x%08lx\",\"descriptorAdapted\":%s,\"queryBoundToOwnObject\":%s,\"qpcTicks\":\"%lld\",\"qpcFrequency\":\"%lld\",\"descriptorRead\":%s,\"descriptorError\":%lu,\"descriptorBytes\":%lu,\"descriptorHex\":\"%s\"}\n",
+        GetCurrentProcessId(), GetCurrentThreadId(), operation, winpid, cygpid, targetObserved ? "true" : "false",
+        static_cast<ULONG>(status), adapted ? "true" : "false", queryBound ? "true" : "false",
+        clock.qpc.QuadPart, clock.qpcFrequency.QuadPart, descriptorRead ? "true" : "false", error, required, hex);
+    DWORD written = 0;
+    if (count > 0) WriteFile(GetStdHandle(STD_ERROR_HANDLE), line, static_cast<DWORD>(count), &written, nullptr);
+    writingPipeDiagnostic = false;
+}
+
+NTSTATUS NTAPI create_pid_link(PHANDLE output, ACCESS_MASK access, POBJECT_ATTRIBUTES input, PUNICODE_STRING target) {
+    if (writingPipeDiagnostic) return realCreatePidLink(output, access, input, target);
+    const DWORD before = GetLastError();
+    pendingPidLink = {};
+    PidLinkRequest request = inspect_pid_link(access, input, target, true);
+    ScopedDescriptor descriptor = {};
+    const bool adapted = request.exact && append_pid_link_container_ace(request.security, worldSid, pidLinkContainerSid, descriptor);
+    UNICODE_STRING name = {request.nameBytes, static_cast<USHORT>(request.nameBytes + 2), request.name};
+    UNICODE_STRING pid = {request.targetBytes, static_cast<USHORT>(request.targetBytes + 2), request.target};
+    OBJECT_ATTRIBUTES attributes = request.attributes;
+    if (adapted) { attributes.RootDirectory = heldSharedDirectory; attributes.ObjectName = &name; attributes.SecurityDescriptor = &descriptor.descriptor; }
+    SetLastError(before);
+    const NTSTATUS status = realCreatePidLink(output, access, adapted ? &attributes : input, adapted ? &pid : target);
+    const DWORD after = GetLastError();
+    HANDLE created = nullptr;
+    if (status >= 0) { __try { if (output) created = *output; } __except (EXCEPTION_EXECUTE_HANDLER) {} }
+    if (request.bound) log_pid_link("create", request.winpid, request.cygpid, request.targetBytes != 0, status, adapted, true, created);
+    SetLastError(after);
+    return status;
+}
+
+NTSTATUS NTAPI open_pid_link(PHANDLE output, ACCESS_MASK access, POBJECT_ATTRIBUTES input) {
+    if (writingPipeDiagnostic) return realOpenPidLink(output, access, input);
+    const DWORD before = GetLastError();
+    pendingPidLink = {};
+    const PidLinkRequest request = inspect_pid_link(access, input, nullptr, false);
+    SetLastError(before);
+    const NTSTATUS status = realOpenPidLink(output, access, input);
+    const DWORD after = GetLastError();
+    if (request.exact && status >= 0) {
+        __try {
+            if (output && *output) {
+                pendingPidLink.handle = *output; pendingPidLink.winpid = request.winpid;
+                pendingPidLink.nameBytes = request.nameBytes;
+                memcpy(pendingPidLink.name, request.name, sizeof(request.name));
+            }
+        } __except (EXCEPTION_EXECUTE_HANDLER) { pendingPidLink = {}; }
+    }
+    if (request.bound) log_pid_link("open", request.winpid, 0, false, status, false, request.exact);
+    SetLastError(after);
+    return status;
+}
+
+NTSTATUS NTAPI query_pid_link(HANDLE handle, PUNICODE_STRING target, PULONG required) {
+    if (writingPipeDiagnostic) return realQueryPidLink(handle, target, required);
+    const DWORD before = GetLastError();
+    const PidLinkQuery pending = pendingPidLink;
+    pendingPidLink = {};
+    bool bound = false;
+    // No link handle is retained across calls. Reopen only the just-observed
+    // own name, compare the actual objects, then close before returning.
+    HANDLE comparison = nullptr;
+    if (pending.handle == handle && handle && pending.winpid) {
+        UNICODE_STRING name = {pending.nameBytes, static_cast<USHORT>(pending.nameBytes + 2), const_cast<PWSTR>(pending.name)};
+        OBJECT_ATTRIBUTES attributes = {};
+        attributes.Length = sizeof(attributes); attributes.RootDirectory = heldSharedDirectory;
+        attributes.ObjectName = &name; attributes.Attributes = OBJ_CASE_INSENSITIVE;
+        const NTSTATUS opened = realOpenPidLink(&comparison, 1, &attributes);
+        if (opened >= 0) {
+            bound = sameKernelObject && sameKernelObject(handle, comparison);
+            CloseHandle(comparison);
+        }
+    }
+    SetLastError(before);
+    const NTSTATUS status = realQueryPidLink(handle, target, required);
+    const DWORD after = GetLastError();
+    if (pending.handle == handle && pending.winpid) {
+        DWORD pid = 0; WCHAR copied[24] = {}; USHORT bytes = 0;
+        const bool observed = bound && status >= 0 && pid_link_number(target, L"", 0, 2, 4194303, pid, copied, bytes);
+        log_pid_link("query", pending.winpid, pid, observed, status, false, bound);
+    }
+    SetLastError(after);
+    return status;
+}
+
 #if defined(_M_X64)
 LONG observedAccessViolations = 0;
 PVOID faultObserver = nullptr;
@@ -1552,6 +1740,9 @@ BOOL WINAPI DllMain(HINSTANCE self, DWORD reason, LPVOID reserved) {
     if (!error) error = DetourAttach(&realOpen, open_directory);
     if (!error) error = DetourAttach(&realCreateSharedSection, create_shared_section);
     if (!error) error = DetourAttach(&realCreateSharedMutex, create_shared_mutex);
+    if (!error) error = DetourAttach(&realCreatePidLink, create_pid_link);
+    if (!error) error = DetourAttach(&realOpenPidLink, open_pid_link);
+    if (!error) error = DetourAttach(&realQueryPidLink, query_pid_link);
     if (!error) error = DetourAttach(&realWriteIoFile, observe_io_write);
     if (!error) error = DetourAttach(&realReadIoFile, observe_io_read);
     if (!error) error = DetourAttach(&realWaitIoMany, observe_io_wait_many);

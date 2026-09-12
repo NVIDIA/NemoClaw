@@ -18,37 +18,44 @@ const argument = (name: string) => {
 };
 export const originalBinaryPins = {
   "bin/bash.exe": "828e6e891cee98d39057c0c193800e564231fdf92b3cefa15944378fc7730095",
+  "bin/sh.exe": "828e6e891cee98d39057c0c193800e564231fdf92b3cefa15944378fc7730095",
   "usr/bin/bash.exe": "92cff5f145d42f85b55aa3be8d3ad9827844a21ec4fbeaa1ddfe1dd4d76c6474",
+  "usr/bin/sh.exe": "92cff5f145d42f85b55aa3be8d3ad9827844a21ec4fbeaa1ddfe1dd4d76c6474",
   "usr/bin/msys-2.0.dll": "13f0b0dc94588766ecfa1867f1a00061508ba1dc62f5b8e858ac59f01e358aa0",
 };
 export const binaryPins = {
   ...originalBinaryPins,
   "usr/bin/bash.exe": "1d9ff9b052760c832874bfef619eecaefecef3abda0ffe8f40c726a517315a1c",
+  "usr/bin/sh.exe": "1d9ff9b052760c832874bfef619eecaefecef3abda0ffe8f40c726a517315a1c",
   "usr/bin/msys-2.0.dll": "48f8451360bb491f915ddcf0018b20a5938810a4edff74ad3fcd0eaff67ebdb8",
 };
-const variant = "ci-derived-unsigned-msys-dll-and-bash-dynamic-base";
+const variant = "ci-derived-unsigned-msys-dll-bash-and-sh-dynamic-base";
 export function validateDerivedMetadata(receipt: any, revision: string) {
   assert.equal(receipt.classification, "ci-derived-canonical-msys-dynamic-base");
   assert.equal(receipt.sourceRevision, revision);
-  assert.equal(receipt.adaptation, "msys-dll-and-unsigned-bash-dynamic-base");
+  assert.equal(receipt.adaptation, "msys-dll-and-unsigned-bash-sh-dynamic-base");
   assert.equal(receipt.untouchedOfficialBytes, false);
   assert.equal(receipt.originalsPreserved, true);
   assert.equal(receipt.allOtherFilesUnchanged, true);
   assert.equal(receipt.arm64WrapperUnchanged, true);
+  assert.equal(receipt.arm64ShWrapperUnchanged, true);
   assert.equal(receipt.derivedBashExplicitlyUnsigned, true);
+  assert.equal(receipt.derivedShExplicitlyUnsigned, true);
   assert.equal(receipt.nativeChecksumVerified, true);
   assert.equal(receipt.derivedBashUnsignedVerified, true);
+  assert.equal(receipt.derivedShUnsignedVerified, true);
   assert.equal(receipt.qualified, false);
   assert.equal(receipt.upstream.nousCommit, "2237be355906fbe6065ce1815711eee52b2d646e");
   assert.equal(
     receipt.upstream.sha256,
     "f8e92cd3359fcbb96998cfd606a536ccc6dbfb23c04e12b29042f9ba45b6b0c7",
   );
-  assert.equal(receipt.files.length, 2);
-  assert.equal(new Set(receipt.files.map((file: any) => file.path)).size, 2);
+  assert.equal(receipt.files.length, 3);
+  assert.equal(new Set(receipt.files.map((file: any) => file.path)).size, 3);
   for (const [relative, flags] of [
     ["usr/bin/msys-2.0.dll", 0],
     ["usr/bin/bash.exe", 0x8000],
+    ["usr/bin/sh.exe", 0x8000],
   ] as const) {
     const file = receipt.files.find((row: any) => row.path === relative);
     assert.equal(file?.beforeSha256, originalBinaryPins[relative]);
@@ -58,34 +65,67 @@ export function validateDerivedMetadata(receipt: any, revision: string) {
     assert.equal(file.onlyMetadataChanged, true);
     assert.equal(file.certificateDirectoryAbsent, true);
     assert.equal(file.derivedNotSigned, true);
-    assert.equal(file.certificateTableRemoved, relative === "usr/bin/bash.exe");
+    assert.equal(file.certificateTableRemoved, relative !== "usr/bin/msys-2.0.dll");
   }
-  const bash = receipt.files.find((row: any) => row.path === "usr/bin/bash.exe");
-  assert.equal(bash.beforeBytes, 2455808);
-  assert.equal(bash.bytes, 2442752);
-  assert.equal(bash.originalCertificate.offset, 2442752);
-  assert.equal(bash.originalCertificate.bytes, 13056);
-  assert.equal(
-    bash.originalCertificate.sha256,
-    "ad13eb3d0e085570befdca351ea777c89bce3120f9675b2c5e8ba3df9a674e5d",
-  );
-  assert.equal(receipt.nativeSignatures.length, 3);
+  for (const relative of ["usr/bin/bash.exe", "usr/bin/sh.exe"]) {
+    const shell = receipt.files.find((row: any) => row.path === relative);
+    assert.equal(shell.beforeBytes, 2455808);
+    assert.equal(shell.bytes, 2442752);
+    assert.equal(shell.originalCertificate.offset, 2442752);
+    assert.equal(shell.originalCertificate.bytes, 13056);
+    assert.equal(
+      shell.originalCertificate.sha256,
+      "ad13eb3d0e085570befdca351ea777c89bce3120f9675b2c5e8ba3df9a674e5d",
+    );
+  }
+  assert.equal(receipt.nativeSignatures.length, 6);
   for (const [file, expected] of [
     ["original-bash.exe", originalBinaryPins["usr/bin/bash.exe"]],
     ["derived-bash.exe", binaryPins["usr/bin/bash.exe"]],
     ["original-arm64-wrapper.exe", originalBinaryPins["bin/bash.exe"]],
+    ["original-sh.exe", originalBinaryPins["usr/bin/sh.exe"]],
+    ["derived-sh.exe", binaryPins["usr/bin/sh.exe"]],
+    ["original-arm64-sh-wrapper.exe", originalBinaryPins["bin/sh.exe"]],
   ]) {
     const matches = receipt.nativeSignatures.filter((row: any) => row.file === file);
     assert.equal(matches.length, 1);
     assert.equal(matches[0].sha256, expected);
     assert.equal(typeof matches[0].status, "string");
     assert(matches[0].status.length > 0);
-    if (file === "derived-bash.exe") assert.equal(matches[0].status, "NotSigned");
-    if (file === "original-bash.exe")
-      assert.equal(bash.originalCertificate.authenticodeStatus, matches[0].status);
+    if (file === "derived-bash.exe" || file === "derived-sh.exe")
+      assert.equal(matches[0].status, "NotSigned");
+    if (file === "original-bash.exe" || file === "original-sh.exe") {
+      const relative = file === "original-bash.exe" ? "usr/bin/bash.exe" : "usr/bin/sh.exe";
+      assert.equal(
+        receipt.files.find((row: any) => row.path === relative).originalCertificate
+          .authenticodeStatus,
+        matches[0].status,
+      );
+    }
   }
   return receipt;
 }
+export function aliasPipelineCases(nonce: string, originalBashPassed: boolean) {
+  assert.equal(originalBashPassed, true, "Original Bash pipeline must pass before alias cases");
+  assert.match(nonce, /^[a-f0-9]{24}$/u);
+  return [
+    ["usr/bin/sh.exe", "ALIAS_SH_DIRECT_"],
+    ["bin/sh.exe", "ALIAS_SH_WRAPPER_"],
+  ].map(([target, prefix]) => {
+    const marker = prefix + nonce;
+    return {
+      target: target!,
+      expected: marker + "\n",
+      args: [
+        "--noprofile",
+        "--norc",
+        "-c",
+        "set -euo pipefail; printf '%s\\n' '" + marker + "' | cat | grep -F '" + marker + "'",
+      ],
+    };
+  });
+}
+
 export function fixedEnvironment(windows: string, home: string, git: string, node: string) {
   return {
     SYSTEMROOT: windows,
@@ -601,6 +641,22 @@ async function worker(configFile: string) {
       assert.equal(bash.stdout().replaceAll("\r\n", "\n"), expected, bash.stderr());
       results.toolsPassed = true;
       save();
+      if (c.mode === "startup") {
+        results.phase = "sh-alias-pipelines";
+        results.aliasPipelines = [];
+        for (const test of aliasPipelineCases(c.nonce, results.toolsPassed === true)) {
+          const execution = await finite(launcher, [
+            "--",
+            path.join(c.git, test.target),
+            ...test.args,
+          ]);
+          results.aliasPipelines.push({ target: test.target, execution });
+          save();
+          checkSuccess(execution, test.expected);
+        }
+        results.aliasPipelinesPassed = true;
+        save();
+      }
       if (c.mode === "isolation") {
         results.phase = "namespace-open";
         save();
@@ -935,6 +991,13 @@ async function main() {
         }
       }
     report.hostBaseline = [];
+    const originalBashPassed = report.stages.some(
+      (stage: any) => stage.mode === "startup" && stage.toolsPassed === true,
+    );
+    const aliasTargets = originalBashPassed
+      ? aliasPipelineCases(nonce, true).map((test) => test.target)
+      : [];
+    report.aliasHostComparisonsRequired = originalBashPassed;
     if (
       executions.every((value) => value.process.closed) &&
       Object.values(report.cleanup).every(
@@ -945,7 +1008,7 @@ async function main() {
         ["official-original", originalGit],
         [variant, git],
       ]) {
-        for (const target of ["usr/bin/bash.exe", "bin/bash.exe"]) {
+        for (const target of ["usr/bin/bash.exe", "bin/bash.exe", ...aliasTargets]) {
           const marker = "HOST_" + label + "_" + nonce;
           const child = new Owned(
             path.join(tree!, target),
@@ -962,7 +1025,12 @@ async function main() {
           hostExecutions.push(child);
           child.child.stdin!.end();
           const r = await child.finish();
-          report.hostBaseline.push({ ...r, imageVariant: label, pipeline: "printf|cat|grep" });
+          report.hostBaseline.push({
+            ...r,
+            imageVariant: label,
+            shell: target,
+            pipeline: "printf|cat|grep",
+          });
           try {
             checkSuccess(r, marker + "\n");
           } catch (error) {

@@ -3,7 +3,13 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";
-import { deriveImage, imageChecksum, inspectPe } from "./prepare-msys-aslr.mts";
+import {
+  deriveImage,
+  imageChecksum,
+  inspectPe,
+  imageEvidenceNames,
+  originals,
+} from "./prepare-msys-aslr.mts";
 
 const sha = (data: Buffer) => createHash("sha256").update(data).digest("hex");
 function fixture() {
@@ -160,4 +166,21 @@ test("incorrect preexisting checksum cannot be carried into a derivation", () =>
   const input = fixture();
   input.writeUInt32LE(1, 216);
   assert.throws(() => deriveImage(input, { bytes: input.length, sha256: sha(input), flags: 0 }));
+});
+
+test("same-byte sh alias is declared separately with collision-free evidence names", () => {
+  assert.deepEqual(originals["usr/bin/sh.exe"], originals["usr/bin/bash.exe"]);
+  assert.deepEqual(imageEvidenceNames("usr/bin/sh.exe"), {
+    original: "original-sh.exe",
+    derived: "derived-sh.exe",
+    certificate: "original-sh-certificate.bin",
+  });
+  const names = ["original-arm64-wrapper.exe", "original-arm64-sh-wrapper.exe"];
+  for (const [relative, pin] of Object.entries(originals)) {
+    const files = imageEvidenceNames(relative);
+    names.push(files.original, files.derived);
+    if (pin.certificate) names.push(files.certificate);
+  }
+  assert.equal(new Set(names).size, names.length);
+  assert.equal(names.length, 10);
 });

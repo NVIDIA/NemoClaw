@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   baselineKey,
+  aliasPipelineCases,
   fixedEnvironment,
   request,
   parseJsonLines,
@@ -75,14 +76,17 @@ test("derived DLL and unsigned Bash provenance preserves the wrapper and require
   const receipt = {
     classification: "ci-derived-canonical-msys-dynamic-base",
     sourceRevision: "a".repeat(40),
-    adaptation: "msys-dll-and-unsigned-bash-dynamic-base",
+    adaptation: "msys-dll-and-unsigned-bash-sh-dynamic-base",
     untouchedOfficialBytes: false,
     originalsPreserved: true,
     allOtherFilesUnchanged: true,
     arm64WrapperUnchanged: true,
+    arm64ShWrapperUnchanged: true,
     derivedBashExplicitlyUnsigned: true,
+    derivedShExplicitlyUnsigned: true,
     nativeChecksumVerified: true,
     derivedBashUnsignedVerified: true,
+    derivedShUnsignedVerified: true,
     qualified: false,
     upstream: {
       nousCommit: "2237be355906fbe6065ce1815711eee52b2d646e",
@@ -119,6 +123,25 @@ test("derived DLL and unsigned Bash provenance preserves the wrapper and require
           authenticodeStatus: "Valid",
         },
       },
+      {
+        path: "usr/bin/sh.exe",
+        beforeSha256: originalBinaryPins["usr/bin/sh.exe"],
+        afterSha256: binaryPins["usr/bin/sh.exe"],
+        beforeFlags: 0x8000,
+        afterFlags: 0x8040,
+        beforeBytes: 2455808,
+        bytes: 2442752,
+        onlyMetadataChanged: true,
+        certificateDirectoryAbsent: true,
+        derivedNotSigned: true,
+        certificateTableRemoved: true,
+        originalCertificate: {
+          offset: 2442752,
+          bytes: 13056,
+          sha256: "ad13eb3d0e085570befdca351ea777c89bce3120f9675b2c5e8ba3df9a674e5d",
+          authenticodeStatus: "Valid",
+        },
+      },
     ],
     // Synthetic status values exercise the receipt contract; real Windows
     // Authenticode results remain required by run-bash-compat.ps1.
@@ -134,14 +157,24 @@ test("derived DLL and unsigned Bash provenance preserves the wrapper and require
         sha256: originalBinaryPins["bin/bash.exe"],
         status: "NotSigned",
       },
+      { file: "original-sh.exe", sha256: originalBinaryPins["usr/bin/sh.exe"], status: "Valid" },
+      { file: "derived-sh.exe", sha256: binaryPins["usr/bin/sh.exe"], status: "NotSigned" },
+      {
+        file: "original-arm64-sh-wrapper.exe",
+        sha256: originalBinaryPins["bin/sh.exe"],
+        status: "NotSigned",
+      },
     ],
   };
   assert.equal(validateDerivedMetadata(receipt, receipt.sourceRevision), receipt);
   for (const field of [
     "nativeChecksumVerified",
     "derivedBashUnsignedVerified",
+    "derivedShUnsignedVerified",
     "arm64WrapperUnchanged",
+    "arm64ShWrapperUnchanged",
     "derivedBashExplicitlyUnsigned",
+    "derivedShExplicitlyUnsigned",
   ])
     assert.throws(() =>
       validateDerivedMetadata({ ...receipt, [field]: false }, receipt.sourceRevision),
@@ -151,21 +184,42 @@ test("derived DLL and unsigned Bash provenance preserves the wrapper and require
   );
   assert.throws(() =>
     validateDerivedMetadata(
-      { ...receipt, files: [{ ...receipt.files[0], afterFlags: 0xc0 }, receipt.files[1]] },
+      { ...receipt, files: [{ ...receipt.files[0], afterFlags: 0xc0 }, ...receipt.files.slice(1)] },
       receipt.sourceRevision,
     ),
   );
-  assert.throws(() =>
-    validateDerivedMetadata(
-      {
-        ...receipt,
-        nativeSignatures: receipt.nativeSignatures.map((row) =>
-          row.file === "derived-bash.exe" ? { ...row, status: "Valid" } : row,
-        ),
-      },
-      receipt.sourceRevision,
+  for (const derived of ["derived-bash.exe", "derived-sh.exe"])
+    assert.throws(() =>
+      validateDerivedMetadata(
+        {
+          ...receipt,
+          nativeSignatures: receipt.nativeSignatures.map((row) =>
+            row.file === derived ? { ...row, status: "Valid" } : row,
+          ),
+        },
+        receipt.sourceRevision,
+      ),
+    );
+});
+test("sh alias pipeline cases cannot run before the unchanged main Bash gate", () => {
+  assert.throws(() => aliasPipelineCases(c.nonce, false), /Original Bash pipeline/u);
+  assert.throws(() => aliasPipelineCases("invalid", true));
+  const cases = aliasPipelineCases(c.nonce, true);
+  assert.deepEqual(
+    cases.map((entry) => entry.target),
+    ["usr/bin/sh.exe", "bin/sh.exe"],
+  );
+  assert(
+    cases.every(
+      (entry) =>
+        entry.args.slice(0, 3).join(" ") === "--noprofile --norc -c" &&
+        entry.args[3]!.startsWith("set -euo pipefail; ") &&
+        entry.args[3]!.includes("| cat | grep -F"),
     ),
   );
+  assert.notEqual(cases[0]!.expected, cases[1]!.expected);
+  assert.equal(binaryPins["usr/bin/sh.exe"], binaryPins["usr/bin/bash.exe"]);
+  assert.equal(binaryPins["bin/sh.exe"], originalBinaryPins["bin/sh.exe"]);
 });
 test("baseline key requires exact known native failure, not a generic denial", () => {
   const error =

@@ -194,9 +194,10 @@ class PipeProof {
   OVERLAPPED connectOperation{};
   bool connectPending=false;
   bool connected=false;
-  SECURITY_DESCRIPTOR descriptor{};
+  SECURITY_DESCRIPTOR descriptor{},originalDescriptor{};
+  std::string tokenDefaultDacl;
   SECURITY_ATTRIBUTES attributes{};
-  std::array<DWORD,512/sizeof(DWORD)> aclStorage{};
+  std::array<DWORD,512/sizeof(DWORD)> aclStorage{},originalAclStorage{};
   std::array<DWORD,SECURITY_MAX_SID_SIZE/sizeof(DWORD)> adminSid{},systemSid{};
   static_assert(SECURITY_MAX_SID_SIZE%sizeof(DWORD)==0);
   PSID user=nullptr,container=nullptr;
@@ -265,21 +266,34 @@ class PipeProof {
       line("{\"kind\":\"pipe-descriptor\",\"fixture\":"+quote(target?"tracker-createpipe":ordinary?"ordinary-nt":"signal-win32")+",\"appended\":"+std::string(appended?"true":"false")+",\"rawProbeUnshimmed\":true,\"actualControl\":"+std::to_string(control)+",\"ownerSid\":"+quote(utf8(ownerSid))+",\"groupSid\":"+quote(utf8(groupSid))+",\"aceCount\":"+std::to_string(expectedCount)+",\"aceMasks\":["+fields+"],\"actualTokenSidsMatched\":true,\"ownerGroupControlPreserved\":true,\"genericMappingOnly\":true}");
     }catch(...){LocalFree(sd);throw;}LocalFree(sd);
   }
-  void default_template(PACL destination){
-    Handle token;require(OpenProcessToken(GetCurrentProcess(),TOKEN_QUERY,&token.value)!=0,"pipe-default-token");alignas(void*) std::array<BYTE,1024> buffer{};DWORD needed=0;
-    require(GetTokenInformation(token.value,TokenDefaultDacl,buffer.data(),static_cast<DWORD>(buffer.size()),&needed)!=0&&needed>=sizeof(TOKEN_DEFAULT_DACL)&&needed<=buffer.size(),"pipe-default-query");
-    PACL acl=reinterpret_cast<TOKEN_DEFAULT_DACL*>(buffer.data())->DefaultDacl;const uintptr_t begin=reinterpret_cast<uintptr_t>(buffer.data()),address=reinterpret_cast<uintptr_t>(acl);
-    require(acl&&address>=begin+sizeof(TOKEN_DEFAULT_DACL)&&address<=begin+needed-sizeof(ACL),"pipe-default-range");require(acl->AclSize>=sizeof(ACL)&&acl->AclSize<=512&&acl->AclSize<=begin+needed-address&&acl->AceCount==3&&IsValidAcl(acl),"pipe-default-shape");
-    DWORD body=0;std::array<PSID,3> expected={user,adminSid.data(),systemSid.data()};for(DWORD index=0;index<3;++index){PVOID raw=nullptr;require(GetAce(acl,index,&raw)!=0,"pipe-default-ace");auto ace=static_cast<ACCESS_ALLOWED_ACE*>(raw);require(ace->Header.AceType==ACCESS_ALLOWED_ACE_TYPE&&ace->Header.AceFlags==0&&ace->Mask==GENERIC_ALL&&ace->Header.AceSize==8+GetLengthSid(expected[index])&&EqualSid(&ace->SidStart,expected[index]),"pipe-default-template");body+=ace->Header.AceSize;}
-    require(AddAce(destination,ACL_REVISION,MAXDWORD,reinterpret_cast<BYTE*>(acl)+sizeof(ACL),body)!=0,"pipe-default-preserve-aces");
-    const BYTE* raw=reinterpret_cast<BYTE*>(acl);std::string hex;constexpr char digits[]="0123456789abcdef";for(DWORD n=0;n<acl->AclSize;++n){hex+=digits[raw[n]>>4];hex+=digits[raw[n]&15];}
-    line("{\"kind\":\"pipe-token-default\",\"fixture\":\"ordinary-nt\",\"aclBytes\":"+std::to_string(acl->AclSize)+",\"aclHex\":"+quote(hex)+",\"templateMatched\":true}");
+  // MSYS uinfo.cc initializes its default with sec_user_nih; this unshimmed
+  // probe never runs that initializer. Observe its real token without assuming
+  // the MSYS template or changing any token security information.
+  void observe_token_default(bool after=false){
+    Handle token;require(OpenProcessToken(GetCurrentProcess(),TOKEN_QUERY,&token.value)!=0,"pipe-default-token");DWORD needed=0;
+    BOOL sized=GetTokenInformation(token.value,TokenDefaultDacl,nullptr,0,&needed);DWORD error=sized?0:GetLastError();
+    require(!sized&&error==ERROR_INSUFFICIENT_BUFFER&&needed>=sizeof(TOKEN_DEFAULT_DACL)&&needed<=65536,"pipe-default-size");
+    std::vector<BYTE> buffer(needed);require(GetTokenInformation(token.value,TokenDefaultDacl,buffer.data(),static_cast<DWORD>(buffer.size()),&needed)!=0&&needed>=sizeof(TOKEN_DEFAULT_DACL)&&needed<=buffer.size(),"pipe-default-query");
+    PACL acl=reinterpret_cast<TOKEN_DEFAULT_DACL*>(buffer.data())->DefaultDacl;std::string hex;
+    if(acl){const uintptr_t begin=reinterpret_cast<uintptr_t>(buffer.data()),address=reinterpret_cast<uintptr_t>(acl);
+      require(address>=begin+sizeof(TOKEN_DEFAULT_DACL)&&address<=begin+needed-sizeof(ACL),"pipe-default-range");
+      require(acl->AclSize>=sizeof(ACL)&&acl->AclSize<=begin+needed-address&&IsValidAcl(acl),"pipe-default-valid");
+      const BYTE* raw=reinterpret_cast<BYTE*>(acl);constexpr char digits[]="0123456789abcdef";for(DWORD n=0;n<acl->AclSize;++n){hex+=digits[raw[n]>>4];hex+=digits[raw[n]&15];}
+    }
+    const std::string snapshot=acl?hex:"null";const bool unchanged=!after||snapshot==tokenDefaultDacl;
+    line("{\"kind\":\"pipe-token-default\",\"fixture\":\"ordinary-nt\",\"pid\":"+std::to_string(GetCurrentProcessId())+",\"nonce\":"+quote(nonce)+",\"appSidMask\":"+std::to_string(appSidMask)+",\"phase\":"+quote(after?"after":"before")+",\"aclPresent\":"+(acl?"true":"false")+",\"aclBytes\":"+(acl?std::to_string(acl->AclSize):"null")+",\"aceCount\":"+(acl?std::to_string(acl->AceCount):"null")+",\"aclHex\":"+quote(hex)+",\"tokenMutationRequested\":false,\"matchesBefore\":"+(after?(unchanged?"true":"false"):"null")+"}");
+    if(after)require(unchanged,"pipe-token-default-changed");else tokenDefaultDacl=snapshot;
   }
-  HANDLE create_server(DWORD mode,bool useDefault=false){
+  // Exact sec_user_nih same-user/no-second-SID template from sec/helper.cc:
+  // current user, Administrators, SYSTEM; GENERIC_ALL and no ACE inheritance.
+  void canonical_template(PACL acl){
+    for(PSID sid:std::array<PSID,3>{user,adminSid.data(),systemSid.data()})require(AddAccessAllowedAceEx(acl,ACL_REVISION,0,GENERIC_ALL,sid)!=0,"pipe-original-ace");
+  }
+  HANDLE create_server(DWORD mode,bool canonicalBaseline=false){
     if(!ordinary)return CreateNamedPipeW(name.c_str(),mode,0x0000000c,1,65472,65472,0,&attributes);
-    Name object(name,npfs.value,useDefault?nullptr:&descriptor,OBJ_INHERIT);IO_STATUS_BLOCK io{};LARGE_INTEGER timeout{};timeout.QuadPart=-500000;HANDLE result=nullptr;
+    Name object(name,npfs.value,canonicalBaseline?&originalDescriptor:&descriptor,OBJ_INHERIT);IO_STATUS_BLOCK io{};LARGE_INTEGER timeout{};timeout.QuadPart=-500000;HANDLE result=nullptr;
     NTSTATUS value=nativeCreate(&result,0x80100100,&object.attributes,&io,3,2,(mode&FILE_FLAG_OVERLAPPED)?0:0x20,0,0,0,1,65536,65536,&timeout);if(value==static_cast<NTSTATUS>(0x103))fatal_cleanup();
-    line("{\"kind\":\"pipe-native-server\",\"defaultInput\":"+std::string(useDefault?"true":"false")+",\"overlappedFixture\":"+std::string((mode&FILE_FLAG_OVERLAPPED)?"true":"false")+",\"status\":"+status(value)+"}");
+    line("{\"kind\":\"pipe-native-server\",\"canonicalBaseline\":"+std::string(canonicalBaseline?"true":"false")+",\"explicitObjectDescriptor\":true,\"tokenDefaultUsed\":false,\"overlappedFixture\":"+std::string((mode&FILE_FLAG_OVERLAPPED)?"true":"false")+",\"status\":"+status(value)+"}");
     if(value!=0){if(value>=0&&result)CloseHandle(result);return INVALID_HANDLE_VALUE;}return result;
   }
   DWORD open_client(const std::wstring& target,bool minimal,Handle& client){
@@ -300,7 +314,10 @@ class PipeProof {
       DWORD size=static_cast<DWORD>(sizeof(adminSid));require(CreateWellKnownSid(WinBuiltinAdministratorsSid,nullptr,adminSid.data(),&size)!=0,"pipe-admin-sid");size=static_cast<DWORD>(sizeof(systemSid));require(CreateWellKnownSid(WinLocalSystemSid,nullptr,systemSid.data(),&size)!=0,"pipe-system-sid");
       const size_t aclBytes=sizeof(ACL)+4*(sizeof(ACCESS_ALLOWED_ACE)-sizeof(DWORD))+GetLengthSid(user)+GetLengthSid(adminSid.data())+GetLengthSid(systemSid.data())+GetLengthSid(container);require(aclBytes<=sizeof(aclStorage),"pipe-acl-bound");
       auto acl=reinterpret_cast<PACL>(aclStorage.data());require(InitializeAcl(acl,static_cast<DWORD>(aclBytes),ACL_REVISION)!=0,"pipe-acl-init");
-      if(ordinary)default_template(acl);else for(PSID sid:std::array<PSID,3>{user,adminSid.data(),systemSid.data()})require(AddAccessAllowedAceEx(acl,ACL_REVISION,0,GENERIC_ALL,sid)!=0,"pipe-original-ace");
+      if(ordinary)observe_token_default();
+      auto originalAcl=reinterpret_cast<PACL>(originalAclStorage.data());const DWORD originalBytes=static_cast<DWORD>(aclBytes-(sizeof(ACCESS_ALLOWED_ACE)-sizeof(DWORD))-GetLengthSid(container));
+      require(InitializeAcl(originalAcl,originalBytes,ACL_REVISION)!=0,"pipe-original-acl-init");canonical_template(originalAcl);canonical_template(acl);
+      require(InitializeSecurityDescriptor(&originalDescriptor,SECURITY_DESCRIPTOR_REVISION)!=0&&SetSecurityDescriptorDacl(&originalDescriptor,TRUE,originalAcl,FALSE)!=0,"pipe-original-descriptor-init");
       require(AddAccessAllowedAceEx(acl,ACL_REVISION,0,appSidMask,container)!=0,"pipe-container-ace");
       require(InitializeSecurityDescriptor(&descriptor,SECURITY_DESCRIPTOR_REVISION)!=0&&SetSecurityDescriptorDacl(&descriptor,TRUE,acl,FALSE)!=0,"pipe-descriptor-init");attributes={sizeof(attributes),&descriptor,FALSE};
       name=L"\\\\.\\pipe\\msys-"+key+L"-"+std::to_wstring(GetCurrentProcessId())+L"-sigwait";
@@ -363,11 +380,11 @@ class PipeProof {
   }
   void tracker(){
     require(ordinary,"tracker-default-template-required");
-    SECURITY_ATTRIBUTES original={sizeof(SECURITY_ATTRIBUTES),nullptr,FALSE};
+    SECURITY_ATTRIBUTES original={sizeof(SECURITY_ATTRIBUTES),&originalDescriptor,FALSE};
     HANDLE originalRead=nullptr,originalWrite=nullptr;
     const BOOL originalResult=CreatePipe(&originalRead,&originalWrite,&original,16);
     const DWORD originalError=originalResult?ERROR_SUCCESS:GetLastError();
-    line("{\"kind\":\"tracker-original\",\"success\":"+std::string(originalResult?"true":"false")+",\"error\":"+std::to_string(originalError)+",\"failedOutputsInspected\":false}");
+    line("{\"kind\":\"tracker-original\",\"explicitCanonicalObjectDescriptor\":true,\"tokenDefaultUsed\":false,\"success\":"+std::string(originalResult?"true":"false")+",\"error\":"+std::to_string(originalError)+",\"failedOutputsInspected\":false}");
     // FALSE leaves both outputs undefined. They enter ownership only on TRUE.
     if(originalResult){Handle read,write;read.value=originalRead;write.value=originalWrite;
       require(read.value&&write.value&&read.value!=INVALID_HANDLE_VALUE&&write.value!=INVALID_HANDLE_VALUE&&read.value!=write.value,"tracker-original-handles");
@@ -410,6 +427,7 @@ class PipeProof {
     Handle missingClient;DWORD missingError=open_client(name,false,missingClient);require(ordinary?(missingError==0xc0000034u||missingError==0xc000003au):missingError==ERROR_FILE_NOT_FOUND,"pipe-last-handle-not-released");
     Handle recreated;recreated.value=create_server(0x00080001);require(recreated.value!=INVALID_HANDLE_VALUE,"pipe-first-instance-not-reusable");require(CloseHandle(recreated.value)!=0,"pipe-recreated-close");recreated.value=nullptr;closed=true;
     if(npfs.value){require(CloseHandle(npfs.value)!=0,"pipe-npfs-root-close");npfs.value=nullptr;}
+    if(ordinary)observe_token_default(true);
     line("{\"kind\":\"pipe-cleanup\",\"fixture\":"+quote(ordinary?"ordinary-nt":"signal-win32")+",\"pendingConnectCompleted\":true,\"lastHandleAbsent\":true,\"firstInstanceRecreatedAndClosed\":true}");
   }
 };

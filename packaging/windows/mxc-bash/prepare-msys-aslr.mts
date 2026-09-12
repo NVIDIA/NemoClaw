@@ -25,6 +25,16 @@ export const originals: Record<string, ImagePin> = {
       sha256: "ad13eb3d0e085570befdca351ea777c89bce3120f9675b2c5e8ba3df9a674e5d",
     },
   },
+  "usr/bin/sh.exe": {
+    bytes: 2455808,
+    sha256: "92cff5f145d42f85b55aa3be8d3ad9827844a21ec4fbeaa1ddfe1dd4d76c6474",
+    flags: 0x8000,
+    certificate: {
+      offset: 2442752,
+      bytes: 13056,
+      sha256: "ad13eb3d0e085570befdca351ea777c89bce3120f9675b2c5e8ba3df9a674e5d",
+    },
+  },
 };
 const hash = (data: Buffer) => createHash("sha256").update(data).digest("hex");
 
@@ -218,6 +228,15 @@ export function deriveImage(input: Buffer, pin: ImagePin) {
   };
 }
 
+export function imageEvidenceNames(relative: string) {
+  const name = path.basename(relative);
+  return {
+    original: "original-" + name,
+    derived: "derived-" + name,
+    certificate: "original-" + path.parse(name).name + "-certificate.bin",
+  };
+}
+
 function inventory(root: string) {
   const files: { path: string; bytes: number; sha256: string }[] = [];
   function visit(directory: string) {
@@ -262,6 +281,7 @@ function main() {
   for (const [relative, expected] of Object.entries({
     "usr/bin/bash.exe": "92cff5f145d42f85b55aa3be8d3ad9827844a21ec4fbeaa1ddfe1dd4d76c6474",
     "bin/bash.exe": "828e6e891cee98d39057c0c193800e564231fdf92b3cefa15944378fc7730095",
+    "bin/sh.exe": "828e6e891cee98d39057c0c193800e564231fdf92b3cefa15944378fc7730095",
   }))
     assert.equal(hash(fs.readFileSync(path.join(source, relative))), expected);
   fs.mkdirSync(evidence, { recursive: true });
@@ -278,18 +298,24 @@ function main() {
     path.join(evidence, "original-arm64-wrapper.exe"),
     fs.constants.COPYFILE_EXCL,
   );
+  fs.copyFileSync(
+    path.join(source, "bin/sh.exe"),
+    path.join(evidence, "original-arm64-sh-wrapper.exe"),
+    fs.constants.COPYFILE_EXCL,
+  );
   for (const [relative, pin] of Object.entries(originals)) {
     const input = fs.readFileSync(path.join(source, relative));
     const { output, receipt } = deriveImage(input, pin);
-    fs.writeFileSync(path.join(evidence, "original-" + path.basename(relative)), input, {
+    const names = imageEvidenceNames(relative);
+    fs.writeFileSync(path.join(evidence, names.original), input, {
       flag: "wx",
     });
-    fs.writeFileSync(path.join(evidence, "derived-" + path.basename(relative)), output, {
+    fs.writeFileSync(path.join(evidence, names.derived), output, {
       flag: "wx",
     });
     if (pin.certificate)
       fs.writeFileSync(
-        path.join(evidence, "original-bash-certificate.bin"),
+        path.join(evidence, names.certificate),
         input.subarray(pin.certificate.offset),
         { flag: "wx" },
       );
@@ -321,9 +347,11 @@ function main() {
         untouchedOfficialBytes: false,
         originalsPreserved: true,
         allOtherFilesUnchanged: true,
-        adaptation: "msys-dll-and-unsigned-bash-dynamic-base",
+        adaptation: "msys-dll-and-unsigned-bash-sh-dynamic-base",
         arm64WrapperUnchanged: true,
+        arm64ShWrapperUnchanged: true,
         derivedBashExplicitlyUnsigned: true,
+        derivedShExplicitlyUnsigned: true,
         fileCount: before.length,
         originalInventorySha256: hash(Buffer.from(JSON.stringify(before))),
         derivedInventorySha256: hash(Buffer.from(JSON.stringify(after))),

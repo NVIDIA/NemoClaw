@@ -115,6 +115,36 @@ struct SignalPipeDescriptor {
     alignas(DWORD) BYTE acl[512 + sizeof(ACCESS_ALLOWED_ACE) + SECURITY_MAX_SID_SIZE];
 };
 
+// Preserve the pinned everyone_sd(SYMBOLIC_LINK_QUERY) ACE byte-for-byte and
+// add only query access for this actual AppContainer, on a new private PID link.
+inline bool append_pid_link_container_ace(const PipeSecurityObservation& original, PSID world,
+                                           PSID container, ScopedDescriptor& output) {
+    if (!world || !container || !IsValidSid(world) || !IsValidSid(container) || EqualSid(world, container) ||
+        !original.complete || !original.descriptorPresent || original.control != SE_DACL_PRESENT ||
+        original.revision != SECURITY_DESCRIPTOR_REVISION || original.ownerPresent || original.groupPresent ||
+        original.ownerDefaulted || original.groupDefaulted || !original.daclPresent || original.nullDacl ||
+        original.aceCount != 1 || original.aclBytes > sizeof(original.acl) || original.capturedAclBytes != original.aclBytes) return false;
+    auto acl = reinterpret_cast<PACL>(const_cast<BYTE*>(original.acl));
+    const DWORD aceBytes = static_cast<DWORD>(offsetof(ACCESS_ALLOWED_ACE, SidStart)) + GetLengthSid(world);
+    if (original.aclBytes != sizeof(ACL) + aceBytes || acl->AclSize != original.aclBytes ||
+        acl->AclRevision != ACL_REVISION || acl->Sbz1 || acl->Sbz2 || !IsValidAcl(acl)) return false;
+    void* value = nullptr;
+    if (!GetAce(acl, 0, &value)) return false;
+    auto ace = static_cast<ACCESS_ALLOWED_ACE*>(value);
+    if (ace->Header.AceType != ACCESS_ALLOWED_ACE_TYPE || ace->Header.AceFlags != 0 ||
+        ace->Header.AceSize != aceBytes || ace->Mask != 1 ||
+        memcmp(&ace->SidStart, world, GetLengthSid(world)) != 0) return false;
+    ZeroMemory(&output, sizeof(output));
+    auto next = reinterpret_cast<PACL>(output.acl);
+    if (!InitializeSecurityDescriptor(&output.descriptor, SECURITY_DESCRIPTOR_REVISION) ||
+        !InitializeAcl(next, sizeof(output.acl), ACL_REVISION) ||
+        !AddAce(next, ACL_REVISION, MAXDWORD, const_cast<BYTE*>(original.acl + sizeof(ACL)), aceBytes) ||
+        !AddAccessAllowedAceEx(next, ACL_REVISION, 0, 1, container) ||
+        !SetSecurityDescriptorDacl(&output.descriptor, TRUE, next, FALSE)) return false;
+    next->AclSize = static_cast<WORD>(original.aclBytes + offsetof(ACCESS_ALLOWED_ACE, SidStart) + GetLengthSid(container));
+    return true;
+}
+
 // Only the observed canonical three-ACE descriptor is eligible. Preserve its
 // existing ACE bytes/order, then append the actual AppContainer writer rights.
 // This describes a new first-instance pipe; it never changes an existing ACL.
