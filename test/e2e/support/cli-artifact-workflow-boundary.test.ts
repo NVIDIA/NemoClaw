@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { execFile, execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
@@ -9,10 +9,13 @@ import os from "node:os";
 import path from "node:path";
 import { describe, it, type TestContext, vi } from "vitest";
 
+import { superviseChild } from "../../helpers/process-supervisor.ts";
+
 const CANDIDATE_SHA = execFileSync("git", ["rev-parse", "HEAD"], {
   encoding: "utf8",
 }).trim();
 const PAYLOAD_SHA256 = "b".repeat(64);
+const PROCESS_OUTPUT_LIMIT = 1024 * 1024;
 const IDENTITY_SCRIPT = path.resolve("scripts/e2e/validate-cli-artifact-identity.sh");
 const RESTORE_SCRIPT = path.resolve("scripts/e2e/restore-cli-artifact.sh");
 
@@ -32,41 +35,59 @@ type RunProcessResult = {
   stderr: string;
 };
 
-function runProcess(
+async function runProcess(
   file: string,
   args: readonly string[],
   options: RunProcessOptions = {},
 ): Promise<RunProcessResult> {
-  let finish: (result: RunProcessResult) => void = () => undefined;
-  const resultPromise = new Promise<RunProcessResult>((resolve) => {
-    finish = resolve;
+  options.owner?.signal.throwIfAborted();
+  let stdout = "";
+  let stderr = "";
+  let outputError: Error | undefined;
+  const child = spawn(file, [...args], {
+    cwd: options.cwd,
+    detached: true,
+    env: options.env,
+    stdio: ["ignore", "pipe", "pipe"],
   });
-  const child = execFile(
-    file,
-    [...args],
-    {
-      cwd: options.cwd,
-      encoding: "utf8",
-      env: options.env,
-      killSignal: "SIGKILL",
-      signal: options.owner?.signal,
-      timeout: options.timeoutMs ?? 20_000,
+  const finishController = new AbortController();
+  const append = (current: string, chunk: string, stream: string): string => {
+    if (outputError) return current;
+    const next = current + chunk;
+    if (Buffer.byteLength(next, "utf8") <= PROCESS_OUTPUT_LIMIT) return next;
+    outputError = new Error(`${stream} exceeded the process output limit`);
+    finishController.abort();
+    return current;
+  };
+  const signal = options.owner
+    ? AbortSignal.any([options.owner.signal, finishController.signal])
+    : finishController.signal;
+  const resultPromise = superviseChild(child, {
+    killGraceMs: 0,
+    onStderr: (chunk) => {
+      stderr = append(stderr, chunk, "stderr");
     },
-    (error, stdout, stderr) => {
-      const signal = child.signalCode ?? error?.signal ?? null;
-      finish({
-        status: signal ? null : Number(error?.code) || (error ? -1 : 0),
-        signal,
-        stdout,
-        stderr,
-      });
+    onStdout: (chunk) => {
+      stdout = append(stdout, chunk, "stdout");
     },
-  );
+    signal,
+    timeoutMs: options.timeoutMs ?? 20_000,
+  });
   options.owner?.onTestFinished(async () => {
-    child.kill("SIGKILL");
+    finishController.abort();
     await resultPromise;
   });
-  return resultPromise;
+  const result = await resultPromise;
+  return {
+    status: outputError
+      ? -1
+      : result.signal
+        ? null
+        : (result.exitCode ?? (result.spawnError ? -1 : null)),
+    signal: result.signal,
+    stdout,
+    stderr: outputError ? `${stderr}${outputError.message}\n` : stderr,
+  };
 }
 
 async function runSuccessfulProcess(
@@ -531,7 +552,7 @@ describe.concurrent("exact-commit CLI artifact restore", () => {
       { owner: context, timeoutMs: 50 },
     );
     context.expect(result.status).toBeNull();
-    context.expect(result.signal).toBe("SIGKILL");
+    context.expect(result.signal).toBe("SIGTERM");
   });
 
   it("kills a stalled artifact process before owner cleanup completes", async (context) => {
@@ -552,7 +573,7 @@ describe.concurrent("exact-commit CLI artifact restore", () => {
     await finishHandler(context);
     const result = await resultPromise;
     context.expect(result.status).toBeNull();
-    context.expect(result.signal).toBe("SIGKILL");
+    context.expect(result.signal).toBe("SIGTERM");
   });
 
   it("accepts matching artifact, candidate source, and workflow identities", async (context) => {
