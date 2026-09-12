@@ -669,7 +669,7 @@ describe("core onboard flow phases", () => {
 
   it.each([
     ["provider-backed input", { model: "gpt-5.4", provider: "nvidia-prod" }],
-    ["a nondefault agent", { agent: { name: "hermes" }, model: null, provider: null }],
+    ["an unsupported agent", { agent: { name: "pi" }, model: null, provider: null }],
   ])("rejects %s before provider inference or sandbox effects", async (_label, patch) => {
     const setupInference = vi.fn(async () => ({ ok: true as const }));
     const reserveSandboxInferenceRoute = vi.fn(() => true);
@@ -833,9 +833,13 @@ describe("core onboard flow phases", () => {
     expect(reserveSandboxInferenceRoute).not.toHaveBeenCalled();
   });
 
-  it.each([false, true])(
-    "routes verified providerless creation with component %s (#11486)",
-    async (registered) => {
+  it.each([
+    { agentName: "openclaw", registered: false },
+    { agentName: "openclaw", registered: true },
+    { agentName: "hermes", registered: true },
+  ])(
+    "routes $agentName providerless creation with component $registered (#11548)",
+    async ({ agentName, registered }) => {
       const setupNim = vi.fn();
       const setupInference = vi.fn(async () => ({ ok: true as const }));
       let providerlessReservation: {
@@ -895,6 +899,7 @@ describe("core onboard flow phases", () => {
         },
       });
       const initial = context({
+        agent: { name: agentName },
         fresh: true,
         session,
         model: null,
