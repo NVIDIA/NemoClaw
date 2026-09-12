@@ -99,9 +99,8 @@ describe("downloadFromSandbox", () => {
     });
 
     expect(captureMock).toHaveBeenCalledTimes(2);
-    for (const [args] of captureMock.mock.calls) {
-      expect(args).toEqual(expect.arrayContaining(["./-payload"]));
-    }
+    expect(captureMock.mock.calls[0]?.[0]).toEqual(expect.arrayContaining(["./-payload"]));
+    expect(captureMock.mock.calls[1]?.[0]).toEqual(expect.arrayContaining(["./-payload"]));
     expect(runMock).toHaveBeenCalledWith(
       ["sandbox", "download", "alpha", "./-payload", stagedArtifact],
       expect.objectContaining({
