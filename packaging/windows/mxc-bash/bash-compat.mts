@@ -507,7 +507,7 @@ export class Owned {
 export type Config = {
   nonce: string;
   containerId: string;
-  mode: "baseline" | "startup" | "isolation";
+  mode: "baseline" | "startup" | "isolation" | "desktop";
   share: string;
   node: string;
   git: string;
@@ -516,10 +516,44 @@ export type Config = {
   key: string;
   script: string;
 };
+export function validatePrivateDesktop(rows: any[], nonce: string) {
+  const desktops = rows.filter((row) => row.kind === "hermes-private-desktop");
+  assert.equal(desktops.length, 2);
+  for (const [index, variant] of ["canonical-e0003", "documented-e0083"].entries()) {
+    const row = desktops[index];
+    assert.equal(row.accessVariant, variant);
+    assert.equal(row.nonce, nonce);
+    assert.equal(row.desiredAccess, index === 0 ? 0xe0003 : 0xe0083);
+    assert.equal(row.requiredPass, index === 1);
+    assert([0xbf, 0x1bf, 0x3bf].includes(row.effectiveUiMask));
+    assert.equal(row.interactiveSwitchAttempted, false);
+    assert.equal(row.hostDesktopGrantsAdded, false);
+    assert.equal(row.rawProbeUnshimmed, true);
+    assert.equal(row.cleanupError, 0);
+    if (index === 1 || row.created) {
+      assert(
+        row.passed &&
+          row.created &&
+          row.closed &&
+          row.originalContextUnchanged &&
+          row.stationNoninteractive &&
+          row.stationRestored &&
+          row.stationClosed,
+      );
+      assert.equal(row.stage, "complete");
+      assert.equal(row.win32Error, 0);
+    } else {
+      assert.equal(row.passed, false);
+      assert.equal(row.created, false);
+      assert(typeof row.error === "string" && row.error.length > 0);
+    }
+  }
+  return desktops;
+}
 function validateConfig(c: Config) {
   assert.match(c.nonce, /^[a-f0-9]{24}$/u);
-  assert.match(c.containerId, /^nm-[a-f0-9]{12}-(?:base|start|a|b)$/u);
-  assert(["baseline", "startup", "isolation"].includes(c.mode));
+  assert.match(c.containerId, /^nm-[a-f0-9]{12}-(?:base|start|a|b|d)$/u);
+  assert(["baseline", "startup", "isolation", "desktop"].includes(c.mode));
   for (const value of [c.share, c.node, c.git, c.compat, c.probe, c.script])
     assert(/^[A-Za-z]:\\/u.test(value) && !/["\r\n]/u.test(value));
   assert.match(c.key, /^[a-f0-9]{16}$/u);
@@ -589,6 +623,22 @@ async function worker(configFile: string) {
       }
       assert.equal(new Set(keys).size, 1);
       results.key = keys[0];
+      results.passed = true;
+    } else if (c.mode === "desktop") {
+      results.phase = "contained-private-desktop";
+      const host = await waitFile(path.join(c.share, "host.json"), Date.now() + 5000);
+      assert.equal(host.nonce, c.nonce);
+      const desktop = await finite(c.probe, [
+        "desktop",
+        c.key,
+        c.nonce,
+        String(process.pid),
+        String(host.executorPid),
+      ]);
+      results.privateDesktop = { execution: desktop, rows: parseJsonLines(desktop.stdout) };
+      save();
+      checkSuccess(desktop);
+      validatePrivateDesktop(results.privateDesktop.rows, c.nonce);
       results.passed = true;
     } else {
       const launcher = path.join(c.compat, "NemoClawMsysLauncher.exe");
@@ -859,7 +909,7 @@ async function main() {
     cleanup: {},
   };
   const save = () => atomic(path.join(output, "progress.json"), report);
-  const start = (role: "base" | "start" | "a" | "b", mode: Config["mode"], key: string) => {
+  const start = (role: "base" | "start" | "a" | "b" | "d", mode: Config["mode"], key: string) => {
     // Keep every writable state outside the fully readonly input root so Node
     // can inspect its source ancestors without seeing another container state.
     const share = work + "-state-" + role;
@@ -883,7 +933,11 @@ async function main() {
     const child = new Owned(
       mxc,
       [policy, "--log-file", path.join(output, role + "-mxc.log")],
-      { ...env, NEMOCLAW_MSYS_TOKEN_INSPECTION: "repair-query" },
+      {
+        ...env,
+        NEMOCLAW_MSYS_TOKEN_INSPECTION: "repair-query",
+        ...(mode === "desktop" ? { NEMOCLAW_HERMES_PRIVATE_DESKTOP: "1" } : {}),
+      },
       share,
       125000,
     );
@@ -901,6 +955,24 @@ async function main() {
     const r = await waitFile(path.join(value.c.share, "done.json"), Date.now() + 1000);
     write(path.join(output, value.c.containerId + "-result.json"), r);
     report.stages.push(r);
+    if (value.c.mode === "desktop") {
+      const masks = value.process
+        .result()
+        .stderr.split(/\r?\n/u)
+        .filter((line) => line.startsWith("NEMOCLAW_HERMES_DESKTOP_MASK="))
+        .map((line) => JSON.parse(line.slice(line.indexOf("=") + 1)));
+      assert.equal(masks.length, 1);
+      const mask = masks[0];
+      assert.equal(mask.afterMask, mask.beforeMask & ~0x40);
+      assert.equal(mask.removedMask, 0x40);
+      assert(
+        mask.logoutRestrictionPreserved &&
+          mask.everyOtherUiBitPreserved &&
+          !mask.hostDesktopGrantsAdded &&
+          mask.childResumed === false,
+      );
+      report.privateDesktopMask = mask;
+    }
     save();
     assert.equal(r.passed, true, r.error);
     return r;
@@ -914,6 +986,9 @@ async function main() {
     report.phase = "injected-startup-and-tools";
     save();
     await completed(start("start", "startup", key));
+    report.phase = "contained-private-desktop";
+    save();
+    await completed(start("d", "desktop", key));
     report.phase = "two-container-isolation";
     save();
     assert(

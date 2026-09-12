@@ -1,7 +1,7 @@
 diff --git a/src/backends/appcontainer/common/src/appcontainer_runner.rs b/src/backends/appcontainer/common/src/appcontainer_runner.rs
 --- a/src/backends/appcontainer/common/src/appcontainer_runner.rs
 +++ b/src/backends/appcontainer/common/src/appcontainer_runner.rs
-@@ -773,16 +773,34 @@
+@@ -773,16 +773,40 @@
              }
          }
 
@@ -14,6 +14,12 @@ diff --git a/src/backends/appcontainer/common/src/appcontainer_runner.rs b/src/b
 +            &request.container_id,
 +        )
 +        .map_err(|error| WxcError::Process(format!("MSYS root image placement: {error}")))?;
++        let desktop_creation = crate::msys_token_inspection::private_desktop_creation_requested(
++            &working_directory.path,
++            &request.policy.readwrite_paths,
++            &request.container_id,
++            request.policy.ui.disable,
++        ).map_err(|error| WxcError::Process(format!("Hermes desktop admission: {error}")))?;
 +
          // --- Allocate and initialize attribute list ---
          let attr_count = compute_attr_count(
@@ -38,7 +44,7 @@ diff --git a/src/backends/appcontainer/common/src/appcontainer_runner.rs b/src/b
 
          let mut attr_list_size: usize = 0;
 
-@@ -860,7 +878,7 @@
+@@ -860,7 +884,7 @@
 
          // 3. MITIGATION_POLICY (Win32k syscall disable) -- applied by the kernel
          // before the child runs any user-mode code, so there is no race window.
@@ -47,7 +53,7 @@ diff --git a/src/backends/appcontainer/common/src/appcontainer_runner.rs b/src/b
              unsafe {
                  UpdateProcThreadAttribute(
                      attr_list,
-@@ -878,7 +896,9 @@
+@@ -878,7 +902,9 @@
                      ))
                  })?;
              }
@@ -58,7 +64,7 @@ diff --git a/src/backends/appcontainer/common/src/appcontainer_runner.rs b/src/b
          }
 
          // --- Setup handle passthrough / capture (pipe mode only) ---
-@@ -1013,7 +1033,6 @@
+@@ -1013,7 +1039,6 @@
 
          // Resolved via the shared helper so both Windows launch paths agree and
          // neither can pass a NULL cwd (see `working_directory`).
@@ -66,7 +72,37 @@ diff --git a/src/backends/appcontainer/common/src/appcontainer_runner.rs b/src/b
          logger.log_line(&format!(
              "working directory: {}",
              working_directory.describe()
-@@ -1124,6 +1143,33 @@
+@@ -1107,11 +1132,28 @@
+         // that returns an error in this block must terminate first.
+         let job = match (|| -> Result<UiJobObject, WxcError> {
+             let job = UiJobObject::new()?;
+-            let restrictions = ui_policy::resolve_ui_restrictions(
++            let mut restrictions = ui_policy::resolve_ui_restrictions(
+                 &request.policy.ui,
+                 &request.policy.base_process_ui,
+             );
++            let before = crate::job_object::to_job_object_uilimit_mask(&restrictions)
++                & crate::job_object::supported_ui_limit_mask();
+             job.set_ui_limits(&restrictions)?;
++            if desktop_creation {
++                let actual_before = crate::msys_token_inspection::read_private_desktop_mask(
++                    HANDLE(job.handle_value() as *mut std::ffi::c_void),
++                ).map_err(|error| WxcError::Process(format!("Hermes original UI mask: {error}")))?;
++                if actual_before != before {
++                    return Err(WxcError::Process("The original UI job mask did not match its policy".into()));
++                }
++                // Windows bundles CreateDesktop and SwitchDesktop in this bit.
++                // Every other UI restriction, including EXITWINDOWS, is retained.
++                restrictions.block_desktop_switching = false;
++                job.set_ui_limits(&restrictions)?;
++                crate::msys_token_inspection::verify_private_desktop_mask(
++                    HANDLE(job.handle_value() as *mut std::ffi::c_void), before,
++                ).map_err(|error| WxcError::Process(format!("Hermes desktop mask: {error}")))?;
++            }
+             job.assign_process(process_handle.get())?;
+             Ok(job)
+         })() {
+@@ -1124,6 +1166,33 @@
                      let _ = TerminateProcess(process_handle.get(), u32::MAX);
                  }
                  return Err(e);
@@ -100,7 +136,7 @@ diff --git a/src/backends/appcontainer/common/src/appcontainer_runner.rs b/src/b
              }
          };
 
-@@ -1216,6 +1262,7 @@
+@@ -1216,6 +1285,7 @@
          Ok(SpawnedChild {
              process: process_handle,
              thread: thread_handle,
@@ -108,7 +144,7 @@ diff --git a/src/backends/appcontainer/common/src/appcontainer_runner.rs b/src/b
              job,
              pid: pi.dwProcessId,
              capture_session,
-@@ -1263,6 +1310,8 @@
+@@ -1263,6 +1333,8 @@
  struct SpawnedChild {
      process: OwnedHandle,
      thread: OwnedHandle,
@@ -117,7 +153,7 @@ diff --git a/src/backends/appcontainer/common/src/appcontainer_runner.rs b/src/b
      job: UiJobObject,
      /// OS process id of the child.
      pid: u32,
-@@ -1646,6 +1695,7 @@
+@@ -1646,6 +1718,7 @@
  struct AppContainerSandboxProcess {
      process: SendOwnedHandle,
      _thread: SendOwnedHandle,
@@ -125,7 +161,7 @@ diff --git a/src/backends/appcontainer/common/src/appcontainer_runner.rs b/src/b
      job: crate::job_object::UiJobObject,
      pid: u32,
      stdin: Option<PipeWriter>,
-@@ -1711,6 +1761,7 @@
+@@ -1711,6 +1784,7 @@
          Self {
              process,
              _thread: thread,
@@ -151,7 +187,7 @@ diff --git a/src/backends/appcontainer/common/src/msys_token_inspection.rs b/src
 new file mode 100644
 --- /dev/null
 +++ b/src/backends/appcontainer/common/src/msys_token_inspection.rs
-@@ -0,0 +1,261 @@
+@@ -0,0 +1,334 @@
 +// Copyright (c) NVIDIA Corporation.
 +// Licensed under the MIT License.
 +// CI-only exact-owned-job token inspection or explicitly selected TOKEN_QUERY repair.
@@ -235,7 +271,7 @@ new file mode 100644
 +    // Keep the containing drive root outside the guest writable capability.
 +    let bytes = cwd.as_bytes();
 +    let prefix = "\\NemoClawMsysProof-";
-+    let role = ["start", "a", "b"]
++    let role = ["start", "a", "b", "d"]
 +        .into_iter()
 +        .find(|role| container.ends_with(&format!("-{role}")))
 +        .ok_or("Unexpected inspection role")?;
@@ -260,6 +296,79 @@ new file mode 100644
 +        return Err("inspection container differs from the host-owned prototype identity".into());
 +    }
 +    Ok(PathBuf::from(cwd))
++}
++
++fn private_desktop_admission(
++    requested: Option<&str>,
++    github_actions: bool,
++    inspection: &str,
++    cwd: &str,
++    writable: &[String],
++    container: &str,
++    ui_disabled: bool,
++) -> Result<bool, String> {
++    let Some(value) = requested else { return Ok(false) };
++    if value != "1" || !github_actions || inspection != "repair-query" || ui_disabled
++        || !(container.ends_with("-start") || container.ends_with("-d"))
++    {
++        return Err("private desktop creation requires the explicit Hermes CI request".into());
++    }
++    trusted_root(cwd, writable, container)?;
++    let begin = 2 + "\\NemoClawMsysProof-".len();
++    if cwd[begin..begin + 12] != container[3..15] {
++        return Err("desktop state nonce differs from the admitted job".into());
++    }
++    Ok(true)
++}
++
++pub(crate) fn private_desktop_creation_requested(
++    cwd: &str, writable: &[String], container: &str, ui_disabled: bool,
++) -> Result<bool, String> {
++    let requested = std::env::var("NEMOCLAW_HERMES_PRIVATE_DESKTOP").ok();
++    let selected = private_desktop_admission(
++        requested.as_deref(),
++        std::env::var("GITHUB_ACTIONS").as_deref() == Ok("true"),
++        &std::env::var("NEMOCLAW_MSYS_TOKEN_INSPECTION").unwrap_or_default(),
++        cwd, writable, container, ui_disabled,
++    )?;
++    if selected {
++        // Prove the already host-selected state is an ordinary owned directory
++        // before any child is created. Guest environment is not consulted.
++        let _root = pin_directory(Path::new(cwd))?;
++    }
++    Ok(selected)
++}
++
++pub(crate) fn read_private_desktop_mask(job: HANDLE) -> Result<u32, String> {
++    use windows::Win32::System::JobObjects::{
++        QueryInformationJobObject, JobObjectBasicUIRestrictions,
++        JOBOBJECT_BASIC_UI_RESTRICTIONS,
++    };
++    let mut actual = JOBOBJECT_BASIC_UI_RESTRICTIONS::default();
++    unsafe {
++        QueryInformationJobObject(
++            Some(job), JobObjectBasicUIRestrictions,
++            &mut actual as *mut _ as *mut std::ffi::c_void,
++            std::mem::size_of_val(&actual) as u32, None,
++        )
++    }.map_err(|error| format!("job UI readback failed: {error}"))?;
++    Ok(actual.UIRestrictionsClass.0)
++}
++
++pub(crate) fn verify_private_desktop_mask(job: HANDLE, before: u32) -> Result<(), String> {
++    let after = read_private_desktop_mask(job)?;
++    let record = serde_json::json!({
++        "schemaVersion":1, "classification":"admitted-Hermes-desktop-creation",
++        "beforeMask":before, "afterMask":after, "removedMask":before ^ after,
++        "bundledCreateAndSwitch":true, "logoutRestrictionPreserved":after & 0x80 != 0,
++        "everyOtherUiBitPreserved":after == before & !0x40,
++        "hostDesktopGrantsAdded":false, "childResumed":false
++    });
++    eprintln!("NEMOCLAW_HERMES_DESKTOP_MASK={record}");
++    if before & 0xc0 != 0xc0 || after != before & !0x40 {
++        return Err("effective job UI mask did not preserve every other restriction".into());
++    }
++    Ok(())
 +}
 +
 +pub(crate) fn root_image_layout_requested(

@@ -177,15 +177,69 @@ void require_original_probe_in_job(DWORD parentPid){
   bool included=false;for(DWORD i=0;i<members->NumberOfProcessIdsInList;++i)included|=members->ProcessIdList[i]==parentPid;
   require(included,"original-probe-not-in-mxc-job");
 }
+void private_desktop_proof(const Identity& id,const std::wstring& nonce,bool canonical){
+  const std::wstring name=L"NemoClaw-Hermes-"+nonce+(canonical?L"-canonical-":L"-documented-")+std::to_wstring(GetCurrentProcessId());
+  const ACCESS_MASK access=DESKTOP_CREATEWINDOW|DESKTOP_READOBJECTS|READ_CONTROL|WRITE_DAC|WRITE_OWNER|(canonical?0:DESKTOP_WRITEOBJECTS);
+  const HDESK original=GetThreadDesktop(GetCurrentThreadId());const HWINSTA station=GetProcessWindowStation();
+  HDESK desktop=nullptr;HWINSTA alternate=nullptr;PSECURITY_DESCRIPTOR descriptor=nullptr,stationDescriptor=nullptr;
+  JOBOBJECT_BASIC_UI_RESTRICTIONS limits{};bool created=false,closed=false,unchanged=false,stationSelected=false,stationRestored=false,stationClosed=false,noninteractive=false;DWORD failure=0,closeError=0;std::string stage="query-ui-mask",error;
+  try{
+    if(!QueryInformationJobObject(nullptr,JobObjectBasicUIRestrictions,&limits,sizeof(limits),nullptr)){failure=GetLastError();throw std::runtime_error("desktop-ui-query");}
+    require((limits.UIRestrictionsClass&JOB_OBJECT_UILIMIT_DESKTOP)==0&&(limits.UIRestrictionsClass&JOB_OBJECT_UILIMIT_EXITWINDOWS)!=0,"desktop-effective-mask");
+    require(original&&station,"desktop-original-context");
+    stage="query-original-station-dacl";PACL stationDacl=nullptr;
+    failure=GetSecurityInfo(station,SE_WINDOW_OBJECT,DACL_SECURITY_INFORMATION,nullptr,nullptr,&stationDacl,nullptr,&stationDescriptor);
+    if(failure!=ERROR_SUCCESS)throw std::runtime_error("windowstation-dacl-query");
+    SECURITY_DESCRIPTOR stationAbsolute{};require(InitializeSecurityDescriptor(&stationAbsolute,SECURITY_DESCRIPTOR_REVISION)!=0&&SetSecurityDescriptorDacl(&stationAbsolute,TRUE,stationDacl,FALSE)!=0,"windowstation-descriptor");
+    SECURITY_ATTRIBUTES stationAttributes{sizeof(stationAttributes),&stationAbsolute,FALSE};
+    stage="CreateWindowStationW";alternate=CreateWindowStationW(nullptr,0,GENERIC_READ|WINSTA_CREATEDESKTOP,&stationAttributes);
+    failure=alternate?0:GetLastError();
+    if(!alternate&&failure==ERROR_ACCESS_DENIED){alternate=CreateWindowStationW(nullptr,0,WINSTA_READATTRIBUTES|WINSTA_CREATEDESKTOP,&stationAttributes);failure=alternate?0:GetLastError();}
+    if(!alternate)throw std::runtime_error("private-windowstation-create");
+    stage="verify-noninteractive-station";USEROBJECTFLAGS flags{};DWORD flagsNeeded=0;
+    if(!GetUserObjectInformationW(alternate,UOI_FLAGS,&flags,sizeof(flags),&flagsNeeded)){failure=GetLastError();throw std::runtime_error("windowstation-flags-query");}
+    noninteractive=alternate!=station&&(flags.dwFlags&WSF_VISIBLE)==0;require(noninteractive,"windowstation-was-not-private-noninteractive");
+    stage="SetProcessWindowStation";if(!SetProcessWindowStation(alternate)){failure=GetLastError();throw std::runtime_error("private-windowstation-select");}stationSelected=true;
+    stage="check-fresh-name";HDESK prior=OpenDesktopW(name.c_str(),0,FALSE,DESKTOP_READOBJECTS);DWORD priorError=prior?0:GetLastError();
+    if(prior){CloseDesktop(prior);throw std::runtime_error("desktop-name-already-exists");}
+    if(priorError!=ERROR_FILE_NOT_FOUND&&priorError!=ERROR_PATH_NOT_FOUND){failure=priorError;throw std::runtime_error("desktop-name-absence-unproved");}
+    // A new per-proof object, never an ACE on an existing host desktop. No
+    // SWITCHDESKTOP right is requested or granted by this fixture descriptor.
+    stage="private-descriptor";const std::wstring rights=canonical?L"0x000e0003":L"0x000e0083";std::wstring sddl=L"D:P(A;;"+rights+L";;;SY)(A;;"+rights+L";;;"+id.userSid+L")(A;;"+rights+L";;;"+id.sid+L")";
+    if(!ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl.c_str(),SDDL_REVISION_1,&descriptor,nullptr)){failure=GetLastError();throw std::runtime_error("desktop-descriptor");}
+    SECURITY_ATTRIBUTES attributes{sizeof(attributes),descriptor,FALSE};
+    stage="CreateDesktopW";desktop=CreateDesktopW(name.c_str(),nullptr,nullptr,0,access,&attributes);
+    if(!desktop){failure=GetLastError();throw std::runtime_error("owned-desktop-create");}
+    created=true;require(GetThreadDesktop(GetCurrentThreadId())==original&&GetProcessWindowStation()==alternate,"desktop-context-changed");
+    stage="query-created-name";std::array<wchar_t,256> actual{};DWORD needed=0;
+    if(!GetUserObjectInformationW(desktop,UOI_NAME,actual.data(),static_cast<DWORD>(actual.size()*sizeof(wchar_t)),&needed)){failure=GetLastError();throw std::runtime_error("desktop-name-query");}
+    require(needed<=actual.size()*sizeof(wchar_t)&&wcsnlen(actual.data(),actual.size())<actual.size()&&name==actual.data(),"desktop-name-mismatch");
+    stage="restore-windowstation";if(!SetProcessWindowStation(station)){failure=GetLastError();throw std::runtime_error("private-windowstation-restore");}stationSelected=false;stationRestored=true;
+    unchanged=GetThreadDesktop(GetCurrentThreadId())==original&&GetProcessWindowStation()==station;require(unchanged,"desktop-original-context-not-restored");
+    stage="CloseDesktop";if(!CloseDesktop(desktop)){failure=GetLastError();throw std::runtime_error("owned-desktop-close");}desktop=nullptr;closed=true;
+    stage="complete";
+  }catch(const std::exception& caught){error=caught.what();}
+  if(stationSelected){stationRestored=SetProcessWindowStation(station)!=0;if(!stationRestored)closeError=GetLastError();else stationSelected=false;}
+  if(!stationSelected)unchanged=GetThreadDesktop(GetCurrentThreadId())==original&&GetProcessWindowStation()==station;
+  if(desktop){closed=CloseDesktop(desktop)!=0;if(!closed&&!closeError)closeError=GetLastError();}
+  if(alternate){stationClosed=CloseWindowStation(alternate)!=0;if(!stationClosed&&!closeError)closeError=GetLastError();}
+  if(stationDescriptor)LocalFree(stationDescriptor);
+  if(descriptor)LocalFree(descriptor);
+  const bool passed=error.empty()&&created&&closed&&unchanged&&stationRestored&&stationClosed&&noninteractive;
+  line("{\"kind\":\"hermes-private-desktop\",\"nonce\":"+quote(utf8(nonce))+","+identityFields(id)+",\"accessVariant\":"+quote(canonical?"canonical-e0003":"documented-e0083")+",\"requiredPass\":"+(canonical?"false":"true")+",\"effectiveUiMask\":"+std::to_string(limits.UIRestrictionsClass)+",\"desktopName\":"+quote(utf8(name))+",\"desiredAccess\":"+std::to_string(access)+",\"created\":"+(created?"true":"false")+",\"closed\":"+(closed?"true":"false")+",\"absenceAfterCloseIndependentlyVerified\":false,\"originalContextUnchanged\":"+(unchanged?"true":"false")+",\"stationNoninteractive\":"+(noninteractive?"true":"false")+",\"stationRestored\":"+(stationRestored?"true":"false")+",\"stationClosed\":"+(stationClosed?"true":"false")+",\"stationExclusiveCreationClaimed\":false,\"interactiveSwitchAttempted\":false,\"hostDesktopGrantsAdded\":false,\"stage\":"+quote(stage)+",\"win32Error\":"+std::to_string(failure)+",\"cleanupError\":"+std::to_string(closeError)+",\"error\":"+quote(error)+",\"passed\":"+(passed?"true":"false")+"}");
+  require(passed||(canonical&&!created&&!closeError&&unchanged&&(!alternate||stationClosed)),"private-desktop-control-failed");
+}
 int job_proof_native_child(int argc,wchar_t** argv){
-  require(argc==8&&lowerHex(argv[2],24),"job-proof-child-arguments");
+  const bool desktop=argc==9&&std::wstring(argv[8])==L"desktop";
+  require((argc==8||desktop)&&lowerHex(argv[2],24),"job-proof-child-arguments");
   DWORD worker=static_cast<DWORD>(std::stoul(argv[3])),executor=static_cast<DWORD>(std::stoul(argv[4])),parent=static_cast<DWORD>(std::stoul(argv[5]));
   require(worker&&executor&&parent&&worker!=executor&&worker!=parent&&executor!=parent&&parent!=GetCurrentProcessId(),"job-proof-child-identities");
   Api api;Identity id=identity(api);require(id.sid==argv[6]&&id.session==std::stoul(argv[7]),"job-proof-child-container");
   jobProof(worker,executor);require_original_probe_in_job(parent);
+  if(desktop){private_desktop_proof(id,argv[2],true);private_desktop_proof(id,argv[2],false);}
   line("{\"kind\":\"job-proof-native-child\",\"nonce\":"+quote(utf8(argv[2]))+",\"parentPid\":"+std::to_string(parent)+",\"expectedWorkerPid\":"+std::to_string(worker)+",\"expectedExecutorPid\":"+std::to_string(executor)+","+identityFields(id)+",\"originalProbeInJob\":true,\"sameAppContainer\":true,\"strictProofPassed\":true}");return 0;
 }
-void job_proof_through_native_child(DWORD worker,DWORD executor,const Identity& id,const std::wstring& nonce){
+void job_proof_through_native_child(DWORD worker,DWORD executor,const Identity& id,const std::wstring& nonce,bool desktop=false){
   raw_pipe_job_observation("qualification-parent-inner-job",nonce);
   std::array<Handle,3> streams;const std::array<DWORD,3> kinds={STD_INPUT_HANDLE,STD_OUTPUT_HANDLE,STD_ERROR_HANDLE};
   for(size_t i=0;i<streams.size();++i)require(DuplicateHandle(GetCurrentProcess(),GetStdHandle(kinds[i]),GetCurrentProcess(),&streams[i].value,0,TRUE,DUPLICATE_SAME_ACCESS)!=0,"job-child-standard-stream");
@@ -197,7 +251,7 @@ void job_proof_through_native_child(DWORD worker,DWORD executor,const Identity& 
   try{
     require(UpdateProcThreadAttribute(attributes,0,PROC_THREAD_ATTRIBUTE_HANDLE_LIST,inherited.data(),sizeof(inherited),nullptr,nullptr)!=0,"job-child-handle-list");
     std::array<wchar_t,MAX_PATH> image{};DWORD length=GetModuleFileNameW(nullptr,image.data(),static_cast<DWORD>(image.size()));require(length&&length<image.size(),"job-child-image");
-    std::wstring command=L"\""+std::wstring(image.data())+L"\" job-proof-native-child "+nonce+L" "+std::to_wstring(worker)+L" "+std::to_wstring(executor)+L" "+std::to_wstring(GetCurrentProcessId())+L" "+id.sid+L" "+std::to_wstring(id.session);
+    std::wstring command=L"\""+std::wstring(image.data())+L"\" job-proof-native-child "+nonce+L" "+std::to_wstring(worker)+L" "+std::to_wstring(executor)+L" "+std::to_wstring(GetCurrentProcessId())+L" "+id.sid+L" "+std::to_wstring(id.session);if(desktop)command+=L" desktop";
     STARTUPINFOEXW startup{};startup.StartupInfo.cb=sizeof(startup);startup.StartupInfo.dwFlags=STARTF_USESTDHANDLES;startup.StartupInfo.hStdInput=streams[0].value;startup.StartupInfo.hStdOutput=streams[1].value;startup.StartupInfo.hStdError=streams[2].value;startup.lpAttributeList=attributes;PROCESS_INFORMATION process{};
     // No CREATE_BREAKAWAY_FROM_JOB, detached process, or inherited job handle.
     BOOL created=CreateProcessW(image.data(),command.data(),nullptr,nullptr,TRUE,EXTENDED_STARTUPINFO_PRESENT|CREATE_NO_WINDOW,nullptr,nullptr,&startup.StartupInfo,&process);DWORD error=created?0:GetLastError();
@@ -510,7 +564,8 @@ int wmain(int argc,wchar_t** argv){
       }
       line("{\"kind\":\"rawpipe-summary\",\"nonce\":"+quote(utf8(nonce))+",\"diagnosticOnly\":true,\"rawProbeUnshimmed\":true,\"runtimeGrantsChanged\":false,\"casesCompleted\":2,\"casesPassed\":"+std::to_string(succeeded)+"}");return 0;
     }
-    job_proof_through_native_child(workerPid,executorPid,id,nonce);
+    job_proof_through_native_child(workerPid,executorPid,id,nonce,mode==L"desktop");
+    if(mode==L"desktop")return 0;
     if(mode==L"identity"){line("{\"kind\":\"identity\","+identityFields(id)+"}");return 0;}
     if(mode==L"absent"){
       Handle g,s;NTSTATUS gs=openDir(api,gd,g),ss=openDir(api,sd,s);

@@ -11,6 +11,7 @@ import {
   validateDenials,
   validateTracker,
   validateRawPipeDiagnostics,
+  validatePrivateDesktop,
   validateMxcInspectionBuild,
   validateDerivedMetadata,
   binaryPins,
@@ -30,6 +31,58 @@ const c: Config = {
   key: "0".repeat(16),
   script: "C:\\owned\\control\\proof.sh",
 };
+test("private desktop control retains the exact canonical failure and requires the documented create/restore/close contract", () => {
+  const common = {
+    kind: "hermes-private-desktop",
+    nonce: c.nonce,
+    effectiveUiMask: 0x3bf,
+    interactiveSwitchAttempted: false,
+    hostDesktopGrantsAdded: false,
+    rawProbeUnshimmed: true,
+    cleanupError: 0,
+  };
+  const canonical = {
+    ...common,
+    accessVariant: "canonical-e0003",
+    desiredAccess: 0xe0003,
+    requiredPass: false,
+    passed: false,
+    created: false,
+    error: "owned-desktop-create",
+    win32Error: 5,
+  };
+  const documented = {
+    ...common,
+    accessVariant: "documented-e0083",
+    desiredAccess: 0xe0083,
+    requiredPass: true,
+    passed: true,
+    created: true,
+    closed: true,
+    originalContextUnchanged: true,
+    stationNoninteractive: true,
+    stationRestored: true,
+    stationClosed: true,
+    stage: "complete",
+    win32Error: 0,
+  };
+  assert.equal(validatePrivateDesktop([canonical, documented], c.nonce).length, 2);
+  for (const change of [
+    { effectiveUiMask: 0x33f },
+    { effectiveUiMask: 0x3ff },
+    { stationRestored: false },
+    { stationClosed: false },
+    { interactiveSwitchAttempted: true },
+    { passed: false },
+    { created: false },
+    { cleanupError: 5 },
+  ])
+    assert.throws(() => validatePrivateDesktop([canonical, { ...documented, ...change }], c.nonce));
+  assert.throws(() => validatePrivateDesktop([canonical], c.nonce));
+  assert.throws(() =>
+    validatePrivateDesktop([{ ...canonical, created: true }, documented], c.nonce),
+  );
+});
 test("Personal request grants only fixed inputs and its own share, without profile destruction before explicit cleanup", () => {
   const row = request(
     c,

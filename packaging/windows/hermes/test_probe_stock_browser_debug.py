@@ -3,6 +3,7 @@
 import ctypes as c
 import importlib.util
 import io
+import json
 import struct
 from pathlib import Path
 import threading
@@ -18,11 +19,158 @@ spec.loader.exec_module(debug)
 
 
 class DebugOwnerControls(unittest.TestCase):
+    def test_primary_request_requires_passed_native_bytes_and_original_workload_shape(
+        self,
+    ):
+        runtime = r"C:\NemoClawHermesProbe-274d797050ea"
+        nonce = "a" * 24
+        state = r"C:\NemoClawMsysProof-aaaaaaaaaaaa-state-start"
+        controller = r"C:\NemoClawPersonalNode-aaaaaaaaaaaa"
+        native = r"C:\NemoClawPersonalCompat-bbbbbbbbbbbb"
+        source = "c" * 40
+        identity = {"bytes": 1, "sha256": "d" * 64}
+        rows = [
+            {"file": name, **identity}
+            for name in (
+                "NemoClawMsysLauncher.exe",
+                "NemoClawMsysCompat-arm64.dll",
+                "NemoClawMsysCompat-x64.dll",
+            )
+        ]
+        proof = {
+            "passed": True,
+            "normalCleanup": True,
+            "phase": "two-container-isolation",
+            "sourceRevision": source,
+            "inputs": {
+                "mxcBuild": {
+                    "candidateRevision": source,
+                    "files": [{"file": "wxc-exec.exe", **identity}],
+                },
+                "compatibility": {
+                    "sourceRevision": source,
+                    "status": "built",
+                    "files": rows,
+                },
+            },
+        }
+        words = [
+            native + r"\NemoClawMsysLauncher.exe",
+            "--",
+            controller + r"\node.exe",
+            "--experimental-strip-types",
+            "--no-warnings",
+            controller + r"\probe-personal-workload.mts",
+            runtime,
+            state + r"\result.json",
+            nonce,
+            controller + r"\personal-workload-input.json",
+        ]
+        policy = {
+            "containerId": "nm-aaaaaaaaaaaa-start",
+            "process": {
+                "cwd": state,
+                "timeout": 120000,
+                "commandLine": " ".join('"' + word + '"' for word in words),
+            },
+            "filesystem": {
+                "readwritePaths": [state],
+                "readonlyPaths": [runtime, controller, native],
+            },
+            "processContainer": {"leastPrivilege": False},
+            "ui": {"disable": False},
+        }
+        request = {
+            "schemaVersion": 1,
+            "classification": "personal-MXC-browser-debug-request",
+            "executor": r"C:\control\wxc-exec.exe",
+            "executorIdentity": identity,
+            "policyFile": "policy.json",
+            "runtimeRoot": runtime,
+            "nonce": nonce,
+            "probeFile": controller + r"\probe-personal-python.py",
+            "nativeRoot": native,
+            "logFile": "native.log",
+            "environment": {
+                "GITHUB_ACTIONS": "true",
+                "NEMOCLAW_MSYS_TOKEN_INSPECTION": "repair-query",
+            },
+        }
+
+        def run(value, body, native_proof):
+            values = {
+                "policy.json": json.dumps(body).encode(),
+                "proof.json": json.dumps(native_proof).encode(),
+            }
+            value = {
+                **value,
+                "policySha256": debug.owner.hashlib.sha256(
+                    values["policy.json"]
+                ).hexdigest(),
+                "nativeProof": {
+                    "path": "proof.json",
+                    "bytes": len(values["proof.json"]),
+                    "sha256": debug.owner.hashlib.sha256(
+                        values["proof.json"]
+                    ).hexdigest(),
+                },
+            }
+
+            def identify(path):
+                if str(path).endswith(r"\node.exe"):
+                    return {
+                        "bytes": 1,
+                        "sha256": "97cce5301a815d2dce07ac5bfd1e6039eae88185ec1d10ae4f8cb712f1732878",
+                    }
+                return identity
+
+            with (
+                mock.patch.object(
+                    debug.Path,
+                    "read_bytes",
+                    autospec=True,
+                    side_effect=lambda path: values[str(path)],
+                ),
+                mock.patch.object(debug.owner, "identity", side_effect=identify),
+            ):
+                return debug.validate(value)
+
+        self.assertEqual(
+            run(request, policy, proof),
+            ([request["executor"], "policy.json", "--log-file", "native.log"], state),
+        )
+        for value, body, native_proof in (
+            (request, policy, {**proof, "passed": False}),
+            (
+                {**request, "executorIdentity": {"bytes": 1, "sha256": "e" * 64}},
+                policy,
+                proof,
+            ),
+            (
+                request,
+                {
+                    **policy,
+                    "process": {
+                        **policy["process"],
+                        "commandLine": policy["process"]["commandLine"].replace(
+                            "--no-warnings", "--eval"
+                        ),
+                    },
+                },
+                proof,
+            ),
+            ({**request, "environment": {"GITHUB_ACTIONS": "true"}}, policy, proof),
+        ):
+            with self.assertRaises(ValueError):
+                run(value, body, native_proof)
+
     def test_native_pointer_structures_match_the_64_bit_debug_event_contract(self):
         self.assertEqual(c.sizeof(debug.ExceptionRecord), 152)
         self.assertEqual(c.sizeof(debug.ExceptionInfo), 160)
         self.assertEqual(c.sizeof(debug.DebugEvent), 176)
         self.assertEqual(debug.DebugEvent.data.offset, 16)
+        self.assertEqual(c.sizeof(debug.DebugStringInfo), 16)
+        self.assertEqual(debug.DebugStringInfo.length.offset, 10)
         self.assertEqual(c.sizeof(debug.ProcessBasic), 48)
         self.assertEqual(debug.ProcessBasic.parent.offset, 40)
         self.assertEqual(
@@ -81,6 +229,8 @@ class DebugOwnerControls(unittest.TestCase):
         job.appcontainer_seen = False
         job.last_fault = job.first_fault = job.first_unhandled = None
         job.handle_cleanup_errors = []
+        job.reconciled_exits = []
+        job.debug_string_count = 0
         job.observe_startup_handles = lambda *_args: {}
         job.continued = []
         job.wait_calls = 0
@@ -175,6 +325,106 @@ class DebugOwnerControls(unittest.TestCase):
         self.assertEqual(len(job.observation_errors), 1)
         self.assertEqual(job.first_fault["code"], "0xc0000409")
 
+    def test_chrome_debug_strings_are_bounded_secondary_reads_and_events_continue(self):
+        events = [self.event(3)] + [self.event(8) for _ in range(10)] + [self.event(5)]
+        for event in events:
+            if event.kind == 8:
+                event.data.string.address = 0x1234
+                event.data.string.unicode = 1
+                event.data.string.length = 900
+        job = self.job(events)
+        job.pump(0)
+        job.processes[8]["ownedChrome"] = True
+        reads = []
+
+        def read(handle, address, storage, size, copied):
+            reads.append((handle, address, size))
+            data = ("A" * 512).encode("utf-16-le")
+            c.memmove(storage, data, len(data))
+            c.cast(copied, c.POINTER(c.c_size_t))[0] = len(data)
+            return 1
+
+        job.kernel.ReadProcessMemory = read
+        for _ in range(11):
+            job.pump(0)
+        records = [row["debugString"] for row in job.events if "debugString" in row]
+        self.assertEqual(len(records), 8)
+        self.assertEqual(reads, [(11, 0x1234, 1024)] * 8)
+        self.assertTrue(
+            all(row["truncated"] and row["readSucceeded"] for row in records)
+        )
+        self.assertEqual(len(job.continued), 12)
+        self.assertFalse(job.observation_errors)
+        self.assertTrue(job.debug_complete)
+
+    def test_debug_string_missing_memory_is_secondary_and_unowned_or_global_bound_is_not_read(
+        self,
+    ):
+        event = self.event(8)
+        event.data.string.address = 0x1234
+        event.data.string.length = 8
+        job = self.job([self.event(3), event, event, event, self.event(5)])
+        job.pump(0)
+        job.processes[8]["ownedChrome"] = False
+        calls = []
+        job.kernel.ReadProcessMemory = lambda *_args: calls.append(1) or 0
+        job.pump(0)  # No actual owned-Chrome metadata, so payload is ignored.
+        self.assertFalse(calls)
+        job.processes[8]["ownedChrome"] = True
+        with mock.patch.object(
+            debug.c, "get_last_error", return_value=299, create=True
+        ):
+            job.pump(0)
+        job.debug_string_count = 16
+        job.pump(0)
+        job.pump(0)
+        records = [row["debugString"] for row in job.events if "debugString" in row]
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(records[0]["win32Error"], 299)
+        self.assertFalse(records[0]["readSucceeded"])
+        self.assertEqual(records[0]["text"], "")
+        self.assertFalse(job.observation_errors)
+        self.assertTrue(job.debug_complete)
+
+    def test_missing_exit_reconciliation_uses_only_same_signaled_process_handle(self):
+        job = self.job([self.event(3)])
+        job.pump(0)
+        calls = []
+
+        def wait(handle, timeout):
+            calls.append(("wait", handle, timeout))
+            return 0
+
+        def exited(handle, code):
+            calls.append(("exit", handle))
+            c.cast(code, c.POINTER(c.c_uint32))[0] = 0x80000003
+            return 1
+
+        job.kernel.WaitForSingleObject = wait
+        job.kernel.GetExitCodeProcess = exited
+        job.reconcile_exited_processes()
+        self.assertEqual(calls, [("wait", 11, 0), ("exit", 11)])
+        self.assertFalse(job.live_debug_pids)
+        self.assertTrue(job.debug_complete)
+        self.assertEqual(job.reconciled_exits[0]["exitCode"], 0x80000003)
+        self.assertFalse(job.reconciled_exits[0]["exitEventObserved"])
+        self.assertTrue(job.reconciled_exits[0]["closureProved"])
+        self.assertEqual(len(job.continued), 1)  # No synthetic EXIT or close call.
+
+    def test_job_absence_wait_timeout_and_query_failures_cannot_prove_exit(self):
+        for wait_result, query_result in ((258, 1), (0xFFFFFFFF, 1), (0, 0)):
+            job = self.job([self.event(3)])
+            job.pump(0)
+            job.kernel.WaitForSingleObject = lambda *_args: wait_result
+            job.kernel.GetExitCodeProcess = lambda *_args: query_result
+            with mock.patch.object(
+                debug.c, "get_last_error", return_value=6, create=True
+            ):
+                job.reconcile_exited_processes()
+            self.assertEqual(job.live_debug_pids, {8})
+            self.assertFalse(job.debug_complete)
+            self.assertFalse(job.reconciled_exits[0]["closureProved"])
+
     def test_debug_events_cannot_move_to_a_reader_thread(self):
         job = self.job([self.event(3)])
         job.creating_thread = -1
@@ -215,6 +465,7 @@ class DebugOwnerControls(unittest.TestCase):
             events = []
             observation_errors = []
             handle_cleanup_errors = []
+            reconciled_exits = []
             first_fault = last_fault = first_unhandled = None
             appcontainer_seen = chrome_seen = True
             streams = []

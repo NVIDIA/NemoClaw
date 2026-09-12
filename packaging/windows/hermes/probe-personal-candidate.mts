@@ -581,6 +581,55 @@ export function stockBrowserEnvironment(environment: NodeJS.ProcessEnv) {
   return stock;
 }
 
+export function primaryDebugRequest(
+  primary: ReturnType<typeof personalRequest>,
+  runtime: string,
+  script: string,
+  nonce: string,
+) {
+  const request = directBrowserRequest(primary, runtime, script, nonce);
+  const sourceController = path.win32.dirname(script);
+  const controller = path.win32.join(
+    path.win32.parse(runtime).root,
+    `NemoClawPersonalNode-${nonce.slice(0, 12)}`,
+  );
+  const words = [...primary.process.commandLine.matchAll(/"([^"\r\n]*)"/gu)].map(
+    (match) => match[1]!,
+  );
+  assert.equal(primary.process.commandLine, words.map((word) => `"${word}"`).join(" "));
+  assert.equal(words.length, 10);
+  assert.match(words[8]!, /^[a-f0-9]{24}$/u);
+  const nativeRoot = path.win32.dirname(words[0]!);
+  assert(
+    primary.filesystem.readonlyPaths.includes(nativeRoot) ||
+      nativeRoot === path.win32.join(runtime, "mxc-compat"),
+  );
+  assert.deepEqual(words, [
+    path.win32.join(nativeRoot, "NemoClawMsysLauncher.exe"),
+    "--",
+    path.win32.join(sourceController, "node.exe"),
+    "--experimental-strip-types",
+    "--no-warnings",
+    path.win32.join(sourceController, "probe-personal-workload.mts"),
+    runtime,
+    path.win32.join(primary.process.cwd, "result.json"),
+    words[8],
+    path.win32.join(sourceController, "personal-workload-input.json"),
+  ]);
+  assert.notEqual(controller, sourceController);
+  request.filesystem.readonlyPaths = primary.filesystem.readonlyPaths.map((value) =>
+    value === sourceController ? controller : value,
+  );
+  words[2] = path.win32.join(controller, "node.exe");
+  words[5] = path.win32.join(controller, "probe-personal-workload.mts");
+  words[7] = path.win32.join(request.process.cwd, "result.json");
+  const originalNonce = words[8]!;
+  words[8] = nonce;
+  words[9] = path.win32.join(controller, "personal-workload-input.json");
+  request.process.commandLine = words.map((word) => `"${word}"`).join(" ");
+  return { request, controller, sourceController, originalNonce, nativeRoot };
+}
+
 export function validateStockBrowserExecutor(identity: ReturnType<typeof fileIdentity>) {
   assert.equal(identity.sha256, "dde1c592270e9a659b01dccad70362da7b99fec114885fa4d625507aa775a503");
   assert.equal(identity.peMachine, 0xaa64);
@@ -598,13 +647,19 @@ export async function directBrowserDiagnostic(
   nonce: string,
   expectedPython: { bytes: number; sha256: string },
   command: typeof personalCommand = personalCommand,
-  executorVariant: "patched" | "stock" | "stock-debug" = "patched",
+  executorVariant: "patched" | "stock" | "stock-debug" | "patched-primary-debug" = "patched",
 ) {
-  const request = directBrowserRequest(primary, runtime, script, nonce);
+  const primaryPlan =
+    executorVariant === "patched-primary-debug"
+      ? primaryDebugRequest(primary, runtime, script, nonce)
+      : null;
+  const request = primaryPlan?.request ?? directBrowserRequest(primary, runtime, script, nonce);
+  const debugged = executorVariant.endsWith("-debug");
   const share = request.process.cwd;
   let owned = false,
     attempted = false,
-    outputOwned = false;
+    outputOwned = false,
+    controllerOwned = false;
   const cleanup = {
     executorClosed: true,
     profileDeletionClosed: true,
@@ -613,28 +668,40 @@ export async function directBrowserDiagnostic(
   };
   const record: Record<string, any> = {
     schemaVersion: 1,
-    classification: "canonical-Personal-direct-Python-browser-diagnostic",
+    classification: primaryPlan
+      ? "canonical-Personal-primary-workload-debug-diagnostic"
+      : "canonical-Personal-direct-Python-browser-diagnostic",
     diagnosticOnly: true,
     executorVariant,
-    debuggerAttached: executorVariant === "stock-debug",
-    debuggerMayChangeBehavior: executorVariant === "stock-debug",
-    hostEnvironmentDifferences:
-      executorVariant !== "patched" ? ["NEMOCLAW_MSYS_TOKEN_INSPECTION omitted"] : [],
-    compatibilityLauncherUsed: false,
+    debuggerAttached: debugged,
+    debuggerMayChangeBehavior: debugged,
+    hostEnvironmentDifferences: executorVariant.startsWith("stock")
+      ? ["NEMOCLAW_MSYS_TOKEN_INSPECTION omitted"]
+      : [],
+    compatibilityLauncherUsed: primaryPlan !== null,
     dllAbsenceIndependentlyVerified: false,
-    changedDimensions: [
-      "compatibility launcher omitted",
-      "intermediate Node controller omitted",
-      "no concurrent sibling probes",
-      "fresh owned state and profile",
-      ...(executorVariant === "stock-debug"
-        ? ["DEBUG_PROCESS observer and owned kill-on-close Job"]
-        : []),
-    ],
-    comparisonLimits: [
-      "Direct Python also omits the intermediate Node controller and concurrent sibling probes.",
-      "Success does not uniquely attribute the primary failure to DLL injection.",
-    ],
+    changedDimensions: primaryPlan
+      ? [
+          "DEBUG_PROCESS observer and owned kill-on-close Job",
+          "fresh owned state, controller and profile",
+        ]
+      : [
+          "compatibility launcher omitted",
+          "intermediate Node controller omitted",
+          "no concurrent sibling probes",
+          "fresh owned state and profile",
+          ...(executorVariant === "stock-debug"
+            ? ["DEBUG_PROCESS observer and owned kill-on-close Job"]
+            : []),
+        ],
+    comparisonLimits: primaryPlan
+      ? [
+          "Debugger attachment may change exception behavior; the normal primary verdict remains authoritative.",
+        ]
+      : [
+          "Direct Python also omits the intermediate Node controller and concurrent sibling probes.",
+          "Success does not uniquely attribute the primary failure to DLL injection.",
+        ],
     canonicalQualification: false,
     installedAcceptance: false,
     nonce,
@@ -655,7 +722,7 @@ export async function directBrowserDiagnostic(
     assert.equal(python.peMachine, 0xaa64);
     record.python = python;
     record.executor = fileIdentity(mxc);
-    if (executorVariant !== "patched") {
+    if (executorVariant.startsWith("stock")) {
       validateStockBrowserExecutor(record.executor);
       assert.equal(environment.NEMOCLAW_MSYS_TOKEN_INSPECTION, undefined);
       record.stockSdk = {
@@ -664,6 +731,47 @@ export async function directBrowserDiagnostic(
       };
     }
     record.probe = fileIdentity(script);
+    if (primaryPlan) {
+      fs.mkdirSync(primaryPlan.controller);
+      controllerOwned = true;
+      const files = [
+        "node.exe",
+        "probe-component-workload.mts",
+        "probe-personal-workload.mts",
+        "probe-personal-python.py",
+      ];
+      record.controllerFiles = files.map((name) => {
+        const source = path.win32.join(primaryPlan.sourceController, name);
+        const before = fileIdentity(source);
+        if (name === "node.exe")
+          assert.equal(
+            before.sha256,
+            "97cce5301a815d2dce07ac5bfd1e6039eae88185ec1d10ae4f8cb712f1732878",
+          );
+        const destination = path.win32.join(primaryPlan.controller, name);
+        fs.copyFileSync(source, destination, fs.constants.COPYFILE_EXCL);
+        const after = fileIdentity(destination);
+        assert.equal(after.bytes, before.bytes);
+        assert.equal(after.sha256, before.sha256);
+        assert.equal(fileIdentity(source).sha256, before.sha256);
+        return { source: before, staged: after };
+      });
+      const originalInput = JSON.parse(
+        fs.readFileSync(
+          path.win32.join(primaryPlan.sourceController, "personal-workload-input.json"),
+          "utf8",
+        ),
+      );
+      validatePersonalWorkloadInput(originalInput, runtime, primaryPlan.originalNonce);
+      const input = validatePersonalWorkloadInput({ ...originalInput, nonce }, runtime, nonce);
+      fs.writeFileSync(
+        path.win32.join(primaryPlan.controller, "personal-workload-input.json"),
+        JSON.stringify(input, null, 2) + "\n",
+        { flag: "wx" },
+      );
+      record.workloadInput = input;
+      record.nativeRoot = primaryPlan.nativeRoot;
+    }
     fs.mkdirSync(share);
     owned = true;
     cleanup.ownedRootRemoved = false;
@@ -684,7 +792,15 @@ export async function directBrowserDiagnostic(
     );
     record.execution = execution;
     cleanup.executorClosed = execution.childClosed;
-    record.result = parseComponent(execution.stdout, "browser", nonce);
+    if (primaryPlan) {
+      const workloadFile = path.win32.join(share, "result.json");
+      const workload = JSON.parse(fs.readFileSync(workloadFile, "utf8"));
+      assert.equal(workload.classification, "canonical-personal-mxc-feasibility");
+      assert.equal(workload.nonce, nonce);
+      assert.equal(workload.components?.length, 4);
+      record.workload = workload;
+      record.result = { passed: workload.passed === true };
+    } else record.result = parseComponent(execution.stdout, "browser", nonce);
     record.operationSucceeded =
       record.result.passed === true &&
       execution.exitCode === 0 &&
@@ -723,12 +839,18 @@ export async function directBrowserDiagnostic(
       cleanup.ownedRootRemoved = removed.removed;
       record.cleanupErrors.push(...removed.errors);
     }
+    if (controllerOwned && cleanup.executorClosed && cleanup.profileDeletionClosed) {
+      const removed = removePersonalRoots([primaryPlan!.controller], attempted, true);
+      record.controllerRemoved = removed.removed;
+      record.cleanupErrors.push(...removed.errors);
+    }
     record.attempted = attempted;
     record.childrenClosed = cleanup.executorClosed && cleanup.profileDeletionClosed;
     record.cleanupComplete =
       record.childrenClosed &&
       cleanup.profileDeleted &&
       cleanup.ownedRootRemoved &&
+      (!controllerOwned || record.controllerRemoved === true) &&
       record.cleanupErrors.length === 0;
     if (outputOwned) {
       try {
@@ -744,16 +866,23 @@ export async function directBrowserDiagnostic(
 }
 
 export function stockDebugCompletion(record: any, request: any, supervisorClosed: boolean) {
+  const primary = request.classification === "personal-MXC-browser-debug-request";
   assert.equal(record.schemaVersion, 1);
-  assert.equal(record.classification, "stock-MXC-browser-debug-result");
+  assert.equal(
+    record.classification,
+    primary ? "personal-MXC-browser-debug-result" : "stock-MXC-browser-debug-result",
+  );
   assert.equal(record.diagnosticOnly, true);
   assert.equal(record.canonicalQualification, false);
   assert.equal(record.nonce, request.nonce);
   assert.equal(record.policySha256, request.policySha256);
   assert.equal(
     record.executorIdentityAfter?.sha256,
-    "dde1c592270e9a659b01dccad70362da7b99fec114885fa4d625507aa775a503",
+    primary
+      ? request.executorIdentity.sha256
+      : "dde1c592270e9a659b01dccad70362da7b99fec114885fa4d625507aa775a503",
   );
+  if (primary) assert.equal(record.nativeProofSha256, request.nativeProof.sha256);
   const closed =
     supervisorClosed &&
     record.childrenClosed === true &&
@@ -773,6 +902,7 @@ function stockDebugCommand(
   runtime: string,
   probe: string,
   nonce: string,
+  primary?: { nativeRoot: string; proofFile: string },
 ): typeof personalCommand {
   return async (executable, args, environment, cwd, timeout) => {
     // The existing direct-browser owner still owns profile deletion/state cleanup.
@@ -794,15 +924,30 @@ function stockDebugCommand(
     };
     const request = {
       schemaVersion: 1,
-      classification: "stock-MXC-browser-debug-request",
+      classification: primary
+        ? "personal-MXC-browser-debug-request"
+        : "stock-MXC-browser-debug-request",
       executor: executable,
       policyFile: args[0],
       policySha256: fileIdentity(args[0]!).sha256,
       logFile: args[2],
       environment,
       runtimeRoot: runtime,
-      probeFile: probe,
+      probeFile: primary
+        ? path.win32.join(
+            path.win32.parse(runtime).root,
+            `NemoClawPersonalNode-${nonce.slice(0, 12)}`,
+            "probe-personal-python.py",
+          )
+        : probe,
       nonce,
+      ...(primary
+        ? {
+            executorIdentity: fileIdentity(executable),
+            nativeRoot: primary.nativeRoot,
+            nativeProof: fileIdentity(primary.proofFile),
+          }
+        : {}),
     };
     const requestFile = path.join(directory, "debug-owner-request.json");
     const resultFile = path.join(directory, "debug-owner-result.json");
@@ -1277,7 +1422,16 @@ async function main() {
       fs.copyFileSync(result, path.join(output, "workload.json"));
       receipt.workload = JSON.parse(fs.readFileSync(result, "utf8"));
     }
-    if (execution.childClosed) {
+    const primaryOperationsPassed =
+      execution.exitCode === 0 &&
+      !execution.timedOut &&
+      !execution.outputExceeded &&
+      !execution.error &&
+      execution.childClosed &&
+      (receipt.workload as any)?.nonce === nonce &&
+      (receipt.workload as any)?.passed === true &&
+      (receipt.workload as any)?.components?.length === 4;
+    if (execution.childClosed && !primaryOperationsPassed) {
       // Run the same bytes after containment has ended, so a host process
       // cannot initialize MSYS state before the canonical contained attempt.
       const hostEnvironment = Object.fromEntries(
@@ -1328,21 +1482,35 @@ async function main() {
   } catch (error) {
     failure = error;
   } finally {
-    if (attempted && cleanup.executorClosed && cleanup.hostDiagnosticChildrenClosed && request) {
+    receipt.supplementalDiagnosticDisposition = failure
+      ? "primary failed; primary-debug, stock-debug and host comparisons only"
+      : "primary passed; supplemental comparisons skipped";
+    if (
+      failure &&
+      attempted &&
+      cleanup.executorClosed &&
+      cleanup.hostDiagnosticChildrenClosed &&
+      request
+    ) {
       // This supplementary control cannot replace the primary component result.
       // Both comparisons share the one final immutable inventory check.
       try {
         const python = (receipt.derivedRuntime as any).criticalFiles.find(
           (file: any) => file.path === "hermes-agent/venv/Scripts/python.exe",
         );
+        for (const key of ["directBrowserDiagnostic", "stockBrowserDiagnostic"])
+          receipt[key] = {
+            diagnosticOnly: true,
+            skipped:
+              "Unchanged direct-Python comparison omitted; retained prior9675 evidence remains separate.",
+          };
         for (const [key, directory, executor, hostEnvironment, variant] of [
-          ["directBrowserDiagnostic", "browser-direct-diagnostic", mxc, environment, "patched"],
           [
-            "stockBrowserDiagnostic",
-            "browser-stock-diagnostic",
-            stockMxc,
-            stockBrowserEnvironment(environment),
-            "stock",
+            "primaryDebugBrowserDiagnostic",
+            "browser-primary-debug-diagnostic",
+            mxc,
+            environment,
+            "patched-primary-debug",
           ],
           [
             "stockDebugBrowserDiagnostic",
@@ -1362,10 +1530,17 @@ async function main() {
           }
           const diagnosticNonce = randomBytes(12).toString("hex");
           const probe = path.join(launcher, "probe-personal-python.py");
-          const command =
-            variant === "stock-debug"
-              ? stockDebugCommand(hostControllerPython, runtime, probe, diagnosticNonce)
-              : personalCommand;
+          const command = variant.endsWith("-debug")
+            ? stockDebugCommand(
+                hostControllerPython,
+                runtime,
+                probe,
+                diagnosticNonce,
+                variant === "patched-primary-debug"
+                  ? { nativeRoot: currentNativeRoot, proofFile: compatibilityProof }
+                  : undefined,
+              )
+            : personalCommand;
           const diagnostic = await directBrowserDiagnostic(
             request,
             runtime,

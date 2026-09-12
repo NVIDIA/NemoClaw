@@ -11,6 +11,7 @@ import { fileURLToPath } from "node:url";
 import {
   personalRequest,
   directBrowserRequest,
+  primaryDebugRequest,
   directBrowserDiagnostic,
   stockBrowserEnvironment,
   validateStockBrowserExecutor,
@@ -28,6 +29,63 @@ const browserRuntime = "C:\\NemoClawHermesProbe-274d797050ea";
 const browserOriginalNonce = "00112233445566778899aabb";
 const browserNewNonce = "ffeeddccbbaa998877665544";
 const browserController = "C:\\NemoClawPersonalNode-001122334455";
+
+test("primary debugger keeps current native bytes and four-component command while rebinding only owned controller/state", () => {
+  const native = "C:\\NemoClawPersonalCompat-001122334455";
+  const primary = personalRequest(
+    path.win32.join(browserController, "node.exe"),
+    path.win32.join(browserController, "probe-personal-workload.mts"),
+    browserRuntime,
+    "C:\\NemoClawMsysProof-001122334455-state-start",
+    browserOriginalNonce,
+    "C:\\Windows",
+    native,
+  );
+  const before = structuredClone(primary);
+  const plan = primaryDebugRequest(
+    primary,
+    browserRuntime,
+    path.win32.join(browserController, "probe-personal-python.py"),
+    browserNewNonce,
+  );
+  assert.deepEqual(primary, before);
+  assert.equal(plan.nativeRoot, native);
+  assert.equal(plan.originalNonce, browserOriginalNonce);
+  assert.equal(plan.controller, "C:\\NemoClawPersonalNode-ffeeddccbbaa");
+  assert.deepEqual(plan.request.filesystem.readonlyPaths, [
+    browserRuntime,
+    plan.controller,
+    native,
+  ]);
+  assert.deepEqual(plan.request.filesystem.readwritePaths, [
+    "C:\\NemoClawMsysProof-ffeeddccbbaa-state-start",
+  ]);
+  assert(
+    plan.request.process.commandLine.startsWith(
+      `"${native}\\NemoClawMsysLauncher.exe" "--" "${plan.controller}\\node.exe"`,
+    ),
+  );
+  assert(
+    plan.request.process.commandLine.includes(`"${plan.controller}\\probe-personal-workload.mts"`),
+  );
+  assert.equal(plan.request.process.timeout, primary.process.timeout);
+  for (const key of ["network", "ui", "processContainer", "lifecycle"] as const)
+    assert.deepEqual(plan.request[key], primary[key]);
+  assert.throws(() =>
+    primaryDebugRequest(
+      {
+        ...primary,
+        process: {
+          ...primary.process,
+          commandLine: primary.process.commandLine.replace('"--no-warnings"', '"--eval"'),
+        },
+      },
+      browserRuntime,
+      path.win32.join(browserController, "probe-personal-python.py"),
+      browserNewNonce,
+    ),
+  );
+});
 const browserProbe = path.win32.join(browserController, "probe-personal-python.py");
 const browserShare = "C:\\NemoClawMsysProof-ffeeddccbbaa-state-start";
 function browserPrimary() {
@@ -202,6 +260,33 @@ test("stock debugger completion requires exact request and executor identity plu
     cleanup: { captureClosed: true, handlesClosed: true, activeProcesses: 0, errors: [] },
   };
   assert.equal(stockDebugCompletion(record, request, true), true);
+  const primaryRequest = {
+    ...request,
+    classification: "personal-MXC-browser-debug-request",
+    executorIdentity: { sha256: "c".repeat(64) },
+    nativeProof: { sha256: "d".repeat(64) },
+  };
+  const primaryRecord = {
+    ...record,
+    classification: "personal-MXC-browser-debug-result",
+    executorIdentityAfter: primaryRequest.executorIdentity,
+    nativeProofSha256: primaryRequest.nativeProof.sha256,
+  };
+  assert.equal(stockDebugCompletion(primaryRecord, primaryRequest, true), true);
+  assert.throws(() =>
+    stockDebugCompletion(
+      { ...primaryRecord, executorIdentityAfter: record.executorIdentityAfter },
+      primaryRequest,
+      true,
+    ),
+  );
+  assert.throws(() =>
+    stockDebugCompletion(
+      { ...primaryRecord, nativeProofSha256: "e".repeat(64) },
+      primaryRequest,
+      true,
+    ),
+  );
   assert.equal(stockDebugCompletion(record, request, false), false);
   assert.equal(
     stockDebugCompletion({ ...record, remainingDebugProcesses: [42] }, request, true),

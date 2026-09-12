@@ -142,6 +142,14 @@ class LoadInfo(c.Structure):
     ]
 
 
+class DebugStringInfo(c.Structure):
+    _fields_ = [
+        ("address", c.c_void_p),
+        ("unicode", c.c_uint16),
+        ("length", c.c_uint16),
+    ]
+
+
 class EventData(c.Union):
     _fields_ = [
         ("exception", ExceptionInfo),
@@ -149,6 +157,7 @@ class EventData(c.Union):
         ("dll", LoadInfo),
         ("exit_code", c.c_uint32),
         ("unload_base", c.c_void_p),
+        ("string", DebugStringInfo),
     ]
 
 
@@ -225,6 +234,8 @@ class DebugJob(owner.WindowsJob):
         self.first_unhandled = None
         self.handle_observations = 0
         self.handle_cleanup_errors = []
+        self.reconciled_exits = []
+        self.debug_string_count = 0
         k = self.kernel
         declarations = {
             "WaitForDebugEventEx": ([c.POINTER(DebugEvent), c.c_uint32], c.c_int),
@@ -636,6 +647,53 @@ class DebugJob(owner.WindowsJob):
             }
         return result
 
+    def debug_string(self, process, info):
+        # Optional secondary evidence only. Never let an unreadable debug
+        # string replace the actual exception or stop event continuation.
+        declared = int(info.length) * (2 if info.unicode else 1)
+        size = min(declared, 1024)
+        row = {
+            "unicode": bool(info.unicode),
+            "declaredCharacters": int(info.length),
+            "requestedBytes": size,
+            "readAttempted": False,
+            "readSucceeded": False,
+            "readBytes": 0,
+            "win32Error": None,
+            "truncated": declared > size,
+            "text": "",
+        }
+        if not info.address or not size:
+            row["unavailable"] = "empty-or-null-buffer"
+            return row
+        storage = (c.c_ubyte * size)()
+        copied = c.c_size_t()
+        row["readAttempted"] = True
+        try:
+            row["readSucceeded"] = bool(
+                self.kernel.ReadProcessMemory(
+                    process["handle"], info.address, storage, size, c.byref(copied)
+                )
+            )
+            row["win32Error"] = 0 if row["readSucceeded"] else c.get_last_error()
+            row["readBytes"] = copied.value
+            if copied.value > size:
+                row["unavailable"] = "invalid-read-count"
+                return row
+            row["truncated"] |= copied.value < declared
+            count = copied.value - (copied.value % 2 if info.unicode else 0)
+            encoding = (
+                "utf-16-le"
+                if info.unicode
+                else ("mbcs" if os.name == "nt" else "latin-1")
+            )
+            row["text"] = (
+                bytes(storage[:count]).decode(encoding, errors="replace").rstrip("\0")
+            )
+        except Exception as error:
+            row["error"] = owner.detail(error)
+        return row
+
     def pump(self, milliseconds=0):
         owner.require(
             threading.get_ident() == self.creating_thread,
@@ -680,6 +738,10 @@ class DebugJob(owner.WindowsJob):
                     "initialClientHandles": metadata.get("initialClientHandles"),
                     "chromeRole": metadata.get("chromeRole"),
                     "invalidHandleObserved": False,
+                    "ownedChrome": (image["name"] or "").lower() == "chrome.exe"
+                    and metadata.get("ownedJobMember") is True
+                    and metadata.get("isAppContainer") is True,
+                    "debugStrings": 0,
                 }
                 row.update(image=image, **metadata)
                 if metadata.get("chromeRole") == "crashpad-handler":
@@ -761,9 +823,22 @@ class DebugJob(owner.WindowsJob):
             elif event.kind == 5:
                 row["exitCode"] = event.data.exit_code
                 row["exitCodeHex"] = hex(event.data.exit_code)
+            elif event.kind == 8:
+                process = self.processes.get(event.pid)
+                if (
+                    process
+                    and process["ownedChrome"]
+                    and process["debugStrings"] < 8
+                    and self.debug_string_count < 16
+                ):
+                    process["debugStrings"] += 1
+                    self.debug_string_count += 1
+                    row["debugString"] = self.debug_string(process, event.data.string)
             # Thread and debug-string events still must be continued. Their
             # handles are OS-owned; debug-string payload is not read.
-            if event.kind in (1, 3, 5, 6, 7, 9) and len(self.events) < MAX_EVENTS:
+            if (event.kind in (1, 3, 5, 6, 7, 9) or "debugString" in row) and len(
+                self.events
+            ) < MAX_EVENTS:
                 self.events.append(row)
             owner.require(
                 self.event_count != MAX_EVENTS + 1, "Debug event bound exceeded"
@@ -788,18 +863,91 @@ class DebugJob(owner.WindowsJob):
         self.pump(0)
         return super().active()
 
+    def reconcile_exited_processes(self):
+        # The normal five-second EXIT drain runs first. Some faulted Chrome
+        # processes disappear from the Job without an observed EXIT event.
+        # Only their original CREATE_PROCESS handle can independently prove
+        # termination; job accounting or a reused PID cannot substitute for it.
+        for pid in sorted(self.live_debug_pids):
+            process = self.processes.get(pid, {})
+            row = {
+                "pid": pid,
+                "createdSequence": process.get("createdSequence"),
+                "exitEventObserved": False,
+                "sameRetainedCreateProcessHandle": True,
+                "waitResult": None,
+                "waitError": None,
+                "exitCode": None,
+                "exitQueryError": None,
+                "closureProved": False,
+            }
+            handle = process.get("handle")
+            if handle:
+                row["waitResult"] = self.kernel.WaitForSingleObject(handle, 0)
+                if row["waitResult"] == 0xFFFFFFFF:
+                    row["waitError"] = c.get_last_error()
+                elif row["waitResult"] == 0:
+                    code = c.c_uint32()
+                    if self.kernel.GetExitCodeProcess(handle, c.byref(code)):
+                        row["exitCode"] = code.value
+                        row["closureProved"] = True
+                        self.live_debug_pids.discard(pid)
+                    else:
+                        row["exitQueryError"] = c.get_last_error()
+            self.reconciled_exits.append(row)
+        # Debug-event handles stay OS-owned. Do not close them or reopen by PID.
+        self.debug_complete = self.saw_process and not self.live_debug_pids
+
 
 def validate(request):
+    primary = request.get("classification") == "personal-MXC-browser-debug-request"
     owner.require(
         request.get("schemaVersion") == 1
-        and request.get("classification") == "stock-MXC-browser-debug-request",
+        and (
+            primary
+            or request.get("classification") == "stock-MXC-browser-debug-request"
+        ),
         "Unexpected debug request",
     )
     executor, policy = Path(request["executor"]), Path(request["policyFile"])
-    owner.require(
-        owner.identity(executor)["sha256"] == STOCK_SHA,
-        "Stock executor identity differs",
-    )
+    if primary:
+        proof_reference = request["nativeProof"]
+        proof_data = Path(proof_reference["path"]).read_bytes()
+        owner.require(
+            len(proof_data) <= 4 * 1024 * 1024
+            and len(proof_data) == proof_reference["bytes"]
+            and owner.hashlib.sha256(proof_data).hexdigest()
+            == proof_reference["sha256"],
+            "Passed native proof changed",
+        )
+        proof = json.loads(proof_data)
+        owner.require(
+            proof.get("passed") is True
+            and proof.get("normalCleanup") is True
+            and proof.get("phase") == "two-container-isolation",
+            "Native compatibility proof did not pass",
+        )
+        build = proof["inputs"]["mxcBuild"]
+        owner.require(
+            build["candidateRevision"] == proof["sourceRevision"]
+            and len(build["files"]) == 1
+            and build["files"][0]["file"] == "wxc-exec.exe",
+            "Executor proof identity differs",
+        )
+        expected_executor = {key: build["files"][0][key] for key in ("bytes", "sha256")}
+        owner.require(
+            owner.identity(executor) == expected_executor
+            and all(
+                request["executorIdentity"].get(key) == value
+                for key, value in expected_executor.items()
+            ),
+            "Proved executor bytes differ",
+        )
+    else:
+        owner.require(
+            owner.identity(executor)["sha256"] == STOCK_SHA,
+            "Stock executor identity differs",
+        )
     data = policy.read_bytes()
     owner.require(len(data) <= 128 * 1024, "MXC request bound exceeded")
     owner.require(
@@ -851,10 +999,62 @@ def validate(request):
         runtime,
         nonce,
     ]
+    if primary:
+        controller = PureWindowsPath(probe).parent
+        owner.require(
+            controller.name == "NemoClawPersonalNode-" + nonce[:12],
+            "Primary debug controller is not fresh and nonce-bound",
+        )
+        native = PureWindowsPath(request["nativeRoot"])
+        owner.require(
+            str(native) in body["filesystem"]["readonlyPaths"]
+            or native == PureWindowsPath(runtime) / "mxc-compat",
+            "Current native component is not readonly",
+        )
+        compatibility = proof["inputs"]["compatibility"]
+        owner.require(
+            compatibility["sourceRevision"] == proof["sourceRevision"]
+            and compatibility["status"] == "built",
+            "Native DLL source identity differs",
+        )
+        expected_names = {
+            "NemoClawMsysLauncher.exe",
+            "NemoClawMsysCompat-arm64.dll",
+            "NemoClawMsysCompat-x64.dll",
+        }
+        owner.require(
+            {row["file"] for row in compatibility["files"]} == expected_names
+            and len(compatibility["files"]) == 3,
+            "Native component file set differs",
+        )
+        for row in compatibility["files"]:
+            owner.require(
+                owner.identity(str(native / row["file"]))
+                == {key: row[key] for key in ("bytes", "sha256")},
+                "Native component bytes differ",
+            )
+        node = str(controller / "node.exe")
+        owner.require(
+            owner.identity(node)["sha256"]
+            == "97cce5301a815d2dce07ac5bfd1e6039eae88185ec1d10ae4f8cb712f1732878",
+            "Primary Node identity differs",
+        )
+        expected = [
+            str(native / "NemoClawMsysLauncher.exe"),
+            "--",
+            node,
+            "--experimental-strip-types",
+            "--no-warnings",
+            str(controller / "probe-personal-workload.mts"),
+            runtime,
+            str(PureWindowsPath(state) / "result.json"),
+            nonce,
+            str(controller / "personal-workload-input.json"),
+        ]
     owner.require(
         body["process"]["commandLine"]
         == " ".join('"' + value + '"' for value in expected),
-        "Debug request does not run the canonical browser probe",
+        "Debug request does not run its exact canonical workload",
     )
     owner.require(
         runtime in body["filesystem"]["readonlyPaths"]
@@ -864,7 +1064,11 @@ def validate(request):
     environment = request["environment"]
     owner.require(
         environment.get("GITHUB_ACTIONS") == "true"
-        and "NEMOCLAW_MSYS_TOKEN_INSPECTION" not in environment,
+        and (
+            environment.get("NEMOCLAW_MSYS_TOKEN_INSPECTION") == "repair-query"
+            if primary
+            else "NEMOCLAW_MSYS_TOKEN_INSPECTION" not in environment
+        ),
         "Unexpected debug host environment",
     )
     return [str(executor), str(policy), "--log-file", request["logFile"]], state
@@ -875,11 +1079,14 @@ def capture(request, native):
     started = time.monotonic()
     result = {
         "schemaVersion": 1,
-        "classification": "stock-MXC-browser-debug-result",
+        "classification": "personal-MXC-browser-debug-result"
+        if request.get("classification") == "personal-MXC-browser-debug-request"
+        else "stock-MXC-browser-debug-result",
         "diagnosticOnly": True,
         "canonicalQualification": False,
         "nonce": request["nonce"],
         "policySha256": request["policySha256"],
+        "nativeProofSha256": request.get("nativeProof", {}).get("sha256"),
         "debuggerMayChangeBehavior": True,
         "execution": {
             "executable": command[0],
@@ -928,7 +1135,7 @@ def capture(request, native):
 
     try:
         native.create_job()
-        stage = "create-debugged-stock-executor"
+        stage = "create-debugged-executor"
         native.start(command, request["environment"], state)
         result["execution"]["pid"] = native.pid
         stage = "assign-job-before-resume"
@@ -978,6 +1185,13 @@ def capture(request, native):
                 if result["execution"]["childClosed"]:
                     result["execution"]["exitCode"] = native.exit_code()
             result["cleanup"]["activeProcesses"] = native.active() if native.job else 0
+            if (
+                result["execution"]["childClosed"]
+                and result["cleanup"]["activeProcesses"] == 0
+                and not native.observation_errors
+                and native.live_debug_pids
+            ):
+                native.reconcile_exited_processes()
         except Exception as error:
             result["cleanup"]["errors"].append(owner.detail(error))
         for thread in readers:
@@ -1027,6 +1241,7 @@ def capture(request, native):
     result["appContainerDebugEventsObserved"] = native.appcontainer_seen
     result["chromeDebugEventsObserved"] = native.chrome_seen
     result["remainingDebugProcesses"] = list(native.live_debug_pids)
+    result["reconciledDebugProcessExits"] = native.reconciled_exits
     result["executorIdentityAfter"] = owner.identity(command[0])
     return result
 
