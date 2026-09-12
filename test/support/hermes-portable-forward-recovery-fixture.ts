@@ -4,7 +4,10 @@
 import { vi } from "vitest";
 
 import type { HermesPortableForwardRecoveryInput } from "../../src/lib/actions/sandbox/probe/hermes-portable-forward-recovery";
-import type { ForwardServiceTarget } from "../../src/lib/adapters/openshell/forward-service";
+import type {
+  ForwardServiceLaunchOptions,
+  ForwardServiceTarget,
+} from "../../src/lib/adapters/openshell/forward-service";
 import { type ConnectHarness, requireDist } from "./connect-flow-test-harness";
 
 type ForwardRecord = {
@@ -81,6 +84,7 @@ export function createHermesPortableForwardRecoveryFixture({
   const currentCaptureCalls: string[][] = [];
   const currentMutationCalls: string[][] = [];
   const forwardServiceLaunches: ForwardServiceTarget[] = [];
+  const forwardServiceLaunchOptions: ForwardServiceLaunchOptions[] = [];
   const forwardServiceOwnerChecks: ForwardServiceTarget[] = [];
   const rollbackCaptureCalls: string[][] = [];
   let currentAllowed = true;
@@ -123,6 +127,7 @@ export function createHermesPortableForwardRecoveryFixture({
     probeTimeoutMs: 10_000,
     forwardService: {
       executablePath: "/usr/bin/openshell",
+      gatewayEndpoint: "https://127.0.0.1:8080",
       sourceEnvironment: { HOME: "/home/test" },
       workspace: "default",
     },
@@ -139,10 +144,15 @@ export function createHermesPortableForwardRecoveryFixture({
       isForwardServiceOwner: (target) => {
         forwardServiceOwnerChecks.push(target);
         const record = records.get(target.localPort);
-        return record?.direct === true && record.owner === "alpha" && record.reachable;
+        return (
+          record?.owner === "alpha" &&
+          record.reachable &&
+          (record.direct === true || ["active", "running"].includes(record.status))
+        );
       },
-      launchForwardService: (target) => {
+      launchForwardService: (target, options) => {
         forwardServiceLaunches.push(target);
+        forwardServiceLaunchOptions.push(options);
         if (startUpdatesState) {
           records.set(target.localPort, {
             direct: true,
@@ -153,6 +163,7 @@ export function createHermesPortableForwardRecoveryFixture({
         }
         if (target.localPort === dropStartedPort) records.delete(target.localPort);
         if (driftCurrentAfterStart) currentAllowed = false;
+        options.verifyReady?.();
         if (startStatus !== 0) throw new Error("direct forward launch canary");
       },
       isPortReachable: (port) => {
@@ -183,6 +194,7 @@ export function createHermesPortableForwardRecoveryFixture({
     currentMutationCalls,
     elapsedMs: () => now,
     input,
+    forwardServiceLaunchOptions,
     forwardServiceLaunches,
     forwardServiceOwnerChecks,
     records,
@@ -245,10 +257,11 @@ export function configureMissingHermesForwardCapture(
     return runOpenshell(args, runOptions);
   }) as never);
   const ownerSpy = harness.forwardServiceOwnerSpy.mockImplementation(() => directForwardRunning);
-  const launchSpy = harness.launchForwardServiceSpy.mockImplementation(() => {
+  const launchSpy = harness.launchForwardServiceSpy.mockImplementation((_target, launchOptions) => {
     forwardStatus = "missing";
     directForwardRunning = true;
     options.afterStart?.();
+    launchOptions.verifyReady?.();
   });
   return {
     isRunning: () => forwardStatus === "running" || directForwardRunning,
