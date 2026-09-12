@@ -219,6 +219,97 @@ export function validateDerivedPersonalHeader(
   return indexed;
 }
 
+export const completedPersonalReplayPin = {
+  artifactId: 10293082661,
+  runId: 34679482914,
+  sourceRevision: "8d78fe458e9268a7afdc8ed06b85c23306452036",
+  bytes: 1073328197,
+  sha256: "753aa3e7addcc1c274b4a59b6785706715ccba661eaa31bfe77a95e20271bda1",
+  candidateReceiptSha256: "c682b3cd2f9691ad7d65312682522b59a5a5105c19688621153261d92c4f1c4f",
+  inventorySha256: "f4df172630b7f5ae6ec9cc9cf9c54b4744c2b0046cb15859f9469ff9bfe7a0e2",
+  startupAdapterSha256: "58a55abda6045e4919da5e56042d21768e72bab3be1e7444a4f65eb850941f65",
+  runtimeRoot: "C:\\NemoClawHermesProbe-274d797050ea",
+} as const;
+
+export function validatePersonalReplayInput(
+  replay: any,
+  candidate: any,
+  identity: any,
+  runtime: string,
+  controller: string,
+) {
+  assert.equal(replay.schemaVersion, 1);
+  assert.equal(replay.classification, "immutable-canonical-hermes-personal-replay");
+  assert.deepEqual(replay.base, completedPersonalReplayPin);
+  assert.equal(replay.controllerSource, controller);
+  assert.equal(replay.runtimeRoot, runtime);
+  assert.equal(runtime, completedPersonalReplayPin.runtimeRoot);
+  assert.equal(candidate.controllerSource, completedPersonalReplayPin.sourceRevision);
+  assert.equal(identity.sha256, completedPersonalReplayPin.candidateReceiptSha256);
+  assert.equal(candidate.inventorySha256, completedPersonalReplayPin.inventorySha256);
+  for (const key of [
+    "completeZipVerified",
+    "completeNestedArchiveVerified",
+    "sourceBuildProvenanceVerified",
+  ])
+    assert.equal(replay[key], true);
+  for (const key of [
+    "runtimeRebuilt",
+    "runtimeRelocated",
+    "runtimeExported",
+    "runtimeExecutionQualified",
+    "installedAcceptance",
+  ])
+    assert.equal(replay[key], false);
+  assert.equal(replay.before.allFilesAndDirectoriesVerified, true);
+  assert.equal(replay.before.inventorySha256, completedPersonalReplayPin.inventorySha256);
+  assert.equal(replay.before.files, candidate.fileCount);
+  assert.equal(replay.before.logicalBytes, candidate.logicalBytes);
+}
+
+export function verifyPersonalReplayInventory(
+  runtime: string,
+  expected: any,
+  inventorySha256: string,
+) {
+  const started = performance.now();
+  const rootStat = fs.lstatSync(runtime);
+  assert(rootStat.isDirectory() && !rootStat.isSymbolicLink());
+  const files = new Map(expected.files.map((row: any) => [row.path, row]));
+  const directories = new Set(expected.directories);
+  const seenFiles = new Set<string>(),
+    seenDirectories = new Set<string>();
+  const walk = (relative: string) => {
+    for (const name of fs.readdirSync(path.join(runtime, relative))) {
+      const item = relative ? relative + "/" + name : name;
+      const file = path.join(runtime, item);
+      const stat = fs.lstatSync(file);
+      assert(!stat.isSymbolicLink(), "A replay runtime entry became a link");
+      if (stat.isDirectory()) {
+        assert(directories.has(item), "An unrecorded replay directory appeared");
+        seenDirectories.add(item);
+        walk(item);
+      } else {
+        const row: any = files.get(item);
+        assert(stat.isFile() && row && !row.linkTarget, "An unrecorded replay file appeared");
+        assert.equal(stat.size, row.bytes, item);
+        assert.equal(fileIdentity(file).sha256, row.sha256, item);
+        seenFiles.add(item);
+      }
+    }
+  };
+  walk("");
+  assert.equal(seenFiles.size, files.size);
+  assert.equal(seenDirectories.size, directories.size);
+  return {
+    allFilesAndDirectoriesVerified: true,
+    files: seenFiles.size,
+    logicalBytes: expected.files.reduce((n: number, row: any) => n + row.bytes, 0),
+    inventorySha256,
+    elapsedMs: performance.now() - started,
+  };
+}
+
 function loadDerivedPersonalInputs(
   file: string,
   runtime: string,
@@ -226,6 +317,7 @@ function loadDerivedPersonalInputs(
   proof: any,
   build: any,
   mxcBuild: any,
+  replay: any = null,
 ) {
   const candidate = receiptDocument(file);
   const directory = path.dirname(file);
@@ -247,9 +339,13 @@ function loadDerivedPersonalInputs(
     "bash-compatibility-proof.json",
   );
   const mxc = referenced(derivation.value.mxc, "mxc-build.json");
-  assert.deepEqual(compatibility.value, build);
-  assert.deepEqual(compatibilityProof.value, proof);
-  assert.deepEqual(mxc.value, mxcBuild);
+  if (replay)
+    validatePersonalReplayInput(replay, candidate.value, candidate, runtime, sourceRevision);
+  else {
+    assert.deepEqual(compatibility.value, build);
+    assert.deepEqual(compatibilityProof.value, proof);
+    assert.deepEqual(mxc.value, mxcBuild);
+  }
   const inventory = receiptDocument(path.join(directory, "payload-inventory.json"));
   assert.equal(inventory.sha256, candidate.value.inventorySha256);
   const adapterSha256 = fileIdentity(
@@ -261,10 +357,10 @@ function loadDerivedPersonalInputs(
     inventory.value,
     wheel.value,
     git.value,
-    sourceRevision,
+    replay ? completedPersonalReplayPin.sourceRevision : sourceRevision,
     runtime,
     adapterSha256,
-    proof,
+    compatibilityProof.value,
   );
   assert.equal(
     fs.existsSync(derivation.value.originalBuildRoot),
@@ -283,7 +379,7 @@ function loadDerivedPersonalInputs(
     ...personalCriticalFiles,
     ...hooks,
     ...wheel.value.replacement.installedFiles.map((row: any) => row.path),
-    ...build.files.map((row: any) => "mxc-compat/" + row.file),
+    ...compatibility.value.files.map((row: any) => "mxc-compat/" + row.file),
     "mxc-compat/DETOURS-LICENSE.txt",
     "mxc-compat/build-receipt.json",
     "nemoclaw-windows-runtime.json",
@@ -307,6 +403,7 @@ function loadDerivedPersonalInputs(
       sha256: document.sha256,
     })),
     criticalFiles: personalCriticalFiles.map((name) => indexed.get(name)),
+    inventoryValue: inventory.value,
   };
 }
 
@@ -317,6 +414,7 @@ export function personalRequest(
   share: string,
   nonce: string,
   windows: string,
+  nativeRoot = path.win32.join(runtime, "mxc-compat"),
 ) {
   if (
     !/^[a-f0-9]{24}$/u.test(nonce) ||
@@ -332,6 +430,12 @@ export function personalRequest(
     path.win32.dirname(node) !== path.win32.dirname(worker)
   )
     throw new Error("Invalid admitted Personal probe state or launcher path.");
+  const externalNativeRoot = path.win32.join(
+    path.win32.parse(runtime).root,
+    `NemoClawPersonalCompat-${nonce.slice(0, 12)}`,
+  );
+  if (nativeRoot !== path.win32.join(runtime, "mxc-compat") && nativeRoot !== externalNativeRoot)
+    throw new Error("The current native component is outside its owned replay stage.");
   const home = path.win32.join(share, "home");
   const temp = path.win32.join(share, "temp");
   const environment = {
@@ -372,7 +476,7 @@ export function personalRequest(
     containment: "processcontainer",
     process: {
       commandLine: [
-        path.win32.join(runtime, "mxc-compat/NemoClawMsysLauncher.exe"),
+        path.win32.join(nativeRoot, "NemoClawMsysLauncher.exe"),
         "--",
         node,
         "--experimental-strip-types",
@@ -400,7 +504,14 @@ export function personalRequest(
       blockedHosts: [],
       allowLocalNetwork: true,
     },
-    filesystem: { readonlyPaths: [runtime, path.win32.dirname(worker)], readwritePaths: [share] },
+    filesystem: {
+      readonlyPaths: [
+        runtime,
+        path.win32.dirname(worker),
+        ...(nativeRoot === externalNativeRoot ? [nativeRoot] : []),
+      ],
+      readwritePaths: [share],
+    },
     lifecycle: { destroyOnExit: false, preservePolicy: false },
   };
 }
@@ -461,6 +572,9 @@ async function main() {
   const compatibilityProof = argument("--compatibility-proof");
   const mxcBuildReceipt = argument("--mxc-build-receipt");
   const derivedRuntimeReceipt = argument("--derived-runtime-receipt");
+  const replayDocument = process.argv.includes("--replay-receipt")
+    ? receiptDocument(argument("--replay-receipt"))
+    : null;
   const output = argument("--output");
   const windows = path.dirname(process.env.ComSpec ?? process.env.COMSPEC ?? "");
   const windowsRoot = path.dirname(windows);
@@ -469,7 +583,7 @@ async function main() {
     !/^[A-Za-z]:\\Windows$/iu.test(windowsRoot)
   )
     throw new Error("The candidate and Windows roots differ from the owned probe contract.");
-  if (compatibilityRoot !== path.join(runtime, "mxc-compat"))
+  if (!replayDocument && compatibilityRoot !== path.join(runtime, "mxc-compat"))
     throw new Error("Compatibility binaries must remain inside the read-only canonical runtime.");
   fs.mkdirSync(output);
   const nonce = randomBytes(12).toString("hex");
@@ -477,6 +591,12 @@ async function main() {
   const launcher = path.join(root, `NemoClawPersonalNode-${nonce.slice(0, 12)}`);
   const share = path.join(root, `NemoClawMsysProof-${nonce.slice(0, 12)}-state-start`);
   const hostScratch = path.join(root, `NemoClawBashHost-${nonce.slice(0, 12)}`);
+  const currentNativeRoot = replayDocument
+    ? path.join(root, `NemoClawPersonalCompat-${nonce.slice(0, 12)}`)
+    : compatibilityRoot;
+  let nativeRootCreated = false;
+  let replayInventory: any;
+  const stagedNativeFiles: any[] = [];
   const environment: NodeJS.ProcessEnv = {};
   for (const key of [
     "SystemRoot",
@@ -545,15 +665,66 @@ async function main() {
       proof,
       build,
       mxcBuild,
+      replayDocument?.value,
     );
+    const { inventoryValue, ...derivedReceipt } = derived;
+    replayInventory = inventoryValue;
     receipt.candidateSource = derived.candidate.value.controllerSource;
-    receipt.derivedRuntime = derived;
+    receipt.derivedRuntime = derivedReceipt;
+    if (replayDocument) receipt.runtimeReplay = { ...replayDocument.value, after: null };
     for (const file of [...compatibility.files, compatibility.license]) {
       const actual = fileIdentity(path.join(compatibilityRoot, file.file));
       if (actual.sha256 !== file.sha256 || actual.bytes !== file.bytes)
         throw new Error(`A proved compatibility file changed: ${file.file}`);
       if (file.machine && actual.architecture !== file.machine)
         throw new Error(`A proved compatibility architecture changed: ${file.file}`);
+    }
+    if (replayDocument) {
+      fs.mkdirSync(currentNativeRoot);
+      nativeRootCreated = true;
+      for (const file of [
+        ...compatibility.files,
+        compatibility.license,
+        { file: "build-receipt.json", ...fileIdentity(compatibilityReceipt) },
+      ]) {
+        const input =
+          file.file === "build-receipt.json"
+            ? compatibilityReceipt
+            : path.join(compatibilityRoot, file.file);
+        const target = path.join(currentNativeRoot, file.file);
+        assert.equal(fileIdentity(input).sha256, file.sha256);
+        fs.copyFileSync(input, target, fs.constants.COPYFILE_EXCL);
+        const actual = fileIdentity(target);
+        assert.equal(actual.bytes, file.bytes);
+        assert.equal(actual.sha256, file.sha256);
+        assert.equal(fileIdentity(input).sha256, file.sha256);
+        stagedNativeFiles.push({ ...file, path: target });
+      }
+      const currentDocuments: Record<string, unknown> = {};
+      for (const [kind, input, filename, value] of [
+        ["proof", compatibilityProof, "current-native-proof.json", proof],
+        ["compatibility", compatibilityReceipt, "current-msys-build.json", build],
+        ["mxc", mxcBuildReceipt, "current-mxc-build.json", mxcBuild],
+      ] as const) {
+        const document = receiptDocument(input);
+        assert.deepEqual(document.value, value);
+        const saved = path.join(output, filename);
+        fs.copyFileSync(input, saved, fs.constants.COPYFILE_EXCL);
+        const actual = fileIdentity(saved);
+        assert.equal(actual.bytes, document.bytes);
+        assert.equal(actual.sha256, document.sha256);
+        assert.equal(fileIdentity(input).sha256, document.sha256);
+        currentDocuments[kind] = { file: filename, bytes: actual.bytes, sha256: actual.sha256 };
+      }
+      (receipt.runtimeReplay as any).nativeComponent = {
+        root: currentNativeRoot,
+        sourceRevision: compatibility.sourceRevision,
+        proof: fileIdentity(compatibilityProof),
+        build: fileIdentity(compatibilityReceipt),
+        executor: fileIdentity(mxc),
+        files: stagedNativeFiles,
+        documents: currentDocuments,
+      };
     }
     const nodeIdentity = fileIdentity(process.execPath);
     const mxcIdentity = fileIdentity(mxc);
@@ -610,6 +781,7 @@ async function main() {
       share,
       nonce,
       windowsRoot,
+      currentNativeRoot,
     );
     const policy = path.join(output, "personal-request.json");
     const bytes = JSON.stringify(request, null, 2) + "\n";
@@ -701,7 +873,29 @@ async function main() {
       }
     }
     const allClosed = cleanup.executorClosed && cleanup.hostDiagnosticChildrenClosed;
-    const roots = removePersonalRoots([share, launcher, hostScratch], attempted, allClosed);
+    if (replayDocument && replayInventory && (!attempted || allClosed)) {
+      try {
+        (receipt.runtimeReplay as any).after = verifyPersonalReplayInventory(
+          runtime,
+          replayInventory,
+          completedPersonalReplayPin.inventorySha256,
+        );
+        for (const file of stagedNativeFiles) {
+          const actual = fileIdentity(file.path);
+          assert.equal(actual.bytes, file.bytes);
+          assert.equal(actual.sha256, file.sha256);
+        }
+        (receipt.runtimeReplay as any).nativeComponentUnchanged = true;
+      } catch (error) {
+        failure ??= error;
+        errors.push(errorDetail(error));
+      }
+    }
+    const roots = removePersonalRoots(
+      [share, launcher, hostScratch, ...(nativeRootCreated ? [currentNativeRoot] : [])],
+      attempted,
+      allClosed,
+    );
     errors.push(...roots.errors);
     cleanup.ownedRootsRemoved = roots.removed;
     receipt.executorAttempted = attempted;

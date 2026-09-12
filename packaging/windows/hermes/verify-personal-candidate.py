@@ -54,10 +54,10 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
-def download(destination):
+def download(destination, *, artifact=ARTIFACT, run=RUN, head=HEAD, size=SIZE, sha=SHA):
     """Keep authentication on api.github.com; the signed redirect stays in memory."""
     endpoint = (
-        f"https://api.github.com/repos/NVIDIA/NemoClaw/actions/artifacts/{ARTIFACT}"
+        f"https://api.github.com/repos/NVIDIA/NemoClaw/actions/artifacts/{artifact}"
     )
     headers = {"Accept": "application/vnd.github+json", "User-Agent": "NemoClaw-CI"}
     token = os.environ.get("GH_TOKEN")
@@ -69,12 +69,12 @@ def download(destination):
         ) as response:
             metadata = json.load(response)
         require(
-            metadata["id"] == ARTIFACT
-            and metadata["size_in_bytes"] == SIZE
-            and metadata["digest"] == "sha256:" + SHA
+            metadata["id"] == artifact
+            and metadata["size_in_bytes"] == size
+            and metadata["digest"] == "sha256:" + sha
             and not metadata["expired"]
-            and metadata["workflow_run"]["id"] == RUN
-            and metadata["workflow_run"]["head_sha"] == HEAD,
+            and metadata["workflow_run"]["id"] == run
+            and metadata["workflow_run"]["head_sha"] == head,
             "The GitHub artifact identity differs from the reviewed candidate",
         )
         opener = urllib.request.build_opener(NoRedirect())
@@ -99,11 +99,11 @@ def download(destination):
             while block := response.read(8 * 1024 * 1024):
                 count += len(block)
                 require(
-                    count <= SIZE and time.monotonic() - started <= 900,
+                    count <= size and time.monotonic() - started <= 900,
                     "The candidate download exceeded its byte/time bound",
                 )
                 output.write(block)
-        require(count == SIZE, "The candidate download was incomplete")
+        require(count == size, "The candidate download was incomplete")
     except (urllib.error.URLError, TimeoutError) as error:
         # urllib exceptions can contain signed URLs. Keep only their type.
         raise RuntimeError(
@@ -138,10 +138,12 @@ def document(archive, suffix, maximum=256 * 1024 * 1024):
     return matches[0].filename, data, json.loads(data)
 
 
-def documents(archive):
+def documents(archive, *, head=None, adapter=None):
+    head = HEAD if head is None else head
+    adapter = ADAPTER if adapter is None else adapter
     name, _, candidate = document(archive, "runtime-candidate.json", 65536)
     require(
-        candidate["controllerSource"] == HEAD
+        candidate["controllerSource"] == head
         and candidate["upstreamCommit"] == UPSTREAM
         and candidate["status"] == "candidate-bytes-exported"
         and candidate["completeByteInventory"] is True
@@ -179,7 +181,7 @@ def documents(archive):
                 "The official production graph did not complete unchanged",
             )
     require(
-        candidate["startupAdapterSha256"] == ADAPTER,
+        candidate["startupAdapterSha256"] == adapter,
         "The candidate has the wrong reviewed startup adapter",
     )
     require(
@@ -246,7 +248,7 @@ def documents(archive):
         if row["path"].endswith("/nemoclaw_native_windows.py")
     ]
     require(
-        len(hooks) == 3 and all(row["sha256"] == ADAPTER for row in hooks),
+        len(hooks) == 3 and all(row["sha256"] == adapter for row in hooks),
         "Candidate startup hooks differ",
     )
     source = candidate["archive"]
@@ -322,7 +324,7 @@ def verify_members(archive, details):
     return total
 
 
-def extract_verified(archive, details, destination):
+def extract_verified(archive, details, destination, *, created=None):
     require(
         not destination.exists() and not destination.is_symlink(),
         "The candidate extraction root must be fresh",
@@ -330,6 +332,8 @@ def extract_verified(archive, details, destination):
     _, _, files, directories, links, tar_name = details
     all_names = set(files) | directories
     destination.mkdir()
+    if created is not None:
+        created(destination)
     for name in sorted(directories, key=lambda value: (value.count("/"), value)):
         (destination / Path(*PurePosixPath(name).parts[1:])).mkdir(exist_ok=True)
     with (

@@ -9,6 +9,9 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
   personalRequest,
+  completedPersonalReplayPin,
+  validatePersonalReplayInput,
+  verifyPersonalReplayInventory,
   removePersonalRoots,
   publishPersonalReceipt,
 } from "./probe-personal-candidate.mts";
@@ -347,4 +350,101 @@ print(json.dumps({'responseCases':11,'nativeBrowserExecuted':False,'errorOnlyRes
   );
   assert.equal(result.status, 0, result.stderr);
   assert.equal(JSON.parse(result.stdout).responseCases, 11);
+});
+
+test("completed replay binds a historical immutable base to the current controller", () => {
+  const pin = completedPersonalReplayPin;
+  const candidate = {
+    controllerSource: pin.sourceRevision,
+    inventorySha256: pin.inventorySha256,
+    fileCount: 1,
+    logicalBytes: 3,
+  };
+  const identity = { sha256: pin.candidateReceiptSha256 };
+  const replay = {
+    schemaVersion: 1,
+    classification: "immutable-canonical-hermes-personal-replay",
+    base: pin,
+    controllerSource: "c".repeat(40),
+    runtimeRoot: pin.runtimeRoot,
+    completeZipVerified: true,
+    completeNestedArchiveVerified: true,
+    sourceBuildProvenanceVerified: true,
+    runtimeRebuilt: false,
+    runtimeRelocated: false,
+    runtimeExported: false,
+    runtimeExecutionQualified: false,
+    installedAcceptance: false,
+    before: {
+      allFilesAndDirectoriesVerified: true,
+      inventorySha256: pin.inventorySha256,
+      files: 1,
+      logicalBytes: 3,
+    },
+  };
+  validatePersonalReplayInput(replay, candidate, identity, pin.runtimeRoot, "c".repeat(40));
+  for (const changes of [
+    { runtimeRebuilt: true },
+    { controllerSource: "d".repeat(40) },
+    { base: { ...pin, artifactId: 1 } },
+    { before: { ...replay.before, inventorySha256: "0".repeat(64) } },
+  ])
+    assert.throws(() =>
+      validatePersonalReplayInput(
+        { ...replay, ...changes },
+        candidate,
+        identity,
+        pin.runtimeRoot,
+        "c".repeat(40),
+      ),
+    );
+});
+
+test("replay launches only the separately admitted readonly native component", () => {
+  const nonce = "1234567890abcdef12345678";
+  const args = [
+    "C:\\node\\node.exe",
+    "C:\\node\\worker.mts",
+    "C:\\runtime",
+    "C:\\NemoClawMsysProof-1234567890ab-state-start",
+    nonce,
+    "C:\\Windows",
+  ] as const;
+  const native = "C:\\NemoClawPersonalCompat-1234567890ab";
+  const request = personalRequest(...args, native);
+  assert(request.process.commandLine.startsWith('"' + native + '\\NemoClawMsysLauncher.exe"'));
+  assert.deepEqual(request.filesystem.readonlyPaths, [args[2], "C:\\node", native]);
+  assert.deepEqual(request.filesystem.readwritePaths, [args[3]]);
+  assert.equal(request.process.timeout, 120000);
+  assert.throws(() => personalRequest(...args, "C:\\outside"));
+});
+
+test("full replay post-inventory rejects changed, missing, and additional bytes", async () => {
+  const { createHash } = await import("node:crypto");
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "full-replay-inventory-"));
+  try {
+    fs.mkdirSync(path.join(root, "lib"));
+    const file = path.join(root, "lib", "module.py");
+    fs.writeFileSync(file, "abc");
+    const expected = {
+      directories: ["lib"],
+      files: [
+        {
+          path: "lib/module.py",
+          bytes: 3,
+          sha256: createHash("sha256").update("abc").digest("hex"),
+        },
+      ],
+    };
+    assert.equal(verifyPersonalReplayInventory(root, expected, "a".repeat(64)).files, 1);
+    fs.writeFileSync(file, "abd");
+    assert.throws(() => verifyPersonalReplayInventory(root, expected, "a".repeat(64)));
+    fs.unlinkSync(file);
+    assert.throws(() => verifyPersonalReplayInventory(root, expected, "a".repeat(64)));
+    fs.writeFileSync(file, "abc");
+    fs.mkdirSync(path.join(root, "unexpected"));
+    assert.throws(() => verifyPersonalReplayInventory(root, expected, "a".repeat(64)));
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
