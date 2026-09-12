@@ -91,6 +91,30 @@ describe("downloadFromSandbox", () => {
     expect(fs.rmSync).toHaveBeenCalledWith(stagingDir, { recursive: true, force: true });
   });
 
+  it("normalizes a leading-hyphen sandbox path before probing and download (#11378)", async () => {
+    const result = await downloadFromSandbox({
+      sandboxName: "alpha",
+      sandboxPath: "-payload",
+      hostDest: "./out",
+    });
+
+    expect(captureMock).toHaveBeenCalledTimes(2);
+    for (const [args] of captureMock.mock.calls) {
+      expect(args).toEqual(expect.arrayContaining(["./-payload"]));
+    }
+    expect(runMock).toHaveBeenCalledWith(
+      ["sandbox", "download", "alpha", "./-payload", stagedArtifact],
+      expect.objectContaining({
+        ignoreError: true,
+        stdio: "inherit",
+      }),
+    );
+    expect(result).toEqual({
+      sandboxPath: "./-payload",
+      hostDest: path.resolve(process.cwd(), "out"),
+    });
+  });
+
   it("does not apply a fixed timeout to a valid staged download (#10636)", async () => {
     await downloadFromSandbox({
       sandboxName: "alpha",
