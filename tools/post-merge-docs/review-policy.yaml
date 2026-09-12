@@ -11,8 +11,8 @@ filesystem_policy:
     - /usr/share/git-core
     - /etc
     # OpenShell 0.0.116 runs sandbox exec through bash -lc. The pinned image owns these files.
-    - /sandbox/.profile
     - /sandbox/.bashrc
+    - /sandbox/.profile
     - /sandbox/repo
     - /sandbox/config
   read_write:

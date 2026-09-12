@@ -929,6 +929,7 @@ describe("connectSandbox flow", () => {
       portableRecoveryResult: { kind: "recovered" },
     });
     awaitHermesRouteVerification(harness);
+    harness.forwardServiceOwnerSpy.mockReturnValue(true);
 
     await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
 
@@ -1111,8 +1112,10 @@ describe("connectSandbox flow", () => {
         : captureResolved(args, options);
     }) as never);
     harness.forwardReachabilitySpy.mockImplementation(() => forwardsRestored);
-    harness.launchForwardServiceSpy.mockImplementation(() => {
+    harness.launchForwardServiceSpy.mockImplementation((_target, options) => {
       forwardsRestored = true;
+      harness.forwardServiceOwnerSpy.mockReturnValue(true);
+      options?.verifyReady?.();
     });
 
     await expect(harness.connectSandbox("alpha")).rejects.toThrow("process.exit(0)");
@@ -1164,6 +1167,7 @@ describe("connectSandbox flow", () => {
       portableReceiptDisposition: { kind: "hermes", phase: "active" },
       portableRecoveryResult: { kind: "already-running" },
     });
+    harness.forwardServiceOwnerSpy.mockReturnValue(true);
     harness.recoverPortableDemoLifecycleSpy.mockImplementation(() =>
       harness.recoverPortableDemoLifecycleSpy.mock.calls.length >= 5
         ? { kind: "not-installed" }
