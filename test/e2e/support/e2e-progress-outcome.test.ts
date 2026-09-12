@@ -42,7 +42,8 @@ function runFixture(
       timeout: timeoutMs,
     },
     (error, stdout, stderr) => {
-      const signal = child.signalCode ?? error?.signal ?? null;
+      const signal =
+        child.signalCode ?? error?.signal ?? (error?.code === "ABORT_ERR" ? "SIGKILL" : null);
       finish({
         signal,
         status: signal ? null : Number(error?.code) || (error ? -1 : 0),
@@ -58,7 +59,7 @@ function runFixture(
   return resultPromise;
 }
 
-vi.setConfig({ maxConcurrency: 6 });
+vi.setConfig({ maxConcurrency: 7 });
 
 describe.concurrent("automatic E2E phase outcomes", () => {
   it("redacts target identities and explicit progress events before console output", async (context) => {
@@ -88,25 +89,42 @@ describe.concurrent("automatic E2E phase outcomes", () => {
     }
   });
 
-  it("reports the signal when a nested fixture exceeds its deadline", async (context) => {
-    const artifactDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-progress-signal-"));
-    try {
-      const result = await runFixture(
+  it(
+    "reports the signal when a nested fixture exceeds its deadline",
+    { timeout: 15_000 },
+    async (context) => {
+      const artifactDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-progress-signal-"));
+      const timeoutReady = path.join(artifactDir, "timeout-ready");
+      const deadline = new AbortController();
+      const resultPromise = runFixture(
         {
           ...process.env,
           E2E_ARTIFACT_DIR: artifactDir,
-          NEMOCLAW_E2E_PROGRESS_OUTCOME_FIXTURE: "cleanup-failed",
+          NEMOCLAW_E2E_PROGRESS_OUTCOME_FIXTURE: "cleanup-stalled",
+          NEMOCLAW_E2E_PROGRESS_TIMEOUT_READY: timeoutReady,
           NEMOCLAW_RUN_LIVE_E2E: "1",
         },
-        context,
-        50,
+        {
+          onTestFinished: (handler) => context.onTestFinished(handler),
+          signal: AbortSignal.any([context.signal, deadline.signal]),
+        },
       );
-      context.expect(result.status).toBeNull();
-      context.expect(result.signal).toBe("SIGKILL");
-    } finally {
-      fs.rmSync(artifactDir, { recursive: true, force: true });
-    }
-  });
+      try {
+        await vi.waitFor(() => context.expect(fs.existsSync(timeoutReady)).toBe(true), {
+          interval: 10,
+          timeout: 10_000,
+        });
+        deadline.abort();
+        const result = await resultPromise;
+        context.expect(result.status).toBeNull();
+        context.expect(result.signal).toBe("SIGKILL");
+      } finally {
+        deadline.abort();
+        await resultPromise;
+        fs.rmSync(artifactDir, { recursive: true, force: true });
+      }
+    },
+  );
 
   it.for([
     [
