@@ -71,22 +71,6 @@ export interface CredentialWindowChildOptions {
   readonly maxRuntimeMs?: number;
 }
 
-// Emit only known codes, never error messages, response bodies, or credentials.
-const requestErrorReporter = `
-const reportRequestError = (error, step) => {
-  const transportCode = [
-    "EAI_AGAIN", "ENOTFOUND", "ECONNREFUSED", "ECONNRESET", "ETIMEDOUT",
-    "ENETUNREACH", "EHOSTUNREACH", "EPIPE", "EPROTO", "CERT_HAS_EXPIRED",
-    "DEPTH_ZERO_SELF_SIGNED_CERT", "SELF_SIGNED_CERT_IN_CHAIN",
-    "UNABLE_TO_VERIFY_LEAF_SIGNATURE", "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
-    "ERR_TLS_CERT_ALTNAME_INVALID", "ERR_PROXY_TUNNEL", "ERR_SOCKET_CONNECTION_TIMEOUT",
-  ].includes(error.code) ? error.code : "UNKNOWN";
-  const httpStatus = Number.isInteger(error.statusCode) && error.statusCode >= 100 && error.statusCode <= 599
-    ? error.statusCode : undefined;
-  process.stderr.write(JSON.stringify({ step, transportCode, httpStatus }) + "\\n");
-};
-`;
-
 /**
  * Build the process held open across provider mutations. It snapshots the
  * revisioned child environment exactly once, accepts only six bounded request
@@ -109,7 +93,6 @@ export function buildCredentialWindowChildScript(options: CredentialWindowChildO
   return `
 const fs = require("node:fs");
 const https = require("node:https");
-${requestErrorReporter}
 const config = ${config};
 const credentialPlaceholder = process.env[config.envName] || "";
 const revisionPattern = new RegExp(
@@ -151,19 +134,10 @@ const request = (step) => new Promise((resolve) => {
     },
   }, (response) => {
     response.resume();
-    response.on("end", () => {
-      process.stderr.write(JSON.stringify({ step, httpStatus: response.statusCode }) + "\\n");
-      resolve(response.statusCode === 200 ? "allowed" : "denied");
-    });
+    response.on("end", () => resolve(response.statusCode === 200 ? "allowed" : "denied"));
   });
-  outbound.on("error", (error) => {
-    reportRequestError(error, step);
-    resolve("denied");
-  });
-  outbound.setTimeout(30_000, () => {
-    process.stderr.write(JSON.stringify({ step, timedOut: true }) + "\\n");
-    outbound.destroy();
-  });
+  outbound.on("error", () => resolve("denied"));
+  outbound.setTimeout(30_000, () => outbound.destroy());
   outbound.end(body);
 });
 
@@ -200,7 +174,6 @@ export function buildCredentialWindowOneShotScript(): string {
   });
   return `
 const https = require("node:https");
-${requestErrorReporter}
 const config = ${config};
 const credentialPlaceholder = process.env[config.envName] || "";
 const revisionPattern = new RegExp(
@@ -228,13 +201,10 @@ const request = https.request({
   });
 });
 request.on("error", (error) => {
-  reportRequestError(error);
+  process.stderr.write(error.name + "\\n");
   process.exitCode = 1;
 });
-request.setTimeout(30_000, () => {
-  process.stderr.write(JSON.stringify({ timedOut: true }) + "\\n");
-  request.destroy();
-});
+request.setTimeout(30_000, () => request.destroy());
 request.end(body);
 `.trim();
 }
