@@ -169,6 +169,52 @@ int raw_pipe_writer(int argc,wchar_t** argv){
   require(CloseHandle(writer)!=0,"raw-writer-close");return passed?0:1;
 }
 
+// A native child silently leaves only libuv's inner cleanup job. The unchanged
+// strict proof must then identify the enclosing MXC job, including its caller.
+void require_original_probe_in_job(DWORD parentPid){
+  std::vector<unsigned char> storage(sizeof(JOBOBJECT_BASIC_PROCESS_ID_LIST)+256*sizeof(ULONG_PTR));auto members=reinterpret_cast<JOBOBJECT_BASIC_PROCESS_ID_LIST*>(storage.data());
+  require(QueryInformationJobObject(nullptr,JobObjectBasicProcessIdList,members,static_cast<DWORD>(storage.size()),nullptr)!=0&&members->NumberOfProcessIdsInList<=256,"job-parent-members-query");
+  bool included=false;for(DWORD i=0;i<members->NumberOfProcessIdsInList;++i)included|=members->ProcessIdList[i]==parentPid;
+  require(included,"original-probe-not-in-mxc-job");
+}
+int job_proof_native_child(int argc,wchar_t** argv){
+  require(argc==8&&lowerHex(argv[2],24),"job-proof-child-arguments");
+  DWORD worker=static_cast<DWORD>(std::stoul(argv[3])),executor=static_cast<DWORD>(std::stoul(argv[4])),parent=static_cast<DWORD>(std::stoul(argv[5]));
+  require(worker&&executor&&parent&&worker!=executor&&worker!=parent&&executor!=parent&&parent!=GetCurrentProcessId(),"job-proof-child-identities");
+  Api api;Identity id=identity(api);require(id.sid==argv[6]&&id.session==std::stoul(argv[7]),"job-proof-child-container");
+  jobProof(worker,executor);require_original_probe_in_job(parent);
+  line("{\"kind\":\"job-proof-native-child\",\"nonce\":"+quote(utf8(argv[2]))+",\"parentPid\":"+std::to_string(parent)+",\"expectedWorkerPid\":"+std::to_string(worker)+",\"expectedExecutorPid\":"+std::to_string(executor)+","+identityFields(id)+",\"originalProbeInJob\":true,\"sameAppContainer\":true,\"strictProofPassed\":true}");return 0;
+}
+void job_proof_through_native_child(DWORD worker,DWORD executor,const Identity& id,const std::wstring& nonce){
+  raw_pipe_job_observation("qualification-parent-inner-job",nonce);
+  std::array<Handle,3> streams;const std::array<DWORD,3> kinds={STD_INPUT_HANDLE,STD_OUTPUT_HANDLE,STD_ERROR_HANDLE};
+  for(size_t i=0;i<streams.size();++i)require(DuplicateHandle(GetCurrentProcess(),GetStdHandle(kinds[i]),GetCurrentProcess(),&streams[i].value,0,TRUE,DUPLICATE_SAME_ACCESS)!=0,"job-child-standard-stream");
+  std::array<HANDLE,3> inherited={streams[0].value,streams[1].value,streams[2].value};
+  SIZE_T needed=0;InitializeProcThreadAttributeList(nullptr,1,0,&needed);require(needed&&needed<8192,"job-child-attribute-size");std::vector<BYTE> storage(needed);
+  auto attributes=reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(storage.data());require(InitializeProcThreadAttributeList(attributes,1,0,&needed)!=0,"job-child-attribute-init");
+  bool attributesLive=true;Handle child,thread;bool childClosed=false,forced=false;DWORD childPid=0,exitCode=STILL_ACTIVE;
+  auto closeChild=[&](){if(child.value&&!childClosed){if(WaitForSingleObject(child.value,0)!=WAIT_OBJECT_0){forced=true;if(!TerminateProcess(child.value,124)||WaitForSingleObject(child.value,2000)!=WAIT_OBJECT_0)raw_pipe_fatal();}childClosed=true;}};
+  try{
+    require(UpdateProcThreadAttribute(attributes,0,PROC_THREAD_ATTRIBUTE_HANDLE_LIST,inherited.data(),sizeof(inherited),nullptr,nullptr)!=0,"job-child-handle-list");
+    std::array<wchar_t,MAX_PATH> image{};DWORD length=GetModuleFileNameW(nullptr,image.data(),static_cast<DWORD>(image.size()));require(length&&length<image.size(),"job-child-image");
+    std::wstring command=L"\""+std::wstring(image.data())+L"\" job-proof-native-child "+nonce+L" "+std::to_wstring(worker)+L" "+std::to_wstring(executor)+L" "+std::to_wstring(GetCurrentProcessId())+L" "+id.sid+L" "+std::to_wstring(id.session);
+    STARTUPINFOEXW startup{};startup.StartupInfo.cb=sizeof(startup);startup.StartupInfo.dwFlags=STARTF_USESTDHANDLES;startup.StartupInfo.hStdInput=streams[0].value;startup.StartupInfo.hStdOutput=streams[1].value;startup.StartupInfo.hStdError=streams[2].value;startup.lpAttributeList=attributes;PROCESS_INFORMATION process{};
+    // No CREATE_BREAKAWAY_FROM_JOB, detached process, or inherited job handle.
+    BOOL created=CreateProcessW(image.data(),command.data(),nullptr,nullptr,TRUE,EXTENDED_STARTUPINFO_PRESENT|CREATE_NO_WINDOW,nullptr,nullptr,&startup.StartupInfo,&process);DWORD error=created?0:GetLastError();
+    if(created){child.value=process.hProcess;thread.value=process.hThread;childPid=process.dwProcessId;}
+    DeleteProcThreadAttributeList(attributes);attributesLive=false;
+    line("{\"kind\":\"job-proof-child-created\",\"nonce\":"+quote(utf8(nonce))+",\"parentPid\":"+std::to_string(GetCurrentProcessId())+",\"childPid\":"+std::to_string(childPid)+",\"created\":"+(created?"true":"false")+",\"error\":"+std::to_string(error)+",\"ordinaryCreation\":true,\"standardStreamsOnly\":true}");
+    require(created!=FALSE,"job-proof-child-create");
+    DWORD waited=WaitForSingleObject(child.value,7000);if(waited!=WAIT_OBJECT_0)closeChild();else childClosed=true;
+    require(GetExitCodeProcess(child.value,&exitCode)!=0,"job-proof-child-exit-code");
+    require(CloseHandle(thread.value)!=0,"job-proof-child-thread-close");thread.value=nullptr;
+    require(CloseHandle(child.value)!=0,"job-proof-child-process-close");child.value=nullptr;
+    for(auto& stream:streams){require(CloseHandle(stream.value)!=0,"job-proof-child-stream-close");stream.value=nullptr;}
+    line("{\"kind\":\"job-proof-child-closed\",\"nonce\":"+quote(utf8(nonce))+",\"parentPid\":"+std::to_string(GetCurrentProcessId())+",\"childPid\":"+std::to_string(childPid)+",\"exitCode\":"+std::to_string(exitCode)+",\"childClosed\":true,\"handlesClosed\":true,\"forced\":"+(forced?"true":"false")+"}");
+    require(!forced&&exitCode==0,"job-proof-child-strict-proof-failed");
+  }catch(...){if(attributesLive)DeleteProcThreadAttributeList(attributes);closeChild();throw;}
+}
+
 // Raw pipe fixture: no compatibility exports or hooks. Every handle belongs to
 // this probe. Exact synchronous behavior is checked first; the independent
 // isolation fixture then uses overlapped I/O for bounded observation/cleanup.
@@ -436,6 +482,7 @@ int wmain(int argc,wchar_t** argv){
   try{
     if(argc==2&&std::wstring(argv[1])==L"breakaway-child")return 0;
     if(argc>1&&std::wstring(argv[1])==L"rawpipe-writer")return raw_pipe_writer(argc,argv);
+    if(argc>1&&std::wstring(argv[1])==L"job-proof-native-child")return job_proof_native_child(argc,argv);
     require(argc==6,"arguments");std::wstring mode=argv[1],key=argv[2],nonce=argv[3];require(lowerHex(key,16)&&lowerHex(nonce,24),"fixed-identity");
     DWORD workerPid=static_cast<DWORD>(std::stoul(argv[4])),executorPid=static_cast<DWORD>(std::stoul(argv[5]));require(workerPid&&executorPid&&workerPid!=executorPid,"process-identities");
     Api api;Identity id=identity(api);std::wstring gd=absolute(id.root,globalLeaf(key)),sd=id.session?absolute(id.root,sessionLeaf(id.session,key)):gd;
@@ -451,7 +498,7 @@ int wmain(int argc,wchar_t** argv){
       }
       line("{\"kind\":\"rawpipe-summary\",\"nonce\":"+quote(utf8(nonce))+",\"diagnosticOnly\":true,\"rawProbeUnshimmed\":true,\"runtimeGrantsChanged\":false,\"casesCompleted\":2,\"casesPassed\":"+std::to_string(succeeded)+"}");return 0;
     }
-    jobProof(workerPid,executorPid);
+    job_proof_through_native_child(workerPid,executorPid,id,nonce);
     if(mode==L"identity"){line("{\"kind\":\"identity\","+identityFields(id)+"}");return 0;}
     if(mode==L"absent"){
       Handle g,s;NTSTATUS gs=openDir(api,gd,g),ss=openDir(api,sd,s);
