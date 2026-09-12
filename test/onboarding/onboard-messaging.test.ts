@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import { createRequire } from "node:module";
 import os from "node:os";
@@ -18,7 +17,7 @@ import {
   parseMessagingFixturePayload,
   writeCustomMessagingDockerfile,
 } from "../helpers/messaging-plan-fixtures";
-import { runBoundedOnboardScript } from "../helpers/onboard-child-process-harness";
+import { runBoundedOnboardScriptAsync } from "../helpers/onboard-child-process-harness";
 import { writeOkOpenshell } from "../helpers/onboard-openshell-fixture";
 
 type CommandEntry = {
@@ -43,13 +42,13 @@ beforeEach(() => {
   vi.stubEnv("NEMOCLAW_TEST_FORWARD_SERVICE_FIXTURE", "1");
   vi.stubEnv("NEMOCLAW_SANDBOX_PREBUILD", "1");
 });
-describe("onboard messaging", () => {
+describe.concurrent("onboard messaging", () => {
   it(
     "creates providers for messaging tokens and attaches them to the sandbox",
     {
       timeout: 60_000,
     },
-    async () => {
+    async (context) => {
       const tmpDir = fs.mkdtempSync(
         path.join(os.tmpdir(), "nemoclaw-onboard-messaging-providers-"),
       );
@@ -156,8 +155,8 @@ const { createSandbox, setupMessagingChannels } = require(${onboardPath});
 });
 `;
       fs.writeFileSync(scriptPath, script);
-      const result = runBoundedOnboardScript(scriptPath, {
-        cwd: repoRoot,
+      const result = await runBoundedOnboardScriptAsync(scriptPath, {
+        context,
         env: {
           ...process.env,
           HOME: tmpDir,
@@ -298,7 +297,7 @@ const { createSandbox, setupMessagingChannels } = require(${onboardPath});
     {
       timeout: 60_000,
     },
-    async () => {
+    async (context) => {
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-hermes-slack-"));
       try {
         const fakeBin = path.join(tmpDir, "bin");
@@ -441,9 +440,8 @@ const { createSandbox } = require(${onboardPath});
 `;
         fs.writeFileSync(scriptPath, script);
 
-        const result = spawnSync(process.execPath, [scriptPath], {
-          cwd: repoRoot,
-          encoding: "utf-8",
+        const result = await runBoundedOnboardScriptAsync(scriptPath, {
+          context,
           env: {
             ...process.env,
             HOME: tmpDir,
@@ -488,7 +486,7 @@ const { createSandbox } = require(${onboardPath});
   it(
     "publishes attached OpenShell provider state before a messaging recreate starts (#9770)",
     { timeout: 60_000 },
-    async () => {
+    async (context) => {
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-messaging-recreate-"));
       const fakeBin = path.join(tmpDir, "bin");
       const scriptPath = path.join(tmpDir, "messaging-reuse-provider.js");
@@ -568,9 +566,8 @@ const { createSandbox } = require(${onboardPath});
 `;
       fs.writeFileSync(scriptPath, script);
       const runScenario = (failedProvider?: string) =>
-        spawnSync(process.execPath, [scriptPath], {
-          cwd: repoRoot,
-          encoding: "utf-8",
+        runBoundedOnboardScriptAsync(scriptPath, {
+          context,
           env: {
             ...process.env,
             HOME: tmpDir,
@@ -586,7 +583,7 @@ const { createSandbox } = require(${onboardPath});
             ),
           },
         });
-      const result = runScenario();
+      const result = await runScenario();
       assert.equal(result.status, 0, result.stderr);
       const payload = parseStdoutJson(result.stdout);
       const commands = payload.commands as CommandEntry[];
@@ -601,7 +598,7 @@ const { createSandbox } = require(${onboardPath});
       const refreshedProviders = providerRefreshes
         .map(({ entry }: { entry: CommandEntry }) => providerName(entry.command))
         .sort();
-      const denied = runScenario("my-assistant-telegram-bridge");
+      const denied = await runScenario("my-assistant-telegram-bridge");
       assert.equal(denied.status, 1);
       const deniedPayload = parseStdoutJson(denied.stdout);
       const deniedCommands = (deniedPayload.commands as CommandEntry[]).map(
@@ -664,7 +661,7 @@ const { createSandbox } = require(${onboardPath});
     {
       timeout: 60_000,
     },
-    async () => {
+    async (context) => {
       const tmpDir = fs.mkdtempSync(
         path.join(os.tmpdir(), "nemoclaw-onboard-disabled-channels-preserve-"),
       );
@@ -780,8 +777,8 @@ const { createSandbox } = require(${onboardPath});
 });
 `;
       fs.writeFileSync(scriptPath, script);
-      const result = runBoundedOnboardScript(scriptPath, {
-        cwd: repoRoot,
+      const result = await runBoundedOnboardScriptAsync(scriptPath, {
+        context,
         env: {
           ...process.env,
           HOME: tmpDir,
@@ -831,7 +828,7 @@ const { createSandbox } = require(${onboardPath});
     {
       timeout: 60_000,
     },
-    async () => {
+    async (context) => {
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-tokenless-whatsapp-"));
       try {
         const customDockerfileArg = JSON.stringify(writeCustomMessagingDockerfile(tmpDir));
@@ -944,9 +941,8 @@ const { createSandbox } = require(${onboardPath});
 `;
         fs.writeFileSync(scriptPath, script);
 
-        const result = spawnSync(process.execPath, [scriptPath], {
-          cwd: repoRoot,
-          encoding: "utf-8",
+        const result = await runBoundedOnboardScriptAsync(scriptPath, {
+          context,
           env: {
             ...process.env,
             HOME: tmpDir,
@@ -997,7 +993,7 @@ const { createSandbox } = require(${onboardPath});
     {
       timeout: 60_000,
     },
-    async () => {
+    async (context) => {
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-disabled-whatsapp-"));
       try {
         const customDockerfileArg = JSON.stringify(writeCustomMessagingDockerfile(tmpDir));
@@ -1116,9 +1112,8 @@ const { createSandbox } = require(${onboardPath});
 `;
         fs.writeFileSync(scriptPath, script);
 
-        const result = spawnSync(process.execPath, [scriptPath], {
-          cwd: repoRoot,
-          encoding: "utf-8",
+        const result = await runBoundedOnboardScriptAsync(scriptPath, {
+          context,
           env: {
             ...process.env,
             HOME: tmpDir,
@@ -1159,26 +1154,31 @@ const { createSandbox } = require(${onboardPath});
     },
   );
 
-  it("aborts onboard when a messaging provider upsert fails", { timeout: 60_000 }, async () => {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-provider-fail-"));
-    const fakeBin = path.join(tmpDir, "bin");
-    const scriptPath = path.join(tmpDir, "provider-upsert-fail.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
-    const preflightPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "onboard", "preflight.ts"),
-    );
-    const credentialsPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
-    );
+  it(
+    "aborts onboard when a messaging provider upsert fails",
+    { timeout: 60_000 },
+    async (context) => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-provider-fail-"));
+      const fakeBin = path.join(tmpDir, "bin");
+      const scriptPath = path.join(tmpDir, "provider-upsert-fail.js");
+      const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
+      const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
+      const registryPath = JSON.stringify(
+        path.join(repoRoot, "src", "lib", "state", "registry.ts"),
+      );
+      const preflightPath = JSON.stringify(
+        path.join(repoRoot, "src", "lib", "onboard", "preflight.ts"),
+      );
+      const credentialsPath = JSON.stringify(
+        path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
+      );
 
-    fs.mkdirSync(fakeBin, { recursive: true });
-    fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
-      mode: 0o755,
-    });
+      fs.mkdirSync(fakeBin, { recursive: true });
+      fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
+        mode: 0o755,
+      });
 
-    const script = String.raw`
+      const script = String.raw`
 const runner = require(${runnerPath});
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 const registry = require(${registryPath});
@@ -1218,32 +1218,32 @@ const { createSandbox } = require(${onboardPath});
   process.exit(1);
 });
 `;
-    fs.writeFileSync(scriptPath, script);
+      fs.writeFileSync(scriptPath, script);
 
-    const result = spawnSync(process.execPath, [scriptPath], {
-      cwd: repoRoot,
-      encoding: "utf-8",
-      env: {
-        ...process.env,
-        HOME: tmpDir,
-        PATH: `${fakeBin}:${process.env.PATH || ""}`,
-        NEMOCLAW_NON_INTERACTIVE: "1",
-      },
-    });
+      const result = await runBoundedOnboardScriptAsync(scriptPath, {
+        context,
+        env: {
+          ...process.env,
+          HOME: tmpDir,
+          PATH: `${fakeBin}:${process.env.PATH || ""}`,
+          NEMOCLAW_NON_INTERACTIVE: "1",
+        },
+      });
 
-    assert.notEqual(result.status, 0, "expected non-zero exit when provider upsert fails");
-    assert.ok(
-      !result.stdout.includes("ERROR_DID_NOT_EXIT"),
-      "onboard should have aborted before reaching sandbox create",
-    );
-  });
+      assert.notEqual(result.status, 0, "expected non-zero exit when provider upsert fails");
+      assert.ok(
+        !result.stdout.includes("ERROR_DID_NOT_EXIT"),
+        "onboard should have aborted before reaching sandbox create",
+      );
+    },
+  );
 
   it.sequential(
     "reuses sandbox without refreshing unselected ambient messaging providers (#10277)",
     {
       timeout: 60_000,
     },
-    async () => {
+    async (context) => {
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-reuse-providers-"));
       const fakeBin = path.join(tmpDir, "bin");
       const scriptPath = path.join(tmpDir, "reuse-with-providers.js");
@@ -1302,9 +1302,8 @@ const { createSandbox } = require(${onboardPath});
 `;
       fs.writeFileSync(scriptPath, script);
 
-      const result = spawnSync(process.execPath, [scriptPath], {
-        cwd: repoRoot,
-        encoding: "utf-8",
+      const result = await runBoundedOnboardScriptAsync(scriptPath, {
+        context,
         env: {
           ...process.env,
           HOME: tmpDir,
@@ -1343,7 +1342,7 @@ const { createSandbox } = require(${onboardPath});
     {
       timeout: 60_000,
     },
-    async () => {
+    async (context) => {
       const tmpDir = fs.mkdtempSync(
         path.join(os.tmpdir(), "nemoclaw-onboard-enabled-channels-filter-"),
       );
@@ -1434,9 +1433,8 @@ const { createSandbox } = require(${onboardPath});
 `;
       fs.writeFileSync(scriptPath, script);
 
-      const result = spawnSync(process.execPath, [scriptPath], {
-        cwd: repoRoot,
-        encoding: "utf-8",
+      const result = await runBoundedOnboardScriptAsync(scriptPath, {
+        context,
         env: {
           ...process.env,
           HOME: tmpDir,
@@ -1484,7 +1482,7 @@ const { createSandbox } = require(${onboardPath});
     {
       timeout: 60_000,
     },
-    async () => {
+    async (context) => {
       const tmpDir = fs.mkdtempSync(
         path.join(os.tmpdir(), "nemoclaw-onboard-enabled-channels-empty-"),
       );
@@ -1594,9 +1592,8 @@ const { createSandbox } = require(${onboardPath});
 `;
       fs.writeFileSync(scriptPath, script);
 
-      const result = spawnSync(process.execPath, [scriptPath], {
-        cwd: repoRoot,
-        encoding: "utf-8",
+      const result = await runBoundedOnboardScriptAsync(scriptPath, {
+        context,
         env: {
           ...process.env,
           HOME: tmpDir,
@@ -1634,7 +1631,7 @@ const { createSandbox } = require(${onboardPath});
     {
       timeout: 60_000,
     },
-    async () => {
+    async (context) => {
       const tmpDir = fs.mkdtempSync(
         path.join(os.tmpdir(), "nemoclaw-onboard-messaging-noninteractive-"),
       );
@@ -1681,9 +1678,8 @@ const { setupMessagingChannels } = require(${onboardPath});
 `;
       fs.writeFileSync(scriptPath, script);
 
-      const result = spawnSync(process.execPath, [scriptPath], {
-        cwd: repoRoot,
-        encoding: "utf-8",
+      const result = await runBoundedOnboardScriptAsync(scriptPath, {
+        context,
         env: {
           ...process.env,
           HOME: tmpDir,
@@ -1707,7 +1703,7 @@ const { setupMessagingChannels } = require(${onboardPath});
     {
       timeout: 60_000,
     },
-    async () => {
+    async (context) => {
       const tmpDir = fs.mkdtempSync(
         path.join(os.tmpdir(), "nemoclaw-onboard-messaging-slack-live-reject-"),
       );
@@ -1769,9 +1765,8 @@ const { setupMessagingChannels } = require(${onboardPath});
 `;
       fs.writeFileSync(scriptPath, script);
 
-      const result = spawnSync(process.execPath, [scriptPath], {
-        cwd: repoRoot,
-        encoding: "utf-8",
+      const result = await runBoundedOnboardScriptAsync(scriptPath, {
+        context,
         env: {
           ...process.env,
           HOME: tmpDir,
@@ -1795,7 +1790,7 @@ const { setupMessagingChannels } = require(${onboardPath});
     {
       timeout: 60_000,
     },
-    async () => {
+    async (context) => {
       const tmpDir = fs.mkdtempSync(
         path.join(os.tmpdir(), "nemoclaw-onboard-messaging-no-tokens-"),
       );
@@ -1832,9 +1827,8 @@ const { setupMessagingChannels } = require(${onboardPath});
 `;
       fs.writeFileSync(scriptPath, script);
 
-      const result = spawnSync(process.execPath, [scriptPath], {
-        cwd: repoRoot,
-        encoding: "utf-8",
+      const result = await runBoundedOnboardScriptAsync(scriptPath, {
+        context,
         env: {
           ...process.env,
           HOME: tmpDir,
@@ -1860,7 +1854,7 @@ const { setupMessagingChannels } = require(${onboardPath});
     {
       timeout: 60_000,
     },
-    async () => {
+    async (context) => {
       const tmpDir = fs.mkdtempSync(
         path.join(os.tmpdir(), "nemoclaw-onboard-slack-format-reject-"),
       );
@@ -1922,9 +1916,8 @@ const { setupMessagingChannels, MESSAGING_CHANNELS } = require(${onboardPath});
       // Dry run with just Enter — no toggles, empty result — used to read back
       // Slack's 1-based index from the same subscript so the real run can
       // press the right digit.
-      const introspect = spawnSync(process.execPath, [scriptPath], {
-        cwd: repoRoot,
-        encoding: "utf-8",
+      const introspect = await runBoundedOnboardScriptAsync(scriptPath, {
+        context,
         env: {
           ...process.env,
           HOME: tmpDir,
@@ -1940,9 +1933,8 @@ const { setupMessagingChannels, MESSAGING_CHANNELS } = require(${onboardPath});
       // Real run: press Slack's digit, Enter. Slack gets toggled on, prompt
       // fires, mocked prompt returns "abcd", tokenFormat regex rejects it,
       // channel is dropped, saveCredential never runs for SLACK_BOT_TOKEN.
-      const result = spawnSync(process.execPath, [scriptPath], {
-        cwd: repoRoot,
-        encoding: "utf-8",
+      const result = await runBoundedOnboardScriptAsync(scriptPath, {
+        context,
         env: {
           ...process.env,
           HOME: tmpDir,

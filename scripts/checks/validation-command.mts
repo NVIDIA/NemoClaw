@@ -5,6 +5,16 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
+export function withValidationNodeHeap(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const nodeOptions = (env.NODE_OPTIONS ?? "")
+    .replace(/(?:^|\s)--max[-_]old[-_]space[-_]size(?:=\S+|\s+\S+)/g, " ")
+    .trim();
+  return {
+    ...env,
+    NODE_OPTIONS: [nodeOptions, "--max-old-space-size=8192"].filter(Boolean).join(" "),
+  };
+}
+
 export function windowsNpmCli(
   root: string,
   executable: string,
