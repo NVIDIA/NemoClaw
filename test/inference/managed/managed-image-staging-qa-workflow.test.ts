@@ -41,6 +41,10 @@ describe("managed-image staging QA workflow", () => {
     const drift = step(qaBuilder, "Reproduce staging discovery permission drift");
     const baseBuild = step(qaBuilder, "Rebuild staging QA Deep Agents Code base from exact source");
     const finalBuild = step(qaBuilder, "Build latest PR commit against reproduced staging QA base");
+    const darwinBuild = step(
+      qaBuilder,
+      "Build Darwin compatibility image against reproduced staging QA base",
+    );
     const contract = step(qaBuilder, "Validate staging QA final image contract");
 
     expect(qaBuilder.if).toBe("github.event_name == 'pull_request'");
@@ -51,6 +55,7 @@ describe("managed-image staging QA workflow", () => {
       CANDIDATE_SHA: "${{ github.event.pull_request.head.sha }}",
       STAGING_QA_SOURCE_SHA: "ce96811ddb418ad01c040521a1fe912b5bcb405e",
       STAGING_QA_BASE_IMAGE: "nemoclaw-deepagents-code-base:staging-31396519688",
+      STAGING_QA_DARWIN_IMAGE: "nemoclaw-managed-pr/langchain-deepagents-code-staging-qa-darwin",
     });
     expect(qaBuilder.env).not.toHaveProperty("STAGING_PRODUCER_SHA");
     expect(qaBuilder.env).not.toHaveProperty("STAGING_QA_RECORDED_INDEX_DIGEST");
@@ -76,7 +81,8 @@ describe("managed-image staging QA workflow", () => {
     expect(steps.indexOf(overlay)).toBeLessThan(steps.indexOf(drift));
     expect(steps.indexOf(drift)).toBeLessThan(steps.indexOf(baseBuild));
     expect(steps.indexOf(baseBuild)).toBeLessThan(steps.indexOf(finalBuild));
-    expect(steps.indexOf(finalBuild)).toBeLessThan(steps.indexOf(contract));
+    expect(steps.indexOf(finalBuild)).toBeLessThan(steps.indexOf(darwinBuild));
+    expect(steps.indexOf(darwinBuild)).toBeLessThan(steps.indexOf(contract));
 
     const overlaySource = required(overlay.run, "staging QA dependency overlay is missing");
     expect(overlaySource).toContain("agents/langchain-deepagents-code/Dockerfile.base");
@@ -120,11 +126,29 @@ describe("managed-image staging QA workflow", () => {
     expect(finalSource).toContain("--build-arg NEMOCLAW_DARWIN_VM_COMPAT=0");
     expect(finalSource).toMatch(/-t "\$final_reference"\s+\\\n\s+\./u);
 
+    const darwinSource = required(darwinBuild.run, "Darwin compatibility image build is missing");
+    expect(darwinBuild["working-directory"]).toBe("candidate");
+    expect(darwinBuild.env?.DOCKER_BUILDKIT).toBe("1");
+    expect(darwinSource).toContain("-f agents/langchain-deepagents-code/Dockerfile");
+    expect(darwinSource).toContain('--build-arg BASE_IMAGE="$STAGING_QA_BASE_IMAGE"');
+    expect(darwinSource).toContain("--build-arg NEMOCLAW_DARWIN_VM_COMPAT=1");
+    expect(darwinSource).toContain("${STAGING_QA_DARWIN_IMAGE}:${CANDIDATE_SHA}");
+
     const contractSource = required(contract.run, "staging QA final contract is missing");
     expect(contractSource).toMatch(
       /if ! jq -n -e \\\n\s+--argjson base "\$base_layers" \\\n\s+--argjson final "\$final_layers"/u,
     );
     expect(contractSource).toContain("$final[.] == $base[.]");
+    expect(contract.env).toMatchObject({
+      DARWIN_FINAL_ID: "${{ steps.staging-darwin-final.outputs.id }}",
+      FINAL_ID: "${{ steps.staging-final.outputs.id }}",
+    });
+    expect(contractSource).toMatch(
+      /verify-dcode-conversation-history-image\.sh \\\n\s+"\$FINAL_ID" linux\/amd64 0/u,
+    );
+    expect(contractSource).toMatch(
+      /verify-dcode-conversation-history-image\.sh \\\n\s+"\$DARWIN_FINAL_ID" linux\/amd64 1/u,
+    );
     expect(contractSource).toContain('find -P "$discovery_runtime" ! -user root');
     expect(contractSource).toContain("\\( ! -user root -o -perm /022 \\) -print -quit");
     expect(contractSource).toContain("-type d ! -perm 0555");

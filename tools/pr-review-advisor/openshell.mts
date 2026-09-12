@@ -564,19 +564,44 @@ export function initializeAdvisorSandboxRuntime(): void {
   checkAdvisorSandboxRuntime();
 }
 
-export function runOpenShellAdvisorCommand(
+export async function runOpenShellAdvisorCommand(
   command: string | undefined,
   initialize: () => void = initializeAdvisorSandboxRuntime,
-): void {
+  waitForTermination: () => Promise<void> = waitForAdvisorSandboxTermination,
+): Promise<void> {
   const requiredCommand = required(command, "openshell command");
   if (requiredCommand !== "initialize") {
     throw new Error(`Unsupported OpenShell advisor command: ${requiredCommand}`);
   }
   initialize();
+  await waitForTermination();
+}
+
+type AdvisorSandboxSignals = {
+  once(event: "SIGINT" | "SIGTERM", listener: () => void): unknown;
+  removeListener(event: "SIGINT" | "SIGTERM", listener: () => void): unknown;
+};
+
+export function waitForAdvisorSandboxTermination(
+  signals: AdvisorSandboxSignals = process,
+): Promise<void> {
+  return new Promise((resolve) => {
+    // Signal listeners and an unresolved promise do not keep Node running when
+    // no active handles remain. Own one handle until OpenShell terminates PID 1.
+    const keepAlive = setInterval(() => undefined, 60_000);
+    const finish = () => {
+      clearInterval(keepAlive);
+      signals.removeListener("SIGTERM", finish);
+      signals.removeListener("SIGINT", finish);
+      resolve();
+    };
+    signals.once("SIGTERM", finish);
+    signals.once("SIGINT", finish);
+  });
 }
 
 async function main(): Promise<void> {
-  runOpenShellAdvisorCommand(process.argv[2]);
+  await runOpenShellAdvisorCommand(process.argv[2]);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

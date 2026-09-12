@@ -272,6 +272,21 @@ describe("connectSandbox flow", () => {
       timeoutMilliseconds: expect.any(Number),
       tty: false,
     });
+    expect(harness.sandboxRunBufferedSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        command: [
+          "/usr/local/lib/nemoclaw/dcode-managed-exec",
+          "/bin/sh",
+          "-c",
+          expect.stringContaining("/v1/chat/completions"),
+        ],
+        target: { kind: "named", gatewayName: "nemoclaw" },
+        timeoutMilliseconds: 95_000,
+      }),
+    );
+    expect(harness.sandboxRunBufferedSpy.mock.invocationCallOrder.at(-1)!).toBeLessThan(
+      harness.startSandboxSessionSpy.mock.invocationCallOrder[0]!,
+    );
   });
 
   it.each([401, 403, 404])(
@@ -929,6 +944,7 @@ describe("connectSandbox flow", () => {
       portableRecoveryResult: { kind: "recovered" },
     });
     awaitHermesRouteVerification(harness);
+    harness.forwardServiceOwnerSpy.mockReturnValue(true);
 
     await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
 
@@ -1111,8 +1127,10 @@ describe("connectSandbox flow", () => {
         : captureResolved(args, options);
     }) as never);
     harness.forwardReachabilitySpy.mockImplementation(() => forwardsRestored);
-    harness.launchForwardServiceSpy.mockImplementation(() => {
+    harness.launchForwardServiceSpy.mockImplementation((_target, options) => {
       forwardsRestored = true;
+      harness.forwardServiceOwnerSpy.mockReturnValue(true);
+      options?.verifyReady?.();
     });
 
     await expect(harness.connectSandbox("alpha")).rejects.toThrow("process.exit(0)");
@@ -1164,6 +1182,7 @@ describe("connectSandbox flow", () => {
       portableReceiptDisposition: { kind: "hermes", phase: "active" },
       portableRecoveryResult: { kind: "already-running" },
     });
+    harness.forwardServiceOwnerSpy.mockReturnValue(true);
     harness.recoverPortableDemoLifecycleSpy.mockImplementation(() =>
       harness.recoverPortableDemoLifecycleSpy.mock.calls.length >= 5
         ? { kind: "not-installed" }

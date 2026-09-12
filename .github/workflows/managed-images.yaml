@@ -143,6 +143,7 @@ jobs:
       STAGING_QA_SOURCE_SHA: ce96811ddb418ad01c040521a1fe912b5bcb405e
       STAGING_QA_BASE_IMAGE: nemoclaw-deepagents-code-base:staging-31396519688
       STAGING_QA_FINAL_IMAGE: nemoclaw-managed-pr/langchain-deepagents-code-staging-qa
+      STAGING_QA_DARWIN_IMAGE: nemoclaw-managed-pr/langchain-deepagents-code-staging-qa-darwin
     steps:
       - name: Checkout latest PR commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -300,10 +301,40 @@ jobs:
           fi
           printf 'id=%s\n' "$final_id" >> "$GITHUB_OUTPUT"
 
+      - name: Build Darwin compatibility image against reproduced staging QA base
+        id: staging-darwin-final
+        shell: bash
+        working-directory: candidate
+        env:
+          DOCKER_BUILDKIT: "1"
+        run: |
+          set -euo pipefail
+          final_reference="${STAGING_QA_DARWIN_IMAGE}:${CANDIDATE_SHA}"
+          docker build --progress=plain \
+            -f agents/langchain-deepagents-code/Dockerfile \
+            --build-arg BASE_IMAGE="$STAGING_QA_BASE_IMAGE" \
+            --build-arg NEMOCLAW_MODEL=nvidia/nemotron-3-ultra-550b-a55b \
+            --build-arg NEMOCLAW_INFERENCE_PROVIDER_ID=inference \
+            --build-arg NEMOCLAW_UPSTREAM_PROVIDER=nvidia-nim \
+            --build-arg NEMOCLAW_INFERENCE_BASE_URL=https://inference.local/v1 \
+            --build-arg NEMOCLAW_INFERENCE_API=openai-completions \
+            --build-arg NEMOCLAW_DCODE_AUTO_APPROVAL=thread-opt-in \
+            --build-arg NEMOCLAW_BUILD_ID="$STAGING_QA_SOURCE_SHA" \
+            --build-arg NEMOCLAW_DARWIN_VM_COMPAT=1 \
+            -t "$final_reference" \
+            .
+          final_id="$(docker image inspect --format "{{.Id}}" "$final_reference")"
+          if [[ ! "$final_id" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "ERROR: Darwin compatibility image did not resolve to an immutable local image ID." >&2
+            exit 1
+          fi
+          printf 'id=%s\n' "$final_id" >> "$GITHUB_OUTPUT"
+
       - name: Validate staging QA final image contract
         shell: bash
         env:
           BASE_ID: ${{ steps.staging-base.outputs.id }}
+          DARWIN_FINAL_ID: ${{ steps.staging-darwin-final.outputs.id }}
           FINAL_ID: ${{ steps.staging-final.outputs.id }}
         run: |
           set -euo pipefail
@@ -319,6 +350,10 @@ jobs:
             echo "ERROR: staging QA final image does not extend the rebuilt QA base." >&2
             exit 1
           fi
+          candidate/scripts/checks/verify-dcode-conversation-history-image.sh \
+            "$FINAL_ID" linux/amd64 0
+          candidate/scripts/checks/verify-dcode-conversation-history-image.sh \
+            "$DARWIN_FINAL_ID" linux/amd64 1
           if ! actual_discovery_contract="$(
             docker run --rm --platform linux/amd64 --entrypoint /bin/sh "$FINAL_ID" -c '
             set -eu
@@ -755,6 +790,9 @@ jobs:
              ' <<< "$image_json" >/dev/null; then
             echo "ERROR: Deep Agents Code managed image lost base resolution metadata." >&2
             exit 1
+          fi
+          if [ "$AGENT" = "langchain-deepagents-code" ]; then
+            scripts/checks/verify-dcode-conversation-history-image.sh "$image_id" "$PLATFORM" 0
           fi
 
           discovery_runtime="/usr/local/lib/nemoclaw/mcp-tool-discovery-runtime"
