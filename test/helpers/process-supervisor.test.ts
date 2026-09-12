@@ -7,7 +7,7 @@
  */
 
 import { spawn } from "node:child_process";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { superviseChild } from "./process-supervisor.ts";
 
@@ -65,6 +65,32 @@ describe("helpers/process-supervisor", () => {
     // killGraceMs + a small scheduling margin; if escalation never
     // ran this would take ~30 seconds.
     expect(elapsed).toBeLessThan(5_000);
+  });
+
+  it("still kills descendants after the process-group leader exits on SIGTERM", async () => {
+    let descendantPid: number | undefined;
+    const child = spawn(
+      "bash",
+      [
+        "-c",
+        `trap 'exit 0' TERM; bash -c 'trap "" TERM; while :; do sleep 1; done' >/dev/null 2>&1 & echo $!; wait`,
+      ],
+      { detached: true, stdio: ["ignore", "pipe", "pipe"] },
+    );
+    const result = await superviseChild(child, {
+      timeoutMs: 200,
+      killGraceMs: 200,
+      onStdout: (chunk) => {
+        const parsed = Number(chunk.trim());
+        if (Number.isSafeInteger(parsed)) descendantPid = parsed;
+      },
+    });
+
+    expect(result.timedOut).toBe(true);
+    expect(descendantPid).toBeTypeOf("number");
+    await vi.waitFor(() => {
+      expect(() => process.kill(descendantPid!, 0)).toThrow();
+    });
   });
 
   it("honors an AbortSignal without flagging the run as a timeout", async () => {

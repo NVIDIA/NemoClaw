@@ -60,8 +60,9 @@ type OutputCapture = {
 };
 
 function appendOutput(capture: OutputCapture, chunk: string): void {
-  const next = capture.truncated ? capture.text : capture.text + chunk;
-  const truncated = capture.truncated || Buffer.byteLength(next, "utf8") > COMMAND_OUTPUT_LIMIT;
+  if (capture.truncated) return;
+  const next = capture.text + chunk;
+  const truncated = Buffer.byteLength(next, "utf8") > COMMAND_OUTPUT_LIMIT;
   capture.text = truncated
     ? `${new StringDecoder("utf8").write(
         Buffer.from(next).subarray(
