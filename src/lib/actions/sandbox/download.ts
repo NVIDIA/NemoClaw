@@ -141,11 +141,14 @@ export async function downloadFromSandbox(
 async function downloadFromSandboxUnlocked(
   opts: SandboxDownloadOptions,
 ): Promise<SandboxDownloadResult> {
-  const sandboxPath = (opts.sandboxPath ?? "").trim();
+  let sandboxPath = (opts.sandboxPath ?? "").trim();
   if (!sandboxPath) {
     throw new Error(
       `No sandbox path provided; usage: ${CLI_NAME} ${opts.sandboxName} download <sandbox-path> [host-dest]`,
     );
+  }
+  if (sandboxPath.startsWith("-")) {
+    sandboxPath = "./" + sandboxPath;
   }
   const hostDest = resolveHostPathFromCwd((opts.hostDest ?? "").trim() || ".");
 
