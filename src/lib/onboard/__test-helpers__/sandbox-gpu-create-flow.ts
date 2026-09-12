@@ -222,24 +222,58 @@ export function createGpuFlowTestHarness(mocks: Record<string, ReturnType<typeof
     runtimeDir: "/run/user/1001",
     socketPath: "/run/user/1001/podman/podman.sock",
   };
-  const managedDockerConfigPreservationCases = [
+  const managedCreateSandboxEnv = {
+    PATH: "/usr/bin",
+    OPENSHELL_GATEWAY: "1",
+    WSL_DISTRO_NAME: "Ubuntu",
+  } as const;
+  const remoteDockerHost = "tcp://remote-builder.example:2376";
+  const managedDockerConfigPreservationCases: readonly {
+    readonly title: string;
+    readonly helperResponds: boolean;
+    /** Docker selection in the caller environment of the nemoclaw command. */
+    readonly callerSelection: { readonly DOCKER_HOST?: string; readonly DOCKER_CONTEXT?: string };
+    /** The allowlisted part of that selection that reaches the sandbox create env. */
+    readonly sandboxSelection: { readonly DOCKER_HOST?: string };
+    readonly contextStdout: string;
+    readonly contextShowCalls: number;
+    readonly clientConfigForwarded: boolean;
+  }[] = [
     {
       title: "the Desktop helper responds",
       helperResponds: true,
-      dockerHost: "unix:///var/run/docker.sock",
+      callerSelection: {},
+      sandboxSelection: {},
       contextStdout: "default\n",
+      contextShowCalls: 1,
+      clientConfigForwarded: true,
     },
     {
-      title: "the Docker context is not default",
+      title: "the persisted Docker context is not default",
       helperResponds: false,
-      dockerHost: undefined,
+      callerSelection: {},
+      sandboxSelection: {},
       contextStdout: "remote-builder\n",
+      contextShowCalls: 1,
+      clientConfigForwarded: true,
+    },
+    {
+      title: "the caller selects a non-default DOCKER_CONTEXT",
+      helperResponds: false,
+      callerSelection: { DOCKER_CONTEXT: "qa-explicit-host" },
+      sandboxSelection: {},
+      contextStdout: "default\n",
+      contextShowCalls: 0,
+      clientConfigForwarded: true,
     },
     {
       title: "an explicit remote Docker host is selected",
       helperResponds: false,
-      dockerHost: "tcp://remote-builder.example:2376",
+      callerSelection: { DOCKER_HOST: remoteDockerHost },
+      sandboxSelection: { DOCKER_HOST: remoteDockerHost },
       contextStdout: "default\n",
+      contextShowCalls: 0,
+      clientConfigForwarded: false,
     },
   ];
   const temporaryDirectories: string[] = [];
@@ -327,7 +361,7 @@ export function createGpuFlowTestHarness(mocks: Record<string, ReturnType<typeof
     return dockerConfig;
   }
 
-  function attachManagedBootstrap(input: SandboxGpuCreateFlowInput): void {
+  function attachManagedBootstrap(input: SandboxGpuCreateFlowInput) {
     input.sandboxGpuConfig = {
       mode: "0",
       hostGpuDetected: false,
@@ -338,6 +372,24 @@ export function createGpuFlowTestHarness(mocks: Record<string, ReturnType<typeof
     };
     input.gpuRoutePlan = "none";
     input.initialGpuRoute = "none";
+    const createLifecycle = vi.fn((options: ManagedBootstrapRuntimeCreateLifecycleInput) => ({
+      launchArgv: options.launchArgv,
+      patch: createGpuPatchFixture(),
+      recoverUnfinished: async () => null,
+      prepareNetwork: async () => undefined,
+      runCreate: async <T>(
+        start: (held: {
+          readonly heldWorkloadArgv: readonly string[];
+          readonly bootstrapIdentity: string;
+        }) => Promise<{ readonly value: T }>,
+      ): Promise<T> =>
+        (
+          await start({
+            heldWorkloadArgv: options.heldWorkloadArgv,
+            bootstrapIdentity: options.bootstrapIdentity,
+          })
+        ).value,
+    }));
     input.managedBootstrap = {
       bootstrapIdentity: "e".repeat(64),
       stateRoot: "/tmp/nemoclaw-managed-bootstrap",
@@ -345,27 +397,11 @@ export function createGpuFlowTestHarness(mocks: Record<string, ReturnType<typeof
         identity: { id: "mxc" },
         bootstrap: {
           createOnboardRouting: () => ({ nativeFallbackHasCleanBaseline: false }),
-          createLifecycle: (options: ManagedBootstrapRuntimeCreateLifecycleInput) => ({
-            launchArgv: options.launchArgv,
-            patch: createGpuPatchFixture(),
-            recoverUnfinished: async () => null,
-            prepareNetwork: async () => undefined,
-            runCreate: async <T>(
-              start: (held: {
-                readonly heldWorkloadArgv: readonly string[];
-                readonly bootstrapIdentity: string;
-              }) => Promise<{ readonly value: T }>,
-            ): Promise<T> =>
-              (
-                await start({
-                  heldWorkloadArgv: options.heldWorkloadArgv,
-                  bootstrapIdentity: options.bootstrapIdentity,
-                })
-              ).value,
-          }),
+          createLifecycle,
         },
       },
     } as unknown as NonNullable<SandboxGpuCreateFlowInput["managedBootstrap"]>;
+    return { createLifecycle };
   }
 
   function captureCreateEnv(): {
@@ -413,6 +449,7 @@ export function createGpuFlowTestHarness(mocks: Record<string, ReturnType<typeof
     NVIDIA_SMI_FAILED_PROOF: nvidiaSmiFailedProof,
     DEFAULT_RUNTIME_SNAPSHOT: defaultRuntimeSnapshot,
     PORTABLE_RUNTIME_AUTHORITY: portableRuntimeAuthority,
+    MANAGED_CREATE_SANDBOX_ENV: managedCreateSandboxEnv,
     managedDockerConfigPreservationCases,
     readySandboxGetResult,
     createSequencedOpenShellRunner,

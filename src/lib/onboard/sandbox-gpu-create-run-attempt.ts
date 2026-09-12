@@ -4,6 +4,7 @@
 import { randomBytes } from "node:crypto";
 
 import {
+  dockerClientSelectionEnv,
   mergeIsolatedDockerClientEnv,
   prepareDockerBuildEnvironment,
   warnIfDockerBuildEnvironmentCleanupFailed,
@@ -83,14 +84,15 @@ async function streamSandboxCreateWithPublicImageCredentialIsolation(
   isolate: boolean,
   sandboxName: string,
   sandboxEnv: NodeJS.ProcessEnv,
+  dockerClientEnv: NodeJS.ProcessEnv,
   run: (env: NodeJS.ProcessEnv) => Promise<StreamSandboxCreateResult>,
 ): Promise<StreamSandboxCreateResult> {
   if (!isolate) return run(sandboxEnv);
-  // Detect against the same environment the create command runs with. The
-  // sandbox env drops DOCKER_CONFIG and DOCKER_CONTEXT, so process.env can
-  // report a credential store or a context the create never uses.
+  // The create env itself cannot serve as the detection source: it carries
+  // no DOCKER_CONTEXT and no DOCKER_CONFIG, so it reports the default context
+  // and the ambient credential store even when the caller selected others.
   const prepared = prepareDockerBuildEnvironment({
-    env: sandboxEnv,
+    env: dockerClientEnv,
     allowCredentialIsolation: true,
   });
   try {
@@ -579,6 +581,10 @@ export function createSandboxGpuCreateAttemptRunner(
     }
     const hasRequiredUlimits = (input.requiredUlimits?.length ?? 0) > 0;
     const managedBootstrap = input.managedBootstrap ?? null;
+    const dockerClientEnv = dockerClientSelectionEnv(
+      input.sandboxEnv,
+      input.hostEnv ?? process.env,
+    );
     const unboundAttemptArgv = state.compatibilityArgv ?? input.createArgv;
     if (input.requirePolicylessCreate) assertPolicylessSandboxCreateArgv(unboundAttemptArgv);
     const createAttemptNonce = resolveCreateAttemptNonce(input, deferPostCreateEffects);
@@ -678,7 +684,7 @@ export function createSandboxGpuCreateAttemptRunner(
           sandboxGpuConfig: input.sandboxGpuConfig,
           requiredLimits: input.requiredUlimits ?? [],
           timeoutSecs: input.sandboxReadyTimeoutSecs,
-          dockerClientEnv: input.sandboxEnv,
+          dockerClientEnv,
           network: {
             inferenceProvider: input.provider,
             gatewayUsesContainerBridge: input.dockerDriverGateway,
@@ -770,6 +776,7 @@ export function createSandboxGpuCreateAttemptRunner(
         managedBootstrap != null,
         input.sandboxName,
         input.sandboxEnv,
+        dockerClientEnv,
         (createEnv) =>
           streamSandboxCreate(createExecutable, createExecutableArgs, createEnv, {
             ...(input.createWorkingDirectory ? { cwd: input.createWorkingDirectory } : {}),

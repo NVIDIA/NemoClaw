@@ -195,8 +195,8 @@ Onboarding preflight prints this warning before the first image pull and then co
 
 On WSL, NemoClaw automatically uses a temporary credential-free Docker configuration for public managed image pulls, generated image builds, GPU probes, and local-inference probe images when all of these conditions apply:
 
-- The current Docker context is `default` and `DOCKER_HOST` is unset.
-- The client configuration selects the Docker Desktop credential helper.
+- `DOCKER_HOST` is unset and the Docker context is `default`. NemoClaw reads `DOCKER_HOST`, `DOCKER_CONTEXT`, and `DOCKER_CONFIG` from the environment of the `$$nemoclaw` command. When `DOCKER_CONTEXT` is unset, it runs `docker context show`.
+- The client configuration named above selects the Docker Desktop credential helper.
 - The read-only helper probe fails.
 - The operation does not require registry credentials.
 
@@ -204,7 +204,14 @@ NemoClaw does not modify your Docker client configuration.
 It removes the temporary directory after the Docker operation.
 If cleanup fails, the warning prints the exact credential-free directory; wait for Docker to finish using it, then remove that directory.
 
-An explicit Docker host, a non-default context, a responsive helper, a custom Dockerfile, and an operation that might require private-registry credentials continue to use the configured Docker client state.
+These cases continue to use the configured Docker client state:
+
+- An explicit Docker host.
+- A non-default context selected with `DOCKER_CONTEXT` or persisted by `docker context use`.
+- A responsive helper.
+- A custom Dockerfile.
+- An operation that might require private-registry credentials.
+
 Restore the Docker Desktop session or helper access for those operations.
 
 For a public-image-only retry outside the automatic WSL path, resume onboarding with a temporary isolated configuration:

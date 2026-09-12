@@ -109,6 +109,7 @@ const {
   NVIDIA_SMI_FAILED_PROOF,
   DEFAULT_RUNTIME_SNAPSHOT,
   PORTABLE_RUNTIME_AUTHORITY,
+  MANAGED_CREATE_SANDBOX_ENV,
   managedDockerConfigPreservationCases,
   readySandboxGetResult,
   createSequencedOpenShellRunner,
@@ -133,17 +134,11 @@ afterEach(resetHarness);
 
 describe("runSandboxGpuCreateFlow provider-owned managed create", () => {
   it("isolates an unavailable WSL Docker Desktop helper during managed create (#10349)", async () => {
-    vi.stubEnv("DOCKER_CONTEXT", "ambient-remote-context");
-    vi.stubEnv("DOCKER_HOST", "tcp://ambient-remote.example:2376");
     const dockerConfig = writeDesktopCredsStore();
     const input = createInput();
     attachManagedBootstrap(input);
-    input.sandboxEnv = {
-      PATH: "/usr/bin",
-      OPENSHELL_GATEWAY: "1",
-      WSL_DISTRO_NAME: "Ubuntu",
-      DOCKER_CONFIG: dockerConfig,
-    };
+    input.hostEnv = { PATH: "/usr/bin", DOCKER_CONFIG: dockerConfig };
+    input.sandboxEnv = { ...MANAGED_CREATE_SANDBOX_ENV };
     const captured = captureCreateEnv();
     const deps = createDeps();
     vi.mocked(deps.runCaptureOpenshell).mockImplementation((args) =>
@@ -153,13 +148,15 @@ describe("runSandboxGpuCreateFlow provider-owned managed create", () => {
     await runSandboxGpuCreateFlow(input, deps);
 
     expect(captured.env.DOCKER_CONFIG).toContain("nemoclaw-wsl-buildkit-docker-config-");
-    expect(captured.env.DOCKER_CONFIG).not.toBe(dockerConfig);
     expect(captured.env.PATH).toBe("/usr/bin");
     expect(captured.env.OPENSHELL_GATEWAY).toBe("1");
+    expect(captured.env).not.toHaveProperty("DOCKER_CONTEXT");
     expect(captured.configExisted).toBe(true);
     expect(fs.existsSync(String(captured.env.DOCKER_CONFIG))).toBe(false);
-    expect(mocks.dockerSpawnSync.mock.calls[0]?.[1]?.env).not.toHaveProperty("DOCKER_CONTEXT");
-    expect(mocks.dockerSpawnSync.mock.calls[0]?.[1]?.env).not.toHaveProperty("DOCKER_HOST");
+    const contextShowEnv = mocks.dockerSpawnSync.mock.calls[0]?.[1]?.env;
+    expect(contextShowEnv?.DOCKER_CONFIG).toBe(dockerConfig);
+    expect(contextShowEnv).not.toHaveProperty("DOCKER_CONTEXT");
+    expect(contextShowEnv).not.toHaveProperty("DOCKER_HOST");
     expect(mocks.streamSandboxCreate).toHaveBeenCalledOnce();
   });
 
@@ -175,14 +172,9 @@ describe("runSandboxGpuCreateFlow provider-owned managed create", () => {
         stderr: "",
       });
       const input = createInput();
-      attachManagedBootstrap(input);
-      input.sandboxEnv = {
-        PATH: "/usr/bin",
-        OPENSHELL_GATEWAY: "1",
-        WSL_DISTRO_NAME: "Ubuntu",
-        DOCKER_CONFIG: dockerConfig,
-        ...(row.dockerHost === undefined ? {} : { DOCKER_HOST: row.dockerHost }),
-      };
+      const { createLifecycle } = attachManagedBootstrap(input);
+      input.hostEnv = { PATH: "/usr/bin", DOCKER_CONFIG: dockerConfig, ...row.callerSelection };
+      input.sandboxEnv = { ...MANAGED_CREATE_SANDBOX_ENV, ...row.sandboxSelection };
       const captured = captureCreateEnv();
       const deps = createDeps();
       vi.mocked(deps.runCaptureOpenshell).mockImplementation((args) =>
@@ -191,11 +183,18 @@ describe("runSandboxGpuCreateFlow provider-owned managed create", () => {
 
       await runSandboxGpuCreateFlow(input, deps);
 
-      expect(captured.env.DOCKER_CONFIG).toBe(dockerConfig);
+      expect(captured.env).not.toHaveProperty("DOCKER_CONFIG");
+      expect(captured.env).not.toHaveProperty("DOCKER_CONTEXT");
       expect(captured.env.PATH).toBe("/usr/bin");
       expect(captured.env.OPENSHELL_GATEWAY).toBe("1");
-      expect(captured.configExisted).toBe(true);
       expect(fs.existsSync(dockerConfig)).toBe(true);
+      expect(mocks.dockerSpawnSync).toHaveBeenCalledTimes(row.contextShowCalls);
+      const dockerClientEnv = createLifecycle.mock.calls[0]?.[0]?.dockerClientEnv ?? {};
+      expect(dockerClientEnv.DOCKER_HOST).toBe(row.callerSelection.DOCKER_HOST);
+      expect(dockerClientEnv.DOCKER_CONTEXT).toBe(row.callerSelection.DOCKER_CONTEXT);
+      expect(dockerClientEnv.DOCKER_CONFIG).toBe(
+        row.clientConfigForwarded ? dockerConfig : undefined,
+      );
     },
   );
 
