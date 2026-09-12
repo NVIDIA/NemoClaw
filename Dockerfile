@@ -734,7 +734,7 @@ RUN set -eu; \
             apt-get install -y --no-install-recommends procps=2:4.0.4-9; \
         fi; \
         if [ "$needs_chattr" = "1" ]; then \
-            apt-get install -y --no-install-recommends e2fsprogs=1.47.2-3+b11; \
+            apt-get install -y --no-install-recommends e2fsprogs=1.47.2-3+b12; \
         fi; \
         if [ "$needs_tmux" = "1" ]; then \
             apt-get install -y --no-install-recommends tmux=3.5a-3; \
