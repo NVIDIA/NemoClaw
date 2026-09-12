@@ -351,6 +351,11 @@ describe("non-resumed onboard replacement journal (#7735)", () => {
 
     expect(() => open()).toThrow(/neither a live sandbox nor explicit absence/);
     expect(session.checkpoint?.sandboxRecreate ?? null).toBeNull();
+    expect(mocks.captureOpenshell).toHaveBeenCalledTimes(1);
+    expect(mocks.captureOpenshell).not.toHaveBeenCalledWith(
+      ["sandbox", "list", "-g", "nemoclaw-9090", "-o", "json"],
+      expect.anything(),
+    );
   });
 
   it("uses structured inventory when a gateway upgrade cannot read the legacy config", () => {
@@ -358,7 +363,7 @@ describe("non-resumed onboard replacement journal (#7735)", () => {
       status: 1,
       output: "",
       stdout: "",
-      stderr: "Error: legacy sandbox config is unavailable",
+      stderr: 'status: Internal, message: "sandbox has no spec", details: []',
     };
     mocks.captureOpenshell
       .mockReturnValueOnce(configFailure)
@@ -384,7 +389,7 @@ describe("non-resumed onboard replacement journal (#7735)", () => {
         status: 1,
         output: "",
         stdout: "",
-        stderr: "Error: legacy sandbox config is unavailable",
+        stderr: 'status: Internal, message: "sandbox has no spec", details: []',
       })
       .mockReturnValueOnce({ status: 0, output: "", stdout: "[]", stderr: "" });
 
