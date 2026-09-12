@@ -153,9 +153,10 @@ describe("validation reuse", () => {
       const aliasedRoot = `${root}-alias`;
       symlinkSync(root, aliasedRoot, "dir");
       try {
-        expect(() =>
-          validationFingerprint(aliasedRoot, [process.execPath, "--version"], {}),
-        ).not.toThrow();
+        const command = [process.execPath, "--version"];
+        expect(validationFingerprint(aliasedRoot, command, {})).toEqual(
+          validationFingerprint(root, command, {}),
+        );
       } finally {
         rmSync(aliasedRoot);
       }

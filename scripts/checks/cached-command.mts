@@ -126,6 +126,7 @@ export function validationFingerprint(
   env: NodeJS.ProcessEnv,
   outputPaths: readonly string[] = ["dist", "nemoclaw/dist", "nemoclaw/runner-dist"],
 ): { inputs: string; outputs: string } {
+  const canonicalRoot = fs.realpathSync(root);
   const files = git(root, ["ls-files", "-z", "--cached", "--others", "--exclude-standard"])
     .split("\0")
     .filter(Boolean);
@@ -182,7 +183,7 @@ export function validationFingerprint(
   const inputs = createHash("sha256")
     .update(
       JSON.stringify({
-        root,
+        root: canonicalRoot,
         command,
         env,
         refs,
