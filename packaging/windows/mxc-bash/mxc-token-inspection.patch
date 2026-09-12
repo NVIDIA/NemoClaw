@@ -145,24 +145,39 @@ diff --git a/src/backends/appcontainer/common/src/appcontainer_runner.rs b/src/b
              job,
              pid: pi.dwProcessId,
              capture_session,
-@@ -1263,6 +1334,8 @@
- struct SpawnedChild {
+@@ -1264,6 +1335,9 @@
      process: OwnedHandle,
      thread: OwnedHandle,
-+    // Stop/join the inspection owner before closing the job on every drop path.
-+    msys_token_inspection: Option<crate::msys_token_inspection::OwnerGuard>,
      job: UiJobObject,
++    // Primary process/thread/job handles close before the observer joins and
++    // releases its query duplicates; its owned desktop handles close last.
++    msys_token_inspection: Option<crate::msys_token_inspection::OwnerGuard>,
      /// OS process id of the child.
      pid: u32,
-@@ -1646,6 +1719,7 @@
- struct AppContainerSandboxProcess {
+     /// Live guarded WPR capture session for `captureDenials`, started
+@@ -1647,6 +1721,7 @@
      process: SendOwnedHandle,
      _thread: SendOwnedHandle,
-+    _msys_token_inspection: Option<crate::msys_token_inspection::OwnerGuard>,
      job: crate::job_object::UiJobObject,
++    _msys_token_inspection: Option<crate::msys_token_inspection::OwnerGuard>,
      pid: u32,
      stdin: Option<PipeWriter>,
-@@ -1711,6 +1785,7 @@
+     stdout: Option<InterruptiblePipeReader>,
+@@ -1695,6 +1770,13 @@
+ unsafe impl Send for AppContainerSandboxProcess {}
+
+ impl AppContainerSandboxProcess {
++    fn observe_desktop_teardown(&self) {
++        if self._msys_token_inspection.as_ref().is_some_and(|owner| owner.has_desktops()) {
++            crate::msys_token_readback::desktop_teardown_snapshot(
++                HANDLE(self.job.handle_value() as *mut std::ffi::c_void), self.process.get(),
++            );
++        }
++    }
+     fn new(
+         mut child: SpawnedChild,
+         prepared: Prepared,
+@@ -1711,6 +1793,7 @@
          Self {
              process,
              _thread: thread,
@@ -170,6 +185,22 @@ diff --git a/src/backends/appcontainer/common/src/appcontainer_runner.rs b/src/b
              job: child.job,
              pid: child.pid,
              stdin,
+@@ -1921,6 +2004,7 @@
+                 "failed to terminate sandbox job during drop: {error}"
+             ));
+             self.release_guarded_capture_after_termination_failure();
++            self.observe_desktop_teardown();
+             return;
+         }
+         unsafe {
+@@ -1931,6 +2015,7 @@
+                 "captureDenials teardown failed during drop: {error}"
+             ));
+         }
++        self.observe_desktop_teardown();
+     }
+ }
+
 diff --git a/src/backends/appcontainer/common/src/lib.rs b/src/backends/appcontainer/common/src/lib.rs
 --- a/src/backends/appcontainer/common/src/lib.rs
 +++ b/src/backends/appcontainer/common/src/lib.rs
@@ -188,7 +219,7 @@ diff --git a/src/backends/appcontainer/common/src/msys_token_inspection.rs b/src
 new file mode 100644
 --- /dev/null
 +++ b/src/backends/appcontainer/common/src/msys_token_inspection.rs
-@@ -0,0 +1,346 @@
+@@ -0,0 +1,350 @@
 +// Copyright (c) NVIDIA Corporation.
 +// Licensed under the MIT License.
 +// CI-only exact-owned-job token inspection or explicitly selected TOKEN_QUERY repair.
@@ -447,9 +478,13 @@ new file mode 100644
 +pub(crate) struct OwnerGuard {
 +    stop: Arc<AtomicBool>,
 +    worker: Option<JoinHandle<()>>,
-+    // Retained through the existing owner lifetime; Drop stops/joins the token
-+    // observer first. The runner already kills/reaps the job before teardown.
++    // The runner terminates/drains before its fields drop. Primary handles
++    // close first; this Drop joins the observer (releasing query duplicates)
++    // before the desktop vector drops and performs its actual absence check.
 +    _desktops: Vec<crate::msys_token_readback::PrivateDesktop>,
++}
++impl OwnerGuard {
++    pub(crate) fn has_desktops(&self) -> bool { !self._desktops.is_empty() }
 +}
 +impl Drop for OwnerGuard {
 +    fn drop(&mut self) {
@@ -539,7 +574,7 @@ diff --git a/src/backends/appcontainer/common/src/msys_token_readback.rs b/src/b
 new file mode 100644
 --- /dev/null
 +++ b/src/backends/appcontainer/common/src/msys_token_readback.rs
-@@ -0,0 +1,1326 @@
+@@ -0,0 +1,1363 @@
 +// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 +// SPDX-License-Identifier: Apache-2.0
 +// Disposable Windows CI inspection and explicit exact-TOKEN_QUERY repair.
@@ -605,6 +640,7 @@ new file mode 100644
 +#[link(name = "kernel32")]
 +unsafe extern "system" {
 +    fn GetLastError() -> u32;
++    fn GetTickCount64() -> u64;
 +    fn GetCurrentProcess() -> RawHandle;
 +    fn GetCurrentThreadId() -> u32;
 +    fn SetLastError(error: u32);
@@ -768,6 +804,7 @@ new file mode 100644
 +unsafe impl Send for PrivateDesktop {}
 +impl Drop for PrivateDesktop {
 +    fn drop(&mut self) {
++        let close_started_tick = unsafe { GetTickCount64() };
 +        let closed = unsafe { CloseDesktop(self.handle) } != 0;
 +        let close_error = if closed { 0 } else { unsafe { GetLastError() } };
 +        let name: Vec<u16> = self.name.encode_utf16().chain(Some(0)).collect();
@@ -786,10 +823,45 @@ new file mode 100644
 +        }
 +        let record = json!({"schemaVersion":1,"classification":"owned-Hermes-desktop",
 +            "stage":"owner-close","desktopName":self.name,"closed":closed,"closeError":close_error,
++            "clock":"GetTickCount64","closeStartedTickMilliseconds":close_started_tick,
++            "absenceCheckedTickMilliseconds":unsafe { GetTickCount64() },
 +            "absentAfterOwnerClose":absent,"absenceError":absence_error,
 +            "presenceHandleClosed":presence_handle_closed,"hostDesktopSelected":false});
 +        eprintln!("NEMOCLAW_HERMES_DESKTOP={record}");
 +    }
++}
++#[repr(C)]
++#[derive(Default)]
++struct DesktopJobAccounting {
++    times: [i64; 4],
++    page_faults: u32,
++    total_processes: u32,
++    active_processes: u32,
++    terminated_processes: u32,
++}
++// One observation at the actual runner teardown boundary. These borrowed
++// handles are still valid here; no new handle, wait, or job operation is added.
++pub(crate) fn desktop_teardown_snapshot(job: HANDLE, root: HANDLE) {
++    let mut accounting = DesktopJobAccounting::default();
++    let mut needed = 0;
++    let queried = unsafe { QueryInformationJobObject(job.0, 1,
++        (&mut accounting as *mut DesktopJobAccounting).cast(), size_of::<DesktopJobAccounting>() as u32,
++        &mut needed) } != 0;
++    let query_error = if queried {0} else {unsafe { GetLastError() }};
++    let known = queried && needed == size_of::<DesktopJobAccounting>() as u32;
++    let root_wait = unsafe { WaitForSingleObject(root.0, 0) };
++    let root_wait_error = if root_wait == u32::MAX {unsafe {GetLastError()}} else {0};
++    let record = json!({"schemaVersion":1,"classification":"owned-Hermes-desktop-teardown",
++        "stage":"before-primary-handle-release","clock":"GetTickCount64",
++        "tickMilliseconds":unsafe {GetTickCount64()},"rootPid":unsafe {GetProcessId(root.0)},
++        "jobAccountingQueried":queried,"jobAccountingKnown":known,
++        "jobAccountingBytes":needed,"jobAccountingExpectedBytes":size_of::<DesktopJobAccounting>(),
++        "jobAccountingError":query_error,
++        "activeProcesses":if known {Some(accounting.active_processes)} else {None},
++        "totalProcesses":if known {Some(accounting.total_processes)} else {None},
++        "terminatedProcesses":if known {Some(accounting.terminated_processes)} else {None},
++        "rootWaitStatus":root_wait,"rootSignaled":root_wait==0,"rootWaitError":root_wait_error});
++    eprintln!("NEMOCLAW_HERMES_DESKTOP_TEARDOWN={record}");
 +}
 +fn desktop_name(handle: RawHandle) -> Result<String, String> {
 +    let mut name = [0u16; 256];
