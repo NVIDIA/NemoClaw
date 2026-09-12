@@ -1,12 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
+import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, it, type TestContext, vi } from "vitest";
 
 const CANDIDATE_SHA = execFileSync("git", ["rev-parse", "HEAD"], {
   encoding: "utf8",
@@ -15,13 +16,62 @@ const PAYLOAD_SHA256 = "b".repeat(64);
 const IDENTITY_SCRIPT = path.resolve("scripts/e2e/validate-cli-artifact-identity.sh");
 const RESTORE_SCRIPT = path.resolve("scripts/e2e/restore-cli-artifact.sh");
 
-function runIdentityValidation(overrides: Record<string, unknown> = {}, consumerAttempt = "1") {
+type RunProcessOptions = {
+  cwd?: string;
+  env?: NodeJS.ProcessEnv;
+};
+
+type RunProcessResult = {
+  status: number | null;
+  signal: NodeJS.Signals | null;
+  stdout: string;
+  stderr: string;
+};
+
+function runProcess(
+  file: string,
+  args: readonly string[],
+  options: RunProcessOptions = {},
+): Promise<RunProcessResult> {
+  return new Promise((resolve) => {
+    execFile(
+      file,
+      [...args],
+      { cwd: options.cwd, encoding: "utf8", env: options.env },
+      (error, stdout, stderr) => {
+        const signal = error?.signal ?? null;
+        resolve({
+          status: signal ? null : Number(error?.code) || (error ? -1 : 0),
+          signal,
+          stdout,
+          stderr,
+        });
+      },
+    );
+  });
+}
+
+async function runSuccessfulProcess(
+  file: string,
+  args: readonly string[],
+  options: RunProcessOptions = {},
+): Promise<RunProcessResult> {
+  const result = await runProcess(file, args, options);
+  assert.equal(result.status, 0, `${file} failed: ${result.stdout}${result.stderr}`);
+  return result;
+}
+
+vi.setConfig({ maxConcurrency: 4 });
+
+async function runIdentityValidation(
+  overrides: Record<string, unknown> = {},
+  consumerAttempt = "1",
+) {
   const workflowSha = "d".repeat(40);
   const outputDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "cli-artifact-identity-"));
   try {
     const outputPath = path.join(outputDirectory, "github-output");
-    const result = spawnSync(IDENTITY_SCRIPT, [], {
-      encoding: "utf8",
+    const result = await runProcess(IDENTITY_SCRIPT, [], {
       env: {
         ...process.env,
         CALLER_WORKFLOW_SHA: workflowSha,
@@ -85,11 +135,11 @@ function sha256File(file: string): string {
   return createHash("sha256").update(fs.readFileSync(file)).digest("hex");
 }
 
-function writeCliArchive(
+async function writeCliArchive(
   context: ArchiveFixtureContext,
   customizeDist: (dist: string) => void,
   customizeShared: (shared: string) => void = () => undefined,
-): void {
+): Promise<void> {
   const dist = path.join(context.payloadRoot, "dist");
   const shared = path.join(context.payloadRoot, "nemoclaw", "dist", "shared");
   fs.mkdirSync(path.join(dist, "lib"), { recursive: true });
@@ -121,7 +171,7 @@ function writeCliArchive(
   customizeShared(shared);
 
   customizeDist(dist);
-  execFileSync("tar", [
+  await runSuccessfulProcess("tar", [
     "-cf",
     context.payload,
     "-C",
@@ -131,20 +181,20 @@ function writeCliArchive(
   ]);
 }
 
-function writeValidArchive(context: ArchiveFixtureContext): void {
-  writeCliArchive(context, () => undefined);
+async function writeValidArchive(context: ArchiveFixtureContext): Promise<void> {
+  await writeCliArchive(context, () => undefined);
 }
 
-function writeLinkArchive(context: ArchiveFixtureContext): void {
-  writeCliArchive(context, (dist) => {
+async function writeLinkArchive(context: ArchiveFixtureContext): Promise<void> {
+  await writeCliArchive(context, (dist) => {
     fs.symlinkSync("nemoclaw.js", path.join(dist, "linked-cli.js"));
   });
 }
 
 const MANAGED_IMAGE_REVISION = "e".repeat(40);
 
-function writeManagedCatalogArchive(context: ArchiveFixtureContext): void {
-  writeCliArchive(context, (dist) => {
+async function writeManagedCatalogArchive(context: ArchiveFixtureContext): Promise<void> {
+  await writeCliArchive(context, (dist) => {
     fs.writeFileSync(
       path.join(dist, "e2e-managed-image-catalog.json"),
       `${JSON.stringify({
@@ -155,8 +205,8 @@ function writeManagedCatalogArchive(context: ArchiveFixtureContext): void {
   });
 }
 
-function writeCliDirectoryArchive(context: ArchiveFixtureContext): void {
-  writeCliArchive(context, (dist) => {
+async function writeCliDirectoryArchive(context: ArchiveFixtureContext): Promise<void> {
+  await writeCliArchive(context, (dist) => {
     const entrypoint = path.join(dist, "nemoclaw.js");
     fs.rmSync(entrypoint);
     fs.mkdirSync(entrypoint);
@@ -164,16 +214,16 @@ function writeCliDirectoryArchive(context: ArchiveFixtureContext): void {
   });
 }
 
-function writeMissingSharedArchive(context: ArchiveFixtureContext): void {
-  writeCliArchive(
+async function writeMissingSharedArchive(context: ArchiveFixtureContext): Promise<void> {
+  await writeCliArchive(
     context,
     () => undefined,
     (shared) => fs.rmSync(path.join(shared, "sandbox-name.cjs")),
   );
 }
 
-function writeSharedModuleDirectoryArchive(context: ArchiveFixtureContext): void {
-  writeCliArchive(
+async function writeSharedModuleDirectoryArchive(context: ArchiveFixtureContext): Promise<void> {
+  await writeCliArchive(
     context,
     () => undefined,
     (shared) => {
@@ -185,18 +235,24 @@ function writeSharedModuleDirectoryArchive(context: ArchiveFixtureContext): void
   );
 }
 
-function writeNonDistArchive(context: ArchiveFixtureContext): void {
+async function writeNonDistArchive(context: ArchiveFixtureContext): Promise<void> {
   fs.writeFileSync(path.join(context.payloadRoot, "outside.txt"), "outside dist\n");
-  execFileSync("tar", ["-cf", context.payload, "-C", context.payloadRoot, "outside.txt"]);
+  await runSuccessfulProcess("tar", [
+    "-cf",
+    context.payload,
+    "-C",
+    context.payloadRoot,
+    "outside.txt",
+  ]);
 }
 
-function writeTraversalArchive(context: ArchiveFixtureContext): void {
+async function writeTraversalArchive(context: ArchiveFixtureContext): Promise<void> {
   fs.writeFileSync(path.join(context.payloadRoot, "outside.txt"), "outside dist\n");
   const transform =
     process.platform === "darwin"
       ? ["-s", "|^outside.txt$|dist/../outside.txt|"]
       : ["--transform=s|^outside.txt$|dist/../outside.txt|"];
-  execFileSync("tar", [
+  await runSuccessfulProcess("tar", [
     "-cf",
     context.payload,
     ...transform,
@@ -218,7 +274,7 @@ const ARCHIVE_FIXTURE_WRITERS = {
   valid: writeValidArchive,
 } satisfies Record<
   NonNullable<RestoreFixtureOptions["archive"]>,
-  (context: ArchiveFixtureContext) => void
+  (context: ArchiveFixtureContext) => Promise<void>
 >;
 
 function writeDanglingDistSymlink(workspace: string): void {
@@ -257,7 +313,7 @@ const PREEXISTING_DIST_WRITERS = {
   (workspace: string) => void
 >;
 
-function runRestoreValidation(options: RestoreFixtureOptions = {}) {
+async function runRestoreValidation(options: RestoreFixtureOptions = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "cli-artifact-restore-"));
   const workspace = path.join(root, "workspace");
   const runnerTemp = path.join(root, "runner-temp");
@@ -276,12 +332,14 @@ function runRestoreValidation(options: RestoreFixtureOptions = {}) {
     '#!/usr/bin/env node\nrequire("../dist/nemoclaw.js");\n',
     { mode: 0o755 },
   );
-  execFileSync("git", ["init", "--quiet"], { cwd: workspace });
-  execFileSync("git", ["remote", "add", "origin", "https://github.com/NVIDIA/NemoClaw.git"], {
-    cwd: workspace,
-  });
-  execFileSync("git", ["add", "."], { cwd: workspace });
-  execFileSync(
+  await runSuccessfulProcess("git", ["init", "--quiet"], { cwd: workspace });
+  await runSuccessfulProcess(
+    "git",
+    ["remote", "add", "origin", "https://github.com/NVIDIA/NemoClaw.git"],
+    { cwd: workspace },
+  );
+  await runSuccessfulProcess("git", ["add", "."], { cwd: workspace });
+  await runSuccessfulProcess(
     "git",
     [
       "-c",
@@ -297,17 +355,15 @@ function runRestoreValidation(options: RestoreFixtureOptions = {}) {
     ],
     { cwd: workspace },
   );
-  const candidateSha = execFileSync("git", ["rev-parse", "HEAD"], {
-    cwd: workspace,
-    encoding: "utf8",
-  }).trim();
-  const sourceTree = execFileSync("git", ["rev-parse", "HEAD^{tree}"], {
-    cwd: workspace,
-    encoding: "utf8",
-  }).trim();
+  const candidateSha = (
+    await runSuccessfulProcess("git", ["rev-parse", "HEAD"], { cwd: workspace })
+  ).stdout.trim();
+  const sourceTree = (
+    await runSuccessfulProcess("git", ["rev-parse", "HEAD^{tree}"], { cwd: workspace })
+  ).stdout.trim();
 
   const payload = path.join(artifactDirectory, "nemoclaw-cli.tar");
-  ARCHIVE_FIXTURE_WRITERS[options.archive ?? "valid"]({
+  await ARCHIVE_FIXTURE_WRITERS[options.archive ?? "valid"]({
     buildIdentitySha: options.buildIdentitySha ?? candidateSha,
     payload,
     payloadRoot,
@@ -369,9 +425,8 @@ function runRestoreValidation(options: RestoreFixtureOptions = {}) {
 
   const githubOutput = path.join(root, "github-output");
   const githubEnv = path.join(root, "github-env");
-  const identityResult = spawnSync(IDENTITY_SCRIPT, [], {
+  const identityResult = await runProcess(IDENTITY_SCRIPT, [], {
     cwd: workspace,
-    encoding: "utf8",
     env: {
       ...process.env,
       CALLER_WORKFLOW_SHA: workflowSha,
@@ -392,7 +447,7 @@ function runRestoreValidation(options: RestoreFixtureOptions = {}) {
       }),
     },
   });
-  const runRestoreStep = () => {
+  const runRestoreStep = async () => {
     const identityOutputs = Object.fromEntries(
       fs
         .readFileSync(githubOutput, "utf8")
@@ -403,9 +458,8 @@ function runRestoreValidation(options: RestoreFixtureOptions = {}) {
           return [line.slice(0, separator), line.slice(separator + 1)];
         }),
     );
-    return spawnSync(RESTORE_SCRIPT, [], {
+    return runProcess(RESTORE_SCRIPT, [], {
       cwd: workspace,
-      encoding: "utf8",
       env: {
         ...process.env,
         ARTIFACT_NAME: identityOutputs.artifact_name,
@@ -423,7 +477,7 @@ function runRestoreValidation(options: RestoreFixtureOptions = {}) {
     });
   };
   const identitySucceeded = identityResult.status === 0;
-  const restoreResult = identitySucceeded ? runRestoreStep() : identityResult;
+  const restoreResult = identitySucceeded ? await runRestoreStep() : identityResult;
   return {
     candidateSha,
     cleanup: () => fs.rmSync(root, { force: true, recursive: true }),
@@ -437,8 +491,12 @@ function runRestoreValidation(options: RestoreFixtureOptions = {}) {
   };
 }
 
-function expectRestoreFailure(options: RestoreFixtureOptions, message: string): void {
-  const fixture = runRestoreValidation(options);
+async function expectRestoreFailure(
+  expect: TestContext["expect"],
+  options: RestoreFixtureOptions,
+  message: string,
+): Promise<void> {
+  const fixture = await runRestoreValidation(options);
   try {
     expect(fixture.result.status, fixture.output).not.toBe(0);
     expect(fixture.output).toContain(message);
@@ -449,14 +507,19 @@ function expectRestoreFailure(options: RestoreFixtureOptions, message: string): 
   }
 }
 
-describe("exact-commit CLI artifact restore", () => {
-  it("accepts matching artifact, candidate source, and workflow identities", () => {
-    const result = runIdentityValidation();
+describe.concurrent("exact-commit CLI artifact restore", () => {
+  it("accepts matching artifact, candidate source, and workflow identities", async ({ expect }) => {
+    const result = await runIdentityValidation();
     expect(result.status, "matching artifact identity validation failed").toBe(0);
   });
 
-  it("reuses an immutable producer artifact during a later failed-job rerun", () => {
-    const fixture = runRestoreValidation({ consumerRunAttempt: "2", producerRunAttempt: "1" });
+  it("reuses an immutable producer artifact during a later failed-job rerun", async ({
+    expect,
+  }) => {
+    const fixture = await runRestoreValidation({
+      consumerRunAttempt: "2",
+      producerRunAttempt: "1",
+    });
     try {
       expect(fixture.result.status, "cross-attempt CLI artifact restore failed").toBe(0);
       expect(
@@ -486,22 +549,25 @@ describe("exact-commit CLI artifact restore", () => {
     }
   });
 
-  it("rejects a producer attempt that does not match the restored artifact manifest", () => {
-    expectRestoreFailure(
+  it("rejects a producer attempt that does not match the restored artifact manifest", async ({
+    expect,
+  }) => {
+    await expectRestoreFailure(
+      expect,
       { manifestRunAttempt: "2", producerRunAttempt: "1" },
       "exact-commit CLI artifact provenance mismatch",
     );
   });
 
-  it("rejects consumer workflow attempt zero", () => {
-    const result = runIdentityValidation({}, "0");
+  it("rejects consumer workflow attempt zero", async ({ expect }) => {
+    const result = await runIdentityValidation({}, "0");
     expect(result.status, `${result.stdout}${result.stderr}`).not.toBe(0);
     expect(`${result.stdout}${result.stderr}`).toContain(
       "consumer workflow run attempt is invalid",
     );
   });
 
-  it.each([
+  it.for([
     ["empty artifact ID", { artifactId: "" }, "producer CLI artifact provenance is invalid"],
     [
       "prefixed upload digest",
@@ -538,13 +604,17 @@ describe("exact-commit CLI artifact restore", () => {
       { unexpected: "value" },
       "producer CLI artifact provenance is invalid",
     ],
-  ])("fails closed for %s", (_case, overrides, expectedError) => {
-    const result = runIdentityValidation(overrides);
-    expect(result.status, `${result.stdout}${result.stderr}`).not.toBe(0);
-    expect(`${result.stdout}${result.stderr}`).toContain(expectedError);
-  });
+  ] as const)(
+    ([caseName]: readonly [string, Record<string, unknown>, string]) =>
+      `fails closed for ${caseName}`,
+    async ([, overrides, expectedError], { expect }) => {
+      const result = await runIdentityValidation(overrides);
+      expect(result.status, `${result.stdout}${result.stderr}`).not.toBe(0);
+      expect(`${result.stdout}${result.stderr}`).toContain(expectedError);
+    },
+  );
 
-  it.each([
+  it.for([
     [
       "candidate repository",
       { candidateRepository: "example/other-repository" },
@@ -557,14 +627,20 @@ describe("exact-commit CLI artifact restore", () => {
       { runAttempt: "2" },
       "producer workflow attempt is newer than the consumer attempt",
     ],
-  ])("rejects a mismatched %s before artifact download", (_case, overrides, expectedError) => {
-    const result = runIdentityValidation(overrides);
-    expect(result.status, `${result.stdout}${result.stderr}`).not.toBe(0);
-    expect(`${result.stdout}${result.stderr}`).toContain(expectedError);
-  });
+  ] as const)(
+    ([caseName]: readonly [string, Record<string, unknown>, string]) =>
+      `rejects a mismatched ${caseName} before artifact download`,
+    async ([, overrides, expectedError], { expect }) => {
+      const result = await runIdentityValidation(overrides);
+      expect(result.status, `${result.stdout}${result.stderr}`).not.toBe(0);
+      expect(`${result.stdout}${result.stderr}`).toContain(expectedError);
+    },
+  );
 
-  it("restores a payload whose compiled identity matches the candidate commit (#7915)", () => {
-    const fixture = runRestoreValidation();
+  it("restores a payload whose compiled identity matches the candidate commit (#7915)", async ({
+    expect,
+  }) => {
+    const fixture = await runRestoreValidation();
     try {
       expect(fixture.result.status, fixture.output).toBe(0);
       expect(
@@ -593,8 +669,8 @@ describe("exact-commit CLI artifact restore", () => {
     }
   });
 
-  it("exports restored managed-image catalog publication authority", () => {
-    const fixture = runRestoreValidation({ archive: "managed-catalog" });
+  it("exports restored managed-image catalog publication authority", async ({ expect }) => {
+    const fixture = await runRestoreValidation({ archive: "managed-catalog" });
     try {
       expect(fixture.result.status, fixture.output).toBe(0);
       expect(fixture.githubEnv).toBe(
@@ -606,8 +682,10 @@ describe("exact-commit CLI artifact restore", () => {
     }
   });
 
-  it("restores a binary payload when the host SHA-256 utility reports a different digest (#10569)", () => {
-    const fixture = runRestoreValidation();
+  it("restores a binary payload when the host SHA-256 utility reports a different digest (#10569)", async ({
+    expect,
+  }) => {
+    const fixture = await runRestoreValidation();
     try {
       expect(fixture.result.status, fixture.output).toBe(0);
       expect(fs.existsSync(path.join(fixture.workspace, "dist", "nemoclaw.js"))).toBe(true);
@@ -616,58 +694,78 @@ describe("exact-commit CLI artifact restore", () => {
     }
   });
 
-  it("rejects manifest provenance before artifact extraction (#7915)", () => {
-    expectRestoreFailure(
+  it("rejects manifest provenance before artifact extraction (#7915)", async ({ expect }) => {
+    await expectRestoreFailure(
+      expect,
       { manifestCandidateSha: "e".repeat(40) },
       "exact-commit CLI artifact provenance mismatch",
     );
   });
 
-  it("rejects a payload digest mismatch before artifact extraction (#7915)", () => {
-    expectRestoreFailure(
+  it("rejects a payload digest mismatch before artifact extraction (#7915)", async ({ expect }) => {
+    await expectRestoreFailure(
+      expect,
       { expectedPayloadSha256: "f".repeat(64) },
       "exact-commit CLI artifact payload digest mismatch",
     );
   });
 
-  it("rejects a payload missing a compiled shared module before activation (#7915)", () => {
-    expectRestoreFailure(
+  it("rejects a payload missing a compiled shared module before activation (#7915)", async ({
+    expect,
+  }) => {
+    await expectRestoreFailure(
+      expect,
       { archive: "missing-shared" },
       "restored CLI artifact shared module is missing or is not a nonempty regular file: sandbox-name.cjs",
     );
   });
 
-  it("rejects a directory in place of the CLI entry point before activation (#7915)", () => {
-    expectRestoreFailure(
+  it("rejects a directory in place of the CLI entry point before activation (#7915)", async ({
+    expect,
+  }) => {
+    await expectRestoreFailure(
+      expect,
       { archive: "cli-directory" },
       "restored CLI artifact entry point is missing or is not a nonempty regular file",
     );
   });
 
-  it("rejects a directory in place of a shared module before activation (#7915)", () => {
-    expectRestoreFailure(
+  it("rejects a directory in place of a shared module before activation (#7915)", async ({
+    expect,
+  }) => {
+    await expectRestoreFailure(
+      expect,
       { archive: "shared-module-directory" },
       "restored CLI artifact shared module is missing or is not a nonempty regular file: sandbox-name.cjs",
     );
   });
 
-  it("rejects an archive member outside dist before artifact extraction (#7915)", () => {
-    expectRestoreFailure(
+  it("rejects an archive member outside dist before artifact extraction (#7915)", async ({
+    expect,
+  }) => {
+    await expectRestoreFailure(
+      expect,
       { archive: "non-dist" },
       "CLI artifact contains an unsafe member: outside.txt",
     );
   });
 
-  it("rejects traversal through a dist-prefixed archive member before extraction (#7915)", () => {
-    expectRestoreFailure({ archive: "traversal" }, "CLI artifact contains traversal");
+  it("rejects traversal through a dist-prefixed archive member before extraction (#7915)", async ({
+    expect,
+  }) => {
+    await expectRestoreFailure(expect, { archive: "traversal" }, "CLI artifact contains traversal");
   });
 
-  it("rejects an archive link before artifact extraction (#7915)", () => {
-    expectRestoreFailure({ archive: "link" }, "CLI artifact contains a link or special file");
+  it("rejects an archive link before artifact extraction (#7915)", async ({ expect }) => {
+    await expectRestoreFailure(
+      expect,
+      { archive: "link" },
+      "CLI artifact contains a link or special file",
+    );
   });
 
-  it("does not overwrite a preexisting dist directory (#7915)", () => {
-    const fixture = runRestoreValidation({ preexistingDist: "directory" });
+  it("does not overwrite a preexisting dist directory (#7915)", async ({ expect }) => {
+    const fixture = await runRestoreValidation({ preexistingDist: "directory" });
     try {
       expect(fixture.result.status, fixture.output).not.toBe(0);
       expect(fixture.output).toContain("consumer unexpectedly built dist before artifact restore");
@@ -679,8 +777,8 @@ describe("exact-commit CLI artifact restore", () => {
     }
   });
 
-  it("does not overwrite a preexisting nemoclaw/dist directory (#7915)", () => {
-    const fixture = runRestoreValidation({ preexistingDist: "plugin-directory" });
+  it("does not overwrite a preexisting nemoclaw/dist directory (#7915)", async ({ expect }) => {
+    const fixture = await runRestoreValidation({ preexistingDist: "plugin-directory" });
     try {
       expect(fixture.result.status, fixture.output).not.toBe(0);
       expect(fixture.output).toContain(
@@ -698,8 +796,10 @@ describe("exact-commit CLI artifact restore", () => {
     }
   });
 
-  it("rejects a symlinked nemoclaw directory without writing outside the workspace (#7915)", () => {
-    const fixture = runRestoreValidation({ preexistingDist: "symlinked-plugin-parent" });
+  it("rejects a symlinked nemoclaw directory without writing outside the workspace (#7915)", async ({
+    expect,
+  }) => {
+    const fixture = await runRestoreValidation({ preexistingDist: "symlinked-plugin-parent" });
     try {
       expect(fixture.result.status, fixture.output).not.toBe(0);
       expect(fixture.output).toContain(
@@ -715,8 +815,8 @@ describe("exact-commit CLI artifact restore", () => {
     }
   });
 
-  it("does not overwrite a dangling dist symlink (#7915)", () => {
-    const fixture = runRestoreValidation({ preexistingDist: "dangling-symlink" });
+  it("does not overwrite a dangling dist symlink (#7915)", async ({ expect }) => {
+    const fixture = await runRestoreValidation({ preexistingDist: "dangling-symlink" });
     try {
       expect(fixture.result.status, fixture.output).not.toBe(0);
       expect(fixture.output).toContain("consumer unexpectedly built dist before artifact restore");
@@ -727,8 +827,11 @@ describe("exact-commit CLI artifact restore", () => {
     }
   });
 
-  it("rejects a compiled identity mismatch before artifact activation (#7915)", () => {
-    expectRestoreFailure(
+  it("rejects a compiled identity mismatch before artifact activation (#7915)", async ({
+    expect,
+  }) => {
+    await expectRestoreFailure(
+      expect,
       { buildIdentitySha: "e".repeat(40) },
       "restored CLI build identity does not match the candidate SHA",
     );
