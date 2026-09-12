@@ -39,7 +39,7 @@ import type { TestProgress, TestProgressCapability } from "./progress.ts";
  * `model-router-provider-routed-inference`, or `agent-turn-latency`, replace
  * bespoke inference env/probes with that lifecycle, preserve the suite-specific
  * sandbox assertions, scope `inference_mode` to the consuming workflow job,
- * and add the suite's fast-test mapping to `test/e2e/mock-parity.json`.
+ * and keep fast coverage discoverable through imports or matching support-test names.
  */
 export const E2E_INFERENCE_MODE_VALUES = ["mock", "internal-nvidia", "public-nvidia"] as const;
 export type E2EInferenceMode = (typeof E2E_INFERENCE_MODE_VALUES)[number];
