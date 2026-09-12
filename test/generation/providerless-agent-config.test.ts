@@ -50,7 +50,20 @@ function dockerEnvironment(agent: Agent, model = "", provider = "") {
     path.join(root, agent === "openclaw" ? "Dockerfile" : "agents/hermes/Dockerfile"),
     recipe,
   );
-  patchStagedDockerfile(recipe, model, provider, "http://127.0.0.1:18789");
+  patchStagedDockerfile(
+    recipe,
+    model,
+    "http://127.0.0.1:18789",
+    "providerless-regression",
+    provider || null,
+    null,
+    null,
+    null,
+    false,
+    null,
+    [],
+    { agentName: agent },
+  );
   // Feed the patched recipe to the real generator, including its default build arguments.
   return Object.fromEntries(
     [
@@ -202,7 +215,9 @@ describe.each<Agent>(["openclaw", "hermes"])("providerless %s configuration", (a
     expectAbsent[agent](generated.read());
   });
   it("preserves ordinary provider-backed Dockerfile generation", () => {
-    const generated = generate(agent, dockerEnvironment(agent, "fixture/model", "nvidia-prod"));
+    const environment = dockerEnvironment(agent, "fixture/model", "nvidia-prod");
+    expect(environment.NEMOCLAW_UPSTREAM_PROVIDER).toBe("nvidia-prod");
+    const generated = generate(agent, environment);
     expect(generated.result.status, generated.result.stderr).toBe(0);
     expectConfigured[agent](generated.read());
   });
