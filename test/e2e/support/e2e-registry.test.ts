@@ -54,7 +54,55 @@ function runTargetCli(args: string[]) {
   });
 }
 
+const EXTERNAL_WORKFLOW_FIXTURE: Extract<E2eInventoryTarget, { route: "external-workflow" }> = {
+  id: "external-proof",
+  route: "external-workflow",
+  definition: {
+    id: "external-proof",
+    workflow: ".github/workflows/proof.yaml",
+    job: "prove",
+    tests: [{ file: "test/e2e-runtime/proof.test.ts", project: "integration" }],
+  },
+};
+
 describe("deterministic target registry", () => {
+  it("retains the workflow owner and Vitest project of an external test", () => {
+    const entry = EXTERNAL_WORKFLOW_FIXTURE;
+    expect([...buildExecutionInventory([entry]).values()]).toEqual([entry]);
+  });
+
+  it.each([
+    { workflow: "../outside.yaml", job: "prove" },
+    { workflow: ".github/workflows/proof.yaml", job: "" },
+  ])("rejects an external target without a repository workflow job: %j", (owner) => {
+    const entry = EXTERNAL_WORKFLOW_FIXTURE;
+    expect(() =>
+      buildExecutionInventory([{ ...entry, definition: { ...entry.definition, ...owner } }]),
+    ).toThrow("requires a workflow job owner");
+  });
+
+  it("rejects an external target without tests", () => {
+    const entry = EXTERNAL_WORKFLOW_FIXTURE;
+    expect(() =>
+      buildExecutionInventory([{ ...entry, definition: { ...entry.definition, tests: [] } }]),
+    ).toThrow("requires test files");
+  });
+
+  it("rejects an external test path outside the test directory", () => {
+    const entry = EXTERNAL_WORKFLOW_FIXTURE;
+    expect(() =>
+      buildExecutionInventory([
+        {
+          ...entry,
+          definition: {
+            ...entry.definition,
+            tests: [{ file: "../outside.test.ts", project: "integration" }],
+          },
+        },
+      ]),
+    ).toThrow("has an invalid test path");
+  });
+
   it("should reject duplicate target IDs", () => {
     const first = target("duplicate-id")
       .manifest("test/e2e/manifests/openclaw-nvidia.yaml")

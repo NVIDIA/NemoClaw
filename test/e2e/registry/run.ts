@@ -15,7 +15,11 @@ import {
   runtimeExecutionId,
 } from "../../../tools/e2e/gateway-runtime.mts";
 
-import { listTargets, requireTargets } from "../../../tools/e2e/target-inventory.mts";
+import {
+  listExecutionTargets,
+  listTargets,
+  requireTargets,
+} from "../../../tools/e2e/target-inventory.mts";
 import { resolveRunnerForTarget } from "./runner-routing.ts";
 import {
   liveTargetExecutionCoverage,
@@ -27,6 +31,7 @@ import type { TargetDefinition } from "./types.ts";
 
 interface Args {
   list: boolean;
+  listInventory: boolean;
   emitLiveMatrix: boolean;
   targets: string[];
 }
@@ -57,11 +62,16 @@ export interface LiveTargetMatrixEntry extends LiveTargetInventoryEntry {
 function parseArgs(argv: string[]): Args {
   const args: Args = {
     list: false,
+    listInventory: false,
     emitLiveMatrix: false,
     targets: [],
   };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
+    if (arg === "--list-inventory") {
+      args.listInventory = true;
+      continue;
+    }
     if (arg === "--list") {
       args.list = true;
       continue;
@@ -161,6 +171,10 @@ function emitLiveMatrix(ids: string[]) {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
+  if (args.listInventory) {
+    process.stdout.write(`${JSON.stringify(listExecutionTargets(), null, 2)}\n`);
+    return;
+  }
   if (args.list) {
     printList();
     return;

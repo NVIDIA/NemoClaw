@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { externalWorkflowTargets } from "./target-definitions/external-workflows.mts";
 import { workflowTargets } from "./target-definitions/workflows.mts";
 import { type E2eExecutionRow, validateE2eExecutionRows } from "./execution-coverage.mts";
 
@@ -1814,6 +1815,13 @@ export interface WorkflowE2eTarget {
   coverage: readonly { row: E2eExecutionRow; gatewayRuntimes: E2eGatewayRuntimeSupport }[];
 }
 
+export interface ExternalWorkflowE2eTarget {
+  id: string;
+  workflow: string;
+  job: string;
+  tests: readonly { file: string; project: "e2e-live" | "integration" }[];
+}
+
 export interface WorkflowExecutionSelection {
   allowedJobs: string[];
   workflowJobs: string[];
@@ -1830,7 +1838,8 @@ export type E2eInventoryTarget =
   | { id: string; route: "profile"; definition: E2eCatalogueTarget }
   | { id: string; route: "typed"; definition: TargetDefinition }
   | { id: string; route: "shared"; definition: SharedE2eTarget }
-  | { id: string; route: "workflow"; definition: WorkflowE2eTarget };
+  | { id: string; route: "workflow"; definition: WorkflowE2eTarget }
+  | { id: string; route: "external-workflow"; definition: ExternalWorkflowE2eTarget };
 
 export function buildExecutionInventory(
   targets: readonly E2eInventoryTarget[],
@@ -1840,6 +1849,19 @@ export function buildExecutionInventory(
     assertSafeTargetId(entry.id);
     if (entry.id !== entry.definition.id)
       throw new Error(`Execution target identity differs: ${entry.id}`);
+    if (entry.route === "external-workflow") {
+      const { workflow, job, tests } = entry.definition;
+      if (!/^\.github\/workflows\/[a-zA-Z0-9_-]+\.ya?ml$/.test(workflow) || !job.trim())
+        throw new Error(`External workflow target ${entry.id} requires a workflow job owner`);
+      if (tests.length === 0)
+        throw new Error(`External workflow target ${entry.id} requires test files`);
+      for (const test of tests) {
+        if (!/^test\/[a-zA-Z0-9_/-]+\.test\.ts$/.test(test.file))
+          throw new Error(
+            `External workflow target ${entry.id} has an invalid test path: ${test.file}`,
+          );
+      }
+    }
     if (entry.route === "workflow") {
       if (entry.definition.coverage.length === 0)
         throw new Error(`Workflow target ${entry.id} requires execution coverage`);
@@ -1858,6 +1880,11 @@ export function buildExecutionInventory(
 }
 
 const executionInventory = buildExecutionInventory([
+  ...externalWorkflowTargets.map((definition) => ({
+    id: definition.id,
+    route: "external-workflow" as const,
+    definition,
+  })),
   ...workflowTargets.map((definition) => ({
     id: definition.id,
     route: "workflow" as const,
