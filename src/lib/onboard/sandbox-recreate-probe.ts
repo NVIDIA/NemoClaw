@@ -11,9 +11,11 @@ import { captureOpenshell } from "../adapters/openshell/runtime";
 import { buildSelectedOpenShellSubprocessEnv } from "../adapters/openshell/command-argv";
 import type { OpenShellRuntimeSelection } from "../adapters/openshell/runtime-selection";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../adapters/openshell/timeouts";
+import { observeOpenShellSandboxIdentity } from "../adapters/openshell/sandbox-presence";
 import { parseSandboxPhase } from "../state/gateway";
 import {
   fingerprintSandboxLiveIdentity,
+  fingerprintSandboxRecreateValue,
   type SandboxRecreateObservation,
 } from "./sandbox-recreate-transaction";
 
@@ -43,6 +45,18 @@ export type SandboxRecreateObserver = (target: SandboxRecreateTarget) => Sandbox
 export type SandboxRecreateCapture = typeof captureOpenshell;
 
 /**
+ * OpenShell 0.0.116 can resolve legacy sandbox metadata but fail while reading
+ * the missing spec needed to render `sandbox get`. Inventory does not perform
+ * that config read, so this exact diagnostic is safe to recover through list.
+ */
+function isSandboxHasNoSpecGatewayOutput(output: string): boolean {
+  const clean = stripAnsi(String(output)).replace(/\r/g, "").trim();
+  return /^(?:error:\s*)?status:\s*Internal,\s*message:\s*["']sandbox has no spec["'](?:,\s*details:\s*\[\])?(?:,\s*metadata:\s*MetadataMap\s*\{\s*\})?$/i.test(
+    clean,
+  );
+}
+
+/**
  * Strict absence classifier for destructive owner-gateway reconciliation.
  * Bare NotFound is not sufficient because OpenShell uses it for missing
  * gateways and providers as well as sandboxes.
@@ -55,9 +69,7 @@ export function isExplicitMissingSandboxGatewayOutput(
   // Miette wraps long OpenShell 0.0.116 diagnostics onto a `│` continuation
   // line. Collapse only that renderer-owned boundary before exact matching.
   const structured = clean.replace(/\n\s*│\s*/g, " ");
-  const exactNoSpec =
-    /^(?:error:\s*)?status:\s*Internal,\s*message:\s*["']sandbox has no spec["'](?:,\s*details:\s*\[\])?(?:,\s*metadata:\s*MetadataMap\s*\{\s*\})?$/i;
-  if (exactNoSpec.test(clean)) return true;
+  if (isSandboxHasNoSpecGatewayOutput(clean)) return true;
   // OpenShell can omit the requested name from an owner-scoped lookup.
   // Require both exact structured fields so gateway/provider absence and
   // transport diagnostics remain ambiguous.
@@ -109,7 +121,7 @@ export function observeSandboxOnGateway(
       `Cannot journal sandbox '${target.sandboxName}' replacement: selected gateway does not match the recorded target.`,
     );
   }
-  const probe = capture(["sandbox", "get", "-g", target.gatewayName, target.sandboxName], {
+  const captureOptions = {
     ignoreError: true,
     includeStderr: true,
     includeStreams: true,
@@ -120,11 +132,34 @@ export function observeSandboxOnGateway(
           replaceEnv: true,
         }
       : {}),
-  });
+  } as const;
+  const probe = capture(
+    ["sandbox", "get", "-g", target.gatewayName, target.sandboxName],
+    captureOptions,
+  );
   const stdout = String(probe.stdout ?? (probe.status === 0 ? probe.output : "")).trim();
   const combined = `${stdout}\n${String(probe.stderr ?? probe.output ?? "")}`.trim();
   const failedCleanly =
     !probe.error && !probe.signal && probe.status !== null && probe.status !== 0;
+  if (failedCleanly && isSandboxHasNoSpecGatewayOutput(combined)) {
+    // `sandbox get` also reads the sandbox config. A gateway upgrade can retain
+    // the sandbox identity before its legacy config can be read. The structured
+    // inventory proves presence without depending on that extra config read.
+    const inventory = capture(
+      ["sandbox", "list", "-g", target.gatewayName, "-o", "json"],
+      captureOptions,
+    );
+    const listed = observeOpenShellSandboxIdentity(target.sandboxName, inventory);
+    if (listed.kind === "present") {
+      return {
+        state: listed.phase === "Ready" || listed.phase === "Running" ? "ready" : "not_ready",
+        liveIdentityFingerprint: fingerprintSandboxRecreateValue(listed.id),
+      };
+    }
+    throw new Error(
+      `Cannot journal sandbox '${target.sandboxName}' replacement: gateway '${target.gatewayName}' reported neither a live sandbox nor explicit absence.`,
+    );
+  }
   if (failedCleanly && isExplicitMissingSandboxGatewayOutput(combined, target.sandboxName)) {
     return { state: "missing", liveIdentityFingerprint: null };
   }
