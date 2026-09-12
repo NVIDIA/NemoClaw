@@ -5,6 +5,10 @@
 
 Direct E2E coverage runs through Vitest.
 
+The managed-image OpenClaw security probe creates and restores snapshots through packaged
+`commands/migration-state.js`. It checks credential removal and rejects a symlinked restore destination.
+Snapshot listing uses `blueprint/snapshot-management.js`.
+
 Interactive TUI targets require `expect`. The unified workflow installs it
 before those targets run; local runners must provide it themselves.
 

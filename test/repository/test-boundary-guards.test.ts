@@ -57,6 +57,38 @@ function writeSourceLoaderFixture(directory: string): void {
   );
 }
 
+describe("packaged snapshot probe imports", () => {
+  it.each([
+    [
+      "test/e2e-runtime/managed-image-openclaw-security.test.ts",
+      true,
+      "/opt/nemoclaw/dist/commands/migration-state.js",
+      0,
+    ],
+    [
+      "test/e2e-runtime/managed-image-openclaw-security.test.ts",
+      false,
+      "/opt/nemoclaw/dist/commands/migration-state.js",
+      1,
+    ],
+    ["test/ordinary.test.ts", true, "/opt/nemoclaw/dist/commands/migration-state.js", 1],
+    [
+      "test/e2e-runtime/managed-image-openclaw-security.test.ts",
+      true,
+      "../../dist/commands/migration-state.js",
+      1,
+    ],
+  ] as const)("checks %s with embedded=%s and import=%s", (file, embedded, specifier, count) => {
+    const source = `await import(${JSON.stringify(specifier)});`;
+    expect(
+      findCompiledInternalViolations(
+        file,
+        embedded ? "const probe = String.raw`" + source + "`;" : source,
+      ),
+    ).toHaveLength(count);
+  });
+});
+
 describe("compiled-test import boundary", () => {
   it("detects every supported compiled-internal reference shape", () => {
     const specifier = (target: string) => ["..", "dist", target].join("/");
