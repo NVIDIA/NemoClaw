@@ -120,6 +120,16 @@ describe("deterministic target registry", () => {
     ).toThrow("requires a workflow job owner");
   });
 
+  it.each(["../dispatch.mts", "/tmp/dispatch.mts", "tools/../dispatch.mts"])(
+    "rejects a delegated entry point outside repository scripts: %s",
+    (entrypoint) => {
+      const entry = EXTERNAL_WORKFLOW_FIXTURE;
+      expect(() =>
+        buildExecutionInventory([{ ...entry, definition: { ...entry.definition, entrypoint } }]),
+      ).toThrow("invalid script entry point");
+    },
+  );
+
   it("rejects an external target without tests", () => {
     const entry = EXTERNAL_WORKFLOW_FIXTURE;
     expect(() =>

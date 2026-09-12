@@ -432,6 +432,10 @@ npx tsx test/e2e/registry/run.ts --list-inventory
 External workflow routes retain scheduling, prerequisites, artifact identity, and cleanup in their owning jobs.
 Their inventory IDs do not select jobs in the main E2E workflow or the typed driver.
 The inventory also records live packaged-image checks in the `integration` project.
+The registration check scans direct live test calls across workflow files and checks registered packaged-image consumers.
+It rejects missing workflow jobs, missing test files, and test calls without an inventory route.
+Delegated routes name their script entry point; the check verifies that the owning job still calls it.
+These static checks do not certify remote execution or replace environment-gated collection checks.
 Manual entries link to their instructions and summarize prerequisites; the tests retain the prerequisite checks.
 Listing a manual qualification does not schedule it or establish product support.
 Jetson dispatch retains its opt-in and trusted-controller checks.

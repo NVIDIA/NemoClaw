@@ -6,7 +6,20 @@ import type { ExternalWorkflowE2eTarget } from "../target-inventory.mts";
 // Workflow jobs retain scheduling, prerequisites, artifact identity, and cleanup ownership.
 export const externalWorkflowTargets: readonly ExternalWorkflowE2eTarget[] = [
   {
+    id: "e2e-managed-image-multiarch-package-contracts",
+    workflow: ".github/workflows/e2e.yaml",
+    job: "managed-image-multiarch-startup",
+    tests: [
+      { file: "test/e2e-runtime/managed-image-openclaw-security.test.ts", project: "integration" },
+      {
+        file: "test/e2e-runtime/image-compatibility-docker-lifecycle.test.ts",
+        project: "integration",
+      },
+    ],
+  },
+  {
     id: "e2e-jetson-nvmap-gpu",
+    entrypoint: "tools/e2e/jetson-dispatch-client.mts",
     workflow: ".github/workflows/e2e.yaml",
     job: "jetson-nvmap-gpu",
     tests: [{ file: "test/e2e/live/jetson-nvmap-gpu.test.ts", project: "e2e-live" }],
@@ -198,6 +211,7 @@ export const externalWorkflowTargets: readonly ExternalWorkflowE2eTarget[] = [
   },
   {
     id: "podman-cpu-proof-portable-cpu-delegation",
+    entrypoint: "scripts/checks/run-portable-cpu-delegation-proof.mts",
     workflow: ".github/workflows/podman-cpu-proof.yaml",
     job: "portable-cpu-delegation",
     tests: [

@@ -1818,6 +1818,7 @@ export interface WorkflowE2eTarget {
 
 export interface ExternalWorkflowE2eTarget {
   id: string;
+  entrypoint?: string;
   workflow: string;
   job: string;
   tests: readonly { file: string; project: "e2e-live" | "integration" }[];
@@ -1859,7 +1860,12 @@ export function buildExecutionInventory(
     if (entry.id !== entry.definition.id)
       throw new Error(`Execution target identity differs: ${entry.id}`);
     if (entry.route === "external-workflow") {
-      const { workflow, job } = entry.definition;
+      const { workflow, job, entrypoint } = entry.definition;
+      if (
+        entrypoint !== undefined &&
+        !/^(?:scripts|tools)\/[a-zA-Z0-9_/-]+\.[cm]?[jt]s$/.test(entrypoint)
+      )
+        throw new Error(`External workflow target ${entry.id} has an invalid script entry point`);
       if (!/^\.github\/workflows\/[a-zA-Z0-9_-]+\.ya?ml$/.test(workflow) || !job.trim())
         throw new Error(`External workflow target ${entry.id} requires a workflow job owner`);
     }

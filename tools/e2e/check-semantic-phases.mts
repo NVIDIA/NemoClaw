@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { listExecutionTargets, workflowExecutionSelection } from "./target-inventory.mts";
+import { checkWorkflowConsumers } from "./workflow-execution-discovery.mts";
 import fs from "node:fs";
 import path from "node:path";
 import { Writable } from "node:stream";
@@ -2914,7 +2915,10 @@ export async function checkSemanticPhaseCoverage(): Promise<SemanticPhaseCoverag
   const liveFiles = fs
     .globSync("**/*.test.ts", { cwd: LIVE_ROOT })
     .map((file) => path.join("test/e2e/live", file).split(path.sep).join("/"));
-  const registrationFailures = reconcileLiveTargetDiscovery(liveFiles);
+  const registrationFailures = [
+    ...reconcileLiveTargetDiscovery(liveFiles),
+    ...checkWorkflowConsumers(REPO_ROOT),
+  ];
   if (registrationFailures.length) throw new Error(registrationFailures.join("\n"));
   const workflowModules = semanticPhaseCoverageModules();
   const expectedProjects = [...new Set(workflowModules.map(({ project }) => project))];
