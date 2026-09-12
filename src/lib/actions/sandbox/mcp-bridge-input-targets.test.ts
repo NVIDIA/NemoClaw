@@ -9,6 +9,8 @@ import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
+import { trailingJsonPayload } from "../../../../test/helpers/host-process-harness";
+
 import { isTrustedPrivateEndpointCapability } from "../../security/trusted-private-endpoint";
 import { addMcpBridge, normalizeMcpServerUrl } from "./mcp-bridge";
 import {
@@ -422,6 +424,8 @@ const entry = () => ({
   policyName: "mcp-bridge-github", source: "native",
 });
 replace(adapters, "assertAgentMcpMutationRuntimeCapability", () => {});
+replace(adapters, "assertAgentMcpTeardownRuntimeCapability", () => {});
+replace(require("./src/lib/actions/sandbox/mcp-bridge-policy.js"), "removeGeneratedPolicy", () => { state.policy = "absent"; });
 replace(adapters, "inspectAgentAdapterRegistration", () => ({ state: state.adapter ? "registered" : "absent" }));
 replace(adapters, "registerAgentAdapterAtCurrentCredentialRevision", () => { state.adapter = true; return "v7"; });
 replace(adapters, "unregisterAgentAdapter", () => { state.adapter = false; return "removed"; });
@@ -487,14 +491,18 @@ require("./src/lib/actions/sandbox/mcp-bridge.js").addMcpBridge("alpha", {
 }).then(() => {
   if (expectFailure) process.exit(2);
   process.stdout.write(JSON.stringify({ state }), () => process.exit(0));
-}, (error) => {
+}, async (error) => {
   if (!expectFailure) {
     process.stderr.write(String(error && error.stack || error), () => process.exit(1));
     return;
   }
+  const beforeForcedRemoval = { ...state };
+  if (phase === "policy-url-mismatch") {
+    await require("./src/lib/actions/sandbox/mcp-bridge.js").removeMcpBridge("alpha", "github", { force: true });
+  }
   process.stdout.write(JSON.stringify({
     message: String(error && error.message || error),
-    state, authorizationProbe,
+    state, authorizationProbe, beforeForcedRemoval,
   }), () => process.exit(0));
 });
 `;
@@ -513,20 +521,21 @@ require("./src/lib/actions/sandbox/mcp-bridge.js").addMcpBridge("alpha", {
         });
         expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
         expect(`${result.stdout}\n${result.stderr}`).not.toContain("host-only-secret");
-        const outcome = JSON.parse(result.stdout) as {
+        const outcome = trailingJsonPayload<{
           message?: string;
           state: Record<string, unknown>;
-        };
+        }>(result.stdout);
         expect(outcome).toMatchObject(
           phase === "policy-url-mismatch"
             ? {
                 message: expect.stringContaining("incomplete add transaction for a different URL"),
-                state: {
+                beforeForcedRemoval: {
                   adapter: false,
                   attachment: false,
                   policy: "capability",
                   provider: false,
                 },
+                state: { adapter: false, attachment: false, policy: "absent", provider: false },
               }
             : phase === "adapter-stable-unauthorized" || phase === "adapter-update-failed"
               ? {

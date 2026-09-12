@@ -47,23 +47,14 @@ function openClawConfigPath(root: string): string {
   return path.posix.join(root, "openclaw.json");
 }
 
-function atomicOpenClawConfigHelpers(): string[] {
+function openClawConfigReadHelpers(): string[] {
   return [
     'const fs = require("node:fs");',
-    'const path = require("node:path");',
-    'const crypto = require("node:crypto");',
     "const MAX_BYTES = 1048576;",
     "function fingerprint(value) { return value ? [value.dev, value.ino, value.size, value.mtimeMs, value.ctimeMs, value.mode, value.nlink, value.uid] : null; }",
     "function readConfig(configPath) {",
     "  let fd; try { fd = fs.openSync(configPath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW); } catch (error) { if (error && error.code === 'ENOENT') return { data: {}, identity: null }; throw error; }",
     "  try { const before = fs.fstatSync(fd); const linked = fs.lstatSync(configPath); if (!before.isFile() || !linked.isFile() || before.uid !== process.getuid() || before.nlink !== 1 || before.dev !== linked.dev || before.ino !== linked.ino || before.size > MAX_BYTES) throw new Error('OpenClaw configuration source is unsafe'); const raw = Buffer.alloc(before.size); let count = 0; while (count < raw.length) { const read = fs.readSync(fd, raw, count, raw.length - count, count); if (read === 0) break; count += read; } const after = fs.fstatSync(fd); if (count !== before.size || JSON.stringify(fingerprint(before)) !== JSON.stringify(fingerprint(after))) throw new Error('OpenClaw configuration changed while reading'); const data = before.size === 0 ? {} : JSON.parse(raw.toString('utf8')); if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error('OpenClaw configuration must be an object'); return { data, identity: fingerprint(before) }; } finally { fs.closeSync(fd); }",
-    "}",
-    "function writeConfig(configPath, data, identity) {",
-    "  const directory = path.dirname(configPath); fs.mkdirSync(directory, { recursive: true, mode: 0o700 });",
-    "  let current = null; try { current = fingerprint(fs.lstatSync(configPath)); } catch (error) { if (!error || error.code !== 'ENOENT') throw error; }",
-    "  if (JSON.stringify(current) !== JSON.stringify(identity)) throw new Error('OpenClaw configuration changed before publication');",
-    "  const tempPath = path.join(directory, `.openclaw.json.nemoclaw-${process.pid}-${crypto.randomBytes(12).toString('hex')}`); let fd;",
-    "  try { const content = Buffer.from(JSON.stringify(data, null, 2) + '\\n'); fd = fs.openSync(tempPath, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW, 0o600); let offset = 0; while (offset < content.length) offset += fs.writeSync(fd, content, offset); fs.fsyncSync(fd); fs.closeSync(fd); fd = undefined; const staged = fs.lstatSync(tempPath); if (!staged.isFile() || staged.uid !== process.getuid() || staged.nlink !== 1 || (staged.mode & 0o777) !== 0o600) throw new Error('OpenClaw staged configuration is unsafe'); fs.renameSync(tempPath, configPath); const dirfd = fs.openSync(directory, fs.constants.O_RDONLY); try { fs.fsyncSync(dirfd); } finally { fs.closeSync(dirfd); } } finally { if (fd !== undefined) fs.closeSync(fd); try { fs.unlinkSync(tempPath); } catch (error) { if (!error || error.code !== 'ENOENT') throw error; } }",
     "}",
   ];
 }
@@ -84,7 +75,7 @@ export function buildStrictOpenClawMcpInspectCommand(
   };
   return [
     "node - <<'NODE'",
-    ...atomicOpenClawConfigHelpers(),
+    ...openClawConfigReadHelpers(),
     `const expected = JSON.parse(${pythonJsonLiteral(payload)});`,
     "let actual; try { const current = readConfig(expected.configPath); actual = current.data && current.data.mcp && current.data.mcp.servers && current.data.mcp.servers[expected.server]; } catch (error) { console.error(error instanceof Error ? error.message : String(error)); process.exit(3); }",
     "if (!actual) { console.log('absent'); process.exit(0); }",
@@ -93,61 +84,6 @@ export function buildStrictOpenClawMcpInspectCommand(
     "const registered = actual.url === expected.url && actual.transport === expected.transport && openClawHeadersMatchExpected(headers, expected.headers);",
     'console.log(registered ? "registered" : "mismatch");',
     "if (!registered && expected.failOnMismatch) process.exit(2);",
-    "NODE",
-  ].join("\n");
-}
-
-export function buildOpenClawMcpRegisterCommand(
-  entry: McpSourceEntry,
-  replaceExisting = false,
-  root = OPENCLAW_MCP_CONFIG_DIR,
-  credentialRevision?: McpAttachedCredentialRevision,
-): string {
-  const headers = entryHeaders(entry, credentialRevision);
-  const payload = {
-    configPath: openClawConfigPath(root),
-    server: entry.server,
-    value: {
-      transport: OPENCLAW_NATIVE_MCP_TRANSPORT,
-      url: entry.url,
-      ...(Object.keys(headers).length > 0 ? { headers } : {}),
-    },
-    replaceExisting,
-  };
-  return [
-    "node - <<'NODE'",
-    ...atomicOpenClawConfigHelpers(),
-    `const payload = JSON.parse(${pythonJsonLiteral(payload)});`,
-    "const current = readConfig(payload.configPath);",
-    "if (current.data.mcp !== undefined && (!current.data.mcp || typeof current.data.mcp !== 'object' || Array.isArray(current.data.mcp))) throw new Error('OpenClaw mcp configuration must be an object');",
-    "const mcp = current.data.mcp || {}; if (mcp.servers !== undefined && (!mcp.servers || typeof mcp.servers !== 'object' || Array.isArray(mcp.servers))) throw new Error('OpenClaw mcp.servers configuration must be an object');",
-    'const servers = { ...(mcp.servers || {}) }; if (Object.hasOwn(servers, payload.server) && !payload.replaceExisting) { console.error("MCP server \'" + payload.server + "\' already exists in OpenClaw configuration."); process.exit(2); }',
-    "servers[payload.server] = payload.value; current.data.mcp = { ...mcp, servers }; writeConfig(payload.configPath, current.data, current.identity);",
-    "NODE",
-  ].join("\n");
-}
-
-export function buildOpenClawMcpRemoveCommand(
-  entry: McpSourceEntry,
-  force = false,
-  root = OPENCLAW_MCP_CONFIG_DIR,
-): string {
-  const payload = {
-    configPath: openClawConfigPath(root),
-    server: entry.server,
-    url: entry.url,
-    transport: OPENCLAW_NATIVE_MCP_TRANSPORT,
-    headers: entryHeaders(entry),
-    force,
-  };
-  return [
-    "node - <<'NODE'",
-    ...atomicOpenClawConfigHelpers(),
-    `const expected = JSON.parse(${pythonJsonLiteral(payload)});`,
-    openClawHeaderMatcherSource(),
-    "const current = readConfig(expected.configPath); const mcp = current.data.mcp; const servers = mcp && mcp.servers; if (!servers || typeof servers !== 'object' || Array.isArray(servers) || !Object.hasOwn(servers, expected.server)) process.exit(0);",
-    'const actual = servers[expected.server]; const exact = actual && typeof actual === "object" && actual.url === expected.url && actual.transport === expected.transport && openClawHeadersMatchExpected(actual.headers || {}, expected.headers || {}); if (!exact && !expected.force) { console.error("Refusing to remove modified OpenClaw MCP server \'" + expected.server + "\'. Use --force to remove it."); process.exit(2); }',
-    "delete servers[expected.server]; current.data.mcp = { ...mcp, servers }; writeConfig(expected.configPath, current.data, current.identity);",
     "NODE",
   ].join("\n");
 }

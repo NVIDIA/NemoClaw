@@ -51,11 +51,7 @@ export {
   type AdapterRegistrationInspection,
   parseAdapterRegistrationInspection,
 } from "./mcp-bridge-adapter-inspection";
-export {
-  buildOpenClawMcpRegisterCommand,
-  buildOpenClawMcpRemoveCommand,
-  MCPORTER_VERSION,
-} from "./mcp-bridge-adapter-openclaw";
+export { MCPORTER_VERSION } from "./mcp-bridge-adapter-openclaw";
 export {
   buildDeepAgentsMcpStatusCommand,
   buildHermesMcpStatusCommand,

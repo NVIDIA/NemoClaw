@@ -48,8 +48,6 @@ export {
   buildHermesMcpProbeCommand,
   buildHermesMcpRegisterCommand,
   buildOpenClawMcpInspectCommand,
-  buildOpenClawMcpRegisterCommand,
-  buildOpenClawMcpRemoveCommand,
   DEEPAGENTS_MCP_CONFIG_PATH,
   MCPORTER_VERSION,
   openClawHeadersMatchExpected,

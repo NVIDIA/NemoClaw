@@ -70,7 +70,7 @@ import {
   reloadOpenClawGatewayAfterMcpMutation,
   unregisterAgentAdapter,
 } from "./mcp-bridge-adapters";
-import { registerOpenClawAdapter } from "./mcp-bridge-adapter-openclaw";
+import { registerOpenClawAdapter, unregisterOpenClawAdapter } from "./mcp-bridge-adapter-openclaw";
 import { entryHeaders, openClawHeadersMatchExpected } from "./mcp-bridge-adapter-status";
 
 const baseEntry: McpSourceEntry = {
@@ -355,6 +355,30 @@ describe("OpenClaw MCP adapter registration", () => {
         plugins: { allow: ["nemoclaw"] },
         tools: { alsoAllow: ["bundle-mcp"], toolSearch: { mode: "tools" } },
       },
+    );
+  });
+
+  it("preserves a changed OpenClaw entry unless removal is explicitly forced", () => {
+    const entry: McpSourceEntry = {
+      ...baseEntry,
+      agent: "openclaw",
+      adapter: "openclaw-config",
+    };
+    mocks.readSandboxConfig.mockReturnValue({
+      preserved: true,
+      mcp: { servers: { github: { url: "https://changed.example/mcp" } } },
+    });
+
+    expect(() => unregisterOpenClawAdapter("alpha", entry, runtimeSelection)).toThrow(
+      "Refusing to remove modified OpenClaw MCP server 'github'",
+    );
+    expect(mocks.writeSandboxConfig).not.toHaveBeenCalled();
+
+    unregisterOpenClawAdapter("alpha", entry, runtimeSelection, { force: true });
+    expect(mocks.writeSandboxConfig).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({ configPath: "/sandbox/.openclaw/openclaw.json" }),
+      { preserved: true, mcp: { servers: {} } },
     );
   });
 

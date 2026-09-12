@@ -10,8 +10,6 @@ import { describe, expect, it } from "vitest";
 
 import type { McpSourceEntry } from "./mcp-bridge-contracts";
 import {
-  buildOpenClawMcpRegisterCommand,
-  buildOpenClawMcpRemoveCommand,
   buildStrictOpenClawMcpInspectCommand,
   MCPORTER_VERSION,
 } from "./mcp-bridge-adapter-openclaw";
@@ -32,44 +30,34 @@ function run(command: string) {
 }
 
 describe("OpenClaw native MCP adapter", () => {
-  it("atomically registers, inspects, and removes a native OpenClaw entry", () => {
+  it("inspects a native OpenClaw entry without changing its configuration", () => {
     const temp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-mcp-"));
-    const root = temp;
     const configPath = path.join(temp, "openclaw.json");
-    try {
-      fs.writeFileSync(configPath, JSON.stringify({ preserved: true }), { mode: 0o600 });
-      expect(run(buildOpenClawMcpRegisterCommand(entry, false, root)).status).toBe(0);
-      expect(JSON.parse(fs.readFileSync(configPath, "utf8"))).toEqual({
-        preserved: true,
-        mcp: {
-          servers: {
-            github: {
-              transport: "streamable-http",
-              url: entry.url,
-              headers: { Authorization: "Bearer openshell:resolve:env:GITHUB_TOKEN" },
-            },
+    const content = JSON.stringify({
+      preserved: true,
+      mcp: {
+        servers: {
+          github: {
+            transport: "streamable-http",
+            url: entry.url,
+            headers: entryHeaders(entry),
           },
         },
-      });
-      const inspection = run(buildStrictOpenClawMcpInspectCommand(entry, true, root));
+      },
+    });
+    try {
+      fs.writeFileSync(configPath, content, { mode: 0o600 });
+      const inspection = run(buildStrictOpenClawMcpInspectCommand(entry, true, temp));
       expect(inspection.status).toBe(0);
       expect(inspection.stdout.trim()).toBe("registered");
-      const revisioned = JSON.parse(fs.readFileSync(configPath, "utf8"));
-      revisioned.mcp.servers.github.headers.Authorization =
-        "Bearer openshell:resolve:env:v12_GITHUB_TOKEN";
-      fs.writeFileSync(configPath, JSON.stringify(revisioned), { mode: 0o600 });
-      expect(run(buildOpenClawMcpRemoveCommand(entry, false, root)).status).toBe(0);
-      expect(JSON.parse(fs.readFileSync(configPath, "utf8"))).toEqual({
-        preserved: true,
-        mcp: { servers: {} },
-      });
+      expect(fs.readFileSync(configPath, "utf8")).toBe(content);
     } finally {
       fs.rmSync(temp, { recursive: true, force: true });
     }
   });
 
   it("projects the exact OpenShell credential revision into native headers", () => {
-    const command = buildOpenClawMcpRegisterCommand(entry, false, "/sandbox/.openclaw", "v12");
+    const command = buildStrictOpenClawMcpInspectCommand(entry, true, "/sandbox/.openclaw", "v12");
     expect(command).toContain('\\"transport\\":\\"streamable-http\\"');
     expect(command).toContain("Bearer openshell:resolve:env:v12_GITHUB_TOKEN");
     expect(
@@ -78,23 +66,6 @@ describe("OpenClaw native MCP adapter", () => {
         entryHeaders(entry, "v12"),
       ),
     ).toBe(true);
-  });
-
-  it("refuses to remove a changed native entry unless force is explicit", () => {
-    const temp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-mcp-drift-"));
-    const root = temp;
-    const configPath = path.join(temp, "openclaw.json");
-    try {
-      fs.writeFileSync(
-        configPath,
-        JSON.stringify({ mcp: { servers: { github: { url: "https://changed.example/mcp" } } } }),
-        { mode: 0o600 },
-      );
-      expect(run(buildOpenClawMcpRemoveCommand(entry, false, root)).status).toBe(2);
-      expect(run(buildOpenClawMcpRemoveCommand(entry, true, root)).status).toBe(0);
-    } finally {
-      fs.rmSync(temp, { recursive: true, force: true });
-    }
   });
 
   it("rejects a URL-only entry that OpenClaw would otherwise treat as legacy SSE", () => {

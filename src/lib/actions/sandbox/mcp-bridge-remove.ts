@@ -7,7 +7,7 @@ import {
   assertAgentMcpTeardownRuntimeCapability,
   unregisterAgentAdapter,
 } from "./mcp-bridge-adapters";
-import { isAgentMcpAdapter, McpBridgeError } from "./mcp-bridge-contracts";
+import { isAgentMcpAdapter, McpBridgeError, type McpSourceEntry } from "./mcp-bridge-contracts";
 import { removeGeneratedPolicy } from "./mcp-bridge-policy";
 import {
   detachProvider,
@@ -22,7 +22,7 @@ import {
   getSandboxAgent,
   getSandboxOrThrow,
 } from "./mcp-bridge-state";
-import { inspectSourceBridgeState } from "./mcp-bridge-source";
+import { inspectPolicyOnlyMcpEntry, inspectSourceBridgeState } from "./mcp-bridge-source";
 import {
   resolvePersistedCredentialEnvForRedaction,
   validateMcpServerName,
@@ -47,11 +47,22 @@ export async function removeMcpBridge(
         2,
       );
     }
-    const entry = observed.bridges[server];
+    const agent = getSandboxAgent(sandbox);
+    let entry: McpSourceEntry | undefined = observed.bridges[server];
+    if (!entry && options.force && agent.mcpCapability.adapter) {
+      entry =
+        (await inspectPolicyOnlyMcpEntry(
+          sandbox,
+          server,
+          agent.name,
+          agent.mcpCapability.adapter,
+          runtimeSelection,
+        )) ?? undefined;
+    }
     if (!entry) {
       if (!options.force) {
         throw new McpBridgeError(
-          `MCP server '${server}' was not found in the ${getSandboxAgent(sandbox).displayName} configuration.`,
+          `MCP server '${server}' was not found in the ${agent.displayName} configuration.`,
         );
       }
       console.log(`  No native MCP server '${server}' is configured on sandbox '${sandboxName}'.`);

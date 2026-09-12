@@ -35,7 +35,7 @@ $$nemoclaw my-sandbox mcp status github --json
 The per-server `warnings` array reports unsupported stored boundaries, trusted-private DNS pin changes, and credential-resolution findings. The `env.missing` field lists recorded host variable names that are currently unset.
 
 <AgentOnly variant="deepagents">
-When `/sandbox/.deepagents/.nemoclaw-mcp.json` is a symbolic link, FIFO, or another non-regular file, `mcp status` exits with status `2`.
+When `/sandbox/.deepagents/.nemoclaw-mcp.json` is a symbolic link, FIFO, or another non-regular file, `mcp status` exits with a nonzero status.
 It identifies the unsafe file type and does not report healthy server status.
 </AgentOnly>
 
