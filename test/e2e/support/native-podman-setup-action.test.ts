@@ -501,6 +501,18 @@ describe("native Podman E2E setup boundary", () => {
     }
   });
 
+  it.concurrent("reports signal termination without an exit status", async (context) => {
+    const result = await runCommand(
+      context,
+      "bash",
+      ["--noprofile", "--norc", "-c", "kill -TERM $$"],
+      process.env,
+    );
+
+    expect(result.status).toBeNull();
+    expect(result.signal).toBe("SIGTERM");
+  });
+
   it.concurrent("restores unchanged Docker runtime state and retires its authority (#11014)", async (context) => {
     const {
       destination,
