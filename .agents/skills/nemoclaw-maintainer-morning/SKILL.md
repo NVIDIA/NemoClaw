@@ -1,6 +1,6 @@
 ---
 name: nemoclaw-maintainer-morning
-description: Runs the morning maintainer standup for NemoClaw. Triages the backlog, determines the day's target version, labels selected items, surfaces stragglers from previous versions, and outputs the daily plan. Use at the start of the workday. Trigger keywords - morning, standup, start of day, daily plan, what are we shipping today.
+description: "Prepare the NemoClaw morning maintainer plan: triage the backlog, select a target version, and identify release candidates and stragglers."
 user_invocable: true
 ---
 

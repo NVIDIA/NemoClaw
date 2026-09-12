@@ -1,6 +1,6 @@
 ---
 name: nemoclaw-maintainer-validate-launchable
-description: Validate the user-facing staging Brev Launchable deployment, NemoClaw image and runtime identity, onboarding, CLI behavior, and inference. Use when a maintainer asks to test the staging Launchable in the Brev web interface, provides a deployed Brev environment URL, hands a Launchable instance to Codex, or needs advisory web validation separate from automated Launchable E2E.
+description: "Validate the staging NemoClaw Brev Launchable through its web journey or a deployed environment. Use for advisory validation outside automated E2E."
 ---
 
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->

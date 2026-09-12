@@ -3,9 +3,8 @@
 
 # Code Change Considerations
 
-Use these questions while planning, implementing, and reviewing a code change. Apply them to the
-current lifecycle stage; do not turn them into a separate report when the workflow already owns an
-output format.
+Use the questions relevant to a nontrivial code change or design decision. They are prompts for
+judgment, not a required checklist or separate report.
 
 ## Authority
 
@@ -20,8 +19,7 @@ recording them here.
 - What current code, branch, parameter, owner, fixture, or file becomes unnecessary and can be
   deleted or merged in this change?
 - Would the change duplicate an existing structure or create another source of truth?
-- Can the completed source-and-test change be neutral or negative in total lines? If not, what
-  current correctness, security, or accepted-scope contract requires the growth?
+- Can existing code or fixtures be simplified while preserving the requested behavior and coverage?
 - If the change adds a helper, abstraction, configuration, registry, fallback, or compatibility
   path, which current consumers adopt it now, what old structure does it remove, and is the whole
   result smaller or simpler?
