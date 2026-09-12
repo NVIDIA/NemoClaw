@@ -23,11 +23,15 @@ type LiveSandboxListProbe = (
 
 type DockerCaptureProbe = (args: string[], opts?: Record<string, unknown>) => string;
 
-type LiveSandboxProbe = (deps?: {
+type LiveSandboxProbeDeps = {
   captureOpenshell?: LiveSandboxListProbe;
   dockerCapture?: DockerCaptureProbe;
+  /** Milliseconds left in the shared wait; every probe timeout shrinks to it. */
+  remainingWaitMs?: () => number;
   timeoutMs?: number;
-}) => LiveSandboxProbeVerdict;
+};
+
+type LiveSandboxProbe = (deps?: LiveSandboxProbeDeps) => LiveSandboxProbeVerdict;
 
 type FinalDestroyGatewayCleanupInput = {
   deleteSucceededOrAlreadyGone: boolean;
@@ -57,8 +61,9 @@ type FinalDestroyGatewayCleanupDeps = {
 // OpenShell keeps listing a deleted sandbox until its runtime finishes
 // terminating, so the final probe waits for that one row before it treats the
 // row as a live sandbox that blocks gateway cleanup. The retry schedule caps
-// the attempts; the deadline caps the wall-clock wait when each list probe is
-// slow, so the wait cannot multiply the probe timeout by the attempt count.
+// the attempts; the deadline caps the wall-clock wait: no sleep or probe starts
+// once it would pass the deadline, and every probe timeout shrinks to the
+// remaining budget, so slow probes cannot stretch the wait past it.
 const DELETED_SANDBOX_ABSENCE_TIMEOUT_MS = 30_000;
 const DELETED_SANDBOX_ABSENCE_RETRY_DELAY_MS = 2_000;
 const DELETED_SANDBOX_ABSENCE_RETRY_DELAYS_MS: readonly number[] = Array.from(
@@ -80,31 +85,54 @@ function captureDockerContainers(...args: Parameters<DockerCaptureProbe>) {
   return dockerCapture(...args);
 }
 
+// spawnSync treats a zero timeout as unbounded, so an exhausted budget still
+// bounds the probe at one millisecond, which fails it closed.
+function probeTimeoutMs(deps: LiveSandboxProbeDeps): number {
+  const timeoutMs = deps.timeoutMs ?? OPENSHELL_PROBE_TIMEOUT_MS;
+  return deps.remainingWaitMs
+    ? Math.max(1, Math.min(timeoutMs, deps.remainingWaitMs()))
+    : timeoutMs;
+}
+
+function captureLiveSandboxList(deps: LiveSandboxProbeDeps): LiveSandboxListSnapshot {
+  return (deps.captureOpenshell ?? captureLiveSandboxes)(["sandbox", "list"], {
+    ignoreError: true,
+    timeout: probeTimeoutMs(deps),
+  });
+}
+
+function captureDockerSandboxContainers(deps: LiveSandboxProbeDeps): {
+  snapshot: DockerSandboxContainerSnapshot;
+  error?: unknown;
+} {
+  try {
+    return {
+      snapshot: {
+        output: (deps.dockerCapture ?? captureDockerContainers)(
+          ["ps", "--filter", "name=openshell-", "--format", "{{.Names}}"],
+          { timeout: probeTimeoutMs(deps) },
+        ),
+      },
+    };
+  } catch (error) {
+    return { snapshot: { output: "", probeFailed: true }, error };
+  }
+}
+
 export function collectLiveSandboxProbeSnapshot(
-  deps: {
-    captureOpenshell?: LiveSandboxListProbe;
-    dockerCapture?: DockerCaptureProbe;
-    timeoutMs?: number;
-  } = {},
+  deps: LiveSandboxProbeDeps = {},
 ): LiveSandboxProbeSnapshot {
   // Both host probes are synchronous so this produces one ordered snapshot
   // after the registry check and before the cleanup decision.
-  const captureOpenshell = deps.captureOpenshell ?? captureLiveSandboxes;
-  const dockerCapture = deps.dockerCapture ?? captureDockerContainers;
-  const timeoutMs = deps.timeoutMs ?? OPENSHELL_PROBE_TIMEOUT_MS;
-  const liveList = captureOpenshell(["sandbox", "list"], {
-    ignoreError: true,
-    timeout: timeoutMs,
-  });
+  const liveList = captureLiveSandboxList(deps);
+  const sandboxNames = getLiveSandboxNames(liveList);
   const dockerContainersBySandboxName = new Map<string, DockerSandboxContainerSnapshot>();
-  for (const sandboxName of getLiveSandboxNames(liveList)) {
-    try {
-      dockerContainersBySandboxName.set(sandboxName, {
-        output: dockerCapture(["ps", "--filter", "name=openshell-", "--format", "{{.Names}}"], {
-          timeout: timeoutMs,
-        }),
-      });
-    } catch (error) {
+  if (sandboxNames.length === 0) return { liveList, dockerContainersBySandboxName };
+  // One container listing answers every listed row, so the Docker probe runs
+  // once per snapshot and cannot multiply its timeout by the row count.
+  const containers = captureDockerSandboxContainers(deps);
+  for (const sandboxName of sandboxNames) {
+    if (containers.snapshot.probeFailed) {
       // SOURCE_OF_TRUTH: this host Docker CLI probe follows a terminal OpenShell
       // row and must attest that its backing container is absent. An exception
       // leaves live-sandbox state unknown, so preserve the shared gateway.
@@ -113,28 +141,20 @@ export function collectLiveSandboxProbeSnapshot(
       // it only when final cleanup has one authoritative sandbox/container state
       // source; see the OpenShell listener-removal boundary tracked in #6639.
       console.warn(
-        `Docker container probe failed for sandbox '${sandboxName}'; preserving shared gateway: ${String(error)}`,
+        `Docker container probe failed for sandbox '${sandboxName}'; preserving shared gateway: ${String(containers.error)}`,
       );
-      dockerContainersBySandboxName.set(sandboxName, { output: "", probeFailed: true });
     }
+    dockerContainersBySandboxName.set(sandboxName, containers.snapshot);
   }
   return { liveList, dockerContainersBySandboxName };
 }
 
-function classifyLiveSandboxesFromHost(
-  deps?: Parameters<LiveSandboxProbe>[0],
-): LiveSandboxProbeVerdict {
+function classifyLiveSandboxesFromHost(deps: LiveSandboxProbeDeps): LiveSandboxProbeVerdict {
   return classifyLiveSandboxes(collectLiveSandboxProbeSnapshot(deps));
 }
 
-function classifyLiveSandboxesWithoutDocker(
-  timeoutMs: number,
-  captureOpenshell: LiveSandboxListProbe = captureLiveSandboxes,
-): LiveSandboxProbeVerdict {
-  const liveList = captureOpenshell(["sandbox", "list"], {
-    ignoreError: true,
-    timeout: timeoutMs,
-  });
+function classifyLiveSandboxesWithoutDocker(deps: LiveSandboxProbeDeps): LiveSandboxProbeVerdict {
+  const liveList = captureLiveSandboxList(deps);
   // OpenShell terminal rows do not record their backing runtime. A Podman
   // absence proof therefore cannot establish that a same-named Docker
   // resource is absent. Preserve the shared gateway whenever any unclassified
@@ -148,6 +168,7 @@ function classifyLiveSandboxesWithoutDocker(
 function resolveFinalDestroyGatewayCleanupOnce(
   input: FinalDestroyGatewayCleanupInput,
   deps: FinalDestroyGatewayCleanupDeps,
+  remainingWaitMs: () => number,
 ): FinalDestroyGatewayCleanupVerdict {
   const listSandboxes = deps.listSandboxes ?? registry.listSandboxes;
   if (
@@ -157,19 +178,19 @@ function resolveFinalDestroyGatewayCleanupOnce(
   ) {
     return { status: "not-final" };
   }
-  const timeoutMs = deps.timeoutMs ?? OPENSHELL_PROBE_TIMEOUT_MS;
   const provider = input.runtimeProviderId
     ? (deps.resolveRuntimeProvider ?? resolveRegisteredRuntimeProvider)(input.runtimeProviderId)
     : null;
-  const liveProbeDeps = {
+  const liveProbeDeps: LiveSandboxProbeDeps = {
     ...(deps.captureOpenshell ? { captureOpenshell: deps.captureOpenshell } : {}),
     ...(deps.dockerCapture ? { dockerCapture: deps.dockerCapture } : {}),
-    timeoutMs,
+    remainingWaitMs,
+    timeoutMs: deps.timeoutMs ?? OPENSHELL_PROBE_TIMEOUT_MS,
   };
   const liveSandboxes = deps.liveSandboxProbe
     ? deps.liveSandboxProbe(liveProbeDeps)
     : provider?.gateway.ownsHostReadiness === true
-      ? classifyLiveSandboxesWithoutDocker(timeoutMs, deps.captureOpenshell)
+      ? classifyLiveSandboxesWithoutDocker(liveProbeDeps)
       : classifyLiveSandboxesFromHost(liveProbeDeps);
   if (liveSandboxes.status === "none") return { status: "cleanup" };
   if (liveSandboxes.status === "unavailable") return { status: "live-list-unavailable" };
@@ -191,18 +212,32 @@ export async function resolveFinalDestroyGatewayCleanup(
   deps: FinalDestroyGatewayCleanupDeps = {},
 ): Promise<FinalDestroyGatewayCleanupVerdict> {
   const now = deps.now ?? Date.now;
+  const retryDelaysMs = deps.retryDelaysMs ?? DELETED_SANDBOX_ABSENCE_RETRY_DELAYS_MS;
   const deadline = now() + DELETED_SANDBOX_ABSENCE_TIMEOUT_MS;
-  return retryUntilAsync(() => resolveFinalDestroyGatewayCleanupOnce(input, deps), {
-    accept: (verdict) =>
-      !onlyDeletedSandboxRemains(verdict, input.sandboxName) || now() >= deadline,
-    onRetry: (_verdict, _delayMs, attempt) => {
-      if (attempt === 1) {
-        console.log(
-          `  Waiting for OpenShell to finish removing sandbox '${input.sandboxName}' before the shared gateway decision...`,
-        );
-      }
+  const remainingWaitMs = () => deadline - now();
+  let lastVerdict: FinalDestroyGatewayCleanupVerdict | undefined;
+  return retryUntilAsync(
+    () => {
+      // A sleep that overran the deadline leaves no budget for another probe,
+      // so the last fail-closed verdict stands.
+      if (lastVerdict !== undefined && remainingWaitMs() <= 0) return lastVerdict;
+      lastVerdict = resolveFinalDestroyGatewayCleanupOnce(input, deps, remainingWaitMs);
+      return lastVerdict;
     },
-    retryDelaysMs: deps.retryDelaysMs ?? DELETED_SANDBOX_ABSENCE_RETRY_DELAYS_MS,
-    sleep: deps.sleep ?? ((ms) => new Promise<void>((resolve) => setTimeout(resolve, ms))),
-  });
+    {
+      // Stop once the next scheduled sleep would reach the deadline.
+      accept: (verdict, attempt) =>
+        !onlyDeletedSandboxRemains(verdict, input.sandboxName) ||
+        remainingWaitMs() <= (retryDelaysMs[attempt - 1] ?? 0),
+      onRetry: (_verdict, _delayMs, attempt) => {
+        if (attempt === 1) {
+          console.log(
+            `  Waiting for OpenShell to finish removing sandbox '${input.sandboxName}' before the shared gateway decision...`,
+          );
+        }
+      },
+      retryDelaysMs,
+      sleep: deps.sleep ?? ((ms) => new Promise<void>((resolve) => setTimeout(resolve, ms))),
+    },
+  );
 }

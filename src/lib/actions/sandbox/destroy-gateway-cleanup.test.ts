@@ -15,8 +15,24 @@ const confirmedFinalDestroy = {
   sandboxName: "alpha",
 };
 
+const TERMINATING_ALPHA_ROW = "alpha             now                  Terminating\n";
+
 function liveList(rows: string): { status: number; output: string } {
   return { status: 0, output: `NAME              CREATED              PHASE\n${rows}` };
+}
+
+// A list probe that needs `durationMs`, honours the timeout it receives, and
+// reports the killed-process shape when the timeout cuts it short.
+function slowListProbe(clock: { now: number }, durationMs: number) {
+  return vi.fn((_args: string[], opts?: { timeout?: number }) => {
+    const elapsedMs = Math.min(durationMs, opts?.timeout ?? durationMs);
+    clock.now += elapsedMs;
+    return elapsedMs < durationMs ? { status: null, output: "" } : liveList(TERMINATING_ALPHA_ROW);
+  });
+}
+
+function probeTimeouts(probe: ReturnType<typeof slowListProbe>): Array<number | undefined> {
+  return probe.mock.calls.map(([, opts]) => opts?.timeout);
 }
 
 describe("resolveFinalDestroyGatewayCleanup", () => {
@@ -72,6 +88,7 @@ describe("resolveFinalDestroyGatewayCleanup", () => {
     ).resolves.toEqual({ status: "cleanup" });
     expect(liveSandboxProbe).toHaveBeenCalledWith({
       captureOpenshell,
+      remainingWaitMs: expect.any(Function),
       timeoutMs: 1_000,
     });
   });
@@ -189,13 +206,12 @@ describe("resolveFinalDestroyGatewayCleanup", () => {
     expect(sleep).toHaveBeenCalledTimes(2);
   });
 
-  it("stops waiting at the deadline when slow list probes consume the wait budget", async () => {
-    let clock = 0;
-    const captureOpenshell = vi.fn(() => {
-      clock += 20_000;
-      return liveList("alpha             now                  Terminating\n");
+  it("shrinks each list probe timeout to the remaining budget and ends at the deadline", async () => {
+    const clock = { now: 0 };
+    const captureOpenshell = slowListProbe(clock, 12_000);
+    const sleep = vi.fn(async (ms: number) => {
+      clock.now += ms;
     });
-    const sleep = vi.fn(async (_ms: number) => undefined);
     vi.spyOn(console, "log").mockImplementation(() => undefined);
 
     await expect(
@@ -203,13 +219,85 @@ describe("resolveFinalDestroyGatewayCleanup", () => {
         captureOpenshell,
         dockerCapture: () => "",
         listSandboxes: () => ({ sandboxes: [] }),
-        now: () => clock,
-        retryDelaysMs: [5, 5, 5, 5],
+        now: () => clock.now,
+        retryDelaysMs: [2_000, 2_000, 2_000, 2_000, 2_000],
+        sleep,
+      }),
+    ).resolves.toEqual({ status: "live-list-unavailable" });
+    expect(probeTimeouts(captureOpenshell)).toEqual([15_000, 15_000, 2_000]);
+    expect(sleep).toHaveBeenCalledTimes(2);
+    expect(clock.now).toBe(30_000);
+  });
+
+  it("does not sleep when the next retry delay would reach the deadline", async () => {
+    const clock = { now: 0 };
+    const captureOpenshell = slowListProbe(clock, 13_000);
+    const sleep = vi.fn(async (ms: number) => {
+      clock.now += ms;
+    });
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    await expect(
+      resolveFinalDestroyGatewayCleanup(confirmedFinalDestroy, {
+        captureOpenshell,
+        dockerCapture: () => "",
+        listSandboxes: () => ({ sandboxes: [] }),
+        now: () => clock.now,
+        retryDelaysMs: [2_000, 2_000, 2_000, 2_000, 2_000],
         sleep,
       }),
     ).resolves.toEqual({ status: "live-sandboxes", sandboxNames: ["alpha"] });
     expect(captureOpenshell).toHaveBeenCalledTimes(2);
+    expect(sleep.mock.calls).toEqual([[2_000]]);
+    expect(clock.now).toBe(28_000);
+  });
+
+  it("keeps the last verdict instead of probing when a sleep overruns the deadline", async () => {
+    const clock = { now: 0 };
+    const captureOpenshell = slowListProbe(clock, 1_000);
+    const sleep = vi.fn(async (_ms: number) => {
+      clock.now = 30_000;
+    });
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    await expect(
+      resolveFinalDestroyGatewayCleanup(confirmedFinalDestroy, {
+        captureOpenshell,
+        dockerCapture: () => "",
+        listSandboxes: () => ({ sandboxes: [] }),
+        now: () => clock.now,
+        retryDelaysMs: [2_000, 2_000],
+        sleep,
+      }),
+    ).resolves.toEqual({ status: "live-sandboxes", sandboxNames: ["alpha"] });
+    expect(captureOpenshell).toHaveBeenCalledOnce();
     expect(sleep).toHaveBeenCalledOnce();
+  });
+
+  it("bounds the Docker container probe to the budget left after a slow list probe", async () => {
+    const clock = { now: 0 };
+    const captureOpenshell = vi.fn(() => {
+      clock.now += 25_000;
+      return liveList("alpha             now                  Error\n");
+    });
+    const dockerCapture = vi.fn(() => "");
+
+    await expect(
+      resolveFinalDestroyGatewayCleanup(confirmedFinalDestroy, {
+        captureOpenshell,
+        dockerCapture,
+        listSandboxes: () => ({ sandboxes: [] }),
+        now: () => clock.now,
+      }),
+    ).resolves.toEqual({ status: "cleanup" });
+    expect(captureOpenshell).toHaveBeenCalledWith(["sandbox", "list"], {
+      ignoreError: true,
+      timeout: 15_000,
+    });
+    expect(dockerCapture).toHaveBeenCalledExactlyOnceWith(
+      ["ps", "--filter", "name=openshell-", "--format", "{{.Names}}"],
+      { timeout: 5_000 },
+    );
   });
 
   it("does not wait when another live sandbox blocks cleanup alongside the deleted one", async () => {
@@ -275,6 +363,26 @@ describe("resolveFinalDestroyGatewayCleanup", () => {
     expect(classifyLiveSandboxes(snapshot)).toEqual({
       status: "present",
       sandboxNames: ["npmtest"],
+    });
+  });
+
+  it("runs one Docker container probe for every listed sandbox", () => {
+    const dockerCapture = vi.fn(() => "openshell-default--beta-e487d1bd\n");
+
+    const snapshot = collectLiveSandboxProbeSnapshot({
+      captureOpenshell: () =>
+        liveList(
+          "alpha             now                  Error\nbeta              now                  Failed\n",
+        ),
+      dockerCapture,
+      timeoutMs: 1_000,
+    });
+
+    expect(dockerCapture).toHaveBeenCalledOnce();
+    expect([...snapshot.dockerContainersBySandboxName.keys()]).toEqual(["alpha", "beta"]);
+    expect(classifyLiveSandboxes(snapshot)).toEqual({
+      status: "present",
+      sandboxNames: ["beta"],
     });
   });
 
