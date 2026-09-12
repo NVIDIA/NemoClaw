@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { execFileSync, spawnSync } from "node:child_process";
+import { EventEmitter } from "node:events";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -30,6 +31,7 @@ import {
   prepareAdvisorSandboxInputs,
   runAdvisorSandboxAsync,
   runOpenShellAdvisorCommand,
+  waitForAdvisorSandboxTermination,
   verifyAdvisorGitWorktree,
 } from "../../../tools/pr-review-advisor/openshell.mts";
 import {
@@ -525,6 +527,50 @@ describe("PR review advisor specialist lifecycle", () => {
 });
 
 describe("PR review advisor OpenShell wrapper", () => {
+  it.each(["SIGTERM", "SIGINT"] as const)(
+    "initializes and keeps the sandbox entrypoint alive until OpenShell sends %s (#10791)",
+    async (signal) => {
+      const signals = new EventEmitter();
+      const initialize = vi.fn();
+      let settled = false;
+      const waiting = runOpenShellAdvisorCommand("initialize", initialize, () =>
+        waitForAdvisorSandboxTermination(signals),
+      ).then(() => {
+        settled = true;
+      });
+
+      await Promise.resolve();
+      expect(initialize).toHaveBeenCalledOnce();
+      expect(settled).toBe(false);
+
+      signals.emit(signal);
+      await waiting;
+      expect(settled).toBe(true);
+      expect(signals.listenerCount("SIGTERM")).toBe(0);
+      expect(signals.listenerCount("SIGINT")).toBe(0);
+    },
+  );
+
+  it("keeps a real Node entrypoint alive while it waits for OpenShell termination (#10791)", () => {
+    const moduleUrl = new URL("../../../tools/pr-review-advisor/openshell.mts", import.meta.url)
+      .href;
+    const child = spawnSync(
+      process.execPath,
+      [
+        "--no-warnings",
+        "--input-type=module",
+        "--eval",
+        `import { waitForAdvisorSandboxTermination } from ${JSON.stringify(moduleUrl)}; await waitForAdvisorSandboxTermination();`,
+      ],
+      { encoding: "utf8", killSignal: "SIGTERM", timeout: 1_000 },
+    );
+
+    expect(child.error).toMatchObject({ code: "ETIMEDOUT" });
+    expect(child.status).toBe(0);
+    expect(child.signal).toBeNull();
+    expect(child.stderr).toBe("");
+  });
+
   it("permits only the pinned image login files required by stable OpenShell exec", () => {
     const policy = YAML.parse(
       fs.readFileSync("tools/pr-review-advisor/openshell-policy.yaml", "utf8"),
@@ -550,14 +596,6 @@ describe("PR review advisor OpenShell wrapper", () => {
     });
   });
 
-  it("dispatches sandbox runtime initialization", () => {
-    const initialize = vi.fn();
-
-    runOpenShellAdvisorCommand("initialize", initialize);
-
-    expect(initialize).toHaveBeenCalledOnce();
-  });
-
   it.each([
     [undefined, "openshell command is required"],
     ["prepare", "Unsupported OpenShell advisor command: prepare"],
@@ -569,10 +607,10 @@ describe("PR review advisor OpenShell wrapper", () => {
     ["delete", "Unsupported OpenShell advisor command: delete"],
     ["check", "Unsupported OpenShell advisor command: check"],
     ["unknown", "Unsupported OpenShell advisor command: unknown"],
-  ])("rejects unsupported OpenShell command %s", (command, message) => {
+  ])("rejects unsupported OpenShell command %s", async (command, message) => {
     const initialize = vi.fn();
 
-    expect(() => runOpenShellAdvisorCommand(command, initialize)).toThrow(message);
+    await expect(runOpenShellAdvisorCommand(command, initialize)).rejects.toThrow(message);
     expect(initialize).not.toHaveBeenCalled();
   });
 
