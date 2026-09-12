@@ -102,7 +102,9 @@ Run `$$nemoclaw <sandbox> rebuild` to apply it.
 
 Clearing a channel's host environment variables is not a removal signal when its recorded OpenShell gateway provider still matches the channel's credential contract.
 Onboarding preserves the channel selection and matching network policy preset because interactive inputs normally disappear between runs.
-If a required gateway provider is missing or no longer matches the expected credential contract, onboarding disables the channel and drops the matching policy preset.
+When reusing a Ready sandbox, onboarding stops if a required gateway provider is missing or does not match its credential contract.
+The running sandbox, durable messaging plan, and network policy remain unchanged.
+Restore the provider or use `channels remove` for explicit removal before retrying.
 
 For an in-sandbox QR-paired channel such as WhatsApp, only `channels remove` clears its session or pairing state before teardown.
 Refer to [Manage Messaging Channels](manage-messaging-channels) for channel-specific removal effects and recovery guidance.
