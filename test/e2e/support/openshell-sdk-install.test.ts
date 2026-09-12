@@ -1,13 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { execFileSync, spawnSync } from "node:child_process";
+import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, it, vi } from "vitest";
 import YAML from "yaml";
+import { testTimeoutOptions } from "../../helpers/timeouts.ts";
 
 const profile = YAML.parse(
   fs.readFileSync(".github/workflows/e2e-standard-profile.yaml", "utf8"),
@@ -25,7 +27,78 @@ const externalGatewayInstallScript = externalGateway.jobs["external-gateway-heal
   (step) => step.name === "Install reviewed OpenShell SDK archive without package credentials",
 )!.run!;
 
-function writePackageArchive(
+type RunProcessOptions = {
+  cwd?: string;
+  env?: NodeJS.ProcessEnv;
+  timeoutMs: number;
+};
+
+type RunProcessResult = {
+  error?: Error;
+  signal: NodeJS.Signals | null;
+  status: number | null;
+  stderr: string;
+  stdout: string;
+};
+
+function runProcess(
+  file: string,
+  args: readonly string[],
+  options: RunProcessOptions,
+): Promise<RunProcessResult> {
+  return new Promise((resolve) => {
+    execFile(
+      file,
+      [...args],
+      {
+        cwd: options.cwd,
+        encoding: "utf8",
+        env: options.env,
+        killSignal: "SIGKILL",
+        maxBuffer: 10 * 1024 * 1024,
+        timeout: options.timeoutMs,
+      },
+      (error, stdout, stderr) => {
+        const signal = error?.signal ?? null;
+        const spawnError = error && typeof error.code !== "number" && !signal ? error : undefined;
+        resolve({
+          ...(spawnError ? { error: spawnError } : {}),
+          signal,
+          status: signal ? null : Number(error?.code) || (error ? -1 : 0),
+          stderr,
+          stdout,
+        });
+      },
+    );
+  });
+}
+
+async function runSuccessfulProcess(
+  file: string,
+  args: readonly string[],
+  options: RunProcessOptions,
+): Promise<RunProcessResult> {
+  const result = await runProcess(file, args, options);
+  assert.equal(result.error, undefined, result.error?.message);
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  return result;
+}
+
+async function runProcessWithStatus(
+  file: string,
+  args: readonly string[],
+  options: RunProcessOptions,
+  expectedStatus: number,
+): Promise<void> {
+  const result = await runProcess(file, args, options);
+  assert.equal(result.error, undefined, result.error?.message);
+  assert.equal(result.signal, null);
+  assert.equal(result.status, expectedStatus, result.stderr);
+}
+
+vi.setConfig({ maxConcurrency: 4 });
+
+async function writePackageArchive(
   root: string,
   name: string,
   dependencies: Record<string, string> = {},
@@ -53,20 +126,21 @@ function writePackageArchive(
       : `export const version = ${JSON.stringify(version)};`,
   );
   const packed = JSON.parse(
-    execFileSync(
-      "npm",
-      ["pack", source, "--pack-destination", root, "--json", "--offline", "--ignore-scripts"],
-      {
-        cwd: root,
-        encoding: "utf8",
-        env: {
-          PATH: process.env.PATH,
-          HOME: root,
-          NPM_CONFIG_CACHE: path.join(root, "pack-cache"),
+    (
+      await runSuccessfulProcess(
+        "npm",
+        ["pack", source, "--pack-destination", root, "--json", "--offline", "--ignore-scripts"],
+        {
+          cwd: root,
+          env: {
+            PATH: process.env.PATH,
+            HOME: root,
+            NPM_CONFIG_CACHE: path.join(root, "pack-cache"),
+          },
+          timeoutMs: 10_000,
         },
-        timeout: 10_000,
-      },
-    ),
+      )
+    ).stdout,
   ) as Array<{ filename: string }>;
   const archive = path.join(root, packed[0]!.filename);
   return {
@@ -97,8 +171,8 @@ fs.writeFileSync(directory + "/package.json", JSON.stringify({ type: "module", e
 fs.writeFileSync(directory + "/index.js", process.env.SDK_SOURCE);
 `;
 
-describe("catalogue OpenShell SDK installation", () => {
-  it.each([
+describe.concurrent("catalogue OpenShell SDK installation", () => {
+  it.for([
     { name: "catalogue active SDK", script: installScript, lockedSdkVersion: "0.9.0" },
     { name: "catalogue replacement SDK", script: installScript, lockedSdkVersion: "1.0.0" },
     {
@@ -113,21 +187,22 @@ describe("catalogue OpenShell SDK installation", () => {
     },
   ])(
     "installs the lock-selected SDK and dependencies offline for $name",
-    ({ lockedSdkVersion, script }) => {
+    testTimeoutOptions(25_000),
+    async ({ lockedSdkVersion, script }, { expect }) => {
       const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-sdk-real-npm-"));
       try {
-        const sdk = writePackageArchive(root, "@nvidia/openshell-sdk", {
+        const sdk = await writePackageArchive(root, "@nvidia/openshell-sdk", {
           "fixture-transport": "^1.0.0",
         });
-        const previousSdk = writePackageArchive(
+        const previousSdk = await writePackageArchive(
           root,
           "@nvidia/openshell-sdk",
           { "fixture-transport": "^1.0.0" },
           "0.9.0",
         );
         const selectedSdk = lockedSdkVersion === "1.0.0" ? sdk : previousSdk;
-        const transport = writePackageArchive(root, "fixture-transport");
-        const sibling = writePackageArchive(root, "fixture-sibling");
+        const transport = await writePackageArchive(root, "fixture-transport");
+        const sibling = await writePackageArchive(root, "fixture-sibling");
         const workspace = path.join(root, "workspace");
         fs.mkdirSync(workspace);
         const manifest = JSON.stringify({
@@ -164,13 +239,12 @@ describe("catalogue OpenShell SDK installation", () => {
           RUNNER_TEMP: root,
         };
         const runNpm = (args: string[]) =>
-          execFileSync("npm", args, {
+          runSuccessfulProcess("npm", args, {
             cwd: workspace,
-            encoding: "utf8",
             env,
-            timeout: 10_000,
+            timeoutMs: 10_000,
           });
-        runNpm([
+        await runNpm([
           "cache",
           "add",
           transport.archive,
@@ -178,7 +252,7 @@ describe("catalogue OpenShell SDK installation", () => {
           "--offline",
           "--ignore-scripts",
         ]);
-        runNpm(["ci", "--ignore-scripts"]);
+        await runNpm(["ci", "--ignore-scripts"]);
         expect(fs.existsSync(path.join(workspace, "node_modules/@nvidia/openshell-sdk"))).toBe(
           false,
         );
@@ -186,25 +260,22 @@ describe("catalogue OpenShell SDK installation", () => {
         fs.copyFileSync(sdk.archive, path.join(root, "openshell-sdk", "sdk.tgz"));
         fs.copyFileSync(previousSdk.archive, path.join(root, "openshell-sdk", "previous-sdk.tgz"));
 
-        const result = spawnSync("bash", ["-c", script], {
+        await runSuccessfulProcess("bash", ["-c", script], {
           cwd: workspace,
-          encoding: "utf8",
           env,
-          timeout: 20_000,
+          timeoutMs: 20_000,
         });
 
-        expect(result.error).toBeUndefined();
-        expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
-        const observed = execFileSync(
+        const observed = await runSuccessfulProcess(
           process.execPath,
           [
             "--input-type=module",
             "-e",
             'import { OpenShellClient } from "@nvidia/openshell-sdk"; import { version } from "fixture-sibling"; console.log(JSON.stringify([OpenShellClient.connect(), version]));',
           ],
-          { cwd: workspace, encoding: "utf8", env },
+          { cwd: workspace, env, timeoutMs: 10_000 },
         );
-        expect(JSON.parse(observed)).toEqual(["1.0.0", "1.0.0"]);
+        expect(JSON.parse(observed.stdout)).toEqual(["1.0.0", "1.0.0"]);
         expect(
           JSON.parse(
             fs.readFileSync(
@@ -229,7 +300,7 @@ describe("catalogue OpenShell SDK installation", () => {
     },
   );
 
-  it.each([
+  it.for([
     {
       name: "one reviewed archive",
       archives: ["sdk.tgz"],
@@ -281,7 +352,7 @@ describe("catalogue OpenShell SDK installation", () => {
     },
   ])(
     "checks $name before running the catalogue target",
-    ({ archives, sdk, status, calls, failure }) => {
+    async ({ archives, sdk, status, calls, failure }, { expect }) => {
       const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-sdk-install-"));
       const archiveDirectory = path.join(directory, "openshell-sdk");
       const bin = path.join(directory, "bin");
@@ -296,25 +367,25 @@ describe("catalogue OpenShell SDK installation", () => {
         fs.writeFileSync(path.join(bin, "npm"), npmFixture, { mode: 0o755 });
         fs.symlinkSync(process.execPath, path.join(bin, "node"));
 
-        const result = spawnSync("bash", ["-c", installScript], {
-          cwd: directory,
-          encoding: "utf8",
-          timeout: 10_000,
-          env: {
-            PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}`,
-            RUNNER_TEMP: directory,
-            INSTALL_LOG: log,
-            SDK_SOURCE: sdk,
-            NPM_FAILURE: failure,
-            NODE_AUTH_TOKEN: "package-credential-canary",
-            GITHUB_TOKEN: "github-credential-canary",
-            GH_TOKEN: "gh-credential-canary",
+        await runProcessWithStatus(
+          "bash",
+          ["-c", installScript],
+          {
+            cwd: directory,
+            env: {
+              PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}`,
+              RUNNER_TEMP: directory,
+              INSTALL_LOG: log,
+              SDK_SOURCE: sdk,
+              NPM_FAILURE: failure,
+              NODE_AUTH_TOKEN: "package-credential-canary",
+              GITHUB_TOKEN: "github-credential-canary",
+              GH_TOKEN: "gh-credential-canary",
+            },
+            timeoutMs: 10_000,
           },
-        });
-
-        expect(result.error).toBeUndefined();
-        expect(result.signal).toBeNull();
-        expect(result.status, result.stderr).toBe(status);
+          status,
+        );
         const expectedCalls = [
           ...archives.map((archive) => ({
             args: [
