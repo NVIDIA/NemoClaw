@@ -43,11 +43,11 @@ jobs:
           REPAIR_ATTEMPT_KEY: ${{ inputs.repair_attempt_key }}
         run: |
           set -euo pipefail
-          [[ "$GITHUB_REF" == refs/heads/main ]]
-          [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]]
-          [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
-          [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]]
-          [[ "$REPAIR_ATTEMPT_KEY" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ "$GITHUB_REF" == refs/heads/main ]] || { echo "Generated repair validation must run from trusted main" >&2; exit 1; }
+          [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]] || { echo "Repair PR number is invalid" >&2; exit 1; }
+          [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "Repair head SHA is invalid" >&2; exit 1; }
+          [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "Repair base SHA is invalid" >&2; exit 1; }
+          [[ "$REPAIR_ATTEMPT_KEY" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "Repair attempt key is invalid" >&2; exit 1; }
           gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" |
             jq -e --arg head "$HEAD_SHA" --arg base "$BASE_SHA" '
               .state == "open" and .draft == false and

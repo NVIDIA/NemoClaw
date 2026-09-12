@@ -59,8 +59,8 @@ jobs:
           VALIDATION_WORKFLOW_SHA: ${{ github.workflow_sha }}
         run: |
           set -euo pipefail
-          [[ "$SOURCE_RUN_ID" =~ ^[1-9][0-9]*$ ]]
-          [[ "$SOURCE_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]
+          [[ "$SOURCE_RUN_ID" =~ ^[1-9][0-9]*$ ]] || { echo "Source run ID is invalid" >&2; exit 1; }
+          [[ "$SOURCE_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]] || { echo "Source run attempt is invalid" >&2; exit 1; }
           gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID" > "$RUNNER_TEMP/source-run.json"
           gh api "repos/$GITHUB_REPOSITORY/actions/workflows/pr-review-advisor.yaml" > "$RUNNER_TEMP/source-workflow.json"
           SOURCE_WORKFLOW_SHA="$(jq -er '.head_sha | select(type == "string" and test("^[0-9a-f]{40}$"))' "$RUNNER_TEMP/source-run.json")"
@@ -85,7 +85,7 @@ jobs:
             echo "Manual reconciliation source run has no generated-head request artifact" >&2
             exit 1
           fi
-          [[ "$count" == 1 ]]
+          [[ "$count" == 1 ]] || { echo "Manual reconciliation source run has ambiguous generated-head request artifacts" >&2; exit 1; }
           jq -e --argjson run "$SOURCE_RUN_ID" '.[0].expired == false and .[0].workflow_run.id == $run' \
             "$RUNNER_TEMP/request-artifacts.json" >/dev/null
           echo "artifact-id=$(jq -r '.[0].id' "$RUNNER_TEMP/request-artifacts.json")" >> "$GITHUB_OUTPUT"

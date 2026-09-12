@@ -185,8 +185,8 @@ jobs:
           PUBLISH_REQUESTED: ${{ inputs.repair_publish }}
         run: |
           set -euo pipefail
-          [[ "$FINDING_IDS" == '[]' ]]
-          [[ "$PUBLISH_REQUESTED" == 'false' ]]
+          [[ "$FINDING_IDS" == '[]' ]] || { echo "Automatic Advisor runs cannot select repair findings" >&2; exit 1; }
+          [[ "$PUBLISH_REQUESTED" == 'false' ]] || { echo "Automatic Advisor runs cannot request repair publication" >&2; exit 1; }
       - name: Upload GitHub review context
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -591,8 +591,8 @@ jobs:
           SOURCE_HEAD_SHA: ${{ inputs.repair_head_sha }}
         run: |
           set -euo pipefail
-          [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]]
-          [[ "$SOURCE_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]] || { echo "Repair PR number is invalid" >&2; exit 1; }
+          [[ "$SOURCE_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "Repair source head SHA is invalid" >&2; exit 1; }
           live="$RUNNER_TEMP/live"
           gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" > "$live/pull.json"
           gh api "repos/$GITHUB_REPOSITORY/commits/$SOURCE_HEAD_SHA" > "$live/commit.json"
