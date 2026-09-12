@@ -108,6 +108,21 @@ try {
 } catch (error) {
   report.discoveryError = error.stack;
 }
+try {
+  const captured = JSON.parse(report.powershell.snapshot.nemoclaw.stdout);
+  const malformedOptionalPath = [captured.watcherPath, captured.daemonPath].some(
+    (value) => value !== null && typeof value !== "string",
+  );
+  if (malformedOptionalPath) {
+    const windows = require(path.join(root, "dist/lib/inference/ollama/windows.js"));
+    const outcome = windows.setupWindowsOllamaLoopbackBinding({ announceStop: true });
+    report.windowsSetupOutcome = { ok: outcome.ok, reason: outcome.reason };
+    if (outcome.ok) outcome.rollback();
+    else windows.printWindowsOllamaSnapshotDiagnostics();
+  }
+} catch (error) {
+  report.snapshotProbeError = error.message;
+}
 fs.writeFileSync(path.join(evidence, "main-discovery.json"), JSON.stringify(report, null, 2));
 console.log(JSON.stringify(report, null, 2));
 const stageProgram = `process.chdir(${JSON.stringify(root)}); process.env.NEMOCLAW_AGENT='hermes'; const {setupNim}=require(${JSON.stringify(path.join(root, "dist/lib/onboard.js"))}); const {loadAgent}=require(${JSON.stringify(path.join(root, "dist/lib/agent/defs.js"))}); Promise.resolve(setupNim(null,null,loadAgent('hermes'))).then(result=>console.log(JSON.stringify(result))).catch(error=>{console.error(error.stack); process.exitCode=1;});`;

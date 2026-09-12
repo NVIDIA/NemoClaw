@@ -73,7 +73,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Model pull failed' }
           Invoke-RestMethod 'http://127.0.0.1:11434/api/tags' | ConvertTo-Json -Depth 8 | Set-Content "$env:GITHUB_WORKSPACE\evidence\windows-tags.json"
           Get-NetTCPConnection -LocalPort 11434 -State Listen | Select-Object LocalAddress,LocalPort,OwningProcess | ConvertTo-Json | Set-Content "$env:GITHUB_WORKSPACE\evidence\windows-listener.json"
-      - name: Install and start Docker Desktop for the reported route
+      - name: Install Docker Desktop for the reported route
         id: desktop
         continue-on-error: true
         timeout-minutes: 12
@@ -91,14 +91,6 @@ jobs:
           $settingsRoot = "$env:APPDATA\Docker"
           New-Item -ItemType Directory -Force $settingsRoot | Out-Null
           @{configurationFileVersion=43;wslEngineEnabled=$true;integratedWslDistros=@($env:WSL_DISTRO);enableIntegrationWithDefaultWslDistro=$true} | ConvertTo-Json | Set-Content "$settingsRoot\settings-store.json"
-          Start-Process 'C:\Program Files\Docker\Docker\Docker Desktop.exe'
-          $ready=$false
-          for ($i=0; $i -lt 60; $i++) {
-            & wsl -d $env:WSL_DISTRO -- docker info --format '{{.OperatingSystem}}'
-            if ($LASTEXITCODE -eq 0) { $ready=$true; break }
-            Start-Sleep 5
-          }
-          if (-not $ready) { throw 'Docker Desktop did not become available inside WSL' }
       - name: Build the unmodified main CLI in WSL
         shell: powershell
         timeout-minutes: 15
@@ -116,11 +108,31 @@ jobs:
           Invoke-WslScript -Distro $env:WSL_DISTRO -User $env:WSL_TEST_USER -Script $script
       - name: Run real discovery and provider-menu probes
         shell: powershell
-        timeout-minutes: 10
+        timeout-minutes: 12
         env:
           DESKTOP_SETUP: ${{ steps.desktop.outcome }}
         run: |
           . "$env:GITHUB_WORKSPACE\source\tools\wsl\ci-helper.ps1"
+          $dockerExe = 'C:\Program Files\Docker\Docker\resources\bin\docker.exe'
+          if (Test-Path $dockerExe) {
+            & $dockerExe desktop start --timeout 120 2>&1 | Tee-Object "$env:GITHUB_WORKSPACE\evidence\desktop-start.log"
+            & $dockerExe --context desktop-linux info 2>&1 | Tee-Object "$env:GITHUB_WORKSPACE\evidence\desktop-engine.log"
+          }
+          $root = "$env:RUNNER_TEMP\issue-11401-ollama"
+          $env:OLLAMA_HOST = '127.0.0.1:11434'
+          $env:OLLAMA_MODELS = "$root\models"
+          $existing = @(Get-Process ollama -ErrorAction SilentlyContinue)
+          if ($existing.Count -eq 0) {
+            $daemon = Start-Process "$root\ollama.exe" -ArgumentList serve -PassThru -RedirectStandardOutput "$env:GITHUB_WORKSPACE\evidence\ollama-live.stdout.log" -RedirectStandardError "$env:GITHUB_WORKSPACE\evidence\ollama-live.stderr.log"
+          }
+          $ready=$false
+          for ($i=0; $i -lt 20; $i++) {
+            try { $tags=Invoke-RestMethod 'http://127.0.0.1:11434/api/tags'; if ($tags.models.Count -gt 0) { $ready=$true; break } } catch { }
+            Start-Sleep 1
+          }
+          if (-not $ready) { throw 'The real Windows daemon and installed model must be present during the probes' }
+          Get-Process ollama | Select-Object Id,Path,StartTime | ConvertTo-Json | Set-Content "$env:GITHUB_WORKSPACE\evidence\ollama-live.before.json"
+          $tags | ConvertTo-Json -Depth 8 | Set-Content "$env:GITHUB_WORKSPACE\evidence\windows-live-tags.json"
           $harness = ConvertTo-BashLiteral (ConvertTo-WslPath "$env:GITHUB_WORKSPACE\harness\tools\wsl\verify-11401.cts")
           $evidence = ConvertTo-BashLiteral (ConvertTo-WslPath "$env:GITHUB_WORKSPACE\evidence")
           $workdir = ConvertTo-BashLiteral $env:WSL_WORKDIR
@@ -135,12 +147,25 @@ jobs:
           node $harness $workdir $evidence '$env:DESKTOP_SETUP'
           "@
           Invoke-WslScript -Distro $env:WSL_DISTRO -User $env:WSL_TEST_USER -Script $script
+          Get-Process ollama | Select-Object Id,Path,StartTime | ConvertTo-Json | Set-Content "$env:GITHUB_WORKSPACE\evidence\ollama-live.after.json"
+          Invoke-RestMethod 'http://127.0.0.1:11434/api/tags' | ConvertTo-Json -Depth 8 | Set-Content "$env:GITHUB_WORKSPACE\evidence\windows-live-tags.after.json"
       - name: Record the Windows process after the probes
         if: always()
         shell: powershell
         run: |
           Get-Process ollama -ErrorAction SilentlyContinue | Select-Object Id,Path,StartTime | ConvertTo-Json | Set-Content "$env:GITHUB_WORKSPACE\evidence\ollama.after.json"
           Get-ChildItem "$env:LOCALAPPDATA\Docker" -Filter '*install*.txt' -ErrorAction SilentlyContinue | Copy-Item -Destination "$env:GITHUB_WORKSPACE\evidence" -ErrorAction SilentlyContinue
+          Get-ChildItem "$env:LOCALAPPDATA\Docker\log\host" -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -match 'backend|lifecycle|desktop' } | ForEach-Object { Get-Content $_.FullName -Tail 120 | Set-Content (Join-Path "$env:GITHUB_WORKSPACE\evidence" $_.Name) }
+          & wsl --list --verbose
+          Add-Type -AssemblyName System.Windows.Forms
+          Add-Type -AssemblyName System.Drawing
+          $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+          $bitmap = New-Object System.Drawing.Bitmap $bounds.Width,$bounds.Height
+          $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+          $graphics.CopyFromScreen($bounds.Location,[System.Drawing.Point]::Empty,$bounds.Size)
+          $bitmap.Save("$env:GITHUB_WORKSPACE\evidence\desktop.png")
+          $graphics.Dispose()
+          $bitmap.Dispose()
       - name: Upload reproduction evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
