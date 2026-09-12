@@ -1,8 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  type WorkflowExecutionSelection,
+  workflowExecutionSelection,
+  reconcileWorkflowExecutionDiscovery,
+} from "./target-inventory.mts";
 import { createHash } from "node:crypto";
-import { readFileSync, statSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
@@ -17,7 +22,6 @@ import {
   validateHermesDashboardWorkflow,
 } from "./hermes-dashboard-workflow-boundary.mts";
 import { validateHermesGpuStartupWorkflow } from "./hermes-gpu-startup-workflow-boundary.mts";
-import { HERMES_ACP_E2E_OWNING_PATHS } from "./hermes-acp-owning-paths.mts";
 import {
   HERMES_TIMEOUT_CONTRACTS,
   HERMES_TIMEOUT_HEADROOM_MAX_MINUTES,
@@ -135,32 +139,11 @@ type WorkflowStep = WorkflowRecord & {
   with?: WorkflowRecord;
 };
 
-export interface FreeStandingJobsInventory {
-  allowedJobs: string[];
-  workflowJobs: string[];
-  explicitOnlyJobs: string[];
-  freeStandingTargets: string[];
-  targetToJob: Map<string, string>;
-  liveTestToJobs: Map<string, string[]>;
-  coverageRows: E2eExecutionRow[];
-  gatewayRuntimesByJob: Map<string, E2eGatewayRuntimeSupport>;
-  gatewayRuntimesByCoverageRow: Map<string, E2eGatewayRuntimeSupport>;
-}
-
-export interface FocusedE2eJob {
-  id: string;
-  matchedFiles: string[];
-}
+export type FreeStandingJobsInventory = WorkflowExecutionSelection;
 
 export interface StagingBrevLaunchableDispatchEvaluation {
   runLaunchableE2e: boolean;
 }
-
-type CachedFreeStandingJobsInventory = {
-  mtimeMs: number;
-  size: number;
-  inventory: FreeStandingJobsInventory;
-};
 
 const SELECTOR_PATTERN = /^[A-Za-z0-9_-]+(,[A-Za-z0-9_-]+)*$/;
 const SELECTOR_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
@@ -488,10 +471,6 @@ function addMapValue(map: Map<string, string[]>, key: string, value: string): vo
   map.set(key, values);
 }
 
-function cloneStringArrayMap(map: ReadonlyMap<string, readonly string[]>): Map<string, string[]> {
-  return new Map([...map].map(([key, values]) => [key, [...values]]));
-}
-
 function findDuplicates(values: readonly string[]): string[] {
   const seen = new Set<string>();
   const duplicates = new Set<string>();
@@ -730,103 +709,8 @@ function deriveFreeStandingJobsInventoryFromJobs(jobs: WorkflowRecord): {
   };
 }
 
-const freeStandingJobsInventoryCache = new Map<string, CachedFreeStandingJobsInventory>();
-
 function readWorkflowRecord(workflowPath: string): WorkflowRecord {
   return asRecord(YAML.parse(readFileSync(workflowPath, "utf-8")));
-}
-
-function cloneFreeStandingJobsInventory(
-  inventory: FreeStandingJobsInventory,
-): FreeStandingJobsInventory {
-  return {
-    allowedJobs: [...inventory.allowedJobs],
-    workflowJobs: [...inventory.workflowJobs],
-    explicitOnlyJobs: [...inventory.explicitOnlyJobs],
-    freeStandingTargets: [...inventory.freeStandingTargets],
-    targetToJob: new Map(inventory.targetToJob),
-    coverageRows: inventory.coverageRows.map((row) => ({ ...row })),
-    gatewayRuntimesByJob: new Map(
-      [...inventory.gatewayRuntimesByJob].map(([job, runtimes]) => [
-        job,
-        runtimes === E2E_RUNTIME_AGNOSTIC ? runtimes : [...runtimes],
-      ]),
-    ),
-    gatewayRuntimesByCoverageRow: new Map(
-      [...inventory.gatewayRuntimesByCoverageRow].map(([key, runtimes]) => [
-        key,
-        runtimes === E2E_RUNTIME_AGNOSTIC ? runtimes : [...runtimes],
-      ]),
-    ),
-    liveTestToJobs: cloneStringArrayMap(inventory.liveTestToJobs),
-  };
-}
-
-export function validateFreeStandingWorkflowInventory(
-  workflowPath = DEFAULT_E2E_WORKFLOW_PATH,
-): string[] {
-  const workflow = readWorkflowRecord(workflowPath);
-  return deriveFreeStandingJobsInventoryFromJobs(asRecord(workflow.jobs)).errors;
-}
-
-export function readFreeStandingJobsInventory(
-  workflowPath = DEFAULT_E2E_WORKFLOW_PATH,
-): FreeStandingJobsInventory {
-  const stats = statSync(workflowPath);
-  const cached = freeStandingJobsInventoryCache.get(workflowPath);
-  if (cached && cached.mtimeMs === stats.mtimeMs && cached.size === stats.size) {
-    return cloneFreeStandingJobsInventory(cached.inventory);
-  }
-
-  const workflow = readWorkflowRecord(workflowPath);
-  const { errors, inventory } = deriveFreeStandingJobsInventoryFromJobs(asRecord(workflow.jobs));
-  if (errors.length > 0) {
-    throw new Error(`Invalid free-standing workflow inventory:\n${errors.join("\n")}`);
-  }
-  freeStandingJobsInventoryCache.set(workflowPath, {
-    mtimeMs: stats.mtimeMs,
-    size: stats.size,
-    inventory: cloneFreeStandingJobsInventory(inventory),
-  });
-  return inventory;
-}
-
-const RESTORED_GATEWAY_PAIRING_RUNTIME_FILES = new Set([
-  "src/lib/actions/sandbox/auto-pair-approval.ts",
-  "src/lib/actions/sandbox/restore-gateway-pairing.ts",
-  "src/lib/adapters/openshell/restore-gateway-pairing.ts",
-]);
-const LIVE_E2E_OWNING_FILE_JOBS = new Map<string, readonly string[]>([
-  ...HERMES_ACP_E2E_OWNING_PATHS.map((file) => [file, ["hermes-e2e"]] as const),
-  ["test/e2e/lib/fake-wechat-api.mts", ["messaging-providers"]],
-  ["test/e2e/live/hermes-gpu-startup-proof.ts", ["hermes-gpu-startup"]],
-  ["test/helpers/openshell-gateway-start-output.ts", ["hermes-gpu-startup"]],
-  ["test/e2e/fixtures/openclaw-plugin-runtime-exdev-onboard.ts", ["openclaw-plugin-runtime-exdev"]],
-  [
-    "test/e2e/live/openclaw-plugin-runtime-exdev-trusted-prebuild.ts",
-    ["openclaw-plugin-runtime-exdev"],
-  ],
-]);
-
-export function focusedE2eJobsForChangedFiles(
-  changedFiles: readonly string[],
-  inventory: FreeStandingJobsInventory = readFreeStandingJobsInventory(),
-): FocusedE2eJob[] {
-  const matchedFilesByJob = new Map<string, string[]>();
-  for (const file of [...new Set(changedFiles)].sort((left, right) => left.localeCompare(right))) {
-    for (const job of inventory.liveTestToJobs.get(file) ?? []) {
-      addMapValue(matchedFilesByJob, job, file);
-    }
-    for (const job of LIVE_E2E_OWNING_FILE_JOBS.get(file) ?? []) {
-      if (inventory.allowedJobs.includes(job)) addMapValue(matchedFilesByJob, job, file);
-    }
-    if (RESTORED_GATEWAY_PAIRING_RUNTIME_FILES.has(file)) {
-      addMapValue(matchedFilesByJob, "snapshot-commands", file);
-    }
-  }
-  return [...matchedFilesByJob]
-    .sort(([left], [right]) => left.localeCompare(right))
-    .map(([id, matchedFiles]) => ({ id, matchedFiles }));
 }
 
 export interface WorkflowDispatchSelectorEvaluation {
@@ -872,7 +756,7 @@ export function evaluateE2eWorkflowDispatchSelectors(input: {
   jobs?: string;
   targets?: string;
 }): WorkflowDispatchSelectorEvaluation {
-  const inventory = readFreeStandingJobsInventory();
+  const inventory = workflowExecutionSelection();
   const freeStandingJobIds = inventory.allowedJobs;
   const freeStandingTargetToJob = inventory.targetToJob;
   const jobs = input.jobs ?? "";
@@ -2882,7 +2766,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   errors.push(...validateJetsonDispatchBoundary(workflow));
   const { errors: inventoryErrors, inventory: freeStandingInventory } =
     deriveFreeStandingJobsInventoryFromJobs(jobs);
-  errors.push(...inventoryErrors);
+  errors.push(...inventoryErrors, ...reconcileWorkflowExecutionDiscovery(freeStandingInventory));
   validateFreeStandingInventoryBoundary(errors, jobs, freeStandingInventory);
   validateDockerHubAuthBoundary(errors, jobs);
   const generateMatrix = asRecord(jobs["generate-matrix"]);

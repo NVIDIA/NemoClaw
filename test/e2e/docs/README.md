@@ -21,7 +21,7 @@ Direct E2E implementations now live in Vitest. The former
 
 | Task | Source |
 | --- | --- |
-| Live target IDs and metadata | `tools/e2e/target-inventory.mts`; typed scenario data in `test/e2e/registry/definitions/baseline.ts` |
+| Live target IDs and metadata | `tools/e2e/target-inventory.mts`; typed scenario data in `test/e2e/registry/definitions/baseline.ts`; specialized definitions in `tools/e2e/target-definitions/workflows.mts` |
 | GitHub Actions matrix emission | `test/e2e/registry/run.ts --emit-live-matrix` |
 | Live target execution | `test/e2e/live/registry-targets.test.ts` |
 | Homogeneous target catalogue and execution | [Catalogue Targets](../README.md#catalogue-targets) |

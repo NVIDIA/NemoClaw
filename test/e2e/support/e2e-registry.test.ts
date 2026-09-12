@@ -9,12 +9,42 @@ import { target } from "../registry/builder.ts";
 import {
   buildExecutionInventory,
   listTargets,
+  type E2eInventoryTarget,
+  reconcileWorkflowExecutionDiscovery,
   sharedTarget,
 } from "../../../tools/e2e/target-inventory.mts";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const RUN_TARGETS = path.join(REPO_ROOT, "test/e2e/registry/run.ts");
 const TSX = path.join(REPO_ROOT, "node_modules/.bin/tsx");
+
+const WORKFLOW_FIXTURE: Extract<E2eInventoryTarget, { route: "workflow" }> = {
+  id: "proof",
+  route: "workflow",
+  definition: {
+    id: "proof",
+    workflow: ".github/workflows/e2e.yaml",
+    targetId: "proof",
+    defaultEnabled: true,
+    gatewayRuntimes: ["docker"],
+    testFiles: ["test/e2e/live/proof.test.ts"],
+    owningPaths: [],
+    coverage: [
+      {
+        gatewayRuntimes: ["docker"],
+        row: {
+          id: "proof",
+          variant: "",
+          source: "retained-workflow",
+          agentRuntime: "none",
+          observableOutcome: "The proof completes",
+          environmentOrInferenceEndpoint: "Linux Docker host",
+          unresolvedReason: "",
+        },
+      },
+    ],
+  },
+};
 
 function runTargetCli(args: string[]) {
   return spawnSync(TSX, [RUN_TARGETS, ...args], {
@@ -51,6 +81,54 @@ describe("deterministic target registry", () => {
         { id: typed.id, route: "typed", definition: typed },
       ]),
     ).toThrow("Duplicate target IDs: vllm-docker-storage");
+  });
+
+  it("rejects coverage attached to another workflow target", () => {
+    const entry = WORKFLOW_FIXTURE;
+    const definition = {
+      ...entry.definition,
+      coverage: entry.definition.coverage.map((coverage) => ({
+        ...coverage,
+        row: { ...coverage.row, id: "another-job" },
+      })),
+    };
+    expect(() => buildExecutionInventory([{ ...entry, definition }])).toThrow(
+      "Workflow coverage identity differs from target",
+    );
+  });
+
+  it("rejects a workflow target without execution coverage", () => {
+    const entry = WORKFLOW_FIXTURE;
+    expect(() =>
+      buildExecutionInventory([{ ...entry, definition: { ...entry.definition, coverage: [] } }]),
+    ).toThrow("requires execution coverage");
+  });
+
+  it("rejects an undisposed workflow job and a missing registered job", () => {
+    expect(
+      reconcileWorkflowExecutionDiscovery(
+        { workflowJobs: ["unexpected"], liveTestToJobs: new Map() },
+        { workflowJobs: ["required"], liveTestToJobs: new Map() },
+      ),
+    ).toEqual([
+      "Discovered workflow job unexpected has no inventory disposition",
+      "Registered workflow job required is missing",
+    ]);
+  });
+
+  it("rejects a workflow that dispatches a registered test through another job", () => {
+    expect(
+      reconcileWorkflowExecutionDiscovery(
+        {
+          workflowJobs: ["owner"],
+          liveTestToJobs: new Map([["test/e2e/live/proof.test.ts", ["other"]]]),
+        },
+        {
+          workflowJobs: ["owner"],
+          liveTestToJobs: new Map([["test/e2e/live/proof.test.ts", ["owner"]]]),
+        },
+      ),
+    ).toEqual(["Workflow test route differs from the inventory: test/e2e/live/proof.test.ts"]);
   });
 
   it("should reject target IDs that are unsafe for workflow regex filters and artifact paths", () => {

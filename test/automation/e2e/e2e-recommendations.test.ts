@@ -10,7 +10,6 @@ import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import {
-  extractFreeStandingE2eJobs,
   normalizeE2eCoverageResult,
   normalizeE2eTargetAdvisorResult,
   trustedE2eRecommendationInventory,
@@ -135,6 +134,7 @@ describe("E2E recommendation normalizer", () => {
         "tools/e2e/openshell-gateway-upgrade-fixture.mts",
         "tools/e2e/selector-aliases.mts",
         "tools/e2e/target-inventory.mts",
+        "tools/e2e/target-definitions/workflows.mts",
         "scripts/checks/protected-managed-image-contract.ts",
         "tools/e2e/module-tags.mts",
         ".github/workflows/e2e.yaml",
@@ -843,52 +843,6 @@ describe("E2E recommendation normalizer", () => {
     ]);
     expect(normalized.noTargetE2eReason).toBeNull();
     expect(normalized.confidence).toBe("medium");
-  });
-
-  it("extracts free-standing E2E jobs from workflow job selectors", () => {
-    expect(
-      extractFreeStandingE2eJobs(String.raw`
-jobs:
-  live-targets:
-    if: \${{ inputs.jobs == '' }}
-    steps:
-      - run: npx vitest run --project e2e-live test/e2e/live/registry-targets.test.ts
-  token-rotation:
-    if: \${{ (inputs.jobs == '' && inputs.targets == '') || contains(format(',{0},', inputs.jobs), ',token-rotation,') }}
-    steps:
-      - run: npx vitest run --project e2e-live test/e2e/live/token-rotation.test.ts
-`),
-    ).toEqual([
-      {
-        id: "token-rotation",
-        liveTestFiles: ["test/e2e/live/token-rotation.test.ts"],
-      },
-    ]);
-  });
-
-  it("requires exact selected-jobs membership for planned workflow jobs", () => {
-    expect(
-      extractFreeStandingE2eJobs(String.raw`
-jobs:
-  target-a:
-    if: \${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'target-a-extra') }}
-    steps:
-      - run: npx vitest run test/e2e/live/target-a.test.ts
-  target-b:
-    # selected_jobs and target-b are unrelated text.
-    steps:
-      - run: npx vitest run test/e2e/live/target-b.test.ts
-  target-c:
-    if: \${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'target-c') }}
-    steps:
-      - run: npx vitest run test/e2e/live/target-c.test.ts
-`),
-    ).toEqual([
-      {
-        id: "target-c",
-        liveTestFiles: ["test/e2e/live/target-c.test.ts"],
-      },
-    ]);
   });
 
   it("prefers a focused free-standing job over fan-out when trusted workflow wiring exists", () => {

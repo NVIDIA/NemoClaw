@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { focusedE2eJobsForChangedFiles } from "../../../tools/e2e/target-inventory.mts";
+import { workflowExecutionSelection } from "../../../tools/e2e/target-inventory.mts";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 
@@ -18,10 +20,7 @@ import {
   catalogueTargetsForChangedFiles,
   E2E_TARGET_CATALOGUE,
 } from "../../../tools/e2e/target-inventory.mts";
-import {
-  focusedE2eJobsForChangedFiles,
-  readFreeStandingJobsInventory,
-} from "../../../tools/e2e/workflow-boundary.mts";
+
 import { classifyTestDepth } from "../../../tools/pr-review-advisor/deterministic-context.mts";
 
 const HEAD_SHA = "a".repeat(40);
@@ -1090,7 +1089,7 @@ describe("deterministic PR risk plan", () => {
 
   it("keeps every risk-plan job wired into the canonical E2E workflow", () => {
     const allowedJobs = new Set([
-      ...readFreeStandingJobsInventory().allowedJobs,
+      ...workflowExecutionSelection().allowedJobs,
       ...E2E_TARGET_CATALOGUE.flatMap(({ id, targetId }) => [id, targetId]),
     ]);
     const configuredJobs = new Set(RISK_RULES.flatMap((rule) => rule.requiredJobs));

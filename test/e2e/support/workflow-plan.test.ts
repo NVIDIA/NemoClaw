@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { workflowExecutionSelection } from "../../../tools/e2e/target-inventory.mts";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -22,7 +23,7 @@ import {
   isPrCandidateCatalogueTarget,
   validateE2eTargetCatalogue,
 } from "../../../tools/e2e/target-inventory.mts";
-import { readFreeStandingJobsInventory } from "../../../tools/e2e/workflow-boundary.mts";
+
 import {
   buildE2eWorkflowPlan,
   releaseRequiredWorkflowJobs,
@@ -66,7 +67,7 @@ function firstId<T extends { id: string }>(rows: readonly T[], label: string): s
 }
 
 function retiredControllerSelectorIds(): string[] {
-  const allowedJobs = new Set(readFreeStandingJobsInventory().allowedJobs);
+  const allowedJobs = new Set(workflowExecutionSelection().allowedJobs);
   const retiredIds = RETIRED_CONTROLLER_SELECTOR_IDS.filter((id) => !allowedJobs.has(id));
   expect(retiredIds).toEqual([...RETIRED_CONTROLLER_SELECTOR_IDS]);
   return retiredIds;
@@ -80,6 +81,15 @@ function expectExplicitCatalogueCoverage(): void {
 }
 
 describe("E2E workflow plan", () => {
+  it.each(["tools/e2e/target-inventory.mts", "tools/e2e/target-definitions/workflows.mts"])(
+    "preserves full-suite selection when workflow metadata moves to %s",
+    (file) => {
+      expect(buildE2eWorkflowPlan({}, { changedFiles: [file] })).toEqual(
+        buildE2eWorkflowPlan({}, { changedFiles: [".github/workflows/e2e.yaml"] }),
+      );
+    },
+  );
+
   it("defaults to every release-required target and tagged credential-free test", () => {
     const plan = buildE2eWorkflowPlan();
     expect(plan).toEqual(buildE2eWorkflowPlan({}, { gatewayRuntimes: ["docker"] }));
@@ -329,7 +339,7 @@ describe("E2E workflow plan", () => {
     ]);
     expect(catalogueTarget("network-policy").selector).toBe("^network-policy:");
     const migratedTargetIds = ["hermes-slack", "openclaw-inference-switch", "sandbox-operations"];
-    const retainedMigratedJobs = readFreeStandingJobsInventory().allowedJobs.filter((id) =>
+    const retainedMigratedJobs = workflowExecutionSelection().allowedJobs.filter((id) =>
       migratedTargetIds.includes(id),
     );
 
@@ -878,7 +888,7 @@ describe("E2E workflow plan", () => {
         expect(legacyPlan).toEqual(canonicalPlan);
         expect(legacyPlan.hermesSelected).toBe(true);
         expect(readFileSync(output, "utf8")).toContain("hermes_selected=true\n");
-        expect(readFreeStandingJobsInventory().allowedJobs).not.toContain("hermes-dashboard");
+        expect(workflowExecutionSelection().allowedJobs).not.toContain("hermes-dashboard");
       } finally {
         rmSync(directory, { force: true, recursive: true });
       }
@@ -893,7 +903,7 @@ describe("E2E workflow plan", () => {
 
       expect(legacyPlan).toEqual(canonicalPlan);
       expect(legacyPlan.hermesSelected).toBe(false);
-      expect(readFreeStandingJobsInventory().allowedJobs).not.toContain("sandbox-rlimits-connect");
+      expect(workflowExecutionSelection().allowedJobs).not.toContain("sandbox-rlimits-connect");
     },
   );
 
@@ -998,7 +1008,7 @@ describe("E2E workflow plan", () => {
         selectedJobs: [],
         runtimeProvidersByJob: {},
         hermesSelected: false,
-        explicitOnlyJobs: readFreeStandingJobsInventory().explicitOnlyJobs,
+        explicitOnlyJobs: workflowExecutionSelection().explicitOnlyJobs,
       };
       try {
         const result = await runPlannerCli(["--ci-output"], context, {
@@ -1039,7 +1049,7 @@ describe("E2E workflow plan", () => {
         selectedJobs: ["jetson-nvmap-gpu"],
         runtimeProvidersByJob: { "jetson-nvmap-gpu": ["none"] },
         hermesSelected: false,
-        explicitOnlyJobs: readFreeStandingJobsInventory().explicitOnlyJobs,
+        explicitOnlyJobs: workflowExecutionSelection().explicitOnlyJobs,
       });
     },
   );
@@ -1063,7 +1073,7 @@ describe("E2E workflow plan", () => {
       selectedJobs: [],
       runtimeProvidersByJob: {},
       hermesSelected: false,
-      explicitOnlyJobs: readFreeStandingJobsInventory().explicitOnlyJobs,
+      explicitOnlyJobs: workflowExecutionSelection().explicitOnlyJobs,
     };
     try {
       const result = await runPlannerCli(["--ci-output"], context, {

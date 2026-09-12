@@ -1,9 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { focusedE2eJobsForChangedFiles } from "../e2e/target-inventory.mts";
 import { getCommits, getDiffStat } from "../advisors/git.mts";
 import { buildRiskPlan, isPrE2ePlanningJob, type RiskPlan } from "../advisors/risk-plan.mts";
-import { focusedE2eJobsForChangedFiles } from "../e2e/workflow-boundary.mts";
+
 import type { GitHubReviewContext } from "./github-context.mts";
 import {
   collectDriftEvidence,

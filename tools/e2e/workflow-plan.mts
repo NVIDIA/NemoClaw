@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { focusedE2eJobsForChangedFiles } from "./target-inventory.mts";
+import { workflowExecutionSelection } from "./target-inventory.mts";
 import { appendFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -40,10 +42,7 @@ import {
   type E2eOptionalCredential,
   pathMatches,
 } from "./target-inventory.mts";
-import {
-  focusedE2eJobsForChangedFiles,
-  readFreeStandingJobsInventory,
-} from "./workflow-boundary.mts";
+
 import {
   e2eExecutionLabel,
   type E2eExecutionRow,
@@ -134,6 +133,8 @@ const FULL_SUITE_OWNING_PATHS = [
   "test/e2e/fixtures/",
   "tools/e2e/live-vitest-invocation.mts",
   "tools/e2e/workflow-plan.mts",
+  "tools/e2e/target-inventory.mts",
+  "tools/e2e/target-definitions/workflows.mts",
 ] as const;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -487,7 +488,7 @@ function registryTargetsForChangedFiles(
 }
 
 function workflowJobRuntimeProviders(
-  inventory: ReturnType<typeof readFreeStandingJobsInventory>,
+  inventory: ReturnType<typeof workflowExecutionSelection>,
   job: string,
   gatewayRuntimes: readonly E2eGatewayRuntime[],
 ): E2eRuntimeProvider[] {
@@ -498,7 +499,7 @@ function workflowJobRuntimeProviders(
 }
 
 function runtimeProvidersByJob(
-  inventory: ReturnType<typeof readFreeStandingJobsInventory>,
+  inventory: ReturnType<typeof workflowExecutionSelection>,
   jobs: readonly string[],
   gatewayRuntimes: readonly E2eGatewayRuntime[],
   sharedRows: readonly CredentialFreeTestMatrixRow[] = [],
@@ -549,7 +550,7 @@ function mapTrustedControllerJobs(
     return { retiredSelectorSelected: false, selectors };
   }
 
-  const inventory = readFreeStandingJobsInventory();
+  const inventory = workflowExecutionSelection();
   const jobs = selectorIds(selectors.jobs, "jobs").map((job) =>
     job === LEGACY_BOOTSTRAP_INSTALL_JOB_ID &&
     E2E_TARGET_CATALOGUE.some((target) => target.targetId === BOOTSTRAP_INSTALL_JOB_ID)
@@ -597,7 +598,7 @@ function emptyE2eWorkflowPlan(gatewayRuntimes: readonly E2eGatewayRuntime[]): E2
     selectedJobs: [],
     runtimeProvidersByJob: {},
     hermesSelected: false,
-    explicitOnlyJobs: readFreeStandingJobsInventory().explicitOnlyJobs,
+    explicitOnlyJobs: workflowExecutionSelection().explicitOnlyJobs,
   };
 }
 
@@ -605,7 +606,7 @@ type E2eWorkflowPlanWithoutCoverage = Omit<E2eWorkflowPlan, "coverageMatrix">;
 
 function coverageMatrixForPlan(
   plan: E2eWorkflowPlanWithoutCoverage,
-  inventory: ReturnType<typeof readFreeStandingJobsInventory>,
+  inventory: ReturnType<typeof workflowExecutionSelection>,
 ): E2eExecutionRow[] {
   const catalogueRows = E2E_EXECUTION_PROFILES.flatMap((profile) =>
     plan.catalogueMatrices[profile].map((row) => ({
@@ -653,7 +654,7 @@ function coverageMatrixForPlan(
 
 function withCoverageMatrix(
   plan: E2eWorkflowPlanWithoutCoverage,
-  inventory: ReturnType<typeof readFreeStandingJobsInventory>,
+  inventory: ReturnType<typeof workflowExecutionSelection>,
 ): E2eWorkflowPlan {
   return {
     ...plan,
@@ -662,7 +663,7 @@ function withCoverageMatrix(
 }
 
 export function releaseRequiredWorkflowJobs(): string[] {
-  const inventory = readFreeStandingJobsInventory();
+  const inventory = workflowExecutionSelection();
   const sharedTestsRun = discoverCredentialFreeTests().length > 0;
   const liveTargetsRun = buildLiveTargetMatrix().length > 0;
   const catalogueJobs = E2E_EXECUTION_PROFILES.filter((profile) =>
@@ -712,7 +713,7 @@ export function buildE2eWorkflowPlan(
     }
   }
 
-  const inventory = readFreeStandingJobsInventory();
+  const inventory = workflowExecutionSelection();
   const jetsonDispatchSelected =
     (jobs.length === 1 && jobs[0] === JETSON_DISPATCH_TARGET && targets.length === 0) ||
     (targets.length === 1 && targets[0] === JETSON_DISPATCH_TARGET && jobs.length === 0);
@@ -1034,7 +1035,7 @@ export function validateE2eWorkflowPlan(plan: unknown): E2eWorkflowPlan {
   const { coverageMatrix, ...planWithoutCoverage } = plan as E2eWorkflowPlan;
   const expectedCoverageMatrix = coverageMatrixForPlan(
     planWithoutCoverage,
-    readFreeStandingJobsInventory(),
+    workflowExecutionSelection(),
   );
   if (!isDeepStrictEqual(coverageMatrix, expectedCoverageMatrix)) {
     throw new Error(
@@ -1072,7 +1073,7 @@ export function withoutUnavailableOptionalCredentialTargets(
   const { coverageMatrix: _coverageMatrix, ...planWithoutCoverage } = plan;
   return withCoverageMatrix(
     { ...planWithoutCoverage, catalogueMatrices },
-    readFreeStandingJobsInventory(),
+    workflowExecutionSelection(),
   );
 }
 
@@ -1094,7 +1095,7 @@ function runtimeExclusion(
 
 function runtimeExclusionsForPlan(
   plan: E2eWorkflowPlan,
-  inventory: ReturnType<typeof readFreeStandingJobsInventory>,
+  inventory: ReturnType<typeof workflowExecutionSelection>,
 ): RuntimeExclusion[] {
   const catalogueIds = new Set(
     Object.values(plan.catalogueMatrices)
@@ -1153,7 +1154,7 @@ export function renderE2eWorkflowPlanSummary(
   if (options.includeCoverageAudit === false) {
     return `${lines.join("\n")}\n`;
   }
-  const inventory = readFreeStandingJobsInventory();
+  const inventory = workflowExecutionSelection();
   const explicitOnlyRows = inventory.coverageRows.filter((row) =>
     plan.explicitOnlyJobs.includes(row.id),
   );

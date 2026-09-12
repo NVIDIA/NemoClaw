@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { workflowExecutionSelection } from "./target-inventory.mts";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -11,7 +12,6 @@ import * as importedRiskSignal from "./risk-signal.ts";
 import {
   RETIRED_CONTROLLER_SELECTOR_IDS,
   RETIRED_CONTROLLER_TARGET_SELECTOR_IDS,
-  readFreeStandingJobsInventory,
 } from "./workflow-boundary.mts";
 
 export { RETIRED_CONTROLLER_SELECTOR_IDS } from "./workflow-boundary.mts";
@@ -271,7 +271,7 @@ export function runRetiredSelectorCompatibility(
     runCommand?: CommandRunner;
   } = {},
 ): RetiredControllerSelectorId[] {
-  const allowedJobs = options.allowedJobs ?? readFreeStandingJobsInventory().allowedJobs;
+  const allowedJobs = options.allowedJobs ?? workflowExecutionSelection().allowedJobs;
   const selected = selectedRetiredControllerJobs({
     allowedJobs,
     expectedSha: environment.NEMOCLAW_E2E_EXPECTED_SHA,

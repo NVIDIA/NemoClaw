@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { workflowExecutionSelection } from "./target-inventory.mts";
 import fs from "node:fs";
 import path from "node:path";
 import { Writable } from "node:stream";
@@ -16,10 +17,7 @@ import {
   type CredentialFreeTestMatrixRow,
   type CredentialFreeTestProject,
 } from "./credential-free-tests.mts";
-import {
-  type FreeStandingJobsInventory,
-  readFreeStandingJobsInventory,
-} from "./workflow-boundary.mts";
+import { type FreeStandingJobsInventory } from "./workflow-boundary.mts";
 import { buildE2eWorkflowPlan } from "./workflow-plan.mts";
 
 declare module "vitest" {
@@ -233,7 +231,7 @@ function credentialFreeProjectForWorkflowFile(
  */
 export function semanticPhaseCoverageModules(
   plan: SemanticPhaseWorkflowPlan = buildE2eWorkflowPlan(),
-  inventory: SemanticPhaseWorkflowInventory = readFreeStandingJobsInventory(),
+  inventory: SemanticPhaseWorkflowInventory = workflowExecutionSelection(),
   liveTestFiles: readonly string[] = fs
     .globSync("**/*.test.ts", { cwd: LIVE_ROOT })
     .map((file) => path.join("test/e2e/live", file).split(path.sep).join("/")),

@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { workflowTargets } from "./target-definitions/workflows.mts";
+import { type E2eExecutionRow, validateE2eExecutionRows } from "./execution-coverage.mts";
+
 import { canonicalTargets } from "../../test/e2e/registry/definitions/baseline.ts";
 import type { TargetDefinition } from "../../test/e2e/registry/types.ts";
 
@@ -1800,10 +1803,34 @@ const sharedTargets: SharedE2eTarget[] = [
   },
 ];
 
+export interface WorkflowE2eTarget {
+  id: string;
+  workflow: string;
+  targetId: string | null;
+  defaultEnabled: boolean;
+  gatewayRuntimes: E2eGatewayRuntimeSupport;
+  testFiles: readonly string[];
+  owningPaths: readonly string[];
+  coverage: readonly { row: E2eExecutionRow; gatewayRuntimes: E2eGatewayRuntimeSupport }[];
+}
+
+export interface WorkflowExecutionSelection {
+  allowedJobs: string[];
+  workflowJobs: string[];
+  explicitOnlyJobs: string[];
+  freeStandingTargets: string[];
+  targetToJob: Map<string, string>;
+  liveTestToJobs: Map<string, string[]>;
+  coverageRows: E2eExecutionRow[];
+  gatewayRuntimesByJob: Map<string, E2eGatewayRuntimeSupport>;
+  gatewayRuntimesByCoverageRow: Map<string, E2eGatewayRuntimeSupport>;
+}
+
 export type E2eInventoryTarget =
   | { id: string; route: "profile"; definition: E2eCatalogueTarget }
   | { id: string; route: "typed"; definition: TargetDefinition }
-  | { id: string; route: "shared"; definition: SharedE2eTarget };
+  | { id: string; route: "shared"; definition: SharedE2eTarget }
+  | { id: string; route: "workflow"; definition: WorkflowE2eTarget };
 
 export function buildExecutionInventory(
   targets: readonly E2eInventoryTarget[],
@@ -1813,6 +1840,17 @@ export function buildExecutionInventory(
     assertSafeTargetId(entry.id);
     if (entry.id !== entry.definition.id)
       throw new Error(`Execution target identity differs: ${entry.id}`);
+    if (entry.route === "workflow") {
+      if (entry.definition.coverage.length === 0)
+        throw new Error(`Workflow target ${entry.id} requires execution coverage`);
+      if (entry.definition.targetId !== null)
+        assertSafeTargetId(entry.definition.targetId, "Workflow target selector");
+      for (const { row } of entry.definition.coverage) {
+        if (row.id !== entry.id)
+          throw new Error(`Workflow coverage identity differs from target ${entry.id}: ${row.id}`);
+      }
+      validateE2eExecutionRows(entry.definition.coverage.map(({ row }) => row));
+    }
     if (entries.has(entry.id)) throw new Error(`Duplicate target IDs: ${entry.id}`);
     entries.set(entry.id, entry);
   }
@@ -1820,6 +1858,11 @@ export function buildExecutionInventory(
 }
 
 const executionInventory = buildExecutionInventory([
+  ...workflowTargets.map((definition) => ({
+    id: definition.id,
+    route: "workflow" as const,
+    definition,
+  })),
   ...sharedTargets.map((definition) => ({
     id: definition.id,
     route: "shared" as const,
@@ -1839,6 +1882,103 @@ const executionInventory = buildExecutionInventory([
 
 export function listExecutionTargets(): E2eInventoryTarget[] {
   return [...executionInventory.values()].sort((left, right) => left.id.localeCompare(right.id));
+}
+
+export function workflowExecutionSelection(): WorkflowExecutionSelection {
+  const workflows = [...executionInventory.values()].flatMap((entry) =>
+    entry.route === "workflow" ? [entry.definition] : [],
+  );
+  const shared = sharedTargetRows();
+  const files = new Map<string, string[]>();
+  for (const entry of workflows) {
+    for (const file of entry.testFiles) files.set(file, [...(files.get(file) ?? []), entry.id]);
+  }
+  for (const entry of shared) files.set(entry.file, [...(files.get(entry.file) ?? []), entry.id]);
+  const targetToJob = new Map(
+    workflows.flatMap((entry) => (entry.targetId ? [[entry.targetId, entry.id] as const] : [])),
+  );
+  for (const entry of shared) targetToJob.set(entry.id, "shared-e2e");
+  return {
+    allowedJobs: [...workflows.map((entry) => entry.id), ...shared.map((entry) => entry.id)],
+    workflowJobs: [...workflows.map((entry) => entry.id), ...(shared.length ? ["shared-e2e"] : [])],
+    explicitOnlyJobs: workflows.filter((entry) => !entry.defaultEnabled).map((entry) => entry.id),
+    freeStandingTargets: [...targetToJob.keys()],
+    targetToJob,
+    liveTestToJobs: new Map(
+      [...files]
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([file, jobs]) => [file, jobs.sort()]),
+    ),
+    coverageRows: workflows.flatMap((entry) => entry.coverage.map(({ row }) => ({ ...row }))),
+    gatewayRuntimesByJob: new Map(workflows.map((entry) => [entry.id, entry.gatewayRuntimes])),
+    gatewayRuntimesByCoverageRow: new Map(
+      workflows.flatMap((entry) =>
+        entry.coverage.map(
+          ({ row, gatewayRuntimes }) => [`${row.id}:${row.variant}`, gatewayRuntimes] as const,
+        ),
+      ),
+    ),
+  };
+}
+
+export function reconcileWorkflowExecutionDiscovery(
+  discovered: Pick<WorkflowExecutionSelection, "workflowJobs" | "liveTestToJobs">,
+  expected: Pick<
+    WorkflowExecutionSelection,
+    "workflowJobs" | "liveTestToJobs"
+  > = workflowExecutionSelection(),
+): string[] {
+  const errors: string[] = [];
+  for (const id of discovered.workflowJobs) {
+    if (!expected.workflowJobs.includes(id))
+      errors.push(`Discovered workflow job ${id} has no inventory disposition`);
+  }
+  for (const id of expected.workflowJobs) {
+    if (!discovered.workflowJobs.includes(id))
+      errors.push(`Registered workflow job ${id} is missing`);
+  }
+  for (const file of new Set([
+    ...discovered.liveTestToJobs.keys(),
+    ...expected.liveTestToJobs.keys(),
+  ])) {
+    const actual = [...(discovered.liveTestToJobs.get(file) ?? [])].sort();
+    const registered = [...(expected.liveTestToJobs.get(file) ?? [])].sort();
+    if (!isDeepStrictEqual(actual, registered))
+      errors.push(`Workflow test route differs from the inventory: ${file}`);
+  }
+  return errors;
+}
+
+export interface FocusedE2eJob {
+  id: string;
+  matchedFiles: string[];
+}
+
+export function focusedE2eJobsForChangedFiles(
+  changedFiles: readonly string[],
+  selection = workflowExecutionSelection(),
+): FocusedE2eJob[] {
+  const matched = new Map<string, Set<string>>();
+  const workflowDefinitions = [...executionInventory.values()].flatMap((entry) =>
+    entry.route === "workflow" ? [entry.definition] : [],
+  );
+  for (const file of new Set(changedFiles)) {
+    const jobs = new Set(selection.liveTestToJobs.get(file));
+    for (const definition of workflowDefinitions) {
+      if (definition.owningPaths.includes(file) && selection.allowedJobs.includes(definition.id))
+        jobs.add(definition.id);
+    }
+    if (file.startsWith("src/") && catalogueTarget("snapshot-commands").owningPaths.includes(file))
+      jobs.add("snapshot-commands");
+    for (const job of jobs) {
+      const files = matched.get(job) ?? new Set<string>();
+      files.add(file);
+      matched.set(job, files);
+    }
+  }
+  return [...matched]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([id, files]) => ({ id, matchedFiles: [...files].sort() }));
 }
 
 export function sharedTarget(id: string): SharedE2eTarget {
