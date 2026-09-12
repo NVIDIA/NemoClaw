@@ -159,6 +159,14 @@ function writeOnboardLock(stateRoot: string): void {
   fs.writeFileSync(path.join(stateRoot, "onboard.lock"), "active\n", { mode: 0o600 });
 }
 
+function expectOnboardLockContention(stateRoot: string): void {
+  const lockPath = path.join(stateRoot, "onboard.lock");
+  expect(() => {
+    const descriptor = fs.openSync(lockPath, "wx", 0o600);
+    fs.closeSync(descriptor);
+  }).toThrow(expect.objectContaining({ code: "EEXIST" }));
+}
+
 function writeSelectedSandboxRegistry(stateRoot: string, port: number): void {
   fs.writeFileSync(
     path.join(stateRoot, "sandboxes.json"),
@@ -665,13 +673,11 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
     },
     {
       ...interruptedPreGatewayBase,
-      expectedExit: 1,
       onLog: (message: string, tmpHome: string, port: number) =>
-        message.includes("State and binaries")
-          ? writeOnboardLock(path.join(tmpHome, ".nemoclaw", "gateways", String(port)))
+        message.includes("Stopping services") || message.includes("State and binaries")
+          ? expectOnboardLockContention(path.join(tmpHome, ".nemoclaw", "gateways", String(port)))
           : undefined,
-      scenario: "preserves interrupted state when onboarding starts before state removal",
-      stateKept: true,
+      scenario: "holds the onboarding lock through interrupted state removal",
     },
   ])(
     "$scenario (#11395)",

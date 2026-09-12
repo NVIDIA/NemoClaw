@@ -66,6 +66,11 @@ Make `brew` available through `PATH` or inspect the formula before you remove Op
 For example, `NEMOCLAW_GATEWAY_PORT=9123 $$nemoclaw uninstall` selects `nemoclaw-9123` and its port-scoped state.
 Do not use `--gateway` to select another instance; when supplied for compatibility, its value must match the derived name or uninstall stops before cleanup.
 
+For a nondefault port, uninstall can remove state from onboarding that stopped during preflight before it created a gateway or registered a sandbox.
+The recorded failed session must match the selected managed gateway, and no selected sandbox registry, gateway registration, gateway state, managed gateway process, port listener, or active onboarding lock can exist.
+Uninstall acquires the selected state root's onboarding lock before cleanup and keeps it until that state is removed.
+If the evidence changes or the lock is unavailable, uninstall exits nonzero and preserves the state for a retry.
+
 ## Stop the Amazon Bedrock Runtime Adapter
 
 The selected gateway can use a host-local Amazon Bedrock Runtime adapter.

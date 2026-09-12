@@ -2904,7 +2904,7 @@ async function executeOpenShellResourceCleanup(
   managedHermesStateVolumes: readonly ManagedHermesStateVolumeContext[],
   teardownAuthority: GatewayOwner,
   portableRuntimeCleanup: boolean,
-  interruptedPreGatewayCleanup: boolean,
+  interruptedOnboardLock?: InterruptedOnboardLock,
 ): Promise<boolean> {
   const externallySupervised = isExternallySupervised(teardownAuthority);
   const portableCleanupInput: PortableRuntimeCleanupInput = {
@@ -2915,7 +2915,7 @@ async function executeOpenShellResourceCleanup(
     registryFile: path.join(paths.nemoclawStateDir, "sandboxes.json"),
     stateDir: path.dirname(paths.managedSwapMarkerPath),
   };
-  if (interruptedPreGatewayCleanup) {
+  if (interruptedOnboardLock) {
     if (
       !canRemoveInterruptedPreGatewayState(
         paths,
@@ -2923,6 +2923,7 @@ async function executeOpenShellResourceCleanup(
         runtime,
         teardownAuthority,
         portableRuntimeCleanup,
+        interruptedOnboardLock,
       )
     ) {
       runtime.warn(
@@ -2985,7 +2986,7 @@ async function executeOpenShellResourceCleanup(
   }
   if (
     scopedToSelectedGateway &&
-    !interruptedPreGatewayCleanup &&
+    !interruptedOnboardLock &&
     !finishScopedOpenShellCleanup(paths, options, runtime, sandboxNames, externallySupervised)
   ) {
     return false;
@@ -3040,13 +3041,79 @@ function canBeginOpenShellCleanup(
   );
 }
 
+interface InterruptedOnboardLock {
+  file: OpenRegularFile;
+  lockPath: string;
+}
+
+function interruptedOnboardLockIsOwned(lock: InterruptedOnboardLock): boolean {
+  try {
+    lock.file.stat();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function releaseInterruptedOnboardLock(lock: InterruptedOnboardLock): void {
+  try {
+    lock.file.stat();
+    fs.unlinkSync(lock.lockPath);
+  } catch {
+    // Best effort. A changed lock must never be removed.
+  } finally {
+    try {
+      lock.file.close();
+    } catch {
+      // Best effort.
+    }
+  }
+}
+
+function tryAcquireInterruptedOnboardLock(
+  stateRoot: string,
+  runtime: UninstallRuntime,
+): InterruptedOnboardLock | null {
+  const lockPath = path.join(stateRoot, "onboard.lock");
+  let file: OpenRegularFile;
+  try {
+    file = runtime.openRegularFile(lockPath, { create: true, mode: 0o600, writable: true });
+  } catch (error) {
+    if (isErrnoException(error) && error.code === "EEXIST") return null;
+    throw error;
+  }
+  const lock = { file, lockPath };
+  try {
+    file.replaceUtf8(
+      JSON.stringify({
+        command: "nemoclaw uninstall interrupted onboarding cleanup",
+        pid: process.pid,
+        startedAt: new Date().toISOString(),
+      }),
+      0o600,
+    );
+    return lock;
+  } catch (error) {
+    releaseInterruptedOnboardLock(lock);
+    throw error;
+  }
+}
+
 function interruptedPreGatewayStateIsStable(
   paths: UninstallPaths,
   options: UninstallRunOptions,
   runtime: UninstallRuntime,
   teardownAuthority: GatewayOwner,
   portableRuntimeCleanup: boolean,
+  onboardLock?: InterruptedOnboardLock,
 ): boolean {
+  const onboardLockPath = path.join(paths.nemoclawStateDir, "onboard.lock");
+  let onboardLockIsStable = !pathEntryExists(onboardLockPath, runtime);
+  if (onboardLock) {
+    onboardLockIsStable =
+      path.resolve(onboardLockPath) === onboardLock.lockPath &&
+      interruptedOnboardLockIsOwned(onboardLock);
+  }
   return (
     GATEWAY_PORT !== DEFAULT_GATEWAY_PORT &&
     !options.keepOpenShell &&
@@ -3055,7 +3122,7 @@ function interruptedPreGatewayStateIsStable(
     !runtime.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR?.trim() &&
     pathEntryExists(paths.nemoclawStateDir, runtime) &&
     hasInterruptedPreGatewaySession(paths, options, runtime, teardownAuthority) &&
-    !pathEntryExists(path.join(paths.nemoclawStateDir, "onboard.lock"), runtime) &&
+    onboardLockIsStable &&
     !pathEntryExists(paths.selectedGatewayLocalStateDir, runtime) &&
     selectedGatewayRegistryIsEmpty(paths, runtime) &&
     selectedGatewayRegistrationIsAbsent(options, runtime)
@@ -3116,6 +3183,7 @@ function canRemoveInterruptedPreGatewayState(
   runtime: UninstallRuntime,
   teardownAuthority: GatewayOwner,
   portableRuntimeCleanup: boolean,
+  onboardLock?: InterruptedOnboardLock,
 ): boolean {
   if (
     !interruptedPreGatewayStateIsStable(
@@ -3124,6 +3192,7 @@ function canRemoveInterruptedPreGatewayState(
       runtime,
       teardownAuthority,
       portableRuntimeCleanup,
+      onboardLock,
     )
   ) {
     return false;
@@ -3153,6 +3222,7 @@ function canRemoveInterruptedPreGatewayState(
       runtime,
       teardownAuthority,
       portableRuntimeCleanup,
+      onboardLock,
     )
   );
 }
@@ -3206,6 +3276,7 @@ type OpenShellCleanupDisposition =
 
 interface PreparedOpenShellCleanup {
   disposition: OpenShellCleanupDisposition;
+  interruptedOnboardLock?: InterruptedOnboardLock;
   stateLifecycleLock?: Exclude<ReturnType<typeof tryAcquireManagedGatewayStateLifecycleLock>, null>;
 }
 
@@ -3218,6 +3289,7 @@ function assertInterruptedPreGatewayStateRemovalAllowed(
   runtime: UninstallRuntime,
   teardownAuthority: GatewayOwner,
   portableRuntimeCleanup: boolean,
+  onboardLock?: InterruptedOnboardLock,
 ): void {
   if (disposition !== "interrupted-pre-gateway") return;
   if (
@@ -3227,6 +3299,7 @@ function assertInterruptedPreGatewayStateRemovalAllowed(
       runtime,
       teardownAuthority,
       portableRuntimeCleanup,
+      onboardLock,
     )
   ) {
     return;
@@ -3249,6 +3322,7 @@ function prepareOpenShellCleanup(
   let stateLifecycleLock:
     | Exclude<ReturnType<typeof tryAcquireManagedGatewayStateLifecycleLock>, null>
     | undefined;
+  let interruptedOnboardLock: InterruptedOnboardLock | undefined;
   try {
     stateLifecycleLock = configuredStateDir
       ? (tryAcquireManagedGatewayStateLifecycleLock(paths.selectedGatewayLocalStateDir) ??
@@ -3266,12 +3340,12 @@ function prepareOpenShellCleanup(
     );
     return { disposition: "blocked" };
   }
-  let stateLifecycleLockTransferred = false;
+  let cleanupLocksTransferred = false;
   const retainStateLifecycleLock = (
     disposition: OpenShellCleanupDisposition,
   ): PreparedOpenShellCleanup => {
-    stateLifecycleLockTransferred = true;
-    return { disposition, stateLifecycleLock };
+    cleanupLocksTransferred = true;
+    return { disposition, interruptedOnboardLock, stateLifecycleLock };
   };
   try {
     if (
@@ -3292,6 +3366,36 @@ function prepareOpenShellCleanup(
           portableRuntimeCleanup,
         )
       ) {
+        try {
+          interruptedOnboardLock =
+            tryAcquireInterruptedOnboardLock(paths.nemoclawStateDir, runtime) ?? undefined;
+        } catch (error) {
+          runtime.warn(
+            `Unable to lock the interrupted onboarding state; it was preserved: ${formatError(error)}. Correct the reported path, ownership, permissions, or lock state, then rerun uninstall.`,
+          );
+          return retainStateLifecycleLock("blocked");
+        }
+        if (!interruptedOnboardLock) {
+          runtime.warn(
+            "The selected gateway state is owned by an active onboarding lifecycle; preserving it. Wait for onboarding to finish, then rerun uninstall.",
+          );
+          return retainStateLifecycleLock("blocked");
+        }
+        if (
+          !canRemoveInterruptedPreGatewayState(
+            paths,
+            options,
+            runtime,
+            teardownAuthority,
+            portableRuntimeCleanup,
+            interruptedOnboardLock,
+          )
+        ) {
+          runtime.warn(
+            "The interrupted pre-gateway state changed during uninstall; preserving it for retry.",
+          );
+          return retainStateLifecycleLock("blocked");
+        }
         runtime.log(
           "No sandbox or gateway process was created; continuing cleanup of the interrupted onboarding state.",
         );
@@ -3335,7 +3439,10 @@ function prepareOpenShellCleanup(
     );
     return retainStateLifecycleLock("reservation-removed");
   } finally {
-    if (!stateLifecycleLockTransferred && stateLifecycleLock) {
+    if (!cleanupLocksTransferred && interruptedOnboardLock) {
+      releaseInterruptedOnboardLock(interruptedOnboardLock);
+    }
+    if (!cleanupLocksTransferred && stateLifecycleLock) {
       releaseManagedGatewayStateLifecycleLock(stateLifecycleLock);
     }
   }
@@ -3364,7 +3471,11 @@ async function executePlan(
     teardownAuthority,
     portableRuntimeCleanup,
   );
-  const { disposition: openShellCleanup, stateLifecycleLock } = preparedOpenShellCleanup;
+  const {
+    disposition: openShellCleanup,
+    interruptedOnboardLock,
+    stateLifecycleLock,
+  } = preparedOpenShellCleanup;
   try {
     if (openShellCleanup === "blocked") return { ok: false };
     return await executePreparedPlan(
@@ -3382,13 +3493,75 @@ async function executePlan(
       portableRuntimeCleanup,
       portableRetirementEntries,
       openShellCleanup,
+      interruptedOnboardLock,
     );
   } catch (error) {
     if (error instanceof InterruptedPreGatewayStateChangedError) return { ok: false };
     throw error;
   } finally {
+    if (interruptedOnboardLock) releaseInterruptedOnboardLock(interruptedOnboardLock);
     if (stateLifecycleLock) releaseManagedGatewayStateLifecycleLock(stateLifecycleLock);
   }
+}
+
+function stateRootPreservationEntries(
+  paths: UninstallPaths,
+  preserveUnderStateDir: readonly string[],
+  portableStateEntries: readonly string[],
+  failedManagedLlamaStateDirs: readonly string[],
+  selectedIsDefault: boolean,
+  scopedToSelectedGateway: boolean,
+): string[] {
+  return [
+    ...preserveUnderStateDir,
+    ...portableStateEntries,
+    ...failedManagedLlamaStateDirs.flatMap((stateDir) => {
+      const relative = path.relative(paths.nemoclawStateDir, stateDir);
+      return relative && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative)
+        ? [relative.split(path.sep)[0]!]
+        : [];
+    }),
+    ...(selectedIsDefault ? [GATEWAYS_SUBDIR, path.basename(paths.managedSwapMarkerPath)] : []),
+    ...(scopedToSelectedGateway && selectedIsDefault ? ["source"] : []),
+    ...(scopedToSelectedGateway
+      ? scopedStatePreservationEntries(paths.nemoclawStateDir, selectedIsDefault)
+      : []),
+  ];
+}
+
+function removeStateRootBeforeFinalCleanup(
+  disposition: OpenShellCleanupDisposition,
+  paths: UninstallPaths,
+  preservedEntries: readonly string[],
+  runtime: UninstallRuntime,
+): boolean {
+  return (
+    disposition === "interrupted-pre-gateway" ||
+    removePathExcept(paths.nemoclawStateDir, preservedEntries, runtime)
+  );
+}
+
+function removeInterruptedStateRootAfterFinalCleanup(
+  disposition: OpenShellCleanupDisposition,
+  paths: UninstallPaths,
+  options: UninstallRunOptions,
+  runtime: UninstallRuntime,
+  teardownAuthority: GatewayOwner,
+  portableRuntimeCleanup: boolean,
+  onboardLock: InterruptedOnboardLock | undefined,
+  preservedEntries: readonly string[],
+): boolean {
+  if (disposition !== "interrupted-pre-gateway") return true;
+  assertInterruptedPreGatewayStateRemovalAllowed(
+    disposition,
+    paths,
+    options,
+    runtime,
+    teardownAuthority,
+    portableRuntimeCleanup,
+    onboardLock,
+  );
+  return removePathExcept(paths.nemoclawStateDir, preservedEntries, runtime);
 }
 
 async function executePreparedPlan(
@@ -3406,6 +3579,7 @@ async function executePreparedPlan(
   portableRuntimeCleanup: boolean,
   portableRetirementEntries: ReturnType<typeof portableRetirementPreservationEntries>,
   openShellCleanup: Exclude<OpenShellCleanupDisposition, "blocked">,
+  interruptedOnboardLock?: InterruptedOnboardLock,
 ): Promise<{ ok: boolean }> {
   const externallySupervised = isExternallySupervised(teardownAuthority);
   let ok = true;
@@ -3529,7 +3703,7 @@ async function executePreparedPlan(
           managedHermesStateVolumes,
           teardownAuthority,
           false,
-          openShellCleanup === "interrupted-pre-gateway",
+          openShellCleanup === "interrupted-pre-gateway" ? interruptedOnboardLock : undefined,
         ))
       ) {
         return { ok: false };
@@ -3606,6 +3780,14 @@ async function executePreparedPlan(
       }
       const sharedRoot = path.dirname(paths.managedSwapMarkerPath);
       const selectedIsDefault = path.resolve(paths.nemoclawStateDir) === path.resolve(sharedRoot);
+      const preservedStateRootEntries = stateRootPreservationEntries(
+        paths,
+        preserveUnderStateDir,
+        portableStateEntries,
+        failedManagedLlamaStateDirs,
+        selectedIsDefault,
+        scopedToSelectedGateway,
+      );
       assertInterruptedPreGatewayStateRemovalAllowed(
         openShellCleanup,
         paths,
@@ -3613,6 +3795,7 @@ async function executePreparedPlan(
         runtime,
         teardownAuthority,
         portableRuntimeCleanup,
+        interruptedOnboardLock,
       );
       if (scopedToSelectedGateway && selectedIsDefault && sharedRegistryMustBePreserved) {
         if (!options.keepOpenShell && !externallySupervised)
@@ -3630,25 +3813,10 @@ async function executePreparedPlan(
         continue;
       }
       if (
-        !removePathExcept(
-          paths.nemoclawStateDir,
-          [
-            ...preserveUnderStateDir,
-            ...portableStateEntries,
-            ...failedManagedLlamaStateDirs.flatMap((stateDir) => {
-              const relative = path.relative(paths.nemoclawStateDir, stateDir);
-              return relative && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative)
-                ? [relative.split(path.sep)[0]!]
-                : [];
-            }),
-            ...(selectedIsDefault
-              ? [GATEWAYS_SUBDIR, path.basename(paths.managedSwapMarkerPath)]
-              : []),
-            ...(scopedToSelectedGateway && selectedIsDefault ? ["source"] : []),
-            ...(scopedToSelectedGateway
-              ? scopedStatePreservationEntries(paths.nemoclawStateDir, selectedIsDefault)
-              : []),
-          ],
+        !removeStateRootBeforeFinalCleanup(
+          openShellCleanup,
+          paths,
+          preservedStateRootEntries,
           runtime,
         )
       )
@@ -3692,6 +3860,19 @@ async function executePreparedPlan(
           if (!removePathExcept(paths.nemoclawConfigDir, ["portable"], runtime)) ok = false;
         } else if (!removePathExcept(paths.nemoclawConfigDir, ["portable"], runtime)) ok = false;
       }
+      if (
+        !removeInterruptedStateRootAfterFinalCleanup(
+          openShellCleanup,
+          paths,
+          options,
+          runtime,
+          teardownAuthority,
+          portableRuntimeCleanup,
+          interruptedOnboardLock,
+          preservedStateRootEntries,
+        )
+      )
+        ok = false;
     }
   }
   return { ok };
@@ -3719,7 +3900,7 @@ async function completePortablePlan(
       [],
       authority,
       true,
-      false,
+      undefined,
     ))
   )
     return { ok: false };
