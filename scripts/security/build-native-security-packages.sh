@@ -12,7 +12,7 @@ readonly PYTHON_DEBIAN_VERSION="3.13.5-2+deb13u5"
 readonly PYTHON_FIX_VERSION="${PYTHON_DEBIAN_VERSION}+nemoclaw1"
 readonly PYTHON_PARSER_SHA256="f91ec3de6331206bbe2ec3e54a05f646bd23d3c61a18d4a01b25164e070bacc9"
 readonly PYTHON_PARSER_FIXED_SHA256="4ff43a8578bda2f14686c67911b64c18e869841973722b1c623b5727491bdaf7"
-readonly DEBIAN_SNAPSHOT_URL="https://snapshot.debian.org/archive/debian/20260912T200000Z/pool/main"
+readonly DEBIAN_SNAPSHOT_URL="https://snapshot.debian.org/archive/debian/20260724T000000Z/pool/main"
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 readonly script_dir
@@ -256,7 +256,7 @@ build_python_fix_package() {
   esac
 
   download \
-    "${DEBIAN_SNAPSHOT_URL}/p/python3.13/libpython3.13-stdlib_${PYTHON_DEBIAN_VERSION}_${architecture}.deb" \
+    "https://snapshot.debian.org/archive/debian/20260906T023042Z/pool/main/p/python3.13/libpython3.13-stdlib_${PYTHON_DEBIAN_VERSION}_${architecture}.deb" \
     "${original_deb}"
   verify_sha256 "${original_sha256}" "${original_deb}"
   dpkg-deb -x "${original_deb}" "${original_root}"

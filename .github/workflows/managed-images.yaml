@@ -192,6 +192,7 @@ jobs:
           staging_root="$GITHUB_WORKSPACE/staging-qa-base-source"
           for relative in \
             agents/langchain-deepagents-code/Dockerfile.base \
+            scripts/security/build-native-security-packages.sh \
             agents/langchain-deepagents-code/requirements.lock
           do
             source_file="$candidate_root/$relative"
@@ -204,7 +205,6 @@ jobs:
           done
           for support_relative in \
             scripts/lib/bundled-npm-package.mts \
-            scripts/security/build-native-security-packages.sh \
             scripts/security/patches/perl-5.44.0-net-ping-capability-tests.patch
           do
             support_source="$candidate_root/$support_relative"
