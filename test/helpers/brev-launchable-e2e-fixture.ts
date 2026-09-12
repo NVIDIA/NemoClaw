@@ -45,18 +45,22 @@ export function fixture(
     createAppearsAfterRefresh?: number;
     createStatus?: number;
     deleteFails?: boolean;
+    diagnosticResolverMissing?: boolean;
     e2eDiagnosticTimesOut?: boolean;
     e2eFails?: boolean;
     gatewayChildJournal?: string;
     gatewayExecStart?: string;
     imageRepositorySha?: string;
     listenerOutput?: string;
+    gatewayEndpoint?: string;
     missingProvisionReceipt?: boolean;
+    omitCommandEvidence?: boolean;
     omitReceiptField?: "imageName" | "imageRepositorySha" | "project";
     platformDiagnosticFails?: boolean;
     provisionImageRepositorySha?: string;
     provisionSha?: string;
     ready?: boolean;
+    realCommandEvidence?: boolean;
     receiptSha?: string;
     refreshError?: string;
     refreshStatus?: number;
@@ -88,7 +92,65 @@ export function fixture(
   const timeoutBlock = path.join(root, "timeout-block");
   fs.mkdirSync(bin);
   fs.mkdirSync(workDir);
+  const bakedRoot = path.join(root, "baked");
+  if (options.realCommandEvidence) {
+    fs.mkdirSync(path.join(bakedRoot, "node_modules", ".bin"), { recursive: true });
+    fs.mkdirSync(path.join(bakedRoot, "test", "e2e", "live"), { recursive: true });
+    fs.writeFileSync(
+      path.join(bakedRoot, "vitest.config.mts"),
+      `export default { test: { projects: [{ test: { name: "e2e-live", include: ["test/e2e/live/full-e2e.test.ts"], maxWorkers: 1 } }] } };`,
+    );
+    fs.writeFileSync(
+      path.join(bakedRoot, "launchable-config.mjs"),
+      'console.log("fixture-cloud-model");\n',
+    );
+    fs.writeFileSync(
+      path.join(bakedRoot, "test", "e2e", "live", "full-e2e.test.ts"),
+      `import { it, expect } from ${JSON.stringify(path.join(REPO_ROOT, "node_modules/vitest/dist/index.js"))};
+import { ArtifactSink } from ${JSON.stringify(path.join(REPO_ROOT, "test/e2e/fixtures/artifacts.ts"))};
+import { startTestProgress } from ${JSON.stringify(path.join(REPO_ROOT, "test/e2e/fixtures/progress.ts"))};
+import { redactString } from ${JSON.stringify(path.join(REPO_ROOT, "test/e2e/fixtures/redaction.ts"))};
+import { ShellProbe, trustedShellCommand } from ${JSON.stringify(path.join(REPO_ROOT, "test/e2e/fixtures/shell-probe.ts"))};
+it("emits evidence from a completed guest command", async () => {
+  const progress = startTestProgress("guest command", ["execute command", "verify result"], { logLine: () => undefined });
+  try {
+    const probe = new ShellProbe({
+      artifacts: new ArtifactSink(${JSON.stringify(path.join(bakedRoot, "artifacts"))}, [process.env.NVIDIA_INFERENCE_API_KEY]),
+      progress, redact: redactString, signal: new AbortController().signal,
+    });
+    const result = await probe.run(trustedShellCommand({
+      command: process.execPath,
+      args: ["-e", "console.log('guest-private-output'); process.exit(0)", "guest-command-proof", process.env.NVIDIA_INFERENCE_API_KEY],
+      reason: "prove completed command evidence reaches the retained controller log",
+    }), { artifactName: "guest-command-proof" });
+    expect(result.exitCode).toBe(0);
+  } finally { progress.stop(); }
+});
+`,
+    );
+    executable(
+      path.join(bakedRoot, "node_modules", ".bin", "vitest"),
+      `#!/usr/bin/env bash
+exec ${JSON.stringify(process.execPath)} ${JSON.stringify(path.join(REPO_ROOT, "node_modules/vitest/vitest.mjs"))} --root ${JSON.stringify(bakedRoot)} --config ${JSON.stringify(path.join(bakedRoot, "vitest.config.mts"))} "$@"
+`,
+    );
+  }
   fs.writeFileSync(timeoutBlock, "block\n");
+  fs.writeFileSync(
+    path.join(root, "gateway.json"),
+    JSON.stringify({
+      version: 1,
+      mode: "externally-supervised",
+      endpoint: options.gatewayEndpoint ?? "https://127.0.0.1:18080",
+      stateDir: "/var/lib/brev/openshell-gateway",
+      supervisor: {
+        kind: "systemd-system",
+        serviceName: "openshell-gateway.service",
+        execPath: "/usr/local/bin/openshell-gateway",
+      },
+      requiredCapabilities: ["gateway.health", "sandbox.create", "sandbox.exec"],
+    }),
+  );
 
   executable(
     path.join(bin, "timeout"),
@@ -168,6 +230,7 @@ exec ${JSON.stringify(REAL_STAT)} "$@"
     path.join(bin, "ss"),
     `#!/usr/bin/env bash
 set -euo pipefail
+printf 'ss %s\n' "$*" >> "$FAKE_CALLS"
 printf '%s\n' "$FAKE_LISTENER_OUTPUT"
 `,
   );
@@ -454,7 +517,8 @@ case "$remote" in
     exit $? ;;
   *"ss -H -ltnp"*)
     probe_options_present "$@"
-    printf 'ssh full-e2e diagnostic port 8080 listener\n' >> "$FAKE_CALLS"
+    printf 'ssh full-e2e diagnostic declared gateway listener\n' >> "$FAKE_CALLS"
+    remote="\${remote/\\/opt\\/nemoclaw-image\\/NemoClaw/$FAKE_REPO_ROOT}"
     bash -c "$remote"
     exit $? ;;
   "bash -s") ;;
@@ -467,8 +531,18 @@ script="$(cat)"
 grep -q 'NEMOCLAW_E2E_SETUP_MODE=preinstalled-launchable' <<<"$script"
 grep -q 'NEMOCLAW_SOURCE_PATH=/opt/nemoclaw-image/NemoClaw' <<<"$script"
 grep -q 'runtime-overrides.json' <<<"$script"
+if [ -n "$FAKE_BAKED_ROOT" ]; then
+  script="\${script/\\/opt\\/nemoclaw-image\\/NemoClaw/$FAKE_BAKED_ROOT}"
+  script="\${script/\\/etc\\/nemoclaw\\/runtime-overrides.json/$FAKE_BAKED_ROOT/runtime-overrides.json}"
+  script="\${script/\\/usr\\/local\\/lib\\/nemoclaw\\/launchable-config.mjs/$FAKE_BAKED_ROOT/launchable-config.mjs}"
+  exec bash -s <<<"$script"
+fi
 printf 'ssh preinstalled full-e2e.test.ts\\n' >> "$FAKE_CALLS"
 printf 'remote output contains %s\\n' "$NVIDIA_INFERENCE_API_KEY"
+grep -q 'NEMOCLAW_E2E_COMMAND_EVIDENCE=1' <<<"$script"
+if [ "$FAKE_OMIT_COMMAND_EVIDENCE" != 1 ]; then
+printf 'NEMOCLAW_E2E_COMMAND {"schemaVersion":1,"command":["brev-quickstart","e2e-staging"],"startedAt":"2026-09-10T18:57:30.000Z","finishedAt":"2026-09-10T18:57:31.000Z","durationMs":1000,"exitCode":1,"signal":null,"timedOut":false}\\n'
+fi
 [ "$FAKE_E2E_FAILS" != 1 ] || exit 7
 printf 'NEMOCLAW_FULL_E2E_PASSED\\n'
 `,
@@ -476,6 +550,10 @@ printf 'NEMOCLAW_FULL_E2E_PASSED\\n'
 
   const env: NodeJS.ProcessEnv = {
     ...process.env,
+    NEMOCLAW_GATEWAY_MANAGEMENT: path.join(root, "gateway.json"),
+    FAKE_REPO_ROOT: options.diagnosticResolverMissing ? root : REPO_ROOT,
+    FAKE_BAKED_ROOT: options.realCommandEvidence ? bakedRoot : "",
+    FAKE_OMIT_COMMAND_EVIDENCE: options.omitCommandEvidence ? "1" : "0",
     PATH: `${bin}:${process.env.PATH ?? ""}`,
     BREV_DELETE_TIMEOUT_SECONDS: "5",
     BREV_READY_TIMEOUT_SECONDS: "5",
@@ -511,7 +589,7 @@ printf 'NEMOCLAW_FULL_E2E_PASSED\\n'
     FAKE_IMAGE_REPOSITORY_SHA: options.imageRepositorySha ?? "b".repeat(40),
     FAKE_LISTENER_OUTPUT:
       options.listenerOutput ??
-      'LISTEN 0 4096 127.0.0.1:8080 0.0.0.0:* users:(("s3cr3t",pid=99,fd=3))',
+      'LISTEN 0 4096 127.0.0.1:18080 0.0.0.0:* users:(("s3cr3t",pid=99,fd=3))',
     FAKE_MISSING_PROVISION_RECEIPT: options.missingProvisionReceipt ? "1" : "0",
     FAKE_OMIT_RECEIPT_FIELD: options.omitReceiptField ?? "",
     FAKE_PLATFORM_DIAGNOSTIC_FAILS: options.platformDiagnosticFails ? "1" : "0",
