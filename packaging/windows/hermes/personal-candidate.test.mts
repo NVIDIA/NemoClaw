@@ -2,13 +2,16 @@
 // SPDX-License-Identifier: Apache-2.0
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { test } from "node:test";
+import { test, type TestContext } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
   personalRequest,
+  directBrowserRequest,
+  directBrowserDiagnostic,
   completedPersonalReplayPin,
   validatePersonalReplayInput,
   verifyPersonalReplayInventory,
@@ -16,6 +19,240 @@ import {
   publishPersonalReceipt,
 } from "./probe-personal-candidate.mts";
 import { parseComponent, personalCommand } from "./probe-personal-workload.mts";
+
+const browserRuntime = "C:\\NemoClawHermesProbe-274d797050ea";
+const browserOriginalNonce = "00112233445566778899aabb";
+const browserNewNonce = "ffeeddccbbaa998877665544";
+const browserController = "C:\\NemoClawPersonalNode-001122334455";
+const browserProbe = path.win32.join(browserController, "probe-personal-python.py");
+const browserShare = "C:\\NemoClawMsysProof-ffeeddccbbaa-state-start";
+function browserPrimary() {
+  return personalRequest(
+    path.win32.join(browserController, "node.exe"),
+    path.win32.join(browserController, "probe-personal-workload.mts"),
+    browserRuntime,
+    "C:\\NemoClawMsysProof-001122334455-state-start",
+    browserOriginalNonce,
+    "C:\\Windows",
+    "C:\\NemoClawPersonalCompat-001122334455",
+  );
+}
+
+test("direct browser comparison preserves policy and environment except fresh owned state and command", () => {
+  const primary = browserPrimary();
+  const before = structuredClone(primary);
+  const diagnostic = directBrowserRequest(primary, browserRuntime, browserProbe, browserNewNonce);
+  assert.deepEqual(primary, before);
+  assert.equal(diagnostic.process.cwd, browserShare);
+  assert.deepEqual(diagnostic.filesystem.readwritePaths, [browserShare]);
+  assert.equal(
+    diagnostic.process.commandLine,
+    `"${browserRuntime}\\hermes-agent\\venv\\Scripts\\python.exe" "-I" "-B" "${browserProbe}" "browser" "${browserRuntime}" "${browserNewNonce}"`,
+  );
+  assert.deepEqual(diagnostic.filesystem.readonlyPaths, primary.filesystem.readonlyPaths);
+  assert.equal(diagnostic.process.timeout, 120_000);
+  for (const entry of primary.process.env) {
+    const key = entry.slice(0, entry.indexOf("="));
+    if (
+      ![
+        "HOME",
+        "HERMES_HOME",
+        "NEMOCLAW_AGENT_HOME",
+        "USERPROFILE",
+        "APPDATA",
+        "LOCALAPPDATA",
+        "TEMP",
+        "TMP",
+      ].includes(key)
+    )
+      assert(diagnostic.process.env.includes(entry));
+  }
+  const restored = structuredClone(diagnostic);
+  restored.containerId = primary.containerId;
+  restored.process = primary.process;
+  restored.filesystem.readwritePaths = primary.filesystem.readwritePaths;
+  assert.deepEqual(restored, primary);
+  assert.throws(() =>
+    directBrowserRequest(primary, browserRuntime, browserProbe, browserOriginalNonce),
+  );
+});
+
+function browserControl(
+  t: TestContext,
+  mode:
+    | "success"
+    | "browser-failure"
+    | "parse-failure"
+    | "unclosed"
+    | "delete-failure"
+    | "existing",
+) {
+  const primary = browserPrimary();
+  const files = new Map<string, Buffer>();
+  const directories = new Set<string>();
+  const events: string[] = [];
+  const pe = Buffer.alloc(256);
+  pe.write("MZ");
+  pe.writeUInt32LE(128, 60);
+  pe.write("PE\0\0", 128);
+  pe.writeUInt16LE(0xaa64, 132);
+  const python = path.win32.join(browserRuntime, "hermes-agent/venv/Scripts/python.exe");
+  const executor = "C:\\verified\\wxc-exec.exe";
+  files.set(python, pe);
+  files.set(executor, pe);
+  files.set(browserProbe, Buffer.from("fixed controller"));
+  if (mode === "existing") directories.add(browserShare);
+  t.mock.method(fs, "mkdirSync", (file: any) => {
+    const name = String(file);
+    if (directories.has(name)) throw Object.assign(new Error("already exists"), { code: "EEXIST" });
+    directories.add(name);
+  });
+  t.mock.method(fs, "readFileSync", (file: any) => {
+    const value = files.get(String(file));
+    assert(value, "unknown read " + file);
+    return value;
+  });
+  t.mock.method(fs, "writeFileSync", (file: any, value: any, options: any) => {
+    assert.equal(options.flag, "wx");
+    assert(!files.has(String(file)));
+    files.set(String(file), Buffer.from(value));
+  });
+  t.mock.method(
+    fs,
+    "existsSync",
+    (file: any) => directories.has(String(file)) || files.has(String(file)),
+  );
+  t.mock.method(fs, "rmSync", (file: any) => {
+    assert.equal(String(file), browserShare);
+    events.push("remove-owned-root");
+    for (const directory of directories)
+      if (directory.startsWith(browserShare)) directories.delete(directory);
+  });
+  const environment = { GITHUB_ACTIONS: "true", NEMOCLAW_MSYS_TOKEN_INSPECTION: "repair-query" };
+  const command: typeof personalCommand = async (exe, args, env, cwd, timeout) => {
+    assert.equal(exe, executor);
+    assert.equal(env, environment);
+    const deletion = args[0] === "--delete";
+    events.push(deletion ? "delete-profile" : "execute-direct-python");
+    if (deletion) {
+      assert.equal(cwd, "C:\\");
+      assert.deepEqual(args, ["--delete", "--containername", "nm-ffeeddccbbaa-start"]);
+    } else {
+      assert.equal(timeout, 120_000);
+      assert.equal(cwd, browserShare);
+      assert(
+        JSON.parse(files.get(args[0]!)!.toString()).process.commandLine.startsWith(`"${python}"`),
+      );
+    }
+    const result = {
+      schemaVersion: 1,
+      component: "browser",
+      nonce: browserNewNonce,
+      passed: mode !== "browser-failure",
+      error: mode === "browser-failure" ? "original Chrome failure" : null,
+    };
+    return {
+      executable: exe,
+      args,
+      pid: 42,
+      exitCode:
+        (deletion && mode === "delete-failure") || (!deletion && mode === "browser-failure")
+          ? 1
+          : 0,
+      signal: null,
+      timedOut: !deletion && mode === "unclosed",
+      outputExceeded: false,
+      stdout: deletion
+        ? ""
+        : mode === "parse-failure"
+          ? "missing result\n"
+          : "NEMOCLAW_PERSONAL_RESULT=" + JSON.stringify(result) + "\n",
+      stderr: deletion ? "" : "ordinary Chrome stderr",
+      error: null,
+      childClosed: deletion || mode !== "unclosed",
+      elapsedMs: 1,
+      nativeStderr: "",
+      nativeStderrBytes: 0,
+      nativeStderrSha256: "",
+      nativeRecordCount: 0,
+      nativeOutputExceeded: false,
+      nativeParseErrors: [],
+    };
+  };
+  return {
+    primary,
+    events,
+    directories,
+    run: () =>
+      directBrowserDiagnostic(
+        primary,
+        browserRuntime,
+        browserProbe,
+        executor,
+        environment,
+        "/owned-evidence/browser-direct",
+        browserNewNonce,
+        { bytes: pe.length, sha256: createHash("sha256").update(pe).digest("hex") },
+        command,
+      ),
+  };
+}
+
+test("direct browser retains raw successful result and closes executor before profile/root cleanup", async (t) => {
+  const control = browserControl(t, "success");
+  const original = structuredClone(control.primary);
+  const result = await control.run();
+  assert.equal(result.operationSucceeded, true);
+  assert.equal(result.cleanupComplete, true);
+  assert.equal(result.result.passed, true);
+  assert.equal(result.diagnosticOnly, true);
+  assert.equal(result.canonicalQualification, false);
+  assert.equal(result.dllAbsenceIndependentlyVerified, false);
+  assert.deepEqual(control.events, [
+    "execute-direct-python",
+    "delete-profile",
+    "remove-owned-root",
+  ]);
+  assert.deepEqual(control.primary, original);
+});
+
+for (const mode of [
+  "browser-failure",
+  "parse-failure",
+  "unclosed",
+  "delete-failure",
+  "existing",
+] as const) {
+  test(`direct browser ${mode} preserves result and exact resource ownership`, async (t) => {
+    const control = browserControl(t, mode);
+    const result = await control.run();
+    if (mode === "browser-failure") {
+      assert.equal(result.operationSucceeded, false);
+      assert.equal(result.result.error, "original Chrome failure");
+      assert.equal(result.execution.stderr, "ordinary Chrome stderr");
+      assert.equal(result.cleanupComplete, true);
+    } else if (mode === "parse-failure") {
+      assert.equal(result.operationSucceeded, false);
+      assert.equal(result.execution.stdout, "missing result\n");
+      assert(result.error);
+      assert.equal(result.cleanupComplete, true);
+    } else if (mode === "unclosed") {
+      assert.equal(result.childrenClosed, false);
+      assert.equal(result.cleanupComplete, false);
+      assert(control.directories.has(browserShare));
+      assert.deepEqual(control.events, ["execute-direct-python"]);
+    } else if (mode === "delete-failure") {
+      assert.equal(result.cleanupComplete, false);
+      assert.equal(result.cleanup.profileDeleted, false);
+      assert.equal(result.cleanupErrors.length, 1);
+    } else {
+      assert.equal(result.attempted, false);
+      assert(result.error);
+      assert(control.directories.has(browserShare));
+      assert.deepEqual(control.events, []);
+    }
+  });
+}
 
 test("Personal capture keeps native diagnostics separate from primary Python output", async () => {
   const result = await personalCommand(

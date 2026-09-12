@@ -103,32 +103,75 @@ def bash_check(root, nonce):
 
 
 def conpty_check(_root, nonce):
-    from winpty import PTY
+    from winpty import PTY, WinptyError
     from winpty.enums import Backend
     import winpty.winpty as native
 
     assert importlib.metadata.version("pywinpty") == "2.0.15"
     pty = PTY(80, 24, backend=Backend.ConPTY)
     command = " " + subprocess.list2cmdline(["-I", "-c", "print('" + nonce + "')"])
-    assert pty.spawn(sys.executable, cmdline=command, cwd=os.getcwd())
     output = ""
-    deadline = time.monotonic() + 15
-    while time.monotonic() < deadline:
-        output += pty.read(4096, blocking=False)
-        assert len(output) <= 65536
-        if not pty.isalive() and pty.iseof():
-            break
-        time.sleep(0.02)
-    assert not pty.isalive() and pty.get_exitstatus() == 0 and nonce in output, repr(
-        output
-    )
-    return {
+    details = {
         "backend": "ConPTY",
         "nativeModule": native.__file__,
-        "pid": pty.pid,
-        "exitCode": pty.get_exitstatus(),
-        "output": output,
+        "pid": None,
+        "exitCode": None,
+        "childExitObserved": False,
+        "eofObserved": False,
+        "deadlineExpired": False,
     }
+    try:
+        assert pty.spawn(sys.executable, cmdline=command, cwd=os.getcwd())
+        details["pid"] = pty.pid
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline:
+            if not details["eofObserved"]:
+                try:
+                    output += pty.read(4096, blocking=False)
+                except WinptyError as error:
+                    # Locked winpty-rs0.4.1 emits this only after EOF and an
+                    # empty output cache. It proves draining, not child success.
+                    if str(error) != "Standard out reached EOF":
+                        raise
+                    details["eofObserved"] = True
+                assert len(output) <= 65536, "ConPTY output exceeded its bound"
+            details["childExitObserved"] = not pty.isalive()
+            if details["childExitObserved"] and details["eofObserved"]:
+                break
+            time.sleep(0.02)
+        else:
+            details["deadlineExpired"] = True
+        details["exitCode"] = pty.get_exitstatus()
+        assert (
+            details["childExitObserved"]
+            and details["eofObserved"]
+            and details["exitCode"] == 0
+            and nonce in output
+        ), "ConPTY did not drain its sentinel and exit successfully"
+        return {**details, "output": output}
+    except BaseException as error:
+        # Preserve the primary read/exit error and bounded partial output. A
+        # diagnostic status query must not replace the original failure.
+        for key, method in (
+            ("childExitObserved", "isalive"),
+            ("exitCode", "get_exitstatus"),
+        ):
+            try:
+                value = getattr(pty, method)()
+                details[key] = not value if key == "childExitObserved" else value
+            except BaseException as query_error:
+                details[key + "Error"] = repr(query_error)
+        error.add_note(
+            "ConPTY probe details: "
+            + json.dumps(
+                {**details, "output": output[-8192:], "outputChars": len(output)}
+            )
+        )
+        raise
+    finally:
+        # The canonical destructor owns ClosePseudoConsole, its pipe readers
+        # and the original process/thread handles. No host PID reopening.
+        pty = None
 
 
 def browser_check(root, nonce):

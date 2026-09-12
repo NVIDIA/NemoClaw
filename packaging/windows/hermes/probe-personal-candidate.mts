@@ -9,6 +9,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { errorDetail, fileIdentity } from "./probe-component-workload.mts";
 import {
   bashDiagnostics,
+  parseComponent,
   personalCommand,
   personalCriticalFiles,
   validatePersonalWorkloadInput,
@@ -523,6 +524,195 @@ function argument(name: string) {
   return path.resolve(process.argv[index + 1]!);
 }
 
+export function directBrowserRequest(
+  primary: ReturnType<typeof personalRequest>,
+  runtime: string,
+  script: string,
+  nonce: string,
+) {
+  assert.match(nonce, /^[a-f0-9]{24}$/u);
+  assert([runtime, script].every((value) => !/["\r\n]/u.test(value)));
+  assert(primary.filesystem.readonlyPaths.includes(runtime));
+  assert(primary.filesystem.readonlyPaths.includes(path.win32.dirname(script)));
+  assert.equal(path.win32.basename(script), "probe-personal-python.py");
+  assert.equal(primary.process.timeout, 120_000);
+  const share = path.win32.join(
+    path.win32.parse(runtime).root,
+    `NemoClawMsysProof-${nonce.slice(0, 12)}-state-start`,
+  );
+  assert.notEqual(share, primary.process.cwd);
+  const request = structuredClone(primary);
+  request.containerId = `nm-${nonce.slice(0, 12)}-start`;
+  assert.notEqual(request.containerId, primary.containerId);
+  request.process.cwd = share;
+  request.filesystem.readwritePaths = [share];
+  request.process.commandLine = [
+    path.win32.join(runtime, "hermes-agent/venv/Scripts/python.exe"),
+    "-I",
+    "-B",
+    script,
+    "browser",
+    runtime,
+    nonce,
+  ]
+    .map((value) => `"${value}"`)
+    .join(" ");
+  const home = path.win32.join(share, "home");
+  const state: Record<string, string> = {
+    HERMES_HOME: home,
+    HOME: home,
+    USERPROFILE: home,
+    APPDATA: home,
+    LOCALAPPDATA: home,
+    NEMOCLAW_AGENT_HOME: share,
+    TEMP: path.win32.join(share, "temp"),
+    TMP: path.win32.join(share, "temp"),
+  };
+  request.process.env = request.process.env.map((entry) => {
+    const key = entry.slice(0, entry.indexOf("="));
+    return key in state ? `${key}=${state[key]}` : entry;
+  });
+  return request;
+}
+
+export async function directBrowserDiagnostic(
+  primary: ReturnType<typeof personalRequest>,
+  runtime: string,
+  script: string,
+  mxc: string,
+  environment: NodeJS.ProcessEnv,
+  output: string,
+  nonce: string,
+  expectedPython: { bytes: number; sha256: string },
+  command: typeof personalCommand = personalCommand,
+) {
+  const request = directBrowserRequest(primary, runtime, script, nonce);
+  const share = request.process.cwd;
+  let owned = false,
+    attempted = false,
+    outputOwned = false;
+  const cleanup = {
+    executorClosed: true,
+    profileDeletionClosed: true,
+    profileDeleted: true,
+    ownedRootRemoved: true,
+  };
+  const record: Record<string, any> = {
+    schemaVersion: 1,
+    classification: "canonical-Personal-direct-Python-browser-diagnostic",
+    diagnosticOnly: true,
+    compatibilityLauncherUsed: false,
+    dllAbsenceIndependentlyVerified: false,
+    changedDimensions: [
+      "compatibility launcher omitted",
+      "intermediate Node controller omitted",
+      "no concurrent sibling probes",
+      "fresh owned state and profile",
+    ],
+    comparisonLimits: [
+      "Direct Python also omits the intermediate Node controller and concurrent sibling probes.",
+      "Success does not uniquely attribute the primary failure to DLL injection.",
+    ],
+    canonicalQualification: false,
+    installedAcceptance: false,
+    nonce,
+    runtime,
+    cleanup,
+    operationSucceeded: false,
+    execution: null,
+    result: null,
+    error: null,
+    cleanupErrors: [],
+  };
+  try {
+    fs.mkdirSync(output);
+    outputOwned = true;
+    const python = fileIdentity(path.win32.join(runtime, "hermes-agent/venv/Scripts/python.exe"));
+    assert.equal(python.bytes, expectedPython.bytes);
+    assert.equal(python.sha256, expectedPython.sha256);
+    assert.equal(python.peMachine, 0xaa64);
+    record.python = python;
+    record.executor = fileIdentity(mxc);
+    record.probe = fileIdentity(script);
+    fs.mkdirSync(share);
+    owned = true;
+    cleanup.ownedRootRemoved = false;
+    for (const name of ["home", "temp"]) fs.mkdirSync(path.win32.join(share, name));
+    const policy = path.join(output, "request.json");
+    const bytes = JSON.stringify(request, null, 2) + "\n";
+    fs.writeFileSync(policy, bytes, { flag: "wx" });
+    record.requestSha256 = createHash("sha256").update(bytes).digest("hex");
+    attempted = true;
+    cleanup.executorClosed = false;
+    cleanup.profileDeleted = false;
+    const execution = await command(
+      mxc,
+      [policy, "--log-file", path.join(output, "mxc-native.log")],
+      environment,
+      share,
+      120_000,
+    );
+    record.execution = execution;
+    cleanup.executorClosed = execution.childClosed;
+    record.result = parseComponent(execution.stdout, "browser", nonce);
+    record.operationSucceeded =
+      record.result.passed === true &&
+      execution.exitCode === 0 &&
+      execution.childClosed &&
+      !execution.timedOut &&
+      !execution.outputExceeded &&
+      !execution.error;
+  } catch (error) {
+    record.error = errorDetail(error);
+  } finally {
+    if (attempted && cleanup.executorClosed) {
+      cleanup.profileDeletionClosed = false;
+      try {
+        const deletion = await command(
+          mxc,
+          ["--delete", "--containername", request.containerId],
+          environment,
+          path.win32.parse(runtime).root,
+        );
+        record.profileDeletion = deletion;
+        cleanup.profileDeletionClosed = deletion.childClosed;
+        cleanup.profileDeleted =
+          deletion.exitCode === 0 &&
+          deletion.childClosed &&
+          !deletion.error &&
+          !deletion.timedOut &&
+          !deletion.outputExceeded;
+        if (!cleanup.profileDeleted)
+          record.cleanupErrors.push("The diagnostic profile did not delete successfully.");
+      } catch (error) {
+        record.cleanupErrors.push(errorDetail(error));
+      }
+    }
+    if (owned && cleanup.executorClosed && cleanup.profileDeletionClosed) {
+      const removed = removePersonalRoots([share], attempted, true);
+      cleanup.ownedRootRemoved = removed.removed;
+      record.cleanupErrors.push(...removed.errors);
+    }
+    record.attempted = attempted;
+    record.childrenClosed = cleanup.executorClosed && cleanup.profileDeletionClosed;
+    record.cleanupComplete =
+      record.childrenClosed &&
+      cleanup.profileDeleted &&
+      cleanup.ownedRootRemoved &&
+      record.cleanupErrors.length === 0;
+    if (outputOwned) {
+      try {
+        fs.writeFileSync(path.join(output, "result.json"), JSON.stringify(record, null, 2) + "\n", {
+          flag: "wx",
+        });
+      } catch (error) {
+        record.receiptWriteError = errorDetail(error);
+      }
+    }
+  }
+  return record;
+}
+
 export function removePersonalRoots(
   directories: string[],
   attempted: boolean,
@@ -621,6 +811,7 @@ async function main() {
     hostDiagnosticChildrenClosed: true,
     profileDeleted: false,
     ownedRootsRemoved: false,
+    browserDiagnosticComplete: true,
   };
   const receipt: Record<string, unknown> = {
     schemaVersion: 1,
@@ -638,6 +829,7 @@ async function main() {
   let failure: unknown = null;
   let request: ReturnType<typeof personalRequest> | undefined;
   let compatibility: ReturnType<typeof validatePersonalCompatibility> | undefined;
+  let browserDiagnosticChildrenClosed = true;
   try {
     const proof = JSON.parse(fs.readFileSync(compatibilityProof, "utf8"));
     const build = JSON.parse(fs.readFileSync(compatibilityReceipt, "utf8"));
@@ -853,6 +1045,35 @@ async function main() {
   } catch (error) {
     failure = error;
   } finally {
+    if (attempted && cleanup.executorClosed && cleanup.hostDiagnosticChildrenClosed && request) {
+      // This supplementary control cannot replace the primary component result.
+      // It shares the final immutable inventory check, after both executors close.
+      try {
+        const python = (receipt.derivedRuntime as any).criticalFiles.find(
+          (file: any) => file.path === "hermes-agent/venv/Scripts/python.exe",
+        );
+        const diagnostic = await directBrowserDiagnostic(
+          request,
+          runtime,
+          path.join(launcher, "probe-personal-python.py"),
+          mxc,
+          environment,
+          path.join(output, "browser-direct-diagnostic"),
+          randomBytes(12).toString("hex"),
+          python,
+        );
+        receipt.directBrowserDiagnostic = diagnostic;
+        browserDiagnosticChildrenClosed = diagnostic.childrenClosed;
+        cleanup.browserDiagnosticComplete = diagnostic.cleanupComplete;
+        if (!diagnostic.cleanupComplete)
+          errors.push({ browserDiagnosticCleanup: diagnostic.cleanup });
+      } catch (error) {
+        // Before the helper returns, uncertain ownership must retain the runtime.
+        browserDiagnosticChildrenClosed = false;
+        cleanup.browserDiagnosticComplete = false;
+        errors.push({ browserDiagnosticError: errorDetail(error) });
+      }
+    }
     if (attempted && cleanup.executorClosed && request) {
       try {
         const deletion = await personalCommand(
@@ -872,7 +1093,10 @@ async function main() {
         errors.push(errorDetail(error));
       }
     }
-    const allClosed = cleanup.executorClosed && cleanup.hostDiagnosticChildrenClosed;
+    const allClosed =
+      cleanup.executorClosed &&
+      cleanup.hostDiagnosticChildrenClosed &&
+      browserDiagnosticChildrenClosed;
     if (replayDocument && replayInventory && (!attempted || allClosed)) {
       try {
         (receipt.runtimeReplay as any).after = verifyPersonalReplayInventory(
