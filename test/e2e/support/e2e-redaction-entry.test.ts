@@ -19,7 +19,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { ArtifactSink } from "../fixtures/artifacts.ts";
 import { startTestProgress } from "../fixtures/progress.ts";
@@ -35,7 +35,116 @@ function supportProgress() {
   );
 }
 
+async function captureCommandEvidence(outcome: string) {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "e2e-command-evidence-"));
+  const secret = "sink-only-command-secret";
+  const artifacts = new ArtifactSink(directory, [secret]);
+  const progress = supportProgress();
+  const writes: string[] = [];
+  const stderr = vi.spyOn(process.stderr, "write").mockImplementation((chunk) => {
+    writes.push(String(chunk));
+    return true;
+  });
+  vi.stubEnv("NEMOCLAW_E2E_COMMAND_EVIDENCE", outcome === "not-requested" ? "" : "1");
+  try {
+    const probe = new ShellProbe({
+      artifacts,
+      progress,
+      redact: redactString,
+      signal: new AbortController().signal,
+    });
+    let failed = false;
+    await probe
+      .run(
+        trustedShellCommand({
+          command: outcome === "spawn-error" ? "/nonexistent/e2e-command" : process.execPath,
+          args: [
+            "-e",
+            outcome === "timeout"
+              ? "setInterval(() => {}, 1000)"
+              : `console.log('private-output-body'); process.exit(${outcome === "failure" ? 7 : 0})`,
+            secret,
+            ...(outcome === "oversized" ? ["a".repeat(70_000)] : []),
+          ],
+          reason: "verify timestamped command evidence and redaction",
+        }),
+        {
+          artifactName: "command-evidence",
+          timeoutMs: outcome === "timeout" ? 100 : 5000,
+          persistArtifacts: outcome !== "disabled",
+        },
+      )
+      .catch(() => {
+        failed = true;
+      });
+    const lines = writes.filter((line) => line.startsWith("NEMOCLAW_E2E_COMMAND "));
+    const result = await fs
+      .readFile(path.join(directory, "shell/command-evidence.result.json"), "utf8")
+      .catch(() => null);
+    return { lines, result, secret, failed };
+  } finally {
+    stderr.mockRestore();
+    vi.unstubAllEnvs();
+    progress.stop();
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+}
+
 describe("fixture redaction entry point", () => {
+  it.each([
+    { outcome: "success", exitCode: 0, timedOut: false, failed: false, commandOmitted: undefined },
+    { outcome: "failure", exitCode: 7, timedOut: false, failed: false, commandOmitted: undefined },
+    {
+      outcome: "timeout",
+      exitCode: null,
+      timedOut: true,
+      failed: false,
+      commandOmitted: undefined,
+    },
+    {
+      outcome: "spawn-error",
+      exitCode: null,
+      timedOut: false,
+      failed: true,
+      commandOmitted: undefined,
+    },
+    {
+      outcome: "oversized",
+      exitCode: 0,
+      timedOut: false,
+      failed: false,
+      commandOmitted: "size-limit",
+    },
+  ])(
+    "retains redacted UTC command metadata for $outcome without publishing output bodies",
+    async ({ outcome, exitCode, timedOut, failed, commandOmitted }) => {
+      const evidence = await captureCommandEvidence(outcome);
+      expect(evidence.failed).toBe(failed);
+      expect(evidence.lines).toHaveLength(1);
+      const record = JSON.parse(evidence.lines[0]!.slice("NEMOCLAW_E2E_COMMAND ".length));
+      expect(record.schemaVersion).toBe(1);
+      expect(record.startedAt).toMatch(/^\d{4}-\d{2}-\d{2}T.*Z$/);
+      expect(Date.parse(record.finishedAt) - Date.parse(record.startedAt)).toBe(record.durationMs);
+      expect(record.exitCode).toBe(exitCode);
+      expect(record.timedOut).toBe(timedOut);
+      expect(evidence.lines[0]).not.toContain(evidence.secret);
+      expect(record).not.toHaveProperty("stdout");
+      expect(record).not.toHaveProperty("stderr");
+      expect(Buffer.byteLength(evidence.lines[0]!)).toBeLessThan(65_600);
+      expect(record.commandOmitted).toBe(commandOmitted);
+      expect(evidence.result).not.toBeNull();
+      expect(evidence.result).not.toContain(evidence.secret);
+    },
+  );
+  it.each(["disabled", "not-requested"])(
+    "emits no command metadata when evidence is %s",
+    async (outcome) => {
+      const evidence = await captureCommandEvidence(outcome);
+      expect(evidence.failed).toBe(false);
+      expect(evidence.lines).toEqual([]);
+    },
+  );
+
   it("recognizes pass env names only at exact or underscore-delimited boundaries", () => {
     expect(
       ["PASS", "PASSWD", "CUSTOM_PASS", "CUSTOM_PASSWD"].every((key) =>

@@ -20,8 +20,6 @@ describe("CLI dispatch for terminal agents", () => {
     writeSandboxRegistry(home, {
       ...launchReadinessRegistryFixture(),
       agent: "langchain-deepagents-code",
-      provider: "",
-      model: "",
     });
     fs.writeFileSync(
       path.join(localBin, "openshell"),
@@ -38,7 +36,7 @@ describe("CLI dispatch for terminal agents", () => {
         "  exit 0",
         "fi",
         'if [ "$1" = "inference" ] && [ "$2" = "get" ]; then',
-        "  printf '%s\\n' 'Gateway inference:' '  Not configured'",
+        "  printf '%s\\n' 'Gateway inference:' '  Provider: nvidia-prod' '  Model: test-model'",
         "  exit 0",
         "fi",
         'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && { [ "$3" = "alpha" ] || [ "$5" = "alpha" ]; }; then',
@@ -55,6 +53,8 @@ describe("CLI dispatch for terminal agents", () => {
         // so the stub does not depend on how many flags precede it (#8624).
         '  cmd="${*: -1}"',
         '  case "$cmd" in',
+        '    *"inference.local/v1/models"*) echo "OK 200"; exit 0 ;;',
+        `    *"inference.local/v1/chat/completions"*) printf '%s\\n' '200' '{"choices":[{"message":{"content":"OK"}}]}'; exit 0 ;;`,
         '    *"dcode --version"*) echo "NEMOCLAW_AGENT_SMOKE_BEGIN"; echo "dcode 0.1.55"; echo "NEMOCLAW_AGENT_SMOKE_EXIT:0"; exit 0 ;;',
         '    *"config.toml"*) echo "NEMOCLAW_AGENT_SMOKE_BEGIN"; echo "NEMOCLAW_DEEPAGENTS_CONFIG_OK"; echo "NEMOCLAW_AGENT_SMOKE_EXIT:0"; exit 0 ;;',
         '    *"NEMOCLAW_DCODE_EMPTY_PROMPT_OK"*) echo "NEMOCLAW_AGENT_SMOKE_BEGIN"; echo "NEMOCLAW_DCODE_EMPTY_PROMPT_OK"; echo "NEMOCLAW_AGENT_SMOKE_EXIT:0"; exit 0 ;;',
