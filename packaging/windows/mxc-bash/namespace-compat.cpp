@@ -1495,7 +1495,7 @@ PidLinkRequest inspect_pid_link(ACCESS_MASK access, POBJECT_ATTRIBUTES input, PU
         const char* rejected = nullptr;
         DWORD error = 0;
         result.exact = input->Attributes == OBJ_CASE_INSENSITIVE && !input->SecurityQualityOfService &&
-            access == (create ? 0x000f0001 : 1) && not_impersonating(rejected, error);
+            access == (create ? 0x000f0001u : 1u) && not_impersonating(rejected, error);
         if (create) {
             // thisproc assigns myself_initial.dwProcessId (current process),
             // including in a forkee, before create_winpid_symlink.
