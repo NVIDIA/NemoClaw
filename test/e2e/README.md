@@ -447,6 +447,10 @@ Retired selectors fail in manual PR runs, including requests mixed with active s
 Their replacement tests remain in the ordinary test projects.
 The `hermes-dashboard` alias remains because the Hermes workflow still calls it.
 
+Coverage descriptions and agent/environment labels belong to the execution inventory.
+Workflow YAML retains execution parameters, matrix variants, credentials, dependencies, and artifact controls.
+The workflow check reconciles job and test routes; it does not reconstruct coverage descriptions from YAML.
+
 `tools/e2e/target-catalogue.mts` runs the selected profile target; it does not register targets.
 Each profile target shares one execution shape.
 Each entry owns these target properties:
