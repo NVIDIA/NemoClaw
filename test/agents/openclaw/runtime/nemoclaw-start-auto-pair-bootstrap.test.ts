@@ -1,14 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawn, spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { settleOrdinaryOpenClawPairing } from "../../../../src/lib/onboard/machine/finalization-deps";
-import { createCanonicalCliFixture } from "./auto-pair-settlement-fixture";
+import { createCanonicalCliFixture, runOpenclaw } from "./auto-pair-settlement-fixture";
 
 const START_SCRIPT = path.join(
   import.meta.dirname,
@@ -65,7 +65,9 @@ def _nemoclaw_test_sleep(seconds): _nemoclaw_test_clock.__setitem__(0, _nemoclaw
 type SettlementDeps = NonNullable<Parameters<typeof settleOrdinaryOpenClawPairing>[1]>;
 type RaceTiming = "watcher-first" | "host-first";
 
-describe("nemoclaw-start initial CLI auto-pair bootstrap (#6113)", () => {
+vi.setConfig({ maxConcurrency: 4 });
+
+describe.concurrent("nemoclaw-start initial CLI auto-pair bootstrap (#6113)", () => {
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
 
   it.each([
@@ -297,7 +299,7 @@ exit 2
     30_000,
   );
 
-  it("approves an initial CLI pairing request when device list is itself gated (#6113)", () => {
+  it("approves an initial CLI pairing request when device list is itself gated (#6113)", async () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auto-pair-bootstrap-"));
     const fakeOpenclaw = path.join(tmpDir, "openclaw");
     const stateDir = path.join(tmpDir, "state");
@@ -378,7 +380,7 @@ exit 2
     );
 
     try {
-      const run = spawnSync("python3", ["-c", autoPairPythonScript(src, tmpDir)], {
+      const run = await runOpenclaw("python3", ["-c", autoPairPythonScript(src, tmpDir)], {
         encoding: "utf-8",
         env: {
           ...process.env,
@@ -418,7 +420,7 @@ exit 2
       expect(fs.existsSync(authFile)).toBe(false);
       expect(JSON.parse(fs.readFileSync(pendingFile, "utf-8"))).toHaveProperty("request-1");
 
-      const agent = spawnSync(fakeOpenclaw, ["agent", "run", "write-file"], {
+      const agent = await runOpenclaw(fakeOpenclaw, ["agent", "run", "write-file"], {
         encoding: "utf-8",
         env: {
           ...process.env,
@@ -452,7 +454,7 @@ exit 2
     ["missing pairing scope", { scopes: ["operator.write"] }],
   ])(
     "rejects %s before initial CLI approve (#6113)",
-    (_name, override) => {
+    async (_name, override) => {
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auto-pair-reject-"));
       const fakeOpenclaw = path.join(tmpDir, "openclaw");
       const stateDir = path.join(tmpDir, "state");
@@ -507,7 +509,7 @@ exit 2
       );
 
       try {
-        const run = spawnSync("python3", ["-c", autoPairPythonScript(src, tmpDir)], {
+        const run = await runOpenclaw("python3", ["-c", autoPairPythonScript(src, tmpDir)], {
           encoding: "utf-8",
           env: {
             ...process.env,
@@ -561,7 +563,7 @@ exit 2
     ["option-like request id", "pairing required: device is not approved yet requestId: --help"],
   ])(
     "rejects %s from gated-list errors before initial CLI approve (#6113)",
-    (_name, listError) => {
+    async (_name, listError) => {
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auto-pair-requestid-"));
       const fakeOpenclaw = path.join(tmpDir, "openclaw");
       const stateDir = path.join(tmpDir, "state");
@@ -621,7 +623,7 @@ exit 2
       );
 
       try {
-        const run = spawnSync("python3", ["-c", autoPairPythonScript(src, tmpDir)], {
+        const run = await runOpenclaw("python3", ["-c", autoPairPythonScript(src, tmpDir)], {
           encoding: "utf-8",
           env: {
             ...process.env,
@@ -659,7 +661,7 @@ exit 2
     ],
   ])(
     "rejects %s before initial CLI approve (#6113)",
-    (_name, identityOverride) => {
+    async (_name, identityOverride) => {
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auto-pair-identity-"));
       const fakeOpenclaw = path.join(tmpDir, "openclaw");
       const stateDir = path.join(tmpDir, "state");
@@ -713,7 +715,7 @@ exit 2
       );
 
       try {
-        const run = spawnSync("python3", ["-c", autoPairPythonScript(src, tmpDir)], {
+        const run = await runOpenclaw("python3", ["-c", autoPairPythonScript(src, tmpDir)], {
           encoding: "utf-8",
           env: {
             ...process.env,
@@ -735,7 +737,7 @@ exit 2
     40_000,
   );
 
-  it("fails closed for malformed identity public keys without terminating the watcher (#6113)", () => {
+  it("fails closed for malformed identity public keys without terminating the watcher (#6113)", async () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auto-pair-bad-identity-"));
     const fakeOpenclaw = path.join(tmpDir, "openclaw");
     const stateDir = path.join(tmpDir, "state");
@@ -785,7 +787,7 @@ exit 2
     );
 
     try {
-      const run = spawnSync("python3", ["-c", autoPairPythonScript(src, tmpDir)], {
+      const run = await runOpenclaw("python3", ["-c", autoPairPythonScript(src, tmpDir)], {
         encoding: "utf-8",
         env: {
           ...process.env,
@@ -810,7 +812,7 @@ exit 2
     ["timeout", "sleep 1", "timeout", "0.5"],
   ])(
     "retries a transient initial CLI approve %s on the next gated-list poll (#6113)",
-    (_name, firstAction, failureReason, runTimeoutSeconds) => {
+    async (_name, firstAction, failureReason, runTimeoutSeconds) => {
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auto-pair-retry-"));
       const fakeOpenclaw = path.join(tmpDir, "openclaw");
       const stateDir = path.join(tmpDir, "state");
@@ -872,7 +874,7 @@ exit 2
       );
 
       try {
-        const run = spawnSync("python3", ["-c", autoPairPythonScript(src, tmpDir)], {
+        const run = await runOpenclaw("python3", ["-c", autoPairPythonScript(src, tmpDir)], {
           encoding: "utf-8",
           env: {
             ...process.env,
@@ -896,7 +898,7 @@ exit 2
     40_000,
   );
 
-  it("keeps a permanently failing gated approval in fast mode until the watcher deadline (#10269)", () => {
+  it("keeps a permanently failing gated approval in fast mode until the watcher deadline (#10269)", async () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auto-pair-permfail-"));
     const fakeOpenclaw = path.join(tmpDir, "openclaw");
     const stateDir = path.join(tmpDir, "state");
@@ -949,7 +951,7 @@ exit 2
     );
 
     try {
-      const run = spawnSync("python3", ["-c", autoPairPythonScript(src, tmpDir)], {
+      const run = await runOpenclaw("python3", ["-c", autoPairPythonScript(src, tmpDir)], {
         encoding: "utf-8",
         env: {
           ...process.env,
@@ -975,7 +977,7 @@ exit 2
     }
   }, 40_000);
 
-  it("does not seed when device list fails for a non-pairing error (#6113)", () => {
+  it("does not seed when device list fails for a non-pairing error (#6113)", async () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auto-pair-nonpairing-"));
     const fakeOpenclaw = path.join(tmpDir, "openclaw");
     const stateDir = path.join(tmpDir, "state");
@@ -1023,7 +1025,7 @@ exit 1
     );
 
     try {
-      const run = spawnSync("python3", ["-c", autoPairPythonScript(src, tmpDir)], {
+      const run = await runOpenclaw("python3", ["-c", autoPairPythonScript(src, tmpDir)], {
         encoding: "utf-8",
         env: {
           ...process.env,
@@ -1044,7 +1046,7 @@ exit 1
     }
   }, 40_000);
 
-  it("reports the request-creation stage while a valid device list stays empty (#9844)", () => {
+  it("reports the request-creation stage while a valid device list stays empty (#9844)", async () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auto-pair-empty-"));
     const fakeOpenclaw = path.join(tmpDir, "openclaw");
     fs.writeFileSync(
@@ -1056,7 +1058,7 @@ printf '%s\\n' '{"pending":[],"paired":[]}'
     );
 
     try {
-      const run = spawnSync("python3", ["-c", autoPairPythonScript(src, tmpDir)], {
+      const run = await runOpenclaw("python3", ["-c", autoPairPythonScript(src, tmpDir)], {
         encoding: "utf-8",
         env: {
           ...process.env,
@@ -1082,7 +1084,7 @@ printf '%s\\n' '{"pending":[],"paired":[]}'
     ["null paired", '{"pending":[],"paired":null}'],
     ["missing pending", '{"paired":[]}'],
     ["missing paired", '{"pending":[]}'],
-  ])("rejects a valid JSON response with %s (#9844)", (_name, response) => {
+  ])("rejects a valid JSON response with %s (#9844)", async (_name, response) => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auto-pair-shape-"));
     const fakeOpenclaw = path.join(tmpDir, "openclaw");
     const approvalMarker = path.join(tmpDir, "approval-called");
@@ -1098,7 +1100,7 @@ printf '%s\\n' ${JSON.stringify(response)}
     );
 
     try {
-      const run = spawnSync("python3", ["-c", autoPairPythonScript(src, tmpDir)], {
+      const run = await runOpenclaw("python3", ["-c", autoPairPythonScript(src, tmpDir)], {
         encoding: "utf-8",
         env: {
           ...process.env,
@@ -1117,7 +1119,7 @@ printf '%s\\n' ${JSON.stringify(response)}
     }
   });
 
-  it("keeps forced CLI pairing until a validated paired CLI record appears (#9844)", () => {
+  it("keeps forced CLI pairing until a validated paired CLI record appears (#9844)", async () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auto-pair-bootstrap-state-"));
     const fakeOpenclaw = path.join(tmpDir, "openclaw");
     const listCount = path.join(tmpDir, "list-count");
@@ -1156,7 +1158,7 @@ exit 2
     );
 
     try {
-      const run = spawnSync("python3", ["-c", autoPairPythonScript(src, tmpDir)], {
+      const run = await runOpenclaw("python3", ["-c", autoPairPythonScript(src, tmpDir)], {
         encoding: "utf-8",
         env: {
           ...process.env,
@@ -1196,7 +1198,7 @@ exit 2
     ["option-like", "--help", "--help"],
   ])(
     "rejects a malformed %s request ID without approval or disclosure (#9844)",
-    (_name, requestId, secretMarker) => {
+    async (_name, requestId, secretMarker) => {
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auto-pair-request-id-"));
       const fakeOpenclaw = path.join(tmpDir, "openclaw");
       const approvalMarker = path.join(tmpDir, "approval-called");
@@ -1225,7 +1227,7 @@ printf '%s\n' ${JSON.stringify(response)}
       );
 
       try {
-        const run = spawnSync("python3", ["-c", autoPairPythonScript(src, tmpDir)], {
+        const run = await runOpenclaw("python3", ["-c", autoPairPythonScript(src, tmpDir)], {
           encoding: "utf-8",
           env: {
             ...process.env,
@@ -1251,7 +1253,7 @@ printf '%s\n' ${JSON.stringify(response)}
     },
   );
 
-  it("does not treat an incomplete paired CLI record as the canonical baseline (#10269)", () => {
+  it("does not treat an incomplete paired CLI record as the canonical baseline (#10269)", async () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auto-pair-malformed-pending-"));
     const fakeOpenclaw = path.join(tmpDir, "openclaw");
     const approvalMarker = path.join(tmpDir, "approval-called");
@@ -1267,7 +1269,7 @@ printf '%s\n' '{"pending":[{"requestId":"--help","clientId":"cli","clientMode":"
     );
 
     try {
-      const run = spawnSync("python3", ["-c", autoPairPythonScript(src, tmpDir)], {
+      const run = await runOpenclaw("python3", ["-c", autoPairPythonScript(src, tmpDir)], {
         encoding: "utf-8",
         env: {
           ...process.env,
@@ -1292,7 +1294,7 @@ printf '%s\n' '{"pending":[{"requestId":"--help","clientId":"cli","clientMode":"
     }
   });
 
-  it("forgets request diagnostics after the gateway removes the request (#9844)", () => {
+  it("forgets request diagnostics after the gateway removes the request (#9844)", async () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auto-pair-request-prune-"));
     const fakeOpenclaw = path.join(tmpDir, "openclaw");
     const listCount = path.join(tmpDir, "list-count");
@@ -1314,7 +1316,7 @@ fi
     );
 
     try {
-      const run = spawnSync("python3", ["-c", autoPairPythonScript(src, tmpDir)], {
+      const run = await runOpenclaw("python3", ["-c", autoPairPythonScript(src, tmpDir)], {
         encoding: "utf-8",
         env: {
           ...process.env,
@@ -1341,7 +1343,7 @@ fi
     }
   });
 
-  it("reports a fixed watcher-execution stage without raw exception details (#9844)", () => {
+  it("reports a fixed watcher-execution stage without raw exception details (#9844)", async () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auto-pair-exception-"));
     const writablePolicy = path.join(tmpDir, "openclaw_device_approval_policy.py");
     fs.writeFileSync(writablePolicy, "def approval_request_decision(_device): return {}\n", {
@@ -1353,7 +1355,7 @@ fi
     );
 
     try {
-      const run = spawnSync("python3", ["-c", script], {
+      const run = await runOpenclaw("python3", ["-c", script], {
         encoding: "utf-8",
         env: { ...process.env, OPENCLAW_BIN: "/bin/false" },
         timeout: 10_000,

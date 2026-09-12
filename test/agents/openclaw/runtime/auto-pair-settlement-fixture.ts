@@ -1,12 +1,43 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { execFile } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
 const PUBLIC_KEY = "y3vjb9p8tAecivI1l5f1Hdc9QdZJSt3BmLkJMM7wZD8";
 const DEVICE_ID = "04a4c561c730435e9f6a2e38d2e7b929bcbec2ea1c37d3dd053f3341ecce4e47";
+
+type RunProcessOptions = {
+  encoding: BufferEncoding;
+  env?: NodeJS.ProcessEnv;
+  timeout?: number;
+};
+
+export function runOpenclaw(
+  file: string,
+  args: readonly string[],
+  options: RunProcessOptions,
+): Promise<{ status: number; stdout: string; stderr: string }> {
+  return new Promise((resolve) => {
+    execFile(
+      file,
+      [...args],
+      {
+        encoding: options.encoding,
+        env: options.env,
+        timeout: options.timeout,
+      },
+      (error, stdout, stderr) =>
+        resolve({
+          status: Number(error?.code) || (error ? -1 : 0),
+          stdout,
+          stderr,
+        }),
+    );
+  });
+}
 
 export function createCanonicalCliFixture(stateDir: string) {
   fs.mkdirSync(path.join(stateDir, "identity"), { recursive: true });
