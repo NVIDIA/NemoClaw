@@ -350,6 +350,13 @@ EOF
   describe("drop_capabilities", () => {
     const QA_CAPBND = "00000004a82c35fb"; // All ten dangerous capabilities from issue #3280.
     const CLEAN_CAPBND = "0000000000000000";
+    const RETAINED_SETPCAP = "0000000000000100";
+    const CLEAN_STATUS = `CapInh: 0
+CapPrm: 0
+CapEff: 0
+CapBnd: ${CLEAN_CAPBND}
+CapAmb: 0
+`;
     const QA_DANGEROUS =
       "cap_sys_admin,cap_sys_ptrace,cap_net_raw,cap_dac_override,cap_sys_chroot,cap_fsetid,cap_setfcap,cap_mknod,cap_audit_write,cap_net_bind_service";
     const forwardedArgs = ["argument with spaces", "literal;$value"];
@@ -366,16 +373,22 @@ EOF
       sentinel = "",
       capsh = "unavailable",
       afterDrop = caps,
+      procStatus = caps === null ? null : CLEAN_STATUS.replace(CLEAN_CAPBND, caps),
     }: {
       caps?: string | null;
       strict?: boolean;
       sentinel?: string;
       capsh?: string;
       afterDrop?: string | null;
+      procStatus?: string | null;
     } = {}) {
-      const entrypoint = join(workDir, "entrypoint");
+      const entrypoint = join(workDir, "entrypoint with spaces");
       for (const name of ["reads", "calls", "args"]) writeFileSync(join(workDir, name), "");
-      writeFileSync(join(workDir, "forged-status"), `CapBnd:\t${CLEAN_CAPBND}\n`);
+      writeFileSync(join(workDir, "status"), procStatus ?? "");
+      writeFileSync(
+        join(workDir, "after-status"),
+        CLEAN_STATUS.replace(CLEAN_CAPBND, afterDrop ?? ""),
+      );
       writeFileSync(
         join(workDir, "capsh"),
         `#!/bin/bash
@@ -387,7 +400,7 @@ fi
 printf '%s\\0' "$@" >>"$TEST_CAPSH_ARGS"
 if [ "$TEST_CAPSH_MODE" = error ]; then echo CAPSH_EXEC_FAILED >&2; exit 71; fi
 [ "$NEMOCLAW_CAPS_DROPPED" = 1 ] || exit 72
-export TEST_CAPBND="$TEST_AFTER_DROP"
+export TEST_PROC_STATUS="$TEST_AFTER_DROP"
 shift 2
 exec /bin/bash "$@"
 `,
@@ -398,6 +411,7 @@ exec /bin/bash "$@"
         `#!/bin/bash
 set -euo pipefail
 source ${JSON.stringify(SANDBOX_INIT)}
+install_capability_reader_fixture
 drop_capabilities "$0" "$@"
 printf 'ENTRYPOINT_RETURNED\\n'
 printf 'FORWARDED:%s\\n' "$@"
@@ -406,18 +420,20 @@ printf 'FORWARDED:%s\\n' "$@"
       );
       const { stdout } = runWithLib(
         `
-        # Override the reader, not production's status path or capability decoder.
-        awk() {
-          printf '%s\\n' "\${2:-}" >>"$TEST_CAP_READS"
-          [ "$#" -eq 2 ] && [ "$2" = /proc/self/status ] || return 90
-          [ -n "$TEST_CAPBND" ] || return 1
-          printf '%s\\n' "$TEST_CAPBND"
+        install_capability_reader_fixture() {
+          eval "$(declare -f read_capability_state | sed '1s/read_capability_state/read_fixture_capability_state/')"
+          read_capability_state() {
+            printf '%s\\n' "$1" >>"$TEST_CAP_READS"
+            [ "$#" -eq 1 ] && [ "$1" = /proc/self/status ] || return 90
+            read_fixture_capability_state "$TEST_PROC_STATUS"
+          }
         }
         command() {
           if [ "$TEST_CAPSH_MODE" = missing ] && [ "$*" = '-v capsh' ]; then return 1; fi
           builtin command "$@"
         }
-        export -f awk command
+        export -f install_capability_reader_fixture command
+        install_capability_reader_fixture
         : >"$TEST_CAPSH_CALLS"
         set +e
         (set -e; drop_capabilities ${JSON.stringify(entrypoint)} 'argument with spaces' 'literal;$value'; echo ENTRYPOINT_RETURNED) 2>&1
@@ -426,8 +442,8 @@ printf 'FORWARDED:%s\\n' "$@"
         {
           env: {
             PATH: `${workDir}:/usr/bin:/bin`,
-            TEST_CAPBND: caps ?? "",
-            TEST_AFTER_DROP: afterDrop ?? "",
+            TEST_PROC_STATUS: join(workDir, procStatus === null ? "unreadable" : "status"),
+            TEST_AFTER_DROP: join(workDir, afterDrop === null ? "unreadable" : "after-status"),
             TEST_CAPSH_MODE: capsh,
             TEST_CAP_READS: join(workDir, "reads"),
             TEST_CAPSH_CALLS: join(workDir, "calls"),
@@ -490,6 +506,35 @@ printf 'FORWARDED:%s\\n' "$@"
       },
     );
 
+    it.each([
+      { procStatus: `CapBnd: ${CLEAN_CAPBND}\n`, afterDrop: CLEAN_CAPBND },
+      {
+        procStatus: CLEAN_STATUS.replace(
+          "CapPrm: 0\nCapEff: 0",
+          "CapPrm: 102\nCapEff: 102",
+        ).replace(CLEAN_CAPBND, RETAINED_SETPCAP),
+        afterDrop: RETAINED_SETPCAP,
+      },
+    ])(
+      "retains capsh handling for a clean bounding set without five empty sets: %j",
+      ({ procStatus, afterDrop }) => {
+        const fallback = runDrop({ caps: afterDrop, procStatus, strict: true });
+        expect(fallback.calls).toBe("--has-p=cap_setpcap\n");
+        expect(fallback.stdout).toBe("ENTRYPOINT_RETURNED\nDROP_STATUS=0");
+        expect(fallback.reads).toEqual(["/proc/self/status"]);
+        const reexec = runDrop({
+          caps: afterDrop,
+          procStatus,
+          strict: true,
+          capsh: "available",
+        });
+        expect(reexec.reads).toEqual(["/proc/self/status", "/proc/self/status"]);
+        expect(reexec.args[0]).toBe(`--drop=${QA_DANGEROUS}`);
+        expect(reexec.stdout).toContain("ENTRYPOINT_RETURNED");
+        expect(reexec.stdout).toContain("DROP_STATUS=0");
+      },
+    );
+
     it("decodes the dangerous set and preserves the empty-set result", () => {
       const { stdout } = runWithLib(
         `echo "DANGEROUS:[$(dangerous_caps_in_capbnd ${QA_CAPBND})]"
@@ -506,14 +551,19 @@ printf 'FORWARDED:%s\\n' "$@"
         },
         { caps: null, reason: "could not read bounding set from /proc/self/status" },
         {
+          caps: CLEAN_CAPBND,
+          procStatus: `${CLEAN_STATUS}CapPrm: 0\n`,
+          reason: "could not read bounding set from /proc/self/status",
+        },
+        {
           caps: "00000000nothex0",
           reason: "could not parse bounding set (CapBnd=00000000nothex0)",
         },
       ].flatMap((failure) => [false, true].map((strict) => ({ ...failure, strict }))),
     )(
       "retains residual and unverifiable outcomes (caps=$caps, strict=$strict)",
-      ({ caps, reason, strict }) => {
-        const result = runDrop({ caps, strict });
+      ({ reason, strict, ...state }) => {
+        const result = runDrop({ ...state, strict });
         expect(result.reads).toEqual(["/proc/self/status"]);
         expect(result.stdout).toContain(reason);
         expect(result.stdout).toContain(
@@ -562,8 +612,8 @@ printf 'FORWARDED:%s\\n' "$@"
           `--drop=${QA_DANGEROUS}`,
           "--",
           "-c",
-          `exec ${result.entrypoint} "$@"`,
-          "--",
+          'exec "$0" "$@"',
+          result.entrypoint,
           ...forwardedArgs,
         ]);
         expect(result.stdout).toContain(`DROP_STATUS=${status}`);
