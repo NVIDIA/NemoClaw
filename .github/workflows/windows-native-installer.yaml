@@ -838,8 +838,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
-          $vsDevCmd = (& $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.ARM64 -find 'Common7\Tools\VsDevCmd.bat' | Select-Object -First 1)
-          if ($LASTEXITCODE -ne 0 -or -not $vsDevCmd) { throw 'The pinned ARM64 compiler environment is unavailable.' }
+          $installations = @(& $vswhere -latest -products '*' -property installationPath)
+          if ($LASTEXITCODE -ne 0 -or $installations.Count -ne 1) { throw 'Visual Studio installation discovery failed.' }
+          $vsDevCmd = Join-Path $installations[0] 'Common7\Tools\VsDevCmd.bat'
+          if (-not (Test-Path -LiteralPath $vsDevCmd -PathType Leaf)) { throw 'The selected Visual Studio environment script is missing.' }
           $pwsh = Join-Path $PSHOME 'pwsh.exe'
           foreach ($value in @($vsDevCmd, $pwsh, $env:GITHUB_WORKSPACE, $env:RUNNER_TEMP)) {
             if ($value -match '["%&|<>^\r\n]') { throw 'A CI invocation path contains command delimiters.' }
