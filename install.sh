@@ -66,6 +66,27 @@ has_payload_marker() {
   [[ -f "$file" ]] && grep -q "$PAYLOAD_MARKER" "$file"
 }
 
+# Git reports a transport failure as "unable to access" before it can look up
+# the ref, so that text separates a missing ref from a failed connection. curl
+# prints the same "Couldn't connect to server" for a refused and a timed-out
+# connect; only the reported connect duration tells them apart.
+INSTALL_REF_CONNECT_TIMEOUT_HINT_MS=10000
+
+classify_install_ref_fetch_failure() {
+  local git_error="$1" connect_ms=""
+  if [[ "$git_error" != *"unable to access"* ]]; then
+    printf 'missing-ref'
+    return 0
+  fi
+  [[ "$git_error" =~ after\ ([0-9]+)\ ms ]] && connect_ms="${BASH_REMATCH[1]}"
+  if [[ "$git_error" == *"timed out"* || "$git_error" == *"Timeout"* || "$git_error" == *"timeout"* ]] \
+    || [[ -n "$connect_ms" && "$connect_ms" -ge "$INSTALL_REF_CONNECT_TIMEOUT_HINT_MS" ]]; then
+    printf 'connect-timeout'
+    return 0
+  fi
+  printf 'connect-failed'
+}
+
 clone_nemoclaw_ref() {
   local ref="$1" dest="$2"
 
@@ -74,9 +95,23 @@ clone_nemoclaw_ref() {
     umask 022
     git init --quiet "$dest"
     git -C "$dest" remote add origin https://github.com/NVIDIA/NemoClaw.git
-    if ! git -C "$dest" fetch --quiet --depth 1 origin "+${ref}:refs/nemoclaw-install/target"; then
-      printf "[ERROR] Requested install ref '%s' is not available from https://github.com/NVIDIA/NemoClaw.git.\n" "$ref" >&2
-      printf "        Check NEMOCLAW_INSTALL_TAG/NEMOCLAW_INSTALL_REF and try again.\n" >&2
+    local fetch_error=""
+    if ! fetch_error="$(git -C "$dest" fetch --quiet --depth 1 origin "+${ref}:refs/nemoclaw-install/target" 2>&1)"; then
+      [[ -z "$fetch_error" ]] || printf '%s\n' "$fetch_error" >&2
+      case "$(classify_install_ref_fetch_failure "$fetch_error")" in
+        connect-timeout)
+          printf "[ERROR] Timed out connecting to https://github.com/NVIDIA/NemoClaw.git while looking up install ref '%s'.\n" "$ref" >&2
+          printf "        The installed CLI was not changed. Check network access to github.com and try again.\n" >&2
+          ;;
+        connect-failed)
+          printf "[ERROR] Could not connect to https://github.com/NVIDIA/NemoClaw.git to look up install ref '%s'.\n" "$ref" >&2
+          printf "        The installed CLI was not changed. Check network access to github.com and try again.\n" >&2
+          ;;
+        *)
+          printf "[ERROR] Requested install ref '%s' is not available from https://github.com/NVIDIA/NemoClaw.git.\n" "$ref" >&2
+          printf "        The installed CLI was not changed. Check NEMOCLAW_INSTALL_TAG/NEMOCLAW_INSTALL_REF and try again.\n" >&2
+          ;;
+      esac
       exit 1
     fi
     git -C "$dest" -c advice.detachedHead=false checkout --quiet --detach refs/nemoclaw-install/target

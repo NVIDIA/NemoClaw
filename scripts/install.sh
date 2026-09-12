@@ -187,6 +187,27 @@ resolve_stamped_version() {
   printf "%s" "$version"
 }
 
+# Git reports a transport failure as "unable to access" before it can look up
+# the ref, so that text separates a missing ref from a failed connection. curl
+# prints the same "Couldn't connect to server" for a refused and a timed-out
+# connect; only the reported connect duration tells them apart.
+INSTALL_REF_CONNECT_TIMEOUT_HINT_MS=10000
+
+classify_install_ref_fetch_failure() {
+  local git_error="$1" connect_ms=""
+  if [[ "$git_error" != *"unable to access"* ]]; then
+    printf 'missing-ref'
+    return 0
+  fi
+  [[ "$git_error" =~ after\ ([0-9]+)\ ms ]] && connect_ms="${BASH_REMATCH[1]}"
+  if [[ "$git_error" == *"timed out"* || "$git_error" == *"Timeout"* || "$git_error" == *"timeout"* ]] \
+    || [[ -n "$connect_ms" && "$connect_ms" -ge "$INSTALL_REF_CONNECT_TIMEOUT_HINT_MS" ]]; then
+    printf 'connect-timeout'
+    return 0
+  fi
+  printf 'connect-failed'
+}
+
 clone_nemoclaw_ref() {
   local ref="$1" dest="$2"
 
@@ -195,8 +216,20 @@ clone_nemoclaw_ref() {
     umask 022
     git init --quiet "$dest"
     git -C "$dest" remote add origin https://github.com/NVIDIA/NemoClaw.git
-    if ! git -C "$dest" fetch --quiet --depth 1 origin "+${ref}:refs/nemoclaw-install/target"; then
-      error "Requested install ref '$ref' is not available from https://github.com/NVIDIA/NemoClaw.git. Check NEMOCLAW_INSTALL_TAG/NEMOCLAW_INSTALL_REF and try again."
+    local fetch_error=""
+    if ! fetch_error="$(git -C "$dest" fetch --quiet --depth 1 origin "+${ref}:refs/nemoclaw-install/target" 2>&1)"; then
+      [[ -z "$fetch_error" ]] || printf '%s\n' "$fetch_error" >&2
+      case "$(classify_install_ref_fetch_failure "$fetch_error")" in
+        connect-timeout)
+          error "Timed out connecting to https://github.com/NVIDIA/NemoClaw.git while looking up install ref '$ref'. The installed CLI was not changed. Check network access to github.com and try again."
+          ;;
+        connect-failed)
+          error "Could not connect to https://github.com/NVIDIA/NemoClaw.git to look up install ref '$ref'. The installed CLI was not changed. Check network access to github.com and try again."
+          ;;
+        *)
+          error "Requested install ref '$ref' is not available from https://github.com/NVIDIA/NemoClaw.git. The installed CLI was not changed. Check NEMOCLAW_INSTALL_TAG/NEMOCLAW_INSTALL_REF and try again."
+          ;;
+      esac
     fi
     git -C "$dest" -c advice.detachedHead=false checkout --quiet --detach refs/nemoclaw-install/target
   )
@@ -3121,9 +3154,14 @@ install_nemoclaw() {
     if is_reusable_managed_nemoclaw_install "$nemoclaw_src"; then
       info "Reusing the installed ${_CLI_DISPLAY} CLI at the selected revision."
     else
-      rm -rf "$nemoclaw_src"
+      # Clone beside the installed source and swap only after the fetch
+      # succeeds, so a failed fetch leaves the installed CLI in place.
+      local nemoclaw_staging="${nemoclaw_src}.staging"
+      rm -rf "$nemoclaw_staging"
       mkdir -p "$(dirname "$nemoclaw_src")"
-      spin "Cloning ${_CLI_DISPLAY} source" clone_nemoclaw_ref "$release_ref" "$nemoclaw_src"
+      spin "Cloning ${_CLI_DISPLAY} source" clone_nemoclaw_ref "$release_ref" "$nemoclaw_staging"
+      rm -rf "$nemoclaw_src"
+      mv "$nemoclaw_staging" "$nemoclaw_src"
       # Fetch version tags into the shallow clone so `git describe --tags
       # --match "v*"` works at runtime (the shallow clone only has the
       # single ref we asked for).
