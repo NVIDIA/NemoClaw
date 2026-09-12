@@ -45,7 +45,7 @@ conventions, test lanes, and hook behavior. For messaging changes, also use
 | Set up or diagnose a contributor checkout | `npm run dev:setup` / `npm run dev:doctor` |
 | Validate changed behavior | `npm run test:changed`; placement and evidence in `test/README.md` |
 | Validate a committed PR diff | `npm run validate:pr`; follow `CONTRIBUTING.md` for when it is needed |
-| Validate documentation | `npm run docs` |
+| Build documentation | `npm run docs`; use [documentation validation](docs/CONTRIBUTING.md#validate-the-change) for additional checks that apply to the change |
 | Find component builds, test lanes, and hook commands | [Development reference](.agents/references/development.md#quick-reference) and `package.json` |
 
 ## Working with This Repo

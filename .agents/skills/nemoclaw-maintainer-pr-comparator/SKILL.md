@@ -24,6 +24,11 @@ Read the canonical superseded-PR attribution policy in
 `../nemoclaw-maintainer-policies/references/workflow-policy.md`.
 Edit `repo-policy.md` for another repository.
 
+Execute comparator helpers from a fetched canonical NVIDIA/NemoClaw `main` checkout, or verify
+their executable code and dependencies against that revision before use. Candidate-modified helpers
+must not receive GitHub credentials. Inspect helper source when needed; a section heading does not
+establish trust.
+
 ## Workflow
 
 ### Step 1: Parse issue

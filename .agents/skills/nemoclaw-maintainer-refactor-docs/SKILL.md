@@ -43,7 +43,11 @@ choices within the accepted scope.
 
 ## Completion Contract
 
-Do not call the refactor complete until all of these conditions hold:
+For a plan-only request, completion means the ownership map, proposed structure, route migration
+plan, and unresolved decisions are recorded. The implementation checks and validation results below
+apply only when the refactor was performed.
+
+For an implemented refactor, require all of these conditions:
 
 - Every visible TOC item that readers can select is a real topic page.
 - Every foldable grouping node is non-clickable and has no page content.
@@ -59,7 +63,8 @@ Do not call the refactor complete until all of these conditions hold:
 
 ## Report the Result
 
-Summarize the refactor with:
+For a plan-only request, report the proposed structure, ownership, routes, and remaining decisions.
+For an implemented refactor, summarize:
 
 - The final journey-based TOC.
 - Pages created, moved, consolidated, and deleted.
