@@ -152,7 +152,7 @@ export async function prepareExternalComponentNetwork(
       "network",
       "ls",
       "--filter",
-      `name=^${name.replace(/[.]/gu, "\\.")}$`,
+      `name=^${name.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")}$`,
       "--format",
       "{{.Name}}",
     ]);

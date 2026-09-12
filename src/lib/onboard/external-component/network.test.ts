@@ -32,6 +32,31 @@ function fixture() {
 const failure = { status: 1, stdout: "", stderr: "private diagnostic" };
 
 describe("Docker network provisioning", () => {
+  it("matches a dotted network name literally when confirming absence (#11606)", async () => {
+    const f = fixture();
+    await prepareExternalComponentNetwork(f.env, f.runtime);
+    expect(f.run.mock.calls[0]![0]).toEqual([
+      "network",
+      "ls",
+      "--filter",
+      "name=^generic\\.network$",
+      "--format",
+      "{{.Name}}",
+    ]);
+  });
+
+  it.each(["generic\\network", "generic.*", "generic[network]", "generic$", "generic|network"])(
+    "rejects network name %j before calling Docker (#11606)",
+    async (name) => {
+      const f = fixture();
+      f.env.OPENSHELL_DOCKER_NETWORK_NAME = name;
+      await expect(prepareExternalComponentNetwork(f.env, f.runtime)).rejects.toThrow(
+        "preparation_failed",
+      );
+      expect(f.run).not.toHaveBeenCalled();
+    },
+  );
+
   it.each([
     ["missing identity", { Id: "" }],
     ["wrong name", { Name: "another-network" }],
