@@ -138,8 +138,26 @@ NemoClaw does not install or supervise those services.
 
 ## Validation
 
-`connections.test.ts` covers declaration restrictions, trust files, generated configuration, drift, and preparation.
+`network.test.ts` covers bridge validation, bounded creation, uncertain results, and connection or address drift.
+`connections.test.ts` covers declaration restrictions, trust files, generated configuration, network reuse, and preparation.
 Existing activation and gateway-handler tests cover bounded transport, incomplete activation, and unchanged v1 behavior.
 The creation and finalization tests share an OpenClaw/Hermes matrix for image identity, startup configuration, policy proof, and activation failures.
 Real OpenShell registration, policy and profile delivery, sandbox identity, and middleware outcomes require live evidence.
 Record exact NemoClaw and OpenShell revisions and both agents’ results separately. Mocked results do not qualify the integration.
+
+### Network preparation evidence
+
+On 2026-09-12 UTC, commit `87ead4ed71f87b38e913c1f6b36bc0e003cb8a59` passed isolated Linux network and gateway checks.
+The fixture used Docker 29.5.3 with overlay2, Node.js 22.23.1, and checksum-verified OpenShell 0.0.116 release binaries.
+The OpenShell source revision was `d1155aa70042d3e2ee49dbfa15346b108b7c1d92`.
+
+Both OpenClaw and Hermes provisioned a missing network and reused it without changing its identity or addressing.
+Each successful run completed component preparation, two authenticated registration calls, and an authenticated mTLS gateway health check.
+A selected Docker context also passed; generated configuration retained its selected socket.
+Both agents rejected preparation before gateway launch. Rejected registration authentication prevented a healthy gateway.
+Each network had one creation event and no deletion event, including after failures and gateway shutdown.
+
+The first OpenClaw observer queried an unconfigured gateway name. A separate check verified the selected gateway over mTLS.
+The corrected observer passed subsequent runs. No product change was required for that fixture error.
+Positive runs stopped after gateway verification. Image completion, activation, agent startup, inference, and workload policy outcomes were not qualified.
+These results establish the network and gateway boundary only. The providerless image fix and full lifecycle qualification retain their separate owners.
