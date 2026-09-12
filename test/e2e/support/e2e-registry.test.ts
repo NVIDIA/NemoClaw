@@ -65,7 +65,46 @@ const EXTERNAL_WORKFLOW_FIXTURE: Extract<E2eInventoryTarget, { route: "external-
   },
 };
 
+const MANUAL_FIXTURE: Extract<E2eInventoryTarget, { route: "manual" }> = {
+  id: "manual-proof",
+  route: "manual",
+  definition: {
+    id: "manual-proof",
+    tests: [{ file: "test/e2e/live/manual-proof.test.ts", project: "e2e-live" }],
+    instructions: "test/e2e/README.md#manual-proof",
+    prerequisites: ["A prepared local test host"],
+  },
+};
+
 describe("deterministic target registry", () => {
+  it.each([
+    { instructions: "", prerequisites: ["A prepared host"] },
+    { instructions: "test/e2e/README.md", prerequisites: [] },
+    { instructions: "test/e2e/README.md", prerequisites: [" "] },
+  ])("rejects a manual target without instructions or prerequisites: %j", (requirements) => {
+    const entry = MANUAL_FIXTURE;
+    expect(() =>
+      buildExecutionInventory([
+        {
+          ...entry,
+          definition: { ...entry.definition, ...requirements },
+        },
+      ]),
+    ).toThrow("requires instructions and prerequisites");
+  });
+
+  it("rejects a manual declaration without an executable test file", () => {
+    const entry = MANUAL_FIXTURE;
+    expect(() =>
+      buildExecutionInventory([
+        {
+          ...entry,
+          definition: { ...entry.definition, tests: [] },
+        },
+      ]),
+    ).toThrow("requires test files");
+  });
+
   it("retains the workflow owner and Vitest project of an external test", () => {
     const entry = EXTERNAL_WORKFLOW_FIXTURE;
     expect([...buildExecutionInventory([entry]).values()]).toEqual([entry]);

@@ -81,6 +81,14 @@ function expectExplicitCatalogueCoverage(): void {
 }
 
 describe("E2E workflow plan", () => {
+  it.each([
+    "windows-mxc-openclaw-process-container",
+    "spark-express-vllm",
+    "historical-openclaw-security-revision-container-e2e",
+  ])("rejects manual inventory ID %s as a main workflow selector", (id) => {
+    expect(() => buildE2eWorkflowPlan({ targets: id })).toThrow(/Unknown/);
+  });
+
   it.each(["tools/e2e/target-inventory.mts", "tools/e2e/target-definitions/workflows.mts"])(
     "preserves full-suite selection when workflow metadata moves to %s",
     (file) => {

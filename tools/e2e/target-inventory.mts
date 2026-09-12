@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { manualTargets } from "./target-definitions/manual.mts";
 import { externalWorkflowTargets } from "./target-definitions/external-workflows.mts";
 import { workflowTargets } from "./target-definitions/workflows.mts";
 import { type E2eExecutionRow, validateE2eExecutionRows } from "./execution-coverage.mts";
@@ -1822,6 +1823,13 @@ export interface ExternalWorkflowE2eTarget {
   tests: readonly { file: string; project: "e2e-live" | "integration" }[];
 }
 
+export interface ManualE2eTarget {
+  id: string;
+  tests: ExternalWorkflowE2eTarget["tests"];
+  instructions: string;
+  prerequisites: readonly string[];
+}
+
 export interface WorkflowExecutionSelection {
   allowedJobs: string[];
   workflowJobs: string[];
@@ -1839,7 +1847,8 @@ export type E2eInventoryTarget =
   | { id: string; route: "typed"; definition: TargetDefinition }
   | { id: string; route: "shared"; definition: SharedE2eTarget }
   | { id: string; route: "workflow"; definition: WorkflowE2eTarget }
-  | { id: string; route: "external-workflow"; definition: ExternalWorkflowE2eTarget };
+  | { id: string; route: "external-workflow"; definition: ExternalWorkflowE2eTarget }
+  | { id: string; route: "manual"; definition: ManualE2eTarget };
 
 export function buildExecutionInventory(
   targets: readonly E2eInventoryTarget[],
@@ -1850,16 +1859,25 @@ export function buildExecutionInventory(
     if (entry.id !== entry.definition.id)
       throw new Error(`Execution target identity differs: ${entry.id}`);
     if (entry.route === "external-workflow") {
-      const { workflow, job, tests } = entry.definition;
+      const { workflow, job } = entry.definition;
       if (!/^\.github\/workflows\/[a-zA-Z0-9_-]+\.ya?ml$/.test(workflow) || !job.trim())
         throw new Error(`External workflow target ${entry.id} requires a workflow job owner`);
-      if (tests.length === 0)
-        throw new Error(`External workflow target ${entry.id} requires test files`);
-      for (const test of tests) {
+    }
+    if (entry.route === "manual") {
+      const { instructions, prerequisites } = entry.definition;
+      if (
+        !instructions.trim() ||
+        !prerequisites.length ||
+        prerequisites.some((value) => !value.trim())
+      )
+        throw new Error(`Manual target ${entry.id} requires instructions and prerequisites`);
+    }
+    if (entry.route === "external-workflow" || entry.route === "manual") {
+      if (entry.definition.tests.length === 0)
+        throw new Error(`Execution target ${entry.id} requires test files`);
+      for (const test of entry.definition.tests) {
         if (!/^test\/[a-zA-Z0-9_/-]+\.test\.ts$/.test(test.file))
-          throw new Error(
-            `External workflow target ${entry.id} has an invalid test path: ${test.file}`,
-          );
+          throw new Error(`Execution target ${entry.id} has an invalid test path: ${test.file}`);
       }
     }
     if (entry.route === "workflow") {
@@ -1880,6 +1898,11 @@ export function buildExecutionInventory(
 }
 
 const executionInventory = buildExecutionInventory([
+  ...manualTargets.map((definition) => ({
+    id: definition.id,
+    route: "manual" as const,
+    definition,
+  })),
   ...externalWorkflowTargets.map((definition) => ({
     id: definition.id,
     route: "external-workflow" as const,

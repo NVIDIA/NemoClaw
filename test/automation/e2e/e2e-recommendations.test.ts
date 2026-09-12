@@ -136,6 +136,7 @@ describe("E2E recommendation normalizer", () => {
         "tools/e2e/target-inventory.mts",
         "tools/e2e/target-definitions/workflows.mts",
         "tools/e2e/target-definitions/external-workflows.mts",
+        "tools/e2e/target-definitions/manual.mts",
         "scripts/checks/protected-managed-image-contract.ts",
         "tools/e2e/module-tags.mts",
         ".github/workflows/e2e.yaml",

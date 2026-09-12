@@ -6,6 +6,12 @@ import type { ExternalWorkflowE2eTarget } from "../target-inventory.mts";
 // Workflow jobs retain scheduling, prerequisites, artifact identity, and cleanup ownership.
 export const externalWorkflowTargets: readonly ExternalWorkflowE2eTarget[] = [
   {
+    id: "e2e-jetson-nvmap-gpu",
+    workflow: ".github/workflows/e2e.yaml",
+    job: "jetson-nvmap-gpu",
+    tests: [{ file: "test/e2e/live/jetson-nvmap-gpu.test.ts", project: "e2e-live" }],
+  },
+  {
     id: "candidate-compatibility-live",
     workflow: ".github/workflows/candidate-compatibility.yaml",
     job: "live",

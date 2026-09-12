@@ -406,9 +406,9 @@ credential values. It then changes the fixture's recorded sandbox fingerprint an
 launchers to fail without publishing a file before restoring the registry. The assertion budget is
 unchanged because this contract replaces a redundant nonempty-log assertion in the same scenario.
 
-`tools/e2e/target-inventory.mts` owns target identity and lookup for reusable-profile, shared, typed-driver, specialized workflow, and external workflow executions.
+`tools/e2e/target-inventory.mts` owns target identity and lookup for reusable-profile, shared, typed-driver, specialized workflow, external workflow, and manual executions.
 Typed scenario definitions remain beside the live driver. The inventory rejects duplicate IDs across these routes.
-List all registered routes, including their owning workflow jobs and Vitest projects:
+List all registered routes, including workflow owners, Vitest projects, and manual prerequisites:
 
 ```bash
 npx tsx test/e2e/registry/run.ts --list-inventory
@@ -417,7 +417,10 @@ npx tsx test/e2e/registry/run.ts --list-inventory
 External workflow routes retain scheduling, prerequisites, artifact identity, and cleanup in their owning jobs.
 Their inventory IDs do not select jobs in the main E2E workflow or the typed driver.
 The inventory also records live packaged-image checks in the `integration` project.
-Manual routes and compatibility callers remain under audit for #11407.
+Manual entries link to their instructions and summarize prerequisites; the tests retain the prerequisite checks.
+Listing a manual qualification does not schedule it or establish product support.
+Jetson dispatch retains its opt-in and trusted-controller checks.
+Compatibility callers remain under audit for #11407.
 
 `tools/e2e/target-catalogue.mts` runs the selected profile target; it does not register targets.
 Each profile target shares one execution shape.
