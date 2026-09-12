@@ -68,7 +68,7 @@ describe("helpers/process-supervisor", () => {
   });
 
   it("waits for descendants after the process-group leader exits on SIGTERM", async () => {
-    let descendantPid: number | undefined;
+    let descendantStdout = "";
     const child = spawn(
       "bash",
       [
@@ -81,15 +81,17 @@ describe("helpers/process-supervisor", () => {
       timeoutMs: 200,
       killGraceMs: 200,
       onStdout: (chunk) => {
-        const parsed = Number(chunk.trim());
-        descendantPid = Number.isSafeInteger(parsed) ? parsed : descendantPid;
+        descendantStdout += chunk;
       },
     });
 
     expect(result.timedOut).toBe(true);
     expect(result.cleanupError).toBeUndefined();
-    expect(descendantPid).toBeTypeOf("number");
-    expect(() => process.kill(descendantPid!, 0)).toThrow();
+    const descendantPidText = descendantStdout.trim();
+    expect(descendantPidText).toMatch(/^[1-9]\d*$/);
+    const descendantPid = Number(descendantPidText);
+    expect(Number.isSafeInteger(descendantPid)).toBe(true);
+    expect(() => process.kill(descendantPid, 0)).toThrow();
   });
 
   it("honors an AbortSignal without flagging the run as a timeout", async () => {
