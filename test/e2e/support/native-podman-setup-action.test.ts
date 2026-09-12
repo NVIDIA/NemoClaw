@@ -79,8 +79,7 @@ function runCommand(
     const owner = ownChildProcess(child);
     let timedOut = false;
     const timeout = setTimeout(() => {
-      timedOut = true;
-      child.kill("SIGKILL");
+      timedOut = child.exitCode === null && child.signalCode === null && child.kill("SIGKILL");
     }, timeoutMs);
     timeout.unref();
     ownerContext.onTestFinished(async () => {
@@ -529,6 +528,14 @@ describe("native Podman E2E setup boundary", () => {
 
     expect(result.status).toBeNull();
     expect(result.signal).toBe("SIGTERM");
+    expect(result.timedOut).toBe(false);
+  });
+
+  it.concurrent("does not report a timeout after a normal exit", async (context) => {
+    const result = await runCommand(context, process.execPath, ["-e", ""], process.env, 1_000);
+
+    expect(result.status).toBe(0);
+    expect(result.signal).toBeNull();
     expect(result.timedOut).toBe(false);
   });
 
