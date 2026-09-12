@@ -310,6 +310,37 @@ describe("migration-state external restore security", () => {
 });
 
 describe("migration-state snapshot directory reservation", () => {
+  it("rejects a symlinked state directory without copying its target", () => {
+    const home = makeHome();
+    const outside = makeHome();
+    const state = path.join(home, ".openclaw");
+    writeFileSync(path.join(outside, "openclaw.json"), '{"outside":true}');
+    symlinkSync(outside, state);
+    expect(
+      createSnapshotBundle(makeHostState(home, path.join(state, "openclaw.json")), makeLogger(), {
+        persist: true,
+      }),
+    ).toBeNull();
+    expect(readdirSync(path.join(home, ".nemoclaw", "snapshots"))).toEqual([]);
+    expect(readFileSync(path.join(outside, "openclaw.json"), "utf8")).toBe('{"outside":true}');
+  });
+
+  it.each([".nemoclaw", ".nemoclaw/snapshots"])(
+    "rejects a symlink at snapshot ancestor %s without writing outside home",
+    (relativePath) => {
+      const { home, configPath, logger } = makeMinimalHostSnapshot();
+      const outside = makeHome();
+      const link = path.join(home, relativePath);
+      mkdirSync(path.dirname(link), { recursive: true });
+      symlinkSync(outside, link);
+      expect(
+        createSnapshotBundle(makeHostState(home, configPath), logger, { persist: true }),
+      ).toBeNull();
+      expect(readdirSync(outside)).toEqual([]);
+      expect(readFileSync(configPath, "utf8")).toBe("{}");
+    },
+  );
+
   it("takes its snapshot directory from the shared reservation (#9433)", () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-08-18T06:43:16.500Z"));

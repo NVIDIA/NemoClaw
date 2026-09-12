@@ -13,6 +13,11 @@ Fake inference providers share JSON responses, SSE event framing, and server shu
 Slack and Discord share frame encoding and decoding through `lib/websocket-frames.mts`.
 Each provider owns its handshake ordering, authentication, messages, and connection state.
 
+The managed-image OpenClaw security probe creates and restores snapshots through packaged
+`commands/migration-state.js`. It checks credential removal and rejects a symlinked restore destination.
+Snapshot listing and retention use `blueprint/snapshot-management.js`.
+The legacy `blueprint/snapshot.js` entry point is removed. Migration-state rejects symlinked snapshot parents before reservation.
+
 Interactive TUI targets require `expect`. The unified workflow installs it
 before those targets run; local runners must provide it themselves.
 
