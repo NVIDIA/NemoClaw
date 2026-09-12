@@ -2,12 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
+import { retryUntilAsync } from "../../core/retry";
 import {
+  classifyLiveSandboxes,
   type DockerSandboxContainerSnapshot,
   getLiveSandboxNames,
-  hasNoLiveSandboxes,
   type LiveSandboxListSnapshot,
-  shouldCleanupGatewayAfterDestroy,
+  type LiveSandboxProbeSnapshot,
+  type LiveSandboxProbeVerdict,
 } from "../../domain/sandbox/destroy";
 import { resolveRegisteredRuntimeProvider } from "../../onboard/runtime-provider/selection";
 import * as registry from "../../state/registry";
@@ -25,13 +27,20 @@ type LiveSandboxProbe = (deps?: {
   captureOpenshell?: LiveSandboxListProbe;
   dockerCapture?: DockerCaptureProbe;
   timeoutMs?: number;
-}) => boolean;
+}) => LiveSandboxProbeVerdict;
 
 type FinalDestroyGatewayCleanupInput = {
   deleteSucceededOrAlreadyGone: boolean;
   removedRegistryEntry: boolean;
   runtimeProviderId?: string | null;
+  sandboxName: string;
 };
+
+export type FinalDestroyGatewayCleanupVerdict =
+  | { readonly status: "not-final" }
+  | { readonly status: "cleanup" }
+  | { readonly status: "live-list-unavailable" }
+  | { readonly status: "live-sandboxes"; readonly sandboxNames: readonly string[] };
 
 type FinalDestroyGatewayCleanupDeps = {
   captureOpenshell?: LiveSandboxListProbe;
@@ -39,8 +48,20 @@ type FinalDestroyGatewayCleanupDeps = {
   listSandboxes?: SandboxListProvider;
   liveSandboxProbe?: LiveSandboxProbe;
   resolveRuntimeProvider?: typeof resolveRegisteredRuntimeProvider;
+  retryDelaysMs?: readonly number[];
+  sleep?: (ms: number) => Promise<void>;
   timeoutMs?: number;
 };
+
+// OpenShell keeps listing a deleted sandbox until its runtime finishes
+// terminating, so the final probe waits for that one row before it treats the
+// row as a live sandbox that blocks gateway cleanup.
+const DELETED_SANDBOX_ABSENCE_TIMEOUT_MS = 30_000;
+const DELETED_SANDBOX_ABSENCE_RETRY_DELAY_MS = 2_000;
+const DELETED_SANDBOX_ABSENCE_RETRY_DELAYS_MS: readonly number[] = Array.from(
+  { length: DELETED_SANDBOX_ABSENCE_TIMEOUT_MS / DELETED_SANDBOX_ABSENCE_RETRY_DELAY_MS },
+  () => DELETED_SANDBOX_ABSENCE_RETRY_DELAY_MS,
+);
 
 function captureLiveSandboxes(...args: Parameters<LiveSandboxListProbe>) {
   const { captureOpenshell } = require("../../adapters/openshell/runtime") as {
@@ -62,7 +83,7 @@ export function collectLiveSandboxProbeSnapshot(
     dockerCapture?: DockerCaptureProbe;
     timeoutMs?: number;
   } = {},
-): Parameters<typeof hasNoLiveSandboxes>[0] {
+): LiveSandboxProbeSnapshot {
   // Both host probes are synchronous so this produces one ordered snapshot
   // after the registry check and before the cleanup decision.
   const captureOpenshell = deps.captureOpenshell ?? captureLiveSandboxes;
@@ -97,14 +118,16 @@ export function collectLiveSandboxProbeSnapshot(
   return { liveList, dockerContainersBySandboxName };
 }
 
-function hasNoLiveSandboxesFromHost(deps?: Parameters<LiveSandboxProbe>[0]): boolean {
-  return hasNoLiveSandboxes(collectLiveSandboxProbeSnapshot(deps));
+function classifyLiveSandboxesFromHost(
+  deps?: Parameters<LiveSandboxProbe>[0],
+): LiveSandboxProbeVerdict {
+  return classifyLiveSandboxes(collectLiveSandboxProbeSnapshot(deps));
 }
 
-function hasNoLiveSandboxesWithoutDocker(
+function classifyLiveSandboxesWithoutDocker(
   timeoutMs: number,
   captureOpenshell: LiveSandboxListProbe = captureLiveSandboxes,
-): boolean {
+): LiveSandboxProbeVerdict {
   const liveList = captureOpenshell(["sandbox", "list"], {
     ignoreError: true,
     timeout: timeoutMs,
@@ -114,17 +137,24 @@ function hasNoLiveSandboxesWithoutDocker(
   // resource is absent. Preserve the shared gateway whenever any unclassified
   // row remains; an empty successful OpenShell snapshot is the only
   // cross-runtime absence proof available without invoking Docker.
-  return liveList.status === 0 && getLiveSandboxNames(liveList).length === 0;
+  if (liveList.status !== 0) return { status: "unavailable" };
+  const sandboxNames = getLiveSandboxNames(liveList);
+  return sandboxNames.length === 0 ? { status: "none" } : { status: "present", sandboxNames };
 }
 
-export function shouldCleanupGatewayAfterConfirmedFinalDestroy(
+function resolveFinalDestroyGatewayCleanupOnce(
   input: FinalDestroyGatewayCleanupInput,
-  deps: FinalDestroyGatewayCleanupDeps = {},
-): boolean {
+  deps: FinalDestroyGatewayCleanupDeps,
+): FinalDestroyGatewayCleanupVerdict {
   const listSandboxes = deps.listSandboxes ?? registry.listSandboxes;
-  const liveSandboxProbe = deps.liveSandboxProbe ?? hasNoLiveSandboxesFromHost;
+  if (
+    !input.deleteSucceededOrAlreadyGone ||
+    !input.removedRegistryEntry ||
+    listSandboxes().sandboxes.length > 0
+  ) {
+    return { status: "not-final" };
+  }
   const timeoutMs = deps.timeoutMs ?? OPENSHELL_PROBE_TIMEOUT_MS;
-  const noRegisteredSandboxes = listSandboxes().sandboxes.length === 0;
   const provider = input.runtimeProviderId
     ? (deps.resolveRuntimeProvider ?? resolveRegisteredRuntimeProvider)(input.runtimeProviderId)
     : null;
@@ -133,20 +163,40 @@ export function shouldCleanupGatewayAfterConfirmedFinalDestroy(
     ...(deps.dockerCapture ? { dockerCapture: deps.dockerCapture } : {}),
     timeoutMs,
   };
-  const noLiveSandboxes =
-    input.deleteSucceededOrAlreadyGone &&
-    input.removedRegistryEntry &&
-    noRegisteredSandboxes &&
-    (deps.liveSandboxProbe
-      ? liveSandboxProbe(liveProbeDeps)
-      : provider?.gateway.ownsHostReadiness === true
-        ? hasNoLiveSandboxesWithoutDocker(timeoutMs, deps.captureOpenshell)
-        : liveSandboxProbe(liveProbeDeps));
+  const liveSandboxes = deps.liveSandboxProbe
+    ? deps.liveSandboxProbe(liveProbeDeps)
+    : provider?.gateway.ownsHostReadiness === true
+      ? classifyLiveSandboxesWithoutDocker(timeoutMs, deps.captureOpenshell)
+      : classifyLiveSandboxesFromHost(liveProbeDeps);
+  if (liveSandboxes.status === "none") return { status: "cleanup" };
+  if (liveSandboxes.status === "unavailable") return { status: "live-list-unavailable" };
+  return { status: "live-sandboxes", sandboxNames: liveSandboxes.sandboxNames };
+}
 
-  return shouldCleanupGatewayAfterDestroy({
-    deleteSucceededOrAlreadyGone: input.deleteSucceededOrAlreadyGone,
-    removedRegistryEntry: input.removedRegistryEntry,
-    noRegisteredSandboxes,
-    noLiveSandboxes,
+function onlyDeletedSandboxRemains(
+  verdict: FinalDestroyGatewayCleanupVerdict,
+  sandboxName: string,
+): boolean {
+  return (
+    verdict.status === "live-sandboxes" &&
+    verdict.sandboxNames.every((liveSandboxName) => liveSandboxName === sandboxName)
+  );
+}
+
+export async function resolveFinalDestroyGatewayCleanup(
+  input: FinalDestroyGatewayCleanupInput,
+  deps: FinalDestroyGatewayCleanupDeps = {},
+): Promise<FinalDestroyGatewayCleanupVerdict> {
+  return retryUntilAsync(() => resolveFinalDestroyGatewayCleanupOnce(input, deps), {
+    accept: (verdict) => !onlyDeletedSandboxRemains(verdict, input.sandboxName),
+    onRetry: (_verdict, _delayMs, attempt) => {
+      if (attempt === 1) {
+        console.log(
+          `  Waiting for OpenShell to finish removing sandbox '${input.sandboxName}' before the shared gateway decision...`,
+        );
+      }
+    },
+    retryDelaysMs: deps.retryDelaysMs ?? DELETED_SANDBOX_ABSENCE_RETRY_DELAYS_MS,
+    sleep: deps.sleep ?? ((ms) => new Promise<void>((resolve) => setTimeout(resolve, ms))),
   });
 }

@@ -33,6 +33,7 @@ export type DestroyHarness = {
   events: string[];
   executeSandboxDestroySpy: MockInstance;
   enforceRemovedImmutabilityMigrationBoundarySpy: MockInstance;
+  finalGatewaySleepSpy: MockInstance;
   finalizeMcpBridgesAfterSandboxDeleteSpy: MockInstance;
   gatewayPinsAtMcpPrepare: Array<string | undefined>;
   gatewayPinsAtSandboxList: Array<string | undefined>;
@@ -50,6 +51,7 @@ export type DestroyHarness = {
   removeSandboxSpy: MockInstance;
   reconstructRetainedSandboxRecoverySpy: MockInstance;
   resolveRetainedSandboxRecoverySpy: MockInstance;
+  resolveFinalGatewayCleanupSpy: MockInstance;
   resolveGatewayRuntimeProviderIdSpy: MockInstance;
   retireRemovedImmutabilityStateRecordSpy: MockInstance;
   retirePortableLifecycleReceiptSpy: MockInstance;
@@ -69,7 +71,6 @@ export type DestroyHarness = {
   setRegistryEntryPresent: (present: boolean) => void;
   setRetainedRecoveryRecords: (records: RetainedSandboxRecoveryRecord[]) => void;
   setSandboxPresent: (present: boolean) => void;
-  shouldCleanupGatewaySpy: MockInstance;
   stopAllSpy: MockInstance;
   stopModelRouterForDestroyedSandboxSpy: MockInstance;
   stopNimByNameSpy: MockInstance;
@@ -607,10 +608,13 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
   const cleanupGatewaySpy = vi
     .spyOn(destroyGateway, "cleanupGatewayAfterLastSandbox")
     .mockImplementation(() => undefined);
-  const shouldCleanupGatewaySpy = vi.spyOn(
-    destroyGatewayCleanup,
-    "shouldCleanupGatewayAfterConfirmedFinalDestroy",
-  );
+  const resolveFinalGatewayCleanup = destroyGatewayCleanup.resolveFinalDestroyGatewayCleanup;
+  const finalGatewaySleepSpy = vi.fn(async (_ms: number) => undefined);
+  const resolveFinalGatewayCleanupSpy = vi
+    .spyOn(destroyGatewayCleanup, "resolveFinalDestroyGatewayCleanup")
+    .mockImplementation((input, deps = {}) =>
+      resolveFinalGatewayCleanup(input, { ...deps, sleep: finalGatewaySleepSpy }),
+    );
   const assertDestroyIdentitySpy = vi.spyOn(
     destroyPresence,
     "assertUnambiguousDestroyContainerIdentity",
@@ -718,6 +722,7 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     executeSandboxDestroySpy,
     runSandboxProviderPreDeleteCleanupSpy,
     enforceRemovedImmutabilityMigrationBoundarySpy,
+    finalGatewaySleepSpy,
     finalizeMcpBridgesAfterSandboxDeleteSpy,
     gatewayPinsAtMcpPrepare,
     gatewayPinsAtSandboxList,
@@ -737,6 +742,7 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     removeSandboxSpy,
     reconstructRetainedSandboxRecoverySpy,
     resolveRetainedSandboxRecoverySpy,
+    resolveFinalGatewayCleanupSpy,
     resolveGatewayRuntimeProviderIdSpy,
     retireRemovedImmutabilityStateRecordSpy,
     retirePortableLifecycleReceiptSpy,
@@ -757,7 +763,6 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     setSandboxPresent: (present: boolean) => {
       sandboxPresent = present;
     },
-    shouldCleanupGatewaySpy,
     stopAllSpy,
     stopModelRouterForDestroyedSandboxSpy,
     stopNimByNameSpy,

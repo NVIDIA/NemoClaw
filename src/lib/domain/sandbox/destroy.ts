@@ -102,19 +102,10 @@ export function isDestroyNonInteractiveEnv(): boolean {
   return isNonInteractiveEnv();
 }
 
-export function shouldCleanupGatewayAfterDestroy(input: {
-  deleteSucceededOrAlreadyGone: boolean;
-  removedRegistryEntry: boolean;
-  noRegisteredSandboxes: boolean;
-  noLiveSandboxes: boolean;
-}): boolean {
-  return (
-    input.deleteSucceededOrAlreadyGone &&
-    input.removedRegistryEntry &&
-    input.noRegisteredSandboxes &&
-    input.noLiveSandboxes
-  );
-}
+export type LiveSandboxProbeVerdict =
+  | { readonly status: "none" }
+  | { readonly status: "unavailable" }
+  | { readonly status: "present"; readonly sandboxNames: readonly string[] };
 
 /**
  * Decide the non-UI gateway cleanup path for a final sandbox destroy.
@@ -177,28 +168,34 @@ export function getLiveSandboxNames(liveList: LiveSandboxListSnapshot): string[]
   return parseLiveSandboxEntries(liveList.output).map((entry) => entry.name);
 }
 
-export function hasNoLiveSandboxesWithResourceObservation(
+export function classifyLiveSandboxesWithResourceObservation(
   liveList: LiveSandboxListSnapshot,
   hasRunningResource: (sandboxName: string, knownSandboxNames: readonly string[]) => boolean,
-): boolean {
+): LiveSandboxProbeVerdict {
   // Fail closed: if OpenShell cannot report authoritative sandbox state,
   // preserve the shared gateway so a sandbox never loses its listener.
   if (liveList.status !== 0) {
-    return false;
+    return { status: "unavailable" };
   }
   const entries = parseLiveSandboxEntries(liveList.output);
   const sandboxNames = entries.map((entry) => entry.name);
-  return entries.every((entry) => {
-    if (!TERMINAL_OPEN_SHELL_SANDBOX_PHASES.has(entry.phase ?? "")) return false;
-    return !hasRunningResource(entry.name, sandboxNames);
-  });
+  const liveSandboxNames = entries
+    .filter(
+      (entry) =>
+        !TERMINAL_OPEN_SHELL_SANDBOX_PHASES.has(entry.phase ?? "") ||
+        hasRunningResource(entry.name, sandboxNames),
+    )
+    .map((entry) => entry.name);
+  return liveSandboxNames.length === 0
+    ? { status: "none" }
+    : { status: "present", sandboxNames: liveSandboxNames };
 }
 
-export function hasNoLiveSandboxes({
+export function classifyLiveSandboxes({
   liveList,
   dockerContainersBySandboxName,
-}: LiveSandboxProbeSnapshot): boolean {
-  return hasNoLiveSandboxesWithResourceObservation(liveList, (sandboxName, sandboxNames) =>
+}: LiveSandboxProbeSnapshot): LiveSandboxProbeVerdict {
+  return classifyLiveSandboxesWithResourceObservation(liveList, (sandboxName, sandboxNames) =>
     hasRunningDockerSandboxContainer(
       sandboxName,
       dockerContainersBySandboxName.get(sandboxName),

@@ -2065,6 +2065,12 @@ By default, unattended final-sandbox destroys (`--yes`, `--force`, or `NEMOCLAW_
 Pass `--cleanup-gateway` to force removal, or `--no-cleanup-gateway` to force preservation.
 These flags override both `NEMOCLAW_CLEANUP_GATEWAY` and the platform default.
 
+Before the final-sandbox gateway decision, `destroy` confirms through `openshell sandbox list` that no sandbox remains on the gateway.
+OpenShell can keep listing the deleted sandbox while its runtime terminates, so `destroy` polls the list for up to 30 seconds until that row is gone.
+If any sandbox is still listed after that wait, or the list command fails, `destroy` leaves the gateway running, names the listed sandboxes or the failed command, and exits 0.
+When you passed `--cleanup-gateway`, the message states that the flag was not applied.
+After `openshell sandbox list` reports no sandboxes, run `openshell gateway remove <gateway-name>` to remove the gateway.
+
 If the pre-delete workspace wipe exits nonzero, `destroy` continues, but the retained volume can still contain old files.
 Use a different sandbox name to avoid reusing that retained volume.
 If workspace cleanup reaches its 60-second timeout, NemoClaw cannot confirm the remote result.

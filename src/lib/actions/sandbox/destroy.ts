@@ -62,7 +62,10 @@ import {
   cleanupGatewayAfterLastSandbox,
   resolveGatewayCleanupRuntimeProviderId,
 } from "./destroy-gateway";
-import { shouldCleanupGatewayAfterConfirmedFinalDestroy } from "./destroy-gateway-cleanup";
+import {
+  type FinalDestroyGatewayCleanupVerdict,
+  resolveFinalDestroyGatewayCleanup,
+} from "./destroy-gateway-cleanup";
 import {
   assertUnambiguousDestroyContainerIdentity,
   classifyDestroyContainerIdentity,
@@ -220,6 +223,28 @@ async function resolveCleanupGatewayDecision(options: DestroySandboxOptions): Pr
   );
   const trimmed = answer.trim().toLowerCase();
   return trimmed === "y" || trimmed === "yes";
+}
+
+function reportFinalGatewayLeftRunning(
+  gatewayName: string,
+  verdict: Extract<
+    FinalDestroyGatewayCleanupVerdict,
+    { status: "live-list-unavailable" | "live-sandboxes" }
+  >,
+  cleanupRequested: boolean,
+): void {
+  const cause =
+    verdict.status === "live-list-unavailable"
+      ? "'openshell sandbox list' failed, so NemoClaw could not confirm that no sandbox remains"
+      : `OpenShell still reports ${verdict.sandboxNames.length === 1 ? "sandbox" : "sandboxes"} ${verdict.sandboxNames
+          .map((name) => `'${name}'`)
+          .join(", ")}`;
+  console.warn(
+    `  ${YW}⚠${R} Shared NemoClaw gateway left running${cleanupRequested ? "; --cleanup-gateway was not applied" : ""}: ${cause}.`,
+  );
+  console.warn(
+    `  ${YW}⚠${R} After 'openshell sandbox list' reports no sandboxes, run 'openshell gateway remove ${gatewayName}' to remove it.`,
+  );
 }
 
 export async function cleanupSandboxServices(
@@ -1190,16 +1215,16 @@ async function destroySandboxUnlocked(
       requestSandboxDestroyExit(1);
     }
   }
-  if (
-    shouldCleanupGatewayAfterConfirmedFinalDestroy(
-      {
-        deleteSucceededOrAlreadyGone,
-        removedRegistryEntry: registryEntryAbsent,
-        ...(destroyRuntimeProviderId ? { runtimeProviderId: destroyRuntimeProviderId } : {}),
-      },
-      cleanupCaptureOpenshell ? { captureOpenshell: cleanupCaptureOpenshell } : {},
-    )
-  ) {
+  const finalGatewayCleanup = await resolveFinalDestroyGatewayCleanup(
+    {
+      deleteSucceededOrAlreadyGone,
+      removedRegistryEntry: registryEntryAbsent,
+      sandboxName,
+      ...(destroyRuntimeProviderId ? { runtimeProviderId: destroyRuntimeProviderId } : {}),
+    },
+    cleanupCaptureOpenshell ? { captureOpenshell: cleanupCaptureOpenshell } : {},
+  );
+  if (finalGatewayCleanup.status === "cleanup") {
     const shouldCleanupGateway = await resolveCleanupGatewayDecision(normalized);
     if (shouldCleanupGateway) {
       if (destroyRuntimeProviderId) {
@@ -1221,6 +1246,12 @@ async function destroySandboxUnlocked(
         `  or pass '--cleanup-gateway' / set NEMOCLAW_CLEANUP_GATEWAY=1 next time. (#2166)`,
       );
     }
+  } else if (finalGatewayCleanup.status !== "not-final") {
+    reportFinalGatewayLeftRunning(
+      cleanupGatewayName,
+      finalGatewayCleanup,
+      normalized.cleanupGateway === true,
+    );
   }
   if (alreadyGone) {
     console.log(`  Sandbox '${sandboxName}' was already absent from the live gateway.`);
