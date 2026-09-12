@@ -60,12 +60,14 @@ function runProcess(
   });
   const finishController = new AbortController();
   const append = (current: string, chunk: string, stream: string): string => {
-    if (outputError) return current;
     const next = current + chunk;
-    if (Buffer.byteLength(next, "utf8") <= 10 * 1024 * 1024) return next;
-    outputError = new Error(`${stream} exceeded the 10 MiB process output limit`);
-    finishController.abort();
-    return current;
+    const limitError =
+      !outputError && Buffer.byteLength(next, "utf8") > 10 * 1024 * 1024
+        ? new Error(`${stream} exceeded the 10 MiB process output limit`)
+        : undefined;
+    outputError ??= limitError;
+    void (limitError ? finishController.abort() : undefined);
+    return outputError ? current : next;
   };
   const resultPromise = superviseChild(child, {
     killGraceMs: 0,
@@ -83,11 +85,13 @@ function runProcess(
     await resultPromise;
   });
   return resultPromise.then((result) => ({
-    ...(result.spawnError || outputError ? { error: result.spawnError ?? outputError } : {}),
+    ...(result.spawnError || result.cleanupError || outputError
+      ? { error: result.spawnError ?? result.cleanupError ?? outputError }
+      : {}),
     signal: result.signal,
     status: result.signal
       ? null
-      : (result.exitCode ?? (result.spawnError || outputError ? -1 : null)),
+      : (result.exitCode ?? (result.spawnError || result.cleanupError || outputError ? -1 : null)),
     stderr,
     stdout,
   }));
@@ -259,19 +263,23 @@ describe.concurrent("catalogue OpenShell SDK installation", () => {
       const { expect } = context;
       const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-sdk-real-npm-"));
       try {
-        const [sdk, previousSdk, transport, sibling] = await writePackageArchives(root, [
-          {
-            name: "@nvidia/openshell-sdk",
-            dependencies: { "fixture-transport": "^1.0.0" },
-          },
-          {
-            name: "@nvidia/openshell-sdk",
-            version: "0.9.0",
-            dependencies: { "fixture-transport": "^1.0.0" },
-          },
-          { name: "fixture-transport" },
-          { name: "fixture-sibling" },
-        ], context);
+        const [sdk, previousSdk, transport, sibling] = await writePackageArchives(
+          root,
+          [
+            {
+              name: "@nvidia/openshell-sdk",
+              dependencies: { "fixture-transport": "^1.0.0" },
+            },
+            {
+              name: "@nvidia/openshell-sdk",
+              version: "0.9.0",
+              dependencies: { "fixture-transport": "^1.0.0" },
+            },
+            { name: "fixture-transport" },
+            { name: "fixture-sibling" },
+          ],
+          context,
+        );
         const selectedSdk = lockedSdkVersion === "1.0.0" ? sdk : previousSdk;
         const workspace = path.join(root, "workspace");
         fs.mkdirSync(workspace);
