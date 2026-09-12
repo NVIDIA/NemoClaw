@@ -244,18 +244,257 @@ def bounded_browser_diagnostics(value):
     return value
 
 
+class BrowserHarnessProcess:
+    """Retain only query/synchronize access to the authenticated Windows daemon."""
+
+    def __init__(self, pid):
+        import ctypes
+
+        self.ctypes = ctypes
+        self.kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        handle, dword, boolean = ctypes.c_void_p, ctypes.c_uint32, ctypes.c_int
+
+        class Filetime(ctypes.Structure):
+            _fields_ = [("low", dword), ("high", dword)]
+
+        self.Filetime = Filetime
+        declarations = {
+            "OpenProcess": ([dword, boolean, dword], handle),
+            "GetProcessId": ([handle], dword),
+            "GetProcessTimes": ([handle] + [ctypes.POINTER(Filetime)] * 4, boolean),
+            "GetExitCodeProcess": ([handle, ctypes.POINTER(dword)], boolean),
+            "WaitForSingleObject": ([handle, dword], dword),
+            "CloseHandle": ([handle], boolean),
+        }
+        for name, (arguments, result) in declarations.items():
+            function = getattr(self.kernel, name)
+            function.argtypes, function.restype = arguments, result
+        self.handle = self.kernel.OpenProcess(0x00101000, False, pid)
+        if not self.handle:
+            raise ctypes.WinError(ctypes.get_last_error())
+
+    def identity(self):
+        values = [self.Filetime() for _ in range(4)]
+        pid = self.kernel.GetProcessId(self.handle)
+        if not pid or not self.kernel.GetProcessTimes(
+            self.handle, *(self.ctypes.byref(v) for v in values)
+        ):
+            raise self.ctypes.WinError(self.ctypes.get_last_error())
+        return pid, str((values[0].high << 32) | values[0].low)
+
+    def wait(self, seconds):
+        value = self.kernel.WaitForSingleObject(
+            self.handle, max(0, int(seconds * 1000))
+        )
+        if value not in (0, 258):
+            raise self.ctypes.WinError(self.ctypes.get_last_error())
+        return value == 0
+
+    def exit_code(self):
+        code = self.ctypes.c_uint32()
+        if not self.kernel.GetExitCodeProcess(self.handle, self.ctypes.byref(code)):
+            raise self.ctypes.WinError(self.ctypes.get_last_error())
+        return code.value
+
+    def close(self):
+        if not self.kernel.CloseHandle(self.handle):
+            raise self.ctypes.WinError(self.ctypes.get_last_error())
+        self.handle = None
+
+
+def shutdown_browser_harness(
+    session, state, ipc, process_factory=BrowserHarnessProcess
+):
+    from nemoclaw_native_windows import NativeStartupRefusal
+    import re
+
+    record = {
+        "schemaVersion": 1,
+        "classification": "authenticated-Windows-browser-harness-shutdown",
+        "session": session,
+        "recordsAbsent": False,
+        "identifiedPid": None,
+        "creationFiletime": None,
+        "processHandleRetained": False,
+        "openProcessAccess": "0x00101000",
+        "identityReconfirmed": False,
+        "shutdownAcknowledged": False,
+        "processExitObserved": False,
+        "exitCode": None,
+        "endpointRemoved": False,
+        "pidRecordRemoved": False,
+        "handleClosed": True,
+        "complete": False,
+        "error": None,
+    }
+    started = time.monotonic()
+    deadline = (
+        started + 12
+    )  # Leave startup/log/receipt margin under the existing 15s subprocess ceiling.
+    process = None
+    stage = "validate-owned-endpoint"
+
+    def read_owned(file, limit):
+        Path(file).relative_to(state)
+        if not Path(file).exists():
+            return None
+        with owned_file(file, state).open("rb") as stream:
+            data = stream.read(limit + 1)
+        if len(data) > limit:
+            raise ValueError("Browser Harness ownership record exceeded its bound")
+        return data
+
+    try:
+        if not re.fullmatch(r"nc-[a-f0-9]{12}", session):
+            raise ValueError("Unexpected owned Browser Harness session")
+        port_file, pid_file = ipc.port_path(session), ipc.pid_path(session)
+        endpoint_bytes, pid_bytes = (
+            read_owned(port_file, 4096),
+            read_owned(pid_file, 128),
+        )
+        if endpoint_bytes is None:
+            if pid_bytes is not None:
+                raise ValueError(
+                    "Daemon PID record exists without an authenticated endpoint"
+                )
+            record["recordsAbsent"] = True
+            record["complete"] = True
+            return record
+        endpoint = json.loads(endpoint_bytes)
+        if (
+            type(endpoint.get("port")) is not int
+            or not 0 < endpoint["port"] <= 65535
+            or not isinstance(endpoint.get("token"), str)
+            or not re.fullmatch(r"[a-f0-9]{64}", endpoint["token"])
+        ):
+            raise ValueError("Invalid owned Browser Harness endpoint record")
+        record["endpointRecordSha256"] = hashlib.sha256(endpoint_bytes).hexdigest()
+
+        def call(request, seconds):
+            if read_owned(port_file, 4096) != endpoint_bytes:
+                raise ValueError("Browser Harness endpoint identity changed")
+            remaining = min(seconds, deadline - time.monotonic())
+            if remaining <= 0:
+                raise TimeoutError("Browser Harness shutdown budget exhausted")
+            channel, token = ipc.connect(session, timeout=remaining)
+            try:
+                if (
+                    token != endpoint["token"]
+                    or channel.getpeername()[:2] != ("127.0.0.1", endpoint["port"])
+                    or read_owned(port_file, 4096) != endpoint_bytes
+                ):
+                    raise ValueError("Authenticated Browser Harness endpoint differs")
+                channel.settimeout(
+                    max(0.001, min(seconds, deadline - time.monotonic()))
+                )
+                return ipc.request(channel, token, request)
+            finally:
+                channel.close()
+
+        stage = "authenticate-daemon"
+        identified = call({"meta": "ping"}, 1)
+        pid = identified.get("pid") if isinstance(identified, dict) else None
+        if (
+            not isinstance(identified, dict)
+            or identified.get("pong") is not True
+            or type(pid) is not int
+            or not 0 < pid < 2**32
+            or identified.get("browser_kind") not in {"local", "cdp"}
+        ):
+            raise ValueError("The owned endpoint did not identify a local daemon")
+        if pid_bytes is not None and pid_bytes.strip() != str(pid).encode():
+            raise ValueError("Daemon PID record differs from authenticated identity")
+        record["identifiedPid"] = pid
+        stage = "retain-daemon-handle"
+        process = process_factory(pid)
+        record["processHandleRetained"] = True
+        record["handleClosed"] = False
+        actual_pid, creation = process.identity()
+        if actual_pid != pid or process.wait(0):
+            raise ValueError("The identified daemon process changed before shutdown")
+        record["creationFiletime"] = creation
+        stage = "reconfirm-daemon-identity"
+        again = call({"meta": "ping"}, 1)
+        if (
+            not isinstance(again, dict)
+            or again.get("pong") is not True
+            or type(again.get("pid")) is not int
+            or again.get("pid") != pid
+            or process.wait(0)
+        ):
+            raise ValueError(
+                "The retained daemon no longer owns the authenticated endpoint"
+            )
+        record["identityReconfirmed"] = True
+        stage = "request-authenticated-shutdown"
+        response = call({"meta": "shutdown"}, 5)
+        if (
+            not isinstance(response, dict)
+            or response.get("ok") is not True
+            or response.get("error")
+        ):
+            raise ValueError("Browser Harness did not acknowledge clean shutdown")
+        record["shutdownAcknowledged"] = True
+        stage = "wait-for-daemon-exit"
+        if not process.wait(max(0, deadline - time.monotonic())):
+            raise TimeoutError(
+                "The identified daemon did not exit within cleanup budget"
+            )
+        record["processExitObserved"] = True
+        record["exitCode"] = process.exit_code()
+        stage = "remove-exited-daemon-records"
+        remaining_endpoint = read_owned(port_file, 4096)
+        if remaining_endpoint is not None and remaining_endpoint != endpoint_bytes:
+            raise ValueError("A successor changed the Browser Harness endpoint")
+        remaining_pid = read_owned(pid_file, 128)
+        if remaining_pid is not None and remaining_pid.strip() != str(pid).encode():
+            raise ValueError("A successor changed the Browser Harness PID record")
+        ipc.cleanup_endpoint(session)
+        record["endpointRemoved"] = not Path(port_file).exists()
+        if remaining_pid is not None:
+            Path(pid_file).unlink(missing_ok=True)
+        record["pidRecordRemoved"] = not Path(pid_file).exists()
+    except (Exception, NativeStartupRefusal) as error:
+        record["error"] = {
+            "stage": stage,
+            "name": type(error).__name__,
+            "message": str(error)[:512],
+            "winerror": getattr(error, "winerror", None),
+        }
+    finally:
+        if process is not None:
+            try:
+                process.close()
+                record["handleClosed"] = True
+            except Exception as error:
+                record["closeError"] = repr(error)[:256]
+        record["elapsedMs"] = (time.monotonic() - started) * 1000
+    record["complete"] = (
+        record["error"] is None
+        and record["identityReconfirmed"]
+        and record["shutdownAcknowledged"]
+        and record["processExitObserved"]
+        and record["exitCode"] == 0
+        and record["endpointRemoved"]
+        and record["pidRecordRemoved"]
+        and record["handleClosed"]
+    )
+    return record
+
+
 def browser_shutdown_code(session, state, retain_log):
-    code = "from browser_harness.admin import restart_daemon, ipc\n"
+    code = (
+        "import importlib.util,json,pathlib\nfrom browser_harness import _ipc as ipc\n"
+        + "spec=importlib.util.spec_from_file_location('nc_browser_log',"
+        + repr(__file__)
+        + ")\n"
+        + "observer=importlib.util.module_from_spec(spec);spec.loader.exec_module(observer)\n"
+    )
     if retain_log:
         # Reuse this small reader in the existing shutdown interpreter. Its
         # canonical package resolves the real log path; .port tokens are never read.
         code += (
-            "import importlib.util,json,pathlib\ntry:\n"
-            + " spec=importlib.util.spec_from_file_location('nc_browser_log',"
-            + repr(__file__)
-            + ")\n"
-            + " observer=importlib.util.module_from_spec(spec);spec.loader.exec_module(observer)\n"
-            + " record=observer.browser_log_tail(ipc.log_path("
+            "try:\n record=observer.browser_log_tail(ipc.log_path("
             + repr(session)
             + "),pathlib.Path("
             + repr(str(state))
@@ -264,12 +503,62 @@ def browser_shutdown_code(session, state, retain_log):
             + "print('NEMOCLAW_BROWSER_HARNESS_LOG='+json.dumps(record))\n"
         )
     return code + (
-        "restart_daemon(name="
+        "shutdown=observer.shutdown_browser_harness("
         + repr(session)
-        + ");assert not ipc.ping("
-        + repr(session)
-        + ",timeout=1.0);print('HARNESS_STOPPED')"
+        + ",pathlib.Path("
+        + repr(str(state))
+        + "),ipc)\n"
+        + "print('NEMOCLAW_BROWSER_HARNESS_SHUTDOWN='+json.dumps(shutdown))\n"
+        + "assert shutdown['complete'],'Browser Harness shutdown failed: '+json.dumps(shutdown)\nprint('HARNESS_STOPPED')"
     )
+
+
+def browser_page_code(url, nonce):
+    # The canonical marker may decorate document.title. Actual owned navigation
+    # and rendered nonce content are the acceptance evidence.
+    snapshot = (
+        "(()=>{const e=document.getElementById('sentinel');return {"
+        "url:location.href.slice(0,512),title:document.title.slice(0,256),"
+        "readyState:document.readyState,sentinel:e?e.textContent.slice(0,128):null};})()"
+    )
+    return (
+        "import json\n"
+        + "expected_url="
+        + repr(url)
+        + "\nexpected_nonce="
+        + repr(nonce)
+        + "\n"
+        + "actual=None\nstage='navigate-owned-page'\ntry:\n"
+        + " new_tab(expected_url)\n stage='wait-rendered-sentinel'\n"
+        + " visible=wait_for_element('#sentinel',timeout=15.0,visible=True)\n"
+        + " stage='observe-owned-page'\n actual=js("
+        + repr(snapshot)
+        + ")\n"
+        + " print('NEMOCLAW_BROWSER_PAGE_STATE='+json.dumps({'visible':visible,'actual':actual}))\n"
+        + " stage='assert-rendered-sentinel'\n assert visible is True,'#sentinel did not become visible'\n"
+        + " stage='assert-owned-url'\n assert isinstance(actual,dict) and actual.get('url')==expected_url,'owned URL mismatch'\n"
+        + " stage='assert-owned-nonce'\n assert actual.get('sentinel')==expected_nonce,'rendered nonce mismatch'\n"
+        + "except Exception as error:\n"
+        + " raise RuntimeError(f'Browser stage {stage}: expected_url={expected_url!r}, expected_nonce={expected_nonce!r}, actual={actual!r}; {error}') from error\n"
+        + "print('BROWSER_PERSONAL_OK')"
+    )
+
+
+def browser_page_observation(result):
+    if not isinstance(result, dict) or not isinstance(result.get("output"), str):
+        return None
+    rows = [
+        line.split("=", 1)[1]
+        for line in result["output"].splitlines()
+        if line.startswith("NEMOCLAW_BROWSER_PAGE_STATE=")
+    ]
+    if len(rows) != 1 or len(rows[0].encode()) > 4096:
+        return None
+    try:
+        value = json.loads(rows[0])
+        return value if isinstance(value, dict) else None
+    except ValueError:
+        return None
 
 
 def browser_check(root, nonce):
@@ -314,12 +603,8 @@ def browser_check(root, nonce):
     result = None
     raw = None
     try:
-        code = (
-            "new_tab('http://127.0.0.1:"
-            + str(server.server_port)
-            + "/'); wait_for_load(); assert js('document.title') == 'Hermes Personal proof'; assert js(\"document.getElementById('sentinel').textContent\") == '"
-            + nonce
-            + "'; print('BROWSER_PERSONAL_OK')"
+        code = browser_page_code(
+            "http://127.0.0.1:" + str(server.server_port) + "/", nonce
         )
         raw = browser_exec(code, session=session, task_id=task, timeout_s=45)
         result = json.loads(raw) if isinstance(raw, str) else raw
@@ -336,6 +621,7 @@ def browser_check(root, nonce):
         error.add_note("Browser Use raw response: " + repr(raw))
         primary = error
     finally:
+        diagnostics["pageObservation"] = browser_page_observation(result)
         if primary:
             diagnostics["logs"]["chrome"] = browser_log_tail(chrome_log, state)
         try:
@@ -354,6 +640,14 @@ def browser_check(root, nonce):
                 text=True,
                 timeout=15,
             )
+            shutdown_rows = [
+                line.split("=", 1)[1]
+                for line in shutdown.stdout.splitlines()
+                if line.startswith("NEMOCLAW_BROWSER_HARNESS_SHUTDOWN=")
+            ]
+            diagnostics["harnessShutdown"] = (
+                json.loads(shutdown_rows[0]) if len(shutdown_rows) == 1 else None
+            )
             if primary:
                 rows = [
                     line.split("=", 1)[1]
@@ -367,9 +661,12 @@ def browser_check(root, nonce):
                         "readError": "The shutdown observer did not return exactly one log record"
                     }
                 )
-            assert shutdown.returncode == 0 and "HARNESS_STOPPED" in shutdown.stdout, (
-                repr(shutdown)
-            )
+            assert (
+                shutdown.returncode == 0
+                and "HARNESS_STOPPED" in shutdown.stdout
+                and isinstance(diagnostics["harnessShutdown"], dict)
+                and diagnostics["harnessShutdown"].get("complete") is True
+            ), repr(shutdown)
         except BaseException as error:
             errors.append(repr(error))
         try:
@@ -385,14 +682,22 @@ def browser_check(root, nonce):
         primary.add_note("Browser cleanup: " + repr(errors))
         primary.nemoclaw_browser_diagnostics = bounded_browser_diagnostics(diagnostics)
         raise primary
-    assert not errors, repr(errors)
+    if errors:
+        failure = AssertionError("Browser cleanup failed: " + repr(errors))
+        failure.nemoclaw_browser_diagnostics = bounded_browser_diagnostics(diagnostics)
+        raise failure
     return {
         "browserUseResult": result,
         "selectedAgentBrowser": str(expected),
         "chromiumPath": os.environ.get("AGENT_BROWSER_EXECUTABLE_PATH"),
         "chromeLogging": diagnostics["chromeLogging"],
+        "pageObservation": diagnostics["pageObservation"],
+        "browserHarnessShutdown": diagnostics["harnessShutdown"],
         "browserHarnessEndpointClosed": True,
-        "browserHarnessProcessExitIndependentlyVerified": False,
+        "browserHarnessProcessExitIndependentlyVerified": diagnostics[
+            "harnessShutdown"
+        ].get("processExitObserved")
+        is True,
         "canonicalBrowserCleanupCalled": True,
         "ownedPageServerStopped": True,
         "tavilyLiveLookup": "not-tested-user-waiver",

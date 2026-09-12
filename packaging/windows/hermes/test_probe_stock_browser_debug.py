@@ -3,6 +3,7 @@
 import ctypes as c
 import importlib.util
 import io
+import struct
 from pathlib import Path
 import threading
 import types
@@ -79,6 +80,8 @@ class DebugOwnerControls(unittest.TestCase):
         job.chrome_seen = False
         job.appcontainer_seen = False
         job.last_fault = job.first_fault = job.first_unhandled = None
+        job.handle_cleanup_errors = []
+        job.observe_startup_handles = lambda *_args: {}
         job.continued = []
         job.wait_calls = 0
 
@@ -211,6 +214,7 @@ class DebugOwnerControls(unittest.TestCase):
             pid = 9
             events = []
             observation_errors = []
+            handle_cleanup_errors = []
             first_fault = last_fault = first_unhandled = None
             appcontainer_seen = chrome_seen = True
             streams = []
@@ -282,6 +286,173 @@ class DebugOwnerControls(unittest.TestCase):
         self.assertEqual(result["execution"]["stderr"], "actual stderr")
         self.assertLess(trace.index("continued-exit-9"), trace.index("closed-process"))
         self.assertLess(clock[0], 126)
+
+    def test_initial_client_data_keeps_only_five_numeric_handles(self):
+        command = 'chrome.exe --type=crashpad-handler "--initial-client-data=0x10,0x20,0x30,0x40,0x50,0x123456789abc,0xabcdef,0x0"'
+        result = debug.initial_client_handles(command)
+        self.assertEqual(result, dict(zip(debug.INITIAL_HANDLES, [16, 32, 48, 64, 80])))
+        self.assertNotIn(0x123456789ABC, result.values())
+        self.assertIsNone(debug.initial_client_handles("chrome.exe"))
+        for invalid in [
+            command.replace("0x10", "0xffffffff", 1),
+            command.replace("0x10", "text", 1),
+            command.replace(',0x0"', '"'),
+            command + " --initial-client-data=0x1",
+        ]:
+            with self.assertRaises(ValueError):
+                debug.initial_client_handles(invalid)
+
+    def test_win64_startup_prefix_and_snapshot_layout(self):
+        self.assertEqual(c.sizeof(debug.SnapshotHandleEntry), 136)
+        self.assertEqual(debug.SnapshotHandleEntry.attributes.offset, 24)
+        self.assertEqual(debug.SnapshotHandleEntry.specific.offset, 88)
+        header = bytearray(56)
+        struct.pack_into("<IIII", header, 0, 256, 128, 1, 0)
+        for offset, value in (
+            (16, 0xFFFFFFFFFFFFFFFF),
+            (32, 0x60),
+            (40, 0x64),
+            (48, 0x70),
+        ):
+            struct.pack_into("<Q", header, offset, value)
+        self.assertEqual(
+            debug.startup_handles(header)["values"],
+            {
+                "console": 0xFFFFFFFFFFFFFFFF,
+                "stdin": 0x60,
+                "stdout": 0x64,
+                "stderr": 0x70,
+            },
+        )
+        with self.assertRaises(ValueError):
+            debug.startup_handles(header[:48])
+        header[:8] = b"\0" * 8
+        with self.assertRaises(ValueError):
+            debug.startup_handles(header)
+
+    def test_snapshot_reports_presence_only_after_complete_walk_and_frees_owners(self):
+        job = debug.DebugJob.__new__(debug.DebugJob)
+        job.snapshot_api = True
+        job.handle_cleanup_errors = []
+        calls = []
+        entries = [0x60]
+
+        def capture(process, flags, context, pointer):
+            self.assertEqual((process, flags, context), (123, 0x14, 0))
+            pointer._obj.value = 55
+            return 0
+
+        def marker(_allocator, pointer):
+            pointer._obj.value = 66
+            return 0
+
+        def walk(_snapshot, kind, _marker, pointer, size):
+            self.assertEqual((kind, size), (2, 136))
+            if not entries:
+                return 259
+            value = pointer._obj
+            value.handle = entries.pop()
+            value.flags = 4
+            value.attributes = 2
+            value.access = 0x120089
+            return 0
+
+        job.kernel = types.SimpleNamespace(
+            PssCaptureSnapshot=capture,
+            PssWalkMarkerCreate=marker,
+            PssWalkSnapshot=walk,
+            PssWalkMarkerFree=lambda h: calls.append(("marker", h.value)) or 0,
+            PssFreeSnapshot=lambda p, h: calls.append(("snapshot", p, h.value)) or 0,
+            GetCurrentProcess=lambda: 999,
+        )
+        result = job.handle_snapshot(123, {0x60, 0x64})
+        self.assertTrue(result["complete"])
+        self.assertTrue(result["rows"]["0x60"]["present"])
+        self.assertFalse(result["rows"]["0x64"]["present"])
+        self.assertEqual(calls, [("marker", 66), ("snapshot", 999, 55)])
+
+        def capture_failed(_process, _flags, _context, pointer):
+            pointer._obj.value = 999  # Failed API outputs do not convey ownership.
+            return 5
+
+        calls.clear()
+        job.kernel.PssCaptureSnapshot = capture_failed
+        refused = job.handle_snapshot(123, {0x60})
+        self.assertEqual(refused["captureStatus"], 5)
+        self.assertFalse(refused["complete"])
+        self.assertEqual(refused["rows"], {})
+        self.assertEqual(calls, [])
+
+        def marker_failed(_allocator, pointer):
+            pointer._obj.value = 999
+            return 8
+
+        job.kernel.PssCaptureSnapshot = capture
+        job.kernel.PssWalkMarkerCreate = marker_failed
+        refused = job.handle_snapshot(123, {0x60})
+        self.assertEqual(refused["markerStatus"], 8)
+        self.assertEqual(calls, [("snapshot", 999, 55)])
+
+    def test_character_handle_query_preserves_source_and_identifies_null_device(self):
+        job = debug.DebugJob.__new__(debug.DebugJob)
+        job.handle_cleanup_errors = []
+        closed = []
+
+        def duplicate(source, value, target, output, access, inherit, options):
+            self.assertEqual(
+                (source, value, target, access, inherit, options),
+                (123, 0x60, 999, 0, False, 2),
+            )
+            output._obj.value = 77
+            return 1
+
+        def name_query(_handle, kind, data, _size, _needed):
+            self.assertEqual(kind, 1)
+            encoded = "\\Device\\Null".encode("utf-16-le")
+            name = debug.UnicodeString.from_buffer(data)
+            name.length = name.maximum = len(encoded)
+            name.buffer = c.addressof(data) + 16
+            c.memmove(name.buffer, encoded, len(encoded))
+            return 0
+
+        job.kernel = types.SimpleNamespace(
+            GetCurrentProcess=lambda: 999,
+            DuplicateHandle=duplicate,
+            GetFileType=lambda _handle: 2,
+            CloseHandle=lambda handle: closed.append(handle.value) or 1,
+        )
+        job.nt = types.SimpleNamespace(NtQueryObject=name_query)
+        with (
+            mock.patch.object(c, "set_last_error", create=True),
+            mock.patch.object(c, "get_last_error", return_value=6, create=True),
+        ):
+            result = job.handle_type(123, 0x60)
+            self.assertTrue(result["isNullDevice"])
+            self.assertEqual(result["fileType"], 2)
+            self.assertEqual(closed, [77])
+            job.kernel.DuplicateHandle = lambda *_args: 0
+            self.assertEqual(job.handle_type(123, 0x60)["duplicateError"], 6)
+        self.assertFalse(job.handle_type(123, 0)["duplicateAttempted"])
+
+    def test_handler_create_and_first_invalid_handle_recheck_same_original_values(self):
+        fault = self.event(1)
+        fault.data.exception.record.code = 0xC0000008
+        second = self.event(1)
+        second.data.exception.record.code = 0xC0000008
+        second.data.exception.first = 0
+        job = self.job([self.event(3), fault, second, self.event(5)])
+        calls = []
+
+        def observe(_process, _parent, _initial, stage, previous=()):
+            calls.append((stage, list(previous)))
+            return {"selectedValues": ["0x60", "0x64"]}
+
+        job.observe_startup_handles = observe
+        for _ in range(4):
+            job.pump(0)
+        self.assertEqual(calls, [("create", []), ("invalid-handle", [0x60, 0x64])])
+        self.assertTrue(job.debug_complete)
+        self.assertEqual(job.continued[1][2], debug.DBG_NOT_HANDLED)
 
 
 if __name__ == "__main__":

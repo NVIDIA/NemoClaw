@@ -25,6 +25,80 @@ DBG_NOT_HANDLED = 0x80010001
 MAX_EVENTS = 8192
 MAX_PROCESSES = 128
 MAX_MODULES = 1024
+MAX_HANDLE_SCAN = 512
+INITIAL_HANDLES = (
+    "requestCrashDump",
+    "requestNonCrashDump",
+    "nonCrashDumpCompleted",
+    "firstPipeInstance",
+    "clientProcess",
+)
+
+
+def initial_client_handles(command):
+    matches = re.findall(
+        r'(?:^|\s)"?--initial-client-data=([^"\s]+)"?(?=\s|$)', command
+    )
+    if not matches:
+        return None
+    owner.require(len(matches) == 1, "Repeated initial-client-data")
+    parts = matches[0].split(",")
+    owner.require(
+        len(parts) == 8
+        and all(re.fullmatch(r"0x[0-9a-fA-F]{1,16}", value) for value in parts),
+        "Unexpected numeric initial-client-data",
+    )
+    values = [int(value, 16) for value in parts[:5]]
+    owner.require(
+        all(0 <= value < 0xFFFFFFFF for value in values),
+        "Unexpected initial-client handle width",
+    )
+    return dict(
+        zip(INITIAL_HANDLES, values)
+    )  # The three client addresses are intentionally not retained.
+
+
+class SnapshotHandleEntry(c.Structure):
+    _fields_ = [
+        ("handle", c.c_void_p),
+        ("flags", c.c_uint32),
+        ("object_type", c.c_uint32),
+        ("capture_time", c.c_uint64),
+        ("attributes", c.c_uint32),
+        ("access", c.c_uint32),
+        ("handle_count", c.c_uint32),
+        ("pointer_count", c.c_uint32),
+        ("paged", c.c_uint32),
+        ("nonpaged", c.c_uint32),
+        ("creation_time", c.c_uint64),
+        ("type_length", c.c_uint16),
+        ("type_name", c.c_void_p),
+        ("name_length", c.c_uint16),
+        ("name", c.c_void_p),
+        ("specific", c.c_uint64 * 6),
+    ]
+
+
+def startup_handles(header):
+    owner.require(len(header) == 56, "Incomplete Win64 process-parameter prefix")
+    maximum, length, flags, _debug = struct.unpack_from("<IIII", header)
+    owner.require(
+        56 <= length <= maximum <= 1024 * 1024,
+        "Unexpected Win64 process-parameter length",
+    )
+    return {
+        "parameterFlags": flags,
+        "consoleFlags": struct.unpack_from("<I", header, 24)[0],
+        "values": {
+            key: struct.unpack_from("<Q", header, offset)[0]
+            for key, offset in (
+                ("console", 16),
+                ("stdin", 32),
+                ("stdout", 40),
+                ("stderr", 48),
+            )
+        },
+    }
 
 
 class ExceptionRecord(c.Structure):
@@ -149,6 +223,8 @@ class DebugJob(owner.WindowsJob):
         self.last_fault = None
         self.first_fault = None
         self.first_unhandled = None
+        self.handle_observations = 0
+        self.handle_cleanup_errors = []
         k = self.kernel
         declarations = {
             "WaitForDebugEventEx": ([c.POINTER(DebugEvent), c.c_uint32], c.c_int),
@@ -195,6 +271,59 @@ class DebugJob(owner.WindowsJob):
             c.POINTER(c.c_uint32),
         ]
         self.adv.GetTokenInformation.restype = c.c_int
+        self.kernel.GetCurrentProcess.restype = c.c_void_p
+        self.kernel.DuplicateHandle.argtypes = [
+            c.c_void_p,
+            c.c_void_p,
+            c.c_void_p,
+            c.POINTER(c.c_void_p),
+            c.c_uint32,
+            c.c_int,
+            c.c_uint32,
+        ]
+        self.kernel.DuplicateHandle.restype = c.c_int
+        self.kernel.GetFileType.argtypes = [c.c_void_p]
+        self.kernel.GetFileType.restype = c.c_uint32
+        self.nt.NtQueryObject.argtypes = [
+            c.c_void_p,
+            c.c_uint32,
+            c.c_void_p,
+            c.c_uint32,
+            c.POINTER(c.c_uint32),
+        ]
+        self.nt.NtQueryObject.restype = c.c_int32
+        self.snapshot_api = all(
+            hasattr(self.kernel, name)
+            for name in (
+                "PssCaptureSnapshot",
+                "PssWalkMarkerCreate",
+                "PssWalkSnapshot",
+                "PssWalkMarkerFree",
+                "PssFreeSnapshot",
+            )
+        )
+        if self.snapshot_api:
+            for name, args in {
+                "PssCaptureSnapshot": [
+                    c.c_void_p,
+                    c.c_uint32,
+                    c.c_uint32,
+                    c.POINTER(c.c_void_p),
+                ],
+                "PssWalkMarkerCreate": [c.c_void_p, c.POINTER(c.c_void_p)],
+                "PssWalkSnapshot": [
+                    c.c_void_p,
+                    c.c_uint32,
+                    c.c_void_p,
+                    c.c_void_p,
+                    c.c_uint32,
+                ],
+                "PssWalkMarkerFree": [c.c_void_p],
+                "PssFreeSnapshot": [c.c_void_p, c.c_void_p],
+            }.items():
+                method = getattr(self.kernel, name)
+                method.argtypes = args
+                method.restype = c.c_uint32
 
     def start(self, *args):
         try:
@@ -302,7 +431,210 @@ class DebugJob(owner.WindowsJob):
                     )
                     role = re.search(r'(?:^|\s)"?--type=([a-z-]+)"?(?:\s|$)', command)
                     value["chromeRole"] = role.group(1) if role else None
+                    if value["chromeRole"] == "crashpad-handler":
+                        value["initialClientHandles"] = initial_client_handles(command)
         return value
+
+    def read_memory(self, process, address, size):
+        data = c.create_string_buffer(size)
+        read = c.c_size_t()
+        self.checked(
+            self.kernel.ReadProcessMemory(process, address, data, size, c.byref(read))
+        )
+        owner.require(read.value == size, "Incomplete startup metadata read")
+        return data.raw
+
+    def startup_state(self, process):
+        try:
+            basic = ProcessBasic()
+            needed = c.c_uint32()
+            status = self.nt.NtQueryInformationProcess(
+                process, 0, c.byref(basic), c.sizeof(basic), c.byref(needed)
+            )
+            owner.require(
+                status == 0 and basic.peb,
+                "ProcessBasicInformation status " + hex(status & 0xFFFFFFFF),
+            )
+            parameters = struct.unpack(
+                "<Q", self.read_memory(process, basic.peb + 0x20, 8)
+            )[0]
+            owner.require(
+                parameters != 0 and parameters % 8 == 0,
+                "Invalid Win64 process-parameter pointer",
+            )
+            return {
+                "layout": "Win64 process parameters console/std prefix",
+                **startup_handles(self.read_memory(process, parameters, 56)),
+            }
+        except Exception as error:
+            return {"error": owner.detail(error), "values": {}}
+
+    def handle_snapshot(self, process, wanted):
+        result = {
+            "available": self.snapshot_api,
+            "captureFlags": 0x14,
+            "complete": False,
+            "rows": {},
+            "cleanupErrors": [],
+        }
+        if not self.snapshot_api:
+            return result
+        snapshot, marker = c.c_void_p(), c.c_void_p()
+        captured = marker_created = False
+        try:
+            result["captureStatus"] = self.kernel.PssCaptureSnapshot(
+                process, 0x14, 0, c.byref(snapshot)
+            )
+            if result["captureStatus"] != 0:
+                return result
+            captured = True
+            result["markerStatus"] = self.kernel.PssWalkMarkerCreate(
+                None, c.byref(marker)
+            )
+            if result["markerStatus"] != 0:
+                return result
+            marker_created = True
+            for _ in range(MAX_HANDLE_SCAN):
+                entry = SnapshotHandleEntry()
+                status = self.kernel.PssWalkSnapshot(
+                    snapshot, 2, marker, c.byref(entry), c.sizeof(entry)
+                )
+                result["walkStatus"] = status
+                if status == 259:
+                    result["complete"] = True
+                    break
+                if status != 0:
+                    break
+                value = entry.handle or 0
+                if value in wanted:
+                    row = {"present": True, "validFields": entry.flags}
+                    if entry.flags & 4:
+                        row.update(
+                            attributes=entry.attributes, grantedAccess=hex(entry.access)
+                        )
+                    if entry.flags & 1:
+                        row["objectType"] = entry.object_type
+                    result["rows"][hex(value)] = row
+            if result["complete"]:
+                for value in wanted:
+                    result["rows"].setdefault(hex(value), {"present": False})
+        finally:
+            if marker_created and marker.value:
+                status = self.kernel.PssWalkMarkerFree(marker)
+                if status:
+                    error = {"PssWalkMarkerFree": status}
+                    result["cleanupErrors"].append(error)
+                    if len(self.handle_cleanup_errors) < 8:
+                        self.handle_cleanup_errors.append(error)
+            if captured and snapshot.value:
+                status = self.kernel.PssFreeSnapshot(
+                    self.kernel.GetCurrentProcess(), snapshot
+                )
+                if status:
+                    error = {"PssFreeSnapshot": status}
+                    result["cleanupErrors"].append(error)
+                    if len(self.handle_cleanup_errors) < 8:
+                        self.handle_cleanup_errors.append(error)
+        return result
+
+    def handle_type(self, process, value):
+        if value == 0 or value >= 0xFFFFFFFFFFFFFFF0:
+            return {"pseudoOrNull": True, "duplicateAttempted": False}
+        duplicate = c.c_void_p()
+        result = {"duplicateAttempted": True}
+        if not self.kernel.DuplicateHandle(
+            process,
+            value,
+            self.kernel.GetCurrentProcess(),
+            c.byref(duplicate),
+            0,
+            False,
+            2,
+        ):
+            result["duplicateError"] = c.get_last_error()
+            result["sourceHandleExists"] = (
+                False if result["duplicateError"] == 6 else None
+            )
+            return result
+        result["duplicateError"] = 0
+        result["sourceHandleExists"] = True
+        try:
+            c.set_last_error(0)
+            kind = self.kernel.GetFileType(duplicate)
+            result["fileType"] = kind
+            result["fileTypeError"] = c.get_last_error() if kind == 0 else 0
+            if (
+                kind == 2
+            ):  # Only character handles need a bounded NUL-versus-console name check.
+                data = c.create_string_buffer(1024)
+                needed = c.c_uint32()
+                status = self.nt.NtQueryObject(
+                    duplicate, 1, data, len(data), c.byref(needed)
+                )
+                result["nameQueryStatus"] = hex(status & 0xFFFFFFFF)
+                if status == 0:
+                    name = UnicodeString.from_buffer(data)
+                    begin = c.addressof(data)
+                    end = begin + len(data)
+                    if (
+                        name.buffer
+                        and name.length % 2 == 0
+                        and begin <= name.buffer <= end
+                        and name.length <= end - name.buffer
+                    ):
+                        text = c.string_at(name.buffer, name.length).decode(
+                            "utf-16-le", errors="strict"
+                        )
+                        result["isNullDevice"] = text.casefold() == "\\device\\null"
+                        result["characterObjectName"] = text[:256]
+        finally:
+            if not self.kernel.CloseHandle(duplicate):
+                result["duplicateCloseError"] = c.get_last_error()
+                if len(self.handle_cleanup_errors) < 8:
+                    self.handle_cleanup_errors.append(
+                        {"duplicateCloseError": result["duplicateCloseError"]}
+                    )
+        return result
+
+    def observe_startup_handles(self, process, parent, initial, stage, previous=()):
+        if self.handle_observations >= 16:
+            return {"bounded": True}
+        self.handle_observations += 1
+        result = {
+            "stage": stage,
+            "queryOnly": True,
+            "parentMayRunConcurrently": True,
+            "initialClientHandles": {
+                key: hex(value) for key, value in (initial or {}).items()
+            },
+            "processes": {},
+        }
+        states = {"handler": self.startup_state(process)}
+        if parent:
+            states["parent"] = self.startup_state(parent)
+        wanted = set((initial or {}).values()) | set(previous)
+        for state in states.values():
+            wanted.update(state["values"].values())
+        result["selectedValues"] = [hex(value) for value in sorted(wanted)]
+        for role, handle in (("handler", process), ("parent", parent)):
+            if not handle:
+                continue
+            state = states[role]
+            snapshot = self.handle_snapshot(handle, wanted)
+            result["processes"][role] = {
+                "startup": {
+                    **state,
+                    "values": {
+                        key: hex(value) for key, value in state["values"].items()
+                    },
+                },
+                "snapshot": snapshot,
+                "selectedHandles": {
+                    hex(value): self.handle_type(handle, value)
+                    for value in sorted(wanted)
+                },
+            }
+        return result
 
     def pump(self, milliseconds=0):
         owner.require(
@@ -344,8 +676,26 @@ class DebugJob(owner.WindowsJob):
                     "modules": {info.base or 0: image},
                     "loaderBreakpoint": False,
                     "createdSequence": self.event_count,
+                    "parentPid": metadata.get("parentPid"),
+                    "initialClientHandles": metadata.get("initialClientHandles"),
+                    "chromeRole": metadata.get("chromeRole"),
+                    "invalidHandleObserved": False,
                 }
                 row.update(image=image, **metadata)
+                if metadata.get("chromeRole") == "crashpad-handler":
+                    parent = self.processes.get(metadata.get("parentPid"), {}).get(
+                        "handle"
+                    )
+                    row["startupHandles"] = self.observe_startup_handles(
+                        info.process,
+                        parent,
+                        metadata.get("initialClientHandles"),
+                        "create",
+                    )
+                    self.processes[event.pid]["createdHandleValues"] = [
+                        int(value, 16)
+                        for value in row["startupHandles"].get("selectedValues", [])
+                    ]
                 self.chrome_seen |= (image["name"] or "").lower() == "chrome.exe"
             elif event.kind == 6:
                 info = event.data.dll
@@ -367,6 +717,7 @@ class DebugJob(owner.WindowsJob):
                 )
             elif event.kind == 1:
                 info = event.data.exception
+                process = self.processes[event.pid]
                 disposition, initial, location = exception_disposition(
                     self.processes[event.pid], info.record, bool(info.first)
                 )
@@ -380,6 +731,22 @@ class DebugJob(owner.WindowsJob):
                     **location,
                 )
                 if not initial:
+                    if (
+                        info.record.code == 0xC0000008
+                        and process.get("chromeRole") == "crashpad-handler"
+                        and not process["invalidHandleObserved"]
+                    ):
+                        process["invalidHandleObserved"] = True
+                        parent = self.processes.get(process.get("parentPid"), {}).get(
+                            "handle"
+                        )
+                        row["startupHandles"] = self.observe_startup_handles(
+                            process["handle"],
+                            parent,
+                            process.get("initialClientHandles"),
+                            "invalid-handle",
+                            process.get("createdHandleValues", []),
+                        )
                     if info.record.code == 0x4000001F:
                         row["unclassifiedEmulationBreakpoint"] = True
                     row["information"] = [
@@ -638,6 +1005,7 @@ def capture(request, native):
         result["cleanup"]["handlesClosed"] = not any(
             (native.thread, native.process, native.job)
         )
+        result["cleanup"]["errors"].extend(native.handle_cleanup_errors)
         result["cleanupComplete"] = (
             result["childrenClosed"]
             and result["cleanup"]["handlesClosed"]
