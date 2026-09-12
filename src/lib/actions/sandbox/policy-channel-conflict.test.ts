@@ -17,6 +17,7 @@ import { hashCredential } from "../../security/credential-hash";
 import * as onboardSession from "../../state/onboard-session";
 import type { SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
+import * as crossPortRegistry from "../../state/registry/cross-port";
 import * as messagingHostForwardLifecycle from "./messaging-host-forward-lifecycle";
 import { addSandboxChannel, startSandboxChannel } from "./policy-channel";
 import { policyChannelDependencies } from "./policy-channel-dependencies";
@@ -344,6 +345,14 @@ beforeEach(() => {
 
   // Registry seam.
   getSandboxMock = vi.spyOn(registry, "getSandbox").mockReturnValue(null);
+  vi.spyOn(crossPortRegistry, "findSandboxAcrossGatewayRoots").mockImplementation(
+    (name: string) => {
+      const entry = registry.getSandbox(name);
+      return entry
+        ? { entry, gatewayPort: entry.gatewayPort ?? null, registryFile: "/test/sandboxes.json" }
+        : null;
+    },
+  );
   getDisabledChannelsMock = vi.spyOn(registry, "getDisabledChannels").mockReturnValue([]);
   listSandboxesMock = vi
     .spyOn(registry, "listSandboxes")
@@ -360,9 +369,10 @@ beforeEach(() => {
   runOpenshellMock = vi.spyOn(runtime, "runOpenshell").mockReturnValue(successfulOpenshellResult());
   const healthyGatewayState = {
     state: "healthy_named",
-    status: "",
-    gatewayInfo: "",
     activeGateway: "nemoclaw",
+    diagnostic: "",
+    recoveryBlocked: false,
+    unavailable: false,
   } as const;
   vi.spyOn(gatewayRuntime, "recoverNamedGatewayRuntime").mockResolvedValue({
     recovered: true,

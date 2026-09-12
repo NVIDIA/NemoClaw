@@ -1056,6 +1056,10 @@ describe("post-merge documentation runner", () => {
       },
     });
     expect(state.createArgs).not.toContain("--upload");
+    const policyIndex = state.createArgs.indexOf("--policy");
+    expect(state.createArgs[policyIndex + 1]).toBe(
+      path.join(input.env.TRUSTED_CHECKOUT, "tools/post-merge-docs/review-policy.yaml"),
+    );
     expect(state.createArgs.slice(-6)).toEqual([
       "--",
       "/usr/bin/git",

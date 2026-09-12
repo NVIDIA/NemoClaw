@@ -24,6 +24,8 @@
     {
       "live": "test/e2e/live/llama-cpp-generic-gpu.test.ts",
       "fast": [
+        "src/lib/inference/llama-cpp/index.test.ts",
+        "src/lib/onboard/llama-cpp-selection/index.test.ts",
         "src/lib/inference/llama-cpp/managed-selection.test.ts",
         "src/lib/inference/llama-cpp/managed-installer.test.ts",
         "src/lib/onboard/setup-nim-flow.test.ts",
