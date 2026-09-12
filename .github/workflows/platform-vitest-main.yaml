@@ -108,8 +108,10 @@ jobs:
           test "`$(git rev-parse HEAD)" = e4e6391870bef3834cd30cdd997529e5361f89a5
           npm ci --ignore-scripts
           npm run build:cli
+          mv $workdir /home/nemoclaw-ci/issue-11401-main
           "@
           Invoke-WslScript -Distro $env:WSL_DISTRO -User $env:WSL_TEST_USER -Script $script
+          'WSL_WORKDIR=/home/nemoclaw-ci/issue-11401-main' | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
       - name: Run real discovery and provider-menu probes
         shell: powershell
         timeout-minutes: 12
