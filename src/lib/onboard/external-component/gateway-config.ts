@@ -8,7 +8,7 @@ import {
   type ExternalComponentDeclarationV2,
 } from "./index";
 import type { RuntimeProviderGatewayHostRuntime } from "../runtime-provider/contract";
-import { isIPv4 } from "node:net";
+import { inspectExternalComponentNetwork } from "./network";
 
 type Settings = Omit<ExternalComponentDeclarationV2, "activationSocketPath">;
 const quote = JSON.stringify;
@@ -30,20 +30,16 @@ export function externalComponentGatewayNetwork(
   env: Record<string, string>,
   runtime: RuntimeProviderGatewayHostRuntime,
   settings: Settings,
-): { gatewayIp: string; subnet: string } {
+): { id: string; name: string; gatewayIp: string; subnet: string } {
   const name = env.OPENSHELL_DOCKER_NETWORK_NAME;
-  const network = name ? runtime.network.inspect(name) : undefined;
   if (
     runtime.openShellDriver !== "docker" ||
-    !network?.gatewayIp ||
-    !network.subnet ||
-    !isIPv4(network.gatewayIp) ||
-    !/^(?:10\.|192\.168\.|172\.(?:1[6-9]|2\d|3[01])\.)/u.test(network.gatewayIp) ||
+    !name ||
     new URL(settings.middleware.endpoint).hostname !== "host.openshell.internal"
   ) {
     throw new ExternalComponentContractError("endpoint_restricted");
   }
-  return { gatewayIp: network.gatewayIp, subnet: network.subnet };
+  return inspectExternalComponentNetwork(name, runtime);
 }
 
 export function renderExternalComponentConnections(

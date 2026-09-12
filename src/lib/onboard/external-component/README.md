@@ -76,6 +76,30 @@ NemoClaw does not distribute profiles or evaluate profile content.
 
 ## Preparation
 
+Issue #11606 authorizes NemoClaw to provision a missing Docker bridge before authenticated v2 preparation.
+NemoClaw resolves the selected local Docker connection and configured network name through its runtime adapter.
+A successful, complete network listing must establish absence before NemoClaw creates one attachable bridge.
+Existing compatible networks retain their identity and configuration. NemoClaw does not start a temporary gateway or sandbox.
+OpenShell reuses the inspected network and retains sandbox lifecycle and policy enforcement.
+Ordinary onboarding, v1 components, and non-Docker paths do not use this provisioning operation.
+
+Preparation requires one local, non-internal bridge with exactly one private IPv4 subnet and a usable gateway in that subnet.
+Missing identities, multiple networks, ambiguous IPAM, incompatible drivers, inspection failures, replacement, and address drift stop onboarding.
+Network commands use the selected Unix socket. Generated v2 gateway configuration pins that socket so OpenShell cannot select another daemon.
+TCP and SSH Docker endpoints remain unsupported. A changed Docker connection stops preparation or startup.
+
+Read operations have a 10-second deadline; creation has a 30-second deadline. Each command has a 16 KiB output limit and a forced-kill deadline.
+NemoClaw attempts creation once. After a failure, timeout, or competing creation, it inspects the retained network to reconcile the result.
+Only a compatible inspected network can proceed. A successful creation must return the same identity as inspection.
+An unresolved result stops onboarding with `preparation_failed`; service diagnostics are not forwarded.
+NemoClaw never deletes, repairs, or recreates the network during preparation or failure handling.
+The network also remains after rejected component preparation, authentication failure, or a later startup failure.
+
+This path does not depend on an OpenShell network-preparation command. Runtime pins are unchanged.
+Other authenticated component compatibility requirements still apply; network reuse alone does not qualify the full integration.
+Issue #11606 retains the follow-up to agree on network ownership, compatibility, and a long-term preparation interface with OpenShell maintainers.
+No upstream agreement or delivery date is assumed. Evaluate any agreed interface in a separate reviewed change.
+
 The component must create its CA files and protected activation socket before onboarding.
 CA files must contain currently valid CA certificates only, with protected parents and no symlinks or hardlinks.
 Root or the current user must own the files. Group and other users must not have write access.
@@ -108,7 +132,7 @@ The component associates the later activation with the prepared `componentId` an
 It verifies the sandbox against the prepared gateway identity before acknowledging activation.
 The existing activation UUID, effective-policy proof, failure classification, and incomplete-activation state remain unchanged.
 
-NemoClaw revalidates declaration, socket, CA files, generated configuration, gateway keys, and bridge addressing.
+NemoClaw revalidates declaration, socket, CA files, generated configuration, gateway keys, and bridge identity and addressing.
 OpenShell performs authenticated registration after successful preparation and rejects missing or incompatible services.
 NemoClaw does not install or supervise those services.
 
@@ -118,4 +142,4 @@ NemoClaw does not install or supervise those services.
 Existing activation and gateway-handler tests cover bounded transport, incomplete activation, and unchanged v1 behavior.
 The creation and finalization tests share an OpenClaw/Hermes matrix for image identity, startup configuration, policy proof, and activation failures.
 Real OpenShell registration, policy and profile delivery, sandbox identity, and middleware outcomes require live evidence.
-Record NemoClaw, OpenShell, and combined #11486 revisions separately. Mocked results do not qualify the integration.
+Record exact NemoClaw and OpenShell revisions and both agents’ results separately. Mocked results do not qualify the integration.
