@@ -551,6 +551,26 @@ describe("PR review advisor OpenShell wrapper", () => {
     },
   );
 
+  it("keeps a real Node entrypoint alive while it waits for OpenShell termination (#10791)", () => {
+    const moduleUrl = new URL("../../../tools/pr-review-advisor/openshell.mts", import.meta.url)
+      .href;
+    const child = spawnSync(
+      process.execPath,
+      [
+        "--no-warnings",
+        "--input-type=module",
+        "--eval",
+        `import { waitForAdvisorSandboxTermination } from ${JSON.stringify(moduleUrl)}; await waitForAdvisorSandboxTermination();`,
+      ],
+      { encoding: "utf8", killSignal: "SIGTERM", timeout: 1_000 },
+    );
+
+    expect(child.error).toMatchObject({ code: "ETIMEDOUT" });
+    expect(child.status).toBe(0);
+    expect(child.signal).toBeNull();
+    expect(child.stderr).toBe("");
+  });
+
   it("permits only the pinned image login files required by stable OpenShell exec", () => {
     const policy = YAML.parse(
       fs.readFileSync("tools/pr-review-advisor/openshell-policy.yaml", "utf8"),
