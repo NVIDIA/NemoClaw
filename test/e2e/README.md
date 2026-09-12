@@ -420,7 +420,13 @@ The inventory also records live packaged-image checks in the `integration` proje
 Manual entries link to their instructions and summarize prerequisites; the tests retain the prerequisite checks.
 Listing a manual qualification does not schedule it or establish product support.
 Jetson dispatch retains its opt-in and trusted-controller checks.
-Compatibility callers remain under audit for #11407.
+The bootstrap test body now resides in `bootstrap-install-smoke.test.ts`.
+The `launchable-smoke`, `sandbox-rlimits-connect`, and
+`common-egress-agent-openclaw-personal-stock-price` selectors are retired and fail selection.
+The controller cutoff is canonical main `b8337ce01231264726b028d1147dc2634fd85885` and its pinned actions.
+Those controllers no longer invoke the old bootstrap or resource-limit files.
+The bootstrap forwarder and the semantic-phase checker's zero-test exception are removed.
+Other compatibility routes remain under audit for #11407.
 
 `tools/e2e/target-catalogue.mts` runs the selected profile target; it does not register targets.
 Each profile target shares one execution shape.

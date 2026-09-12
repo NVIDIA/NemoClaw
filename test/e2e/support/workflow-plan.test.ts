@@ -784,18 +784,12 @@ describe("E2E workflow plan", () => {
     );
   });
 
-  it("maps the trusted main Personal stock selector to the candidate public-fetch target", () => {
+  it("rejects the retired Personal stock selector while retaining public-fetch coverage", () => {
     const legacyId = "common-egress-agent-openclaw-personal-stock-price";
     const canonicalId = "common-egress-agent-openclaw-personal-public-fetch";
-    const target = catalogueTarget(legacyId);
-    const plan = buildE2eWorkflowPlan({ targets: legacyId });
-
-    expect(target).toMatchObject({
-      id: canonicalId,
-      selector: "^common-egress.+C4.+$",
-      shard: "openclaw-personal-public-fetch",
-      testFile: "test/e2e/live/common-egress-agent.test.ts",
-    });
+    expect(() => catalogueTarget(legacyId)).toThrow(legacyId);
+    expect(() => buildE2eWorkflowPlan({ targets: legacyId })).toThrow(legacyId);
+    const plan = buildE2eWorkflowPlan({ targets: canonicalId });
     expect(plan.catalogueMatrices["nvidia-inference"].map((row) => row.id)).toEqual([canonicalId]);
   });
 
@@ -904,14 +898,11 @@ describe("E2E workflow plan", () => {
   );
 
   it.each(["jobs", "targets"] as const)(
-    "maps the retired sandbox rlimit %s selector to sandbox operations",
+    "rejects the retired sandbox rlimit %s selector",
     (kind) => {
-      const legacyPlan = buildE2eWorkflowPlan({ [kind]: "sandbox-rlimits-connect" });
-      const canonicalPlan = buildE2eWorkflowPlan({ [kind]: "sandbox-operations" });
-
-      expect(legacyPlan).toEqual(canonicalPlan);
-      expect(legacyPlan.hermesSelected).toBe(false);
-      expect(workflowExecutionSelection().allowedJobs).not.toContain("sandbox-rlimits-connect");
+      expect(() => buildE2eWorkflowPlan({ [kind]: "sandbox-rlimits-connect" })).toThrow(
+        "sandbox-rlimits-connect",
+      );
     },
   );
 
@@ -940,11 +931,10 @@ describe("E2E workflow plan", () => {
     },
   );
 
-  it.concurrent("maps launchable-smoke to bootstrap-install-smoke when checkout_sha is set", async (context) => {
+  it.concurrent("rejects launchable-smoke when checkout_sha is set", async (context) => {
     const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-workflow-plan-cli-"));
     const output = path.join(directory, "github-output");
     const summary = path.join(directory, "summary.md");
-    const plan = buildE2eWorkflowPlan({ jobs: "bootstrap-install-smoke" });
     try {
       const result = await runPlannerCli(["--ci-output"], context, {
         ...process.env,
@@ -957,11 +947,8 @@ describe("E2E workflow plan", () => {
         NEMOCLAW_E2E_EXPECTED_SHA: "a".repeat(40),
       });
 
-      expect(result.status, result.stderr).toBe(0);
-      expect(readFileSync(output, "utf8")).toBe(expectedWorkflowPlanCiOutput(plan));
-      expect(readFileSync(summary, "utf8")).toBe(
-        renderE2eWorkflowPlanSummary(plan, { includeCoverageAudit: false }),
-      );
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("::error::Unknown E2E test ID: launchable-smoke");
     } finally {
       rmSync(directory, { force: true, recursive: true });
     }

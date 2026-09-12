@@ -83,6 +83,10 @@ direct global or environment mutations in the test that owns them.
 Follow [`WRITING.md`](../WRITING.md) for behavior-oriented test titles. Put a local issue reference
 in a final suffix such as `(#1234)`.
 
+When an unchanged test body replaces a forwarding file, growth checks carry the body's existing
+baseline only if its source file is removed. A replacement at the source path keeps the ordinary
+per-file comparisons. This does not permit assertion, conditional, or loop growth.
+
 ## macOS host tools
 
 Some tests require GNU command-line tools that macOS does not provide. The `macos-vitest` job in

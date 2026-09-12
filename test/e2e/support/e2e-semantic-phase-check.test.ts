@@ -101,7 +101,7 @@ describe("semantic E2E phase checker", () => {
     ]);
   });
 
-  test("derives coverage from registry, free-standing, shared, and forwarding workflow paths", () => {
+  test("derives coverage from discovered files and registered workflow paths", () => {
     const modules = semanticPhaseCoverageModules(
       {
         matrix: [{}],
@@ -133,7 +133,6 @@ describe("semantic E2E phase checker", () => {
         file: "test/e2e/live/bootstrap-install-smoke.test.ts",
         project: "e2e-live",
       },
-      { file: "test/e2e/live/launchable-smoke.test.ts", project: "e2e-live" },
       { file: "test/e2e/live/registry-targets.test.ts", project: "e2e-live" },
       { file: "test/e2e/live/unselected-regression.test.ts", project: "e2e-live" },
       { file: "test/platform/images/vllm-docker-storage.test.ts", project: "integration" },
@@ -200,82 +199,20 @@ describe("semantic E2E phase checker", () => {
     );
   });
 
-  test.each([
-    { forwardedTestModules: [] },
-    { forwardedTestModules: ["test/e2e/live/other.test.ts"] },
-    {
-      forwardedTestModules: [
-        "test/e2e/live/launchable-smoke.test.ts",
-        "test/e2e/live/other.test.ts",
-      ],
-    },
-  ])("accepts only the exact bootstrap forwarding alias [case %#]", ({ forwardedTestModules }) => {
-    const forwardingModule = {
-      relativeModuleId: "test/e2e/live/bootstrap-install-smoke.test.ts",
-      errors: [],
-      tests: [],
-      source: {
-        importsDirectTest: false,
-        importsSharedTest: false,
-        phaseCalls: [],
-        testPhaseBodies: [],
-      },
-    };
-
+  test("rejects a module that collects no executable tests", () => {
     expect(
       validateCollectedSemanticPhaseModule({
-        ...forwardingModule,
+        relativeModuleId: "test/e2e/live/empty.test.ts",
+        errors: [],
+        tests: [],
         source: {
-          ...forwardingModule.source,
-          forwardedTestModules: ["test/e2e/live/launchable-smoke.test.ts"],
+          importsDirectTest: false,
+          importsSharedTest: true,
+          phaseCalls: [],
+          testPhaseBodies: [],
         },
       }),
-    ).toEqual([]);
-    expect(
-      validateCollectedSemanticPhaseModule({
-        ...forwardingModule,
-        source: {
-          ...forwardingModule.source,
-          directChildProcessCalls: [
-            {
-              api: "spawnSync",
-              boundary: "forwardedSetup",
-              file: "test/e2e/live/bootstrap-install-smoke.test.ts",
-              hasBoundedTimeout: false,
-              hasHardKillSignal: true,
-              line: 8,
-              observesOutput: false,
-              outputIgnored: false,
-              tracksActivity: false,
-              tracksLifecycle: false,
-            },
-          ],
-          forwardedTestModules: ["test/e2e/live/launchable-smoke.test.ts"],
-        },
-      }),
-    ).toEqual([
-      expect.stringMatching(
-        /blocking child-process call spawnSync must declare a positive timeout/u,
-      ),
-    ]);
-    const expectedFailure =
-      "test/e2e/live/bootstrap-install-smoke.test.ts: forwarding module must import exactly test/e2e/live/launchable-smoke.test.ts";
-
-    expect(
-      validateCollectedSemanticPhaseModule({
-        ...forwardingModule,
-        source: { ...forwardingModule.source, forwardedTestModules },
-      }),
-    ).toEqual([expectedFailure]);
-
-    const forwardingSource = scanLiveSourceGraph(
-      path.join(REPO_ROOT, "test/e2e/live/bootstrap-install-smoke.test.ts"),
-    );
-    expect(forwardingSource.phaseCalls).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ file: "test/e2e/live/launchable-smoke.test.ts" }),
-      ]),
-    );
+    ).toContain("test/e2e/live/empty.test.ts: collected zero tests");
   });
 
   test("rejects each direct child-process boundary that can hide a heartbeat", () => {

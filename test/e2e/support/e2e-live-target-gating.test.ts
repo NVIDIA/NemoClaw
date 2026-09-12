@@ -149,62 +149,23 @@ describe("live E2E target gating", () => {
     });
   });
 
-  it(
-    "keeps the formatted bootstrap entry point valid through real Vitest collection",
-    testTimeoutOptions(35_000),
-    () => {
-      const formatted = spawnSync(
-        process.execPath,
-        [
-          path.join(REPO_ROOT, "node_modules", "oxfmt", "bin", "oxfmt"),
-          "--check",
-          path.join(LIVE_E2E_ROOT, "bootstrap-install-smoke.test.ts"),
-        ],
-        { cwd: REPO_ROOT, encoding: "utf8", timeout: 30_000 },
-      );
-      expect(formatted.status, formatted.stderr || formatted.stdout).toBe(0);
-    },
-  );
-
   it.concurrent(
-    "collects the bootstrap install test through the trusted-main legacy path",
-    collectorTimeoutOptions(3),
+    "collects the bootstrap install contract through its current entry point",
+    collectorTimeoutOptions(),
     async (context) => {
       const listLiveTests = liveTestLister(context);
-      const legacy = await listLiveTests({
-        enabled: true,
-        env: { E2E_TARGET_ID: "launchable-smoke" },
-        files: ["launchable-smoke.test.ts"],
-      });
-
-      context.expect(legacy.status, legacy.stderr || legacy.stdout).toBe(0);
-      context
-        .expect(linesForFile(legacy.lines, "launchable-smoke.test.ts"))
-        .toEqual([
-          "[e2e-live] test/e2e/live/launchable-smoke.test.ts > bootstrap install smoke: bootstrap, onboard, sandbox health, live inference, cleanup",
-        ]);
-
-      const renamed = await listLiveTests({
+      const collected = await listLiveTests({
         enabled: true,
         env: { E2E_TARGET_ID: "bootstrap-install-smoke" },
         files: ["bootstrap-install-smoke.test.ts"],
       });
 
-      context.expect(renamed.status, renamed.stderr || renamed.stdout).toBe(0);
+      context.expect(collected.status, collected.stderr || collected.stdout).toBe(0);
       context
-        .expect(linesForFile(renamed.lines, "bootstrap-install-smoke.test.ts"))
+        .expect(linesForFile(collected.lines, "bootstrap-install-smoke.test.ts"))
         .toEqual([
           "[e2e-live] test/e2e/live/bootstrap-install-smoke.test.ts > bootstrap install smoke: bootstrap, onboard, sandbox health, live inference, cleanup",
         ]);
-
-      const inactive = await listLiveTests({
-        enabled: true,
-        env: { E2E_TARGET_ID: "launchable-smoke" },
-        files: ["bootstrap-install-smoke.test.ts"],
-      });
-
-      context.expect(inactive.status, inactive.stderr || inactive.stdout).toBe(0);
-      context.expect(linesForFile(inactive.lines, "bootstrap-install-smoke.test.ts")).toEqual([]);
     },
   );
 

@@ -307,6 +307,21 @@ function defineCodebaseGrowthGuardrailTestSupport(): void {
     expect(await e2eAssertionBudgetGrowthViolations(diff)).toEqual([]);
   });
 
+  it("rejects increased per-file assertions after a test rename", async () => {
+    const file = "test/e2e/live/renamed.test.ts";
+    const diff = fixtureDiff(
+      [
+        { filename: "ci/e2e-assertion-budget.json", status: "modified" },
+        { filename: file, previous_filename: "test/e2e/live/example.test.ts", status: "renamed" },
+      ],
+      { "ci/e2e-assertion-budget.json": e2eAssertionBudget(2) },
+      { "ci/e2e-assertion-budget.json": e2eAssertionBudget(3, "a".repeat(40), file) },
+    );
+    expect(await e2eAssertionBudgetGrowthViolations(diff)).toContain(
+      `${file} directExpectCalls increased from 2 to 3`,
+    );
+  });
+
   it("rejects a changed test that is missing from the latest PR commit", async () => {
     const diff = fixtureDiff(
       [{ filename: "test/example.test.ts", status: "modified" }],

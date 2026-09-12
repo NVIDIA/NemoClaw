@@ -65,7 +65,6 @@ export interface ScopedPhasePlan {
 export interface SemanticPhaseSourceGraph {
   childProcessAuditFailures?: string[];
   directChildProcessCalls?: DirectChildProcessCall[];
-  forwardedTestModules?: string[];
   importsDirectTest: boolean;
   importsSharedTest: boolean;
   importsWorkflowTest?: boolean;
@@ -96,9 +95,6 @@ const E2E_RUNTIME_OBSERVABILITY_FILES = [path.join(E2E_ROOT, "risk-signal-report
 const REGISTRY_TARGET_TEST = "test/e2e/live/registry-targets.test.ts";
 const WINDOWS_MXC_OPENCLAW_HELPER =
   "test/e2e/live/windows-mxc-openclaw-process-container-helpers.ts";
-const LIVE_TEST_FORWARDERS = new Map([
-  ["test/e2e/live/bootstrap-install-smoke.test.ts", "test/e2e/live/launchable-smoke.test.ts"],
-]);
 const LIVE_TEST_FIXTURE_SUFFIX = "/fixtures/e2e-test.ts";
 const WORKFLOW_TEST_FIXTURE_SUFFIX = "/e2e/fixtures/workflow-e2e-test.ts";
 
@@ -254,10 +250,6 @@ export function semanticPhaseCoverageModules(
     add(file, credentialFreeProjectForWorkflowFile(file, plan.testMatrix));
   }
   if (plan.matrix.length > 0) add(REGISTRY_TARGET_TEST, "e2e-live");
-
-  for (const [forwarder, target] of LIVE_TEST_FORWARDERS) {
-    if (selected.has(forwarder)) add(target, "e2e-live");
-  }
 
   return [...selected]
     .map(([file, project]) => ({ file, project }))
@@ -2535,12 +2527,6 @@ function dynamicE2EImportFromNode(node: ts.Node, file: string): string | null {
   return resolveE2EImport(file, specifier.text);
 }
 
-function forwardedLiveTestFromNode(node: ts.Node, file: string): string | null {
-  const resolved = dynamicLiveImportFromNode(node, file);
-  if (!resolved?.endsWith(".test.ts")) return null;
-  return path.relative(REPO_ROOT, resolved).split(path.sep).join("/");
-}
-
 function collectTestPhaseBodies(file: string, sourceFile: ts.SourceFile): TestPhaseBody[] {
   const bodies: TestPhaseBody[] = [];
 
@@ -2613,7 +2599,6 @@ export function validateTestScopedPhaseCalls(
 export function scanLiveSourceGraph(entryFile: string): SemanticPhaseSourceGraph {
   const visited = new Set<string>();
   const processVisited = new Set<string>();
-  const forwardedTestModules: string[] = [];
   const phaseCalls: PhaseCall[] = [];
   const directChildProcessCalls: DirectChildProcessCall[] = [];
   const childProcessAuditFailures: string[] = [];
@@ -2654,10 +2639,6 @@ export function scanLiveSourceGraph(entryFile: string): SemanticPhaseSourceGraph
     function inspect(node: ts.Node): void {
       const dynamicImport = dynamicLiveImportFromNode(node, file);
       if (dynamicImport) visit(dynamicImport);
-      if (file === entryFile) {
-        const forwardedTest = forwardedLiveTestFromNode(node, file);
-        if (forwardedTest) forwardedTestModules.push(forwardedTest);
-      }
       const call = phaseCallFromNode(node, file, sourceFile);
       if (call) phaseCalls.push(call);
       ts.forEachChild(node, inspect);
@@ -2715,7 +2696,6 @@ export function scanLiveSourceGraph(entryFile: string): SemanticPhaseSourceGraph
   return {
     childProcessAuditFailures,
     directChildProcessCalls,
-    forwardedTestModules,
     importsDirectTest,
     importsSharedTest,
     importsWorkflowTest,
@@ -2781,7 +2761,6 @@ export function validateCollectedSemanticPhaseModule(
   const phasePlans: string[][] = [];
   const scopedPhasePlans: ScopedPhasePlan[] = [];
   const moduleTests = collectedModule.tests.length;
-  const forwardingTarget = LIVE_TEST_FORWARDERS.get(collectedModule.relativeModuleId);
   const project =
     collectedModule.project ??
     (collectedModule.relativeModuleId.startsWith("test/e2e/live/") ? "e2e-live" : "integration");
@@ -2789,21 +2768,6 @@ export function validateCollectedSemanticPhaseModule(
     ...(collectedModule.source.childProcessAuditFailures ?? []),
     ...validateDirectChildProcessCalls(collectedModule.source.directChildProcessCalls ?? []),
   );
-
-  if (forwardingTarget) {
-    if (moduleTests !== 0) {
-      failures.push(
-        `${collectedModule.relativeModuleId}: forwarding module must collect zero tests`,
-      );
-    }
-    const forwardedTestModules = collectedModule.source.forwardedTestModules ?? [];
-    if (forwardedTestModules.length !== 1 || forwardedTestModules[0] !== forwardingTarget) {
-      failures.push(
-        `${collectedModule.relativeModuleId}: forwarding module must import exactly ${forwardingTarget}`,
-      );
-    }
-    return failures;
-  }
 
   for (const test of collectedModule.tests) {
     const phasePlan = test.phases;

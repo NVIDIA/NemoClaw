@@ -2,10 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 export const E2E_SELECTOR_ALIASES = Object.freeze({
-  "common-egress-agent-openclaw-personal-stock-price":
-    "common-egress-agent-openclaw-personal-public-fetch",
   "hermes-dashboard": "hermes-e2e",
-  "sandbox-rlimits-connect": "sandbox-operations",
 } as const);
 
 export function normalizeE2eSelectorId(selector: string): string {

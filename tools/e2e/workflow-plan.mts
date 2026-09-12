@@ -95,8 +95,6 @@ type TrustedControllerSelectorMap = {
 const SAFE_SELECTOR_LIST_PATTERN = /^[A-Za-z0-9_-]+(?:,[A-Za-z0-9_-]+)*$/;
 const HERMES_JOB_ID = "hermes-e2e";
 const STAGING_BREV_IDENTITY_JOB_ID = "staging-brev-launchable-identity";
-const LEGACY_BOOTSTRAP_INSTALL_JOB_ID = "launchable-smoke";
-const BOOTSTRAP_INSTALL_JOB_ID = "bootstrap-install-smoke";
 const COMMIT_SHA_PATTERN = /^[a-f0-9]{40}$/;
 const INFERENCE_MODES = new Set(["mock", "internal-nvidia", "public-nvidia"]);
 const CATALOGUE_JOB_BY_PROFILE: Record<E2eExecutionProfile, string> = {
@@ -551,12 +549,7 @@ function mapTrustedControllerJobs(
   }
 
   const inventory = workflowExecutionSelection();
-  const jobs = selectorIds(selectors.jobs, "jobs").map((job) =>
-    job === LEGACY_BOOTSTRAP_INSTALL_JOB_ID &&
-    E2E_TARGET_CATALOGUE.some((target) => target.targetId === BOOTSTRAP_INSTALL_JOB_ID)
-      ? BOOTSTRAP_INSTALL_JOB_ID
-      : job,
-  );
+  const jobs = selectorIds(selectors.jobs, "jobs");
   const targets = selectorIds(selectors.targets, "targets");
   const retiredJobs = new Set<string>(
     selectedRetiredControllerJobs({
