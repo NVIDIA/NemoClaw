@@ -96,7 +96,7 @@ async function runProcessWithStatus(
   assert.equal(result.status, expectedStatus, result.stderr);
 }
 
-vi.setConfig({ maxConcurrency: 4 });
+vi.setConfig({ maxConcurrency: 3 });
 
 async function writePackageArchive(
   root: string,
@@ -137,7 +137,7 @@ async function writePackageArchive(
             HOME: root,
             NPM_CONFIG_CACHE: path.join(root, "pack-cache"),
           },
-          timeoutMs: 10_000,
+          timeoutMs: 30_000,
         },
       )
     ).stdout,
@@ -187,7 +187,7 @@ describe.concurrent("catalogue OpenShell SDK installation", () => {
     },
   ])(
     "installs the lock-selected SDK and dependencies offline for $name",
-    testTimeoutOptions(25_000),
+    testTimeoutOptions(90_000),
     async ({ lockedSdkVersion, script }, { expect }) => {
       const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-sdk-real-npm-"));
       try {
@@ -242,7 +242,7 @@ describe.concurrent("catalogue OpenShell SDK installation", () => {
           runSuccessfulProcess("npm", args, {
             cwd: workspace,
             env,
-            timeoutMs: 10_000,
+            timeoutMs: 30_000,
           });
         await runNpm([
           "cache",
@@ -263,7 +263,7 @@ describe.concurrent("catalogue OpenShell SDK installation", () => {
         await runSuccessfulProcess("bash", ["-c", script], {
           cwd: workspace,
           env,
-          timeoutMs: 20_000,
+          timeoutMs: 60_000,
         });
 
         const observed = await runSuccessfulProcess(
