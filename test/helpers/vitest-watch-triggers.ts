@@ -413,7 +413,7 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   },
   {
     pattern:
-      /(?:^|\/)\.agents\/skills\/(?:nemoclaw-maintainer-cut-release-tag\/SKILL\.md|nemoclaw-maintainer-evening\/SKILL\.md|nemoclaw-maintainer-release-notes\/SKILL\.md|nemoclaw-maintainer-policies\/references\/release-train\.md)$/,
+      /(?:^|\/)\.agents\/skills\/(?:nemoclaw-maintainer-cut-release-tag\/(?:SKILL\.md|references\/cut-and-follow-through\.md)|nemoclaw-maintainer-evening\/SKILL\.md|nemoclaw-maintainer-release-notes\/SKILL\.md|nemoclaw-maintainer-policies\/references\/release-train\.md)$/,
     testsToRun: runTests("test/automation/releases/release-post-tag-follow-through.test.ts"),
   },
 ];
