@@ -2,14 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
+import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, it, vi } from "vitest";
+import { describe, it, type TestContext, vi } from "vitest";
 import YAML from "yaml";
 import { testTimeoutOptions } from "../../helpers/timeouts.ts";
+import { superviseChild } from "../../helpers/process-supervisor.ts";
 
 const profile = YAML.parse(
   fs.readFileSync(".github/workflows/e2e-standard-profile.yaml", "utf8"),
@@ -30,6 +31,7 @@ const externalGatewayInstallScript = externalGateway.jobs["external-gateway-heal
 type RunProcessOptions = {
   cwd?: string;
   env?: NodeJS.ProcessEnv;
+  owner: Pick<TestContext, "onTestFinished" | "signal">;
   timeoutMs: number;
 };
 
@@ -46,31 +48,49 @@ function runProcess(
   args: readonly string[],
   options: RunProcessOptions,
 ): Promise<RunProcessResult> {
-  return new Promise((resolve) => {
-    execFile(
-      file,
-      [...args],
-      {
-        cwd: options.cwd,
-        encoding: "utf8",
-        env: options.env,
-        killSignal: "SIGKILL",
-        maxBuffer: 10 * 1024 * 1024,
-        timeout: options.timeoutMs,
-      },
-      (error, stdout, stderr) => {
-        const signal = error?.signal ?? null;
-        const spawnError = error && typeof error.code !== "number" && !signal ? error : undefined;
-        resolve({
-          ...(spawnError ? { error: spawnError } : {}),
-          signal,
-          status: signal ? null : Number(error?.code) || (error ? -1 : 0),
-          stderr,
-          stdout,
-        });
-      },
-    );
+  options.owner.signal.throwIfAborted();
+  let stdout = "";
+  let stderr = "";
+  let outputError: Error | undefined;
+  const child = spawn(file, [...args], {
+    cwd: options.cwd,
+    detached: true,
+    env: options.env,
+    stdio: ["ignore", "pipe", "pipe"],
   });
+  const finishController = new AbortController();
+  const append = (current: string, chunk: string, stream: string): string => {
+    if (outputError) return current;
+    const next = current + chunk;
+    if (Buffer.byteLength(next, "utf8") <= 10 * 1024 * 1024) return next;
+    outputError = new Error(`${stream} exceeded the 10 MiB process output limit`);
+    finishController.abort();
+    return current;
+  };
+  const resultPromise = superviseChild(child, {
+    killGraceMs: 0,
+    onStderr: (chunk) => {
+      stderr = append(stderr, chunk, "stderr");
+    },
+    onStdout: (chunk) => {
+      stdout = append(stdout, chunk, "stdout");
+    },
+    signal: AbortSignal.any([options.owner.signal, finishController.signal]),
+    timeoutMs: options.timeoutMs,
+  });
+  options.owner.onTestFinished(async () => {
+    finishController.abort();
+    await resultPromise;
+  });
+  return resultPromise.then((result) => ({
+    ...(result.spawnError || outputError ? { error: result.spawnError ?? outputError } : {}),
+    signal: result.signal,
+    status: result.signal
+      ? null
+      : (result.exitCode ?? (result.spawnError || outputError ? -1 : null)),
+    stderr,
+    stdout,
+  }));
 }
 
 async function runSuccessfulProcess(
@@ -104,7 +124,11 @@ type PackageDefinition = {
   version?: string;
 };
 
-async function writePackageArchives(root: string, packages: readonly PackageDefinition[]) {
+async function writePackageArchives(
+  root: string,
+  packages: readonly PackageDefinition[],
+  owner: Pick<TestContext, "onTestFinished" | "signal">,
+) {
   const sources = packages.map(({ dependencies = {}, name, version = "1.0.0" }) => {
     const source = path.join(root, `${name.replaceAll("/", "-")}-${version}`);
     fs.mkdirSync(source);
@@ -149,6 +173,7 @@ async function writePackageArchives(root: string, packages: readonly PackageDefi
             HOME: root,
             NPM_CONFIG_CACHE: path.join(root, "pack-cache"),
           },
+          owner,
           timeoutMs: 30_000,
         },
       )
@@ -190,6 +215,30 @@ fs.writeFileSync(directory + "/index.js", process.env.SDK_SOURCE);
 `;
 
 describe.concurrent("catalogue OpenShell SDK installation", () => {
+  it("reaps helper descendants after the process-group leader exits", async (context) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-sdk-process-tree-"));
+    const pidFile = path.join(root, "descendant.pid");
+    try {
+      const result = await runProcess(
+        "bash",
+        [
+          "-c",
+          `trap 'exit 0' TERM; bash -c 'trap "" TERM; while :; do sleep 1; done' >/dev/null 2>&1 & echo $! > "$PID_FILE"; wait`,
+        ],
+        { env: { ...process.env, PID_FILE: pidFile }, owner: context, timeoutMs: 300 },
+      );
+      const descendantPid = Number(fs.readFileSync(pidFile, "utf8").trim());
+
+      context.expect(result.error).toBeUndefined();
+      context.expect(descendantPid).toBeGreaterThan(0);
+      await vi.waitFor(() => {
+        context.expect(() => process.kill(descendantPid, 0)).toThrow();
+      });
+    } finally {
+      fs.rmSync(root, { force: true, recursive: true });
+    }
+  });
+
   it.for([
     { name: "catalogue active SDK", script: installScript, lockedSdkVersion: "0.9.0" },
     { name: "catalogue replacement SDK", script: installScript, lockedSdkVersion: "1.0.0" },
@@ -206,7 +255,8 @@ describe.concurrent("catalogue OpenShell SDK installation", () => {
   ])(
     "installs the lock-selected SDK and dependencies offline for $name",
     testTimeoutOptions(90_000),
-    async ({ lockedSdkVersion, script }, { expect }) => {
+    async ({ lockedSdkVersion, script }, context) => {
+      const { expect } = context;
       const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-sdk-real-npm-"));
       try {
         const [sdk, previousSdk, transport, sibling] = await writePackageArchives(root, [
@@ -221,7 +271,7 @@ describe.concurrent("catalogue OpenShell SDK installation", () => {
           },
           { name: "fixture-transport" },
           { name: "fixture-sibling" },
-        ]);
+        ], context);
         const selectedSdk = lockedSdkVersion === "1.0.0" ? sdk : previousSdk;
         const workspace = path.join(root, "workspace");
         fs.mkdirSync(workspace);
@@ -262,6 +312,7 @@ describe.concurrent("catalogue OpenShell SDK installation", () => {
           runSuccessfulProcess("npm", args, {
             cwd: workspace,
             env,
+            owner: context,
             timeoutMs: 30_000,
           });
         await runNpm([
@@ -283,6 +334,7 @@ describe.concurrent("catalogue OpenShell SDK installation", () => {
         await runSuccessfulProcess("bash", ["-c", script], {
           cwd: workspace,
           env,
+          owner: context,
           timeoutMs: 60_000,
         });
 
@@ -293,7 +345,7 @@ describe.concurrent("catalogue OpenShell SDK installation", () => {
             "-e",
             'import { OpenShellClient } from "@nvidia/openshell-sdk"; import { version } from "fixture-sibling"; console.log(JSON.stringify([OpenShellClient.connect(), version]));',
           ],
-          { cwd: workspace, env, timeoutMs: 10_000 },
+          { cwd: workspace, env, owner: context, timeoutMs: 10_000 },
         );
         expect(JSON.parse(observed.stdout)).toEqual(["1.0.0", "1.0.0"]);
         expect(
@@ -373,7 +425,8 @@ describe.concurrent("catalogue OpenShell SDK installation", () => {
   ])(
     "checks $name before running the catalogue target",
     testTimeoutOptions(30_000),
-    async ({ archives, sdk, status, calls, failure }, { expect }) => {
+    async ({ archives, sdk, status, calls, failure }, context) => {
+      const { expect } = context;
       const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-sdk-install-"));
       const archiveDirectory = path.join(directory, "openshell-sdk");
       const bin = path.join(directory, "bin");
@@ -403,6 +456,7 @@ describe.concurrent("catalogue OpenShell SDK installation", () => {
               GITHUB_TOKEN: "github-credential-canary",
               GH_TOKEN: "gh-credential-canary",
             },
+            owner: context,
             timeoutMs: 10_000,
           },
           status,

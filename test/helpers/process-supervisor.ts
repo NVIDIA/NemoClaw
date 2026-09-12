@@ -88,11 +88,14 @@ export function superviseChild(
 
     let timedOut = false;
     let killTimer: NodeJS.Timeout | undefined;
+    let pendingClose: SuperviseResult | undefined;
     const terminate = (): void => {
       signalProcessGroup("SIGTERM");
       if (killTimer) clearTimeout(killTimer);
       killTimer = setTimeout(() => {
         signalProcessGroup("SIGKILL");
+        killTimer = undefined;
+        if (pendingClose) settle(pendingClose);
       }, killGraceMs);
       killTimer.unref();
     };
@@ -142,11 +145,26 @@ export function superviseChild(
       resolve(result);
     };
 
+    const processGroupIsRunning = (): boolean => {
+      if (typeof pgid !== "number") return false;
+      try {
+        process.kill(-pgid, 0);
+        return true;
+      } catch (error) {
+        return (error as NodeJS.ErrnoException).code === "EPERM";
+      }
+    };
+
     child.on("error", (err) => {
       settle({ exitCode: null, signal: null, timedOut, spawnError: err });
     });
     child.on("close", (code, signal) => {
-      settle({ exitCode: code, signal, timedOut });
+      const result = { exitCode: code, signal, timedOut };
+      if (killTimer && processGroupIsRunning()) {
+        pendingClose = result;
+        return;
+      }
+      settle(result);
     });
   });
 }
