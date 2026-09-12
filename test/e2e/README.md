@@ -653,6 +653,8 @@ rebuilding its locked image:
 scripts/test-launch-readiness-lease.sh <openclaw-sandbox>
 ```
 
+The helper fails if the selected acceptance test does not execute.
+
 Run this helper on Linux after the sandbox's final durable home and state
 volume is mounted and after final policy and network provisioning is complete.
 The launch-readiness lease path that it validates is currently Linux-only.
