@@ -147,7 +147,10 @@ import {
   recoverHermesPortableInferenceForConnectProbe,
   type HermesPortableInferenceConnectRecoveryFailure,
 } from "./probe/hermes-portable-inference-recovery";
-import { runTerminalAgentConnectProbe } from "./terminal-connect-probe";
+import {
+  runTerminalAgentConnectProbe,
+  verifyDcodeConnectInference,
+} from "./terminal-connect-probe";
 import { applyOpenShellVmDnsMonkeypatch, shouldApplyVmDnsMonkeypatch } from "./vm-dns-monkeypatch";
 
 export { runConnectAutoPairApprovalPass, waitForManagedGatewaySupervisor };
@@ -1662,6 +1665,20 @@ async function ensureSandboxInferenceRouteUnlocked(
         return { sandbox: sb, routeHealthy: false };
       }
     }
+    // Model discovery can answer while the selected model's inference route fails.
+    if (agent?.name === "langchain-deepagents-code" && routeReady) {
+      routeReady = await verifyDcodeConnectInference(
+        {
+          sandboxName,
+          gatewayName,
+          provider,
+          model,
+          preferredInferenceApi: sb.preferredInferenceApi ?? null,
+        },
+        sandboxCommandExecutor,
+      );
+      if (!routeReady) console.error(`  Run:  ${CLI_NAME} ${sandboxName} doctor`);
+    }
     return { sandbox: sb, routeHealthy: routeReady };
   } catch (error) {
     if (!sb || inference?.kind !== "configured") return { sandbox: sb, routeHealthy: null };
@@ -1719,6 +1736,12 @@ async function ensureSandboxInferenceRouteOrExit(
   { quiet = false }: { quiet?: boolean } = {},
 ): Promise<SandboxEntry | null> {
   const result = await ensureSandboxInferenceRoute(sandboxName, agent, { quiet });
+  if (agent?.name === "langchain-deepagents-code" && result.routeHealthy === null) {
+    console.error(
+      `  Connect failed: Deep Agents Code inference route could not be verified in '${sandboxName}'; the recorded provider or model is missing.`,
+    );
+    process.exit(1);
+  }
   if (result.routeHealthy === false) {
     process.exit(1);
   }
@@ -2185,7 +2208,10 @@ async function runConnectEntryPreflight(
 export async function printInteractiveSessionHints(sandboxName: string): Promise<void> {
   // Version staleness check — warn but don't block
   try {
-    const versionCheck = await sandboxVersion.checkAgentVersion(sandboxName);
+    // A live DCode version command can source personal profiles before route verification.
+    const versionCheck = await sandboxVersion.checkAgentVersion(sandboxName, {
+      skipProbe: agentRuntime.getSessionAgent(sandboxName)?.name === "langchain-deepagents-code",
+    });
     if (versionCheck.isStale) {
       for (const line of sandboxVersion.formatStalenessWarning(sandboxName, versionCheck)) {
         console.error(line);

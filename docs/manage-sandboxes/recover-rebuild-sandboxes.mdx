@@ -182,9 +182,8 @@ During the lease, `launch` still verifies the owning OpenShell gateway, exact li
 Configured inference must return HTTP 2xx from the semantic `inference.local` probe, which is stricter than the HTTP 200–499 reachability diagnostic used by ordinary `connect`.
 </AgentOnly>
 <AgentOnly variant="deepagents">
-Configured inference must return HTTP 2xx from the semantic `inference.local` probe for every provider except `openrouter-api`.
-The OpenRouter adapter returns HTTP 404 for `GET /v1/models`.
-NemoClaw accepts that result only after a bounded inference request for the recorded model succeeds.
+Every configured route must serve a valid response to a bounded request for the recorded model before NemoClaw accepts or publishes launch readiness.
+The models probe must return HTTP 2xx, except that `openrouter-api` can return HTTP 404 for `GET /v1/models`.
 A failed request rejects launch readiness and identifies the inference request as the failed check.
 </AgentOnly>
 <AgentOnly variant="openclaw">

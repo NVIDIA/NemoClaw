@@ -464,6 +464,13 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
   const inferenceProbeResponses = [...(options.inferenceProbeResponses ?? [])];
   const listOutputs = [...(options.listOutputs ?? [])];
   const sandboxRunBufferedSpy = vi.fn(async (request: OpenShellSandboxBufferedCommandRequest) => {
+    if (request.command.join(" ").includes("/v1/chat/completions")) {
+      return {
+        outcome: { kind: "completed", exitCode: 0 },
+        stdout: '200\n{"choices":[{"message":{"content":"OK"}}]}',
+        stderr: "",
+      } satisfies OpenShellSandboxBufferedCommandCompletion;
+    }
     if (!request.command.join(" ").includes("inference.local/v1/models")) {
       return {
         outcome: { kind: "completed", exitCode: 0 },
@@ -618,6 +625,9 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     agent: options.agentName ?? "openclaw",
     provider: options.agentName === "hermes" ? "ollama-local" : null,
     model: options.agentName === "hermes" ? "qwen3-vl:4b" : null,
+    ...(options.agentName === "langchain-deepagents-code"
+      ? { provider: "nvidia-prod", model: "nvidia/nemotron-3-super-120b-a12b" }
+      : {}),
     lifecycleLiveIdentityFingerprint:
       portableDisposition.kind === "hermes"
         ? portableDisposition.liveIdentityFingerprint
