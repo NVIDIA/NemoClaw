@@ -1354,6 +1354,7 @@ const {
   adoptPackagedGatewayOwnerAfterTrustedInstall,
   assertGatewayStartAllowed,
   bindGatewayOwner,
+  getGatewayForwardRuntimeAuthority,
   getGatewayLocalEndpoint,
   getGatewayOwner,
   getGatewayStartEnv,
@@ -1372,7 +1373,6 @@ const {
   resolveOpenShellGatewayBinary,
   waitForGatewayHttpReady,
 });
-
 const gatewayRegistration = createGatewayRegistration({
   gatewayName: () => GATEWAY_NAME,
   getDockerDriverGatewayEndpointArg,
@@ -2504,7 +2504,6 @@ const setupOpenclaw = openclawSetup.createOpenclawSetup({
   agentProductName,
   configureOpenclawSandbox,
 });
-
 const {
   buildChain,
   buildAgentVerifyChain,
@@ -2530,6 +2529,7 @@ const {
   redact,
   sleep: sleepSeconds,
   productionForwardService: true,
+  getGatewayForwardRuntimeAuthority,
   printAgentDashboardUi: agentOnboard.printDashboardUi,
 });
 const onboardRuntimeBoundary = new OnboardRuntimeBoundary({
