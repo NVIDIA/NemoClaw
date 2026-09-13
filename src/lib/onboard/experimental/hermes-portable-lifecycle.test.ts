@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -15,8 +14,8 @@ import type { SandboxEntry } from "../../state/registry";
 import { fingerprintOpenShellSandboxLiveIdentity } from "../../adapters/openshell/sandbox-identity";
 import type { ContainerEngineCommandCapture } from "../../adapters/container-engine";
 import { hermesPortableContainerInternals } from "./hermes-portable-container";
-import { resolveHermesPortableStartupContract } from "./hermes-portable-contract";
 import {
+  createHermesPortableLifecycleTestReceipt,
   testOpenShellExecutableAuthority,
   testPodmanExecutableAuthority,
   testPodmanExecutableAuthorityDeps,
@@ -37,14 +36,10 @@ import {
   type HermesPortableLifecycleDeps,
 } from "./hermes-portable-lifecycle";
 import {
-  captureHermesPortablePolicySource,
-  publishHermesPortableDurablePolicySource,
-  publishHermesPortableLifecycleReceipt,
   publishHermesPortableSuccessorReceipt,
   readHermesPortableLifecycleReceipt,
   readHermesPortableLifecycleReceiptForRequalification,
   type HermesPortableConfiguredReceipt,
-  type HermesPortablePendingReceipt,
 } from "./hermes-portable-receipt";
 
 const SANDBOX = "alpha";
@@ -69,89 +64,19 @@ function startupArgv() {
   return renderStartupArgv(SANDBOX);
 }
 function activeReceipt(homeDir = "/home/test"): HermesPortableConfiguredReceipt {
-  const uid = process.getuid!();
-  const socketPath = `/run/user/${String(uid)}/podman/podman.sock`;
-  const transactionId = randomUUID();
-  const policy = publishHermesPortableDurablePolicySource({
-    sandboxName: SANDBOX,
-    transactionId,
+  return createHermesPortableLifecycleTestReceipt({
+    agent: loadAgent("hermes"),
     stateDir,
-    source: captureHermesPortablePolicySource(policyPath),
-    hooks: { assertLifecycleLock: () => undefined },
-  });
-  const pending: HermesPortablePendingReceipt = {
-    schemaVersion: 7,
-    agent: "hermes",
-    phase: "pending",
-    transactionId,
-    createIntentSha256: "c".repeat(64),
+    policyPath,
+    homeDir,
     sandboxName: SANDBOX,
     gatewayName: GATEWAY,
     lifecycleGeneration: GENERATION,
-    runtimeAuthority: {
-      schemaVersion: 1,
-      kind: "podman",
-      ownership: "current-user",
-      uid,
-      homeDir,
-      configHome: path.join(homeDir, ".config"),
-      runtimeDir: `/run/user/${String(uid)}`,
-      socketPath,
-    },
-    openshellExecutableAuthority: testOpenShellExecutableAuthority(),
-    podmanExecutableAuthority: testPodmanExecutableAuthority(),
-    socketAuthority: {
-      device: "1",
-      inode: "2",
-      mode: String(0o140600),
-      ownerUid: String(uid),
-      socketPath,
-      directoryChain: directoryChain(path.dirname(socketPath)).map((directory, index) => ({
-        device: "1",
-        inode: String(index + 3),
-        mode: String(index === 0 ? 0o40700 : 0o40755),
-        ownerUid: String(index === 0 ? uid : 0),
-        path: directory,
-      })),
-    },
-    startup: resolveHermesPortableStartupContract({
-      agent: loadAgent("hermes"),
-      sandboxName: SANDBOX,
-      startupArgv: startupArgv(),
-    }),
-    policy,
-  };
-  const first = publishHermesPortableLifecycleReceipt(pending, stateDir, {
-    assertLifecycleLock: () => undefined,
+    containerId: CONTAINER_ID,
+    imageDigest: IMAGE,
+    sandboxId: SANDBOX_ID,
+    labels: LABELS,
   });
-  const { policy: _policy, ...transaction } = pending;
-  const configuring: HermesPortableConfiguredReceipt = {
-    ...transaction,
-    phase: "configuring",
-    previousPhaseSha256: first.sha256,
-    container: {
-      containerId: CONTAINER_ID,
-      sandboxId: SANDBOX_ID,
-      imageId: `sha256:${IMAGE}`,
-      labelsSha256: hermesPortableContainerInternals.labelsDigest(LABELS),
-      name: `openshell-default--${SANDBOX}-${SANDBOX_ID}`,
-      running: true,
-      restartPolicy: "no",
-    },
-  };
-  const second = publishHermesPortableLifecycleReceipt(configuring, stateDir, {
-    assertLifecycleLock: () => undefined,
-  });
-  const active: HermesPortableConfiguredReceipt = {
-    ...configuring,
-    phase: "active",
-    previousPhaseSha256: second.sha256,
-    container: { ...configuring.container, restartPolicy: "unless-stopped" },
-  };
-  publishHermesPortableLifecycleReceipt(active, stateDir, {
-    assertLifecycleLock: () => undefined,
-  });
-  return active;
 }
 function lifecycleDeps(
   receipt: HermesPortableConfiguredReceipt,
@@ -164,15 +89,16 @@ function lifecycleDeps(
     readonly failPostStartInspectOnce?: boolean;
     readonly stopRequiresAssist?: boolean;
     readonly startStatus?: number;
+    readonly initialPhase?: "Ready" | "Error" | "Stopped";
   } = {},
 ) {
   let running = initiallyRunning,
     workloadRunning = initiallyRunning,
     now = 0;
-  let lifecyclePhase: "Ready" | "Stopped" | undefined;
+  let lifecyclePhase: "Ready" | "Error" | "Stopped" | undefined = options.initialPhase;
   let postStartInspectFailurePending = false;
   const sandboxPhase = () =>
-    options.sandboxPhase?.(running) ?? lifecyclePhase ?? (running ? "Ready" : "Error");
+    options.sandboxPhase?.(running) ?? lifecyclePhase ?? (running ? "Ready" : "Stopped");
   const podman = vi.fn((args: readonly string[]) => {
     const actions = {
       inspect: () => {
@@ -355,6 +281,57 @@ afterEach(() => {
 });
 
 describe("Hermes portable lifecycle", () => {
+  it.each([
+    { initialPhase: "Error" as const, running: true },
+    { initialPhase: "Error" as const, running: false },
+    { initialPhase: "Ready" as const, running: false },
+  ])(
+    "rejects unsupported saved $initialPhase with running=$running before mutation (#11646)",
+    ({ initialPhase, running }) => {
+      const fixture = lifecycleDeps(activeReceipt(), running, { initialPhase });
+      expect(() =>
+        withMcpLifecycleLockSync(
+          SANDBOX,
+          () => recoverHermesPortableSandboxLifecycle(SANDBOX, lifecycleContext(), fixture.deps),
+          { stateDir: path.join(stateDir, "state") },
+        ),
+      ).toThrow(`saved OpenShell phase ${initialPhase}`);
+      expect(openshellMutationCalls(fixture.captureOpenShell, "start")).toHaveLength(0);
+      expect(openshellMutationCalls(fixture.captureOpenShell, "stop")).toHaveLength(0);
+      expect(fixture.launchOpenShell).not.toHaveBeenCalled();
+    },
+  );
+
+  it("reconciles saved Stopped with a running container through OpenShell (#11646)", () => {
+    const fixture = lifecycleDeps(activeReceipt(), true, { initialPhase: "Stopped" });
+    const result = withMcpLifecycleLockSync(
+      SANDBOX,
+      () => recoverHermesPortableSandboxLifecycle(SANDBOX, lifecycleContext(), fixture.deps),
+      { stateDir: path.join(stateDir, "state") },
+    );
+    expect(result).toEqual({ kind: "recovered" });
+    expect(openshellMutationCalls(fixture.captureOpenShell, "start")).toHaveLength(1);
+    expect(openshellMutationCalls(fixture.captureOpenShell, "stop")).toHaveLength(0);
+    expect(fixture.launchOpenShell).not.toHaveBeenCalled();
+  });
+
+  it("preserves the pre-existing container when saved-phase reconciliation fails (#11646)", () => {
+    const fixture = lifecycleDeps(activeReceipt(), true, {
+      initialPhase: "Stopped",
+      startStatus: 1,
+    });
+    expect(() =>
+      withMcpLifecycleLockSync(
+        SANDBOX,
+        () => recoverHermesPortableSandboxLifecycle(SANDBOX, lifecycleContext(), fixture.deps),
+        { stateDir: path.join(stateDir, "state") },
+      ),
+    ).toThrow("OpenShell start failed");
+    expect(openshellMutationCalls(fixture.captureOpenShell, "start")).toHaveLength(1);
+    expect(openshellMutationCalls(fixture.captureOpenShell, "stop")).toHaveLength(0);
+    expect(fixture.launchOpenShell).not.toHaveBeenCalled();
+  });
+
   it("uses one entry and final qualification when the timing callback fails (#10423)", () => {
     const receipt = activeReceipt();
     publishSuccessor();
@@ -392,8 +369,8 @@ describe("Hermes portable lifecycle", () => {
     const operations = fixture.captureOpenShell.mock.calls.map(([args]) =>
       args.slice(0, 2).join(":"),
     );
-    expect(operations.filter((operation) => operation === "sandbox:list")).toHaveLength(3);
-    expect(operations.filter((operation) => operation === "sandbox:get")).toHaveLength(3);
+    expect(operations.filter((operation) => operation === "sandbox:list")).toHaveLength(4);
+    expect(operations.filter((operation) => operation === "sandbox:get")).toHaveLength(4);
     expect(operations.filter((operation) => operation === "policy:get")).toHaveLength(3);
     expect(openshellMutationCalls(fixture.captureOpenShell, "start")).toHaveLength(1);
     expect(openshellMutationCalls(fixture.captureOpenShell, "stop")).toHaveLength(0);
@@ -511,11 +488,11 @@ describe("Hermes portable lifecycle", () => {
     );
   });
 
-  it("uses post-start authority to roll back an Error-origin OpenShell sandbox", () => {
+  it("uses post-start authority to roll back a Stopped-origin OpenShell sandbox", () => {
     const receipt = activeReceipt();
     publishSuccessor();
     const fixture = lifecycleDeps(receipt, false, {
-      sandboxPhase: (running) => (running ? "Stopped" : "Error"),
+      sandboxPhase: () => "Stopped",
       stopRequiresAssist: true,
     });
     const defaultCapture = fixture.captureOpenShell.getMockImplementation()!;
@@ -556,19 +533,12 @@ describe("Hermes portable lifecycle", () => {
     publishSuccessor();
     const fixture = lifecycleDeps(receipt, false);
     const defaultCapture = fixture.captureOpenShell.getMockImplementation()!;
-    fixture.captureOpenShell
-      .mockImplementationOnce(defaultCapture)
-      .mockImplementationOnce(defaultCapture)
-      .mockImplementationOnce(defaultCapture)
-      .mockImplementationOnce(defaultCapture)
-      .mockImplementationOnce(defaultCapture)
-      .mockImplementationOnce(defaultCapture)
-      .mockReturnValueOnce({
-        status: 0,
-        stdout: sandboxListJson("rebound-sandbox-id", "Ready"),
-        stderr: "",
-      })
-      .mockImplementation(defaultCapture);
+    let listObservations = 0;
+    fixture.captureOpenShell.mockImplementation((args: readonly string[]) => {
+      return args[0] === "sandbox" && args[1] === "list" && ++listObservations === 3
+        ? { status: 0, stdout: sandboxListJson("rebound-sandbox-id", "Ready"), stderr: "" }
+        : defaultCapture(args);
+    });
     expect(() =>
       withMcpLifecycleLockSync(
         SANDBOX,
@@ -950,8 +920,12 @@ describe("Hermes portable lifecycle", () => {
 
   it("preserves startup and terminal-settlement failure classes together (#11248)", () => {
     const receipt = activeReceipt();
+    let observedRunning = false;
     const { deps, podman, captureOpenShell, launchOpenShell } = lifecycleDeps(receipt, false, {
-      sandboxPhase: () => "Ready",
+      sandboxPhase: (running) => {
+        observedRunning ||= running;
+        return observedRunning ? "Ready" : "Stopped";
+      },
     });
     const defaultCapture = captureOpenShell.getMockImplementation()!;
     captureOpenShell.mockImplementation((args: readonly string[]) =>
