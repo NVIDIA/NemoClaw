@@ -875,12 +875,29 @@ case "${1:-}" in
     ;;
 esac
 
+is_non_interactive_long_option() {
+  case "$1" in
+    --non | --non- | --non-i | --non-in | --non-int | --non-inte | --non-inter | --non-intera | --non-interac | --non-interact | --non-interacti | --non-interactiv | --non-interactive)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 managed_headless=false
 for arg in "$@"; do
   case "$arg" in
-    -n | -n?* | --non-interactive | --non-interactive=*)
+    -n | -n?*)
       managed_headless=true
       break
+      ;;
+    *)
+      if is_non_interactive_long_option "${arg%%=*}"; then
+        managed_headless=true
+        break
+      fi
       ;;
   esac
 done
@@ -1016,14 +1033,25 @@ while [ "$arg_index" -lt "${#dcode_args[@]}" ]; do
       arg_index=$((value_index + 1))
       continue
       ;;
-    --non-interactive=*)
-      if prompt_is_blank "${current_arg#--non-interactive=}"; then
-        reject_empty_non_interactive "--non-interactive"
-      fi
-      ;;
     -n?*)
       if prompt_is_blank "${current_arg#-n}"; then
         reject_empty_non_interactive "-n"
+      fi
+      ;;
+    *)
+      current_name="${current_arg%%=*}"
+      if is_non_interactive_long_option "$current_name"; then
+        if [ "$current_name" = "$current_arg" ]; then
+          value_index=$((arg_index + 1))
+          if [ "$value_index" -lt "${#dcode_args[@]}" ] && prompt_is_blank "${dcode_args[value_index]}"; then
+            reject_empty_non_interactive "$current_name"
+          fi
+          arg_index=$((value_index + 1))
+          continue
+        fi
+        if prompt_is_blank "${current_arg#*=}"; then
+          reject_empty_non_interactive "$current_name"
+        fi
       fi
       ;;
   esac

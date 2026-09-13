@@ -448,6 +448,34 @@ describe.concurrent("LangChain Deep Agents Code managed entrypoints", () => {
     expect(fs.existsSync(ranMarker)).toBe(false);
   });
 
+  it.each([["--non", "hi"], ["--non-", "hi"], ["--non-int", "hi"], ["--non-interactive=hi"]])(
+    "applies headless restrictions for unambiguous non-interactive prefix %s",
+    async (...args) => {
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-headless-prefix-"));
+      const { wrapperPath, ranMarker } = makeWrapperFixture(tempDir);
+      const result = await runCommand("bash", [wrapperPath, ...args, "--interpreter"], {
+        env: { PATH: process.env.PATH ?? "/usr/bin:/bin" },
+        encoding: "utf8",
+      });
+
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain("headless interpreter");
+      expect(fs.existsSync(ranMarker)).toBe(false);
+    },
+  );
+
+  it("does not classify invalid non-interactive option names as headless", async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-invalid-prefix-"));
+    const { wrapperPath, ranMarker } = makeWrapperFixture(tempDir);
+    const result = await runCommand("bash", [wrapperPath, "--non-invalid", "--interpreter"], {
+      env: { PATH: process.env.PATH ?? "/usr/bin:/bin" },
+      encoding: "utf8",
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(fs.existsSync(ranMarker)).toBe(true);
+  });
+
   it.each([
     { label: "ambient only", prepare: (_path: string) => undefined },
     {

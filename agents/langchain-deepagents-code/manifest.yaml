@@ -54,10 +54,10 @@ state_dirs:
 # ── Top-level durable state files ───────────────────────────────
 # config.toml mixes DCode preferences with NemoClaw-managed model routing.
 # Ownership is split into three explicit buckets. Users own only the allowlisted
-# ui.show_scrollbar, ui.show_url_open_toast, threads.relative_time, and
-# threads.sort_order preferences below. NemoClaw owns the fresh models/update
-# tables and generated provider headers. Agent-runtime, unknown, executable, and
-# security-sensitive backup keys are not restorable and are dropped.
+# UI and thread preferences, native interpreter settings, and the startup
+# approval mode below. NemoClaw owns the fresh models/update tables and generated
+# provider headers. Unknown, privileged, and security-sensitive backup keys are
+# not restorable and are dropped.
 # .env and user-authored .deepagents/.mcp.json content are intentionally omitted
 # because they may contain service credentials. NemoClaw writes only direct-HTTP
 # bridge endpoint config and OpenShell placeholders to its separate
@@ -89,6 +89,35 @@ state_files:
           values:
             - updated_at
             - created_at
+        - key: interpreter.enable_interpreter
+          type: boolean
+        - key: interpreter.timeout_seconds
+          type: number
+          min: 0
+        - key: interpreter.memory_limit_mb
+          type: integer
+          min: 1
+        - key: interpreter.max_ptc_calls
+          type: integer
+          min: 0
+        - key: interpreter.max_result_chars
+          type: integer
+          min: 0
+        - key: interpreter.ptc
+          type: enum
+          values:
+            - safe
+            - all
+            - false
+        - key: interpreter.ptc_acknowledge_unsafe
+          type: boolean
+        - key: startup.mode
+          type: enum
+          values:
+            - manual
+            - auto
+            - yolo
+  - hooks.json
 user_managed_files:
   - .deepagents/.env
   - .deepagents/.mcp.json

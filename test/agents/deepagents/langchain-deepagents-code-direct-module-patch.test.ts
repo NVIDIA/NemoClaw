@@ -232,6 +232,21 @@ else:
     expect(`${result.stdout}\n${result.stderr}`).toContain("managed headless");
   });
 
+  it.each([["-n", ""], ["--non-interactive="]])(
+    "rejects an empty direct-module headless prompt before local overrides: %s",
+    (...args) => {
+      const tempDir = createPatchedPackageFixture();
+      const result = spawnSync("python3", ["-m", "deepagents_code", ...args, "--interpreter"], {
+        env: { PATH: process.env.PATH, PYTHONPATH: tempDir },
+        encoding: "utf8",
+      });
+
+      expect(result.status).not.toBe(0);
+      expect(`${result.stdout}\n${result.stderr}`).toContain("empty managed headless prompt");
+      expect(`${result.stdout}\n${result.stderr}`).not.toContain("managed-posture-ok");
+    },
+  );
+
   it.each([["-y"], ["--auto-approve"]])(
     "preserves explicit direct-module auto-approval in thread-opt-in mode: %s (#6478)",
     (...args) => {
@@ -1327,6 +1342,34 @@ print("managed-auto-approval-ok")
     });
     expect(shapeResult.status).not.toBe(0);
     expect(shapeResult.stderr).toContain("_prompt_launch_tavily");
+
+    const missingApprovalMethod = createPackageFixture();
+    const approvalAppPath = path.join(missingApprovalMethod, "deepagents_code", "app.py");
+    fs.writeFileSync(
+      approvalAppPath,
+      fs.readFileSync(approvalAppPath, "utf8").replace("_set_approval_mode", "_renamed_mode"),
+      "utf8",
+    );
+    const approvalMethodResult = spawnSync("python3", [patcher], {
+      env: { PATH: process.env.PATH, PYTHONPATH: missingApprovalMethod },
+      encoding: "utf8",
+    });
+    expect(approvalMethodResult.status).not.toBe(0);
+    expect(approvalMethodResult.stderr).toContain("_set_approval_mode");
+
+    const missingApprovalEnum = createPackageFixture();
+    const approvalModePath = path.join(missingApprovalEnum, "deepagents_code", "approval_mode.py");
+    fs.writeFileSync(
+      approvalModePath,
+      fs.readFileSync(approvalModePath, "utf8").replace("class ApprovalMode", "class RenamedMode"),
+      "utf8",
+    );
+    const approvalEnumResult = spawnSync("python3", [patcher], {
+      env: { PATH: process.env.PATH, PYTHONPATH: missingApprovalEnum },
+      encoding: "utf8",
+    });
+    expect(approvalEnumResult.status).not.toBe(0);
+    expect(approvalEnumResult.stderr).toContain("ApprovalMode");
 
     const missingFetch = createPackageFixture();
     const toolsPath = path.join(missingFetch, "deepagents_code", "tools.py");

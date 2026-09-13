@@ -100,7 +100,10 @@ MAIN_PATCH = '''    # NemoClaw-managed Deep Agents Code hardening v2.
     )
 
     nemoclaw_auto_approval_enabled = _nemoclaw_managed_auto_approval_enabled()
-    nemoclaw_headless = bool(getattr(args, "non_interactive_message", None))
+    nemoclaw_non_interactive_message = getattr(args, "non_interactive_message", None)
+    nemoclaw_headless = nemoclaw_non_interactive_message is not None
+    if nemoclaw_headless and not nemoclaw_non_interactive_message.strip():
+        parser.error("empty managed headless prompt; provide prompt text")
     blocked_command = getattr(args, "command", None)
     if blocked_command == "mcp":
         parser.error("MCP commands are disabled in NemoClaw-managed Deep Agents Code sandboxes")
@@ -1742,6 +1745,8 @@ def main() -> None:
     compile(managed_runtime_source, str(MANAGED_RUNTIME_SOURCE_PATH), "exec")
 
     root = _package_root()
+    approval_mode_path = root / "approval_mode.py"
+    approval_mode_text = approval_mode_path.read_text(encoding="utf-8")
     paths = {
         "entrypoint": root / "__main__.py",
         "main": root / "main.py",
@@ -1894,9 +1899,19 @@ def main() -> None:
             "_switch_model",
             "_absolutize_launch_relative_path",
             "_set_rubric_model",
+            "_set_approval_mode",
             "_on_auto_approve_enabled",
             "action_toggle_auto_approve",
         },
+    )
+    approval_mode_tree = ast.parse(
+        approval_mode_text,
+        filename=str(approval_mode_path),
+    )
+    _require_symbols(
+        approval_mode_path,
+        approval_mode_tree,
+        {"ApprovalMode"},
     )
     _require_functions(
         paths["auth_store"], texts["auth_store"], {"load_credentials", "set_stored_key"}
