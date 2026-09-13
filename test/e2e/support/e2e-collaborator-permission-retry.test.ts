@@ -2,14 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
+import { spawn } from "node:child_process";
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { describe, it, vi } from "vitest";
+import { describe, it, type TestContext, vi } from "vitest";
 
 import { readWorkflow } from "../../helpers/e2e-workflow-contract";
+import { superviseChild } from "../../helpers/process-supervisor";
 
 type AuthorizationStep = {
   deniedMessage: string;
@@ -18,6 +19,7 @@ type AuthorizationStep = {
 };
 
 type PermissionScenario =
+  | "blocking"
   | "denied"
   | "malformed-success"
   | "mismatched-actor"
@@ -40,18 +42,44 @@ type RunProcessResult = {
   stderr: string;
 };
 
-function runProcess(file: string, args: readonly string[], env: NodeJS.ProcessEnv) {
-  return new Promise<RunProcessResult>((resolve) => {
-    execFile(file, [...args], { encoding: "utf8", env }, (error, stdout, stderr) => {
-      const signal = error?.signal ?? null;
-      resolve({
-        status: signal ? null : Number(error?.code) || (error ? -1 : 0),
-        signal,
-        stdout,
-        stderr,
-      });
-    });
+function runProcess(
+  file: string,
+  args: readonly string[],
+  env: NodeJS.ProcessEnv,
+  owner: Pick<TestContext, "onTestFinished" | "signal">,
+) {
+  owner.signal.throwIfAborted();
+  let stdout = "";
+  let stderr = "";
+  const child = spawn(file, [...args], {
+    detached: true,
+    env,
+    stdio: ["ignore", "pipe", "pipe"],
   });
+  const finishController = new AbortController();
+  const resultPromise = superviseChild(child, {
+    killGraceMs: 0,
+    onStderr: (chunk) => {
+      stderr += chunk;
+    },
+    onStdout: (chunk) => {
+      stdout += chunk;
+    },
+    signal: AbortSignal.any([owner.signal, finishController.signal]),
+    timeoutMs: 10_000,
+  }).then((result): RunProcessResult => ({
+    signal: result.signal,
+    status: result.signal
+      ? null
+      : (result.exitCode ?? (result.spawnError || result.cleanupError ? -1 : null)),
+    stderr,
+    stdout,
+  }));
+  owner.onTestFinished(async () => {
+    finishController.abort();
+    await resultPromise;
+  });
+  return resultPromise;
 }
 
 vi.setConfig({ maxConcurrency: 8 });
@@ -73,13 +101,17 @@ function lines(path: string): string[] {
 }
 
 async function runAuthorization(
+  owner: Pick<TestContext, "onTestFinished" | "signal">,
   stepName: string,
   scenario: PermissionScenario,
-  options: { actor?: string; status?: string } = {},
+  options: { actor?: string; onFixtureCreated?: (fixture: string) => void; status?: string } = {},
 ) {
   const fixture = mkdtempSync(join(tmpdir(), "nemoclaw-collaborator-permission-"));
+  options.onFixtureCreated?.(fixture);
   const attemptFile = join(fixture, "attempts");
   const curlLog = join(fixture, "curl.log");
+  const permissionProcessFile = join(fixture, "permission-process");
+  const permissionReadyFile = join(fixture, "permission-ready");
   const sleepLog = join(fixture, "sleep.log");
   const curlPath = join(fixture, "curl");
   const sleepPath = join(fixture, "sleep");
@@ -109,6 +141,11 @@ if [[ "$url" == *"/collaborators/"*"/permission" ]]; then
   curl_exit=0
   printf -v body '{"user":{"login":"%s"},"role_name":"admin"}' "$actor"
   case "$PERMISSION_SCENARIO" in
+    blocking)
+      printf '%s\n' "$$" >"$PERMISSION_PROCESS_FILE"
+      : >"$PERMISSION_READY_FILE"
+      exec /bin/sleep 60
+      ;;
     transient-then-success)
       if (( attempt == 1 )); then status="$PERMISSION_TEST_STATUS"; body="private-response-body"; fi
       ;;
@@ -136,46 +173,66 @@ printf '%s\n' "$1" >>"$SLEEP_LOG"
   chmodSync(curlPath, 0o755);
   chmodSync(sleepPath, 0o755);
 
-  const workflowSha = "c".repeat(40);
-  const result = await runProcess(
-    "bash",
-    ["--noprofile", "--norc", "-c", authorizationScript(stepName)],
-    {
-      ...process.env,
-      ACTOR: options.actor ?? "dispatch-admin",
-      ALLOW_JETSON_DISPATCH: "false",
-      BASE_SHA: "b".repeat(40),
-      CHECKOUT_REPOSITORY: "contributor/NemoClaw",
-      CHECKOUT_SHA: "",
-      CURL_LOG: curlLog,
-      EXPECTED_WORKFLOW_SHA: workflowSha,
-      GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
-      GITHUB_TOKEN: "private-test-token",
-      INCLUDE_LAUNCHABLE: "true",
-      JOBS: "",
-      PATH: `${fixture}:${process.env.PATH ?? ""}`,
-      PERMISSION_ATTEMPT_FILE: attemptFile,
-      PERMISSION_SCENARIO: scenario,
-      PERMISSION_TEST_STATUS: options.status ?? "503",
-      PR_NUMBER: "42",
-      REVIEW_REASON: "Reviewed latest PR commit",
-      RUN_ATTEMPT: "1",
-      RUNNER_TEMP: fixture,
-      SLEEP_LOG: sleepLog,
-      TARGETS: "",
-      TRIGGERING_ACTOR: "dispatch-admin",
-      WORKFLOW_EVENT: "workflow_dispatch",
-      WORKFLOW_REF: "refs/heads/main",
-      WORKFLOW_SHA: workflowSha,
-    },
-  );
-  const permissionAttempts = existsSync(attemptFile)
-    ? Number.parseInt(readFileSync(attemptFile, "utf8"), 10)
-    : 0;
-  const curlOperations = lines(curlLog);
-  const sleeps = lines(sleepLog);
-  rmSync(fixture, { force: true, recursive: true });
-  return { ...result, curlOperations, permissionAttempts, sleeps };
+  try {
+    const workflowSha = "c".repeat(40);
+    const result = await runProcess(
+      "bash",
+      ["--noprofile", "--norc", "-c", authorizationScript(stepName)],
+      {
+        ...process.env,
+        ACTOR: options.actor ?? "dispatch-admin",
+        ALLOW_JETSON_DISPATCH: "false",
+        BASE_SHA: "b".repeat(40),
+        CHECKOUT_REPOSITORY: "contributor/NemoClaw",
+        CHECKOUT_SHA: "",
+        CURL_LOG: curlLog,
+        EXPECTED_WORKFLOW_SHA: workflowSha,
+        GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
+        GITHUB_TOKEN: "private-test-token",
+        INCLUDE_LAUNCHABLE: "true",
+        JOBS: "",
+        PATH: `${fixture}:${process.env.PATH ?? ""}`,
+        PERMISSION_ATTEMPT_FILE: attemptFile,
+        PERMISSION_PROCESS_FILE: permissionProcessFile,
+        PERMISSION_READY_FILE: permissionReadyFile,
+        PERMISSION_SCENARIO: scenario,
+        PERMISSION_TEST_STATUS: options.status ?? "503",
+        PR_NUMBER: "42",
+        REVIEW_REASON: "Reviewed latest PR commit",
+        RUN_ATTEMPT: "1",
+        RUNNER_TEMP: fixture,
+        SLEEP_LOG: sleepLog,
+        TARGETS: "",
+        TRIGGERING_ACTOR: "dispatch-admin",
+        WORKFLOW_EVENT: "workflow_dispatch",
+        WORKFLOW_REF: "refs/heads/main",
+        WORKFLOW_SHA: workflowSha,
+      },
+      owner,
+    );
+    const permissionAttempts = existsSync(attemptFile)
+      ? Number.parseInt(readFileSync(attemptFile, "utf8"), 10)
+      : 0;
+    const permissionPid = existsSync(permissionProcessFile)
+      ? Number.parseInt(readFileSync(permissionProcessFile, "utf8"), 10)
+      : undefined;
+    let permissionProcessRunning = false;
+    try {
+      process.kill(permissionPid ?? Number.NaN, 0);
+      permissionProcessRunning = true;
+    } catch {
+      // No permission process was started, or the cancelled process is gone as required.
+    }
+    return {
+      ...result,
+      curlOperations: lines(curlLog),
+      permissionAttempts,
+      permissionProcessRunning,
+      sleeps: lines(sleepLog),
+    };
+  } finally {
+    rmSync(fixture, { force: true, recursive: true });
+  }
 }
 
 describe.concurrent.each(AUTHORIZATION_STEPS)(
@@ -183,8 +240,9 @@ describe.concurrent.each(AUTHORIZATION_STEPS)(
   ({ deniedMessage, mismatchMessage, name }) => {
     it.for(["408", "429", "503"])(
       "retries HTTP %s once before authorization succeeds (#9337)",
-      async (status, { expect }) => {
-        const result = await runAuthorization(name, "transient-then-success", { status });
+      async (status, context) => {
+        const { expect } = context;
+        const result = await runAuthorization(context, name, "transient-then-success", { status });
 
         expect(result.status, result.stderr).toBe(0);
         expect(result.permissionAttempts).toBe(2);
@@ -200,8 +258,9 @@ describe.concurrent.each(AUTHORIZATION_STEPS)(
       },
     );
 
-    it("stops after three transient transport failures (#9337)", async ({ expect }) => {
-      const result = await runAuthorization(name, "transport-exhaustion");
+    it("stops after three transient transport failures (#9337)", async (context) => {
+      const { expect } = context;
+      const result = await runAuthorization(context, name, "transport-exhaustion");
 
       expect(result.status).not.toBe(0);
       expect(result.permissionAttempts).toBe(3);
@@ -214,8 +273,9 @@ describe.concurrent.each(AUTHORIZATION_STEPS)(
 
     it.for(["401", "403", "404", "422"])(
       "does not retry HTTP %s (#9337)",
-      async (status, { expect }) => {
-        const result = await runAuthorization(name, "terminal-http", { status });
+      async (status, context) => {
+        const { expect } = context;
+        const result = await runAuthorization(context, name, "terminal-http", { status });
 
         expect(result.status).not.toBe(0);
         expect(result.permissionAttempts).toBe(1);
@@ -228,8 +288,9 @@ describe.concurrent.each(AUTHORIZATION_STEPS)(
       },
     );
 
-    it("does not retry a malformed HTTP 200 response (#9337)", async ({ expect }) => {
-      const result = await runAuthorization(name, "malformed-success");
+    it("does not retry a malformed HTTP 200 response (#9337)", async (context) => {
+      const { expect } = context;
+      const result = await runAuthorization(context, name, "malformed-success");
 
       expect(result.status).not.toBe(0);
       expect(result.permissionAttempts).toBe(1);
@@ -241,8 +302,9 @@ describe.concurrent.each(AUTHORIZATION_STEPS)(
       expect(result.stderr).not.toContain("private-response-body");
     });
 
-    it("does not retry a valid response with an unauthorized role (#9337)", async ({ expect }) => {
-      const result = await runAuthorization(name, "denied");
+    it("does not retry a valid response with an unauthorized role (#9337)", async (context) => {
+      const { expect } = context;
+      const result = await runAuthorization(context, name, "denied");
 
       expect(result.status).not.toBe(0);
       expect(result.permissionAttempts).toBe(1);
@@ -251,8 +313,9 @@ describe.concurrent.each(AUTHORIZATION_STEPS)(
       expect(result.stderr).toContain(deniedMessage);
     });
 
-    it("does not retry a permission response for a different actor (#9337)", async ({ expect }) => {
-      const result = await runAuthorization(name, "mismatched-actor");
+    it("does not retry a permission response for a different actor (#9337)", async (context) => {
+      const { expect } = context;
+      const result = await runAuthorization(context, name, "mismatched-actor");
 
       expect(result.status).not.toBe(0);
       expect(result.permissionAttempts).toBe(1);
@@ -261,8 +324,9 @@ describe.concurrent.each(AUTHORIZATION_STEPS)(
       expect(result.stderr).toContain(mismatchMessage);
     });
 
-    it("rejects an invalid actor before the permission read (#9337)", async ({ expect }) => {
-      const result = await runAuthorization(name, "transient-then-success", {
+    it("rejects an invalid actor before the permission read (#9337)", async (context) => {
+      const { expect } = context;
+      const result = await runAuthorization(context, name, "transient-then-success", {
         actor: "invalid actor",
       });
 
@@ -271,6 +335,43 @@ describe.concurrent.each(AUTHORIZATION_STEPS)(
       expect(result.curlOperations).toEqual([]);
       expect(result.sleeps).toEqual([]);
       expect(result.stderr).toContain("actor is invalid");
+    });
+
+    it("kills a blocked permission read and removes its fixture when cancelled", async (context) => {
+      const deadline = new AbortController();
+      let fixture = "";
+      const resultPromise = runAuthorization(
+        {
+          onTestFinished: (handler) => context.onTestFinished(handler),
+          signal: AbortSignal.any([context.signal, deadline.signal]),
+        },
+        name,
+        "blocking",
+        {
+          onFixtureCreated: (createdFixture) => {
+            fixture = createdFixture;
+          },
+        },
+      );
+      try {
+        await vi.waitFor(
+          () => context.expect(existsSync(join(fixture, "permission-ready"))).toBe(true),
+          {
+            interval: 10,
+            timeout: 5_000,
+          },
+        );
+        deadline.abort();
+        const result = await resultPromise;
+
+        context.expect(result.status).toBeNull();
+        context.expect(result.signal).toMatch(/^SIG(?:TERM|KILL)$/);
+        context.expect(result.permissionProcessRunning).toBe(false);
+        context.expect(existsSync(fixture)).toBe(false);
+      } finally {
+        deadline.abort();
+        await resultPromise;
+      }
     });
   },
 );
