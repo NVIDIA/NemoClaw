@@ -3,6 +3,7 @@
 
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import { matchesGlob } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
@@ -290,6 +291,32 @@ ${serviceIdentityCheck}`,
     );
     const liveSource = readRepoText("test/e2e/live/portable-profile-rootless-linux.test.ts");
     const revisionExpression = "${{ github.event.pull_request.head.sha || github.sha }}";
+
+    // Evaluate selection rather than requiring a particular spelling of the filters.
+    const selects = (event: "pull_request" | "push", changedPath: string) =>
+      workflow.on[event].paths.some((pattern) => matchesGlob(changedPath, pattern));
+    expect.soft(selects("pull_request", "src/lib/actions/sandbox/launch.ts")).toBe(true);
+    expect.soft(selects("pull_request", "src/lib/actions/sandbox/connect.ts")).toBe(true);
+    expect
+      .soft(selects("pull_request", "src/lib/onboard/experimental/hermes-portable-receipt.ts"))
+      .toBe(true);
+    expect
+      .soft(selects("pull_request", "src/lib/state/portable-uninstall-retirement.ts"))
+      .toBe(true);
+    expect.soft(selects("pull_request", "agents/hermes/manifest.yaml")).toBe(true);
+    expect.soft(selects("pull_request", "src/lib/actions/sandbox/start.ts")).toBe(true);
+    expect.soft(selects("pull_request", "docs/get-started/quickstart.mdx")).toBe(false);
+    expect.soft(selects("pull_request", "src/lib/messaging/telegram.ts")).toBe(false);
+    expect.soft(selects("push", "src/lib/actions/sandbox/launch.ts")).toBe(true);
+    expect.soft(selects("push", "src/lib/actions/sandbox/connect.ts")).toBe(true);
+    expect
+      .soft(selects("push", "src/lib/onboard/experimental/hermes-portable-receipt.ts"))
+      .toBe(true);
+    expect.soft(selects("push", "src/lib/state/portable-uninstall-retirement.ts")).toBe(true);
+    expect.soft(selects("push", "agents/hermes/manifest.yaml")).toBe(true);
+    expect.soft(selects("push", "src/lib/actions/sandbox/start.ts")).toBe(true);
+    expect.soft(selects("push", "docs/get-started/quickstart.mdx")).toBe(false);
+    expect.soft(selects("push", "src/lib/messaging/telegram.ts")).toBe(false);
 
     expect(workflow.on.pull_request.types).toEqual(["opened", "synchronize", "reopened"]);
     expect(workflow.on.push.paths).toContain("tools/e2e/full-e2e-timeout-contract.mts");
