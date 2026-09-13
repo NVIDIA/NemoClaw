@@ -103,7 +103,7 @@ async function powershellMetadata(systemRoot: string, file: string, pid?: number
   );
   const script =
     pid === undefined
-      ? "$f=Get-Item -LiteralPath $env:NEMOCLAW_EDGE_INSPECT_PATH;Import-Module Microsoft.PowerShell.Security -ErrorAction Stop;$s=Get-AuthenticodeSignature -LiteralPath $f.FullName;[ordered]@{path=$f.FullName;version=$f.VersionInfo.FileVersion;productName=$f.VersionInfo.ProductName;originalFilename=$f.VersionInfo.OriginalFilename;reparsePoint=[bool]($f.Attributes -band [IO.FileAttributes]::ReparsePoint);signatureStatus=[string]$s.Status;signerSubject=if($s.SignerCertificate){$s.SignerCertificate.Subject}else{''};signerThumbprint=if($s.SignerCertificate){$s.SignerCertificate.Thumbprint}else{''}}|ConvertTo-Json -Compress"
+      ? "$f=Get-Item -LiteralPath $env:NEMOCLAW_EDGE_INSPECT_PATH;Import-Module Microsoft.PowerShell.Security -ErrorAction Stop;$s=Get-AuthenticodeSignature -LiteralPath $f.FullName;[ordered]@{path=$f.FullName;version=$f.VersionInfo.FileVersion;productName=$f.VersionInfo.ProductName;originalFilename=$f.VersionInfo.OriginalFilename;reparsePoint=[bool]($f.Attributes -band [IO.FileAttributes]::ReparsePoint);signatureStatus=$s.Status.ToString();signerSubject=if($s.SignerCertificate){$s.SignerCertificate.Subject}else{''};signerThumbprint=if($s.SignerCertificate){$s.SignerCertificate.Thumbprint}else{''}}|ConvertTo-Json -Compress"
       : "$p=Get-Process -Id ([int]$env:NEMOCLAW_EDGE_INSPECT_PID) -ErrorAction Stop;[ordered]@{pid=$p.Id;path=$p.Path;creationFiletime=$p.StartTime.ToUniversalTime().ToFileTimeUtc().ToString()}|ConvertTo-Json -Compress";
   const result = await execFileAsync(
     powershell,
