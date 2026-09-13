@@ -40,6 +40,7 @@ export interface ForwardServiceLaunchOptions {
   /** Verify the bound forward before releasing the child from startup cleanup. */
   readonly verifyReady?: () => void;
   readonly timeoutMs?: number;
+  readonly now?: () => number;
 }
 
 export interface ForwardServiceChild {
@@ -450,7 +451,7 @@ export function terminateForwardServiceProcessTree(
         });
       }
     }
-    const now = dependencies.now ?? Date.now;
+    const now = dependencies.now ?? (() => performance.now());
     const sleep =
       dependencies.sleep ??
       ((milliseconds: number) => Atomics.wait(sleepBuffer, 0, 0, milliseconds));
@@ -513,11 +514,12 @@ export function launchForwardService(
 
   const sleep =
     options.sleep ?? ((milliseconds: number) => Atomics.wait(sleepBuffer, 0, 0, milliseconds));
-  const deadline = Date.now() + (options.timeoutMs ?? START_TIMEOUT_MS);
+  const now = options.now ?? (() => performance.now());
+  const deadline = now() + (options.timeoutMs ?? START_TIMEOUT_MS);
   let startupError = new Error(
     `OpenShell forward service did not bind ${target.localHost}:${String(target.localPort)}`,
   );
-  while (Date.now() < deadline) {
+  while (now() < deadline) {
     if (isReachable(target.localPort)) {
       try {
         options.verifyReady?.();
@@ -528,7 +530,7 @@ export function launchForwardService(
       child.unref();
       return;
     }
-    sleep(POLL_INTERVAL_MS);
+    sleep(Math.min(POLL_INTERVAL_MS, Math.max(0, deadline - now())));
   }
   try {
     (options.terminateProcessTree ?? terminateForwardServiceProcessTree)(child);

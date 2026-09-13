@@ -133,6 +133,32 @@ async function availableLoopbackPort(): Promise<number> {
   return address.port;
 }
 
+describe("forward startup allowance", () => {
+  it("uses monotonic time when the wall clock moves backwards (#11652)", () => {
+    let elapsed = 0;
+    let wall = 10_000;
+    const wallClock = vi.spyOn(Date, "now").mockImplementation(() => wall);
+    try {
+      expect(() =>
+        launchForwardService(target, {
+          timeoutMs: 100,
+          now: () => elapsed,
+          isReachable: () => false,
+          spawnDetached: () => ({ pid: detachedChildPid, unref() {} }),
+          terminateProcessTree: () => undefined,
+          sleep: (milliseconds) => {
+            wall += milliseconds - (elapsed === 0 ? 1_000 : 0);
+            elapsed += milliseconds;
+          },
+        }),
+      ).toThrow("did not bind");
+      expect(elapsed).toBe(100);
+    } finally {
+      wallClock.mockRestore();
+    }
+  });
+});
+
 describe("OpenShell forward service", () => {
   it("builds the direct ForwardTcp command with explicit gateway authority", () => {
     expect(buildForwardServiceArgs(target)).toEqual([

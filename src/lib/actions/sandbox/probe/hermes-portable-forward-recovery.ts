@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { isLocalForwardReachable } from "../forward-health";
+import { createOpenShellOperationDeadline } from "../../../adapters/openshell/operation-deadline";
 import {
   createForwardServiceTarget,
   ForwardServiceStartupCleanupError,
@@ -471,6 +472,7 @@ function invokeForwardServiceLaunch(
   input: HermesPortableForwardRecoveryInput,
   port: number,
   timing: ReturnType<typeof createForwardTimingRecorder>,
+  remaining: (maximumMs: number) => number,
 ): void {
   requireCurrent(input, false);
   const reachable = input.deps.isPortReachable ?? isLocalForwardReachable;
@@ -479,9 +481,10 @@ function invokeForwardServiceLaunch(
   try {
     timing.measure("start", () =>
       (input.deps.launchForwardService ?? launchForwardService)(target, {
-        isReachable: (candidatePort) => reachable(candidatePort, input.probeTimeoutMs),
+        isReachable: (candidatePort) => reachable(candidatePort, remaining(input.probeTimeoutMs)),
         sourceEnvironment: input.forwardService.sourceEnvironment,
-        timeoutMs: input.operationTimeoutMs,
+        timeoutMs: remaining(input.operationTimeoutMs),
+        now: input.deps.now,
         verifyReady: () => {
           requireCurrent(input, false);
           if (
@@ -494,6 +497,7 @@ function invokeForwardServiceLaunch(
             });
           }
           requireCurrent(input, false);
+          remaining(1);
           readinessVerified = true;
         },
       }),
@@ -521,12 +525,14 @@ function settleTouchedPorts(
   input: HermesPortableForwardRecoveryInput,
   requiredHealthy: ReadonlySet<number>,
   timing: ReturnType<typeof createForwardTimingRecorder>,
+  remaining: (maximumMs: number) => number,
 ): ForwardObservation {
   return timing.measure("settle", () => {
-    const now = input.deps.now ?? Date.now;
+    const now = input.deps.now ?? (() => performance.now());
     const sleep = input.deps.sleep ?? sleepMilliseconds;
     let previous = readClock(now);
-    const deadline = previous + Math.min(input.operationTimeoutMs, FORWARD_SETTLEMENT_TIMEOUT_MS);
+    const deadline =
+      previous + remaining(Math.min(input.operationTimeoutMs, FORWARD_SETTLEMENT_TIMEOUT_MS));
     if (!Number.isFinite(deadline)) failure("recovery-failed");
 
     for (let observation = 0; observation < FORWARD_SETTLEMENT_MAX_OBSERVATIONS; observation += 1) {
@@ -546,7 +552,7 @@ function settleTouchedPorts(
 }
 
 function rollbackPort(input: HermesPortableForwardRecoveryInput, port: number): void {
-  const now = input.deps.now ?? Date.now;
+  const now = input.deps.now ?? (() => performance.now());
   try {
     const deadline =
       readClock(now) + Math.min(input.operationTimeoutMs, FORWARD_SETTLEMENT_TIMEOUT_MS);
@@ -597,11 +603,21 @@ export function prepareHermesPortableLaunchForwards(
   const touchedPorts: number[] = [];
   try {
     validatePorts(input);
-    const initial = observeForwards(input, false, timing);
+    const now = input.deps.now ?? (() => performance.now());
+    const deadline = createOpenShellOperationDeadline(input.operationTimeoutMs, now);
+    const remaining = (maximumMs: number) => deadline.remaining(maximumMs, "forward recovery");
+    const initial = observeForwards(
+      input,
+      false,
+      timing,
+      now() + remaining(input.operationTimeoutMs),
+      now,
+    );
     requireNoOccupied(initial.states);
     const missing = input.ports.filter((port) => initial.states.get(port) !== "healthy");
     if (missing.length === 0) {
       requireCurrent(input, false);
+      remaining(1);
       timing.finish("proved");
       return retainForwardRecovery(input, touchedPorts, {
         kind: "verified",
@@ -612,9 +628,9 @@ export function prepareHermesPortableLaunchForwards(
     const requiredHealthy = new Set(input.ports);
     for (const port of missing) {
       touchedPorts.push(port);
-      invokeForwardServiceLaunch(input, port, timing);
+      invokeForwardServiceLaunch(input, port, timing, remaining);
     }
-    const final = settleTouchedPorts(input, requiredHealthy, timing);
+    const final = settleTouchedPorts(input, requiredHealthy, timing, remaining);
 
     requireNoOccupied(final.states);
     if (input.ports.some((port) => final.states.get(port) !== "healthy")) {

@@ -37,6 +37,28 @@ function launchThen(launch: LaunchForwardService, afterLaunch: () => void): Laun
 }
 
 describe("Hermes Portable probe-only forward recovery", () => {
+  it("passes the remaining transaction allowance to the second forward (#11652)", () => {
+    const fixture = createRecoveryFixture({ ports: [18_789, 8_642] });
+    Object.assign(fixture.input, { operationTimeoutMs: 100 });
+    const launch = fixture.input.deps.launchForwardService!;
+    const allowances: number[] = [];
+    Object.assign(fixture.input.deps, {
+      launchForwardService: (
+        target: ForwardServiceTarget,
+        options: Parameters<LaunchForwardService>[1],
+      ) => {
+        allowances.push(options.timeoutMs!);
+        launch(target, options);
+        fixture.input.deps.sleep!(Math.min(60, options.timeoutMs!));
+      },
+    });
+    expect(() => recoverHermesPortableLaunchForwards(fixture.input)).toThrow(
+      "restoration-unproved",
+    );
+    expect(allowances).toEqual([100, 40]);
+    expect(fixture.elapsedMs()).toBe(100);
+  });
+
   it("starts missing forwards sequentially before one joint settlement observation (#10926)", () => {
     const fixture = createRecoveryFixture({ ports: [18_789, 8_642] });
 
@@ -962,7 +984,7 @@ describe("Hermes Portable connect composition", () => {
       },
       expect.objectContaining({
         sourceEnvironment: expect.any(Object),
-        timeoutMs: 30_000,
+        timeoutMs: expect.any(Number),
       }),
     );
     expect(
@@ -973,6 +995,8 @@ describe("Hermes Portable connect composition", () => {
           !["start", "stop"].includes(String(args[1])),
       ),
     ).toBe(true);
+    expect(forward.launchSpy.mock.calls[0]![1].timeoutMs).toBeGreaterThan(0);
+    expect(forward.launchSpy.mock.calls[0]![1].timeoutMs).toBeLessThanOrEqual(30_000);
     expect(harness.publishLaunchReadinessSpy).toHaveBeenCalledOnce();
     expect(forward.launchSpy.mock.invocationCallOrder.at(-1)!).toBeLessThan(
       harness.publishLaunchReadinessSpy.mock.invocationCallOrder[0]!,
