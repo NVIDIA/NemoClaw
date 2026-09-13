@@ -100,6 +100,10 @@ export function testPodmanExecutableAuthorityDeps(): PodmanExecutableAuthorityDe
   };
 }
 
+/**
+ * Builds receipts for the lifecycle test in its companion module so that the
+ * lifecycle scenarios stay within the repository's test-file size limit.
+ */
 export function createHermesPortableLifecycleTestReceipt({
   agent,
   stateDir,

@@ -1549,17 +1549,29 @@ export function recoverHermesPortableSandboxLifecycle(
     throw error;
   }
   const wasRunning = qualified.container.authority.running;
+  const needsStart = !wasRunning || qualified.openShellPhase === "Stopped";
   timing.setContainerAction(wasRunning ? "reused" : "started");
   let rollbackAuthority = qualified;
   let startedByRecovery = false;
   try {
-    if (!wasRunning) {
+    if (
+      qualified.openShellPhase === "Error" ||
+      (!wasRunning && qualified.openShellPhase === "Ready")
+    ) {
+      fail(
+        `cannot recover saved OpenShell phase ${qualified.openShellPhase} with receipt-owned container ${qualified.container.status}. ` +
+          "The current OpenShell start API requires Stopped and cannot repair this mismatch. " +
+          "Preserve startup diagnostics and resolve the saved state through OpenShell before retrying launch.",
+      );
+    }
+    if (needsStart) {
       try {
         if (qualified.hasTransactionAuthority) {
           timing.increment("transactionCurrentness");
           qualified.assertTransactionCurrent();
         }
         timing.increment("containerStart");
+        // Both retained capture routes apply commandBudget immediately before execution.
         const startResult = timing.measure("containerStart", () =>
           captureRetainedLifecycleCommand(
             qualified,
@@ -1576,7 +1588,7 @@ export function recoverHermesPortableSandboxLifecycle(
             )
           );
         }
-        startedByRecovery = true;
+        startedByRecovery = !wasRunning;
         primaryFailureClass = "post-start-authority";
         if (qualified.hasTransactionAuthority) {
           timing.increment("transactionCurrentness");
@@ -1591,7 +1603,7 @@ export function recoverHermesPortableSandboxLifecycle(
             qualified.receipt,
             qualified.containerDeps,
           );
-          startedByRecovery = current.authority.running;
+          startedByRecovery = !wasRunning && current.authority.running;
         } catch (reconciliationError) {
           throw new AggregateError(
             [startError, reconciliationError],
@@ -1612,10 +1624,21 @@ export function recoverHermesPortableSandboxLifecycle(
           currentnessTiming,
         ),
       );
+      if (qualified.hasTransactionAuthority) {
+        qualified = {
+          ...qualified,
+          openShellPhase: observeOpenShellIdentity(qualified.receipt, qualified.capture, [
+            "Ready",
+            "Error",
+            "Stopped",
+          ]).phase,
+        };
+      }
       rollbackAuthority = qualified;
-      startedByRecovery =
+      const isRunning =
         qualified.container.authority.running && qualified.container.status === "running";
-      if (!startedByRecovery) {
+      startedByRecovery = !wasRunning && isRunning;
+      if (!isRunning) {
         fail("OpenShell start did not start the receipt-owned container");
       }
     }
@@ -1713,7 +1736,7 @@ export function recoverHermesPortableSandboxLifecycle(
           ),
         );
         commandBudget(1);
-        const result = wasRunning
+        const result = !needsStart
           ? { kind: "already-running" as const }
           : { kind: "recovered" as const };
         inspectionTiming?.finish();
@@ -1841,7 +1864,7 @@ export function recoverHermesPortableSandboxLifecycle(
       ),
     );
     commandBudget(1);
-    if (wasRunning) {
+    if (!needsStart) {
       inspectionTiming?.finish();
       currentnessTiming.finish();
       timing.finish("already-running");
