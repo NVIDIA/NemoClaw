@@ -529,7 +529,7 @@ function retainForwardServiceChild(
     exited = true;
   });
   return Object.freeze({
-    terminate: async (assertCurrent) => {
+    terminate: async (assertCurrent?: () => void) => {
       // libuv can reap several children before calling their exit handlers. A check-phase
       // boundary lets that batch finish before we inspect this child, even when cleanup
       // was requested from another child's exit callback or its promise continuation.

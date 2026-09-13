@@ -506,7 +506,9 @@ describe("Hermes Portable Ollama inference recovery", () => {
     const harness = createHarness();
     const dependency = {
       release: vi.fn(() => harness.events.push("dependency-release")),
-      rollback: vi.fn(() => harness.events.push("dependency-rollback")),
+      rollback: vi.fn(() => {
+        harness.events.push("dependency-rollback");
+      }),
     };
 
     expect(
@@ -602,7 +604,9 @@ describe("Hermes Portable Ollama inference recovery", () => {
     });
     const dependency = {
       release: vi.fn(() => harness.events.push("dependency-release")),
-      rollback: vi.fn(() => harness.events.push("dependency-rollback")),
+      rollback: vi.fn(() => {
+        harness.events.push("dependency-rollback");
+      }),
     };
 
     await expect(

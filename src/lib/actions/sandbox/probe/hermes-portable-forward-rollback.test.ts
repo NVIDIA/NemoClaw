@@ -38,7 +38,9 @@ describe("Hermes Portable rollback ownership", () => {
   it("rolls back only the retained first child when the second launch fails (#11649)", async () => {
     const fixture = createRecoveryFixture({ ports: [18_789, 8_642] });
     const launch = fixture.input.deps.launchForwardService!;
-    const terminate = vi.fn(() => fixture.records.delete(18_789));
+    const terminate = vi.fn(() => {
+      fixture.records.delete(18_789);
+    });
     Object.assign(fixture.input.deps, {
       launchForwardService: vi
         .fn()
@@ -86,7 +88,9 @@ describe("Hermes Portable rollback ownership", () => {
   it("terminates the retained child when its listener disappears before rollback (#11649)", async () => {
     const fixture = createRecoveryFixture({ ports: [18_789, 8_642] });
     const launch = fixture.input.deps.launchForwardService!;
-    const terminate = vi.fn(() => fixture.records.delete(18_789));
+    const terminate = vi.fn(() => {
+      fixture.records.delete(18_789);
+    });
     Object.assign(fixture.input.deps, {
       launchForwardService: vi
         .fn()
@@ -122,7 +126,9 @@ describe("Hermes Portable rollback observation failures", () => {
   ])("terminates its retained child before a $label (#11649)", async ({ capture }) => {
     const fixture = createRecoveryFixture();
     const launch = fixture.input.deps.launchForwardService!;
-    const terminate = vi.fn(() => fixture.records.delete(18_789));
+    const terminate = vi.fn(() => {
+      fixture.records.delete(18_789);
+    });
     Object.assign(fixture.input.deps, {
       launchForwardService: (
         target: ForwardServiceTarget,
