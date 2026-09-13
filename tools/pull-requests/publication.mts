@@ -74,11 +74,17 @@ function optionalTreeEntry(
   return { mode, path: filePath, sha, type };
 }
 
-function treeEntry(repository: string, tree: string, filePath: string): GitTreeEntry {
+function treeEntry(
+  repository: string,
+  tree: string,
+  filePath: string,
+  allowExecutableFiles: boolean,
+): GitTreeEntry {
   const entry = optionalTreeEntry(repository, tree, filePath);
   if (!entry) throw new Error(`Git tree does not contain ${filePath}`);
-  if (entry.mode !== "100644" || entry.type !== "blob")
-    throw new Error(`Git tree entry is not a mode-100644 file: ${filePath}`);
+  const allowedModes = allowExecutableFiles ? new Set(["100644", "100755"]) : new Set(["100644"]);
+  if (!allowedModes.has(entry.mode) || entry.type !== "blob")
+    throw new Error(`Git tree entry has an unsupported regular-file mode: ${filePath}`);
   return entry;
 }
 
@@ -88,6 +94,7 @@ function parentContainsBlob(repository: string, parent: string, entry: GitTreeEn
 }
 
 export async function createGitHubTree(input: {
+  allowExecutableFiles?: boolean;
   baseSha: string;
   finalTree: string;
   headSha: string;
@@ -98,7 +105,12 @@ export async function createGitHubTree(input: {
   const entries: GitTreeEntry[] = [];
   for (const change of changedPathStatuses(input.repository, input.baseSha, input.finalTree)) {
     const sourceTree = change.status === "D" ? input.baseSha : input.finalTree;
-    const entry = treeEntry(input.repository, sourceTree, change.path);
+    const entry = treeEntry(
+      input.repository,
+      sourceTree,
+      change.path,
+      input.allowExecutableFiles ?? false,
+    );
     if (change.status === "D") {
       entries.push({ ...entry, sha: null });
       continue;

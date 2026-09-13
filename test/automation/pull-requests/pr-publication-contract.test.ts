@@ -47,6 +47,6 @@ it("rejects non-regular file modes before publishing a tree (#7542)", async () =
       repositoryName: "NVIDIA/NemoClaw",
       request,
     }),
-  ).rejects.toThrow("not a mode-100644 file");
+  ).rejects.toThrow("unsupported regular-file mode");
   expect(request).not.toHaveBeenCalled();
 });

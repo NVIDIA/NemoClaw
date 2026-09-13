@@ -612,7 +612,11 @@ describe("PR merge conflict fixer", () => {
     fixture.baseSha = git(fixture.repository, ["rev-parse", "HEAD"]);
     const entry = entryFor(fixture);
     const patchPath = path.join(temporaryDirectory(), "resolution.patch");
-    const finalTree = createResolutionPatch(fixture, patchPath);
+    const finalTree = createResolutionPatch(fixture, patchPath, (repository) => {
+      write(repository, "resolved-script.sh", "#!/bin/sh\nexit 0\n");
+      fs.chmodSync(path.join(repository, "resolved-script.sh"), 0o755);
+      git(repository, ["add", "resolved-script.sh"]);
+    });
     const commitSha = "c".repeat(40);
     const requests: Array<{ body: unknown; method: string; path: string }> = [];
     const graphql = vi.fn(async (_query: string, variables: Record<string, unknown>) => ({
@@ -687,11 +691,17 @@ describe("PR merge conflict fixer", () => {
       "clean-merge.txt",
       "conflict.txt",
       "pr-deleted.txt",
+      "resolved-script.sh",
     ]);
     expect(treeBody.tree.find((item) => item.path === "pr-deleted.txt")).toEqual({
       mode: "100644",
       path: "pr-deleted.txt",
       sha: null,
+      type: "blob",
+    });
+    expect(treeBody.tree.find((item) => item.path === "resolved-script.sh")).toMatchObject({
+      mode: "100755",
+      path: "resolved-script.sh",
       type: "blob",
     });
     expect(treeBody.tree.some((item) => item.path.startsWith("stale-main/"))).toBe(false);
@@ -704,6 +714,7 @@ describe("PR merge conflict fixer", () => {
       [
         "pull request\nkeep-1\nkeep-2\nkeep-3\nkeep-4\nkeep-5\nmain branch\n",
         "resolved intent\n",
+        "#!/bin/sh\nexit 0\n",
       ].sort(),
     );
     expect(graphql).toHaveBeenCalledWith(expect.stringContaining("updateRefs"), {

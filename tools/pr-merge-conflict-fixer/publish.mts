@@ -93,6 +93,7 @@ async function publishValidatedTree(input: {
   request: GitHubRequest;
 }): Promise<string> {
   const tree = await createGitHubTree({
+    allowExecutableFiles: true,
     baseSha: input.entry.base_sha,
     finalTree: input.finalTree,
     headSha: input.entry.head_sha,
