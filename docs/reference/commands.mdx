@@ -354,7 +354,7 @@ nemoclaw onboard --agent langchain-deepagents-code [options]
 
 #### External Component Onboarding
 
-On Linux, NemoClaw can register one experimental external host component during fresh onboarding with a NemoClaw-managed Docker-driver gateway.
+On Linux, OpenClaw and Hermes can register one experimental external host component during fresh onboarding with a NemoClaw-managed Docker-driver gateway.
 Create the declaration before onboarding and use a new explicit sandbox name.
 NemoClaw rejects resume, recreation, reuse, repair, and externally supervised gateways.
 For the declaration, fixed interceptor settings, activation protocol, incomplete-state handling, and credential boundary, refer to [Register an External Component During Onboarding](../deployment/register-external-component).
@@ -480,7 +480,7 @@ Before reserving an inference route, onboarding can release a foreign-session ro
 It preserves the current session's reservation, any row that is no longer route-only, and any row that has gained verified sandbox-create authority.
 Without the lock, it preserves the foreign reservation.
 
-<AgentOnly variant="openclaw">
+<AgentOnly variant="openclaw,hermes">
 
 #### `--apf-interceptor`
 
@@ -1056,6 +1056,10 @@ $$nemoclaw launch <name>
 The sandbox name is required, and the command takes no flags. The sandbox must already exist in the local NemoClaw state. If it is not registered locally, `launch` exits before it runs an OpenShell command or readiness recovery and reports that the sandbox is not registered in the local NemoClaw state. When the agent exits, you return to the host shell.
 
 <AgentOnly variant="openclaw">
+
+For an older OpenClaw registration without recorded lifecycle identity, `launch` requires a ready live sandbox with an observable identity before it starts the agent.
+If this identity check fails, `launch` stops before starting the agent.
+Run `$$nemoclaw <name> doctor`, resolve the reported issue, and retry `$$nemoclaw launch <name>`.
 
 `launch` returns the agent's exit code when the post-command OpenClaw permission cleanup succeeds. If that cleanup cannot inspect, restore, or verify the mutable config permission contract, `launch` fails closed with exit `1` and prints `OpenClaw permission cleanup failed (...)` to `stderr`.
 
