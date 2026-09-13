@@ -38,7 +38,6 @@ import {
 import { assessNvidiaCdiHost } from "./docker-cdi";
 import { printUnderProvisionedRuntimeWarning } from "./preflight-messages";
 import { isSshSession } from "./ssh-forward-hint";
-import { isWslDockerDesktopRuntime } from "./wsl-docker-desktop-gpu";
 
 export {
   MIN_RECOMMENDED_DOCKER_CPUS,

@@ -37,8 +37,9 @@ Usage:
     seed-dashboard-config.py [--merge-legacy] <managed-policy.json> <gateway-config.yaml> <dashboard-config.yaml> <gateway.env> <dashboard.env>
 
 Exits 0 on success or a benign no-op for a missing gateway config.
-Exits 1 when an existing config is invalid or unreadable, routing is absent, a
-reviewed policy is invalid, or a write fails. Emits ``[dashboard]`` lines on
+Providerless configuration may omit all routing keys. Partial routing remains invalid.
+Exits 1 when an existing config is invalid or unreadable, a reviewed policy is
+invalid, or a write fails. Emits ``[dashboard]`` lines on
 stderr to match the rest of the gateway startup contract.
 """
 
@@ -57,6 +58,7 @@ from typing import Callable, TextIO
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from managed_policy import (  # noqa: E402
+    HERMES_PROXY_REWRITE_SENTINEL,
     ManagedPolicyError,
     load_managed_policy,
     policy_value,
@@ -493,6 +495,9 @@ def _atomic_write_no_follow(
 
 
 def _normalized_routing(gateway: dict, routing_keys: list[str], policy: dict) -> dict:
+    # Only a providerless image policy permits completely absent routing.
+    if not any(key in gateway or key in policy["config"] for key in routing_keys):
+        return {}
     if any(key not in gateway for key in routing_keys):
         raise InvalidDashboardSeedDocumentError("gateway config has incomplete model routing")
     routing = {key: deepcopy(gateway[key]) for key in routing_keys}
@@ -516,7 +521,7 @@ def _normalized_routing(gateway: dict, routing_keys: list[str], policy: dict) ->
         or not custom_providers
     ):
         raise InvalidDashboardSeedDocumentError("gateway config has invalid model routing")
-    expected_api_key = policy_value(policy["config"], "model.api_key")
+    expected_api_key = HERMES_PROXY_REWRITE_SENTINEL
     credential_bearing_routes = [model, *providers.values(), *custom_providers]
     if not isinstance(expected_api_key, str) or any(
         not isinstance(route, dict) or route.get("api_key") != expected_api_key
@@ -792,6 +797,9 @@ def _seed_dashboard(argv: list[str], dashboard_fd: int | None) -> int:
         dashboard["web"] = dashboard_web
     else:
         dashboard.pop("web", None)
+    if not routing:
+        for key in policy["dashboard"]["routing_keys"]:
+            dashboard.pop(key, None)
     dashboard.update(routing)
     _merge_policy(dashboard, policy_sections)
 
@@ -808,7 +816,8 @@ def _seed_dashboard(argv: list[str], dashboard_fd: int | None) -> int:
     ):
         return 1
 
-    print(f"[dashboard] seeded model routing and reviewed policy into {dst}", file=sys.stderr)
+    status = "model routing and reviewed policy" if routing else "reviewed policy (inference not configured)"
+    print(f"[dashboard] seeded {status} into {dst}", file=sys.stderr)
     return 0
 
 

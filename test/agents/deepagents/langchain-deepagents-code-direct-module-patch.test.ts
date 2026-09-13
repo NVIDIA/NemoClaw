@@ -33,7 +33,6 @@ describe("LangChain Deep Agents Code managed package patch", () => {
       "Darwin fcntl seal shim injection point not found in helper module",
     );
   });
-
   it.each([
     'args.sandbox = "none"',
     "args.no_mcp = not has_managed_mcp",
@@ -85,6 +84,7 @@ describe("LangChain Deep Agents Code managed package patch", () => {
     expect(main).toContain(expected);
   });
   it.each([
+    ["config", "config.py", "def is_openai_prompt_cache_key_enabled() -> bool:"],
     ["entrypoint", "__main__.py", 'os.environ["LANGGRAPH_CLI_NO_ANALYTICS"] = "1"'],
     ["main", "main.py", 'os.environ["LANGGRAPH_CLI_NO_ANALYTICS"] = "1"'],
     ["tools", "tools.py", "_nemoclaw_original_fetch_with_redirects = _fetch_with_redirects"],
@@ -624,7 +624,7 @@ check("disabled", False)
     "passes sealed and anonymous MCP snapshots through ServerProcess restart [%s]",
     (snapshotKind) => {
       const tempDir = createPatchedPackageFixture();
-      const configPath = path.join(tempDir, ".nemoclaw-mcp.json");
+      const configPath = path.join(tempDir, ".mcp.json");
       const managedConfig = {
         mcpServers: {
           github: {

@@ -51,10 +51,10 @@ function runInferenceRouteThenDriftLiveIdentity(
 function awaitHermesRouteVerification(harness: ReturnType<typeof createConnectHarness>): void {
   harness.recoverHermesPortableOllamaInferenceSpy.mockImplementation((async (input: {
     verifyRoute: () => Promise<unknown>;
-    prepareProbeDependency?: () => { release: () => void };
+    prepareProbeDependency?: () => Promise<{ release: () => void }>;
   }) => {
     await input.verifyRoute();
-    input.prepareProbeDependency?.().release();
+    (await input.prepareProbeDependency?.())?.release();
     return "reused";
   }) as never);
 }
@@ -272,6 +272,21 @@ describe("connectSandbox flow", () => {
       timeoutMilliseconds: expect.any(Number),
       tty: false,
     });
+    expect(harness.sandboxRunBufferedSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        command: [
+          "/usr/local/lib/nemoclaw/dcode-managed-exec",
+          "/bin/sh",
+          "-c",
+          expect.stringContaining("/v1/chat/completions"),
+        ],
+        target: { kind: "named", gatewayName: "nemoclaw" },
+        timeoutMilliseconds: 95_000,
+      }),
+    );
+    expect(harness.sandboxRunBufferedSpy.mock.invocationCallOrder.at(-1)!).toBeLessThan(
+      harness.startSandboxSessionSpy.mock.invocationCallOrder[0]!,
+    );
   });
 
   it.each([401, 403, 404])(

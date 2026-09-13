@@ -1,6 +1,6 @@
 ---
 name: nemoclaw-maintainer-fix-e2e-failures
-description: Fixes failures from automatic NemoClaw E2E runs on main through continuous maintainer coordination. Groups failures by root cause, assigns one PR to each cause, reviews peer changes, satisfies GitHub merge requirements, merges eligible PRs when authorized, and monitors new results. Use for continuous main E2E maintenance or coordinated multi-agent E2E maintenance. Do not use for manual E2E dispatch; use nemoclaw-maintainer-e2e instead.
+description: "Continuously maintain automatic NemoClaw main E2E results through coordinated repairs. Use for ongoing maintenance, not one-time dispatch or diagnosis."
 ---
 
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->

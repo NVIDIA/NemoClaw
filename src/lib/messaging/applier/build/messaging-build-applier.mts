@@ -164,6 +164,8 @@ function isPinnedHermesUvPackageSpec(spec: string): boolean {
 
 export class MessagingBuildApplierError extends Error {}
 
+class MessagingBuildCommandError extends MessagingBuildApplierError {}
+
 export const DEFAULT_MESSAGING_RUNTIME_PLAN_PATH =
   "/usr/local/share/nemoclaw/messaging-runtime-plan.json";
 
@@ -1336,15 +1338,17 @@ function requireExactNpmPackageSpec(
 function runCommand(args: readonly string[], env: Env): void {
   console.log(`+ ${args.join(" ")}`);
   const result = spawnSync(args[0] as string, args.slice(1), {
+    encoding: "utf8",
     env: env as NodeJS.ProcessEnv,
-    stdio: "inherit",
+    maxBuffer: 64 * 1024 * 1024,
+    stdio: ["ignore", "pipe", "pipe"],
   });
-  if (result.error) throw result.error;
+  if (result.error) throw new MessagingBuildCommandError();
   if (result.status !== 0) {
-    throw new MessagingBuildApplierError(
-      `${args[0]} exited with status ${String(result.status ?? "unknown")}`,
-    );
+    throw new MessagingBuildCommandError();
   }
+  if (result.stdout) process.stdout.write(result.stdout);
+  if (result.stderr) process.stderr.write(result.stderr);
 }
 
 function packVerifiedOpenClawPluginArchive(
@@ -2073,11 +2077,21 @@ function isMainModule(): boolean {
   return process.argv[1] ? import.meta.url === pathToFileURL(resolve(process.argv[1])).href : false;
 }
 
+function fatalMessagingBuildDiagnostic(error: unknown): string {
+  if (error instanceof MessagingBuildCommandError) {
+    return "Messaging build applier command failed.";
+  }
+  if (error instanceof MessagingBuildApplierError) {
+    return "Messaging build applier rejected invalid or unsafe input.";
+  }
+  return "Messaging build applier failed.";
+}
+
 if (isMainModule()) {
   try {
     main();
   } catch (error) {
-    console.error(error instanceof Error ? error.message : String(error));
+    console.error(fatalMessagingBuildDiagnostic(error));
     process.exit(2);
   }
 }

@@ -3,7 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import { createSession, type Session, type SessionUpdates } from "../../../state/onboard-session";
+import { createSession, type SessionUpdates } from "../../../state/onboard-session";
 import { handleAgentSetupState, type AgentSetupStateOptions } from "./agent-setup";
 
 type Agent = { name: string; displayName: string };
