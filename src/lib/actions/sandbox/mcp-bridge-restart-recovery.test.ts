@@ -5,6 +5,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   register: vi.fn(),
+  inspectAdapter: vi.fn(),
+  reloadHermes: vi.fn(),
   unregister: vi.fn(),
   observe: vi.fn(),
   wait: vi.fn(),
@@ -13,6 +15,8 @@ const mocks = vi.hoisted(() => ({
   status: vi.fn(),
   inspectSources: vi.fn(),
   preflightTargets: vi.fn(),
+  getBridgeAdapter: vi.fn(),
+  getSandboxAgent: vi.fn(),
 }));
 
 vi.mock("../../state/mcp-lifecycle-lock", () => ({
@@ -22,6 +26,8 @@ vi.mock("../../onboard/experimental/portable-agent-lifecycle", () => ({
   assertHermesPortableCommandUnavailable: vi.fn(),
 }));
 vi.mock("./mcp-bridge-adapters", () => ({
+  inspectAgentAdapterRegistration: mocks.inspectAdapter,
+  reloadHermesGatewayAfterMcpRestart: mocks.reloadHermes,
   registerAgentAdapterAtCurrentCredentialRevision: mocks.register,
   unregisterAgentAdapter: mocks.unregister,
   reloadOpenClawGatewayAfterMcpMutation: mocks.reload,
@@ -54,11 +60,8 @@ vi.mock("./mcp-bridge-runtime-capabilities", () => ({
 }));
 vi.mock("./mcp-bridge-state", () => ({
   ensureSandboxGatewaySelected: vi.fn(),
-  getBridgeAdapter: vi.fn(() => "openclaw-config"),
-  getSandboxAgent: vi.fn(() => ({
-    name: "openclaw",
-    mcpCapability: { support: "bridge", adapter: "openclaw-config" },
-  })),
+  getBridgeAdapter: mocks.getBridgeAdapter,
+  getSandboxAgent: mocks.getSandboxAgent,
   getSandboxOrThrow: vi.fn(() => ({ name: "alpha", agent: "openclaw" })),
 }));
 vi.mock("./mcp-bridge-source", () => ({
@@ -94,6 +97,13 @@ describe("OpenClaw MCP partial-mutation recovery", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.observe.mockReset().mockResolvedValue("v1");
+    mocks.inspectAdapter.mockReset().mockResolvedValue({ state: "registered" });
+    mocks.reloadHermes.mockReset();
+    mocks.getBridgeAdapter.mockReset().mockReturnValue("openclaw-config");
+    mocks.getSandboxAgent.mockReset().mockReturnValue({
+      name: "openclaw",
+      mcpCapability: { support: "bridge", adapter: "openclaw-config" },
+    });
     mocks.wait.mockReset().mockResolvedValue("v1");
     mocks.refresh.mockReset();
     mocks.unregister.mockReset();
@@ -178,6 +188,36 @@ describe("OpenClaw MCP partial-mutation recovery", () => {
     expect(mocks.register).toHaveBeenCalledTimes(2);
     expect(mocks.reload).toHaveBeenCalledOnce();
     expect(mocks.reload).toHaveBeenCalledWith("alpha", ["openclaw-config", "openclaw-config"]);
+  });
+
+  it("restarts an unchanged Hermes adapter through the authenticated supervisor", async () => {
+    const hermesEntry = {
+      ...entries[0],
+      agent: "hermes",
+      adapter: "hermes-config" as const,
+    };
+    mocks.getBridgeAdapter.mockReturnValue("hermes-config");
+    mocks.getSandboxAgent.mockReturnValue({
+      name: "hermes",
+      mcpCapability: { support: "bridge", adapter: "hermes-config" },
+    });
+    mocks.inspectSources.mockReturnValue({
+      bridges: { first: hermesEntry },
+      sources: { native: { first: hermesEntry }, legacy: {} },
+    });
+    mocks.register.mockReset();
+
+    await restartMcpBridge("alpha", "first");
+
+    expect(mocks.inspectAdapter).toHaveBeenCalledWith(
+      "alpha",
+      "hermes-config",
+      hermesEntry,
+      { gatewayName: "nemoclaw", workspace: "default" },
+      "v1",
+    );
+    expect(mocks.reloadHermes).toHaveBeenCalledWith("alpha");
+    expect(mocks.register).not.toHaveBeenCalled();
   });
 
   it("reloads every attempted OpenClaw restoration mutation before propagating failure", async () => {

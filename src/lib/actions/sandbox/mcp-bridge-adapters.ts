@@ -12,6 +12,7 @@ import {
 import {
   assertHermesMcpMutationRuntimeCapability,
   inspectHermesAdapterRegistration,
+  reloadHermesGatewayAfterMcpRestart,
   registerHermesAdapter,
   unregisterHermesAdapter,
 } from "./mcp-bridge-adapter-hermes";
@@ -67,12 +68,18 @@ export async function inspectAgentAdapterRegistration(
   adapter: AgentMcpAdapter,
   entry: McpSourceEntry,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
+  credentialRevision?: McpAttachedCredentialRevision,
 ): Promise<AdapterRegistrationInspection> {
   switch (adapter) {
     case "openclaw-config":
       return inspectOpenClawAdapterRegistration(sandboxName, entry, runtimeSelection);
     case "hermes-config":
-      return await inspectHermesAdapterRegistration(sandboxName, entry, runtimeSelection);
+      return await inspectHermesAdapterRegistration(
+        sandboxName,
+        entry,
+        runtimeSelection,
+        credentialRevision,
+      );
     case "deepagents-config":
       return await inspectDeepAgentsAdapterRegistration(sandboxName, entry, runtimeSelection);
   }
@@ -118,6 +125,8 @@ export async function reloadOpenClawGatewayAfterMcpMutation(
 ): Promise<void> {
   if (adapters.includes("openclaw-config")) await reloadOpenClawGateway(sandboxName);
 }
+
+export { reloadHermesGatewayAfterMcpRestart };
 
 export async function registerAgentAdapter(
   sandboxName: string,

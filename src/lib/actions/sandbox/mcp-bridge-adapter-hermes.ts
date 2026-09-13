@@ -9,6 +9,7 @@ import {
   type AdapterMutationOptions,
   type AdapterRegistrationInspection,
   inspectAdapterRegistrationCommand,
+  restartMcpGatewayThroughSupervisor,
 } from "./mcp-bridge-adapter-inspection";
 import {
   buildHermesMcpStatusCommand,
@@ -260,6 +261,15 @@ export async function registerHermesAdapter(
     { envValues, requireReload: true },
   );
   await verifyHermesAdapterRegistration(sandboxName, entry, runtimeSelection, credentialRevision);
+}
+
+/** Restart an unchanged Hermes MCP definition through the authenticated host supervisor. */
+export async function reloadHermesGatewayAfterMcpRestart(sandboxName: string): Promise<void> {
+  const result = await restartMcpGatewayThroughSupervisor(sandboxName);
+  if (result.ok) return;
+  throw new McpBridgeError(
+    `Hermes gateway did not reload the current MCP configuration (${result.failureLayer}: ${result.detail}).`,
+  );
 }
 
 export function unregisterHermesAdapter(

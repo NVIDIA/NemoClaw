@@ -6,6 +6,8 @@ import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock";
 import { assertHermesPortableCommandUnavailable } from "../../onboard/experimental/portable-agent-lifecycle";
 import type { McpSourceEntry } from "./mcp-bridge-contracts";
 import {
+  inspectAgentAdapterRegistration,
+  reloadHermesGatewayAfterMcpRestart,
   registerAgentAdapterAtCurrentCredentialRevision,
   reloadOpenClawGatewayAfterMcpMutation,
   unregisterAgentAdapter,
@@ -152,6 +154,20 @@ async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): P
       }
       const entryAdapter = entry.adapter ?? adapter;
       attemptedAdapters.push(entryAdapter);
+      if (entryAdapter === "hermes-config") {
+        const adapterInspection = await inspectAgentAdapterRegistration(
+          sandboxName,
+          entryAdapter,
+          entry,
+          providerRuntimeSelection,
+          credentialObservation,
+        );
+        if (adapterInspection.state === "registered") {
+          await reloadHermesGatewayAfterMcpRestart(sandboxName);
+          console.log(`  Reloaded MCP server '${name}' from current agent configuration.`);
+          continue;
+        }
+      }
       await registerAgentAdapterAtCurrentCredentialRevision(
         sandboxName,
         entryAdapter,

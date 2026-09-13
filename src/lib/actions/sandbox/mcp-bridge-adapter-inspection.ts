@@ -4,7 +4,11 @@
 import type { McpSourceEntry } from "./mcp-bridge-contracts";
 import { redactBridgeSecretsForDisplay } from "./mcp-bridge-output";
 import type { McpProviderInspectionRuntimeSelection } from "./mcp-bridge-provider-inspection";
-import { executeSandboxCommand, type SandboxCommandResult } from "./process-recovery";
+import {
+  executeSandboxCommand,
+  restartSandboxGateway,
+  type SandboxCommandResult,
+} from "./process-recovery";
 
 export type AdapterRegistrationInspection =
   | { state: "absent" | "registered" | "mismatch" }
@@ -56,4 +60,8 @@ export async function inspectAdapterRegistrationCommand(
   const result = await executeSandboxCommand(sandboxName, command, { runtimeSelection });
   if (!result) return { state: "error", detail: "sandbox unreachable" };
   return parseAdapterRegistrationInspection(result, entry);
+}
+
+export async function restartMcpGatewayThroughSupervisor(sandboxName: string) {
+  return restartSandboxGateway(sandboxName, { quiet: true });
 }
