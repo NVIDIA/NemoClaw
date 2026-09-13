@@ -1,7 +1,7 @@
 diff --git a/src/backends/appcontainer/common/src/appcontainer_runner.rs b/src/backends/appcontainer/common/src/appcontainer_runner.rs
 --- a/src/backends/appcontainer/common/src/appcontainer_runner.rs
 +++ b/src/backends/appcontainer/common/src/appcontainer_runner.rs
-@@ -773,16 +773,40 @@
+@@ -773,16 +773,47 @@
              }
          }
 
@@ -20,6 +20,13 @@ diff --git a/src/backends/appcontainer/common/src/appcontainer_runner.rs b/src/b
 +            &request.container_id,
 +            request.policy.ui.disable,
 +        ).map_err(|error| WxcError::Process(format!("Hermes desktop admission: {error}")))?;
++        let canonical_chrome_jobs = crate::msys_token_inspection::canonical_chrome_jobs_requested(
++            &working_directory.path,
++            &request.policy.readwrite_paths,
++            &request.container_id,
++            request.policy.ui.disable,
++            desktop_creation,
++        ).map_err(|error| WxcError::Process(format!("Hermes Chrome job admission: {error}")))?;
 +
          // --- Allocate and initialize attribute list ---
          let attr_count = compute_attr_count(
@@ -72,7 +79,7 @@ diff --git a/src/backends/appcontainer/common/src/appcontainer_runner.rs b/src/b
          logger.log_line(&format!(
              "working directory: {}",
              working_directory.describe()
-@@ -1107,11 +1132,28 @@
+@@ -1107,11 +1132,34 @@
          // that returns an error in this block must terminate first.
          let job = match (|| -> Result<UiJobObject, WxcError> {
              let job = UiJobObject::new()?;
@@ -95,9 +102,15 @@ diff --git a/src/backends/appcontainer/common/src/appcontainer_runner.rs b/src/b
 +                // Every other UI restriction, including EXITWINDOWS, is retained.
 +                restrictions.block_desktop_switching = false;
 +                job.set_ui_limits(&restrictions)?;
-+                crate::msys_token_inspection::verify_private_desktop_mask(
-+                    HANDLE(job.handle_value() as *mut std::ffi::c_void), before,
-+                ).map_err(|error| WxcError::Process(format!("Hermes desktop mask: {error}")))?;
++                if canonical_chrome_jobs {
++                    crate::msys_token_inspection::clear_outer_ui_mask_for_chrome_jobs(
++                        HANDLE(job.handle_value() as *mut std::ffi::c_void), before,
++                    ).map_err(|error| WxcError::Process(format!("Hermes Chrome outer job: {error}")))?;
++                } else {
++                    crate::msys_token_inspection::verify_private_desktop_mask(
++                        HANDLE(job.handle_value() as *mut std::ffi::c_void), before,
++                    ).map_err(|error| WxcError::Process(format!("Hermes desktop mask: {error}")))?;
++                }
 +            }
              job.assign_process(process_handle.get())?;
              Ok(job)
@@ -219,7 +232,7 @@ diff --git a/src/backends/appcontainer/common/src/msys_token_inspection.rs b/src
 new file mode 100644
 --- /dev/null
 +++ b/src/backends/appcontainer/common/src/msys_token_inspection.rs
-@@ -0,0 +1,350 @@
+@@ -0,0 +1,397 @@
 +// Copyright (c) NVIDIA Corporation.
 +// Licensed under the MIT License.
 +// CI-only exact-owned-job token inspection or explicitly selected TOKEN_QUERY repair.
@@ -367,6 +380,22 @@ new file mode 100644
 +    Ok(selected)
 +}
 +
++pub(crate) fn canonical_chrome_jobs_requested(
++    cwd: &str, writable: &[String], container: &str, ui_disabled: bool, private_desktop: bool,
++) -> Result<bool, String> {
++    let requested = std::env::var("NEMOCLAW_HERMES_CANONICAL_CHROME_JOBS").ok();
++    let selected = private_desktop_admission(
++        requested.as_deref(),
++        std::env::var("GITHUB_ACTIONS").as_deref() == Ok("true"),
++        &std::env::var("NEMOCLAW_MSYS_TOKEN_INSPECTION").unwrap_or_default(),
++        cwd, writable, container, ui_disabled,
++    )?;
++    if selected && !private_desktop {
++        return Err("canonical Chrome jobs require the admitted private desktop".into());
++    }
++    Ok(selected)
++}
++
 +pub(crate) fn read_private_desktop_mask(job: HANDLE) -> Result<u32, String> {
 +    use windows::Win32::System::JobObjects::{
 +        QueryInformationJobObject, JobObjectBasicUIRestrictions,
@@ -395,6 +424,37 @@ new file mode 100644
 +    eprintln!("NEMOCLAW_HERMES_DESKTOP_MASK={record}");
 +    if before & 0xc0 != 0xc0 || after != before & !0x40 {
 +        return Err("effective job UI mask did not preserve every other restriction".into());
++    }
++    Ok(())
++}
++
++pub(crate) fn clear_outer_ui_mask_for_chrome_jobs(job: HANDLE, before: u32) -> Result<(), String> {
++    use windows::Win32::System::JobObjects::{
++        SetInformationJobObject, JobObjectBasicUIRestrictions,
++        JOBOBJECT_BASIC_UI_RESTRICTIONS,
++    };
++    if before & 0xc0 != 0xc0 {
++        return Err("original UI mask lacks the admitted desktop/logout restrictions".into());
++    }
++    let clear = JOBOBJECT_BASIC_UI_RESTRICTIONS::default();
++    unsafe {
++        SetInformationJobObject(
++            job, JobObjectBasicUIRestrictions,
++            &clear as *const _ as *const std::ffi::c_void,
++            std::mem::size_of_val(&clear) as u32,
++        )
++    }.map_err(|error| format!("clear outer UI mask failed: {error}"))?;
++    let after = read_private_desktop_mask(job)?;
++    let record = serde_json::json!({
++        "schemaVersion":1, "classification":"admitted-Hermes-canonical-Chrome-jobs",
++        "beforeMask":before, "afterMask":after, "removedMask":before,
++        "privateDesktopRequired":true, "appContainerPreserved":true,
++        "outerProcessLimitPreserved":true, "chromeTargetJobsOwnUiRestrictions":true,
++        "childResumed":false
++    });
++    eprintln!("NEMOCLAW_HERMES_CHROME_JOB_MASK={record}");
++    if after != 0 {
++        return Err("outer UI mask was not cleared for canonical Chrome target jobs".into());
 +    }
 +    Ok(())
 +}

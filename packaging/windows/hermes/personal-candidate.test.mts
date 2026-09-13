@@ -13,6 +13,8 @@ import {
   rendererWerRequest,
   validateRendererPostmortemOwner,
   validatePersonalDiagnosticModes,
+  validateHermesCanonicalChromeJobMask,
+  configureCanonicalChromeJobs,
   finishRendererCaptureOwner,
   completeBrowserFirstHostControl,
   personalRequest,
@@ -1327,6 +1329,52 @@ test("one bounded host desktop mask row permits only the bundled0x40 removal", (
   assert.throws(() => validateHermesDesktopMask(line(row) + line(row)));
   assert.throws(() => validateHermesDesktopMask("NEMOCLAW_HERMES_DESKTOP_MASK=invalid\n"));
 });
+
+test("canonical Chrome jobs require a private desktop and a zero outer UI mask", () => {
+  const row = {
+    schemaVersion: 1,
+    classification: "admitted-Hermes-canonical-Chrome-jobs",
+    beforeMask: 0x3ff,
+    afterMask: 0,
+    removedMask: 0x3ff,
+    privateDesktopRequired: true,
+    appContainerPreserved: true,
+    outerProcessLimitPreserved: true,
+    chromeTargetJobsOwnUiRestrictions: true,
+    childResumed: false,
+  };
+  const line = (value: any) => "NEMOCLAW_HERMES_CHROME_JOB_MASK=" + JSON.stringify(value) + "\n";
+  assert.deepEqual(validateHermesCanonicalChromeJobMask(line(row)), row);
+  for (const change of [
+    { afterMask: 0x3bf },
+    { removedMask: 0x3bf },
+    { privateDesktopRequired: false },
+    { appContainerPreserved: false },
+    { outerProcessLimitPreserved: false },
+    { chromeTargetJobsOwnUiRestrictions: false },
+    { childResumed: true },
+  ])
+    assert.throws(() => validateHermesCanonicalChromeJobMask(line({ ...row, ...change })));
+});
+
+test("canonical Chrome job opt-in reaches only the host MXC and contained Chrome tree", () => {
+  const environment: NodeJS.ProcessEnv = {};
+  const request = personalRequest(
+    "C:\\node\\node.exe",
+    "C:\\node\\worker.mts",
+    "C:\\runtime",
+    "C:\\NemoClawMsysProof-1234567890ab-state-start",
+    "1234567890abcdef12345678",
+    "C:\\Windows",
+  );
+  configureCanonicalChromeJobs(environment, request, false);
+  assert.equal(environment.NEMOCLAW_HERMES_CANONICAL_CHROME_JOBS, undefined);
+  assert(!request.process.env.includes("NEMOCLAW_HERMES_CANONICAL_CHROME_JOBS=1"));
+  configureCanonicalChromeJobs(environment, request, true);
+  assert.equal(environment.NEMOCLAW_HERMES_CANONICAL_CHROME_JOBS, "1");
+  assert(request.process.env.includes("NEMOCLAW_HERMES_CANONICAL_CHROME_JOBS=1"));
+});
+
 test("the fixed request rejects a command-line quote or invalid nonce", () => {
   assert.throws(
     () =>

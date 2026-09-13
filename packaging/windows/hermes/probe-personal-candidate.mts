@@ -727,6 +727,37 @@ export function validateHermesDesktopMask(stderr: string) {
   return row;
 }
 
+export function validateHermesCanonicalChromeJobMask(stderr: string) {
+  const prefix = "NEMOCLAW_HERMES_CHROME_JOB_MASK=";
+  const rows = stderr.split(/\r?\n/u).filter((line) => line.startsWith(prefix));
+  assert.equal(rows.length, 1, "Expected one canonical Chrome job mask record.");
+  assert(Buffer.byteLength(rows[0]!, "utf8") <= 2048);
+  const row = JSON.parse(rows[0]!.slice(prefix.length));
+  assert.equal(row.schemaVersion, 1);
+  assert.equal(row.classification, "admitted-Hermes-canonical-Chrome-jobs");
+  assert([0xff, 0x1ff, 0x3ff].includes(row.beforeMask));
+  assert.equal(row.afterMask, 0);
+  assert.equal(row.removedMask, row.beforeMask);
+  assert.equal(row.privateDesktopRequired, true);
+  assert.equal(row.appContainerPreserved, true);
+  assert.equal(row.outerProcessLimitPreserved, true);
+  assert.equal(row.chromeTargetJobsOwnUiRestrictions, true);
+  assert.equal(row.childResumed, false);
+  return row;
+}
+
+export function configureCanonicalChromeJobs(
+  environment: NodeJS.ProcessEnv,
+  request: ReturnType<typeof personalRequest>,
+  enabled: boolean,
+) {
+  if (enabled) {
+    environment.NEMOCLAW_HERMES_CANONICAL_CHROME_JOBS = "1";
+    request.process.env.push("NEMOCLAW_HERMES_CANONICAL_CHROME_JOBS=1");
+  }
+  return request;
+}
+
 export function desktopAbsenceRequest(initial: any) {
   assert.equal(initial.identityAndCloseVerified, true);
   assert(initial.ownedNames.length > 0 && initial.ownedNames.length <= 2);
@@ -2352,6 +2383,7 @@ async function main() {
       windowsRoot,
       currentNativeRoot,
     );
+    request = configureCanonicalChromeJobs(environment, request, browserFirst);
     if (rendererWerBuildFile) {
       assert(replayDocument, "Renderer WER capture requires the immutable canonical replay");
       rendererCapture.helper = fileIdentity(rendererCaptureHelper);
@@ -2457,7 +2489,9 @@ async function main() {
     }
     let desktopMaskFailure: unknown;
     try {
-      receipt.desktopJobMask = validateHermesDesktopMask(execution.stderr);
+      receipt.desktopJobMask = browserFirst
+        ? validateHermesCanonicalChromeJobMask(execution.stderr)
+        : validateHermesDesktopMask(execution.stderr);
     } catch (error) {
       desktopMaskFailure = error;
       receipt.desktopJobMaskError = errorDetail(error);
