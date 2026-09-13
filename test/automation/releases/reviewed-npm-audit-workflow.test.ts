@@ -28,6 +28,11 @@ import {
   verifyReviewedNpmLock,
 } from "../../../scripts/lib/reviewed-npm-archive.mts";
 import type { AuditPolicyResult } from "../../../scripts/lib/reviewed-npm-audit.mts";
+import {
+  openClawReplacementGraphFixture,
+  type LockedGraphFixture,
+  wechatReplacementGraphFixture,
+} from "./reviewed-npm-audit-fixtures.ts";
 
 type WorkflowStep = {
   readonly env?: Record<string, string>;
@@ -80,6 +85,7 @@ function runConsolidatedAuditFixture(
   auditStatus = 0,
   offlinePackStatus = 0,
   observedNpmVersion = REVIEWED_AUDIT_CONFIG.npmVersion,
+  lockedGraphFixture?: LockedGraphFixture<(typeof REVIEWED_AUDIT_CONFIG.lockedGraphs)[number]>,
 ): ConsolidatedAuditFixture {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-reviewed-audit-entry-"));
   const trustedRoot = path.join(root, "trusted");
@@ -92,9 +98,6 @@ function runConsolidatedAuditFixture(
   try {
     fs.mkdirSync(path.join(trustedRoot, "ci"), { recursive: true });
     fs.symlinkSync(trustedRoot, trustedRootAlias, "junction");
-    fs.mkdirSync(path.join(targetRoot, "agents", "openclaw", "wechat-runtime"), {
-      recursive: true,
-    });
     fs.mkdirSync(bin);
     fs.cpSync(path.join(REPO_ROOT, "scripts"), path.join(trustedRoot, "scripts"), {
       recursive: true,
@@ -103,19 +106,10 @@ function runConsolidatedAuditFixture(
       path.join(trustedRoot, "ci", "npm-audit-exceptions.json"),
       '{"schemaVersion":1,"exceptions":[]}\n',
     );
-    const runtimeLockValue = JSON.parse(
-      fs.readFileSync(
-        path.join(REPO_ROOT, "agents/openclaw/wechat-runtime/package-lock.json"),
-        "utf8",
-      ),
-    );
-    runtimeLockValue.packages["node_modules/@tencent-weixin/openclaw-weixin"].peerDependenciesMeta =
-      {
-        openclaw: { optional: true },
-      };
-    const runtimeLock = Buffer.from(JSON.stringify(runtimeLockValue));
-    const integrity =
-      "sha512-dPQbidUNWigC6V10vGW4i+GLH09x+6zUhafZRjuxkJ9GDu8o62WBsnUTojp4KqUH756hz+t2v9khiCRSi0dBDw==";
+    const graphFixture = lockedGraphFixture ?? wechatReplacementGraphFixture(REPO_ROOT);
+    const selectedFixtureIdentity = graphFixture.graph.replacement ?? graphFixture.graph;
+    const lockedDirectory = path.join(targetRoot, graphFixture.graph.directory);
+    fs.mkdirSync(lockedDirectory, { recursive: true });
     fs.writeFileSync(
       path.join(trustedRoot, "ci", "reviewed-npm-audit.json"),
       JSON.stringify({
@@ -124,31 +118,7 @@ function runConsolidatedAuditFixture(
         archiveTarVersion: "7.5.21",
         artifactDirectory: "artifacts/reviewed-npm-audit",
         exceptionFile: "ci/npm-audit-exceptions.json",
-        lockedGraphs: [
-          {
-            directory: "agents/openclaw/wechat-runtime",
-            id: "wechat-runtime",
-            inputValidation: "wechat-runtime",
-            installMode: "legacy-peer-deps",
-            integrity: "sha512-previous",
-            label: "WeChat previous fixture",
-            lockSha256: "a".repeat(64),
-            packageSpec: "@tencent-weixin/openclaw-weixin@2.4.2",
-            replacement: {
-              integrity,
-              label: "WeChat fixture",
-              lockSha256: createHash("sha256").update(runtimeLock).digest("hex"),
-              packageSpec: "@tencent-weixin/openclaw-weixin@2.4.3",
-              promotionPullRequest: 11105,
-              tarballUrl:
-                "https://registry.npmjs.org/@tencent-weixin/openclaw-weixin/-/openclaw-weixin-2.4.3.tgz",
-            },
-            severityThreshold: "low",
-            signatureAudit: "retry-download-failures",
-            tarballUrl:
-              "https://registry.npmjs.org/@tencent-weixin/openclaw-weixin/-/openclaw-weixin-2.4.2.tgz",
-          },
-        ],
+        lockedGraphs: [graphFixture.graph],
         nodeVersion: process.version.slice(1),
         npmArchiveSha256: REVIEWED_AUDIT_CONFIG.npmArchiveSha256,
         npmIntegrity: REVIEWED_AUDIT_CONFIG.npmIntegrity,
@@ -159,10 +129,10 @@ function runConsolidatedAuditFixture(
         sourceNestedShrinkwrapPackages: [],
         sourceRegistryPackage: {
           artifactName: "fixture-1.0.0.tgz",
-          integrity,
+          integrity: selectedFixtureIdentity.integrity,
           label: "fixture",
           packageSpec: "fixture@1.0.0",
-          tarballUrl: "https://registry.npmjs.org/fixture/-/fixture-1.0.0.tgz",
+          tarballUrl: selectedFixtureIdentity.tarballUrl,
         },
         sourceRegistryPackagesWithoutIntegrity: [],
       }),
@@ -177,14 +147,8 @@ function runConsolidatedAuditFixture(
         packages: { "": manifest },
       }),
     );
-    fs.copyFileSync(
-      path.join(REPO_ROOT, "agents/openclaw/wechat-runtime/package.json"),
-      path.join(targetRoot, "agents/openclaw/wechat-runtime/package.json"),
-    );
-    fs.writeFileSync(
-      path.join(targetRoot, "agents/openclaw/wechat-runtime/package-lock.json"),
-      runtimeLock,
-    );
+    fs.writeFileSync(path.join(lockedDirectory, "package.json"), graphFixture.manifest);
+    fs.writeFileSync(path.join(lockedDirectory, "package-lock.json"), graphFixture.lock);
     mutateTarget(targetRoot);
     fs.writeFileSync(
       path.join(bin, "npm"),
@@ -263,18 +227,16 @@ process.exit(0);
           NEMOCLAW_TEST_NPM_CALLS: callsFile,
           NEMOCLAW_TEST_NPM_VERSION: observedNpmVersion,
           NEMOCLAW_TEST_OFFLINE_PACK_STATUS: String(offlinePackStatus),
-          NEMOCLAW_TEST_REVIEWED_INTEGRITY: integrity,
-          NEMOCLAW_TEST_REVIEWED_TARBALL:
-            "https://registry.npmjs.org/@tencent-weixin/openclaw-weixin/-/openclaw-weixin-2.4.3.tgz",
+          NEMOCLAW_TEST_REVIEWED_INTEGRITY: selectedFixtureIdentity.integrity,
+          NEMOCLAW_TEST_REVIEWED_TARBALL: selectedFixtureIdentity.tarballUrl,
           PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}`,
         },
       },
     );
     const provenanceFile = path.join(artifactDirectory, "source-graph.provenance.json");
     const lockedProvenanceFile = path.join(artifactDirectory, "locked-graph-1.provenance.json");
-    const receiptFile = path.join(artifactDirectory, "wechat-runtime.receipt.json");
-    const rawReportFile = path.join(artifactDirectory, "wechat-runtime.raw.json");
-    const lockedDirectory = path.join(targetRoot, "agents", "openclaw", "wechat-runtime");
+    const receiptFile = path.join(artifactDirectory, `${graphFixture.graph.id}.receipt.json`);
+    const rawReportFile = path.join(artifactDirectory, `${graphFixture.graph.id}.raw.json`);
     return {
       lockedReceipt: fs.existsSync(receiptFile) ? fs.readFileSync(receiptFile, "utf-8") : undefined,
       lockedProvenance: fs.existsSync(lockedProvenanceFile)
@@ -378,15 +340,25 @@ describe("trusted npm audit workflow (#5896)", () => {
   });
 
   it("records the selected replacement identity in locked-graph audit provenance", () => {
-    const fixture = runConsolidatedAuditFixture(() => {});
+    const graph = REVIEWED_AUDIT_CONFIG.lockedGraphs.find(({ id }) => id === "openclaw-runtime")!;
+    const fixture = runConsolidatedAuditFixture(
+      () => {},
+      undefined,
+      0,
+      0,
+      REVIEWED_AUDIT_CONFIG.npmVersion,
+      openClawReplacementGraphFixture(REPO_ROOT, graph),
+    );
 
     expect(fixture.result.status, fixture.result.stderr.toString()).toBe(0);
     expect(fixture.lockedProvenance).toMatchObject({
       graph: {
-        label: "WeChat fixture",
-        packageSpecs: ["@tencent-weixin/openclaw-weixin@2.4.3"],
+        label: "OpenClaw 2026.9.1 locked runtime graph",
+        packageSpecs: ["openclaw@2026.9.1"],
       },
     });
+    expect(fixture.lockedReceipt).toBeDefined();
+    expect(fixture.npmCalls).toContain(JSON.stringify(NPM_AUDIT_SIGNATURE_ARGV));
   });
 
   it("restores the read-only trusted cache after offline packing fails", () => {
@@ -626,7 +598,6 @@ describe("trusted npm audit workflow (#5896)", () => {
       label: "OpenClaw replacement",
       lockSha256: replacementLock,
       packageSpec: "openclaw@2026.9.1",
-      promotionPullRequest: 11105,
       tarballUrl: "https://registry.npmjs.org/openclaw/-/openclaw-2026.9.1.tgz",
     };
     try {
@@ -678,7 +649,6 @@ describe("trusted npm audit workflow (#5896)", () => {
       label: "Different package",
       lockSha256: "b".repeat(64),
       packageSpec: "different-package@1.0.0",
-      promotionPullRequest: 11105,
       tarballUrl: "https://registry.npmjs.org/different-package/-/different-package-1.0.0.tgz",
     };
 

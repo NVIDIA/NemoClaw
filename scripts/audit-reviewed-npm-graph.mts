@@ -35,7 +35,6 @@ type ReviewedPackage = Readonly<{
   tarballUrl: string;
 }>;
 type LockedGraphIdentity = ReviewedPackage & Readonly<{ lockSha256: string }>;
-type LockedGraphReplacement = LockedGraphIdentity & Readonly<{ promotionPullRequest: number }>;
 type SourceRegistryPackage = ReviewedPackage & Readonly<{ artifactName: string }>;
 type PackageWithoutIntegrity = Readonly<{
   label: string;
@@ -49,7 +48,7 @@ type LockedGraph = LockedGraphIdentity &
     inputValidation?: "wechat-runtime";
     installMode?: "legacy-peer-deps";
     lockSha256: string;
-    replacement?: LockedGraphReplacement;
+    replacement?: LockedGraphIdentity;
     severityThreshold?: Severity;
     signatureAudit?: "retry-download-failures";
   }>;
@@ -275,8 +274,6 @@ export function parseAuditConfig(contents: string): AuditConfig {
             graph.signatureAudit !== undefined)) ||
         (graph.replacement !== undefined &&
           (!isLockedGraphIdentity(graph.replacement) ||
-            !Number.isInteger(graph.replacement.promotionPullRequest) ||
-            graph.replacement.promotionPullRequest < 1 ||
             exactPackageName(graph.replacement.packageSpec) !==
               exactPackageName(graph.packageSpec) ||
             graph.replacement.packageSpec === graph.packageSpec ||

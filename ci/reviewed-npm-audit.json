@@ -105,8 +105,7 @@
         "packageSpec": "openclaw@2026.9.1",
         "integrity": "sha512-0Ve0631CdgkJDwd4NNG1BawIdF5yCL2sO+Tts8amStw+H6vKURTj0K4rOa4+hFpJk1Dnw5LyKl5twzwX1VtA2w==",
         "tarballUrl": "https://registry.npmjs.org/openclaw/-/openclaw-2026.9.1.tgz",
-        "lockSha256": "9f99aa4f5d10280b4d809e0d54f20bcbe786d4140d30fc10ed502b1305ff9a8d",
-        "promotionPullRequest": 11105
+        "lockSha256": "9f99aa4f5d10280b4d809e0d54f20bcbe786d4140d30fc10ed502b1305ff9a8d"
       }
     },
     {

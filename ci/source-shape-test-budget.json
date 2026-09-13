@@ -207,11 +207,6 @@
       "category": "security"
     },
     {
-      "file": "test/automation/releases/reviewed-npm-audit-replacement.test.ts",
-      "test": "requires every replacement identity to name its promotion pull request",
-      "category": "security"
-    },
-    {
       "file": "test/automation/releases/reviewed-npm-audit-workflow.test.ts",
       "test": "rejects a replacement graph for a different package",
       "category": "security"
