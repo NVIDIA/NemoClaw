@@ -14,7 +14,7 @@ $ErrorActionPreference='Stop'
 if ($env:GITHUB_ACTIONS -cne 'true' -or $env:OS -cne 'Windows_NT') { throw 'This candidate test requires disposable Windows CI.' }
 if ($ColdJobProbe -and ($RecordStartup -or $CaptureRendererContext)) { throw 'The cold owned-job experiment cannot record startup or capture renderer context.' }
 if ($RendererWer -and ($ColdJobProbe -or $RecordStartup -or $CaptureRendererContext)) { throw 'The renderer WER diagnostic must run without other diagnostic modes.' }
-if ($RendererPostmortem -and ($RendererWer -or $ColdJobProbe -or $RecordStartup -or $CaptureRendererContext)) { throw 'Postmortem capture must run without other diagnostic modes.' }
+if ($RendererPostmortem -and ($RendererWer -or $ColdJobProbe -or $CaptureRendererContext)) { throw 'Postmortem capture requires WER-clone, cold-job and renderer-context modes off.' }
 $output=[IO.Path]::GetFullPath($ArtifactDirectory)
 if (Test-Path -LiteralPath $output) { throw 'The Personal evidence directory must be fresh.' }
 $null=New-Item -ItemType Directory -Path $output
@@ -24,7 +24,7 @@ $root=[IO.Path]::GetPathRoot([Environment]::SystemDirectory)
 $runtime=Join-Path $root 'NemoClawHermesProbe-274d797050ea'
 $primary=$null;$mxcAttempted=$false;$runtimeOwned=$false;$faultWindowStart=$null
 $classification=if($RendererPostmortem){'canonical-personal-mxc-postmortem-diagnostic'}elseif($RendererWer){'canonical-personal-mxc-renderer-wer-diagnostic'}elseif($ColdJobProbe){'canonical-personal-mxc-cold-job-diagnostic'}else{'canonical-personal-mxc-candidate-feasibility'}
-$receipt=[ordered]@{schemaVersion=1;classification=$classification;sourceRevision=$env:GITHUB_SHA;diagnosticOnly=[bool]($ColdJobProbe -or $RendererWer -or $RendererPostmortem);coldJobProbe=[bool]$ColdJobProbe;rendererWer=[bool]$RendererWer;rendererPostmortem=[bool]$RendererPostmortem;
+$receipt=[ordered]@{schemaVersion=1;classification=$classification;sourceRevision=$env:GITHUB_SHA;diagnosticOnly=[bool]($ColdJobProbe -or $RendererWer -or $RendererPostmortem);coldJobProbe=[bool]$ColdJobProbe;rendererWer=[bool]$RendererWer;rendererPostmortem=[bool]$RendererPostmortem;recordStartupRequested=[bool]$RecordStartup;
     candidateSource='8d78fe458e9268a7afdc8ed06b85c23306452036';artifactId=10293082661;status='failed';runtimeRebuilt=$false;runtimeExported=$false;
     installedAcceptance=$false;fullAgentQualified=$false;runtimeRoot=$runtime;cleanupErrors=@()}
 function Invoke-PersonalChecked([string]$Executable,[string[]]$Arguments,[string]$Label) {

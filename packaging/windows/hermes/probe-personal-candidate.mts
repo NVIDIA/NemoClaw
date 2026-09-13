@@ -582,6 +582,25 @@ export function rendererWerRequest(
   return request;
 }
 
+export function validatePersonalDiagnosticModes(modes: {
+  postmortem: boolean;
+  wer: boolean;
+  coldJob: boolean;
+  rendererContext: boolean;
+  recordStartup: boolean;
+}) {
+  if (modes.postmortem && (modes.wer || modes.coldJob || modes.rendererContext))
+    throw new Error(
+      "Postmortem capture requires WER-clone, cold-job and renderer-context modes off.",
+    );
+  if (modes.wer && (modes.coldJob || modes.rendererContext || modes.recordStartup))
+    throw new Error("The renderer WER diagnostic requires all other diagnostic modes off.");
+  if (modes.coldJob && (modes.rendererContext || modes.recordStartup))
+    throw new Error(
+      "The first-workload owned-job diagnostic requires tracing and debugger capture off.",
+    );
+}
+
 export function validateRendererPostmortemOwner(
   primary: ReturnType<typeof personalRequest>,
   runtime: string,
@@ -1890,24 +1909,15 @@ async function main() {
   const rendererWerBuildFile = process.argv.includes("--renderer-wer-build")
     ? argument("--renderer-wer-build")
     : null;
-  if (
-    rendererPostmortem &&
-    (rendererWerBuildFile ||
-      coldJobProbe ||
-      rendererContextBuildFile ||
-      process.argv.includes("--record-startup"))
-  )
-    throw new Error("Postmortem capture requires all other diagnostic modes off.");
+  const recordStartup = process.argv.includes("--record-startup");
+  validatePersonalDiagnosticModes({
+    postmortem: rendererPostmortem,
+    wer: Boolean(rendererWerBuildFile),
+    coldJob: coldJobProbe,
+    rendererContext: Boolean(rendererContextBuildFile),
+    recordStartup,
+  });
   const rendererCaptureRequested = Boolean(rendererWerBuildFile || rendererPostmortem);
-  if (
-    rendererWerBuildFile &&
-    (coldJobProbe || rendererContextBuildFile || process.argv.includes("--record-startup"))
-  )
-    throw new Error("The renderer WER diagnostic requires all other diagnostic modes off.");
-  if (coldJobProbe && (rendererContextBuildFile || process.argv.includes("--record-startup")))
-    throw new Error(
-      "The first-workload owned-job diagnostic requires tracing and debugger capture off.",
-    );
   const compatibilityRoot = fs.realpathSync(argument("--compatibility-root"));
   const compatibilityReceipt = argument("--compatibility-receipt");
   const compatibilityProof = argument("--compatibility-proof");
@@ -2019,6 +2029,11 @@ async function main() {
             "Temporary 64-bit AeDebug postmortem registration, filtered to this canonical renderer and AppContainer",
             "No debugger at startup; original runtime and Personal request unchanged",
             "CDB reads the original JIT exception noninvasively; no instruction replay or exception-resolution signal",
+            ...(recordStartup
+              ? [
+                  "WPR startup observation requested; actual capture coverage and closure are retained in primaryWpr",
+                ]
+              : []),
           ]
         : [
             "Separate verified Chrome subtree with an observe-only out-of-process WER callback",
@@ -2295,7 +2310,7 @@ async function main() {
     const bytes = JSON.stringify(request, null, 2) + "\n";
     fs.writeFileSync(policy, bytes, { flag: "wx" });
     receipt.requestSha256 = createHash("sha256").update(bytes).digest("hex");
-    if (process.argv.includes("--record-startup")) {
+    if (recordStartup) {
       primaryWpr = await startPersonalWpr(
         wprPowershell,
         output,

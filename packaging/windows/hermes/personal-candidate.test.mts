@@ -12,6 +12,7 @@ import {
   rendererContextBuild,
   rendererWerRequest,
   validateRendererPostmortemOwner,
+  validatePersonalDiagnosticModes,
   finishRendererCaptureOwner,
   personalRequest,
   directBrowserRequest,
@@ -39,6 +40,28 @@ const browserRuntime = "C:\\NemoClawHermesProbe-274d797050ea";
 const browserOriginalNonce = "00112233445566778899aabb";
 const browserNewNonce = "ffeeddccbbaa998877665544";
 const browserController = "C:\\NemoClawPersonalNode-001122334455";
+
+test("postmortem may pair with startup recording while incompatible modes remain excluded", () => {
+  const ordinary = {
+    postmortem: false,
+    wer: false,
+    coldJob: false,
+    rendererContext: false,
+    recordStartup: false,
+  };
+  validatePersonalDiagnosticModes(ordinary);
+  validatePersonalDiagnosticModes({ ...ordinary, recordStartup: true });
+  for (const recordStartup of [false, true]) {
+    const postmortem = { ...ordinary, postmortem: true, recordStartup };
+    validatePersonalDiagnosticModes(postmortem);
+    for (const incompatible of ["wer", "coldJob", "rendererContext"] as const)
+      assert.throws(() => validatePersonalDiagnosticModes({ ...postmortem, [incompatible]: true }));
+  }
+  for (const incompatible of ["wer", "coldJob"] as const)
+    assert.throws(() =>
+      validatePersonalDiagnosticModes({ ...ordinary, recordStartup: true, [incompatible]: true }),
+    );
+});
 
 test("Browser Use launch binds current helper bytes and the packaged module command", () => {
   const source = {
