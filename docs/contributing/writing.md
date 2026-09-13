@@ -2,7 +2,7 @@
 
 State the answer or required action first, then give the reasons and details the reader needs to act correctly.
 Keep one canonical page for each task, reference topic, or failure mode.
-This guide adapts the upstream NemoClaw writing rules for this independent Markdown prototype.
+This guide adapts the upstream NemoClaw writing rules for this Markdown documentation.
 
 ## Organize with the Minto Pyramid
 
@@ -32,9 +32,19 @@ Prefer short sentences, but preserve technical accuracy over a word limit.
 Avoid contractions, vague pronouns, promotional claims, redundant summaries, and implementation history in operating guides.
 Use `must` for requirements, `may` for permission, `can` for capability, and `should` for recommendations.
 
+## Write durable guidance
+
+Describe behavior and requirements directly, without defining NemoClaw by a temporary development stage.
+Avoid relative-time phrases such as “currently,” “still,” “the latest,” and “the newer release” when describing capabilities.
+Name the configuration, API, version, or revision that determines the behavior.
+Keep dates in decision records and validation evidence, where they identify the scope of a claim.
+Move development chronology and task-specific authorization into historical records.
+Preserve actual constraints, version pins, literal command and image names, and the limits of recorded evidence.
+Do not turn planned work into implemented behavior by removing temporal wording.
+
 ## Keep terminology precise
 
-| Term | Meaning in this prototype |
+| Term | Meaning in NemoClaw |
 | --- | --- |
 | Agent runtime | The software that executes agent work; prefer this to a generic “harness” in explanatory prose |
 | `harness` | Fabric's literal adapter/recipe selector; preserve it in YAML, flags, code, and adapter-specific descriptions |
@@ -85,5 +95,5 @@ The upstream baseline was read at commit `e9cf24220532e33e704298632d9006b30254ef
 The requested Google style takes precedence over the upstream title-case heading rule.
 Google's [headings](https://developers.google.com/style/headings) and [procedures](https://developers.google.com/style/procedures) guides provide the applicable conventions.
 This branch uses Markdown links, not Fern routes, generated runtime variants, or MDX components.
-Those upstream publishing requirements do not imply that this prototype has a documentation site.
+Those upstream publishing requirements do not imply that this repository has a documentation site.
 Historical documents and literal output retain their original formatting when needed to preserve evidence.

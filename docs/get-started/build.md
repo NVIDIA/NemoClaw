@@ -43,5 +43,7 @@ Continue with [external service setup](external-services.md) and [deployment](de
 
 [versions.json](../../versions.json) records executable versions, download URLs, and hashes.
 [go.mod](../../go.mod) and [go.sum](../../go.sum) pin Go dependencies.
-The OpenShell SDK is pinned to the OpenShell 0.0.116 release commit because the newer unreleased SDK removed the inference API this prototype uses.
+The OpenShell SDK is pinned to release 0.0.116, Go revision `d1155aa70042`, for the inference API used by NemoClaw.
+SDK upgrades must preserve that API contract or include corresponding integration changes.
+The [dated SDK research](../archive/validation-log.md#historical-build-availability-and-remaining-limits) records the compatibility investigation.
 The Fabric source revision and per-recipe dependency locks are documented in the [runtime reference](../reference/fabric-harnesses.md) and [third-party inventory](../reference/third-party.md).

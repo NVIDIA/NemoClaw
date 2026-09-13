@@ -1,9 +1,9 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# Working on the desired-state prototype
+# Working on NemoClaw
 
-This checkout is an independent Go prototype.
+NemoClaw uses Go to manage deployments from desired-state configuration.
 Read [the scope](docs/architecture/decisions.md), [build guide](docs/get-started/build.md), and [test guide](docs/validation/run-tests.md).
 Keep work local unless the user authorizes publication.
 

@@ -1,7 +1,7 @@
-# Contribute to the prototype
+# Contribute to NemoClaw
 
-Keep changes within the [local experiment's scope](docs/architecture/decisions.md).
-This checkout has an independent implementation; the documentation and release tooling on `main` do not apply automatically.
+Keep changes within the [deployment scope](docs/architecture/decisions.md).
+Use the build, test, and documentation workflows provided in this checkout.
 
 1. [Build the bundle](docs/get-started/build.md).
 2. Read [AGENTS.md](AGENTS.md) before changing code.

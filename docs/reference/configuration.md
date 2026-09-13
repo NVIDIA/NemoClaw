@@ -1,6 +1,6 @@
 # Configuration and credentials
 
-The prototype accepts a strict `nemoclaw.nvidia.com/v1alpha1` document with one provider, one sandbox, one agent, and one inference route.
+NemoClaw accepts a strict `nemoclaw.nvidia.com/v1alpha1` document with one provider, one sandbox, one agent, and one inference route.
 Start from a checked-in example; the broader [historical RFC](../archive/desired-state-rfc.md) includes fields and behavior that are not implemented.
 
 ## Choose a deployment shape
@@ -58,9 +58,10 @@ Without credentials, inference HTTP endpoints must use literal private or loopba
 Plaintext gateway endpoints must use literal loopback addresses.
 The ordinary isolated policy allows no general network egress; OpenShell routes inference separately.
 Landlock uses upstream `best_effort`, so filesystem enforcement depends on the host kernel.
-This experiment does not establish security qualification.
+These checks do not establish security qualification.
+Refer to the [validation evidence](../validation/index.md) for the scope of platform and runtime checks.
 
 Keep the complete state directory for [lifecycle operations](../guides/lifecycle.md).
 Native agent settings and files are outside deployment YAML and export.
-The ordinary OpenShell slice deletes sandbox storage during teardown.
-[Native messaging](../guides/native-access.md) still needs generic egress, secret, and retained-storage facilities for real service use.
+The OpenShell deployment deletes sandbox storage during teardown.
+[Native messaging](../guides/native-access.md) requires generic egress, secret, and retained-storage facilities for real service use.

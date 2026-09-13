@@ -1,6 +1,6 @@
 # Validation results and limits
 
-The prototype has native Linux ARM64 evidence for deployment, selected agent operations, and retained-state recovery.
+The recorded tests cover native Linux ARM64 deployment, selected agent operations, and retained-state recovery.
 Results apply to their recorded revisions and test conditions; they do not qualify arbitrary Fabric features or other runtime platforms.
 The complete [dated validation log](../archive/validation-log.md) preserves failures, repairs, manifests, and timings.
 
@@ -15,10 +15,10 @@ The complete [dated validation log](../archive/validation-log.md) preserves fail
 | Native OpenClaw messaging | [Native-interface evidence](evidence/openclaw-native-interfaces-linux-arm64.json): actual processes, local Telegram/model fixtures, native settings and state continuity | Real Telegram/WhatsApp delivery and ordinary OpenShell messaging infrastructure |
 | Managed DGX Spark | [Spark evidence](evidence/spark-linux-arm64.json): real replies, verified artifacts, no-op/export, watchdog recovery, and explicit artifact change | Other GPUs, Podman, Docker Desktop, terminal OpenShell error recovery |
 | Teardown | [Destroy evidence](evidence/destroy-linux-arm64.json): native managed gateway/sandbox teardown and reapply; Docker fixtures for inference-process removal | Live destruction of the primary large-model process; combined Ollama teardown |
-| Managed Ollama | [Historical Ollama evidence](evidence/managed-ollama-linux-arm64.json): create, model changes, and recreation | Ordinary repair of a stopped server; current-bundle live qualification after later reader changes |
+| Managed Ollama | [Historical Ollama evidence](evidence/managed-ollama-linux-arm64.json): create, model changes, and recreation | Ordinary repair of a stopped server; live qualification of revisions after the recorded run |
 | Bundle platforms | [Build records](../archive/validation-log.md#current-direct-reader-validation): five targets build and pass checksum checks | Native macOS, Windows, Linux AMD64, and Podman runtime behavior |
 
-The latest adapter expansion passed Go unit tests, vet, two Python recipe tests, and the native provider integration suite in 58.445 seconds.
+The adapter expansion recorded at commit `4a04e0a1821608e88954bacf3089f96bdf09a809` passed Go unit tests, vet, two Python recipe tests, and the native provider integration suite in 58.445 seconds.
 The native bundle was rebuilt before that integration run.
 Its seven OpenShell adapter runs took 4.20–11.35 seconds each with deterministic inference fixtures.
 Earlier live-model evidence is separate and must not be read as live-model qualification of those seven adapters.

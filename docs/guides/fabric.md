@@ -8,7 +8,7 @@ OpenClaw uses a local adapter; the other nine adapters come from the pinned Fabr
 
 Use native Linux ARM64, Python 3.13, Docker, uv, and the host build toolchain.
 Maturin can provision Rust in its cache.
-Provide an [external gateway and inference service](../get-started/external-services.md); Fabric with managed gateway or inference is outside this slice.
+Provide an [external gateway and inference service](../get-started/external-services.md); Fabric deployments require both services to be external.
 Claude requires Anthropic Messages; Codex and Pi require OpenAI Responses.
 A Chat Completions response alone does not establish compatibility with those protocols.
 

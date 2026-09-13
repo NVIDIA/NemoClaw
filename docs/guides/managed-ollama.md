@@ -1,16 +1,16 @@
 # Try managed Ollama
 
-Use this experiment to create an Ollama container and model volume on an existing local Docker network.
+Use the managed Ollama configuration to create an Ollama container and model volume on an existing local Docker network.
 It demonstrates a resource-boundary limitation: a stopped server blocks model refresh, so ordinary apply cannot plan its restart.
 The CLI also rejects destroy for this combined container/storage resource.
-Use the live test for this experiment so its cleanup is explicit.
+Use the live test to exercise the configuration with explicit cleanup.
 On failure, preserve the reported state and refer to [troubleshooting](../reference/troubleshooting.md).
 
 This live test creates two deployments, downloads models, and intentionally stops its owned inference container.
 On success it deletes those deployments and their model volumes.
 Rebuild the native bundle before running the test.
 
-## Configure the experiment
+## Configure managed Ollama
 
 1. Use the [external gateway setup](../get-started/external-services.md#start-the-gateway) and an unused port on its Docker bridge.
    Build the OpenClaw image and bundle, then copy the managed example:
@@ -46,7 +46,7 @@ The recreated deployment uses another free port on the same host.
 On success the harness removes only its two deployments, Ollama containers, and model volumes.
 Stop the foreground gateway and remove its test network afterward.
 On failure it preserves resources and state for inspection.
-Reader tests cover interrupted pull streams and cancellation; a real download interrupted through OpenTofu remains a separate qualification scenario.
+Reader tests cover interrupted pull streams and cancellation; a real download interrupted through OpenTofu requires separate qualification.
 This setup does not qualify Podman, Docker Desktop, or native macOS/Windows operation.
 
 Downloaded models are retained when the selected model changes.

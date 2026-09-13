@@ -5,11 +5,11 @@ NemoClaw owns deployment operations; it has no invocation or channel API.
 
 ## Messaging prerequisites and limits
 
-The ordinary OpenShell deployment still has fixed isolated egress and does not provide messaging secret mounts or retained sandbox storage.
+The ordinary OpenShell deployment has fixed isolated egress and does not provide messaging secret mounts or retained sandbox storage.
 The Docker fixture supplies those prerequisites locally.
-Real Telegram/WhatsApp deployment still needs those generic infrastructure facilities and real-account qualification.
-The adapter no longer declares channel-specific requirements, installs messaging dependencies, performs enrollment, or manages channel state on the user's behalf.
-The current image already contains the pinned native Telegram plugin.
+Real Telegram/WhatsApp deployment requires those generic infrastructure facilities and real-account qualification.
+The adapter does not declare channel-specific requirements, install messaging dependencies, perform enrollment, or manage channel state on the user's behalf.
+The OpenClaw image contains the pinned native Telegram plugin.
 
 The Hermes and Deep Agents adapters provide agent execution; they do not provide native messaging gateways.
 Use a harness's own available interfaces or Fabric's existing SDK.
@@ -29,7 +29,7 @@ openshell --gateway-endpoint GATEWAY --workspace WORKSPACE sandbox connect assis
 This workspace is an OpenShell resource, not the filesystem workspace directory.
 The sandbox name is the one from YAML.
 Inside the sandbox, use OpenClaw directly.
-Channel enrollment commands require the infrastructure described above; they are not a working Telegram setup procedure for the current deployment:
+Channel enrollment commands require the infrastructure described above; they are not a working Telegram setup procedure for this deployment configuration:
 
 | Task | Native command |
 | --- | --- |
@@ -48,7 +48,7 @@ openshell --gateway-endpoint GATEWAY --workspace WORKSPACE sandbox exec --name a
 These are upstream OpenShell/OpenClaw commands.
 They do not pass through a NemoClaw runtime API.
 The native gateway stays on sandbox loopback.
-No public listener or port forwarding is enabled by this experiment.
+No public listener or port forwarding is enabled by this deployment configuration.
 Gateway authentication, remote user access, UI setup and channel enrollment follow native harness behavior.
 
 ## Configuration and lifecycle ownership
@@ -58,10 +58,10 @@ It seeds configuration only when absent.
 Existing native settings are preserved on startup; changes to channels, pairing, plugins and session settings are not translated into another schema.
 The native gateway handles its own configuration reloads.
 
-NemoClaw's readiness checks still verify the provisioned loopback gateway endpoint, primary OpenShell inference route and workspace.
+NemoClaw's readiness checks verify the provisioned loopback gateway endpoint, primary OpenShell inference route and workspace.
 Changing these deployment-owned settings through the native CLI causes readiness/reconciliation to fail instead of silently overwriting the file.
 The adapter holds an exclusive state lock while its gateway runs.
-Fabric still owns process start/stop through its existing contract.
+Fabric owns process start/stop through its existing contract.
 SDK-originated adapter calls retain their timeout and no-replay behavior; native CLI/channel requests use native OpenClaw execution and delivery semantics.
 
 Native messages are not Fabric invocation records.

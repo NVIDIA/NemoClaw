@@ -5,7 +5,7 @@ Complete [Spark deployment](../guides/dgx-spark.md) first.
 The lifecycle test intentionally stops inference through the watchdog and then reapplies the deployment.
 
 Deterministic fixtures cover download/preparation interruption, authentication and transport failures, partial observations, ownership/configuration drift, capacity rejection, immediate startup exit, and supervised child shutdown.
-The native OpenTofu/provider integration suite remains `go test -tags=integration ./internal/engine -count=1`.
+Run the native OpenTofu/provider integration suite with `go test -tags=integration ./internal/engine -count=1`.
 Retained Spark live evidence is identified in the [validation summary](index.md); fixture success alone does not establish GPU inference success.
 
 ## Test packed data without a GPU

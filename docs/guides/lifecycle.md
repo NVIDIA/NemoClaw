@@ -58,8 +58,8 @@ Destroy deletes sandbox files and conversation history.
 Back up native agent state separately before proceeding if you need to keep it.
 Select the intended state directory; destroy accepts no YAML.
 
-The first teardown slice handles external inference endpoints and managed Spark.
-It rejects the older combined Ollama container/storage resource before effects.
+Destroy handles external inference endpoints and managed Spark.
+It rejects the combined Ollama container/storage resource before effects.
 An unfinished apply with potentially unbound effects must first be reconciled with its original YAML.
 Keep the gateway reachable until its workloads are removed.
 

@@ -62,6 +62,6 @@ A resident supervisor protects memory after the CLI exits.
 Docker restart is disabled; explicit apply performs capacity checks before restarting a stopped inference container.
 The [Spark guide](../guides/dgx-spark.md) owns build, deployment, and watchdog verification procedures.
 
-The older managed Ollama boundary combines its container and volume and uses a separate model resource.
+The managed Ollama resource boundary combines its container and volume and uses a separate model resource.
 A stopped service prevents model inventory refresh and blocks a restart plan.
 This is an unresolved resource-boundary limitation, documented in [troubleshooting](../reference/troubleshooting.md).

@@ -1,6 +1,6 @@
 # Third-party components
 
-The source in this experiment uses Apache-2.0.
+NemoClaw source uses Apache-2.0.
 Dependencies retain their respective licenses.
 `go.mod`, `go.sum`, and `versions.json` identify the inputs.
 
@@ -27,7 +27,7 @@ Dependencies retain their respective licenses.
 | Qwen3.8 NVFP4 model snapshot | Pinned inference weights and model card | Apache-2.0 as declared by the model card |
 
 Generated bundles and images are local artifacts and are not committed.
-A distribution release still needs the complete transitive license inventory, notices, corresponding-source obligations where applicable, signing, and platform packaging.
+A distribution release requires the complete transitive license inventory, notices, corresponding-source obligations where applicable, signing, and platform packaging.
 This file does not establish redistribution readiness.
 
 The Fabric image source revision and archive checksum are recorded in `image/fabric/build.py`.
@@ -40,4 +40,4 @@ The verified source archive and extracted source remain under `.build/fabric` on
 
 The model-specific runtime retains its recipe archive, complete source, patches, original and modified files, licenses, preparation tools, and supervisor source.
 Refer to [the Qwen runtime notice](../../runtimes/qwen38/NOTICE.md) for exact revisions, attributions, and source locations inside the image.
-Its local OCI artifact has been reproduced without the build cache; no runtime image or weights have been published by this experiment.
+Refer to the [Spark validation record](../archive/validation-log.md#managed-dgx-spark-experiment) for artifact reproducibility and publication history.

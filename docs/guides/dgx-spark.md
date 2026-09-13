@@ -5,7 +5,7 @@ Fabric is not part of this managed recipe.
 
 ## Prerequisites
 
-This experiment requires Linux ARM64, a GB10 Spark with at least 118 GiB RAM, NVIDIA driver 580 or newer, a working Docker GPU runtime, and adequate local disk.
+This deployment requires Linux ARM64, a GB10 Spark with at least 118 GiB RAM, NVIDIA driver 580 or newer, a working Docker GPU runtime, and adequate local disk.
 Capacity checks account for remaining snapshot and preparation bytes plus a 16 GiB disk reserve.
 No host package installation or kernel tuning is performed.
 `hostReserveGiB` constrains the requested GPU budget; the available/free memory thresholds govern the resident watchdog.
