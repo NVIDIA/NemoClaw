@@ -781,8 +781,13 @@ function installOpenClawPluginPackages(installs: readonly OpenClawPluginInstall[
       // which fails the trusted-official-install check gating openKeyedStore
       // on OpenClaw >= 2026.6.10 and crash-loops channel plugins that use
       // keyed state (e.g. WhatsApp). npm-pack installs always record the
-      // exact resolved version, so `--pin` is not needed.
-      runCommand(["openclaw", "plugins", "install", `npm-pack:${packed.archivePath}`], installEnv);
+      // exact resolved version, so `--pin` is not needed. OpenClaw 2026.9.1
+      // requires --force as the explicit confirmation for non-ClawHub sources;
+      // the archive has already passed the reviewed identity and SRI checks.
+      runCommand(
+        ["openclaw", "plugins", "install", "--force", `npm-pack:${packed.archivePath}`],
+        installEnv,
+      );
       if (install.runtimeLock) {
         const openClawVersion = sanitizeOptionalString(env.OPENCLAW_VERSION);
         if (!openClawVersion) {

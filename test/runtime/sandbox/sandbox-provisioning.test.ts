@@ -216,7 +216,10 @@ describe("sandbox provisioning: runtime npm online state", () => {
   });
 
   it("exercises the staged plugin install with the offline lock still applied", () => {
-    const stage = stageDockerfileUntil(DOCKERFILE, "openclaw plugins install /opt/nemoclaw");
+    const stage = stageDockerfileUntil(
+      DOCKERFILE,
+      "openclaw plugins install --force /opt/nemoclaw",
+    );
     const probe = [
       "#!/usr/bin/env bash",
       "set -eo pipefail",

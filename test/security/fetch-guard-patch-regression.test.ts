@@ -309,7 +309,7 @@ describe("fetch-guard patch regression guard", () => {
     );
     const script = [
       "openclaw() {",
-      '  if [ "${1:-} ${2:-} ${3:-}" = "plugins install /opt/nemoclaw" ]; then',
+      '  if [ "${1:-} ${2:-} ${3:-} ${4:-}" = "plugins install --force /opt/nemoclaw" ]; then',
       '    [ "${NPM_CONFIG_IGNORE_SCRIPTS:-}" = "true" ] || return 43',
       '    [ "${npm_config_ignore_scripts:-}" = "true" ] || return 44',
       "    return 42",
@@ -325,11 +325,9 @@ describe("fetch-guard patch regression guard", () => {
     const inspectMarker = path.join(tmp, "inspected");
     const successScript = [
       "openclaw() {",
-      '  case "${1:-} ${2:-} ${3:-}" in',
-      '    "plugins install /opt/nemoclaw") echo "installed" ;;',
-      `    "plugins inspect nemoclaw") : > ${JSON.stringify(inspectMarker)} ;;`,
-      '    "plugins enable nemoclaw") return 43 ;;',
-      "  esac",
+      '  if [ "${1:-} ${2:-} ${3:-} ${4:-}" = "plugins install --force /opt/nemoclaw" ]; then echo "installed"; fi',
+      `  if [ "\${1:-} \${2:-} \${3:-}" = "plugins inspect nemoclaw" ]; then : > ${JSON.stringify(inspectMarker)}; fi`,
+      '  if [ "${1:-} ${2:-} ${3:-}" = "plugins enable nemoclaw" ]; then return 43; fi',
       "  return 0",
       "}",
       command,

@@ -681,7 +681,7 @@ describe("messaging-build-applier.mts: agent-install", () => {
       expect(trace).toContain(
         "npm|pack|https://registry.npmjs.org/@openclaw/discord/-/discord-2026.9.1.tgz|--pack-destination",
       );
-      expect(trace).toContain("plugins|install|npm-pack:");
+      expect(trace).toContain("plugins|install|--force|npm-pack:");
       expect(trace).toContain("discord-2026.9.1.tgz|ignore-scripts=true/true");
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
@@ -751,7 +751,7 @@ describe("messaging-build-applier.mts: agent-install", () => {
       expect(trace).toContain(
         "npm|pack|https://registry.npmjs.org/@openclaw/msteams/-/msteams-2026.9.1.tgz|--pack-destination",
       );
-      expect(trace).toContain("openclaw|plugins|install|npm-pack:");
+      expect(trace).toContain("openclaw|plugins|install|--force|npm-pack:");
       expect(trace).toContain("msteams-2026.9.1.tgz|");
       expect(remediateReviewedArchive).toHaveBeenCalledWith(
         expect.objectContaining({ packageSpec: "@openclaw/msteams@2026.9.1" }),
@@ -977,8 +977,8 @@ describe("messaging-build-applier.mts: agent-install", () => {
         expect(trace).toContain(`npm|view|${packageSpec}|dist.integrity`);
         expect(trace).toContain(`npm|view|${packageSpec}|dist.tarball`);
         expect(trace).toContain(`npm|pack|${tarballUrl}|--pack-destination`);
-        expect(trace).toContain("plugins|install|npm-pack:");
-        expect(trace).toContain(`${archiveName}||||`);
+        expect(trace).toContain("plugins|install|--force|npm-pack:");
+        expect(trace).toContain(`${archiveName}|||`);
 
         expect(trace).toContain(
           "verify|/usr/local/lib/nemoclaw/wechat-runtime/package-lock.json|/sandbox/.openclaw/npm/projects",
@@ -1036,7 +1036,7 @@ describe("messaging-build-applier.mts: agent-install", () => {
       expect(trace).toContain(
         "npm|pack|https://registry.npmjs.org/@openclaw/slack/-/slack-2026.9.1.tgz|--pack-destination",
       );
-      expect(trace).toContain("openclaw|plugins|install|npm-pack:");
+      expect(trace).toContain("openclaw|plugins|install|--force|npm-pack:");
       expect(trace).toContain("slack-2026.9.1.tgz|");
       expect(remediateReviewedArchive).toHaveBeenCalledWith(
         expect.objectContaining({ packageSpec: "@openclaw/slack@2026.9.1" }),

@@ -168,7 +168,7 @@ describe("messaging-build-applier.mts: plugin archive integrity", () => {
         expect(trace).toContain("npm|view|@openclaw/slack@2026.9.1|dist.integrity");
         expect(trace).toContain("npm|view|@openclaw/slack@2026.9.1|dist.tarball");
         expect(trace).toContain(`npm|pack|${OPENCLAW_SLACK_2026_9_1_TARBALL}|--pack-destination`);
-        expect(trace).toContain("openclaw|plugins|install|npm-pack:");
+        expect(trace).toContain("openclaw|plugins|install|--force|npm-pack:");
         expect(trace).toContain("slack-2026.9.1.tgz|");
       } finally {
         fs.rmSync(tmp, { recursive: true, force: true });

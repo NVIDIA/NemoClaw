@@ -815,7 +815,7 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
           "npm pack https://registry.npmjs.org/@openclaw/diagnostics-otel/-/diagnostics-otel-2026.9.1.tgz --pack-destination",
         );
         expect(calls).toMatch(
-          /openclaw plugins install npm-pack:\S*\/diagnostics-otel-2026\.9\.1\.tgz\n/,
+          /openclaw plugins install --force npm-pack:\S*\/diagnostics-otel-2026\.9\.1\.tgz\n/,
         );
         expect(calls).not.toContain(`remediate --archive`);
         expect(calls).toContain(
@@ -828,7 +828,7 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
           "npm pack https://registry.npmjs.org/@openclaw/brave-plugin/-/brave-plugin-2026.9.1.tgz --pack-destination",
         );
         expect(calls).toMatch(
-          /openclaw plugins install npm-pack:\S*\/brave-plugin-2026\.9\.1\.tgz\n/,
+          /openclaw plugins install --force npm-pack:\S*\/brave-plugin-2026\.9\.1\.tgz\n/,
         );
         expect(calls).toContain("openclaw-env true true");
       });

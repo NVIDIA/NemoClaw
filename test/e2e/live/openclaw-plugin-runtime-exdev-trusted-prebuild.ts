@@ -83,7 +83,7 @@ COPY --from=weather-plugin-builder --chown=sandbox:sandbox \
 
 USER sandbox
 RUN --mount=type=bind,from=weather-plugin-builder,source=/opt/weather-runtime-dist,target=${TRUSTED_PLUGIN_FIXTURE_IMAGE_DIR}/dist,ro \
-    HOME=/sandbox openclaw plugins install ${TRUSTED_PLUGIN_FIXTURE_IMAGE_DIR} \
+    HOME=/sandbox openclaw plugins install --force ${TRUSTED_PLUGIN_FIXTURE_IMAGE_DIR} \
     && HOME=/sandbox openclaw plugins enable weather
 
 # Enabling the plugin changes openclaw.json after the managed runtime hashes it.

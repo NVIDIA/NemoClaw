@@ -67,7 +67,7 @@ it("pins Brave web-search and preserves its placeholder during build-time doctor
     expect(result.status, result.stderr).toBe(0);
     expect(calls).toContain("npm view @openclaw/brave-plugin@2026.9.1 dist.integrity");
     expect(calls).toContain(`npm pack ${BRAVE_TARBALL} --pack-destination`);
-    expect(calls).toContain("plugins install npm-pack:");
+    expect(calls).toContain("plugins install --force npm-pack:");
     expect(calls).toContain(
       "doctor --fix --non-interactive|BRAVE_API_KEY=openshell:resolve:env:BRAVE_API_KEY",
     );
