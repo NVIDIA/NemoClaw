@@ -390,6 +390,17 @@ ${serviceIdentityCheck}`,
       )
       .toBe(true);
     expect.soft(selects("pull_request", "src/lib/actions/sandbox/exec.ts")).toBe(true);
+    expect
+      .soft(
+        selects(
+          "pull_request",
+          "src/lib/onboard/experimental/hermes-portable-operating-authority.ts",
+        ),
+      )
+      .toBe(true);
+    expect
+      .soft(selects("pull_request", "src/lib/onboard/experimental/hermes-portable-policy-state.ts"))
+      .toBe(true);
     expect.soft(selects("pull_request", "src/lib/actions/sandbox/stop.ts")).toBe(true);
     expect.soft(selects("pull_request", "src/lib/actions/sandbox/lifecycle/lock.ts")).toBe(true);
     expect.soft(selects("pull_request", "src/lib/cli/nemoclaw-oclif-command.ts")).toBe(true);
@@ -417,6 +428,12 @@ ${serviceIdentityCheck}`,
       .soft(selects("push", "src/lib/onboard/experimental/hermes-portable-podman-authority.ts"))
       .toBe(true);
     expect.soft(selects("push", "src/lib/actions/sandbox/exec.ts")).toBe(true);
+    expect
+      .soft(selects("push", "src/lib/onboard/experimental/hermes-portable-operating-authority.ts"))
+      .toBe(true);
+    expect
+      .soft(selects("push", "src/lib/onboard/experimental/hermes-portable-policy-state.ts"))
+      .toBe(true);
     expect.soft(selects("push", "src/lib/actions/sandbox/stop.ts")).toBe(true);
     expect.soft(selects("push", "src/lib/actions/sandbox/lifecycle/lock.ts")).toBe(true);
     expect.soft(selects("push", "src/lib/cli/nemoclaw-oclif-command.ts")).toBe(true);
