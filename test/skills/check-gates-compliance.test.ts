@@ -844,14 +844,17 @@ describe("maintainer PR comparator contributor compliance", () => {
     expect(comparatorOutput.details.ci_missing_required_checks).toEqual(["checks"]);
   });
 
-  it("treats the former PR E2E gate as advisory", () => {
+  it("keeps the former PR E2E gate advisory after its retirement from merge readiness (#8445)", () => {
     const fixture = {
       body: "Signed-off-by: Example User <user@example.com>",
       verified: true,
       checkConclusions: { "E2E / PR Gate": "FAILURE" },
     };
 
-    expect(JSON.parse(runGate(fixture).stdout).gates.ci.pass).toBe(true);
+    expect(JSON.parse(runGate(fixture).stdout)).toMatchObject({
+      allPass: true,
+      gates: { ci: { pass: true } },
+    });
     expect(JSON.parse(runComparatorGate(fixture).stdout).gates.ci_green_sha).toBe(true);
   });
 
