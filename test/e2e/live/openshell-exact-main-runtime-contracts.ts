@@ -827,12 +827,16 @@ export async function assertExactMainPolicyNftAndIdentityContracts(options: {
       containerId,
       "exact-main-nft-rules-before-restart",
     );
-    const restart = await options.host.command("docker", ["restart", containerId], {
-      artifactName: "exact-main-sandbox-container-restart",
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: POLICY_TIMEOUT_MS,
-    });
-    expectExitZero(restart, "restart exact-main OpenShell sandbox container");
+    // OpenShell 0.0.116 treats an unexpected main-process exit as terminal Error.
+    // Its lifecycle commands retain the container and wait for Stopped/Ready.
+    for (const operation of ["stop", "start"]) {
+      const result = await options.sandbox.openshell(["sandbox", operation, options.sandboxName], {
+        artifactName: `exact-main-sandbox-container-${operation}`,
+        env: sandboxAccessEnv(),
+        timeoutMs: POLICY_TIMEOUT_MS,
+      });
+      expectExitZero(result, `${operation} exact-main OpenShell sandbox container`);
+    }
     const restartedContainerId = await findSandboxContainer(
       options.host,
       options.sandboxName,
