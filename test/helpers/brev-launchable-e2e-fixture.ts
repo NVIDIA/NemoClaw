@@ -117,7 +117,7 @@ import { startTestProgress } from ${JSON.stringify(path.join(REPO_ROOT, "test/e2
 import { redactString } from ${JSON.stringify(path.join(REPO_ROOT, "test/e2e/fixtures/redaction.ts"))};
 import { ShellProbe, trustedShellCommand } from ${JSON.stringify(path.join(REPO_ROOT, "test/e2e/fixtures/shell-probe.ts"))};
 it${options.e2eSkipped ? ".skip" : ""}("emits evidence from a completed guest command", async () => {
-  const progress = startTestProgress("guest command", ["execute command", "verify result"], { logLine: () => undefined });
+  const progress = startTestProgress("guest command", "execute command", { logLine: () => undefined });
   try {
     const probe = new ShellProbe({
       artifacts: new ArtifactSink(${JSON.stringify(path.join(bakedRoot, "artifacts"))}, [process.env.NVIDIA_INFERENCE_API_KEY]),
