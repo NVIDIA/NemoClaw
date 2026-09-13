@@ -140,23 +140,14 @@ beforeEach(() => {
   });
   fixture.restoreSandboxStateMock.mockImplementation((_name, _path, options) => {
     const error = fixture.validateSnapshotRestoreMutationMock(_path, options ?? {});
-    if (error) {
-      return {
-        success: false,
-        restoredDirs: [],
-        restoredFiles: [],
-        failedDirs: ["workspace"],
-        failedFiles: [],
-        error,
-      };
-    }
-    providerRestore.events.push("filesystem-restore");
+    providerRestore.events.push(...(error ? [] : ["filesystem-restore"]));
     return {
-      success: true,
-      restoredDirs: ["workspace"],
+      success: !error,
+      restoredDirs: error ? [] : ["workspace"],
       restoredFiles: [],
-      failedDirs: [],
+      failedDirs: error ? ["workspace"] : [],
       failedFiles: [],
+      ...(error ? { error } : {}),
     };
   });
   vi.spyOn(console, "log").mockImplementation(() => {});
