@@ -104,6 +104,22 @@ export default defineConfig({
       },
     },
     {
+      // This source feeds the same qualified Pi image input boundary.
+      files: ["src/lib/onboard/managed-startup/image-runtime.ts"],
+      rules: {
+        "no-unused-vars": [
+          "error",
+          {
+            argsIgnorePattern: "^_",
+            caughtErrorsIgnorePattern: "^(?:_|error)$",
+            destructuredArrayIgnorePattern: "^_",
+            ignoreRestSiblings: true,
+            varsIgnorePattern: "^_",
+          },
+        ],
+      },
+    },
+    {
       // Live E2E source changes must be paired with mapped fast-test changes.
       // Preserve these historical declarations until their owning tests change.
       files: [
