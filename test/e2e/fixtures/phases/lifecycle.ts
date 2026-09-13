@@ -730,13 +730,18 @@ export class LifecyclePhaseFixture {
   }
 
   async startGatewayRuntime(
-    options: { requireUserService?: boolean } = {},
+    options: { requireUserService?: boolean; sandboxName?: string } = {},
   ): Promise<ShellProbeResult> {
     const userServiceStart = await this.startOpenShellGatewayUserService({
       requireAvailable: options.requireUserService,
     });
     if (userServiceStart) return userServiceStart;
-    return await this.host.command("openshell", ["gateway", "start", "--name", "nemoclaw"], {
+    if (!options.sandboxName) {
+      throw new Error("Gateway recovery requires the registered sandbox name.");
+    }
+    // Plain sandbox doctor recovers its registered gateway through NemoClaw's
+    // owner-aware startup path before checking health. JSON doctor is read-only.
+    return await this.host.nemoclaw([options.sandboxName, "doctor"], {
       artifactName: "lifecycle-gateway-start",
       env: buildAvailabilityProbeEnv(),
       timeoutMs: 120_000,
@@ -772,9 +777,6 @@ export class LifecyclePhaseFixture {
       this.stoppedOpenShellGatewayUserService = null;
       return result;
     }
-    if (result.exitCode === USER_SERVICE_UNAVAILABLE_EXIT && !options.requireAvailable) {
-      return null;
-    }
     if (result.exitCode === USER_SERVICE_UNAVAILABLE_EXIT) {
       throw new Error(
         `OpenShell gateway user service is not available for reboot lifecycle recovery.`,
@@ -787,7 +789,7 @@ export class LifecyclePhaseFixture {
   }
 
   async restartGatewayRuntime(
-    options: { delayMs?: number; requireUserService?: boolean } = {},
+    options: { delayMs?: number; requireUserService?: boolean; sandboxName?: string } = {},
   ): Promise<HostGatewayRuntime | null> {
     const previousRuntime = await this.stopGatewayRuntime();
     if (this.gateway) {
@@ -801,6 +803,7 @@ export class LifecyclePhaseFixture {
     }
     const start = await this.startGatewayRuntime({
       requireUserService: options.requireUserService,
+      sandboxName: options.sandboxName,
     });
     assertExitZero(start, "restart OpenShell gateway runtime");
     return previousRuntime;

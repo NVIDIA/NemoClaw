@@ -538,14 +538,14 @@ describe("LifecyclePhaseFixture gateway runtime restart helpers", () => {
     runner.enqueue(shellResult(1, "")); // expectHostRuntimeStopped pid probe
     runner.enqueue(shellResult(0, "")); // expectHostRuntimeStopped container probe
     runner.enqueue(shellResult(0)); // lifecycle-gateway-stopped true artifact
-    runner.enqueue(shellResult(0, "gateway started\n")); // start the named gateway
+    runner.enqueue(shellResult(0, "gateway started\n")); // plain sandbox doctor recovers the registered gateway
     runner.enqueue(shellResult(0, "Connected to nemoclaw\n")); // waitForGatewayConnected
     const cleanup = new FakeCleanup();
     const host = new HostCliClient(runner);
     const sandbox = new SandboxClient(runner);
     const fx = new LifecyclePhaseFixture(host, sandbox, cleanup, new GatewayClient(host, sandbox));
 
-    await expect(fx.restartGatewayRuntime({ delayMs: 0 })).resolves.toEqual({
+    await expect(fx.restartGatewayRuntime({ delayMs: 0, sandboxName: "e2e-x" })).resolves.toEqual({
       kind: "pid",
       id: "12345",
     });
@@ -561,7 +561,7 @@ describe("LifecyclePhaseFixture gateway runtime restart helpers", () => {
       expect.stringContaining("sh -lc pid_file="),
       "docker container ps --format {{.ID}}\t{{.Names}}",
       "true ",
-      "openshell gateway start --name nemoclaw",
+      "nemoclaw e2e-x doctor",
       "openshell status",
     ]);
   });
@@ -689,14 +689,48 @@ describe("LifecyclePhaseFixture gateway runtime restart helpers", () => {
     runner.enqueue(shellResult(1, "gateway recovery failed"));
     const fx = fixture(runner, new FakeCleanup());
 
-    await expect(fx.restartGatewayRuntime({ delayMs: 0 })).rejects.toThrow(
+    await expect(fx.restartGatewayRuntime({ delayMs: 0, sandboxName: "e2e-x" })).rejects.toThrow(
       /restart OpenShell gateway runtime/,
     );
     expect(runner.calls.at(-1)).toMatchObject({
-      command: "openshell",
-      args: ["gateway", "start", "--name", "nemoclaw"],
+      command: "nemoclaw",
+      args: ["e2e-x", "doctor"],
     });
     expect(runner.calls).toHaveLength(6);
+  });
+
+  it.each([75, 1])(
+    "preserves the selected service for cleanup when restart exits %i",
+    async (exitCode) => {
+      const runner = new FakeRunner();
+      const cleanup = new FakeCleanup();
+      const fx = fixture(runner, cleanup);
+      runner.enqueue(shellResult(0)); // forward stop
+      runner.enqueue(shellResult(0, stoppedGatewayUserService));
+      runner.enqueue(shellResult(exitCode, "service restart failed"));
+
+      await expect(fx.restartGatewayRuntime({ delayMs: 0, sandboxName: "e2e-x" })).rejects.toThrow(
+        /user service.*(?:not available|restart failed)/,
+      );
+      expect(runner.calls).toHaveLength(3);
+      expect(runner.calls.at(-1)?.args.at(-1)).toBe("systemd:nemoclaw-openshell-gateway.service");
+      expect(cleanup.calls).toHaveLength(1);
+
+      runner.enqueue(shellResult(0));
+      await cleanup.calls[0]!.run();
+      expect(runner.calls.at(-1)?.args.at(-1)).toBe("systemd:nemoclaw-openshell-gateway.service");
+      expect(runner.calls).toHaveLength(4);
+      await cleanup.calls[0]!.run();
+      expect(runner.calls).toHaveLength(4);
+    },
+  );
+
+  it("rejects gateway recovery without a selected service or registered sandbox name", async () => {
+    const runner = new FakeRunner();
+    await expect(fixture(runner, new FakeCleanup()).startGatewayRuntime()).rejects.toThrow(
+      /registered sandbox name/,
+    );
+    expect(runner.calls).toHaveLength(0);
   });
 
   it("requires the selected user service when the lifecycle requests it", async () => {
@@ -709,17 +743,19 @@ describe("LifecyclePhaseFixture gateway runtime restart helpers", () => {
     expect(runner.calls).toHaveLength(0);
   });
 
-  it("starts the named gateway when no user service was stopped", async () => {
+  it("recovers the registered gateway through plain sandbox doctor when no service was stopped", async () => {
     const runner = new FakeRunner();
     runner.enqueue(shellResult(0, "gateway started\n"));
 
-    await expect(fixture(runner, new FakeCleanup()).startGatewayRuntime()).resolves.toMatchObject({
+    await expect(
+      fixture(runner, new FakeCleanup()).startGatewayRuntime({ sandboxName: "e2e-x" }),
+    ).resolves.toMatchObject({
       exitCode: 0,
     });
     expect(runner.calls).toEqual([
       expect.objectContaining({
-        command: "openshell",
-        args: ["gateway", "start", "--name", "nemoclaw"],
+        command: "nemoclaw",
+        args: ["e2e-x", "doctor"],
       }),
     ]);
   });

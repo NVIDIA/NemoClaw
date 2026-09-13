@@ -481,7 +481,7 @@ async function qualifyAgent(
   expect(writeMarker.exitCode, resultText(writeMarker)).toBe(0);
 
   enterRecoveryPhase(progress, agent);
-  await lifecycle.restartGatewayRuntime({ delayMs: 2_000 });
+  await lifecycle.restartGatewayRuntime({ delayMs: 2_000, sandboxName });
   await lifecycle.waitForGatewayConnected({ attempts: 60, intervalMs: 5_000 });
   await lifecycle.assertSandboxReadyAfterGatewayRestart(sandboxName, {
     artifactNamePrefix: `${agent}-post-restart-ready`,

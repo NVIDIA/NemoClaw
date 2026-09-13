@@ -840,7 +840,7 @@ test(
       env,
       progress,
       restartGateway: async () => {
-        await lifecycle.restartGatewayRuntime();
+        await lifecycle.restartGatewayRuntime({ sandboxName: SANDBOX_NAME });
         await lifecycle.waitForGatewayConnected();
       },
       sandbox,

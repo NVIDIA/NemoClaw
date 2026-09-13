@@ -414,6 +414,7 @@ test(
     await captureSurvivalDiagnostics(host, runtimeProvider, "before-gateway-restart", [apiKey]);
     await lifecycle.restartGatewayRuntime({
       delayMs: 5_000,
+      sandboxName: SANDBOX_NAME,
     });
     await captureSurvivalDiagnostics(host, runtimeProvider, "after-gateway-restart", [apiKey]);
     await lifecycle.waitForGatewayConnected({

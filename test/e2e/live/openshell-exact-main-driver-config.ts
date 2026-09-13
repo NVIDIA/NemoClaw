@@ -681,6 +681,7 @@ export async function restartAndAssertExactMainDriverConfig(options: {
   if (!baseline) throw new Error("exact-main baseline snapshot is missing");
   await options.lifecycle.restartGatewayRuntime({
     delayMs: 1_000,
+    sandboxName: options.sandboxName,
   });
   await options.lifecycle.waitForGatewayConnected({
     attempts: 60,

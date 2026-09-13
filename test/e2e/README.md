@@ -184,7 +184,8 @@ managed-image build, startup, publication, and checked-in receipt. The receipt r
 the Linux AMD64 and Linux ARM64 receipts to identify one source revision, release, and publication
 cohort.
 
-The gateway restart fixture restarts the user service it stopped, or starts the named OpenShell gateway when no service was selected.
+The gateway restart fixture restarts the user service it stopped. If no service was selected, plain sandbox doctor recovers the registered gateway.
+A selected service that cannot restart remains selected for cleanup; recovery does not switch to another startup path.
 A failed start ends the test before health polling. Sandbox readiness, retained state, and agent turns remain separate assertions.
 
 #### Timing Baseline
