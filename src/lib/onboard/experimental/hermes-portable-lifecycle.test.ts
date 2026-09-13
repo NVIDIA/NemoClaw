@@ -285,7 +285,68 @@ afterEach(() => {
   fs.rmSync(stateDir, { recursive: true, force: true });
 });
 
+function recoverWithLifecycleLock(deps: HermesPortableLifecycleDeps) {
+  return withMcpLifecycleLockSync(
+    SANDBOX,
+    () => recoverHermesPortableSandboxLifecycle(SANDBOX, lifecycleContext(), deps),
+    { stateDir: path.join(stateDir, "state") },
+  );
+}
+
 describe("Hermes portable lifecycle", () => {
+  it("passes only the startup time remaining to authenticated health (#11652)", () => {
+    const fixture = lifecycleDeps(activeReceipt(), false);
+    const capture = fixture.captureOpenShell.getMockImplementation()!;
+    let elapsed = 0;
+    const healthAllowances: number[] = [];
+    const command = vi.fn((args: readonly string[], allowance: number) => {
+      elapsed += args[1] === "start" ? 60 : 0;
+      const healthTimeout = () => {
+        healthAllowances.push(allowance);
+        elapsed += allowance;
+        return { status: 1, stdout: "", stderr: "health timed out" };
+      };
+      return args.includes(hermesPortableLifecycleInternals.healthWaitProgram)
+        ? healthTimeout()
+        : capture(args);
+    });
+    expect(() =>
+      recoverWithLifecycleLock({
+        ...fixture.deps,
+        startupTimeoutMs: 100,
+        now: () => elapsed,
+        captureOpenShell: command,
+      }),
+    ).toThrow("allowance exhausted during authenticated-health");
+    expect(healthAllowances).toEqual([40]);
+    expect(elapsed).toBe(100);
+    expect(openshellMutationCalls(command, "stop")).toHaveLength(1);
+  });
+
+  it("reconciles and stops a partially applied start after its allowance expires (#11652)", () => {
+    const fixture = lifecycleDeps(activeReceipt(), false, { startStatus: 1 });
+    const capture = fixture.captureOpenShell.getMockImplementation()!;
+    let elapsed = 0;
+    const command = vi.fn((args: readonly string[], allowance: number) => {
+      const result = capture(args);
+      elapsed += args[1] === "start" ? allowance : 0;
+      return result;
+    });
+    expect(() =>
+      recoverWithLifecycleLock({
+        ...fixture.deps,
+        startupTimeoutMs: 100,
+        now: () => elapsed,
+        captureOpenShell: command,
+      }),
+    ).toThrow("OpenShell start failed with status 1");
+    expect(elapsed).toBe(100);
+    expect(openshellMutationCalls(command, "stop")).toHaveLength(1);
+    expect(fixture.deps.container.podman(["container", "inspect"])).toEqual(
+      expect.objectContaining({ stdout: expect.stringContaining('"Running":false') }),
+    );
+  });
+
   it("shares the caller allowance across start and exec readiness, then rolls back (#11652)", () => {
     const fixture = lifecycleDeps(activeReceipt(), false);
     const capture = fixture.captureOpenShell.getMockImplementation()!;
@@ -299,20 +360,15 @@ describe("Hermes portable lifecycle", () => {
       return execNotReady ? { status: 1, stdout: "", stderr: "not ready" } : capture(args);
     });
     expect(() =>
-      withMcpLifecycleLockSync(
-        SANDBOX,
-        () =>
-          recoverHermesPortableSandboxLifecycle(SANDBOX, lifecycleContext(), {
-            ...fixture.deps,
-            startupTimeoutMs: 120_000,
-            now: () => elapsed,
-            sleep: (milliseconds) => {
-              elapsed += milliseconds;
-            },
-            captureOpenShell: command,
-          }),
-        { stateDir: path.join(stateDir, "state") },
-      ),
+      recoverWithLifecycleLock({
+        ...fixture.deps,
+        startupTimeoutMs: 120_000,
+        now: () => elapsed,
+        sleep: (milliseconds) => {
+          elapsed += milliseconds;
+        },
+        captureOpenShell: command,
+      }),
     ).toThrow("allowance exhausted during openshell-exec-readiness");
     expect(elapsed).toBe(120_000);
     expect(openshellMutationCalls(command, "start")).toHaveLength(1);
@@ -327,18 +383,13 @@ describe("Hermes portable lifecycle", () => {
       throw new Error("timing sink unavailable");
     });
     let timingNow = 0;
-    const result = withMcpLifecycleLockSync(
-      SANDBOX,
-      () =>
-        recoverHermesPortableSandboxLifecycle(SANDBOX, lifecycleContext(), {
-          ...fixture.deps,
-          recoveryTiming: {
-            now: () => (timingNow += 1),
-            onComplete: evidence,
-          },
-        }),
-      { stateDir: path.join(stateDir, "state") },
-    );
+    const result = recoverWithLifecycleLock({
+      ...fixture.deps,
+      recoveryTiming: {
+        now: () => (timingNow += 1),
+        onComplete: evidence,
+      },
+    });
     expect(result).toEqual({ kind: "recovered" });
     expect(evidence).toHaveBeenCalledOnce();
     expect(evidence).toHaveBeenCalledWith(
@@ -839,19 +890,14 @@ describe("Hermes portable lifecycle", () => {
         ? observeHealth()
         : defaultCapture(args),
     );
-    const result = withMcpLifecycleLockSync(
-      SANDBOX,
-      () =>
-        recoverHermesPortableSandboxLifecycle(SANDBOX, lifecycleContext(), {
-          ...deps,
-          now: () => now,
-          sleep: (milliseconds) => {
-            sleepBoundaries.push({ inspectsBefore: inspectCount(), milliseconds });
-            now += milliseconds;
-          },
-        }),
-      { stateDir: path.join(stateDir, "state") },
-    );
+    const result = recoverWithLifecycleLock({
+      ...deps,
+      now: () => now,
+      sleep: (milliseconds) => {
+        sleepBoundaries.push({ inspectsBefore: inspectCount(), milliseconds });
+        now += milliseconds;
+      },
+    });
     const healthRunInspects = podman.mock.calls.filter(
       ([args]) => args[0] === "container" && args[1] === "inspect",
     );

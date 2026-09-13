@@ -995,7 +995,7 @@ function qualify(
     sandboxName,
     capture: policyCapture(capture),
   });
-  const baseContainerDeps =
+  const baseContainerDeps: HermesPortableLifecycleContainerDeps =
     typeof deps.container === "function"
       ? deps.container(receipt)
       : (deps.container ?? createContainerDeps(receipt, commandEnv, deps.podmanAuthorityDeps));
@@ -1583,6 +1583,8 @@ export function recoverHermesPortableSandboxLifecycle(
           qualified.assertTransactionCurrent();
         }
       } catch (startError) {
+        // Reconcile a possible partial start before cleanup, even when startup time has expired.
+        startupEnforced = false;
         try {
           timing.increment("containerInspection");
           const current = assertCurrentHermesPortableContainer(
@@ -1750,6 +1752,7 @@ export function recoverHermesPortableSandboxLifecycle(
         assertLiveHermesPortableStartupBinding(qualified, deps, timing),
       );
       primaryFailureClass = "startup-launch";
+      commandBudget(1);
       timing.increment("startupLaunch");
       timing.measure("startupLaunch", () =>
         rawLaunch(openshellExecArgs(qualified.receipt, qualified.receipt.startup.argv)),
@@ -1820,7 +1823,10 @@ export function recoverHermesPortableSandboxLifecycle(
           },
           (operation) => timing.measure("healthPollSleep", operation),
         );
-    if (!recovered) fail("managed startup did not pass authenticated health");
+    if (!recovered) {
+      commandBudget(1);
+      fail("managed startup did not pass authenticated health");
+    }
     primaryFailureClass = "final-authority";
     timing.increment("qualification");
     timing.measure("finalQualification", () =>

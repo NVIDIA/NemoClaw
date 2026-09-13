@@ -336,7 +336,7 @@ function captureForwardEntries(
   rollback: boolean,
   timing?: ReturnType<typeof createForwardTimingRecorder>,
   deadline?: number,
-  now: () => number = input.deps.now ?? Date.now,
+  now: () => number = input.deps.now ?? (() => performance.now()),
 ): StrictForwardEntry[] {
   requireCurrent(input, rollback);
   let result: CommandResult;
@@ -382,7 +382,7 @@ function observeForwards(
   rollback: boolean,
   timing?: ReturnType<typeof createForwardTimingRecorder>,
   deadline?: number,
-  now: () => number = input.deps.now ?? Date.now,
+  now: () => number = input.deps.now ?? (() => performance.now()),
 ): ForwardObservation {
   const listedEntries = captureForwardEntries(input, rollback, timing, deadline, now);
   const entries = new Map<number, StrictForwardEntry>();
@@ -481,10 +481,13 @@ function invokeForwardServiceLaunch(
   try {
     timing.measure("start", () =>
       (input.deps.launchForwardService ?? launchForwardService)(target, {
-        isReachable: (candidatePort) => reachable(candidatePort, remaining(input.probeTimeoutMs)),
+        // The service supplies startup time remaining and retains an independent cleanup probe.
+        isReachable: (candidatePort, timeoutMs = input.probeTimeoutMs) =>
+          reachable(candidatePort, Math.min(input.probeTimeoutMs, timeoutMs)),
         sourceEnvironment: input.forwardService.sourceEnvironment,
         timeoutMs: remaining(input.operationTimeoutMs),
         now: input.deps.now,
+        sleep: input.deps.sleep,
         verifyReady: () => {
           requireCurrent(input, false);
           if (
@@ -637,6 +640,7 @@ export function prepareHermesPortableLaunchForwards(
       failure("recovery-failed");
     }
     requireCurrent(input, false);
+    remaining(1);
     timing.finish("proved");
     return retainForwardRecovery(input, touchedPorts, {
       kind: "restored",

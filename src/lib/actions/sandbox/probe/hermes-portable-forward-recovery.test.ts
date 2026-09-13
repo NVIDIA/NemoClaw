@@ -37,6 +37,24 @@ function launchThen(launch: LaunchForwardService, afterLaunch: () => void): Laun
 }
 
 describe("Hermes Portable probe-only forward recovery", () => {
+  it("rejects settlement when the final ownership check exhausts the allowance (#11652)", () => {
+    const fixture = createRecoveryFixture({ ports: [18_789] });
+    Object.assign(fixture.input, { operationTimeoutMs: 100 });
+    const owner = fixture.input.deps.isForwardServiceOwner!;
+    let checks = 0;
+    Object.assign(fixture.input.deps, {
+      isForwardServiceOwner: (target: ForwardServiceTarget) => {
+        fixture.input.deps.sleep!(++checks === 2 ? 100 : 0);
+        return owner(target);
+      },
+    });
+    expect(() => recoverHermesPortableLaunchForwards(fixture.input)).toThrow(
+      "restoration-unproved",
+    );
+    expect(fixture.elapsedMs()).toBe(100);
+    expect(fixture.rollbackCaptureCalls).not.toHaveLength(0);
+  });
+
   it("passes the remaining transaction allowance to the second forward (#11652)", () => {
     const fixture = createRecoveryFixture({ ports: [18_789, 8_642] });
     Object.assign(fixture.input, { operationTimeoutMs: 100 });

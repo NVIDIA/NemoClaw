@@ -134,6 +134,80 @@ async function availableLoopbackPort(): Promise<number> {
 }
 
 describe("forward startup allowance", () => {
+  it("cleans up the child when a startup probe throws at the deadline (#11652)", () => {
+    const child = { pid: detachedChildPid, unref: vi.fn() };
+    const terminateProcessTree = vi.fn();
+    const isReachable = vi
+      .fn()
+      .mockReturnValueOnce(false)
+      .mockImplementationOnce(() => {
+        throw new Error("startup allowance exhausted");
+      })
+      .mockReturnValue(false);
+    expect(() =>
+      launchForwardService(target, {
+        isReachable,
+        spawnDetached: () => child,
+        terminateProcessTree,
+      }),
+    ).toThrow("startup allowance exhausted");
+    expect(terminateProcessTree).toHaveBeenCalledExactlyOnceWith(child);
+    expect(child.unref).not.toHaveBeenCalled();
+  });
+
+  it("rejects readiness that finishes after the startup allowance (#11652)", () => {
+    let elapsed = 0;
+    const child = { pid: detachedChildPid, unref: vi.fn() };
+    const terminateProcessTree = vi.fn();
+    expect(() =>
+      launchForwardService(target, {
+        timeoutMs: 100,
+        now: () => elapsed,
+        isReachable: vi
+          .fn()
+          .mockReturnValueOnce(false)
+          .mockReturnValueOnce(true)
+          .mockReturnValue(false),
+        verifyReady: () => {
+          elapsed = 100;
+        },
+        spawnDetached: () => child,
+        terminateProcessTree,
+      }),
+    ).toThrow("did not bind");
+    expect(terminateProcessTree).toHaveBeenCalledExactlyOnceWith(child);
+    expect(child.unref).not.toHaveBeenCalled();
+  });
+
+  it("shares the allowance between the initial port probe and startup polling (#11652)", () => {
+    let elapsed = 0;
+    const allowances: number[] = [];
+    const terminateProcessTree = vi.fn();
+    const startupProbe = (_port: number, allowance?: number) => {
+      allowances.push(allowance!);
+      elapsed += Math.min(60, allowance!);
+      return false;
+    };
+    expect(() =>
+      launchForwardService(target, {
+        timeoutMs: 100,
+        now: () => elapsed,
+        isReachable: vi
+          .fn()
+          .mockImplementationOnce(startupProbe)
+          .mockImplementationOnce(startupProbe)
+          .mockReturnValue(false),
+        sleep: (milliseconds) => {
+          elapsed += milliseconds;
+        },
+        spawnDetached: () => ({ pid: detachedChildPid, unref() {} }),
+        terminateProcessTree,
+      }),
+    ).toThrow("did not bind");
+    expect(allowances).toEqual([100, 40]);
+    expect(elapsed).toBe(100);
+  });
+
   it("uses monotonic time when the wall clock moves backwards (#11652)", () => {
     let elapsed = 0;
     let wall = 10_000;

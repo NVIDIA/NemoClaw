@@ -11,6 +11,7 @@ import { probeLocalForwardListener } from "./local-forward-listener";
 
 const START_TIMEOUT_MS = 30_000;
 const POLL_INTERVAL_MS = 100;
+const LISTENER_PROBE_TIMEOUT_MS = 1_000;
 const PROCESS_TREE_TERMINATION_TIMEOUT_MS = 5_000;
 const PROCESS_TREE_TERMINATION_POLL_MS = 25;
 const sleepBuffer = new Int32Array(new SharedArrayBuffer(4));
@@ -28,7 +29,7 @@ export interface ForwardServiceTarget {
 }
 
 export interface ForwardServiceLaunchOptions {
-  readonly isReachable?: (port: number) => boolean;
+  readonly isReachable?: (port: number, timeoutMs?: number) => boolean;
   readonly sleep?: (milliseconds: number) => void;
   readonly sourceEnvironment?: NodeJS.ProcessEnv;
   readonly spawnDetached?: (
@@ -494,8 +495,12 @@ export function launchForwardService(
   options: ForwardServiceLaunchOptions = {},
 ): void {
   validateForwardServiceTarget(target);
+  const now = options.now ?? (() => performance.now());
+  const deadline = now() + (options.timeoutMs ?? START_TIMEOUT_MS);
+  const probeAllowance = () =>
+    Math.min(LISTENER_PROBE_TIMEOUT_MS, Math.max(1, Math.floor(deadline - now())));
   const isReachable = options.isReachable ?? probeLocalForwardListener;
-  if (isReachable(target.localPort)) {
+  if (isReachable(target.localPort, probeAllowance())) {
     throw new Error(`Host port ${String(target.localPort)} is already occupied`);
   }
   const spawnDetached =
@@ -514,23 +519,22 @@ export function launchForwardService(
 
   const sleep =
     options.sleep ?? ((milliseconds: number) => Atomics.wait(sleepBuffer, 0, 0, milliseconds));
-  const now = options.now ?? (() => performance.now());
-  const deadline = now() + (options.timeoutMs ?? START_TIMEOUT_MS);
   let startupError = new Error(
     `OpenShell forward service did not bind ${target.localHost}:${String(target.localPort)}`,
   );
-  while (now() < deadline) {
-    if (isReachable(target.localPort)) {
-      try {
+  try {
+    while (now() < deadline) {
+      if (isReachable(target.localPort, probeAllowance())) {
+        if (now() >= deadline) break;
         options.verifyReady?.();
-      } catch (error) {
-        startupError = error instanceof Error ? error : new Error(String(error));
-        break;
+        if (now() >= deadline) break;
+        child.unref();
+        return;
       }
-      child.unref();
-      return;
+      sleep(Math.min(POLL_INTERVAL_MS, Math.max(0, deadline - now())));
     }
-    sleep(Math.min(POLL_INTERVAL_MS, Math.max(0, deadline - now())));
+  } catch (error) {
+    startupError = error instanceof Error ? error : new Error(String(error));
   }
   try {
     (options.terminateProcessTree ?? terminateForwardServiceProcessTree)(child);
