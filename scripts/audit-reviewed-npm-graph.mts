@@ -566,12 +566,17 @@ export function normalizeOpenClawSignatureAlias(directory: string): void {
     version,
   } = OPENCLAW_DOMEXCEPTION_ALIAS;
   const lockfile = path.join(directory, "package-lock.json");
+  assertRegularFile(lockfile, "OpenClaw signature-audit lock");
+  const lock = readJsonObject(lockfile, "OpenClaw signature-audit lock");
+  const packages = lock.packages as Record<string, any> | undefined;
+  if (!packages) throw new Error("OpenClaw signature-audit alias lock identity drifted");
+  if (!packages[aliasPackagePath]) return;
+
   const aliasDirectory = path.join(directory, aliasPackagePath);
   const actualDirectory = path.join(directory, actualPackagePath);
   const aliasManifestFile = path.join(aliasDirectory, "package.json");
   const requesterManifestFile = path.join(directory, requesterPackagePath, "package.json");
   for (const [file, label] of [
-    [lockfile, "OpenClaw signature-audit lock"],
     [aliasManifestFile, "OpenClaw aliased package manifest"],
     [requesterManifestFile, "OpenClaw alias requester manifest"],
   ] as const) {
@@ -581,8 +586,6 @@ export function normalizeOpenClawSignatureAlias(directory: string): void {
     throw new Error(`OpenClaw signature-audit destination already exists: ${actualPackagePath}`);
   }
 
-  const lock = readJsonObject(lockfile, "OpenClaw signature-audit lock");
-  const packages = lock.packages as Record<string, any> | undefined;
   const aliasEntry = packages?.[aliasPackagePath];
   const requesterEntry = packages?.[requesterPackagePath];
   if (

@@ -1430,4 +1430,31 @@ describe("trusted npm audit workflow (#5896)", () => {
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
+
+  it("leaves the hoisted OpenClaw DOMException package unchanged", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-signature-hoisted-"));
+    const lockfile = path.join(root, "package-lock.json");
+    const lock = {
+      lockfileVersion: 3,
+      packages: {
+        "node_modules/fetch-blob": {
+          dependencies: { "node-domexception": "^1.0.0" },
+          version: "3.2.0",
+        },
+        "node_modules/node-domexception": {
+          version: "1.0.0",
+        },
+      },
+    };
+    try {
+      const contents = `${JSON.stringify(lock, null, 2)}\n`;
+      fs.writeFileSync(lockfile, contents);
+
+      normalizeOpenClawSignatureAlias(root);
+
+      expect(fs.readFileSync(lockfile, "utf8")).toBe(contents);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
