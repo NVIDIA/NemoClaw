@@ -9,7 +9,7 @@ import {
 } from "../../helpers/e2e-workflow-contract.ts";
 
 const WORKFLOW_PATH = ".github/workflows/hosted-runner-recovery.yaml";
-const PLATFORM_WORKFLOW_PATH = ".github/workflows/platform-vitest-main.yaml";
+
 const TRUSTED_CHECKOUT = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1";
 const TRUSTED_SETUP_NODE = "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020";
 
@@ -28,17 +28,8 @@ type RecoveryWorkflow = {
   };
 };
 
-type SourceWorkflowIdentity = {
-  name: string;
-  "run-name"?: string;
-};
-
 function workflow(): RecoveryWorkflow {
   return readYaml<RecoveryWorkflow>(WORKFLOW_PATH);
-}
-
-function sourceWorkflow(path: string): SourceWorkflowIdentity {
-  return readYaml<SourceWorkflowIdentity>(path);
 }
 
 function step(job: WorkflowJob, name: string): WorkflowStep {

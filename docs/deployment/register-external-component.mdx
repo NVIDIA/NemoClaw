@@ -22,6 +22,9 @@ The shared OpenShell runtime currently pinned by NemoClaw does not provide all r
 Do not rely on version 2 in an installed release until NemoClaw qualifies it against a released runtime.
 
 Version 2 uses HTTPS endpoints, CA certificates, gateway preparation, and optional interceptor-backed provider profiles.
+During preparation, it can create one missing attachable Docker bridge through the selected local Unix-socket connection.
+It preserves that bridge after a preparation or startup failure.
+It does not support TCP or SSH Docker connections.
 It does not change the version 1 declaration or `/v1/activate` protocol.
 NemoClaw continues to own generated gateway configuration and gateway lifecycle.
 The component supplies policy, and OpenShell validates and enforces the effective sandbox policy.

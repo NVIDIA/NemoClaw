@@ -65,8 +65,16 @@ export default defineConfig({
     // Sanitizers deliberately match control characters; Vitest fixtures require empty parameters.
     "no-control-regex": "off",
     "no-empty-pattern": ["error", { allowObjectPatternsAsParameters: true }],
-    // Preserve the current scoped checks until each remaining rule family is migrated.
-    "no-unused-vars": "off",
+    "no-unused-vars": [
+      "error",
+      {
+        argsIgnorePattern: "^_",
+        caughtErrorsIgnorePattern: "^_",
+        destructuredArrayIgnorePattern: "^_",
+        ignoreRestSiblings: true,
+        varsIgnorePattern: "^_",
+      },
+    ],
     "no-unused-expressions": "off",
     "no-useless-catch": "off",
     "no-unsafe-optional-chaining": "off",
@@ -77,6 +85,71 @@ export default defineConfig({
     {
       files: ["docs/_components/**/*.{ts,tsx}", "fern/components/**/*.{ts,tsx}"],
       env: { browser: true },
+    },
+    {
+      // This file is a qualified Pi image input; preserve its bytes until both
+      // architecture receipts can be republished from the same workflow run.
+      files: ["nemoclaw-blueprint/scripts/sandbox-safety-net.js"],
+      rules: {
+        "no-unused-vars": [
+          "error",
+          {
+            argsIgnorePattern: "^(?:_|promise$)",
+            caughtErrorsIgnorePattern: "^_",
+            destructuredArrayIgnorePattern: "^_",
+            ignoreRestSiblings: true,
+            varsIgnorePattern: "^_",
+          },
+        ],
+      },
+    },
+    {
+      // This source feeds the same qualified Pi image input boundary.
+      files: ["src/lib/onboard/managed-startup/image-runtime.ts"],
+      rules: {
+        "no-unused-vars": [
+          "error",
+          {
+            argsIgnorePattern: "^_",
+            caughtErrorsIgnorePattern: "^(?:_|error)$",
+            destructuredArrayIgnorePattern: "^_",
+            ignoreRestSiblings: true,
+            varsIgnorePattern: "^_",
+          },
+        ],
+      },
+    },
+    {
+      // Live E2E source changes must be paired with mapped fast-test changes.
+      // Preserve these historical declarations until their owning tests change.
+      files: [
+        "test/e2e/live/agent-turn-latency-helpers.ts",
+        "test/e2e/live/bedrock-runtime-compatible-anthropic.test.ts",
+        "test/e2e/live/cloud-onboard.test.ts",
+        "test/e2e/live/hermes-gpu-startup-proof.ts",
+        "test/e2e/live/hermes-inference-switch.test.ts",
+        "test/e2e/live/issue-4434-tui-unreachable-inference.test.ts",
+        "test/e2e/live/kimi-inference-compat-helpers.ts",
+        "test/e2e/live/messaging-compatible-endpoint.test.ts",
+        "test/e2e/live/onboard-resume.test.ts",
+        "test/e2e/live/openclaw-pairing-helpers.ts",
+        "test/e2e/live/openshell-allowed-ips-rebinding.ts",
+        "test/e2e/live/podman-cpu-lifecycle.test.ts",
+        "test/e2e/live/sandbox-survival.test.ts",
+      ],
+      rules: {
+        "no-unused-vars": [
+          "error",
+          {
+            argsIgnorePattern: "^(?:_|host|skip)$",
+            caughtErrorsIgnorePattern: "^_",
+            destructuredArrayIgnorePattern: "^_",
+            ignoreRestSiblings: true,
+            varsIgnorePattern:
+              "^(?:_|buildAvailabilityProbeEnv|CommandResultText|CommandText|ContainerEngine|HostCliClient|path|ProcessResult|Server|shellQuote|ShellProbeResult)$",
+          },
+        ],
+      },
     },
     {
       files: ["**/*.test.ts"],
