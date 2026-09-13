@@ -25,18 +25,20 @@ import {
 describe("Hermes ACP live evidence boundary", () => {
   const shellResult = ({
     exitCode,
+    signal = null,
     stderr = "",
     stdout = "",
     timedOut = false,
   }: {
     exitCode: number;
+    signal?: NodeJS.Signals | null;
     stderr?: string;
     stdout?: string;
     timedOut?: boolean;
   }) => ({
     command: ["openshell", "status"],
     exitCode,
-    signal: null,
+    signal,
     timedOut,
     stdout,
     stderr,
@@ -66,6 +68,16 @@ describe("Hermes ACP live evidence boundary", () => {
     expect(
       hermesAcpGatewayStoppedPreconditionPassed(
         shellResult({ exitCode: 1, stderr: "Connection refused", timedOut: true }),
+      ),
+    ).toBe(false);
+    expect(
+      hermesAcpGatewayStoppedPreconditionPassed(
+        shellResult({
+          exitCode: 1,
+          signal: "SIGTERM",
+          stderr:
+            "Error:   × client error (Connect)\n  ├─▶ tcp connect error\n  ╰─▶ Connection refused (os error 111)\n",
+        }),
       ),
     ).toBe(false);
   });

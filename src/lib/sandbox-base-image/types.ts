@@ -53,7 +53,7 @@ export type ResolveBaseImageOptions = {
   pinnedRemoteRef?: string;
   requirePinnedRemoteRef?: boolean;
   allowLocalFallback?: boolean;
-  validateImage?: (imageRef: string) => boolean;
+  validateImage?: (imageRef: string, context?: SandboxBaseImageValidationContext) => boolean;
   validationDescription?: string;
   resolutionHint?: SandboxBaseImageResolutionMetadata | null;
   forceRefresh?: boolean;
@@ -73,6 +73,11 @@ export type SandboxBaseImageResolution = {
   glibcVersion: string | null;
   metadata?: SandboxBaseImageResolutionMetadata;
 };
+
+export type SandboxBaseImageValidationContext = Pick<
+  SandboxBaseImageResolution,
+  "source" | "pinnedRemoteRef"
+>;
 
 export type LocalImageMetadata = {
   Id?: unknown;

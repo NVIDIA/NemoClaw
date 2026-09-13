@@ -81,11 +81,15 @@ export function sandboxBaseImageHasSecurityInventory(imageRef: string): boolean 
   return sandboxBaseImageHasPackageInventory(imageRef, SANDBOX_BASE_SECURITY_PACKAGE_INVENTORY);
 }
 
-/** Accept the reviewed inventory still recorded by the Dockerfile-pinned Hermes base. */
-export function hermesSandboxBaseImageHasSecurityInventory(imageRef: string): boolean {
+/** Accept the reviewed older inventory only with pinned-base provenance. */
+export function hermesSandboxBaseImageHasSecurityInventory(
+  imageRef: string,
+  allowPinnedInventory = false,
+): boolean {
   return (
     sandboxBaseImageHasSecurityInventory(imageRef) ||
-    sandboxBaseImageHasPackageInventory(imageRef, PINNED_HERMES_BASE_SECURITY_PACKAGE_INVENTORY)
+    (allowPinnedInventory &&
+      sandboxBaseImageHasPackageInventory(imageRef, PINNED_HERMES_BASE_SECURITY_PACKAGE_INVENTORY))
   );
 }
 

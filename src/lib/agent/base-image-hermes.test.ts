@@ -81,7 +81,23 @@ describe("agent base image provisioning", () => {
       dockerCaptureMock.mockReturnValueOnce("nemoclaw-hermes-mcp-runtime-ok").mockReturnValue("");
 
       expect(options.validateImage?.("hermes-base:stale-inventory")).toBe(false);
-      expect(dockerCaptureMock).toHaveBeenCalledTimes(3);
+      expect(dockerCaptureMock).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  it("rejects the older security inventory without pinned resolver provenance (#10947)", () => {
+    withMockedDocker(({ ensureAgentBaseImage, dockerCaptureMock, resolveSandboxBaseImageMock }) => {
+      ensureAgentBaseImage(makeAgent());
+      const options = resolveSandboxBaseImageMock.mock.calls[0]?.[0] as {
+        validateImage?: (imageRef: string, context?: { source: string }) => boolean;
+      };
+      dockerCaptureMock
+        .mockReturnValueOnce("nemoclaw-hermes-mcp-runtime-ok")
+        .mockReturnValueOnce("")
+        .mockReturnValueOnce("nemoclaw-security-inventory-ok");
+
+      expect(options.validateImage?.("hermes-base:cached-old", { source: "local" })).toBe(false);
+      expect(dockerCaptureMock).toHaveBeenCalledTimes(2);
     });
   });
 
@@ -89,18 +105,30 @@ describe("agent base image provisioning", () => {
     withMockedDocker(({ ensureAgentBaseImage, dockerCaptureMock, resolveSandboxBaseImageMock }) => {
       ensureAgentBaseImage(makeAgent());
       const options = resolveSandboxBaseImageMock.mock.calls[0]?.[0] as {
-        validateImage?: (imageRef: string) => boolean;
+        pinnedRemoteRef?: string;
+        validateImage?: (
+          imageRef: string,
+          context?: { source: string; pinnedRemoteRef?: string },
+        ) => boolean;
       };
       dockerCaptureMock
         .mockReturnValueOnce("nemoclaw-hermes-mcp-runtime-ok")
         .mockReturnValueOnce("")
         .mockReturnValueOnce("nemoclaw-security-inventory-ok");
 
-      expect(options.validateImage?.("hermes-base:pinned-inventory")).toBe(true);
+      expect(options.pinnedRemoteRef).toMatch(
+        /^ghcr\.io\/nvidia\/nemoclaw\/hermes-sandbox-base@sha256:[0-9a-f]{64}$/,
+      );
+      expect(
+        options.validateImage?.(options.pinnedRemoteRef!, {
+          source: "pinned",
+          pinnedRemoteRef: options.pinnedRemoteRef,
+        }),
+      ).toBe(true);
       const inventoryProbe = dockerCaptureMock.mock.calls[2]?.[0] as string[];
       expect(inventoryProbe).toEqual(
         expect.arrayContaining([
-          "hermes-base:pinned-inventory",
+          options.pinnedRemoteRef,
           expect.stringContaining("nemoclaw-python3.13-htmlparser-fix=3.13.5-2+deb13u4+nemoclaw1"),
         ]),
       );
