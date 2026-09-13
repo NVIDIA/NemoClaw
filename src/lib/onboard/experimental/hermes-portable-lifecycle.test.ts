@@ -295,6 +295,9 @@ describe("Hermes portable lifecycle", () => {
       expect(openshellMutationCalls(fixture.captureOpenShell, "start")).toHaveLength(0);
       expect(openshellMutationCalls(fixture.captureOpenShell, "stop")).toHaveLength(0);
       expect(fixture.launchOpenShell).not.toHaveBeenCalled();
+      expect(
+        fixture.podman.mock.calls.filter(([args]) => args[1] === "start" || args[1] === "stop"),
+      ).toHaveLength(0);
     },
   );
 
@@ -309,6 +312,9 @@ describe("Hermes portable lifecycle", () => {
     expect(openshellMutationCalls(fixture.captureOpenShell, "start")).toHaveLength(1);
     expect(openshellMutationCalls(fixture.captureOpenShell, "stop")).toHaveLength(0);
     expect(fixture.launchOpenShell).not.toHaveBeenCalled();
+    expect(
+      fixture.podman.mock.calls.filter(([args]) => args[1] === "start" || args[1] === "stop"),
+    ).toHaveLength(0);
   });
 
   it("preserves the pre-existing container when saved-phase reconciliation fails (#11646)", () => {
@@ -326,6 +332,9 @@ describe("Hermes portable lifecycle", () => {
     expect(openshellMutationCalls(fixture.captureOpenShell, "start")).toHaveLength(1);
     expect(openshellMutationCalls(fixture.captureOpenShell, "stop")).toHaveLength(0);
     expect(fixture.launchOpenShell).not.toHaveBeenCalled();
+    expect(
+      fixture.podman.mock.calls.filter(([args]) => args[1] === "start" || args[1] === "stop"),
+    ).toHaveLength(0);
   });
 
   it("uses one entry and final qualification when the timing callback fails (#10423)", () => {
