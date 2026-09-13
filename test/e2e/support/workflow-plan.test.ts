@@ -1022,7 +1022,7 @@ describe("E2E workflow plan", () => {
 
   it("rejects an unknown target that belongs to neither inventory nor registry", () => {
     expect(() => buildE2eWorkflowPlan({ targets: "definitely-unknown-e2e-target" })).toThrow(
-      "Unknown target 'definitely-unknown-e2e-target'",
+      /Unknown target 'definitely-unknown-e2e-target'\. Available targets: .*ubuntu-repo-cloud-openclaw/,
     );
   });
 

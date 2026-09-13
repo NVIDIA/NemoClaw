@@ -30,31 +30,6 @@ const cloudDeepAgentsCodeReady: ExpectedState = {
   credentials: { expected: "present" },
 };
 
-const localOllamaOpenclawReady: ExpectedState = {
-  id: "local-ollama-openclaw-ready",
-  cli: { installed: true },
-  gateway: { expected: "present", health: "healthy" },
-  sandbox: { expected: "present", status: "running", agent: "openclaw" },
-  inference: { expected: "available", provider: "ollama" },
-  credentials: { expected: "present" },
-};
-
-const macosCliReadyDockerOptional: ExpectedState = {
-  id: "macos-cli-ready-docker-optional",
-  cli: { installed: true },
-  gateway: { expected: "optional", health: "optional" },
-  sandbox: { expected: "optional", status: "optional", agent: "openclaw" },
-  inference: { expected: "optional", provider: "nvidia" },
-  credentials: { expected: "optional" },
-};
-
-const preflightFailureNoSandbox: ExpectedState = {
-  id: "preflight-failure-no-sandbox",
-  cli: { installed: true },
-  gateway: { expected: "absent" },
-  sandbox: { expected: "absent" },
-};
-
 const onboardingFailurePolicyPresetsRequired: ExpectedState = {
   id: "onboarding-failure-policy-presets-required",
   cli: { installed: true },
@@ -86,9 +61,6 @@ const postRebootRecoveryReady: ExpectedState = {
 const REGISTRY: readonly ExpectedState[] = [
   cloudOpenclawReady,
   cloudDeepAgentsCodeReady,
-  localOllamaOpenclawReady,
-  macosCliReadyDockerOptional,
-  preflightFailureNoSandbox,
   onboardingFailurePolicyPresetsRequired,
   postRebootRecoveryReady,
 ];

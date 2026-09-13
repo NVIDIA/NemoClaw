@@ -83,14 +83,22 @@ function parseArgs(argv: string[]): Args {
     if (arg === "--targets") {
       const value = argv[i + 1];
       if (!value) {
-        throw new Error("--targets requires a comma-separated value");
+        throw new Error(
+          `--targets requires a comma-separated value. Available targets: ${listTargets()
+            .map((target) => target.id)
+            .join(", ")}`,
+        );
       }
       args.targets = value
         .split(",")
         .map((id) => id.trim())
         .filter(Boolean);
       if (args.targets.length === 0) {
-        throw new Error("--targets requires at least one target ID");
+        throw new Error(
+          `--targets requires at least one target ID. Available targets: ${listTargets()
+            .map((target) => target.id)
+            .join(", ")}`,
+        );
       }
       i += 1;
       continue;

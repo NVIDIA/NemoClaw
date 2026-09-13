@@ -94,12 +94,16 @@ describe("live E2E target matrix", () => {
     expect(result.stderr).toContain("Unknown target 'ubuntu-repo-cloud-hermes'");
   });
 
-  it("rejects an empty explicit selection instead of selecting every target", () => {
-    const result = runEmitLiveMatrix(["--targets", " , "]);
-    expect(result.status).not.toBe(0);
-    expect(result.stdout).toBe("");
-    expect(result.stderr).toContain("--targets requires at least one target ID");
-  });
+  it.each(["", " , "])(
+    "rejects a blank explicit selection %j with available targets",
+    (selection) => {
+      const result = runEmitLiveMatrix(["--targets", selection]);
+      expect(result.status).not.toBe(0);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toContain("--targets requires");
+      expect(result.stderr).toMatch(/Available targets: .*ubuntu-repo-cloud-openclaw/);
+    },
+  );
 
   it("exposes execution coverage for every executable typed target (#9167)", () => {
     expect(buildLiveTargetMatrix()).toEqual(buildLiveTargetMatrix([], ["docker"]));

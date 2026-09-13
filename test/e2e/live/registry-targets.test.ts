@@ -10,10 +10,10 @@ import { HOSTED_INFERENCE_SECRET } from "../fixtures/hosted-inference.ts";
 import { CLI_DIST_ENTRYPOINT, CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import {
   dcodeInvalidCredentialRebuildOptionsFromRegistryEntry,
-  type LifecycleProfile,
   readRegistrySandboxEntry,
 } from "../fixtures/phases/index.ts";
 import { listTargets, requireTargets } from "../../../tools/e2e/target-inventory.mts";
+import { isLifecycleProfile } from "../fixtures/phases/lifecycle-profile.ts";
 import { liveTargetSupport, liveTargetTestTitle } from "../registry/runtime-support.ts";
 import { runE2eCloudExperimentalChecks } from "./cloud-experimental-checks.ts";
 import {
@@ -22,15 +22,6 @@ import {
   loadDcodeBaseImagePublicationEvidence,
 } from "./dcode-base-image-runtime-evidence.ts";
 import { buildLiveTargetRunPlan } from "./run-plan.ts";
-
-const LIFECYCLE_PROFILES: ReadonlySet<LifecycleProfile> = new Set([
-  "post-reboot-recovery",
-  "dcode-rebuild-invalid-credential",
-]);
-
-function isLifecycleProfile(value: string | undefined): value is LifecycleProfile {
-  return value !== undefined && LIFECYCLE_PROFILES.has(value as LifecycleProfile);
-}
 
 const E2E_CLOUD_EXPERIMENTAL_CHECKS_DIR = path.join(
   REPO_ROOT,
@@ -122,8 +113,7 @@ for (const [targetIndex, target] of listTargets().entries()) {
       if (profile && !lifecycleProfile) {
         throw new Error(
           `target '${target.id}' declares lifecycle '${profile}' which is not ` +
-            `dispatched by LifecyclePhaseFixture; update the fixture and the ` +
-            `SUPPORTED_LIFECYCLES whitelist together.`,
+            `dispatched by LifecyclePhaseFixture.`,
         );
       }
       progress.phase("prepare the target lifecycle prerequisites");
@@ -139,11 +129,6 @@ for (const [targetIndex, target] of listTargets().entries()) {
           : { timeoutMs: timeoutContract.commandTimeoutMs }),
       });
 
-      // Lifecycle phase runs between onboard and state-validation.
-      // Targets opt in by setting `environment.lifecycle` to a
-      // whitelisted profile (see SUPPORTED_LIFECYCLES in
-      // runtime-support.ts). Profiles dispatch through
-      // LifecyclePhaseFixture before state validation.
       let lifecycleResult: Awaited<ReturnType<typeof lifecycle.simulate>> | undefined;
       // Every registry target crosses the optional lifecycle boundary before
       // state validation.

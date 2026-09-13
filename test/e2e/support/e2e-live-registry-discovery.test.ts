@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
+import { isLifecycleProfile } from "../fixtures/phases/lifecycle-profile.ts";
 
 import { DEEPAGENTS_CLOUD_EXPERIMENTAL_CHECKS } from "../live/cloud-experimental-check-list.ts";
 import { buildLiveTargetRunPlan } from "../live/run-plan.ts";
@@ -27,6 +28,16 @@ function syntheticTarget(environment: TargetEnvironment = SUPPORTED_ENVIRONMENT)
 }
 
 describe("live target registry discovery support", () => {
+  it.each(["post-reboot-recovery", "dcode-rebuild-invalid-credential"])(
+    "accepts the lifecycle fixture profile %s during target discovery",
+    (lifecycle) => {
+      expect(isLifecycleProfile(lifecycle)).toBe(true);
+      expect(
+        liveTargetSupport(syntheticTarget({ ...SUPPORTED_ENVIRONMENT, lifecycle })).supported,
+      ).toBe(true);
+    },
+  );
+
   it("accepts a fully wired synthetic target and forwards its pending suites", () => {
     const registered = syntheticTarget();
 

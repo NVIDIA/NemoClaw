@@ -6,6 +6,7 @@ import {
   type E2eExecutionMetadata,
   validateE2eExecutionMetadata,
 } from "../../../tools/e2e/execution-coverage.mts";
+import { isLifecycleProfile } from "../fixtures/phases/lifecycle-profile.ts";
 import type { TargetDefinition } from "./types.ts";
 
 const SUPPORTED_PLATFORMS = new Set(["ubuntu-local"]);
@@ -17,12 +18,6 @@ const SUPPORTED_ONBOARDING = new Set([
   "cloud-langchain-deepagents-code",
 ]);
 const SUPPORTED_POLICY_TIERS = new Set(["balanced", "open", "personal"]);
-// Lifecycle profiles wired into the live Vitest driver. A profile is
-// supported only after both (a) `LifecyclePhaseFixture.simulate(profile)`
-// dispatches it, and (b) at least one expected-state declares the post-
-// lifecycle host invariants the fixture creates. New profiles must add
-// the dispatcher branch and an expected-state in the same change set.
-const SUPPORTED_LIFECYCLES = new Set(["post-reboot-recovery", "dcode-rebuild-invalid-credential"]);
 
 export interface LiveTargetSupport {
   supported: boolean;
@@ -51,7 +46,7 @@ export function liveTargetSupport(target: TargetDefinition): LiveTargetSupport {
     if (environment.policyTier && !SUPPORTED_POLICY_TIERS.has(environment.policyTier)) {
       reasons.push(`policyTier '${environment.policyTier}' is not wired for live fixtures`);
     }
-    if (environment.lifecycle && !SUPPORTED_LIFECYCLES.has(environment.lifecycle)) {
+    if (environment.lifecycle && !isLifecycleProfile(environment.lifecycle)) {
       reasons.push(`lifecycle '${environment.lifecycle}' is not wired for live fixtures`);
     }
   }
