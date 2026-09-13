@@ -686,7 +686,7 @@ describe("LifecyclePhaseFixture gateway runtime restart helpers", () => {
     expect(runner.calls).toHaveLength(2);
   });
 
-  it("restores a container runtime through the built NemoClaw product start path", async () => {
+  it("restores a container runtime through its sandbox-specific recovery path", async () => {
     const runner = new FakeRunner();
     runner.enqueue(shellResult(0, "gateway recovered\n"));
     const cleanup = new FakeCleanup();
@@ -698,15 +698,32 @@ describe("LifecyclePhaseFixture gateway runtime restart helpers", () => {
       ),
     ).resolves.toMatchObject({ exitCode: 0 });
 
-    expect(runner.calls).toHaveLength(1);
-    expect(runner.calls[0]?.command).toBe(process.execPath);
-    expect(runner.calls[0]?.args).toEqual([
-      "-e",
-      expect.stringContaining('startGatewayForRecovery({ gatewayName: "nemoclaw" })'),
-    ]);
+    expect(runner.calls[0]?.command).toBe("nemoclaw");
+    expect(runner.calls[0]?.args).toEqual(["e2e-survival", "status"]);
     expect(runner.calls[0]?.options?.artifactName).toBe(
-      "lifecycle-gateway-recover-through-nemoclaw-product-start",
+      "lifecycle-gateway-recover-through-nemoclaw-status-e2e-survival",
     );
+  });
+
+  it("fails closed when container recovery has no sandbox identity", async () => {
+    await expect(
+      fixture(new FakeRunner(), new FakeCleanup()).startGatewayRuntime({
+        kind: "container",
+        id: "container-1",
+      }),
+    ).rejects.toThrow(/sandbox name is required.*container gateway runtime/i);
+  });
+
+  it("propagates a nonzero container recovery result", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue(shellResult(1, "sandbox recovery failed"));
+
+    await expect(
+      fixture(runner, new FakeCleanup()).startGatewayRuntime(
+        { kind: "container", id: "container-1" },
+        { sandboxName: "e2e-survival" },
+      ),
+    ).rejects.toThrow(/recover stopped container gateway.*sandbox recovery failed/i);
   });
 
   it("restarts the stopped user service before sandbox recovery", async () => {

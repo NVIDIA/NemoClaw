@@ -185,6 +185,7 @@ export function buildOpenShellGatewayUserServiceDiagnosticsScript(): string {
   ].join("\n");
 }
 
+/** Build the host command that executes NemoClaw's production gateway-start path. */
 export function buildNemoClawGatewayRecoveryScript(): string {
   return [
     '"use strict";',
@@ -745,6 +746,7 @@ export class LifecyclePhaseFixture {
     );
   }
 
+  /** Restart the same gateway owner recorded before the lifecycle fixture stopped it. */
   async startGatewayRuntime(
     previousRuntime: HostGatewayRuntime | null,
     options: { requireUserService?: boolean; sandboxName?: string } = {},
@@ -753,6 +755,23 @@ export class LifecyclePhaseFixture {
       requireAvailable: options.requireUserService,
     });
     if (userServiceStart) return userServiceStart;
+    if (previousRuntime?.kind === "container") {
+      if (!options.sandboxName) {
+        throw new Error(
+          "A sandbox name is required to recover the stopped container gateway runtime.",
+        );
+      }
+      const result = await this.host.nemoclaw([options.sandboxName, "status"], {
+        artifactName: `lifecycle-gateway-recover-through-nemoclaw-status-${options.sandboxName}`,
+        env: buildAvailabilityProbeEnv(),
+        timeoutMs: 120_000,
+      });
+      assertExitZero(
+        result,
+        `recover stopped container gateway through sandbox status ${options.sandboxName}`,
+      );
+      return result;
+    }
     const result = await this.host.command(
       process.execPath,
       ["-e", buildNemoClawGatewayRecoveryScript()],
