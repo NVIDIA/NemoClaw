@@ -589,6 +589,283 @@ def browser_agent_state(state, expected, launches):
     return observation
 
 
+def existing_crashpad_reports(
+    root, state, observation, budget=2.0, process_factory=None
+):
+    """Read existing Windows Crashpad reports; never create a database or copy dumps."""
+    from nemoclaw_native_windows import NativeStartupRefusal
+    import nemoclaw_native_windows as native
+    import re
+    import struct
+    import importlib.util
+
+    started = time.monotonic()
+    deadline = started + min(2.0, max(0.0, budget))
+    result = {
+        "classification": "owned-Crashpad-minidump-diagnostic",
+        "diagnosticOnly": True,
+        "databaseCreated": False,
+        "uploadSettingsChanged": False,
+        "rawDumpRetained": False,
+        "maximumReports": 3,
+        "maximumFileBytes": 16 * 1024 * 1024,
+        "maximumDirectoryEntries": 64,
+        "reports": [],
+        "error": None,
+        "processHandleClosed": True,
+        "stackUnwound": False,
+    }
+    held = None
+
+    def remaining():
+        if time.monotonic() >= deadline:
+            raise TimeoutError("Crashpad observation budget exhausted")
+
+    def directory(path):
+        native._absolute_path(path).relative_to(state)
+        for item in (*reversed(path.parents), path):
+            if native._path_kind(item) != "directory":
+                raise ValueError("Crashpad directory is redirected or not ordinary")
+        return path
+
+    def read_file(path, maximum):
+        remaining()
+        file = owned_file(path, state)
+        with file.open("rb") as source:
+            before = os.fstat(source.fileno())
+            if not 0 <= before.st_size <= maximum:
+                raise ValueError("Crashpad file exceeds its read bound")
+            chunks = []
+            size = 0
+            while True:
+                remaining()
+                chunk = source.read(min(65536, maximum + 1 - size))
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                size += len(chunk)
+                if size > maximum:
+                    raise ValueError("Crashpad file grew beyond its bound")
+            after = os.fstat(source.fileno())
+        if (
+            before.st_size != after.st_size
+            or before.st_mtime_ns != after.st_mtime_ns
+            or size != before.st_size
+        ):
+            raise ValueError("Crashpad file changed during observation")
+        return b"".join(chunks)
+
+    try:
+        expected = owned_file(
+            root / "browsers/chromium-1234/chrome-win64/chrome.exe", root
+        )
+        rows = [
+            row
+            for row in observation.get("processes", [])
+            if Path(row.get("executable", "")) == expected
+            and not any(
+                arg.startswith("--type=") for arg in row.get("selectedArguments", [])
+            )
+        ]
+        if len(rows) != 1 or rows[0].get("identityRechecked") is not True:
+            raise ValueError("No single identity-checked root Chrome profile")
+        row = rows[0]
+        profiles = [
+            arg.split("=", 1)[1]
+            for arg in row["selectedArguments"]
+            if arg.startswith("--user-data-dir=")
+        ]
+        if len(profiles) != 1 or row["dosImage"].get("complete") is not True:
+            raise ValueError("Chrome profile or DOS identity is ambiguous")
+        profile = directory(Path(profiles[0]))
+        if len(str(profile.relative_to(state))) > 512:
+            raise ValueError("Owned Chrome profile name exceeds its evidence bound")
+        parser_path = Path(__file__).with_name("parse-chrome-minidump.py")
+        parser_path = owned_file(parser_path, parser_path.parent)
+        parser_bytes = parser_path.read_bytes()
+        if len(parser_bytes) > 128 * 1024:
+            raise ValueError("Minidump parser source exceeds its bound")
+        spec = importlib.util.spec_from_file_location("nc_owned_minidump", parser_path)
+        parser = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(parser)
+        if parser_path.read_bytes() != parser_bytes:
+            raise ValueError("Staged minidump parser changed during loading")
+        result["parser"] = {
+            "file": parser_path.name,
+            "bytes": len(parser_bytes),
+            "sha256": hashlib.sha256(parser_bytes).hexdigest(),
+        }
+        held = (process_factory or BrowserHarnessProcess)(row["pid"])
+        result["processHandleClosed"] = False
+        identity = (row["pid"], row["dosImage"]["creationFiletime"])
+        if held.identity() != identity:
+            raise ValueError(
+                "Chrome process generation changed before Crashpad observation"
+            )
+        exited = held.wait(0)
+        observed = row["dosImage"]
+        if (
+            observed.get("pid") != identity[0]
+            or Path(observed.get("value", "")) != expected
+            or not exited
+            and Path(held.image()) != expected
+        ):
+            raise ValueError(
+                "Chrome image identity changed before Crashpad observation"
+            )
+        result["processExitedBeforeRead"] = exited
+        result["imageIdentitySource"] = (
+            "prior-complete-DOS-observation" if exited else "same-retained-handle"
+        )
+        result["browserProcess"] = {"pid": identity[0], "creationFiletime": identity[1]}
+        database = directory(profile / "Crashpad")
+        result["databaseRelativeToState"] = str(database.relative_to(state))
+        try:
+            settings = read_file(database / "settings.dat", 4096)
+            if len(settings) < 40:
+                raise ValueError("Crashpad settings header is truncated")
+            magic, version, options = struct.unpack_from("<III", settings)
+            if magic != 0x43506473 or version != 1:
+                raise ValueError("Crashpad settings magic/version differs")
+            result["settings"] = {
+                "bytes": len(settings),
+                "sha256": hashlib.sha256(settings).hexdigest(),
+                "version": version,
+                "options": hex(options),
+                "uploadsEnabled": bool(options & 1),
+            }
+        except (Exception, NativeStartupRefusal) as error:
+            result["settings"] = {"error": repr(error)[:160], "uploadsEnabled": None}
+        reports = directory(database / "reports")
+        names = []
+        with os.scandir(reports) as entries:
+            for index, entry in enumerate(entries):
+                remaining()
+                if index == 64:
+                    result["directoryTruncated"] = True
+                    break
+                if re.fullmatch(
+                    r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}\.dmp",
+                    entry.name,
+                ):
+                    names.append(entry.name)
+        result["reportsObserved"] = len(names)
+        result["reportsTruncated"] = len(names) > 3
+        for name in sorted(names)[:3]:
+            record = {"name": name, "rawDumpRetained": False}
+            try:
+                remaining()
+                record["parsed"] = parser.parse_minidump(
+                    owned_file(reports / name, state), deadline=deadline
+                )
+                record["parsed"]["validatedModuleCount"] = len(
+                    record["parsed"].get("modules", [])
+                )
+                record["parsed"]["unreferencedModulesOmitted"] = 0
+                record["parsed"].setdefault("stack", {})[
+                    "candidateCountBeforeOutputLimit"
+                ] = len(record["parsed"].get("stack", {}).get("candidates", []))
+            except (Exception, NativeStartupRefusal) as error:
+                record["error"] = repr(error)[:160]
+            result["reports"].append(record)
+        result["processIdentityRechecked"] = held.identity() == identity
+        result["processStillRunning"] = not held.wait(0)
+    except (Exception, NativeStartupRefusal) as error:
+        result["error"] = repr(error)[:160]
+    finally:
+        if held is not None:
+            try:
+                held.close()
+                result["processHandleClosed"] = True
+            except Exception as error:
+                result["processCloseError"] = repr(error)[:160]
+    result["elapsedMs"] = int((time.monotonic() - started) * 1000)
+    result["serializedLimitBytes"] = 12 * 1024
+
+    # Reserve bytes for the caller's nonce; every iteration removes candidates,
+    # condenses one previously full report, or removes a report. Never spin.
+    def omit_unreferenced_modules():
+        removed = 0
+        for report in result["reports"]:
+            parsed = report.get("parsed", {})
+            references = [
+                parsed.get("exception", {}).get("location")
+                if parsed.get("exception")
+                else None,
+                parsed.get("context", {}).get("instructionLocation"),
+            ]
+            references += parsed.get("stack", {}).get("candidates", [])
+            bases = {
+                entry.get("base") for entry in references if isinstance(entry, dict)
+            }
+            modules = parsed.get("modules", [])
+            kept = [module for module in modules if module.get("base") in bases]
+            if len(kept) < len(modules):
+                parsed["unreferencedModulesOmitted"] += len(modules) - len(kept)
+                parsed["modules"] = kept
+                removed += len(modules) - len(kept)
+        return removed
+
+    omit_unreferenced_modules()
+    result["aggregateTruncated"] = False
+    while len(json.dumps(result).encode()) > 12 * 1024 - 128:
+        result["aggregateTruncated"] = True
+        if omit_unreferenced_modules():
+            continue
+        candidates = [
+            r["parsed"]["stack"]["candidates"]
+            for r in result["reports"]
+            if r.get("parsed", {}).get("stack", {}).get("candidates")
+        ]
+        if candidates:
+            max(candidates, key=len).pop()
+            continue
+        full = [
+            r
+            for r in result["reports"]
+            if "parsed" in r and not r.get("detailsOmittedForBudget")
+        ]
+        if full:
+            report = full[-1]
+            parsed = report["parsed"]
+            report["parsed"] = {
+                key: parsed.get(key)
+                for key in (
+                    "file",
+                    "exception",
+                    "headerTimeDateStamp",
+                    "miscInfo",
+                    "systemInfo",
+                )
+            }
+            report["parsed"]["context"] = {
+                "status": parsed.get("context", {}).get("status"),
+                "detailsOmittedForBudget": True,
+            }
+            report["parsed"]["stack"] = {
+                "unwound": False,
+                "status": "omitted for budget",
+                "candidates": [],
+            }
+            report["detailsOmittedForBudget"] = True
+        elif result["reports"]:
+            result["reports"].pop()
+            result["reportEntriesDroppedForBudget"] = (
+                result.get("reportEntriesDroppedForBudget", 0) + 1
+            )
+        else:
+            result = {
+                "classification": result["classification"],
+                "diagnosticOnly": True,
+                "error": "Crashpad metadata exceeded output bound",
+                "aggregateTruncated": True,
+                "rawDumpRetained": False,
+                "processHandleClosed": result["processHandleClosed"],
+            }
+            break
+    return result
+
+
 def existing_agent_browser_status(
     root, state, observation, budget=1.0, process_factory=None
 ):
@@ -1579,6 +1856,14 @@ def browser_check(root, nonce):
             )
             diagnostics["logs"]["chrome"] = browser_log_tail(chrome_log, state)
             diagnostic_started = time.monotonic()
+            crashpad = existing_crashpad_reports(
+                root,
+                state,
+                diagnostics["agentBrowserState"],
+                min(2.0, max(0.0, 60.0 - (time.monotonic() - component_started))),
+            )
+            crashpad["nonce"] = nonce
+            print("NEMOCLAW_CRASHPAD_RESULT=" + json.dumps(crashpad), flush=True)
             diagnostics["agentBrowserStatus"] = existing_agent_browser_status(
                 root,
                 state,

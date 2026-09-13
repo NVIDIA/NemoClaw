@@ -1184,6 +1184,11 @@ test("component evidence requires one exact nonce and operation result", () => {
     "NEMOCLAW_PERSONAL_RESULT=" +
     JSON.stringify({ schemaVersion: 1, component: "bash", nonce: "one", passed: false });
   assert.equal(parseComponent(line, "bash", "one").passed, false);
+  const crashpad = 'NEMOCLAW_CRASHPAD_RESULT={"diagnosticOnly":true,"rawDumpRetained":false}';
+  assert.deepEqual(
+    parseComponent(crashpad + "\n" + line, "bash", "one"),
+    parseComponent(line, "bash", "one"),
+  );
   assert.throws(() => parseComponent(line, "browser", "one"), /identity/u);
   assert.throws(() => parseComponent(line, "bash", "two"), /identity/u);
   assert.throws(() => parseComponent(line + "\n" + line, "bash", "one"), /exactly one/u);

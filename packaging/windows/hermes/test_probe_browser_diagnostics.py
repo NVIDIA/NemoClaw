@@ -34,6 +34,184 @@ class BrowserDiagnostics(unittest.TestCase):
         modules.start()
         self.addCleanup(modules.stop)
 
+    def test_existing_crashpad_collection_is_bounded_and_keeps_closed_process_reports(
+        self,
+    ):
+        import struct
+
+        with tempfile.TemporaryDirectory() as directory:
+            root, state = Path(directory) / "runtime", Path(directory) / "state"
+            expected = root / "browsers/chromium-1234/chrome-win64/chrome.exe"
+            expected.parent.mkdir(parents=True)
+            expected.write_bytes(b"fixture; never executed")
+            profile = state / "profile"
+            reports = profile / "Crashpad/reports"
+            reports.mkdir(parents=True)
+            (profile / "Crashpad/settings.dat").write_bytes(
+                struct.pack("<III", 0x43506473, 1, 0) + b"\0" * 28
+            )
+            for number in range(3):
+                (reports / (f"00000000-0000-0000-0000-{number:012d}.dmp")).write_bytes(
+                    b"fixture"
+                )
+            # The parser's format/bounds tests live with its separate owner. Here
+            # a deterministic data stub tests collection, closure and aggregate limits.
+            parsed = {
+                "file": {"name": "fixture.dmp", "bytes": 7, "sha256": "a" * 64},
+                "exception": {
+                    "code": "0xc0000008",
+                    "threadId": 4,
+                    "address": "0x1010",
+                    "location": {
+                        "module": "fixture.dll",
+                        "base": "0x1000",
+                        "rva": "0x10",
+                    },
+                },
+                "modules": [
+                    {
+                        "name": f"fixture{i:03}.dll" + "x" * 96,
+                        "base": hex(0x1000 + i * 4096),
+                        "size": 4096,
+                    }
+                    for i in range(256)
+                ],
+                "headerTimeDateStamp": 1700000123,
+                "miscInfo": {"processId": 456, "processCreateTime": 1700000000},
+                "systemInfo": {"processorArchitecture": 12},
+                "context": {
+                    "status": "unsupported architecture",
+                    "registers": {},
+                    "uninterpretedFixturePadding": "x" * 8000,
+                },
+                "stack": {
+                    "unwound": False,
+                    "status": "raw candidates",
+                    "candidates": [
+                        {
+                            "address": hex(0x1010 + i * 4096),
+                            "module": f"fixture{i:03}.dll" + "x" * 96,
+                            "base": hex(0x1000 + i * 4096),
+                            "rva": "0x10",
+                            "stackOffsetBytes": i * 8,
+                        }
+                        for i in range(16)
+                    ],
+                },
+            }
+            parser = Path(directory) / "parse-chrome-minidump.py"
+            parser.write_text(
+                "def parse_minidump(path, *, deadline=None):\n return "
+                + repr(parsed)
+                + "\n"
+            )
+            observation = {
+                "processes": [
+                    {
+                        "pid": 123,
+                        "executable": str(expected),
+                        "identityRechecked": True,
+                        "selectedArguments": ["--user-data-dir=" + str(profile)],
+                        "dosImage": {
+                            "pid": 123,
+                            "complete": True,
+                            "value": str(expected),
+                            "creationFiletime": "456",
+                        },
+                    }
+                ]
+            }
+            for case in (
+                "live",
+                "exited",
+                "generation",
+                "parser-error",
+                "missing-database",
+            ):
+                with self.subTest(case=case):
+                    closed = []
+
+                    class Process:
+                        def __init__(self, pid):
+                            self.pid = pid
+
+                        def identity(self):
+                            return (
+                                self.pid,
+                                "changed" if case == "generation" else "456",
+                            )
+
+                        def wait(self, seconds):
+                            self_test.assertEqual(seconds, 0)
+                            return case == "exited"
+
+                        def image(self):
+                            if case == "exited":
+                                raise AssertionError(
+                                    "Exited process uses prior complete image binding"
+                                )
+                            return str(expected)
+
+                        def close(self):
+                            closed.append(self.pid)
+
+                    self_test = self
+                    if case == "parser-error":
+                        parser.write_text(
+                            "def parse_minidump(path, *, deadline=None):\n raise ValueError('malformed fixture')\n"
+                        )
+                    if case == "missing-database":
+                        absent = dict(observation["processes"][0])
+                        other = state / "absent-profile"
+                        other.mkdir()
+                        absent["selectedArguments"] = ["--user-data-dir=" + str(other)]
+                        selected = {"processes": [absent]}
+                    else:
+                        selected = observation
+                    with patch.object(
+                        owner,
+                        "__file__",
+                        str(Path(directory) / "probe-personal-python.py"),
+                    ):
+                        result = owner.existing_crashpad_reports(
+                            root, state, selected, process_factory=Process
+                        )
+                    self.assertEqual(closed, [123])
+                    self.assertTrue(result["processHandleClosed"])
+                    self.assertFalse(result["rawDumpRetained"])
+                    self.assertFalse(result["uploadSettingsChanged"])
+                    self.assertLessEqual(
+                        len(json.dumps(result).encode()), 12 * 1024 - 128
+                    )
+                    if case in ("live", "exited"):
+                        self.assertIsNone(result["error"])
+                        self.assertEqual(
+                            result["processExitedBeforeRead"], case == "exited"
+                        )
+                        self.assertFalse(result["settings"]["uploadsEnabled"])
+                        self.assertEqual(len(result["reports"]), 3)
+                        self.assertTrue(result["aggregateTruncated"])
+                        for report in result["reports"]:
+                            self.assertEqual(
+                                report["parsed"]["exception"]["code"], "0xc0000008"
+                            )
+                            self.assertFalse(report["parsed"]["stack"]["unwound"])
+                            self.assertEqual(
+                                report["parsed"]["miscInfo"]["processId"], 456
+                            )
+                            self.assertEqual(
+                                report["parsed"]["headerTimeDateStamp"], 1700000123
+                            )
+                    elif case == "parser-error":
+                        self.assertTrue(
+                            all(
+                                "malformed fixture" in r["error"]
+                                for r in result["reports"]
+                            )
+                        )
+                    else:
+                        self.assertIsNotNone(result["error"])
+
     def test_existing_daemon_status_is_one_bound_read_only_request(self):
         import socket
 

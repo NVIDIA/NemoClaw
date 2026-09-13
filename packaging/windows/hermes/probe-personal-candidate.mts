@@ -1159,6 +1159,7 @@ export async function directBrowserDiagnostic(
         "probe-personal-workload.mts",
         "probe-personal-python.py",
         "nemoclaw_browser_use.py",
+        "parse-chrome-minidump.py",
       ];
       record.controllerFiles = files.map((name) => {
         const source = path.win32.join(primaryPlan.sourceController, name);
@@ -1879,11 +1880,27 @@ async function main() {
       "probe-personal-workload.mts",
       "probe-personal-python.py",
       "nemoclaw_browser_use.py",
+      "parse-chrome-minidump.py",
     ])
       fs.copyFileSync(
         fileURLToPath(new URL("./" + name, import.meta.url)),
         path.join(launcher, name),
       );
+    const crashpadParserSource = fileIdentity(
+      fileURLToPath(new URL("./parse-chrome-minidump.py", import.meta.url)),
+    );
+    const crashpadParserStaged = fileIdentity(path.join(launcher, "parse-chrome-minidump.py"));
+    assert.equal(crashpadParserStaged.bytes, crashpadParserSource.bytes);
+    assert.equal(crashpadParserStaged.sha256, crashpadParserSource.sha256);
+    const crashpadParserDocument = path.join(output, "current-crashpad-parser.py");
+    fs.copyFileSync(crashpadParserStaged.path, crashpadParserDocument, fs.constants.COPYFILE_EXCL);
+    const crashpadParserRetained = fileIdentity(crashpadParserDocument);
+    assert.equal(crashpadParserRetained.sha256, crashpadParserSource.sha256);
+    receipt.crashpadParser = {
+      source: crashpadParserSource,
+      staged: crashpadParserStaged,
+      document: crashpadParserRetained,
+    };
     const browserAdapterSource = fileIdentity(
       fileURLToPath(new URL("./nemoclaw_browser_use.py", import.meta.url)),
     );
