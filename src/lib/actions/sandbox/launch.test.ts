@@ -1252,6 +1252,81 @@ describe("launchSandbox", () => {
     }
   });
   it.each([
+    { replacement: "unchanged", cleanupCount: 1 },
+    { replacement: "recreated", cleanupCount: 0 },
+    { replacement: "removed", cleanupCount: 0 },
+  ])(
+    "binds completion cleanup to the launched sandbox ($replacement)",
+    async ({ replacement, cleanupCount }) => {
+      const { startSandboxExec } = await vi.importActual<typeof import("./exec")>("./exec");
+      const agent = loadAgent("openclaw");
+      let current: SandboxEntry | null = sandboxEntry(agent.name);
+      prepareSession(agent.name, agent);
+      const sessionEnded = deferred();
+      const childStarted = deferred();
+      const events: string[] = [];
+      const lock = createSerialTestLock(events, "sandbox");
+      const cleanup = vi.fn(() => {
+        events.push("cleanup");
+        return { applies: true as const, ok: true, issues: [] };
+      });
+      const release = vi.fn();
+      mocks.startSandboxExec.mockImplementation((name, command, options, deps) =>
+        startSandboxExec(name, command, options, {
+          ...deps,
+          selectGateway: () => ({ outcome: "unregistered", gatewayName: null }),
+          commandExecutor: {
+            probeDirectory: async () => ({ state: "present" }),
+            runStreaming: async () => {
+              childStarted.resolve();
+              await sessionEnded.promise;
+              return { outcome: { kind: "completed", exitCode: 0 }, release };
+            },
+          },
+          cleanupDeps: {
+            getSandbox: () => current,
+            inspectMutableConfigPerms: cleanup,
+            repairMutableConfigPerms: () => {
+              throw new Error("unexpected repair");
+            },
+          },
+          exit: (code) => {
+            throw new Error(`exit:${code}`);
+          },
+        }),
+      );
+      const launch = launchSandbox("alpha", {
+        getSandbox: () => current,
+        withSandboxMutationLock: lock,
+      });
+      const completion = expect(launch).rejects.toThrow("exit:0");
+      await childStarted.promise;
+      await lock("alpha", () => {
+        current =
+          replacement === "removed"
+            ? null
+            : {
+                ...current!,
+                lifecycleGeneration:
+                  replacement === "recreated" ? "generation-new" : "generation-alpha",
+              };
+        events.push("replacement-observed");
+      });
+      expect(cleanup).not.toHaveBeenCalled();
+      events.length = 0;
+      sessionEnded.resolve();
+      await completion;
+      expect(cleanup).toHaveBeenCalledTimes(cleanupCount);
+      expect(release).toHaveBeenCalledOnce();
+      expect(events).toEqual(
+        cleanupCount === 1
+          ? ["sandbox:acquired", "cleanup", "sandbox:released"]
+          : ["sandbox:acquired", "sandbox:released"],
+      );
+    },
+  );
+
+  it.each([
     {
       scenario: "hermes-accepted",
       agentName: "hermes",

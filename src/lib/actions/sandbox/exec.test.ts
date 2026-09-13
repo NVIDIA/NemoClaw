@@ -349,6 +349,8 @@ it(
       ),
     );
     let dispatched = false;
+    let lockHeldDuringCleanup: boolean | null = null;
+    let fenceHeldDuringCleanup: boolean | null = null;
     try {
       const finish = await withPortableHostFence(home, () =>
         withMcpLifecycleLock(
@@ -372,8 +374,8 @@ it(
                 },
                 cleanupDeps: {
                   getSandbox: () => {
-                    expect(isMcpLifecycleLockHeld(sandboxName, stateDir)).toBe(false);
-                    expect(fs.existsSync(portableHostFencePath(home))).toBe(false);
+                    lockHeldDuringCleanup = isMcpLifecycleLockHeld(sandboxName, stateDir);
+                    fenceHeldDuringCleanup = fs.existsSync(portableHostFencePath(home));
                     return { agent: "openclaw" };
                   },
                   inspectMutableConfigPerms: cleanup,
@@ -422,6 +424,8 @@ it(
       expect(release).not.toHaveBeenCalled();
       endSession();
       await expect(finish()).rejects.toThrow("exit:0");
+      expect(lockHeldDuringCleanup).toBe(false);
+      expect(fenceHeldDuringCleanup).toBe(false);
       expect(cleanup).toHaveBeenCalledOnce();
       expect(release).toHaveBeenCalledOnce();
     } finally {

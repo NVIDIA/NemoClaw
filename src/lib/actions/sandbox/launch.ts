@@ -246,14 +246,25 @@ async function launchAgentWithPortableAuthority(
   beforeOrdinaryLaunch?: () => Promise<void>,
   beforeAgentExec?: () => void,
 ): Promise<void> {
+  const lockSandbox = deps.withSandboxMutationLock ?? withSandboxMutationLock;
   const startOrdinaryAgent = async (): Promise<{ finish: () => Promise<void> }> => {
     prepareHermesLightTerminalSkin(sandboxName, agent, process.env);
     beforeAgentExec?.();
-    const finish = await startSandboxExec(sandboxName, command, {
-      tty: true,
-      stdin: true,
-      timeoutSeconds: 0,
-    });
+    const readSandbox = deps.getSandbox ?? getKnownSandboxTarget;
+    const launchedEntry = structuredClone(readSandbox(sandboxName));
+    const finish = await startSandboxExec(
+      sandboxName,
+      command,
+      { tty: true, stdin: true, timeoutSeconds: 0 },
+      {
+        withCleanupAuthority: (cleanup) =>
+          lockSandbox(sandboxName, () => {
+            const current = readSandbox(sandboxName);
+            if (!launchedEntry || !isDeepStrictEqual(current, launchedEntry)) return null;
+            return cleanup();
+          }),
+      },
+    );
     return { finish };
   };
   const startHermesPortableAgent = (
@@ -288,7 +299,6 @@ async function launchAgentWithPortableAuthority(
       },
     };
   };
-  const lockSandbox = deps.withSandboxMutationLock ?? withSandboxMutationLock;
   const started = await lockSandbox(sandboxName, async () => {
     const current = inspectPortableAgentReceiptDisposition(sandboxName);
     if ((current.kind === "hermes") !== hermesPortableSnapshot) {

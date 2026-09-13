@@ -148,6 +148,8 @@ export type ExecSandboxDeps = {
   /** Post-command observability and cleanup seams. */
   policyHint?: ExecPolicyHintDeps;
   cleanupDeps?: SandboxExecCleanupDeps;
+  /** Reacquire and verify dispatch authority before delayed launch cleanup. */
+  withCleanupAuthority?: (cleanup: () => string | null) => Promise<string | null>;
   /** Activate config written by a successful direct Google Chat pairing approval. */
   restartGateway?: SandboxExecGatewayRestart;
   /** Resolve the sandbox's recorded agent before applying agent-specific post-exec effects. */
@@ -180,16 +182,19 @@ async function runSandboxExecRequest(
   return completed;
 }
 
-function finishSandboxExecRequest(
+async function finishSandboxExecRequest(
   completed: Awaited<ReturnType<OpenShellSandboxCommandExecutor["runStreaming"]>>,
   request: OpenShellSandboxCommandRequest,
   cleanupDeps: SandboxExecCleanupDeps,
-): SandboxExecCompletion {
+  withCleanupAuthority?: ExecSandboxDeps["withCleanupAuthority"],
+): Promise<SandboxExecCompletion> {
   try {
     const commandCode = completed.outcome.kind === "completed" ? completed.outcome.exitCode : 1;
     const invocationError =
       completed.outcome.kind === "failed" ? completed.outcome.error.message : undefined;
-    const cleanupError = cleanupOpenClawAfterExec(request.sandboxName, cleanupDeps) ?? undefined;
+    const cleanup = () => cleanupOpenClawAfterExec(request.sandboxName, cleanupDeps);
+    const cleanupError =
+      (await (withCleanupAuthority ? withCleanupAuthority(cleanup) : cleanup())) ?? undefined;
     return {
       code: cleanupError ? 1 : commandCode,
       commandCode,
@@ -325,7 +330,7 @@ export async function startSandboxExec(
   };
   const pending = runSandboxExecRequest(commandExecutor, request);
   return async () => {
-    const completion = finishSandboxExecRequest(
+    const completion = await finishSandboxExecRequest(
       await pending,
       request,
       deps.cleanupDeps ?? {
@@ -342,6 +347,7 @@ export async function startSandboxExec(
             require("../../sandbox/mutable-config-perms") as typeof import("../../sandbox/mutable-config-perms")
           ).repairMutableConfigPerms(name),
       },
+      deps.withCleanupAuthority,
     );
     if (completion.invocationError) {
       console.error(`  Failed to invoke openshell: ${completion.invocationError}`);
