@@ -50,7 +50,6 @@ import {
   createExactTempFileCleanup,
   secureTempFile,
 } from "../../onboard/temp-files";
-import * as policies from "../../policy";
 import { ROOT, run, shellQuote, validateName } from "../../runner";
 import { parseLiveSandboxNames } from "../../runtime-recovery";
 import { streamSandboxCreate } from "../../sandbox/create-stream";

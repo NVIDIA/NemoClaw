@@ -655,7 +655,7 @@ describe("docker-driver-gateway config TOML", () => {
             let settled = false;
             let stdout = "";
             let stderr = "";
-            let proofTimer: NodeJS.Timeout | undefined;
+            let _proofTimer: NodeJS.Timeout | undefined;
             const startupTimer = setTimeout(() => {
               settled ||
                 ((settled = true),
@@ -671,7 +671,7 @@ describe("docker-driver-gateway config TOML", () => {
                 !stdout.includes("ready\n") ||
                 ((ready = true),
                 clearTimeout(startupTimer),
-                (proofTimer = setTimeout(() => {
+                (_proofTimer = setTimeout(() => {
                   settled ||
                     ((settled = true),
                     spawned.kill("SIGKILL"),
@@ -683,14 +683,14 @@ describe("docker-driver-gateway config TOML", () => {
               settled ||
                 ((settled = true),
                 clearTimeout(startupTimer),
-                proofTimer && clearTimeout(proofTimer),
+                _proofTimer && clearTimeout(_proofTimer),
                 reject(error));
             });
             spawned.once("exit", (code) => {
               settled ||
                 ((settled = true),
                 clearTimeout(startupTimer),
-                proofTimer && clearTimeout(proofTimer),
+                _proofTimer && clearTimeout(_proofTimer),
                 resolve({ code, stderr }));
             });
           },

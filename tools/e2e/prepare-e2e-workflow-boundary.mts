@@ -28,7 +28,6 @@ const PREINSTALLED_E2E_JOBS = new Set([
 ]);
 const NATIVE_RUNTIME_QUALIFICATION_PRODUCER_PREPARE_CONDITION =
   "${{ inputs.checkout_sha == '' || inputs.jobs != 'native-runtime-qualification-producer' || inputs.targets != '' }}";
-const RETIRED_SELECTOR_COMPATIBILITY_JOB = "retired-selector-compatibility";
 
 export const PREPARE_E2E_NO_BUILD_JOBS = new Set<string>(E2E_JOB_POLICY.prepareNoBuild);
 
@@ -108,10 +107,7 @@ export function validatePrepareE2eInvocations(workflow: WorkflowRecord): string[
         const job = record(value);
         return (
           !PREINSTALLED_E2E_JOBS.has(jobName) &&
-          (jobName === "generate-matrix" ||
-            jobName === "live" ||
-            jobName === RETIRED_SELECTOR_COMPATIBILITY_JOB ||
-            record(job.env).E2E_JOB === "1")
+          (jobName === "generate-matrix" || jobName === "live" || record(job.env).E2E_JOB === "1")
         );
       })
       .map(([jobName]) => jobName),
