@@ -22,7 +22,6 @@ import {
   renderSandboxCreateArgsForGpuRoute,
   type SelectedDockerGpuRoute,
 } from "../docker-gpu-route";
-import type { HermesDashboardOnboardState } from "../hermes-dashboard";
 import type { InitialSandboxPolicy } from "../initial-policy";
 import { isShippedManagedImageAgent, managedImageRuntimeIdentity } from "../managed-image/contract";
 import {

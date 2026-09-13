@@ -154,42 +154,6 @@ function runCapturingConsoleError<T>(fn: () => T): { result: T; stderr: string }
   }
 }
 
-function writeWeChatPluginMetadata(manifest: Record<string, unknown>) {
-  const pluginDir = path.join(tmpDir, ".openclaw", "extensions", "openclaw-weixin");
-  fs.mkdirSync(pluginDir, { recursive: true });
-  fs.writeFileSync(path.join(pluginDir, "openclaw.plugin.json"), JSON.stringify(manifest, null, 2));
-}
-
-function writeWeChatNpmPackageMetadata(manifest: Record<string, unknown>) {
-  const pluginDir = path.join(
-    tmpDir,
-    ".openclaw",
-    "npm",
-    "node_modules",
-    "@tencent-weixin",
-    "openclaw-weixin",
-  );
-  fs.mkdirSync(pluginDir, { recursive: true });
-  fs.writeFileSync(path.join(pluginDir, "package.json"), JSON.stringify(manifest, null, 2));
-}
-
-function writeWeChatNpmPluginMetadata(manifest: Record<string, unknown>) {
-  const pluginDir = path.join(
-    tmpDir,
-    ".openclaw",
-    "npm",
-    "node_modules",
-    "@tencent-weixin",
-    "openclaw-weixin",
-  );
-  fs.mkdirSync(pluginDir, { recursive: true });
-  fs.writeFileSync(path.join(pluginDir, "openclaw.plugin.json"), JSON.stringify(manifest, null, 2));
-}
-
-function wechatExtensionPath(stateDir = path.join(tmpDir, ".openclaw")) {
-  return path.join(fs.realpathSync(stateDir), "extensions", "openclaw-weixin");
-}
-
 function writeRegistryManifest(
   blueprintDir: string,
   relativeManifestPath: string,

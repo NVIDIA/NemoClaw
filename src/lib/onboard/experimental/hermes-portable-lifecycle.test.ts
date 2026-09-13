@@ -16,13 +16,10 @@ import type { ContainerEngineCommandCapture } from "../../adapters/container-eng
 import { hermesPortableContainerInternals } from "./hermes-portable-container";
 import {
   createHermesPortableLifecycleTestReceipt,
-  testOpenShellExecutableAuthority,
-  testPodmanExecutableAuthority,
   testPodmanExecutableAuthorityDeps,
 } from "./hermes-portable-lifecycle.test-fixture";
 import {
   createSandboxListJson,
-  directoryChain,
   openshellMutationCalls,
   poisonUnexpectedCommand,
 } from "./hermes-portable-lifecycle.test-fixtures";
@@ -885,7 +882,7 @@ describe("Hermes portable lifecycle", () => {
     "rolls back unavailable health with waiter status %i and diagnostic %s (#9211)",
     (status, diagnostic) => {
       const receipt = activeReceipt();
-      const { deps, podman, captureOpenShell, launchOpenShell } = lifecycleDeps(receipt, false);
+      const { deps, captureOpenShell, launchOpenShell } = lifecycleDeps(receipt, false);
       const defaultCapture = captureOpenShell.getMockImplementation()!;
       let now = 0;
       let healthAttempts = 0;
@@ -926,7 +923,7 @@ describe("Hermes portable lifecycle", () => {
   it("preserves startup and terminal-settlement failure classes together (#11248)", () => {
     const receipt = activeReceipt();
     let observedRunning = false;
-    const { deps, podman, captureOpenShell, launchOpenShell } = lifecycleDeps(receipt, false, {
+    const { deps, captureOpenShell, launchOpenShell } = lifecycleDeps(receipt, false, {
       sandboxPhase: (running) => {
         observedRunning ||= running;
         return observedRunning ? "Ready" : "Stopped";
@@ -966,7 +963,7 @@ describe("Hermes portable lifecycle", () => {
 
   it("rejects authority drift after exec readiness without launching startup (#9211)", () => {
     const receipt = activeReceipt();
-    const { deps, podman, captureOpenShell, launchOpenShell } = lifecycleDeps(receipt, false);
+    const { deps, captureOpenShell, launchOpenShell } = lifecycleDeps(receipt, false);
     const defaultCapture = captureOpenShell.getMockImplementation()!;
     const stableReadRegistry: NonNullable<HermesPortableLifecycleDeps["readRegistry"]> =
       deps.readRegistry!;
@@ -1001,7 +998,7 @@ describe("Hermes portable lifecycle", () => {
 
   it("rolls back its exact container when OpenShell does not reconnect (#9203)", () => {
     const receipt = activeReceipt();
-    const { deps, podman, captureOpenShell } = lifecycleDeps(receipt, false);
+    const { deps, captureOpenShell } = lifecycleDeps(receipt, false);
     const defaultCapture = captureOpenShell.getMockImplementation()!;
     let now = 0;
     captureOpenShell.mockImplementation((args: readonly string[]) =>
@@ -1045,7 +1042,7 @@ describe("Hermes portable lifecycle", () => {
   });
   it("does not stop an already-running container after a health failure (#9203)", () => {
     const receipt = activeReceipt();
-    const { deps, podman, captureOpenShell, launchOpenShell } = lifecycleDeps(receipt);
+    const { deps, captureOpenShell, launchOpenShell } = lifecycleDeps(receipt);
     const defaultCapture = captureOpenShell.getMockImplementation()!;
     let now = 0;
     captureOpenShell.mockImplementation((args: readonly string[]) =>
@@ -1075,7 +1072,7 @@ describe("Hermes portable lifecycle", () => {
     const receipt = activeReceipt();
     const registry = {} satisfies Partial<SandboxEntry>;
     const livePolicy = POLICY;
-    const { deps, podman } = lifecycleDeps(receipt, false, { livePolicy, registry });
+    const { deps } = lifecycleDeps(receipt, false, { livePolicy, registry });
     const result = withMcpLifecycleLockSync(
       SANDBOX,
       () => recoverHermesPortableSandboxLifecycle(SANDBOX, lifecycleContext(), deps),

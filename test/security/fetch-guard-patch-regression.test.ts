@@ -30,15 +30,7 @@ const REVIEWED_NPM_AUDIT_HELPER = path.join(
   "lib",
   "reviewed-npm-audit.mts",
 );
-const REVIEWED_OPENCLAW_PATCH_CLASSIFIER_VERSIONS = [
-  "2026.4.24",
-  "2026.5.18",
-  "2026.5.22",
-  "2026.5.27",
-  "2026.7.1",
-] as const;
-const EXPECTED_OPENCLAW_INTEGRITY =
-  "sha512-ge/Xss99CHAjPL/ikmH/UFoiOrjcxDB4sW3y9mhyCD+dYW3wzV7TKbAVdkrXFgAG2d2BjpJofP97zUZ+umxo8g==";
+
 const REVIEWED_OPENCLAW_2026_7_1_WEB_FETCH_SHAPE = [
   "async function fetchWithWebToolsNetworkGuard(params) {",
   "  const { timeoutSeconds, useEnvProxy, ...rest } = params;",
@@ -62,32 +54,8 @@ function readRequiredMatch(file: string, pattern: RegExp, description: string): 
   return match[1];
 }
 
-function compareDotVersions(left: string, right: string): number {
-  const lhs = left.split(".").map((part) => Number.parseInt(part, 10) || 0);
-  const rhs = right.split(".").map((part) => Number.parseInt(part, 10) || 0);
-  const length = Math.max(lhs.length, rhs.length);
-  for (let index = 0; index < length; index += 1) {
-    const a = lhs[index] ?? 0;
-    const b = rhs[index] ?? 0;
-    if (a !== b) return a - b;
-  }
-  return 0;
-}
-
-function expectVersionAtLeast(actual: string, minimum: string, message: string) {
-  expect(compareDotVersions(actual, minimum), message).toBeGreaterThanOrEqual(0);
-}
-
 function readBlueprintMinOpenClawVersion(): string {
   return readRequiredMatch(BLUEPRINT, /min_openclaw_version:\s*"([^"]+)"/, "OpenClaw minimum");
-}
-
-function readDockerfileBaseOpenClawVersion(): string {
-  return readRequiredMatch(
-    DOCKERFILE_BASE,
-    /^ARG OPENCLAW_VERSION=([^\s]+)/m,
-    "OpenClaw base image version",
-  );
 }
 
 function readDockerfileOpenClawVersion(): string {
@@ -118,14 +86,6 @@ function readDockerfileMcporterIntegrity(): string {
   const base = readRequiredMatch(DOCKERFILE_BASE, pattern, "mcporter base image integrity");
   expect(base, "mcporter base image integrity").toBe(runtime);
   return runtime;
-}
-
-function readDockerfileBaseOpenClawIntegrity(): string {
-  return readRequiredMatch(
-    DOCKERFILE_BASE,
-    /^ARG OPENCLAW_2026_7_1_INTEGRITY=([^\s]+)/m,
-    "OpenClaw base image integrity",
-  );
 }
 
 function readDockerfileOpenClawIntegrity(): string {

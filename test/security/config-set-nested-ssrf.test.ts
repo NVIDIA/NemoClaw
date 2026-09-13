@@ -45,7 +45,7 @@ function installMockPrivilegedExec(
         stderr: Buffer.alloc(0),
       }),
       resolvePrivilegedSandboxTarget: () => ({ resourceHandle: "container-id" }),
-      withPrivilegedSandboxExecutionLease: <T>(_sandboxName: string, cmd: readonly string[]) => [
+      withPrivilegedSandboxExecutionLease: <_T>(_sandboxName: string, cmd: readonly string[]) => [
         ...cmd,
       ],
       resolveDirectSandboxContainer: () => "container-id",
