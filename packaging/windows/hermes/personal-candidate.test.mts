@@ -11,6 +11,8 @@ import { fileURLToPath } from "node:url";
 import {
   rendererContextBuild,
   rendererWerRequest,
+  validateRendererPostmortemOwner,
+  finishRendererCaptureOwner,
   personalRequest,
   directBrowserRequest,
   primaryDebugRequest,
@@ -451,6 +453,107 @@ test("renderer WER diagnostic adds only its owned read path and browser selectio
     assert.throws(() =>
       rendererWerRequest(primary, browserRuntime, browserOriginalNonce, { ...owner, ...changed }),
     );
+});
+
+test("postmortem admission preserves the exact original Personal request", () => {
+  const primary = browserPrimary();
+  const before = structuredClone(primary);
+  const owner = {
+    schemaVersion: 1,
+    classification: "renderer-postmortem-owner",
+    status: "prepared",
+    ready: true,
+    nonce: browserOriginalNonce,
+    root: "C:\\NemoClawRendererPostmortem-001122334455",
+    appContainerName: primary.containerId,
+    derivedAppContainerSid: "S-1-15-2-1-2-3-4-5-6-7",
+    chromeIdentity: {
+      path: path.win32.join(browserRuntime, "browsers/chromium-1234/chrome-win64/chrome.exe"),
+      bytes: 4024832,
+      sha256: "409805a16d6416087e6b2f778df1cf8f7bbb267d6b99f6b5bb0a618eace234f2",
+    },
+  };
+  assert.equal(
+    validateRendererPostmortemOwner(primary, browserRuntime, browserOriginalNonce, owner),
+    primary,
+  );
+  assert.deepEqual(primary, before);
+  for (const changed of [
+    { ready: false },
+    { nonce: browserNewNonce },
+    { root: "C:\\Users" },
+    { appContainerName: "another-container" },
+    { derivedAppContainerSid: "S-1-5-18" },
+    { chromeIdentity: { ...owner.chromeIdentity, sha256: "a".repeat(64) } },
+  ])
+    assert.throws(() =>
+      validateRendererPostmortemOwner(primary, browserRuntime, browserOriginalNonce, {
+        ...owner,
+        ...changed,
+      }),
+    );
+});
+
+test("external capture cleanup preserves report failure and still closes its owner", async () => {
+  const errors: unknown[] = [];
+  const calls: { mode: string; args: string[] }[] = [];
+  const cleanup = { hostDiagnosticChildrenClosed: true };
+  await finishRendererCaptureOwner({
+    owner: "owner.json",
+    ownerSha256: "a".repeat(64),
+    output: "evidence",
+    postmortem: true,
+    attempted: false,
+    allClosed: true,
+    cleanup,
+    errors,
+    run: async (mode, args, document) => {
+      calls.push({ mode, args });
+      if (mode === "readreports") throw new Error("original report-read failure");
+      return {
+        path: document,
+        bytes: 1,
+        sha256: "b".repeat(64),
+        value: {
+          cleanupComplete: true,
+          registryRestored: true,
+          hostsClosed: true,
+          rootRemoved: true,
+        },
+      };
+    },
+  });
+  assert.deepEqual(
+    calls.map((row) => row.mode),
+    ["readreports", "cleanup"],
+  );
+  assert(calls[1]!.args.includes("--executor-not-started"));
+  assert(!calls[1]!.args.includes("--executor-closed"));
+  assert.equal(errors.length, 1);
+  assert.match(JSON.stringify(errors), /original report-read failure/u);
+  assert.equal(cleanup.hostDiagnosticChildrenClosed, true);
+});
+
+test("external capture never starts another helper while prior ownership is unknown", async () => {
+  const errors: unknown[] = [];
+  const cleanup = { hostDiagnosticChildrenClosed: false };
+  await finishRendererCaptureOwner({
+    owner: "owner.json",
+    ownerSha256: "a".repeat(64),
+    output: "evidence",
+    postmortem: true,
+    attempted: true,
+    allClosed: false,
+    cleanup,
+    errors,
+    run: async () => {
+      throw new Error("must not start another helper");
+    },
+  });
+  assert.equal(cleanup.hostDiagnosticChildrenClosed, false);
+  assert.equal(errors.length, 1);
+  assert.match(JSON.stringify(errors), /retained/u);
+  assert.doesNotMatch(JSON.stringify(errors), /must not start/u);
 });
 
 test("direct browser comparison preserves policy and environment except fresh owned state and command", () => {

@@ -582,6 +582,42 @@ export function rendererWerRequest(
   return request;
 }
 
+export function validateRendererPostmortemOwner(
+  primary: ReturnType<typeof personalRequest>,
+  runtime: string,
+  nonce: string,
+  owner: any,
+) {
+  assert.match(nonce, /^[a-f0-9]{24}$/u);
+  assert.equal(owner.schemaVersion, 1);
+  assert.equal(owner.classification, "renderer-postmortem-owner");
+  assert.equal(owner.status, "prepared");
+  assert.equal(owner.ready, true);
+  assert.equal(owner.nonce, nonce);
+  assert.equal(
+    owner.root,
+    path.win32.join(
+      path.win32.parse(runtime).root,
+      `NemoClawRendererPostmortem-${nonce.slice(0, 12)}`,
+    ),
+  );
+  assert.equal(owner.appContainerName, primary.containerId);
+  assert.equal(primary.containerId, `nm-${nonce.slice(0, 12)}-start`);
+  assert.match(owner.derivedAppContainerSid, /^S-1-15-2(?:-[0-9]+){7}$/u);
+  assert.equal(
+    owner.chromeIdentity.path,
+    path.win32.join(runtime, "browsers/chromium-1234/chrome-win64/chrome.exe"),
+  );
+  assert.equal(owner.chromeIdentity.bytes, 4024832);
+  assert.equal(
+    owner.chromeIdentity.sha256,
+    "409805a16d6416087e6b2f778df1cf8f7bbb267d6b99f6b5bb0a618eace234f2",
+  );
+  // Postmortem capture is external: the primary's command, environment,
+  // permissions and startup deadline are deliberately returned unchanged.
+  return primary;
+}
+
 function argument(name: string) {
   const index = process.argv.indexOf(name);
   if (index < 0 || !process.argv[index + 1] || process.argv[index + 1]!.startsWith("--"))
@@ -1759,6 +1795,80 @@ export function publishPersonalReceipt(
   }
 }
 
+export async function finishRendererCaptureOwner(options: {
+  owner: string;
+  ownerSha256?: string;
+  output: string;
+  postmortem: boolean;
+  attempted: boolean;
+  allClosed: boolean;
+  cleanup: { hostDiagnosticChildrenClosed: boolean };
+  errors: unknown[];
+  run: (
+    mode: string,
+    args: string[],
+    document: string,
+  ) => Promise<ReturnType<typeof receiptDocument>>;
+}) {
+  const { output, attempted, allClosed, cleanup, errors } = options;
+  const rendererCaptureOwner = options.owner;
+  const rendererPostmortem = options.postmortem;
+  const runRendererCapture = options.run;
+  let rendererCaptureOwnerSha256 = options.ownerSha256;
+  // The WER host is a separate owner. Its callback returning or the MXC
+  // Job closing does not establish that its loaded DLL has been released.
+  try {
+    if (!rendererCaptureOwnerSha256 && fs.existsSync(rendererCaptureOwner))
+      rendererCaptureOwnerSha256 = fileIdentity(rendererCaptureOwner).sha256;
+  } catch (error) {
+    cleanup.hostDiagnosticChildrenClosed = false;
+    errors.push({ rendererWerOwnerReceipt: errorDetail(error) });
+  }
+  if (rendererCaptureOwnerSha256 && cleanup.hostDiagnosticChildrenClosed) {
+    try {
+      await runRendererCapture(
+        "readreports",
+        ["--owner", rendererCaptureOwner, "--owner-sha256", rendererCaptureOwnerSha256],
+        path.join(
+          output,
+          rendererPostmortem ? "renderer-postmortem-reports.json" : "renderer-wer-reports.json",
+        ),
+      );
+    } catch (error) {
+      errors.push({ rendererWerReports: errorDetail(error) });
+    }
+    try {
+      if (!cleanup.hostDiagnosticChildrenClosed)
+        throw new Error("A renderer WER helper remains live; cleanup was not attempted");
+      const result = await runRendererCapture(
+        "cleanup",
+        [
+          "--owner",
+          rendererCaptureOwner,
+          "--owner-sha256",
+          rendererCaptureOwnerSha256,
+          ...(!attempted ? ["--executor-not-started"] : allClosed ? ["--executor-closed"] : []),
+        ],
+        path.join(
+          output,
+          rendererPostmortem ? "renderer-postmortem-cleanup.json" : "renderer-wer-cleanup.json",
+        ),
+      );
+      assert.equal(result.value.cleanupComplete, true);
+      assert.equal(result.value.registryRestored, true);
+      assert.equal(result.value.hostsClosed, true);
+      assert.equal(result.value.rootRemoved, true);
+    } catch (error) {
+      errors.push({ rendererWerCleanup: errorDetail(error) });
+    }
+  } else {
+    cleanup.hostDiagnosticChildrenClosed = false;
+    errors.push({
+      rendererWerCleanup: "Ownership receipt absent or helper still live; diagnostic root retained",
+    });
+  }
+}
+
 async function main() {
   if (
     process.platform !== "win32" ||
@@ -1776,9 +1886,19 @@ async function main() {
     ? argument("--renderer-context-build")
     : null;
   const coldJobProbe = process.argv.includes("--cold-job-probe");
+  const rendererPostmortem = process.argv.includes("--renderer-postmortem");
   const rendererWerBuildFile = process.argv.includes("--renderer-wer-build")
     ? argument("--renderer-wer-build")
     : null;
+  if (
+    rendererPostmortem &&
+    (rendererWerBuildFile ||
+      coldJobProbe ||
+      rendererContextBuildFile ||
+      process.argv.includes("--record-startup"))
+  )
+    throw new Error("Postmortem capture requires all other diagnostic modes off.");
+  const rendererCaptureRequested = Boolean(rendererWerBuildFile || rendererPostmortem);
   if (
     rendererWerBuildFile &&
     (coldJobProbe || rendererContextBuildFile || process.argv.includes("--record-startup"))
@@ -1879,37 +1999,54 @@ async function main() {
   let compatibility: ReturnType<typeof validatePersonalCompatibility> | undefined;
   let browserDiagnosticChildrenClosed = true;
   let primaryWpr: Awaited<ReturnType<typeof startPersonalWpr>> | null = null;
-  const rendererWerOwner = path.join(output, "renderer-wer-owner.json");
-  let rendererWerOwnerSha256: string | undefined;
-  let rendererWerPrepareAttempted = false;
-  const rendererWer: Record<string, unknown> = {};
-  if (rendererWerBuildFile) {
+  const rendererCaptureOwner = path.join(
+    output,
+    rendererPostmortem ? "renderer-postmortem-owner.json" : "renderer-wer-owner.json",
+  );
+  let rendererCaptureOwnerSha256: string | undefined;
+  let rendererCapturePrepareAttempted = false;
+  const rendererCapture: Record<string, unknown> = {};
+  if (rendererCaptureRequested) {
     Object.assign(receipt, {
       diagnosticOnly: true,
-      rendererWerDiagnostic: true,
-      rendererWerProbePassed: false,
+      ...(rendererPostmortem
+        ? { rendererPostmortemDiagnostic: true, rendererPostmortemProbePassed: false }
+        : { rendererWerDiagnostic: true, rendererWerProbePassed: false }),
       ordinaryPrimaryExecuted: false,
       firstCanonicalWorkload: true,
-      changedDimensions: [
-        "Separate verified Chrome subtree with an observe-only out-of-process WER callback",
-        "Chrome path differs; canonical Chrome executable/resources and immutable base remain unchanged",
-        "Diagnostic WER callback does not claim either C0000008 or the stock C0000409 exception",
-      ],
-      rendererWer,
+      changedDimensions: rendererPostmortem
+        ? [
+            "Temporary 64-bit AeDebug postmortem registration, filtered to this canonical renderer and AppContainer",
+            "No debugger at startup; original runtime and Personal request unchanged",
+            "CDB reads the original JIT exception noninvasively; no instruction replay or exception-resolution signal",
+          ]
+        : [
+            "Separate verified Chrome subtree with an observe-only out-of-process WER callback",
+            "Chrome path differs; canonical Chrome executable/resources and immutable base remain unchanged",
+            "Diagnostic WER callback does not claim either C0000008 or the stock C0000409 exception",
+          ],
+      ...(rendererPostmortem
+        ? { rendererPostmortem: rendererCapture }
+        : { rendererWer: rendererCapture }),
     });
   }
-  const rendererWerHelper = fileURLToPath(new URL("./prepare-renderer-wer.py", import.meta.url));
-  const runRendererWer = async (mode: string, args: string[], document: string) => {
+  const rendererCaptureHelper = fileURLToPath(
+    new URL(
+      rendererPostmortem ? "./prepare-renderer-postmortem.py" : "./prepare-renderer-wer.py",
+      import.meta.url,
+    ),
+  );
+  const runRendererCapture = async (mode: string, args: string[], document: string) => {
     const priorOwnersClosed = cleanup.hostDiagnosticChildrenClosed;
     if (mode === "cleanup") cleanup.hostDiagnosticChildrenClosed = false;
     const execution = await personalCommand(
       hostControllerPython,
-      ["-I", "-B", rendererWerHelper, mode, ...args, "--output", document],
+      ["-I", "-B", rendererCaptureHelper, mode, ...args, "--output", document],
       { ...environment, GITHUB_SHA: process.env.GITHUB_SHA! },
       root,
       30_000,
     );
-    rendererWer[mode] = { execution };
+    rendererCapture[mode] = { execution };
     if (!execution.childClosed) cleanup.hostDiagnosticChildrenClosed = false;
     let saved: ReturnType<typeof receiptDocument> | null = null;
     try {
@@ -1919,13 +2056,17 @@ async function main() {
         cleanup.hostDiagnosticChildrenClosed =
           priorOwnersClosed && execution.childClosed && saved?.value.hostsClosed === true;
     }
-    rendererWer[mode] = { execution, receipt: saved };
-    assert.equal(execution.childClosed, true, "Renderer WER helper did not close");
-    assert.equal(execution.timedOut, false, "Renderer WER helper exceeded its bound");
-    assert.equal(execution.outputExceeded, false, "Renderer WER helper output exceeded its bound");
+    rendererCapture[mode] = { execution, receipt: saved };
+    assert.equal(execution.childClosed, true, "Renderer capture helper did not close");
+    assert.equal(execution.timedOut, false, "Renderer capture helper exceeded its bound");
+    assert.equal(
+      execution.outputExceeded,
+      false,
+      "Renderer capture helper output exceeded its bound",
+    );
     assert.equal(execution.error, null);
-    assert.equal(execution.exitCode, 0, "Renderer WER helper failed; see its retained receipt");
-    assert(saved, "Renderer WER helper did not retain its ownership receipt");
+    assert.equal(execution.exitCode, 0, "Renderer capture helper failed; see its retained receipt");
+    assert(saved, "Renderer capture helper did not retain its ownership receipt");
     return saved;
   };
   try {
@@ -2107,10 +2248,10 @@ async function main() {
     );
     if (rendererWerBuildFile) {
       assert(replayDocument, "Renderer WER capture requires the immutable canonical replay");
-      rendererWer.helper = fileIdentity(rendererWerHelper);
-      rendererWer.build = receiptDocument(rendererWerBuildFile);
-      rendererWerPrepareAttempted = true;
-      const prepared = await runRendererWer(
+      rendererCapture.helper = fileIdentity(rendererCaptureHelper);
+      rendererCapture.build = receiptDocument(rendererWerBuildFile);
+      rendererCapturePrepareAttempted = true;
+      const prepared = await runRendererCapture(
         "prepare",
         [
           "--runtime-root",
@@ -2122,10 +2263,33 @@ async function main() {
           "--nonce",
           nonce,
         ],
-        rendererWerOwner,
+        rendererCaptureOwner,
       );
-      rendererWerOwnerSha256 = prepared.sha256;
+      rendererCaptureOwnerSha256 = prepared.sha256;
       request = rendererWerRequest(request, runtime, nonce, prepared.value);
+    }
+    if (rendererPostmortem) {
+      assert(replayDocument, "Postmortem capture requires the immutable canonical replay");
+      rendererCapture.helper = fileIdentity(rendererCaptureHelper);
+      rendererCapturePrepareAttempted = true;
+      const prepared = await runRendererCapture(
+        "prepare",
+        [
+          "--runtime-root",
+          runtime,
+          "--inventory",
+          path.join(path.dirname(derivedRuntimeReceipt), "payload-inventory.json"),
+          "--nonce",
+          nonce,
+          "--python",
+          hostControllerPython,
+          "--gate",
+          fileURLToPath(new URL("./renderer-aedebug-gate.py", import.meta.url)),
+        ],
+        rendererCaptureOwner,
+      );
+      rendererCaptureOwnerSha256 = prepared.sha256;
+      request = validateRendererPostmortemOwner(request, runtime, nonce, prepared.value);
     }
     const policy = path.join(output, "personal-request.json");
     const bytes = JSON.stringify(request, null, 2) + "\n";
@@ -2208,7 +2372,7 @@ async function main() {
       (receipt.workload as any)?.components?.length === 4;
     if (
       !coldJobProbe &&
-      !rendererWerBuildFile &&
+      !rendererCaptureRequested &&
       execution.childClosed &&
       browserDiagnosticChildrenClosed &&
       !primaryOperationsPassed
@@ -2277,18 +2441,20 @@ async function main() {
       browserDiagnosticChildrenClosed &&= recorderSafe;
       cleanup.hostDiagnosticChildrenClosed &&= recorderSafe;
     }
-    receipt.supplementalDiagnosticDisposition = rendererWerBuildFile
-      ? "first-workload out-of-process WER diagnostic only; supplemental replays skipped"
-      : coldJobProbe
-        ? "first-workload owned-job experiment only; supplemental replays skipped"
-        : failure
-          ? rendererContextBuildFile
-            ? "primary failed; optional validated renderer debugger, then ordinary warm replay and owned-job replay"
-            : "primary failed; ordinary warm replay then owned-job replay without debugger"
-          : "primary passed; supplemental comparisons skipped";
+    receipt.supplementalDiagnosticDisposition = rendererPostmortem
+      ? "first-workload postmortem diagnostic only; supplemental replays skipped"
+      : rendererWerBuildFile
+        ? "first-workload out-of-process WER diagnostic only; supplemental replays skipped"
+        : coldJobProbe
+          ? "first-workload owned-job experiment only; supplemental replays skipped"
+          : failure
+            ? rendererContextBuildFile
+              ? "primary failed; optional validated renderer debugger, then ordinary warm replay and owned-job replay"
+              : "primary failed; ordinary warm replay then owned-job replay without debugger"
+            : "primary passed; supplemental comparisons skipped";
     if (
       !coldJobProbe &&
-      !rendererWerBuildFile &&
+      !rendererCaptureRequested &&
       failure &&
       attempted &&
       cleanup.executorClosed &&
@@ -2471,60 +2637,23 @@ async function main() {
       }
     }
     let allClosed =
-      (cleanup.executorClosed || (rendererWerPrepareAttempted && !attempted)) &&
+      (cleanup.executorClosed || (rendererCapturePrepareAttempted && !attempted)) &&
       cleanup.hostDiagnosticChildrenClosed &&
       browserDiagnosticChildrenClosed;
-    if (rendererWerPrepareAttempted) {
-      // The WER host is a separate owner. Its callback returning or the MXC
-      // Job closing does not establish that its loaded DLL has been released.
-      try {
-        if (!rendererWerOwnerSha256 && fs.existsSync(rendererWerOwner))
-          rendererWerOwnerSha256 = fileIdentity(rendererWerOwner).sha256;
-      } catch (error) {
-        cleanup.hostDiagnosticChildrenClosed = false;
-        errors.push({ rendererWerOwnerReceipt: errorDetail(error) });
-      }
-      if (rendererWerOwnerSha256 && cleanup.hostDiagnosticChildrenClosed) {
-        try {
-          await runRendererWer(
-            "readreports",
-            ["--owner", rendererWerOwner, "--owner-sha256", rendererWerOwnerSha256],
-            path.join(output, "renderer-wer-reports.json"),
-          );
-        } catch (error) {
-          errors.push({ rendererWerReports: errorDetail(error) });
-        }
-        try {
-          if (!cleanup.hostDiagnosticChildrenClosed)
-            throw new Error("A renderer WER helper remains live; cleanup was not attempted");
-          const result = await runRendererWer(
-            "cleanup",
-            [
-              "--owner",
-              rendererWerOwner,
-              "--owner-sha256",
-              rendererWerOwnerSha256,
-              ...(!attempted ? ["--executor-not-started"] : allClosed ? ["--executor-closed"] : []),
-            ],
-            path.join(output, "renderer-wer-cleanup.json"),
-          );
-          assert.equal(result.value.cleanupComplete, true);
-          assert.equal(result.value.registryRestored, true);
-          assert.equal(result.value.hostsClosed, true);
-          assert.equal(result.value.rootRemoved, true);
-        } catch (error) {
-          errors.push({ rendererWerCleanup: errorDetail(error) });
-        }
-      } else {
-        cleanup.hostDiagnosticChildrenClosed = false;
-        errors.push({
-          rendererWerCleanup:
-            "Ownership receipt absent or helper still live; diagnostic root retained",
-        });
-      }
-    }
+    if (rendererCapturePrepareAttempted)
+      await finishRendererCaptureOwner({
+        owner: rendererCaptureOwner,
+        ownerSha256: rendererCaptureOwnerSha256,
+        output,
+        postmortem: rendererPostmortem,
+        attempted,
+        allClosed,
+        cleanup,
+        errors,
+        run: runRendererCapture,
+      });
     allClosed &&= cleanup.hostDiagnosticChildrenClosed;
-    const resourceOwnerAttempted = attempted || rendererWerPrepareAttempted;
+    const resourceOwnerAttempted = attempted || rendererCapturePrepareAttempted;
     if (replayDocument && replayInventory && (!resourceOwnerAttempted || allClosed)) {
       try {
         (receipt.runtimeReplay as any).after = verifyPersonalReplayInventory(
@@ -2552,15 +2681,16 @@ async function main() {
     cleanup.ownedRootsRemoved = roots.removed;
     receipt.executorAttempted = attempted;
     receipt.rootsRetainedForUnclosedExecutor = resourceOwnerAttempted && !allClosed;
-    if (rendererWerPrepareAttempted)
-      rendererWer.runtimeRetainedForUnclosedOwner = resourceOwnerAttempted && !allClosed;
+    if (rendererCapturePrepareAttempted)
+      rendererCapture.runtimeRetainedForUnclosedOwner = resourceOwnerAttempted && !allClosed;
     receipt.error = failure ? errorDetail(failure) : null;
     receipt.cleanupErrors = errors;
     const completed =
       failure === null && errors.length === 0 && Object.values(cleanup).every(Boolean);
-    receipt.feasibilityPassed = !coldJobProbe && !rendererWerBuildFile && completed;
+    receipt.feasibilityPassed = !coldJobProbe && !rendererCaptureRequested && completed;
     if (coldJobProbe) receipt.coldJobProbePassed = completed;
     if (rendererWerBuildFile) receipt.rendererWerProbePassed = completed;
+    if (rendererPostmortem) receipt.rendererPostmortemProbePassed = completed;
     const published = publishPersonalReceipt(
       path.join(output, "personal-feasibility.json"),
       receipt,
