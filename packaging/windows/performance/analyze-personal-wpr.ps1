@@ -129,12 +129,12 @@ function Invoke-PersonalTraceAnalysis([string]$Directory){
   $tool=$xperf[0];$logs=Join-Path $out 'logs';$reports=Join-Path $out 'reports';[void][IO.Directory]::CreateDirectory($logs);[void][IO.Directory]::CreateDirectory($reports)
   $record.stage='analysis';$help=Invoke-TraceAnalysisCommand $tool @('-help','processing') (Join-Path $logs 'processing-help.log');$record.actions+=@($help)
   if($help.started -and (-not $help.closed -or -not $help.captureClosed)){throw 'Analysis help process or pipe capture has unconfirmed closure.'}
-  $dumperHelp=Invoke-TraceAnalysisCommand $tool @('-help','dumper') (Join-Path $logs 'dumper-help.log');$record.actions+=@($dumperHelp)
+  $dumperHelp=Invoke-TraceAnalysisCommand $tool @('-help','dumper','tracestats','profile') (Join-Path $logs 'action-help.log');$record.actions+=@($dumperHelp)
   if($dumperHelp.started -and (-not $dumperHelp.closed -or -not $dumperHelp.captureClosed)){throw 'Dumper help process or pipe capture has unconfirmed closure.'}
   $actions=@(
-   @{name='trace-stats';args=@('tracestats','-timespan','actual','-detail','-timezone','utc')},
+   @{name='trace-stats';args=@('tracestats','-timespan','actual','-detail')},
    @{name='processes';args=@('process')},
-   @{name='cpu-samples';args=@('profile','-util','1','-detail')},
+   @{name='cpu-samples';args=@('profile','-detail')},
    @{name='context-switches';args=@('cswitch','-process','-thread')},
    @{name='cpu-disk';args=@('cpudisk')},
    @{name='file-names';args=@('filename')},
