@@ -516,6 +516,121 @@ export type Config = {
   key: string;
   script: string;
 };
+export function validateCreationSentinelBuild(receipt: any) {
+  assert.equal(receipt.schemaVersion, 1);
+  assert.equal(receipt.classification, "unshimmed-creation-sentinels-build");
+  assert.equal(receipt.status, "built");
+  assert.equal(receipt.executed, false);
+  assert.match(receipt.source.sha256, /^[a-f0-9]{64}$/u);
+  assert(Number.isSafeInteger(receipt.source.bytes) && receipt.source.bytes > 0);
+  assert.equal(receipt.files.length, 2);
+  for (const [target, machine] of [
+    ["arm64", 0xaa64],
+    ["amd64", 0x8664],
+  ] as const) {
+    const files = receipt.files.filter((row: any) => row.target === target);
+    assert.equal(files.length, 1);
+    const file = files[0];
+    assert.equal(file.machine, machine);
+    assert.equal(file.relativePath, target + "/creation-sentinel.exe");
+    assert.equal(file.delayImportsAbsent, true);
+    assert.equal(file.executed, false);
+    assert.match(file.sha256, /^[a-f0-9]{64}$/u);
+    assert(Number.isSafeInteger(file.bytes) && file.bytes > 0);
+    assert.equal(file.imports.length, 1);
+    assert.equal(file.imports[0].dll.toLowerCase(), "kernel32.dll");
+    assert.deepEqual(file.imports[0].functions, ["ExitProcess"]);
+  }
+  return receipt;
+}
+
+export function validateCreationMatrix(rows: any[], nonce: string, context: "host" | "contained") {
+  const cases = rows.filter((row) => row.kind === "creation-matrix-case");
+  const summaries = rows.filter((row) => row.kind === "creation-matrix-summary");
+  assert.equal(cases.length, 16);
+  assert.equal(summaries.length, 1);
+  const keys = new Set<string>();
+  for (const row of cases) {
+    assert.equal(row.nonce, nonce);
+    assert.equal(row.context, context);
+    assert(["arm64", "amd64"].includes(row.architecture));
+    assert(["same-primary", "privileges-admin-restricted"].includes(row.tokenVariant));
+    assert(["absent", "ui0", "ui-ff"].includes(row.innerJob));
+    assert.equal(typeof row.win32kRequested, "boolean");
+    if (row.tokenVariant !== "same-primary") assert.equal(row.innerJob, "absent");
+    const key = [row.architecture, row.tokenVariant, row.innerJob, row.win32kRequested].join("/");
+    assert(!keys.has(key));
+    keys.add(key);
+    for (const field of [
+      "apiAttempted",
+      "apiCreated",
+      "processHandleReturned",
+      "threadHandleReturned",
+    ])
+      assert.equal(typeof row[field], "boolean");
+    for (const field of ["setupError", "apiError", "waitResult", "exitCode", "terminationError"])
+      assert(Number.isSafeInteger(row[field]) && row[field] >= 0 && row[field] <= 0xffffffff);
+    assert.equal(row.innerUi, row.innerJob === "ui-ff" ? 0xff : 0);
+    assert.equal(row.innerExtendedFlags, row.innerJob === "absent" ? 0 : 0x2008);
+    if (row.apiAttempted) {
+      assert.equal(row.stage, "CreateProcessAsUserW");
+      assert.equal(row.apiError === 0, row.apiCreated);
+    }
+    assert.equal(row.noChildRequested, true);
+    assert.equal(row.creationFlags, 0x8040c);
+    assert.equal(row.resumed, false);
+    assert.equal(row.diagnosticOnly, true);
+    assert.equal(row.falseOutputIgnored, true);
+    assert.equal(row.ownedHandlesClosed, true);
+    assert.equal(row.cleanupError, 0);
+    if (row.apiCreated) {
+      assert(row.apiAttempted && row.processHandleReturned && row.threadHandleReturned);
+      assert(Number.isSafeInteger(row.childPid) && row.childPid > 0);
+      assert.equal(row.waitResult, 0);
+      assert.equal(row.exitCodeKnown, true);
+      assert.notEqual(row.exitCode, 0, "A sentinel entrypoint executed");
+      assert.equal(row.earlyExit, row.exitCode !== 0x4e434d58);
+    } else {
+      assert.equal(row.processHandleReturned, false);
+      assert.equal(row.threadHandleReturned, false);
+    }
+  }
+  const summary = summaries[0];
+  assert.equal(summary.nonce, nonce);
+  assert.equal(summary.context, context);
+  assert.equal(summary.rows, 16);
+  assert.equal(summary.childrenResumed, 0);
+  assert.equal(summary.tokenHandlesClosed, true);
+  assert.equal(summary.parentPolicyUnchanged, true);
+  assert.equal(summary.callerUnshimmed, true);
+  assert.equal(summary.chromeQualified, false);
+  assert.equal(summary.diagnosticOnly, true);
+  if (context === "contained") {
+    assert.equal(summary.callerUi, 0x3bf);
+    assert.equal(summary.callerExtendedFlags, 0x2000);
+    assert.equal(summary.callerInJob, true);
+    assert.match(summary.callerAppSid, /^S-1-15-2-(?:[0-9]+-)*[0-9]+$/u);
+  } else assert.equal(summary.callerAppSid, "");
+  assert(
+    cases.every(
+      (row) => row.callerAppSid === summary.callerAppSid && row.callerPid === summary.callerPid,
+    ),
+  );
+  const apiCoverageComplete = cases.every(
+    (row) => row.apiAttempted === true && row.setupError === 0,
+  );
+  return {
+    diagnosticOnly: true,
+    chromeQualified: false,
+    observations: cases.length,
+    apiCoverageComplete,
+    created: cases.filter((row) => row.apiCreated).length,
+    refused: cases.filter((row) => row.apiAttempted && !row.apiCreated).length,
+    ownedCleanupComplete: true,
+    summary,
+  };
+}
+
 export function validatePrivateDesktop(rows: any[], nonce: string) {
   const desktops = rows.filter((row) => row.kind === "hermes-private-desktop");
   assert.equal(desktops.length, 4);
@@ -749,6 +864,16 @@ async function worker(configFile: string) {
       results.privateDesktop = { execution: desktop, rows: parseJsonLines(desktop.stdout) };
       save();
       checkSuccess(desktop);
+      results.creationMatrix = validateCreationMatrix(
+        results.privateDesktop.rows,
+        c.nonce,
+        "contained",
+      );
+      save();
+      assert(
+        results.creationMatrix.apiCoverageComplete,
+        "Contained creation API matrix is incomplete",
+      );
       validatePrivateDesktop(results.privateDesktop.rows, c.nonce);
       results.passed = true;
     } else {
@@ -976,6 +1101,24 @@ async function main() {
     assert.equal(sha(path.join(compat, file.file)), file.sha256);
     assert.equal(fs.statSync(path.join(compat, file.file)).size, file.bytes);
   }
+  const sentinelRoot = path.join(path.dirname(probe), "creation-sentinels");
+  const sentinelBuild = validateCreationSentinelBuild(
+    JSON.parse(fs.readFileSync(path.join(sentinelRoot, "build-receipt.json"), "utf8")),
+  );
+  for (const file of sentinelBuild.files) {
+    const location = path.join(sentinelRoot, file.relativePath);
+    assert.equal(fs.statSync(location).size, file.bytes);
+    assert.equal(sha(location), file.sha256);
+  }
+  const objectBuild = JSON.parse(fs.readFileSync(probe + ".json", "utf8"));
+  assert.equal(objectBuild.classification, "unshimmed-native-object-probe-build");
+  assert.equal(objectBuild.schemaVersion, 1);
+  assert.equal(objectBuild.machine, "arm64");
+  assert.equal(objectBuild.executed, false);
+  assert.match(objectBuild.sourceSha256, /^[a-f0-9]{64}$/u);
+  assert.match(objectBuild.matrixHeaderSha256, /^[a-f0-9]{64}$/u);
+  assert.equal(fs.statSync(probe).size, objectBuild.bytes);
+  assert.equal(sha(probe), objectBuild.sha256);
   assert.equal(build.files.length, 3);
   assert.equal(new Set(build.files.map((file: any) => file.file)).size, 3);
   const nonce = randomBytes(12).toString("hex"),
@@ -1015,7 +1158,10 @@ async function main() {
         Object.keys(binaryPins).map((name) => [name, sha(path.join(git, name))]),
       ),
       compatibility: build,
+      creationSentinels: sentinelBuild,
+      objectProbe: objectBuild,
     },
+    hostCreationMatrix: { execution: null },
     stages: [],
     cleanup: {},
   };
@@ -1093,6 +1239,27 @@ async function main() {
   };
   try {
     save();
+    report.phase = "host-creation-matrix";
+    const matrixHost = new Owned(probe, ["creation-host", nonce], env, work, 15000);
+    hostExecutions.push(matrixHost);
+    matrixHost.child.stdin!.end();
+    const matrixExecution = await matrixHost.finish();
+    report.hostCreationMatrix = { execution: matrixExecution };
+    save();
+    report.hostCreationMatrix.rows = parseJsonLines(matrixExecution.stdout);
+    save();
+    checkSuccess(matrixExecution);
+    report.hostCreationMatrix.observation = validateCreationMatrix(
+      report.hostCreationMatrix.rows,
+      nonce,
+      "host",
+    );
+    save();
+    assert(
+      report.hostCreationMatrix.observation.apiCoverageComplete,
+      "Host creation API matrix is incomplete",
+    );
+    report.phase = "baseline";
     const original = await completed(start("base", "baseline", "0000000000000000"));
     const key = original.key;
     assert.match(key, /^[a-f0-9]{16}$/u);

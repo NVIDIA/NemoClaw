@@ -307,6 +307,8 @@ void private_desktop_observations(const Identity& id,const std::wstring& nonce){
   line("{\"kind\":\"hermes-private-desktop-summary\",\"nonce\":"+quote(utf8(nonce))+",\"observationsCompleted\":true,\"hostDefaultCanonicalPassed\":"+(passed[0]?"true":"false")+",\"hostDefaultExplicitPassed\":"+(passed[1]?"true":"false")+",\"hostLowCanonicalPassed\":"+(passed[2]?"true":"false")+",\"hostLowExplicitPassed\":"+(passed[3]?"true":"false")+",\"sameAccessDuplicatePassed\":"+(duplicate.first?"true":"false")+",\"canonicalChromeSupportQualified\":false,\"allCleanupPassed\":"+(clean?"true":"false")+",\"passed\":"+(complete?"true":"false")+"}");
   require(complete,"host-desktop-controls-failed");
 }
+#include "creation-matrix.h"
+
 int job_proof_native_child(int argc,wchar_t** argv){
   const bool desktop=argc==9&&std::wstring(argv[8])==L"desktop";
   require((argc==8||desktop)&&lowerHex(argv[2],24),"job-proof-child-arguments");
@@ -314,7 +316,7 @@ int job_proof_native_child(int argc,wchar_t** argv){
   require(worker&&executor&&parent&&worker!=executor&&worker!=parent&&executor!=parent&&parent!=GetCurrentProcessId(),"job-proof-child-identities");
   Api api;Identity id=identity(api);require(id.sid==argv[6]&&id.session==std::stoul(argv[7]),"job-proof-child-container");
   jobProof(worker,executor);require_original_probe_in_job(parent);
-  if(desktop)private_desktop_observations(id,argv[2]);
+  if(desktop){creation_matrix::run(argv[2],true,&id);private_desktop_observations(id,argv[2]);}
   line("{\"kind\":\"job-proof-native-child\",\"nonce\":"+quote(utf8(argv[2]))+",\"parentPid\":"+std::to_string(parent)+",\"expectedWorkerPid\":"+std::to_string(worker)+",\"expectedExecutorPid\":"+std::to_string(executor)+","+identityFields(id)+",\"originalProbeInJob\":true,\"sameAppContainer\":true,\"strictProofPassed\":true}");return 0;
 }
 void job_proof_through_native_child(DWORD worker,DWORD executor,const Identity& id,const std::wstring& nonce,bool desktop=false){
@@ -624,6 +626,10 @@ class PipeProof {
 
 int wmain(int argc,wchar_t** argv){
   try{
+    if(argc==3&&std::wstring(argv[1])==L"creation-host"){
+      WCHAR ci[8]{};require(GetEnvironmentVariableW(L"GITHUB_ACTIONS",ci,8)==4&&std::wstring(ci)==L"true","creation-host-CI");
+      creation_matrix::run(argv[2],false);return 0;
+    }
     if(argc==2&&std::wstring(argv[1])==L"breakaway-child")return 0;
     if(argc>1&&std::wstring(argv[1])==L"rawpipe-writer")return raw_pipe_writer(argc,argv);
     if(argc>1&&std::wstring(argv[1])==L"job-proof-native-child")return job_proof_native_child(argc,argv);

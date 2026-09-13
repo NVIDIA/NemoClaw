@@ -17,6 +17,8 @@ $vswhere=Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/v
 $installations=@(& $vswhere -latest -products '*' -property installationPath);if($LASTEXITCODE -ne 0 -or $installations.Count -ne 1){throw 'The Visual Studio installation is ambiguous.'}
 $vsdev=Join-Path $installations[0] 'Common7/Tools/VsDevCmd.bat'
 $directory=Split-Path -Parent $binary;$batch=Join-Path $directory 'compile-object-probe.cmd'
+$matrixHeader=Join-Path (Split-Path -Parent $inputSource) 'creation-matrix.h'
+$matrixHeaderHash=(Get-FileHash -LiteralPath $matrixHeader -Algorithm SHA256).Hash.ToLowerInvariant()
 $sourceHash=(Get-FileHash -LiteralPath $inputSource -Algorithm SHA256).Hash.ToLowerInvariant()
 $identity=@'
 Set-StrictMode -Version Latest;$ErrorActionPreference='Stop'
@@ -54,5 +56,6 @@ Invoke-ProbeCompiler (Join-Path ([Environment]::SystemDirectory) 'cmd.exe') ('/d
 $bytes=[IO.File]::ReadAllBytes($binary);$offset=[BitConverter]::ToInt32($bytes,60)
 if($offset -lt 64 -or $offset+6 -gt $bytes.Length -or [BitConverter]::ToUInt32($bytes,$offset) -ne 0x4550 -or [BitConverter]::ToUInt16($bytes,$offset+4) -ne 0xAA64){throw 'The probe is not ARM64 PE.'}
 if((Get-FileHash -LiteralPath $inputSource -Algorithm SHA256).Hash.ToLowerInvariant() -cne $sourceHash){throw 'Probe source changed during compilation.'}
-$record=@{schemaVersion=1;classification='unshimmed-native-object-probe-build';sourceSha256=$sourceHash;toolchain=$arm;bytes=$bytes.Length;sha256=(Get-FileHash -LiteralPath $binary -Algorithm SHA256).Hash.ToLowerInvariant();machine='arm64';executed=$false}
+if((Get-FileHash -LiteralPath $matrixHeader -Algorithm SHA256).Hash.ToLowerInvariant() -cne $matrixHeaderHash){throw 'Creation matrix header changed during compilation.'}
+$record=@{schemaVersion=1;matrixHeaderSha256=$matrixHeaderHash;classification='unshimmed-native-object-probe-build';sourceSha256=$sourceHash;toolchain=$arm;bytes=$bytes.Length;sha256=(Get-FileHash -LiteralPath $binary -Algorithm SHA256).Hash.ToLowerInvariant();machine='arm64';executed=$false}
 [IO.File]::WriteAllText(($binary+'.json'),($record|ConvertTo-Json -Depth 6)+"`n",[Text.UTF8Encoding]::new($false))

@@ -140,8 +140,26 @@ public static class MsysImageChecksum {
  Copy-Item -LiteralPath $inspectionExe -Destination (Join-Path $tools 'wxc-exec.exe')
  Copy-Item -LiteralPath (Join-Path $inspectionBuild 'mxc-token-inspection-build.json') -Destination (Join-Path $tools 'mxc-token-inspection-build.json')
  Copy-Item -LiteralPath $inspectionPatch -Destination (Join-Path $tools 'mxc-token-inspection.patch')
+ # Build immutable creation-only sentinels from the same reviewed compiler tuple.
+ Invoke-Owned (Join-Path $PSHOME 'pwsh.exe') @('-NoProfile','-File',(Join-Path $SourceRoot 'packaging/windows/mxc-bash/build-creation-sentinels.ps1'),'-SourceRoot',$SourceRoot,'-Directory',$out) 'compile-creation-sentinels' 120
+ $sentinelRoot=Join-Path $out 'creation-sentinels'
+ $sentinelReceipt=Get-Content -LiteralPath (Join-Path $sentinelRoot 'build-receipt.json') -Raw|ConvertFrom-Json
+ if($sentinelReceipt.schemaVersion -ne 1 -or $sentinelReceipt.classification -cne 'unshimmed-creation-sentinels-build' -or $sentinelReceipt.status -cne 'built' -or $sentinelReceipt.executed -cne $false -or @($sentinelReceipt.files).Count -ne 2){throw 'Creation sentinel build is incomplete.'}
+ $sentinelSource=Join-Path $SourceRoot 'packaging/windows/mxc-bash/creation-sentinel.cpp'
+ if((Get-FileHash -LiteralPath $sentinelSource -Algorithm SHA256).Hash.ToLowerInvariant() -cne $sentinelReceipt.source.sha256){throw 'Creation sentinel source identity differs.'}
+ $sentinelTools=Join-Path $tools 'creation-sentinels';[void][IO.Directory]::CreateDirectory($sentinelTools)
+ foreach($sentinel in $sentinelReceipt.files){
+  if($sentinel.target -cnotin @('arm64','amd64') -or $sentinel.relativePath -cne ($sentinel.target+'/creation-sentinel.exe') -or $sentinel.delayImportsAbsent -cne $true -or $sentinel.executed -cne $false){throw 'Creation sentinel metadata differs.'}
+  $file=Join-Path $sentinelRoot $sentinel.relativePath;Assert-Bytes $file $sentinel.bytes $sentinel.sha256
+  $target=Join-Path $sentinelTools $sentinel.relativePath;[void][IO.Directory]::CreateDirectory((Split-Path -Parent $target));Copy-Item -LiteralPath $file -Destination $target
+ }
+ Copy-Item -LiteralPath (Join-Path $sentinelRoot 'build-receipt.json') -Destination (Join-Path $sentinelTools 'build-receipt.json')
  # Use the producer's initialized environment through its narrow probe builder.
  try{Invoke-Owned (Join-Path $PSHOME 'pwsh.exe') @('-NoProfile','-File',(Join-Path $SourceRoot 'packaging/windows/mxc-bash/build-object-probe.ps1'),'-Source',(Join-Path $SourceRoot 'packaging/windows/mxc-bash/object-probe.cpp'),'-Output',(Join-Path $tools 'NemoClawMsysObjectProbe.exe'),'-ToolchainReceipt',(Join-Path $compatBuild 'build-receipt.json')) 'compile-object-probe' 120}catch{$receipt['objectProbeCompileError']=$_.Exception.Message}
+ $objectBinary=Join-Path $tools 'NemoClawMsysObjectProbe.exe'
+ $objectReceipt=Get-Content -LiteralPath ($objectBinary+'.json') -Raw|ConvertFrom-Json
+ if($objectReceipt.classification -cne 'unshimmed-native-object-probe-build' -or $objectReceipt.executed -cne $false -or $objectReceipt.sourceSha256 -cne (Get-FileHash -LiteralPath (Join-Path $SourceRoot 'packaging/windows/mxc-bash/object-probe.cpp') -Algorithm SHA256).Hash.ToLowerInvariant() -or $objectReceipt.matrixHeaderSha256 -cne (Get-FileHash -LiteralPath (Join-Path $SourceRoot 'packaging/windows/mxc-bash/creation-matrix.h') -Algorithm SHA256).Hash.ToLowerInvariant()){throw 'Creation matrix probe build is incomplete or differs from reviewed sources.'}
+ Assert-Bytes $objectBinary $objectReceipt.bytes $objectReceipt.sha256
  Invoke-Owned (Join-Path $tools 'node.exe') @('--experimental-strip-types','--no-warnings',(Join-Path $SourceRoot 'packaging/windows/mxc-bash/bash-compat.mts'),'--work-root',$work,'--output',$out,'--mxc',(Join-Path $tools 'wxc-exec.exe')) 'contained-qualification' 420
  $proof=Get-Content -LiteralPath (Join-Path $out 'result.json') -Raw|ConvertFrom-Json
  if($proof.passed -cne $true -or $proof.normalCleanup -cne $true){throw 'The prototype did not finish all required checks.'}
@@ -157,7 +175,7 @@ finally{
  $probeReceipt=Join-Path $tools 'NemoClawMsysObjectProbe.exe.json';if(Test-Path -LiteralPath $probeReceipt){Copy-Item -LiteralPath $probeReceipt -Destination (Join-Path $out 'object-probe-build.json')}
  }catch{$receipt['compilerLogRetentionError']=$_.Exception.Message;if($null -eq $primary){$primary=$_}}
  $safe=$true;$result=Join-Path $out 'result.json'
- if(Test-Path -LiteralPath $result){try{$value=Get-Content -Raw $result|ConvertFrom-Json;$rows=@($value.cleanup.PSObject.Properties.Value);$safe=$value.hostProcessesClosed -ceq $true -and $value.hostProcessesNormal -ceq $true -and @($value.hostBaseline).Count -eq $value.startedHostProcesses -and $value.startedExecutors -gt 0 -and $rows.Count -eq $value.startedExecutors -and @($rows|Where-Object {$_.executor.closed -cne $true}).Count -eq 0}catch{$safe=$false}}
+ if(Test-Path -LiteralPath $result){try{$value=Get-Content -Raw $result|ConvertFrom-Json;$rows=@($value.cleanup.PSObject.Properties.Value);$safe=$value.hostProcessesClosed -ceq $true -and $value.hostProcessesNormal -ceq $true -and (@($value.hostBaseline).Count + [int]($null -ne $value.hostCreationMatrix.execution)) -eq $value.startedHostProcesses -and $value.startedExecutors -gt 0 -and $rows.Count -eq $value.startedExecutors -and @($rows|Where-Object {$_.executor.closed -cne $true}).Count -eq 0}catch{$safe=$false}}
  elseif($receipt.phase -ceq 'contained-qualification'){$safe=$false}
  $safe=$safe -and @($receipt.stages|Where-Object {$_.closed -cne $true}).Count -eq 0
  $receipt.cleanup['workRetainedForUnconfirmedExecutor']= -not $safe

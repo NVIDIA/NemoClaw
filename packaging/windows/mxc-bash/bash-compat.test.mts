@@ -12,6 +12,8 @@ import {
   validateTracker,
   validateRawPipeDiagnostics,
   validatePrivateDesktop,
+  validateCreationMatrix,
+  validateCreationSentinelBuild,
   validateMxcInspectionBuild,
   validateDerivedMetadata,
   binaryPins,
@@ -740,4 +742,151 @@ test("patched MXC receipt requires exact upstream source, patch and sole ARM64 e
       "C:\\Windows",
     ).process.env.some((entry) => entry.startsWith("NEMOCLAW_MSYS_TOKEN_INSPECTION=")),
   );
+});
+
+function creationRows(context: "host" | "contained" = "contained") {
+  const identity = {
+    nonce: c.nonce,
+    context,
+    callerPid: 123,
+    callerAppSid: context === "contained" ? "S-1-15-2-123-456" : "",
+  };
+  const rows: any[] = [];
+  for (const architecture of ["arm64", "amd64"])
+    for (const tokenVariant of ["same-primary", "privileges-admin-restricted"]) {
+      for (const innerJob of tokenVariant === "same-primary"
+        ? ["absent", "ui0", "ui-ff"]
+        : ["absent"])
+        for (const win32kRequested of [false, true])
+          rows.push({
+            ...identity,
+            kind: "creation-matrix-case",
+            architecture,
+            tokenVariant,
+            innerJob,
+            win32kRequested,
+            innerUi: innerJob === "ui-ff" ? 255 : 0,
+            innerExtendedFlags: innerJob === "absent" ? 0 : 0x2008,
+            noChildRequested: true,
+            creationFlags: 0x8040c,
+            resumed: false,
+            diagnosticOnly: true,
+            falseOutputIgnored: true,
+            ownedHandlesClosed: true,
+            cleanupError: 0,
+            stage: "CreateProcessAsUserW",
+            setupError: 0,
+            apiAttempted: true,
+            apiCreated: false,
+            apiError: 50,
+            processHandleReturned: false,
+            threadHandleReturned: false,
+            childPid: 0,
+            waitResult: 0xffffffff,
+            exitCode: 259,
+            terminationError: 0,
+          });
+    }
+  rows.push({
+    ...identity,
+    kind: "creation-matrix-summary",
+    rows: 16,
+    childrenResumed: 0,
+    tokenHandlesClosed: true,
+    parentPolicyUnchanged: true,
+    callerUnshimmed: true,
+    chromeQualified: false,
+    diagnosticOnly: true,
+    callerUi: 0x3bf,
+    callerExtendedFlags: 0x2000,
+    callerInJob: true,
+  });
+  return rows;
+}
+test("creation matrix retains API refusals but rejects incomplete coverage and ownership", () => {
+  for (const context of ["host", "contained"] as const) {
+    const value = validateCreationMatrix(creationRows(context), c.nonce, context);
+    assert.equal(value.apiCoverageComplete, true);
+    assert.equal(value.refused, 16);
+    assert.equal(value.chromeQualified, false);
+  }
+  for (const stage of ["matrix-budget", "token-setup"]) {
+    const rows = creationRows();
+    Object.assign(rows[0], { apiAttempted: false, stage, setupError: 1460 });
+    assert.equal(validateCreationMatrix(rows, c.nonce, "contained").apiCoverageComplete, false);
+  }
+  for (const mutation of [
+    (rows: any[]) => rows.pop(),
+    (rows: any[]) => (rows[0] = rows[1]),
+    (rows: any[]) => (rows[0].ownedHandlesClosed = false),
+    (rows: any[]) => (rows[16].callerExtendedFlags = 0x3c00),
+    (rows: any[]) => (rows[0].callerAppSid = "S-1-15-2-999"),
+    (rows: any[]) => (rows[0].innerUi = 0x40),
+  ]) {
+    const rows = creationRows();
+    mutation(rows);
+    assert.throws(() => validateCreationMatrix(rows, c.nonce, "contained"));
+  }
+});
+test("creation matrix admits signaled early loader exits but never sentinel entry or unknown closure", () => {
+  const rows = creationRows();
+  Object.assign(rows[0], {
+    apiCreated: true,
+    apiError: 0,
+    processHandleReturned: true,
+    threadHandleReturned: true,
+    childPid: 456,
+    waitResult: 0,
+    exitCodeKnown: true,
+    exitCode: 0xc00000bb,
+    earlyExit: true,
+    terminated: false,
+    terminationError: 5,
+  });
+  assert.equal(validateCreationMatrix(rows, c.nonce, "contained").created, 1);
+  for (const change of [
+    { exitCode: 0 },
+    { waitResult: 258 },
+    { exitCodeKnown: false },
+    { processHandleReturned: false },
+  ]) {
+    const bad = structuredClone(rows);
+    Object.assign(bad[0], change);
+    assert.throws(() => validateCreationMatrix(bad, c.nonce, "contained"));
+  }
+});
+test("creation sentinel build requires both exact no-USER32 architectures and successful production", () => {
+  const receipt: any = {
+    schemaVersion: 1,
+    classification: "unshimmed-creation-sentinels-build",
+    status: "built",
+    executed: false,
+    source: { bytes: 336, sha256: "a".repeat(64) },
+    files: [
+      ["arm64", 0xaa64],
+      ["amd64", 0x8664],
+    ].map(([target, machine]) => ({
+      target,
+      machine,
+      relativePath: target + "/creation-sentinel.exe",
+      bytes: 1024,
+      sha256: "b".repeat(64),
+      delayImportsAbsent: true,
+      executed: false,
+      imports: [{ dll: "KERNEL32.dll", functions: ["ExitProcess"] }],
+    })),
+  };
+  assert.equal(validateCreationSentinelBuild(receipt), receipt);
+  for (const mutation of [
+    (r: any) => (r.status = "failed"),
+    (r: any) => r.files.pop(),
+    (r: any) => (r.files[0].imports[0].dll = "USER32.dll"),
+    (r: any) => (r.files[0].delayImportsAbsent = false),
+    (r: any) => (r.files[1].machine = 0xaa64),
+    (r: any) => (r.files[0].relativePath = "creation-sentinel-arm64.exe"),
+  ]) {
+    const bad = structuredClone(receipt);
+    mutation(bad);
+    assert.throws(() => validateCreationSentinelBuild(bad));
+  }
 });
