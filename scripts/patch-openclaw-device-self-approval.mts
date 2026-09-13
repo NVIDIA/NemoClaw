@@ -2,16 +2,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /*
- * Temporary compatibility patch for OpenClaw 2026.6.10 through 2026.7.1 device
+ * Temporary compatibility patch for OpenClaw 2026.6.10 through 2026.9.1 device
  * scope upgrades.
  *
  * The devices CLI asks for the scopes it is trying to approve. A device that
  * currently has only operator.pairing is therefore rejected by the gateway
- * handshake before device.pair.approve can run. OpenClaw 2026.7.1 also rejects
+ * handshake before device.pair.approve can run. OpenClaw 2026.9.1 also rejects
  * that valid device token during authentication, before its canonical pairing
  * path can create the scope-upgrade request. Its operator.admin retry fails the
  * same way, after which NemoClaw historically repaired the two JSON state files
- * directly. OpenClaw 2026.7.1 also omits CLI identity for loopback shared-token
+ * directly. OpenClaw 2026.9.1 also omits CLI identity for loopback shared-token
  * calls. Preserve that identity whenever a stored operator device credential
  * exists, while retaining the upstream omission during bootstrap and for the
  * local backend. The shared token may authenticate the connection, but the

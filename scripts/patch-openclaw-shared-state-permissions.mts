@@ -3,10 +3,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /*
- * Temporary compatibility patch for OpenClaw 2026.7.1 split-user state.
+ * Temporary compatibility patch for OpenClaw 2026.9.1 split-user state.
  *
  * NemoClaw's root entrypoint runs the OpenClaw CLI and gateway as separate
- * users in the same group. OpenClaw 2026.7.1 makes shared and per-agent SQLite
+ * users in the same group. OpenClaw 2026.9.1 makes shared and per-agent SQLite
  * state part of gateway startup, but hardens those paths to owner-only modes.
  * For that topology, keep generic credential and identity stores owner-only
  * while applying group-shared modes only to the databases. Leave private-store

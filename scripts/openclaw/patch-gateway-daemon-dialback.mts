@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /*
- * Temporary compatibility patch for OpenClaw 2026.7.1 gateway daemon
+ * Temporary compatibility patch for OpenClaw 2026.9.1 gateway daemon
  * self-dialback.
  *
  * NemoClaw exports OPENCLAW_GATEWAY_URL so agent processes can reach the
