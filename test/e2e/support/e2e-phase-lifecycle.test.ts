@@ -14,6 +14,7 @@ import {
   HostCliClient,
   SandboxClient,
 } from "../fixtures/clients/index.ts";
+import { buildGatewayRuntimeStartScript } from "../fixtures/gateway-runtime-start.ts";
 import type { E2ETargetFixtures } from "../fixtures/e2e-test.ts";
 import { RuntimeProviderPrerequisite } from "../fixtures/runtime-provider.ts";
 import type { NemoClawInstance } from "../fixtures/phases/index.ts";
@@ -532,13 +533,12 @@ describe("LifecyclePhaseFixture gateway runtime restart helpers", () => {
     runner.enqueue(shellResult(0, "12345\n")); // resolveHostRuntime pid probe
     runner.enqueue(shellResult(0)); // forward stop
     runner.enqueue(shellResult(75)); // selected user service is inactive
-    runner.enqueue(shellResult(0)); // gateway stop
     runner.enqueue(shellResult(0)); // pid stop
     runner.enqueue(shellResult(0)); // container stop
     runner.enqueue(shellResult(1, "")); // expectHostRuntimeStopped pid probe
     runner.enqueue(shellResult(0, "")); // expectHostRuntimeStopped container probe
     runner.enqueue(shellResult(0)); // lifecycle-gateway-stopped true artifact
-    runner.enqueue(shellResult(0, "gateway started\n")); // plain sandbox doctor recovers the registered gateway
+    runner.enqueue(shellResult(0, "gateway started\n")); // start the registered gateway through its existing startup owner
     runner.enqueue(shellResult(0, "Connected to nemoclaw\n")); // waitForGatewayConnected
     const cleanup = new FakeCleanup();
     const host = new HostCliClient(runner);
@@ -555,13 +555,12 @@ describe("LifecyclePhaseFixture gateway runtime restart helpers", () => {
       expect.stringContaining("sh -lc pid_file="),
       "sh -lc command -v openshell >/dev/null 2>&1 && openshell forward stop 18789 || true",
       expect.stringContaining("bash -c set -eu"),
-      "sh -lc command -v openshell >/dev/null 2>&1 && openshell gateway stop -g nemoclaw || true",
       expect.stringContaining("sh -lc pid_file="),
       "docker container ps --format {{.ID}}\t{{.Names}}",
       expect.stringContaining("sh -lc pid_file="),
       "docker container ps --format {{.ID}}\t{{.Names}}",
       "true ",
-      "nemoclaw e2e-x doctor",
+      `${process.execPath} -e ${buildGatewayRuntimeStartScript()} e2e-x`,
       "openshell status",
     ]);
   });
@@ -593,7 +592,6 @@ describe("LifecyclePhaseFixture gateway runtime restart helpers", () => {
     const runner = new FakeRunner();
     runner.enqueue(shellResult(0)); // forward stop
     runner.enqueue(shellResult(0, "NEMOCLAW_E2E_STOPPED_GATEWAY_USER_SERVICE=unavailable\n"));
-    runner.enqueue(shellResult(0)); // gateway stop
     runner.enqueue(shellResult(0)); // pid stop
     runner.enqueue(shellResult(0, "gateway-id\topenshell-cluster-nemoclaw\n")); // discover
     runner.enqueue(shellResult(0)); // container stop
@@ -683,7 +681,6 @@ describe("LifecyclePhaseFixture gateway runtime restart helpers", () => {
     const runner = new FakeRunner();
     runner.enqueue(shellResult(0)); // forward stop
     runner.enqueue(shellResult(75)); // no selected user service
-    runner.enqueue(shellResult(0)); // gateway stop
     runner.enqueue(shellResult(0)); // pid stop
     runner.enqueue(shellResult(0, "")); // no gateway container
     runner.enqueue(shellResult(1, "gateway recovery failed"));
@@ -693,10 +690,10 @@ describe("LifecyclePhaseFixture gateway runtime restart helpers", () => {
       /restart OpenShell gateway runtime/,
     );
     expect(runner.calls.at(-1)).toMatchObject({
-      command: "nemoclaw",
-      args: ["e2e-x", "doctor"],
+      command: process.execPath,
+      args: ["-e", buildGatewayRuntimeStartScript(), "e2e-x"],
     });
-    expect(runner.calls).toHaveLength(6);
+    expect(runner.calls).toHaveLength(5);
   });
 
   it.each([75, 1])(
@@ -733,6 +730,19 @@ describe("LifecyclePhaseFixture gateway runtime restart helpers", () => {
     expect(runner.calls).toHaveLength(0);
   });
 
+  it.each([undefined, "", " "])(
+    "rejects missing restart identity before stopping any runtime: %s",
+    async (sandboxName) => {
+      const runner = new FakeRunner();
+      const cleanup = new FakeCleanup();
+      await expect(
+        fixture(runner, cleanup).restartGatewayRuntime({ sandboxName, delayMs: 0 }),
+      ).rejects.toThrow(/sandbox name or a required user service/);
+      expect(runner.calls).toHaveLength(0);
+      expect(cleanup.calls).toHaveLength(0);
+    },
+  );
+
   it("requires the selected user service when the lifecycle requests it", async () => {
     const runner = new FakeRunner();
     const fx = fixture(runner, new FakeCleanup());
@@ -743,7 +753,7 @@ describe("LifecyclePhaseFixture gateway runtime restart helpers", () => {
     expect(runner.calls).toHaveLength(0);
   });
 
-  it("recovers the registered gateway through plain sandbox doctor when no service was stopped", async () => {
+  it("starts the registered gateway through its startup owner when no service was stopped", async () => {
     const runner = new FakeRunner();
     runner.enqueue(shellResult(0, "gateway started\n"));
 
@@ -754,8 +764,8 @@ describe("LifecyclePhaseFixture gateway runtime restart helpers", () => {
     });
     expect(runner.calls).toEqual([
       expect.objectContaining({
-        command: "nemoclaw",
-        args: ["e2e-x", "doctor"],
+        command: process.execPath,
+        args: ["-e", buildGatewayRuntimeStartScript(), "e2e-x"],
       }),
     ]);
   });
