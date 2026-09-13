@@ -331,6 +331,7 @@ export function acquireOnboardStateLock(
 export function releaseOnboardStateLock(handle: OnboardStateLockHandle): void {
   const quarantine = `${handle.lockFile}.release-${String(process.pid)}-${randomUUID()}`;
   try {
+    if (!isOnboardStateLockOwned(handle)) return;
     try {
       fs.renameSync(handle.lockFile, quarantine);
     } catch {
@@ -342,8 +343,11 @@ export function releaseOnboardStateLock(handle: OnboardStateLockHandle): void {
       fs.unlinkSync(quarantine);
       return;
     }
-    fs.linkSync(quarantine, handle.lockFile);
-    fs.unlinkSync(quarantine);
+    try {
+      fs.linkSync(quarantine, handle.lockFile);
+    } finally {
+      fs.unlinkSync(quarantine);
+    }
   } catch {
     // Release is best effort. Never delete an unproved replacement lock.
   } finally {

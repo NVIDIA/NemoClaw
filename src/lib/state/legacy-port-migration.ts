@@ -22,7 +22,7 @@ import {
 } from "./onboard-session/retained-sandbox-recovery";
 import { nemoclawStateRoot, resolveHome } from "./state-root";
 
-const MIGRATION_LOCK = ".gateway-state-migration.lock";
+export const GATEWAY_STATE_MIGRATION_LOCK = ".gateway-state-migration.lock";
 const MIGRATION_INTENT = ".gateway-state-migration";
 const MIGRATION_INTENT_METADATA = "intent.json";
 const MIGRATION_INTENT_REMAINING_RECOVERY = "remaining-retained-sandbox-recovery.json";
@@ -65,6 +65,10 @@ export interface LegacyPortMigrationResult {
   migratedSandboxNames: string[];
   migratedSession: boolean;
   warnings: string[];
+}
+
+export interface GatewayStateMigrationLockHandle {
+  lockPath: string;
 }
 
 /** Read-only collision check used before deciding whether public argv needs migration. */
@@ -754,6 +758,22 @@ function acquireDirectoryLock(home: string, lock: string): string {
   throw migrationError(`could not acquire ${lock}`);
 }
 
+/** Hold the host-wide fence that every onboarding writer checks before mutating gateway state. */
+export function acquireGatewayStateMigrationLock(home: string): GatewayStateMigrationLockHandle {
+  const resolvedHome = path.resolve(home);
+  const sharedRoot = nemoclawStateRoot(resolvedHome, DEFAULT_GATEWAY_PORT);
+  return {
+    lockPath: acquireDirectoryLock(
+      resolvedHome,
+      path.join(sharedRoot, GATEWAY_STATE_MIGRATION_LOCK),
+    ),
+  };
+}
+
+export function releaseGatewayStateMigrationLock(handle: GatewayStateMigrationLockHandle): void {
+  fs.rmSync(handle.lockPath, { recursive: true, force: true });
+}
+
 function assertOnboardStateUnlocked(home: string, stateRoots: readonly string[]): void {
   for (const stateRoot of stateRoots) {
     const activeLock = path.join(stateRoot, "onboard.lock");
@@ -783,7 +803,7 @@ export function migrateLegacyPortState(
   };
   const sharedRoot = nemoclawStateRoot(home, DEFAULT_GATEWAY_PORT);
   const legacyRegistryFile = path.join(sharedRoot, "sandboxes.json");
-  const migrationLock = path.join(sharedRoot, MIGRATION_LOCK);
+  const migrationLock = path.join(sharedRoot, GATEWAY_STATE_MIGRATION_LOCK);
   const pendingBeforeLock = readMigrationIntent(home, sharedRoot);
   const staleIntentDirectoriesExist = staleMigrationIntentNames(home, sharedRoot).length > 0;
 

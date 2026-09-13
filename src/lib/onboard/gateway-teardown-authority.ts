@@ -28,6 +28,12 @@ export {
   retargetOnboardStateLock,
   type OnboardStateLockHandle,
 } from "../state/onboard-session/lock";
+export {
+  acquireGatewayStateMigrationLock,
+  GATEWAY_STATE_MIGRATION_LOCK,
+  releaseGatewayStateMigrationLock,
+  type GatewayStateMigrationLockHandle,
+} from "../state/legacy-port-migration";
 import { nemoclawStateRoot, resolveHome } from "../state/state-root";
 import { hasOpenShellGatewayUserService } from "./docker-driver-gateway-service";
 import { gatewayOwnerFromCheckpoint } from "./gateway-authority-checkpoint";

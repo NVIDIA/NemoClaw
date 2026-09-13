@@ -8,6 +8,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { bindGatewayAuthorityToCheckpoint } from "../../onboard/gateway-authority-checkpoint";
 import { createSession } from "../../state/onboard-session";
+import {
+  acquireOnboardStateLock,
+  releaseOnboardStateLock,
+  type OnboardStateLockHandle,
+} from "../../state/onboard-session/lock";
 import type { RunResult } from "./run-plan";
 
 const ADMISSION_MESSAGE =
@@ -68,6 +73,7 @@ interface RunInterruptedUninstallOptions {
   checkpointPort?: number;
   gatewayNames?: string[];
   onLog?: (message: string) => void;
+  prepareState?: (stateRoot: string) => void;
 }
 
 async function runInterruptedUninstall(
@@ -82,9 +88,11 @@ async function runInterruptedUninstall(
   fs.mkdirSync(stateRoot, { mode: 0o700, recursive: true });
   writeInterruptedSession(stateRoot, options.checkpointPort ?? port);
   const errors: string[] = [];
+  const logs: string[] = [];
   const calls: string[][] = [];
   const gatewayNames = options.gatewayNames ?? [];
   const onLog = options.onLog ?? (() => undefined);
+  options.prepareState?.(stateRoot);
   const outcome = await runUninstallPlan(
     {
       assumeYes: true,
@@ -101,7 +109,10 @@ async function runInterruptedUninstall(
       hasPortableRuntimeCleanup: () => false,
       isPortFree: () => true,
       isTty: false,
-      log: onLog,
+      log: (message) => {
+        logs.push(message);
+        onLog(message);
+      },
       resolveGatewayTeardownAuthority: ({ gatewayName, gatewayPort }) => ({
         endpoint: null,
         gatewayName,
@@ -125,7 +136,7 @@ async function runInterruptedUninstall(
       sleep: () => undefined,
     },
   );
-  return { calls, errors, outcome, stateRoot };
+  return { calls, errors, logs, outcome, stateRoot };
 }
 
 function nonListOpenShellCalls(calls: readonly string[][]): string[][] {
@@ -142,6 +153,61 @@ afterEach(() => {
 });
 
 describe("interrupted pre-gateway uninstall races (#11395)", () => {
+  it("uses scoped cleanup when a sibling already owns its onboarding lock", async () => {
+    const tmpHome = fs.mkdtempSync(path.join(process.cwd(), "nemoclaw-uninstall-active-sibling-"));
+    const port = 9123;
+    const siblingRoot = path.join(tmpHome, ".nemoclaw", "gateways", String(port + 1));
+    const siblingLock = acquireOnboardStateLock(siblingRoot, tmpHome, "nemoclaw onboard");
+    const siblingLockHandle = siblingLock.handle as OnboardStateLockHandle;
+    expect(siblingLock.acquired).toBe(true);
+    try {
+      const result = await runInterruptedUninstall(tmpHome, port);
+
+      expect(result.outcome.exitCode, result.errors.join("\n")).toBe(0);
+      expect(result.outcome.otherGatewayEnvironmentsRemain).toBe(true);
+      expect(fs.existsSync(result.stateRoot)).toBe(false);
+      expect(result.errors.join("\n")).toContain(
+        "A sibling gateway appeared during interrupted-state cleanup; switching to gateway-scoped cleanup.",
+      );
+      expect(nonListOpenShellCalls(result.calls)).toEqual([]);
+    } finally {
+      releaseOnboardStateLock(siblingLockHandle);
+      fs.rmSync(tmpHome, { force: true, recursive: true });
+    }
+  });
+
+  it("fences a sibling onboarding attempt before shared cleanup begins", async () => {
+    const tmpHome = fs.mkdtempSync(path.join(process.cwd(), "nemoclaw-uninstall-sibling-fence-"));
+    const port = 9123;
+    const siblingRoot = path.join(tmpHome, ".nemoclaw");
+    const migrationLock = path.join(tmpHome, ".nemoclaw", ".gateway-state-migration.lock");
+    let siblingAttempts = 0;
+    const attemptSiblingOnboarding = () => {
+      siblingAttempts += 1;
+      expect(fs.existsSync(migrationLock)).toBe(true);
+      const acquisition = acquireOnboardStateLock(
+        siblingRoot,
+        tmpHome,
+        "nemoclaw onboard",
+        migrationLock,
+      );
+      expect(acquisition.acquired).toBe(false);
+      expect(acquisition.handle).toBeUndefined();
+    };
+    try {
+      const result = await runInterruptedUninstall(tmpHome, port, {
+        onLog: (message) =>
+          message.includes("] Stopping services") ? attemptSiblingOnboarding() : undefined,
+      });
+
+      expect(result.outcome.exitCode, result.errors.join("\n")).toBe(0);
+      expect(siblingAttempts).toBe(1);
+      expect(fs.existsSync(migrationLock)).toBe(false);
+    } finally {
+      fs.rmSync(tmpHome, { force: true, recursive: true });
+    }
+  });
+
   it("switches to scoped cleanup when a sibling appears after admission", async () => {
     const tmpHome = fs.mkdtempSync(path.join(process.cwd(), "nemoclaw-uninstall-late-sibling-"));
     const port = 9123;
@@ -217,11 +283,12 @@ describe("interrupted pre-gateway uninstall races (#11395)", () => {
     const tmpHome = fs.mkdtempSync(path.join(process.cwd(), "nemoclaw-uninstall-recreated-state-"));
     const port = 9123;
     const stateRoot = path.join(tmpHome, ".nemoclaw", "gateways", String(port));
+    const detachedRoot = path.join(tmpHome, ".nemoclaw-uninstall-staging", String(port));
     const renameSync = fs.renameSync.bind(fs);
     vi.spyOn(fs, "renameSync").mockImplementation((source, destination) => {
       renameSync(source, destination);
       return path.resolve(String(source)) === path.resolve(stateRoot) &&
-        String(destination).includes(".uninstall-")
+        path.resolve(String(destination)) === path.resolve(detachedRoot)
         ? writeLiveReplacementState(stateRoot)
         : undefined;
     });
@@ -231,7 +298,72 @@ describe("interrupted pre-gateway uninstall races (#11395)", () => {
       expect(result.outcome.exitCode, result.errors.join("\n")).toBe(0);
       expect(fs.readFileSync(path.join(stateRoot, "new-onboarding-state"), "utf8")).toBe("new\n");
       expect(fs.existsSync(path.join(stateRoot, "onboard.lock"))).toBe(true);
+      expect(fs.existsSync(detachedRoot)).toBe(false);
       expect(nonListOpenShellCalls(result.calls)).toEqual([]);
+    } finally {
+      fs.rmSync(tmpHome, { force: true, recursive: true });
+    }
+  });
+
+  it("recovers preserved data from abandoned staging before cleanup", async () => {
+    const tmpHome = fs.mkdtempSync(
+      path.join(process.cwd(), "nemoclaw-uninstall-staging-recovery-"),
+    );
+    const port = 9123;
+    const detachedRoot = path.join(tmpHome, ".nemoclaw-uninstall-staging", String(port));
+    const backupFile = path.join(detachedRoot, "backups", "workspace.tar");
+    fs.mkdirSync(path.dirname(backupFile), { mode: 0o700, recursive: true });
+    fs.writeFileSync(backupFile, "preserved\n");
+    try {
+      const result = await runInterruptedUninstall(tmpHome, port);
+
+      expect(result.outcome.exitCode, result.errors.join("\n")).toBe(0);
+      expect(fs.readFileSync(path.join(result.stateRoot, "backups", "workspace.tar"), "utf8")).toBe(
+        "preserved\n",
+      );
+      expect(result.logs.join("\n")).toContain(
+        "Recovered preserved state from an interrupted uninstall: backups",
+      );
+      expect(fs.existsSync(detachedRoot)).toBe(false);
+    } finally {
+      fs.rmSync(tmpHome, { force: true, recursive: true });
+    }
+  });
+
+  it("reports a preserved-data restore collision without rejecting", async () => {
+    const tmpHome = fs.mkdtempSync(
+      path.join(process.cwd(), "nemoclaw-uninstall-restore-collision-"),
+    );
+    const port = 9123;
+    const stateRoot = path.join(tmpHome, ".nemoclaw", "gateways", String(port));
+    const detachedRoot = path.join(tmpHome, ".nemoclaw-uninstall-staging", String(port));
+    const restoreSource = path.join(detachedRoot, "backups");
+    const restoreDestination = path.join(stateRoot, "backups");
+    const renameSync = fs.renameSync.bind(fs);
+    const collideWithRestore = (source: fs.PathLike, destination: fs.PathLike) => {
+      fs.mkdirSync(String(destination), { mode: 0o700, recursive: true });
+      fs.writeFileSync(path.join(String(destination), "new-backup"), "new\n");
+      return renameSync(source, destination);
+    };
+    vi.spyOn(fs, "renameSync").mockImplementation((source, destination) =>
+      path.resolve(String(source)) === path.resolve(restoreSource)
+        ? collideWithRestore(source, destination)
+        : renameSync(source, destination),
+    );
+    try {
+      const result = await runInterruptedUninstall(tmpHome, port, {
+        prepareState: (root) => {
+          fs.mkdirSync(path.join(root, "backups"));
+          fs.writeFileSync(path.join(root, "backups", "original-backup"), "original\n");
+        },
+      });
+
+      expect(result.outcome.exitCode).toBe(1);
+      expect(result.errors.join("\n")).toContain("Unable to restore preserved backups:");
+      expect(fs.readFileSync(path.join(restoreDestination, "new-backup"), "utf8")).toBe("new\n");
+      expect(fs.readFileSync(path.join(restoreSource, "original-backup"), "utf8")).toBe(
+        "original\n",
+      );
     } finally {
       fs.rmSync(tmpHome, { force: true, recursive: true });
     }
