@@ -1404,11 +1404,9 @@ export function createSandboxRecreateRuntime(
   }
   const openingSessionId = openingSession.sessionId;
   let currentTransaction = transaction;
-  let phase: CheckpointSandboxRecreatePhase = transaction.phase;
   const advance = (next: CheckpointSandboxRecreatePhase): void => {
     sessionStore.updateSession((current) => {
       currentTransaction = advanceSandboxRecreateTransaction(current, transaction.id, next);
-      phase = currentTransaction.phase;
       return current;
     });
   };
@@ -1467,7 +1465,6 @@ export function createSandboxRecreateRuntime(
         observe: () => observe(sandboxName, transaction.gatewayName),
       });
       currentTransaction = begun.transaction;
-      phase = currentTransaction.phase;
       return begun.sourcePresence;
     },
     confirmDeleted: () => {
@@ -1551,7 +1548,6 @@ export function createSandboxRecreateRuntime(
           `Cannot verify sandbox '${sandboxName}' identity in its recreate journal after the write.`,
         );
       }
-      phase = storedTransaction.phase;
       targetLiveIdentityFingerprint = storedTransaction.targetLiveIdentityFingerprint;
       return {
         lifecycleGeneration: storedTransaction.targetGeneration,

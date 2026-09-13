@@ -1057,6 +1057,10 @@ The sandbox name is required, and the command takes no flags. The sandbox must a
 
 <AgentOnly variant="openclaw">
 
+For an older OpenClaw registration without recorded lifecycle identity, `launch` requires a ready live sandbox with an observable identity before it starts the agent.
+If this identity check fails, `launch` stops before starting the agent.
+Run `$$nemoclaw <name> doctor`, resolve the reported issue, and retry `$$nemoclaw launch <name>`.
+
 `launch` returns the agent's exit code when the post-command OpenClaw permission cleanup succeeds. If that cleanup cannot inspect, restore, or verify the mutable config permission contract, `launch` fails closed with exit `1` and prints `OpenClaw permission cleanup failed (...)` to `stderr`.
 
 </AgentOnly>

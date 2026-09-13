@@ -117,6 +117,29 @@ describe("Portable debug", () => {
     expect(mocks.legacyDebug).not.toHaveBeenCalled();
   });
 
+  it("preserves another file when a partial archive symlink already exists (#11651)", async () => {
+    const output = path.join(directory, "debug.tar.gz");
+    const victim = path.join(directory, "user-data.txt");
+    const partial = `${output}.partial.${process.pid}`;
+    const contents = "preserve this unrelated user data";
+    fs.writeFileSync(victim, contents);
+    fs.symlinkSync(victim, partial);
+
+    await runDebugCommandWithOptions(
+      { sandboxName: "alpha", output },
+      buildDebugCommandDeps(process.cwd()),
+    );
+
+    expect(fs.readFileSync(victim, "utf8")).toBe(contents);
+    expect(fs.lstatSync(partial).isSymbolicLink()).toBe(true);
+    expect(fs.lstatSync(output).isFile()).toBe(true);
+    expect(fs.statSync(output).mode & 0o777).toBe(0o600);
+    const entries = execFileSync("tar", ["tzf", output], { encoding: "utf8" });
+    expect(entries).toContain("/portable-lifecycle.json");
+    expect(mocks.capture).not.toHaveBeenCalled();
+    expect(mocks.legacyDebug).not.toHaveBeenCalled();
+  });
+
   it("refuses malformed selected authority before creating output", async () => {
     const output = path.join(directory, "debug.tar.gz");
     fs.writeFileSync(path.join(receiptDirectory, "active.json"), "{invalid json", { mode: 0o600 });
