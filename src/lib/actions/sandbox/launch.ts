@@ -13,6 +13,10 @@ import {
 } from "../../adapters/openshell/sandbox-command-cli";
 import { resolveSandboxGatewayName } from "../../gateway-runtime-action";
 import { emitPortableOpenClawAlreadyRunningTiming } from "../../onboard/experimental/portable-demo-lifecycle-timing";
+import {
+  observeSandboxOnGateway,
+  type SandboxRecreateObserver,
+} from "../../onboard/sandbox-recreate-probe";
 import type { SandboxEntry } from "../../state/registry";
 import { enforceRemovedImmutabilityMigrationBoundary } from "../../state/migrations/removed-immutability";
 import {
@@ -34,7 +38,7 @@ import {
   type HermesPortableActiveLifecycleAuthority,
   withSandboxLifecycleLock as withSandboxMutationLock,
 } from "./gateway-state";
-import { getKnownSandboxTarget } from "./gateway-target";
+import { getKnownSandboxTarget, getPersistedSandboxTargetGateway } from "./gateway-target";
 import {
   createBoundLaunchReadinessDeps,
   inspectLaunchReadiness,
@@ -59,6 +63,7 @@ const sandboxCommandExecutor = createCliOpenShellSandboxCommandExecutor({
  */
 interface LaunchSandboxDeps {
   getSandbox?: typeof getKnownSandboxTarget;
+  observeSandbox?: SandboxRecreateObserver;
   resolveSandboxGatewayName?: typeof resolveSandboxGatewayName;
   withSandboxMutationLock?: typeof withSandboxMutationLock;
   inspectLaunchReadiness?: typeof inspectLaunchReadiness;
@@ -240,12 +245,19 @@ async function startAgentWithPortableAuthority(
   const startOrdinaryAgent = async (): Promise<{ finish: () => Promise<void> }> => {
     const readSandbox = deps.getSandbox ?? getKnownSandboxTarget;
     const launchedEntry = structuredClone(readSandbox(sandboxName));
-    if (
-      launchedEntry?.agent === "openclaw" &&
+    const legacyTarget =
+      launchedEntry &&
+      (launchedEntry.agent ?? "openclaw") === "openclaw" &&
       (!launchedEntry.lifecycleGeneration || !launchedEntry.lifecycleLiveIdentityFingerprint)
-    ) {
+        ? { sandboxName, ...getPersistedSandboxTargetGateway(launchedEntry) }
+        : null;
+    const observeSandbox = deps.observeSandbox ?? observeSandboxOnGateway;
+    // Older registrations have no recorded identity. Bind cleanup to the live ID
+    // without changing their registration or requiring a sandbox replacement.
+    const launchedLive = legacyTarget ? observeSandbox(legacyTarget) : null;
+    if (launchedLive && (launchedLive.state !== "ready" || !launchedLive.liveIdentityFingerprint)) {
       throw new Error(
-        `Cannot safely clean up an interactive OpenClaw launch for sandbox '${sandboxName}' because its lifecycle identity is incomplete. Run the sandbox doctor to inspect the registration, then create a new sandbox through onboarding before launching.`,
+        `Cannot verify the live identity of sandbox '${sandboxName}' before launch. Run the sandbox doctor and retry.`,
       );
     }
     prepareHermesLightTerminalSkin(sandboxName, agent, process.env);
@@ -264,11 +276,16 @@ async function startAgentWithPortableAuthority(
               !current ||
               current.agent !== launchedEntry.agent ||
               current.gatewayName !== launchedEntry.gatewayName ||
-              !launchedEntry.lifecycleGeneration ||
-              !launchedEntry.lifecycleLiveIdentityFingerprint ||
+              current.gatewayPort !== launchedEntry.gatewayPort ||
               current.lifecycleGeneration !== launchedEntry.lifecycleGeneration ||
               current.lifecycleLiveIdentityFingerprint !==
                 launchedEntry.lifecycleLiveIdentityFingerprint
+            )
+              return null;
+            if (
+              legacyTarget &&
+              observeSandbox(legacyTarget).liveIdentityFingerprint !==
+                launchedLive?.liveIdentityFingerprint
             )
               return null;
             return cleanup();

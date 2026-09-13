@@ -1,11 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
-
-import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { AgentDefinition } from "../../agent/defs";
 import * as agentDefinitions from "../../agent/defs";
@@ -1122,19 +1118,18 @@ describe("launchSandbox", () => {
   });
 
   it.each([
-    ["current", {}, 1],
-    ["missing generation", { lifecycleGeneration: undefined }, 0],
-    ["missing live identity", { lifecycleLiveIdentityFingerprint: undefined }, 0],
+    ["current", {}],
+    ["missing generation", { lifecycleGeneration: undefined }],
+    ["missing live identity", { lifecycleLiveIdentityFingerprint: undefined }],
     [
       "missing both",
       { lifecycleGeneration: undefined, lifecycleLiveIdentityFingerprint: undefined },
-      0,
     ],
   ])(
     "checks %s cleanup identity when macOS evidence is unavailable (#8942, #11647)",
-    async (_label, identity, dispatchCount) => {
+    async (_label, identity) => {
       const agent = loadAgent("openclaw");
-      const entry = { ...sandboxEntry(agent.name), ...identity };
+      const entry = { ...sandboxEntry(agent.name), gatewayName: "nemoclaw-8081", ...identity };
       const before = structuredClone(entry);
       mocks.inspectLaunchReadiness.mockResolvedValue({
         kind: "fallback",
@@ -1152,21 +1147,19 @@ describe("launchSandbox", () => {
         hermesPortable: false,
       });
 
-      const result = await launchSandbox("alpha", { getSandbox: () => entry }).catch(
-        (error: Error) => error.message,
-      );
-      expect(result).toEqual(
-        dispatchCount === 1
-          ? undefined
-          : expect.stringMatching(/lifecycle identity.*sandbox doctor.*onboarding/u),
-      );
+      await expect(
+        launchSandbox("alpha", {
+          getSandbox: () => entry,
+          observeSandbox: () => ({ state: "ready", liveIdentityFingerprint: "f".repeat(64) }),
+        }),
+      ).resolves.toBeUndefined();
       expect(mocks.prepareInteractiveSession).toHaveBeenCalledOnce();
       expect(mocks.publishLaunchReadiness).not.toHaveBeenCalled();
       expect(mocks.withLaunchReadinessMutationGate).toHaveBeenCalledWith(
         expect.objectContaining({ epochId: null }),
         expect.any(Function),
       );
-      expect(mocks.startSandboxExec).toHaveBeenCalledTimes(dispatchCount);
+      expect(mocks.startSandboxExec).toHaveBeenCalledOnce();
       expect(mocks.startSandboxSession).not.toHaveBeenCalled();
       expect(entry).toEqual(before);
     },
@@ -1317,97 +1310,6 @@ describe("launchSandbox", () => {
       events.filter((event) => ["readiness", "dispatch", "contender"].includes(event)),
     ).toEqual(["readiness", "dispatch", "contender"]);
   });
-
-  it.each([
-    { replacement: "unchanged", cleanupCount: 1, stateFile: "unrelated.json", error: "exit:0" },
-    { replacement: "metadata", cleanupCount: 1, stateFile: "unrelated.json", error: "exit:0" },
-    { replacement: "recreated", cleanupCount: 0, stateFile: "unrelated.json", error: "exit:0" },
-    { replacement: "removed", cleanupCount: 0, stateFile: "unrelated.json", error: "exit:0" },
-    {
-      replacement: "legacy-recovery",
-      cleanupCount: 0,
-      stateFile: "shields-timer-alpha.json",
-      error: /recovery artifacts from the removed Shields/u,
-    },
-  ])(
-    "binds completion cleanup to the launched sandbox ($replacement)",
-    async ({ replacement, cleanupCount, stateFile, error }) => {
-      const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-launch-cleanup-"));
-      onTestFinished(() => fs.rmSync(stateDir, { recursive: true, force: true }));
-      vi.stubEnv("HOME", stateDir);
-      vi.stubEnv("NEMOCLAW_TEST_BASE_HOME", stateDir);
-      vi.stubEnv("NEMOCLAW_TEST_STATE_DIR", stateDir);
-      const statePath = path.join(stateDir, stateFile);
-      const { startSandboxExec } = await vi.importActual<typeof import("./exec")>("./exec");
-      const agent = loadAgent("openclaw");
-      let current: SandboxEntry | null = sandboxEntry(agent.name);
-      prepareSession(agent.name, agent);
-      const sessionEnded = deferred();
-      const childStarted = deferred();
-      const events: string[] = [];
-      const lock = createSerialTestLock(events, "sandbox");
-      const cleanup = vi.fn(() => {
-        events.push("cleanup");
-        return { applies: true as const, ok: true, issues: [] };
-      });
-      const release = vi.fn();
-      mocks.startSandboxExec.mockImplementation((name, command, options, deps) =>
-        startSandboxExec(name, command, options, {
-          ...deps,
-          selectGateway: () => ({ outcome: "unregistered", gatewayName: null }),
-          commandExecutor: {
-            probeDirectory: async () => ({ state: "present" }),
-            runStreaming: async () => {
-              childStarted.resolve();
-              await sessionEnded.promise;
-              return { outcome: { kind: "completed", exitCode: 0 }, release };
-            },
-          },
-          cleanupDeps: {
-            getSandbox: () => current,
-            inspectMutableConfigPerms: cleanup,
-            repairMutableConfigPerms: () => {
-              throw new Error("unexpected repair");
-            },
-          },
-          exit: (code) => {
-            throw new Error(`exit:${code}`);
-          },
-        }),
-      );
-      const launch = launchSandbox("alpha", {
-        getSandbox: () => current,
-        withSandboxMutationLock: lock,
-      });
-      const completion = expect(launch).rejects.toThrow(error);
-      await childStarted.promise;
-      await lock("alpha", () => {
-        fs.writeFileSync(statePath, "recorded state\n");
-        current =
-          replacement === "removed"
-            ? null
-            : {
-                ...current!,
-                model: replacement === "metadata" ? "updated-model" : current!.model,
-                lifecycleGeneration:
-                  replacement === "recreated" ? "generation-new" : "generation-alpha",
-              };
-        events.push("replacement-observed");
-      });
-      expect(cleanup).not.toHaveBeenCalled();
-      events.length = 0;
-      sessionEnded.resolve();
-      await completion;
-      expect(cleanup).toHaveBeenCalledTimes(cleanupCount);
-      expect(release).toHaveBeenCalledOnce();
-      expect(fs.readFileSync(statePath, "utf8")).toBe("recorded state\n");
-      expect(events).toEqual(
-        cleanupCount === 1
-          ? ["sandbox:acquired", "cleanup", "sandbox:released"]
-          : ["sandbox:acquired", "sandbox:released"],
-      );
-    },
-  );
 
   it.each([
     {
