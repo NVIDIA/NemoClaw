@@ -36,42 +36,60 @@ const AUTHORIZATION_STEPS: AuthorizationStep[] = [
 ];
 
 type RunProcessResult = {
+  error?: Error;
   status: number | null;
   signal: NodeJS.Signals | null;
   stdout: string;
   stderr: string;
 };
 
+const MAX_PROCESS_OUTPUT_BYTES = 10 * 1024 * 1024;
+
 function runProcess(
   file: string,
   args: readonly string[],
   env: NodeJS.ProcessEnv,
   owner: Pick<TestContext, "onTestFinished" | "signal">,
+  maxOutputBytes = MAX_PROCESS_OUTPUT_BYTES,
 ) {
   owner.signal.throwIfAborted();
   let stdout = "";
   let stderr = "";
+  let outputError: Error | undefined;
   const child = spawn(file, [...args], {
     detached: true,
     env,
     stdio: ["ignore", "pipe", "pipe"],
   });
   const finishController = new AbortController();
+  const append = (current: string, chunk: string, stream: string): string => {
+    const next = current + chunk;
+    const limitError =
+      !outputError && Buffer.byteLength(next, "utf8") > maxOutputBytes
+        ? new Error(`${stream} exceeded the process output limit`)
+        : undefined;
+    outputError ??= limitError;
+    void (limitError ? finishController.abort() : undefined);
+    return outputError ? current : next;
+  };
   const resultPromise = superviseChild(child, {
     killGraceMs: 0,
     onStderr: (chunk) => {
-      stderr += chunk;
+      stderr = append(stderr, chunk, "stderr");
     },
     onStdout: (chunk) => {
-      stdout += chunk;
+      stdout = append(stdout, chunk, "stdout");
     },
     signal: AbortSignal.any([owner.signal, finishController.signal]),
     timeoutMs: 10_000,
   }).then((result): RunProcessResult => ({
+    ...(result.spawnError || result.cleanupError || outputError
+      ? { error: result.spawnError ?? result.cleanupError ?? outputError }
+      : {}),
     signal: result.signal,
     status: result.signal
       ? null
-      : (result.exitCode ?? (result.spawnError || result.cleanupError ? -1 : null)),
+      : (result.exitCode ?? (result.spawnError || result.cleanupError || outputError ? -1 : null)),
     stderr,
     stdout,
   }));
@@ -104,7 +122,11 @@ async function runAuthorization(
   owner: Pick<TestContext, "onTestFinished" | "signal">,
   stepName: string,
   scenario: PermissionScenario,
-  options: { actor?: string; onFixtureCreated?: (fixture: string) => void; status?: string } = {},
+  options: {
+    actor?: string;
+    onFixtureCreated?: (fixture: string) => void;
+    status?: string;
+  } = {},
 ) {
   const fixture = mkdtempSync(join(tmpdir(), "nemoclaw-collaborator-permission-"));
   options.onFixtureCreated?.(fixture);
@@ -372,6 +394,45 @@ describe.concurrent.each(AUTHORIZATION_STEPS)(
         deadline.abort();
         await resultPromise;
       }
+    });
+
+    it.sequential("bounds child output, reaps its process group, and removes its fixture", async (context) => {
+      const fixture = mkdtempSync(join(tmpdir(), "nemoclaw-collaborator-output-"));
+      const processFile = join(fixture, "process");
+      let result: RunProcessResult | undefined;
+      let outputProcessPid = Number.NaN;
+      try {
+        result = await runProcess(
+          "bash",
+          [
+            "--noprofile",
+            "--norc",
+            "-c",
+            `printf '%s\\n' "$$" >"$PERMISSION_PROCESS_FILE"
+/usr/bin/head -c 65537 /dev/zero >&2
+exec /bin/sleep 60`,
+          ],
+          { ...process.env, PERMISSION_PROCESS_FILE: processFile },
+          context,
+          64 * 1024,
+        );
+        outputProcessPid = Number.parseInt(readFileSync(processFile, "utf8"), 10);
+      } finally {
+        rmSync(fixture, { force: true, recursive: true });
+      }
+      let outputProcessRunning = false;
+      try {
+        process.kill(outputProcessPid, 0);
+        outputProcessRunning = true;
+      } catch {
+        // The output-limited process is gone as required.
+      }
+
+      context.expect(result?.error?.message).toBe("stderr exceeded the process output limit");
+      context.expect(result?.status).toBeNull();
+      context.expect(result?.signal).toMatch(/^SIG(?:TERM|KILL)$/);
+      context.expect(outputProcessRunning).toBe(false);
+      context.expect(existsSync(fixture)).toBe(false);
     });
   },
 );
