@@ -349,9 +349,10 @@ beforeEach(() => {
 
   const healthyGatewayState = {
     state: "healthy_named",
-    status: "",
-    gatewayInfo: "",
     activeGateway: "nemoclaw",
+    diagnostic: "",
+    recoveryBlocked: false,
+    unavailable: false,
   } as const;
   vi.spyOn(gatewayRuntime, "recoverNamedGatewayRuntime").mockResolvedValue({
     recovered: true,

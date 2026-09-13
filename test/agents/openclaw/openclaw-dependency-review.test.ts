@@ -225,15 +225,10 @@ optional_plugin_block="$(sed -n '/# Install non-messaging OpenClaw plugins that 
 check_contains "$optional_plugin_block" '/scripts/lib/reviewed-npm-archive.mts' "optional plugin shared helper"
 check_contains "$optional_plugin_block" '--package-spec "$plugin_spec" --integrity "$expected_integrity"' "optional plugin reviewed identity"
 check_contains "$optional_plugin_block" '--tarball-url "$expected_tarball"' "optional plugin reviewed tarball"
-check_contains "$optional_plugin_block" '/scripts/lib/openclaw-npm-remediation.mts' "optional plugin remediation helper"
-  check_contains "$optional_plugin_block" '"@openclaw/diagnostics-otel@2026.9.1")' "diagnostics remediation identity"
-check_contains "$optional_plugin_block" '--working-directory "$plugin_work_root"' "diagnostics remediation workspace"
-check_contains "$optional_plugin_block" 'if (!value.remediated || typeof value.archivePath !== "string")' "diagnostics remediation result guard"
+check_not_contains "$optional_plugin_block" '/scripts/lib/openclaw-npm-remediation.mts' "optional plugin remediation helper"
 check_contains "$optional_plugin_block" 'plugin_source_root="$(dirname "$plugin_archive")"' "optional plugin source root"
-check_contains "$optional_plugin_block" 'plugin_work_root="$(mktemp -d /tmp/nemoclaw-openclaw-plugin.XXXXXX)"' "optional plugin writable workspace"
 check_contains "$optional_plugin_block" 'plugin_install_archive="$plugin_archive"' "optional plugin default archive"
 check_contains "$optional_plugin_block" 'openclaw plugins install "npm-pack:\${plugin_install_archive}"' "optional plugin npm-pack install"
-check_contains "$optional_plugin_block" 'rm -rf "$plugin_work_root"' "optional plugin workspace cleanup"
 check_contains "$optional_plugin_block" 'if [ -z "\${NEMOCLAW_REVIEWED_NPM_ARCHIVE_DIR:-}" ]; then rm -rf "$plugin_source_root"; fi' "optional plugin fallback source cleanup"
 check_not_contains "$optional_plugin_block" 'pack_reviewed_npm_tarball' "optional plugin inline pack helper"
 
@@ -259,9 +254,9 @@ check_not_contains "$optional_plugin_block" 'pack_reviewed_npm_tarball' "optiona
 		'@openclaw/diagnostics-otel@2026.6.10' \
 		'@openclaw/slack@2026.6.10' \
 		'@openclaw/msteams@2026.6.10' \
-		'@openclaw/diagnostics-otel@2026.9.1' \
-		'@openclaw/slack@2026.9.1' \
-		'@openclaw/msteams@2026.9.1'; do
+		'@openclaw/diagnostics-otel@2026.7.1' \
+		'@openclaw/slack@2026.7.1' \
+		'@openclaw/msteams@2026.7.1'; do
 		grep -Fq "$package_spec" "$remediation_helper"
 	done
 	grep -Fq 'validateArchiveMembers(archivePath' "$remediation_helper"

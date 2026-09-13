@@ -234,7 +234,7 @@ RUN test -f /usr/local/bin/nemoclaw-managed-bootstrap \
     && cmp -s /usr/local/lib/nemoclaw/dcode-launcher.sh /usr/local/lib/nemoclaw/dcode-managed-exec \
     && chmod -R a+rX /opt/nemoclaw-blueprint \
     && test "$(find /opt/nemoclaw-deepagents-profile-plugin -type f -print | LC_ALL=C sort)" = "$(printf '%s\n' '/opt/nemoclaw-deepagents-profile-plugin/pyproject.toml' '/opt/nemoclaw-deepagents-profile-plugin/src/nemoclaw_deepagents_profile/__init__.py')" \
-    && printf '%s  %s\n' '6bb8dc8108c5dd7e7f71c39aacfb0da07d285b7a324eecd691177a9ca460cfc0' '/opt/nemoclaw-deepagents-profile-plugin/src/nemoclaw_deepagents_profile/__init__.py' '7be3f7972d7cd78d3ddaf66e2ff8b07a5e6af3611034b956cf0475ba78f5a576' '/opt/nemoclaw-deepagents-profile-plugin/pyproject.toml' | sha256sum -c - \
+    && printf '%s  %s\n' '97eaed5781f9c7df4478c96263b0742fb545b322846fe0c73c39a3bfba4553a9' '/opt/nemoclaw-deepagents-profile-plugin/src/nemoclaw_deepagents_profile/__init__.py' '7be3f7972d7cd78d3ddaf66e2ff8b07a5e6af3611034b956cf0475ba78f5a576' '/opt/nemoclaw-deepagents-profile-plugin/pyproject.toml' | sha256sum -c - \
     && /opt/venv/bin/pip3 install --no-index --no-cache-dir --no-deps --no-build-isolation /opt/nemoclaw-deepagents-profile-plugin \
     && /opt/venv/bin/python3 -I -c 'import nemoclaw_deepagents_profile; print("NEMOCLAW_DCODE_PROFILE_" + "IMPORT_GATE", flush=True); import deepagents; import deepagents_code' \
     && /opt/venv/bin/pip3 check \
@@ -415,7 +415,7 @@ RUN set -eu; \
         "vim-tiny=2:9.2.0858-1" \
         "libssh2-1t64=1.11.1-1+deb13u1+nemoclaw2" \
         "libssl3t64=3.5.7-1~deb13u2" \
-        "nemoclaw-python3.13-htmlparser-fix=3.13.5-2+deb13u4+nemoclaw1" \
+        "nemoclaw-python3.13-htmlparser-fix=3.13.5-2+deb13u5+nemoclaw1" \
         "perl-base=5.44.0-1nemoclaw1" \
         "perl=5.44.0-1nemoclaw1" \
         | cmp -s - "$security_inventory"; \
@@ -427,7 +427,7 @@ RUN set -eu; \
     test "$(dpkg-query -W -f='${Version}' vim-tiny)" = "2:9.2.0858-1"; \
     test "$(dpkg-query -W -f='${Version}' libssh2-1t64)" = "1.11.1-1+deb13u1+nemoclaw2"; \
     test "$(dpkg-query -W -f='${Version}' libssl3t64)" = "3.5.7-1~deb13u2"; \
-    test "$(dpkg-query -W -f='${Version}' nemoclaw-python3.13-htmlparser-fix)" = "3.13.5-2+deb13u4+nemoclaw1"; \
+    test "$(dpkg-query -W -f='${Version}' nemoclaw-python3.13-htmlparser-fix)" = "3.13.5-2+deb13u5+nemoclaw1"; \
     test "$(dpkg-query -W -f='${Version}' perl-base)" = "5.44.0-1nemoclaw1"; \
     test "$(dpkg-query -W -f='${Version}' perl)" = "5.44.0-1nemoclaw1"; \
     test "$(perl -e 'print $^V')" = "v5.44.0"; \

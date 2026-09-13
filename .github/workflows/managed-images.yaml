@@ -192,6 +192,7 @@ jobs:
           staging_root="$GITHUB_WORKSPACE/staging-qa-base-source"
           for relative in \
             agents/langchain-deepagents-code/Dockerfile.base \
+            scripts/security/build-native-security-packages.sh \
             agents/langchain-deepagents-code/requirements.lock
           do
             source_file="$candidate_root/$relative"

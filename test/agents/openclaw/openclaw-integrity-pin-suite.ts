@@ -125,9 +125,7 @@ const PINNED_OPENCLAW_BRAVE_PLUGIN_INTEGRITY = requiredDockerArg(
 );
 const PINNED_OPENCLAW_BRAVE_PLUGIN_TARBALL =
   "https://registry.npmjs.org/@openclaw/brave-plugin/-/brave-plugin-2026.9.1.tgz";
-const PINNED_OPENCLAW_DISCORD_INTEGRITY = requiredMessagingPluginIntegrity("discord");
 const PINNED_OPENCLAW_SLACK_INTEGRITY = requiredMessagingPluginIntegrity("slack");
-const PINNED_OPENCLAW_WHATSAPP_INTEGRITY = requiredMessagingPluginIntegrity("whatsapp");
 const PINNED_OPENCLAW_MSTEAMS_INTEGRITY = requiredMessagingPluginIntegrity("teams");
 const PINNED_WECHAT_PLUGIN_INTEGRITY =
   "sha512-dPQbidUNWigC6V10vGW4i+GLH09x+6zUhafZRjuxkJ9GDu8o62WBsnUTojp4KqUH756hz+t2v9khiCRSi0dBDw==";

@@ -243,17 +243,15 @@ describe("locked OpenClaw production installation (#5896)", () => {
     {
       expected: "must use the reviewed registry",
       mutate: (lock: any) => {
-        lock.packages["node_modules/chalk"].resolved =
-          "https://packages.invalid/chalk-5.6.2.tgz";
+        lock.packages["node_modules/chalk"].resolved = "https://packages.invalid/chalk-5.6.2.tgz";
       },
       name: "malicious transitive registry substitution",
     },
     {
       expected: "conflicting package identity: safe-buffer@5.1.2",
       mutate: (lock: any) => {
-        lock.packages[
-          "node_modules/string_decoder/node_modules/safe-buffer"
-        ].integrity = `sha512-${"C".repeat(88)}`;
+        lock.packages["node_modules/string_decoder/node_modules/safe-buffer"].integrity =
+          `sha512-${"C".repeat(88)}`;
       },
       name: "conflicting duplicate package identity",
     },
