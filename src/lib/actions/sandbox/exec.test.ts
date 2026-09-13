@@ -327,7 +327,10 @@ it("dispatches under authority and completes outside the released lock context (
   const stateDir = path.join(home, "state");
   const lockOptions = { stateDir };
   const sandboxName = "launch-exec";
-  const ended = Promise.withResolvers<void>();
+  let endSession: () => void = () => {};
+  const ended = new Promise<void>((resolve) => {
+    endSession = resolve;
+  });
   const release = vi.fn();
   const cleanup = vi.fn(() =>
     withMcpLifecycleLockSync(
@@ -357,7 +360,7 @@ it("dispatches under authority and completes outside the released lock context (
                   expect(isMcpLifecycleLockHeld(sandboxName, stateDir)).toBe(true);
                   expect(fs.existsSync(portableHostFencePath(home))).toBe(true);
                   dispatched = true;
-                  await ended.promise;
+                  await ended;
                   return { outcome: { kind: "completed", exitCode: 0 }, release };
                 },
               },
@@ -393,12 +396,12 @@ it("dispatches under authority and completes outside the released lock context (
       ),
     );
     expect(contenderEntered).toBe(true);
-    ended.resolve();
+    endSession();
     await expect(finish()).rejects.toThrow("exit:0");
     expect(cleanup).toHaveBeenCalledOnce();
     expect(release).toHaveBeenCalledOnce();
   } finally {
-    ended.resolve();
+    endSession();
     fs.rmSync(home, { recursive: true, force: true });
   }
 });
