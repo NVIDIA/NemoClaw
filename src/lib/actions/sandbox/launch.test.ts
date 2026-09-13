@@ -1121,28 +1121,56 @@ describe("launchSandbox", () => {
     expect(mocks.startSandboxExec).toHaveBeenCalled();
   });
 
-  it("runs the complete preflight and interactive command when macOS evidence is unavailable (#8942)", async () => {
-    mocks.inspectLaunchReadiness.mockResolvedValue({
-      kind: "fallback",
-      category: "unsafe",
-      fence: null,
-      gatewayName: "nemoclaw",
-      gatewayPort: 8080,
-      fenceFailed: true,
-      recoveryBlocked: false,
-      authorityUnsupported: true,
-    });
+  it.each([
+    ["current", {}, 1],
+    ["missing generation", { lifecycleGeneration: undefined }, 0],
+    ["missing live identity", { lifecycleLiveIdentityFingerprint: undefined }, 0],
+    [
+      "missing both",
+      { lifecycleGeneration: undefined, lifecycleLiveIdentityFingerprint: undefined },
+      0,
+    ],
+  ])(
+    "checks %s cleanup identity when macOS evidence is unavailable (#8942, #11647)",
+    async (_label, identity, dispatchCount) => {
+      const agent = loadAgent("openclaw");
+      const entry = { ...sandboxEntry(agent.name), ...identity };
+      const before = structuredClone(entry);
+      mocks.inspectLaunchReadiness.mockResolvedValue({
+        kind: "fallback",
+        category: "unsafe",
+        fence: null,
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+        fenceFailed: true,
+        recoveryBlocked: false,
+        authorityUnsupported: true,
+      });
+      mocks.prepareInteractiveSession.mockResolvedValue({
+        agent,
+        sb: entry,
+        hermesPortable: false,
+      });
 
-    await expect(launchSandbox("alpha")).resolves.toBeUndefined();
-
-    expect(mocks.prepareInteractiveSession).toHaveBeenCalledOnce();
-    expect(mocks.publishLaunchReadiness).not.toHaveBeenCalled();
-    expect(mocks.withLaunchReadinessMutationGate).toHaveBeenCalledWith(
-      expect.objectContaining({ epochId: null }),
-      expect.any(Function),
-    );
-    expect(mocks.startSandboxExec).toHaveBeenCalledOnce();
-  });
+      const result = await launchSandbox("alpha", { getSandbox: () => entry }).catch(
+        (error: Error) => error.message,
+      );
+      expect(result).toEqual(
+        dispatchCount === 1
+          ? undefined
+          : expect.stringMatching(/lifecycle identity.*sandbox doctor.*onboarding/u),
+      );
+      expect(mocks.prepareInteractiveSession).toHaveBeenCalledOnce();
+      expect(mocks.publishLaunchReadiness).not.toHaveBeenCalled();
+      expect(mocks.withLaunchReadinessMutationGate).toHaveBeenCalledWith(
+        expect.objectContaining({ epochId: null }),
+        expect.any(Function),
+      );
+      expect(mocks.startSandboxExec).toHaveBeenCalledTimes(dispatchCount);
+      expect(mocks.startSandboxSession).not.toHaveBeenCalled();
+      expect(entry).toEqual(before);
+    },
+  );
 
   it("stops before the complete preflight when a prior launch-readiness epoch may remain acceptable (#8942)", async () => {
     mocks.inspectLaunchReadiness.mockResolvedValue({

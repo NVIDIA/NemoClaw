@@ -238,10 +238,18 @@ async function startAgentWithPortableAuthority(
 ): Promise<{ finish: () => Promise<void> }> {
   const lockSandbox = deps.withSandboxMutationLock ?? withSandboxMutationLock;
   const startOrdinaryAgent = async (): Promise<{ finish: () => Promise<void> }> => {
-    prepareHermesLightTerminalSkin(sandboxName, agent, process.env);
-    beforeAgentExec?.();
     const readSandbox = deps.getSandbox ?? getKnownSandboxTarget;
     const launchedEntry = structuredClone(readSandbox(sandboxName));
+    if (
+      launchedEntry?.agent === "openclaw" &&
+      (!launchedEntry.lifecycleGeneration || !launchedEntry.lifecycleLiveIdentityFingerprint)
+    ) {
+      throw new Error(
+        `Cannot safely clean up an interactive OpenClaw launch for sandbox '${sandboxName}' because its lifecycle identity is incomplete. Run the sandbox doctor to inspect the registration, then create a new sandbox through onboarding before launching.`,
+      );
+    }
+    prepareHermesLightTerminalSkin(sandboxName, agent, process.env);
+    beforeAgentExec?.();
     const finish = await startSandboxExec(
       sandboxName,
       command,
