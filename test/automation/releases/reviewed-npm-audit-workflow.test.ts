@@ -23,7 +23,10 @@ import {
   verifyMaterializedLockedGraph,
   verifySignaturesWithReviewedRetry,
 } from "../../../scripts/audit-reviewed-npm-graph.mts";
-import { verifyInstalledNpmLock } from "../../../scripts/lib/reviewed-npm-archive.mts";
+import {
+  verifyInstalledNpmLock,
+  verifyReviewedNpmLock,
+} from "../../../scripts/lib/reviewed-npm-archive.mts";
 import type { AuditPolicyResult } from "../../../scripts/lib/reviewed-npm-audit.mts";
 
 type WorkflowStep = {
@@ -502,6 +505,31 @@ describe("trusted npm audit workflow (#5896)", () => {
       }),
     );
   });
+
+  it.each(REVIEWED_AUDIT_CONFIG.lockedGraphs)(
+    "keeps the committed $id graph coherent with its referenced lock",
+    (graph) => {
+      const lockfilePath = path.join(REPO_ROOT, graph.directory, "package-lock.json");
+      expect(() =>
+        verifyReviewedNpmLock(
+          {
+            expectedIntegrity: graph.integrity,
+            expectedLockSha256: graph.lockSha256,
+            label: graph.label,
+            lockfilePath,
+            packageSpec: graph.packageSpec,
+            registryOrigin: REVIEWED_AUDIT_CONFIG.registryOrigin,
+            tarballUrl: graph.tarballUrl,
+          },
+          (args, request) =>
+            ({
+              "dist.integrity": request.expectedIntegrity,
+              "dist.tarball": request.tarballUrl,
+            })[args[2]!]!,
+        ),
+      ).not.toThrow();
+    },
+  );
 
   it("validates the exact checked-in WeChat runtime inputs", () => {
     expect(() =>

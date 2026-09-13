@@ -544,7 +544,7 @@ describe("LifecyclePhaseFixture gateway runtime restart helpers", () => {
     runner.enqueue(shellResult(1, "")); // expectHostRuntimeStopped pid probe
     runner.enqueue(shellResult(0, "")); // expectHostRuntimeStopped container probe
     runner.enqueue(shellResult(0)); // lifecycle-gateway-stopped true artifact
-    runner.enqueue(shellResult(0, "gateway recovered\n")); // built product gateway start
+    runner.enqueue(shellResult(0, "gateway started\n")); // start the registered gateway through its existing startup owner
     runner.enqueue(shellResult(0, "Connected to nemoclaw\n")); // waitForGatewayConnected
     const cleanup = new FakeCleanup();
     const host = new HostCliClient(runner);
@@ -552,7 +552,7 @@ describe("LifecyclePhaseFixture gateway runtime restart helpers", () => {
     const fx = new LifecyclePhaseFixture(host, sandbox, cleanup, new GatewayClient(host, sandbox));
 
     await expect(
-      fx.restartGatewayRuntime({ delayMs: 0, sandboxName: "e2e-survival" }),
+      fx.restartGatewayRuntime({ delayMs: 0, sandboxName: "e2e-x" }),
     ).resolves.toEqual({ kind: "pid", id: "12345" });
     await fx.waitForGatewayConnected({ attempts: 1, intervalMs: 1 });
 
@@ -566,9 +566,7 @@ describe("LifecyclePhaseFixture gateway runtime restart helpers", () => {
       expect.stringContaining("sh -lc pid_file="),
       "docker container ps --format {{.ID}}\t{{.Names}}",
       "true ",
-      expect.stringContaining(
-        `${process.execPath} -e "use strict";\nconst { startGatewayForRecovery }`,
-      ),
+      `${process.execPath} -e ${buildGatewayRuntimeStartScript()} e2e-x`,
       "openshell status",
     ]);
   });
@@ -745,16 +743,98 @@ describe("LifecyclePhaseFixture gateway runtime restart helpers", () => {
     ]);
   });
 
-  it("fails closed when the built NemoClaw product start path cannot recover the gateway", async () => {
+  it("reports a failed gateway restart before waiting for health", async () => {
     const runner = new FakeRunner();
+    runner.enqueue(shellResult(0)); // forward stop
+    runner.enqueue(shellResult(75)); // no selected user service
+    runner.enqueue(shellResult(0)); // gateway stop
+    runner.enqueue(shellResult(0)); // pid stop
+    runner.enqueue(shellResult(0, "")); // no gateway container
     runner.enqueue(shellResult(1, "gateway recovery failed"));
+    const fx = fixture(runner, new FakeCleanup());
+
+    await expect(fx.restartGatewayRuntime({ delayMs: 0, sandboxName: "e2e-x" })).rejects.toThrow(
+      /restart OpenShell gateway runtime/,
+    );
+    expect(runner.calls.at(-1)).toMatchObject({
+      command: process.execPath,
+      args: ["-e", buildGatewayRuntimeStartScript(), "e2e-x"],
+    });
+    expect(runner.calls).toHaveLength(6);
+  });
+
+  it.each([75, 1])(
+    "preserves the selected service for cleanup when restart exits %i",
+    async (exitCode) => {
+      const runner = new FakeRunner();
+      const cleanup = new FakeCleanup();
+      const fx = fixture(runner, cleanup);
+      runner.enqueue(shellResult(0)); // forward stop
+      runner.enqueue(shellResult(0, stoppedGatewayUserService));
+      runner.enqueue(shellResult(exitCode, "service restart failed"));
+
+      await expect(fx.restartGatewayRuntime({ delayMs: 0, sandboxName: "e2e-x" })).rejects.toThrow(
+        /user service.*(?:not available|restart failed)/,
+      );
+      expect(runner.calls).toHaveLength(3);
+      expect(runner.calls.at(-1)?.args.at(-1)).toBe("systemd:nemoclaw-openshell-gateway.service");
+      expect(cleanup.calls).toHaveLength(1);
+
+      runner.enqueue(shellResult(0));
+      await cleanup.calls[0]!.run();
+      expect(runner.calls.at(-1)?.args.at(-1)).toBe("systemd:nemoclaw-openshell-gateway.service");
+      expect(runner.calls).toHaveLength(4);
+      await cleanup.calls[0]!.run();
+      expect(runner.calls).toHaveLength(4);
+    },
+  );
+
+  it("rejects gateway recovery without a selected service or registered sandbox name", async () => {
+    const runner = new FakeRunner();
+    await expect(fixture(runner, new FakeCleanup()).startGatewayRuntime(null)).rejects.toThrow(
+      /registered sandbox name/,
+    );
+    expect(runner.calls).toHaveLength(0);
+  });
+
+  it.each([undefined, "", " "])(
+    "rejects missing restart identity before stopping any runtime: %s",
+    async (sandboxName) => {
+      const runner = new FakeRunner();
+      const cleanup = new FakeCleanup();
+      await expect(
+        fixture(runner, cleanup).restartGatewayRuntime({ sandboxName, delayMs: 0 }),
+      ).rejects.toThrow(/sandbox name or a required user service/);
+      expect(runner.calls).toHaveLength(0);
+      expect(cleanup.calls).toHaveLength(0);
+    },
+  );
+
+  it("requires the selected user service when the lifecycle requests it", async () => {
+    const runner = new FakeRunner();
+    const fx = fixture(runner, new FakeCleanup());
+
+    await expect(fx.startGatewayRuntime(null, { requireUserService: true })).rejects.toThrow(
+      /user service is not available/,
+    );
+    expect(runner.calls).toHaveLength(0);
+  });
+
+  it("starts the registered gateway through its startup owner when no service was stopped", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue(shellResult(0, "gateway started\n"));
 
     await expect(
-      fixture(runner, new FakeCleanup()).startGatewayRuntime({
-        kind: "pid",
-        id: "12345",
+      fixture(runner, new FakeCleanup()).startGatewayRuntime(null, { sandboxName: "e2e-x" }),
+    ).resolves.toMatchObject({
+      exitCode: 0,
+    });
+    expect(runner.calls).toEqual([
+      expect.objectContaining({
+        command: process.execPath,
+        args: ["-e", buildGatewayRuntimeStartScript(), "e2e-x"],
       }),
-    ).rejects.toThrow(/recover stopped pid gateway.*gateway recovery failed/i);
+    ]);
   });
 });
 
