@@ -49,7 +49,6 @@ type LockedGraph = LockedGraphIdentity &
     installMode?: "legacy-peer-deps";
     lockSha256: string;
     replacement?: LockedGraphIdentity;
-    replacementLockSha256?: string;
     severityThreshold?: Severity;
     signatureAudit?: "retry-download-failures";
   }>;
@@ -273,11 +272,6 @@ export function parseAuditConfig(contents: string): AuditConfig {
           (graph.installMode !== undefined ||
             graph.severityThreshold !== undefined ||
             graph.signatureAudit !== undefined)) ||
-        (graph.replacementLockSha256 !== undefined &&
-          (typeof graph.replacementLockSha256 !== "string" ||
-            !/^[0-9a-f]{64}$/.test(graph.replacementLockSha256) ||
-            graph.replacementLockSha256 === graph.lockSha256 ||
-            graph.replacement !== undefined)) ||
         (graph.replacement !== undefined &&
           (!isLockedGraphIdentity(graph.replacement) ||
             exactPackageName(graph.replacement.packageSpec) !==
@@ -452,7 +446,7 @@ export function selectReviewedLockedGraphIdentity(
   graph: LockedGraph,
 ): LockedGraphIdentity {
   const actual = createHash("sha256").update(fs.readFileSync(lockfilePath)).digest("hex");
-  if (actual === graph.lockSha256 || actual === graph.replacementLockSha256) {
+  if (actual === graph.lockSha256) {
     return {
       integrity: graph.integrity,
       label: graph.label,
@@ -462,11 +456,9 @@ export function selectReviewedLockedGraphIdentity(
     };
   }
   if (actual === graph.replacement?.lockSha256) return graph.replacement;
-  const reviewedDigests = [
-    graph.lockSha256,
-    graph.replacementLockSha256,
-    graph.replacement?.lockSha256,
-  ].filter((digest): digest is string => digest !== undefined);
+  const reviewedDigests = [graph.lockSha256, graph.replacement?.lockSha256].filter(
+    (digest): digest is string => digest !== undefined,
+  );
   throw new Error(
     `${graph.label} lock SHA-256 mismatch\nExpected one of: ${reviewedDigests.join(", ")}\nActual:          ${actual}`,
   );
@@ -489,23 +481,6 @@ export function verifyMaterializedLockedGraph({
     lockfilePath,
     omitDev: true,
   });
-}
-
-export function selectReviewedLockSha256(
-  lockfilePath: string,
-  lockSha256: string,
-  replacementLockSha256: string | undefined,
-  label: string,
-): string {
-  const actual = createHash("sha256").update(fs.readFileSync(lockfilePath)).digest("hex");
-  const reviewedDigests =
-    replacementLockSha256 === undefined ? [lockSha256] : [lockSha256, replacementLockSha256];
-  if (!reviewedDigests.includes(actual)) {
-    throw new Error(
-      `${label} lock SHA-256 mismatch\nExpected one of: ${reviewedDigests.join(", ")}\nActual:          ${actual}`,
-    );
-  }
-  return actual;
 }
 
 function readJsonObject(file: string, label: string): Record<string, any> {
