@@ -1,7 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 
 import type { AgentDefinition } from "../../agent/defs";
 import * as agentDefinitions from "../../agent/defs";
@@ -1287,13 +1291,25 @@ describe("launchSandbox", () => {
   });
 
   it.each([
-    { replacement: "unchanged", cleanupCount: 1 },
-    { replacement: "metadata", cleanupCount: 1 },
-    { replacement: "recreated", cleanupCount: 0 },
-    { replacement: "removed", cleanupCount: 0 },
+    { replacement: "unchanged", cleanupCount: 1, stateFile: "unrelated.json", error: "exit:0" },
+    { replacement: "metadata", cleanupCount: 1, stateFile: "unrelated.json", error: "exit:0" },
+    { replacement: "recreated", cleanupCount: 0, stateFile: "unrelated.json", error: "exit:0" },
+    { replacement: "removed", cleanupCount: 0, stateFile: "unrelated.json", error: "exit:0" },
+    {
+      replacement: "legacy-recovery",
+      cleanupCount: 0,
+      stateFile: "shields-timer-alpha.json",
+      error: /recovery artifacts from the removed Shields/u,
+    },
   ])(
     "binds completion cleanup to the launched sandbox ($replacement)",
-    async ({ replacement, cleanupCount }) => {
+    async ({ replacement, cleanupCount, stateFile, error }) => {
+      const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-launch-cleanup-"));
+      onTestFinished(() => fs.rmSync(stateDir, { recursive: true, force: true }));
+      vi.stubEnv("HOME", stateDir);
+      vi.stubEnv("NEMOCLAW_TEST_BASE_HOME", stateDir);
+      vi.stubEnv("NEMOCLAW_TEST_STATE_DIR", stateDir);
+      const statePath = path.join(stateDir, stateFile);
       const { startSandboxExec } = await vi.importActual<typeof import("./exec")>("./exec");
       const agent = loadAgent("openclaw");
       let current: SandboxEntry | null = sandboxEntry(agent.name);
@@ -1335,9 +1351,10 @@ describe("launchSandbox", () => {
         getSandbox: () => current,
         withSandboxMutationLock: lock,
       });
-      const completion = expect(launch).rejects.toThrow("exit:0");
+      const completion = expect(launch).rejects.toThrow(error);
       await childStarted.promise;
       await lock("alpha", () => {
+        fs.writeFileSync(statePath, "recorded state\n");
         current =
           replacement === "removed"
             ? null
@@ -1355,6 +1372,7 @@ describe("launchSandbox", () => {
       await completion;
       expect(cleanup).toHaveBeenCalledTimes(cleanupCount);
       expect(release).toHaveBeenCalledOnce();
+      expect(fs.readFileSync(statePath, "utf8")).toBe("recorded state\n");
       expect(events).toEqual(
         cleanupCount === 1
           ? ["sandbox:acquired", "cleanup", "sandbox:released"]

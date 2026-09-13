@@ -249,6 +249,7 @@ async function startAgentWithPortableAuthority(
       {
         withCleanupAuthority: (cleanup) =>
           lockSandbox(sandboxName, () => {
+            enforceRemovedImmutabilityMigrationBoundary(sandboxName);
             const current = readSandbox(sandboxName);
             if (
               !launchedEntry ||
