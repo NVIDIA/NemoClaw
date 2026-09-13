@@ -387,5 +387,24 @@ exec /bin/sleep 60`,
       context.expect(result?.signal).toMatch(/^SIG(?:TERM|KILL)$/);
       context.expect(outputProcessRunning).toBe(false);
     });
+
+    it.sequential("reports oversized output as failure after a zero exit", async (context) => {
+      const result = await runProcess(
+        "bash",
+        [
+          "--noprofile",
+          "--norc",
+          "-c",
+          "(sleep 0.05; /usr/bin/head -c 2048 /dev/zero >&2) & exit 0",
+        ],
+        process.env,
+        context,
+        1024,
+      );
+
+      context.expect(result.error?.message).toBe("stderr exceeded the process output limit");
+      context.expect(result.status).toBe(-1);
+      context.expect(result.signal).toBeNull();
+    });
   },
 );

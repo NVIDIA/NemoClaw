@@ -11,6 +11,7 @@ export type SupervisedProcessOwner = Pick<TestContext, "onTestFinished" | "signa
 export interface RunSupervisedProcessOptions {
   cwd?: string;
   env?: NodeJS.ProcessEnv;
+  killGraceMs?: number;
   maxOutputBytesPerStream: number;
   owner?: SupervisedProcessOwner;
   timeoutMs: number;
@@ -56,7 +57,7 @@ export function runSupervisedProcess(
     ? AbortSignal.any([options.owner.signal, finishController.signal])
     : finishController.signal;
   const resultPromise = superviseChild(child, {
-    killGraceMs: 0,
+    killGraceMs: options.killGraceMs ?? 100,
     onStderr: (chunk) => {
       stderr = append(stderr, chunk, "stderr");
     },
@@ -70,7 +71,7 @@ export function runSupervisedProcess(
     return {
       ...(error ? { error } : {}),
       signal: result.signal,
-      status: result.signal ? null : (result.exitCode ?? (error ? -1 : null)),
+      status: result.signal ? null : error ? -1 : result.exitCode,
       stderr,
       stdout,
       timedOut: result.timedOut,
