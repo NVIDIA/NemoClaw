@@ -30,66 +30,8 @@ type SdkPackageWorkflow = Readonly<{
   permissions?: Readonly<Record<string, string>>;
 }>;
 
-type InstallerHashAction = CompositeAction & {
-  inputs?: Record<string, { required?: boolean }>;
-};
-
-type CodebaseGrowthGuardrailsWorkflow = {
-  jobs: Record<string, WorkflowJob>;
-};
-
-type PrekConfig = {
-  default_stages?: string[];
-  repos: Array<{
-    hooks?: Array<{
-      id: string;
-      always_run?: boolean;
-      entry?: string;
-      files?: string;
-      stages?: string[];
-    }>;
-  }>;
-};
-
-type PackageJson = {
-  scripts: Record<string, string>;
-};
-
-type TypeScriptConfig = {
-  include: string[];
-};
-
-const sharedActionPaths = {
-  staticChecks: "./.github/actions/ci-static-checks",
-  compileArtifacts: "./.github/actions/ci-compile-artifacts",
-  buildTypecheck: "./.github/actions/ci-build-typecheck",
-  cliCoverageShard: "./.github/actions/ci-cli-coverage-shard",
-  cliCoverageMerge: "./.github/actions/ci-cli-coverage-merge",
-  pluginCoverage: "./.github/actions/ci-plugin-coverage",
-  installerIntegration: "./.github/actions/ci-installer-integration",
-} as const;
-
-const trustedPrActionPaths = {
-  staticChecks: "./.trusted-ci-actions/.github/actions/ci-static-checks",
-  compileArtifacts: "./.trusted-ci-actions/.github/actions/ci-compile-artifacts",
-  buildTypecheck: "./.trusted-ci-actions/.github/actions/ci-build-typecheck",
-  cliCoverageShard: "./.trusted-ci-actions/.github/actions/ci-cli-coverage-shard",
-  cliCoverageMerge: "./.trusted-ci-actions/.github/actions/ci-cli-coverage-merge",
-  pluginCoverage: "./.trusted-ci-actions/.github/actions/ci-plugin-coverage",
-  installerIntegration: "./.trusted-ci-actions/.github/actions/ci-installer-integration",
-} as const;
-
 const trustedCheckoutAction = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1";
 const trustedSetupNodeAction = "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020";
-const trustedActionDirs = [
-  ".github/actions/ci-static-checks",
-  ".github/actions/ci-build-typecheck",
-  ".github/actions/ci-compile-artifacts",
-  ".github/actions/ci-cli-coverage-shard",
-  ".github/actions/ci-cli-coverage-merge",
-  ".github/actions/ci-plugin-coverage",
-  ".github/actions/ci-installer-integration",
-] as const;
 
 const cliShardCount = "12";
 const cliShardTimeoutMinutes = 30;
@@ -119,28 +61,12 @@ function requiredStep(action: CompositeAction, stepName: string): WorkflowStep {
   return step;
 }
 
-function requiredStepIndex(action: CompositeAction, stepName: string): number {
-  const stepIndex = action.runs.steps.findIndex((candidate) => candidate.name === stepName);
-  if (stepIndex === -1) {
-    throw new Error(`Missing shared action step: ${stepName}`);
-  }
-  return stepIndex;
-}
-
 function requiredWorkflowStep(job: WorkflowJob, stepName: string): WorkflowStep {
   const step = job.steps?.find((candidate) => candidate.name === stepName);
   if (!step) {
     throw new Error(`Missing workflow step: ${stepName}`);
   }
   return step;
-}
-
-function requiredWorkflowStepIndex(job: WorkflowJob, stepName: string): number {
-  const stepIndex = job.steps?.findIndex((candidate) => candidate.name === stepName) ?? -1;
-  if (stepIndex === -1) {
-    throw new Error(`Missing workflow step: ${stepName}`);
-  }
-  return stepIndex;
 }
 
 function runWorkflowShellStep(
@@ -322,90 +248,6 @@ function runWorkflowShellStepWithJobs(
   }
 }
 
-type LoggedPackageScript = {
-  calls: string[][];
-  stderr: string;
-};
-
-function runLoggedPackageScriptWithOutput(script: string): LoggedPackageScript {
-  const temp = mkdtempSync(join(tmpdir(), "nemoclaw-package-script-"));
-  const fakeBin = join(temp, "bin");
-  const commandLog = join(temp, "commands.jsonl");
-  mkdirSync(fakeBin);
-
-  for (const command of ["npm", "npx", "tsx", "vitest"]) {
-    writeFileSync(
-      join(fakeBin, command),
-      [
-        "#!/usr/bin/env node",
-        'const fs = require("node:fs");',
-        `fs.appendFileSync(process.env.COMMAND_LOG, JSON.stringify(["${command}", ...process.argv.slice(2)]) + "\\n");`,
-      ].join("\n"),
-      { mode: 0o755 },
-    );
-  }
-
-  try {
-    const result = spawnSync("sh", ["-c", script], {
-      encoding: "utf8",
-      env: {
-        ...process.env,
-        COMMAND_LOG: commandLog,
-        PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
-      },
-    });
-    expect(result.status, `Package script failed: ${result.stderr}`).toBe(0);
-    return {
-      calls: readFileSync(commandLog, "utf8")
-        .trim()
-        .split("\n")
-        .filter(Boolean)
-        .map((line) => JSON.parse(line) as string[]),
-      stderr: result.stderr,
-    };
-  } finally {
-    rmSync(temp, { force: true, recursive: true });
-  }
-}
-
-function runLoggedPackageScript(script: string): string[][] {
-  return runLoggedPackageScriptWithOutput(script).calls;
-}
-
-function codeFilterMatchesChangedPaths(workflow: CiWorkflow, paths: string[]): boolean {
-  const filterStep = workflow.jobs.changes.steps?.find((step) => step.id === "filter");
-  const quantifier = filterStep?.with?.["predicate-quantifier"];
-  const filters = String(filterStep?.with?.filters ?? "");
-  const patterns = filters
-    .split("\n")
-    .map((line) => line.trim())
-    .filter((line) => line.startsWith("- "))
-    .map((line) => line.slice(2).replace(/^['"]|['"]$/g, ""));
-
-  const patternMatches = (path: string, pattern: string): boolean => {
-    switch (pattern) {
-      case "**":
-        return true;
-      case "!**/*.md":
-        return !path.endsWith(".md");
-      case "!docs/**":
-        return !path.startsWith("docs/");
-      default:
-        throw new Error(`Unhandled PR workflow code filter pattern: ${pattern}`);
-    }
-  };
-
-  return paths.some((path) => {
-    if (quantifier === "every") {
-      return patterns.every((pattern) => patternMatches(path, pattern));
-    }
-    if (quantifier === "some") {
-      return patterns.some((pattern) => patternMatches(path, pattern));
-    }
-    throw new Error(`Unhandled PR workflow predicate quantifier: ${String(quantifier)}`);
-  });
-}
-
 function installerHashTrustViolations(workflow: CiWorkflow): string[] {
   const steps = workflow.jobs["check-hash"]?.steps ?? [];
   const baseCheckout = steps.find(
@@ -449,7 +291,7 @@ function installerHashTrustViolations(workflow: CiWorkflow): string[] {
 describe("pull request and main workflow contracts", () => {
   const prWorkflow = readYaml<CiWorkflow>(".github/workflows/pr.yaml");
   const mainWorkflow = readYaml<CiWorkflow>(".github/workflows/main.yaml");
-  const dcoWorkflow = readYaml<CiWorkflow>(".github/workflows/dco-check.yaml");
+
   const installerHashWorkflow = readYaml<CiWorkflow>(".github/workflows/installer-hash-check.yaml");
   const advisorWorkflow = readYaml<CiWorkflow>(".github/workflows/pr-review-advisor.yaml");
   const sdkPackageWorkflow = readYaml<SdkPackageWorkflow>(
@@ -461,14 +303,6 @@ describe("pull request and main workflow contracts", () => {
   >;
   const sdkPackageJob = sdkPackageWorkflow.jobs["package-openshell-sdk"];
 
-  const installerHashAction = readYaml<InstallerHashAction>(
-    ".github/actions/ci-installer-hash-check/action.yaml",
-  );
-  const prekConfig = readYaml<PrekConfig>(".pre-commit-config.yaml");
-  const packageJson = JSON.parse(readFileSync("package.json", "utf8")) as PackageJson;
-  const cliTypeScriptConfig = JSON.parse(
-    readFileSync("tsconfig.cli.json", "utf8"),
-  ) as TypeScriptConfig;
   const sharedActions = {
     staticChecks: readYaml<CompositeAction>(".github/actions/ci-static-checks/action.yaml"),
     compileArtifacts: readYaml<CompositeAction>(".github/actions/ci-compile-artifacts/action.yaml"),
@@ -1117,6 +951,16 @@ describe("pull request and main workflow contracts", () => {
     } finally {
       rmSync(temp, { force: true, recursive: true });
     }
+  });
+
+  // source-shape-contract: compatibility -- The coverage merge must consume the current attempt instead of a stale failed shard report
+  it("replaces stale CLI shard reports when a failed job is rerun", () => {
+    const upload = requiredStep(sharedActions.cliCoverageShard, "Upload CLI shard blob report");
+
+    expect(upload.with).toMatchObject({
+      name: "cli-blob-report-${{ inputs.shard }}",
+      overwrite: true,
+    });
   });
 
   it.each([

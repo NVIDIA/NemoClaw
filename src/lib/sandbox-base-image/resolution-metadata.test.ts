@@ -204,7 +204,10 @@ describe("sandbox base-image resolution metadata lifecycle", () => {
         KEY,
       ),
     ).toBeNull();
-    expect(validateImage).toHaveBeenCalledWith(REF);
+    expect(validateImage).toHaveBeenCalledWith(REF, {
+      source: metadata.source,
+      ...(metadata.pinnedRemoteRef ? { pinnedRemoteRef: metadata.pinnedRemoteRef } : {}),
+    });
     expect(mocks.addTraceEvent).toHaveBeenCalledWith("nemoclaw.sandbox_base_image.cache_stale", {
       reason: "custom_validation_failed",
     });

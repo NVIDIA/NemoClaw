@@ -88,7 +88,6 @@ import { preflightVllmModelEnvOrExit } from "./connect-vllm-preflight";
 import { isDockerRuntimeDown, printDockerRuntimeDownGuidance } from "./gateway-failure-classifier";
 import {
   ensureLiveSandboxOrExit,
-  assertHermesPortableLifecycleForConnect,
   buildHermesPortableCommandAuthority,
   defaultPortableDemoStateDir,
   type HermesPortableActiveLifecycleAuthority,
@@ -401,7 +400,7 @@ async function runSandboxConnectProbe(
         probeTiming?.markFailureStage("forward");
         failHermesPortableForwardRecovery(sandboxName, "authority-drift");
       }
-      recoverHermesPortableForwardsForConnectProbeOrExit(
+      await recoverHermesPortableForwardsForConnectProbeOrExit(
         sandboxName,
         authority,
         probeTiming,
@@ -586,7 +585,7 @@ function describeHermesPortableForwardRecoveryFailure(
     case "forward-settlement-timed-out":
       return "The required recorded host forwards did not become healthy before the recovery deadline. Inspect the recorded forward state before retrying.";
     case "forward-mutation-failed":
-      return `NemoClaw could not confirm that OpenShell forward ${context.operation} completed for recorded host port ${String(context.port)}. Inspect the recorded forward state before retrying.`;
+      return `NemoClaw could not confirm that OpenShell forward ${context.operation} completed for recorded host port ${String(context.port)}.${context.startupFailure ? ` Startup failure: ${context.startupFailure}.` : ""} Inspect the recorded forward state before retrying.`;
   }
   switch (failure) {
     case "forward-occupied":
@@ -827,14 +826,14 @@ function verifyHermesPortableForwardsForConnectProbe(
   return verifyHermesPortableLaunchForwards(hermesPortableForwardInputForConnectProbe(input));
 }
 
-function recoverHermesPortableForwardsForConnectProbeOrExit(
+async function recoverHermesPortableForwardsForConnectProbeOrExit(
   sandboxName: string,
   authority: HermesPortableActiveLifecycleAuthority,
   probeTiming?: ProbeTimingRecorder,
   commandAuthority?: ReturnType<typeof qualifyHermesPortableOperatingCommandAuthority>,
-): void {
+): Promise<void> {
   try {
-    const prepared = prepareHermesPortableForwardsForConnectProbeMeasured(
+    const prepared = await prepareHermesPortableForwardsForConnectProbeMeasured(
       sandboxName,
       authority,
       probeTiming,
@@ -851,7 +850,7 @@ function recoverHermesPortableForwardsForConnectProbeOrExit(
   }
 }
 
-function prepareHermesPortableForwardsForConnectProbeMeasured(
+async function prepareHermesPortableForwardsForConnectProbeMeasured(
   sandboxName: string,
   authority: HermesPortableActiveLifecycleAuthority,
   probeTiming?: ProbeTimingRecorder,
@@ -866,7 +865,7 @@ function prepareHermesPortableForwardsForConnectProbeMeasured(
         readRegistry: registry.getSandbox,
         ...(commandAuthority ? { commandAuthority } : {}),
       });
-    return probeTiming ? probeTiming.measure("forward", prepare) : prepare();
+    return await (probeTiming ? probeTiming.measureAsync("forward", prepare) : prepare());
   } catch (error) {
     probeTiming?.setForwardAction("failed");
     probeTiming?.markFailureStage("forward");
@@ -1092,8 +1091,8 @@ async function verifyOrRecoverHermesPortableInferenceRouteForProbeOnlyOrExit(
         }
         return verified;
       },
-      prepareProbeDependency: () => {
-        preparedForwards = prepareHermesPortableForwardsForConnectProbeMeasured(
+      prepareProbeDependency: async () => {
+        preparedForwards = await prepareHermesPortableForwardsForConnectProbeMeasured(
           sandboxName,
           authority,
           options.probeTiming,
@@ -2331,7 +2330,7 @@ export async function prepareInteractiveSession(sandboxName: string): Promise<{
           undefined,
           portableAgentLifecycleAuthorityDeps(),
         );
-        recoverHermesPortableForwardsForConnectProbeOrExit(sandboxName, authority);
+        await recoverHermesPortableForwardsForConnectProbeOrExit(sandboxName, authority);
       }
       if (!hermesPortable && !(await settlePortablePairingOrExit(sandboxName))) {
         completeInteractiveSessionSetup(sandboxName, sb);
@@ -2615,7 +2614,7 @@ async function prepareConnectSandboxWithinLifecycleFence(
             probeTiming!.markFailureStage("authority");
             failHermesPortableReadinessAuthority(sandboxName);
           }
-          recoverHermesPortableForwardsForConnectProbeOrExit(
+          await recoverHermesPortableForwardsForConnectProbeOrExit(
             sandboxName,
             activeAuthority,
             probeTiming,

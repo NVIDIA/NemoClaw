@@ -1073,11 +1073,16 @@ describe("post-merge documentation runner", () => {
       },
     });
     expect(state.createArgs).not.toContain("--upload");
+    expect(state.createArgs).not.toContain("--");
     const policyIndex = state.createArgs.indexOf("--policy");
     expect(state.createArgs[policyIndex + 1]).toBe(
       path.join(input.env.TRUSTED_CHECKOUT, "tools/post-merge-docs/review-policy.yaml"),
     );
-    expect(state.createArgs.slice(-6)).toEqual([
+    expect(state.bootstrapArgs).toEqual([
+      "sandbox",
+      "exec",
+      "--name",
+      "docs-review",
       "--",
       "/usr/bin/git",
       "--git-dir=/sandbox/repo/.git",

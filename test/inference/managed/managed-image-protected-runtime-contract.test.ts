@@ -37,6 +37,7 @@ import {
   removeManagedImageGatewayStateIfSafe,
   resolveManagedImageOnboardModule,
 } from "../../../scripts/checks/run-managed-image-openshell-e2e.ts";
+import { validateManagedStartupProfile } from "../../../src/lib/onboard/managed-startup/profile.ts";
 import { resolveOnboardManagedBootstrapLaunch } from "../../../src/lib/onboard/managed-workload/onboard-orchestration.js";
 import type { RuntimeProviderBundle } from "../../../src/lib/onboard/runtime-provider/contract.ts";
 
@@ -618,8 +619,16 @@ describe("protected managed-image runtime contract", () => {
     expect(result.status).toBe(1);
   });
 
-  it("rewrites only the inference route while preserving the managed agent profile", () => {
-    const profile = managedStartupE2eProfile("hermes", false, true, true);
+  it.each([
+    ["openclaw", false],
+    ["openclaw", true],
+    ["hermes", false],
+    ["hermes", true],
+  ] as const)("supplies a valid local route for %s with providerless=%s", (agent, providerless) => {
+    const original = managedStartupE2eProfile(agent, false, true, true);
+    const profile = providerless
+      ? validateManagedStartupProfile({ ...original, inference: null })
+      : original;
     const route = resolveManagedImageLocalInferenceRoute("nim");
     const rewritten = withManagedImageLocalInferenceProfile(
       profile,
@@ -627,8 +636,9 @@ describe("protected managed-image runtime contract", () => {
       "nvidia/nemotron-3-nano",
     );
 
-    expect(rewritten).toMatchObject({
-      agent: "hermes",
+    expect(validateManagedStartupProfile(rewritten)).toEqual(rewritten);
+    expect(rewritten).toEqual({
+      ...profile,
       inference: {
         api: "openai-completions",
         model: "nvidia/nemotron-3-nano",
@@ -636,9 +646,16 @@ describe("protected managed-image runtime contract", () => {
         routeProvider: "inference",
         upstreamEndpointUrl: null,
         upstreamProvider: "vllm-local",
+        primaryModelRef: agent === "openclaw" ? "inference/nvidia/nemotron-3-nano" : null,
+        compatibility: profile.inference?.compatibility ?? (agent === "openclaw" ? {} : null),
+        inputModalities:
+          profile.inference?.inputModalities ?? (agent === "openclaw" ? ["text"] : null),
       },
     });
-    expect(rewritten.agentConfig).toEqual(profile.agentConfig);
+    expect(profile.inference).toEqual(providerless ? null : original.inference);
+    expect(() =>
+      validateManagedStartupProfile(withManagedImageLocalInferenceProfile(profile, route, "")),
+    ).toThrow();
   });
 
   it("rejects mutable images and incomplete GPU provider tuples", () => {

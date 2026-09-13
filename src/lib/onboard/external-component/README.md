@@ -29,6 +29,14 @@ Both agents use the same preparation, externally supplied policy, identity proof
 Each agent retains its managed image, configuration generator, and startup integration.
 Providerless onboarding does not create an ordinary inference provider; the agent still requires a managed inference route.
 This path does not add a requirement to configure that route before sandbox creation.
+The internal startup profile stores absent inference as `null` for these two agents.
+The image and startup generators omit inference configuration until a model is selected.
+Agent plugins, managed restrictions, and startup services retain their existing behavior.
+After the managed inference provider exists, `nemoclaw inference set` supplies the real provider and model.
+That command updates the OpenShell route, agent configuration, configuration hash, and agent services.
+Hermes dashboard startup accepts absent routing and later copies the configured managed route.
+A partial route or unexpected credential still fails validation.
+Activation alone does not establish inference readiness. Verify the route, agent configuration, and a successful inference request.
 Verify agent startup and inference after activation with real OpenShell before claiming live qualification.
 Failed or ambiguous activation retains incomplete state and does not retry.
 
@@ -142,6 +150,8 @@ NemoClaw does not install or supervise those services.
 `connections.test.ts` covers declaration restrictions, trust files, generated configuration, network reuse, and preparation.
 Existing activation and gateway-handler tests cover bounded transport, incomplete activation, and unchanged v1 behavior.
 The creation and finalization tests share an OpenClaw/Hermes matrix for image identity, startup configuration, policy proof, and activation failures.
+`test/generation/providerless-agent-config.test.ts` exercises both patched Dockerfiles and real configuration generators.
+It covers absent inference, ordinary provider-backed configuration, later managed inference updates, and failed updates.
 Real OpenShell registration, policy and profile delivery, sandbox identity, and middleware outcomes require live evidence.
 Record exact NemoClaw and OpenShell revisions and both agents’ results separately. Mocked results do not qualify the integration.
 
