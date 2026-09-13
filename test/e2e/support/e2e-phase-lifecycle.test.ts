@@ -527,7 +527,7 @@ describe("LifecyclePhaseFixture rebuild helpers", () => {
 });
 
 describe("LifecyclePhaseFixture gateway runtime restart helpers", () => {
-  it("falls back to PID/container controls when the selected user service is inactive (#10947)", async () => {
+  it("restores a PID gateway before sandbox recovery when the user service is inactive (#11640)", async () => {
     const runner = new FakeRunner();
     runner.enqueue(shellResult(0, "12345\n")); // resolveHostRuntime pid probe
     runner.enqueue(shellResult(0)); // forward stop
@@ -545,10 +545,9 @@ describe("LifecyclePhaseFixture gateway runtime restart helpers", () => {
     const sandbox = new SandboxClient(runner);
     const fx = new LifecyclePhaseFixture(host, sandbox, cleanup, new GatewayClient(host, sandbox));
 
-    await expect(fx.restartGatewayRuntime({ delayMs: 0 })).resolves.toEqual({
-      kind: "pid",
-      id: "12345",
-    });
+    await expect(
+      fx.restartGatewayRuntime({ delayMs: 0, sandboxName: "e2e-survival" }),
+    ).resolves.toEqual({ kind: "pid", id: "12345" });
     await fx.waitForGatewayConnected({ attempts: 1, intervalMs: 1 });
 
     expect(runner.calls.map((call) => `${call.command} ${call.args.join(" ")}`)).toEqual([
@@ -679,22 +678,39 @@ describe("LifecyclePhaseFixture gateway runtime restart helpers", () => {
     expect(runner.calls).toHaveLength(2);
   });
 
-  it("can recover a PID runtime through sandbox-specific status", async () => {
+  it("restores a container runtime through sandbox-specific status", async () => {
     const runner = new FakeRunner();
     runner.enqueue(shellResult(0, "status recovered\n"));
     const cleanup = new FakeCleanup();
 
     await expect(
       fixture(runner, cleanup).startGatewayRuntime(
-        { kind: "pid", id: "12345" },
-        {
-          sandboxName: "e2e-survival",
-        },
+        { kind: "container", id: "container-1" },
+        { sandboxName: "e2e-survival" },
       ),
     ).resolves.toMatchObject({ exitCode: 0 });
 
     expect(runner.calls.map((call) => `${call.command} ${call.args.join(" ")}`)).toEqual([
       "nemoclaw e2e-survival status",
+    ]);
+  });
+
+  it("restarts the stopped user service before a PID or sandbox status fallback", async () => {
+    const runner = new FakeRunner();
+    const cleanup = new FakeCleanup();
+    const fx = fixture(runner, cleanup);
+    runner.enqueue(shellResult(0)); // forward stop
+    runner.enqueue(shellResult(0, stoppedGatewayUserService)); // user service stop
+
+    await fx.stopGatewayRuntime();
+
+    runner.enqueue(shellResult(0)); // selected user service restart
+    await fx.startGatewayRuntime({ kind: "pid", id: "12345" }, { sandboxName: "e2e-survival" });
+
+    expect(runner.calls.map((call) => call.options?.artifactName)).toEqual([
+      "lifecycle-gateway-forward-stop",
+      "lifecycle-gateway-user-service-stop",
+      "lifecycle-gateway-user-service-restart",
     ]);
   });
 });

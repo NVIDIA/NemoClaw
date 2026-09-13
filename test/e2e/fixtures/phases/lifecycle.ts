@@ -734,27 +734,20 @@ export class LifecyclePhaseFixture {
     previousRuntime: HostGatewayRuntime | null,
     options: { requireUserService?: boolean; sandboxName?: string } = {},
   ): Promise<ShellProbeResult> {
-    if (options.sandboxName && options.requireUserService !== true) {
-      return await this.host.nemoclaw([options.sandboxName, "status"], {
-        artifactName: `lifecycle-gateway-recover-through-nemoclaw-status-${options.sandboxName}`,
-        env: buildAvailabilityProbeEnv(),
-        timeoutMs: 120_000,
-      });
-    }
     const userServiceStart = await this.startOpenShellGatewayUserService({
       requireAvailable: options.requireUserService,
     });
     if (userServiceStart) return userServiceStart;
-    if (options.sandboxName) {
-      return await this.host.nemoclaw([options.sandboxName, "status"], {
-        artifactName: `lifecycle-gateway-recover-through-nemoclaw-status-${options.sandboxName}`,
+    if (previousRuntime?.kind === "pid") {
+      return await this.host.nemoclaw(["status"], {
+        artifactName: "lifecycle-gateway-recover-through-nemoclaw-status",
         env: buildAvailabilityProbeEnv(),
         timeoutMs: 120_000,
       });
     }
-    if (previousRuntime?.kind === "pid") {
-      return await this.host.nemoclaw(["status"], {
-        artifactName: "lifecycle-gateway-recover-through-nemoclaw-status",
+    if (options.sandboxName) {
+      return await this.host.nemoclaw([options.sandboxName, "status"], {
+        artifactName: `lifecycle-gateway-recover-through-nemoclaw-status-${options.sandboxName}`,
         env: buildAvailabilityProbeEnv(),
         timeoutMs: 120_000,
       });
