@@ -1,9 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { setTimeout as delay } from "node:timers/promises";
+import { constants as osConstants } from "node:os";
+
 import { isLocalForwardReachable } from "../forward-health";
 import {
   createForwardServiceTarget,
+  ForwardServiceEarlyExitError,
   ForwardServiceStartupCleanupError,
   isForwardServiceListenerOwner,
   launchForwardService,
@@ -68,6 +72,7 @@ export type HermesPortableForwardRecoveryContext =
       readonly cause: "forward-mutation-failed";
       readonly operation: "start" | "stop";
       readonly port: number;
+      readonly startupFailure?: string;
     }
   | { readonly cause: "port-occupied"; readonly port: number };
 
@@ -93,7 +98,7 @@ export interface HermesPortableForwardRecoveryDeps {
   ) => void | Promise<void>;
   readonly isPortReachable?: (port: number, timeoutMs?: number) => boolean;
   readonly now?: () => number;
-  readonly sleep?: (milliseconds: number) => void;
+  readonly sleep?: (milliseconds: number) => void | Promise<void>;
 }
 
 export interface HermesPortableForwardRecoveryInput {
@@ -519,12 +524,31 @@ async function invokeForwardServiceLaunch(
   } catch (error) {
     if (error instanceof ForwardServiceStartupCleanupError) failure("restoration-unproved");
     if (error instanceof HermesPortableForwardRecoveryError) throw error;
-    failure("recovery-failed", { cause: "forward-mutation-failed", operation: "start", port });
+    failure("recovery-failed", {
+      cause: "forward-mutation-failed",
+      operation: "start",
+      port,
+      startupFailure: describeStartupFailure(error),
+    });
   }
   if (!readinessVerified) {
     failure("recovery-failed", { cause: "forward-mutation-failed", operation: "start", port });
   }
   requireCurrent(input, false);
+}
+
+/** Retain only process status fields; raw spawn messages can contain private paths. */
+function describeStartupFailure(error: unknown): string | undefined {
+  if (error instanceof ForwardServiceEarlyExitError) {
+    if (error.signal && Object.hasOwn(osConstants.signals, error.signal)) {
+      return `signal ${error.signal}`;
+    }
+    if (Number.isSafeInteger(error.exitCode)) return `status ${String(error.exitCode)}`;
+  }
+  if (error instanceof Error && "code" in error) {
+    if (error.code === "ENOENT" || error.code === "EACCES") return error.code;
+  }
+  return undefined;
 }
 
 function readClock(now: () => number, previous?: number): number {
@@ -535,14 +559,14 @@ function readClock(now: () => number, previous?: number): number {
   return current;
 }
 
-function settleTouchedPorts(
+async function settleTouchedPorts(
   input: HermesPortableForwardRecoveryInput,
   requiredHealthy: ReadonlySet<number>,
   timing: ReturnType<typeof createForwardTimingRecorder>,
-): ForwardObservation {
-  return timing.measure("settle", () => {
+): Promise<ForwardObservation> {
+  return timing.measureAsync("settle", async () => {
     const now = input.deps.now ?? Date.now;
-    const sleep = input.deps.sleep ?? sleepMilliseconds;
+    const sleep = input.deps.sleep ?? delay;
     let previous = readClock(now);
     const deadline = previous + Math.min(input.operationTimeoutMs, FORWARD_SETTLEMENT_TIMEOUT_MS);
     if (!Number.isFinite(deadline)) failure("recovery-failed");
@@ -557,7 +581,7 @@ function settleTouchedPorts(
       const current = readClock(now, previous);
       previous = current;
       if (current >= deadline) break;
-      sleep(Math.min(FORWARD_SETTLEMENT_INTERVAL_MS, deadline - current));
+      await sleep(Math.min(FORWARD_SETTLEMENT_INTERVAL_MS, deadline - current));
     }
     failure("recovery-failed", { cause: "forward-settlement-timed-out" });
   });
@@ -632,7 +656,7 @@ export async function prepareHermesPortableLaunchForwards(
       touchedPorts.push(port);
       await invokeForwardServiceLaunch(input, port, timing);
     }
-    const final = settleTouchedPorts(input, requiredHealthy, timing);
+    const final = await settleTouchedPorts(input, requiredHealthy, timing);
 
     requireNoOccupied(final.states);
     if (input.ports.some((port) => final.states.get(port) !== "healthy")) {
@@ -683,9 +707,4 @@ export function verifyHermesPortableLaunchForwards(
   } catch (error) {
     throw normalizeFailure(error);
   }
-}
-
-function sleepMilliseconds(milliseconds: number): void {
-  if (milliseconds <= 0 || !Number.isFinite(milliseconds)) return;
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds);
 }

@@ -8,10 +8,6 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { getCredential } from "../credentials/store";
-import {
-  createForwardServiceTarget,
-  launchForwardService,
-} from "../adapters/openshell/forward-service";
 import { loadServingCatalog } from "../inference/serving/catalog-loader";
 import { listServingProfiles } from "../inference/serving/profile-list";
 import { servingProfileProvenance } from "../inference/serving/profile-provenance";
@@ -1441,38 +1437,6 @@ describe("onboard command options", () => {
     expect(errors[0]).not.toMatch(
       /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u2028-\u202e\u2066-\u2069]/u,
     );
-  });
-
-  it("propagates a real forward spawn failure through the onboarding command (#11648)", async () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-forward-"));
-    const terminateProcessTree = vi.fn();
-    try {
-      const target = createForwardServiceTarget(
-        {
-          executable: path.join(root, "missing-openshell"),
-          gatewayName: "nemoclaw",
-          workspace: "default",
-          sandboxName: "demo",
-          localHost: "127.0.0.1",
-        },
-        18789,
-      );
-      await expect(
-        runOnboardCommand({
-          flags: {},
-          env: {},
-          runOnboard: () =>
-            launchForwardService(target, {
-              isReachable: () => false,
-              terminateProcessTree,
-              timeoutMs: 1000,
-            }),
-        }),
-      ).rejects.toMatchObject({ code: "ENOENT" });
-      expect(terminateProcessTree).not.toHaveBeenCalled();
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
   });
 
   it("sets the Ollama autostart override before onboarding", async () => {

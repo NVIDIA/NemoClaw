@@ -67,6 +67,18 @@ export interface ForwardServiceProcessTreeTerminationDependencies {
   ) => { readonly error?: Error; readonly status: number | null };
 }
 
+export class ForwardServiceEarlyExitError extends Error {
+  constructor(
+    target: ForwardServiceTarget,
+    readonly exitCode: number | null,
+    readonly signal: NodeJS.Signals | null,
+  ) {
+    super(
+      `OpenShell forward service exited before binding ${target.localHost}:${String(target.localPort)} (${signal ? `signal ${signal}` : `status ${String(exitCode)}`})`,
+    );
+  }
+}
+
 export class ForwardServiceStartupCleanupError extends AggregateError {
   constructor(startupError: Error, cleanupError: unknown) {
     super(
@@ -530,9 +542,7 @@ export async function launchForwardService(
     notifyFailure();
   });
   child.on?.("exit", (code, signal) => {
-    childFailure ??= new Error(
-      `OpenShell forward service exited before binding ${target.localHost}:${String(target.localPort)} (${signal ? `signal ${signal}` : `status ${String(code)}`})`,
-    );
+    childFailure ??= new ForwardServiceEarlyExitError(target, code, signal);
     notifyFailure();
   });
   const deadline = Date.now() + (options.timeoutMs ?? START_TIMEOUT_MS);
@@ -564,6 +574,9 @@ export async function launchForwardService(
           : delay(POLL_INTERVAL_MS, undefined, { signal: controller.signal }),
         failed,
       ]);
+    } catch (error) {
+      startupError = childFailure ?? (error instanceof Error ? error : new Error(String(error)));
+      break;
     } finally {
       controller.abort();
     }

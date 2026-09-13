@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { type ChildProcess, spawn } from "node:child_process";
-import { once } from "node:events";
+import { EventEmitter, once } from "node:events";
 import {
   existsSync,
   mkdirSync,
@@ -447,6 +447,55 @@ describe("OpenShell forward service", () => {
       ).rejects.toThrow(/exited before binding .*status 23/u);
     },
   );
+
+  it.each([
+    {
+      mode: "throw",
+      fail: (error: Error): never => {
+        throw error;
+      },
+    },
+    { mode: "reject", fail: (error: Error) => Promise.reject(error) },
+  ])(
+    "cleans up the started child when polling sleep fails with $mode (#11648)",
+    async ({ fail }) => {
+      const child = { pid: 12345, unref: vi.fn() };
+      const terminateProcessTree = vi.fn();
+      const error = new Error("polling failed");
+      await expect(
+        launchForwardService(target, {
+          spawnDetached: () => child,
+          isReachable: () => false,
+          terminateProcessTree,
+          sleep: () => fail(error),
+        }),
+      ).rejects.toBe(error);
+      expect(terminateProcessTree).toHaveBeenCalledExactlyOnceWith(child);
+      expect(child.unref).not.toHaveBeenCalled();
+    },
+  );
+
+  it("preserves a child error when polling and cleanup also fail (#11648)", async () => {
+    const child = Object.assign(new EventEmitter(), { pid: 12345, unref: vi.fn() });
+    const childError = Object.assign(new Error("spawn failed"), { code: "EACCES" });
+    const cleanupError = new Error("cleanup failed");
+    const terminateProcessTree = vi.fn(() => {
+      throw cleanupError;
+    });
+    await expect(
+      launchForwardService(target, {
+        spawnDetached: () => child,
+        isReachable: () => false,
+        terminateProcessTree,
+        sleep: () => {
+          child.emit("error", childError);
+          throw new Error("polling failed");
+        },
+      }),
+    ).rejects.toMatchObject({ errors: [childError, cleanupError] });
+    expect(terminateProcessTree).toHaveBeenCalledExactlyOnceWith(child);
+    expect(child.unref).not.toHaveBeenCalled();
+  });
 
   it("detaches the OpenShell child and waits for its local port", async () => {
     const unref = vi.fn();

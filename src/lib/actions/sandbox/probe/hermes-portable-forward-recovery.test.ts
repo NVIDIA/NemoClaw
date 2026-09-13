@@ -29,6 +29,25 @@ type LaunchForwardService = NonNullable<
   ReturnType<typeof createRecoveryFixture>["input"]["deps"]["launchForwardService"]
 >;
 
+function earlyExitError(exitCode: number | null, signal: NodeJS.Signals | null): Error {
+  const forward = requireDist(
+    "../../src/lib/adapters/openshell/forward-service.js",
+  ) as typeof import("../../../adapters/openshell/forward-service");
+  const target = forward.createForwardServiceTarget(
+    {
+      executable: "/fixture/openshell",
+      gatewayName: "nemoclaw",
+      workspace: "default",
+      sandboxName: "alpha",
+      localHost: "127.0.0.1",
+    },
+    18789,
+  );
+  return Object.assign(new forward.ForwardServiceEarlyExitError(target, exitCode, signal), {
+    message: "private executable path canary",
+  });
+}
+
 function launchThen(launch: LaunchForwardService, afterLaunch: () => void): LaunchForwardService {
   return (target, options) => {
     launch(target, options);
@@ -37,10 +56,51 @@ function launchThen(launch: LaunchForwardService, afterLaunch: () => void): Laun
 }
 
 describe("Hermes Portable probe-only forward recovery", () => {
+  it("lets timers restore readiness during forward settlement (#11648)", async () => {
+    const fixture = createRecoveryFixture();
+    const launch = fixture.input.deps.launchForwardService!;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    Object.assign(fixture.input.deps, {
+      now: Date.now,
+      sleep: undefined,
+      launchForwardService: launchThen(launch, () => {
+        const record = fixture.records.get(18_789)!;
+        record.reachable = false;
+        timer = setTimeout(() => {
+          record.reachable = true;
+        }, 0);
+      }),
+    });
+    try {
+      await expect(recoverHermesPortableLaunchForwards(fixture.input)).resolves.toEqual({
+        kind: "restored",
+        restoredPorts: [18_789],
+      });
+      expect(fixture.rollbackCalls).toEqual([]);
+    } finally {
+      clearTimeout(timer);
+    }
+  });
+
   it("starts missing forwards sequentially before one joint settlement observation (#10926)", async () => {
     const fixture = createRecoveryFixture({ ports: [18_789, 8_642] });
+    const launch = fixture.input.deps.launchForwardService!;
+    let releaseFirst!: () => void;
+    const firstLaunch = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    Object.assign(fixture.input.deps, {
+      launchForwardService: vi.fn(launch).mockImplementationOnce((target, options) => {
+        launch(target, options);
+        return firstLaunch;
+      }),
+    });
+    const recovery = recoverHermesPortableLaunchForwards(fixture.input);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(fixture.forwardServiceLaunches.map((target) => target.localPort)).toEqual([18_789]);
+    releaseFirst();
 
-    expect(await recoverHermesPortableLaunchForwards(fixture.input)).toEqual({
+    expect(await recovery).toEqual({
       kind: "restored",
       restoredPorts: [18_789, 8_642],
     });
@@ -1057,6 +1117,49 @@ describe("Hermes Portable connect composition", () => {
       expect(harness.logSpy.mock.calls.flat().join("\n")).toContain(
         "Probe complete: launch readiness is healthy for 'alpha'.",
       );
+    },
+  );
+
+  it.each([
+    {
+      error: Object.assign(new Error("private executable path canary"), { code: "ENOENT" }),
+      detail: "ENOENT",
+    },
+    {
+      error: Object.assign(new Error("private executable path canary"), { code: "EACCES" }),
+      detail: "EACCES",
+    },
+    {
+      error: earlyExitError(23, null),
+      detail: "status 23",
+    },
+    {
+      error: earlyExitError(null, "SIGTERM"),
+      detail: "signal SIGTERM",
+    },
+  ])(
+    "reports $detail from forward startup through connect without raw diagnostics (#11648)",
+    async ({ error, detail }) => {
+      const accepted = acceptedHermesReadiness();
+      const harness = createConnectHarness({
+        agentName: "hermes",
+        sessionAgent: { name: "hermes" },
+        registryEntry: accepted.entry,
+        portableReceiptDisposition: { kind: "hermes", phase: "active" },
+        portableRecoveryResult: { kind: "already-running" },
+        readinessDecision: accepted.readinessDecision,
+      });
+      bindAcceptedReadinessToCurrentEntry(harness);
+      const forward = configureMissingHermesForwardCapture(harness);
+      forward.launchSpy.mockRejectedValue(error);
+
+      await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
+        "process.exit(1)",
+      );
+      const output = harness.errorSpy.mock.calls.flat().join("\n");
+      expect(output).toContain(detail);
+      expect(output).not.toContain("private executable path canary");
+      expect(harness.publishLaunchReadinessSpy).not.toHaveBeenCalled();
     },
   );
 
