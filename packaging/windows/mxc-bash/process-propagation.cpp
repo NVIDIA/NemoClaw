@@ -18,6 +18,7 @@ decltype(&CreateProcessW) realCreateW = CreateProcessW;
 decltype(&CreateProcessA) realCreateA = CreateProcessA;
 decltype(&CreateProcessAsUserW) realCreateAsUserW = CreateProcessAsUserW;
 decltype(&CreateProcessAsUserA) realCreateAsUserA = CreateProcessAsUserA;
+decltype(&SetInformationJobObject) realSetJobInformation = SetInformationJobObject;
 
 // The canonical MSYS image does not opt into DYNAMIC_BASE and fork expects
 // its DLL data at identical addresses. This explicit prototype option changes
@@ -752,8 +753,7 @@ struct ChromeAsUserObservation {
     bool appMatched = false, appNull = false, parentQueried = false, parentMatched = false;
 };
 
-bool configuredChromeParentMatches(const WCHAR* selected) {
-    ProcessImageFile parent, expected;
+bool configuredChromeParentMatches(const WCHAR* selected, ProcessImageFile& parent, ProcessImageFile& expected) {
     USHORT machine = 0;
     if (!readProcessImageMachine(GetCurrentProcess(), parent, machine) || machine != IMAGE_FILE_MACHINE_AMD64)
         return false;
@@ -766,6 +766,169 @@ bool configuredChromeParentMatches(const WCHAR* selected) {
     return parent.information.dwVolumeSerialNumber == expected.information.dwVolumeSerialNumber &&
         parent.information.nFileIndexHigh == expected.information.nFileIndexHigh &&
         parent.information.nFileIndexLow == expected.information.nFileIndexLow;
+}
+
+bool configuredChromeParentMatches(const WCHAR* selected) {
+    ProcessImageFile parent, expected;
+    return configuredChromeParentMatches(selected, parent, expected);
+}
+
+// A nested Chrome UI-restricted job cannot be created inside this MXC UI job.
+// Keep UI isolation at the existing MXC boundary, while preserving every
+// per-target token, mitigation and non-UI job limit. This changes Chrome's
+// per-target USER-handle/global-atom isolation scope; it is not equivalent.
+LONG chromeInnerUiRecords = 0;
+
+bool exactChromeInnerUiRequest(JOBOBJECTINFOCLASS kind, LPVOID information, DWORD bytes) {
+    if (kind != JobObjectBasicUIRestrictions || !information || bytes != sizeof(JOBOBJECT_BASIC_UI_RESTRICTIONS))
+        return false;
+    __try { return static_cast<const JOBOBJECT_BASIC_UI_RESTRICTIONS*>(information)->UIRestrictionsClass == 0xff; }
+    __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+
+bool chromeBrokerCommand() {
+    // The canonical broker has no process-type switch. Refuse any occurrence,
+    // including quoted/mixed-case child forms, rather than parse new arguments.
+    __try {
+        const WCHAR* command = GetCommandLineW();
+        if (!command) return false;
+        size_t length = 0;
+        while (length < 32768 && command[length]) ++length;
+        if (!length || length == 32768) return false;
+        for (size_t i = 0; i < length; ++i)
+            if (!_wcsnicmp(command + i, L"--type", 6) || !_wcsnicmp(command + i, L"/type", 5)) return false;
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+
+struct ChromeInnerUiProof {
+    const char* stage = "parent-identity";
+    DWORD checkError = 0, requested = 0xff, before = 0, after = 0;
+    DWORD outerBefore = 0, outerAfter = 0, outerExtended = 0;
+    bool admitted = false, applied = false, verified = false;
+    bool innerReadback = false, outerReadback = false, limitsUnchanged = false, stillUnused = false;
+    JOBOBJECT_BASIC_ACCOUNTING_INFORMATION accounting = {};
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits = {};
+};
+
+bool admitChromeInnerUi(HANDLE job, ChromeInnerUiProof& proof) {
+    alignas(SID) BYTE actualSid[SECURITY_MAX_SID_SIZE] = {};
+    BOOL currentInJob = FALSE, currentInTarget = FALSE;
+    if (!initialized) { SetLastError(ERROR_INVALID_STATE); return false; }
+    if (!processContainerSid(GetCurrentProcess(), actualSid)) return false;
+    if (!EqualSid(actualSid, containerSid)) { SetLastError(ERROR_ACCESS_DENIED); return false; }
+    proof.stage = "current-MXC-job";
+    JOBOBJECT_BASIC_UI_RESTRICTIONS outer = {};
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION outerLimits = {};
+    if (!IsProcessInJob(GetCurrentProcess(), nullptr, &currentInJob) || !currentInJob ||
+        !QueryInformationJobObject(nullptr, JobObjectBasicUIRestrictions, &outer, sizeof(outer), nullptr) ||
+        !QueryInformationJobObject(nullptr, JobObjectExtendedLimitInformation, &outerLimits, sizeof(outerLimits), nullptr)) return false;
+    proof.outerBefore = outer.UIRestrictionsClass;
+    proof.outerExtended = outerLimits.BasicLimitInformation.LimitFlags;
+    if (proof.outerBefore != 0x3bf || proof.outerExtended != JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE) { SetLastError(ERROR_ACCESS_DENIED); return false; }
+    proof.stage = "unused-separate-inner-job";
+    JOBOBJECT_BASIC_UI_RESTRICTIONS inner = {};
+    if (!job || job == INVALID_HANDLE_VALUE ||
+        !IsProcessInJob(GetCurrentProcess(), job, &currentInTarget) || currentInTarget ||
+        !QueryInformationJobObject(job, JobObjectBasicAccountingInformation, &proof.accounting, sizeof(proof.accounting), nullptr) ||
+        !QueryInformationJobObject(job, JobObjectBasicUIRestrictions, &inner, sizeof(inner), nullptr) ||
+        !QueryInformationJobObject(job, JobObjectExtendedLimitInformation, &proof.limits, sizeof(proof.limits), nullptr)) return false;
+    proof.before = inner.UIRestrictionsClass;
+    // TotalProcesses counts every lifetime association, including failed
+    // assignments. Chrome calls this while its newly created job is private.
+    const bool unused = proof.before == 0 && proof.accounting.TotalProcesses == 0 &&
+        proof.accounting.ActiveProcesses == 0 && proof.accounting.TotalTerminatedProcesses == 0;
+    if (!unused) SetLastError(ERROR_ACCESS_DENIED);
+    return unused;
+}
+
+void logChromeInnerUi(HANDLE job, const ChromeInnerUiProof& proof, BOOL apiResult, DWORD apiError) {
+    const DWORD saved = GetLastError();
+    if (InterlockedIncrement(&chromeInnerUiRecords) <= 8) {
+        char line[1280];
+        const int length = _snprintf_s(line, sizeof(line), _TRUNCATE,
+            "NEMOCLAW_MSYS_CHROME_INNER_UI={\"schemaVersion\":1,\"pid\":%lu,\"threadId\":%lu,\"job\":\"0x%llx\",\"stage\":\"%s\",\"admitted\":%s,\"requestedInnerMask\":%lu,\"beforeInnerMask\":%lu,\"effectiveInnerMask\":%lu,\"outerBeforeMask\":%lu,\"outerAfterMask\":%lu,\"outerExtendedFlags\":%lu,\"totalProcessesBefore\":%lu,\"activeProcessesBefore\":%lu,\"terminatedProcessesBefore\":%lu,\"applied\":%s,\"apiResult\":%s,\"apiError\":%lu,\"lastError\":%lu,\"checkError\":%lu,\"innerReadback\":%s,\"outerReadback\":%s,\"otherJobLimitsUnchanged\":%s,\"stillUnused\":%s,\"verified\":%s,\"uiIsolationScope\":\"MXC-outer-boundary\",\"chromePerTargetUiScopeEquivalent\":false}\n",
+            GetCurrentProcessId(), GetCurrentThreadId(), static_cast<unsigned long long>(reinterpret_cast<uintptr_t>(job)), proof.stage,
+            proof.admitted ? "true" : "false", proof.requested, proof.before, proof.after,
+            proof.outerBefore, proof.outerAfter, proof.outerExtended, proof.accounting.TotalProcesses,
+            proof.accounting.ActiveProcesses, proof.accounting.TotalTerminatedProcesses, proof.applied ? "true" : "false",
+            apiResult ? "true" : "false", apiResult ? 0 : apiError, apiError, proof.checkError, proof.innerReadback ? "true" : "false",
+            proof.outerReadback ? "true" : "false", proof.limitsUnchanged ? "true" : "false",
+            proof.stillUnused ? "true" : "false", proof.verified ? "true" : "false");
+        if (length > 0 && length < static_cast<int>(sizeof(line))) {
+            OutputDebugStringA(line);
+            DWORD written = 0;
+            // Best-effort stderr may be NUL even in Personal capture; the
+            // debugger can retain OutputDebugString. No command/token is logged.
+            WriteFile(GetStdHandle(STD_ERROR_HANDLE), line, static_cast<DWORD>(length), &written, nullptr);
+        }
+    }
+    SetLastError(saved);
+}
+
+void chromeInnerUiCheckFailure(ChromeInnerUiProof& proof, const char* stage, DWORD error) {
+    if (!proof.checkError) { proof.stage = stage; proof.checkError = error ? error : ERROR_INVALID_DATA; }
+}
+
+BOOL WINAPI hookedSetJobInformation(HANDLE job, JOBOBJECTINFOCLASS kind, LPVOID information, DWORD bytes) {
+    const DWORD saved = GetLastError();
+    if (!initialized || !exactChromeInnerUiRequest(kind, information, bytes)) {
+        SetLastError(saved); return realSetJobInformation(job, kind, information, bytes);
+    }
+    WCHAR selected[4096] = {};
+    const DWORD count = GetEnvironmentVariableW(L"AGENT_BROWSER_EXECUTABLE_PATH", selected, 4096);
+    const WCHAR* leaf = count && count < 4096 ? wcsrchr(selected, L'\\') : nullptr;
+    ProcessImageFile parent, expected; // Both identities stay held through readback.
+    if (!leaf || selected[1] != L':' || selected[2] != L'\\' || _wcsicmp(leaf + 1, L"chrome.exe") ||
+        !chromeBrokerCommand() || !configuredChromeParentMatches(selected, parent, expected)) {
+        SetLastError(saved); return realSetJobInformation(job, kind, information, bytes);
+    }
+    ChromeInnerUiProof proof;
+    proof.admitted = admitChromeInnerUi(job, proof);
+    if (!proof.admitted) {
+        proof.checkError = GetLastError();
+        SetLastError(saved);
+        const BOOL result = realSetJobInformation(job, kind, information, bytes);
+        const DWORD error = GetLastError();
+        logChromeInnerUi(job, proof, result, error);
+        SetLastError(error); return result;
+    }
+    // Do not mutate the caller's buffer or make any other SetInformation call.
+    JOBOBJECT_BASIC_UI_RESTRICTIONS effective = {};
+    SetLastError(saved);
+    const BOOL result = realSetJobInformation(job, kind, &effective, sizeof(effective));
+    const DWORD error = GetLastError();
+    proof.applied = result != FALSE; proof.stage = "SetInformationJobObject";
+    if (result) {
+        JOBOBJECT_BASIC_UI_RESTRICTIONS inner = {}, outer = {};
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits = {}, outerLimits = {};
+        JOBOBJECT_BASIC_ACCOUNTING_INFORMATION accounting = {};
+        BOOL currentInTarget = TRUE;
+        proof.stage = "readback";
+        proof.innerReadback = QueryInformationJobObject(job, JobObjectBasicUIRestrictions, &inner, sizeof(inner), nullptr) != FALSE;
+        proof.after = inner.UIRestrictionsClass;
+        if (!proof.innerReadback) chromeInnerUiCheckFailure(proof, "inner-ui-readback", GetLastError());
+        else if (proof.after != 0) chromeInnerUiCheckFailure(proof, "inner-ui-mismatch", ERROR_INVALID_DATA);
+        proof.outerReadback = QueryInformationJobObject(nullptr, JobObjectBasicUIRestrictions, &outer, sizeof(outer), nullptr) != FALSE;
+        proof.outerAfter = outer.UIRestrictionsClass;
+        if (!proof.outerReadback) chromeInnerUiCheckFailure(proof, "outer-ui-readback", GetLastError());
+        else if (proof.outerAfter != proof.outerBefore) chromeInnerUiCheckFailure(proof, "outer-ui-mismatch", ERROR_INVALID_DATA);
+        proof.limitsUnchanged = QueryInformationJobObject(job, JobObjectExtendedLimitInformation, &limits, sizeof(limits), nullptr) &&
+            !memcmp(&limits, &proof.limits, sizeof(limits));
+        if (!proof.limitsUnchanged) chromeInnerUiCheckFailure(proof, "inner-extended-readback", GetLastError());
+        proof.stillUnused = QueryInformationJobObject(job, JobObjectBasicAccountingInformation, &accounting, sizeof(accounting), nullptr) &&
+            !accounting.TotalProcesses && !accounting.ActiveProcesses && !accounting.TotalTerminatedProcesses &&
+            IsProcessInJob(GetCurrentProcess(), job, &currentInTarget) && !currentInTarget;
+        if (!proof.stillUnused) chromeInnerUiCheckFailure(proof, "unused-job-readback", GetLastError());
+        proof.verified = proof.innerReadback && proof.after == 0 && proof.outerReadback && proof.outerAfter == proof.outerBefore &&
+            proof.limitsUnchanged && proof.stillUnused &&
+            QueryInformationJobObject(nullptr, JobObjectExtendedLimitInformation, &outerLimits, sizeof(outerLimits), nullptr) &&
+            outerLimits.BasicLimitInformation.LimitFlags == proof.outerExtended;
+        if (!proof.verified) chromeInnerUiCheckFailure(proof, "outer-extended-readback", GetLastError());
+    }
+    logChromeInnerUi(job, proof, result, error);
+    SetLastError(result && !proof.verified ? ERROR_INVALID_DATA : error);
+    return result && !proof.verified ? FALSE : result;
 }
 
 ChromeAsUserObservation chromeAsUserCall(LPCWSTR app) {
@@ -912,6 +1075,7 @@ extern "C" LONG NemoClawStageProcessPropagation() {
     if (!error) error = DetourAttach(reinterpret_cast<PVOID*>(&realCreateA), reinterpret_cast<PVOID>(hookedCreateA));
     if (!error) error = DetourAttach(reinterpret_cast<PVOID*>(&realCreateAsUserW), reinterpret_cast<PVOID>(hookedAsUserW));
     if (!error) error = DetourAttach(reinterpret_cast<PVOID*>(&realCreateAsUserA), reinterpret_cast<PVOID>(hookedAsUserA));
+    if (!error) error = DetourAttach(reinterpret_cast<PVOID*>(&realSetJobInformation), reinterpret_cast<PVOID>(hookedSetJobInformation));
     return error;
 }
 
