@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       source_run_id:
-        description: Successful trusted Advisor repair run to reconcile
+        description: Trusted Advisor repair run to reconcile
         required: true
         type: string
       source_run_attempt:
@@ -73,7 +73,8 @@ jobs:
               .id == $run and .run_attempt == $attempt and .repository.full_name == $repo and
               .workflow_id == $workflow[0].id and .name == "Automation / PR Review Advisor" and
               .path == ".github/workflows/pr-review-advisor.yaml" and .event == "workflow_dispatch" and
-              .status == "completed" and .conclusion == "success" and .head_branch == "main"
+              ((.status == "in_progress" and .conclusion == null) or
+               (.status == "completed" and .conclusion == "success")) and .head_branch == "main"
             ' "$RUNNER_TEMP/source-run.json" >/dev/null
           gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID/artifacts?per_page=100" \
             --slurp > "$RUNNER_TEMP/source-artifact-pages.json"

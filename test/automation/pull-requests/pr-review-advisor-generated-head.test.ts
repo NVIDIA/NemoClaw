@@ -207,11 +207,19 @@ describe("PR Review Advisor generated-head evidence", () => {
     ]);
   });
 
+  it("accepts the bound request while its publishing source run is still active (#10791)", () => {
+    const result = runLocator({ run: { status: "in_progress", conclusion: null } });
+    expect(result.status).toBe(0);
+    expect(result.outputs).toContain("artifact-id=456");
+  });
+
   it.each([
     ["wrong workflow ID", { run: { workflow_id: 999 } }],
     ["wrong workflow path", { run: { path: ".github/workflows/pr.yaml" } }],
     ["wrong repository", { run: { repository: { full_name: "someone/fork" } } }],
     ["wrong event", { run: { event: "pull_request_target" } }],
+    ["queued source run", { run: { status: "queued", conclusion: null } }],
+    ["failed completed source run", { run: { status: "completed", conclusion: "failure" } }],
     ["wrong attempt", { run: { run_attempt: 3 } }],
     ["invalid workflow SHA", { run: { head_sha: "not-a-sha" } }],
     ["changed trusted main", { mainRef: { object: { type: "commit", sha: "c".repeat(40) } } }],

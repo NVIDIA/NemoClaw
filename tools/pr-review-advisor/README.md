@@ -148,9 +148,10 @@ is rejected. A repeat manual dispatch that resolves to the same repository, PR, 
 SHAs, Advisor run and attempt, and selected finding IDs is also rejected because it has the same
 attempt key. A later PR head or a different bound Advisor run and finding set creates a distinct
 eligible attempt. If automatic generated-head observation is missed, dispatch `Automation / PR
-Review Advisor Generated Head` from `main` with the successful source `source_run_id` and exact
-`source_run_attempt`; reconciliation revalidates and reuses that run's content-addressed request
-without creating another repair attempt.
+Review Advisor Generated Head` from `main` with the source `source_run_id` and exact
+`source_run_attempt`; reconciliation accepts the bound request while automatic publication is still
+in progress, or after that source attempt completes successfully. It revalidates and reuses the
+content-addressed request without creating another repair attempt.
 
 The repair path retains bounded proposal, validation, publication, generated-head, and diagnostic
 artifacts. The redacted audit receipt preserves the primary resolver failure stage and separately

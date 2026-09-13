@@ -686,7 +686,7 @@ jobs:
     runs-on: ubuntu-24.04
     # Keep the job deadline outside every bounded sandbox-owning phase so the
     # runner-local cleanup step gets a deterministic chance to execute.
-    timeout-minutes: 60
+    timeout-minutes: 70
     outputs:
       candidate-artifact-id: ${{ steps.upload.outputs.artifact-id }}
       cleanup-receipt: ${{ steps.outcome.outputs.cleanup-receipt }}
@@ -791,7 +791,7 @@ jobs:
         name: Configure inference on the trusted host
         env:
           OPENAI_API_KEY: ${{ secrets.PR_REVIEW_ADVISOR_API_KEY }}
-        run: node --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/repair-resolve.mts" configure
+        run: timeout --signal=TERM --kill-after=15s 5m node --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/repair-resolve.mts" configure
 
       - id: reconcile
         name: Reconcile the prior repair sandbox
