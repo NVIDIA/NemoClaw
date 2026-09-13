@@ -32,6 +32,11 @@
       "category": "compatibility"
     },
     {
+      "file": "test/e2e/support/e2e-host-dependency-workflow-boundary.test.ts",
+      "test": "rejects drift in the reviewed action and script contents",
+      "category": "security"
+    },
+    {
       "file": "test/e2e/support/e2e-registry.test.ts",
       "test": "CLI should emit multiple selected live matrix entries",
       "category": "compatibility"
@@ -192,6 +197,11 @@
       "category": "security"
     },
     {
+      "file": "test/automation/pull-requests/pr-workflow-contract.test.ts",
+      "test": "replaces stale CLI shard reports when a failed job is rerun",
+      "category": "compatibility"
+    },
+    {
       "file": "test/automation/releases/release-daily-brev-image.test.ts",
       "test": "attests one daily request before the isolated dispatch job (#9799)",
       "category": "security"
@@ -204,6 +214,11 @@
     {
       "file": "test/automation/releases/reviewed-npm-audit-workflow.test.ts",
       "test": "passes the cache identity target root without interpolating it into shell source",
+      "category": "security"
+    },
+    {
+      "file": "test/automation/releases/reviewed-npm-audit-workflow.test.ts",
+      "test": "rejects a replacement graph for a different package",
       "category": "security"
     },
     {

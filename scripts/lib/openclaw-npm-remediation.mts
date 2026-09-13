@@ -1442,6 +1442,46 @@ function isMainModule(): boolean {
   return process.argv[1] ? import.meta.url === pathToFileURL(resolve(process.argv[1])).href : false;
 }
 
+function fatalOpenClawNpmRemediationDiagnostic(error: unknown): string {
+  const message = error instanceof Error ? error.message : "";
+  if (message.startsWith("Missing --")) {
+    return "OpenClaw npm remediation is missing required arguments.";
+  }
+  if (message.includes(" failed:")) {
+    return "OpenClaw npm remediation command failed.";
+  }
+  if (
+    error instanceof SyntaxError ||
+    message.startsWith("npm archive ") ||
+    message.includes(" did not extract a package directory") ||
+    message.includes(" archive escaped its reviewed root") ||
+    message.includes(" archive is not a regular file")
+  ) {
+    return "OpenClaw npm remediation rejected an invalid archive.";
+  }
+  if (
+    message.includes(" changed") ||
+    message.includes(" before remediation") ||
+    message.includes(" after review") ||
+    message.includes(" must declare") ||
+    message.includes(" must resolve") ||
+    message.includes(" must ship") ||
+    message.includes(" unexpectedly") ||
+    message.includes(" already") ||
+    message.includes(" integrity mismatch") ||
+    message.includes("unsupported entry") ||
+    message.includes("invalid remediation result") ||
+    message.startsWith("No OpenClaw npm remediation is defined")
+  ) {
+    return "OpenClaw npm remediation rejected an unreviewed package state.";
+  }
+  const code = error instanceof Error ? (error as NodeJS.ErrnoException).code : undefined;
+  if (code === "EACCES" || code === "EISDIR" || code === "ENOENT" || code === "ENOTDIR") {
+    return "OpenClaw npm remediation could not access its working files.";
+  }
+  return "OpenClaw npm remediation failed.";
+}
+
 if (isMainModule()) {
   const args = process.argv.slice(2);
   const value = (name: string): string => {
@@ -1461,7 +1501,7 @@ if (isMainModule()) {
       ),
     );
   } catch (error) {
-    console.error(error instanceof Error ? error.message : String(error));
+    console.error(fatalOpenClawNpmRemediationDiagnostic(error));
     process.exit(1);
   }
 }

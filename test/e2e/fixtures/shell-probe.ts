@@ -341,19 +341,20 @@ export class ShellProbe {
       finishedAt: new Date(finishedAtMs).toISOString(),
       durationMs: finishedAtMs - startedAtMs,
     };
-    if (supervised.spawnError) {
-      const redactedMessage = redactProbeText(errorMessage(supervised.spawnError));
+    const superviseError = supervised.spawnError ?? supervised.cleanupError;
+    if (superviseError) {
+      const redactedMessage = redactProbeText(errorMessage(superviseError));
       const stderrWithError = [redactedStderr, redactedMessage].filter(Boolean).join("\n");
       await writeArtifacts({
         command: redactedCommand,
         ...timing,
-        exitCode: null,
-        signal: null,
+        exitCode: supervised.exitCode,
+        signal: supervised.signal,
         timedOut: supervised.timedOut,
         stdout: redactedStdout,
         stderr: stderrWithError,
       });
-      throw redactedError(supervised.spawnError, redactedMessage);
+      throw redactedError(superviseError, redactedMessage);
     }
 
     const result: Omit<ShellProbeResult, "artifacts"> = {

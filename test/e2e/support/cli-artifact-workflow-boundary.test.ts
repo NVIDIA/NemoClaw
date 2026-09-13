@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { execFileSync, spawn } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
@@ -9,7 +9,10 @@ import os from "node:os";
 import path from "node:path";
 import { describe, it, type TestContext, vi } from "vitest";
 
-import { superviseChild } from "../../helpers/process-supervisor.ts";
+import {
+  runSupervisedProcess,
+  type SupervisedProcessOwner,
+} from "../../helpers/supervised-process.ts";
 
 const CANDIDATE_SHA = execFileSync("git", ["rev-parse", "HEAD"], {
   encoding: "utf8",
@@ -19,7 +22,7 @@ const PROCESS_OUTPUT_LIMIT = 1024 * 1024;
 const IDENTITY_SCRIPT = path.resolve("scripts/e2e/validate-cli-artifact-identity.sh");
 const RESTORE_SCRIPT = path.resolve("scripts/e2e/restore-cli-artifact.sh");
 
-type ProcessOwner = Pick<TestContext, "onTestFinished" | "signal">;
+type ProcessOwner = SupervisedProcessOwner;
 
 type RunProcessOptions = {
   cwd?: string;
@@ -40,56 +43,18 @@ async function runProcess(
   args: readonly string[],
   options: RunProcessOptions = {},
 ): Promise<RunProcessResult> {
-  options.owner?.signal.throwIfAborted();
-  let stdout = "";
-  let stderr = "";
-  let outputError: Error | undefined;
-  const child = spawn(file, [...args], {
+  const result = await runSupervisedProcess(file, args, {
     cwd: options.cwd,
-    detached: true,
     env: options.env,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  const finishController = new AbortController();
-  const append = (current: string, chunk: string, stream: string): string => {
-    const next = current + chunk;
-    const limitError =
-      !outputError && Buffer.byteLength(next, "utf8") > PROCESS_OUTPUT_LIMIT
-        ? new Error(`${stream} exceeded the process output limit`)
-        : undefined;
-    outputError ??= limitError;
-    void (limitError ? finishController.abort() : undefined);
-    return outputError ? current : next;
-  };
-  const signal = options.owner
-    ? AbortSignal.any([options.owner.signal, finishController.signal])
-    : finishController.signal;
-  const resultPromise = superviseChild(child, {
-    killGraceMs: 0,
-    onStderr: (chunk) => {
-      stderr = append(stderr, chunk, "stderr");
-    },
-    onStdout: (chunk) => {
-      stdout = append(stdout, chunk, "stdout");
-    },
-    signal,
+    maxOutputBytesPerStream: PROCESS_OUTPUT_LIMIT,
+    owner: options.owner,
     timeoutMs: options.timeoutMs ?? 20_000,
   });
-  options.owner?.onTestFinished(async () => {
-    finishController.abort();
-    await resultPromise;
-  });
-  const result = await resultPromise;
-  const processError = outputError ?? result.spawnError ?? result.cleanupError;
   return {
-    status: processError
-      ? -1
-      : result.signal
-        ? null
-        : (result.exitCode ?? (result.spawnError ? -1 : null)),
+    status: result.error ? -1 : result.status,
     signal: result.signal,
-    stdout,
-    stderr: processError ? `${stderr}${processError.message}\n` : stderr,
+    stdout: result.stdout,
+    stderr: result.error ? `${result.stderr}${result.error.message}\n` : result.stderr,
   };
 }
 

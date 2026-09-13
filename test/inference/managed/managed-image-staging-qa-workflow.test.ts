@@ -1,6 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import { describe, expect, it } from "vitest";
 
 import { readWorkflow, required, step } from "../../helpers/managed-image-publication-workflow";
@@ -27,6 +32,12 @@ function stagingQaDeepCodeBuilder(workflow: Workflow): Job {
     workflow.jobs?.["pr-staging-qa-deep-code"],
     "managed-image workflow is missing its staging QA Deep Agents Code regression",
   );
+}
+
+function writeOverlayFixture(root: string, relative: string, content: string) {
+  const destination = path.join(root, relative);
+  fs.mkdirSync(path.dirname(destination), { recursive: true });
+  fs.writeFileSync(destination, content);
 }
 
 describe("managed-image staging QA workflow", () => {
@@ -91,6 +102,44 @@ describe("managed-image staging QA workflow", () => {
     expect(overlaySource).toContain(
       "scripts/security/patches/perl-5.44.0-net-ping-capability-tests.patch",
     );
+
+    const overlayFixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-staging-overlay-"));
+    const candidateRoot = path.join(overlayFixture, "candidate");
+    const stagingRoot = path.join(overlayFixture, "staging-qa-base-source");
+    const dockerfile = "agents/langchain-deepagents-code/Dockerfile.base";
+    const packageBuilder = "scripts/security/build-native-security-packages.sh";
+    const requirements = "agents/langchain-deepagents-code/requirements.lock";
+    const npmBundler = "scripts/lib/bundled-npm-package.mts";
+    const perlPatch = "scripts/security/patches/perl-5.44.0-net-ping-capability-tests.patch";
+    try {
+      writeOverlayFixture(candidateRoot, dockerfile, "candidate Dockerfile\n");
+      writeOverlayFixture(candidateRoot, packageBuilder, "exit 42\n");
+      writeOverlayFixture(candidateRoot, requirements, "candidate requirements\n");
+      writeOverlayFixture(candidateRoot, npmBundler, "candidate npm bundler\n");
+      writeOverlayFixture(candidateRoot, perlPatch, "candidate Perl patch\n");
+      writeOverlayFixture(stagingRoot, dockerfile, "staging Dockerfile\n");
+      writeOverlayFixture(stagingRoot, packageBuilder, "exit 41\n");
+      writeOverlayFixture(stagingRoot, requirements, "staging requirements\n");
+      writeOverlayFixture(stagingRoot, npmBundler, "staging npm bundler\n");
+      writeOverlayFixture(stagingRoot, perlPatch, "staging Perl patch\n");
+      const summary = path.join(overlayFixture, "summary.md");
+      const result = spawnSync("bash", ["-c", overlaySource], {
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          CANDIDATE_SHA: "candidate-sha",
+          GITHUB_STEP_SUMMARY: summary,
+          GITHUB_WORKSPACE: overlayFixture,
+        },
+      });
+      expect({ status: result.status, stderr: result.stderr }).toEqual({
+        status: 0,
+        stderr: "",
+      });
+      expect(spawnSync("bash", [path.join(stagingRoot, packageBuilder)]).status).toBe(42);
+    } finally {
+      fs.rmSync(overlayFixture, { recursive: true, force: true });
+    }
 
     const baseSource = required(baseBuild.run, "staging QA base build is missing");
     expect(baseBuild.env?.DOCKER_BUILDKIT).toBe("1");

@@ -2629,7 +2629,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       });
     const revalidateCreatedSandboxIdentity = (
       expectedIdentity: string,
-      operation: string,
+      _operation: string,
     ): void => {
       sandboxRecreateTransaction.revalidateCreatedSandboxLifecycleRegistration(
         { sandboxName, gatewayName: GATEWAY_NAME },

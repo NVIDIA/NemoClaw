@@ -21,7 +21,6 @@ const installer = fileURLToPath(new URL("../../../scripts/install.sh", import.me
 const upstreamServiceShow =
   "--user show openshell-gateway.service --property=FragmentPath --property=ExecStart";
 const stoppedServicePrefix = "NEMOCLAW_E2E_STOPPED_GATEWAY_USER_SERVICE=";
-const linuxDescribe = process.platform === "linux" ? describe : describe.skip;
 
 function runStopScript(installerPath: string, env: NodeJS.ProcessEnv) {
   return spawnSync(
@@ -178,7 +177,8 @@ function writeMacServiceStubs(
     servicePath,
   };
 }
-linuxDescribe("reboot lifecycle OpenShell gateway user-service fixture", () => {
+
+describe("reboot lifecycle OpenShell gateway user-service fixture", () => {
   it("stages, enables, and removes the repository service without installer cleanup", () => {
     const root = fs.mkdtempSync(
       path.join(os.tmpdir(), "nemoclaw-installer-lifecycle-stage-service-"),
@@ -191,6 +191,7 @@ linuxDescribe("reboot lifecycle OpenShell gateway user-service fixture", () => {
     const installerCleanupSentinel = path.join(root, "installer-cleanup-sentinel");
 
     fs.mkdirSync(bin, { recursive: true });
+    fs.writeFileSync(path.join(bin, "uname"), "#!/bin/sh\nprintf 'Linux\\n'\n", { mode: 0o755 });
     fs.writeFileSync(installerCleanupSentinel, "fixture-owned\n");
     fs.writeFileSync(path.join(bin, "openshell-gateway"), "#!/bin/sh\n", { mode: 0o755 });
     fs.writeFileSync(
@@ -250,6 +251,7 @@ linuxDescribe("reboot lifecycle OpenShell gateway user-service fixture", () => {
 
     fs.mkdirSync(home, { recursive: true });
     fs.mkdirSync(bin, { recursive: true });
+    fs.writeFileSync(path.join(bin, "uname"), "#!/bin/sh\nprintf 'Linux\\n'\n", { mode: 0o755 });
     fs.writeFileSync(path.join(bin, "systemctl"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
 
     try {
@@ -283,6 +285,7 @@ linuxDescribe("reboot lifecycle OpenShell gateway user-service fixture", () => {
     const unit = path.join(configHome, "systemd", "user", "nemoclaw-openshell-gateway.service");
 
     fs.mkdirSync(bin, { recursive: true });
+    fs.writeFileSync(path.join(bin, "uname"), "#!/bin/sh\nprintf 'Linux\\n'\n", { mode: 0o755 });
     fs.writeFileSync(path.join(bin, "openshell-gateway"), "#!/bin/sh\n", { mode: 0o755 });
     fs.writeFileSync(
       path.join(bin, "systemctl"),
@@ -325,6 +328,7 @@ linuxDescribe("reboot lifecycle OpenShell gateway user-service fixture", () => {
 
     fs.mkdirSync(home, { recursive: true });
     fs.mkdirSync(bin, { recursive: true });
+    fs.writeFileSync(path.join(bin, "uname"), "#!/bin/sh\nprintf 'Linux\\n'\n", { mode: 0o755 });
     fs.mkdirSync(unitDir, { recursive: true });
     fs.writeFileSync(unit, "[Service]\nExecStart=/tmp/foreign\n");
     fs.writeFileSync(path.join(bin, "openshell-gateway"), "#!/bin/sh\n", { mode: 0o755 });
