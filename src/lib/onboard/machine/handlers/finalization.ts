@@ -34,7 +34,6 @@ export interface FinalizationStateOptions<Agent, VerifyChain, VerificationResult
   webSearchEnabled: boolean;
   webSearchProvider: WebSearchVerifyProvider | null;
   portableProfileSelected?: boolean;
-  recreateJournalHandoff?: boolean;
   externalComponent?: PreparedExternalComponent | null;
   providerless?: boolean;
   deps: {
@@ -44,7 +43,9 @@ export interface FinalizationStateOptions<Agent, VerifyChain, VerificationResult
      * registered as default (#4614).
      */
     setDefaultSandbox(sandboxName: string): void;
-    createExternalComponentActivationProof?(sandboxName: string): ExternalComponentActivationProof;
+    createExternalComponentActivationProof?(
+      sandboxName: string,
+    ): ExternalComponentActivationProof | Promise<ExternalComponentActivationProof>;
     createExternalComponentActivationId?(): string;
     activateExternalComponent?(
       component: PreparedExternalComponent,
@@ -219,7 +220,7 @@ export async function handleFinalizationState<Agent, VerifyChain, VerificationRe
     ) {
       throw new Error("External component activation is unavailable.");
     }
-    const proof = deps.createExternalComponentActivationProof(sandboxName);
+    const proof = await deps.createExternalComponentActivationProof(sandboxName);
     const activationId = deps.createExternalComponentActivationId();
     const evidence = (resultClass: "failed" | "ambiguous") => ({
       schemaVersion: 1 as const,
@@ -298,7 +299,6 @@ export async function handlePostVerifyState<Agent, VerifyChain, VerificationResu
   webSearchEnabled,
   webSearchProvider,
   portableProfileSelected,
-  recreateJournalHandoff,
   deps,
 }: FinalizationStateOptions<
   Agent,
@@ -313,9 +313,7 @@ export async function handlePostVerifyState<Agent, VerifyChain, VerificationResu
     deps.readRegistryAgent,
   );
   const ordinaryOpenClawPairingRequired =
-    portableAgent === "ordinary" &&
-    selectedAgentName(agent) === "openclaw" &&
-    recreateJournalHandoff !== true;
+    portableAgent === "ordinary" && selectedAgentName(agent) === "openclaw";
   let verificationDiagnostics: string[] = [];
   let deploymentHealthy = true;
   if (portableAgent !== "ordinary") {

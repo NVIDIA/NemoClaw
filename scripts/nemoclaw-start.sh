@@ -202,29 +202,19 @@ harden_resource_limits
 # PATH was already locked down at the top of this script (before the
 # early stderr capture). This comment marks the original location.
 
-# Redirect tool caches and state to /tmp so transient package-manager and
-# shell state stays outside the agent's durable workspace. Without these, tools
-# would create noisy dotfiles (~/.npm, ~/.cache, ~/.bash_history, ~/.gitconfig,
-# ~/.local, ~/.claude) under /sandbox.
-#
-# IMPORTANT: This array is the single source of truth for tool-cache redirects.
-# The same entries are emitted into /tmp/nemoclaw-proxy-env.sh (see below) so
-# that `openshell sandbox connect` sessions also pick up the redirects.
+# Keep disposable caches and existing auth/history locations in /tmp. Ordinary
+# config and user data use native HOME defaults; npm needs a writable user prefix.
+# Connect shells receive the same settings from /tmp/nemoclaw-proxy-env.sh.
 _TOOL_REDIRECTS=(
   'npm_config_cache=/tmp/.npm-cache'
   'XDG_CACHE_HOME=/tmp/.cache'
-  'XDG_CONFIG_HOME=/tmp/.config'
-  'XDG_DATA_HOME=/tmp/.local/share'
-  'XDG_STATE_HOME=/tmp/.local/state'
   'XDG_RUNTIME_DIR=/tmp/.runtime'
   'NODE_REPL_HISTORY=/tmp/.node_repl_history'
   'HISTFILE=/tmp/.bash_history'
-  'GIT_CONFIG_GLOBAL=/tmp/.gitconfig'
   'GNUPGHOME=/tmp/.gnupg'
-  'PYTHONUSERBASE=/tmp/.local'
   'PYTHON_HISTORY=/tmp/.python_history'
   'CLAUDE_CONFIG_DIR=/tmp/.claude'
-  'npm_config_prefix=/tmp/npm-global'
+  'npm_config_prefix=/sandbox/.local'
   # Pin npm online at runtime so a stale base image or future build-time
   # offline-lock regression cannot force `only-if-cached` mode on PID 1 or
   # `openshell sandbox connect` sessions.
@@ -244,15 +234,10 @@ done
 # directories are owned by us automatically. Using install -o would fail with
 # EPERM because only root can chown. Ref: #804
 if [ "$(id -u)" -eq 0 ]; then
-  install -d -o sandbox -g sandbox -m 755 \
-    /tmp/.npm-cache /tmp/.cache /tmp/.config /tmp/.local/share \
-    /tmp/.local/state /tmp/.runtime /tmp/.claude \
-    /tmp/npm-global
+  install -d -o sandbox -g sandbox -m 755 /tmp/.npm-cache /tmp/.cache /tmp/.runtime /tmp/.claude
   install -d -o sandbox -g sandbox -m 700 /tmp/.gnupg
 else
-  mkdir -p /tmp/.npm-cache /tmp/.cache /tmp/.config /tmp/.local/share \
-    /tmp/.local/state /tmp/.runtime /tmp/.claude \
-    /tmp/npm-global
+  mkdir -p /tmp/.npm-cache /tmp/.cache /tmp/.runtime /tmp/.claude
   install -d -m 700 /tmp/.gnupg
 fi
 
@@ -1388,13 +1373,13 @@ config_file = sys.argv[1]
 prefix = "openshell:resolve:env:"
 alias_marker = "-OPENSHELL-RESOLVE-ENV-"
 env_key_re = re.compile(r"^[A-Z][A-Z0-9_]{0,127}$")
-revision_re = re.compile(r"^v[0-9]+_")
+generation_re = re.compile(r"^(?:v[0-9]{1,20}|s[a-f0-9]{64})_")
 keys = set()
 MESSAGING_RUNTIME_PLAN_DEFAULT_PATH = "/usr/local/share/nemoclaw/messaging-runtime-plan.json"
 
 
 def add_key(value):
-    key = revision_re.sub("", value)
+    key = generation_re.sub("", value)
     if env_key_re.match(key):
         keys.add(key)
 
@@ -1560,8 +1545,8 @@ for key in keys:
         states[key] = {"kind": "present"}
         continue
     suffix = value[len(prefix) :]
-    revision = re.match(r"^v[0-9]+_", suffix)
-    unversioned = suffix[len(revision.group(0)) :] if revision else suffix
+    generation = re.match(r"^(?:v[0-9]{1,20}|s[a-f0-9]{64})_", suffix)
+    unversioned = suffix[len(generation.group(0)) :] if generation else suffix
     if unversioned != key:
         states[key] = {"kind": "placeholder-mismatch"}
         continue
@@ -1610,8 +1595,8 @@ def runtime_state(key):
         return {"kind": "missing", "value": ""}
     if value.startswith(prefix):
         suffix = value[len(prefix) :]
-        revision = re.match(r"^v[0-9]+_", suffix)
-        unversioned = suffix[len(revision.group(0)) :] if revision else suffix
+        generation = re.match(r"^(?:v[0-9]{1,20}|s[a-f0-9]{64})_", suffix)
+        unversioned = suffix[len(generation.group(0)) :] if generation else suffix
         kind = "placeholder" if unversioned == key else "placeholder-mismatch"
         return {"kind": kind, "value": value}
     return {"kind": "present", "value": value}
@@ -1653,7 +1638,8 @@ def rewrite(value):
             alias_suffix = value[alias_index + len(alias_marker) :]
             for env_key in keys:
                 if alias_suffix != env_key and not re.fullmatch(
-                    rf"v[0-9]{{1,20}}_{re.escape(env_key)}", alias_suffix
+                    rf"(?:v[0-9]{{1,20}}|s[a-f0-9]{{64}})_{re.escape(env_key)}",
+                    alias_suffix,
                 ):
                     continue
                 runtime_value = os.environ.get(env_key, "")
@@ -1661,7 +1647,8 @@ def rewrite(value):
                     continue
                 runtime_suffix = runtime_value[len(prefix) :]
                 if runtime_suffix != env_key and not re.fullmatch(
-                    rf"v[0-9]{{1,20}}_{re.escape(env_key)}", runtime_suffix
+                    rf"(?:v[0-9]{{1,20}}|s[a-f0-9]{{64}})_{re.escape(env_key)}",
+                    runtime_suffix,
                 ):
                     continue
                 updated = value[: alias_index + len(alias_marker)] + runtime_suffix
@@ -1681,8 +1668,8 @@ updated = rewrite(config)
 def placeholder_suffix_matches_env_key(suffix, env_key):
     if suffix == env_key:
         return True
-    revision = re.match(r"^v[0-9]+_", suffix)
-    return bool(revision and suffix[len(revision.group(0)) :] == env_key)
+    generation = re.match(r"^(?:v[0-9]{1,20}|s[a-f0-9]{64})_", suffix)
+    return bool(generation and suffix[len(generation.group(0)) :] == env_key)
 
 
 def path_label(path):
@@ -1729,7 +1716,7 @@ def walk_for_warnings(value, path):
                 state = runtime_state(env_key)
                 env_value = state.get("value", "")
                 placeholder_re = re.compile(
-                    rf"^{re.escape(prefix)}(v[0-9]+_)?{re.escape(env_key)}$"
+                    rf"^{re.escape(prefix)}(?:(?:v[0-9]{{1,20}}|s[a-f0-9]{{64}})_)?{re.escape(env_key)}$"
                 )
                 if state.get("kind") == "missing":
                     warnings.append(
@@ -1885,8 +1872,12 @@ def clean_env_alias(entry, index):
         fail(f"envAliases[{index}].match is not a valid regex: {exc}")
     value = clean_string(entry.get("value"), f"envAliases[{index}].value", allow_empty=True)
     if target_env_key != env_key:
-        if pattern != f"^openshell:resolve:env:v[0-9]+_{env_key}$":
-            fail(f"envAliases[{index}] cross-key match is not revision-scoped")
+        expected_pattern = (
+            "^openshell:resolve:env:"
+            f"(?:v[0-9]{{1,20}}|s[a-f0-9]{{64}})_{env_key}$"
+        )
+        if pattern != expected_pattern:
+            fail(f"envAliases[{index}] cross-key match is not generation-scoped")
         if value != f"openshell:resolve:env:{env_key}":
             fail(f"envAliases[{index}] cross-key value is not the canonical source placeholder")
     return {
@@ -2033,7 +2024,10 @@ for alias in plan.get("envAliases", []):
     placeholder_prefix = "openshell:resolve:env:"
     if marker in value and runtime_value.startswith(placeholder_prefix):
         runtime_suffix = runtime_value[len(placeholder_prefix) :]
-        if re.fullmatch(rf"v[0-9]{{1,20}}_{re.escape(env_key)}", runtime_suffix):
+        if re.fullmatch(
+            rf"(?:v[0-9]{{1,20}}|s[a-f0-9]{{64}})_{re.escape(env_key)}",
+            runtime_suffix,
+        ):
             alias_suffix = value.split(marker, 1)[1]
             if alias_suffix == env_key:
                 value = value.split(marker, 1)[0] + marker + runtime_suffix
@@ -4135,11 +4129,15 @@ GUARDENVEOF
     if type emit_messaging_connect_runtime_preload_exports >/dev/null 2>&1; then
       emit_messaging_connect_runtime_preload_exports
     fi
-    # Tool cache redirects — generated from _TOOL_REDIRECTS (single source of truth)
-    echo '# Tool cache redirects — keep transient tool state under /tmp'
     for _redir in "${_TOOL_REDIRECTS[@]}"; do
       echo "export ${_redir?}"
     done
+    # Only the sandbox account searches its writable user bin directory.
+    cat <<'USERPATHENVEOF'
+if [ "$(/usr/bin/id -un)" = sandbox ]; then
+  export PATH="$PATH:/sandbox/.local/bin"
+fi
+USERPATHENVEOF
     if [ -n "${OPENCLAW_GATEWAY_TOKEN:-}" ]; then
       _escaped_gateway_token="$(printf '%s' "$OPENCLAW_GATEWAY_TOKEN" | sed "s/'/'\\\\''/g")"
       # Emit the token last, after every other generated export. Mark the name
@@ -5107,8 +5105,10 @@ launch_openclaw_gateway_process() {
   case "$launch_identity" in
     current) ;;
     gateway)
+      # The gateway cannot create native Git config in the sandbox-owned HOME.
+      # Keep its fallback private so user commands retain native Git settings.
       gateway_launch_prefix=(
-        "${STEP_DOWN_PREFIX_GATEWAY[@]}" env HOME=/sandbox sh -c
+        "${STEP_DOWN_PREFIX_GATEWAY[@]}" /usr/bin/env HOME=/sandbox GIT_CONFIG_GLOBAL=/tmp/.gitconfig sh -c
         'umask 0007; exec "$@"' sh
       )
       ;;
@@ -5757,6 +5757,7 @@ fi
 if [ "$(id -u)" -ne 0 ]; then
   echo "[gateway] Running as non-root (uid=$(id -u)) — privilege separation disabled" >&2
   export HOME=/sandbox
+  export PATH="$PATH:/sandbox/.local/bin"
   # Restore a #3118 truncation before later config reads.
   _nemoclaw_capture_epoch_realtime _NEMOCLAW_GATEWAY_CONFIG_STARTED_EPOCH
   recover_openclaw_config_if_empty
@@ -5947,7 +5948,7 @@ setup_auth_profile_as_sandbox
 # If a command was passed (e.g., "openclaw agent ..."), run it as sandbox user
 if [ ${#NEMOCLAW_CMD[@]} -gt 0 ]; then
   _nemoclaw_cmd_rc=0
-  run_oneshot_command "${STEP_DOWN_PREFIX_SANDBOX[@]}" "${NEMOCLAW_CMD[@]}" || _nemoclaw_cmd_rc=$?
+  run_oneshot_command "${STEP_DOWN_PREFIX_SANDBOX[@]}" /usr/bin/env HOME=/sandbox PATH="$PATH:/sandbox/.local/bin" "${NEMOCLAW_CMD[@]}" || _nemoclaw_cmd_rc=$?
   exit "$_nemoclaw_cmd_rc"
 fi
 

@@ -242,7 +242,7 @@ export async function runOllamaRecoveryCapture(
     const result = await runCapturedProcess(
       binary,
       args,
-      { maxBufferBytes: OLLAMA_RESTART_RECOVERY_MAX_BUFFER_BYTES, stdinIsTty: true },
+      { maxBufferBytes: OLLAMA_RESTART_RECOVERY_MAX_BUFFER_BYTES, stdin: false },
       { signalSource: options.signalSource, spawnChild },
     );
     return {

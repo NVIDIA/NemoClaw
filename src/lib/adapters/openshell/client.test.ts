@@ -561,14 +561,21 @@ describe("openshell helpers", () => {
     });
   });
 
-  it("preserves the legacy unbounded async capture when maxBuffer is supplied", async () => {
+  it("bounds asynchronous capture through outputLimitBytes", async () => {
     const result = await captureOpenshellCommandAsync(
       process.execPath,
       ["-e", "process.stdout.write('x'.repeat(64))"],
-      { ignoreError: true, maxBuffer: 8 },
+      { ignoreError: true, includeStreams: true, outputLimitBytes: 8 },
     );
 
-    expect(result).toEqual({ status: 0, output: "x".repeat(64), signal: null });
+    expect(result).toEqual({
+      status: 1,
+      output: "x".repeat(8),
+      stdout: "x".repeat(8),
+      stderr: "",
+      error: expect.objectContaining({ code: "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" }),
+      signal: null,
+    });
   });
 
   it("uses the injected exit handler on failure", () => {

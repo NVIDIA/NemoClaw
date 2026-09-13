@@ -57,8 +57,11 @@ type ExecRunner = (
 type StatusDeps = {
   loadAgent?: (name: string) => AgentDefinition;
   getSandbox?: typeof registry.getSandbox;
-  getAppliedPresets?: (sandboxName: string) => string[];
-  getGatewayPresets?: (sandboxName: string, timeoutMs?: number) => string[] | null;
+  getAppliedPresets?: (sandboxName: string, timeoutMs?: number) => string[] | Promise<string[]>;
+  getGatewayPresets?: (
+    sandboxName: string,
+    timeoutMs?: number,
+  ) => string[] | null | Promise<string[] | null>;
   execSandbox?: ExecRunner;
   now?: () => Date;
   nowMs?: () => number;
@@ -301,7 +304,7 @@ async function buildBasicChannelReport(
   const entry = deps.getSandbox(sandboxName);
   const enabled = registry.getConfiguredMessagingChannelsFromEntry(entry).includes(channelName);
   const disabled = registry.getDisabledMessagingChannelsFromEntry(entry).includes(channelName);
-  const appliedPresets = deps.getAppliedPresets(sandboxName);
+  const appliedPresets = await deps.getAppliedPresets(sandboxName);
   const policyPresets =
     diagnostic.policyPresets.length > 0 ? diagnostic.policyPresets : [channelName];
   const presetApplied = policyPresets.some((preset) => appliedPresets.includes(preset));
@@ -429,11 +432,11 @@ async function runChannelHealthHook(
     .includes(channelName);
   const policyPresets =
     diagnostic.policyPresets.length > 0 ? diagnostic.policyPresets : [channelName];
-  const appliedPresets = deps.getAppliedPresets(sandboxName);
+  const appliedPresets = await deps.getAppliedPresets(sandboxName);
   const presetApplied = policyPresets.some((preset) => appliedPresets.includes(preset));
   let presetOnGateway: boolean | null = null;
   try {
-    const gatewayPresets = deps.getGatewayPresets(sandboxName);
+    const gatewayPresets = await deps.getGatewayPresets(sandboxName);
     presetOnGateway =
       gatewayPresets === null
         ? null
@@ -547,9 +550,24 @@ function withStatusDeadline(deps: Required<StatusDeps>, deadlineMs: number): Req
   };
   return {
     ...deps,
-    getGatewayPresets: (sandboxName, requestedTimeoutMs) => {
+    getAppliedPresets: async (sandboxName, requestedTimeoutMs) => {
       const timeoutMs = boundedTimeoutMs(requestedTimeoutMs);
-      return timeoutMs === null ? null : deps.getGatewayPresets(sandboxName, timeoutMs);
+      if (timeoutMs === null) return [];
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        return await Promise.race([
+          deps.getAppliedPresets(sandboxName, timeoutMs),
+          new Promise<string[]>((resolve) => {
+            timer = setTimeout(() => resolve([]), timeoutMs);
+          }),
+        ]);
+      } finally {
+        clearTimeout(timer);
+      }
+    },
+    getGatewayPresets: async (sandboxName, requestedTimeoutMs) => {
+      const timeoutMs = boundedTimeoutMs(requestedTimeoutMs);
+      return timeoutMs === null ? null : await deps.getGatewayPresets(sandboxName, timeoutMs);
     },
     execSandbox: async (sandboxName, command, requestedTimeoutMs) => {
       const timeoutMs = boundedTimeoutMs(requestedTimeoutMs);
@@ -607,7 +625,9 @@ async function waitForChannelReadiness(
     elapsedMs = Math.max(0, deps.nowMs() - startedAt);
   }
   const state: ChannelStatusWaitState =
-    lastObserved.state === "waiting" ? "timeout" : lastObserved.state;
+    lastObserved.state === "waiting" || (elapsedMs >= timeoutMs && lastObserved.state !== "ready")
+      ? "timeout"
+      : lastObserved.state;
   return {
     schemaVersion: 1,
     sandbox: sandboxName,

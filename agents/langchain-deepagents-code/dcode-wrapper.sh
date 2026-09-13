@@ -136,7 +136,8 @@ run_dcode() {
 #       identifiers (e.g. with hyphens) are still classified.
 #     * OpenShell credential placeholders are allowed only when the complete
 #       value names the same valid env key, either canonically or with an
-#       OpenShell `v<digits>_` revision prefix. Any other occurrence is refused.
+#       OpenShell `v<digits>_` revision prefix or `s<64 lowercase hex>_` stable
+#       handle. Any other occurrence is refused.
 # - Regression: test/agents/deepagents/langchain-deepagents-code-secret-pattern-parity.test.ts
 #   pins the canonical TOKEN_PREFIX_PATTERNS, CONTEXT_PATTERNS, and
 #   SECRET_BLOCK_PATTERNS fingerprints (source + flags), while
@@ -437,7 +438,7 @@ is_dynamic_dotenv_value() {
 is_openshell_env_placeholder_for_name() {
   local name="$1"
   local value="$2"
-  local canonical revision_prefix revision_suffix versioned revision
+  local canonical revision_prefix stable_prefix generation_suffix versioned revision stable handle
 
   # OPENSHELL_TLS_KEY is supervisor infrastructure, not a provider credential.
   # Never let a provider placeholder bypass that supervisor-only boundary.
@@ -455,15 +456,28 @@ is_openshell_env_placeholder_for_name() {
   [ "$value" = "$canonical" ] && return 0
 
   revision_prefix="${OPENSHELL_ENV_PLACEHOLDER_PREFIX}v"
-  revision_suffix="_${name}"
+  stable_prefix="${OPENSHELL_ENV_PLACEHOLDER_PREFIX}s"
+  generation_suffix="_${name}"
   versioned="${value#"$revision_prefix"}"
-  [ "$versioned" != "$value" ] || return 1
-  revision="${versioned%"$revision_suffix"}"
-  [ "$revision" != "$versioned" ] || return 1
-  [ "$versioned" = "$revision$revision_suffix" ] || return 1
-  [ "${#revision}" -le 20 ] || return 1
-  case "$revision" in
-    "" | *[!0-9]*) return 1 ;;
+  if [ "$versioned" != "$value" ]; then
+    revision="${versioned%"$generation_suffix"}"
+    [ "$revision" != "$versioned" ] || return 1
+    [ "$versioned" = "$revision$generation_suffix" ] || return 1
+    [ "${#revision}" -le 20 ] || return 1
+    case "$revision" in
+      "" | *[!0-9]*) return 1 ;;
+      *) return 0 ;;
+    esac
+  fi
+
+  stable="${value#"$stable_prefix"}"
+  [ "$stable" != "$value" ] || return 1
+  handle="${stable%"$generation_suffix"}"
+  [ "$handle" != "$stable" ] || return 1
+  [ "$stable" = "$handle$generation_suffix" ] || return 1
+  [ "${#handle}" -eq 64 ] || return 1
+  case "$handle" in
+    *[!0123456789abcdef]*) return 1 ;;
     *) return 0 ;;
   esac
 }

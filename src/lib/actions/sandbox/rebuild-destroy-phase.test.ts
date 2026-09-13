@@ -204,6 +204,39 @@ describe("rebuild destroy phase", () => {
     expectNoSandboxDelete(mocks.runOpenshell);
   });
 
+  it("refuses deletion when the registry target changes during asynchronous validation", async () => {
+    let finishValidation!: () => void;
+    const validateAtDeleteEdge = vi.fn(async () => {
+      await new Promise<void>((resolve) => {
+        finishValidation = resolve;
+      });
+      return { ok: true as const };
+    });
+    const journal = stubRecreateJournal();
+    const pending = runRebuildDestroyPhase({
+      sandboxName: "alpha",
+      sandboxEntry: { name: "alpha", agent: "openclaw" },
+      staleRecovery: false,
+      recreateJournal: journal,
+      backupManifest: null,
+      log: vi.fn(),
+      bail: (message): never => {
+        throw new Error(message);
+      },
+      validateAtDeleteEdge,
+      onDeleted: vi.fn(),
+    });
+    await vi.waitFor(() => expect(validateAtDeleteEdge).toHaveBeenCalledOnce());
+    mocks.getSandbox.mockReturnValue({ name: "alpha", agent: "openclaw", gatewayName: "other" });
+    finishValidation();
+    await expect(pending).rejects.toThrow(
+      "Sandbox delete target changed during rebuild preparation.",
+    );
+    expect(journal.beginDelete).not.toHaveBeenCalled();
+    expectNoSandboxDelete(mocks.runOpenshell);
+    expect(mocks.reattachMcpAfterDeleteFailure).toHaveBeenCalledOnce();
+  });
+
   it("passes force=true to prepareMcpForRebuild when input.force is set (#7062)", async () => {
     const log = vi.fn();
     const bail = vi.fn((message: string): never => {

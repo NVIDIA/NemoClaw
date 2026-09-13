@@ -7,6 +7,7 @@ import {
   createDockerRuntimeProviderBundle,
   type DockerRuntimeProviderDependencies,
 } from "./docker";
+import * as dockerCommands from "../../adapters/docker/run";
 import type { RuntimeProviderLifecycleInput } from "./contract";
 
 const GPU_PROOF_RESOURCE = {
@@ -26,6 +27,16 @@ function lifecycleInput(environment: NodeJS.ProcessEnv = {}): RuntimeProviderLif
       gatewayName: "nemoclaw",
       lifecycleGeneration: "generation-1",
     } as RuntimeProviderLifecycleInput["sandbox"],
+  };
+}
+
+function openClawLifecycleInput(
+  environment: NodeJS.ProcessEnv = {},
+): RuntimeProviderLifecycleInput {
+  const input = lifecycleInput(environment);
+  return {
+    ...input,
+    sandbox: { ...input.sandbox, agent: "openclaw" },
   };
 }
 
@@ -292,5 +303,145 @@ describe("Docker provider portable lifecycle dispatch", () => {
       stateDir: "/portable-home/.nemoclaw/state",
     });
     expect(stopPortableSandbox).toHaveBeenCalledOnce();
+  });
+});
+
+describe("Docker provider OpenShell lifecycle dispatch", () => {
+  it("starts a stopped OpenShell sandbox through the gateway instead of Docker (#11251)", () => {
+    const captureSandboxLifecycle = vi.fn(() => ({ status: 0, output: "started" }));
+    const provider = createDockerRuntimeProviderBundle({
+      captureSandboxLifecycle,
+      findLabeledSandboxContainers: () => [
+        { name: "openshell-default--alpha-id", running: false, status: "Exited (0) 1 second ago" },
+      ],
+      recoverPortableSandbox: () => ({ kind: "not-installed" }),
+      recoverSandbox: poison,
+      withLifecycleLockSync: (_sandboxName, operation) => operation(),
+    });
+
+    expect(
+      supportedLifecycle(provider).start(openClawLifecycleInput({ HOME: "/test-home" })),
+    ).toEqual({ exitCode: 0 });
+    expect(captureSandboxLifecycle).toHaveBeenCalledWith("start", "alpha", "nemoclaw", {
+      HOME: "/test-home",
+    });
+  });
+
+  it("stops a running OpenShell sandbox through the gateway instead of Docker (#11251)", () => {
+    const beforeStop = vi.fn();
+    const captureSandboxLifecycle = vi.fn(() => ({ status: 0, output: "stopped" }));
+    const provider = createDockerRuntimeProviderBundle({
+      captureSandboxLifecycle,
+      findLabeledSandboxContainers: () => [
+        { name: "openshell-default--alpha-id", running: true, status: "Up 1 minute" },
+      ],
+      stopContainer: poison,
+      stopPortableSandbox: () => ({ kind: "not-installed" }),
+      withLifecycleLockSync: (_sandboxName, operation) => operation(),
+    });
+
+    expect(
+      supportedLifecycle(provider).stop(openClawLifecycleInput({ HOME: "/test-home" }), {
+        beforeStop,
+      }),
+    ).toEqual({ exitCode: 0, state: "stopped" });
+    expect(beforeStop).toHaveBeenCalledOnce();
+    expect(captureSandboxLifecycle).toHaveBeenCalledWith("stop", "alpha", "nemoclaw", {
+      HOME: "/test-home",
+    });
+  });
+
+  it("fails closed when OpenShell cannot start the stopped sandbox (#11251)", () => {
+    const provider = createDockerRuntimeProviderBundle({
+      captureSandboxLifecycle: () => ({ status: 1, output: "sandbox phase is Error" }),
+      findLabeledSandboxContainers: () => [
+        { name: "openshell-default--alpha-id", running: false, status: "Exited (0) 1 second ago" },
+      ],
+      recoverPortableSandbox: () => ({ kind: "not-installed" }),
+      recoverSandbox: poison,
+      withLifecycleLockSync: (_sandboxName, operation) => operation(),
+    });
+
+    expect(supportedLifecycle(provider).start(openClawLifecycleInput())).toEqual({
+      exitCode: 1,
+      message: "  OpenShell could not start sandbox 'alpha' (exit 1): sandbox phase is Error.",
+    });
+  });
+
+  it("fails closed when OpenShell cannot stop the running sandbox (#11251)", () => {
+    const beforeStop = vi.fn();
+    const provider = createDockerRuntimeProviderBundle({
+      captureSandboxLifecycle: () => ({ status: 1, output: "gateway unavailable" }),
+      findLabeledSandboxContainers: () => [
+        { name: "openshell-default--alpha-id", running: true, status: "Up 1 minute" },
+      ],
+      stopContainer: poison,
+      stopPortableSandbox: () => ({ kind: "not-installed" }),
+      withLifecycleLockSync: (_sandboxName, operation) => operation(),
+    });
+
+    expect(supportedLifecycle(provider).stop(openClawLifecycleInput(), { beforeStop })).toEqual({
+      exitCode: 1,
+      message: "  OpenShell could not stop sandbox 'alpha' (exit 1): gateway unavailable.",
+    });
+    expect(beforeStop).toHaveBeenCalledOnce();
+  });
+
+  it("keeps an already-stopped sandbox idempotent without calling OpenShell (#11251)", () => {
+    const captureSandboxLifecycle = vi.fn(poison);
+    const beforeStop = vi.fn(poison);
+    const provider = createDockerRuntimeProviderBundle({
+      captureSandboxLifecycle,
+      findLabeledSandboxContainers: () => [
+        { name: "openshell-default--alpha-id", running: false, status: "Exited (0) 1 second ago" },
+      ],
+      stopPortableSandbox: () => ({ kind: "not-installed" }),
+      withLifecycleLockSync: (_sandboxName, operation) => operation(),
+    });
+
+    expect(supportedLifecycle(provider).stop(openClawLifecycleInput(), { beforeStop })).toEqual({
+      exitCode: 0,
+      state: "already-stopped",
+    });
+    expect(captureSandboxLifecycle).not.toHaveBeenCalled();
+    expect(beforeStop).not.toHaveBeenCalled();
+  });
+});
+
+describe("Docker network command bounds", () => {
+  it("uses the selected socket, output limit, and forced timeout for provisioning (#11606)", () => {
+    const dockerRun = vi.spyOn(dockerCommands, "dockerRun").mockReturnValue({
+      status: null,
+      signal: "SIGKILL",
+      stdout: Buffer.alloc(0),
+      stderr: Buffer.alloc(0),
+      error: Object.assign(new Error("deadline"), { code: "ETIMEDOUT" }),
+      pid: 1,
+      output: [],
+    });
+    const gateway = createDockerRuntimeProviderBundle().gateway as Extract<
+      ReturnType<typeof createDockerRuntimeProviderBundle>["gateway"],
+      { supported: true }
+    >;
+    const runtime = gateway.observeHostRuntime({ environment: {}, platform: "linux" });
+    const args = ["network", "create", "--driver", "bridge", "--attachable", "generic-network"];
+    const result = runtime.network.run(args, 30_000, {
+      maxOutputBytes: 16 * 1024,
+      environment: { DOCKER_HOST: "unix:///run/user/1000/docker.sock" },
+    });
+    expect(dockerRun).toHaveBeenCalledWith(args, {
+      timeout: 30_000,
+      maxBuffer: 16 * 1024,
+      killSignal: "SIGKILL",
+      env: { DOCKER_HOST: "unix:///run/user/1000/docker.sock" },
+      ignoreError: true,
+      suppressOutput: true,
+    });
+    expect(result).toMatchObject({
+      status: null,
+      signal: "SIGKILL",
+      timedOut: true,
+      errorCode: "ETIMEDOUT",
+    });
   });
 });

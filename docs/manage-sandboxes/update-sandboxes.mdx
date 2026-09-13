@@ -43,7 +43,7 @@ The `langchain-deepagents-code` agent manifest declares the expected Deep Agents
 Run the maintained installer to update the host CLI and reconcile registered sandboxes.
 
 <Warning>
-The maintained OpenShell 0.0.106 pin limits a routed sandbox name to 19 characters and rejects consecutive hyphens.
+The maintained OpenShell 0.0.116 pin limits a routed sandbox name to 19 characters and rejects consecutive hyphens.
 A NemoClaw sandbox name must contain 1 to 19 characters.
 It must start with a lowercase letter, use lowercase letters, numbers, and single internal hyphens, and end with a letter or number.
 Before the OpenShell upgrade, the installer checks registered sandboxes for the selected gateway.
@@ -52,7 +52,7 @@ If the installer finds incompatible names, it lists each name and exits before i
 - Prepare the NemoClaw CLI for the upgrade.
 - Start a backup of the registered sandboxes.
 - Retire the selected OpenShell gateway.
-- Install OpenShell 0.0.106.
+- Install OpenShell 0.0.116.
 - Recreate a sandbox.
 
 NemoClaw does not automatically truncate or change the sandbox name.
@@ -82,6 +82,8 @@ curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_INSTALL_REF= NEMOCLAW_I
 
 During the automatic upgrade path, the installer prepares the current NemoClaw CLI without replacing OpenShell and requires a fresh backup of every registered sandbox.
 If any sandbox is skipped or fails, the installer exits before it changes the gateway.
+For a failed required pre-upgrade backup, NemoClaw removes the incomplete timestamped backup directory so it cannot appear as a recovery point.
+If that removal fails, the installer reports the retained path; preserve it and do not use it for recovery.
 After backup, the installer requires any existing OpenShell executable it will use to report a version, then compares that version with the supported range declared by the prepared current source.
 It retires the running gateway before replacing an out-of-range OpenShell installation, keeps the gateway when the installed version is supported, and stops without retiring it when the installed version or supported range cannot be validated.
 If OpenShell lifecycle commands cannot retire the gateway, the installer can use verified service or PID-file evidence on Linux and macOS.

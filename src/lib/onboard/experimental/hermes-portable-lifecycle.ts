@@ -72,6 +72,89 @@ import { defaultPortableDemoStateDir } from "./portable-runtime-receipt-readines
 const UTF8 = new TextDecoder("utf-8", { fatal: true });
 const COMMAND_TIMEOUT_MS = 5_000;
 const OPENSHELL_LIFECYCLE_MUTATION_TIMEOUT_MS = 60_000;
+const OPENSHELL_V0116_STOP_ASSIST_PROGRAM = [
+  "import os",
+  "import signal",
+  "import time",
+  "",
+  "own_pid = os.getpid()",
+  "own_pgrp = os.getpgrp()",
+  "own_uid = os.getuid()",
+  'managed_argv = (b"bash", b"/usr/local/bin/nemoclaw-start")',
+  "candidates = set()",
+  "",
+  "def inspect(pid):",
+  '    if os.stat(f"/proc/{pid}").st_uid != own_uid:',
+  "        return None",
+  '    argv = open(f"/proc/{pid}/cmdline", "rb").read().split(b"\\0")',
+  '    if argv and argv[-1] == b"":',
+  "        argv.pop()",
+  '    stat = open(f"/proc/{pid}/stat", "r", encoding="ascii").read()',
+  '    fields = stat.rsplit(")", 1)[1].split()',
+  "    if len(fields) < 20:",
+  "        return None",
+  "    return tuple(argv), int(fields[1]), int(fields[2]), fields[19]",
+  "",
+  'for entry in os.scandir("/proc"):',
+  "    if not entry.name.isdecimal():",
+  "        continue",
+  "    pid = int(entry.name)",
+  "    if pid in (1, own_pid):",
+  "        continue",
+  "    try:",
+  "        observed = inspect(pid)",
+  "    except (FileNotFoundError, PermissionError, ProcessLookupError):",
+  "        continue",
+  "    if observed is None:",
+  "        continue",
+  "    argv, ppid, pgrp, starttime = observed",
+  "    if argv == managed_argv and ppid == 1 and pgrp == pid and pgrp != own_pgrp:",
+  "        candidates.add((pid, ppid, pgrp, starttime, argv))",
+  "groups = {pgrp for _, _, pgrp, _, _ in candidates}",
+  "if len(groups) != 1:",
+  "    raise SystemExit(75)",
+  "pgrp = groups.pop()",
+  "child = os.fork()",
+  "if child == 0:",
+  "    os.setsid()",
+  "    for fd in (0, 1, 2):",
+  "        try:",
+  "            os.close(fd)",
+  "        except OSError:",
+  "            pass",
+  "    time.sleep(1.0)",
+  "    valid = False",
+  "    for pid, candidate_ppid, candidate_pgrp, starttime, candidate_argv in candidates:",
+  "        try:",
+  "            observed = inspect(pid)",
+  "        except (FileNotFoundError, PermissionError, ProcessLookupError):",
+  "            continue",
+  "        if observed is None:",
+  "            continue",
+  "        argv, current_ppid, current_pgrp, current_starttime = observed",
+  "        if (",
+  "            candidate_ppid == 1",
+  "            and current_ppid == candidate_ppid",
+  "            and candidate_pgrp == pgrp",
+  "            and current_pgrp == pgrp",
+  "            and current_pgrp == pid",
+  "            and current_starttime == starttime",
+  "            and candidate_argv == managed_argv",
+  "            and argv == candidate_argv",
+  "        ):",
+  "            valid = True",
+  "            break",
+  "    if not valid:",
+  "        os._exit(76)",
+  "    try:",
+  "        os.killpg(pgrp, signal.SIGTERM)",
+  "    except ProcessLookupError:",
+  "        pass",
+  "    except PermissionError:",
+  "        os._exit(77)",
+  "    os._exit(0)",
+  'print(f"schema=1 result=armed pgrp={pgrp}")',
+].join("\n");
 const EXEC_READY_TIMEOUT_MS = 90_000;
 const EXEC_READY_POLL_INTERVAL_MS = 100;
 const STOP_SETTLEMENT_TIMEOUT_MS = 30_000;
@@ -1019,6 +1102,26 @@ function openshellLifecycleMutationArgs(
   return ["sandbox", operation, "-g", receipt.gatewayName, receipt.sandboxName];
 }
 
+function armOpenShellV0116StopAssist(qualified: QualifiedHermesPortableLifecycle): void {
+  const result = qualified.capture(
+    openshellExecArgs(qualified.receipt, [
+      "python3",
+      "-I",
+      "-c",
+      OPENSHELL_V0116_STOP_ASSIST_PROGRAM,
+    ]),
+    COMMAND_TIMEOUT_MS,
+  );
+  const stdout = commandOutput(result.stdout, "OpenShell 0.0.116 stop assist output");
+  if (
+    result.status !== 0 ||
+    result.error ||
+    !/^schema=1 result=armed pgrp=[1-9][0-9]*\n?$/u.test(stdout)
+  ) {
+    fail("OpenShell 0.0.116 stop assist could not prove the canonical workload process group");
+  }
+}
+
 function waitFor(
   timeoutMs: number,
   deps: HermesPortableLifecycleDeps,
@@ -1086,6 +1189,9 @@ function rollbackStartedHermesPortableRecovery(
       qualified.assertTransactionCurrent();
     }
     failureClass = "container-stop-settlement";
+    if (qualified.openShellPhase === "Stopped") {
+      armOpenShellV0116StopAssist(qualified);
+    }
     captureRetainedLifecycleCommand(
       qualified,
       timing,
@@ -1411,7 +1517,7 @@ export function recoverHermesPortableSandboxLifecycle(
   }
   const wasRunning = qualified.container.authority.running;
   timing.setContainerAction(wasRunning ? "reused" : "started");
-  const rollbackAuthority = qualified;
+  let rollbackAuthority = qualified;
   let startedByRecovery = false;
   let primaryFailureClass: HermesPortableRecoveryFailureClass = "container-start";
   try {
@@ -1472,6 +1578,7 @@ export function recoverHermesPortableSandboxLifecycle(
           currentnessTiming,
         ),
       );
+      rollbackAuthority = qualified;
       startedByRecovery =
         qualified.container.authority.running && qualified.container.status === "running";
       if (!startedByRecovery) {
@@ -1706,15 +1813,32 @@ export function recoverHermesPortableSandboxLifecycle(
     if (startedByRecovery) {
       try {
         timing.increment("rollback");
-        timing.measure("rollback", () =>
+        timing.measure("rollback", () => {
+          if (rollbackAuthority.openShellPhase === "Error") {
+            try {
+              rollbackAuthority = {
+                ...qualified,
+                openShellPhase: observeOpenShellIdentity(qualified.receipt, qualified.capture, [
+                  "Ready",
+                  "Error",
+                  "Stopped",
+                ]).phase,
+              };
+            } catch (rollbackAuthorityError) {
+              throw new HermesPortableRollbackAttemptError(
+                "pre-stop-authority",
+                rollbackAuthorityError,
+              );
+            }
+          }
           rollbackStartedHermesPortableRecovery(
             sandboxName,
             context,
             instrumentedDeps,
             rollbackAuthority,
             timing,
-          ),
-        );
+          );
+        });
       } catch (rollbackError) {
         inspectionTiming?.finish();
         currentnessTiming.finish();
@@ -2011,6 +2135,13 @@ export function stopHermesPortableSandboxLifecycle(
   if (qualified.container.authority.running && qualified.openShellPhase === "Stopped") {
     fail("OpenShell Stopped phase disagrees with the running receipt container");
   }
+  if (qualified.openShellPhase === "Ready") {
+    // OpenShell 0.0.116's rootless Podman supervisor drops CAP_KILL, so its
+    // SIGTERM cannot reach the sandbox-UID workload (OpenShell #3036). Arm one
+    // same-UID, exact-entrypoint signal before the authenticated stop request;
+    // the delay lets OpenShell durably own Stopping before the workload exits.
+    armOpenShellV0116StopAssist(qualified);
+  }
   qualified.capture(
     openshellLifecycleMutationArgs(qualified.receipt, "stop"),
     OPENSHELL_LIFECYCLE_MUTATION_TIMEOUT_MS,
@@ -2023,6 +2154,7 @@ export const hermesPortableLifecycleInternals = {
   buildHermesPortableOpenShellEnv,
   createContainerDeps,
   healthWaitProgram: HEALTH_WAIT_PROGRAM,
+  openShellV0116StopAssistProgram: OPENSHELL_V0116_STOP_ASSIST_PROGRAM,
   parseHealthWaitReceipt,
   qualify,
   retainRequalifiedOperatingAuthority,

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -13,12 +13,14 @@ import { withMcpLifecycleLockSync } from "../../state/mcp-lifecycle-lock";
 import { withPortableHostFence } from "../../state/portable-uninstall-retirement";
 import type { SandboxEntry } from "../../state/registry";
 import { fingerprintOpenShellSandboxLiveIdentity } from "../../adapters/openshell/sandbox-identity";
-import type { HermesPortableOpenShellExecutableAuthority } from "../../adapters/openshell/resolve-shared";
-import type { PodmanExecutableAuthorityDeps, PodmanExecutableStat } from "../../adapters/podman";
 import type { ContainerEngineCommandCapture } from "../../adapters/container-engine";
-import type { HermesPortablePodmanExecutableAuthority } from "./hermes-portable-podman-authority";
 import { hermesPortableContainerInternals } from "./hermes-portable-container";
 import { resolveHermesPortableStartupContract } from "./hermes-portable-contract";
+import {
+  testOpenShellExecutableAuthority,
+  testPodmanExecutableAuthority,
+  testPodmanExecutableAuthorityDeps,
+} from "./hermes-portable-lifecycle.test-fixture";
 import {
   createSandboxListJson,
   directoryChain,
@@ -66,81 +68,6 @@ let policyPath: string;
 function startupArgv() {
   return renderStartupArgv(SANDBOX);
 }
-function openshellExecutableAuthority(): HermesPortableOpenShellExecutableAuthority {
-  return {
-    version: "0.0.106",
-    executable: {
-      executablePath: "/usr/bin/openshell",
-      device: "1",
-      inode: "10",
-      mode: String(0o100755),
-      ownerUid: "0",
-      size: "1024",
-      modifiedTimeNanoseconds: "11",
-      changedTimeNanoseconds: "12",
-      sha256: "f".repeat(64),
-      directoryChain: ["/usr/bin", "/usr", "/"].map((directory, index) => ({
-        device: "1",
-        inode: String(index + 20),
-        mode: String(0o40755),
-        ownerUid: "0",
-        path: directory,
-      })),
-    },
-  };
-}
-function podmanExecutableAuthority(): HermesPortablePodmanExecutableAuthority {
-  const bytes = Buffer.from("podman-5.7.0-test", "utf8");
-  return {
-    version: "5.7.0",
-    executable: {
-      executablePath: "/usr/bin/podman",
-      device: "1",
-      inode: "30",
-      mode: String(0o100755),
-      ownerUid: "0",
-      size: String(bytes.byteLength),
-      modifiedTimeNanoseconds: "31",
-      changedTimeNanoseconds: "32",
-      sha256: createHash("sha256").update(bytes).digest("hex"),
-      directoryChain: ["/usr/bin", "/usr", "/"].map((directory, index) => ({
-        device: "1",
-        inode: String(index + 40),
-        mode: String(0o40755),
-        ownerUid: "0",
-        path: directory,
-      })),
-    },
-  };
-}
-function podmanExecutableAuthorityDeps(): PodmanExecutableAuthorityDeps {
-  const bytes = Buffer.from("podman-5.7.0-test", "utf8");
-  const stat = (filePath: string): PodmanExecutableStat => ({
-    dev: 1n,
-    ino:
-      filePath === "/usr/bin/podman"
-        ? 30n
-        : filePath === "/usr/bin"
-          ? 40n
-          : filePath === "/usr"
-            ? 41n
-            : 42n,
-    mode: filePath === "/usr/bin/podman" ? 0o100755n : 0o40755n,
-    uid: 0n,
-    size: filePath === "/usr/bin/podman" ? BigInt(bytes.byteLength) : 0n,
-    mtimeNs: 31n,
-    ctimeNs: 32n,
-    isDirectory: () => filePath !== "/usr/bin/podman",
-    isFile: () => filePath === "/usr/bin/podman",
-    isSymbolicLink: () => false,
-  });
-  return {
-    uid: process.getuid!(),
-    lstat: stat,
-    readFile: () => bytes,
-    realpath: (filePath) => filePath,
-  };
-}
 function activeReceipt(homeDir = "/home/test"): HermesPortableConfiguredReceipt {
   const uid = process.getuid!();
   const socketPath = `/run/user/${String(uid)}/podman/podman.sock`;
@@ -171,8 +98,8 @@ function activeReceipt(homeDir = "/home/test"): HermesPortableConfiguredReceipt 
       runtimeDir: `/run/user/${String(uid)}`,
       socketPath,
     },
-    openshellExecutableAuthority: openshellExecutableAuthority(),
-    podmanExecutableAuthority: podmanExecutableAuthority(),
+    openshellExecutableAuthority: testOpenShellExecutableAuthority(),
+    podmanExecutableAuthority: testPodmanExecutableAuthority(),
     socketAuthority: {
       device: "1",
       inode: "2",
@@ -235,13 +162,17 @@ function lifecycleDeps(
     readonly sandboxPhase?: (running: boolean) => string;
     readonly sandboxIdentity?: (running: boolean) => string | undefined;
     readonly failPostStartInspectOnce?: boolean;
+    readonly stopRequiresAssist?: boolean;
     readonly startStatus?: number;
   } = {},
 ) {
   let running = initiallyRunning,
+    workloadRunning = initiallyRunning,
     now = 0;
+  let lifecyclePhase: "Ready" | "Stopped" | undefined;
   let postStartInspectFailurePending = false;
-  const sandboxPhase = () => options.sandboxPhase?.(running) ?? (running ? "Ready" : "Error");
+  const sandboxPhase = () =>
+    options.sandboxPhase?.(running) ?? lifecyclePhase ?? (running ? "Ready" : "Error");
   const podman = vi.fn((args: readonly string[]) => {
     const actions = {
       inspect: () => {
@@ -284,21 +215,33 @@ function lifecycleDeps(
   });
   const liveIdentityFingerprint = fingerprintOpenShellSandboxLiveIdentity(LIVE)!;
   const captureOpenShell = vi.fn((args: readonly string[]) => {
+    const stopAssist = args.includes(
+      hermesPortableLifecycleInternals.openShellV0116StopAssistProgram,
+    );
+    workloadRunning = stopAssist && options.stopRequiresAssist ? false : workloadRunning;
     const sandboxExecOutput = args.includes(hermesPortableLifecycleInternals.healthWaitProgram)
       ? "schema=1 result=ready attempts=1 notReady=0 timeouts=0 errors=0 lastFailure=none probeMs=0 sleepMs=0\n"
-      : args.includes("python3")
-        ? "200\n"
-        : "";
+      : stopAssist
+        ? "schema=1 result=armed pgrp=123\n"
+        : args.includes("python3")
+          ? "200\n"
+          : "";
     const operation = args.slice(0, 2).join(":");
     const mutation = {
       "sandbox:start": () => {
         running = true;
+        workloadRunning = true;
+        lifecyclePhase = "Ready";
         postStartInspectFailurePending = options.failPostStartInspectOnce === true;
         return { status: options.startStatus ?? 0, stdout: "", stderr: "start failed" };
       },
       "sandbox:stop": () => {
-        running = false;
-        return { status: 0, stdout: "", stderr: "" };
+        const blocked = options.stopRequiresAssist && workloadRunning;
+        running = blocked ? running : false;
+        lifecyclePhase = blocked ? lifecyclePhase : "Stopped";
+        return blocked
+          ? { status: 1, stdout: "", stderr: "managed workload is still running" }
+          : { status: 0, stdout: "", stderr: "" };
       },
     }[operation];
     const responses = {
@@ -347,7 +290,7 @@ function lifecycleDeps(
           gatewayName: GATEWAY,
           lifecycleGeneration: GENERATION,
           lifecycleLiveIdentityFingerprint: liveIdentityFingerprint,
-          openshellVersion: "0.0.106",
+          openshellVersion: "0.0.116",
           ...options.registry,
         }) as SandboxEntry,
       captureOpenShell,
@@ -568,6 +511,46 @@ describe("Hermes portable lifecycle", () => {
     );
   });
 
+  it("uses post-start authority to roll back an Error-origin OpenShell sandbox", () => {
+    const receipt = activeReceipt();
+    publishSuccessor();
+    const fixture = lifecycleDeps(receipt, false, {
+      sandboxPhase: (running) => (running ? "Stopped" : "Error"),
+      stopRequiresAssist: true,
+    });
+    const defaultCapture = fixture.captureOpenShell.getMockImplementation()!;
+    fixture.captureOpenShell.mockImplementation((args: readonly string[]) =>
+      args.includes(hermesPortableLifecycleInternals.healthWaitProgram)
+        ? { status: 0, stdout: "unavailable\n", stderr: "" }
+        : defaultCapture(args),
+    );
+    let now = 0;
+
+    expect(() =>
+      withMcpLifecycleLockSync(
+        SANDBOX,
+        () =>
+          recoverHermesPortableSandboxLifecycle(SANDBOX, lifecycleContext(), {
+            ...fixture.deps,
+            now: () => now,
+            sleep: (milliseconds) => {
+              now += milliseconds;
+            },
+          }),
+        { stateDir: path.join(stateDir, "state") },
+      ),
+    ).toThrow("OpenShell sandbox identity disagrees with the receipt container");
+
+    const calls = fixture.captureOpenShell.mock.calls.map(([args]) => args);
+    const assist = calls.findIndex((args) =>
+      args.includes(hermesPortableLifecycleInternals.openShellV0116StopAssistProgram),
+    );
+    const stop = calls.findIndex((args) => args[0] === "sandbox" && args[1] === "stop");
+    expect(assist).toBeGreaterThanOrEqual(0);
+    expect(stop).toBeGreaterThan(assist);
+    expect(openshellMutationCalls(fixture.captureOpenShell, "stop")).toHaveLength(1);
+  });
+
   it("rejects live sandbox rebind before the name-addressed startup launch (#10423)", () => {
     const receipt = activeReceipt();
     publishSuccessor();
@@ -749,7 +732,7 @@ describe("Hermes portable lifecycle", () => {
       },
       {
         capture,
-        executableAuthorityDeps: podmanExecutableAuthorityDeps(),
+        executableAuthorityDeps: testPodmanExecutableAuthorityDeps(),
         assertSocketAuthority: vi.fn(),
         resolveExecutablePath: () => receipt.podmanExecutableAuthority.executable.executablePath,
         platform: "linux",
@@ -861,6 +844,7 @@ describe("Hermes portable lifecycle", () => {
     );
     expect(result).toEqual({ kind: "recovered" });
     expect(listObservations).toBeGreaterThanOrEqual(3);
+    expect(podman.mock.calls.filter(([args]) => args[1] === "start")).toHaveLength(0);
     expect(openshellMutationCalls(captureOpenShell, "start")).toHaveLength(1);
   });
 
@@ -1206,9 +1190,14 @@ describe("Hermes portable lifecycle", () => {
       { stateDir: path.join(stateDir, "state") },
     );
     expect(result).toEqual({ kind: "stopped" });
+    expect(podman.mock.calls.filter(([args]) => args[1] === "stop")).toEqual([]);
     expect(captureOpenShell).toHaveBeenCalledWith(
       ["sandbox", "stop", "-g", GATEWAY, SANDBOX],
       60_000,
+    );
+    expect(captureOpenShell).toHaveBeenCalledWith(
+      expect.arrayContaining([hermesPortableLifecycleInternals.openShellV0116StopAssistProgram]),
+      5_000,
     );
     expect(captureOpenShell).toHaveReturnedWith({
       status: 0,
@@ -1283,7 +1272,7 @@ describe("Hermes portable lifecycle", () => {
 
   it("times out a stopped container when OpenShell identity remains incomplete (#11302)", () => {
     const receipt = activeReceipt();
-    const { deps, captureOpenShell } = lifecycleDeps(receipt, true, {
+    const { deps, podman, captureOpenShell } = lifecycleDeps(receipt, true, {
       sandboxIdentity: (running) => (running ? undefined : `Name: ${SANDBOX}\nPhase: Error\n`),
     });
     expect(() =>
@@ -1293,6 +1282,7 @@ describe("Hermes portable lifecycle", () => {
         { stateDir: path.join(stateDir, "state") },
       ),
     ).toThrow("OpenShell sandbox did not settle in Error or Stopped after exact container exit");
+    expect(podman.mock.calls.filter(([args]) => args[1] === "stop")).toHaveLength(0);
     expect(openshellMutationCalls(captureOpenShell, "stop")).toHaveLength(1);
   });
 

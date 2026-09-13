@@ -62,7 +62,7 @@ const NON_SECRET_KEY_METADATA_NAMES = new Set([
   "targetEnvKey",
 ]);
 const MESSAGING_CREDENTIAL_PLACEHOLDER_RE =
-  /^(?:openshell:resolve:env:|[A-Za-z0-9]+-OPENSHELL-RESOLVE-ENV-)(?:v[0-9]+_)?[A-Z][A-Z0-9_]*$/u;
+  /^(?:openshell:resolve:env:|[A-Za-z0-9]+-OPENSHELL-RESOLVE-ENV-)(?:(?:v[0-9]{1,20}|s[a-f0-9]{64})_)?[A-Z][A-Z0-9_]*$/u;
 const MESSAGING_CREDENTIAL_ENV_ALIASES = new Set(
   listMessagingCredentialEnvAssignments()
     .filter(({ sourceEnvKey, targetEnvKey }) => sourceEnvKey !== targetEnvKey)
@@ -849,6 +849,7 @@ export const MANAGED_STARTUP_PROFILE_EXCLUDED_DOCKER_INPUTS = {
     { input: "NEMOCLAW_HERMES_CRON_RESTORE_CONTROLLER_SHA256", reason: "integrity-pin" },
     { input: "NEMOCLAW_HERMES_CRON_RUNTIME_PATCHER_SHA256", reason: "integrity-pin" },
     { input: "NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256", reason: "integrity-pin" },
+    { input: "NEMOCLAW_HERMES_AUXILIARY_TOKEN_LIMIT_PATCHER_SHA256", reason: "integrity-pin" },
     { input: "NEMOCLAW_HERMES_CRON_EXECUTIONS_SOURCE_SHA256", reason: "integrity-pin" },
     { input: "NEMOCLAW_HERMES_BACKUP_SOURCE_SHA256", reason: "integrity-pin" },
     { input: "NEMOCLAW_HERMES_SQLITE_TEMP_STORE_PATCHER_SHA256", reason: "integrity-pin" },
@@ -1074,7 +1075,7 @@ function messagingCredentialPlaceholderEnvKey(value: string): string | null {
     ? "openshell:resolve:env:"
     : "-OPENSHELL-RESOLVE-ENV-";
   const key = value.slice(value.indexOf(marker) + marker.length);
-  return key.replace(/^v[0-9]+_/u, "");
+  return key.replace(/^(?:v[0-9]{1,20}|s[a-f0-9]{64})_/u, "");
 }
 
 function containsMessagingCredentialPlaceholder(value: string): boolean {
@@ -1140,8 +1141,8 @@ function isCanonicalMessagingRuntimeEnvAlias(
   const placeholder = ownDataPropertyValue(value, "value");
   const expectedMatch =
     targetEnvKey === undefined
-      ? `^openshell:resolve:env:(v[0-9]+_)?${envKey}$`
-      : `^openshell:resolve:env:v[0-9]+_${envKey}$`;
+      ? `^openshell:resolve:env:((?:v[0-9]{1,20}|s[a-f0-9]{64})_)?${envKey}$`
+      : `^openshell:resolve:env:(?:v[0-9]{1,20}|s[a-f0-9]{64})_${envKey}$`;
   return (
     typeof envKey === "string" &&
     CREDENTIAL_ENV_NAME_PATTERN.test(envKey) &&

@@ -893,6 +893,7 @@ function deletePortableOpenShellSandbox(
   return false;
 }
 
+/** Report unconfirmed removal so callers retain uninstall state for recovery. */
 function removeGatewayRegistration(
   runtime: UninstallRuntime,
   gatewayLabel: string,
@@ -930,6 +931,17 @@ function removeGatewayRegistration(
       stderr: outcome.result.stderr ?? "",
     }),
   );
+  if (
+    !runtime.commandExists("docker") ||
+    runtime.runDocker(["info"], { env: runtime.env, stdio: "ignore", timeout: 10_000 }).status !== 0
+  ) {
+    runtime.warn(
+      "Docker is not available in this shell. Restore Docker access. " +
+        "If using Docker Desktop on Windows, enable WSL integration for this distro. " +
+        "For WSL, save work in all sessions before running wsl --shutdown from PowerShell. Reopen the distro afterward. " +
+        "Verify docker info succeeds, then rerun the same uninstall command.",
+    );
+  }
   return false;
 }
 

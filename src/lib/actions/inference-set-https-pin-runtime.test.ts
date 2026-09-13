@@ -545,7 +545,7 @@ describe("runInferenceSet HTTPS-pin route credential handoff (#6141)", () => {
     expect(deps.calls.appendAuditEntry).not.toHaveBeenCalled();
   });
 
-  it("restores the prior selection when provider profile preparation fails (#9806)", async () => {
+  it("does not prepare an OpenAI compatibility profile before updating the binding (#11229)", async () => {
     vi.stubEnv("COMPATIBLE_API_KEY", "real-upstream-secret");
     const capture = providerCapture({
       providerName: "compatible-endpoint",
@@ -564,7 +564,8 @@ describe("runInferenceSet HTTPS-pin route credential handoff (#6141)", () => {
       ensureHttpsPinRuntimeAdapter: mockAdapter(),
       captureOpenshell: capture,
     });
-    vi.spyOn(deps.providerAdapter, "importProviderProfile").mockResolvedValue({
+    const importProviderProfile = vi.spyOn(deps.providerAdapter, "importProviderProfile");
+    importProviderProfile.mockResolvedValue({
       ok: false,
       error: {
         kind: "command",
@@ -573,7 +574,7 @@ describe("runInferenceSet HTTPS-pin route credential handoff (#6141)", () => {
       },
     });
 
-    const failure = await runInferenceSet(
+    await runInferenceSet(
       {
         provider: "compatible-endpoint",
         model: "new-model",
@@ -582,19 +583,13 @@ describe("runInferenceSet HTTPS-pin route credential handoff (#6141)", () => {
         inferenceApi: "openai-completions",
       },
       deps,
-    ).catch((error: Error) => error);
-
-    expect(failure).toBeInstanceOf(InferenceSetError);
-    const message = (failure as Error).message;
-    expect(message).toContain("redacted profile failure");
-    expect(message).toContain(
-      "The previous OpenShell inference selection was restored. The provider binding was not changed.",
     );
 
+    expect(importProviderProfile).not.toHaveBeenCalled();
     const selectionMutations = capture.mock.calls.filter(
       ([args]) => args[0] === "inference" && args[1] === "set",
     );
-    expect(selectionMutations).toHaveLength(2);
+    expect(selectionMutations).toHaveLength(1);
     expect(selectionMutations[0]?.[0]).toEqual(
       expect.arrayContaining([
         "--provider",
@@ -604,17 +599,13 @@ describe("runInferenceSet HTTPS-pin route credential handoff (#6141)", () => {
         "--no-verify",
       ]),
     );
-    expect(selectionMutations[1]?.[0]).toEqual(
-      expect.arrayContaining(["--provider", "nvidia-prod", "--model", "old-model", "--no-verify"]),
-    );
     expect(
       capture.mock.calls.filter(([args]) => args[0] === "provider" && args[1] === "update"),
-    ).toHaveLength(0);
-    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
-    expect(deps.calls.updateSession).not.toHaveBeenCalled();
-    expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
-    expect(deps.calls.recomputeSandboxConfigHash).not.toHaveBeenCalled();
-    expect(deps.calls.appendAuditEntry).not.toHaveBeenCalled();
+    ).toHaveLength(1);
+    expect(deps.calls.updateSandbox).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({ provider: "compatible-endpoint", model: "new-model" }),
+    );
   });
 
   it("reports reconciliation when provider update and selection restore both fail (#9806)", async () => {
