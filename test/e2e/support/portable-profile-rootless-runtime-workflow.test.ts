@@ -454,6 +454,56 @@ ${serviceIdentityCheck}`,
       .soft(selects("push", "test/e2e/support/portable-profile-rootless-runtime-workflow.test.ts"))
       .toBe(true);
 
+    expect.soft(selects("pull_request", "src/lib/state/registry/route-reservation.ts")).toBe(true);
+    expect
+      .soft(selects("pull_request", "src/lib/state/registry/pending-create-identity.ts"))
+      .toBe(true);
+    expect.soft(selects("pull_request", "src/lib/state/registry/persistence.ts")).toBe(true);
+    expect.soft(selects("pull_request", "src/lib/state/registry/lock.ts")).toBe(true);
+    expect.soft(selects("pull_request", "src/lib/state/registry/types.ts")).toBe(true);
+    expect
+      .soft(selects("pull_request", "src/lib/onboard/experimental/portable-runtime-readiness.ts"))
+      .toBe(true);
+    expect
+      .soft(
+        selects(
+          "pull_request",
+          "src/lib/onboard/experimental/portable-cpu-delegation-preflight.ts",
+        ),
+      )
+      .toBe(true);
+    expect.soft(selects("pull_request", "src/lib/onboard/docker-driver-platform.ts")).toBe(true);
+    expect
+      .soft(selects("pull_request", "src/lib/onboard/experimental/docker-network-authority.ts"))
+      .toBe(true);
+    expect
+      .soft(selects("pull_request", "src/lib/onboard/runtime-provider/podman-lifecycle.ts"))
+      .toBe(true);
+    expect.soft(selects("pull_request", "src/lib/adapters/podman/index.ts")).toBe(true);
+    expect.soft(selects("pull_request", "src/lib/adapters/podman/socket-authority.ts")).toBe(true);
+    expect
+      .soft(selects("pull_request", "src/lib/adapters/podman/executable-authority.ts"))
+      .toBe(true);
+    expect.soft(selects("push", "src/lib/state/registry/route-reservation.ts")).toBe(true);
+    expect.soft(selects("push", "src/lib/state/registry/pending-create-identity.ts")).toBe(true);
+    expect.soft(selects("push", "src/lib/state/registry/persistence.ts")).toBe(true);
+    expect.soft(selects("push", "src/lib/state/registry/lock.ts")).toBe(true);
+    expect.soft(selects("push", "src/lib/state/registry/types.ts")).toBe(true);
+    expect
+      .soft(selects("push", "src/lib/onboard/experimental/portable-runtime-readiness.ts"))
+      .toBe(true);
+    expect
+      .soft(selects("push", "src/lib/onboard/experimental/portable-cpu-delegation-preflight.ts"))
+      .toBe(true);
+    expect.soft(selects("push", "src/lib/onboard/docker-driver-platform.ts")).toBe(true);
+    expect
+      .soft(selects("push", "src/lib/onboard/experimental/docker-network-authority.ts"))
+      .toBe(true);
+    expect.soft(selects("push", "src/lib/onboard/runtime-provider/podman-lifecycle.ts")).toBe(true);
+    expect.soft(selects("push", "src/lib/adapters/podman/index.ts")).toBe(true);
+    expect.soft(selects("push", "src/lib/adapters/podman/socket-authority.ts")).toBe(true);
+    expect.soft(selects("push", "src/lib/adapters/podman/executable-authority.ts")).toBe(true);
+
     expect(workflow.on.pull_request.types).toEqual(["opened", "synchronize", "reopened"]);
     expect(workflow.on.push.paths).toContain("tools/e2e/full-e2e-timeout-contract.mts");
     expect(workflow.on.pull_request.paths).not.toContain("tools/e2e/full-e2e-timeout-contract.mts");
