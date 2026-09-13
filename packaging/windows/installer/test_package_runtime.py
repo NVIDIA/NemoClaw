@@ -207,12 +207,23 @@ class PackageComposition(unittest.TestCase):
         except OSError as error:
             self.skipTest("Directory aliases are unavailable: " + str(error))
         authoring = self.fixture.root / "payload-short.wxs"
-        package.payload_authoring(self.output, authoring, alias)
+        inputs = package.read_json(self.output / "immutable-package-inputs.json")
+        runtime = self.output / "runtimes" / inputs["runtime"]["runtimeId"]
+        runtime_alias = self.fixture.root / "r"
+        runtime_alias.symlink_to(runtime, target_is_directory=True)
+        package.payload_authoring(self.output, authoring, alias, runtime_alias)
         tree = ET.parse(authoring)
         ns = {"w": package.NAMESPACE}
         sources = [row.attrib["Source"] for row in tree.findall(".//w:File", ns)]
         self.assertTrue(sources)
-        self.assertTrue(all(Path(source).is_relative_to(alias.absolute()) for source in sources))
+        self.assertTrue(
+            all(
+                Path(source).is_relative_to(alias.absolute())
+                or Path(source).is_relative_to(runtime_alias.absolute())
+                for source in sources
+            )
+        )
+        self.assertTrue(any(Path(source).is_relative_to(runtime_alias.absolute()) for source in sources))
 
 
 if __name__ == "__main__":

@@ -284,14 +284,31 @@ def stable_id(prefix: str, value: str):
     return prefix + hashlib.sha256(value.lower().encode()).hexdigest()[:32]
 
 
-def payload_authoring(payload: Path, output: Path, cabinet_source: Path | None = None):
+def payload_authoring(
+    payload: Path,
+    output: Path,
+    cabinet_source: Path | None = None,
+    cabinet_runtime_source: Path | None = None,
+):
     explicit_cabinet_source = cabinet_source is not None
+    if cabinet_runtime_source is not None and not explicit_cabinet_source:
+        raise ValueError("The runtime cabinet alias requires the payload cabinet alias.")
     cabinet_source = payload if cabinet_source is None else cabinet_source
     if (
         not cabinet_source.is_absolute()
         or cabinet_source.resolve(strict=True) != payload.resolve(strict=True)
     ):
         raise ValueError("The cabinet source alias does not resolve to the verified payload.")
+    inputs = read_json(payload / "immutable-package-inputs.json")
+    runtime_relative = Path("runtimes") / inputs["runtime"]["runtimeId"]
+    runtime_root = payload / runtime_relative
+    if cabinet_runtime_source is not None and (
+        not cabinet_runtime_source.is_absolute()
+        or cabinet_runtime_source.resolve(strict=True) != runtime_root.resolve(strict=True)
+    ):
+        raise ValueError(
+            "The cabinet runtime alias does not resolve to the verified runtime."
+        )
     rows = inventory(payload)
     wix = ET.Element("{" + NAMESPACE + "}Wix")
     fragment = element(wix, "Fragment")
@@ -334,15 +351,22 @@ def payload_authoring(payload: Path, output: Path, cabinet_source: Path | None =
                 # RemoveFolder runs during RemoveFiles while those still exist.
                 element(component, "CreateFolder")
             for number, relative in enumerate(group):
+                source = cabinet_source / relative
+                if cabinet_runtime_source is not None and Path(relative).is_relative_to(
+                    runtime_relative
+                ):
+                    source = cabinet_runtime_source / Path(relative).relative_to(
+                        runtime_relative
+                    )
                 element(
                     component,
                     "File",
                     Id=stable_id("File_", relative),
                     Name=Path(relative).name,
                     Source=str(
-                        (cabinet_source / relative).absolute()
+                        source.absolute()
                         if explicit_cabinet_source
-                        else (cabinet_source / relative).resolve()
+                        else source.resolve()
                     ),
                     KeyPath="yes" if number == 0 else "no",
                 )
@@ -379,6 +403,7 @@ def main():
     for name in ("payload", "output", "transaction-helper", "transaction-output"):
         build_parser.add_argument("--" + name, type=Path, required=True)
     build_parser.add_argument("--cabinet-source", type=Path)
+    build_parser.add_argument("--cabinet-runtime-source", type=Path)
     ui = sub.add_parser("bootstrapper")
     for name in ("published", "payload", "output"):
         ui.add_argument("--" + name, type=Path, required=True)
@@ -434,7 +459,12 @@ def main():
             args.payload / "runtimes" / inputs["runtime"]["runtimeId"],
             inputs["runtime"],
         )
-        stats = payload_authoring(args.payload, args.output, args.cabinet_source)
+        stats = payload_authoring(
+            args.payload,
+            args.output,
+            args.cabinet_source,
+            args.cabinet_runtime_source,
+        )
         xml, record = author(
             inputs["runtime"],
             args.transaction_helper,

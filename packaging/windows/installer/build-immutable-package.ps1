@@ -177,21 +177,37 @@ try {
     $msi = Join-Path $OutputDirectory "NemoClaw-$ProductVersion-windows-arm64.msi"
     $cabinetDrive = 'P:'
     $cabinetRoot = $cabinetDrive + '\'
+    $runtimeDrive = 'R:'
+    $runtimeCabinetRoot = $runtimeDrive + '\'
     $subst = Join-Path $env:SystemRoot 'System32\subst.exe'
-    if (Test-Path -LiteralPath $cabinetRoot) { throw 'The fixed CI cabinet source drive is already in use.' }
+    if ((Test-Path -LiteralPath $cabinetRoot) -or (Test-Path -LiteralPath $runtimeCabinetRoot)) {
+        throw 'A fixed CI cabinet source drive is already in use.'
+    }
     & $subst $cabinetDrive $payload
     if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath (Join-Path $cabinetRoot 'immutable-package-inputs.json') -PathType Leaf)) {
         throw 'The short CI cabinet source drive could not be bound to the verified payload.'
     }
+    $runtimePayload = Join-Path $payload (Join-Path 'runtimes' ([string]$assembly.runtime.runtimeId))
+    & $subst $runtimeDrive $runtimePayload
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath (Join-Path $runtimeCabinetRoot 'runtime.manifest') -PathType Leaf)) {
+        & $subst $runtimeDrive /D
+        & $subst $cabinetDrive /D
+        throw 'The short CI runtime cabinet drive could not be bound to the verified runtime.'
+    }
     $cabinetFailure = $null
     try {
-        Invoke-BuildTool $PythonPath @($composer, 'author', '--payload', $payload, '--cabinet-source', $cabinetRoot, '--output', $payloadAuthoring,
+        Invoke-BuildTool $PythonPath @($composer, 'author', '--payload', $payload, '--cabinet-source', $cabinetRoot,
+            '--cabinet-runtime-source', $runtimeCabinetRoot, '--output', $payloadAuthoring,
             '--transaction-helper', $helper, '--transaction-output', $transactions) 'package-authoring'
         Invoke-BuildTool $WixPath @('build', '-arch', 'arm64', '-d', "ProductVersion=$ProductVersion", '-d', "SourceRoot=$SourceRoot",
             '-d', 'NativeRuntimeMsiPrototype=false', '-d', 'ImmutableRuntimePackage=true', '-d', "NativeRuntimeMsiAuthoring=$transactions",
             (Join-Path $windows 'Product.wxs'), $payloadAuthoring, '-pdbtype', 'none', '-wx', '-out', $msi) 'msi-build'
     } catch { $cabinetFailure = $_ }
     finally {
+        & $subst $runtimeDrive /D
+        if ($LASTEXITCODE -ne 0 -and $null -eq $cabinetFailure) {
+            $cabinetFailure = [InvalidOperationException]::new('The short CI runtime cabinet drive could not be released.')
+        }
         & $subst $cabinetDrive /D
         if ($LASTEXITCODE -ne 0 -and $null -eq $cabinetFailure) {
             $cabinetFailure = [InvalidOperationException]::new('The short CI cabinet source drive could not be released.')
