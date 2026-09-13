@@ -307,7 +307,7 @@ def prepare_plan(
             raise AdaptationError(
                 "Existing native adaptation metadata does not match this adapter."
             )
-        if upgrade and (
+        if ci_upgrade_startup_adapter and (
             sorted(
                 path for path in prepared["generatedFiles"] if path.endswith("/" + HOOK)
             )
@@ -319,6 +319,14 @@ def prepare_plan(
         ):
             raise AdaptationError(
                 "Startup adapter upgrade requires the exact three prior hooks."
+            )
+        if ci_upgrade_edge_adapter and any(
+            hashlib.sha256(read_metadata(root / path, root)).hexdigest()
+            != EDGE_PREVIOUS_ADAPTER_SHA256
+            for path in UPGRADE_HOOK_PATHS
+        ):
+            raise AdaptationError(
+                "Edge adapter upgrade requires the exact three prior hook bytes."
             )
         if (
             "startupAdapterUpgrade" in prepared
@@ -632,7 +640,7 @@ def prepare_plan(
         for name, data in startup_files:
             path = directory / name
             if path.exists():
-                before = read_required(path)
+                before = read_metadata(path, root) if upgrade else read_required(path)
                 reviewed_upgrade = (
                     upgrade is not None
                     and name == HOOK

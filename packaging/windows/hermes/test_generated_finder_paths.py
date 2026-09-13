@@ -319,18 +319,25 @@ class CanonicalAdapterUpgrade(unittest.TestCase):
             self.plan(ci_upgrade_startup_adapter=True)
 
     def test_edge_candidate_has_one_exact_upgrade_then_relocates(self):
-        changes, report = self.plan(ci_upgrade_edge_adapter=True)
-        self.assertTrue(report["startupAdapterUpgradeApplied"])
-        self.assertEqual(
-            report["startupAdapterUpgrade"], metadata.edge_adapter_upgrade_record()
-        )
-        metadata.apply_plan(changes)
-        later, receipt = self.plan(target=self.directory / "installed")
-        self.assertFalse(receipt["startupAdapterUpgradeApplied"])
-        self.assertEqual(
-            receipt["startupAdapterUpgrade"], metadata.edge_adapter_upgrade_record()
-        )
-        self.assertIn(self.root / metadata.MARKER, later)
+        missing = metadata.UPGRADE_HOOK_PATHS[0]
+        self.marker["generatedFiles"].pop(missing)
+        marker_bytes = (json.dumps(self.marker, indent=2) + "\n").encode()
+        (self.root / metadata.MARKER).write_bytes(marker_bytes)
+        with mock.patch.object(
+            metadata, "EDGE_PREVIOUS_MARKER_SHA256", hashlib.sha256(marker_bytes).hexdigest()
+        ):
+            changes, report = self.plan(ci_upgrade_edge_adapter=True)
+            self.assertTrue(report["startupAdapterUpgradeApplied"])
+            self.assertEqual(
+                report["startupAdapterUpgrade"], metadata.edge_adapter_upgrade_record()
+            )
+            metadata.apply_plan(changes)
+            later, receipt = self.plan(target=self.directory / "installed")
+            self.assertFalse(receipt["startupAdapterUpgradeApplied"])
+            self.assertEqual(
+                receipt["startupAdapterUpgrade"], metadata.edge_adapter_upgrade_record()
+            )
+            self.assertIn(self.root / metadata.MARKER, later)
 
     def test_installed_browser_companion_preserves_native_order_and_compiles_in_ci(
         self,
