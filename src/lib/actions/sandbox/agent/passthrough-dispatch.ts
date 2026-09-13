@@ -196,7 +196,8 @@ export function isTimedOutAgentDispatch(stdout: string, stderr: string): boolean
 
 /** Detect generic OpenClaw tool call failures in captured output. */
 export function isToolCallFailed(stdout: string, stderr: string): boolean {
-  return /Tool Call failed/.test(stdout) || /Tool Call failed/.test(stderr);
+  const toolCallFailedPattern = /(?:^|\r?\n)Tool Call failed(?:\r?\n|$)/;
+  return toolCallFailedPattern.test(stdout) || toolCallFailedPattern.test(stderr);
 }
 
 // OpenClaw owns argv validation. Inspect its supported options only to choose
