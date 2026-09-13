@@ -318,6 +318,66 @@ ${serviceIdentityCheck}`,
     expect.soft(selects("push", "docs/get-started/quickstart.mdx")).toBe(false);
     expect.soft(selects("push", "src/lib/messaging/telegram.ts")).toBe(false);
 
+    expect
+      .soft(selects("pull_request", "src/lib/actions/sandbox/launch-readiness/health.ts"))
+      .toBe(true);
+    expect.soft(selects("pull_request", "src/lib/actions/sandbox/gateway-state.ts")).toBe(true);
+    expect
+      .soft(selects("pull_request", "src/lib/onboard/portable-retirement-authority.ts"))
+      .toBe(true);
+    expect
+      .soft(selects("pull_request", "src/lib/actions/uninstall/hermes-portable-uninstall.ts"))
+      .toBe(true);
+    expect
+      .soft(selects("pull_request", "src/lib/actions/uninstall/portable-runtime-cleanup.ts"))
+      .toBe(true);
+    expect
+      .soft(selects("pull_request", "src/lib/state/hermes-portable-uninstall/authority.ts"))
+      .toBe(true);
+    expect
+      .soft(selects("pull_request", "src/lib/state/onboard/portable-runtime-authority.ts"))
+      .toBe(true);
+    expect
+      .soft(selects("pull_request", "src/lib/state/registry/lifecycle-generation.ts"))
+      .toBe(true);
+    expect
+      .soft(selects("pull_request", "src/lib/state/registry/lifecycle-generation-cas.ts"))
+      .toBe(true);
+    expect
+      .soft(selects("pull_request", "src/lib/onboard/experimental/portable-demo-lifecycle.ts"))
+      .toBe(true);
+    expect
+      .soft(
+        selects(
+          "pull_request",
+          "src/lib/onboard/experimental/portable-runtime-receipt-readiness.ts",
+        ),
+      )
+      .toBe(true);
+    expect
+      .soft(selects("pull_request", "src/lib/adapters/openshell/forward-service.ts"))
+      .toBe(true);
+    expect.soft(selects("push", "src/lib/actions/sandbox/launch-readiness/health.ts")).toBe(true);
+    expect.soft(selects("push", "src/lib/actions/sandbox/gateway-state.ts")).toBe(true);
+    expect.soft(selects("push", "src/lib/onboard/portable-retirement-authority.ts")).toBe(true);
+    expect
+      .soft(selects("push", "src/lib/actions/uninstall/hermes-portable-uninstall.ts"))
+      .toBe(true);
+    expect
+      .soft(selects("push", "src/lib/actions/uninstall/portable-runtime-cleanup.ts"))
+      .toBe(true);
+    expect.soft(selects("push", "src/lib/state/hermes-portable-uninstall/authority.ts")).toBe(true);
+    expect.soft(selects("push", "src/lib/state/onboard/portable-runtime-authority.ts")).toBe(true);
+    expect.soft(selects("push", "src/lib/state/registry/lifecycle-generation.ts")).toBe(true);
+    expect.soft(selects("push", "src/lib/state/registry/lifecycle-generation-cas.ts")).toBe(true);
+    expect
+      .soft(selects("push", "src/lib/onboard/experimental/portable-demo-lifecycle.ts"))
+      .toBe(true);
+    expect
+      .soft(selects("push", "src/lib/onboard/experimental/portable-runtime-receipt-readiness.ts"))
+      .toBe(true);
+    expect.soft(selects("push", "src/lib/adapters/openshell/forward-service.ts")).toBe(true);
+
     expect(workflow.on.pull_request.types).toEqual(["opened", "synchronize", "reopened"]);
     expect(workflow.on.push.paths).toContain("tools/e2e/full-e2e-timeout-contract.mts");
     expect(workflow.on.pull_request.paths).not.toContain("tools/e2e/full-e2e-timeout-contract.mts");
