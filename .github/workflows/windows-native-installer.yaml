@@ -809,8 +809,13 @@ jobs:
           import path from "node:path";
           import { detectNativeEdge } from "./packaging/windows/runtime/native-edge-browser.mts";
           if (process.platform !== "win32" || process.arch !== "arm64") throw new Error("Expected native Windows ARM64 Node.");
-          const identity = await detectNativeEdge();
-          fs.writeFileSync(path.join(process.env.RUNNER_TEMP, "native-edge-prerequisite", "edge-identity.json"), JSON.stringify({ ...identity, executed: false }, null, 2) + "\n", { flag: "wx" });
+          try {
+            const identity = await detectNativeEdge();
+            fs.writeFileSync(path.join(process.env.RUNNER_TEMP, "native-edge-prerequisite", "edge-identity.json"), JSON.stringify({ ...identity, executed: false }, null, 2) + "\n", { flag: "wx" });
+          } catch (error) {
+            fs.writeFileSync(path.join(process.env.RUNNER_TEMP, "native-edge-prerequisite", "edge-failure.json"), JSON.stringify({ schemaVersion: 1, classificationCategory: "native-edge-prerequisite", message: error instanceof Error ? error.message : "Edge validation failed" }, null, 2) + "\n", { flag: "wx" });
+            throw error;
+          }
           '@
       - name: Preserve Microsoft Edge identity evidence
         if: always()

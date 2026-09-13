@@ -45,20 +45,28 @@ export function parseDevToolsActivePort(text: string) {
 }
 
 export function validateEdgeMetadata(value: any, expectedPath: string) {
+  if (value?.path?.toLowerCase() !== expectedPath.toLowerCase())
+    throw new Error("Microsoft Edge resolved outside its standard installation path.");
+  if (typeof value.version !== "string" || !/^[0-9]+(?:\.[0-9]+){1,3}$/u.test(value.version))
+    throw new Error("Microsoft Edge has an invalid product version.");
+  if (value.productName !== "Microsoft Edge")
+    throw new Error("Microsoft Edge has an unexpected product identity.");
+  if (value.originalFilename?.toLowerCase() !== "msedge.exe")
+    throw new Error("Microsoft Edge has an unexpected original filename.");
+  if (value.reparsePoint !== false)
+    throw new Error("Microsoft Edge cannot be loaded through a reparse point.");
+  if (value.signatureStatus !== "Valid")
+    throw new Error("Microsoft Edge does not have a valid Authenticode signature.");
   if (
-    value?.path?.toLowerCase() !== expectedPath.toLowerCase() ||
-    typeof value.version !== "string" ||
-    !/^[0-9]+(?:\.[0-9]+){1,3}$/u.test(value.version) ||
-    value.productName !== "Microsoft Edge" ||
-    value.originalFilename?.toLowerCase() !== "msedge.exe" ||
-    value.reparsePoint !== false ||
-    value.signatureStatus !== "Valid" ||
     typeof value.signerSubject !== "string" ||
-    !/(?:^|,\s*)O=Microsoft Corporation(?:,|$)/u.test(value.signerSubject) ||
+    !/(?:^|,\s*)O=Microsoft Corporation(?:,|$)/u.test(value.signerSubject)
+  )
+    throw new Error("Microsoft Edge is not signed by Microsoft Corporation.");
+  if (
     typeof value.signerThumbprint !== "string" ||
     !/^[A-F0-9]{40,128}$/u.test(value.signerThumbprint)
   )
-    throw new Error("Microsoft Edge did not pass its signed native installation check.");
+    throw new Error("Microsoft Edge has an invalid signer thumbprint.");
   return value as {
     path: string;
     version: string;
