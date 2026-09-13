@@ -253,7 +253,10 @@ function runOpenClawUpgradeBlock(currentVersion: string) {
   ].join("\n");
   const scriptPath = path.join(tmp, "run.sh");
   fs.writeFileSync(scriptPath, script, { mode: 0o700 });
-  const result = spawnSync("bash", [scriptPath], { encoding: "utf-8", timeout: 10000 });
+  const result = spawnSync("bash", [scriptPath], {
+    encoding: "utf-8",
+    timeout: 10000,
+  });
   const calls = fs.existsSync(log) ? fs.readFileSync(log, "utf-8") : "";
   fs.rmSync(tmp, { recursive: true, force: true });
   return { result, calls };
@@ -309,7 +312,7 @@ describe("fetch-guard patch regression guard", () => {
     );
     const script = [
       "openclaw() {",
-      '  if [ "${1:-} ${2:-} ${3:-} ${4:-}" = "plugins install --force /opt/nemoclaw" ]; then',
+      '  if [ "${1:-} ${2:-} ${3:-} ${4:-} ${5:-}" = "plugins install --force --accept-capabilities /opt/nemoclaw" ]; then',
       '    [ "${NPM_CONFIG_IGNORE_SCRIPTS:-}" = "true" ] || return 43',
       '    [ "${npm_config_ignore_scripts:-}" = "true" ] || return 44',
       "    return 42",
@@ -318,14 +321,17 @@ describe("fetch-guard patch regression guard", () => {
       "}",
       command,
     ].join("\n");
-    const result = spawnSync("bash", ["-c", script], { encoding: "utf-8", timeout: 5000 });
+    const result = spawnSync("bash", ["-c", script], {
+      encoding: "utf-8",
+      timeout: 5000,
+    });
     expect(result.status).toBe(42);
 
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-plugin-install-"));
     const inspectMarker = path.join(tmp, "inspected");
     const successScript = [
       "openclaw() {",
-      '  if [ "${1:-} ${2:-} ${3:-} ${4:-}" = "plugins install --force /opt/nemoclaw" ]; then echo "installed"; fi',
+      '  if [ "${1:-} ${2:-} ${3:-} ${4:-} ${5:-}" = "plugins install --force --accept-capabilities /opt/nemoclaw" ]; then echo "installed"; fi',
       `  if [ "\${1:-} \${2:-} \${3:-}" = "plugins inspect nemoclaw" ]; then : > ${JSON.stringify(inspectMarker)}; fi`,
       '  if [ "${1:-} ${2:-} ${3:-}" = "plugins enable nemoclaw" ]; then return 43; fi',
       "  return 0",
@@ -631,7 +637,11 @@ let blocked = false;
 try { await web.c({ url: 'http://10.0.0.1', useEnvProxy: true }); } catch { blocked = true; }
 if (!blocked) throw new Error('private IP literal was not blocked');`,
         ],
-        { encoding: "utf-8", env: { ...process.env, OPENSHELL_SANDBOX: "1" }, timeout: 5000 },
+        {
+          encoding: "utf-8",
+          env: { ...process.env, OPENSHELL_SANDBOX: "1" },
+          timeout: 5000,
+        },
       );
       expect(verify.status).toBe(0);
       expect(verify.stderr).toBe("");
@@ -1337,7 +1347,10 @@ if (!blocked) throw new Error('private IP literal was not blocked');`,
     fs.mkdirSync(dist, { recursive: true });
     writeNeighbouringFetchGuardFixtures(dist);
     const preflightPath = path.join(dist, "model-preflight.runtime.js");
-    const source = reviewedCronPreflightFixture({ auditOccurrences: 1, patchedOccurrences: 1 });
+    const source = reviewedCronPreflightFixture({
+      auditOccurrences: 1,
+      patchedOccurrences: 1,
+    });
     fs.writeFileSync(preflightPath, source);
     try {
       const patch = runFetchGuardPatchBlock(dist, tmp);
@@ -1392,7 +1405,9 @@ if (!blocked) throw new Error('private IP literal was not blocked');`,
     writeNeighbouringFetchGuardFixtures(dist);
     fs.writeFileSync(
       path.join(dist, "model-preflight.runtime.js"),
-      reviewedCronPreflightFixture({ includeBuildLocalProviderSsrFPolicy: false }),
+      reviewedCronPreflightFixture({
+        includeBuildLocalProviderSsrFPolicy: false,
+      }),
     );
     try {
       const patch = runFetchGuardPatchBlock(dist, tmp);

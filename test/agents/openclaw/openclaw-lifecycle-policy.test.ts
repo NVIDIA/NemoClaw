@@ -91,10 +91,12 @@ console.log(JSON.stringify({
     codex: /npm install -g --offline --no-audit --no-fund --no-progress --ignore-scripts/.test(codexBlock),
     runtime: /npm install -g --no-audit --no-fund --no-progress --ignore-scripts "\$OPENCLAW_PACK_PATH"/.test(runtimeBlock),
     base: /npm install -g --ignore-scripts "\$OPENCLAW_PACK_PATH"/.test(baseBlock),
-    optionalPlugin: /NPM_CONFIG_IGNORE_SCRIPTS=true npm_config_ignore_scripts=true\s+\\\s*openclaw plugins install --force "npm-pack:/.test(optionalPluginBlock) &&
-      optionalPluginBlock.includes('openclaw plugins install --force "npm-pack:\${plugin_install_archive}"'),
+    optionalPlugin: /NPM_CONFIG_IGNORE_SCRIPTS=true npm_config_ignore_scripts=true\s+\\\s*openclaw plugins install --force --accept-capabilities "npm-pack:/.test(optionalPluginBlock) &&
+      optionalPluginBlock.includes('openclaw plugins install --force --accept-capabilities "npm-pack:\${plugin_install_archive}"'),
     messagingPlugin: [
-      '["openclaw", "plugins", "install", "--force", \`npm-pack:\${packed.archivePath}\`]',
+      '"--force",',
+      '"--accept-capabilities",',
+      '\`npm-pack:\${packed.archivePath}\`',
       'NPM_CONFIG_IGNORE_SCRIPTS: "true"',
       'npm_config_ignore_scripts: "true"',
     ].every((marker) => messagingInstallBlock.includes(marker)),
@@ -122,7 +124,9 @@ describe("reviewed npm lifecycle policy", () => {
     ).toBe(true);
 
     const messagingPackageSpecs = Object.keys(
-      reviewedOpenClawPluginIntegrityByPackageSpec({ OPENCLAW_VERSION: "2026.9.1" }),
+      reviewedOpenClawPluginIntegrityByPackageSpec({
+        OPENCLAW_VERSION: "2026.9.1",
+      }),
     );
     const result = spawnSync(process.execPath, ["-e", PRODUCTION_BOUNDARY_AUDIT], {
       cwd: REPO_ROOT,
@@ -148,7 +152,10 @@ describe("reviewed npm lifecycle policy", () => {
       messagingPlugin: true,
     });
     const allowedLifecycleScripts = policy.allowedLifecycleScripts
-      .map(({ packageSpec, explicitCommand }) => ({ packageSpec, explicitCommand }))
+      .map(({ packageSpec, explicitCommand }) => ({
+        packageSpec,
+        explicitCommand,
+      }))
       .sort((left, right) => left.packageSpec.localeCompare(right.packageSpec));
     expect(audit.runtimeLifecycleScripts).toEqual(audit.baseLifecycleScripts);
     expect(audit.runtimeLifecycleScripts).toEqual(allowedLifecycleScripts);

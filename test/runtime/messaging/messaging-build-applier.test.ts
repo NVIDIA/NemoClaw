@@ -681,7 +681,7 @@ describe("messaging-build-applier.mts: agent-install", () => {
       expect(trace).toContain(
         "npm|pack|https://registry.npmjs.org/@openclaw/discord/-/discord-2026.9.1.tgz|--pack-destination",
       );
-      expect(trace).toContain("plugins|install|--force|npm-pack:");
+      expect(trace).toContain("plugins|install|--force|--accept-capabilities|npm-pack:");
       expect(trace).toContain("discord-2026.9.1.tgz|ignore-scripts=true/true");
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
@@ -723,7 +723,7 @@ describe("messaging-build-applier.mts: agent-install", () => {
       path.join(tmp, "openclaw"),
       [
         "#!/bin/sh",
-        'printf \'openclaw|%s|%s|%s|%s\\n\' "$1" "$2" "$3" "$4" >> "$OPENCLAW_TRACE"',
+        'printf \'openclaw|%s|%s|%s|%s|%s\\n\' "$1" "$2" "$3" "$4" "$5" >> "$OPENCLAW_TRACE"',
         "exit 0",
         "",
       ].join("\n"),
@@ -751,7 +751,7 @@ describe("messaging-build-applier.mts: agent-install", () => {
       expect(trace).toContain(
         "npm|pack|https://registry.npmjs.org/@openclaw/msteams/-/msteams-2026.9.1.tgz|--pack-destination",
       );
-      expect(trace).toContain("openclaw|plugins|install|--force|npm-pack:");
+      expect(trace).toContain("openclaw|plugins|install|--force|--accept-capabilities|npm-pack:");
       expect(trace).toContain("msteams-2026.9.1.tgz|");
       expect(remediateReviewedArchive).toHaveBeenCalledWith(
         expect.objectContaining({ packageSpec: "@openclaw/msteams@2026.9.1" }),
@@ -908,7 +908,7 @@ describe("messaging-build-applier.mts: agent-install", () => {
         fakeOpenclaw,
         [
           "#!/bin/sh",
-          'printf \'%s|%s|%s|%s|%s|%s|%s\\n\' "$1" "$2" "$3" "$4" "${TELEGRAM_BOT_TOKEN:-}" "${DISCORD_BOT_TOKEN:-}" "${SLACK_BOT_TOKEN:-}" >> "$OPENCLAW_TRACE"',
+          'printf \'%s|%s|%s|%s|%s|%s|%s|%s\\n\' "$1" "$2" "$3" "$4" "$5" "${TELEGRAM_BOT_TOKEN:-}" "${DISCORD_BOT_TOKEN:-}" "${SLACK_BOT_TOKEN:-}" >> "$OPENCLAW_TRACE"',
           "exit 0",
           "",
         ].join("\n"),
@@ -977,7 +977,7 @@ describe("messaging-build-applier.mts: agent-install", () => {
         expect(trace).toContain(`npm|view|${packageSpec}|dist.integrity`);
         expect(trace).toContain(`npm|view|${packageSpec}|dist.tarball`);
         expect(trace).toContain(`npm|pack|${tarballUrl}|--pack-destination`);
-        expect(trace).toContain("plugins|install|--force|npm-pack:");
+        expect(trace).toContain("plugins|install|--force|--accept-capabilities");
         expect(trace).toContain(`${archiveName}|||`);
 
         expect(trace).toContain(
@@ -1009,7 +1009,7 @@ describe("messaging-build-applier.mts: agent-install", () => {
       path.join(tmp, "openclaw"),
       [
         "#!/bin/sh",
-        'printf \'openclaw|%s|%s|%s|%s\\n\' "$1" "$2" "$3" "$4" >> "$OPENCLAW_TRACE"',
+        'printf \'openclaw|%s|%s|%s|%s|%s\\n\' "$1" "$2" "$3" "$4" "$5" >> "$OPENCLAW_TRACE"',
         "exit 0",
         "",
       ].join("\n"),
@@ -1036,7 +1036,7 @@ describe("messaging-build-applier.mts: agent-install", () => {
       expect(trace).toContain(
         "npm|pack|https://registry.npmjs.org/@openclaw/slack/-/slack-2026.9.1.tgz|--pack-destination",
       );
-      expect(trace).toContain("openclaw|plugins|install|--force|npm-pack:");
+      expect(trace).toContain("openclaw|plugins|install|--force|--accept-capabilities|npm-pack:");
       expect(trace).toContain("slack-2026.9.1.tgz|");
       expect(remediateReviewedArchive).toHaveBeenCalledWith(
         expect.objectContaining({ packageSpec: "@openclaw/slack@2026.9.1" }),
@@ -1064,7 +1064,7 @@ describe("messaging-build-applier.mts: agent-install", () => {
       path.join(tmp, "openclaw"),
       [
         "#!/bin/sh",
-        'printf \'openclaw|%s|%s|%s|%s\\n\' "$1" "$2" "$3" "$4" >> "$OPENCLAW_TRACE"',
+        'printf \'openclaw|%s|%s|%s|%s|%s\\n\' "$1" "$2" "$3" "$4" "$5" >> "$OPENCLAW_TRACE"',
         "exit 0",
         "",
       ].join("\n"),
@@ -1247,7 +1247,11 @@ describe("messaging-build-applier.mts: agent-install", () => {
     const fakeOpenclaw = path.join(tmp, "openclaw");
     const channels = channelsB64(["telegram", "discord", "slack", "wechat"]);
     const wechatConfig = Buffer.from(
-      JSON.stringify({ accountId: "primary", baseUrl: "https://ilinkai.wechat.com", userId: "u1" }),
+      JSON.stringify({
+        accountId: "primary",
+        baseUrl: "https://ilinkai.wechat.com",
+        userId: "u1",
+      }),
     ).toString("base64");
 
     fs.writeFileSync(
@@ -1301,7 +1305,9 @@ describe("messaging-build-applier.mts: agent-install", () => {
       expect(config.plugins?.entries?.discord).toEqual({ enabled: true });
       expect(config.channels?.slack?.enabled).toBe(true);
       expect(config.plugins?.entries?.slack).toEqual({ enabled: true });
-      expect(config.channels?.["openclaw-weixin"]?.accounts?.primary).toEqual({ enabled: true });
+      expect(config.channels?.["openclaw-weixin"]?.accounts?.primary).toEqual({
+        enabled: true,
+      });
       expect(config.channels?.wechat).toBeUndefined();
 
       fs.writeFileSync(
@@ -1320,7 +1326,9 @@ describe("messaging-build-applier.mts: agent-install", () => {
       });
       expect(managedConfig.channels?.telegram?.accounts?.default?.botToken).toBeUndefined();
       expect(managedConfig.channels?.discord?.enabled).toBe(true);
-      expect(managedConfig.plugins?.entries?.discord).toEqual({ enabled: true });
+      expect(managedConfig.plugins?.entries?.discord).toEqual({
+        enabled: true,
+      });
       expect(managedConfig.channels?.slack?.enabled).toBe(true);
       expect(managedConfig.plugins?.entries?.slack).toEqual({ enabled: true });
       expect(managedConfig.channels?.["openclaw-weixin"]?.accounts?.primary).toEqual({
@@ -1335,7 +1343,11 @@ describe("messaging-build-applier.mts: agent-install", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-post-agent-install-"));
     const channels = channelsB64(["wechat"]);
     const wechatConfig = Buffer.from(
-      JSON.stringify({ accountId: "primary", baseUrl: "https://ilinkai.wechat.com", userId: "u1" }),
+      JSON.stringify({
+        accountId: "primary",
+        baseUrl: "https://ilinkai.wechat.com",
+        userId: "u1",
+      }),
     ).toString("base64");
 
     try {
@@ -1350,7 +1362,9 @@ describe("messaging-build-applier.mts: agent-install", () => {
         },
         "openclaw",
       );
-      fs.writeFileSync(path.join(tmp, "openclaw"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+      fs.writeFileSync(path.join(tmp, "openclaw"), "#!/bin/sh\nexit 0\n", {
+        mode: 0o755,
+      });
       const postInstallResult = runApplierProcess(env, "openclaw", "post-agent-install");
       expect(postInstallResult.status, postInstallResult.stderr).toBe(0);
 
@@ -1365,7 +1379,9 @@ describe("messaging-build-applier.mts: agent-install", () => {
       expect(config.plugins?.load?.paths ?? []).not.toContain(
         "/sandbox/.openclaw/extensions/openclaw-weixin",
       );
-      expect(config.channels?.["openclaw-weixin"]?.accounts?.primary).toEqual({ enabled: true });
+      expect(config.channels?.["openclaw-weixin"]?.accounts?.primary).toEqual({
+        enabled: true,
+      });
       expect(config.channels?.wechat).toBeUndefined();
 
       const account = JSON.parse(

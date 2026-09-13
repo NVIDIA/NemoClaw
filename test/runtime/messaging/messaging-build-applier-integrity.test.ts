@@ -137,12 +137,14 @@ describe("messaging-build-applier.mts: plugin archive integrity", () => {
 
       const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-slack-provenance-"));
       const tracePath = path.join(tmp, "openclaw.trace");
-      fs.writeFileSync(path.join(tmp, "npm"), fakeSlackNpmScript(), { mode: 0o755 });
+      fs.writeFileSync(path.join(tmp, "npm"), fakeSlackNpmScript(), {
+        mode: 0o755,
+      });
       fs.writeFileSync(
         path.join(tmp, "openclaw"),
         [
           "#!/bin/sh",
-          'printf \'openclaw|%s|%s|%s|%s\\n\' "$1" "$2" "$3" "$4" >> "$OPENCLAW_TRACE"',
+          'printf \'openclaw|%s|%s|%s|%s|%s\\n\' "$1" "$2" "$3" "$4" "$5" >> "$OPENCLAW_TRACE"',
           "exit 0",
           "",
         ].join("\n"),
@@ -168,7 +170,7 @@ describe("messaging-build-applier.mts: plugin archive integrity", () => {
         expect(trace).toContain("npm|view|@openclaw/slack@2026.9.1|dist.integrity");
         expect(trace).toContain("npm|view|@openclaw/slack@2026.9.1|dist.tarball");
         expect(trace).toContain(`npm|pack|${OPENCLAW_SLACK_2026_9_1_TARBALL}|--pack-destination`);
-        expect(trace).toContain("openclaw|plugins|install|--force|npm-pack:");
+        expect(trace).toContain("openclaw|plugins|install|--force|--accept-capabilities|npm-pack:");
         expect(trace).toContain("slack-2026.9.1.tgz|");
       } finally {
         fs.rmSync(tmp, { recursive: true, force: true });
@@ -178,21 +180,23 @@ describe("messaging-build-applier.mts: plugin archive integrity", () => {
   );
 
   it("pins the registry tarball URL for every trusted built-in messaging plugin", () => {
-    expect(reviewedOpenClawPluginTarballUrlByPackageSpec({ OPENCLAW_VERSION: "2026.9.1" })).toEqual(
-      {
-        "@openclaw/discord@2026.9.1":
-          "https://registry.npmjs.org/@openclaw/discord/-/discord-2026.9.1.tgz",
-        "@openclaw/googlechat@2026.9.1":
-          "https://registry.npmjs.org/@openclaw/googlechat/-/googlechat-2026.9.1.tgz",
-        "@openclaw/msteams@2026.9.1":
-          "https://registry.npmjs.org/@openclaw/msteams/-/msteams-2026.9.1.tgz",
-        "@openclaw/slack@2026.9.1": OPENCLAW_SLACK_2026_9_1_TARBALL,
-        "@openclaw/whatsapp@2026.9.1":
-          "https://registry.npmjs.org/@openclaw/whatsapp/-/whatsapp-2026.9.1.tgz",
-        "@tencent-weixin/openclaw-weixin@2.4.3":
-          "https://registry.npmjs.org/@tencent-weixin/openclaw-weixin/-/openclaw-weixin-2.4.3.tgz",
-      },
-    );
+    expect(
+      reviewedOpenClawPluginTarballUrlByPackageSpec({
+        OPENCLAW_VERSION: "2026.9.1",
+      }),
+    ).toEqual({
+      "@openclaw/discord@2026.9.1":
+        "https://registry.npmjs.org/@openclaw/discord/-/discord-2026.9.1.tgz",
+      "@openclaw/googlechat@2026.9.1":
+        "https://registry.npmjs.org/@openclaw/googlechat/-/googlechat-2026.9.1.tgz",
+      "@openclaw/msteams@2026.9.1":
+        "https://registry.npmjs.org/@openclaw/msteams/-/msteams-2026.9.1.tgz",
+      "@openclaw/slack@2026.9.1": OPENCLAW_SLACK_2026_9_1_TARBALL,
+      "@openclaw/whatsapp@2026.9.1":
+        "https://registry.npmjs.org/@openclaw/whatsapp/-/whatsapp-2026.9.1.tgz",
+      "@tencent-weixin/openclaw-weixin@2.4.3":
+        "https://registry.npmjs.org/@tencent-weixin/openclaw-weixin/-/openclaw-weixin-2.4.3.tgz",
+    });
   });
 
   it(
@@ -200,12 +204,14 @@ describe("messaging-build-applier.mts: plugin archive integrity", () => {
     async () => {
       const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-slack-tarball-"));
       const tracePath = path.join(tmp, "openclaw.trace");
-      fs.writeFileSync(path.join(tmp, "npm"), fakeSlackNpmScript(), { mode: 0o755 });
+      fs.writeFileSync(path.join(tmp, "npm"), fakeSlackNpmScript(), {
+        mode: 0o755,
+      });
       fs.writeFileSync(
         path.join(tmp, "openclaw"),
         [
           "#!/bin/sh",
-          'printf \'openclaw|%s|%s|%s|%s\\n\' "$1" "$2" "$3" "$4" >> "$OPENCLAW_TRACE"',
+          'printf \'openclaw|%s|%s|%s|%s|%s\\n\' "$1" "$2" "$3" "$4" "$5" >> "$OPENCLAW_TRACE"',
           "exit 0",
           "",
         ].join("\n"),
@@ -252,12 +258,14 @@ describe("messaging-build-applier.mts: plugin archive integrity", () => {
     async () => {
       const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-slack-pack-"));
       const tracePath = path.join(tmp, "openclaw.trace");
-      fs.writeFileSync(path.join(tmp, "npm"), fakeSlackNpmScript(), { mode: 0o755 });
+      fs.writeFileSync(path.join(tmp, "npm"), fakeSlackNpmScript(), {
+        mode: 0o755,
+      });
       fs.writeFileSync(
         path.join(tmp, "openclaw"),
         [
           "#!/bin/sh",
-          'printf \'openclaw|%s|%s|%s|%s\\n\' "$1" "$2" "$3" "$4" >> "$OPENCLAW_TRACE"',
+          'printf \'openclaw|%s|%s|%s|%s|%s\\n\' "$1" "$2" "$3" "$4" "$5" >> "$OPENCLAW_TRACE"',
           "exit 0",
           "",
         ].join("\n"),
@@ -300,12 +308,14 @@ describe("messaging-build-applier.mts: plugin archive integrity", () => {
     async () => {
       const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-slack-pack-path-"));
       const tracePath = path.join(tmp, "openclaw.trace");
-      fs.writeFileSync(path.join(tmp, "npm"), fakeSlackNpmScript(), { mode: 0o755 });
+      fs.writeFileSync(path.join(tmp, "npm"), fakeSlackNpmScript(), {
+        mode: 0o755,
+      });
       fs.writeFileSync(
         path.join(tmp, "openclaw"),
         [
           "#!/bin/sh",
-          'printf \'openclaw|%s|%s|%s|%s\\n\' "$1" "$2" "$3" "$4" >> "$OPENCLAW_TRACE"',
+          'printf \'openclaw|%s|%s|%s|%s|%s\\n\' "$1" "$2" "$3" "$4" "$5" >> "$OPENCLAW_TRACE"',
           "exit 0",
           "",
         ].join("\n"),

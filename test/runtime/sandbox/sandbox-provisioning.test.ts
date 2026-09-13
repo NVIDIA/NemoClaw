@@ -207,7 +207,10 @@ describe("sandbox provisioning: runtime npm online state", () => {
     const scriptPath = path.join(tmp, "replay.sh");
     try {
       fs.writeFileSync(scriptPath, probe, { mode: 0o700 });
-      const result = spawnSync("bash", [scriptPath], { encoding: "utf-8", timeout: 5000 });
+      const result = spawnSync("bash", [scriptPath], {
+        encoding: "utf-8",
+        timeout: 5000,
+      });
       expect(result.status, `stderr: ${result.stderr}`).toBe(0);
       expect(result.stdout.trim().split("\n")).toEqual(["false", "unset"]);
     } finally {
@@ -218,7 +221,7 @@ describe("sandbox provisioning: runtime npm online state", () => {
   it("exercises the staged plugin install with the offline lock still applied", () => {
     const stage = stageDockerfileUntil(
       DOCKERFILE,
-      "openclaw plugins install --force /opt/nemoclaw",
+      "openclaw plugins install --force --accept-capabilities /opt/nemoclaw",
     );
     const probe = [
       "#!/usr/bin/env bash",
@@ -230,7 +233,10 @@ describe("sandbox provisioning: runtime npm online state", () => {
     const scriptPath = path.join(tmp, "staged.sh");
     try {
       fs.writeFileSync(scriptPath, probe, { mode: 0o700 });
-      const result = spawnSync("bash", [scriptPath], { encoding: "utf-8", timeout: 5000 });
+      const result = spawnSync("bash", [scriptPath], {
+        encoding: "utf-8",
+        timeout: 5000,
+      });
       expect(result.status, `stderr: ${result.stderr}`).toBe(0);
       expect(result.stdout.trim()).toBe("true");
     } finally {
@@ -455,12 +461,18 @@ describe("sandbox provisioning: image health checks (#1430)", () => {
       // A connect timeout means a listener exists but is not responding,
       // e.g. a wedged HTTP server. We deliberately do not fall back to the
       // process check there — Docker should restart the container.
-      const probe = runProductionHealthProbe({ curlExit: 28, gatewayCmdline: null });
+      const probe = runProductionHealthProbe({
+        curlExit: 28,
+        gatewayCmdline: null,
+      });
       expect(probe.result.status).toBe(1);
     });
 
     it("reports unhealthy when curl gets connection refused and openclaw is not running", () => {
-      const probe = runProductionHealthProbe({ curlExit: 7, gatewayCmdline: null });
+      const probe = runProductionHealthProbe({
+        curlExit: 7,
+        gatewayCmdline: null,
+      });
       expect(probe.result.status).toBe(1);
     });
 
@@ -470,7 +482,10 @@ describe("sandbox provisioning: image health checks (#1430)", () => {
     });
 
     it("does not fall back when curl reports an HTTP error (gateway answered with failure)", () => {
-      const probe = runProductionHealthProbe({ curlExit: 22, gatewayCmdline: null });
+      const probe = runProductionHealthProbe({
+        curlExit: 22,
+        gatewayCmdline: null,
+      });
       expect(probe.result.status).toBe(1);
       // HTTP errors from the in-container probe should bypass the fallback;
       // a 4xx/5xx means the gateway is reachable and unhappy, not a
@@ -1018,7 +1033,10 @@ describe("sandbox provisioning: base runtime tools", () => {
     const scriptPath = path.join(tmp, "run.sh");
     try {
       fs.writeFileSync(scriptPath, script, { mode: 0o700 });
-      const result = spawnSync("bash", [scriptPath], { encoding: "utf-8", timeout: 5000 });
+      const result = spawnSync("bash", [scriptPath], {
+        encoding: "utf-8",
+        timeout: 5000,
+      });
       expect(result.status).toBe(0);
       const calls = fs.readFileSync(log, "utf-8");
       expect(calls).toContain("apt-mark manual procps e2fsprogs");

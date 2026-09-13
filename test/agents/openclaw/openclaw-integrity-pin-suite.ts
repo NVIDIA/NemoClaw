@@ -479,7 +479,10 @@ function runInstallBlock(
   ].join("\n");
   const scriptPath = path.join(tmp, "run.sh");
   fs.writeFileSync(scriptPath, script, { mode: 0o700 });
-  const result = spawnSync("bash", [scriptPath], { encoding: "utf-8", timeout: 10000 });
+  const result = spawnSync("bash", [scriptPath], {
+    encoding: "utf-8",
+    timeout: 10000,
+  });
   const calls = fs.existsSync(log) ? fs.readFileSync(log, "utf-8") : "";
   const provenanceExists = fs.existsSync(provenancePath);
   const provenanceContent = provenanceExists ? fs.readFileSync(provenancePath, "utf-8") : null;
@@ -655,7 +658,10 @@ function runOptionalOpenClawPluginBlock(
   ].join("\n");
   const scriptPath = path.join(tmp, "run.sh");
   fs.writeFileSync(scriptPath, script, { mode: 0o700 });
-  const result = spawnSync("bash", [scriptPath], { encoding: "utf-8", timeout: 10000 });
+  const result = spawnSync("bash", [scriptPath], {
+    encoding: "utf-8",
+    timeout: 10000,
+  });
   const calls = fs.existsSync(log) ? fs.readFileSync(log, "utf-8") : "";
   fs.rmSync(tmp, { recursive: true, force: true });
   return { result, calls };
@@ -677,7 +683,11 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
         const cacheSeed = JSON.parse(
           fs.readFileSync(NEMOCLAW_NPM_CACHE_SEED_MANIFEST, "utf-8"),
         ) as {
-          archives?: Array<{ archive?: string; integrity?: string; resolved?: string }>;
+          archives?: Array<{
+            archive?: string;
+            integrity?: string;
+            resolved?: string;
+          }>;
           lockSha256?: string;
         };
         const lockedTar = packageLock.packages?.["node_modules/tar"];
@@ -815,7 +825,7 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
           "npm pack https://registry.npmjs.org/@openclaw/diagnostics-otel/-/diagnostics-otel-2026.9.1.tgz --pack-destination",
         );
         expect(calls).toMatch(
-          /openclaw plugins install --force npm-pack:\S*\/diagnostics-otel-2026\.9\.1\.tgz\n/,
+          /openclaw plugins install --force --accept-capabilities npm-pack:\S*\/diagnostics-otel-2026\.9\.1\.tgz\n/,
         );
         expect(calls).not.toContain(`remediate --archive`);
         expect(calls).toContain(
@@ -828,7 +838,7 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
           "npm pack https://registry.npmjs.org/@openclaw/brave-plugin/-/brave-plugin-2026.9.1.tgz --pack-destination",
         );
         expect(calls).toMatch(
-          /openclaw plugins install --force npm-pack:\S*\/brave-plugin-2026\.9\.1\.tgz\n/,
+          /openclaw plugins install --force --accept-capabilities npm-pack:\S*\/brave-plugin-2026\.9\.1\.tgz\n/,
         );
         expect(calls).toContain("openclaw-env true true");
       });
@@ -1039,7 +1049,9 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
         ["missing marker", { baseProvenance: null }],
         [
           "wrong schema",
-          { baseProvenance: openClawBaseProvenance().replace("schema=4", "schema=3") },
+          {
+            baseProvenance: openClawBaseProvenance().replace("schema=4", "schema=3"),
+          },
         ],
         [
           "wrong version",
@@ -1153,11 +1165,17 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
         ],
         [
           "writable marker",
-          { baseProvenance: openClawBaseProvenance(), baseProvenanceMetadata: "0:0:644" },
+          {
+            baseProvenance: openClawBaseProvenance(),
+            baseProvenanceMetadata: "0:0:644",
+          },
         ],
         [
           "symlink marker",
-          { baseProvenance: openClawBaseProvenance(), baseProvenanceSymlink: true },
+          {
+            baseProvenance: openClawBaseProvenance(),
+            baseProvenanceSymlink: true,
+          },
         ],
         [
           "wrong installed version",
@@ -1176,7 +1194,10 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
         ],
         [
           "custom base reference",
-          { baseProvenance: openClawBaseProvenance(), baseImage: "registry.example/base:custom" },
+          {
+            baseProvenance: openClawBaseProvenance(),
+            baseImage: "registry.example/base:custom",
+          },
         ],
         [
           "local base without independent CI attestation",
@@ -1514,7 +1535,9 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
           { OPENCLAW_VERSION: LEGACY_REBUILD_OPENCLAW_VERSION },
           { OPENCLAW_VERSION: "2026.4.24" },
           { OPENCLAW_2026_3_11_TARBALL: LEGACY_REBUILD_OPENCLAW_TARBALL },
-          { OPENCLAW_2026_4_24_INTEGRITY: LEGACY_GATEWAY_UPGRADE_OPENCLAW_INTEGRITY },
+          {
+            OPENCLAW_2026_4_24_INTEGRITY: LEGACY_GATEWAY_UPGRADE_OPENCLAW_INTEGRITY,
+          },
         ];
         for (const env of legacyEnvCases) {
           const result = runProductionBuildArgGuard([], env);
@@ -1574,7 +1597,9 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
         }
 
         for (const pinArgName of currentPinArgNames) {
-          const envResult = runProductionBuildArgGuard([], { [pinArgName]: "attacker-controlled" });
+          const envResult = runProductionBuildArgGuard([], {
+            [pinArgName]: "attacker-controlled",
+          });
           expect(envResult.status, pinArgName).toBe(1);
           expect(envResult.stderr).toContain("pin overrides are not allowed");
         }

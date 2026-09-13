@@ -782,10 +782,17 @@ function installOpenClawPluginPackages(installs: readonly OpenClawPluginInstall[
       // on OpenClaw >= 2026.6.10 and crash-loops channel plugins that use
       // keyed state (e.g. WhatsApp). npm-pack installs always record the
       // exact resolved version, so `--pin` is not needed. OpenClaw 2026.9.1
-      // requires --force as the explicit confirmation for non-ClawHub sources;
-      // the archive has already passed the reviewed identity and SRI checks.
+      // requires explicit source and declared-capability consent for non-ClawHub
+      // sources; the archive has already passed the reviewed identity and SRI checks.
       runCommand(
-        ["openclaw", "plugins", "install", "--force", `npm-pack:${packed.archivePath}`],
+        [
+          "openclaw",
+          "plugins",
+          "install",
+          "--force",
+          "--accept-capabilities",
+          `npm-pack:${packed.archivePath}`,
+        ],
         installEnv,
       );
       if (install.runtimeLock) {
@@ -1389,7 +1396,10 @@ function packVerifiedOpenClawPluginArchive(
     packageSpec: exactPackage.packageSpec,
     workingDirectory: archive.rootDirectory,
   });
-  return { archivePath: remediated.archivePath, rootDir: archive.rootDirectory };
+  return {
+    archivePath: remediated.archivePath,
+    rootDir: archive.rootDirectory,
+  };
 }
 
 type CredentialPlaceholderRule = {
@@ -1975,7 +1985,10 @@ export function main(argv: readonly string[] = process.argv.slice(2)): void {
     console.log(JSON.stringify(describeMessagingBuildPhase(plan, phase, process.env), null, 2));
     return;
   }
-  applyMessagingBuildPhase(plan, phase, process.env, { managedStartupRuntime, mode });
+  applyMessagingBuildPhase(plan, phase, process.env, {
+    managedStartupRuntime,
+    mode,
+  });
 }
 
 function parseMessagingBuildArgs(argv: readonly string[]): {

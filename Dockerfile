@@ -1494,7 +1494,7 @@ RUN --network=none --mount=from=openclaw-optional-plugin-archives,target=/opt/ne
         plugin_source_root="$(dirname "$plugin_archive")"; \
         plugin_install_archive="$plugin_archive"; \
         NPM_CONFIG_IGNORE_SCRIPTS=true npm_config_ignore_scripts=true \
-            openclaw plugins install --force "npm-pack:${plugin_install_archive}"; \
+            openclaw plugins install --force --accept-capabilities "npm-pack:${plugin_install_archive}"; \
         if [ -z "${NEMOCLAW_REVIEWED_NPM_ARCHIVE_DIR:-}" ]; then rm -rf "$plugin_source_root"; fi; \
     }; \
     if [ "$managed_image_union" = "1" ] || [ "$NEMOCLAW_OPENCLAW_OTEL" = "1" ] || [ "$NEMOCLAW_WEB_SEARCH_ENABLED" = "1" ]; then \
@@ -1702,7 +1702,7 @@ ENV NPM_CONFIG_OFFLINE=true \
 # OCI image imported by k3s.
 # hadolint ignore=DL3059,DL4006
 RUN NPM_CONFIG_IGNORE_SCRIPTS=true npm_config_ignore_scripts=true \
-    openclaw plugins install --force /opt/nemoclaw \
+    openclaw plugins install --force --accept-capabilities /opt/nemoclaw \
     && openclaw plugins inspect nemoclaw --json > /dev/null \
     && if [ -d /sandbox/.openclaw/plugin-runtime-deps ]; then \
         find /sandbox/.openclaw/plugin-runtime-deps -type f \( \

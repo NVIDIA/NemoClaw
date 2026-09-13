@@ -83,7 +83,7 @@ COPY --from=weather-plugin-builder --chown=sandbox:sandbox \
 
 USER sandbox
 RUN --mount=type=bind,from=weather-plugin-builder,source=/opt/weather-runtime-dist,target=${TRUSTED_PLUGIN_FIXTURE_IMAGE_DIR}/dist,ro \
-    HOME=/sandbox openclaw plugins install --force ${TRUSTED_PLUGIN_FIXTURE_IMAGE_DIR} \
+    HOME=/sandbox openclaw plugins install --force --accept-capabilities ${TRUSTED_PLUGIN_FIXTURE_IMAGE_DIR} \
     && HOME=/sandbox openclaw plugins enable weather
 
 # Enabling the plugin changes openclaw.json after the managed runtime hashes it.
@@ -141,7 +141,10 @@ export function createOpenShellTrustedImageWrapper(options: {
   const imageSelectionPath = path.join(directory, "selected-image.json");
   const rewriterPath = path.join(directory, "rewrite-from.cjs");
   const executable = path.join(directory, "openshell");
-  fs.writeFileSync(imageSelectionPath, "{}\n", { encoding: "utf8", mode: 0o600 });
+  fs.writeFileSync(imageSelectionPath, "{}\n", {
+    encoding: "utf8",
+    mode: 0o600,
+  });
   fs.writeFileSync(
     rewriterPath,
     `const { spawnSync } = require("node:child_process");
