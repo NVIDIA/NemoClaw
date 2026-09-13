@@ -1270,6 +1270,11 @@ export function writeE2eWorkflowPlanCiOutput(
   if (!changedFiles && plan.hermesSelected !== expectedHermes) {
     throw new Error("E2E planner changed the trusted Hermes selection");
   }
+  const selectedResultJobs = selectedWorkflowJobs(plan);
+  if (controllerMap.retiredSelectorSelected) {
+    selectedResultJobs.push("retired-selector-compatibility");
+    selectedResultJobs.sort();
+  }
   const output = environment.GITHUB_OUTPUT;
   const summary = environment.GITHUB_STEP_SUMMARY;
   if (!output || !summary) throw new Error("GitHub output paths are required");
@@ -1286,7 +1291,7 @@ export function writeE2eWorkflowPlanCiOutput(
       `gateway_runtimes=${JSON.stringify(plan.gatewayRuntimes)}`,
       `runtime_providers_by_job=${JSON.stringify(plan.runtimeProvidersByJob)}`,
       `selected_jobs=${JSON.stringify(plan.selectedJobs)}`,
-      `selected_workflow_jobs=${JSON.stringify(selectedWorkflowJobs(plan))}`,
+      `selected_workflow_jobs=${JSON.stringify(selectedResultJobs)}`,
       `hermes_selected=${plan.hermesSelected}`,
       `explicit_only_jobs=${plan.explicitOnlyJobs.join(",")}`,
       `release_required_jobs=${JSON.stringify(releaseRequiredWorkflowJobs())}`,

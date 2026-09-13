@@ -979,7 +979,12 @@ describe("E2E workflow plan", () => {
       });
 
       expect(result.status, result.stderr).toBe(0);
-      expect(readFileSync(output, "utf8")).toBe(expectedWorkflowPlanCiOutput(plan));
+      expect(readFileSync(output, "utf8")).toBe(
+        expectedWorkflowPlanCiOutput(plan, [
+          ...selectedWorkflowJobs(plan),
+          "retired-selector-compatibility",
+        ]),
+      );
       expect(readFileSync(summary, "utf8")).toBe(
         renderE2eWorkflowPlanSummary(plan, { includeCoverageAudit: false }),
       );
@@ -989,7 +994,7 @@ describe("E2E workflow plan", () => {
   });
 
   it.concurrent.for(RETIRED_CONTROLLER_SELECTOR_IDS)(
-    "emits an empty live plan for retired controller job %s (#7616)",
+    "requires compatibility evidence without live jobs for retired controller job %s (#7616)",
     async (job, context) => {
       const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-workflow-plan-cli-"));
       const output = path.join(directory, "github-output");
@@ -1024,7 +1029,9 @@ describe("E2E workflow plan", () => {
         });
 
         expect(result.status, result.stderr).toBe(0);
-        expect(readFileSync(output, "utf8")).toBe(expectedWorkflowPlanCiOutput(plan));
+        expect(readFileSync(output, "utf8")).toBe(
+          expectedWorkflowPlanCiOutput(plan, ["retired-selector-compatibility"]),
+        );
         expect(readFileSync(summary, "utf8")).toBe(renderE2eWorkflowPlanSummary(plan));
       } finally {
         rmSync(directory, { force: true, recursive: true });
@@ -1055,7 +1062,7 @@ describe("E2E workflow plan", () => {
     },
   );
 
-  it.concurrent("emits an empty matrix for retired free-standing rebuild selectors (#7615)", async (context) => {
+  it.concurrent("requires compatibility evidence without a matrix for retired rebuild selectors (#7615)", async (context) => {
     const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-workflow-plan-cli-"));
     const output = path.join(directory, "github-output");
     const summary = path.join(directory, "summary.md");
@@ -1089,7 +1096,9 @@ describe("E2E workflow plan", () => {
       });
 
       expect(result.status, result.stderr).toBe(0);
-      expect(readFileSync(output, "utf8")).toBe(expectedWorkflowPlanCiOutput(plan));
+      expect(readFileSync(output, "utf8")).toBe(
+        expectedWorkflowPlanCiOutput(plan, ["retired-selector-compatibility"]),
+      );
       expect(readFileSync(summary, "utf8")).toBe(renderE2eWorkflowPlanSummary(plan));
     } finally {
       rmSync(directory, { force: true, recursive: true });

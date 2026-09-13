@@ -116,6 +116,17 @@ describe("release qualification", () => {
     ).toThrow("Release qualification did not pass: staging-brev-launchable");
   });
 
+  it("rejects failed retired-selector compatibility evidence for Relevant E2E (#7616)", () => {
+    const needs = {
+      ...successfulNeeds,
+      "retired-selector-compatibility": { result: "failure" },
+    };
+
+    expect(() =>
+      assertReleaseQualification(JSON.stringify(needs), '["retired-selector-compatibility"]'),
+    ).toThrow("Release qualification did not pass: retired-selector-compatibility");
+  });
+
   it("treats an empty test selection as a successful controller-only no-op (#7912)", () => {
     expect(failedReleaseQualificationJobs(successfulNeeds, [])).toEqual([]);
     expect(() => assertReleaseQualification(JSON.stringify(successfulNeeds), "[]")).not.toThrow();
