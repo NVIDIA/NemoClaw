@@ -329,7 +329,7 @@ const RUNTIME_IDENTITY_E2E_OPTIONS = {
       "prove inference remains live after identity attachment",
       "call the protected resource with the injected bearer",
       "reject unreviewed credential delivery before bearer substitution",
-      "rotate the credential and relaunch with its new placeholder",
+      "rotate the credential and resolve its stable placeholder",
       "verify secret-safe status and deterministic rollback",
     ],
   },
@@ -836,7 +836,7 @@ async function runRuntimeIdentityE2EScenario(
   );
   expect(deniedResource.exitCode, resultText(deniedResource)).not.toBe(0);
   expect(oauth.resourceRequests()).toHaveLength(admittedRequestCount);
-  progress.phase("rotate the credential and relaunch with its new placeholder");
+  progress.phase("rotate the credential and resolve its stable placeholder");
   const rotate = await sandbox.openshell(
     ["provider", "refresh", "rotate", providerName, "--credential-key", credentialKey],
     {
@@ -856,35 +856,17 @@ async function runRuntimeIdentityE2EScenario(
     clientSecretOk: true,
     issuedVersion: 2,
   });
-  let placeholderAfterRotation = "";
-  let rotationProbeAttempt = 0;
-  await expect
-    .poll(
-      async () => {
-        rotationProbeAttempt += 1;
-        const placeholderAfter = await sandbox.exec(
-          sandboxName,
-          ["/usr/bin/printenv", credentialKey],
-          {
-            artifactName: `${artifactPrefix}-placeholder-after-rotation-${rotationProbeAttempt}`,
-            env: openshellEnv,
-            timeoutMs: 30_000,
-          },
-        );
-        placeholderAfterRotation =
-          placeholderAfter.exitCode === 0 ? placeholderAfter.stdout.trim() : "";
-        return placeholderAfterRotation === placeholder ? "" : placeholderAfterRotation;
-      },
-      { interval: 2_000, timeout: 35_000 },
-    )
-    .toMatch(placeholderPattern);
-  expect(placeholderAfterRotation).not.toBe(placeholder);
+  const placeholderAfter = await sandbox.exec(sandboxName, ["/usr/bin/printenv", credentialKey], {
+    artifactName: `${artifactPrefix}-placeholder-after-rotation`,
+    env: openshellEnv,
+    timeoutMs: 30_000,
+  });
+  expect(placeholderAfter.exitCode, resultText(placeholderAfter)).toBe(0);
+  const placeholderAfterRotation = placeholderAfter.stdout.trim();
+  // OpenShell keeps refresh-managed handles stable while endpoint authorization remains unchanged.
+  expect(placeholderAfterRotation).toBe(placeholder);
   for (const secret of redactionValues) expect(placeholderAfterRotation).not.toContain(secret);
-  await expectProtectedResourceVersion(
-    placeholderAfterRotation,
-    2,
-    `${artifactPrefix}-protected-resource-v2`,
-  );
+  await expectProtectedResourceVersion(placeholder, 2, `${artifactPrefix}-protected-resource-v2`);
   expect(oauth.resourceRequests()).toEqual([
     {
       method: "GET",
