@@ -197,6 +197,11 @@
       "category": "security"
     },
     {
+      "file": "test/automation/pull-requests/pr-workflow-contract.test.ts",
+      "test": "replaces stale CLI shard reports when a failed job is rerun",
+      "category": "compatibility"
+    },
+    {
       "file": "test/automation/releases/release-daily-brev-image.test.ts",
       "test": "attests one daily request before the isolated dispatch job (#9799)",
       "category": "security"

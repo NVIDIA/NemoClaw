@@ -1082,11 +1082,28 @@ function isMainModule(): boolean {
   return fs.realpathSync.native(fileURLToPath(import.meta.url)) === invokedPath;
 }
 
+function fatalAuditDiagnostic(error: unknown): string {
+  const message = error instanceof Error ? error.message : "";
+  if (message.startsWith("npm audit requires npm ")) {
+    return "Reviewed npm audit requires its configured npm version.";
+  }
+  if (message.includes(" npm pack failed")) {
+    return "Reviewed npm audit could not pack a reviewed archive.";
+  }
+  if (message.includes("refuses target-controlled npm config")) {
+    return "Reviewed npm audit refused target-controlled npm configuration.";
+  }
+  if (message.includes("locked package must resolve from the reviewed npm registry origin")) {
+    return "Reviewed npm audit rejected a package outside the reviewed npm registry.";
+  }
+  return "Reviewed npm audit failed.";
+}
+
 if (isMainModule()) {
   try {
     main();
   } catch (error) {
-    console.error(error instanceof Error ? error.message : String(error));
+    console.error(fatalAuditDiagnostic(error));
     process.exit(1);
   }
 }
