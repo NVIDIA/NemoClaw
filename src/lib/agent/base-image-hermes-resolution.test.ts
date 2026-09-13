@@ -127,7 +127,24 @@ describe("Hermes base-image resolver integration", () => {
     fs.rmSync(testRoot, { force: true, recursive: true });
   });
 
-  it("stages Hermes on aarch64 with a Dockerfile-pinned platform digest produced by the resolver path (#6313)", () => {
+  it("stages Hermes on aarch64 when the resolved Dockerfile-pinned platform digest has the pinned inventory (#6313)", () => {
+    const captureByEntrypointAndPinnedInventory = new Map([
+      ["/opt/hermes/.venv/bin/python\0false", "nemoclaw-hermes-mcp-runtime-ok"],
+      ["/usr/bin/ldd\0false", "ldd (GNU libc) 2.41"],
+      ["/bin/sh\0true", "nemoclaw-security-inventory-ok"],
+    ]);
+    dockerMocks.capture.mockImplementation((args: string[]) => {
+      const entrypoint = args[args.indexOf("--entrypoint") + 1];
+      const requestsPinnedInventory = args.some((arg) =>
+        arg.includes("nemoclaw-python3.13-htmlparser-fix=3.13.5-2+deb13u4+nemoclaw1"),
+      );
+      return (
+        captureByEntrypointAndPinnedInventory.get(
+          `${entrypoint}\0${String(requestsPinnedInventory)}`,
+        ) ?? ""
+      );
+    });
+
     const result = stageHermesSandbox();
 
     expect(fs.readFileSync(result.stagedDockerfile, "utf8")).toContain(
@@ -148,6 +165,12 @@ describe("Hermes base-image resolver integration", () => {
       "{{json .RepoDigests}}",
       trackedRef,
       { ignoreError: true },
+    );
+    expect(dockerMocks.capture).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.stringContaining("nemoclaw-python3.13-htmlparser-fix=3.13.5-2+deb13u4+nemoclaw1"),
+      ]),
+      expect.objectContaining({ ignoreError: true }),
     );
   }, 15_000);
 

@@ -1,10 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { McpBridgeEntry } from "../../state/registry";
+import type { McpSourceEntry } from "./mcp-bridge-contracts";
 import { redactBridgeSecretsForDisplay } from "./mcp-bridge-output";
 import type { McpProviderInspectionRuntimeSelection } from "./mcp-bridge-provider-inspection";
-import { executeSandboxCommand, type SandboxCommandResult } from "./process-recovery";
+import {
+  executeSandboxCommand,
+  restartSandboxGateway,
+  type SandboxCommandResult,
+} from "./process-recovery";
 
 export type AdapterRegistrationInspection =
   | { state: "absent" | "registered" | "mismatch" }
@@ -21,7 +25,7 @@ export type AdapterRemovalOutcome = "removed" | "absent" | "unowned";
 
 export function parseAdapterRegistrationInspection(
   result: SandboxCommandResult,
-  entry: McpBridgeEntry,
+  entry: McpSourceEntry,
 ): AdapterRegistrationInspection {
   const output = [result.stdout, result.stderr].filter(Boolean).join("\n").trim();
   if (result.status !== 0) {
@@ -49,11 +53,15 @@ export function parseAdapterRegistrationInspection(
 
 export async function inspectAdapterRegistrationCommand(
   sandboxName: string,
-  entry: McpBridgeEntry,
+  entry: McpSourceEntry,
   command: string,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
 ): Promise<AdapterRegistrationInspection> {
   const result = await executeSandboxCommand(sandboxName, command, { runtimeSelection });
   if (!result) return { state: "error", detail: "sandbox unreachable" };
   return parseAdapterRegistrationInspection(result, entry);
+}
+
+export async function restartMcpGatewayThroughSupervisor(sandboxName: string) {
+  return restartSandboxGateway(sandboxName, { quiet: true });
 }

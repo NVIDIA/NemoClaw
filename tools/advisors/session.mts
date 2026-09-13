@@ -581,6 +581,10 @@ export async function runReadOnlyAdvisor(
           };
           await promptAndWait(promptWithRequiredContextTools(turn.prompt, contextToolNames));
           const initialFlow = currentTurnFlow;
+          // A configured assistant-text repair is a separate, tool-disabled continuation. Preserve
+          // the original flow for terminal-submit validation so the harness's own repair prose is
+          // not mistaken for model activity after a successful submit.
+          let terminalSubmitValidationFlow = initialFlow;
           if (
             repairableAssistantText(turn, initialFlow, tools, successfulToolNames, currentTurnError)
           ) {
@@ -631,7 +635,6 @@ export async function runReadOnlyAdvisor(
             tools,
             currentTurnError,
           );
-          let terminalSubmitValidationFlow = currentTurnFlow;
           const submitRepairToolName = repairableTerminalSubmitToolName(
             turn,
             currentTurnFlow,
