@@ -20,7 +20,7 @@ const OPENCLAW_NPM_REMEDIATION = path.join(
 );
 const CREDENTIAL_CANARY = "OPENAI_API_KEY=process-boundary-canary-0123456789";
 
-function encodedMessagingPlan(renderTarget: string): string {
+function encodedMessagingPlan(renderTarget: string | null): string {
   return Buffer.from(
     JSON.stringify({
       schemaVersion: 1,
@@ -28,15 +28,17 @@ function encodedMessagingPlan(renderTarget: string): string {
       agent: "openclaw",
       channels: [{ channelId: "test", active: true }],
       credentialBindings: [],
-      agentRender: [
-        {
-          channelId: "test",
-          agent: "openclaw",
-          target: renderTarget,
-          kind: "json-fragment",
-          value: { enabled: true },
-        },
-      ],
+      agentRender: renderTarget
+        ? [
+            {
+              channelId: "test",
+              agent: "openclaw",
+              target: renderTarget,
+              kind: "json-fragment",
+              value: { enabled: true },
+            },
+          ]
+        : [],
       buildSteps: [],
     }),
   ).toString("base64");
@@ -59,8 +61,49 @@ describe("fatal process diagnostics", () => {
 
     expect(result.status).toBe(2);
     expect(result.stdout).toBe("");
-    expect(result.stderr).toContain("Messaging build applier failed.");
+    expect(result.stderr).toContain("Messaging build applier rejected invalid or unsafe input.");
     expect(result.stderr).not.toContain(CREDENTIAL_CANARY);
+  });
+
+  it("omits inherited credentials printed by a failing messaging child (#11673)", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-messaging-diagnostic-"));
+    try {
+      const openclaw = path.join(root, "openclaw");
+      fs.writeFileSync(
+        openclaw,
+        [
+          "#!/bin/sh",
+          'printf "%s\\n" "$NEMOCLAW_FATAL_DIAGNOSTIC_CANARY"',
+          'printf "%s\\n" "$NEMOCLAW_FATAL_DIAGNOSTIC_CANARY" >&2',
+          "exit 1",
+          "",
+        ].join("\n"),
+        { mode: 0o700 },
+      );
+
+      const result = spawnSync(
+        process.execPath,
+        [MESSAGING_BUILD_APPLIER, "--agent", "openclaw", "--phase", "post-agent-install"],
+        {
+          cwd: REPOSITORY_ROOT,
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            NEMOCLAW_FATAL_DIAGNOSTIC_CANARY: CREDENTIAL_CANARY,
+            NEMOCLAW_MESSAGING_PLAN_B64: encodedMessagingPlan(null),
+            PATH: `${root}${path.delimiter}${process.env.PATH ?? ""}`,
+          },
+        },
+      );
+
+      expect(result.status).toBe(2);
+      expect(result.stdout).toContain("+ openclaw doctor --fix --non-interactive");
+      expect(result.stdout).not.toContain(CREDENTIAL_CANARY);
+      expect(result.stderr).toContain("Messaging build applier command failed.");
+      expect(result.stderr).not.toContain(CREDENTIAL_CANARY);
+    } finally {
+      fs.rmSync(root, { force: true, recursive: true });
+    }
   });
 
   it("omits an environment-controlled path from an audit failure (#11673)", () => {
@@ -131,10 +174,23 @@ describe("fatal process diagnostics", () => {
 
       expect(result.status).toBe(1);
       expect(result.stdout).toBe("");
-      expect(result.stderr).toContain("OpenClaw npm remediation failed.");
+      expect(result.stderr).toContain("OpenClaw npm remediation command failed.");
       expect(result.stderr).not.toContain(CREDENTIAL_CANARY);
     } finally {
       fs.rmSync(root, { force: true, recursive: true });
     }
+  });
+
+  it("classifies missing remediation arguments without echoing their values (#11673)", () => {
+    const result = spawnSync(process.execPath, [OPENCLAW_NPM_REMEDIATION], {
+      cwd: REPOSITORY_ROOT,
+      encoding: "utf8",
+      env: process.env,
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toContain("OpenClaw npm remediation is missing required arguments.");
+    expect(result.stderr).not.toContain("--archive");
   });
 });
