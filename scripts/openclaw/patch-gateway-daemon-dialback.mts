@@ -40,6 +40,10 @@ interface PatchSpec {
   readonly marker: string;
   readonly upstream: string;
   readonly patched: string;
+  readonly alternatives?: ReadonlyArray<{
+    readonly upstream: string;
+    readonly patched: string;
+  }>;
 }
 
 interface PatchTextResult {
@@ -61,6 +65,19 @@ const CALL_CONTEXT_SPEC: PatchSpec = {
     `const nemoclawGatewaySelfDialback = process.title === "openclaw-gateway" && process.env.OPENSHELL_SANDBOX === "1"; ${CALL_CONTEXT_MARKER}`,
     "const envUrlOverride = cliUrlOverride || opts.localPortOverride !== void 0 || nemoclawGatewaySelfDialback ? void 0 : trimToUndefined(process.env.OPENCLAW_GATEWAY_URL);",
   ].join("\n\t"),
+  alternatives: [
+    {
+      upstream: [
+        "if (params.ignoreEnvUrlOverride || params.localPortOverride !== void 0) return {};",
+        "const envUrl = trimToUndefined((params.env ?? process.env).OPENCLAW_GATEWAY_URL);",
+      ].join("\n\t"),
+      patched: [
+        `const nemoclawGatewaySelfDialback = process.title === "openclaw-gateway" && process.env.OPENSHELL_SANDBOX === "1"; ${CALL_CONTEXT_MARKER}`,
+        "if (params.ignoreEnvUrlOverride || params.localPortOverride !== void 0 || nemoclawGatewaySelfDialback) return {};",
+        "const envUrl = trimToUndefined((params.env ?? process.env).OPENCLAW_GATEWAY_URL);",
+      ].join("\n\t"),
+    },
+  ],
 };
 
 const CONNECTION_DETAILS_SPEC: PatchSpec = {
@@ -91,9 +108,16 @@ function countOccurrences(source: string, needle: string): number {
 }
 
 function patchText(source: string, file: string, spec: PatchSpec): PatchTextResult {
+  const shapes = [{ upstream: spec.upstream, patched: spec.patched }, ...(spec.alternatives ?? [])];
   const markerCount = countOccurrences(source, spec.marker);
-  const patchedCount = countOccurrences(source, spec.patched);
-  const upstreamCount = countOccurrences(source, spec.upstream);
+  const patchedCount = shapes.reduce(
+    (count, shape) => count + countOccurrences(source, shape.patched),
+    0,
+  );
+  const upstreamCount = shapes.reduce(
+    (count, shape) => count + countOccurrences(source, shape.upstream),
+    0,
+  );
   if (markerCount === 1 && patchedCount === 1 && upstreamCount === 0) {
     return { status: "already-patched", text: source };
   }
@@ -102,11 +126,13 @@ function patchText(source: string, file: string, spec: PatchSpec): PatchTextResu
       `${file}: expected one unpatched or one patched ${spec.label} shape; found ${upstreamCount} upstream, ${patchedCount} patched, and ${markerCount} marker occurrences`,
     );
   }
-  const text = source.replace(spec.upstream, spec.patched);
+  const matchedShape = shapes.find((shape) => source.includes(shape.upstream));
+  if (!matchedShape) throw new Error(`${file}: failed to resolve ${spec.label} shape`);
+  const text = source.replace(matchedShape.upstream, matchedShape.patched);
   if (
     countOccurrences(text, spec.marker) !== 1 ||
-    countOccurrences(text, spec.patched) !== 1 ||
-    countOccurrences(text, spec.upstream) !== 0
+    shapes.reduce((count, shape) => count + countOccurrences(text, shape.patched), 0) !== 1 ||
+    shapes.reduce((count, shape) => count + countOccurrences(text, shape.upstream), 0) !== 0
   ) {
     throw new Error(`${file}: failed to verify patched ${spec.label} shape`);
   }
@@ -146,7 +172,10 @@ function findTarget(
   spec: PatchSpec,
 ): { file: string; source: string } {
   const matches = entries.filter(
-    ({ source }) => source.includes(spec.upstream) || source.includes(spec.marker),
+    ({ source }) =>
+      source.includes(spec.upstream) ||
+      spec.alternatives?.some((shape) => source.includes(shape.upstream)) ||
+      source.includes(spec.marker),
   );
   if (matches.length !== 1) {
     throw new Error(

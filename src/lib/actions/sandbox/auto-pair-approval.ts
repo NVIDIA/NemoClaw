@@ -36,10 +36,10 @@
  * self-repair shape. It requires a matching live preflight before one canonical
  * approval. The canonical writer binds the authenticated token to the paired
  * and stored-auth before-images, then journals pending, paired, and stored-auth
- * publication together. The wrapper verifies the resulting transition and
- * rewrites the same rotated token to the clone's client-auth store. Remove this
- * compatibility path when OpenClaw can complete scope upgrades natively
- * through device-token auth using operator.pairing.
+ * publication together. The wrapper verifies that SQLite transition directly;
+ * on older JSON layouts it rewrites the same rotated token to the clone's
+ * client-auth store. Remove this compatibility path when OpenClaw can complete
+ * scope upgrades natively through device-token auth using operator.pairing.
  */
 
 import { spawnSync } from "node:child_process";
@@ -251,12 +251,14 @@ def exit_with_receipt(receipt):
     ? "exit_with_receipt('approve-failed')"
     : "continue";
   const cloneStateApprovalGuard = options.localDeviceOnly
-    ? `if (
-        not clone_directory_is_current('devices', clone_devices_dir_fd)
-        or not clone_directory_is_current('identity', clone_identity_dir_fd)
-    ):
+    ? `if not clone_state_snapshot_is_current():
         ${failedApproveAction}
     `
+    : "";
+  const cloneStateSelectionGuard = options.localDeviceOnly
+    ? `if not clone_state_selection_is_current():
+    ${exitWithReceipt("list-pending-unsafe")}
+`
     : "";
   const maxApprovals = options.localDeviceOnly
     ? 1
@@ -276,14 +278,10 @@ def exit_with_receipt(receipt):
             or not raw_gateway_port.isdecimal()
             or raw_gateway_port != str(int(raw_gateway_port))
             or not 1 <= int(raw_gateway_port) <= 65535
-            or min(
-                clone_state_dir_fd,
-                clone_devices_dir_fd,
-                clone_identity_dir_fd,
-                clone_pending_snapshot_fd,
-                clone_paired_snapshot_fd,
-                clone_identity_snapshot_fd,
-            ) < 3
+            or min(clone_state_dir_fd, clone_pending_snapshot_fd,
+                   clone_paired_snapshot_fd, clone_identity_snapshot_fd) < 3
+            or (clone_state_layout == 'legacy' and
+                min(clone_devices_dir_fd, clone_identity_dir_fd) < 3)
         ):
             ${exitWithReceipt("approve-failed")}
         pinned_gateway_url = f'ws://127.0.0.1:{raw_gateway_port}'
@@ -394,7 +392,10 @@ def exit_with_receipt(receipt):
 # Removal condition: delete this path when the pinned OpenClaw release exposes
 # that bootstrap/list API for an unpaired clone.
 import stat
+import sqlite3
+import tempfile
 import time
+import urllib.parse
 
 state_dir = os.environ.get('OPENCLAW_STATE_DIR') or '/sandbox/.openclaw'
 if not os.path.isabs(state_dir):
@@ -468,7 +469,7 @@ def clone_state_root_is_current():
     )
 
 def clone_directory_is_current(directory_name, directory_fd):
-    if directory_name not in ('devices', 'identity') or not clone_state_root_is_current():
+    if directory_name not in ('devices', 'identity', 'state') or not clone_state_root_is_current():
         return False
     try:
         current = os.stat(
@@ -486,7 +487,7 @@ def clone_directory_is_current(directory_name, directory_fd):
     )
 
 def open_clone_directory(directory_name):
-    if directory_name not in ('devices', 'identity'):
+    if directory_name not in ('devices', 'identity', 'state'):
         raise OSError('unsupported clone state directory')
     directory_fd = os.open(
         directory_name,
@@ -524,39 +525,282 @@ def read_clone_json(directory_fd, directory_name, entry_name):
     os.close(fd)
     return parsed
 
+def clone_database_is_current():
+    if clone_state_layout != 'sqlite' or not clone_directory_is_current('state', clone_database_dir_fd):
+        return False
+    try:
+        current = os.stat(
+            'openclaw.sqlite',
+            dir_fd=clone_database_dir_fd,
+            follow_symlinks=False,
+        )
+        pinned = os.fstat(clone_database_fd)
+    except OSError:
+        return False
+    return (
+        stat.S_ISREG(current.st_mode)
+        and stat.S_ISREG(pinned.st_mode)
+        and current.st_nlink == 1
+        and pinned.st_nlink == 1
+        and (current.st_dev, current.st_ino) == (pinned.st_dev, pinned.st_ino)
+    )
+
+def clone_database_is_absent():
+    if not clone_state_root_is_current():
+        return False
+    database_directory_fd = -1
+    try:
+        try:
+            database_directory_fd = open_clone_directory('state')
+        except FileNotFoundError:
+            # Recheck through the pinned root so a concurrently published state
+            # directory cannot be mistaken for authoritative SQLite absence.
+            try:
+                os.stat('state', dir_fd=clone_state_dir_fd, follow_symlinks=False)
+            except FileNotFoundError:
+                return clone_state_root_is_current()
+            except OSError:
+                return False
+            return False
+        try:
+            appeared_fd = os.open(
+                'openclaw.sqlite', clone_file_flags, dir_fd=database_directory_fd,
+            )
+        except FileNotFoundError:
+            try:
+                os.stat(
+                    'openclaw.sqlite',
+                    dir_fd=database_directory_fd,
+                    follow_symlinks=False,
+                )
+            except FileNotFoundError:
+                return clone_directory_is_current('state', database_directory_fd)
+            except OSError:
+                return False
+            return False
+        except OSError:
+            return False
+        else:
+            os.close(appeared_fd)
+            return False
+    finally:
+        if database_directory_fd >= 0:
+            os.close(database_directory_fd)
+
+def clone_state_snapshot_is_current():
+    if clone_state_layout == 'sqlite':
+        return clone_database_is_current()
+    return (
+        clone_database_is_absent()
+        and clone_directory_is_current('devices', clone_devices_dir_fd)
+        and clone_directory_is_current('identity', clone_identity_dir_fd)
+    )
+
+def clone_state_selection_is_current():
+    if clone_state_layout == 'sqlite':
+        return clone_database_is_current()
+    return (
+        clone_database_is_absent()
+        and clone_directory_is_current('devices', clone_devices_dir_fd)
+    )
+
+def sqlite_optional(record, key, value):
+    if value is not None:
+        record[key] = value
+
+def sqlite_json(value):
+    return None if value is None else json.loads(value)
+
+def sqlite_pending_record(row):
+    record = {
+        'requestId': row['request_id'],
+        'deviceId': row['device_id'],
+        'publicKey': row['public_key'],
+        'ts': row['ts'],
+    }
+    for key, column in (
+        ('displayName', 'display_name'), ('platform', 'platform'),
+        ('deviceFamily', 'device_family'), ('clientId', 'client_id'),
+        ('clientMode', 'client_mode'), ('browserOrigin', 'browser_origin'),
+        ('role', 'role'), ('remoteIp', 'remote_ip'),
+        ('refreshedAtMs', 'refreshed_at_ms'),
+    ):
+        sqlite_optional(record, key, row[column])
+    sqlite_optional(record, 'roles', sqlite_json(row['roles_json']))
+    sqlite_optional(record, 'scopes', sqlite_json(row['scopes_json']))
+    sqlite_optional(record, 'silent', None if row['silent'] is None else row['silent'] != 0)
+    sqlite_optional(record, 'isRepair', None if row['is_repair'] is None else row['is_repair'] != 0)
+    return record
+
+def sqlite_paired_record(row):
+    record = {
+        'deviceId': row['device_id'],
+        'publicKey': row['public_key'],
+        'createdAtMs': row['created_at_ms'],
+        'approvedAtMs': row['approved_at_ms'],
+    }
+    for key, column in (
+        ('displayName', 'display_name'), ('operatorLabel', 'operator_label'),
+        ('platform', 'platform'), ('deviceFamily', 'device_family'),
+        ('clientId', 'client_id'), ('clientMode', 'client_mode'),
+        ('browserOrigin', 'browser_origin'), ('role', 'role'),
+        ('remoteIp', 'remote_ip'), ('approvedVia', 'approved_via'),
+        ('lastSeenAtMs', 'last_seen_at_ms'), ('lastSeenReason', 'last_seen_reason'),
+    ):
+        sqlite_optional(record, key, row[column])
+    for key, column in (
+        ('roles', 'roles_json'), ('scopes', 'scopes_json'),
+        ('approvedScopes', 'approved_scopes_json'), ('tokens', 'tokens_json'),
+        ('nodeSurface', 'node_surface_json'),
+        ('pendingNodeSurface', 'pending_node_surface_json'),
+    ):
+        sqlite_optional(record, key, sqlite_json(row[column]))
+    return record
+
+def read_clone_sqlite_state():
+    if not clone_database_is_current():
+        raise OSError('clone state database changed')
+    database_path = os.path.join(state_dir, 'state', 'openclaw.sqlite')
+    database_uri = 'file:' + urllib.parse.quote(database_path, safe='/') + '?mode=ro'
+    connection = sqlite3.connect(database_uri, uri=True, timeout=0.25)
+    connection.row_factory = sqlite3.Row
+    try:
+        connection.execute('PRAGMA query_only = ON')
+        connection.execute('PRAGMA trusted_schema = OFF')
+        connection.execute('BEGIN')
+        identity_rows = connection.execute(
+            "SELECT identity_key, device_id, public_key_pem, private_key_pem "
+            "FROM device_identities WHERE identity_key = 'primary'",
+        ).fetchall()
+        if len(identity_rows) != 1:
+            raise ValueError('canonical primary device identity is unavailable')
+        identity_row = identity_rows[0]
+        identity = {
+            'version': 1,
+            'deviceId': identity_row['device_id'],
+            'publicKeyPem': identity_row['public_key_pem'],
+            'privateKeyPem': identity_row['private_key_pem'],
+        }
+        pending_rows = connection.execute('SELECT * FROM device_pairing_pending').fetchall()
+        paired_rows = connection.execute('SELECT * FROM device_pairing_paired').fetchall()
+        auth_rows = connection.execute(
+            "SELECT device_id, role, token, scopes_json, updated_at_ms "
+            "FROM device_auth_tokens WHERE role = 'operator'",
+        ).fetchall()
+        pending_by_id = {row['request_id']: sqlite_pending_record(row) for row in pending_rows}
+        paired_by_id = {row['device_id']: sqlite_paired_record(row) for row in paired_rows}
+        auth_by_device = {
+            row['device_id']: {
+                'token': row['token'],
+                'role': row['role'],
+                'scopes': sqlite_json(row['scopes_json']),
+                'updatedAtMs': row['updated_at_ms'],
+            }
+            for row in auth_rows
+        }
+        if (
+            len(pending_by_id) != len(pending_rows)
+            or len(paired_by_id) != len(paired_rows)
+            or len(auth_by_device) != len(auth_rows)
+        ):
+            raise ValueError('canonical device state contains duplicate identities')
+        connection.rollback()
+    finally:
+        connection.close()
+    if not clone_database_is_current():
+        raise OSError('clone state database changed')
+    return identity, pending_by_id, paired_by_id, auth_by_device
+
+clone_database_dir_fd = -1
+clone_database_fd = -1
+clone_devices_dir_fd = -1
+clone_identity_dir_fd = -1
+clone_state_layout = 'legacy'
 try:
-    clone_devices_dir_fd = open_clone_directory('devices')
+    clone_database_dir_fd = open_clone_directory('state')
+    try:
+        clone_database_fd = os.open(
+            'openclaw.sqlite', clone_file_flags, dir_fd=clone_database_dir_fd,
+        )
+    except FileNotFoundError:
+        os.close(clone_database_dir_fd)
+        clone_database_dir_fd = -1
+    else:
+        validate_clone_json_descriptor(clone_database_fd)
+        clone_state_layout = 'sqlite'
+except FileNotFoundError:
+    pass
 except OSError:
-    ${exitWithReceipt("list-devices-directory-failed")}
+    ${exitWithReceipt("list-pending-unsafe")}
+
+if clone_state_layout == 'sqlite':
+    try:
+        (
+            local_identity,
+            local_pending_by_id,
+            local_paired_by_id,
+            local_sqlite_auth_by_device,
+        ) = read_clone_sqlite_state()
+    except (OSError, ValueError, sqlite3.Error, json.JSONDecodeError, KeyError, TypeError):
+        ${exitWithReceipt("list-pending-unsafe")}
+    snapshot_directory = tempfile.TemporaryDirectory(prefix='nemoclaw-pairing-')
+    def open_clone_snapshot_descriptor(entry_name, value):
+        snapshot_path = os.path.join(snapshot_directory.name, entry_name)
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | getattr(os, 'O_CLOEXEC', 0)
+        write_fd = os.open(snapshot_path, flags, 0o600)
+        try:
+            os.fchmod(write_fd, 0o600)
+            payload = json.dumps(value, separators=(',', ':')).encode('utf-8')
+            offset = 0
+            while offset < len(payload):
+                offset += os.write(write_fd, payload[offset:])
+            os.fsync(write_fd)
+        finally:
+            os.close(write_fd)
+        descriptor = os.open(snapshot_path, clone_file_flags)
+        validate_clone_json_descriptor(descriptor)
+        return descriptor
+    try:
+        clone_identity_snapshot_fd = open_clone_snapshot_descriptor('identity.json', local_identity)
+        clone_pending_snapshot_fd = open_clone_snapshot_descriptor('pending.json', local_pending_by_id)
+        clone_paired_snapshot_fd = open_clone_snapshot_descriptor('paired.json', local_paired_by_id)
+    except (OSError, ValueError, TypeError):
+        ${exitWithReceipt("list-pending-unsafe")}
+    pending = list(local_pending_by_id.values())
+else:
+    try:
+        clone_devices_dir_fd = open_clone_directory('devices')
+    except OSError:
+        ${exitWithReceipt("list-devices-directory-failed")}
 # The gateway can publish pending.json immediately after the warm-up. Retry only
 # a missing entry before publication, invalid JSON during truncate/write, or an
 # opened inode that an atomic replace unlinked. Unsafe filesystem shapes and
 # persistently malformed documents fail closed before request selection.
-pending_read_failure = 'unavailable'
-for pending_read_attempt in range(PENDING_READ_ATTEMPTS):
-    try:
-        local_pending_by_id, clone_pending_snapshot_fd = open_clone_json_descriptor(
-            clone_devices_dir_fd,
-            'devices',
-            'pending.json',
-        )
-    except FileNotFoundError:
-        pending_read_failure = 'unavailable'
-    except (CloneStateEntryRotated, json.JSONDecodeError):
-        pending_read_failure = 'unstable'
-    except (OSError, ValueError):
-        ${exitWithReceipt("list-pending-unsafe")}
+    pending_read_failure = 'unavailable'
+    for pending_read_attempt in range(PENDING_READ_ATTEMPTS):
+        try:
+            local_pending_by_id, clone_pending_snapshot_fd = open_clone_json_descriptor(
+                clone_devices_dir_fd,
+                'devices',
+                'pending.json',
+            )
+        except FileNotFoundError:
+            pending_read_failure = 'unavailable'
+        except (CloneStateEntryRotated, json.JSONDecodeError):
+            pending_read_failure = 'unstable'
+        except (OSError, ValueError):
+            ${exitWithReceipt("list-pending-unsafe")}
+        else:
+            if not isinstance(local_pending_by_id, dict):
+                ${exitWithReceipt("list-pending-invalid-shape")}
+            break
+        if pending_read_attempt + 1 < PENDING_READ_ATTEMPTS:
+            approval_time.sleep(PENDING_READ_POLL_S)
     else:
-        if not isinstance(local_pending_by_id, dict):
-            ${exitWithReceipt("list-pending-invalid-shape")}
-        break
-    if pending_read_attempt + 1 < PENDING_READ_ATTEMPTS:
-        approval_time.sleep(PENDING_READ_POLL_S)
-else:
-    if pending_read_failure == 'unavailable':
-        ${exitWithReceipt("list-pending-unavailable")}
-    ${exitWithReceipt("list-pending-unstable")}
-pending = list(local_pending_by_id.values())
+        if pending_read_failure == 'unavailable':
+            ${exitWithReceipt("list-pending-unavailable")}
+        ${exitWithReceipt("list-pending-unstable")}
+    pending = list(local_pending_by_id.values())
 `
     : `
 list_env = gateway_approval_env(os.environ)
@@ -698,6 +942,16 @@ def paired_has_exact_pairing_baseline(device, token_scopes):
     )
 
 def client_auth_matches_paired(token, scopes):
+    if clone_state_layout == 'sqlite':
+        operator = local_sqlite_auth_by_device.get(local_device_id)
+        if not isinstance(operator, dict):
+            return False
+        stored_scopes = bounded_scope_set(operator.get('scopes'))
+        return (
+            str(operator.get('token', '') or '').strip() == token
+            and str(operator.get('role', '') or '').strip() == 'operator'
+            and stored_scopes == scopes
+        )
     try:
         auth_store = read_clone_json(
             clone_identity_dir_fd,
@@ -727,15 +981,16 @@ def client_auth_matches_paired(token, scopes):
         and stored_scopes == scopes
     )
 
-try:
-    clone_identity_dir_fd = open_clone_directory('identity')
-    local_identity, clone_identity_snapshot_fd = open_clone_json_descriptor(
-        clone_identity_dir_fd,
-        'identity',
-        'device.json',
-    )
-except (OSError, ValueError):
-    ${exitWithReceipt("request-rejected")}
+if clone_state_layout == 'legacy':
+    try:
+        clone_identity_dir_fd = open_clone_directory('identity')
+        local_identity, clone_identity_snapshot_fd = open_clone_json_descriptor(
+            clone_identity_dir_fd,
+            'identity',
+            'device.json',
+        )
+    except (OSError, ValueError):
+        ${exitWithReceipt("request-rejected")}
 if not isinstance(local_identity, dict):
     ${exitWithReceipt("request-rejected")}
 local_device_id = str(local_identity.get('deviceId', '') or '').strip()
@@ -760,17 +1015,18 @@ if (
 # baseline uses the clone's paired token for its bounded write upgrade, whether
 # OpenClaw marks the request as repair or pre-convergence. The restored source
 # config is never a credential.
-try:
-    local_paired_by_id, clone_paired_snapshot_fd = open_clone_json_descriptor(
-        clone_devices_dir_fd,
-        'devices',
-        'paired.json',
-    )
-except FileNotFoundError:
-    local_paired_by_id = {}
-    clone_paired_snapshot_fd = -1
-except (OSError, ValueError):
-    ${exitWithReceipt("request-rejected")}
+if clone_state_layout == 'legacy':
+    try:
+        local_paired_by_id, clone_paired_snapshot_fd = open_clone_json_descriptor(
+            clone_devices_dir_fd,
+            'devices',
+            'paired.json',
+        )
+    except FileNotFoundError:
+        local_paired_by_id = {}
+        clone_paired_snapshot_fd = -1
+    except (OSError, ValueError):
+        ${exitWithReceipt("request-rejected")}
 if not isinstance(local_paired_by_id, dict):
     ${exitWithReceipt("request-rejected")}
 related_paired = [
@@ -843,17 +1099,28 @@ def local_pairing_transition_auth_mode(device):
 
 def sync_approved_clone_device_auth(request, previous_token):
     try:
-        pending_after = read_clone_json(
-            clone_devices_dir_fd,
-            'devices',
-            'pending.json',
-        )
-        paired_after = read_clone_json(
-            clone_devices_dir_fd,
-            'devices',
-            'paired.json',
-        )
-    except (OSError, ValueError):
+        if clone_state_layout == 'sqlite':
+            (
+                identity_after,
+                pending_after,
+                paired_after,
+                auth_after,
+            ) = read_clone_sqlite_state()
+            if identity_after != local_identity:
+                return False
+        else:
+            pending_after = read_clone_json(
+                clone_devices_dir_fd,
+                'devices',
+                'pending.json',
+            )
+            paired_after = read_clone_json(
+                clone_devices_dir_fd,
+                'devices',
+                'paired.json',
+            )
+            auth_after = None
+    except (OSError, ValueError, sqlite3.Error, json.JSONDecodeError, KeyError, TypeError):
         return False
     if not isinstance(pending_after, dict) or not isinstance(paired_after, dict):
         return False
@@ -913,6 +1180,16 @@ def sync_approved_clone_device_auth(request, previous_token):
         or 'operator.write' not in approved_scope_view
     ):
         return False
+    if clone_state_layout == 'sqlite':
+        stored_operator = auth_after.get(local_device_id)
+        if not isinstance(stored_operator, dict):
+            return False
+        stored_scopes = bounded_scope_set(stored_operator.get('scopes'))
+        return (
+            str(stored_operator.get('token', '') or '').strip() == approved_token
+            and str(stored_operator.get('role', '') or '').strip() == 'operator'
+            and stored_scopes == approved_token_scopes
+        )
     temp_name = ''
     try:
         if not clone_directory_is_current('identity', clone_identity_dir_fd):
@@ -1037,7 +1314,7 @@ except Exception:
 OPENCLAW = os.environ.get('OPENCLAW_BIN', 'openclaw')
 MAX_APPROVALS = ${maxApprovals}
 
-${pendingRead}${localDeviceFilter}
+${pendingRead}${cloneStateSelectionGuard}${localDeviceFilter}
 approved_count = 0
 attempted_count = 0
 seen_request_ids = set()

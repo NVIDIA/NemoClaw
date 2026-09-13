@@ -77,6 +77,30 @@ const PATCHED_CHMOD_HELPER = [
   "}",
 ].join("\n");
 
+const UPSTREAM_CHMOD_HELPER_20260901 = [
+  "function bestEffortChmodSync(target, mode) {",
+  "\tconst result = applyPrivateModeSync(target, mode);",
+  "\tif (result.applied || chmodWarnedTargets.check(target)) return;",
+  "\tstateDbLog$2.warn(`skipped permission hardening for ${target}: ${String(result.error)}`);",
+  "}",
+].join("\n");
+
+const PATCHED_CHMOD_HELPER_20260901 = [
+  "function bestEffortChmodSync(target, mode, skipWhenModeMatches = false) {",
+  "\tif (skipWhenModeMatches) try {",
+  "\t\tif ((fs.statSync(target).mode & 0o7777) === mode) return;",
+  "\t} catch {}",
+  "\tconst result = applyPrivateModeSync(target, mode);",
+  "\tif (result.applied || chmodWarnedTargets.check(target)) return;",
+  "\tstateDbLog$2.warn(`skipped permission hardening for ${target}: ${String(result.error)}`);",
+  "}",
+].join("\n");
+
+const STATE_CHMOD_HELPER_SHAPES = [
+  { patched: PATCHED_CHMOD_HELPER, upstream: UPSTREAM_CHMOD_HELPER },
+  { patched: PATCHED_CHMOD_HELPER_20260901, upstream: UPSTREAM_CHMOD_HELPER_20260901 },
+] as const;
+
 const UPSTREAM_PERMISSION_HELPER = [
   "function ensureOpenClawStatePermissions(pathname, env) {",
   "\tconst dir = path.dirname(pathname);",
@@ -112,6 +136,54 @@ const PATCHED_PERMISSION_HELPER = [
   "}",
 ].join("\n");
 
+const UPSTREAM_PERMISSION_HELPER_20260901 = [
+  "function ensureOpenClawStatePermissions(pathname, env) {",
+  "\tconst dir = path.dirname(pathname);",
+  "\tconst defaultDir = resolveOpenClawStateSqliteDir(env);",
+  "\tconst isDefaultStateDatabase = path.resolve(pathname) === path.resolve(resolveOpenClawStateSqlitePath(env));",
+  "\tif (isDefaultStateDatabase && dir !== defaultDir) throw new Error(`OpenClaw state database path resolved outside its state dir: ${pathname}`);",
+  "\tconst dirExisted = existsSync(dir);",
+  "\tmkdirSync(dir, {",
+  "\t\trecursive: true,",
+  "\t\tmode: OPENCLAW_STATE_DIR_MODE",
+  "\t});",
+  "\tif (isDefaultStateDatabase || !dirExisted) bestEffortChmodSync(dir, OPENCLAW_STATE_DIR_MODE);",
+  "\tfor (const candidate of resolveSqliteDatabaseFilePaths(pathname)) if (existsSync(candidate)) try {",
+  "\t\tbestEffortChmodSync(candidate, OPENCLAW_STATE_FILE_MODE);",
+  "\t} catch (error) {",
+  '\t\tif (candidate === pathname || !hasErrnoCode(error, "ENOENT")) throw error;',
+  "\t}",
+  "}",
+].join("\n");
+
+const PATCHED_PERMISSION_HELPER_20260901 = [
+  "function ensureOpenClawStatePermissions(pathname, env) {",
+  "\tconst dir = path.dirname(pathname);",
+  "\tconst defaultDir = resolveOpenClawStateSqliteDir(env);",
+  "\tconst isDefaultStateDatabase = path.resolve(pathname) === path.resolve(resolveOpenClawStateSqlitePath(env));",
+  "\tif (isDefaultStateDatabase && dir !== defaultDir) throw new Error(`OpenClaw state database path resolved outside its state dir: ${pathname}`);",
+  "\tconst nemoclawGroupSharedState = nemoclawUsesGroupSharedState(env);",
+  "\tconst nemoclawStateDirMode = nemoclawGroupSharedState ? NEMOCLAW_SHARED_STATE_DIR_MODE : OPENCLAW_STATE_DIR_MODE;",
+  "\tconst nemoclawStateFileMode = nemoclawGroupSharedState ? NEMOCLAW_SHARED_STATE_FILE_MODE : OPENCLAW_STATE_FILE_MODE;",
+  "\tconst dirExisted = existsSync(dir);",
+  "\tmkdirSync(dir, {",
+  "\t\trecursive: true,",
+  "\t\tmode: nemoclawStateDirMode",
+  "\t});",
+  "\tif (isDefaultStateDatabase || !dirExisted) bestEffortChmodSync(dir, nemoclawStateDirMode, nemoclawGroupSharedState);",
+  "\tfor (const candidate of resolveSqliteDatabaseFilePaths(pathname)) if (existsSync(candidate)) try {",
+  "\t\tbestEffortChmodSync(candidate, nemoclawStateFileMode, nemoclawGroupSharedState);",
+  "\t} catch (error) {",
+  '\t\tif (candidate === pathname || !hasErrnoCode(error, "ENOENT")) throw error;',
+  "\t}",
+  "}",
+].join("\n");
+
+const STATE_PERMISSION_HELPER_SHAPES = [
+  { patched: PATCHED_PERMISSION_HELPER, upstream: UPSTREAM_PERMISSION_HELPER },
+  { patched: PATCHED_PERMISSION_HELPER_20260901, upstream: UPSTREAM_PERMISSION_HELPER_20260901 },
+] as const;
+
 const PATCHED_STATE_REQUIRED_PATTERNS = [
   MARKER,
   "const NEMOCLAW_SHARED_STATE_DIR_MODE = 0o2770;",
@@ -119,11 +191,15 @@ const PATCHED_STATE_REQUIRED_PATTERNS = [
   "function nemoclawUsesGroupSharedState(env) {",
   "env?.NEMOCLAW_OPENCLAW_SHARED_STATE ?? process.env.NEMOCLAW_OPENCLAW_SHARED_STATE",
   "function bestEffortChmodSync(target, mode, skipWhenModeMatches = false) {",
-  "(statSync(target).mode & 0o7777) === mode",
   "const nemoclawGroupSharedState = nemoclawUsesGroupSharedState(env);",
   "mode: nemoclawStateDirMode",
   "bestEffortChmodSync(dir, nemoclawStateDirMode, nemoclawGroupSharedState);",
   "bestEffortChmodSync(candidate, nemoclawStateFileMode, nemoclawGroupSharedState);",
+] as const;
+
+const PATCHED_STATE_MODE_MATCH_PATTERNS = [
+  "(statSync(target).mode & 0o7777) === mode",
+  "(fs.statSync(target).mode & 0o7777) === mode",
 ] as const;
 
 const UPSTREAM_AGENT_MODE_CONSTANTS = [
@@ -177,6 +253,61 @@ const PATCHED_AGENT_PERMISSION_HELPER = [
   "}",
 ].join("\n");
 
+const UPSTREAM_AGENT_PERMISSION_HELPER_20260901 = [
+  "function ensureOpenClawAgentDatabasePermissions(pathname, options) {",
+  "\tconst dir = path.dirname(pathname);",
+  "\tconst defaultPath = resolveOpenClawAgentSqlitePath({",
+  "\t\tagentId: options.agentId,",
+  "\t\tenv: options.env",
+  "\t});",
+  "\tconst isDefaultAgentDatabase = path.resolve(pathname) === path.resolve(defaultPath);",
+  "\tconst dirExisted = existsSync(dir);",
+  "\tmkdirSync(dir, {",
+  "\t\trecursive: true,",
+  "\t\tmode: OPENCLAW_AGENT_DB_DIR_MODE",
+  "\t});",
+  "\tif (isDefaultAgentDatabase || !dirExisted) chmodSync(dir, OPENCLAW_AGENT_DB_DIR_MODE);",
+  "\tfor (const candidate of resolveSqliteDatabaseFilePaths(pathname)) try {",
+  "\t\tchmodSync(candidate, OPENCLAW_AGENT_DB_FILE_MODE);",
+  "\t} catch (error) {",
+  '\t\tif (error.code !== "ENOENT") throw error;',
+  "\t}",
+  "}",
+].join("\n");
+
+const PATCHED_AGENT_PERMISSION_HELPER_20260901 = [
+  "function ensureOpenClawAgentDatabasePermissions(pathname, options) {",
+  "\tconst dir = path.dirname(pathname);",
+  "\tconst defaultPath = resolveOpenClawAgentSqlitePath({",
+  "\t\tagentId: options.agentId,",
+  "\t\tenv: options.env",
+  "\t});",
+  "\tconst isDefaultAgentDatabase = path.resolve(pathname) === path.resolve(defaultPath);",
+  "\tconst nemoclawGroupSharedState = nemoclawUsesGroupSharedState(options.env);",
+  "\tconst nemoclawAgentDirMode = nemoclawGroupSharedState ? NEMOCLAW_SHARED_AGENT_DB_DIR_MODE : OPENCLAW_AGENT_DB_DIR_MODE;",
+  "\tconst nemoclawAgentFileMode = nemoclawGroupSharedState ? NEMOCLAW_SHARED_AGENT_DB_FILE_MODE : OPENCLAW_AGENT_DB_FILE_MODE;",
+  "\tconst dirExisted = existsSync(dir);",
+  "\tmkdirSync(dir, {",
+  "\t\trecursive: true,",
+  "\t\tmode: nemoclawAgentDirMode",
+  "\t});",
+  "\tif ((isDefaultAgentDatabase || !dirExisted) && (!nemoclawGroupSharedState || (statSync(dir).mode & 0o7777) !== nemoclawAgentDirMode)) chmodSync(dir, nemoclawAgentDirMode);",
+  "\tfor (const candidate of resolveSqliteDatabaseFilePaths(pathname)) try {",
+  "\t\tif (!nemoclawGroupSharedState || (statSync(candidate).mode & 0o7777) !== nemoclawAgentFileMode) chmodSync(candidate, nemoclawAgentFileMode);",
+  "\t} catch (error) {",
+  '\t\tif (error.code !== "ENOENT") throw error;',
+  "\t}",
+  "}",
+].join("\n");
+
+const AGENT_PERMISSION_HELPER_SHAPES = [
+  { patched: PATCHED_AGENT_PERMISSION_HELPER, upstream: UPSTREAM_AGENT_PERMISSION_HELPER },
+  {
+    patched: PATCHED_AGENT_PERMISSION_HELPER_20260901,
+    upstream: UPSTREAM_AGENT_PERMISSION_HELPER_20260901,
+  },
+] as const;
+
 const PATCHED_AGENT_REQUIRED_PATTERNS = [
   AGENT_MARKER,
   "const NEMOCLAW_SHARED_AGENT_DB_DIR_MODE = 0o2770;",
@@ -206,13 +337,34 @@ const PATCHED_MIGRATION_START = [
   "\tif (!fileExists(params.detected.sourcePath)) return {",
 ].join("\n");
 
+const UPSTREAM_MIGRATION_START_20260901 = [
+  "function migrateLegacyUpdateCheckState(params) {",
+  "\treturn migrateLegacyJsonState({",
+].join("\n");
+
+const PATCHED_MIGRATION_START_20260901 = [
+  MANAGED_RUNTIME_ENV_HELPER,
+  "function migrateLegacyUpdateCheckState(params) {",
+  `\tif (nemoclawUsesManagedRuntime()) return { changes: [], warnings: [] }; ${MIGRATION_MARKER}`,
+  "\treturn migrateLegacyJsonState({",
+].join("\n");
+
+const MIGRATION_START_SHAPES = [
+  { patched: PATCHED_MIGRATION_START, upstream: UPSTREAM_MIGRATION_START },
+  { patched: PATCHED_MIGRATION_START_20260901, upstream: UPSTREAM_MIGRATION_START_20260901 },
+] as const;
+
 const PATCHED_MIGRATION_REQUIRED_PATTERNS = [
   MIGRATION_MARKER,
   "function nemoclawUsesManagedRuntime(env) {",
   "env?.NEMOCLAW_OPENCLAW_SHARED_STATE ?? process.env.NEMOCLAW_OPENCLAW_SHARED_STATE",
   "env?.OPENSHELL_SANDBOX ?? process.env.OPENSHELL_SANDBOX",
   "function migrateLegacyUpdateCheckState(params) {",
+] as const;
+
+const PATCHED_MIGRATION_GUARD_PATTERNS = [
   "if (nemoclawUsesManagedRuntime()) return { changes, warnings };",
+  "if (nemoclawUsesManagedRuntime()) return { changes: [], warnings: [] };",
 ] as const;
 
 const UPSTREAM_MODELS_FILE_MODE_HELPER = [
@@ -278,11 +430,40 @@ function requireExactlyOnce(source: string, needle: string, label: string, file:
   }
 }
 
+function resolveExactlyOneShape(
+  source: string,
+  shapes: ReadonlyArray<{ readonly patched: string; readonly upstream: string }>,
+  label: string,
+  file: string,
+) {
+  const count = shapes.reduce(
+    (total, shape) => total + countOccurrences(source, shape.upstream),
+    0,
+  );
+  if (count !== 1) throw new Error(`${file}: expected exactly one ${label}, found ${count}`);
+  return shapes.find((shape) => source.includes(shape.upstream)) as {
+    readonly patched: string;
+    readonly upstream: string;
+  };
+}
+
 function validatePatchedStateText(source: string, file: string): void {
   for (const pattern of PATCHED_STATE_REQUIRED_PATTERNS) {
     requireExactlyOnce(source, pattern, `patched pattern ${JSON.stringify(pattern)}`, file);
   }
-  if (source.includes(UPSTREAM_CHMOD_HELPER) || source.includes(UPSTREAM_PERMISSION_HELPER)) {
+  const modeMatchCount = PATCHED_STATE_MODE_MATCH_PATTERNS.reduce(
+    (count, pattern) => count + countOccurrences(source, pattern),
+    0,
+  );
+  if (modeMatchCount !== 1) {
+    throw new Error(
+      `${file}: expected exactly one patched shared-state mode guard, found ${modeMatchCount}`,
+    );
+  }
+  if (
+    STATE_CHMOD_HELPER_SHAPES.some((shape) => source.includes(shape.upstream)) ||
+    STATE_PERMISSION_HELPER_SHAPES.some((shape) => source.includes(shape.upstream))
+  ) {
     throw new Error(`${file}: patch marker is present but an upstream permission target remains`);
   }
 }
@@ -294,13 +475,23 @@ export function patchOpenClawStateDbText(source: string, file: string): PatchTex
   }
 
   requireExactlyOnce(source, UPSTREAM_MODE_CONSTANTS, "state mode constants", file);
-  requireExactlyOnce(source, UPSTREAM_CHMOD_HELPER, "chmod helper", file);
-  requireExactlyOnce(source, UPSTREAM_PERMISSION_HELPER, "state permission helper", file);
+  const chmodShape = resolveExactlyOneShape(
+    source,
+    STATE_CHMOD_HELPER_SHAPES,
+    "chmod helper",
+    file,
+  );
+  const permissionShape = resolveExactlyOneShape(
+    source,
+    STATE_PERMISSION_HELPER_SHAPES,
+    "state permission helper",
+    file,
+  );
 
   const text = source
     .replace(UPSTREAM_MODE_CONSTANTS, PATCHED_MODE_CONSTANTS)
-    .replace(UPSTREAM_CHMOD_HELPER, PATCHED_CHMOD_HELPER)
-    .replace(UPSTREAM_PERMISSION_HELPER, PATCHED_PERMISSION_HELPER);
+    .replace(chmodShape.upstream, chmodShape.patched)
+    .replace(permissionShape.upstream, permissionShape.patched);
   validatePatchedStateText(text, file);
   return { patched: true, status: "patched", text };
 }
@@ -309,7 +500,7 @@ function validatePatchedAgentText(source: string, file: string): void {
   for (const pattern of PATCHED_AGENT_REQUIRED_PATTERNS) {
     requireExactlyOnce(source, pattern, `patched pattern ${JSON.stringify(pattern)}`, file);
   }
-  if (source.includes(UPSTREAM_AGENT_PERMISSION_HELPER)) {
+  if (AGENT_PERMISSION_HELPER_SHAPES.some((shape) => source.includes(shape.upstream))) {
     throw new Error(`${file}: patch marker is present but an upstream permission target remains`);
   }
 }
@@ -321,15 +512,15 @@ export function patchOpenClawAgentDbText(source: string, file: string): PatchTex
   }
 
   requireExactlyOnce(source, UPSTREAM_AGENT_MODE_CONSTANTS, "agent state mode constants", file);
-  requireExactlyOnce(
+  const permissionShape = resolveExactlyOneShape(
     source,
-    UPSTREAM_AGENT_PERMISSION_HELPER,
+    AGENT_PERMISSION_HELPER_SHAPES,
     "agent state permission helper",
     file,
   );
   const text = source
     .replace(UPSTREAM_AGENT_MODE_CONSTANTS, PATCHED_AGENT_MODE_CONSTANTS)
-    .replace(UPSTREAM_AGENT_PERMISSION_HELPER, PATCHED_AGENT_PERMISSION_HELPER);
+    .replace(permissionShape.upstream, permissionShape.patched);
   validatePatchedAgentText(text, file);
   return { patched: true, status: "patched", text };
 }
@@ -338,7 +529,16 @@ function validatePatchedMigrationText(source: string, file: string): void {
   for (const pattern of PATCHED_MIGRATION_REQUIRED_PATTERNS) {
     requireExactlyOnce(source, pattern, `patched pattern ${JSON.stringify(pattern)}`, file);
   }
-  if (source.includes(UPSTREAM_MIGRATION_START)) {
+  const guardCount = PATCHED_MIGRATION_GUARD_PATTERNS.reduce(
+    (count, pattern) => count + countOccurrences(source, pattern),
+    0,
+  );
+  if (guardCount !== 1) {
+    throw new Error(
+      `${file}: expected exactly one patched legacy update-check guard, found ${guardCount}`,
+    );
+  }
+  if (MIGRATION_START_SHAPES.some((shape) => source.includes(shape.upstream))) {
     throw new Error(`${file}: patch marker is present but the upstream migration target remains`);
   }
 }
@@ -349,8 +549,14 @@ export function patchOpenClawStateMigrationText(source: string, file: string): P
     return { patched: false, status: "already-patched", text: source };
   }
 
-  requireExactlyOnce(source, UPSTREAM_MIGRATION_START, "legacy update-check migration start", file);
-  const text = source.replace(UPSTREAM_MIGRATION_START, PATCHED_MIGRATION_START);
+  const matches = MIGRATION_START_SHAPES.filter((shape) => source.includes(shape.upstream));
+  if (matches.length !== 1) {
+    throw new Error(
+      `${file}: expected exactly one legacy update-check migration start, found ${matches.length}`,
+    );
+  }
+  const shape = matches[0];
+  const text = source.replace(shape.upstream, shape.patched);
   validatePatchedMigrationText(text, file);
   return { patched: true, status: "patched", text };
 }
@@ -425,7 +631,7 @@ export function patchOpenClawSharedStatePermissions(distDir: string): PatchDistR
       `Expected exactly one OpenClaw per-agent database target in ${resolvedDist}, found ${agentCandidates.length}`,
     );
   }
-  const migrationCandidates = listCandidates(resolvedDist, /^state-migrations-.+\.js$/).filter(
+  const migrationCandidates = listCandidates(resolvedDist, /^state-migrations[.-].+\.js$/).filter(
     (file) => {
       const source = fs.readFileSync(file, "utf8");
       return (

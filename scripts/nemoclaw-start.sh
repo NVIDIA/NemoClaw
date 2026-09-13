@@ -2554,7 +2554,9 @@ import base64
 import binascii
 import hashlib
 import os
+import pathlib
 import re
+import sqlite3
 import stat
 import subprocess
 import sys
@@ -2726,9 +2728,142 @@ def _identity_public_key(identity):
     return base64.urlsafe_b64encode(der[-32:]).decode('ascii').rstrip('=')
 
 
+def _state_sqlite_path(state_dir):
+    return os.path.join(state_dir, 'state', 'openclaw.sqlite')
+
+
+def _state_sqlite_metadata(metadata):
+    if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
+        raise RuntimeError('SQLite state is not a regular single-link file')
+    return (
+        metadata.st_dev,
+        metadata.st_ino,
+        metadata.st_size,
+        metadata.st_mtime_ns,
+    )
+
+
+def _assert_state_sqlite_unchanged(sqlite_path, sqlite_fd, expected_metadata):
+    descriptor_metadata = _state_sqlite_metadata(os.fstat(sqlite_fd))
+    path_metadata = _state_sqlite_metadata(os.stat(sqlite_path, follow_symlinks=False))
+    if descriptor_metadata != expected_metadata or path_metadata != expected_metadata:
+        raise RuntimeError('SQLite state changed while reading pairing state')
+
+
+def _open_state_sqlite_read_only(sqlite_path):
+    # mode=ro prevents a missing/raced-away database from being created. Keep
+    # query_only enabled as a second guard against accidental mutation if this
+    # compatibility reader grows additional queries later.
+    nofollow = getattr(os, 'O_NOFOLLOW', None)
+    if nofollow is None:
+        raise RuntimeError('SQLite state cannot be opened without symlink protection')
+    sqlite_fd = os.open(
+        sqlite_path,
+        os.O_RDONLY | os.O_CLOEXEC | os.O_NONBLOCK | nofollow,
+    )
+    connection = None
+    database_uri = pathlib.Path(os.path.abspath(sqlite_path)).as_uri() + '?mode=ro'
+    try:
+        expected_metadata = _state_sqlite_metadata(os.fstat(sqlite_fd))
+        _assert_state_sqlite_unchanged(sqlite_path, sqlite_fd, expected_metadata)
+        # Do not use immutable=1: the canonical database may be in WAL mode,
+        # and a normal read-only SQLite connection must observe committed WAL.
+        connection = sqlite3.connect(database_uri, uri=True, timeout=1)
+        connection.row_factory = sqlite3.Row
+        connection.execute('PRAGMA query_only = ON')
+        connection.execute('PRAGMA trusted_schema = OFF')
+        connection.execute('BEGIN')
+        _assert_state_sqlite_unchanged(sqlite_path, sqlite_fd, expected_metadata)
+        return connection, sqlite_fd, expected_metadata
+    except Exception:
+        if connection is not None:
+            connection.close()
+        os.close(sqlite_fd)
+        raise
+
+
+def _close_state_sqlite_read_only(connection, sqlite_path, sqlite_fd, expected_metadata):
+    try:
+        # Fence the path and pinned descriptor while the read transaction is
+        # still active. A replaced or modified database invalidates all rows
+        # read from this snapshot before they can influence approval.
+        _assert_state_sqlite_unchanged(sqlite_path, sqlite_fd, expected_metadata)
+    finally:
+        try:
+            try:
+                connection.rollback()
+            finally:
+                connection.close()
+        finally:
+            os.close(sqlite_fd)
+
+
+def _sqlite_primary_identity(connection):
+    row = connection.execute(
+        '''
+        SELECT device_id, public_key_pem
+        FROM device_identities
+        WHERE identity_key = ?
+        ''',
+        ('primary',),
+    ).fetchone()
+    if row is None:
+        raise RuntimeError('primary SQLite device identity is missing')
+    return {
+        'deviceId': row['device_id'],
+        'publicKeyPem': row['public_key_pem'],
+    }
+
+
+def _sqlite_initial_pairing_snapshot(sqlite_path, request_id):
+    connection, sqlite_fd, expected_metadata = _open_state_sqlite_read_only(sqlite_path)
+    try:
+        identity = _sqlite_primary_identity(connection)
+        row = connection.execute(
+            '''
+            SELECT request_id, device_id, public_key, client_id, client_mode,
+                   role, roles_json, scopes_json
+            FROM device_pairing_pending
+            WHERE request_id = ?
+            ''',
+            (request_id,),
+        ).fetchone()
+        if row is None:
+            return identity, None
+        request = {
+            'requestId': row['request_id'],
+            'deviceId': row['device_id'],
+            'publicKey': row['public_key'],
+            'clientId': row['client_id'],
+            'clientMode': row['client_mode'],
+            'role': row['role'],
+            'roles': json.loads(row['roles_json']) if row['roles_json'] is not None else None,
+            'scopes': json.loads(row['scopes_json']) if row['scopes_json'] is not None else None,
+        }
+        return identity, request
+    finally:
+        _close_state_sqlite_read_only(
+            connection, sqlite_path, sqlite_fd, expected_metadata,
+        )
+
+
 def _local_device_identity():
     state_dir = os.environ.get('OPENCLAW_STATE_DIR') or '/sandbox/.openclaw'
-    identity = _read_json_object(os.path.join(state_dir, 'identity', 'device.json'))
+    sqlite_path = _state_sqlite_path(state_dir)
+    if os.path.lexists(sqlite_path):
+        connection, sqlite_fd, expected_metadata = _open_state_sqlite_read_only(sqlite_path)
+        try:
+            identity = _sqlite_primary_identity(connection)
+        finally:
+            _close_state_sqlite_read_only(
+                connection, sqlite_path, sqlite_fd, expected_metadata,
+            )
+    else:
+        identity = _read_json_object(os.path.join(state_dir, 'identity', 'device.json'))
+        # Never accept legacy identity state once the canonical database has
+        # appeared. This closes the existence-check/read race fail-closed.
+        if os.path.lexists(sqlite_path):
+            raise RuntimeError('SQLite state appeared while reading legacy device identity')
     device_id = str(identity.get('deviceId', '') or '').strip()
     public_key = _identity_public_key(identity)
     public_key_raw = base64.urlsafe_b64decode(public_key + '=' * (-len(public_key) % 4))
@@ -2746,7 +2881,7 @@ def is_local_cli_request(request):
         return False
     try:
         device_id, public_key = _local_device_identity()
-    except (OSError, ValueError, RuntimeError, binascii.Error):
+    except (OSError, ValueError, RuntimeError, binascii.Error, sqlite3.Error):
         return False
     return (
         request.get('deviceId') == device_id
@@ -2773,17 +2908,23 @@ def initial_cli_request_is_allowlisted(request_id):
     # exposes that bootstrap/list API and NemoClaw no longer supports gated
     # list behavior for first-run CLI pairing.
     state_dir = os.environ.get('OPENCLAW_STATE_DIR') or '/sandbox/.openclaw'
+    sqlite_path = _state_sqlite_path(state_dir)
     pending_path = os.path.join(state_dir, 'devices', 'pending.json')
     identity_path = os.path.join(state_dir, 'identity', 'device.json')
     try:
-        pending = _read_json_object(pending_path)
-        identity = _read_json_object(identity_path)
-        request = pending.get(request_id)
+        if os.path.lexists(sqlite_path):
+            identity, request = _sqlite_initial_pairing_snapshot(sqlite_path, request_id)
+        else:
+            pending = _read_json_object(pending_path)
+            identity = _read_json_object(identity_path)
+            if os.path.lexists(sqlite_path):
+                raise RuntimeError('SQLite state appeared while reading legacy pairing state')
+            request = pending.get(request_id)
         if not isinstance(request, dict):
             return False
-        # The map key is the authoritative request id. Reject a record whose
-        # embedded requestId is missing or disagrees with its key, so a
-        # malformed/tampered pending.json cannot approve a mismatched request.
+        # The stored primary key is the authoritative request id. Reject a
+        # record whose embedded requestId is missing or disagrees with it, so
+        # malformed/tampered pending state cannot approve a mismatched request.
         # (PR #6330 review, cv item 3.)
         if str(request.get('requestId', '') or '').strip() != str(request_id).strip():
             return False
@@ -2836,7 +2977,7 @@ def initial_cli_request_is_allowlisted(request_id):
         if scopes != {'operator.pairing'}:
             return False
         return approval_request_decision(request)['allowed'] is True
-    except (OSError, ValueError, RuntimeError, binascii.Error) as err:
+    except (OSError, ValueError, RuntimeError, binascii.Error, sqlite3.Error) as err:
         print(f'[auto-pair] initial CLI pairing validation skipped request={request_id}: {brief_child_error("", str(err))}')
         return False
 
@@ -2967,7 +3108,7 @@ def exact_string_set(value, expected):
 def canonical_cli_baseline_settled(paired, pending):
     try:
         local_device_id, local_public_key = _local_device_identity()
-    except (OSError, ValueError, RuntimeError, binascii.Error):
+    except (OSError, ValueError, RuntimeError, binascii.Error, sqlite3.Error):
         return False
     candidates = [
         device for device in paired

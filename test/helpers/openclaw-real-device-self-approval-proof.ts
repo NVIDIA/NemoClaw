@@ -1137,6 +1137,116 @@ async function stopChild(child: ChildProcess): Promise<void> {
   requireLiveProof(childExited(child), "real OpenClaw gateway did not stop after SIGKILL");
 }
 
+function runSqliteDeviceSelfApprovalProof(options: ProofOptions): void {
+  const stateDir = path.join(options.tmp, "device-approval-sqlite-state");
+  fs.mkdirSync(stateDir, { recursive: true });
+  const proof = spawnSync(
+    options.nodeExecutable,
+    [
+      "--input-type=module",
+      "-e",
+      `
+import crypto from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+const dist = process.env.NEMOCLAW_OPENCLAW_DIST;
+const stateDir = process.env.NEMOCLAW_DEVICE_APPROVAL_STATE;
+const exactlyOne = (pattern, label, sourceMarker) => {
+  const files = fs.readdirSync(dist).filter((name) =>
+    pattern.test(name) && fs.readFileSync(path.join(dist, name), "utf8").includes(sourceMarker)
+  );
+  if (files.length !== 1) throw new Error(label + ": expected one runtime, found " + files.length);
+  return pathToFileURL(path.join(dist, files[0])).href;
+};
+const pairing = await import(exactlyOne(/^device-pairing-[^.]+[.]js$/, "pairing", "async function requestDevicePairing(req, baseDir)"));
+const approval = await import(exactlyOne(/^device-pairing-approval-[^.]+[.]js$/, "approval", "async function approveDevicePairingWithOptions"));
+const auth = await import(exactlyOne(/^device-auth-store-[^.]+[.]js$/, "stored auth", "function loadDeviceAuth"));
+if (typeof pairing.h !== "function" || typeof pairing.c !== "function" || typeof approval.n !== "function" || typeof auth.l !== "function" || typeof auth.r !== "function") {
+  throw new Error("reviewed SQLite device-pairing exports missing");
+}
+const publicKey = crypto.randomBytes(32).toString("base64url");
+const deviceId = crypto.createHash("sha256").update(Buffer.from(publicKey, "base64url")).digest("hex");
+const request = async (scopes) => (await pairing.h({
+  deviceId,
+  publicKey,
+  clientId: "cli",
+  clientMode: "cli",
+  role: "operator",
+  roles: ["operator"],
+  scopes,
+}, stateDir)).request;
+const initial = await request(["operator.pairing"]);
+const initialApproval = await approval.n(initial.requestId, { callerScopes: ["operator.admin"] }, stateDir);
+if (initialApproval?.status !== "approved") throw new Error("initial SQLite pairing failed");
+const initialToken = initialApproval.device?.tokens?.operator;
+if (!initialToken?.token || JSON.stringify([...initialToken.scopes].toSorted()) !== JSON.stringify(["operator.pairing"])) throw new Error("initial SQLite token invalid");
+const stored = auth.l({
+  deviceId,
+  role: "operator",
+  token: initialToken.token,
+  scopes: initialToken.scopes,
+  env: { ...process.env, OPENCLAW_STATE_DIR: stateDir },
+});
+if (stored?.token !== initialToken.token) throw new Error("initial SQLite stored auth missing");
+const upgrade = await request(["operator.pairing", "operator.write"]);
+if (upgrade.isRepair !== true) throw new Error("SQLite scope upgrade was not classified as repair");
+const identity = {
+  deviceId,
+  publicKey,
+  role: "operator",
+  clientId: "cli",
+  clientMode: "cli",
+  deviceToken: initialToken.token,
+};
+const upgraded = await approval.n(upgrade.requestId, {
+  callerScopes: ["operator.pairing"],
+  nemoclawSelfApprovalIdentity: identity,
+}, stateDir);
+if (upgraded?.status !== "approved") throw new Error("bounded SQLite self-approval failed");
+const nextToken = upgraded.device?.tokens?.operator;
+const expectedScopes = ["operator.pairing", "operator.read", "operator.write"];
+if (!nextToken?.token || nextToken.token === initialToken.token || JSON.stringify([...nextToken.scopes].toSorted()) !== JSON.stringify(expectedScopes)) throw new Error("bounded SQLite token rotation invalid");
+const afterList = await pairing.c(stateDir);
+const afterPaired = afterList.paired.find((device) => device.deviceId === deviceId);
+const afterStored = auth.r({ deviceId, role: "operator", env: { ...process.env, OPENCLAW_STATE_DIR: stateDir } });
+if (afterList.pending.some((pending) => pending.requestId === upgrade.requestId) || afterPaired?.tokens?.operator?.token !== nextToken.token || afterStored?.token !== nextToken.token || JSON.stringify([...afterStored.scopes].toSorted()) !== JSON.stringify(expectedScopes)) {
+  throw new Error("bounded SQLite pairing and stored auth were not published atomically");
+}
+const staleRequest = await request(["operator.pairing", "operator.write"]);
+let staleRejected = false;
+try {
+  await approval.n(staleRequest.requestId, {
+    callerScopes: ["operator.pairing"],
+    nemoclawSelfApprovalIdentity: identity,
+  }, stateDir);
+} catch {
+  staleRejected = true;
+}
+if (!staleRejected) throw new Error("stale SQLite self-approval token was accepted");
+const finalList = await pairing.c(stateDir);
+const finalPaired = finalList.paired.find((device) => device.deviceId === deviceId);
+const finalStored = auth.r({ deviceId, role: "operator", env: { ...process.env, OPENCLAW_STATE_DIR: stateDir } });
+if (!finalList.pending.some((pending) => pending.requestId === staleRequest.requestId) || finalPaired?.tokens?.operator?.token !== nextToken.token || finalStored?.token !== nextToken.token) {
+  throw new Error("failed SQLite self-approval did not roll back completely");
+}
+`,
+    ],
+    {
+      cwd: path.dirname(options.dist),
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        NEMOCLAW_DEVICE_APPROVAL_STATE: stateDir,
+        NEMOCLAW_OPENCLAW_DIST: options.dist,
+        OPENCLAW_STATE_DIR: stateDir,
+      },
+      timeout: Math.min(options.timeoutMs, 60_000),
+    },
+  );
+  requireSuccess(proof, "prove real SQLite bounded device self-approval");
+}
+
 async function waitForGatewayReady(
   child: ChildProcess,
   port: number,
@@ -2196,13 +2306,16 @@ export async function runRealOpenClawDeviceSelfApprovalProof(options: ProofOptio
     timeout: options.timeoutMs,
   });
   requireSuccess(audit, "audit bounded device self-approval patch");
+  const auditSummary = audit.stdout.includes("canonical device pairing SQLite persistence runtime:")
+    ? "Summary: 7 OK · 0 missing"
+    : "Summary: 6 OK · 0 missing";
   for (const marker of [
     "gateway call device-identity runtime:",
     "devices CLI approval runtime:",
     "device-token scope-upgrade gateway auth runtime:",
     "device pairing gateway handler:",
     "canonical device pairing state runtime:",
-    "Summary: 6 OK · 0 missing",
+    auditSummary,
   ]) {
     requireIncludes(audit.stdout, marker, "device self-approval audit");
   }
@@ -2225,15 +2338,49 @@ export async function runRealOpenClawDeviceSelfApprovalProof(options: ProofOptio
     "function resolveApprovePairingScopesForRequest(request, paired)",
     "nemoclaw: reach gateway for bounded same-device scope approval",
   ]);
+  const sqlitePairingLayout = sources.some(
+    ({ source }) =>
+      source.includes("function persistDevicePairingStoreState(state, baseDir, target, options)") &&
+      source.includes("nemoclaw: recover bounded self-approval state transaction"),
+  );
   const pairingStateSource = requireExactlyOneDistSource(
     sources,
     "patched transactional device pairing state runtime",
-    [
-      "nemoclaw: validate bounded self-approval inside pairing lock",
-      "nemoclaw: recover bounded self-approval state transaction",
-      'await persistState(state, baseDir, "both")',
-    ],
+    sqlitePairingLayout
+      ? [
+          "nemoclaw: validate bounded self-approval inside pairing lock",
+          "approveDevicePairingWithOptions",
+          "nemoclawSelfApprovalIdentity",
+        ]
+      : [
+          "nemoclaw: validate bounded self-approval inside pairing lock",
+          "nemoclaw: recover bounded self-approval state transaction",
+          'await persistState(state, baseDir, "both")',
+        ],
   );
+  if (sqlitePairingLayout) {
+    requireExactlyOneDistSource(sources, "patched atomic SQLite pairing persistence runtime", [
+      "function persistDevicePairingStoreState(state, baseDir, target, options)",
+      "nemoclaw: recover bounded self-approval state transaction",
+      "bounded self-approval stored-auth fence failed",
+    ]);
+    const packageDir = path.dirname(options.dist);
+    const install = spawnSync(
+      "npm",
+      [
+        "install",
+        "--ignore-scripts",
+        "--omit=dev",
+        "--legacy-peer-deps",
+        "--no-audit",
+        "--no-fund",
+      ],
+      { cwd: packageDir, encoding: "utf8", timeout: 120_000 },
+    );
+    requireSuccess(install, "install reviewed OpenClaw runtime dependencies without scripts");
+    runSqliteDeviceSelfApprovalProof(options);
+    return;
+  }
   requireExactlyOneDistSource(sources, "atomic JSON state rename runtime", [
     "async function renameWithRetry(params)",
     "await params.fsModule.rename(params.src, params.dest)",

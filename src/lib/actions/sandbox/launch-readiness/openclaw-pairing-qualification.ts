@@ -217,11 +217,14 @@ import hashlib
 import json
 import os
 import re
+import sqlite3
 import stat
 import sys
+import urllib.parse
 
 MARKER = ${JSON.stringify(marker)}
 MAX_ENTRY_BYTES = 512 * 1024
+MAX_SQLITE_BYTES = 1024 * 1024 * 1024
 REQUIRED_ROLES = ['operator']
 PAIRING_ONLY_SCOPES = ['operator.pairing']
 REQUEST_SCOPES = ['operator.pairing', 'operator.write']
@@ -303,6 +306,27 @@ def file_metadata(fd):
         metadata.st_mode & 0o7777,
     )
 
+def sqlite_file_metadata(fd):
+    metadata = os.fstat(fd)
+    if (
+        not stat.S_ISREG(metadata.st_mode)
+        or metadata.st_nlink != 1
+        or metadata.st_gid != os.getegid()
+        or metadata.st_mode & 0o007
+        or metadata.st_size < 1
+        or metadata.st_size > MAX_SQLITE_BYTES
+    ):
+        raise OSError('unsafe sqlite database')
+    return (
+        metadata.st_dev,
+        metadata.st_ino,
+        metadata.st_uid,
+        metadata.st_gid,
+        metadata.st_size,
+        metadata.st_mtime_ns,
+        metadata.st_mode & 0o7777,
+    )
+
 def state_root_is_current(fd):
     current = os.stat(STATE_DIR, follow_symlinks=False)
     pinned = os.fstat(fd)
@@ -337,7 +361,7 @@ def directory_is_current(parent_fd, name, fd):
     )
 
 def open_directory(parent_fd, name):
-    if name not in ('devices', 'identity'):
+    if name not in ('devices', 'identity', 'state'):
         raise OSError('unsupported directory')
     fd = os.open(name, directory_flags, dir_fd=parent_fd)
     directory_metadata(fd)
@@ -378,8 +402,30 @@ def read_entry(directory_fd, name):
     finally:
         os.close(fd)
 
-def read_snapshot():
+def assert_sqlite_database_absent(state_fd):
+    sqlite_state_fd = -1
+    try:
+        try:
+            sqlite_state_fd = open_directory(state_fd, 'state')
+        except FileNotFoundError:
+            return
+        try:
+            os.stat('openclaw.sqlite', dir_fd=sqlite_state_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            return
+        raise StateChangedError('sqlite database appeared')
+    finally:
+        if sqlite_state_fd >= 0:
+            os.close(sqlite_state_fd)
+
+def assert_legacy_layout_current():
     state_fd = open_state_root()
+    try:
+        assert_sqlite_database_absent(state_fd)
+    finally:
+        os.close(state_fd)
+
+def read_legacy_snapshot(state_fd):
     devices_fd = -1
     identity_fd = -1
     try:
@@ -395,7 +441,9 @@ def read_snapshot():
             or not directory_is_current(state_fd, 'identity', identity_fd)
         ):
             raise StateChangedError('state root changed')
+        assert_sqlite_database_absent(state_fd)
         return {
+            'layout': 'legacy',
             'directories': [directory_metadata(state_fd), directory_metadata(devices_fd), directory_metadata(identity_fd)],
             'identity': (identity_raw, identity_metadata),
             'auth': (auth_raw, auth_metadata),
@@ -407,6 +455,152 @@ def read_snapshot():
             os.close(identity_fd)
         if devices_fd >= 0:
             os.close(devices_fd)
+
+def optional(row, key, value):
+    if value is not None:
+        row[key] = value
+
+def parse_json_column(value):
+    if not isinstance(value, str):
+        raise ValueError('invalid sqlite JSON column')
+    return json.loads(value)
+
+def read_sqlite_snapshot(state_fd, sqlite_state_fd):
+    database_fd = os.open('openclaw.sqlite', file_flags, dir_fd=sqlite_state_fd)
+    connection = None
+    try:
+        before = sqlite_file_metadata(database_fd)
+        current = os.stat('openclaw.sqlite', dir_fd=sqlite_state_fd, follow_symlinks=False)
+        if (
+            current.st_dev,
+            current.st_ino,
+            current.st_uid,
+            current.st_gid,
+            current.st_size,
+            current.st_mtime_ns,
+            current.st_mode & 0o7777,
+        ) != before:
+            raise StateChangedError('sqlite database changed')
+        database_path = os.path.join(STATE_DIR, 'state', 'openclaw.sqlite')
+        database_uri = 'file:' + urllib.parse.quote(database_path, safe='/') + '?mode=ro'
+        connection = sqlite3.connect(database_uri, uri=True, timeout=0)
+        connection.row_factory = sqlite3.Row
+        connection.execute('PRAGMA query_only = ON')
+        connection.execute('PRAGMA trusted_schema = OFF')
+        connection.execute('BEGIN')
+        identities = connection.execute(
+            "SELECT identity_key, device_id, public_key_pem, private_key_pem "
+            "FROM device_identities WHERE identity_key = 'primary'",
+        ).fetchall()
+        if len(identities) != 1:
+            raise ValueError('invalid primary identity cardinality')
+        identity_row = identities[0]
+        device_id = identity_row['device_id']
+
+        paired = {}
+        for source in connection.execute(
+            'SELECT device_id, public_key, client_id, client_mode, role, roles_json, '
+            'scopes_json, approved_scopes_json, tokens_json FROM device_pairing_paired '
+            'ORDER BY device_id',
+        ):
+            row = {
+                'deviceId': source['device_id'],
+                'publicKey': source['public_key'],
+            }
+            optional(row, 'clientId', source['client_id'])
+            optional(row, 'clientMode', source['client_mode'])
+            optional(row, 'role', source['role'])
+            optional(row, 'roles', parse_json_column(source['roles_json']) if source['roles_json'] is not None else None)
+            optional(row, 'scopes', parse_json_column(source['scopes_json']) if source['scopes_json'] is not None else None)
+            optional(row, 'approvedScopes', parse_json_column(source['approved_scopes_json']) if source['approved_scopes_json'] is not None else None)
+            optional(row, 'tokens', parse_json_column(source['tokens_json']) if source['tokens_json'] is not None else None)
+            paired[source['device_id']] = row
+
+        pending = {}
+        for source in connection.execute(
+            'SELECT request_id, device_id, public_key, client_id, client_mode, role, '
+            'roles_json, scopes_json, is_repair FROM device_pairing_pending ORDER BY request_id',
+        ):
+            row = {
+                'requestId': source['request_id'],
+                'deviceId': source['device_id'],
+                'publicKey': source['public_key'],
+            }
+            optional(row, 'clientId', source['client_id'])
+            optional(row, 'clientMode', source['client_mode'])
+            optional(row, 'role', source['role'])
+            optional(row, 'roles', parse_json_column(source['roles_json']) if source['roles_json'] is not None else None)
+            optional(row, 'scopes', parse_json_column(source['scopes_json']) if source['scopes_json'] is not None else None)
+            optional(row, 'isRepair', source['is_repair'] != 0 if source['is_repair'] is not None else None)
+            pending[source['request_id']] = row
+
+        auth_tokens = {}
+        for source in connection.execute(
+            'SELECT role, token, scopes_json FROM device_auth_tokens '
+            'WHERE device_id = ? ORDER BY role',
+            (device_id,),
+        ):
+            auth_tokens[source['role']] = {
+                'role': source['role'],
+                'token': source['token'],
+                'scopes': parse_json_column(source['scopes_json']),
+            }
+        connection.execute('COMMIT')
+        after = sqlite_file_metadata(database_fd)
+        current = os.stat('openclaw.sqlite', dir_fd=sqlite_state_fd, follow_symlinks=False)
+        if before != after or (
+            current.st_dev,
+            current.st_ino,
+            current.st_uid,
+            current.st_gid,
+            current.st_size,
+            current.st_mtime_ns,
+            current.st_mode & 0o7777,
+        ) != after or not state_root_is_current(state_fd) or not directory_is_current(state_fd, 'state', sqlite_state_fd):
+            raise StateChangedError('sqlite database changed')
+        return {
+            'layout': 'sqlite',
+            'directories': [directory_metadata(state_fd), directory_metadata(sqlite_state_fd)],
+            'identity': (json.dumps({
+                'deviceId': device_id,
+                'publicKeyPem': identity_row['public_key_pem'],
+                'privateKeyPem': identity_row['private_key_pem'],
+            }, sort_keys=True).encode('utf-8'), before),
+            'auth': (json.dumps({
+                'version': 1,
+                'deviceId': device_id,
+                'tokens': auth_tokens,
+            }, sort_keys=True).encode('utf-8'), before),
+            'paired': (json.dumps(paired, sort_keys=True).encode('utf-8'), before),
+            'pending': (json.dumps(pending, sort_keys=True).encode('utf-8'), before),
+        }
+    except sqlite3.OperationalError as error:
+        if 'locked' in str(error).lower() or 'busy' in str(error).lower():
+            raise StateChangedError('sqlite database is busy') from error
+        raise
+    finally:
+        if connection is not None:
+            connection.close()
+        os.close(database_fd)
+
+def read_snapshot():
+    state_fd = open_state_root()
+    sqlite_state_fd = -1
+    try:
+        try:
+            sqlite_state_fd = open_directory(state_fd, 'state')
+        except FileNotFoundError:
+            return read_legacy_snapshot(state_fd)
+        try:
+            database_entry = os.stat('openclaw.sqlite', dir_fd=sqlite_state_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            return read_legacy_snapshot(state_fd)
+        if not stat.S_ISREG(database_entry.st_mode):
+            raise OSError('unsafe sqlite database')
+        return read_sqlite_snapshot(state_fd, sqlite_state_fd)
+    finally:
+        if sqlite_state_fd >= 0:
+            os.close(sqlite_state_fd)
         os.close(state_fd)
 
 def parse_json(raw):
@@ -477,6 +671,8 @@ try:
     second = read_snapshot()
     if first != second:
         retry_observation()
+    if first.get('layout') == 'legacy':
+        assert_legacy_layout_current()
     identity = parse_json(first['identity'][0])
     auth = parse_json(first['auth'][0])
     paired = parse_json(first['paired'][0])
@@ -664,7 +860,7 @@ try:
     print(MARKER + json.dumps(projection, sort_keys=True, separators=(',', ':')))
 except (FileNotFoundError, StateChangedError):
     retry_observation()
-except (OSError, ValueError, TypeError, KeyError, binascii.Error, UnicodeError):
+except (OSError, ValueError, TypeError, KeyError, binascii.Error, UnicodeError, sqlite3.Error):
     reject()
 PYQUALIFY
 `;

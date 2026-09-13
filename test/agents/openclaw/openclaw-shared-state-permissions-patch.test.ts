@@ -148,6 +148,18 @@ const UPSTREAM_STATE_MIGRATION_SOURCE = [
   "",
 ].join("\n");
 
+const UPSTREAM_STATE_MIGRATION_20260901_SOURCE = [
+  "function migrateLegacyJsonState() { return { changes: ['upstream update-check migration ran'], warnings: [] }; }",
+  "function migrateLegacyUpdateCheckState(params) {",
+  "\treturn migrateLegacyJsonState({",
+  "\t\tsourcePath: params.detected.sourcePath,",
+  "\t\tstateDir: params.stateDir",
+  "\t});",
+  "}",
+  "export { migrateLegacyUpdateCheckState };",
+  "",
+].join("\n");
+
 const UPSTREAM_FILE_STORE_SOURCE = [
   'import path from "node:path";',
   "",
@@ -368,6 +380,21 @@ async function importModelsFixture(file: string): Promise<ModelsFixtureRuntime> 
 }
 
 describe("OpenClaw SQLite state permission compatibility patch (#7280)", () => {
+  it("recognizes the 2026.9.1 doctor migration layout", () => {
+    const patched = patchOpenClawStateMigrationText(
+      UPSTREAM_STATE_MIGRATION_20260901_SOURCE,
+      "state-migrations.doctor-fixture.js",
+    );
+    expect(patched.status).toBe("patched");
+    expect(patched.text).toContain(MIGRATION_MARKER);
+    expect(patched.text).toContain(
+      "if (nemoclawUsesManagedRuntime()) return { changes: [], warnings: [] };",
+    );
+    expect(
+      patchOpenClawStateMigrationText(patched.text, "state-migrations.doctor-fixture.js").status,
+    ).toBe("already-patched");
+  });
+
   it("applies every exact target once through the CLI and remains idempotent", () => {
     const fixture = makeFixture();
     try {

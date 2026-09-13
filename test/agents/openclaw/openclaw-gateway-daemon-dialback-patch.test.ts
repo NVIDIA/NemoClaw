@@ -39,6 +39,17 @@ const CALL_CONTEXT_SOURCE = [
   "",
 ].join("\n");
 
+const CALL_CONTEXT_20260901_SOURCE = [
+  "function trimToUndefined(value) { return value?.trim() || undefined; }",
+  "function resolveGatewayUrlOverride(params) {",
+  "\tif (params.ignoreEnvUrlOverride || params.localPortOverride !== void 0) return {};",
+  "\tconst envUrl = trimToUndefined((params.env ?? process.env).OPENCLAW_GATEWAY_URL);",
+  '\treturn envUrl ? { url: envUrl, source: "env" } : {};',
+  "}",
+  "export { resolveGatewayUrlOverride };",
+  "",
+].join("\n");
+
 const CONNECTION_DETAILS_SOURCE = [
   "function normalizeOptionalString(value) { return value?.trim() || undefined; }",
   "function buildGatewayConnectionDetails(options) {",
@@ -219,6 +230,34 @@ describe("OpenClaw gateway daemon self-dialback patch", () => {
           "wss://gateway.example.test",
         );
       });
+    } finally {
+      fs.rmSync(tmp, { force: true, recursive: true });
+    }
+  });
+
+  it("recognizes the 2026.9.1 gateway URL override helper", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-dialback-691-"));
+    try {
+      const patched = patchGatewayCallContextText(CALL_CONTEXT_20260901_SOURCE);
+      const runtime = await importFixture<{
+        resolveGatewayUrlOverride(params: {
+          env?: NodeJS.ProcessEnv;
+          ignoreEnvUrlOverride?: boolean;
+          localPortOverride?: number;
+        }): { source?: string; url?: string };
+      }>(tmp, "call-691.mjs", patched.text);
+      const privateUrl = "ws://10.200.0.2:18789";
+
+      withGatewayEnvironment({ openshell: "1", title: "openclaw-gateway", url: privateUrl }, () =>
+        expect(runtime.resolveGatewayUrlOverride({})).toEqual({}),
+      );
+      withGatewayEnvironment({ openshell: "1", title: "openclaw", url: privateUrl }, () => {
+        expect(runtime.resolveGatewayUrlOverride({})).toEqual({
+          source: "env",
+          url: privateUrl,
+        });
+      });
+      expect(patchGatewayCallContextText(patched.text).status).toBe("already-patched");
     } finally {
       fs.rmSync(tmp, { force: true, recursive: true });
     }

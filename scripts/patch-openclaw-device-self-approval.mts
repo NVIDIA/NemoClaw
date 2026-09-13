@@ -101,6 +101,11 @@ const CALL_OMIT_IDENTITY_REPLACEMENT = [
   CALL_OMIT_IDENTITY_MODE_LINE,
   "\tconst mode = params.opts.mode ?? GATEWAY_CLIENT_MODES.CLI;",
 ].join("\n");
+const CALL_OMIT_IDENTITY_SQLITE_REPLACEMENT = [
+  "function shouldOmitDeviceIdentityForGatewayCall(params) {",
+  CALL_OMIT_IDENTITY_MODE_LINE,
+  "\tconst mode = params.opts.mode ?? GATEWAY_CLIENT_MODES.CLI;",
+].join("\n");
 const CALL_STORED_IDENTITY_TARGET =
   "\tconst isLocalCliSharedAuth = mode === GATEWAY_CLIENT_MODES.CLI && clientName === GATEWAY_CLIENT_NAMES.CLI && hasSharedSecretAuth && isLoopback;";
 const CALL_STORED_IDENTITY_REPLACEMENT = [
@@ -111,10 +116,90 @@ const CALL_STORED_IDENTITY_REPLACEMENT = [
   "\t\tisLoopback &&",
   `\t\t!hasStoredOperatorDeviceAuthToken(resolveDeviceIdentityForGatewayCall()); // ${CALL_STORED_IDENTITY_MARKER} (#4462)`,
 ].join("\n");
+const CALL_STORED_IDENTITY_SQLITE_REPLACEMENT = [
+  "\tconst isLocalCliSharedAuth =",
+  "\t\tmode === GATEWAY_CLIENT_MODES.CLI &&",
+  "\t\tclientName === GATEWAY_CLIENT_NAMES.CLI &&",
+  "\t\thasSharedSecretAuth &&",
+  "\t\tisLoopback &&",
+  `\t\t!loadStoredOperatorDeviceAuthToken(resolveDeviceIdentityForGatewayCall(params.opts.sharedStateMode), params.deviceAuthScope, params.opts.sharedStateMode); // ${CALL_STORED_IDENTITY_MARKER} (#4462)`,
+].join("\n");
+const CALL_OMIT_IDENTITY_CALLSITE_TARGET = [
+  "\t\tpassword,",
+  '\t\tallowAuthNone: opts.requireLocalBackendSharedAuth === true && authMode === "none"',
+].join("\n");
+const CALL_OMIT_IDENTITY_CALLSITE_REPLACEMENT = [
+  "\t\tpassword,",
+  "\t\tdeviceAuthScope,",
+  '\t\tallowAuthNone: opts.requireLocalBackendSharedAuth === true && authMode === "none"',
+].join("\n");
 const CALL_IDENTITY_RESOLVER_TARGET = [
   "function resolveDeviceIdentityForGatewayCall() {",
   "\ttry {",
   "\t\treturn gatewayCallDeps.loadOrCreateDeviceIdentity();",
+  "\t} catch {",
+  "\t\treturn null;",
+  "\t}",
+  "}",
+].join("\n");
+const CALL_IDENTITY_RESOLVER_SQLITE_TARGET = [
+  "function resolveDeviceIdentityForGatewayCall(sharedStateMode) {",
+  "\ttry {",
+  '\t\treturn sharedStateMode === "read-only" ? loadDeviceIdentityIfPresent() : loadOrCreateDeviceIdentity();',
+  "\t} catch {",
+  "\t\treturn null;",
+  "\t}",
+  "}",
+].join("\n");
+const CALL_IDENTITY_RESOLVER_SQLITE_REPLACEMENT = [
+  "function resolveNemoClawCanonicalIdentityDescriptor() {",
+  "\tconst nemoclawRawDescriptor = process.env.NEMOCLAW_OPENCLAW_IDENTITY_FD;",
+  '\tif (typeof nemoclawRawDescriptor !== "string" || !/^[1-9]\\d*$/.test(nemoclawRawDescriptor)) return null;',
+  "\tconst nemoclawDescriptor = Number(nemoclawRawDescriptor);",
+  "\treturn Number.isSafeInteger(nemoclawDescriptor) && nemoclawDescriptor >= 3 && nemoclawDescriptor <= 2147483647 && String(nemoclawDescriptor) === nemoclawRawDescriptor ? nemoclawDescriptor : null;",
+  "}",
+  "function loadNemoClawForcedDeviceIdentity() {",
+  "\tconst nemoclawDescriptor = resolveNemoClawCanonicalIdentityDescriptor();",
+  '\tif (nemoclawDescriptor === null) throw new Error("forced pairing identity descriptor is unavailable");',
+  "\tlet nemoclawParsedIdentity;",
+  "\ttry {",
+  "\t\tconst nemoclawBefore = fs.fstatSync(nemoclawDescriptor);",
+  "\t\tif (!nemoclawBefore.isFile() || nemoclawBefore.nlink !== 1 || !Number.isSafeInteger(nemoclawBefore.size) || nemoclawBefore.size < 2 || nemoclawBefore.size > 1048576) throw new Error();",
+  "\t\tconst nemoclawBuffer = Buffer.alloc(nemoclawBefore.size);",
+  "\t\tlet nemoclawOffset = 0;",
+  "\t\twhile (nemoclawOffset < nemoclawBuffer.length) {",
+  "\t\t\tconst nemoclawRead = fs.readSync(nemoclawDescriptor, nemoclawBuffer, nemoclawOffset, nemoclawBuffer.length - nemoclawOffset, nemoclawOffset);",
+  "\t\t\tif (nemoclawRead <= 0) throw new Error();",
+  "\t\t\tnemoclawOffset += nemoclawRead;",
+  "\t\t}",
+  "\t\tconst nemoclawAfter = fs.fstatSync(nemoclawDescriptor);",
+  "\t\tif (!nemoclawAfter.isFile() || nemoclawAfter.nlink !== 1 || nemoclawAfter.dev !== nemoclawBefore.dev || nemoclawAfter.ino !== nemoclawBefore.ino || nemoclawAfter.size !== nemoclawBefore.size || nemoclawAfter.mtimeMs !== nemoclawBefore.mtimeMs) throw new Error();",
+  '\t\tnemoclawParsedIdentity = JSON.parse(nemoclawBuffer.toString("utf8"));',
+  "\t\tconst nemoclawIdentityKeys = Object.keys(nemoclawParsedIdentity ?? {}).toSorted();",
+  '\t\tif (nemoclawParsedIdentity?.version !== 1 || nemoclawIdentityKeys.join("\\0") !== ["deviceId", "privateKeyPem", "publicKeyPem", "version"].join("\\0")) throw new Error();',
+  '\t\tif (typeof nemoclawParsedIdentity.deviceId !== "string" || !/^[a-f0-9]{64}$/.test(nemoclawParsedIdentity.deviceId) || typeof nemoclawParsedIdentity.publicKeyPem !== "string" || typeof nemoclawParsedIdentity.privateKeyPem !== "string") throw new Error();',
+  '\t\tconst nemoclawCrypto = process.getBuiltinModule("node:crypto");',
+  "\t\tconst nemoclawPublicKey = nemoclawCrypto.createPublicKey(nemoclawParsedIdentity.publicKeyPem);",
+  "\t\tconst nemoclawPrivateKey = nemoclawCrypto.createPrivateKey(nemoclawParsedIdentity.privateKeyPem);",
+  '\t\tif (nemoclawPublicKey.asymmetricKeyType !== "ed25519" || nemoclawPrivateKey.asymmetricKeyType !== "ed25519") throw new Error();',
+  '\t\tconst nemoclawPublicDer = nemoclawPublicKey.export({ type: "spki", format: "der" });',
+  '\t\tconst nemoclawDerivedPublicDer = nemoclawCrypto.createPublicKey(nemoclawPrivateKey).export({ type: "spki", format: "der" });',
+  '\t\tif (!Buffer.from(nemoclawPublicDer).equals(Buffer.from(nemoclawDerivedPublicDer)) || nemoclawCrypto.createHash("sha256").update(Buffer.from(nemoclawPublicDer).subarray(-32)).digest("hex") !== nemoclawParsedIdentity.deviceId) throw new Error();',
+  "\t} catch {",
+  '\t\tthrow new Error("forced pairing identity descriptor is invalid");',
+  "\t}",
+  `\treturn { deviceId: nemoclawParsedIdentity.deviceId, publicKeyPem: nemoclawParsedIdentity.publicKeyPem, privateKeyPem: nemoclawParsedIdentity.privateKeyPem }; // ${DEVICE_IDENTITY_FD_MARKER} (#4462)`,
+  "}",
+  "function resolveDeviceIdentityForGatewayCall(sharedStateMode) {",
+  '\tif (process.env.NEMOCLAW_OPENCLAW_RESTORED_CLONE_PAIRING === "1") {',
+  "\t\tconst nemoclawExpectedDeviceId = normalizeOptionalString(process.env.NEMOCLAW_OPENCLAW_EXPECTED_DEVICE_ID);",
+  '\t\tif (!nemoclawExpectedDeviceId) throw new Error("forced pairing expected device identity is unavailable");',
+  "\t\tconst nemoclawDeviceIdentity = loadNemoClawForcedDeviceIdentity();",
+  `\t\tif (nemoclawDeviceIdentity.deviceId !== nemoclawExpectedDeviceId) throw new Error("forced pairing device identity does not match the clone"); // ${CALL_EXPECTED_IDENTITY_MARKER} (#4462)`,
+  "\t\treturn nemoclawDeviceIdentity;",
+  "\t}",
+  "\ttry {",
+  '\t\treturn sharedStateMode === "read-only" ? loadDeviceIdentityIfPresent() : loadOrCreateDeviceIdentity();',
   "\t} catch {",
   "\t\treturn null;",
   "\t}",
@@ -438,6 +523,10 @@ const CLI_HELPER = [
   "}",
   "",
 ].join("\n");
+const CLI_HELPER_SQLITE = CLI_HELPER.replaceAll("GATEWAY_CLIENT_NAMES.CLI", '"cli"').replaceAll(
+  "GATEWAY_CLIENT_MODES.CLI",
+  '"cli"',
+);
 
 const CLI_REPLACEMENT = [
   "\tfor (const scope of operatorScopes) {",
@@ -470,6 +559,24 @@ const CLI_CALL_GATEWAY_REPLACEMENT = [
   "\t} : {})",
   "}));",
 ].join("\n");
+const CLI_CALL_GATEWAY_SQLITE_FULL_TARGET = [
+  "const callGatewayCli = async (method, opts, params, callOpts) => callGatewayFromCliWithTransport(method, opts, params, {",
+  "\tlabel: `Devices ${method}`,",
+  "\tdefaultTimeoutMs: DEFAULT_DEVICES_TIMEOUT_MS,",
+  "\tscopes: callOpts?.scopes,",
+  '\tsharedStateMode: "read-only"',
+  "});",
+].join("\n");
+const CLI_CALL_GATEWAY_SQLITE_REPLACEMENT = [
+  "const callGatewayCli = async (method, opts, params, callOpts) => callGatewayFromCliWithTransport(method, callOpts?.usePairedToken === true ? { ...opts, url: callOpts.pinnedGatewayUrl, token: callOpts.pairedToken, password: void 0, port: void 0 } : opts, params, {",
+  "\tlabel: `Devices ${method}`,",
+  "\tdefaultTimeoutMs: DEFAULT_DEVICES_TIMEOUT_MS,",
+  "\tscopes: callOpts?.scopes,",
+  `\tuseStoredDeviceAuth: callOpts?.useStoredDeviceAuth, // ${CLI_MARKER} (#4462)`,
+  "\trequiredStoredDeviceAuthScopes: callOpts?.requiredStoredDeviceAuthScopes,",
+  '\tsharedStateMode: "read-only"',
+  "});",
+].join("\n");
 
 const CLI_LIST_SIGNATURE_TARGET = "async function listPairingWithFallback(opts) {";
 const CLI_LIST_SIGNATURE_LEGACY_REPLACEMENT =
@@ -487,6 +594,10 @@ const CLI_LIST_CALL_TARGET =
   '\t\treturn parseDevicePairingList(await callGatewayCli("device.pair.list", opts, {}));';
 const CLI_LIST_CALL_REPLACEMENT =
   '\t\treturn parseDevicePairingList(await callGatewayCli("device.pair.list", opts, {}, callOpts));';
+const CLI_LIST_CALL_SQLITE_TARGET =
+  '\t\treturn parseDevicePairingList(await callGatewayCli("device.pair.list", opts, {}, { scopes: [PAIRING_SCOPE] }));';
+const CLI_LIST_CALL_SQLITE_REPLACEMENT =
+  '\t\treturn parseDevicePairingList(await callGatewayCli("device.pair.list", opts, {}, { ...callOpts, scopes: callOpts?.scopes ?? [PAIRING_SCOPE] }));';
 
 const CLI_CONTEXT_TARGET = [
   "async function resolveApprovePairingGatewayContext(opts, requestId) {",
@@ -587,11 +698,57 @@ const CLI_CONTEXT_REPLACEMENT = [
   "\t}",
   "}",
 ].join("\n");
+const CLI_CONTEXT_SQLITE_TARGET = [
+  "async function resolveApprovePairingGatewayContext(opts, requestId) {",
+  "\ttry {",
+  "\t\tconst list = await listPairingWithFallback(opts);",
+  "\t\tconst request = findPendingRequestById(list.pending, requestId);",
+  "\t\tif (!request) return {",
+  "\t\t\toriginalRequest: null,",
+  "\t\t\tpairingList: list,",
+  "\t\t\tscopes: void 0",
+  "\t\t};",
+  "\t\treturn {",
+  "\t\t\toriginalRequest: request,",
+  "\t\t\tpairingList: list,",
+  "\t\t\tscopes: resolveApprovePairingScopesForRequest(request, lookupPairedDevice(indexPairedDevices(list.paired), request))",
+  "\t\t};",
+  "\t} catch {",
+  "\t\treturn {",
+  "\t\t\toriginalRequest: null,",
+  "\t\t\tpairingList: null,",
+  "\t\t\tscopes: void 0",
+  "\t\t};",
+  "\t}",
+  "}",
+].join("\n");
+const CLI_CONTEXT_REPLACEMENT_SQLITE = CLI_CONTEXT_REPLACEMENT.replaceAll(
+  "GATEWAY_CLIENT_NAMES.CLI",
+  '"cli"',
+)
+  .replaceAll("GATEWAY_CLIENT_MODES.CLI", '"cli"')
+  .replaceAll(
+    "\t\t\toriginalRequest: null,\n\t\t\tscopes:",
+    "\t\t\toriginalRequest: null,\n\t\t\tpairingList: null,\n\t\t\tscopes:",
+  )
+  .replace(
+    "\t\t\toriginalRequest: request,\n\t\t\tscopes:",
+    "\t\t\toriginalRequest: request,\n\t\t\tpairingList: list,\n\t\t\tscopes:",
+  );
 
 const CLI_APPROVE_HEADER_TARGET =
   "\tconst { scopes, originalRequest } = await resolveApprovePairingGatewayContext(opts, requestId);";
 const CLI_APPROVE_HEADER_REPLACEMENT =
   '\tconst { scopes, originalRequest, nemoclawUseStoredDeviceAuth, nemoclawUsePairedToken, nemoclawPairedToken, nemoclawPinnedGatewayUrl, nemoclawRefuseUnsafeApproval } = await resolveApprovePairingGatewayContext(opts, requestId);\n\tif (nemoclawRefuseUnsafeApproval) throw new Error("bounded same-device approval context changed before gateway approval");';
+const CLI_APPROVE_HEADER_SQLITE_TARGET = [
+  "async function approvePairingWithFallback(opts, requestId, context) {",
+  "\tconst { scopes, originalRequest } = context;",
+].join("\n");
+const CLI_APPROVE_HEADER_SQLITE_REPLACEMENT = [
+  "async function approvePairingWithFallback(opts, requestId, context) {",
+  "\tconst { scopes, originalRequest, nemoclawUseStoredDeviceAuth, nemoclawUsePairedToken, nemoclawPairedToken, nemoclawPinnedGatewayUrl, nemoclawRefuseUnsafeApproval } = context;",
+  '\tif (nemoclawRefuseUnsafeApproval) throw new Error("bounded same-device approval context changed before gateway approval");',
+].join("\n");
 const CLI_APPROVE_CALL_TARGET =
   '\t\treturn await callGatewayCli("device.pair.approve", opts, { requestId }, scopes ? { scopes } : void 0);';
 const CLI_APPROVE_CALL_REPLACEMENT = [
@@ -646,6 +803,34 @@ const AUTH_DEVICE_TOKEN_REPLACEMENT = [
   "\t\tif (tokenCheck.ok || nemoclawCliScopeUpgrade) { // nemoclaw: route bounded CLI device-token scope upgrade into pairing (#4462)",
   "\t\t\tauthOk = true;",
   '\t\t\tauthMethod = "device-token";',
+].join("\n");
+const AUTH_DEVICE_TOKEN_SQLITE_TARGET = [
+  "\t\tasync verifyDeviceToken(paramsLocal) {",
+  "\t\t\treturn await verifyDeviceToken({",
+  "\t\t\t\t...paramsLocal,",
+  "\t\t\t\trequiredSharedGatewaySessionGeneration: getRequiredSharedGatewaySessionGeneration?.()",
+  "\t\t\t});",
+  "\t\t}",
+].join("\n");
+const AUTH_DEVICE_TOKEN_SQLITE_REPLACEMENT = [
+  "\t\tasync verifyDeviceToken(paramsLocal) {",
+  "\t\t\tconst nemoclawTokenCheck = await verifyDeviceToken({",
+  "\t\t\t\t...paramsLocal,",
+  "\t\t\t\trequiredSharedGatewaySessionGeneration: getRequiredSharedGatewaySessionGeneration?.()",
+  "\t\t\t});",
+  '\t\t\tconst nemoclawAllowedUpgradeScopes = new Set(["operator.pairing", "operator.read", "operator.write"]);',
+  '\t\t\tconst nemoclawScopeUpgradeScopes = Array.isArray(paramsLocal.scopes) ? paramsLocal.scopes.map((scope) => typeof scope === "string" ? scope.trim() : "") : [];',
+  "\t\t\tconst nemoclawCliScopeUpgrade =",
+  "\t\t\t\t!nemoclawTokenCheck.ok &&",
+  '\t\t\t\t(nemoclawTokenCheck.reason === "scope-mismatch" || nemoclawTokenCheck.reason === "scope_mismatch") &&',
+  "\t\t\t\tconnectParams.client.id === GATEWAY_CLIENT_IDS.CLI &&",
+  "\t\t\t\tconnectParams.client.mode === GATEWAY_CLIENT_MODES.CLI &&",
+  '\t\t\t\tparamsLocal.role === "operator" &&',
+  "\t\t\t\tnemoclawScopeUpgradeScopes.length > 0 &&",
+  "\t\t\t\tnemoclawScopeUpgradeScopes.length === new Set(nemoclawScopeUpgradeScopes).size &&",
+  "\t\t\t\tnemoclawScopeUpgradeScopes.every((scope) => scope && nemoclawAllowedUpgradeScopes.has(scope));",
+  `\t\t\treturn nemoclawCliScopeUpgrade ? { ...nemoclawTokenCheck, ok: true } : nemoclawTokenCheck; // ${AUTH_SCOPE_UPGRADE_MARKER} (#4462)`,
+  "\t\t}",
 ].join("\n");
 
 const HANDLER_HELPER = [
@@ -1263,16 +1448,194 @@ const STATE_APPROVAL_PERSIST_REPLACEMENT = [
   "}",
   "async function approveBootstrapDevicePairing(requestId, bootstrapProfile, optionsOrBaseDir, maybeBaseDir) {",
 ].join("\n");
+const STATE_SQLITE_PENDING_TARGET = [
+  "\t\tconst pendingRecord = state.pendingById[requestId];",
+  "\t\tif (!pendingRecord) return null;",
+  "\t\tconst autoApproveScopes = options?.autoApproveNewDeviceScopes;",
+].join("\n");
+const STATE_SQLITE_PENDING_REPLACEMENT = [
+  "\t\tconst pendingRecord = state.pendingById[requestId];",
+  "\t\tif (!pendingRecord) return null;",
+  "\t\tconst nemoclawSelfApprovalScopes = resolveNemoClawSelfApprovalScopes(pendingRecord, options?.callerScopes, options?.nemoclawSelfApprovalIdentity);",
+  "\t\tconst autoApproveScopes = options?.autoApproveNewDeviceScopes;",
+].join("\n");
+const STATE_SQLITE_CALLER_REPLACEMENT = STATE_CALLER_REPLACEMENT;
+const STATE_SQLITE_COMMIT_TARGET = [
+  "\t\t\t}),",
+  "\t\t\tbaseDir",
+  "\t\t});",
+  "\t});",
+  "}",
+  "async function approveBootstrapDevicePairing(requestId, bootstrapProfile, optionsOrBaseDir, maybeBaseDir) {",
+].join("\n");
+const STATE_SQLITE_COMMIT_REPLACEMENT = [
+  "\t\t\t}),",
+  "\t\t\tbaseDir,",
+  "\t\t\tnemoclawSelfApprovalIdentity: nemoclawSelfApprovalScopes ? options?.nemoclawSelfApprovalIdentity : null",
+  "\t\t});",
+  "\t});",
+  "}",
+  "async function approveBootstrapDevicePairing(requestId, bootstrapProfile, optionsOrBaseDir, maybeBaseDir) {",
+].join("\n");
+const STATE_SQLITE_PERSIST_CALL_TARGET =
+  'persistDevicePairingStoreState(state, baseDir, "both", installationIdentityChanged ? { clearApnsNodeIds: [device.deviceId] } : void 0);';
+const STATE_SQLITE_PERSIST_CALL_REPLACEMENT = [
+  'persistDevicePairingStoreState(state, baseDir, "both", params.nemoclawSelfApprovalIdentity ? {',
+  "\t\t...(installationIdentityChanged ? { clearApnsNodeIds: [device.deviceId] } : {}),",
+  "\t\tnemoclawSelfApproval: { requestId, identity: params.nemoclawSelfApprovalIdentity }",
+  "\t} : installationIdentityChanged ? { clearApnsNodeIds: [device.deviceId] } : void 0);",
+].join("\n");
+const STATE_SQLITE_PERSISTENCE_TARGET = [
+  "\t\tconst kysely = getNodeSqliteKysely(db);",
+  '\t\tif (target !== "paired") {',
+].join("\n");
+const STATE_SQLITE_PERSISTENCE_REPLACEMENT = [
+  "\t\tconst kysely = getNodeSqliteKysely(db);",
+  "\t\tconst nemoclawApproval = options?.nemoclawSelfApproval;",
+  "\t\tlet nemoclawAuthTransition = null;",
+  "\t\tif (nemoclawApproval) {",
+  '\t\t\tif (target !== "both") throw new Error("bounded self-approval requires one complete SQLite transaction");',
+  "\t\t\tconst nemoclawIdentity = nemoclawApproval.identity;",
+  "\t\t\tconst nemoclawRequestId = nemoclawApproval.requestId;",
+  '\t\t\tif (!nemoclawIdentity || typeof nemoclawRequestId !== "string" || !nemoclawRequestId.trim() || nemoclawRequestId !== nemoclawRequestId.trim()) throw new Error("invalid bounded self-approval transaction identity");',
+  "\t\t\tconst nemoclawPendingRow = db.prepare(`SELECT device_id, public_key, client_id, client_mode FROM device_pairing_pending WHERE request_id = ?`).get(nemoclawRequestId);",
+  "\t\t\tconst nemoclawPairedRow = db.prepare(`SELECT public_key, tokens_json FROM device_pairing_paired WHERE device_id = ?`).get(nemoclawIdentity.deviceId);",
+  "\t\t\tconst nemoclawAuthRow = db.prepare(`SELECT token, scopes_json FROM device_auth_tokens WHERE device_id = ? AND role = 'operator'`).get(nemoclawIdentity.deviceId);",
+  "\t\t\tlet nemoclawPairedTokens;",
+  "\t\t\tlet nemoclawAuthScopes;",
+  "\t\t\ttry {",
+  "\t\t\t\tnemoclawPairedTokens = JSON.parse(nemoclawPairedRow?.tokens_json);",
+  "\t\t\t\tnemoclawAuthScopes = JSON.parse(nemoclawAuthRow?.scopes_json);",
+  "\t\t\t} catch {}",
+  "\t\t\tconst nemoclawBeforeToken = nemoclawPairedTokens?.operator;",
+  "\t\t\tconst nemoclawNextDevice = state.pairedByDeviceId[nemoclawIdentity.deviceId];",
+  "\t\t\tconst nemoclawNextToken = nemoclawNextDevice?.tokens?.operator;",
+  '\t\t\tconst nemoclawNormalizeScopes = (value) => Array.isArray(value) && value.length === new Set(value).size && value.every((scope) => typeof scope === "string" && ["operator.pairing", "operator.read", "operator.write"].includes(scope)) ? [...value].toSorted() : null;',
+  "\t\t\tconst nemoclawBeforeScopes = nemoclawNormalizeScopes(nemoclawBeforeToken?.scopes);",
+  "\t\t\tconst nemoclawStoredScopes = nemoclawNormalizeScopes(nemoclawAuthScopes);",
+  "\t\t\tconst nemoclawAfterScopes = nemoclawNormalizeScopes(nemoclawNextToken?.scopes);",
+  "\t\t\tif (",
+  "\t\t\t\tnemoclawPendingRow?.device_id !== nemoclawIdentity.deviceId ||",
+  "\t\t\t\tnemoclawPendingRow.public_key !== nemoclawIdentity.publicKey ||",
+  "\t\t\t\tnemoclawPendingRow.client_id !== nemoclawIdentity.clientId ||",
+  "\t\t\t\tnemoclawPendingRow.client_mode !== nemoclawIdentity.clientMode ||",
+  "\t\t\t\tnemoclawPairedRow?.public_key !== nemoclawIdentity.publicKey ||",
+  '\t\t\t\tnemoclawBeforeToken?.role !== "operator" ||',
+  "\t\t\t\tnemoclawBeforeToken.token !== nemoclawIdentity.deviceToken ||",
+  "\t\t\t\tnemoclawAuthRow?.token !== nemoclawIdentity.deviceToken ||",
+  '\t\t\t\tJSON.stringify(nemoclawBeforeScopes) !== JSON.stringify(["operator.pairing"]) ||',
+  "\t\t\t\tJSON.stringify(nemoclawStoredScopes) !== JSON.stringify(nemoclawBeforeScopes) ||",
+  "\t\t\t\tnemoclawNextDevice?.publicKey !== nemoclawIdentity.publicKey ||",
+  '\t\t\t\tnemoclawNextToken?.role !== "operator" ||',
+  '\t\t\t\ttypeof nemoclawNextToken.token !== "string" ||',
+  "\t\t\t\t!nemoclawNextToken.token ||",
+  "\t\t\t\tnemoclawNextToken.token === nemoclawIdentity.deviceToken ||",
+  '\t\t\t\tJSON.stringify(nemoclawAfterScopes) !== JSON.stringify(["operator.pairing", "operator.read", "operator.write"])',
+  '\t\t\t) throw new Error("bounded self-approval SQLite state changed before publication");',
+  "\t\t\tnemoclawAuthTransition = { deviceId: nemoclawIdentity.deviceId, beforeToken: nemoclawIdentity.deviceToken, afterToken: nemoclawNextToken.token, scopes: nemoclawNextToken.scopes };",
+  `\t\t} // ${STATE_TRANSACTION_MARKER} (#4462)`,
+  '\t\tif (target !== "paired") {',
+].join("\n");
+const STATE_SQLITE_AUTH_UPDATE_TARGET = [
+  "\t\tfor (const nodeId of new Set(options?.clearApnsNodeIds ?? [])) clearApnsRegistrationFromDatabase(db, nodeId);",
+].join("\n");
+const STATE_SQLITE_AUTH_UPDATE_REPLACEMENT = [
+  "\t\tif (nemoclawAuthTransition) {",
+  "\t\t\tconst nemoclawUpdatedAtMs = Date.now();",
+  "\t\t\tconst nemoclawUpdate = db.prepare(`UPDATE device_auth_tokens SET token = ?, scopes_json = ?, updated_at_ms = ? WHERE device_id = ? AND role = 'operator' AND token = ?`).run(nemoclawAuthTransition.afterToken, JSON.stringify(nemoclawAuthTransition.scopes), nemoclawUpdatedAtMs, nemoclawAuthTransition.deviceId, nemoclawAuthTransition.beforeToken);",
+  '\t\t\tif (nemoclawUpdate.changes !== 1) throw new Error("bounded self-approval stored-auth fence failed");',
+  "\t\t\tdb.prepare(`UPDATE gateway_origin_device_tokens SET token = ?, scopes_json = ?, updated_at_ms = ? WHERE device_id = ? AND role = 'operator' AND token = ?`).run(nemoclawAuthTransition.afterToken, JSON.stringify(nemoclawAuthTransition.scopes), nemoclawUpdatedAtMs, nemoclawAuthTransition.deviceId, nemoclawAuthTransition.beforeToken);",
+  "\t\t}",
+  "\t\tfor (const nodeId of new Set(options?.clearApnsNodeIds ?? [])) clearApnsRegistrationFromDatabase(db, nodeId);",
+].join("\n");
 
-const FILE_SPECS: FileSpec[] = [
+function patchCurrentDevicesCli(source: string, file: string): PatchResult {
+  let result: ReplacementResult = replaceExactlyOnce(
+    source,
+    CLI_HELPER_ANCHOR,
+    `${CLI_HELPER_SQLITE}${CLI_HELPER_ANCHOR}`,
+    "bounded SQLite devices CLI classifier anchor",
+    file,
+  );
+  if (result.error) return { source, status: "no-match", error: result.error };
+  for (const [target, replacement, label] of [
+    [CLI_TARGET, CLI_REPLACEMENT, "bounded SQLite devices CLI scope-selection target"],
+    [
+      CLI_CALL_GATEWAY_SQLITE_FULL_TARGET,
+      CLI_CALL_GATEWAY_SQLITE_REPLACEMENT,
+      "SQLite devices CLI gateway-call forwarding target",
+    ],
+    [
+      CLI_LIST_SIGNATURE_TARGET,
+      CLI_LIST_SIGNATURE_REPLACEMENT,
+      "SQLite devices CLI bounded pairing-list signature target",
+    ],
+    [
+      CLI_LIST_CALL_SQLITE_TARGET,
+      CLI_LIST_CALL_SQLITE_REPLACEMENT,
+      "SQLite devices CLI bounded pairing-list call target",
+    ],
+    [
+      CLI_CONTEXT_SQLITE_TARGET,
+      CLI_CONTEXT_REPLACEMENT_SQLITE,
+      "SQLite devices CLI pairing-context target",
+    ],
+    [
+      CLI_APPROVE_HEADER_SQLITE_TARGET,
+      CLI_APPROVE_HEADER_SQLITE_REPLACEMENT,
+      "SQLite devices CLI approval-context target",
+    ],
+    [CLI_APPROVE_CALL_TARGET, CLI_APPROVE_CALL_REPLACEMENT, "SQLite stored-auth selection target"],
+    [
+      CLI_ADMIN_RETRY_TARGET_2026_7_1,
+      CLI_ADMIN_RETRY_REPLACEMENT_2026_7_1,
+      "SQLite stored-auth fail-closed retry target",
+    ],
+  ] as const) {
+    result = replaceExactlyOnce(result.source, target, replacement, label, file);
+    if (result.error) return { source, status: "no-match", error: result.error };
+  }
+  return { source: result.source, status: "would-apply" };
+}
+
+function patchCurrentPairingState(source: string, file: string): PatchResult {
+  let result: ReplacementResult = replaceExactlyOnce(
+    source,
+    STATE_FUNCTION_ANCHOR,
+    `${STATE_HELPER}${STATE_FUNCTION_ANCHOR}`,
+    "SQLite pairing self-approval classifier anchor",
+    file,
+  );
+  if (result.error) return { source, status: "no-match", error: result.error };
+  for (const [target, replacement, label] of [
+    [STATE_SQLITE_PENDING_TARGET, STATE_SQLITE_PENDING_REPLACEMENT, "SQLite pending target"],
+    [STATE_CALLER_TARGET, STATE_SQLITE_CALLER_REPLACEMENT, "SQLite caller-scope target"],
+    [STATE_SQLITE_COMMIT_TARGET, STATE_SQLITE_COMMIT_REPLACEMENT, "SQLite approval target"],
+    [
+      STATE_SQLITE_PERSIST_CALL_TARGET,
+      STATE_SQLITE_PERSIST_CALL_REPLACEMENT,
+      "SQLite atomic persistence option target",
+    ],
+  ] as const) {
+    result = replaceExactlyOnce(result.source, target, replacement, label, file);
+    if (result.error) return { source, status: "no-match", error: result.error };
+  }
+  return { source: result.source, status: "would-apply" };
+}
+
+const BASE_FILE_SPECS: FileSpec[] = [
   {
     id: "device-identity",
     label: "device identity runtime",
     marker: DEVICE_IDENTITY_FD_MARKER,
     selector(source) {
       return (
-        source.includes("function normalizeStoredIdentity(parsed) {") &&
-        (source.includes(DEVICE_IDENTITY_LOAD_TARGET) || source.includes(DEVICE_IDENTITY_FD_MARKER))
+        (source.includes("function normalizeStoredIdentity(parsed) {") &&
+          (source.includes(DEVICE_IDENTITY_LOAD_TARGET) ||
+            source.includes(DEVICE_IDENTITY_FD_MARKER))) ||
+        (source.includes("loadDeviceIdentityIfPresent") &&
+          (source.includes(CALL_IDENTITY_RESOLVER_SQLITE_TARGET) ||
+            source.includes(DEVICE_IDENTITY_FD_MARKER)))
       );
     },
     patch(source, file) {
@@ -1291,11 +1654,14 @@ const FILE_SPECS: FileSpec[] = [
         }
         return { source, status: "already-applied" };
       }
+      const sqliteLayout = source.includes(CALL_IDENTITY_RESOLVER_SQLITE_TARGET);
       const result = replaceExactlyOnce(
         source,
-        DEVICE_IDENTITY_LOAD_TARGET,
-        DEVICE_IDENTITY_LOAD_REPLACEMENT,
-        "forced device-identity descriptor target",
+        sqliteLayout ? CALL_IDENTITY_RESOLVER_SQLITE_TARGET : DEVICE_IDENTITY_LOAD_TARGET,
+        sqliteLayout ? CALL_IDENTITY_RESOLVER_SQLITE_REPLACEMENT : DEVICE_IDENTITY_LOAD_REPLACEMENT,
+        sqliteLayout
+          ? "forced SQLite device-identity descriptor target"
+          : "forced device-identity descriptor target",
         file,
       );
       return result.error
@@ -1308,6 +1674,9 @@ const FILE_SPECS: FileSpec[] = [
     label: "gateway call device-identity runtime",
     marker: CALL_STORED_IDENTITY_MARKER,
     selector(source) {
+      const sqliteLayout = source.includes(
+        "function resolveDeviceIdentityForGatewayCall(sharedStateMode) {",
+      );
       return (
         source.includes("function shouldOmitDeviceIdentityForGatewayCall(params) {") &&
         source.includes("const isLocalCliSharedAuth =") &&
@@ -1316,14 +1685,19 @@ const FILE_SPECS: FileSpec[] = [
         (source.includes(CALL_STORED_IDENTITY_TARGET) ||
           source.includes(CALL_STORED_IDENTITY_MARKER)) &&
         (source.includes(CALL_IDENTITY_RESOLVER_TARGET) ||
+          source.includes(CALL_IDENTITY_RESOLVER_SQLITE_TARGET) ||
           source.includes(CALL_EXPECTED_IDENTITY_MARKER)) &&
-        (source.includes(CALL_DISABLE_STORED_AUTH_TARGET) ||
+        (sqliteLayout ||
+          source.includes(CALL_DISABLE_STORED_AUTH_TARGET) ||
           source.includes(CALL_DISABLE_STORED_AUTH_MARKER))
       );
     },
     patch(source, file) {
       let result: ReplacementResult = { source };
       let changed = false;
+      const sqliteLayout = result.source.includes(
+        "function resolveDeviceIdentityForGatewayCall(sharedStateMode) {",
+      );
       if (result.source.includes(CALL_OMIT_IDENTITY_LEGACY_FORCE_LINE)) {
         result = replaceExactlyOnce(
           result.source,
@@ -1338,7 +1712,7 @@ const FILE_SPECS: FileSpec[] = [
         result = replaceExactlyOnce(
           result.source,
           CALL_OMIT_IDENTITY_TARGET,
-          CALL_OMIT_IDENTITY_REPLACEMENT,
+          sqliteLayout ? CALL_OMIT_IDENTITY_SQLITE_REPLACEMENT : CALL_OMIT_IDENTITY_REPLACEMENT,
           "gateway call forced device-identity target",
           file,
         );
@@ -1349,7 +1723,7 @@ const FILE_SPECS: FileSpec[] = [
         result = replaceExactlyOnce(
           result.source,
           CALL_STORED_IDENTITY_TARGET,
-          CALL_STORED_IDENTITY_REPLACEMENT,
+          sqliteLayout ? CALL_STORED_IDENTITY_SQLITE_REPLACEMENT : CALL_STORED_IDENTITY_REPLACEMENT,
           "gateway call stored device-identity target",
           file,
         );
@@ -1372,15 +1746,28 @@ const FILE_SPECS: FileSpec[] = [
       } else if (!result.source.includes(CALL_EXPECTED_IDENTITY_MARKER)) {
         result = replaceExactlyOnce(
           result.source,
-          CALL_IDENTITY_RESOLVER_TARGET,
-          CALL_IDENTITY_RESOLVER_REPLACEMENT,
+          sqliteLayout ? CALL_IDENTITY_RESOLVER_SQLITE_TARGET : CALL_IDENTITY_RESOLVER_TARGET,
+          sqliteLayout
+            ? CALL_IDENTITY_RESOLVER_SQLITE_REPLACEMENT
+            : CALL_IDENTITY_RESOLVER_REPLACEMENT,
           "gateway call expected clone-identity target",
           file,
         );
         if (result.error) return { source, status: "no-match", error: result.error };
         changed = true;
       }
-      if (!result.source.includes(CALL_DISABLE_STORED_AUTH_MARKER)) {
+      if (sqliteLayout && result.source.includes(CALL_OMIT_IDENTITY_CALLSITE_TARGET)) {
+        result = replaceExactlyOnce(
+          result.source,
+          CALL_OMIT_IDENTITY_CALLSITE_TARGET,
+          CALL_OMIT_IDENTITY_CALLSITE_REPLACEMENT,
+          "gateway call device-auth scope target",
+          file,
+        );
+        if (result.error) return { source, status: "no-match", error: result.error };
+        changed = true;
+      }
+      if (!sqliteLayout && !result.source.includes(CALL_DISABLE_STORED_AUTH_MARKER)) {
         result = replaceExactlyOnce(
           result.source,
           CALL_DISABLE_STORED_AUTH_TARGET,
@@ -1399,11 +1786,14 @@ const FILE_SPECS: FileSpec[] = [
     label: "devices CLI approval runtime",
     marker: CLI_MARKER,
     selector(source) {
+      const sqliteLayout = source.includes("callGatewayFromCliWithTransport");
       return (
-        source.includes("async function approvePairingWithFallback(opts, requestId)") &&
+        (source.includes("async function approvePairingWithFallback(opts, requestId)") ||
+          source.includes("async function approvePairingWithFallback(opts, requestId, context)")) &&
         source.includes("function resolveApprovePairingScopesForRequest(request, paired)") &&
         source.includes('callGatewayCli("device.pair.approve"') &&
-        CLI_SELECTOR_DEPENDENCIES.every((dependency) => source.includes(dependency))
+        (sqliteLayout ||
+          CLI_SELECTOR_DEPENDENCIES.every((dependency) => source.includes(dependency)))
       );
     },
     patch(source, file) {
@@ -1455,6 +1845,9 @@ const FILE_SPECS: FileSpec[] = [
           status: "no-match",
           error: `devices CLI approval runtime in ${file}: partial or duplicate patch markers (${appliedMarkerCounts.join(", ")})`,
         };
+      }
+      if (source.includes("callGatewayFromCliWithTransport")) {
+        return patchCurrentDevicesCli(source, file);
       }
       let result = replaceExactlyOnce(
         source,
@@ -1544,16 +1937,30 @@ const FILE_SPECS: FileSpec[] = [
     label: "device-token scope-upgrade gateway auth runtime",
     marker: AUTH_SCOPE_UPGRADE_MARKER,
     selector(source) {
-      return (
-        source.includes("async function resolveConnectAuthDecisionCore(params)") &&
-        source.includes("const authDecision = await resolveConnectAuthDecision({") &&
-        source.includes("verifyDeviceToken: async") &&
-        (source.includes(AUTH_DEVICE_TOKEN_TARGET) || source.includes(AUTH_SCOPE_UPGRADE_MARKER))
-      );
+      return source.includes(AUTH_DEVICE_TOKEN_SQLITE_TARGET) ||
+        source.includes(AUTH_SCOPE_UPGRADE_MARKER)
+        ? source.includes("connectParams.client.id") && source.includes("verifyDeviceToken")
+        : source.includes("async function resolveConnectAuthDecisionCore(params)") &&
+            source.includes("const authDecision = await resolveConnectAuthDecision({") &&
+            source.includes("verifyDeviceToken: async") &&
+            (source.includes(AUTH_DEVICE_TOKEN_TARGET) ||
+              source.includes(AUTH_SCOPE_UPGRADE_MARKER));
     },
     patch(source, file) {
       if (source.includes(AUTH_SCOPE_UPGRADE_MARKER)) {
         return { source, status: "already-applied" };
+      }
+      if (source.includes(AUTH_DEVICE_TOKEN_SQLITE_TARGET)) {
+        const result = replaceExactlyOnce(
+          source,
+          AUTH_DEVICE_TOKEN_SQLITE_TARGET,
+          AUTH_DEVICE_TOKEN_SQLITE_REPLACEMENT,
+          "SQLite gateway device-token scope-upgrade target",
+          file,
+        );
+        return result.error
+          ? { source, status: "no-match", error: result.error }
+          : { source: result.source, status: "would-apply" };
       }
       let result = replaceExactlyOnce(
         source,
@@ -1632,11 +2039,26 @@ const FILE_SPECS: FileSpec[] = [
     selector(source) {
       return (
         source.includes(STATE_FUNCTION_ANCHOR) &&
-        source.includes("const withLock = createAsyncLock();") &&
-        source.includes('await persistState(state, baseDir, "both")')
+        ((source.includes("const withLock = createAsyncLock();") &&
+          source.includes('await persistState(state, baseDir, "both")')) ||
+          source.includes(STATE_SQLITE_PERSIST_CALL_TARGET) ||
+          (source.includes(STATE_MARKER) && source.includes("approveDevicePairingWithOptions")))
       );
     },
     patch(source, file) {
+      const sqliteLayout = source.includes("approveDevicePairingWithOptions");
+      if (sqliteLayout) {
+        const markerCount = countOccurrences(source, STATE_MARKER);
+        if (markerCount === 1) return { source, status: "already-applied" };
+        if (markerCount > 1) {
+          return {
+            source,
+            status: "no-match",
+            error: `canonical SQLite device pairing state runtime in ${file}: duplicate patch marker`,
+          };
+        }
+        return patchCurrentPairingState(source, file);
+      }
       const appliedMarkerCounts = STATE_APPLIED_MARKERS.map((marker) =>
         countOccurrences(source, marker),
       );
@@ -1718,6 +2140,55 @@ const FILE_SPECS: FileSpec[] = [
         : { source: result.source, status: "would-apply" };
     },
   },
+];
+
+const SQLITE_PERSISTENCE_SPEC: FileSpec = {
+  id: "pairing-state-sqlite-persistence",
+  label: "canonical device pairing SQLite persistence runtime",
+  marker: STATE_TRANSACTION_MARKER,
+  selector(source) {
+    return (
+      source.includes(
+        "function persistDevicePairingStoreState(state, baseDir, target, options) {",
+      ) &&
+      (source.includes(STATE_SQLITE_PERSISTENCE_TARGET) ||
+        source.includes(STATE_TRANSACTION_MARKER))
+    );
+  },
+  patch(source, file) {
+    if (source.includes(STATE_TRANSACTION_MARKER)) {
+      return { source, status: "already-applied" };
+    }
+    let result = replaceExactlyOnce(
+      source,
+      STATE_SQLITE_PERSISTENCE_TARGET,
+      STATE_SQLITE_PERSISTENCE_REPLACEMENT,
+      "bounded SQLite transaction preflight target",
+      file,
+    );
+    if (result.error) return { source, status: "no-match", error: result.error };
+    result = replaceExactlyOnce(
+      result.source,
+      STATE_SQLITE_AUTH_UPDATE_TARGET,
+      STATE_SQLITE_AUTH_UPDATE_REPLACEMENT,
+      "bounded SQLite stored-auth update target",
+      file,
+    );
+    return result.error
+      ? { source, status: "no-match", error: result.error }
+      : { source: result.source, status: "would-apply" };
+  },
+};
+
+const hasSqlitePairingPersistence = listJsFiles(distDir).some((file) => {
+  const source = fs.readFileSync(file, "utf8");
+  return source.includes(
+    "function persistDevicePairingStoreState(state, baseDir, target, options) {",
+  );
+});
+const FILE_SPECS: FileSpec[] = [
+  ...BASE_FILE_SPECS,
+  ...(hasSqlitePairingPersistence ? [SQLITE_PERSISTENCE_SPEC] : []),
 ];
 
 function resolveSpecFile(spec: FileSpec, dryRun: boolean): ResolvedSpecFile {
