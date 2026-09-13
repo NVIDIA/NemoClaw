@@ -20,6 +20,42 @@ import {
   validateMxcInspectionBuild,
 } from "../mxc-bash/bash-compat.mts";
 
+export function validateBrowserUseLaunch(
+  actual: any,
+  source: ReturnType<typeof fileIdentity>,
+  runtime: string,
+) {
+  assert.equal(actual?.classification, "owned-browser-use-module-launch");
+  assert.equal(
+    path.win32.normalize(actual.source.path).toLowerCase(),
+    path.win32.normalize(source.path).toLowerCase(),
+  );
+  assert.equal(actual.source.bytes, source.bytes);
+  assert.equal(actual.source.sha256, source.sha256);
+  assert.deepEqual(actual.command, [
+    path.win32.join(runtime, "tools/browser-use/Scripts/python.exe"),
+    "-I",
+    "-B",
+    "-m",
+    "browser_use.cli",
+  ]);
+  assert.equal(
+    actual.modulePath,
+    path.win32.join(runtime, "tools/browser-use/Lib/site-packages/browser_use/cli.py"),
+  );
+  assert.equal(
+    actual.moduleSha256,
+    "9a52306f028230fa471b0887e81b0ab4eccc15dc26be4b0b152bb001ba2977ef",
+  );
+  assert.equal(
+    actual.entryPointsSha256,
+    "444f604c01aadb261d692bf944e9ebc2e39398ef77dcf0a32d550eb25e32e0e1",
+  );
+  assert.equal(actual.trampolineBypassed, true);
+  assert.equal(actual.runtimeBytesModified, false);
+  return actual;
+}
+
 export function validatePersonalCompatibility(
   proof: any,
   build: any,
@@ -601,9 +637,148 @@ export function validateHermesDesktopMask(stderr: string) {
   return row;
 }
 
+export function desktopAbsenceRequest(initial: any) {
+  assert.equal(initial.identityAndCloseVerified, true);
+  assert(initial.ownedNames.length > 0 && initial.ownedNames.length <= 2);
+  const constructors = initial.rows.filter((row: any) => row.stage !== "owner-close");
+  const first = constructors[0];
+  assert(Number.isSafeInteger(first.hostSession) && first.hostSession >= 0);
+  assert.equal(first.stationName?.toLowerCase(), "winsta0");
+  assert.match(first.hostUserSid, /^S-1-5-(?:[0-9]+-)*[0-9]+$/u);
+  for (const row of constructors) {
+    assert.equal(row.hostSession, first.hostSession);
+    assert.equal(row.stationName?.toLowerCase(), "winsta0");
+    assert.equal(row.hostUserSid, first.hostUserSid);
+  }
+  const closes = initial.rows.filter((row: any) => row.stage === "owner-close");
+  for (const row of closes) {
+    assert.equal(row.clock, "GetTickCount64");
+    assert(
+      Number.isSafeInteger(row.absenceCheckedTickMilliseconds) &&
+        row.absenceCheckedTickMilliseconds >= 0,
+    );
+  }
+  return {
+    schemaVersion: 1,
+    classification: "post-executor-desktop-absence-request",
+    afterDropTick: Math.max(...closes.map((row: any) => row.absenceCheckedTickMilliseconds)),
+    executorClosed: true,
+    binding: initial.binding,
+    hostSession: first.hostSession,
+    stationName: first.stationName,
+    hostUserSid: first.hostUserSid,
+    appContainerSid: initial.appContainerSid,
+    names: initial.ownedNames,
+  };
+}
+
+function validateDesktopAbsence(initial: any, post: any) {
+  assert.equal(post.attempted, true);
+  assert.deepEqual(post.request, desktopAbsenceRequest(initial));
+  const execution = post.execution;
+  assert.equal(execution.childClosed, true);
+  assert.equal(execution.timedOut, false);
+  assert.equal(execution.outputExceeded, false);
+  assert.equal(execution.exitCode, 0);
+  assert.equal(execution.error, null);
+  const receipt = post.receipt.value;
+  assert.equal(receipt.schemaVersion, 1);
+  assert.equal(receipt.classification, "post-executor-desktop-absence");
+  assert.equal(receipt.requestSha256, post.requestIdentity.sha256);
+  assert.deepEqual(receipt.binding, initial.binding);
+  assert.equal(receipt.appContainerSid, initial.appContainerSid);
+  assert.equal(receipt.contextMatched, true);
+  assert.equal(receipt.clock, "GetTickCount64");
+  assert(
+    Number.isSafeInteger(receipt.startedTick) && receipt.startedTick >= post.request.afterDropTick,
+  );
+  assert(
+    Number.isSafeInteger(receipt.completedTick) && receipt.completedTick >= receipt.startedTick,
+  );
+  assert.equal(receipt.context.hostSession, post.request.hostSession);
+  assert.equal(receipt.context.stationName.toLowerCase(), "winsta0");
+  assert.equal(receipt.context.hostUserSid, post.request.hostUserSid);
+  assert.equal(receipt.context.tokenHandleClosed, true);
+  assert.equal(receipt.context.sidBufferFreed, true);
+  assert.equal(receipt.attemptsPerName, 1);
+  assert.equal(receipt.selectionAttempted, false);
+  assert.equal(receipt.mutationAttempted, false);
+  assert.equal(receipt.enumerationAttempted, false);
+  assert.equal(receipt.error, null);
+  assert.deepEqual(
+    receipt.rows.map((row: any) => row.name),
+    initial.ownedNames,
+  );
+  for (const row of receipt.rows) {
+    assert(Number.isSafeInteger(row.startedTick) && row.startedTick >= receipt.startedTick);
+    assert(
+      Number.isSafeInteger(row.completedTick) &&
+        row.completedTick >= row.startedTick &&
+        row.completedTick <= receipt.completedTick,
+    );
+    assert.equal(row.requestedAccess, 0x20000);
+    assert.equal(row.openFlags, 0);
+    assert.equal(row.inheritRequested, false);
+    assert.equal(row.present, false, "Owned desktop remains present after executor exit.");
+    assert.equal(row.absent, true);
+    assert([2, 3].includes(row.openError), "Post-executor lookup was not an observed absence.");
+    assert.equal(row.lookupHandleClosed, true);
+    assert.equal(row.closeError, 0);
+  }
+  assert.equal(receipt.passed, true);
+}
+
+export async function observeHermesDesktopCleanup(
+  execution: Awaited<ReturnType<typeof personalCommand>>,
+  binding: { executable: string; policyFile: string; requestSha256: string; containerId: string },
+  controllerPython: string,
+  environment: NodeJS.ProcessEnv,
+  output: string,
+) {
+  const initial = inspectHermesDesktopCleanup(execution, binding);
+  if (!initial.identityAndCloseVerified || !initial.ownedNames.length) return initial;
+  const post: any = {
+    request: null,
+    execution: null,
+    receipt: null,
+    attempted: false,
+    error: null,
+  };
+  try {
+    post.request = desktopAbsenceRequest(initial);
+    post.controllerPython = fileIdentity(controllerPython);
+    assert.equal(
+      post.controllerPython.sha256,
+      "54e17da389d3aae8c56b08a06fea5cd2f5acd57d2a7acb4061fc572964d4108b",
+    );
+    const helper = fileURLToPath(new URL("./probe-desktop-absence.py", import.meta.url));
+    post.helper = fileIdentity(helper);
+    const requestFile = path.join(output, "desktop-absence-request.json");
+    const responseFile = path.join(output, "desktop-absence-result.json");
+    fs.writeFileSync(requestFile, JSON.stringify(post.request, null, 2) + "\n", { flag: "wx" });
+    post.requestIdentity = fileIdentity(requestFile);
+    post.attempted = true;
+    post.execution = await personalCommand(
+      controllerPython,
+      ["-I", "-B", helper, "--request", requestFile, "--output", responseFile],
+      stockBrowserEnvironment(environment),
+      output,
+      5_000,
+    );
+    assert.equal(fileIdentity(helper).sha256, post.helper.sha256);
+    post.receipt = receiptDocument(responseFile);
+  } catch (error) {
+    post.error = errorDetail(error);
+  }
+  const final = inspectHermesDesktopCleanup(execution, binding, post);
+  final.observerClosed = !post.attempted || post.execution?.childClosed === true;
+  return final;
+}
+
 export function inspectHermesDesktopCleanup(
   execution: ReturnType<typeof personalCommand> extends Promise<infer T> ? T : never,
   binding: { executable: string; policyFile: string; requestSha256: string; containerId: string },
+  postExecutorObservation?: any,
 ) {
   const record: any = {
     schemaVersion: 1,
@@ -613,6 +788,13 @@ export function inspectHermesDesktopCleanup(
     rows: [],
     ownedNames: [],
     rootIdentityCrossChecked: false,
+    identityAndCloseVerified: false,
+    observerClosed:
+      !postExecutorObservation?.attempted ||
+      postExecutorObservation.execution?.childClosed === true,
+    immediateDropAbsencePassed: false,
+    immediateDropAbsenceError: null,
+    postExecutorObservation: postExecutorObservation ?? null,
     passed: false,
     error: null,
   };
@@ -744,15 +926,30 @@ export function inspectHermesDesktopCleanup(
       assert.equal(row.closed, true, "Host CloseDesktop did not succeed.");
       assert.equal(row.closeError, 0);
       assert.equal(row.presenceHandleClosed, true, "Post-close lookup handle did not close.");
-      assert.equal(
-        row.absentAfterOwnerClose,
-        true,
-        "Desktop absence was not observed after owner close.",
-      );
-      assert(
-        [2, 3].includes(row.absenceError),
-        "Desktop absence must be a missing-object result, not an unavailable lookup.",
-      );
+    }
+    record.identityAndCloseVerified = true;
+    try {
+      for (const row of closes) {
+        assert.equal(
+          row.absentAfterOwnerClose,
+          true,
+          "Desktop absence was not observed after owner close.",
+        );
+        assert(
+          [2, 3].includes(row.absenceError),
+          "Desktop absence must be a missing-object result, not an unavailable lookup.",
+        );
+      }
+      record.immediateDropAbsencePassed = true;
+    } catch (error) {
+      record.immediateDropAbsenceError = errorDetail(error);
+    }
+    if (postExecutorObservation) {
+      record.stage = "post-executor-absence";
+      assert.equal(postExecutorObservation.error, null);
+      validateDesktopAbsence(record, postExecutorObservation);
+    } else if (!record.immediateDropAbsencePassed) {
+      throw new Error(record.immediateDropAbsenceError.message);
     }
     record.stage = "complete";
     record.passed = true;
@@ -829,6 +1026,7 @@ export async function directBrowserDiagnostic(
   expectedPython: { bytes: number; sha256: string },
   command: typeof personalCommand = personalCommand,
   executorVariant: "patched" | "stock" | "stock-debug" | "patched-primary-debug" = "patched",
+  controllerPython?: string,
 ) {
   const primaryPlan =
     executorVariant === "patched-primary-debug"
@@ -846,7 +1044,7 @@ export async function directBrowserDiagnostic(
     profileDeletionClosed: true,
     profileDeleted: true,
     ownedRootRemoved: true,
-    ...(primaryPlan ? { hostDesktopsReleased: false } : {}),
+    ...(primaryPlan ? { hostDesktopsReleased: false, desktopObserverClosed: true } : {}),
   };
   const record: Record<string, any> = {
     schemaVersion: 1,
@@ -922,6 +1120,7 @@ export async function directBrowserDiagnostic(
         "probe-component-workload.mts",
         "probe-personal-workload.mts",
         "probe-personal-python.py",
+        "nemoclaw_browser_use.py",
       ];
       record.controllerFiles = files.map((name) => {
         const source = path.win32.join(primaryPlan.sourceController, name);
@@ -976,12 +1175,19 @@ export async function directBrowserDiagnostic(
     record.execution = execution;
     cleanup.executorClosed = execution.childClosed;
     if (primaryPlan && execution.childClosed) {
-      record.hostDesktopCleanup = inspectHermesDesktopCleanup(execution, {
-        executable: mxc,
-        policyFile: policy,
-        requestSha256: record.requestSha256,
-        containerId: request.containerId,
-      });
+      record.hostDesktopCleanup = await observeHermesDesktopCleanup(
+        execution,
+        {
+          executable: mxc,
+          policyFile: policy,
+          requestSha256: record.requestSha256,
+          containerId: request.containerId,
+        },
+        controllerPython!,
+        environment,
+        output,
+      );
+      cleanup.desktopObserverClosed = record.hostDesktopCleanup.observerClosed !== false;
       cleanup.hostDesktopsReleased = record.hostDesktopCleanup.passed === true;
       if (!cleanup.hostDesktopsReleased)
         record.cleanupErrors.push({ hostDesktopCleanup: record.hostDesktopCleanup.error });
@@ -993,6 +1199,13 @@ export async function directBrowserDiagnostic(
       assert.equal(workload.nonce, nonce);
       assert.equal(workload.components?.length, 4);
       record.workload = workload;
+      if (workload.passed === true)
+        validateBrowserUseLaunch(
+          workload.components.find((row: any) => row.component === "browser")?.result
+            ?.browserLauncherAdaptation,
+          fileIdentity(path.win32.join(primaryPlan.controller, "nemoclaw_browser_use.py")),
+          runtime,
+        );
       record.result = { passed: workload.passed === true };
     } else record.result = parseComponent(execution.stdout, "browser", nonce);
     record.operationSucceeded =
@@ -1039,7 +1252,10 @@ export async function directBrowserDiagnostic(
       record.cleanupErrors.push(...removed.errors);
     }
     record.attempted = attempted;
-    record.childrenClosed = cleanup.executorClosed && cleanup.profileDeletionClosed;
+    record.childrenClosed =
+      cleanup.executorClosed &&
+      cleanup.profileDeletionClosed &&
+      cleanup.desktopObserverClosed !== false;
     record.cleanupComplete =
       record.childrenClosed &&
       cleanup.profileDeleted &&
@@ -1569,11 +1785,27 @@ async function main() {
       "probe-component-workload.mts",
       "probe-personal-workload.mts",
       "probe-personal-python.py",
+      "nemoclaw_browser_use.py",
     ])
       fs.copyFileSync(
         fileURLToPath(new URL("./" + name, import.meta.url)),
         path.join(launcher, name),
       );
+    const browserAdapterSource = fileIdentity(
+      fileURLToPath(new URL("./nemoclaw_browser_use.py", import.meta.url)),
+    );
+    const browserAdapterStaged = fileIdentity(path.join(launcher, "nemoclaw_browser_use.py"));
+    assert.equal(browserAdapterStaged.bytes, browserAdapterSource.bytes);
+    assert.equal(browserAdapterStaged.sha256, browserAdapterSource.sha256);
+    const browserAdapterDocument = path.join(output, "current-browser-use-adapter.py");
+    fs.copyFileSync(browserAdapterStaged.path, browserAdapterDocument, fs.constants.COPYFILE_EXCL);
+    const browserAdapterRetained = fileIdentity(browserAdapterDocument);
+    assert.equal(browserAdapterRetained.sha256, browserAdapterSource.sha256);
+    receipt.browserUseLaunchAdapter = {
+      source: browserAdapterSource,
+      staged: browserAdapterStaged,
+      document: browserAdapterRetained,
+    };
     const workloadInput = validatePersonalWorkloadInput(
       {
         schemaVersion: 1,
@@ -1615,13 +1847,20 @@ async function main() {
     receipt.execution = execution;
     cleanup.executorClosed = execution.childClosed;
     if (execution.childClosed) {
-      const desktopCleanup = inspectHermesDesktopCleanup(execution, {
-        executable: mxc,
-        policyFile: policy,
-        requestSha256: receipt.requestSha256 as string,
-        containerId: request.containerId,
-      });
+      const desktopCleanup = await observeHermesDesktopCleanup(
+        execution,
+        {
+          executable: mxc,
+          policyFile: policy,
+          requestSha256: receipt.requestSha256 as string,
+          containerId: request.containerId,
+        },
+        hostControllerPython,
+        environment,
+        output,
+      );
       receipt.hostDesktopCleanup = desktopCleanup;
+      browserDiagnosticChildrenClosed &&= desktopCleanup.observerClosed !== false;
       cleanup.hostDesktopsReleased = desktopCleanup.passed === true;
       if (!cleanup.hostDesktopsReleased) errors.push({ hostDesktopCleanup: desktopCleanup.error });
     }
@@ -1646,7 +1885,7 @@ async function main() {
       (receipt.workload as any)?.nonce === nonce &&
       (receipt.workload as any)?.passed === true &&
       (receipt.workload as any)?.components?.length === 4;
-    if (execution.childClosed && !primaryOperationsPassed) {
+    if (execution.childClosed && browserDiagnosticChildrenClosed && !primaryOperationsPassed) {
       // Run the same bytes after containment has ended, so a host process
       // cannot initialize MSYS state before the canonical contained attempt.
       const hostEnvironment = Object.fromEntries(
@@ -1683,6 +1922,12 @@ async function main() {
       | undefined;
     if (workload?.nonce !== nonce || workload.passed !== true || workload.components?.length !== 4)
       throw new Error("One or more canonical Personal component operations failed.");
+    validateBrowserUseLaunch(
+      (workload.components as any[]).find((row) => row.component === "browser")?.result
+        ?.browserLauncherAdaptation,
+      browserAdapterStaged,
+      runtime,
+    );
     if (desktopMaskFailure) throw desktopMaskFailure;
     const log = fs
       .readFileSync(path.join(output, "mxc-native.log"), "utf8")
@@ -1796,6 +2041,7 @@ async function main() {
             python,
             command,
             variant,
+            hostControllerPython,
           );
           receipt[key] = diagnostic;
           browserDiagnosticChildrenClosed = diagnostic.childrenClosed;

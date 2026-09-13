@@ -32,6 +32,29 @@ def owned_file(file, root):
     return _regular_file(Path(file), root)
 
 
+def apply_browser_launch_adapter(root):
+    """Apply the same owned helper used by installed startup, outside the base."""
+    import importlib.util
+    import nemoclaw_native_windows as native
+    from tools import browser_use_cli
+
+    file = Path(__file__).with_name("nemoclaw_browser_use.py")
+    owned_file(file, file.parent)
+    content = file.read_bytes()
+    spec = importlib.util.spec_from_file_location("nc_current_browser_use", file)
+    helper = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(helper)
+    result = helper.adapt(browser_use_cli, root, native)
+    if file.read_bytes() != content:
+        raise ValueError("The staged Browser Use adapter changed during loading.")
+    result["source"] = {
+        "path": str(file),
+        "bytes": len(content),
+        "sha256": hashlib.sha256(content).hexdigest(),
+    }
+    return result
+
+
 def python_check(root, nonce):
     expected = (
         root
@@ -1420,6 +1443,8 @@ def main():
             and all(value in "0123456789abcdef" for value in nonce)
         )
         root = owned_runtime(directory)
+        if kind == "browser":
+            result["browserLauncherAdaptation"] = apply_browser_launch_adapter(root)
         # Retain the old prelude's actual Windows outcome separately; it is
         # not used as authority or allowed to prevent the component operation.
         try:

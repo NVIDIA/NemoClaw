@@ -16,7 +16,9 @@ import {
   stockBrowserEnvironment,
   validateHermesDesktopMask,
   inspectHermesDesktopCleanup,
+  desktopAbsenceRequest,
   validateStockBrowserExecutor,
+  validateBrowserUseLaunch,
   hostBrowserCompletion,
   stockDebugCompletion,
   completedPersonalReplayPin,
@@ -31,6 +33,53 @@ const browserRuntime = "C:\\NemoClawHermesProbe-274d797050ea";
 const browserOriginalNonce = "00112233445566778899aabb";
 const browserNewNonce = "ffeeddccbbaa998877665544";
 const browserController = "C:\\NemoClawPersonalNode-001122334455";
+
+test("Browser Use launch binds current helper bytes and the packaged module command", () => {
+  const source = {
+    path: path.win32.join(browserController, "nemoclaw_browser_use.py"),
+    bytes: 123,
+    sha256: "a".repeat(64),
+    peMachine: null,
+    architecture: "non-PE-or-unknown",
+  };
+  const observed = {
+    classification: "owned-browser-use-module-launch",
+    source: { path: source.path, bytes: source.bytes, sha256: source.sha256 },
+    command: [
+      path.win32.join(browserRuntime, "tools/browser-use/Scripts/python.exe"),
+      "-I",
+      "-B",
+      "-m",
+      "browser_use.cli",
+    ],
+    modulePath: path.win32.join(
+      browserRuntime,
+      "tools/browser-use/Lib/site-packages/browser_use/cli.py",
+    ),
+    moduleSha256: "9a52306f028230fa471b0887e81b0ab4eccc15dc26be4b0b152bb001ba2977ef",
+    entryPointsSha256: "444f604c01aadb261d692bf944e9ebc2e39398ef77dcf0a32d550eb25e32e0e1",
+    trampolineBypassed: true,
+    runtimeBytesModified: false,
+  };
+  assert.equal(validateBrowserUseLaunch(observed, source, browserRuntime), observed);
+  assert.throws(() =>
+    validateBrowserUseLaunch(
+      { ...observed, source: { ...observed.source, sha256: "b".repeat(64) } },
+      source,
+      browserRuntime,
+    ),
+  );
+  assert.throws(() =>
+    validateBrowserUseLaunch(
+      { ...observed, command: ["C:\\host\\python.exe", ...observed.command.slice(1)] },
+      source,
+      browserRuntime,
+    ),
+  );
+  assert.throws(() =>
+    validateBrowserUseLaunch({ ...observed, runtimeBytesModified: true }, source, browserRuntime),
+  );
+});
 
 const desktopOwnerBinding = {
   executable: "C:\\native\\wxc-exec.exe",
@@ -48,6 +97,9 @@ function desktopOwnerRows(): any[] {
     rootPid: 400,
     appContainerSid: desktopOwnerSid,
     actualJobAndAppContainerBound: true,
+    hostSession: 2,
+    stationName: "WinSta0",
+    hostUserSid: "S-1-5-21-123-456-789-500",
     hostDesktopSelected: false,
     existingObjectSecurityChanged: false,
     desktopName: `NemoClawHermesDesktop-${desktopOwnerSid}-${labelVariant}`,
@@ -63,6 +115,8 @@ function desktopOwnerRows(): any[] {
       schemaVersion: 1,
       classification: "owned-Hermes-desktop",
       stage: "owner-close",
+      clock: "GetTickCount64",
+      absenceCheckedTickMilliseconds: 100,
       desktopName,
       closed: true,
       closeError: 0,
@@ -1239,4 +1293,139 @@ test("full replay post-inventory rejects changed, missing, and additional bytes"
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
+});
+
+function postDesktopObservation(initial: any) {
+  const request = desktopAbsenceRequest(initial);
+  return {
+    attempted: true,
+    request,
+    requestIdentity: { sha256: "b".repeat(64) },
+    error: null,
+    execution: {
+      childClosed: true,
+      timedOut: false,
+      outputExceeded: false,
+      exitCode: 0,
+      error: null,
+    },
+    receipt: {
+      value: {
+        schemaVersion: 1,
+        classification: "post-executor-desktop-absence",
+        requestSha256: "b".repeat(64),
+        binding: initial.binding,
+        appContainerSid: initial.appContainerSid,
+        contextMatched: true,
+        context: {
+          hostSession: 2,
+          stationName: "WinSta0",
+          hostUserSid: request.hostUserSid,
+          tokenHandleClosed: true,
+          sidBufferFreed: true,
+        },
+        clock: "GetTickCount64",
+        startedTick: 120,
+        completedTick: 122,
+        rows: initial.ownedNames.map((name: string) => ({
+          name,
+          requestedAccess: 0x20000,
+          openFlags: 0,
+          inheritRequested: false,
+          present: false,
+          absent: true,
+          openError: 2,
+          lookupHandleClosed: true,
+          closeError: 0,
+          startedTick: 120,
+          completedTick: 121,
+        })),
+        attemptsPerName: 1,
+        selectionAttempted: false,
+        mutationAttempted: false,
+        enumerationAttempted: false,
+        error: null,
+        passed: true,
+      },
+    },
+  };
+}
+
+test("post-executor desktop absence preserves Drop failure and requires exact later readback", () => {
+  const rows = desktopOwnerRows();
+  rows[2].absentAfterOwnerClose = false;
+  rows[2].absenceError = null;
+  const execution = desktopOwnerExecution(rows),
+    initial = inspectHermesDesktopCleanup(execution, desktopOwnerBinding);
+  assert.equal(initial.passed, false);
+  assert.equal(initial.identityAndCloseVerified, true);
+  const post = postDesktopObservation(initial);
+  const accepted = inspectHermesDesktopCleanup(execution, desktopOwnerBinding, post);
+  assert.equal(accepted.passed, true);
+  assert.equal(accepted.immediateDropAbsencePassed, false);
+  assert.match(accepted.immediateDropAbsenceError.message, /absence/u);
+  assert.equal(accepted.observerClosed, true);
+  for (const change of [
+    (x: any) => (x.receipt.value.rows[0].present = true),
+    (x: any) => (x.receipt.value.rows[0].openError = 5),
+    (x: any) => (x.receipt.value.rows[0].lookupHandleClosed = false),
+    (x: any) => (x.receipt.value.rows[0].name = "Default"),
+    (x: any) => (x.receipt.value.context.hostSession = 3),
+    (x: any) => (x.receipt.value.startedTick = 99),
+    (x: any) => (x.receipt.value.binding.executorPid = 999),
+    (x: any) => (x.receipt.value.requestSha256 = "c".repeat(64)),
+    (x: any) => (x.execution.exitCode = 1),
+    (x: any) => (x.execution.outputExceeded = true),
+  ]) {
+    const bad = structuredClone(post);
+    change(bad);
+    assert.equal(inspectHermesDesktopCleanup(execution, desktopOwnerBinding, bad).passed, false);
+  }
+  for (const execution of [{ ...post.execution, childClosed: false }, null]) {
+    const unclosed = { ...post, execution, error: { message: "unconfirmed observer" } };
+    const value = inspectHermesDesktopCleanup(
+      desktopOwnerExecution(rows),
+      desktopOwnerBinding,
+      unclosed,
+    );
+    assert.equal(value.passed, false);
+    assert.equal(value.observerClosed, false);
+  }
+  rows[3].closed = false;
+  assert.equal(
+    inspectHermesDesktopCleanup(desktopOwnerExecution(rows), desktopOwnerBinding, post).passed,
+    false,
+  );
+});
+
+test("fixed desktop observer rejects unowned names/context and never accepts present or inaccessible lookups", () => {
+  const helper = fileURLToPath(new URL("./probe-desktop-absence.py", import.meta.url));
+  const program = String.raw`
+import importlib.util,json,sys
+spec=importlib.util.spec_from_file_location('desktop',sys.argv[1]);m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
+r=json.loads(sys.argv[2])
+class API:
+ def __init__(self,error=2,present=False,closed=True,session=2):self.error=error;self.present=present;self.closed=closed;self.session=session;self.names=[]
+ def tick(self):return 120
+ def context(self):return {'hostSession':self.session,'stationName':'WinSta0','hostUserSid':r['hostUserSid'],'tokenHandleClosed':True,'sidBufferFreed':True}
+ def observe(self,name):
+  self.names.append(name)
+  return {'name':name,'absent':not self.present and self.error in (2,3),'lookupHandleClosed':self.closed,'closeError':0 if self.closed else 5}
+for error,present,closed,passed in [(2,False,True,True),(3,False,True,True),(5,False,True,False),(0,True,True,False),(0,True,False,False)]:
+ api=API(error,present,closed);value=m.observe(r,api);assert value['passed']==passed and api.names==r['names']
+for bad in [dict(r,names=['Default']),dict(r,executorClosed=False),dict(r,afterDropTick=121)]:
+ try:m.observe(bad,API());raise AssertionError('unexpected acceptance')
+ except ValueError:pass
+api=API(session=3)
+try:m.observe(r,api);raise AssertionError('unexpected context acceptance')
+except ValueError:assert not api.names
+print('9 bounded desktop observer controls passed; no Windows execution')
+`;
+  const request = desktopAbsenceRequest(
+    inspectHermesDesktopCleanup(desktopOwnerExecution(), desktopOwnerBinding),
+  );
+  const result = spawnSync("python3", ["-B", "-c", program, helper, JSON.stringify(request)], {
+    encoding: "utf8",
+  });
+  assert.equal(result.status, 0, result.stdout + result.stderr);
 });

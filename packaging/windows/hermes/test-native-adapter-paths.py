@@ -4,6 +4,7 @@
 """Actual-file adapter path controls; Windows/MXC execution is a separate gate."""
 
 import importlib.util
+import hashlib
 import json
 import os
 from pathlib import Path, PureWindowsPath
@@ -19,9 +20,97 @@ SOURCE = Path(__file__).absolute().with_name("nemoclaw_native_windows.py")
 spec = importlib.util.spec_from_file_location("native_adapter_path_controls", SOURCE)
 adapter = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(adapter)
+browser_spec = importlib.util.spec_from_file_location(
+    "browser_use_adapter_controls", SOURCE.with_name("nemoclaw_browser_use.py")
+)
+browser_adapter = importlib.util.module_from_spec(browser_spec)
+browser_spec.loader.exec_module(browser_adapter)
 
 
 class AdapterPathControls(unittest.TestCase):
+    def browser_fixture(self):
+        module = ModuleType(browser_adapter.MODULE)
+        module.__file__ = str(self.root / "hermes-agent" / browser_adapter.RELATIVE)
+        module._find_cli = lambda: self.fail("The unowned resolver was called")
+        for relative, content in (
+            ("hermes-agent/" + browser_adapter.RELATIVE, b"owned Hermes policy"),
+            (browser_adapter.PYTHON, b"owned interpreter fixture"),
+            (browser_adapter.CLI, b"owned CLI fixture"),
+            (browser_adapter.ENTRY_POINTS, b"owned entrypoint fixture"),
+        ):
+            file = self.root / relative
+            file.parent.mkdir(parents=True, exist_ok=True)
+            file.write_bytes(content)
+        return module
+
+    def test_browser_module_route_preserves_owned_command_without_realpath(self):
+        module = self.browser_fixture()
+        with (
+            patch.object(adapter, "_active_root", self.root),
+            patch.object(
+                browser_adapter,
+                "CLI_SHA256",
+                hashlib.sha256(b"owned CLI fixture").hexdigest(),
+            ),
+            patch.object(
+                browser_adapter,
+                "ENTRY_POINTS_SHA256",
+                hashlib.sha256(b"owned entrypoint fixture").hexdigest(),
+            ),
+            patch.object(Path, "resolve", side_effect=PermissionError("WinError 5")),
+            patch.object(
+                os.path, "realpath", side_effect=PermissionError("WinError 5")
+            ),
+        ):
+            result = browser_adapter.adapt(module, self.root, adapter)
+            expected = [
+                str(self.root / browser_adapter.PYTHON),
+                "-I",
+                "-B",
+                "-m",
+                "browser_use.cli",
+            ]
+            self.assertEqual(module._find_cli(), expected)
+            self.assertEqual(result["command"], expected)
+            self.assertFalse(result["runtimeBytesModified"])
+            (self.root / browser_adapter.PYTHON).unlink()
+            with self.assertRaises(adapter.NativeStartupRefusal):
+                module._find_cli()
+
+    def test_browser_entry_read_failure_uses_primary_startup_refusal(self):
+        module = self.browser_fixture()
+        with (
+            patch.object(adapter, "_active_root", self.root),
+            patch.object(Path, "read_bytes", side_effect=PermissionError("WinError 5")),
+            self.assertRaises(adapter.NativeStartupRefusal),
+        ):
+            browser_adapter.adapt(module, self.root, adapter)
+
+    def test_browser_companion_reuses_native_loader_and_is_idempotent(self):
+        fake = ModuleType("nemoclaw_native_windows")
+        fake._active_root = self.root
+        fake._MODULES = {}
+        calls = []
+        fake._adapt_module = lambda *args: calls.append(args)
+        fake._refuse = adapter._refuse
+        with (
+            patch.dict(sys.modules, {"nemoclaw_native_windows": fake}),
+            patch.object(browser_adapter, "os", SimpleNamespace(name="nt")),
+            patch.object(browser_adapter, "_installed_root", None),
+            patch.object(browser_adapter, "adapt") as adapt,
+        ):
+            browser_adapter.install()
+            installed = fake._adapt_module
+            browser_adapter.install()
+            self.assertIs(installed, fake._adapt_module)
+            self.assertEqual(
+                fake._MODULES, {browser_adapter.MODULE: browser_adapter.RELATIVE}
+            )
+            target = ModuleType(browser_adapter.MODULE)
+            fake._adapt_module(target, self.root, self.bash)
+            self.assertEqual(calls, [(target, self.root, self.bash)])
+            adapt.assert_called_once_with(target, self.root, fake)
+
     def setUp(self):
         self.fixture = tempfile.TemporaryDirectory(prefix="native-adapter-path-")
         self.addCleanup(self.fixture.cleanup)
