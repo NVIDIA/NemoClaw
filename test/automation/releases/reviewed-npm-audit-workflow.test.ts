@@ -356,8 +356,19 @@ describe("trusted npm audit workflow (#5896)", () => {
         label: "OpenClaw 2026.9.1 locked runtime graph",
         packageSpecs: ["openclaw@2026.9.1"],
       },
+      scanner: {
+        name: "npm audit",
+        nodeVersion: process.version,
+        npmVersion: REVIEWED_AUDIT_CONFIG.npmVersion,
+      },
     });
     expect(fixture.lockedReceipt).toBeDefined();
+    expect(fixture.npmCalls).toContain(
+      JSON.stringify(["view", "openclaw@2026.9.1", "dist.integrity"]),
+    );
+    expect(fixture.npmCalls).toContain(
+      JSON.stringify(["view", "openclaw@2026.9.1", "dist.tarball"]),
+    );
     expect(fixture.npmCalls).toContain(JSON.stringify(NPM_AUDIT_SIGNATURE_ARGV));
   });
 

@@ -788,7 +788,7 @@ function auditLockedGraph(
   return { identity, result };
 }
 
-export function lockedGraphAuditProvenance(
+function lockedGraphAuditProvenance(
   identity: LockedGraphIdentity,
   nodeVersion: string,
   npmVersion: string,
