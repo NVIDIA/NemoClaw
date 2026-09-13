@@ -558,7 +558,9 @@ export async function launchForwardService(
     try {
       await Promise.race([
         options.sleep
-          ? options.sleep(POLL_INTERVAL_MS)
+          ? Promise.resolve(options.sleep(POLL_INTERVAL_MS)).then(() =>
+              delay(0, undefined, { signal: controller.signal }),
+            )
           : delay(POLL_INTERVAL_MS, undefined, { signal: controller.signal }),
         failed,
       ]);

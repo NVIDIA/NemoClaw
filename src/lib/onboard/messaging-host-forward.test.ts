@@ -116,16 +116,22 @@ describe("ensureMessagingHostForwardIfConfigured", () => {
   });
 
   it("starts the active messaging host forward", async () => {
-    const ensureForward = vi.fn(() => true);
+    let finishForward!: (ready: boolean) => void;
+    const forwarded = new Promise<boolean>((resolve) => {
+      finishForward = resolve;
+    });
+    const ensureForward = vi.fn(() => forwarded);
     const note = vi.fn();
 
-    const ok = await ensureMessagingHostForwardIfConfigured({
+    const pending = ensureMessagingHostForwardIfConfigured({
       sandboxName: "demo",
       plan: makePlan(),
       ensureForward,
       note,
     });
-
+    expect(note).not.toHaveBeenCalled();
+    finishForward(true);
+    const ok = await pending;
     expect(ok).toBe(true);
     expect(ensureForward).toHaveBeenCalledWith("demo", 3978, "Microsoft Teams webhook");
     expect(note).toHaveBeenCalledWith(

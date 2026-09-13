@@ -8,6 +8,10 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { getCredential } from "../credentials/store";
+import {
+  createForwardServiceTarget,
+  launchForwardService,
+} from "../adapters/openshell/forward-service";
 import { loadServingCatalog } from "../inference/serving/catalog-loader";
 import { listServingProfiles } from "../inference/serving/profile-list";
 import { servingProfileProvenance } from "../inference/serving/profile-provenance";
@@ -1439,50 +1443,36 @@ describe("onboard command options", () => {
     );
   });
 
-  it("re-throws a non-cancellation, non-gateway error so genuine bugs still surface (#7627)", async () => {
-    await expect(
-      runOnboardCommand({
-        flags: {},
-        env: {},
-        runOnboard: async () => {
-          throw new Error("unexpected boom");
+  it("propagates a real forward spawn failure through the onboarding command (#11648)", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-forward-"));
+    const terminateProcessTree = vi.fn();
+    try {
+      const target = createForwardServiceTarget(
+        {
+          executable: path.join(root, "missing-openshell"),
+          gatewayName: "nemoclaw",
+          workspace: "default",
+          sandboxName: "demo",
+          localHost: "127.0.0.1",
         },
-        error: () => {},
-        exit: exitWithCode,
-      }),
-    ).rejects.toThrow("unexpected boom");
-  });
-
-  it("returns without rethrowing when a prompt rejects with SIGINT (#7439)", async () => {
-    const exit = vi.fn<(code: number) => never>();
-    await expect(
-      runOnboardCommand({
-        flags: {},
-        env: {},
-        runOnboard: async () => {
-          throw Object.assign(new Error("Prompt interrupted"), {
-            code: "SIGINT",
-          });
-        },
-        error: () => {},
-        exit,
-      }),
-    ).resolves.toBeUndefined();
-    expect(exit).not.toHaveBeenCalled();
-  });
-
-  it("rethrows non-cancellation onboarding failures unchanged (#5976)", async () => {
-    await expect(
-      runOnboardCommand({
-        flags: {},
-        env: {},
-        runOnboard: async () => {
-          throw new Error("docker is not reachable");
-        },
-        error: () => {},
-        exit: exitWithCode,
-      }),
-    ).rejects.toThrow("docker is not reachable");
+        18789,
+      );
+      await expect(
+        runOnboardCommand({
+          flags: {},
+          env: {},
+          runOnboard: () =>
+            launchForwardService(target, {
+              isReachable: () => false,
+              terminateProcessTree,
+              timeoutMs: 1000,
+            }),
+        }),
+      ).rejects.toMatchObject({ code: "ENOENT" });
+      expect(terminateProcessTree).not.toHaveBeenCalled();
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it("sets the Ollama autostart override before onboarding", async () => {

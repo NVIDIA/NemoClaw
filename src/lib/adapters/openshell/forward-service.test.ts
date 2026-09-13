@@ -383,7 +383,11 @@ describe("OpenShell forward service", () => {
     expect(probe).toHaveBeenCalledOnce();
   });
 
-  it("returns a missing executable error to the caller without an uncaught child error (#11648)", async () => {
+  it.each([
+    { wait: "default", sleep: undefined },
+    { wait: "synchronous hook", sleep: () => undefined },
+    { wait: "settled hook", sleep: async () => undefined },
+  ])("returns a missing executable error with $wait (#11648)", async ({ sleep }) => {
     const root = mkdtempSync(path.join(os.tmpdir(), "nemoclaw-forward-spawn-"));
     temporaryDirectories.push(root);
     const terminateProcessTree = vi.fn();
@@ -395,6 +399,7 @@ describe("OpenShell forward service", () => {
           isReachable: () => false,
           terminateProcessTree,
           timeoutMs: 1_000,
+          sleep,
         },
       ),
     ).rejects.toMatchObject({ code: "ENOENT" });
