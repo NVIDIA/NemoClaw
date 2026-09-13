@@ -129,7 +129,8 @@ $$nemoclaw <sandbox-name> doctor
 ```
 
 Save both results.
-The expected status line is `Portable lifecycle phase: active`.
+The expected status line is `Saved Portable lifecycle phase: active`.
+Status also prints `Runtime and agent health: not probed`.
 The expected doctor line is `Portable lifecycle: agent=Hermes; phase=active`.
 These results prove only that the lifecycle receipt and sandbox registry agree.
 They do not prove that the Podman runner returned to stopped.

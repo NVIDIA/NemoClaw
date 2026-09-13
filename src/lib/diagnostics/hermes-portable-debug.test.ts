@@ -8,18 +8,8 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
-  disposition: vi.fn(),
   legacyDebug: vi.fn(),
-  guard: vi.fn(),
   capture: vi.fn(),
-}));
-vi.mock("../onboard/experimental/hermes-portable-receipt", async (original) => ({
-  ...(await original<typeof import("../onboard/experimental/hermes-portable-receipt")>()),
-  inspectPortableAgentReceiptAuthorityForClassification: mocks.disposition,
-}));
-vi.mock("../state/portable-uninstall-retirement", async (original) => ({
-  ...(await original<typeof import("../state/portable-uninstall-retirement")>()),
-  assertNoHermesPortableHostAuthority: mocks.guard,
 }));
 vi.mock("../adapters/openshell/client", async (original) => ({
   ...(await original<typeof import("../adapters/openshell/client")>()),
@@ -30,35 +20,51 @@ vi.mock("./debug", async (original) => ({
   runDebug: mocks.legacyDebug,
 }));
 
+import { loadAgent } from "../agent/defs";
+import { createHermesPortableLifecycleTestReceipt } from "../onboard/experimental/hermes-portable-lifecycle.test-fixture";
+import { hermesPortableReceiptDirectory } from "../onboard/experimental/hermes-portable-receipt";
+
 import { buildDebugCommandDeps } from "./debug-command-deps";
 import { runDebugCommandWithOptions } from "./debug-command";
 import { inspectHermesPortableDebugSummary } from "./hermes-portable-debug";
 
 describe("Portable debug", () => {
+  let directory: string;
+  let receiptDirectory: string;
   beforeEach(() => {
     vi.resetAllMocks();
     vi.spyOn(console, "log").mockImplementation(() => undefined);
-    mocks.disposition.mockReturnValue({
-      kind: "hermes",
-      snapshot: {
-        receipt: {
-          phase: "active",
-          gatewayName: "private-gateway-canary",
-          lifecycleGeneration: "private-generation-canary",
-          liveIdentityFingerprint: "private-identity-canary",
-        },
-      },
+    directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-portable-debug-test-"));
+    vi.stubEnv("HOME", directory);
+    const stateDir = path.join(directory, ".nemoclaw");
+    fs.mkdirSync(stateDir, { mode: 0o700 });
+    const policyPath = path.join(directory, "policy.yaml");
+    fs.writeFileSync(policyPath, "version: 1\nnetwork_policies: {}\n", { mode: 0o600 });
+    createHermesPortableLifecycleTestReceipt({
+      agent: loadAgent("hermes"),
+      stateDir,
+      policyPath,
+      homeDir: directory,
+      sandboxName: "alpha",
+      gatewayName: "private-gateway-canary",
+      lifecycleGeneration: "private-generation-canary",
+      containerId: "a".repeat(64),
+      imageDigest: "b".repeat(64),
+      sandboxId: "private-sandbox-id",
+      labels: { "openshell.managed": "true" },
     });
+    receiptDirectory = hermesPortableReceiptDirectory("alpha", stateDir);
     mocks.capture.mockImplementation(() => {
       throw new Error("runtime must remain offline");
     });
   });
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+    fs.rmSync(directory, { recursive: true, force: true });
   });
 
   it("archives only selected retained state while the registry and runtime are unavailable", async () => {
-    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-portable-debug-test-"));
     const output = path.join(directory, "debug.tar.gz");
     try {
       await runDebugCommandWithOptions(
@@ -78,7 +84,9 @@ describe("Portable debug", () => {
         agentHealth: "not-probed",
       });
       expect(report).not.toContain("private-");
-      expect(mocks.disposition).toHaveBeenCalledWith("alpha", expect.any(String));
+      expect(report).not.toContain(directory);
+      expect(report).not.toContain("a".repeat(64));
+      expect(fs.existsSync(path.join(directory, ".nemoclaw", "sandboxes.json"))).toBe(false);
       expect(mocks.capture).not.toHaveBeenCalled();
       expect(mocks.legacyDebug).not.toHaveBeenCalled();
     } finally {
@@ -87,39 +95,31 @@ describe("Portable debug", () => {
   });
 
   it("refuses malformed selected authority before creating output", async () => {
-    mocks.disposition.mockImplementation(() => {
-      throw new Error("invalid selected receipt");
-    });
+    const output = path.join(directory, "debug.tar.gz");
+    fs.writeFileSync(path.join(receiptDirectory, "active.json"), "{invalid json", { mode: 0o600 });
     await expect(
-      runDebugCommandWithOptions({ sandboxName: "beta" }, buildDebugCommandDeps(process.cwd())),
-    ).rejects.toThrow("invalid selected receipt");
-    expect(mocks.disposition).toHaveBeenCalledWith("beta", expect.any(String));
+      runDebugCommandWithOptions(
+        { sandboxName: "alpha", output },
+        buildDebugCommandDeps(process.cwd()),
+      ),
+    ).rejects.toThrow("is malformed or is not strict UTF-8");
+    expect(fs.existsSync(output)).toBe(false);
     expect(mocks.capture).not.toHaveBeenCalled();
     expect(mocks.legacyDebug).not.toHaveBeenCalled();
   });
 
   it("retains the host guard before entering legacy collection for another sandbox", () => {
-    mocks.disposition.mockReturnValue({ kind: "none" });
-    mocks.guard.mockImplementation(() => {
-      throw new Error("Portable authority exists");
-    });
     expect(() => buildDebugCommandDeps(process.cwd()).runDebug({ sandboxName: "beta" })).toThrow(
-      "Portable authority exists",
+      /Portable|portable/,
     );
     expect(mocks.capture).not.toHaveBeenCalled();
     expect(mocks.legacyDebug).not.toHaveBeenCalled();
   });
 
   it("reports a pending receipt without claiming registry publication or live health", () => {
-    mocks.disposition.mockReturnValue({
-      kind: "hermes",
-      snapshot: {
-        receipt: {
-          phase: "pending",
-          gatewayName: "gateway-alpha",
-        },
-      },
-    });
+    // Retain the valid pending phase and its durable policy, before later phases exist.
+    fs.unlinkSync(path.join(receiptDirectory, "active.json"));
+    fs.unlinkSync(path.join(receiptDirectory, "configuring.json"));
     expect(inspectHermesPortableDebugSummary("alpha")?.report).toMatchObject({
       savedLifecyclePhase: "pending",
       runtimeHealth: "not-probed",
