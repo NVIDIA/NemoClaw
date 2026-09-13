@@ -849,40 +849,43 @@ describe("maintainer PR comparator contributor compliance", () => {
     expect(comparatorOutput.details.ci_missing_required_checks).toEqual(["checks"]);
   });
 
-  it("keeps the former PR E2E gate advisory after its retirement from merge readiness (#8445)", () => {
-    const fixture = {
-      body: "Signed-off-by: Example User <user@example.com>",
-      verified: true,
-      statusChecks: [
-        ...successfulRequiredChecks(),
-        {
-          __typename: "CheckRun",
-          name: "E2E / PR Gate",
-          workflowName: "E2E / PR Gate Controller",
-          detailsUrl: "https://github.com/NVIDIA/NemoClaw/runs/8000",
-          startedAt: "2026-01-01T00:01:30Z",
-          status: "COMPLETED",
-          conclusion: "FAILURE",
-        },
-      ],
-    };
+  it.each(["E2E / PR Gate", "E2E / PR Gate / Rollup", "E2E / PR Gate Coordination"])(
+    "keeps the former %s check advisory after its retirement from merge readiness (#8445)",
+    (name) => {
+      const fixture = {
+        body: "Signed-off-by: Example User <user@example.com>",
+        verified: true,
+        statusChecks: [
+          ...successfulRequiredChecks(),
+          {
+            __typename: "CheckRun",
+            name,
+            workflowName: "E2E / PR Gate Controller",
+            detailsUrl: "https://github.com/NVIDIA/NemoClaw/runs/8000",
+            startedAt: "2026-01-01T00:01:30Z",
+            status: "COMPLETED",
+            conclusion: "FAILURE",
+          },
+        ],
+      };
 
-    expect(JSON.parse(runGate(fixture).stdout)).toMatchObject({
-      allPass: true,
-      gates: { ci: { pass: true } },
-    });
-    expect(
-      JSON.parse(
-        runComparatorGate({
-          body: fixture.body,
-          verified: fixture.verified,
-          checkNames: [...REQUIRED_CHECK_NAMES, "E2E / PR Gate"],
-          checkConclusions: { "E2E / PR Gate": "FAILURE" },
-          checkWorkflows: { "E2E / PR Gate": "E2E / PR Gate Controller" },
-        }).stdout,
-      ).gates.ci_green_sha,
-    ).toBe(true);
-  });
+      expect(JSON.parse(runGate(fixture).stdout)).toMatchObject({
+        allPass: true,
+        gates: { ci: { pass: true } },
+      });
+      expect(
+        JSON.parse(
+          runComparatorGate({
+            body: fixture.body,
+            verified: fixture.verified,
+            checkNames: [...REQUIRED_CHECK_NAMES, name],
+            checkConclusions: { [name]: "FAILURE" },
+            checkWorkflows: { [name]: "E2E / PR Gate Controller" },
+          }).stdout,
+        ).gates.ci_green_sha,
+      ).toBe(true);
+    },
+  );
 
   it.each([
     ["E2E / PR Gate", "CI / Unexpected"],
