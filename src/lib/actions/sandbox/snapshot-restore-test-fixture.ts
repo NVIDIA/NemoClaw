@@ -51,7 +51,8 @@ export type SandboxRecord = {
   hermesDashboardPort?: number | null;
   hermesDashboardInternalPort?: number | null;
   hermesDashboardTui?: boolean;
-  mcp?: SandboxEntry["mcp"];
+  /** Legacy test input consumed only by the source-inspection mock. */
+  mcp?: { bridges?: Record<string, import("./mcp-bridge-contracts").McpSourceEntry> };
 };
 export { type DcodeProbeState, dcodeProbeOutput } from "./dcode-probe-test-fixture";
 
@@ -198,7 +199,7 @@ export const removeSandboxMock = vi.fn();
 export const updateSandboxMock = vi.fn();
 export const finalizePendingSandboxRegistrationMock = vi.fn();
 export const restoreSandboxStateMock = vi.fn();
-export const restoreDeepAgentsManagedMcpProjectionMock = vi.fn();
+export const restoreDeepAgentsNativeMcpConfigMock = vi.fn();
 export const getMcpProviderInspectionRuntimeSelectionMock = vi.fn(() => ({
   gatewayName: "nemoclaw-8091",
   workspace: "default",
@@ -365,12 +366,19 @@ vi.mock("./restore-gateway-pairing", () => ({
 
 vi.mock("./mcp-bridge-adapter-deepagents-registration", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./mcp-bridge-adapter-deepagents-registration")>()),
-  restoreDeepAgentsManagedMcpProjection: restoreDeepAgentsManagedMcpProjectionMock,
+  restoreDeepAgentsNativeMcpConfig: restoreDeepAgentsNativeMcpConfigMock,
 }));
 
 vi.mock("./mcp-bridge-provider-inspection", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./mcp-bridge-provider-inspection")>()),
   getMcpProviderInspectionRuntimeSelection: getMcpProviderInspectionRuntimeSelectionMock,
+}));
+
+vi.mock("./mcp-bridge-source", () => ({
+  inspectAgentMcpSources: (sandbox: SandboxRecord) => ({
+    native: sandbox.mcp?.bridges ?? {},
+    legacy: {},
+  }),
 }));
 
 export function resetSnapshotRestoreMocks(): void {
@@ -432,7 +440,7 @@ export function resetSnapshotRestoreMocks(): void {
     failedDirs: [],
     failedFiles: [],
   });
-  restoreDeepAgentsManagedMcpProjectionMock.mockReset();
+  restoreDeepAgentsNativeMcpConfigMock.mockReset();
   getMcpProviderInspectionRuntimeSelectionMock.mockClear();
   streamSandboxCreateMock.mockImplementation(async () => ({
     status: 0,

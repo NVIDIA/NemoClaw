@@ -27,8 +27,19 @@ const START_FAILURE_RETURN_PATTERN = [
   "\t\t\t\t\t\t\t\tdiagnostics: diags",
   "\t\t\t\t\t\t\t};",
 ].join("\n");
-const ACQUIRE_LEASE_PATTERN = ["\t\tacquireLease() {", "\t\t\tactiveLeases += 1;"].join("\n");
-const TRANSPORT_FACTORY_PATTERN = "function resolveMcpTransport(serverName, rawServer) {";
+const LIST_TOOLS_PATTERN = [
+  "\t\t\t\t\t\t\tconst listedTools = await listAllToolsBestEffort({",
+  "\t\t\t\t\t\t\t\tclient: session.client,",
+  "\t\t\t\t\t\t\t\ttimeoutMs: getCatalogListTimeoutMs(rawServer, resolved.requestTimeoutMs),",
+  "\t\t\t\t\t\t\t\tsuppressUnsupported: Boolean(!capabilities.tools && (capabilities.resources || capabilities.prompts))",
+  "\t\t\t\t\t\t\t});",
+].join("\n");
+const ACQUIRE_LEASE_PATTERN = [
+  "\t\tacquireLease() {",
+  "\t\t\tactiveLeases += 1;",
+].join("\n");
+const TRANSPORT_FACTORY_PATTERN =
+  "function resolveMcpTransport(serverName, rawServer) {";
 const LOG_WARN_PATTERN = "logWarn(";
 
 const PREPARED_ENTRY_20260901_PATTERN = [
@@ -66,10 +77,14 @@ const UNPATCHED_TARGET_PATTERNS = [
   TASK_OPEN_PATTERN,
   TASK_CLOSE_PATTERN,
   START_FAILURE_RETURN_PATTERN,
+  LIST_TOOLS_PATTERN,
   ACQUIRE_LEASE_PATTERN,
 ];
 /** Anchors this patch only reads; the retry reuses the upstream transport factory. */
-const REQUIRED_PATTERNS = [...UNPATCHED_TARGET_PATTERNS, TRANSPORT_FACTORY_PATTERN];
+const REQUIRED_PATTERNS = [
+  ...UNPATCHED_TARGET_PATTERNS,
+  TRANSPORT_FACTORY_PATTERN,
+];
 
 const TASK_OPEN_REPLACEMENT = [
   "\t\t\t\t\ttasks: preparedEntries.map(({ serverName, rawServer, resolved, safeServerName }) => nemoClawWithMcpStartRetry({",
@@ -94,6 +109,22 @@ const START_FAILURE_RETURN_REPLACEMENT = [
   "\t\t\t\t\t\t\t\t\treusedSession",
   "\t\t\t\t\t\t\t\t}",
   "\t\t\t\t\t\t\t};",
+].join("\n");
+const LIST_TOOLS_REPLACEMENT = [
+  "\t\t\t\t\t\t\tlet listedTools = await listAllToolsBestEffort({",
+  "\t\t\t\t\t\t\t\tclient: session.client,",
+  "\t\t\t\t\t\t\t\ttimeoutMs: getCatalogListTimeoutMs(rawServer, resolved.requestTimeoutMs),",
+  "\t\t\t\t\t\t\t\tsuppressUnsupported: Boolean(!capabilities.tools && (capabilities.resources || capabilities.prompts))",
+  "\t\t\t\t\t\t\t});",
+  '\t\t\t\t\t\t\tif (resolved.transportType === "streamable-http" && capabilities.tools && listedTools.length === 0) {',
+  '\t\t\t\t\t\t\t\tlogWarn(`bundle-mcp: tool-capable server "${serverName}" returned an empty initial tool list; retrying once on the established transport.`);',
+  "\t\t\t\t\t\t\t\tawait nemoClawMcpRetryDelay();",
+  "\t\t\t\t\t\t\t\tlistedTools = await listAllToolsBestEffort({",
+  "\t\t\t\t\t\t\t\t\tclient: session.client,",
+  "\t\t\t\t\t\t\t\t\ttimeoutMs: getCatalogListTimeoutMs(rawServer, resolved.requestTimeoutMs),",
+  "\t\t\t\t\t\t\t\t\tsuppressUnsupported: false",
+  "\t\t\t\t\t\t\t\t});",
+  "\t\t\t\t\t\t\t}",
 ].join("\n");
 const ACQUIRE_LEASE_REPLACEMENT = [
   "\t\tacquireLease() {",
@@ -140,12 +171,14 @@ const LEGACY_SHAPE = {
     TASK_OPEN_REPLACEMENT,
     TASK_CLOSE_REPLACEMENT,
     START_FAILURE_RETURN_REPLACEMENT,
+    LIST_TOOLS_REPLACEMENT,
     ACQUIRE_LEASE_REPLACEMENT,
   ],
   replacements: [
     [TASK_OPEN_PATTERN, TASK_OPEN_REPLACEMENT],
     [TASK_CLOSE_PATTERN, TASK_CLOSE_REPLACEMENT],
     [START_FAILURE_RETURN_PATTERN, START_FAILURE_RETURN_REPLACEMENT],
+    [LIST_TOOLS_PATTERN, LIST_TOOLS_REPLACEMENT],
     [ACQUIRE_LEASE_PATTERN, ACQUIRE_LEASE_REPLACEMENT],
   ],
 } as const;
@@ -156,6 +189,7 @@ const SHAPE_20260901 = {
     TASK_OPEN_20260901_PATTERN,
     TASK_CLOSE_20260901_PATTERN,
     START_FAILURE_RETURN_20260901_PATTERN,
+    LIST_TOOLS_PATTERN,
     ACQUIRE_LEASE_PATTERN,
   ],
   required: [
@@ -163,6 +197,7 @@ const SHAPE_20260901 = {
     TASK_OPEN_20260901_PATTERN,
     TASK_CLOSE_20260901_PATTERN,
     START_FAILURE_RETURN_20260901_PATTERN,
+    LIST_TOOLS_PATTERN,
     ACQUIRE_LEASE_PATTERN,
     TRANSPORT_FACTORY_IMPORT_20260901_PATTERN,
   ],
@@ -172,13 +207,18 @@ const SHAPE_20260901 = {
     TASK_OPEN_20260901_REPLACEMENT,
     TASK_CLOSE_20260901_REPLACEMENT,
     START_FAILURE_RETURN_20260901_REPLACEMENT,
+    LIST_TOOLS_REPLACEMENT,
     ACQUIRE_LEASE_REPLACEMENT,
   ],
   replacements: [
     [PREPARED_ENTRY_20260901_PATTERN, PREPARED_ENTRY_20260901_REPLACEMENT],
     [TASK_OPEN_20260901_PATTERN, TASK_OPEN_20260901_REPLACEMENT],
     [TASK_CLOSE_20260901_PATTERN, TASK_CLOSE_20260901_REPLACEMENT],
-    [START_FAILURE_RETURN_20260901_PATTERN, START_FAILURE_RETURN_20260901_REPLACEMENT],
+    [
+      START_FAILURE_RETURN_20260901_PATTERN,
+      START_FAILURE_RETURN_20260901_REPLACEMENT,
+    ],
+    [LIST_TOOLS_PATTERN, LIST_TOOLS_REPLACEMENT],
     [ACQUIRE_LEASE_PATTERN, ACQUIRE_LEASE_REPLACEMENT],
   ],
 } as const;
@@ -187,10 +227,12 @@ const SHAPE_20260901 = {
  * Injected compatibility runtime for OpenClaw `bundle-mcp`.
  *
  * Retries exactly one classified transient Streamable HTTP server *startup*
- * failure with a fresh transport and bounded jitter, and stops a catalog that
- * carries any server diagnostic from becoming the session's stable catalog. A
- * credential, TLS, policy, or configuration rejection is never retried, and
- * keeps its own diagnostic.
+ * failure with a fresh transport and bounded jitter. A tool-capable
+ * Streamable HTTP server that returns an empty initial list receives one
+ * idempotent list retry on the established transport. The patch also stops a
+ * catalog that carries any server diagnostic from becoming the session's
+ * stable catalog. A credential, TLS, policy, or configuration rejection is
+ * never retried, and keeps its own diagnostic.
  */
 export const INJECTED_START_RETRY_HELPER = [
   MARKER,
@@ -351,7 +393,9 @@ function readOpenClawVersion(distDir: string): string {
     );
   }
   if (typeof payload.version !== "string") {
-    throw new Error(`OpenClaw package metadata missing string version at ${packageJsonPath}`);
+    throw new Error(
+      `OpenClaw package metadata missing string version at ${packageJsonPath}`,
+    );
   }
   return payload.version;
 }
@@ -371,17 +415,22 @@ function listJsFiles(dir: string): string[] {
   for (const entry of entries) {
     const entryPath = path.join(dir, entry.name);
     if (entry.isDirectory()) files.push(...listJsFiles(entryPath));
-    else if (entry.isFile() && entry.name.endsWith(".js")) files.push(entryPath);
+    else if (entry.isFile() && entry.name.endsWith(".js"))
+      files.push(entryPath);
   }
   return files.sort();
 }
 
 /** Fail closed: a recognized bundle-mcp runtime must expose every patch anchor exactly once. */
-export function patchBundleMcpRuntimeText(source: string, filePath: string): PatchTextResult {
+export function patchBundleMcpRuntimeText(
+  source: string,
+  filePath: string,
+): PatchTextResult {
   const currentLayout =
     source.includes(TASK_OPEN_20260901_PATTERN) ||
     source.includes(TASK_OPEN_20260901_REPLACEMENT) ||
-    (source.includes("policyToolEntries: []") && source.includes("launchDescription"));
+    (source.includes("policyToolEntries: []") &&
+      source.includes("launchDescription"));
   const shape = currentLayout ? SHAPE_20260901 : LEGACY_SHAPE;
   if (source.includes(MARKER)) {
     for (const pattern of shape.patched) {
@@ -403,7 +452,9 @@ export function patchBundleMcpRuntimeText(source: string, filePath: string): Pat
   }
 
   if (!source.includes(LOG_WARN_PATTERN)) {
-    throw new Error(`${filePath}: bundle-mcp runtime lacks the expected logWarn diagnostic helper`);
+    throw new Error(
+      `${filePath}: bundle-mcp runtime lacks the expected logWarn diagnostic helper`,
+    );
   }
   for (const pattern of shape.required) {
     const count = countOccurrences(source, pattern);
@@ -416,13 +467,16 @@ export function patchBundleMcpRuntimeText(source: string, filePath: string): Pat
 
   const importMatch = source.match(/^(?:import[^\n]*\n)+/);
   if (!importMatch) {
-    throw new Error(`${filePath}: bundle-mcp runtime has no import prologue to anchor the helper`);
+    throw new Error(
+      `${filePath}: bundle-mcp runtime has no import prologue to anchor the helper`,
+    );
   }
 
   let text = `${source.slice(0, importMatch[0].length)}${INJECTED_START_RETRY_HELPER}${source.slice(
     importMatch[0].length,
   )}`;
-  for (const [upstream, patched] of shape.replacements) text = text.replace(upstream, patched);
+  for (const [upstream, patched] of shape.replacements)
+    text = text.replace(upstream, patched);
 
   for (const pattern of shape.patched) {
     const count = countOccurrences(text, pattern);
@@ -455,12 +509,18 @@ export function patchOpenClawMcpReliability(distDir: string): {
   const resolvedDist = path.resolve(distDir);
   const version = readOpenClawVersion(resolvedDist);
   const target = resolveBundleMcpRuntimeFile(resolvedDist);
-  const result = patchBundleMcpRuntimeText(fs.readFileSync(target, "utf-8"), target);
+  const result = patchBundleMcpRuntimeText(
+    fs.readFileSync(target, "utf-8"),
+    target,
+  );
   if (result.patched) fs.writeFileSync(target, result.text);
   return { status: result.status, file: target, version };
 }
 
-export function auditOpenClawMcpReliability(distDir: string): { file: string; version: string } {
+export function auditOpenClawMcpReliability(distDir: string): {
+  file: string;
+  version: string;
+} {
   const resolvedDist = path.resolve(distDir);
   const version = readOpenClawVersion(resolvedDist);
   const target = resolveBundleMcpRuntimeFile(resolvedDist);
@@ -470,7 +530,9 @@ export function auditOpenClawMcpReliability(distDir: string): { file: string; ve
   }
   const result = patchBundleMcpRuntimeText(source, target);
   if (result.status !== "already-patched") {
-    throw new Error(`${target}: MCP startup recovery patch state is not stable`);
+    throw new Error(
+      `${target}: MCP startup recovery patch state is not stable`,
+    );
   }
   return { file: target, version };
 }
