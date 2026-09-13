@@ -4,9 +4,9 @@
   "baseSha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
   "expectedSpecialists": ["first", "second"],
   "deterministic": {
-    "version": 23,
+    "version": 24,
     "headSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-    "planHash": "59382646287943f44ab820a5ebb0e8be6b177140c960ff97847d542488bb8048",
+    "planHash": "c7da215512915d7992f721468e05c0624d2fb07225a597d2093984158127c796",
     "changedFiles": ["docs/example.mdx"],
     "tier": 0,
     "families": [],

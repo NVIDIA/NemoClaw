@@ -18,7 +18,7 @@ const protectedManagedImageContract = (
 const { PROTECTED_MANAGED_IMAGE_ACTIVATION_PATH, PROTECTED_MANAGED_IMAGE_MULTIARCH_JOB_ID } =
   protectedManagedImageContract;
 
-export const RISK_PLAN_VERSION = 23 as const;
+export const RISK_PLAN_VERSION = 24 as const;
 
 export const PR_E2E_TYPED_TARGET_IDS = [
   "ubuntu-repo-cloud-langchain-deepagents-code",
@@ -65,6 +65,32 @@ export const GATEWAY_TOPOLOGY_FILES = [
   "src/lib/onboard/runtime-provider/contract.ts",
   "src/lib/onboard/runtime-provider/podman-host-local-inference.ts",
 ] as const;
+// These surfaces own the preinstalled gateway and recovery-to-launch path exercised on Brev.
+// Keep unit tests and agent-specific neighbors outside this live recommendation.
+const BREV_LAUNCHABLE_FILES = new Set([
+  "test/e2e/fixtures/full-e2e-gateway.ts",
+  "test/e2e/live/full-e2e.test.ts",
+  "test/e2e/live/launch-agent-turn.ts",
+  "tools/e2e/brev-launchable-e2e.sh",
+  "src/lib/onboard/gateway-binding.ts",
+  "src/lib/onboard/gateway-binding/identity.ts",
+  "src/lib/onboard/gateway-management.ts",
+  "src/lib/onboard/gateway-ownership.ts",
+  "src/lib/onboard/gateway-teardown-authority.ts",
+  "src/lib/onboard/gateway-host-runtime.ts",
+  "src/lib/onboard/agent-dashboard-forward.ts",
+  "src/lib/onboard/dashboard-forward-control.ts",
+  "src/lib/onboard/dashboard.ts",
+  "src/lib/adapters/openshell/forward-service.ts",
+  "src/lib/adapters/openshell/local-forward-listener.ts",
+  "src/lib/actions/sandbox/forward-recovery.ts",
+  "src/lib/actions/sandbox/forward-health.ts",
+  "src/lib/actions/sandbox/process-recovery.ts",
+  "src/lib/actions/sandbox/status/process-recovery.ts",
+  "src/lib/actions/sandbox/connect.ts",
+  "src/lib/actions/sandbox/terminal-connect-probe.ts",
+  "src/lib/actions/sandbox/launch-readiness.ts",
+]);
 const GATEWAY_TOPOLOGY_FILE_SET = new Set<string>(GATEWAY_TOPOLOGY_FILES);
 const MANAGED_STARTUP_E2E_JOB_IDS = [
   "device-auth-health",
@@ -203,6 +229,7 @@ export type RiskTier = 0 | 1 | 2 | 3;
 export type RiskFamilyId =
   | "lifecycle-state"
   | "gateway-topology"
+  | "brev-launchable"
   | "upgrade-rebuild"
   | "shared-agent"
   | "inference-policy"
@@ -446,6 +473,19 @@ export function focusedPrE2eJobsForChangedFiles(
 }
 
 export const RISK_RULES: readonly RiskRule[] = [
+  {
+    id: "brev-launchable",
+    summary:
+      "Verify preinstalled gateway ownership and post-recovery launch on the baked Brev image. A maintainer must authorize the standalone staging-brev-launchable run.",
+    tier: 2,
+    requiredJobs: ["staging-brev-launchable"],
+    invariants: [
+      "gateway discovery and cleanup respect the image-declared platform owner",
+      "recovery, probe-only connect, and launch preserve forward listener ownership",
+      "the full Launchable scenario runs; identity smoke alone does not prove runtime recovery",
+    ],
+    matches: (file) => BREV_LAUNCHABLE_FILES.has(file),
+  },
   {
     id: "lifecycle-state",
     summary:

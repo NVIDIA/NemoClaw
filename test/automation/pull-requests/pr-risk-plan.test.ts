@@ -142,7 +142,7 @@ describe("deterministic PR risk plan", () => {
     const second = plan("src/lib/onboard.ts", "src/lib/state/registry.ts");
 
     expect(first).toEqual(second);
-    expect(first.version).toBe(23);
+    expect(first.version).toBe(24);
     expect(first.headSha).toBe(HEAD_SHA);
     expect(first.planHash).toMatch(/^[a-f0-9]{64}$/u);
     expect(first.changedFiles).toEqual(["src/lib/onboard.ts", "src/lib/state/registry.ts"]);
@@ -1096,5 +1096,63 @@ describe("deterministic PR risk plan", () => {
     const configuredJobs = new Set(RISK_RULES.flatMap((rule) => rule.requiredJobs));
 
     expect([...configuredJobs].filter((job) => !allowedJobs.has(job))).toEqual([]);
+  });
+});
+
+describe("Brev Launchable recommendations", () => {
+  it.each([
+    ["image-declared gateway", "test/e2e/fixtures/full-e2e-gateway.ts"],
+    ["platform gateway ownership", "src/lib/onboard/gateway-management.ts"],
+    ["gateway naming", "src/lib/onboard/gateway-binding/identity.ts"],
+    ["listener identity", "src/lib/adapters/openshell/forward-service.ts"],
+    ["listener reachability", "src/lib/adapters/openshell/local-forward-listener.ts"],
+    ["forward recovery", "src/lib/actions/sandbox/forward-recovery.ts"],
+    ["process recovery", "src/lib/actions/sandbox/process-recovery.ts"],
+    ["probe and connect", "src/lib/actions/sandbox/connect.ts"],
+    ["dashboard startup", "src/lib/onboard/agent-dashboard-forward.ts"],
+    ["preinstalled scenario", "test/e2e/live/full-e2e.test.ts"],
+    ["Launchable deployment", "tools/e2e/brev-launchable-e2e.sh"],
+  ])("recommends full Brev coverage for %s changes", (_behavior, file) => {
+    const result = buildRiskPlan({ headSha: HEAD_SHA, changedFiles: [file] });
+    expect(result.requiredJobs).toContainEqual(
+      expect.objectContaining({
+        id: "staging-brev-launchable",
+        matchedFiles: [file],
+        reasons: [
+          expect.stringContaining("preinstalled gateway ownership and post-recovery launch"),
+        ],
+      }),
+    );
+    expect(riskPlanRequiredJobIds(result)).not.toContain("staging-brev-launchable-identity");
+  });
+
+  it.each([
+    "docs/manage-sandboxes/recover-rebuild-sandboxes.mdx",
+    "src/lib/actions/sandbox/forward-recovery-declared-ports.test.ts",
+    "test/e2e/support/full-e2e-gateway.test.ts",
+    "test/e2e-runtime/brev-launchable-e2e.test.ts",
+    "src/lib/actions/sandbox/probe/hermes-portable-forward-recovery.ts",
+    "src/lib/onboard/hermes-dashboard.ts",
+    "src/lib/onboard/ssh-forward-hint.ts",
+  ])("does not recommend Brev for an adjacent change in %s", (file) => {
+    const result = buildRiskPlan({ headSha: HEAD_SHA, changedFiles: [file] });
+    expect(riskPlanRequiredJobIds(result)).not.toContain("staging-brev-launchable");
+  });
+
+  it("combines both regression surfaces without dropping lifecycle coverage", () => {
+    const changedFiles = [
+      "src/lib/actions/sandbox/forward-recovery.ts",
+      "test/e2e/fixtures/full-e2e-gateway.ts",
+    ];
+    const result = buildRiskPlan({
+      headSha: HEAD_SHA,
+      changedFiles: [...changedFiles, changedFiles[0]],
+    });
+    expect(result.requiredJobs.filter(({ id }) => id === "staging-brev-launchable")).toEqual([
+      expect.objectContaining({ matchedFiles: changedFiles }),
+    ]);
+    expect(riskPlanRequiredJobIds(result)).toEqual(
+      expect.arrayContaining(["onboard-resume", "onboard-repair"]),
+    );
   });
 });
