@@ -166,15 +166,12 @@ try {
     $receipt['replayInputSha256']=(Get-FileHash -LiteralPath (Join-Path $candidate 'replay-input.json') -Algorithm SHA256).Hash.ToLowerInvariant()
     $compatZip=Join-Path $downloads 'passed-bash-compatibility.zip'
     $headers=@{Authorization=('Bearer '+$env:GH_TOKEN);Accept='application/vnd.github+json'}
-    $compatRun=Invoke-RestMethod -Uri 'https://api.github.com/repos/NVIDIA/NemoClaw/actions/runs/34778448015' -Headers $headers -TimeoutSec 30
-    $compatArtifact=Invoke-RestMethod -Uri 'https://api.github.com/repos/NVIDIA/NemoClaw/actions/artifacts/10324406454' -Headers $headers -TimeoutSec 30
-    if($compatRun.head_sha -cne 'b99629e3e89a62f5cd04d68648664eed79899abd' -or $compatRun.path -cne '.github/workflows/windows-native-installer.yaml' -or $compatRun.status -cne 'completed' -or $compatRun.conclusion -cne 'success' -or $compatRun.run_attempt -ne 1 -or $compatArtifact.workflow_run.id -ne $compatRun.id -or $compatArtifact.workflow_run.head_sha -cne $compatRun.head_sha -or $compatArtifact.name -cne 'bash-compatibility-b99629e3e89a62f5cd04d68648664eed79899abd-1' -or $compatArtifact.expired -or $compatArtifact.size_in_bytes -ne 11336349 -or $compatArtifact.digest -cne 'sha256:d34d02d1e2065e37769b4cf5b42e76fa98e1f16bd21e31bd0edb56dd3c83b6af'){throw 'The passed Bash source run or artifact identity changed.'}
-    Invoke-WebRequest -Uri 'https://api.github.com/repos/NVIDIA/NemoClaw/actions/artifacts/10324406454/zip' -Headers $headers -OutFile $compatZip -TimeoutSec 120
-    if((Get-Item -LiteralPath $compatZip).Length -ne 11336349 -or (Get-FileHash -LiteralPath $compatZip -Algorithm SHA256).Hash.ToLowerInvariant() -cne 'd34d02d1e2065e37769b4cf5b42e76fa98e1f16bd21e31bd0edb56dd3c83b6af'){throw 'The passed Bash artifact changed.'}
+    Invoke-WebRequest -Uri 'https://api.github.com/repos/NVIDIA/NemoClaw/actions/artifacts/10310050928/zip' -Headers $headers -OutFile $compatZip -TimeoutSec 120
+    if((Get-Item -LiteralPath $compatZip).Length -ne 11333076 -or (Get-FileHash -LiteralPath $compatZip -Algorithm SHA256).Hash.ToLowerInvariant() -cne '4d191b31060dacbc582678e026da5799cfe3d0574c39bd882684fc4863c5c4ad'){throw 'The passed Bash artifact changed.'}
     $compatExtract=Join-Path $downloads 'passed-bash'
     $zip=[IO.Compression.ZipFile]::OpenRead($compatZip)
     try{
-        if($zip.Entries.Count -ne 100 -or ($zip.Entries|Measure-Object -Property Length -Sum).Sum -ne 34636170){throw 'The passed Bash archive layout changed.'}
+        if($zip.Entries.Count -ne 100 -or ($zip.Entries|Measure-Object -Property Length -Sum).Sum -ne 34636106){throw 'The passed Bash archive layout changed.'}
         foreach($entry in $zip.Entries){
             $target=[IO.Path]::GetFullPath((Join-Path $compatExtract $entry.FullName))
             if(-not $target.StartsWith($compatExtract+'\',[StringComparison]::OrdinalIgnoreCase)){throw 'The passed Bash archive path escapes its owned output.'}
@@ -184,7 +181,7 @@ try {
     $compatEvidence=Join-Path $compatExtract 'bash-compat-evidence'
     Remove-Item Env:GH_TOKEN -ErrorAction SilentlyContinue
     $receipt['derivedCandidateReceiptSha256']=(Get-FileHash -LiteralPath (Join-Path $candidate 'runtime-candidate.json') -Algorithm SHA256).Hash.ToLowerInvariant()
-    $receipt['compatibilityProofSource']='b99629e3e89a62f5cd04d68648664eed79899abd'
+    $receipt['compatibilityProofSource']='c830cd3ef8315ff46a7ebfcd3c0b2afefd152a4a'
     $receipt['completeBaseReused']=$true
     $sdk=Join-Path $downloads 'mxc-sdk.tgz'
     Invoke-WebRequest -Uri 'https://registry.npmjs.org/@microsoft/mxc-sdk/-/mxc-sdk-0.8.0.tgz' -OutFile $sdk -TimeoutSec 60

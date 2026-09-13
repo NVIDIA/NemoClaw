@@ -801,16 +801,6 @@ bool chromeBrokerCommand() {
     } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
 }
 
-bool canonicalChromeJobsRequested() {
-    const DWORD saved = GetLastError();
-    WCHAR value[4] = {};
-    const bool enabled = initialized &&
-        GetEnvironmentVariableW(L"NEMOCLAW_HERMES_CANONICAL_CHROME_JOBS", value, 4) == 1 &&
-        !wcscmp(value, L"1");
-    SetLastError(saved);
-    return enabled;
-}
-
 struct ChromeInnerUiProof {
     const char* stage = "parent-identity";
     DWORD checkError = 0, requested = 0xff, before = 0, after = 0;
@@ -835,8 +825,7 @@ bool admitChromeInnerUi(HANDLE job, ChromeInnerUiProof& proof) {
         !QueryInformationJobObject(nullptr, JobObjectExtendedLimitInformation, &outerLimits, sizeof(outerLimits), nullptr)) return false;
     proof.outerBefore = outer.UIRestrictionsClass;
     proof.outerExtended = outerLimits.BasicLimitInformation.LimitFlags;
-    const DWORD expectedOuter = canonicalChromeJobsRequested() ? 0 : 0x3bf;
-    if (proof.outerBefore != expectedOuter || proof.outerExtended != JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE) { SetLastError(ERROR_ACCESS_DENIED); return false; }
+    if (proof.outerBefore != 0x3bf || proof.outerExtended != JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE) { SetLastError(ERROR_ACCESS_DENIED); return false; }
     proof.stage = "unused-separate-inner-job";
     JOBOBJECT_BASIC_UI_RESTRICTIONS inner = {};
     if (!job || job == INVALID_HANDLE_VALUE ||
@@ -858,16 +847,14 @@ void logChromeInnerUi(HANDLE job, const ChromeInnerUiProof& proof, BOOL apiResul
     if (InterlockedIncrement(&chromeInnerUiRecords) <= 8) {
         char line[1280];
         const int length = _snprintf_s(line, sizeof(line), _TRUNCATE,
-            "NEMOCLAW_MSYS_CHROME_INNER_UI={\"schemaVersion\":1,\"pid\":%lu,\"threadId\":%lu,\"job\":\"0x%llx\",\"stage\":\"%s\",\"admitted\":%s,\"requestedInnerMask\":%lu,\"beforeInnerMask\":%lu,\"effectiveInnerMask\":%lu,\"outerBeforeMask\":%lu,\"outerAfterMask\":%lu,\"outerExtendedFlags\":%lu,\"totalProcessesBefore\":%lu,\"activeProcessesBefore\":%lu,\"terminatedProcessesBefore\":%lu,\"applied\":%s,\"apiResult\":%s,\"apiError\":%lu,\"lastError\":%lu,\"checkError\":%lu,\"innerReadback\":%s,\"outerReadback\":%s,\"otherJobLimitsUnchanged\":%s,\"stillUnused\":%s,\"verified\":%s,\"uiIsolationScope\":\"%s\",\"chromePerTargetUiScopeEquivalent\":%s}\n",
+            "NEMOCLAW_MSYS_CHROME_INNER_UI={\"schemaVersion\":1,\"pid\":%lu,\"threadId\":%lu,\"job\":\"0x%llx\",\"stage\":\"%s\",\"admitted\":%s,\"requestedInnerMask\":%lu,\"beforeInnerMask\":%lu,\"effectiveInnerMask\":%lu,\"outerBeforeMask\":%lu,\"outerAfterMask\":%lu,\"outerExtendedFlags\":%lu,\"totalProcessesBefore\":%lu,\"activeProcessesBefore\":%lu,\"terminatedProcessesBefore\":%lu,\"applied\":%s,\"apiResult\":%s,\"apiError\":%lu,\"lastError\":%lu,\"checkError\":%lu,\"innerReadback\":%s,\"outerReadback\":%s,\"otherJobLimitsUnchanged\":%s,\"stillUnused\":%s,\"verified\":%s,\"uiIsolationScope\":\"MXC-outer-boundary\",\"chromePerTargetUiScopeEquivalent\":false}\n",
             GetCurrentProcessId(), GetCurrentThreadId(), static_cast<unsigned long long>(reinterpret_cast<uintptr_t>(job)), proof.stage,
             proof.admitted ? "true" : "false", proof.requested, proof.before, proof.after,
             proof.outerBefore, proof.outerAfter, proof.outerExtended, proof.accounting.TotalProcesses,
             proof.accounting.ActiveProcesses, proof.accounting.TotalTerminatedProcesses, proof.applied ? "true" : "false",
             apiResult ? "true" : "false", apiResult ? 0 : apiError, apiError, proof.checkError, proof.innerReadback ? "true" : "false",
             proof.outerReadback ? "true" : "false", proof.limitsUnchanged ? "true" : "false",
-            proof.stillUnused ? "true" : "false", proof.verified ? "true" : "false",
-            canonicalChromeJobsRequested() ? "private-desktop-plus-Chrome-target-job" : "MXC-outer-boundary",
-            canonicalChromeJobsRequested() ? "true" : "false");
+            proof.stillUnused ? "true" : "false", proof.verified ? "true" : "false");
         if (length > 0 && length < static_cast<int>(sizeof(line))) {
             OutputDebugStringA(line);
             DWORD written = 0;
@@ -905,42 +892,6 @@ BOOL WINAPI hookedSetJobInformation(HANDLE job, JOBOBJECTINFOCLASS kind, LPVOID 
         const DWORD error = GetLastError();
         logChromeInnerUi(job, proof, result, error);
         SetLastError(error); return result;
-    }
-    if (canonicalChromeJobsRequested()) {
-        // The outer job has no UI restrictions and the private desktop remains
-        // the cross-boundary UI isolation. Preserve Chromium's exact target-job
-        // restriction rather than replacing it with the old nested-job shim.
-        SetLastError(saved);
-        const BOOL result = realSetJobInformation(job, kind, information, bytes);
-        const DWORD error = GetLastError();
-        proof.applied = result != FALSE; proof.stage = "canonical-Chrome-readback";
-        if (result) {
-            JOBOBJECT_BASIC_UI_RESTRICTIONS inner = {}, outer = {};
-            JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits = {}, outerLimits = {};
-            JOBOBJECT_BASIC_ACCOUNTING_INFORMATION accounting = {};
-            BOOL currentInTarget = TRUE;
-            proof.innerReadback = QueryInformationJobObject(job, JobObjectBasicUIRestrictions,
-                &inner, sizeof(inner), nullptr) != FALSE;
-            proof.after = inner.UIRestrictionsClass;
-            proof.limitsUnchanged = QueryInformationJobObject(job, JobObjectExtendedLimitInformation,
-                &limits, sizeof(limits), nullptr) && !memcmp(&limits, &proof.limits, sizeof(limits));
-            proof.outerReadback = QueryInformationJobObject(nullptr, JobObjectBasicUIRestrictions,
-                &outer, sizeof(outer), nullptr) != FALSE;
-            proof.outerAfter = outer.UIRestrictionsClass;
-            proof.stillUnused = QueryInformationJobObject(job, JobObjectBasicAccountingInformation,
-                &accounting, sizeof(accounting), nullptr) && !accounting.TotalProcesses &&
-                !accounting.ActiveProcesses && !accounting.TotalTerminatedProcesses &&
-                IsProcessInJob(GetCurrentProcess(), job, &currentInTarget) && !currentInTarget;
-            proof.verified = proof.innerReadback && proof.after == proof.requested &&
-                proof.outerReadback && proof.outerAfter == 0 && proof.limitsUnchanged &&
-                proof.stillUnused && QueryInformationJobObject(nullptr,
-                    JobObjectExtendedLimitInformation, &outerLimits, sizeof(outerLimits), nullptr) &&
-                outerLimits.BasicLimitInformation.LimitFlags == proof.outerExtended;
-            if (!proof.verified) chromeInnerUiCheckFailure(proof, "canonical-Chrome-readback", ERROR_INVALID_DATA);
-        }
-        logChromeInnerUi(job, proof, result, error);
-        SetLastError(result && !proof.verified ? ERROR_INVALID_DATA : error);
-        return result && !proof.verified ? FALSE : result;
     }
     // Do not mutate the caller's buffer or make any other SetInformation call.
     JOBOBJECT_BASIC_UI_RESTRICTIONS effective = {};
