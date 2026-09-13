@@ -111,6 +111,13 @@ async function powershellMetadata(systemRoot: string, file: string, pid?: number
     {
       env: {
         ...process.env,
+        PSModulePath: path.win32.join(
+          systemRoot,
+          "System32",
+          "WindowsPowerShell",
+          "v1.0",
+          "Modules",
+        ),
         ...(pid === undefined
           ? { NEMOCLAW_EDGE_INSPECT_PATH: file }
           : { NEMOCLAW_EDGE_INSPECT_PID: String(pid) }),
