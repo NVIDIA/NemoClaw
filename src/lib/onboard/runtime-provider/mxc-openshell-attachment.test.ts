@@ -528,21 +528,30 @@ describe("inactive OpenShell MXC installation attachment", () => {
     ).toThrow(/observed distribution identity does not match/u);
   });
 
-  it("rejects an unowned qualification distribution before observation (#10585)", () => {
-    expect(() =>
-      createMxcOpenShellQualificationGatewayConfiguration({
-        agentPath: "C:\\openclaw\\node.exe",
-        distributionRevision: "abcdef0123456789",
-        distributionProfileId: MXC_OPENSHELL_V0_0_30_MXC_V0_8_0_ACCEPTED_PROFILE_ID,
-        distributionVersion: "9.9.9-dev.1",
-        egressProxyPort: 18080,
-        relayPath: "C:\\mxc-share\\openshell-supervisor-relay.exe",
-        shareDirectory: "C:\\mxc-share",
-        targetPort: 18889,
-        wxcExecPath: "C:\\mxc-sdk\\bin\\x64\\wxc-exec.exe",
-      }),
-    ).toThrow(/does not match the provider-owned profile/u);
-  });
+  it.each([
+    ["openshell-not-provider-owned", /profile is not provider-owned/u],
+    [
+      MXC_OPENSHELL_V0_0_30_MXC_V0_8_0_ACCEPTED_PROFILE_ID,
+      /does not match the provider-owned profile/u,
+    ],
+  ])(
+    "rejects invalid qualification distribution %s before observation (#10585)",
+    (profileId, error) => {
+      expect(() =>
+        createMxcOpenShellQualificationGatewayConfiguration({
+          agentPath: "C:\\openclaw\\node.exe",
+          distributionRevision: "abcdef0123456789",
+          distributionProfileId: profileId,
+          distributionVersion: "9.9.9-dev.1",
+          egressProxyPort: 18080,
+          relayPath: "C:\\mxc-share\\openshell-supervisor-relay.exe",
+          shareDirectory: "C:\\mxc-share",
+          targetPort: 18889,
+          wxcExecPath: "C:\\mxc-sdk\\bin\\x64\\wxc-exec.exe",
+        }),
+      ).toThrow(error);
+    },
+  );
 
   it("rejects an unknown distribution profile before observation (#10583)", () => {
     expect(() =>

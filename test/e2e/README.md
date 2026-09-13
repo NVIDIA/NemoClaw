@@ -780,13 +780,13 @@ host launch context, records whether the run used temporary
 diagnostic name deletion and retains the observed
 gateway-configuration digest, each bounded provider lifecycle result, and
 sanitized provider failure records. It also classifies startup
-as not observed, spawn failed, exited before readiness, health timeout, or ready.
+as not observed, spawn failed, exited before readiness, readiness timeout, or ready.
 Create-verification failures retain a fixed stage, error class, elapsed
 milliseconds, and an optional bounded Windows error code. These fields distinguish
 pin timeouts, native sharing conflicts, and digest drift without retaining raw
 error text, paths, command output, or environment values. Diagnostic reporting
 does not change mutation, timeout, or cleanup decisions.
-The ready outcome means that the in-sandbox health probe succeeded.
+The ready outcome means that the probe observed readiness in the gateway startup log.
 It does not mean that the qualification passed.
 Use `verdict` and `startup.versionExitCode` to diagnose the result.
 A nonzero version exit code produces a failed qualification.

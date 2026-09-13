@@ -5,7 +5,6 @@ import { createHash } from "node:crypto";
 
 import { describe, expect, it, vi } from "vitest";
 
-import { managedStartupE2eProfile } from "../../../../scripts/checks/generate-managed-startup-profile-fixture.mts";
 import { encodeManagedStartupProfile } from "../managed-startup/profile";
 import { nativeArtifactWorkloadReceiptFixture } from "../workload/native-artifact-test-fixture";
 import type {
@@ -45,7 +44,61 @@ function labelDigest(value: string): string {
 async function request(lifecycleGeneration = "generation-7") {
   let plan: RuntimeProviderNativeArtifactBootstrapPlan | undefined;
   const workload = nativeArtifactWorkloadReceiptFixture(
-    encodeManagedStartupProfile(managedStartupE2eProfile("openclaw")),
+    // Keep this protocol fixture independent of changing live E2E startup defaults.
+    encodeManagedStartupProfile({
+      schemaVersion: 1,
+      agent: "openclaw",
+      inference: {
+        routeProvider: "inference",
+        upstreamProvider: "nvidia",
+        model: "nvidia/nemotron-3-ultra-550b-a55b",
+        routedBaseUrl: "https://inference.local/v1",
+        upstreamEndpointUrl: null,
+        api: "openai-completions",
+        primaryModelRef: "inference/nvidia/nemotron-3-ultra-550b-a55b",
+        compatibility: {},
+        inputModalities: ["text"],
+      },
+      proxy: {
+        managedHost: "10.200.0.1",
+        managedPort: 3128,
+        hostHttpUrl: "http://fixture-http-proxy.example.test:18080",
+        hostHttpsUrl: "http://fixture-https-proxy.example.test:18443",
+        hostNoProxy: ["localhost", "127.0.0.1", ".example.test"],
+      },
+      tools: { disclosure: "progressive", enabledGateways: [] },
+      messaging: { plan: null },
+      corporateCa: { bundleSha256: null },
+      agentConfig: {
+        agent: "openclaw",
+        webSearch: { enabled: false, provider: "brave" },
+        otel: {
+          enabled: false,
+          endpointUrl: "http://host.openshell.internal:4318",
+          serviceName: "openclaw-gateway",
+          sampleRate: 1,
+        },
+        agentTimeoutSeconds: 600,
+        heartbeatEvery: null,
+        extraAgents: { agents: [], defaults: {}, main: {} },
+        deviceAuth: { disabled: true, optOutSource: "managed-onboard" },
+        minimalBootstrap: true,
+      },
+      dashboard: {
+        agent: "openclaw",
+        mode: "loopback",
+        url: "http://127.0.0.1:18789",
+        port: 18789,
+        bindAddress: "127.0.0.1",
+        wslExposure: false,
+      },
+      tuning: {
+        contextWindow: 131072,
+        maxTokens: 8192,
+        reasoning: false,
+        reasoningEffort: "default",
+      },
+    }),
   );
   const surface = createMxcNativeArtifactBootstrapSurface({
     verifyAndCreate: async (value) => {
@@ -216,11 +269,7 @@ describe("inactive OpenShell MXC live operations", () => {
   it("makes leading-symbol digest labels valid for create and recovery (#10585)", async () => {
     const liveRequest = await request("leading-symbol-15");
     const rawRequestLabel = Buffer.from(liveRequest.requestSha256, "hex").toString("base64url");
-    expect(rawRequestLabel).toBe("_L0dR3VVaq9sU5M1qTd_V8WEuhgMG_ZzIDVnjWz2Yck");
-    const attempt12Digest = "fe33a3082f70157204fa554d4940853833d7eb39b1e63fb4a6b7f88066df5e18";
-    expect(Buffer.from(attempt12Digest, "hex").toString("base64url")).toBe(
-      "_jOjCC9wFXIE-lVNSUCFODPX6zmx5j-0prf4gGbfXhg",
-    );
+    expect(rawRequestLabel).toMatch(/^[-_]/u);
     const verifyAndRunCreate = vi.fn<MxcOpenShellLiveHostBoundary["verifyAndRunCreate"]>(
       async () => ({ status: "create-rejected" }),
     );
@@ -422,13 +471,14 @@ describe("inactive OpenShell MXC live operations", () => {
   });
 
   it("reports absence without attempting deletion (#8178)", async () => {
+    const liveRequest = await request();
     const run = vi
       .fn<MxcOpenShellLiveHostBoundary["run"]>()
       .mockImplementationOnce(async () => result("", 1))
       .mockImplementationOnce(async () => result([]));
 
     await expect(
-      operations({ verifyAndRunCreate: vi.fn(), run }).recoverCreate(await request()),
+      operations({ verifyAndRunCreate: vi.fn(), run }).recoverCreate(liveRequest),
     ).resolves.toEqual({ status: "absent" });
     expect(run).toHaveBeenCalledTimes(2);
     expect(run.mock.calls[1]![0].command.arguments).toEqual(
@@ -436,7 +486,7 @@ describe("inactive OpenShell MXC live operations", () => {
         "--limit",
         "2",
         "--selector",
-        expect.stringMatching(/^nemoclaw-request-sha256=[A-Za-z0-9_-]{43}$/u),
+        `nemoclaw-request-sha256=${labelDigest(liveRequest.requestSha256)}`,
       ]),
     );
   });

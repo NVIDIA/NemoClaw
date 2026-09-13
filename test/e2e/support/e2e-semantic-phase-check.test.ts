@@ -46,16 +46,35 @@ describe("semantic E2E phase checker", () => {
     expect(validateWindowsMxcControlBoundarySource(source)).toEqual([]);
   });
 
-  test("accepts the provider-owned Windows MXC lifecycle without direct sandbox commands", () => {
+  test.each([
+    "await lifecycle.recover();",
+    "let providerLifecycle; const recover = () => providerLifecycle.recover(); providerLifecycle = lifecycle; await recover();",
+    "let first, second; const recover = () => second.recover(); second = first; first = lifecycle; await recover();",
+  ])("accepts provider-owned lifecycle recovery through binding %s", (recovery) => {
     const source = `
       async function qualify(input) {
         const lifecycle = createWindowsMxcInactiveOnboardingLifecycle(input);
         await lifecycle.run();
-        await lifecycle.recover();
+        ${recovery}
       }
     `;
 
     expect(validateWindowsMxcControlBoundarySource(source)).toEqual([]);
+  });
+
+  test.each([
+    "other.run(); other.recover();",
+    "function unrelated(lifecycle) { lifecycle.run(); lifecycle.recover(); }",
+  ])("rejects unrelated lifecycle method calls: %s", (calls) => {
+    expect(
+      validateWindowsMxcControlBoundarySource(`
+      const lifecycle = createWindowsMxcInactiveOnboardingLifecycle(input);
+      ${calls}
+    `),
+    ).toEqual([
+      "OpenShell sandbox create command is missing",
+      "OpenShell sandbox delete command is missing",
+    ]);
   });
 
   test("rejects mixing provider-owned and direct Windows MXC lifecycle commands", () => {

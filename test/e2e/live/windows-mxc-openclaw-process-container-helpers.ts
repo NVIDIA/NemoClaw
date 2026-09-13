@@ -578,6 +578,15 @@ export function sanitizeWindowsMxcOpenClawGatewayOutput(value: string, token: st
     .slice(-MAX_COMMAND_OUTPUT_BYTES);
 }
 
+export function readWindowsMxcOpenClawGatewayOutput(file: string, token: string): string | null {
+  try {
+    return sanitizeWindowsMxcOpenClawGatewayOutput(fs.readFileSync(file, "utf8"), token);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+}
+
 function realRegularFile(input: string, name: string): string {
   const absolute = path.resolve(input);
   const status = fs.lstatSync(absolute);
@@ -1384,7 +1393,8 @@ export function parseWindowsMxcInteractiveHostContext(
   try {
     value = JSON.parse(result.stdout);
   } catch {
-    throw new Error("Windows host launch-context output is invalid");
+    // Malformed JSON fails the same field validation as missing launch-context evidence.
+    value = null;
   }
   const { processElevated, processSessionId, processUserInteractive } = (value ?? {}) as Record<
     string,
@@ -2579,13 +2589,11 @@ export async function runWindowsMxcOpenClawProcessContainerQualification(
     const created = await lifecycle.run();
     providerCreateResult = created.bootstrapResult;
     attachmentReceipt = created.attachmentReceipt;
-    if (fs.existsSync(openClawGatewayOutputPath)) {
+    const startupOutput = readWindowsMxcOpenClawGatewayOutput(openClawGatewayOutputPath, token);
+    if (startupOutput !== null) {
       fs.writeFileSync(
         path.join(inputs.artifactDirectory, `windows-mxc-openclaw-startup-${runId}.log`),
-        sanitizeWindowsMxcOpenClawGatewayOutput(
-          fs.readFileSync(openClawGatewayOutputPath, "utf8"),
-          token,
-        ),
+        startupOutput,
         { encoding: "utf8", mode: 0o600 },
       );
     }
@@ -2994,11 +3002,12 @@ export async function runWindowsMxcOpenClawProcessContainerQualification(
       [forwardLogPath, "openshell-forward"],
       [forwardErrorPath, "openshell-forward-error"],
     ] as const) {
-      if (!fs.existsSync(source) || fs.statSync(source).size === 0) continue;
       try {
+        const output = readWindowsMxcOpenClawGatewayOutput(source, token);
+        if (!output) continue;
         fs.writeFileSync(
           path.join(inputs.artifactDirectory, `windows-mxc-${name}-${runId}.log`),
-          sanitizeWindowsMxcOpenClawGatewayOutput(fs.readFileSync(source, "utf8"), token),
+          output,
           { encoding: "utf8", flag: "wx", mode: 0o600 },
         );
       } catch (error) {

@@ -135,6 +135,50 @@ export function validateWindowsMxcControlBoundarySource(source: string): string[
   let createsProviderOwnedLifecycle = false;
   let runsProviderOwnedLifecycle = false;
   let recoversProviderOwnedLifecycle = false;
+  const options: ts.CompilerOptions = { noLib: true, noResolve: true };
+  const host = ts.createCompilerHost(options);
+  host.getSourceFile = (file) => (file === sourceFile.fileName ? sourceFile : undefined);
+  const checker = ts.createProgram([sourceFile.fileName], options, host).getTypeChecker();
+  const lifecycleBindings = new Set<ts.Symbol>();
+  const aliases: [ts.Symbol, ts.Symbol][] = [];
+
+  function collectBindings(node: ts.Node): void {
+    const target = ts.isVariableDeclaration(node)
+      ? node.name
+      : ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken
+        ? node.left
+        : undefined;
+    const value = ts.isVariableDeclaration(node)
+      ? node.initializer
+      : ts.isBinaryExpression(node)
+        ? node.right
+        : undefined;
+    if (target && ts.isIdentifier(target) && value) {
+      const binding = checker.getSymbolAtLocation(target);
+      if (
+        binding &&
+        ts.isCallExpression(value) &&
+        invokedName(value.expression) === "createWindowsMxcInactiveOnboardingLifecycle"
+      ) {
+        lifecycleBindings.add(binding);
+      } else if (binding && ts.isIdentifier(value)) {
+        const source = checker.getSymbolAtLocation(value);
+        if (source) aliases.push([binding, source]);
+      }
+    }
+    ts.forEachChild(node, collectBindings);
+  }
+  collectBindings(sourceFile);
+  // Resolve aliases before checking calls, including recovery callbacks declared earlier.
+  for (let changed = true; changed;) {
+    changed = false;
+    for (const [target, source] of aliases) {
+      if (lifecycleBindings.has(source) && !lifecycleBindings.has(target)) {
+        lifecycleBindings.add(target);
+        changed = true;
+      }
+    }
+  }
 
   function containsWxcExecPath(node: ts.Node): boolean {
     let found = false;
@@ -197,8 +241,11 @@ export function validateWindowsMxcControlBoundarySource(source: string): string[
         createsProviderOwnedLifecycle = true;
       }
       if (ts.isPropertyAccessExpression(node.expression)) {
-        if (node.expression.name.text === "run") runsProviderOwnedLifecycle = true;
-        if (node.expression.name.text === "recover") recoversProviderOwnedLifecycle = true;
+        const receiver = checker.getSymbolAtLocation(node.expression.expression);
+        if (receiver && lifecycleBindings.has(receiver)) {
+          if (node.expression.name.text === "run") runsProviderOwnedLifecycle = true;
+          if (node.expression.name.text === "recover") recoversProviderOwnedLifecycle = true;
+        }
       }
       const kind = commandKind(node);
       if (kind === "create" && createPosition === null) createPosition = node.getStart(sourceFile);

@@ -34,6 +34,7 @@ import {
   retainedWindowsMxcSandboxName,
   runWindowsMxcForwardCleanup,
   sanitizeWindowsMxcOpenClawGatewayOutput,
+  readWindowsMxcOpenClawGatewayOutput,
   stageWindowsMxcOpenClawArtifact,
   sha256File,
   withWindowsMxcLocalSetupOwnership,
@@ -210,11 +211,14 @@ describe("inactive Windows MXC OpenClaw process_container qualification", () => 
   });
 
   it("removes credential values from preserved startup diagnostics (#8178)", () => {
+    const { root } = fixture();
+    const log = path.join(root, "gateway.log");
     const token = "runtime-only-secret";
-    const sanitized = sanitizeWindowsMxcOpenClawGatewayOutput(
+    fs.writeFileSync(
+      log,
       `token=${token}\nAuthorization: ${token}\napi_key='also-sensitive'\nstatus=failed`,
-      token,
     );
+    const sanitized = readWindowsMxcOpenClawGatewayOutput(log, token);
 
     expect(sanitized).toBe(
       "token=[redacted]\nAuthorization: [redacted]\napi_key=[redacted]\nstatus=failed",
@@ -223,6 +227,19 @@ describe("inactive Windows MXC OpenClaw process_container qualification", () => 
     expect(() => sanitizeWindowsMxcOpenClawGatewayOutput("text", "")).toThrow(
       "gateway token is required",
     );
+  });
+
+  it("skips missing diagnostics but preserves empty logs and read failures (#8178)", () => {
+    const { root } = fixture();
+    const log = path.join(root, "gateway.log");
+    expect(readWindowsMxcOpenClawGatewayOutput(log, "test-token")).toBeNull();
+    fs.writeFileSync(log, "");
+    expect(readWindowsMxcOpenClawGatewayOutput(log, "test-token")).toBe("");
+    const denied = Object.assign(new Error("read denied"), { code: "EACCES" });
+    vi.spyOn(fs, "readFileSync").mockImplementationOnce(() => {
+      throw denied;
+    });
+    expect(() => readWindowsMxcOpenClawGatewayOutput(log, "test-token")).toThrow(denied);
   });
 
   it("removes a token-bearing MXC environment file after a runtime failure (#8178)", () => {
