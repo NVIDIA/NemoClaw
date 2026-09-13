@@ -223,6 +223,7 @@ export function lockedArchives(
 
   for (const packagePath of reachablePackagePaths(packages, target)) {
     const entry = record(packages[packagePath], `package-lock entry ${packagePath}`);
+    if (entry.inBundle === true) continue;
     const resolved = entry.resolved;
     const integrity = entry.integrity;
     if (resolved === undefined && integrity === undefined) continue;

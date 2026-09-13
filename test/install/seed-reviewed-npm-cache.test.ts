@@ -89,6 +89,63 @@ describe("reviewed npm cache seed", () => {
     ).toEqual(new Map([[PACKAGE_SPEC, copiedArchive]]));
   });
 
+  it("maps only the parent archive for a reviewed inBundle dependency", () => {
+    const input = fixture();
+    const lock = JSON.parse(fs.readFileSync(input.lockfilePath, "utf8"));
+    lock.packages[`node_modules/${PACKAGE_NAME}`].dependencies = { "bundled-child": "2.0.0" };
+    lock.packages[`node_modules/${PACKAGE_NAME}/node_modules/bundled-child`] = {
+      inBundle: true,
+      integrity: `sha512-${"b".repeat(88)}`,
+      resolved: "https://registry.npmjs.org/bundled-child/-/bundled-child-2.0.0.tgz",
+      version: "2.0.0",
+    };
+    fs.writeFileSync(input.lockfilePath, JSON.stringify(lock));
+    const archiveDirectory = path.join(input.root, "archives");
+    fs.mkdirSync(archiveDirectory);
+    const copiedArchive = path.join(archiveDirectory, path.basename(input.archivePath));
+    fs.copyFileSync(input.archivePath, copiedArchive);
+
+    expect(
+      lockedArchivesFromDirectory(archiveDirectory, input.lockfilePath, REGISTRY_ORIGIN, TARGET),
+    ).toEqual(new Map([[PACKAGE_SPEC, copiedArchive]]));
+  });
+
+  it("maps a registry archive when an earlier inBundle record has the same identity", () => {
+    const input = fixture();
+    const lock = JSON.parse(fs.readFileSync(input.lockfilePath, "utf8"));
+    const sharedBytes = Buffer.from("shared registry archive");
+    const sharedIntegrity = `sha512-${createHash("sha512").update(sharedBytes).digest("base64")}`;
+    const sharedUrl = "https://registry.npmjs.org/shared/-/shared-2.0.0.tgz";
+    lock.packages[""].dependencies.shared = "2.0.0";
+    lock.packages[`node_modules/${PACKAGE_NAME}`].bundleDependencies = ["shared"];
+    lock.packages[`node_modules/${PACKAGE_NAME}`].dependencies = { shared: "2.0.0" };
+    lock.packages[`node_modules/${PACKAGE_NAME}/node_modules/shared`] = {
+      inBundle: true,
+      version: "2.0.0",
+    };
+    lock.packages["node_modules/shared"] = {
+      integrity: sharedIntegrity,
+      resolved: sharedUrl,
+      version: "2.0.0",
+    };
+    fs.writeFileSync(input.lockfilePath, JSON.stringify(lock));
+    const archiveDirectory = path.join(input.root, "archives");
+    fs.mkdirSync(archiveDirectory);
+    const parentArchive = path.join(archiveDirectory, path.basename(input.archivePath));
+    const sharedArchive = path.join(archiveDirectory, "shared-2.0.0.tgz");
+    fs.copyFileSync(input.archivePath, parentArchive);
+    fs.writeFileSync(sharedArchive, sharedBytes);
+
+    expect(
+      lockedArchivesFromDirectory(archiveDirectory, input.lockfilePath, REGISTRY_ORIGIN, TARGET),
+    ).toEqual(
+      new Map([
+        [PACKAGE_SPEC, parentArchive],
+        ["shared@2.0.0", sharedArchive],
+      ]),
+    );
+  });
+
   it("rejects extras and symlinked directories at the archive-directory boundary", () => {
     const input = fixture();
     const archiveDirectory = path.join(input.root, "archives");

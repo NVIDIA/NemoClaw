@@ -102,6 +102,10 @@ function readLockedPackages(
   for (const [location, unknownRecord] of Object.entries(packages)) {
     if (location === "") continue;
     const record = requireObject(unknownRecord, `reviewed npm cache seed package ${location}`);
+    // The shared lock verifier already proved that every inBundle entry is
+    // owned by an integrity-pinned parent archive. npm does not fetch a
+    // separate archive for these records, so neither should the cache seed.
+    if (record.inBundle === true) continue;
     const name =
       typeof record.name === "string" ? record.name : packageNameFromLockLocation(location);
     const version = typeof record.version === "string" ? record.version : "";
