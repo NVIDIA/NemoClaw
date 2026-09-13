@@ -3,7 +3,8 @@
 [CmdletBinding()]
 param([Parameter(Mandatory)][string]$ArtifactDirectory,
     [Parameter(Mandatory)][string]$BootstrapDirectory,
-    [Parameter(Mandatory)][string]$HelperDirectory)
+    [Parameter(Mandatory)][string]$HelperDirectory,
+    [switch]$RecordStartup)
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
 if ($env:GITHUB_ACTIONS -cne 'true' -or $env:OS -cne 'Windows_NT') { throw 'This candidate test requires disposable Windows CI.' }
@@ -118,11 +119,13 @@ try {
     } catch {$receipt['runtimeAclObservationError']=$_.Exception.Message}
     $mxcAttempted=$true
     $patchedMxc=Join-Path $compatEvidence 'mxc-token-inspection-build'
-    Invoke-PersonalChecked $node @('--experimental-strip-types','--no-warnings',(Join-Path $PSScriptRoot 'probe-personal-candidate.mts'),
+    $personalArguments = @('--experimental-strip-types','--no-warnings',(Join-Path $PSScriptRoot 'probe-personal-candidate.mts'),
         '--runtime-root',$runtime,'--mxc',(Join-Path $patchedMxc 'wxc-exec.exe'),'--stock-mxc',(Join-Path $mxc 'wxc-exec.exe'),'--host-controller-python',$python,'--wpr-powershell',(Join-Path $PSHOME 'pwsh.exe'),'--output',(Join-Path $output 'personal-mxc'),
         '--compatibility-root',(Join-Path $compatEvidence 'compatibility-build'),'--compatibility-receipt',(Join-Path $compatEvidence 'compatibility-build/build-receipt.json'),
         '--compatibility-proof',(Join-Path $compatEvidence 'result.json'),'--mxc-build-receipt',(Join-Path $patchedMxc 'mxc-token-inspection-build.json'),
-        '--derived-runtime-receipt',(Join-Path $candidate 'runtime-candidate.json'),'--replay-receipt',(Join-Path $candidate 'replay-input.json')) 'Canonical Personal component execution'
+        '--derived-runtime-receipt',(Join-Path $candidate 'runtime-candidate.json'),'--replay-receipt',(Join-Path $candidate 'replay-input.json'))
+    if ($RecordStartup) { $personalArguments += '--record-startup' }
+    Invoke-PersonalChecked $node $personalArguments 'Canonical Personal component execution'
     if(Test-Path -LiteralPath $original){throw 'The original build root became available during execution.'}
     $receipt.status='pass'
 }catch{$primary=$_;$receipt['error']=$_.Exception.Message}

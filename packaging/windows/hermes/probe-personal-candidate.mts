@@ -1929,14 +1929,18 @@ async function main() {
     const bytes = JSON.stringify(request, null, 2) + "\n";
     fs.writeFileSync(policy, bytes, { flag: "wx" });
     receipt.requestSha256 = createHash("sha256").update(bytes).digest("hex");
-    primaryWpr = await startPersonalWpr(
-      wprPowershell,
-      output,
-      nonce,
-      process.env.GITHUB_SHA!,
-      receipt.requestSha256 as string,
-      stockBrowserEnvironment(environment),
-    );
+    if (process.argv.includes("--record-startup")) {
+      primaryWpr = await startPersonalWpr(
+        wprPowershell,
+        output,
+        nonce,
+        process.env.GITHUB_SHA!,
+        receipt.requestSha256 as string,
+        stockBrowserEnvironment(environment),
+      );
+    } else {
+      receipt.primaryWpr = { attempted: false, mode: "not-requested" };
+    }
     attempted = true;
     const execution = await personalCommand(
       mxc,
@@ -1946,7 +1950,7 @@ async function main() {
       120_000,
     );
     receipt.execution = execution;
-    requestPersonalWprStop(primaryWpr, execution);
+    if (primaryWpr) requestPersonalWprStop(primaryWpr, execution);
     cleanup.executorClosed = execution.childClosed;
     if (execution.childClosed) {
       const desktopCleanup = await observeHermesDesktopCleanup(

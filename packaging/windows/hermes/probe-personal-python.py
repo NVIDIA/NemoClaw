@@ -589,6 +589,175 @@ def browser_agent_state(state, expected, launches):
     return observation
 
 
+def existing_agent_browser_status(
+    root, state, observation, budget=1.0, process_factory=None
+):
+    """One read-only status query to the already identified daemon; never launch a CLI."""
+    from nemoclaw_native_windows import NativeStartupRefusal
+    import re
+    import socket
+
+    started = time.monotonic()
+    deadline = started + min(1.0, max(0.0, budget))
+    held, channel, request_started = None, None, None
+    record = {
+        "diagnosticOnly": True,
+        "action": "stream_status",
+        "stage": "bind-existing-daemon",
+        "requestSent": False,
+        "responseReceived": False,
+        "identityRechecked": False,
+        "socketClosed": True,
+        "processHandleClosed": True,
+        "error": None,
+    }
+
+    def remaining():
+        seconds = deadline - time.monotonic()
+        if seconds <= 0:
+            raise TimeoutError("Existing daemon status budget exhausted")
+        return seconds
+
+    try:
+        rows = observation.get("commands", [])
+        if len(rows) != 1 or rows[0].get("daemonIdentityBound") is not True:
+            raise ValueError("No single bound existing agent-browser daemon")
+        row = rows[0]
+        argv = row["argv"]
+        expected = owned_file(
+            root / "agent-browser/bin/agent-browser-win32-x64.exe", root
+        )
+        if (
+            len(argv) != 6
+            or Path(argv[0]) != expected
+            or argv[1] != "--session"
+            or argv[3:] != ["--json", "get", "cdp-url"]
+            or not re.fullmatch(r"h_[a-f0-9]{10}", argv[2])
+        ):
+            raise ValueError("Existing daemon command/session identity differs")
+        session = argv[2]
+        directory = state / ("agent-browser-" + session)
+        if Path(row["sessionDirectory"]) != directory:
+            raise ValueError("Existing daemon directory differs")
+
+        def read_records():
+            values = {}
+            for suffix in ("pid", "port", "version"):
+                path = owned_file(directory / (session + "." + suffix), state)
+                with path.open("rb") as source:
+                    data = source.read(513)
+                saved = row["files"][suffix]
+                if (
+                    len(data) > 512
+                    or len(data) != saved["bytes"]
+                    or hashlib.sha256(data).hexdigest() != saved["sha256"]
+                ):
+                    raise ValueError("Existing daemon record changed: " + suffix)
+                values[suffix] = data.decode("ascii").strip()
+            return values
+
+        files = read_records()
+        if (
+            not files["pid"].isdigit()
+            or not 0 < int(files["pid"]) < 2**32
+            or not files["port"].isdigit()
+            or not 0 < int(files["port"]) < 65536
+            or files["version"] != "0.26.0"
+        ):
+            raise ValueError("Existing daemon record values differ")
+        pid, port = int(files["pid"]), int(files["port"])
+        dos = row["daemonDosImage"]
+        if dos.get("complete") is not True or dos.get("pid") != pid:
+            raise ValueError("Existing daemon DOS identity is incomplete")
+        generation = dos["creationFiletime"]
+        held = (process_factory or BrowserHarnessProcess)(pid)
+        record["processHandleClosed"] = False
+        record.update(pid=pid, creationFiletime=generation, session=session, port=port)
+
+        def recheck():
+            if (
+                held.identity() != (pid, generation)
+                or held.wait(0)
+                or Path(held.image()) != expected
+                or read_records() != files
+            ):
+                raise ValueError("Existing daemon process or endpoint changed")
+
+        recheck()
+        record["stage"] = "connect-existing-command-port"
+        request_started = time.monotonic()
+        channel = socket.create_connection(("127.0.0.1", port), timeout=remaining())
+        record["socketClosed"] = False
+        if channel.getpeername()[:2] != ("127.0.0.1", port):
+            raise ValueError("Existing daemon peer differs")
+        # This supported skip-launch query reads status/CDP liveness only. It cannot
+        # launch/reconfigure/close a browser; the normal handler may await its mutex.
+        request = {"id": "nc-status", "action": "stream_status"}
+        channel.settimeout(remaining())
+        channel.sendall((json.dumps(request) + "\n").encode())
+        record["requestSent"] = True
+        record["stage"] = "read-status-response"
+        data = b""
+        while b"\n" not in data:
+            channel.settimeout(remaining())
+            chunk = channel.recv(2049 - len(data))
+            if not chunk:
+                raise EOFError("Existing daemon closed before a status response")
+            data += chunk
+            if len(data) > 2048:
+                record["responseTruncated"] = True
+                raise ValueError("Existing daemon response exceeded2048 bytes")
+        record["responseBytes"] = len(data)
+        record["responseSha256"] = hashlib.sha256(data).hexdigest()
+        response = json.loads(data)
+        if (
+            response.get("id") != "nc-status"
+            or type(response.get("success")) is not bool
+        ):
+            raise ValueError("Existing daemon response envelope differs")
+        record["responseReceived"] = True
+        status = response.get("data")
+        if response["success"]:
+            if (
+                not isinstance(status, dict)
+                or set(status) != {"enabled", "port", "connected", "screencasting"}
+                or any(
+                    type(status[k]) is not bool
+                    for k in ("enabled", "connected", "screencasting")
+                )
+                or status["port"] is not None
+                and (type(status["port"]) is not int or not 0 <= status["port"] < 65536)
+            ):
+                raise ValueError("Existing daemon status schema differs")
+            record["status"] = status
+        else:
+            record["daemonError"] = str(response.get("error"))[:160]
+        recheck()
+        record["identityRechecked"] = True
+        record["stage"] = "complete"
+    except (Exception, NativeStartupRefusal) as error:
+        record["error"] = repr(error)[:160]
+    finally:
+        if request_started is not None:
+            record["requestElapsedMs"] = int(
+                (time.monotonic() - request_started) * 1000
+            )
+        if channel is not None:
+            try:
+                channel.close()
+                record["socketClosed"] = True
+            except Exception as error:
+                record["socketCloseError"] = repr(error)[:120]
+        if held is not None:
+            try:
+                held.close()
+                record["processHandleClosed"] = True
+            except Exception as error:
+                record["processCloseError"] = repr(error)[:120]
+    record["elapsedMs"] = int((time.monotonic() - started) * 1000)
+    return record
+
+
 def bounded_browser_diagnostics(value):
     value["serializedLimitBytes"] = 12 * 1024
     value["aggregateTruncated"] = False
@@ -1409,11 +1578,19 @@ def browser_check(root, nonce):
                 state, expected, launches
             )
             diagnostics["logs"]["chrome"] = browser_log_tail(chrome_log, state)
+            diagnostic_started = time.monotonic()
+            diagnostics["agentBrowserStatus"] = existing_agent_browser_status(
+                root,
+                state,
+                diagnostics["agentBrowserState"],
+                min(1.0, max(0.0, 60.0 - (time.monotonic() - component_started))),
+            )
             cdp_selection = browser_cdp_selection(
                 root, state, diagnostics["agentBrowserState"]
             )
             cdp_budget = min(
-                8.0, max(0.0, 60.0 - (time.monotonic() - component_started))
+                max(0.0, 8.0 - (time.monotonic() - diagnostic_started)),
+                max(0.0, 60.0 - (time.monotonic() - component_started)),
             )
             if cdp_selection.get("skipped") or cdp_budget < 4:
                 cdp_budget = 0

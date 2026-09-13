@@ -34,6 +34,165 @@ class BrowserDiagnostics(unittest.TestCase):
         modules.start()
         self.addCleanup(modules.stop)
 
+    def test_existing_daemon_status_is_one_bound_read_only_request(self):
+        import socket
+
+        with tempfile.TemporaryDirectory() as directory:
+            root, state = Path(directory) / "runtime", Path(directory) / "state"
+            expected = root / "agent-browser/bin/agent-browser-win32-x64.exe"
+            expected.parent.mkdir(parents=True)
+            expected.write_bytes(b"fixture only; never executed")
+            session = "h_0123456789"
+            endpoint = state / ("agent-browser-" + session)
+            endpoint.mkdir(parents=True)
+            files = {}
+            for suffix, text in (
+                ("pid", "123"),
+                ("port", "4567"),
+                ("version", "0.26.0"),
+            ):
+                data = text.encode()
+                (endpoint / (session + "." + suffix)).write_bytes(data)
+                files[suffix] = {
+                    "bytes": len(data),
+                    "sha256": hashlib.sha256(data).hexdigest(),
+                }
+            status = {
+                "enabled": False,
+                "port": None,
+                "connected": True,
+                "screencasting": False,
+            }
+            for case in (
+                "success",
+                "absent",
+                "record-changed",
+                "generation",
+                "timeout",
+                "truncated",
+                "close-error",
+            ):
+                with self.subTest(case=case):
+                    observation = {
+                        "commands": [
+                            {
+                                "argv": [
+                                    str(expected),
+                                    "--session",
+                                    session,
+                                    "--json",
+                                    "get",
+                                    "cdp-url",
+                                ],
+                                "daemonIdentityBound": True,
+                                "sessionDirectory": str(endpoint),
+                                "files": {
+                                    key: dict(value) for key, value in files.items()
+                                },
+                                "daemonDosImage": {
+                                    "pid": 123,
+                                    "creationFiletime": "123456",
+                                    "complete": True,
+                                },
+                            }
+                        ]
+                    }
+                    if case == "absent":
+                        observation["commands"] = []
+                    if case == "record-changed":
+                        observation["commands"][0]["files"]["port"]["sha256"] = "0" * 64
+                    events, sent = [], []
+
+                    class Process:
+                        def __init__(self, pid):
+                            self.pid = pid
+                            events.append("process-open")
+
+                        def identity(self):
+                            return (
+                                self.pid,
+                                "different" if case == "generation" else "123456",
+                            )
+
+                        def image(self):
+                            return str(expected)
+
+                        def wait(self, seconds):
+                            assert seconds == 0
+                            return False
+
+                        def close(self):
+                            events.append("process-close")
+                            if case == "close-error":
+                                raise OSError("controlled handle close failure")
+
+                    class Channel:
+                        def getpeername(self):
+                            return "127.0.0.1", 4567
+
+                        def settimeout(self, seconds):
+                            assert 0 < seconds <= 1
+
+                        def sendall(self, data):
+                            sent.append(json.loads(data))
+
+                        def recv(self, size):
+                            if case == "timeout":
+                                raise TimeoutError("controlled response read timeout")
+                            if case == "truncated":
+                                return b"x" * size
+                            return (
+                                json.dumps(
+                                    {"id": "nc-status", "success": True, "data": status}
+                                )
+                                + "\n"
+                            ).encode()
+
+                        def close(self):
+                            events.append("socket-close")
+
+                    with (
+                        patch.object(
+                            owner,
+                            "owned_file",
+                            side_effect=lambda file, admitted: Path(file),
+                        ),
+                        patch.object(
+                            socket, "create_connection", return_value=Channel()
+                        ) as connect,
+                    ):
+                        result = owner.existing_agent_browser_status(
+                            root, state, observation, process_factory=Process
+                        )
+                    self.assertLess(len(json.dumps(result).encode()), 1400)
+                    self.assertTrue(result["diagnosticOnly"])
+                    self.assertEqual(result["action"], "stream_status")
+                    if case in ("absent", "record-changed", "generation"):
+                        connect.assert_not_called()
+                        self.assertFalse(result["requestSent"])
+                    else:
+                        connect.assert_called_once()
+                        self.assertEqual(
+                            sent, [{"id": "nc-status", "action": "stream_status"}]
+                        )
+                        self.assertIn("socket-close", events)
+                        self.assertTrue(result["socketClosed"])
+                    if "process-open" in events:
+                        self.assertIn("process-close", events)
+                    self.assertEqual(
+                        result["processHandleClosed"], case != "close-error"
+                    )
+                    if case in ("success", "close-error"):
+                        self.assertEqual(result["status"], status)
+                        self.assertTrue(result["identityRechecked"])
+                        self.assertTrue(result["responseReceived"])
+                    else:
+                        self.assertIsNotNone(result["error"])
+                    if case == "timeout":
+                        self.assertEqual(result["stage"], "read-status-response")
+                    if case == "truncated":
+                        self.assertTrue(result["responseTruncated"])
+
     def test_runtime_readonly_open_proof_requires_read_and_exact_write_denial(self):
         import ctypes
 
