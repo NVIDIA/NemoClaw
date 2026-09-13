@@ -816,6 +816,13 @@ describe("Hermes portable lifecycle", () => {
     );
     expect(result).toEqual({ kind: "recovered" });
     expect(listObservations).toBeGreaterThanOrEqual(3);
+    const operations = captureOpenShell.mock.calls.map(([args]) => args.slice(0, 2).join(":"));
+    const postStart = operations.slice(
+      operations.indexOf("sandbox:start") + 1,
+      operations.indexOf("sandbox:exec"),
+    );
+    expect(postStart.filter((operation) => operation === "sandbox:list")).toHaveLength(1);
+    expect(postStart.filter((operation) => operation === "sandbox:get")).toHaveLength(1);
     expect(podman.mock.calls.filter(([args]) => args[1] === "start")).toHaveLength(0);
     expect(openshellMutationCalls(captureOpenShell, "start")).toHaveLength(1);
   });
@@ -1040,33 +1047,41 @@ describe("Hermes portable lifecycle", () => {
     expect(openshellMutationCalls(captureOpenShell, "start")).toHaveLength(1);
     expect(openshellMutationCalls(captureOpenShell, "stop")).toHaveLength(1);
   });
-  it("does not stop an already-running container after a health failure (#9203)", () => {
-    const receipt = activeReceipt();
-    const { deps, captureOpenShell, launchOpenShell } = lifecycleDeps(receipt);
-    const defaultCapture = captureOpenShell.getMockImplementation()!;
-    let now = 0;
-    captureOpenShell.mockImplementation((args: readonly string[]) =>
-      args.includes("python3")
-        ? { status: 0, stdout: "unavailable\n", stderr: "" }
-        : defaultCapture(args),
-    );
-    expect(() =>
-      withMcpLifecycleLockSync(
-        SANDBOX,
-        () =>
-          recoverHermesPortableSandboxLifecycle(SANDBOX, lifecycleContext(), {
-            ...deps,
-            now: () => now,
-            sleep: (milliseconds) => {
-              now += milliseconds;
-            },
-          }),
-        { stateDir: path.join(stateDir, "state") },
-      ),
-    ).toThrow("managed startup did not pass authenticated health");
-    expect(launchOpenShell).not.toHaveBeenCalled();
-    expect(openshellMutationCalls(captureOpenShell, "stop")).toHaveLength(0);
-  });
+  it.each(["Ready", "Stopped"] as const)(
+    "preserves an already-running container after a health failure from %s (#11646)",
+    (initialPhase) => {
+      const receipt = activeReceipt();
+      const { deps, captureOpenShell, launchOpenShell } = lifecycleDeps(receipt, true, {
+        initialPhase,
+      });
+      const defaultCapture = captureOpenShell.getMockImplementation()!;
+      let now = 0;
+      captureOpenShell.mockImplementation((args: readonly string[]) =>
+        args.includes("python3")
+          ? { status: 0, stdout: "unavailable\n", stderr: "" }
+          : defaultCapture(args),
+      );
+      expect(() =>
+        withMcpLifecycleLockSync(
+          SANDBOX,
+          () =>
+            recoverHermesPortableSandboxLifecycle(SANDBOX, lifecycleContext(), {
+              ...deps,
+              now: () => now,
+              sleep: (milliseconds) => {
+                now += milliseconds;
+              },
+            }),
+          { stateDir: path.join(stateDir, "state") },
+        ),
+      ).toThrow("managed startup did not pass authenticated health");
+      expect(launchOpenShell).not.toHaveBeenCalled();
+      expect(openshellMutationCalls(captureOpenShell, "start")).toHaveLength(
+        initialPhase === "Stopped" ? 1 : 0,
+      );
+      expect(openshellMutationCalls(captureOpenShell, "stop")).toHaveLength(0);
+    },
+  );
 
   it("recovers against the current live OpenShell policy (#9211)", () => {
     const receipt = activeReceipt();

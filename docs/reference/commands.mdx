@@ -1444,7 +1444,7 @@ The error identifies the mismatch and asks you to preserve startup diagnostics a
 Recovery does not reset OpenShell storage or start the container directly through Podman.
 If recovery started a stopped container, it launches the receipt-owned `nemoclaw-start` command once and waits for authenticated Hermes health.
 For a container that was already running, recovery preserves the workload and waits for authenticated health after any saved-phase reconciliation.
-If a container or OpenShell identity check, reconnect check, or health check later fails after recovery started the sandbox, NemoClaw uses OpenShell to stop it.
+If a container or OpenShell identity check, reconnect check, or health check later fails after recovery started a previously stopped container, NemoClaw uses OpenShell to stop it.
 It then requires Podman to report the receipt-owned container as `exited` and OpenShell to report `Error` or `Stopped`.
 If NemoClaw cannot prove that rollback, the command reports both the recovery failure and the rollback failure.
 

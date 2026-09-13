@@ -1589,14 +1589,16 @@ export function recoverHermesPortableSandboxLifecycle(
           currentnessTiming,
         ),
       );
-      qualified = {
-        ...qualified,
-        openShellPhase: observeOpenShellIdentity(qualified.receipt, qualified.capture, [
-          "Ready",
-          "Error",
-          "Stopped",
-        ]).phase,
-      };
+      if (qualified.hasTransactionAuthority) {
+        qualified = {
+          ...qualified,
+          openShellPhase: observeOpenShellIdentity(qualified.receipt, qualified.capture, [
+            "Ready",
+            "Error",
+            "Stopped",
+          ]).phase,
+        };
+      }
       rollbackAuthority = qualified;
       const isRunning =
         qualified.container.authority.running && qualified.container.status === "running";
