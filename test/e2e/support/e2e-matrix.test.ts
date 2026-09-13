@@ -34,7 +34,7 @@ describe("live E2E target matrix", () => {
   it("honors an explicit runs-on:<label> requirement override", () => {
     const custom = target("test-runs-on-override")
       .description("test fixture")
-      .manifest("test/e2e/manifests/openclaw-nvidia.yaml")
+
       .environment({
         platform: "ubuntu-local",
         install: "repo-current",
@@ -42,8 +42,7 @@ describe("live E2E target matrix", () => {
         onboarding: "cloud-openclaw",
       })
       .expectedState("cloud-openclaw-ready")
-      .onboardingAssertions(["base-installed"])
-      .suites(["smoke"])
+
       .runnerRequirements(["runs-on:custom-self-hosted"])
       .build();
     expect(resolveRunnerForTarget(custom).runner).toBe("custom-self-hosted");
@@ -52,7 +51,7 @@ describe("live E2E target matrix", () => {
   it("rejects empty runs-on requirement overrides", () => {
     const broken = target("test-empty-runs-on-override")
       .description("test fixture")
-      .manifest("test/e2e/manifests/openclaw-nvidia.yaml")
+
       .environment({
         platform: "ubuntu-local",
         install: "repo-current",
@@ -60,8 +59,7 @@ describe("live E2E target matrix", () => {
         onboarding: "cloud-openclaw",
       })
       .expectedState("cloud-openclaw-ready")
-      .onboardingAssertions(["base-installed"])
-      .suites(["smoke"])
+
       .runnerRequirements(["runs-on:   "])
       .build();
     expect(() => resolveRunnerForTarget(broken)).toThrow(/empty runs-on override/);
@@ -70,7 +68,7 @@ describe("live E2E target matrix", () => {
   it("fails loudly when a platform has no default runner mapping", () => {
     const broken = target("test-unknown-platform")
       .description("test fixture")
-      .manifest("test/e2e/manifests/openclaw-nvidia.yaml")
+
       .environment({
         platform: "made-up-platform",
         install: "repo-current",
@@ -78,8 +76,7 @@ describe("live E2E target matrix", () => {
         onboarding: "cloud-openclaw",
       })
       .expectedState("cloud-openclaw-ready")
-      .onboardingAssertions(["base-installed"])
-      .suites(["smoke"])
+
       .build();
     expect(() => resolveRunnerForTarget(broken)).toThrow(/no default for platform/);
   });

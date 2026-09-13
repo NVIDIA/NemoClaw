@@ -6,9 +6,7 @@ import { cloudExperimentalChecksForOnboarding } from "./cloud-experimental-check
 
 export interface LiveTargetRunPlan {
   targetId: string;
-  manifestPath: string | null;
   expectedStateId: string | undefined;
-  suiteIds: string[];
   phases: string[];
   e2eCloudExperimentalChecks?: string[];
 }
@@ -16,9 +14,7 @@ export interface LiveTargetRunPlan {
 export function buildLiveTargetRunPlan(target: TargetDefinition): LiveTargetRunPlan {
   const plan: LiveTargetRunPlan = {
     targetId: target.id,
-    manifestPath: target.manifestPath ?? null,
     expectedStateId: target.expectedStateId,
-    suiteIds: target.suiteIds ?? [],
     phases: [
       "environment",
       "onboarding",

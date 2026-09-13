@@ -20,10 +20,8 @@ const SUPPORTED_ENVIRONMENT: TargetEnvironment = {
 
 function syntheticTarget(environment: TargetEnvironment = SUPPORTED_ENVIRONMENT): TargetDefinition {
   return target("synthetic-target")
-    .manifest("synthetic/manifest.yaml")
     .environment(environment)
     .expectedState("synthetic-ready")
-    .suites(["synthetic-smoke", "synthetic-security"])
     .build();
 }
 
@@ -38,13 +36,12 @@ describe("live target registry discovery support", () => {
     },
   );
 
-  it("accepts a fully wired synthetic target and forwards its pending suites", () => {
+  it("accepts a fully wired synthetic target", () => {
     const registered = syntheticTarget();
 
     expect(liveTargetSupport(registered)).toEqual({
       supported: true,
       reasons: [],
-      pendingRuntimeSuites: registered.suiteIds,
     });
   });
 
@@ -104,9 +101,7 @@ describe("live target registry discovery support", () => {
 
     expect(buildLiveTargetRunPlan(registered)).toEqual({
       targetId: registered.id,
-      manifestPath: registered.manifestPath,
       expectedStateId: registered.expectedStateId,
-      suiteIds: registered.suiteIds,
       phases: ["environment", "onboarding", "state-validation"],
     });
     const deepAgents = { ...SUPPORTED_ENVIRONMENT, onboarding: "cloud-langchain-deepagents-code" };

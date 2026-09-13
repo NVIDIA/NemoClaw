@@ -100,7 +100,6 @@ for (const [targetIndex, target] of listTargets().entries()) {
       await artifacts.target.declare({
         id: target.id,
         boundary: "typed-registry",
-        pendingRuntimeSuites: support.pendingRuntimeSuites,
       });
 
       const runPlan = buildLiveTargetRunPlan(target);
@@ -168,7 +167,6 @@ for (const [targetIndex, target] of listTargets().entries()) {
         id: target.id,
         expectedStateId: validation.state.id,
         probes: validation.probes.map((probe) => probe.id),
-        pendingRuntimeSuites: support.pendingRuntimeSuites,
         dcodeBaseImage,
         lifecycle: lifecycleResult
           ? { profile: lifecycleResult.profile, steps: lifecycleResult.steps.map((s) => s.id) }

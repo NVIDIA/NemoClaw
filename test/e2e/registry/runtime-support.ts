@@ -22,7 +22,6 @@ const SUPPORTED_POLICY_TIERS = new Set(["balanced", "open", "personal"]);
 export interface LiveTargetSupport {
   supported: boolean;
   reasons: string[];
-  pendingRuntimeSuites: string[];
 }
 
 export function liveTargetSupport(target: TargetDefinition): LiveTargetSupport {
@@ -57,7 +56,6 @@ export function liveTargetSupport(target: TargetDefinition): LiveTargetSupport {
   return {
     supported: reasons.length === 0,
     reasons,
-    pendingRuntimeSuites: target.suiteIds ?? [],
   };
 }
 

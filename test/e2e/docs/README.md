@@ -28,7 +28,6 @@ Direct E2E implementations now live in Vitest. The former
 | Main-push and manual selection | `tools/e2e/workflow-plan.mts` |
 | Phase fixtures and clients | `test/e2e/fixtures/` |
 | Expected-state probes | `test/e2e/registry/expected-states.ts` |
-| Product-facing setup/onboarding state | `test/e2e/manifests/*.yaml` |
 | Migration status and retirement decisions | GitHub issues and pull requests |
 
 ## Target Model
@@ -66,8 +65,8 @@ Live execution happens through shared fixtures:
 The `test/e2e/fixtures/` path is fixture/support code, not a test
 harness or runner. Vitest remains the only test harness.
 
-`suiteIds` remain metadata for reporting and migration planning. They do not
-dispatch shell validation suites.
+Typed targets declare their environment, expected state, lifecycle, and required
+secrets. The live Vitest test executes those contracts through fixtures.
 
 ## Selecting One Target
 
@@ -331,7 +330,6 @@ test/e2e/
   docs/                  # Fixture guide, migration notes, retirement record
   fixtures/              # Vitest fixtures, clients, redaction, artifacts, cleanup
   live/                  # Opt-in live E2E target tests
-  manifests/             # Product-facing NemoClawInstance desired state
   registry/              # Typed registry, matrix helpers, expected states
   support/               # Fast fixture/support and metadata tests
 ```

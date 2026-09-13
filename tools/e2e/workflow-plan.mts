@@ -178,14 +178,12 @@ function isLiveTargetMatrixEntry(value: unknown): value is LiveTargetMatrixEntry
       "label",
       "onboarding",
       "observableOutcome",
-      "pendingRuntimeSuites",
       "platform",
       "requiredSecrets",
       "runtime_provider",
       "coverage_variant",
       "runner",
       "runtime",
-      "suites",
       "supportReasons",
       "supported",
       "timeout_minutes",
@@ -220,10 +218,8 @@ function isLiveTargetMatrixEntry(value: unknown): value is LiveTargetMatrixEntry
     typeof value.timeout_minutes === "number" &&
     Number.isSafeInteger(value.timeout_minutes) &&
     value.timeout_minutes > 0 &&
-    isStringArray(value.suites) &&
     isStringArray(value.requiredSecrets) &&
     isStringArray(value.supportReasons) &&
-    isStringArray(value.pendingRuntimeSuites) &&
     hasValidExecutionMetadata(value)
   );
 }

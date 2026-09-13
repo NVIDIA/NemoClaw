@@ -53,9 +53,7 @@ export interface LiveTargetMatrixEntry extends LiveTargetInventoryEntry {
   runtime: string;
   onboarding: string;
   expectedStateId: string;
-  suites: string[];
   requiredSecrets: string[];
-  pendingRuntimeSuites: string[];
   timeout_minutes: number;
 }
 
@@ -133,9 +131,7 @@ function liveMatrixEntry(
     runtime: target.environment?.runtime ?? "unknown",
     onboarding: target.environment?.onboarding ?? "unknown",
     expectedStateId: target.expectedStateId ?? "",
-    suites: target.suiteIds ?? [],
     requiredSecrets: target.requiredSecrets ?? [],
-    pendingRuntimeSuites: support.pendingRuntimeSuites,
     timeout_minutes: liveTargetTimeoutContract(target.environment?.lifecycle).targetTimeoutMinutes,
   };
 }

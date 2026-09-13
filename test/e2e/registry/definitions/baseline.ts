@@ -19,11 +19,8 @@ import {
 
 interface CanonicalTargetInput {
   id: string;
-  manifestName: string;
   environment: TargetEnvironment;
   expectedStateId: string;
-  suiteIds: string[];
-  onboardingAssertionIds?: string[];
   description?: string;
   executionCoverage?: E2eExecutionMetadata;
   requiredSecrets?: string[];
@@ -34,11 +31,8 @@ interface CanonicalTargetInput {
 function canonicalTarget(input: CanonicalTargetInput): TargetDefinition {
   let builder = target(input.id)
     .description(input.description ?? `Canonical typed target for ${input.id}.`)
-    .manifest(`test/e2e/manifests/${input.manifestName}.yaml`)
     .environment(input.environment)
-    .expectedState(input.expectedStateId)
-    .onboardingAssertions(input.onboardingAssertionIds ?? ["base-installed", "preflight-passed"])
-    .suites(input.suiteIds);
+    .expectedState(input.expectedStateId);
 
   if (input.requiredSecrets) {
     builder = builder.requiredSecrets(input.requiredSecrets);
@@ -61,10 +55,8 @@ const canonicalTargetInputs: CanonicalTargetInput[] = [
   {
     id: "ubuntu-repo-cloud-openclaw",
     gatewayRuntimes: E2E_GATEWAY_RUNTIMES,
-    manifestName: "openclaw-nvidia",
     environment: ubuntuRepoManagedRuntime("cloud-openclaw"),
     expectedStateId: "cloud-openclaw-ready",
-    suiteIds: ["smoke", "inference", "credentials"],
     description: "Ubuntu repo checkout with managed-runtime cloud OpenClaw onboarding.",
     executionCoverage: {
       agentRuntime: "openclaw",
@@ -77,13 +69,11 @@ const canonicalTargetInputs: CanonicalTargetInput[] = [
   {
     id: "ubuntu-repo-cloud-langchain-deepagents-code",
     gatewayRuntimes: E2E_GATEWAY_RUNTIMES,
-    manifestName: "langchain-deepagents-code-nvidia",
     environment: ubuntuRepoManagedRuntimeLifecycle(
       "cloud-langchain-deepagents-code",
       "dcode-rebuild-invalid-credential",
     ),
     expectedStateId: "cloud-deepagents-code-ready",
-    suiteIds: ["smoke", "inference", "terminal-agent", "deepagents-code-policy"],
     description: "Ubuntu repo checkout with managed-runtime Deep Agents Code onboarding.",
     executionCoverage: {
       agentRuntime: "langchain-deepagents-code",
@@ -108,10 +98,8 @@ const canonicalTargetInputs: CanonicalTargetInput[] = [
     // `*-nemoclaw-gpu-backup-*` sibling).
     id: "ubuntu-repo-docker-post-reboot-recovery",
     gatewayRuntimes: ["docker"],
-    manifestName: "openclaw-nvidia-post-reboot-recovery",
     environment: ubuntuRepoDockerLifecycle("cloud-openclaw", "post-reboot-recovery"),
     expectedStateId: "post-reboot-recovery-ready",
-    suiteIds: ["smoke"],
     requiredSecrets: ["NVIDIA_INFERENCE_API_KEY"],
     description:
       "Post-reboot recovery guard: the gateway must recover through the required user service " +
@@ -126,11 +114,8 @@ const canonicalTargetInputs: CanonicalTargetInput[] = [
   {
     id: "ubuntu-policy-custom-missing-presets-negative",
     gatewayRuntimes: E2E_GATEWAY_RUNTIMES,
-    manifestName: "openclaw-nvidia-policy-custom-missing-presets",
     environment: ubuntuRepoManagedRuntime("cloud-openclaw-policy-custom-missing-presets"),
     expectedStateId: "onboarding-failure-policy-presets-required",
-    onboardingAssertionIds: ["base-installed", "preflight-passed"],
-    suiteIds: [],
     executionCoverage: {
       agentRuntime: "openclaw",
       observableOutcome: "Missing custom policy presets fail closed",

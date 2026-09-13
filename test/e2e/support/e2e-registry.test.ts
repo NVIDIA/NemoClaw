@@ -174,10 +174,8 @@ describe("deterministic target registry", () => {
   });
 
   it("should reject duplicate target IDs", () => {
-    const first = target("duplicate-id")
-      .manifest("test/e2e/manifests/openclaw-nvidia.yaml")
-      .build();
-    const second = target("duplicate-id").manifest("synthetic/second-manifest.yaml").build();
+    const first = target("duplicate-id").build();
+    const second = target("duplicate-id").build();
 
     expect(() =>
       buildExecutionInventory(
@@ -250,7 +248,7 @@ describe("deterministic target registry", () => {
   });
 
   it("should reject target IDs that are unsafe for workflow regex filters and artifact paths", () => {
-    const unsafe = target("bad.id").manifest("test/e2e/manifests/openclaw-nvidia.yaml").build();
+    const unsafe = target("bad.id").build();
 
     expect(() =>
       buildExecutionInventory([{ id: unsafe.id, route: "typed", definition: unsafe }]),

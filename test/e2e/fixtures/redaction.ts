@@ -200,7 +200,7 @@ export function redactString(text: string, explicitValues?: Iterable<string>): s
 
 // Env keys the fixture layer guarantees children may always see. Anything
 // outside this set, outside FIXTURE_ENV_PREFIXES, and not declared
-// in PhaseAction.secretEnv / AssertionStep.secretEnv is dropped before
+// through the child process secretEnv option is dropped before
 // the child spawns.
 const FIXTURE_ENV_ALLOWLIST: ReadonlySet<string> = new Set([
   "PATH",
