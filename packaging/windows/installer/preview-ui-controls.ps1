@@ -78,8 +78,10 @@ function Wait-PreviewWindow($Process) {
     } while ($clock.ElapsedMilliseconds -lt 60000)
     throw 'The candidate setup window did not become available.'
 }
-function Set-PreviewCanaryConfiguration($Window, [string]$Endpoint, [string]$Key) {
-    $choice = Wait-PreviewElement $Window 'AgentOpenClaw'
+function Set-PreviewCanaryConfiguration($Window, [string]$Endpoint, [string]$Key,
+    [ValidateSet('openclaw','hermes')][string]$Agent = 'openclaw') {
+    $choiceId = if ($Agent -ieq 'hermes') { 'AgentHermes' } else { 'AgentOpenClaw' }
+    $choice = Wait-PreviewElement $Window $choiceId
     ([Windows.Automation.SelectionItemPattern]$choice.GetCurrentPattern([Windows.Automation.SelectionItemPattern]::Pattern)).Select()
     Invoke-PreviewButton (Wait-PreviewElement $Window 'ConfigureInference')
     $provider = Wait-PreviewElement $Window 'InferenceProvider'
@@ -103,13 +105,14 @@ function Invoke-PreviewUi {
         [ValidateSet('failure','install','replace','uninstall')][string]$Mode,
         [string]$LogPath, [string]$Endpoint = 'https://127.0.0.1:17193/qualification/v1',
         [string]$CanaryKey = 'disposable-setup-diagnostic-canary',
-        [switch]$RemoveOpenClawData, [scriptblock]$AfterReplacement)
+        [Alias('RemoveOpenClawData')][switch]$RemoveAgentData, [scriptblock]$AfterReplacement,
+        [ValidateSet('openclaw','hermes')][string]$Agent = 'openclaw')
     if ((Get-FileHash -LiteralPath $SetupPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne $SetupSha256) { throw 'The setup artifact bytes changed before execution.' }
     if (Test-Path -LiteralPath $LogPath) { throw 'Setup qualification logs must be fresh.' }
     $action = if ($Mode -ceq 'uninstall') { '-uninstall' } else { '-install' }
     $info = New-PreviewProcess $SetupPath @($action,'-norestart','-log',$LogPath)
     $clock = [Diagnostics.Stopwatch]::StartNew(); $process = [Diagnostics.Process]::Start($info)
-    $window = $null; $primary = $null; $result = [ordered]@{ mode=$Mode; nativeWpf=$false; installClicks=0; configureClicks=0; replacementMilliseconds=$null; applyToReadyMilliseconds=$null; exitCode=$null; cleanupClosed=$false }
+    $window = $null; $primary = $null; $result = [ordered]@{ mode=$Mode; agent=$Agent.ToLowerInvariant(); nativeWpf=$false; installClicks=0; configureClicks=0; replacementMilliseconds=$null; applyToReadyMilliseconds=$null; exitCode=$null; cleanupClosed=$false }
     try {
         $null = $process.Handle; $window = Wait-PreviewWindow $process; $result.nativeWpf = $true
         $result['windowProcessId'] = $window.Current.ProcessId; $result['windowHandle'] = $window.Current.NativeWindowHandle
@@ -124,10 +127,10 @@ function Invoke-PreviewUi {
             $remove = Wait-PreviewElement $window 'RemoveOwnedAgentData'
             $toggle = [Windows.Automation.TogglePattern]$remove.GetCurrentPattern([Windows.Automation.TogglePattern]::Pattern)
             if ($toggle.Current.ToggleState -ne [Windows.Automation.ToggleState]::Off) { throw 'Uninstall did not preserve user data by default.' }
-            if ($RemoveOpenClawData) {
+            if ($RemoveAgentData) {
                 $toggle.Toggle()
-                $agent = Wait-PreviewElement $window 'RemoveAgent-openclaw'
-                $selected = [Windows.Automation.TogglePattern]$agent.GetCurrentPattern([Windows.Automation.TogglePattern]::Pattern)
+                $agentChoice = Wait-PreviewElement $window ('RemoveAgent-' + $Agent.ToLowerInvariant())
+                $selected = [Windows.Automation.TogglePattern]$agentChoice.GetCurrentPattern([Windows.Automation.TogglePattern]::Pattern)
                 if ($selected.Current.ToggleState -ne [Windows.Automation.ToggleState]::Off) { throw 'An agent was preselected for removal.' }
                 $selected.Toggle()
             }
@@ -135,7 +138,7 @@ function Invoke-PreviewUi {
             $null = Wait-PreviewElement $window 'CloseButton' -Milliseconds 180000
             $result.applyToReadyMilliseconds = $apply.ElapsedMilliseconds
         } else {
-            Set-PreviewCanaryConfiguration $window $Endpoint $CanaryKey; $result.configureClicks++
+            Set-PreviewCanaryConfiguration $window $Endpoint $CanaryKey -Agent $Agent; $result.configureClicks++
             $apply = [Diagnostics.Stopwatch]::StartNew(); Invoke-PreviewButton (Wait-PreviewElement $window 'InstallNemoClaw'); $result.installClicks++
             if ($Mode -ceq 'failure') {
                 $failure = Wait-PreviewElement $window 'FailureDetail' -Milliseconds 180000 -ExpectedFailure

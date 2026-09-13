@@ -647,7 +647,10 @@ class SelectedNodeControls(unittest.TestCase):
             self.assertNotIn("HERMES_TUI_DIR", os.environ)
 
     def test_native_edge_cdp_uses_the_canonical_override_without_selecting_chromium(self):
-        self.contract()
+        record = self.contract()
+        record["browserHost"] = "native-edge-cdp"
+        record.pop("chromium")
+        (self.root / "nemoclaw-hermes-node.json").write_text(json.dumps(record))
         endpoint = "ws://127.0.0.1:51234/devtools/browser/01234567-abcd"
         with mock.patch.dict(os.environ, {"BROWSER_CDP_URL": endpoint}, clear=True):
             adapter._install_prebuilt_node(self.root)

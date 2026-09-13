@@ -4,7 +4,13 @@
 import { fileURLToPath as nativeEntryFile } from "node:url";
 declare const NEMOCLAW_BUNDLED_RUNTIME: boolean | undefined;
 import { nativeWorkerAssets } from "./native-assets.mts";
-import { withNativeRuntimeSession, type NativeRuntimeSession } from "./native-runtime.mts";
+import {
+  withNativeRuntimeSession,
+  nativeHermesToolEnvironment,
+  nativeHermesCompatibility,
+  nativeRuntimeWorkerCommand,
+  type NativeRuntimeSession,
+} from "./native-runtime.mts";
 import { spawn } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
@@ -515,7 +521,7 @@ const execute = (prompt) => new Promise((resolve, reject) => {
       ...process.env,
       HERMES_HOME: hermesHome,
       HERMES_DISABLE_LAZY_INSTALLS: "1",
-      HERMES_NODE: process.execPath,
+      HERMES_NODE: required("HERMES_NODE"),
       HERMES_PYTHON: python,
       HERMES_SKIP_NODE_BOOTSTRAP: "1",
       HOME: home,
@@ -808,6 +814,21 @@ async function mainInternal(runtimeLease: NativeRuntimeSession) {
   const systemDrive = process.env.SystemDrive;
   if (!systemDrive || !/^[A-Za-z]:$/u.test(systemDrive)) fail("SystemDrive is invalid");
   const systemRoot = requiredDirectory(process.env.SystemRoot ?? "", "Windows system root");
+  const hermesTools = isHermes ? nativeHermesToolEnvironment(runtimeLease, systemRoot) : null;
+  const hermesCompatibility = isHermes ? nativeHermesCompatibility(runtimeLease) : null;
+  if (hermesTools) {
+    for (const [tool, executable] of Object.entries({
+      Python: hermesTools.python,
+      Bash: hermesTools.bash,
+      Node: hermesTools.node,
+      ripgrep: hermesTools.ripgrep,
+      compatibilityLauncher: hermesCompatibility!.launcher,
+      compatibilityArm64Dll: hermesCompatibility!.arm64Dll,
+      compatibilityX64Dll: hermesCompatibility!.x64Dll,
+      compatibilityExecutor: hermesCompatibility!.executor,
+    }))
+      requiredFile(executable, `sealed Hermes ${tool}`);
+  }
   const runId = randomBytes(5).toString("hex");
   const runRoot = path.join(`${systemDrive}\\`, `NemoClawNativeAgent-${agentId}-${runId}`);
   const shareRoot = path.join(`${systemDrive}\\`, `NemoClawNativeAgentShare-${agentId}-${runId}`);
@@ -819,7 +840,11 @@ async function mainInternal(runtimeLease: NativeRuntimeSession) {
     if (fs.existsSync(directory)) fail("qualification root already exists");
     fs.mkdirSync(directory);
   }
-  const gatewayConfig = writeNativeGatewayConfig(installRoot, runRoot);
+  const gatewayConfig = writeNativeGatewayConfig(
+    installRoot,
+    runRoot,
+    isHermes ? runtimeLease : undefined,
+  );
   // MXC adds its container-specific grant from filesystem_policy after this host boundary is set.
   const privateShareAcl = await createPrivateShareRoot(shareRoot, systemRoot);
   const evidenceRoot = path.resolve(
@@ -973,7 +998,11 @@ async function mainInternal(runtimeLease: NativeRuntimeSession) {
       NODE_DISABLE_COMPILE_CACHE: "1",
       NUMBER_OF_PROCESSORS: process.env.NUMBER_OF_PROCESSORS ?? "1",
       OS: "Windows_NT",
-      PATH: `${path.join(systemRoot, "System32")};${systemRoot}`,
+      ...(hermesTools
+        ? hermesTools.environment
+        : {
+            PATH: `${path.join(systemRoot, "System32")};${systemRoot}`,
+          }),
       PATHEXT: ".COM;.EXE;.BAT;.CMD",
       PROCESSOR_ARCHITECTURE: "ARM64",
       SYSTEMDRIVE: systemDrive,
@@ -991,7 +1020,13 @@ async function mainInternal(runtimeLease: NativeRuntimeSession) {
       "--policy",
       policyPath,
       "--driver-config-json",
-      JSON.stringify({ mxc: { command: [node, workload], cwd: shareRoot, windows_ui: true } }),
+      JSON.stringify({
+        mxc: {
+          command: nativeRuntimeWorkerCommand(runtimeLease, workload),
+          cwd: shareRoot,
+          windows_ui: true,
+        },
+      }),
       "--no-tty",
     ];
     for (const [name, value] of Object.entries(sandboxEnvironment))

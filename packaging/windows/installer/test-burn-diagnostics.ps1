@@ -1,7 +1,8 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 [CmdletBinding()]
-param([Parameter(Mandatory)][string]$FixtureDirectory, [Parameter(Mandatory)][string]$OutputDirectory)
+param([Parameter(Mandatory)][string]$FixtureDirectory, [Parameter(Mandatory)][string]$OutputDirectory,
+    [ValidateSet('openclaw','hermes')][string]$Agent = 'openclaw')
 Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'preview-ui-controls.ps1')
 if (Test-Path -LiteralPath $OutputDirectory) { throw 'Burn diagnostic evidence must be fresh.' }
@@ -13,7 +14,7 @@ foreach ($item in @($fixture.helper,$fixture.setup)) {
     if ([IO.Path]::GetFileName([string]$item.file) -cne $item.file -or (Get-Item -LiteralPath $file).Length -ne $item.bytes -or
         (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant() -cne $item.sha256) { throw 'A Burn diagnostic fixture file differs from its receipt.' }
 }
-$record = [ordered]@{schemaVersion=1;classification='actual-burn-prerequisite-failure-qualification';sourceRevision=$env:GITHUB_SHA;status='failed';
+$record = [ordered]@{schemaVersion=1;classification='actual-burn-prerequisite-failure-qualification';sourceRevision=$env:GITHUB_SHA;agent=$Agent.ToLowerInvariant();status='failed';
     packageNotInstalled=$false;primaryFailureRetained=$false;sidecarMatched=$false;stdoutReceiptAbsent=$false;ui=$null;cleanupErrors=@()}
 $primary = $null
 if (Test-Path -LiteralPath (Join-Path $env:ProgramFiles 'NVIDIA\NemoClaw')) { throw 'The Burn failure regression requires no installed product.' }
@@ -38,7 +39,7 @@ try {
         $child.Dispose()
     }
     $log = Join-Path $output 'burn.log'
-    $record.ui = Invoke-PreviewUi -SetupPath (Join-Path $FixtureDirectory $fixture.setup.file) -SetupSha256 $fixture.setup.sha256 -Mode failure -LogPath $log
+    $record.ui = Invoke-PreviewUi -SetupPath (Join-Path $FixtureDirectory $fixture.setup.file) -SetupSha256 $fixture.setup.sha256 -Mode failure -LogPath $log -Agent $Agent
     $files = @(Get-ChildItem -LiteralPath $output -Filter 'burn.log.host-preparation-*.json' -File)
     if ($files.Count -ne 1 -or $files[0].Length -gt 8192) { throw 'The actual Burn invocation did not retain exactly one bounded helper sidecar.' }
     $detail = Get-Content -LiteralPath $files[0].FullName -Raw | ConvertFrom-Json

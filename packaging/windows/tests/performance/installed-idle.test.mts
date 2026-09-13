@@ -194,3 +194,123 @@ test("partial records and excessive output fail with the real observer stopped",
     assert.equal(result.observerExitConfirmed, true);
   }
 });
+
+function hermesFixture() {
+  const value = fixture();
+  const install = plan.installRoot;
+  const root = install + "\\runtimes\\" + plan.runtimeId + "\\hermes";
+  const entries = [
+    ["guardian", install + "\\bin\\NemoClaw.exe", 0],
+    [
+      "host-runtime",
+      install + "\\runtimes\\" + plan.runtimeId + "\\app\\NemoClaw.Runtime.exe",
+      100,
+    ],
+    ["openshell-gateway", install + "\\bin\\openshell-gateway.exe", 101],
+    ["native-window", install + "\\native-ui\\NemoClaw.Bootstrapper.exe", 101],
+    ["hermes-ui-relay", install + "\\bin\\NemoClaw.exe", 101],
+    ["hermes-broker-relay", install + "\\bin\\NemoClaw.exe", 101],
+    ["hermes-status-owner", install + "\\bin\\NemoClaw.exe", 101],
+    ["hermes-state-session-owner", install + "\\bin\\NemoClaw.exe", 101],
+    ["hermes-runtime-session-owner", install + "\\bin\\NemoClaw.exe", 101],
+    ["mxc-executor", root + "\\mxc-compat\\wxc-exec.exe", 102],
+    ["hermes-launcher", root + "\\mxc-compat\\NemoClawMsysLauncher.exe", 109],
+    ["contained-node", install + "\\bin\\node.exe", 110],
+    ["observer", "C:\\Program Files\\PowerShell\\7\\pwsh.exe", 0],
+    ["hermes-python-redirector-113", root + "\\hermes-agent\\venv\\Scripts\\python.exe", 111],
+    [
+      "hermes-python-114",
+      root +
+        "\\hermes-agent\\.hermes-runtime\\python\\cpython-3.11.16-windows-aarch64-none\\python.exe",
+      113,
+    ],
+    ["hermes-tui-node-115", root + "\\node\\node.exe", 114],
+  ] as const;
+  const frames = value.frames.map((frame) => ({
+    ...frame,
+    processes: entries.map(([role, executable], index) => ({
+      ...frame.processes[0],
+      role,
+      executable,
+      processId: 100 + index,
+    })),
+  }));
+  const checked = {
+    ...plan,
+    agent: "hermes" as const,
+    stateRoot: "C:\\NemoClawState-S-1-5-21-1-2-3-1001-hermes",
+    windowsRoot: "C:\\Windows",
+  };
+  return {
+    checked,
+    result: {
+      ...value,
+      ...checked,
+      frames,
+      processRelations: entries.flatMap(([, executable, parentProcessId], index) =>
+        parentProcessId && index > 1
+          ? [
+              {
+                processId: 100 + index,
+                parentProcessId,
+                executable,
+                creationFileTime: frames[0].processes[index].creationFileTime,
+                parentCreationFileTime: frames[0].processes.find(
+                  (row) => row.processId === parentProcessId,
+                )!.creationFileTime,
+              },
+            ]
+          : [],
+      ),
+    },
+  };
+}
+
+test("Hermes idle plan and summary retain its sealed executor and real Python counters", () => {
+  const { checked, result } = hermesFixture();
+  assert.equal(validateIdlePlan(checked).agent, "hermes");
+  const summary = summarizeIdle(result, checked);
+  const python = summary.targets.find((row) => row.role === "hermes-python-114")!;
+  assert.equal(python.cpuMs, 30);
+  assert.equal(python.counters.readOperations, "2");
+  assert.equal(python.counters.readTransferBytes, "7");
+  assert(
+    summary.targets
+      .find((row) => row.role === "mxc-executor")!
+      .executable.includes("\\hermes\\mxc-compat\\"),
+  );
+  assert.equal(summary.targets.length, 15);
+  assert.throws(() =>
+    validateIdlePlan({ ...checked, stateRoot: "D:\\NemoClawState-S-1-5-21-1-2-3-1001-hermes" }),
+  );
+});
+
+test("Hermes idle rejects stock MXC, absent Python, foreign images and broken parent generations", () => {
+  for (const kind of [
+    "stock-executor",
+    "missing-python",
+    "foreign-python",
+    "outside-contained-chain",
+    "parent-generation",
+    "pid-reuse",
+  ]) {
+    const { checked, result } = hermesFixture();
+    if (kind === "stock-executor")
+      for (const frame of result.frames)
+        frame.processes.find((row) => row.role === "mxc-executor")!.executable =
+          checked.installRoot + "\\mxc\\wxc-exec.exe";
+    if (kind === "missing-python")
+      for (const frame of result.frames)
+        frame.processes = frame.processes.filter((row) => row.role !== "hermes-python-114");
+    if (kind === "foreign-python")
+      for (const frame of result.frames)
+        frame.processes.find((row) => row.role === "hermes-python-114")!.executable =
+          "C:\\HostPython\\python.exe";
+    const edge = result.processRelations.find((row) => row.processId === 114)!;
+    if (kind === "outside-contained-chain") edge.parentProcessId = 101;
+    if (kind === "parent-generation") edge.parentCreationFileTime = "1";
+    if (kind === "pid-reuse")
+      result.frames[1].processes.find((row) => row.processId === 114)!.creationFileTime = "999";
+    assert.throws(() => summarizeIdle(result, checked), kind);
+  }
+});

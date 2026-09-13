@@ -325,7 +325,7 @@ export async function startNativeEdgeBrowser(options: {
     options.signal?.addEventListener("abort", abort, { once: true });
     return {
       identity,
-      process: { pid: child.pid!, creationFiletime: generation.creationFiletime },
+      process: { pid: child.pid!, creationTimeFileTime: generation.creationFiletime },
       endpoint,
       output,
       inheritedKillOnCloseJob: true,

@@ -266,6 +266,99 @@ export async function acquireNativeRuntimeSession(
 
 export type NativeRuntimeSession = Awaited<ReturnType<typeof acquireNativeRuntimeSession>>;
 
+export type NativeRuntimeLaunchLease = Pick<
+  NativeRuntimeSession,
+  "purpose" | "runtimeRoot" | "runtimeId" | "agentRoot" | "node" | "assertHeld"
+>;
+
+export function nativeHermesCompatibility(runtime: NativeRuntimeLaunchLease) {
+  runtime.assertHeld();
+  const installation = path.win32.dirname(path.win32.dirname(runtime.node));
+  const root = path.win32.join(installation, "runtimes", runtime.runtimeId, "hermes");
+  if (
+    runtime.purpose !== "hermes" ||
+    !HEX64.test(runtime.runtimeId) ||
+    runtime.runtimeRoot !== path.win32.dirname(root) ||
+    runtime.agentRoot !== root ||
+    runtime.node !== path.win32.join(installation, "bin", "node.exe")
+  )
+    throw new Error("The Hermes compatibility paths differ from the held runtime lease.");
+  const compatibilityRoot = path.win32.join(root, "mxc-compat");
+  return Object.freeze({
+    installation,
+    root: compatibilityRoot,
+    launcher: path.win32.join(compatibilityRoot, "NemoClawMsysLauncher.exe"),
+    arm64Dll: path.win32.join(compatibilityRoot, "NemoClawMsysCompat-arm64.dll"),
+    x64Dll: path.win32.join(compatibilityRoot, "NemoClawMsysCompat-x64.dll"),
+    executor: path.win32.join(compatibilityRoot, "wxc-exec.exe"),
+  });
+}
+
+export function nativeRuntimeWorkerCommand(runtime: NativeRuntimeLaunchLease, workload: string) {
+  runtime.assertHeld();
+  if (runtime.purpose !== "hermes") return [runtime.node, workload];
+  const compatibility = nativeHermesCompatibility(runtime);
+  const relative = path.win32.relative(path.win32.join(runtime.runtimeRoot, "workers"), workload);
+  if (
+    !relative ||
+    relative === ".." ||
+    relative.startsWith("..\\") ||
+    path.win32.isAbsolute(relative)
+  )
+    throw new Error("The Hermes worker does not belong to the held sealed runtime.");
+  return [compatibility.launcher, "--", runtime.node, workload];
+}
+
+export function nativeHermesToolEnvironment(
+  runtime: Pick<NativeRuntimeSession, "purpose" | "agentRoot" | "python" | "bash" | "assertHeld">,
+  windowsRoot: string,
+) {
+  runtime.assertHeld();
+  if (
+    runtime.purpose !== "hermes" ||
+    !runtime.agentRoot ||
+    !/^[A-Za-z]:\\/u.test(windowsRoot) ||
+    /[\u0000-\u001f;]/u.test(windowsRoot)
+  )
+    throw new Error("The canonical Hermes tool environment has no held runtime identity.");
+  const root = runtime.agentRoot;
+  const python = path.win32.join(root, "hermes-agent", "venv", "Scripts", "python.exe");
+  const bash = path.win32.join(root, "git", "bin", "bash.exe");
+  if (runtime.python !== python || runtime.bash !== bash)
+    throw new Error("The canonical Hermes interpreter or shell differs from its runtime lease.");
+  const node = path.win32.join(root, "node", "node.exe");
+  const ripgrep = path.win32.join(root, "ripgrep", "rg.exe");
+  // All application/tool entries are installer-owned. Do not append the host
+  // PATH, which may resolve WSL Bash or another Git/Python/Node installation.
+  const directories = [
+    path.win32.join(root, "bin"),
+    path.win32.dirname(node),
+    path.win32.dirname(python),
+    path.win32.dirname(ripgrep),
+    path.win32.join(root, "git", "bin"),
+    path.win32.join(root, "git", "usr", "bin"),
+    path.win32.join(root, "git", "cmd"),
+    path.win32.join(windowsRoot, "System32"),
+    windowsRoot,
+  ];
+  return Object.freeze({
+    python,
+    bash,
+    node,
+    ripgrep,
+    environment: Object.freeze({
+      PATH: directories.join(";"),
+      HERMES_PYTHON: python,
+      HERMES_GIT_BASH_PATH: bash,
+      HERMES_NODE: node,
+      HERMES_SKIP_NODE_BOOTSTRAP: "1",
+      HERMES_DISABLE_LAZY_INSTALLS: "1",
+      UV_OFFLINE: "1",
+      PIP_NO_INDEX: "1",
+    }),
+  });
+}
+
 export async function withNativeRuntimeSession<T>(
   launcher: string,
   installRoot: string,

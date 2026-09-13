@@ -2,8 +2,10 @@
 # SPDX-License-Identifier: Apache-2.0
 # Separate-runner migration qualification. It does not send inference requests.
 [CmdletBinding()]
-param([Parameter(Mandatory)][string]$WorkDirectory, [Parameter(Mandatory)][string]$ProductVersion)
+param([Parameter(Mandatory)][string]$WorkDirectory, [Parameter(Mandatory)][string]$ProductVersion,
+    [ValidateSet('openclaw','hermes')][string]$NewAgent = 'openclaw')
 Set-StrictMode -Version Latest; $ErrorActionPreference = 'Stop'
+$NewAgent=$NewAgent.ToLowerInvariant()
 . (Join-Path $PSScriptRoot 'preview-ui-controls.ps1')
 $work = [IO.Path]::GetFullPath($WorkDirectory)
 $output = Join-Path $work 'migration'
@@ -13,7 +15,11 @@ $installation = Join-Path $env:ProgramFiles 'NVIDIA\NemoClaw'
 $configuration = Join-Path $env:LOCALAPPDATA 'NVIDIA\NemoClaw\agents\openclaw\native-windows.json'
 $userSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
 $state = $env:SystemDrive.ToUpperInvariant() + '\NemoClawState-' + $userSid + '-openclaw'
-if ((Test-Path -LiteralPath $installation) -or (Test-Path -LiteralPath $configuration) -or (Test-Path -LiteralPath $state)) { throw 'Migration requires an empty disposable runner; existing state is not adopted.' }
+$newConfiguration = Join-Path $env:LOCALAPPDATA ('NVIDIA\NemoClaw\agents\'+$NewAgent+'\native-windows.json')
+$newState = $env:SystemDrive.ToUpperInvariant() + '\NemoClawState-' + $userSid + '-'+$NewAgent
+foreach ($path in @($installation,$configuration,$state,$newConfiguration,$newState)) {
+    if (Test-Path -LiteralPath $path) { throw 'Migration requires an empty disposable runner; existing state is not adopted.' }
+}
 $build = Get-Content -LiteralPath (Join-Path $work 'package\immutable-package-build.json') -Raw | ConvertFrom-Json
 if ($build.sourceRevision -cne $env:GITHUB_SHA -or $build.status -cne 'candidate-built-for-installed-qualification') { throw 'Migration must use this exact same-run product artifact.' }
 foreach ($row in $build.files) {
@@ -23,13 +29,13 @@ foreach ($row in $build.files) {
 }
 $newSetup = Join-Path $work "package\NemoClawSetup-$ProductVersion-windows-arm64.exe"
 $newHash = (Get-FileHash -LiteralPath $newSetup -Algorithm SHA256).Hash.ToLowerInvariant()
-$oldSetup = Join-Path $output 'NemoClawSetup-0.1.3-windows-arm64.exe'
-$oldHash = '7376adac66b2fef369f2288173029d2ddd091839a833e39a0ee70ab80dedb927'
-$oldUrl = 'https://media.githubusercontent.com/media/NVIDIA/NemoClaw/8aa14e4d1c25e9c840d9cf5bdac57e6f5dcb8874/NemoClawSetup-0.1.3-windows-arm64.exe'
+$oldSetup = Join-Path $output 'NemoClawSetup-0.1.4-windows-arm64.exe'
+$oldHash = '99a1f9db86f9be25cf5b903545f6dce626f9f09700c0e51b0b4040f1fd82d750'
+$oldUrl = 'https://media.githubusercontent.com/media/NVIDIA/NemoClaw/7c570e3f09bac5a48df7a5f2b85456e35cbe77ec/NemoClawSetup-0.1.4-windows-arm64.exe'
 $report = [ordered]@{schemaVersion=1;classification='actual-published-preview-native-migration';sourceRevision=$env:GITHUB_SHA;productVersion=$ProductVersion;
-    oldSource='491a3a3d5e7206d82c741198062b6e2aa98dc72c';oldSha256=$oldHash;newSha256=$newHash;status='failed';
+    oldSource='7935e0ccee812d365fd58d32e7291fd3286a98bf';oldVersion='0.1.4';oldAgent='openclaw';newAgent=$NewAgent;oldSha256=$oldHash;newSha256=$newHash;status='failed';
     freshInstallTimingContaminated=$false;realModelRequests=0;cases=@();cleanupErrors=@()}
-$primary = $null; $retainedHelper = $null; $binding = $null; $configHash = $null; $ownedCanary = $false; $script:MigrationInstallerOpen = $false
+$primary = $null; $retainedHelper = $null; $retainedHelperHash = $null; $binding = $null; $configHash = $null; $ownedCanary = $false; $script:MigrationInstallerOpen = $false
 
 function Get-MigrationRegistrations {
     $rows = @()
@@ -83,13 +89,34 @@ function Assert-MigrationCanary([string]$MarkerPath, [string]$MarkerHash, [strin
     $read = Invoke-MigrationHelper $retainedHelper @('--credential-read','compatible','--binding',$binding)
     if ($read.exitCode -ne 0 -or $read.stdout -cne $Key) { throw 'Migration did not preserve the exact owned Windows credential.' }
 }
+function Remove-MigrationOldCanary {
+    if ($null -eq $retainedHelperHash -or (Get-FileHash -LiteralPath $retainedHelper -Algorithm SHA256).Hash.ToLowerInvariant() -cne $retainedHelperHash) { throw 'The retained old native cleanup helper changed.' }
+    $failures=@()
+    foreach ($command in @(@('--state-remove','openclaw'), @('--credential-delete','compatible','--binding',$binding))) {
+        try {
+            $cleanupResult=Invoke-MigrationHelper $retainedHelper $command
+            if ($cleanupResult.exitCode -ne 0) { throw 'Retained native canary cleanup failed.' }
+        } catch { $failures+=@($_.Exception.Message) }
+    }
+    try {
+        if (Test-Path -LiteralPath $configuration -PathType Leaf) {
+            if ($null -eq $configHash -or (Get-FileHash -LiteralPath $configuration -Algorithm SHA256).Hash.ToLowerInvariant() -cne $configHash) { throw 'The remaining old configuration changed; it was preserved.' }
+            [IO.File]::Delete($configuration)
+        }
+    } catch { $failures+=@($_.Exception.Message) }
+    try {
+        $read=Invoke-MigrationHelper $retainedHelper @('--credential-read','compatible','--binding',$binding)
+        if ((Test-Path -LiteralPath $state) -or (Test-Path -LiteralPath $configuration) -or $read.exitCode -eq 0 -or $read.stdout.Length -ne 0) { throw 'The exact old canary reset is incomplete.' }
+    } catch { $failures+=@($_.Exception.Message) }
+    if ($failures.Count) { throw ($failures -join ' ') }
+}
 function Invoke-MigrationQuietUninstall([string]$SetupPath, [string]$Label) {
     $info = New-PreviewProcess $SetupPath @('-uninstall','-quiet','-norestart','-log',(Join-Path $output ($Label + '.log')))
     $clock=[Diagnostics.Stopwatch]::StartNew(); $child=[Diagnostics.Process]::Start($info); $script:MigrationInstallerOpen=$true
     try {
         if (-not $child.WaitForExit(180000)) { throw 'Windows uninstall did not complete; its live transaction was not killed.' }
-        if ($child.ExitCode -ne 0) { throw "Windows uninstall failed with status $($child.ExitCode)." }
         $script:MigrationInstallerOpen=$false
+        if ($child.ExitCode -ne 0) { throw "Windows uninstall failed with status $($child.ExitCode)." }
         return @{elapsedMilliseconds=$clock.ElapsedMilliseconds;exitCode=$child.ExitCode}
     } finally { $child.Dispose() }
 }
@@ -105,17 +132,20 @@ function Assert-MigrationPreparationNoop([string]$LogPath) {
 try {
     Assert-MigrationRegistrations ''
     Invoke-WebRequest -Uri $oldUrl -OutFile $oldSetup -TimeoutSec 180
-    if ((Get-Item -LiteralPath $oldSetup).Length -ne 204621961 -or (Get-FileHash -LiteralPath $oldSetup -Algorithm SHA256).Hash.ToLowerInvariant() -cne $oldHash) { throw 'The anonymous previous-preview download differs from the pinned full artifact.' }
+    if ((Get-Item -LiteralPath $oldSetup).Length -ne 204621797 -or (Get-FileHash -LiteralPath $oldSetup -Algorithm SHA256).Hash.ToLowerInvariant() -cne $oldHash) { throw 'The anonymous previous-preview download differs from the pinned full artifact.' }
     foreach ($kind in @('conventional-reinstall','native-replace-preview')) {
         $caseRoot = Join-Path $output $kind; [void][IO.Directory]::CreateDirectory($caseRoot)
         $nonce=[guid]::NewGuid().ToString('N'); $canary='disposable-migration-key-'+$nonce; $endpoint='https://127.0.0.1:17193/migration-'+$nonce+'/v1'
-        $case = [ordered]@{kind=$kind;oldInstall=$null;oldUninstall=$null;newInstall=$null;newUninstall=$null;preservedBeforeNewOnboarding=$false;preparation=$null;resetVerified=$false}
+        $newBinding=$null
+        $case = [ordered]@{kind=$kind;oldAgent='openclaw';newAgent=$NewAgent;oldVersion='0.1.4';newVersion=$ProductVersion;oldInstall=$null;oldUninstall=$null;newInstall=$null;newUninstall=$null;preservedBeforeNewOnboarding=$false;preservedAfterSelectiveReset=$false;preparation=$null;resetVerified=$false}
         $report.cases+=@($case)
         $case.oldInstall = Invoke-PreviewUi -SetupPath $oldSetup -SetupSha256 $oldHash -Mode install -LogPath (Join-Path $caseRoot 'old-install.log') -Endpoint $endpoint -CanaryKey $canary
-        Assert-MigrationRegistrations '0.1.3'
+        Assert-MigrationRegistrations '0.1.4'
         $launcher=Join-Path $installation 'bin\NemoClaw.exe'; $retainedHelper=Join-Path $caseRoot 'retained-NemoClaw.exe'
         [IO.File]::Copy($launcher,$retainedHelper,$false)
         if ((Get-FileHash -LiteralPath $launcher -Algorithm SHA256).Hash -cne (Get-FileHash -LiteralPath $retainedHelper -Algorithm SHA256).Hash) { throw 'The retained canary helper differs from the installed old preview.' }
+        $retainedHelperHash=(Get-FileHash -LiteralPath $retainedHelper -Algorithm SHA256).Hash.ToLowerInvariant()
+        $case['retainedOldHelperSha256']=$retainedHelperHash
         $prepared=Invoke-MigrationHelper $launcher @('--configure-native','--prepare-all') (Get-Content -LiteralPath $configuration -Raw)
         if ($prepared.exitCode -ne 0) { throw 'The existing configuration bindings could not be inspected.' }
         $binding=($prepared.stdout | ConvertFrom-Json).inference
@@ -133,20 +163,43 @@ try {
         if ($kind -ceq 'conventional-reinstall') {
             $case.oldUninstall=Invoke-MigrationQuietUninstall $oldSetup ($kind+'-old-uninstall')
             & $afterRemoval
-            $case.newInstall=Invoke-PreviewUi -SetupPath $newSetup -SetupSha256 $newHash -Mode install -LogPath $newLog -Endpoint $endpoint -CanaryKey $canary
+            $case.newInstall=Invoke-PreviewUi -SetupPath $newSetup -SetupSha256 $newHash -Mode install -LogPath $newLog -Endpoint $endpoint -CanaryKey $canary -Agent $NewAgent
         } else {
-            $case.newInstall=Invoke-PreviewUi -SetupPath $newSetup -SetupSha256 $newHash -Mode replace -LogPath $newLog -Endpoint $endpoint -CanaryKey $canary -AfterReplacement $afterRemoval
+            $case.newInstall=Invoke-PreviewUi -SetupPath $newSetup -SetupSha256 $newHash -Mode replace -LogPath $newLog -Endpoint $endpoint -CanaryKey $canary -AfterReplacement $afterRemoval -Agent $NewAgent
         }
         Assert-MigrationRegistrations $ProductVersion
         Assert-MigrationCanary $marker $markerHash $configHash $canary
         if (-not $case.preservedBeforeNewOnboarding -or $case.newInstall.installClicks -ne 1 -or $case.newInstall.configureClicks -ne 1) { throw 'The native migration did not preserve data before its single onboarding flow.' }
         $case.preparation=Assert-MigrationPreparationNoop $newLog
-        $identity=Invoke-MigrationHelper (Join-Path $installation 'bin\NemoClaw.exe') @('--runtime-session','openclaw') "release`n"
+        $identity=Invoke-MigrationHelper (Join-Path $installation 'bin\NemoClaw.exe') @('--runtime-session',$NewAgent) "release`n"
         $leaseIdentity=$identity.stdout | ConvertFrom-Json
         $expected=Get-Content -LiteralPath (Join-Path $work 'assembled\runtime-identity.json') -Raw | ConvertFrom-Json
-        if ($identity.exitCode -ne 0 -or $leaseIdentity.runtimeId -cne $expected.runtimeId -or $leaseIdentity.sourceRevision -cne $env:GITHUB_SHA) { throw 'The migrated installed runtime differs from the same-run artifact.' }
-        $case.newUninstall=Invoke-PreviewUi -SetupPath $newSetup -SetupSha256 $newHash -Mode uninstall -LogPath (Join-Path $caseRoot 'new-uninstall.log') -RemoveOpenClawData
+        if ($identity.exitCode -ne 0 -or $leaseIdentity.agent -cne $NewAgent -or $leaseIdentity.leaseHeld -ne $true -or $leaseIdentity.runtimeId -cne $expected.runtimeId -or $leaseIdentity.sourceRevision -cne $env:GITHUB_SHA) { throw 'The migrated installed runtime differs from the same-run selected-agent artifact.' }
+        if ($NewAgent -ceq 'hermes') {
+            $newConfigText=Get-Content -LiteralPath $newConfiguration -Raw
+            $newConfig=$newConfigText | ConvertFrom-Json
+            if ($newConfig.agent -cne $NewAgent) { throw 'The migrated configuration names another agent.' }
+            $prepared=Invoke-MigrationHelper $launcher @('--configure-native','--prepare-all') $newConfigText
+            if ($prepared.exitCode -ne 0) { throw 'The migrated Hermes binding could not be inspected.' }
+            $newBinding=($prepared.stdout | ConvertFrom-Json).inference
+            if ($newBinding -cnotmatch '^[a-f0-9]{64}$' -or $newBinding -ceq $binding) { throw 'The old and new agent credential bindings are not distinct.' }
+            $newRead=Invoke-MigrationHelper $launcher @('--credential-read','compatible','--binding',$newBinding)
+            if ($newRead.exitCode -ne 0 -or $newRead.stdout -cne $canary) { throw 'The migrated Hermes credential differs.' }
+            $newLease=Invoke-MigrationHelper $launcher @('--state-session',$NewAgent)
+            $newStateReceipt=$newLease.stdout | ConvertFrom-Json
+            if ($newLease.exitCode -ne 0 -or $newStateReceipt.agent -cne $NewAgent -or $newStateReceipt.stateRoot -cne $newState -or $newStateReceipt.leaseHeld -ne $true) { throw 'The migrated Hermes state owner differs.' }
+            [IO.File]::WriteAllText((Join-Path $newState ('migration-'+$nonce+'.txt')),'Disposable migrated Hermes state '+$nonce,[Text.UTF8Encoding]::new($false))
+            $case['newAgentBindingVerified']=$true
+        }
+        $case.newUninstall=Invoke-PreviewUi -SetupPath $newSetup -SetupSha256 $newHash -Mode uninstall -LogPath (Join-Path $caseRoot 'new-uninstall.log') -RemoveAgentData -Agent $NewAgent
         Assert-MigrationRegistrations ''
+        if ($NewAgent -ceq 'hermes') {
+            $newRead=Invoke-MigrationHelper $retainedHelper @('--credential-read','compatible','--binding',$newBinding)
+            if ((Test-Path -LiteralPath $newConfiguration) -or (Test-Path -LiteralPath $newState) -or $newRead.exitCode -eq 0 -or $newRead.stdout.Length -ne 0) { throw 'Selective Hermes reset retained its owned data or credential.' }
+            Assert-MigrationCanary $marker $markerHash $configHash $canary
+            $case.preservedAfterSelectiveReset=$true
+            Remove-MigrationOldCanary
+        }
         $read=Invoke-MigrationHelper $retainedHelper @('--credential-read','compatible','--binding',$binding)
         $case['resetObserved'] = @{installationRootExists=(Test-Path -LiteralPath $installation);configurationExists=(Test-Path -LiteralPath $configuration);stateRootExists=(Test-Path -LiteralPath $state);credentialReadExitCode=$read.exitCode;credentialOutputEmpty=($read.stdout.Length -eq 0)}
         if ($case.resetObserved.installationRootExists) { throw 'Native tester reset retained the installation root.' }
@@ -164,9 +217,9 @@ finally {
     if ($script:MigrationInstallerOpen) { $report.cleanupErrors+=@('A live Windows installer transaction remains; no concurrent cleanup was attempted.') }
     $installedHelper=Join-Path $installation 'bin\NemoClaw.exe'
     if (-not $script:MigrationInstallerOpen -and (Test-Path -LiteralPath $installedHelper -PathType Leaf)) {
-        if ($ownedCanary) {
+        if ($ownedCanary -and ($NewAgent -ceq 'openclaw' -or $case.preservedBeforeNewOnboarding)) {
             try {
-                $cleanupResult=Invoke-MigrationHelper $installedHelper @('--remove-native-data','--agent','openclaw')
+                $cleanupResult=Invoke-MigrationHelper $installedHelper @('--remove-native-data','--agent',$NewAgent)
                 if ($cleanupResult.exitCode -ne 0) { throw 'Installed owned-data cleanup failed.' }
             } catch { $report.cleanupErrors+=@($_.Exception.Message) }
         }
@@ -177,17 +230,8 @@ finally {
         # These two commands execute directly in the native launcher and do not
         # require the removed installed runtime. Never use --remove-native-data
         # through a retained copy: it dispatches into the installed application.
-        foreach ($command in @(@('--state-remove','openclaw'), @('--credential-delete','compatible','--binding',$binding))) {
-            try {
-                $cleanupResult=Invoke-MigrationHelper $retainedHelper $command
-                if ($cleanupResult.exitCode -ne 0) { throw 'Retained native canary cleanup failed.' }
-            } catch { $report.cleanupErrors+=@($_.Exception.Message) }
-        }
-        if (Test-Path -LiteralPath $configuration -PathType Leaf) {
-            if ($null -ne $configHash -and (Get-FileHash -LiteralPath $configuration -Algorithm SHA256).Hash.ToLowerInvariant() -ceq $configHash) {
-                [IO.File]::Delete($configuration)
-            } else { $report.cleanupErrors+=@('The remaining configuration changed; it was preserved.') }
-        }
+        try { Remove-MigrationOldCanary }
+        catch { $report.cleanupErrors+=@($_.Exception.Message) }
     }
     $report['installationRootRemoved']= -not(Test-Path -LiteralPath $installation)
     if ($report.cleanupErrors.Count -ne 0) { $report.status='failed' }

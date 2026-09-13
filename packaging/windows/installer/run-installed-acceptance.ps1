@@ -7,9 +7,11 @@ param([Parameter(Mandatory)][string]$SourceRoot,
     [Parameter(Mandatory)][string]$WorkDirectory,
     [Parameter(Mandatory)][string]$ProductVersion,
     [Parameter(Mandatory)][string]$ArtifactSourceRevision,
-    [ValidateSet('current-build','built-0.1.3-replay')][string]$Mode = 'current-build')
+    [ValidateSet('current-build','built-0.1.3-replay')][string]$Mode = 'current-build',
+    [ValidateSet('openclaw','hermes')][string]$Agent = 'openclaw')
 $ErrorActionPreference = 'Stop'
 $controllerSource = $env:GITHUB_SHA
+if ($Agent -ceq 'hermes' -and $Mode -cne 'current-build') { throw 'Hermes cannot reuse the historical OpenClaw replay lane.' }
 if ($env:OS -cne 'Windows_NT' -or $env:GITHUB_ACTIONS -cne 'true' -or $PSVersionTable.PSEdition -cne 'Core' -or
     $controllerSource -cnotmatch '^[a-f0-9]{40}$' -or $ArtifactSourceRevision -cnotmatch '^[a-f0-9]{40}$' -or
     $ProductVersion -cnotmatch '^[0-9]+\.[0-9]+\.[0-9]+$') { throw 'Installed acceptance requires explicit Windows CI identities.' }
@@ -43,7 +45,7 @@ foreach ($file in $build.files) {
     throw 'The downloaded preview executable/MSI differs from its build receipt.'
   }
 }
-$timings = [ordered]@{ schemaVersion = 1; sourceRevision = $ArtifactSourceRevision; artifactSourceRevision = $ArtifactSourceRevision; controllerSourceRevision = $controllerSource; currentHeadQualification = $false; mode = $Mode; measurement = 'fresh-runner-installed-preview';
+$timings = [ordered]@{ schemaVersion = 1; sourceRevision = $ArtifactSourceRevision; artifactSourceRevision = $ArtifactSourceRevision; controllerSourceRevision = $controllerSource; currentHeadQualification = $false; mode = $Mode; measurement = 'fresh-runner-installed-preview'; agent = $Agent;
   hostPreparationRunBeforeInstall = $false; upgradeMeasured = $false; installTargetMilliseconds = 30000; installTargetSatisfied = $false; compiledMsi = $build.compiledMsi; stages = [ordered]@{} }
 function Invoke-OwnedSetup([string]$Action, [string]$Log) {
   $info = [Diagnostics.ProcessStartInfo]::new()
@@ -62,24 +64,31 @@ try {
     @{ name = 'firstInstalledLaunch'; directory = 'installed-acceptance' },
     @{ name = 'warmInstalledLaunch'; directory = 'installed-acceptance-warm' }
   )) {
-    & "$work\application\node\node.exe" --experimental-strip-types `
-      "$SourceRoot\packaging\windows\installer\qualify-installed-openclaw.mts" `
+    $qualification = Join-Path $SourceRoot ("packaging\windows\installer\qualify-installed-$Agent.mts")
+    $driverRoot = if ($Agent -ceq 'hermes') { "$work\application\inputs\tools\node_modules\playwright-core" } else { "$work\application\build\app\node_modules\playwright-core" }
+    $caseArguments = @()
+    if ($Agent -ceq 'hermes') {
+      $caseArguments = if ($case.name -ceq 'firstInstalledLaunch') { @('--preserve-configuration') } else { @('--reuse-configuration') }
+    }
+    & "$work\application\node\node.exe" --experimental-strip-types --no-warnings $qualification `
       --install-root $installation --runtime-identity "$work\assembled\runtime-identity.json" `
-      --output "$work\$($case.directory)" --browser-driver-root "$work\application\build\app\node_modules\playwright-core"
+      --output "$work\$($case.directory)" --browser-driver-root $driverRoot @caseArguments
     $code = $LASTEXITCODE
-    $timings[$case.name] = @{ exitCode = $code; receipt = "$($case.directory)/installed-openclaw-acceptance.json";
-      modelAndToolDurationsSeparate = $true; agentStateResetPerCase = $true }
-    if ($code -ne 0) { throw "The $($case.name) OpenClaw acceptance failed; no startup comparison is claimed." }
-    $accepted = Get-Content -LiteralPath "$work\$($case.directory)\installed-openclaw-acceptance.json" -Raw | ConvertFrom-Json
+    $timings[$case.name] = @{ exitCode = $code; receipt = "$($case.directory)/installed-$Agent-acceptance.json";
+      modelAndToolDurationsSeparate = ($Agent -ceq 'openclaw'); conversationIntervalsSeparateFromStartup = ($Agent -ceq 'hermes'); isolatedProviderLatencyClaimed = $false; agentStateResetPerCase = ($Agent -ceq 'openclaw') }
+    if ($code -ne 0) { throw "The $($case.name) selected-agent acceptance failed; no startup comparison is claimed." }
+    $accepted = Get-Content -LiteralPath "$work\$($case.directory)\installed-$Agent-acceptance.json" -Raw | ConvertFrom-Json
     if ($accepted.verdict -cne 'pass' -or @($accepted.cleanupErrors).Count -ne 0) {
       throw 'Ordinary launch did not finish its required model/tool checks and owned cleanup.'
     }
   }
   $timings.startupComparisonAvailable = $true
-  & "$work\application\node\node.exe" --experimental-strip-types `
-    "$SourceRoot\packaging\windows\installer\qualify-finished-package.mts" `
-    --install-root "$env:ProgramFiles\NVIDIA\NemoClaw" --runtime-identity "$work\assembled\runtime-identity.json" --output "$work\installed-smoke"
-  if ($LASTEXITCODE -ne 0) { throw 'The installed compiled/contained smoke failed.' }
+  if ($Agent -ceq 'openclaw') {
+    & "$work\application\node\node.exe" --experimental-strip-types `
+      "$SourceRoot\packaging\windows\installer\qualify-finished-package.mts" `
+      --install-root "$env:ProgramFiles\NVIDIA\NemoClaw" --runtime-identity "$work\assembled\runtime-identity.json" --output "$work\installed-smoke"
+    if ($LASTEXITCODE -ne 0) { throw 'The installed compiled/contained smoke failed.' }
+  } else { $timings['compiledRuntimeControls'] = 'Hermes acceptance validated capabilities, SEA identity and held runtime tuple.' }
 } catch { $primary = $_ }
 finally {
   # Enumerate only after launch samples, so counting does not warm startup paths.

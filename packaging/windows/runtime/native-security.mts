@@ -5,6 +5,7 @@ import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { nativeHermesCompatibility, type NativeRuntimeLaunchLease } from "./native-runtime.mts";
 
 type NativeMessage = { role: "system" | "user" | "assistant"; content: string };
 type ReadOpenedRegularFileOptions = { encoding?: BufferEncoding; maxBytes?: number };
@@ -260,7 +261,11 @@ export function readOpenedRegularFile(
   }
 }
 
-export function writeNativeGatewayConfig(installRoot: string, runRoot: string): string {
+export function writeNativeGatewayConfig(
+  installRoot: string,
+  runRoot: string,
+  hermesRuntime?: NativeRuntimeLaunchLease,
+): string {
   const installation = path.resolve(installRoot);
   if (Buffer.from(installation, "utf8").toString("utf8") !== installation)
     fail("the installation path contains invalid Unicode");
@@ -277,11 +282,27 @@ export function writeNativeGatewayConfig(installRoot: string, runRoot: string): 
     maxBytes: 64 * 1024,
   });
   if (template === null) fail("the installed gateway configuration template is missing");
+  const rendered = renderNativeGatewayConfig(template, installation, hermesRuntime);
+  const output = path.join(resolvedRunRoot, "mxc-gateway.toml");
+  fs.writeFileSync(output, rendered, { encoding: "utf8", flag: "wx", mode: 0o600 });
+  return output;
+}
+
+export function renderNativeGatewayConfig(
+  template: string,
+  installRoot: string,
+  hermesRuntime?: NativeRuntimeLaunchLease,
+): string {
+  const compatibility = hermesRuntime ? nativeHermesCompatibility(hermesRuntime) : null;
+  if (
+    compatibility &&
+    path.win32.normalize(installRoot).toLowerCase() !== compatibility.installation.toLowerCase()
+  )
+    fail("the Hermes gateway and runtime lease name different installations");
   // JSON uses TOML-compatible basic-string escapes, except for its unescaped DEL character.
-  const executable = JSON.stringify(path.join(installation, "mxc", "wxc-exec.exe")).replace(
-    /\u007f/gu,
-    "\\u007f",
-  );
+  const executable = JSON.stringify(
+    compatibility?.executor ?? path.join(installRoot, "mxc", "wxc-exec.exe"),
+  ).replace(/\u007f/gu, "\\u007f");
   let inMxc = false;
   let sections = 0;
   let executablePaths = 0;
@@ -303,9 +324,7 @@ export function writeNativeGatewayConfig(installRoot: string, runRoot: string): 
     .join(template.includes("\r\n") ? "\r\n" : "\n");
   if (sections !== 1 || executablePaths !== 1)
     fail("the gateway template must declare one MXC section and executable path");
-  const output = path.join(resolvedRunRoot, "mxc-gateway.toml");
-  fs.writeFileSync(output, rendered, { encoding: "utf8", flag: "wx", mode: 0o600 });
-  return output;
+  return rendered;
 }
 
 export function validatedChatMessages(body: unknown): NativeMessage[] {

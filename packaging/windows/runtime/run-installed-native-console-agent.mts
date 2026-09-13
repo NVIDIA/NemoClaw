@@ -13,6 +13,9 @@ import { fileURLToPath } from "node:url";
 import {
   withNativeRuntimeSession,
   bindNativeRuntimeGuard,
+  nativeHermesToolEnvironment,
+  nativeHermesCompatibility,
+  nativeRuntimeWorkerCommand,
   type NativeRuntimeSession,
 } from "./native-runtime.mts";
 import { hermesDashboardPythonSource } from "./native-hermes-dashboard.mts";
@@ -406,7 +409,7 @@ if (agent === "pi") {
   ].join("\n"), "utf8");
   executable = python;
   args = dashboard ? [runner] : [runner, "--provider", "custom", "--model", model];
-  extraEnvironment = { HERMES_HOME: hermesHome, HERMES_TUI_DIR: process.env.NEMOCLAW_HERMES_TUI_DIR, HERMES_NODE: node, HERMES_PYTHON: python, HERMES_SKIP_NODE_BOOTSTRAP: "1", HERMES_DISABLE_LAZY_INSTALLS: "1", ...(dashboard ? {
+  extraEnvironment = { HERMES_HOME: hermesHome, HERMES_TUI_DIR: process.env.NEMOCLAW_HERMES_TUI_DIR, HERMES_NODE: required("HERMES_NODE"), HERMES_PYTHON: python, HERMES_SKIP_NODE_BOOTSTRAP: "1", HERMES_DISABLE_LAZY_INSTALLS: "1", ...(dashboard ? {
     // Hermes's optional atomic file publication conflicts with the held state
     // directory guard. Its normal stdout contract reports the live bound port.
     HERMES_DESKTOP_READY_FILE: "",
@@ -719,6 +722,27 @@ async function runNativeConsoleAgentInternal(
     runtimeLease.python === null
       ? null
       : requiredDirectory(path.dirname(runtimeLease.python), "sealed Python directory");
+  const hermesTools =
+    agentId === "hermes"
+      ? nativeHermesToolEnvironment(
+          runtimeLease,
+          requiredDirectory(process.env.SystemRoot ?? "", "Windows system root"),
+        )
+      : null;
+  const hermesCompatibility = agentId === "hermes" ? nativeHermesCompatibility(runtimeLease) : null;
+  if (hermesTools) {
+    for (const [tool, executable] of Object.entries({
+      Python: hermesTools.python,
+      Bash: hermesTools.bash,
+      Node: hermesTools.node,
+      ripgrep: hermesTools.ripgrep,
+      compatibilityLauncher: hermesCompatibility!.launcher,
+      compatibilityArm64Dll: hermesCompatibility!.arm64Dll,
+      compatibilityX64Dll: hermesCompatibility!.x64Dll,
+      compatibilityExecutor: hermesCompatibility!.executor,
+    }))
+      requiredFile(executable, `sealed Hermes ${tool}`);
+  }
   requiredFile(path.join(installRoot, "config", "mxc-gateway.toml"), "MXC gateway configuration");
   requiredFile(path.join(installRoot, "mxc", "wxc-exec.exe"), "MXC executor");
   const { configuration: config, credential } = await resolveNativeConfiguredInference(
@@ -864,7 +888,11 @@ async function runNativeConsoleAgentInternal(
       }
       diagnostics.stage("runtime");
     }
-    const gatewayConfig = writeNativeGatewayConfig(installRoot, runRoot);
+    const gatewayConfig = writeNativeGatewayConfig(
+      installRoot,
+      runRoot,
+      agentId === "hermes" ? runtimeLease : undefined,
+    );
     runtimeLease.assertHeld();
     const node = installedNode;
     const runtime = installedRuntime;
@@ -918,7 +946,11 @@ async function runNativeConsoleAgentInternal(
     const gatewayPort = await freePort();
     const sandboxName = `${adapter.sandboxPrefix}-${runId}`;
     const gatewayName = `nemoclaw-${agentId}-${runId}`;
+    stateSession.assertHeld();
     const gatewayEnvironment = allowlistedWindowsEnvironment({
+      ...(agentId === "hermes"
+        ? { NEMOCLAW_MSYS_TOKEN_INSPECTION: "hermes-query", NEMOCLAW_HERMES_PRIVATE_DESKTOP: "1" }
+        : {}),
       OPENSHELL_DRIVERS: "mxc",
       OPENSHELL_GATEWAY_CONFIG: gatewayConfig,
       XDG_CONFIG_HOME: configRoot,
@@ -944,7 +976,12 @@ async function runNativeConsoleAgentInternal(
     );
     gateway.stdout?.on("data", (chunk) => diagnostics.capture("gateway.stdout", chunk));
     gateway.stderr?.on("data", (chunk) => diagnostics.capture("gateway.stderr", chunk));
-    let cliEnvironment = gatewayEnvironment;
+    let cliEnvironment = allowlistedWindowsEnvironment({
+      ...gatewayEnvironment,
+      ...(agentId === "hermes"
+        ? { NEMOCLAW_MSYS_TOKEN_INSPECTION: undefined, NEMOCLAW_HERMES_PRIVATE_DESKTOP: undefined }
+        : {}),
+    });
     let passed = false;
     try {
       console.log("Starting the native OpenShell MXC boundary…");
@@ -952,6 +989,12 @@ async function runNativeConsoleAgentInternal(
       cliEnvironment = allowlistedWindowsEnvironment({
         ...gatewayEnvironment,
         OPENSHELL_GATEWAY: undefined,
+        ...(agentId === "hermes"
+          ? {
+              NEMOCLAW_MSYS_TOKEN_INSPECTION: undefined,
+              NEMOCLAW_HERMES_PRIVATE_DESKTOP: undefined,
+            }
+          : {}),
       });
       await run(
         openshell,
@@ -974,6 +1017,9 @@ async function runNativeConsoleAgentInternal(
         HOME: agentRuntimeRoot,
         LOCALAPPDATA: agentRuntimeRoot,
         NEMOCLAW_AGENT_HOME: agentRuntimeRoot,
+        ...(agentId === "hermes"
+          ? { NEMOCLAW_MSYS_TOKEN_INSPECTION_HOLD: "hermes-query", NEMOCLAW_MSYS_DIAGNOSTICS: "0" }
+          : {}),
         NEMOCLAW_AGENT_ID: agentId,
         NEMOCLAW_AGENT_SESSION_ID: runId,
         NEMOCLAW_AGENT_BOOTSTRAP_RECEIPT: bootstrapPath,
@@ -1011,7 +1057,11 @@ async function runNativeConsoleAgentInternal(
         NODE_DISABLE_COMPILE_CACHE: "1",
         NUMBER_OF_PROCESSORS: process.env.NUMBER_OF_PROCESSORS ?? "1",
         OS: "Windows_NT",
-        PATH: `${path.join(systemRoot, "System32")};${systemRoot}`,
+        ...(hermesTools
+          ? hermesTools.environment
+          : {
+              PATH: `${path.join(systemRoot, "System32")};${systemRoot}`,
+            }),
         PATHEXT: ".COM;.EXE;.BAT;.CMD",
         PROCESSOR_ARCHITECTURE: "ARM64",
         SYSTEMDRIVE: systemDrive,
@@ -1037,7 +1087,7 @@ async function runNativeConsoleAgentInternal(
         JSON.stringify({
           mxc: {
             windows_ui: true,
-            command: [node, workload],
+            command: nativeRuntimeWorkerCommand(runtimeLease, workload),
             cwd: agentRuntimeRoot,
             host_loopback: false,
             host_console: !dashboard,
@@ -1259,6 +1309,7 @@ async function runNativeConsoleAgentInternal(
                 schemaVersion: 1,
                 classification: "native-hermes-dashboard-qualification",
                 agent: agentId,
+                sessionId: runId,
                 url,
                 nodeProcessId: process.pid,
                 gatewayProcessId: gateway.pid,
@@ -1482,6 +1533,14 @@ async function runNativeConsoleAgentInternal(
             schemaVersion: 1,
             classification: "native-hermes-dashboard-qualification",
             agent: agentId,
+            runtimeIdentity: {
+              runtimeId: runtimeLease.runtimeId,
+              manifestSha256: runtimeLease.manifestSha256,
+              sourceRevision: runtimeLease.sourceRevision,
+            },
+            runtimeCounterSource: "held-runtime-session",
+            runtimeBytesCopied: runtimeLease.runtimeBytesCopied,
+            runtimeFilesHashedAtLaunch: runtimeLease.runtimeFilesHashedAtLaunch,
             sandboxDeleted: sessionPassed,
             gatewayStopped: dashboardGatewayStopped,
             ephemeralRootsRemoved:

@@ -13,6 +13,8 @@ namespace {
 WCHAR moduleDirectory[MAX_PATH] = {};
 alignas(SID) BYTE containerSid[SECURITY_MAX_SID_SIZE] = {};
 BOOL initialized = FALSE;
+BOOL installedHermesSession = FALSE;
+WCHAR hermesRequestRoot[MAX_PATH] = {};
 __declspec(thread) BOOL withinCreate = FALSE;
 decltype(&CreateProcessW) realCreateW = CreateProcessW;
 decltype(&CreateProcessA) realCreateA = CreateProcessA;
@@ -411,11 +413,40 @@ BOOL removeInspectionHandle(HANDLE file) {
     return SetFileInformationByHandle(file, FileDispositionInfo, &disposition, sizeof(disposition));
 }
 
+BOOL initializeHermesRequestRoot() {
+    WCHAR mode[16] = {};
+    if (GetEnvironmentVariableW(L"NEMOCLAW_MSYS_TOKEN_INSPECTION_HOLD", mode, 16) != 12 ||
+        wcscmp(mode, L"hermes-query")) return TRUE;
+    // The host independently derives and pins its actual account's state root.
+    // This cached path is only guest synchronization; changing terminal cwd or
+    // environment later must not move an active session's request channel.
+    const DWORD count = GetEnvironmentVariableW(L"NEMOCLAW_AGENT_HOME", hermesRequestRoot, MAX_PATH);
+    const WCHAR prefix[] = L"\\NemoClawState-S-1-";
+    const size_t prefixLength = sizeof(prefix) / sizeof(WCHAR) - 1;
+    if (count <= 2 + prefixLength + 7 || count >= MAX_PATH ||
+        !((hermesRequestRoot[0] >= L'A' && hermesRequestRoot[0] <= L'Z') ||
+          (hermesRequestRoot[0] >= L'a' && hermesRequestRoot[0] <= L'z')) ||
+        hermesRequestRoot[1] != L':' || wcsncmp(hermesRequestRoot + 2, prefix, prefixLength) ||
+        wcscmp(hermesRequestRoot + count - 7, L"-hermes")) {
+        SetLastError(ERROR_INVALID_NAME); return FALSE;
+    }
+    for (size_t i = 2 + prefixLength; i < count - 7; ++i) {
+        const WCHAR ch = hermesRequestRoot[i];
+        if ((ch < L'0' || ch > L'9') && ch != L'-') {
+            SetLastError(ERROR_INVALID_NAME); return FALSE;
+        }
+    }
+    installedHermesSession = TRUE;
+    return TRUE;
+}
+
 BOOL requestHostQueryRepair(HANDLE child) {
     const DWORD saved = GetLastError();
     WCHAR mode[16] = {};
     const DWORD modeLength = GetEnvironmentVariableW(L"NEMOCLAW_MSYS_TOKEN_INSPECTION_HOLD", mode, 16);
-    if (!modeLength || modeLength >= 16 || wcscmp(mode, L"repair-query")) { SetLastError(saved); return FALSE; }
+    if (!installedHermesSession && (!modeLength || modeLength >= 16 || wcscmp(mode, L"repair-query"))) {
+        SetLastError(saved); return FALSE;
+    }
     const ULONGLONG started = GetTickCount64();
     BOOL published = FALSE, verified = FALSE, ackRemoved = FALSE, requestRemoved = FALSE, replySeen = FALSE;
     DWORD error = 0;
@@ -428,7 +459,10 @@ BOOL requestHostQueryRepair(HANDLE child) {
             !GetProcessTimes(child, &childCreated, &exit, &kernel, &user)) { error = GetLastError(); break; }
         const ULONGLONG parentTime = (static_cast<ULONGLONG>(parentCreated.dwHighDateTime) << 32) | parentCreated.dwLowDateTime;
         const ULONGLONG childTime = (static_cast<ULONGLONG>(childCreated.dwHighDateTime) << 32) | childCreated.dwLowDateTime;
-        WCHAR root[MAX_PATH] = {}; const DWORD count = GetCurrentDirectoryW(MAX_PATH, root);
+        WCHAR root[MAX_PATH] = {};
+        const DWORD count = installedHermesSession
+            ? static_cast<DWORD>(wcslen(hermesRequestRoot)) : GetCurrentDirectoryW(MAX_PATH, root);
+        if (installedHermesSession) wcscpy_s(root, hermesRequestRoot);
         if (!count || count >= MAX_PATH || swprintf_s(request, L"%s\\msys-token-inspection.request", root) < 0 ||
             swprintf_s(reply, L"%s\\msys-token-inspection.ack", root) < 0) { error = ERROR_BUFFER_OVERFLOW; break; }
         char frame[128], success[160], failure[160];
@@ -1058,6 +1092,7 @@ extern "C" BOOL NemoClawInitializeProcessContext(HMODULE self) {
     WCHAR* separator = wcsrchr(moduleDirectory, L'\\');
     if (!separator || moduleDirectory[1] != L':') { SetLastError(ERROR_INVALID_NAME); return FALSE; }
     *separator = 0;
+    if (!initializeHermesRequestRoot()) return FALSE;
     initialized = TRUE;
     return TRUE;
 }

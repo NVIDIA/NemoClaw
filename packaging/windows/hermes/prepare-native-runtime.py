@@ -29,6 +29,8 @@ REVISION = "2237be355906fbe6065ce1815711eee52b2d646e"
 MARKER = "nemoclaw-windows-runtime.json"
 HOOK = "nemoclaw_native_windows.py"
 PTH = "000_nemoclaw_native_windows.pth"
+BROWSER_USE_HOOK = "nemoclaw_browser_use.py"
+BROWSER_USE_PTH = "001_nemoclaw_browser_use.pth"
 MAX_METADATA = 1024 * 1024
 
 # One explicit CI transition from the complete canonical candidate (47d8907).
@@ -216,6 +218,7 @@ def prepare_plan(
     browser_use_outer_inventory: dict | None = None,
     *,
     ci_upgrade_startup_adapter: bool = False,
+    ci_browser_use_adapter: dict | None = None,
 ) -> tuple[dict[Path, bytes], dict]:
     root = runtime_root.resolve(strict=True)
     if not source_root.is_absolute() or not target_root.is_absolute():
@@ -537,16 +540,62 @@ def prepare_plan(
     output = io.StringIO(newline="")
     csv.writer(output, lineterminator="\n").writerows(rows)
     changes[record_file] = output.getvalue().encode("utf-8")
+    browser_use_bytes = None
+    browser_use_startup = None
+    if ci_browser_use_adapter is not None:
+        if (
+            sys.platform != "win32"
+            or os.environ.get("GITHUB_ACTIONS") != "true"
+            or prepared is None
+            or environments != ["hermes-agent/venv", "tools/browser-use"]
+            or not isinstance(ci_browser_use_adapter, dict)
+            or set(ci_browser_use_adapter) != {"bytes", "sha256"}
+        ):
+            raise AdaptationError(
+                "The installed Browser Use hook requires explicit CI provenance."
+            )
+        browser_use_bytes = (Path(__file__).parent / BROWSER_USE_HOOK).read_bytes()
+        if ci_browser_use_adapter != {
+            "bytes": len(browser_use_bytes),
+            "sha256": hashlib.sha256(browser_use_bytes).hexdigest(),
+        }:
+            raise AdaptationError(
+                "The installed Browser Use helper differs from Personal proof."
+            )
+        browser_use_startup = {
+            "classification": "ci-installed-browser-use-startup",
+            "module": BROWSER_USE_HOOK,
+            **ci_browser_use_adapter,
+            "pth": BROWSER_USE_PTH,
+            "afterPth": PTH,
+            "nativeStartupAdapterSha256": hashlib.sha256(hook_bytes).hexdigest(),
+            "executionQualified": False,
+        }
+    elif prepared and prepared.get("browserUseStartup") is not None:
+        raise AdaptationError(
+            "An installed Browser Use hook requires its explicit CI provenance."
+        )
     site_packages.extend(root / home / "Lib/site-packages" for home in python_homes)
     for directory in site_packages:
         directory.resolve().relative_to(root)
-        for name, data in (
+        startup_files = [
             (HOOK, hook_bytes),
             (
                 PTH,
                 b"import nemoclaw_native_windows; nemoclaw_native_windows.install()\n",
             ),
-        ):
+        ]
+        if browser_use_bytes is not None:
+            startup_files.extend(
+                [
+                    (BROWSER_USE_HOOK, browser_use_bytes),
+                    (
+                        BROWSER_USE_PTH,
+                        b"import nemoclaw_browser_use; nemoclaw_browser_use.install()\n",
+                    ),
+                ]
+            )
+        for name, data in startup_files:
             path = directory / name
             if path.exists():
                 before = read_required(path)
@@ -579,6 +628,8 @@ def prepare_plan(
             for path, data in changes.items()
         },
     }
+    if browser_use_startup is not None:
+        marker["browserUseStartup"] = browser_use_startup
     lineage = upgrade or (prepared or {}).get("startupAdapterUpgrade")
     if lineage:
         marker["startupAdapterUpgrade"] = lineage
@@ -592,6 +643,7 @@ def prepare_plan(
         "environments": environments,
         "requiresMovedRootProbe": True,
         "runtimeExecutionQualified": False,
+        **({"browserUseStartup": browser_use_startup} if browser_use_startup else {}),
         "retirements": retirements,
         "files": [
             {

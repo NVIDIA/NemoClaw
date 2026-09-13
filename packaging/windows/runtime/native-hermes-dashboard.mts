@@ -14,7 +14,7 @@ export function hermesDashboardPythonSource(): string[] {
     "os.environ['HERMES_TUI_DIR'] = str(_source / 'ui-tui')",
     "if not (_package / 'web_dist' / 'index.html').is_file(): raise RuntimeError('The bundled Hermes dashboard is missing')",
     "os.environ['HERMES_WEB_DIST'] = str(_package / 'web_dist')",
-    "os.environ['HERMES_NODE'] = os.environ['NEMOCLAW_AGENT_NODE']",
+    "if not os.environ.get('HERMES_NODE'): raise RuntimeError('The installed canonical Hermes Node path is missing')",
     "os.environ['HERMES_PYTHON'] = sys.executable",
     "os.environ['HERMES_SKIP_NODE_BOOTSTRAP'] = '1'",
     "from hermes_cli.main import main",

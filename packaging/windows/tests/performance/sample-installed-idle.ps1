@@ -9,6 +9,9 @@ $clock = [Diagnostics.Stopwatch]::StartNew()
 $handles = [Collections.Generic.List[object]]::new()
 $ancestryHandles = [Collections.Generic.List[object]]::new()
 $phase = 'input'
+$isHermes = $false
+$generations = @{}
+$relations = @{}
 function Emit($Value) { [Console]::Out.WriteLine(($Value | ConvertTo-Json -Depth 8 -Compress)); [Console]::Out.Flush() }
 function Require($Condition, [string]$Message) { if (-not $Condition) { throw $Message } }
 function Same-Path([string]$Left, [string]$Right) { return [string]::Equals([IO.Path]::GetFullPath($Left), [IO.Path]::GetFullPath($Right), [StringComparison]::OrdinalIgnoreCase) }
@@ -18,11 +21,36 @@ function Record([int]$Id) {
     return $rows[0]
 }
 function File-Time($Date) { return ([datetime]$Date).ToUniversalTime().ToFileTimeUtc().ToString() }
-function Hold($Row, [string]$Image, [string]$Role, [string]$Expected = '', [int]$Tolerance = 10) {
+function Hold($Row, [string]$Image, [string]$Role, [string]$Expected = '', [int]$Tolerance = 10, $Parent = $null) {
+    if ($null -ne $Parent) { Require ([int]$Row.ParentProcessId -eq [int]$Parent.ProcessId -and $Row.CreationDate.ToUniversalTime() -ge $Parent.CreationDate.ToUniversalTime()) 'The measured child does not follow its held parent generation.' }
     Require ($null -ne $Row.ExecutablePath -and (Same-Path $Row.ExecutablePath $Image)) 'An owned process image is unavailable or changed.'
     if (-not $Expected) { $Expected = File-Time $Row.CreationDate }
     $counter = [NemoClaw.InstalledIdle.Counter]::new([int]$Row.ProcessId, $Image, $Expected, $Tolerance, $Role)
     try { $handles.Add($counter) } catch { $counter.Dispose(); throw }
+    if ($isHermes) {
+        $snapshot = $counter.Snapshot()
+        $generations[[int]$Row.ProcessId] = [string]$snapshot.creationFileTime
+        if ($null -ne $Parent) { Remember-Relation $Row $Parent $snapshot }
+    }
+}
+function Remember-Relation($Row, $Parent, $Snapshot) {
+    Require ($generations.ContainsKey([int]$Parent.ProcessId)) 'The measured parent has no held generation.'
+    $relations[[int]$Row.ProcessId] = @{ processId=[int]$Row.ProcessId; parentProcessId=[int]$Parent.ProcessId;
+        executable=[string]$Snapshot.executable; creationFileTime=[string]$Snapshot.creationFileTime;
+        parentCreationFileTime=[string]$generations[[int]$Parent.ProcessId] }
+}
+function Hermes-Role([string]$Image, [int]$Id) {
+    $paths = @{
+        'hermes-python' = (Join-Path $hermesRoot 'hermes-agent\.hermes-runtime\python\cpython-3.11.16-windows-aarch64-none\python.exe')
+        'hermes-python-redirector' = (Join-Path $hermesRoot 'hermes-agent\venv\Scripts\python.exe')
+        'hermes-tui-node' = (Join-Path $hermesRoot 'node\node.exe')
+        'hermes-browser-use-python' = (Join-Path $hermesRoot 'tools\browser-use\Scripts\python.exe')
+        'hermes-console-host' = (Join-Path $windowsRoot 'System32\conhost.exe')
+    }
+    foreach ($role in $paths.Keys) { if (Same-Path $Image $paths[$role]) { return $role + '-' + $Id } }
+    $normalized = [IO.Path]::GetFullPath($Image)
+    Require ($normalized.StartsWith($hermesRoot + '\', [StringComparison]::OrdinalIgnoreCase) -and $normalized.EndsWith('.exe', [StringComparison]::OrdinalIgnoreCase)) 'An observed Hermes descendant is outside its canonical runtime images.'
+    return 'hermes-tool-' + $Id
 }
 function One($Rows, [string]$Label) { $values = @($Rows); Require ($values.Count -eq 1) ('The ' + $Label + ' role is missing or ambiguous.'); return $values[0] }
 function Frame {
@@ -40,6 +68,16 @@ try {
     foreach ($key in @('controllerPid','guardianPid','hostPid')) { Require ($plan.$key -is [long] -or $plan.$key -is [int]) 'A process identity is not integral.'; Require ($plan.$key -gt 0 -and $plan.$key -le [int]::MaxValue) 'A process identity is out of range.' }
     $installation = [IO.Path]::GetFullPath([string]$plan.installRoot).TrimEnd('\')
     Require (Same-Path $installation (Join-Path $env:ProgramFiles 'NVIDIA\NemoClaw')) 'The measurement target is not the fixed installed application.'
+    $isHermes = $null -ne $plan.PSObject.Properties['agent'] -and $plan.agent -ceq 'hermes'
+    Require ($null -eq $plan.PSObject.Properties['agent'] -or $isHermes) 'The idle agent selector is unsupported.'
+    $hermesRoot = Join-Path $installation "runtimes\$($plan.runtimeId)\hermes"
+    $windowsRoot = [IO.Path]::GetFullPath($env:SystemRoot).TrimEnd('\')
+    if ($isHermes) {
+        Require (Same-Path $plan.windowsRoot $windowsRoot) 'The Hermes Windows image root differs from the actual OS.'
+        $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+        $stateRoot = [IO.Path]::GetPathRoot($windowsRoot) + 'NemoClawState-' + $sid + '-hermes'
+        Require (Same-Path $plan.stateRoot $stateRoot) 'The Hermes state root is not the actual current-user owned root.'
+    }
     $phase = 'prepare-counter'
     # PS7 compiles this observer in process. Compilation is outside the sample.
     Add-Type -Path (Join-Path $PSScriptRoot 'InstalledIdleCounter.cs')
@@ -56,46 +94,85 @@ try {
     Require ($children.Count -le 32) 'The owned runtime child inventory exceeds its bound.'
     $gatewayImage = Join-Path $installation 'bin\openshell-gateway.exe'
     $gateway = One @($children | Where-Object { $_.ExecutablePath -and (Same-Path $_.ExecutablePath $gatewayImage) }) 'gateway'
-    Hold $gateway $gatewayImage 'openshell-gateway'
+    $directParent = if ($isHermes) { $hostRow } else { $null }
+    Hold $gateway $gatewayImage 'openshell-gateway' -Parent $directParent
     $windowImage = Join-Path $installation 'native-ui\NemoClaw.Bootstrapper.exe'
-    Hold (One @($children | Where-Object { $_.ExecutablePath -and (Same-Path $_.ExecutablePath $windowImage) }) 'native-window') $windowImage 'native-window'
+    Hold (One @($children | Where-Object { $_.ExecutablePath -and (Same-Path $_.ExecutablePath $windowImage) }) 'native-window') $windowImage 'native-window' -Parent $directParent
     $ownerImage = Join-Path $installation 'bin\NemoClaw.exe'
-    $prefix = [regex]::Escape([IO.Path]::GetPathRoot($installation) + 'NemoClawNativeUiShare-')
-    $sessionNames = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
-    foreach ($role in @('ui-relay','inference-relay')) {
-        $pattern = '^(?:"' + [regex]::Escape($ownerImage) + '"|' + [regex]::Escape($ownerImage) + ')\s+--native-ui-file-owner\s+"?(' + $prefix + '[a-f0-9]{10})\\' + $role + '"?\s*$'
-        $rows = @($children | Where-Object { $_.ExecutablePath -and (Same-Path $_.ExecutablePath $ownerImage) -and [regex]::IsMatch([string]$_.CommandLine, $pattern, [Text.RegularExpressions.RegexOptions]::IgnoreCase) })
-        $row = One $rows $role
-        $match = [regex]::Match([string]$row.CommandLine, $pattern, [Text.RegularExpressions.RegexOptions]::IgnoreCase)
-        [void]$sessionNames.Add($match.Groups[1].Value)
-        Hold $row $ownerImage $role
+    if ($isHermes) {
+        $sessionNames = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+        foreach ($role in @('hermes-ui-relay','hermes-broker-relay','hermes-status-owner')) {
+            $directory = @{ 'hermes-ui-relay'='ui-relay'; 'hermes-broker-relay'='broker-relay'; 'hermes-status-owner'='session-status' }[$role]
+            $pattern = '^(?:"' + [regex]::Escape($ownerImage) + '"|' + [regex]::Escape($ownerImage) + ')\s+--native-ui-file-owner\s+"?' + [regex]::Escape($stateRoot) + '\\' + $directory + '-([a-f0-9]{10})"?\s*$'
+            $row = One @($children | Where-Object { $_.ExecutablePath -and (Same-Path $_.ExecutablePath $ownerImage) -and [regex]::IsMatch([string]$_.CommandLine, $pattern, [Text.RegularExpressions.RegexOptions]::IgnoreCase) }) $role
+            $match = [regex]::Match([string]$row.CommandLine, $pattern, [Text.RegularExpressions.RegexOptions]::IgnoreCase)
+            [void]$sessionNames.Add($match.Groups[1].Value)
+            Hold $row $ownerImage $role -Parent $hostRow
+        }
+        Require ($sessionNames.Count -eq 1) 'The Hermes file owners do not share one held session.'
+        foreach ($mode in @('state-session','runtime-session')) {
+            $pattern = '^(?:"' + [regex]::Escape($ownerImage) + '"|' + [regex]::Escape($ownerImage) + ')\s+--' + $mode + '\s+hermes\s*$'
+            $row = One @($children | Where-Object { $_.ExecutablePath -and (Same-Path $_.ExecutablePath $ownerImage) -and [regex]::IsMatch([string]$_.CommandLine, $pattern, [Text.RegularExpressions.RegexOptions]::IgnoreCase) }) $mode
+            Hold $row $ownerImage ('hermes-' + $mode + '-owner') -Parent $hostRow
+        }
+    } else {
+        $prefix = [regex]::Escape([IO.Path]::GetPathRoot($installation) + 'NemoClawNativeUiShare-')
+        $sessionNames = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+        foreach ($role in @('ui-relay','inference-relay')) {
+            $pattern = '^(?:"' + [regex]::Escape($ownerImage) + '"|' + [regex]::Escape($ownerImage) + ')\s+--native-ui-file-owner\s+"?(' + $prefix + '[a-f0-9]{10})\\' + $role + '"?\s*$'
+            $rows = @($children | Where-Object { $_.ExecutablePath -and (Same-Path $_.ExecutablePath $ownerImage) -and [regex]::IsMatch([string]$_.CommandLine, $pattern, [Text.RegularExpressions.RegexOptions]::IgnoreCase) })
+            $row = One $rows $role
+            $match = [regex]::Match([string]$row.CommandLine, $pattern, [Text.RegularExpressions.RegexOptions]::IgnoreCase)
+            [void]$sessionNames.Add($match.Groups[1].Value)
+            Hold $row $ownerImage $role
+        }
+        Require ($sessionNames.Count -eq 1) 'The two relays do not share one exact installed session.'
     }
-    Require ($sessionNames.Count -eq 1) 'The two relays do not share one exact installed session.'
     # Live gateway ancestry is collected once before timing. No command lines or
     # arbitrary guest-reported PID are accepted as standalone authority.
     $queue = [Collections.Generic.Queue[object]]::new(); $queue.Enqueue(@{ row=$gateway; depth=0; chain=@() })
     $guestImage = Join-Path $installation 'bin\node.exe'
-    $executorImage = Join-Path $installation 'mxc\wxc-exec.exe'
-    $guests = @(); $records = 0
+    $executorImage = if ($isHermes) { Join-Path $hermesRoot 'mxc-compat\wxc-exec.exe' } else { Join-Path $installation 'mxc\wxc-exec.exe' }
+    $guests = @(); $descendants = @(); $records = 0
+    $depthBound = if ($isHermes) { 12 } else { 8 }
     while ($queue.Count -gt 0) {
         Require ($clock.ElapsedMilliseconds -lt 10000) 'Owned identity discovery exhausted its diagnostic budget.'
         $entry = $queue.Dequeue()
-        Require ($entry.depth -lt 8) 'The owned gateway ancestry exceeds its depth bound.'
+        Require ($entry.depth -lt $depthBound) 'The owned gateway ancestry exceeds its depth bound.'
         $nested = @(Get-CimInstance Win32_Process -Filter "ParentProcessId=$([int]$entry.row.ProcessId)" -OperationTimeoutSec 3)
         foreach ($row in $nested) {
             Require ((++$records) -le 32) 'The owned gateway process inventory exceeds its bound.'
             Require ($row.ExecutablePath -and $row.CreationDate.ToUniversalTime() -ge $entry.row.CreationDate.ToUniversalTime()) 'An owned ancestry row is not live and ordered.'
             $anchor = [NemoClaw.InstalledIdle.Counter]::new([int]$row.ProcessId, [string]$row.ExecutablePath, (File-Time $row.CreationDate), 10, 'ancestry')
             try { $ancestryHandles.Add($anchor) } catch { $anchor.Dispose(); throw }
+            if ($isHermes) {
+                $snapshot = $anchor.Snapshot()
+                $generations[[int]$row.ProcessId] = [string]$snapshot.creationFileTime
+                Remember-Relation $row $entry.row $snapshot
+            }
             $chain = @($entry.chain) + @($entry.row)
+            if ($isHermes) { $descendants += @{ row=$row; chain=$chain } }
             if ($row.ExecutablePath -and (Same-Path $row.ExecutablePath $guestImage)) { $guests += @{ row=$row; chain=$chain } }
-            else { $queue.Enqueue(@{ row=$row; depth=($entry.depth+1); chain=$chain }) }
+            if ($isHermes -or -not (Same-Path $row.ExecutablePath $guestImage)) { $queue.Enqueue(@{ row=$row; depth=($entry.depth+1); chain=$chain }) }
         }
     }
     $guest = One $guests 'contained-node'
     $executor = One @($guest.chain | Where-Object { $_.ExecutablePath -and (Same-Path $_.ExecutablePath $executorImage) }) 'mxc-executor'
     Hold $executor $executorImage 'mxc-executor'
     Hold $guest.row $guestImage 'contained-node'
+    if ($isHermes) {
+        $launcherImage = Join-Path $hermesRoot 'mxc-compat\NemoClawMsysLauncher.exe'
+        $launcher = One @($guest.chain | Where-Object { Same-Path $_.ExecutablePath $launcherImage }) 'Hermes compatibility launcher'
+        Hold $launcher $launcherImage 'hermes-launcher'
+        $pythonCount = 0
+        foreach ($entry in $descendants) {
+            if (@($entry.chain | Where-Object { [int]$_.ProcessId -eq [int]$guest.row.ProcessId }).Count -eq 0) { continue }
+            $role = Hermes-Role ([string]$entry.row.ExecutablePath) ([int]$entry.row.ProcessId)
+            if ($role -cmatch '^hermes-python-[0-9]+$') { $pythonCount++ }
+            Hold $entry.row ([string]$entry.row.ExecutablePath) $role
+        }
+        Require ($pythonCount -ge 1) 'The real canonical Hermes Python process is missing from its held descendant tree.'
+    }
     Hold $self ([Environment]::ProcessPath) 'observer'
     $ids = @($handles | ForEach-Object { $_.Snapshot().processId })
     Require (@($ids | Select-Object -Unique).Count -eq $ids.Count) 'One PID was assigned multiple measurement roles.'
@@ -109,10 +186,12 @@ try {
     $after = Frame
     foreach ($anchor in $ancestryHandles) { $null = $anchor.Snapshot() }
     $phase = 'complete'
-    Emit @{ kind='complete'; schemaVersion=1; runtimeId=$plan.runtimeId; sourceRevision=$plan.sourceRevision; manifestSha256=$plan.manifestSha256;
+    $complete = @{ kind='complete'; schemaVersion=1; runtimeId=$plan.runtimeId; sourceRevision=$plan.sourceRevision; manifestSha256=$plan.manifestSha256;
         requestedIdleMs=30000; clock='Stopwatch.GetTimestamp'; frequency=[Diagnostics.Stopwatch]::Frequency.ToString(); logicalProcessors=[Environment]::ProcessorCount;
         preparationMs=$preparationMs; observerTotalMs=$clock.Elapsed.TotalMilliseconds; frames=@($before,$after);
         applicationInstrumentationEnabled=$false; scenario='settled-response-browser-connected-no-user-actions'; relayCounters=$null }
+    if ($isHermes) { $complete.agent='hermes'; $complete.stateRoot=$stateRoot; $complete.windowsRoot=$windowsRoot; $complete.processRelations=@($relations.Values | Sort-Object processId) }
+    Emit $complete
 } catch {
     $failed = $true
     $causes = @(); $cause = $_.Exception

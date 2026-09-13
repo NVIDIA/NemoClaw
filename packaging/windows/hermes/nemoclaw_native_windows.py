@@ -182,15 +182,20 @@ def _prebuilt_node(root: Path) -> dict | None:
         or record.get("web") != "hermes-agent/hermes_cli/web_dist/index.html"
         or record.get("agentBrowser") != "agent-browser/bin/agent-browser-win32-x64.exe"
         or record.get("browserUse") != "0.13.10"
-        or not isinstance(record.get("chromium"), str)
-        or not re.fullmatch(
-            r"browsers/chromium-[0-9]+/chrome-win64/chrome\.exe", record["chromium"]
-        )
     ):
         _refuse("the production Node contract differs from the installed profile.")
+    edge = record.get("browserHost") == "native-edge-cdp"
+    if edge:
+        if "chromium" in record:
+            _refuse("the native Edge profile cannot select bundled Chromium.")
+    elif not isinstance(record.get("chromium"), str) or not re.fullmatch(
+        r"browsers/chromium-[0-9]+/chrome-win64/chrome\.exe", record["chromium"]
+    ):
+        _refuse("the production browser contract differs from the installed profile.")
+    selected = ("tui", "web", "agentBrowser") if edge else ("tui", "web", "chromium", "agentBrowser")
     return {
         key: _regular_file(root / record[key], root)
-        for key in ("tui", "web", "chromium", "agentBrowser")
+        for key in selected
     }
 
 
@@ -203,6 +208,8 @@ def _install_prebuilt_node(root: Path) -> None:
     os.environ["HERMES_WEB_DIST"] = str(files["web"].parent)
     edge_cdp = os.environ.get("BROWSER_CDP_URL")
     if edge_cdp:
+        if "chromium" in files:
+            _refuse("the installed runtime did not select native Microsoft Edge.")
         if not re.fullmatch(
             r"ws://127\.0\.0\.1:[1-9][0-9]{0,4}/devtools/browser/[A-Za-z0-9-]{1,128}",
             edge_cdp,
@@ -213,6 +220,8 @@ def _install_prebuilt_node(root: Path) -> None:
         os.environ.pop("PLAYWRIGHT_BROWSERS_PATH", None)
         os.environ.pop("AGENT_BROWSER_EXECUTABLE_PATH", None)
     else:
+        if "chromium" not in files:
+            _refuse("the native Microsoft Edge CDP channel is unavailable.")
         os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(root / "browsers")
         os.environ["AGENT_BROWSER_EXECUTABLE_PATH"] = str(files["chromium"])
 

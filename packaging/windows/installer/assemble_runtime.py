@@ -19,6 +19,7 @@ from pathlib import Path, PureWindowsPath
 import re
 import shutil
 import stat
+import subprocess
 
 from assign_runtime_namespace import assign
 from build_runtime_manifest import build, hash_file, validate_relative, MAX_ENTRIES
@@ -69,6 +70,7 @@ LAYOUT = {
     ),
 }
 OFFICIAL_HERMES = "2237be355906fbe6065ce1815711eee52b2d646e"
+HERMES_CORE_PYTHON = "hermes-agent/.hermes-runtime/python/cpython-3.11.16-windows-aarch64-none/python.exe"
 HOST_MODES = [
     "turn",
     "terminal-turn",
@@ -102,7 +104,7 @@ PYTHON_WORKERS = {
 }
 
 
-def python_workers(build_root: Path, agents):
+def python_workers(build_root: Path, agents: dict[str, Path]):
     selected = []
     for agent in agents:
         if agent not in PYTHON_WORKERS:
@@ -110,6 +112,14 @@ def python_workers(build_root: Path, agents):
         version, names = PYTHON_WORKERS[agent]
         root = build_root / "python" / agent
         receipt = read_json(root / "bytecode.json", 16 * 1024 * 1024)
+        if agent == "hermes":
+            python = agents[agent] / HERMES_CORE_PYTHON
+            ordinary(python, False)
+            arm64_executable(python)
+            if receipt.get("pythonSha256") != hash_file(python)[1]:
+                raise ValueError(
+                    "The Hermes workers were not compiled by the exact shipping Python."
+                )
         if (
             receipt.get("classification") != "ci-prepared-python-bytecode"
             or receipt.get("agent") != agent
@@ -451,7 +461,7 @@ def prepare_agent(agent: str, root: Path):
 
 
 def verify_hermes_input(root: Path, actual: list[dict], candidate_receipt: Path):
-    candidate = read_json(candidate_receipt)
+    candidate, candidate_document = bound_document(candidate_receipt)
     if (
         candidate.get("classification") != "official-hermes-runtime-candidate-build"
         or candidate.get("status") != "candidate-bytes-exported"
@@ -464,9 +474,11 @@ def verify_hermes_input(root: Path, actual: list[dict], candidate_receipt: Path)
     ):
         raise ValueError("Hermes requires the complete official candidate provenance.")
     source_inventory = candidate_receipt.with_name("payload-inventory.json")
-    if hash_file(source_inventory)[1] != candidate.get("inventorySha256"):
+    recorded, inventory_document = bound_document(
+        source_inventory, limit=256 * 1024 * 1024
+    )
+    if inventory_document[1][1] != candidate.get("inventorySha256"):
         raise ValueError("The official complete runtime inventory changed.")
-    recorded = read_json(source_inventory, 256 * 1024 * 1024)
     expected = [
         {
             "path": row["path"],
@@ -491,9 +503,16 @@ def verify_hermes_input(root: Path, actual: list[dict], candidate_receipt: Path)
         or marker.get("hermesRevision") != OFFICIAL_HERMES
     ):
         raise ValueError("The official native metadata origin is invalid.")
+    return candidate, candidate_document, inventory_document
 
 
-def finalize_hermes(root: Path, target: PureWindowsPath):
+def finalize_hermes(
+    root: Path,
+    target: PureWindowsPath,
+    source_inventory: Path,
+    diagnostics: Path,
+    browser_use_adapter: dict,
+):
     if os.name != "nt":
         raise ValueError("Official Hermes final-path adaptation must run on Windows.")
     helper = Path(__file__).parents[1] / "hermes/prepare-native-runtime.py"
@@ -504,10 +523,698 @@ def finalize_hermes(root: Path, target: PureWindowsPath):
     # rechecks every prior generated hash, then changes pyvenv/direct_url metadata
     # once for the assigned install path. No package install or resolution occurs.
     changes, receipt = module.prepare_plan(
-        root, root, Path(str(target)), ["hermes-agent/venv", "tools/browser-use"]
+        root,
+        root,
+        Path(str(target)),
+        ["hermes-agent/venv", "tools/browser-use"],
+        ci_browser_use_adapter={
+            key: browser_use_adapter[key] for key in ("bytes", "sha256")
+        },
     )
+    node_contract = root / "nemoclaw-hermes-node.json"
+    node = json.loads(node_contract.read_text())
+    chromium = node.pop("chromium", None)
+    if (
+        not isinstance(chromium, str)
+        or not re.fullmatch(
+            r"browsers/chromium-[0-9]+/chrome-win64/chrome\.exe", chromium
+        )
+        or node.get("agentBrowser")
+        != "agent-browser/bin/agent-browser-win32-x64.exe"
+    ):
+        raise ValueError("The canonical browser input contract differs")
+    node["browserHost"] = "native-edge-cdp"
+    changes[node_contract] = (json.dumps(node, indent=2) + "\n").encode()
+    receipt["browserDelivery"] = {
+        "host": "native-arm64-microsoft-edge",
+        "transport": "authenticated-session-cdp-relay",
+        "bundledChromiumRemoved": True,
+        "agentBrowserClientPreserved": True,
+    }
     module.apply_plan(changes)
+    pruning = Path(__file__).parents[1] / "hermes/prepare-production-runtime.py"
+    pruning_spec = importlib.util.spec_from_file_location(
+        "hermes_production_partition", pruning
+    )
+    pruning_module = importlib.util.module_from_spec(pruning_spec)
+    pruning_spec.loader.exec_module(pruning_module)
+    receipt["productionPartition"] = pruning_module.prepare(
+        root, source_inventory, diagnostics
+    )
     return receipt
+
+
+def prepare_hermes_bytecode(root: Path, evidence: Path):
+    helper = Path(__file__).parents[1] / "hermes/prepare-official-bytecode.py"
+    spec = importlib.util.spec_from_file_location("hermes_bytecode", helper)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    # Only the already-proven shipping interpreter compiles the finished tree.
+    # -S avoids running site hooks while preparing bytes; no Hermes source runs.
+    environment = {
+        name: os.environ[name]
+        for name in (
+            "SystemRoot",
+            "WINDIR",
+            "SystemDrive",
+            "TEMP",
+            "TMP",
+            "OS",
+            "GITHUB_ACTIONS",
+        )
+        if name in os.environ
+    }
+    subprocess.run(
+        [
+            str(root / module.PYTHON),
+            "-I",
+            "-S",
+            "-B",
+            str(helper),
+            "--runtime-root",
+            str(root),
+            "--receipt",
+            str(evidence),
+        ],
+        env=environment,
+        check=True,
+        timeout=600,
+    )
+    compiled = read_json(evidence, 64 * 1024 * 1024)
+    module.validate_receipt(root, compiled)
+    result = {key: value for key, value in compiled.items() if key != "files"}
+    result["fullReceiptSha256"] = hash_file(evidence)[1]
+    write_json(root / "nemoclaw-python-bytecode.json", result)
+    return result
+
+
+def bound_document(file: Path, expected=None, limit=64 * 1024 * 1024):
+    ordinary(file, False)
+    with file.open("rb") as stream:
+        data = stream.read(limit + 1)
+    if len(data) > limit:
+        raise ValueError("Hermes provenance exceeds its document bound.")
+    identity = (len(data), hashlib.sha256(data).hexdigest())
+    if expected is not None and identity != expected:
+        raise ValueError("Hermes provenance bytes changed: " + file.name)
+    value = json.loads(data)
+    if not isinstance(value, dict):
+        raise ValueError("Hermes provenance must be a JSON object.")
+    return value, (file, identity)
+
+
+def reference_document(parent: Path, record, name: str):
+    if not isinstance(record, dict) or record.get("file") != name:
+        raise ValueError("Hermes provenance reference differs: " + name)
+    return bound_document(parent / name, (record.get("bytes"), record.get("sha256")))
+
+
+def validate_hermes_executor_build(build, source_revision: str):
+    if (
+        build.get("classification") != "mxc-owned-token-inspection-build"
+        or build.get("status") != "built"
+        or build.get("candidateRevision") != source_revision
+        or build.get("sourceCommit") != "7dac1a952f0c9ad13f0a4cb089c4e0e8b3e0013a"
+        or build.get("sourceSha256")
+        != "814659a1db0b4cd06854066705f274bba2b2702f563735d69ba72a407c0ad258"
+        or build.get("target") != "aarch64-pc-windows-msvc"
+        or build.get("compilerClosed") is not True
+        or build.get("compilerForced") is not False
+        or build.get("compilerExitCode") != 0
+        or build.get("compilerCleanupErrors") != []
+        or build.get("tokenQueryRepairSupported") is not True
+        or build.get("tokenAccessMode") != "owned-child-query-only"
+        or len(build.get("files", [])) != 1
+    ):
+        raise ValueError("The same-source Hermes executor build did not complete.")
+    executable = build["files"][0]
+    if executable.get("file") != "wxc-exec.exe" or executable.get("machine") != 0xAA64:
+        raise ValueError(
+            "The canonical Hermes executor is not the expected ARM64 file."
+        )
+    return executable
+
+
+def hermes_executor_files(directory: Path, build_file: Path, source_revision: str):
+    """Verify finished executor bytes from the same-source native proof."""
+    build, document = bound_document(build_file)
+    executable = validate_hermes_executor_build(build, source_revision)
+    ordinary(directory, True)
+    result = []
+    for name, expected in (
+        ("wxc-exec.exe", executable.get("sha256")),
+        ("MXC-LICENSE.txt", build.get("licenseSha256")),
+        ("NEMOCLAW-LICENSE.txt", build.get("nemoClawLicenseSha256")),
+    ):
+        source = directory / name
+        ordinary(source, False)
+        size, sha = hash_file(source)
+        if (
+            not isinstance(expected, str)
+            or not re.fullmatch(r"[a-f0-9]{64}", expected)
+            or sha != expected
+        ):
+            raise ValueError("A canonical Hermes executor input changed: " + name)
+        if name == "wxc-exec.exe":
+            if size != executable.get("bytes"):
+                raise ValueError("The canonical Hermes executor size changed.")
+            arm64_executable(source)
+        result.append((source, "mxc-compat/" + name, (size, sha), None))
+    result.append((document[0], "mxc-compat/mxc-build.json", document[1], None))
+    return build, result
+
+
+NATIVE_SOURCE_ROOT = Path(__file__).parents[1] / "mxc-bash"
+NATIVE_SOURCE_FILES = {
+    "compat-launcher.cpp",
+    "process-propagation.cpp",
+    "process-propagation.h",
+    "namespace-compat.cpp",
+    "namespace-path.h",
+    "namespace-security.h",
+    "namespace-controls.cpp",
+    "compat.def",
+}
+COMPATIBILITY_MEMBERS = {
+    "NemoClawMsysLauncher.exe": "arm64",
+    "NemoClawMsysCompat-arm64.dll": "arm64",
+    "NemoClawMsysCompat-x64.dll": "x64",
+}
+
+# The replay is of one already-exported complete runtime, never a general
+# permission to mix a candidate with an unrelated Personal controller.
+PERSONAL_REPLAY_BASE = {
+    "artifactId": 10293082661,
+    "runId": 34679482914,
+    "sourceRevision": "8d78fe458e9268a7afdc8ed06b85c23306452036",
+    "bytes": 1073328197,
+    "sha256": "753aa3e7addcc1c274b4a59b6785706715ccba661eaa31bfe77a95e20271bda1",
+    "candidateReceiptSha256": "c682b3cd2f9691ad7d65312682522b59a5a5105c19688621153261d92c4f1c4f",
+    "inventorySha256": "f4df172630b7f5ae6ec9cc9cf9c54b4744c2b0046cb15859f9469ff9bfe7a0e2",
+    "startupAdapterSha256": "58a55abda6045e4919da5e56042d21768e72bab3be1e7444a4f65eb850941f65",
+    "runtimeRoot": r"C:\NemoClawHermesProbe-274d797050ea",
+}
+
+
+def personal_replay_lineage(personal, candidate, candidate_identity, actual, parent):
+    replay = personal.get("runtimeReplay")
+    if replay is None:
+        if personal.get("sourceRevision") != candidate.get("controllerSource"):
+            raise ValueError(
+                "A different Personal controller requires the exact finished replay."
+            )
+        return []
+    if (
+        replay.get("schemaVersion") != 1
+        or replay.get("classification") != "immutable-canonical-hermes-personal-replay"
+        or replay.get("base") != PERSONAL_REPLAY_BASE
+        or not re.fullmatch(r"[a-f0-9]{40}", personal.get("sourceRevision", ""))
+        or replay.get("controllerSource") != personal.get("sourceRevision")
+        or replay.get("runtimeRoot") != PERSONAL_REPLAY_BASE["runtimeRoot"]
+        or personal.get("runtime") != replay.get("runtimeRoot")
+        or candidate.get("controllerSource") != PERSONAL_REPLAY_BASE["sourceRevision"]
+        or candidate_identity[1] != PERSONAL_REPLAY_BASE["candidateReceiptSha256"]
+        or candidate.get("inventorySha256") != PERSONAL_REPLAY_BASE["inventorySha256"]
+        or candidate.get("startupAdapterSha256")
+        != PERSONAL_REPLAY_BASE["startupAdapterSha256"]
+        or any(
+            replay.get(key) is not True
+            for key in (
+                "completeZipVerified",
+                "completeNestedArchiveVerified",
+                "sourceBuildProvenanceVerified",
+                "nativeComponentUnchanged",
+            )
+        )
+        or any(
+            replay.get(key) is not False
+            for key in (
+                "runtimeRebuilt",
+                "runtimeRelocated",
+                "runtimeExported",
+                "runtimeExecutionQualified",
+                "installedAcceptance",
+            )
+        )
+    ):
+        raise ValueError(
+            "The Personal replay is not bound to the exact immutable canonical base."
+        )
+    for key in ("before", "after"):
+        scan = replay.get(key, {})
+        if (
+            not isinstance(scan, dict)
+            or scan.get("allFilesAndDirectoriesVerified") is not True
+            or scan.get("inventorySha256") != candidate["inventorySha256"]
+            or scan.get("files") != candidate.get("fileCount")
+            or scan.get("logicalBytes") != candidate.get("logicalBytes")
+        ):
+            raise ValueError(
+                "The Personal replay requires its complete before/after inventory."
+            )
+
+    native = replay.get("nativeComponent", {})
+    references = native.get("documents", {})
+    documents = {}
+    lineage = []
+    for key, name in (
+        ("proof", "current-native-proof.json"),
+        ("compatibility", "current-msys-build.json"),
+        ("mxc", "current-mxc-build.json"),
+    ):
+        value, document = reference_document(parent, references.get(key), name)
+        documents[key] = value
+        lineage.append((*document, "personal-replay/" + name))
+    proof, build, mxc = (documents[key] for key in ("proof", "compatibility", "mxc"))
+    source = native.get("sourceRevision", "")
+    if (
+        not re.fullmatch(r"[a-f0-9]{40}", source)
+        or proof.get("classification") != "small-msys-appcontainer-compatibility-proof"
+        or proof.get("sourceRevision") != source
+        or proof.get("passed") is not True
+        or proof.get("normalCleanup") is not True
+        or proof.get("phase") != "two-container-isolation"
+        or build.get("classification") != "mxc-msys-compatibility-prototype-build"
+        or build.get("status") != "built"
+        or build.get("sourceRevision") != source
+        or build.get("cleanupErrors") != []
+        or proof.get("inputs", {}).get("compatibility") != build
+        or proof.get("inputs", {}).get("mxcBuild") != mxc
+    ):
+        raise ValueError(
+            "The Personal replay current native proof did not pass or differs."
+        )
+    executor = validate_hermes_executor_build(mxc, source)
+    before = {row["path"]: row for row in actual if row["kind"] == "file"}
+    git = proof.get("inputs", {}).get("git", {})
+    if set(git) != {
+        "bin/bash.exe",
+        "bin/sh.exe",
+        "usr/bin/bash.exe",
+        "usr/bin/sh.exe",
+        "usr/bin/msys-2.0.dll",
+    } or any(
+        before.get("git/" + name, {}).get("sha256") != sha for name, sha in git.items()
+    ):
+        raise ValueError("The Personal replay used different canonical Git images.")
+    members = build.get("files", [])
+    license_record = build.get("license", {})
+    if (
+        len(members) != 3
+        or {row.get("file") for row in members} != set(COMPATIBILITY_MEMBERS)
+        or any(
+            row.get("machine") != COMPATIBILITY_MEMBERS[row["file"]] for row in members
+        )
+        or license_record.get("file") != "DETOURS-LICENSE.txt"
+    ):
+        raise ValueError("The Personal replay native file set differs.")
+    for key in ("proof", "build"):
+        reference = references["compatibility" if key == "build" else key]
+        identity = native.get(key, {})
+        if (identity.get("bytes"), identity.get("sha256")) != (
+            reference["bytes"],
+            reference["sha256"],
+        ):
+            raise ValueError("The Personal replay executed input document differs.")
+    executed = native.get("executor", {})
+    host = personal.get("hostInputs", {})
+    if (
+        executed != host.get("mxc")
+        or personal.get("execution", {}).get("executable") != executed.get("path")
+        or executed.get("bytes") != executor.get("bytes")
+        or executed.get("sha256") != executor.get("sha256")
+        or executed.get("peMachine") != 0xAA64
+        or PureWindowsPath(executed.get("path", "")).name != "wxc-exec.exe"
+        or proof.get("inputs", {}).get("mxcSha256") != executor.get("sha256")
+        or host.get("compatibility")
+        != {
+            "sourceRevision": source,
+            "files": members,
+            "license": license_record,
+            "mxcFile": executor,
+            "gitPins": git,
+        }
+    ):
+        raise ValueError(
+            "The Personal replay executed native identities differ from their proof."
+        )
+    nonce = personal.get("workload", {}).get("nonce", "")
+    if not re.fullmatch(r"[a-f0-9]{24}", nonce):
+        raise ValueError("The Personal replay owned launch nonce is missing.")
+    native_root = "C:\\NemoClawPersonalCompat-" + nonce[:12]
+    staged = native.get("files", [])
+    expected = [
+        *members,
+        license_record,
+        {**references["compatibility"], "file": "build-receipt.json"},
+    ]
+    if (
+        native.get("root") != native_root
+        or len(staged) != len(expected)
+        or {row.get("file") for row in staged} != {row["file"] for row in expected}
+    ):
+        raise ValueError("The Personal replay staged native component differs.")
+    indexed = {row["file"]: row for row in staged}
+    for row in expected:
+        copied = indexed[row["file"]]
+        if copied.get("path") != str(PureWindowsPath(native_root) / row["file"]) or any(
+            copied.get(key) != row.get(key) for key in ("bytes", "sha256", "machine")
+        ):
+            raise ValueError("The Personal replay staged native file identity differs.")
+    # The request is retained by the CI controller before execution. Bind its
+    # selected launcher and read-only stage without reopening deleted CI paths.
+    request, document = bound_document(
+        parent / "personal-request.json", limit=64 * 1024
+    )
+    if document[1][1] != personal.get("requestSha256"):
+        raise ValueError("The Personal replay executed request differs.")
+    command = request.get("process", {}).get("commandLine", "")
+    readonly = request.get("filesystem", {}).get("readonlyPaths", [])
+    state = "C:\\NemoClawMsysProof-" + nonce[:12] + "-state-start"
+    if (
+        not command.startswith('"' + native_root + '\\NemoClawMsysLauncher.exe" "--" ')
+        or native_root not in readonly
+        or replay["runtimeRoot"] not in readonly
+        or request.get("containerId") != "nm-" + nonce[:12] + "-start"
+        or request.get("process", {}).get("cwd") != state
+        or request.get("filesystem", {}).get("readwritePaths") != [state]
+    ):
+        raise ValueError(
+            "The Personal replay did not execute its proved read-only launcher."
+        )
+    lineage.append((*document, "personal-replay/personal-request.json"))
+    return lineage
+
+
+def hermes_composition(
+    root,
+    actual,
+    candidate_file,
+    personal_file,
+    compatibility_directory,
+    proof_file,
+    executor_directory,
+    source_revision,
+):
+    candidate, candidate_document, inventory_document = verify_hermes_input(
+        root, actual, candidate_file
+    )
+    personal, personal_document = bound_document(personal_file)
+    edge_mode = personal.get("browserMode") == "host-native-edge-cdp"
+    expected_personal_pass = not edge_mode
+    recorded_candidate = personal.get("derivedRuntime", {}).get("candidate", {})
+    components = personal.get("workload", {}).get("components", [])
+    execution = personal.get("execution", {})
+    if (
+        personal.get("classification") != "canonical-personal-mxc-feasibility"
+        or personal.get("feasibilityPassed") is not expected_personal_pass
+        or personal.get("candidateSource") != candidate.get("controllerSource")
+        or recorded_candidate.get("value") != candidate
+        or (recorded_candidate.get("bytes"), recorded_candidate.get("sha256"))
+        != candidate_document[1]
+        or personal.get("privateStateLeaseTested") is not False
+        or personal.get("installedAcceptance") is not False
+        or personal.get("fullAgentQualified") is not False
+        or personal.get("cleanupErrors") != []
+        or (not edge_mode and personal.get("error") is not None)
+        or personal.get("workload", {}).get("passed") is not expected_personal_pass
+        or len(components) != 4
+        or {row.get("component") for row in components}
+        != {"python", "bash", "conpty", "browser"}
+        or any(
+            row.get("passed") is not True
+            or row.get("result", {}).get("passed") is not True
+            or row.get("result", {}).get("component") != row.get("component")
+            or row.get("execution", {}).get("exitCode") != 0
+            or row.get("execution", {}).get("childClosed") is not True
+            or row.get("execution", {}).get("timedOut") is not False
+            or row.get("execution", {}).get("outputExceeded") is not False
+            for row in components
+            if not edge_mode or row.get("component") != "browser"
+        )
+        or (not edge_mode and execution.get("exitCode") != 0)
+        or execution.get("childClosed") is not True
+        or execution.get("timedOut") is not False
+        or execution.get("outputExceeded") is not False
+        or any(
+            personal.get("cleanup", {}).get(key) is not True
+            for key in (
+                "executorClosed",
+                "hostDiagnosticChildrenClosed",
+                "profileDeleted",
+                "ownedRootsRemoved",
+            )
+        )
+    ):
+        raise ValueError(
+            "Hermes requires its exact passing Personal component proof and cleanup."
+        )
+    if edge_mode:
+        browser_failure = next(row for row in components if row["component"] == "browser")
+        edge = personal.get("edgePrerequisite", {})
+        if (
+            personal.get("installedAcceptanceRequired") is not True
+            or browser_failure.get("passed") is not False
+            or browser_failure.get("execution", {}).get("childClosed") is not True
+            or browser_failure.get("execution", {}).get("timedOut") is not False
+            or browser_failure.get("execution", {}).get("outputExceeded") is not False
+            or edge.get("classification") != "native-arm64-microsoft-edge"
+            or edge.get("architecture") != "arm64"
+            or edge.get("machine") != 0xAA64
+            or edge.get("signatureStatus") != "Valid"
+            or edge.get("provenance") != "standard-windows-microsoft-edge-installation"
+            or edge.get("executed") is not False
+        ):
+            raise ValueError("Hermes host Edge build admission differs.")
+    browser_helper = Path(__file__).parents[1] / "hermes/nemoclaw_browser_use.py"
+    helper_bytes, helper_sha = hash_file(browser_helper)
+    adapter = personal.get("browserUseLaunchAdapter", {})
+    browser = next(row for row in components if row["component"] == "browser")
+    applied = browser.get("result", {}).get("browserLauncherAdaptation", {})
+    identities = [adapter.get(key, {}) for key in ("source", "staged", "document")]
+    identities.append(applied.get("source", {}))
+    if (
+        any(
+            (row.get("bytes"), row.get("sha256")) != (helper_bytes, helper_sha)
+            for row in identities
+        )
+        or applied.get("classification") != "owned-browser-use-module-launch"
+        or applied.get("trampolineBypassed") is not True
+        or applied.get("runtimeBytesModified") is not False
+    ):
+        raise ValueError(
+            "Installed Browser Use must use the same helper that passed Personal."
+        )
+    browser_use_adapter = {
+        "file": browser_helper.name,
+        "bytes": helper_bytes,
+        "sha256": helper_sha,
+        "personalSource": personal["sourceRevision"],
+        "personalProofSha256": personal_document[1][1],
+        "entryPointsSha256": applied.get("entryPointsSha256"),
+        "moduleSha256": applied.get("moduleSha256"),
+        "executionQualified": False,
+    }
+    replay_lineage = personal_replay_lineage(
+        personal, candidate, candidate_document[1], actual, personal_file.parent
+    )
+    # Inventory validation precedes every copy and replacement. Its expected
+    # receipt is pinned by the already-passed Personal candidate above.
+    if hash_file(candidate_file) != candidate_document[1]:
+        raise ValueError("Canonical Hermes receipt changed during preflight.")
+    parent = candidate_file.parent
+    derivation, derivation_document = reference_document(
+        parent, candidate.get("derivation"), "candidate-derivation.json"
+    )
+    if derivation != personal.get("derivedRuntime", {}).get("derivation", {}).get(
+        "value"
+    ):
+        raise ValueError("Canonical Hermes derivation differs from the Personal proof.")
+    lineage = [
+        (*candidate_document, "runtime-candidate.json"),
+        (*derivation_document, "candidate-derivation.json"),
+        (*personal_document, "personal-feasibility.json"),
+        *replay_lineage,
+    ]
+    lineage.append((*inventory_document, "payload-inventory.json"))
+    for key, name in (
+        ("pywinpty", "pywinpty-rebuild.json"),
+        ("git", "canonical-git-derivation.json"),
+        ("compatibility", "msys-build.json"),
+        ("compatibilityProof", "bash-compatibility-proof.json"),
+        ("mxc", "mxc-build.json"),
+    ):
+        _, document = reference_document(parent, derivation.get(key), name)
+        lineage.append((*document, name))
+    proof, proof_document = bound_document(proof_file)
+    compatibility_file = compatibility_directory / "build-receipt.json"
+    compatibility, compatibility_document = bound_document(compatibility_file)
+    build_file = executor_directory / "mxc-token-inspection-build.json"
+    executor, files = hermes_executor_files(
+        executor_directory, build_file, source_revision
+    )
+    if (
+        proof.get("classification") != "small-msys-appcontainer-compatibility-proof"
+        or proof.get("sourceRevision") != source_revision
+        or proof.get("passed") is not True
+        or proof.get("normalCleanup") is not True
+        or proof.get("phase") != "two-container-isolation"
+        or compatibility.get("classification")
+        != "mxc-msys-compatibility-prototype-build"
+        or compatibility.get("status") != "built"
+        or compatibility.get("sourceRevision") != source_revision
+        or compatibility.get("cleanupErrors") != []
+        or proof.get("inputs", {}).get("compatibility") != compatibility
+        or proof.get("inputs", {}).get("mxcBuild") != executor
+        or proof.get("inputs", {}).get("mxcSha256") != executor["files"][0]["sha256"]
+        or executor.get("patchSha256")
+        != hash_file(NATIVE_SOURCE_ROOT / "mxc-token-inspection.patch")[1]
+    ):
+        raise ValueError(
+            "Hermes compatibility requires the same-source passed native proof."
+        )
+    source_files = compatibility.get("sourceFiles", [])
+    if (
+        len(source_files) != len(NATIVE_SOURCE_FILES)
+        or {row.get("path") for row in source_files} != NATIVE_SOURCE_FILES
+    ):
+        raise ValueError("The compatibility source-file set changed.")
+    for row in source_files:
+        if hash_file(NATIVE_SOURCE_ROOT / row["path"])[1] != row.get("sha256"):
+            raise ValueError("The native compatibility source differs from its proof.")
+    before = {
+        row["path"]: (row["bytes"], row["sha256"])
+        for row in actual
+        if row["kind"] == "file"
+    }
+    git = proof.get("inputs", {}).get("git", {})
+    if set(git) != {
+        "bin/bash.exe",
+        "bin/sh.exe",
+        "usr/bin/bash.exe",
+        "usr/bin/sh.exe",
+        "usr/bin/msys-2.0.dll",
+    } or any(
+        before.get("git/" + name, (None, None))[1] != sha for name, sha in git.items()
+    ):
+        raise ValueError("The new native proof used different canonical Git images.")
+    members = compatibility.get("files", [])
+    if (
+        len(members) != 3
+        or {row.get("file") for row in members} != set(COMPATIBILITY_MEMBERS)
+        or any(
+            row.get("machine") != COMPATIBILITY_MEMBERS[row["file"]] for row in members
+        )
+    ):
+        raise ValueError("The compatibility binary set changed.")
+    license_record = compatibility.get("license", {})
+    if license_record.get("file") != "DETOURS-LICENSE.txt":
+        raise ValueError("The compatibility license is missing.")
+    for row in [
+        *members,
+        license_record,
+        {
+            "file": "build-receipt.json",
+            "bytes": compatibility_document[1][0],
+            "sha256": compatibility_document[1][1],
+        },
+    ]:
+        name = row["file"]
+        source = compatibility_directory / name
+        ordinary(source, False)
+        expected = (row.get("bytes"), row.get("sha256"))
+        relative = "mxc-compat/" + name
+        if hash_file(source) != expected or relative not in before:
+            raise ValueError(
+                "A native compatibility input or canonical replacement changed."
+            )
+        if name == "DETOURS-LICENSE.txt":
+            if before[relative] != expected:
+                raise ValueError(
+                    "The proved Detours license differs from the retained canonical license."
+                )
+            continue
+        if name in COMPATIBILITY_MEMBERS:
+            with source.open("rb") as stream:
+                header = stream.read(4096)
+            offset = int.from_bytes(header[60:64], "little")
+            machine = (
+                b"\x64\xaa" if COMPATIBILITY_MEMBERS[name] == "arm64" else b"\x64\x86"
+            )
+            if (
+                len(header) < 64
+                or header[:2] != b"MZ"
+                or offset < 64
+                or offset > len(header) - 6
+                or header[offset : offset + 6] != b"PE\0\0" + machine
+            ):
+                raise ValueError(
+                    "A compatibility binary has a different PE architecture."
+                )
+        files.append((source, relative, expected, before[relative]))
+    for source, expected, name in lineage:
+        files.append(
+            (source, "mxc-compat/provenance/canonical/" + name, expected, None)
+        )
+    files.append(
+        (
+            proof_document[0],
+            "mxc-compat/native-compatibility-proof.json",
+            proof_document[1],
+            None,
+        )
+    )
+    receipt = {
+        "schemaVersion": 1,
+        "classification": "installed-hermes-native-composition",
+        "sourceRevision": source_revision,
+        "canonicalSource": candidate["controllerSource"],
+        "canonicalCandidateSha256": candidate_document[1][1],
+        "personalProofSha256": personal_document[1][1],
+        "personalSource": personal["sourceRevision"],
+        "browserMode": "host-native-edge-cdp" if edge_mode else "contained-canonical-browser",
+        "browserUseAdapter": browser_use_adapter,
+        "nativeProofSha256": proof_document[1][1],
+        "compatibilityBuildSha256": compatibility_document[1][1],
+        "executorBuildSha256": files[3][2][1],
+        "privateStateLeaseTested": False,
+        "installedAcceptance": False,
+        "fullAgentQualified": False,
+        "canonicalBaseVerifiedBeforeCopy": True,
+        "nousFilesReplaced": False,
+        "detoursLicensePreserved": license_record,
+        "files": [
+            {
+                "path": relative,
+                "bytes": expected[0],
+                "sha256": expected[1],
+                "before": None if old is None else {"bytes": old[0], "sha256": old[1]},
+            }
+            for _, relative, expected, old in files
+        ],
+    }
+    return files, receipt
+
+
+def copy_hermes_composition(destination: Path, files):
+    for source, relative, expected, previous in files:
+        ordinary(source, False)
+        if hash_file(source) != expected:
+            raise ValueError("A Hermes composition input changed after preflight.")
+        target = destination / relative
+        if previous is None:
+            if target.exists() or target.is_symlink():
+                raise ValueError("A Hermes composition destination already exists.")
+        else:
+            ordinary(target, False)
+            if hash_file(target) != previous:
+                raise ValueError("A canonical Hermes replacement changed after copy.")
+            target.unlink()
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with source.open("rb") as incoming, target.open("xb") as outgoing:
+            shutil.copyfileobj(incoming, outgoing)
+        if hash_file(source) != expected or hash_file(target) != expected:
+            raise ValueError("A Hermes composition input changed during copy.")
 
 
 def write_json(path: Path, value):
@@ -529,6 +1236,10 @@ def assemble(
     executable_build: Path,
     model_pack: Path | None = None,
     hermes_receipt: Path | None = None,
+    hermes_executor: Path | None = None,
+    hermes_personal_proof: Path | None = None,
+    hermes_compatibility: Path | None = None,
+    hermes_compatibility_proof: Path | None = None,
     target_install_root: str | None = None,
 ):
     if not sources or any(agent not in LAYOUT for agent in sources):
@@ -552,11 +1263,25 @@ def assemble(
     )
     if "hermes" in sources and hermes_receipt is None:
         raise ValueError("Curated or provenance-free Hermes cannot enter this layout.")
+    native_inputs = (
+        hermes_executor,
+        hermes_personal_proof,
+        hermes_compatibility,
+        hermes_compatibility_proof,
+    )
+    if ("hermes" in sources and any(value is None for value in native_inputs)) or (
+        "hermes" not in sources and any(value is not None for value in native_inputs)
+    ):
+        raise ValueError(
+            "Only selected Hermes requires its explicit canonical Personal and native compatibility proofs."
+        )
     application_files += python_workers(worker_build, sources)
     # Preflight every selected tree before creating output. Unselected agents
     # are not inspected, copied, or required to build an OpenClaw-only candidate.
     inputs = {agent: prepare_agent(agent, root) for agent, root in sources.items()}
     target = None
+    composition_files = []
+    composition_receipt = None
     if "hermes" in sources:
         if (
             not target_install_root
@@ -573,7 +1298,16 @@ def assemble(
                 "Hermes metadata needs the explicit fixed Program Files install target."
             )
         target = PureWindowsPath(target_install_root) / "runtimes" / runtime_id
-        verify_hermes_input(sources["hermes"], inputs["hermes"], hermes_receipt)
+        composition_files, composition_receipt = hermes_composition(
+            sources["hermes"],
+            inputs["hermes"],
+            hermes_receipt,
+            hermes_personal_proof,
+            hermes_compatibility,
+            hermes_compatibility_proof,
+            hermes_executor,
+            source_revision,
+        )
     for root in sources.values():
         if output.resolve().is_relative_to(root.resolve()):
             raise ValueError("The build output cannot be nested in an input tree.")
@@ -624,8 +1358,28 @@ def assemble(
                     "A runtime source changed during its exact build copy."
                 )
             adaptation = None
+            bytecode = None
             if agent == "hermes":
-                adaptation = finalize_hermes(destination, target / "hermes")
+                copy_hermes_composition(destination, composition_files)
+                write_json(
+                    destination / "mxc-compat/composition.json", composition_receipt
+                )
+                adaptation = finalize_hermes(
+                    destination,
+                    target / "hermes",
+                    destination
+                    / "mxc-compat/provenance/canonical/payload-inventory.json",
+                    output / "hermes-production-diagnostics",
+                    composition_receipt["browserUseAdapter"],
+                )
+                adaptation["nativeCompatibilityComposition"] = composition_receipt
+                adaptation["executorBuildSha256"] = composition_receipt[
+                    "executorBuildSha256"
+                ]
+                # Keep failure evidence outside the disposable assembly output.
+                bytecode = prepare_hermes_bytecode(
+                    destination, output.with_name(output.name + "-hermes-bytecode.json")
+                )
             records.append(
                 {
                     "agent": agent,
@@ -636,6 +1390,7 @@ def assemble(
                     "filesCopiedAtBuild": sum(row["kind"] == "file" for row in before),
                     "bytesCopiedAtBuild": sum(row.get("bytes", 0) for row in before),
                     "finalMetadataAdaptation": adaptation,
+                    **({"pythonBytecodePreparation": bytecode} if bytecode else {}),
                     "executionQualified": False,
                     "availability": "blocked-canonical-shell"
                     if agent == "hermes"
@@ -739,6 +1494,10 @@ def main():
     parser.add_argument("--executable-build", type=Path, required=True)
     parser.add_argument("--model-pack", type=Path)
     parser.add_argument("--canonical-hermes-receipt", type=Path)
+    parser.add_argument("--hermes-executor-directory", type=Path)
+    parser.add_argument("--canonical-hermes-personal-proof", type=Path)
+    parser.add_argument("--hermes-compatibility-directory", type=Path)
+    parser.add_argument("--hermes-compatibility-proof", type=Path)
     parser.add_argument("--target-install-root")
     args = parser.parse_args()
     sources = {}
@@ -761,6 +1520,10 @@ def main():
                 executable_build=args.executable_build,
                 model_pack=args.model_pack,
                 hermes_receipt=args.canonical_hermes_receipt,
+                hermes_executor=args.hermes_executor_directory,
+                hermes_personal_proof=args.canonical_hermes_personal_proof,
+                hermes_compatibility=args.hermes_compatibility_directory,
+                hermes_compatibility_proof=args.hermes_compatibility_proof,
                 target_install_root=args.target_install_root,
             )
         )

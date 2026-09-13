@@ -219,7 +219,7 @@ diff --git a/src/backends/appcontainer/common/src/msys_token_inspection.rs b/src
 new file mode 100644
 --- /dev/null
 +++ b/src/backends/appcontainer/common/src/msys_token_inspection.rs
-@@ -0,0 +1,350 @@
+@@ -0,0 +1,433 @@
 +// Copyright (c) NVIDIA Corporation.
 +// Licensed under the MIT License.
 +// CI-only exact-owned-job token inspection or explicitly selected TOKEN_QUERY repair.
@@ -330,6 +330,56 @@ new file mode 100644
 +    Ok(PathBuf::from(cwd))
 +}
 +
++fn normalized_state_path(path: &str) -> Result<String, String> {
++    let path = path.replace('/', "\\");
++    let path = path.strip_suffix('\\').unwrap_or(&path);
++    let parts: Vec<_> = path.split('\\').collect();
++    if parts.len() < 2
++        || parts[0].len() != 2
++        || !parts[0].as_bytes()[0].is_ascii_alphabetic()
++        || parts[0].as_bytes()[1] != b':'
++        || parts[1..].iter().any(|part| {
++            part.is_empty()
++                || matches!(*part, "." | "..")
++                || part.ends_with(['.', ' '])
++                || part
++                    .chars()
++                    .any(|ch| ch.is_control() || "<>:\"|?*".contains(ch))
++        })
++    {
++        return Err("Hermes state path is not an unambiguous drive-root path".into());
++    }
++    Ok(path.to_ascii_lowercase())
++}
++
++fn installed_root(
++    cwd: &str,
++    writable: &[String],
++    expected: &str,
++) -> Result<(PathBuf, Vec<String>), String> {
++    let expected = normalized_state_path(expected)?;
++    if normalized_state_path(cwd)? != expected || writable.is_empty() {
++        return Err("Hermes state differs from the actual host account's leased root".into());
++    }
++    let prefix = format!("{expected}\\");
++    let mut descendants = Vec::new();
++    let mut root_present = false;
++    for entry in writable {
++        let path = normalized_state_path(entry)?;
++        if path == expected {
++            root_present = true;
++        } else if let Some(relative) = path.strip_prefix(&prefix) {
++            descendants.push(relative.to_owned());
++        } else {
++            return Err("Hermes writable capability is outside its leased state root".into());
++        }
++    }
++    if !root_present {
++        return Err("Hermes leased state root is not the writable owner".into());
++    }
++    Ok((PathBuf::from(cwd), descendants))
++}
++
 +fn private_desktop_admission(
 +    requested: Option<&str>,
 +    github_actions: bool,
@@ -353,10 +403,26 @@ new file mode 100644
 +    cwd: &str, writable: &[String], container: &str, ui_disabled: bool,
 +) -> Result<bool, String> {
 +    let requested = std::env::var("NEMOCLAW_HERMES_PRIVATE_DESKTOP").ok();
++    let inspection = std::env::var("NEMOCLAW_MSYS_TOKEN_INSPECTION").unwrap_or_default();
++    if requested.as_deref() == Some("1") && inspection == "hermes-query" {
++        if ui_disabled {
++            return Err("installed Hermes desktop creation requires its UI-compatible policy".into());
++        }
++        // The dedicated gateway holds the runtime/state owners. Derive the
++        // account identity from the actual host token, never guest variables.
++        let (root, descendants) = installed_root(
++            cwd, writable, &crate::msys_token_readback::host_hermes_root()?,
++        )?;
++        let directory = pin_directory(&root)?;
++        for relative in &descendants {
++            crate::msys_token_readback::verify_owned_descendant(directory.get(), relative)?;
++        }
++        return Ok(true);
++    }
 +    let selected = private_desktop_admission(
 +        requested.as_deref(),
 +        std::env::var("GITHUB_ACTIONS").as_deref() == Ok("true"),
-+        &std::env::var("NEMOCLAW_MSYS_TOKEN_INSPECTION").unwrap_or_default(),
++        &inspection,
 +        cwd, writable, container, ui_disabled,
 +    )?;
 +    if selected {
@@ -508,23 +574,40 @@ new file mode 100644
 +    root_process: HANDLE,
 +    private_desktop: bool,
 +) -> Result<Option<OwnerGuard>, String> {
-+    let repair = match std::env::var("NEMOCLAW_MSYS_TOKEN_INSPECTION") {
++    let (repair, installed) = match std::env::var("NEMOCLAW_MSYS_TOKEN_INSPECTION") {
 +        Err(std::env::VarError::NotPresent) => return Ok(None),
-+        Ok(value) if value == "1" => false,
-+        Ok(value) if value == "repair-query" => true,
++        Ok(value) if value == "1" => (false, false),
++        Ok(value) if value == "repair-query" => (true, false),
++        Ok(value) if value == "hermes-query" => (true, true),
 +        _ => return Err("invalid host token-inspection opt-in".into()),
 +    };
-+    if container.ends_with("-base") || (!repair && !container.ends_with("-start")) {
++    if !installed && (container.ends_with("-base") || (!repair && !container.ends_with("-start"))) {
 +        return Ok(None);
 +    }
-+    let root = trusted_root(cwd, writable, container)?;
++    let (root, descendants) = if installed {
++        // This environment belongs to the dedicated host Hermes gateway. The
++        // installed caller holds both runtime and native-state leases; guest
++        // environment/request text never selects the host account or job.
++        installed_root(
++            cwd,
++            writable,
++            &crate::msys_token_readback::host_hermes_root()?,
++        )?
++    } else {
++        (trusted_root(cwd, writable, container)?, Vec::new())
++    };
 +    if !expected_sid.starts_with("S-1-15-2-") || expected_sid.len() > 184 {
 +        return Err("inspection expected AppContainer identity is invalid".into());
 +    }
 +    let directory = pin_directory(&root)?;
-+    // New desktops on the unchanged current station serve CI -d and -start.
-+    // Installed hermes-query and all other roles remain excluded.
-+    let desktops = if diagnostic_desktop_requested(private_desktop, container) {
++    for relative in &descendants {
++        crate::msys_token_readback::verify_owned_descendant(directory.get(), relative)?;
++    }
++    // The installed gateway holds the runtime/state leases. Its actual account
++    // root is pinned and every writable descendant has been validated above.
++    // Reuse the same owned desktops; the explicit CI admission is unchanged.
++    let desktops = if (private_desktop && installed)
++        || diagnostic_desktop_requested(private_desktop, container) {
 +        crate::msys_token_readback::prepare_private_desktops(job, root_process, expected_sid)?
 +    } else { Vec::new() };
 +    // JOB_OBJECT_QUERY only; never assign, terminate, or set attributes.
@@ -574,7 +657,7 @@ diff --git a/src/backends/appcontainer/common/src/msys_token_readback.rs b/src/b
 new file mode 100644
 --- /dev/null
 +++ b/src/backends/appcontainer/common/src/msys_token_readback.rs
-@@ -0,0 +1,1363 @@
+@@ -0,0 +1,1440 @@
 +// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 +// SPDX-License-Identifier: Apache-2.0
 +// Disposable Windows CI inspection and explicit exact-TOKEN_QUERY repair.
@@ -644,6 +727,7 @@ new file mode 100644
 +    fn GetCurrentProcess() -> RawHandle;
 +    fn GetCurrentThreadId() -> u32;
 +    fn SetLastError(error: u32);
++    fn GetWindowsDirectoryW(buffer: *mut u16, size: u32) -> u32;
 +    fn LocalFree(value: RawHandle) -> RawHandle;
 +    fn GetModuleHandleW(name: *const u16) -> RawHandle;
 +    fn GetProcAddress(module: RawHandle, name: *const u8) -> *const c_void;
@@ -1142,6 +1226,58 @@ new file mode 100644
 +    )?;
 +    Ok(Some(Owned(handle)))
 +}
++pub(super) fn verify_owned_descendant(root: HANDLE, relative: &str) -> Result<(), String> {
++    // Only normalized host policy descendants reach this check. Resolve from
++    // the already retained root, rejecting reparse traversal at any component.
++    let characters: Vec<u16> = relative.encode_utf16().collect();
++    require(
++        !characters.is_empty() && characters.len() <= 32766,
++        "Hermes descendant path exceeds bound",
++    )?;
++    let name = UnicodeName {
++        length: (characters.len() * 2) as u16,
++        maximum_length: (characters.len() * 2) as u16,
++        buffer: characters.as_ptr(),
++    };
++    let attributes = ObjectAttributes {
++        length: size_of::<ObjectAttributes>() as u32,
++        root: root.0,
++        name: &name,
++        attributes: 0x1040,
++        security: std::ptr::null(),
++        quality: std::ptr::null(),
++    };
++    let mut handle = std::ptr::null_mut();
++    let mut io = IoStatus::default();
++    let status = unsafe {
++        NtCreateFile(
++            &mut handle,
++            0x0010_0080,
++            &attributes,
++            &mut io,
++            std::ptr::null(),
++            0,
++            3,
++            1,
++            0x0020_0021,
++            std::ptr::null(),
++            0,
++        )
++    };
++    require(
++        status == 0 && !handle.is_null(),
++        &format!("Hermes descendant open: NTSTATUS 0x{:08x}", status as u32),
++    )?;
++    let owned = Owned(handle);
++    let mut info = FileInfo::default();
++    if unsafe { GetFileInformationByHandle(owned.0, &mut info) } == 0 {
++        return Err(error("GetFileInformationByHandle/Hermes-descendant"));
++    }
++    require(
++        info.attributes & 0x400 == 0 && info.attributes & 0x10 != 0,
++        "Hermes writable descendant is not an ordinary directory",
++    )
++}
 +fn created(process: RawHandle) -> Result<u64, String> {
 +    let (mut start, mut end, mut kernel, mut user) = (
 +        FileTime::default(),
@@ -1284,6 +1420,30 @@ new file mode 100644
 +        ));
 +    }
 +    Ok(text)
++}
++pub(super) fn host_hermes_root() -> Result<String, String> {
++    let host = token(unsafe { GetCurrentProcess() }, 8)?;
++    require(
++        number(host.0, 29)? == 0,
++        "Hermes compatibility owner must be outside AppContainer",
++    )?;
++    let user = sid(host.0, 1)?;
++    let mut windows = [0u16; 32768];
++    let length = unsafe { GetWindowsDirectoryW(windows.as_mut_ptr(), windows.len() as u32) };
++    require(
++        length >= 3
++            && (length as usize) < windows.len()
++            && windows[1] == b':' as u16
++            && windows[2] == b'\\' as u16,
++        "The Windows system drive is unavailable",
++    )?;
++    let drive = char::from_u32(u32::from(windows[0]))
++        .filter(char::is_ascii_alphabetic)
++        .ok_or("The Windows system drive is invalid")?;
++    Ok(format!(
++        "{}:\\NemoClawState-{user}-hermes",
++        drive.to_ascii_uppercase()
++    ))
 +}
 +// An exact token-object DACL adaptation. These pure byte helpers deliberately
 +// accept only the observed three allow ACEs (or that exact postimage).

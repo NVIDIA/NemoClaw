@@ -11,6 +11,8 @@ import json
 import os
 from pathlib import Path
 import tempfile
+import types
+import sys
 import unittest
 from unittest import mock
 
@@ -302,6 +304,117 @@ class CanonicalAdapterUpgrade(unittest.TestCase):
         )
         with self.assertRaisesRegex(metadata.AdaptationError, "pinned old/new"):
             self.plan(ci_upgrade_startup_adapter=True)
+
+    def test_installed_browser_companion_preserves_native_order_and_compiles_in_ci(
+        self,
+    ):
+        changes, _ = self.plan(ci_upgrade_startup_adapter=True)
+        metadata.apply_plan(changes)
+        native_before = {
+            name: (self.root / name).read_bytes()
+            for name in metadata.UPGRADE_HOOK_PATHS
+        }
+        source = Path(__file__).with_name(metadata.BROWSER_USE_HOOK)
+        data = source.read_bytes()
+        Path(metadata.__file__).with_name(metadata.BROWSER_USE_HOOK).write_bytes(data)
+        identity = {"bytes": len(data), "sha256": hashlib.sha256(data).hexdigest()}
+        ordinary, _ = self.plan()
+        self.assertFalse(any(p.name == metadata.BROWSER_USE_HOOK for p in ordinary))
+        for ci in ("false",):
+            with (
+                mock.patch.dict(os.environ, {"GITHUB_ACTIONS": ci}),
+                self.assertRaisesRegex(metadata.AdaptationError, "explicit CI"),
+            ):
+                self.plan(ci_browser_use_adapter=identity)
+        bad = dict(identity, sha256="0" * 64)
+        with self.assertRaisesRegex(metadata.AdaptationError, "differs from Personal"):
+            self.plan(ci_browser_use_adapter=bad)
+        changes, report = self.plan(ci_browser_use_adapter=identity)
+        added = [
+            p
+            for p in changes
+            if p.name in (metadata.BROWSER_USE_HOOK, metadata.BROWSER_USE_PTH)
+        ]
+        self.assertEqual(len(added), 6)
+        self.assertLess(metadata.PTH, metadata.BROWSER_USE_PTH)
+        metadata.apply_plan(changes)
+        marker = json.loads((self.root / metadata.MARKER).read_text())
+        self.assertEqual(marker["browserUseStartup"]["sha256"], identity["sha256"])
+        self.assertEqual(report["browserUseStartup"], marker["browserUseStartup"])
+        for name, before in native_before.items():
+            self.assertEqual((self.root / name).read_bytes(), before)
+        for file in added:
+            self.assertEqual(
+                marker["generatedFiles"][file.relative_to(self.root).as_posix()],
+                hashlib.sha256(file.read_bytes()).hexdigest(),
+            )
+        # Execute only the generated startup lines with a stub native owner and
+        # the real shared helper; no official runtime or Windows API executes.
+        selected = next(p for p in added if p.name == metadata.BROWSER_USE_HOOK)
+        spec = importlib.util.spec_from_file_location("nemoclaw_browser_use", selected)
+        browser = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(browser)
+        native = types.SimpleNamespace(
+            _active_root=None, _MODULES={}, _adapt_module=lambda *args: None
+        )
+        native._refuse = lambda message: (_ for _ in ()).throw(ValueError(message))
+        native.install = lambda: setattr(native, "_active_root", self.root)
+        with (
+            mock.patch.dict(
+                sys.modules,
+                {"nemoclaw_native_windows": native, "nemoclaw_browser_use": browser},
+            ),
+            mock.patch.object(browser.os, "name", "nt"),
+        ):
+            with self.assertRaisesRegex(ValueError, "follow native"):
+                browser.install()
+            for name in sorted([metadata.PTH, metadata.BROWSER_USE_PTH]):
+                exec((selected.parent / name).read_text(), {})
+            self.assertIn(browser.MODULE, native._MODULES)
+            wrapped = native._adapt_module
+            browser.install()
+            self.assertIs(native._adapt_module, wrapped)
+        bytecode_spec = importlib.util.spec_from_file_location(
+            "installed_bytecode",
+            Path(__file__).with_name("prepare-official-bytecode.py"),
+        )
+        bytecode = importlib.util.module_from_spec(bytecode_spec)
+        bytecode_spec.loader.exec_module(bytecode)
+        compiled = bytecode.prepare_tree(self.root)
+        helpers = [
+            row
+            for row in compiled
+            if row["source"].endswith("/" + metadata.BROWSER_USE_HOOK)
+        ]
+        self.assertEqual(len(helpers), 3)
+        self.assertTrue(
+            all(row["sourceSha256"] == identity["sha256"] for row in helpers)
+        )
+        self.assertEqual(
+            (self.root / "untouched-runtime.bin").read_bytes(),
+            b"complete base retained",
+        )
+        with self.assertRaisesRegex(metadata.AdaptationError, "explicit CI provenance"):
+            self.plan()
+
+    def test_installed_browser_startup_collision_does_not_change_the_tree(self):
+        changes, _ = self.plan(ci_upgrade_startup_adapter=True)
+        metadata.apply_plan(changes)
+        data = Path(__file__).with_name(metadata.BROWSER_USE_HOOK).read_bytes()
+        Path(metadata.__file__).with_name(metadata.BROWSER_USE_HOOK).write_bytes(data)
+        path = (self.root / metadata.UPGRADE_HOOK_PATHS[0]).with_name(
+            metadata.BROWSER_USE_PTH
+        )
+        path.write_text("import foreign_owner\n")
+        before = self.snapshot()
+        with self.assertRaisesRegex(metadata.AdaptationError, "verified prior plan"):
+            self.plan(
+                ci_browser_use_adapter={
+                    "bytes": len(data),
+                    "sha256": hashlib.sha256(data).hexdigest(),
+                }
+            )
+        self.assertEqual(before, self.snapshot())
 
     def test_any_old_hook_or_unrelated_recorded_metadata_tamper_is_refused(self):
         for relative in [
