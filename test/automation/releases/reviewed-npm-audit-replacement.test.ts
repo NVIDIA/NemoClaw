@@ -71,7 +71,7 @@ describe("reviewed npm audit replacement identity", () => {
     }
   });
 
-  // source-shape-contract: security -- Every temporary reviewed identity must name the pull request that will promote it and remove the prior authority
+  // source-shape-contract: security -- A replacement identity must name its promotion pull request
   it("requires every replacement identity to name its promotion pull request", () => {
     const config = JSON.parse(
       fs.readFileSync(path.join(REPO_ROOT, "ci", "reviewed-npm-audit.json"), "utf8"),
