@@ -38,7 +38,7 @@ import {
   runOpenClawLaunchReadinessLeaseTurns,
 } from "../live/launch-agent-turn.ts";
 
-vi.setConfig({ maxConcurrency: 3 });
+vi.setConfig({ maxConcurrency: 6 });
 const PROCESS_EXIT_WAIT = new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT));
 type FixtureMode =
   | "cleanup-failure"
