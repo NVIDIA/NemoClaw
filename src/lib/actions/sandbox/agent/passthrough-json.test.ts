@@ -26,7 +26,7 @@ describe("runAgentJsonPassthrough", () => {
     };
   }
 
-  it("preserves OpenClaw JSON stdout and appends failed-tool provenance to stderr", async () => {
+  it("fails non-zero for a structured failed tool result while preserving JSON stdout", async () => {
     const payload = JSON.stringify({
       result: {
         messages: [
@@ -56,7 +56,7 @@ describe("runAgentJsonPassthrough", () => {
         stdinIsTty: () => false,
         runDispatch,
       }),
-    ).rejects.toThrow("__exit:0");
+    ).rejects.toThrow("__exit:1");
 
     expect(runDispatch).toHaveBeenCalledWith({
       kind: "command",
@@ -72,7 +72,8 @@ describe("runAgentJsonPassthrough", () => {
     expect(stderr.join("")).toContain("openclaw warning");
     expect(stderr.join("")).toContain("[openclaw provenance] failed tool result");
     expect(stderr.join("")).toContain("node-not-real");
-    expect(exit).toHaveBeenCalledWith(0);
+    expect(stderr.join("")).toContain("OpenClaw tool call failed.");
+    expect(exit).toHaveBeenCalledWith(1);
   });
 
   it("bounds the host transport when the turn requests a deadline (#8723)", async () => {
@@ -363,6 +364,37 @@ describe("runAgentJsonPassthrough", () => {
     expect(exit).toHaveBeenCalledWith(1);
   });
 
+  it("keeps timeout guidance precedence over structured tool failures", async () => {
+    const payload = JSON.stringify({
+      status: "timeout",
+      result: {
+        messages: [{ role: "toolResult", toolName: "exec", toolCallId: "c1", isError: true }],
+        payloads: [{ text: "partial" }],
+        meta: { timeoutPhase: "provider" },
+      },
+    });
+    const runDispatch = vi.fn(async (_request: OpenShellSandboxSessionRequest) => ({
+      outcome: { kind: "exited" as const, exitCode: 0 },
+      stdout: payload,
+      stderr: "",
+    }));
+    const { exit, proc, stderr } = makeProc();
+
+    await expect(
+      runAgentJsonPassthrough("alpha", ["openclaw", "agent", "--json"], proc, {
+        getGatewayName: () => null,
+        getOpenshellBinary: () => "openshell",
+        runDispatch,
+        stdinIsTty: () => false,
+      }),
+    ).rejects.toThrow("__exit:1");
+
+    const errText = stderr.join("");
+    expect(errText).toContain("timed out in the provider phase");
+    expect(errText).not.toContain("OpenClaw tool call failed.");
+    expect(exit).toHaveBeenCalledWith(1);
+  });
+
   it("exits non-zero when an incomplete response omits optional payloads", async () => {
     const payload = JSON.stringify({
       status: "ok",
@@ -410,6 +442,31 @@ describe("runAgentJsonPassthrough", () => {
       }),
     ).rejects.toThrow("__exit:0");
 
+    expect(exit).toHaveBeenCalledWith(0);
+  });
+
+  it('keeps a successful JSON turn when payload text includes "Tool Call failed"', async () => {
+    const payload = JSON.stringify({
+      status: "ok",
+      result: { payloads: [{ text: 'The phrase "Tool Call failed" appeared in old logs.' }], meta: {} },
+    });
+    const runDispatch = vi.fn(async (_request: OpenShellSandboxSessionRequest) => ({
+      outcome: { kind: "exited" as const, exitCode: 0 },
+      stdout: payload,
+      stderr: "",
+    }));
+    const { exit, proc, stdout } = makeProc();
+
+    await expect(
+      runAgentJsonPassthrough("alpha", ["openclaw", "agent", "--json"], proc, {
+        getGatewayName: () => null,
+        getOpenshellBinary: () => "openshell",
+        runDispatch,
+        stdinIsTty: () => false,
+      }),
+    ).rejects.toThrow("__exit:0");
+
+    expect(stdout.join("")).toBe(payload);
     expect(exit).toHaveBeenCalledWith(0);
   });
 

@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 import {
+  openClawAgentFailedToolResultSignal,
   openClawAgentIncompleteTurnSignal,
   type OpenClawIncompleteTurnSignal,
   openClawAgentJsonProvenanceLines,
@@ -9,7 +10,6 @@ import {
   type OpenClawAgentDispatchDeps,
   runOpenClawAgentDispatch,
   isSilentAgentDispatch,
-  isToolCallFailed,
   SILENT_AGENT_DISPATCH_EXIT_CODE,
 } from "./passthrough-dispatch";
 import {
@@ -85,10 +85,6 @@ export async function runAgentJsonPassthrough(
   // that declares a timeout phase gets the deadline-specific guidance instead
   // of the generic incomplete-turn text; both are the same failure to the
   // caller and share one exit code.
-  if (code === 0 && isToolCallFailed(stdout, stderr)) {
-    proc.stderr.write(`  OpenClaw tool call failed.\n`);
-    return proc.exit(1);
-  }
   const incompleteTurn = (deps.incompleteTurnSignal ?? openClawAgentIncompleteTurnSignal)(stdout);
   if (incompleteTurn && code === 0) {
     if (incompleteTurn.timeoutPhase) {
@@ -97,6 +93,10 @@ export async function runAgentJsonPassthrough(
       writeIncompleteAgentTurnFailure(proc, sandboxName, incompleteTurn.markers);
     }
     return proc.exit(INCOMPLETE_AGENT_TURN_EXIT_CODE);
+  }
+  if (code === 0 && openClawAgentFailedToolResultSignal(stdout)) {
+    proc.stderr.write("  OpenClaw tool call failed.\n");
+    return proc.exit(1);
   }
   return proc.exit(code);
 }

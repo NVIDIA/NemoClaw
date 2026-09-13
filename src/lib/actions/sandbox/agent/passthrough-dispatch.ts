@@ -194,7 +194,7 @@ export function isTimedOutAgentDispatch(stdout: string, stderr: string): boolean
   return OPENCLAW_AGENT_TIMEOUT_PATTERN.test(stdout) || OPENCLAW_AGENT_TIMEOUT_PATTERN.test(stderr);
 }
 
-/** Detect generic OpenClaw tool call failures in captured output. */
+/** Detect non-JSON OpenClaw tool-call failures in captured diagnostic text. */
 export function isToolCallFailed(stdout: string, stderr: string): boolean {
   const toolCallFailedPattern = /(?:^|\r?\n)Tool Call failed(?:\r?\n|$)/;
   return toolCallFailedPattern.test(stdout) || toolCallFailedPattern.test(stderr);

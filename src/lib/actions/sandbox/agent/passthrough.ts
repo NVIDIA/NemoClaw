@@ -197,16 +197,15 @@ export async function runAgentNonJsonPassthrough(
   // Last, so the partial trace is already on the wire: a turn whose deadline
   // fired must not exit 0 just because the transport did. An upstream non-zero
   // code is preserved as-is.
-  // Detect generic tool call failures that return a zero exit status.
-  // OpenClaw may print "Tool Call failed" while exiting with code 0,
-  // which would otherwise be treated as success. Treat this as a failure.
-  if (code === 0 && isToolCallFailed(stdout, stderr)) {
-    proc.stderr.write(`  OpenClaw tool call failed.\n`);
-    return proc.exit(1);
-  }
   if (code === 0 && isTimedOutAgentDispatch(stdout, stderr)) {
     writeTimedOutAgentTurnFailure(proc, sandboxName);
     return proc.exit(TIMED_OUT_AGENT_TURN_EXIT_CODE);
+  }
+  // Detect generic tool-call text only on the non-JSON transport, where no
+  // structured run metadata is available.
+  if (code === 0 && isToolCallFailed(stdout, stderr)) {
+    proc.stderr.write("  OpenClaw tool call failed.\n");
+    return proc.exit(1);
   }
   return proc.exit(code);
 }

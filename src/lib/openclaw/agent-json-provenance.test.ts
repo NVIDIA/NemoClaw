@@ -4,6 +4,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  openClawAgentFailedToolResultSignal,
   openClawAgentResponseRecord,
   openClawAgentIncompleteTurnSignal,
   openClawAgentJsonProvenanceLines,
@@ -93,6 +94,25 @@ describe("openClawAgentJsonProvenanceLines", () => {
     expect(
       openClawAgentJsonProvenanceLines(JSON.stringify({ result: { payloads: [{ text: "42" }] } })),
     ).toEqual([]);
+  });
+
+  describe("openClawAgentFailedToolResultSignal", () => {
+    it("detects structured failed tool results", () => {
+      const raw = JSON.stringify({
+        result: {
+          messages: [{ role: "toolResult", toolName: "exec", toolCallId: "call_1", isError: true }],
+        },
+      });
+      expect(openClawAgentFailedToolResultSignal(raw)).toBe(true);
+    });
+
+    it('ignores successful payload text that includes "Tool Call failed"', () => {
+      const raw = JSON.stringify({
+        status: "ok",
+        result: { payloads: [{ text: "Tool Call failed is just part of this explanation." }], meta: {} },
+      });
+      expect(openClawAgentFailedToolResultSignal(raw)).toBe(false);
+    });
   });
 
   it("surfaces failed tool results independent of the bare-python trigger", () => {
