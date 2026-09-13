@@ -9,6 +9,7 @@ import { isAbsolute, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import {
+  LOCKED_NPM_CACHE_SEED_MANIFEST_NAME,
   lockedArchives,
   type NpmPlatformTarget,
 } from "../checks/materialize-locked-npm-cache-seed.mts";
@@ -193,6 +194,18 @@ export function lockedArchivesFromDirectory(
 
   const actualNames = readdirSync(directory).sort();
   const expected = selectedArchives.map(({ archive }) => archive).sort();
+  const manifestIndex = actualNames.indexOf(LOCKED_NPM_CACHE_SEED_MANIFEST_NAME);
+  if (manifestIndex >= 0) {
+    // Export mode carries this inert handoff manifest alongside the archives.
+    // Archive identities still come from the reviewed lock above, not its bytes.
+    const manifestEntry = lstatSync(join(directory, LOCKED_NPM_CACHE_SEED_MANIFEST_NAME));
+    if (!manifestEntry.isFile() || manifestEntry.isSymbolicLink()) {
+      throw new Error(
+        "reviewed npm cache seed archive directory contains an invalid seed manifest",
+      );
+    }
+    actualNames.splice(manifestIndex, 1);
+  }
   if (JSON.stringify(actualNames) !== JSON.stringify(expected)) {
     throw new Error("reviewed npm cache seed archive directory is incomplete or contains extras");
   }

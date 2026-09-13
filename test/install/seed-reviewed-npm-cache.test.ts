@@ -83,6 +83,7 @@ describe("reviewed npm cache seed", () => {
     fs.mkdirSync(archiveDirectory);
     const copiedArchive = path.join(archiveDirectory, path.basename(input.archivePath));
     fs.copyFileSync(input.archivePath, copiedArchive);
+    fs.writeFileSync(path.join(archiveDirectory, "manifest.json"), "inert export metadata");
 
     expect(
       lockedArchivesFromDirectory(archiveDirectory, input.lockfilePath, REGISTRY_ORIGIN, TARGET),
@@ -169,6 +170,13 @@ describe("reviewed npm cache seed", () => {
         TARGET,
       ),
     ).toThrow("archive directory must be a non-symlink directory");
+
+    fs.rmSync(path.join(archiveDirectory, "unexpected.tgz"));
+    fs.rmSync(path.join(archiveDirectory, "manifest.json"), { force: true });
+    fs.symlinkSync(input.archivePath, path.join(archiveDirectory, "manifest.json"));
+    expect(() =>
+      lockedArchivesFromDirectory(archiveDirectory, input.lockfilePath, REGISTRY_ORIGIN, TARGET),
+    ).toThrow("archive directory contains an invalid seed manifest");
   });
 
   it("seeds verified tarball and packument records from an exact local archive", async () => {
