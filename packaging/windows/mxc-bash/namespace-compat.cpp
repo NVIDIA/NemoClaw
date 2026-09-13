@@ -1936,6 +1936,16 @@ DWORD adapt_browser_discarded_stdio() {
 decltype(&CreateWindowStationW) realCreateBrowserStation = CreateWindowStationW;
 LONG browserStationRecords = 0;
 
+bool canonical_chrome_jobs() {
+    const DWORD saved = GetLastError();
+    WCHAR value[4] = {};
+    const bool enabled = contextDiagnostic.isContainer == 1 && selected_browser_gui() &&
+        GetEnvironmentVariableW(L"NEMOCLAW_HERMES_CANONICAL_CHROME_JOBS", value, 4) == 1 &&
+        !wcscmp(value, L"1");
+    SetLastError(saved);
+    return enabled;
+}
+
 bool canonical_browser_station_attributes(LPSECURITY_ATTRIBUTES attributes) {
     __try {
         return attributes && attributes->nLength == sizeof(SECURITY_ATTRIBUTES) &&
@@ -2009,7 +2019,8 @@ HWINSTA WINAPI create_browser_station(LPCWSTR name, DWORD flags, ACCESS_MASK acc
         return nullptr;
     }
     const DWORD mask = restrictions.UIRestrictionsClass;
-    if (mask != 0x000000bf && mask != 0x000001bf && mask != 0x000003bf) {
+    if (mask != 0x000000bf && mask != 0x000001bf && mask != 0x000003bf &&
+        !(mask == 0 && canonical_chrome_jobs())) {
         log_browser_station(access, mask, nullptr, nullptr, false, false, ERROR_ACCESS_DENIED, false, 0);
         SetLastError(originalError);
         return nullptr;
@@ -2138,7 +2149,8 @@ HDESK create_browser_desktop_for_variant(LPCWSTR name, LPCWSTR device, DEVMODEW*
     if (!QueryInformationJobObject(nullptr, JobObjectBasicUIRestrictions, &restrictions,
             sizeof(restrictions), nullptr)) operationError = GetLastError();
     const DWORD mask = restrictions.UIRestrictionsClass;
-    if (!operationError && mask != 0xbf && mask != 0x1bf && mask != 0x3bf)
+    if (!operationError && mask != 0xbf && mask != 0x1bf && mask != 0x3bf &&
+        !(mask == 0 && canonical_chrome_jobs()))
         operationError = ERROR_ACCESS_DENIED;
     const HWINSTA borrowedStation = operationError ? nullptr : GetProcessWindowStation();
     const HDESK borrowedDesktop = operationError ? nullptr : GetThreadDesktop(GetCurrentThreadId());
