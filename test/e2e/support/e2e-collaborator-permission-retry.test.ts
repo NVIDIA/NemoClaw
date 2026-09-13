@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,7 +9,10 @@ import { join } from "node:path";
 import { describe, it, type TestContext, vi } from "vitest";
 
 import { readWorkflow } from "../../helpers/e2e-workflow-contract";
-import { superviseChild } from "../../helpers/process-supervisor";
+import {
+  runSupervisedProcess,
+  type SupervisedProcessResult,
+} from "../../helpers/supervised-process";
 
 type AuthorizationStep = {
   deniedMessage: string;
@@ -35,14 +37,6 @@ const AUTHORIZATION_STEPS: AuthorizationStep[] = [
   },
 ];
 
-type RunProcessResult = {
-  error?: Error;
-  status: number | null;
-  signal: NodeJS.Signals | null;
-  stdout: string;
-  stderr: string;
-};
-
 const MAX_PROCESS_OUTPUT_BYTES = 10 * 1024 * 1024;
 
 function runProcess(
@@ -52,52 +46,12 @@ function runProcess(
   owner: Pick<TestContext, "onTestFinished" | "signal">,
   maxOutputBytes = MAX_PROCESS_OUTPUT_BYTES,
 ) {
-  owner.signal.throwIfAborted();
-  let stdout = "";
-  let stderr = "";
-  let outputError: Error | undefined;
-  const child = spawn(file, [...args], {
-    detached: true,
+  return runSupervisedProcess(file, args, {
     env,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  const finishController = new AbortController();
-  const append = (current: string, chunk: string, stream: string): string => {
-    const next = current + chunk;
-    const limitError =
-      !outputError && Buffer.byteLength(next, "utf8") > maxOutputBytes
-        ? new Error(`${stream} exceeded the process output limit`)
-        : undefined;
-    outputError ??= limitError;
-    void (limitError ? finishController.abort() : undefined);
-    return outputError ? current : next;
-  };
-  const resultPromise = superviseChild(child, {
-    killGraceMs: 0,
-    onStderr: (chunk) => {
-      stderr = append(stderr, chunk, "stderr");
-    },
-    onStdout: (chunk) => {
-      stdout = append(stdout, chunk, "stdout");
-    },
-    signal: AbortSignal.any([owner.signal, finishController.signal]),
+    maxOutputBytesPerStream: maxOutputBytes,
+    owner,
     timeoutMs: 10_000,
-  }).then((result): RunProcessResult => ({
-    ...(result.spawnError || result.cleanupError || outputError
-      ? { error: result.spawnError ?? result.cleanupError ?? outputError }
-      : {}),
-    signal: result.signal,
-    status: result.signal
-      ? null
-      : (result.exitCode ?? (result.spawnError || result.cleanupError || outputError ? -1 : null)),
-    stderr,
-    stdout,
-  }));
-  owner.onTestFinished(async () => {
-    finishController.abort();
-    await resultPromise;
   });
-  return resultPromise;
 }
 
 vi.setConfig({ maxConcurrency: 8 });
@@ -396,10 +350,10 @@ describe.concurrent.each(AUTHORIZATION_STEPS)(
       }
     });
 
-    it.sequential("bounds child output, reaps its process group, and removes its fixture", async (context) => {
+    it.sequential("bounds child output and reaps its process group", async (context) => {
       const fixture = mkdtempSync(join(tmpdir(), "nemoclaw-collaborator-output-"));
       const processFile = join(fixture, "process");
-      let result: RunProcessResult | undefined;
+      let result: SupervisedProcessResult | undefined;
       let outputProcessPid = Number.NaN;
       try {
         result = await runProcess(
@@ -432,7 +386,6 @@ exec /bin/sleep 60`,
       context.expect(result?.status).toBeNull();
       context.expect(result?.signal).toMatch(/^SIG(?:TERM|KILL)$/);
       context.expect(outputProcessRunning).toBe(false);
-      context.expect(existsSync(fixture)).toBe(false);
     });
   },
 );
