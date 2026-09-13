@@ -104,6 +104,38 @@ export default defineConfig({
       },
     },
     {
+      // Live E2E source changes must be paired with mapped fast-test changes.
+      // Preserve these historical declarations until their owning tests change.
+      files: [
+        "test/e2e/live/agent-turn-latency-helpers.ts",
+        "test/e2e/live/bedrock-runtime-compatible-anthropic.test.ts",
+        "test/e2e/live/cloud-onboard.test.ts",
+        "test/e2e/live/hermes-gpu-startup-proof.ts",
+        "test/e2e/live/hermes-inference-switch.test.ts",
+        "test/e2e/live/issue-4434-tui-unreachable-inference.test.ts",
+        "test/e2e/live/kimi-inference-compat-helpers.ts",
+        "test/e2e/live/messaging-compatible-endpoint.test.ts",
+        "test/e2e/live/onboard-resume.test.ts",
+        "test/e2e/live/openclaw-pairing-helpers.ts",
+        "test/e2e/live/openshell-allowed-ips-rebinding.ts",
+        "test/e2e/live/podman-cpu-lifecycle.test.ts",
+        "test/e2e/live/sandbox-survival.test.ts",
+      ],
+      rules: {
+        "no-unused-vars": [
+          "error",
+          {
+            argsIgnorePattern: "^(?:_|host|skip)$",
+            caughtErrorsIgnorePattern: "^_",
+            destructuredArrayIgnorePattern: "^_",
+            ignoreRestSiblings: true,
+            varsIgnorePattern:
+              "^(?:_|buildAvailabilityProbeEnv|CommandResultText|CommandText|ContainerEngine|HostCliClient|path|ProcessResult|Server|shellQuote|ShellProbeResult)$",
+          },
+        ],
+      },
+    },
+    {
       files: ["**/*.test.ts"],
       // Mock assertions pass method references without invoking their receivers.
       rules: { "typescript/unbound-method": "off" },

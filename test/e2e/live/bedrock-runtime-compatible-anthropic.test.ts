@@ -76,6 +76,7 @@ const TEST_TIMEOUT_MS = testTimeout(60 * 60_000);
 const SANDBOX_TIMEOUT_MS = 180_000;
 
 type AgentName = "openclaw" | "hermes";
+type CommandText = { stdout: string; stderr: string };
 type EventHeader = { type: "string"; value: string };
 type EventStreamCodec = {
   encode(message: { headers: Record<string, EventHeader>; body: Uint8Array }): Uint8Array;

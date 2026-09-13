@@ -16,6 +16,7 @@ import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { type SandboxClient, trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
 import { expect } from "../fixtures/e2e-test.ts";
 import { discoverHostAddress } from "../fixtures/host-address.ts";
+import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
   type DnsRebindingHostsFixture,
   remapDnsRebindingHostname,
