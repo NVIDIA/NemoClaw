@@ -20,6 +20,7 @@ import {
 import {
   assertExactSandboxImage,
   assertOpenClawHeartbeatStart,
+  managedOpenClawHeartbeatLogProbe,
   assertFailedBootstrapOwnerCleanupRetention,
   assertFailedSandboxOwnerCleanupRetention,
   createProtectedManagedImageBootstrapInput,
@@ -142,20 +143,62 @@ describe("protected managed-image runtime contract", () => {
     ).toThrow("provider-owned mount projection");
   });
 
+  it("reads the structured heartbeat interval without exporting log credentials", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "heartbeat-log-"));
+    try {
+      const log = path.join(root, "openclaw-2026-09-13.log");
+      fs.writeFileSync(
+        log,
+        JSON.stringify({
+          "0": JSON.stringify({ subsystem: "gateway/heartbeat" }),
+          "1": { intervalMs: 120000, apiKey: "fixture-secret" },
+          "2": "heartbeat: started",
+        }) + "\n",
+      );
+      const probe = managedOpenClawHeartbeatLogProbe()
+        .replace('"/tmp/openclaw"', JSON.stringify(root))
+        .replace('"/tmp/openclaw-" + process.getuid()', JSON.stringify(root));
+      const result = spawnSync(process.execPath, ["-e", probe], { encoding: "utf8" });
+      expect(result.status).toBe(0);
+      expect(result.stdout).toBe("heartbeat-interval-ms=120000");
+      expect(result.stderr).toBe("");
+      fs.writeFileSync(log, "malformed fixture-secret");
+      const failed = spawnSync(process.execPath, ["-e", probe], { encoding: "utf8" });
+      expect(failed.status).toBe(1);
+      expect(failed.stdout).toBe("");
+      expect(failed.stderr).toBe("heartbeat-evidence-unavailable");
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("requires the exact managed OpenClaw heartbeat interval in startup logs (#10262)", () => {
     const containerId = "a".repeat(64);
     const runCommand = vi.fn<ManagedImageCommandRunner>(() => ({
       status: 0,
-      stdout: "",
-      stderr: '{"msg":"heartbeat: started","intervalMs":120000}\n',
+      stderr: "",
+      stdout: "heartbeat-interval-ms=120000",
     }));
 
     expect(() => assertOpenClawHeartbeatStart(containerId, {}, runCommand)).not.toThrow();
-    expect(runCommand).toHaveBeenCalledWith(["docker", "logs", containerId], {}, 15_000);
+    expect(runCommand).toHaveBeenCalledWith(
+      [
+        "docker",
+        "exec",
+        "--user",
+        "sandbox",
+        containerId,
+        "node",
+        "-e",
+        managedOpenClawHeartbeatLogProbe(),
+      ],
+      {},
+      15_000,
+    );
 
     runCommand.mockReturnValue({
       status: 0,
-      stdout: "heartbeat: started intervalMs=1800000\n",
+      stdout: "heartbeat-interval-ms=1800000",
       stderr: "",
     });
     expect(() => assertOpenClawHeartbeatStart(containerId, {}, runCommand)).toThrow(
@@ -173,7 +216,7 @@ describe("protected managed-image runtime contract", () => {
     }));
 
     expect(() => assertOpenClawHeartbeatStart(containerId, {}, runCommand)).toThrow(
-      "could not read managed OpenClaw startup logs (status=1, spawnError=false)",
+      "managed OpenClaw structured heartbeat evidence unavailable",
     );
     expect(() => assertOpenClawHeartbeatStart(containerId, {}, runCommand)).not.toThrow(secret);
   });
