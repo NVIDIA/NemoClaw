@@ -6,7 +6,7 @@ Use native Linux ARM64 and Docker with the [Fabric build prerequisites](../refer
 
 ```sh
 python3 image/fabric/build.py --harness openclaw
-python3 tools/openclaw-native-experiment.py
+python3 tools/openclaw-native-test.py
 ```
 
 This runs the actual Fabric and OpenClaw processes with local TLS Telegram and model protocol fixtures.
