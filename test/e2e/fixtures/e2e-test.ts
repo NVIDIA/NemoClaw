@@ -69,10 +69,7 @@ export interface E2ETargetFixtures {
   progress: TestProgress;
 }
 
-const SUPPORT_PHASES = [
-  "exercise E2E fixture support",
-  "record E2E fixture support outcome",
-] as const;
+const DEFAULT_PHASES = ["execute E2E test", "record E2E test outcome"] as const;
 export const E2E_TEARDOWN_PHASE = "release registered E2E resources";
 
 export function runnerComparisonSampleIntervalMs(targetId: string | null): number {
@@ -165,11 +162,7 @@ export const test = base.extend<E2ETargetFixtures>({
       const shardId = process.env.NEMOCLAW_E2E_SHARD;
       const baselinePath = process.env.E2E_RESOURCE_PHASE_BASELINES_FILE;
       const phasePlan = task.meta.e2ePhases;
-      assert.ok(
-        task.file.projectName !== "e2e-live" || phasePlan,
-        `live E2E test is missing semantic phase metadata: ${task.name}`,
-      );
-      const declaredPhasePlan = phasePlan ?? SUPPORT_PHASES;
+      const declaredPhasePlan = phasePlan ?? DEFAULT_PHASES;
       const declaredFinalPhase = declaredPhasePlan.at(-1) as string;
       const progress = startTestProgress(task.name, declaredPhasePlan, {
         targetId,
@@ -196,17 +189,17 @@ export const test = base.extend<E2ETargetFixtures>({
           : {}),
         ...runnerComparisonProgressOptions(),
       });
-      const completeSupportPlan = phasePlan
+      const completeDefaultPlan = phasePlan
         ? () => undefined
         : () => {
-            if (!progress.isComplete()) progress.phase(SUPPORT_PHASES[1]);
+            if (!progress.isComplete()) progress.phase(DEFAULT_PHASES[1]);
           };
       let finalized = false;
       onTestFinished(async () => {
         if (finalized) return;
         finalized = true;
         const outcome = outcomeForTaskState(task.result?.state);
-        completeSupportPlan();
+        completeDefaultPlan();
         const completedPhasePlan = !phasePlan || progress.hasReached(declaredFinalPhase);
         if (!progress.isComplete()) progress.phase(E2E_TEARDOWN_PHASE);
         const phaseOutcome = outcome === "passed" && !completedPhasePlan ? "failed" : outcome;

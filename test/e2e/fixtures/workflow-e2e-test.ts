@@ -36,11 +36,11 @@ export const test = base.extend<WorkflowE2ETestFixtures>({
   progress: [
     async ({ onTestFinished, skip, task }, use) => {
       const phasePlan = task.meta.e2ePhases;
-      assert.ok(phasePlan, `workflow-selected E2E test is missing semantic phases: ${task.name}`);
-      const declaredFinalPhase = phasePlan.at(-1) as string;
+      const declaredPhasePlan = phasePlan ?? ["execute E2E test", "record E2E test outcome"];
+      const declaredFinalPhase = declaredPhasePlan.at(-1) as string;
       const secrets = new SecretStore(process.env, skip);
       const targetId = process.env.E2E_TARGET_ID || process.env.GITHUB_JOB;
-      const progress = startTestProgress(task.name, phasePlan, {
+      const progress = startTestProgress(task.name, declaredPhasePlan, {
         targetId,
         taskStatus: () => ({
           errorCount: task.result?.errors?.length ?? 0,
@@ -60,7 +60,8 @@ export const test = base.extend<WorkflowE2ETestFixtures>({
         if (finalized) return;
         finalized = true;
         const outcome = outcomeForTaskState(task.result?.state);
-        const completedPhasePlan = progress.hasReached(declaredFinalPhase);
+        if (!phasePlan && !progress.isComplete()) progress.phase(declaredFinalPhase);
+        const completedPhasePlan = !phasePlan || progress.hasReached(declaredFinalPhase);
         progress.stop(outcome === "passed" && !completedPhasePlan ? "failed" : outcome);
         if (process.env.NEMOCLAW_RUN_LIVE_E2E === "1") {
           const artifacts = createArtifactSink(task.name, process.cwd(), secrets.redactionValues());

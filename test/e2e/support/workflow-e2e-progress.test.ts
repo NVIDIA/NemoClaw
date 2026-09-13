@@ -16,7 +16,7 @@ const FIXTURE = "test/e2e/support/fixtures/workflow-e2e-progress.fixture.test.ts
 const ARTIFACT_SLUG = "records-shared-job-identity-without-exposing-secrets";
 
 describe("workflow-selected integration progress", () => {
-  it("falls back to the job identity and redacts console and artifact output", () => {
+  it("reports default progress without phase metadata and redacts job identity", () => {
     const artifactRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-workflow-progress-"));
     const sensitiveTarget = "workflow-fixture-sensitive-target";
     try {
@@ -57,7 +57,7 @@ describe("workflow-selected integration progress", () => {
         version: 1,
       });
       expect(summary.phases.at(-1)).toMatchObject({
-        label: "release shared workflow fixture",
+        label: "record E2E test outcome",
         outcome: "passed",
       });
     } finally {

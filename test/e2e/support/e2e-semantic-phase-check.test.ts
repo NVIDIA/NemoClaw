@@ -199,7 +199,7 @@ describe("semantic E2E phase checker", () => {
     ).toEqual([]);
   });
 
-  test("rejects missing metadata and invalid phase transitions from a collected module", () => {
+  test("allows default progress but rejects invalid explicit phase transitions", () => {
     const failures = validateCollectedSemanticPhaseModule({
       relativeModuleId: "test/e2e/live/invalid-semantic-phase.test.ts",
       errors: [],
@@ -213,10 +213,9 @@ describe("semantic E2E phase checker", () => {
       source: scanLiveSourceGraph(INVALID_SOURCE_FIXTURE),
     });
 
-    expect(failures).toHaveLength(3);
+    expect(failures).toHaveLength(2);
     expect(failures).toEqual(
       expect.arrayContaining([
-        "test/e2e/live/invalid-semantic-phase.test.ts > missing semantic phase metadata: missing e2ePhases metadata",
         expect.stringMatching(/semantic phase transitions must use literals/u),
         expect.stringMatching(/undeclared semantic phase: undeclared fixture behavior/u),
       ]),

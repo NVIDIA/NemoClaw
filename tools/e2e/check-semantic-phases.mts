@@ -2772,12 +2772,7 @@ export function validateCollectedSemanticPhaseModule(
 
   for (const test of collectedModule.tests) {
     const phasePlan = test.phases;
-    if (!phasePlan) {
-      failures.push(
-        `${collectedModule.relativeModuleId} > ${test.fullName}: missing e2ePhases metadata`,
-      );
-      continue;
-    }
+    if (!phasePlan) continue;
     try {
       validateE2EPhasePlan(phasePlan);
       phasePlans.push([...phasePlan]);

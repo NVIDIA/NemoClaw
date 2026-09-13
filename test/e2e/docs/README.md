@@ -249,14 +249,16 @@ credentials, or tokens.
 For the stateful live fixture, the harness-owned final phase captures registered
 cleanup duration, failures, and stalls; each registry entry reports a redacted
 start/outcome event and is shown as the active cleanup operation in a stall
-heartbeat. Workflow-selected integration tests declare their own final release
+heartbeat. Workflow-selected integration tests can declare their own final release
 phase. Soft assertion failures are recorded against the semantic phase where
 they occurred, while successful resource release retains its own `passed`
 outcome.
 
-Every `e2e-live` test and every credential-free integration test selected by
-the shared E2E planner must declare two to twelve behavior-specific phases and
-transition through them in order. For example:
+Live and workflow-selected tests receive automatic progress and outcome reporting.
+Tests may declare two to twelve behavior-specific phases when the extra detail
+helps diagnose failures. Declared plans must transition in order and reach their
+final phase. Keep explicit phases when qualification artifacts or resource
+comparisons consume their labels. For example:
 
 ```typescript
 const PHASES = [
