@@ -10,23 +10,10 @@ test(
   "candidate CLI activates exact managed images for every shipped agent without a Dockerfile build (#7744)",
   {
     timeout: TIMEOUT_MS,
-    meta: {
-      e2ePhases: [
-        "validate exact candidate catalog and host runtime",
-        "onboard and exercise OpenClaw",
-        "restart and recover OpenClaw",
-        "destroy and verify OpenClaw cleanup",
-        "onboard and exercise Hermes",
-        "restart and recover Hermes",
-        "destroy and verify Hermes cleanup",
-        "onboard and exercise Deep Agents Code",
-        "restart and recover Deep Agents Code",
-        "destroy and verify Deep Agents Code cleanup",
-        "prove buildless all-agent activation",
-      ],
-    },
   },
   async ({ artifacts, cleanup, host, lifecycle, progress, sandbox }) => {
+    progress.phase("validate exact candidate catalog and host runtime");
+
     await artifacts.target.declare({
       id: "managed-image-activation",
       boundary:

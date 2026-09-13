@@ -30,7 +30,6 @@ import {
 import { verifyHermesConfigExportLive } from "../fixtures/hermes-config-export-live.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { assertHermesCliAdapterLiveContract } from "./hermes-cli-adapter-live.ts";
-import { HERMES_E2E_PHASES } from "./hermes-e2e-phases.ts";
 import { assertHermesSkillLifecycle } from "./hermes-skill-lifecycle.ts";
 import { expectPackageDatabaseReadOnly } from "./package-database-read-only.ts";
 
@@ -203,7 +202,6 @@ test(
   "hermes-e2e: install.sh onboards Hermes and proves health plus live inference",
   {
     timeout: testTimeout(HERMES_E2E_TEST_TIMEOUT_MS),
-    meta: { e2ePhases: HERMES_E2E_PHASES },
   },
   async ({
     artifacts,
@@ -215,6 +213,8 @@ test(
     runtimeProvider,
     sandbox,
   }) => {
+    progress.phase("prepare clean Hermes runner");
+
     await artifacts.target.declare({
       id: "hermes-e2e",
       boundary: `install.sh --non-interactive --fresh + Hermes sandbox runtime + ${inference.mode} inference adapter`,

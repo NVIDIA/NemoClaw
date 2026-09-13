@@ -47,18 +47,6 @@ runAgentTurnLatencyTest(
   "OpenClaw and Hermes complete real hosted inference turns within the latency cap",
   {
     timeout: TIMEOUT_MS,
-    meta: {
-      e2ePhases: [
-        "prepare clean inference hosts",
-        "install OpenClaw sandbox",
-        "validate OpenClaw inference route",
-        "run OpenClaw hosted inference turns",
-        "replace OpenClaw with Hermes sandbox",
-        "validate Hermes inference route",
-        "run Hermes hosted inference turn",
-        "record hosted inference timing evidence",
-      ],
-    },
   },
   async ({
     artifacts,
@@ -70,6 +58,8 @@ runAgentTurnLatencyTest(
     runtimeProvider,
     sandbox,
   }) => {
+    progress.phase("prepare clean inference hosts");
+
     const results: Record<string, unknown> = {
       model: inference.model,
       maxTurnSeconds: MAX_TURN_SECONDS,

@@ -107,11 +107,7 @@ describe("canonical runner comparison progress sampling", () => {
       return true;
     });
     state = harness.state;
-    const progress = startTestProgress(
-      "runner comparison",
-      ["build Hermes image", "validate Hermes sandbox"],
-      harness.options,
-    );
+    const progress = startTestProgress("runner comparison", "build Hermes image", harness.options);
 
     expect(records).toEqual([{ atMs: 0, kind: "scenario-start", phase: "build Hermes image" }]);
     expect(state.baselines).toEqual(["build Hermes image"]);
@@ -169,7 +165,7 @@ describe("canonical runner comparison progress sampling", () => {
     harness.options.resourceSampleIntervalMs = 15_000;
     const progress = startTestProgress(
       "rebuild runner comparison",
-      ["build Hermes image", "validate Hermes sandbox"],
+      "build Hermes image",
       harness.options,
     );
 
@@ -190,7 +186,7 @@ describe("canonical runner comparison progress sampling", () => {
     });
     const progress = startTestProgress(
       "runner comparison collision",
-      ["build Hermes image", "validate Hermes sandbox"],
+      "build Hermes image",
       harness.options,
     );
 
@@ -215,7 +211,7 @@ describe("canonical runner comparison progress sampling", () => {
     harness.options.stallThresholdMs = 310_000;
     const progress = startTestProgress(
       "runner comparison unaligned stall",
-      ["build Hermes image", "validate Hermes sandbox"],
+      "build Hermes image",
       harness.options,
     );
 
@@ -244,7 +240,7 @@ describe("canonical runner comparison progress sampling", () => {
       });
       const progress = startTestProgress(
         "runner comparison fallback",
-        ["build Hermes image", "validate Hermes sandbox"],
+        "build Hermes image",
         harness.options,
       );
 
@@ -271,7 +267,7 @@ describe("canonical runner comparison progress sampling", () => {
     state = harness.state;
     const progress = startTestProgress(
       "runner comparison catchup",
-      ["build Hermes image", "validate Hermes sandbox"],
+      "build Hermes image",
       harness.options,
     );
 
@@ -295,7 +291,7 @@ describe("canonical runner comparison progress sampling", () => {
     state = harness.state;
     const progress = startTestProgress(
       "runner comparison startup",
-      ["build Hermes image", "validate Hermes sandbox"],
+      "build Hermes image",
       harness.options,
     );
 
@@ -318,7 +314,7 @@ describe("canonical runner comparison progress sampling", () => {
     state = harness.state;
     const progress = startTestProgress(
       "runner comparison phase collision",
-      ["build Hermes image", "validate Hermes sandbox"],
+      "build Hermes image",
       harness.options,
     );
 
@@ -346,7 +342,7 @@ describe("canonical runner comparison progress sampling", () => {
     }, 1);
     const progress = startTestProgress(
       "runner comparison stale callback",
-      ["build Hermes image", "validate Hermes sandbox"],
+      "build Hermes image",
       harness.options,
     );
 
@@ -367,7 +363,7 @@ describe("canonical runner comparison progress sampling", () => {
     const harness = progressHarness(() => true, 1);
     const progress = startTestProgress(
       "runner comparison stop",
-      ["build Hermes image", "validate Hermes sandbox"],
+      "build Hermes image",
       harness.options,
     );
 
@@ -382,26 +378,22 @@ describe("canonical runner comparison progress sampling", () => {
     let timerCalls = 0;
     let clockMs = 0;
     expect(() => {
-      const progress = startTestProgress(
-        "runner comparison timer creation",
-        ["build Hermes image", "validate Hermes sandbox"],
-        {
-          now: () => clockMs,
-          setTimer: () => {
-            timerCalls += 1;
-            return timerCalls === 1
-              ? fail("synthetic timer failure")
-              : {
-                  unref() {
-                    throw new Error("synthetic unref failure");
-                  },
-                };
-          },
-          clearTimer: () => undefined,
-          logLine: () => undefined,
-          recordResourceSample: () => true,
+      const progress = startTestProgress("runner comparison timer creation", "build Hermes image", {
+        now: () => clockMs,
+        setTimer: () => {
+          timerCalls += 1;
+          return timerCalls === 1
+            ? fail("synthetic timer failure")
+            : {
+                unref() {
+                  throw new Error("synthetic unref failure");
+                },
+              };
         },
-      );
+        clearTimer: () => undefined,
+        logLine: () => undefined,
+        recordResourceSample: () => true,
+      });
       clockMs = 1_000;
       progress.phase("validate Hermes sandbox");
       clockMs = 2_000;

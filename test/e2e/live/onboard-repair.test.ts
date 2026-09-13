@@ -136,20 +136,10 @@ test(
   "onboard repair resumes missing sandbox and rejects conflicting resume inputs",
   {
     timeout: LIVE_TIMEOUT_MS,
-    meta: {
-      e2ePhases: [
-        "confirm the selected runtime and start the compatible endpoint",
-        "clear prior onboard-repair state",
-        "interrupt onboarding after sandbox creation",
-        "remove the recorded sandbox and resume repair",
-        "validate repaired attachments and corporate trust",
-        "reseed interrupted onboarding state",
-        "reject conflicting resume inputs",
-        "clear the repaired onboarding state",
-      ],
-    },
   },
   async ({ artifacts, cleanup: cleanupRegistry, host, progress, runtimeProvider, sandbox }) => {
+    progress.phase("confirm the selected runtime and start the compatible endpoint");
+
     const corporateCa = createCorporateCaFixture("requests", "nemoclaw-repair-corporate-ca-");
     cleanupRegistry.trackDisposable("remove corporate CA fixture", () =>
       cleanupCorporateCaFixture(corporateCa),

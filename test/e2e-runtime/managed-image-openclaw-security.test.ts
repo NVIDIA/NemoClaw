@@ -441,17 +441,10 @@ test.runIf(RUN_MANAGED_IMAGE_SECURITY)(
   "enforces the OpenClaw managed-image sandbox boundary",
   {
     timeout: MANAGED_IMAGE_SECURITY_TIMEOUT_MS,
-    meta: {
-      e2ePhases: [
-        "verify final image identities and runtime tools",
-        "verify cross-user process and filesystem isolation",
-        "verify packaged configuration repair and refusal",
-        "verify post-stepdown capability boundary",
-        "record managed-image security evidence",
-      ],
-    },
   },
   async ({ artifacts, host, progress }) => {
+    progress.phase("verify final image identities and runtime tools");
+
     const image = openclawProtectedImage();
 
     progress.phase("verify final image identities and runtime tools");

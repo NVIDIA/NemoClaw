@@ -54,7 +54,6 @@ export interface TestProgressOptions {
   resourceSampleIntervalMs?: number;
   recordResourceSample?: (phase: string, kind: ProgressResourceSampleKind) => boolean;
   recordResourceBaseline?: (phase: string) => void;
-  terminalPhase?: string;
   taskStatus?: () => { errorCount: number; outcome?: ProgressPhaseOutcome };
 }
 
@@ -93,8 +92,6 @@ export interface TestProgress extends TestProgressCapability {
   /** Emit a content-free semantic status event. Never pass child output or request data. */
   event: (label: string) => void;
   phase: (label: string) => void;
-  hasReached: (label: string) => boolean;
-  isComplete: () => boolean;
   stop: (outcome?: ProgressPhaseOutcome) => void;
   summary: () => ProgressSummary;
   timeline: () => TestProgressTimeline;
@@ -117,10 +114,7 @@ export function isTestProgressCapability(value: unknown): value is TestProgress 
 const DEFAULT_STALL_THRESHOLD_MS = 5 * 60_000;
 const DEFAULT_STALL_REMINDER_INTERVAL_MS = 10 * 60_000;
 const DEFAULT_RESOURCE_SAMPLE_INTERVAL_MS = 60_000;
-const GENERIC_PHASE_LABEL =
-  /^(?:cleanup|execute|phase(?: \d+)?|run test|setup|teardown|test body|verify)$/iu;
 const MAX_LOG_IDENTITY_LENGTH = 160;
-const MAX_PHASE_LABEL_LENGTH = 160;
 const MAX_ACTIVITY_LABEL_LENGTH = 160;
 const MAX_EVENT_LABEL_LENGTH = 160;
 
@@ -205,34 +199,6 @@ function formatResources(sampleResources: () => ResourceSnapshot): string {
   }
 }
 
-export function validateE2EPhasePlan(phasePlan: readonly string[]): void {
-  if (phasePlan.length < 2) {
-    throw new Error("live E2E tests must declare at least two semantic phases");
-  }
-  if (phasePlan.length > 12) {
-    throw new Error("live E2E tests must keep semantic phase plans to 12 phases or fewer");
-  }
-
-  const seen = new Set<string>();
-  for (const label of phasePlan) {
-    if (
-      label !== label.trim() ||
-      label.length === 0 ||
-      label.length > MAX_PHASE_LABEL_LENGTH ||
-      /[\u0000-\u001f\u007f]/u.test(label)
-    ) {
-      throw new Error("invalid live E2E phase label");
-    }
-    if (GENERIC_PHASE_LABEL.test(label) || label.toLowerCase().startsWith("command:")) {
-      throw new Error(`live E2E phase label must describe test behavior: ${JSON.stringify(label)}`);
-    }
-    if (seen.has(label)) {
-      throw new Error(`duplicate live E2E phase label: ${JSON.stringify(label)}`);
-    }
-    seen.add(label);
-  }
-}
-
 /**
  * Reports semantic E2E phase transitions plus explicitly requested,
  * content-free status events. Child output is observed only as timestamps;
@@ -240,18 +206,10 @@ export function validateE2EPhasePlan(phasePlan: readonly string[]): void {
  */
 export function startTestProgress(
   scenario: string,
-  phasePlan: readonly string[],
+  initialPhase: string,
   options: TestProgressOptions = {},
 ): TestProgress {
-  validateE2EPhasePlan(phasePlan);
-  const terminalPhase = options.terminalPhase;
-  if (terminalPhase) {
-    if (phasePlan.includes(terminalPhase)) {
-      throw new Error(`duplicate live E2E phase label: ${JSON.stringify(terminalPhase)}`);
-    }
-    validateE2EPhasePlan([phasePlan[0] as string, terminalPhase]);
-  }
-  const runtimePhasePlan = terminalPhase ? [...phasePlan, terminalPhase] : phasePlan;
+  validateProgressEventLabel(initialPhase);
 
   const now = options.now ?? Date.now;
   const setTimer = options.setTimer ?? ((callback, delayMs) => setTimeout(callback, delayMs));
@@ -278,7 +236,7 @@ export function startTestProgress(
     `[e2e target=${logIdentity(options.targetId ?? "", "unassigned")} ` +
     `scenario=${logIdentity(scenario, "unnamed")}]`;
   const phases: ProgressPhase[] = [];
-  const reachedPhases = new Set<string>([runtimePhasePlan[0] as string]);
+  let phaseLabel = initialPhase;
   const activities = new Map<number, string>();
   let nextActivityId = 0;
   let nextChildLifecycleOrdinal = 1;
@@ -311,9 +269,8 @@ export function startTestProgress(
   };
   let phaseStartErrorCount = readTaskStatus().errorCount;
 
-  const currentPhase = () => runtimePhasePlan[phaseIndex] as string;
-  const phasePrefix = (index = phaseIndex) =>
-    `${identityPrefix} [phase ${index + 1}/${runtimePhasePlan.length}]`;
+  const currentPhase = () => phaseLabel;
+  const phasePrefix = (index = phaseIndex) => `${identityPrefix} [phase ${index + 1}]`;
 
   const recordBaselineBestEffort = () => {
     try {
@@ -500,21 +457,16 @@ export function startTestProgress(
     if (cleared) schedulePulse();
   };
 
-  const finishPhase = (
-    atMs: number,
-    outcome: ProgressPhaseOutcome,
-    options: { index?: number; startedAtMs?: number } = {},
-  ): ProgressPhase => {
+  const finishPhase = (atMs: number, outcome: ProgressPhaseOutcome): ProgressPhase => {
     const completed: ProgressPhase = {
       label: currentPhase(),
       outcome,
-      startedAtMs: options.startedAtMs ?? phaseStartedAt,
+      startedAtMs: phaseStartedAt,
       finishedAtMs: atMs,
-      durationMs: Math.max(0, atMs - (options.startedAtMs ?? phaseStartedAt)),
-      outputEvents: options.index === undefined ? outputEvents : 0,
-      lastOutputAtMs: options.index === undefined ? lastOutputAt : null,
+      durationMs: Math.max(0, atMs - phaseStartedAt),
+      outputEvents,
+      lastOutputAtMs: lastOutputAt,
     };
-    if (options.index !== undefined) completed.label = runtimePhasePlan[options.index] as string;
     phases.push(completed);
     return completed;
   };
@@ -548,28 +500,16 @@ export function startTestProgress(
 
   const selectPhase = (label: string) => {
     if (finishedAt !== null) return;
-    const nextPhaseIndex = runtimePhasePlan.indexOf(label);
-    if (nextPhaseIndex === -1) {
-      throw new Error(`undeclared live E2E phase for ${scenario}: ${JSON.stringify(label)}`);
-    }
-    if (nextPhaseIndex < phaseIndex) {
-      throw new Error(`live E2E phase moved backwards for ${scenario}: ${JSON.stringify(label)}`);
-    }
-    if (nextPhaseIndex === phaseIndex) return;
+    validateProgressEventLabel(label);
+    if (label === phaseLabel) return;
 
     const current = now();
     recordPhaseSampleBestEffort();
     const completedIndex = phaseIndex;
     const completedOutcome = outcomeAtBoundary("passed");
     const completed = finishPhase(current, completedOutcome);
-    for (let skippedIndex = phaseIndex + 1; skippedIndex < nextPhaseIndex; skippedIndex += 1) {
-      finishPhase(current, "skipped", {
-        index: skippedIndex,
-        startedAtMs: current,
-      });
-    }
-    phaseIndex = nextPhaseIndex;
-    reachedPhases.add(label);
+    phaseIndex += 1;
+    phaseLabel = label;
     phaseStartedAt = current;
     lastOutputAt = null;
     outputEvents = 0;
@@ -653,12 +593,6 @@ export function startTestProgress(
       }
     },
     phase: selectPhase,
-    hasReached(label) {
-      return reachedPhases.has(label);
-    },
-    isComplete() {
-      return phaseIndex === runtimePhasePlan.length - 1;
-    },
     stop(outcome = "passed") {
       if (finishedAt !== null) return;
       const stoppedAt = now();

@@ -172,19 +172,10 @@ test(
   "onboard-resume: interrupted onboard then --resume can recreate with cached setup",
   {
     timeout: testTimeout(ONBOARD_RESUME_TEST_TIMEOUT_MS),
-    meta: {
-      e2ePhases: [
-        "confirm runtime and compatible-endpoint prerequisites",
-        "clear prior resumable onboarding state",
-        "interrupt onboard after agent configuration",
-        "resume cached setup with sandbox recreation",
-        "validate resumed sandbox state and corporate trust",
-        "retry final verification after route repair",
-        "compare implicit resume with fresh onboard",
-      ],
-    },
   },
   async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox }) => {
+    progress.phase("confirm runtime and compatible-endpoint prerequisites");
+
     const corporateCa = createCorporateCaFixture("host-anchor", "nemoclaw-resume-corporate-ca-");
     cleanup.trackDisposable("remove corporate CA fixture", () =>
       cleanupCorporateCaFixture(corporateCa),

@@ -1437,25 +1437,21 @@ artifact so baseline aggregation stays stable.
 Older issue references to Vitest target artifacts under `e2e-artifacts/vitest/`
 map to this consolidated `e2e-artifacts/live/` registry-target artifact layout.
 
-Every `e2e-live` test and every credential-free integration test selected by
-the shared E2E workflow planner declares an ordered semantic phase plan in
-`meta.e2ePhases` and uses its automatic progress fixture. Normal E2E output
-identifies the workflow target and test scenario, then shows immediate phase
-start and completion lines with both phase and total elapsed time. A transition
-looks like:
+Live and workflow-selected integration tests use automatic progress reporting.
+Calls to `progress.phase(label)` record the activity that execution reaches;
+tests do not declare phase plans. Output includes target and scenario identity,
+activity start and completion, elapsed time, and outcome. For example:
 
 ```text
-[e2e target="cloud-onboard" scenario="onboards a hosted sandbox"] [phase 2/4] completed: onboard the sandbox — passed in 2m 14s (total 2m 21s)
-[e2e target="cloud-onboard" scenario="onboards a hosted sandbox"] [phase 3/4] started: verify hosted inference (total 2m 21s; phase 0s)
+[e2e target="cloud-onboard" scenario="onboards a hosted sandbox"] [phase 2] completed: onboard the sandbox — passed in 2m 14s (total 2m 21s)
+[e2e target="cloud-onboard" scenario="onboards a hosted sandbox"] [phase 3] started: verify hosted inference (total 2m 21s; phase 0s)
 ```
 
-For `e2e-live`, the stateful fixture appends `release registered E2E resources`
-after the test-declared plan, so the displayed phase count includes that
-terminal phase. Registered cleanup duration, failures, and stall diagnostics
-are attributed there. Workflow-selected integration tests instead declare and
-enter their own final release phase. Soft assertion failures remain attributed
-to the semantic phase in which they occurred rather than being reassigned to
-resource release.
+The stateful fixture enters `release registered E2E resources` during teardown.
+Registered cleanup duration, failures, and stalls are attributed there.
+Workflow-selected integration tests own their resource cleanup.
+Soft assertion failures remain attributed to the activity where they occurred.
+Progress labels do not prove that an operation succeeded; tests must assert its result.
 
 If one phase remains active for five minutes, a content-free diagnostic adds
 the target/scenario identity, total and phase duration, age of the last child

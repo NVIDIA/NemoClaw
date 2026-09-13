@@ -42,7 +42,7 @@ describe("Hermes rebuild live progress", () => {
     const { options, state } = progressHarness();
     const progress = startTestProgress(
       "rebuild-hermes",
-      ["run authoritative Hermes rebuild", "remove rebuilt Hermes resources"],
+      "run authoritative Hermes rebuild",
       options,
     );
 
@@ -62,40 +62,35 @@ describe("Hermes rebuild live progress", () => {
     ]);
     expect(state.lines).toHaveLength(linesAfterStop);
     expect(state.lines).toEqual([
-      '[e2e target="unassigned" scenario="rebuild-hermes"] [phase 1/2] started: run authoritative Hermes rebuild (total 0s; phase 0s)',
-      '[e2e target="unassigned" scenario="rebuild-hermes"] [phase 1/2] still running: run authoritative Hermes rebuild (total 5m; phase 5m; child output 4m ago; no active command; rss 0.5 GiB; memory available 8.0 GiB/16.0 GiB; disk free 6.0 GiB; load 2.50)',
+      '[e2e target="unassigned" scenario="rebuild-hermes"] [phase 1] started: run authoritative Hermes rebuild (total 0s; phase 0s)',
+      '[e2e target="unassigned" scenario="rebuild-hermes"] [phase 1] still running: run authoritative Hermes rebuild (total 5m; phase 5m; child output 4m ago; no active command; rss 0.5 GiB; memory available 8.0 GiB/16.0 GiB; disk free 6.0 GiB; load 2.50)',
       'E2E_RESOURCE_SNAPSHOT {"phase":"run authoritative Hermes rebuild"}',
-      '[e2e target="unassigned" scenario="rebuild-hermes"] [phase 1/2] completed: run authoritative Hermes rebuild — passed in 5m (total 5m)',
-      '[e2e target="unassigned" scenario="rebuild-hermes"] [phase 2/2] started: remove rebuilt Hermes resources (total 5m; phase 0s)',
-      '[e2e target="unassigned" scenario="rebuild-hermes"] [phase 2/2] completed: remove rebuilt Hermes resources — passed in 0s (total 5m)',
+      '[e2e target="unassigned" scenario="rebuild-hermes"] [phase 1] completed: run authoritative Hermes rebuild — passed in 5m (total 5m)',
+      '[e2e target="unassigned" scenario="rebuild-hermes"] [phase 2] started: remove rebuilt Hermes resources (total 5m; phase 0s)',
+      '[e2e target="unassigned" scenario="rebuild-hermes"] [phase 2] completed: remove rebuilt Hermes resources — passed in 0s (total 5m)',
     ]);
   });
 
   it("reports a target, scenario, total time, and content-free status events", () => {
     const { options, state } = progressHarness();
     options.targetId = "rebuild-hermes-target";
-    const progress = startTestProgress(
-      "rebuild-hermes scenario",
-      ["pull historical base", "validate rebuilt sandbox"],
-      options,
-    );
+    const progress = startTestProgress("rebuild-hermes scenario", "pull historical base", options);
 
     state.clockMs = 61_000;
     progress.event("historical base pull timed out; retrying attempt 2");
     progress.stop("failed");
 
     expect(state.lines).toEqual([
-      '[e2e target="rebuild-hermes-target" scenario="rebuild-hermes scenario"] [phase 1/2] started: pull historical base (total 0s; phase 0s)',
-      '[e2e target="rebuild-hermes-target" scenario="rebuild-hermes scenario"] [phase 1/2] event: historical base pull timed out; retrying attempt 2 (total 1m; phase 1m)',
-      '[e2e target="rebuild-hermes-target" scenario="rebuild-hermes scenario"] [phase 1/2] completed: pull historical base — failed in 1m (total 1m)',
+      '[e2e target="rebuild-hermes-target" scenario="rebuild-hermes scenario"] [phase 1] started: pull historical base (total 0s; phase 0s)',
+      '[e2e target="rebuild-hermes-target" scenario="rebuild-hermes scenario"] [phase 1] event: historical base pull timed out; retrying attempt 2 (total 1m; phase 1m)',
+      '[e2e target="rebuild-hermes-target" scenario="rebuild-hermes scenario"] [phase 1] completed: pull historical base — failed in 1m (total 1m)',
     ]);
     expect(() => progress.event("ignored after stop\nsecret-shaped payload")).not.toThrow();
 
-    const activeProgress = startTestProgress(
-      "event-validation",
-      ["prepare event validation", "finish event validation"],
-      { ...options, logLine: () => undefined },
-    );
+    const activeProgress = startTestProgress("event-validation", "prepare event validation", {
+      ...options,
+      logLine: () => undefined,
+    });
     expect(() => activeProgress.event("invalid\nsecret-shaped payload")).toThrowError(
       /^invalid live E2E progress event label$/u,
     );
@@ -117,7 +112,7 @@ describe("Hermes rebuild live progress", () => {
     });
     const progress = startTestProgress(
       "rebuild-hermes memory fallback",
-      ["run authoritative Hermes rebuild", "remove rebuilt Hermes resources"],
+      "run authoritative Hermes rebuild",
       options,
     );
 
@@ -140,11 +135,7 @@ describe("Hermes rebuild live progress", () => {
     };
 
     expect(() => {
-      const progress = startTestProgress(
-        "rebuild-hermes",
-        ["build previous Hermes base", "remove previous Hermes base"],
-        options,
-      );
+      const progress = startTestProgress("rebuild-hermes", "build previous Hermes base", options);
       state.clockMs = 301_000;
       state.timerCallback?.();
       progress.phase("remove previous Hermes base");

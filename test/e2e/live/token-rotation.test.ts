@@ -283,16 +283,10 @@ test(
   "messaging token rotation rebuilds only the changed provider and reuses unchanged credentials",
   {
     timeout: PHASE_TIMEOUT_MS,
-    meta: {
-      e2ePhases: [
-        "confirm the selected runtime and start hermetic inference",
-        "install the sandbox and confirm provider hashes",
-        "rotate only the Telegram provider",
-        "reuse the sandbox and record rotation evidence",
-      ],
-    },
   },
   async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox }) => {
+    progress.phase("confirm the selected runtime and start hermetic inference");
+
     expect(
       fs.existsSync(CLI_ENTRYPOINT),
       "run `npm run build:cli` before live repo CLI targets",

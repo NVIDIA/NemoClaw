@@ -28,13 +28,9 @@ import { shouldRetryMcpDiscoveryAfterRestart } from "../e2e/live/mcp-bridge-tool
 const servers: StartedHttpServer[] = [];
 function progressProbe() {
   const lines: string[] = [];
-  const progress = startTestProgress(
-    "MCP tunnel support",
-    ["start MCP tunnel", "verify MCP tunnel"],
-    {
-      logLine: (line) => lines.push(line),
-    },
-  );
+  const progress = startTestProgress("MCP tunnel support", "start MCP tunnel", {
+    logLine: (line) => lines.push(line),
+  });
   return { lines, progress };
 }
 type CompatibleToolCallResponse = {

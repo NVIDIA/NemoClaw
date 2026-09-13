@@ -334,6 +334,7 @@ export async function runHermesSlackE2E({
   secrets,
   skip,
 }: HermesSlackE2EFixtures): Promise<void> {
+  progress.phase("check Hermes Slack prerequisites");
   const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
   const env = hermesSlackEnv(apiKey);
   const redactionValues = redactions(apiKey);

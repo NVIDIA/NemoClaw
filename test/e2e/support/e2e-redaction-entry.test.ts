@@ -28,11 +28,9 @@ import { SecretStore } from "../fixtures/secrets.ts";
 import { ShellProbe, trustedShellCommand } from "../fixtures/shell-probe.ts";
 
 function supportProgress() {
-  return startTestProgress(
-    "ShellProbe redaction support",
-    ["run redaction probe", "verify redacted evidence"],
-    { logLine: () => undefined },
-  );
+  return startTestProgress("ShellProbe redaction support", "run redaction probe", {
+    logLine: () => undefined,
+  });
 }
 
 async function captureCommandEvidence(outcome: string) {

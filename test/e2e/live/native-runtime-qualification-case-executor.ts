@@ -60,16 +60,6 @@ const LIFECYCLE_SANDBOX_NAMES = Object.freeze({
   "langchain-deepagents-code": "q-deepagents",
   openclaw: "q-openclaw",
 } as const satisfies Record<NativeRuntimeQualificationAgent, string>);
-export const NATIVE_RUNTIME_QUALIFICATION_E2E_PHASES = [
-  "validate credential-free Docker-unavailable isolation",
-  "bind the rootless Podman engine",
-  "launch exact local inference",
-  "onboard the managed agent image",
-  "exercise sandbox lifecycle and state recovery",
-  "restart and reconcile inference",
-  "prove exact cleanup",
-  "emit bounded case evidence",
-] as const;
 
 interface PodmanNetworkAuthority {
   readonly id: string;

@@ -196,20 +196,10 @@ test(
   "Ollama auth proxy enforces tokens, proxies inference, persists tokens, and recovers",
   {
     timeout: LIVE_TIMEOUT_MS,
-    meta: {
-      e2ePhases: [
-        "confirm proxy script Node and curl prerequisites",
-        "install and start Ollama with the test model",
-        "start the tokenized Ollama auth proxy",
-        "enforce proxy authentication",
-        "proxy OpenAI and native Ollama inference",
-        "restart the proxy with its persisted token",
-        "prove the container network boundary",
-        "repair divergent token state",
-      ],
-    },
   },
   async ({ artifacts, cleanup, host, progress }) => {
+    progress.phase("confirm proxy script Node and curl prerequisites");
+
     await artifacts.target.declare({
       id: "ollama-auth-proxy",
       boundary: "real host Ollama + real Node auth proxy + curl + optional Docker reachability",

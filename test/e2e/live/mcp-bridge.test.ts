@@ -55,7 +55,6 @@ import {
   buildMcpBridgeOnboardEnv,
   requireMcpBridgeTlsCaCert,
 } from "./mcp-bridge-onboard-env.ts";
-import { MCP_BRIDGE_PHASES } from "./mcp-bridge-phases.ts";
 import {
   DEEPAGENTS_MCP_DENIED_TOOL_PROBE,
   HERMES_MCP_ENV_LOAD_COMMANDS,
@@ -725,9 +724,9 @@ test(
   "mcp-bridge",
   {
     timeout: testTimeout(45 * 60_000),
-    meta: { e2ePhases: MCP_BRIDGE_PHASES.openclaw },
   },
   async ({ artifacts, cleanup, host, progress, sandbox }) => {
+    progress.phase("start compatible inference and MCP endpoints");
     await artifacts.writeJson("scenario.json", {
       id: "mcp-bridge",
       sandbox: OPENCLAW_SANDBOX_NAME,
@@ -1089,9 +1088,9 @@ mcpBridgeShardTest("hermes")(
   "mcp-bridge-hermes",
   {
     timeout: testTimeout(45 * 60_000),
-    meta: { e2ePhases: MCP_BRIDGE_PHASES.hermes },
   },
   async ({ artifacts, cleanup, host, progress, sandbox }) => {
+    progress.phase("start Hermes inference and MCP endpoints");
     await artifacts.writeJson("scenario.json", {
       id: "mcp-bridge-hermes",
       sandbox: HERMES_SANDBOX_NAME,
@@ -1325,9 +1324,9 @@ mcpBridgeShardTest("deepagents")(
   "mcp-bridge-deepagents",
   {
     timeout: testTimeout(45 * 60_000),
-    meta: { e2ePhases: MCP_BRIDGE_PHASES.deepagents },
   },
   async ({ artifacts, cleanup, host, lifecycle, progress, sandbox }) => {
+    progress.phase("start Deep Agents inference and MCP endpoints");
     await artifacts.writeJson("scenario.json", {
       id: "mcp-bridge-deepagents",
       sandbox: DEEPAGENTS_SANDBOX_NAME,

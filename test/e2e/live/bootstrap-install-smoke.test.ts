@@ -179,20 +179,10 @@ test(
   "bootstrap install smoke: bootstrap, onboard, sandbox health, live inference, cleanup",
   {
     timeout: TEST_TIMEOUT_MS,
-    meta: {
-      e2ePhases: [
-        "confirm bootstrap host and hosted endpoint",
-        "prepare a fresh bootstrap clone",
-        "run the Brev bootstrap script",
-        "inspect installed CLI and runtime artifacts",
-        "onboard the hosted inference sandbox",
-        "inspect sandbox and gateway health",
-        "prove direct and sandbox inference",
-        "destroy the bootstrap sandbox and clone",
-      ],
-    },
   },
   async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets, skip }) => {
+    progress.phase("confirm bootstrap host and hosted endpoint");
+
     validateSandboxName(SANDBOX_NAME);
 
     await artifacts.target.declare({

@@ -15,7 +15,7 @@ import { runCommand, startPinnedGateway } from "../live/podman-cpu-lifecycle-hel
 const PHASES = ["exercise the Podman lifecycle helper", "verify helper cleanup"] as const;
 
 function testProgress(logLines: string[]): TestProgress {
-  return startTestProgress("Podman CPU lifecycle helper", PHASES, {
+  return startTestProgress("Podman CPU lifecycle helper", PHASES[0], {
     logLine: (line) => logLines.push(line),
   });
 }

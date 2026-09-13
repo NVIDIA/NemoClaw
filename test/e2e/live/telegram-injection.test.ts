@@ -197,17 +197,10 @@ test(
   "Telegram bridge-style message handling treats shell metacharacters as data",
   {
     timeout: LIVE_TIMEOUT_MS,
-    meta: {
-      e2ePhases: [
-        "confirm Docker and onboard the injection sandbox",
-        "exercise command-substitution payloads",
-        "check parameter and process-table secret boundaries",
-        "reject malicious sandbox names",
-        "confirm benign message passthrough",
-      ],
-    },
   },
   async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets, skip }) => {
+    progress.phase("confirm Docker and onboard the injection sandbox");
+
     const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
     const env = phase6Env({
       sandboxName: SANDBOX_NAME,

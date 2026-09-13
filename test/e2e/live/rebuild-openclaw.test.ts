@@ -349,20 +349,10 @@ test(
   "rebuild-openclaw: old OpenClaw sandbox rebuild preserves state and leaves the agent usable",
   {
     timeout: REBUILD_E2E_TIMEOUT_MS,
-    meta: {
-      e2ePhases: [
-        "confirm Docker and prepare OpenClaw rebuild resources",
-        "onboard the current OpenClaw sandbox",
-        "build the old OpenClaw base image",
-        "create the old OpenClaw sandbox",
-        "seed persistent state and registry metadata",
-        "restore the current OpenClaw base image",
-        "rebuild the OpenClaw sandbox",
-        "validate rebuilt agent readiness and preserved state",
-      ],
-    },
   },
   async ({ artifacts, cleanup, host, progress, sandbox, secrets, skip }) => {
+    progress.phase("confirm Docker and prepare OpenClaw rebuild resources");
+
     const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
     expect(
       path.resolve(host.commandPath),

@@ -78,18 +78,10 @@ test(
   "OpenClaw Slack Socket Mode pairing request is shared with connect-shell approval",
   {
     timeout: LIVE_TIMEOUT_MS,
-    meta: {
-      e2ePhases: [
-        "load Slack credentials and clear pairing state",
-        "install the Slack-enabled OpenClaw sandbox",
-        "inspect Slack providers and preset policy",
-        "route Slack API and websocket traffic through managed policies",
-        "issue a Slack pairing request",
-        "approve the Slack code through connect-shell",
-      ],
-    },
   },
   async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets, skip }) => {
+    progress.phase("load Slack credentials and clear pairing state");
+
     progress.phase("load Slack credentials and clear pairing state");
     const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
     const env = pairingEnv({

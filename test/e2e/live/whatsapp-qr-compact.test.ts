@@ -250,17 +250,10 @@ test(
   "WhatsApp pairing QR renders compact with the NemoClaw preload",
   {
     ...testTimeoutOptions(INSTALL_TIMEOUT_MS + TSC_TIMEOUT_MS + PROBE_TIMEOUT_MS * 2),
-    meta: {
-      e2ePhases: [
-        "read the bundled OpenClaw WhatsApp version",
-        "compile the production compact-QR preload",
-        "install matching WhatsApp runtime packages",
-        "measure unmodified QR rendering",
-        "measure compact-preload QR rendering",
-      ],
-    },
   },
   async ({ progress, shellProbe }) => {
+    progress.phase("read the bundled OpenClaw WhatsApp version");
+
     expect(
       await pathExists(PRELOAD_SOURCE),
       `compact-QR preload source missing: ${PRELOAD_SOURCE}`,

@@ -23,15 +23,11 @@ async function createShellProbe(signal: AbortSignalSource): Promise<ShellProbe> 
   const artifactRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cleanup-signal-"));
   const artifacts = new ArtifactSink(artifactRoot);
   await artifacts.ensureRoot();
-  const progress = startTestProgress(
-    "cleanup signal support",
-    ["exercise cleanup signal", "verify cleanup signal"],
-    {
-      clearTimer: () => undefined,
-      logLine: () => undefined,
-      setTimer: () => ({}),
-    },
-  );
+  const progress = startTestProgress("cleanup signal support", "exercise cleanup signal", {
+    clearTimer: () => undefined,
+    logLine: () => undefined,
+    setTimer: () => ({}),
+  });
   onTestFinished(() => {
     progress.stop();
     fs.rmSync(artifactRoot, { force: true, recursive: true });

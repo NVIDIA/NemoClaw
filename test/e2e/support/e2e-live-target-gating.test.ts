@@ -67,10 +67,7 @@ function buildLiveTestEnv(
 
 function liveTestLister(context: Pick<TestContext, "signal" | "onTestFinished">) {
   const artifactRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-live-test-list-"));
-  const progress = startTestProgress("nested live E2E collection", [
-    "collect live tests",
-    "clean collector artifacts",
-  ]);
+  const progress = startTestProgress("nested live E2E collection", "collect live tests");
   const probe = new ShellProbe({
     artifacts: new ArtifactSink(artifactRoot),
     progress,

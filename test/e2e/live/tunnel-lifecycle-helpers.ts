@@ -228,6 +228,7 @@ export async function runTunnelLifecycleContract({
   secrets,
   skip,
 }: TunnelLifecycleFixtures): Promise<void> {
+  progress.phase("confirm Docker and cloudflared prerequisites");
   assertTestOwnedSandboxName();
   const hosted = requireHostedInferenceConfig(secrets);
   const apiKey = hosted.apiKey;

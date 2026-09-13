@@ -325,20 +325,10 @@ test(
   "openshell-credential-generation-window",
   {
     timeout: 60 * 60_000,
-    meta: {
-      e2ePhases: [
-        "start endpoints and onboard the credential-window sandbox",
-        "attach the MCP provider and observe its initial generation",
-        "prove a retained credential generation expires",
-        "rotate beyond the retained generation window",
-        "prove key and bridge removal revoke access",
-        "re-add the bridge and keep the old process revoked",
-        "rebuild the sandbox and confirm credential reuse",
-        "remove the MCP bridge and audit denied requests",
-      ],
-    },
   },
   async ({ artifacts, cleanup, host, progress, sandbox }) => {
+    progress.phase("start endpoints and onboard the credential-window sandbox");
+
     expect(process.env.NEMOCLAW_OPENSHELL_EXACT_MAIN_PROOF).toBe("1");
     expect(CREDENTIAL_WINDOW_ROTATION_COUNT).toBeGreaterThan(
       OPENSHELL_RETAINED_CREDENTIAL_GENERATIONS,

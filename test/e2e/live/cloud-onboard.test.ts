@@ -110,19 +110,6 @@ test(
   "cloud onboard: public installer creates healthy sandbox with security checks",
   {
     timeout: LIVE_TIMEOUT_MS,
-    meta: {
-      e2ePhases: [
-        "check cloud onboarding prerequisites",
-        "stage legacy plaintext credential",
-        "install and onboard cloud sandbox",
-        "verify migrated gateway credential",
-        "validate installed CLI and corporate CA trust",
-        "verify compatible endpoint reasoning propagation",
-        "collect scoped diagnostics from onboarded sandbox",
-        "run cloud inference and security checks",
-        "remove cloud sandbox",
-      ],
-    },
   },
   async ({
     artifacts,
@@ -133,6 +120,8 @@ test(
     sandbox,
     secrets,
   }) => {
+    progress.phase("check cloud onboarding prerequisites");
+
     const hosted = requireHostedInferenceConfig(secrets);
     const ref = publicInstallRef();
     const installUrl =

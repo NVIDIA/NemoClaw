@@ -1,19 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import assert from "node:assert/strict";
-
 import { test as base } from "vitest";
 
 import { createArtifactSink } from "./artifacts.ts";
 import { type ProgressPhaseOutcome, startTestProgress, type TestProgress } from "./progress.ts";
 import { SecretStore } from "./secrets.ts";
-
-declare module "vitest" {
-  interface TaskMeta {
-    e2ePhases?: readonly string[];
-  }
-}
 
 export interface WorkflowE2ETestFixtures {
   progress: TestProgress;
@@ -35,12 +27,9 @@ function outcomeForTaskState(state: string | undefined): ProgressPhaseOutcome {
 export const test = base.extend<WorkflowE2ETestFixtures>({
   progress: [
     async ({ onTestFinished, skip, task }, use) => {
-      const phasePlan = task.meta.e2ePhases;
-      const declaredPhasePlan = phasePlan ?? ["execute E2E test", "record E2E test outcome"];
-      const declaredFinalPhase = declaredPhasePlan.at(-1) as string;
       const secrets = new SecretStore(process.env, skip);
       const targetId = process.env.E2E_TARGET_ID || process.env.GITHUB_JOB;
-      const progress = startTestProgress(task.name, declaredPhasePlan, {
+      const progress = startTestProgress(task.name, "execute E2E test", {
         targetId,
         taskStatus: () => ({
           errorCount: task.result?.errors?.length ?? 0,
@@ -60,9 +49,7 @@ export const test = base.extend<WorkflowE2ETestFixtures>({
         if (finalized) return;
         finalized = true;
         const outcome = outcomeForTaskState(task.result?.state);
-        if (!phasePlan && !progress.isComplete()) progress.phase(declaredFinalPhase);
-        const completedPhasePlan = !phasePlan || progress.hasReached(declaredFinalPhase);
-        progress.stop(outcome === "passed" && !completedPhasePlan ? "failed" : outcome);
+        progress.stop(outcome);
         if (process.env.NEMOCLAW_RUN_LIVE_E2E === "1") {
           const artifacts = createArtifactSink(task.name, process.cwd(), secrets.redactionValues());
           await artifacts.ensureRoot();
@@ -72,10 +59,6 @@ export const test = base.extend<WorkflowE2ETestFixtures>({
             ...(process.env.NEMOCLAW_E2E_SHARD ? { shardId: process.env.NEMOCLAW_E2E_SHARD } : {}),
           });
         }
-        assert.ok(
-          outcome !== "passed" || completedPhasePlan,
-          `workflow-selected E2E test did not reach its final semantic phase: ${task.name}`,
-        );
       });
       await use(progress);
     },

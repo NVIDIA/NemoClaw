@@ -13,7 +13,6 @@ import { trackIssue4462FailureDiagnostics } from "../fixtures/issue-4462-diagnos
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import {
   adminApprovalConnectScript,
-  ISSUE_4462_SCOPE_UPGRADE_PHASES,
   preApprovalAdminProbeEvidence,
 } from "./issue-4462-admin-approval-helper.ts";
 
@@ -102,7 +101,6 @@ test(
   "settles operator.write during onboarding and requires explicit operator.admin approval (#4462)",
   {
     timeout: LIVE_TIMEOUT_MS,
-    meta: { e2ePhases: ISSUE_4462_SCOPE_UPGRADE_PHASES },
   },
   async ({
     artifacts,
@@ -113,6 +111,8 @@ test(
     sandbox,
     secrets,
   }) => {
+    progress.phase("confirm configured runtime availability and clear the scope-upgrade sandbox");
+
     const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
     await artifacts.target.declare({
       id: "issue-4462-scope-upgrade-approval",

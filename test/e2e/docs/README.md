@@ -50,10 +50,10 @@ Live execution happens through shared fixtures:
 - `stateValidation` probes host-observable expected state.
 - `artifacts`, `secrets`, `cleanup`, and `shellProbe` provide shared fixture
   services.
-- The automatic `progress` fixture reports the ordered semantic phase plan for
+- The automatic `progress` fixture records the activities reached by
   each `e2e-live` case. Normal output contains the target/scenario identity,
   immediate phase starts and completions, and phase plus total durations. The
-  harness appends `release registered E2E resources` to cover registered
+  harness enters `release registered E2E resources` to cover registered
   cleanup. After five minutes in one phase, a content-free stall diagnostic
   adds child-output age, current redacted command or cleanup activity, and
   runner resources; it repeats every ten minutes while the phase remains
@@ -249,59 +249,39 @@ credentials, or tokens.
 For the stateful live fixture, the harness-owned final phase captures registered
 cleanup duration, failures, and stalls; each registry entry reports a redacted
 start/outcome event and is shown as the active cleanup operation in a stall
-heartbeat. Workflow-selected integration tests can declare their own final release
-phase. Soft assertion failures are recorded against the semantic phase where
+heartbeat. Workflow-selected integration tests record their own resource cleanup. Soft assertion failures are recorded against the semantic phase where
 they occurred, while successful resource release retains its own `passed`
 outcome.
 
 Live and workflow-selected tests receive automatic progress and outcome reporting.
-Tests may declare two to twelve behavior-specific phases when the extra detail
-helps diagnose failures. Declared plans must transition in order and reach their
-final phase. Keep explicit phases when qualification artifacts or resource
-comparisons consume their labels. For example:
+Use `progress.phase(label)` to identify an activity before executing it. There is
+no declared sequence, phase-count limit, or required final label. Repeated and
+conditional activities are recorded in execution order; unvisited activities do
+not produce synthetic skipped entries. For example:
 
 ```typescript
-const PHASES = [
-  "provision a clean sandbox",
-  "exercise token rotation",
-  "verify the rotated credential",
-] as const;
-
-test(
-  "rotates a live sandbox credential",
-  { meta: { e2ePhases: PHASES } },
-  async ({ progress }) => {
-    await provisionSandbox();
-    progress.phase("exercise token rotation");
-    await rotateCredential();
-    progress.phase("verify the rotated credential");
-    await verifyCredential();
-  },
-);
+test("rotates a live sandbox credential", async ({ progress }) => {
+  progress.phase("provision a clean sandbox");
+  await provisionSandbox();
+  progress.phase("exercise token rotation");
+  await rotateCredential();
+  progress.phase("verify the rotated credential");
+  await verifyCredential();
+});
 ```
 
-Use phases for meaningful scenario boundaries, not individual commands. Labels
-must be unique within the plan; generic labels such as `setup`, `execute`,
-`verify`, and `test body` are rejected. Pass each phase label as a string
-literal so the collection-only checker can validate the transition without
-executing the test body; variables and array lookups are rejected. A phase
-transition may skip optional intermediate phases, which are recorded with a
-`skipped` outcome, but it cannot move backward or select an undeclared label.
-When a module has multiple tests, including tests with the same phase plan,
-keep each literal transition inside its owning test callback so the checker can
-attribute it to that case. A helper may own the operational boundary by
-accepting a callback that performs the transition.
-Completed phases use `passed`, `failed`, or `skipped` outcomes. A passing path
-must enter the final declared phase before returning, or fixture teardown fails
-the test. In `e2e-live`, do not declare or enter
-`release registered E2E resources`; the stateful harness appends and enters it
-automatically after the test's phase plan. Workflow-selected integration tests
-own and enter their final release phase.
-`npm run test:e2e-phases:check` collects every `e2e-live` module plus the
-workflow-selected integration modules from the authoritative shared-job plan.
-It rejects missing or invalid plans without executing test bodies. Live modules
-must import `fixtures/e2e-test.ts`; selected integration modules must import
-`fixtures/workflow-e2e-test.ts` and declare their final release phase explicitly.
+Labels must be bounded, nonempty, and free of control characters. Keep labels
+useful for diagnosis and exclude credentials and child output. Resource
+comparisons can use stable activity labels without maintaining a second list.
+Qualification tests must assert required outcomes and publish their owning
+qualification evidence; progress labels alone do not establish qualification.
+Completed activities record `passed`, `failed`, or `skipped` from the test outcome.
+The live fixture records registered cleanup as `release registered E2E resources`.
+
+`npm run test:e2e-phases:check` retains its existing command name. It collects live
+and workflow-selected integration tests, rejects zero-test modules, checks workflow
+consumers, and requires the appropriate shared fixture. It does not validate phase
+plans or execute test bodies.
 The same check audits direct child-process boundaries reachable through shared
 E2E helpers. Prefer `ShellProbe`; a long-lived process that cannot use it must
 live in an explicitly audited progress-aware boundary, close its activity on

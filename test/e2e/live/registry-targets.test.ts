@@ -41,16 +41,6 @@ const SELECTED_TARGET_IDS = [SELECTED_TARGET_ID].filter(
   (targetId): targetId is string => targetId !== undefined,
 );
 requireTargets(SELECTED_TARGET_IDS);
-const REGISTRY_TARGET_PHASES = [
-  "resolve the target contract and run plan",
-  "confirm the target environment is ready",
-  "prepare the target lifecycle prerequisites",
-  "onboard the registry-selected sandbox",
-  "execute the target lifecycle boundary",
-  "verify the expected sandbox state",
-  "run target-specific cloud checks",
-  "record target completion evidence",
-] as const;
 
 for (const [targetIndex, target] of listTargets().entries()) {
   const support = liveTargetSupport(target);
@@ -61,7 +51,6 @@ for (const [targetIndex, target] of listTargets().entries()) {
     {
       meta: {
         e2eArtifactRootId: target.id,
-        e2ePhases: REGISTRY_TARGET_PHASES,
       },
       ...(timeoutContract.testTimeoutMs === undefined
         ? {}
@@ -77,6 +66,8 @@ for (const [targetIndex, target] of listTargets().entries()) {
       secrets,
       stateValidation,
     }) => {
+      progress.phase("resolve the target contract and run plan");
+
       const dcodeBaseContract = loadDcodeBaseImagePublicationEvidence(
         target.id,
         artifacts.pathFor("dcode-base-image.json"),

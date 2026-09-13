@@ -20,22 +20,18 @@ function progressProbe() {
   const lines: string[] = [];
   const timers: Array<() => void> = [];
   let clockMs = 0;
-  const progress = startTestProgress(
-    "Bedrock command support",
-    ["run Bedrock command", "verify Bedrock result"],
-    {
-      clearTimer: () => undefined,
-      logLine: (line) => lines.push(line),
-      now: () => clockMs,
-      setTimer: (callback, delayMs) => {
-        timers.push(() => {
-          clockMs += delayMs;
-          callback();
-        });
-        return {};
-      },
+  const progress = startTestProgress("Bedrock command support", "run Bedrock command", {
+    clearTimer: () => undefined,
+    logLine: (line) => lines.push(line),
+    now: () => clockMs,
+    setTimer: (callback, delayMs) => {
+      timers.push(() => {
+        clockMs += delayMs;
+        callback();
+      });
+      return {};
     },
-  );
+  });
   onTestFinished(() => progress.stop());
   return { lines, progress, timers };
 }

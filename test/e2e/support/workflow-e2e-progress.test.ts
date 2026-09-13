@@ -57,7 +57,7 @@ describe("workflow-selected integration progress", () => {
         version: 1,
       });
       expect(summary.phases.at(-1)).toMatchObject({
-        label: "record E2E test outcome",
+        label: "execute E2E test",
         outcome: "passed",
       });
     } finally {

@@ -119,19 +119,10 @@ test(
   "openclaw-skill-cli: public skill lifecycle delegates to native OpenClaw state",
   {
     timeout: INSTALL_TIMEOUT_MS + 10 * 60_000,
-    meta: {
-      e2ePhases: [
-        "confirm built CLI, selected runtime, and hosted inference",
-        "clear the OpenClaw skill CLI sandbox",
-        "install and onboard the OpenClaw sandbox",
-        "confirm OpenClaw runtime directories",
-        "install and list the workspace skill through NemoClaw",
-        "remove only the canonical writable-root copy",
-        "record the stateless native-agent contract",
-      ],
-    },
   },
   async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets, skip }) => {
+    progress.phase("confirm built CLI, selected runtime, and hosted inference");
+
     expect(
       fs.existsSync(CLI_ENTRYPOINT),
       "run `npm run build:cli` before live repo CLI targets",

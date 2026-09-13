@@ -19,16 +19,16 @@ const progressInstances: TestProgress[] = [];
 
 function trackedProgress(
   scenario: string,
-  phasePlan: readonly string[],
+  initialPhase: string,
   options: TestProgressOptions = {},
 ): TestProgress {
-  const progress = startTestProgress(scenario, phasePlan, options);
+  const progress = startTestProgress(scenario, initialPhase, options);
   progressInstances.push(progress);
   return progress;
 }
 
 function observedProgress(): TestProgress {
-  return trackedProgress("observed child support", ["run observed child", "verify observation"], {
+  return trackedProgress("observed child support", "run observed child", {
     logLine: () => undefined,
   });
 }
@@ -56,22 +56,18 @@ describe("observed E2E child process", () => {
     const lines: string[] = [];
     const timers: Array<() => void> = [];
     let clockMs = 0;
-    const progress = trackedProgress(
-      "observed child support",
-      ["run observed child", "verify observation"],
-      {
-        clearTimer: () => undefined,
-        logLine: (line) => lines.push(line),
-        now: () => clockMs,
-        setTimer: (callback, delayMs) => {
-          timers.push(() => {
-            clockMs += delayMs;
-            callback();
-          });
-          return {};
-        },
+    const progress = trackedProgress("observed child support", "run observed child", {
+      clearTimer: () => undefined,
+      logLine: (line) => lines.push(line),
+      now: () => clockMs,
+      setTimer: (callback, delayMs) => {
+        timers.push(() => {
+          clockMs += delayMs;
+          callback();
+        });
+        return {};
       },
-    );
+    });
     const child = spawnObservedChild(
       process.execPath,
       ["-e", `process.stdout.write(${JSON.stringify(secret)}); process.stderr.write("err")`],
@@ -97,13 +93,9 @@ describe("observed E2E child process", () => {
     ["exited-nonzero", "process.exit(7)"],
   ] as const)("classifies a child that terminates as %s", async (outcome, script) => {
     const lines: string[] = [];
-    const progress = trackedProgress(
-      "observed child classification",
-      ["run classified child", "verify child classification"],
-      {
-        logLine: (line) => lines.push(line),
-      },
-    );
+    const progress = trackedProgress("observed child classification", "run classified child", {
+      logLine: (line) => lines.push(line),
+    });
     const child = spawnObservedChild(process.execPath, ["-e", script], {
       activityLabel: "command: classified-child",
       progress,
@@ -120,13 +112,9 @@ describe("observed E2E child process", () => {
   test("keeps a post-launch process error distinct from a spawn failure", async () => {
     const secret = "POST_LAUNCH_ERROR_SECRET";
     const lines: string[] = [];
-    const progress = trackedProgress(
-      "observed child post-launch error",
-      ["start launched child", "verify launched child outcome"],
-      {
-        logLine: (line) => lines.push(line),
-      },
-    );
+    const progress = trackedProgress("observed child post-launch error", "start launched child", {
+      logLine: (line) => lines.push(line),
+    });
     const child = spawnObservedChild(
       process.execPath,
       ["-e", "setTimeout(() => process.exit(0), 100)"],
@@ -153,7 +141,7 @@ describe("observed E2E child process", () => {
     const lines: string[] = [];
     const progress = trackedProgress(
       "observed child signal classification",
-      ["start signal-bound child", "verify signal classification"],
+      "start signal-bound child",
       {
         logLine: (line) => lines.push(line),
       },
@@ -181,13 +169,9 @@ describe("observed E2E child process", () => {
 
   test("records one launch failure only after the failed child closes", async () => {
     const lines: string[] = [];
-    const progress = trackedProgress(
-      "observed child launch failure",
-      ["start unavailable child", "verify launch failure"],
-      {
-        logLine: (line) => lines.push(line),
-      },
-    );
+    const progress = trackedProgress("observed child launch failure", "start unavailable child", {
+      logLine: (line) => lines.push(line),
+    });
     const child = spawnObservedChild("nemoclaw-observed-child-missing-binary", [], {
       activityLabel: "command: unavailable-child",
       progress,
@@ -213,7 +197,7 @@ describe("observed E2E child process", () => {
     try {
       const progress = trackedProgress(
         "observed child content boundary",
-        ["run secret-bearing child", "verify content-free lifecycle"],
+        "run secret-bearing child",
         {
           logLine: (line) => lines.push(line),
         },
@@ -261,7 +245,7 @@ describe("observed E2E child process", () => {
     const lines: string[] = [];
     const progress = trackedProgress(
       "observed child interrupted runner",
-      ["start interrupted child", "verify interruption evidence"],
+      "start interrupted child",
       {
         logLine: (line) => lines.push(line),
       },
@@ -276,7 +260,7 @@ describe("observed E2E child process", () => {
   test("keeps process execution independent from rejected lifecycle logging", async () => {
     const progress = trackedProgress(
       "observed child logging failure",
-      ["run child with failed logger", "verify child completion"],
+      "run child with failed logger",
       {
         logLine: () => {
           throw new Error("diagnostic logger failed");
@@ -306,22 +290,18 @@ describe("observed E2E child process", () => {
     const lines: string[] = [];
     const timers: Array<() => void> = [];
     let clockMs = 0;
-    const progress = trackedProgress(
-      "observed child support",
-      ["run observed child", "verify observation"],
-      {
-        clearTimer: () => undefined,
-        logLine: (line) => lines.push(line),
-        now: () => clockMs,
-        setTimer: (callback, delayMs) => {
-          timers.push(() => {
-            clockMs += delayMs;
-            callback();
-          });
-          return {};
-        },
+    const progress = trackedProgress("observed child support", "run observed child", {
+      clearTimer: () => undefined,
+      logLine: (line) => lines.push(line),
+      now: () => clockMs,
+      setTimer: (callback, delayMs) => {
+        timers.push(() => {
+          clockMs += delayMs;
+          callback();
+        });
+        return {};
       },
-    );
+    });
     expect(() =>
       spawnObservedChild("bad\0command", [], {
         activityLabel: "command: invalid-spawn",

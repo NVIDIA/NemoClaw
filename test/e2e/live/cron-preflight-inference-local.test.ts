@@ -196,16 +196,10 @@ test(
   "cron preflight reaches managed inference.local provider without EAI_AGAIN",
   {
     timeout: LIVE_TIMEOUT_MS,
-    meta: {
-      e2ePhases: [
-        "check cron preflight prerequisites",
-        "install hosted-inference OpenClaw sandbox",
-        "run in-sandbox cron provider preflight",
-        "validate managed route availability",
-      ],
-    },
   },
   async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets }) => {
+    progress.phase("check cron preflight prerequisites");
+
     const hosted = requireHostedInferenceConfig(secrets, process.env, { model: MODEL });
     const apiKey = hosted.apiKey;
 

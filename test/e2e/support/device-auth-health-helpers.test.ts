@@ -15,11 +15,9 @@ import { startTestProgress } from "../fixtures/progress.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { commandEnv, installDeviceAuthSandbox } from "../live/device-auth-health-helpers.ts";
 
-const NOOP_PROGRESS = startTestProgress(
-  "device auth support",
-  ["serve device auth endpoint", "verify device auth endpoint"],
-  { logLine: () => undefined },
-);
+const NOOP_PROGRESS = startTestProgress("device auth support", "serve device auth endpoint", {
+  logLine: () => undefined,
+});
 
 function okResult(command: string[]): ShellProbeResult {
   return {

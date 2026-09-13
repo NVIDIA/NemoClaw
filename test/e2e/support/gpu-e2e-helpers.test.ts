@@ -165,13 +165,9 @@ const invalidExecutionProofs: Array<{
 
 describe("GPU E2E helpers", () => {
   it("owns the attached Ollama daemon with the supplied listener and cleanup (#11435)", async () => {
-    const progress = startTestProgress(
-      "attached Ollama helper",
-      ["start the attached daemon", "close the owned daemon"],
-      {
-        logLine: () => undefined,
-      },
-    );
+    const progress = startTestProgress("attached Ollama helper", "start the attached daemon", {
+      logLine: () => undefined,
+    });
     const child = new ChildProcess();
     const spawn = vi.spyOn(observedChild, "spawnObservedChild").mockReturnValue(child);
     const kill = vi.spyOn(child, "kill").mockReturnValue(true);

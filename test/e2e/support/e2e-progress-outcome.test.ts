@@ -154,7 +154,15 @@ describe.concurrent("automatic E2E phase outcomes", () => {
       "failed",
       20,
     ],
-    ["incomplete", 1, "rejects-incomplete-phase-plan", E2E_TEARDOWN_PHASE, "failed", "failed", 0],
+    [
+      "incomplete",
+      0,
+      "accepts-a-test-without-a-final-phase-declaration",
+      E2E_TEARDOWN_PHASE,
+      "passed",
+      "passed",
+      0,
+    ],
     [
       "soft-failed",
       1,

@@ -146,19 +146,10 @@ runIssue4434LiveTest(
   "issue-4434: openclaw tui surfaces unreachable-inference errors and stops the connected spinner",
   {
     timeout: 120 * 60_000,
-    meta: {
-      e2ePhases: [
-        "confirm Linux firewall and hosted inference prerequisites",
-        "onboard OpenClaw and confirm the managed route",
-        "block hosted inference egress",
-        "route inference.local through a fake provider",
-        "stop the provider and confirm route failure",
-        "capture the OpenClaw TUI failure",
-        "analyze visible diagnostics and spinner state",
-      ],
-    },
   },
   async ({ artifacts, cleanup, environment, host, onboard, progress, sandbox, secrets, skip }) => {
+    progress.phase("confirm Linux firewall and hosted inference prerequisites");
+
     // Hosted compatible inference is gateway-managed; this repro only blocks
     // sandbox egress, so runIssue4434LiveTest skips that mode before setup.
     if (process.platform !== "linux") {

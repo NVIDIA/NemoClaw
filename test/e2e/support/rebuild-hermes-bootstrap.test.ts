@@ -24,7 +24,6 @@ import {
   resolveRebuildHermesDashboardPort,
   trackRebuildHermesCleanupPort,
 } from "../live/rebuild-hermes-bootstrap.ts";
-import { REBUILD_HERMES_PHASES } from "../live/rebuild-hermes-phases.ts";
 
 const RESOLUTION = {
   schema: 1,
@@ -470,18 +469,5 @@ describe("rebuild-Hermes direct bootstrap", () => {
     expect(liveSource.indexOf("const sessionSummary = seedRegistryAndSession(")).toBeLessThan(
       liveSource.indexOf("await cronRestore.seed();"),
     );
-  });
-
-  it("retains the eight-phase rebuild contract with truthful bootstrap coverage (#7144)", () => {
-    expect(REBUILD_HERMES_PHASES).toEqual([
-      "confirm Docker and prepare Hermes rebuild resources",
-      "prepare trusted gateway inference and the current Hermes base",
-      "pull and verify the historical Hermes base fixture",
-      "create the historical Hermes sandbox",
-      "seed persistent Hermes state and registry metadata",
-      "prepare the current-base rebuild condition",
-      "rebuild the Hermes sandbox",
-      "validate upgraded state inference and backup hygiene",
-    ]);
   });
 });

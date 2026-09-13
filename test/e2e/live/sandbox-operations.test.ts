@@ -899,14 +899,10 @@ test(
   "refuses legacy dashboard forwards whose ownership cannot be proved",
   {
     timeout: testTimeout(45 * 60_000),
-    meta: {
-      e2ePhases: [
-        "onboard the legacy forward sandbox",
-        "seed, refuse, and release the legacy dashboard forwards",
-      ],
-    },
   },
   async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, secrets }) => {
+    progress.phase("onboard the legacy forward sandbox");
+
     const hosted = requireHostedInferenceConfig(secrets);
     const legacyEnv = legacyForwardEnvironment(hosted);
 
@@ -1005,13 +1001,6 @@ test(
   "credentials reset removes a provider attached during sandbox rebuild (#9806)",
   {
     timeout: 45 * 60_000,
-    meta: {
-      e2ePhases: [
-        "confirm the selected runtime and clear the credential provider fixture",
-        "onboard the credential lifecycle sandbox",
-        "add, attach, reset, and remove the credential provider",
-      ],
-    },
   },
   async ({
     artifacts,
@@ -1023,6 +1012,8 @@ test(
     sandbox,
     secrets,
   }) => {
+    progress.phase("confirm the selected runtime and clear the credential provider fixture");
+
     const hosted = requireHostedInferenceConfig(secrets);
 
     await artifacts.target.declare({
@@ -1124,19 +1115,6 @@ test(
   "sandbox operations preserve list/status/logs/recovery/multi-sandbox contracts",
   {
     timeout: testTimeout(45 * 60_000),
-    meta: {
-      e2ePhases: [
-        "confirm Docker and clear the sandbox operation fixtures",
-        "onboard the primary sandbox",
-        "validate connected shell resource limits",
-        "exercise primary CLI inference and logs",
-        "exercise terminal registry and process recovery",
-        "onboard the secondary sandbox",
-        "verify metadata and cross-sandbox isolation",
-        "destroy the secondary sandbox and recover the survivor",
-        "destroy the final sandbox and confirm port release",
-      ],
-    },
   },
   async ({
     artifacts,
@@ -1148,6 +1126,8 @@ test(
     sandbox,
     secrets,
   }) => {
+    progress.phase("confirm Docker and clear the sandbox operation fixtures");
+
     const hosted = requireHostedInferenceConfig(secrets);
 
     await artifacts.target.declare({

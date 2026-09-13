@@ -57,18 +57,10 @@ test(
   "GPU Ollama onboard enables CUDA, auth proxy, and sandbox inference",
   {
     timeout: TIMEOUT_MS,
-    meta: {
-      e2ePhases: [
-        "prepare clean GPU runtime",
-        "install Ollama and GPU sandbox",
-        "validate GPU runtime status",
-        "validate Ollama proxy credential boundary",
-        "run sandbox inference.local chat",
-        "restart Ollama and recover agent inference",
-      ],
-    },
   },
   async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, skip }) => {
+    progress.phase("prepare clean GPU runtime");
+
     await artifacts.target.declare({
       id: "gpu-e2e",
       boundary:
@@ -328,15 +320,10 @@ test(
   "Hermes GPU Ollama initial, resumed, and continued replies contain expected answers without tool-call output (#10215)",
   {
     timeout: HERMES_RESPONSE_TIMEOUT_MS,
-    meta: {
-      e2ePhases: [
-        "prepare clean GPU Ollama runtime for Hermes",
-        "install Hermes with local Ollama inference",
-        "run Hermes initial, resumed, and continued replies",
-      ],
-    },
   },
   async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, skip }) => {
+    progress.phase("prepare clean GPU Ollama runtime for Hermes");
+
     await artifacts.target.declare({
       id: "gpu-e2e",
       boundary: "Hermes sandbox + GPU Ollama + initial, resumed, and continued CLI replies",
@@ -411,16 +398,10 @@ test(
   "OpenClaw exports an attached Ollama daemon and refuses a stopped backend (#11435)",
   {
     timeout: TIMEOUT_MS,
-    meta: {
-      e2ePhases: [
-        "prepare an attached Ollama daemon",
-        "onboard OpenClaw without sandbox GPU",
-        "export and compare the active Ollama configuration",
-        "refuse export after the attached daemon stops",
-      ],
-    },
   },
   async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox }) => {
+    progress.phase("prepare an attached Ollama daemon");
+
     await artifacts.target.declare({
       id: "gpu-e2e",
       boundary:
