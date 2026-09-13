@@ -1,12 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
+import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, it, vi } from "vitest";
 
 import { readWorkflow } from "../../helpers/e2e-workflow-contract";
 
@@ -32,6 +33,29 @@ const AUTHORIZATION_STEPS: AuthorizationStep[] = [
   },
 ];
 
+type RunProcessResult = {
+  status: number | null;
+  signal: NodeJS.Signals | null;
+  stdout: string;
+  stderr: string;
+};
+
+function runProcess(file: string, args: readonly string[], env: NodeJS.ProcessEnv) {
+  return new Promise<RunProcessResult>((resolve) => {
+    execFile(file, [...args], { encoding: "utf8", env }, (error, stdout, stderr) => {
+      const signal = error?.signal ?? null;
+      resolve({
+        status: signal ? null : Number(error?.code) || (error ? -1 : 0),
+        signal,
+        stdout,
+        stderr,
+      });
+    });
+  });
+}
+
+vi.setConfig({ maxConcurrency: 8 });
+
 function authorizationScript(stepName: string): string {
   const workflow = readWorkflow() as {
     jobs: Record<string, { steps?: Array<{ name?: string; run?: string }> }>;
@@ -39,7 +63,7 @@ function authorizationScript(stepName: string): string {
   const step = workflow.jobs["generate-matrix"]!.steps!.find(
     (candidate) => candidate.name === stepName,
   );
-  expect(step?.run).toEqual(expect.any(String));
+  assert.equal(typeof step?.run, "string", `${stepName} script is missing`);
   return step!.run!;
 }
 
@@ -48,7 +72,7 @@ function lines(path: string): string[] {
   return value === "" ? [] : value.split("\n");
 }
 
-function runAuthorization(
+async function runAuthorization(
   stepName: string,
   scenario: PermissionScenario,
   options: { actor?: string; status?: string } = {},
@@ -113,9 +137,10 @@ printf '%s\n' "$1" >>"$SLEEP_LOG"
   chmodSync(sleepPath, 0o755);
 
   const workflowSha = "c".repeat(40);
-  const result = spawnSync("bash", ["--noprofile", "--norc", "-c", authorizationScript(stepName)], {
-    encoding: "utf8",
-    env: {
+  const result = await runProcess(
+    "bash",
+    ["--noprofile", "--norc", "-c", authorizationScript(stepName)],
+    {
       ...process.env,
       ACTOR: options.actor ?? "dispatch-admin",
       ALLOW_JETSON_DISPATCH: "false",
@@ -143,7 +168,7 @@ printf '%s\n' "$1" >>"$SLEEP_LOG"
       WORKFLOW_REF: "refs/heads/main",
       WORKFLOW_SHA: workflowSha,
     },
-  });
+  );
   const permissionAttempts = existsSync(attemptFile)
     ? Number.parseInt(readFileSync(attemptFile, "utf8"), 10)
     : 0;
@@ -153,13 +178,13 @@ printf '%s\n' "$1" >>"$SLEEP_LOG"
   return { ...result, curlOperations, permissionAttempts, sleeps };
 }
 
-describe.each(AUTHORIZATION_STEPS)(
+describe.concurrent.each(AUTHORIZATION_STEPS)(
   "$name collaborator permission read",
   ({ deniedMessage, mismatchMessage, name }) => {
-    it.each(["408", "429", "503"])(
+    it.for(["408", "429", "503"])(
       "retries HTTP %s once before authorization succeeds (#9337)",
-      (status) => {
-        const result = runAuthorization(name, "transient-then-success", { status });
+      async (status, { expect }) => {
+        const result = await runAuthorization(name, "transient-then-success", { status });
 
         expect(result.status, result.stderr).toBe(0);
         expect(result.permissionAttempts).toBe(2);
@@ -175,8 +200,8 @@ describe.each(AUTHORIZATION_STEPS)(
       },
     );
 
-    it("stops after three transient transport failures (#9337)", () => {
-      const result = runAuthorization(name, "transport-exhaustion");
+    it("stops after three transient transport failures (#9337)", async ({ expect }) => {
+      const result = await runAuthorization(name, "transport-exhaustion");
 
       expect(result.status).not.toBe(0);
       expect(result.permissionAttempts).toBe(3);
@@ -187,21 +212,24 @@ describe.each(AUTHORIZATION_STEPS)(
       );
     });
 
-    it.each(["401", "403", "404", "422"])("does not retry HTTP %s (#9337)", (status) => {
-      const result = runAuthorization(name, "terminal-http", { status });
+    it.for(["401", "403", "404", "422"])(
+      "does not retry HTTP %s (#9337)",
+      async (status, { expect }) => {
+        const result = await runAuthorization(name, "terminal-http", { status });
 
-      expect(result.status).not.toBe(0);
-      expect(result.permissionAttempts).toBe(1);
-      expect(result.sleeps).toEqual([]);
-      expect(result.curlOperations).toEqual(["permission"]);
-      expect(result.stderr).toContain(
-        `Collaborator permission read attempt 1/3 failed: HTTP ${status}`,
-      );
-      expect(result.stderr).not.toContain("private-response-body");
-    });
+        expect(result.status).not.toBe(0);
+        expect(result.permissionAttempts).toBe(1);
+        expect(result.sleeps).toEqual([]);
+        expect(result.curlOperations).toEqual(["permission"]);
+        expect(result.stderr).toContain(
+          `Collaborator permission read attempt 1/3 failed: HTTP ${status}`,
+        );
+        expect(result.stderr).not.toContain("private-response-body");
+      },
+    );
 
-    it("does not retry a malformed HTTP 200 response (#9337)", () => {
-      const result = runAuthorization(name, "malformed-success");
+    it("does not retry a malformed HTTP 200 response (#9337)", async ({ expect }) => {
+      const result = await runAuthorization(name, "malformed-success");
 
       expect(result.status).not.toBe(0);
       expect(result.permissionAttempts).toBe(1);
@@ -213,8 +241,8 @@ describe.each(AUTHORIZATION_STEPS)(
       expect(result.stderr).not.toContain("private-response-body");
     });
 
-    it("does not retry a valid response with an unauthorized role (#9337)", () => {
-      const result = runAuthorization(name, "denied");
+    it("does not retry a valid response with an unauthorized role (#9337)", async ({ expect }) => {
+      const result = await runAuthorization(name, "denied");
 
       expect(result.status).not.toBe(0);
       expect(result.permissionAttempts).toBe(1);
@@ -223,8 +251,8 @@ describe.each(AUTHORIZATION_STEPS)(
       expect(result.stderr).toContain(deniedMessage);
     });
 
-    it("does not retry a permission response for a different actor (#9337)", () => {
-      const result = runAuthorization(name, "mismatched-actor");
+    it("does not retry a permission response for a different actor (#9337)", async ({ expect }) => {
+      const result = await runAuthorization(name, "mismatched-actor");
 
       expect(result.status).not.toBe(0);
       expect(result.permissionAttempts).toBe(1);
@@ -233,8 +261,10 @@ describe.each(AUTHORIZATION_STEPS)(
       expect(result.stderr).toContain(mismatchMessage);
     });
 
-    it("rejects an invalid actor before the permission read (#9337)", () => {
-      const result = runAuthorization(name, "transient-then-success", { actor: "invalid actor" });
+    it("rejects an invalid actor before the permission read (#9337)", async ({ expect }) => {
+      const result = await runAuthorization(name, "transient-then-success", {
+        actor: "invalid actor",
+      });
 
       expect(result.status).not.toBe(0);
       expect(result.permissionAttempts).toBe(0);
