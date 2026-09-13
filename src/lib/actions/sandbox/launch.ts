@@ -486,7 +486,7 @@ async function prepareLaunchSession(
   // part of prepareInteractiveSession, so `launch` must call it too: without it
   // a Hermes TUI on a light-background terminal keeps the default dark skin,
   // and a switch back to a dark terminal never removes the managed skin.
-  // Run the agent through a login shell. execSandbox wraps every command in
+  // Run the agent through a login shell. startSandboxExec wraps every command in
   // wrapExecCommandWithRuntimeEnv (runtime-env.ts), which sources
   // /tmp/nemoclaw-proxy-env.sh and then unsets OPENCLAW_GATEWAY_TOKEN so
   // ordinary caller argv cannot inherit it (#6291). The SSH path that

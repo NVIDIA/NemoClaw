@@ -464,7 +464,12 @@ describe("NemoClawCommand", () => {
         await Promise.all([mutation, rejected]);
         expect(inspect).not.toHaveBeenCalled();
         expect(fs.readFileSync(recordPath, "utf8")).toBe("legacy state\n");
-        expect(isMcpLifecycleLockHeld("alpha", stateDir)).toBe(false);
+        const reacquired = await withMcpLifecycleLock(
+          "alpha",
+          () => isMcpLifecycleLockHeld("alpha", stateDir),
+          { stateDir, timeoutMs: 1000 },
+        );
+        expect(reacquired).toBe(true);
       } finally {
         update();
         await mutation;
