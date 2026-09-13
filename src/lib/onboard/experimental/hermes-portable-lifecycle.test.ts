@@ -83,6 +83,7 @@ function lifecycleDeps(
     readonly stopRequiresAssist?: boolean;
     readonly startStatus?: number;
     readonly initialPhase?: "Ready" | "Error" | "Stopped";
+    readonly nonRunningStatus?: string;
   } = {},
 ) {
   let running = initiallyRunning,
@@ -110,7 +111,7 @@ function lifecycleDeps(
                   State: {
                     Running: running,
                     Paused: false,
-                    Status: running ? "running" : "exited",
+                    Status: running ? "running" : (options.nonRunningStatus ?? "exited"),
                   },
                   HostConfig: { RestartPolicy: { Name: "unless-stopped" } },
                 },
@@ -275,13 +276,17 @@ afterEach(() => {
 
 describe("Hermes portable lifecycle", () => {
   it.each([
-    { initialPhase: "Error" as const, running: true },
-    { initialPhase: "Error" as const, running: false },
-    { initialPhase: "Ready" as const, running: false },
+    { initialPhase: "Error" as const, status: "running" },
+    { initialPhase: "Error" as const, status: "exited" },
+    { initialPhase: "Ready" as const, status: "exited" },
+    { initialPhase: "Ready" as const, status: "stopping" },
   ])(
-    "rejects unsupported saved $initialPhase with running=$running before mutation (#11646)",
-    ({ initialPhase, running }) => {
-      const fixture = lifecycleDeps(activeReceipt(), running, { initialPhase });
+    "rejects unsupported saved $initialPhase with container=$status before mutation (#11646)",
+    ({ initialPhase, status }) => {
+      const fixture = lifecycleDeps(activeReceipt(), status === "running", {
+        initialPhase,
+        nonRunningStatus: status,
+      });
       expect(() =>
         withMcpLifecycleLockSync(
           SANDBOX,

@@ -1439,7 +1439,7 @@ Follow [Recover Portable Published Ollama](../manage-sandboxes/operate-sandboxes
 
 For an active Portable Hermes receipt, `recover` checks the saved OpenShell phase and the receipt-owned Podman container state before mutation.
 When OpenShell reports `Stopped`, recovery calls OpenShell start, including when the container is already running.
-A saved `Error` phase, or a saved `Ready` phase with an exited container, stops recovery before mutation.
+A saved `Error` phase, or a saved `Ready` phase with a container that is not running, stops recovery before mutation.
 The error identifies the mismatch and asks you to preserve startup diagnostics and resolve the saved state through OpenShell.
 Recovery does not reset OpenShell storage or start the container directly through Podman.
 If recovery started a stopped container, it launches the receipt-owned `nemoclaw-start` command once and waits for authenticated Hermes health.
