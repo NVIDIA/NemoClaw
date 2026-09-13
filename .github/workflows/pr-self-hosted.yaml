@@ -287,12 +287,15 @@ jobs:
         run: gunzip -c /tmp/isolation-image.tar.gz | docker load
 
       - name: Validate OpenClaw managed-image security boundary
+        env:
+          NEMOCLAW_E2E_REQUIRE_EXECUTED_TEST: "1"
         run: >-
           npx vitest run --project integration test/e2e-runtime/managed-image-openclaw-security.test.ts --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
 
       - name: Validate glibc probe lifecycle
         if: ${{ !cancelled() }}
         env:
+          NEMOCLAW_E2E_REQUIRE_EXECUTED_TEST: "1"
           NEMOCLAW_RUN_GLIBC_PROBE_DOCKER_E2E: "1"
         run: >-
           npx vitest run --project integration test/e2e-runtime/image-compatibility-docker-lifecycle.test.ts

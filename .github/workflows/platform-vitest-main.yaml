@@ -185,6 +185,7 @@ jobs:
       - name: Run macOS live E2E
         if: ${{ matrix.shard == 1 && steps.macos_docker.outputs.docker_ok == 'true' && github.ref == 'refs/heads/main' }}
         env:
+          NEMOCLAW_E2E_REQUIRE_EXECUTED_TEST: "1"
           GITHUB_TOKEN: ${{ github.token }}
           NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
           NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
@@ -193,7 +194,7 @@ jobs:
           NEMOCLAW_SANDBOX_NAME: "e2e-macos"
           NEMOCLAW_RUN_LIVE_E2E: "1"
         run: >-
-          npx vitest run --project e2e-live test/e2e/live/full-e2e.test.ts --silent=false --reporter=default
+          npx vitest run --project e2e-live test/e2e/live/full-e2e.test.ts --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
 
       - name: Explain skipped macOS live E2E
         if: ${{ matrix.shard == 1 && (steps.macos_docker.outputs.docker_ok != 'true' || github.ref != 'refs/heads/main') }}
@@ -416,7 +417,8 @@ jobs:
           cd $workdir
           $exports
           export NEMOCLAW_RUN_LIVE_E2E=1
-          npx vitest run --project e2e-live test/e2e/live/full-e2e.test.ts --silent=false --reporter=default
+          export NEMOCLAW_E2E_REQUIRE_EXECUTED_TEST=1
+          npx vitest run --project e2e-live test/e2e/live/full-e2e.test.ts --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
           "@
           Invoke-WslScript -Distro $env:WSL_DISTRO -Script $script
 

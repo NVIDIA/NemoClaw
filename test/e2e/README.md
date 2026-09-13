@@ -438,6 +438,7 @@ Comments, printed commands, and filenames in other steps do not establish a test
 It rejects missing workflow jobs, missing test files, and test calls without an inventory route.
 Delegated routes name their script entry point; the check verifies that the owning job still calls it.
 Workflow routes without Vitest files must name a script entry point, including both staging Brev Launchable routes.
+Direct external workflow test commands also require execution, including packaged-image checks and the WSL guest command.
 The Podman CPU proof commands require the risk-signal reporter, including execution under the dedicated proof user.
 The staging full-suite script requires the guest risk-signal reporter; an empty or entirely skipped suite fails before the success marker.
 These static checks do not certify remote execution or replace environment-gated collection checks.
