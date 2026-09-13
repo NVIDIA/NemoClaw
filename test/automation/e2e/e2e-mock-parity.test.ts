@@ -1,8 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
+  DEFAULT_PARITY_MANIFEST,
   filterMockParityRelevantChangedFiles,
   isMockParityRelevantSourceChange,
   type MockParityManifest,
@@ -20,6 +22,28 @@ function manifest(entries: MockParityManifest["entries"]): MockParityManifest {
 }
 
 describe("changed live E2E mock parity", () => {
+  it.each([
+    "test/e2e/live/hermes-e2e.test.ts",
+    "test/e2e/live/managed-image-activation-e2e-helpers.ts",
+    "test/e2e/live/openshell-exact-main-driver-config.ts",
+    "test/e2e/live/pi-agent-qualification.test.ts",
+    "test/e2e/live/sandbox-survival.test.ts",
+  ])("accepts shared gateway restart coverage for %s", (changedLiveSource) => {
+    const currentManifest = JSON.parse(
+      fs.readFileSync(DEFAULT_PARITY_MANIFEST, "utf8"),
+    ) as MockParityManifest;
+
+    expect(
+      validateMockParity({
+        manifest: currentManifest,
+        changedFiles: [changedLiveSource, "test/e2e/support/e2e-phase-lifecycle.test.ts"],
+      }),
+    ).toEqual([]);
+    expect(
+      validateMockParity({ manifest: currentManifest, changedFiles: [changedLiveSource] }),
+    ).toHaveLength(1);
+  });
+
   it.each([
     ["array", "const values = [1, 2];", "const values = [1, 2,];"],
     ["call", "check(1, 2);", "check(1, 2,);"],
