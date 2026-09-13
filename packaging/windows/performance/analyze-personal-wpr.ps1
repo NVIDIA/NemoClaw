@@ -129,18 +129,20 @@ function Invoke-PersonalTraceAnalysis([string]$Directory){
   $tool=$xperf[0];$logs=Join-Path $out 'logs';$reports=Join-Path $out 'reports';[void][IO.Directory]::CreateDirectory($logs);[void][IO.Directory]::CreateDirectory($reports)
   $record.stage='analysis';$help=Invoke-TraceAnalysisCommand $tool @('-help','processing') (Join-Path $logs 'processing-help.log');$record.actions+=@($help)
   if($help.started -and (-not $help.closed -or -not $help.captureClosed)){throw 'Analysis help process or pipe capture has unconfirmed closure.'}
+  $dumperHelp=Invoke-TraceAnalysisCommand $tool @('-help','dumper') (Join-Path $logs 'dumper-help.log');$record.actions+=@($dumperHelp)
+  if($dumperHelp.started -and (-not $dumperHelp.closed -or -not $dumperHelp.captureClosed)){throw 'Dumper help process or pipe capture has unconfirmed closure.'}
   $actions=@(
    @{name='trace-stats';args=@('tracestats','-timespan','actual','-detail','-timezone','utc')},
    @{name='processes';args=@('process')},
    @{name='cpu-samples';args=@('profile','-util','1','-detail')},
    @{name='context-switches';args=@('cswitch','-process','-thread')},
    @{name='cpu-disk';args=@('cpudisk')},
-   @{name='file-io';args=@('fileio')},
+   @{name='file-names';args=@('filename')},
    @{name='disk-io';args=@('diskio','-summary')}
   )
   foreach($action in $actions){
    if(@($record.actions|Where-Object {$_.started -and (-not $_.closed -or -not $_.captureClosed)}).Count){throw 'An analysis child or its pipe capture has unconfirmed closure; no next action may start.'}
-   $total=(@(Get-ChildItem -LiteralPath $reports -File)|Measure-Object -Property Length -Sum).Sum
+   $total=0L;foreach($file in @(Get-ChildItem -LiteralPath $reports -File)){$total+=$file.Length}
    if($total -ge 256MB){throw 'Analysis summaries reached their256MiB aggregate bound.'}
    $report=Join-Path $reports ($action.name+'.txt');$argv=@('-i',$etl,'-o',$report,'-a')+$action.args
    $value=Invoke-TraceAnalysisCommand $tool $argv (Join-Path $logs ($action.name+'.log')) $report ([Math]::Min(64MB,256MB-$total))
