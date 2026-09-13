@@ -9,7 +9,6 @@ import {
 
 export function expectedWorkflowPlanCiOutput(
   plan: ReturnType<typeof buildE2eWorkflowPlan>,
-  selectedResultJobs: readonly string[] = selectedWorkflowJobs(plan),
 ): string {
   return [
     `matrix=${JSON.stringify(plan.matrix)}`,
@@ -22,7 +21,7 @@ export function expectedWorkflowPlanCiOutput(
     `gateway_runtimes=${JSON.stringify(plan.gatewayRuntimes)}`,
     `runtime_providers_by_job=${JSON.stringify(plan.runtimeProvidersByJob)}`,
     `selected_jobs=${JSON.stringify(plan.selectedJobs)}`,
-    `selected_workflow_jobs=${JSON.stringify(selectedResultJobs)}`,
+    `selected_workflow_jobs=${JSON.stringify(selectedWorkflowJobs(plan))}`,
     `hermes_selected=${plan.hermesSelected}`,
     `explicit_only_jobs=${plan.explicitOnlyJobs.join(",")}`,
     `release_required_jobs=${JSON.stringify(releaseRequiredWorkflowJobs())}`,
