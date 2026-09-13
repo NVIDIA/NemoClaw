@@ -695,7 +695,7 @@ jobs:
       ADVISOR_DIR: ${{ github.workspace }}/advisor
       OPENSHELL_GATEWAY_ENDPOINT: http://127.0.0.1:8080
       PI_IMAGE: ghcr.io/nvidia/openshell-community/sandboxes/pi@sha256:00d0c5e9e733f94f6db3eaa2ab70d4fd75bcc4aace6b13a54535cbf2dd20dfcd
-      SANDBOX_NAME: advisor-repair-${{ github.run_id }}
+      SANDBOX_NAME: advisor-repair-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - name: Set runner-local repair paths
         run: |
@@ -793,6 +793,12 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.PR_REVIEW_ADVISOR_API_KEY }}
         run: node --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/repair-resolve.mts" configure
 
+      - id: reconcile
+        name: Reconcile the prior repair sandbox
+        env:
+          RECONCILIATION_RECEIPT_FILE: ${{ runner.temp }}/repair-reconciliation.json
+        run: timeout --signal=TERM --kill-after=15s 5m node --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/repair-resolve.mts" reconcile
+
       - id: create
         name: Create the credential-free sandbox
         run: timeout --signal=TERM --kill-after=15s 5m node --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/repair-resolve.mts" create
@@ -835,6 +841,8 @@ jobs:
         env:
           CLEANUP_OUTCOME: ${{ steps.cleanup.outcome }}
           CLEANUP_RECEIPT_FILE: ${{ runner.temp }}/repair-cleanup.json
+          RECONCILIATION_OUTCOME: ${{ steps.reconcile.outcome }}
+          RECONCILIATION_RECEIPT_FILE: ${{ runner.temp }}/repair-reconciliation.json
           BUDGET_OUTCOME: ${{ steps.budget.outcome }}
           CONFIGURE_OUTCOME: ${{ steps.configure.outcome }}
           CREATE_OUTCOME: ${{ steps.create.outcome }}
@@ -851,6 +859,7 @@ jobs:
             ["install", process.env.INSTALL_OUTCOME],
             ["budget", process.env.BUDGET_OUTCOME],
             ["configure", process.env.CONFIGURE_OUTCOME],
+            ["reconcile", process.env.RECONCILIATION_OUTCOME],
             ["create", process.env.CREATE_OUTCOME],
             ["run", process.env.REPAIR_RUN_OUTCOME],
             ["download", process.env.DOWNLOAD_OUTCOME],
@@ -868,6 +877,11 @@ jobs:
             const stat = fs.statSync(process.env.CLEANUP_RECEIPT_FILE);
             if (!stat.isFile() || stat.size > 4096) throw new Error("repair cleanup receipt is invalid");
             cleanup = JSON.parse(fs.readFileSync(process.env.CLEANUP_RECEIPT_FILE, "utf8"));
+          }
+          if (process.env.RECONCILIATION_OUTCOME === "failure" && fs.existsSync(process.env.RECONCILIATION_RECEIPT_FILE)) {
+            const stat = fs.statSync(process.env.RECONCILIATION_RECEIPT_FILE);
+            if (!stat.isFile() || stat.size > 4096) throw new Error("repair reconciliation receipt is invalid");
+            cleanup = JSON.parse(fs.readFileSync(process.env.RECONCILIATION_RECEIPT_FILE, "utf8"));
           }
           const failureStage = primary?.[0] ?? (cleanup.outcome === "failure" ? "cleanup" : "");
           fs.appendFileSync(process.env.GITHUB_OUTPUT, `failure-stage=${failureStage}\ncleanup-receipt=${JSON.stringify(cleanup)}\n`);
@@ -1173,7 +1187,14 @@ jobs:
   repair-audit:
     name: Preserve bounded repair audit receipt
     if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.repair_finding_ids_json != '[]' }}
-    needs: [repair-select, repair-resolve, repair-validate, repair-publish, repair-dispatch-generated-head]
+    needs:
+      [
+        repair-select,
+        repair-resolve,
+        repair-validate,
+        repair-publish,
+        repair-dispatch-generated-head,
+      ]
     permissions: {}
     runs-on: ubuntu-24.04
     timeout-minutes: 5

@@ -124,6 +124,7 @@ describe("PR Review Advisor repair workflow contracts", () => {
     expect(resolveText).toContain('if":"always()"');
     expect(resolveText).toContain('"continue-on-error":true');
     expect(resolveText).toContain("CLEANUP_RECEIPT_FILE");
+    expect(resolveText).toContain("RECONCILIATION_RECEIPT_FILE");
     expect(resolveText).toContain("Preserve resolver and cleanup outcomes");
     expect(resolve["runs-on"]).toBe("ubuntu-24.04");
     expect(resolve["timeout-minutes"]).toBe(60);
@@ -134,12 +135,13 @@ describe("PR Review Advisor repair workflow contracts", () => {
     expect(boundedSandboxSteps.get("budget")).toContain("elapsed_seconds > 900");
     expect(boundedSandboxSteps.get("budget")).toContain("15-minute pre-sandbox budget");
     expect(boundedSandboxSteps.get("create")).toContain("kill-after=15s 5m");
+    expect(boundedSandboxSteps.get("reconcile")).toContain("kill-after=15s 5m");
     expect(boundedSandboxSteps.get("repair_run")).toContain("kill-after=15s 22m");
     expect(boundedSandboxSteps.get("download")).toContain("kill-after=15s 5m");
     expect(boundedSandboxSteps.get("cleanup")).toContain("kill-after=15s 5m");
     expect(resolveText).toContain("process.env.INSTALL_OUTCOME");
     expect(resolveText).toContain("process.env.BUDGET_OUTCOME");
-    expect(resolveText).toContain("advisor-repair-${{ github.run_id }}");
+    expect(resolveText).toContain("advisor-repair-${{ github.run_id }}-${{ github.run_attempt }}");
     expect(validateText).toContain("needs.repair-select.outputs.context-artifact-id");
     expect(validateText).toContain("needs.repair-resolve.outputs.candidate-artifact-id");
     expect(validateText).toContain("repair-validate.mts");

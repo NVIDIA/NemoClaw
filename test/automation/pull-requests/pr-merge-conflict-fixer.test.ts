@@ -55,6 +55,7 @@ import {
   downloadAdvisorRepairCandidate,
   exportAdvisorRepairPatch,
   prepareAdvisorRepairInputs,
+  reconcilePreviousAdvisorRepairSandbox,
   runAdvisorRepairTask,
 } from "../../../tools/pr-review-advisor/repair-resolve.mts";
 import { validateAndSealRepair } from "../../../tools/pr-review-advisor/repair-validate.mts";
@@ -983,6 +984,50 @@ describe("PR merge conflict fixer", () => {
       sandboxName: "sandbox-test",
       outcome: "failure",
       error: "Failed to delete OpenShell sandbox sandbox-test: [REDACTED] delete failed",
+    });
+  });
+
+  it("removes the prior owned sandbox before a repair retry creates its replacement (#10791)", () => {
+    const firstAttempt = {
+      ...resolverEnvironment(),
+      GITHUB_RUN_ATTEMPT: "1",
+      GITHUB_RUN_ID: "12345",
+      SANDBOX_NAME: "advisor-repair-12345-1",
+    };
+    const failedCleanupReceipt = path.join(temporaryDirectory(), "failed-cleanup.json");
+    const failedCleanupTools = resolverTools(["advisor-repair-12345-1"]);
+    vi.mocked(failedCleanupTools.run)
+      .mockImplementationOnce(() => "advisor-repair-12345-1")
+      .mockImplementationOnce(() => {
+        throw new Error("cleanup failed");
+      });
+    expect(() =>
+      deleteAdvisorRepairSandbox(firstAttempt, failedCleanupReceipt, failedCleanupTools),
+    ).toThrow("cleanup failed");
+
+    const env = {
+      ...resolverEnvironment(),
+      GITHUB_RUN_ATTEMPT: "2",
+      GITHUB_RUN_ID: "12345",
+      SANDBOX_NAME: "advisor-repair-12345-2",
+    };
+    const receiptFile = path.join(temporaryDirectory(), "reconciliation.json");
+    const tools = resolverTools(["advisor-repair-12345-1", "", ""]);
+
+    reconcilePreviousAdvisorRepairSandbox(env, receiptFile, tools);
+    createAdvisorRepairSandbox(env, tools);
+
+    const calls = vi.mocked(tools.run).mock.calls;
+    expect(calls[0]?.[1]).toEqual(["sandbox", "list", "--names"]);
+    expect(calls[1]?.[1]).toEqual(["sandbox", "delete", "advisor-repair-12345-1"]);
+    expect(calls[2]?.[1]).toEqual(
+      expect.arrayContaining(["sandbox", "create", "--name", "advisor-repair-12345-2"]),
+    );
+    expect(JSON.parse(fs.readFileSync(receiptFile, "utf8"))).toEqual({
+      version: 1,
+      sandboxName: "advisor-repair-12345-1",
+      outcome: "success",
+      error: null,
     });
   });
 

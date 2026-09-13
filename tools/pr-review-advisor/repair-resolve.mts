@@ -52,6 +52,31 @@ export type AdvisorRepairCleanupReceipt = {
   error: string | null;
 };
 
+function writeCleanupReceipt(
+  receiptFile: string,
+  receipt: AdvisorRepairCleanupReceipt,
+): AdvisorRepairCleanupReceipt {
+  writeFileSync(receiptFile, `${JSON.stringify(receipt)}\n`, { flag: "wx", mode: 0o600 });
+  return receipt;
+}
+
+function advisorRepairSandboxIdentity(env: NodeJS.ProcessEnv): {
+  current: string;
+  previous: string | null;
+} {
+  const runId = required(env.GITHUB_RUN_ID, "GITHUB_RUN_ID");
+  const attemptText = required(env.GITHUB_RUN_ATTEMPT, "GITHUB_RUN_ATTEMPT");
+  if (!/^[1-9]\d*$/u.test(runId) || !/^[1-9]\d*$/u.test(attemptText))
+    throw new RepairError("Advisor repair run identity is invalid");
+  const attempt = Number(attemptText);
+  if (!Number.isSafeInteger(attempt))
+    throw new RepairError("Advisor repair run attempt is invalid");
+  return {
+    current: `advisor-repair-${runId}-${attempt}`,
+    previous: attempt === 1 ? null : `advisor-repair-${runId}-${attempt - 1}`,
+  };
+}
+
 const REPAIR_COMMAND_PREFIX = [
   "/usr/bin/node",
   "/usr/lib/node_modules/@earendil-works/pi-coding-agent/dist/cli.js",
@@ -181,6 +206,34 @@ export function createAdvisorRepairSandbox(
   );
 }
 
+export function reconcilePreviousAdvisorRepairSandbox(
+  env: NodeJS.ProcessEnv,
+  receiptFile: string,
+  tools: OpenShellTools = defaultOpenShellTools,
+): AdvisorRepairCleanupReceipt | null {
+  const identity = advisorRepairSandboxIdentity(env);
+  if (required(env.SANDBOX_NAME, "SANDBOX_NAME") !== identity.current)
+    throw new RepairError("Advisor repair sandbox identity does not match the workflow run");
+  if (identity.previous === null) return null;
+  try {
+    deleteOpenShellSandbox(env, identity.previous, tools);
+    return writeCleanupReceipt(receiptFile, {
+      version: 1,
+      sandboxName: identity.previous,
+      outcome: "success",
+      error: null,
+    });
+  } catch (error) {
+    writeCleanupReceipt(receiptFile, {
+      version: 1,
+      sandboxName: identity.previous,
+      outcome: "failure",
+      error: sanitizeDiagnostic(error),
+    });
+    throw error;
+  }
+}
+
 export function runAdvisorRepairTask(
   env: NodeJS.ProcessEnv,
   tools: OpenShellTools = defaultOpenShellTools,
@@ -236,11 +289,10 @@ export function deleteAdvisorRepairSandbox(
       outcome: "failure",
       error: sanitizeDiagnostic(error),
     };
-    writeFileSync(receiptFile, `${JSON.stringify(receipt)}\n`, { flag: "wx", mode: 0o600 });
+    writeCleanupReceipt(receiptFile, receipt);
     throw error;
   }
-  writeFileSync(receiptFile, `${JSON.stringify(receipt)}\n`, { flag: "wx", mode: 0o600 });
-  return receipt;
+  return writeCleanupReceipt(receiptFile, receipt);
 }
 
 function regularFileInventory(root: string): Map<string, string> {
@@ -386,6 +438,13 @@ async function main(): Promise<void> {
       return;
     case "create":
       createAdvisorRepairSandbox(process.env);
+      return;
+    case "reconcile":
+      reconcilePreviousAdvisorRepairSandbox(
+        process.env,
+        required(process.env.RECONCILIATION_RECEIPT_FILE, "RECONCILIATION_RECEIPT_FILE"),
+        defaultOpenShellTools,
+      );
       return;
     case "run":
       runAdvisorRepairTask(process.env);

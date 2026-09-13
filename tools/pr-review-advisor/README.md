@@ -154,11 +154,13 @@ without creating another repair attempt.
 
 The repair path retains bounded proposal, validation, publication, generated-head, and diagnostic
 artifacts. The redacted audit receipt preserves the primary resolver failure stage and separately
-records the sanitized cleanup outcome and run-named sandbox identity, so cleanup failure does not
-hide the original failure. The workflow fails visibly when it cannot write or upload that receipt.
-The resolver runs on an ephemeral GitHub-hosted `ubuntu-24.04` runner: its `always()` step attempts
-to delete the run-named sandbox after ordinary failures, while cancellation or job timeout retires
-the runner-local gateway and sandbox with the runner. Moving this job to a persistent or self-hosted
+records the sanitized cleanup outcome and run-attempt-named sandbox identity, so cleanup failure
+does not hide the original failure. Before a retry creates its sandbox, a bounded reconciliation
+step deletes only the prior attempt's deterministic owned sandbox and records its sanitized outcome.
+The workflow fails visibly when it cannot write or upload that receipt. The resolver runs on an
+ephemeral GitHub-hosted `ubuntu-24.04` runner: its `always()` step attempts to delete the current
+run-attempt-named sandbox after ordinary failures, while cancellation or job timeout retires the
+runner-local gateway and sandbox with the runner. Moving this job to a persistent or self-hosted
 runner requires a separate external reconciliation design.
 
 Automatic `workflow_run` analysis jobs remain advisory-only and read-only. The advisory-comment
