@@ -138,7 +138,8 @@ function Invoke-PersonalTraceAnalysis([string]$Directory){
    @{name='context-switches';args=@('cswitch','-process','-thread')},
    @{name='cpu-disk';args=@('cpudisk')},
    @{name='file-names';args=@('filename')},
-   @{name='disk-io';args=@('diskio','-summary')}
+   @{name='disk-io';args=@('diskio','-summary')},
+   @{name='classic-process-events';args=@('dumper','-provider','{3d6fa8d0-fe05-11d0-9dda-00c04fd7ba7c}','-add_fieldnames')}
   )
   foreach($action in $actions){
    if(@($record.actions|Where-Object {$_.started -and (-not $_.closed -or -not $_.captureClosed)}).Count){throw 'An analysis child or its pipe capture has unconfirmed closure; no next action may start.'}
