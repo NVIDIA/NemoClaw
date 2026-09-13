@@ -51,22 +51,33 @@ function receipt(createdAt = NOW, packageLock: string | Buffer = inputs.packageL
   });
 }
 
+const reviewedConfig = {
+  lockedGraphs: [
+    {
+      id: inputs.graphId,
+      integrity: "sha512-primary",
+      label: "mcporter primary",
+      lockSha256: "a".repeat(64),
+      packageSpec: "mcporter@1.0.0",
+      replacement: {
+        integrity: "sha512-replacement",
+        label: "mcporter replacement",
+        lockSha256: "b".repeat(64),
+        packageSpec: "mcporter@1.0.1",
+        tarballUrl: "https://registry.npmjs.org/mcporter/-/mcporter-1.0.1.tgz",
+      },
+      tarballUrl: "https://registry.npmjs.org/mcporter/-/mcporter-1.0.0.tgz",
+    },
+  ],
+};
+
+function reviewedDigests(config: unknown): readonly string[] {
+  return reviewedLockedGraphSha256s(JSON.stringify(config), inputs.graphId);
+}
+
 describe("npm audit receipt", () => {
   it("accepts only lock digests reviewed for the selected graph", () => {
-    expect(
-      reviewedLockedGraphSha256s(
-        JSON.stringify({
-          lockedGraphs: [
-            {
-              id: inputs.graphId,
-              lockSha256: "a".repeat(64),
-              replacement: { lockSha256: "b".repeat(64) },
-            },
-          ],
-        }),
-        inputs.graphId,
-      ),
-    ).toEqual(["a".repeat(64), "b".repeat(64)]);
+    expect(reviewedDigests(reviewedConfig)).toEqual(["a".repeat(64), "b".repeat(64)]);
 
     const unapprovedLock = "unapproved lock";
     expect(() =>
@@ -75,6 +86,30 @@ describe("npm audit receipt", () => {
         packageLock: unapprovedLock,
       }),
     ).toThrow(/not a reviewed lock digest/);
+  });
+
+  it.each([
+    ["a missing field", { ...reviewedConfig.lockedGraphs[0]!.replacement, label: "" }],
+    [
+      "a duplicate package specification",
+      {
+        ...reviewedConfig.lockedGraphs[0]!.replacement,
+        packageSpec: reviewedConfig.lockedGraphs[0]!.packageSpec,
+      },
+    ],
+    [
+      "a different package name",
+      {
+        ...reviewedConfig.lockedGraphs[0]!.replacement,
+        packageSpec: "different-package@1.0.1",
+      },
+    ],
+  ])("rejects a replacement identity with %s", (_case, replacement) => {
+    expect(() =>
+      reviewedDigests({
+        lockedGraphs: [{ ...reviewedConfig.lockedGraphs[0], replacement }],
+      }),
+    ).toThrow();
   });
 
   it("canonically binds all receipt inputs and verifies a fresh passing result", () => {
@@ -259,7 +294,16 @@ describe("npm audit receipt", () => {
           path.join(root, "reviewed-npm-audit.json"),
           JSON.stringify({
             ...reviewedNpmIdentity,
-            lockedGraphs: [{ id: inputs.graphId, lockSha256: sha256(inputs.packageLock) }],
+            lockedGraphs: [
+              {
+                id: inputs.graphId,
+                integrity: "sha512-fixture",
+                label: "mcporter fixture",
+                lockSha256: sha256(inputs.packageLock),
+                packageSpec: "mcporter@1.0.0",
+                tarballUrl: "https://registry.npmjs.org/mcporter/-/mcporter-1.0.0.tgz",
+              },
+            ],
           }),
         );
         const auditReceipt = legacy

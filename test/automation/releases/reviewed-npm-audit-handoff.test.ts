@@ -166,7 +166,11 @@ describe("npm audit handoff", () => {
           lockedGraphs: [
             {
               id: "temporary-graph",
+              integrity: "sha512-fixture",
+              label: "temporary graph fixture",
               lockSha256: createHash("sha256").update(packageLock).digest("hex"),
+              packageSpec: "temporary-graph@1.0.0",
+              tarballUrl: "https://registry.npmjs.org/temporary-graph/-/temporary-graph-1.0.0.tgz",
             },
           ],
         }),
@@ -247,7 +251,11 @@ describe("npm audit handoff", () => {
           lockedGraphs: [
             {
               id: "temporary-graph",
+              integrity: "sha512-fixture",
+              label: "temporary graph fixture",
               lockSha256: createHash("sha256").update(packageLock).digest("hex"),
+              packageSpec: "temporary-graph@1.0.0",
+              tarballUrl: "https://registry.npmjs.org/temporary-graph/-/temporary-graph-1.0.0.tgz",
             },
           ],
         }),

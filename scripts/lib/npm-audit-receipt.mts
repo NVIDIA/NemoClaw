@@ -25,6 +25,8 @@ export const RECEIPT_LIFETIME_MS = 12 * 60 * 60 * 1000 - 1;
 export const MAX_FUTURE_SKEW_MS = 5 * 60 * 1000;
 const SEVERITIES = new Set(["info", "low", "moderate", "high", "critical"]);
 const SHA256 = /^[0-9a-f]{64}$/;
+const EXACT_NPM_PACKAGE_SPEC =
+  /^(?:@[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*|[a-z0-9][a-z0-9._-]*)@[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$/;
 const RECEIPT_KEYS = [
   "acceptedAdvisoryIds",
   "argv",
@@ -92,6 +94,26 @@ function exactKeys(
   }
 }
 
+function reviewedLockedGraphIdentity(value: Record<string, unknown>, graphId: string) {
+  const { integrity, label, lockSha256, packageSpec, tarballUrl } = value;
+  if (
+    typeof integrity !== "string" ||
+    integrity.length === 0 ||
+    typeof label !== "string" ||
+    label.length === 0 ||
+    typeof lockSha256 !== "string" ||
+    !SHA256.test(lockSha256) ||
+    typeof packageSpec !== "string" ||
+    !EXACT_NPM_PACKAGE_SPEC.test(packageSpec) ||
+    typeof tarballUrl !== "string" ||
+    tarballUrl.length === 0
+  ) {
+    throw new Error(`npm audit configuration has an invalid identity for ${graphId}`);
+  }
+  const name = packageSpec.slice(0, packageSpec.lastIndexOf("@"));
+  return { lockSha256, name, packageSpec };
+}
+
 export function reviewedLockedGraphSha256s(contents: string, graphId: string): readonly string[] {
   let parsed: unknown;
   try {
@@ -118,24 +140,23 @@ export function reviewedLockedGraphSha256s(contents: string, graphId: string): r
     throw new Error(`npm audit configuration must contain one reviewed graph for ${graphId}`);
   }
   const graph = matches[0]!;
+  const primary = reviewedLockedGraphIdentity(graph, graphId);
   const replacement = graph.replacement;
   if (
     replacement !== undefined &&
     (typeof replacement !== "object" || replacement === null || Array.isArray(replacement))
   ) {
-    throw new Error(`npm audit configuration has invalid reviewed lock digests for ${graphId}`);
+    throw new Error(`npm audit configuration has an invalid replacement for ${graphId}`);
   }
-  const digests = [
-    graph.lockSha256,
-    ...(replacement === undefined ? [] : [(replacement as Record<string, unknown>).lockSha256]),
-  ];
-  if (
-    digests.some((digest) => typeof digest !== "string" || !SHA256.test(digest)) ||
-    new Set(digests).size !== digests.length
-  ) {
-    throw new Error(`npm audit configuration has invalid reviewed lock digests for ${graphId}`);
+  if (replacement === undefined) return [primary.lockSha256];
+  const next = reviewedLockedGraphIdentity(replacement as Record<string, unknown>, graphId);
+  if (next.name !== primary.name || next.packageSpec === primary.packageSpec) {
+    throw new Error(`npm audit configuration has an invalid replacement for ${graphId}`);
   }
-  return digests as string[];
+  if (next.lockSha256 === primary.lockSha256) {
+    throw new Error(`npm audit configuration has duplicate reviewed lock digests for ${graphId}`);
+  }
+  return [primary.lockSha256, next.lockSha256];
 }
 
 function stringArray(value: unknown, label: string): readonly string[] {
