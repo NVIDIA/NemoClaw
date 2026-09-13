@@ -40,8 +40,17 @@ PREVIOUS_ADAPTER_SHA256 = (
 UPGRADED_ADAPTER_SHA256 = (
     "58a55abda6045e4919da5e56042d21768e72bab3be1e7444a4f65eb850941f65"
 )
+CURRENT_ADAPTER_SHA256 = (
+    "53f5f98f97e3dce1f1497835f9ddc57a666e89b3c0260e96925b4b2b5c11ff53"
+)
 PREVIOUS_MARKER_SHA256 = (
     "659227b44a6a75ac8436c995ab5b8e719b2ad06f5116c49f19032a14b0b09136"
+)
+EDGE_PREVIOUS_ADAPTER_SHA256 = (
+    "58a55abda6045e4919da5e56042d21768e72bab3be1e7444a4f65eb850941f65"
+)
+EDGE_PREVIOUS_MARKER_SHA256 = (
+    "5bfc3ac32e7f06dd99be8024a05d407049e1cd3802858ebd41d7134bf500f411"
 )
 UPGRADE_HOOK_PATHS = (
     "hermes-agent/.hermes-runtime/python/cpython-3.11.16-windows-aarch64-none/Lib/site-packages/"
@@ -58,6 +67,17 @@ def adapter_upgrade_record():
         "previousMarkerSha256": PREVIOUS_MARKER_SHA256,
         "beforeSha256": PREVIOUS_ADAPTER_SHA256,
         "afterSha256": UPGRADED_ADAPTER_SHA256,
+        "hookPaths": list(UPGRADE_HOOK_PATHS),
+    }
+
+
+def edge_adapter_upgrade_record():
+    return {
+        "schemaVersion": 1,
+        "baseCandidateSource": "8d78fe458e9268a7afdc8ed06b85c23306452036",
+        "previousMarkerSha256": EDGE_PREVIOUS_MARKER_SHA256,
+        "beforeSha256": EDGE_PREVIOUS_ADAPTER_SHA256,
+        "afterSha256": CURRENT_ADAPTER_SHA256,
         "hookPaths": list(UPGRADE_HOOK_PATHS),
     }
 
@@ -218,6 +238,7 @@ def prepare_plan(
     browser_use_outer_inventory: dict | None = None,
     *,
     ci_upgrade_startup_adapter: bool = False,
+    ci_upgrade_edge_adapter: bool = False,
     ci_browser_use_adapter: dict | None = None,
 ) -> tuple[dict[Path, bytes], dict]:
     root = runtime_root.resolve(strict=True)
@@ -234,12 +255,13 @@ def prepare_plan(
     prepared = None
     upgrade = None
     marker_path = root / MARKER
-    if ci_upgrade_startup_adapter and (
+    if (ci_upgrade_startup_adapter or ci_upgrade_edge_adapter) and (
         sys.platform != "win32"
         or os.environ.get("GITHUB_ACTIONS") != "true"
         or target_root != root
         or environments != ["hermes-agent/venv", "tools/browser-use"]
         or not marker_path.is_file()
+        or (ci_upgrade_startup_adapter and ci_upgrade_edge_adapter)
     ):
         raise AdaptationError(
             "Startup adapter upgrade requires the complete CI copy before relocation."
@@ -256,6 +278,17 @@ def prepare_plan(
                     "Startup adapter upgrade does not match the pinned old/new candidate bytes."
                 )
             upgrade = adapter_upgrade_record()
+        if ci_upgrade_edge_adapter:
+            if (
+                hashlib.sha256(marker_bytes).hexdigest()
+                != EDGE_PREVIOUS_MARKER_SHA256
+                or hashlib.sha256(hook_bytes).hexdigest()
+                != CURRENT_ADAPTER_SHA256
+            ):
+                raise AdaptationError(
+                    "Edge adapter upgrade does not match the pinned old/new candidate bytes."
+                )
+            upgrade = edge_adapter_upgrade_record()
         if (
             type(prepared.get("schemaVersion")) is not int
             or prepared.get("schemaVersion") != 1
@@ -264,8 +297,8 @@ def prepare_plan(
             or prepared.get("layoutVersion") != 1
             or prepared.get("startupAdapterSha256")
             != (
-                PREVIOUS_ADAPTER_SHA256
-                if upgrade
+                upgrade["beforeSha256"]
+                if upgrade is not None
                 else hashlib.sha256(hook_bytes).hexdigest()
             )
             or prepared.get("environments") != environments
@@ -289,7 +322,8 @@ def prepare_plan(
             )
         if (
             "startupAdapterUpgrade" in prepared
-            and prepared["startupAdapterUpgrade"] != adapter_upgrade_record()
+            and prepared["startupAdapterUpgrade"]
+            not in (adapter_upgrade_record(), edge_adapter_upgrade_record())
         ):
             raise AdaptationError(
                 "The recorded startup adapter upgrade provenance changed."
@@ -603,7 +637,7 @@ def prepare_plan(
                     upgrade is not None
                     and name == HOOK
                     and path.relative_to(root).as_posix() in UPGRADE_HOOK_PATHS
-                    and hashlib.sha256(before).hexdigest() == PREVIOUS_ADAPTER_SHA256
+                    and hashlib.sha256(before).hexdigest() == upgrade["beforeSha256"]
                 )
                 if before != data and not reviewed_upgrade:
                     raise AdaptationError(

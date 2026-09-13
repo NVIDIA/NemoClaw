@@ -129,6 +129,9 @@ class CanonicalAdapterUpgrade(unittest.TestCase):
                 metadata, "UPGRADED_ADAPTER_SHA256", digest(self.new_hook)
             )
         )
+        self.stack.enter_context(
+            mock.patch.object(metadata, "CURRENT_ADAPTER_SHA256", digest(self.new_hook))
+        )
         self.stack.enter_context(mock.patch.object(metadata.sys, "platform", "win32"))
         self.stack.enter_context(
             mock.patch.dict(os.environ, {"GITHUB_ACTIONS": "true"})
@@ -232,6 +235,16 @@ class CanonicalAdapterUpgrade(unittest.TestCase):
         self.stack.enter_context(
             mock.patch.object(metadata, "PREVIOUS_MARKER_SHA256", digest(marker_bytes))
         )
+        self.stack.enter_context(
+            mock.patch.object(
+                metadata, "EDGE_PREVIOUS_ADAPTER_SHA256", digest(self.old_hook)
+            )
+        )
+        self.stack.enter_context(
+            mock.patch.object(
+                metadata, "EDGE_PREVIOUS_MARKER_SHA256", digest(marker_bytes)
+            )
+        )
 
     def snapshot(self):
         return {
@@ -304,6 +317,20 @@ class CanonicalAdapterUpgrade(unittest.TestCase):
         )
         with self.assertRaisesRegex(metadata.AdaptationError, "pinned old/new"):
             self.plan(ci_upgrade_startup_adapter=True)
+
+    def test_edge_candidate_has_one_exact_upgrade_then_relocates(self):
+        changes, report = self.plan(ci_upgrade_edge_adapter=True)
+        self.assertTrue(report["startupAdapterUpgradeApplied"])
+        self.assertEqual(
+            report["startupAdapterUpgrade"], metadata.edge_adapter_upgrade_record()
+        )
+        metadata.apply_plan(changes)
+        later, receipt = self.plan(target=self.directory / "installed")
+        self.assertFalse(receipt["startupAdapterUpgradeApplied"])
+        self.assertEqual(
+            receipt["startupAdapterUpgrade"], metadata.edge_adapter_upgrade_record()
+        )
+        self.assertIn(self.root / metadata.MARKER, later)
 
     def test_installed_browser_companion_preserves_native_order_and_compiles_in_ci(
         self,

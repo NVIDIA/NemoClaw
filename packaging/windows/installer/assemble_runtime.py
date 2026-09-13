@@ -516,7 +516,7 @@ def hermes_final_path_plan(module, root, target, browser_use_adapter):
         root,
         root,
         ["hermes-agent/venv", "tools/browser-use"],
-        ci_upgrade_startup_adapter=True,
+        ci_upgrade_edge_adapter=True,
     )
     module.apply_plan(upgrade)
     changes, receipt = module.prepare_plan(

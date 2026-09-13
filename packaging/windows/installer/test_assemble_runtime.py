@@ -38,7 +38,7 @@ class RuntimeAssembly(unittest.TestCase):
         browser = {"bytes": 10, "sha256": "a" * 64}
         changes, _ = assembler.hermes_final_path_plan(Module, root, target, browser)
         self.assertEqual(calls[0][2], root)
-        self.assertEqual(calls[0][4], {"ci_upgrade_startup_adapter": True})
+        self.assertEqual(calls[0][4], {"ci_upgrade_edge_adapter": True})
         self.assertEqual(calls[1][0], "apply")
         self.assertEqual(calls[2][2], Path(str(target)))
         self.assertEqual(calls[2][4], {"ci_browser_use_adapter": browser})
