@@ -157,25 +157,26 @@ describe("PR E2E workflow dispatch reconciliation", () => {
     expect(api).not.toHaveBeenCalled();
   });
 
-  it.each([
-    400, 401, 403, 404, 409, 422,
-  ])("treats HTTP %i as a definitive rejection without polling", async (status) => {
-    const rejection = new GitHubApiError({
-      kind: "http",
-      method: "POST",
-      apiPath: `repos/${REPOSITORY}/actions/workflows/e2e.yaml/dispatches`,
-      status,
-      responseText: "rejected",
-    });
-    const dispatch = vi.fn().mockRejectedValue(rejection);
-    const { deps, api } = reconciliationDeps(() => inventory([]));
+  it.each([400, 401, 403, 404, 409, 422])(
+    "treats HTTP %i as a definitive rejection without polling",
+    async (status) => {
+      const rejection = new GitHubApiError({
+        kind: "http",
+        method: "POST",
+        apiPath: `repos/${REPOSITORY}/actions/workflows/e2e.yaml/dispatches`,
+        status,
+        responseText: "rejected",
+      });
+      const dispatch = vi.fn().mockRejectedValue(rejection);
+      const { deps, api } = reconciliationDeps(() => inventory([]));
 
-    await expect(dispatchWorkflowWithReconciliation(dispatchOptions(dispatch), deps)).rejects.toBe(
-      rejection,
-    );
-    expect(dispatch).toHaveBeenCalledOnce();
-    expect(api).not.toHaveBeenCalled();
-  });
+      await expect(
+        dispatchWorkflowWithReconciliation(dispatchOptions(dispatch), deps),
+      ).rejects.toBe(rejection);
+      expect(dispatch).toHaveBeenCalledOnce();
+      expect(api).not.toHaveBeenCalled();
+    },
+  );
 
   it("adopts one exact child after a server error and a full settling window", async () => {
     vi.spyOn(console, "warn").mockImplementation(() => undefined);

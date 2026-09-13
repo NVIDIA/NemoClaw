@@ -32,6 +32,7 @@ import {
   type PodmanPublishedResumeTiming,
   type PodmanInferenceRedactor,
 } from "./podman-host-local-inference";
+import { observeNativePodmanGatewayReadiness } from "./podman-gateway-readiness";
 import type {
   PodmanInferenceAuthorityReceipt,
   PodmanInferenceQualificationOptions,
@@ -61,6 +62,7 @@ import {
   resolveNativePodmanSocketPath,
 } from "./podman-runtime-surfaces";
 import { resolvePodmanStateRoot } from "./podman-state-root";
+import { cleanupOwnedContainer, ownedContainerRunArguments } from "./owned-container-resource";
 
 export interface PodmanRuntimeProviderEngines {
   readonly hostDoctor: PodmanContainerEngine;
@@ -245,6 +247,27 @@ export function createPodmanRuntimeProviderBundle(
   const preflight = options.preflight ?? {};
   const environment = Object.freeze({ ...(options.environment ?? process.env) });
   const deferred = "This operation is intentionally deferred to a later Podman slice.";
+  const projectGatewayHostRuntime = (
+    input: Parameters<RuntimeProviderBundle["gateway"]["prepareHostRuntime"]>[0],
+    hostPreparation?: NativePodmanGatewayHostPreparationDeps,
+  ) => {
+    if (
+      options.gatewaySocketPath !== undefined &&
+      input.socketPath !== undefined &&
+      resolveNativePodmanSocketPath(input.environment, input.socketPath) !==
+        options.gatewaySocketPath
+    ) {
+      throw new Error("Native Podman gateway socket differs from its bundle authority.");
+    }
+    return prepareNativePodmanGatewayHostRuntime(
+      {
+        ...input,
+        socketPath: options.gatewaySocketPath ?? input.socketPath,
+      },
+      gatewayInspection,
+      hostPreparation,
+    );
+  };
 
   return {
     identity: {
@@ -279,24 +302,10 @@ export function createPodmanRuntimeProviderBundle(
       launcher: "nemoclaw",
       inspectLegacyContainer: false,
       ownsHostReadiness: true,
-      prepareHostRuntime: (input) => {
-        if (
-          options.gatewaySocketPath !== undefined &&
-          input.socketPath !== undefined &&
-          resolveNativePodmanSocketPath(input.environment, input.socketPath) !==
-            options.gatewaySocketPath
-        ) {
-          throw new Error("Native Podman gateway socket differs from its bundle authority.");
-        }
-        return prepareNativePodmanGatewayHostRuntime(
-          {
-            ...input,
-            socketPath: options.gatewaySocketPath ?? input.socketPath,
-          },
-          gatewayInspection,
-          options.gatewayHostPreparation,
-        );
-      },
+      observeOwnedGateway: observeNativePodmanGatewayReadiness,
+      observeHostRuntime: (input) => projectGatewayHostRuntime(input),
+      prepareHostRuntime: (input) =>
+        projectGatewayHostRuntime(input, options.gatewayHostPreparation),
     },
     workload: {
       providerId,
@@ -460,6 +469,46 @@ export function createPodmanRuntimeProviderBundle(
         }
         return engine.capture(args, timeoutMs);
       },
+      nvidiaContainer: inferenceEngine
+        ? {
+            capture: (operation, input, timeoutMs) => {
+              const engine = containerEngineOperations.get(operation);
+              if (!engine) {
+                throw new Error(
+                  `Podman provider does not register the '${operation}' engine operation.`,
+                );
+              }
+              return engine.capture(
+                [
+                  "run",
+                  "--rm",
+                  ...ownedContainerRunArguments(input.resource),
+                  "--device",
+                  "nvidia.com/gpu=all",
+                  "--entrypoint",
+                  input.entrypoint,
+                  input.image,
+                  ...input.command,
+                ],
+                timeoutMs,
+              );
+            },
+            cleanup: (operation, resource, options) => {
+              const engine = containerEngineOperations.get(operation);
+              if (!engine) {
+                throw new Error(
+                  `Podman provider does not register the '${operation}' engine operation.`,
+                );
+              }
+              return cleanupOwnedContainer(
+                resource,
+                `^${resource.name}$`,
+                (args, timeout) => engine.capture(args, timeout),
+                options,
+              );
+            },
+          }
+        : undefined,
     },
   };
 }

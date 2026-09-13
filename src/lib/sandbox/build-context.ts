@@ -128,6 +128,7 @@ function stageMcpToolDiscoveryRuntime(rootDir: string, buildCtx: string): void {
 
 function stageManagedStartupRuntimeSources(rootDir: string, buildCtx: string): void {
   for (const relativePath of [
+    "extra-agents-validation.ts",
     path.join("core", "json-types.ts"),
     path.join("core", "ports.ts"),
     path.join("security", "credential-hash.ts"),
@@ -192,6 +193,10 @@ function stageLegacySandboxBuildContext(
   fs.copyFileSync(
     path.join(rootDir, "src", "lib", "tool-disclosure.ts"),
     path.join(buildCtx, "src", "lib", "tool-disclosure.ts"),
+  );
+  fs.copyFileSync(
+    path.join(rootDir, "src", "lib", "providerless-inference.ts"),
+    path.join(buildCtx, "src", "lib", "providerless-inference.ts"),
   );
   stageManagedStartupRuntimeSources(rootDir, buildCtx);
   normalizeReadModesForDockerCopy(path.join(buildCtx, "src"));
@@ -347,10 +352,6 @@ function stageOptimizedSandboxBuildContext(
     path.join(stagedScriptsDir, "lib", "openclaw_device_approval_policy.py"),
   );
   fs.copyFileSync(
-    path.join(rootDir, "scripts", "lib", "clean_runtime_shell_env_shim.py"),
-    path.join(stagedScriptsDir, "lib", "clean_runtime_shell_env_shim.py"),
-  );
-  fs.copyFileSync(
     path.join(rootDir, "scripts", "lib", "normalize_mutable_config_perms.py"),
     path.join(stagedScriptsDir, "lib", "normalize_mutable_config_perms.py"),
   );
@@ -367,6 +368,10 @@ function stageOptimizedSandboxBuildContext(
   fs.copyFileSync(
     path.join(rootDir, "src", "lib", "tool-disclosure.ts"),
     path.join(buildCtx, "src", "lib", "tool-disclosure.ts"),
+  );
+  fs.copyFileSync(
+    path.join(rootDir, "src", "lib", "providerless-inference.ts"),
+    path.join(buildCtx, "src", "lib", "providerless-inference.ts"),
   );
   stageManagedStartupRuntimeSources(rootDir, buildCtx);
   normalizeReadModesForDockerCopy(path.join(buildCtx, "src"));
@@ -454,12 +459,12 @@ function stageOptimizedSandboxBuildContext(
     path.join(stagedScriptsDir, "lib", "reviewed-npm-audit.mts"),
   );
   fs.copyFileSync(
-    path.join(rootDir, "scripts", "lib", "npm-audit-receipt.mts"),
-    path.join(stagedScriptsDir, "lib", "npm-audit-receipt.mts"),
-  );
-  fs.copyFileSync(
     path.join(rootDir, "scripts", "lib", "openclaw-npm-remediation.mts"),
     path.join(stagedScriptsDir, "lib", "openclaw-npm-remediation.mts"),
+  );
+  fs.copyFileSync(
+    path.join(rootDir, "scripts", "lib", "verify-mcporter-audit.sh"),
+    path.join(stagedScriptsDir, "lib", "verify-mcporter-audit.sh"),
   );
   normalizeReadModesForDockerCopy(stagedScriptsDir);
 

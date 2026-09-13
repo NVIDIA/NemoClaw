@@ -53,6 +53,7 @@ export const removedImmutabilityMigration = requireDist(
   "../../state/migrations/removed-immutability.js",
 );
 export const openshellRuntime = requireDist("../../adapters/openshell/runtime.js");
+export const providerCommand = requireDist("../../adapters/openshell/provider-command.js");
 export const policies = requireDist("../../policy/index.js");
 export const policyState = requireDist("../../adapters/openshell/policy-state.js");
 export const policyGet = requireDist("./policy-get.js");
@@ -70,6 +71,7 @@ export const rebuildPreparedImageContext = requireDist("./rebuild-prepared-image
 export const rebuildRoutePreflight = requireDist("./rebuild-preflight-guards.js");
 export const rebuildUsageNotice = requireDist("./rebuild-usage-notice.js");
 export const registry = requireDist("../../state/registry.js");
+export const crossPortRegistry = requireDist("../../state/registry/cross-port.js");
 export const registryPersistence = requireDist("../../state/registry/persistence.js");
 export const resolve = requireDist("../../adapters/openshell/resolve.js");
 export const sandboxList = requireDist("../../openshell-sandbox-list.js");
@@ -168,6 +170,7 @@ export function installRebuildFlowTestHooks(options: RebuildFlowTestHookOptions 
   });
   afterEach(() => {
     vi.restoreAllMocks();
+    providerCommand.setProviderCommandRuntimeHooksForTest({});
     purgeRebuildModule();
     for (const dir of harnessTempDirs.splice(0)) {
       fs.rmSync(dir, { recursive: true, force: true });

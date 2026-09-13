@@ -132,7 +132,12 @@ function publicationDeps(
     },
     gatewayHealth: async () => true,
     forwardsHealthy: () => true,
-    inferenceProbe: () => ({ healthy: true, broken: false, httpStatus: 200, detail: "OK 200" }),
+    inferenceProbe: async () => ({
+      healthy: true,
+      broken: false,
+      httpStatus: 200,
+      detail: "OK 200",
+    }),
     classifyPortableLifecycleReceipt: () => ({ kind: "absent" }),
     readLease: () => ({ kind: "missing" }),
     fenceLease: fence,
@@ -260,7 +265,7 @@ describe("launch readiness observation timing", () => {
       },
       gatewayHealth: async () => true,
       forwardsHealthy: () => true,
-      inferenceProbe: () => ({
+      inferenceProbe: async () => ({
         healthy: inferenceHealthy,
         broken: false,
         httpStatus: inferenceHealthy ? 200 : 503,

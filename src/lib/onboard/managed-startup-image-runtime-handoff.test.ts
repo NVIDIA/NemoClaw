@@ -390,9 +390,7 @@ describe("managed startup image runtime handoff and descriptor integrity", () =>
   });
 
   it("serializes the fixed Hermes paths into the validated supervisor environment", () => {
-    const mapped = mapManagedStartupProfileToAgentEnvironment(
-      managedStartupE2eProfile("hermes"),
-    );
+    const mapped = mapManagedStartupProfileToAgentEnvironment(managedStartupE2eProfile("hermes"));
     const script = serializeManagedStartupRuntimeEnvironment(
       mapped.runtimeEnvironment,
       false,

@@ -34,19 +34,19 @@ const onboardProviders = requireDist("../../onboard/providers.js") as {
     baseUrl: string | null,
     env: NodeJS.ProcessEnv,
     runOpenshell: typeof openshellRuntime.runOpenshell,
-  ): { ok: boolean; status?: number; message?: string };
+  ): Promise<{ ok: boolean; status?: number; message?: string }>;
 };
 
 type SetupResult = { done: true; result: unknown } | { done: false };
 
-function upsertLocalProvider(
+async function upsertLocalProvider(
   name: string,
   type: string,
   credentialEnv: string,
   baseUrl: string | null,
   env: NodeJS.ProcessEnv = {},
 ) {
-  return onboardProviders.upsertProvider(
+  return await onboardProviders.upsertProvider(
     name,
     type,
     credentialEnv,
@@ -174,7 +174,10 @@ describe("rebuild local-provider recreation", () => {
           : {
               status: args[0] === "provider" && args[1] === "get" ? 1 : 0,
               stdout: "",
-              stderr: "",
+              stderr:
+                args[0] === "provider" && args[1] === "get"
+                  ? `provider '${provider}' not found`
+                  : "",
             };
       });
       const liveSource = "Name: alpha\nId: sbx-alpha-source\nPhase: Ready\n";

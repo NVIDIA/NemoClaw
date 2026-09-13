@@ -185,7 +185,12 @@ describe("WeChat hook implementations", () => {
           log: (message) => logs.push(message),
           saveCredential: (key, value) => saved.push({ key, value }),
           runLogin: () =>
-            runWechatHostQrLogin({ fetch, renderQr: () => {}, log: () => {}, sleep: async () => {} }),
+            runWechatHostQrLogin({
+              fetch,
+              renderQr: () => {},
+              log: () => {},
+              sleep: async () => {},
+            }),
         }),
       },
     ]);

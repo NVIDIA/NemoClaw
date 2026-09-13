@@ -9,14 +9,13 @@ import {
   HERMES_PORTABLE_UNSUPPORTED_COMMAND_MESSAGE,
   HERMES_PORTABLE_UNSUPPORTED_DOCTOR_FIX_MESSAGE,
 } from "../onboard/experimental/portable-agent-lifecycle";
-import { hasHermesPortableReceiptCandidate } from "../onboard/experimental/hermes-portable-receipt";
 import { defaultPortableDemoStateDir } from "../onboard/experimental/portable-runtime-receipt-readiness";
 import { redactForLog } from "../security/redact";
 import {
   assertNoHermesPortableHostAuthority,
   withCurrentPortableHostFence,
 } from "../state/portable-uninstall-retirement";
-import { withMcpLifecycleLock } from "../state/mcp-lifecycle-lock";
+import { withSandboxLifecycleLock } from "../actions/sandbox/lifecycle/lock";
 import {
   enforceRemovedImmutabilityMigrationBoundary,
   reportRemovedImmutabilityUpgrade,
@@ -31,7 +30,7 @@ export type CommandExitResult = {
 
 export { HERMES_PORTABLE_UNSUPPORTED_COMMAND_MESSAGE };
 export { assertHermesPortableCommandUnavailable };
-export const withSandboxCommandLifecycleLock = withMcpLifecycleLock;
+export const withSandboxCommandLifecycleLock = withSandboxLifecycleLock;
 export { HERMES_PORTABLE_UNSUPPORTED_DOCTOR_FIX_MESSAGE };
 
 const REMOVED_IMMUTABILITY_REMEDIATION_COMMANDS = new Set([
@@ -142,22 +141,7 @@ export abstract class NemoClawCommand extends Command {
       }
       return super._run<T>();
     };
-    const runWithLifecycleFence = async () => {
-      return await withMcpLifecycleLock(sandboxName, runLocked);
-    };
-    if (
-      this.isProbeOnlyConnect(commandId) &&
-      hasHermesPortableReceiptCandidate(sandboxName, defaultPortableDemoStateDir(process.env))
-    ) {
-      return await withCurrentPortableHostFence(runWithLifecycleFence);
-    }
-    return await runWithLifecycleFence();
-  }
-
-  private isProbeOnlyConnect(commandId: string | undefined): boolean {
-    return (
-      commandId === "sandbox:connect" && this.lifecycleParserOutput?.flags["probe-only"] === true
-    );
+    return await withSandboxLifecycleLock(sandboxName, runLocked);
   }
 
   private isInteractiveConnect(commandId: string | undefined): boolean {
@@ -228,6 +212,11 @@ export abstract class NemoClawCommand extends Command {
     });
 
     return parsed;
+  }
+
+  protected override toErrorJson(error: unknown): unknown {
+    // Error.message is not enumerable, so retain it before JSON redaction.
+    return super.toErrorJson(error instanceof Error ? { ...error, message: error.message } : error);
   }
 
   protected logJson(json: unknown): void {

@@ -293,5 +293,4 @@ describe("deleteSandboxSession (hermes sandbox)", () => {
     expect(execSandboxMock).not.toHaveBeenCalled();
     expect(consoleErrorSpy.mock.calls.flat().join("\n")).toMatch(/session id/i);
   });
-
 });

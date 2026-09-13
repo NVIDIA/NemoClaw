@@ -79,6 +79,7 @@ const {
   isDeepSeekV4ProModel,
   isKimiK26Model,
   isReasoningOnlyLengthResponse,
+  resolveOnboardingProbeReplyBudget,
   STRICT_TOOL_PROBE_INITIAL_TOKENS,
   STRICT_TOOL_PROBE_RETRY_TOKEN_LADDER,
   strictToolProbeReasoningRetryMessage,
@@ -545,9 +546,7 @@ function probeChatCompletionsToolCalling(endpointUrl, model, apiKey, options = {
 
 // ── OpenAI-like probe ────────────────────────────────────────────
 function needsExtendedNvidiaEndpointValidationBudget(model) {
-  return (
-    vllmProbePolicyForModel(String(model || "")) === EXTENDED_NVIDIA_ENDPOINT_PROBE_POLICY
-  );
+  return vllmProbePolicyForModel(String(model || "")) === EXTENDED_NVIDIA_ENDPOINT_PROBE_POLICY;
 }
 
 function getChatCompletionsProbeTimingArgs(model, opts) {
@@ -575,6 +574,7 @@ export function getChatCompletionsProbeCurlArgs(opts: {
   pinnedAddresses?: readonly string[];
   validationTiming?: unknown;
   useNvidiaEndpointProbePayload?: boolean;
+  replyBudget?: number;
 }) {
   const {
     credentialArgs,
@@ -585,6 +585,7 @@ export function getChatCompletionsProbeCurlArgs(opts: {
     pinnedAddresses,
     validationTiming,
     useNvidiaEndpointProbePayload,
+    replyBudget,
   } = opts;
   const platformOptions = getProbeTimingOptions({
     ...(typeof isWslOverride === "boolean" ? { isWsl: isWslOverride } : {}),
@@ -600,7 +601,9 @@ export function getChatCompletionsProbeCurlArgs(opts: {
     "Content-Type: application/json",
     ...credSlice,
     "-d",
-    JSON.stringify(getChatCompletionsProbePayload(model, { useNvidiaEndpointProbePayload })),
+    JSON.stringify(
+      getChatCompletionsProbePayload(model, { useNvidiaEndpointProbePayload, replyBudget }),
+    ),
     url,
   ];
 }
@@ -615,6 +618,7 @@ function runChatCompletionsProbe({
   trustedPrivateCapability,
   validationTiming,
   useNvidiaEndpointProbePayload,
+  replyBudget,
   spawnSyncImpl,
 }) {
   const args = getChatCompletionsProbeCurlArgs({
@@ -625,6 +629,7 @@ function runChatCompletionsProbe({
     pinnedAddresses,
     validationTiming,
     useNvidiaEndpointProbePayload,
+    replyBudget,
   });
   const probeOpts = {
     timeoutMs: getProbeProcessTimeoutMs(args),
@@ -652,6 +657,7 @@ function runDoubledTimeoutChatCompletionsRetry({
   options,
   baseUrl,
   authConfig,
+  replyBudget,
 }) {
   const platformOptions = getProbeTimingOptions(options);
   const baseArgs = getChatCompletionsProbeTimingArgs(model, platformOptions);
@@ -671,6 +677,7 @@ function runDoubledTimeoutChatCompletionsRetry({
     JSON.stringify(
       getChatCompletionsProbePayload(model, {
         useNvidiaEndpointProbePayload: options.useNvidiaEndpointProbePayload,
+        replyBudget,
       }),
     ),
     `${baseUrl}/chat/completions`,
@@ -699,6 +706,7 @@ function runDoubledTimeoutChatCompletionsRetry({
 }
 
 function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
+  const replyBudget = resolveOnboardingProbeReplyBudget(options);
   if (isHijackedDockerInternalUrl(endpointUrl) && options.allowHostDockerInternal !== true) {
     return getHostDockerInternalProbeFailure();
   }
@@ -931,6 +939,7 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
               trustedPrivateCapability: options.trustedPrivateCapability,
               validationTiming,
               useNvidiaEndpointProbePayload: options.useNvidiaEndpointProbePayload,
+              replyBudget,
               spawnSyncImpl: options.spawnSyncImpl,
             }),
     };
@@ -1075,6 +1084,7 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
         options,
         baseUrl,
         authConfig,
+        replyBudget,
       });
       if (retryResult.ok) {
         return { ok: true, api: "openai-completions", label: "Chat Completions API" };
@@ -1131,7 +1141,12 @@ export async function probeOpenAiLikeEndpointOptimized(endpointUrl, model, apiKe
   const normalizedKey = apiKey ? normalizeCredentialValue(apiKey) : "";
   const baseUrl = String(endpointUrl).replace(/\/+$/, "");
   const validationTiming = resolveOpenAiLikeValidationTiming(baseUrl, options);
-  const sessionProbeOptions = validationTiming ? { ...options, validationTiming } : options;
+  const replyBudget = resolveOnboardingProbeReplyBudget(options);
+  const sessionProbeOptions = {
+    ...options,
+    ...(validationTiming ? { validationTiming } : {}),
+    ...(replyBudget !== undefined ? { replyBudget } : {}),
+  };
   const result = await probeOpenAiLikeEndpointWithValidationSession(
     endpointUrl,
     model,
@@ -1142,7 +1157,11 @@ export async function probeOpenAiLikeEndpointOptimized(endpointUrl, model, apiKe
       hasResponsesToolCall,
       hasChatCompletionsToolCall,
       hasChatCompletionsToolCallLeak,
-      getChatPayload: getChatCompletionsProbePayload,
+      getChatPayload: (probeModel) =>
+        getChatCompletionsProbePayload(probeModel, {
+          useNvidiaEndpointProbePayload: sessionProbeOptions.useNvidiaEndpointProbePayload,
+          replyBudget: sessionProbeOptions.replyBudget,
+        }),
       getResponsesTimeoutMs: (probeOptions) =>
         getCurlMaxTimeSeconds(getValidationProbeCurlArgs(getProbeTimingOptions(probeOptions))) *
         1000,
@@ -1224,7 +1243,15 @@ export function shouldSmokeOpenAiLikeOnboardRoute(
     return false;
   }
   const { REMOTE_PROVIDER_CONFIG } = require("../onboard/providers");
-  if (provider === "nvidia-nim" || provider === "nvidia-router") return true;
+  // NVIDIA Endpoints registers as OpenShell provider type "nvidia", which the
+  // providerType test below does not match, so nvidia-prod was the only
+  // OpenAI-completions remote provider whose onboarding never sent a Chat
+  // Completions request. A model that is in the NVIDIA Build catalog but not
+  // deployed for the account then onboarded clean and first failed at
+  // `status` with a bare HTTP 404 (#10879). Smoke it like its siblings.
+  if (provider === "nvidia-prod" || provider === "nvidia-nim" || provider === "nvidia-router") {
+    return true;
+  }
   return Object.values(REMOTE_PROVIDER_CONFIG).some(
     (entry) =>
       entry.providerName === provider &&
@@ -1270,6 +1297,7 @@ export async function verifyOnboardInferenceSmoke(options: any, dependencies: an
     useNvidiaEndpointProbePayload: usesNvidiaEndpointProbePayload(options.provider),
     pinnedAddresses: options.pinnedAddresses,
     trustedPrivateCapability: options.trustedPrivateCapability,
+    provider: options.provider,
   });
 
   if (probe.ok) {
@@ -1293,9 +1321,8 @@ export async function verifyOnboardInferenceSmoke(options: any, dependencies: an
   try {
     const teardownOrphanManagedGatewayOnAbort =
       dependencies.teardownOrphanManagedGatewayOnAbort ??
-      (
-        require("../onboard/gateway-destroy") as typeof import("../onboard/gateway-destroy")
-      ).teardownOrphanManagedGatewayOnAbort;
+      (require("../onboard/gateway-destroy") as typeof import("../onboard/gateway-destroy"))
+        .teardownOrphanManagedGatewayOnAbort;
     teardownOrphanManagedGatewayOnAbort();
   } catch (error) {
     // Helper never throws; this covers require/load failures only.

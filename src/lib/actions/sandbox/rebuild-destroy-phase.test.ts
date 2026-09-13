@@ -22,6 +22,7 @@ const mocks = vi.hoisted(() => ({
   reattachMcpAfterDeleteFailure: vi.fn(),
   removeSandboxRegistryEntryWithReceipt: vi.fn(() => null),
   waitUntil: vi.fn(),
+  waitUntilAsync: vi.fn(),
   warnUnpreservedUserManagedFiles: vi.fn(),
   runOpenshell: vi.fn(
     (
@@ -48,6 +49,7 @@ vi.mock("../../adapters/openshell/runtime", () => ({
 
 vi.mock("../../core/wait", () => ({
   waitUntil: mocks.waitUntil,
+  waitUntilAsync: mocks.waitUntilAsync,
 }));
 
 vi.mock("../../inference/nim", () => ({
@@ -200,6 +202,39 @@ describe("rebuild destroy phase", () => {
 
     expect(mocks.reattachMcpAfterDeleteFailure).toHaveBeenCalledOnce();
     expectNoSandboxDelete(mocks.runOpenshell);
+  });
+
+  it("refuses deletion when the registry target changes during asynchronous validation", async () => {
+    let finishValidation!: () => void;
+    const validateAtDeleteEdge = vi.fn(async () => {
+      await new Promise<void>((resolve) => {
+        finishValidation = resolve;
+      });
+      return { ok: true as const };
+    });
+    const journal = stubRecreateJournal();
+    const pending = runRebuildDestroyPhase({
+      sandboxName: "alpha",
+      sandboxEntry: { name: "alpha", agent: "openclaw" },
+      staleRecovery: false,
+      recreateJournal: journal,
+      backupManifest: null,
+      log: vi.fn(),
+      bail: (message): never => {
+        throw new Error(message);
+      },
+      validateAtDeleteEdge,
+      onDeleted: vi.fn(),
+    });
+    await vi.waitFor(() => expect(validateAtDeleteEdge).toHaveBeenCalledOnce());
+    mocks.getSandbox.mockReturnValue({ name: "alpha", agent: "openclaw", gatewayName: "other" });
+    finishValidation();
+    await expect(pending).rejects.toThrow(
+      "Sandbox delete target changed during rebuild preparation.",
+    );
+    expect(journal.beginDelete).not.toHaveBeenCalled();
+    expectNoSandboxDelete(mocks.runOpenshell);
+    expect(mocks.reattachMcpAfterDeleteFailure).toHaveBeenCalledOnce();
   });
 
   it("passes force=true to prepareMcpForRebuild when input.force is set (#7062)", async () => {
@@ -483,12 +518,7 @@ describe("rebuild destroy phase", () => {
     expect(revalidateBeforeDelete).toHaveBeenCalledOnce();
     expect(mocks.runOpenshell).not.toHaveBeenCalled();
     expect(mocks.removeSandboxRegistryEntryWithReceipt).not.toHaveBeenCalled();
-    expect(mocks.reattachMcpAfterDeleteFailure).toHaveBeenCalledWith(
-      "alpha",
-      [],
-      [],
-      undefined,
-    );
+    expect(mocks.reattachMcpAfterDeleteFailure).toHaveBeenCalledWith("alpha", [], [], undefined);
     expect(mocks.stopNimContainer).not.toHaveBeenCalled();
     expect(mocks.stopNimContainerByName).not.toHaveBeenCalled();
   });
@@ -528,12 +558,7 @@ describe("rebuild destroy phase", () => {
     expect(revalidateBeforeDelete.mock.invocationCallOrder[0]).toBeLessThan(
       mocks.runOpenshell.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
     );
-    expect(mocks.reattachMcpAfterDeleteFailure).toHaveBeenCalledWith(
-      "alpha",
-      [],
-      [],
-      undefined,
-    );
+    expect(mocks.reattachMcpAfterDeleteFailure).toHaveBeenCalledWith("alpha", [], [], undefined);
     expect(mocks.teardownSandboxDashboardForward).not.toHaveBeenCalled();
     expect(mocks.restoreSandboxLaunchForwards).not.toHaveBeenCalled();
     expect(mocks.removeSandboxRegistryEntryWithReceipt).not.toHaveBeenCalled();

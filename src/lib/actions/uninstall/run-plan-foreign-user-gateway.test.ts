@@ -19,10 +19,10 @@ function notFound(): RunResult {
   return { status: 1, stdout: "", stderr: "" };
 }
 
-function uninstallWithHostGatewayOwnedBy(uid: number): {
+async function uninstallWithHostGatewayOwnedBy(uid: number): Promise<{
   errors: string[];
   exitCode: number;
-} {
+}> {
   const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-foreign-"));
   const errors: string[] = [];
   const psResults = new Map<string, RunResult>([
@@ -42,7 +42,7 @@ function uninstallWithHostGatewayOwnedBy(uid: number): {
           ? ok("[]")
           : ok();
   try {
-    const result = runUninstallPlan(
+    const result = await runUninstallPlan(
       { assumeYes: true, deleteModels: false, keepOpenShell: false },
       {
         commandExists: (command) => command === "pgrep" || command === "openshell",
@@ -76,8 +76,10 @@ function uninstallWithHostGatewayOwnedBy(uid: number): {
 }
 
 describe("uninstall with a host gateway owned by another user", () => {
-  it("completes when the only unstoppable gateway process belongs to another user", () => {
-    const { errors, exitCode } = uninstallWithHostGatewayOwnedBy((process.getuid?.() ?? 0) + 1);
+  it("completes when the only unstoppable gateway process belongs to another user", async () => {
+    const { errors, exitCode } = await uninstallWithHostGatewayOwnedBy(
+      (process.getuid?.() ?? 0) + 1,
+    );
 
     expect(exitCode).toBe(0);
     expect(errors).toContainEqual(
@@ -89,8 +91,8 @@ describe("uninstall with a host gateway owned by another user", () => {
     );
   });
 
-  it("still fails when the current user's own gateway process cannot be stopped", () => {
-    const { errors, exitCode } = uninstallWithHostGatewayOwnedBy(process.getuid?.() ?? 0);
+  it("still fails when the current user's own gateway process cannot be stopped", async () => {
+    const { errors, exitCode } = await uninstallWithHostGatewayOwnedBy(process.getuid?.() ?? 0);
 
     expect(exitCode).toBe(1);
     expect(errors).toContainEqual(

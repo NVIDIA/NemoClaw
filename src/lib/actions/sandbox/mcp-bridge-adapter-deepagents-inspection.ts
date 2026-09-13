@@ -10,13 +10,13 @@ import {
 } from "./mcp-bridge-adapter-inspection";
 import { buildDeepAgentsMcpStatusCommand } from "./mcp-bridge-adapter-status";
 
-export function inspectDeepAgentsAdapterRegistration(
+export async function inspectDeepAgentsAdapterRegistration(
   sandboxName: string,
   entry: McpBridgeEntry,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
   credentialRevision?: McpAttachedCredentialRevision,
-): AdapterRegistrationInspection {
-  return inspectAdapterRegistrationCommand(
+): Promise<AdapterRegistrationInspection> {
+  return await inspectAdapterRegistrationCommand(
     sandboxName,
     entry,
     buildDeepAgentsMcpStatusCommand(entry, credentialRevision),

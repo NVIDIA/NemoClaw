@@ -300,12 +300,12 @@ describe.sequential("packaged Blueprint Runner external target", () => {
     blueprintFile = path.join(blueprintRoot, "blueprint.yaml");
     validBlueprintDocument = {
       version: "1.0.0",
-      min_openshell_version: "0.0.106",
-      max_openshell_version: "0.0.106",
+      min_openshell_version: "0.0.116",
+      max_openshell_version: "0.0.116",
       openshell_target: {
         endpoint: "https://192.0.2.1:8443",
         workspace: "default",
-        expected_release: "0.0.106",
+        expected_release: "0.0.116",
         lifecycle: "external",
         trust: { ca_file: privateCaPath },
         authentication: { credential_file: privateAuthenticationPath },
@@ -466,7 +466,7 @@ describe.sequential("packaged Blueprint Runner external target", () => {
     // Result
     expect(execution.result.status, execution.safeDiagnostics).toBe(1);
     expect(execution.result.stderr).toContain(
-      "external OpenShell target expected_release must be 0.0.106",
+      "external OpenShell target expected_release must be 0.0.116",
     );
     expect(execution.result.stdout).not.toContain("openshell_target");
     expect(execution.evidence).toEqual({ effects: [] });
@@ -490,7 +490,7 @@ describe.sequential("packaged Blueprint Runner external target", () => {
       openshell_target: {
         endpoint: "https://192.0.2.1:8443",
         workspace: "default",
-        expected_release: "0.0.106",
+        expected_release: "0.0.116",
         lifecycle: "external",
         authentication_source: "file",
         ca_fingerprint: expectedFingerprint,

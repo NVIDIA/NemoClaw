@@ -4,23 +4,10 @@
 /**
  * Live E2E: gateway guard-chain recovery after pod-recreate /tmp wipe.
  *
- * Regression guard for NVIDIA/NemoClaw#2701. The historical recovery shell
- * took a "warn-and-proceed" branch when `/tmp/nemoclaw-proxy-env.sh` was
- * missing: it logged `[gateway-recovery] WARNING` and launched the gateway
- * naked. On
- * aarch64 / DGX Spark this triggers an infinite crash loop in
- * `@homebridge/ciao` (`os.networkInterfaces()` throws because the OpenShell
- * netns blocks the syscall). The only manual recovery is a 5-min
- * `nemoclaw <name> rebuild --yes`.
- *
- * This test asserts the desired contract — recovery logs that it is restoring
- * from trusted packaged preloads, RESTORES the guard chain before launching,
- * and keeps the gateway PID stable. It will fail on `main` (proving the bug),
- * pass once the fix lands.
- *
- * The contract is platform-independent: we don't need aarch64 to assert
- * "guards are present after recovery." The aarch64 ciao crash is a
- * downstream consequence of the same broken contract.
+ * Regression guard for NVIDIA/NemoClaw#2701. Recovery restores the remaining
+ * packaged preloads when `/tmp/nemoclaw-proxy-env.sh` is missing, then proves
+ * gateway health, inference and stable process identity. Native network
+ * interface discovery is covered by the Docker/Podman full-E2E lifecycle.
  *
  * #2701 acceptance scope for this PR:
  *   - Covered: the default OpenClaw production recovery route
@@ -84,13 +71,20 @@ if (result.status !== 0) {
   process.exit(result.status || 1);
 }
 const rows = JSON.parse(result.stdout);
-const prefix = "OPENSHELL_SANDBOX_COMMAND=";
-const matches = (rows[0]?.Config?.Env || []).filter((entry) => entry.startsWith(prefix));
+const environment = rows[0]?.Config?.Env || [];
+const legacyPrefix = "OPENSHELL_SANDBOX_COMMAND=";
+const specPrefix = "OPENSHELL_MAIN_PROCESS_SPEC=";
+const prefixes = [legacyPrefix, specPrefix];
+const matches = environment.filter((entry) => prefixes.some((prefix) => entry.startsWith(prefix)));
 if (matches.length !== 1) {
   process.stderr.write("expected one OpenShell sandbox startup command\n");
   process.exit(1);
 }
-process.stdout.write(matches[0].slice(prefix.length) + "\n");
+const match = matches[0];
+const command = match.startsWith(legacyPrefix)
+  ? match.slice(legacyPrefix.length)
+  : JSON.parse(match.slice(specPrefix.length)).command.join(" ");
+process.stdout.write(command + "\n");
 `;
 
 const SUPERVISOR_TOPOLOGY_SCRIPT = String.raw`from pathlib import Path

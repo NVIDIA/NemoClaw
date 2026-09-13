@@ -63,8 +63,7 @@ export function getLiveGatewayInference(
     const result = capture(args, { ignoreError: true, timeout: opts.timeout });
     const output = stripAnsi(result.output || "").trim();
     const parsedInference = parseGatewayInference(output);
-    const inference =
-      parsedInference?.provider && parsedInference.model ? parsedInference : null;
+    const inference = parsedInference?.provider && parsedInference.model ? parsedInference : null;
     const recognizedOutput =
       Boolean(inference) || (!parsedInference && hasUnconfiguredInferenceSection(output));
     const failure = classifyLookupFailure(result);

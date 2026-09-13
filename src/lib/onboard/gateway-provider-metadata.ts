@@ -11,11 +11,16 @@ import {
 const PROVIDER_PROBE_DIAGNOSTIC_LIMIT = 64 * 1024;
 const PROVIDER_PROBE_TIMEOUT_MS = 5_000;
 
-export type GatewayProviderMetadata = OpenShellProviderMetadata;
+export type GatewayProviderMetadata = Omit<OpenShellProviderMetadata, "revision">;
 
 // #9813 owns the remaining raw CLI consumers of these compatibility exports.
 // New consumers must use OpenShellProviderAdapter typed results.
-export const parseGatewayProviderMetadata = parseCliOpenShellProviderMetadata;
+export function parseGatewayProviderMetadata(output: string): GatewayProviderMetadata | null {
+  const metadata = parseCliOpenShellProviderMetadata(output);
+  if (!metadata) return null;
+  const { revision: _revision, ...legacyMetadata } = metadata;
+  return legacyMetadata;
+}
 
 export type GatewayProviderBinding = {
   name: string;

@@ -2,7 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
-import { detectLocalTcpListener } from "../inference/local";
+import {
+  buildOllamaProbeOptions,
+  detectLocalTcpListener,
+  resetOllamaHostCache,
+  setResolvedOllamaHost,
+} from "../inference/local";
 import { MIN_OLLAMA_VERSION } from "../inference/ollama-version";
 import { getWindowsHostOllamaDockerRequirement } from "./local-inference-topology";
 import {
@@ -68,12 +73,13 @@ function buildDeps(
     detectLocalTcpListener: vi.fn(() => null),
     probeWindowsHostOllamaRouteProtection: vi.fn(() => windowsRouteProtection()),
     resetOllamaHostCache: vi.fn(),
+    setResolvedOllamaHost: vi.fn(),
     ...overrides,
   };
 }
 
 function detectWithDeps(
-  deps: DetectInferenceProviderHostStateDeps,
+  deps: Partial<DetectInferenceProviderHostStateDeps>,
   gpu: InferenceProviderHostGpu | null = null,
   env: NodeJS.ProcessEnv = {},
 ) {
@@ -186,19 +192,17 @@ describe("detectInferenceProviderHostState", () => {
   it("keeps Docker-less hosts out of managed vLLM at the host-state boundary (#10891)", () => {
     const logs: string[] = [];
     const deps = buildDeps({
-      detectVllmProfile: vi.fn<DetectInferenceProviderHostStateDeps["detectVllmProfile"]>(
-        () => ({
-          name: "DGX Spark",
-          platform: "spark" as const,
-          image: "nvcr.io/nvidia/vllm:test",
-          imageDownloadSizeBytes: 1,
-          defaultModel: {} as never,
-          containerName: "nemoclaw-vllm",
-          dockerRunFlags: [],
-          pullTimeoutSec: 1,
-          loadTimeoutSec: 1,
-        }),
-      ),
+      detectVllmProfile: vi.fn<DetectInferenceProviderHostStateDeps["detectVllmProfile"]>(() => ({
+        name: "DGX Spark",
+        platform: "spark" as const,
+        image: "nvcr.io/nvidia/vllm:test",
+        imageDownloadSizeBytes: 1,
+        defaultModel: {} as never,
+        containerName: "nemoclaw-vllm",
+        dockerRunFlags: [],
+        pullTimeoutSec: 1,
+        loadTimeoutSec: 1,
+      })),
     });
     const gpu = { nimCapable: false, type: "nvidia" as const, platform: "spark" as const };
 
@@ -564,6 +568,7 @@ describe("detectInferenceProviderHostState", () => {
       wslDetection: { isWsl: true },
       env: {},
       loopbackOnly: true,
+      prepareDockerEnvironment: undefined,
     });
   });
 
@@ -594,9 +599,10 @@ describe("detectInferenceProviderHostState", () => {
     expect(probeWindowsHostOllamaRouteProtection).toHaveBeenCalledOnce();
   });
 
-  it("reuses a protected Windows route when its executable path is unavailable", () => {
-    const probeWindowsHostOllamaRouteProtection = vi.fn(
-      (_capture, options) =>
+  it.each(["host.docker.internal", null])(
+    "reuses a protected Windows route after initial discovery returns %s without an executable path (#11401)",
+    (discoveredHost) => {
+      const probeWindowsHostOllamaRouteProtection = vi.fn((_capture, options) =>
         options.loopbackOnly === false
           ? windowsRouteProtection({ reachable: true, hostValidationEnabled: true })
           : windowsRouteProtection({
@@ -605,26 +611,39 @@ describe("detectInferenceProviderHostState", () => {
               hostValidationEnabled: true,
               protected: true,
             }),
-    );
-    const deps = buildDeps({
-      isWsl: vi.fn(() => true),
-      findReachableOllamaHost: vi.fn(() => "host.docker.internal"),
-      detectWindowsHostOllama: vi.fn(() => ({
-        installed: false,
-        installedPath: "",
-        loopbackOnly: false,
-      })),
-      probeWindowsHostOllamaRouteProtection,
-    });
+      );
+      const deps = buildDeps({
+        isWsl: vi.fn(() => true),
+        findReachableOllamaHost: vi.fn(() => {
+          discoveredHost && setResolvedOllamaHost(discoveredHost);
+          return discoveredHost;
+        }),
+        detectWindowsHostOllama: vi.fn(() => ({
+          installed: false,
+          installedPath: "",
+          loopbackOnly: false,
+        })),
+        probeWindowsHostOllamaRouteProtection,
+      });
 
-    const state = detectWithDeps(deps);
+      resetOllamaHostCache();
+      try {
+        const state = detectWithDeps({ ...deps, setResolvedOllamaHost: undefined });
 
-    expect(state.hasWindowsOllama).toBe(false);
-    expect(state.isWindowsHostOllama).toBe(true);
-    expect(state.ollamaHost).toBe("host.docker.internal");
-    expect(state.ollamaRunning).toBe(true);
-    expect(state.ollamaInstallMenu.entry).toBeNull();
-  });
+        expect(state.hasWindowsOllama).toBe(false);
+        expect(state.isWindowsHostOllama).toBe(true);
+        expect(state.ollamaHost).toBe("host.docker.internal");
+        expect(state.ollamaRunning).toBe(true);
+        expect(state.ollamaInstallMenu.entry).toBeNull();
+        expect(buildOllamaProbeOptions(false)).toMatchObject({
+          allowHostDockerInternal: true,
+          probeFromDocker: { expectedPort: 11434 },
+        });
+      } finally {
+        resetOllamaHostCache();
+      }
+    },
+  );
 
   it("rejects a wildcard-bound Windows-host Ollama route even when Docker can reach it", () => {
     const resetOllamaHostCache = vi.fn();

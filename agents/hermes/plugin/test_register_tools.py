@@ -47,7 +47,6 @@ class RegisterToolSchemaShapeTest(unittest.TestCase):
     EXPECTED_TOOLS = (
         "nemoclaw_status",
         "nemoclaw_info",
-        "nemoclaw_reload_skills",
         "transcribe_audio",
     )
 

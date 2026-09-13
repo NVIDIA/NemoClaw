@@ -18,7 +18,7 @@ export interface Deps {
     model: string,
     preferredInferenceApi: string | null,
     endpointUrl: string | null,
-  ): { changed: boolean; unknown: boolean };
+  ): Promise<{ changed: boolean; unknown: boolean }>;
   error(message?: string): void;
   exitProcess(code: number): never;
 }
@@ -82,14 +82,14 @@ export function preserveManagedDcodeRegistryEntry<Agent>(
   return { ...decision, removeRegistryEntry: false };
 }
 
-export function resolveSignals<Agent>(
+export async function resolveSignals<Agent>(
   options: ResumeOptions<Agent>,
   state: ResumeState,
   sandboxReuseState: string,
   registryEntry: SandboxEntry | null,
   dcodeAutoApprovalMode: DcodeAutoApprovalMode,
   deps: Deps,
-): { inferenceSelectionChanged: boolean; dcodeAutoApprovalChanged: boolean } {
+): Promise<{ inferenceSelectionChanged: boolean; dcodeAutoApprovalChanged: boolean }> {
   const sandboxName = state.sandboxName;
   const dcodeAutoApprovalChanged = hasDcodeAutoApprovalDrift({
     liveExists: sandboxReuseState === "ready",
@@ -113,7 +113,7 @@ export function resolveSignals<Agent>(
     );
     return deps.exitProcess(1);
   }
-  const drift = deps.getDcodeSelectionDrift(
+  const drift = await deps.getDcodeSelectionDrift(
     sandboxName,
     options.provider,
     options.model,

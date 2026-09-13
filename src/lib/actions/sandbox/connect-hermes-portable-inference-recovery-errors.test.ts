@@ -89,11 +89,12 @@ describe("Hermes Portable connect recovery errors", () => {
       ["inference", "get", "-g", "nemoclaw"],
       expect.objectContaining({ openshellBinary: "/usr/bin/openshell" }),
     );
-    expect(
-      harness.captureResolvedOpenshellSpy.mock.calls.some(
-        ([args]) => Array.isArray(args) && args[0] === "sandbox" && args[1] === "exec",
-      ),
-    ).toBe(true);
+    expect(harness.sandboxRunBufferedSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sandboxName: "alpha",
+        target: { kind: "named", gatewayName: "nemoclaw" },
+      }),
+    );
     expect(harness.publishLaunchReadinessSpy).toHaveBeenCalledOnce();
   });
 

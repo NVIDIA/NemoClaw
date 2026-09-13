@@ -36,15 +36,13 @@ const commandDiagnosticHeadroomMs = 10 * MINUTE_MS;
 const testHeadroomMs = 10 * MINUTE_MS;
 const jobHeadroomMs = 20 * MINUTE_MS;
 const workflowFinalizationHeadroomMs = 10 * MINUTE_MS;
-const preparationOperationCeilingMs =
-  MINUTE_MS + 30_000 + 30_000 + 10 * MINUTE_MS + 2 * MINUTE_MS;
+const preparationOperationCeilingMs = MINUTE_MS + 30_000 + 30_000 + 10 * MINUTE_MS + 2 * MINUTE_MS;
 const dockerRecoveryOperationCeilingMs = 3 * 15_000;
 const gatewayRestartOperationCeilingMs =
   30_000 + 30_000 + MINUTE_MS + 30_000 + MINUTE_MS + 35_000 + 2 * MINUTE_MS;
 const gatewayReconnectOperationCeilingMs = 60 * 30_000 + 59 * 5_000 + 30_000;
 const sandboxReadinessOperationCeilingMs = 30 * 30_000 + 29 * 5_000;
-const statusValidationOperationCeilingMs =
-  5 * MINUTE_MS + MINUTE_MS + 15_000 + 2 * MINUTE_MS;
+const statusValidationOperationCeilingMs = 5 * MINUTE_MS + MINUTE_MS + 15_000 + 2 * MINUTE_MS;
 
 describe("onboard final-handoff timeout contract", () => {
   it("keeps the command alive through both reconnect waits and the failure diagnostic", () => {

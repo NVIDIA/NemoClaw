@@ -3,9 +3,9 @@
 # SPDX-License-Identifier: Apache-2.0
 title: "Prepare a Windows Machine to Install NemoClaw"
 sidebar-title: "Additional Setup for Windows Machines"
-description: "Prepare a Windows machine for NemoClaw before running the Quickstart: enable WSL 2, install Ubuntu, and configure Docker Desktop."
-description-agent: "Covers Windows-only preparation steps required before the Quickstart. Use when preparing a Windows machine for NemoClaw, enabling WSL 2, configuring Docker Desktop for Windows, or troubleshooting a Windows-specific install error."
-keywords: ["nemoclaw windows wsl2 setup", "nemoclaw install windows docker desktop"]
+description: "Prepare a Windows machine for NemoClaw before running the Quickstart: enable WSL 2, install Ubuntu, and choose Docker Desktop or qualified rootless Podman for WSL-local Ollama."
+description-agent: "Covers Windows-only preparation steps required before the Quickstart. Use when preparing a Windows machine for NemoClaw, enabling WSL 2, configuring Docker Desktop or qualified rootless Podman, or troubleshooting a Windows-specific install error."
+keywords: ["nemoclaw windows wsl2 setup", "nemoclaw install windows docker desktop podman"]
 content:
   type: "reference"
 ---
@@ -46,7 +46,16 @@ Verify the following before you begin:
 
 </AgentOnly>
 
+## Choose a Container Runtime
+
+Use Docker Desktop unless you specifically need the qualified rootless Podman path for WSL-local Ollama.
+
+- **Docker Desktop:** Follow the bootstrap-script route below. Docker Desktop is required for managed llama.cpp and Windows-host Ollama.
+- **Rootless Podman:** Skip the bootstrap script and the Docker Desktop section. Complete [Enable WSL 2](#enable-wsl-2) and [Install and Register Ubuntu](#install-and-register-ubuntu) manually, then follow the [native Podman prerequisites and recovery guidance](../../reference/troubleshooting#podman) inside WSL. Before onboarding, set `NEMOCLAW_GATEWAY_RUNTIME=podman` and confirm the current-user Podman socket and service, rootless engine, cgroups v2, bridge networking, and DNS are available. NVIDIA CDI is additionally required when you enable sandbox GPU passthrough or need the N1x CUDA capacity proof. This route supports WSL-local Ollama; it does not enable managed llama.cpp or Windows-host Ollama.
+
 ## Use the Bootstrap Script
+
+The bootstrap script is the Docker Desktop route. It is not a prerequisite for the rootless Podman route.
 
 Open Windows PowerShell on the Windows host and run the bootstrap script:
 
@@ -88,7 +97,7 @@ You can also download and install Docker Desktop manually from [docker.com](http
 After you install Docker Desktop, rerun the bootstrap script.
 The script skips the install step after it detects Docker Desktop.
 
-The manual steps below describe the same Windows preparation pieces and are useful when you need to verify or repair WSL, Ubuntu, or Docker Desktop by hand.
+The manual steps below describe the Docker Desktop preparation pieces and are useful when you need to verify or repair WSL, Ubuntu, or Docker Desktop by hand.
 
 ## Enable WSL 2
 
@@ -154,13 +163,19 @@ docker info
 `docker info` prints server information.
 If you see "Cannot connect to the Docker daemon", confirm that Docker Desktop is running and that Docker Desktop enables WSL integration.
 
+For WSL-local Ollama, a qualified rootless Podman provider is also supported.
+Set `NEMOCLAW_GATEWAY_RUNTIME=podman` before onboarding and make sure the current-user Podman service and `lsof` on `PATH` are available. NemoClaw does not install `lsof`; install it through the WSL distribution's package-management policy before retrying onboarding. NVIDIA CDI is additionally required for sandbox GPU passthrough and the N1x CUDA capacity proof.
+The Podman path does not enable the Docker-specific managed llama.cpp or Windows-host Ollama routes described below.
+
 ## Set Up Local Inference (Optional)
 
 If the installer offers Express on WSL, a qualifying N1x WSL host uses managed llama.cpp with Qwen 3.6 35B-A3B.
-The installer uses local Docker Desktop, Arm64, the Windows N1x product identity, and at least 48,000 MiB of GPU memory as preliminary selection conditions.
-Onboarding also requires the default local Docker context, at least 48,000 MiB of Docker memory, driver version `580.65.06` or later, Docker storage and runtime readiness, NVIDIA GPU integration, and a successful Docker Desktop GPU passthrough proof.
-If any required readiness check fails, onboarding stops managed llama.cpp selection.
-Other WSL hosts use WSL-local Ollama for Express installation.
+The installer leaves inference selection to onboarding.
+Onboarding requires Linux ARM64 WSL, one GPU whose normalized identity is either `NVIDIA RTX Spark N1X` or `NVIDIA RTX Spark N1X (6144-core Blackwell RTX GPU)`, the default local Docker context, at least 48,000 MiB of Docker and GPU memory, driver version `580.65.06` or later, Docker storage and runtime readiness, NVIDIA GPU integration, and a successful Docker Desktop GPU passthrough proof.
+The Windows chassis model does not participate in selection.
+If N1x readiness does not match before managed selection starts, Windows Express selects WSL-local Ollama.
+If a required check fails after managed selection starts, onboarding stops before installation.
+Other WSL hosts also use WSL-local Ollama for Express installation.
 
 If you plan to select Ollama as your inference provider during onboarding, use one Ollama instance.
 It can run inside WSL or on Windows through Docker Desktop.
@@ -179,8 +194,6 @@ The Windows install and restart actions enforce the same loopback binding and va
 For WSL hosts that do not qualify for managed llama.cpp, accepting Express selects WSL-local Ollama.
 The Windows-host Ollama path remains an explicit manual option and requires Docker Desktop WSL integration.
 For that path, unset `DOCKER_HOST` and use Docker's local `default` context; otherwise, choose WSL-local Ollama.
-When the installer must read the Docker configuration file to determine the effective Docker context and Node.js is unavailable, it defers provider selection until after it installs Node.js.
-It then reads the configuration to finish the managed N1x eligibility check.
 The express selection does not waive system readiness.
 An installed Windows-host Ollama that fails the loopback, reachability, or HTTP `Host` validation check leaves the WSL-local install available in the onboarding menu and through a requested `install-ollama` provider.
 Qualified Windows-host routes reach the protected host route directly and do not use the Ollama auth proxy.
@@ -190,8 +203,10 @@ A direct request from WSL can fail because Docker Desktop defines this hostname 
 Do not set Windows `OLLAMA_HOST` to `0.0.0.0:11434`; the wildcard listener is unauthenticated and disables the loopback-only HTTP `Host` validation that NemoClaw requires.
 Do not run both the Windows and WSL Ollama instances on port `11434` at the same time.
 Use one instance, or move one of them to a different port before running `$$nemoclaw onboard`.
-If a Windows on Arm N1x system does not qualify for managed llama.cpp and uses Ollama, let NemoClaw choose the starter model automatically.
-It selects the compute-constrained `qwen3.5:9b` path instead of recommending the 30B and 35B starter models.
+A WSL host whose Windows product reports RTX Spark N1x uses capacity from the selected Docker or Podman provider's CUDA proof to rank installed Ollama models.
+Both providers run the same pinned CUDA workload and capacity query; their provider implementation owns the GPU injection arguments.
+When `qwen3.6:35b` is installed and that proof reports at least 30,000 MiB available, NemoClaw selects it before `qwen3.5:9b`.
+Other Windows on Arm GPUs remain compute-constrained and select `qwen3.5:9b` instead of the 30B and 35B starter models.
 <AgentOnly variant="openclaw">
 For the selection boundary and remaining N1X limitations, refer to [Use Ollama for Local Inference](/user-guide/openclaw/inference/local-inference/set-up-ollama).
 </AgentOnly>

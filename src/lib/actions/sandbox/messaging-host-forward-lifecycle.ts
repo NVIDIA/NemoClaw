@@ -7,10 +7,7 @@ import {
   ensureMessagingHostForwardIfConfigured,
   resolveMessagingHostForward,
 } from "../../onboard/messaging-host-forward";
-import {
-  ensureSandboxPortForwardForPort,
-  isSandboxPortForwardHealthy,
-} from "./forward-recovery";
+import { ensureSandboxPortForwardForPort, isSandboxPortForwardHealthy } from "./forward-recovery";
 
 export function ensureMessagingHostForwardAfterRebuild(
   sandboxName: string,
@@ -19,7 +16,12 @@ export function ensureMessagingHostForwardAfterRebuild(
 ): boolean {
   const forward = resolveMessagingHostForward(plan);
   if (!forward) return true;
-  const health = isSandboxPortForwardHealthy(sandboxName, forward.port, undefined, runtimeSelection);
+  const health = isSandboxPortForwardHealthy(
+    sandboxName,
+    forward.port,
+    undefined,
+    runtimeSelection,
+  );
   if (health === true) return true;
   return ensureMessagingHostForwardIfConfigured({
     sandboxName,

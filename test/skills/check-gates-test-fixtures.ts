@@ -814,7 +814,6 @@ esac
       [
         "--import",
         clockPath,
-        "--experimental-strip-types",
         "--no-warnings",
         ".agents/skills/nemoclaw-maintainer-day/scripts/check-gates.ts",
         "42",

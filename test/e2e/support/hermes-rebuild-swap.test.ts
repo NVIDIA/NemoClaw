@@ -69,10 +69,7 @@ describe("Hermes rebuild swap", () => {
       })
       .mockResolvedValueOnce(result());
 
-    await prepareHermesRebuildSwap(
-      { command } as unknown as HostCliClient,
-      { trackDisposable },
-    );
+    await prepareHermesRebuildSwap({ command } as unknown as HostCliClient, { trackDisposable });
 
     expect(command.mock.calls.map(([commandName]) => commandName)).toEqual([
       "swapon",
@@ -102,14 +99,11 @@ describe("Hermes rebuild swap", () => {
       async (_commandName: string, _args: string[] = []) => responses.shift() ?? result(1),
     );
 
-    await prepareHermesRebuildSwap(
-      { command } as unknown as HostCliClient,
-      {
-        trackDisposable: (_name, action) => {
-          cleanupAction = action;
-        },
+    await prepareHermesRebuildSwap({ command } as unknown as HostCliClient, {
+      trackDisposable: (_name, action) => {
+        cleanupAction = action;
       },
-    );
+    });
 
     await expect(cleanupAction?.()).rejects.toThrow("remove Hermes rebuild swap failed");
   });
@@ -136,14 +130,10 @@ describe("Hermes rebuild swap", () => {
       .fn()
       .mockResolvedValueOnce(result(0, "0\n"))
       .mockImplementationOnce(async (_commandName: string, args: string[]) => {
-        const execution = spawnSync(
-          "bash",
-          ["-c", args[2], args[3], swapPath, args[5]],
-          {
-            encoding: "utf8",
-            env: { ...process.env, PATH: `${binDirectory}:${process.env.PATH ?? ""}` },
-          },
-        );
+        const execution = spawnSync("bash", ["-c", args[2], args[3], swapPath, args[5]], {
+          encoding: "utf8",
+          env: { ...process.env, PATH: `${binDirectory}:${process.env.PATH ?? ""}` },
+        });
         expect(execution.status).toBe(42);
         expect(fs.existsSync(swapPath)).toBe(false);
         return result(execution.status ?? 1, execution.stdout, execution.stderr);
@@ -151,10 +141,7 @@ describe("Hermes rebuild swap", () => {
 
     try {
       await expect(
-        prepareHermesRebuildSwap(
-          { command } as unknown as HostCliClient,
-          { trackDisposable },
-        ),
+        prepareHermesRebuildSwap({ command } as unknown as HostCliClient, { trackDisposable }),
       ).rejects.toThrow("provision swap for Hermes rebuild failed");
       expect(trackDisposable).not.toHaveBeenCalled();
       expect(fs.existsSync(swapPath)).toBe(false);

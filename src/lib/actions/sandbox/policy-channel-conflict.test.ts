@@ -17,6 +17,7 @@ import { hashCredential } from "../../security/credential-hash";
 import * as onboardSession from "../../state/onboard-session";
 import type { SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
+import * as crossPortRegistry from "../../state/registry/cross-port";
 import * as messagingHostForwardLifecycle from "./messaging-host-forward-lifecycle";
 import { addSandboxChannel, startSandboxChannel } from "./policy-channel";
 import { policyChannelDependencies } from "./policy-channel-dependencies";
@@ -344,6 +345,14 @@ beforeEach(() => {
 
   // Registry seam.
   getSandboxMock = vi.spyOn(registry, "getSandbox").mockReturnValue(null);
+  vi.spyOn(crossPortRegistry, "findSandboxAcrossGatewayRoots").mockImplementation(
+    (name: string) => {
+      const entry = registry.getSandbox(name);
+      return entry
+        ? { entry, gatewayPort: entry.gatewayPort ?? null, registryFile: "/test/sandboxes.json" }
+        : null;
+    },
+  );
   getDisabledChannelsMock = vi.spyOn(registry, "getDisabledChannels").mockReturnValue([]);
   listSandboxesMock = vi
     .spyOn(registry, "listSandboxes")
@@ -353,16 +362,17 @@ beforeEach(() => {
   // Lazy legacy-provider seam: no onboarding graph is loaded for this suite.
   upsertMock = vi.spyOn(policyChannelDependencies, "upsertMessagingProviders").mockReturnValue([]);
   vi.spyOn(policyChannelDependencies, "revalidateChannelProviderPolicy").mockImplementation(
-    () => undefined,
+    async () => undefined,
   );
 
   // openshell runtime + gateway recovery.
   runOpenshellMock = vi.spyOn(runtime, "runOpenshell").mockReturnValue(successfulOpenshellResult());
   const healthyGatewayState = {
     state: "healthy_named",
-    status: "",
-    gatewayInfo: "",
     activeGateway: "nemoclaw",
+    diagnostic: "",
+    recoveryBlocked: false,
+    unavailable: false,
   } as const;
   vi.spyOn(gatewayRuntime, "recoverNamedGatewayRuntime").mockResolvedValue({
     recovered: true,
@@ -387,12 +397,12 @@ beforeEach(() => {
   vi.spyOn(policy, "loadPreset").mockReturnValue("network_policies:\n  stub: {}\n");
   vi.spyOn(policy, "parsePresetPolicyKeys").mockReturnValue(["stub"]);
   vi.spyOn(policy, "listPresets").mockReturnValue([]);
-  vi.spyOn(policy, "getPresetContentGatewayState").mockReturnValue("absent");
+  vi.spyOn(policy, "getPresetContentGatewayState").mockResolvedValue("absent");
   scopeDisclosureMock = vi
     .spyOn(policy, "logPresetScopeForState")
     .mockImplementation(() => undefined);
-  applyPresetMock = vi.spyOn(policy, "applyPreset").mockReturnValue(true);
-  vi.spyOn(policy, "getAppliedPresets").mockReturnValue([]);
+  applyPresetMock = vi.spyOn(policy, "applyPreset").mockResolvedValue(true);
+  vi.spyOn(policy, "getAppliedPresets").mockResolvedValue([]);
 
   // Downstream rebuild is not under test.
   rebuildSandboxMock = vi
@@ -408,8 +418,8 @@ beforeEach(() => {
   // unit-test runner; locally it is installed, so this only bites in CI). Stub
   // the exec path so the post-add verification never shells out and never trips
   // the exit spy unless a test explicitly overrides it.
-  vi.spyOn(processRecovery, "executeSandboxExecCommand").mockReturnValue(null);
-  vi.spyOn(processRecovery, "executeSandboxCommand").mockReturnValue(null);
+  vi.spyOn(processRecovery, "executeSandboxExecCommand").mockResolvedValue(null);
+  vi.spyOn(processRecovery, "executeSandboxCommand").mockResolvedValue(null);
 
   process.env.NEMOCLAW_SKIP_TELEGRAM_REACHABILITY = "1";
   process.env.NEMOCLAW_SKIP_SLACK_AUTH_VALIDATION = "1";
@@ -575,17 +585,19 @@ describe("addSandboxChannel cross-sandbox conflict check (#4305)", () => {
   it("removes credential-free policy when provider attachment fails", async () => {
     arrangeRegistry({ current: makeEmptyEntry("alpha") });
     getCredentialMock.mockReturnValue(TELEGRAM_TOKEN);
-    upsertMock.mockReturnValue(["alpha-telegram-bridge"]);
+    upsertMock.mockRejectedValue(
+      Object.assign(new Error("provider attachment failed"), {
+        code: "NEMOCLAW_MESSAGING_PROVIDER_MUTATION_FAILURE",
+        mutatedProviderNames: ["alpha-telegram-bridge"],
+        createdProviderNames: ["alpha-telegram-bridge"],
+      }),
+    );
     vi.mocked(policy.listPresets).mockReturnValue([
       { file: "telegram.yaml", name: "telegram", description: "Telegram" },
     ]);
-    vi.mocked(policy.getAppliedPresets).mockReturnValue(["telegram"]);
-    const removePresetMock = vi.spyOn(policy, "removePreset").mockReturnValue(true);
-    runOpenshellMock.mockImplementation((args: readonly string[]) =>
-      args.includes("attach")
-        ? { ...successfulOpenshellResult(), status: 1 }
-        : successfulOpenshellResult(),
-    );
+    vi.mocked(policy.getAppliedPresets).mockResolvedValue(["telegram"]);
+    const removePresetMock = vi.spyOn(policy, "removePreset").mockResolvedValue(true);
+    runOpenshellMock.mockReturnValue(successfulOpenshellResult());
 
     await expect(addSandboxChannel("alpha", { channel: "telegram" })).rejects.toThrow(
       "process.exit(1)",
@@ -641,7 +653,12 @@ describe("addSandboxChannel cross-sandbox conflict check (#4305)", () => {
         },
       ],
       "nemoclaw",
-      { bestEffort: true, requireExactBindings: true },
+      { replaceExisting: true },
+      expect.objectContaining({
+        channelName: "discord",
+        sandboxAgent: "hermes",
+        sandboxName: "alpha",
+      }),
     );
   });
 
@@ -1221,6 +1238,11 @@ describe("addSandboxChannel cross-sandbox conflict check (#4305)", () => {
     const execCommands = vi
       .mocked(processRecovery.executeSandboxExecCommand)
       .mock.calls.map((call: unknown[]) => String(call[1]));
+    expect(
+      vi
+        .mocked(processRecovery.executeSandboxExecCommand)
+        .mock.calls.every((call) => call[3]?.localDockerFallbackPolicy === "read-only"),
+    ).toBe(true);
     expect(execCommands.some((cmd: string) => cmd.includes("grep"))).toBe(false);
     expect(
       execCommands.some(
@@ -1389,7 +1411,7 @@ describe("Teams host-forward lifecycle (PRA-2)", () => {
 
 function mockBridgeHealthExec(options: { config: unknown; log: string }): void {
   vi.mocked(processRecovery.executeSandboxExecCommand).mockImplementation(
-    (_sandboxName: string, command: string) => {
+    async (_sandboxName: string, command: string) => {
       if (command.includes("cat") && command.includes("openclaw.json")) {
         return { status: 0, stdout: JSON.stringify(options.config), stderr: "" };
       }

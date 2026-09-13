@@ -60,6 +60,12 @@ config:
   auth_file: auth.json            # OAuth tokens (Nous Portal, Codex, etc.)
   format: yaml
 
+# Static integration metadata only. Hermes remains the authority on which
+# skills are visible or active.
+skills:
+  writable_root: /sandbox/.hermes/skills
+  list_command: [skills, list]
+
 # ── State directories ──────────────────────────────────────────
 state_dirs:
   - memories

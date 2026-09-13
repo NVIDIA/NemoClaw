@@ -38,42 +38,42 @@ function privateEntry(adapter: AgentMcpAdapter, agent: string): McpBridgeEntry {
 }
 
 describe("trusted-private MCP lifecycle replay", () => {
-  it.each(adapters)("replays recorded pins without ambient DNS for $agent (#8267)", async ({
-    adapter,
-    agent,
-  }) => {
-    const lookup = vi.spyOn(dns, "lookup").mockRejectedValue(new Error("ambient DNS used"));
-    const entry = privateEntry(adapter, agent);
+  it.each(adapters)(
+    "replays recorded pins without ambient DNS for $agent (#8267)",
+    async ({ adapter, agent }) => {
+      const lookup = vi.spyOn(dns, "lookup").mockRejectedValue(new Error("ambient DNS used"));
+      const entry = privateEntry(adapter, agent);
 
-    const targets = await preflightMcpEntryTargets([entry]);
-    const target = targets.get(entry.server);
+      const targets = await preflightMcpEntryTargets([entry]);
+      const target = targets.get(entry.server);
 
-    expect(lookup).not.toHaveBeenCalled();
-    expect(target?.addresses).toEqual(entry.allowedIps);
-    expect(target?.trustedPrivateHost).toBe(entry.trustedPrivateHost);
-    expect(isTrustedPrivateEndpointCapability(target?.trustedPrivateCapability)).toBe(true);
-    expect(target && assertMcpBridgePolicyTarget(entry, target)).toEqual(entry.allowedIps);
-  });
+      expect(lookup).not.toHaveBeenCalled();
+      expect(target?.addresses).toEqual(entry.allowedIps);
+      expect(target?.trustedPrivateHost).toBe(entry.trustedPrivateHost);
+      expect(isTrustedPrivateEndpointCapability(target?.trustedPrivateCapability)).toBe(true);
+      expect(target && assertMcpBridgePolicyTarget(entry, target)).toEqual(entry.allowedIps);
+    },
+  );
 
-  it.each(adapters)("replays a direct private IPv4 target for $agent (#8267)", async ({
-    adapter,
-    agent,
-  }) => {
-    const lookup = vi.spyOn(dns, "lookup").mockRejectedValue(new Error("ambient DNS used"));
-    const entry = privateEntry(adapter, agent);
-    entry.url = "https://10.20.30.40/mcp";
-    entry.trustedPrivateHost = "10.20.30.40";
-    entry.allowedIps = ["10.20.30.40"];
+  it.each(adapters)(
+    "replays a direct private IPv4 target for $agent (#8267)",
+    async ({ adapter, agent }) => {
+      const lookup = vi.spyOn(dns, "lookup").mockRejectedValue(new Error("ambient DNS used"));
+      const entry = privateEntry(adapter, agent);
+      entry.url = "https://10.20.30.40/mcp";
+      entry.trustedPrivateHost = "10.20.30.40";
+      entry.allowedIps = ["10.20.30.40"];
 
-    const target = (await preflightMcpEntryTargets([entry])).get(entry.server);
+      const target = (await preflightMcpEntryTargets([entry])).get(entry.server);
 
-    expect(lookup).not.toHaveBeenCalled();
-    expect(target).toMatchObject({
-      addresses: ["10.20.30.40"],
-      trustedPrivateHost: "10.20.30.40",
-    });
-    expect(target && assertMcpBridgePolicyTarget(entry, target)).toEqual(["10.20.30.40"]);
-  });
+      expect(lookup).not.toHaveBeenCalled();
+      expect(target).toMatchObject({
+        addresses: ["10.20.30.40"],
+        trustedPrivateHost: "10.20.30.40",
+      });
+      expect(target && assertMcpBridgePolicyTarget(entry, target)).toEqual(["10.20.30.40"]);
+    },
+  );
 
   it("rejects invalid durable private pins without consulting DNS (#8267)", async () => {
     const lookup = vi.spyOn(dns, "lookup").mockRejectedValue(new Error("ambient DNS used"));
@@ -97,12 +97,15 @@ describe("trusted-private MCP lifecycle replay", () => {
     expect(lookup).not.toHaveBeenCalled();
   });
 
-  it("resumes an incomplete private add from recorded pins without ambient DNS (#8267)", {
-    timeout: 40_000,
-  }, () => {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-private-mcp-add-replay-"));
-    const sourceRequireHook = path.resolve("test/helpers/onboard-script-mocks.cjs");
-    const script = `
+  it(
+    "resumes an incomplete private add from recorded pins without ambient DNS (#8267)",
+    {
+      timeout: 40_000,
+    },
+    () => {
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-private-mcp-add-replay-"));
+      const sourceRequireHook = path.resolve("test/helpers/onboard-script-mocks.cjs");
+      const script = `
 process.env.HOME = ${JSON.stringify(home)};
 delete process.env.LOCAL_MCP_TOKEN;
 const dns = require("node:dns/promises");
@@ -142,25 +145,26 @@ bridge.addMcpBridge("alpha", {
   ),
 );
 `;
-    const result = spawnSync(process.execPath, ["-e", script], {
-      cwd: process.cwd(),
-      encoding: "utf8",
-      env: {
-        ...process.env,
-        HOME: home,
-        NODE_OPTIONS: [process.env.NODE_OPTIONS, `--require=${sourceRequireHook}`]
-          .filter(Boolean)
-          .join(" "),
-      },
-      timeout: 30_000,
-    });
-    fs.rmSync(home, { recursive: true, force: true });
+      const result = spawnSync(process.execPath, ["-e", script], {
+        cwd: process.cwd(),
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          HOME: home,
+          NODE_OPTIONS: [process.env.NODE_OPTIONS, `--require=${sourceRequireHook}`]
+            .filter(Boolean)
+            .join(" "),
+        },
+        timeout: 30_000,
+      });
+      fs.rmSync(home, { recursive: true, force: true });
 
-    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
-    expect(JSON.parse(result.stdout)).toEqual({
-      message:
-        "Host environment variable 'LOCAL_MCP_TOKEN' is required to create MCP provider 'alpha-mcp-local'.",
-      dnsCalls: 0,
-    });
-  });
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+      expect(JSON.parse(result.stdout)).toEqual({
+        message:
+          "Host environment variable 'LOCAL_MCP_TOKEN' is required to create MCP provider 'alpha-mcp-local'.",
+        dnsCalls: 0,
+      });
+    },
+  );
 });

@@ -539,7 +539,7 @@ agentDefs.loadAgent = () => ({
   mcpCapability: { support: "bridge", adapter: "mcporter" },
 });
 const commands = [];
-processRecovery.executeSandboxCommand = (_sandboxName, command) => {
+processRecovery.executeSandboxCommand = async (_sandboxName, command) => {
   commands.push(command);
   return command === "command -v mcporter"
     ? { status: 0, stdout: "/usr/bin/mcporter\\n", stderr: "" }
@@ -548,9 +548,11 @@ processRecovery.executeSandboxCommand = (_sandboxName, command) => {
 const adapter = require("./src/lib/actions/sandbox/mcp-bridge-adapter-openclaw.js");
 const entry = ${JSON.stringify(baseEntry)};
 const runtimeSelection = { gatewayName: "nemoclaw-8091", workspace: "default" };
-adapter.registerOpenClawAdapter("custom-root-lifecycle", entry, runtimeSelection);
-adapter.unregisterOpenClawAdapter("custom-root-lifecycle", entry, runtimeSelection);
+(async () => {
+await adapter.registerOpenClawAdapter("custom-root-lifecycle", entry, runtimeSelection);
+await adapter.unregisterOpenClawAdapter("custom-root-lifecycle", entry, runtimeSelection);
 process.stdout.write(JSON.stringify(commands));
+})().catch((error) => { console.error(error); process.exitCode = 1; });
 `;
     const result = spawnSync(process.execPath, ["-e", script], {
       cwd: process.cwd(),

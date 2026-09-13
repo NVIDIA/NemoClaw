@@ -200,7 +200,7 @@ nemo-deepagents <sandbox-name> policy add tavily --yes
 # Export the key on the host (NemoClaw reads it from the current shell):
 export TAVILY_API_KEY=tvly-...
 # Register the provider with the gateway:
-nemo-deepagents credentials add tavily-search --type tavily --credential TAVILY_API_KEY
+nemo-deepagents credentials add tavily-search --type tavily --agent dcode --credential TAVILY_API_KEY
 # Remove the raw key from the host shell after the gateway stores it:
 unset TAVILY_API_KEY
 # Attach the new provider to the sandbox:

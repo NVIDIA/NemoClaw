@@ -34,7 +34,7 @@ export function isGlobalCommandInvocation(
   const [command, firstArg] = argv;
   if (!command || !opts.globalCommands.has(command)) return false;
   if (command !== "doctor") return true;
-  if (!firstArg) return !opts.isRegisteredSandbox(command);
+  if (!firstArg) return true;
   if (opts.isSandboxConnectFlag(firstArg)) {
     const isHelpFlag = firstArg === "--help" || firstArg === "-h";
     if (!isHelpFlag || opts.isRegisteredSandbox(command)) return false;

@@ -407,10 +407,16 @@ test(
         }),
       ).toBe("OK");
 
-      const contextOverride = await captureConfig(run, dockerLog, image, "context window override", {
-        NEMOCLAW_MODEL_OVERRIDE: overrideModel,
-        NEMOCLAW_CONTEXT_WINDOW: "32768",
-      });
+      const contextOverride = await captureConfig(
+        run,
+        dockerLog,
+        image,
+        "context window override",
+        {
+          NEMOCLAW_MODEL_OVERRIDE: overrideModel,
+          NEMOCLAW_CONTEXT_WINDOW: "32768",
+        },
+      );
       expect(firstProviderModel(contextOverride).contextWindow).toBe(32768);
 
       const maxTokensOverride = await captureConfig(run, dockerLog, image, "max tokens override", {
@@ -500,11 +506,7 @@ test(
       });
     } finally {
       if (cleanupImage) {
-        const cleanup = await run(
-          "docker",
-          ["image", "rm", "-f", image],
-          `cleanup-${image}`,
-        );
+        const cleanup = await run("docker", ["image", "rm", "-f", image], `cleanup-${image}`);
         dockerLog.push(formatLog(`cleanup ${image}`, cleanup));
       }
       await artifacts.writeText("docker.log", `${secrets.redact(dockerLog.join("\n\n"))}\n`);

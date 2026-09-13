@@ -10,6 +10,7 @@ import type {
 } from "./contract";
 import { observePodmanManagedContainer } from "./podman-lifecycle";
 import {
+  DirectSandboxContainerNotFoundError,
   DirectSandboxFallbackUnavailableError,
   PinnedSandboxResourceIdentityChangedError,
 } from "./privileged-sandbox-control-errors";
@@ -50,7 +51,12 @@ function resolveTarget(
     throw new Error("Podman privileged control requires the registered sandbox identity.");
   }
   const container = observePodmanManagedContainer(engine, input.sandboxName);
-  if (!container || !container.running || container.paused) {
+  if (!container) {
+    throw new DirectSandboxContainerNotFoundError(
+      `No Podman runtime resource found for sandbox '${input.sandboxName}'.`,
+    );
+  }
+  if (!container.running || container.paused) {
     throw new DirectSandboxFallbackUnavailableError(
       `No running Podman runtime resource found for sandbox '${input.sandboxName}'.`,
     );

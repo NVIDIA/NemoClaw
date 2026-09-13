@@ -14,9 +14,16 @@ import type { CurlProbeOptions, CurlProbeResult } from "../adapters/http/probe";
 import { runCurlProbe } from "../adapters/http/probe";
 import { normalizeCredentialValue, resolveProviderCredential } from "../credentials/store";
 import { getProviderSelectionConfig } from "./config";
-import type { LocalProviderHealthProbeOptions } from "./local";
-import { probeLocalProviderHealth } from "./local";
-import { MIN_PROBE_REPLY_TOKENS } from "./max-tokens-field";
+import {
+  getResolvedOllamaHost,
+  loadPersistedOllamaHost,
+  type LocalProviderHealthProbeOptions,
+  OLLAMA_PORT,
+  probeOllamaEndpointInventory,
+  probeLocalProviderHealth,
+  type RunCaptureFn,
+} from "./local";
+import { MIN_PROBE_REPLY_TOKENS, resolveProbeReplyTokens } from "./max-tokens-field";
 import { getChatCompletionsProbeCurlArgs } from "./onboard-probes";
 import { usesNvidiaEndpointProbePayload } from "./openai-probe-models";
 import { BUILD_ENDPOINT_URL } from "./provider-models";
@@ -53,6 +60,30 @@ export interface ProviderHealthProbeOptions {
   model?: string | null;
   getCredentialImpl?: (envName: string) => string | null | undefined;
   isWsl?: boolean;
+}
+
+export type OllamaHostInventoryProbeOptions = {
+  getOllamaHost?: () => string;
+  runCaptureImpl?: RunCaptureFn;
+  prepareDockerEnvironment?: Parameters<typeof probeOllamaEndpointInventory>[3];
+};
+
+/** Probe the persisted raw Ollama daemon through its platform-specific host transport. */
+export function probeOllamaHostInventory(options: OllamaHostInventoryProbeOptions = {}): {
+  endpoint: string;
+  inventory: string[] | null;
+} {
+  const host = options.getOllamaHost
+    ? options.getOllamaHost()
+    : (loadPersistedOllamaHost() ?? getResolvedOllamaHost());
+  const endpoint = `http://${host}:${OLLAMA_PORT}/api/tags`;
+  const inventory = probeOllamaEndpointInventory(
+    host,
+    options.runCaptureImpl,
+    5_000,
+    options.prepareDockerEnvironment,
+  );
+  return { endpoint, inventory };
 }
 
 const COMPATIBLE_PROVIDERS = new Set(["compatible-endpoint", "compatible-anthropic-endpoint"]);
@@ -106,37 +137,24 @@ function useStatusProbeTiming(argv: string[]): string[] {
   );
 }
 
-function capStatusProbeOutput(argv: string[]): string[] {
-  const next = [...argv];
-  const dataIndex = next.indexOf("-d");
-  if (dataIndex < 0 || dataIndex + 1 >= next.length) return next;
-  const payload = parseJsonRecord(next[dataIndex + 1]);
-  if (!payload) return next;
-  if ("max_tokens" in payload) payload.max_tokens = HEALTH_PROBE_MAX_TOKENS;
-  if ("max_completion_tokens" in payload) {
-    payload.max_completion_tokens = HEALTH_PROBE_MAX_TOKENS;
-  }
-  next[dataIndex + 1] = JSON.stringify(payload);
-  return next;
-}
-
+/** Build curl arguments for an authenticated chat-completions health probe. */
 function buildChatCompletionsStatusProbeCurlArgs(
   model: string,
   endpoint: string,
   authArgs: readonly string[],
   isWsl?: boolean,
   useNvidiaEndpointProbePayload = false,
+  replyBudget: number = HEALTH_PROBE_MAX_TOKENS,
 ): string[] {
-  const args = capStatusProbeOutput(
-    useStatusProbeTiming(
-      getChatCompletionsProbeCurlArgs({
-        credentialArgs: [],
-        model,
-        url: endpoint,
-        isWsl,
-        useNvidiaEndpointProbePayload,
-      }),
-    ),
+  const args = useStatusProbeTiming(
+    getChatCompletionsProbeCurlArgs({
+      credentialArgs: [],
+      model,
+      url: endpoint,
+      isWsl,
+      useNvidiaEndpointProbePayload,
+      replyBudget,
+    }),
   );
   const url = args.pop() || endpoint;
   return [...args, ...authArgs, url];
@@ -503,6 +521,7 @@ function probeChatCompletionsProviderHealth(
   endpoint: string,
   options: ProviderHealthProbeOptions,
   useNvidiaEndpointProbePayload = false,
+  replyBudget: number = HEALTH_PROBE_MAX_TOKENS,
 ): ProviderHealthStatus {
   let apiKey = "";
   try {
@@ -532,6 +551,7 @@ function probeChatCompletionsProviderHealth(
           authConfig.args,
           options.isWsl,
           useNvidiaEndpointProbePayload,
+          replyBudget,
         ),
         { trustedConfigFiles: authConfig.trustedConfigFiles },
       );
@@ -689,6 +709,8 @@ export function probeRemoteProviderHealth(
       config.credentialEnv,
       GEMINI_CHAT_COMPLETIONS_ENDPOINT,
       options,
+      false,
+      resolveProbeReplyTokens(provider),
     );
   }
 

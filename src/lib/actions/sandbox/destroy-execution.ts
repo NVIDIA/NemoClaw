@@ -527,7 +527,7 @@ export async function executeSandboxDestroy({
         mcpRecoveryFailure,
       };
     }
-    const detachProviders = (): DetachSandboxProvidersResult =>
+    const detachProviders = (): Promise<DetachSandboxProvidersResult> =>
       runSandboxProviderPreDeleteCleanup(sandboxName, {
         runOpenshell: selectedRunOpenshell,
         redact,
@@ -545,8 +545,11 @@ export async function executeSandboxDestroy({
     const detachOutcome: DetachSandboxProvidersResult = sandboxConfirmedAbsent
       ? { detached: [], failures: [] }
       : runtimeProvider?.cleanup.supported === true && sandbox
-        ? runtimeProvider.cleanup.prepareDestroy({ sandbox, sandboxName }, { detachProviders })
-        : detachProviders();
+        ? await runtimeProvider.cleanup.prepareDestroy(
+            { sandbox, sandboxName },
+            { detachProviders },
+          )
+        : await detachProviders();
     // The final identity proof runs immediately before OpenShell delete. A
     // runtime administrator remains a trusted host authority; this closes the
     // multi-step window without claiming a cross-runtime transaction.

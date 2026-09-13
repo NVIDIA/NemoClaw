@@ -2,32 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Behavioral regression coverage for #4538 (reopened after PR #4610).
- *
- * The reporter workflow is NOT a NemoClaw wrapper command: QA connects to a
- * mutable sandbox and runs the raw OpenClaw CLI directly —
- *
- *     openclaw doctor --fix
- *
- * `doctor --fix` enforces OpenClaw's single-user 700/600 layout, tightening
- * /sandbox/.openclaw to `700 sandbox:sandbox` and openclaw.json to `600`, even
- * when it exits nonzero (it hits EACCES on the root-owned /sandbox/.bashrc).
- * That breaks the NemoClaw mutable contract (2770 dir / 660 config) the gateway
- * UID needs — the gateway is in the sandbox group and can no longer persist
- * config writes.
- *
- * PR #4610 only repaired this from NemoClaw-managed host paths (`nemoclaw doctor
- * --fix`, rebuild structure-repair, startup). None of those run after a raw
- * in-sandbox `openclaw doctor --fix` until the next restart, so the gateway
- * stays broken in between. The fix adds the restore to the always-on in-sandbox
- * `openclaw()` guard function (emitted into /tmp/nemoclaw-proxy-env.sh and
- * sourced by every interactive/login sandbox shell), so the contract is
- * re-asserted after every raw openclaw invocation, regardless of exit code.
- *
- * These tests execute the actual emitted guard / helper shell against a
- * temporary OpenClaw config tree rather than asserting on source text. The
- * docker-backed test at the bottom drives the EXACT reporter workflow against a
- * real sandbox image and is gated behind NEMOCLAW_RUN_DOCTOR_PERMS_DOCKER_E2E=1.
+ * The retained separate-user contract needs shared state after native commands
+ * tighten permissions (#4538). These fixtures run the emitted shell and real
+ * shared owner-normalization phase against isolated files, including failed
+ * commands. Kernel topology and privileged handoff have separate test owners.
+ * The optional Docker case below remains gated.
  */
 
 import { execFileSync, spawnSync } from "node:child_process";
@@ -118,7 +97,28 @@ function seedTightenedConfigTree(): { tmpDir: string; configDir: string; configF
   fs.chmodSync(hashFile, 0o600);
   fs.chmodSync(nestedDir, 0o700);
   fs.chmodSync(configDir, 0o700);
+  const normalizerPath = path.join(tmpDir, "normalizer.py");
+  // Select the shared owner phase without requiring a sandbox account on the test host.
+  fs.writeFileSync(
+    normalizerPath,
+    [
+      "import os, runpy, sys",
+      `normalizer = runpy.run_path(${JSON.stringify(path.join(path.dirname(START_SCRIPT), "lib/normalize_mutable_config_perms.py"))})`,
+      'root_fd, _ = normalizer["normalize_owner_tree"](sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), modes=(0o2770, 0o660))',
+      "os.close(root_fd)",
+    ].join("\n"),
+  );
   return { tmpDir, configDir, configFile };
+}
+
+function startScriptForConfigTree(configDir: string): string {
+  return fs
+    .readFileSync(START_SCRIPT, "utf-8")
+    .replaceAll("/sandbox/.openclaw", configDir)
+    .replaceAll(
+      "/usr/local/lib/nemoclaw/normalize_mutable_config_perms.py",
+      path.join(path.dirname(configDir), "normalizer.py"),
+    );
 }
 
 function writeDoctorFixFake(tmpDir: string): string {
@@ -139,11 +139,10 @@ function writeDoctorFixFake(tmpDir: string): string {
 }
 
 describe("raw `openclaw doctor --fix` mutable-perm restore (#4538)", () => {
-  const src = fs.readFileSync(START_SCRIPT, "utf-8");
-
   // source-shape-contract: security -- Executes the shipped restore helper to verify hardened mutable ownership modes
   it("restore helper re-asserts 2770/660 after the tree is tightened to 700/600", () => {
     const { tmpDir, configDir, configFile } = seedTightenedConfigTree();
+    const src = startScriptForConfigTree(configDir);
     const nestedDir = path.join(configDir, "agents", "main");
     const hashFile = path.join(configDir, ".config-hash");
     try {
@@ -181,6 +180,7 @@ describe("raw `openclaw doctor --fix` mutable-perm restore (#4538)", () => {
 
   it("restore helper is a no-op while a host transaction owns the config directory", () => {
     const { tmpDir, configDir, configFile } = seedTightenedConfigTree();
+    const src = startScriptForConfigTree(configDir);
     try {
       const result = spawnSync(
         "bash",
@@ -213,6 +213,7 @@ describe("raw `openclaw doctor --fix` mutable-perm restore (#4538)", () => {
   // source-shape-contract: security -- Executes the shipped guard to preserve permissions after a failing doctor repair
   it("emitted openclaw() guard restores the contract AND preserves a nonzero exit", () => {
     const { tmpDir, configDir, configFile } = seedTightenedConfigTree();
+    const src = startScriptForConfigTree(configDir);
     // Start from the intact contract so the simulated doctor run is what
     // tightens it — exactly the reporter sequence.
     fs.chmodSync(configDir, 0o2770);
@@ -261,6 +262,7 @@ describe("raw `openclaw doctor --fix` mutable-perm restore (#4538)", () => {
     // before the restore runs. The top-level call aborts the script (expected),
     // but the perms must already be restored from inside the function.
     const { tmpDir, configDir, configFile } = seedTightenedConfigTree();
+    const src = startScriptForConfigTree(configDir);
     fs.chmodSync(configDir, 0o2770);
     fs.chmodSync(configFile, 0o660);
     try {
@@ -300,9 +302,9 @@ describe("raw `openclaw doctor --fix` mutable-perm restore (#4538)", () => {
   });
 
   it("restore helper never leaves the recovery baseline group-writable", () => {
-    // The recursive `chmod -R g+rwX` must not loosen the read-only recovery
-    // trust anchor; the helper strips group-write from it afterwards (#4538).
+    // Shared-state repair must keep the recovery baseline read-only.
     const { tmpDir, configDir } = seedTightenedConfigTree();
+    const src = startScriptForConfigTree(configDir);
     const baseline = path.join(configDir, "openclaw.json.nemoclaw-baseline");
     fs.writeFileSync(baseline, "{}\n");
     fs.chmodSync(baseline, 0o440);

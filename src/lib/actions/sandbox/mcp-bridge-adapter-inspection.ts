@@ -47,13 +47,13 @@ export function parseAdapterRegistrationInspection(
   };
 }
 
-export function inspectAdapterRegistrationCommand(
+export async function inspectAdapterRegistrationCommand(
   sandboxName: string,
   entry: McpBridgeEntry,
   command: string,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
-): AdapterRegistrationInspection {
-  const result = executeSandboxCommand(sandboxName, command, { runtimeSelection });
+): Promise<AdapterRegistrationInspection> {
+  const result = await executeSandboxCommand(sandboxName, command, { runtimeSelection });
   if (!result) return { state: "error", detail: "sandbox unreachable" };
   return parseAdapterRegistrationInspection(result, entry);
 }

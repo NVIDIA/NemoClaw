@@ -12,7 +12,13 @@ const TRANSACTION = path.join(
   "hermes",
   "mcp-config-transaction.py",
 );
-const GUARD = path.join(import.meta.dirname, "../../..", "agents", "hermes", "runtime-config-guard.py");
+const GUARD = path.join(
+  import.meta.dirname,
+  "../../..",
+  "agents",
+  "hermes",
+  "runtime-config-guard.py",
+);
 
 describe("Hermes MCP apply-state race recovery", () => {
   it("returns success when the gateway commits the apply-state hash before the transaction helper can", () => {

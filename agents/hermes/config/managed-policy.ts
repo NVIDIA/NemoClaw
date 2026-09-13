@@ -152,7 +152,7 @@ type HermesManagedConfigBase = Record<string, unknown> & {
   };
 };
 
-export type HermesManagedConfig = HermesManagedConfigBase & HermesManagedRouting;
+export type HermesManagedConfig = HermesManagedConfigBase & Partial<HermesManagedRouting>;
 
 export type HermesManagedPolicyV1 = {
   schema_version: typeof HERMES_MANAGED_POLICY_SCHEMA_VERSION;
@@ -275,13 +275,14 @@ export function buildHermesManagedPolicy(
     platforms,
   };
 
-  applyHermesManagedRoute(config, {
-    model: settings.model,
-    baseUrl: settings.baseUrl,
-    upstreamProvider: settings.upstreamProvider,
-    inferenceApi: settings.inferenceApi,
-    contextWindow: settings.contextWindow,
-  });
+  if (settings.model !== null)
+    applyHermesManagedRoute(config, {
+      model: settings.model,
+      baseUrl: settings.baseUrl,
+      upstreamProvider: settings.upstreamProvider,
+      inferenceApi: settings.inferenceApi,
+      contextWindow: settings.contextWindow,
+    });
 
   const managedToolGatewayPresets = effectiveManagedToolGatewayPresets(settings);
   if (managedToolGatewayPresets.length > 0) {

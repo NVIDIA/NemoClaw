@@ -31,7 +31,6 @@ import {
 } from "./inference-set.test-support";
 import type { EnsureHttpsPinRuntimeAdapterOptions } from "./inference-set-route-containment";
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 const onboardProviders: any =
   (onboardProvidersNs as unknown as { default?: unknown }).default ?? onboardProvidersNs;
 

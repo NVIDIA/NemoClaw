@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { ProcessSessionChild, ProcessSessionSignals } from "../../core/process-session";
 import { EventEmitter } from "node:events";
 import { describe, expect, it, vi } from "vitest";
 
@@ -9,34 +10,18 @@ import type {
   OpenShellSandboxCommandExecutor,
   OpenShellSandboxCommandOutcome,
 } from "../../adapters/openshell/sandbox-command";
-import {
-  execSandbox,
-  type SandboxExecChild,
-  type SandboxExecCleanupDeps,
-  type SandboxExecSignalSource,
-} from "./exec";
+import { execSandbox, type SandboxExecCleanupDeps } from "./exec";
 
 const HEALTHY_MUTABLE_CONFIG = {
   applies: true as const,
   ok: true,
-  dirMode: "2770",
-  dirOwner: "sandbox:sandbox",
-  fileMode: "660",
-  fileOwner: "sandbox:sandbox",
-  configDir: "/sandbox/.openclaw",
-  configFile: "openclaw.json",
   issues: [],
 };
 
 const TIGHTENED_MUTABLE_CONFIG = {
   ...HEALTHY_MUTABLE_CONFIG,
   ok: false,
-  dirMode: "700",
-  fileMode: "600",
-  issues: [
-    "/sandbox/.openclaw mode 700 (expected 2770 setgid+group-writable)",
-    "openclaw.json mode 600 (expected 660 group-writable)",
-  ],
+  issues: ["OpenClaw config mode differs from runtime contract"],
 };
 
 function cleanupDeps(overrides: Partial<SandboxExecCleanupDeps> = {}): SandboxExecCleanupDeps {
@@ -124,17 +109,13 @@ describe("execSandbox mutable OpenClaw cleanup (#6047)", () => {
     expect(release).toHaveBeenCalledOnce();
   });
 
-  it("repairs a tightened tree after the command, re-inspects it, and preserves status 42", async () => {
+  it("repairs a drifted tree after the command and preserves status 42 after verified repair", async () => {
     const order: string[] = [];
     const inspect = vi
       .fn<SandboxExecCleanupDeps["inspectMutableConfigPerms"]>()
       .mockImplementationOnce(() => {
         order.push("inspect-before");
         return TIGHTENED_MUTABLE_CONFIG;
-      })
-      .mockImplementationOnce(() => {
-        order.push("inspect-after");
-        return HEALTHY_MUTABLE_CONFIG;
       });
     const repair = vi.fn(() => {
       order.push("repair");
@@ -153,7 +134,7 @@ describe("execSandbox mutable OpenClaw cleanup (#6047)", () => {
     });
 
     expect(result.exitCode).toBe(42);
-    expect(order).toEqual(["command", "inspect-before", "repair", "inspect-after", "release"]);
+    expect(order).toEqual(["command", "inspect-before", "repair", "release"]);
   });
 
   it("lets cleanup failure override status 42 and reports both statuses", async () => {
@@ -239,7 +220,7 @@ describe("execSandbox mutable OpenClaw cleanup (#6047)", () => {
     const childEvents = new EventEmitter();
     const signalEvents = new EventEmitter();
     const order: string[] = [];
-    const child: SandboxExecChild = {
+    const child: ProcessSessionChild = {
       exitCode: null,
       signalCode: null,
       kill: vi.fn((receivedSignal) => {
@@ -252,9 +233,9 @@ describe("execSandbox mutable OpenClaw cleanup (#6047)", () => {
         return true;
       }),
       once: ((event: string, listener: (...args: unknown[]) => void) =>
-        childEvents.once(event, listener)) as SandboxExecChild["once"],
+        childEvents.once(event, listener)) as ProcessSessionChild["once"],
     };
-    const signalSource: SandboxExecSignalSource = {
+    const signalSource: ProcessSessionSignals = {
       add: (name, listener) => signalEvents.on(name, listener),
       remove: (name, listener) => {
         const recordRelease = {
@@ -296,14 +277,14 @@ describe("execSandbox mutable OpenClaw cleanup (#6047)", () => {
   it("does not deliver a second SIGINT when the terminal already signals the child", async () => {
     const childEvents = new EventEmitter();
     const signalEvents = new EventEmitter();
-    const child: SandboxExecChild = {
+    const child: ProcessSessionChild = {
       exitCode: null,
       signalCode: null,
       kill: vi.fn(() => true),
       once: ((event: string, listener: (...args: unknown[]) => void) =>
-        childEvents.once(event, listener)) as SandboxExecChild["once"],
+        childEvents.once(event, listener)) as ProcessSessionChild["once"],
     };
-    const signalSource: SandboxExecSignalSource = {
+    const signalSource: ProcessSessionSignals = {
       add: (name, listener) => signalEvents.on(name, listener),
       remove: (name, listener) => signalEvents.off(name, listener),
     };
@@ -334,22 +315,28 @@ describe("execSandbox mutable OpenClaw cleanup (#6047)", () => {
     expect(signalEvents.listenerCount("SIGINT")).toBe(0);
   });
 
-  it("fails when post-repair inspection cannot prove the contract", async () => {
+  it("refuses repair when inspection cannot prove the contract", async () => {
     const inspect = vi
       .fn<SandboxExecCleanupDeps["inspectMutableConfigPerms"]>()
-      .mockReturnValueOnce(TIGHTENED_MUTABLE_CONFIG)
       .mockReturnValueOnce({
         applies: false,
         skipReason: "unavailable",
-        reason: "could not stat config (container stopped)",
+        reason: "startup-not-ready",
       });
+    const repair = vi.fn();
 
     const result = await runExecCase({
       outcome: { kind: "completed", exitCode: 0 },
-      cleanupDeps: cleanupDeps({ inspectMutableConfigPerms: inspect }),
+      cleanupDeps: cleanupDeps({
+        inspectMutableConfigPerms: inspect,
+        repairMutableConfigPerms: repair,
+      }),
     });
 
     expect(result.exitCode).toBe(1);
-    expect(result.stderr.join("\n")).toContain("post-repair permission verification unavailable");
+    expect(result.stderr.join("\n")).toContain(
+      "permission inspection unavailable: startup-not-ready",
+    );
+    expect(repair).not.toHaveBeenCalled();
   });
 });

@@ -89,9 +89,7 @@ describe("Hermes MCP recovery guidance", () => {
       };
     });
 
-    expect(() =>
-      assertHermesMcpMutationRuntimeCapability("alpha", runtimeSelection),
-    ).not.toThrow();
+    expect(() => assertHermesMcpMutationRuntimeCapability("alpha", runtimeSelection)).not.toThrow();
     expect(() => unregisterHermesAdapter("alpha", entry, runtimeSelection)).not.toThrow();
     expect(mocks.runOpenshell).toHaveBeenCalledTimes(2);
   });

@@ -48,7 +48,7 @@ providerCommands.setProviderCommandRuntimeHooksForTest({ runOpenshell: (args, op
   if (args[0] === "provider" && args[1] === "get") {
     return {
       status: 0,
-      stdout: "Id: 11111111-2222-4333-8444-555555555555\nType: nemoclaw-mcp-v1\nResource version: 4\nCredential keys: GITHUB_TOKEN\n",
+      stdout: "Name: alpha-mcp-github\nId: 11111111-2222-4333-8444-555555555555\nType: nemoclaw-mcp-v1\nResource version: 4\nCredential keys: GITHUB_TOKEN\nConfig keys: <none>\n",
       stderr: "",
     };
   }
@@ -143,7 +143,7 @@ providerCommands.runOpenshellProviderCommand = (args) => {
   if (args[0] === "provider" && args[1] === "get") {
     return {
       status: 0,
-      stdout: "Id: 11111111-2222-4333-8444-555555555555\nType: nemoclaw-mcp-v1\nResource version: 4\nCredential keys: LD_PRELOAD\n",
+      stdout: "Name: alpha-mcp-fake\nId: 11111111-2222-4333-8444-555555555555\nType: nemoclaw-mcp-v1\nResource version: 4\nCredential keys: LD_PRELOAD\nConfig keys: <none>\n",
       stderr: "",
     };
   }

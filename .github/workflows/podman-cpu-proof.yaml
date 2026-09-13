@@ -83,25 +83,25 @@ jobs:
 
       - name: Prepare system and app slice CPU settings without service delegation
         shell: bash
-        run: node --experimental-strip-types scripts/checks/run-portable-cpu-delegation-proof.mts prepare
+        run: node scripts/checks/run-portable-cpu-delegation-proof.mts prepare
 
       - name: Verify missing delegation blocks portable configuration and service activation
         shell: bash
-        run: node --experimental-strip-types scripts/checks/run-portable-cpu-delegation-proof.mts reject
+        run: node scripts/checks/run-portable-cpu-delegation-proof.mts reject
 
       - name: Apply administrator delegation and prove admission
         shell: bash
-        run: node --experimental-strip-types scripts/checks/run-portable-cpu-delegation-proof.mts admit
+        run: node scripts/checks/run-portable-cpu-delegation-proof.mts admit
 
       - name: Capture CPU delegation failure diagnostics
         if: failure()
         shell: bash
-        run: node --experimental-strip-types scripts/checks/run-portable-cpu-delegation-proof.mts diagnostics
+        run: node scripts/checks/run-portable-cpu-delegation-proof.mts diagnostics
 
       - name: Restore the user manager boundary
         if: always()
         shell: bash
-        run: node --experimental-strip-types scripts/checks/run-portable-cpu-delegation-proof.mts cleanup
+        run: node scripts/checks/run-portable-cpu-delegation-proof.mts cleanup
 
       - name: Upload CPU delegation evidence
         if: always()
@@ -124,7 +124,7 @@ jobs:
       E2E_SOURCE_REVISION: ${{ github.event.pull_request.head.sha }}
       E2E_TARGET_ID: podman-cpu-lifecycle
       NEMOCLAW_RUN_LIVE_E2E: "1"
-      NEMOCLAW_OPENSHELL_PIN_VERSION: "0.0.106"
+      NEMOCLAW_OPENSHELL_PIN_VERSION: "0.0.116"
       PODMAN_APT_VERSION: "5.7.0+ds2-3build1"
     steps:
       - name: Checkout

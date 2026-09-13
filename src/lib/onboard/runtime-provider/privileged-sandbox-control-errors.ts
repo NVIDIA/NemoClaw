@@ -8,6 +8,13 @@ export class DirectSandboxFallbackUnavailableError extends Error {
   }
 }
 
+export class DirectSandboxContainerNotFoundError extends DirectSandboxFallbackUnavailableError {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "DirectSandboxContainerNotFoundError";
+  }
+}
+
 export class PinnedSandboxResourceIdentityChangedError extends Error {
   constructor(sandboxName: string) {
     super(

@@ -15,7 +15,6 @@ import {
 } from "../../agent/onboard";
 import { RD as _RD, R } from "../../cli/terminal-style";
 import { snapshotOpenShellEnv } from "../../gateway-runtime-action";
-import * as nim from "../../inference/nim";
 import type { WebSearchConfig } from "../../inference/web-search";
 import type { DcodeAutoApprovalMode } from "../../onboard/dcode-auto-approval";
 import { isSandboxBaseImageRefreshRequested } from "../../onboard/base-image-resolution-flow";
@@ -34,6 +33,7 @@ import * as registry from "../../state/registry";
 import * as sandboxState from "../../state/sandbox";
 import type { ToolDisclosure } from "../../tool-disclosure";
 import { probeSandboxInferenceInvocation } from "./inference-invocation-probe";
+import { rebuildOnboardDependencies } from "./rebuild-onboard-dependencies";
 import {
   DCODE_AGENT_NAME,
   type ResolvedDcodeRebuildTarget,
@@ -196,13 +196,13 @@ function resolveTarget(
   }
 }
 
-function requireInferenceRoute(
+async function requireInferenceRoute(
   sandboxName: string,
   target: ResolvedDcodeRebuildTarget,
   bail: DcodeRebuildPreflightBail,
   runtimeSelection?: OpenShellRuntimeSelection,
-): void {
-  const result = probeSandboxInferenceInvocation({
+): Promise<void> {
+  const result = await probeSandboxInferenceInvocation({
     sandboxName,
     agentName: target.agent,
     ...target,
@@ -251,11 +251,14 @@ function getRecordedGpuConfig(
     entry,
     session?.sandboxName === sandboxName ? session.gpuPassthrough : undefined,
   );
-  return resolveSandboxGpuConfig(nim.detectGpu(), {
-    flag: overrides.flag,
-    device: overrides.device,
-    env: {},
-  });
+  return resolveSandboxGpuConfig(
+    rebuildOnboardDependencies.detectGpuWithRuntimeProviderProof(entry.openshellDriver),
+    {
+      flag: overrides.flag,
+      device: overrides.device,
+      env: {},
+    },
+  );
 }
 
 function inspectLocalImageId(imageRef: string): string {
@@ -512,7 +515,7 @@ export async function prepareDcodeReplacementBeforeMutation(
 
     const session = loadMatchingDcodeSession(sandboxName);
     const target = resolveTarget(entry, resumeConfig, bail, gatewayPort);
-    if (!skipLiveRoute) requireInferenceRoute(sandboxName, target, bail, runtimeSelection);
+    if (!skipLiveRoute) await requireInferenceRoute(sandboxName, target, bail, runtimeSelection);
 
     pinnedBase = resolvePinnedDcodeBaseImage(bail, input.baseImageOptions);
     const sandboxGpuConfig = getRecordedGpuConfig(sandboxName, entry, session);
@@ -549,7 +552,7 @@ export async function prepareDcodeReplacementBeforeMutation(
       return null;
     }
     if (!input.checkGatewaySchema(runtimeSelection)) return null;
-    if (!skipLiveRoute) requireInferenceRoute(sandboxName, target, bail, runtimeSelection);
+    if (!skipLiveRoute) await requireInferenceRoute(sandboxName, target, bail, runtimeSelection);
     requireCurrentTarget(sandboxName, entry, target, resumeConfig, bail, gatewayPort);
     if (!verifyPreparedDcodeRebuildImage(buildContext) || !pinnedBase.verify()) {
       fail("the prepared DCode replacement inputs changed during preflight", bail);
@@ -609,7 +612,7 @@ export async function revalidateDcodeReplacementAtMutationEdge(
     return false;
   }
   if (!input.checkGatewaySchema(runtimeSelection)) return false;
-  if (!skipLiveRoute) requireInferenceRoute(sandboxName, target, bail, runtimeSelection);
+  if (!skipLiveRoute) await requireInferenceRoute(sandboxName, target, bail, runtimeSelection);
   requireCurrentTarget(sandboxName, entry, target, resumeConfig, bail, gatewayPort);
   if (!replacement.verify()) {
     fail("the prepared DCode replacement inputs changed before deletion", bail);
@@ -648,7 +651,7 @@ export async function revalidateManagedDcodeWorkloadAtMutationEdge(
     return false;
   }
   if (!input.checkGatewaySchema(runtimeSelection)) return false;
-  if (!skipLiveRoute) requireInferenceRoute(sandboxName, target, bail, runtimeSelection);
+  if (!skipLiveRoute) await requireInferenceRoute(sandboxName, target, bail, runtimeSelection);
   requireCurrentTarget(sandboxName, entry, target, resumeConfig, bail, gatewayPort);
   return true;
 }

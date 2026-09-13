@@ -141,7 +141,7 @@ export async function runRebuildPreflightPhase(
   } = createRebuildCommandContext(options, opts);
   const sandboxEntry = getRebuildSandboxEntryOrBail(sandboxName, bail);
   if (!sandboxEntry) return null;
-  if (blockRebuildOnRetainedSandboxRecovery(sandboxName, bail)) return null;
+  if (blockRebuildOnRetainedSandboxRecovery(sandboxEntry, bail)) return null;
   // #6376: refuse a stuck MCP destroy transaction up front — before backup,
   // image prep, or the old-sandbox delete. The only MCP marker check used to
   // live inside the destroy phase, which runs AFTER the backup phase, so a
@@ -326,13 +326,13 @@ export async function runRebuildPreflightPhase(
         resumeConfig.credentialEnv && hydrateCredentialEnv(resumeConfig.credentialEnv),
       );
       if (
-        !checkRebuildGatewayCredentialReuseOrBail(
+        !(await checkRebuildGatewayCredentialReuseOrBail(
           sandboxName,
           resumeConfig,
           hostCredentialAvailable,
           log,
           bail,
-        )
+        ))
       ) {
         return null;
       }

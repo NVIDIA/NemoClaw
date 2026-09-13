@@ -77,7 +77,7 @@
 # Only a small set of top-level commands are intercepted. Managed dashboard
 # launches receive the local API bearer token through process environment after
 # a descriptor-safe read, so the isolated dashboard home does not need a second
-# credential-bearing dotenv file. Other subcommands pass through unchanged.
+# credential-bearing dotenv file.
 
 import ast
 import json
@@ -782,6 +782,7 @@ def _report_cli_adapter_error(exc: _CliAdapterError) -> int:
 
 
 def main(argv: list[str]) -> int:
+    os.environ["HERMES_SKIP_CHMOD"] = "1"
     real_hermes = _resolve_real_hermes()
     guard_path = _resolve_guard()
     if argv[:1] == ["dashboard"] and not _load_dashboard_api_server_key():

@@ -67,16 +67,17 @@ If preflight detects an unsafe path, invalid config, invalid ownership posture, 
 | Channel tokens | Rebuild required because the channel configuration and credential attachment are created during onboarding or rebuild | `$$nemoclaw <name> channels add <channel>`, then accept the rebuild prompt |
 | Channel enable or disable | Rebuild required because `/sandbox/.hermes/.env` and Hermes config are baked at image build time | `$$nemoclaw <name> channels stop <channel>`, then rebuild |
 | API or dashboard forward port | Runtime; the host-side forward is re-resolved on the next `connect` | `$$nemoclaw <name> connect` or `$$nemoclaw <name> recover` |
-| Hermes plugin code, Langfuse settings, or other startup-only runtime config | Runtime after a supported host-side update and gateway restart | Bake plugin code into the image or use a supported host config command, then run `$$nemoclaw <name> gateway restart` |
+| Hermes plugin code, Langfuse settings, or other startup-only runtime config | Runtime after Hermes or the sandbox user changes valid mutable config and the gateway restarts | Change Hermes-owned config in the sandbox; use a supported host config command for settings owned by NemoClaw, then run `$$nemoclaw <name> gateway restart` |
 | Web search provider | Rebuild required because onboarding bakes `web.backend`, the environment placeholder, and the credential attachment into the image | Set `NEMOCLAW_WEB_SEARCH_PROVIDER=tavily` or `none`, then rerun onboarding and recreate the sandbox |
 | Filesystem layout | Locked at creation | Re-onboard with `$$nemoclaw onboard --recreate-sandbox` |
 | Sandbox name | Locked at creation | Re-onboard with a different `--name` |
 | GPU passthrough or device selector | Locked at creation | Re-onboard with `--gpu` or `--sandbox-gpu-device` |
-| Hermes `config.yaml` keys | Mixed; inference and supported config keys can be patched by host commands, while image, policy, and channel changes still require rebuild | Use `$$nemoclaw inference set` or `$$nemoclaw <name> config set` so the config and root-owned trust anchor change together |
+| Hermes `config.yaml` keys | Mixed; valid Hermes-owned changes are adopted on restart, while image, policy, and channel changes still require rebuild | Change Hermes-owned settings in the sandbox; use `$$nemoclaw inference set` or `$$nemoclaw <name> config set` for settings owned by NemoClaw so its registry stays aligned |
 
 The runtime source of truth is `/sandbox/.hermes/config.yaml` plus `/sandbox/.hermes/.env`. The host registry caches metadata, but the image and Hermes runtime read from the in-sandbox files.
+Valid changes made by Hermes or the sandbox user are authoritative. Startup and restart validate the secret boundary, safe paths, and a stable transaction snapshot, then adopt the current mutable configuration. A direct config change alone does not block lifecycle operations.
 
-Do not edit those files or their hash files directly and then expect `gateway restart` to establish the bytes as trusted. Use supported host config and inference commands so NemoClaw updates the managed config metadata together.
+Use supported host config and inference commands for settings that NemoClaw owns so its registry stays aligned with the runtime. Those commands can report a registry mismatch for the operation they manage, but generic startup, restart, recovery, health, probe, and connect paths do not enforce registry equality.
 
 Hermes host-side config writes run as a sealed transaction.
 NemoClaw binds the write to the SHA-256 digest of the matching read, temporarily seals the mutable config paths, atomically installs fresh config inodes, refreshes the strict and compatibility hashes, and then restores the mutable paths.
@@ -94,8 +95,8 @@ NemoClaw does not provide post-provisioning immutability for agent configuration
 OpenShell remains authoritative for sandbox filesystem and network policy enforcement.
 An agent process can change files that its sandbox identity can write.
 
-Use supported host commands for intended configuration changes so NemoClaw updates validation hashes and managed metadata with the config.
-Direct in-sandbox edits can cause a later gateway restart to reject the changed config when its integrity metadata no longer matches.
+For Hermes, direct changes to valid mutable configuration do not block restart. Lifecycle validation can still refuse raw secrets, unsafe paths, raced snapshots, or missing or malformed transaction metadata.
+Use supported host commands for settings owned by NemoClaw so its registry and the running Hermes projection remain aligned for those host-managed operations.
 
 NemoClaw serializes host-side gateway recovery, config and inference writes, snapshots, policy updates, channel updates, and sandbox destruction for each sandbox.
 This mutation lock prevents concurrent host operations from racing on the same registered sandbox.

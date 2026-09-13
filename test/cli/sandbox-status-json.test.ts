@@ -22,6 +22,7 @@ function createInferenceRouteStatusSetup(options: {
   upstreamExit?: number;
   invocationHttpStatus?: string;
   invocationExit?: number;
+  invocationClassification?: string;
 }) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-status-route-"));
   const localBin = path.join(home, "bin");
@@ -72,7 +73,11 @@ function createInferenceRouteStatusSetup(options: {
       "  exit 0",
       "fi",
       'if [ "$1" = "sandbox" ] && [ "$2" = "exec" ]; then',
-      ...inferenceInvocationStubLines(options.invocationHttpStatus, options.invocationExit),
+      ...inferenceInvocationStubLines(
+        options.invocationHttpStatus,
+        options.invocationExit,
+        options.invocationClassification ? [options.invocationClassification] : [],
+      ),
       ...(options.executeRouteCommand
         ? [
             '  while [ "$#" -gt 0 ] && [ "$1" != "--" ]; do shift; done',
@@ -279,6 +284,32 @@ describe("CLI sandbox status JSON output", testTimeoutOptions(20_000), () => {
     );
   });
 
+  it("sandbox status --json names the NVIDIA Build account entitlement behind a 404 (#10879)", () => {
+    const { home, localBin, sandboxName } = createInferenceRouteStatusSetup({
+      routeOutput: "OK 200",
+      invocationHttpStatus: "404",
+      invocationExit: 1,
+      invocationClassification: "nemoclaw-probe:nvcf-function-not-found",
+    });
+
+    const result = runWithEnv(`${sandboxName} status --json`, {
+      HOME: home,
+      PATH: `${localBin}:${process.env.PATH || ""}`,
+    });
+
+    expect(result.code).toBe(1);
+    const parsed = JSON.parse(result.out);
+    expect(parsed.inferenceHealth).toMatchObject({
+      ok: false,
+      probed: true,
+      failureLabel: "unhealthy",
+      endpoint: "https://inference.local/v1/chat/completions",
+    });
+    expect(parsed.inferenceHealth.detail).toContain("not deployed for your account");
+    expect(parsed.inferenceHealth.detail).toContain("nvidia/nemotron");
+    expect(parsed.inferenceHealth.detail).not.toContain("..");
+  });
+
   it.each([401, 403])(
     "sandbox status --json fails an inference.local HTTP %s that rejects an agent request",
     (httpStatus) => {
@@ -299,11 +330,18 @@ describe("CLI sandbox status JSON output", testTimeoutOptions(20_000), () => {
         ok: false,
         probed: true,
         failureLabel: "unauthorized",
-        endpoint: "https://inference.local/v1/models",
+        // The rejected request is the invocation, so the row names its path
+        // rather than the models route it did not use (#10879).
+        endpoint: "https://inference.local/v1/chat/completions",
       });
       expect(parsed.inferenceHealth.detail).toContain(String(httpStatus));
       expect(parsed.inferenceHealth.subprobes).toContainEqual(
-        expect.objectContaining({ ok: true, probeLabel: "route reachability" }),
+        expect.objectContaining({
+          ok: true,
+          probeLabel: "route reachability",
+          endpoint: "https://inference.local/v1/models",
+          okLabel: `reachable (HTTP ${httpStatus})`,
+        }),
       );
     },
   );

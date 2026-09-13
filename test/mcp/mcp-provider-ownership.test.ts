@@ -45,7 +45,7 @@ providerCommands.runOpenshellProviderCommand = (args) => {
   if (args[0] === "provider" && args[1] === "get") {
     return {
       status: 0,
-      stdout: "Id: " + liveId + "\\nType: nemoclaw-mcp-v1\\nResource version: 4\\nCredential keys: EXPECTED_TOKEN\\n",
+      stdout: "Name: " + args[2] + "\\nId: " + liveId + "\\nType: nemoclaw-mcp-v1\\nResource version: 4\\nCredential keys: EXPECTED_TOKEN\\nConfig keys: <none>\\n",
       stderr: "",
     };
   }
@@ -146,7 +146,7 @@ providerCommands.runOpenshellProviderCommand = (args) => {
     return providerExists
       ? {
           status: 0,
-          stdout: "Id: " + expectedId + "\nType: nemoclaw-mcp-v1\nResource version: 4\nCredential keys: LD_PRELOAD\n",
+          stdout: "Name: " + args[2] + "\nId: " + expectedId + "\nType: nemoclaw-mcp-v1\nResource version: 4\nCredential keys: LD_PRELOAD\nConfig keys: <none>\n",
           stderr: "",
         }
       : { status: 1, stdout: "", stderr: "provider '" + args[2] + "' not found" };
@@ -307,7 +307,7 @@ providerCommands.runOpenshellProviderCommand = (args) => {
   if (args[0] === "provider" && args[1] === "get") {
     return {
       status: 0,
-      stdout: "Id: 99999999-8888-4777-8666-555555555555\nType: nemoclaw-mcp-v1\nResource version: 4\nCredential keys: EXPECTED_TOKEN\n",
+      stdout: "Name: " + args[2] + "\nId: 99999999-8888-4777-8666-555555555555\nType: nemoclaw-mcp-v1\nResource version: 4\nCredential keys: EXPECTED_TOKEN\nConfig keys: <none>\n",
       stderr: "",
     };
   }
@@ -407,18 +407,23 @@ const entry = {
   adapter: "mcporter",
   addedAt: "2026-06-01T00:00:00.000Z",
 };
-const before = providerActions.inspectMcpProviderAttachments("alpha", runtimeSelection);
-const firstOutcome = providerActions.detachMissingProviderReference("alpha", entry, runtimeSelection);
-const afterFirst = providerActions.inspectMcpProviderAttachments("alpha", runtimeSelection);
-const secondOutcome = providerActions.detachMissingProviderReference("alpha", {
-  ...entry,
-  server: "second",
-  providerName: "alpha-mcp-second",
-  providerId: "22222222-3333-4444-8555-666666666666",
-  policyName: "mcp-bridge-second",
-}, runtimeSelection);
-const after = providerActions.inspectMcpProviderAttachments("alpha", runtimeSelection);
-process.stdout.write(JSON.stringify({ before, firstOutcome, afterFirst, secondOutcome, after, calls }));
+(async () => {
+  const before = await providerActions.inspectMcpProviderAttachments("alpha", runtimeSelection);
+  const firstOutcome = await providerActions.detachMissingProviderReference("alpha", entry, runtimeSelection);
+  const afterFirst = await providerActions.inspectMcpProviderAttachments("alpha", runtimeSelection);
+  const secondOutcome = await providerActions.detachMissingProviderReference("alpha", {
+    ...entry,
+    server: "second",
+    providerName: "alpha-mcp-second",
+    providerId: "22222222-3333-4444-8555-666666666666",
+    policyName: "mcp-bridge-second",
+  }, runtimeSelection);
+  const after = await providerActions.inspectMcpProviderAttachments("alpha", runtimeSelection);
+  process.stdout.write(JSON.stringify({ before, firstOutcome, afterFirst, secondOutcome, after, calls }));
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
 `;
     const result = spawnSync(process.execPath, ["-e", script], {
       cwd: process.cwd(),
@@ -470,7 +475,7 @@ providerCommands.runOpenshellProviderCommand = (args) => {
   if (args[0] === "provider" && args[1] === "get") {
     return {
       status: 0,
-      stdout: "Id: 11111111-2222-4333-8444-555555555555\nType: nemoclaw-mcp-v1\nResource version: " + resourceVersion + "\nCredential keys: EXPECTED_TOKEN\n",
+      stdout: "Name: " + args[2] + "\nId: 11111111-2222-4333-8444-555555555555\nType: nemoclaw-mcp-v1\nResource version: " + resourceVersion + "\nCredential keys: EXPECTED_TOKEN\nConfig keys: <none>\n",
       stderr: "",
     };
   }
@@ -486,20 +491,25 @@ providerCommands.runOpenshellProviderCommand = (args) => {
 };
 const providerActions = require("./src/lib/actions/sandbox/mcp-bridge-provider.js");
 let message = "";
-try {
-  providerActions.upsertMcpProvider(
-    "alpha-mcp-fake",
-    [{ name: "EXPECTED_TOKEN" }],
-    {
-      allowExisting: true,
-      expectedProviderId: "11111111-2222-4333-8444-555555555555",
-      runtimeSelection,
-    },
-  );
-} catch (error) {
-  message = error.message;
-}
-process.stdout.write(JSON.stringify({ message, resourceVersion, calls }));
+(async () => {
+  try {
+    await providerActions.upsertMcpProvider(
+      "alpha-mcp-fake",
+      [{ name: "EXPECTED_TOKEN" }],
+      {
+        allowExisting: true,
+        expectedProviderId: "11111111-2222-4333-8444-555555555555",
+        runtimeSelection,
+      },
+    );
+  } catch (error) {
+    message = error.message;
+  }
+  process.stdout.write(JSON.stringify({ message, resourceVersion, calls }));
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
 `;
     const result = spawnSync(process.execPath, ["-e", script], {
       cwd: process.cwd(),
@@ -541,21 +551,26 @@ providerCommands.runOpenshellProviderCommand = (args) => {
 };
 const providerActions = require("./src/lib/actions/sandbox/mcp-bridge-provider.js");
 let message = "";
-try {
-  providerActions.upsertMcpProvider(
-    "alpha-mcp-fake",
-    [{ name: "EXPECTED_TOKEN" }],
-    {
-      allowExisting: true,
-      expectedProviderId: "11111111-2222-4333-8444-555555555555",
-      requireExisting: true,
-      runtimeSelection,
-    },
-  );
-} catch (error) {
-  message = error.message;
-}
-process.stdout.write(JSON.stringify({ message, calls }));
+(async () => {
+  try {
+    await providerActions.upsertMcpProvider(
+      "alpha-mcp-fake",
+      [{ name: "EXPECTED_TOKEN" }],
+      {
+        allowExisting: true,
+        expectedProviderId: "11111111-2222-4333-8444-555555555555",
+        requireExisting: true,
+        runtimeSelection,
+      },
+    );
+  } catch (error) {
+    message = error.message;
+  }
+  process.stdout.write(JSON.stringify({ message, calls }));
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
 `;
     const result = spawnSync(process.execPath, ["-e", script], {
       cwd: process.cwd(),
@@ -608,7 +623,7 @@ providerCommands.runOpenshellProviderCommand = (args) => {
   if (args[0] === "provider" && args[1] === "get") {
     return {
       status: 0,
-      stdout: "Id: 99999999-8888-4777-8666-555555555555\\nType: nemoclaw-mcp-v1\\nResource version: 4\\nCredential keys: EXPECTED_TOKEN\\n",
+      stdout: "Name: " + args[2] + "\\nId: 99999999-8888-4777-8666-555555555555\\nType: nemoclaw-mcp-v1\\nResource version: 4\\nCredential keys: EXPECTED_TOKEN\\nConfig keys: <none>\\n",
       stderr: "",
     };
   }

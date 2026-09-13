@@ -133,11 +133,8 @@ describe("local inference helpers", () => {
 
   it("bounds an unavailable WSL networking-mode probe and keeps the conservative route", () => {
     const stateRoot = mkdtempSync(path.join(os.tmpdir(), "nemoclaw-ollama-wsl-mode-"));
-    const capture = vi.fn<NonNullable<Parameters<typeof findReachableOllamaHost>[0]>>(
-      (command) =>
-        command.includes("http://127.0.0.1:11434/api/tags")
-          ? JSON.stringify({ models: [] })
-          : "",
+    const capture = vi.fn<NonNullable<Parameters<typeof findReachableOllamaHost>[0]>>((command) =>
+      command.includes("http://127.0.0.1:11434/api/tags") ? JSON.stringify({ models: [] }) : "",
     );
 
     try {
@@ -1197,7 +1194,7 @@ describe("local inference helpers", () => {
     const captureEx = () => ({ stdout: "", exitCode: 0, timedOut: false });
     const result = validateOllamaModel("nemotron-3-nano:30b", () => "", undefined, captureEx);
     expect(result.ok).toBe(false);
-    expect(result.message).toMatch(/did not answer the local probe in time/);
+    expect(result.message).toMatch(/failed the local probe without a response/);
   });
 
   it("fails ollama model validation when Ollama returns an error payload", () => {
@@ -1367,7 +1364,7 @@ describe("local inference helpers", () => {
     );
     expect(result.ok).toBe(false);
     expect(callCount).toBe(1);
-    expect(result.message).toMatch(/did not answer the local probe in time/);
+    expect(result.message).toMatch(/failed the local probe without a response/);
   });
 
   it("fails when both probe attempts return empty (model truly unhealthy or too slow)", () => {

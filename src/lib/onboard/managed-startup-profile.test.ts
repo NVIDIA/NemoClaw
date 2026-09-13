@@ -352,19 +352,23 @@ const STOCK_RUNTIME_INPUT_AGENTS = {
 } as const satisfies Record<string, readonly ManagedStartupAgent[]>;
 
 describe("managed startup profile", () => {
+  it.each(["pi", "langchain-deepagents-code"] as const)("requires inference for %s", (agent) => {
+    const profile = agent === "pi" ? PI_PROFILE : DCODE_PROFILE;
+    expect(() => validateManagedStartupProfile({ ...profile, inference: null })).toThrow(
+      "requires inference configuration",
+    );
+  });
   it.each(VALID_PROFILES)(
     "round-trips each $agent profile through canonical encoding",
     (profile) => {
       const validated = validateManagedStartupProfile(profile);
       const encoded = encodeManagedStartupProfile(profile);
-
       const decoded = decodeManagedStartupProfile(encoded);
       expect(decoded).toEqual(validated);
-      expect(decoded.inference.model).toBe(profile.inference.model);
+      expect(decoded.inference!.model).toBe(profile.inference!.model);
       expect(fingerprintManagedStartupProfile(profile)).toMatch(/^[a-f0-9]{64}$/);
     },
   );
-
   it("round-trips all OpenClaw-only startup settings", () => {
     const profile = decodeManagedStartupProfile(encodeManagedStartupProfile(OPENCLAW_PROFILE));
     expect(profile).toMatchObject({
@@ -469,7 +473,6 @@ describe("managed startup profile", () => {
       },
     };
     const serialized = serializeManagedStartupProfile(HERMES_PROFILE);
-
     expect(serializeManagedStartupProfile(reordered)).toBe(serialized);
     expect(fingerprintManagedStartupProfile(reordered)).toBe(
       createHash("sha256").update(serialized, "utf8").digest("hex"),
@@ -508,7 +511,7 @@ describe("managed startup profile", () => {
     expect(() =>
       validateManagedStartupProfile({
         ...DCODE_PROFILE,
-        inference: { ...DCODE_PROFILE.inference, api: "openai-responses" },
+        inference: { ...DCODE_PROFILE.inference!, api: "openai-responses" },
       }),
     ).toThrow(/not supported/);
   });
@@ -517,7 +520,6 @@ describe("managed startup profile", () => {
     "records $input cross-agent emissions as cleanup obligations, not supported semantics",
     (obligation) => {
       expect(MANAGED_STARTUP_RUNTIME_CLEANUP_OBLIGATIONS).toHaveLength(2);
-
       const supportedAgents =
         STOCK_RUNTIME_INPUT_AGENTS[obligation.input as keyof typeof STOCK_RUNTIME_INPUT_AGENTS];
       expect(obligation.owner).toBe("application-environment");
@@ -527,11 +529,13 @@ describe("managed startup profile", () => {
           MANAGED_STARTUP_PROFILE_AFFORDANCE_INVENTORY[agent].map(({ input }) => input),
         ).not.toContain(obligation.input);
       });
-      expect(obligation.supportedFor.every((agent) =>
-          supportedAgents.some((supportedAgent) => supportedAgent === agent))).toBe(true);
+      expect(
+        obligation.supportedFor.every((agent) =>
+          supportedAgents.some((supportedAgent) => supportedAgent === agent),
+        ),
+      ).toBe(true);
     },
   );
-
   it.each(MANAGED_STARTUP_AGENTS)(
     "keeps deferred %s runtime inputs separate from typed profile intent",
     (agent) => {
@@ -543,7 +547,6 @@ describe("managed startup profile", () => {
       expect(new Set(deferredInputs.map(({ input }) => input)).size).toBe(deferredInputs.length);
     },
   );
-
   it.each(MANAGED_STARTUP_AGENTS)("keeps the %s affordance inventory unambiguous", (agent) => {
     const inventory = MANAGED_STARTUP_PROFILE_AFFORDANCE_INVENTORY[agent];
     expect(new Set(inventory.map(({ input }) => input)).size).toBe(inventory.length);
@@ -564,16 +567,15 @@ describe("managed startup profile", () => {
     (profile) => {
       MANAGED_STARTUP_PROFILE_AFFORDANCE_INVENTORY[profile.agent].forEach(({ profilePath }) => {
         let current: unknown = profile;
-      profilePath.split(".").forEach((segment) => {
-        expect(current).not.toBeNull();
-        expect(typeof current).toBe("object");
-        expect(Object.hasOwn(current as object, segment)).toBe(true);
-        current = (current as Record<string, unknown>)[segment];
-      });
+        profilePath.split(".").forEach((segment) => {
+          expect(current).not.toBeNull();
+          expect(typeof current).toBe("object");
+          expect(Object.hasOwn(current as object, segment)).toBe(true);
+          current = (current as Record<string, unknown>)[segment];
+        });
       });
     },
   );
-
   it("rejects non-canonical transports instead of accepting ambiguous fingerprints", () => {
     const raw = JSON.stringify(OPENCLAW_PROFILE);
     expect(() => decodeManagedStartupProfile(Buffer.from(raw).toString("base64url"))).toThrow(
@@ -590,7 +592,7 @@ describe("managed startup profile", () => {
       label: "inference",
       mutate: (profile: ManagedStartupProfile) => ({
         ...profile,
-        inference: { ...profile.inference, extension: true },
+        inference: { ...profile.inference!, extension: true },
       }),
     },
     {
@@ -680,7 +682,7 @@ describe("managed startup profile", () => {
     expect(() =>
       validateManagedStartupProfile({
         ...OPENCLAW_PROFILE,
-        inference: { ...OPENCLAW_PROFILE.inference, compatibility },
+        inference: { ...OPENCLAW_PROFILE.inference!, compatibility },
       }),
     ).toThrow(/credential-shaped/);
   });
@@ -692,14 +694,13 @@ describe("managed startup profile", () => {
         validateManagedStartupProfile({
           ...OPENCLAW_PROFILE,
           inference: {
-            ...OPENCLAW_PROFILE.inference,
+            ...OPENCLAW_PROFILE.inference!,
             compatibility: { [field]: "non-secret metadata" },
           },
-        }).inference.compatibility,
+        }).inference!.compatibility,
       ).toEqual({ [field]: "non-secret metadata" });
     },
   );
-
   it("rejects raw credentials nested inside an otherwise opaque messaging plan", () => {
     expect(() =>
       validateManagedStartupProfile({
@@ -779,10 +780,10 @@ describe("managed startup profile", () => {
   it.each([
     ...listMessagingCredentialEnvAssignments({ agent: "hermes" })
       .filter(({ sourceEnvKey, targetEnvKey }) => sourceEnvKey !== targetEnvKey)
-      .map(({ targetEnvKey, placeholder }) => [
-        "a cross-agent credential environment alias",
-        `${targetEnvKey}=${placeholder}`,
-      ] as const),
+      .map(
+        ({ targetEnvKey, placeholder }) =>
+          ["a cross-agent credential environment alias", `${targetEnvKey}=${placeholder}`] as const,
+      ),
     ["a raw credential", `SLACK_BOT_TOKEN=xoxb-${"a".repeat(32)}`],
     ["a malformed assignment", "SLACK_BOT_TOKEN =openshell:resolve:env:SLACK_BOT_TOKEN"],
     ["more than one assignment", "SLACK_BOT_TOKEN=openshell:resolve:env:SLACK_BOT_TOKEN=FORGED"],
@@ -870,7 +871,7 @@ describe("managed startup profile", () => {
         ? {
             ...DCODE_PROFILE,
             inference: {
-              ...DCODE_PROFILE.inference,
+              ...DCODE_PROFILE.inference!,
               [field]: "https://user:password@example.test/v1",
             },
           }
@@ -904,7 +905,7 @@ describe("managed startup profile", () => {
         validateManagedStartupProfile({
           ...OPENCLAW_PROFILE,
           inference: {
-            ...OPENCLAW_PROFILE.inference,
+            ...OPENCLAW_PROFILE.inference!,
             compatibility: {
               note: `https://example.test/hook?${credentialField}=opaque-secret`,
             },
@@ -913,7 +914,6 @@ describe("managed startup profile", () => {
       ).toThrow(/URL with embedded credentials/);
     },
   );
-
   it.each(["#access_token=opaque-secret", "#token=opaque-secret", "#/route?api_key=opaque-secret"])(
     "rejects credential-shaped parameters in an opaque URL fragment",
     (fragment) => {
@@ -921,7 +921,7 @@ describe("managed startup profile", () => {
         validateManagedStartupProfile({
           ...OPENCLAW_PROFILE,
           inference: {
-            ...OPENCLAW_PROFILE.inference,
+            ...OPENCLAW_PROFILE.inference!,
             compatibility: {
               note: `https://example.test/callback${fragment}`,
             },
@@ -930,7 +930,6 @@ describe("managed startup profile", () => {
       ).toThrow(/URL with embedded credentials/);
     },
   );
-
   it("accepts an HTTP CONNECT origin for host HTTPS proxy intent", () => {
     expect(validateManagedStartupProfile(OPENCLAW_PROFILE).proxy.hostHttpsUrl).toBe(
       "http://connect-proxy.example.test:3128",
@@ -1005,7 +1004,7 @@ describe("managed startup profile", () => {
     expect(() =>
       validateManagedStartupProfile({
         ...PI_PROFILE,
-        inference: { ...PI_PROFILE.inference, api: "openai-responses" },
+        inference: { ...PI_PROFILE.inference!, api: "openai-responses" },
       }),
     ).toThrow(/not supported/);
     expect(() =>
@@ -1017,7 +1016,10 @@ describe("managed startup profile", () => {
     expect(() =>
       validateManagedStartupProfile({
         ...PI_PROFILE,
-        inference: { ...PI_PROFILE.inference, upstreamEndpointUrl: "https://openrouter.ai/api/v1" },
+        inference: {
+          ...PI_PROFILE.inference!,
+          upstreamEndpointUrl: "https://openrouter.ai/api/v1",
+        },
       }),
     ).toThrow(/inference\.upstreamEndpointUrl must be null for pi/);
   });
@@ -1026,14 +1028,14 @@ describe("managed startup profile", () => {
     expect(() =>
       validateManagedStartupProfile({
         ...DCODE_PROFILE,
-        inference: { ...DCODE_PROFILE.inference, api: "openai-responses" },
+        inference: { ...DCODE_PROFILE.inference!, api: "openai-responses" },
       }),
     ).toThrow(/not supported/);
     expect(() =>
       validateManagedStartupProfile({
         ...HERMES_PROFILE,
         inference: {
-          ...HERMES_PROFILE.inference,
+          ...HERMES_PROFILE.inference!,
           compatibility: { supportsDeveloperRole: true },
         },
       }),
@@ -1045,7 +1047,7 @@ describe("managed startup profile", () => {
       validateManagedStartupProfile({
         ...OPENCLAW_PROFILE,
         inference: {
-          ...OPENCLAW_PROFILE.inference,
+          ...OPENCLAW_PROFILE.inference!,
           primaryModelRef: "different-provider/different-model",
         },
       }),
@@ -1157,31 +1159,30 @@ describe("managed startup profile", () => {
   });
 
   it.each(HERMES_RESERVED_API_PORTS)("rejects reserved Hermes API port %s", (port) => {
-      expect(() =>
-        validateManagedStartupProfile({
-          ...HERMES_PROFILE,
-          dashboard: { ...HERMES_PROFILE.dashboard, publicPort: port },
-        }),
-      ).toThrow(/reserved API ports/);
+    expect(() =>
+      validateManagedStartupProfile({
+        ...HERMES_PROFILE,
+        dashboard: { ...HERMES_PROFILE.dashboard, publicPort: port },
+      }),
+    ).toThrow(/reserved API ports/);
   });
 
   it.each([HERMES_API_PORT_RANGE_START - 1, HERMES_API_PORT_RANGE_END + 1])(
     "accepts dashboard port %s outside the reserved Hermes API port range",
     (port) => {
-    expect(() =>
-      validateManagedStartupProfile({
-        ...HERMES_PROFILE,
-        dashboard: {
-          ...HERMES_PROFILE.dashboard,
-          url: `http://127.0.0.1:${port}`,
-          browserUrl: `https://hermes.example.test:${port}`,
-          publicPort: port,
-        },
-      }),
-    ).not.toThrow();
+      expect(() =>
+        validateManagedStartupProfile({
+          ...HERMES_PROFILE,
+          dashboard: {
+            ...HERMES_PROFILE.dashboard,
+            url: `http://127.0.0.1:${port}`,
+            browserUrl: `https://hermes.example.test:${port}`,
+            publicPort: port,
+          },
+        }),
+      ).not.toThrow();
     },
   );
-
   it.each([
     "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----",
     Buffer.from(
@@ -1194,7 +1195,7 @@ describe("managed startup profile", () => {
     expect(() =>
       validateManagedStartupProfile({
         ...OPENCLAW_PROFILE,
-        inference: { ...OPENCLAW_PROFILE.inference, model: rawCa },
+        inference: { ...OPENCLAW_PROFILE.inference!, model: rawCa },
       }),
     ).toThrow(/raw certificate data/);
   });
@@ -1264,13 +1265,12 @@ describe("managed startup profile", () => {
         throw new Error("excess property was read");
       },
     });
-
     expect(() => validateManagedStartupProfile(wide)).toThrow(/complexity limit/);
     expect(excessPropertyRead).toBe(false);
   });
 
   it("rejects a custom JSON serializer before invoking it", () => {
-    const inputModalities = [...OPENCLAW_PROFILE.inference.inputModalities];
+    const inputModalities = [...OPENCLAW_PROFILE.inference!.inputModalities];
     let serializerInvoked = false;
     Object.defineProperty(inputModalities, "toJSON", {
       value() {
@@ -1278,11 +1278,10 @@ describe("managed startup profile", () => {
         return ["text"];
       },
     });
-
     expect(() =>
       validateManagedStartupProfile({
         ...OPENCLAW_PROFILE,
-        inference: { ...OPENCLAW_PROFILE.inference, inputModalities },
+        inference: { ...OPENCLAW_PROFILE.inference!, inputModalities },
       }),
     ).toThrow(/custom JSON serializer/);
     expect(serializerInvoked).toBe(false);
@@ -1299,7 +1298,6 @@ describe("managed startup profile", () => {
       },
     });
     Object.setPrototypeOf(enabledGateways, prototype);
-
     expect(() =>
       validateManagedStartupProfile({
         ...DCODE_PROFILE,
@@ -1318,7 +1316,6 @@ describe("managed startup profile", () => {
         return [`nvapi-${"a".repeat(32)}`];
       },
     });
-
     expect(() =>
       validateManagedStartupProfile({
         ...DCODE_PROFILE,
@@ -1345,7 +1342,6 @@ describe("managed startup profile", () => {
     } finally {
       Reflect.deleteProperty(Object.prototype, "toJSON");
     }
-
     expect(caught).toBeInstanceOf(Error);
     expect((caught as Error).message).toMatch(/custom JSON serializer/);
     expect(serializerInvoked).toBe(false);
@@ -1361,7 +1357,6 @@ describe("managed startup profile", () => {
         return null;
       },
     });
-
     let caught: unknown;
     try {
       validateManagedStartupProfile({ ...DCODE_PROFILE, corporateCa });
@@ -1370,7 +1365,6 @@ describe("managed startup profile", () => {
     } finally {
       Reflect.deleteProperty(Object.prototype, "bundleSha256");
     }
-
     expect(caught).toBeInstanceOf(Error);
     expect((caught as Error).message).toMatch(/bundleSha256/);
     expect(getterInvoked).toBe(false);
@@ -1394,7 +1388,6 @@ describe("managed startup profile", () => {
         },
       },
     });
-
     try {
       expect(() =>
         validateManagedStartupProfile({
@@ -1406,13 +1399,12 @@ describe("managed startup profile", () => {
       Reflect.deleteProperty(Object.prototype, "schemaVersion");
       Reflect.deleteProperty(Object.prototype, "agent");
     }
-
     expect(getterInvoked).toBe(false);
   });
 
   it("returns opaque JSON objects without inherited prototype data", () => {
     const profile = validateManagedStartupProfile(OPENCLAW_PROFILE);
-    expect(Object.getPrototypeOf(profile.inference.compatibility as object)).toBeNull();
+    expect(Object.getPrototypeOf(profile.inference!.compatibility as object)).toBeNull();
     expect(Object.getPrototypeOf(profile.messaging.plan as object)).toBeNull();
     expect(
       Object.getPrototypeOf(
@@ -1427,7 +1419,6 @@ describe("managed startup profile", () => {
       value: "safe",
       enumerable: false,
     });
-
     expect(() =>
       validateManagedStartupProfile({
         ...OPENCLAW_PROFILE,
@@ -1465,7 +1456,6 @@ describe("managed startup profile", () => {
       Object.defineProperty(Array.prototype, "map", mapDescriptor as PropertyDescriptor);
       Object.defineProperty(Array.prototype, "sort", sortDescriptor as PropertyDescriptor);
     }
-
     expect(prototypeMethodInvoked).toBe(false);
     expect(serialized).toContain('"payload":["safe"]');
     expect(serialized).not.toContain("nvapi-");
@@ -1477,7 +1467,6 @@ describe("managed startup profile", () => {
       value: `nvapi-${"a".repeat(32)}`,
       enumerable: false,
     });
-
     expect(() =>
       validateManagedStartupProfile({
         ...OPENCLAW_PROFILE,

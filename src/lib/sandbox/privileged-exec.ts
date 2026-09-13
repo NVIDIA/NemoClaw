@@ -9,6 +9,7 @@ import type {
 } from "../onboard/runtime-provider/contract";
 import { CURRENT_RUNTIME_PROVIDER_BUNDLES } from "../onboard/runtime-provider/current";
 import {
+  DirectSandboxContainerNotFoundError,
   DirectSandboxFallbackUnavailableError,
   PinnedSandboxResourceIdentityChangedError,
 } from "../onboard/runtime-provider/privileged-sandbox-control-errors";
@@ -198,6 +199,12 @@ export function isDirectSandboxFallbackUnavailableError(
   error: unknown,
 ): error is DirectSandboxFallbackUnavailableError {
   return error instanceof DirectSandboxFallbackUnavailableError;
+}
+
+export function isDirectSandboxContainerNotFoundError(
+  error: unknown,
+): error is DirectSandboxContainerNotFoundError {
+  return error instanceof DirectSandboxContainerNotFoundError;
 }
 
 export function isPinnedSandboxContainerIdentityChangedError(

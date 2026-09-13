@@ -232,10 +232,7 @@ describe("Logger", () => {
     Object.assign(sanitizerError, {
       endpoint: `https://example.test/path?access_token=${urlToken}`,
     });
-    const cause = new AggregateError(
-      [sanitizerError, new Error("cleanup failed")],
-      "both failed",
-    );
+    const cause = new AggregateError([sanitizerError, new Error("cleanup failed")], "both failed");
 
     log.debugObject("context", new Error("outer failure", { cause }));
 

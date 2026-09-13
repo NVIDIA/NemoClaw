@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createGatewayHostRuntime, type GatewayHostRuntimeDeps } from "./gateway-host-runtime";
@@ -56,6 +57,7 @@ function createDeps(overrides: Partial<GatewayHostRuntimeDeps> = {}): GatewayHos
     getGatewayPortListenerRawScan: () => ({ pids: [SYSTEMD_GATEWAY_PID], complete: true }),
     getInstalledOpenshellVersion: () => "0.0.72",
     isGatewayHealthy: () => true,
+    restartPackagedGatewayAfterTrustedInstall: () => undefined,
     runCaptureOpenshell: () => "healthy",
     runOpenshell: () => ({ status: 0 }),
     resolveOpenShellGatewayBinary: () => SYSTEMD_GATEWAY_EXEC,
@@ -97,6 +99,41 @@ describe("gateway host runtime ownership", () => {
 
     expect(() => createGatewayHostRuntime(createDeps()).assertGatewayStartAllowed(false)).toThrow(
       /openshell-gateway\.service/,
+    );
+  });
+
+  it.each([8080, 18080])(
+    "rejects gateway startup on port %s when the host declaration selector is missing (#11347)",
+    (gatewayPort) => {
+      delete process.env[GATEWAY_MANAGEMENT_ENV_VAR];
+      const entry = fs.lstatSync(process.cwd());
+      vi.spyOn(fs, "lstatSync").mockReturnValue(entry);
+      const runOpenshell = vi.fn();
+      const runtime = createGatewayHostRuntime(createDeps({ runOpenshell }));
+
+      expect(() =>
+        runtime.assertGatewayStartAllowed(false, {
+          gatewayName: gatewayPort === 8080 ? "nemoclaw" : `nemoclaw-${gatewayPort}`,
+          gatewayPort,
+        }),
+      ).toThrow(GatewayManagementDeclarationError);
+      expect(runOpenshell).not.toHaveBeenCalled();
+    },
+  );
+
+  it("blocks startup when a host declaration appears after self-management was bound (#11347)", () => {
+    delete process.env[GATEWAY_MANAGEMENT_ENV_VAR];
+    const entry = fs.lstatSync(process.cwd());
+    const inspect = vi.spyOn(fs, "lstatSync").mockImplementation(() => {
+      throw Object.assign(new Error("no host declaration"), { code: "ENOENT" });
+    });
+    const runtime = createGatewayHostRuntime(createDeps());
+    expect(runtime.getGatewayOwner()).toMatchObject({ mode: "nemoclaw-managed" });
+
+    inspect.mockReturnValue(entry);
+
+    expect(() => runtime.assertGatewayStartAllowed(false)).toThrow(
+      /set NEMOCLAW_GATEWAY_MANAGEMENT=/,
     );
   });
 
@@ -206,23 +243,86 @@ describe("gateway host runtime ownership", () => {
     });
   });
 
+  it("restarts an already-bound packaged service after a trusted binary replacement", () => {
+    const restartPackagedGatewayAfterTrustedInstall = vi.fn();
+    const runtime = createGatewayHostRuntime(
+      createDeps({
+        hasOpenShellGatewayUserService: () => true,
+        restartPackagedGatewayAfterTrustedInstall,
+      }),
+    );
+    const owner = runtime.getGatewayOwner();
+
+    expect(runtime.adoptPackagedGatewayOwnerAfterTrustedInstall()).toBe(owner);
+    expect(restartPackagedGatewayAfterTrustedInstall).toHaveBeenCalledOnce();
+    expect(restartPackagedGatewayAfterTrustedInstall).toHaveBeenCalledWith(owner);
+  });
+
   it("adopts only a trusted standalone-to-packaged-service install transition (#7411)", () => {
     let hasPackagedService = false;
+    const events: string[] = [];
+    const restartPackagedGatewayAfterTrustedInstall = vi.fn(() => events.push("restart"));
     const runtime = createGatewayHostRuntime(
-      createDeps({ hasOpenShellGatewayUserService: () => hasPackagedService }),
+      createDeps({
+        hasOpenShellGatewayUserService: () => hasPackagedService,
+        restartPackagedGatewayAfterTrustedInstall,
+      }),
     );
     expect(runtime.getGatewayOwner()).toMatchObject({ source: "standalone" });
 
     hasPackagedService = true;
 
-    const persistOwner = vi.fn();
+    const persistOwner = vi.fn(() => events.push("persist"));
     expect(runtime.adoptPackagedGatewayOwnerAfterTrustedInstall(persistOwner)).toMatchObject({
       source: "packaged-service",
     });
     expect(persistOwner).toHaveBeenCalledWith(
       expect.objectContaining({ source: "packaged-service" }),
     );
+    expect(restartPackagedGatewayAfterTrustedInstall).toHaveBeenCalledOnce();
+    expect(events).toEqual(["persist", "restart"]);
     expect(runtime.getGatewayOwner()).toMatchObject({ source: "packaged-service" });
+  });
+
+  it("does not restart a standalone owner after a trusted CLI-only install", () => {
+    const restartPackagedGatewayAfterTrustedInstall = vi.fn();
+    const runtime = createGatewayHostRuntime(
+      createDeps({ restartPackagedGatewayAfterTrustedInstall }),
+    );
+    const owner = runtime.getGatewayOwner();
+
+    expect(runtime.adoptPackagedGatewayOwnerAfterTrustedInstall()).toBe(owner);
+    expect(owner.source).toBe("standalone");
+    expect(restartPackagedGatewayAfterTrustedInstall).not.toHaveBeenCalled();
+  });
+
+  it("does not restart a declared external supervisor after a trusted CLI install", () => {
+    declareExternalSupervision();
+    const restartPackagedGatewayAfterTrustedInstall = vi.fn();
+    const runtime = createGatewayHostRuntime(
+      createDeps({ restartPackagedGatewayAfterTrustedInstall }),
+    );
+    const owner = runtime.getGatewayOwner();
+
+    expect(runtime.adoptPackagedGatewayOwnerAfterTrustedInstall()).toBe(owner);
+    expect(owner.source).toBe("declared");
+    expect(restartPackagedGatewayAfterTrustedInstall).not.toHaveBeenCalled();
+  });
+
+  it("fails the trusted install reconciliation when packaged restart fails", () => {
+    const runtime = createGatewayHostRuntime(
+      createDeps({
+        hasOpenShellGatewayUserService: () => true,
+        restartPackagedGatewayAfterTrustedInstall: () => {
+          throw new Error("packaged restart failed");
+        },
+      }),
+    );
+    runtime.getGatewayOwner();
+
+    expect(() => runtime.adoptPackagedGatewayOwnerAfterTrustedInstall()).toThrow(
+      "packaged restart failed",
+    );
   });
 
   it("keeps the old binding when trusted-install persistence fails (#7411)", () => {
@@ -576,11 +676,17 @@ describe("gateway host runtime attachment probe", () => {
 
   it("reads the authoritative gateway port lazily, not at construction (#6576)", () => {
     let port = 8080;
-    const runtime = createGatewayHostRuntime(createDeps({ gatewayPort: () => port }));
+    const getGatewayStartNetworkEnv = vi.fn((gatewayPort: number) => ({
+      OPENSHELL_SERVER_PORT: String(gatewayPort),
+    }));
+    const runtime = createGatewayHostRuntime(
+      createDeps({ gatewayPort: () => port, getGatewayStartNetworkEnv }),
+    );
 
     port = 9443;
 
     expect(runtime.getGatewayStartEnv()).toMatchObject({ OPENSHELL_SERVER_PORT: "9443" });
+    expect(getGatewayStartNetworkEnv).toHaveBeenCalledWith(9443);
   }, 15_000);
 
   it("registers and selects the exact declared endpoint without prior gateway metadata (#6576)", async () => {

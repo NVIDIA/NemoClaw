@@ -9,11 +9,11 @@ const DEEPAGENTS_MCP_CAPABILITY_MARKER = "NEMOCLAW_DEEPAGENTS_MCP_CAPABILITY=2";
 const DEEPAGENTS_MCP_CAPABILITY_COMMAND =
   "/usr/local/bin/deepagents-code --nemoclaw-mcp-capability";
 
-export function assertDeepAgentsMcpMutationRuntimeCapability(
+export async function assertDeepAgentsMcpMutationRuntimeCapability(
   sandboxName: string,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
-): void {
-  const result = executeSandboxCommand(sandboxName, DEEPAGENTS_MCP_CAPABILITY_COMMAND, {
+): Promise<void> {
+  const result = await executeSandboxCommand(sandboxName, DEEPAGENTS_MCP_CAPABILITY_COMMAND, {
     runtimeSelection,
   });
   if (result?.status !== 0 || result.stdout.trim() !== DEEPAGENTS_MCP_CAPABILITY_MARKER) {

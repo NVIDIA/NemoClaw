@@ -81,6 +81,13 @@ function compareStrings(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
 }
 
+function compareRuntimeRequirementFailures(
+  left: RuntimeRequirementFailure,
+  right: RuntimeRequirementFailure,
+): number {
+  return right.priority - left.priority || compareStrings(left.presetId, right.presetId);
+}
+
 function unmanagedExplicitIntent(intent: ManagedInferenceSelectionIntent): boolean {
   return intent.vllmExtraArguments?.some(hasText) ?? false;
 }
@@ -136,9 +143,7 @@ function hasAdmittedReadinessException(
   if (waivedFindingIds.size !== admission.waivedFindingIds.length) return false;
   const allowedFindingIds = new Set<string>([
     ONBOARD_READINESS_FINDING_IDS.storageIncompatible,
-    ...(allowDeferredN1xManagedVllm
-      ? [ONBOARD_READINESS_FINDING_IDS.n1xValidationPending]
-      : []),
+    ...(allowDeferredN1xManagedVllm ? [ONBOARD_READINESS_FINDING_IDS.n1xValidationPending] : []),
   ]);
   return admission.waivedFindingIds.every((id) => allowedFindingIds.has(id));
 }
@@ -456,10 +461,7 @@ function intentCompatibilityError(
   if (hasText(intent.provider) && intent.provider !== recipe.spec.backend) {
     return `provider ${intent.provider} conflicts with preset ${preset.metadata.id}`;
   }
-  if (
-    hasText(intent.vllmModel) &&
-    !recipeMatchesModelIntent(recipe, intent.vllmModel)
-  ) {
+  if (hasText(intent.vllmModel) && !recipeMatchesModelIntent(recipe, intent.vllmModel)) {
     return `model ${intent.vllmModel} conflicts with preset ${preset.metadata.id}`;
   }
   if (unmanagedExplicitIntent(intent)) {
@@ -688,21 +690,29 @@ export function resolveManagedInferenceServing<TOutput>(
     }
 
     const matching: MatchingCandidate<TOutput>[] = [];
-    let firstFailure: Exclude<
-      ReturnType<typeof matchingCandidate<TOutput>>,
-      { readonly outcome: "matched" }
-    > | undefined;
+    let runtimeFailure: RuntimeRequirementFailure | undefined;
+    let firstFailure:
+      | Exclude<
+          ReturnType<typeof matchingCandidate<TOutput>>,
+          { readonly outcome: "matched" } | RuntimeRequirementFailure
+        >
+      | undefined;
     for (const compiledPreset of modelPresets) {
       const evaluated = matchingCandidate(catalog, compiledPreset, input);
       if (evaluated.outcome === "matched") matching.push(evaluated.candidate);
-      else firstFailure ??= evaluated;
+      else if (evaluated.outcome === "runtime-unmet") {
+        if (!runtimeFailure || compareRuntimeRequirementFailures(evaluated, runtimeFailure) < 0) {
+          runtimeFailure = evaluated;
+        }
+      } else firstFailure ??= evaluated;
     }
     if (matching.length === 0) {
+      const failure = runtimeFailure ?? firstFailure;
       return {
         outcome: "rejected",
-        code: firstFailure?.outcome === "invalid-topology" ? "invalid-topology" : "requirements-not-met",
+        code: failure?.outcome === "invalid-topology" ? "invalid-topology" : "requirements-not-met",
         message:
-          firstFailure?.message ?? `No compatible managed vLLM profile defines model ${explicitModel}.`,
+          failure?.message ?? `No compatible managed vLLM profile defines model ${explicitModel}.`,
       };
     }
     matching.sort(
@@ -732,16 +742,11 @@ export function resolveManagedInferenceServing<TOutput>(
     if (preset.spec.selection !== "automatic") continue;
     const evaluated = matchingCandidate(catalog, compiledPreset, input);
     if (evaluated.outcome === "matched") matching.push(evaluated.candidate);
-    else if (
-      evaluated.outcome === "runtime-unmet" &&
-      (!runtimeFailure ||
-        evaluated.priority > runtimeFailure.priority ||
-        (evaluated.priority === runtimeFailure.priority &&
-          compareStrings(evaluated.presetId, runtimeFailure.presetId) < 0))
-    ) {
-      runtimeFailure = evaluated;
-    }
-    else if (evaluated.outcome === "invalid-topology") firstInvalidTopology ??= evaluated.message;
+    else if (evaluated.outcome === "runtime-unmet") {
+      if (!runtimeFailure || compareRuntimeRequirementFailures(evaluated, runtimeFailure) < 0) {
+        runtimeFailure = evaluated;
+      }
+    } else if (evaluated.outcome === "invalid-topology") firstInvalidTopology ??= evaluated.message;
   }
   if (firstInvalidTopology) {
     return {

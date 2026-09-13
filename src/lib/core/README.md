@@ -14,6 +14,7 @@ json-types.ts
 errno.ts
 wait.ts
 url-utils.ts
+endpoint-url-safety.ts
 shell-quote.ts
 ```
 

@@ -97,15 +97,14 @@ describe("curl auth config helper", () => {
     }
   });
 
-  it.each([
-    " : value",
-    "Bad Header: value",
-    "missing-colon",
-  ])("rejects invalid OpenAI-like provider header %j", (header) => {
-    expect(() => parseOpenAiLikeExtraHeaders([header])).toThrow(
-      "invalid OpenAI-like provider header",
-    );
-  });
+  it.each([" : value", "Bad Header: value", "missing-colon"])(
+    "rejects invalid OpenAI-like provider header %j",
+    (header) => {
+      expect(() => parseOpenAiLikeExtraHeaders([header])).toThrow(
+        "invalid OpenAI-like provider header",
+      );
+    },
+  );
 
   it("accepts every HTTP token character in an OpenAI-like provider header name", () => {
     const tokenChars =

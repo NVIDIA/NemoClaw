@@ -14,7 +14,7 @@ import {
   dockerRmi,
   dockerTag,
 } from "../adapters/docker";
-import { CUA_SANDBOX_IMAGE_ENV, requireCuaSandboxImageRef } from "../cua/feature";
+import { requireCuaSandboxImageRef } from "../cua/feature";
 import { encodeCorporateCaArg, resolveCorporateCa } from "../onboard/corporate-ca";
 import { createCustomBuildContextFilter } from "../onboard/custom-build-context";
 import { ROOT } from "../runner";
@@ -43,6 +43,7 @@ import {
   versionGte,
 } from "../sandbox-base-image";
 import { sandboxBaseImageHasSecurityInventory } from "../sandbox-base-image/security-inventory";
+import { getAgentSandboxBaseImageEnvVar } from "./base-image-env";
 import { createDeepAgentsCodeBaseImageResolutionOptions } from "./deep-agents-code-base-image";
 import type { AgentDefinition } from "./defs";
 
@@ -184,10 +185,7 @@ function reuseTrustedAgentRemoteBaseImageOverride(
   return reused;
 }
 
-export function getAgentSandboxBaseImageEnvVar(agentName: string): string {
-  if (agentName === "nemocua") return CUA_SANDBOX_IMAGE_ENV;
-  return `NEMOCLAW_${agentName.toUpperCase().replace(/[^A-Z0-9]+/g, "_")}_SANDBOX_BASE_IMAGE_REF`;
-}
+export { getAgentSandboxBaseImageEnvVar };
 
 function immutableLocalBaseImageTag(agentName: string, imageId: string, temporary = false): string {
   const match = imageId.trim().match(/^sha256:([0-9a-f]{64})$/i);
@@ -334,8 +332,7 @@ function createAgentBaseImageResolutionOptions(
     agent.name === "hermes"
       ? {
           validateImage: (imageRef: string) =>
-            hermesBaseImageSupportsMcp(imageRef) &&
-            sandboxBaseImageHasSecurityInventory(imageRef),
+            hermesBaseImageSupportsMcp(imageRef) && sandboxBaseImageHasSecurityInventory(imageRef),
           validationDescription:
             "the required MCP Streamable HTTP and ACP runtimes and the immutable security package inventory",
         }

@@ -12,9 +12,11 @@ import { writeOpenShell0044PreAuthState } from "../../../test/support/openshell-
 import {
   buildDockerDriverGatewayEnv,
   buildDockerGatewayDebEnvFile,
+  configureDockerDriverGatewayExternalComponent,
   startPackageManagedDockerDriverGatewayWithEnvOverride,
   writeDockerGatewayDebEnvOverride,
 } from "./docker-driver-gateway-env";
+import { NEMOCLAW_EXTERNAL_COMPONENT_GATEWAY_IDENTITY_ENV } from "./docker-driver-gateway-config";
 import { PORTABLE_HOST_GATEWAY_IP } from "./experimental/portable-profile";
 
 function homeEnv(home: string, xdgConfigHome = ""): NodeJS.ProcessEnv {
@@ -38,6 +40,31 @@ function trustedPackageServiceOptions(home: string) {
 }
 
 describe("buildDockerDriverGatewayEnv", () => {
+  it("adds the validated external component to NemoClaw gateway configuration (#11340)", () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-component-env-"));
+    try {
+      fs.chmodSync(stateDir, 0o700);
+      const env = buildDockerDriverGatewayEnv({
+        platform: "linux",
+        stateDir,
+        getDockerSupervisorImage: () => "supervisor:test",
+        resolveSandboxBin: () => "/usr/bin/openshell-sandbox",
+      });
+
+      configureDockerDriverGatewayExternalComponent(env, {
+        componentId: "policy-governance",
+        interceptorSocketPath: "/run/user/1000/component/interceptor.sock",
+      });
+
+      expect(fs.readFileSync(env.OPENSHELL_GATEWAY_CONFIG, "utf8")).toContain(
+        'name = "policy-governance"',
+      );
+      expect(env[NEMOCLAW_EXTERNAL_COMPONENT_GATEWAY_IDENTITY_ENV]).toMatch(/^[0-9a-f]{64}$/u);
+    } finally {
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+
   it("uses the shared configured Docker network authority (#9461)", () => {
     vi.stubEnv("OPENSHELL_DOCKER_NETWORK_NAME", "openshell-portable-proof");
 

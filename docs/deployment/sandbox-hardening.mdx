@@ -133,8 +133,9 @@ System paths remain read-only for these protections:
 - Agents cannot modify DNS resolution or TLS trust stores.
 - Agents cannot tamper with libraries or shell configuration outside `/sandbox`.
 
-The image build pre-creates locked shell init files `.bashrc` and `.profile` without proxy entries.
-System-wide shell hooks that read `/tmp/nemoclaw-proxy-env.sh` source the runtime proxy configuration.
+Personal shell files `.bashrc` and `.profile` belong to the sandbox user and can be edited.
+System-wide shell hooks load runtime proxy settings from `/tmp/nemoclaw-proxy-env.sh`, which retains mode `0444`.
+After updating NemoClaw, [rebuild existing sandboxes](../operate-sandboxes/recover-and-rebuild-sandboxes) to apply these profile permissions.
 
 ### Landlock Kernel Requirements
 

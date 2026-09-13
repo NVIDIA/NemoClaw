@@ -7,12 +7,11 @@
  * this compensation until attachment mutations expose an immutable-ID CAS API.
  */
 
-import { stripAnsi } from "../../adapters/openshell/client";
-import { runOpenshellProviderCommand } from "../../adapters/openshell/provider-command";
+import type { OpenShellProviderAdapter } from "../../adapters/openshell/provider-adapter";
 import type { McpBridgeEntry } from "../../state/registry";
 import { McpBridgeError } from "./mcp-bridge-contracts";
-import { commandOutput, type OpenShellCommandResult } from "./mcp-bridge-output";
 import {
+  createMcpProviderAdapterBoundary,
   inspectMcpProvider,
   inspectMcpProviderAttachments,
   type McpProviderAttachment,
@@ -27,12 +26,17 @@ import {
   assertPersistedAuthenticatedBridgeEntry,
 } from "./mcp-bridge-validation";
 
-function exactAttachment(
+async function exactAttachment(
   sandboxName: string,
   entry: McpBridgeEntry,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
-): { inspection: McpProviderAttachmentInspection; attachment?: McpProviderAttachment } {
-  const inspection = inspectMcpProviderAttachments(sandboxName, runtimeSelection);
+  providerAdapter?: OpenShellProviderAdapter,
+): Promise<{ inspection: McpProviderAttachmentInspection; attachment?: McpProviderAttachment }> {
+  const inspection = await inspectMcpProviderAttachments(
+    sandboxName,
+    runtimeSelection,
+    providerAdapter,
+  );
   return {
     inspection,
     attachment: inspection.attachments?.find(
@@ -54,11 +58,12 @@ function attachmentMatchesCurrentProviderSnapshot(
   );
 }
 
-export function attachProvider(
+export async function attachProvider(
   sandboxName: string,
   entry: McpBridgeEntry,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
-): void {
+  providerAdapter?: OpenShellProviderAdapter,
+): Promise<void> {
   if (!entry.providerName) return;
   assertAuthenticatedBridgeEntry(entry);
   if (!entry.providerId) {
@@ -66,7 +71,12 @@ export function attachProvider(
       `MCP server '${entry.server}' has no stable OpenShell provider ID. Refusing to attach same-name provider '${entry.providerName}'.`,
     );
   }
-  const inspection = inspectMcpProvider(entry.providerName, runtimeSelection);
+  const boundary = createMcpProviderAdapterBoundary(runtimeSelection, providerAdapter);
+  const inspection = await inspectMcpProvider(
+    entry.providerName,
+    runtimeSelection,
+    boundary.adapter,
+  );
   if (inspection.exists === false) {
     throw new McpBridgeError(
       `OpenShell provider '${entry.providerName}' disappeared before attach.`,
@@ -80,21 +90,26 @@ export function attachProvider(
   if (!inspection.id || !inspection.resourceVersion) {
     throw new McpBridgeError(`OpenShell provider '${entry.providerName}' has incomplete metadata.`);
   }
-  const result = runOpenshellProviderCommand(
-    ["sandbox", "provider", "attach", sandboxName, entry.providerName],
-    { ignoreError: true, runtimeSelection, stdio: ["ignore", "pipe", "pipe"] },
-  ) as OpenShellCommandResult;
-  if (result.status !== 0) {
-    const output = commandOutput(result);
-    const afterError = exactAttachment(sandboxName, entry, runtimeSelection);
+  const result = await boundary.adapter.attachProvider({
+    providerName: entry.providerName,
+    sandboxName,
+    target: boundary.target,
+  });
+  if (!result.ok) {
+    const afterError = await exactAttachment(
+      sandboxName,
+      entry,
+      runtimeSelection,
+      boundary.adapter,
+    );
     if (attachmentMatchesCurrentProviderSnapshot(afterError.attachment, entry)) return;
     throw new McpBridgeError(
-      output ||
+      result.error.message ||
         afterError.inspection.error ||
         `Failed to attach MCP provider '${entry.providerName}'.`,
     );
   }
-  const after = exactAttachment(sandboxName, entry, runtimeSelection);
+  const after = await exactAttachment(sandboxName, entry, runtimeSelection, boundary.adapter);
   if (!attachmentMatchesCurrentProviderSnapshot(after.attachment, entry)) {
     throw new McpBridgeError(
       after.inspection.error ??
@@ -103,35 +118,20 @@ export function attachProvider(
   }
 }
 
-export function providerDetachChangedState(status: number | null, output: string): boolean {
-  return (
-    status === 0 &&
-    !/\bwas\s+not\s+attached\b|\balready\s+detached\b|\bNotAttached\b/i.test(stripAnsi(output))
-  );
-}
-
 export type ProviderDetachOutcome = "detached" | "absent" | "unknown";
 
 const MCP_PROVIDER_DETACH_ATTEMPTS = 2;
 
-function isRetryableSandboxMutationConflict(status: number | null, output: string): boolean {
-  return (
-    status !== 0 &&
-    /Failed to detach provider:\s*sandbox was modified by another operation\.\s*Please retry the command\.?/i.test(
-      stripAnsi(output),
-    )
-  );
-}
-
-export function detachProvider(
+export async function detachProvider(
   sandboxName: string,
   entry: McpBridgeEntry,
   options: {
     allowLegacyGeneric?: boolean;
     bestEffort?: boolean;
     runtimeSelection: McpProviderInspectionRuntimeSelection;
+    providerAdapter?: OpenShellProviderAdapter;
   },
-): ProviderDetachOutcome {
+): Promise<ProviderDetachOutcome> {
   if (!entry.providerName) return "absent";
   assertPersistedAuthenticatedBridgeEntry(entry);
   if (!entry.providerId) {
@@ -140,8 +140,16 @@ export function detachProvider(
       `MCP server '${entry.server}' has no recorded provider ID for prechecked detach.`,
     );
   }
+  const boundary = createMcpProviderAdapterBoundary(
+    options.runtimeSelection,
+    options.providerAdapter,
+  );
   for (let attempt = 0; attempt < MCP_PROVIDER_DETACH_ATTEMPTS; attempt += 1) {
-    const provider = inspectMcpProvider(entry.providerName, options.runtimeSelection);
+    const provider = await inspectMcpProvider(
+      entry.providerName,
+      options.runtimeSelection,
+      boundary.adapter,
+    );
     if (
       !providerMatchesManagedCredential(provider, entry.env[0], entry.providerId, {
         allowLegacyGeneric: options.allowLegacyGeneric,
@@ -152,7 +160,12 @@ export function detachProvider(
         `OpenShell provider '${entry.providerName}' changed before detach. ${providerShapeDetail(provider, entry.env[0], entry.providerId)} Refusing to mutate it.`,
       );
     }
-    const before = exactAttachment(sandboxName, entry, options.runtimeSelection);
+    const before = await exactAttachment(
+      sandboxName,
+      entry,
+      options.runtimeSelection,
+      boundary.adapter,
+    );
     if (!before.inspection.attachments) {
       if (options.bestEffort) return "unknown";
       throw new McpBridgeError(
@@ -166,31 +179,33 @@ export function detachProvider(
         `Provider attachment '${entry.providerName}' does not match MCP server '${entry.server}'. Expected stable provider ID '${entry.providerId}', found '${before.attachment.providerId ?? "missing"}', with credential keys '${before.attachment.credentialKeys.join(", ") || "none"}'.`,
       );
     }
-    const result = runOpenshellProviderCommand(
-      ["sandbox", "provider", "detach", sandboxName, entry.providerName],
-      {
-        ignoreError: true,
-        runtimeSelection: options.runtimeSelection,
-        stdio: ["ignore", "pipe", "pipe"],
-        suppressOutput: true,
-      } as Record<string, unknown>,
-    ) as OpenShellCommandResult;
-    const output = commandOutput(result);
-    const after = exactAttachment(sandboxName, entry, options.runtimeSelection);
+    const result = await boundary.adapter.detachProvider({
+      providerName: entry.providerName,
+      sandboxName,
+      target: boundary.target,
+    });
+    const after = await exactAttachment(
+      sandboxName,
+      entry,
+      options.runtimeSelection,
+      boundary.adapter,
+    );
     if (after.inspection.attachments && !after.attachment) {
-      return providerDetachChangedState(result.status, output) ? "detached" : "absent";
+      return result.ok && result.value.changed ? "detached" : "absent";
     }
     if (
       attempt + 1 < MCP_PROVIDER_DETACH_ATTEMPTS &&
       after.inspection.attachments &&
       attachmentMatchesCurrentProviderSnapshot(after.attachment, entry) &&
-      isRetryableSandboxMutationConflict(result.status, output)
+      !result.ok &&
+      result.error.kind === "command" &&
+      result.error.reason === "conflict"
     ) {
       continue;
     }
     if (options.bestEffort) return "unknown";
     throw new McpBridgeError(
-      output ||
+      (!result.ok ? result.error.message : "") ||
         after.inspection.error ||
         `OpenShell did not confirm removal of provider attachment '${entry.providerName}'.`,
     );
@@ -204,14 +219,16 @@ export function detachProvider(
  * list attachments while a referenced provider is missing, but its detach
  * command removes the name directly from the sandbox spec under CAS.
  */
-export function detachMissingProviderReference(
+export async function detachMissingProviderReference(
   sandboxName: string,
   entry: McpBridgeEntry,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
-): ProviderDetachOutcome {
+  providerAdapter?: OpenShellProviderAdapter,
+): Promise<ProviderDetachOutcome> {
   if (!entry.providerName) return "absent";
   assertPersistedAuthenticatedBridgeEntry(entry);
-  const before = inspectMcpProvider(entry.providerName, runtimeSelection);
+  const boundary = createMcpProviderAdapterBoundary(runtimeSelection, providerAdapter);
+  const before = await inspectMcpProvider(entry.providerName, runtimeSelection, boundary.adapter);
   if (before.exists !== false) {
     const detail =
       before.exists === null
@@ -221,28 +238,27 @@ export function detachMissingProviderReference(
       `OpenShell provider '${entry.providerName}' is not provably absent before dangling-reference cleanup: ${detail}.`,
     );
   }
-  const result = runOpenshellProviderCommand(
-    ["sandbox", "provider", "detach", sandboxName, entry.providerName],
-    { ignoreError: true, runtimeSelection, stdio: ["ignore", "pipe", "pipe"] },
-  ) as OpenShellCommandResult;
-  const output = commandOutput(result);
-  if (result.status !== 0) {
+  const result = await boundary.adapter.detachProvider({
+    providerName: entry.providerName,
+    sandboxName,
+    target: boundary.target,
+  });
+  if (!result.ok) {
     throw new McpBridgeError(
-      output || `Failed to remove dangling provider reference '${entry.providerName}'.`,
+      result.error.message ||
+        `Failed to remove dangling provider reference '${entry.providerName}'.`,
     );
   }
-  const afterProvider = inspectMcpProvider(entry.providerName, runtimeSelection);
+  const afterProvider = await inspectMcpProvider(
+    entry.providerName,
+    runtimeSelection,
+    boundary.adapter,
+  );
   if (afterProvider.exists !== false) {
     throw new McpBridgeError(
       afterProvider.error ??
         `A same-name provider appeared while removing dangling reference '${entry.providerName}'. Refusing to create or adopt it.`,
     );
   }
-  const cleanOutput = stripAnsi(output);
-  if (!/\bDetached provider\b|\bwas not attached to sandbox\b/i.test(cleanOutput)) {
-    throw new McpBridgeError(
-      `OpenShell returned an unrecognized result while removing dangling provider reference '${entry.providerName}'.`,
-    );
-  }
-  return providerDetachChangedState(result.status, output) ? "detached" : "absent";
+  return result.value.changed ? "detached" : "absent";
 }
