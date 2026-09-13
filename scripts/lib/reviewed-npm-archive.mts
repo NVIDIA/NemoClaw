@@ -292,12 +292,18 @@ function readReviewedLock(lockfilePath: string): Record<string, Record<string, u
   return packages as Record<string, Record<string, unknown>>;
 }
 
-function parseExactPackageSpec(packageSpec: string): { name: string; version: string } {
+function parseExactPackageSpec(packageSpec: string): {
+  name: string;
+  version: string;
+} {
   if (!EXACT_NPM_PACKAGE_SPEC.test(packageSpec)) {
     throw new Error(`reviewed npm lock must use an exact npm package spec: ${packageSpec}`);
   }
   const separator = packageSpec.lastIndexOf("@");
-  return { name: packageSpec.slice(0, separator), version: packageSpec.slice(separator + 1) };
+  return {
+    name: packageSpec.slice(0, separator),
+    version: packageSpec.slice(separator + 1),
+  };
 }
 
 function packageNameFromLockLocation(location: string): string {
@@ -413,6 +419,69 @@ function resolveLockDependencyLocation(
   }
 }
 
+function reviewedBundledLockLocations(
+  packages: Readonly<Record<string, Record<string, unknown>>>,
+): ReadonlySet<string> {
+  const bundledLocations = new Set<string>();
+  const pending: Array<Readonly<{ location: string; ownerLocation: string }>> = [];
+  for (const [location, value] of Object.entries(packages)) {
+    if (location === "") continue;
+    if (typeof value !== "object" || value === null || Array.isArray(value)) {
+      throw new Error(`reviewed npm lock has an invalid package record: ${location}`);
+    }
+    const record = value as Record<string, unknown>;
+    const bundleDependencies = record.bundleDependencies;
+    if (bundleDependencies === undefined) continue;
+    if (
+      !Array.isArray(bundleDependencies) ||
+      bundleDependencies.some((name) => typeof name !== "string")
+    ) {
+      throw new Error(`reviewed npm lock has invalid bundleDependencies: ${location}`);
+    }
+    for (const name of bundleDependencies as string[]) {
+      if (!EXACT_NPM_PACKAGE_SPEC.test(`${name}@0.0.0`)) {
+        throw new Error(`reviewed npm lock has an invalid bundled dependency name: ${location}`);
+      }
+      const bundledLocation = `${location}/node_modules/${name}`;
+      const bundledRecord = packages[bundledLocation];
+      if (
+        typeof bundledRecord === "object" &&
+        bundledRecord !== null &&
+        !Array.isArray(bundledRecord) &&
+        bundledRecord.inBundle === true
+      ) {
+        pending.push({ location: bundledLocation, ownerLocation: location });
+      }
+    }
+  }
+
+  while (pending.length > 0) {
+    const current = pending.pop();
+    if (!current || bundledLocations.has(current.location)) continue;
+    bundledLocations.add(current.location);
+    const record = packages[current.location];
+    if (typeof record !== "object" || record === null || Array.isArray(record)) continue;
+    for (const dependency of lockDependencies(record, current.location)) {
+      const dependencyLocation = resolveLockDependencyLocation(
+        packages,
+        current.location,
+        dependency.name,
+      );
+      if (
+        !dependencyLocation?.startsWith(`${current.ownerLocation}/node_modules/`) ||
+        packages[dependencyLocation]?.inBundle !== true
+      ) {
+        continue;
+      }
+      pending.push({
+        location: dependencyLocation,
+        ownerLocation: current.ownerLocation,
+      });
+    }
+  }
+  return bundledLocations;
+}
+
 function productionLockLocations(
   packages: Readonly<Record<string, Record<string, unknown>>>,
 ): ReadonlySet<string> {
@@ -503,6 +572,7 @@ function readReviewedLockPackages(
     reviewedRegistryIdentities.set(reviewedPackage.packageSpec, reviewedPackage);
   }
   const productionLocations = omitDev ? productionLockLocations(packages) : undefined;
+  const bundledLocations = reviewedBundledLockLocations(packages);
   for (const [location, value] of Object.entries(packages)) {
     if (location === "") continue;
     if (typeof value !== "object" || value === null || Array.isArray(value)) {
@@ -511,6 +581,18 @@ function readReviewedLockPackages(
     const record = value as Record<string, unknown>;
     assertNotProductionDev(productionLocations, location, record);
     if (omitDev && record.dev === true) continue;
+    if (record.inBundle !== undefined && record.inBundle !== true) {
+      throw new Error(`reviewed npm lock has invalid inBundle metadata: ${location}`);
+    }
+    if (record.inBundle === true) {
+      if (!bundledLocations.has(location)) {
+        throw new Error(`reviewed npm lock has an unowned bundled package: ${location}`);
+      }
+      // npm ships this complete subtree inside the nearest reviewed parent
+      // tarball. The parent's committed SHA-512 authenticates these bytes, and
+      // npm intentionally omits per-entry resolved/integrity metadata here.
+      continue;
+    }
     const locationName = packageNameFromLockLocation(location);
     const packageName = typeof record.name === "string" ? record.name : locationName;
     const version = typeof record.version === "string" ? record.version : "";

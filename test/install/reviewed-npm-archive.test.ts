@@ -86,7 +86,11 @@ function writeSyntheticLock(
 
 function cachedArchiveRunner(
   calls: Array<{ args: readonly string[]; request: ReviewedNpmArchiveRequest }>,
-  mutation?: Readonly<{ filename?: string; integrity?: string; packageSpec: string }>,
+  mutation?: Readonly<{
+    filename?: string;
+    integrity?: string;
+    packageSpec: string;
+  }>,
 ) {
   return (args: readonly string[], reviewed: ReviewedNpmArchiveRequest): string => {
     calls.push({ args: [...args], request: reviewed });
@@ -101,7 +105,11 @@ function cachedArchiveRunner(
 function cachedArchivePackResponse(
   args: readonly string[],
   reviewed: ReviewedNpmArchiveRequest,
-  mutation?: Readonly<{ filename?: string; integrity?: string; packageSpec: string }>,
+  mutation?: Readonly<{
+    filename?: string;
+    integrity?: string;
+    packageSpec: string;
+  }>,
 ): string {
   const destination = args[3] as string;
   const filename =
@@ -141,7 +149,10 @@ describe("reviewed npm archive", () => {
           const destination = args[3] as string;
           fs.writeFileSync(path.join(destination, "reviewed-1.2.3.tgz"), "reviewed bytes");
           return JSON.stringify([
-            { filename: "reviewed-1.2.3.tgz", integrity: reviewed.expectedIntegrity },
+            {
+              filename: "reviewed-1.2.3.tgz",
+              integrity: reviewed.expectedIntegrity,
+            },
           ]);
         })()
       );
@@ -217,7 +228,10 @@ describe("reviewed npm archive", () => {
   });
 
   it("re-packs every locked cache archive offline through the shared verifier", () => {
-    const calls: Array<{ args: readonly string[]; request: ReviewedNpmArchiveRequest }> = [];
+    const calls: Array<{
+      args: readonly string[];
+      request: ReviewedNpmArchiveRequest;
+    }> = [];
     const reviewed = cacheRequest();
     expect(verifyReviewedNpmCache(reviewed, cachedArchiveRunner(calls))).toEqual([
       CACHE_PACKAGE_SPEC,
@@ -257,7 +271,10 @@ describe("reviewed npm archive", () => {
         2,
       )}\n`,
     );
-    const calls: Array<{ args: readonly string[]; request: ReviewedNpmArchiveRequest }> = [];
+    const calls: Array<{
+      args: readonly string[];
+      request: ReviewedNpmArchiveRequest;
+    }> = [];
 
     expect(
       verifyReviewedNpmCache({ ...reviewed, lockfilePath }, cachedArchiveRunner(calls)),
@@ -277,14 +294,96 @@ describe("reviewed npm archive", () => {
       resolved: TARBALL_URL,
       version: "1.2.3",
     });
-    const request = { lockfilePath, registryOrigin: "https://registry.npmjs.org/" };
+    const request = {
+      lockfilePath,
+      registryOrigin: "https://registry.npmjs.org/",
+    };
 
     expect(() => verifyReviewedNpmLockPackages(request)).toThrow(
       "must not delegate to nested shrinkwrap",
     );
-    expect(verifyReviewedNpmLockPackages({ ...request, allowNestedShrinkwrap: true })).toEqual([
-      PACKAGE_SPEC,
-    ]);
+    expect(
+      verifyReviewedNpmLockPackages({
+        ...request,
+        allowNestedShrinkwrap: true,
+      }),
+    ).toEqual([PACKAGE_SPEC]);
+  });
+
+  it("trusts only archive-owned bundled dependency subtrees", () => {
+    const reviewed = cacheRequest();
+    const lockfilePath = path.join(reviewed.tempDirectory as string, "bundled-lock.json");
+    fs.writeFileSync(
+      lockfilePath,
+      `${JSON.stringify({
+        lockfileVersion: 3,
+        packages: {
+          "": {},
+          "node_modules/@example/reviewed": {
+            bundleDependencies: ["bundled-child"],
+            integrity: INTEGRITY,
+            resolved: TARBALL_URL,
+            version: "1.2.3",
+          },
+          "node_modules/@example/reviewed/node_modules/bundled-child": {
+            dependencies: { transitive: "3.0.0" },
+            inBundle: true,
+            version: "2.0.0",
+          },
+          "node_modules/@example/reviewed/node_modules/transitive": {
+            inBundle: true,
+            version: "3.0.0",
+          },
+        },
+      })}\n`,
+    );
+
+    expect(
+      verifyReviewedNpmLockPackages({
+        lockfilePath,
+        registryOrigin: "https://registry.npmjs.org/",
+      }),
+    ).toEqual([PACKAGE_SPEC]);
+
+    const lock = JSON.parse(fs.readFileSync(lockfilePath, "utf8"));
+    delete lock.packages["node_modules/@example/reviewed"].bundleDependencies;
+    fs.writeFileSync(lockfilePath, `${JSON.stringify(lock)}\n`);
+    expect(() =>
+      verifyReviewedNpmLockPackages({
+        lockfilePath,
+        registryOrigin: "https://registry.npmjs.org/",
+      }),
+    ).toThrow("reviewed npm lock has an unowned bundled package");
+  });
+
+  it("does not exempt declared bundle entries without npm's inBundle ownership marker", () => {
+    const reviewed = cacheRequest();
+    const lockfilePath = path.join(reviewed.tempDirectory as string, "forged-bundle-lock.json");
+    fs.writeFileSync(
+      lockfilePath,
+      `${JSON.stringify({
+        lockfileVersion: 3,
+        packages: {
+          "": {},
+          "node_modules/@example/reviewed": {
+            bundleDependencies: ["bundled-child"],
+            integrity: INTEGRITY,
+            resolved: TARBALL_URL,
+            version: "1.2.3",
+          },
+          "node_modules/@example/reviewed/node_modules/bundled-child": {
+            version: "2.0.0",
+          },
+        },
+      })}\n`,
+    );
+
+    expect(() =>
+      verifyReviewedNpmLockPackages({
+        lockfilePath,
+        registryOrigin: "https://registry.npmjs.org/",
+      }),
+    ).toThrow("must use a committed sha512 npm integrity value");
   });
 
   it("validates but does not archive an approved package without integrity", () => {
@@ -348,16 +447,25 @@ describe("reviewed npm archive", () => {
   it.each([
     {
       expected: "downloaded tarball integrity mismatch",
-      mutation: { integrity: "sha512-drift", packageSpec: CACHE_PACKAGE_TWO_SPEC },
+      mutation: {
+        integrity: "sha512-drift",
+        packageSpec: CACHE_PACKAGE_TWO_SPEC,
+      },
       name: "packed SRI drift",
     },
     {
       expected: "reported unsafe archive filename",
-      mutation: { filename: "../../cache-two.tgz", packageSpec: CACHE_PACKAGE_TWO_SPEC },
+      mutation: {
+        filename: "../../cache-two.tgz",
+        packageSpec: CACHE_PACKAGE_TWO_SPEC,
+      },
       name: "an unsafe packed filename",
     },
   ])("rejects $name in the final cache", ({ expected, mutation }) => {
-    const calls: Array<{ args: readonly string[]; request: ReviewedNpmArchiveRequest }> = [];
+    const calls: Array<{
+      args: readonly string[];
+      request: ReviewedNpmArchiveRequest;
+    }> = [];
     expect(() =>
       verifyReviewedNpmCache(cacheRequest(), cachedArchiveRunner(calls, mutation)),
     ).toThrow(expected);
