@@ -59,6 +59,7 @@
       "fast": [
         "src/lib/onboard/command.test.ts",
         "src/lib/onboard/sandbox-workload-preparation.test.ts",
+        "test/e2e/support/e2e-phase-lifecycle.test.ts",
         "test/e2e/support/managed-image-activation-diagnostics.test.ts",
         "test/inference/managed/managed-image-publication-workflow.test.ts",
         "test/onboarding/onboard-managed-image-buildless-e2e.test.ts"
@@ -74,6 +75,7 @@
         "src/lib/agent/candidate.test.ts",
         "src/lib/agent/pi-lifecycle.test.ts",
         "src/lib/onboard/pi-candidate-rebuild.test.ts",
+        "test/e2e/support/e2e-phase-lifecycle.test.ts",
         "test/e2e/support/onboard-interactive-pty.test.ts",
         "test/e2e/support/pi-agent-qualification-events.test.ts",
         "test/agents/openclaw/runtime/pi-candidate-runtime-artifacts.test.ts"
@@ -556,6 +558,7 @@
         "src/lib/actions/sandbox/skill-install.test.ts",
         "test/agents/hermes/hermes-image-build-probes.test.ts",
         "test/agents/hermes/hermes-start.test.ts",
+        "test/e2e/support/e2e-phase-lifecycle.test.ts",
         "test/e2e/support/hermes-cli-adapter-live.test.ts",
         "test/e2e/support/hermes-acp-live.test.ts",
         "test/e2e/support/managed-image-cohort-contract.test.ts",
@@ -632,6 +635,7 @@
         "test/e2e/live/mcp-bridge-trusted-private.ts",
         "test/e2e/live/mcp-provider-rewrite-probe.ts",
         "test/e2e/live/openshell-allowed-ips-rebinding.ts",
+        "test/e2e/live/openshell-exact-main-driver-config.ts",
         "test/e2e/live/openshell-exact-main-runtime-contracts.ts"
       ],
       "fast": [
@@ -640,6 +644,7 @@
         "src/lib/actions/sandbox/mcp-bridge-adapter-teardown.test.ts",
         "src/lib/actions/sandbox/mcp-bridge-input-targets.test.ts",
         "src/lib/actions/sandbox/mcp-bridge-provider.test.ts",
+        "test/e2e/support/e2e-phase-lifecycle.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
         "test/e2e/support/e2e-redaction-entry.test.ts",
@@ -653,6 +658,7 @@
         "test/e2e/support/mcp-bridge-tool-discovery.test.ts",
         "test/e2e/support/mcp-provider-rewrite-probe.test.ts",
         "test/e2e/support/mcp-workflow-boundary.test.ts",
+        "test/e2e/support/openshell-exact-main-driver-config.test.ts",
         "test/e2e/support/openshell-exact-main-runtime-contracts.test.ts",
         "test/mcp/mcp-bridge-servers.test.ts"
       ]
@@ -858,6 +864,7 @@
     {
       "live": "test/e2e/live/sandbox-survival.test.ts",
       "fast": [
+        "test/e2e/support/e2e-phase-lifecycle.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
       ]
