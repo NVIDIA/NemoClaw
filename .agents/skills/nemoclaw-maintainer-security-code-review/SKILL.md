@@ -1,6 +1,6 @@
 ---
 name: nemoclaw-maintainer-security-code-review
-description: Review a PR, or a PR linked to an issue, for security risks. Check nine categories and report PASS, WARNING, or FAIL. Use when reviewing code for vulnerabilities, secrets, injection, authorization bypasses, or unsafe configuration. Trigger keywords - security review, code review, appsec, vulnerability assessment, security audit, review PR security.
+description: "Perform a requested security review of a NemoClaw PR or a PR linked to an issue. Use for vulnerability or trust-boundary assessment."
 user_invocable: true
 ---
 

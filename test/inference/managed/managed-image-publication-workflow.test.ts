@@ -28,11 +28,7 @@ import {
   required,
   step,
 } from "../../helpers/managed-image-publication-workflow";
-import type {
-  Job,
-  MatrixEntry,
-  Workflow,
-} from "../../helpers/managed-image-publication-workflow-types";
+import type { Job, Workflow } from "../../helpers/managed-image-publication-workflow-types";
 
 const fullShaAction = /^[^@]+@[0-9a-f]{40}$/iu;
 
@@ -444,6 +440,9 @@ describe("complete managed-image publication workflow", () => {
       "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=sandbox",
     );
     expect(contract.run).toContain('.[0].Config.User == "sandbox"');
+    expect(contract.run).toContain(
+      'verify-dcode-conversation-history-image.sh "$image_id" "$PLATFORM" 0',
+    );
     expect(workflow.on?.pull_request?.paths).toEqual(
       expect.arrayContaining([
         ".github/actions/ci-reviewed-npm-audit/**",
@@ -751,6 +750,7 @@ describe("complete managed-image publication workflow", () => {
     expect(workflow.on?.pull_request?.paths).toEqual(
       expect.arrayContaining([
         "src/lib/onboard/**",
+        "test/e2e/fixtures/phases/lifecycle.ts",
         "test/e2e/live/managed-image-activation-e2e*.ts",
       ]),
     );

@@ -13,8 +13,8 @@ export const CANDIDATE_QUALIFICATION_RECEIPT_DIGESTS: Readonly<
   Record<CandidateManagedImageAgent, readonly string[]>
 > = Object.freeze({
   pi: Object.freeze([
-    "0149d48ac4098137be673fea0100b2a7d487652c6548d8927f2c6fa1d0283767",
-    "53470135b2a9d772bf7e8ed2b638a63e8f127b180ee05dacb6119f39db4ba216",
+    "3bb193758822c3fa40fe3c64412659f86881129cc3d086ae61ff0481ac5c6152",
+    "7d4410052a8e1b219f8c75517198ce5e552d9e0f97910920d67cb01e6389fe0e",
   ]),
 });
 

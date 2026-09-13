@@ -133,31 +133,39 @@ describe("sandbox readiness parsing", () => {
 // Regression tests: WSL truncates hyphenated sandbox names during shell
 // argument parsing (e.g. "my-assistant" → "m").
 describe("WSL sandbox name handling", () => {
-  it("applyPreset rejects truncated/invalid sandbox name", () => {
+  it("applyPreset rejects truncated/invalid sandbox name", async () => {
     // Empty name
-    expect(() => applyPreset("", "npm")).toThrow(/Invalid or truncated sandbox name/);
+    await expect((async () => await applyPreset("", "npm"))()).rejects.toThrow(
+      /Invalid or truncated sandbox name/,
+    );
     // Name with uppercase (not valid per RFC 1123)
-    expect(() => applyPreset("My-Assistant", "npm")).toThrow(/Invalid or truncated sandbox name/);
+    await expect((async () => await applyPreset("My-Assistant", "npm"))()).rejects.toThrow(
+      /Invalid or truncated sandbox name/,
+    );
     // Name starting with hyphen
-    expect(() => applyPreset("-broken", "npm")).toThrow(/Invalid or truncated sandbox name/);
+    await expect((async () => await applyPreset("-broken", "npm"))()).rejects.toThrow(
+      /Invalid or truncated sandbox name/,
+    );
   });
 
-  it("accepts an exact 19-character sandbox name before a no-op policy batch (#8497)", () => {
-    expect(applyPresets("a".repeat(19), [])).toBe(true);
+  it("accepts an exact 19-character sandbox name before a no-op policy batch (#8497)", async () => {
+    expect(await applyPresets("a".repeat(19), [])).toBe(true);
     expect(policySideEffects.runCapture).not.toHaveBeenCalled();
     expect(policySideEffects.run).not.toHaveBeenCalled();
   });
 
   it.each([
-    ["removePreset", (name: string) => removePreset(name, "npm")],
-    ["applyPresetContent", (name: string) => applyPresetContent(name, "npm", "")],
-    ["applyPresets", (name: string) => applyPresets(name, ["npm"])],
+    ["removePreset", async (name: string) => await removePreset(name, "npm")],
+    ["applyPresetContent", async (name: string) => await applyPresetContent(name, "npm", "")],
+    ["applyPresets", async (name: string) => await applyPresets(name, ["npm"])],
   ])(
     "%s rejects 20-character and consecutive-hyphen names before policy side effects (#8497)",
-    (_entrypoint, invoke) => {
-      ["a".repeat(20), "legacy--box"].forEach((name) => {
-        expect(() => invoke(name)).toThrow(/Allowed format: 1-19 characters/);
-      });
+    async (_entrypoint, invoke) => {
+      await Promise.all(
+        ["a".repeat(20), "legacy--box"].map(async (name) => {
+          await expect(invoke(name)).rejects.toThrow(/Allowed format: 1-19 characters/);
+        }),
+      );
       expect(policySideEffects.runCapture).not.toHaveBeenCalled();
       expect(policySideEffects.run).not.toHaveBeenCalled();
     },

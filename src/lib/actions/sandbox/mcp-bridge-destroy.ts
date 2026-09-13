@@ -8,7 +8,7 @@ import {
   scrubManagedMcpAdapterOrThrow,
   type McpScrubbedAdapterEntry,
 } from "./mcp-bridge-adapter-teardown";
-import { MCP_BRIDGE_POLICY_SOURCE, McpBridgeError } from "./mcp-bridge-contracts";
+import { McpBridgeError } from "./mcp-bridge-contracts";
 import { removeGeneratedPolicy } from "./mcp-bridge-policy";
 import type { McpDestroyPreparation } from "./mcp-bridge-destroy-preflight";
 import {
@@ -142,7 +142,7 @@ export async function prepareMcpBridgesForDestroy(
       );
     }
     for (const entry of entries) {
-      removeGeneratedPolicy(sandboxName, entry, {
+      await removeGeneratedPolicy(sandboxName, entry, {
         runtimeSelection: providerRuntimeSelection,
       });
       removedPolicies.push(entry);

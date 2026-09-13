@@ -165,7 +165,7 @@ describe("managed workload rebuild mutation guard", () => {
       agentDefinition: {},
       resumeConfig: {
         provider: "nvidia",
-        model: previousProfile.inference.model,
+        model: previousProfile.inference!.model,
         preferredInferenceApi: "openai-completions",
         endpointUrl: null,
         compatibleEndpointReasoning: null,

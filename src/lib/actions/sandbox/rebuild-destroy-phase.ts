@@ -418,18 +418,18 @@ export async function runRebuildDestroyPhase(
     let validation: RebuildDeleteValidationResult;
     try {
       validation = await validateAtDeleteEdge(rebuildMcpRuntimeSelection);
-      if (validation.ok && !rebuildDeleteTargetMatchesRegistry(deleteTarget)) {
-        validation = {
-          ok: false,
-          message: "Sandbox delete target changed during rebuild preparation.",
-        };
-      }
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
       log(`Unexpected delete-edge validation failure: ${redactFull(detail)}`);
       validation = {
         ok: false,
         message: "Replacement validation failed before sandbox deletion.",
+      };
+    }
+    if (validation.ok && !rebuildDeleteTargetMatchesRegistry(deleteTarget)) {
+      validation = {
+        ok: false,
+        message: "Sandbox delete target changed during rebuild preparation.",
       };
     }
     if (!validation.ok) {

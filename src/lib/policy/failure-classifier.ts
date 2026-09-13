@@ -101,14 +101,16 @@ function verificationNote(preset: PolicyContextPreset): string {
   return " The OpenShell gateway is unreachable, so current enforcement could not be verified.";
 }
 
-function resolveContext(input: AccessFailureInput): PolicyContext {
+async function resolveContext(input: AccessFailureInput): Promise<PolicyContext> {
   if (input.context) return input.context;
   const options: BuildPolicyContextOptions =
     input.gatewayPresets === undefined ? {} : { gatewayPresets: input.gatewayPresets };
-  return buildPolicyContext(input.sandboxName, options);
+  return await buildPolicyContext(input.sandboxName, options);
 }
 
-export function classifyAccessFailure(input: AccessFailureInput): AccessFailureClassification {
+export async function classifyAccessFailure(
+  input: AccessFailureInput,
+): Promise<AccessFailureClassification> {
   if (input.capability && input.capability.supported === false) {
     const reason = input.capability.reason ?? "capability is not offered for this sandbox";
     return {
@@ -119,7 +121,7 @@ export function classifyAccessFailure(input: AccessFailureInput): AccessFailureC
       confidence: "high",
     };
   }
-  const ctx = resolveContext(input);
+  const ctx = await resolveContext(input);
   const matched = findMatchingPreset(input.host, ctx.activePresets);
   const status = input.error?.status;
   const code = input.error?.code;

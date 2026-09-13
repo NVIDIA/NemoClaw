@@ -13,7 +13,6 @@ import {
 import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock";
 import { assertHermesPortableCommandUnavailable } from "../../onboard/experimental/portable-agent-lifecycle";
 import type { McpBridgeEntry } from "../../state/registry";
-import * as registry from "../../state/registry";
 import { withMcpCredentialOwnershipLock } from "../../state/mcp-lifecycle-lock/credential-ownership";
 import {
   assertAgentMcpMutationRuntimeCapability,
@@ -141,7 +140,7 @@ async function assertPreparedMcpAddResourcesAbsent(
     entry.providerName ?? "",
     entry.denyTools,
   );
-  const policyState = policies.getPresetContentGatewayState(
+  const policyState = await policies.getPresetContentGatewayState(
     sandboxName,
     policyContent,
     undefined,
@@ -239,7 +238,7 @@ async function updateMcpBridgeDenyToolsUnlocked(
   // update from the journal.
   writeBridgeEntry(sandboxName, pendingEntry);
   try {
-    removeGeneratedPolicy(sandboxName, storedEntry, { runtimeSelection });
+    await removeGeneratedPolicy(sandboxName, storedEntry, { runtimeSelection });
   } catch (error) {
     writeBridgeEntry(sandboxName, storedEntry);
     throw error;
@@ -253,7 +252,7 @@ async function updateMcpBridgeDenyToolsUnlocked(
     );
   }
   try {
-    applyRecordedGeneratedPolicy(sandboxName, updatedEntry, runtimeSelection);
+    await applyRecordedGeneratedPolicy(sandboxName, updatedEntry, runtimeSelection);
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     throw new McpBridgeError(
@@ -480,7 +479,7 @@ async function addMcpBridgeUnlocked(
         // policy cleanup happen only after the running-image capability probe.
         await assertMcpProviderRecoverable(entry, providerRuntimeSelection);
       } catch (error) {
-        removeGeneratedPolicy(sandboxName, entry, {
+        await removeGeneratedPolicy(sandboxName, entry, {
           bestEffort: true,
           runtimeSelection: providerRuntimeSelection,
         });
@@ -530,7 +529,7 @@ async function addMcpBridgeUnlocked(
     // provider mutation. OpenShell requires the endpointless provider to be
     // attached before it accepts credential_binding.provider, and withholds
     // that provider's static credential until the bound policy is active.
-    applyGeneratedPolicy(sandboxName, entry, target, {
+    await applyGeneratedPolicy(sandboxName, entry, target, {
       bindCredential: false,
       runtimeSelection: providerRuntimeSelection,
     });
@@ -577,7 +576,7 @@ async function addMcpBridgeUnlocked(
     }
     providerAttachAttempted = true;
     await attachProvider(sandboxName, entry, providerRuntimeSelection);
-    applyGeneratedPolicy(sandboxName, entry, target, {
+    await applyGeneratedPolicy(sandboxName, entry, target, {
       runtimeSelection: providerRuntimeSelection,
     });
     let refreshedAfterObservedAbsence = false;
@@ -692,7 +691,7 @@ async function addMcpBridgeUnlocked(
       });
     }
     if (policyApplied) {
-      removeGeneratedPolicy(sandboxName, entry, {
+      await removeGeneratedPolicy(sandboxName, entry, {
         bestEffort: true,
         runtimeSelection: providerRuntimeSelection,
       });

@@ -429,6 +429,7 @@ export const HERMES_PORTABLE_BUILD_CONTEXT_FILES = [
   { path: "src/lib/messaging/utils.test.ts", mode: "100644" },
   { path: "src/lib/messaging/utils.ts", mode: "100644" },
   { path: "src/lib/tool-disclosure.ts", mode: "100644" },
+  { path: "src/lib/providerless-inference.ts", mode: "100644" },
   {
     path: "tools/mcp-tool-discovery-runtime/npm-cache-seed/tar-7.5.21.tgz",
     mode: "100644",

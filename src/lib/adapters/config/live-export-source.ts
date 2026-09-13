@@ -64,14 +64,17 @@ function resolveGatewayBinding(entry: Readonly<SandboxEntry>): { name: string; p
 
 function gatewayFor(entry: Readonly<SandboxEntry>): ObservedExportGateway {
   const { name, port } = resolveGatewayBinding(entry);
+  const configuredStateDir = process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR?.trim();
   const stateDir = resolveGatewayStateDirForPort({
-    configured: process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR,
+    configured: configuredStateDir,
     home: os.homedir(),
     port,
   });
   const stateRootOwned =
-    managedGatewayStateRootOwnershipFailure({ gatewayName: name, gatewayPort: port, stateDir }) ===
-    null;
+    managedGatewayStateRootOwnershipFailure(
+      { gatewayName: name, gatewayPort: port, stateDir },
+      { allowLegacyManagedState: !configuredStateDir },
+    ) === null;
   return {
     name,
     port,

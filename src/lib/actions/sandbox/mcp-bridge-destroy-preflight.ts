@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { McpBridgeEntry, SandboxEntry } from "../../state/registry";
-import * as registry from "../../state/registry";
 import type { McpScrubbedAdapterEntry } from "./mcp-bridge-adapter-teardown";
 import { McpBridgeError } from "./mcp-bridge-contracts";
 import {
@@ -116,7 +115,7 @@ export async function discardSafeIncompleteMcpAdds(
     if (options.sandboxAbsent) {
       assertGeneratedPolicyRegistrationMutationSafe(sandboxName, entry);
     } else {
-      removeGeneratedPolicy(sandboxName, entry, {
+      await removeGeneratedPolicy(sandboxName, entry, {
         runtimeSelection: providerRuntimeSelection!,
       });
     }

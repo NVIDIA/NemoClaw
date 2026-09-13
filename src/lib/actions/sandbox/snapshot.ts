@@ -7,7 +7,7 @@ import { isDeepStrictEqual } from "node:util";
 import { dockerCapture } from "../../adapters/docker";
 import {
   namedOpenShellGateway,
-  syncCliOpenShellSandboxPolicyReader,
+  cliOpenShellSandboxPolicyReader,
 } from "../../adapters/openshell/sandbox-policy-cli";
 import {
   captureOpenshell,
@@ -50,7 +50,6 @@ import {
   createExactTempFileCleanup,
   secureTempFile,
 } from "../../onboard/temp-files";
-import * as policies from "../../policy";
 import { ROOT, run, shellQuote, validateName } from "../../runner";
 import { parseLiveSandboxNames } from "../../runtime-recovery";
 import { streamSandboxCreate } from "../../sandbox/create-stream";
@@ -400,7 +399,7 @@ async function prepareSnapshotClonePolicy(
   cleanup?: () => boolean;
 }> {
   const gatewayName = resolveSandboxGatewayName(srcEntry);
-  const policyRead = syncCliOpenShellSandboxPolicyReader.readSandboxPolicy({
+  const policyRead = await cliOpenShellSandboxPolicyReader.readSandboxPolicy({
     target: namedOpenShellGateway(gatewayName),
     sandboxName: srcEntry.name,
     scope: "base",

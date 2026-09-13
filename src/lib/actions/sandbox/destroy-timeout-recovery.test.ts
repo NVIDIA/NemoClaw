@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createDestroyHarness,
   resetDestroyModuleCache,
@@ -9,10 +9,8 @@ import {
 import { SANDBOX_DESTROY_TIMEOUT_MS } from "./destroy-gateway";
 
 describe("destroy timeout recovery", () => {
-  let exitSpy: MockInstance;
-
   beforeEach(() => {
-    exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number | string | null) => {
+    vi.spyOn(process, "exit").mockImplementation(((code?: number | string | null) => {
       throw new Error(`process.exit(${code ?? 0})`);
     }) as never);
   });
