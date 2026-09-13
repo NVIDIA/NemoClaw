@@ -43,9 +43,11 @@ export function createTarball(
     closeSync(descriptor);
     descriptor = undefined;
     if (result.status !== 0 || result.signal || result.error) {
-      const reason = result.signal
-        ? `killed by signal ${result.signal}`
-        : `exited with code ${result.status ?? "unknown"}`;
+      const reason = result.error
+        ? result.error.message
+        : result.signal
+          ? `killed by signal ${result.signal}`
+          : `exited with code ${result.status ?? "unknown"}`;
       error(`Failed to create tarball at ${output} (tar ${reason})`);
       process.exitCode = 1;
       return false;

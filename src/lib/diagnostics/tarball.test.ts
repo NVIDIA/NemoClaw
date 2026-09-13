@@ -67,6 +67,7 @@ describe("archive publication", () => {
     vi.stubEnv("PATH", path.join(directory, "missing-bin"));
 
     expect(createTarball(collectDir, output, options)).toBe(false);
+    expect(options.error).toHaveBeenCalledWith(expect.stringContaining("ENOENT"));
     expect(process.exitCode).toBe(1);
     expect(fs.readFileSync(output, "utf8")).toBe("previous archive");
     expect(fs.readdirSync(directory).sort()).toEqual(["collected", "debug.tar.gz"]);
