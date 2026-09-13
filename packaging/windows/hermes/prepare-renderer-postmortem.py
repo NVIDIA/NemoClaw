@@ -4,12 +4,14 @@
 
 import argparse
 import ctypes as c
+import hashlib
 import importlib.util
 import json
 import ntpath
 import os
 from pathlib import Path
 import re
+import stat
 import subprocess
 import sys
 import time
@@ -75,53 +77,141 @@ def appcontainer_sid(name, windows):
             )
 
 
-def inspect_tools(output, windows):
+def input_metadata(path, row):
+    row["path"] = str(path)
+    value = Path(path).lstat()
+    row.update(
+        linkCount=value.st_nlink,
+        bytes=value.st_size,
+        fileAttributes=getattr(value, "st_file_attributes", 0),
+        fileIdentity={"device": str(value.st_dev), "inode": str(value.st_ino)},
+    )
+    return value
+
+
+def system_powershell_identity(windows, row):
+    # Only this OS-resolved system executable permits servicing hard links.
     windows.k.GetSystemDirectoryW.argtypes = [c.c_wchar_p, c.c_uint32]
     windows.k.GetSystemDirectoryW.restype = c.c_uint32
     buffer = c.create_unicode_buffer(32768)
     count = windows.k.GetSystemDirectoryW(buffer, len(buffer))
     require(0 < count < len(buffer), "System directory lookup failed")
-    powershell = Path(buffer.value) / "WindowsPowerShell/v1.0/powershell.exe"
-    inspector = Path(__file__).with_name("inspect-postmortem-tools.ps1")
-    inputs = {"powershell": identity(powershell), "script": identity(inspector)}
-    process = subprocess.run(
-        [
-            str(powershell),
-            "-NoProfile",
-            "-File",
-            str(inspector),
-            "-Output",
-            str(output),
-        ],
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        timeout=20,
-        creationflags=0x08000000,
-    )
-    execution = {
-        "exitCode": process.returncode,
-        "closed": True,
-        "stdout": process.stdout[:8192].decode("utf-8", errors="replace"),
-        "stderr": process.stderr[:8192].decode("utf-8", errors="replace"),
-        "outputExceeded": len(process.stdout) > 8192 or len(process.stderr) > 8192,
-    }
-    if process.returncode != 0 or execution["outputExceeded"]:
-        error = ValueError("Read-only debugger inspection failed")
-        error.tool_inspection = {"inputs": inputs, "execution": execution}
-        raise error
-    reference, data = read_json(output, 128 * 1024)
+    path = Path(buffer.value) / "WindowsPowerShell/v1.0/powershell.exe"
+    before = input_metadata(path, row)
     require(
-        data["classification"] == "renderer-postmortem-tool-inspection"
-        and data["executedDebugger"] is False,
-        "Unexpected debugger inspection receipt",
+        stat.S_ISREG(before.st_mode)
+        and not stat.S_ISLNK(before.st_mode)
+        and not row["fileAttributes"] & 0x400,
+        "System PowerShell must be an ordinary non-reparse file",
     )
-    return {
-        "inputs": inputs,
-        "execution": execution,
-        "receipt": reference,
-        "value": data,
+    require(
+        64 <= before.st_size <= 32 * 1024 * 1024,
+        "System PowerShell size is outside its bound",
+    )
+
+    def state(value):
+        return (
+            value.st_dev,
+            value.st_ino,
+            value.st_size,
+            value.st_mtime_ns,
+            value.st_ctime_ns,
+            value.st_nlink,
+        )
+
+    digest, count, header = hashlib.sha256(), 0, bytearray()
+    with path.open("rb") as stream:
+        opened = os.fstat(stream.fileno())
+        require(
+            state(opened) == state(before), "System PowerShell changed while opening"
+        )
+        while block := stream.read(64 * 1024):
+            count += len(block)
+            require(count <= before.st_size, "System PowerShell grew while reading")
+            digest.update(block)
+            if len(header) < 65536:
+                header.extend(block[: 65536 - len(header)])
+        require(
+            count == before.st_size
+            and state(os.fstat(stream.fileno())) == state(before),
+            "System PowerShell changed while reading",
+        )
+    require(
+        state(path.lstat()) == state(before),
+        "System PowerShell path changed while reading",
+    )
+    row.update(sha256=digest.hexdigest(), stable=True)
+    pe = int.from_bytes(header[60:64], "little")
+    require(
+        header[:2] == b"MZ"
+        and 64 <= pe <= len(header) - 24
+        and header[pe : pe + 4] == b"PE\0\0",
+        "Invalid System PowerShell PE header",
+    )
+    machine = int.from_bytes(header[pe + 4 : pe + 6], "little")
+    row.update(machine=machine, machineHex=hex(machine))
+    require(
+        machine == 0xAA64,
+        "Expected native ARM64 system PowerShell before the primary workload",
+    )
+    return row
+
+
+def inspect_tools(output, windows):
+    observation = {
+        "inputs": {"powershell": {}, "script": {}},
+        "execution": None,
+        "executionAttempted": False,
     }
+    try:
+        inputs = observation["inputs"]
+        observation["stage"] = "powershell-identity"
+        powershell = system_powershell_identity(windows, inputs["powershell"])
+        inspector = Path(__file__).with_name("inspect-postmortem-tools.ps1")
+        observation["stage"] = "inspector-script-identity"
+        input_metadata(inspector, inputs["script"])
+        # Staged/source inputs retain their existing no-hardlink contract.
+        inputs["script"].update(identity(inspector))
+        observation["stage"] = "execute-read-only-tool-inspector"
+        observation["executionAttempted"] = True
+        process = subprocess.run(
+            [
+                powershell["path"],
+                "-NoProfile",
+                "-File",
+                str(inspector),
+                "-Output",
+                str(output),
+            ],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=20,
+            creationflags=0x08000000,
+        )
+        execution = observation["execution"] = {
+            "exitCode": process.returncode,
+            "closed": True,
+            "stdout": process.stdout[:8192].decode("utf-8", errors="replace"),
+            "stderr": process.stderr[:8192].decode("utf-8", errors="replace"),
+            "outputExceeded": len(process.stdout) > 8192 or len(process.stderr) > 8192,
+        }
+        require(
+            process.returncode == 0 and not execution["outputExceeded"],
+            "Read-only debugger inspection failed",
+        )
+        reference, data = read_json(output, 128 * 1024)
+        require(
+            data["classification"] == "renderer-postmortem-tool-inspection"
+            and data["executedDebugger"] is False,
+            "Unexpected debugger inspection receipt",
+        )
+        observation.update(receipt=reference, value=data)
+        return observation
+    except Exception as error:
+        observation["error"] = detail(error)
+        error.tool_inspection = observation
+        raise
 
 
 def file_tuple(path):

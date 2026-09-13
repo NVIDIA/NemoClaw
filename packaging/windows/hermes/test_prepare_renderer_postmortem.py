@@ -4,6 +4,8 @@
 
 import importlib.util
 import json
+import hashlib
+import os
 from pathlib import Path
 import tempfile
 from types import SimpleNamespace
@@ -206,6 +208,82 @@ class OwnerTests(unittest.TestCase):
         self.assertFalse(result["cleanupComplete"])
         self.assertEqual(self.restored, [])
         self.assertTrue(self.root.exists())
+
+
+class SystemPowerShellIdentityTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.file = self.root / "WindowsPowerShell/v1.0/powershell.exe"
+        self.file.parent.mkdir(parents=True)
+
+        class SystemDirectory:
+            def __call__(api, buffer, length):
+                buffer.value = str(self.root)
+                return len(buffer.value)
+
+        self.windows = SimpleNamespace(
+            k=SimpleNamespace(GetSystemDirectoryW=SystemDirectory())
+        )
+        self.pe = bytearray(128)
+        self.pe[:2] = b"MZ"
+        self.pe[60:64] = (64).to_bytes(4, "little")
+        self.pe[64:68] = b"PE\0\0"
+        self.pe[68:70] = (0xAA64).to_bytes(2, "little")
+        self.file.write_bytes(self.pe)
+
+    def test_servicing_hardlink_records_native_identity_without_relaxing_common(self):
+        os.link(self.file, self.root / "servicing-copy.exe")
+        row = owner.system_powershell_identity(self.windows, {})
+        self.assertEqual(row["path"], str(self.file))
+        self.assertEqual(row["linkCount"], 2)
+        self.assertEqual(row["fileIdentity"]["inode"], str(self.file.stat().st_ino))
+        self.assertEqual(row["sha256"], hashlib.sha256(self.pe).hexdigest())
+        self.assertEqual(row["machine"], 0xAA64)
+        self.assertTrue(row["stable"])
+        self.assertNotIn("executed", row)
+        with self.assertRaisesRegex(ValueError, "hard-linked"):
+            owner.identity(self.file)
+
+    def test_x64_or_redirected_input_retains_exact_metadata_and_never_executes(self):
+        self.pe[68:70] = (0x8664).to_bytes(2, "little")
+        self.file.write_bytes(self.pe)
+        with patch.object(owner.subprocess, "run") as execution:
+            with self.assertRaisesRegex(ValueError, "native ARM64") as caught:
+                owner.inspect_tools(self.root / "tools.json", self.windows)
+            value = caught.exception.tool_inspection
+            self.assertEqual(value["inputs"]["powershell"]["machine"], 0x8664)
+            self.assertEqual(value["inputs"]["powershell"]["path"], str(self.file))
+            self.assertIsNone(value["execution"])
+            self.assertFalse(value["executionAttempted"])
+            execution.assert_not_called()
+        target = self.root / "redirected.exe"
+        self.file.rename(target)
+        self.file.symlink_to(target)
+        row = {}
+        with self.assertRaisesRegex(ValueError, "non-reparse"):
+            owner.system_powershell_identity(self.windows, row)
+        self.assertEqual(row["path"], str(self.file))
+        self.assertIn("linkCount", row)
+
+    def test_other_hardlinked_input_still_refuses_with_its_own_path(self):
+        script = self.root / "inspect-postmortem-tools.ps1"
+        script.write_text("# data only\n")
+        os.link(script, self.root / "other-script.ps1")
+        with (
+            patch.object(
+                owner, "__file__", str(self.root / "prepare-renderer-postmortem.py")
+            ),
+            patch.object(owner.subprocess, "run") as execution,
+        ):
+            with self.assertRaisesRegex(ValueError, "hard-linked") as caught:
+                owner.inspect_tools(self.root / "tools.json", self.windows)
+            inputs = caught.exception.tool_inspection["inputs"]
+            self.assertEqual(inputs["script"]["path"], str(script))
+            self.assertEqual(inputs["script"]["linkCount"], 2)
+            self.assertTrue(inputs["powershell"]["stable"])
+            execution.assert_not_called()
 
 
 if __name__ == "__main__":
