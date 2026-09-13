@@ -352,6 +352,7 @@ function makePatchFixture(version = "0.1.55"): PatchFixture {
   const sourcePaths = Object.entries(PACKAGE_SOURCES).map(([relativePath, source]) =>
     writeFixtureFile(packageDir, relativePath, source),
   );
+  writeFixtureFile(packageDir, "approval_mode.py", "class ApprovalMode:\n    pass");
   writeFixtureFile(
     root,
     `deepagents_code-${version}.dist-info/METADATA`,
