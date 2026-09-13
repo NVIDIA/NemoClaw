@@ -15,7 +15,7 @@ $downloads=Join-Path $output 'downloads'
 $null=New-Item -ItemType Directory -Path $downloads
 $root=[IO.Path]::GetPathRoot([Environment]::SystemDirectory)
 $runtime=Join-Path $root 'NemoClawHermesProbe-274d797050ea'
-$primary=$null;$mxcAttempted=$false;$runtimeOwned=$false
+$primary=$null;$mxcAttempted=$false;$runtimeOwned=$false;$faultWindowStart=$null
 $receipt=[ordered]@{schemaVersion=1;classification='canonical-personal-mxc-candidate-feasibility';sourceRevision=$env:GITHUB_SHA;
     candidateSource='8d78fe458e9268a7afdc8ed06b85c23306452036';artifactId=10293082661;status='failed';runtimeRebuilt=$false;runtimeExported=$false;
     installedAcceptance=$false;fullAgentQualified=$false;runtimeRoot=$runtime;cleanupErrors=@()}
@@ -25,6 +25,77 @@ function Invoke-PersonalChecked([string]$Executable,[string[]]$Arguments,[string
     & $Executable @Arguments 2>&1 | Tee-Object -FilePath (Join-Path $output (($Label -replace '[^a-zA-Z0-9-]','-')+'.log'))
     if ($LASTEXITCODE -ne 0) { throw ($Label+' failed with exit '+$LASTEXITCODE) }
 }
+function Get-PersonalChromeFaultEvents([string]$ChromePath,[datetime]$StartUtc,[datetime]$EndUtc) {
+    $ChromePath=$ChromePath.Replace('/','\')
+    $result=[ordered]@{schemaVersion=1;classification='readonly-owned-Chrome-fault-events';sourceRevision=$env:GITHUB_SHA;chromePath=$ChromePath;
+        startUtc=$StartUtc.ToUniversalTime().ToString('o');endUtc=$EndUtc.ToUniversalTime().ToString('o');
+        maximumEventsPerProvider=64;windowObservationOnly=$true;rawMessagesRetained=$false;queries=@();events=@();errors=@()}
+    if($EndUtc -lt $StartUtc -or ($EndUtc-$StartUtc).TotalMinutes -gt 30){throw 'Chrome event observation window exceeds its bound.'}
+    $reports=@{};$pending=@()
+    foreach($spec in @(@('Application Error',1000),@('Windows Error Reporting',1001))) {
+        $query=[ordered]@{provider=$spec[0];eventId=$spec[1];recordsRead=0;recordsDisposed=0;limitReached=$false;error=$null}
+        try {
+            $events=@(Get-WinEvent -FilterHashtable @{LogName='Application';ProviderName=$spec[0];Id=$spec[1];StartTime=$StartUtc;EndTime=$EndUtc} -MaxEvents 64 -ErrorAction Stop)
+            $query.recordsRead=$events.Count;$query.limitReached=$events.Count -eq 64
+            foreach($event in $events) {
+                try {
+                    $text=$event.ToXml()
+                    if($text.Length -gt 65536){throw 'Event XML exceeds its read bound.'}
+                    $settings=[Xml.XmlReaderSettings]::new();$settings.DtdProcessing=[Xml.DtdProcessing]::Prohibit;$settings.XmlResolver=$null
+                    $reader=[Xml.XmlReader]::Create([IO.StringReader]::new($text),$settings)
+                    $doc=[Xml.XmlDocument]::new();$doc.XmlResolver=$null
+                    try{$doc.Load($reader)}finally{$reader.Dispose()}
+                    $ns=[Xml.XmlNamespaceManager]::new($doc.NameTable);$ns.AddNamespace('e','http://schemas.microsoft.com/win/2004/08/events/event')
+                    $system=$doc.SelectSingleNode('/e:Event/e:System',$ns)
+                    $provider=$system.SelectSingleNode('e:Provider',$ns).GetAttribute('Name')
+                    $id=[int]$system.SelectSingleNode('e:EventID',$ns).InnerText
+                    $time=[datetime]::Parse($system.SelectSingleNode('e:TimeCreated',$ns).GetAttribute('SystemTime')).ToUniversalTime()
+                    if($provider -cne $spec[0] -or $id -ne $spec[1] -or $time -lt $StartUtc -or $time -gt $EndUtc){throw 'Event provider/time differs from the bounded query.'}
+                    $data=@{}
+                    foreach($node in $doc.SelectNodes('/e:Event/e:EventData/e:Data',$ns)) {
+                        $name=$node.GetAttribute('Name');if(-not $name){continue}
+                        if($data.ContainsKey($name)){throw 'Event contains duplicate named data.'}
+                        $data[$name]=$node.InnerText
+                    }
+                    $recordId=[long]$system.SelectSingleNode('e:EventRecordID',$ns).InnerText
+                    if($id -eq 1000) {
+                        if(-not $data.ContainsKey('AppPath') -or -not [string]::Equals($data.AppPath,$ChromePath,[StringComparison]::OrdinalIgnoreCase)){continue}
+                        $fields=@{}
+                        foreach($name in @('AppName','AppVersion','AppTimeStamp','ModuleName','ModuleVersion','ModuleTimeStamp','ExceptionCode','FaultingOffset','ProcessId','ProcessCreationTime','AppPath','ModulePath','IntegratorReportId')) {
+                            if($data.ContainsKey($name)) {if($data[$name].Length -gt 512){throw 'Selected fault field exceeds its bound.'};$fields[$name]=$data[$name]}
+                        }
+                        $row=@{provider=$provider;eventId=$id;recordId=$recordId;timeUtc=$time.ToString('o');match='exact-canonical-Chrome-AppPath';fields=$fields}
+                        $result.events+=@($row)
+                        $reportId=$data['IntegratorReportId']
+                        if($reportId -and $reportId -match '^[0-9a-fA-F-]{36}$' -and $reportId -ne '00000000-0000-0000-0000-000000000000'){
+                            if($reports.ContainsKey($reportId)){$reports[$reportId]=$null}else{$reports[$reportId]=$row}
+                        }
+                    } else {
+                        # WER1001 often has no AppPath. Only retain it through an exact
+                        # report-ID link to an already matched Application Error row.
+                        $reportId=$data['ReportId'];$eventName=$data['EventName']
+                        if($reportId -and $reportId.Length -le 64 -and $eventName -and $eventName.Length -le 128){
+                            $pending+=@(@{provider=$provider;eventId=$id;recordId=$recordId;timeUtc=$time.ToString('o');reportId=$reportId;eventName=$eventName})
+                        }
+                    }
+                } catch {$result.errors+=@(@{provider=$spec[0];error=$_.Exception.Message.Substring(0,[Math]::Min(256,$_.Exception.Message.Length))})}
+                finally{try{$event.Dispose();$query.recordsDisposed++}catch{$result.errors+=@(@{provider=$spec[0];error='Event record disposal failed.'})}}
+            }
+        } catch {
+            if($_.FullyQualifiedErrorId -notlike 'NoMatchingEventsFound*'){$query.error=$_.Exception.Message.Substring(0,[Math]::Min(256,$_.Exception.Message.Length))}
+        }
+        $result.queries+=@($query)
+    }
+    $unlinked=0
+    foreach($row in $pending){
+        if($reports.ContainsKey($row.reportId) -and $null -ne $reports[$row.reportId]){
+            $row['match']='report-ID-linked-to-exact-Chrome-AppPath';$row['applicationErrorRecordId']=$reports[$row.reportId].recordId;$result.events+=@($row)
+        }else{$unlinked++}
+    }
+    $result['unlinkedWerCandidatesOmitted']=$unlinked
+    return $result
+}
+
 function Get-PersonalRuntimeAclObservation([string]$Runtime,[string]$CandidateSha256,[string]$ReplaySha256) {
     $clock=[Diagnostics.Stopwatch]::StartNew()
     $result=[ordered]@{schemaVersion=1;classification='readonly-canonical-runtime-acl-observation';sourceRevision=$env:GITHUB_SHA;
@@ -117,6 +188,7 @@ try {
         [IO.File]::WriteAllText($aclPath,($aclObservation|ConvertTo-Json -Depth 10)+"`n",[Text.UTF8Encoding]::new($false))
         $receipt['runtimeAclObservation']=@{file='runtime-acl-observation.json';bytes=(Get-Item -LiteralPath $aclPath).Length;sha256=(Get-FileHash -LiteralPath $aclPath -Algorithm SHA256).Hash.ToLowerInvariant()}
     } catch {$receipt['runtimeAclObservationError']=$_.Exception.Message}
+    $faultWindowStart=[DateTime]::UtcNow
     $mxcAttempted=$true
     $patchedMxc=Join-Path $compatEvidence 'mxc-token-inspection-build'
     $personalArguments = @('--experimental-strip-types','--no-warnings',(Join-Path $PSScriptRoot 'probe-personal-candidate.mts'),
@@ -130,6 +202,15 @@ try {
     $receipt.status='pass'
 }catch{$primary=$_;$receipt['error']=$_.Exception.Message}
 finally{
+    if($null -ne $faultWindowStart) {
+        try {
+            $faults=Get-PersonalChromeFaultEvents (Join-Path $runtime 'browsers/chromium-1234/chrome-win64/chrome.exe') $faultWindowStart ([DateTime]::UtcNow)
+            $faults['candidateReceiptSha256']=$receipt.derivedCandidateReceiptSha256;$faults['replayInputSha256']=$receipt.replayInputSha256
+            $faultPath=Join-Path $output 'chrome-fault-events.json'
+            [IO.File]::WriteAllText($faultPath,($faults|ConvertTo-Json -Depth 10)+"`n",[Text.UTF8Encoding]::new($false))
+            $receipt['chromeFaultEvents']=@{file='chrome-fault-events.json';bytes=(Get-Item $faultPath).Length;sha256=(Get-FileHash $faultPath -Algorithm SHA256).Hash.ToLowerInvariant()}
+        } catch {$receipt['chromeFaultEventsError']=$_.Exception.Message}
+    }
     $removeRuntime=$runtimeOwned -and -not $mxcAttempted
     if($mxcAttempted){
         try{
