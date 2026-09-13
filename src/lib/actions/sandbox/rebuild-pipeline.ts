@@ -72,7 +72,10 @@ import {
   type RebuildSandboxExecutionOptions,
   revalidatePreparedRecoveryBeforeDelete,
 } from "./rebuild-prepared-recovery";
-import { inspectRebuildGatewayProviderRegistration } from "./rebuild-provider-preflight";
+import {
+  inspectRebuildGatewayProviderRegistration,
+  shouldVerifyRebuildGatewayProvider,
+} from "./rebuild-provider-preflight";
 import {
   clearRebuildRecoveryBackup,
   findRebuildRecoveryBackup,
@@ -770,7 +773,26 @@ async function rebuildSandboxUnlocked(
             preparation.runtimeSelection,
           );
         },
-        validateAtDeleteEdge: (runtimeSelection) => {
+        validateAtDeleteEdge: async (runtimeSelection) => {
+          if (
+            !recreateOptions.rebuildProviderReconfigure &&
+            shouldVerifyRebuildGatewayProvider(resumeConfig.provider)
+          ) {
+            const registration = await inspectRebuildGatewayProviderRegistration(
+              resumeConfig.provider,
+              log,
+              "Before deletion",
+              runtimeSelection,
+              undefined,
+              resumeConfig.credentialEnv,
+            );
+            if (registration !== "registered") {
+              return {
+                ok: false,
+                message: `Gateway provider '${resumeConfig.provider}' is ${registration} before sandbox deletion. Refresh its credential or restore gateway access, then retry rebuild.`,
+              };
+            }
+          }
           const validation =
             revalidateManagedWorkloadRebuildBeforeDelete(
               sandboxName,
