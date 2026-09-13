@@ -1,8 +1,7 @@
-# NemoClaw desired-state prototype
+# NemoClaw
 
 NemoClaw provisions agent runtimes through NeMo Fabric.
 It uses Go, OpenTofu, and OpenShell to plan, apply, export, and destroy a deployment.
-This branch is a local prototype with native Linux ARM64 evidence; it is not a platform or security qualification release.
 
 ## Get started
 
@@ -24,7 +23,7 @@ Keep the selected state directory, which defaults to `.nemoclaw`.
 Before teardown, read [what destroy removes and retains](docs/guides/lifecycle.md#destroy-a-deployment).
 Runtime interaction and messaging use native agent interfaces or Fabric's existing SDK.
 
-## Explore the prototype
+## Learn more
 
 - [Documentation](docs/index.md): setup, operations, reference, and architecture.
 - [Validation evidence](docs/validation/index.md): tested behavior and remaining limits.
