@@ -1379,12 +1379,66 @@ export function validateJobOnlyConfiguration(record: any) {
   return record;
 }
 
+function contextFile(file: string) {
+  const { path: absolute, bytes, sha256 } = fileIdentity(file);
+  return { path: absolute, bytes, sha256 };
+}
+
+export function rendererContextBuild(buildFile: string, sourceRevision: string) {
+  const document = receiptDocument(buildFile);
+  const build = document.value;
+  assert.equal(build.schemaVersion, 1);
+  assert.equal(build.classification, "renderer-context-helper-build");
+  assert.equal(build.status, "built");
+  assert.equal(build.sourceRevision, sourceRevision);
+  assert.equal(build.validation.status, "not-run");
+  assert.equal(build.executed, false);
+  assert.equal(
+    build.compatibilityReceipt.sourceRevision,
+    "c830cd3ef8315ff46a7ebfcd3c0b2afefd152a4a",
+  );
+  for (const [source, expectedPath] of [
+    [build.source, "packaging/windows/hermes/renderer-context-helper.cpp"],
+    [build.sentinelSource, "packaging/windows/mxc-bash/creation-sentinel.cpp"],
+  ] as const) {
+    assert.equal(source.path, expectedPath);
+    const file = path.resolve(fileURLToPath(new URL("../../..", import.meta.url)), source.path);
+    assert.equal(fileIdentity(file).sha256, source.sha256);
+  }
+  const names: Record<string, string> = {
+    "context-helper": "NemoClawRendererContext-x64.exe",
+    "creation-sentinel": "creation-sentinel-x64.exe",
+  };
+  assert.equal(build.files.length, 2);
+  const seen = new Set<string>();
+  let helper: any;
+  for (const row of build.files) {
+    assert(names[row.role] && !seen.has(row.role));
+    seen.add(row.role);
+    assert.equal(row.relativePath, names[row.role]);
+    assert.equal(row.machine, 0x8664);
+    assert.equal(row.executed, false);
+    assert(Number.isSafeInteger(row.bytes) && row.bytes > 0 && row.bytes <= 16 * 1024 * 1024);
+    const identity = fileIdentity(path.join(path.dirname(buildFile), row.relativePath));
+    assert.equal(identity.bytes, row.bytes);
+    assert.equal(identity.sha256, row.sha256);
+    assert.equal(identity.peMachine, 0x8664);
+    if (row.role === "context-helper") helper = contextFile(identity.path);
+  }
+  return { helper, buildReceipt: contextFile(buildFile) };
+}
+
 function stockDebugCommand(
   controllerPython: string,
   runtime: string,
   probe: string,
   nonce: string,
-  primary?: { nativeRoot: string; proofFile: string; mode?: "personal-job-only" },
+  primary?: {
+    nativeRoot: string;
+    proofFile: string;
+    mode?: "personal-job-only";
+    rendererContext?: any;
+  },
 ): typeof personalCommand {
   return async (executable, args, environment, cwd, timeout) => {
     // The existing direct-browser owner still owns profile deletion/state cleanup.
@@ -1424,6 +1478,7 @@ function stockDebugCommand(
         : probe,
       nonce,
       ...(primary?.mode ? { mode: primary.mode } : {}),
+      ...(primary?.rendererContext ? { rendererContext: primary.rendererContext } : {}),
       ...(primary
         ? {
             executorIdentity: fileIdentity(executable),
@@ -1689,6 +1744,9 @@ async function main() {
   const stockMxc = argument("--stock-mxc");
   const hostControllerPython = argument("--host-controller-python");
   const wprPowershell = argument("--wpr-powershell");
+  const rendererContextBuildFile = process.argv.includes("--renderer-context-build")
+    ? argument("--renderer-context-build")
+    : null;
   const compatibilityRoot = fs.realpathSync(argument("--compatibility-root"));
   const compatibilityReceipt = argument("--compatibility-receipt");
   const compatibilityProof = argument("--compatibility-proof");
@@ -2074,7 +2132,9 @@ async function main() {
       cleanup.hostDiagnosticChildrenClosed &&= recorderSafe;
     }
     receipt.supplementalDiagnosticDisposition = failure
-      ? "primary failed; ordinary warm replay then owned-job replay without debugger"
+      ? rendererContextBuildFile
+        ? "primary failed; optional validated renderer debugger, then ordinary warm replay and owned-job replay"
+        : "primary failed; ordinary warm replay then owned-job replay without debugger"
       : "primary passed; supplemental comparisons skipped";
     if (
       failure &&
@@ -2110,7 +2170,82 @@ async function main() {
               artifactSha256: "c8e48ef72f5d0f9a29d782d33b0d2063e137f9fed14adec3ffde39c489660810",
             },
           };
+        let rendererContext: any = null;
+        if (rendererContextBuildFile) {
+          const validation: any = {
+            requested: true,
+            diagnosticOnly: true,
+            error: null,
+            execution: null,
+          };
+          receipt.rendererContextValidation = validation;
+          try {
+            const config = rendererContextBuild(rendererContextBuildFile, process.env.GITHUB_SHA!);
+            const helper = fileURLToPath(
+              new URL("./probe-stock-browser-debug.py", import.meta.url),
+            );
+            validation.owner = fileIdentity(helper);
+            validation.sharedOwner = fileIdentity(
+              fileURLToPath(new URL("./probe-host-browser.py", import.meta.url)),
+            );
+            const resultFile = path.join(output, "renderer-context-validation.json");
+            validation.execution = await personalCommand(
+              hostControllerPython,
+              [
+                "-I",
+                "-B",
+                helper,
+                "--validate-renderer-context",
+                rendererContextBuildFile,
+                "--output",
+                resultFile,
+              ],
+              stockBrowserEnvironment(environment),
+              output,
+              15_000,
+            );
+            assert.equal(validation.execution.childClosed, true);
+            validation.receipt = receiptDocument(resultFile);
+            assert.equal(validation.receipt.value.childrenClosed, true);
+            assert.equal(validation.receipt.value.cleanupComplete, true);
+            assert.equal(validation.receipt.value.passed, true);
+            assert.equal(validation.execution.exitCode, 0);
+            assert.equal(validation.execution.timedOut, false);
+            assert.equal(validation.execution.outputExceeded, false);
+            assert.equal(validation.execution.error, null);
+            assert.equal(fileIdentity(helper).sha256, validation.owner.sha256);
+            assert.deepEqual(validation.receipt.value.inputs.helper, config.helper);
+            assert.deepEqual(validation.receipt.value.inputs.buildReceipt, config.buildReceipt);
+            rendererContext = {
+              ...config,
+              validationReceipt: contextFile(resultFile),
+              chromePath: path.win32.join(
+                runtime,
+                "browsers/chromium-1234/chrome-win64/chrome.exe",
+              ),
+            };
+          } catch (error) {
+            validation.error = errorDetail(error);
+          }
+          // A build/refusal result is secondary; uncertain helper ownership prevents successors.
+          const closed =
+            validation.execution === null ||
+            (validation.execution.childClosed === true &&
+              validation.receipt?.value.childrenClosed === true &&
+              validation.receipt?.value.cleanupComplete === true);
+          browserDiagnosticChildrenClosed &&= closed;
+          cleanup.hostDiagnosticChildrenClosed &&= closed;
+        }
         for (const [key, directory, variant] of [
+          ...(rendererContext
+            ? [
+                [
+                  "primaryDebugBrowserDiagnostic",
+                  "browser-primary-debug-diagnostic",
+                  "patched-primary-debug",
+                ] as const,
+              ]
+            : []),
           [
             "ordinaryWarmReplayDiagnostic",
             "browser-ordinary-warm-diagnostic",
@@ -2129,11 +2264,13 @@ async function main() {
           const diagnosticNonce = randomBytes(12).toString("hex");
           const probe = path.join(launcher, "probe-personal-python.py");
           const command =
-            variant === "patched-primary-job"
+            variant !== "patched-primary-warm"
               ? stockDebugCommand(hostControllerPython, runtime, probe, diagnosticNonce, {
                   nativeRoot: currentNativeRoot,
                   proofFile: compatibilityProof,
-                  mode: "personal-job-only",
+                  ...(variant === "patched-primary-job"
+                    ? { mode: "personal-job-only" as const }
+                    : { rendererContext }),
                 })
               : personalCommand;
           const diagnostic = await directBrowserDiagnostic(

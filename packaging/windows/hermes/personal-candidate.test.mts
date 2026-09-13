@@ -9,6 +9,7 @@ import path from "node:path";
 import { test, type TestContext } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
+  rendererContextBuild,
   personalRequest,
   directBrowserRequest,
   primaryDebugRequest,
@@ -1503,4 +1504,61 @@ print('9 bounded desktop observer controls passed; no Windows execution')
     encoding: "utf8",
   });
   assert.equal(result.status, 0, result.stdout + result.stderr);
+});
+
+test("renderer context admission binds current source, AMD64 bytes and unexecuted build", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "renderer-context-"));
+  try {
+    const identity = (file: string) => ({
+      bytes: fs.statSync(file).size,
+      sha256: createHash("sha256").update(fs.readFileSync(file)).digest("hex"),
+    });
+    const source = (relative: string) => ({
+      path: relative,
+      ...identity(fileURLToPath(new URL("../../../" + relative, import.meta.url))),
+    });
+    const files = [
+      ["context-helper", "NemoClawRendererContext-x64.exe"],
+      ["creation-sentinel", "creation-sentinel-x64.exe"],
+    ].map(([role, relativePath]) => {
+      const data = Buffer.alloc(128);
+      data.write("MZ");
+      data.writeUInt32LE(64, 60);
+      data.write("PE\0\0", 64);
+      data.writeUInt16LE(0x8664, 68);
+      const file = path.join(directory, relativePath!);
+      fs.writeFileSync(file, data);
+      return { role, relativePath, ...identity(file), machine: 0x8664, executed: false };
+    });
+    const build = {
+      schemaVersion: 1,
+      classification: "renderer-context-helper-build",
+      status: "built",
+      sourceRevision: "a".repeat(40),
+      executed: false,
+      validation: { status: "not-run" },
+      compatibilityReceipt: { sourceRevision: "c830cd3ef8315ff46a7ebfcd3c0b2afefd152a4a" },
+      source: source("packaging/windows/hermes/renderer-context-helper.cpp"),
+      sentinelSource: source("packaging/windows/mxc-bash/creation-sentinel.cpp"),
+      files,
+    };
+    const receipt = path.join(directory, "build-receipt.json");
+    const save = () => fs.writeFileSync(receipt, JSON.stringify(build));
+    save();
+    assert.equal(rendererContextBuild(receipt, "a".repeat(40)).helper.sha256, files[0]!.sha256);
+    assert.throws(() => rendererContextBuild(receipt, "b".repeat(40)));
+    build.status = "failed";
+    save();
+    assert.throws(() => rendererContextBuild(receipt, "a".repeat(40)));
+    build.status = "built";
+    files[0]!.executed = true;
+    save();
+    assert.throws(() => rendererContextBuild(receipt, "a".repeat(40)));
+    files[0]!.executed = false;
+    files[0]!.relativePath = "../escape.exe";
+    save();
+    assert.throws(() => rendererContextBuild(receipt, "a".repeat(40)));
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
 });

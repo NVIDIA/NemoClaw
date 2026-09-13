@@ -4,7 +4,8 @@
 param([Parameter(Mandatory)][string]$ArtifactDirectory,
     [Parameter(Mandatory)][string]$BootstrapDirectory,
     [Parameter(Mandatory)][string]$HelperDirectory,
-    [switch]$RecordStartup)
+    [switch]$RecordStartup,
+    [switch]$CaptureRendererContext)
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
 if ($env:GITHUB_ACTIONS -cne 'true' -or $env:OS -cne 'Windows_NT') { throw 'This candidate test requires disposable Windows CI.' }
@@ -189,14 +190,31 @@ try {
         $receipt['runtimeAclObservation']=@{file='runtime-acl-observation.json';bytes=(Get-Item -LiteralPath $aclPath).Length;sha256=(Get-FileHash -LiteralPath $aclPath -Algorithm SHA256).Hash.ToLowerInvariant()}
     } catch {$receipt['runtimeAclObservationError']=$_.Exception.Message}
     $faultWindowStart=[DateTime]::UtcNow
-    $mxcAttempted=$true
     $patchedMxc=Join-Path $compatEvidence 'mxc-token-inspection-build'
     $personalArguments = @('--experimental-strip-types','--no-warnings',(Join-Path $PSScriptRoot 'probe-personal-candidate.mts'),
         '--runtime-root',$runtime,'--mxc',(Join-Path $patchedMxc 'wxc-exec.exe'),'--stock-mxc',(Join-Path $mxc 'wxc-exec.exe'),'--host-controller-python',$python,'--wpr-powershell',(Join-Path $PSHOME 'pwsh.exe'),'--output',(Join-Path $output 'personal-mxc'),
         '--compatibility-root',(Join-Path $compatEvidence 'compatibility-build'),'--compatibility-receipt',(Join-Path $compatEvidence 'compatibility-build/build-receipt.json'),
         '--compatibility-proof',(Join-Path $compatEvidence 'result.json'),'--mxc-build-receipt',(Join-Path $patchedMxc 'mxc-token-inspection-build.json'),
         '--derived-runtime-receipt',(Join-Path $candidate 'runtime-candidate.json'),'--replay-receipt',(Join-Path $candidate 'replay-input.json'))
+    if ($CaptureRendererContext) {
+        # Build only this optional diagnostic; current native proof/runtime remain unchanged.
+        $contextBuild=Join-Path $output 'renderer-context-helper/build-receipt.json'
+        $compatBuildReceipt=Join-Path $compatEvidence 'compatibility-build/build-receipt.json'
+        try {
+            & (Join-Path $PSScriptRoot 'build-renderer-context-helper.ps1') -SourceRoot ([IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..'))) -Directory $output `
+                -CompatibilityReceipt $compatBuildReceipt -CompatibilitySourceRevision $receipt.compatibilityProofSource `
+                -CompatibilityReceiptSha256 ((Get-FileHash -LiteralPath $compatBuildReceipt -Algorithm SHA256).Hash.ToLowerInvariant())
+        } catch { $receipt['rendererContextBuildError']=$_.Exception.Message }
+        # Unknown compiler/capture lifetime is not a safe successor boundary.
+        if (-not (Test-Path -LiteralPath $contextBuild)) { throw 'Renderer context build did not retain its ownership receipt.' }
+        $contextReceipt=Get-Content -LiteralPath $contextBuild -Raw | ConvertFrom-Json
+        if (@($contextReceipt.cleanupErrors).Count -ne 0 -or @($contextReceipt.diagnostics | Where-Object { $_.closed -ne $true -or $_.captureClosed -ne $true }).Count -ne 0) {
+            throw 'Renderer context compiler ownership did not close.'
+        }
+        $personalArguments += @('--renderer-context-build',$contextBuild)
+    }
     if ($RecordStartup) { $personalArguments += '--record-startup' }
+    $mxcAttempted=$true
     Invoke-PersonalChecked $node $personalArguments 'Canonical Personal component execution'
     if(Test-Path -LiteralPath $original){throw 'The original build root became available during execution.'}
     $receipt.status='pass'

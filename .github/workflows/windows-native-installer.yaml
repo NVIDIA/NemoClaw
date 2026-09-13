@@ -43,6 +43,11 @@ on:
         required: false
         default: false
         type: boolean
+      capture_hermes_renderer_context:
+        description: Capture bounded renderer context only in the failure debugger diagnostic
+        required: false
+        default: false
+        type: boolean
       official_hermes_phase:
         description: Official Hermes probe phase (requires the probe input above)
         required: false
@@ -877,7 +882,8 @@ jobs:
             -ArtifactDirectory "$env:RUNNER_TEMP\official-hermes-personal" `
             -BootstrapDirectory "$env:RUNNER_TEMP\personal-bootstrap" `
             -HelperDirectory "$env:RUNNER_TEMP\personal-helper" `
-            -RecordStartup:("${{ inputs.record_hermes_startup }}" -ceq 'true')
+            -RecordStartup:("${{ inputs.record_hermes_startup }}" -ceq 'true') `
+            -CaptureRendererContext:("${{ inputs.capture_hermes_renderer_context }}" -ceq 'true')
       - name: Preserve small exact-candidate feasibility evidence
         if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

@@ -211,6 +211,368 @@ def exception_disposition(process, record, first):
     return DBG_CONTINUE if initial else DBG_NOT_HANDLED, initial, location
 
 
+def renderer_context_packet(process, thread, pid, tid, created, modules):
+    owner.require(
+        0 < process < 2**64 - 1 and 0 <= thread < 2**64 - 1, "Invalid helper handles"
+    )
+    owner.require(
+        0 < pid < 2**32 and 0 < tid < 2**32 and str(created).isdigit(),
+        "Invalid helper identity",
+    )
+    owner.require(len(modules) <= 256, "Renderer module map exceeds256 entries")
+    lines = [
+        "NEMOCLAW_RENDERER_CONTEXT_V1",
+        f"0x{process:x} 0x{thread:x} {pid} {tid} {created}",
+        str(len(modules)),
+    ]
+    for base, size, name in modules:
+        owner.require(
+            0 < base < 2**64 and 0 < size < 2**64 - base,
+            "Invalid renderer module range",
+        )
+        owner.require(
+            re.fullmatch(r"[A-Za-z0-9_.+()-]{1,128}", name) is not None,
+            "Invalid renderer module basename",
+        )
+        lines.append(f"0x{base:x} 0x{size:x} {name}")
+    data = ("\n".join(lines) + "\n").encode("ascii")
+    owner.require(len(data) <= 65536, "Renderer helper protocol exceeds64KiB")
+    return data
+
+
+class ContextHelperJob(owner.WindowsJob):
+    """Fixed helper owner; assign its suspended process before reading handles."""
+
+    def start(self, command, environment, cwd, inherited_handles):
+        import msvcrt
+        import subprocess
+
+        handles = []
+        self.input = None
+        try:
+            for _ in range(3):
+                handles.extend(self.api.CreatePipe(None, 0))
+            (
+                input_read,
+                input_write,
+                output_read,
+                output_write,
+                error_read,
+                error_write,
+            ) = handles
+            inherited = [input_read, output_write, error_write]
+            for handle in inherited:
+                os.set_handle_inheritable(handle, True)
+            startup = subprocess.STARTUPINFO()
+            startup.dwFlags = subprocess.STARTF_USESTDHANDLES
+            startup.hStdInput, startup.hStdOutput, startup.hStdError = inherited
+            startup.lpAttributeList = {"handle_list": inherited + inherited_handles}
+            self.process, self.thread, self.pid, _ = self.api.CreateProcess(
+                command[0],
+                subprocess.list2cmdline(command),
+                None,
+                None,
+                True,
+                self.creation_flags,
+                environment,
+                cwd,
+                startup,
+            )
+            for handle in inherited:
+                self.api.CloseHandle(handle)
+                handles.remove(handle)
+            for handle, mode, flags in [
+                (input_write, "wb", os.O_WRONLY),
+                (output_read, "rb", os.O_RDONLY),
+                (error_read, "rb", os.O_RDONLY),
+            ]:
+                fd = msvcrt.open_osfhandle(handle, flags | os.O_BINARY)
+                handles.remove(handle)
+                try:
+                    stream = os.fdopen(fd, mode, buffering=0)
+                except BaseException:
+                    os.close(fd)
+                    raise
+                if handle == input_write:
+                    self.input = stream
+                else:
+                    self.streams.append(stream)
+        finally:
+            for handle in handles:
+                self.api.CloseHandle(handle)
+
+
+def context_result(value, expected):
+    owner.require(
+        value.get("schemaVersion") == 1
+        and value.get("classification") == "owned-renderer-thread-context"
+        and value.get("helperMachine") == "0x8664",
+        "Unexpected context result",
+    )
+    owner.require(value.get("requested") == expected, "Helper request identity differs")
+    owner.require(
+        value.get("stack", {}).get("unwound") is False
+        and len(value["stack"].get("candidates", [])) <= 16
+        and 0 <= value["stack"].get("readBytes", -1) <= 1024
+        and 0 <= value["stack"].get("requestedBytes", -1) <= 1024,
+        "Unexpected context memory bounds",
+    )
+    if value.get("identityMatched"):
+        observed = value.get("observed", {})
+        owner.require(
+            all(observed.get(k) == v for k, v in expected.items())
+            and observed.get("threadProcessId") == expected["pid"],
+            "Helper observed identity differs",
+        )
+    return value
+
+
+def invoke_renderer_context(
+    config,
+    kernel,
+    process_handle,
+    thread_handle,
+    pid,
+    tid,
+    created,
+    modules,
+    deadline,
+    wrong_pid=False,
+    wrong_handle=False,
+):
+    """A two-second query inside an owned Job; closure reserved before return."""
+    started = time.monotonic()
+    result = {
+        "diagnosticOnly": True,
+        "processId": pid,
+        "threadId": tid,
+        "creationFiletime": str(created),
+        "stage": "duplicate-held-handles",
+        "processAccess": "0x1010",
+        "threadAccess": "0x808",
+        "helper": config["helper"],
+        "helperStarted": False,
+        "helperClosed": True,
+        "pipesClosed": True,
+        "activeProcesses": 0,
+        "ownerHandlesClosed": True,
+        "duplicatesClosed": True,
+        "error": None,
+        "cleanupErrors": [],
+        "stackUnwound": False,
+    }
+    duplicates, child, threads = [], None, []
+    assigned = False
+    buffers = [
+        {"data": bytearray(), "total": 0, "closed": False, "error": None}
+        for _ in range(2)
+    ]
+    writer_closed = [False]
+    stop = threading.Event()
+
+    def duplicate(source, access):
+        value = c.c_void_p()
+        current = kernel.GetCurrentProcess()
+        if not kernel.DuplicateHandle(
+            current, source, current, c.byref(value), access, True, 0
+        ):
+            raise c.WinError(c.get_last_error())
+        duplicates.append(value.value)
+        return value.value
+
+    def read(stream, buffer):
+        try:
+            while data := stream.read(4096):
+                buffer["total"] += len(data)
+                buffer["data"].extend(data[: max(0, 16384 - len(buffer["data"]))])
+                if buffer["total"] > 16384:
+                    stop.set()
+        except Exception as error:
+            buffer["error"] = owner.detail(error)
+            stop.set()
+        finally:
+            try:
+                stream.close()
+                buffer["closed"] = True
+            except Exception as error:
+                buffer["error"] = owner.detail(error)
+
+    try:
+        owner.require(
+            time.monotonic() + 0.5 < deadline, "No remaining renderer diagnostic budget"
+        )
+        owner.require(
+            owner.identity(config["helper"]["path"])
+            == {k: config["helper"][k] for k in ("bytes", "sha256")},
+            "Context helper changed",
+        )
+        process = duplicate(process_handle, 0x1010)
+        thread = (
+            duplicate(process_handle, 0x1010)
+            if wrong_handle
+            else duplicate(thread_handle, 0x808)
+        )
+        expected = {
+            "pid": pid + int(wrong_pid),
+            "tid": tid,
+            "creationFiletime": str(created),
+        }
+        payload = renderer_context_packet(
+            process, thread, expected["pid"], tid, created, modules
+        )
+        result.update(
+            requestSha256=owner.hashlib.sha256(payload).hexdigest(),
+            requestBytes=len(payload),
+            moduleCount=len(modules),
+        )
+        child = ContextHelperJob()
+        child.create_job()
+        result.update(ownerHandlesClosed=False, activeProcesses=None)
+        result["stage"] = "start-query-helper"
+        child.start(
+            [config["helper"]["path"]],
+            dict(os.environ),
+            str(Path(config["helper"]["path"]).parent),
+            duplicates.copy(),
+        )
+        result.update(
+            helperStarted=True,
+            helperClosed=False,
+            pipesClosed=False,
+            helperPid=child.pid,
+        )
+        child.assign()
+        assigned = True
+
+        def write():
+            try:
+                remaining = memoryview(payload)
+                while remaining:
+                    written = child.input.write(remaining)
+                    owner.require(
+                        isinstance(written, int) and 0 < written <= len(remaining),
+                        "Helper stdin made no write progress",
+                    )
+                    remaining = remaining[written:]
+            except Exception as error:
+                result["writerError"] = owner.detail(error)
+                stop.set()
+            finally:
+                try:
+                    child.input.close()
+                    writer_closed[0] = True
+                except Exception as error:
+                    result["writerError"] = owner.detail(error)
+
+        for stream, buffer in zip(child.streams, buffers):
+            reader = threading.Thread(target=read, args=(stream, buffer), daemon=True)
+            threads.append(reader)
+            reader.start()
+        writer = threading.Thread(target=write, daemon=True)
+        threads.append(writer)
+        writer.start()
+        child.resume()
+        result["stage"] = "read-context-result"
+        limit = min(started + 2.0, deadline - 0.5)
+        while not child.wait(10) and not stop.is_set() and time.monotonic() < limit:
+            pass
+        result["timedOut"] = not child.wait(0) and time.monotonic() >= limit
+    except Exception as error:
+        result["error"] = owner.detail(error)
+    finally:
+        if child is not None:
+            if child.process:
+                result.update(
+                    helperStarted=True,
+                    helperClosed=False,
+                    pipesClosed=False,
+                    helperPid=child.pid,
+                )
+            try:
+                if child.process:
+                    if not child.wait(0) or (assigned and child.active()):
+                        child.terminate(assigned)
+                    result["helperClosed"] = child.wait(
+                        max(0, min(500, int((deadline - time.monotonic()) * 1000)))
+                    )
+                    if result["helperClosed"]:
+                        result["exitCode"] = child.exit_code()
+                result["activeProcesses"] = child.active() if child.job else 0
+            except Exception as error:
+                result["cleanupErrors"].append(owner.detail(error))
+            for reader in threads:
+                reader.join(max(0, min(0.5, deadline - time.monotonic())))
+            if not threads:
+                for stream in ([child.input] if child.input else []) + child.streams:
+                    try:
+                        stream.close()
+                    except Exception as error:
+                        result["cleanupErrors"].append(owner.detail(error))
+            result["pipesClosed"] = (
+                all(
+                    stream.closed
+                    for stream in ([child.input] if child.input else []) + child.streams
+                )
+                if not threads
+                else writer_closed[0]
+                and all(b["closed"] for b in buffers)
+                and all(not t.is_alive() for t in threads)
+            )
+            for name in ("thread", "process", "job"):
+                try:
+                    child.close(name)
+                except Exception as error:
+                    result["cleanupErrors"].append(owner.detail(error))
+            result["ownerHandlesClosed"] = not any(
+                (child.thread, child.process, child.job)
+            )
+        for handle in duplicates:
+            if not kernel.CloseHandle(handle):
+                result["duplicatesClosed"] = False
+                result["cleanupErrors"].append(
+                    {
+                        "stage": "close-helper-duplicate",
+                        "win32Error": c.get_last_error(),
+                    }
+                )
+    result["outputExceeded"] = any(b["total"] > 16384 for b in buffers)
+    result["outputBytes"] = {
+        name: buffer["total"] for name, buffer in zip(("stdout", "stderr"), buffers)
+    }
+    result["captureErrors"] = [b["error"] for b in buffers if b["error"]]
+    if buffers[1]["data"]:
+        result["stderr"] = bytes(buffers[1]["data"]).decode("utf-8", errors="replace")[
+            :1024
+        ]
+    if (
+        result["helperClosed"]
+        and result["pipesClosed"]
+        and not result["outputExceeded"]
+        and buffers[0]["data"]
+    ):
+        try:
+            result["result"] = context_result(
+                json.loads(bytes(buffers[0]["data"])), expected
+            )
+        except Exception as error:
+            if result["error"] is None:
+                result["error"] = owner.detail(error)
+    result["safeToContinue"] = (
+        all(
+            result[k]
+            for k in (
+                "helperClosed",
+                "pipesClosed",
+                "duplicatesClosed",
+                "ownerHandlesClosed",
+            )
+        )
+        and result["activeProcesses"] == 0
+    )
+    result["elapsedMs"] = (time.monotonic() - started) * 1000
+    return result
+
+
 class DebugJob(owner.WindowsJob):
     creation_flags = (
         owner.WindowsJob.creation_flags | 1
@@ -237,6 +599,12 @@ class DebugJob(owner.WindowsJob):
         self.handle_cleanup_errors = []
         self.reconciled_exits = []
         self.debug_string_count = 0
+        self.renderer_context = None
+        self.renderer_context_deadline = 0
+        self.renderer_context_observations = []
+        self.renderer_context_seen = set()
+        self.renderer_context_threads = {}
+        self.renderer_context_helpers_closed = True
         k = self.kernel
         declarations = {
             "WaitForDebugEventEx": ([c.POINTER(DebugEvent), c.c_uint32], c.c_int),
@@ -254,6 +622,10 @@ class DebugJob(owner.WindowsJob):
                 c.c_int,
             ),
             "GetProcessTimes": ([c.c_void_p, *([c.POINTER(c.c_uint64)] * 4)], c.c_int),
+            "QueryFullProcessImageNameW": (
+                [c.c_void_p, c.c_uint32, c.c_wchar_p, c.POINTER(c.c_uint32)],
+                c.c_int,
+            ),
         }
         for name, (args, result) in declarations.items():
             f = getattr(k, name)
@@ -799,6 +1171,134 @@ class DebugJob(owner.WindowsJob):
             row["error"] = owner.detail(error)
         return row
 
+    def retain_renderer_thread(self, event, image, metadata):
+        if (
+            not getattr(self, "renderer_context", None)
+            or metadata.get("chromeRole") != "renderer"
+        ):
+            return None
+        record = {"pid": event.pid, "tid": event.tid, "retained": False, "error": None}
+        try:
+            self.close_renderer_thread(event.pid)
+            owner.require(
+                event.pid not in self.renderer_context_threads,
+                "Prior renderer thread duplicate remains owned",
+            )
+            owner.require(
+                metadata.get("ownedJobMember") is True
+                and metadata.get("isAppContainer") is True
+                and image.get("machine") == "0x8664",
+                "Renderer ownership/architecture differs",
+            )
+            name = c.create_unicode_buffer(32768)
+            length = c.c_uint32(len(name))
+            self.checked(
+                self.kernel.QueryFullProcessImageNameW(
+                    event.data.process.process, 0, name, c.byref(length)
+                )
+            )
+            owner.require(
+                PureWindowsPath(name.value)
+                == PureWindowsPath(self.renderer_context["chromePath"]),
+                "Renderer image differs from configured Chrome",
+            )
+            owner.require(
+                str(metadata.get("creationFiletime", "")).isdigit(),
+                "Renderer generation missing",
+            )
+            duplicate = c.c_void_p()
+            current = self.kernel.GetCurrentProcess()
+            self.checked(
+                self.kernel.DuplicateHandle(
+                    current,
+                    event.data.process.thread,
+                    current,
+                    c.byref(duplicate),
+                    0x808,
+                    False,
+                    0,
+                )
+            )
+            self.renderer_context_threads[event.pid] = {
+                "handle": duplicate.value,
+                "tid": event.tid,
+                "creationFiletime": metadata["creationFiletime"],
+                "createdSequence": self.event_count,
+            }
+            record.update(
+                retained=True,
+                imageMatched=True,
+                creationFiletime=metadata["creationFiletime"],
+                requestedAccess="0x808",
+                inheritable=False,
+            )
+        except Exception as error:
+            record["error"] = owner.detail(error)
+        return record
+
+    def close_renderer_thread(self, pid):
+        value = getattr(self, "renderer_context_threads", {}).get(pid)
+        if value:
+            if self.kernel.CloseHandle(value["handle"]):
+                self.renderer_context_threads.pop(pid)
+            else:
+                self.handle_cleanup_errors.append(
+                    {
+                        "stage": "close-retained-renderer-thread",
+                        "pid": pid,
+                        "tid": value["tid"],
+                        "win32Error": c.get_last_error(),
+                    }
+                )
+
+    def observe_renderer_context(self, event, process):
+        held = getattr(self, "renderer_context_threads", {}).get(event.pid)
+        if not (
+            getattr(self, "renderer_context", None)
+            and held
+            and event.tid == held["tid"]
+            and held["createdSequence"] == process["createdSequence"]
+            and event.data.exception.first
+            and event.data.exception.record.code == 0xC0000008
+            and event.pid not in self.renderer_context_seen
+            and len(self.renderer_context_seen) < 4
+        ):
+            return None
+        self.renderer_context_seen.add(event.pid)
+        try:
+            modules = [
+                (base, row["size"], row["name"])
+                for base, row in sorted(process["modules"].items())
+                if row.get("size") and row.get("name")
+            ]
+            value = invoke_renderer_context(
+                self.renderer_context,
+                self.kernel,
+                process["handle"],
+                held["handle"],
+                event.pid,
+                held["tid"],
+                held["creationFiletime"],
+                modules,
+                min(self.renderer_context_deadline, time.monotonic() + 2.5),
+            )
+            self.renderer_context_helpers_closed &= value["safeToContinue"]
+        except Exception as error:
+            value = {
+                "diagnosticOnly": True,
+                "error": owner.detail(error),
+                "helperStarted": False,
+            }
+        value.update(
+            eventSequence=self.event_count,
+            exceptionDisposition="0x80010001",
+            firstChance=True,
+            fatalExceptionProved=False,
+            initialThreadOnly=True,
+        )
+        self.renderer_context_observations.append(value)
+        return len(self.renderer_context_observations) - 1
+
     def pump(self, milliseconds=0):
         owner.require(
             threading.get_ident() == self.creating_thread,
@@ -852,6 +1352,9 @@ class DebugJob(owner.WindowsJob):
                     "debugStrings": 0,
                 }
                 row.update(image=image, **metadata)
+                retained = self.retain_renderer_thread(event, image, metadata)
+                if retained is not None:
+                    row["rendererContextThread"] = retained
                 startup = self.chrome_startup_metadata(info.process, image, metadata)
                 if startup is not None:
                     row["startupPolicies"] = startup
@@ -903,6 +1406,9 @@ class DebugJob(owner.WindowsJob):
                     disposition=hex(disposition),
                     **location,
                 )
+                context_index = self.observe_renderer_context(event, process)
+                if context_index is not None:
+                    row["rendererContextObservation"] = context_index
                 if not initial:
                     if (
                         info.record.code == 0xC0000008
@@ -931,7 +1437,12 @@ class DebugJob(owner.WindowsJob):
                         self.first_fault = dict(row)
                     if not info.first and self.first_unhandled is None:
                         self.first_unhandled = dict(row)
+            elif event.kind == 4:
+                held = getattr(self, "renderer_context_threads", {}).get(event.pid)
+                if held and held["tid"] == event.tid:
+                    self.close_renderer_thread(event.pid)
             elif event.kind == 5:
+                self.close_renderer_thread(event.pid)
                 row["exitCode"] = event.data.exit_code
                 row["exitCodeHex"] = hex(event.data.exit_code)
             elif event.kind == 8:
@@ -1280,6 +1791,41 @@ def capture(request, native):
         "childrenClosed": False,
         "cleanupComplete": False,
     }
+    if request.get("rendererContext") and not job_only:
+        configuration = request["rendererContext"]
+        admitted = renderer_build(configuration["buildReceipt"]["path"])
+        owner.require(
+            admitted["helper"] == configuration["helper"]
+            and admitted["buildReceipt"] == configuration["buildReceipt"],
+            "Context helper input differs",
+        )
+        validation_path = configuration["validationReceipt"]["path"]
+        owner.require(
+            owner.identity(validation_path)
+            == {k: configuration["validationReceipt"][k] for k in ("bytes", "sha256")},
+            "Context validation changed",
+        )
+        validation_data = Path(validation_path).read_bytes()
+        owner.require(
+            len(validation_data) <= 128 * 1024, "Context validation exceeded bound"
+        )
+        validated = json.loads(validation_data)
+        owner.require(
+            validated.get("passed") is True
+            and validated.get("cleanupComplete") is True
+            and validated.get("inputs") == admitted,
+            "Context helper is not validated",
+        )
+        expected_chrome = str(
+            PureWindowsPath(request["runtimeRoot"])
+            / "browsers/chromium-1234/chrome-win64/chrome.exe"
+        )
+        owner.require(
+            configuration["chromePath"] == expected_chrome and primary,
+            "Context helper is scoped to the Personal Chrome diagnostic",
+        )
+        native.renderer_context = configuration
+        native.renderer_context_deadline = started + 119
     if job_only:
         result.update(mode="personal-job-only", debugEventsCollected=False)
     buffers = [
@@ -1333,12 +1879,19 @@ def capture(request, native):
                     not native.event_history_exceeded,
                     "Debug event history bound exceeded",
                 )
+            if not job_only and not getattr(
+                native, "renderer_context_helpers_closed", True
+            ):
+                result["rendererContextOwnershipFailed"] = True
+                break
             if stop.is_set() or time.monotonic() - started >= 120:
                 result["execution"]["timedOut"] = time.monotonic() - started >= 120
                 break
     except Exception as error:
         result["execution"]["error"] = {**owner.detail(error), "stage": stage}
     finally:
+        if not job_only:
+            native.renderer_context_deadline = 0
         deadline = time.monotonic() + 5
         try:
             if native.process:
@@ -1392,11 +1945,15 @@ def capture(request, native):
             and all(not t.is_alive() for t in readers)
             and all(x["eof"] and x["error"] is None for x in buffers)
         )
+        if not job_only:
+            for pid in list(getattr(native, "renderer_context_threads", {})):
+                native.close_renderer_thread(pid)
         result["childrenClosed"] = (
             (not native.process or result["execution"]["childClosed"])
             and result["cleanup"]["activeProcesses"] == 0
             and (job_only or not native.live_debug_pids)
             and result["cleanup"]["captureClosed"]
+            and (job_only or getattr(native, "renderer_context_helpers_closed", True))
         )
         for name in ("thread", "process", "job"):
             try:
@@ -1405,7 +1962,7 @@ def capture(request, native):
                 result["cleanup"]["errors"].append(owner.detail(error))
         result["cleanup"]["handlesClosed"] = not any(
             (native.thread, native.process, native.job)
-        )
+        ) and not getattr(native, "renderer_context_threads", {})
         if not job_only:
             result["cleanup"]["errors"].extend(native.handle_cleanup_errors)
         result["cleanupComplete"] = (
@@ -1422,6 +1979,17 @@ def capture(request, native):
     )
     result["execution"]["elapsedMs"] = (time.monotonic() - started) * 1000
     if not job_only:
+        result["rendererContext"] = {
+            "requested": bool(request.get("rendererContext")),
+            "configuration": request.get("rendererContext"),
+            "observationLimit": 4,
+            "helperDeadlineMs": 2000,
+            "observations": getattr(native, "renderer_context_observations", []),
+            "helpersClosed": getattr(native, "renderer_context_helpers_closed", True),
+            "retainedThreadsClosed": not getattr(
+                native, "renderer_context_threads", {}
+            ),
+        }
         result["events"] = native.events
         result["eventHistory"] = {
             "eventLimit": MAX_EVENTS,
@@ -1448,9 +2016,195 @@ def capture(request, native):
     return result
 
 
+def renderer_build(path):
+    data = Path(path).read_bytes()
+    owner.require(len(data) <= 65536, "Context build receipt exceeds bound")
+    build = json.loads(data)
+    owner.require(
+        build.get("schemaVersion") == 1
+        and build.get("classification") == "renderer-context-helper-build"
+        and build.get("status") == "built"
+        and build.get("executed") is False
+        and build.get("validation", {}).get("status") == "not-run",
+        "Context helper build is unavailable",
+    )
+    expected = {
+        "context-helper": "NemoClawRendererContext-x64.exe",
+        "creation-sentinel": "creation-sentinel-x64.exe",
+    }
+    owner.require(len(build.get("files", [])) == 2, "Context helper file set differs")
+    files = {}
+    for row in build["files"]:
+        role = row["role"]
+        owner.require(
+            role in expected
+            and role not in files
+            and row["relativePath"] == expected[role]
+            and row["machine"] == 0x8664
+            and row["executed"] is False,
+            "Context build file contract differs",
+        )
+        file = str(Path(path).parent / expected[role])
+        identity = owner.identity(file)
+        owner.require(
+            identity == {k: row[k] for k in ("bytes", "sha256")},
+            "Context binary changed",
+        )
+        files[role] = {"path": file, **identity}
+    return {
+        "helper": files["context-helper"],
+        "sentinel": files["creation-sentinel"],
+        "buildReceipt": {"path": str(path), **owner.identity(str(path))},
+        "sourceRevision": build["sourceRevision"],
+    }
+
+
+def validate_renderer_context(build_path):
+    result = {
+        "schemaVersion": 1,
+        "classification": "renderer-context-validation",
+        "diagnosticOnly": True,
+        "passed": False,
+        "childrenClosed": True,
+        "cleanupComplete": False,
+        "cases": [],
+        "error": None,
+        "cleanupErrors": [],
+        "sentinelResumed": False,
+        "canonicalChromeSupportQualified": False,
+    }
+    native = owner.WindowsJob()
+    assigned = False
+    deadline = time.monotonic() + 12
+    try:
+        config = renderer_build(build_path)
+        result["inputs"] = config
+        k = native.kernel
+        for name, (args, returns) in {
+            "GetCurrentProcess": ([], c.c_void_p),
+            "DuplicateHandle": (
+                [
+                    c.c_void_p,
+                    c.c_void_p,
+                    c.c_void_p,
+                    c.POINTER(c.c_void_p),
+                    c.c_uint32,
+                    c.c_int,
+                    c.c_uint32,
+                ],
+                c.c_int,
+            ),
+            "GetThreadId": ([c.c_void_p], c.c_uint32),
+            "GetProcessTimes": ([c.c_void_p, *([c.POINTER(c.c_uint64)] * 4)], c.c_int),
+        }.items():
+            function = getattr(k, name)
+            function.argtypes, function.restype = args, returns
+        native.create_job()
+        native.start(
+            [config["sentinel"]["path"]], dict(os.environ), str(Path(build_path).parent)
+        )
+        result["childrenClosed"] = False
+        native.assign()
+        assigned = True
+        tid = k.GetThreadId(native.thread)
+        native.checked(tid)
+        times = [c.c_uint64() for _ in range(4)]
+        native.checked(k.GetProcessTimes(native.process, *(c.byref(t) for t in times)))
+        result["sentinelIdentity"] = {
+            "pid": native.pid,
+            "tid": tid,
+            "creationFiletime": str(times[0].value),
+        }
+        for name, wrong_pid, wrong_handle in [
+            ("positive", False, False),
+            ("wrong-pid", True, False),
+            ("wrong-handle", False, True),
+        ]:
+            case = invoke_renderer_context(
+                config,
+                k,
+                native.process,
+                native.thread,
+                native.pid,
+                tid,
+                str(times[0].value),
+                [],
+                min(deadline - 1, time.monotonic() + 2.5),
+                wrong_pid,
+                wrong_handle,
+            )
+            case["name"] = name
+            result["cases"].append(case)
+            if not case["safeToContinue"]:
+                break
+        owner.require(
+            len(result["cases"]) == 3, "Context validation ownership incomplete"
+        )
+        for index, case in enumerate(result["cases"]):
+            value = case.get("result", {})
+            owner.require(
+                case["safeToContinue"]
+                and not case.get("timedOut")
+                and not case["outputExceeded"]
+                and case["error"] is None
+                and not case["captureErrors"]
+                and not case["cleanupErrors"]
+                and value.get("handlesClosed") == {"process": True, "thread": True},
+                "Context validation capture/closure failed",
+            )
+            owner.require(
+                case.get("exitCode") == (0 if index == 0 else 1)
+                and value.get("identityMatched") is (index == 0)
+                and value.get("contextCaptured") is (index == 0),
+                "Context validation positive/refusal contract failed",
+            )
+        result["passed"] = True
+    except Exception as error:
+        result["error"] = owner.detail(error)
+    finally:
+        try:
+            if native.process:
+                native.terminate(assigned)
+                result["sentinelClosed"] = native.wait(
+                    max(0, min(1000, int((deadline - time.monotonic()) * 1000)))
+                )
+                if result["sentinelClosed"]:
+                    result["sentinelExitCode"] = native.exit_code()
+            result["activeProcesses"] = native.active() if native.job else 0
+        except Exception as error:
+            result["cleanupErrors"].append(owner.detail(error))
+        for stream in native.streams:
+            try:
+                stream.close()
+            except Exception as error:
+                result["cleanupErrors"].append(owner.detail(error))
+        result["childrenClosed"] = (
+            (not native.process or result.get("sentinelClosed") is True)
+            and result.get("activeProcesses") == 0
+            and all(case.get("safeToContinue") for case in result["cases"])
+        )
+        for name in ("thread", "process", "job"):
+            try:
+                native.close(name)
+            except Exception as error:
+                result["cleanupErrors"].append(owner.detail(error))
+        result["handlesClosed"] = not any((native.thread, native.process, native.job))
+        result["cleanupComplete"] = (
+            result["childrenClosed"]
+            and result["handlesClosed"]
+            and not result["cleanupErrors"]
+        )
+        result["passed"] &= (
+            result["cleanupComplete"] and result.get("sentinelExitCode") == 1
+        )
+    return result
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--request", type=Path, required=True)
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument("--request", type=Path)
+    group.add_argument("--validate-renderer-context", type=Path)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     owner.require(
@@ -1461,6 +2215,12 @@ def main():
         not args.output.exists() and args.output.parent.is_dir(),
         "Debug result must be fresh",
     )
+    if args.validate_renderer_context:
+        record = validate_renderer_context(args.validate_renderer_context)
+        with args.output.open("x", encoding="utf-8") as stream:
+            json.dump(record, stream, indent=2)
+            stream.write("\n")
+        return 0 if record["passed"] else 1
     data = args.request.read_bytes()
     owner.require(len(data) <= 128 * 1024, "Debug owner request exceeded its bound")
     request = json.loads(data)

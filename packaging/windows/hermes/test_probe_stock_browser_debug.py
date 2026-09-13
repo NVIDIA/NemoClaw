@@ -21,6 +21,218 @@ spec.loader.exec_module(debug)
 
 
 class DebugOwnerControls(unittest.TestCase):
+    def test_renderer_packet_and_result_identity_boundaries(self):
+        packet = debug.renderer_context_packet(
+            0x12, 0x13, 8, 9, "1234", [(0x1000, 0x100, "ntdll.dll")]
+        )
+        self.assertEqual(
+            packet,
+            b"NEMOCLAW_RENDERER_CONTEXT_V1\n0x12 0x13 8 9 1234\n1\n0x1000 0x100 ntdll.dll\n",
+        )
+        for modules in [[(1, 1, "../escape")], [(1, 1, "x")] * 257]:
+            with self.assertRaises(ValueError):
+                debug.renderer_context_packet(1, 2, 8, 9, "1234", modules)
+        expected = {"pid": 8, "tid": 9, "creationFiletime": "1234"}
+        value = {
+            "schemaVersion": 1,
+            "classification": "owned-renderer-thread-context",
+            "helperMachine": "0x8664",
+            "requested": expected,
+            "observed": {**expected, "threadProcessId": 8},
+            "identityMatched": True,
+            "stack": {
+                "unwound": False,
+                "readBytes": 8,
+                "requestedBytes": 16,
+                "candidates": [],
+            },
+        }
+        self.assertIs(debug.context_result(value, expected), value)
+        value["observed"]["creationFiletime"] = "1235"
+        with self.assertRaises(ValueError):
+            debug.context_result(value, expected)
+
+    def test_renderer_first_chance_initial_thread_once_and_helper_failure_continues(
+        self,
+    ):
+        job = self.job([])
+        job.renderer_context = {"helper": {"path": "helper"}}
+        job.renderer_context_deadline = 99
+        job.renderer_context_threads = {
+            8: {
+                "handle": 42,
+                "tid": 9,
+                "creationFiletime": "1234",
+                "createdSequence": 1,
+            }
+        }
+        job.renderer_context_seen = set()
+        job.renderer_context_observations = []
+        job.renderer_context_helpers_closed = True
+        process = {
+            "handle": 41,
+            "modules": {0x1000: {"size": 0x100, "name": "ntdll.dll"}},
+            "loaderBreakpoint": True,
+            "createdSequence": 1,
+        }
+        event = self.event(1)
+        event.tid = 10
+        event.data.exception.first = 1
+        event.data.exception.record.code = 0xC0000008
+        with mock.patch.object(
+            debug,
+            "invoke_renderer_context",
+            return_value={"safeToContinue": False, "error": {"stage": "timeout"}},
+        ) as call:
+            self.assertIsNone(job.observe_renderer_context(event, process))
+            event.tid = 9
+            self.assertEqual(job.observe_renderer_context(event, process), 0)
+            self.assertFalse(job.renderer_context_helpers_closed)
+            self.assertIsNone(job.observe_renderer_context(event, process))
+            self.assertEqual(call.call_count, 1)
+        self.assertEqual(
+            debug.exception_disposition(process, event.data.exception.record, True)[0],
+            debug.DBG_NOT_HANDLED,
+        )
+        self.assertFalse(job.renderer_context_observations[0]["fatalExceptionProved"])
+        job.kernel.CloseHandle = lambda handle: handle == 42
+        job.close_renderer_thread(8)
+        self.assertEqual(job.renderer_context_threads, {})
+
+    def test_renderer_helper_owns_timeout_overflow_and_pre_resume_failure(self):
+        class Child:
+            def __init__(self):
+                self.job = self.process = self.thread = None
+                self.streams = []
+                self.input = None
+                self.pid = 99
+                self.dead = False
+
+            def create_job(self):
+                self.job = 1
+
+            def start(self, *_args):
+                self.process, self.thread = 2, 3
+
+                class ShortInput(io.BytesIO):
+                    def write(self, data):
+                        chunks.append(bytes(data[:3]))
+                        return super().write(data[:3])
+
+                self.input = ShortInput()
+                self.streams = [
+                    io.BytesIO(b"" if failure == "timeout" else b"x" * 17000),
+                    io.BytesIO(),
+                ]
+
+            def assign(self):
+                if failure is True:
+                    raise ValueError("assign before resume")
+
+            def resume(self):
+                resumed.append(True)
+
+            def wait(self, _timeout):
+                return self.dead
+
+            def active(self):
+                return int(not self.dead and self.process is not None)
+
+            def terminate(self, assigned):
+                self.dead = True
+
+            def exit_code(self):
+                return 1
+
+            def close(self, name):
+                setattr(self, name, None)
+
+        def duplicate(_a, _b, _c, pointer, rights, inherit, flags):
+            c.cast(pointer, c.POINTER(c.c_void_p))[0] = 20 + len(dups)
+            dups.append((rights, inherit, flags))
+            return 1
+
+        for failure in (False, True, "timeout"):
+            dups, resumed, closed, chunks = [], [], [], []
+            kernel = types.SimpleNamespace(
+                GetCurrentProcess=lambda: 1,
+                DuplicateHandle=duplicate,
+                CloseHandle=lambda h: closed.append(h) or 1,
+            )
+            with (
+                mock.patch.object(debug, "ContextHelperJob", Child),
+                mock.patch.object(
+                    debug.owner,
+                    "identity",
+                    return_value={"bytes": 1, "sha256": "a" * 64},
+                ),
+            ):
+                result = debug.invoke_renderer_context(
+                    {"helper": {"path": "helper.exe", "bytes": 1, "sha256": "a" * 64}},
+                    kernel,
+                    8,
+                    9,
+                    8,
+                    9,
+                    "1234",
+                    [],
+                    debug.time.monotonic() + 1,
+                )
+            self.assertTrue(result["safeToContinue"], result)
+            self.assertEqual(dups, [(0x1010, True, 0), (0x808, True, 0)])
+            self.assertEqual(len(closed), 2)
+            if failure is True:
+                self.assertEqual(resumed, [])
+                self.assertIn("assign", result["error"]["message"])
+            else:
+                if failure == "timeout":
+                    self.assertTrue(result["timedOut"])
+                else:
+                    self.assertTrue(result["outputExceeded"])
+                self.assertEqual(len(b"".join(chunks)), result["requestBytes"])
+
+    def test_context_pipe_fd_failure_closes_transferred_fd(self):
+        job = debug.ContextHelperJob.__new__(debug.ContextHelperJob)
+        job.streams = []
+        job.creation_flags = 4
+        handles = iter([(1, 2), (3, 4), (5, 6)])
+        closed = []
+        job.api = types.SimpleNamespace(
+            CreatePipe=lambda *_: next(handles),
+            CloseHandle=lambda handle: closed.append(handle),
+            CreateProcess=lambda *_: (10, 11, 12, 13),
+        )
+        startup = types.SimpleNamespace()
+        fake_msvcrt = types.SimpleNamespace(open_osfhandle=lambda *_: 77)
+        with (
+            mock.patch.dict("sys.modules", {"msvcrt": fake_msvcrt}),
+            mock.patch("subprocess.STARTUPINFO", return_value=startup, create=True),
+            mock.patch("subprocess.STARTF_USESTDHANDLES", 256, create=True),
+            mock.patch.object(debug.os, "set_handle_inheritable", create=True),
+            mock.patch.object(debug.os, "O_BINARY", 0, create=True),
+            mock.patch.object(debug.os, "fdopen", side_effect=OSError("fdopen")),
+            mock.patch.object(debug.os, "close") as close_fd,
+        ):
+            with self.assertRaisesRegex(OSError, "fdopen"):
+                job.start(["helper.exe"], {}, ".", [20, 21])
+        close_fd.assert_called_once_with(77)
+        self.assertEqual(job.process, 10)  # Parent still owns actual created process.
+        self.assertCountEqual(closed, [1, 4, 6, 3, 5])
+
+    def test_context_pid_reuse_never_overwrites_unclosed_thread(self):
+        job = self.job([])
+        job.renderer_context = {"chromePath": "C:\\chrome.exe"}
+        job.renderer_context_threads = {
+            8: {"handle": 42, "tid": 9, "creationFiletime": "1", "createdSequence": 1}
+        }
+        job.kernel.CloseHandle = lambda handle: 0
+        event = self.event(3)
+        with mock.patch.object(debug.c, "get_last_error", return_value=6, create=True):
+            record = job.retain_renderer_thread(event, {}, {"chromeRole": "renderer"})
+        self.assertFalse(record["retained"])
+        self.assertEqual(job.renderer_context_threads[8]["handle"], 42)
+        self.assertEqual(job.handle_cleanup_errors[0]["win32Error"], 6)
+
     def test_primary_request_requires_passed_native_bytes_and_original_workload_shape(
         self,
     ):
