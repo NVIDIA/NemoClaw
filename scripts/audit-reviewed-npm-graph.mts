@@ -402,7 +402,7 @@ function materializeLockedGraph(
   graph: LockedGraph,
   tempRoot: string,
   registryOrigin: string,
-): string {
+): Readonly<{ directory: string; identity: LockedGraphIdentity }> {
   const sourcePackage = targetRepositoryPath(
     path.join(graph.directory, "package.json"),
     `${graph.label} package manifest`,
@@ -444,7 +444,7 @@ function materializeLockedGraph(
   if (graph.installMode === "legacy-peer-deps") installArgs.push("--legacy-peer-deps");
   run("npm", installArgs, destination);
   verifyMaterializedLockedGraph({ destination, expectedLockSha256, label: reviewedIdentity.label });
-  return destination;
+  return { directory: destination, identity: reviewedIdentity };
 }
 
 export function selectReviewedLockedGraphIdentity(
@@ -706,7 +706,7 @@ function makeTreeOwnerWritable(root: string): void {
 }
 
 function verifyWechatInstallCacheBoundary(
-  graph: LockedGraph,
+  identity: LockedGraphIdentity,
   tempRoot: string,
   registryOrigin: string,
 ): void {
@@ -722,7 +722,7 @@ function verifyWechatInstallCacheBoundary(
     NPM_CONFIG_REGISTRY: registryOrigin,
     NPM_CONFIG_USERCONFIG: "/dev/null",
   };
-  const cache = spawnSync("npm", ["cache", "add", graph.packageSpec], {
+  const cache = spawnSync("npm", ["cache", "add", identity.packageSpec], {
     encoding: "utf-8",
     env,
     stdio: ["ignore", "pipe", "pipe"],
@@ -742,10 +742,10 @@ function verifyWechatInstallCacheBoundary(
     makeTreeOwnerWritable(installCache);
     packReviewedNpmArchive({
       env: { ...env, NPM_CONFIG_CACHE: installCache, NPM_CONFIG_OFFLINE: "true" },
-      expectedIntegrity: graph.integrity,
-      label: graph.label,
-      packageSpec: graph.packageSpec,
-      tarballUrl: graph.tarballUrl,
+      expectedIntegrity: identity.integrity,
+      label: identity.label,
+      packageSpec: identity.packageSpec,
+      tarballUrl: identity.tarballUrl,
       tempDirectory: packDirectory,
     });
     assertTreeReadOnly(trustedCache);
@@ -762,17 +762,17 @@ function auditLockedGraph(
   exceptionFile: string,
   artifactDirectory: string,
 ) {
-  const directory = materializeLockedGraph(graph, tempRoot, config.registryOrigin);
+  const { directory, identity } = materializeLockedGraph(graph, tempRoot, config.registryOrigin);
   const result = runReviewedNpmAudit({
     cacheFile: graphCacheFile(graph.id),
     directory,
     exceptionFile,
     graph: graph.id,
     provenance: {
-      label: graph.label,
+      label: identity.label,
       nodeVersion: process.version,
       npmVersion: config.npmVersion,
-      packageSpecs: [graph.packageSpec],
+      packageSpecs: [identity.packageSpec],
     },
     reviewedNpmIdentity: config,
     reportFile: path.join(artifactDirectory, `locked-graph-${index + 1}.json`),
@@ -792,9 +792,9 @@ function auditLockedGraph(
     run("npm", NPM_AUDIT_SIGNATURE_ARGV, directory);
   }
   if (graph.inputValidation === "wechat-runtime") {
-    verifyWechatInstallCacheBoundary(graph, tempRoot, config.registryOrigin);
+    verifyWechatInstallCacheBoundary(identity, tempRoot, config.registryOrigin);
   }
-  return result;
+  return { identity, result };
 }
 
 function auditSourceGraph(
@@ -993,16 +993,16 @@ function main(): void {
       threshold: config.severityThreshold,
       throwOnBlock: false,
     });
-    const lockedResults = config.lockedGraphs.map((graph, index) =>
+    const lockedAudits = config.lockedGraphs.map((graph, index) =>
       auditLockedGraph(graph, index, config, tempRoot, exceptionFile, artifactDirectory),
     );
     const reports = [
       { label: SOURCE_GRAPH.label, result: sourceResult },
       { label: "reviewed archive graph", result: archiveResult },
       ...config.lockedGraphs.map((graph, index) => ({
-        label: graph.label,
+        label: lockedAudits[index]!.identity.label,
         threshold: graph.severityThreshold ?? config.severityThreshold,
-        result: lockedResults[index]!,
+        result: lockedAudits[index]!.result,
       })),
     ];
     assertReviewedAuditReportsPass(reports, config.severityThreshold);
@@ -1045,7 +1045,7 @@ function main(): void {
         ),
         rawReportFile: path.join(artifactDirectory, `locked-graph-${index + 1}.json`),
         registryOrigin: NPM_AUDIT_REGISTRY,
-        result: lockedResults[index]!,
+        result: lockedAudits[index]!.result,
         threshold: graph.severityThreshold ?? config.severityThreshold,
       });
     });

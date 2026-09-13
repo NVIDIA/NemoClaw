@@ -61,6 +61,7 @@ const REVIEWED_AUDIT_CONFIG = parseAuditConfig(REVIEWED_AUDIT_CONFIG_SOURCE);
 type ConsolidatedAuditFixture = Readonly<{
   npmCalls: readonly string[];
   lockedReceipt?: string;
+  lockedProvenance?: Record<string, unknown>;
   lockedRawReport?: Buffer;
   lockedPackageJson: Buffer;
   lockedPackageLock: Buffer;
@@ -128,14 +129,22 @@ function runConsolidatedAuditFixture(
             id: "wechat-runtime",
             inputValidation: "wechat-runtime",
             installMode: "legacy-peer-deps",
-            integrity,
-            label: "WeChat fixture",
-            lockSha256: createHash("sha256").update(runtimeLock).digest("hex"),
-            packageSpec: "@tencent-weixin/openclaw-weixin@2.4.3",
+            integrity: "sha512-previous",
+            label: "WeChat previous fixture",
+            lockSha256: "a".repeat(64),
+            packageSpec: "@tencent-weixin/openclaw-weixin@2.4.2",
+            replacement: {
+              integrity,
+              label: "WeChat fixture",
+              lockSha256: createHash("sha256").update(runtimeLock).digest("hex"),
+              packageSpec: "@tencent-weixin/openclaw-weixin@2.4.3",
+              tarballUrl:
+                "https://registry.npmjs.org/@tencent-weixin/openclaw-weixin/-/openclaw-weixin-2.4.3.tgz",
+            },
             severityThreshold: "low",
             signatureAudit: "retry-download-failures",
             tarballUrl:
-              "https://registry.npmjs.org/@tencent-weixin/openclaw-weixin/-/openclaw-weixin-2.4.3.tgz",
+              "https://registry.npmjs.org/@tencent-weixin/openclaw-weixin/-/openclaw-weixin-2.4.2.tgz",
           },
         ],
         nodeVersion: process.version.slice(1),
@@ -256,11 +265,15 @@ process.exit(0);
       },
     );
     const provenanceFile = path.join(artifactDirectory, "source-graph.provenance.json");
+    const lockedProvenanceFile = path.join(artifactDirectory, "locked-graph-1.provenance.json");
     const receiptFile = path.join(artifactDirectory, "wechat-runtime.receipt.json");
     const rawReportFile = path.join(artifactDirectory, "wechat-runtime.raw.json");
     const lockedDirectory = path.join(targetRoot, "agents", "openclaw", "wechat-runtime");
     return {
       lockedReceipt: fs.existsSync(receiptFile) ? fs.readFileSync(receiptFile, "utf-8") : undefined,
+      lockedProvenance: fs.existsSync(lockedProvenanceFile)
+        ? (JSON.parse(fs.readFileSync(lockedProvenanceFile, "utf-8")) as Record<string, unknown>)
+        : undefined,
       lockedRawReport: fs.existsSync(rawReportFile) ? fs.readFileSync(rawReportFile) : undefined,
       lockedPackageJson: fs.readFileSync(path.join(lockedDirectory, "package.json")),
       lockedPackageLock: fs.readFileSync(path.join(lockedDirectory, "package-lock.json")),
@@ -356,6 +369,18 @@ describe("trusted npm audit workflow (#5896)", () => {
       `npm audit requires npm ${REVIEWED_AUDIT_CONFIG.npmVersion}; running npm 11.18.0`,
     );
     expect(fixture.lockedReceipt).toBeUndefined();
+  });
+
+  it("records the selected replacement identity in locked-graph audit provenance", () => {
+    const fixture = runConsolidatedAuditFixture(() => {});
+
+    expect(fixture.result.status, fixture.result.stderr.toString()).toBe(0);
+    expect(fixture.lockedProvenance).toMatchObject({
+      graph: {
+        label: "WeChat fixture",
+        packageSpecs: ["@tencent-weixin/openclaw-weixin@2.4.3"],
+      },
+    });
   });
 
   it("restores the read-only trusted cache after offline packing fails", () => {
