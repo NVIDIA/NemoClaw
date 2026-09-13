@@ -59,6 +59,57 @@ $toolRecord=Get-Content -LiteralPath (Join-Path $toolRoot 'timeout.log.json') -R
 Assert-Control ($null -ne $caught -and $caught.Exception.Message -ceq 'WPR command exceeded its bounded wait.') 'native command timeout remains the primary failure'
 Assert-Control ($toolRecord.timedOut -and $toolRecord.processStopped -and $toolRecord.output.outputClosed) 'timed-out exact owned tool exits and both pipes close'
 Assert-Control ([IO.File]::ReadAllText((Join-Path $toolRoot 'timeout.log')).Contains('tool-stdout') -and [IO.File]::ReadAllText((Join-Path $toolRoot 'timeout.log')).Contains('tool-stderr')) 'timeout retains partial stdout and stderr'
+# Only recorder commands are controlled here. The actual profile parser and
+# lifecycle must select/validate the exported profile before any recording.
+$originalRecorderIdentity=(Get-Command Get-WindowsPerformanceRecorderIdentity).ScriptBlock
+$originalRecorderCommand=(Get-Command Invoke-OwnedWprCommand).ScriptBlock
+$originalProfileOS=$env:OS
+$script:profileCommands=[Collections.Generic.List[object]]::new()
+$script:missingCpuKeyword=$false
+try {
+    $env:OS='Windows_NT'
+    function Get-WindowsPerformanceRecorderIdentity {return [pscustomobject]@{path='controlled-wpr';sha256=('a'*64);fileVersion='controlled'}}
+    function Invoke-OwnedWprCommand {param([string[]]$Arguments,[string]$LogPath,[int]$TimeoutMilliseconds=60000)
+        $script:profileCommands.Add(@($Arguments))
+        if($Arguments[0] -ceq '-exportprofile'){
+            $names=@('ProcessThread','Loader','SampledProfile','CSwitch','ReadyThread')
+            if($script:missingCpuKeyword){$names=@($names|Where-Object {$_ -cne 'ReadyThread'})}
+            $keywords=($names|ForEach-Object {'<Keyword Value="'+$_+'" />'}) -join ''
+            $xml='<WindowsPerformanceRecorder Version="1.0"><Profiles><SystemCollector Id="collector" Name="controlled"><BufferSize Value="1024"/><Buffers Value="40"/></SystemCollector><SystemProvider Id="provider"><Keywords>'+$keywords+'</Keywords><Stacks><Stack Value="ThreadDCEnd"/></Stacks></SystemProvider><Profile Id="GeneralProfile.Light.File" Name="GeneralProfile" DetailLevel="Light" LoggingMode="File"><Collectors><SystemCollectorId Value="collector"><SystemProviderId Value="provider"/></SystemCollectorId></Collectors></Profile></Profiles></WindowsPerformanceRecorder>'
+            [IO.File]::WriteAllText($Arguments[2],$xml)
+        }
+    }
+    foreach($cpuOnly in @($false,$true)){
+        $script:profileCommands.Clear()
+        $directory=Join-Path $ArtifactDirectory ('profile-'+$cpuOnly)
+        $arguments=@{Directory=$directory};if($cpuOnly){$arguments.CpuSchedulingOnly=$true}
+        $trace=Start-WindowsPerformanceTrace @arguments
+        $expected=if($cpuOnly){'GeneralProfile.Light'}else{'GeneralProfile.Light+FileIO'}
+        $export=@($script:profileCommands|Where-Object {$_[0] -ceq '-exportprofile'})
+        $start=@($script:profileCommands|Where-Object {$_[0] -ceq '-start'})
+        Assert-Control ($export.Count -eq 1 -and $export[0][1] -ceq $expected -and ($trace.profiles -join '+') -ceq $expected) ('profile selection and export agree: '+$expected)
+        Assert-Control ($start.Count -eq 1 -and (($start[0] -contains 'FileIO') -eq (-not $cpuOnly)) -and $trace.maximumBytes -eq 256MB -and $trace.maximumSeconds -eq 45) ('profile selection preserves recording bounds: '+$expected)
+        Stop-WindowsPerformanceTrace -Trace $trace
+        $saved=Get-Content -LiteralPath (Join-Path $directory 'trace-receipt.json') -Raw|ConvertFrom-Json
+        Assert-Control (($saved.profiles -join '+') -ceq $expected -and $saved.cpuSchedulingOnly -eq $cpuOnly) ('receipt retains actual profile option: '+$expected)
+        if($cpuOnly){
+            $hash=(Get-FileHash -LiteralPath (Join-Path $directory 'actual-profiles.wprp') -Algorithm SHA256).Hash.ToLowerInvariant()
+            Assert-Control ($saved.profileValidation.requiredKeywordsVerified -and $saved.profileValidation.sha256 -ceq $hash -and @($saved.profileValidation.requiredKeywords).Count -eq 5 -and $saved.profileValidation.keywords -contains 'ReadyThread') 'CPU scheduling receipt binds the actual required keyword export'
+        }
+    }
+    $forwardDirectory=Join-Path $ArtifactDirectory 'profile-forward';[IO.Directory]::CreateDirectory($forwardDirectory)|Out-Null
+    $forward=New-MeasurementTraceState -Case ([pscustomobject]@{action='launch';wpr=$true}) -Directory $forwardDirectory -CpuSchedulingOnly
+    Assert-Control ($forward.current.trace.cpuSchedulingOnly -and ($forward.current.trace.profiles -join '+') -ceq 'GeneralProfile.Light') 'measurement state forwards CPU-only selection'
+    $null=Complete-MeasurementTraceState -State $forward
+    $script:profileCommands.Clear();$script:missingCpuKeyword=$true;$missingFailure=$null
+    try {Start-WindowsPerformanceTrace -Directory (Join-Path $ArtifactDirectory 'profile-missing') -CpuSchedulingOnly|Out-Null}
+    catch {$missingFailure=$_}
+    Assert-Control ($null -ne $missingFailure -and @($script:profileCommands|Where-Object {$_[0] -ceq '-start'}).Count -eq 0) 'missing scheduling keyword refuses before recording starts'
+} finally {
+    $env:OS=$originalProfileOS
+    Set-Item Function:\Get-WindowsPerformanceRecorderIdentity -Value $originalRecorderIdentity
+    Set-Item Function:\Invoke-OwnedWprCommand -Value $originalRecorderCommand
+}
 # No WPR execution is claimed here. These seams control recorder outcomes while
 # the target is a separate real process; use actual WPR only in the Windows job.
 function Start-WindowsPerformanceTrace {param([string]$Directory)

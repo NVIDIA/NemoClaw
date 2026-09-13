@@ -22,7 +22,8 @@ function Start-MeasurementTraceWindow {
     $window=[ordered]@{directory=(Join-Path $State.directory ('wpr-'+$Phase));phase=$Phase;markerObservedMs=$MarkerObservedMs;startRequestedMs=$State.clock.Elapsed.TotalMilliseconds;startCompletedMs=$null;stopObservedMs=$null;trace=$null}
     $State.windows.Add($window)
     try {
-        $window.trace=Start-WindowsPerformanceTrace -Directory $window.directory
+        if($State.cpuSchedulingOnly){$window.trace=Start-WindowsPerformanceTrace -Directory $window.directory -CpuSchedulingOnly}
+        else{$window.trace=Start-WindowsPerformanceTrace -Directory $window.directory}
         $window.startCompletedMs=$State.clock.Elapsed.TotalMilliseconds
         $State.current=$window
     } catch {
@@ -33,7 +34,7 @@ function Start-MeasurementTraceWindow {
     }
 }
 function New-MeasurementTraceState {
-    param($Case,[string]$Directory)
+    param($Case,[string]$Directory,[switch]$CpuSchedulingOnly)
     $log=$null
     if($Case.PSObject.Properties.Name -contains 'wprInstallerLog'){
         $log=[string]$Case.wprInstallerLog
@@ -42,7 +43,7 @@ function New-MeasurementTraceState {
         }
     }
     $state=[pscustomobject]@{
-        directory=$Directory;clock=[Diagnostics.Stopwatch]::StartNew();log=$log;offset=0L;pending='';decoder=[Text.UTF8Encoding]::new($false,$true).GetDecoder()
+        directory=$Directory;cpuSchedulingOnly=[bool]$CpuSchedulingOnly;clock=[Diagnostics.Stopwatch]::StartNew();log=$log;offset=0L;pending='';decoder=[Text.UTF8Encoding]::new($false,$true).GetDecoder()
         activePhase=$null;phaseObservedMs=0.0;current=$null;safeToContinue=$true;logFailed=$false
         windows=[Collections.Generic.List[object]]::new();events=[Collections.Generic.List[object]]::new();failures=[Collections.Generic.List[object]]::new()
         attempted=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
@@ -113,6 +114,7 @@ function Complete-MeasurementTraceState {
     }
     $record=[ordered]@{
         classification='partial-performance-recording-windows';completeOperationTraceClaimed=$false
+        cpuSchedulingOnly=$State.cpuSchedulingOnly;dedicatedLogicalFileIODetailOmitted=$State.cpuSchedulingOnly
         clock='observer monotonic stopwatch; Burn timestamp retained separately';installerStages=@($State.events.ToArray())
         windows=@($State.windows.ToArray()|ForEach-Object {[ordered]@{phase=$_.phase;markerObservedMs=$_.markerObservedMs;startRequestedMs=$_.startRequestedMs;startCompletedMs=$_.startCompletedMs;stopObservedMs=$_.stopObservedMs;directory=$_.directory}})
         failures=@($State.failures.ToArray());unobservedWindows=$missing;safeToContinue=$State.safeToContinue

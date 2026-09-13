@@ -80,24 +80,56 @@ function Get-WindowsPerformanceRecorderIdentity {
     return [pscustomobject]@{path=$file.FullName;sha256=(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant();fileVersion=$file.VersionInfo.FileVersion}
 }
 
+function Read-CpuSchedulingProfile {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Path)
+    $file=Get-Item -LiteralPath $Path
+    if($file.PSIsContainer -or $file.Attributes.HasFlag([IO.FileAttributes]::ReparsePoint) -or $file.Length -gt 1MB){throw 'The exported CPU profile must be a bounded ordinary file.'}
+    $settings=[Xml.XmlReaderSettings]::new();$settings.DtdProcessing=[Xml.DtdProcessing]::Prohibit;$settings.XmlResolver=$null
+    $reader=[Xml.XmlReader]::Create($file.FullName,$settings);$document=[Xml.XmlDocument]::new();$document.XmlResolver=$null
+    try{$document.Load($reader)}finally{$reader.Dispose()}
+    $profiles=@($document.SelectNodes('/WindowsPerformanceRecorder/Profiles/Profile'))
+    if($profiles.Count -ne 1){throw 'Expected one effective exported CPU profile.'}
+    $references=@($profiles[0].SelectNodes('Collectors/SystemCollectorId/SystemProviderId'))
+    if(-not $references.Count){throw 'The exported CPU profile has no system provider.'}
+    $keywords=@();$stacks=@()
+    foreach($reference in $references){
+        $id=$reference.GetAttribute('Value')
+        $providers=@($document.SelectNodes('/WindowsPerformanceRecorder/Profiles/SystemProvider')|Where-Object {$_.GetAttribute('Id') -ceq $id})
+        if($providers.Count -ne 1){throw 'The exported CPU profile provider is ambiguous.'}
+        $keywords+=@($providers[0].SelectNodes('Keywords/Keyword')|ForEach-Object {$_.GetAttribute('Value')})
+        $stacks+=@($providers[0].SelectNodes('Stacks/Stack')|ForEach-Object {$_.GetAttribute('Value')})
+    }
+    $keywords=@($keywords|Sort-Object -Unique);$stacks=@($stacks|Sort-Object -Unique)
+    $required=@('ProcessThread','Loader','SampledProfile','CSwitch','ReadyThread')
+    foreach($keyword in $required){if($keyword -cnotin $keywords){throw ('The exported CPU profile lacks required keyword '+$keyword+'.')}}
+    return [pscustomobject]@{sha256=(Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant();profileId=$profiles[0].GetAttribute('Id');detailLevel=$profiles[0].GetAttribute('DetailLevel');requiredKeywords=$required;keywords=$keywords;stacks=$stacks;requiredKeywordsVerified=$true}
+}
+
 function Start-WindowsPerformanceTrace {
     [CmdletBinding()]
-    param([Parameter(Mandatory)][string]$Directory)
+    param([Parameter(Mandatory)][string]$Directory,[switch]$CpuSchedulingOnly)
     if($env:OS -cne 'Windows_NT' -or (Test-Path -LiteralPath $Directory)){throw 'Tracing requires Windows and a fresh output directory.'}
     [IO.Directory]::CreateDirectory($Directory)|Out-Null
     $tool=Get-WindowsPerformanceRecorderIdentity
     $instance='NemoClawPerf-'+[guid]::NewGuid().ToString('N').Substring(0,12)
+    $profiles=@('GeneralProfile.Light','FileIO');$profileValidation=$null
+    if($CpuSchedulingOnly){$profiles=@('GeneralProfile.Light')}
     Invoke-OwnedWprCommand -Arguments @('-profiles') -LogPath (Join-Path $Directory 'available-profiles.log')
-    Invoke-OwnedWprCommand -Arguments @('-exportprofile','GeneralProfile.Light+FileIO',(Join-Path $Directory 'actual-profiles.wprp'),'-filemode') -LogPath (Join-Path $Directory 'export-profile.log')
+    Invoke-OwnedWprCommand -Arguments @('-exportprofile',($profiles -join '+'),(Join-Path $Directory 'actual-profiles.wprp'),'-filemode') -LogPath (Join-Path $Directory 'export-profile.log')
+    if($CpuSchedulingOnly){$profileValidation=Read-CpuSchedulingProfile -Path (Join-Path $Directory 'actual-profiles.wprp')}
+    $startArguments=@('-start','GeneralProfile.Light')
+    if(-not $CpuSchedulingOnly){$startArguments+=@('-start','FileIO')}
+    $startArguments+=@('-filemode','-recordtempto',$Directory,'-instancename',$instance)
     try {
-        Invoke-OwnedWprCommand -Arguments @('-start','GeneralProfile.Light','-start','FileIO','-filemode','-recordtempto',$Directory,'-instancename',$instance) -LogPath (Join-Path $Directory 'start.log')
+        Invoke-OwnedWprCommand -Arguments $startArguments -LogPath (Join-Path $Directory 'start.log')
     } catch {
         $startFailure=$_
         try {Invoke-OwnedWprCommand -Arguments @('-cancel','-instancename',$instance) -LogPath (Join-Path $Directory 'failed-start-cancel.log') -TimeoutMilliseconds 10000}
         catch {Write-Warning 'The failed owned WPR start could not confirm cancellation.'}
         throw $startFailure
     }
-    return [pscustomobject]@{instance=$instance;directory=$Directory;tool=$tool;started=[Diagnostics.Stopwatch]::StartNew();active=$true;capped=$false;capReason=$null;maximumBytes=256MB;maximumSeconds=45;lastBytes=0L;peakRecordingBytes=0L;recordingSeconds=$null;finalizationMs=$null;finalFiles=$null;stopSucceeded=$false;lastBudgetMs=-1000L}
+    return [pscustomobject]@{instance=$instance;directory=$Directory;tool=$tool;profiles=$profiles;cpuSchedulingOnly=[bool]$CpuSchedulingOnly;profileValidation=$profileValidation;started=[Diagnostics.Stopwatch]::StartNew();active=$true;capped=$false;capReason=$null;maximumBytes=256MB;maximumSeconds=45;lastBytes=0L;peakRecordingBytes=0L;recordingSeconds=$null;finalizationMs=$null;finalFiles=$null;stopSucceeded=$false;lastBudgetMs=-1000L}
 }
 
 function Stop-WindowsPerformanceTrace {
@@ -121,7 +153,10 @@ function Stop-WindowsPerformanceTrace {
         try {$Trace.finalFiles=Get-WindowsPerformanceTraceFiles -Directory $Trace.directory}
         catch {if($null -eq $primary){$primary=$_}else{Write-Warning 'Final trace accounting also failed.'}}
         $record=[ordered]@{
-            instance=$Trace.instance;tool=$Trace.tool;profiles=@('GeneralProfile.Light','FileIO');fileMode=$true
+            instance=$Trace.instance;tool=$Trace.tool;profiles=$Trace.profiles;fileMode=$true
+            cpuSchedulingOnly=$Trace.cpuSchedulingOnly;profileValidation=$Trace.profileValidation
+            dedicatedLogicalFileIODetailOmitted=$Trace.cpuSchedulingOnly
+            coverage='Actual exported profile/status and measured recording duration; no whole-operation coverage guarantee.'
             capped=$Trace.capped;capReason=$Trace.capReason;recordingSeconds=$Trace.recordingSeconds;finalizationMs=$Trace.finalizationMs
             maximumRecordingBytes=$Trace.maximumBytes;maximumRecordingSeconds=$Trace.maximumSeconds;pollIntervalMs=100
             peakObservedRecordingBytes=$Trace.peakRecordingBytes;finalFiles=$Trace.finalFiles

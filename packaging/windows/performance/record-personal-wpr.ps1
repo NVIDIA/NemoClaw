@@ -53,7 +53,7 @@ Save-OwnedJson @{classification='installed-WPT-analysis-tool-discovery';tools=@(
  $toolPresent=Test-Path -LiteralPath (Get-WindowsPerformanceRecorderPath) -PathType Leaf
  if(-not $toolPresent){throw 'Built-in WPR is unavailable; the primary command remains independent.'}
  $record.stage='recorder-start';$record.recordingAttempted=$true
- $state=New-MeasurementTraceState -Case ([pscustomobject]@{action='launch';wpr=$true}) -Directory $directory
+ $state=New-MeasurementTraceState -Case ([pscustomobject]@{action='launch';wpr=$true}) -Directory $directory -CpuSchedulingOnly
  Save-OwnedJson @{sourceRevision=$request.sourceRevision;nonce=$request.nonce;started=($null -ne $state.current -and $state.current.trace.active);failures=@($state.failures.ToArray())} $ready
  $readyWritten=$true
  while($state.safeToContinue -and $null -ne $state.current -and $state.current.trace.active){

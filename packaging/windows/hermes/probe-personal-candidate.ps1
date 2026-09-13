@@ -24,6 +24,42 @@ function Invoke-PersonalChecked([string]$Executable,[string[]]$Arguments,[string
     & $Executable @Arguments 2>&1 | Tee-Object -FilePath (Join-Path $output (($Label -replace '[^a-zA-Z0-9-]','-')+'.log'))
     if ($LASTEXITCODE -ne 0) { throw ($Label+' failed with exit '+$LASTEXITCODE) }
 }
+function Get-PersonalRuntimeAclObservation([string]$Runtime,[string]$CandidateSha256,[string]$ReplaySha256) {
+    $clock=[Diagnostics.Stopwatch]::StartNew()
+    $result=[ordered]@{schemaVersion=1;classification='readonly-canonical-runtime-acl-observation';sourceRevision=$env:GITHUB_SHA;
+        runtimeRoot=$Runtime;candidateReceiptSha256=$CandidateSha256;replayInputSha256=$ReplaySha256;
+        observedBeforePrimary=$true;maximumEntries=7;contentRead=$false;aclWriteAttempted=$false;
+        requestedSections='Owner,Group,Access (READ_CONTROL; no SACL)';requiredMxcReadonlyMask='0x001200a9';
+        mxcSkipDecisionObserved=$false;eventPidPathAttributionEstablished=$false;entries=@()}
+    # Fixed paths from the already verified complete canonical inventory; no tree walk.
+    foreach($relative in @('','hermes-agent/venv/Scripts/python.exe','tools/browser-use/Scripts/python.exe',
+        'browsers/chromium-1234/chrome-win64/chrome.exe','agent-browser/bin/agent-browser-win32-x64.exe',
+        'git/usr/bin/bash.exe','node/node.exe')) {
+        $path=if($relative){Join-Path $Runtime $relative}else{$Runtime}
+        $row=[ordered]@{relativePath=$relative;path=$path;readSucceeded=$false;error=$null}
+        try {
+            $item=Get-Item -LiteralPath $path -Force
+            if($item.Attributes.HasFlag([IO.FileAttributes]::ReparsePoint)){throw 'ACL observation target is a reparse point.'}
+            $row['kind']=if($item.PSIsContainer){'directory'}else{'file'}
+            $row['attributes']=[int]$item.Attributes
+            $acl=Get-Acl -LiteralPath $path
+            $rules=@($acl.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier]))
+            if($rules.Count -gt 128 -or $acl.GetSecurityDescriptorBinaryForm().Length -gt 32768){throw 'ACL observation exceeds its descriptor/ACE bound.'}
+            $row['ownerSid']=$acl.GetOwner([Security.Principal.SecurityIdentifier]).Value
+            $row['groupSid']=$acl.GetGroup([Security.Principal.SecurityIdentifier]).Value
+            $row['daclSddl']=$acl.GetSecurityDescriptorSddlForm([Security.AccessControl.AccessControlSections]::Access)
+            $row['accessRulesProtected']=$acl.AreAccessRulesProtected
+            $row['accessRulesCanonical']=$acl.AreAccessRulesCanonical
+            $row['aces']=@($rules|ForEach-Object {@{sid=$_.IdentityReference.Value;type=$_.AccessControlType.ToString();
+                mask=('0x{0:x8}' -f ([int64]$_.FileSystemRights -band 0xffffffffL));inherited=$_.IsInherited;
+                inheritanceFlags=$_.InheritanceFlags.ToString();propagationFlags=$_.PropagationFlags.ToString()}})
+            $row.readSucceeded=$true
+        } catch {$row.error=$_.Exception.Message}
+        $result.entries+=@($row)
+    }
+    $result['elapsedMs']=$clock.Elapsed.TotalMilliseconds
+    return $result
+}
 try {
     $bootstrap=Get-Content -LiteralPath (Join-Path $BootstrapDirectory 'export-controls.json') -Raw|ConvertFrom-Json
     if ($bootstrap.status -cne 'pass') { throw 'Pinned interpreter/bootstrap controls did not pass.' }
@@ -73,6 +109,13 @@ try {
     & (Join-Path $PSScriptRoot '..\host-preparation\test-system-root-mxc.ps1') -HelperPath (Join-Path $HelperDirectory 'NemoClawHostPreparation.exe') -MxcDirectory $mxc -NodePath $node -ArtifactDirectory (Join-Path $output 'system-root-proof')
     $systemProof=Get-Content -LiteralPath (Join-Path $output 'system-root-proof\system-root-mxc-proof.json') -Raw|ConvertFrom-Json
     if($systemProof.status -cne 'pass'){throw 'The same-run system-root/MXC proof failed.'}
+    # Observe only metadata before the timed primary workload; failures stay secondary.
+    try {
+        $aclObservation=Get-PersonalRuntimeAclObservation $runtime $receipt.derivedCandidateReceiptSha256 $receipt.replayInputSha256
+        $aclPath=Join-Path $output 'runtime-acl-observation.json'
+        [IO.File]::WriteAllText($aclPath,($aclObservation|ConvertTo-Json -Depth 10)+"`n",[Text.UTF8Encoding]::new($false))
+        $receipt['runtimeAclObservation']=@{file='runtime-acl-observation.json';bytes=(Get-Item -LiteralPath $aclPath).Length;sha256=(Get-FileHash -LiteralPath $aclPath -Algorithm SHA256).Hash.ToLowerInvariant()}
+    } catch {$receipt['runtimeAclObservationError']=$_.Exception.Message}
     $mxcAttempted=$true
     $patchedMxc=Join-Path $compatEvidence 'mxc-token-inspection-build'
     Invoke-PersonalChecked $node @('--experimental-strip-types','--no-warnings',(Join-Path $PSScriptRoot 'probe-personal-candidate.mts'),
