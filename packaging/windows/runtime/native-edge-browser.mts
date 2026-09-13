@@ -55,8 +55,13 @@ export function validateEdgeMetadata(value: any, expectedPath: string) {
     throw new Error("Microsoft Edge has an unexpected original filename.");
   if (value.reparsePoint !== false)
     throw new Error("Microsoft Edge cannot be loaded through a reparse point.");
-  if (value.signatureStatus !== "Valid")
-    throw new Error("Microsoft Edge does not have a valid Authenticode signature.");
+  if (value.signatureStatus !== "Valid") {
+    const status =
+      typeof value.signatureStatus === "string" && /^[A-Za-z]{1,64}$/u.test(value.signatureStatus)
+        ? value.signatureStatus
+        : "InvalidStatus";
+    throw new Error(`Microsoft Edge Authenticode status is ${status}.`);
+  }
   if (
     typeof value.signerSubject !== "string" ||
     !/(?:^|,\s*)O=Microsoft Corporation(?:,|$)/u.test(value.signerSubject)
