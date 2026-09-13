@@ -791,7 +791,9 @@ class DebugJob(owner.WindowsJob):
                 else ("mbcs" if os.name == "nt" else "latin-1")
             )
             row["text"] = (
-                bytes(storage[:count]).decode(encoding, errors="replace").split("\0", 1)[0]
+                bytes(storage[:count])
+                .decode(encoding, errors="replace")
+                .split("\0", 1)[0]
             )
         except Exception as error:
             row["error"] = owner.detail(error)
@@ -1005,7 +1007,58 @@ class DebugJob(owner.WindowsJob):
         self.debug_complete = self.saw_process and not self.live_debug_pids
 
 
+def job_only_mode(request):
+    if "mode" not in request:
+        return False
+    owner.require(
+        request["mode"] == "personal-job-only"
+        and request.get("classification") == "personal-MXC-browser-debug-request",
+        "Job-only observation requires the full Personal request",
+    )
+    return True
+
+
+def job_only_limits(native):
+    value = {"creationFlags": native.creation_flags, "queryOnly": True}
+    for name, information_class, info in (
+        ("uiRestrictions", 4, c.c_uint32()),
+        ("extendedLimits", 9, owner.ExtendedLimits()),
+    ):
+        needed = c.c_uint32()
+        row = {
+            "informationClass": information_class,
+            "bufferBytes": c.sizeof(info),
+            "returnedBytes": None,
+            "querySucceeded": False,
+            "complete": False,
+            "flags": None,
+            "win32Error": None,
+        }
+        value[name] = row
+        try:
+            row["querySucceeded"] = bool(
+                native.kernel.QueryInformationJobObject(
+                    native.job,
+                    information_class,
+                    c.byref(info),
+                    c.sizeof(info),
+                    c.byref(needed),
+                )
+            )
+            row["returnedBytes"] = needed.value
+            row["win32Error"] = 0 if row["querySucceeded"] else c.get_last_error()
+            row["complete"] = row["querySucceeded"] and needed.value == c.sizeof(info)
+            if row["complete"]:
+                row["flags"] = (
+                    info.value if information_class == 4 else info.basic.flags
+                )
+        except Exception as error:
+            row["error"] = owner.detail(error)
+    return value
+
+
 def validate(request):
+    job_only_mode(request)
     primary = request.get("classification") == "personal-MXC-browser-debug-request"
     owner.require(
         request.get("schemaVersion") == 1
@@ -1182,6 +1235,7 @@ def validate(request):
 
 def capture(request, native):
     command, state = validate(request)
+    job_only = job_only_mode(request)
     started = time.monotonic()
     # The full Personal executor emits both application and native owner
     # evidence. Match its existing 64 KiB + 256 KiB channel budgets in this
@@ -1193,7 +1247,9 @@ def capture(request, native):
     ]
     result = {
         "schemaVersion": 1,
-        "classification": "personal-MXC-browser-debug-result"
+        "classification": "owned-Personal-job-only-diagnostic"
+        if job_only
+        else "personal-MXC-browser-debug-result"
         if request.get("classification") == "personal-MXC-browser-debug-request"
         else "stock-MXC-browser-debug-result",
         "diagnosticOnly": True,
@@ -1202,7 +1258,7 @@ def capture(request, native):
         "policySha256": request["policySha256"],
         "nativeProofSha256": request.get("nativeProof", {}).get("sha256"),
         "captureLimits": dict(zip(("stdout", "stderr"), capture_limits)),
-        "debuggerMayChangeBehavior": True,
+        "debuggerMayChangeBehavior": not job_only,
         "execution": {
             "executable": command[0],
             "args": command[1:],
@@ -1224,6 +1280,8 @@ def capture(request, native):
         "childrenClosed": False,
         "cleanupComplete": False,
     }
+    if job_only:
+        result.update(mode="personal-job-only", debugEventsCollected=False)
     buffers = [
         {"bytes": bytearray(), "eof": False, "error": None, "total": 0, "limit": limit}
         for limit in capture_limits
@@ -1250,7 +1308,9 @@ def capture(request, native):
 
     try:
         native.create_job()
-        stage = "create-debugged-executor"
+        if job_only:
+            result["ownedJob"] = job_only_limits(native)
+        stage = "create-owned-executor" if job_only else "create-debugged-executor"
         native.start(command, request["environment"], state)
         result["execution"]["pid"] = native.pid
         stage = "assign-job-before-resume"
@@ -1262,15 +1322,17 @@ def capture(request, native):
             thread.start()
         stage = "resume-executor"
         native.resume()
-        stage = "debug-events"
+        stage = "wait-owned-executor" if job_only else "debug-events"
         while not native.wait(20):
-            owner.require(
-                not native.observation_errors,
-                "Debug event observation failed; see exact metadata error",
-            )
-            owner.require(
-                not native.event_history_exceeded, "Debug event history bound exceeded"
-            )
+            if not job_only:
+                owner.require(
+                    not native.observation_errors,
+                    "Debug event observation failed; see exact metadata error",
+                )
+                owner.require(
+                    not native.event_history_exceeded,
+                    "Debug event history bound exceeded",
+                )
             if stop.is_set() or time.monotonic() - started >= 120:
                 result["execution"]["timedOut"] = time.monotonic() - started >= 120
                 break
@@ -1285,18 +1347,24 @@ def capture(request, native):
                     result["forcedTermination"] = True
                 settle = min(deadline, time.monotonic() + 1)
                 while native.active() and time.monotonic() < settle:
-                    native.pump(10)
+                    if job_only:
+                        time.sleep(0.01)
+                    else:
+                        native.pump(10)
                 if native.active():
                     native.terminate(assigned)
                     result["forcedTermination"] = True
                 # Continue EXIT events while waiting: kernel shutdown cannot
                 # finish while the debugger leaves an exit notification stopped.
                 while time.monotonic() < deadline:
-                    native.pump(10)
+                    if job_only:
+                        time.sleep(0.01)
+                    else:
+                        native.pump(10)
                     if (
                         native.wait(0)
                         and native.active() == 0
-                        and not native.live_debug_pids
+                        and (job_only or not native.live_debug_pids)
                     ):
                         break
                 result["execution"]["childClosed"] = native.wait(0)
@@ -1304,7 +1372,8 @@ def capture(request, native):
                     result["execution"]["exitCode"] = native.exit_code()
             result["cleanup"]["activeProcesses"] = native.active() if native.job else 0
             if (
-                result["execution"]["childClosed"]
+                not job_only
+                and result["execution"]["childClosed"]
                 and result["cleanup"]["activeProcesses"] == 0
                 and not native.observation_errors
                 and native.live_debug_pids
@@ -1326,7 +1395,7 @@ def capture(request, native):
         result["childrenClosed"] = (
             (not native.process or result["execution"]["childClosed"])
             and result["cleanup"]["activeProcesses"] == 0
-            and not native.live_debug_pids
+            and (job_only or not native.live_debug_pids)
             and result["cleanup"]["captureClosed"]
         )
         for name in ("thread", "process", "job"):
@@ -1337,7 +1406,8 @@ def capture(request, native):
         result["cleanup"]["handlesClosed"] = not any(
             (native.thread, native.process, native.job)
         )
-        result["cleanup"]["errors"].extend(native.handle_cleanup_errors)
+        if not job_only:
+            result["cleanup"]["errors"].extend(native.handle_cleanup_errors)
         result["cleanupComplete"] = (
             result["childrenClosed"]
             and result["cleanup"]["handlesClosed"]
@@ -1351,28 +1421,29 @@ def capture(request, native):
         x["total"] > x["limit"] for x in buffers
     )
     result["execution"]["elapsedMs"] = (time.monotonic() - started) * 1000
-    result["events"] = native.events
-    result["eventHistory"] = {
-        "eventLimit": MAX_EVENTS,
-        "eventsObserved": native.event_count,
-        "rowsRetained": len(native.events),
-        "exceeded": native.event_history_exceeded,
-    }
-    if native.event_history_exceeded and result["execution"]["error"] is None:
-        # Overflow can first occur on an EXIT or during cleanup. It still
-        # fails this diagnostic, while actual handle closure remains provable.
-        result["execution"]["error"] = {
-            **owner.detail(ValueError("Debug event history bound exceeded")),
-            "stage": "debug-events",
+    if not job_only:
+        result["events"] = native.events
+        result["eventHistory"] = {
+            "eventLimit": MAX_EVENTS,
+            "eventsObserved": native.event_count,
+            "rowsRetained": len(native.events),
+            "exceeded": native.event_history_exceeded,
         }
-    result["lastForwardedException"] = native.last_fault
-    result["firstForwardedException"] = native.first_fault
-    result["firstUnhandledException"] = native.first_unhandled
-    result["debugObservationErrors"] = native.observation_errors
-    result["appContainerDebugEventsObserved"] = native.appcontainer_seen
-    result["chromeDebugEventsObserved"] = native.chrome_seen
-    result["remainingDebugProcesses"] = list(native.live_debug_pids)
-    result["reconciledDebugProcessExits"] = native.reconciled_exits
+        if native.event_history_exceeded and result["execution"]["error"] is None:
+            # Overflow can first occur on an EXIT or during cleanup. It still
+            # fails this diagnostic, while actual handle closure remains provable.
+            result["execution"]["error"] = {
+                **owner.detail(ValueError("Debug event history bound exceeded")),
+                "stage": "debug-events",
+            }
+        result["lastForwardedException"] = native.last_fault
+        result["firstForwardedException"] = native.first_fault
+        result["firstUnhandledException"] = native.first_unhandled
+        result["debugObservationErrors"] = native.observation_errors
+        result["appContainerDebugEventsObserved"] = native.appcontainer_seen
+        result["chromeDebugEventsObserved"] = native.chrome_seen
+        result["remainingDebugProcesses"] = list(native.live_debug_pids)
+        result["reconciledDebugProcessExits"] = native.reconciled_exits
     result["executorIdentityAfter"] = owner.identity(command[0])
     return result
 
@@ -1392,7 +1463,9 @@ def main():
     )
     data = args.request.read_bytes()
     owner.require(len(data) <= 128 * 1024, "Debug owner request exceeded its bound")
-    record = capture(json.loads(data), DebugJob())
+    request = json.loads(data)
+    native = owner.WindowsJob() if job_only_mode(request) else DebugJob()
+    record = capture(request, native)
     record["requestSha256"] = owner.hashlib.sha256(data).hexdigest()
     with args.output.open("x", encoding="utf-8") as stream:
         json.dump(record, stream, indent=2)

@@ -7,6 +7,7 @@ import io
 import json
 import struct
 from pathlib import Path
+import tempfile
 import threading
 import types
 import unittest
@@ -140,6 +141,21 @@ class DebugOwnerControls(unittest.TestCase):
             run(request, policy, proof),
             ([request["executor"], "policy.json", "--log-file", "native.log"], state),
         )
+        self.assertEqual(
+            run({**request, "mode": "personal-job-only"}, policy, proof),
+            ([request["executor"], "policy.json", "--log-file", "native.log"], state),
+        )
+        for invalid in (
+            {**request, "mode": None},
+            {**request, "mode": "stock-job-only"},
+            {
+                **request,
+                "mode": "personal-job-only",
+                "classification": "stock-MXC-browser-debug-request",
+            },
+        ):
+            with self.assertRaisesRegex(ValueError, "full Personal request"):
+                run(invalid, policy, proof)
         for value, body, native_proof in (
             (request, policy, {**proof, "passed": False}),
             (
@@ -162,8 +178,9 @@ class DebugOwnerControls(unittest.TestCase):
             ),
             ({**request, "environment": {"GITHUB_ACTIONS": "true"}}, policy, proof),
         ):
-            with self.assertRaises(ValueError):
-                run(value, body, native_proof)
+            for mode in ({}, {"mode": "personal-job-only"}):
+                with self.assertRaises(ValueError):
+                    run({**value, **mode}, body, native_proof)
 
     def test_native_pointer_structures_match_the_64_bit_debug_event_contract(self):
         self.assertEqual(c.sizeof(debug.ExceptionRecord), 152)
@@ -437,6 +454,7 @@ class DebugOwnerControls(unittest.TestCase):
             {"__builtins__": {}},
             {
                 "native": job,
+                "job_only": False,
                 "result": {
                     "execution": {"childClosed": closed},
                     "cleanup": {"activeProcesses": active},
@@ -649,6 +667,157 @@ class DebugOwnerControls(unittest.TestCase):
         self.assertEqual(result["execution"]["stderr"], "actual stderr")
         self.assertLess(trace.index("continued-exit-9"), trace.index("closed-process"))
         self.assertLess(clock[0], 126)
+
+    def test_personal_job_only_uses_plain_owner_and_retains_cleanup_failures(self):
+        for failure in (None, "query", "close"):
+            trace = []
+
+            class Native:
+                creation_flags = debug.owner.WindowsJob.creation_flags
+                process = job = thread = None
+                pid = 9
+                streams = []
+
+                def query(self, handle, kind, pointer, size, needed):
+                    self_test.assertEqual(handle, self.job)
+                    trace.append(("query", kind, size))
+                    if failure == "query":
+                        return 0
+                    info_type = c.c_uint32 if kind == 4 else debug.owner.ExtendedLimits
+                    self_test.assertEqual(size, c.sizeof(info_type))
+                    info = c.cast(pointer, c.POINTER(info_type)).contents
+                    if kind == 4:
+                        info.value = 0
+                    else:
+                        info.basic.flags = 0x2000
+                    c.cast(needed, c.POINTER(c.c_uint32))[0] = size
+                    return 1
+
+                def create_job(self):
+                    self.job = 1
+                    self.kernel = types.SimpleNamespace(
+                        QueryInformationJobObject=self.query
+                    )
+
+                def start(self, *_args):
+                    trace.append("start")
+                    self.process, self.thread = 2, 3
+                    self.streams = [
+                        io.BytesIO(b"full workload"),
+                        io.BytesIO(b"original failure"),
+                    ]
+
+                def assign(self):
+                    trace.append("assign")
+
+                def resume(self):
+                    trace.append("resume")
+
+                def wait(self, milliseconds):
+                    return True
+
+                def active(self):
+                    return 0
+
+                def exit_code(self):
+                    return 1
+
+                def close(self, name):
+                    trace.append("close-" + name)
+                    if failure == "close" and name == "job":
+                        raise RuntimeError("owned job close failed")
+                    setattr(self, name, None)
+
+            self_test = self
+            native = Native()
+            with tempfile.TemporaryDirectory() as directory:
+                request_path, output = (
+                    Path(directory) / "request.json",
+                    Path(directory) / "result.json",
+                )
+                request_path.write_text(
+                    json.dumps(
+                        {
+                            "classification": "personal-MXC-browser-debug-request",
+                            "mode": "personal-job-only",
+                            "nonce": "a" * 24,
+                            "policySha256": "b" * 64,
+                            "environment": {},
+                        }
+                    )
+                )
+                with (
+                    mock.patch(
+                        "sys.argv",
+                        [
+                            debug.__file__,
+                            "--request",
+                            str(request_path),
+                            "--output",
+                            str(output),
+                        ],
+                    ),
+                    mock.patch.object(
+                        debug,
+                        "os",
+                        types.SimpleNamespace(
+                            name="nt", environ={"GITHUB_ACTIONS": "true"}
+                        ),
+                    ),
+                    mock.patch.object(
+                        debug.owner, "WindowsJob", return_value=native
+                    ) as constructor,
+                    mock.patch.object(
+                        debug,
+                        "DebugJob",
+                        side_effect=AssertionError("debugger constructed"),
+                    ),
+                    mock.patch.object(
+                        debug,
+                        "validate",
+                        return_value=(["executor", "policy"], "state"),
+                    ),
+                    mock.patch.object(
+                        debug.owner, "identity", return_value={"sha256": "c" * 64}
+                    ),
+                    mock.patch.object(
+                        debug.c, "get_last_error", return_value=5, create=True
+                    ),
+                    mock.patch("sys.stdout", io.StringIO()),
+                ):
+                    self.assertEqual(debug.main(), 1 if failure == "close" else 0)
+                constructor.assert_called_once_with()
+                result = json.loads(output.read_text())
+            self.assertEqual(trace[2:5], ["start", "assign", "resume"])
+            self.assertEqual(
+                result["classification"], "owned-Personal-job-only-diagnostic"
+            )
+            self.assertFalse(result["debuggerMayChangeBehavior"])
+            self.assertFalse(result["debugEventsCollected"])
+            self.assertTrue(result["childrenClosed"])
+            self.assertEqual(result["cleanupComplete"], failure != "close")
+            self.assertEqual(result["execution"]["exitCode"], 1)
+            self.assertEqual(result["execution"]["stderr"], "original failure")
+            self.assertEqual(
+                result["captureLimits"], {"stdout": 65536, "stderr": 327680}
+            )
+            self.assertEqual(result["ownedJob"]["creationFlags"], 0x08000004)
+            for key, flags in (("uiRestrictions", 0), ("extendedLimits", 0x2000)):
+                self.assertEqual(
+                    result["ownedJob"][key]["complete"], failure != "query"
+                )
+                self.assertEqual(
+                    result["ownedJob"][key]["flags"],
+                    None if failure == "query" else flags,
+                )
+            for key in (
+                "events",
+                "eventHistory",
+                "firstUnhandledException",
+                "remainingDebugProcesses",
+                "reconciledDebugProcessExits",
+            ):
+                self.assertNotIn(key, result)
 
     def test_initial_client_data_keeps_only_five_numeric_handles(self):
         command = 'chrome.exe --type=crashpad-handler "--initial-client-data=0x10,0x20,0x30,0x40,0x50,0x123456789abc,0xabcdef,0x0"'

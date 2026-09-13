@@ -1015,6 +1015,47 @@ export function validateStockBrowserExecutor(identity: ReturnType<typeof fileIde
   return identity;
 }
 
+type PrimaryComparisonVariant =
+  | "patched-primary-debug"
+  | "patched-primary-warm"
+  | "patched-primary-job";
+
+export function primaryComparisonMetadata(variant: PrimaryComparisonVariant) {
+  const debug = variant === "patched-primary-debug";
+  const job = variant === "patched-primary-job";
+  assert(
+    ["patched-primary-debug", "patched-primary-warm", "patched-primary-job"].includes(variant),
+  );
+  return {
+    classification: debug
+      ? "canonical-Personal-primary-workload-debug-diagnostic"
+      : job
+        ? "canonical-Personal-primary-workload-job-only-diagnostic"
+        : "canonical-Personal-primary-workload-ordinary-warm-diagnostic",
+    changedDimensions: [
+      ...(debug ? ["DEBUG_PROCESS observer and owned kill-on-close Job"] : []),
+      ...(job
+        ? [
+            "owned kill-on-close Job and fixed Python Win32 launch owner with explicit std handles; DEBUG_PROCESS absent",
+          ]
+        : []),
+      ...(!debug
+        ? ["later replay order; runtime and OS cache state are not independently measured"]
+        : []),
+      "fresh owned state, controller and profile",
+    ],
+    comparisonLimits: [
+      "The original ordinary primary verdict remains authoritative; comparison success cannot qualify it.",
+      ...(job
+        ? [
+            "Job ancestry, launch owner and stdio differ together; this is not unique attribution to a job flag.",
+          ]
+        : []),
+      ...(debug ? ["Debugger attachment may change exception behavior."] : []),
+    ],
+  };
+}
+
 export async function directBrowserDiagnostic(
   primary: ReturnType<typeof personalRequest>,
   runtime: string,
@@ -1025,13 +1066,15 @@ export async function directBrowserDiagnostic(
   nonce: string,
   expectedPython: { bytes: number; sha256: string },
   command: typeof personalCommand = personalCommand,
-  executorVariant: "patched" | "stock" | "stock-debug" | "patched-primary-debug" = "patched",
+  executorVariant: "patched" | "stock" | "stock-debug" | PrimaryComparisonVariant = "patched",
   controllerPython?: string,
 ) {
-  const primaryPlan =
-    executorVariant === "patched-primary-debug"
-      ? primaryDebugRequest(primary, runtime, script, nonce)
-      : null;
+  const primaryPlan = executorVariant.startsWith("patched-primary-")
+    ? primaryDebugRequest(primary, runtime, script, nonce)
+    : null;
+  const comparison = primaryPlan
+    ? primaryComparisonMetadata(executorVariant as PrimaryComparisonVariant)
+    : null;
   const request = primaryPlan?.request ?? directBrowserRequest(primary, runtime, script, nonce);
   const debugged = executorVariant.endsWith("-debug");
   const share = request.process.cwd;
@@ -1048,9 +1091,8 @@ export async function directBrowserDiagnostic(
   };
   const record: Record<string, any> = {
     schemaVersion: 1,
-    classification: primaryPlan
-      ? "canonical-Personal-primary-workload-debug-diagnostic"
-      : "canonical-Personal-direct-Python-browser-diagnostic",
+    classification:
+      comparison?.classification ?? "canonical-Personal-direct-Python-browser-diagnostic",
     diagnosticOnly: true,
     executorVariant,
     debuggerAttached: debugged,
@@ -1060,11 +1102,8 @@ export async function directBrowserDiagnostic(
       : [],
     compatibilityLauncherUsed: primaryPlan !== null,
     dllAbsenceIndependentlyVerified: false,
-    changedDimensions: primaryPlan
-      ? [
-          "DEBUG_PROCESS observer and owned kill-on-close Job",
-          "fresh owned state, controller and profile",
-        ]
+    changedDimensions: comparison
+      ? comparison.changedDimensions
       : [
           "compatibility launcher omitted",
           "intermediate Node controller omitted",
@@ -1074,10 +1113,8 @@ export async function directBrowserDiagnostic(
             ? ["DEBUG_PROCESS observer and owned kill-on-close Job"]
             : []),
         ],
-    comparisonLimits: primaryPlan
-      ? [
-          "Debugger attachment may change exception behavior; the normal primary verdict remains authoritative.",
-        ]
+    comparisonLimits: comparison
+      ? comparison.comparisonLimits
       : [
           "Direct Python also omits the intermediate Node controller and concurrent sibling probes.",
           "Success does not uniquely attribute the primary failure to DLL injection.",
@@ -1199,6 +1236,7 @@ export async function directBrowserDiagnostic(
       assert.equal(workload.nonce, nonce);
       assert.equal(workload.components?.length, 4);
       record.workload = workload;
+      record.desktopJobMask = validateHermesDesktopMask(execution.stderr);
       if (workload.passed === true)
         validateBrowserUseLaunch(
           workload.components.find((row: any) => row.component === "browser")?.result
@@ -1278,10 +1316,24 @@ export async function directBrowserDiagnostic(
 
 export function stockDebugCompletion(record: any, request: any, supervisorClosed: boolean) {
   const primary = request.classification === "personal-MXC-browser-debug-request";
+  const jobOnly = request.mode === "personal-job-only";
+  assert(request.mode === undefined || jobOnly);
+  if (jobOnly) {
+    assert.equal(primary, true);
+    assert.equal(record.mode, "personal-job-only");
+    assert.equal(record.debuggerMayChangeBehavior, false);
+    assert.equal(record.debugEventsCollected, false);
+    assert.equal(record.events, undefined);
+    assert.equal(record.remainingDebugProcesses, undefined);
+  }
   assert.equal(record.schemaVersion, 1);
   assert.equal(
     record.classification,
-    primary ? "personal-MXC-browser-debug-result" : "stock-MXC-browser-debug-result",
+    jobOnly
+      ? "owned-Personal-job-only-diagnostic"
+      : primary
+        ? "personal-MXC-browser-debug-result"
+        : "stock-MXC-browser-debug-result",
   );
   assert.equal(record.diagnosticOnly, true);
   assert.equal(record.canonicalQualification, false);
@@ -1303,9 +1355,26 @@ export function stockDebugCompletion(record: any, request: any, supervisorClosed
     record.cleanup?.activeProcesses === 0 &&
     Array.isArray(record.cleanup?.errors) &&
     record.cleanup.errors.length === 0 &&
-    Array.isArray(record.remainingDebugProcesses) &&
-    record.remainingDebugProcesses.length === 0;
+    (jobOnly ||
+      (Array.isArray(record.remainingDebugProcesses) &&
+        record.remainingDebugProcesses.length === 0));
   return closed;
+}
+
+export function validateJobOnlyConfiguration(record: any) {
+  assert.equal(record.creationFlags, 0x08000004);
+  assert.equal(record.queryOnly, true);
+  for (const [key, informationClass, flags] of [
+    ["uiRestrictions", 4, 0],
+    ["extendedLimits", 9, 0x2000],
+  ] as const) {
+    assert.equal(record[key].informationClass, informationClass);
+    assert.equal(record[key].querySucceeded, true);
+    assert.equal(record[key].complete, true);
+    assert.equal(record[key].win32Error, 0);
+    assert.equal(record[key].flags, flags);
+  }
+  return record;
 }
 
 function stockDebugCommand(
@@ -1313,7 +1382,7 @@ function stockDebugCommand(
   runtime: string,
   probe: string,
   nonce: string,
-  primary?: { nativeRoot: string; proofFile: string },
+  primary?: { nativeRoot: string; proofFile: string; mode?: "personal-job-only" },
 ): typeof personalCommand {
   return async (executable, args, environment, cwd, timeout) => {
     // The existing direct-browser owner still owns profile deletion/state cleanup.
@@ -1352,6 +1421,7 @@ function stockDebugCommand(
           )
         : probe,
       nonce,
+      ...(primary?.mode ? { mode: primary.mode } : {}),
       ...(primary
         ? {
             executorIdentity: fileIdentity(executable),
@@ -1360,8 +1430,10 @@ function stockDebugCommand(
           }
         : {}),
     };
-    const requestFile = path.join(directory, "debug-owner-request.json");
-    const resultFile = path.join(directory, "debug-owner-result.json");
+    const jobOnly = primary?.mode === "personal-job-only";
+    const prefix = jobOnly ? "job-owner" : "debug-owner";
+    const requestFile = path.join(directory, prefix + "-request.json");
+    const resultFile = path.join(directory, prefix + "-result.json");
     fs.writeFileSync(requestFile, JSON.stringify(request, null, 2) + "\n", { flag: "wx" });
     const identity = fileIdentity(requestFile);
     const supervisor = await personalCommand(
@@ -1372,7 +1444,7 @@ function stockDebugCommand(
       135_000,
     );
     fs.writeFileSync(
-      path.join(directory, "debug-owner-supervisor.json"),
+      path.join(directory, prefix + "-supervisor.json"),
       JSON.stringify(
         {
           schemaVersion: 1,
@@ -1389,6 +1461,14 @@ function stockDebugCommand(
     const receipt = receiptDocument(resultFile);
     assert.equal(receipt.value.requestSha256, identity.sha256);
     const childClosed = stockDebugCompletion(receipt.value, request, supervisor.childClosed);
+    let configurationError: Record<string, unknown> | null = null;
+    if (jobOnly) {
+      try {
+        validateJobOnlyConfiguration(receipt.value.ownedJob);
+      } catch (error) {
+        configurationError = errorDetail(error);
+      }
+    }
     const native = receipt.value.execution;
     assert.equal(native.executable, executable);
     assert.deepEqual(native.args, args);
@@ -1400,14 +1480,24 @@ function stockDebugCommand(
       childClosed,
       timedOut: native.timedOut || supervisor.timedOut,
       outputExceeded: native.outputExceeded || supervisor.outputExceeded,
-      error: native.error ?? supervisor.error,
+      error: native.error ?? supervisor.error ?? configurationError,
       nativeStderr: "",
       nativeStderrBytes: 0,
       nativeStderrSha256: "",
       nativeRecordCount: 0,
       nativeOutputExceeded: false,
       nativeParseErrors: [],
-      debugOwner: { ownerInputs, requestIdentity: identity, receipt, supervisor },
+      ...(jobOnly
+        ? {
+            jobOwner: {
+              ownerInputs,
+              requestIdentity: identity,
+              receipt,
+              supervisor,
+              configurationError,
+            },
+          }
+        : { debugOwner: { ownerInputs, requestIdentity: identity, receipt, supervisor } }),
     };
   };
 }
@@ -1468,7 +1558,7 @@ export function hostBrowserCompletion(record: any, request: any, supervisorClose
   return { childrenClosed, cleanupComplete };
 }
 
-async function hostBrowserDiagnostic(
+export async function hostBrowserDiagnostic(
   primary: ReturnType<typeof personalRequest>,
   runtime: string,
   script: string,
@@ -1944,7 +2034,7 @@ async function main() {
     failure = error;
   } finally {
     receipt.supplementalDiagnosticDisposition = failure
-      ? "primary failed; host, primary-debug and stock-debug comparisons only"
+      ? "primary failed; ordinary warm replay then owned-job replay without debugger"
       : "primary passed; supplemental comparisons skipped";
     if (
       failure &&
@@ -1959,55 +2049,34 @@ async function main() {
         const python = (receipt.derivedRuntime as any).criticalFiles.find(
           (file: any) => file.path === "hermes-agent/venv/Scripts/python.exe",
         );
-        for (const key of ["directBrowserDiagnostic", "stockBrowserDiagnostic"])
+        for (const key of [
+          "directBrowserDiagnostic",
+          "stockBrowserDiagnostic",
+          "hostBrowserDiagnostic",
+          "primaryDebugBrowserDiagnostic",
+          "stockDebugBrowserDiagnostic",
+        ])
           receipt[key] = {
             diagnosticOnly: true,
-            skipped:
-              "Unchanged direct-Python comparison omitted; retained prior9675 evidence remains separate.",
-          };
-        // Run the independent host comparison before the debugger can reach
-        // its history bound. The same closure gate still owns every successor.
-        if (browserDiagnosticChildrenClosed) {
-          const host = await hostBrowserDiagnostic(
-            request,
-            runtime,
-            path.join(launcher, "probe-personal-python.py"),
-            hostControllerPython,
-            environment,
-            path.join(output, "browser-host-diagnostic"),
-            python,
-          );
-          receipt.hostBrowserDiagnostic = host;
-          browserDiagnosticChildrenClosed = host.childrenClosed;
-          cleanup.browserDiagnosticComplete &&= host.cleanupComplete;
-          if (!host.cleanupComplete)
-            errors.push({
-              browserDiagnostic: "host",
-              error: host.error,
-              cleanup: host.receipt?.value?.cleanup,
-            });
-        } else {
-          receipt.hostBrowserDiagnostic = {
-            diagnosticOnly: true,
+            executedThisRun: false,
             canonicalQualification: false,
-            skipped: "A previous diagnostic child did not close.",
+            skipped:
+              "Superseded comparison retained in historical a822 evidence; not repeated in this run.",
+            historicalEvidence: {
+              sourceRevision: "a8227a9b846b4576a1942e572717a78b86ec1c05",
+              runId: 34733992806,
+              artifactId: 10310775596,
+              artifactBytes: 3754349,
+              artifactSha256: "c8e48ef72f5d0f9a29d782d33b0d2063e137f9fed14adec3ffde39c489660810",
+            },
           };
-        }
-        for (const [key, directory, executor, hostEnvironment, variant] of [
+        for (const [key, directory, variant] of [
           [
-            "primaryDebugBrowserDiagnostic",
-            "browser-primary-debug-diagnostic",
-            mxc,
-            environment,
-            "patched-primary-debug",
+            "ordinaryWarmReplayDiagnostic",
+            "browser-ordinary-warm-diagnostic",
+            "patched-primary-warm",
           ],
-          [
-            "stockDebugBrowserDiagnostic",
-            "browser-stock-debug-diagnostic",
-            stockMxc,
-            stockBrowserEnvironment(environment),
-            "stock-debug",
-          ],
+          ["jobOnlyReplayDiagnostic", "browser-job-only-diagnostic", "patched-primary-job"],
         ] as const) {
           if (!browserDiagnosticChildrenClosed) {
             receipt[key] = {
@@ -2019,23 +2088,20 @@ async function main() {
           }
           const diagnosticNonce = randomBytes(12).toString("hex");
           const probe = path.join(launcher, "probe-personal-python.py");
-          const command = variant.endsWith("-debug")
-            ? stockDebugCommand(
-                hostControllerPython,
-                runtime,
-                probe,
-                diagnosticNonce,
-                variant === "patched-primary-debug"
-                  ? { nativeRoot: currentNativeRoot, proofFile: compatibilityProof }
-                  : undefined,
-              )
-            : personalCommand;
+          const command =
+            variant === "patched-primary-job"
+              ? stockDebugCommand(hostControllerPython, runtime, probe, diagnosticNonce, {
+                  nativeRoot: currentNativeRoot,
+                  proofFile: compatibilityProof,
+                  mode: "personal-job-only",
+                })
+              : personalCommand;
           const diagnostic = await directBrowserDiagnostic(
             request,
             runtime,
             probe,
-            executor,
-            hostEnvironment,
+            mxc,
+            environment,
             path.join(output, directory),
             diagnosticNonce,
             python,

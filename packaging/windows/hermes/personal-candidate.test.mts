@@ -21,6 +21,8 @@ import {
   validateBrowserUseLaunch,
   hostBrowserCompletion,
   stockDebugCompletion,
+  validateJobOnlyConfiguration,
+  primaryComparisonMetadata,
   completedPersonalReplayPin,
   validatePersonalReplayInput,
   verifyPersonalReplayInventory,
@@ -590,6 +592,54 @@ test("stock debugger completion requires exact request and executor identity plu
     nativeProofSha256: primaryRequest.nativeProof.sha256,
   };
   assert.equal(stockDebugCompletion(primaryRecord, primaryRequest, true), true);
+  const jobRequest = { ...primaryRequest, mode: "personal-job-only" };
+  const jobRecord = {
+    ...primaryRecord,
+    remainingDebugProcesses: undefined,
+    classification: "owned-Personal-job-only-diagnostic",
+    mode: "personal-job-only",
+    debuggerMayChangeBehavior: false,
+    debugEventsCollected: false,
+  };
+  assert.equal(stockDebugCompletion(jobRecord, jobRequest, true), true);
+  assert.equal(stockDebugCompletion(jobRecord, jobRequest, false), false);
+  assert.equal(
+    stockDebugCompletion(
+      { ...jobRecord, cleanup: { ...jobRecord.cleanup, activeProcesses: 1 } },
+      jobRequest,
+      true,
+    ),
+    false,
+  );
+  assert.throws(() =>
+    stockDebugCompletion({ ...jobRecord, debugEventsCollected: true }, jobRequest, true),
+  );
+  const ownedJob = {
+    creationFlags: 0x08000004,
+    queryOnly: true,
+    uiRestrictions: {
+      informationClass: 4,
+      querySucceeded: true,
+      complete: true,
+      win32Error: 0,
+      flags: 0,
+    },
+    extendedLimits: {
+      informationClass: 9,
+      querySucceeded: true,
+      complete: true,
+      win32Error: 0,
+      flags: 0x2000,
+    },
+  };
+  assert.equal(validateJobOnlyConfiguration(ownedJob), ownedJob);
+  assert.throws(() => validateJobOnlyConfiguration({ ...ownedJob, creationFlags: 0x08000005 }));
+  assert.throws(() =>
+    validateJobOnlyConfiguration({
+      ...ownedJob,
+      uiRestrictions: { ...ownedJob.uiRestrictions, querySucceeded: false, flags: null },
+    }),
+  );
   assert.throws(() =>
     stockDebugCompletion(
       { ...primaryRecord, executorIdentityAfter: record.executorIdentityAfter },
@@ -635,6 +685,26 @@ test("stock debugger completion requires exact request and executor identity plu
       true,
     ),
   );
+});
+
+test("ordinary warm and job-only comparisons label additional launch dimensions without qualification", () => {
+  const warm = primaryComparisonMetadata("patched-primary-warm");
+  const job = primaryComparisonMetadata("patched-primary-job");
+  assert.equal(warm.classification, "canonical-Personal-primary-workload-ordinary-warm-diagnostic");
+  assert(!warm.changedDimensions.some((value) => value.includes("Job")));
+  assert(job.changedDimensions.some((value) => value.includes("DEBUG_PROCESS absent")));
+  for (const metadata of [warm, job]) {
+    assert(
+      metadata.changedDimensions.some((value) =>
+        value.includes("cache state are not independently measured"),
+      ),
+    );
+    assert(
+      metadata.comparisonLimits.some((value) =>
+        value.includes("original ordinary primary verdict remains authoritative"),
+      ),
+    );
+  }
 });
 
 function browserControl(
