@@ -185,6 +185,19 @@ export function buildOpenShellGatewayUserServiceDiagnosticsScript(): string {
   ].join("\n");
 }
 
+export function buildNemoClawGatewayRecoveryScript(): string {
+  return [
+    '"use strict";',
+    'const { startGatewayForRecovery } = require("./dist/lib/onboard");',
+    "Promise.resolve()",
+    '  .then(() => startGatewayForRecovery({ gatewayName: "nemoclaw" }))',
+    "  .catch((error) => {",
+    "    console.error(error && error.stack ? error.stack : String(error));",
+    "    process.exit(1);",
+    "  });",
+  ].join("\n");
+}
+
 export type LifecycleProfile = "post-reboot-recovery" | "dcode-rebuild-invalid-credential";
 
 export interface LifecycleCleanup {
@@ -719,7 +732,9 @@ export class LifecyclePhaseFixture {
       this.stoppedOpenShellGatewayUserService = selection;
       this.cleanup.add(`lifecycle.gateway-user-service-restart:${selection}`, async () => {
         if (this.stoppedOpenShellGatewayUserService !== selection) return;
-        await this.startOpenShellGatewayUserService({ requireAvailable: true });
+        await this.startOpenShellGatewayUserService({
+          requireAvailable: true,
+        });
       });
       return true;
     }
@@ -738,16 +753,20 @@ export class LifecyclePhaseFixture {
       requireAvailable: options.requireUserService,
     });
     if (userServiceStart) return userServiceStart;
-    if (!options.sandboxName) {
-      throw new Error(
-        `A sandbox name is required to recover the stopped ${previousRuntime?.kind ?? "unknown"} gateway runtime.`,
-      );
-    }
-    return await this.host.nemoclaw([options.sandboxName, "recover"], {
-      artifactName: `lifecycle-gateway-recover-through-nemoclaw-recover-${options.sandboxName}`,
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: 120_000,
-    });
+    const result = await this.host.command(
+      process.execPath,
+      ["-e", buildNemoClawGatewayRecoveryScript()],
+      {
+        artifactName: "lifecycle-gateway-recover-through-nemoclaw-product-start",
+        env: buildAvailabilityProbeEnv(),
+        timeoutMs: 120_000,
+      },
+    );
+    assertExitZero(
+      result,
+      `recover stopped ${previousRuntime?.kind ?? "unknown"} gateway through NemoClaw product start`,
+    );
+    return result;
   }
 
   private async startOpenShellGatewayUserService(options: {
@@ -794,7 +813,11 @@ export class LifecyclePhaseFixture {
   }
 
   async restartGatewayRuntime(
-    options: { delayMs?: number; requireUserService?: boolean; sandboxName?: string } = {},
+    options: {
+      delayMs?: number;
+      requireUserService?: boolean;
+      sandboxName?: string;
+    } = {},
   ): Promise<HostGatewayRuntime | null> {
     const previousRuntime = await this.stopGatewayRuntime();
     if (this.gateway) {

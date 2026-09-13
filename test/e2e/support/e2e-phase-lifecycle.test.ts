@@ -156,11 +156,17 @@ describe("LifecyclePhaseFixture.trackInstallerGatewayUserService", () => {
     process.env.XDG_CONFIG_HOME = config;
     process.env.PATH = `${root}:${previousPath ?? ""}`;
     fs.mkdirSync(path.dirname(unit), { recursive: true });
-    fs.writeFileSync(path.join(root, "systemctl"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+    fs.writeFileSync(path.join(root, "systemctl"), "#!/bin/sh\nexit 0\n", {
+      mode: 0o755,
+    });
     runner = new FakeRunner();
     cleanup = new FakeCleanup();
     runner.run = async (command, options) => {
-      runner.calls.push({ command: command.command, args: [...command.args], options });
+      runner.calls.push({
+        command: command.command,
+        args: [...command.args],
+        options,
+      });
       const result = spawnSync(command.command, ["-c", command.args[1]!], {
         env: options?.env,
         encoding: "utf8",
@@ -527,7 +533,7 @@ describe("LifecyclePhaseFixture rebuild helpers", () => {
 });
 
 describe("LifecyclePhaseFixture gateway runtime restart helpers", () => {
-  it("restores a PID gateway before sandbox recovery when the user service is inactive (#11640)", async () => {
+  it("restores a PID gateway through the product start path when the user service is inactive (#11640)", async () => {
     const runner = new FakeRunner();
     runner.enqueue(shellResult(0, "12345\n")); // resolveHostRuntime pid probe
     runner.enqueue(shellResult(0)); // forward stop
@@ -538,7 +544,7 @@ describe("LifecyclePhaseFixture gateway runtime restart helpers", () => {
     runner.enqueue(shellResult(1, "")); // expectHostRuntimeStopped pid probe
     runner.enqueue(shellResult(0, "")); // expectHostRuntimeStopped container probe
     runner.enqueue(shellResult(0)); // lifecycle-gateway-stopped true artifact
-    runner.enqueue(shellResult(0, "gateway recovered\n")); // start through sandbox recovery
+    runner.enqueue(shellResult(0, "gateway recovered\n")); // built product gateway start
     runner.enqueue(shellResult(0, "Connected to nemoclaw\n")); // waitForGatewayConnected
     const cleanup = new FakeCleanup();
     const host = new HostCliClient(runner);
@@ -560,7 +566,9 @@ describe("LifecyclePhaseFixture gateway runtime restart helpers", () => {
       expect.stringContaining("sh -lc pid_file="),
       "docker container ps --format {{.ID}}\t{{.Names}}",
       "true ",
-      "nemoclaw e2e-survival recover",
+      expect.stringContaining(
+        `${process.execPath} -e "use strict";\nconst { startGatewayForRecovery }`,
+      ),
       "openshell status",
     ]);
   });
@@ -678,7 +686,7 @@ describe("LifecyclePhaseFixture gateway runtime restart helpers", () => {
     expect(runner.calls).toHaveLength(2);
   });
 
-  it("restores a container runtime through sandbox-specific recovery", async () => {
+  it("restores a container runtime through the built NemoClaw product start path", async () => {
     const runner = new FakeRunner();
     runner.enqueue(shellResult(0, "gateway recovered\n"));
     const cleanup = new FakeCleanup();
@@ -690,9 +698,15 @@ describe("LifecyclePhaseFixture gateway runtime restart helpers", () => {
       ),
     ).resolves.toMatchObject({ exitCode: 0 });
 
-    expect(runner.calls.map((call) => `${call.command} ${call.args.join(" ")}`)).toEqual([
-      "nemoclaw e2e-survival recover",
+    expect(runner.calls).toHaveLength(1);
+    expect(runner.calls[0]?.command).toBe(process.execPath);
+    expect(runner.calls[0]?.args).toEqual([
+      "-e",
+      expect.stringContaining('startGatewayForRecovery({ gatewayName: "nemoclaw" })'),
     ]);
+    expect(runner.calls[0]?.options?.artifactName).toBe(
+      "lifecycle-gateway-recover-through-nemoclaw-product-start",
+    );
   });
 
   it("restarts the stopped user service before sandbox recovery", async () => {
@@ -714,13 +728,16 @@ describe("LifecyclePhaseFixture gateway runtime restart helpers", () => {
     ]);
   });
 
-  it("fails closed without a sandbox recovery target when no user service owns the gateway", async () => {
+  it("fails closed when the built NemoClaw product start path cannot recover the gateway", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue(shellResult(1, "gateway recovery failed"));
+
     await expect(
-      fixture(new FakeRunner(), new FakeCleanup()).startGatewayRuntime({
+      fixture(runner, new FakeCleanup()).startGatewayRuntime({
         kind: "pid",
         id: "12345",
       }),
-    ).rejects.toThrow(/sandbox name is required to recover the stopped pid gateway runtime/i);
+    ).rejects.toThrow(/recover stopped pid gateway.*gateway recovery failed/i);
   });
 });
 
