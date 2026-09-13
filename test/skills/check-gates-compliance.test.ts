@@ -3,7 +3,12 @@
 
 import { describe, expect, it } from "vitest";
 
-import { REQUIRED_CHECK_NAMES, runComparatorGate, runGate } from "./check-gates-test-fixtures.ts";
+import {
+  REQUIRED_CHECK_NAMES,
+  runComparatorGate,
+  runGate,
+  successfulRequiredChecks,
+} from "./check-gates-test-fixtures.ts";
 
 describe("maintainer merge-gate contributor compliance", () => {
   it("excludes public docs but keeps inference source behind the risky-code test gate (#9934)", () => {
@@ -848,14 +853,34 @@ describe("maintainer PR comparator contributor compliance", () => {
     const fixture = {
       body: "Signed-off-by: Example User <user@example.com>",
       verified: true,
-      checkConclusions: { "E2E / PR Gate": "FAILURE" },
+      statusChecks: [
+        ...successfulRequiredChecks(),
+        {
+          __typename: "CheckRun",
+          name: "E2E / PR Gate",
+          workflowName: "E2E / PR Gate Controller",
+          detailsUrl: "https://github.com/NVIDIA/NemoClaw/runs/8000",
+          startedAt: "2026-01-01T00:01:30Z",
+          status: "COMPLETED",
+          conclusion: "FAILURE",
+        },
+      ],
     };
 
     expect(JSON.parse(runGate(fixture).stdout)).toMatchObject({
       allPass: true,
       gates: { ci: { pass: true } },
     });
-    expect(JSON.parse(runComparatorGate(fixture).stdout).gates.ci_green_sha).toBe(true);
+    expect(
+      JSON.parse(
+        runComparatorGate({
+          body: fixture.body,
+          verified: fixture.verified,
+          checkNames: [...REQUIRED_CHECK_NAMES, "E2E / PR Gate"],
+          checkConclusions: { "E2E / PR Gate": "FAILURE" },
+        }).stdout,
+      ).gates.ci_green_sha,
+    ).toBe(true);
   });
 
   it.each(["ACTION_REQUIRED", "STARTUP_FAILURE", "STALE"])(
