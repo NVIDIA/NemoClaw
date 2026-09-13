@@ -1486,7 +1486,9 @@ describe("Hermes Portable connect composition", () => {
 
     await expect(harness.connectSandbox("alpha")).rejects.toThrow("process.exit(0)");
 
-    expect(harness.forwardServiceOwnerSpy).toHaveBeenCalledWith(expectedTarget);
+    expect(harness.forwardServiceOwnerSpy).toHaveBeenCalledWith(expectedTarget, {
+      remainingMs: expect.any(Function),
+    });
     expect(
       harness.runOpenshellSpy.mock.calls.some(
         ([args]) => Array.isArray(args) && args[0] === "forward",

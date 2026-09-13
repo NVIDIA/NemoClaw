@@ -1726,6 +1726,8 @@ export function recoverHermesPortableSandboxLifecycle(
         );
       }
       if (initialHealth === "ready") {
+        commandBudget(1);
+        primaryFailureClass = "final-authority";
         timing.increment("qualification");
         timing.measure("finalQualification", () =>
           qualify(
