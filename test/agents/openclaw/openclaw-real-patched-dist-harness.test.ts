@@ -443,6 +443,16 @@ describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS !== "1")(
           `Patch 6 applied to OpenClaw ${version}`,
           "Patch 6",
         );
+        requireRuntimeIncludes(
+          dockerPatch.stdout,
+          `OpenClaw ${version} delegates install-safe-path to @openclaw/fs-safe/advanced; Patch 3a not needed`,
+          "Patch 3a",
+        );
+        requireRuntimeIncludes(
+          dockerPatch.stdout,
+          `OpenClaw ${version} install-package-dir already uses stat plus realpath stability; Patch 3b not needed`,
+          "Patch 3b",
+        );
 
         [
           "nemoclaw: env-gated bypass",

@@ -1033,27 +1033,46 @@ RUN set -eu; \
         fi; \
     fi; \
     # --- Patch 3: follow symlinks in plugin-install path checks (#2203) --- \
-    # OpenClaw's install-safe-path and install-package-dir reject symlinked \
-    # directories via lstat. Changing lstat → stat in these two modules lets \
-    # symlinks resolve; the real security gates (realpath + isPathInside \
-    # containment) remain intact — a symlink escaping the base tree is still caught. \
-    # Scoped to install-safe-path + install-package-dir only. \
+    # Legacy OpenClaw install-safe-path and install-package-dir layouts reject \
+    # symlinked directories via lstat. Change those exact shapes to stat while \
+    # retaining realpath containment. OpenClaw 2026.9.1 delegates safe-path \
+    # enforcement to @openclaw/fs-safe and already uses stat plus realpath in \
+    # install-package-dir; accept only those reviewed replacement shapes. \
     isp_file="$(grep -RIlE --include='*.js' 'const baseLstat = await fs\.(lstat|stat)\(baseDir\)' "$OC_DIST/install-safe-path-"*.js || true)"; \
-    test -n "$isp_file" || { echo "ERROR: install-safe-path baseLstat pattern not found" >&2; exit 1; }; \
-    sed -i 's/const baseLstat = await fs\.lstat(baseDir)/const baseLstat = await fs.stat(baseDir)/' "$isp_file"; \
-    if grep -q 'const baseLstat = await fs\.lstat(baseDir)' "$isp_file"; then echo "ERROR: Patch 3a (install-safe-path) left baseLstat lstat call" >&2; exit 1; fi; \
-    if ! grep -q 'const baseLstat = await fs\.stat(baseDir)' "$isp_file"; then echo "ERROR: Patch 3a (install-safe-path) did not find patched baseLstat stat call" >&2; exit 1; fi; \
+    if [ -n "$isp_file" ]; then \
+        sed -i 's/const baseLstat = await fs\.lstat(baseDir)/const baseLstat = await fs.stat(baseDir)/' "$isp_file"; \
+        if grep -q 'const baseLstat = await fs\.lstat(baseDir)' "$isp_file"; then echo "ERROR: Patch 3a (install-safe-path) left baseLstat lstat call" >&2; exit 1; fi; \
+        if ! grep -q 'const baseLstat = await fs\.stat(baseDir)' "$isp_file"; then echo "ERROR: Patch 3a (install-safe-path) did not find patched baseLstat stat call" >&2; exit 1; fi; \
+    else \
+        isp_delegate_file="$(grep -RIlF --include='*.js' 'from "@openclaw/fs-safe/advanced"' "$OC_DIST/install-safe-path-"*.js || true)"; \
+        isp_delegate_count="$(printf '%s\n' "$isp_delegate_file" | awk 'NF { count++ } END { print count + 0 }')"; \
+        if [ "$OC_VERSION" != "2026.9.1" ] || [ "$isp_delegate_count" -ne 1 ]; then \
+            patch_fail "Patch 3a target missing without the single reviewed 2026.9.1 @openclaw/fs-safe delegation"; \
+        fi; \
+        if ! grep -Fq 'assertCanonicalPathWithinBase' "$isp_delegate_file" \
+            || ! grep -Fq 'resolveSafeInstallDir' "$isp_delegate_file"; then \
+            patch_fail "Patch 3a reviewed @openclaw/fs-safe delegation is incomplete"; \
+        fi; \
+        if grep -Fq 'lstat(' "$isp_delegate_file"; then \
+            patch_fail "Patch 3a reviewed @openclaw/fs-safe delegation still performs a local lstat"; \
+        fi; \
+        echo "INFO: OpenClaw ${OC_VERSION} delegates install-safe-path to @openclaw/fs-safe/advanced; Patch 3a not needed"; \
+    fi; \
     ipd_file="$(grep -RIlE --include='*.js' 'assertInstallBaseStable' "$OC_DIST/install-package-dir-"*.js || true)"; \
     test -n "$ipd_file" || { echo "ERROR: install-package-dir assertInstallBaseStable not found" >&2; exit 1; }; \
-	    if grep -q 'const baseLstat = await fs\.lstat(params\.installBaseDir)' "$ipd_file"; then \
-	        sed -i 's/const baseLstat = await fs\.lstat(params\.installBaseDir)/const baseLstat = await fs.stat(params.installBaseDir)/' "$ipd_file"; \
-	        sed -i 's/baseLstat\.isSymbolicLink()/false \/* nemoclaw: symlink check disabled, realpath guards containment *\//' "$ipd_file"; \
-	        if grep -q 'fs\.lstat(params\.installBaseDir)' "$ipd_file"; then echo "ERROR: Patch 3b (install-package-dir) left lstat in assertInstallBaseStable" >&2; exit 1; fi; \
-	        if ! grep -q 'const baseLstat = await fs\.stat(params\.installBaseDir)' "$ipd_file" && ! grep -q 'await fs\.stat(params\.installBaseDir)).isDirectory()' "$ipd_file"; then echo "ERROR: Patch 3b (install-package-dir) did not find patched/safe installBaseDir stat call" >&2; exit 1; fi; \
-	        if grep -q 'baseLstat\.isSymbolicLink()' "$ipd_file"; then echo "ERROR: Patch 3b (install-package-dir) left baseLstat symlink check" >&2; exit 1; fi; \
-	    else \
-	        grep -q 'await fs\.realpath(params\.installBaseDir) !== params\.expectedRealPath' "$ipd_file" || { echo "ERROR: install-package-dir lacks expected realpath stability guard" >&2; exit 1; }; \
-	    fi; \
+    if grep -q 'const baseLstat = await fs\.lstat(params\.installBaseDir)' "$ipd_file"; then \
+        sed -i 's/const baseLstat = await fs\.lstat(params\.installBaseDir)/const baseLstat = await fs.stat(params.installBaseDir)/' "$ipd_file"; \
+        sed -i 's/baseLstat\.isSymbolicLink()/false \/* nemoclaw: symlink check disabled, realpath guards containment *\//' "$ipd_file"; \
+        if grep -q 'fs\.lstat(params\.installBaseDir)' "$ipd_file"; then echo "ERROR: Patch 3b (install-package-dir) left lstat in assertInstallBaseStable" >&2; exit 1; fi; \
+        if ! grep -q 'const baseLstat = await fs\.stat(params\.installBaseDir)' "$ipd_file" && ! grep -q 'await fs\.stat(params\.installBaseDir)).isDirectory()' "$ipd_file"; then echo "ERROR: Patch 3b (install-package-dir) did not find patched/safe installBaseDir stat call" >&2; exit 1; fi; \
+        if grep -q 'baseLstat\.isSymbolicLink()' "$ipd_file"; then echo "ERROR: Patch 3b (install-package-dir) left baseLstat symlink check" >&2; exit 1; fi; \
+    else \
+        grep -Fq 'if (!(await fs.stat(params.installBaseDir)).isDirectory())' "$ipd_file" \
+            || patch_fail "Patch 3b current install-package-dir lacks the reviewed directory stat guard"; \
+        grep -Fq 'await fs.realpath(params.installBaseDir) !== params.expectedRealPath' "$ipd_file" \
+            || patch_fail "Patch 3b current install-package-dir lacks the reviewed realpath stability guard"; \
+        echo "INFO: OpenClaw ${OC_VERSION} install-package-dir already uses stat plus realpath stability; Patch 3b not needed"; \
+    fi; \
     # --- Patch 5: bump default WS handshake timeout 10s -> 60s (#2484) --- \
     # OpenClaw's WS connect handshake has a hard-coded 10s timeout on both \
     # client and server. Server-side connect-handler processing can exceed \
