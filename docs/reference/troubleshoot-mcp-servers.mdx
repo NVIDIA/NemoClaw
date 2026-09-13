@@ -14,17 +14,20 @@ Use the reported status or lifecycle error to choose the matching remediation.
 ## Credential Resolution Is Unknown
 
 If `mcp status <server>` reports identical placeholder and control rejections, first confirm the stored credential is valid.
-To replace the credential, export the recorded environment variable and run restart:
+Restart validates and reloads the current provider-backed registration; it never consumes an exported replacement credential.
+To replace the credential, follow the conservative remove and re-add procedure:
 
 ```bash
 export <CREDENTIAL_ENV>='replacement-value'
-$$nemoclaw <sandbox> mcp restart <server>
+$$nemoclaw <sandbox> mcp remove <server>
+# Confirm no sandbox uses the retained provider named by remove, then delete it.
+openshell provider delete <PROVIDER_NAME>
+$$nemoclaw <sandbox> mcp add <server> --url <MCP_URL> --env <CREDENTIAL_ENV>
 unset <CREDENTIAL_ENV>
 ```
 
-Without an exported replacement, restart does not rotate the credential.
-It verifies the existing stored credential and reuses it only when the credential-resolution probe succeeds.
-A failed or inconclusive probe exits before policy, provider, or adapter changes.
+Preserve the original denied-tool selectors and `--trusted-private-host` declaration on the re-add.
+See [Rotate a Credential](../manage-sandboxes/mcp-servers/manage-mcp-servers#rotate-a-credential) for the complete provider-cleanup sequence.
 
 For identical HTTP 401 or 403 responses, a confirmed-valid credential means the OpenShell gateway on this host is not rewriting the recorded resolver placeholder on egress.
 Every agent request receives the same authentication failure even when provider, attachment, readiness, and adapter checks report healthy.
@@ -43,16 +46,16 @@ Inspect the OpenShell gateway's ephemeral CA generation and CA-file initializati
 
 ## Provider Is Missing During Restart
 
-If restart reports a missing provider and the original credential is not registered in OpenShell, export the same variable name used during add and retry.
+If restart reports a missing provider, remove the native registration and re-add it with the same URL, credential environment name, denied-tool selectors, and trusted-private declaration. Restart does not recreate providers.
 
 ## Provider Uses the Legacy Generic Profile
 
 If restart or rebuild reports that the provider uses the profile-less legacy `generic` type, remove that server and add it again with the recorded credential variable exported.
 OpenShell cannot bind that provider to an MCP endpoint, and NemoClaw accepts it only for cleanup.
 
-## Rebuild or Destroy Cannot Prove a Credential Handle
+## Rebuild Cannot Prove a Credential Handle
 
-If rebuild or destroy reports that it could not prove a credential handle, a fresh sandbox process did not expose the exact OpenShell credential identity required for adapter cleanup.
+If rebuild reports that it could not prove a credential handle, a fresh sandbox process did not expose the exact OpenShell credential identity required for adapter cleanup.
 NemoClaw leaves the affected adapter and every provider unchanged.
 It attempts to restore adapter entries prepared earlier in the operation and reports rollback failures.
 
@@ -63,44 +66,43 @@ $$nemoclaw <sandbox> mcp status <server> --json
 ```
 
 If status cannot reach the sandbox, repair the reported gateway condition first.
-Export the recorded environment variable, then restart the server to publish the current credential and verify endpoint authorization for its credential handle:
+Export the replacement under the same environment-variable name, then remove and re-add the server so a fresh provider binding and agent placeholder are created:
 
 ```bash
 export <CREDENTIAL_ENV>='replacement-value'
-$$nemoclaw <sandbox> mcp restart <server>
+$$nemoclaw <sandbox> mcp remove <server>
+$$nemoclaw <sandbox> mcp add <server> --url <HTTPS_MCP_URL> --env <CREDENTIAL_ENV>
 unset <CREDENTIAL_ENV>
 ```
 
 Run status again.
-An ordinary credential refresh can retain the same `s…` stable handle; restart proves current authorization and does not need to mint a different handle.
-Retry rebuild or destroy only after `provider.credentialReady` and `adapter.registered` are both `true`.
-If restart still cannot prove credential readiness, repair the reported OpenShell provider, policy, or adapter condition before retrying teardown.
+OpenShell can retain the same `s…` stable handle after a provider update; verify endpoint authorization with the named `mcp status` probe.
+Retry rebuild only after `provider.credentialReady` and `adapter.registered` are both `true`.
+If the re-add still cannot prove the credential handle, repair the reported OpenShell provider, policy, or adapter condition before retrying teardown.
 
 ## Add Transaction Is Incomplete
 
-If status reports an incomplete add transaction, rerun the original `mcp add` command with the same URL, environment-variable name, and any `--deny-tool` options.
-Re-export the value if the provider still needs to be created.
+If `mcp add` is interrupted, inspect the native source and live status first. If no native registration exists, rerun the original command with the same URL, environment-variable name, and any `--deny-tool` options. If the native registration exists, remove it and then re-add it after re-exporting the credential.
 
 To abandon the transaction, run `mcp remove <server> --force`.
-NemoClaw cleans only resources whose ownership it can prove and keeps the registry entry when residual cleanup remains.
+NemoClaw disables the native agent entry first and cleans only live resources whose ownership it can prove. It preserves the workspace provider and reports any residual policy or attachment cleanup.
 
 ## Agent MCP Capability Is Missing
 
-If add or restart reports that `mcporter`, the Hermes transaction helper, or Deep Agents managed MCP capability v2 is unavailable, rebuild the sandbox onto a current image before retrying.
-An existing Deep Agents v1 entry remains removable, destroyable, and eligible for rebuild teardown when NemoClaw can identify the registry-owned legacy entry.
-
-The rebuilt image must pass the v2 capability check before its MCP runtime is restored.
+If add or restart reports that the OpenClaw native writer, Hermes transaction helper, or Deep Agents native MCP capability v3 is unavailable, rebuild the sandbox onto a current image before retrying.
+When an older OpenClaw or Deep Agents sandbox has a legacy MCP file, preview `mcp migrate`, then use `mcp migrate --apply` to convert it. A native definition that conflicts with the legacy definition stops migration before mutation.
 
 <AgentOnly variant="deepagents">
-The rebuild installs the current projection path and reconstructs `/sandbox/.deepagents/.nemoclaw-mcp.json` from the host registry.
-Rebuild a Deep Agents sandbox, then retry the managed MCP command:
+Migration carries the legacy `.deepagents/.nemoclaw-mcp.json` entries through a normal rebuild into the native `/sandbox/.deepagents/.mcp.json` file.
+Preview and apply the migration, then retry the managed MCP command:
 
 ```bash
-nemo-deepagents <name> rebuild
+nemo-deepagents <name> mcp migrate
+nemo-deepagents <name> mcp migrate --apply
 nemo-deepagents <name> mcp add <server-name> --url <url> --env <credential-env>
 ```
 
-NemoClaw does not auto-load user-owned `/sandbox/.deepagents/.mcp.json` or project MCP files into managed configuration.
+NemoClaw preserves unrelated entries in `/sandbox/.deepagents/.mcp.json` and mutates only the named managed server.
 Use `nemo-deepagents <name> mcp ...` for servers that need OpenShell credential replacement and egress policy.
 </AgentOnly>
 
@@ -358,7 +360,7 @@ If the endpoint resolves to RFC1918, carrier-grade network address translation (
 The declared host must equal the normalized hostname from `--url`.
 NemoClaw rejects a private endpoint without that explicit declaration before provider, policy, registry, or adapter mutation.
 
-An agent-native registration path, such as OpenClaw `mcporter` run inside the sandbox, may accept a plain-HTTP or local URL, but it bypasses NemoClaw credential replacement and generated egress policy.
+An agent-native registration path, such as editing OpenClaw `openclaw.json` inside the sandbox, may accept a plain-HTTP or local URL, but it bypasses NemoClaw credential replacement and generated egress policy.
 A URL that the agent-native path accepts is therefore not registrable through managed `mcp add`.
 
 For a host-local server, keep the MCP process on loopback when practical.
