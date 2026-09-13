@@ -95,6 +95,7 @@ interface ComplianceFixture {
   body: string;
   checkConclusions?: Record<string, string>;
   checkNames?: string[];
+  checkWorkflows?: Record<string, string>;
   statusChecks?: StatusCheckFixture[];
   commitOutput?: string;
   commitAuthorLogins?: string[];
@@ -595,6 +596,7 @@ function runComparatorGate(fixture: ComparatorFixture, prNumber = "42") {
     headRefOid: fixture.headRefOid ?? "abc123",
     statusCheckRollup: (fixture.checkNames ?? REQUIRED_CHECK_NAMES).map((name) => ({
       name,
+      workflowName: fixture.checkWorkflows?.[name],
       status: "COMPLETED",
       conclusion: fixture.checkConclusions?.[name] ?? "SUCCESS",
     })),

@@ -878,9 +878,46 @@ describe("maintainer PR comparator contributor compliance", () => {
           verified: fixture.verified,
           checkNames: [...REQUIRED_CHECK_NAMES, "E2E / PR Gate"],
           checkConclusions: { "E2E / PR Gate": "FAILURE" },
+          checkWorkflows: { "E2E / PR Gate": "E2E / PR Gate Controller" },
         }).stdout,
       ).gates.ci_green_sha,
     ).toBe(true);
+  });
+
+  it.each([
+    ["E2E / PR Gate", "CI / Unexpected"],
+    ["unrelated-check", "E2E / PR Gate Controller"],
+  ])("keeps a failed check merge-relevant when only %s / %s matches", (name, workflowName) => {
+    const check = {
+      __typename: "CheckRun",
+      name,
+      workflowName,
+      detailsUrl: "https://github.com/NVIDIA/NemoClaw/runs/8001",
+      startedAt: "2026-01-01T00:01:30Z",
+      status: "COMPLETED",
+      conclusion: "FAILURE",
+    };
+    const mergeGate = runGate({
+      body: "Signed-off-by: Example User <user@example.com>",
+      verified: true,
+      statusChecks: [...successfulRequiredChecks(), check],
+    });
+    const comparator = runComparatorGate({
+      body: "Signed-off-by: Example User <user@example.com>",
+      verified: true,
+      checkNames: [...REQUIRED_CHECK_NAMES, name],
+      checkConclusions: { [name]: "FAILURE" },
+      checkWorkflows: { [name]: workflowName },
+    });
+
+    expect(JSON.parse(mergeGate.stdout)).toMatchObject({
+      allPass: false,
+      gates: { ci: { pass: false, failingChecks: [`${name}: FAILURE`] } },
+    });
+    expect(JSON.parse(comparator.stdout)).toMatchObject({
+      gates: { ci_green_sha: false },
+      details: { ci_failing_checks: [`${name}: FAILURE`] },
+    });
   });
 
   it.each(["ACTION_REQUIRED", "STARTUP_FAILURE", "STALE"])(

@@ -1229,7 +1229,7 @@ const ADVISORY_E2E_WORKFLOW_NAMES = new Set(["E2E / PR Gate Controller"]);
 // manual E2E separately, as documented in MERGE-GATE.md.
 function isAdvisoryE2eCheck(check: StatusCheck): boolean {
   return (
-    ADVISORY_E2E_CHECK_NAMES.has(check.name ?? check.context ?? "") ||
+    ADVISORY_E2E_CHECK_NAMES.has(check.name ?? check.context ?? "") &&
     ADVISORY_E2E_WORKFLOW_NAMES.has(check.workflowName ?? "")
   );
 }
