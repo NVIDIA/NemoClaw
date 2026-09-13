@@ -226,10 +226,10 @@ describe("OpenClaw Tool Search pinned-runtime validator", () => {
     expect(result.visibleToolNames).toEqual(["nemoclaw_runtime_validator_probe"]);
   });
 
-  it("selects the exact 2026.9.1 agent-tools runtime layout", async () => {
+  it("selects the exact 2026.9.1 agent-tools and local-model-lean runtime layout", async () => {
     const fixture = writeFixture({
       runtimeFileName: "agent-tools-fixture.js",
-      secondRuntimeFileName: "tool-search-fixture.js",
+      secondRuntimeFileName: "local-model-lean-fixture.js",
       secondSource: RUNTIME_FIXTURE_SOURCE,
       version: "2026.9.1",
     });

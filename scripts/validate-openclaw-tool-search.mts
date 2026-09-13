@@ -42,9 +42,9 @@ const RUNTIME_MODULE_FILE_PATTERNS = new Map<string, Readonly<Record<RuntimeFunc
     [
       "2026.9.1",
       {
-        resolveToolSearchConfig: /^tool-search-.*\.js$/,
+        resolveToolSearchConfig: /^local-model-lean-.*\.js$/,
         createOpenClawCodingTools: /^agent-tools-.*\.js$/,
-        applyToolSearchCatalog: /^tool-search-.*\.js$/,
+        applyToolSearchCatalog: /^local-model-lean-.*\.js$/,
       },
     ],
   ],
