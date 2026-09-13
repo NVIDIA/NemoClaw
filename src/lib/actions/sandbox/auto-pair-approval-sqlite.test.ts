@@ -19,6 +19,56 @@ describe("auto-pair approval SQLite compatibility", () => {
     spawnSync("sh", ["-c", "command -v python3"], { stdio: "ignore" }).status === 0 ? it : it.skip;
   const pyIt25s = (name: string, test: () => void) => pyIt(name, test, 25_000);
 
+  function expectUnsafeCanonicalState(
+    script: string,
+    version: number,
+    walContents: readonly string[] = [],
+  ): void {
+    const tmpDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-db-reject-")));
+    try {
+      const stateDir = path.join(tmpDir, "openclaw-state");
+      const databasePath = path.join(stateDir, "state", "openclaw.sqlite");
+      fs.mkdirSync(path.dirname(databasePath), { recursive: true });
+      const setup = spawnSync(
+        "python3",
+        [
+          "-c",
+          "import sqlite3, sys; c = sqlite3.connect(sys.argv[1]); c.execute('PRAGMA journal_mode = WAL'); c.execute(f'PRAGMA user_version = {sys.argv[2]}'); c.commit(); c.execute('PRAGMA wal_checkpoint(TRUNCATE)'); c.close()",
+          databasePath,
+          String(version),
+        ],
+        { encoding: "utf-8" },
+      );
+      expect(setup.status, setup.stderr).toBe(0);
+      expect([...fs.readFileSync(databasePath).subarray(18, 20)]).toEqual([2, 2]);
+      expect(fs.existsSync(`${databasePath}-wal`)).toBe(false);
+      expect(fs.existsSync(`${databasePath}-shm`)).toBe(false);
+      fs.writeFileSync(path.join(tmpDir, "openclaw"), "#!/bin/sh\nexit 2\n", { mode: 0o755 });
+      for (const contents of walContents) {
+        fs.writeFileSync(`${databasePath}-wal`, contents);
+        fs.chmodSync(`${databasePath}-wal`, 0o660);
+      }
+      const result = spawnSync("sh", ["-c", script], {
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          PATH: `${tmpDir}:/usr/bin:/bin`,
+          OPENCLAW_STATE_DIR: stateDir,
+          OPENCLAW_GATEWAY_PORT: "18789",
+        },
+        timeout: 10_000,
+      });
+      expect(result.status, result.stderr).toBe(0);
+      expect(
+        parseAutoPairApprovalReceipt(result.stdout),
+        `${result.stdout}\n${result.stderr}`,
+      ).toBe("list-pending-unsafe");
+      expect(fs.existsSync(`${databasePath}-shm`)).toBe(false);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  }
+
   pyIt25s("uses canonical SQLite snapshots without recreating legacy device state", () => {
     const policy = readAutoPairApprovalPolicyModule();
     expect(policy).toBeTruthy();
@@ -69,15 +119,19 @@ describe("auto-pair approval SQLite compatibility", () => {
         "python3",
         [
           "-c",
-          `import json, sqlite3, sys
+          `import json, os, sqlite3, sys
 db, raw = sys.argv[1:]
 f = json.loads(raw)
+os.umask(0o007)
 c = sqlite3.connect(db)
+c.execute('PRAGMA journal_mode = WAL')
+c.execute('PRAGMA wal_autocheckpoint = 0')
 c.executescript('''
 CREATE TABLE device_identities (identity_key TEXT PRIMARY KEY, device_id TEXT, public_key_pem TEXT, private_key_pem TEXT, created_at_ms INTEGER, updated_at_ms INTEGER);
 CREATE TABLE device_pairing_pending (request_id TEXT PRIMARY KEY, device_id TEXT, public_key TEXT, display_name TEXT, platform TEXT, device_family TEXT, client_id TEXT, client_mode TEXT, browser_origin TEXT, role TEXT, roles_json TEXT, scopes_json TEXT, remote_ip TEXT, silent INTEGER, is_repair INTEGER, ts INTEGER, refreshed_at_ms INTEGER);
 CREATE TABLE device_pairing_paired (device_id TEXT PRIMARY KEY, public_key TEXT, display_name TEXT, operator_label TEXT, platform TEXT, device_family TEXT, client_id TEXT, client_mode TEXT, browser_origin TEXT, role TEXT, roles_json TEXT, scopes_json TEXT, approved_scopes_json TEXT, remote_ip TEXT, tokens_json TEXT, approved_via TEXT, node_surface_json TEXT, pending_node_surface_json TEXT, created_at_ms INTEGER, approved_at_ms INTEGER, last_seen_at_ms INTEGER, last_seen_reason TEXT);
 CREATE TABLE device_auth_tokens (device_id TEXT, role TEXT, token TEXT, scopes_json TEXT, updated_at_ms INTEGER, PRIMARY KEY (device_id, role));
+PRAGMA user_version = 15;
 ''')
 c.execute('INSERT INTO device_identities VALUES (?,?,?,?,?,?)', ('primary', f['deviceId'], f['publicKeyPem'], f['privateKeyPem'], 1, 1))
 c.execute('INSERT INTO device_pairing_pending VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)', (f['requestId'], f['deviceId'], f['publicKeyText'], None, None, None, 'cli', 'cli', None, 'operator', json.dumps(['operator']), json.dumps(['operator.write']), None, 0, 1, 1, None))
@@ -85,6 +139,7 @@ tokens = {'operator': {'token': f['beforeToken'], 'role': 'operator', 'scopes': 
 c.execute('INSERT INTO device_pairing_paired VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)', (f['deviceId'], f['publicKeyText'], None, None, None, None, 'cli', 'cli', None, 'operator', json.dumps(['operator']), json.dumps(['operator.pairing']), json.dumps(['operator.pairing']), None, json.dumps(tokens), None, None, None, 1, 1, None, None))
 c.execute('INSERT INTO device_auth_tokens VALUES (?,?,?,?,?)', (f['deviceId'], 'operator', f['beforeToken'], json.dumps(['operator.pairing']), 1))
 c.commit()
+os._exit(0)
 `,
           databasePath,
           JSON.stringify(fixture),
@@ -92,6 +147,32 @@ c.commit()
         { encoding: "utf-8" },
       );
       expect(setup.status, setup.stderr).toBe(0);
+      const wal = fs.statSync(`${databasePath}-wal`);
+      const sharedMemory = fs.statSync(`${databasePath}-shm`);
+      expect([wal.isFile(), wal.nlink, wal.gid, wal.mode & 0o007, wal.size > 0]).toEqual([
+        true,
+        1,
+        process.getegid!(),
+        0,
+        true,
+      ]);
+      expect([
+        sharedMemory.isFile(),
+        sharedMemory.nlink,
+        sharedMemory.gid,
+        sharedMemory.mode & 0o007,
+        sharedMemory.size > 0,
+      ]).toEqual([true, 1, process.getegid!(), 0, true]);
+      const walProof = spawnSync(
+        "python3",
+        [
+          "-c",
+          "import sqlite3,sys; p=sys.argv[1]; assert sqlite3.connect(f'file:{p}?immutable=1', uri=True).execute(\"SELECT COUNT(*) FROM sqlite_master WHERE name='device_identities'\").fetchone()[0] == 0; assert sqlite3.connect(f'file:{p}?mode=ro', uri=True).execute('SELECT COUNT(*) FROM device_identities').fetchone()[0] == 1",
+          databasePath,
+        ],
+        { encoding: "utf-8" },
+      );
+      expect(walProof.status, walProof.stderr).toBe(0);
       fs.writeFileSync(
         path.join(tmpDir, "openclaw"),
         `#!/usr/bin/env python3
@@ -104,7 +185,7 @@ def descriptor(name):
     if not raw.isdecimal() or int(raw) < 3:
         raise RuntimeError('descriptor unavailable')
     metadata = os.fstat(int(raw))
-    if not os.path.isfile('/dev/fd/' + raw) or metadata.st_nlink != 1:
+    if not os.path.isfile('/dev/fd/' + raw) or metadata.st_nlink != 0:
         raise RuntimeError('descriptor unsafe')
     with os.fdopen(os.dup(int(raw)), encoding='utf-8') as handle:
         return json.load(handle)
@@ -228,6 +309,26 @@ print(json.dumps({
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
+  });
+
+  pyIt25s("rejects an unsupported canonical schema", () => {
+    const policy = readAutoPairApprovalPolicyModule();
+    expect(policy).toBeTruthy();
+    const script = buildAutoPairApprovalScript(Buffer.from(policy as string).toString("base64"), {
+      emitReceipt: true,
+      localDeviceOnly: true,
+    });
+    expectUnsafeCanonicalState(script, 14);
+  });
+
+  pyIt25s("does not create a missing shared-memory sidecar for a nonempty WAL", () => {
+    const policy = readAutoPairApprovalPolicyModule();
+    expect(policy).toBeTruthy();
+    const script = buildAutoPairApprovalScript(Buffer.from(policy as string).toString("base64"), {
+      emitReceipt: true,
+      localDeviceOnly: true,
+    });
+    expectUnsafeCanonicalState(script, 15, ["uncheckpointed canonical state"]);
   });
 
   pyIt25s("abandons legacy selection when the canonical database appears", () => {

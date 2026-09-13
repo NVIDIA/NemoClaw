@@ -39,6 +39,7 @@ function normalizeOptionalString(value) {
   const normalized = value.trim();
   return normalized || undefined;
 }
+
 function resolveDeviceIdentityForGatewayCall() {
   try {
     return gatewayCallDeps.loadOrCreateDeviceIdentity();
@@ -86,6 +87,105 @@ function setStoredOperatorDeviceAuthToken(value) { storedOperatorDeviceAuthToken
 `);
 }
 
+function currentGatewayCallFixture(): string {
+  return compiledIndent(`
+const descriptorFiles = new Map();
+const descriptorReads = [];
+const descriptorFs = {
+  fstatSync(fd) {
+    const value = descriptorFiles.get(fd);
+    if (value === undefined) throw new Error("unknown descriptor");
+    return {
+      dev: 1,
+      ino: fd,
+      size: Buffer.byteLength(value),
+      nlink: 0,
+      mtimeMs: 1,
+      isFile: () => true
+    };
+  },
+  readSync(fd, buffer, offset, length, position) {
+    const value = descriptorFiles.get(fd);
+    if (value === undefined) throw new Error("unknown descriptor");
+    descriptorReads.push({ fd, position });
+    const source = Buffer.from(value);
+    const count = Math.min(length, Math.max(0, source.length - position));
+    if (count > 0) source.copy(buffer, offset, position, position + count);
+    return count;
+  }
+};
+const descriptorCrypto = {
+  createPublicKey() {
+    return {
+      asymmetricKeyType: "ed25519",
+      export: () => Buffer.from("matching-key")
+    };
+  },
+  createPrivateKey(key) {
+    return { asymmetricKeyType: "ed25519", privateKey: key };
+  },
+  createHash() {
+    return {
+      update() { return this; },
+      digest() { return "a".repeat(64); }
+    };
+  }
+};
+const process = {
+  env: {},
+  getBuiltinModule(name) {
+    if (name === "node:fs") return descriptorFs;
+    if (name === "node:crypto") return descriptorCrypto;
+    throw new Error("unexpected builtin module");
+  }
+};
+const GATEWAY_CLIENT_NAMES = { CLI: "cli", GATEWAY_CLIENT: "gateway-client" };
+const GATEWAY_CLIENT_MODES = { CLI: "cli", BACKEND: "backend" };
+function normalizeOptionalString(value) {
+  if (typeof value !== "string") return;
+  const normalized = value.trim();
+  return normalized || undefined;
+}
+function loadDeviceIdentityIfPresent() { return null; }
+let createdIdentityCount = 0;
+function loadOrCreateDeviceIdentity() {
+  createdIdentityCount += 1;
+  return { deviceId: "ordinary-device" };
+}
+function resolveDeviceIdentityForGatewayCall(sharedStateMode) {
+  try {
+    return sharedStateMode === "read-only" ? loadDeviceIdentityIfPresent() : loadOrCreateDeviceIdentity();
+  } catch {
+    return null;
+  }
+}
+function loadStoredOperatorDeviceAuthToken() { return null; }
+function isLoopbackGatewayUrl(url) { return url.startsWith("ws://127.0.0.1:"); }
+function shouldOmitDeviceIdentityForGatewayCall(params) {
+  const mode = params.opts.mode ?? GATEWAY_CLIENT_MODES.CLI;
+  const clientName = params.opts.clientName ?? GATEWAY_CLIENT_NAMES.CLI;
+  const hasSharedSecretAuth = params.authMode === "token" && Boolean(params.token) || params.authMode === "password" && Boolean(params.password);
+  const isLoopback = isLoopbackGatewayUrl(params.url);
+  const isLocalBackendSharedAuth = mode === GATEWAY_CLIENT_MODES.BACKEND && clientName === GATEWAY_CLIENT_NAMES.GATEWAY_CLIENT && (hasSharedSecretAuth || params.allowAuthNone === true) && isLoopback;
+  const isLocalCliSharedAuth = mode === GATEWAY_CLIENT_MODES.CLI && clientName === GATEWAY_CLIENT_NAMES.CLI && hasSharedSecretAuth && isLoopback;
+  return isLocalBackendSharedAuth || isLocalCliSharedAuth;
+}
+function setForcedIdentityDescriptor(value) {
+  process.env.NEMOCLAW_OPENCLAW_RESTORED_CLONE_PAIRING = "1";
+  process.env.NEMOCLAW_OPENCLAW_EXPECTED_DEVICE_ID = "a".repeat(64);
+  process.env.NEMOCLAW_OPENCLAW_IDENTITY_FD = "43";
+  descriptorFiles.set(43, JSON.stringify(value));
+  descriptorReads.length = 0;
+}
+function setForceDevicePairing(value) {
+  if (value) process.env.NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING = "1";
+  else delete process.env.NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING;
+}
+function getCreatedIdentityCount() { return createdIdentityCount; }
+function identityDescriptorReads() { return [...descriptorReads]; }
+`);
+}
+
 function cliFixture(): string {
   return compiledIndent(`
 const descriptorFiles = new Map();
@@ -102,7 +202,7 @@ const process = {
           dev: 1,
           ino: fd,
           size: Buffer.byteLength(value),
-          nlink: 1,
+          nlink: 0,
           mtimeMs: 1,
           isFile: () => true
         };
@@ -340,7 +440,6 @@ function deviceIdentityFixture(): string {
   return compiledIndent(`
 const descriptorFiles = new Map();
 const descriptorReads = [];
-const process = { env: {} };
 const fs = {
   fstatSync(fd) {
     const value = descriptorFiles.get(fd);
@@ -362,6 +461,13 @@ const fs = {
     const count = Math.min(length, Math.max(0, source.length - position));
     if (count > 0) source.copy(buffer, offset, position, position + count);
     return count;
+  }
+};
+const process = {
+  env: {},
+  getBuiltinModule(name) {
+    if (name !== "node:fs") throw new Error("unexpected builtin module");
+    return fs;
   }
 };
 let ordinaryLoadCount = 0;
@@ -777,6 +883,14 @@ async function approveBootstrapDevicePairing(requestId, bootstrapProfile, option
 export function writeFixtureDist(dist: string): void {
   fs.writeFileSync(path.join(dist, "call-fixture.js"), gatewayCallFixture());
   fs.writeFileSync(path.join(dist, "device-identity-fixture.js"), deviceIdentityFixture());
+  fs.writeFileSync(path.join(dist, "devices-cli.runtime-fixture.js"), cliFixture());
+  fs.writeFileSync(path.join(dist, "message-handler-fixture.js"), gatewayAuthFixture());
+  fs.writeFileSync(path.join(dist, "devices-fixture.js"), handlerFixture());
+  fs.writeFileSync(path.join(dist, "device-pairing-fixture.js"), stateFixture());
+}
+
+export function writeCurrentGatewayCallFixtureDist(dist: string): void {
+  fs.writeFileSync(path.join(dist, "call-current-fixture.js"), currentGatewayCallFixture());
   fs.writeFileSync(path.join(dist, "devices-cli.runtime-fixture.js"), cliFixture());
   fs.writeFileSync(path.join(dist, "message-handler-fixture.js"), gatewayAuthFixture());
   fs.writeFileSync(path.join(dist, "devices-fixture.js"), handlerFixture());

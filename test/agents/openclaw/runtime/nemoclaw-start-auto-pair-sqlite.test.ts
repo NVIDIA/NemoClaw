@@ -78,13 +78,17 @@ function createCanonicalSqlitePairingState(stateDir: string): string {
       "-c",
       `
 import json
+import os
 import sqlite3
 import sys
 
 database, identity_json, request_json = sys.argv[1:]
 identity = json.loads(identity_json)
 request = json.loads(request_json)
+os.umask(0o007)
 connection = sqlite3.connect(database)
+connection.execute('PRAGMA journal_mode = WAL')
+connection.execute('PRAGMA wal_autocheckpoint = 0')
 connection.executescript('''
 CREATE TABLE device_identities (
   identity_key TEXT NOT NULL PRIMARY KEY,
@@ -113,6 +117,7 @@ CREATE TABLE device_pairing_pending (
   ts INTEGER NOT NULL,
   refreshed_at_ms INTEGER
 ) STRICT;
+PRAGMA user_version = 15;
 ''')
 connection.execute(
     '''INSERT INTO device_identities
@@ -132,7 +137,7 @@ connection.execute(
     ),
 )
 connection.commit()
-connection.close()
+os._exit(0)
 `,
       database,
       JSON.stringify(IDENTITY),
@@ -141,6 +146,22 @@ connection.close()
     { encoding: "utf-8" },
   );
   expect(setup.status, setup.stderr).toBe(0);
+  const wal = fs.statSync(`${database}-wal`);
+  const sharedMemory = fs.statSync(`${database}-shm`);
+  expect([wal.isFile(), wal.nlink, wal.gid, wal.mode & 0o007, wal.size > 0]).toEqual([
+    true,
+    1,
+    process.getegid!(),
+    0,
+    true,
+  ]);
+  expect([
+    sharedMemory.isFile(),
+    sharedMemory.nlink,
+    sharedMemory.gid,
+    sharedMemory.mode & 0o007,
+    sharedMemory.size > 0,
+  ]).toEqual([true, 1, process.getegid!(), 0, true]);
   return database;
 }
 
@@ -163,6 +184,62 @@ exit 2
   );
 }
 
+async function expectUnsafeCanonicalState(
+  src: string,
+  version: number,
+  walContents: readonly string[] = [],
+): Promise<void> {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auto-pair-reject-"));
+  const fakeOpenclaw = path.join(tmpDir, "openclaw");
+  const stateDir = path.join(tmpDir, "state");
+  const approveLog = path.join(tmpDir, "approve-called");
+  const database = createCanonicalSqlitePairingState(stateDir);
+  const updateVersion = spawnSync(
+    "python3",
+    [
+      "-c",
+      "import sqlite3, sys; c = sqlite3.connect(sys.argv[1]); c.execute(f'PRAGMA user_version = {sys.argv[2]}'); c.commit(); c.execute('PRAGMA wal_checkpoint(TRUNCATE)'); c.close()",
+      database,
+      String(version),
+    ],
+    { encoding: "utf-8" },
+  );
+  expect(updateVersion.status, updateVersion.stderr).toBe(0);
+  fs.rmSync(`${database}-wal`, { force: true });
+  fs.rmSync(`${database}-shm`, { force: true });
+  expect([...fs.readFileSync(database).subarray(18, 20)]).toEqual([2, 2]);
+  expect(fs.existsSync(`${database}-wal`)).toBe(false);
+  expect(fs.existsSync(`${database}-shm`)).toBe(false);
+  for (const contents of walContents) {
+    fs.writeFileSync(`${database}-wal`, contents);
+    fs.chmodSync(`${database}-wal`, 0o660);
+  }
+  writeFakeOpenclaw(fakeOpenclaw, approveLog);
+
+  try {
+    const run = await runOpenclaw("python3", ["-c", autoPairPythonScript(src, tmpDir)], {
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        OPENCLAW_BIN: fakeOpenclaw,
+        OPENCLAW_STATE_DIR: stateDir,
+        NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: "1",
+        NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: "1",
+      },
+      timeout: 30_000,
+    });
+
+    expect(run.status).toBe(0);
+    expect(run.stdout).toContain(
+      "[auto-pair] stage=validation rejected request=request-1 reason=not-allowlisted",
+    );
+    expect(fs.existsSync(approveLog)).toBe(false);
+    expect(fs.existsSync(`${database}-shm`)).toBe(false);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+}
+
 describe("nemoclaw-start canonical SQLite auto-pair bootstrap", () => {
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
 
@@ -175,6 +252,16 @@ describe("nemoclaw-start canonical SQLite auto-pair bootstrap", () => {
     const approveLog = path.join(tmpDir, "approve-called");
     const database = createCanonicalSqlitePairingState(stateDir);
     const databaseBefore = fs.readFileSync(database);
+    const walProof = spawnSync(
+      "python3",
+      [
+        "-c",
+        "import sqlite3,sys; p=sys.argv[1]; assert sqlite3.connect(f'file:{p}?immutable=1', uri=True).execute(\"SELECT COUNT(*) FROM sqlite_master WHERE name='device_identities'\").fetchone()[0] == 0; assert sqlite3.connect(f'file:{p}?mode=ro', uri=True).execute('SELECT COUNT(*) FROM device_pairing_pending').fetchone()[0] == 1",
+        database,
+      ],
+      { encoding: "utf-8" },
+    );
+    expect(walProof.status, walProof.stderr).toBe(0);
 
     // Conflicting legacy files prove that an existing canonical database is
     // authoritative and the watcher does not mix the two storage layouts.
@@ -264,5 +351,13 @@ describe("nemoclaw-start canonical SQLite auto-pair bootstrap", () => {
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
+  }, 40_000);
+
+  it("rejects an unsupported canonical schema", async () => {
+    await expectUnsafeCanonicalState(src, 14);
+  }, 40_000);
+
+  it("does not create a missing shared-memory sidecar for a nonempty WAL", async () => {
+    await expectUnsafeCanonicalState(src, 15, ["uncheckpointed canonical state"]);
   }, 40_000);
 });

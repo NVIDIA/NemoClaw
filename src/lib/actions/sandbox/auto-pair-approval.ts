@@ -420,8 +420,12 @@ clone_file_flags = (
 )
 PENDING_READ_ATTEMPTS = ${CONNECT_AUTO_PAIR_PENDING_READ_ATTEMPTS}
 PENDING_READ_POLL_S = ${CONNECT_AUTO_PAIR_PENDING_READ_POLL_S}
+MAX_SQLITE_BYTES = 1024 * 1024 * 1024
 
 class CloneStateEntryRotated(OSError):
+    pass
+
+class CloneStateWalNotReady(OSError):
     pass
 
 def validate_clone_json_descriptor(fd):
@@ -545,6 +549,44 @@ def clone_database_is_current():
         and (current.st_dev, current.st_ino) == (pinned.st_dev, pinned.st_ino)
     )
 
+def clone_sqlite_wal_reader_ready():
+    if not clone_directory_is_current('state', clone_database_dir_fd):
+        raise OSError('clone state database directory changed')
+    try:
+        wal_metadata = os.stat(
+            'openclaw.sqlite-wal',
+            dir_fd=clone_database_dir_fd,
+            follow_symlinks=False,
+        )
+    except FileNotFoundError:
+        return False
+    if (
+        not stat.S_ISREG(wal_metadata.st_mode)
+        or wal_metadata.st_nlink != 1
+        or wal_metadata.st_gid != os.getegid()
+        or wal_metadata.st_mode & 0o007
+        or wal_metadata.st_size > MAX_SQLITE_BYTES
+    ):
+        raise OSError('clone state WAL is unsafe')
+    try:
+        shm_metadata = os.stat(
+            'openclaw.sqlite-shm',
+            dir_fd=clone_database_dir_fd,
+            follow_symlinks=False,
+        )
+    except FileNotFoundError:
+        raise CloneStateWalNotReady('clone state WAL is missing its shared-memory sidecar')
+    if (
+        not stat.S_ISREG(shm_metadata.st_mode)
+        or shm_metadata.st_nlink != 1
+        or shm_metadata.st_gid != os.getegid()
+        or shm_metadata.st_mode & 0o007
+        or shm_metadata.st_size < 1
+        or shm_metadata.st_size > MAX_SQLITE_BYTES
+    ):
+        raise OSError('clone state shared-memory sidecar is unsafe')
+    return True
+
 def clone_database_is_absent():
     if not clone_state_root_is_current():
         return False
@@ -660,14 +702,23 @@ def sqlite_paired_record(row):
 def read_clone_sqlite_state():
     if not clone_database_is_current():
         raise OSError('clone state database changed')
+    # A read-only SQLite connection may create the shared-memory sidecar for a
+    # live WAL database. Never let this observer be the process that mutates
+    # the state directory; retry after the canonical writer publishes -shm.
+    wal_present = clone_sqlite_wal_reader_ready()
     database_path = os.path.join(state_dir, 'state', 'openclaw.sqlite')
     database_uri = 'file:' + urllib.parse.quote(database_path, safe='/') + '?mode=ro'
+    if not wal_present:
+        database_uri += '&immutable=1'
     connection = sqlite3.connect(database_uri, uri=True, timeout=0.25)
     connection.row_factory = sqlite3.Row
     try:
         connection.execute('PRAGMA query_only = ON')
         connection.execute('PRAGMA trusted_schema = OFF')
         connection.execute('BEGIN')
+        schema_version = connection.execute('PRAGMA user_version').fetchone()
+        if schema_version is None or schema_version[0] != 15:
+            raise ValueError('unsupported canonical device state schema')
         identity_rows = connection.execute(
             "SELECT identity_key, device_id, public_key_pem, private_key_pem "
             "FROM device_identities WHERE identity_key = 'primary'",
@@ -704,6 +755,8 @@ def read_clone_sqlite_state():
             or len(auth_by_device) != len(auth_rows)
         ):
             raise ValueError('canonical device state contains duplicate identities')
+        if clone_sqlite_wal_reader_ready() != wal_present:
+            raise CloneStateWalNotReady('clone state WAL changed while reading')
         connection.rollback()
     finally:
         connection.close()
@@ -734,36 +787,47 @@ except OSError:
     ${exitWithReceipt("list-pending-unsafe")}
 
 if clone_state_layout == 'sqlite':
-    try:
-        (
-            local_identity,
-            local_pending_by_id,
-            local_paired_by_id,
-            local_sqlite_auth_by_device,
-        ) = read_clone_sqlite_state()
-    except (OSError, ValueError, sqlite3.Error, json.JSONDecodeError, KeyError, TypeError):
-        ${exitWithReceipt("list-pending-unsafe")}
-    snapshot_directory = tempfile.TemporaryDirectory(prefix='nemoclaw-pairing-')
-    def open_clone_snapshot_descriptor(entry_name, value):
-        snapshot_path = os.path.join(snapshot_directory.name, entry_name)
-        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | getattr(os, 'O_CLOEXEC', 0)
-        write_fd = os.open(snapshot_path, flags, 0o600)
+    for sqlite_read_attempt in range(PENDING_READ_ATTEMPTS):
         try:
-            os.fchmod(write_fd, 0o600)
+            (
+                local_identity,
+                local_pending_by_id,
+                local_paired_by_id,
+                local_sqlite_auth_by_device,
+            ) = read_clone_sqlite_state()
+        except CloneStateWalNotReady:
+            if sqlite_read_attempt + 1 < PENDING_READ_ATTEMPTS:
+                approval_time.sleep(PENDING_READ_POLL_S)
+                continue
+            ${exitWithReceipt("list-pending-unsafe")}
+        except (OSError, ValueError, sqlite3.Error, json.JSONDecodeError, KeyError, TypeError):
+            ${exitWithReceipt("list-pending-unsafe")}
+        break
+    clone_snapshot_handles = []
+    def open_clone_snapshot_descriptor(value):
+        # Keep secret-bearing snapshots anonymous for the lifetime of this
+        # bounded process. The child receives only /proc/self/fd/N handles;
+        # no crash can strand identity or pairing credentials in /tmp.
+        handle = tempfile.TemporaryFile(mode='w+b')
+        try:
+            os.fchmod(handle.fileno(), 0o600)
             payload = json.dumps(value, separators=(',', ':')).encode('utf-8')
-            offset = 0
-            while offset < len(payload):
-                offset += os.write(write_fd, payload[offset:])
-            os.fsync(write_fd)
-        finally:
-            os.close(write_fd)
-        descriptor = os.open(snapshot_path, clone_file_flags)
-        validate_clone_json_descriptor(descriptor)
-        return descriptor
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+            handle.seek(0)
+            metadata = os.fstat(handle.fileno())
+            if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 0:
+                raise OSError('clone snapshot descriptor is not anonymous')
+            clone_snapshot_handles.append(handle)
+            return handle.fileno()
+        except Exception:
+            handle.close()
+            raise
     try:
-        clone_identity_snapshot_fd = open_clone_snapshot_descriptor('identity.json', local_identity)
-        clone_pending_snapshot_fd = open_clone_snapshot_descriptor('pending.json', local_pending_by_id)
-        clone_paired_snapshot_fd = open_clone_snapshot_descriptor('paired.json', local_paired_by_id)
+        clone_identity_snapshot_fd = open_clone_snapshot_descriptor(local_identity)
+        clone_pending_snapshot_fd = open_clone_snapshot_descriptor(local_pending_by_id)
+        clone_paired_snapshot_fd = open_clone_snapshot_descriptor(local_paired_by_id)
     except (OSError, ValueError, TypeError):
         ${exitWithReceipt("list-pending-unsafe")}
     pending = list(local_pending_by_id.values())
@@ -1432,7 +1496,12 @@ export function runSandboxAutoPairApprovalPass(
     if (!match) {
       return { attempted: true, reported: false, approved: 0, receipt };
     }
-    return { attempted: true, reported: true, approved: Number(match[1]), receipt };
+    return {
+      attempted: true,
+      reported: true,
+      approved: Number(match[1]),
+      receipt,
+    };
   } catch {
     /* defense-in-depth — never throw from the connect or doctor path */
     return {

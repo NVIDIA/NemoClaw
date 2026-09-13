@@ -219,12 +219,15 @@ import os
 import re
 import sqlite3
 import stat
+import subprocess
 import sys
 import urllib.parse
 
 MARKER = ${JSON.stringify(marker)}
 MAX_ENTRY_BYTES = 512 * 1024
 MAX_SQLITE_BYTES = 1024 * 1024 * 1024
+MAX_SAFE_INTEGER = 9007199254740991
+OPENCLAW_STATE_SCHEMA_VERSION = 15
 REQUIRED_ROLES = ['operator']
 PAIRING_ONLY_SCOPES = ['operator.pairing']
 REQUEST_SCOPES = ['operator.pairing', 'operator.write']
@@ -465,6 +468,80 @@ def parse_json_column(value):
         raise ValueError('invalid sqlite JSON column')
     return json.loads(value)
 
+def safe_timestamp(value):
+    return type(value) is int and 0 <= value <= MAX_SAFE_INTEGER
+
+def validate_identity_key_pair(public_key_pem, private_key_pem):
+    if not isinstance(public_key_pem, str) or not isinstance(private_key_pem, str):
+        raise ValueError('invalid identity key material')
+    openssl = '/usr/bin/openssl'
+    openssl_metadata = os.stat(openssl, follow_symlinks=False)
+    if (
+        not stat.S_ISREG(openssl_metadata.st_mode)
+        or openssl_metadata.st_nlink != 1
+        or openssl_metadata.st_uid != 0
+        or openssl_metadata.st_mode & 0o022
+    ):
+        raise OSError('openssl is unsafe')
+    try:
+        derived_public_key = subprocess.run(
+            [openssl, 'pkey', '-pubout', '-outform', 'DER'],
+            input=private_key_pem.encode('utf-8'),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            env={
+                'LANG': 'C',
+                'OPENSSL_CONF': '/dev/null',
+                'PATH': '/usr/bin:/bin',
+            },
+            check=True,
+            timeout=2,
+        ).stdout
+    except (subprocess.SubprocessError, UnicodeError) as error:
+        raise ValueError('invalid identity private key') from error
+    match = re.fullmatch(
+        r'-----BEGIN PUBLIC KEY-----\\n([A-Za-z0-9+/]{59}=)\\n-----END PUBLIC KEY-----\\n',
+        public_key_pem,
+    )
+    if match is None:
+        raise ValueError('invalid identity public key')
+    expected_public_key = base64.b64decode(match.group(1), validate=True)
+    if derived_public_key != expected_public_key:
+        raise ValueError('identity key pair mismatch')
+
+def assert_wal_reader_ready(sqlite_state_fd):
+    try:
+        wal = os.stat('openclaw.sqlite-wal', dir_fd=sqlite_state_fd, follow_symlinks=False)
+    except FileNotFoundError:
+        return False
+    if (
+        not stat.S_ISREG(wal.st_mode)
+        or wal.st_nlink != 1
+        or wal.st_gid != os.getegid()
+        or wal.st_mode & 0o007
+        or wal.st_size > MAX_SQLITE_BYTES
+    ):
+        raise OSError('unsafe sqlite WAL')
+    try:
+        shared_memory = os.stat(
+            'openclaw.sqlite-shm', dir_fd=sqlite_state_fd, follow_symlinks=False,
+        )
+    except FileNotFoundError as error:
+        # A read-only SQLite connection otherwise creates the missing SHM
+        # sidecar. Let the running gateway finish publishing its WAL state and
+        # retry without mutating OpenClaw-owned artifacts.
+        raise StateChangedError('sqlite WAL is not reader-ready') from error
+    if (
+        not stat.S_ISREG(shared_memory.st_mode)
+        or shared_memory.st_nlink != 1
+        or shared_memory.st_gid != os.getegid()
+        or shared_memory.st_mode & 0o007
+        or shared_memory.st_size < 1
+        or shared_memory.st_size > MAX_SQLITE_BYTES
+    ):
+        raise OSError('unsafe sqlite shared memory')
+    return True
+
 def read_sqlite_snapshot(state_fd, sqlite_state_fd):
     database_fd = os.open('openclaw.sqlite', file_flags, dir_fd=sqlite_state_fd)
     connection = None
@@ -481,20 +558,35 @@ def read_sqlite_snapshot(state_fd, sqlite_state_fd):
             current.st_mode & 0o7777,
         ) != before:
             raise StateChangedError('sqlite database changed')
+        wal_present = assert_wal_reader_ready(sqlite_state_fd)
         database_path = os.path.join(STATE_DIR, 'state', 'openclaw.sqlite')
         database_uri = 'file:' + urllib.parse.quote(database_path, safe='/') + '?mode=ro'
+        if not wal_present:
+            database_uri += '&immutable=1'
         connection = sqlite3.connect(database_uri, uri=True, timeout=0)
         connection.row_factory = sqlite3.Row
         connection.execute('PRAGMA query_only = ON')
         connection.execute('PRAGMA trusted_schema = OFF')
         connection.execute('BEGIN')
+        schema_version = connection.execute('PRAGMA user_version').fetchone()[0]
+        if type(schema_version) is not int or schema_version != OPENCLAW_STATE_SCHEMA_VERSION:
+            raise ValueError('unsupported sqlite schema version')
         identities = connection.execute(
-            "SELECT identity_key, device_id, public_key_pem, private_key_pem "
+            "SELECT identity_key, device_id, public_key_pem, private_key_pem, "
+            "created_at_ms, updated_at_ms "
             "FROM device_identities WHERE identity_key = 'primary'",
         ).fetchall()
         if len(identities) != 1:
             raise ValueError('invalid primary identity cardinality')
         identity_row = identities[0]
+        if (
+            not safe_timestamp(identity_row['created_at_ms'])
+            or not safe_timestamp(identity_row['updated_at_ms'])
+        ):
+            raise ValueError('invalid identity timestamps')
+        validate_identity_key_pair(
+            identity_row['public_key_pem'], identity_row['private_key_pem'],
+        )
         device_id = identity_row['device_id']
 
         paired = {}
@@ -545,6 +637,8 @@ def read_sqlite_snapshot(state_fd, sqlite_state_fd):
                 'token': source['token'],
                 'scopes': parse_json_column(source['scopes_json']),
             }
+        if assert_wal_reader_ready(sqlite_state_fd) != wal_present:
+            raise StateChangedError('sqlite WAL changed')
         connection.execute('COMMIT')
         after = sqlite_file_metadata(database_fd)
         current = os.stat('openclaw.sqlite', dir_fd=sqlite_state_fd, follow_symlinks=False)

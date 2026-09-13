@@ -10,6 +10,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { runRealOpenClawDeviceSelfApprovalProof } from "../../helpers/openclaw-real-device-self-approval-proof";
+import { runRealOpenClawInstallPathProof } from "../../helpers/openclaw-real-install-path-proof";
 import { runRealOpenClawMcpStartRetryProof } from "../../helpers/openclaw-real-mcp-start-retry-proof";
 
 const REPO_ROOT = path.join(import.meta.dirname, "../../..");
@@ -35,6 +36,11 @@ const PATCH_OPENCLAW_MCP_RELIABILITY = path.join(
   REPO_ROOT,
   "scripts",
   "patch-openclaw-mcp-reliability.mts",
+);
+const PATCH_OPENCLAW_MANAGED_TRANSPORT_DIAGNOSTICS = path.join(
+  REPO_ROOT,
+  "scripts",
+  "patch-openclaw-managed-transport-diagnostics.mts",
 );
 const OPENCLAW_VERSION_EXTRACTOR = path.join(REPO_ROOT, "scripts", "extract-semver.sh");
 const REAL_OPENCLAW_NODE_ENV = "NEMOCLAW_REAL_OPENCLAW_NODE";
@@ -443,17 +449,6 @@ describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS !== "1")(
           `Patch 6 applied to OpenClaw ${version}`,
           "Patch 6",
         );
-        requireRuntimeIncludes(
-          dockerPatch.stdout,
-          `OpenClaw ${version} delegates install-safe-path to @openclaw/fs-safe/advanced; Patch 3a not needed`,
-          "Patch 3a",
-        );
-        requireRuntimeIncludes(
-          dockerPatch.stdout,
-          `OpenClaw ${version} install-package-dir already uses stat plus realpath stability; Patch 3b not needed`,
-          "Patch 3b",
-        );
-
         [
           "nemoclaw: env-gated bypass",
           "nemoclaw: OpenShell host gateway for web_fetch trusted env proxy",
@@ -793,11 +788,31 @@ describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS !== "1")(
         // These proofs install the reviewed shrinkwrapped runtime dependencies
         // with lifecycle scripts disabled. Keep them after every shape-only
         // dist scan so dependency materialization cannot perturb their timing.
+        const transportDiagnosticsPatch = spawnSync(
+          nodeRuntime.executable,
+          [PATCH_OPENCLAW_MANAGED_TRANSPORT_DIAGNOSTICS, dist],
+          { encoding: "utf-8", timeout: PATCH_COMMAND_TIMEOUT_MS },
+        );
+        requireSpawnSuccess(transportDiagnosticsPatch, "apply managed transport diagnostics patch");
+        const transportDiagnosticsAudit = spawnSync(
+          nodeRuntime.executable,
+          [PATCH_OPENCLAW_MANAGED_TRANSPORT_DIAGNOSTICS, "--audit", dist],
+          { encoding: "utf-8", timeout: PATCH_COMMAND_TIMEOUT_MS },
+        );
+        requireSpawnSuccess(transportDiagnosticsAudit, "audit managed transport diagnostics patch");
+
         runRealOpenClawMcpStartRetryProof({
           dist,
           nodeExecutable: nodeRuntime.executable,
           patchScript: PATCH_OPENCLAW_MCP_RELIABILITY,
           timeoutMs: PATCH_COMMAND_TIMEOUT_MS,
+        });
+
+        runRealOpenClawInstallPathProof({
+          dist,
+          nodeExecutable: nodeRuntime.executable,
+          timeoutMs: PATCH_COMMAND_TIMEOUT_MS,
+          tmp,
         });
 
         await runRealOpenClawDeviceSelfApprovalProof({

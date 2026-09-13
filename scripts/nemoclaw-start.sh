@@ -2750,6 +2750,38 @@ def _assert_state_sqlite_unchanged(sqlite_path, sqlite_fd, expected_metadata):
         raise RuntimeError('SQLite state changed while reading pairing state')
 
 
+def _assert_state_sqlite_wal_has_shm(sqlite_path):
+    max_sqlite_bytes = 1024 * 1024 * 1024
+    wal_path = f'{sqlite_path}-wal'
+    shm_path = f'{sqlite_path}-shm'
+    try:
+        wal_metadata = os.stat(wal_path, follow_symlinks=False)
+    except FileNotFoundError:
+        return False
+    if (
+        not stat.S_ISREG(wal_metadata.st_mode)
+        or wal_metadata.st_nlink != 1
+        or wal_metadata.st_gid != os.getegid()
+        or wal_metadata.st_mode & 0o007
+        or wal_metadata.st_size > max_sqlite_bytes
+    ):
+        raise RuntimeError('SQLite WAL sidecar is unsafe')
+    try:
+        shm_metadata = os.stat(shm_path, follow_symlinks=False)
+    except FileNotFoundError as err:
+        raise RuntimeError('SQLite WAL is missing its shared-memory sidecar') from err
+    if (
+        not stat.S_ISREG(shm_metadata.st_mode)
+        or shm_metadata.st_nlink != 1
+        or shm_metadata.st_gid != os.getegid()
+        or shm_metadata.st_mode & 0o007
+        or shm_metadata.st_size < 1
+        or shm_metadata.st_size > max_sqlite_bytes
+    ):
+        raise RuntimeError('SQLite shared-memory sidecar is unsafe')
+    return True
+
+
 def _open_state_sqlite_read_only(sqlite_path):
     # mode=ro prevents a missing/raced-away database from being created. Keep
     # query_only enabled as a second guard against accidental mutation if this
@@ -2766,15 +2798,26 @@ def _open_state_sqlite_read_only(sqlite_path):
     try:
         expected_metadata = _state_sqlite_metadata(os.fstat(sqlite_fd))
         _assert_state_sqlite_unchanged(sqlite_path, sqlite_fd, expected_metadata)
-        # Do not use immutable=1: the canonical database may be in WAL mode,
-        # and a normal read-only SQLite connection must observe committed WAL.
+        # Opening a WAL database can create -shm even in mode=ro. Require the
+        # canonical writer to have published that sidecar first so this
+        # observer never mutates the state directory.
+        wal_present = _assert_state_sqlite_wal_has_shm(sqlite_path)
+        # A database whose WAL is absent is safe to open as immutable. This is
+        # required even when its header still records WAL mode: mode=ro alone
+        # can create -shm. A live WAL must instead be read normally so committed
+        # rows remain visible; the canonical writer must have published -shm.
+        if not wal_present:
+            database_uri += '&immutable=1'
         connection = sqlite3.connect(database_uri, uri=True, timeout=1)
         connection.row_factory = sqlite3.Row
         connection.execute('PRAGMA query_only = ON')
         connection.execute('PRAGMA trusted_schema = OFF')
         connection.execute('BEGIN')
+        schema_version = connection.execute('PRAGMA user_version').fetchone()
+        if schema_version is None or schema_version[0] != 15:
+            raise RuntimeError('unsupported canonical device state schema')
         _assert_state_sqlite_unchanged(sqlite_path, sqlite_fd, expected_metadata)
-        return connection, sqlite_fd, expected_metadata
+        return connection, sqlite_fd, expected_metadata, wal_present
     except Exception:
         if connection is not None:
             connection.close()
@@ -2782,12 +2825,16 @@ def _open_state_sqlite_read_only(sqlite_path):
         raise
 
 
-def _close_state_sqlite_read_only(connection, sqlite_path, sqlite_fd, expected_metadata):
+def _close_state_sqlite_read_only(
+    connection, sqlite_path, sqlite_fd, expected_metadata, expected_wal_present,
+):
     try:
         # Fence the path and pinned descriptor while the read transaction is
         # still active. A replaced or modified database invalidates all rows
         # read from this snapshot before they can influence approval.
         _assert_state_sqlite_unchanged(sqlite_path, sqlite_fd, expected_metadata)
+        if _assert_state_sqlite_wal_has_shm(sqlite_path) != expected_wal_present:
+            raise RuntimeError('SQLite WAL changed while reading pairing state')
     finally:
         try:
             try:
@@ -2816,7 +2863,7 @@ def _sqlite_primary_identity(connection):
 
 
 def _sqlite_initial_pairing_snapshot(sqlite_path, request_id):
-    connection, sqlite_fd, expected_metadata = _open_state_sqlite_read_only(sqlite_path)
+    connection, sqlite_fd, expected_metadata, wal_present = _open_state_sqlite_read_only(sqlite_path)
     try:
         identity = _sqlite_primary_identity(connection)
         row = connection.execute(
@@ -2843,7 +2890,7 @@ def _sqlite_initial_pairing_snapshot(sqlite_path, request_id):
         return identity, request
     finally:
         _close_state_sqlite_read_only(
-            connection, sqlite_path, sqlite_fd, expected_metadata,
+            connection, sqlite_path, sqlite_fd, expected_metadata, wal_present,
         )
 
 
@@ -2851,12 +2898,12 @@ def _local_device_identity():
     state_dir = os.environ.get('OPENCLAW_STATE_DIR') or '/sandbox/.openclaw'
     sqlite_path = _state_sqlite_path(state_dir)
     if os.path.lexists(sqlite_path):
-        connection, sqlite_fd, expected_metadata = _open_state_sqlite_read_only(sqlite_path)
+        connection, sqlite_fd, expected_metadata, wal_present = _open_state_sqlite_read_only(sqlite_path)
         try:
             identity = _sqlite_primary_identity(connection)
         finally:
             _close_state_sqlite_read_only(
-                connection, sqlite_path, sqlite_fd, expected_metadata,
+                connection, sqlite_path, sqlite_fd, expected_metadata, wal_present,
             )
     else:
         identity = _read_json_object(os.path.join(state_dir, 'identity', 'device.json'))
