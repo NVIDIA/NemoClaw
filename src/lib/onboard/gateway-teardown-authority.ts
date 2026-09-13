@@ -20,6 +20,14 @@ import { DEFAULT_GATEWAY_PORT } from "../core/ports";
 import { inspectCheckpoint } from "../state/onboard-checkpoint";
 import { resolveCheckpointForResume } from "../state/onboard-checkpoint-migrate";
 import type { Session } from "../state/onboard-session";
+export {
+  acquireOnboardStateLock,
+  assertOnboardStateLockOwned,
+  isOnboardStateLockOwned,
+  releaseOnboardStateLock,
+  retargetOnboardStateLock,
+  type OnboardStateLockHandle,
+} from "../state/onboard-session/lock";
 import { nemoclawStateRoot, resolveHome } from "../state/state-root";
 import { hasOpenShellGatewayUserService } from "./docker-driver-gateway-service";
 import { gatewayOwnerFromCheckpoint } from "./gateway-authority-checkpoint";
@@ -242,6 +250,20 @@ export function isInterruptedPreGatewayTeardownSession(
   target: GatewayTeardownTarget,
   owner: GatewayOwner,
 ): boolean {
+  if (!isInterruptedPreGatewaySession(value)) return false;
+  const inspected = resolveCheckpointForResume(value);
+  if (inspected.status !== "loaded") return false;
+  const authority = inspected.checkpoint.gatewayAuthority;
+  return Boolean(
+    authority.kind === "selected" &&
+    sameGatewayOwner(gatewayOwnerFromCheckpoint(authority.value), owner) &&
+    authority.value.gatewayName === target.gatewayName &&
+    authority.value.gatewayPort === target.gatewayPort,
+  );
+}
+
+/** Confirm only the durable lifecycle shape, without granting teardown authority. */
+export function isInterruptedPreGatewaySession(value: unknown): boolean {
   const record = (candidate: unknown): Record<string, unknown> | null =>
     typeof candidate === "object" && candidate !== null && !Array.isArray(candidate)
       ? (candidate as Record<string, unknown>)
@@ -253,28 +275,17 @@ export function isInterruptedPreGatewayTeardownSession(
   const preflight = record(steps?.preflight);
   const gateway = record(steps?.gateway);
   const sandbox = record(steps?.sandbox);
-  if (
-    !session ||
-    session.resumable !== true ||
-    session.status !== "failed" ||
-    session.lastStepStarted !== "preflight" ||
-    failure?.interrupted !== true ||
-    failure.step !== "preflight" ||
-    machine?.state !== "failed" ||
-    preflight?.status !== "failed" ||
-    gateway?.status !== "pending" ||
-    sandbox?.status !== "pending"
-  ) {
-    return false;
-  }
-  const inspected = resolveCheckpointForResume(value);
-  if (inspected.status !== "loaded") return false;
-  const authority = inspected.checkpoint.gatewayAuthority;
   return Boolean(
-    authority.kind === "selected" &&
-    sameGatewayOwner(gatewayOwnerFromCheckpoint(authority.value), owner) &&
-    authority.value.gatewayName === target.gatewayName &&
-    authority.value.gatewayPort === target.gatewayPort,
+    session &&
+    session.resumable === true &&
+    session.status === "failed" &&
+    session.lastStepStarted === "preflight" &&
+    failure?.interrupted === true &&
+    failure.step === "preflight" &&
+    machine?.state === "failed" &&
+    preflight?.status === "failed" &&
+    gateway?.status === "pending" &&
+    sandbox?.status === "pending",
   );
 }
 
