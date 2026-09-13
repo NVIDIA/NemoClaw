@@ -6,7 +6,7 @@
 import hashlib
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 import shutil
 import subprocess
 import sys
@@ -19,6 +19,31 @@ import assemble_runtime as assembler
 
 
 class RuntimeAssembly(unittest.TestCase):
+    def test_hermes_final_path_upgrades_the_pinned_adapter_before_relocation(self):
+        calls = []
+
+        class Module:
+            @staticmethod
+            def prepare_plan(root, source, target, environments, **options):
+                calls.append((root, source, target, environments, options))
+                name = "upgrade" if options.get("ci_upgrade_startup_adapter") else "relocate"
+                return ({Path(root) / name: b"x"}, {})
+
+            @staticmethod
+            def apply_plan(changes):
+                calls.append(("apply", changes))
+
+        root = self.root / "runtime"
+        target = PureWindowsPath(r"C:\Program Files\NVIDIA\NemoClaw\runtime")
+        browser = {"bytes": 10, "sha256": "a" * 64}
+        changes, _ = assembler.hermes_final_path_plan(Module, root, target, browser)
+        self.assertEqual(calls[0][2], root)
+        self.assertEqual(calls[0][4], {"ci_upgrade_startup_adapter": True})
+        self.assertEqual(calls[1][0], "apply")
+        self.assertEqual(calls[2][2], Path(str(target)))
+        self.assertEqual(calls[2][4], {"ci_browser_use_adapter": browser})
+        self.assertIn(root / "relocate", changes)
+
     def setUp(self):
         fixture = tempfile.TemporaryDirectory()
         self.addCleanup(fixture.cleanup)

@@ -506,6 +506,31 @@ def verify_hermes_input(root: Path, actual: list[dict], candidate_receipt: Path)
     return candidate, candidate_document, inventory_document
 
 
+def hermes_final_path_plan(module, root, target, browser_use_adapter):
+    # The pinned candidate predates the current reviewed startup adapter. Upgrade
+    # that adapter in-place on the complete CI copy, then perform the ordinary
+    # final-path relocation and Browser Use addition against the upgraded marker.
+    # Neither phase installs or resolves packages.
+    upgrade, _ = module.prepare_plan(
+        root,
+        root,
+        root,
+        ["hermes-agent/venv", "tools/browser-use"],
+        ci_upgrade_startup_adapter=True,
+    )
+    module.apply_plan(upgrade)
+    changes, receipt = module.prepare_plan(
+        root,
+        root,
+        Path(str(target)),
+        ["hermes-agent/venv", "tools/browser-use"],
+        ci_browser_use_adapter={
+            key: browser_use_adapter[key] for key in ("bytes", "sha256")
+        },
+    )
+    return changes, receipt
+
+
 def finalize_hermes(
     root: Path,
     target: PureWindowsPath,
@@ -519,18 +544,7 @@ def finalize_hermes(
     spec = importlib.util.spec_from_file_location("hermes_final_metadata", helper)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    # This consumes only an already adapted complete official tree. The helper
-    # rechecks every prior generated hash, then changes pyvenv/direct_url metadata
-    # once for the assigned install path. No package install or resolution occurs.
-    changes, receipt = module.prepare_plan(
-        root,
-        root,
-        Path(str(target)),
-        ["hermes-agent/venv", "tools/browser-use"],
-        ci_browser_use_adapter={
-            key: browser_use_adapter[key] for key in ("bytes", "sha256")
-        },
-    )
+    changes, receipt = hermes_final_path_plan(module, root, target, browser_use_adapter)
     node_contract = root / "nemoclaw-hermes-node.json"
     node = json.loads(node_contract.read_text())
     chromium = node.pop("chromium", None)
