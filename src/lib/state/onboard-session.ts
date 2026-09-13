@@ -787,15 +787,6 @@ function parseStoredCheckpoint(value: unknown): OnboardCheckpoint | null {
   return inspected.status === "loaded" ? inspected.checkpoint : null;
 }
 
-function parseLockInfo(value: SessionJsonValue | undefined): LockInfo | null {
-  if (!isObject(value) || typeof value.pid !== "number") return null;
-  return {
-    pid: value.pid,
-    startedAt: readString(value.startedAt),
-    command: readString(value.command),
-  };
-}
-
 // redactSensitiveText and redactUrl imported from ./redact (#2381).
 export { redactSensitiveText, redactUrl };
 
