@@ -3,12 +3,15 @@
 import hashlib
 import importlib.util
 import io
+import json
 import os
 from pathlib import Path
 import struct
 import tarfile
 import tempfile
+from types import SimpleNamespace
 import unittest
+from unittest.mock import MagicMock, patch
 import zipfile
 
 SPEC = importlib.util.spec_from_file_location(
@@ -20,6 +23,89 @@ PUBLIC_ACCESS = REPLAY.load("prepare-public-runtime-acl.py")
 
 
 class ReplayControls(unittest.TestCase):
+    def test_public_rx_diagnostic_path_is_explicit_and_keeps_default_root(self):
+        class EmptyRoot:
+            def __init__(self, text, contents=()):
+                self.text, self.contents = text, contents
+
+            def __str__(self):
+                return self.text
+
+            def is_symlink(self):
+                return False
+
+            def is_dir(self):
+                return True
+
+            def iterdir(self):
+                return iter(self.contents)
+
+        nonce = "0123456789ab"
+        diagnostic = rf"C:\NemoClawRendererWer-{nonce}"
+        original = PUBLIC_ACCESS.PUBLIC_ROOT
+        environment = SimpleNamespace(
+            name="nt", environ={"GITHUB_ACTIONS": "true", "GITHUB_SHA": "a" * 40}
+        )
+        with patch.object(PUBLIC_ACCESS, "os", environment):
+            for path, options in (
+                (original, {}),
+                (diagnostic, {"diagnostic_nonce": nonce}),
+            ):
+                kernel, security, receipt = MagicMock(), MagicMock(), MagicMock()
+                kernel.CreateFileW.return_value = None
+                with (
+                    patch.object(
+                        PUBLIC_ACCESS.C,
+                        "WinDLL",
+                        side_effect=[kernel, security],
+                        create=True,
+                    ),
+                    patch.object(
+                        PUBLIC_ACCESS.C, "get_last_error", return_value=5, create=True
+                    ),
+                    patch.object(
+                        PUBLIC_ACCESS.C,
+                        "WinError",
+                        return_value=OSError(5, "fixture-open-denied"),
+                        create=True,
+                    ),
+                    self.assertRaisesRegex(OSError, "fixture-open-denied"),
+                ):
+                    PUBLIC_ACCESS.prepare(EmptyRoot(path), receipt, **options)
+                kernel.CreateFileW.assert_called_once_with(
+                    path, 0x60080, 3, None, 3, 0x02200000, None
+                )
+                record = json.loads(receipt.write_text.call_args.args[0])
+                self.assertEqual(
+                    record.get("diagnosticNonce"), options.get("diagnostic_nonce")
+                )
+                self.assertEqual("diagnosticNonce" in record, bool(options))
+                self.assertEqual(record["runtimeRoot"], path)
+                self.assertEqual(
+                    record["sourceSha256"],
+                    hashlib.sha256(
+                        Path(PUBLIC_ACCESS.__file__).read_bytes()
+                    ).hexdigest(),
+                )
+            for path, options, contents in (
+                (original, {"diagnostic_nonce": nonce}, ()),
+                (diagnostic, {}, ()),
+                (diagnostic.replace("C:", "D:"), {"diagnostic_nonce": nonce}, ()),
+                (diagnostic, {"diagnostic_nonce": nonce.upper()}, ()),
+                (diagnostic, {"diagnostic_nonce": nonce + "0"}, ()),
+                (diagnostic, {"diagnostic_nonce": True}, ()),
+                (diagnostic, {"diagnostic_nonce": nonce}, ("existing",)),
+            ):
+                with (
+                    patch.object(PUBLIC_ACCESS.C, "WinDLL", create=True) as native,
+                    self.assertRaises(ValueError),
+                ):
+                    PUBLIC_ACCESS.prepare(
+                        EmptyRoot(path, contents), MagicMock(), **options
+                    )
+                native.assert_not_called()
+        self.assertEqual(PUBLIC_ACCESS.PUBLIC_ROOT, original)
+
     def test_public_rx_addition_preserves_existing_ace_bytes_and_order(self):
         # A prior explicit deny and inherited System grant retain their exact
         # flags/masks/SIDs. Only the new AppPackages RX ACE is inserted.

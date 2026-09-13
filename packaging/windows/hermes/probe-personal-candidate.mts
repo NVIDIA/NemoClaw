@@ -554,6 +554,34 @@ export function personalRequest(
   };
 }
 
+export function rendererWerRequest(
+  primary: ReturnType<typeof personalRequest>,
+  runtime: string,
+  nonce: string,
+  owner: any,
+) {
+  assert.match(nonce, /^[a-f0-9]{24}$/u);
+  const cloneRoot = path.win32.join(
+    path.win32.parse(runtime).root,
+    `NemoClawRendererWer-${nonce.slice(0, 12)}`,
+  );
+  assert.equal(owner.schemaVersion, 1);
+  assert.equal(owner.classification, "renderer-wer-clone-owner");
+  assert.equal(owner.status, "prepared");
+  assert.equal(owner.ready, true);
+  assert.equal(owner.nonce, nonce);
+  assert.equal(owner.cloneRoot, cloneRoot);
+  assert.equal(owner.chromePath, path.win32.join(cloneRoot, "chrome-win64/chrome.exe"));
+  assert.equal(owner.reportRoot, path.win32.join(cloneRoot, "reports"));
+  assert.equal(primary.containerId, `nm-${nonce.slice(0, 12)}-start`);
+  const request = structuredClone(primary);
+  assert(!request.filesystem.readonlyPaths.includes(cloneRoot));
+  assert(!request.process.env.some((entry) => entry.startsWith("NEMOCLAW_HERMES_WER_CHROME=")));
+  request.filesystem.readonlyPaths.push(cloneRoot);
+  request.process.env.push(`NEMOCLAW_HERMES_WER_CHROME=${owner.chromePath}`);
+  return request;
+}
+
 function argument(name: string) {
   const index = process.argv.indexOf(name);
   if (index < 0 || !process.argv[index + 1] || process.argv[index + 1]!.startsWith("--"))
@@ -1748,6 +1776,14 @@ async function main() {
     ? argument("--renderer-context-build")
     : null;
   const coldJobProbe = process.argv.includes("--cold-job-probe");
+  const rendererWerBuildFile = process.argv.includes("--renderer-wer-build")
+    ? argument("--renderer-wer-build")
+    : null;
+  if (
+    rendererWerBuildFile &&
+    (coldJobProbe || rendererContextBuildFile || process.argv.includes("--record-startup"))
+  )
+    throw new Error("The renderer WER diagnostic requires all other diagnostic modes off.");
   if (coldJobProbe && (rendererContextBuildFile || process.argv.includes("--record-startup")))
     throw new Error(
       "The first-workload owned-job diagnostic requires tracing and debugger capture off.",
@@ -1843,6 +1879,55 @@ async function main() {
   let compatibility: ReturnType<typeof validatePersonalCompatibility> | undefined;
   let browserDiagnosticChildrenClosed = true;
   let primaryWpr: Awaited<ReturnType<typeof startPersonalWpr>> | null = null;
+  const rendererWerOwner = path.join(output, "renderer-wer-owner.json");
+  let rendererWerOwnerSha256: string | undefined;
+  let rendererWerPrepareAttempted = false;
+  const rendererWer: Record<string, unknown> = {};
+  if (rendererWerBuildFile) {
+    Object.assign(receipt, {
+      diagnosticOnly: true,
+      rendererWerDiagnostic: true,
+      rendererWerProbePassed: false,
+      ordinaryPrimaryExecuted: false,
+      firstCanonicalWorkload: true,
+      changedDimensions: [
+        "Separate verified Chrome subtree with an observe-only out-of-process WER callback",
+        "Chrome path differs; canonical Chrome executable/resources and immutable base remain unchanged",
+        "Diagnostic WER callback does not claim either C0000008 or the stock C0000409 exception",
+      ],
+      rendererWer,
+    });
+  }
+  const rendererWerHelper = fileURLToPath(new URL("./prepare-renderer-wer.py", import.meta.url));
+  const runRendererWer = async (mode: string, args: string[], document: string) => {
+    const priorOwnersClosed = cleanup.hostDiagnosticChildrenClosed;
+    if (mode === "cleanup") cleanup.hostDiagnosticChildrenClosed = false;
+    const execution = await personalCommand(
+      hostControllerPython,
+      ["-I", "-B", rendererWerHelper, mode, ...args, "--output", document],
+      { ...environment, GITHUB_SHA: process.env.GITHUB_SHA! },
+      root,
+      30_000,
+    );
+    rendererWer[mode] = { execution };
+    if (!execution.childClosed) cleanup.hostDiagnosticChildrenClosed = false;
+    let saved: ReturnType<typeof receiptDocument> | null = null;
+    try {
+      saved = fs.existsSync(document) ? receiptDocument(document) : null;
+    } finally {
+      if (mode === "cleanup")
+        cleanup.hostDiagnosticChildrenClosed =
+          priorOwnersClosed && execution.childClosed && saved?.value.hostsClosed === true;
+    }
+    rendererWer[mode] = { execution, receipt: saved };
+    assert.equal(execution.childClosed, true, "Renderer WER helper did not close");
+    assert.equal(execution.timedOut, false, "Renderer WER helper exceeded its bound");
+    assert.equal(execution.outputExceeded, false, "Renderer WER helper output exceeded its bound");
+    assert.equal(execution.error, null);
+    assert.equal(execution.exitCode, 0, "Renderer WER helper failed; see its retained receipt");
+    assert(saved, "Renderer WER helper did not retain its ownership receipt");
+    return saved;
+  };
   try {
     const proof = JSON.parse(fs.readFileSync(compatibilityProof, "utf8"));
     const build = JSON.parse(fs.readFileSync(compatibilityReceipt, "utf8"));
@@ -2020,6 +2105,28 @@ async function main() {
       windowsRoot,
       currentNativeRoot,
     );
+    if (rendererWerBuildFile) {
+      assert(replayDocument, "Renderer WER capture requires the immutable canonical replay");
+      rendererWer.helper = fileIdentity(rendererWerHelper);
+      rendererWer.build = receiptDocument(rendererWerBuildFile);
+      rendererWerPrepareAttempted = true;
+      const prepared = await runRendererWer(
+        "prepare",
+        [
+          "--runtime-root",
+          runtime,
+          "--inventory",
+          path.join(path.dirname(derivedRuntimeReceipt), "payload-inventory.json"),
+          "--observer-build",
+          rendererWerBuildFile,
+          "--nonce",
+          nonce,
+        ],
+        rendererWerOwner,
+      );
+      rendererWerOwnerSha256 = prepared.sha256;
+      request = rendererWerRequest(request, runtime, nonce, prepared.value);
+    }
     const policy = path.join(output, "personal-request.json");
     const bytes = JSON.stringify(request, null, 2) + "\n";
     fs.writeFileSync(policy, bytes, { flag: "wx" });
@@ -2101,6 +2208,7 @@ async function main() {
       (receipt.workload as any)?.components?.length === 4;
     if (
       !coldJobProbe &&
+      !rendererWerBuildFile &&
       execution.childClosed &&
       browserDiagnosticChildrenClosed &&
       !primaryOperationsPassed
@@ -2169,15 +2277,18 @@ async function main() {
       browserDiagnosticChildrenClosed &&= recorderSafe;
       cleanup.hostDiagnosticChildrenClosed &&= recorderSafe;
     }
-    receipt.supplementalDiagnosticDisposition = coldJobProbe
-      ? "first-workload owned-job experiment only; supplemental replays skipped"
-      : failure
-        ? rendererContextBuildFile
-          ? "primary failed; optional validated renderer debugger, then ordinary warm replay and owned-job replay"
-          : "primary failed; ordinary warm replay then owned-job replay without debugger"
-        : "primary passed; supplemental comparisons skipped";
+    receipt.supplementalDiagnosticDisposition = rendererWerBuildFile
+      ? "first-workload out-of-process WER diagnostic only; supplemental replays skipped"
+      : coldJobProbe
+        ? "first-workload owned-job experiment only; supplemental replays skipped"
+        : failure
+          ? rendererContextBuildFile
+            ? "primary failed; optional validated renderer debugger, then ordinary warm replay and owned-job replay"
+            : "primary failed; ordinary warm replay then owned-job replay without debugger"
+          : "primary passed; supplemental comparisons skipped";
     if (
       !coldJobProbe &&
+      !rendererWerBuildFile &&
       failure &&
       attempted &&
       cleanup.executorClosed &&
@@ -2359,11 +2470,62 @@ async function main() {
         errors.push(errorDetail(error));
       }
     }
-    const allClosed =
-      cleanup.executorClosed &&
+    let allClosed =
+      (cleanup.executorClosed || (rendererWerPrepareAttempted && !attempted)) &&
       cleanup.hostDiagnosticChildrenClosed &&
       browserDiagnosticChildrenClosed;
-    if (replayDocument && replayInventory && (!attempted || allClosed)) {
+    if (rendererWerPrepareAttempted) {
+      // The WER host is a separate owner. Its callback returning or the MXC
+      // Job closing does not establish that its loaded DLL has been released.
+      try {
+        if (!rendererWerOwnerSha256 && fs.existsSync(rendererWerOwner))
+          rendererWerOwnerSha256 = fileIdentity(rendererWerOwner).sha256;
+      } catch (error) {
+        cleanup.hostDiagnosticChildrenClosed = false;
+        errors.push({ rendererWerOwnerReceipt: errorDetail(error) });
+      }
+      if (rendererWerOwnerSha256 && cleanup.hostDiagnosticChildrenClosed) {
+        try {
+          await runRendererWer(
+            "readreports",
+            ["--owner", rendererWerOwner, "--owner-sha256", rendererWerOwnerSha256],
+            path.join(output, "renderer-wer-reports.json"),
+          );
+        } catch (error) {
+          errors.push({ rendererWerReports: errorDetail(error) });
+        }
+        try {
+          if (!cleanup.hostDiagnosticChildrenClosed)
+            throw new Error("A renderer WER helper remains live; cleanup was not attempted");
+          const result = await runRendererWer(
+            "cleanup",
+            [
+              "--owner",
+              rendererWerOwner,
+              "--owner-sha256",
+              rendererWerOwnerSha256,
+              ...(!attempted ? ["--executor-not-started"] : allClosed ? ["--executor-closed"] : []),
+            ],
+            path.join(output, "renderer-wer-cleanup.json"),
+          );
+          assert.equal(result.value.cleanupComplete, true);
+          assert.equal(result.value.registryRestored, true);
+          assert.equal(result.value.hostsClosed, true);
+          assert.equal(result.value.rootRemoved, true);
+        } catch (error) {
+          errors.push({ rendererWerCleanup: errorDetail(error) });
+        }
+      } else {
+        cleanup.hostDiagnosticChildrenClosed = false;
+        errors.push({
+          rendererWerCleanup:
+            "Ownership receipt absent or helper still live; diagnostic root retained",
+        });
+      }
+    }
+    allClosed &&= cleanup.hostDiagnosticChildrenClosed;
+    const resourceOwnerAttempted = attempted || rendererWerPrepareAttempted;
+    if (replayDocument && replayInventory && (!resourceOwnerAttempted || allClosed)) {
       try {
         (receipt.runtimeReplay as any).after = verifyPersonalReplayInventory(
           runtime,
@@ -2383,19 +2545,22 @@ async function main() {
     }
     const roots = removePersonalRoots(
       [share, launcher, hostScratch, ...(nativeRootCreated ? [currentNativeRoot] : [])],
-      attempted,
+      resourceOwnerAttempted,
       allClosed,
     );
     errors.push(...roots.errors);
     cleanup.ownedRootsRemoved = roots.removed;
     receipt.executorAttempted = attempted;
-    receipt.rootsRetainedForUnclosedExecutor = attempted && !allClosed;
+    receipt.rootsRetainedForUnclosedExecutor = resourceOwnerAttempted && !allClosed;
+    if (rendererWerPrepareAttempted)
+      rendererWer.runtimeRetainedForUnclosedOwner = resourceOwnerAttempted && !allClosed;
     receipt.error = failure ? errorDetail(failure) : null;
     receipt.cleanupErrors = errors;
     const completed =
       failure === null && errors.length === 0 && Object.values(cleanup).every(Boolean);
-    receipt.feasibilityPassed = !coldJobProbe && completed;
+    receipt.feasibilityPassed = !coldJobProbe && !rendererWerBuildFile && completed;
     if (coldJobProbe) receipt.coldJobProbePassed = completed;
+    if (rendererWerBuildFile) receipt.rendererWerProbePassed = completed;
     const published = publishPersonalReceipt(
       path.join(output, "personal-feasibility.json"),
       receipt,

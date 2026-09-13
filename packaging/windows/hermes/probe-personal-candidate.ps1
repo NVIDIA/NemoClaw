@@ -6,11 +6,13 @@ param([Parameter(Mandatory)][string]$ArtifactDirectory,
     [Parameter(Mandatory)][string]$HelperDirectory,
     [switch]$RecordStartup,
     [switch]$CaptureRendererContext,
-    [switch]$ColdJobProbe)
+    [switch]$ColdJobProbe,
+    [switch]$RendererWer)
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
 if ($env:GITHUB_ACTIONS -cne 'true' -or $env:OS -cne 'Windows_NT') { throw 'This candidate test requires disposable Windows CI.' }
 if ($ColdJobProbe -and ($RecordStartup -or $CaptureRendererContext)) { throw 'The cold owned-job experiment cannot record startup or capture renderer context.' }
+if ($RendererWer -and ($ColdJobProbe -or $RecordStartup -or $CaptureRendererContext)) { throw 'The renderer WER diagnostic must run without other diagnostic modes.' }
 $output=[IO.Path]::GetFullPath($ArtifactDirectory)
 if (Test-Path -LiteralPath $output) { throw 'The Personal evidence directory must be fresh.' }
 $null=New-Item -ItemType Directory -Path $output
@@ -19,8 +21,8 @@ $null=New-Item -ItemType Directory -Path $downloads
 $root=[IO.Path]::GetPathRoot([Environment]::SystemDirectory)
 $runtime=Join-Path $root 'NemoClawHermesProbe-274d797050ea'
 $primary=$null;$mxcAttempted=$false;$runtimeOwned=$false;$faultWindowStart=$null
-$classification=if($ColdJobProbe){'canonical-personal-mxc-cold-job-diagnostic'}else{'canonical-personal-mxc-candidate-feasibility'}
-$receipt=[ordered]@{schemaVersion=1;classification=$classification;sourceRevision=$env:GITHUB_SHA;diagnosticOnly=[bool]$ColdJobProbe;coldJobProbe=[bool]$ColdJobProbe;
+$classification=if($RendererWer){'canonical-personal-mxc-renderer-wer-diagnostic'}elseif($ColdJobProbe){'canonical-personal-mxc-cold-job-diagnostic'}else{'canonical-personal-mxc-candidate-feasibility'}
+$receipt=[ordered]@{schemaVersion=1;classification=$classification;sourceRevision=$env:GITHUB_SHA;diagnosticOnly=[bool]($ColdJobProbe -or $RendererWer);coldJobProbe=[bool]$ColdJobProbe;rendererWer=[bool]$RendererWer;
     candidateSource='8d78fe458e9268a7afdc8ed06b85c23306452036';artifactId=10293082661;status='failed';runtimeRebuilt=$false;runtimeExported=$false;
     installedAcceptance=$false;fullAgentQualified=$false;runtimeRoot=$runtime;cleanupErrors=@()}
 function Invoke-PersonalChecked([string]$Executable,[string[]]$Arguments,[string]$Label) {
@@ -199,6 +201,15 @@ try {
         '--compatibility-root',(Join-Path $compatEvidence 'compatibility-build'),'--compatibility-receipt',(Join-Path $compatEvidence 'compatibility-build/build-receipt.json'),
         '--compatibility-proof',(Join-Path $compatEvidence 'result.json'),'--mxc-build-receipt',(Join-Path $patchedMxc 'mxc-token-inspection-build.json'),
         '--derived-runtime-receipt',(Join-Path $candidate 'runtime-candidate.json'),'--replay-receipt',(Join-Path $candidate 'replay-input.json'))
+    if ($RendererWer) {
+        $receipt['activeStage']='Build out-of-process renderer diagnostic'
+        Write-Host '[Hermes Personal] Build out-of-process renderer diagnostic'
+        $compatBuildReceipt=Join-Path $compatEvidence 'compatibility-build/build-receipt.json'
+        & (Join-Path $PSScriptRoot 'build-renderer-wer-observer.ps1') -SourceRoot ([IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..'))) -Directory $output `
+            -CompatibilityReceipt $compatBuildReceipt -CompatibilitySourceRevision $receipt.compatibilityProofSource `
+            -CompatibilityReceiptSha256 ((Get-FileHash -LiteralPath $compatBuildReceipt -Algorithm SHA256).Hash.ToLowerInvariant())
+        $personalArguments += @('--renderer-wer-build',(Join-Path $output 'renderer-wer-observer/build-receipt.json'))
+    }
     if ($CaptureRendererContext) {
         # Build only this optional diagnostic; current native proof/runtime remain unchanged.
         $contextBuild=Join-Path $output 'renderer-context-helper/build-receipt.json'
@@ -237,7 +248,7 @@ finally{
     if($mxcAttempted){
         try{
             $completed=Get-Content -LiteralPath (Join-Path $output 'personal-mxc\personal-feasibility.json') -Raw|ConvertFrom-Json
-            $removeRuntime=$runtimeOwned -and $completed.schemaVersion -eq 1 -and $completed.classification -ceq 'canonical-personal-mxc-feasibility' -and $completed.runtime -ceq $runtime -and ($completed.executorAttempted -ceq $false -or ($completed.cleanup.executorClosed -ceq $true -and $completed.cleanup.hostDiagnosticChildrenClosed -ceq $true -and $completed.rootsRetainedForUnclosedExecutor -ceq $false))
+            $removeRuntime=$runtimeOwned -and $completed.schemaVersion -eq 1 -and $completed.classification -ceq 'canonical-personal-mxc-feasibility' -and $completed.runtime -ceq $runtime -and $completed.rootsRetainedForUnclosedExecutor -ceq $false -and $completed.cleanup.hostDiagnosticChildrenClosed -ceq $true -and ($completed.executorAttempted -ceq $false -or $completed.cleanup.executorClosed -ceq $true)
         }catch{$receipt.cleanupErrors+=@('Runtime retained: executor completion receipt unavailable. '+$_.Exception.Message)}
     }
     $receipt['runtimeRetainedForUnclosedExecutor']=$runtimeOwned -and -not $removeRuntime

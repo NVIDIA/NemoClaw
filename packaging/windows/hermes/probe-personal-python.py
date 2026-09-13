@@ -32,6 +32,35 @@ def owned_file(file, root):
     return _regular_file(Path(file), root)
 
 
+def renderer_wer_paths(runtime, state, selected):
+    """Admit only the separately owned diagnostic copy for this exact session."""
+    from pathlib import PureWindowsPath
+    import re
+
+    match = re.fullmatch(
+        r"([A-Za-z]):\\NemoClawMsysProof-([a-f0-9]{12})-state-start", state
+    )
+    if not match or PureWindowsPath(runtime).drive != match[1] + ":":
+        raise ValueError("Renderer WER diagnostic state identity differs")
+    owner = PureWindowsPath(match[1] + ":\\NemoClawRendererWer-" + match[2])
+    expected = owner / "chrome-win64/chrome.exe"
+    if selected != str(expected):
+        raise ValueError("Renderer WER diagnostic Chrome path differs")
+    return str(expected), str(owner)
+
+
+def selected_chrome_file(root, default):
+    selected = os.environ.get("NEMOCLAW_HERMES_WER_CHROME")
+    if not selected:
+        return owned_file(default, root)
+    if os.environ.get("GITHUB_ACTIONS") != "true":
+        raise ValueError("Renderer WER selection requires the explicit CI diagnostic")
+    file, owner = renderer_wer_paths(
+        str(root), os.environ.get("NEMOCLAW_AGENT_HOME", ""), selected
+    )
+    return owned_file(Path(file), Path(owner))
+
+
 def runtime_readonly_check(root):
     """Observe access to one existing static runtime file without changing it."""
     import ctypes
@@ -656,8 +685,8 @@ def existing_crashpad_reports(
         return b"".join(chunks)
 
     try:
-        expected = owned_file(
-            root / "browsers/chromium-1234/chrome-win64/chrome.exe", root
+        expected = selected_chrome_file(
+            root, root / "browsers/chromium-1234/chrome-win64/chrome.exe"
         )
         rows = [
             row
@@ -1070,7 +1099,9 @@ def browser_cdp_selection(root, state, observation):
             for row in observation.get("commands", [])
             if row.get("daemonIdentityBound") is True
         }
-        expected = owned_file(os.environ["AGENT_BROWSER_EXECUTABLE_PATH"], root)
+        expected = selected_chrome_file(
+            root, os.environ["AGENT_BROWSER_EXECUTABLE_PATH"]
+        )
         candidates = [
             row
             for row in observation.get("processes", [])
@@ -1756,6 +1787,17 @@ def browser_page_observation(result):
 
 def browser_check(root, nonce):
     component_started = time.monotonic()
+    if os.environ.get("NEMOCLAW_HERMES_WER_CHROME"):
+        selected = selected_chrome_file(root, "")
+        # The separate diagnostic tree changes only the WER callback DLL.
+        # The browser itself must remain the exact canonical executable.
+        with selected.open("rb") as source:
+            data = source.read(4024833)
+        if len(data) != 4024832 or hashlib.sha256(data).hexdigest() != (
+            "409805a16d6416087e6b2f778df1cf8f7bbb267d6b99f6b5bb0a618eace234f2"
+        ):
+            raise ValueError("Renderer WER diagnostic changed the Chrome executable")
+        os.environ["AGENT_BROWSER_EXECUTABLE_PATH"] = str(selected)
     from tools.browser_use_cli import browser_exec, _backend_cache_key
     from tools.browser_tool_install import _find_agent_browser
     from tools.browser_tool_lifecycle import cleanup_browser

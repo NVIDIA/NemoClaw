@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import struct
 
 PUBLIC_ROOT = r"C:\NemoClawHermesProbe-274d797050ea"
@@ -75,12 +76,19 @@ def verify_delta(before, after, expected):
         raise ValueError("Public runtime DACL change exceeded its one-ACE contract")
 
 
-def prepare(runtime, receipt_file):
+def prepare(runtime, receipt_file, *, diagnostic_nonce=None):
     """The extraction owner's callback is the sole caller; no existing tree."""
+    expected_root = PUBLIC_ROOT
+    if diagnostic_nonce is not None:
+        if not isinstance(diagnostic_nonce, str) or not re.fullmatch(
+            r"[0-9a-f]{12}", diagnostic_nonce
+        ):
+            raise ValueError("The diagnostic runtime nonce must be 12 lowercase hex")
+        expected_root = rf"C:\NemoClawRendererWer-{diagnostic_nonce}"
     if (
         os.name != "nt"
         or os.environ.get("GITHUB_ACTIONS") != "true"
-        or str(runtime) != PUBLIC_ROOT
+        or str(runtime) != expected_root
         or runtime.is_symlink()
         or not runtime.is_dir()
         or any(runtime.iterdir())
@@ -110,6 +118,8 @@ def prepare(runtime, receipt_file):
         "error": None,
         "cleanupErrors": [],
     }
+    if diagnostic_nonce is not None:
+        record["diagnosticNonce"] = diagnostic_nonce
     kernel = C.WinDLL("kernel32", use_last_error=True)
     security = C.WinDLL("advapi32", use_last_error=True)
     ptr, dword, word, boolean = C.c_void_p, C.c_uint32, C.c_uint16, C.c_int32

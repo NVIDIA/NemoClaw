@@ -10,6 +10,7 @@ import { test, type TestContext } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
   rendererContextBuild,
+  rendererWerRequest,
   personalRequest,
   directBrowserRequest,
   primaryDebugRequest,
@@ -417,6 +418,40 @@ function browserPrimary() {
     "C:\\NemoClawPersonalCompat-001122334455",
   );
 }
+
+test("renderer WER diagnostic adds only its owned read path and browser selection", () => {
+  const primary = browserPrimary();
+  const before = structuredClone(primary);
+  const cloneRoot = "C:\\NemoClawRendererWer-001122334455";
+  const owner = {
+    schemaVersion: 1,
+    classification: "renderer-wer-clone-owner",
+    status: "prepared",
+    ready: true,
+    nonce: browserOriginalNonce,
+    cloneRoot,
+    chromePath: path.win32.join(cloneRoot, "chrome-win64/chrome.exe"),
+    reportRoot: path.win32.join(cloneRoot, "reports"),
+  };
+  const result = rendererWerRequest(primary, browserRuntime, browserOriginalNonce, owner);
+  assert.deepEqual(primary, before);
+  const expected = structuredClone(primary);
+  expected.filesystem.readonlyPaths.push(cloneRoot);
+  expected.process.env.push(`NEMOCLAW_HERMES_WER_CHROME=${owner.chromePath}`);
+  assert.deepEqual(result, expected);
+  assert.equal(result.process.timeout, 120_000);
+  for (const changed of [
+    { ready: false },
+    { status: "failed" },
+    { nonce: browserNewNonce },
+    { cloneRoot: "C:\\Windows" },
+    { chromePath: owner.chromePath.replace("001122334455", "ffeeddccbbaa") },
+    { reportRoot: "C:\\Users" },
+  ])
+    assert.throws(() =>
+      rendererWerRequest(primary, browserRuntime, browserOriginalNonce, { ...owner, ...changed }),
+    );
+});
 
 test("direct browser comparison preserves policy and environment except fresh owned state and command", () => {
   const primary = browserPrimary();

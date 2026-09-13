@@ -23,6 +23,39 @@ spec.loader.exec_module(owner)
 
 
 class BrowserDiagnostics(unittest.TestCase):
+    def test_renderer_wer_selection_is_bound_to_one_session_and_same_drive(self):
+        runtime = r"C:\NemoClawHermesProbe-274d797050ea"
+        state = r"C:\NemoClawMsysProof-012345abcdef-state-start"
+        owner_root = r"C:\NemoClawRendererWer-012345abcdef"
+        chrome = owner_root + r"\chrome-win64\chrome.exe"
+        self.assertEqual(
+            owner.renderer_wer_paths(runtime, state, chrome), (chrome, owner_root)
+        )
+        for rejected in (
+            chrome.replace("012345abcdef", "112345abcdef"),
+            chrome.replace("C:", "D:"),
+            chrome.replace("chrome-win64", r"chrome-win64\..\chrome-win64"),
+            r"C:\Windows\System32\chrome.exe",
+            chrome.replace("chrome.exe", "other.exe"),
+        ):
+            with self.subTest(path=rejected), self.assertRaises(ValueError):
+                owner.renderer_wer_paths(runtime, state, rejected)
+        with self.assertRaises(ValueError):
+            owner.renderer_wer_paths(runtime, state.replace("C:", "D:"), chrome)
+
+    def test_renderer_wer_selection_leaves_ordinary_file_admission_unchanged(self):
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch.object(owner, "owned_file", return_value="ordinary") as admitted,
+        ):
+            self.assertEqual(owner.selected_chrome_file("root", "default"), "ordinary")
+            admitted.assert_called_once_with("default", "root")
+        with (
+            patch.dict(os.environ, {"NEMOCLAW_HERMES_WER_CHROME": "any"}, clear=True),
+            self.assertRaises(ValueError),
+        ):
+            owner.selected_chrome_file("root", "default")
+
     def setUp(self):
         native_spec = importlib.util.spec_from_file_location(
             "fixture_native_policy",
