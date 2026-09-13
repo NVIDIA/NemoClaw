@@ -581,6 +581,7 @@ interface QualifiedHermesPortableLifecycle {
 }
 
 export type HermesPortableRecoveryFailureClass =
+  | "entry-qualification"
   | "container-start"
   | "post-start-authority"
   | "openshell-exec-readiness"
@@ -1505,7 +1506,7 @@ export function recoverHermesPortableSandboxLifecycle(
   // Preserve the existing 60s start + 90s exec + 90s health allowance as one ceiling.
   const deadline = createOpenShellOperationDeadline(deps.startupTimeoutMs ?? 240_000, deps.now);
   let startupEnforced = true;
-  let primaryFailureClass: HermesPortableRecoveryFailureClass = "container-start";
+  let primaryFailureClass: HermesPortableRecoveryFailureClass = "entry-qualification";
   const commandBudget = (maximumMs: number) =>
     startupEnforced ? deadline.remaining(maximumMs, primaryFailureClass) : maximumMs;
   const timing = createHermesPortableLifecycleTimingRecorder(deps.recoveryTiming);
@@ -1542,12 +1543,14 @@ export function recoverHermesPortableSandboxLifecycle(
         currentnessTiming,
       ),
     );
+    commandBudget(1);
   } catch (error) {
     inspectionTiming?.finish();
     currentnessTiming.finish();
     timing.finish("failed");
     throw error;
   }
+  primaryFailureClass = "container-start";
   const wasRunning = qualified.container.authority.running;
   const needsStart = !wasRunning || qualified.openShellPhase === "Stopped";
   timing.setContainerAction(wasRunning ? "reused" : "started");

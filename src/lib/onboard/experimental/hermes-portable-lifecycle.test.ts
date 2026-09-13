@@ -297,36 +297,42 @@ describe("Hermes portable lifecycle", () => {
     expect(openshellMutationCalls(fixture.captureOpenShell, "stop")).toHaveLength(1);
   });
 
-  it("bounds start and health after qualification uses startup time (#11652)", () => {
-    const fixture = lifecycleDeps(activeReceipt(), false);
-    const capture = fixture.captureOpenShell.getMockImplementation()!;
-    let elapsed = 0;
-    const healthAllowances: number[] = [];
-    const command = vi.fn((args: readonly string[], allowance: number) => {
-      elapsed += args[1] === "get" && elapsed === 0 ? 20 : 0;
-      elapsed += args[1] === "start" ? 60 : 0;
-      const healthTimeout = () => {
-        healthAllowances.push(allowance);
-        elapsed += allowance;
-        return { status: 1, stdout: "", stderr: "health timed out" };
-      };
-      return args.includes(hermesPortableLifecycleInternals.healthWaitProgram)
-        ? healthTimeout()
-        : capture(args);
-    });
-    expect(() =>
-      recoverWithLifecycleLock({
-        ...fixture.deps,
-        startupTimeoutMs: 100,
-        now: () => elapsed,
-        captureOpenShell: command,
-      }),
-    ).toThrow("allowance exhausted during authenticated-health");
-    expect(command.mock.calls.find(([args]) => args[1] === "start")?.[1]).toBe(80);
-    expect(healthAllowances).toEqual([20]);
-    expect(elapsed).toBe(100);
-    expect(openshellMutationCalls(command, "stop")).toHaveLength(1);
-  });
+  it.each([
+    [20, "authenticated-health", 80, [20], 1],
+    [100, "entry-qualification", undefined, [], 0],
+  ] as const)(
+    "bounds later phases after %s ms qualification (#11652)",
+    (qualificationMs, phase, startAllowance, expectedHealth, stops) => {
+      const fixture = lifecycleDeps(activeReceipt(), false);
+      const capture = fixture.captureOpenShell.getMockImplementation()!;
+      let elapsed = 0;
+      const healthAllowances: number[] = [];
+      const command = vi.fn((args: readonly string[], allowance: number) => {
+        elapsed += args[1] === "get" && elapsed === 0 ? qualificationMs : 0;
+        elapsed += args[1] === "start" ? 60 : 0;
+        const healthTimeout = () => {
+          healthAllowances.push(allowance);
+          elapsed += allowance;
+          return { status: 1, stdout: "", stderr: "health timed out" };
+        };
+        return args.includes(hermesPortableLifecycleInternals.healthWaitProgram)
+          ? healthTimeout()
+          : capture(args);
+      });
+      expect(() =>
+        recoverWithLifecycleLock({
+          ...fixture.deps,
+          startupTimeoutMs: 100,
+          now: () => elapsed,
+          captureOpenShell: command,
+        }),
+      ).toThrow(`allowance exhausted during ${phase}`);
+      expect(command.mock.calls.find(([args]) => args[1] === "start")?.[1]).toBe(startAllowance);
+      expect(healthAllowances).toEqual(expectedHealth);
+      expect(elapsed).toBe(100);
+      expect(openshellMutationCalls(command, "stop")).toHaveLength(stops);
+    },
+  );
 
   it("reconciles and stops a partially applied start after its allowance expires (#11652)", () => {
     const fixture = lifecycleDeps(activeReceipt(), false, { startStatus: 1 });
