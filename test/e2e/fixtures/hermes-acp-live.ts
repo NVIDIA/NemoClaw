@@ -465,6 +465,7 @@ export async function runHermesAcpLiveScenario(options: HermesAcpLiveOptions): P
   const passed =
     !result.timedOut &&
     !result.spawnError &&
+    !result.cleanupError &&
     exitValid &&
     initialized &&
     scenarioValid &&

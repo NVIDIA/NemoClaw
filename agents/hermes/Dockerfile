@@ -103,7 +103,7 @@ ADD --checksum=sha256:66d2759d1921838256a05a3f80ad7e724936f083e35be5abb5e16eed6b
 COPY agents/hermes/managed_policy.py /opt/nemoclaw-hermes-config/managed_policy.py
 COPY agents/hermes/host/managed-tool-gateway-matrix.json /opt/nemoclaw-hermes-config/managed-tool-gateway-matrix.json
 COPY src/lib/hermes-managed-route.ts /src/lib/hermes-managed-route.ts
-COPY src/lib/tool-disclosure.ts /src/lib/tool-disclosure.ts
+COPY src/lib/tool-disclosure.ts src/lib/providerless-inference.ts /src/lib/
 COPY src/lib/messaging/ /src/lib/messaging/
 COPY scripts/lib/openclaw-npm-remediation.mts /scripts/lib/openclaw-npm-remediation.mts
 
@@ -473,7 +473,7 @@ RUN chmod -R a+rX /opt/nemoclaw-hermes-plugin/
 # read-only.
 RUN find /opt/nemoclaw-hermes-config -type d -exec chmod 755 {} + \
     && find /opt/nemoclaw-hermes-config -type f -exec chmod 444 {} + \
-    && chmod 444 /src/lib/hermes-managed-route.ts /src/lib/tool-disclosure.ts \
+    && chmod 444 /src/lib/hermes-managed-route.ts /src/lib/tool-disclosure.ts /src/lib/providerless-inference.ts \
     && chmod 444 /scripts/lib/reviewed-npm-archive.mts /scripts/lib/bundled-npm-package.mts \
         /scripts/lib/openclaw-npm-remediation.mts \
         /scripts/patch-bundled-npm-brace-expansion.mts /scripts/lib/patch-bundled-npm-ip-address.mts \
@@ -1713,6 +1713,11 @@ RUN check_metadata() { \
 RUN set -eu; \
     security_inventory=/usr/local/share/nemoclaw/security-packages.txt; \
     arch="$(dpkg --print-architecture)"; \
+    python_fix_version="$(dpkg-query -W -f='${Version}' nemoclaw-python3.13-htmlparser-fix)"; \
+    case "$python_fix_version" in \
+        3.13.5-2+deb13u4+nemoclaw1|3.13.5-2+deb13u5+nemoclaw1) ;; \
+        *) echo "ERROR: unexpected patched Python package version: $python_fix_version" >&2; exit 1 ;; \
+    esac; \
     test -f "$security_inventory"; \
     test ! -L "$security_inventory"; \
     test "$(stat -c '%u:%g:%a' "$security_inventory")" = "0:0:444"; \
@@ -1726,7 +1731,7 @@ RUN set -eu; \
         "vim-tiny=2:9.2.0858-1" \
         "libssh2-1t64=1.11.1-1+deb13u1+nemoclaw2" \
         "libssl3t64=3.5.7-1~deb13u2" \
-        "nemoclaw-python3.13-htmlparser-fix=3.13.5-2+deb13u4+nemoclaw1" \
+        "nemoclaw-python3.13-htmlparser-fix=$python_fix_version" \
         "perl-base=5.44.0-1nemoclaw1" \
         "perl=5.44.0-1nemoclaw1" \
         | cmp -s - "$security_inventory"; \
@@ -1738,7 +1743,6 @@ RUN set -eu; \
     test "$(dpkg-query -W -f='${Version}' vim-tiny)" = "2:9.2.0858-1"; \
     test "$(dpkg-query -W -f='${Version}' libssh2-1t64)" = "1.11.1-1+deb13u1+nemoclaw2"; \
     test "$(dpkg-query -W -f='${Version}' libssl3t64)" = "3.5.7-1~deb13u2"; \
-    test "$(dpkg-query -W -f='${Version}' nemoclaw-python3.13-htmlparser-fix)" = "3.13.5-2+deb13u4+nemoclaw1"; \
     test "$(dpkg-query -W -f='${Version}' perl-base)" = "5.44.0-1nemoclaw1"; \
     test "$(dpkg-query -W -f='${Version}' perl)" = "5.44.0-1nemoclaw1"; \
     test "$(perl -e 'print $^V')" = "v5.44.0"; \

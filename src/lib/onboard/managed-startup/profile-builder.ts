@@ -83,7 +83,7 @@ export interface ManagedStartupResolvedInferenceInput {
   readonly model: string;
   readonly routedBaseUrl: string;
   readonly upstreamEndpointUrl: string | null;
-  readonly api: ManagedStartupProfile["inference"]["api"];
+  readonly api: NonNullable<ManagedStartupProfile["inference"]>["api"];
   readonly primaryModelRef: string | null;
   readonly compatibility: Readonly<Record<string, unknown>> | null;
 }
@@ -91,7 +91,7 @@ export interface ManagedStartupResolvedInferenceInput {
 export interface ManagedStartupProfileBuilderInput {
   readonly agent: ManagedStartupAgent;
   /** Fully resolved host semantics; the portable builder never selects providers. */
-  readonly inference: ManagedStartupResolvedInferenceInput;
+  readonly inference: ManagedStartupResolvedInferenceInput | null;
   readonly dashboard: ManagedStartupDashboard;
   readonly webSearch: {
     readonly fetchEnabled: boolean;
@@ -527,12 +527,15 @@ function resolveCorporateCaMaterial(corporateCa: ResolvedCorporateCa | null | un
 }
 
 function assertAgentSpecificInput(input: ManagedStartupProfileBuilderInput): void {
+  if (input.inference === null && input.agent !== "openclaw" && input.agent !== "hermes") {
+    fail(`${input.agent} requires inference configuration`);
+  }
   if (input.dashboard.agent !== input.agent) {
     fail("dashboard.agent must match agent");
   }
   if (input.agent === "openclaw") {
     if (
-      input.inference.upstreamEndpointUrl !== null ||
+      (input.inference?.upstreamEndpointUrl ?? null) !== null ||
       input.hermesToolGateways.length > 0 ||
       input.dcodeAutoApprovalMode !== null ||
       input.observabilityEnabled !== null
@@ -542,11 +545,11 @@ function assertAgentSpecificInput(input: ManagedStartupProfileBuilderInput): voi
     return;
   }
   if (input.agent === "hermes") {
-    if (input.inference.compatibility !== null) {
+    if ((input.inference?.compatibility ?? null) !== null) {
       fail("Hermes does not support inference compatibility");
     }
     if (
-      input.inference.upstreamEndpointUrl !== null ||
+      (input.inference?.upstreamEndpointUrl ?? null) !== null ||
       input.dcodeAutoApprovalMode !== null ||
       input.observabilityEnabled !== null
     ) {
@@ -559,8 +562,8 @@ function assertAgentSpecificInput(input: ManagedStartupProfileBuilderInput): voi
       input.webSearch !== null ||
       input.hermesToolGateways.length > 0 ||
       input.messagingPlan !== null ||
-      input.inference.compatibility !== null ||
-      input.inference.upstreamEndpointUrl !== null ||
+      (input.inference?.compatibility ?? null) !== null ||
+      (input.inference?.upstreamEndpointUrl ?? null) !== null ||
       input.dcodeAutoApprovalMode !== null ||
       input.observabilityEnabled !== null
     ) {
@@ -577,7 +580,7 @@ function assertAgentSpecificInput(input: ManagedStartupProfileBuilderInput): voi
   if (input.messagingPlan !== null) {
     fail("langchain-deepagents-code messagingPlan must be null");
   }
-  if (input.inference.compatibility !== null) {
+  if ((input.inference?.compatibility ?? null) !== null) {
     fail("langchain-deepagents-code does not support inference compatibility");
   }
   if (
@@ -637,6 +640,7 @@ function profilePathExists(profile: ManagedStartupProfile, profilePath: string):
 
 function assertInventoryPathsResolved(profile: ManagedStartupProfile): void {
   for (const affordance of MANAGED_STARTUP_PROFILE_AFFORDANCE_INVENTORY[profile.agent]) {
+    if (profile.inference === null && affordance.profilePath.startsWith("inference.")) continue;
     if (!profilePathExists(profile, affordance.profilePath)) {
       fail(`${affordance.input} has no resolved value at ${affordance.profilePath}`);
     }
@@ -676,12 +680,12 @@ function assertEnvironmentConsistency(
   environment: NodeJS.ProcessEnv,
 ): void {
   const stringValues: Readonly<Record<string, string | null>> = {
-    NEMOCLAW_MODEL: profile.inference.model,
-    NEMOCLAW_INFERENCE_PROVIDER_ID: profile.inference.routeProvider,
-    NEMOCLAW_UPSTREAM_PROVIDER: profile.inference.upstreamProvider,
-    NEMOCLAW_PRIMARY_MODEL_REF: profile.inference.primaryModelRef,
-    NEMOCLAW_INFERENCE_BASE_URL: profile.inference.routedBaseUrl,
-    NEMOCLAW_INFERENCE_API: profile.inference.api,
+    NEMOCLAW_MODEL: profile.inference?.model ?? null,
+    NEMOCLAW_INFERENCE_PROVIDER_ID: profile.inference?.routeProvider ?? null,
+    NEMOCLAW_UPSTREAM_PROVIDER: profile.inference?.upstreamProvider ?? null,
+    NEMOCLAW_PRIMARY_MODEL_REF: profile.inference?.primaryModelRef ?? null,
+    NEMOCLAW_INFERENCE_BASE_URL: profile.inference?.routedBaseUrl ?? null,
+    NEMOCLAW_INFERENCE_API: profile.inference?.api ?? null,
     NEMOCLAW_TOOL_DISCLOSURE: profile.tools.disclosure,
     CHAT_UI_URL:
       profile.dashboard.agent === "openclaw"
@@ -718,7 +722,7 @@ function assertEnvironmentConsistency(
     assertEquivalent(
       "NEMOCLAW_UPSTREAM_ENDPOINT_URL",
       upstreamEndpoint,
-      profile.inference.upstreamEndpointUrl,
+      profile.inference?.upstreamEndpointUrl ?? null,
     );
   }
 
@@ -770,7 +774,7 @@ function assertEnvironmentConsistency(
       assertEquivalent(
         "NEMOCLAW_INFERENCE_INPUTS",
         [...parseInputModalities(environment)].sort(),
-        profile.inference.inputModalities,
+        profile.inference?.inputModalities ?? null,
       );
     }
     const compatibility = parseEnvironmentJson(environment, "NEMOCLAW_INFERENCE_COMPAT_B64");
@@ -778,7 +782,7 @@ function assertEnvironmentConsistency(
       assertEquivalent(
         "NEMOCLAW_INFERENCE_COMPAT_B64",
         compatibility,
-        profile.inference.compatibility,
+        profile.inference?.compatibility ?? null,
       );
     }
     const extraAgents = parseEnvironmentJson(environment, "NEMOCLAW_EXTRA_AGENTS_JSON_B64");
@@ -981,22 +985,28 @@ function buildCandidate(input: ManagedStartupProfileBuilderInput): {
     schemaVersion: MANAGED_STARTUP_PROFILE_SCHEMA_VERSION,
     agent: input.agent,
     agentConfig,
-    inference: {
-      routeProvider: inference.routeProvider,
-      upstreamProvider: inference.upstreamProvider,
-      model: inference.model,
-      routedBaseUrl: inference.routedBaseUrl,
-      upstreamEndpointUrl: inference.upstreamEndpointUrl,
-      api: inference.api,
-      primaryModelRef: inference.primaryModelRef,
-      // Docker's legacy JSON encoder maps a null compatibility result to {},
-      // and the OpenClaw generator consumes an object in all cases.
-      compatibility:
-        input.agent === "openclaw"
-          ? (JSON.parse(JSON.stringify(inference.compatibility ?? {})) as ManagedStartupJsonObject)
-          : null,
-      inputModalities: input.agent === "openclaw" ? parseInputModalities(input.environment) : null,
-    },
+    inference:
+      inference === null
+        ? null
+        : {
+            routeProvider: inference.routeProvider,
+            upstreamProvider: inference.upstreamProvider,
+            model: inference.model,
+            routedBaseUrl: inference.routedBaseUrl,
+            upstreamEndpointUrl: inference.upstreamEndpointUrl,
+            api: inference.api,
+            primaryModelRef: inference.primaryModelRef,
+            // Docker's legacy JSON encoder maps a null compatibility result to {},
+            // and the OpenClaw generator consumes an object in all cases.
+            compatibility:
+              input.agent === "openclaw"
+                ? (JSON.parse(
+                    JSON.stringify(inference.compatibility ?? {}),
+                  ) as ManagedStartupJsonObject)
+                : null,
+            inputModalities:
+              input.agent === "openclaw" ? parseInputModalities(input.environment) : null,
+          },
     proxy: {
       managedHost,
       managedPort,

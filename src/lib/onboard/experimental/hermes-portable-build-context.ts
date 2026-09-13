@@ -91,6 +91,7 @@ const LOCAL_COPY_SOURCES = [
   "src/lib/messaging/",
   "src/lib/messaging/channels/googlechat/runtime/hermes-adapter.py",
   "src/lib/tool-disclosure.ts",
+  "src/lib/providerless-inference.ts",
   "tools/mcp-tool-discovery-runtime/npm-cache-seed/tar-7.5.21.tgz",
   "tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/managed-startup-image-runtime.bundle",
   "tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/mcp-tool-discovery/BUNDLED_PACKAGES.json",

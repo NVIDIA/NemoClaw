@@ -89,14 +89,17 @@ def load_managed_policy(path: Path = MANAGED_POLICY_PATH) -> dict:
         "managed policy managed_paths",
     )
     config = document["config"]
-    if policy_value(config, "model.api_key") != HERMES_PROXY_REWRITE_SENTINEL:
+    has_routing = any(
+        key in config for key in ("model", "providers", "custom_providers", "_nemoclaw_upstream")
+    )
+    if has_routing and policy_value(config, "model.api_key") != HERMES_PROXY_REWRITE_SENTINEL:
         raise ManagedPolicyError(
             "managed policy model.api_key must use the OpenShell proxy rewrite sentinel"
         )
     for managed_path in managed_paths:
         policy_value(config, managed_path)
     for key in dashboard["routing_keys"]:
-        if key not in config:
+        if has_routing and key not in config:
             raise ManagedPolicyError(f"managed policy config is missing {key}")
     return document
 
