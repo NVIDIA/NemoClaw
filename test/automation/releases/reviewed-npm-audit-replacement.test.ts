@@ -4,7 +4,6 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { gunzipSync } from "node:zlib";
 import { describe, expect, it } from "vitest";
 import {
   lockedGraphAuditProvenance,
@@ -12,6 +11,7 @@ import {
   selectReviewedLockedGraphIdentity,
 } from "../../../scripts/audit-reviewed-npm-graph.mts";
 import { verifyReviewedNpmLock } from "../../../scripts/lib/reviewed-npm-archive.mts";
+import { openClawReplacementGraphFixture } from "./reviewed-npm-audit-fixtures.ts";
 
 const REPO_ROOT = path.join(import.meta.dirname, "../../..");
 const REVIEWED_AUDIT_CONFIG = parseAuditConfig(
@@ -26,13 +26,8 @@ describe("reviewed npm audit replacement identity", () => {
 
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-replacement-"));
     const lockfile = path.join(root, "package-lock.json");
-    const fixture = fs
-      .readFileSync(
-        path.join(REPO_ROOT, "test/fixtures/openclaw-2026.9.1-package-lock.json.gz.base64"),
-        "utf8",
-      )
-      .replaceAll(/\s/g, "");
-    fs.writeFileSync(lockfile, gunzipSync(Buffer.from(fixture, "base64")));
+    const fixture = openClawReplacementGraphFixture(REPO_ROOT, graph);
+    fs.writeFileSync(lockfile, fixture.lock);
 
     try {
       const identity = selectReviewedLockedGraphIdentity(lockfile, graph);
