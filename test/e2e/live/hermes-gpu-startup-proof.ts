@@ -142,7 +142,7 @@ export function assertHermesContainerImageAuthority(
 export async function assertHermesGpuStartupProof({
   env,
   gpuRoute,
-  host,
+  host: _host,
   install,
   runtimeProvider,
   sandbox,

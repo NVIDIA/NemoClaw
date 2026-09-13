@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { testTimeout } from "../../helpers/timeouts.ts";
-import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/index.ts";
 import { trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";

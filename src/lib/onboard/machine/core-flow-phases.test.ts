@@ -30,7 +30,6 @@ import {
 import type { OnboardFlowContext } from "./flow-context";
 import type { OnboardPrerequisiteRepairEventRecorder } from "./prerequisite-repair";
 import { advanceTo, branchTo } from "./result";
-import type { OnboardSequencePhase } from "./sequence-runner";
 
 type Agent = { name: string };
 type Gpu = { platform: string };

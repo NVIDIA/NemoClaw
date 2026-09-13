@@ -8,22 +8,12 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
-import YAML from "yaml";
 
-import {
-  validateE2eWorkflow,
-  validateHostDependencyAction,
-} from "../../../tools/e2e/workflow-boundary.mts";
+import { validateE2eWorkflow } from "../../../tools/e2e/workflow-boundary.mts";
 import { readWorkflow as readE2eWorkflow } from "../../helpers/e2e-workflow-contract.ts";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
-const ACTION_PATH = path.join(
-  REPO_ROOT,
-  ".github",
-  "actions",
-  "host-dependency-setup",
-  "action.yaml",
-);
+
 const SCRIPT_PATH = path.join(REPO_ROOT, ".github", "scripts", "host-dependency-setup.sh");
 const ACTION_USES =
   "NVIDIA/NemoClaw/.github/actions/host-dependency-setup@4def1501b34ce586f83b91af50a66b5d22b31d75";
@@ -52,24 +42,6 @@ function throwMissingStep(stepName: string): never {
 function requireStepIndex(steps: WorkflowStep[], stepName: string): number {
   const index = steps.findIndex((step) => step.name === stepName);
   return index >= 0 ? index : throwMissingStep(stepName);
-}
-
-function validateActionMutation(options: {
-  mutateAction?: (source: string) => string;
-  mutateScript?: (source: string) => string;
-}): string[] {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-host-dependency-action-"));
-  const actionPath = path.join(directory, "action.yaml");
-  const scriptPath = path.join(directory, "host-dependency-setup.sh");
-  try {
-    const actionSource = fs.readFileSync(ACTION_PATH, "utf8");
-    fs.writeFileSync(actionPath, options.mutateAction?.(actionSource) ?? actionSource);
-    const scriptSource = fs.readFileSync(SCRIPT_PATH, "utf8");
-    fs.writeFileSync(scriptPath, options.mutateScript?.(scriptSource) ?? scriptSource);
-    return validateHostDependencyAction(actionPath, scriptPath);
-  } finally {
-    fs.rmSync(directory, { force: true, recursive: true });
-  }
 }
 
 function writeExecutable(filePath: string, source: string): void {

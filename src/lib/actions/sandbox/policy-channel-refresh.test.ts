@@ -44,9 +44,7 @@ const POLICY_PRESETS: PresetInfo[] = [
   { file: "discord.yaml", name: "discord", description: "Discord API access" },
 ];
 
-let logSpy: MockInstance;
 let errSpy: MockInstance;
-let exitSpy: MockInstance;
 let refreshSpy: MockInstance;
 let applyPresetMock: MockInstance;
 let removePresetMock: MockInstance;
@@ -70,9 +68,9 @@ beforeEach(() => {
   stdinIsTty = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
   Object.defineProperty(process.stdin, "isTTY", { configurable: true, value: true });
 
-  logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+  vi.spyOn(console, "log").mockImplementation(() => undefined);
   errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
-  exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+  vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
     throw new ExitError(code);
   }) as never);
 

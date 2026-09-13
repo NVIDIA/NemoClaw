@@ -78,8 +78,6 @@ interface CompatibleMock {
   close(): Promise<void>;
 }
 
-type ProcessResult = { exitCode?: number | null; stdout: string; stderr: string };
-
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }

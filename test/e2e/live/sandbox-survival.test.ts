@@ -210,7 +210,7 @@ test(
     runtimeProvider,
     sandbox,
     secrets,
-    skip,
+    skip: _skip,
     stateValidation,
   }) => {
     const hosted = requireHostedInferenceConfig(secrets);

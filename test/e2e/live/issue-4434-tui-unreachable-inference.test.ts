@@ -61,8 +61,6 @@ const runIssue4434LiveTest =
     ? test.skipIf(HOSTED_INFERENCE_IS_GATEWAY_MANAGED)
     : test.skip;
 
-type CommandResultText = { stdout: string; stderr: string };
-
 function shellSingleQuote(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`;
 }

@@ -7,7 +7,6 @@ import os from "node:os";
 import path from "node:path";
 
 import { vi } from "vitest";
-import type { ContainerEngine } from "../../../src/lib/adapters/container-engine";
 import {
   capturePodmanSocketAuthority,
   createPodmanContainerEngine,

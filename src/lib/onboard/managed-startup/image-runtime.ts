@@ -1035,7 +1035,7 @@ function managedSystemCaAnchorNames(): readonly string[] {
     return (fs.readdirSync(MANAGED_STARTUP_SYSTEM_CA_ANCHOR_DIRECTORY) as string[])
       .filter((name) => MANAGED_STARTUP_SYSTEM_CA_ANCHOR_RE.test(name))
       .sort();
-  } catch (error) {
+  } catch {
     fail("could not inspect the managed system CA anchors");
   }
 }

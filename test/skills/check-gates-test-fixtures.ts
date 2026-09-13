@@ -202,30 +202,6 @@ function requiredCheck(name: string, conclusion = "SUCCESS") {
   return e2eGateCheck([runId, jobId, conclusion, undefined, undefined, workflowName, name]);
 }
 
-function initialE2eSeedJobs(): ActionJobFixture[] {
-  return [
-    { id: 471, name: "cancel-superseded" },
-    { id: 472, name: "initialize" },
-    { id: 473, name: "coordinate", conclusion: "skipped" },
-  ].map((job) => ({
-    ...job,
-    startedAt: "2026-01-01T00:01:00Z",
-    completedAt: "2026-01-01T00:01:31Z",
-  }));
-}
-
-function initialE2eSeedCheck() {
-  return {
-    __typename: "CheckRun",
-    name: "initialize",
-    workflowName: "E2E / PR Gate Controller",
-    detailsUrl: "https://github.com/NVIDIA/NemoClaw/actions/runs/407/job/472",
-    startedAt: "2026-01-01T00:01:00Z",
-    status: "COMPLETED",
-    conclusion: "SUCCESS",
-  };
-}
-
 function e2eGateCheck(check: E2eCheckFixture, index = 0) {
   const [runId, jobId, conclusion, startedAt, detailsUrl, workflowName, name] = check;
   return {

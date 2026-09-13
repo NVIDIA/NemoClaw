@@ -12,11 +12,9 @@ import {
   e2eRunFixture,
   exactDiffGateRun,
   HEAD_SHA,
-  INCOMPLETE_E2E,
   REQUIRED_CHECK_NAMES,
   runGate,
   successfulRequiredChecks,
-  successfulRequiredChecksWithoutE2e,
 } from "./check-gates-test-fixtures.ts";
 
 const ADVISOR_WORKFLOW_NAME = "Automation / PR Review Advisor";

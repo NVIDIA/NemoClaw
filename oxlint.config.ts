@@ -65,8 +65,16 @@ export default defineConfig({
     // Sanitizers deliberately match control characters; Vitest fixtures require empty parameters.
     "no-control-regex": "off",
     "no-empty-pattern": ["error", { allowObjectPatternsAsParameters: true }],
-    // Preserve the current scoped checks until each remaining rule family is migrated.
-    "no-unused-vars": "off",
+    "no-unused-vars": [
+      "error",
+      {
+        argsIgnorePattern: "^_",
+        caughtErrorsIgnorePattern: "^_",
+        destructuredArrayIgnorePattern: "^_",
+        ignoreRestSiblings: true,
+        varsIgnorePattern: "^_",
+      },
+    ],
     "no-unused-expressions": "off",
     "no-useless-catch": "off",
     "no-unsafe-optional-chaining": "off",
@@ -77,6 +85,23 @@ export default defineConfig({
     {
       files: ["docs/_components/**/*.{ts,tsx}", "fern/components/**/*.{ts,tsx}"],
       env: { browser: true },
+    },
+    {
+      // This file is a qualified Pi image input; preserve its bytes until both
+      // architecture receipts can be republished from the same workflow run.
+      files: ["nemoclaw-blueprint/scripts/sandbox-safety-net.js"],
+      rules: {
+        "no-unused-vars": [
+          "error",
+          {
+            argsIgnorePattern: "^(?:_|promise$)",
+            caughtErrorsIgnorePattern: "^_",
+            destructuredArrayIgnorePattern: "^_",
+            ignoreRestSiblings: true,
+            varsIgnorePattern: "^_",
+          },
+        ],
+      },
     },
     {
       files: ["**/*.test.ts"],
