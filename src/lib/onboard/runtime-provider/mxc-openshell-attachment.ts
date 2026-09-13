@@ -6,11 +6,14 @@ import { createHash } from "node:crypto";
 import path from "node:path";
 
 import { cloneAndDeepFreeze } from "../../core/immutable";
+import type { WindowsMxcQualifiedNativeArchitecture } from "../windows-mxc/host-qualification";
 
 export const MXC_OPENSHELL_ATTACHMENT_CONTRACT_VERSION = 3 as const;
 export const MXC_OPENSHELL_DISTRIBUTION_AUTHORITY_CONTRACT_VERSION = 1 as const;
 export const MXC_OPENSHELL_V0_0_24_MXC_V0_7_0_RC1_QUALIFICATION_PROFILE_ID =
   "openshell-v0-0-24-mxc-v0-7-0-rc1-qualification" as const;
+export const MXC_OPENSHELL_V0_0_59_DEV_927_MR105_MXC_V0_8_0_QUALIFICATION_PROFILE_ID =
+  "openshell-v0-0-59-dev-927-mr105-mxc-v0-8-0-qualification" as const;
 
 const PROVIDER_ID = "mxc";
 const SHA256_PATTERN = /^[a-f0-9]{64}$/u;
@@ -20,6 +23,27 @@ const VERSION_PATTERN =
 const CONTROL_CHARACTER_PATTERN = /[\u0000-\u001f\u007f-\u009f]/u;
 const LOCAL_DRIVE_PATH_PATTERN = /^[A-Za-z]:\\/u;
 const MAX_TEXT_BYTES = 4096;
+const QUALIFICATION_AGENT_ENVIRONMENT_NAMES = [
+  "COMSPEC",
+  "NEMOCLAW_MXC_E2E_COMPAT_PRELOAD",
+  "NEMOCLAW_MXC_E2E_DENY_PATH",
+  "NEMOCLAW_MXC_E2E_ENTRY",
+  "NEMOCLAW_MXC_E2E_HEARTBEAT_PATH",
+  "NEMOCLAW_MXC_E2E_HOME",
+  "NEMOCLAW_MXC_E2E_MOCK_PORT",
+  "NEMOCLAW_MXC_E2E_NODE",
+  "NEMOCLAW_MXC_E2E_OPENCLAW_PORT",
+  "NEMOCLAW_MXC_E2E_OPENCLAW_PID_PATH",
+  "NEMOCLAW_MXC_E2E_OPENCLAW_STATE_DIR",
+  "NEMOCLAW_MXC_E2E_OUTCOME_PATH",
+  "NEMOCLAW_MXC_E2E_READY_PATH",
+  "NEMOCLAW_MXC_E2E_RESULT_PATH",
+  "NEMOCLAW_MXC_E2E_STOP_PATH",
+  "NEMOCLAW_MXC_E2E_TOKEN",
+  "PATH",
+  "SYSTEMROOT",
+  "WINDIR",
+] as const;
 
 type ExactDistributionIdentity = {
   readonly version: string;
@@ -48,7 +72,13 @@ interface MxcOpenShellAttachmentExpectation {
 export type MxcOpenShellDistributionAcceptance = "qualification" | "accepted";
 
 export type MxcOpenShellDistributionProfileId =
-  typeof MXC_OPENSHELL_V0_0_24_MXC_V0_7_0_RC1_QUALIFICATION_PROFILE_ID;
+  | typeof MXC_OPENSHELL_V0_0_24_MXC_V0_7_0_RC1_QUALIFICATION_PROFILE_ID
+  | typeof MXC_OPENSHELL_V0_0_59_DEV_927_MR105_MXC_V0_8_0_QUALIFICATION_PROFILE_ID;
+
+export interface MxcOpenShellQualificationGatewayConfiguration {
+  readonly content: string;
+  readonly distributionAuthority: MxcOpenShellDistributionAuthority;
+}
 
 export interface MxcOpenShellAttachmentObservation extends MxcOpenShellAttachmentExpectation {
   readonly distributionRoot: string;
@@ -66,6 +96,7 @@ export interface MxcOpenShellAttachmentAuthority {
   readonly acceptance: MxcOpenShellDistributionAcceptance;
   readonly distributionProfileId: MxcOpenShellDistributionProfileId;
   readonly acceptedIdentitySha256: string;
+  readonly nativeArchitecture: WindowsMxcQualifiedNativeArchitecture;
 }
 
 export interface MxcOpenShellDistributionAuthority {
@@ -74,6 +105,7 @@ export interface MxcOpenShellDistributionAuthority {
   readonly profileId: MxcOpenShellDistributionProfileId;
   readonly acceptance: MxcOpenShellDistributionAcceptance;
   readonly acceptedIdentitySha256: string;
+  readonly nativeArchitecture: WindowsMxcQualifiedNativeArchitecture;
 }
 
 export interface MxcOpenShellAttachmentReceipt {
@@ -87,7 +119,11 @@ export interface MxcOpenShellAttachmentReceipt {
   readonly components: {
     readonly cli: { readonly path: string; readonly sha256: string };
     readonly gateway: { readonly path: string; readonly sha256: string };
-    readonly wxcExec: { readonly root: string; readonly path: string; readonly sha256: string };
+    readonly wxcExec: {
+      readonly root: string;
+      readonly path: string;
+      readonly sha256: string;
+    };
   };
   readonly gateway: ExactGatewayIdentity & { readonly configPath: string };
 }
@@ -121,6 +157,7 @@ export const MXC_OPENSHELL_V0_0_24_MXC_V0_7_0_RC1_QUALIFICATION_PROFILE = cloneA
     nativeArchitecture: "x64" as const,
     backend: "process_container" as const,
     mxcVersion: "0.7.0-rc1",
+    networkMode: "local-network" as const,
   },
   expectation: {
     distribution: {
@@ -141,9 +178,41 @@ export const MXC_OPENSHELL_V0_0_24_MXC_V0_7_0_RC1_QUALIFICATION_PROFILE = cloneA
   },
 });
 
+/** Qualification-only MR !105 review fixes after merging MR !108. */
+export const MXC_OPENSHELL_V0_0_59_DEV_927_MR105_MXC_V0_8_0_QUALIFICATION_PROFILE =
+  cloneAndDeepFreeze({
+    profileId: MXC_OPENSHELL_V0_0_59_DEV_927_MR105_MXC_V0_8_0_QUALIFICATION_PROFILE_ID,
+    acceptance: "qualification" as const,
+    compatibility: {
+      nativeArchitecture: "arm64" as const,
+      backend: "process_container" as const,
+      mxcVersion: "0.8.0",
+      networkMode: "egress-proxy" as const,
+    },
+    expectation: {
+      distribution: {
+        version: "0.0.59-dev.927+g01053b261",
+        revision: "01053b261ab38f5a9458f331009a374805fe28ec",
+        sha256: "21f216568f4884a5bcfedf43620dde64455c21e88c7d012a99bc4c9fafcb93d9",
+      },
+      components: {
+        cliSha256: "459f4cb5fabbb2bdb52e3d3d8f1690cdf9ed2e854e2c84182d5c9088ff19dfd1",
+        gatewaySha256: "f8c35961f08290282ef18b3fb2c59bc8ec43c328e9e411e8afc83300b65a4bff",
+        wxcExecSha256: "dde1c592270e9a659b01dccad70362da7b99fec114885fa4d625507aa775a503",
+      },
+      gateway: {
+        configSha256: "cafc36920c9caba0a1c540c00e91b3f8ecec95e02fbe7c30cf9ca6603fcb79a4",
+        driver: "mxc" as const,
+        backend: "process_container" as const,
+      },
+    },
+  });
+
 const DISTRIBUTION_PROFILES = {
   [MXC_OPENSHELL_V0_0_24_MXC_V0_7_0_RC1_QUALIFICATION_PROFILE_ID]:
     MXC_OPENSHELL_V0_0_24_MXC_V0_7_0_RC1_QUALIFICATION_PROFILE,
+  [MXC_OPENSHELL_V0_0_59_DEV_927_MR105_MXC_V0_8_0_QUALIFICATION_PROFILE_ID]:
+    MXC_OPENSHELL_V0_0_59_DEV_927_MR105_MXC_V0_8_0_QUALIFICATION_PROFILE,
 } as const;
 
 function record(value: unknown, label: string): Record<string, unknown> {
@@ -255,6 +324,10 @@ function pathWithin(root: string, candidate: string): boolean {
   );
 }
 
+function tomlWindowsPath(value: string): string {
+  return JSON.stringify(value.replaceAll("\\", "/"));
+}
+
 function parseObservation(value: unknown): MxcOpenShellAttachmentObservation {
   const input = record(value, "observed attachment");
   exactKeys(
@@ -331,6 +404,7 @@ function createMxcOpenShellAttachmentAuthority(
   expectation: unknown,
   acceptance: MxcOpenShellDistributionAcceptance,
   distributionProfileId: MxcOpenShellAttachmentAuthority["distributionProfileId"],
+  nativeArchitecture: WindowsMxcQualifiedNativeArchitecture,
 ): MxcOpenShellAttachmentAuthority {
   const accepted = cloneAndDeepFreeze(parseExpectation(expectation, "accepted attachment"));
   const acceptedIdentitySha256 = createHash("sha256")
@@ -341,6 +415,7 @@ function createMxcOpenShellAttachmentAuthority(
         mode: "attach-existing",
         acceptance,
         distributionProfileId,
+        nativeArchitecture,
         accepted,
       }),
       "utf8",
@@ -353,10 +428,15 @@ function createMxcOpenShellAttachmentAuthority(
     acceptance,
     distributionProfileId,
     acceptedIdentitySha256,
+    nativeArchitecture,
   });
   ACCEPTED_IDENTITIES.set(
     authority,
-    cloneAndDeepFreeze({ acceptance, distributionProfileId, expectation: accepted }),
+    cloneAndDeepFreeze({
+      acceptance,
+      distributionProfileId,
+      expectation: accepted,
+    }),
   );
   return authority;
 }
@@ -365,11 +445,13 @@ function createDistributionAuthority(
   profileId: MxcOpenShellDistributionAuthority["profileId"],
   acceptance: MxcOpenShellDistributionAcceptance,
   expectation: unknown,
+  nativeArchitecture: WindowsMxcQualifiedNativeArchitecture,
 ): MxcOpenShellDistributionAuthority {
   const attachmentAuthority = createMxcOpenShellAttachmentAuthority(
     expectation,
     acceptance,
     profileId,
+    nativeArchitecture,
   );
   const authority = Object.freeze({
     contractVersion: MXC_OPENSHELL_DISTRIBUTION_AUTHORITY_CONTRACT_VERSION,
@@ -377,6 +459,7 @@ function createDistributionAuthority(
     profileId,
     acceptance,
     acceptedIdentitySha256: attachmentAuthority.acceptedIdentitySha256,
+    nativeArchitecture,
   });
   DISTRIBUTION_AUTHORITIES.set(authority, attachmentAuthority);
   return authority;
@@ -395,7 +478,147 @@ export function createMxcOpenShellDistributionAuthority(
     throw new MxcOpenShellAttachmentError("distribution profile is not provider-owned");
   }
   const profile = DISTRIBUTION_PROFILES[profileId];
-  return createDistributionAuthority(profile.profileId, profile.acceptance, profile.expectation);
+  return createDistributionAuthority(
+    profile.profileId,
+    profile.acceptance,
+    profile.expectation,
+    profile.compatibility.nativeArchitecture,
+  );
+}
+
+/**
+ * Render the only gateway configuration authorized for a provider-owned inactive
+ * Windows qualification profile and bind its digest to an opaque authority.
+ *
+ * The caller supplies run-local paths and a loopback target port, but cannot
+ * supply configuration text, security semantics, or an accepted digest.
+ */
+export function createMxcOpenShellQualificationGatewayConfiguration(
+  inputValue: unknown,
+): MxcOpenShellQualificationGatewayConfiguration {
+  const input = record(inputValue, "qualification gateway configuration");
+  exactKeys(
+    input,
+    [
+      "agentPath",
+      "distributionRevision",
+      "distributionProfileId",
+      "distributionVersion",
+      "egressProxyPort",
+      "relayPath",
+      "shareDirectory",
+      "targetPort",
+      "wxcExecPath",
+    ],
+    "qualification gateway configuration",
+  );
+  const distributionVersion = exactText(
+    input.distributionVersion,
+    "qualification distribution version",
+    VERSION_PATTERN,
+  );
+  const distributionRevision = exactText(
+    input.distributionRevision,
+    "qualification distribution revision",
+    REVISION_PATTERN,
+  );
+  if (
+    typeof input.distributionProfileId !== "string" ||
+    !Object.hasOwn(DISTRIBUTION_PROFILES, input.distributionProfileId)
+  ) {
+    throw new MxcOpenShellAttachmentError(
+      "qualification distribution profile is not provider-owned",
+    );
+  }
+  const distributionProfileId = input.distributionProfileId as MxcOpenShellDistributionProfileId;
+  const profile = DISTRIBUTION_PROFILES[distributionProfileId];
+  if (
+    profile.expectation.distribution.version !== distributionVersion ||
+    profile.expectation.distribution.revision !== distributionRevision
+  ) {
+    throw new MxcOpenShellAttachmentError(
+      "qualification distribution does not match the provider-owned profile",
+    );
+  }
+  const agentPath = canonicalWindowsPath(input.agentPath, "qualification agent path");
+  const relayPath = canonicalWindowsPath(input.relayPath, "qualification relay path");
+  const shareDirectory = canonicalWindowsPath(
+    input.shareDirectory,
+    "qualification share directory",
+  );
+  const wxcExecPath = canonicalWindowsPath(input.wxcExecPath, "qualification wxc-exec path");
+  if (!pathWithin(shareDirectory, relayPath)) {
+    throw new MxcOpenShellAttachmentError(
+      "qualification relay path must remain inside the qualification share directory",
+    );
+  }
+  if (
+    typeof input.targetPort !== "number" ||
+    !Number.isSafeInteger(input.targetPort) ||
+    input.targetPort < 1 ||
+    input.targetPort > 65_535
+  ) {
+    throw new MxcOpenShellAttachmentError("qualification target port is invalid");
+  }
+  if (
+    typeof input.egressProxyPort !== "number" ||
+    !Number.isSafeInteger(input.egressProxyPort) ||
+    input.egressProxyPort < 1 ||
+    input.egressProxyPort > 65_535 ||
+    input.egressProxyPort === input.targetPort
+  ) {
+    throw new MxcOpenShellAttachmentError("qualification egress proxy port is invalid");
+  }
+
+  const sandboxTempDirectory = path.win32.join(shareDirectory, "temp");
+  const probeAgentPath = path.win32.join(shareDirectory, "probe-agent.mjs");
+  const agentEnvironment = [
+    ...QUALIFICATION_AGENT_ENVIRONMENT_NAMES,
+    `LOCALAPPDATA=${path.win32.join(shareDirectory, "home", "AppData", "Local")}`,
+    `TEMP=${sandboxTempDirectory}`,
+    `TMP=${sandboxTempDirectory}`,
+  ];
+  const content = [
+    "[openshell.drivers.mxc]",
+    `wxc_exec_path = ${tomlWindowsPath(wxcExecPath)}`,
+    'backend = "process_container"',
+    'default_configuration_id = "composable"',
+    `share_dir = ${tomlWindowsPath(shareDirectory)}`,
+    `agent_cwd = ${tomlWindowsPath(shareDirectory)}`,
+    "agent_command = [",
+    `  ${tomlWindowsPath(agentPath)},`,
+    `  ${tomlWindowsPath(probeAgentPath)},`,
+    "]",
+    "agent_env = [",
+    ...agentEnvironment.map((value) => `  ${tomlWindowsPath(value)},`),
+    "]",
+    "pc_least_privilege = false",
+    'pc_capabilities = ["privateNetworkClientServer"]',
+    ...(profile.compatibility.networkMode === "egress-proxy"
+      ? ["egress_proxy = true", `egress_proxy_addr = "127.0.0.1:${input.egressProxyPort}"`]
+      : ["pc_allow_local_network = true"]),
+    "pc_minimal_env = true",
+    `pc_relay_spawner_path = ${tomlWindowsPath(relayPath)}`,
+    `pc_relay_target_port = ${input.targetPort}`,
+    "debug = false",
+    "",
+  ].join("\n");
+  const expectation = {
+    ...profile.expectation,
+    gateway: {
+      ...profile.expectation.gateway,
+      configSha256: createHash("sha256").update(content, "utf8").digest("hex"),
+    },
+  };
+  return Object.freeze({
+    content,
+    distributionAuthority: createDistributionAuthority(
+      profile.profileId,
+      profile.acceptance,
+      expectation,
+      profile.compatibility.nativeArchitecture,
+    ),
+  });
 }
 
 /** Resolve the opaque attachment capability carried by a provider-owned distribution authority. */
@@ -454,7 +677,10 @@ export function qualifyMxcOpenShellAttachment(
     distribution: { ...observed.distribution, root: observed.distributionRoot },
     components: {
       cli: { path: observed.cliPath, sha256: observed.components.cliSha256 },
-      gateway: { path: observed.gatewayPath, sha256: observed.components.gatewaySha256 },
+      gateway: {
+        path: observed.gatewayPath,
+        sha256: observed.components.gatewaySha256,
+      },
       wxcExec: {
         root: observed.mxcRoot,
         path: observed.wxcExecPath,

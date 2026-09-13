@@ -5,7 +5,6 @@ import { createHash } from "node:crypto";
 
 import { describe, expect, it, vi } from "vitest";
 
-import { managedStartupE2eProfile } from "../../../../scripts/checks/generate-managed-startup-profile-fixture.mts";
 import { encodeManagedStartupProfile } from "../managed-startup/profile";
 import { nativeArtifactWorkloadReceiptFixture } from "../workload/native-artifact-test-fixture";
 import type {
@@ -37,10 +36,69 @@ const REQUIRED_ENVIRONMENT = [
   "USERPROFILE",
 ] as const;
 
-async function request() {
+function labelDigest(value: string): string {
+  const encoded = Buffer.from(value, "hex").toString("base64url");
+  return /^[A-Za-z0-9]/u.test(encoded) ? encoded : `h${encoded}`;
+}
+
+async function request(lifecycleGeneration = "generation-7") {
   let plan: RuntimeProviderNativeArtifactBootstrapPlan | undefined;
   const workload = nativeArtifactWorkloadReceiptFixture(
-    encodeManagedStartupProfile(managedStartupE2eProfile("openclaw")),
+    // Keep this protocol fixture independent of changing live E2E startup defaults.
+    encodeManagedStartupProfile({
+      schemaVersion: 1,
+      agent: "openclaw",
+      inference: {
+        routeProvider: "inference",
+        upstreamProvider: "nvidia",
+        model: "nvidia/nemotron-3-ultra-550b-a55b",
+        routedBaseUrl: "https://inference.local/v1",
+        upstreamEndpointUrl: null,
+        api: "openai-completions",
+        primaryModelRef: "inference/nvidia/nemotron-3-ultra-550b-a55b",
+        compatibility: {},
+        inputModalities: ["text"],
+      },
+      proxy: {
+        managedHost: "10.200.0.1",
+        managedPort: 3128,
+        hostHttpUrl: "http://fixture-http-proxy.example.test:18080",
+        hostHttpsUrl: "http://fixture-https-proxy.example.test:18443",
+        hostNoProxy: ["localhost", "127.0.0.1", ".example.test"],
+      },
+      tools: { disclosure: "progressive", enabledGateways: [] },
+      messaging: { plan: null },
+      corporateCa: { bundleSha256: null },
+      agentConfig: {
+        agent: "openclaw",
+        webSearch: { enabled: false, provider: "brave" },
+        otel: {
+          enabled: false,
+          endpointUrl: "http://host.openshell.internal:4318",
+          serviceName: "openclaw-gateway",
+          sampleRate: 1,
+        },
+        agentTimeoutSeconds: 600,
+        heartbeatEvery: null,
+        extraAgents: { agents: [], defaults: {}, main: {} },
+        deviceAuth: { disabled: true, optOutSource: "managed-onboard" },
+        minimalBootstrap: true,
+      },
+      dashboard: {
+        agent: "openclaw",
+        mode: "loopback",
+        url: "http://127.0.0.1:18789",
+        port: 18789,
+        bindAddress: "127.0.0.1",
+        wslExposure: false,
+      },
+      tuning: {
+        contextWindow: 131072,
+        maxTokens: 8192,
+        reasoning: false,
+        reasoningEffort: "default",
+      },
+    }),
   );
   const surface = createMxcNativeArtifactBootstrapSurface({
     verifyAndCreate: async (value) => {
@@ -55,7 +113,7 @@ async function request() {
   await surface.run({
     providerId: "mxc",
     sandboxName: "alpha",
-    lifecycleGeneration: "generation-7",
+    lifecycleGeneration,
     driveRoot: "C:\\",
     artifactRoot: "C:\\openclaw-2026-7-1",
     workload: {
@@ -114,13 +172,13 @@ function sandbox(
     workspace: "default",
     labels: {
       "nemoclaw-provider": "mxc",
-      "nemoclaw-attachment-sha256": fixture().authoritySha256,
-      "nemoclaw-authority-sha256": liveRequest.authoritySha256,
-      "nemoclaw-policy-sha256": "6".repeat(64),
-      "nemoclaw-request-sha256": liveRequest.requestSha256,
-      "nemoclaw-lifecycle-sha256": createHash("sha256")
-        .update(liveRequest.lifecycleGeneration, "utf8")
-        .digest("hex"),
+      "nemoclaw-attachment-sha256": labelDigest(fixture().authoritySha256),
+      "nemoclaw-authority-sha256": labelDigest(liveRequest.authoritySha256),
+      "nemoclaw-policy-sha256": labelDigest("6".repeat(64)),
+      "nemoclaw-request-sha256": labelDigest(liveRequest.requestSha256),
+      "nemoclaw-lifecycle-sha256": labelDigest(
+        createHash("sha256").update(liveRequest.lifecycleGeneration, "utf8").digest("hex"),
+      ),
       ...labelOverrides,
     },
     phase,
@@ -167,6 +225,7 @@ describe("inactive OpenShell MXC live operations", () => {
       sha256: "6".repeat(64),
     });
     expect(input.command.executablePath).toBe(input.attachment.components.cli.path);
+    expect(input.command.timeoutMs).toBe(10 * 60_000);
     expect(input.command.arguments).toEqual(
       expect.arrayContaining([
         "--gateway",
@@ -189,20 +248,51 @@ describe("inactive OpenShell MXC live operations", () => {
     );
     expect(labelArguments(input.command)).toMatchObject({
       "nemoclaw-provider": "mxc",
-      "nemoclaw-attachment-sha256": input.attachment.authoritySha256,
-      "nemoclaw-authority-sha256": liveRequest.authoritySha256,
-      "nemoclaw-policy-sha256": "6".repeat(64),
-      "nemoclaw-request-sha256": liveRequest.requestSha256,
-      "nemoclaw-lifecycle-sha256": createHash("sha256")
-        .update(liveRequest.lifecycleGeneration, "utf8")
-        .digest("hex"),
+      "nemoclaw-attachment-sha256": labelDigest(input.attachment.authoritySha256),
+      "nemoclaw-authority-sha256": labelDigest(liveRequest.authoritySha256),
+      "nemoclaw-policy-sha256": labelDigest("6".repeat(64)),
+      "nemoclaw-request-sha256": labelDigest(liveRequest.requestSha256),
+      "nemoclaw-lifecycle-sha256": labelDigest(
+        createHash("sha256").update(liveRequest.lifecycleGeneration, "utf8").digest("hex"),
+      ),
     });
     expect(input.command.arguments).toContain(`HOME=${liveRequest.environment.HOME}`);
     expect(liveRequest.hostEnvironmentReferences.length).toBeGreaterThan(0);
     liveRequest.hostEnvironmentReferences.forEach((name) => {
       expect(input.command.arguments.some((entry) => entry.startsWith(`${name}=`))).toBe(false);
+      expect(input.command.arguments).toContain(name);
+      expect(input.command.arguments[input.command.arguments.indexOf(name) - 1]).toBe("--env-from");
     });
     expect(run).not.toHaveBeenCalled();
+  });
+
+  it("makes leading-symbol digest labels valid for create and recovery (#10585)", async () => {
+    const liveRequest = await request("leading-symbol-15");
+    const rawRequestLabel = Buffer.from(liveRequest.requestSha256, "hex").toString("base64url");
+    expect(rawRequestLabel).toMatch(/^[-_]/u);
+    const verifyAndRunCreate = vi.fn<MxcOpenShellLiveHostBoundary["verifyAndRunCreate"]>(
+      async () => ({ status: "create-rejected" }),
+    );
+    const run = vi
+      .fn<MxcOpenShellLiveHostBoundary["run"]>()
+      .mockImplementationOnce(async () => result("", 1))
+      .mockImplementationOnce(async () => result([]));
+    const live = operations({ verifyAndRunCreate, run });
+
+    await expect(live.verifyAndCreate(liveRequest)).resolves.toEqual({
+      status: "not-created",
+      reason: "create-rejected",
+    });
+    await expect(live.recoverCreate(liveRequest)).resolves.toEqual({ status: "absent" });
+
+    const expected = `h${rawRequestLabel}`;
+    expect(labelArguments(verifyAndRunCreate.mock.calls[0]![0].command)).toMatchObject({
+      "nemoclaw-request-sha256": expected,
+    });
+    expect(run.mock.calls[1]![0].command.arguments).toEqual(
+      expect.arrayContaining(["--selector", `nemoclaw-request-sha256=${expected}`]),
+    );
+    expect(expected).toMatch(/^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/u);
   });
 
   it("does not create when the trusted boundary rejects artifact verification (#8178)", async () => {
@@ -381,13 +471,14 @@ describe("inactive OpenShell MXC live operations", () => {
   });
 
   it("reports absence without attempting deletion (#8178)", async () => {
+    const liveRequest = await request();
     const run = vi
       .fn<MxcOpenShellLiveHostBoundary["run"]>()
       .mockImplementationOnce(async () => result("", 1))
       .mockImplementationOnce(async () => result([]));
 
     await expect(
-      operations({ verifyAndRunCreate: vi.fn(), run }).recoverCreate(await request()),
+      operations({ verifyAndRunCreate: vi.fn(), run }).recoverCreate(liveRequest),
     ).resolves.toEqual({ status: "absent" });
     expect(run).toHaveBeenCalledTimes(2);
     expect(run.mock.calls[1]![0].command.arguments).toEqual(
@@ -395,7 +486,7 @@ describe("inactive OpenShell MXC live operations", () => {
         "--limit",
         "2",
         "--selector",
-        expect.stringMatching(/^nemoclaw-request-sha256=[a-f0-9]{64}$/u),
+        `nemoclaw-request-sha256=${labelDigest(liveRequest.requestSha256)}`,
       ]),
     );
   });
@@ -449,6 +540,8 @@ describe("inactive OpenShell MXC live operations", () => {
       "sandbox",
       "delete",
       "alpha",
+      "--expected-id",
+      "sandbox-id-1",
     ]);
   });
 

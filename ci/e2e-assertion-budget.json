@@ -30,11 +30,11 @@
       "expectCalls": 2281,
       "matcherAssertions": 2245,
       "nodeAssertions": 127,
-      "namedAssertionHelpers": 905,
+      "namedAssertionHelpers": 903,
       "failCalls": 38,
       "throwGuards": 626,
       "objectFieldAssertions": 343,
-      "assertionPoints": 4284,
+      "assertionPoints": 4282,
       "generatedProbeBlocks": 276,
       "generatedProbeConditions": 943
     },
@@ -130,7 +130,7 @@
       "test/e2e/live/token-rotation.test.ts": [28,36,28,36,2],
       "test/e2e/live/tunnel-lifecycle.test.ts": [0,0,8,17,4],
       "test/e2e/live/whatsapp-qr-compact.test.ts": [29,35,29,35,1],
-      "test/e2e/live/windows-mxc-openclaw-process-container.test.ts": [7,11,7,73,4]
+      "test/e2e/live/windows-mxc-openclaw-process-container.test.ts": [7,11,7,71,4]
     }
   }
 }

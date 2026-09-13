@@ -1061,9 +1061,12 @@
         "test/e2e/live/windows-mxc-openclaw-process-container-helpers.ts"
       ],
       "fast": [
+        "src/lib/onboard/runtime-provider/mxc-openshell-attachment.test.ts",
+        "src/lib/onboard/runtime-provider/mxc-bootstrap.test.ts",
+        "src/lib/onboard/runtime-provider/mxc-windows-openshell-executor.test.ts",
         "test/e2e/support/e2e-semantic-phase-check.test.ts",
-        "test/e2e/support/windows-mxc-inactive-onboarding-composition.test.ts",
-        "test/e2e/support/windows-mxc-openclaw-process-container.test.ts"
+        "test/e2e/support/windows-mxc-openclaw-process-container.test.ts",
+        "test/e2e/support/windows-mxc-inactive-onboarding-composition.test.ts"
       ]
     }
   ]

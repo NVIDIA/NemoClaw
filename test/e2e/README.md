@@ -633,32 +633,53 @@ qualification target for epic #8178. It exercises an operator-supplied native
 Windows OpenShell package and a staged OpenClaw artifact through the OpenShell
 `process_container` driver. It does not register MXC, call `wxc-exec.exe`
 directly, or establish Windows support.
-The generated driver configuration records the prototype configuration
-qualified by this target: normal AppContainer mode,
-`privateNetworkClientServer`, the host egress proxy, and an
-operator-supplied supervisor relay. This configuration broadens the candidate
-sandbox relative to the earlier less-privileged probe and is not a production
-default.
+The provider-generated driver configuration records the qualification-only
+OpenShell MR !105 dev.927/MXC 0.8.0 configuration used by this target after
+MR !108 merged into MR !105 and its forwarding, certificate-staging, and
+environment-cleanup review fixes were applied. Superseded package profiles are
+not available to this target.
+The selected configuration enables
+`privateNetworkClientServer`, the host egress proxy, and an operator-supplied
+supervisor relay. It does not enable `pc_allow_local_network`. The network
+default remains block. The policy permits graphical DLL loading required by
+Node.js while it denies clipboard access and input injection.
 
-The target requires a Windows x64 host that passes the minimum MXC candidate
+The target requires a Windows ARM64 host that passes the minimum MXC candidate
 check. It rejects a dirty NemoClaw checkout and requires exact expected
 identities for that checkout, the original OpenShell distribution artifact,
 the extracted OpenShell CLI, gateway, supervisor relay, separately rooted
 `wxc-exec.exe`, complete OpenClaw artifact tree, Node.js, and OpenClaw
-entrypoint. It observes these paths through the inactive native stable-file
-boundary before sandbox mutation but does not mint the provider-owned authority
-required to qualify or activate the distribution. The target also requires an
+entrypoint. The checked-in inactive distribution profile supplies package
+authority. Caller paths and hashes are observations only and cannot replace
+that authority. The trusted executor reobserves and pins the package, policy,
+and artifact before sandbox mutation. The target also requires an
 existing work root and records the operator's exact host-preparation declaration.
-It observes whether the test process is elevated but does not change host ACLs or elevation.
+It requires a logged-in interactive Windows session and rejects session 0 or
+noninteractive launch context before local setup or sandbox creation. Elevation
+alone does not satisfy this check. It records the observed session ID,
+interactive status, and elevation in each receipt. It does not switch sessions
+or change drive-root ACLs or elevation. For each fresh test-owned share and staged artifact root, it
+grants inheritable modify access to `ALL APPLICATION PACKAGES` (`S-1-15-2-1`) and
+`ALL RESTRICTED APPLICATION PACKAGES` (`S-1-15-2-2`) before sandbox creation.
+Those grants are scoped to the two disposable roots, which are removed after
+each cycle.
 Compute the canonical artifact-tree digest after staging:
 
-The OpenClaw artifact, share, and host-state directories must be fresh siblings
-directly beneath the declared drive root. This matches the current package's
-shallow-share requirement and the qualified workaround for MXC parent-path
-traversal. The generated agent environment redirects `TEMP` and `TMP` into a
-test-owned directory beneath the writable share; it does not expose the host
-temporary directory to the sandbox. Host-only configuration remains outside
-the sandbox share.
+The reviewed OpenClaw artifact, share, and host-state directories must be fresh
+siblings directly beneath the declared drive root. Each cycle copies and
+revalidates the complete OpenClaw artifact into a fresh disposable drive-root
+sibling before sandbox creation. This matches the current package's shallow-share requirement
+and the qualified workaround for MXC parent-path traversal. The generated agent
+environment redirects `LOCALAPPDATA`, `TEMP`, and `TMP` into test-owned
+directories beneath the writable share; it does not expose the corresponding
+host directories to the sandbox. Host-only configuration remains outside the
+sandbox share.
+
+The provider validates the staged tree and Node.js digest, pins its files, and
+rechecks the tree before issuing sandbox creation. Gateway and forward readiness
+both require a loopback listener owned by the spawned process ID. A listener
+owned by another process cannot satisfy readiness. Listener queries remain
+bounded, and the target separately validates each process identity.
 
 ```powershell
 npx tsx tools/e2e/windows-mxc-openclaw-artifact-tree.mts $env:NEMOCLAW_WINDOWS_MXC_OPENCLAW_ROOT
@@ -685,7 +706,8 @@ values. Do not put credentials in them.
 | `NEMOCLAW_WINDOWS_MXC_OPENSHELL_GATEWAY_SHA256` | Expected OpenShell gateway SHA-256 |
 | `NEMOCLAW_WINDOWS_MXC_OPENSHELL_RELAY_SHA256` | Expected OpenShell supervisor relay SHA-256 |
 | `NEMOCLAW_WINDOWS_MXC_WXC_EXEC_SHA256` | Expected `wxc-exec.exe` SHA-256 |
-| `NEMOCLAW_WINDOWS_MXC_HOST_PREPARATION` | declaration `wxc-host-prep-prepare-system-drive`; the target records but does not perform or verify this persistent host mutation |
+| `NEMOCLAW_WINDOWS_MXC_HOST_PREPARATION` | declaration `wxc-host-prep-prepare-system-drive`, or `preexisting-compatible-system-drive-acl` when a saved successful probe reports DACL augmentation is unnecessary; the target records but does not perform or independently verify host preparation |
+| `NEMOCLAW_WINDOWS_MXC_ALLOW_NAME_DELETE_DIAGNOSTIC` | retired and ignored; cleanup always requires the immutable sandbox ID |
 | `NEMOCLAW_WINDOWS_MXC_WORK_ROOT` | Existing Windows drive root for fresh, test-owned sibling share and host-state directories |
 | `NEMOCLAW_WINDOWS_MXC_OPENCLAW_ROOT` | Staged native OpenClaw artifact root directly beneath the declared drive root |
 | `NEMOCLAW_WINDOWS_MXC_NODE` | Node.js executable beneath the artifact root |
@@ -702,8 +724,9 @@ including the token, to privileged host process inspection while `wxc-exec.exe`
 starts the sandbox. The token is never written to the receipt or supplied in
 the OpenClaw command arguments, is not reused, and is useful only for the
 temporary loopback OpenClaw gateway. The host client uses a temporary config
-file that is deleted before a passing receipt is written. Cleanup attempts sandbox deletion, stops
-the recorded OpenClaw process, clears the in-memory environment value, and
+file that is deleted before a passing receipt is written. Cleanup calls the
+provider-owned recovery path, stops the recorded OpenClaw process, clears the
+in-memory environment value, and
 removes both test-owned run directories, including the MXC agent environment
 file, runtime home, state, configuration, and gateway logs. A direct
 process-tree termination is an emergency cleanup fallback only. The host-side
@@ -714,11 +737,18 @@ and creation time. For OpenClaw, it also validates the probe-parent ancestry.
 The host rejects a mismatched or reused PID. The fallback uses the
 `taskkill.exe` beneath the validated Windows system root. If the OpenClaw
 process, OpenShell forward, or OpenShell gateway needs that fallback, the qualification
-fails. The delete retry and process-termination paths are failure containment,
-not compatibility workarounds that permit a passing result; their presence does
-not assume a specific upstream defect. Remove them only when failed or partial
-OpenShell lifecycle operations can still guarantee teardown without host-side
-cleanup.
+fails. Process termination is failure containment, not a compatibility
+workaround that permits a passing result. The target never retries sandbox
+creation and never deletes a sandbox from its mutable name alone.
+The probe passes explicit `OPENCLAW_CONFIG_PATH` and `OPENCLAW_STATE_DIR`
+values beneath its writable share. It disables bundled plugins, automatic
+updates, channels, and provider sidecars because this credential-free target
+qualifies the core gateway and its declared mock model only.
+The OpenClaw child receives `NO_PROXY` and `no_proxy` containing only the
+mock server's bound `127.0.0.1:<port>`. This routes same-sandbox mock traffic
+directly. It replaces inherited bypass lists and preserves the injected HTTP
+and HTTPS proxy settings for other destinations. It does not permit additional
+network access or establish governed-egress qualification.
 
 Run only the explicit target:
 
@@ -747,34 +777,58 @@ It does not inspect OpenShell terminal wording or repeat the forward mutation.
 The complete create, forward, chat, and cleanup flow runs twice to detect stale
 state. After preflight and local setup succeed, it
 writes a secret-free receipt for either verdict and records whether sensitive
-runtime artifacts were removed. Receipt schema version 4 retains the observed
-gateway-configuration digest and also classifies startup
-as not observed, spawn failed, exited before readiness, health timeout, or ready.
-The ready outcome means that the in-sandbox health probe succeeded.
+runtime artifacts were removed. Receipt schema version 9 adds the observed
+host launch context and retains the observed
+gateway-configuration digest, each bounded provider lifecycle result, and
+sanitized provider failure records. New receipts require authoritative, ID-guarded
+cleanup; historical diagnostic-name-delete receipts cannot pass this target.
+It also classifies startup
+as not observed, spawn failed, exited before readiness, readiness timeout, or ready.
+Create-verification failures retain a fixed stage, error class, elapsed
+milliseconds, and an optional bounded Windows error code. These fields distinguish
+pin timeouts, native sharing conflicts, and digest drift without retaining raw
+error text, paths, command output, or environment values. Diagnostic reporting
+does not change mutation, timeout, or cleanup decisions.
+The ready outcome means that the probe observed readiness in the gateway startup log.
 It does not mean that the qualification passed.
 Use `verdict` and `startup.versionExitCode` to diagnose the result.
 A nonzero version exit code produces a failed qualification.
-It retains only bounded numeric child and version exit codes; it does not retain
-child output, error text, command arguments, paths, or credentials. Cleanup
+It retains only bounded numeric child and version exit codes in the receipt.
+When startup or OpenShell control fails, it can also retain bounded, sanitized
+gateway log artifacts after removing the run token and credential assignments.
+It does not retain raw child output or credentials. Cleanup
 removes both test-owned run directories for every verdict because MXC can write
 the temporary gateway token to its agent environment file. A failed run retains
 the secret-free receipt and any secret-free forward-readiness artifact written
 before the failure.
 The host-preparation declaration is operator evidence, not an ACL attestation.
+Artifact staging grants the existing inheritable package-group Modify access to
+the fresh empty staging root before copying OpenClaw. Copied files inherit the
+grants without a recursive ACL rewrite across the populated artifact tree. The
+source tree, parent directory, permission set, and command timeout are unchanged.
+Copy each top-level entry to a new destination within that root. Keep existing
+destination rejection enabled; do not overwrite entries or copy onto the root itself.
 Gateway mTLS, governed egress policy enforcement, managed inference,
 gateway-restart recovery, standard-user operation, and production activation
 remain outside this target.
 
 If a failed receipt has a non-null `cleanup.retainedSandboxName`, OpenShell did
 not confirm removal of that sandbox. The retained process environment can
-hold the temporary gateway token until sandbox deletion is confirmed. Inspect
-the registry and delete only the recorded name:
-
-```powershell
-$receipt = Get-Content "C:\path\to\receipt.json" -Raw | ConvertFrom-Json
-& $env:NEMOCLAW_WINDOWS_MXC_OPENSHELL_CLI sandbox list -o json
-& $env:NEMOCLAW_WINDOWS_MXC_OPENSHELL_CLI sandbox delete $receipt.cleanup.retainedSandboxName
-```
+hold the temporary gateway token until sandbox deletion is confirmed. Do not
+delete the recorded name directly. Preserve the receipt and use an
+OpenShell recovery operation that revalidates the immutable sandbox ID and
+request labels. If the installed package cannot do that, report the resource
+as possibly retained and stop qualification on that host.
+The previously evaluated v0.0.30 package exposed deletion by mutable sandbox name.
+Its unused profile has been removed; it is not a qualification fallback.
+The checked-in qualification-only profile for the MR 105 developer package
+uses immutable-identity-checked deletion, so it can produce development
+evidence but cannot produce accepted-package evidence. Final qualification
+still requires a provider-owned profile for an accepted package built from its
+exact OpenShell revision. Do not weaken the delete requirement. If create or
+list reconciliation cannot prove the resource identity or absence, preserve
+the receipt, report the sandbox as possibly retained, and stop qualification on
+that host rather than attempting broad cleanup.
 
 The retired `hermes-dashboard` selector remains a compatibility alias for
 `hermes-e2e` in both selector inputs. Reports use the canonical

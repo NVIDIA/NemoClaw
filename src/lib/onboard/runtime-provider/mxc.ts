@@ -81,9 +81,10 @@ function unsupported(reason: string) {
 
 function inspectMxcHost(
   hostFacts: WindowsMxcHostFacts,
+  nativeArchitecture: MxcOpenShellAttachmentAuthority["nativeArchitecture"],
   qualifyAttachment: () => ReturnType<typeof qualifyMxcOpenShellAttachment>,
 ): RuntimeProviderDoctorCheck {
-  const assessment = assessWindowsMxcProcessContainerCandidate(hostFacts);
+  const assessment = assessWindowsMxcProcessContainerCandidate(hostFacts, nativeArchitecture);
   if (!assessment.candidate) {
     return {
       group: "Host",
@@ -99,7 +100,7 @@ function inspectMxcHost(
       label: "OpenShell MXC process_container candidate",
       status: "info",
       detail:
-        `Windows x64 build ${assessment.windowsBuild} and OpenShell ${attachment.distribution.version} ` +
+        `Windows ${assessment.nativeArchitecture} build ${assessment.windowsBuild} and OpenShell ${attachment.distribution.version} ` +
         "match the inactive attachment contract.",
       hint:
         "This check does not enable MXC. Maintainers must accept a stable OpenShell distribution " +
@@ -172,7 +173,12 @@ export function createMxcRuntimeProviderBundle({
     preflightDoctor: {
       providerId: MXC_PROVIDER_ID,
       supported: true,
-      inspectHost: () => inspectMxcHost(hostFacts, qualifyAttachment),
+      inspectHost: () =>
+        inspectMxcHost(
+          hostFacts,
+          openshellAttachmentAuthority.nativeArchitecture,
+          qualifyAttachment,
+        ),
       validateSandboxGpu: (config, exitProcess) =>
         exitOnSandboxGpuConfigErrors(config, exitProcess),
       preflightLifecycle: () => ({ exitCode: 1, message: lifecycleReason }),
