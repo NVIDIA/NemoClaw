@@ -50,6 +50,7 @@ on:
           - npm-shims
           - export-controls
           - personal-candidate
+          - trace-analysis
           - bash-compat
           - host-prerequisites
           - system-drive
@@ -60,11 +61,41 @@ permissions:
   contents: read
 
 concurrency:
-  group: windows-native-installer-${{ github.ref }}${{ inputs.run_windows_native_installer && inputs.windows_native_diagnostic_source_run_id == '' && '-finished-package' || inputs.test_native_windows_runtime && '-runtime-controls' || inputs.profile_native_windows && '-profiling' || inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'python' && '-hermes-python' || inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'runtime' && '-hermes-runtime' || inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'npm-shims' && '-hermes-npm-shims' || inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'bash-compat' && '-bash-compat' || inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'personal-candidate' && '-hermes-personal-candidate' || inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'export-controls' && '-hermes-export-controls' || inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'application' && '-compiled-application' || inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'host-prerequisites' && '-host-prerequisites' || inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'system-drive' && '-system-drive' || inputs.probe_official_hermes_components && '-hermes-components' || inputs.windows_native_diagnostic_source_run_id != '' && '-package-diagnostic' || '' }}
+  group: windows-native-installer-${{ github.ref }}${{ inputs.run_windows_native_installer && inputs.windows_native_diagnostic_source_run_id == '' && '-finished-package' || inputs.test_native_windows_runtime && '-runtime-controls' || inputs.profile_native_windows && '-profiling' || inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'python' && '-hermes-python' || inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'runtime' && '-hermes-runtime' || inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'npm-shims' && '-hermes-npm-shims' || inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'bash-compat' && '-bash-compat' || inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'personal-candidate' && '-hermes-personal-candidate' || inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'trace-analysis' && '-hermes-trace-analysis' || inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'export-controls' && '-hermes-export-controls' || inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'application' && '-compiled-application' || inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'host-prerequisites' && '-host-prerequisites' || inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'system-drive' && '-system-drive' || inputs.probe_official_hermes_components && '-hermes-components' || inputs.windows_native_diagnostic_source_run_id != '' && '-package-diagnostic' || '' }}
   # Finish the in-flight artifact/evidence; keep only the latest queued request.
   cancel-in-progress: false
 
 jobs:
+  windows-personal-trace-analysis:
+    name: Recorded Hermes Personal trace analysis (no application execution)
+    if: ${{ github.event_name == 'workflow_dispatch' && !inputs.run_windows_native_installer && !inputs.profile_native_windows && !inputs.test_native_windows_runtime && inputs.windows_native_diagnostic_source_run_id == '' && inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'trace-analysis' }}
+    runs-on: windows-11-vs2026-arm
+    # Fixed recorded input; eight bounded analysis commands plus intake/upload.
+    timeout-minutes: 25
+    steps:
+      - name: Check out the trace analysis controller
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Verify and analyze the exact recorded bf0c trace
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          & "$env:GITHUB_WORKSPACE\packaging\windows\performance\analyze-personal-wpr.ps1" `
+            -ArtifactDirectory "$env:RUNNER_TEMP\personal-trace-analysis"
+      - name: Preserve bounded analysis reports and original small trace metadata
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: official-hermes-personal-trace-analysis-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/personal-trace-analysis/
+            !${{ runner.temp }}/personal-trace-analysis/recorded-trace.zip
+            !${{ runner.temp }}/personal-trace-analysis/input/**/*.etl
+          if-no-files-found: error
+          retention-days: 14
+
   windows-finished-installer:
     name: Finished Windows OpenClaw preview installer (ARM64)
     needs: windows-compiled-application
@@ -880,7 +911,7 @@ jobs:
 
   official-hermes-components:
     name: Official Hermes ${{ inputs.official_hermes_phase || 'components' }} probe (Windows ARM64)
-    if: ${{ github.event_name == 'workflow_dispatch' && !inputs.run_windows_native_installer && inputs.probe_official_hermes_components && inputs.official_hermes_phase != 'host-prerequisites' && inputs.official_hermes_phase != 'application' && inputs.official_hermes_phase != 'system-drive' && inputs.official_hermes_phase != 'npm-shims' && inputs.official_hermes_phase != 'export-controls' && inputs.official_hermes_phase != 'personal-candidate' && inputs.official_hermes_phase != 'bash-compat' && !inputs.test_native_windows_runtime && !inputs.profile_native_windows }}
+    if: ${{ github.event_name == 'workflow_dispatch' && !inputs.run_windows_native_installer && inputs.probe_official_hermes_components && inputs.official_hermes_phase != 'host-prerequisites' && inputs.official_hermes_phase != 'application' && inputs.official_hermes_phase != 'system-drive' && inputs.official_hermes_phase != 'npm-shims' && inputs.official_hermes_phase != 'export-controls' && inputs.official_hermes_phase != 'personal-candidate' && inputs.official_hermes_phase != 'trace-analysis' && inputs.official_hermes_phase != 'bash-compat' && !inputs.test_native_windows_runtime && !inputs.profile_native_windows }}
     runs-on: windows-11-vs2026-arm
     timeout-minutes: ${{ inputs.official_hermes_phase == 'runtime' && 180 || 90 }}
     steps:
