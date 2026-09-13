@@ -25,7 +25,6 @@ import {
   directoryChain,
   openshellMutationCalls,
   poisonUnexpectedCommand,
-  startupArgv as renderStartupArgv,
 } from "./hermes-portable-lifecycle.test-fixtures";
 import {
   hermesPortableLifecycleInternals,
@@ -60,9 +59,6 @@ const LABELS = {
 };
 let stateDir: string;
 let policyPath: string;
-function startupArgv() {
-  return renderStartupArgv(SANDBOX);
-}
 function activeReceipt(homeDir = "/home/test"): HermesPortableConfiguredReceipt {
   return createHermesPortableLifecycleTestReceipt({
     agent: loadAgent("hermes"),
