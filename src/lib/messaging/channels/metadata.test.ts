@@ -282,7 +282,8 @@ describe("built-in messaging channel metadata", () => {
   });
 
   it("requires committed npm integrity pins for built-in OpenClaw plugin installs", () => {
-    const openClawVersion = loadAgent("openclaw").expectedVersion;
+    const openClawVersion = loadAgent("openclaw").expectedVersion ?? "";
+    expect(openClawVersion, "OpenClaw manifest must declare an expected version").not.toBe("");
     const npmPluginInstalls = listBuiltInMessagingChannelManifests({ agent: "openclaw" }).flatMap(
       (manifest) =>
         (manifest.agentPackages ?? [])

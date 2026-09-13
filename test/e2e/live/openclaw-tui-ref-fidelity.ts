@@ -17,7 +17,7 @@ export function resolveExpectedOpenClawVersion({
   manifestVersion,
 }: {
   override?: string;
-  manifestVersion?: string;
+  manifestVersion?: string | null;
 }): string {
   return override ?? manifestVersion ?? "";
 }

@@ -21,6 +21,7 @@ describe("OpenClaw TUI NemoClaw ref fidelity", () => {
       }),
     ).toBe("2027.1.0");
     expect(resolveExpectedOpenClawVersion({ manifestVersion: undefined })).toBe("");
+    expect(resolveExpectedOpenClawVersion({ manifestVersion: null })).toBe("");
   });
 
   it("records the exact checkout that produced the tested CLI", () => {
