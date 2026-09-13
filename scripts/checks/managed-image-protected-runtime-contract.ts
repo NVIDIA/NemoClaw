@@ -99,10 +99,14 @@ export function withManagedImageLocalInferenceProfile(
   model: string,
 ): ManagedStartupProfile {
   const primaryModelRef =
-    profile.agent === "openclaw" ? `inference/${model}` : profile.inference.primaryModelRef;
+    profile.agent === "openclaw"
+      ? `inference/${model}`
+      : (profile.inference?.primaryModelRef ?? null);
   return {
     ...profile,
     inference: {
+      compatibility: profile.agent === "openclaw" ? {} : null,
+      inputModalities: profile.agent === "openclaw" ? ["text"] : null,
       ...profile.inference,
       routeProvider: "inference",
       upstreamProvider: route.providerName,
