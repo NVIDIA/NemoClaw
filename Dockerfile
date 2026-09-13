@@ -1311,13 +1311,11 @@ ARG NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=sandbox
 # the primary agent always remains the default. See generate-openclaw-config.mts
 # for the validator. Default: empty array (W10= == base64("[]")).
 ARG NEMOCLAW_EXTRA_AGENTS_JSON_B64=W10=
-# Set to "1" to force-disable device-pairing auth. Also auto-disabled when
-# CHAT_UI_URL is a non-loopback address (Brev Launchable, remote deployments)
-# since terminal-based pairing is impossible in those contexts.
-# Default: "0" (device auth enabled for local deployments — secure by default).
+# Legacy compatibility inputs retained for managed build and rebuild callers.
+# OpenClaw 2026.9.1 retired the device-auth bypass, so NemoClaw validates the
+# provenance value but does not emit an upstream configuration key for either
+# input. Remove these arguments after all external callers have transitioned.
 ARG NEMOCLAW_DISABLE_DEVICE_AUTH=0
-# Internal audit provenance for the opt-out above. Standard onboarding rewrites
-# this to managed-onboard; direct image builders retain operator provenance.
 ARG NEMOCLAW_DEVICE_AUTH_OPT_OUT_SOURCE=operator
 # Compatibility build arg for older custom Dockerfiles and rebuild tooling.
 # NemoClaw-managed images intentionally do not consume it; gateway auth tokens

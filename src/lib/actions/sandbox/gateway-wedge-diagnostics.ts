@@ -10,7 +10,7 @@
 // restart." to /tmp/gateway.log.
 // Source boundary: that park-alive behavior lives in OpenClaw's gateway run
 // loop, outside NemoClaw; NemoClaw can only detect it and hand recovery back
-// to its supervisor. The sandbox-side prevention (gateway.reload.mode=hot pin
+// to its supervisor. The sandbox-side prevention (gateway.reload.mode=off pin
 // and the serving watchdog) ships separately in the #4710 sandbox PR.
 // Removal condition: when sandbox images pin an OpenClaw release whose failed
 // in-process restart exits non-zero (so the PID-wait supervisor respawns it),

@@ -797,7 +797,7 @@ The in-sandbox OpenClaw gateway can drop its HTTP listener while its process sta
 
 NemoClaw prevents restart-class configuration changes from causing this condition and recovers a gateway that stops serving:
 
-- The generated sandbox config pins `gateway.reload.mode` to `hot`, so configuration changes never make the gateway restart itself out from under the sandbox supervisor.
+- The generated sandbox config pins `gateway.reload.mode` to `off`, so configuration changes never make the gateway restart itself out from under the sandbox supervisor.
 - A serving watchdog inside the sandbox stops a gateway process that does not serve, and the supervisor relaunches it.
 
 The watchdog treats the gateway as serving only while the local health endpoint answers `200` or `401`, the same response requirement the sandbox applies when it waits for the gateway at startup. These probe outcomes count as not serving:

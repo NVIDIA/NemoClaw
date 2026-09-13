@@ -112,11 +112,9 @@ const MANAGED_INFERENCE_HOSTNAME = "inference.local";
 const MANAGED_INFERENCE_SAFEGUARD_COMPACTION: JsonObject = {
   mode: "safeguard",
   timeoutSeconds: 120,
-  maxHistoryShare: 0.35,
   recentTurnsPreserve: 1,
   qualityGuard: { enabled: true, maxRetries: 0 },
   notifyUser: true,
-  truncateAfterCompaction: true,
 };
 const FALSE_VALUES = new Set(["0", "false", "no", "off"]);
 const WEB_SEARCH_PROVIDERS = {
@@ -920,42 +918,11 @@ export function buildConfig(env: Env = process.env): JsonObject {
     REMOTE_DASHBOARD_BIND_VALUES,
   );
   const remoteBindOptIn = dashboardBind === "0.0.0.0";
-  const wslDashboardExposure = readBooleanBuildFlag(env, "NEMOCLAW_WSL_DASHBOARD_EXPOSURE");
-  const hasRemoteDashboardExposure = isRemote || remoteBindOptIn || wslDashboardExposure;
-  const deviceAuthOptOut = env.NEMOCLAW_DISABLE_DEVICE_AUTH === "1";
-  const deviceAuthOptOutSource = readOptionalEnumEnv(
-    env,
-    "NEMOCLAW_DEVICE_AUTH_OPT_OUT_SOURCE",
-    DEVICE_AUTH_OPT_OUT_SOURCES,
-  );
-  const managedDeviceAuthOptOut = deviceAuthOptOut && deviceAuthOptOutSource === "managed-onboard";
-  const disableDeviceAuth = deviceAuthOptOut || hasRemoteDashboardExposure;
-  const allowInsecure = parsed.scheme === "http";
-  const securityAuditSuppressions: JsonObject[] = [];
-  if (allowInsecure && !hasRemoteDashboardExposure) {
-    const reason =
-      "NemoClaw derives this setting from a loopback HTTP CHAT_UI_URL; use HTTPS for non-loopback dashboards.";
-    securityAuditSuppressions.push(
-      { checkId: "gateway.control_ui.insecure_auth", reason },
-      {
-        checkId: "config.insecure_or_dangerous_flags",
-        detailIncludes: "gateway.controlUi.allowInsecureAuth=true",
-        reason,
-      },
-    );
-  }
-  if (managedDeviceAuthOptOut && !hasRemoteDashboardExposure) {
-    const reason =
-      "NemoClaw onboarding disables device authentication for immediate dashboard access (managed compatibility behavior; see #1217).";
-    securityAuditSuppressions.push(
-      { checkId: "gateway.control_ui.device_auth_disabled", reason },
-      {
-        checkId: "config.insecure_or_dangerous_flags",
-        detailIncludes: "gateway.controlUi.dangerouslyDisableDeviceAuth=true",
-        reason,
-      },
-    );
-  }
+  readBooleanBuildFlag(env, "NEMOCLAW_WSL_DASHBOARD_EXPOSURE");
+  // OpenClaw 2026.9.1 retired and ignores the Control UI device-auth bypass.
+  // Keep validating the historical provenance input while managed builders
+  // transition, but do not emit the dead upstream configuration key.
+  readOptionalEnumEnv(env, "NEMOCLAW_DEVICE_AUTH_OPT_OUT_SOURCE", DEVICE_AUTH_OPT_OUT_SOURCES);
 
   const providerModels: JsonObject[] = [
     {
@@ -1104,16 +1071,11 @@ export function buildConfig(env: Env = process.env): JsonObject {
     channels,
     tools: openclawTools,
     update: { checkOnStart: false },
-    ...(securityAuditSuppressions.length > 0
-      ? { security: { audit: { suppressions: securityAuditSuppressions } } }
-      : {}),
     plugins,
     gateway: {
       mode: "local",
       port: gatewayPort,
       controlUi: {
-        allowInsecureAuth: allowInsecure,
-        dangerouslyDisableDeviceAuth: disableDeviceAuth,
         allowedOrigins: origins,
         ...(remoteBindOptIn && !isRemote ? { dangerouslyAllowHostHeaderOriginFallback: true } : {}),
       },
@@ -1123,15 +1085,15 @@ export function buildConfig(env: Env = process.env): JsonObject {
       // unrecognized keys, ...) must not let the gateway SIGUSR1-restart
       // itself: in containers the in-process restart path can fail and park
       // the process alive with no HTTP listener, which the PID-wait respawn
-      // loop in nemoclaw-start.sh cannot observe (#4710). Hot mode makes the
-      // gateway ignore plan-driven restarts; NemoClaw applies restart-class
+      // loop in nemoclaw-start.sh cannot observe (#4710). Off mode makes the
+      // gateway ignore plan-driven reloads; NemoClaw applies restart-class
       // changes through sandbox rebuild or `nemoclaw <name> recover` instead.
       // Removal condition (also for the serving watchdog in
       // nemoclaw-start.sh): once the pinned OpenClaw release exits non-zero
       // when a failed in-process restart cannot re-bind its listener — so the
       // respawn loop sees the death — this pin can revert to the default
       // reload mode after a wedge drill proves no regression.
-      reload: { mode: "hot" },
+      reload: { mode: "off" },
     },
   };
 
