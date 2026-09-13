@@ -352,10 +352,9 @@ async function main() {
       return { component, execution, error: String(error), passed: false };
     }
   });
-  // Preserve the original LocalEnvironment outcome before starting direct
-  // diagnostics. They overlap only the other bounded component checks.
+  // Attach direct startup diagnostics to a failed canonical Bash result.
   const diagnostic = calls[1]!.then(async (canonical) =>
-    canonical.execution.childClosed
+    !canonical.passed && canonical.execution.childClosed
       ? await bashDiagnostics(
           runtime,
           process.cwd(),
@@ -369,7 +368,9 @@ async function main() {
           scope: "contained",
           diagnosticOnly: true,
           canonicalQualification: false,
-          skipped: "canonical Bash child did not close",
+          skipped: canonical.passed
+            ? "canonical Bash passed; failure diagnostics not needed"
+            : "canonical Bash child did not close",
         },
   );
   const components = await Promise.all(calls);

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { randomBytes, createHash } from "node:crypto";
+import { startPersonalWpr, requestPersonalWprStop, finishPersonalWpr } from "./personal-wpr.mts";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
@@ -1686,6 +1687,7 @@ async function main() {
   const mxc = argument("--mxc");
   const stockMxc = argument("--stock-mxc");
   const hostControllerPython = argument("--host-controller-python");
+  const wprPowershell = argument("--wpr-powershell");
   const compatibilityRoot = fs.realpathSync(argument("--compatibility-root"));
   const compatibilityReceipt = argument("--compatibility-receipt");
   const compatibilityProof = argument("--compatibility-proof");
@@ -1761,6 +1763,7 @@ async function main() {
   let request: ReturnType<typeof personalRequest> | undefined;
   let compatibility: ReturnType<typeof validatePersonalCompatibility> | undefined;
   let browserDiagnosticChildrenClosed = true;
+  let primaryWpr: Awaited<ReturnType<typeof startPersonalWpr>> | null = null;
   try {
     const proof = JSON.parse(fs.readFileSync(compatibilityProof, "utf8"));
     const build = JSON.parse(fs.readFileSync(compatibilityReceipt, "utf8"));
@@ -1926,6 +1929,14 @@ async function main() {
     const bytes = JSON.stringify(request, null, 2) + "\n";
     fs.writeFileSync(policy, bytes, { flag: "wx" });
     receipt.requestSha256 = createHash("sha256").update(bytes).digest("hex");
+    primaryWpr = await startPersonalWpr(
+      wprPowershell,
+      output,
+      nonce,
+      process.env.GITHUB_SHA!,
+      receipt.requestSha256 as string,
+      stockBrowserEnvironment(environment),
+    );
     attempted = true;
     const execution = await personalCommand(
       mxc,
@@ -1935,6 +1946,7 @@ async function main() {
       120_000,
     );
     receipt.execution = execution;
+    requestPersonalWprStop(primaryWpr, execution);
     cleanup.executorClosed = execution.childClosed;
     if (execution.childClosed) {
       const desktopCleanup = await observeHermesDesktopCleanup(
@@ -2033,6 +2045,13 @@ async function main() {
   } catch (error) {
     failure = error;
   } finally {
+    if (primaryWpr) {
+      const recording = await finishPersonalWpr(primaryWpr);
+      receipt.primaryWpr = recording;
+      const recorderSafe = recording.ownerClosed === true && recording.recordingStopped === true;
+      browserDiagnosticChildrenClosed &&= recorderSafe;
+      cleanup.hostDiagnosticChildrenClosed &&= recorderSafe;
+    }
     receipt.supplementalDiagnosticDisposition = failure
       ? "primary failed; ordinary warm replay then owned-job replay without debugger"
       : "primary passed; supplemental comparisons skipped";
