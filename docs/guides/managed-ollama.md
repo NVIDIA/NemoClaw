@@ -16,14 +16,14 @@ Rebuild the native bundle before running the test.
    Build the OpenClaw image and bundle, then copy the managed example:
 
    ```sh
-   docker build -t nc-prototype-openclaw:local image
-   docker image inspect nc-prototype-openclaw:local --format '{{index .RepoDigests 0}}'
-   docker network inspect nc-prototype-test --format '{{(index .IPAM.Config 0).Gateway}}'
+   docker build -t nc-openclaw:local image
+   docker image inspect nc-openclaw:local --format '{{index .RepoDigests 0}}'
+   docker network inspect nc-local-test --format '{{(index .IPAM.Config 0).Gateway}}'
    go run ./tools/bundle
    cp examples/managed-ollama.yaml .local/managed-deployment.yaml
    ```
 
-2. Edit the copied YAML: set `ollama.network` to `nc-prototype-test`, use the printed bridge address in the endpoint, and use the built OpenClaw image digest.
+2. Edit the copied YAML: set `ollama.network` to `nc-local-test`, use the printed bridge address in the endpoint, and use the built OpenClaw image digest.
    Keep the selected local engine socket explicit.
    Choose a fresh deployment UUID for interactive use; the live test generates its own UUIDs.
 

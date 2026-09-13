@@ -35,6 +35,8 @@ Use `must` for requirements, `may` for permission, `can` for capability, and `sh
 ## Write durable guidance
 
 Describe behavior and requirements directly, without defining NemoClaw by a temporary development stage.
+Do not label NemoClaw or its deployment paths as experiments or prototypes in active guidance.
+Retain historical wording only in clearly identified records and exact source identifiers that commands or links require.
 Avoid relative-time phrases such as “currently,” “still,” “the latest,” and “the newer release” when describing capabilities.
 Name the configuration, API, version, or revision that determines the behavior.
 Keep dates in decision records and validation evidence, where they identify the scope of a claim.

@@ -20,8 +20,8 @@ That request can load a local model or incur inference usage.
 1. Build the OpenClaw image and obtain its immutable reference:
 
    ```sh
-   docker build -t nc-prototype-openclaw:local image
-   docker image inspect nc-prototype-openclaw:local --format '{{index .RepoDigests 0}}'
+   docker build -t nc-openclaw:local image
+   docker image inspect nc-openclaw:local --format '{{index .RepoDigests 0}}'
    ```
 
    The image adds supervisor network tools and disables an inherited health check outside the agent's network namespace.

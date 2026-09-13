@@ -53,5 +53,5 @@ On failure, inspect the retained state and evidence before rerunning; do not rem
 
 The early sandbox token-path failure exposed a separate OpenShell limit: OpenShell 0.0.116 treats sandbox `Error` as terminal and has no public recovery operation for that phase.
 Apply records the configured sandbox identity before checking readiness and reports failure without recreating it.
-The initial experiment required a controlled offline repair; fresh creation with the corrected layout passed without repairs.
+The initial deployment required a controlled offline repair; fresh creation with the corrected layout passed without repairs.
 This is recorded in the [validation summary](index.md), and is not an automatic recovery feature.

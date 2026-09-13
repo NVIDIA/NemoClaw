@@ -23,21 +23,21 @@ chmod 700 "$nc_test_dir"
 openshell-gateway generate-certs --output-dir "$nc_test_dir/tls" --server-san 127.0.0.1
 cat > "$nc_test_dir/gateway.toml" <<EOF
 [openshell.drivers.docker]
-network_name = "nc-prototype-test"
+network_name = "nc-local-test"
 ssh_socket_path = "$nc_test_dir/ssh"
 
 [openshell.gateway.gateway_jwt]
 signing_key_path = "$nc_test_dir/tls/jwt/signing.pem"
 public_key_path = "$nc_test_dir/tls/jwt/public.pem"
 kid_path = "$nc_test_dir/tls/jwt/kid"
-gateway_id = "nc-prototype-test"
+gateway_id = "nc-local-test"
 ttl_secs = 0
 
 [openshell.gateway.auth]
 allow_unauthenticated_users = true
 EOF
 openshell-gateway --config "$nc_test_dir/gateway.toml" \
-  --name nc-prototype-test --port 17671 --drivers docker --disable-tls \
+  --name nc-local-test --port 17671 --drivers docker --disable-tls \
   --db-url "sqlite:$nc_test_dir/gateway.db"
 ```
 
@@ -55,14 +55,14 @@ Replace `IMAGE_REFERENCE` in the following command with that complete immutable 
 ```sh
 nc_ollama_image='IMAGE_REFERENCE'
 nc_test_dir="$(pwd)/.local/runtime"
-nc_test_bridge="$(docker network inspect nc-prototype-test --format '{{(index .IPAM.Config 0).Gateway}}')"
+nc_test_bridge="$(docker network inspect nc-local-test --format '{{(index .IPAM.Config 0).Gateway}}')"
 mkdir -p "$nc_test_dir/ollama"
-docker run -d --name nc-prototype-test-ollama --network nc-prototype-test \
+docker run -d --name nc-local-test-ollama --network nc-local-test \
   -p "$nc_test_bridge:11436:11434" \
   -v "$nc_test_dir/ollama:/root/.ollama" \
   "$nc_ollama_image"
-docker exec nc-prototype-test-ollama ollama pull qwen3.5:0.8b
-docker exec nc-prototype-test-ollama ollama pull qwen3:0.6b
+docker exec nc-local-test-ollama ollama pull qwen3.5:0.8b
+docker exec nc-local-test-ollama ollama pull qwen3:0.6b
 ```
 
 ## Verify and continue
@@ -71,7 +71,7 @@ Confirm that both model pulls succeed.
 Before deployment, wait for a successful response from the selected model:
 
 ```sh
-docker exec nc-prototype-test-ollama ollama run qwen3.5:0.8b 'Reply with FOUR.'
+docker exec nc-local-test-ollama ollama run qwen3.5:0.8b 'Reply with FOUR.'
 ```
 
 A cold model can exceed OpenShell's endpoint-validation deadline.
@@ -79,7 +79,7 @@ Use `http://BRIDGE_ADDRESS:11436/v1` as the inference endpoint, replacing `BRIDG
 Use `http://127.0.0.1:17671` as the gateway endpoint.
 Continue with [Deploy an agent](deploy.md) or [Deploy a Fabric runtime](../guides/fabric.md).
 
-If a service fails to start, inspect its terminal output or `docker logs nc-prototype-test-ollama`.
+If a service fails to start, inspect its terminal output or `docker logs nc-local-test-ollama`.
 Resolve the reported port, network, or model error before applying a deployment.
 Do not remove gateway state to bypass an error in an established deployment.
 
@@ -89,14 +89,14 @@ First [destroy deployments](../guides/lifecycle.md#destroy-a-deployment) that de
 The following command stops inference and removes only the named test container:
 
 ```sh
-docker rm -f nc-prototype-test-ollama
+docker rm -f nc-local-test-ollama
 ```
 
 Stop the foreground gateway with Ctrl+C.
 Once no test sandboxes remain, remove the test network:
 
 ```sh
-docker network rm nc-prototype-test
+docker network rm nc-local-test
 ```
 
 The model cache, gateway database, and keys remain in `.local/runtime`.

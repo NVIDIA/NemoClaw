@@ -3,7 +3,7 @@
 NemoClaw uses Go, OpenTofu, and OpenShell to manage deployment infrastructure from desired-state configuration.
 It implements a subset of the configuration analysis in issue #10904, not the entire proposed schema or product integration.
 
-The [initial decision record](../archive/initial-decisions.md) preserves the dated experiment scope and task-specific publication authorization.
+The [initial decision record](../archive/initial-decisions.md) preserves the dated implementation scope and task-specific publication authorization.
 
 ## Acceptance criteria
 

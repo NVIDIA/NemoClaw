@@ -93,7 +93,7 @@ Historical headings remain available in the archived RFC and validation log.
 ## Content decisions
 
 - The README is the entry point; build, setup, operations, and tests have focused pages.
-- The architecture explains current behavior; the decision record keeps the experiment's authorization and acceptance criteria.
+- The architecture explains current behavior; the decision record keeps deployment acceptance criteria and links to archived authorization.
 - Fabric versions and protocol requirements belong to the runtime reference; setup and validation link to it.
 - Recovery belongs to the lifecycle guide and troubleshooting reference; setup pages link to these owners.
 - Historical proposals and results retain their wording, including superseded commands, behind an archive notice.
