@@ -17,6 +17,7 @@ import {
 const fixture = String.raw`
 const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto');
 const file=process.argv[1],failed=process.argv[2]==='failed',raw=fs.readFileSync(file),r=JSON.parse(raw),dir=path.dirname(file);
+if(process.env.GITHUB_SHA!==r.sourceRevision)throw Error('recorder environment lacks exact source');
 const write=(name,value)=>{fs.writeFileSync(path.join(dir,name+'.tmp'),JSON.stringify(value));fs.renameSync(path.join(dir,name+'.tmp'),path.join(dir,name));};
 write('ready.json',{nonce:r.nonce,sourceRevision:r.sourceRevision,started:!failed});
 const timer=setInterval(()=>{
@@ -25,7 +26,7 @@ const timer=setInterval(()=>{
  write('owner-result.json',{schemaVersion:1,classification:'personal-primary-wpr-owner',fixtureOnly:true,
  sourceRevision:r.sourceRevision,nonce:r.nonce,requestSha256:crypto.createHash('sha256').update(raw).digest('hex'),measuredPolicySha256:r.policySha256,
  primaryLaunchedByRecorder:false,debuggerAttached:false,partialPrefixOnly:true,maximumRecordingSeconds:45,maximumObservedRecordingBytes:268435456,
- recordingStopped:true,error:failed?'controlled recorder start failure':null});
+ recordingAttempted:!failed,trace:failed?null:{safeToContinue:true},recordingStopped:true,error:failed?'controlled recorder start failure':null});
  process.exitCode=failed?23:0;
 },10);
 `;
@@ -35,12 +36,15 @@ test("sibling recorder never launches the primary; stop and closure are independ
   try {
     const output = path.join(root, "personal-mxc");
     fs.mkdirSync(output);
+    const originalEnvironment = { ...process.env, GITHUB_SHA: "not-the-run-source" };
     let calls = 0;
     const command: typeof personalCommand = (exe, args, environment, cwd, timeout) => {
       calls++;
       assert.equal(exe, process.execPath);
       assert.equal(args[5], "-RequestFile");
       assert.equal(timeout, 360_000);
+      assert.equal(environment?.GITHUB_SHA, "b".repeat(40));
+      assert.equal(originalEnvironment.GITHUB_SHA, "not-the-run-source");
       return personalCommand(process.execPath, ["-e", fixture, args[6]!], environment, cwd, 5000);
     };
     const recorder = await startPersonalWpr(
@@ -49,7 +53,7 @@ test("sibling recorder never launches the primary; stop and closure are independ
       "a".repeat(24),
       "b".repeat(40),
       "c".repeat(64),
-      process.env,
+      originalEnvironment,
       command,
     );
     assert.equal(recorder.record.captureStartConfirmedBeforePrimary, true);
@@ -89,6 +93,20 @@ test("sibling recorder never launches the primary; stop and closure are independ
         recordingStopped: false,
       }),
       false,
+    );
+    assert.throws(() =>
+      validatePersonalWprCompletion(result, {
+        ...result.ownerReceipt.value,
+        recordingAttempted: true,
+        trace: null,
+      }),
+    );
+    assert.throws(() =>
+      validatePersonalWprCompletion(result, {
+        ...result.ownerReceipt.value,
+        recordingAttempted: false,
+        trace: { safeToContinue: true },
+      }),
     );
   } finally {
     fs.rmSync(root, { recursive: true, force: true });

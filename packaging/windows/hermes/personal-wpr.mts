@@ -85,7 +85,7 @@ export async function startPersonalWpr(
     state.completion = command(
       powershell,
       ["-NoLogo", "-NoProfile", "-NonInteractive", "-File", sidecar, "-RequestFile", request],
-      environment,
+      { ...environment, GITHUB_SHA: sourceRevision },
       output,
       360_000,
     ).then(
@@ -159,6 +159,14 @@ export function validatePersonalWprCompletion(record: any, owner: any) {
   assert.equal(owner.partialPrefixOnly, true);
   assert.equal(owner.maximumRecordingSeconds, 45);
   assert.equal(owner.maximumObservedRecordingBytes, 256 * 1024 * 1024);
+  assert.equal(typeof owner.recordingAttempted, "boolean");
+  if (owner.recordingAttempted === false) {
+    assert.equal(owner.trace, null);
+    assert.equal(owner.recordingStopped, true);
+    assert(typeof owner.error === "string" && owner.error.length > 0);
+  } else if (owner.recordingStopped === true) {
+    assert.equal(owner.trace?.safeToContinue, true);
+  }
   return record.execution?.childClosed === true && owner.recordingStopped === true;
 }
 
