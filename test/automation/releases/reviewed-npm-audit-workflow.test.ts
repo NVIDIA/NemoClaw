@@ -1457,4 +1457,20 @@ describe("trusted npm audit workflow (#5896)", () => {
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
+
+  it("rejects a malformed lock before treating the legacy alias as absent", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-signature-malformed-"));
+    try {
+      fs.writeFileSync(
+        path.join(root, "package-lock.json"),
+        `${JSON.stringify({ lockfileVersion: 3, packages: [] })}\n`,
+      );
+
+      expect(() => normalizeOpenClawSignatureAlias(root)).toThrow(
+        "OpenClaw signature-audit alias lock identity drifted",
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
 });

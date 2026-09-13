@@ -568,8 +568,10 @@ export function normalizeOpenClawSignatureAlias(directory: string): void {
   const lockfile = path.join(directory, "package-lock.json");
   assertRegularFile(lockfile, "OpenClaw signature-audit lock");
   const lock = readJsonObject(lockfile, "OpenClaw signature-audit lock");
-  const packages = lock.packages as Record<string, any> | undefined;
-  if (!packages) throw new Error("OpenClaw signature-audit alias lock identity drifted");
+  if (typeof lock.packages !== "object" || lock.packages === null || Array.isArray(lock.packages)) {
+    throw new Error("OpenClaw signature-audit alias lock identity drifted");
+  }
+  const packages = lock.packages as Record<string, any>;
   if (!packages[aliasPackagePath]) return;
 
   const aliasDirectory = path.join(directory, aliasPackagePath);
