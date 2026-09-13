@@ -82,15 +82,17 @@ function lifecycleDeps(
     readonly failPostStartInspectOnce?: boolean;
     readonly stopRequiresAssist?: boolean;
     readonly startStatus?: number;
+    readonly initialPhase?: "Ready" | "Error" | "Stopped";
+    readonly nonRunningStatus?: string;
   } = {},
 ) {
   let running = initiallyRunning,
     workloadRunning = initiallyRunning,
     now = 0;
-  let lifecyclePhase: "Ready" | "Stopped" | undefined;
+  let lifecyclePhase: "Ready" | "Error" | "Stopped" | undefined = options.initialPhase;
   let postStartInspectFailurePending = false;
   const sandboxPhase = () =>
-    options.sandboxPhase?.(running) ?? lifecyclePhase ?? (running ? "Ready" : "Error");
+    options.sandboxPhase?.(running) ?? lifecyclePhase ?? (running ? "Ready" : "Stopped");
   const podman = vi.fn((args: readonly string[]) => {
     const actions = {
       inspect: () => {
@@ -109,7 +111,7 @@ function lifecycleDeps(
                   State: {
                     Running: running,
                     Paused: false,
-                    Status: running ? "running" : "exited",
+                    Status: running ? "running" : (options.nonRunningStatus ?? "exited"),
                   },
                   HostConfig: { RestartPolicy: { Name: "unless-stopped" } },
                 },
@@ -378,6 +380,56 @@ describe("Hermes portable lifecycle", () => {
     expect(openshellMutationCalls(command, "stop")).toHaveLength(1);
   });
 
+  it.each([
+    { initialPhase: "Error" as const, status: "running" },
+    { initialPhase: "Error" as const, status: "exited" },
+    { initialPhase: "Ready" as const, status: "exited" },
+    { initialPhase: "Ready" as const, status: "stopping" },
+  ])(
+    "rejects unsupported saved $initialPhase with container=$status before mutation (#11646)",
+    ({ initialPhase, status }) => {
+      const fixture = lifecycleDeps(activeReceipt(), status === "running", {
+        initialPhase,
+        nonRunningStatus: status,
+      });
+      expect(() => recoverWithLifecycleLock(fixture.deps)).toThrow(
+        `saved OpenShell phase ${initialPhase}`,
+      );
+      expect(openshellMutationCalls(fixture.captureOpenShell, "start")).toHaveLength(0);
+      expect(openshellMutationCalls(fixture.captureOpenShell, "stop")).toHaveLength(0);
+      expect(fixture.launchOpenShell).not.toHaveBeenCalled();
+      expect(
+        fixture.podman.mock.calls.filter(([args]) => args[1] === "start" || args[1] === "stop"),
+      ).toHaveLength(0);
+    },
+  );
+
+  it("reconciles saved Stopped with a running container through OpenShell (#11646)", () => {
+    const fixture = lifecycleDeps(activeReceipt(), true, { initialPhase: "Stopped" });
+    const result = recoverWithLifecycleLock(fixture.deps);
+    expect(result).toEqual({ kind: "recovered" });
+    expect(openshellMutationCalls(fixture.captureOpenShell, "start")).toHaveLength(1);
+    expect(openshellMutationCalls(fixture.captureOpenShell, "stop")).toHaveLength(0);
+    expect(fixture.launchOpenShell).not.toHaveBeenCalled();
+    expect(
+      fixture.podman.mock.calls.filter(([args]) => args[1] === "start" || args[1] === "stop"),
+    ).toHaveLength(0);
+  });
+
+  it("preserves the pre-existing container when saved-phase reconciliation fails (#11646)", () => {
+    const fixture = lifecycleDeps(activeReceipt(), true, {
+      initialPhase: "Stopped",
+      startStatus: 1,
+    });
+    expect(() => recoverWithLifecycleLock(fixture.deps)).toThrow("OpenShell start failed");
+    expect(openshellMutationCalls(fixture.captureOpenShell, "start")).toHaveLength(1);
+    expect(openshellMutationCalls(fixture.captureOpenShell, "stop")).toHaveLength(0);
+    expect(fixture.launchOpenShell).not.toHaveBeenCalled();
+    expect(
+      fixture.podman.mock.calls.filter(([args]) => args[1] === "start" || args[1] === "stop"),
+    ).toHaveLength(0);
+  });
+
   it("uses one entry and final qualification when the timing callback fails (#10423)", () => {
     const receipt = activeReceipt();
     publishSuccessor();
@@ -410,8 +462,8 @@ describe("Hermes portable lifecycle", () => {
     const operations = fixture.captureOpenShell.mock.calls.map(([args]) =>
       args.slice(0, 2).join(":"),
     );
-    expect(operations.filter((operation) => operation === "sandbox:list")).toHaveLength(3);
-    expect(operations.filter((operation) => operation === "sandbox:get")).toHaveLength(3);
+    expect(operations.filter((operation) => operation === "sandbox:list")).toHaveLength(4);
+    expect(operations.filter((operation) => operation === "sandbox:get")).toHaveLength(4);
     expect(operations.filter((operation) => operation === "policy:get")).toHaveLength(3);
     expect(openshellMutationCalls(fixture.captureOpenShell, "start")).toHaveLength(1);
     expect(openshellMutationCalls(fixture.captureOpenShell, "stop")).toHaveLength(0);
@@ -520,11 +572,11 @@ describe("Hermes portable lifecycle", () => {
     );
   });
 
-  it("uses post-start authority to roll back an Error-origin OpenShell sandbox", () => {
+  it("uses post-start authority to roll back a Stopped-origin OpenShell sandbox", () => {
     const receipt = activeReceipt();
     publishSuccessor();
     const fixture = lifecycleDeps(receipt, false, {
-      sandboxPhase: (running) => (running ? "Stopped" : "Error"),
+      sandboxPhase: () => "Stopped",
       stopRequiresAssist: true,
     });
     const defaultCapture = fixture.captureOpenShell.getMockImplementation()!;
@@ -565,19 +617,12 @@ describe("Hermes portable lifecycle", () => {
     publishSuccessor();
     const fixture = lifecycleDeps(receipt, false);
     const defaultCapture = fixture.captureOpenShell.getMockImplementation()!;
-    fixture.captureOpenShell
-      .mockImplementationOnce(defaultCapture)
-      .mockImplementationOnce(defaultCapture)
-      .mockImplementationOnce(defaultCapture)
-      .mockImplementationOnce(defaultCapture)
-      .mockImplementationOnce(defaultCapture)
-      .mockImplementationOnce(defaultCapture)
-      .mockReturnValueOnce({
-        status: 0,
-        stdout: sandboxListJson("rebound-sandbox-id", "Ready"),
-        stderr: "",
-      })
-      .mockImplementation(defaultCapture);
+    let listObservations = 0;
+    fixture.captureOpenShell.mockImplementation((args: readonly string[]) => {
+      return args[0] === "sandbox" && args[1] === "list" && ++listObservations === 3
+        ? { status: 0, stdout: sandboxListJson("rebound-sandbox-id", "Ready"), stderr: "" }
+        : defaultCapture(args);
+    });
     expect(() =>
       withMcpLifecycleLockSync(
         SANDBOX,
@@ -853,6 +898,13 @@ describe("Hermes portable lifecycle", () => {
     );
     expect(result).toEqual({ kind: "recovered" });
     expect(listObservations).toBeGreaterThanOrEqual(3);
+    const operations = captureOpenShell.mock.calls.map(([args]) => args.slice(0, 2).join(":"));
+    const postStart = operations.slice(
+      operations.indexOf("sandbox:start") + 1,
+      operations.indexOf("sandbox:exec"),
+    );
+    expect(postStart.filter((operation) => operation === "sandbox:list")).toHaveLength(1);
+    expect(postStart.filter((operation) => operation === "sandbox:get")).toHaveLength(1);
     expect(podman.mock.calls.filter(([args]) => args[1] === "start")).toHaveLength(0);
     expect(openshellMutationCalls(captureOpenShell, "start")).toHaveLength(1);
   });
@@ -954,8 +1006,12 @@ describe("Hermes portable lifecycle", () => {
 
   it("preserves startup and terminal-settlement failure classes together (#11248)", () => {
     const receipt = activeReceipt();
+    let observedRunning = false;
     const { deps, captureOpenShell, launchOpenShell } = lifecycleDeps(receipt, false, {
-      sandboxPhase: () => "Ready",
+      sandboxPhase: (running) => {
+        observedRunning ||= running;
+        return observedRunning ? "Ready" : "Stopped";
+      },
     });
     const defaultCapture = captureOpenShell.getMockImplementation()!;
     captureOpenShell.mockImplementation((args: readonly string[]) =>
@@ -1068,33 +1124,41 @@ describe("Hermes portable lifecycle", () => {
     expect(openshellMutationCalls(captureOpenShell, "start")).toHaveLength(1);
     expect(openshellMutationCalls(captureOpenShell, "stop")).toHaveLength(1);
   });
-  it("does not stop an already-running container after a health failure (#9203)", () => {
-    const receipt = activeReceipt();
-    const { deps, captureOpenShell, launchOpenShell } = lifecycleDeps(receipt);
-    const defaultCapture = captureOpenShell.getMockImplementation()!;
-    let now = 0;
-    captureOpenShell.mockImplementation((args: readonly string[]) =>
-      args.includes("python3")
-        ? { status: 0, stdout: "unavailable\n", stderr: "" }
-        : defaultCapture(args),
-    );
-    expect(() =>
-      withMcpLifecycleLockSync(
-        SANDBOX,
-        () =>
-          recoverHermesPortableSandboxLifecycle(SANDBOX, lifecycleContext(), {
-            ...deps,
-            now: () => now,
-            sleep: (milliseconds) => {
-              now += milliseconds;
-            },
-          }),
-        { stateDir: path.join(stateDir, "state") },
-      ),
-    ).toThrow("managed startup did not pass authenticated health");
-    expect(launchOpenShell).not.toHaveBeenCalled();
-    expect(openshellMutationCalls(captureOpenShell, "stop")).toHaveLength(0);
-  });
+  it.each(["Ready", "Stopped"] as const)(
+    "preserves an already-running container after a health failure from %s (#11646)",
+    (initialPhase) => {
+      const receipt = activeReceipt();
+      const { deps, captureOpenShell, launchOpenShell } = lifecycleDeps(receipt, true, {
+        initialPhase,
+      });
+      const defaultCapture = captureOpenShell.getMockImplementation()!;
+      let now = 0;
+      captureOpenShell.mockImplementation((args: readonly string[]) =>
+        args.includes("python3")
+          ? { status: 0, stdout: "unavailable\n", stderr: "" }
+          : defaultCapture(args),
+      );
+      expect(() =>
+        withMcpLifecycleLockSync(
+          SANDBOX,
+          () =>
+            recoverHermesPortableSandboxLifecycle(SANDBOX, lifecycleContext(), {
+              ...deps,
+              now: () => now,
+              sleep: (milliseconds) => {
+                now += milliseconds;
+              },
+            }),
+          { stateDir: path.join(stateDir, "state") },
+        ),
+      ).toThrow("managed startup did not pass authenticated health");
+      expect(launchOpenShell).not.toHaveBeenCalled();
+      expect(openshellMutationCalls(captureOpenShell, "start")).toHaveLength(
+        initialPhase === "Stopped" ? 1 : 0,
+      );
+      expect(openshellMutationCalls(captureOpenShell, "stop")).toHaveLength(0);
+    },
+  );
 
   it("recovers against the current live OpenShell policy (#9211)", () => {
     const receipt = activeReceipt();
