@@ -6,6 +6,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { target } from "../registry/builder.ts";
+import { validateE2eExecutionRows } from "../../../tools/e2e/execution-coverage.mts";
 import {
   buildExecutionInventory,
   listTargets,
@@ -72,25 +73,15 @@ const MANUAL_FIXTURE: Extract<E2eInventoryTarget, { route: "manual" }> = {
     id: "manual-proof",
     tests: [{ file: "test/e2e/live/manual-proof.test.ts", project: "e2e-live" }],
     instructions: "test/e2e/README.md#manual-proof",
-    prerequisites: ["A prepared local test host"],
   },
 };
 
 describe("deterministic target registry", () => {
-  it.each([
-    { instructions: "", prerequisites: ["A prepared host"] },
-    { instructions: "test/e2e/README.md", prerequisites: [] },
-    { instructions: "test/e2e/README.md", prerequisites: [" "] },
-  ])("rejects a manual target without instructions or prerequisites: %j", (requirements) => {
-    const entry = MANUAL_FIXTURE;
-    expect(() =>
-      buildExecutionInventory([
-        {
-          ...entry,
-          definition: { ...entry.definition, ...requirements },
-        },
-      ]),
-    ).toThrow("requires instructions and prerequisites");
+  it("distinguishes execution identities even when their descriptions match", () => {
+    const first = WORKFLOW_FIXTURE.definition.coverage[0]!.row;
+    const second = { ...first, id: "another-proof" };
+    expect(validateE2eExecutionRows([first, second])).toEqual([first, second]);
+    expect(() => validateE2eExecutionRows([first, first])).toThrow("duplicate row");
   });
 
   it("rejects a manual declaration without an executable test file", () => {

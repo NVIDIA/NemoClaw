@@ -422,7 +422,7 @@ launchers to fail without publishing a file before restoring the registry. The s
 Typed scenario definitions remain beside the live driver. The inventory rejects duplicate IDs across these routes.
 The semantic-phase check compares live files with every inventory route before collection.
 It rejects unregistered live files and registrations whose live file is missing.
-List all registered routes, including workflow owners, Vitest projects, and manual prerequisites:
+List all registered routes, including workflow owners, Vitest projects, and manual instructions:
 
 ```bash
 npx tsx test/e2e/registry/run.ts --list-inventory
@@ -441,7 +441,7 @@ Direct external workflow test commands also require execution, including package
 The Podman CPU proof commands require the risk-signal reporter, including execution under the dedicated proof user.
 The staging full-suite script requires the guest risk-signal reporter; an empty or entirely skipped suite fails before the success marker.
 These static checks do not certify remote execution or replace environment-gated collection checks.
-Manual entries link to their instructions and summarize prerequisites; the tests retain the prerequisite checks.
+Manual entries link to their owning instructions. Keep prerequisites in those instructions and executable checks in the tests.
 Listing a manual qualification does not schedule it or establish product support.
 Jetson dispatch retains its opt-in and trusted-controller checks.
 The bootstrap test body resides in `bootstrap-install-smoke.test.ts`.

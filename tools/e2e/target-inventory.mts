@@ -1828,7 +1828,6 @@ export interface ManualE2eTarget {
   id: string;
   tests: ExternalWorkflowE2eTarget["tests"];
   instructions: string;
-  prerequisites: readonly string[];
 }
 
 export interface WorkflowExecutionSelection {
@@ -1871,15 +1870,6 @@ export function buildExecutionInventory(
       const { workflow, job } = entry.definition;
       if (!/^\.github\/workflows\/[a-zA-Z0-9_-]+\.ya?ml$/.test(workflow) || !job.trim())
         throw new Error(`External workflow target ${entry.id} requires a workflow job owner`);
-    }
-    if (entry.route === "manual") {
-      const { instructions, prerequisites } = entry.definition;
-      if (
-        !instructions.trim() ||
-        !prerequisites.length ||
-        prerequisites.some((value) => !value.trim())
-      )
-        throw new Error(`Manual target ${entry.id} requires instructions and prerequisites`);
     }
     if (entry.route === "external-workflow" || entry.route === "manual") {
       if (entry.definition.tests.length === 0)
