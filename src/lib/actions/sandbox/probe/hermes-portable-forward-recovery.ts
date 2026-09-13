@@ -506,7 +506,7 @@ function invokeForwardServiceLaunch(
     if (error instanceof HermesPortableForwardRecoveryError) throw error;
     failure("recovery-failed", { cause: "forward-mutation-failed", operation: "start", port });
   }
-  if (!readinessVerified) {
+  if (!readinessVerified || !retained.has(port)) {
     failure("recovery-failed", { cause: "forward-mutation-failed", operation: "start", port });
   }
   requireCurrent(input, false);
@@ -559,8 +559,10 @@ function rollbackPort(
       readClock(now) + Math.min(input.operationTimeoutMs, FORWARD_SETTLEMENT_TIMEOUT_MS);
     if (!Number.isFinite(deadline)) failure("restoration-unproved");
     const observed = observeForwards(input, true, undefined, deadline, now);
-    if (!observed.entries.has(port) && observed.states.get(port) === "absent") return;
     const ownership = retained.get(port);
+    if (!ownership && !observed.entries.has(port) && observed.states.get(port) === "absent") {
+      return;
+    }
     if (ownership) {
       requireCurrent(input, true);
       ownership.terminate();

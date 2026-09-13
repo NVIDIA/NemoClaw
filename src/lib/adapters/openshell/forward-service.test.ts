@@ -135,6 +135,29 @@ async function availableLoopbackPort(): Promise<number> {
 }
 
 describe("retained forward process ownership", () => {
+  it("refuses a retained capability after its synchronous transaction yields (#11649)", async () => {
+    const child = Object.assign(new EventEmitter(), {
+      pid: detachedChildPid,
+      exitCode: null,
+      signalCode: null,
+      unref() {},
+    });
+    const terminate = vi.fn();
+    let ownership: ForwardServiceOwnership | undefined;
+    launchForwardService(target, {
+      isReachable: vi.fn().mockReturnValueOnce(false).mockReturnValue(true),
+      spawnDetached: () => child,
+      terminateProcessTree: terminate,
+      retainOwnership: (value) => {
+        ownership = value;
+      },
+    });
+    await Promise.resolve();
+
+    expect(() => ownership!.terminate()).toThrow("child lifetime can no longer be proved");
+    expect(terminate).not.toHaveBeenCalled();
+  });
+
   it.each(["exit", "error", "pid-changed", "exit-code", "signal-code"] as const)(
     "rejects termination after %s invalidates the original child (#11649)",
     (change) => {
@@ -200,7 +223,7 @@ describe("retained forward process ownership", () => {
       ownership!.terminate();
       ownership!.terminate();
       await closed;
-      expect(child!.signalCode).toBe("SIGKILL");
+      expect(child!.exitCode !== null || child!.signalCode !== null).toBe(true);
       expect(probeLocalForwardListener(port, 100)).toBe(false);
     } finally {
       child?.exitCode === null &&

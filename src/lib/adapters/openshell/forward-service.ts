@@ -40,7 +40,7 @@ export interface ForwardServiceLaunchOptions {
   /** Verify the bound forward before releasing the child from startup cleanup. */
   readonly verifyReady?: () => void;
   readonly timeoutMs?: number;
-  /** Retain this live child for transaction rollback after readiness succeeds. */
+  /** Retain this child for synchronous transaction rollback after readiness succeeds. */
   readonly retainOwnership?: (ownership: ForwardServiceOwnership) => void;
 }
 
@@ -504,6 +504,10 @@ function retainForwardServiceChild(
   const pid = child.pid;
   let exited = false;
   let terminated = false;
+  let synchronousLifetime = true;
+  queueMicrotask(() => {
+    synchronousLifetime = false;
+  });
   child.once?.("exit", () => {
     exited = true;
   });
@@ -513,9 +517,11 @@ function retainForwardServiceChild(
   return Object.freeze({
     terminate: () => {
       if (terminated) return;
-      // No await occurs between checking the ChildProcess and signalling it.
-      // Once Node has observed/reaped its exit, the numeric PID is no longer authority.
+      // Production prepares, releases or rolls back within the spawning stack.
+      // Expire before yielding: libuv can reap several children before their exit callbacks.
+      // Within this stack an exited POSIX child is unreaped; Windows retains its OS handle.
       if (
+        !synchronousLifetime ||
         !child.once ||
         exited ||
         child.exitCode !== null ||
