@@ -56,7 +56,14 @@ function fixture() {
   );
   const cacheDirectory = path.join(root, "cache");
   fs.mkdirSync(cacheDirectory);
-  return { archive, archivePath, cacheDirectory, integrity, lockfilePath, root };
+  return {
+    archive,
+    archivePath,
+    cacheDirectory,
+    integrity,
+    lockfilePath,
+    root,
+  };
 }
 
 function request(
@@ -93,7 +100,9 @@ describe("reviewed npm cache seed", () => {
   it("maps only the parent archive for a reviewed inBundle dependency", () => {
     const input = fixture();
     const lock = JSON.parse(fs.readFileSync(input.lockfilePath, "utf8"));
-    lock.packages[`node_modules/${PACKAGE_NAME}`].dependencies = { "bundled-child": "2.0.0" };
+    lock.packages[`node_modules/${PACKAGE_NAME}`].dependencies = {
+      "bundled-child": "2.0.0",
+    };
     lock.packages[`node_modules/${PACKAGE_NAME}/node_modules/bundled-child`] = {
       inBundle: true,
       integrity: `sha512-${"b".repeat(88)}`,
@@ -119,7 +128,9 @@ describe("reviewed npm cache seed", () => {
     const sharedUrl = "https://registry.npmjs.org/shared/-/shared-2.0.0.tgz";
     lock.packages[""].dependencies.shared = "2.0.0";
     lock.packages[`node_modules/${PACKAGE_NAME}`].bundleDependencies = ["shared"];
-    lock.packages[`node_modules/${PACKAGE_NAME}`].dependencies = { shared: "2.0.0" };
+    lock.packages[`node_modules/${PACKAGE_NAME}`].dependencies = {
+      shared: "2.0.0",
+    };
     lock.packages[`node_modules/${PACKAGE_NAME}/node_modules/shared`] = {
       inBundle: true,
       version: "2.0.0",
@@ -205,6 +216,37 @@ describe("reviewed npm cache seed", () => {
     expect(calls[2]?.data.toString()).toContain('"bundleDependencies":["bundled-child"]');
   });
 
+  it("seeds metadata but no separate archive for an authenticated bundled dependency", async () => {
+    const input = fixture();
+    const lock = JSON.parse(fs.readFileSync(input.lockfilePath, "utf8"));
+    lock.packages[`node_modules/${PACKAGE_NAME}`].dependencies = {
+      "bundled-child": "2.0.0",
+    };
+    lock.packages[`node_modules/${PACKAGE_NAME}/node_modules/bundled-child`] = {
+      inBundle: true,
+      version: "2.0.0",
+    };
+    fs.writeFileSync(input.lockfilePath, JSON.stringify(lock));
+    const calls: PutCall[] = [];
+
+    await expect(
+      seedReviewedNpmCache(request(input), async (cachePath, key, data, options) => {
+        calls.push({ cachePath, data, key, metadata: options?.metadata });
+      }),
+    ).resolves.toEqual([PACKAGE_SPEC, "bundled-child@2.0.0"]);
+
+    expect(calls).toHaveLength(6);
+    expect(calls.filter(({ key }) => key.includes("bundled-child"))).toHaveLength(2);
+    const bundledPackument = JSON.parse(
+      calls.find(({ key }) => key.endsWith("registry.npmjs.org/bundled-child"))?.data.toString() ??
+        "null",
+    );
+    expect(bundledPackument.versions["2.0.0"]).toEqual({
+      name: "bundled-child",
+      version: "2.0.0",
+    });
+  });
+
   it("combines every locked version into one offline packument", async () => {
     const input = fixture();
     const sharedVersions = ["3.1.2", "5.0.1"] as const;
@@ -231,8 +273,14 @@ describe("reviewed npm cache seed", () => {
     const packuments = calls.filter(({ key }) => key.endsWith("registry.npmjs.org/shared"));
     expect(packuments).toHaveLength(2);
     expect(packuments.map(({ data }) => JSON.parse(data.toString()).versions)).toEqual([
-      expect.objectContaining({ "3.1.2": expect.any(Object), "5.0.1": expect.any(Object) }),
-      expect.objectContaining({ "3.1.2": expect.any(Object), "5.0.1": expect.any(Object) }),
+      expect.objectContaining({
+        "3.1.2": expect.any(Object),
+        "5.0.1": expect.any(Object),
+      }),
+      expect.objectContaining({
+        "3.1.2": expect.any(Object),
+        "5.0.1": expect.any(Object),
+      }),
     ]);
   });
 

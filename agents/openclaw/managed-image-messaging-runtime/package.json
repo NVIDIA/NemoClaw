@@ -20,5 +20,18 @@
   },
   "engines": {
     "node": ">=22.19.0"
+  },
+  "overrides": {
+    "@openclaw/discord@2026.9.1": {
+      "@discord/embedded-app-sdk@2.5.0": {
+        "uuid": "14.0.2"
+      }
+    },
+    "@openclaw/whatsapp@2026.9.1": {
+      "baileys@7.0.0-rc14": {
+        "file-type": "22.0.2",
+        "protobufjs": "8.7.2"
+      }
+    }
   }
 }

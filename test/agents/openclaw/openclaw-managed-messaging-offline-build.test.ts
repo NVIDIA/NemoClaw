@@ -7,6 +7,18 @@ import { describe, expect, it } from "vitest";
 
 const repoRoot = path.join(import.meta.dirname, "../../..");
 const dockerfile = fs.readFileSync(path.join(repoRoot, "Dockerfile"), "utf8");
+const runtimeDirectory = path.join(
+  repoRoot,
+  "agents",
+  "openclaw",
+  "managed-image-messaging-runtime",
+);
+const runtimeManifest = JSON.parse(
+  fs.readFileSync(path.join(runtimeDirectory, "package.json"), "utf8"),
+);
+const runtimeLock = JSON.parse(
+  fs.readFileSync(path.join(runtimeDirectory, "package-lock.json"), "utf8"),
+);
 function dockerfileSection(startMarker: string, endMarker: string): string {
   const start = dockerfile.indexOf(startMarker);
   const end = dockerfile.indexOf(endMarker, start);
@@ -16,6 +28,34 @@ function dockerfileSection(startMarker: string, endMarker: string): string {
 }
 
 describe("OpenClaw managed messaging offline image build", () => {
+  it("binds npm's clean-install view to the versions shipped in reviewed bundles", () => {
+    const bundledVersion = (location: string) => {
+      const bundled = runtimeLock.packages[location];
+      expect(bundled?.inBundle).toBe(true);
+      return bundled?.version;
+    };
+
+    expect(runtimeManifest.overrides).toEqual({
+      "@openclaw/discord@2026.9.1": {
+        "@discord/embedded-app-sdk@2.5.0": {
+          uuid: bundledVersion(
+            "node_modules/@openclaw/discord/node_modules/@discord/embedded-app-sdk/node_modules/uuid",
+          ),
+        },
+      },
+      "@openclaw/whatsapp@2026.9.1": {
+        "baileys@7.0.0-rc14": {
+          "file-type": bundledVersion(
+            "node_modules/@openclaw/whatsapp/node_modules/baileys/node_modules/file-type",
+          ),
+          protobufjs: bundledVersion(
+            "node_modules/@openclaw/whatsapp/node_modules/baileys/node_modules/protobufjs",
+          ),
+        },
+      },
+    });
+  });
+
   it("materializes one exact platform seed from the committed lock", () => {
     const archiveStage = dockerfileSection(
       "AS openclaw-managed-messaging-npm-archives",
