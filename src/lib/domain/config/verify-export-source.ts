@@ -621,6 +621,7 @@ function projectAdditionalAgents(
   profile: ManagedStartupProfile,
 ): VerifiedExportSource["additionalAgents"] | null {
   if (profile.agentConfig.agent !== "openclaw") return undefined;
+  if (profile.inference === null) return null;
   try {
     const manifest = validateExtraAgents(
       profile.agentConfig.extraAgents,

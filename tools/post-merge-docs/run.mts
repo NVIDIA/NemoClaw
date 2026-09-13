@@ -241,7 +241,7 @@ function create(env: NodeJS.ProcessEnv, tools: OpenShellTools): void {
   createOpenShellSandbox(
     env,
     {
-      command: review ? startupCommand : [],
+      command: [],
       image: required(env.PI_IMAGE, "PI_IMAGE"),
       name: sandboxName,
       policyPath: path.join(required(env.TRUSTED_CHECKOUT, "TRUSTED_CHECKOUT"), "tools", policy),
@@ -275,13 +275,11 @@ function create(env: NodeJS.ProcessEnv, tools: OpenShellTools): void {
     },
     tools,
   );
-  if (!review) {
-    execOpenShellSandbox(
-      credentialFreeEnvironment(env),
-      { command: startupCommand, name: sandboxName },
-      tools,
-    );
-  }
+  execOpenShellSandbox(
+    credentialFreeEnvironment(env),
+    { command: startupCommand, name: sandboxName },
+    tools,
+  );
 }
 
 function run(env: NodeJS.ProcessEnv, tools: OpenShellTools): void {

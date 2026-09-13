@@ -103,7 +103,7 @@ ADD --checksum=sha256:66d2759d1921838256a05a3f80ad7e724936f083e35be5abb5e16eed6b
 COPY agents/hermes/managed_policy.py /opt/nemoclaw-hermes-config/managed_policy.py
 COPY agents/hermes/host/managed-tool-gateway-matrix.json /opt/nemoclaw-hermes-config/managed-tool-gateway-matrix.json
 COPY src/lib/hermes-managed-route.ts /src/lib/hermes-managed-route.ts
-COPY src/lib/tool-disclosure.ts /src/lib/tool-disclosure.ts
+COPY src/lib/tool-disclosure.ts src/lib/providerless-inference.ts /src/lib/
 COPY src/lib/messaging/ /src/lib/messaging/
 COPY scripts/lib/openclaw-npm-remediation.mts /scripts/lib/openclaw-npm-remediation.mts
 
@@ -472,7 +472,7 @@ RUN chmod -R a+rX /opt/nemoclaw-hermes-plugin/
 # read-only.
 RUN find /opt/nemoclaw-hermes-config -type d -exec chmod 755 {} + \
     && find /opt/nemoclaw-hermes-config -type f -exec chmod 444 {} + \
-    && chmod 444 /src/lib/hermes-managed-route.ts /src/lib/tool-disclosure.ts \
+    && chmod 444 /src/lib/hermes-managed-route.ts /src/lib/tool-disclosure.ts /src/lib/providerless-inference.ts \
     && chmod 444 /scripts/lib/reviewed-npm-archive.mts /scripts/lib/bundled-npm-package.mts \
         /scripts/lib/openclaw-npm-remediation.mts \
         /scripts/patch-bundled-npm-brace-expansion.mts /scripts/lib/patch-bundled-npm-ip-address.mts \

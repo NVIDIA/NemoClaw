@@ -44,6 +44,12 @@ function runTests(...tests: string[]): () => string[] {
 
 export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   {
+    pattern:
+      /(?:^|\/)(?:scripts\/generate-openclaw-config\.mts|agents\/hermes\/(?:generate-config\.ts|config\/[^/]+\.ts|managed_policy\.py|seed-dashboard-config\.py))$/,
+    testsToRun: runTests("test/generation/providerless-agent-config.test.ts"),
+  },
+
+  {
     pattern: /(?:^|\/)(?:scripts\/checks\/read-only-fixer\.py|\.pre-commit-config\.yaml)$/,
     testsToRun: runTests(
       "test/repository/publication-validation.test.ts",
@@ -160,6 +166,7 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     testsToRun: (_file, match) => {
       if (match[1] === "agents/hermes/") {
         return [
+          "test/generation/providerless-agent-config.test.ts",
           "src/lib/onboard/experimental/hermes-portable-build-context.test.ts",
           "src/lib/onboard/managed-startup-profile.test.ts",
           "test/agents/hermes/hermes-mcp-runtime-capability.test.ts",
@@ -172,6 +179,7 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
             "test/mcp/mcp-tool-discovery-image-contract.test.ts",
           ]
         : [
+            "test/generation/providerless-agent-config.test.ts",
             "src/lib/onboard/managed-startup-profile.test.ts",
             "src/lib/sandbox/optimized-build-context-copy-sources.test.ts",
             "test/mcp/mcp-tool-discovery-image-contract.test.ts",
