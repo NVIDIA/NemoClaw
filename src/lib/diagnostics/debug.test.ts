@@ -1,10 +1,20 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  lstatSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // Import source directly so tests cannot pass against a stale build.
 import {
   buildDmesgRerunCommand,
@@ -85,6 +95,7 @@ describe("createTarball", () => {
     if (tempDir) rmSync(tempDir, { recursive: true, force: true });
     if (outputDir) rmSync(outputDir, { recursive: true, force: true });
     process.exitCode = undefined;
+    vi.resetModules();
   });
 
   it("sets process.exitCode = 1 and returns false when tar fails on invalid output path", () => {
@@ -129,6 +140,39 @@ describe("createTarball", () => {
     expect(ok).toBe(true);
     expect(process.exitCode).toBeUndefined();
     expect(existsSync(output)).toBe(true);
+  });
+
+  it("writes the bundle owner-only and removes the protected staging directory", () => {
+    tempDir = mkdtempSync(join(tmpdir(), "debug-test-"));
+    writeFileSync(join(tempDir, "env.txt"), "PROXY_USER=example-not-a-real-value-1");
+    outputDir = mkdtempSync(join(tmpdir(), "debug-test-out-"));
+    const output = join(outputDir, "owner-only.tar.gz");
+    const ok = createTarball(tempDir, output);
+    expect(ok).toBe(true);
+    // test/helpers/normalize-fixture-umask.ts pins every worker to umask 0o022,
+    // under which an unstaged archive is published 644.
+    expect((statSync(output).mode & 0o777).toString(8)).toBe("600");
+    expect(readdirSync(outputDir)).toEqual(["owner-only.tar.gz"]);
+  });
+
+  it("does not use the legacy predictable staging path", () => {
+    tempDir = mkdtempSync(join(tmpdir(), "debug-test-"));
+    writeFileSync(join(tempDir, "payload.txt"), "test data");
+    outputDir = mkdtempSync(join(tmpdir(), "debug-test-out-"));
+    const output = join(outputDir, "staged.tar.gz");
+    const bystander = join(outputDir, "bystander.txt");
+    const bystanderContents = "bystander content that must survive";
+    writeFileSync(bystander, bystanderContents);
+    const legacyStagingPath = `${output}.partial.${process.pid}`;
+    symlinkSync(bystander, legacyStagingPath);
+
+    const ok = createTarball(tempDir, output);
+
+    expect(ok).toBe(true);
+    expect(process.exitCode).toBeUndefined();
+    expect(readFileSync(bystander, "utf-8")).toBe(bystanderContents);
+    expect(existsSync(output)).toBe(true);
+    expect(lstatSync(legacyStagingPath).isSymbolicLink()).toBe(true);
   });
 });
 
