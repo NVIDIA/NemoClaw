@@ -7,6 +7,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { buildAvailabilityProbeEnv } from "../availability-env.ts";
+import { buildGatewayRuntimeStartScript } from "../gateway-runtime-start.ts";
+import { REPO_ROOT } from "../paths.ts";
 import { assertExitZero, outputContainsReadySandbox } from "../clients/command.ts";
 import type { GatewayClient, HostGatewayRuntime } from "../clients/gateway.ts";
 import type { HostCliClient } from "../clients/host.ts";
@@ -182,20 +184,6 @@ export function buildOpenShellGatewayUserServiceDiagnosticsScript(): string {
     '  journalctl --user --unit "$service" --no-pager --lines=200',
     "fi",
     "exit 0",
-  ].join("\n");
-}
-
-/** Build the host command that executes NemoClaw's production gateway-start path. */
-export function buildNemoClawGatewayRecoveryScript(): string {
-  return [
-    '"use strict";',
-    'const { startGatewayForRecovery } = require("./dist/lib/onboard");',
-    "Promise.resolve()",
-    '  .then(() => startGatewayForRecovery({ gatewayName: "nemoclaw" }))',
-    "  .catch((error) => {",
-    "    console.error(error && error.stack ? error.stack : String(error));",
-    "    process.exit(1);",
-    "  });",
   ].join("\n");
 }
 
@@ -524,7 +512,6 @@ export class LifecyclePhaseFixture {
     const previousRuntime = await this.restartGatewayRuntime({
       delayMs: 0,
       requireUserService: true,
-      sandboxName: instance.sandboxName,
     });
     steps.push({
       id: `gateway-restart:${previousRuntime?.kind ?? "user-service"}`,
@@ -633,16 +620,6 @@ export class LifecyclePhaseFixture {
     );
     if (await this.stopOpenShellGatewayUserService()) return runtime;
 
-    await this.host.command(
-      "sh",
-      ["-lc", "command -v openshell >/dev/null 2>&1 && openshell gateway stop -g nemoclaw || true"],
-      {
-        artifactName: "lifecycle-gateway-stop",
-        env: buildAvailabilityProbeEnv(),
-        timeoutMs: 60_000,
-      },
-    );
-
     const pidFileStop = await this.host.command(
       "sh",
       [
@@ -733,9 +710,7 @@ export class LifecyclePhaseFixture {
       this.stoppedOpenShellGatewayUserService = selection;
       this.cleanup.add(`lifecycle.gateway-user-service-restart:${selection}`, async () => {
         if (this.stoppedOpenShellGatewayUserService !== selection) return;
-        await this.startOpenShellGatewayUserService({
-          requireAvailable: true,
-        });
+        await this.startOpenShellGatewayUserService({ requireAvailable: true });
       });
       return true;
     }
@@ -746,46 +721,28 @@ export class LifecyclePhaseFixture {
     );
   }
 
-  /** Restart the same gateway owner recorded before the lifecycle fixture stopped it. */
   async startGatewayRuntime(
-    previousRuntime: HostGatewayRuntime | null,
     options: { requireUserService?: boolean; sandboxName?: string } = {},
   ): Promise<ShellProbeResult> {
     const userServiceStart = await this.startOpenShellGatewayUserService({
       requireAvailable: options.requireUserService,
     });
     if (userServiceStart) return userServiceStart;
-    if (previousRuntime?.kind === "container") {
-      if (!options.sandboxName) {
-        throw new Error(
-          "A sandbox name is required to recover the stopped container gateway runtime.",
-        );
-      }
-      const result = await this.host.nemoclaw([options.sandboxName, "status"], {
-        artifactName: `lifecycle-gateway-recover-through-nemoclaw-status-${options.sandboxName}`,
-        env: buildAvailabilityProbeEnv(),
-        timeoutMs: 120_000,
-      });
-      assertExitZero(
-        result,
-        `recover stopped container gateway through sandbox status ${options.sandboxName}`,
-      );
-      return result;
+    if (!options.sandboxName?.trim()) {
+      throw new Error("Gateway recovery requires the registered sandbox name.");
     }
-    const result = await this.host.command(
+    // The fixture knows it stopped this gateway. Observational recovery can
+    // refuse an unreachable gateway whose identity the CLI cannot report.
+    return await this.host.command(
       process.execPath,
-      ["-e", buildNemoClawGatewayRecoveryScript()],
+      ["-e", buildGatewayRuntimeStartScript(), options.sandboxName],
       {
-        artifactName: "lifecycle-gateway-recover-through-nemoclaw-product-start",
+        artifactName: "lifecycle-gateway-start",
+        cwd: REPO_ROOT,
         env: buildAvailabilityProbeEnv(),
         timeoutMs: 120_000,
       },
     );
-    assertExitZero(
-      result,
-      `recover stopped ${previousRuntime?.kind ?? "unknown"} gateway through NemoClaw product start`,
-    );
-    return result;
   }
 
   private async startOpenShellGatewayUserService(options: {
@@ -817,9 +774,6 @@ export class LifecyclePhaseFixture {
       this.stoppedOpenShellGatewayUserService = null;
       return result;
     }
-    if (result.exitCode === USER_SERVICE_UNAVAILABLE_EXIT && !options.requireAvailable) {
-      return null;
-    }
     if (result.exitCode === USER_SERVICE_UNAVAILABLE_EXIT) {
       throw new Error(
         `OpenShell gateway user service is not available for reboot lifecycle recovery.`,
@@ -832,12 +786,11 @@ export class LifecyclePhaseFixture {
   }
 
   async restartGatewayRuntime(
-    options: {
-      delayMs?: number;
-      requireUserService?: boolean;
-      sandboxName?: string;
-    } = {},
+    options: { delayMs?: number; requireUserService?: boolean; sandboxName?: string } = {},
   ): Promise<HostGatewayRuntime | null> {
+    if (options.requireUserService !== true && !options.sandboxName?.trim()) {
+      throw new Error("Gateway restart requires a sandbox name or a required user service.");
+    }
     const previousRuntime = await this.stopGatewayRuntime();
     if (this.gateway) {
       await this.gateway.expectHostRuntimeStopped({
@@ -848,10 +801,11 @@ export class LifecyclePhaseFixture {
     if (delayMs > 0) {
       await new Promise((resolve) => setTimeout(resolve, delayMs));
     }
-    await this.startGatewayRuntime(previousRuntime, {
+    const start = await this.startGatewayRuntime({
       requireUserService: options.requireUserService,
       sandboxName: options.sandboxName,
     });
+    assertExitZero(start, "restart OpenShell gateway runtime");
     return previousRuntime;
   }
 

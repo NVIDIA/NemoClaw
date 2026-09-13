@@ -352,6 +352,12 @@ const STOCK_RUNTIME_INPUT_AGENTS = {
 } as const satisfies Record<string, readonly ManagedStartupAgent[]>;
 
 describe("managed startup profile", () => {
+  it.each(["pi", "langchain-deepagents-code"] as const)("requires inference for %s", (agent) => {
+    const profile = agent === "pi" ? PI_PROFILE : DCODE_PROFILE;
+    expect(() => validateManagedStartupProfile({ ...profile, inference: null })).toThrow(
+      "requires inference configuration",
+    );
+  });
   it.each(VALID_PROFILES)(
     "round-trips each $agent profile through canonical encoding",
     (profile) => {
@@ -359,7 +365,7 @@ describe("managed startup profile", () => {
       const encoded = encodeManagedStartupProfile(profile);
       const decoded = decodeManagedStartupProfile(encoded);
       expect(decoded).toEqual(validated);
-      expect(decoded.inference.model).toBe(profile.inference.model);
+      expect(decoded.inference!.model).toBe(profile.inference!.model);
       expect(fingerprintManagedStartupProfile(profile)).toMatch(/^[a-f0-9]{64}$/);
     },
   );
@@ -505,7 +511,7 @@ describe("managed startup profile", () => {
     expect(() =>
       validateManagedStartupProfile({
         ...DCODE_PROFILE,
-        inference: { ...DCODE_PROFILE.inference, api: "openai-responses" },
+        inference: { ...DCODE_PROFILE.inference!, api: "openai-responses" },
       }),
     ).toThrow(/not supported/);
   });
@@ -586,7 +592,7 @@ describe("managed startup profile", () => {
       label: "inference",
       mutate: (profile: ManagedStartupProfile) => ({
         ...profile,
-        inference: { ...profile.inference, extension: true },
+        inference: { ...profile.inference!, extension: true },
       }),
     },
     {
@@ -676,7 +682,7 @@ describe("managed startup profile", () => {
     expect(() =>
       validateManagedStartupProfile({
         ...OPENCLAW_PROFILE,
-        inference: { ...OPENCLAW_PROFILE.inference, compatibility },
+        inference: { ...OPENCLAW_PROFILE.inference!, compatibility },
       }),
     ).toThrow(/credential-shaped/);
   });
@@ -688,10 +694,10 @@ describe("managed startup profile", () => {
         validateManagedStartupProfile({
           ...OPENCLAW_PROFILE,
           inference: {
-            ...OPENCLAW_PROFILE.inference,
+            ...OPENCLAW_PROFILE.inference!,
             compatibility: { [field]: "non-secret metadata" },
           },
-        }).inference.compatibility,
+        }).inference!.compatibility,
       ).toEqual({ [field]: "non-secret metadata" });
     },
   );
@@ -865,7 +871,7 @@ describe("managed startup profile", () => {
         ? {
             ...DCODE_PROFILE,
             inference: {
-              ...DCODE_PROFILE.inference,
+              ...DCODE_PROFILE.inference!,
               [field]: "https://user:password@example.test/v1",
             },
           }
@@ -899,7 +905,7 @@ describe("managed startup profile", () => {
         validateManagedStartupProfile({
           ...OPENCLAW_PROFILE,
           inference: {
-            ...OPENCLAW_PROFILE.inference,
+            ...OPENCLAW_PROFILE.inference!,
             compatibility: {
               note: `https://example.test/hook?${credentialField}=opaque-secret`,
             },
@@ -915,7 +921,7 @@ describe("managed startup profile", () => {
         validateManagedStartupProfile({
           ...OPENCLAW_PROFILE,
           inference: {
-            ...OPENCLAW_PROFILE.inference,
+            ...OPENCLAW_PROFILE.inference!,
             compatibility: {
               note: `https://example.test/callback${fragment}`,
             },
@@ -998,7 +1004,7 @@ describe("managed startup profile", () => {
     expect(() =>
       validateManagedStartupProfile({
         ...PI_PROFILE,
-        inference: { ...PI_PROFILE.inference, api: "openai-responses" },
+        inference: { ...PI_PROFILE.inference!, api: "openai-responses" },
       }),
     ).toThrow(/not supported/);
     expect(() =>
@@ -1010,7 +1016,10 @@ describe("managed startup profile", () => {
     expect(() =>
       validateManagedStartupProfile({
         ...PI_PROFILE,
-        inference: { ...PI_PROFILE.inference, upstreamEndpointUrl: "https://openrouter.ai/api/v1" },
+        inference: {
+          ...PI_PROFILE.inference!,
+          upstreamEndpointUrl: "https://openrouter.ai/api/v1",
+        },
       }),
     ).toThrow(/inference\.upstreamEndpointUrl must be null for pi/);
   });
@@ -1019,14 +1028,14 @@ describe("managed startup profile", () => {
     expect(() =>
       validateManagedStartupProfile({
         ...DCODE_PROFILE,
-        inference: { ...DCODE_PROFILE.inference, api: "openai-responses" },
+        inference: { ...DCODE_PROFILE.inference!, api: "openai-responses" },
       }),
     ).toThrow(/not supported/);
     expect(() =>
       validateManagedStartupProfile({
         ...HERMES_PROFILE,
         inference: {
-          ...HERMES_PROFILE.inference,
+          ...HERMES_PROFILE.inference!,
           compatibility: { supportsDeveloperRole: true },
         },
       }),
@@ -1038,7 +1047,7 @@ describe("managed startup profile", () => {
       validateManagedStartupProfile({
         ...OPENCLAW_PROFILE,
         inference: {
-          ...OPENCLAW_PROFILE.inference,
+          ...OPENCLAW_PROFILE.inference!,
           primaryModelRef: "different-provider/different-model",
         },
       }),
@@ -1186,7 +1195,7 @@ describe("managed startup profile", () => {
     expect(() =>
       validateManagedStartupProfile({
         ...OPENCLAW_PROFILE,
-        inference: { ...OPENCLAW_PROFILE.inference, model: rawCa },
+        inference: { ...OPENCLAW_PROFILE.inference!, model: rawCa },
       }),
     ).toThrow(/raw certificate data/);
   });
@@ -1261,7 +1270,7 @@ describe("managed startup profile", () => {
   });
 
   it("rejects a custom JSON serializer before invoking it", () => {
-    const inputModalities = [...OPENCLAW_PROFILE.inference.inputModalities];
+    const inputModalities = [...OPENCLAW_PROFILE.inference!.inputModalities];
     let serializerInvoked = false;
     Object.defineProperty(inputModalities, "toJSON", {
       value() {
@@ -1272,7 +1281,7 @@ describe("managed startup profile", () => {
     expect(() =>
       validateManagedStartupProfile({
         ...OPENCLAW_PROFILE,
-        inference: { ...OPENCLAW_PROFILE.inference, inputModalities },
+        inference: { ...OPENCLAW_PROFILE.inference!, inputModalities },
       }),
     ).toThrow(/custom JSON serializer/);
     expect(serializerInvoked).toBe(false);
@@ -1395,7 +1404,7 @@ describe("managed startup profile", () => {
 
   it("returns opaque JSON objects without inherited prototype data", () => {
     const profile = validateManagedStartupProfile(OPENCLAW_PROFILE);
-    expect(Object.getPrototypeOf(profile.inference.compatibility as object)).toBeNull();
+    expect(Object.getPrototypeOf(profile.inference!.compatibility as object)).toBeNull();
     expect(Object.getPrototypeOf(profile.messaging.plan as object)).toBeNull();
     expect(
       Object.getPrototypeOf(
