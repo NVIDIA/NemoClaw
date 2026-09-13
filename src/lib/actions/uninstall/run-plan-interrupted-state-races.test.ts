@@ -122,6 +122,7 @@ async function runInterruptedUninstall(
             : ok();
       },
       runDocker: () => ok(),
+      sleep: () => undefined,
     },
   );
   return { calls, errors, outcome, stateRoot };
