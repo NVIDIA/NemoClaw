@@ -18,6 +18,7 @@ import {
   normalizeOpenClawSignatureAlias,
   parseAuditConfig,
   reviewedArchiveGraphManifest,
+  selectReviewedLockedGraphIdentity,
   selectReviewedLockSha256,
   validateWechatRuntimeInputs,
   verifyMaterializedLockedGraph,
@@ -630,6 +631,54 @@ describe("trusted npm audit workflow (#5896)", () => {
         tarballUrl: "https://npm.pkg.github.com/download/@example/reviewed/1.0.0/reviewed",
       },
       sourceRegistryPackagesWithoutIntegrity: [],
+    };
+
+    expect(() => parseAuditConfig(JSON.stringify(config))).toThrow(
+      "ci/reviewed-npm-audit.json is invalid",
+    );
+  });
+
+  it("selects one exact replacement package identity for a reviewed lock", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-reviewed-graph-transition-"));
+    const lockfile = path.join(root, "package-lock.json");
+    fs.writeFileSync(lockfile, "replacement graph\n");
+    const replacementLock = createHash("sha256").update("replacement graph\n").digest("hex");
+    const replacement = {
+      integrity: "sha512-replacement",
+      label: "OpenClaw replacement",
+      lockSha256: replacementLock,
+      packageSpec: "openclaw@2026.9.1",
+      tarballUrl: "https://registry.npmjs.org/openclaw/-/openclaw-2026.9.1.tgz",
+    };
+    try {
+      expect(
+        selectReviewedLockedGraphIdentity(lockfile, {
+          directory: "agents/openclaw/openclaw-runtime",
+          id: "openclaw-runtime",
+          integrity: "sha512-current",
+          label: "OpenClaw current",
+          lockSha256: "a".repeat(64),
+          packageSpec: "openclaw@2026.7.1",
+          replacement,
+          tarballUrl: "https://registry.npmjs.org/openclaw/-/openclaw-2026.7.1.tgz",
+        }),
+      ).toEqual(replacement);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  // source-shape-contract: security -- A replacement graph must retain the same npm package name so reviewed transition authority cannot install an unrelated dependency
+  it("rejects a replacement graph for a different package", () => {
+    const config = JSON.parse(REVIEWED_AUDIT_CONFIG_SOURCE) as {
+      lockedGraphs: Array<Record<string, unknown>>;
+    };
+    config.lockedGraphs[0]!.replacement = {
+      integrity: "sha512-replacement",
+      label: "Different package",
+      lockSha256: "b".repeat(64),
+      packageSpec: "different-package@1.0.0",
+      tarballUrl: "https://registry.npmjs.org/different-package/-/different-package-1.0.0.tgz",
     };
 
     expect(() => parseAuditConfig(JSON.stringify(config))).toThrow(

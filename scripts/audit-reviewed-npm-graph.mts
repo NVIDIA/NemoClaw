@@ -34,19 +34,21 @@ type ReviewedPackage = Readonly<{
   packageSpec: string;
   tarballUrl: string;
 }>;
+type LockedGraphIdentity = ReviewedPackage & Readonly<{ lockSha256: string }>;
 type SourceRegistryPackage = ReviewedPackage & Readonly<{ artifactName: string }>;
 type PackageWithoutIntegrity = Readonly<{
   label: string;
   packageSpec: string;
   tarballUrl: string;
 }>;
-type LockedGraph = ReviewedPackage &
+type LockedGraph = LockedGraphIdentity &
   Readonly<{
     directory: string;
     id: string;
     inputValidation?: "wechat-runtime";
     installMode?: "legacy-peer-deps";
     lockSha256: string;
+    replacement?: LockedGraphIdentity;
     replacementLockSha256?: string;
     severityThreshold?: Severity;
     signatureAudit?: "retry-download-failures";
@@ -112,6 +114,23 @@ function isSourceRegistryPackage(value: unknown): value is SourceRegistryPackage
     candidate.integrity.length > 0 &&
     typeof candidate.tarballUrl === "string" &&
     candidate.tarballUrl.length > 0
+  );
+}
+
+function isLockedGraphIdentity(value: unknown): value is LockedGraphIdentity {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const candidate = value as Partial<LockedGraphIdentity>;
+  return (
+    typeof candidate.label === "string" &&
+    candidate.label.length > 0 &&
+    typeof candidate.packageSpec === "string" &&
+    EXACT_NPM_PACKAGE_SPEC.test(candidate.packageSpec) &&
+    typeof candidate.integrity === "string" &&
+    candidate.integrity.length > 0 &&
+    typeof candidate.tarballUrl === "string" &&
+    candidate.tarballUrl.length > 0 &&
+    typeof candidate.lockSha256 === "string" &&
+    /^[0-9a-f]{64}$/.test(candidate.lockSha256)
   );
 }
 
@@ -257,7 +276,14 @@ export function parseAuditConfig(contents: string): AuditConfig {
         (graph.replacementLockSha256 !== undefined &&
           (typeof graph.replacementLockSha256 !== "string" ||
             !/^[0-9a-f]{64}$/.test(graph.replacementLockSha256) ||
-            graph.replacementLockSha256 === graph.lockSha256)),
+            graph.replacementLockSha256 === graph.lockSha256 ||
+            graph.replacement !== undefined)) ||
+        (graph.replacement !== undefined &&
+          (!isLockedGraphIdentity(graph.replacement) ||
+            exactPackageName(graph.replacement.packageSpec) !==
+              exactPackageName(graph.packageSpec) ||
+            graph.replacement.packageSpec === graph.packageSpec ||
+            graph.replacement.lockSha256 === graph.lockSha256)),
     ) ||
     new Set(parsed.lockedGraphs.map(({ id }) => id)).size !== parsed.lockedGraphs.length
   ) {
@@ -399,20 +425,16 @@ function materializeLockedGraph(
     }
     validateWechatRuntimeInputs(sourcePackage, sourceLock, registryOrigin);
   }
-  const expectedLockSha256 = selectReviewedLockSha256(
-    sourceLock,
-    graph.lockSha256,
-    graph.replacementLockSha256,
-    graph.label,
-  );
+  const reviewedIdentity = selectReviewedLockedGraphIdentity(sourceLock, graph);
+  const expectedLockSha256 = reviewedIdentity.lockSha256;
   verifyReviewedNpmLock({
-    expectedIntegrity: graph.integrity,
+    expectedIntegrity: reviewedIdentity.integrity,
     expectedLockSha256,
-    label: graph.label,
+    label: reviewedIdentity.label,
     lockfilePath: sourceLock,
-    packageSpec: graph.packageSpec,
+    packageSpec: reviewedIdentity.packageSpec,
     registryOrigin,
-    tarballUrl: graph.tarballUrl,
+    tarballUrl: reviewedIdentity.tarballUrl,
   });
   const destination = path.join(tempRoot, `locked-${path.basename(graph.directory)}`);
   fs.mkdirSync(destination);
@@ -421,8 +443,33 @@ function materializeLockedGraph(
   const installArgs = ["ci", "--ignore-scripts", "--omit=dev", "--no-audit", "--no-fund"];
   if (graph.installMode === "legacy-peer-deps") installArgs.push("--legacy-peer-deps");
   run("npm", installArgs, destination);
-  verifyMaterializedLockedGraph({ destination, expectedLockSha256, label: graph.label });
+  verifyMaterializedLockedGraph({ destination, expectedLockSha256, label: reviewedIdentity.label });
   return destination;
+}
+
+export function selectReviewedLockedGraphIdentity(
+  lockfilePath: string,
+  graph: LockedGraph,
+): LockedGraphIdentity {
+  const actual = createHash("sha256").update(fs.readFileSync(lockfilePath)).digest("hex");
+  if (actual === graph.lockSha256 || actual === graph.replacementLockSha256) {
+    return {
+      integrity: graph.integrity,
+      label: graph.label,
+      lockSha256: actual,
+      packageSpec: graph.packageSpec,
+      tarballUrl: graph.tarballUrl,
+    };
+  }
+  if (actual === graph.replacement?.lockSha256) return graph.replacement;
+  const reviewedDigests = [
+    graph.lockSha256,
+    graph.replacementLockSha256,
+    graph.replacement?.lockSha256,
+  ].filter((digest): digest is string => digest !== undefined);
+  throw new Error(
+    `${graph.label} lock SHA-256 mismatch\nExpected one of: ${reviewedDigests.join(", ")}\nActual:          ${actual}`,
+  );
 }
 
 export function verifyMaterializedLockedGraph({
