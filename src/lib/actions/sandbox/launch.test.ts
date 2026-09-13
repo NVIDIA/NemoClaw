@@ -388,8 +388,6 @@ describe("launchSandbox", () => {
     expect(mocks.assertCommandCurrent).toHaveBeenCalledTimes(3);
     expect(events).toEqual([
       "sandbox:acquired",
-      "sandbox:released",
-      "sandbox:acquired",
       "child",
       "sandbox:released",
       "sandbox:acquired",
@@ -423,8 +421,6 @@ describe("launchSandbox", () => {
     await contender;
     expect(events).toEqual([
       "sandbox:acquired",
-      "sandbox:released",
-      "sandbox:acquired",
       "child",
       "sandbox:released",
       "sandbox:acquired",
@@ -454,7 +450,7 @@ describe("launchSandbox", () => {
     expect(mocks.startSandboxSession).not.toHaveBeenCalled();
   });
 
-  it("does not run accepted ordinary setup when schema-5 publishes before the launch fence (#9203)", async () => {
+  it("qualifies schema-5 published before the launch fence without ordinary setup (#9203)", async () => {
     const hermes = loadAgent("hermes");
     const entry = sandboxEntry("hermes");
     mocks.inspectLaunchReadiness.mockResolvedValue({
@@ -474,12 +470,13 @@ describe("launchSandbox", () => {
           return await operation();
         },
       }),
-    ).rejects.toThrow("lifecycle authority changed");
+    ).resolves.toBeUndefined();
 
     expect(mocks.printInteractiveSessionHints).not.toHaveBeenCalled();
     expect(mocks.completeReadinessQualifiedInteractiveSessionSetup).not.toHaveBeenCalled();
     expect(mocks.startSandboxExec).not.toHaveBeenCalled();
-    expect(mocks.startSandboxSession).not.toHaveBeenCalled();
+    expect(mocks.startSandboxSession).toHaveBeenCalledOnce();
+    expect(mocks.requireActiveLifecycleAuthority).toHaveBeenCalled();
   });
 
   it("rejects schema-5 retirement inside the launch lifecycle fence (#9203)", async () => {
@@ -1251,8 +1248,47 @@ describe("launchSandbox", () => {
       logSpy.mockRestore();
     }
   });
+  it("holds lifecycle authority from ordinary readiness through dispatch (#11647)", async () => {
+    const events: string[] = [];
+    const lock = createSerialTestLock(events, "sandbox");
+    const inspected = deferred();
+    const continueInspection = deferred();
+    const childStarted = deferred();
+    const sessionEnded = deferred();
+    mocks.inspectLaunchReadiness.mockImplementationOnce(async () => {
+      events.push("readiness");
+      inspected.resolve();
+      await continueInspection.promise;
+      return {
+        kind: "accepted",
+        category: "accepted",
+        agent: loadAgent("openclaw"),
+        sb: sandboxEntry("openclaw"),
+      };
+    });
+    mocks.startSandboxExec.mockImplementationOnce(async () => {
+      events.push("dispatch");
+      childStarted.resolve();
+      return () => sessionEnded.promise;
+    });
+    const launch = launchSandbox("alpha", { withSandboxMutationLock: lock });
+    await inspected.promise;
+    const contender = lock("alpha", () => {
+      events.push("contender");
+    });
+    continueInspection.resolve();
+    await childStarted.promise;
+    await contender;
+    sessionEnded.resolve();
+    await launch;
+    expect(
+      events.filter((event) => ["readiness", "dispatch", "contender"].includes(event)),
+    ).toEqual(["readiness", "dispatch", "contender"]);
+  });
+
   it.each([
     { replacement: "unchanged", cleanupCount: 1 },
+    { replacement: "metadata", cleanupCount: 1 },
     { replacement: "recreated", cleanupCount: 0 },
     { replacement: "removed", cleanupCount: 0 },
   ])(
@@ -1307,6 +1343,7 @@ describe("launchSandbox", () => {
             ? null
             : {
                 ...current!,
+                model: replacement === "metadata" ? "updated-model" : current!.model,
                 lifecycleGeneration:
                   replacement === "recreated" ? "generation-new" : "generation-alpha",
               };
