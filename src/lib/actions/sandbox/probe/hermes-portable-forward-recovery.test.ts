@@ -29,6 +29,25 @@ type LaunchForwardService = NonNullable<
   ReturnType<typeof createRecoveryFixture>["input"]["deps"]["launchForwardService"]
 >;
 
+function earlyExitError(exitCode: number | null, signal: NodeJS.Signals | null): Error {
+  const forward = requireDist(
+    "../../src/lib/adapters/openshell/forward-service.js",
+  ) as typeof import("../../../adapters/openshell/forward-service");
+  const target = forward.createForwardServiceTarget(
+    {
+      executable: "/fixture/openshell",
+      gatewayName: "nemoclaw",
+      workspace: "default",
+      sandboxName: "alpha",
+      localHost: "127.0.0.1",
+    },
+    18789,
+  );
+  return Object.assign(new forward.ForwardServiceEarlyExitError(target, exitCode, signal), {
+    message: "private executable path canary",
+  });
+}
+
 function launchThen(launch: LaunchForwardService, afterLaunch: () => void): LaunchForwardService {
   return (target, options) => {
     launch(target, options);
@@ -37,50 +56,51 @@ function launchThen(launch: LaunchForwardService, afterLaunch: () => void): Laun
 }
 
 describe("Hermes Portable probe-only forward recovery", () => {
-  it("rejects settlement when the final ownership check exhausts the allowance (#11652)", () => {
-    const fixture = createRecoveryFixture({ ports: [18_789] });
-    Object.assign(fixture.input, { operationTimeoutMs: 100 });
-    const owner = fixture.input.deps.isForwardServiceOwner!;
-    let checks = 0;
-    Object.assign(fixture.input.deps, {
-      isForwardServiceOwner: (target: ForwardServiceTarget) => {
-        fixture.input.deps.sleep!(++checks === 2 ? 100 : 0);
-        return owner(target);
-      },
-    });
-    expect(() => recoverHermesPortableLaunchForwards(fixture.input)).toThrow(
-      "restoration-unproved",
-    );
-    expect(fixture.elapsedMs()).toBe(100);
-    expect(fixture.rollbackCaptureCalls).not.toHaveLength(0);
-  });
-
-  it("passes the remaining transaction allowance to the second forward (#11652)", () => {
-    const fixture = createRecoveryFixture({ ports: [18_789, 8_642] });
-    Object.assign(fixture.input, { operationTimeoutMs: 100 });
+  it("lets timers restore readiness during forward settlement (#11648)", async () => {
+    const fixture = createRecoveryFixture();
     const launch = fixture.input.deps.launchForwardService!;
-    const allowances: number[] = [];
+    let timer: ReturnType<typeof setTimeout> | undefined;
     Object.assign(fixture.input.deps, {
-      launchForwardService: (
-        target: ForwardServiceTarget,
-        options: Parameters<LaunchForwardService>[1],
-      ) => {
-        allowances.push(options.timeoutMs!);
-        launch(target, options);
-        fixture.input.deps.sleep!(Math.min(60, options.timeoutMs!));
-      },
+      now: Date.now,
+      sleep: undefined,
+      launchForwardService: launchThen(launch, () => {
+        const record = fixture.records.get(18_789)!;
+        record.reachable = false;
+        timer = setTimeout(() => {
+          record.reachable = true;
+        }, 0);
+      }),
     });
-    expect(() => recoverHermesPortableLaunchForwards(fixture.input)).toThrow(
-      "restoration-unproved",
-    );
-    expect(allowances).toEqual([100, 40]);
-    expect(fixture.elapsedMs()).toBe(100);
+    try {
+      await expect(recoverHermesPortableLaunchForwards(fixture.input)).resolves.toEqual({
+        kind: "restored",
+        restoredPorts: [18_789],
+      });
+      expect(fixture.rollbackCalls).toEqual([]);
+    } finally {
+      clearTimeout(timer);
+    }
   });
 
-  it("starts missing forwards sequentially before one joint settlement observation (#10926)", () => {
+  it("starts missing forwards sequentially before one joint settlement observation (#10926)", async () => {
     const fixture = createRecoveryFixture({ ports: [18_789, 8_642] });
+    const launch = fixture.input.deps.launchForwardService!;
+    let releaseFirst!: () => void;
+    const firstLaunch = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    Object.assign(fixture.input.deps, {
+      launchForwardService: vi.fn(launch).mockImplementationOnce((target, options) => {
+        launch(target, options);
+        return firstLaunch;
+      }),
+    });
+    const recovery = recoverHermesPortableLaunchForwards(fixture.input);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(fixture.forwardServiceLaunches.map((target) => target.localPort)).toEqual([18_789]);
+    releaseFirst();
 
-    expect(recoverHermesPortableLaunchForwards(fixture.input)).toEqual({
+    expect(await recovery).toEqual({
       kind: "restored",
       restoredPorts: [18_789, 8_642],
     });
@@ -134,7 +154,7 @@ describe("Hermes Portable probe-only forward recovery", () => {
     { endpoint: "https://[::1]:8080", expectedTlsDir: "/external/gateway/tls" },
   ])(
     "carries external authority through a direct launch to $endpoint",
-    ({ endpoint, expectedTlsDir }) => {
+    async ({ endpoint, expectedTlsDir }) => {
       const fixture = createRecoveryFixture();
       Object.assign(fixture.input.forwardService, {
         gatewayEndpoint: endpoint,
@@ -146,7 +166,7 @@ describe("Hermes Portable probe-only forward recovery", () => {
         },
       });
 
-      expect(recoverHermesPortableLaunchForwards(fixture.input).kind).toBe("restored");
+      expect((await recoverHermesPortableLaunchForwards(fixture.input)).kind).toBe("restored");
       expect(fixture.forwardServiceLaunches[0]).toMatchObject({ gatewayEndpoint: endpoint });
       expect(
         fixture.forwardServiceLaunchOptions[0]?.sourceEnvironment?.OPENSHELL_LOCAL_TLS_DIR,
@@ -155,10 +175,10 @@ describe("Hermes Portable probe-only forward recovery", () => {
     },
   );
 
-  it("keeps an already healthy forward set verification-only", () => {
+  it("keeps an already healthy forward set verification-only", async () => {
     const fixture = createRecoveryFixture({ ports: [18_789, 8_642], running: [18_789, 8_642] });
 
-    expect(recoverHermesPortableLaunchForwards(fixture.input)).toEqual({
+    expect(await recoverHermesPortableLaunchForwards(fixture.input)).toEqual({
       kind: "verified",
       restoredPorts: [],
     });
@@ -226,14 +246,14 @@ describe("Hermes Portable probe-only forward recovery", () => {
     expect(fixture.forwardServiceLaunches).toEqual([]);
   });
 
-  it("fails closed when an unlisted reachable listener's exact owner changes", () => {
+  it("fails closed when an unlisted reachable listener's exact owner changes", async () => {
     const fixture = createRecoveryFixture({ listOutput: "No active forwards." });
     Object.assign(fixture.input.deps, {
       isPortReachable: () => true,
       isForwardServiceOwner: () => false,
     });
 
-    expect(() => recoverHermesPortableLaunchForwards(fixture.input)).toThrow(
+    await expect(recoverHermesPortableLaunchForwards(fixture.input)).rejects.toThrow(
       expect.objectContaining({
         context: { cause: "port-occupied", port: 18_789 },
         failure: "forward-occupied",
@@ -283,10 +303,10 @@ describe("Hermes Portable probe-only forward recovery", () => {
     expect(fixture.rollbackCalls).toEqual([]);
   });
 
-  it("keeps exact active forwards verification-only", () => {
+  it("keeps exact active forwards verification-only", async () => {
     const fixture = createRecoveryFixture({ ports: [18_789, 8_642], active: [18_789, 8_642] });
 
-    expect(recoverHermesPortableLaunchForwards(fixture.input)).toEqual({
+    expect(await recoverHermesPortableLaunchForwards(fixture.input)).toEqual({
       kind: "verified",
       restoredPorts: [],
     });
@@ -294,7 +314,7 @@ describe("Hermes Portable probe-only forward recovery", () => {
     expect(fixture.rollbackCalls).toEqual([]);
   });
 
-  it("ignores a valid non-target wildcard row while verifying the target forward (#10926)", () => {
+  it("ignores a valid non-target wildcard row while verifying the target forward (#10926)", async () => {
     const fixture = createRecoveryFixture({
       active: [18_789],
       listOutput:
@@ -303,14 +323,14 @@ describe("Hermes Portable probe-only forward recovery", () => {
         "remote-dashboard 0.0.0.0 8080 54321 running",
     });
 
-    expect(recoverHermesPortableLaunchForwards(fixture.input)).toEqual({
+    expect(await recoverHermesPortableLaunchForwards(fixture.input)).toEqual({
       kind: "verified",
       restoredPorts: [],
     });
     expect(fixture.currentMutationCalls).toEqual([]);
   });
 
-  it("rejects a gateway row whose target relevance cannot be determined (#10926)", () => {
+  it("rejects a gateway row whose target relevance cannot be determined (#10926)", async () => {
     const fixture = createRecoveryFixture({
       active: [18_789],
       listOutput:
@@ -319,7 +339,7 @@ describe("Hermes Portable probe-only forward recovery", () => {
         "remote-dashboard 0.0.0.0 not-a-port 54321 running",
     });
 
-    expect(() => recoverHermesPortableLaunchForwards(fixture.input)).toThrow(
+    await expect(recoverHermesPortableLaunchForwards(fixture.input)).rejects.toThrow(
       expect.objectContaining({ failure: "forward-state-unavailable" }),
     );
     expect(fixture.currentMutationCalls).toEqual([]);
@@ -328,10 +348,10 @@ describe("Hermes Portable probe-only forward recovery", () => {
   it.each([
     ["stopped", { stopped: [18_789] }],
     ["dead after the host session ends", { dead: [18_789] }],
-  ])("replaces unreachable %s metadata without stopping it", (_state, options) => {
+  ])("replaces unreachable %s metadata without stopping it", async (_state, options) => {
     const fixture = createRecoveryFixture(options);
 
-    expect(recoverHermesPortableLaunchForwards(fixture.input)).toEqual({
+    expect(await recoverHermesPortableLaunchForwards(fixture.input)).toEqual({
       kind: "restored",
       restoredPorts: [18_789],
     });
@@ -341,27 +361,27 @@ describe("Hermes Portable probe-only forward recovery", () => {
     expect(fixture.rollbackCalls).toEqual([]);
   });
 
-  it.each(["dead", "stopped"])("leaves a reachable unverified %s row untouched", (status) => {
+  it.each(["dead", "stopped"])("leaves a reachable unverified %s row untouched", async (status) => {
     const fixture = createRecoveryFixture(
       status === "dead" ? { dead: [18_789] } : { stopped: [18_789] },
     );
     fixture.records.get(18_789)!.reachable = true;
 
-    expect(() => recoverHermesPortableLaunchForwards(fixture.input)).toThrow(
+    await expect(recoverHermesPortableLaunchForwards(fixture.input)).rejects.toThrow(
       expect.objectContaining({ failure: "forward-occupied" }),
     );
     expect(fixture.currentCalls.filter((args) => args[1] === "stop")).toHaveLength(0);
     expect(fixture.forwardServiceLaunches).toHaveLength(0);
   });
 
-  it("does not stop a reachable stale listener while waiting for ownership", () => {
+  it("does not stop a reachable stale listener while waiting for ownership", async () => {
     const fixture = createRecoveryFixture({
       dead: [18_789],
       stoppedListenerReleaseChecks: 3,
     });
     fixture.records.get(18_789)!.reachable = true;
 
-    expect(() => recoverHermesPortableLaunchForwards(fixture.input)).toThrow(
+    await expect(recoverHermesPortableLaunchForwards(fixture.input)).rejects.toThrow(
       expect.objectContaining({ failure: "forward-occupied" }),
     );
     expect(fixture.stoppedListenerReleaseCheckCount()).toBe(0);
@@ -370,14 +390,14 @@ describe("Hermes Portable probe-only forward recovery", () => {
     expect(fixture.elapsedMs()).toBe(0);
   });
 
-  it("does not launch while a stopped listener remains reachable", () => {
+  it("does not launch while a stopped listener remains reachable", async () => {
     const fixture = createRecoveryFixture({
       dead: [18_789],
       stoppedListenerReleaseChecks: null,
     });
     fixture.records.get(18_789)!.reachable = true;
 
-    expect(() => recoverHermesPortableLaunchForwards(fixture.input)).toThrow(
+    await expect(recoverHermesPortableLaunchForwards(fixture.input)).rejects.toThrow(
       expect.objectContaining({ failure: "forward-occupied" }),
     );
     expect(fixture.forwardServiceLaunches).toEqual([]);
@@ -385,11 +405,11 @@ describe("Hermes Portable probe-only forward recovery", () => {
     expect(fixture.elapsedMs()).toBe(0);
   });
 
-  it("restarts a target-owned live forward that is unreachable", () => {
+  it("restarts a target-owned live forward that is unreachable", async () => {
     const fixture = createRecoveryFixture({ running: [18_789] });
     fixture.records.get(18_789)!.reachable = false;
 
-    expect(recoverHermesPortableLaunchForwards(fixture.input)).toEqual({
+    expect(await recoverHermesPortableLaunchForwards(fixture.input)).toEqual({
       kind: "restored",
       restoredPorts: [18_789],
     });
@@ -397,7 +417,7 @@ describe("Hermes Portable probe-only forward recovery", () => {
     expect(fixture.forwardServiceLaunches).toHaveLength(1);
   });
 
-  it("never stops a replacement listener that wins after stale metadata is observed", () => {
+  it("never stops a replacement listener that wins after stale metadata is observed", async () => {
     const fixture = createRecoveryFixture({ dead: [18_789] });
     Object.assign(fixture.input.deps, {
       launchForwardService: () => {
@@ -411,14 +431,14 @@ describe("Hermes Portable probe-only forward recovery", () => {
       },
     });
 
-    expect(() => recoverHermesPortableLaunchForwards(fixture.input)).toThrow(
+    await expect(recoverHermesPortableLaunchForwards(fixture.input)).rejects.toThrow(
       expect.objectContaining({ failure: "restoration-unproved" }),
     );
     expect(fixture.currentMutationCalls).toEqual([]);
     expect(fixture.records.get(18_789)?.owner).toBe("beta");
   });
 
-  it("rejects authority drift after post-bind ownership succeeds", () => {
+  it("rejects authority drift after post-bind ownership succeeds", async () => {
     const fixture = createRecoveryFixture();
     const proveOwner = fixture.input.deps.isForwardServiceOwner!;
     Object.assign(fixture.input.deps, {
@@ -429,7 +449,7 @@ describe("Hermes Portable probe-only forward recovery", () => {
       },
     });
 
-    expect(() => recoverHermesPortableLaunchForwards(fixture.input)).toThrow(
+    await expect(recoverHermesPortableLaunchForwards(fixture.input)).rejects.toThrow(
       expect.objectContaining({ failure: "restoration-unproved" }),
     );
     expect(fixture.forwardServiceOwnerChecks).toHaveLength(2);
@@ -438,13 +458,13 @@ describe("Hermes Portable probe-only forward recovery", () => {
 
   it.each(["active", "running"])(
     "rejects a same-sandbox %s row whose exact listener owner is unproved",
-    (status) => {
+    async (status) => {
       const fixture = createRecoveryFixture(
         status === "active" ? { active: [18_789] } : { running: [18_789] },
       );
       Object.assign(fixture.input.deps, { isForwardServiceOwner: () => false });
 
-      expect(() => recoverHermesPortableLaunchForwards(fixture.input)).toThrow(
+      await expect(recoverHermesPortableLaunchForwards(fixture.input)).rejects.toThrow(
         expect.objectContaining({ failure: "forward-occupied" }),
       );
       expect(fixture.currentMutationCalls).toEqual([]);
@@ -452,12 +472,12 @@ describe("Hermes Portable probe-only forward recovery", () => {
     },
   );
 
-  it.each(["dead", "stopped"])("rejects a foreign %s row before mutation", (status) => {
+  it.each(["dead", "stopped"])("rejects a foreign %s row before mutation", async (status) => {
     const fixture = createRecoveryFixture({
       listOutput: `SANDBOX BIND PORT PID STATUS\nbeta 127.0.0.1 18789 12345 ${status}`,
     });
 
-    expect(() => recoverHermesPortableLaunchForwards(fixture.input)).toThrow(
+    await expect(recoverHermesPortableLaunchForwards(fixture.input)).rejects.toThrow(
       expect.objectContaining({
         context: { cause: "port-occupied", port: 18_789 },
         failure: "forward-occupied",
@@ -466,11 +486,11 @@ describe("Hermes Portable probe-only forward recovery", () => {
     expect(fixture.currentCalls.some((args) => ["start", "stop"].includes(args[1]!))).toBe(false);
   });
 
-  it("rejects a reachable port with no listed owner before mutation", () => {
+  it("rejects a reachable port with no listed owner before mutation", async () => {
     const fixture = createRecoveryFixture();
     Object.assign(fixture.input.deps, { isPortReachable: () => true });
 
-    expect(() => recoverHermesPortableLaunchForwards(fixture.input)).toThrow(
+    await expect(recoverHermesPortableLaunchForwards(fixture.input)).rejects.toThrow(
       expect.objectContaining({
         context: { cause: "port-occupied", port: 18_789 },
         failure: "forward-occupied",
@@ -479,7 +499,7 @@ describe("Hermes Portable probe-only forward recovery", () => {
     expect(fixture.currentCalls.some((args) => ["start", "stop"].includes(args[1]!))).toBe(false);
   });
 
-  it("identifies the port whose reachability check failed (#11107)", () => {
+  it("identifies the port whose reachability check failed (#11107)", async () => {
     const fixture = createRecoveryFixture({ active: [18_789] });
     Object.assign(fixture.input.deps, {
       isPortReachable: () => {
@@ -487,7 +507,7 @@ describe("Hermes Portable probe-only forward recovery", () => {
       },
     });
 
-    expect(() => recoverHermesPortableLaunchForwards(fixture.input)).toThrow(
+    await expect(recoverHermesPortableLaunchForwards(fixture.input)).rejects.toThrow(
       expect.objectContaining({
         context: { cause: "forward-reachability-failed", port: 18_789 },
         failure: "forward-state-unavailable",
@@ -496,7 +516,7 @@ describe("Hermes Portable probe-only forward recovery", () => {
     expect(fixture.currentCalls.some((args) => ["start", "stop"].includes(args[1]!))).toBe(false);
   });
 
-  it("records command counts and overlapping settlement timing for an absent forward", () => {
+  it("records command counts and overlapping settlement timing for an absent forward", async () => {
     const fixture = createRecoveryFixture();
     const capture = fixture.input.deps.captureCurrentList;
     const launch = fixture.input.deps.launchForwardService!;
@@ -518,7 +538,7 @@ describe("Hermes Portable probe-only forward recovery", () => {
     const onComplete = vi.fn();
     Object.assign(fixture.input, { timing: { now: () => now, onComplete } });
 
-    expect(recoverHermesPortableLaunchForwards(fixture.input).kind).toBe("restored");
+    expect((await recoverHermesPortableLaunchForwards(fixture.input)).kind).toBe("restored");
     expect(onComplete).toHaveBeenCalledWith({
       listMs: 4,
       listCount: 2,
@@ -541,21 +561,21 @@ describe("Hermes Portable probe-only forward recovery", () => {
       },
     });
 
-    expect(recoverHermesPortableLaunchForwards(fixture.input).kind).toBe("restored");
+    expect((await recoverHermesPortableLaunchForwards(fixture.input)).kind).toBe("restored");
     await new Promise((resolve) => setImmediate(resolve));
   });
 
-  it("reports restoration uncertainty when a failed launch leaves the exact owner present (#11107)", () => {
+  it("reports restoration uncertainty when a failed launch leaves the exact owner present (#11107)", async () => {
     const fixture = createRecoveryFixture({ startStatus: 1 });
 
-    expect(() => recoverHermesPortableLaunchForwards(fixture.input)).toThrow(
+    await expect(recoverHermesPortableLaunchForwards(fixture.input)).rejects.toThrow(
       expect.objectContaining({ failure: "restoration-unproved" }),
     );
     expect(fixture.forwardServiceLaunches).toHaveLength(1);
     expect(fixture.rollbackCalls.some((args) => args[1] === "stop")).toBe(false);
   });
 
-  it("reports restoration uncertainty when detached start transport throws", () => {
+  it("reports restoration uncertainty when detached start transport throws", async () => {
     const fixture = createRecoveryFixture();
     const launch = fixture.input.deps.launchForwardService!;
     const captureRollbackList = fixture.input.deps.captureRollbackList;
@@ -575,7 +595,7 @@ describe("Hermes Portable probe-only forward recovery", () => {
     });
     Object.assign(fixture.input, { timing: { onComplete } });
 
-    expect(() => recoverHermesPortableLaunchForwards(fixture.input)).toThrow(
+    await expect(recoverHermesPortableLaunchForwards(fixture.input)).rejects.toThrow(
       expect.objectContaining({ failure: "restoration-unproved" }),
     );
     expect(fixture.rollbackCalls.some((args) => args[1] === "stop")).toBe(false);
@@ -586,10 +606,10 @@ describe("Hermes Portable probe-only forward recovery", () => {
     expect(rollbackSequence.at(-1)).toBe("timing:failed");
   });
 
-  it("classifies a failed launch without an owner as a mutation failure (#11107)", () => {
+  it("classifies a failed launch without an owner as a mutation failure (#11107)", async () => {
     const fixture = createRecoveryFixture({ startStatus: 1, startUpdatesState: false });
 
-    expect(() => recoverHermesPortableLaunchForwards(fixture.input)).toThrow(
+    await expect(recoverHermesPortableLaunchForwards(fixture.input)).rejects.toThrow(
       expect.objectContaining({
         context: { cause: "forward-mutation-failed", operation: "start", port: 18_789 },
         failure: "recovery-failed",
@@ -601,7 +621,7 @@ describe("Hermes Portable probe-only forward recovery", () => {
     expect(fixture.rollbackCalls.some((args) => args[1] === "stop")).toBe(false);
   });
 
-  it("reports restoration uncertainty when detached startup cleanup is unproved", () => {
+  it("reports restoration uncertainty when detached startup cleanup is unproved", async () => {
     const fixture = createRecoveryFixture();
     Object.assign(fixture.input.deps, {
       launchForwardService: () => {
@@ -612,21 +632,21 @@ describe("Hermes Portable probe-only forward recovery", () => {
       },
     });
 
-    expect(() => recoverHermesPortableLaunchForwards(fixture.input)).toThrow(
+    await expect(recoverHermesPortableLaunchForwards(fixture.input)).rejects.toThrow(
       expect.objectContaining({ failure: "restoration-unproved" }),
     );
     expect(fixture.rollbackCalls.some((args) => args[1] === "stop")).toBe(false);
   });
 
-  it("never invokes the legacy stop mutation while replacing unreachable metadata", () => {
+  it("never invokes the legacy stop mutation while replacing unreachable metadata", async () => {
     const fixture = createRecoveryFixture({ stopped: [18_789], stopStatus: 1 });
 
-    expect(recoverHermesPortableLaunchForwards(fixture.input).kind).toBe("restored");
+    expect((await recoverHermesPortableLaunchForwards(fixture.input)).kind).toBe("restored");
     expect(fixture.currentCalls.filter((args) => args[1] === "stop")).toHaveLength(0);
     expect(fixture.forwardServiceLaunches).toHaveLength(1);
   });
 
-  it("refuses to stop an unproved replacement after start transport failure", () => {
+  it("refuses to stop an unproved replacement after start transport failure", async () => {
     const fixture = createRecoveryFixture();
     const launch = fixture.input.deps.launchForwardService!;
     Object.assign(fixture.input.deps, {
@@ -641,7 +661,7 @@ describe("Hermes Portable probe-only forward recovery", () => {
       }),
     });
 
-    expect(() => recoverHermesPortableLaunchForwards(fixture.input)).toThrow(
+    await expect(recoverHermesPortableLaunchForwards(fixture.input)).rejects.toThrow(
       expect.objectContaining({ failure: "restoration-unproved" }),
     );
     expect(fixture.rollbackCalls.some((args) => args[1] === "stop")).toBe(false);
@@ -652,15 +672,18 @@ describe("Hermes Portable probe-only forward recovery", () => {
     ["foreign occupied", { occupied: [18_789] }, "forward-occupied", "port-occupied"],
     ["unavailable", { listStatus: 1 }, "forward-state-unavailable", "forward-list-failed"],
     ["malformed", { malformedList: true }, "forward-state-unavailable", "forward-list-invalid"],
-  ] as const)("rejects %s forward state before mutation", (_label, options, failure, cause) => {
-    const fixture = createRecoveryFixture(options);
+  ] as const)(
+    "rejects %s forward state before mutation",
+    async (_label, options, failure, cause) => {
+      const fixture = createRecoveryFixture(options);
 
-    expect(() => recoverHermesPortableLaunchForwards(fixture.input)).toThrow(
-      expect.objectContaining({ context: expect.objectContaining({ cause }), failure }),
-    );
-    expect(fixture.currentCalls.some((args) => ["start", "stop"].includes(args[1]!))).toBe(false);
-    expect(fixture.rollbackCalls).toEqual([]);
-  });
+      await expect(recoverHermesPortableLaunchForwards(fixture.input)).rejects.toThrow(
+        expect.objectContaining({ context: expect.objectContaining({ cause }), failure }),
+      );
+      expect(fixture.currentCalls.some((args) => ["start", "stop"].includes(args[1]!))).toBe(false);
+      expect(fixture.rollbackCalls).toEqual([]);
+    },
+  );
 
   it.each([
     ["active PID", "alpha 127.0.0.1 18789 not-a-pid active"],
@@ -669,12 +692,12 @@ describe("Hermes Portable probe-only forward recovery", () => {
     ["port", "alpha 127.0.0.1 70000 12345 running"],
     ["status", "alpha 127.0.0.1 18789 12345 uncertain"],
     ["extra column", "alpha 127.0.0.1 18789 12345 running extra"],
-  ])("rejects a malformed relevant-row %s before mutation", (_field, row) => {
+  ])("rejects a malformed relevant-row %s before mutation", async (_field, row) => {
     const fixture = createRecoveryFixture({
       listOutput: `SANDBOX BIND PORT PID STATUS\n${row}`,
     });
 
-    expect(() => recoverHermesPortableLaunchForwards(fixture.input)).toThrow(
+    await expect(recoverHermesPortableLaunchForwards(fixture.input)).rejects.toThrow(
       expect.objectContaining({ failure: "forward-state-unavailable" }),
     );
     expect(fixture.currentCalls.some((args) => ["start", "stop"].includes(args[1]!))).toBe(false);
@@ -683,33 +706,33 @@ describe("Hermes Portable probe-only forward recovery", () => {
 
   it.each(["*", "0.0.0.0", "::1", "[::1]"])(
     "rejects non-exact loopback bind %s before mutation",
-    (bind) => {
+    async (bind) => {
       const fixture = createRecoveryFixture({
         listOutput: `SANDBOX BIND PORT PID STATUS\nalpha ${bind} 18789 12345 running`,
       });
 
-      expect(() => recoverHermesPortableLaunchForwards(fixture.input)).toThrow(
+      await expect(recoverHermesPortableLaunchForwards(fixture.input)).rejects.toThrow(
         expect.objectContaining({ failure: "forward-state-unavailable" }),
       );
       expect(fixture.currentMutationCalls).toEqual([]);
     },
   );
 
-  it("rejects a launcher that skips readiness verification", () => {
+  it("rejects a launcher that skips readiness verification", async () => {
     const fixture = createRecoveryFixture();
     Object.assign(fixture.input.deps, {
       launchForwardService: () => undefined,
     });
 
-    expect(() => recoverHermesPortableLaunchForwards(fixture.input)).toThrow(
+    await expect(recoverHermesPortableLaunchForwards(fixture.input)).rejects.toThrow(
       expect.objectContaining({ failure: "recovery-failed" }),
     );
     expect(fixture.currentMutationCalls).toEqual([]);
   });
 
-  it("refuses rollback when the settled PID changes before stop", () => {
+  it("refuses rollback when the settled PID changes before stop", async () => {
     const fixture = createRecoveryFixture();
-    const prepared = prepareHermesPortableLaunchForwards(fixture.input);
+    const prepared = await prepareHermesPortableLaunchForwards(fixture.input);
     const captureRollback = fixture.input.deps.captureRollbackList;
     Object.assign(fixture.input.deps, {
       captureRollbackList: (args: readonly string[], timeout: number) => {
@@ -724,17 +747,17 @@ describe("Hermes Portable probe-only forward recovery", () => {
     expect(fixture.rollbackCalls.some((args) => args[1] === "stop")).toBe(false);
   });
 
-  it("fails closed when current authority drifts before recovery", () => {
+  it("fails closed when current authority drifts before recovery", async () => {
     const fixture = createRecoveryFixture();
     fixture.setCurrentAllowed(false);
 
-    expect(() => recoverHermesPortableLaunchForwards(fixture.input)).toThrow(
+    await expect(recoverHermesPortableLaunchForwards(fixture.input)).rejects.toThrow(
       expect.objectContaining({ failure: "authority-drift" }),
     );
     expect(fixture.currentCalls).toEqual([]);
   });
 
-  it("rejects ambiguous duplicate rows before mutation", () => {
+  it("rejects ambiguous duplicate rows before mutation", async () => {
     const fixture = createRecoveryFixture({ active: [18_789] });
     Object.assign(fixture.input.deps, {
       captureCurrentList: () => ({
@@ -746,18 +769,18 @@ describe("Hermes Portable probe-only forward recovery", () => {
       }),
     });
 
-    expect(() => recoverHermesPortableLaunchForwards(fixture.input)).toThrow(
+    await expect(recoverHermesPortableLaunchForwards(fixture.input)).rejects.toThrow(
       expect.objectContaining({ failure: "forward-state-unavailable" }),
     );
     expect(fixture.rollbackCalls).toEqual([]);
   });
 
-  it("rejects a foreign active owner before mutation", () => {
+  it("rejects a foreign active owner before mutation", async () => {
     const fixture = createRecoveryFixture({
       listOutput: "SANDBOX BIND PORT PID STATUS\nbeta 127.0.0.1 18789 12345 active",
     });
 
-    expect(() => recoverHermesPortableLaunchForwards(fixture.input)).toThrow(
+    await expect(recoverHermesPortableLaunchForwards(fixture.input)).rejects.toThrow(
       expect.objectContaining({
         context: { cause: "port-occupied", port: 18_789 },
         failure: "forward-occupied",
@@ -767,21 +790,21 @@ describe("Hermes Portable probe-only forward recovery", () => {
     expect(fixture.rollbackCalls).toEqual([]);
   });
 
-  it("reports restoration uncertainty when authority drifts before start identity settles", () => {
+  it("reports restoration uncertainty when authority drifts before start identity settles", async () => {
     const fixture = createRecoveryFixture({ driftCurrentAfterStart: true });
 
-    expect(() => recoverHermesPortableLaunchForwards(fixture.input)).toThrow(
+    await expect(recoverHermesPortableLaunchForwards(fixture.input)).rejects.toThrow(
       expect.objectContaining({ failure: "restoration-unproved" }),
     );
     expect(fixture.rollbackCalls.some((args) => args[1] === "stop")).toBe(false);
     expect(fixture.records.has(18_789)).toBe(true);
   });
 
-  it("leaves a started forward unchanged when the final currentness fence fails", () => {
+  it("leaves a started forward unchanged when the final currentness fence fails", async () => {
     const baseline = createRecoveryFixture();
     const baselineAssertCurrent = vi.fn();
     Object.assign(baseline.input.deps, { assertCurrent: baselineAssertCurrent });
-    expect(recoverHermesPortableLaunchForwards(baseline.input).kind).toBe("restored");
+    expect((await recoverHermesPortableLaunchForwards(baseline.input)).kind).toBe("restored");
 
     const fixture = createRecoveryFixture();
     const assertCurrent = vi.fn();
@@ -793,16 +816,16 @@ describe("Hermes Portable probe-only forward recovery", () => {
     });
     Object.assign(fixture.input.deps, { assertCurrent });
 
-    expect(() => recoverHermesPortableLaunchForwards(fixture.input)).toThrow(
+    await expect(recoverHermesPortableLaunchForwards(fixture.input)).rejects.toThrow(
       expect.objectContaining({ failure: "restoration-unproved" }),
     );
     expect(fixture.rollbackCalls.some((args) => args[1] === "stop")).toBe(false);
     expect(fixture.records.has(18_789)).toBe(true);
   });
 
-  it("reports restoration uncertainty without stopping a current forward", () => {
+  it("reports restoration uncertainty without stopping a current forward", async () => {
     const fixture = createRecoveryFixture();
-    const prepared = prepareHermesPortableLaunchForwards(fixture.input);
+    const prepared = await prepareHermesPortableLaunchForwards(fixture.input);
 
     expect(() => prepared.rollback()).toThrow(
       expect.objectContaining({ failure: "restoration-unproved" }),
@@ -811,9 +834,9 @@ describe("Hermes Portable probe-only forward recovery", () => {
     expect(fixture.records.has(18_789)).toBe(true);
   });
 
-  it("preserves a replacement installed after rollback observation", () => {
+  it("preserves a replacement installed after rollback observation", async () => {
     const fixture = createRecoveryFixture();
-    const prepared = prepareHermesPortableLaunchForwards(fixture.input);
+    const prepared = await prepareHermesPortableLaunchForwards(fixture.input);
     const captureRollbackList = fixture.input.deps.captureRollbackList;
     Object.assign(fixture.input.deps, {
       captureRollbackList: (args: readonly string[], timeout: number) => {
@@ -835,33 +858,33 @@ describe("Hermes Portable probe-only forward recovery", () => {
     expect(fixture.records.get(18_789)?.pid).toBe(54_321);
   });
 
-  it("rejects settlement when a previously healthy required port disappears", () => {
+  it("rejects settlement when a previously healthy required port disappears", async () => {
     const fixture = createRecoveryFixture({ ports: [18_789, 8_642], running: [18_789] });
     const launch = fixture.input.deps.launchForwardService!;
     Object.assign(fixture.input.deps, {
       launchForwardService: launchThen(launch, () => fixture.records.delete(18_789)),
     });
 
-    expect(() => recoverHermesPortableLaunchForwards(fixture.input)).toThrow(
+    await expect(recoverHermesPortableLaunchForwards(fixture.input)).rejects.toThrow(
       expect.objectContaining({ failure: "restoration-unproved" }),
     );
     expect(fixture.rollbackCalls.some((args) => args[1] === "stop")).toBe(false);
     expect(fixture.records.has(8_642)).toBe(true);
   });
 
-  it("reports restoration uncertainty when rollback command authority drifts", () => {
+  it("reports restoration uncertainty when rollback command authority drifts", async () => {
     const fixture = createRecoveryFixture({ startUpdatesState: false });
     fixture.setRollbackAllowed(false);
 
-    expect(() => recoverHermesPortableLaunchForwards(fixture.input)).toThrow(
+    await expect(recoverHermesPortableLaunchForwards(fixture.input)).rejects.toThrow(
       expect.objectContaining({ failure: "restoration-unproved" }),
     );
   });
 
-  it("rejects invalid or duplicate recorded ports before any command", () => {
+  it("rejects invalid or duplicate recorded ports before any command", async () => {
     const fixture = createRecoveryFixture({ ports: [18_789, 18_789] });
 
-    expect(() => recoverHermesPortableLaunchForwards(fixture.input)).toThrow(
+    await expect(recoverHermesPortableLaunchForwards(fixture.input)).rejects.toThrow(
       HermesPortableForwardRecoveryError,
     );
     expect(fixture.currentCalls).toEqual([]);
@@ -1099,6 +1122,49 @@ describe("Hermes Portable connect composition", () => {
     },
   );
 
+  it.each([
+    {
+      error: Object.assign(new Error("private executable path canary"), { code: "ENOENT" }),
+      detail: "ENOENT",
+    },
+    {
+      error: Object.assign(new Error("private executable path canary"), { code: "EACCES" }),
+      detail: "EACCES",
+    },
+    {
+      error: earlyExitError(23, null),
+      detail: "status 23",
+    },
+    {
+      error: earlyExitError(null, "SIGTERM"),
+      detail: "signal SIGTERM",
+    },
+  ])(
+    "reports $detail from forward startup through connect without raw diagnostics (#11648)",
+    async ({ error, detail }) => {
+      const accepted = acceptedHermesReadiness();
+      const harness = createConnectHarness({
+        agentName: "hermes",
+        sessionAgent: { name: "hermes" },
+        registryEntry: accepted.entry,
+        portableReceiptDisposition: { kind: "hermes", phase: "active" },
+        portableRecoveryResult: { kind: "already-running" },
+        readinessDecision: accepted.readinessDecision,
+      });
+      bindAcceptedReadinessToCurrentEntry(harness);
+      const forward = configureMissingHermesForwardCapture(harness);
+      forward.launchSpy.mockRejectedValue(error);
+
+      await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
+        "process.exit(1)",
+      );
+      const output = harness.errorSpy.mock.calls.flat().join("\n");
+      expect(output).toContain(detail);
+      expect(output).not.toContain("private executable path canary");
+      expect(harness.publishLaunchReadinessSpy).not.toHaveBeenCalled();
+    },
+  );
+
   it("does not report accepted readiness when forward recovery fails", async () => {
     const accepted = acceptedHermesReadiness();
     const harness = createConnectHarness({
@@ -1146,12 +1212,12 @@ describe("Hermes Portable connect composition", () => {
     let ollamaRunning = false;
     harness.recoverHermesPortableOllamaInferenceSpy.mockImplementation((async (input: {
       verifyRoute: () => Promise<unknown>;
-      prepareProbeDependency?: () => { release: () => void; rollback: () => void };
+      prepareProbeDependency?: () => Promise<{ release: () => void; rollback: () => void }>;
     }) => {
       ollamaRunning = true;
       try {
         await input.verifyRoute();
-        input.prepareProbeDependency?.().release();
+        (await input.prepareProbeDependency?.())?.release();
         return "recovered";
       } catch (error) {
         ollamaRunning = false;
@@ -1191,11 +1257,11 @@ describe("Hermes Portable connect composition", () => {
     let ollamaRunning = false;
     harness.recoverHermesPortableOllamaInferenceSpy.mockImplementation((async (input: {
       verifyRoute: () => Promise<unknown>;
-      prepareProbeDependency?: () => { rollback: () => void };
+      prepareProbeDependency?: () => Promise<{ rollback: () => void }>;
     }) => {
       ollamaRunning = true;
       await input.verifyRoute();
-      const dependency = input.prepareProbeDependency?.();
+      const dependency = await input.prepareProbeDependency?.();
       try {
         dependency?.rollback();
       } finally {
@@ -1225,11 +1291,11 @@ describe("Hermes Portable connect composition", () => {
     let ollamaRunning = false;
     harness.recoverHermesPortableOllamaInferenceSpy.mockImplementation((async (input: {
       verifyRoute: () => Promise<unknown>;
-      prepareProbeDependency?: () => { rollback: () => void };
+      prepareProbeDependency?: () => Promise<{ rollback: () => void }>;
     }) => {
       ollamaRunning = true;
       await input.verifyRoute();
-      const dependency = input.prepareProbeDependency?.();
+      const dependency = await input.prepareProbeDependency?.();
       harness.assertHermesPortableOperatingCommandCurrentSpy.mockImplementation(() => {
         throw new Error("rollback authority canary");
       });

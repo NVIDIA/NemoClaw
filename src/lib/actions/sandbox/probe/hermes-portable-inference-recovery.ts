@@ -21,7 +21,9 @@ export interface HermesPortableInferenceConnectRecoveryInput {
   readonly authority: HermesPortableActiveLifecycleAuthority;
   readonly readRegistry: (sandboxName: string) => SandboxEntry | null;
   readonly verifyRoute: () => Promise<SandboxEntry>;
-  readonly prepareProbeDependency?: () => HermesPortableOllamaPreparedProbeDependency;
+  readonly prepareProbeDependency?: () =>
+    | HermesPortableOllamaPreparedProbeDependency
+    | Promise<HermesPortableOllamaPreparedProbeDependency>;
   readonly assertCallerTransactionCurrent?: () => void;
   readonly assertCallerCurrent?: () => void;
   readonly runGatewayOpenshell?: typeof captureHermesPortableInferenceRecoveryGateway;
