@@ -1,6 +1,6 @@
 # NemoClaw desired-state prototype
 
-This local experiment creates an OpenClaw agent or a Fabric-managed Deep Agents, Hermes or OpenClaw
+This local experiment creates an OpenClaw agent or a Fabric-managed harness
 runtime from YAML using Go, OpenTofu, and OpenShell. It has an independent Git root and contains no source
 from the previous NemoClaw implementation. See [DESIGN.md](DESIGN.md) for scope.
 
@@ -31,6 +31,10 @@ digest printed by the builder, a fresh deployment UUID, and your external gatewa
 and inference endpoint. The recipe builds the pinned Fabric source revision and
 installs Deep Agents 0.7.13 with hash-locked dependencies; no runtime installation
 or ordinary network egress is required inside the sandbox.
+
+All nine upstream adapters and the local OpenClaw adapter have image recipes;
+see [FABRIC_HARNESSES.md](FABRIC_HARNESSES.md) for the complete list, protocol
+requirements, and native test commands.
 
 For Hermes, run `python3 image/fabric/build.py --harness hermes` and use
 [examples/fabric-hermes.yaml](examples/fabric-hermes.yaml) with the resulting digest.
@@ -66,7 +70,7 @@ The relevant agent configuration is:
 ```yaml
 name: main
 type: fabric
-harness: deepagents # or hermes / openclaw, with the corresponding image
+harness: deepagents # See FABRIC_HARNESSES.md for all ten image recipes
 ```
 
 Keep the `inference` route from the example. NemoClaw supplies Fabric with the

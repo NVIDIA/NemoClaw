@@ -9,11 +9,17 @@ import (
 	"strings"
 	"time"
 
+	"github.com/NVIDIA/NemoClaw/internal/config"
+
 	v1 "github.com/NVIDIA/OpenShell/sdk/go/openshell/v1"
 )
 
 func isFabric(runtime []string) bool {
-	return len(runtime) > 0 && (runtime[0] == "fabric-deepagents" || runtime[0] == "fabric-hermes" || runtime[0] == "fabric-openclaw")
+	if len(runtime) == 0 {
+		return false
+	}
+	harness, ok := strings.CutPrefix(runtime[0], "fabric-")
+	return ok && config.IsFabricHarness(harness)
 }
 
 func fabricEnvironment(name string, runtime ...string) map[string]string {
@@ -30,6 +36,9 @@ func fabricEnvironment(name string, runtime ...string) map[string]string {
 		if runtime[0] == "fabric-openclaw" {
 			env["PYTHONPATH"] = "/opt/nemoclaw"
 		}
+	}
+	if len(runtime) > 0 && runtime[0] == "fabric-mini-swe-agent" {
+		env["MSWEA_COST_TRACKING"] = "ignore_errors"
 	}
 	return env
 }

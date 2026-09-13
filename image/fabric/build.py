@@ -23,13 +23,16 @@ HERMES_REVISION = "29112bef099274229cadff79cdff7bf7b99c4b77"
 HERMES_HASH = "76b99a8be9b77d66833c3cfe2b35c6d6f6a58e4ff9637ef8effcfc1f420ab35a"
 
 
+HARNESSES = ("deepagents", "hermes", "openclaw", "claude", "codex", "mini-swe-agent", "nooa", "nooa-bench", "remote-agent", "pi")
+
+
 def run(*args, **kwargs):
     subprocess.run(args, check=True, **kwargs)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--harness", choices=("deepagents", "hermes", "openclaw"), default="deepagents")
+    parser.add_argument("--harness", choices=HARNESSES, default="deepagents")
     harness = parser.parse_args().harness
     BUILD = ROOT / (".build/fabric" if harness == "deepagents" else f".build/fabric-{harness}")
     if platform.system() != "Linux" or platform.machine() != "aarch64":
@@ -48,8 +51,8 @@ def main():
     own_wheels.mkdir(exist_ok=True)
     env = dict(os.environ, SOURCE_DATE_EPOCH="1789171200")
     packages = ["sdk/python/nemo-fabric-runtime", "adapter-contract/python", "adapters/python/common"]
-    if harness != "openclaw":
-        packages.append(f"adapters/python/{harness}")
+    if harness not in ("openclaw", "pi"):
+        packages.append(f"adapters/python/{'nooa' if harness == 'nooa-bench' else harness}")
     for package in packages:
         args = ["uv", "build", "--python", "3.13", "--wheel", "--out-dir", str(own_wheels)]
         if package.endswith("nemo-fabric-runtime"):
@@ -69,12 +72,15 @@ def main():
     run("uv", "pip", "install", "--python", python, "pip==26.2.1")
     run(python, "-m", "pip", "download", "--only-binary=:all:", "--require-hashes",
         "--find-links", str(own_wheels), "-r", str(BUILD / "requirements.txt"), "-d", str(BUILD / "wheels"))
-    dockerfile = "Dockerfile" if harness == "deepagents" else f"Dockerfile.{harness}"
+    dockerfile = f"Dockerfile.{harness}" if harness in ("hermes", "openclaw", "mini-swe-agent", "pi") else "Dockerfile"
     shutil.copyfile(ROOT / "image/fabric" / dockerfile, BUILD / "Dockerfile")
     shutil.copyfile(ROOT / "image/fabric/fabric.py", BUILD / "fabric.py")
     if harness == "openclaw":
         for name in ("openclaw_adapter.py", "openclaw.fabric-adapter.json"):
             shutil.copyfile(ROOT / "image/fabric" / name, BUILD / name)
+    if harness == "pi":
+        for package in ("adapter-contract/typescript", "adapters/typescript"):
+            shutil.copytree(source / package, BUILD / "pi-source" / package, dirs_exist_ok=True)
     if harness == "hermes":
         archive = BUILD / "hermes-source.tar.gz"
         if not archive.exists():
@@ -86,7 +92,7 @@ def main():
             source.extractall(BUILD, filter="data")
     (BUILD / "provenance.json").write_text(json.dumps({
         "fabric_revision": REVISION, "source_sha256": SOURCE_HASH,
-        "harness": harness, "version": {"deepagents": "0.7.13", "hermes": "0.21.0", "openclaw": "2026.9.4"}[harness],
+        "harness": harness, "version": {"deepagents": "0.7.13", "hermes": "0.21.0", "openclaw": "2026.9.4", "claude": "0.2.120", "codex": "0.144.4", "mini-swe-agent": "2.4.6", "nooa": "0.0.10", "nooa-bench": "0.0.10", "remote-agent": "0.4.0", "pi": "0.84.2"}[harness],
         **({"openclaw_image": "ghcr.io/openclaw/openclaw@sha256:cc596b846506a5f4cfcee111394a2725f375f01cca2ebb492a161fd1b747f101",
             "adapter": "local prototype; not supplied by upstream Fabric",
             "adapter_sha256": hashlib.sha256((ROOT / "image/fabric/openclaw_adapter.py").read_bytes()).hexdigest()}
@@ -95,7 +101,7 @@ def main():
            if harness == "hermes" else {}),
         "requirements_sha256": hashlib.sha256(lock.encode()).hexdigest(),
     }, indent=2) + "\n")
-    (BUILD / ".dockerignore").write_text("*\n!Dockerfile\n!wheels/\n!wheels/**\n!requirements.txt\n!fabric.py\n!provenance.json\n!openclaw_adapter.py\n!openclaw.fabric-adapter.json\n!hermes-agent-" + HERMES_REVISION + "/\n!hermes-agent-" + HERMES_REVISION + "/**\n")
+    (BUILD / ".dockerignore").write_text("*\n!Dockerfile\n!pi-source/\n!pi-source/**\n!wheels/\n!wheels/**\n!requirements.txt\n!fabric.py\n!provenance.json\n!openclaw_adapter.py\n!openclaw.fabric-adapter.json\n!hermes-agent-" + HERMES_REVISION + "/\n!hermes-agent-" + HERMES_REVISION + "/**\n")
     run("docker", "build", "-t", f"nc-prototype-fabric:{harness}", str(BUILD))
     run("docker", "image", "inspect", f"nc-prototype-fabric:{harness}", "--format", "{{index .RepoDigests 0}}")
 

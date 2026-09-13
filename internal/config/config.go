@@ -191,8 +191,8 @@ func (d Document) Validate() error {
 		return errors.New("this slice requires exactly one inference provider and one sandbox")
 	}
 	p := d.Spec.InferenceProviders[0]
-	if !slug.MatchString(p.Name) || p.Provider != "openai" {
-		return errors.New("provider requires a lowercase name and openai implementation")
+	if !slug.MatchString(p.Name) || (p.Provider != "openai" && p.Provider != "anthropic") {
+		return errors.New("provider requires a lowercase name and openai or anthropic implementation")
 	}
 	if p.Service != nil {
 		if p.Endpoint != "" || p.Ollama != nil || p.Credential != nil {
@@ -233,11 +233,14 @@ func (d Document) Validate() error {
 	if !slug.MatchString(a.Name) {
 		return errors.New("agent requires a lowercase name")
 	}
-	if !((a.Type == "openclaw" && a.Harness == "") || (a.Type == "fabric" && (a.Harness == "deepagents" || a.Harness == "hermes" || a.Harness == "openclaw"))) {
-		return errors.New("agent requires openclaw without harness, or fabric with harness deepagents, hermes or openclaw")
+	if !((a.Type == "openclaw" && a.Harness == "") || (a.Type == "fabric" && IsFabricHarness(a.Harness))) {
+		return errors.New("agent requires openclaw without harness, or fabric with a supported harness")
 	}
 	if a.Type == "fabric" && (g.Management != "external" || p.Ollama != nil || p.Service != nil) {
 		return errors.New("this Fabric slice requires external gateway and inference services")
+	}
+	if (a.Type == "fabric" && a.Harness == "claude") != (p.Provider == "anthropic") {
+		return errors.New("Claude requires an anthropic provider; other harness recipes require openai")
 	}
 	if len(a.Inference.Routes) != 1 {
 		return errors.New("this slice requires exactly one primary inference route")
@@ -333,4 +336,14 @@ func (a Agent) Runtime() string {
 		return "fabric-" + a.Harness
 	}
 	return ""
+}
+
+// IsFabricHarness reports whether the pinned image recipes provide this adapter.
+func IsFabricHarness(harness string) bool {
+	switch harness {
+	case "deepagents", "hermes", "openclaw", "claude", "codex", "mini-swe-agent", "nooa", "nooa-bench", "remote-agent", "pi":
+		return true
+	default:
+		return false
+	}
 }

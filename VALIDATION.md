@@ -483,3 +483,59 @@ and native OpenTofu/provider integration tests passed after rebuilding the bundl
 The integration tests also reject the removed runtime commands. Live messaging
 account qualification and generic OpenShell messaging infrastructure remain separate
 from these results; see [NATIVE_MESSAGING.md](NATIVE_MESSAGING.md).
+
+## Complete pinned Fabric adapter inventory — 2026-09-12 (local date)
+
+Added Claude, Codex, mini-SWE-agent, NOOA CodingAgent, NOOA bench, remote-agent,
+and Pi. All seven images built and ran natively on Linux ARM64. The inventory test
+compares the builder with every descriptor in both upstream adapter language trees:
+nine upstream adapters, plus the unchanged local OpenClaw adapter. No upstream
+Fabric changes were made. Recipes, versions, and protocol requirements are in
+[FABRIC_HARNESSES.md](FABRIC_HARNESSES.md).
+
+Evidence: [fabric-adapter-matrix-linux-arm64.json](evidence/fabric-adapter-matrix-linux-arm64.json).
+It records immutable image references, source/dependency provenance, per-harness
+Docker evidence, and real OpenShell deployment state paths.
+
+Every new harness passed startup, two readiness checks without inference,
+rejection of a mismatched readiness configuration, two ordered invocations in the
+same Fabric runtime, and stop. Docker networking was disabled; local TLS fixtures
+supplied the model/remote-service responses. mini-SWE-agent and both NOOA modes
+also executed actual file-writing tools, with independent file verification.
+
+Every new harness separately passed through OpenShell 0.0.116: native
+OpenTofu/provider provisioning, inference routing, unchanged apply, export/reapply,
+stable hosted runtime and resource IDs, an independent successful SDK invocation,
+and teardown. Runs took 4.20–11.35 seconds each. Upstream model requests were
+received as `fixture-model`, including Pi's catalog-profile requests. These runs
+used deterministic inference fixtures, not live model weights or hosted credentials.
+The earlier Deep Agents, Hermes, and OpenClaw live-model evidence remains separate.
+
+Runtime tests found and resolved the following integration gaps:
+
+- Claude needs an Anthropic provider and Messages probe; OpenShell does not
+  translate an OpenAI route into Anthropic Messages. OpenAI state retains its old
+  default, and provider-type replacement remains blocked during ordinary apply.
+- Codex and Pi require Responses probes. The Pi adapter requires a known catalog
+  model; its `gpt-4o` profile selects the wire format while OpenShell selects and
+  rewrites the actual upstream model.
+- mini-SWE-agent needs `MSWEA_COST_TRACKING=ignore_errors` for the unpriced
+  `primary` alias in both the image and the OpenShell launch environment.
+- NOOA and mini-SWE-agent require actual structured tool calls. The fixture was
+  corrected to use their native tools, rather than returning code as plain text.
+- The TLS fixture needs a separate server certificate and a CA with the key usage
+  extension required by Python 3.13; certificate verification stayed enabled.
+
+The full Go unit suite, `go vet ./...`, live-tag vet, two Python recipe tests, and
+the full native provider integration suite passed (58.445 seconds). The latter
+covers all ten harness choices, failed inference probes, immutable harness
+selection, export, and older OpenClaw/OpenAI state without replacement. The native
+bundle was rebuilt before integration execution. All test containers, temporary
+gateway processes, and the empty test network were removed; evidence and caches
+remain local. One pre-fix mini-SWE sandbox needed explicit SDK deletion after its
+exact ID and owner were verified, then ordinary destroy removed its route/provider.
+
+This qualifies the tested adapter lifecycle and protocol boundaries on native
+Linux ARM64. It does not qualify live Anthropic/OpenAI authentication, real model
+tool selection, every Pi catalog profile, all NOOA workflow targets, optional
+telemetry/MCP/messaging features, or other operating systems/architectures.

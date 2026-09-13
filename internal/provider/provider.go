@@ -115,7 +115,7 @@ func (r *Resource) Schema(_ context.Context, _ resource.SchemaRequest, out *reso
 	a := map[string]schema.Attribute{"id": schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}}}
 	for _, n := range r.definition.Fields {
 		attr := schema.StringAttribute{Required: true}
-		if n == "agent_runtime" {
+		if n == "agent_runtime" || n == "provider_type" {
 			attr = schema.StringAttribute{Optional: true, Computed: true, Default: stringdefault.StaticString("")}
 		}
 		if n == "running" && (r.definition.Kind == managed.GatewayKind || r.definition.Kind == managed.ServiceKind) {

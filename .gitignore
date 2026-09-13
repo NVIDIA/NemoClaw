@@ -4,3 +4,4 @@ dist/
 .local/
 .nemoclaw/
 *.test
+__pycache__/

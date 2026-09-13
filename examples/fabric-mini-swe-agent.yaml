@@ -1,0 +1,36 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Replace the fixture endpoint/model with your own compatible service.
+# See FABRIC_HARNESSES.md for protocol requirements and test commands.
+apiVersion: nemoclaw.nvidia.com/v1alpha1
+kind: NemoClawConfig
+metadata:
+  name: fabric-mini-swe-agent
+  uid: 9b33c13b-516f-4377-bbf1-0019d00a9271
+spec:
+  gateway:
+    management: external
+    endpoint: http://127.0.0.1:17681
+  inferenceProviders:
+    - name: local
+      provider: openai
+      endpoint: http://172.20.0.1:11446/v1
+  sandboxes:
+    - name: assistant
+      image:
+        ref: nc-prototype-fabric@sha256:b362c65247df2db9fd50f4699df5f2e067f68aabf3e7d2a6800b3ec03a9674f9
+      runtime:
+        provider: docker
+      network:
+        tier: isolated
+      agents:
+        - name: main
+          type: fabric
+          harness: mini-swe-agent
+          inference:
+            routes:
+              - name: primary
+                providerRef: local
+                overrides:
+                  model: fixture-model

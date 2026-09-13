@@ -215,7 +215,7 @@ func (f *fixture) CreateSandbox(ctx context.Context, q *pb.CreateSandboxRequest)
 func (f *fixture) ExecSandbox(q *pb.ExecSandboxRequest, s grpc.ServerStreamingServer[pb.ExecSandboxEvent]) error {
 	f.mu.Lock()
 	exit := f.execExit
-	if strings.Contains(strings.Join(q.Command, " "), "/v1/chat/completions") {
+	if strings.Contains(strings.Join(q.Command, " "), "https://inference.local/v1/") {
 		exit = f.inferenceExit
 	}
 	f.mu.Unlock()

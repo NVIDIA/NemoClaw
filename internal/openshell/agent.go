@@ -122,10 +122,16 @@ func Ready(ctx context.Context, c Client, workspace, name, agent string, runtime
 
 // Route validation runs on the gateway. Probe from the sandbox as well because
 // local supervisors perform inference in a different network namespace.
-func InferenceReady(ctx context.Context, c Client, workspace, name string) error {
+func InferenceReady(ctx context.Context, c Client, workspace, name string, runtime ...string) error {
 	ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()
 	probe := []string{"node", "-e", `fetch('https://inference.local/v1/chat/completions',{method:'POST',headers:{'content-type':'application/json','authorization':'Bearer openshell-placeholder'},body:JSON.stringify({model:'primary',messages:[{role:'user',content:'Reply OK.'}],max_tokens:1,stream:false}),signal:AbortSignal.timeout(80000)}).then(async r=>{const b=await r.json();process.exit(r.ok&&Array.isArray(b.choices)&&b.choices.length>0?0:1)}).catch(()=>process.exit(1))`}
+	if len(runtime) > 0 && runtime[0] == "fabric-claude" {
+		probe[2] = `fetch('https://inference.local/v1/messages',{method:'POST',headers:{'content-type':'application/json','x-api-key':'openshell-placeholder','anthropic-version':'2023-06-01'},body:JSON.stringify({model:'primary',messages:[{role:'user',content:'Reply OK.'}],max_tokens:1,stream:false}),signal:AbortSignal.timeout(80000)}).then(async r=>{const b=await r.json();process.exit(r.ok&&Array.isArray(b.content)&&b.content.length>0?0:1)}).catch(()=>process.exit(1))`
+	}
+	if len(runtime) > 0 && (runtime[0] == "fabric-codex" || runtime[0] == "fabric-pi") {
+		probe[2] = `fetch('https://inference.local/v1/responses',{method:'POST',headers:{'content-type':'application/json','authorization':'Bearer openshell-placeholder'},body:JSON.stringify({model:'primary',input:'Reply OK.',max_output_tokens:16,stream:false}),signal:AbortSignal.timeout(80000)}).then(async r=>{const b=await r.json();process.exit(r.ok&&Array.isArray(b.output)&&b.output.length>0?0:1)}).catch(()=>process.exit(1))`
+	}
 	r, err := c.Exec().Run(ctx, workspace, name, probe, v1.ExecOptions{})
 	if err != nil || r.ExitCode != 0 {
 		return errors.New("inference through the sandbox failed; resources retained; verify the endpoint is reachable by the supervisor and reapply the same YAML")

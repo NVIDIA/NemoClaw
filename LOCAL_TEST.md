@@ -2,6 +2,10 @@
 
 ## Fabric integration
 
+All ten recipes and the seven new adapter tests are listed in
+[FABRIC_HARNESSES.md](FABRIC_HARNESSES.md). Claude requires an Anthropic provider;
+Codex and Pi require a Responses-capable endpoint.
+
 The Fabric images are native Linux ARM64 builds using Python 3.13. They require
 Docker, uv and the host build toolchain; maturin can provision Rust in its cache.
 Run `python3 image/fabric/build.py` and then `go run ./tools/bundle`. The builder
@@ -36,7 +40,7 @@ This creates a fresh deployment UUID and retains YAML, native OpenTofu state and
 results under `.local/fabric-live-UUID`. It checks unchanged apply, export/reapply,
 and stable hosted runtime/resource identities. OpenClaw is accessed through its
 native CLI over OpenShell exec; native settings are changed before reconciliation
-and verified afterward, followed by a real agent reply. Deep Agents/Hermes receive
+and verified afterward, followed by a real agent reply. The other harnesses receive
 an independent one-shot smoke request through the upstream Fabric SDK, not an
 attachment to the hosted runtime. The private probe has no invocation interface.
 The previous `NEMOCLAW_LIVE_FABRIC_TOOLS` mode is retired with the NemoClaw invocation

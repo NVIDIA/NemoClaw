@@ -1,0 +1,317 @@
+{
+  "date": "2026-09-12 America/Vancouver",
+  "platform": "native Linux ARM64",
+  "fabric_revision": "51a28c1aefec56abd877070b6973d0a32a1e3003",
+  "openshell_version": "0.0.116",
+  "python": "3.13",
+  "go": "1.27.1",
+  "inference": "Deterministic protocol fixtures; no live model/provider authentication or external messaging qualification",
+  "adapter_source_changes": "none; existing local OpenClaw adapter unchanged",
+  "checks": {
+    "source_inventory": "nine upstream descriptors (Python and TypeScript), plus local OpenClaw",
+    "go_tests": "passed",
+    "go_vet": "passed, including live-tag tests",
+    "native_provider_integration": "full suite passed in 58.445s",
+    "python_recipe_tests": 2
+  },
+  "harnesses": [
+    {
+      "harness": "claude",
+      "image": "nc-prototype-fabric@sha256:ad0f0a9bdef6b1d1efd77b850cff8137d257fee03aa29e3b6980d81cd52fb3fb",
+      "provenance": {
+        "fabric_revision": "51a28c1aefec56abd877070b6973d0a32a1e3003",
+        "source_sha256": "14fab1b7094e41f2056051316cff7f84bd7e0f294b2c6aa1c09a30085b4406cf",
+        "harness": "claude",
+        "version": "0.2.120",
+        "requirements_sha256": "b17abdbd0a1568f35827d20e72f7284524a188ba0f36ed6bf02bdd148c04ee97"
+      },
+      "offline": {
+        "harness": "claude",
+        "readiness_without_inference": true,
+        "tool_file_verified": false,
+        "stopped": true,
+        "ordered_invocations": 2,
+        "runtime_id": "runtime-1789268687072-1-2",
+        "request_paths": [
+          "/v1/messages?beta=true"
+        ],
+        "network": "none; local TLS protocol fixture; no live model",
+        "evidence": ".local/fabric-claude-b2eba89d-3724-4b65-9a3e-9b12141fbbc4"
+      },
+      "openshell": {
+        "duration": "6.80s",
+        "state": ".local/fabric-live-8920ce31-dba5-4b78-9794-957c7f76a0f4",
+        "fixture_evidence": ".local/fabric-openshell-claude",
+        "provider_type": "anthropic",
+        "received_model_ids": [
+          "fixture-model"
+        ],
+        "sdk_status": "succeeded",
+        "request_paths": [
+          "/v1/messages"
+        ],
+        "unchanged_apply": true,
+        "export_reapply": true,
+        "stable_hosted_runtime_and_resource_ids": true,
+        "teardown": true
+      }
+    },
+    {
+      "harness": "codex",
+      "image": "nc-prototype-fabric@sha256:5d7ab97e878116ae728df2a29386345b4214975fa7360c8d091b6eb45cfb1479",
+      "provenance": {
+        "fabric_revision": "51a28c1aefec56abd877070b6973d0a32a1e3003",
+        "source_sha256": "14fab1b7094e41f2056051316cff7f84bd7e0f294b2c6aa1c09a30085b4406cf",
+        "harness": "codex",
+        "version": "0.144.4",
+        "requirements_sha256": "f45776d165298ddb3e8f8bf680d78ffef732f2c77b36ec2d6f1d48db965413f7"
+      },
+      "offline": {
+        "harness": "codex",
+        "readiness_without_inference": true,
+        "tool_file_verified": false,
+        "stopped": true,
+        "ordered_invocations": 2,
+        "runtime_id": "runtime-1789268690253-1-2",
+        "request_paths": [
+          "/v1/responses"
+        ],
+        "network": "none; local TLS protocol fixture; no live model",
+        "evidence": ".local/fabric-codex-31af607b-240b-400e-adac-569eae434e8c"
+      },
+      "openshell": {
+        "duration": "11.35s",
+        "state": ".local/fabric-live-88b15cf5-6431-49fb-8bbb-72dbf9d01287",
+        "fixture_evidence": ".local/fabric-openshell-codex",
+        "provider_type": "openai",
+        "received_model_ids": [
+          "fixture-model"
+        ],
+        "sdk_status": "succeeded",
+        "request_paths": [
+          "/v1/chat/completions",
+          "/v1/responses"
+        ],
+        "unchanged_apply": true,
+        "export_reapply": true,
+        "stable_hosted_runtime_and_resource_ids": true,
+        "teardown": true
+      }
+    },
+    {
+      "harness": "mini-swe-agent",
+      "image": "nc-prototype-fabric@sha256:b362c65247df2db9fd50f4699df5f2e067f68aabf3e7d2a6800b3ec03a9674f9",
+      "provenance": {
+        "fabric_revision": "51a28c1aefec56abd877070b6973d0a32a1e3003",
+        "source_sha256": "14fab1b7094e41f2056051316cff7f84bd7e0f294b2c6aa1c09a30085b4406cf",
+        "harness": "mini-swe-agent",
+        "version": "2.4.6",
+        "requirements_sha256": "758fb8ae9ca5fe2717268c8f4bb18ae8e2b0cabd8d245fb064a333614004171c"
+      },
+      "offline": {
+        "harness": "mini-swe-agent",
+        "readiness_without_inference": true,
+        "tool_file_verified": true,
+        "stopped": true,
+        "ordered_invocations": 2,
+        "runtime_id": "runtime-1789268700453-1-2",
+        "request_paths": [
+          "/v1/chat/completions"
+        ],
+        "network": "none; local TLS protocol fixture; no live model",
+        "evidence": ".local/fabric-mini-swe-agent-2db73b0a-74e7-4e0a-9f37-fdd95df5560f"
+      },
+      "openshell": {
+        "duration": "6.99s",
+        "state": ".local/fabric-live-65032990-d938-42f0-a5bb-8ef1aab9d810",
+        "fixture_evidence": ".local/fabric-openshell-mini-swe-agent",
+        "provider_type": "openai",
+        "received_model_ids": [
+          "fixture-model"
+        ],
+        "sdk_status": "succeeded",
+        "request_paths": [
+          "/v1/chat/completions"
+        ],
+        "unchanged_apply": true,
+        "export_reapply": true,
+        "stable_hosted_runtime_and_resource_ids": true,
+        "teardown": true
+      }
+    },
+    {
+      "harness": "nooa",
+      "image": "nc-prototype-fabric@sha256:c1cf75ce3036c2c438375b8e9921eeca06f302a3f7f42d1e412cd571ffd8323b",
+      "provenance": {
+        "fabric_revision": "51a28c1aefec56abd877070b6973d0a32a1e3003",
+        "source_sha256": "14fab1b7094e41f2056051316cff7f84bd7e0f294b2c6aa1c09a30085b4406cf",
+        "harness": "nooa",
+        "version": "0.0.10",
+        "requirements_sha256": "e8a112856ec229e44e19a5dba853be14e9474252e5265de4ba4949d2423e1a29"
+      },
+      "offline": {
+        "harness": "nooa",
+        "readiness_without_inference": true,
+        "tool_file_verified": true,
+        "stopped": true,
+        "ordered_invocations": 2,
+        "runtime_id": "runtime-1789268705332-1-2",
+        "request_paths": [
+          "/v1/chat/completions"
+        ],
+        "network": "none; local TLS protocol fixture; no live model",
+        "evidence": ".local/fabric-nooa-17b090c0-328a-4089-84ad-d2750bdc03d1"
+      },
+      "openshell": {
+        "duration": "7.79s",
+        "state": ".local/fabric-live-fb9cf97e-bc26-4a29-b01f-53b54ca3e29a",
+        "fixture_evidence": ".local/fabric-openshell-nooa",
+        "provider_type": "openai",
+        "received_model_ids": [
+          "fixture-model"
+        ],
+        "sdk_status": "succeeded",
+        "request_paths": [
+          "/v1/chat/completions"
+        ],
+        "unchanged_apply": true,
+        "export_reapply": true,
+        "stable_hosted_runtime_and_resource_ids": true,
+        "teardown": true
+      }
+    },
+    {
+      "harness": "nooa-bench",
+      "image": "nc-prototype-fabric@sha256:deaa2580e46f5d27105c7051771d36da36c5879ac2fea98e6b22cd651c910260",
+      "provenance": {
+        "fabric_revision": "51a28c1aefec56abd877070b6973d0a32a1e3003",
+        "source_sha256": "14fab1b7094e41f2056051316cff7f84bd7e0f294b2c6aa1c09a30085b4406cf",
+        "harness": "nooa-bench",
+        "version": "0.0.10",
+        "requirements_sha256": "931a1d13fde275247881baadb62d97b730403410e961bfa3921e7375bcce9500"
+      },
+      "offline": {
+        "harness": "nooa-bench",
+        "readiness_without_inference": true,
+        "tool_file_verified": true,
+        "stopped": true,
+        "ordered_invocations": 2,
+        "runtime_id": "runtime-1789268711081-1-2",
+        "request_paths": [
+          "/v1/chat/completions"
+        ],
+        "network": "none; local TLS protocol fixture; no live model",
+        "evidence": ".local/fabric-nooa-bench-b924b0bd-3ac6-4bb1-8594-6bf695334a43"
+      },
+      "openshell": {
+        "duration": "8.02s",
+        "state": ".local/fabric-live-a67a6f38-0ed2-41c4-a9a1-38eb80361a4a",
+        "fixture_evidence": ".local/fabric-openshell-nooa-bench",
+        "provider_type": "openai",
+        "received_model_ids": [
+          "fixture-model"
+        ],
+        "sdk_status": "succeeded",
+        "request_paths": [
+          "/v1/chat/completions"
+        ],
+        "unchanged_apply": true,
+        "export_reapply": true,
+        "stable_hosted_runtime_and_resource_ids": true,
+        "teardown": true
+      }
+    },
+    {
+      "harness": "remote-agent",
+      "image": "nc-prototype-fabric@sha256:a60d580895c1667bddd2063078837134eb5cc7fea73aea7b0b6a55a4fa89204a",
+      "provenance": {
+        "fabric_revision": "51a28c1aefec56abd877070b6973d0a32a1e3003",
+        "source_sha256": "14fab1b7094e41f2056051316cff7f84bd7e0f294b2c6aa1c09a30085b4406cf",
+        "harness": "remote-agent",
+        "version": "0.4.0",
+        "requirements_sha256": "34370338d29db8955aec9f658837dc4de740db372f18bd429d16f37347b3d86a"
+      },
+      "offline": {
+        "harness": "remote-agent",
+        "readiness_without_inference": true,
+        "tool_file_verified": false,
+        "stopped": true,
+        "ordered_invocations": 2,
+        "runtime_id": "runtime-1789268715853-1-2",
+        "request_paths": [
+          "/v1/chat/completions"
+        ],
+        "network": "none; local TLS protocol fixture; no live model",
+        "evidence": ".local/fabric-remote-agent-74fd07e2-7f0e-409a-91c4-a048eceeb34f"
+      },
+      "openshell": {
+        "duration": "4.20s",
+        "state": ".local/fabric-live-29dfb55f-244f-4ed7-8ce8-d92a631f11d9",
+        "fixture_evidence": ".local/fabric-openshell-remote-agent",
+        "provider_type": "openai",
+        "received_model_ids": [
+          "fixture-model"
+        ],
+        "sdk_status": "succeeded",
+        "request_paths": [
+          "/v1/chat/completions"
+        ],
+        "unchanged_apply": true,
+        "export_reapply": true,
+        "stable_hosted_runtime_and_resource_ids": true,
+        "teardown": true
+      }
+    },
+    {
+      "harness": "pi",
+      "image": "nc-prototype-fabric@sha256:69a045d358a5ef73cb4e448aa9555c2d198272445a39e80981145c4acffc4e1b",
+      "provenance": {
+        "fabric_revision": "51a28c1aefec56abd877070b6973d0a32a1e3003",
+        "source_sha256": "14fab1b7094e41f2056051316cff7f84bd7e0f294b2c6aa1c09a30085b4406cf",
+        "harness": "pi",
+        "version": "0.84.2",
+        "requirements_sha256": "744e496af38aab4a116aa47d570f8bf3cd75c27ba0b1030a8bc733aadcfb1abb"
+      },
+      "offline": {
+        "harness": "pi",
+        "readiness_without_inference": true,
+        "tool_file_verified": false,
+        "stopped": true,
+        "ordered_invocations": 2,
+        "runtime_id": "runtime-1789268718515-1-2",
+        "request_paths": [
+          "/v1/responses"
+        ],
+        "network": "none; local TLS protocol fixture; no live model",
+        "evidence": ".local/fabric-pi-10cf5533-bc64-4f64-a6f1-5d4585327b27"
+      },
+      "openshell": {
+        "duration": "5.30s",
+        "state": ".local/fabric-live-f0847e40-fdd7-440d-8511-244aabb5bb55",
+        "fixture_evidence": ".local/fabric-openshell-pi",
+        "provider_type": "openai",
+        "received_model_ids": [
+          "fixture-model"
+        ],
+        "sdk_status": "succeeded",
+        "request_paths": [
+          "/v1/chat/completions",
+          "/v1/responses"
+        ],
+        "unchanged_apply": true,
+        "export_reapply": true,
+        "stable_hosted_runtime_and_resource_ids": true,
+        "teardown": true
+      }
+    }
+  ],
+  "corrections": [
+    "mini-SWE-agent needs MSWEA_COST_TRACKING=ignore_errors in both image and OpenShell environment because primary is not a priced model",
+    "Claude requires an Anthropic OpenShell provider and Messages readiness probe",
+    "Codex and Pi readiness use Responses",
+    "Pi requires a catalog model profile; OpenShell model rewrite to fixture-model verified",
+    "Offline TLS uses a CA with keyCertSign and a separate server certificate",
+    "NOOA and mini-SWE-agent fixtures must emit native tool calls, not text containing code"
+  ],
+  "cleanup": "All test sandboxes and fixture containers removed; temporary gateway and empty test network removed after validation. Failed pre-fix mini-SWE sandbox deleted through the SDK after exact ID and owner checks, then remaining resources reconciled with destroy."
+}

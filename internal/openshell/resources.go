@@ -31,7 +31,7 @@ type Definition struct {
 
 var Definitions = []Definition{
 	{"workspace", []string{"name", "owner", "generation"}, nil},
-	{"provider", []string{"workspace", "name", "owner", "generation", "endpoint", "credential_env"}, []string{"endpoint", "credential_env"}},
+	{"provider", []string{"workspace", "name", "owner", "generation", "endpoint", "credential_env", "provider_type"}, []string{"endpoint", "credential_env"}},
 	{"route", []string{"workspace", "name", "owner", "generation", "provider_name", "model"}, []string{"provider_name", "model"}},
 	{"sandbox", []string{"workspace", "name", "owner", "generation", "image", "agent_name", "agent_runtime"}, nil},
 }
@@ -107,11 +107,15 @@ func observe(ctx context.Context, c Client, kind, workspace, name string, removi
 		if p == nil {
 			return nil, errors.New("incomplete provider response")
 		}
-		if (!removing && p.DeletionTimestamp != nil) || p.Type != "openai" {
+		if (!removing && p.DeletionTimestamp != nil) || (p.Type != "openai" && p.Type != "anthropic") {
 			return nil, errors.New("provider type or lifecycle changed")
 		}
 		row = base(p.Name, p.ID, p.Labels)
 		row["endpoint"] = p.Spec.Config["OPENAI_BASE_URL"]
+		if p.Type == "anthropic" {
+			row["provider_type"] = "anthropic"
+			row["endpoint"] = p.Spec.Config["ANTHROPIC_BASE_URL"]
+		}
 		row["credential_env"] = p.Labels[CredentialLabel]
 	case "route":
 		w, err := observe(ctx, c, "workspace", "", workspace, removing)
@@ -176,7 +180,7 @@ func observe(ctx context.Context, c Client, kind, workspace, name string, removi
 		row["workspace"] = workspace
 	}
 	for _, field := range append(slices.Clone(DefinitionFor(kind).Fields), "id") {
-		if field != "credential_env" && field != "agent_runtime" && row[field] == "" {
+		if field != "credential_env" && field != "agent_runtime" && field != "provider_type" && row[field] == "" {
 			return nil, fmt.Errorf("incomplete %s response", kind)
 		}
 	}
@@ -249,6 +253,9 @@ func Ensure(ctx context.Context, c Client, kind string, want Row) (Row, error) {
 	} else {
 		switch kind {
 		case "provider":
+			if live["provider_type"] != want["provider_type"] {
+				return nil, errors.New("provider type is immutable; teardown is required")
+			}
 			if live["endpoint"] != want["endpoint"] || live["credential_env"] != want["credential_env"] {
 				p, e := provider(want)
 				if e != nil {
@@ -300,5 +307,11 @@ func provider(r Row) (*v1.Provider, error) {
 	}
 	l := labels(r)
 	l[CredentialLabel] = r["credential_env"]
-	return &v1.Provider{Name: r["name"], Type: "openai", Labels: l, Spec: v1.ProviderSpec{Config: map[string]string{"OPENAI_BASE_URL": r["endpoint"]}, Credentials: map[string]string{"OPENAI_API_KEY": credential}}}, nil
+	providerType, baseKey, credentialKey := "openai", "OPENAI_BASE_URL", "OPENAI_API_KEY"
+	if r["provider_type"] == "anthropic" {
+		providerType, baseKey, credentialKey = "anthropic", "ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY"
+	} else if r["provider_type"] != "" {
+		return nil, errors.New("unsupported provider type")
+	}
+	return &v1.Provider{Name: r["name"], Type: providerType, Labels: l, Spec: v1.ProviderSpec{Config: map[string]string{baseKey: r["endpoint"]}, Credentials: map[string]string{credentialKey: credential}}}, nil
 }

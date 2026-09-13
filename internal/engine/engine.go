@@ -234,7 +234,7 @@ func (e *Engine) Run(ctx context.Context, operation string, input io.Reader) err
 	if err = oshell.Ready(ctx, c, d.Workspace(), d.Spec.Sandboxes[0].Name, d.Spec.Sandboxes[0].Agents[0].Name, d.Spec.Sandboxes[0].Agents[0].Runtime()); err != nil {
 		return err
 	}
-	if err = oshell.InferenceReady(ctx, c, d.Workspace(), d.Spec.Sandboxes[0].Name); err != nil {
+	if err = oshell.InferenceReady(ctx, c, d.Workspace(), d.Spec.Sandboxes[0].Name, d.Spec.Sandboxes[0].Agents[0].Runtime()); err != nil {
 		return err
 	}
 	if d.Spec.InferenceProviders[0].Service != nil {

@@ -13,15 +13,15 @@ No existing NemoClaw source or documentation is copied into this branch.
 ## Fabric experiment
 
 Authorized locally by cv on 2026-09-12: provision Fabric inside an OpenShell
-sandbox and delegate harness execution to it. The supported adapters are Deep
-Agents, Hermes and OpenClaw, using an external gateway and external inference endpoint; managed inference/gateway combinations remain a later slice.
+sandbox and delegate harness execution to it. The image recipes cover all nine upstream adapters plus the local OpenClaw
+adapter (see [FABRIC_HARNESSES.md](FABRIC_HARNESSES.md)), using an external gateway and external inference endpoint; managed inference/gateway combinations remain a later slice.
 NemoClaw owns infrastructure, ownership checks, desired state and teardown;
 Fabric owns one persistent harness runtime, ordered invocations and run results.
 The image builds Fabric revision `51a28c1aefec56abd877070b6973d0a32a1e3003`
 from a checksum-verified archive, with locked Python dependencies. This is a
 source build because the published packages lag that revision.
 
-`type: fabric` with `harness: deepagents`, `harness: hermes` or `harness: openclaw` selects the immutable
+`type: fabric` with a supported `harness` selects the immutable
 sandbox launch specification. Existing OpenClaw configuration and launch specifications remain
 valid. Changing harness on an established sandbox requires explicit teardown;
 ordinary apply cannot replace it. NemoClaw owns only plan/apply/export/destroy.

@@ -16,19 +16,28 @@ RESULT_LIMIT = 4 * 1024 * 1024
 def configuration(name, harness="deepagents"):
     adapter = {"deepagents": "nvidia.fabric.langchain.deepagents",
                "hermes": "nvidia.fabric.hermes",
-               "openclaw": "nemoclaw.local.openclaw"}[harness]
+               "openclaw": "nemoclaw.local.openclaw",
+               "claude": "nvidia.fabric.claude", "codex": "nvidia.fabric.codex",
+               "mini-swe-agent": "nvidia.fabric.mini-swe-agent",
+               "nooa": "nvidia.fabric.nooa", "nooa-bench": "nvidia.fabric.nooa.bench-agent",
+               "remote-agent": "nvidia.fabric.remote-agent", "pi": "nvidia.fabric.pi"}[harness]
     return {
         **({"discovery": {"local_paths": ["/opt/nemoclaw/openclaw.fabric-adapter.json"]}}
            if harness == "openclaw" else {}),
+        **({"discovery": {"local_paths": ["/opt/fabric-source/adapters/typescript/pi/pi.fabric-adapter.json"]}} if harness == "pi" else {}),
         "metadata": {"name": name},
+        **({"workflow": {"target_id": "nvidia.nooa.coding-agent"}} if harness == "nooa" else {}),
         "harness": {"adapter_id": adapter,
+                    **({"settings": {"base_url": "https://inference.local/v1", "api_type": "openai-completions"}} if harness == "remote-agent" else {}),
                     **({"settings": {"agent_name": name}} if harness == "openclaw" else {})},
         "models": {"default": {
-            "provider": "openai", "model": "primary",
-            "base_url": "https://inference.local/v1", "api_key_env": "OPENAI_API_KEY",
+            "provider": "openai", "model": "gpt-4o" if harness == "pi" else "primary",
+            **({"base_url": "https://inference.local/v1"} if harness != "remote-agent" else {}),
+            **({"settings": {"client_type": "completion"}} if harness in ("nooa", "nooa-bench") else {}),
+            "api_key_env": "OPENAI_API_KEY",
         }},
         "environment": {"workspace": "/sandbox/workspace"},
-        "runtime": {**({"max_turns": 8} if harness != "openclaw" else {}),
+        "runtime": {**({"max_turns": 8} if harness in ("deepagents", "hermes", "claude", "mini-swe-agent") else {}),
                     "timeout_seconds": 300, "artifacts": "/sandbox/artifacts"},
     }
 
@@ -104,7 +113,7 @@ if __name__ == "__main__":
         asyncio.run(serve())
     elif len(sys.argv) == 3 and sys.argv[1] == "check":
         sys.exit(asyncio.run(client("check", sys.argv[2])))
-    elif len(sys.argv) == 4 and sys.argv[1] == "check" and sys.argv[3] in ("hermes", "openclaw"):
+    elif len(sys.argv) == 4 and sys.argv[1] == "check" and sys.argv[3] in ("deepagents", "hermes", "openclaw", "claude", "codex", "mini-swe-agent", "nooa", "nooa-bench", "remote-agent", "pi"):
         sys.exit(asyncio.run(client("check", sys.argv[2], sys.argv[3])))
     else:
-        sys.exit("usage: fabric.py serve | check NAME [hermes|openclaw]")
+        sys.exit("usage: fabric.py serve | check NAME [HARNESS]")

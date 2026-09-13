@@ -91,6 +91,9 @@ func (e *Engine) export(ctx context.Context, r Record) error {
 		}
 		switch t.Kind {
 		case "provider":
+			if got["provider_type"] != t.Values["provider_type"] {
+				return errors.New("provider type drift requires inspection")
+			}
 			if d.Spec.InferenceProviders[0].Service != nil {
 				if got["endpoint"] != d.InferenceEndpoint() || got["credential_env"] != "" {
 					return errors.New("managed inference registration drifted")
