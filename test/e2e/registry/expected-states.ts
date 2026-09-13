@@ -73,10 +73,6 @@ export function listExpectedStates(): readonly ExpectedState[] {
   return REGISTRY;
 }
 
-export function getExpectedState(id: string): ExpectedState | undefined {
-  return BY_ID.get(id);
-}
-
 export function requireExpectedState(id: string): ExpectedState {
   const state = BY_ID.get(id);
   if (!state) {

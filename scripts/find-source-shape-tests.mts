@@ -595,11 +595,7 @@ const RAW_CONFIG_ACCESSORS: Readonly<Record<string, readonly string[]>> = {
     "requireTargets",
     "listExecutionTargets",
   ],
-  "test/e2e/registry/expected-states": [
-    "getExpectedState",
-    "listExpectedStates",
-    "requireExpectedState",
-  ],
+  "test/e2e/registry/expected-states": ["listExpectedStates", "requireExpectedState"],
 };
 
 function collectRawConfigAccessors(imports: readonly ImportBinding[]): Map<string, SourceFunction> {
