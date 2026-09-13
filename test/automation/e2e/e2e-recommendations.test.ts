@@ -139,6 +139,7 @@ describe("E2E recommendation normalizer", () => {
         "scripts/checks/protected-managed-image-contract.ts",
         "tools/e2e/module-tags.mts",
         ".github/workflows/e2e.yaml",
+        "test/e2e/fixtures/phases/lifecycle-profile.ts",
         "test/platform/images/vllm-docker-storage.test.ts",
         "test/onboarding/onboard-managed-image-buildless-e2e.test.ts",
       ]) {

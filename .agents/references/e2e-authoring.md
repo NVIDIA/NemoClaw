@@ -12,8 +12,8 @@ stable local boundary.
 
 Before adding or extending E2E coverage, name the semantic coverage dimension
 that is missing. Existing migrated examples show the intended granularity:
-catalogue targets pair environment, onboarding profile, expected state, optional
-lifecycle, and `suiteIds`; `dashboard-remote-bind` owns install, onboard,
+typed targets pair environment, onboarding profile, expected state, and optional
+lifecycle; `dashboard-remote-bind` owns install, onboard,
 artifacts, and terminal cleanup; `credential-sanitization`,
 `telegram-injection`, `messaging-providers`, `messaging-compatible-endpoint`,
 and `gpu-e2e` are separate behavior contracts rather than one broad "full" run.
