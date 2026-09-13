@@ -109,7 +109,7 @@ function makeWrapperFixture(
     .replace('/opt/venv/bin/python3 -I - "$auth_file"', 'python3 -I - "$auth_file"')
     .replace(
       "exec /opt/venv/bin/python3 -I -m deepagents_code",
-      `touch "${ranMarker}"; printf 'dcode-tracing=%s,%s,%s,%s,%s,%s,%s,%s,%s analytics=%s openai-proxy=%s\\n' "$DEEPAGENTS_CODE_LANGSMITH_TRACING" "$DEEPAGENTS_CODE_LANGSMITH_TRACING_V2" "$DEEPAGENTS_CODE_LANGCHAIN_TRACING" "$DEEPAGENTS_CODE_LANGCHAIN_TRACING_V2" "$LANGSMITH_TRACING" "$LANGSMITH_TRACING_V2" "$LANGCHAIN_TRACING" "$LANGCHAIN_TRACING_V2" "$OTEL_ENABLED" "$LANGGRAPH_CLI_NO_ANALYTICS" "\${OPENAI_PROXY-__unset__}"; exit 0; : /opt/venv/bin/python3 -I -m deepagents_code`,
+      `touch "${ranMarker}"; printf 'dcode-tracing=%s,%s,%s,%s,%s,%s,%s,%s,%s analytics=%s openai-proxy=%s shell-allow-list=%s\\n' "$DEEPAGENTS_CODE_LANGSMITH_TRACING" "$DEEPAGENTS_CODE_LANGSMITH_TRACING_V2" "$DEEPAGENTS_CODE_LANGCHAIN_TRACING" "$DEEPAGENTS_CODE_LANGCHAIN_TRACING_V2" "$LANGSMITH_TRACING" "$LANGSMITH_TRACING_V2" "$LANGCHAIN_TRACING" "$LANGCHAIN_TRACING_V2" "$OTEL_ENABLED" "$LANGGRAPH_CLI_NO_ANALYTICS" "\${OPENAI_PROXY-__unset__}" "\${DEEPAGENTS_CODE_SHELL_ALLOW_LIST-__unset__}"; exit 0; : /opt/venv/bin/python3 -I -m deepagents_code`,
     );
   fs.writeFileSync(envFile, "", "utf8");
   writeAutoApprovalCapability(autoApprovalPath, autoApprovalContent);
@@ -314,14 +314,9 @@ describe.concurrent("LangChain Deep Agents Code managed entrypoints", () => {
     { args: ['--model-p={"api_key":"secret"}'], posture: "model parameter" },
     { args: ["--rubric-model", "anthropic:test"], posture: "rubric model" },
     { args: ["--rubric-m=anthropic:test"], posture: "rubric model" },
-    { args: ["--interpreter"], posture: "interpreter" },
-    { args: ["--interpreter-tools", "execute"], posture: "interpreter" },
-    { args: ["--interpreter-t=execute"], posture: "interpreter" },
     { args: ["-y"], posture: "tool approval" },
     { args: ["--auto-approve"], posture: "tool approval" },
     { args: ["--acp"], posture: "ACP approval" },
-    { args: ["--startup-cmd", "touch /tmp/unsafe"], posture: "startup command" },
-    { args: ["--startup-cmd=touch /tmp/unsafe"], posture: "startup command" },
   ])("rejects managed runtime override $args", async ({ args, posture }) => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-override-"));
     const { wrapperPath, ranMarker } = makeWrapperFixture(tempDir);
@@ -333,6 +328,49 @@ describe.concurrent("LangChain Deep Agents Code managed entrypoints", () => {
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain(posture);
     expect(fs.existsSync(ranMarker)).toBe(false);
+  });
+
+  it.each([
+    ["--shell-allow-list", "recommended"],
+    ["--interpreter"],
+    ["--interpreter-tools", "execute"],
+    ["--startup-cmd", "printf ready"],
+  ])("passes native interactive local execution argument %s", async (...args) => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-native-local-"));
+    const { wrapperPath, ranMarker } = makeWrapperFixture(tempDir);
+    const result = await runCommand("bash", [wrapperPath, ...args], {
+      env: { PATH: process.env.PATH ?? "/usr/bin:/bin" },
+      encoding: "utf8",
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(fs.existsSync(ranMarker)).toBe(true);
+  });
+
+  it("preserves the native shell allow-list environment only for interactive runs", async () => {
+    const interactiveDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-shell-env-"));
+    const interactiveFixture = makeWrapperFixture(interactiveDir);
+    const interactive = await runCommand("bash", [interactiveFixture.wrapperPath], {
+      env: {
+        PATH: process.env.PATH ?? "/usr/bin:/bin",
+        DEEPAGENTS_CODE_SHELL_ALLOW_LIST: "recommended",
+      },
+      encoding: "utf8",
+    });
+    expect(interactive.status, interactive.stderr).toBe(0);
+    expect(interactive.stdout).toContain("shell-allow-list=recommended");
+
+    const headlessDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-shell-headless-"));
+    const headlessFixture = makeWrapperFixture(headlessDir);
+    const headless = await runCommand("bash", [headlessFixture.wrapperPath, "-n", "hi"], {
+      env: {
+        PATH: process.env.PATH ?? "/usr/bin:/bin",
+        DEEPAGENTS_CODE_SHELL_ALLOW_LIST: "recommended",
+      },
+      encoding: "utf8",
+    });
+    expect(headless.status, headless.stderr).toBe(0);
+    expect(headless.stdout).toContain("shell-allow-list=__unset__");
   });
 
   it.each([
@@ -370,8 +408,9 @@ describe.concurrent("LangChain Deep Agents Code managed entrypoints", () => {
       encoding: "utf8",
     });
 
-    expect(enabled.status, enabled.stderr).toBe(0);
-    expect(fs.existsSync(ranMarker)).toBe(true);
+    expect(enabled.status).not.toBe(0);
+    expect(enabled.stderr).toContain("tool approval");
+    expect(fs.existsSync(ranMarker)).toBe(false);
 
     const disabledTempDir = fs.mkdtempSync(
       path.join(os.tmpdir(), "nemoclaw-dcode-auto-headless-disabled-"),
@@ -389,6 +428,24 @@ describe.concurrent("LangChain Deep Agents Code managed entrypoints", () => {
     expect(disabled.status).not.toBe(0);
     expect(disabled.stderr).toContain("tool approval");
     expect(fs.existsSync(disabledFixture.ranMarker)).toBe(false);
+  });
+
+  it.each([
+    ["--shell-allow-list", "recommended"],
+    ["--interpreter"],
+    ["--interpreter-tools", "execute"],
+    ["--startup-cmd", "printf unsafe"],
+  ])("keeps native local execution disabled for managed headless runs: %s", async (...args) => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-headless-local-"));
+    const { wrapperPath, ranMarker } = makeWrapperFixture(tempDir, "thread-opt-in\n");
+    const result = await runCommand("bash", [wrapperPath, "-n", "hi", ...args], {
+      env: { PATH: process.env.PATH ?? "/usr/bin:/bin" },
+      encoding: "utf8",
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("headless");
+    expect(fs.existsSync(ranMarker)).toBe(false);
   });
 
   it.each([

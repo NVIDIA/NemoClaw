@@ -779,7 +779,9 @@ describe("Deep Agents 0.1.55 progressive-disclosure build patch", () => {
       fixture.sourcePaths
         .filter(
           (sourcePath) =>
-            !sourcePath.endsWith("/__init__.py") && !sourcePath.endsWith("/onboarding.py"),
+            !sourcePath.endsWith("/__init__.py") &&
+            !sourcePath.endsWith("/onboarding.py") &&
+            !sourcePath.endsWith("/hooks/legacy.py"),
         )
         .every(
           (file) =>
@@ -792,6 +794,9 @@ describe("Deep Agents 0.1.55 progressive-disclosure build patch", () => {
     ).toHaveLength(1);
     // Retain onboarding in the full-package snapshot to prove it stays untouched and idempotent.
     expect(firstBytes[path.join(fixture.packageDir, "onboarding.py")]).not.toContain(
+      HARDENING_MARKER,
+    );
+    expect(firstBytes[path.join(fixture.packageDir, "hooks/legacy.py")]).not.toContain(
       HARDENING_MARKER,
     );
     expect(firstBytes[fixture.modulePath]).toBe(fs.readFileSync(middlewarePath, "utf8"));

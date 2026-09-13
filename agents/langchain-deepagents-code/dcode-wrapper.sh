@@ -875,7 +875,19 @@ case "${1:-}" in
     ;;
 esac
 
-unset DEEPAGENTS_CODE_SHELL_ALLOW_LIST
+managed_headless=false
+for arg in "$@"; do
+  case "$arg" in
+    -n | -n?* | --non-interactive | --non-interactive=*)
+      managed_headless=true
+      break
+      ;;
+  esac
+done
+
+if [ "$managed_headless" = true ]; then
+  unset DEEPAGENTS_CODE_SHELL_ALLOW_LIST
+fi
 
 reject_managed_override() {
   local posture="$1"
@@ -924,7 +936,9 @@ for arg in "$@"; do
       reject_managed_override "MCP posture" "$arg"
       ;;
     --shell-allow-list | --shell-allow-list=* | -S | -S?*)
-      reject_managed_override "shell allow-list posture" "$arg"
+      if [ "$managed_headless" = true ]; then
+        reject_managed_override "headless shell posture" "$arg"
+      fi
       ;;
     --u | --up | --upd | --upda | --updat | --update | --update=*)
       reject_managed_override "dependency update posture" "$arg"
@@ -942,16 +956,22 @@ for arg in "$@"; do
       reject_managed_override "rubric model posture" "$arg"
       ;;
     --sta | --sta=* | --star | --star=* | --start | --start=* | --startu | --startu=* | --startup | --startup=* | --startup-*)
-      reject_managed_override "startup command posture" "$arg"
+      if [ "$managed_headless" = true ]; then
+        reject_managed_override "headless startup command posture" "$arg"
+      fi
       ;;
     --interpreter)
-      reject_managed_override "interpreter posture" "$arg"
+      if [ "$managed_headless" = true ]; then
+        reject_managed_override "headless interpreter posture" "$arg"
+      fi
       ;;
     --interpreter-t | --interpreter-t=* | --interpreter-to | --interpreter-to=* | --interpreter-too | --interpreter-too=* | --interpreter-tool | --interpreter-tool=* | --interpreter-tools | --interpreter-tools=*)
-      reject_managed_override "interpreter posture" "$arg"
+      if [ "$managed_headless" = true ]; then
+        reject_managed_override "headless interpreter posture" "$arg"
+      fi
       ;;
-    -y | --auto-a | --auto-ap | --auto-app | --auto-appr | --auto-appro | --auto-approv | --auto-approve)
-      if [ "$MANAGED_DCODE_AUTO_APPROVAL_MODE" != "thread-opt-in" ]; then
+    -y | --auto-a | --auto-ap | --auto-app | --auto-appr | --auto-appro | --auto-approv | --auto-approve | --yolo)
+      if [ "$managed_headless" = true ] || [ "$MANAGED_DCODE_AUTO_APPROVAL_MODE" != "thread-opt-in" ]; then
         reject_managed_override "tool approval posture" "$arg"
       fi
       ;;
