@@ -70,7 +70,11 @@ export function hermesAcpLiveHostEnv(source: NodeJS.ProcessEnv): NodeJS.ProcessE
 export function hermesAcpGatewayStoppedPreconditionPassed(result: ShellProbeResult): boolean {
   const text = `${result.stdout}\n${result.stderr}`;
   if (result.exitCode === 0) {
-    return /^Status:[ \t]*Disconnected[ \t]*\r?$/imu.test(result.stdout);
+    return (
+      !result.timedOut &&
+      result.signal === null &&
+      /^Status:[ \t]*Disconnected[ \t]*\r?$/imu.test(result.stdout)
+    );
   }
   return (
     !result.timedOut &&

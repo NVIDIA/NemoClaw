@@ -62,6 +62,24 @@ describe("Hermes ACP live evidence boundary", () => {
     ).toBe(true);
     expect(
       hermesAcpGatewayStoppedPreconditionPassed(
+        shellResult({
+          exitCode: 0,
+          stdout: "Status: Disconnected\nGateway: nemoclaw\n",
+          timedOut: true,
+        }),
+      ),
+    ).toBe(false);
+    expect(
+      hermesAcpGatewayStoppedPreconditionPassed(
+        shellResult({
+          exitCode: 0,
+          signal: "SIGTERM",
+          stdout: "Status: Disconnected\nGateway: nemoclaw\n",
+        }),
+      ),
+    ).toBe(false);
+    expect(
+      hermesAcpGatewayStoppedPreconditionPassed(
         shellResult({ exitCode: 1, stderr: "Error: permission denied\n" }),
       ),
     ).toBe(false);
