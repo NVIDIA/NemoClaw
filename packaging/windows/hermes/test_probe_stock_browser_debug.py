@@ -59,11 +59,13 @@ class DebugOwnerControls(unittest.TestCase):
         job.renderer_context = {"helper": {"path": "helper"}}
         job.renderer_context_deadline = 99
         job.renderer_context_threads = {
-            8: {
+            (8, 9): {
                 "handle": 42,
                 "tid": 9,
                 "creationFiletime": "1234",
                 "createdSequence": 1,
+                "threadCreatedSequence": 1,
+                "initialThread": True,
             }
         }
         job.renderer_context_seen = set()
@@ -74,6 +76,11 @@ class DebugOwnerControls(unittest.TestCase):
             "modules": {0x1000: {"size": 0x100, "name": "ntdll.dll"}},
             "loaderBreakpoint": True,
             "createdSequence": 1,
+            "rendererContextIdentity": {
+                "creationFiletime": "1234",
+                "createdSequence": 1,
+                "initialTid": 9,
+            },
         }
         event = self.event(1)
         event.tid = 10
@@ -223,15 +230,200 @@ class DebugOwnerControls(unittest.TestCase):
         job = self.job([])
         job.renderer_context = {"chromePath": "C:\\chrome.exe"}
         job.renderer_context_threads = {
-            8: {"handle": 42, "tid": 9, "creationFiletime": "1", "createdSequence": 1}
+            (8, 9): {
+                "handle": 42,
+                "tid": 9,
+                "creationFiletime": "1",
+                "createdSequence": 1,
+                "threadCreatedSequence": 1,
+                "initialThread": True,
+            }
         }
         job.kernel.CloseHandle = lambda handle: 0
         event = self.event(3)
         with mock.patch.object(debug.c, "get_last_error", return_value=6, create=True):
             record = job.retain_renderer_thread(event, {}, {"chromeRole": "renderer"})
         self.assertFalse(record["retained"])
-        self.assertEqual(job.renderer_context_threads[8]["handle"], 42)
+        self.assertEqual(job.renderer_context_threads[(8, 9)]["handle"], 42)
         self.assertEqual(job.handle_cleanup_errors[0]["win32Error"], 6)
+
+    def test_noninitial_second_chance_uses_event_handle_and_forwards_then_closes(self):
+        create = self.event(2)
+        create.tid = 10
+        create.data.thread.thread = 77  # Borrowed CREATE_THREAD handle.
+        fault = self.event(1)
+        fault.tid = 10
+        fault.data.exception.record.code = 0xC0000008
+        fault.data.exception.record.flags = 0x88
+        fault.data.exception.record.address = 0x1080
+        fault.data.exception.first = 0
+        thread_exit = self.event(4)
+        thread_exit.tid = 10
+        process_exit = self.event(5)
+        events = [create, fault, fault, thread_exit, process_exit]
+        job = self.job(events)
+        job.event_count = 1
+        job.saw_process = True
+        job.live_debug_pids = {8}
+        job.renderer_context = {"helper": {"path": "helper"}}
+        job.renderer_context_deadline = 99
+        job.renderer_context_seen = set()
+        job.renderer_context_observations = []
+        job.renderer_context_threads_total = 1
+        job.renderer_context_thread_limit_hits = 0
+        job.renderer_context_helpers_closed = True
+        job.renderer_context_threads = {
+            (8, 9): {
+                "handle": 42,
+                "tid": 9,
+                "creationFiletime": "1234",
+                "createdSequence": 1,
+                "threadCreatedSequence": 1,
+                "initialThread": True,
+            }
+        }
+        job.processes[8] = {
+            "handle": 41,
+            "modules": {0x1000: {"size": 0x100, "name": "ntdll.dll"}},
+            "createdSequence": 1,
+            "loaderBreakpoint": True,
+            "chromeRole": "renderer",
+            "rendererContextIdentity": {
+                "createdSequence": 1,
+                "creationFiletime": "1234",
+                "initialTid": 9,
+            },
+        }
+        duplicated, closed = [], []
+
+        def duplicate(current, borrowed, target, pointer, access, inherit, flags):
+            duplicated.append((borrowed, access, inherit, flags))
+            c.cast(pointer, c.POINTER(c.c_void_p))[0] = 100
+            return 1
+
+        job.kernel.GetCurrentProcess = lambda: 1
+        job.kernel.DuplicateHandle = duplicate
+        job.kernel.CloseHandle = lambda handle: closed.append(handle) or 1
+        with mock.patch.object(
+            debug,
+            "invoke_renderer_context",
+            side_effect=lambda *_args: {"safeToContinue": True},
+        ) as capture:
+            for _ in range(5):
+                job.pump()
+        self.assertEqual(duplicated, [(77, 0x808, False, 0)])
+        self.assertEqual(capture.call_count, 1)
+        self.assertEqual(capture.call_args.args[2:7], (41, 100, 8, 10, "1234"))
+        self.assertEqual(closed, [100, 42])
+        self.assertNotIn(77, closed)
+        self.assertEqual(job.renderer_context_threads, {})
+        observation = job.renderer_context_observations[0]
+        self.assertFalse(observation["firstChance"])
+        self.assertFalse(observation["initialThread"])
+        self.assertEqual(observation["processCreationSequence"], 1)
+        self.assertEqual(observation["threadCreationSequence"], 2)
+        self.assertEqual(job.continued[1:3], [(8, 10, debug.DBG_NOT_HANDLED)] * 2)
+        self.assertEqual(
+            len([e for e in job.events if "rendererContextThreadClosures" in e]), 2
+        )
+        self.assertEqual(job.observation_errors, [])
+
+    def test_renderer_thread_generation_phase_limits_and_unbound_refusal(self):
+        job = self.job([])
+        job.renderer_context = {"helper": {"path": "helper"}}
+        job.renderer_context_deadline = 99
+        job.renderer_context_seen = set()
+        job.renderer_context_observations = []
+        job.renderer_context_helpers_closed = True
+        job.renderer_context_threads = {}
+        job.renderer_context_threads_total = 0
+        job.renderer_context_thread_limit_hits = 0
+        process = {
+            "handle": 41,
+            "modules": {},
+            "createdSequence": 1,
+            "rendererContextIdentity": {
+                "createdSequence": 1,
+                "creationFiletime": "1234",
+                "initialTid": 9,
+            },
+        }
+        calls, closed = [], []
+
+        def duplicate(_a, borrowed, _b, pointer, rights, inherit, flags):
+            calls.append((borrowed, rights, inherit, flags))
+            c.cast(pointer, c.POINTER(c.c_void_p))[0] = 100 + len(calls)
+            return 1
+
+        job.kernel.GetCurrentProcess = lambda: 1
+        job.kernel.DuplicateHandle = duplicate
+        job.kernel.CloseHandle = lambda handle: closed.append(handle) or 1
+        event = self.event(2)
+        event.tid = 10
+        self.assertIsNone(
+            job.retain_context_thread_handle(event, {"createdSequence": 1}, 77, False)
+        )
+        self.assertEqual(calls, [])
+        with (
+            mock.patch.object(debug, "MAX_RENDERER_THREADS_LIVE", 1),
+            mock.patch.object(debug, "MAX_RENDERER_THREADS_TOTAL", 2),
+        ):
+            job.event_count = 2
+            self.assertTrue(
+                job.retain_context_thread_handle(event, process, 77, False)["retained"]
+            )
+            event.tid = 11
+            self.assertFalse(
+                job.retain_context_thread_handle(event, process, 78, False)["retained"]
+            )
+            event.tid = 10
+            job.event_count = 3
+            self.assertTrue(
+                job.retain_context_thread_handle(event, process, 79, False)["retained"]
+            )
+            self.assertEqual(closed, [101])  # Old TID generation released first.
+            self.assertEqual(
+                job.renderer_context_threads[(8, 10)]["threadCreatedSequence"], 3
+            )
+            job.close_renderer_thread(8, 10)
+            self.assertFalse(
+                job.retain_context_thread_handle(event, process, 80, False)["retained"]
+            )
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(job.renderer_context_thread_limit_hits, 2)
+        job.renderer_context_threads[(8, 10)] = {
+            "handle": 103,
+            "tid": 10,
+            "creationFiletime": "1234",
+            "createdSequence": 1,
+            "threadCreatedSequence": 4,
+            "initialThread": False,
+        }
+        event.kind = 1
+        event.data.exception.record.code = 0xC0000008
+        with mock.patch.object(
+            debug,
+            "invoke_renderer_context",
+            side_effect=lambda *_args: {"safeToContinue": True},
+        ) as capture:
+            for phase in (1, 0, 0):
+                event.data.exception.first = phase
+                job.observe_renderer_context(event, process)
+            self.assertEqual(capture.call_count, 2)
+            self.assertEqual(
+                [x["firstChance"] for x in job.renderer_context_observations],
+                [True, False],
+            )
+            # Changing process generation cannot consume the held old thread.
+            self.assertIsNone(
+                job.observe_renderer_context(event, {**process, "createdSequence": 2})
+            )
+            job.renderer_context_seen.update({("extra", 1), ("extra", 2)})
+            job.renderer_context_threads[(8, 10)]["threadCreatedSequence"] = 5
+            self.assertIsNone(job.observe_renderer_context(event, process))
+            self.assertEqual(capture.call_count, 2)
+        job.close_renderer_thread(8)
+        self.assertEqual(job.renderer_context_threads, {})
 
     def test_primary_request_requires_passed_native_bytes_and_original_workload_shape(
         self,
@@ -395,6 +587,8 @@ class DebugOwnerControls(unittest.TestCase):
                     run({**value, **mode}, body, native_proof)
 
     def test_native_pointer_structures_match_the_64_bit_debug_event_contract(self):
+        self.assertEqual(c.sizeof(debug.ThreadInfo), 24)
+        self.assertEqual(debug.ThreadInfo.thread.offset, 0)
         self.assertEqual(c.sizeof(debug.ExceptionRecord), 152)
         self.assertEqual(c.sizeof(debug.ExceptionInfo), 160)
         self.assertEqual(c.sizeof(debug.DebugEvent), 176)

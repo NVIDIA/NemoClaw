@@ -26,6 +26,8 @@ MAX_EVENTS = 8192
 MAX_PROCESSES = 128
 MAX_MODULES = 1024
 MAX_HANDLE_SCAN = 512
+MAX_RENDERER_THREADS_LIVE = 128
+MAX_RENDERER_THREADS_TOTAL = 512
 INITIAL_HANDLES = (
     "requestCrashDump",
     "requestNonCrashDump",
@@ -131,6 +133,10 @@ class ProcessInfo(c.Structure):
     ]
 
 
+class ThreadInfo(c.Structure):
+    _fields_ = [("thread", c.c_void_p), ("tls", c.c_void_p), ("start", c.c_void_p)]
+
+
 class LoadInfo(c.Structure):
     _fields_ = [
         ("file", c.c_void_p),
@@ -154,6 +160,7 @@ class EventData(c.Union):
     _fields_ = [
         ("exception", ExceptionInfo),
         ("process", ProcessInfo),
+        ("thread", ThreadInfo),
         ("dll", LoadInfo),
         ("exit_code", c.c_uint32),
         ("unload_base", c.c_void_p),
@@ -604,6 +611,8 @@ class DebugJob(owner.WindowsJob):
         self.renderer_context_observations = []
         self.renderer_context_seen = set()
         self.renderer_context_threads = {}
+        self.renderer_context_threads_total = 0
+        self.renderer_context_thread_limit_hits = 0
         self.renderer_context_helpers_closed = True
         k = self.kernel
         declarations = {
@@ -1177,11 +1186,20 @@ class DebugJob(owner.WindowsJob):
             or metadata.get("chromeRole") != "renderer"
         ):
             return None
-        record = {"pid": event.pid, "tid": event.tid, "retained": False, "error": None}
+        record = {
+            "pid": event.pid,
+            "tid": event.tid,
+            "retained": False,
+            "error": None,
+            "initialThread": True,
+            "eventKind": 3,
+        }
         try:
             self.close_renderer_thread(event.pid)
             owner.require(
-                event.pid not in self.renderer_context_threads,
+                not any(
+                    pid == event.pid for pid, _tid in self.renderer_context_threads
+                ),
                 "Prior renderer thread duplicate remains owned",
             )
             owner.require(
@@ -1206,12 +1224,58 @@ class DebugJob(owner.WindowsJob):
                 str(metadata.get("creationFiletime", "")).isdigit(),
                 "Renderer generation missing",
             )
+            process = self.processes[event.pid]
+            process["rendererContextIdentity"] = {
+                "creationFiletime": metadata["creationFiletime"],
+                "createdSequence": process["createdSequence"],
+                "initialTid": event.tid,
+            }
+            return self.retain_context_thread_handle(
+                event, process, event.data.process.thread, True
+            )
+        except Exception as error:
+            record["error"] = owner.detail(error)
+        return record
+
+    def retain_context_thread_handle(self, event, process, borrowed_handle, initial):
+        identity = process.get("rendererContextIdentity")
+        if not (
+            getattr(self, "renderer_context", None)
+            and identity
+            and identity["createdSequence"] == process["createdSequence"]
+        ):
+            return None
+        record = {
+            "pid": event.pid,
+            "tid": event.tid,
+            "retained": False,
+            "error": None,
+            "initialThread": initial,
+            "eventKind": event.kind,
+            "processCreationSequence": process["createdSequence"],
+            "threadCreationSequence": self.event_count,
+            "creationFiletime": identity["creationFiletime"],
+        }
+        try:
+            key = (event.pid, event.tid)
+            self.close_renderer_thread(event.pid, event.tid)
+            owner.require(
+                key not in self.renderer_context_threads,
+                "Prior thread generation remains owned",
+            )
+            if (
+                len(self.renderer_context_threads) >= MAX_RENDERER_THREADS_LIVE
+                or self.renderer_context_threads_total >= MAX_RENDERER_THREADS_TOTAL
+            ):
+                self.renderer_context_thread_limit_hits += 1
+                record["unavailable"] = "renderer-thread-handle-budget"
+                return record
             duplicate = c.c_void_p()
             current = self.kernel.GetCurrentProcess()
             self.checked(
                 self.kernel.DuplicateHandle(
                     current,
-                    event.data.process.thread,
+                    borrowed_handle,
                     current,
                     c.byref(duplicate),
                     0x808,
@@ -1219,16 +1283,18 @@ class DebugJob(owner.WindowsJob):
                     0,
                 )
             )
-            self.renderer_context_threads[event.pid] = {
+            self.renderer_context_threads[key] = {
                 "handle": duplicate.value,
                 "tid": event.tid,
-                "creationFiletime": metadata["creationFiletime"],
-                "createdSequence": self.event_count,
+                "creationFiletime": identity["creationFiletime"],
+                "createdSequence": process["createdSequence"],
+                "threadCreatedSequence": self.event_count,
+                "initialThread": initial,
             }
+            self.renderer_context_threads_total += 1
             record.update(
                 retained=True,
                 imageMatched=True,
-                creationFiletime=metadata["creationFiletime"],
                 requestedAccess="0x808",
                 inheritable=False,
             )
@@ -1236,35 +1302,54 @@ class DebugJob(owner.WindowsJob):
             record["error"] = owner.detail(error)
         return record
 
-    def close_renderer_thread(self, pid):
-        value = getattr(self, "renderer_context_threads", {}).get(pid)
-        if value:
+    def close_renderer_thread(self, pid, tid=None):
+        closed = []
+        for key, value in list(getattr(self, "renderer_context_threads", {}).items()):
+            if key[0] != pid or tid is not None and key[1] != tid:
+                continue
+            row = {
+                "pid": pid,
+                "tid": key[1],
+                "processCreationSequence": value["createdSequence"],
+                "threadCreationSequence": value["threadCreatedSequence"],
+                "closed": False,
+                "win32Error": 0,
+            }
             if self.kernel.CloseHandle(value["handle"]):
-                self.renderer_context_threads.pop(pid)
+                self.renderer_context_threads.pop(key)
+                row["closed"] = True
             else:
+                row["win32Error"] = c.get_last_error()
                 self.handle_cleanup_errors.append(
-                    {
-                        "stage": "close-retained-renderer-thread",
-                        "pid": pid,
-                        "tid": value["tid"],
-                        "win32Error": c.get_last_error(),
-                    }
+                    {"stage": "close-retained-renderer-thread", **row}
                 )
+            closed.append(row)
+        return closed
 
     def observe_renderer_context(self, event, process):
-        held = getattr(self, "renderer_context_threads", {}).get(event.pid)
+        held = getattr(self, "renderer_context_threads", {}).get((event.pid, event.tid))
+        phase = bool(event.data.exception.first)
+        selection = (
+            event.pid,
+            process["createdSequence"],
+            event.tid,
+            held["threadCreatedSequence"] if held else None,
+            phase,
+        )
         if not (
             getattr(self, "renderer_context", None)
+            and getattr(self, "renderer_context_helpers_closed", True)
             and held
             and event.tid == held["tid"]
             and held["createdSequence"] == process["createdSequence"]
-            and event.data.exception.first
+            and process.get("rendererContextIdentity", {}).get("creationFiletime")
+            == held["creationFiletime"]
             and event.data.exception.record.code == 0xC0000008
-            and event.pid not in self.renderer_context_seen
+            and selection not in self.renderer_context_seen
             and len(self.renderer_context_seen) < 4
         ):
             return None
-        self.renderer_context_seen.add(event.pid)
+        self.renderer_context_seen.add(selection)
         try:
             modules = [
                 (base, row["size"], row["name"])
@@ -1292,9 +1377,11 @@ class DebugJob(owner.WindowsJob):
         value.update(
             eventSequence=self.event_count,
             exceptionDisposition="0x80010001",
-            firstChance=True,
+            firstChance=phase,
             fatalExceptionProved=False,
-            initialThreadOnly=True,
+            initialThread=held["initialThread"],
+            processCreationSequence=held["createdSequence"],
+            threadCreationSequence=held["threadCreatedSequence"],
         )
         self.renderer_context_observations.append(value)
         return len(self.renderer_context_observations) - 1
@@ -1373,6 +1460,14 @@ class DebugJob(owner.WindowsJob):
                         for value in row["startupHandles"].get("selectedValues", [])
                     ]
                 self.chrome_seen |= (image["name"] or "").lower() == "chrome.exe"
+            elif event.kind == 2:
+                process = self.processes.get(event.pid)
+                if process:
+                    retained = self.retain_context_thread_handle(
+                        event, process, event.data.thread.thread, False
+                    )
+                    if retained is not None:
+                        row["rendererContextThread"] = retained
             elif event.kind == 6:
                 info = event.data.dll
                 process = self.processes.get(event.pid)
@@ -1438,11 +1533,13 @@ class DebugJob(owner.WindowsJob):
                     if not info.first and self.first_unhandled is None:
                         self.first_unhandled = dict(row)
             elif event.kind == 4:
-                held = getattr(self, "renderer_context_threads", {}).get(event.pid)
-                if held and held["tid"] == event.tid:
-                    self.close_renderer_thread(event.pid)
+                closed = self.close_renderer_thread(event.pid, event.tid)
+                if closed:
+                    row["rendererContextThreadClosures"] = closed
             elif event.kind == 5:
-                self.close_renderer_thread(event.pid)
+                closed = self.close_renderer_thread(event.pid)
+                if closed:
+                    row["rendererContextThreadClosures"] = closed
                 row["exitCode"] = event.data.exit_code
                 row["exitCodeHex"] = hex(event.data.exit_code)
             elif event.kind == 8:
@@ -1458,9 +1555,12 @@ class DebugJob(owner.WindowsJob):
                     row["debugString"] = self.debug_string(process, event.data.string)
             # Thread and debug-string events still must be continued. Their
             # handles are OS-owned; debug-string payload is not read.
-            if (event.kind in (1, 3, 5, 6, 7, 9) or "debugString" in row) and len(
-                self.events
-            ) < MAX_EVENTS:
+            if (
+                event.kind in (1, 3, 5, 6, 7, 9)
+                or "debugString" in row
+                or "rendererContextThread" in row
+                or "rendererContextThreadClosures" in row
+            ) and len(self.events) < MAX_EVENTS:
                 self.events.append(row)
         except Exception as error:
             if len(self.observation_errors) < 8:
@@ -1946,8 +2046,11 @@ def capture(request, native):
             and all(x["eof"] and x["error"] is None for x in buffers)
         )
         if not job_only:
-            for pid in list(getattr(native, "renderer_context_threads", {})):
-                native.close_renderer_thread(pid)
+            result["cleanup"]["rendererThreadClosures"] = []
+            for pid, tid in list(getattr(native, "renderer_context_threads", {})):
+                result["cleanup"]["rendererThreadClosures"].extend(
+                    native.close_renderer_thread(pid, tid)
+                )
         result["childrenClosed"] = (
             (not native.process or result["execution"]["childClosed"])
             and result["cleanup"]["activeProcesses"] == 0
@@ -1984,6 +2087,14 @@ def capture(request, native):
             "configuration": request.get("rendererContext"),
             "observationLimit": 4,
             "helperDeadlineMs": 2000,
+            "initialThreadOnly": False,
+            "firstChanceOnly": False,
+            "threadLimits": {
+                "live": MAX_RENDERER_THREADS_LIVE,
+                "total": MAX_RENDERER_THREADS_TOTAL,
+                "retainedTotal": getattr(native, "renderer_context_threads_total", 0),
+                "limitHits": getattr(native, "renderer_context_thread_limit_hits", 0),
+            },
             "observations": getattr(native, "renderer_context_observations", []),
             "helpersClosed": getattr(native, "renderer_context_helpers_closed", True),
             "retainedThreadsClosed": not getattr(

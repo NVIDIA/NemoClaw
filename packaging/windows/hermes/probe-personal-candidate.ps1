@@ -5,10 +5,12 @@ param([Parameter(Mandatory)][string]$ArtifactDirectory,
     [Parameter(Mandatory)][string]$BootstrapDirectory,
     [Parameter(Mandatory)][string]$HelperDirectory,
     [switch]$RecordStartup,
-    [switch]$CaptureRendererContext)
+    [switch]$CaptureRendererContext,
+    [switch]$ColdJobProbe)
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
 if ($env:GITHUB_ACTIONS -cne 'true' -or $env:OS -cne 'Windows_NT') { throw 'This candidate test requires disposable Windows CI.' }
+if ($ColdJobProbe -and ($RecordStartup -or $CaptureRendererContext)) { throw 'The cold owned-job experiment cannot record startup or capture renderer context.' }
 $output=[IO.Path]::GetFullPath($ArtifactDirectory)
 if (Test-Path -LiteralPath $output) { throw 'The Personal evidence directory must be fresh.' }
 $null=New-Item -ItemType Directory -Path $output
@@ -17,7 +19,8 @@ $null=New-Item -ItemType Directory -Path $downloads
 $root=[IO.Path]::GetPathRoot([Environment]::SystemDirectory)
 $runtime=Join-Path $root 'NemoClawHermesProbe-274d797050ea'
 $primary=$null;$mxcAttempted=$false;$runtimeOwned=$false;$faultWindowStart=$null
-$receipt=[ordered]@{schemaVersion=1;classification='canonical-personal-mxc-candidate-feasibility';sourceRevision=$env:GITHUB_SHA;
+$classification=if($ColdJobProbe){'canonical-personal-mxc-cold-job-diagnostic'}else{'canonical-personal-mxc-candidate-feasibility'}
+$receipt=[ordered]@{schemaVersion=1;classification=$classification;sourceRevision=$env:GITHUB_SHA;diagnosticOnly=[bool]$ColdJobProbe;coldJobProbe=[bool]$ColdJobProbe;
     candidateSource='8d78fe458e9268a7afdc8ed06b85c23306452036';artifactId=10293082661;status='failed';runtimeRebuilt=$false;runtimeExported=$false;
     installedAcceptance=$false;fullAgentQualified=$false;runtimeRoot=$runtime;cleanupErrors=@()}
 function Invoke-PersonalChecked([string]$Executable,[string[]]$Arguments,[string]$Label) {
@@ -214,6 +217,7 @@ try {
         $personalArguments += @('--renderer-context-build',$contextBuild)
     }
     if ($RecordStartup) { $personalArguments += '--record-startup' }
+    if ($ColdJobProbe) { $personalArguments += '--cold-job-probe' }
     $mxcAttempted=$true
     Invoke-PersonalChecked $node $personalArguments 'Canonical Personal component execution'
     if(Test-Path -LiteralPath $original){throw 'The original build root became available during execution.'}

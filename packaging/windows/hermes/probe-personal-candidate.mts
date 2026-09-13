@@ -1747,6 +1747,11 @@ async function main() {
   const rendererContextBuildFile = process.argv.includes("--renderer-context-build")
     ? argument("--renderer-context-build")
     : null;
+  const coldJobProbe = process.argv.includes("--cold-job-probe");
+  if (coldJobProbe && (rendererContextBuildFile || process.argv.includes("--record-startup")))
+    throw new Error(
+      "The first-workload owned-job diagnostic requires tracing and debugger capture off.",
+    );
   const compatibilityRoot = fs.realpathSync(argument("--compatibility-root"));
   const compatibilityReceipt = argument("--compatibility-receipt");
   const compatibilityProof = argument("--compatibility-proof");
@@ -1814,6 +1819,21 @@ async function main() {
     fullAgentQualified: false,
     privateStateLeaseTested: false,
     feasibilityPassed: false,
+    ...(coldJobProbe
+      ? {
+          diagnosticOnly: true,
+          coldJobProbe: true,
+          coldJobProbePassed: false,
+          ordinaryPrimaryExecuted: false,
+          firstCanonicalWorkload: true,
+          changedDimensions: [
+            "existing Python owner with explicit stdio and kill-on-close Job before the first canonical workload; DEBUG_PROCESS absent",
+            "job ancestry, parent process and launch/stdio mechanics differ together",
+          ],
+          cacheState:
+            "unmeasured; fresh runner and runtime extraction are not a claim of cold OS caches",
+        }
+      : {}),
     cleanup,
   };
   const errors: unknown[] = [];
@@ -2017,7 +2037,20 @@ async function main() {
       receipt.primaryWpr = { attempted: false, mode: "not-requested" };
     }
     attempted = true;
-    const execution = await personalCommand(
+    const command = coldJobProbe
+      ? stockDebugCommand(
+          hostControllerPython,
+          runtime,
+          path.join(launcher, "probe-personal-python.py"),
+          nonce,
+          {
+            nativeRoot: currentNativeRoot,
+            proofFile: compatibilityProof,
+            mode: "personal-job-only",
+          },
+        )
+      : personalCommand;
+    const execution = await command(
       mxc,
       [policy, "--log-file", path.join(output, "mxc-native.log")],
       environment,
@@ -2066,7 +2099,12 @@ async function main() {
       (receipt.workload as any)?.nonce === nonce &&
       (receipt.workload as any)?.passed === true &&
       (receipt.workload as any)?.components?.length === 4;
-    if (execution.childClosed && browserDiagnosticChildrenClosed && !primaryOperationsPassed) {
+    if (
+      !coldJobProbe &&
+      execution.childClosed &&
+      browserDiagnosticChildrenClosed &&
+      !primaryOperationsPassed
+    ) {
       // Run the same bytes after containment has ended, so a host process
       // cannot initialize MSYS state before the canonical contained attempt.
       const hostEnvironment = Object.fromEntries(
@@ -2131,12 +2169,15 @@ async function main() {
       browserDiagnosticChildrenClosed &&= recorderSafe;
       cleanup.hostDiagnosticChildrenClosed &&= recorderSafe;
     }
-    receipt.supplementalDiagnosticDisposition = failure
-      ? rendererContextBuildFile
-        ? "primary failed; optional validated renderer debugger, then ordinary warm replay and owned-job replay"
-        : "primary failed; ordinary warm replay then owned-job replay without debugger"
-      : "primary passed; supplemental comparisons skipped";
+    receipt.supplementalDiagnosticDisposition = coldJobProbe
+      ? "first-workload owned-job experiment only; supplemental replays skipped"
+      : failure
+        ? rendererContextBuildFile
+          ? "primary failed; optional validated renderer debugger, then ordinary warm replay and owned-job replay"
+          : "primary failed; ordinary warm replay then owned-job replay without debugger"
+        : "primary passed; supplemental comparisons skipped";
     if (
+      !coldJobProbe &&
       failure &&
       attempted &&
       cleanup.executorClosed &&
@@ -2351,14 +2392,16 @@ async function main() {
     receipt.rootsRetainedForUnclosedExecutor = attempted && !allClosed;
     receipt.error = failure ? errorDetail(failure) : null;
     receipt.cleanupErrors = errors;
-    receipt.feasibilityPassed =
+    const completed =
       failure === null && errors.length === 0 && Object.values(cleanup).every(Boolean);
+    receipt.feasibilityPassed = !coldJobProbe && completed;
+    if (coldJobProbe) receipt.coldJobProbePassed = completed;
     const published = publishPersonalReceipt(
       path.join(output, "personal-feasibility.json"),
       receipt,
       failure,
     );
-    if (!receipt.feasibilityPassed || !published) process.exitCode = 1;
+    if (!completed || !published) process.exitCode = 1;
   }
 }
 
