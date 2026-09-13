@@ -5,6 +5,7 @@ import importlib.util
 import io
 import os
 from pathlib import Path
+import struct
 import tarfile
 import tempfile
 import unittest
@@ -15,9 +16,50 @@ SPEC = importlib.util.spec_from_file_location(
 )
 REPLAY = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(REPLAY)
+PUBLIC_ACCESS = REPLAY.load("prepare-public-runtime-acl.py")
 
 
 class ReplayControls(unittest.TestCase):
+    def test_public_rx_addition_preserves_existing_ace_bytes_and_order(self):
+        # A prior explicit deny and inherited System grant retain their exact
+        # flags/masks/SIDs. Only the new AppPackages RX ACE is inserted.
+        sid = bytes.fromhex("010100000000000512000000")
+        deny = struct.pack("<BBHI", 1, 0, 8 + len(sid), 2) + sid
+        inherited = struct.pack("<BBHI", 0, 0x13, 8 + len(sid), 0x1F01FF) + sid
+        raw = (
+            struct.pack("<BBHHH", 2, 0, 8 + len(deny + inherited), 2, 0)
+            + deny
+            + inherited
+        )
+        updated = PUBLIC_ACCESS.append_public_rx(raw)
+        revision, entries = PUBLIC_ACCESS.acl_entries(updated)
+        self.assertEqual(revision, 2)
+        self.assertEqual(entries, [deny, PUBLIC_ACCESS.RX_ACE, inherited])
+        self.assertEqual(
+            PUBLIC_ACCESS.RX_ACE[:8], struct.pack("<BBHI", 0, 3, 24, 0x1200A9)
+        )
+        before = {
+            "ownerSidHex": "owner",
+            "groupSidHex": "group",
+            "revision": 1,
+            "control": 0x8004,
+        }
+        after = {**before, "control": 0x8404, "acesHex": [ace.hex() for ace in entries]}
+        PUBLIC_ACCESS.verify_delta(before, after, updated)
+        for changed in (
+            {"control": 0x9404},
+            {"ownerSidHex": "other"},
+            {"acesHex": list(reversed(after["acesHex"]))},
+        ):
+            with self.assertRaisesRegex(ValueError, "one-ACE"):
+                PUBLIC_ACCESS.verify_delta(before, {**after, **changed}, updated)
+        with self.assertRaisesRegex(ValueError, "already has"):
+            PUBLIC_ACCESS.append_public_rx(updated)
+        with self.assertRaisesRegex(ValueError, "truncated"):
+            PUBLIC_ACCESS.acl_entries(
+                raw[:2] + struct.pack("<H", len(raw) - 4) + raw[4:-4]
+            )
+
     def test_fixed_known_complete_artifact_documents_are_admitted(self):
         file = os.environ.get("NEMOCLAW_REPLAY_TEST_ZIP")
         if not file:
@@ -85,8 +127,14 @@ class ReplayControls(unittest.TestCase):
             REPLAY.OWNER.verify_members(archive, details)
             root = Path(folder) / "root"
             claimed = []
+
+            def before_contents(path):
+                self.assertTrue(path.is_dir())
+                self.assertEqual(list(path.iterdir()), [])
+                claimed.append(path)
+
             REPLAY.OWNER.extract_verified(
-                archive, details, root, created=lambda p: claimed.append(p)
+                archive, details, root, created=before_contents
             )
             self.assertEqual(claimed, [root])
             self.assertEqual((root / "file").read_bytes(), data)

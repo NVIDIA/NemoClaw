@@ -32,6 +32,94 @@ def owned_file(file, root):
     return _regular_file(Path(file), root)
 
 
+def runtime_readonly_check(root):
+    """Observe access to one existing static runtime file without changing it."""
+    import ctypes
+
+    relative = "tools/browser-use/Lib/site-packages/browser_use/cli.py"
+    record = {
+        "relativePath": relative,
+        "creationDisposition": 3,
+        "shareMode": 7,
+        "fileFlags": 0x00200000,
+        "contentWriteAttempted": False,
+        "passed": False,
+        "operations": {},
+    }
+    try:
+        file = owned_file(root / relative, root)
+        record["path"] = str(file)
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        handle, dword, boolean = ctypes.c_void_p, ctypes.c_uint32, ctypes.c_int
+        for name, arguments, result in (
+            (
+                "CreateFileW",
+                [ctypes.c_wchar_p, dword, dword, handle, dword, dword, handle],
+                handle,
+            ),
+            (
+                "ReadFile",
+                [handle, handle, dword, ctypes.POINTER(dword), handle],
+                boolean,
+            ),
+            ("CloseHandle", [handle], boolean),
+        ):
+            function = getattr(kernel, name)
+            function.argtypes, function.restype = arguments, result
+        invalid = handle(-1).value
+        for name, mask in (("read", 0x80000000), ("write", 2)):
+            row = {
+                "accessMask": mask,
+                "openSucceeded": False,
+                "openError": None,
+                "handleClosed": None,
+            }
+            record["operations"][name] = row
+            opened = kernel.CreateFileW(str(file), mask, 7, None, 3, 0x00200000, None)
+            row["openSucceeded"] = opened not in (None, invalid)
+            row["invalidHandleReturned"] = opened == invalid
+            row["openError"] = 0 if row["openSucceeded"] else ctypes.get_last_error()
+            if not row["openSucceeded"]:
+                continue
+            try:
+                if name == "read":
+                    data, copied = ctypes.create_string_buffer(64), dword()
+                    row["readSucceeded"] = bool(
+                        kernel.ReadFile(opened, data, 64, ctypes.byref(copied), None)
+                    )
+                    row["readError"] = (
+                        0 if row["readSucceeded"] else ctypes.get_last_error()
+                    )
+                    row["bytesRead"] = copied.value
+                    if row["readSucceeded"] and 0 < copied.value <= 64:
+                        row["prefixSha256"] = hashlib.sha256(
+                            data.raw[: copied.value]
+                        ).hexdigest()
+            finally:
+                row["handleClosed"] = bool(kernel.CloseHandle(opened))
+                row["closeError"] = (
+                    0 if row["handleClosed"] else ctypes.get_last_error()
+                )
+        read, write = record["operations"]["read"], record["operations"]["write"]
+        record["passed"] = (
+            read["openSucceeded"]
+            and read.get("readSucceeded") is True
+            and read.get("bytesRead") == 64
+            and read["handleClosed"] is True
+            and not write["openSucceeded"]
+            and write["invalidHandleReturned"]
+            and write["openError"] == 5
+        )
+        if not record["passed"]:
+            raise AssertionError(
+                "Canonical runtime read/write-open access proof failed"
+            )
+        return record
+    except BaseException as error:
+        error.nemoclaw_runtime_access = record
+        raise
+
+
 def apply_browser_launch_adapter(root):
     """Apply the same owned helper used by installed startup, outside the base."""
     import importlib.util
@@ -1443,6 +1531,8 @@ def main():
             and all(value in "0123456789abcdef" for value in nonce)
         )
         root = owned_runtime(directory)
+        if kind == "python":
+            result["runtimeAccess"] = runtime_readonly_check(root)
         if kind == "browser":
             result["browserLauncherAdaptation"] = apply_browser_launch_adapter(root)
         # Retain the old prelude's actual Windows outcome separately; it is
@@ -1470,6 +1560,8 @@ def main():
         result["error"] = traceback.format_exc()[-16000:]
         if hasattr(error, "nemoclaw_browser_diagnostics"):
             result["browserDiagnostics"] = error.nemoclaw_browser_diagnostics
+        if hasattr(error, "nemoclaw_runtime_access"):
+            result["runtimeAccess"] = error.nemoclaw_runtime_access
     print("NEMOCLAW_PERSONAL_RESULT=" + json.dumps(result))
     return 0 if result["passed"] else 1
 

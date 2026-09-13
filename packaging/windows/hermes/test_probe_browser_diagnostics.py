@@ -34,6 +34,105 @@ class BrowserDiagnostics(unittest.TestCase):
         modules.start()
         self.addCleanup(modules.stop)
 
+    def test_runtime_readonly_open_proof_requires_read_and_exact_write_denial(self):
+        import ctypes
+
+        root = Path("owned-runtime")
+        file = root / "tools/browser-use/Lib/site-packages/browser_use/cli.py"
+        for case in (
+            "denied",
+            "sharing",
+            "allowed",
+            "read-error",
+            "close-error",
+            "null",
+        ):
+            calls, closed, last_error = [], [], [0]
+
+            def create(path, mask, share, security, disposition, flags, template):
+                calls.append(
+                    (path, mask, share, security, disposition, flags, template)
+                )
+                if mask == 0x80000000:
+                    return 11
+                last_error[0] = 32 if case == "sharing" else 5
+                return (
+                    12
+                    if case == "allowed"
+                    else None
+                    if case == "null"
+                    else ctypes.c_void_p(-1).value
+                )
+
+            def read(handle, data, count, copied, overlapped):
+                self.assertEqual((handle, count, overlapped), (11, 64, None))
+                if case == "read-error":
+                    last_error[0] = 5
+                    return 0
+                ctypes.memmove(data, b"x" * 64, 64)
+                ctypes.cast(copied, ctypes.POINTER(ctypes.c_uint32))[0] = 64
+                return 1
+
+            def close(handle):
+                closed.append(handle)
+                last_error[0] = 6 if case == "close-error" else 0
+                return case != "close-error"
+
+            kernel = SimpleNamespace(
+                CreateFileW=create, ReadFile=read, CloseHandle=close
+            )
+            with (
+                patch.object(owner, "owned_file", return_value=file) as validate,
+                patch.object(ctypes, "WinDLL", return_value=kernel, create=True),
+                patch.object(
+                    ctypes,
+                    "get_last_error",
+                    side_effect=lambda: last_error[0],
+                    create=True,
+                ),
+            ):
+                if case == "denied":
+                    result = owner.runtime_readonly_check(root)
+                else:
+                    with self.assertRaisesRegex(
+                        AssertionError, "runtime read/write-open"
+                    ) as caught:
+                        owner.runtime_readonly_check(root)
+                    result = caught.exception.nemoclaw_runtime_access
+            validate.assert_called_once_with(file, root)
+            self.assertEqual(
+                calls,
+                [
+                    (str(file), mask, 7, None, 3, 0x00200000, None)
+                    for mask in (0x80000000, 2)
+                ],
+            )
+            self.assertEqual(closed, [11, 12] if case == "allowed" else [11])
+            self.assertEqual(result["passed"], case == "denied")
+            self.assertFalse(result["contentWriteAttempted"])
+            if case == "denied":
+                self.assertEqual(
+                    result["operations"]["read"]["prefixSha256"],
+                    hashlib.sha256(b"x" * 64).hexdigest(),
+                )
+            if case == "sharing":
+                self.assertEqual(result["operations"]["write"]["openError"], 32)
+            if case == "allowed":
+                output = io.StringIO()
+                with (
+                    patch.object(owner, "os", SimpleNamespace(name="nt")),
+                    patch.object(owner, "owned_runtime", return_value=root),
+                    patch.object(
+                        owner, "runtime_readonly_check", side_effect=caught.exception
+                    ),
+                    patch.object(sys, "argv", ["probe", "python", str(root), "a" * 24]),
+                    redirect_stdout(output),
+                ):
+                    self.assertEqual(owner.main(), 1)
+                persisted = json.loads(output.getvalue().split("=", 1)[1])
+                self.assertEqual(persisted["runtimeAccess"], result)
+                self.assertFalse(persisted["passed"])
+
     def test_logging_uses_each_owned_state_and_does_not_enable_stderr_or_other_flags(
         self,
     ):
@@ -194,6 +293,7 @@ class BrowserDiagnostics(unittest.TestCase):
             with (
                 patch.object(owner, "os", SimpleNamespace(name="nt")),
                 patch.object(owner, "owned_runtime", return_value=root),
+                patch.object(owner, "apply_browser_launch_adapter", return_value={}),
                 patch.object(owner, "browser_check", side_effect=failure),
                 patch.object(sys, "argv", ["probe", "browser", str(root), "a" * 24]),
                 redirect_stdout(output),

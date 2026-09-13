@@ -152,13 +152,19 @@ def stage(zip_file, output, runtime):
         )
     OWNER.verify_zip(zip_file, PIN["bytes"], PIN["sha256"])
     created = False
+    public_access = None
 
     def owned(path):
-        nonlocal created
+        nonlocal created, public_access
         created = True
         OWNER.save(
             output / "runtime-ownership.json",
             {"runtimeRoot": str(path), "createdByReplay": True},
+        )
+        # The extractor has just created this empty public root. Descendants
+        # inherit RX during creation; no populated-tree ACL walk is needed.
+        public_access = load("prepare-public-runtime-acl.py").prepare(
+            path, output / "public-runtime-access.json"
         )
 
     try:
@@ -188,6 +194,7 @@ def stage(zip_file, output, runtime):
             "completeNestedArchiveVerified": True,
             "sourceBuildProvenanceVerified": True,
             "before": before,
+            "publicRuntimeAccess": public_access,
             "archiveVerificationMs": archive_ms,
             "extractionMs": extraction_ms,
             "runtimeRebuilt": False,

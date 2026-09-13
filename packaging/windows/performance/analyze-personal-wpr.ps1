@@ -4,7 +4,7 @@
 param([Parameter(Mandatory)][string]$ArtifactDirectory)
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
-$script:TracePin=[ordered]@{runId=34738177107L;source='bf0c01fc478b55d781fc577ee50545a7f18c10cc';artifactId=10311642072L;bytes=60500148L;sha256='08f8035e8705002b29ded7a166b065a88bf2b90e03e9b8a3c5eab063932b8461';entries=30;expandedBytes=960543435L;etl='wpr-command-prefix/capture.etl';etlBytes=960495616L;etlSha256='533fd9d540535c906d12fce20ead940bc42c947949ac0f1f5e5c347863a0db5a'}
+$script:TracePin=[ordered]@{runId=34741972130L;source='51e32027e60739a54ad642ca27a3309382acdbc6';artifactId=10313301596L;bytes=16264703L;sha256='edb04d1da3e8c124354d141adee9e27c3a181d9e1977168cdbf15e0f99f4a05d';entries=30;expandedBytes=147989603L;etl='wpr-command-prefix/capture.etl';etlBytes=147849216L;etlSha256='a045f8a403790c179b95204cc0902f6ec5bfe10586231f4daa8aca62e58ed319'}
 function Save-AnalysisJson($Value,[string]$Path){[IO.File]::WriteAllText($Path,($Value|ConvertTo-Json -Depth 14)+"`n",[Text.UTF8Encoding]::new($false))}
 function Get-AnalysisKnownFolders {
  @([Environment]::GetFolderPath([Environment+SpecialFolder]::ProgramFiles),[Environment]::GetFolderPath([Environment+SpecialFolder]::ProgramFilesX86))|Where-Object {$_}|Select-Object -Unique
