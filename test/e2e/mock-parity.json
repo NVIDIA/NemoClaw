@@ -155,7 +155,8 @@
         "test/e2e/live/agent-turn-latency-helpers.ts",
         "test/e2e/live/full-e2e-inference-probe.ts",
         "test/e2e/live/full-e2e-workload-evidence.ts",
-        "test/e2e/live/launch-agent-turn.ts"
+        "test/e2e/live/launch-agent-turn.ts",
+        "test/e2e/live/pr-base-comparison.ts"
       ],
       "fast": [
         "test/agents/openclaw/runtime/nemoclaw-start-preload-gateway.test.ts",
@@ -166,6 +167,7 @@
         "test/e2e/support/launch-agent-turn-provider-availability.test.ts",
         "test/e2e/support/launch-agent-turn.test.ts",
         "test/e2e/support/openclaw-agent-output.test.ts",
+        "test/e2e/support/pr-base-comparison.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
         "test/e2e/support/managed-image-receipt.test.ts",

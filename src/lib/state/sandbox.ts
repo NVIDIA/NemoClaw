@@ -45,7 +45,7 @@ import type { OpenShellRuntimeSelection } from "../adapters/openshell/runtime-se
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../adapters/openshell/timeouts.js";
 import type { AgentMcpAdapter, AgentStateFile } from "../agent/defs.js";
 import { loadAgent } from "../agent/defs.js";
-import { isObjectRecord, type UnknownRecord } from "../core/json-types.js";
+import { isObjectRecord } from "../core/json-types.js";
 import { GATEWAY_PORT } from "../core/ports.js";
 import {
   BACKUP_FAILURE_ABSENT_AFTER_EXTRACTION,

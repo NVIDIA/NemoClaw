@@ -768,7 +768,7 @@ print(json.dumps(results, sort_keys=True))
       expect(
         Object.entries(scenario)
           .filter(([property]) => property.endsWith("preserved") || property === "temp_cleaned")
-          .every(([property, value]) => Object.is(value, true)),
+          .every(([_property, value]) => Object.is(value, true)),
       ).toBe(true);
     });
   });

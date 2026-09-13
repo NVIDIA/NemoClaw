@@ -3,8 +3,6 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-declare const React: unknown;
-
 export function CommandTerminal({ command }: { command: string }) {
   return (
     <div

@@ -760,7 +760,7 @@ async function proveHistoricalHermesPortableLifecycle(input: {
 
     lifecycleEvidence = await withPortableHostFence(input.runtimeAuthority.homeDir, async () => {
       const gatewayEvidence: {
-        forwardRecovery: ReturnType<typeof recoverHermesPortableLaunchForwards> | null;
+        forwardRecovery: Awaited<ReturnType<typeof recoverHermesPortableLaunchForwards>> | null;
         verificationCount: number;
       } = { forwardRecovery: null, verificationCount: 0 };
       const requireCompatibleStartupAuthority = () => {
@@ -779,7 +779,7 @@ async function proveHistoricalHermesPortableLifecycle(input: {
         verifyGateway: async () => {
           gatewayEvidence.verificationCount += 1;
           requireCompatibleStartupAuthority();
-          gatewayEvidence.forwardRecovery = recoverHermesPortableLaunchForwards(
+          gatewayEvidence.forwardRecovery = await recoverHermesPortableLaunchForwards(
             createHermesPortableForwardRecoveryInput({
               assertCurrent: requireCompatibleStartupAuthority,
               assertRollbackCurrent: requireCompatibleStartupAuthority,

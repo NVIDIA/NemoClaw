@@ -103,7 +103,7 @@ export interface OnboardDashboardDeps {
   forwardService?: {
     executable(): string;
     owns?(target: ForwardServiceTarget): boolean;
-    launch?: typeof launchForwardService;
+    launch?: (...args: Parameters<typeof launchForwardService>) => void | Promise<void>;
     resolveGatewayName(
       sandbox: { gatewayName?: string | null; gatewayPort?: number | null } | null | undefined,
     ): string;
@@ -144,7 +144,7 @@ export interface OnboardDashboardHelpers {
     sandboxName: string,
     chatUiUrl?: string,
     options?: DashboardForwardOptions,
-  ): number;
+  ): Promise<number>;
   ensureAgentDashboardForward(
     sandboxName: string,
     agent: { forwardPort?: number | null; forward_ports?: number[] | null },
@@ -156,7 +156,7 @@ export interface OnboardDashboardHelpers {
   ensureFinalizationDashboardForward(
     sandboxName: string,
     revalidateSandboxIdentity?: (operation: string) => void,
-  ): number;
+  ): Promise<number>;
   ensureFinalizationAgentDashboardForward(
     sandboxName: string,
     agent: { name: string; forwardPort?: number | null; forward_ports?: number[] | null } | null,
@@ -164,13 +164,13 @@ export interface OnboardDashboardHelpers {
     portReservation?: {
       releaseBeforeForward(agentName: string, port: number): Promise<void> | void;
     },
-  ): Promise<number> | number;
+  ): Promise<number>;
   ensureAgentFixedForward(
     sandboxName: string,
     port: number,
     label: string,
     revalidateSandboxIdentity?: (operation: string) => void,
-  ): boolean;
+  ): Promise<boolean>;
   fetchGatewayAuthTokenFromSandbox(sandboxName: string): string | null;
   fetchAgentWebAuthTokenFromSandbox(sandboxName: string, agent: AgentDefinition): string | null;
   getDashboardForwardPort(
@@ -427,11 +427,11 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     process.exit(1);
   }
 
-  function ensureDashboardForward(
+  async function ensureDashboardForward(
     sandboxName: string,
     chatUiUrl = `http://127.0.0.1:${CONTROL_UI_PORT}`,
     options: DashboardForwardOptions = {},
-  ): number {
+  ): Promise<number> {
     chatUiUrl ||= `http://127.0.0.1:${CONTROL_UI_PORT}`;
     const { rollbackSandboxOnFailure, allowPortReallocation, reuseExistingForward } =
       normalizeDashboardForwardOptions(options);
@@ -524,7 +524,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
           authority,
         );
         let readinessVerified = false;
-        (forwardService?.launch ?? launchForwardService)(target, {
+        await (forwardService?.launch ?? launchForwardService)(target, {
           sourceEnvironment: forwardSourceEnvironment(actualGateway, authority),
           verifyReady: () => {
             if (forwardService?.owns?.(target) !== true) {
@@ -569,7 +569,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
       );
     }
     if (fwdOk && rollbackSandboxOnFailure) {
-      ensureMessagingHostForwardForSandbox({
+      await ensureMessagingHostForwardForSandbox({
         sandboxName,
         ensureForward: (name, port, label) =>
           ensureAgentFixedForward(name, port, label, revalidateSandboxIdentity),
@@ -597,15 +597,15 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
    * `CHAT_UI_URL`, so after the forward starts this writes the bound port to
    * `CHAT_UI_URL`. (#8970)
    */
-  function ensureFinalizationDashboardForward(
+  async function ensureFinalizationDashboardForward(
     sandboxName: string,
     revalidateSandboxIdentity?: (operation: string) => void,
-  ): number {
+  ): Promise<number> {
     const envUrl = process.env.CHAT_UI_URL;
     const persistedPort = envUrl ? null : getPersistedDashboardPort(sandboxName, listSandboxes);
     const requestedUrl =
       envUrl || (persistedPort === null ? undefined : `http://127.0.0.1:${String(persistedPort)}`);
-    const actualPort = ensureDashboardForward(sandboxName, requestedUrl, {
+    const actualPort = await ensureDashboardForward(sandboxName, requestedUrl, {
       allowPortReallocation: false,
       reuseExistingForward: true,
       ...(revalidateSandboxIdentity ? { revalidateSandboxIdentity } : {}),
@@ -648,7 +648,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     portReservation?: {
       releaseBeforeForward(agentName: string, port: number): Promise<void> | void;
     },
-  ): Promise<number> | number {
+  ): Promise<number> {
     if (!agent) {
       return ensureFinalizationDashboardForward(sandboxName, revalidateSandboxIdentity);
     }
@@ -668,12 +668,12 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     });
   }
 
-  function ensureAgentFixedForward(
+  async function ensureAgentFixedForward(
     sandboxName: string,
     port: number,
     label: string,
     revalidateSandboxIdentity?: (operation: string) => void,
-  ): boolean {
+  ): Promise<boolean> {
     const gatewayName = resolveForwardServiceGateway(sandboxName, {
       revalidateSandboxIdentity,
     });
@@ -687,7 +687,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
       const authority = getForwardRuntimeAuthority();
       const target = forwardTarget(sandboxName, gatewayName, port, String(port), authority);
       let readinessVerified = false;
-      (forwardService?.launch ?? launchForwardService)(target, {
+      await (forwardService?.launch ?? launchForwardService)(target, {
         sourceEnvironment: forwardSourceEnvironment(gatewayName, authority),
         verifyReady: () => {
           if (forwardService?.owns?.(target) !== true) {

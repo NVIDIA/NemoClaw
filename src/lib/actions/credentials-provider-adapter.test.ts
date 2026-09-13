@@ -5,10 +5,7 @@ import readline from "node:readline";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createCliOpenShellProviderAdapter } from "../adapters/openshell/provider-adapter-cli";
-import type {
-  OpenShellProviderAdapter,
-  OpenShellProviderError,
-} from "../adapters/openshell/provider-adapter";
+import type { OpenShellProviderAdapter } from "../adapters/openshell/provider-adapter";
 import { setGlobalCliActionRuntimeHooksForTest } from "./global";
 import { runCredentialsAddAction } from "./credentials-add";
 import { runCredentialsListAction } from "./credentials/list";

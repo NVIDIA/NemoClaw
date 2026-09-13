@@ -58,7 +58,6 @@ describe("rebuild gateway drift preflight", () => {
   let getNamedGatewayLifecycleStateSpy: MockInstance;
   let recoverDockerDriverSandboxSpy: MockInstance;
   let errorSpy: MockInstance;
-  let logSpy: MockInstance;
 
   beforeEach(() => {
     vi.spyOn(gatewayDrift, "detectOpenShellStateRpcPreflightIssue").mockReturnValue(null);
@@ -101,7 +100,7 @@ describe("rebuild gateway drift preflight", () => {
       sandboxes: { alpha: makeSandboxEntry() },
     } as never);
     errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
   });
 
   afterEach(() => {
