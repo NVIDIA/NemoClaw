@@ -3,6 +3,7 @@
 
 import { type ChildProcess, spawn } from "node:child_process";
 import { EventEmitter, once } from "node:events";
+import { createOpenShellOperationDeadline } from "./operation-deadline";
 import {
   existsSync,
   mkdirSync,
@@ -377,6 +378,25 @@ describe("OpenShell forward service", () => {
         target.localPort,
       ),
     ).toThrow(/bare loopback origin matching its gateway port/u);
+  });
+
+  it("shares the remaining allowance across ownership subprocesses (#11652)", () => {
+    const expected = [ownerTarget.executable, ...buildForwardServiceArgs(ownerTarget)].join(" ");
+    const response = darwinOwnerProbe(`${expected}\n`);
+    let elapsed = 0;
+    const allowances: number[] = [];
+    const probe = (executable: string, args: readonly string[], timeoutMs = 5_000) => {
+      allowances.push(timeoutMs);
+      elapsed += Math.min(60, timeoutMs);
+      return response(executable, args);
+    };
+    const deadline = createOpenShellOperationDeadline(100, () => elapsed);
+    const remainingMs = (maximumMs: number) => deadline.remaining(maximumMs, "ownership");
+    expect(() =>
+      isForwardServiceListenerOwner(ownerTarget, { platform: "darwin", probe, remainingMs }),
+    ).toThrow("operation allowance exhausted");
+    expect(allowances).toEqual([100, 40]);
+    expect(elapsed).toBe(100);
   });
 
   it("proves the exact direct ForwardTcp listener before reuse", () => {

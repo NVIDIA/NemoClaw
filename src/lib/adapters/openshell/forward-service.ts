@@ -94,9 +94,12 @@ export class ForwardServiceStartupCleanupError extends AggregateError {
 type ForwardServiceOwnerProbe = (
   executable: string,
   args: readonly string[],
+  timeoutMs?: number,
 ) => { status: number | null; stdout: string };
 
 export interface ForwardServiceOwnerOptions {
+  /** Remaining time supplied by the operation that owns this verification. */
+  readonly remainingMs?: (maximumMs: number) => number;
   readonly platform?: NodeJS.Platform;
   readonly probe?: ForwardServiceOwnerProbe;
   readonly procRoot?: string;
@@ -227,13 +230,17 @@ function trustedHostProbeExecutable(executable: string): string | null {
   return null;
 }
 
-function captureProcess(executable: string, args: readonly string[]) {
+function captureProcess(
+  executable: string,
+  args: readonly string[],
+  timeoutMs = FORWARD_OWNER_PROBE_TIMEOUT_MS,
+) {
   const trustedExecutable = trustedHostProbeExecutable(executable);
   if (!trustedExecutable) return { status: null, stdout: "" };
   const result = spawnSync(trustedExecutable, [...args], {
     encoding: "utf8",
     env: buildOpenShellSubprocessEnv(process.env),
-    timeout: FORWARD_OWNER_PROBE_TIMEOUT_MS,
+    timeout: timeoutMs,
   });
   return { status: result.status, stdout: result.stdout ?? "" };
 }
@@ -252,12 +259,19 @@ function lsofListenerPids(port: number, probe: ForwardServiceOwnerProbe): string
   ];
 }
 
-function linuxListenerPids(port: number, procRoot: string, workLimit: number): string[] {
+function linuxListenerPids(
+  port: number,
+  procRoot: string,
+  workLimit: number,
+  assertBudget: () => void,
+): string[] {
   if (!Number.isSafeInteger(workLimit) || workLimit < 1) return [];
   const portSuffix = `:${port.toString(16).padStart(4, "0").toUpperCase()}`;
   const socketInodes = new Set<string>();
   try {
+    assertBudget();
     for (const line of readFileSync(path.join(procRoot, "net", "tcp"), "utf8").split("\n")) {
+      assertBudget();
       const fields = line.trim().split(/\s+/u);
       if (
         fields[3] === "0A" &&
@@ -275,11 +289,15 @@ function linuxListenerPids(port: number, procRoot: string, workLimit: number): s
   const pids = new Set<string>();
   let inspected = 0;
   try {
+    assertBudget();
     for (const entry of readdirSync(procRoot, { withFileTypes: true })) {
+      assertBudget();
       if (!entry.isDirectory() || !/^[1-9]\d*$/u.test(entry.name)) continue;
       if (++inspected > workLimit) return [];
       try {
+        assertBudget();
         for (const descriptor of readdirSync(path.join(procRoot, entry.name, "fd"))) {
+          assertBudget();
           if (++inspected > workLimit) return [];
           const link = readlinkSync(path.join(procRoot, entry.name, "fd", descriptor));
           const match = /^socket:\[(\d+)\]$/u.exec(link);
@@ -304,10 +322,11 @@ function listenerPids(
   procRoot: string,
   procWorkLimit: number,
   probe: ForwardServiceOwnerProbe,
+  assertBudget: () => void,
 ): string[] {
   const lsof = lsofListenerPids(port, probe);
   if (lsof !== null || platform !== "linux") return lsof ?? [];
-  return linuxListenerPids(port, procRoot, procWorkLimit);
+  return linuxListenerPids(port, procRoot, procWorkLimit, assertBudget);
 }
 
 function executableMatches(actualExecutable: string, expectedExecutable: string): boolean {
@@ -347,10 +366,29 @@ export function isForwardServiceListenerOwner(
 ): boolean {
   validateForwardServiceTarget(target);
   const platform = options.platform ?? process.platform;
-  const probe = options.probe ?? captureProcess;
+  const capture = options.probe ?? captureProcess;
+  const remaining = options.remainingMs;
+  const assertBudget = () => {
+    remaining?.(1);
+  };
+  const probe: ForwardServiceOwnerProbe = remaining
+    ? (executable, args) => {
+        const result = capture(executable, args, remaining(FORWARD_OWNER_PROBE_TIMEOUT_MS));
+        assertBudget();
+        return result;
+      }
+    : capture;
   const procRoot = options.procRoot ?? "/proc";
   const procWorkLimit = options.procWorkLimit ?? LINUX_PROC_WORK_LIMIT;
-  const before = listenerPids(target.localPort, platform, procRoot, procWorkLimit, probe);
+  const before = listenerPids(
+    target.localPort,
+    platform,
+    procRoot,
+    procWorkLimit,
+    probe,
+    assertBudget,
+  );
+  assertBudget();
   const [pid] = before;
   if (before.length !== 1 || pid === undefined || !/^[1-9]\d*$/u.test(pid)) return false;
   if (!processExecutableMatches(pid, target, platform, procRoot, probe)) return false;
@@ -358,7 +396,15 @@ export function isForwardServiceListenerOwner(
   if (commandLine.status !== 0) return false;
   const expected = [target.executable, ...buildForwardServiceArgs(target)].join(" ");
   if (commandLine.stdout.trim() !== expected) return false;
-  const after = listenerPids(target.localPort, platform, procRoot, procWorkLimit, probe);
+  const after = listenerPids(
+    target.localPort,
+    platform,
+    procRoot,
+    procWorkLimit,
+    probe,
+    assertBudget,
+  );
+  assertBudget();
   return after.length === 1 && after[0] === pid;
 }
 

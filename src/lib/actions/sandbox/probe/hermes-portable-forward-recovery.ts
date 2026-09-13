@@ -14,6 +14,7 @@ import {
   isForwardServiceListenerOwner,
   launchForwardService,
   type ForwardServiceLaunchOptions,
+  type ForwardServiceOwnerOptions,
   type ForwardServiceTarget,
 } from "../../../adapters/openshell/forward-service";
 
@@ -93,7 +94,10 @@ export interface HermesPortableForwardRecoveryDeps {
   readonly captureCurrentList: (args: readonly string[], timeout: number) => CommandResult;
   readonly captureRollbackList: (args: readonly string[], timeout: number) => CommandResult;
   readonly runCurrentMutation: (args: readonly string[], timeout: number) => MutationResult;
-  readonly isForwardServiceOwner?: (target: ForwardServiceTarget) => boolean;
+  readonly isForwardServiceOwner?: (
+    target: ForwardServiceTarget,
+    options?: ForwardServiceOwnerOptions,
+  ) => boolean;
   readonly launchForwardService?: (
     target: ForwardServiceTarget,
     options: ForwardServiceLaunchOptions,
@@ -357,8 +361,7 @@ function captureForwardEntries(
   input: HermesPortableForwardRecoveryInput,
   rollback: boolean,
   timing?: ReturnType<typeof createForwardTimingRecorder>,
-  deadline?: number,
-  now: () => number = input.deps.now ?? (() => performance.now()),
+  budget?: (maximumMs: number) => number,
 ): StrictForwardEntry[] {
   requireCurrent(input, rollback);
   let result: CommandResult;
@@ -367,12 +370,7 @@ function captureForwardEntries(
     const operation = () =>
       capture(
         ["forward", "list", "--gateway", input.gatewayName],
-        remainingBudget(
-          deadline,
-          now,
-          input.probeTimeoutMs,
-          rollback ? undefined : { cause: "forward-settlement-timed-out" },
-        ),
+        budget?.(input.probeTimeoutMs) ?? input.probeTimeoutMs,
       );
     result = timing ? timing.measure("list", operation) : operation();
   } catch (error) {
@@ -403,10 +401,9 @@ function observeForwards(
   input: HermesPortableForwardRecoveryInput,
   rollback: boolean,
   timing?: ReturnType<typeof createForwardTimingRecorder>,
-  deadline?: number,
-  now: () => number = input.deps.now ?? (() => performance.now()),
+  budget?: (maximumMs: number) => number,
 ): ForwardObservation {
-  const listedEntries = captureForwardEntries(input, rollback, timing, deadline, now);
+  const listedEntries = captureForwardEntries(input, rollback, timing, budget);
   const entries = new Map<number, StrictForwardEntry>();
   const states = new Map<number, ForwardState>();
   const reachable = input.deps.isPortReachable ?? isLocalForwardReachable;
@@ -427,15 +424,7 @@ function observeForwards(
     requireCurrent(input, rollback);
     let portReachable: boolean;
     try {
-      portReachable = reachable(
-        port,
-        remainingBudget(
-          deadline,
-          now,
-          input.probeTimeoutMs,
-          rollback ? undefined : { cause: "forward-settlement-timed-out" },
-        ),
-      );
+      portReachable = reachable(port, budget?.(input.probeTimeoutMs) ?? input.probeTimeoutMs);
     } catch (error) {
       if (error instanceof HermesPortableForwardRecoveryError) throw error;
       failure(
@@ -453,11 +442,13 @@ function observeForwards(
     try {
       exactOwner = (input.deps.isForwardServiceOwner ?? isForwardServiceListenerOwner)(
         forwardServiceTarget(input, port),
+        { remainingMs: budget },
       );
     } catch {
       exactOwner = false;
     }
     requireCurrent(input, rollback);
+    budget?.(1);
     states.set(port, exactOwner ? "healthy" : "occupied");
   }
   return { entries, states };
@@ -515,7 +506,9 @@ async function invokeForwardServiceLaunch(
           verifyReady: () => {
             requireCurrent(input, false);
             if (
-              (input.deps.isForwardServiceOwner ?? isForwardServiceListenerOwner)(target) !== true
+              (input.deps.isForwardServiceOwner ?? isForwardServiceListenerOwner)(target, {
+                remainingMs: remaining,
+              }) !== true
             ) {
               failure("recovery-failed", {
                 cause: "forward-mutation-failed",
@@ -581,8 +574,12 @@ async function settleTouchedPorts(
       previous + remaining(Math.min(input.operationTimeoutMs, FORWARD_SETTLEMENT_TIMEOUT_MS));
     if (!Number.isFinite(deadline)) failure("recovery-failed");
 
+    const budget = (maximumMs: number) =>
+      remaining(
+        remainingBudget(deadline, now, maximumMs, { cause: "forward-settlement-timed-out" }),
+      );
     for (let observation = 0; observation < FORWARD_SETTLEMENT_MAX_OBSERVATIONS; observation += 1) {
-      const observed = observeForwards(input, false, timing, deadline, now);
+      const observed = observeForwards(input, false, timing, budget);
       requireNoOccupied(observed.states);
       if ([...requiredHealthy].every((port) => observed.states.get(port) === "healthy")) {
         return observed;
@@ -603,7 +600,9 @@ function rollbackPort(input: HermesPortableForwardRecoveryInput, port: number): 
     const deadline =
       readClock(now) + Math.min(input.operationTimeoutMs, FORWARD_SETTLEMENT_TIMEOUT_MS);
     if (!Number.isFinite(deadline)) failure("restoration-unproved");
-    const observed = observeForwards(input, true, undefined, deadline, now);
+    const observed = observeForwards(input, true, undefined, (maximumMs) =>
+      remainingBudget(deadline, now, maximumMs),
+    );
     if (!observed.entries.has(port) && observed.states.get(port) === "absent") return;
   } catch {
     failure("restoration-unproved");
@@ -652,13 +651,7 @@ export async function prepareHermesPortableLaunchForwards(
     const now = input.deps.now ?? (() => performance.now());
     const deadline = createOpenShellOperationDeadline(input.operationTimeoutMs, now);
     const remaining = (maximumMs: number) => deadline.remaining(maximumMs, "forward recovery");
-    const initial = observeForwards(
-      input,
-      false,
-      timing,
-      now() + remaining(input.operationTimeoutMs),
-      now,
-    );
+    const initial = observeForwards(input, false, timing, remaining);
     requireNoOccupied(initial.states);
     const missing = input.ports.filter((port) => initial.states.get(port) !== "healthy");
     if (missing.length === 0) {
