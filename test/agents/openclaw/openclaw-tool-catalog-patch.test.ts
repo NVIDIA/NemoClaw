@@ -140,6 +140,22 @@ function nativeToolSearchFixtureSource() {
   ].join("\n");
 }
 
+function currentNativeToolSearchFixtureSource() {
+  return [
+    "function buildToolSearchRunPlan(params) {",
+    "\treturn { replayAllowedToolNames: new Set(params.uncompactedTools.map((tool) => tool.name)) };",
+    "}",
+    "function prepareEmbeddedAttemptToolCatalog(input) {",
+    "\tconst { clientTools, uncompactedEffectiveTools } = input.bundleTools;",
+    "\tconst toolSearch = applyAgentToolSurfaceCatalog({ tools: uncompactedEffectiveTools });",
+    "\tconst toolSearchRunPlan = buildToolSearchRunPlan({ uncompactedTools: uncompactedEffectiveTools });",
+    "\treturn { replayAllowedToolNames: toolSearchRunPlan.replayAllowedToolNames };",
+    "}",
+    "void prepareEmbeddedAttemptToolCatalog;",
+    "",
+  ].join("\n");
+}
+
 function makeFixture(opts: { version?: string; allCustomToolsLine?: string } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-tool-catalog-patch-"));
   const dist = path.join(root, "dist");
@@ -209,7 +225,7 @@ describe("OpenClaw compact tool catalog patch", () => {
     try {
       const result = runPatch(changed.dist);
       expect(result.status).toBe(1);
-      expect(result.stderr).toContain("Expected exactly one selection-*.js target, found 0");
+      expect(result.stderr).toContain("Expected exactly one compiled tool-catalog target, found 0");
     } finally {
       fs.rmSync(changed.root, { recursive: true, force: true });
     }
@@ -225,6 +241,21 @@ describe("OpenClaw compact tool catalog patch", () => {
       expect(unmodified).toContain("buildToolSearchRunPlan");
     } finally {
       fs.rmSync(native.root, { recursive: true, force: true });
+    }
+
+    const currentNative = makeFixture({ version: "2026.9.1" });
+    try {
+      fs.rmSync(path.join(currentNative.dist, "selection-empty.js"));
+      fs.rmSync(currentNative.selectionPath);
+      const builtinPath = path.join(currentNative.dist, "builtin-openclaw-fixture.js");
+      fs.writeFileSync(builtinPath, currentNativeToolSearchFixtureSource());
+      const result = runPatch(currentNative.dist);
+      expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+      expect(result.stdout).toContain("native-tool-search");
+      expect(result.stdout).toContain("builtin-openclaw-fixture.js");
+      expect(fs.readFileSync(builtinPath, "utf-8")).not.toContain(MARKER);
+    } finally {
+      fs.rmSync(currentNative.root, { recursive: true, force: true });
     }
 
     const builtInCatalog = makeFixture({

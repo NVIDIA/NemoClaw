@@ -1209,7 +1209,7 @@ RUN node /usr/local/lib/nemoclaw/patch-openclaw-managed-transport-diagnostics.mt
 
 # Run the compact tool catalog shim for OpenClaw selection runtimes that still
 # need it. OpenClaw 2026.9.1 ships a built-in catalog surface, so the script
-# skips cleanly after classifying the compiled selection-*.js shape.
+# skips cleanly after classifying the compiled tool-catalog shape.
 # hadolint ignore=DL3059
 RUN node /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.mts \
     /usr/local/lib/node_modules/openclaw/dist

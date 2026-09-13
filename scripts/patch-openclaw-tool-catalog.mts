@@ -32,13 +32,22 @@ const ALREADY_PATCHED_REQUIRED_PATTERNS = [
   "\t\t\tconst nemoClawCatalogSourceTools = [...customTools, ...clientToolDefs];",
   "\t\t\tconst allCustomTools = nemoClawCreateToolCatalog(nemoClawCatalogSourceTools);",
 ];
-const NATIVE_TOOL_SEARCH_PATTERNS = [
-  "const uncompactedEffectiveTools = [...tools, ...filteredBundledTools];",
-  "applyToolSearchCatalog({",
-  "buildToolSearchRunPlan({",
-  "const allowedToolNames = toolSearchRunPlan.visibleAllowedToolNames;",
-  "const replayAllowedToolNames = toolSearchRunPlan.replayAllowedToolNames;",
-];
+const NATIVE_TOOL_SEARCH_PATTERN_SETS = [
+  [
+    "const uncompactedEffectiveTools = [...tools, ...filteredBundledTools];",
+    "applyToolSearchCatalog({",
+    "buildToolSearchRunPlan({",
+    "const allowedToolNames = toolSearchRunPlan.visibleAllowedToolNames;",
+    "const replayAllowedToolNames = toolSearchRunPlan.replayAllowedToolNames;",
+  ],
+  [
+    "function buildToolSearchRunPlan(params) {",
+    "const { clientTools, uncompactedEffectiveTools } = input.bundleTools;",
+    "const toolSearch = applyAgentToolSurfaceCatalog({",
+    "const toolSearchRunPlan = buildToolSearchRunPlan({",
+    "replayAllowedToolNames: toolSearchRunPlan.replayAllowedToolNames",
+  ],
+] as const;
 
 const EFFECTIVE_TOOLS_REPLACEMENT = [
   EFFECTIVE_TOOLS_PATTERN,
@@ -219,7 +228,7 @@ function readOpenClawVersion(distDir: string): string {
   return payload.version;
 }
 
-function listSelectionFiles(distDir: string): string[] {
+function listToolCatalogFiles(distDir: string): string[] {
   let entries: fs.Dirent[];
   try {
     entries = fs.readdirSync(distDir, { withFileTypes: true });
@@ -231,7 +240,7 @@ function listSelectionFiles(distDir: string): string[] {
     );
   }
   return entries
-    .filter((entry) => entry.isFile() && /^selection-.*\.js$/.test(entry.name))
+    .filter((entry) => entry.isFile() && /^(?:builtin-openclaw|selection)-.*\.js$/.test(entry.name))
     .map((entry) => path.join(distDir, entry.name))
     .sort();
 }
@@ -241,7 +250,9 @@ function hasBuiltInToolCatalog(source: string): boolean {
 }
 
 function hasNativeToolSearch(source: string): boolean {
-  return NATIVE_TOOL_SEARCH_PATTERNS.every((pattern) => source.includes(pattern));
+  return NATIVE_TOOL_SEARCH_PATTERN_SETS.some((patterns) =>
+    patterns.every((pattern) => source.includes(pattern)),
+  );
 }
 
 export function patchSelectionText(source: string, filePath: string): PatchSelectionResult {
@@ -297,12 +308,12 @@ export function patchOpenClawToolCatalog(distDir: string): {
   const resolvedDist = path.resolve(distDir);
   const version = readOpenClawVersion(resolvedDist);
 
-  const selectionFiles = listSelectionFiles(resolvedDist);
-  if (selectionFiles.length === 0) {
-    throw new Error(`No selection-*.js files found in ${resolvedDist}`);
+  const toolCatalogFiles = listToolCatalogFiles(resolvedDist);
+  if (toolCatalogFiles.length === 0) {
+    throw new Error(`No compiled tool-catalog candidates found in ${resolvedDist}`);
   }
 
-  const targetFiles = selectionFiles.filter((file) => {
+  const targetFiles = toolCatalogFiles.filter((file) => {
     const text = fs.readFileSync(file, "utf-8");
     return (
       text.includes(ALL_CUSTOM_TOOLS_PATTERN) ||
@@ -312,7 +323,9 @@ export function patchOpenClawToolCatalog(distDir: string): {
     );
   });
   if (targetFiles.length !== 1) {
-    throw new Error(`Expected exactly one selection-*.js target, found ${targetFiles.length}`);
+    throw new Error(
+      `Expected exactly one compiled tool-catalog target, found ${targetFiles.length}`,
+    );
   }
 
   const target = targetFiles[0];
