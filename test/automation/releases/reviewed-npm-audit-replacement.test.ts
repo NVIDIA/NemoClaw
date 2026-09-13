@@ -23,6 +23,7 @@ describe("reviewed npm audit replacement identity", () => {
     const graph = REVIEWED_AUDIT_CONFIG.lockedGraphs.find(({ id }) => id === "openclaw-runtime")!;
     expect(graph).toBeDefined();
     expect(graph.replacement).toBeDefined();
+    expect(graph.replacement?.promotionPullRequest).toBe(11105);
 
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-replacement-"));
     const lockfile = path.join(root, "package-lock.json");
@@ -68,5 +69,18 @@ describe("reviewed npm audit replacement identity", () => {
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
+  });
+
+  // source-shape-contract: security -- Every temporary reviewed identity must name the pull request that will promote it and remove the prior authority
+  it("requires every replacement identity to name its promotion pull request", () => {
+    const config = JSON.parse(
+      fs.readFileSync(path.join(REPO_ROOT, "ci", "reviewed-npm-audit.json"), "utf8"),
+    ) as { lockedGraphs: Array<{ replacement?: { promotionPullRequest?: number } }> };
+    delete config.lockedGraphs.find(({ replacement }) => replacement)?.replacement
+      ?.promotionPullRequest;
+
+    expect(() => parseAuditConfig(JSON.stringify(config))).toThrow(
+      "ci/reviewed-npm-audit.json is invalid",
+    );
   });
 });

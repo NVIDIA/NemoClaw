@@ -139,6 +139,7 @@ function runConsolidatedAuditFixture(
               label: "WeChat fixture",
               lockSha256: createHash("sha256").update(runtimeLock).digest("hex"),
               packageSpec: "@tencent-weixin/openclaw-weixin@2.4.3",
+              promotionPullRequest: 11105,
               tarballUrl:
                 "https://registry.npmjs.org/@tencent-weixin/openclaw-weixin/-/openclaw-weixin-2.4.3.tgz",
             },
@@ -625,6 +626,7 @@ describe("trusted npm audit workflow (#5896)", () => {
       label: "OpenClaw replacement",
       lockSha256: replacementLock,
       packageSpec: "openclaw@2026.9.1",
+      promotionPullRequest: 11105,
       tarballUrl: "https://registry.npmjs.org/openclaw/-/openclaw-2026.9.1.tgz",
     };
     try {
@@ -676,6 +678,7 @@ describe("trusted npm audit workflow (#5896)", () => {
       label: "Different package",
       lockSha256: "b".repeat(64),
       packageSpec: "different-package@1.0.0",
+      promotionPullRequest: 11105,
       tarballUrl: "https://registry.npmjs.org/different-package/-/different-package-1.0.0.tgz",
     };
 
