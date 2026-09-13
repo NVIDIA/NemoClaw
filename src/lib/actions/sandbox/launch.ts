@@ -14,6 +14,7 @@ import {
 import { resolveSandboxGatewayName } from "../../gateway-runtime-action";
 import { emitPortableOpenClawAlreadyRunningTiming } from "../../onboard/experimental/portable-demo-lifecycle-timing";
 import type { SandboxEntry } from "../../state/registry";
+import { enforceRemovedImmutabilityMigrationBoundary } from "../../state/migrations/removed-immutability";
 import {
   completeReadinessQualifiedInteractiveSessionSetup,
   prepareInteractiveSession,
@@ -382,6 +383,7 @@ async function prepareLaunchSession(
   sandboxName: string,
   deps: LaunchSandboxDeps,
 ): Promise<{ finish: () => Promise<void> }> {
+  enforceRemovedImmutabilityMigrationBoundary(sandboxName);
   const launchTiming = createLaunchPreExecTiming(deps);
   const enterMutationGate = deps.withLaunchReadinessMutationGate ?? withLaunchReadinessMutationGate;
   let inspection = await inspectLaunchReadinessForLaunch(sandboxName, deps);
