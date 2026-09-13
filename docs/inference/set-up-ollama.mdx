@@ -208,6 +208,7 @@ When NemoClaw runs in WSL, the provider menu can offer these Windows-host action
 
 The install and restart paths set `OLLAMA_HOST=127.0.0.1:11434` on Windows.
 NemoClaw relaunches Ollama from the detected Windows tray application or verified `ollama.exe` path and checks the endpoint from Docker Desktop's network context.
+If initial host discovery misses a protected Windows route, NemoClaw can reuse it without an executable path.
 It first requires a valid `/api/tags` response and then requires `403` from the same endpoint with an untrusted `Host` header.
 A direct request from WSL can fail because Docker Desktop defines this hostname for its containers.
 It pulls missing models through the Ollama HTTP API without requiring an Ollama CLI inside WSL.
