@@ -1,6 +1,6 @@
 # NemoClaw desired-state prototype
 
-This local experiment creates an OpenClaw agent or a Fabric-managed Deep Agents or Hermes
+This local experiment creates an OpenClaw agent or a Fabric-managed Deep Agents, Hermes or OpenClaw
 runtime from YAML using Go, OpenTofu, and OpenShell. It has an independent Git root and contains no source
 from the previous NemoClaw implementation. See [DESIGN.md](DESIGN.md) for scope.
 
@@ -12,7 +12,6 @@ nemoclaw apply < deployment.yaml
 nemoclaw export > exported.yaml
 nemoclaw plan --destroy
 nemoclaw destroy
-nemoclaw invoke --file prompt.txt
 ```
 
 Each command accepts `--state-dir DIR`, which defaults to `.nemoclaw` in the
@@ -20,11 +19,10 @@ current directory. Keep this directory: it contains deployment identity,
 unfinished intent, the OpenTofu state, and the provider lock file.
 On PowerShell, use `--file deployment.yaml` for plan/apply input. Export and
 destroy select the recorded deployment through `--state-dir`; they accept no YAML.
-`invoke` selects that same state directory and reads a plain-text prompt from
-stdin or `--file`. It currently supports Fabric deployments only and writes the
-normalized Fabric result as JSON, including a failed result when available.
+Runtime interaction belongs to Fabric's existing SDK or the harness's native
+interfaces. NemoClaw has four top-level commands; `plan --destroy` is a flag.
 
-## Fabric with Deep Agents or Hermes
+## Fabric harnesses
 
 This slice requires an external gateway and external inference service.
 Build the native Linux ARM64 image with `python3 image/fabric/build.py`, rebuild
@@ -41,32 +39,52 @@ Its separate image includes Hermes 0.21.0 at the revision pinned by Fabric,
 with hash-locked dependencies. Hermes needs the source layout for bundled assets;
 the image retains it under `/opt/hermes` and disables lazy dependency installs.
 
+For OpenClaw through Fabric, run `python3 image/fabric/build.py --harness openclaw`
+and use [examples/fabric-openclaw.yaml](examples/fabric-openclaw.yaml). This uses a
+**local prototype adapter**: the pinned Fabric revision has no OpenClaw adapter.
+Fabric starts the adapter, which owns an OpenClaw 2026.9.4 gateway. Use OpenClaw's
+native CLI for agent requests, configuration, pairing, and channel status. Its
+stable home is `/sandbox/.openclaw`; the adapter initializes it once and preserves
+native settings on later starts. The adapter still implements Fabric's ordinary
+start/invoke/stop contract, without adding a channel API to Fabric.
+`type: openclaw` still selects the original direct deployment.
+
 ```sh
 dist/linux_arm64/bin/nemoclaw apply --state-dir .local/fabric --file deployment.yaml
-dist/linux_arm64/bin/nemoclaw invoke --state-dir .local/fabric --file prompt.txt
+# Use your gateway and deployment workspace with OpenShell's existing CLI:
+openshell --gateway-endpoint GATEWAY --workspace WORKSPACE sandbox connect assistant
+# Inside the sandbox:
+openclaw channels status --probe
+openclaw pairing list telegram
 ```
+
+See [NATIVE_MESSAGING.md](NATIVE_MESSAGING.md) for native setup and test commands,
+connection details, and the remaining infrastructure requirements for real channels.
 
 The relevant agent configuration is:
 
 ```yaml
 name: main
 type: fabric
-harness: deepagents # or hermes, with the corresponding image
+harness: deepagents # or hermes / openclaw, with the corresponding image
 ```
 
 Keep the `inference` route from the example. NemoClaw supplies Fabric with the
 stable `primary` model alias at `https://inference.local/v1`; OpenShell owns the
 upstream credential. Fabric and its persistent adapter run inside the sandbox.
-The explicit adapter interpreter is `/opt/fabric/bin/python`. A Unix socket,
-accessed through OpenShell exec, accepts one invocation at a time. Successful
-requests expose `runtime_id`, `invocation_id`, `output` and artifact
-references; usage reporting depends on the adapter. Artifact paths refer to files inside the sandbox.
+The explicit adapter interpreter is `/opt/fabric/bin/python`. A private Unix
+socket supplies readiness information to the provisioner; it accepts no agent
+invocations or channel operations. Native OpenClaw configuration may change while
+NemoClaw continues to verify the loopback gateway, workspace, and primary inference
+route it provisioned.
 
-An unchanged apply or export/reapply preserves the running Fabric runtime and
-conversation. A process crash is terminal for that runtime; requests are never
-automatically replayed. Sandbox replacement and teardown delete conversation
-state and artifacts. Switching between OpenClaw, Fabric Deep Agents and Fabric Hermes requires explicit
-teardown and reapply. There is no automatic migration of existing agents.
+Unchanged apply and export/reapply preserve the running Fabric runtime. Native
+OpenClaw settings are not translated into deployment YAML or exported by NemoClaw.
+A runtime crash is terminal until explicitly restarted; no adapter invocation is
+replayed. Native state can survive recreation when its home and workspace are
+retained, as demonstrated by the Docker experiment. The current OpenShell slice
+still deletes sandbox storage on teardown. Changing harness requires explicit
+teardown and reapply; there is no automatic migration of existing agents.
 
 See [LOCAL_TEST.md](LOCAL_TEST.md) for the opt-in real Fabric/inference test.
 

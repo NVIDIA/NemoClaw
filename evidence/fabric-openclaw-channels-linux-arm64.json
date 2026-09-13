@@ -1,0 +1,154 @@
+{
+  "image_id": "sha256:d8b8b5daab7d4dfea2aeaa24e62847e2102057321e698f843dcd793e548280b8",
+  "network": "none",
+  "external_messages": 0,
+  "evidence_directory": "/home/cvillela/.codex/worktrees/91ee/NemoClaw/.local/fabric-channels-7feb4862-4fb9-4c20-8c25-137834cd11a3",
+  "phases": [
+    {
+      "phase": "discover",
+      "evidence_type": "native processes; Telegram and inference protocol fixtures; network none",
+      "capabilities": {
+        "channels": [
+          {
+            "id": "telegram",
+            "media": [
+              "text"
+            ],
+            "access_modes": [
+              "allowlist",
+              "pairing"
+            ],
+            "groups": false,
+            "operations": [
+              "requirements",
+              "configure",
+              "status",
+              "enroll",
+              "approve",
+              "disable"
+            ]
+          }
+        ],
+        "delivery": "native",
+        "fabric_invocation_telemetry": false
+      },
+      "requirements": {
+        "network": [
+          {
+            "host": "api.telegram.org",
+            "port": 443,
+            "protocol": "https",
+            "binaries": [
+              "/usr/local/bin/node"
+            ]
+          }
+        ],
+        "secrets": [
+          {
+            "name": "messaging-token",
+            "mount": "/run/fabric-secrets/messaging-token",
+            "read_only": true
+          }
+        ],
+        "storage": [
+          {
+            "name": "channel-state",
+            "mount": "/sandbox/channel-state",
+            "retain": true
+          },
+          {
+            "name": "workspace",
+            "mount": "/sandbox/workspace",
+            "retain": true
+          }
+        ]
+      },
+      "missing_resources_rejected": true
+    },
+    {
+      "phase": "configure",
+      "evidence_type": "native processes; Telegram and inference protocol fixtures; network none",
+      "initial_configuration": {
+        "changed": true,
+        "configuration": {
+          "channel": "telegram",
+          "enabled": true,
+          "access": {
+            "mode": "pairing",
+            "allowed_users": []
+          }
+        },
+        "runtime_id": "runtime-1789263560303-9-2",
+        "gateway_pid": 85,
+        "state": "connected",
+        "credential_valid": true,
+        "running": true,
+        "last_inbound_at": null,
+        "last_outbound_at": null
+      },
+      "exclusive_retained_state": true,
+      "unauthorized_blocked": true,
+      "enrollment": true,
+      "separate_conversations": true,
+      "native_tool_verified": true,
+      "unchanged_configuration_preserves_gateway": true,
+      "runtime_id": "runtime-1789263560303-9-2"
+    },
+    {
+      "phase": "recreate",
+      "evidence_type": "native processes; Telegram and inference protocol fixtures; network none",
+      "recreated_runtime_retains_enrollment_and_history": true,
+      "disabled_blocks_invocation": true,
+      "invalid_credential_reported": true,
+      "agent_independent_of_channel_failure": true
+    }
+  ],
+  "fabric_revision": "51a28c1aefec56abd877070b6973d0a32a1e3003",
+  "openclaw_version": "2026.9.4",
+  "qualification": "Native Linux ARM64 processes with local protocol fixtures; not real Telegram or OpenShell messaging qualification",
+  "source_sha256": {
+    "image/fabric/openclaw_adapter.py": "c674918cdddbe3036870e0bccefc5d4e2e3bc407d4bd7a9dc0c067ecb757f919",
+    "image/fabric/openclaw_channels.py": "686c6d9b1eb99acf59101869d1721797a39068a7e5866673ab5b027bbbcfc0bf",
+    "image/fabric/channel_control.py": "1ad6dfcf10a9504c36cb4818e468bd7f93514eafcd9b37c430149248b359f0fa",
+    "image/fabric/fabric.py": "df2e2d227575a92501a689f2723ce4627c6e89a94f13709f900e7072411a062b",
+    "test/fabric_channels_native.py": "a8af04009dda3dbb469c9aabf9f4a2132abb511ce344ddb374fec0e68d5a53e3",
+    "tools/fabric-channel-experiment.py": "c4e53fcb3dcf5395704185450dbc1a83a0aa0a0e7199ed56c6ff40ec7f832e58"
+  },
+  "checks": {
+    "python_unit_tests": 7,
+    "go_focused_tests": "passed",
+    "go_vet": "passed",
+    "native_bundle_rebuilt": true,
+    "native_opentofu_integration": "TestFabricChannelControlBoundary, TestFabricDeploymentAndInvocationBoundary, TestExistingOpenClawStateDefaultsRuntimeWithoutReplacement passed"
+  },
+  "remaining": [
+    "Generic OpenShell provisioning of declared network, secret and retained storage resources",
+    "Channel desired state in deployment YAML, OpenTofu reconciliation and export",
+    "Real Telegram bot and consenting senders",
+    "In-flight native message draining and delivery deduplication",
+    "WhatsApp and other adapters",
+    "Fabric per-message invocation telemetry for native ingress"
+  ],
+  "investigated_failures": [
+    {
+      "directory": ".local/fabric-channels-4de11131-9a10-4a17-9b1b-78f7cc7b3d1b",
+      "cause": "Pinned OpenClaw rewrites string streaming setting; adapter now emits native object schema"
+    },
+    {
+      "directory": ".local/fabric-channels-3d1bbb5f-c746-41ad-860d-aba51057819b",
+      "cause": "Fixture loopback model endpoint rejected by native SSRF policy; fixed isolated fixture networking"
+    },
+    {
+      "directory": ".local/fabric-channels-9fa8c3ae-4468-4369-babc-0a4cbb8b3020",
+      "cause": "Fixture selected historical marker from internal context; corrected fixture prompt selection"
+    },
+    {
+      "directory": ".local/fabric-channels-327254b5-8e0c-49da-bec4-3f888a97bb7f",
+      "cause": "Existing state directory rejected; added reuse with exclusive lock"
+    },
+    {
+      "directory": ".local/fabric-channels-f42cc19d-8a91-495d-b494-018c1d787d11",
+      "cause": "Native workspace absent on recreation; adapter now declares workspace retention"
+    }
+  ]
+}

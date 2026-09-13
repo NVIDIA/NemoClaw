@@ -233,8 +233,8 @@ func (d Document) Validate() error {
 	if !slug.MatchString(a.Name) {
 		return errors.New("agent requires a lowercase name")
 	}
-	if !((a.Type == "openclaw" && a.Harness == "") || (a.Type == "fabric" && (a.Harness == "deepagents" || a.Harness == "hermes"))) {
-		return errors.New("agent requires openclaw without harness, or fabric with harness deepagents or hermes")
+	if !((a.Type == "openclaw" && a.Harness == "") || (a.Type == "fabric" && (a.Harness == "deepagents" || a.Harness == "hermes" || a.Harness == "openclaw"))) {
+		return errors.New("agent requires openclaw without harness, or fabric with harness deepagents, hermes or openclaw")
 	}
 	if a.Type == "fabric" && (g.Management != "external" || p.Ollama != nil || p.Service != nil) {
 		return errors.New("this Fabric slice requires external gateway and inference services")

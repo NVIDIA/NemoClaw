@@ -1,0 +1,252 @@
+{
+  "date": "2026-09-12",
+  "kind": "native OpenShell + Fabric + local OpenClaw adapter + real inference",
+  "platform": "linux_arm64",
+  "fabric_revision": "51a28c1aefec56abd877070b6973d0a32a1e3003",
+  "source_sha256": "14fab1b7094e41f2056051316cff7f84bd7e0f294b2c6aa1c09a30085b4406cf",
+  "harness": "openclaw",
+  "version": "2026.9.4",
+  "openclaw_image": "ghcr.io/openclaw/openclaw@sha256:cc596b846506a5f4cfcee111394a2725f375f01cca2ebb492a161fd1b747f101",
+  "adapter": "local prototype; not supplied by upstream Fabric",
+  "adapter_sha256": "de8d2b9ca7f6c93b1c71906bac2f8445627ad000ffb2b4bc8e6b303129822a0a",
+  "requirements_sha256": "5dc07b76db5612403477df747deb976e351129676f072c78ad34fc855378866a",
+  "image": "nc-prototype-fabric@sha256:a60039d285092c9e8a7be91ac3de2eb52bd82abc2ff1890da15d0fbd4f000dcd",
+  "openshell": "0.0.116",
+  "inference": "Ollama 0.34.0; Qwen3 4B; DGX Spark GPU",
+  "model_digest": "359d7dd4bcdab3d86b87d73ac27966f4dbb9f5efdfcc75d34a8764a09474fae7",
+  "bundle_manifest_sha256": "58178d8e4e3da9855e2e19a3cbe62d4dcc0ab21e45b268af172d3059ea4c773c",
+  "earlier_runs": [
+    {
+      "scenario": "chat and apply/export/reapply before disabling memory indexing",
+      "image": "nc-prototype-fabric@sha256:4a24391688feb0e850c012f3f4373531456d9a02687e599343c4b3173eee3730",
+      "passed": true,
+      "duration_seconds": 57.84,
+      "retained_evidence": ".local/fabric-live-9149f8d6-7db5-4f80-a9b0-7e1491abd081",
+      "requests": [
+        {
+          "runtime_id": "runtime-1789246152289-53-2",
+          "invocation_id": "invocation-1789246156966-53-5",
+          "status": "succeeded",
+          "gateway_pid": 59,
+          "response": "FOUR"
+        },
+        {
+          "runtime_id": "runtime-1789246152289-53-2",
+          "invocation_id": "invocation-1789246184736-53-10",
+          "status": "succeeded",
+          "gateway_pid": 59,
+          "response": "four"
+        }
+      ],
+      "cleanup": {
+        "outcome": "destroyed",
+        "changes": [
+          {
+            "resource": "nemoclaw_provider.inference",
+            "actions": [
+              "delete"
+            ]
+          },
+          {
+            "resource": "nemoclaw_route.primary",
+            "actions": [
+              "delete"
+            ]
+          },
+          {
+            "resource": "nemoclaw_sandbox.agent",
+            "actions": [
+              "delete"
+            ]
+          }
+        ],
+        "retained": [
+          "nemoclaw_workspace.deployment"
+        ]
+      }
+    },
+    {
+      "scenario": "exec and read before disabling memory indexing",
+      "image": "nc-prototype-fabric@sha256:4a24391688feb0e850c012f3f4373531456d9a02687e599343c4b3173eee3730",
+      "passed": true,
+      "duration_seconds": 166.06,
+      "retained_evidence": ".local/fabric-live-f0684700-85e8-4dee-8ad3-e7576ade321f",
+      "requests": [
+        {
+          "runtime_id": "runtime-1789246238478-53-2",
+          "invocation_id": "invocation-1789246243204-53-5",
+          "status": "succeeded",
+          "gateway_pid": 67,
+          "response": "36afa8bb7f43ea59d38fd388d310d960297675e4f1558b65c2aa748a57823621"
+        },
+        {
+          "runtime_id": "runtime-1789246238478-53-2",
+          "invocation_id": "invocation-1789246335674-53-10",
+          "status": "succeeded",
+          "gateway_pid": 67,
+          "response": "readback-7dd48783-038b-422a-a3ad-be020620f56e"
+        }
+      ],
+      "cleanup": {
+        "outcome": "destroyed",
+        "changes": [
+          {
+            "resource": "nemoclaw_provider.inference",
+            "actions": [
+              "delete"
+            ]
+          },
+          {
+            "resource": "nemoclaw_route.primary",
+            "actions": [
+              "delete"
+            ]
+          },
+          {
+            "resource": "nemoclaw_sandbox.agent",
+            "actions": [
+              "delete"
+            ]
+          }
+        ],
+        "retained": [
+          "nemoclaw_workspace.deployment"
+        ]
+      }
+    }
+  ],
+  "startup_findings": [
+    {
+      "retained_evidence": ".local/fabric-live-15777d68-64f6-4f3a-84b9-935711222e81",
+      "finding": "Fabric southbound AgentConfig omits metadata. Adapter identity is now passed through validated harness settings.",
+      "cleaned_up": true
+    },
+    {
+      "retained_evidence": ".local/fabric-live-c9b17482-4b2a-4838-88d4-3685b3aee437",
+      "finding": "Adding legacy agents.defaults.memorySearch caused OpenClaw to migrate configuration, including exec settings; strict readiness rejected the changed file. Adapter now uses memory.search.enabled and tools.exec.mode.",
+      "cleaned_up": true
+    }
+  ],
+  "limits": [
+    "Local prototype adapter, not an upstream Fabric OpenClaw integration.",
+    "Fixed OpenShell primary inference route; native Linux ARM64 only.",
+    "One gateway/session per Fabric runtime, with at most 200 history messages in each normalized result.",
+    "260-second OpenClaw turn timeout; no portable maximum-turn count, session recovery, invocation replay or local-agent fallback.",
+    "Cron, heartbeat, automatic application updates and embedding-based memory search disabled. Optional remote model catalog refresh remains blocked by the isolated network policy.",
+    "No browser, MCP, skills, optional native dependencies, streaming or arbitrary code-generation qualification."
+  ],
+  "qualification": {
+    "test": "TestLiveFabric with NEMOCLAW_LIVE_FABRIC_TOOLS=1",
+    "passed": true,
+    "duration_seconds": 219.93,
+    "retained_evidence": ".local/fabric-live-ee67107a-819b-480c-9b67-4c8b8b659443",
+    "file_content_matches": true,
+    "fresh_readback_matches": true,
+    "matched_tool_calls_and_results": [
+      "exec",
+      "read"
+    ],
+    "runtime_id": "runtime-1789246742119-53-2",
+    "gateway_pid": 66,
+    "terminal_invocation_id": "invocation-1789246746791-53-5",
+    "read_file_invocation_id": "invocation-1789246868676-53-10",
+    "terminal_output_sha256": "b8b07019c870b7fe4107def8973c025dacd1020d27ead98a1671bffa03d3d51f",
+    "requests": [
+      {
+        "status": "succeeded",
+        "runtime_id": "runtime-1789246742119-53-2",
+        "invocation_id": "invocation-1789246746791-53-5",
+        "gateway_pid": 66,
+        "session_key": "agent:main:fabric-runtime-1789246742119-53-2",
+        "response": "b8b07019c870b7fe4107def8973c025dacd1020d27ead98a1671bffa03d3d51f",
+        "tool_calls": [
+          {
+            "id": "call_088fljsg",
+            "name": "exec"
+          }
+        ],
+        "tool_results": [
+          {
+            "id": "call_088fljsg",
+            "content": "/bin/bash: 1: cannot create /proc/self/oom_score_adj: Permission denied\nb8b07019c870b7fe4107def8973c025dacd1020d27ead98a1671bffa03d3d51f",
+            "is_error": false
+          }
+        ]
+      },
+      {
+        "status": "succeeded",
+        "runtime_id": "runtime-1789246742119-53-2",
+        "invocation_id": "invocation-1789246868676-53-10",
+        "gateway_pid": 66,
+        "session_key": "agent:main:fabric-runtime-1789246742119-53-2",
+        "response": "readback-c1e10646-b86b-44d0-949d-23c153af8704",
+        "tool_calls": [
+          {
+            "id": "call_088fljsg",
+            "name": "exec"
+          },
+          {
+            "id": "call_umu2b9gk",
+            "name": "read"
+          }
+        ],
+        "tool_results": [
+          {
+            "id": "call_088fljsg",
+            "content": "/bin/bash: 1: cannot create /proc/self/oom_score_adj: Permission denied\nb8b07019c870b7fe4107def8973c025dacd1020d27ead98a1671bffa03d3d51f",
+            "is_error": false
+          },
+          {
+            "id": "call_umu2b9gk",
+            "content": "readback-c1e10646-b86b-44d0-949d-23c153af8704",
+            "is_error": false
+          }
+        ]
+      }
+    ],
+    "unchanged_apply_changes": [],
+    "export_reapply_changes": [],
+    "resource_ids_and_tool_file_preserved": true,
+    "cleanup": {
+      "outcome": "destroyed",
+      "changes": [
+        {
+          "resource": "nemoclaw_provider.inference",
+          "actions": [
+            "delete"
+          ]
+        },
+        {
+          "resource": "nemoclaw_route.primary",
+          "actions": [
+            "delete"
+          ]
+        },
+        {
+          "resource": "nemoclaw_sandbox.agent",
+          "actions": [
+            "delete"
+          ]
+        }
+      ],
+      "retained": [
+        "nemoclaw_workspace.deployment"
+      ]
+    }
+  },
+  "checks": [
+    "gofmt",
+    "go test ./...",
+    "go vet ./...",
+    "go vet -tags=live ./internal/engine",
+    "full native provider integration suite: 43.810s",
+    "focused native Fabric/legacy OpenClaw integration tests after the final bundle rebuild: 8.844s",
+    "3 local adapter protocol tests in the native OpenClaw image"
+  ],
+  "test_prerequisites_cleanup": {
+    "gateway": "stopped",
+    "ollama_container": "removed",
+    "docker_network": "removed",
+    "model_cache_and_gateway_database": "retained under .local/fabric-runtime"
+  }
+}

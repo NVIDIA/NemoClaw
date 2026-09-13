@@ -12,6 +12,12 @@ For Hermes, build with `python3 image/fabric/build.py --harness hermes` and copy
 `examples/fabric-hermes.yaml`. Each harness has its own image tag and dependency
 lock. The Hermes source revision and archive checksum are pinned in the builder;
 its editable install is performed offline using the full source checkout.
+For OpenClaw through Fabric, build with
+`python3 image/fabric/build.py --harness openclaw` and copy
+`examples/fabric-openclaw.yaml`. The image combines the pinned OpenClaw application
+and Node binary with Fabric's Python runtime. Its local prototype adapter owns an
+OpenClaw gateway; it is not an upstream Fabric adapter. Cron, heartbeat and update
+jobs are disabled, memory indexing is disabled, and the gateway binds only inside the sandbox on loopback.
 The samples use ports 17681 and 11446; adjust them to your chosen test topology.
 
 The retained Linux ARM64 test used the pinned Ollama image below, Qwen3 1.7B,
@@ -27,14 +33,19 @@ NEMOCLAW_LIVE_FABRIC_CONFIG="$(pwd)/deployment.yaml" \
 ```
 
 This creates a fresh deployment UUID and retains YAML, native OpenTofu state and
-JSON results under `.local/fabric-live-UUID`. It checks actual agent replies,
-unchanged apply, export/reapply, and identical Fabric runtime IDs with distinct
-invocation IDs. On success it destroys only its sandbox, route and provider;
-the workspace, external gateway and inference service remain. Failure retains
-the deployment for inspection. The deterministic `TestFabricDeploymentAndInvocationBoundary`
-test runs for both harnesses and separately checks arbitrary prompt transport,
-immutable harness selection, failure without replay and
-refusal to invoke drifted configuration; its gateway/exec responses are fixtures.
+results under `.local/fabric-live-UUID`. It checks unchanged apply, export/reapply,
+and stable hosted runtime/resource identities. OpenClaw is accessed through its
+native CLI over OpenShell exec; native settings are changed before reconciliation
+and verified afterward, followed by a real agent reply. Deep Agents/Hermes receive
+an independent one-shot smoke request through the upstream Fabric SDK, not an
+attachment to the hosted runtime. The private probe has no invocation interface.
+The previous `NEMOCLAW_LIVE_FABRIC_TOOLS` mode is retired with the NemoClaw invocation
+API; its historical tool evidence remains recorded in `VALIDATION.md`.
+
+On success the test removes its sandbox, route and provider. Failure retains the
+deployment for inspection. `TestFabricDeploymentBoundary` runs through native
+OpenTofu/provider processes with gateway fixtures, checks immutable harness choice
+and configuration observations, and rejects the retired runtime commands.
 
 The runtime must use the pinned image from the current build. Rebuilding a local
 tag can remove an older digest from the engine; do not rebuild the tag while a
@@ -265,3 +276,13 @@ checking readiness and reports failure without recreating it. The initial
 experiment required a controlled offline repair; fresh creation with the corrected
 layout passed without repairs. This is recorded in `VALIDATION.md`, and is not
 an automatic recovery feature.
+
+## OpenClaw native messaging fixture
+
+Run `python3 image/fabric/build.py --harness openclaw`, then
+`python3 tools/openclaw-native-experiment.py`. Two disposable Docker containers
+run the real Fabric/OpenClaw processes with `--network none`. Local TLS fixtures
+supply Telegram and model responses; no external messages are sent. The test uses
+only native OpenClaw config, pairing, status and gateway commands. Only the native
+state directory and workspace survive recreation. See
+[NATIVE_MESSAGING.md](NATIVE_MESSAGING.md) for the full test and limits.

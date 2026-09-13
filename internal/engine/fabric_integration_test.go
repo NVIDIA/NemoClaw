@@ -56,13 +56,13 @@ func TestExistingOpenClawStateDefaultsRuntimeWithoutReplacement(t *testing.T) {
 	}
 }
 
-func TestFabricDeploymentAndInvocationBoundary(t *testing.T) {
-	for _, harness := range []string{"deepagents", "hermes"} {
-		t.Run(harness, func(t *testing.T) { testFabricDeploymentAndInvocationBoundary(t, harness) })
+func TestFabricDeploymentBoundary(t *testing.T) {
+	for _, harness := range []string{"deepagents", "hermes", "openclaw"} {
+		t.Run(harness, func(t *testing.T) { testFabricDeploymentBoundary(t, harness) })
 	}
 }
 
-func testFabricDeploymentAndInvocationBoundary(t *testing.T, harness string) {
+func testFabricDeploymentBoundary(t *testing.T, harness string) {
 	e, f, d, out := setup(t)
 	d.Spec.Sandboxes[0].Agents[0].Type = "fabric"
 	d.Spec.Sandboxes[0].Agents[0].Harness = harness
@@ -75,20 +75,6 @@ func testFabricDeploymentAndInvocationBoundary(t *testing.T, harness string) {
 	if sandbox.Metadata.Labels[oshell.AgentRuntimeLabel] != "fabric-"+harness || sandbox.Spec.Command[0] != "/opt/fabric/bin/python" {
 		t.Fatal("did not provision Fabric")
 	}
-	f.fabricResult = `{"status":"succeeded","runtime_id":"runtime-one","invocation_id":"turn-one","output":{"response":"hello"}}`
-	f.mu.Unlock()
-	out.Reset()
-	prompt := "quotes ' \" and $(must-not-execute)\nsecond line"
-	if err := e.Run(t.Context(), "invoke", strings.NewReader(prompt)); err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(out.String(), "runtime-one") {
-		t.Fatal("lost Fabric result")
-	}
-	f.mu.Lock()
-	if len(f.fabricInputs) != 1 || f.fabricInputs[0] != prompt {
-		t.Fatal("prompt changed or request repeated")
-	}
 	f.mu.Unlock()
 	out.Reset()
 	if err := invoke(t, e, "apply", d); err != nil {
@@ -98,7 +84,7 @@ func testFabricDeploymentAndInvocationBoundary(t *testing.T, harness string) {
 		t.Fatal("unchanged apply mutated deployment")
 	}
 	f.mu.Lock()
-	if f.sandboxes[d.Workspace()+"/assistant"].Metadata.Id != id || len(f.fabricInputs) != 1 {
+	if f.sandboxes[d.Workspace()+"/assistant"].Metadata.Id != id {
 		t.Fatal("reapply replaced sandbox or invoked conversation")
 	}
 	f.mu.Unlock()
@@ -111,32 +97,23 @@ func testFabricDeploymentAndInvocationBoundary(t *testing.T, harness string) {
 		t.Fatal("Fabric export changed config", err)
 	}
 	// Harness selection is immutable: ordinary apply cannot discard conversation state.
-	d.Spec.Sandboxes[0].Agents[0].Harness = map[string]string{"hermes": "deepagents", "deepagents": "hermes"}[harness]
+	d.Spec.Sandboxes[0].Agents[0].Harness = map[string]string{"hermes": "deepagents", "deepagents": "hermes", "openclaw": "hermes"}[harness]
 	effects := f.count()
 	if err := invoke(t, e, "apply", d); err == nil || f.count() != effects {
 		t.Fatal("harness switch permitted replacement or other effects")
 	}
 	d.Spec.Sandboxes[0].Agents[0].Harness = harness
-	// A failing normalized result reaches the caller without automatic replay.
+	// Configuration drift must still block reconciliation/export without runtime APIs.
 	f.mu.Lock()
-	f.fabricResult = `{"status":"failed","runtime_id":"runtime-one","invocation_id":"turn-two","error":{"code":"failure"}}`
-	f.mu.Unlock()
-	out.Reset()
-	if err := e.Run(t.Context(), "invoke", strings.NewReader("fail")); err == nil || !strings.Contains(out.String(), "failure") {
-		t.Fatal("failed invocation lost its result or reported success")
-	}
-	f.mu.Lock()
-	if len(f.fabricInputs) != 2 {
-		t.Fatal("failed invocation retried")
-	}
 	sandbox.Spec.Environment["OPENAI_API_KEY"] = "changed"
 	f.mu.Unlock()
-	if err := e.Run(t.Context(), "invoke", strings.NewReader("do not run")); err == nil {
-		t.Fatal("invoked a drifted sandbox")
+	out.Reset()
+	if err := invoke(t, e, "export", d); err == nil || out.Len() != 0 {
+		t.Fatal("export accepted a drifted sandbox")
 	}
-	f.mu.Lock()
-	if len(f.fabricInputs) != 2 {
-		t.Fatal("submitted request after failed observation")
+	for _, operation := range []string{"invoke", "channels"} {
+		if err := e.Run(t.Context(), operation, strings.NewReader("")); err == nil {
+			t.Fatal("retired runtime command accepted", operation)
+		}
 	}
-	f.mu.Unlock()
 }

@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""One sandbox-owned Fabric runtime; requests arrive only over a local Unix socket."""
+"""Start one sandbox-owned Fabric runtime and expose a private readiness probe."""
 import asyncio
 import json
 import os
@@ -15,16 +15,21 @@ RESULT_LIMIT = 4 * 1024 * 1024
 
 def configuration(name, harness="deepagents"):
     adapter = {"deepagents": "nvidia.fabric.langchain.deepagents",
-               "hermes": "nvidia.fabric.hermes"}[harness]
+               "hermes": "nvidia.fabric.hermes",
+               "openclaw": "nemoclaw.local.openclaw"}[harness]
     return {
+        **({"discovery": {"local_paths": ["/opt/nemoclaw/openclaw.fabric-adapter.json"]}}
+           if harness == "openclaw" else {}),
         "metadata": {"name": name},
-        "harness": {"adapter_id": adapter},
+        "harness": {"adapter_id": adapter,
+                    **({"settings": {"agent_name": name}} if harness == "openclaw" else {})},
         "models": {"default": {
             "provider": "openai", "model": "primary",
             "base_url": "https://inference.local/v1", "api_key_env": "OPENAI_API_KEY",
         }},
         "environment": {"workspace": "/sandbox/workspace"},
-        "runtime": {"max_turns": 8, "timeout_seconds": 300, "artifacts": "/sandbox/artifacts"},
+        "runtime": {**({"max_turns": 8} if harness != "openclaw" else {}),
+                    "timeout_seconds": 300, "artifacts": "/sandbox/artifacts"},
     }
 
 
@@ -37,26 +42,14 @@ async def serve():
     config = configuration(os.environ["NEMOCLAW_AGENT_NAME"],
                            os.environ.get("NEMOCLAW_FABRIC_HARNESS", "deepagents"))
     runtime = await Fabric().start_runtime(FabricConfig.model_validate(config), base_dir="/sandbox")
-    busy = False
 
     async def handle(reader, writer):
-        nonlocal busy
         try:
             raw = await asyncio.wait_for(reader.readline(), 10)
             request = json.loads(raw)
             if request == {"operation": "check"}:
                 response = {"config": config, "runtime_id": runtime.runtime_id,
                             "ready": runtime.status == RuntimeStatus.ACTIVE}
-            elif (isinstance(request, dict) and set(request) == {"operation", "input"}
-                  and request["operation"] == "invoke" and isinstance(request["input"], str)
-                  and 0 < len(request["input"].encode()) <= 65536):
-                if busy:
-                    raise ValueError("runtime is busy; request was not submitted")
-                busy = True
-                try:
-                    response = (await runtime.invoke(input=request["input"])).to_mapping()
-                finally:
-                    busy = False
             else:
                 raise ValueError("invalid request")
             encoded = json.dumps(response).encode() + b"\n"
@@ -89,12 +82,14 @@ async def client(operation, argument, harness="deepagents"):
     reader, writer = await asyncio.open_unix_connection(SOCKET, limit=RESULT_LIMIT)
     try:
         request = {"operation": operation}
-        if operation == "invoke":
-            request["input"] = argument
         writer.write(json.dumps(request).encode() + b"\n")
         await writer.drain()
         result = json.loads(await asyncio.wait_for(reader.readline(), 320))
         if operation == "check":
+            if harness == "openclaw":
+                from openclaw_adapter import healthy
+                if not await asyncio.to_thread(healthy, argument, result.get("runtime_id", "")):
+                    return 2
             return 0 if (result.get("ready") and result.get("runtime_id")
                          and result.get("config") == configuration(argument, harness)) else 2
         print(json.dumps(result))
@@ -107,9 +102,9 @@ async def client(operation, argument, harness="deepagents"):
 if __name__ == "__main__":
     if len(sys.argv) == 2 and sys.argv[1] == "serve":
         asyncio.run(serve())
-    elif len(sys.argv) == 3 and sys.argv[1] in ("invoke", "check"):
-        sys.exit(asyncio.run(client(sys.argv[1], sys.argv[2])))
-    elif len(sys.argv) == 4 and sys.argv[1] == "check" and sys.argv[3] == "hermes":
-        sys.exit(asyncio.run(client("check", sys.argv[2], "hermes")))
+    elif len(sys.argv) == 3 and sys.argv[1] == "check":
+        sys.exit(asyncio.run(client("check", sys.argv[2])))
+    elif len(sys.argv) == 4 and sys.argv[1] == "check" and sys.argv[3] in ("hermes", "openclaw"):
+        sys.exit(asyncio.run(client("check", sys.argv[2], sys.argv[3])))
     else:
-        sys.exit("usage: fabric.py serve | check NAME [hermes] | invoke PROMPT")
+        sys.exit("usage: fabric.py serve | check NAME [hermes|openclaw]")

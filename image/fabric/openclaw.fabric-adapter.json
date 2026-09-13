@@ -1,0 +1,27 @@
+{
+  "contract_version": "fabric.adapter/v1alpha2",
+  "adapter_id": "nemoclaw.local.openclaw",
+  "adapter_kind": "python",
+  "runner": {
+    "module": "openclaw_adapter"
+  },
+  "settings_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "agent_name": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9-]*$"
+      }
+    },
+    "required": [
+      "agent_name"
+    ]
+  },
+  "config": {
+    "accepts": [
+      "models",
+      "models.base_url"
+    ]
+  }
+}

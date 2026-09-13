@@ -1,0 +1,186 @@
+{
+  "date": "2026-09-12",
+  "implementation_commit": "a489c74f44",
+  "platform": "linux_arm64",
+  "fabric_revision": "51a28c1aefec56abd877070b6973d0a32a1e3003",
+  "hermes_revision": "29112bef099274229cadff79cdff7bf7b99c4b77",
+  "image": "nc-prototype-fabric@sha256:22e0c2ddf37b8ee46c89341af7fd26f913072309630924038b62ad220dff0d40",
+  "openshell": "0.0.116",
+  "inference": "Ollama 0.34.0 on DGX Spark GPU",
+  "runs": [
+    {
+      "model": "qwen3:1.7b",
+      "scenario": "open-ended command generation after chat",
+      "passed": false,
+      "duration_seconds": 62.77,
+      "retained_evidence": ".local/fabric-live-042f6203-2640-44c4-8d53-230aad0871e6",
+      "runtime_id": "runtime-1789242621119-53-2",
+      "invocation_status": "succeeded",
+      "terminal_tool_results": [
+        {
+          "id": "call_k8b3mypa",
+          "content": "{\"error\": \"notify only applies to background commands (foreground results return directly). Either drop notify, or run as terminal(command=..., background=true, notify=...).\"}"
+        },
+        {
+          "id": "call_ux1azbgd",
+          "content": "{\"output\": \"Background process started\", \"session_id\": \"proc_1a02da9f5c70\", \"pid\": 369, \"exit_code\": 0, \"error\": null, \"watch_patterns\": [\"/sandbox/workspace/tool-output.txt\"]}"
+        }
+      ],
+      "terminal_effect_matches": false,
+      "cleanup": {
+        "outcome": "destroyed",
+        "changes": [
+          {
+            "resource": "nemoclaw_provider.inference",
+            "actions": [
+              "delete"
+            ]
+          },
+          {
+            "resource": "nemoclaw_route.primary",
+            "actions": [
+              "delete"
+            ]
+          },
+          {
+            "resource": "nemoclaw_sandbox.agent",
+            "actions": [
+              "delete"
+            ]
+          }
+        ],
+        "retained": [
+          "nemoclaw_workspace.deployment"
+        ]
+      }
+    },
+    {
+      "model": "qwen3:1.7b",
+      "scenario": "supplied command in fresh conversation",
+      "passed": false,
+      "duration_seconds": 23.19,
+      "retained_evidence": ".local/fabric-live-3ba29596-20bd-4a51-b93b-f719e770e283",
+      "runtime_id": "runtime-1789242763038-53-2",
+      "invocation_status": "succeeded",
+      "terminal_tool_results": [
+        {
+          "id": "call_rxs5msmw",
+          "content": "{\"output\": \"3609f76f031853d55e8b3841f333b29ccdddb1748b98fadd41ed64b49b9c25f8\", \"exit_code\": 0, \"error\": null}"
+        }
+      ],
+      "terminal_effect_matches": true,
+      "terminal_output_sha256": "3609f76f031853d55e8b3841f333b29ccdddb1748b98fadd41ed64b49b9c25f8",
+      "read_file_tool_results": [
+        {
+          "id": "call_g70yhrrv",
+          "content": "{\"content\": \"1|readback-9d22cedc-5ddd-4951-b36b-0d2054bb5e9c\", \"total_lines\": 0, \"file_size\": 45, \"truncated\": false, \"is_binary\": false, \"is_image\": false}"
+        }
+      ],
+      "read_file_final_response": "The file `/sandbox/workspace/tool-output.txt` contains 0 lines of text and is 45 bytes in size. No visible content was returned due to truncation or emptiness. The file is not binary/image, and its content is fully preserved in the system.",
+      "read_file_final_response_matches": false,
+      "cleanup": {
+        "outcome": "destroyed",
+        "changes": [
+          {
+            "resource": "nemoclaw_provider.inference",
+            "actions": [
+              "delete"
+            ]
+          },
+          {
+            "resource": "nemoclaw_route.primary",
+            "actions": [
+              "delete"
+            ]
+          },
+          {
+            "resource": "nemoclaw_sandbox.agent",
+            "actions": [
+              "delete"
+            ]
+          }
+        ],
+        "retained": [
+          "nemoclaw_workspace.deployment"
+        ]
+      },
+      "read_file_tool_content_matches": true
+    },
+    {
+      "model": "qwen3:4b",
+      "scenario": "supplied command in fresh conversation; identical to the second 1.7B run",
+      "passed": true,
+      "duration_seconds": 208.04,
+      "retained_evidence": ".local/fabric-live-447044ed-fd20-4d10-8fb6-78c947261a35",
+      "file_content_matches": true,
+      "fresh_readback_matches": true,
+      "matched_tool_calls_and_results": [
+        "terminal",
+        "read_file"
+      ],
+      "runtime_id": "runtime-1789243031691-52-2",
+      "terminal_invocation_id": "invocation-1789243035240-52-5",
+      "read_file_invocation_id": "invocation-1789243167228-52-9",
+      "terminal_output_sha256": "cf7036fad2f5841c8d963d2799149430ee4a50b387508fbe471a30eea962d240",
+      "terminal_final_response": "cf7036fad2f5841c8d963d2799149430ee4a50b387508fbe471a30eea962d240",
+      "read_file_final_response": "1|readback-64837b32-8259-4bf4-a694-0aeb5090\nreadback-64837b32-8259-4bf4-a694-0aeb5090a2a8",
+      "read_file_tool_result": "{\"content\": \"1|readback-64837b32-8259-4bf4-a694-0aeb5090a2a8\", \"total_lines\": 0, \"file_size\": 45, \"truncated\": false, \"is_binary\": false, \"is_image\": false}",
+      "cleanup": {
+        "outcome": "destroyed",
+        "changes": [
+          {
+            "resource": "nemoclaw_provider.inference",
+            "actions": [
+              "delete"
+            ]
+          },
+          {
+            "resource": "nemoclaw_route.primary",
+            "actions": [
+              "delete"
+            ]
+          },
+          {
+            "resource": "nemoclaw_sandbox.agent",
+            "actions": [
+              "delete"
+            ]
+          }
+        ],
+        "retained": [
+          "nemoclaw_workspace.deployment"
+        ]
+      }
+    }
+  ],
+  "findings": [
+    "A succeeded Fabric invocation does not guarantee that the requested task succeeded; independent effect checks are necessary.",
+    "Qwen3 1.7B generated invalid terminal arguments and malformed code in the open-ended task.",
+    "With supplied code in a fresh conversation, Qwen3 1.7B completed the terminal task and returned the independently verified SHA256.",
+    "Hermes read_file returned the correct hidden content but total_lines=0 for a nonempty file without a trailing newline. Pinned tools/file_operations.py computes total_lines with wc -l.",
+    "Qwen3 1.7B misinterpreted that read_file result and incorrectly reported no visible content.",
+    "Qwen3 4B passed the unchanged supplied-command test, including recovery of the hidden file content despite total_lines=0 metadata. Its final answer included extra partial text as well as the complete challenge; the test requires the complete challenge to be present, not exact formatting."
+  ],
+  "model_digests": {
+    "qwen3:4b": "359d7dd4bcdab3d86b87d73ac27966f4dbb9f5efdfcc75d34a8764a09474fae7",
+    "qwen3:1.7b": "8f68893c685c3ddff2aa3fffce2aa60a30bb2da65ca488b61fff134a4d1730e7"
+  },
+  "bundle_manifest_sha256": "ca66c6eeac62877d35ab757373dbdf469aafa45d9175a9aff09093a998ae9c3b",
+  "scope": [
+    "Native Linux ARM64 OpenShell/Fabric/Hermes terminal and read_file tools.",
+    "Supplied-code execution, independently verified file transformation/checksum, and reading new hidden file content in the same runtime.",
+    "No qualification of arbitrary code generation, optional tools, browser, MCP, skills or other platforms."
+  ],
+  "checks": [
+    "gofmt",
+    "go vet -tags=live ./internal/engine",
+    "native bundle rebuilt before each changed-test run",
+    "TestLiveFabric with NEMOCLAW_LIVE_FABRIC_TOOLS=1; Qwen3 4B pass"
+  ],
+  "test_prerequisites_cleanup": {
+    "gateway": "stopped",
+    "ollama_container": "removed",
+    "docker_network": "removed",
+    "model_cache_and_gateway_database": "retained under .local/fabric-runtime"
+  }
+}

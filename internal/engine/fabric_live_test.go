@@ -7,19 +7,22 @@ package engine
 
 import (
 	"bytes"
+	"context"
 	"encoding/json/v2"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 	"uuid"
 
 	"github.com/NVIDIA/NemoClaw/internal/config"
+	oshell "github.com/NVIDIA/NemoClaw/internal/openshell"
+	v1 "github.com/NVIDIA/OpenShell/sdk/go/openshell/v1"
 )
 
-// This test executes a real Fabric adapter and real inference in OpenShell.
-// Success removes only its sandbox, route and provider; failure retains evidence.
+// Provisioning is exercised through NemoClaw. Runtime requests use native interfaces.
 func TestLiveFabric(t *testing.T) {
 	file := os.Getenv("NEMOCLAW_LIVE_FABRIC_CONFIG")
 	if file == "" {
@@ -61,39 +64,72 @@ func TestLiveFabric(t *testing.T) {
 	}
 	out := &bytes.Buffer{}
 	e := &Engine{StateDir: state, BundleDir: bundle, Output: out}
+	save := func(name string, data []byte) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(state, name), data, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
 	run := func(operation string, input []byte, evidence string) {
 		t.Helper()
 		out.Reset()
 		err := e.Run(t.Context(), operation, bytes.NewReader(input))
-		if writeErr := os.WriteFile(filepath.Join(state, evidence), out.Bytes(), 0600); writeErr != nil {
-			t.Fatal(writeErr)
-		}
+		save(evidence, out.Bytes())
 		if err != nil {
 			t.Fatal(err)
 		}
 	}
 	run("apply", b, "apply.json")
-	ids, err := e.stateIDs()
+	c, err := oshell.Connect(d.Spec.Gateway)
 	if err != nil {
 		t.Fatal(err)
 	}
-	run("invoke", []byte("Reply with exactly the word FOUR."), "first-result.json")
-	var first struct {
-		RuntimeID    string `json:"runtime_id"`
-		InvocationID string `json:"invocation_id"`
-		Output       struct {
-			Response string `json:"response"`
-			Harness  string `json:"harness"`
-		} `json:"output"`
+	defer c.Close()
+	exec := func(command []string) []byte {
+		t.Helper()
+		ctx, cancel := context.WithTimeout(t.Context(), 6*time.Minute)
+		defer cancel()
+		r, err := c.Exec().Run(ctx, d.Workspace(), d.Spec.Sandboxes[0].Name, command, v1.ExecOptions{})
+		if err != nil || r.ExitCode != 0 {
+			t.Fatal("native runtime command failed", err, r.ExitCode, string(r.Stderr), string(r.Stdout))
+		}
+		return r.Stdout
 	}
-	if err := json.Unmarshal(out.Bytes(), &first); err != nil || first.RuntimeID == "" || first.Output.Harness != d.Spec.Sandboxes[0].Agents[0].Harness || !strings.Contains(strings.ToUpper(first.Output.Response), "FOUR") {
-		t.Fatal("no actual expected agent response", err)
+	// The private probe has no invocation API. It only identifies the hosted runtime.
+	probe := func() string {
+		t.Helper()
+		result := exec([]string{"/opt/fabric/bin/python", "-c", `import socket,json; s=socket.socket(socket.AF_UNIX); s.connect('/sandbox/fabric.sock'); s.sendall(b'{"operation":"check"}\n'); print(s.makefile().readline())`})
+		var response struct {
+			RuntimeID string `json:"runtime_id"`
+			Ready     bool   `json:"ready"`
+		}
+		if err := json.Unmarshal(result, &response); err != nil || !response.Ready || response.RuntimeID == "" {
+			t.Fatal("missing hosted runtime identity", err)
+		}
+		return response.RuntimeID
+	}
+	agent := d.Spec.Sandboxes[0].Agents[0]
+	if agent.Harness == "openclaw" {
+		save("native-config-set.txt", exec([]string{"/usr/local/bin/openclaw", "config", "set", "--strict-json", "session.dmScope", `"per-channel-peer"`}))
+		save("native-channel-disable.txt", exec([]string{"/usr/local/bin/openclaw", "config", "set", "--strict-json", "channels.telegram.enabled", "false"}))
+	}
+	hostID := probe()
+	ids, err := e.stateIDs()
+	if err != nil {
+		t.Fatal(err)
 	}
 	run("apply", b, "unchanged-apply.json")
 	var result Result
 	if err := json.Unmarshal(out.Bytes(), &result); err != nil || len(result.Changes) != 0 {
 		t.Fatal("unchanged apply changed resources", err)
 	}
+	run("export", nil, "export.yaml")
+	exported := bytes.Clone(out.Bytes())
+	parsed, err := config.Parse(bytes.NewReader(exported))
+	if err != nil || parsed.Digest() != d.Digest() {
+		t.Fatal("export lost Fabric configuration", err)
+	}
+	run("apply", exported, "export-reapply.json")
 	after, err := e.stateIDs()
 	if err != nil {
 		t.Fatal(err)
@@ -103,20 +139,32 @@ func TestLiveFabric(t *testing.T) {
 			t.Fatal("resource identity changed", address)
 		}
 	}
-	run("export", nil, "export.yaml")
-	exported := bytes.Clone(out.Bytes())
-	parsed, err := config.Parse(bytes.NewReader(exported))
-	if err != nil || parsed.Digest() != d.Digest() {
-		t.Fatal("export lost Fabric configuration", err)
+	if probe() != hostID {
+		t.Fatal("reconciliation restarted Fabric")
 	}
-	run("apply", exported, "export-reapply.json")
-	run("invoke", []byte("What is two plus two? Reply with the English word only."), "second-result.json")
-	var second struct {
-		RuntimeID    string `json:"runtime_id"`
-		InvocationID string `json:"invocation_id"`
+	var response []byte
+	if agent.Harness == "openclaw" {
+		nativeSetting := exec([]string{"/usr/local/bin/openclaw", "config", "get", "session.dmScope"})
+		save("native-config-after.txt", nativeSetting)
+		if !strings.Contains(string(nativeSetting), "per-channel-peer") {
+			t.Fatal("reconciliation lost native settings")
+		}
+		params, err := json.Marshal(map[string]any{"agentId": agent.Name, "sessionKey": "agent:" + agent.Name + ":native-live", "message": "Reply with exactly the word FOUR.", "idempotencyKey": uuid.NewV4().String(), "deliver": false})
+		if err != nil {
+			t.Fatal(err)
+		}
+		response = exec([]string{"/usr/local/bin/openclaw", "gateway", "call", "agent", "--params", string(params), "--expect-final", "--json", "--timeout", "280000"})
+		save("native-agent-result.json", response)
+	} else {
+		// An independent one-shot SDK smoke test, not an attachment to the hosted runtime.
+		response = exec([]string{"/opt/fabric/bin/python", "-c", `import sys,asyncio,json; sys.path.insert(0,'/opt/nemoclaw'); from fabric import configuration; from nemo_fabric import Fabric,FabricConfig; c=configuration(sys.argv[1],sys.argv[2]); c['runtime']['artifacts']='/sandbox/sdk-smoke'; print(json.dumps(asyncio.run(Fabric().run(FabricConfig.model_validate(c),input='Reply with exactly the word FOUR.',base_dir='/sandbox')).to_mapping()))`, agent.Name, agent.Harness})
+		save("sdk-smoke-result.json", response)
 	}
-	if err := json.Unmarshal(out.Bytes(), &second); err != nil || second.RuntimeID != first.RuntimeID || second.InvocationID == first.InvocationID {
-		t.Fatal("Fabric runtime was restarted or invocation identity reused", err)
+	if !strings.Contains(strings.ToUpper(string(response)), "FOUR") {
+		t.Fatal("no expected actual agent response")
+	}
+	if probe() != hostID {
+		t.Fatal("native/SDK access replaced hosted runtime")
 	}
 	run("destroy", nil, "destroy.json")
 }

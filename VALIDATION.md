@@ -361,3 +361,125 @@ harnesses, including refusal to replace a harness during ordinary apply. All Go
 unit tests, the full native provider integration suite, and vet passed. This
 qualifies chat and runtime lifecycle; it does not qualify optional tools, tool-use
 accuracy, MCP, skills, streaming or other platforms.
+
+## Hermes tool use, 2026-09-12
+
+[evidence/fabric-hermes-tools-linux-arm64.json](evidence/fabric-hermes-tools-linux-arm64.json)
+records native terminal and `read_file` execution through the committed Hermes
+image. With Qwen3 4B, the opt-in tool scenario passed in 208.04 seconds. The
+terminal tool ran supplied Python against random file contents absent from the
+prompt; OpenShell exec independently verified the exact uppercase output and its
+SHA256. The test then replaced the file with a second hidden value, without a
+trailing newline. Hermes used `read_file` and returned that value. Both requests
+had matching tool-call/result IDs and shared the same Fabric runtime. Teardown
+passed. The assertions verify the exact file bytes, the reported checksum, and
+the presence of the complete readback value; they do not require exact answer
+formatting. The 4B response included partial extra text alongside the full value.
+
+Two Qwen3 1.7B failures are also retained. In an open-ended task following the
+chat scenario, it generated invalid terminal arguments and malformed code; no
+output file existed even though Fabric returned `succeeded`. With supplied code
+in a fresh conversation, it completed the terminal operation correctly. The
+subsequent `read_file` call returned the correct contents, but the model reported
+the file as empty. Hermes's pinned `tools/file_operations.py` uses `wc -l` for
+`total_lines`, yielding zero for this nonempty unterminated line. The larger
+model passed with the same file shape and assertions; no image patch was applied.
+
+This establishes terminal/file tool execution, not general task reliability or
+arbitrary code-generation quality. Optional tools, browser, MCP, skills and other
+platforms remain unqualified. The reusable test is opt-in with
+`NEMOCLAW_LIVE_FABRIC_TOOLS=1`; see [LOCAL_TEST.md](LOCAL_TEST.md).
+
+## Fabric OpenClaw, 2026-09-12
+
+[evidence/fabric-openclaw-linux-arm64.json](evidence/fabric-openclaw-linux-arm64.json)
+records a local prototype adapter for OpenClaw 2026.9.4. The pinned Fabric source
+has no OpenClaw adapter. Fabric starts this adapter through its persistent
+lifecycle contract; the adapter owns an OpenClaw gateway and one session and uses
+the gateway RPC CLI for turns and history. No local-agent fallback is used.
+
+The final native Linux ARM64 image passed the combined tool/lifecycle scenario
+in 219.93 seconds with Qwen3 4B through OpenShell 0.0.116 and Ollama 0.34.0.
+OpenClaw's `exec` tool transformed hidden random file contents and returned the
+SHA256 verified independently through OpenShell exec. Unchanged apply and
+export/reapply had zero changes and preserved all resource IDs and the file.
+The test then replaced that file with a second hidden value; OpenClaw's `read`
+tool retrieved it. Both turns had matched tool-call/result IDs, one Fabric
+runtime ID, one OpenClaw gateway PID and distinct invocation IDs. Teardown passed.
+Earlier chat and tool runs passed in 57.84 and 166.06 seconds on the preceding
+image, before disabling unsupported embedding-based memory indexing. The evidence
+keeps those image identities distinct from the final qualification.
+
+Startup failures are retained separately: the adapter initially assumed Fabric
+forwarded metadata in its southbound config, and a later memory-search setting
+triggered OpenClaw's configuration migration. Identity now travels through
+validated adapter settings; the generated native configuration uses the current
+`memory.search.enabled` and `tools.exec.mode` keys. Strict readiness checks were
+kept. Failed deployments were explicitly destroyed. Cron, heartbeat, automatic
+application updates and memory indexing are disabled. A nonessential remote model
+catalog refresh is blocked by the isolated policy.
+
+All Go unit tests and vet passed. The full native provider integration suite
+passed, followed by focused Fabric and legacy OpenClaw tests with the final
+bundle. Three adapter tests cover lost-response quarantine without replay,
+nonterminal/aborted/error results, and preservation of tool IDs and error flags.
+This qualifies the fixed inference route, local gateway lifecycle and `exec`/`read`
+tools; it does not qualify browser, MCP, skills, arbitrary code generation,
+streaming, optional native dependencies or other platforms.
+
+## Historical: retired Fabric native messaging extension — 2026-09-12 (local date)
+
+The experimental channel contract passed a native Linux ARM64 run using Fabric
+`51a28c1` and OpenClaw 2026.9.4. Image:
+`nc-prototype-fabric@sha256:d8b8b5daab7d4dfea2aeaa24e62847e2102057321e698f843dcd793e548280b8`.
+Evidence: [fabric-openclaw-channels-linux-arm64.json](evidence/fabric-openclaw-channels-linux-arm64.json).
+
+Actual Fabric and OpenClaw processes ran against local TLS Telegram and model
+protocol fixtures with Docker networking disabled. Native enrollment, unauthorized
+sender rejection before inference, two isolated conversations, real tool execution
+with independent file verification, unchanged configuration, exclusive state access,
+and recreation with only declared storage retained passed. Disable prevented new
+model invocations. Invalid credentials produced failed channel status while a
+separate Fabric invocation still succeeded. All experiment containers were removed.
+No external Telegram messages or live inference calls were made.
+
+The test found that OpenClaw needs its workspace retained in addition to channel
+state. Its adapter now declares both generic storage resources. Earlier failures
+and their corrections are retained in the evidence record.
+
+Seven Python protocol/failure tests passed. Focused Go tests and `go vet ./...`
+passed. After rebuilding the native bundle, the new generic channel transport
+integration test and the existing Fabric/legacy launch tests passed through actual
+OpenTofu/provider processes (gateway execution is a fixture).
+
+This is an adapter-boundary proof, not completed deployment messaging support.
+Generic OpenShell resource provisioning, channel YAML/plan/export integration,
+real Telegram delivery, and WhatsApp remain unqualified/unimplemented as detailed
+in [CHANNEL_EXPERIMENT.md](CHANNEL_EXPERIMENT.md).
+
+## Native harness interfaces — 2026-09-12 (local date)
+
+The channel-control extension and NemoClaw `invoke`/`channels` commands are removed.
+Native image:
+`nc-prototype-fabric@sha256:a608340846053d881c3c6b3bdd7541d4f2f53236deaaef8e0b8f44afd8d4e8dd`.
+Evidence: [openclaw-native-interfaces-linux-arm64.json](evidence/openclaw-native-interfaces-linux-arm64.json).
+
+Native Fabric/OpenClaw processes passed the messaging scenarios through OpenClaw's
+own config, pairing, channel-status and gateway CLI commands. Local Telegram/model
+protocol fixtures verified enrollment, unauthorized sender rejection, two isolated
+conversations, real tool effects, preserved native settings, recreation with native
+state/workspace retained, disable and invalid credentials. No channel extension or
+custom client was used; no external messages were sent.
+
+A separate real OpenShell 0.0.116 + Ollama/Qwen3 4B run passed in 42.55 seconds.
+`TestLiveFabric` used OpenShell exec to change native settings before unchanged
+apply and export/reapply. Native settings and resource/runtime identities survived,
+a native gateway agent request returned the expected reply, and teardown passed.
+Evidence is in `.local/fabric-live-6bcf9035-bf93-48e9-93d7-be86a0cc22d5`.
+
+Four Python adapter tests passed, including preservation of native settings and
+rejection of reserved deployment-setting drift. Focused Go unit tests, `go vet`,
+and native OpenTofu/provider integration tests passed after rebuilding the bundle.
+The integration tests also reject the removed runtime commands. Live messaging
+account qualification and generic OpenShell messaging infrastructure remain separate
+from these results; see [NATIVE_MESSAGING.md](NATIVE_MESSAGING.md).

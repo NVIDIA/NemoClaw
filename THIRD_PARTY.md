@@ -10,7 +10,7 @@ respective licenses. `go.mod`, `go.sum`, and `versions.json` identify the inputs
 | OpenTofu | Separate executable | MPL-2.0 |
 | Terraform plugin framework | Provider protocol implementation | MPL-2.0 |
 | OpenShell and its Go SDK | Gateway, isolation, and typed API | Apache-2.0 |
-| OpenClaw | Agent image | MIT |
+| OpenClaw | Direct agent image and local Fabric adapter harness | MIT |
 | NeMo Fabric | Agent runtime, adapter contract, Deep Agents and Hermes adapters | Apache-2.0 |
 | LangChain Deep Agents | Fabric-managed agent harness | MIT |
 | Nous Research Hermes Agent | Fabric-managed agent harness | MIT |

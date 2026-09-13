@@ -14,31 +14,42 @@ No existing NemoClaw source or documentation is copied into this branch.
 
 Authorized locally by cv on 2026-09-12: provision Fabric inside an OpenShell
 sandbox and delegate harness execution to it. The supported adapters are Deep
-Agents and Hermes, using an external gateway and external inference endpoint; managed inference/gateway combinations remain a later slice.
+Agents, Hermes and OpenClaw, using an external gateway and external inference endpoint; managed inference/gateway combinations remain a later slice.
 NemoClaw owns infrastructure, ownership checks, desired state and teardown;
 Fabric owns one persistent harness runtime, ordered invocations and run results.
 The image builds Fabric revision `51a28c1aefec56abd877070b6973d0a32a1e3003`
 from a checksum-verified archive, with locked Python dependencies. This is a
 source build because the published packages lag that revision.
 
-`type: fabric` with `harness: deepagents` or `harness: hermes` selects the immutable
+`type: fabric` with `harness: deepagents`, `harness: hermes` or `harness: openclaw` selects the immutable
 sandbox launch specification. Existing OpenClaw configuration and launch specifications remain
 valid. Changing harness on an established sandbox requires explicit teardown;
-ordinary apply cannot replace it. A Unix socket inside the sandbox exposes the
-Fabric runtime to the OpenShell exec transport used by `nemoclaw invoke`.
-The CLI verifies deployment bindings and observed configuration before invocation.
-It never retries a request whose result is lost. No external listener is added.
+ordinary apply cannot replace it. NemoClaw owns only plan/apply/export/destroy.
+The runtime host exposes a private readiness probe, with no invocation or channel
+control API. Runtime access uses existing Fabric SDK or native harness interfaces;
+OpenShell's existing connection/exec commands provide sandbox access.
 
 Unchanged apply checks the initialized runtime and inference route without adding
 a conversation turn. The live test checks actual agent replies, stable resource
 and runtime identities across unchanged apply and export/reapply, and teardown.
 Fabric artifacts and conversation state stay inside the sandbox and are removed
-with it. There is no session recovery after runtime death, public service API,
-streaming transport, or configurable MCP/skills in this slice.
+with it in the current OpenShell slice. Retained native OpenClaw state and workspace
+support recreation in the Docker experiment; this does not imply OpenShell retained
+storage support. There is no new public Fabric service API or messaging abstraction.
 Hermes uses Fabric's pinned revision `29112bef099274229cadff79cdff7bf7b99c4b77`
 in a separate image. NemoClaw selects the adapter through Fabric configuration;
 only Fabric imports and runs the Hermes harness. The source checkout is retained
 for Hermes's bundled assets. Relay metadata propagation is not configured.
+OpenClaw uses a local prototype adapter; the pinned Fabric source has no such
+adapter. Fabric owns its Python adapter process, and that process starts/stops
+one OpenClaw gateway. The adapter submits gateway RPC calls with an invocation
+idempotency key and a stable session key, waits for the terminal response, and
+normalizes tool history. Uncertain RPC failure stops the gateway and quarantines
+the adapter; no fallback, retry, or restart is attempted. The adapter is limited
+to the fixed OpenShell primary route and timeout-bound SDK turns. Initial native
+configuration disables cron, heartbeat, automatic updates, and memory indexing.
+Subsequent native settings belong to OpenClaw. The adapter preserves the config
+file and checks only deployment-owned gateway/inference/workspace settings.
 The native image recipe is limited to Linux ARM64 with Python 3.13. Keep its live
 evidence distinct from deterministic protocol fixtures and cross-platform builds.
 
@@ -118,3 +129,17 @@ only resources created for this prototype. Interrupted model streams and initial
 volume allocation use deterministic API fixtures. Windows/macOS/Podman runtime
 qualification, real download interruption through OpenTofu, stopped-parent repair,
 adoption, pruning, migration, and the rest of the #10904 schema remain separate work.
+
+## Native messaging interfaces
+
+The earlier `fabric.channels.experimental/v1` experiment is retired. There are
+no NemoClaw invoke/channel commands, adapter channel-control socket, generic channel
+schema, or adapter resource declarations. OpenClaw's native commands handle setup,
+pairing, status, and invocation. Fabric continues to own the gateway process through
+its existing lifecycle contract and our local OpenClaw adapter. No upstream Fabric
+changes or new Fabric client are required.
+
+See [NATIVE_MESSAGING.md](NATIVE_MESSAGING.md) for the tested path and limits.
+Ordinary OpenShell provisioning still needs generic egress, secrets and retained
+storage capabilities for real messaging. Native channel settings themselves remain
+outside the deployment document and stay in the native state directory.

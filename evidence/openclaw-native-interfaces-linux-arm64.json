@@ -1,0 +1,67 @@
+{
+  "image_id": "sha256:a608340846053d881c3c6b3bdd7541d4f2f53236deaaef8e0b8f44afd8d4e8dd",
+  "network": "none",
+  "external_messages": 0,
+  "evidence_directory": "/home/cvillela/.codex/worktrees/91ee/NemoClaw/.local/openclaw-native-10864f71-c151-4705-b358-64386108b935",
+  "phases": [
+    {
+      "phase": "configure",
+      "evidence_type": "native processes; Telegram and inference protocol fixtures; network none",
+      "runtime_id": "runtime-1789264969527-9-2",
+      "unauthorized_blocked": true,
+      "native_pairing": true,
+      "separate_conversations": true,
+      "native_tool_verified": true,
+      "provisioning_check_preserves_native_settings": true,
+      "gateway_pid": 15
+    },
+    {
+      "phase": "recreate",
+      "evidence_type": "native processes; Telegram and inference protocol fixtures; network none",
+      "runtime_id": "runtime-1789264993975-9-2",
+      "recreated_runtime_retains_native_configuration_enrollment_history_workspace": true,
+      "native_disable_blocks_invocation": true,
+      "native_credential_failure_visible": true,
+      "native_agent_independent_of_channel_failure": true
+    }
+  ],
+  "qualification": "Native OpenClaw commands with unchanged upstream Fabric; fixture messaging and separate live OpenShell/inference test",
+  "fabric_revision": "51a28c1aefec56abd877070b6973d0a32a1e3003",
+  "openclaw_version": "2026.9.4",
+  "nemoclaw_commands": [
+    "plan",
+    "apply",
+    "export",
+    "destroy"
+  ],
+  "live_openshell": {
+    "passed": true,
+    "seconds": 42.55,
+    "model": "qwen3:4b",
+    "evidence_directory": "/home/cvillela/.codex/worktrees/91ee/NemoClaw/.local/fabric-live-6bcf9035-bf93-48e9-93d7-be86a0cc22d5",
+    "native_setting_after_reconciliation": "per-channel-peer",
+    "checks": [
+      "native configuration through OpenShell exec",
+      "unchanged apply",
+      "export/reapply",
+      "stable hosted runtime/resource identities",
+      "native settings preserved",
+      "native gateway agent reply",
+      "teardown"
+    ],
+    "channel_delivery_tested": false
+  },
+  "source_sha256": {
+    "image/fabric/openclaw_adapter.py": "8d038ee5e113193546ae0ee352cafcd03ab1ea50bcbb4032aaea249dbbe73eca",
+    "image/fabric/fabric.py": "a87d1f6a919afaccfc7c1bb21fc01f99e9322bd7a8275e0125cc06c06440ca94",
+    "test/openclaw_native_messaging.py": "7e0d5a1c937c56a05cddf663bdb2ce4811f3a04675bb72ff119029d4fd1a8287",
+    "tools/openclaw-native-experiment.py": "5884f1d5a31e2fdc942169f6885ea4d741626647e2f4e1a7cb044bb717d46ff1"
+  },
+  "limits": [
+    "Telegram API and model fixtures in messaging test, not real Telegram delivery",
+    "Ordinary OpenShell messaging egress/secret mounts/retained storage remain outside this slice",
+    "Native configuration is not included in deployment YAML/export",
+    "No uniform messaging or hosted-runtime attachment API for other Fabric adapters"
+  ],
+  "supersedes": "fabric-openclaw-channels-linux-arm64.json"
+}
