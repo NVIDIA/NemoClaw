@@ -163,6 +163,12 @@ describe("npm audit handoff", () => {
           npmArchiveSha256: "0".repeat(64),
           npmIntegrity: `sha512-${Buffer.alloc(64).toString("base64")}`,
           npmVersion: "10.9.4",
+          lockedGraphs: [
+            {
+              id: "temporary-graph",
+              lockSha256: createHash("sha256").update(packageLock).digest("hex"),
+            },
+          ],
         }),
       );
       fs.writeFileSync(
@@ -238,6 +244,12 @@ describe("npm audit handoff", () => {
           npmArchiveSha256: "0".repeat(64),
           npmIntegrity: `sha512-${Buffer.alloc(64).toString("base64")}`,
           npmVersion: "11.18.0",
+          lockedGraphs: [
+            {
+              id: "temporary-graph",
+              lockSha256: createHash("sha256").update(packageLock).digest("hex"),
+            },
+          ],
         }),
       );
       const rejected = spawnSync(process.execPath, verifierArgs, { encoding: "utf8" });

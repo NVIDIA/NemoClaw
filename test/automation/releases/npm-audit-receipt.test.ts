@@ -11,6 +11,7 @@ import {
   createAuditReceipt,
   LEGACY_NPM_AUDIT_RECEIPT_DEADLINE,
   parseAndVerifyAuditReceipt,
+  reviewedLockedGraphSha256s,
   sha256,
 } from "../../../scripts/lib/npm-audit-receipt.mts";
 
@@ -21,6 +22,7 @@ const reviewedNpmIdentity = {
   npmVersion: "10.9.4",
 };
 const inputs = {
+  approvedPackageLockSha256s: [sha256("lock")],
   graphId: "mcporter-runtime",
   reviewedNpmIdentity,
   exceptionPolicy: '{"schemaVersion":1,"exceptions":[]}\n',
@@ -32,7 +34,7 @@ const inputs = {
   registryOrigin: "https://registry.yarnpkg.com",
   now: NOW,
 } as const;
-function receipt(createdAt = NOW) {
+function receipt(createdAt = NOW, packageLock: string | Buffer = inputs.packageLock) {
   return createAuditReceipt({
     acceptedAdvisoryIds: ["GHSA-b", "GHSA-a"],
     blockingAdvisoryIds: [],
@@ -41,7 +43,7 @@ function receipt(createdAt = NOW) {
     graphId: inputs.graphId,
     reviewedNpmIdentity,
     packageJson: inputs.packageJson,
-    packageLock: inputs.packageLock,
+    packageLock,
     rawResponse:
       '{"vulnerabilities":{},"metadata":{"vulnerabilities":{"info":0,"low":0,"moderate":0,"high":0,"critical":0}}}',
     registryOrigin: inputs.registryOrigin,
@@ -50,6 +52,31 @@ function receipt(createdAt = NOW) {
 }
 
 describe("npm audit receipt", () => {
+  it("accepts only lock digests reviewed for the selected graph", () => {
+    expect(
+      reviewedLockedGraphSha256s(
+        JSON.stringify({
+          lockedGraphs: [
+            {
+              id: inputs.graphId,
+              lockSha256: "a".repeat(64),
+              replacement: { lockSha256: "b".repeat(64) },
+            },
+          ],
+        }),
+        inputs.graphId,
+      ),
+    ).toEqual(["a".repeat(64), "b".repeat(64)]);
+
+    const unapprovedLock = "unapproved lock";
+    expect(() =>
+      parseAndVerifyAuditReceipt(canonicalAuditReceipt(receipt(NOW, unapprovedLock)), {
+        ...inputs,
+        packageLock: unapprovedLock,
+      }),
+    ).toThrow(/not a reviewed lock digest/);
+  });
+
   it("canonically binds all receipt inputs and verifies a fresh passing result", () => {
     const parsed = parseAndVerifyAuditReceipt(canonicalAuditReceipt(receipt()), inputs);
     expect(parsed.acceptedAdvisoryIds).toEqual(["GHSA-a", "GHSA-b"]);
@@ -230,7 +257,10 @@ describe("npm audit receipt", () => {
         fs.writeFileSync(path.join(root, "raw.json"), inputs.rawResponse);
         fs.writeFileSync(
           path.join(root, "reviewed-npm-audit.json"),
-          JSON.stringify(reviewedNpmIdentity),
+          JSON.stringify({
+            ...reviewedNpmIdentity,
+            lockedGraphs: [{ id: inputs.graphId, lockSha256: sha256(inputs.packageLock) }],
+          }),
         );
         const auditReceipt = legacy
           ? {

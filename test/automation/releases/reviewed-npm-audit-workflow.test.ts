@@ -469,7 +469,7 @@ describe("trusted npm audit workflow (#5896)", () => {
         path.join(root, "report.provenance.json"),
         JSON.stringify({ run: { startedAt: "2026-01-01T00:00:00.000Z" } }),
       );
-      emitAuditReceipt({
+      const receiptOptions = {
         artifactDirectory: root,
         graphId: "temporary-graph",
         reviewedNpmIdentity: {
@@ -493,6 +493,13 @@ describe("trusted npm audit workflow (#5896)", () => {
           unacceptedBlockingAdvisories: [],
         },
         threshold: "high",
+      } as const;
+      expect(() =>
+        emitAuditReceipt({ ...receiptOptions, expectedLockSha256: "b".repeat(64) }),
+      ).toThrow("temporary-graph receipt lock does not match its reviewed identity");
+      emitAuditReceipt({
+        ...receiptOptions,
+        expectedLockSha256: createHash("sha256").update(packageLock).digest("hex"),
       });
 
       expect(fs.readFileSync(path.join(root, "temporary-graph.package.json"))).toEqual(packageJson);

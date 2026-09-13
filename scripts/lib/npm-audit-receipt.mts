@@ -24,6 +24,7 @@ export const LEGACY_NPM_AUDIT_RECEIPT_DEADLINE = Date.parse("2026-09-18T00:00:00
 export const RECEIPT_LIFETIME_MS = 12 * 60 * 60 * 1000 - 1;
 export const MAX_FUTURE_SKEW_MS = 5 * 60 * 1000;
 const SEVERITIES = new Set(["info", "low", "moderate", "high", "critical"]);
+const SHA256 = /^[0-9a-f]{64}$/;
 const RECEIPT_KEYS = [
   "acceptedAdvisoryIds",
   "argv",
@@ -91,6 +92,52 @@ function exactKeys(
   }
 }
 
+export function reviewedLockedGraphSha256s(contents: string, graphId: string): readonly string[] {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(contents);
+  } catch {
+    throw new Error("npm audit configuration is not valid JSON");
+  }
+  const record =
+    typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : {};
+  const lockedGraphs = record.lockedGraphs;
+  if (!Array.isArray(lockedGraphs)) {
+    throw new Error("npm audit configuration has no reviewed locked graphs");
+  }
+  const matches = lockedGraphs.filter(
+    (candidate) =>
+      typeof candidate === "object" &&
+      candidate !== null &&
+      !Array.isArray(candidate) &&
+      (candidate as Record<string, unknown>).id === graphId,
+  ) as Record<string, unknown>[];
+  if (matches.length !== 1) {
+    throw new Error(`npm audit configuration must contain one reviewed graph for ${graphId}`);
+  }
+  const graph = matches[0]!;
+  const replacement = graph.replacement;
+  if (
+    replacement !== undefined &&
+    (typeof replacement !== "object" || replacement === null || Array.isArray(replacement))
+  ) {
+    throw new Error(`npm audit configuration has invalid reviewed lock digests for ${graphId}`);
+  }
+  const digests = [
+    graph.lockSha256,
+    ...(replacement === undefined ? [] : [(replacement as Record<string, unknown>).lockSha256]),
+  ];
+  if (
+    digests.some((digest) => typeof digest !== "string" || !SHA256.test(digest)) ||
+    new Set(digests).size !== digests.length
+  ) {
+    throw new Error(`npm audit configuration has invalid reviewed lock digests for ${graphId}`);
+  }
+  return digests as string[];
+}
+
 function stringArray(value: unknown, label: string): readonly string[] {
   if (
     !Array.isArray(value) ||
@@ -153,6 +200,7 @@ export function createAuditReceipt(
 export function parseAndVerifyAuditReceipt(
   contents: string,
   expected: Readonly<{
+    approvedPackageLockSha256s: readonly string[];
     graphId: string;
     reviewedNpmIdentity: ReviewedNpmIdentity;
     exceptionPolicy: string | Buffer;
@@ -187,6 +235,13 @@ export function parseAndVerifyAuditReceipt(
   }
   const reviewedNpmIdentity = parseReviewedNpmIdentity(expected.reviewedNpmIdentity);
   if (
+    expected.approvedPackageLockSha256s.length === 0 ||
+    expected.approvedPackageLockSha256s.some((digest) => !SHA256.test(digest)) ||
+    new Set(expected.approvedPackageLockSha256s).size !== expected.approvedPackageLockSha256s.length
+  ) {
+    throw new Error("expected reviewed package lock digests are invalid");
+  }
+  if (
     value.graphId !== expected.graphId ||
     value.npmVersion !== reviewedNpmIdentity.npmVersion ||
     (!isLegacyReceipt &&
@@ -217,6 +272,9 @@ export function parseAndVerifyAuditReceipt(
     ["packageLockSha256", sha256(expected.packageLock)],
   ] as const) {
     if (value[key] !== actual) throw new Error(`receipt ${key} does not match`);
+  }
+  if (!expected.approvedPackageLockSha256s.includes(value.packageLockSha256 as string)) {
+    throw new Error("receipt packageLockSha256 is not a reviewed lock digest");
   }
   if (value.exceptionPolicySha256 !== sha256(expected.exceptionPolicy))
     throw new Error("receipt exceptionPolicySha256 does not match");
@@ -280,11 +338,12 @@ function cli(args: readonly string[]): void {
   const packageLock = fs.readFileSync(values.get("--package-lock")!);
   const rawResponse = fs.readFileSync(values.get("--raw-report")!);
   const exceptionPolicy = fs.readFileSync(values.get("--exceptions")!);
-  const reviewedNpmIdentity = parseReviewedNpmIdentityConfig(
-    fs.readFileSync(values.get("--audit-config")!, "utf8"),
-  );
+  const auditConfig = fs.readFileSync(values.get("--audit-config")!, "utf8");
+  const graphId = values.get("--graph")!;
+  const reviewedNpmIdentity = parseReviewedNpmIdentityConfig(auditConfig);
   parseAndVerifyAuditReceipt(fs.readFileSync(values.get("--receipt")!, "utf8"), {
-    graphId: values.get("--graph")!,
+    approvedPackageLockSha256s: reviewedLockedGraphSha256s(auditConfig, graphId),
+    graphId,
     reviewedNpmIdentity,
     exceptionPolicy,
     severityThreshold: values.get("--threshold")! as AuditReceipt["severityThreshold"],

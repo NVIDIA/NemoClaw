@@ -875,6 +875,7 @@ export function auditMaterializedSourceGraph(
 export function emitAuditReceipt(
   options: Readonly<{
     artifactDirectory: string;
+    expectedLockSha256?: string;
     graphId: string;
     reviewedNpmIdentity: ReviewedNpmIdentity;
     packageJsonFile: string;
@@ -900,6 +901,13 @@ export function emitAuditReceipt(
   if (typeof createdAt !== "string") {
     throw new Error(`${options.graphId} audit provenance lacks evidence creation time`);
   }
+  const packageLock = fs.readFileSync(options.packageLockFile);
+  if (
+    options.expectedLockSha256 !== undefined &&
+    createHash("sha256").update(packageLock).digest("hex") !== options.expectedLockSha256
+  ) {
+    throw new Error(`${options.graphId} receipt lock does not match its reviewed identity`);
+  }
   const receipt = createAuditReceipt({
     acceptedAdvisoryIds: options.result.acceptedAdvisories,
     createdAt: new Date(createdAt),
@@ -910,7 +918,7 @@ export function emitAuditReceipt(
     graphId: options.graphId,
     reviewedNpmIdentity: options.reviewedNpmIdentity,
     packageJson: fs.readFileSync(options.packageJsonFile),
-    packageLock: fs.readFileSync(options.packageLockFile),
+    packageLock,
     rawResponse: fs.readFileSync(options.rawReportFile),
     registryOrigin: options.registryOrigin,
     severityThreshold: options.threshold,
@@ -1039,6 +1047,7 @@ function main(): void {
     config.lockedGraphs.forEach((graph, index) => {
       emitAuditReceipt({
         artifactDirectory,
+        expectedLockSha256: lockedAudits[index]!.identity.lockSha256,
         graphId: graph.id,
         reviewedNpmIdentity: config,
         packageJsonFile: targetRepositoryPath(
