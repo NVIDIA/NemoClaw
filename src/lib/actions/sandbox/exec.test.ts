@@ -1,11 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+
+import { execTimeout, testTimeoutOptions } from "../../../../test/helpers/timeouts";
 
 import {
   withMcpLifecycleLock,
@@ -322,86 +325,108 @@ describe("execSandbox scope-upgrade hint wiring (#9744)", () => {
   });
 });
 
-it("dispatches under authority and completes outside the released lock context (#11647)", async () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-launch-exec-"));
-  const stateDir = path.join(home, "state");
-  const lockOptions = { stateDir };
-  const sandboxName = "launch-exec";
-  let endSession: () => void = () => {};
-  const ended = new Promise<void>((resolve) => {
-    endSession = resolve;
-  });
-  const release = vi.fn();
-  const cleanup = vi.fn(() =>
-    withMcpLifecycleLockSync(
-      sandboxName,
-      () => {
-        expect(isMcpLifecycleLockHeld(sandboxName, stateDir)).toBe(true);
-        return { applies: true as const, ok: true, issues: [] };
-      },
-      lockOptions,
-    ),
-  );
-  let dispatched = false;
-  try {
-    const finish = await withPortableHostFence(home, () =>
-      withMcpLifecycleLock(
-        sandboxName,
-        () =>
-          startSandboxExec(
-            sandboxName,
-            ["bash", "-lc", "openclaw tui"],
-            { tty: true, stdin: true, timeoutSeconds: 0 },
-            {
-              selectGateway: () => ({ outcome: "unregistered", gatewayName: null }),
-              commandExecutor: {
-                probeDirectory: async () => ({ state: "present" }),
-                runStreaming: async () => {
-                  expect(isMcpLifecycleLockHeld(sandboxName, stateDir)).toBe(true);
-                  expect(fs.existsSync(portableHostFencePath(home))).toBe(true);
-                  dispatched = true;
-                  await ended;
-                  return { outcome: { kind: "completed", exitCode: 0 }, release };
-                },
-              },
-              cleanupDeps: {
-                getSandbox: () => {
-                  expect(isMcpLifecycleLockHeld(sandboxName, stateDir)).toBe(false);
-                  expect(fs.existsSync(portableHostFencePath(home))).toBe(false);
-                  return { agent: "openclaw" };
-                },
-                inspectMutableConfigPerms: cleanup,
-                repairMutableConfigPerms: () => {
-                  throw new Error("healthy config needs no repair");
-                },
-              },
-              exit: (code) => {
-                throw new Error(`exit:${code}`);
-              },
-            },
-          ),
-        lockOptions,
-      ),
-    );
-    expect(dispatched).toBe(true);
-    expect(cleanup).not.toHaveBeenCalled();
-    let contenderEntered = false;
-    await withPortableHostFence(home, () =>
-      withMcpLifecycleLock(
+it(
+  "releases authority to another process before interactive completion (#11647)",
+  testTimeoutOptions(15_000),
+  async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-launch-exec-"));
+    const stateDir = path.join(home, "state");
+    const lockOptions = { stateDir };
+    const sandboxName = "launch-exec";
+    let endSession: () => void = () => {};
+    const ended = new Promise<void>((resolve) => {
+      endSession = resolve;
+    });
+    const release = vi.fn();
+    const cleanup = vi.fn(() =>
+      withMcpLifecycleLockSync(
         sandboxName,
         () => {
-          contenderEntered = true;
+          expect(isMcpLifecycleLockHeld(sandboxName, stateDir)).toBe(true);
+          return { applies: true as const, ok: true, issues: [] };
         },
         lockOptions,
       ),
     );
-    expect(contenderEntered).toBe(true);
-    endSession();
-    await expect(finish()).rejects.toThrow("exit:0");
-    expect(cleanup).toHaveBeenCalledOnce();
-    expect(release).toHaveBeenCalledOnce();
-  } finally {
-    endSession();
-    fs.rmSync(home, { recursive: true, force: true });
-  }
-});
+    let dispatched = false;
+    try {
+      const finish = await withPortableHostFence(home, () =>
+        withMcpLifecycleLock(
+          sandboxName,
+          () =>
+            startSandboxExec(
+              sandboxName,
+              ["bash", "-lc", "openclaw tui"],
+              { tty: true, stdin: true, timeoutSeconds: 0 },
+              {
+                selectGateway: () => ({ outcome: "unregistered", gatewayName: null }),
+                commandExecutor: {
+                  probeDirectory: async () => ({ state: "present" }),
+                  runStreaming: async () => {
+                    expect(isMcpLifecycleLockHeld(sandboxName, stateDir)).toBe(true);
+                    expect(fs.existsSync(portableHostFencePath(home))).toBe(true);
+                    dispatched = true;
+                    await ended;
+                    return { outcome: { kind: "completed", exitCode: 0 }, release };
+                  },
+                },
+                cleanupDeps: {
+                  getSandbox: () => {
+                    expect(isMcpLifecycleLockHeld(sandboxName, stateDir)).toBe(false);
+                    expect(fs.existsSync(portableHostFencePath(home))).toBe(false);
+                    return { agent: "openclaw" };
+                  },
+                  inspectMutableConfigPerms: cleanup,
+                  repairMutableConfigPerms: () => {
+                    throw new Error("healthy config needs no repair");
+                  },
+                },
+                exit: (code) => {
+                  throw new Error(`exit:${code}`);
+                },
+              },
+            ),
+          lockOptions,
+        ),
+      );
+      expect(dispatched).toBe(true);
+      expect(cleanup).not.toHaveBeenCalled();
+      const contender = spawnSync(
+        process.execPath,
+        [
+          "--no-warnings",
+          "--import",
+          "tsx",
+          "--input-type=module",
+          "-e",
+          `
+        const retirement = (await import(process.argv[1])).default;
+        const lifecycle = (await import(process.argv[2])).default;
+        await retirement.withPortableHostFence(process.argv[3], () =>
+          lifecycle.withMcpLifecycleLock(process.argv[4], () => {
+            console.log("contender-entered");
+          }, { stateDir: process.argv[5] }),
+        );
+      `,
+          new URL("../../state/portable-uninstall-retirement.ts", import.meta.url).href,
+          new URL("../../state/mcp-lifecycle-lock-acquisition.ts", import.meta.url).href,
+          home,
+          sandboxName,
+          stateDir,
+        ],
+        { encoding: "utf8", timeout: execTimeout() },
+      );
+      expect(contender.status, contender.stderr || String(contender.error ?? "")).toBe(0);
+      expect(contender.stdout.trim()).toBe("contender-entered");
+      expect(cleanup).not.toHaveBeenCalled();
+      expect(release).not.toHaveBeenCalled();
+      endSession();
+      await expect(finish()).rejects.toThrow("exit:0");
+      expect(cleanup).toHaveBeenCalledOnce();
+      expect(release).toHaveBeenCalledOnce();
+    } finally {
+      endSession();
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  },
+);
