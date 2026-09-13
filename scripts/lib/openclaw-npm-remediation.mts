@@ -1460,8 +1460,8 @@ if (isMainModule()) {
         }),
       ),
     );
-  } catch (error) {
-    console.error(error instanceof Error ? error.message : String(error));
+  } catch {
+    console.error("OpenClaw npm remediation failed.");
     process.exit(1);
   }
 }

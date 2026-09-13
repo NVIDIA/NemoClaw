@@ -2076,8 +2076,8 @@ function isMainModule(): boolean {
 if (isMainModule()) {
   try {
     main();
-  } catch (error) {
-    console.error(error instanceof Error ? error.message : String(error));
+  } catch {
+    console.error("Messaging build applier failed.");
     process.exit(2);
   }
 }
