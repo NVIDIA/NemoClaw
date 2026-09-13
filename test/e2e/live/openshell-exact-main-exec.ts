@@ -224,9 +224,9 @@ export async function assertExactMainChildProcessContracts(
   );
   assertChildProofReport(execChild, "exec");
 
-  // OpenShell 0.0.116 connect attaches to the idle main process. Use NemoClaw
-  // connect to open a fresh interactive shell and return the assertion status.
-  // The output marker distinguishes executed output from TTY input echo.
+  // NemoClaw connect opens a fresh TTY shell; OpenShell 0.0.116 connect instead
+  // attaches the running entrypoint. Feed the probe to NemoClaw's shell and
+  // require its exact output marker and assertion exit status.
   const connectChild = await host.command(
     "bash",
     [

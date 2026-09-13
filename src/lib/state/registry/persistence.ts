@@ -8,7 +8,6 @@ import { isDeferredN1xManagedVllmAcceptanceRoute } from "../../domain/sandbox/n1
 import { parseServingProfileProvenance } from "../../inference/serving/profile-provenance";
 import { readConfigFile, writeConfigFile } from "../config-io";
 import { normalizeExtraProviders } from "../extra-providers";
-import { normalizeSandboxMcpState, serializeSandboxMcpStateForDisk } from "../registry-mcp";
 import {
   cloneSandboxMessagingState,
   serializeSandboxMessagingStateForDisk,
@@ -172,7 +171,6 @@ function normalizeSandboxEntryForRuntime(entry: SandboxEntry): SandboxEntry {
     "load",
   );
   const deferredN1xManagedVllmAccepted = normalizeDeferredN1xManagedVllmAcceptance(entry, "load");
-  const mcp = normalizeSandboxMcpState(entry.mcp);
   const policyEntry = normalizeSandboxPolicyAttribution(entry);
   const {
     cuaRuntimeReadiness: _legacyCuaRuntimeReadiness,
@@ -182,9 +180,9 @@ function normalizeSandboxEntryForRuntime(entry: SandboxEntry): SandboxEntry {
     hostLocalInferenceProvenance: _hostLocalInferenceProvenance,
     servingProfileProvenance: _servingProfileProvenance,
     deferredN1xManagedVllmAccepted: _deferredN1xManagedVllmAccepted,
-    mcp: _mcp,
+    mcp: _legacyMcp,
     ...rest
-  } = policyEntry as SandboxEntry & { cuaRuntimeReadiness?: unknown };
+  } = policyEntry as SandboxEntry & { cuaRuntimeReadiness?: unknown; mcp?: unknown };
   return {
     ...rest,
     ...(workload ? { workload } : {}),
@@ -193,7 +191,6 @@ function normalizeSandboxEntryForRuntime(entry: SandboxEntry): SandboxEntry {
     ...(servingProfileProvenance ? { servingProfileProvenance } : {}),
     ...(deferredN1xManagedVllmAccepted ? { deferredN1xManagedVllmAccepted } : {}),
     ...(messaging ? { messaging } : {}),
-    ...(mcp ? { mcp } : {}),
   };
 }
 
@@ -233,7 +230,6 @@ function serializeSandboxEntryForDisk(entry: SandboxEntry): SandboxEntry {
     "save",
   );
   const deferredN1xManagedVllmAccepted = normalizeDeferredN1xManagedVllmAcceptance(durable, "save");
-  const mcp = serializeSandboxMcpStateForDisk(durable.mcp);
   const policyEntry = normalizeSandboxPolicyAttribution(durable);
   const {
     cuaRuntimeReadiness: _legacyCuaRuntimeReadiness,
@@ -243,9 +239,9 @@ function serializeSandboxEntryForDisk(entry: SandboxEntry): SandboxEntry {
     hostLocalInferenceProvenance: _hostLocalInferenceProvenance,
     servingProfileProvenance: _servingProfileProvenance,
     deferredN1xManagedVllmAccepted: _deferredN1xManagedVllmAccepted,
-    mcp: _mcp,
+    mcp: _legacyMcp,
     ...rest
-  } = policyEntry as SandboxEntry & { cuaRuntimeReadiness?: unknown };
+  } = policyEntry as SandboxEntry & { cuaRuntimeReadiness?: unknown; mcp?: unknown };
   return {
     ...rest,
     ...(rest.dashboardPort === 0 ? { dashboardPort: null } : {}),
@@ -255,6 +251,5 @@ function serializeSandboxEntryForDisk(entry: SandboxEntry): SandboxEntry {
     ...(servingProfileProvenance ? { servingProfileProvenance } : {}),
     ...(deferredN1xManagedVllmAccepted ? { deferredN1xManagedVllmAccepted } : {}),
     ...(messaging ? { messaging } : {}),
-    ...(mcp ? { mcp } : {}),
   };
 }

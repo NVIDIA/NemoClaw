@@ -618,6 +618,25 @@ describe("advisor session runner", () => {
     expect(sdk.state.prompts).toHaveLength(2);
   });
 
+  it("accepts tool-disabled analysis repair after a successful terminal submit", async () => {
+    sdk.state.omitAnalysisPrompts = 1;
+    sdk.state.terminalResponses = ["success"];
+    const result = await run([
+      {
+        ...submitTurn("prepare-and-submit"),
+        requireAssistantText: true,
+        assistantTextRepairPrompt: "Return the required analysis.",
+      },
+    ]);
+
+    expect(result.fatalError).toBeUndefined();
+    expect(result.turnErrors).toEqual([]);
+    expect(result.raw).toContain("assistant_text_repair_start prepare-and-submit");
+    expect(result.raw).not.toContain("terminal_submit_repair_start");
+    expect(sdk.state.activeToolCalls).toContainEqual([]);
+    expect(sdk.state.prompts).toHaveLength(2);
+  });
+
   it("repairs omitted required recording tools before submit (#9963)", async () => {
     sdk.state.terminalResponses = ["fail-once", "success"];
     const requiredRecordingTurn = {

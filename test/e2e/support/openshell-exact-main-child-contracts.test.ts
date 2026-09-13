@@ -68,7 +68,6 @@ function fakeHost() {
       command,
       nemoclaw,
       commandPath: "/reviewed/nemoclaw",
-      openshellCommandPath: "/reviewed/openshell",
     } as unknown as HostCliClient,
     nemoclaw,
   };
@@ -116,7 +115,7 @@ describe("OpenShell exact-main child contracts", () => {
     }
   });
 
-  it("proves entrypoint, exec, and forced-TTY connect children independently", async () => {
+  it("proves entrypoint, exec, and NemoClaw connect children", async () => {
     const { command, host, nemoclaw } = fakeHost();
     command
       .mockResolvedValueOnce(containerDiscovery())

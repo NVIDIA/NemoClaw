@@ -12,26 +12,22 @@ skill:
   priority: 40
 ---
 Use the same host-side workflow for OpenClaw, Hermes, and Deep Agents Code sandboxes.
-NemoClaw selects the agent-specific adapter from the sandbox registry.
+NemoClaw selects the agent-specific adapter from the running sandbox and writes the configuration that agent consumes. OpenShell remains the source of truth for policy, providers, attachments, and credential values; NemoClaw retains no MCP registry row after the command.
 
 ## Check Managed Capability
 
 <AgentOnly variant="deepagents">
-Deep Agents Code `mcp add` and `mcp restart` require managed MCP capability v2.
-A v1 image stops with rebuild guidance before it changes a live provider, policy, or adapter.
-The early capability check identifies managed image version only; NemoClaw still verifies config ownership and content at the mutation boundary.
+Deep Agents Code `mcp add` and `mcp restart` require native MCP capability v3.
+A legacy image stops with migration guidance before it changes a live provider, policy, or agent configuration.
 </AgentOnly>
 <AgentOnly variant="hermes">
-Hermes performs its managed runtime probe before an active add or restart changes a live provider or policy.
-Hermes stores the stable credential handle from the readiness check in the OpenShell resolver placeholder.
-Registration, inspection, rollback, and lifecycle reconciliation preserve that handle while it remains observable.
+Hermes stores MCP servers in its native `config.yaml`. Registration and inspection preserve the stable credential handle from the readiness check in the OpenShell resolver placeholder without comparing it with host-side desired state.
 </AgentOnly>
 <AgentOnly variant="openclaw">
-OpenClaw verifies the pinned `mcporter` during adapter registration and rolls back an incomplete add.
+OpenClaw stores MCP servers in `openclaw.json` under `mcp.servers`. Existing Mcporter entries require the explicit migration described in [Manage MCP Servers](manage-mcp-servers#migrate-an-existing-registration).
 </AgentOnly>
 
-When recovery finds that a provider was already deleted, NemoClaw may remove only the dangling sandbox-spec reference required for a capability probe.
-That prerequisite does not delete or replace a live provider, credential, or policy, and the durable manifest remains retryable if a later probe fails.
+An interrupted add is retried from the current agent and OpenShell sources. A deterministic provider name lets the retry recognize a partially created provider without a host-side transaction marker. The retry resumes only when the native entry, generated policy, provider identity and credential key, and sandbox attachment form an exact prefix of the requested add; conflicting or ambiguous resources remain unchanged and stop the command.
 
 ## Add the Server
 
@@ -45,7 +41,7 @@ The assignment is illustrative.
 Load real values from an approved secret manager or masked prompt so the credential is not recorded in shell history.
 
 `--env KEY` reads the value from the host process environment and stores it in OpenShell's provider store.
-NemoClaw persists only the variable name and writes an OpenShell resolver placeholder for that key into sandbox-side MCP configuration.
+NemoClaw writes only the variable name as an OpenShell resolver placeholder in agent-native MCP configuration.
 OpenShell resolves the placeholder at egress.
 
 After `mcp add` commits, NemoClaw performs a fresh status inspection and runs the gated credential-resolution probe once unless you pass `--no-probe`.
@@ -63,8 +59,8 @@ $$nemoclaw my-sandbox mcp add doordash \
 unset DOORDASH_MCP_TOKEN
 ```
 
-NemoClaw records the denied-tool list and includes it in every generated policy comparison.
-Restart and rebuild preserve the deny rules without a manual policy edit.
+NemoClaw writes the denied-tool list into the live OpenShell policy; it does not retain a duplicate registry copy.
+Restart leaves that policy unchanged, and rebuild snapshots and restores the complete live policy.
 The option matches tool names only and does not inspect tool arguments.
 Use `mcp update` to replace or clear the list after registration.
 
@@ -118,14 +114,13 @@ It also rejects a trusted-private hostname when its DNS answers mix public and p
 
 As an alternative, set `NEMOCLAW_TRUSTED_PRIVATE_HOSTS` to a comma-separated list of exact hosts for the current command.
 NemoClaw combines the environment list with any `--trusted-private-host` options.
-It normalizes and deduplicates environment entries, ignores entries unrelated to this URL, and persists only the matching private host.
-The command records the resulting trust intent, so later lifecycle commands do not depend on the ambient environment.
+It normalizes and deduplicates environment entries and ignores entries unrelated to this URL. The resulting host and address pins live in the OpenShell policy, so later lifecycle commands do not depend on the ambient environment.
 
-NemoClaw records the normalized trust intent and every validated address as policy pins.
+NemoClaw records the normalized host and every validated address as OpenShell policy pins.
 The raw bearer value passes transiently to the OpenShell provider and remains absent from NemoClaw state, sandbox configuration, command arguments, and logs.
 The sandbox configuration contains only an OpenShell resolver placeholder for `LOCAL_MCP_TOKEN`, not the raw bearer value.
 You can unset the host variable after `mcp add` returns because OpenShell retains the credential.
-An exported replacement updates it during restart, and `mcp remove` or sandbox destroy deletes the registry-owned provider.
+To replace it, remove and re-add the server with the replacement exported under the same host variable name. `mcp remove` detaches the provider, and sandbox destroy may leave the detached provider for explicit operator cleanup.
 
 Inspect the registration after the add returns:
 
