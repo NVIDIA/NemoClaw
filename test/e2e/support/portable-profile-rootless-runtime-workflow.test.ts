@@ -504,6 +504,127 @@ ${serviceIdentityCheck}`,
     expect.soft(selects("push", "src/lib/adapters/podman/socket-authority.ts")).toBe(true);
     expect.soft(selects("push", "src/lib/adapters/podman/executable-authority.ts")).toBe(true);
 
+    expect.soft(selects("pull_request", "src/lib/actions/sandbox/destroy.ts")).toBe(true);
+    expect.soft(selects("pull_request", "src/lib/actions/sandbox/destroy-execution.ts")).toBe(true);
+    expect.soft(selects("pull_request", "src/lib/actions/sandbox/destroy-presence.ts")).toBe(true);
+    expect.soft(selects("pull_request", "src/lib/domain/sandbox/destroy.ts")).toBe(true);
+    expect
+      .soft(
+        selects(
+          "pull_request",
+          "src/lib/actions/sandbox/probe/hermes-portable-inference-recovery.ts",
+        ),
+      )
+      .toBe(true);
+    expect
+      .soft(
+        selects("pull_request", "src/lib/onboard/experimental/hermes-portable-ollama-inference.ts"),
+      )
+      .toBe(true);
+    expect
+      .soft(
+        selects("pull_request", "src/lib/onboard/experimental/hermes-portable-ollama-authority.ts"),
+      )
+      .toBe(true);
+    expect
+      .soft(
+        selects(
+          "pull_request",
+          "src/lib/onboard/experimental/hermes-portable-ollama-gateway-transaction.ts",
+        ),
+      )
+      .toBe(true);
+    expect
+      .soft(selects("pull_request", "src/lib/onboard/runtime-provider/host-local-inference.ts"))
+      .toBe(true);
+    expect
+      .soft(
+        selects(
+          "pull_request",
+          "src/lib/onboard/runtime-provider/host-local-inference-lifecycle.ts",
+        ),
+      )
+      .toBe(true);
+    expect
+      .soft(
+        selects("pull_request", "src/lib/onboard/runtime-provider/host-local-inference-routing.ts"),
+      )
+      .toBe(true);
+    expect.soft(selects("pull_request", "src/lib/onboard/runtime-provider/podman.ts")).toBe(true);
+    expect
+      .soft(
+        selects("pull_request", "src/lib/onboard/runtime-provider/podman-host-local-inference.ts"),
+      )
+      .toBe(true);
+    expect
+      .soft(selects("pull_request", "src/lib/onboard/runtime-provider/podman-preflight.ts"))
+      .toBe(true);
+    expect
+      .soft(
+        selects("pull_request", "src/lib/onboard/runtime-provider/persisted-engine-authority.ts"),
+      )
+      .toBe(true);
+    expect.soft(selects("pull_request", "src/lib/onboard/docker-driver-gateway-env.ts")).toBe(true);
+    expect
+      .soft(selects("pull_request", "src/lib/onboard/docker-driver-gateway-local-tls.ts"))
+      .toBe(true);
+    expect.soft(selects("pull_request", "src/lib/onboard/build-context-stage.ts")).toBe(true);
+    expect.soft(selects("pull_request", "src/lib/onboard/sandbox-prebuild.ts")).toBe(true);
+    expect.soft(selects("pull_request", "src/lib/sandbox/build-context.ts")).toBe(true);
+    expect.soft(selects("pull_request", "src/lib/sandbox/create-stream.ts")).toBe(true);
+    expect.soft(selects("pull_request", "src/lib/adapters/openshell/resolve-shared.ts")).toBe(true);
+    expect.soft(selects("pull_request", "src/lib/adapters/openshell/timeouts.ts")).toBe(true);
+    expect.soft(selects("pull_request", "src/lib/agent/defs.ts")).toBe(true);
+    expect.soft(selects("pull_request", "src/lib/core/retry.ts")).toBe(true);
+    expect.soft(selects("push", "src/lib/actions/sandbox/destroy.ts")).toBe(true);
+    expect.soft(selects("push", "src/lib/actions/sandbox/destroy-execution.ts")).toBe(true);
+    expect.soft(selects("push", "src/lib/actions/sandbox/destroy-presence.ts")).toBe(true);
+    expect.soft(selects("push", "src/lib/domain/sandbox/destroy.ts")).toBe(true);
+    expect
+      .soft(selects("push", "src/lib/actions/sandbox/probe/hermes-portable-inference-recovery.ts"))
+      .toBe(true);
+    expect
+      .soft(selects("push", "src/lib/onboard/experimental/hermes-portable-ollama-inference.ts"))
+      .toBe(true);
+    expect
+      .soft(selects("push", "src/lib/onboard/experimental/hermes-portable-ollama-authority.ts"))
+      .toBe(true);
+    expect
+      .soft(
+        selects(
+          "push",
+          "src/lib/onboard/experimental/hermes-portable-ollama-gateway-transaction.ts",
+        ),
+      )
+      .toBe(true);
+    expect
+      .soft(selects("push", "src/lib/onboard/runtime-provider/host-local-inference.ts"))
+      .toBe(true);
+    expect
+      .soft(selects("push", "src/lib/onboard/runtime-provider/host-local-inference-lifecycle.ts"))
+      .toBe(true);
+    expect
+      .soft(selects("push", "src/lib/onboard/runtime-provider/host-local-inference-routing.ts"))
+      .toBe(true);
+    expect.soft(selects("push", "src/lib/onboard/runtime-provider/podman.ts")).toBe(true);
+    expect
+      .soft(selects("push", "src/lib/onboard/runtime-provider/podman-host-local-inference.ts"))
+      .toBe(true);
+    expect.soft(selects("push", "src/lib/onboard/runtime-provider/podman-preflight.ts")).toBe(true);
+    expect
+      .soft(selects("push", "src/lib/onboard/runtime-provider/persisted-engine-authority.ts"))
+      .toBe(true);
+    expect.soft(selects("push", "src/lib/onboard/docker-driver-gateway-env.ts")).toBe(true);
+    expect.soft(selects("push", "src/lib/onboard/docker-driver-gateway-local-tls.ts")).toBe(true);
+    expect.soft(selects("push", "src/lib/onboard/build-context-stage.ts")).toBe(true);
+    expect.soft(selects("push", "src/lib/onboard/sandbox-prebuild.ts")).toBe(true);
+    expect.soft(selects("push", "src/lib/sandbox/build-context.ts")).toBe(true);
+    expect.soft(selects("push", "src/lib/sandbox/create-stream.ts")).toBe(true);
+    expect.soft(selects("push", "src/lib/adapters/openshell/resolve-shared.ts")).toBe(true);
+    expect.soft(selects("push", "src/lib/adapters/openshell/timeouts.ts")).toBe(true);
+    expect.soft(selects("push", "src/lib/agent/defs.ts")).toBe(true);
+    expect.soft(selects("push", "src/lib/core/retry.ts")).toBe(true);
+
     expect(workflow.on.pull_request.types).toEqual(["opened", "synchronize", "reopened"]);
     expect(workflow.on.push.paths).toContain("tools/e2e/full-e2e-timeout-contract.mts");
     expect(workflow.on.pull_request.paths).not.toContain("tools/e2e/full-e2e-timeout-contract.mts");
