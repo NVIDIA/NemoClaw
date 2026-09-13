@@ -75,7 +75,11 @@ async function runCommand(
     await resultPromise;
   });
   const result = await resultPromise;
-  const error = outputError ?? result.spawnError ?? result.cleanupError;
+  const error =
+    outputError ??
+    result.spawnError ??
+    result.cleanupError ??
+    (result.timedOut ? new Error("Command exceeded the 20-second timeout") : undefined);
   return {
     ...(error ? { error } : {}),
     status: result.signal ? null : (result.exitCode ?? (error ? -1 : null)),
