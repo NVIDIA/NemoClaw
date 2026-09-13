@@ -478,11 +478,11 @@ export async function runRebuildPostRestorePhase(
   log(`Registry updated: agentVersion=${agentDef.expectedVersion}`);
 
   if (
-    !ensureMessagingHostForwardAfterRebuild(
+    !(await ensureMessagingHostForwardAfterRebuild(
       sandboxName,
       effectiveMessagingPlan,
       mcpRuntimeSelection,
-    )
+    ))
   ) {
     messagingHostForwardUnverified = true;
   }
