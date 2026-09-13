@@ -14,7 +14,6 @@ import {
   discoverCredentialFreeTests,
 } from "../../../tools/e2e/credential-free-tests.mts";
 import { E2E_AGENT_RUNTIMES } from "../../../tools/e2e/execution-coverage.mts";
-import { RETIRED_CONTROLLER_SELECTOR_IDS } from "../../../tools/e2e/retired-selector-compatibility.mts";
 import {
   catalogueTarget,
   catalogueTargetsForChangedFiles,
@@ -65,13 +64,6 @@ function runPlannerCli(
 function firstId<T extends { id: string }>(rows: readonly T[], label: string): string {
   expect(rows, `expected at least one ${label}`).not.toHaveLength(0);
   return rows[0]!.id;
-}
-
-function retiredControllerSelectorIds(): string[] {
-  const allowedJobs = new Set(readFreeStandingJobsInventory().allowedJobs);
-  const retiredIds = RETIRED_CONTROLLER_SELECTOR_IDS.filter((id) => !allowedJobs.has(id));
-  expect(retiredIds).toEqual([...RETIRED_CONTROLLER_SELECTOR_IDS]);
-  return retiredIds;
 }
 
 function expectExplicitCatalogueCoverage(): void {
@@ -933,105 +925,6 @@ describe("E2E workflow plan", () => {
     },
   );
 
-  it.concurrent("maps launchable-smoke to bootstrap-install-smoke when checkout_sha is set", async (context) => {
-    const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-workflow-plan-cli-"));
-    const output = path.join(directory, "github-output");
-    const summary = path.join(directory, "summary.md");
-    const plan = buildE2eWorkflowPlan({ jobs: "bootstrap-install-smoke" });
-    try {
-      const result = await runPlannerCli(["--ci-output"], context, {
-        ...process.env,
-        GITHUB_OUTPUT: output,
-        GITHUB_STEP_SUMMARY: summary,
-        INFERENCE_MODE: "mock",
-        JOBS: "launchable-smoke",
-        NEMOCLAW_E2E_CREDENTIALS_ALLOWED: "true",
-        TARGETS: "",
-        NEMOCLAW_E2E_EXPECTED_SHA: "a".repeat(40),
-      });
-
-      expect(result.status, result.stderr).toBe(0);
-      expect(readFileSync(output, "utf8")).toBe(expectedWorkflowPlanCiOutput(plan));
-      expect(readFileSync(summary, "utf8")).toBe(
-        renderE2eWorkflowPlanSummary(plan, { includeCoverageAudit: false }),
-      );
-    } finally {
-      rmSync(directory, { force: true, recursive: true });
-    }
-  });
-
-  it.concurrent("plans active jobs while checking retired controller selectors (#7616)", async (context) => {
-    const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-workflow-plan-cli-"));
-    const output = path.join(directory, "github-output");
-    const summary = path.join(directory, "summary.md");
-    const activeJobs = "cloud-onboard,security-posture";
-    const plan = buildE2eWorkflowPlan({ jobs: activeJobs });
-    try {
-      const result = await runPlannerCli(["--ci-output"], context, {
-        ...process.env,
-        GITHUB_OUTPUT: output,
-        GITHUB_STEP_SUMMARY: summary,
-        INFERENCE_MODE: "mock",
-        JOBS: [activeJobs, ...retiredControllerSelectorIds()].join(","),
-        NEMOCLAW_E2E_CREDENTIALS_ALLOWED: "true",
-        TARGETS: "",
-        NEMOCLAW_E2E_EXPECTED_SHA: "a".repeat(40),
-      });
-
-      expect(result.status, result.stderr).toBe(0);
-      expect(readFileSync(output, "utf8")).toBe(expectedWorkflowPlanCiOutput(plan));
-      expect(readFileSync(summary, "utf8")).toBe(
-        renderE2eWorkflowPlanSummary(plan, { includeCoverageAudit: false }),
-      );
-    } finally {
-      rmSync(directory, { force: true, recursive: true });
-    }
-  });
-
-  it.concurrent.for(RETIRED_CONTROLLER_SELECTOR_IDS)(
-    "emits an empty live plan for retired controller job %s (#7616)",
-    async (job, context) => {
-      const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-workflow-plan-cli-"));
-      const output = path.join(directory, "github-output");
-      const summary = path.join(directory, "summary.md");
-      const plan: ReturnType<typeof buildE2eWorkflowPlan> = {
-        gatewayRuntimes: ["docker"],
-        matrix: [],
-        testMatrix: [],
-        catalogueMatrices: {
-          standard: [],
-          "nvidia-api": [],
-          "nvidia-inference": [],
-          "github-read": [],
-          "brave-nvidia-inference": [],
-        },
-        coverageMatrix: [],
-        selectedJobs: [],
-        runtimeProvidersByJob: {},
-        hermesSelected: false,
-        explicitOnlyJobs: readFreeStandingJobsInventory().explicitOnlyJobs,
-      };
-      try {
-        const result = await runPlannerCli(["--ci-output"], context, {
-          ...process.env,
-          GITHUB_OUTPUT: output,
-          GITHUB_STEP_SUMMARY: summary,
-          INFERENCE_MODE: "mock",
-          JOBS: job,
-          TARGETS: "",
-          NEMOCLAW_E2E_EXPECTED_SHA: "a".repeat(40),
-          NEMOCLAW_E2E_CREDENTIALS_ALLOWED: "true",
-        });
-
-        expect(result.status, result.stderr).toBe(0);
-        expect(readFileSync(output, "utf8")).toBe(expectedWorkflowPlanCiOutput(plan));
-        expect(readFileSync(summary, "utf8")).toBe(renderE2eWorkflowPlanSummary(plan));
-      } finally {
-        rmSync(directory, { force: true, recursive: true });
-      }
-    },
-  );
-
   it.each(["jobs", "targets"] as const)(
     "emits an empty shared plan for the Jetson dispatch %s selector (#8142)",
     (selector) => {
@@ -1055,48 +948,7 @@ describe("E2E workflow plan", () => {
     },
   );
 
-  it.concurrent("emits an empty matrix for retired free-standing rebuild selectors (#7615)", async (context) => {
-    const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-workflow-plan-cli-"));
-    const output = path.join(directory, "github-output");
-    const summary = path.join(directory, "summary.md");
-    const plan: ReturnType<typeof buildE2eWorkflowPlan> = {
-      gatewayRuntimes: ["docker"],
-      matrix: [],
-      testMatrix: [],
-      catalogueMatrices: {
-        standard: [],
-        "nvidia-api": [],
-        "nvidia-inference": [],
-        "github-read": [],
-        "brave-nvidia-inference": [],
-      },
-      coverageMatrix: [],
-      selectedJobs: [],
-      runtimeProvidersByJob: {},
-      hermesSelected: false,
-      explicitOnlyJobs: readFreeStandingJobsInventory().explicitOnlyJobs,
-    };
-    try {
-      const result = await runPlannerCli(["--ci-output"], context, {
-        ...process.env,
-        GITHUB_OUTPUT: output,
-        GITHUB_STEP_SUMMARY: summary,
-        INFERENCE_MODE: "mock",
-        JOBS: "",
-        TARGETS: "sandbox-rebuild,upgrade-stale-sandbox",
-        NEMOCLAW_E2E_EXPECTED_SHA: "a".repeat(40),
-        NEMOCLAW_E2E_CREDENTIALS_ALLOWED: "true",
-      });
-
-      expect(result.status, result.stderr).toBe(0);
-      expect(readFileSync(output, "utf8")).toBe(expectedWorkflowPlanCiOutput(plan));
-      expect(readFileSync(summary, "utf8")).toBe(renderE2eWorkflowPlanSummary(plan));
-    } finally {
-      rmSync(directory, { force: true, recursive: true });
-    }
-  });
-
-  it.concurrent("rejects the retired bootstrap job outside a PR controller checkout", async (context) => {
+  it.concurrent("rejects a retired selector through the normal SHA-bound inventory", async (context) => {
     const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-workflow-plan-cli-"));
     try {
       const result = await runPlannerCli(["--ci-output"], context, {
@@ -1104,13 +956,14 @@ describe("E2E workflow plan", () => {
         GITHUB_OUTPUT: path.join(directory, "github-output"),
         GITHUB_STEP_SUMMARY: path.join(directory, "summary.md"),
         INFERENCE_MODE: "mock",
-        JOBS: "launchable-smoke",
+        JOBS: "credential-migration",
         TARGETS: "",
-        NEMOCLAW_E2E_EXPECTED_SHA: "",
+        NEMOCLAW_E2E_EXPECTED_SHA: "a".repeat(40),
+        NEMOCLAW_E2E_CREDENTIALS_ALLOWED: "true",
       });
 
       expect(result.status).toBe(1);
-      expect(result.stderr).toContain("::error::Unknown E2E test ID: launchable-smoke");
+      expect(result.stderr).toContain("::error::Unknown E2E test ID: credential-migration");
     } finally {
       rmSync(directory, { force: true, recursive: true });
     }

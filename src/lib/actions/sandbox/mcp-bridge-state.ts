@@ -10,11 +10,7 @@ import {
 import type { McpBridgeEntry, SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
 import { getSandboxTargetGatewayName } from "./gateway-target";
-import {
-  isAgentMcpAdapter,
-  MCP_BRIDGE_POLICY_SOURCE,
-  McpBridgeError,
-} from "./mcp-bridge-contracts";
+import { isAgentMcpAdapter, McpBridgeError } from "./mcp-bridge-contracts";
 import { validateSandboxName } from "./mcp-bridge-validation";
 
 export function nowIso(): string {
