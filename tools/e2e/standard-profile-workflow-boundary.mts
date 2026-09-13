@@ -818,6 +818,10 @@ function validateTypedTargetSteps(errors: string[], profile: WorkflowRecord): vo
   const prepare = namedStep(workflowSteps, "Prepare E2E workspace");
   const execute = namedStep(workflowSteps, "Run catalogue E2E target");
   const sanitize = requireStep(errors, workflowSteps, "Build trusted live E2E timing summary");
+  const summary = requireStep(errors, workflowSteps, "Summarize artifacts");
+  if (summary?.if !== `\${{ always() && steps.execution_plan.outcome == 'success' && ${typed} }}`) {
+    errors.push("typed artifact summary must always run after successful execution planning");
+  }
   const cleanup = requireStep(errors, workflowSteps, "Delete raw live E2E traces");
   const upload = requireStep(errors, workflowSteps, "Upload typed target artifacts");
   const order = [configure, prepare, execute, sanitize, cleanup, upload].map((step) =>
@@ -844,7 +848,8 @@ function validateTypedTargetSteps(errors: string[], profile: WorkflowRecord): vo
     [sanitize, "sanitizer", "python3 scripts/e2e/sanitize-trace-timing.py"],
     [cleanup, "raw trace cleanup", 'rm -rf -- "${NEMOCLAW_TRACE_DIR}"'],
   ] as const) {
-    if (step?.if !== alwaysTyped) errors.push(`live trace ${label} must always run`);
+    if (step?.if !== `\${{ always() && steps.execution_plan.outcome == 'success' && ${typed} }}`)
+      errors.push(`live trace ${label} must always run after successful execution planning`);
     const run = String(step?.run ?? "");
     const operationIndex = run.indexOf(operation);
     const assignment = 'expected_trace_dir="${RUNNER_TEMP}/nemoclaw-e2e-traces/${TARGET_ID}"';
@@ -950,7 +955,9 @@ function validateTypedTargetSteps(errors: string[], profile: WorkflowRecord): vo
   for (const step of workflowSteps) {
     if (
       step !== execute &&
-      String(record(step.env).NVIDIA_INFERENCE_API_KEY).includes("secrets.")
+      ["NVIDIA_API_KEY", "NVIDIA_INFERENCE_API_KEY", "BRAVE_API_KEY"].some((key) =>
+        String(record(step.env)[key]).includes("secrets."),
+      )
     ) {
       errors.push("standard E2E profile must expose inference credentials only to test execution");
     }

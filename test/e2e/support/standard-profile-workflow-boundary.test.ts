@@ -22,6 +22,22 @@ import { readWorkflow } from "../../helpers/e2e-workflow-contract";
 const REPO_ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 
 describe("standard E2E execution profile", () => {
+  it.each(["NVIDIA_API_KEY", "NVIDIA_INFERENCE_API_KEY", "BRAVE_API_KEY"])(
+    "rejects %s on a non-execution step",
+    (key) => {
+      const profile = YAML.parse(
+        fs.readFileSync(".github/workflows/e2e-standard-profile.yaml", "utf8"),
+      );
+      const summary = profile.jobs.run.steps.find(
+        (step: { name?: string }) => step.name === "Summarize artifacts",
+      );
+      summary.env[key] = "${{ secrets." + key + " }}";
+      expect(validateStandardProfileWorkflowBoundary(readWorkflow(), profile)).toContain(
+        "standard E2E profile must expose inference credentials only to test execution",
+      );
+    },
+  );
+
   it.each(["onboard-progress-budget.json", "dcode-base-image.json", "raw-traces/"])(
     "rejects changes to the typed artifact allowlist: %s",
     (artifact) => {

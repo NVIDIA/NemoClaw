@@ -17,6 +17,29 @@ const source = (run: string, job = "proof") =>
   new Map([[workflow, YAML.stringify({ jobs: { [job]: { steps: [{ run }] } } })]]);
 
 describe("workflow execution discovery", () => {
+  it("rejects a workflow route whose job stops invoking its test", () => {
+    const workflowTarget: E2eInventoryTarget = {
+      id: "proof",
+      route: "workflow",
+      definition: {
+        id: "proof",
+        workflow,
+        targetId: null,
+        defaultEnabled: false,
+        gatewayRuntimes: "agnostic",
+        testFiles: [file],
+        owningPaths: [],
+        coverage: [],
+      },
+    };
+    expect(
+      reconcileWorkflowConsumers(source(`npx vitest run ${file}`), [workflowTarget], () => true),
+    ).toEqual([]);
+    expect(
+      reconcileWorkflowConsumers(source("echo complete"), [workflowTarget], () => true),
+    ).toEqual([`proof: workflow job no longer references ${file}`]);
+  });
+
   it("accepts a registered direct consumer without importing the test", () => {
     expect(
       reconcileWorkflowConsumers(source(`npx vitest run ${file}`), [target], () => true),

@@ -24,6 +24,18 @@ function detectedCaseNames(source: string): string[] {
 }
 
 describe("source-shape scanner", () => {
+  it("detects raw workflow selection assertions through the inventory accessor", () => {
+    expect(
+      detectedCaseNames(`
+      import { expect, it } from "vitest";
+      import { workflowExecutionSelection } from "../tools/e2e/target-inventory.mts";
+      it("mirrors workflow selection", () => {
+        expect(workflowExecutionSelection().workflowJobs).toEqual(["shared-e2e"]);
+      });
+    `),
+    ).toEqual(["mirrors workflow selection"]);
+  });
+
   it("skips the local nested worktree checkout container", () => {
     const repoRoot = path.resolve(".");
 

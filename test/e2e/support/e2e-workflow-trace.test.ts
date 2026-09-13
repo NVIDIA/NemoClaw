@@ -21,6 +21,21 @@ function liveStep(workflow: E2eWorkflow, name: string): Record<string, unknown> 
 
 describe("e2e workflow live job boundary", () => {
   it.each([
+    ["Build trusted live E2E timing summary", "live trace sanitizer"],
+    ["Delete raw live E2E traces", "live trace raw trace cleanup"],
+    ["Summarize artifacts", "typed artifact summary"],
+  ])("rejects %s running after execution planning fails", (name, diagnostic) => {
+    const workflow = YAML.parse(
+      fs.readFileSync(".github/workflows/e2e-standard-profile.yaml", "utf8"),
+    ) as E2eWorkflow;
+    const step = liveStep(workflow, name);
+    step.if = String(step.if).replace("steps.execution_plan.outcome == 'success' && ", "");
+    expect(validateStandardProfileWorkflowBoundary(readWorkflow(), workflow)).toContain(
+      `${diagnostic} must always run after successful execution planning`,
+    );
+  });
+
+  it.each([
     "Configure live E2E trace directory",
     "Build trusted live E2E timing summary",
     "Delete raw live E2E traces",
@@ -44,8 +59,8 @@ describe("e2e workflow live job boundary", () => {
 
     expect(errors).toEqual(
       expect.arrayContaining([
-        "live trace sanitizer must always run",
-        "live trace raw trace cleanup must always run",
+        "live trace sanitizer must always run after successful execution planning",
+        "live trace raw trace cleanup must always run after successful execution planning",
       ]),
     );
   });

@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { workflowExecutionSelection } from "../../../tools/e2e/target-inventory.mts";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -73,6 +72,17 @@ function expectExplicitCatalogueCoverage(): void {
 }
 
 describe("E2E workflow plan", () => {
+  it("selects every shared test through the aggregate workflow job", () => {
+    const plan = buildE2eWorkflowPlan({ jobs: "shared-e2e" });
+    expect(plan.testMatrix).toEqual(
+      credentialFreeTestMatrix(discoverCredentialFreeTests(), ["docker"]),
+    );
+    expect(plan.testMatrix.length).toBeGreaterThan(0);
+    expect(plan.selectedJobs).toEqual(["shared-e2e"]);
+    expect(plan.matrix).toEqual([]);
+    expect(Object.values(plan.catalogueMatrices).flat()).toEqual([]);
+  });
+
   it.each([
     "windows-mxc-openclaw-process-container",
     "spark-express-vllm",
@@ -81,14 +91,16 @@ describe("E2E workflow plan", () => {
     expect(() => buildE2eWorkflowPlan({ targets: id })).toThrow(/Unknown/);
   });
 
-  it.each(["tools/e2e/target-inventory.mts", "tools/e2e/target-definitions/workflows.mts"])(
-    "preserves full-suite selection when workflow metadata moves to %s",
-    (file) => {
-      expect(buildE2eWorkflowPlan({}, { changedFiles: [file] })).toEqual(
-        buildE2eWorkflowPlan({}, { changedFiles: [".github/workflows/e2e.yaml"] }),
-      );
-    },
-  );
+  it.each([
+    "tools/e2e/target-inventory.mts",
+    "tools/e2e/target-definitions/workflows.mts",
+    "tools/e2e/target-definitions/manual.mts",
+    "tools/e2e/target-definitions/external-workflows.mts",
+  ])("preserves full-suite selection when workflow metadata moves to %s", (file) => {
+    expect(buildE2eWorkflowPlan({}, { changedFiles: [file] })).toEqual(
+      buildE2eWorkflowPlan({}, { changedFiles: [".github/workflows/e2e.yaml"] }),
+    );
+  });
 
   it("defaults to every release-required target and tagged credential-free test", () => {
     const plan = buildE2eWorkflowPlan();
@@ -338,12 +350,6 @@ describe("E2E workflow plan", () => {
       "catalogue-standard",
     ]);
     expect(catalogueTarget("network-policy").selector).toBe("^network-policy:");
-    const migratedTargetIds = ["hermes-slack", "openclaw-inference-switch", "sandbox-operations"];
-    const retainedMigratedJobs = workflowExecutionSelection().allowedJobs.filter((id) =>
-      migratedTargetIds.includes(id),
-    );
-
-    expect(retainedMigratedJobs).toEqual([]);
   });
 
   it.each([
@@ -980,7 +986,7 @@ describe("E2E workflow plan", () => {
   it.each(["jobs", "targets"] as const)(
     "emits an empty shared plan for the Jetson dispatch %s selector (#8142)",
     (selector) => {
-      expect(buildE2eWorkflowPlan({ [selector]: "jetson-nvmap-gpu" })).toEqual({
+      expect(buildE2eWorkflowPlan({ [selector]: "jetson-nvmap-gpu" })).toMatchObject({
         gatewayRuntimes: ["docker"],
         matrix: [],
         testMatrix: [],
@@ -995,7 +1001,6 @@ describe("E2E workflow plan", () => {
         selectedJobs: ["jetson-nvmap-gpu"],
         runtimeProvidersByJob: { "jetson-nvmap-gpu": ["none"] },
         hermesSelected: false,
-        explicitOnlyJobs: workflowExecutionSelection().explicitOnlyJobs,
       });
     },
   );

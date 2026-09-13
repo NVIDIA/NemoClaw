@@ -31,6 +31,14 @@ describe("typed target execution through the standard profile", () => {
     vi.unstubAllEnvs();
   });
 
+  it("rejects a known catalogue target paired with another target's test", async () => {
+    await expect(
+      runCatalogueTarget("rebuild-hermes", "test/e2e/live/full-e2e.test.ts"),
+    ).rejects.toThrow("does not own test file");
+    expect(mocks.runLiveVitestCommand).not.toHaveBeenCalled();
+    expect(mocks.spawnSync).not.toHaveBeenCalled();
+  });
+
   it.each(listTargets().map(({ id }) => id))(
     "selects only %s and returns the live test failure",
     async (id) => {

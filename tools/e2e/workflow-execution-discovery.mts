@@ -87,7 +87,7 @@ export function reconcileWorkflowConsumers(
             `${target.id}: delegated entry point is missing from its workflow job: ${entrypoint}`,
           );
         }
-      } else if (target.route === "external-workflow") {
+      } else {
         const calls = directTests(jobs.get(owner) ?? {});
         for (const file of tests) {
           if (!calls.has(file))

@@ -594,6 +594,7 @@ const RAW_CONFIG_ACCESSORS: Readonly<Record<string, readonly string[]>> = {
     "listTargets",
     "requireTargets",
     "listExecutionTargets",
+    "workflowExecutionSelection",
   ],
   "test/e2e/registry/expected-states": ["listExpectedStates", "requireExpectedState"],
 };

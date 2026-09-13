@@ -743,7 +743,7 @@ jobs:
         run: npx tsx tools/e2e/runner-comparison.mts finalize
 
       - name: Build trusted live E2E timing summary
-        if: ${{ always() && inputs.test_file == 'test/e2e/live/registry-targets.test.ts' }}
+        if: ${{ always() && steps.execution_plan.outcome == 'success' && inputs.test_file == 'test/e2e/live/registry-targets.test.ts' }}
         env:
           TARGET_ID: ${{ inputs.target_id }}
         shell: bash
@@ -764,7 +764,7 @@ jobs:
       # trace JSON never becomes part of the uploaded artifact surface.
 
       - name: Delete raw live E2E traces
-        if: ${{ always() && inputs.test_file == 'test/e2e/live/registry-targets.test.ts' }}
+        if: ${{ always() && steps.execution_plan.outcome == 'success' && inputs.test_file == 'test/e2e/live/registry-targets.test.ts' }}
         env:
           TARGET_ID: ${{ inputs.target_id }}
         shell: bash
@@ -780,7 +780,7 @@ jobs:
           rm -rf -- "${NEMOCLAW_TRACE_DIR}"
 
       - name: Summarize artifacts
-        if: ${{ always() && inputs.test_file == 'test/e2e/live/registry-targets.test.ts' }}
+        if: ${{ always() && steps.execution_plan.outcome == 'success' && inputs.test_file == 'test/e2e/live/registry-targets.test.ts' }}
         env:
           TARGET_ID: ${{ inputs.target_id }}
           TARGET_LABEL: ${{ inputs.target_label }}

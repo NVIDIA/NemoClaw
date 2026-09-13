@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { focusedE2eJobsForChangedFiles } from "../../../tools/e2e/target-inventory.mts";
-import { workflowExecutionSelection } from "../../../tools/e2e/target-inventory.mts";
+import { buildE2eWorkflowPlan, selectedWorkflowJobs } from "../../../tools/e2e/workflow-plan.mts";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 
@@ -1087,13 +1087,12 @@ describe("deterministic PR risk plan", () => {
     expect(result.suggestedTests.join("\n")).toContain("`src/lib/state/registry.ts`");
   });
 
-  it("keeps every risk-plan job wired into the canonical E2E workflow", () => {
-    const allowedJobs = new Set([
-      ...workflowExecutionSelection().allowedJobs,
-      ...E2E_TARGET_CATALOGUE.flatMap(({ id, targetId }) => [id, targetId]),
-    ]);
-    const configuredJobs = new Set(RISK_RULES.flatMap((rule) => rule.requiredJobs));
-
-    expect([...configuredJobs].filter((job) => !allowedJobs.has(job))).toEqual([]);
-  });
+  it.each([...new Set(RISK_RULES.flatMap((rule) => rule.requiredJobs))])(
+    "plans executable workflow jobs for risk selector %s",
+    (job) => {
+      const plan = buildE2eWorkflowPlan({ jobs: job });
+      expect(selectedWorkflowJobs(plan).length).toBeGreaterThan(0);
+      expect(plan.testMatrix).toEqual([]);
+    },
+  );
 });

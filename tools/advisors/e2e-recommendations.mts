@@ -487,7 +487,11 @@ function discoverTrustedCredentialFreeTests(): E2eChangedCredentialFreeTest[] {
 function trustedRecommendationJobIds(): string[] {
   const inventory = workflowExecutionSelection();
   return [
-    ...new Set([...inventory.allowedJobs, "shared-e2e", ...catalogueRecommendationSelectorIds()]),
+    ...new Set([
+      ...inventory.allowedJobs,
+      ...inventory.workflowJobs,
+      ...catalogueRecommendationSelectorIds(),
+    ]),
   ].sort();
 }
 

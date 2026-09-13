@@ -125,7 +125,7 @@ const FULL_SUITE_OWNING_PATHS = [
   "tools/e2e/live-vitest-invocation.mts",
   "tools/e2e/workflow-plan.mts",
   "tools/e2e/target-inventory.mts",
-  "tools/e2e/target-definitions/workflows.mts",
+  "tools/e2e/target-definitions/",
 ] as const;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -672,11 +672,15 @@ export function buildE2eWorkflowPlan(
   );
 
   if (jobs.length > 0) {
-    const allowedJobs = new Set([...inventory.allowedJobs, ...catalogueIds]);
+    const allowedJobs = new Set([
+      ...inventory.allowedJobs,
+      ...inventory.workflowJobs,
+      ...catalogueIds,
+    ]);
     for (const job of jobs) {
       if (!allowedJobs.has(job)) {
         throw new Error(
-          `Unknown E2E test ID: ${job}\nAllowed test IDs: ${inventory.allowedJobs.join(",")}`,
+          `Unknown E2E test ID: ${job}\nAllowed test IDs: ${[...allowedJobs].sort().join(",")}`,
         );
       }
     }
