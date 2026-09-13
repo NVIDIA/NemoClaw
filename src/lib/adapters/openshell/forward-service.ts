@@ -515,8 +515,14 @@ export async function launchForwardService(
   validateForwardServiceTarget(target);
   const now = options.now ?? (() => performance.now());
   const deadline = now() + (options.timeoutMs ?? START_TIMEOUT_MS);
-  const probeAllowance = () =>
-    Math.min(LISTENER_PROBE_TIMEOUT_MS, Math.max(1, Math.floor(deadline - now())));
+  const timeoutError = new Error(
+    `OpenShell forward service did not bind ${target.localHost}:${String(target.localPort)}`,
+  );
+  const probeAllowance = () => {
+    const remaining = Math.floor(deadline - now());
+    if (remaining <= 0) throw timeoutError;
+    return Math.min(LISTENER_PROBE_TIMEOUT_MS, remaining);
+  };
   const isReachable = options.isReachable ?? probeLocalForwardListener;
   if (isReachable(target.localPort, probeAllowance())) {
     throw new Error(`Host port ${String(target.localPort)} is already occupied`);
@@ -525,15 +531,15 @@ export async function launchForwardService(
     options.spawnDetached ??
     ((executable, args, environment) =>
       spawn(executable, [...args], { detached: true, env: environment, stdio: "ignore" }));
-  const child: ForwardServiceChild = spawnDetached(
-    target.executable,
-    buildForwardServiceArgs(target),
-    forwardServiceEnvironment(
-      options.sourceEnvironment ?? process.env,
-      target,
-      options.sourceEnvironment !== undefined,
-    ),
+  const args = buildForwardServiceArgs(target);
+  const environment = forwardServiceEnvironment(
+    options.sourceEnvironment ?? process.env,
+    target,
+    options.sourceEnvironment !== undefined,
   );
+  // Recheck after the initial probe and command preparation, before creating a child.
+  probeAllowance();
+  const child: ForwardServiceChild = spawnDetached(target.executable, args, environment);
 
   let childFailure: Error | undefined;
   let notifyFailure: () => void = () => {};
@@ -551,9 +557,7 @@ export async function launchForwardService(
     childFailure ??= new ForwardServiceEarlyExitError(target, code, signal);
     notifyFailure();
   });
-  let startupError = new Error(
-    `OpenShell forward service did not bind ${target.localHost}:${String(target.localPort)}`,
-  );
+  let startupError = timeoutError;
   try {
     while (now() < deadline) {
       if (childFailure) {

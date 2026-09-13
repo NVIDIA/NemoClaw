@@ -1155,7 +1155,7 @@ function waitFor(
   const deadline = now() + timeoutMs;
   do {
     const remaining = Math.max(1, deadline - now());
-    if (probe(remaining)) return true;
+    if (probe(remaining)) return now() < deadline;
     const afterProbeRemaining = deadline - now();
     if (afterProbeRemaining <= 0) return false;
     const operation = () => sleep(Math.min(pollIntervalMs, afterProbeRemaining));

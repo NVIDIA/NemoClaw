@@ -10,6 +10,31 @@ import type {
 import { recoverHermesPortableLaunchForwards } from "./hermes-portable-forward-recovery";
 
 describe("Hermes Portable forward recovery deadline", () => {
+  it("rejects a backward operation clock and checks restoration (#11652)", async () => {
+    const fixture = createRecoveryFixture();
+    await fixture.input.deps.sleep!(10);
+    const now = fixture.input.deps.now!;
+    const launch = fixture.input.deps.launchForwardService!;
+    let offset = 0;
+    Object.assign(fixture.input.deps, {
+      now: () => now() + offset,
+      launchForwardService: async (
+        target: ForwardServiceTarget,
+        options: ForwardServiceLaunchOptions,
+      ) => {
+        await launch(target, options);
+        offset = -1;
+      },
+    });
+    await expect(recoverHermesPortableLaunchForwards(fixture.input)).rejects.toThrow(
+      "restoration-unproved",
+    );
+    expect(fixture.forwardServiceLaunches).toHaveLength(1);
+    expect(fixture.records.get(18_789)?.reachable).toBe(true);
+    expect(fixture.currentMutationCalls).toHaveLength(0);
+    expect(fixture.rollbackCaptureCalls).not.toHaveLength(0);
+  });
+
   it("rejects settlement when the final ownership check exhausts the allowance (#11652)", async () => {
     const fixture = createRecoveryFixture({ ports: [18_789] });
     Object.assign(fixture.input, { operationTimeoutMs: 100 });

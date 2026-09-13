@@ -281,12 +281,27 @@ function recoverWithLifecycleLock(deps: HermesPortableLifecycleDeps) {
 }
 
 describe("Hermes portable lifecycle", () => {
-  it("passes only the startup time remaining to authenticated health (#11652)", () => {
+  it("rejects late exec readiness and rolls back (#11652)", () => {
+    const fixture = lifecycleDeps(activeReceipt(), false);
+    const capture = fixture.captureOpenShell.getMockImplementation()!;
+    let elapsed = 0;
+    fixture.captureOpenShell.mockImplementation((args) => {
+      elapsed += args.at(-1) === "true" ? 90_001 : 0;
+      return capture(args);
+    });
+    expect(() => recoverWithLifecycleLock({ ...fixture.deps, now: () => elapsed })).toThrow(
+      "did not reconnect to the selected OpenShell gateway",
+    );
+    expect(openshellMutationCalls(fixture.captureOpenShell, "stop")).toHaveLength(1);
+  });
+
+  it("bounds start and health after qualification uses startup time (#11652)", () => {
     const fixture = lifecycleDeps(activeReceipt(), false);
     const capture = fixture.captureOpenShell.getMockImplementation()!;
     let elapsed = 0;
     const healthAllowances: number[] = [];
     const command = vi.fn((args: readonly string[], allowance: number) => {
+      elapsed += args[1] === "get" && elapsed === 0 ? 20 : 0;
       elapsed += args[1] === "start" ? 60 : 0;
       const healthTimeout = () => {
         healthAllowances.push(allowance);
@@ -305,7 +320,8 @@ describe("Hermes portable lifecycle", () => {
         captureOpenShell: command,
       }),
     ).toThrow("allowance exhausted during authenticated-health");
-    expect(healthAllowances).toEqual([40]);
+    expect(command.mock.calls.find(([args]) => args[1] === "start")?.[1]).toBe(80);
+    expect(healthAllowances).toEqual([20]);
     expect(elapsed).toBe(100);
     expect(openshellMutationCalls(command, "stop")).toHaveLength(1);
   });
@@ -413,15 +429,10 @@ describe("Hermes portable lifecycle", () => {
       throw entryError;
     });
     expect(() =>
-      withMcpLifecycleLockSync(
-        SANDBOX,
-        () =>
-          recoverHermesPortableSandboxLifecycle(SANDBOX, lifecycleContext(), {
-            ...fixture.deps,
-            recoveryTiming: { onComplete: evidence },
-          }),
-        { stateDir: path.join(stateDir, "state") },
-      ),
+      recoverWithLifecycleLock({
+        ...fixture.deps,
+        recoveryTiming: { onComplete: evidence },
+      }),
     ).toThrow(entryError);
     expect(openshellMutationCalls(fixture.captureOpenShell, "start")).toHaveLength(0);
     expect(evidence).toHaveBeenCalledOnce();
@@ -446,11 +457,7 @@ describe("Hermes portable lifecycle", () => {
     });
     let failure: unknown;
     try {
-      withMcpLifecycleLockSync(
-        SANDBOX,
-        () => recoverHermesPortableSandboxLifecycle(SANDBOX, lifecycleContext(), fixture.deps),
-        { stateDir: path.join(stateDir, "state") },
-      );
+      recoverWithLifecycleLock(fixture.deps);
     } catch (error) {
       failure = error;
     }
