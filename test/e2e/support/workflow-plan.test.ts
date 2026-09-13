@@ -627,6 +627,10 @@ describe("E2E workflow plan", () => {
       );
 
       expect(() =>
+        writeE2eWorkflowPlanCiOutput({ jobs: "catalogue-standard" }, environment),
+      ).toThrow("Advisor repair E2E cannot select credential-required job: catalogue-standard");
+
+      expect(() =>
         writeE2eWorkflowPlanCiOutput({ jobs: "managed-image-protected-runtime" }, environment),
       ).toThrow(
         "Advisor repair E2E cannot select credential-required job: managed-image-protected-runtime",

@@ -61,9 +61,11 @@ maintainer may select eligible finding IDs and request one two-turn repair attem
 workflow actor and triggering actor have `maintain` or `admin` permission. Pi can edit only a
 disposable checkout in a credential-free OpenShell sandbox; it cannot run tests, commit, push, or
 call GitHub. The resolver uploads only the disposable checkout and generated configuration, creates
-`/sandbox/output` inside the sandbox, and downloads the reconstructed candidate repository plus the
-bounded `proposal.json`; only that proposal is accepted from the output subtree. A separate
-secret-free job reconstructs and validates the patch. When publication
+`/sandbox/output` inside the sandbox, then downloads both the reconstructed candidate repository
+from `/sandbox/repo` and the bounded proposal from `/sandbox/output/proposal.json`. Trusted host code
+verifies the candidate's changed paths and file properties before exporting its patch; no other file
+from the output subtree is accepted. A separate secret-free job reconstructs and validates the patch.
+When publication
 is explicitly requested, the protected deterministic publisher rechecks the live state and may make
 one verified, non-force, compare-and-swap branch update. A trusted-main reporter then runs and
 records the approved exact-generated-SHA checks without starting another repair attempt.
