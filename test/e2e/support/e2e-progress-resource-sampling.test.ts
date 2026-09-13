@@ -113,7 +113,7 @@ describe("canonical runner comparison progress sampling", () => {
     expect(state.baselines).toEqual(["build Hermes image"]);
     expect(state.order.slice(0, 3)).toEqual([
       "baseline:build Hermes image",
-      expect.stringContaining("log:[e2e"),
+      expect.stringContaining('log:{"kind":"e2e-progress"'),
       "sample:scenario-start:build Hermes image",
     ]);
     expect(state.activeTimers()).toBe(1);
@@ -196,7 +196,9 @@ describe("canonical runner comparison progress sampling", () => {
     expect(harness.state.now()).toBe(300_000);
     expect(harness.state.legacySamples).toEqual([]);
     expect(harness.state.lines).toEqual(
-      expect.arrayContaining([expect.stringContaining("still running: build Hermes image")]),
+      expect.arrayContaining([
+        expect.stringContaining('"event":"stall","activity":"build Hermes image"'),
+      ]),
     );
     expect(harness.state.maximumActiveTimers()).toBe(1);
     progress.stop();
@@ -220,7 +222,9 @@ describe("canonical runner comparison progress sampling", () => {
     expect(periodicCalls).toBe(5);
     expect(harness.state.legacySamples).toEqual([]);
     expect(harness.state.lines).toEqual(
-      expect.arrayContaining([expect.stringContaining("still running: build Hermes image")]),
+      expect.arrayContaining([
+        expect.stringContaining('"event":"stall","activity":"build Hermes image"'),
+      ]),
     );
     progress.stop();
   });

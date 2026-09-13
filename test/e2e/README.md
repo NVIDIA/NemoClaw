@@ -1440,11 +1440,10 @@ map to this consolidated `e2e-artifacts/live/` registry-target artifact layout.
 Live and workflow-selected integration tests use automatic progress reporting.
 Calls to `progress.phase(label)` record the activity that execution reaches;
 tests do not declare phase plans. Output includes target and scenario identity,
-activity start and completion, elapsed time, and outcome. For example:
+activity start and completion, elapsed milliseconds, and outcome as JSON lines. For example:
 
-```text
-[e2e target="cloud-onboard" scenario="onboards a hosted sandbox"] [phase 2] completed: onboard the sandbox — passed in 2m 14s (total 2m 21s)
-[e2e target="cloud-onboard" scenario="onboards a hosted sandbox"] [phase 3] started: verify hosted inference (total 2m 21s; phase 0s)
+```json
+{"kind":"e2e-progress","target":"cloud-onboard","scenario":"onboards a hosted sandbox","event":"complete","activity":"onboard the sandbox","elapsedMs":141000,"activityElapsedMs":134000,"outcome":"passed","durationMs":134000}
 ```
 
 The stateful fixture enters `release registered E2E resources` during teardown.

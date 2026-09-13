@@ -709,13 +709,13 @@ getBuiltinModule("child_process").spawn("bare-child", [], { stdio: "ignore" });
     expect(
       scanDirectChildProcessSource(
         TEST_PROGRESS_SOURCE,
-        progressSource.replace("descriptor.enumerable === false", "descriptor.enumerable === true"),
+        progressSource.replace("TEST_PROGRESS_INSTANCES.has(value)", "true"),
       ).auditFailures,
     ).toEqual([expect.stringMatching(/exactly validate the private registry/u)]);
     expect(
       scanDirectChildProcessSource(
         TEST_PROGRESS_SOURCE,
-        progressSource.replace("    enumerable: false,", "    enumerable: true,"),
+        progressSource.replace("TEST_PROGRESS_INSTANCES.add(progress);", ""),
       ).auditFailures,
     ).toEqual([expect.stringMatching(/privately brand, register, and freeze/u)]);
     expect(

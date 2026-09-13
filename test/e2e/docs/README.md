@@ -219,26 +219,21 @@ phase with its duration and outcome. Push and ordinary manual workflows
 publish the current run's table in the GitHub Actions scorecard summary. The
 summary reads the target identity from `E2E_TARGET_ID`, falling back to the
 Actions `GITHUB_JOB`, and reads `NEMOCLAW_E2E_SHARD` when set. It retains
-overall start, finish, and duration, and records each declared or harness-owned
-phase's start, finish, duration, outcome, child-output event count, and
-last-output timestamp. Use several recent workflow artifact directories to
+overall start, finish, and duration. Each observed activity records its start,
+finish, duration, outcome, child-output event count, and last-output timestamp. Use several recent workflow artifact directories to
 distinguish a consistently expensive test from a variable one.
 
-Normal phase output repeats the workflow target and test scenario because a
-long-running Actions step may not expose Vitest's final report yet. It reports
-the current position and semantic label, total and phase elapsed time, and the
-outcome when that phase ends:
+Console logs are JSON lines with target, scenario, activity, elapsed milliseconds, and an event.
+Completion records include the outcome and duration. Fields are redacted before JSON encoding. For example:
 
-```text
-[e2e target="token-rotation" scenario="rotates a live sandbox credential"] [phase 1/4] started: provision a clean sandbox (total 0s; phase 0s)
-[e2e target="token-rotation" scenario="rotates a live sandbox credential"] [phase 1/4] completed: provision a clean sandbox — passed in 48s (total 48s)
-[e2e target="token-rotation" scenario="rotates a live sandbox credential"] [phase 2/4] still running: exercise token rotation (total 5m 48s; phase 5m; child output 12s ago; activity command: credential-rotation; ...)
-[e2e target="token-rotation" scenario="rotates a live sandbox credential"] [phase 4/4] event: cleanup started: destroy sandbox e2e-token-rotation (total 6m; phase 0s)
-[e2e target="token-rotation" scenario="rotates a live sandbox credential"] [phase 4/4] completed: release registered E2E resources — passed in 6s (total 6m 6s)
+```json
+{"kind":"e2e-progress","target":"token-rotation","scenario":"rotates a live sandbox credential","event":"complete","activity":"exercise token rotation","elapsedMs":348000,"activityElapsedMs":300000,"outcome":"passed","durationMs":300000}
 ```
 
-The `still running` line first appears after five minutes in the same phase and
-then every ten minutes. Shell probes update child-output liveness and redacted
+A `stall` event first appears after five minutes in the same activity, then every ten minutes.
+It adds `outputAgeMs`, `activeCommands`, and `resources` in bytes and load average.
+`resources` is null if sampling fails; `outputAgeMs` is null before the first child output.
+Shell probes update child-output liveness and redacted
 command activity automatically, but that detail remains hidden until the stall
 threshold. Automatic child-output observation forwards only the event timestamp
 and stream name, never the output contents.
@@ -292,9 +287,8 @@ only in redacted artifacts.
 
 Audited subprocess helpers require the fixture-provided frozen, canonical
 `progress` capability. Forward that object unchanged instead of copying
-it or constructing a look-alike or no-op adapter. A module-private brand,
-runtime registry, frozen-object check, type system, and semantic checker enforce
-this boundary.
+it or constructing a look-alike or no-op adapter. The private registry rejects
+copies; freezing prevents callers from replacing the monitor methods.
 
 Progress callbacks are diagnostic-only: callback failures must not change
 command execution, test outcomes, or registered resource release.

@@ -725,10 +725,16 @@ printf '{"data":[]}'
     } finally {
       await fake.close();
     }
-    expect(progressLines).toEqual(
+    expect(progressLines.map((line) => JSON.parse(line))).toEqual(
       expect.arrayContaining([
-        expect.stringContaining("event: fake OpenAI-compatible server started"),
-        expect.stringContaining("event: fake OpenAI-compatible server stopped"),
+        expect.objectContaining({
+          event: "message",
+          message: "fake OpenAI-compatible server started",
+        }),
+        expect.objectContaining({
+          event: "message",
+          message: "fake OpenAI-compatible server stopped",
+        }),
       ]),
     );
   });

@@ -43,7 +43,7 @@ function waitForClose(
 }
 
 function lifecycleLines(lines: readonly string[]): string[] {
-  return lines.filter((line) => line.includes("child lifecycle"));
+  return lines.map((line) => JSON.parse(line)).filter((entry) => entry.event === "child");
 }
 
 describe("observed E2E child process", () => {
@@ -80,7 +80,7 @@ describe("observed E2E child process", () => {
 
     await expect(waitForClose(child)).resolves.toEqual({ code: 0, signal: null });
     timers[0]?.();
-    expect(lines.at(-1)).toContain("no active command");
+    expect(JSON.parse(lines.at(-1)!)).toMatchObject({ event: "stall", activeCommands: [] });
     progress.stop();
     const phase = progress.summary().phases[0];
     expect(phase?.outputEvents).toBe(2);
@@ -104,8 +104,8 @@ describe("observed E2E child process", () => {
 
     await waitForClose(child);
     expect(lifecycleLines(lines)).toEqual([
-      expect.stringContaining("child lifecycle 1: started"),
-      expect.stringContaining(`child lifecycle 1: ${outcome}`),
+      expect.objectContaining({ child: 1, outcome: "started" }),
+      expect.objectContaining({ child: 1, outcome }),
     ]);
   });
 
@@ -130,8 +130,8 @@ describe("observed E2E child process", () => {
     await waitForClose(child);
     const checkpoints = lifecycleLines(lines);
     expect(checkpoints).toEqual([
-      expect.stringContaining("child lifecycle 1: started"),
-      expect.stringContaining("child lifecycle 1: exited-zero"),
+      expect.objectContaining({ child: 1, outcome: "started" }),
+      expect.objectContaining({ child: 1, outcome: "exited-zero" }),
     ]);
     expect(checkpoints.join("\n")).not.toContain(secret);
     expect(checkpoints.join("\n")).not.toContain("spawn-failed");
@@ -161,8 +161,8 @@ describe("observed E2E child process", () => {
     await waitForClose(child);
     const checkpoints = lifecycleLines(lines);
     expect(checkpoints).toEqual([
-      expect.stringContaining("child lifecycle 1: started"),
-      expect.stringContaining("child lifecycle 1: signaled"),
+      expect.objectContaining({ child: 1, outcome: "started" }),
+      expect.objectContaining({ child: 1, outcome: "signaled" }),
     ]);
     expect(checkpoints.join("\n")).not.toContain("SIGTERM");
   });
@@ -182,11 +182,13 @@ describe("observed E2E child process", () => {
       child.once("close", () => resolve());
     });
 
-    expect(lifecycleLines(lines)).toEqual([expect.stringContaining("child lifecycle 1: started")]);
+    expect(lifecycleLines(lines)).toEqual([
+      expect.objectContaining({ child: 1, outcome: "started" }),
+    ]);
     await closed;
     expect(lifecycleLines(lines)).toEqual([
-      expect.stringContaining("child lifecycle 1: started"),
-      expect.stringContaining("child lifecycle 1: spawn-failed"),
+      expect.objectContaining({ child: 1, outcome: "started" }),
+      expect.objectContaining({ child: 1, outcome: "spawn-failed" }),
     ]);
   });
 
@@ -229,10 +231,10 @@ describe("observed E2E child process", () => {
       const checkpoints = lifecycleLines(lines);
       expect(checkpoints).toHaveLength(4);
       expect(checkpoints).toEqual([
-        expect.stringContaining("child lifecycle 1: started"),
-        expect.stringContaining("child lifecycle 1: closed-unknown"),
-        expect.stringContaining("child lifecycle 2: started"),
-        expect.stringContaining("child lifecycle 2: exited-zero"),
+        expect.objectContaining({ child: 1, outcome: "started" }),
+        expect.objectContaining({ child: 1, outcome: "closed-unknown" }),
+        expect.objectContaining({ child: 2, outcome: "started" }),
+        expect.objectContaining({ child: 2, outcome: "exited-zero" }),
       ]);
       expect(checkpoints.join("\n")).not.toContain(secret);
       expect(checkpoints.join("\n")).not.toMatch(/\bpid\b|command:/iu);
@@ -254,7 +256,9 @@ describe("observed E2E child process", () => {
     progress.beginChildLifecycle();
     progress.stop("failed");
 
-    expect(lifecycleLines(lines)).toEqual([expect.stringContaining("child lifecycle 1: started")]);
+    expect(lifecycleLines(lines)).toEqual([
+      expect.objectContaining({ child: 1, outcome: "started" }),
+    ]);
   });
 
   test("keeps process execution independent from rejected lifecycle logging", async () => {
@@ -310,10 +314,10 @@ describe("observed E2E child process", () => {
       }),
     ).toThrow();
     timers[0]?.();
-    expect(lines.at(-1)).toContain("no active command");
+    expect(JSON.parse(lines.at(-1)!)).toMatchObject({ event: "stall", activeCommands: [] });
     expect(lifecycleLines(lines)).toEqual([
-      expect.stringContaining("child lifecycle 1: started"),
-      expect.stringContaining("child lifecycle 1: spawn-failed"),
+      expect.objectContaining({ child: 1, outcome: "started" }),
+      expect.objectContaining({ child: 1, outcome: "spawn-failed" }),
     ]);
   });
 

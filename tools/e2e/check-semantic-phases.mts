@@ -1853,14 +1853,14 @@ function auditTestProgressCapabilityContract(
         ts.isFunctionDeclaration(statement) && statement.name?.text === "isTestProgressCapability",
     );
     const expectedValidatorBody =
-      '{if(typeofvalue!=="object"||value===null||!TEST_PROGRESS_INSTANCES.has(value)){returnfalse;}constdescriptor=Object.getOwnPropertyDescriptor(value,TEST_PROGRESS_CAPABILITY);return(Object.isFrozen(value)&&descriptor?.value===true&&descriptor.enumerable===false&&descriptor.configurable===false&&descriptor.writable===false);}';
+      '{returntypeofvalue==="object"&&value!==null&&TEST_PROGRESS_INSTANCES.has(value);}';
     if (
       !capabilityValidator?.body ||
       compactSource(capabilityValidator.body, sourceFile) !== expectedValidatorBody
     ) {
       reportUnsupported(
         capabilityValidator ?? sourceFile,
-        "isTestProgressCapability must exactly validate the private registry, own brand, and frozen object",
+        "isTestProgressCapability must exactly validate the private registry",
       );
     }
 
@@ -1974,10 +1974,9 @@ function auditTestProgressCapabilityContract(
     }
     const factoryStatements = factory?.body?.statements ?? [];
     const factoryTail = factoryStatements
-      .slice(-3)
+      .slice(-2)
       .map((statement) => compactSource(statement, sourceFile));
     const expectedFactoryTail = [
-      "Object.defineProperty(progress,TEST_PROGRESS_CAPABILITY,{configurable:false,enumerable:false,value:true,writable:false,});",
       "TEST_PROGRESS_INSTANCES.add(progress);",
       "returnObject.freeze(progress);",
     ];
@@ -2008,10 +2007,8 @@ function auditTestProgressCapabilityContract(
         }
         if (
           ts.isCallExpression(node) &&
-          expressionPath(node.expression) === "logChildLifecycleBestEffort" &&
-          node.arguments.length === 2 &&
-          ts.isStringLiteralLike(node.arguments[1] as ts.Expression) &&
-          (node.arguments[1] as ts.StringLiteralLike).text === "started"
+          compactSource(node, sourceFile) ===
+            'writeLog("child",now(),{child:ordinal,outcome:"started"})'
         ) {
           logsSynchronousLifecycleStart = true;
         }

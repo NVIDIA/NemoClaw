@@ -166,12 +166,65 @@ describe("live test progress", () => {
 
     expect(state.clearCalls).toBe(2);
     expect(state.scheduledDelays).toEqual([300_000, 600_000, 300_000]);
-    expect(state.lines).toEqual([
-      '[e2e target="unassigned" scenario="agent-turn-latency"] [phase 1] started: install OpenClaw sandbox (total 0s; phase 0s)',
-      '[e2e target="unassigned" scenario="agent-turn-latency"] [phase 1] still running: install OpenClaw sandbox (total 5m; phase 5m; child output 4m ago; activity command: install-openclaw; rss 0.5 GiB; memory available 8.0 GiB/16.0 GiB; disk free 6.0 GiB; load 2.50)',
-      '[e2e target="unassigned" scenario="agent-turn-latency"] [phase 1] completed: install OpenClaw sandbox — passed in 6m (total 6m)',
-      '[e2e target="unassigned" scenario="agent-turn-latency"] [phase 2] started: install Hermes sandbox (total 6m; phase 0s)',
-      '[e2e target="unassigned" scenario="agent-turn-latency"] [phase 2] completed: install Hermes sandbox — passed in 0s (total 6m)',
+    expect(state.lines.map((line) => (line.startsWith("{") ? JSON.parse(line) : line))).toEqual([
+      {
+        kind: "e2e-progress",
+        target: "unassigned",
+        scenario: "agent-turn-latency",
+        event: "start",
+        activity: "install OpenClaw sandbox",
+        elapsedMs: 0,
+        activityElapsedMs: 0,
+      },
+      {
+        kind: "e2e-progress",
+        target: "unassigned",
+        scenario: "agent-turn-latency",
+        event: "stall",
+        activity: "install OpenClaw sandbox",
+        elapsedMs: 300000,
+        activityElapsedMs: 300000,
+        outputAgeMs: 240000,
+        activeCommands: ["command: install-openclaw"],
+        resources: {
+          availableMemoryBytes: 8589934592,
+          processRssBytes: 536870912,
+          totalMemoryBytes: 17179869184,
+          workspaceFreeBytes: 6442450944,
+          loadAverage1m: 2.5,
+        },
+      },
+      {
+        kind: "e2e-progress",
+        target: "unassigned",
+        scenario: "agent-turn-latency",
+        event: "complete",
+        outcome: "passed",
+        durationMs: 360000,
+        activity: "install OpenClaw sandbox",
+        elapsedMs: 360000,
+        activityElapsedMs: 360000,
+      },
+      {
+        kind: "e2e-progress",
+        target: "unassigned",
+        scenario: "agent-turn-latency",
+        event: "start",
+        activity: "install Hermes sandbox",
+        elapsedMs: 360000,
+        activityElapsedMs: 0,
+      },
+      {
+        kind: "e2e-progress",
+        target: "unassigned",
+        scenario: "agent-turn-latency",
+        event: "complete",
+        outcome: "passed",
+        durationMs: 0,
+        activity: "install Hermes sandbox",
+        elapsedMs: 360000,
+        activityElapsedMs: 0,
+      },
     ]);
     expect(progress.summary()).toEqual({
       version: 1,
@@ -213,9 +266,27 @@ describe("live test progress", () => {
     state.clockMs = 61_000;
     progress.stop("failed");
 
-    expect(state.lines).toEqual([
-      '[e2e target="unassigned" scenario="visible-agent-turn-scenario"] [phase 1] started: prepare hosted inference (total 0s; phase 0s)',
-      '[e2e target="unassigned" scenario="visible-agent-turn-scenario"] [phase 1] completed: prepare hosted inference — failed in 1m (total 1m)',
+    expect(state.lines.map((line) => (line.startsWith("{") ? JSON.parse(line) : line))).toEqual([
+      {
+        kind: "e2e-progress",
+        target: "unassigned",
+        scenario: "visible-agent-turn-scenario",
+        event: "start",
+        activity: "prepare hosted inference",
+        elapsedMs: 0,
+        activityElapsedMs: 0,
+      },
+      {
+        kind: "e2e-progress",
+        target: "unassigned",
+        scenario: "visible-agent-turn-scenario",
+        event: "complete",
+        outcome: "failed",
+        durationMs: 60000,
+        activity: "prepare hosted inference",
+        elapsedMs: 60000,
+        activityElapsedMs: 60000,
+      },
     ]);
     expect(state.lines.join("\n")).toContain("visible-agent-turn-scenario");
     expect(progress.summary().phases).toEqual([

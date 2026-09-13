@@ -31,6 +31,7 @@ export const test = base.extend<WorkflowE2ETestFixtures>({
       const targetId = process.env.E2E_TARGET_ID || process.env.GITHUB_JOB;
       const progress = startTestProgress(task.name, "execute E2E test", {
         targetId,
+        redact: (text) => secrets.redact(text),
         taskStatus: () => ({
           errorCount: task.result?.errors?.length ?? 0,
           ...(taskOutcomeForState(task.result?.state)

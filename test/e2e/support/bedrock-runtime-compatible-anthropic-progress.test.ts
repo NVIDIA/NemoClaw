@@ -83,11 +83,14 @@ describe("Bedrock raw-command progress", () => {
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toBe(expectedOutput);
     observation.timers[0]?.();
-    expect(observation.lines.at(-1)).toContain("no active command");
+    expect(JSON.parse(observation.lines.at(-1)!)).toMatchObject({
+      event: "stall",
+      activeCommands: [],
+    });
     expect(observation.lines).toEqual(
       expect.arrayContaining([
-        expect.stringContaining("event: command bedrock-progress-output started"),
-        expect.stringContaining("event: command bedrock-progress-output passed"),
+        expect.stringContaining('"message":"command bedrock-progress-output started"'),
+        expect.stringContaining('"message":"command bedrock-progress-output passed"'),
       ]),
     );
     progress.stop();
@@ -122,13 +125,20 @@ describe("Bedrock raw-command progress", () => {
     expect(result.timedOut).toBe(true);
     expect(observation.lines).toEqual(
       expect.arrayContaining([
-        expect.stringContaining("event: command bedrock-progress-timeout started"),
-        expect.stringContaining("event: command bedrock-progress-timeout timeout fired after 50ms"),
-        expect.stringContaining("event: command bedrock-progress-timeout stopped after timeout"),
+        expect.stringContaining('"message":"command bedrock-progress-timeout started"'),
+        expect.stringContaining(
+          '"message":"command bedrock-progress-timeout timeout fired after 50ms"',
+        ),
+        expect.stringContaining(
+          '"message":"command bedrock-progress-timeout stopped after timeout"',
+        ),
       ]),
     );
     observation.timers[0]?.();
-    expect(observation.lines.at(-1)).toContain("no active command");
+    expect(JSON.parse(observation.lines.at(-1)!)).toMatchObject({
+      event: "stall",
+      activeCommands: [],
+    });
     progress.stop();
   });
 
@@ -153,7 +163,7 @@ describe("Bedrock raw-command progress", () => {
     expect(observation.lines).toEqual(
       expect.arrayContaining([
         expect.stringContaining(
-          "event: command bedrock-progress-output-limit output exceeded safe capture limit",
+          '"message":"command bedrock-progress-output-limit output exceeded safe capture limit"',
         ),
       ]),
     );

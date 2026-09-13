@@ -161,6 +161,7 @@ export const test = base.extend<E2ETargetFixtures>({
       const baselinePath = process.env.E2E_RESOURCE_PHASE_BASELINES_FILE;
       const progress = startTestProgress(task.name, "execute E2E test", {
         targetId,
+        redact: (text) => secrets.redact(text),
         taskStatus: () => ({
           errorCount: task.result?.errors?.length ?? 0,
           ...(taskOutcomeForState(task.result?.state)

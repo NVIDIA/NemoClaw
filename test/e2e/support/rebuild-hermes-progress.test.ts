@@ -61,13 +61,66 @@ describe("Hermes rebuild live progress", () => {
       "remove rebuilt Hermes resources",
     ]);
     expect(state.lines).toHaveLength(linesAfterStop);
-    expect(state.lines).toEqual([
-      '[e2e target="unassigned" scenario="rebuild-hermes"] [phase 1] started: run authoritative Hermes rebuild (total 0s; phase 0s)',
-      '[e2e target="unassigned" scenario="rebuild-hermes"] [phase 1] still running: run authoritative Hermes rebuild (total 5m; phase 5m; child output 4m ago; no active command; rss 0.5 GiB; memory available 8.0 GiB/16.0 GiB; disk free 6.0 GiB; load 2.50)',
+    expect(state.lines.map((line) => (line.startsWith("{") ? JSON.parse(line) : line))).toEqual([
+      {
+        kind: "e2e-progress",
+        target: "unassigned",
+        scenario: "rebuild-hermes",
+        event: "start",
+        activity: "run authoritative Hermes rebuild",
+        elapsedMs: 0,
+        activityElapsedMs: 0,
+      },
+      {
+        kind: "e2e-progress",
+        target: "unassigned",
+        scenario: "rebuild-hermes",
+        event: "stall",
+        activity: "run authoritative Hermes rebuild",
+        elapsedMs: 300000,
+        activityElapsedMs: 300000,
+        outputAgeMs: 240000,
+        activeCommands: [],
+        resources: {
+          availableMemoryBytes: 8589934592,
+          processRssBytes: 536870912,
+          totalMemoryBytes: 17179869184,
+          workspaceFreeBytes: 6442450944,
+          loadAverage1m: 2.5,
+        },
+      },
       'E2E_RESOURCE_SNAPSHOT {"phase":"run authoritative Hermes rebuild"}',
-      '[e2e target="unassigned" scenario="rebuild-hermes"] [phase 1] completed: run authoritative Hermes rebuild — passed in 5m (total 5m)',
-      '[e2e target="unassigned" scenario="rebuild-hermes"] [phase 2] started: remove rebuilt Hermes resources (total 5m; phase 0s)',
-      '[e2e target="unassigned" scenario="rebuild-hermes"] [phase 2] completed: remove rebuilt Hermes resources — passed in 0s (total 5m)',
+      {
+        kind: "e2e-progress",
+        target: "unassigned",
+        scenario: "rebuild-hermes",
+        event: "complete",
+        outcome: "passed",
+        durationMs: 300000,
+        activity: "run authoritative Hermes rebuild",
+        elapsedMs: 300000,
+        activityElapsedMs: 300000,
+      },
+      {
+        kind: "e2e-progress",
+        target: "unassigned",
+        scenario: "rebuild-hermes",
+        event: "start",
+        activity: "remove rebuilt Hermes resources",
+        elapsedMs: 300000,
+        activityElapsedMs: 0,
+      },
+      {
+        kind: "e2e-progress",
+        target: "unassigned",
+        scenario: "rebuild-hermes",
+        event: "complete",
+        outcome: "passed",
+        durationMs: 0,
+        activity: "remove rebuilt Hermes resources",
+        elapsedMs: 300000,
+        activityElapsedMs: 0,
+      },
     ]);
   });
 
@@ -80,10 +133,37 @@ describe("Hermes rebuild live progress", () => {
     progress.event("historical base pull timed out; retrying attempt 2");
     progress.stop("failed");
 
-    expect(state.lines).toEqual([
-      '[e2e target="rebuild-hermes-target" scenario="rebuild-hermes scenario"] [phase 1] started: pull historical base (total 0s; phase 0s)',
-      '[e2e target="rebuild-hermes-target" scenario="rebuild-hermes scenario"] [phase 1] event: historical base pull timed out; retrying attempt 2 (total 1m; phase 1m)',
-      '[e2e target="rebuild-hermes-target" scenario="rebuild-hermes scenario"] [phase 1] completed: pull historical base — failed in 1m (total 1m)',
+    expect(state.lines.map((line) => (line.startsWith("{") ? JSON.parse(line) : line))).toEqual([
+      {
+        kind: "e2e-progress",
+        target: "rebuild-hermes-target",
+        scenario: "rebuild-hermes scenario",
+        event: "start",
+        activity: "pull historical base",
+        elapsedMs: 0,
+        activityElapsedMs: 0,
+      },
+      {
+        kind: "e2e-progress",
+        target: "rebuild-hermes-target",
+        scenario: "rebuild-hermes scenario",
+        event: "message",
+        message: "historical base pull timed out; retrying attempt 2",
+        activity: "pull historical base",
+        elapsedMs: 60000,
+        activityElapsedMs: 60000,
+      },
+      {
+        kind: "e2e-progress",
+        target: "rebuild-hermes-target",
+        scenario: "rebuild-hermes scenario",
+        event: "complete",
+        outcome: "failed",
+        durationMs: 60000,
+        activity: "pull historical base",
+        elapsedMs: 60000,
+        activityElapsedMs: 60000,
+      },
     ]);
     expect(() => progress.event("ignored after stop\nsecret-shaped payload")).not.toThrow();
 
@@ -120,9 +200,16 @@ describe("Hermes rebuild live progress", () => {
     state.timerCallback?.();
     progress.stop();
 
-    expect(state.lines.find((line) => line.includes("still running"))).toContain(
-      "memory free 3.0 GiB/16.0 GiB",
-    );
+    expect(
+      state.lines
+        .filter((line) => line.startsWith("{"))
+        .map((line) => JSON.parse(line))
+        .find((entry) => entry.event === "stall").resources,
+    ).toMatchObject({
+      memoryAvailabilityKind: "free",
+      availableMemoryBytes: 3 * 1024 ** 3,
+      totalMemoryBytes: 16 * 1024 ** 3,
+    });
   });
 
   it("keeps diagnostics best-effort when host sampling and output fail", () => {

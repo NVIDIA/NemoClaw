@@ -77,10 +77,10 @@ describe("Podman CPU lifecycle helper", () => {
       progress.phase(PHASES[1]);
 
       expect(stdout).toBe("podman-command-ok");
-      expect(logLines).toEqual(
+      expect(logLines.map((line) => JSON.parse(line))).toEqual(
         expect.arrayContaining([
-          expect.stringContaining("child lifecycle 1: started"),
-          expect.stringContaining("child lifecycle 1: exited-zero"),
+          expect.objectContaining({ event: "child", child: 1, outcome: "started" }),
+          expect.objectContaining({ event: "child", child: 1, outcome: "exited-zero" }),
         ]),
       );
       expect(progress.summary().phases[0]?.outputEvents).toBeGreaterThan(0);

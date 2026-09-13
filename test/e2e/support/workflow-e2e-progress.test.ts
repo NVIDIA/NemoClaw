@@ -43,7 +43,7 @@ describe("workflow-selected integration progress", () => {
       const output = `${result.stdout}\n${result.stderr}`;
       expect(result.status, output).toBe(0);
       expect(output).not.toContain(sensitiveTarget);
-      expect(output).toContain('target="[REDACTED]"');
+      expect(output).toContain('"target":"[REDACTED]"');
 
       const artifactText = fs.readFileSync(
         path.join(artifactRoot, ARTIFACT_SLUG, "test-progress.json"),
