@@ -174,12 +174,30 @@ try {
     $receipt.phase = 'native-msi-build'
     $payloadAuthoring = Join-Path $work 'Payload.wxs'
     $transactions = Join-Path $work 'RuntimeTransactions.wxi'
-    Invoke-BuildTool $PythonPath @($composer, 'author', '--payload', $payload, '--output', $payloadAuthoring,
-        '--transaction-helper', $helper, '--transaction-output', $transactions) 'package-authoring'
     $msi = Join-Path $OutputDirectory "NemoClaw-$ProductVersion-windows-arm64.msi"
-    Invoke-BuildTool $WixPath @('build', '-arch', 'arm64', '-d', "ProductVersion=$ProductVersion", '-d', "SourceRoot=$SourceRoot",
-        '-d', 'NativeRuntimeMsiPrototype=false', '-d', 'ImmutableRuntimePackage=true', '-d', "NativeRuntimeMsiAuthoring=$transactions",
-        (Join-Path $windows 'Product.wxs'), $payloadAuthoring, '-pdbtype', 'none', '-wx', '-out', $msi) 'msi-build'
+    $cabinetDrive = 'P:'
+    $cabinetRoot = $cabinetDrive + '\'
+    $subst = Join-Path $env:SystemRoot 'System32\subst.exe'
+    if (Test-Path -LiteralPath $cabinetRoot) { throw 'The fixed CI cabinet source drive is already in use.' }
+    & $subst $cabinetDrive $payload
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath (Join-Path $cabinetRoot 'immutable-package-inputs.json') -PathType Leaf)) {
+        throw 'The short CI cabinet source drive could not be bound to the verified payload.'
+    }
+    $cabinetFailure = $null
+    try {
+        Invoke-BuildTool $PythonPath @($composer, 'author', '--payload', $payload, '--cabinet-source', $cabinetRoot, '--output', $payloadAuthoring,
+            '--transaction-helper', $helper, '--transaction-output', $transactions) 'package-authoring'
+        Invoke-BuildTool $WixPath @('build', '-arch', 'arm64', '-d', "ProductVersion=$ProductVersion", '-d', "SourceRoot=$SourceRoot",
+            '-d', 'NativeRuntimeMsiPrototype=false', '-d', 'ImmutableRuntimePackage=true', '-d', "NativeRuntimeMsiAuthoring=$transactions",
+            (Join-Path $windows 'Product.wxs'), $payloadAuthoring, '-pdbtype', 'none', '-wx', '-out', $msi) 'msi-build'
+    } catch { $cabinetFailure = $_ }
+    finally {
+        & $subst $cabinetDrive /D
+        if ($LASTEXITCODE -ne 0 -and $null -eq $cabinetFailure) {
+            $cabinetFailure = [InvalidOperationException]::new('The short CI cabinet source drive could not be released.')
+        }
+    }
+    if ($null -ne $cabinetFailure) { throw $cabinetFailure }
     # Same existing ICE60 exception as NemoClaw.wixproj; all other ICEs run.
     Invoke-BuildTool $WixPath @('msi', 'validate', '-sice', 'ICE60', '-wx', $msi) 'msi-validation'
     & (Join-Path $owner 'audit-runtime-msi.ps1') -MsiPath $msi -HelperSha256 $helperSha -ReceiptPath (Join-Path $OutputDirectory 'compiled-msi.json') -RequireInstallationRootRemoval

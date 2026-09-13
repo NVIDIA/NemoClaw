@@ -199,6 +199,21 @@ class PackageComposition(unittest.TestCase):
         self.assertEqual(len(owners), 1)
         self.assertTrue(owners[0].findall("w:File", ns))
 
+    def test_explicit_cabinet_alias_is_retained_in_source_paths(self):
+        self.compose()
+        alias = self.fixture.root / "p"
+        try:
+            alias.symlink_to(self.output, target_is_directory=True)
+        except OSError as error:
+            self.skipTest("Directory aliases are unavailable: " + str(error))
+        authoring = self.fixture.root / "payload-short.wxs"
+        package.payload_authoring(self.output, authoring, alias)
+        tree = ET.parse(authoring)
+        ns = {"w": package.NAMESPACE}
+        sources = [row.attrib["Source"] for row in tree.findall(".//w:File", ns)]
+        self.assertTrue(sources)
+        self.assertTrue(all(Path(source).is_relative_to(alias.absolute()) for source in sources))
+
 
 if __name__ == "__main__":
     unittest.main()

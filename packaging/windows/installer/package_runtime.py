@@ -284,7 +284,14 @@ def stable_id(prefix: str, value: str):
     return prefix + hashlib.sha256(value.lower().encode()).hexdigest()[:32]
 
 
-def payload_authoring(payload: Path, output: Path):
+def payload_authoring(payload: Path, output: Path, cabinet_source: Path | None = None):
+    explicit_cabinet_source = cabinet_source is not None
+    cabinet_source = payload if cabinet_source is None else cabinet_source
+    if (
+        not cabinet_source.is_absolute()
+        or cabinet_source.resolve(strict=True) != payload.resolve(strict=True)
+    ):
+        raise ValueError("The cabinet source alias does not resolve to the verified payload.")
     rows = inventory(payload)
     wix = ET.Element("{" + NAMESPACE + "}Wix")
     fragment = element(wix, "Fragment")
@@ -332,7 +339,11 @@ def payload_authoring(payload: Path, output: Path):
                     "File",
                     Id=stable_id("File_", relative),
                     Name=Path(relative).name,
-                    Source=str((payload / relative).resolve()),
+                    Source=str(
+                        (cabinet_source / relative).absolute()
+                        if explicit_cabinet_source
+                        else (cabinet_source / relative).resolve()
+                    ),
                     KeyPath="yes" if number == 0 else "no",
                 )
     if len(components) >= 65536:
@@ -367,6 +378,7 @@ def main():
     build_parser = sub.add_parser("author")
     for name in ("payload", "output", "transaction-helper", "transaction-output"):
         build_parser.add_argument("--" + name, type=Path, required=True)
+    build_parser.add_argument("--cabinet-source", type=Path)
     ui = sub.add_parser("bootstrapper")
     for name in ("published", "payload", "output"):
         ui.add_argument("--" + name, type=Path, required=True)
@@ -422,7 +434,7 @@ def main():
             args.payload / "runtimes" / inputs["runtime"]["runtimeId"],
             inputs["runtime"],
         )
-        stats = payload_authoring(args.payload, args.output)
+        stats = payload_authoring(args.payload, args.output, args.cabinet_source)
         xml, record = author(
             inputs["runtime"],
             args.transaction_helper,
