@@ -292,15 +292,25 @@ def conpty_check(_root, nonce):
 def configure_browser_logging():
     state = Path(os.environ["NEMOCLAW_AGENT_HOME"])
     # Derive logs from the admitted state even when TEMP differs.
-    if os.environ.get("AGENT_BROWSER_ARGS") not in {
-        "--enable-logging=stderr",
-        "--enable-logging",
-    }:
+    # The shared installed/Personal adapter supplies the browser-only GPU flag.
+    arguments = [
+        part.strip()
+        for line in os.environ.get("AGENT_BROWSER_ARGS", "").split("\n")
+        for part in line.split(",")
+        if part.strip()
+    ]
+    logging = {"--enable-logging=stderr", "--enable-logging"}
+    if (
+        len(arguments) != 2
+        or arguments.count("--disable-gpu") != 1
+        or sum(arg in logging for arg in arguments) != 1
+    ):
         raise ValueError("Unexpected canonical browser diagnostic arguments")
-    # agent-browser 0.26 retains Chrome's stderr pipe without draining it after
-    # DevToolsActivePort succeeds. Keep logging, directed to our owned file.
+    # Keep existing file logging and every admitted flag; never use stderr logging.
     log = state / "temp/chrome.log"
-    os.environ["AGENT_BROWSER_ARGS"] = "--enable-logging"
+    os.environ["AGENT_BROWSER_ARGS"] = ",".join(
+        "--enable-logging" if arg in logging else arg for arg in arguments
+    )
     os.environ["CHROME_LOG_FILE"] = str(log)
     return state, log
 
@@ -521,6 +531,7 @@ def browser_agent_state(state, expected, launches):
                                 "--remote-debugging-",
                                 "--headless",
                                 "--enable-logging",
+                                "--disable-gpu",
                             )
                         )
                     ]
@@ -1492,7 +1503,10 @@ def browser_check(root, nonce):
     )
     state, chrome_log = configure_browser_logging()
     diagnostics = {
-        "chromeLogging": {"arguments": "--enable-logging", "file": str(chrome_log)},
+        "chromeLogging": {
+            "arguments": os.environ["AGENT_BROWSER_ARGS"],
+            "file": str(chrome_log),
+        },
         "logs": {},
     }
     page = (

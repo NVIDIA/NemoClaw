@@ -302,7 +302,7 @@ class BrowserDiagnostics(unittest.TestCase):
                 env = {
                     "NEMOCLAW_AGENT_HOME": str(state),
                     "TEMP": str(state / "temp"),
-                    "AGENT_BROWSER_ARGS": "--enable-logging=stderr",
+                    "AGENT_BROWSER_ARGS": "--enable-logging=stderr,--disable-gpu",
                 }
                 with patch.dict(os.environ, env, clear=True):
                     selected, file = owner.configure_browser_logging()
@@ -310,7 +310,8 @@ class BrowserDiagnostics(unittest.TestCase):
                     self.assertEqual(file, state / "temp/chrome.log")
                     self.assertEqual(os.environ["CHROME_LOG_FILE"], str(file))
                     self.assertEqual(
-                        os.environ["AGENT_BROWSER_ARGS"], "--enable-logging"
+                        os.environ["AGENT_BROWSER_ARGS"],
+                        "--enable-logging,--disable-gpu",
                     )
                     paths.append(file)
             self.assertEqual(len(set(paths)), 4)
@@ -805,7 +806,12 @@ class AgentBrowserState(unittest.TestCase):
             102,
             101,
             11.0,
-            ["chrome.exe", "--headless=new", "--user-data-dir=" + str(profile)],
+            [
+                "chrome.exe",
+                "--headless=new",
+                "--user-data-dir=" + str(profile),
+                "--disable-gpu",
+            ],
             [renderer],
         )
         daemon = process(101, 100, 10.0, [str(executable)], [browser])
@@ -884,6 +890,7 @@ class AgentBrowserState(unittest.TestCase):
             self.assertEqual(
                 result["processes"][2]["selectedArguments"], ["--type=renderer"]
             )
+            self.assertIn("--disable-gpu", result["processes"][1]["selectedArguments"])
             self.assertFalse(result["historicalProcessExitsObserved"])
             self.assertTrue((Path(launch[2]) / "h_0123456789.pid").exists())
 

@@ -47,6 +47,13 @@ class AdapterPathControls(unittest.TestCase):
         module = self.browser_fixture()
         with (
             patch.object(adapter, "_active_root", self.root),
+            patch.dict(
+                os.environ,
+                {
+                    "AGENT_BROWSER_ARGS": "--lang=en-US,--enable-logging\n--force-color-profile=srgb"
+                },
+                clear=True,
+            ),
             patch.object(
                 browser_adapter,
                 "CLI_SHA256",
@@ -73,6 +80,19 @@ class AdapterPathControls(unittest.TestCase):
             self.assertEqual(module._find_cli(), expected)
             self.assertEqual(result["command"], expected)
             self.assertFalse(result["runtimeBytesModified"])
+            self.assertEqual(
+                result["browserArgumentPolicy"]["requiredFlag"], "--disable-gpu"
+            )
+            first_arguments = os.environ["AGENT_BROWSER_ARGS"]
+            self.assertEqual(
+                first_arguments,
+                "--lang=en-US,--enable-logging\n--force-color-profile=srgb,--disable-gpu",
+            )
+            browser_adapter.adapt(module, self.root, adapter)
+            self.assertEqual(os.environ["AGENT_BROWSER_ARGS"], first_arguments)
+            os.environ["AGENT_BROWSER_ARGS"] = ""
+            browser_adapter.adapt(module, self.root, adapter)
+            self.assertEqual(os.environ["AGENT_BROWSER_ARGS"], "--disable-gpu")
             (self.root / browser_adapter.PYTHON).unlink()
             with self.assertRaises(adapter.NativeStartupRefusal):
                 module._find_cli()

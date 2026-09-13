@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Use the installed Browser Use module entry instead of uv's path trampoline."""
+"""Windows-owned Browser Use entrypoint and browser acceleration compatibility."""
 
 import hashlib
 import os
@@ -20,7 +20,7 @@ _installed_root = None
 
 
 def adapt(module, root, native):
-    """Change only Hermes' CLI resolver; upstream runs stdin/env/args itself."""
+    """Keep upstream launch ownership with the admitted Windows compatibility flags."""
     if root != native._active_root or module.__name__ != MODULE:
         native._refuse("the Browser Use adapter has no matching admitted runtime.")
     expected = native._regular_file(root / "hermes-agent" / RELATIVE, root)
@@ -43,6 +43,16 @@ def adapt(module, root, native):
         return [str(python), "-I", "-B", "-m", "browser_use.cli"]
 
     command = owned_cli()
+    # agent-browser0.26 splits AGENT_BROWSER_ARGS on commas/newlines, not spaces.
+    # Preserve every supplied argument and append only this browser-only flag.
+    arguments = os.environ.get("AGENT_BROWSER_ARGS", "")
+    tokens = [
+        part.strip() for line in arguments.split("\n") for part in line.split(",")
+    ]
+    if "--disable-gpu" not in tokens:
+        os.environ["AGENT_BROWSER_ARGS"] = (
+            arguments + ("," if arguments else "") + "--disable-gpu"
+        )
     module._find_cli = owned_cli
     return {
         "classification": "owned-browser-use-module-launch",
@@ -52,6 +62,12 @@ def adapt(module, root, native):
         "entryPointsSha256": ENTRY_POINTS_SHA256,
         "trampolineBypassed": True,
         "runtimeBytesModified": False,
+        "browserArgumentPolicy": {
+            "environment": "AGENT_BROWSER_ARGS",
+            "requiredFlag": "--disable-gpu",
+            "otherArgumentsPreserved": True,
+            "scope": "browser graphics acceleration only",
+        },
     }
 
 
