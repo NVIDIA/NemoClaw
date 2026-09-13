@@ -9,13 +9,14 @@ Run commands from the repository root.
 Follow the [Go guidance in AGENTS.md](../../AGENTS.md#go-coding-guidance).
 The following complete workflow targets Linux ARM64 and requires Docker, OpenSSL, and the [Fabric build prerequisites](../reference/dependencies.md#fabric-builds).
 On other platforms, omit the Fabric image build; the native messaging test reports a platform skip.
+Build the image once before testing and rebuild it when dependency inputs change.
 Run:
 
 ```sh
+python3 image/fabric/build.py --harness openclaw
 go test ./...
 go vet ./...
 go run ./tools/bundle
-python3 image/fabric/build.py --harness openclaw
 go test -tags=integration ./internal/engine -count=1
 ```
 
@@ -27,11 +28,13 @@ go test -race ./...
 go vet -tags=integration,live ./...
 ```
 
-On Linux ARM64, the integration suite also runs `TestFabricOpenClawNativeMessaging` against real Fabric and OpenClaw processes in isolated Docker containers.
-Build the OpenClaw Fabric image before running that suite; Docker, OpenSSL, and the [Fabric build prerequisites](../reference/dependencies.md#fabric-builds) are required.
+On Linux ARM64, ordinary `go test ./...` runs `TestFabricOpenClawNativeMessaging` against real Fabric and OpenClaw processes in isolated Docker containers.
+It requires the dependency image, Docker, OpenSSL, and the [Fabric build prerequisites](../reference/dependencies.md#fabric-builds).
 Missing prerequisites fail the test; it skips only on platforms the image does not run on.
-The fixture uses local Telegram and model responses and sends no external messages or paid inference requests.
-Plain `go test ./...` excludes these integration tests.
+The fixture mounts the working-tree adapter and host source and uses local Telegram and model responses.
+It sends no external messages or paid inference requests.
+No build tag or opt-in environment variable selects this test.
+Fixture/source hashes and command/startup timings are retained with its output and evidence.
 
 The provider integration tests execute actual OpenTofu and provider processes against a gRPC fixture.
 They cover no-op apply, model updates, export/recreate, lost responses, cancellation, ownership, policy drift, and secret exclusion.

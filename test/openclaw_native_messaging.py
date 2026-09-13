@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import re
+import select
 import ssl
 import subprocess
 import sys
@@ -27,6 +28,8 @@ NATIVE_ENV = dict(os.environ, HOME='/sandbox', OPENCLAW_HOME='/sandbox',
                   OPENCLAW_STATE_DIR='/sandbox/.openclaw', OPENCLAW_CONFIG_PATH='/sandbox/.openclaw/openclaw.json',
                   SSL_CERT_FILE='/certs/fixture.crt', NODE_EXTRA_CA_CERTS='/certs/fixture.crt')
 commands = []
+cli = None
+timings = []
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
@@ -42,6 +45,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if '/chat/completions' in self.path:
             with condition:
                 models.append(body)
+                condition.notify_all()
             text = '\n'.join(str(m.get('content', '')) for m in body.get('messages', []) if m.get('role') == 'user' and isinstance(m.get('content'), str))
             markers = re.findall(r'PROBE_[A-Z_]+', text)
             answer = markers[-1] if markers else 'FIXTURE_REPLY'
@@ -79,13 +83,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
                       'can_join_groups': True, 'can_read_all_group_messages': False, 'supports_inline_queries': False}
         elif method == 'getUpdates':
             with condition:
-                condition.wait(0.2)
+                condition.wait_for(lambda: any(x["update_id"] >= int(body.get("offset", 0)) for x in updates), timeout=0.05)
                 result = [x for x in updates if x['update_id'] >= int(body.get('offset', 0))]
         elif method == 'getWebhookInfo':
             result = {'url': '', 'has_custom_certificate': False, 'pending_update_count': 0}
         elif method in ('sendMessage', 'editMessageText'):
             with condition:
                 sent.append(body)
+                condition.notify_all()
             result = {'message_id': len(sent), 'date': int(time.time()),
                       'chat': {'id': int(body['chat_id']), 'type': 'private'}, 'text': body.get('text', '')}
         elif method == 'getMyCommands':
@@ -96,14 +101,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def respond(self, value, status=200):
         raw = json.dumps(value).encode()
-        self.send_response(status)
-        self.send_header('Content-Type', 'application/json')
-        self.send_header('Content-Length', str(len(raw)))
-        self.end_headers()
         try:
+            self.send_response(status)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Content-Length', str(len(raw)))
+            self.end_headers()
             self.wfile.write(raw)
         except (BrokenPipeError, ssl.SSLEOFError):
+            # Channel shutdown cancels the fixture's outstanding long poll.
             pass
+
 
 
 def message(user, text):
@@ -121,17 +128,25 @@ def wait(predicate, label, seconds=80):
     while time.monotonic() < deadline:
         if predicate():
             return
-        time.sleep(0.25)
+        time.sleep(0.01)
     raise AssertionError('timed out: '+label)
 
 
 def native(*args, parse=True):
     commands.append(list(args))
-    result = subprocess.run(['/usr/local/bin/openclaw', *args], capture_output=True, text=True,
-                            env=NATIVE_ENV, timeout=90, user=1000, group=1000)
-    if result.returncode != 0:
-        raise AssertionError('native command failed: '+str(args)+'\n'+result.stdout+result.stderr)
-    return json.loads(result.stdout) if parse else result.stdout
+    cli.stdin.write(json.dumps(list(args))+'\n')
+    cli.stdin.flush()
+    if not select.select([cli.stdout], [], [], 10)[0]:
+        raise AssertionError('native CLI command exceeded 10 seconds: '+str(args[:2]))
+    response = cli.stdout.readline()
+    if not response:
+        raise AssertionError('native CLI driver exited')
+    result = json.loads(response)
+    timings.append({'command': list(args[:2]), 'seconds': result['seconds']})
+    if result['code'] != 0:
+        raise AssertionError('native command failed: '+str(args)+'\n'+result['stdout']+result['stderr'])
+    return json.loads(result['stdout']) if parse else result['stdout']
+
 
 
 def configure(path, value):
@@ -156,7 +171,7 @@ def wait_channel(enabled, authenticated=True):
                 return last
         except (AssertionError, KeyError):
             pass
-        time.sleep(1)
+        time.sleep(0.01)
     raise AssertionError('native channel state did not converge: '+str(last))
 
 
@@ -180,13 +195,14 @@ def gateway_pid():
     raise AssertionError('missing native gateway process')
 
 
-def reply(user, marker):
-    message(user, marker)
+def reply(user, marker, text=None):
+    message(user, text or marker)
     wait(lambda: any(str(x.get('chat_id')) == str(user) and marker in x.get('text', '') for x in sent), marker)
 
 
 def start():
     env = dict(NATIVE_ENV, HOME='/sandbox', TMPDIR='/sandbox/tmp', NEMOCLAW_AGENT_NAME='main',
+               NODE_OPTIONS='--import=/fixture-transport.mjs',
                NEMOCLAW_FABRIC_HARNESS='openclaw', OPENAI_API_KEY='openshell-placeholder',
                ADAPTER_PYTHON='/opt/fabric/bin/python', PYTHONPATH='/opt/nemoclaw',
                SSL_CERT_FILE='/certs/fixture.crt', NODE_EXTRA_CA_CERTS='/certs/fixture.crt',
@@ -216,6 +232,8 @@ def stop(process, log):
 
 
 def main():
+    global cli
+    started = time.monotonic()
     # Isolated loopback alias passes native model SSRF checks without weakening them.
     # --network none ensures this address never routes to an external system.
     subprocess.run(['ip', 'addr', 'add', '8.8.4.4/32', 'dev', 'lo'], check=True)
@@ -223,31 +241,47 @@ def main():
     tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     tls.load_cert_chain('/certs/fixture.crt', '/certs/fixture.key')
     server.socket = tls.wrap_socket(server.socket, server_side=True)
-    threading.Thread(target=server.serve_forever, daemon=True).start()
+    threading.Thread(target=lambda: server.serve_forever(poll_interval=0.01), daemon=True).start()
+    cli = subprocess.Popen(['node', '/cli-driver.mjs'], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                           text=True, env=NATIVE_ENV, user=1000, group=1000)
+    if PHASE == 'configure':
+        from openclaw_adapter import OpenClawRuntime
+        initializer = OpenClawRuntime()
+        initializer.home = Path('/sandbox/.openclaw')
+        initializer.name = 'main'
+        initializer.initialize_configuration()
+        os.chown(initializer.home/'openclaw.json', 1000, 1000)
+        desired = {'enabled': True, 'tokenFile': '/run/native-secrets/bot-token',
+                   'dmPolicy': 'pairing', 'allowFrom': [], 'groupPolicy': 'disabled',
+                   'streaming': {'mode': 'off'}}
+        settings = {'session.dmScope': 'per-channel-peer',
+                    'bindings': [{'agentId': 'main', 'match': {'channel': 'telegram', 'accountId': 'default'}}],
+                    'plugins.entries.telegram.enabled': True, 'channels.telegram': desired,
+                    'messages.inbound.debounceMs': 0,
+                    'plugins.allow': ['telegram', 'openai'],
+                    'commands.native': False, 'commands.nativeSkills': False,
+                    'commands.ownerAllowFrom': ['telegram:111'], 'plugins.slots.memory': 'none',
+                    'agents.defaults.typingMode': 'never'}
+        native('config', 'set', '--batch-json', json.dumps([
+            {'path': path, 'value': value} for path, value in settings.items()]), parse=False)
+    startup = time.monotonic()
     process, log = start()
+    timings.append({'operation': 'startup', 'seconds': time.monotonic()-startup})
     proof = {'phase': PHASE, 'evidence_type': 'native processes; Telegram and inference protocol fixtures; network none'}
     try:
         assert not Path('/sandbox/fabric-channels.sock').exists(), 'retired channel interface present'
         proof['runtime_id'] = probe()['runtime_id']
         if PHASE == 'configure':
             # Every channel operation is an existing native command, not an adapter extension.
-            configure('session.dmScope', 'per-channel-peer')
-            configure('bindings', [{'agentId': 'main', 'match': {'channel': 'telegram', 'accountId': 'default'}}])
-            configure('plugins.entries.telegram.enabled', True)
-            desired = {'enabled': True, 'tokenFile': '/run/native-secrets/bot-token',
-                       'dmPolicy': 'pairing', 'allowFrom': [], 'groupPolicy': 'disabled',
-                       'streaming': {'mode': 'off'}}
-            configure('channels.telegram', desired)
             wait_channel(True)
             before = len(models)
             message(111, 'PROBE_UNAUTHORIZED')
             wait(lambda: len(sent) > 0, 'pairing challenge')
-            time.sleep(1)
             assert len(models) == before, 'unauthorized sender reached model'
             pending = native('pairing', 'list', 'telegram', '--json')['requests']
             assert len(pending) == 1 and str(pending[0]['id']) == '111', pending
             native('pairing', 'approve', 'telegram', pending[0]['code'], parse=False)
-            reply(111, 'PROBE_CHAT_A_SECRET')
+            reply(111, 'PROBE_TOOL', 'PROBE_CHAT_A_SECRET PROBE_TOOL')
             message(222, 'PROBE_SECOND_PAIRING')
             wait(lambda: any(str(x.get('chat_id')) == '222' for x in sent), 'second pairing challenge')
             pending = native('pairing', 'list', 'telegram', '--json')['requests']
@@ -255,7 +289,6 @@ def main():
             prior = len(models)
             reply(222, 'PROBE_CHAT_B_SECRET')
             assert all('PROBE_CHAT_A_SECRET' not in json.dumps(x) for x in models[prior:]), 'conversation history leaked'
-            reply(111, 'PROBE_TOOL')
             assert Path('/sandbox/workspace/channel-proof.txt').read_text() == 'fabric-channel-tool-proof'
             assert any(m.get('role') == 'tool' for x in models for m in x['messages']), 'missing native tool result'
             pid = gateway_pid()
@@ -265,6 +298,8 @@ def main():
             assert check.returncode == 0
             assert config_bytes == Path('/sandbox/.openclaw/openclaw.json').read_bytes()
             assert gateway_pid() == pid and probe()['runtime_id'] == proof['runtime_id']
+            # Check the complete phase after successful turns, including delayed requests.
+            assert all('PROBE_UNAUTHORIZED' not in json.dumps(x) for x in models), 'unauthorized sender reached model'
             proof.update(unauthorized_blocked=True, native_pairing=True, separate_conversations=True,
                          native_tool_verified=True, provisioning_check_preserves_native_settings=True,
                          gateway_pid=pid)
@@ -280,7 +315,8 @@ def main():
             wait_channel(False)
             before = len(models)
             message(111, 'PROBE_DISABLED')
-            time.sleep(3)
+            # A completed disabled/stopped status response is the channel shutdown barrier.
+            wait_channel(False)
             assert len(models) == before, 'disabled channel invoked model'
             proof['native_disable_blocks_invocation'] = True
             Path('/run/native-secrets/bot-token').write_text('999999:INVALID_TOKEN_FOR_FIXTURE')
@@ -291,15 +327,18 @@ def main():
                 'message': 'PROBE_AGENT_USABLE', 'idempotencyKey': str(uuid.uuid4()), 'deliver': False}),
                 '--expect-final', '--json', '--timeout', '80000')
             assert result['status'] == 'ok' and 'PROBE_AGENT_USABLE' in json.dumps(result), result
-            configure('channels.telegram.enabled', False)
-            wait_channel(False)
+            assert all('PROBE_DISABLED' not in json.dumps(x) for x in models), 'disabled channel invoked model'
             proof.update(native_credential_failure_visible=True, native_agent_independent_of_channel_failure=True)
         (EVIDENCE/(PHASE+'-proof.json')).write_text(json.dumps(proof, indent=2)+'\n')
         print(json.dumps(proof), flush=True)
     finally:
         (EVIDENCE/(PHASE+'-fixture.json')).write_text(json.dumps({'sent': sent, 'models': models, 'methods': methods, 'native_commands': commands}, indent=2)+'\n')
         stop(process, log)
+        cli.terminate()
+        cli.wait(timeout=5)
         server.shutdown()
+        timings.append({'operation': 'total', 'seconds': time.monotonic()-started})
+        (EVIDENCE/(PHASE+'-timings.json')).write_text(json.dumps(timings, indent=2)+'\n')
 
 
 if __name__ == '__main__':

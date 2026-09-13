@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Local prototype adapter: Fabric owns one OpenClaw gateway and session.
+"""Fabric adapter: Fabric owns one OpenClaw gateway and session.
 
 Uses the pinned OpenClaw gateway RPC CLI, never the CLI's local-agent fallback.
 No invocation retry or session recovery is attempted after an uncertain result.
@@ -157,13 +157,14 @@ class OpenClawRuntime:
         self.process = await asyncio.create_subprocess_exec(
             NODE, CLI, 'gateway', env=self.env, cwd='/sandbox',
             stdout=self.log, stderr=self.log, start_new_session=True)
-        for _ in range(75):
+        deadline = asyncio.get_running_loop().time() + 75
+        while asyncio.get_running_loop().time() < deadline:
             if self.process.returncode is not None:
                 await self.stop_gateway()
                 raise RuntimeError('OpenClaw gateway exited during startup; inspect gateway.log')
             if await asyncio.to_thread(healthy, self.name, self.runtime_id):
                 return
-            await asyncio.sleep(1)
+            await asyncio.sleep(0.05)
         await self.stop_gateway()
         raise RuntimeError('OpenClaw gateway did not become healthy')
 
