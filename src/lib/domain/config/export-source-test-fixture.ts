@@ -76,7 +76,7 @@ export function hermesProfileInput(): ManagedStartupProfileBuilderInput {
     ...profileInput(),
     agent: "hermes",
     inference: {
-      ...profileInput().inference,
+      ...profileInput().inference!,
       primaryModelRef: null,
       compatibility: null,
     },
@@ -373,7 +373,7 @@ export function compatibleSnapshot(
   const input = {
     ...base,
     inference: {
-      ...base.inference,
+      ...base.inference!,
       routeProvider: route.providerKey,
       upstreamProvider: "compatible-endpoint",
       api: "openai-completions" as const,
@@ -391,12 +391,15 @@ export function compatibleSnapshot(
       ...registryOverrides,
     }),
     inference: {
-      ...observed.inference,
+      ...observed.inference!,
       provider: "compatible-endpoint",
       api: "openai-completions",
       endpointEvidence: {
-        ...observed.inference.endpointEvidence!,
-        provider: { ...observed.inference.endpointEvidence!.provider, name: "compatible-endpoint" },
+        ...observed.inference!.endpointEvidence!,
+        provider: {
+          ...observed.inference!.endpointEvidence!.provider,
+          name: "compatible-endpoint",
+        },
       },
     },
   });
