@@ -10,6 +10,7 @@ import {
   readdirSync,
   readFileSync,
   rmSync,
+  statSync,
   symlinkSync,
   unlinkSync,
   writeFileSync,
@@ -82,6 +83,26 @@ afterEach(() => {
 });
 
 describe("locked npm cache seed materialization", () => {
+  it("materializes the reviewed OpenClaw 2026.9.1 archive size", async () => {
+    const bytes = Buffer.alloc(55_564_082, 0x61);
+    const locked: LockedArchive = {
+      archive: "openclaw-2026.9.1.tgz",
+      integrity: `sha512-${crypto.createHash("sha512").update(bytes).digest("base64")}`,
+      resolved: "https://registry.npmjs.org/openclaw/-/openclaw-2026.9.1.tgz",
+    };
+    const lockfile = writeLock(testRoot, [locked]);
+    const seed = path.join(testRoot, "seed");
+
+    await materializeLockedNpmCacheSeed({
+      downloadArchive: async () => bytes,
+      lockfile,
+      output: seed,
+      target: TARGET,
+    });
+
+    expect(statSync(path.join(seed, locked.archive)).size).toBe(bytes.byteLength);
+  });
+
   it("materializes and copies every reachable lock-pinned registry archive for the selected npm platform", async () => {
     const alpha = archive("alpha", "alpha archive");
     const beta = archive("beta", "beta archive");
