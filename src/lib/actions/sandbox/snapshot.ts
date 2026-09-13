@@ -95,8 +95,6 @@ import {
   createSnapshotCloneLifecycle,
   confirmSandboxRuntimeRestore,
   fingerprintSandboxLiveIdentity,
-  getMcpProviderInspectionRuntimeSelection,
-  inspectAgentMcpSources,
   isSandboxPolicyCredentialFree,
   type PreparedHostLocalInferenceAuthority,
   type PreparedSandboxRuntimeRestore,
@@ -107,7 +105,6 @@ import {
   readManagedSnapshotProfileAuthority,
   rejectManagedSnapshotCloneUntilRebind,
   requireCurrentSnapshotRuntimeProvider,
-  restoreDeepAgentsNativeMcpConfig,
   retirePreparedHostLocalInferenceAuthority,
   type RuntimeProviderBundle,
 } from "./snapshot/dependencies";
@@ -120,18 +117,6 @@ const G = useColor ? (trueColor ? "\x1b[38;2;118;185;0m" : "\x1b[38;5;148m") : "
 const B = useColor ? "\x1b[1m" : "";
 const D = useColor ? "\x1b[2m" : "";
 const R = useColor ? "\x1b[0m" : "";
-
-function deepAgentsNativeMcpConfigRecoveryCommand(sandboxName: string): string {
-  const script = [
-    "projection=/sandbox/.deepagents/.mcp.json",
-    'if [ ! -d "$projection" ] || [ -L "$projection" ]; then printf "Native MCP config recovery stopped because %s is no longer a directory. Rerun snapshot restore before using this recovery action.\\n" "$projection" >&2; exit 1; fi',
-    "recovery_dir=$(mktemp -d /sandbox/.mcp.json.recovery.XXXXXX)",
-    'if [ ! -d "$projection" ] || [ -L "$projection" ]; then rmdir -- "$recovery_dir"; printf "Native MCP configuration recovery stopped because %s changed before it could be moved. Rerun snapshot restore before using this recovery action.\\n" "$projection" >&2; exit 1; fi',
-    'mv -- "$projection" "$recovery_dir/projection"',
-    'printf "Moved native MCP configuration to %s\\n" "$recovery_dir/projection"',
-  ].join(" && ");
-  return `${CLI_NAME} ${shellQuote(sandboxName)} exec -- sh -c ${shellQuote(script)}`;
-}
 
 export type SnapshotRequest =
   | { kind: "help" }
@@ -1482,25 +1467,6 @@ async function runSnapshotRestoreUnlocked(
     }
   }
   await withMcpLifecycleLock(targetSandbox, async () => {
-    const snapshotTarget = registry.getSandbox(targetSandbox);
-    const repairsDeepAgentsNativeMcpConfig =
-      snapshotTarget?.agent === "langchain-deepagents-code" && !snapshotTarget.fromDockerfile;
-    const sourceSandbox = repairsDeepAgentsNativeMcpConfig
-      ? registry.getSandbox(sandboxName)
-      : null;
-    const managedDeepAgentsEntries = sourceSandbox
-      ? Object.values(
-          (
-            await inspectAgentMcpSources(
-              sourceSandbox,
-              getMcpProviderInspectionRuntimeSelection(sourceSandbox),
-            )
-          ).native,
-        ).filter(
-          (entry) =>
-            entry.agent === "langchain-deepagents-code" && entry.adapter === "deepagents-config",
-        )
-      : [];
     const validateProviderRestoreBeforeMutation =
       preparedRuntimeRestore || preparedHostLocalInferenceRestore
         ? () => {
@@ -1547,43 +1513,6 @@ async function runSnapshotRestoreUnlocked(
       );
       console.error(`  Destination '${targetSandbox}' was not changed.`);
       snapshotExit(1);
-    }
-    if (
-      repairsDeepAgentsNativeMcpConfig &&
-      snapshotRestoreAuthority &&
-      validateProviderRestoreBeforeMutation
-    ) {
-      const authorityError = sandboxState.validateSnapshotRestoreMutation(backupPath, {
-        authority: snapshotRestoreAuthority,
-        validateBeforeMutation: validateProviderRestoreBeforeMutation,
-      });
-      if (authorityError) {
-        console.error(`  Cannot restore provider snapshot '${sandboxName}': ${authorityError}.`);
-        console.error(`  Destination '${targetSandbox}' was not changed.`);
-        snapshotExit(1);
-      }
-    }
-    if (repairsDeepAgentsNativeMcpConfig) {
-      try {
-        const currentTarget = registry.getSandbox(targetSandbox);
-        if (!currentTarget) {
-          throw new Error(`target '${targetSandbox}' is no longer registered`);
-        }
-        const runtimeSelection = getMcpProviderInspectionRuntimeSelection(currentTarget);
-        await restoreDeepAgentsNativeMcpConfig(
-          targetSandbox,
-          managedDeepAgentsEntries,
-          runtimeSelection,
-        );
-      } catch (error) {
-        const detail = error instanceof Error ? error.message : String(error);
-        const recoveryCommand = deepAgentsNativeMcpConfigRecoveryCommand(targetSandbox);
-        throw new SnapshotCommandError([
-          `Snapshot files were not restored into '${targetSandbox}'.`,
-          `The native Deep Agents MCP configuration at '/sandbox/.deepagents/.mcp.json' could not be repaired: ${detail}`,
-          `Inspect that path in '${targetSandbox}'. If it is a directory, run \`${recoveryCommand}\`. The command prints the unused recovery location. Then rerun the snapshot restore command.`,
-        ]);
-      }
     }
     if (targetSandbox !== sandboxName) {
       console.log(`  Restoring snapshot from '${sandboxName}' into '${targetSandbox}'...`);

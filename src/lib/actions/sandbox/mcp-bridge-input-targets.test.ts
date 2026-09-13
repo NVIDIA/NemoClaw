@@ -496,13 +496,13 @@ require("./src/lib/actions/sandbox/mcp-bridge.js").addMcpBridge("alpha", {
     process.stderr.write(String(error && error.stack || error), () => process.exit(1));
     return;
   }
-  const beforeForcedRemoval = { ...state };
+  const beforeOrdinaryRemoval = { ...state };
   if (phase === "policy-url-mismatch") {
-    await require("./src/lib/actions/sandbox/mcp-bridge.js").removeMcpBridge("alpha", "github", { force: true });
+    await require("./src/lib/actions/sandbox/mcp-bridge.js").removeMcpBridge("alpha", "github");
   }
   process.stdout.write(JSON.stringify({
     message: String(error && error.message || error),
-    state, authorizationProbe, beforeForcedRemoval,
+    state, authorizationProbe, beforeOrdinaryRemoval,
   }), () => process.exit(0));
 });
 `;
@@ -529,7 +529,7 @@ require("./src/lib/actions/sandbox/mcp-bridge.js").addMcpBridge("alpha", {
           phase === "policy-url-mismatch"
             ? {
                 message: expect.stringContaining("incomplete add transaction for a different URL"),
-                beforeForcedRemoval: {
+                beforeOrdinaryRemoval: {
                   adapter: false,
                   attachment: false,
                   policy: "capability",

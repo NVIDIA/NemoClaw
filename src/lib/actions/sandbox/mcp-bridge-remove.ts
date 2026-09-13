@@ -49,7 +49,7 @@ export async function removeMcpBridge(
     }
     const agent = getSandboxAgent(sandbox);
     let entry: McpSourceEntry | undefined = observed.bridges[server];
-    if (!entry && options.force && agent.mcpCapability.adapter) {
+    if (!entry && agent.mcpCapability.adapter) {
       entry =
         (await inspectPolicyOnlyMcpEntry(
           sandbox,
