@@ -5,7 +5,7 @@
 import importlib.util
 import json
 import hashlib
-import os
+import ctypes as c
 from pathlib import Path
 import tempfile
 from types import SimpleNamespace
@@ -210,80 +210,118 @@ class OwnerTests(unittest.TestCase):
         self.assertTrue(self.root.exists())
 
 
-class SystemPowerShellIdentityTests(unittest.TestCase):
+class DebuggerDiscoveryTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
-        self.file = self.root / "WindowsPowerShell/v1.0/powershell.exe"
-        self.file.parent.mkdir(parents=True)
-
-        class SystemDirectory:
-            def __call__(api, buffer, length):
-                buffer.value = str(self.root)
-                return len(buffer.value)
-
-        self.windows = SimpleNamespace(
-            k=SimpleNamespace(GetSystemDirectoryW=SystemDirectory())
+        for architecture, machine in (("x64", 0x8664), ("arm64", 0xAA64)):
+            directory = self.root / "Windows Kits/10/Debuggers" / architecture
+            directory.mkdir(parents=True)
+            data = bytearray(128)
+            data[:2] = b"MZ"
+            data[60:64] = (64).to_bytes(4, "little")
+            data[64:68] = b"PE\0\0"
+            data[68:70] = machine.to_bytes(2, "little")
+            for name in (
+                "cdb.exe",
+                "dbgeng.dll",
+                "dbghelp.dll",
+                "dbgcore.dll",
+                "dbgmodel.dll",
+            ):
+                (directory / name).write_bytes(data)
+        self.metadata = SimpleNamespace(
+            known_folders=lambda: [
+                {"name": "ProgramFilesX86", "path": str(self.root), "error": None}
+            ],
+            file_version=lambda path: "10.0.26100.1",
         )
-        self.pe = bytearray(128)
-        self.pe[:2] = b"MZ"
-        self.pe[60:64] = (64).to_bytes(4, "little")
-        self.pe[64:68] = b"PE\0\0"
-        self.pe[68:70] = (0xAA64).to_bytes(2, "little")
-        self.file.write_bytes(self.pe)
 
-    def test_servicing_hardlink_records_native_identity_without_relaxing_common(self):
-        os.link(self.file, self.root / "servicing-copy.exe")
-        row = owner.system_powershell_identity(self.windows, {})
-        self.assertEqual(row["path"], str(self.file))
-        self.assertEqual(row["linkCount"], 2)
-        self.assertEqual(row["fileIdentity"]["inode"], str(self.file.stat().st_ino))
-        self.assertEqual(row["sha256"], hashlib.sha256(self.pe).hexdigest())
-        self.assertEqual(row["machine"], 0xAA64)
-        self.assertTrue(row["stable"])
-        self.assertNotIn("executed", row)
-        with self.assertRaisesRegex(ValueError, "hard-linked"):
-            owner.identity(self.file)
-
-    def test_x64_or_redirected_input_retains_exact_metadata_and_never_executes(self):
-        self.pe[68:70] = (0x8664).to_bytes(2, "little")
-        self.file.write_bytes(self.pe)
-        with patch.object(owner.subprocess, "run") as execution:
-            with self.assertRaisesRegex(ValueError, "native ARM64") as caught:
-                owner.inspect_tools(self.root / "tools.json", self.windows)
-            value = caught.exception.tool_inspection
-            self.assertEqual(value["inputs"]["powershell"]["machine"], 0x8664)
-            self.assertEqual(value["inputs"]["powershell"]["path"], str(self.file))
-            self.assertIsNone(value["execution"])
-            self.assertFalse(value["executionAttempted"])
-            execution.assert_not_called()
-        target = self.root / "redirected.exe"
-        self.file.rename(target)
-        self.file.symlink_to(target)
-        row = {}
-        with self.assertRaisesRegex(ValueError, "non-reparse"):
-            owner.system_powershell_identity(self.windows, row)
-        self.assertEqual(row["path"], str(self.file))
-        self.assertIn("linkCount", row)
-
-    def test_other_hardlinked_input_still_refuses_with_its_own_path(self):
-        script = self.root / "inspect-postmortem-tools.ps1"
-        script.write_text("# data only\n")
-        os.link(script, self.root / "other-script.ps1")
+    def test_native_discovery_records_unexecuted_preinstalled_files_without_signature_claim(
+        self,
+    ):
         with (
-            patch.object(
-                owner, "__file__", str(self.root / "prepare-renderer-postmortem.py")
-            ),
-            patch.object(owner.subprocess, "run") as execution,
+            patch.object(owner, "DebuggerMetadata", return_value=self.metadata),
+            patch.object(owner.subprocess, "run") as process,
         ):
-            with self.assertRaisesRegex(ValueError, "hard-linked") as caught:
-                owner.inspect_tools(self.root / "tools.json", self.windows)
-            inputs = caught.exception.tool_inspection["inputs"]
-            self.assertEqual(inputs["script"]["path"], str(script))
-            self.assertEqual(inputs["script"]["linkCount"], 2)
-            self.assertTrue(inputs["powershell"]["stable"])
-            execution.assert_not_called()
+            receipt = owner.inspect_tools(self.root / "inspection.json", None)
+            process.assert_not_called()
+        record = receipt["value"]
+        self.assertEqual(record["status"], "available")
+        self.assertEqual(record["selected"]["architecture"], "x64")
+        self.assertEqual(len(record["candidates"]), 2)
+        self.assertFalse(record["executedDebugger"])
+        self.assertFalse(receipt["execution"]["subprocessStarted"])
+        for candidate in record["candidates"]:
+            self.assertEqual(candidate["status"], "available")
+            self.assertEqual(len(candidate["files"]), 5)
+            for file in candidate["files"]:
+                self.assertEqual(
+                    file["sha256"],
+                    hashlib.sha256(Path(file["path"]).read_bytes()).hexdigest(),
+                )
+                self.assertEqual(file["version"], "10.0.26100.1")
+                self.assertEqual(file["signatureStatus"], "not-collected")
+                self.assertEqual(file["provenance"], "preinstalled-windows-sdk")
+                self.assertFalse(file["executed"])
+
+    def test_missing_and_mismatched_sdk_inputs_retain_the_exact_failure(self):
+        x64 = self.root / "Windows Kits/10/Debuggers/x64/cdb.exe"
+        data = bytearray(x64.read_bytes())
+        data[68:70] = (0xAA64).to_bytes(2, "little")
+        x64.write_bytes(data)
+        arm64 = self.root / "Windows Kits/10/Debuggers/arm64/dbgmodel.dll"
+        arm64.unlink()
+        with (
+            patch.object(owner, "DebuggerMetadata", return_value=self.metadata),
+            patch.object(owner.subprocess, "run") as process,
+        ):
+            receipt = owner.inspect_tools(self.root / "inspection.json", None)
+            process.assert_not_called()
+        record = receipt["value"]
+        self.assertEqual(record["status"], "unavailable")
+        self.assertIsNone(record["selected"])
+        self.assertEqual(record["candidates"][0]["files"][0]["path"], str(x64))
+        self.assertEqual(record["candidates"][0]["files"][0]["machine"], 0xAA64)
+        self.assertIn(
+            "architecture differs", record["candidates"][0]["error"]["message"]
+        )
+        self.assertEqual(record["candidates"][1]["files"][-1]["path"], str(arm64))
+        self.assertEqual(record["candidates"][1]["error"]["name"], "FileNotFoundError")
+
+    def test_native_fixed_version_resource_layout_and_pointer_bound(self):
+        api = owner.DebuggerMetadata.__new__(owner.DebuggerMetadata)
+        words = (c.c_uint32 * 13)(0xFEEF04BD, 0x10000, 0xA0000, 0x65F40001)
+        saved = {}
+
+        def read(path, unused, size, buffer):
+            self.assertEqual((unused, size), (0, 52))
+            c.memmove(buffer, words, 52)
+            saved["buffer"] = buffer
+            return 1
+
+        def query(buffer, key, pointer, size):
+            self.assertEqual(key, "\\")
+            c.cast(pointer, c.POINTER(c.c_void_p))[0] = c.addressof(buffer)
+            c.cast(size, c.POINTER(c.c_uint32))[0] = 52
+            return 1
+
+        api.version = SimpleNamespace(
+            GetFileVersionInfoSizeW=lambda path, unused: 52,
+            GetFileVersionInfoW=read,
+            VerQueryValueW=query,
+        )
+        self.assertEqual(api.file_version("fixture.dll"), "10.0.26100.1")
+
+        def invalid(buffer, key, pointer, size):
+            query(buffer, key, pointer, size)
+            c.cast(pointer, c.POINTER(c.c_void_p))[0] = c.addressof(buffer) + 1
+            return 1
+
+        api.version.VerQueryValueW = invalid
+        with self.assertRaisesRegex(ValueError, "Invalid fixed version"):
+            api.file_version("fixture.dll")
 
 
 if __name__ == "__main__":

@@ -4,17 +4,16 @@
 
 import argparse
 import ctypes as c
-import hashlib
 import importlib.util
 import json
 import ntpath
 import os
 from pathlib import Path
 import re
-import stat
 import subprocess
 import sys
 import time
+import uuid
 
 
 def load(name, path=None):
@@ -89,124 +88,221 @@ def input_metadata(path, row):
     return value
 
 
-def system_powershell_identity(windows, row):
-    # Only this OS-resolved system executable permits servicing hard links.
-    windows.k.GetSystemDirectoryW.argtypes = [c.c_wchar_p, c.c_uint32]
-    windows.k.GetSystemDirectoryW.restype = c.c_uint32
-    buffer = c.create_unicode_buffer(32768)
-    count = windows.k.GetSystemDirectoryW(buffer, len(buffer))
-    require(0 < count < len(buffer), "System directory lookup failed")
-    path = Path(buffer.value) / "WindowsPowerShell/v1.0/powershell.exe"
-    before = input_metadata(path, row)
-    require(
-        stat.S_ISREG(before.st_mode)
-        and not stat.S_ISLNK(before.st_mode)
-        and not row["fileAttributes"] & 0x400,
-        "System PowerShell must be an ordinary non-reparse file",
-    )
-    require(
-        64 <= before.st_size <= 32 * 1024 * 1024,
-        "System PowerShell size is outside its bound",
-    )
+class DebuggerMetadata:
+    """Read known-folder and version resources without loading a debugger image."""
 
-    def state(value):
-        return (
-            value.st_dev,
-            value.st_ino,
-            value.st_size,
-            value.st_mtime_ns,
-            value.st_ctime_ns,
-            value.st_nlink,
+    def __init__(self):
+        self.shell = c.WinDLL("shell32", use_last_error=True)
+        self.ole = c.WinDLL("ole32", use_last_error=True)
+        self.version = c.WinDLL("version", use_last_error=True)
+        self.shell.SHGetKnownFolderPath.argtypes = [
+            c.c_void_p,
+            c.c_uint32,
+            c.c_void_p,
+            c.POINTER(c.c_void_p),
+        ]
+        self.shell.SHGetKnownFolderPath.restype = c.c_long
+        self.ole.CoTaskMemFree.argtypes, self.ole.CoTaskMemFree.restype = (
+            [c.c_void_p],
+            None,
         )
+        self.version.GetFileVersionInfoSizeW.argtypes = [
+            c.c_wchar_p,
+            c.POINTER(c.c_uint32),
+        ]
+        self.version.GetFileVersionInfoSizeW.restype = c.c_uint32
+        self.version.GetFileVersionInfoW.argtypes = [
+            c.c_wchar_p,
+            c.c_uint32,
+            c.c_uint32,
+            c.c_void_p,
+        ]
+        self.version.GetFileVersionInfoW.restype = c.c_int
+        self.version.VerQueryValueW.argtypes = [
+            c.c_void_p,
+            c.c_wchar_p,
+            c.POINTER(c.c_void_p),
+            c.POINTER(c.c_uint32),
+        ]
+        self.version.VerQueryValueW.restype = c.c_int
 
-    digest, count, header = hashlib.sha256(), 0, bytearray()
-    with path.open("rb") as stream:
-        opened = os.fstat(stream.fileno())
+    def known_folders(self):
+        result = []
+        for name, value in (
+            ("ProgramFilesX86", "7c5a40ef-a0fb-4bfc-874a-c0f2e0b9fa8e"),
+            ("ProgramFiles", "905e63b6-c1bf-494e-b29c-65b732d3d21a"),
+        ):
+            row = {"name": name, "guid": value, "path": None, "error": None}
+            pointer = c.c_void_p()
+            try:
+                guid = c.create_string_buffer(uuid.UUID(value).bytes_le)
+                status = self.shell.SHGetKnownFolderPath(
+                    guid, 0, None, c.byref(pointer)
+                )
+                row["hresult"] = hex(status & 0xFFFFFFFF)
+                require(status >= 0 and pointer.value, "Known-folder lookup failed")
+                row["path"] = c.wstring_at(pointer)
+                require(
+                    0 < len(row["path"]) < 32768 and ntpath.isabs(row["path"]),
+                    "Invalid known-folder path",
+                )
+            except Exception as error:
+                row["error"] = detail(error)
+            finally:
+                if pointer.value:
+                    self.ole.CoTaskMemFree(pointer)
+            result.append(row)
+        return result
+
+    def file_version(self, path):
+        unused = c.c_uint32()
+        size = self.version.GetFileVersionInfoSizeW(str(path), c.byref(unused))
         require(
-            state(opened) == state(before), "System PowerShell changed while opening"
+            52 <= size <= 1024 * 1024,
+            "Debugger version resource size unavailable or outside bound",
         )
-        while block := stream.read(64 * 1024):
-            count += len(block)
-            require(count <= before.st_size, "System PowerShell grew while reading")
-            digest.update(block)
-            if len(header) < 65536:
-                header.extend(block[: 65536 - len(header)])
+        buffer = c.create_string_buffer(size)
+        if not self.version.GetFileVersionInfoW(str(path), 0, size, buffer):
+            raise c.WinError(c.get_last_error())
+        pointer, length = c.c_void_p(), c.c_uint32()
+        if not self.version.VerQueryValueW(
+            buffer, "\\", c.byref(pointer), c.byref(length)
+        ):
+            raise c.WinError(c.get_last_error())
         require(
-            count == before.st_size
-            and state(os.fstat(stream.fileno())) == state(before),
-            "System PowerShell changed while reading",
+            length.value >= 52
+            and pointer.value
+            and c.addressof(buffer) <= pointer.value <= c.addressof(buffer) + size - 52,
+            "Invalid fixed version resource",
         )
-    require(
-        state(path.lstat()) == state(before),
-        "System PowerShell path changed while reading",
-    )
-    row.update(sha256=digest.hexdigest(), stable=True)
-    pe = int.from_bytes(header[60:64], "little")
-    require(
-        header[:2] == b"MZ"
-        and 64 <= pe <= len(header) - 24
-        and header[pe : pe + 4] == b"PE\0\0",
-        "Invalid System PowerShell PE header",
-    )
-    machine = int.from_bytes(header[pe + 4 : pe + 6], "little")
-    row.update(machine=machine, machineHex=hex(machine))
-    require(
-        machine == 0xAA64,
-        "Expected native ARM64 system PowerShell before the primary workload",
-    )
-    return row
+        words = (c.c_uint32 * 13).from_address(pointer.value)
+        require(words[0] == 0xFEEF04BD, "Debugger fixed version signature differs")
+        return ".".join(
+            str(part)
+            for part in (
+                words[2] >> 16,
+                words[2] & 0xFFFF,
+                words[3] >> 16,
+                words[3] & 0xFFFF,
+            )
+        )
 
 
 def inspect_tools(output, windows):
-    observation = {
-        "inputs": {"powershell": {}, "script": {}},
-        "execution": None,
-        "executionAttempted": False,
+    del windows  # Retain the owner call interface; no process or new query handles.
+    record = {
+        "schemaVersion": 1,
+        "classification": "renderer-postmortem-tool-inspection",
+        "source": "preinstalled Windows SDK; OS known folders",
+        "signatureStatus": "not-collected",
+        "executedDebugger": False,
+        "candidates": [],
+        "selected": None,
+        "status": "unavailable",
     }
+    observation = {
+        "execution": {
+            "mode": "in-process native metadata reads",
+            "subprocessStarted": False,
+        },
+        "value": record,
+    }
+    deadline = time.monotonic() + 20
     try:
-        inputs = observation["inputs"]
-        observation["stage"] = "powershell-identity"
-        powershell = system_powershell_identity(windows, inputs["powershell"])
-        inspector = Path(__file__).with_name("inspect-postmortem-tools.ps1")
-        observation["stage"] = "inspector-script-identity"
-        input_metadata(inspector, inputs["script"])
-        # Staged/source inputs retain their existing no-hardlink contract.
-        inputs["script"].update(identity(inspector))
-        observation["stage"] = "execute-read-only-tool-inspector"
-        observation["executionAttempted"] = True
-        process = subprocess.run(
-            [
-                powershell["path"],
-                "-NoProfile",
-                "-File",
-                str(inspector),
-                "-Output",
-                str(output),
-            ],
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            timeout=20,
-            creationflags=0x08000000,
-        )
-        execution = observation["execution"] = {
-            "exitCode": process.returncode,
-            "closed": True,
-            "stdout": process.stdout[:8192].decode("utf-8", errors="replace"),
-            "stderr": process.stderr[:8192].decode("utf-8", errors="replace"),
-            "outputExceeded": len(process.stdout) > 8192 or len(process.stderr) > 8192,
-        }
-        require(
-            process.returncode == 0 and not execution["outputExceeded"],
-            "Read-only debugger inspection failed",
-        )
-        reference, data = read_json(output, 128 * 1024)
-        require(
-            data["classification"] == "renderer-postmortem-tool-inspection"
-            and data["executedDebugger"] is False,
-            "Unexpected debugger inspection receipt",
-        )
-        observation.update(receipt=reference, value=data)
+        metadata = DebuggerMetadata()
+        record["knownFolders"] = metadata.known_folders()
+        for architecture, machine in (("x64", 0x8664), ("arm64", 0xAA64)):
+            seen = set()
+            for folder in record["knownFolders"]:
+                if folder["error"] or ntpath.normcase(folder["path"]) in seen:
+                    continue
+                seen.add(ntpath.normcase(folder["path"]))
+                directory = (
+                    Path(folder["path"])
+                    / "Windows Kits"
+                    / "10"
+                    / "Debuggers"
+                    / architecture
+                )
+                candidate = {
+                    "directory": str(directory),
+                    "knownFolder": folder["name"],
+                    "architecture": architecture,
+                    "status": "unavailable",
+                    "files": [],
+                    "error": None,
+                }
+                record["candidates"].append(candidate)
+                try:
+                    require(
+                        time.monotonic() < deadline,
+                        "Debugger metadata budget exhausted",
+                    )
+                    ordinary(directory, True)
+                    for name in (
+                        "cdb.exe",
+                        "dbgeng.dll",
+                        "dbghelp.dll",
+                        "dbgcore.dll",
+                        "dbgmodel.dll",
+                    ):
+                        require(
+                            time.monotonic() < deadline,
+                            "Debugger metadata budget exhausted",
+                        )
+                        path = directory / name
+                        row = {
+                            "path": str(path),
+                            "signatureStatus": "not-collected",
+                            "executed": False,
+                            "provenance": "preinstalled-windows-sdk",
+                            "versionSource": "VS_FIXEDFILEINFO",
+                        }
+                        candidate["files"].append(row)
+                        input_metadata(path, row)
+                        reference, data = common.read_file(path, 32 * 1024 * 1024, True)
+                        row.update(reference)
+                        require(
+                            len(data) >= 64 and data[:2] == b"MZ",
+                            "Debugger DOS header differs",
+                        )
+                        pe = int.from_bytes(data[60:64], "little")
+                        require(
+                            64 <= pe <= len(data) - 24
+                            and data[pe : pe + 4] == b"PE\0\0",
+                            "Debugger PE header differs",
+                        )
+                        row["machine"] = int.from_bytes(data[pe + 4 : pe + 6], "little")
+                        require(
+                            row["machine"] == machine,
+                            "Debugger PE architecture differs",
+                        )
+                        require(
+                            time.monotonic() < deadline,
+                            "Debugger metadata budget exhausted",
+                        )
+                        row["version"] = metadata.file_version(path)
+                        require(
+                            identity(path, 32 * 1024 * 1024) == reference,
+                            "Debugger bytes changed during version read",
+                        )
+                        require(
+                            time.monotonic() < deadline,
+                            "Debugger metadata budget exhausted",
+                        )
+                    candidate["status"] = "available"
+                    if record["selected"] is None:
+                        record["selected"] = {
+                            "cdb": candidate["files"][0],
+                            "debuggerDlls": candidate["files"][1:],
+                            "architecture": architecture,
+                        }
+                except Exception as error:
+                    candidate["error"] = detail(error)
+        if record["selected"]:
+            record["status"] = "available"
+        save(output, record)
+        observation["receipt"] = file_tuple(output)
         return observation
     except Exception as error:
         observation["error"] = detail(error)
@@ -278,8 +374,10 @@ def prepare(args, windows):
                 "Debugger input changed",
             )
             require(
-                tool["signatureStatus"] == "Valid" and tool["executed"] is False,
-                "Debugger identity/signature differs",
+                tool["signatureStatus"] == "not-collected"
+                and tool["provenance"] == "preinstalled-windows-sdk"
+                and tool["executed"] is False,
+                "Debugger preinstalled-tool provenance differs",
             )
         inventory, rows, _ = common.selected_inventory(args.inventory)
         receipt["baseInventory"] = inventory
