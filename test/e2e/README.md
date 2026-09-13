@@ -445,15 +445,10 @@ These static checks do not certify remote execution or replace environment-gated
 Manual entries link to their instructions and summarize prerequisites; the tests retain the prerequisite checks.
 Listing a manual qualification does not schedule it or establish product support.
 Jetson dispatch retains its opt-in and trusted-controller checks.
-The bootstrap test body now resides in `bootstrap-install-smoke.test.ts`.
+The bootstrap test body resides in `bootstrap-install-smoke.test.ts`.
 The `launchable-smoke`, `sandbox-rlimits-connect`, and
-`common-egress-agent-openclaw-personal-stock-price` selectors are retired and fail selection.
-The controller cutoff is canonical main `b8337ce01231264726b028d1147dc2634fd85885` and its pinned actions.
-Those controllers no longer invoke the old bootstrap or resource-limit files.
-The bootstrap forwarder and the semantic-phase checker's zero-test exception are removed.
-The retired-selector compatibility job and replacement-test helper are also removed.
-Its controller cutoff is canonical main `06c10fb67402707ee714a750852eed23f6952fc8` and its pinned actions.
-Retired selectors fail in manual PR runs, including requests mixed with active selectors.
+`common-egress-agent-openclaw-personal-stock-price` selectors are retired and fail selection,
+including requests mixed with active selectors.
 Their replacement tests remain in the ordinary test projects.
 The `hermes-dashboard` selector is retired; use `hermes-e2e`.
 
