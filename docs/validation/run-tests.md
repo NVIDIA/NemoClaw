@@ -6,12 +6,16 @@ Run commands from the repository root.
 
 ## Check Go changes
 
-Follow the [Go guidance in AGENTS.md](../../AGENTS.md#go-coding-guidance), then run:
+Follow the [Go guidance in AGENTS.md](../../AGENTS.md#go-coding-guidance).
+The following complete workflow targets Linux ARM64 and requires Docker, OpenSSL, and the [Fabric build prerequisites](../reference/dependencies.md#fabric-builds).
+On other platforms, omit the Fabric image build; the native messaging test reports a platform skip.
+Run:
 
 ```sh
 go test ./...
 go vet ./...
 go run ./tools/bundle
+python3 image/fabric/build.py --harness openclaw
 go test -tags=integration ./internal/engine -count=1
 ```
 
@@ -23,10 +27,16 @@ go test -race ./...
 go vet -tags=integration,live ./...
 ```
 
-Integration tests execute actual OpenTofu and provider processes against a gRPC fixture.
+On Linux ARM64, the integration suite also runs `TestFabricOpenClawNativeMessaging` against real Fabric and OpenClaw processes in isolated Docker containers.
+Build the OpenClaw Fabric image before running that suite; Docker, OpenSSL, and the [Fabric build prerequisites](../reference/dependencies.md#fabric-builds) are required.
+Missing prerequisites fail the test; it skips only on platforms the image does not run on.
+The fixture uses local Telegram and model responses and sends no external messages or paid inference requests.
+Plain `go test ./...` excludes these integration tests.
+
+The provider integration tests execute actual OpenTofu and provider processes against a gRPC fixture.
 They cover no-op apply, model updates, export/recreate, lost responses, cancellation, ownership, policy drift, and secret exclusion.
 Refresh tests verify confirmed absence, retained state on failed observations, and recovery without recreation.
-The fixture does not implement a sandbox or establish working inference.
+The gRPC fixture does not implement a sandbox or establish working inference.
 The race detector covers Go test processes; bundled subprocesses use ordinary builds.
 
 ## Check documentation changes

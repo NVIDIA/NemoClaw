@@ -6,8 +6,13 @@ Use native Linux ARM64 and Docker with the [Fabric build prerequisites](../refer
 
 ```sh
 python3 image/fabric/build.py --harness openclaw
-python3 tools/openclaw-native-test.py
+go test -tags=integration ./internal/engine -run '^TestFabricOpenClawNativeMessaging$' -count=1 -v
 ```
+
+The test is discovered by the [integration suite](run-tests.md#check-go-changes); it is not part of plain `go test ./...`.
+It invokes `tools/openclaw-native-test.py` as its fixture runner.
+Missing Docker, OpenSSL, or the built image fails the test on Linux ARM64.
+Other platforms skip because the image requires native Linux ARM64.
 
 This runs the actual Fabric and OpenClaw processes with local TLS Telegram and model protocol fixtures.
 All messaging operations use `openclaw config`, `openclaw pairing`, `openclaw channels status`, or the native gateway CLI.
