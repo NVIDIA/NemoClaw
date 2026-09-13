@@ -51,4 +51,40 @@ describe("credential gateway recovery diagnostics", () => {
     expect(lines.join("\n")).toContain("Is it running?");
     expect(lines.join("\n")).not.toContain("did not prove the expected gateway identity");
   });
+
+  it("uses identity guidance for a query without exposing recovery evidence", async () => {
+    const canary = "query-recovery-canary";
+    mocks.recoverNamedGatewayRuntime.mockResolvedValue({
+      recovered: false,
+      attempted: false,
+      before: { recoveryBlocked: true, status: canary },
+      after: { recoveryBlocked: true, gatewayInfo: canary },
+    });
+    const reportFailure = vi.fn();
+
+    await expect(recoverGatewayOrExit("query", reportFailure)).resolves.toBe(false);
+
+    const lines = reportFailure.mock.calls[0][0] as readonly string[];
+    expect(lines.join("\n")).toContain("Could not query");
+    expect(lines.join("\n")).toContain("did not prove the expected gateway identity");
+    expect(lines.join("\n")).not.toContain("Is it running?");
+    expect(lines.join("\n")).not.toContain(canary);
+  });
+
+  it("retains query-specific start guidance when the gateway is unreachable", async () => {
+    mocks.recoverNamedGatewayRuntime.mockResolvedValue({
+      recovered: false,
+      attempted: true,
+      before: { recoveryBlocked: false },
+      after: { recoveryBlocked: false },
+    });
+    const reportFailure = vi.fn();
+
+    await expect(recoverGatewayOrExit("query", reportFailure)).resolves.toBe(false);
+
+    const lines = reportFailure.mock.calls[0][0] as readonly string[];
+    expect(lines.join("\n")).toContain("Could not query");
+    expect(lines.join("\n")).toContain("Is it running?");
+    expect(lines.join("\n")).not.toContain("did not prove the expected gateway identity");
+  });
 });
