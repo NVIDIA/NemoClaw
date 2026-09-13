@@ -2,15 +2,18 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, it, type TestContext, vi } from "vitest";
+import { describe, it, vi } from "vitest";
 import YAML from "yaml";
 import { testTimeoutOptions } from "../../helpers/timeouts.ts";
-import { superviseChild } from "../../helpers/process-supervisor.ts";
+import {
+  runSupervisedProcess,
+  type SupervisedProcessOwner,
+  type SupervisedProcessResult,
+} from "../../helpers/supervised-process.ts";
 
 const profile = YAML.parse(
   fs.readFileSync(".github/workflows/e2e-standard-profile.yaml", "utf8"),
@@ -31,77 +34,29 @@ const externalGatewayInstallScript = externalGateway.jobs["external-gateway-heal
 type RunProcessOptions = {
   cwd?: string;
   env?: NodeJS.ProcessEnv;
-  owner: Pick<TestContext, "onTestFinished" | "signal">;
+  owner: SupervisedProcessOwner;
   timeoutMs: number;
-};
-
-type RunProcessResult = {
-  error?: Error;
-  signal: NodeJS.Signals | null;
-  status: number | null;
-  stderr: string;
-  stdout: string;
 };
 
 function runProcess(
   file: string,
   args: readonly string[],
   options: RunProcessOptions,
-): Promise<RunProcessResult> {
-  options.owner.signal.throwIfAborted();
-  let stdout = "";
-  let stderr = "";
-  let outputError: Error | undefined;
-  const child = spawn(file, [...args], {
+): Promise<SupervisedProcessResult> {
+  return runSupervisedProcess(file, args, {
     cwd: options.cwd,
-    detached: true,
     env: options.env,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  const finishController = new AbortController();
-  const append = (current: string, chunk: string, stream: string): string => {
-    const next = current + chunk;
-    const limitError =
-      !outputError && Buffer.byteLength(next, "utf8") > 10 * 1024 * 1024
-        ? new Error(`${stream} exceeded the 10 MiB process output limit`)
-        : undefined;
-    outputError ??= limitError;
-    void (limitError ? finishController.abort() : undefined);
-    return outputError ? current : next;
-  };
-  const resultPromise = superviseChild(child, {
-    killGraceMs: 0,
-    onStderr: (chunk) => {
-      stderr = append(stderr, chunk, "stderr");
-    },
-    onStdout: (chunk) => {
-      stdout = append(stdout, chunk, "stdout");
-    },
-    signal: AbortSignal.any([options.owner.signal, finishController.signal]),
+    maxOutputBytesPerStream: 10 * 1024 * 1024,
+    owner: options.owner,
     timeoutMs: options.timeoutMs,
   });
-  options.owner.onTestFinished(async () => {
-    finishController.abort();
-    await resultPromise;
-  });
-  return resultPromise.then((result) => ({
-    ...(result.spawnError || result.cleanupError || outputError
-      ? { error: result.spawnError ?? result.cleanupError ?? outputError }
-      : {}),
-    signal: result.signal,
-    status: result.signal
-      ? null
-      : (result.exitCode ?? (result.spawnError || result.cleanupError || outputError ? -1 : null)),
-    stderr,
-    stdout,
-  }));
 }
 
 async function runSuccessfulProcess(
   file: string,
   args: readonly string[],
   options: RunProcessOptions,
-): Promise<RunProcessResult> {
+): Promise<SupervisedProcessResult> {
   const result = await runProcess(file, args, options);
   assert.equal(result.error, undefined, result.error?.message);
   assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
@@ -131,7 +86,7 @@ type PackageDefinition = {
 async function writePackageArchives(
   root: string,
   packages: readonly PackageDefinition[],
-  owner: Pick<TestContext, "onTestFinished" | "signal">,
+  owner: SupervisedProcessOwner,
 ) {
   const sources = packages.map(({ dependencies = {}, name, version = "1.0.0" }) => {
     const source = path.join(root, `${name.replaceAll("/", "-")}-${version}`);
