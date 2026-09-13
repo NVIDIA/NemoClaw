@@ -73,7 +73,9 @@ function runConsolidatedAuditFixture(
   mutateTarget: (targetRoot: string) => void,
   auditOutput = JSON.stringify({
     vulnerabilities: {},
-    metadata: { vulnerabilities: { info: 0, low: 0, moderate: 0, high: 0, critical: 0 } },
+    metadata: {
+      vulnerabilities: { info: 0, low: 0, moderate: 0, high: 0, critical: 0 },
+    },
   }),
   auditStatus = 0,
   offlinePackStatus = 0,
@@ -168,7 +170,11 @@ function runConsolidatedAuditFixture(
     fs.writeFileSync(path.join(targetRoot, "package.json"), JSON.stringify(manifest));
     fs.writeFileSync(
       path.join(targetRoot, "package-lock.json"),
-      JSON.stringify({ ...manifest, lockfileVersion: 3, packages: { "": manifest } }),
+      JSON.stringify({
+        ...manifest,
+        lockfileVersion: 3,
+        packages: { "": manifest },
+      }),
     );
     fs.copyFileSync(
       path.join(REPO_ROOT, "agents/openclaw/wechat-runtime/package.json"),
@@ -437,7 +443,9 @@ describe("trusted npm audit workflow (#5896)", () => {
     ["malformed npm output", "{not-json", 1, /invalid-json/],
     [
       "parseable npm error JSON",
-      JSON.stringify({ error: { summary: "registry request failed: ECONNRESET" } }),
+      JSON.stringify({
+        error: { summary: "registry request failed: ECONNRESET" },
+      }),
       1,
       /registry-network-error/,
     ],
@@ -445,7 +453,9 @@ describe("trusted npm audit workflow (#5896)", () => {
     [
       "an incomplete severity matrix",
       JSON.stringify({
-        metadata: { vulnerabilities: { info: 0, low: 0, moderate: 0, high: 0 } },
+        metadata: {
+          vulnerabilities: { info: 0, low: 0, moderate: 0, high: 0 },
+        },
       }),
       0,
       /incomplete-report/,
@@ -584,7 +594,11 @@ describe("trusted npm audit workflow (#5896)", () => {
       verifySignaturesWithReviewedRetry(root, evidence, () => {
         calls += 1;
         return calls < 3
-          ? { status: 1, stdout: "", stderr: "npm error Failed to download signature" }
+          ? {
+              status: 1,
+              stdout: "",
+              stderr: "npm error Failed to download signature",
+            }
           : { status: 0, stdout: "verified", stderr: "" };
       });
       expect(calls).toBe(3);
@@ -732,7 +746,11 @@ describe("trusted npm audit workflow (#5896)", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-source-graph-"));
     const source = path.join(root, "source");
     const destination = path.join(root, "materialized");
-    const manifest = { name: "source-graph-fixture", private: true, version: "1.0.0" };
+    const manifest = {
+      name: "source-graph-fixture",
+      private: true,
+      version: "1.0.0",
+    };
     const lock = {
       name: manifest.name,
       version: manifest.version,
@@ -1273,7 +1291,10 @@ describe("trusted npm audit workflow (#5896)", () => {
     const lockSource = `${JSON.stringify(
       {
         lockfileVersion: 3,
-        packages: { "": { name: "fixture", version: "1.0.0" }, "node_modules/fixture": null },
+        packages: {
+          "": { name: "fixture", version: "1.0.0" },
+          "node_modules/fixture": null,
+        },
       },
       null,
       2,

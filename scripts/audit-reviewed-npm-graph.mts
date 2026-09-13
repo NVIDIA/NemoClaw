@@ -437,7 +437,11 @@ function materializeLockedGraph(
   const installArgs = ["ci", "--ignore-scripts", "--omit=dev", "--no-audit", "--no-fund"];
   if (graph.installMode === "legacy-peer-deps") installArgs.push("--legacy-peer-deps");
   run("npm", installArgs, destination);
-  verifyMaterializedLockedGraph({ destination, expectedLockSha256, label: reviewedIdentity.label });
+  verifyMaterializedLockedGraph({
+    destination,
+    expectedLockSha256,
+    label: reviewedIdentity.label,
+  });
   return { directory: destination, identity: reviewedIdentity };
 }
 
@@ -629,7 +633,11 @@ export function normalizeOpenClawSignatureAlias(directory: string): void {
   fs.writeFileSync(requesterManifestFile, `${JSON.stringify(requesterManifest, null, 2)}\n`);
 }
 
-type CommandResult = Readonly<{ status: number | null; stdout: string; stderr: string }>;
+type CommandResult = Readonly<{
+  status: number | null;
+  stdout: string;
+  stderr: string;
+}>;
 
 export function verifySignaturesWithReviewedRetry(
   directory: string,
@@ -641,7 +649,11 @@ export function verifySignaturesWithReviewedRetry(
       env: { ...process.env, NPM_CONFIG_UPDATE_NOTIFIER: "false" },
     });
     if (result.error) throw result.error;
-    return { status: result.status, stderr: result.stderr, stdout: result.stdout };
+    return {
+      status: result.status,
+      stderr: result.stderr,
+      stdout: result.stdout,
+    };
   },
 ): void {
   const evidence: string[] = [];
@@ -721,7 +733,11 @@ function verifyWechatInstallCacheBoundary(
     fs.cpSync(trustedCache, installCache, { recursive: true, force: true });
     makeTreeOwnerWritable(installCache);
     packReviewedNpmArchive({
-      env: { ...env, NPM_CONFIG_CACHE: installCache, NPM_CONFIG_OFFLINE: "true" },
+      env: {
+        ...env,
+        NPM_CONFIG_CACHE: installCache,
+        NPM_CONFIG_OFFLINE: "true",
+      },
       expectedIntegrity: identity.integrity,
       label: identity.label,
       packageSpec: identity.packageSpec,
@@ -748,12 +764,7 @@ function auditLockedGraph(
     directory,
     exceptionFile,
     graph: graph.id,
-    provenance: {
-      label: identity.label,
-      nodeVersion: process.version,
-      npmVersion: config.npmVersion,
-      packageSpecs: [identity.packageSpec],
-    },
+    provenance: lockedGraphAuditProvenance(identity, process.version, config.npmVersion),
     reviewedNpmIdentity: config,
     reportFile: path.join(artifactDirectory, `locked-graph-${index + 1}.json`),
     resultFile: path.join(artifactDirectory, `${graph.id}.policy.json`),
@@ -775,6 +786,19 @@ function auditLockedGraph(
     verifyWechatInstallCacheBoundary(identity, tempRoot, config.registryOrigin);
   }
   return { identity, result };
+}
+
+export function lockedGraphAuditProvenance(
+  identity: LockedGraphIdentity,
+  nodeVersion: string,
+  npmVersion: string,
+) {
+  return {
+    label: identity.label,
+    nodeVersion,
+    npmVersion,
+    packageSpecs: [identity.packageSpec],
+  };
 }
 
 function auditSourceGraph(
@@ -905,7 +929,9 @@ export function emitAuditReceipt(
       fs.chmodSync(destination, 0o600);
     }
   }
-  fs.writeFileSync(receiptFile, canonicalAuditReceipt(receipt), { mode: 0o600 });
+  fs.writeFileSync(receiptFile, canonicalAuditReceipt(receipt), {
+    mode: 0o600,
+  });
   return receiptFile;
 }
 
