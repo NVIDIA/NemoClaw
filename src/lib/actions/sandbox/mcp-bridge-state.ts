@@ -12,7 +12,6 @@ import type { McpSourceEntry } from "./mcp-bridge-contracts";
 import * as registry from "../../state/registry";
 import { getSandboxTargetGatewayName } from "./gateway-target";
 import { isAgentMcpAdapter, McpBridgeError } from "./mcp-bridge-contracts";
-import { validateSandboxName } from "./mcp-bridge-validation";
 
 export function getSandboxOrThrow(sandboxName: string): SandboxEntry {
   const sandbox = registry.getSandbox(sandboxName);

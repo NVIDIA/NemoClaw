@@ -1546,7 +1546,6 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       normalizeHermesToolGatewaySelections,
       note,
       ownsForwardServicePort,
-      observabilityCommandFlag,
       observabilityPolicy,
       onboardHermesDashboard,
       onboardSession,

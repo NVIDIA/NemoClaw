@@ -49,21 +49,6 @@ afterEach(() => {
 });
 
 describe("rebuild policy provider handoff", () => {
-  const preservedMcpState = {
-    bridges: {
-      github: {
-        server: "github",
-        agent: "openclaw",
-        url: "https://mcp.example.com/",
-        env: ["MCP_TOKEN"],
-        providerName: "alpha-mcp-github",
-        providerId: "provider-id",
-        policyName: "mcp_github",
-        addedAt: "2026-08-30T00:00:00.000Z",
-      },
-    },
-  };
-
   it("derives active additions and disabled removals from current channel manifests", () => {
     expect(
       resolveRebuildMessagingPolicyDeltas({

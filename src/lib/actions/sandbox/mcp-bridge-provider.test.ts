@@ -16,7 +16,6 @@ import {
 import {
   attachProvider,
   assertMcpProviderRecoverable,
-  detachMissingProviderReference,
   detachProvider,
   ensureMcpBridgeProviderProfile,
   MCP_BRIDGE_PROVIDER_TYPE,

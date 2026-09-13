@@ -1,12 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import {
-  type WebSearchConfig,
-  webSearchEnvFor,
-  webSearchLabelFor,
-  webSearchProviderForConfig,
-} from "../../../inference/web-search";
 import type { Session } from "../../../state/onboard-session";
 import type { SandboxEntry } from "../../../state/registry";
 import { persistedSandboxHostMountsEqual } from "../../../state/registry/host-mount";

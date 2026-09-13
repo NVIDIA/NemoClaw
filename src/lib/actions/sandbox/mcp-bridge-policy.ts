@@ -7,11 +7,7 @@ import YAML from "yaml";
 import * as policies from "../../policy";
 import { assertTrustedPrivateEndpointCapability } from "../../security/trusted-private-endpoint";
 import type { McpSourceEntry } from "./mcp-bridge-contracts";
-import {
-  isAgentMcpAdapter,
-  MCP_BRIDGE_POLICY_SOURCE,
-  McpBridgeError,
-} from "./mcp-bridge-contracts";
+import { isAgentMcpAdapter, McpBridgeError } from "./mcp-bridge-contracts";
 import {
   buildMcpBridgeCapabilityPolicyYaml,
   buildMcpBridgePolicyKey,
