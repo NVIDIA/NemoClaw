@@ -50,6 +50,17 @@ test("postmortem may pair with startup recording while incompatible modes remain
     recordStartup: false,
   };
   validatePersonalDiagnosticModes(ordinary);
+  validatePersonalDiagnosticModes({ ...ordinary, browserFirst: true });
+  for (const incompatible of [
+    "postmortem",
+    "wer",
+    "coldJob",
+    "rendererContext",
+    "recordStartup",
+  ] as const)
+    assert.throws(() =>
+      validatePersonalDiagnosticModes({ ...ordinary, browserFirst: true, [incompatible]: true }),
+    );
   validatePersonalDiagnosticModes({ ...ordinary, recordStartup: true });
   for (const recordStartup of [false, true]) {
     const postmortem = { ...ordinary, postmortem: true, recordStartup };

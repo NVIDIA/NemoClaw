@@ -299,6 +299,57 @@ export function parseComponent(stdout: string, component: string, nonce: string)
   return result;
 }
 
+const personalComponentOrder = ["python", "bash", "conpty", "browser"] as const;
+type PersonalComponent = (typeof personalComponentOrder)[number];
+
+export async function schedulePersonalComponents<T extends { execution: { childClosed: boolean } }>(
+  browserFirst: unknown,
+  run: (component: PersonalComponent, timeout: number) => Promise<T>,
+  diagnoseBash: (canonical: T) => Promise<unknown>,
+) {
+  const scheduling = {
+    mode: browserFirst === true ? "browser-first" : "parallel",
+    browserClosedBeforeOtherComponents: null as boolean | null,
+    skippedComponents: [] as string[],
+  };
+  let calls: Promise<T>[];
+  if (browserFirst === true) {
+    const browser = await run("browser", 90_000);
+    scheduling.browserClosedBeforeOtherComponents = browser.execution.childClosed === true;
+    if (!scheduling.browserClosedBeforeOtherComponents) {
+      scheduling.skippedComponents = ["python", "bash", "conpty"];
+      return {
+        components: [browser],
+        scheduling,
+        bashDiagnostic: {
+          classification: "exact-byte-Bash-startup-diagnostic",
+          scope: "contained",
+          diagnosticOnly: true,
+          canonicalQualification: false,
+          skipped: "canonical browser child did not close; remaining components not started",
+        },
+      };
+    }
+    calls = [
+      ...personalComponentOrder.slice(0, 3).map((component) => run(component, 30_000)),
+      Promise.resolve(browser),
+    ];
+  } else {
+    calls = personalComponentOrder.map((component) =>
+      run(component, component === "browser" ? 90_000 : 30_000),
+    );
+  }
+  // Keep the existing Bash-failure diagnostic attached to the Bash promise.
+  const diagnostic = calls[1]!.then(diagnoseBash);
+  const components = await Promise.all(calls);
+  const bashDiagnostic = await diagnostic;
+  return { components, bashDiagnostic, scheduling };
+}
+
+export function allPersonalComponentsPassed(components: { passed: boolean }[]) {
+  return components.length === 4 && components.every((entry) => entry.passed);
+}
+
 async function main() {
   const [runtime, destination, nonce, configuration] = process.argv.slice(2);
   if (
@@ -326,13 +377,13 @@ async function main() {
   }
   const python = path.join(runtime, "hermes-agent/venv/Scripts/python.exe");
   const script = fileURLToPath(new URL("./probe-personal-python.py", import.meta.url));
-  const calls = ["python", "bash", "conpty", "browser"].map(async (component) => {
+  const run = async (component: PersonalComponent, timeout: number) => {
     const execution = await personalCommand(
       python,
       ["-I", "-B", script, component, runtime, nonce!],
       process.env,
       process.cwd(),
-      component === "browser" ? 90_000 : 30_000,
+      timeout,
     );
     try {
       const result = parseComponent(execution.stdout, component, nonce!);
@@ -351,30 +402,31 @@ async function main() {
     } catch (error) {
       return { component, execution, error: String(error), passed: false };
     }
-  });
+  };
   // Attach direct startup diagnostics to a failed canonical Bash result.
-  const diagnostic = calls[1]!.then(async (canonical) =>
-    !canonical.passed && canonical.execution.childClosed
-      ? await bashDiagnostics(
-          runtime,
-          process.cwd(),
-          nonce!,
-          process.env,
-          "contained",
-          input.gitPins,
-        )
-      : {
-          classification: "exact-byte-Bash-startup-diagnostic",
-          scope: "contained",
-          diagnosticOnly: true,
-          canonicalQualification: false,
-          skipped: canonical.passed
-            ? "canonical Bash passed; failure diagnostics not needed"
-            : "canonical Bash child did not close",
-        },
+  const { components, bashDiagnostic, scheduling } = await schedulePersonalComponents(
+    input.browserFirst,
+    run,
+    async (canonical) =>
+      !canonical.passed && canonical.execution.childClosed
+        ? await bashDiagnostics(
+            runtime,
+            process.cwd(),
+            nonce!,
+            process.env,
+            "contained",
+            input.gitPins,
+          )
+        : {
+            classification: "exact-byte-Bash-startup-diagnostic",
+            scope: "contained",
+            diagnosticOnly: true,
+            canonicalQualification: false,
+            skipped: canonical.passed
+              ? "canonical Bash passed; failure diagnostics not needed"
+              : "canonical Bash child did not close",
+          },
   );
-  const components = await Promise.all(calls);
-  const bashDiagnostic = await diagnostic;
   const identities = personalCriticalFiles.map((relative) => {
     try {
       const actual = fileIdentity(path.join(runtime, relative));
@@ -392,12 +444,12 @@ async function main() {
     classification: "canonical-personal-mxc-feasibility",
     nonce,
     components,
+    scheduling,
     bashDiagnostic,
     identities,
     controllerPid: process.pid,
     compatibilityProofSource: input.compatibilityProofSource,
-    passed:
-      components.every((entry) => entry.passed) && identities.every((entry) => entry.verified),
+    passed: allPersonalComponentsPassed(components) && identities.every((entry) => entry.verified),
     installedAcceptance: false,
     dashboardTested: false,
     tuiTested: false,

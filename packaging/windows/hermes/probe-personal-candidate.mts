@@ -588,7 +588,13 @@ export function validatePersonalDiagnosticModes(modes: {
   coldJob: boolean;
   rendererContext: boolean;
   recordStartup: boolean;
+  browserFirst?: boolean;
 }) {
+  if (
+    modes.browserFirst &&
+    (modes.postmortem || modes.wer || modes.coldJob || modes.rendererContext || modes.recordStartup)
+  )
+    throw new Error("Browser-first scheduling requires other diagnostic modes off.");
   if (modes.postmortem && (modes.wer || modes.coldJob || modes.rendererContext))
     throw new Error(
       "Postmortem capture requires WER-clone, cold-job and renderer-context modes off.",
@@ -1905,12 +1911,14 @@ async function main() {
     ? argument("--renderer-context-build")
     : null;
   const coldJobProbe = process.argv.includes("--cold-job-probe");
+  const browserFirst = process.argv.includes("--browser-first");
   const rendererPostmortem = process.argv.includes("--renderer-postmortem");
   const rendererWerBuildFile = process.argv.includes("--renderer-wer-build")
     ? argument("--renderer-wer-build")
     : null;
   const recordStartup = process.argv.includes("--record-startup");
   validatePersonalDiagnosticModes({
+    browserFirst,
     postmortem: rendererPostmortem,
     wer: Boolean(rendererWerBuildFile),
     coldJob: coldJobProbe,
@@ -1985,6 +1993,17 @@ async function main() {
     fullAgentQualified: false,
     privateStateLeaseTested: false,
     feasibilityPassed: false,
+    ...(browserFirst
+      ? {
+          diagnosticOnly: true,
+          browserFirstProbe: true,
+          browserFirstProbePassed: false,
+          firstCanonicalWorkload: true,
+          changedDimensions: [
+            "Canonical browser runs alone before the other three component checks; no warmup, debugger, tracing or timeout changes",
+          ],
+        }
+      : {}),
     ...(coldJobProbe
       ? {
           diagnosticOnly: true,
@@ -2240,6 +2259,7 @@ async function main() {
         schemaVersion: 1,
         nonce,
         runtime,
+        ...(browserFirst ? { browserFirst: true } : {}),
         compatibilityProofSource: compatibility.sourceRevision,
         gitPins: compatibility.gitPins,
         files: derived.criticalFiles,
@@ -2387,6 +2407,7 @@ async function main() {
       (receipt.workload as any)?.components?.length === 4;
     if (
       !coldJobProbe &&
+      !browserFirst &&
       !rendererCaptureRequested &&
       execution.childClosed &&
       browserDiagnosticChildrenClosed &&
@@ -2456,19 +2477,22 @@ async function main() {
       browserDiagnosticChildrenClosed &&= recorderSafe;
       cleanup.hostDiagnosticChildrenClosed &&= recorderSafe;
     }
-    receipt.supplementalDiagnosticDisposition = rendererPostmortem
-      ? "first-workload postmortem diagnostic only; supplemental replays skipped"
-      : rendererWerBuildFile
-        ? "first-workload out-of-process WER diagnostic only; supplemental replays skipped"
-        : coldJobProbe
-          ? "first-workload owned-job experiment only; supplemental replays skipped"
-          : failure
-            ? rendererContextBuildFile
-              ? "primary failed; optional validated renderer debugger, then ordinary warm replay and owned-job replay"
-              : "primary failed; ordinary warm replay then owned-job replay without debugger"
-            : "primary passed; supplemental comparisons skipped";
+    receipt.supplementalDiagnosticDisposition = browserFirst
+      ? "browser-first scheduling diagnostic only; supplemental replays skipped"
+      : rendererPostmortem
+        ? "first-workload postmortem diagnostic only; supplemental replays skipped"
+        : rendererWerBuildFile
+          ? "first-workload out-of-process WER diagnostic only; supplemental replays skipped"
+          : coldJobProbe
+            ? "first-workload owned-job experiment only; supplemental replays skipped"
+            : failure
+              ? rendererContextBuildFile
+                ? "primary failed; optional validated renderer debugger, then ordinary warm replay and owned-job replay"
+                : "primary failed; ordinary warm replay then owned-job replay without debugger"
+              : "primary passed; supplemental comparisons skipped";
     if (
       !coldJobProbe &&
+      !browserFirst &&
       !rendererCaptureRequested &&
       failure &&
       attempted &&
@@ -2702,7 +2726,9 @@ async function main() {
     receipt.cleanupErrors = errors;
     const completed =
       failure === null && errors.length === 0 && Object.values(cleanup).every(Boolean);
-    receipt.feasibilityPassed = !coldJobProbe && !rendererCaptureRequested && completed;
+    receipt.feasibilityPassed =
+      !coldJobProbe && !browserFirst && !rendererCaptureRequested && completed;
+    if (browserFirst) receipt.browserFirstProbePassed = completed;
     if (coldJobProbe) receipt.coldJobProbePassed = completed;
     if (rendererWerBuildFile) receipt.rendererWerProbePassed = completed;
     if (rendererPostmortem) receipt.rendererPostmortemProbePassed = completed;
