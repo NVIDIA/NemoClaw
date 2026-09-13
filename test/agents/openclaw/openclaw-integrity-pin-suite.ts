@@ -64,7 +64,7 @@ const PINNED_NEMOCLAW_TAR_VERSION = "7.5.21";
 const PINNED_NEMOCLAW_TAR_INTEGRITY =
   "sha512-XdhtCvlMywwxpCW8YEq3lOXBJpUPTR2OHHcwLPO3HwsJqOHa2Ok/oJ7ruGzp+JrKoRPVCzJwAdEjqLW/vNRPHA==";
 const PINNED_NEMOCLAW_TAR_TARBALL = "https://registry.npmjs.org/tar/-/tar-7.5.21.tgz";
-const PINNED_NEMOCLAW_TAR_COMMIT = "0cd9cc3c5814446d3c0cbea6a31d6c00c2c8a9d9";
+
 const PINNED_CODEX_ACP_VERSION = "0.11.1";
 const PINNED_CODEX_ACP_TARBALL =
   "https://registry.npmjs.org/@zed-industries/codex-acp/-/codex-acp-0.11.1.tgz";
@@ -125,8 +125,6 @@ const PINNED_OPENCLAW_BRAVE_PLUGIN_TARBALL =
   "https://registry.npmjs.org/@openclaw/brave-plugin/-/brave-plugin-2026.9.1.tgz";
 const PINNED_OPENCLAW_SLACK_INTEGRITY = requiredMessagingPluginIntegrity("slack");
 const PINNED_OPENCLAW_MSTEAMS_INTEGRITY = requiredMessagingPluginIntegrity("teams");
-const PINNED_WECHAT_PLUGIN_INTEGRITY =
-  "sha512-dPQbidUNWigC6V10vGW4i+GLH09x+6zUhafZRjuxkJ9GDu8o62WBsnUTojp4KqUH756hz+t2v9khiCRSi0dBDw==";
 const LEGACY_REBUILD_OPENCLAW_VERSION = "2026.3.11";
 const LEGACY_REBUILD_OPENCLAW_INTEGRITY =
   "sha512-bxwiBmHPakwfpY5tqC9lrV5TCu5PKf0c1bHNc3nhrb+pqKcPEWV4zOjDVFLQUHr98ihgWA+3pacy4b3LQ8wduQ==";

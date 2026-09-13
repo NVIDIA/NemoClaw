@@ -1,11 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
-import fs from "node:fs";
 import { describe, expect, it } from "vitest";
-
-const MESSAGING_PLAN_ENV_KEY = "NEMOCLAW_MESSAGING_PLAN_B64";
 
 function dockerfileEnvNames(dockerfile: string): string[] {
   const directives = dockerfile.match(/^ENV[ \t]+(?:.*\\\r?\n)*.*$/gm) ?? [];

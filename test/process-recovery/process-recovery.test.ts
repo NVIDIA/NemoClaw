@@ -13,12 +13,7 @@ const requireSource = createRequire(import.meta.url);
 const { checkAndRecoverSandboxProcesses: checkAndRecoverSandboxProcessesImpl } = requireSource(
   "../../src/lib/actions/sandbox/process-recovery.ts",
 ) as typeof import("../../src/lib/actions/sandbox/process-recovery.js");
-const { ensureSandboxPortForwardForPort } = requireSource(
-  "../../src/lib/actions/sandbox/forward-recovery.ts",
-) as typeof import("../../src/lib/actions/sandbox/forward-recovery.js");
-const { createProbeTimingRecorder } = requireSource(
-  "../../src/lib/actions/sandbox/probe/timing.ts",
-) as typeof import("../../src/lib/actions/sandbox/probe/timing.js");
+
 const forwardService = requireSource(
   "../../src/lib/adapters/openshell/forward-service.ts",
 ) as typeof import("../../src/lib/adapters/openshell/forward-service.js");
@@ -90,44 +85,6 @@ async function withFakeOpenshellBinary<T>(fn: () => T | Promise<T>): Promise<T> 
     }
     fs.rmSync(dir, { recursive: true, force: true });
   }
-}
-
-function compactTeamsMessagingPlan(port = "3978") {
-  return {
-    schemaVersion: 1,
-    sandboxName: "beta",
-    agent: "openclaw",
-    workflow: "onboard",
-    disabledChannels: [],
-    networkPolicy: {
-      presets: ["teams"],
-      entries: [
-        {
-          channelId: "teams",
-          presetName: "teams",
-          policyKeys: ["teams"],
-          source: "manifest",
-        },
-      ],
-    },
-    channels: [
-      {
-        channelId: "teams",
-        active: true,
-        configured: true,
-        disabled: false,
-        inputs: [
-          { inputId: "allowedUsers", value: "00000000-0000-0000-0000-000000000001" },
-          { inputId: "appId", value: "test-teams-app-id" },
-          { inputId: "clientSecret", credentialAvailable: true },
-          { inputId: "requireMention", value: "1" },
-          { inputId: "tenantId", value: "test-teams-tenant-id" },
-          { inputId: "webhookPort", value: port },
-        ],
-      },
-    ],
-    credentialBindings: [],
-  };
 }
 
 describe("checkAndRecoverSandboxProcesses", () => {

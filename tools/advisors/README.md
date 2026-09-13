@@ -13,10 +13,13 @@ Shared implementation helpers for NemoClaw model-backed advisors.
 - JSON extraction and sanitization helpers;
 - artifact and file I/O helpers;
 - GitHub API and sticky-comment helpers;
-- the trusted E2E inventory supplied to PR Review Advisor specialists.
+- the trusted E2E inventory supplied to PR Review Advisor specialists as review context.
 
-The PR E2E controller independently rebuilds the deterministic plan and remains the only
-merge-authoritative E2E gate. Its trusted inventory reader uses only Node.js built-ins and checked-in
+The inventory helps specialists recommend focused E2E coverage; it does not dispatch jobs or decide
+merge readiness. When a maintainer requires live E2E for a pull request, they run it explicitly through
+the [current E2E workflow](../../.github/workflows/e2e.yaml) and follow the
+[maintainer E2E procedure](../../.agents/skills/nemoclaw-maintainer-day/MERGE-GATE.md). Former PR E2E
+check contexts remain advisory. The inventory reader uses only Node.js built-ins and checked-in
 TypeScript modules, so the production advisor does not need repository development dependencies such
 as TypeScript or Vitest.
 

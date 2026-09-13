@@ -88,7 +88,6 @@ import { preflightVllmModelEnvOrExit } from "./connect-vllm-preflight";
 import { isDockerRuntimeDown, printDockerRuntimeDownGuidance } from "./gateway-failure-classifier";
 import {
   ensureLiveSandboxOrExit,
-  assertHermesPortableLifecycleForConnect,
   buildHermesPortableCommandAuthority,
   defaultPortableDemoStateDir,
   type HermesPortableActiveLifecycleAuthority,

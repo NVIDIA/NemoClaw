@@ -4,7 +4,6 @@
 import {
   buildGatewayInferenceGetArgs,
   parseGatewayInference,
-  resolveManagedStartupInferenceRoute,
 } from "../inference/gateway/route-contract";
 export { resolveManagedStartupInferenceRoute } from "../inference/gateway/route-contract";
 import {
