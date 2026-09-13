@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { randomUUID } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -9,14 +9,15 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { loadAgent } from "../../agent/defs";
+import DebugCliCommand from "../../../commands/debug";
 import { withMcpLifecycleLockSync } from "../../state/mcp-lifecycle-lock";
 import { withPortableHostFence } from "../../state/portable-uninstall-retirement";
 import type { SandboxEntry } from "../../state/registry";
 import { fingerprintOpenShellSandboxLiveIdentity } from "../../adapters/openshell/sandbox-identity";
 import type { ContainerEngineCommandCapture } from "../../adapters/container-engine";
 import { hermesPortableContainerInternals } from "./hermes-portable-container";
-import { resolveHermesPortableStartupContract } from "./hermes-portable-contract";
 import {
+  createHermesPortableLifecycleTestReceipt,
   testOpenShellExecutableAuthority,
   testPodmanExecutableAuthority,
   testPodmanExecutableAuthorityDeps,
@@ -37,14 +38,10 @@ import {
   type HermesPortableLifecycleDeps,
 } from "./hermes-portable-lifecycle";
 import {
-  captureHermesPortablePolicySource,
-  publishHermesPortableDurablePolicySource,
-  publishHermesPortableLifecycleReceipt,
   publishHermesPortableSuccessorReceipt,
   readHermesPortableLifecycleReceipt,
   readHermesPortableLifecycleReceiptForRequalification,
   type HermesPortableConfiguredReceipt,
-  type HermesPortablePendingReceipt,
 } from "./hermes-portable-receipt";
 
 const SANDBOX = "alpha";
@@ -69,89 +66,19 @@ function startupArgv() {
   return renderStartupArgv(SANDBOX);
 }
 function activeReceipt(homeDir = "/home/test"): HermesPortableConfiguredReceipt {
-  const uid = process.getuid!();
-  const socketPath = `/run/user/${String(uid)}/podman/podman.sock`;
-  const transactionId = randomUUID();
-  const policy = publishHermesPortableDurablePolicySource({
-    sandboxName: SANDBOX,
-    transactionId,
+  return createHermesPortableLifecycleTestReceipt({
+    agent: loadAgent("hermes"),
     stateDir,
-    source: captureHermesPortablePolicySource(policyPath),
-    hooks: { assertLifecycleLock: () => undefined },
-  });
-  const pending: HermesPortablePendingReceipt = {
-    schemaVersion: 7,
-    agent: "hermes",
-    phase: "pending",
-    transactionId,
-    createIntentSha256: "c".repeat(64),
+    policyPath,
+    homeDir,
     sandboxName: SANDBOX,
     gatewayName: GATEWAY,
     lifecycleGeneration: GENERATION,
-    runtimeAuthority: {
-      schemaVersion: 1,
-      kind: "podman",
-      ownership: "current-user",
-      uid,
-      homeDir,
-      configHome: path.join(homeDir, ".config"),
-      runtimeDir: `/run/user/${String(uid)}`,
-      socketPath,
-    },
-    openshellExecutableAuthority: testOpenShellExecutableAuthority(),
-    podmanExecutableAuthority: testPodmanExecutableAuthority(),
-    socketAuthority: {
-      device: "1",
-      inode: "2",
-      mode: String(0o140600),
-      ownerUid: String(uid),
-      socketPath,
-      directoryChain: directoryChain(path.dirname(socketPath)).map((directory, index) => ({
-        device: "1",
-        inode: String(index + 3),
-        mode: String(index === 0 ? 0o40700 : 0o40755),
-        ownerUid: String(index === 0 ? uid : 0),
-        path: directory,
-      })),
-    },
-    startup: resolveHermesPortableStartupContract({
-      agent: loadAgent("hermes"),
-      sandboxName: SANDBOX,
-      startupArgv: startupArgv(),
-    }),
-    policy,
-  };
-  const first = publishHermesPortableLifecycleReceipt(pending, stateDir, {
-    assertLifecycleLock: () => undefined,
+    containerId: CONTAINER_ID,
+    imageDigest: IMAGE,
+    sandboxId: SANDBOX_ID,
+    labels: LABELS,
   });
-  const { policy: _policy, ...transaction } = pending;
-  const configuring: HermesPortableConfiguredReceipt = {
-    ...transaction,
-    phase: "configuring",
-    previousPhaseSha256: first.sha256,
-    container: {
-      containerId: CONTAINER_ID,
-      sandboxId: SANDBOX_ID,
-      imageId: `sha256:${IMAGE}`,
-      labelsSha256: hermesPortableContainerInternals.labelsDigest(LABELS),
-      name: `openshell-default--${SANDBOX}-${SANDBOX_ID}`,
-      running: true,
-      restartPolicy: "no",
-    },
-  };
-  const second = publishHermesPortableLifecycleReceipt(configuring, stateDir, {
-    assertLifecycleLock: () => undefined,
-  });
-  const active: HermesPortableConfiguredReceipt = {
-    ...configuring,
-    phase: "active",
-    previousPhaseSha256: second.sha256,
-    container: { ...configuring.container, restartPolicy: "unless-stopped" },
-  };
-  publishHermesPortableLifecycleReceipt(active, stateDir, {
-    assertLifecycleLock: () => undefined,
-  });
-  return active;
 }
 function lifecycleDeps(
   receipt: HermesPortableConfiguredReceipt,
@@ -355,6 +282,74 @@ afterEach(() => {
 });
 
 describe("Hermes portable lifecycle", () => {
+  it("collects an offline public debug bundle for an actual receipt without exposing authority (#11651)", async () => {
+    const home = stateDir;
+    stateDir = path.join(home, ".nemoclaw");
+    fs.mkdirSync(stateDir, { mode: 0o700 });
+    vi.stubEnv("HOME", home);
+    const output = path.join(home, "debug.tar.gz");
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    try {
+      const receipt = activeReceipt(home);
+      await DebugCliCommand.run(["--sandbox", SANDBOX, "--output", output], process.cwd());
+      const entries = execFileSync("tar", ["tzf", output], { encoding: "utf8" }).trim().split("\n");
+      expect(entries).toHaveLength(2);
+      const report = execFileSync("tar", ["xOzf", output, entries[1]!], { encoding: "utf8" });
+      expect(JSON.parse(report)).toMatchObject({
+        sandboxName: SANDBOX,
+        savedLifecyclePhase: "active",
+        runtimeHealth: "not-probed",
+        agentHealth: "not-probed",
+      });
+      expect(report).not.toContain(receipt.transactionId);
+      expect(report).not.toContain(receipt.container.containerId);
+      expect(report).not.toContain(home);
+      expect(log.mock.calls.flat().join("\n")).toContain("Offline Portable lifecycle diagnostics");
+    } finally {
+      vi.unstubAllEnvs();
+      stateDir = home;
+    }
+  });
+
+  it("preserves sanitized command diagnostics and reports an attempted start (#11651)", () => {
+    const receipt = activeReceipt();
+    const fixture = lifecycleDeps(receipt, false);
+    const capture = fixture.captureOpenShell.getMockImplementation()!;
+    fixture.captureOpenShell.mockImplementation((args) =>
+      args[1] === "start"
+        ? {
+            status: 23,
+            stdout: "startup stdout canary",
+            stderr: "startup stderr canary\nNVIDIA_INFERENCE_API_KEY=nvapi-TEST-DIAGNOSTIC-SECRET",
+          }
+        : capture(args),
+    );
+    const evidence = vi.fn();
+    const recover = vi.fn(() =>
+      withMcpLifecycleLockSync(
+        SANDBOX,
+        () =>
+          recoverHermesPortableSandboxLifecycle(SANDBOX, lifecycleContext(), {
+            ...fixture.deps,
+            recoveryTiming: { onComplete: evidence },
+          }),
+        { stateDir: path.join(stateDir, "state") },
+      ),
+    );
+    expect(recover).toThrow("startup stderr canary");
+    const error = recover.mock.results[0]?.value as Error;
+    expect(error.message).toContain("status 23");
+    expect(error.message).toContain("startup stdout canary");
+    expect(error.message).not.toContain("nvapi-TEST-DIAGNOSTIC-SECRET");
+    expect(evidence).toHaveBeenCalledWith(
+      expect.objectContaining({
+        containerStartCount: 1,
+        containerAction: "start-attempted",
+        result: "failed",
+      }),
+    );
+  });
+
   it("uses one entry and final qualification when the timing callback fails (#10423)", () => {
     const receipt = activeReceipt();
     publishSuccessor();
