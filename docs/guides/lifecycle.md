@@ -90,6 +90,6 @@ It checks ownership, generation, configuration, and durable identity without req
 If deletion or observation fails, keep state and explicitly rerun destroy to reconcile.
 Other operations refuse an unfinished teardown.
 
-OpenShell 0.0.116 deletes by name without an ID/version condition.
+The pinned OpenShell API deletes by name without an ID/version condition.
 Identity checks immediately before deletion cannot eliminate replacement by another client between the check and the request.
 The local deployment lock does not lock other gateway clients.

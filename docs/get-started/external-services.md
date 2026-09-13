@@ -5,7 +5,7 @@ Run commands from the repository root.
 
 ## Prerequisites and access
 
-Use Go 1.27.1, Docker, and the OpenShell 0.0.116 `openshell-gateway` executable.
+Use the [pinned Go toolchain](../reference/dependencies.md), Docker, and the `openshell-gateway` executable selected by the [dependency pins](../reference/dependencies.md).
 The gateway is a prerequisite separate from the NemoClaw bundle.
 This configuration is for one local developer: its user API binds to loopback without TLS and permits unauthenticated users.
 Sandbox callbacks authenticate with JWTs.
@@ -49,14 +49,18 @@ This address is reachable by both the gateway and the sandbox supervisor.
 A host loopback address only reaches the gateway.
 For managed inference, skip this external-server setup and follow [managed Ollama](../guides/managed-ollama.md).
 
+Copy `spec.inferenceProviders[0].ollama.image` from [the managed Ollama example](../../examples/managed-ollama.yaml).
+Replace `IMAGE_REFERENCE` in the following command with that complete immutable reference:
+
 ```sh
+nc_ollama_image='IMAGE_REFERENCE'
 nc_test_dir="$(pwd)/.local/runtime"
 nc_test_bridge="$(docker network inspect nc-prototype-test --format '{{(index .IPAM.Config 0).Gateway}}')"
 mkdir -p "$nc_test_dir/ollama"
 docker run -d --name nc-prototype-test-ollama --network nc-prototype-test \
   -p "$nc_test_bridge:11436:11434" \
   -v "$nc_test_dir/ollama:/root/.ollama" \
-  ollama/ollama@sha256:684d8674b4315fa18f4f0e973a118ec2652ed96f67563277839985175858e0ba
+  "$nc_ollama_image"
 docker exec nc-prototype-test-ollama ollama pull qwen3.5:0.8b
 docker exec nc-prototype-test-ollama ollama pull qwen3:0.6b
 ```

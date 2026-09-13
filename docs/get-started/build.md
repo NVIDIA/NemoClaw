@@ -3,7 +3,7 @@
 Build the bundle before running NemoClaw or its provider integration tests.
 Run commands from the repository root.
 
-Install Go 1.27.1, then run:
+Install the [pinned Go toolchain](../reference/dependencies.md), then run:
 
 ```sh
 go run ./tools/bundle
@@ -41,9 +41,7 @@ Continue with [external service setup](external-services.md) and [deployment](de
 
 ## Dependency pins
 
-[versions.json](../../versions.json) records executable versions, download URLs, and hashes.
-[go.mod](../../go.mod) and [go.sum](../../go.sum) pin Go dependencies.
-The OpenShell SDK is pinned to release 0.0.116, Go revision `d1155aa70042`, for the inference API used by NemoClaw.
-SDK upgrades must preserve that API contract or include corresponding integration changes.
+Use the [dependency sources](../reference/dependencies.md) to select tool versions and inspect image provenance.
+The bundle builder reads executable pins from `versions.json`.
+SDK upgrades must preserve the inference API contract or include corresponding integration changes.
 The [dated SDK research](../archive/validation-log.md#historical-build-availability-and-remaining-limits) records the compatibility investigation.
-The Fabric source revision and per-recipe dependency locks are documented in the [runtime reference](../reference/fabric-harnesses.md) and [third-party inventory](../reference/third-party.md).

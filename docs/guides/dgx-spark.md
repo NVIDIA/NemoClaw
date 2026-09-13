@@ -15,7 +15,7 @@ Initial deployment downloads and prepares these artifacts.
 
 ## Build and deploy
 
-Build the pinned model-specific artifact with Go 1.27.1:
+Build the pinned model-specific artifact with the [pinned Go toolchain](../reference/dependencies.md):
 
 ```sh
 go run ./tools/spark-runtime

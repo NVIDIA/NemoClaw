@@ -2,7 +2,7 @@
 
 Run the isolated fixture to check actual OpenClaw messaging behavior without sending external messages.
 This test does not qualify a real Telegram or WhatsApp account.
-Use native Linux ARM64, Python 3.13, and Docker with the [Fabric build prerequisites](../guides/fabric.md#before-you-begin).
+Use native Linux ARM64 and Docker with the [Fabric build prerequisites](../reference/dependencies.md#fabric-builds).
 
 ```sh
 python3 image/fabric/build.py --harness openclaw

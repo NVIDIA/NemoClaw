@@ -6,7 +6,7 @@ OpenClaw uses a local adapter; the other nine adapters come from the pinned Fabr
 
 ## Before you begin
 
-Use native Linux ARM64, Python 3.13, Docker, uv, and the host build toolchain.
+Use native Linux ARM64, Docker, uv, and the [Python and native build prerequisites](../reference/dependencies.md#fabric-builds).
 Maturin can provision Rust in its cache.
 Provide an [external gateway and inference service](../get-started/external-services.md); Fabric deployments require both services to be external.
 Claude requires Anthropic Messages; Codex and Pi require OpenAI Responses.

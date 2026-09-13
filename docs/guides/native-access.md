@@ -39,7 +39,7 @@ Channel enrollment commands require the infrastructure described above; they are
 | Approve an intended sender's pairing code | `openclaw pairing approve telegram CODE` |
 | Open the terminal interface | `openclaw tui` |
 
-For noninteractive access, OpenShell 0.0.116 also supports:
+For noninteractive access, the pinned OpenShell CLI also supports:
 
 ```sh
 openshell --gateway-endpoint GATEWAY --workspace WORKSPACE sandbox exec --name assistant -- openclaw channels status --probe

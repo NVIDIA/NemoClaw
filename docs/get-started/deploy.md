@@ -5,8 +5,8 @@ For Fabric, follow [Deploy a Fabric runtime](../guides/fabric.md).
 
 ## Before you begin
 
-- [Build the bundle](build.md) with Go 1.27.1.
-- Provide an OpenShell 0.0.116 gateway with one Docker or Podman compute driver.
+- [Build the bundle](build.md) with the [pinned Go toolchain](../reference/dependencies.md).
+- Provide an OpenShell gateway matching the [dependency pins](../reference/dependencies.md) with one Docker or Podman compute driver.
 - Provide an OpenAI-compatible inference endpoint reachable from OpenShell's inference execution environment.
 - For the tested Linux Docker topology, complete [external service setup](external-services.md).
 - Read the [configuration limits and credential rules](../reference/configuration.md).
@@ -20,8 +20,8 @@ That request can load a local model or incur inference usage.
 1. Build the OpenClaw image and obtain its immutable reference:
 
    ```sh
-   docker build -t nc-prototype-openclaw:2026.9.4 image
-   docker image inspect nc-prototype-openclaw:2026.9.4 --format '{{index .RepoDigests 0}}'
+   docker build -t nc-prototype-openclaw:local image
+   docker image inspect nc-prototype-openclaw:local --format '{{index .RepoDigests 0}}'
    ```
 
    The image adds supervisor network tools and disables an inherited health check outside the agent's network namespace.

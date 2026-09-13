@@ -39,7 +39,9 @@ Avoid relative-time phrases such as “currently,” “still,” “the latest,
 Name the configuration, API, version, or revision that determines the behavior.
 Keep dates in decision records and validation evidence, where they identify the scope of a claim.
 Move development chronology and task-specific authorization into historical records.
-Preserve actual constraints, version pins, literal command and image names, and the limits of recorded evidence.
+Preserve actual constraints, literal command names, and the limits of recorded evidence.
+Link to the [authoritative dependency inputs](../reference/dependencies.md) instead of copying release numbers or image hashes into operating prose.
+Keep exact versions in historical evidence and where they define an API, schema, or compatibility boundary.
 Do not turn planned work into implemented behavior by removing temporal wording.
 
 ## Keep terminology precise

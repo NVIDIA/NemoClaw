@@ -21,6 +21,7 @@ Start with a local Linux ARM64 deployment; other bundle targets have cross-build
 
 ## Look up behavior
 
+- [Dependency sources](reference/dependencies.md).
 - [CLI commands and flags](reference/cli.md).
 - [Configuration and credentials](reference/configuration.md).
 - [Fabric runtime recipes](reference/fabric-harnesses.md).

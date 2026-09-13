@@ -1,20 +1,21 @@
 # Fabric harness image recipes
 
-The builder covers every adapter descriptor under `adapters/` in Fabric revision `51a28c1aefec56abd877070b6973d0a32a1e3003`: nine upstream adapters, plus our local OpenClaw adapter.
+The builder covers every adapter descriptor under `adapters/` in the Fabric source pinned by [the builder](../../image/fabric/build.py): nine upstream adapters, plus our local OpenClaw adapter.
 No upstream Fabric changes are required.
+Exact package versions belong to the [build inputs and generated provenance](dependencies.md), rather than this protocol table.
 
 | `--harness` / YAML `harness` | Packaged harness | Inference protocol | Adapter selection |
 | --- | --- | --- | --- |
-| `deepagents` | Deep Agents 0.7.13 | OpenAI Chat Completions | `nvidia.fabric.langchain.deepagents` |
-| `hermes` | Hermes 0.21.0, pinned source | OpenAI Chat Completions | `nvidia.fabric.hermes` |
-| `openclaw` | OpenClaw 2026.9.4 | OpenAI Chat Completions | Local `nemoclaw.local.openclaw` |
-| `claude` | Claude Agent SDK 0.2.120 and its bundled CLI | Anthropic Messages | `nvidia.fabric.claude` |
-| `codex` | Codex SDK/CLI 0.144.4 | OpenAI Responses | `nvidia.fabric.codex` |
-| `mini-swe-agent` | mini-SWE-agent 2.4.6 | OpenAI Chat Completions | `nvidia.fabric.mini-swe-agent` |
-| `nooa` | NOOA / NOOA CLI 0.0.10 | OpenAI Chat Completions | `nvidia.fabric.nooa`, workflow `nvidia.nooa.coding-agent` |
-| `nooa-bench` | NOOA bench 0.0.10 | OpenAI Chat Completions | `nvidia.fabric.nooa.bench-agent` |
-| `remote-agent` | HTTP adapter 0.4.0 | OpenAI Chat Completions in this recipe | `nvidia.fabric.remote-agent` |
-| `pi` | Pi 0.84.2 | OpenAI Responses with the selected catalog profile | `nvidia.fabric.pi` (TypeScript process adapter) |
+| `deepagents` | Deep Agents | OpenAI Chat Completions | `nvidia.fabric.langchain.deepagents` |
+| `hermes` | Hermes, pinned source | OpenAI Chat Completions | `nvidia.fabric.hermes` |
+| `openclaw` | OpenClaw | OpenAI Chat Completions | Local `nemoclaw.local.openclaw` |
+| `claude` | Claude Agent SDK and its bundled CLI | Anthropic Messages | `nvidia.fabric.claude` |
+| `codex` | Codex SDK/CLI | OpenAI Responses | `nvidia.fabric.codex` |
+| `mini-swe-agent` | mini-SWE-agent | OpenAI Chat Completions | `nvidia.fabric.mini-swe-agent` |
+| `nooa` | NOOA / NOOA CLI | OpenAI Chat Completions | `nvidia.fabric.nooa`, workflow `nvidia.nooa.coding-agent` |
+| `nooa-bench` | NOOA bench | OpenAI Chat Completions | `nvidia.fabric.nooa.bench-agent` |
+| `remote-agent` | HTTP adapter | OpenAI Chat Completions in this recipe | `nvidia.fabric.remote-agent` |
+| `pi` | Pi | OpenAI Responses with the selected catalog profile | `nvidia.fabric.pi` (TypeScript process adapter) |
 
 Each Python dependency lock contains native wheel hashes.
 Pi builds the TypeScript contract, shared lifecycle host, adapter, and harness using the npm lockfiles from the same checksum-verified Fabric archive.

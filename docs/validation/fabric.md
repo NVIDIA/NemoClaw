@@ -5,7 +5,7 @@ Use a real model separately to establish actual agent responses.
 A passing fixture does not qualify hosted authentication or model task quality.
 
 Build the selected image and native bundle with the [Fabric guide](../guides/fabric.md) before testing.
-Use native Linux ARM64, Python 3.13, Docker, the OpenSSL CLI, and the stated build dependencies.
+Use native Linux ARM64, Docker, the OpenSSL CLI, and the [Python and native build prerequisites](../reference/dependencies.md#fabric-builds).
 The tests create disposable containers; the OpenShell test also creates a fresh deployment.
 
 ## Test without external inference

@@ -16,8 +16,8 @@ Rebuild the native bundle before running the test.
    Build the OpenClaw image and bundle, then copy the managed example:
 
    ```sh
-   docker build -t nc-prototype-openclaw:2026.9.4 image
-   docker image inspect nc-prototype-openclaw:2026.9.4 --format '{{index .RepoDigests 0}}'
+   docker build -t nc-prototype-openclaw:local image
+   docker image inspect nc-prototype-openclaw:local --format '{{index .RepoDigests 0}}'
    docker network inspect nc-prototype-test --format '{{(index .IPAM.Config 0).Gateway}}'
    go run ./tools/bundle
    cp examples/managed-ollama.yaml .local/managed-deployment.yaml
