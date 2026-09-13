@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-
 import {
+  openClawAgentFailedToolResultSignal,
   openClawAgentIncompleteTurnSignal,
   type OpenClawIncompleteTurnSignal,
   openClawAgentJsonProvenanceLines,
@@ -93,6 +93,10 @@ export async function runAgentJsonPassthrough(
       writeIncompleteAgentTurnFailure(proc, sandboxName, incompleteTurn.markers);
     }
     return proc.exit(INCOMPLETE_AGENT_TURN_EXIT_CODE);
+  }
+  if (code === 0 && openClawAgentFailedToolResultSignal(stdout)) {
+    proc.stderr.write("  OpenClaw tool call failed.\n");
+    return proc.exit(1);
   }
   return proc.exit(code);
 }

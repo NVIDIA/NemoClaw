@@ -194,6 +194,12 @@ export function isTimedOutAgentDispatch(stdout: string, stderr: string): boolean
   return OPENCLAW_AGENT_TIMEOUT_PATTERN.test(stdout) || OPENCLAW_AGENT_TIMEOUT_PATTERN.test(stderr);
 }
 
+/** Detect non-JSON OpenClaw tool-call failures in captured diagnostic text. */
+export function isToolCallFailed(stdout: string, stderr: string): boolean {
+  const toolCallFailedPattern = /(?:^|\r?\n)Tool Call failed(?:\r?\n|$)/;
+  return toolCallFailedPattern.test(stdout) || toolCallFailedPattern.test(stderr);
+}
+
 // OpenClaw owns argv validation. Inspect its supported options only to choose
 // stdin, output, and deadline behavior; never rewrite or read message payloads.
 // Unknown options stop inspection because their argument arity is unknown.

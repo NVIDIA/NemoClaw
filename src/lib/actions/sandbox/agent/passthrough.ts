@@ -124,6 +124,7 @@ import {
   runOpenClawAgentDispatch,
   isSilentAgentDispatch,
   isTimedOutAgentDispatch,
+  isToolCallFailed,
   SILENT_AGENT_DISPATCH_EXIT_CODE,
   TIMED_OUT_AGENT_TURN_EXIT_CODE,
 } from "./passthrough-dispatch";
@@ -200,9 +201,16 @@ export async function runAgentNonJsonPassthrough(
     writeTimedOutAgentTurnFailure(proc, sandboxName);
     return proc.exit(TIMED_OUT_AGENT_TURN_EXIT_CODE);
   }
+  // Detect generic tool-call text only on the non-JSON transport, where no
+  // structured run metadata is available.
+  if (code === 0 && isToolCallFailed(stdout, stderr)) {
+    proc.stderr.write("  OpenClaw tool call failed.\n");
+    return proc.exit(1);
+  }
   return proc.exit(code);
 }
 
+// Options for agent passthrough.
 export interface AgentPassthroughOptions {
   extraArgs?: readonly string[];
 }
