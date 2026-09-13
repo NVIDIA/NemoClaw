@@ -20,9 +20,7 @@ const RELEASE_COMMIT = "b".repeat(40);
 const workflow = readYaml<ReleaseLatestWorkflow>(WORKFLOW_PATH);
 const job = workflow.jobs["update-latest"];
 const verifyStep = job.steps?.find((step) => step.id === "verify-release-tag");
-const moveStep = job.steps?.find(
-  (step) => step.name === "Move latest to the verified release tag object",
-);
+
 const verifyScript = verifyStep?.with?.script;
 
 function createHarness(verification: { verified: boolean; reason: string }) {
