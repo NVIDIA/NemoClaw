@@ -127,14 +127,19 @@ export type GatewayRestartDeps = {
       initialManagedHealthPassed?: boolean;
     },
   ) => Promise<boolean>;
-  ensureSandboxPortForward: (sandboxName: string) => boolean;
-  ensureHermesDashboardPortForwardIfEnabled: (sandboxName: string) => boolean | null;
-  recoverMessagingHostForward: (sandboxName: string, options: { quiet: boolean }) => boolean | null;
+  ensureSandboxPortForward: (sandboxName: string) => boolean | Promise<boolean>;
+  ensureHermesDashboardPortForwardIfEnabled: (
+    sandboxName: string,
+  ) => boolean | null | Promise<boolean | null>;
+  recoverMessagingHostForward: (
+    sandboxName: string,
+    options: { quiet: boolean },
+  ) => boolean | null | Promise<boolean | null>;
   recoverDeclaredAgentForwardPorts: (
     sandboxName: string,
     recoveryPort: number,
     options: { quiet: boolean },
-  ) => boolean | null;
+  ) => boolean | null | Promise<boolean | null>;
   printGatewayWedgeDiagnostics: (
     sandboxName: string,
     exec: (sandboxName: string, command: string) => Promise<GatewayRestartCommandResult | null>,
@@ -471,10 +476,11 @@ export async function restartSandboxGatewayWithDeps(
     return { ok: false, failureLayer: "health timeout", detail };
   }
 
-  const forwardRecovered = deps.ensureSandboxPortForward(sandboxName);
-  const dashboardForwardRecovered = deps.ensureHermesDashboardPortForwardIfEnabled(sandboxName);
-  const messagingForwardRecovered = deps.recoverMessagingHostForward(sandboxName, { quiet });
-  const declaredForwardsRecovered = deps.recoverDeclaredAgentForwardPorts(
+  const forwardRecovered = await deps.ensureSandboxPortForward(sandboxName);
+  const dashboardForwardRecovered =
+    await deps.ensureHermesDashboardPortForwardIfEnabled(sandboxName);
+  const messagingForwardRecovered = await deps.recoverMessagingHostForward(sandboxName, { quiet });
+  const declaredForwardsRecovered = await deps.recoverDeclaredAgentForwardPorts(
     sandboxName,
     dashboardPort,
     { quiet },
