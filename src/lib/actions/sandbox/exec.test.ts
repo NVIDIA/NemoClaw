@@ -1,9 +1,27 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { execSandbox, type SandboxExecCleanupDeps, workdirMissingMessage } from "./exec";
+import {
+  withMcpLifecycleLock,
+  withMcpLifecycleLockSync,
+  isMcpLifecycleLockHeld,
+} from "../../state/mcp-lifecycle-lock-acquisition";
+import {
+  withPortableHostFence,
+  portableHostFencePath,
+} from "../../state/portable-uninstall-retirement";
+import {
+  execSandbox,
+  startSandboxExec,
+  type SandboxExecCleanupDeps,
+  workdirMissingMessage,
+} from "./exec";
 
 describe("workdirMissingMessage", () => {
   it("renders a user-facing CLI error with the offending path", () => {
@@ -302,4 +320,85 @@ describe("execSandbox scope-upgrade hint wiring (#9744)", () => {
     expect(exitCode).toBe(1);
     expect(stderr).toBe("");
   });
+});
+
+it("dispatches under authority and completes outside the released lock context (#11647)", async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-launch-exec-"));
+  const stateDir = path.join(home, "state");
+  const lockOptions = { stateDir };
+  const sandboxName = "launch-exec";
+  const ended = Promise.withResolvers<void>();
+  const release = vi.fn();
+  const cleanup = vi.fn(() =>
+    withMcpLifecycleLockSync(
+      sandboxName,
+      () => {
+        expect(isMcpLifecycleLockHeld(sandboxName, stateDir)).toBe(true);
+        return { applies: true as const, ok: true, issues: [] };
+      },
+      lockOptions,
+    ),
+  );
+  let dispatched = false;
+  try {
+    const finish = await withPortableHostFence(home, () =>
+      withMcpLifecycleLock(
+        sandboxName,
+        () =>
+          startSandboxExec(
+            sandboxName,
+            ["bash", "-lc", "openclaw tui"],
+            { tty: true, stdin: true, timeoutSeconds: 0 },
+            {
+              selectGateway: () => ({ outcome: "unregistered", gatewayName: null }),
+              commandExecutor: {
+                probeDirectory: async () => ({ state: "present" }),
+                runStreaming: async () => {
+                  expect(isMcpLifecycleLockHeld(sandboxName, stateDir)).toBe(true);
+                  expect(fs.existsSync(portableHostFencePath(home))).toBe(true);
+                  dispatched = true;
+                  await ended.promise;
+                  return { outcome: { kind: "completed", exitCode: 0 }, release };
+                },
+              },
+              cleanupDeps: {
+                getSandbox: () => {
+                  expect(isMcpLifecycleLockHeld(sandboxName, stateDir)).toBe(false);
+                  expect(fs.existsSync(portableHostFencePath(home))).toBe(false);
+                  return { agent: "openclaw" };
+                },
+                inspectMutableConfigPerms: cleanup,
+                repairMutableConfigPerms: () => {
+                  throw new Error("healthy config needs no repair");
+                },
+              },
+              exit: (code) => {
+                throw new Error(`exit:${code}`);
+              },
+            },
+          ),
+        lockOptions,
+      ),
+    );
+    expect(dispatched).toBe(true);
+    expect(cleanup).not.toHaveBeenCalled();
+    let contenderEntered = false;
+    await withPortableHostFence(home, () =>
+      withMcpLifecycleLock(
+        sandboxName,
+        () => {
+          contenderEntered = true;
+        },
+        lockOptions,
+      ),
+    );
+    expect(contenderEntered).toBe(true);
+    ended.resolve();
+    await expect(finish()).rejects.toThrow("exit:0");
+    expect(cleanup).toHaveBeenCalledOnce();
+    expect(release).toHaveBeenCalledOnce();
+  } finally {
+    ended.resolve();
+    fs.rmSync(home, { recursive: true, force: true });
+  }
 });

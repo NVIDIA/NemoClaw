@@ -393,7 +393,7 @@ describe("NemoClawCommand", () => {
     });
   });
 
-  it("uses the same Portable host and lifecycle fences for launch and stop", async () => {
+  it("leaves interactive launch locking to the action while fencing stop (#11647)", async () => {
     vi.stubEnv("NEMOCLAW_GATEWAY_PORT", "18080");
     useHermesPortableAuthority();
 
@@ -401,11 +401,15 @@ describe("NemoClawCommand", () => {
     await PortableStopCommand.run(["alpha"], process.cwd());
 
     expect(PortableLaunchCommand.observed).toEqual({
+      host: false,
+      lifecycle: false,
+      portableLifecycle: false,
+    });
+    expect(PortableStopCommand.observed).toEqual({
       host: true,
       lifecycle: false,
       portableLifecycle: true,
     });
-    expect(PortableStopCommand.observed).toEqual(PortableLaunchCommand.observed);
   });
 
   it("selects the gateway lifecycle lock under the host fence when there is no Hermes receipt", async () => {

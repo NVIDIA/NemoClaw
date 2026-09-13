@@ -14,7 +14,7 @@ const mocks = vi.hoisted(() => ({
   printInteractiveSessionHints: vi.fn(),
   completeInteractiveSessionSetup: vi.fn(),
   completeReadinessQualifiedInteractiveSessionSetup: vi.fn(),
-  execSandbox: vi.fn(),
+  startSandboxExec: vi.fn(),
   startSandboxSession: vi.fn(),
   createSessionExecutor: vi.fn(),
   releaseSession: vi.fn(),
@@ -40,7 +40,7 @@ vi.mock("./connect", () => ({
     mocks.completeReadinessQualifiedInteractiveSessionSetup,
 }));
 vi.mock("./exec", () => ({
-  execSandbox: mocks.execSandbox,
+  startSandboxExec: mocks.startSandboxExec,
   wrapExecCommandWithRuntimeEnv: (command: readonly string[]) => command,
 }));
 vi.mock("../../adapters/openshell/sandbox-command-cli", async (importOriginal) => ({
@@ -177,7 +177,7 @@ function prepareSession(
 }
 
 function launchedCommand(): readonly string[] {
-  return mocks.execSandbox.mock.calls[0]?.[1] as readonly string[];
+  return mocks.startSandboxExec.mock.calls[0]?.[1] as readonly string[];
 }
 
 type AsyncTestLock = <T>(name: string, operation: () => Promise<T> | T) => Promise<T>;
@@ -215,8 +215,9 @@ describe("launchSandbox", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.calls.length = 0;
-    mocks.execSandbox.mockImplementation(async () => {
-      mocks.calls.push("execSandbox");
+    mocks.startSandboxExec.mockImplementation(async () => {
+      mocks.calls.push("startSandboxExec");
+      return async () => undefined;
     });
     mocks.createSessionExecutor.mockReturnValue({ start: mocks.startSandboxSession });
     mocks.startSandboxSession.mockImplementation(() => {
@@ -333,6 +334,7 @@ describe("launchSandbox", () => {
       cancel: vi.fn(),
     });
     const exit = vi.spyOn(process, "exit").mockImplementation((code) => {
+      expect(mocks.releaseSession).toHaveBeenCalledOnce();
       throw new Error(`exit:${code}`);
     });
     await expect(
@@ -346,7 +348,7 @@ describe("launchSandbox", () => {
     expect(mocks.releaseSession).toHaveBeenCalledOnce();
   });
 
-  it("holds schema-5 authority through the exact interactive child execution (#9203)", async () => {
+  it("holds schema-5 authority through dispatch and releases it while the child runs (#11647)", async () => {
     vi.stubEnv("NVIDIA_INFERENCE_API_KEY", "do-not-forward");
     vi.stubEnv("GITHUB_TOKEN", "do-not-forward");
     vi.stubEnv("AWS_SECRET_ACCESS_KEY", "do-not-forward");
@@ -379,13 +381,22 @@ describe("launchSandbox", () => {
     });
     await childStarted.promise;
     const contender = withSandboxMutationLock("alpha", () => events.push("contender"));
-    await Promise.resolve();
+    await new Promise<void>((resolve) => setImmediate(resolve));
 
     expect(mocks.recoverPortableLifecycle).toHaveBeenCalledOnce();
     expect(mocks.recoverPortableLifecycle).toHaveBeenCalledWith("alpha", entry, "gateway-alpha");
     expect(mocks.assertCommandCurrent).toHaveBeenCalledTimes(3);
-    expect(events).toEqual(["sandbox:acquired", "sandbox:released", "sandbox:acquired", "child"]);
-    expect(mocks.execSandbox).not.toHaveBeenCalled();
+    expect(events).toEqual([
+      "sandbox:acquired",
+      "sandbox:released",
+      "sandbox:acquired",
+      "child",
+      "sandbox:released",
+      "sandbox:acquired",
+      "contender",
+      "sandbox:released",
+    ]);
+    expect(mocks.startSandboxExec).not.toHaveBeenCalled();
     expect(mocks.prepareHermesLightTerminalSkin).not.toHaveBeenCalled();
     expect(mocks.startSandboxSession).toHaveBeenCalledWith({
       kind: "command",
@@ -439,7 +450,7 @@ describe("launchSandbox", () => {
     ).rejects.toThrow("lifecycle authority changed");
 
     expect(mocks.recoverPortableLifecycle).not.toHaveBeenCalled();
-    expect(mocks.execSandbox).not.toHaveBeenCalled();
+    expect(mocks.startSandboxExec).not.toHaveBeenCalled();
     expect(mocks.startSandboxSession).not.toHaveBeenCalled();
   });
 
@@ -467,7 +478,7 @@ describe("launchSandbox", () => {
 
     expect(mocks.printInteractiveSessionHints).not.toHaveBeenCalled();
     expect(mocks.completeReadinessQualifiedInteractiveSessionSetup).not.toHaveBeenCalled();
-    expect(mocks.execSandbox).not.toHaveBeenCalled();
+    expect(mocks.startSandboxExec).not.toHaveBeenCalled();
     expect(mocks.startSandboxSession).not.toHaveBeenCalled();
   });
 
@@ -487,7 +498,7 @@ describe("launchSandbox", () => {
     ).rejects.toThrow("lifecycle authority changed");
 
     expect(mocks.recoverPortableLifecycle).not.toHaveBeenCalled();
-    expect(mocks.execSandbox).not.toHaveBeenCalled();
+    expect(mocks.startSandboxExec).not.toHaveBeenCalled();
   });
 
   it("launches NemoCUA through the ordinary terminal-agent path (#9649)", async () => {
@@ -522,10 +533,10 @@ describe("launchSandbox", () => {
     );
 
     expect(mocks.prepareHermesLightTerminalSkin).not.toHaveBeenCalled();
-    expect(mocks.execSandbox).not.toHaveBeenCalled();
+    expect(mocks.startSandboxExec).not.toHaveBeenCalled();
   });
 
-  // Regression guard for #6291: execSandbox wraps every command in
+  // Regression guard for #6291: startSandboxExec wraps every command in
   // wrapExecCommandWithRuntimeEnv, which unsets OPENCLAW_GATEWAY_TOKEN after
   // sourcing the runtime env file. Only a login shell re-sources the file
   // through the profile, so a bare argv would start the agent with different
@@ -550,14 +561,14 @@ describe("launchSandbox", () => {
     expect(mocks.calls).toEqual([
       "prepareInteractiveSession",
       "prepareHermesLightTerminalSkin",
-      "execSandbox",
+      "startSandboxExec",
     ]);
   });
 
   it("requests an interactive session with no timeout (#6006)", async () => {
     await launchSandbox("alpha");
 
-    expect(mocks.execSandbox.mock.calls[0]?.[2]).toEqual({
+    expect(mocks.startSandboxExec.mock.calls[0]?.[2]).toEqual({
       tty: true,
       stdin: true,
       timeoutSeconds: 0,
@@ -568,7 +579,7 @@ describe("launchSandbox", () => {
     await launchSandbox("beta-01");
 
     expect(mocks.prepareInteractiveSession).toHaveBeenCalledWith("beta-01");
-    expect(mocks.execSandbox.mock.calls[0]?.[0]).toBe("beta-01");
+    expect(mocks.startSandboxExec.mock.calls[0]?.[0]).toBe("beta-01");
   });
 
   // Without the preflight, the agent starts over exec while gateway process
@@ -579,7 +590,7 @@ describe("launchSandbox", () => {
     expect(mocks.calls).toEqual([
       "prepareInteractiveSession",
       "prepareHermesLightTerminalSkin",
-      "execSandbox",
+      "startSandboxExec",
     ]);
     expect(mocks.withLaunchReadinessMutationGate).toHaveBeenCalledWith(
       expect.objectContaining({ epochId: null }),
@@ -604,7 +615,7 @@ describe("launchSandbox", () => {
 
     expect(mocks.withLaunchReadinessMutationGate).not.toHaveBeenCalled();
     expect(mocks.prepareInteractiveSession).not.toHaveBeenCalled();
-    expect(mocks.execSandbox).not.toHaveBeenCalled();
+    expect(mocks.startSandboxExec).not.toHaveBeenCalled();
   });
 
   it("skips the complete OpenClaw pairing pass after current lease qualification (#9023)", async () => {
@@ -626,7 +637,7 @@ describe("launchSandbox", () => {
     const launch = launchSandbox("alpha");
     await vi.waitFor(() => expect(mocks.printInteractiveSessionHints).toHaveBeenCalledOnce());
     expect(mocks.completeReadinessQualifiedInteractiveSessionSetup).not.toHaveBeenCalled();
-    expect(mocks.execSandbox).not.toHaveBeenCalled();
+    expect(mocks.startSandboxExec).not.toHaveBeenCalled();
     finishProbe();
     await launch;
 
@@ -645,7 +656,7 @@ describe("launchSandbox", () => {
     expect(mocks.completeReadinessQualifiedInteractiveSessionSetup).toHaveBeenCalledBefore(
       mocks.prepareHermesLightTerminalSkin,
     );
-    expect(mocks.prepareHermesLightTerminalSkin).toHaveBeenCalledBefore(mocks.execSandbox);
+    expect(mocks.prepareHermesLightTerminalSkin).toHaveBeenCalledBefore(mocks.startSandboxExec);
     expect(launchedCommand()).toEqual(["bash", "-lc", "openclaw tui"]);
     expect(mocks.emitPortableOpenClawAlreadyRunningTiming).toHaveBeenCalledOnce();
   });
@@ -918,7 +929,7 @@ describe("launchSandbox", () => {
       openclaw,
       sb,
     );
-    expect(mocks.execSandbox).toHaveBeenCalledOnce();
+    expect(mocks.startSandboxExec).toHaveBeenCalledOnce();
   });
 
   it("keeps repeated launch and exit cycles on the accepted non-sliding lease (#8942)", async () => {
@@ -935,7 +946,7 @@ describe("launchSandbox", () => {
     await launchSandbox("alpha");
 
     expect(mocks.prepareInteractiveSession).not.toHaveBeenCalled();
-    expect(mocks.execSandbox).toHaveBeenCalledTimes(2);
+    expect(mocks.startSandboxExec).toHaveBeenCalledTimes(2);
     expect(mocks.publishLaunchReadiness).not.toHaveBeenCalled();
     expect(mocks.completeReadinessQualifiedInteractiveSessionSetup).toHaveBeenCalledTimes(2);
     expect(mocks.completeInteractiveSessionSetup).not.toHaveBeenCalled();
@@ -968,7 +979,7 @@ describe("launchSandbox", () => {
     await launchSandbox("alpha");
 
     expect(mocks.prepareInteractiveSession).toHaveBeenCalledBefore(mocks.publishLaunchReadiness);
-    expect(mocks.publishLaunchReadiness).toHaveBeenCalledBefore(mocks.execSandbox);
+    expect(mocks.publishLaunchReadiness).toHaveBeenCalledBefore(mocks.startSandboxExec);
     expect(mocks.publishLaunchReadiness).toHaveBeenCalledWith(
       expect.any(Object),
       expect.objectContaining({
@@ -1066,7 +1077,7 @@ describe("launchSandbox", () => {
     publicationRelease.resolve();
 
     await rejection;
-    expect(mocks.execSandbox).not.toHaveBeenCalled();
+    expect(mocks.startSandboxExec).not.toHaveBeenCalled();
     expect(mocks.startSandboxSession).not.toHaveBeenCalled();
   });
 
@@ -1088,7 +1099,7 @@ describe("launchSandbox", () => {
     expect(mocks.prepareInteractiveSession).toHaveBeenCalledOnce();
     expect(mocks.publishLaunchReadiness).not.toHaveBeenCalled();
     expect(mocks.prepareHermesLightTerminalSkin).not.toHaveBeenCalled();
-    expect(mocks.execSandbox).not.toHaveBeenCalled();
+    expect(mocks.startSandboxExec).not.toHaveBeenCalled();
   });
 
   it("keeps ordinary launch available when evidence observation, hashing, or storage fails (#8942)", async () => {
@@ -1106,7 +1117,7 @@ describe("launchSandbox", () => {
     await expect(launchSandbox("alpha")).resolves.toBeUndefined();
 
     expect(mocks.prepareInteractiveSession).toHaveBeenCalled();
-    expect(mocks.execSandbox).toHaveBeenCalled();
+    expect(mocks.startSandboxExec).toHaveBeenCalled();
   });
 
   it("runs the complete preflight and interactive command when macOS evidence is unavailable (#8942)", async () => {
@@ -1129,7 +1140,7 @@ describe("launchSandbox", () => {
       expect.objectContaining({ epochId: null }),
       expect.any(Function),
     );
-    expect(mocks.execSandbox).toHaveBeenCalledOnce();
+    expect(mocks.startSandboxExec).toHaveBeenCalledOnce();
   });
 
   it("stops before the complete preflight when a prior launch-readiness epoch may remain acceptable (#8942)", async () => {
@@ -1149,7 +1160,7 @@ describe("launchSandbox", () => {
 
     expect(mocks.prepareInteractiveSession).not.toHaveBeenCalled();
     expect(mocks.publishLaunchReadiness).not.toHaveBeenCalled();
-    expect(mocks.execSandbox).not.toHaveBeenCalled();
+    expect(mocks.startSandboxExec).not.toHaveBeenCalled();
   });
 
   it("stops before the complete preflight when the fenced epoch cannot be revalidated (#8942)", async () => {
@@ -1170,7 +1181,7 @@ describe("launchSandbox", () => {
 
     expect(mocks.prepareInteractiveSession).not.toHaveBeenCalled();
     expect(mocks.publishLaunchReadiness).not.toHaveBeenCalled();
-    expect(mocks.execSandbox).not.toHaveBeenCalled();
+    expect(mocks.startSandboxExec).not.toHaveBeenCalled();
   });
 
   it("does not launch after final semantic validation reports unhealthy state (#8942)", async () => {
@@ -1193,7 +1204,7 @@ describe("launchSandbox", () => {
     );
 
     expect(mocks.prepareInteractiveSession).toHaveBeenCalled();
-    expect(mocks.execSandbox).not.toHaveBeenCalled();
+    expect(mocks.startSandboxExec).not.toHaveBeenCalled();
   });
 
   it("does not launch after final live-policy validation fails", async () => {
@@ -1225,7 +1236,7 @@ describe("launchSandbox", () => {
 
     expect(mocks.prepareInteractiveSession).toHaveBeenCalledOnce();
     expect(mocks.prepareHermesLightTerminalSkin).not.toHaveBeenCalled();
-    expect(mocks.execSandbox).not.toHaveBeenCalled();
+    expect(mocks.startSandboxExec).not.toHaveBeenCalled();
     expect(mocks.startSandboxSession).not.toHaveBeenCalled();
   });
 
@@ -1240,4 +1251,90 @@ describe("launchSandbox", () => {
       logSpy.mockRestore();
     }
   });
+  it.each([
+    {
+      scenario: "hermes-accepted",
+      agentName: "hermes",
+      portable: true,
+      readiness: "accepted",
+      disposition: activeHermesDisposition(),
+    },
+    {
+      scenario: "hermes-prepared",
+      agentName: "hermes",
+      portable: true,
+      readiness: "fallback",
+      disposition: activeHermesDisposition(),
+    },
+    {
+      scenario: "openclaw-prepared",
+      agentName: "openclaw",
+      portable: false,
+      readiness: "fallback",
+      disposition: { kind: "absent" },
+    },
+  ])(
+    "permits another lifecycle operation while $scenario TUI remains open (#11647)",
+    async ({ agentName, portable, readiness, disposition }) => {
+      mocks.assertCommandCurrent.mockReset().mockImplementation(() => undefined);
+      const agent = loadAgent(agentName);
+      const entry = sandboxEntry(agent.name);
+      prepareSession(agent.name, agent, portable);
+      mocks.inspectPortableReceiptDisposition.mockReturnValue(disposition);
+      mocks.inspectLaunchReadiness.mockResolvedValue({
+        kind: readiness,
+        category: "missing",
+        fence: null,
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+        fenceFailed: true,
+        recoveryBlocked: false,
+        agent,
+        sb: entry,
+      });
+      const sessionEnded = deferred();
+      const childStarted = deferred();
+      mocks.startSandboxSession.mockImplementation(() => {
+        childStarted.resolve();
+        return {
+          completion: sessionEnded.promise.then(() => ({
+            outcome: { kind: "exited", exitCode: 0 },
+            stdout: "",
+            stderr: "",
+            release: mocks.releaseSession,
+          })),
+          cancel: vi.fn(),
+        };
+      });
+      mocks.startSandboxExec.mockImplementation(async () => {
+        childStarted.resolve();
+        return async () => {
+          await sessionEnded.promise;
+        };
+      });
+      const events: string[] = [];
+      const lock = createSerialTestLock(events, "sandbox");
+      const launch = launchSandbox("alpha", {
+        getSandbox: () => entry,
+        resolveSandboxGatewayName: () => "gateway-alpha",
+        withSandboxMutationLock: lock,
+      });
+      await Promise.race([
+        childStarted.promise,
+        launch.then(() => {
+          throw new Error("launch ended without starting a session");
+        }),
+      ]);
+      let anotherOperationEntered = false;
+      const anotherOperation = lock("alpha", () => {
+        anotherOperationEntered = true;
+      });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      const enteredWhileSessionOpen = anotherOperationEntered;
+      sessionEnded.resolve();
+      await Promise.all([launch, anotherOperation]);
+      expect(anotherOperationEntered).toBe(true);
+      expect(enteredWhileSessionOpen).toBe(true);
+    },
+  );
 });

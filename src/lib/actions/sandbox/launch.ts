@@ -20,7 +20,7 @@ import {
   printInteractiveSessionHints,
 } from "./connect";
 import { prepareHermesLightTerminalSkin } from "./connect-hermes-light-skin";
-import { execSandbox, wrapExecCommandWithRuntimeEnv } from "./exec";
+import { startSandboxExec, wrapExecCommandWithRuntimeEnv } from "./exec";
 import {
   inspectPortableAgentReceiptDisposition,
   captureHermesPortableAcceptedReadinessObservation,
@@ -246,19 +246,20 @@ async function launchAgentWithPortableAuthority(
   beforeOrdinaryLaunch?: () => Promise<void>,
   beforeAgentExec?: () => void,
 ): Promise<void> {
-  const runOrdinaryAgent = async (): Promise<void> => {
+  const startOrdinaryAgent = async (): Promise<{ finish: () => Promise<void> }> => {
     prepareHermesLightTerminalSkin(sandboxName, agent, process.env);
     beforeAgentExec?.();
-    await execSandbox(sandboxName, command, {
+    const finish = await startSandboxExec(sandboxName, command, {
       tty: true,
       stdin: true,
       timeoutSeconds: 0,
     });
+    return { finish };
   };
-  const runHermesPortableAgent = async (
+  const startHermesPortableAgent = (
     gatewayName: string,
     commandAuthority: HermesPortableReadinessCommandAuthority,
-  ): Promise<void> => {
+  ): { finish: () => Promise<void> } => {
     commandAuthority.assertCurrent();
     beforeAgentExec?.();
     const session = createCliOpenShellSandboxSessionExecutor({
@@ -273,26 +274,29 @@ async function launchAgentWithPortableAuthority(
       output: "inherit",
       timeoutSeconds: 0,
     });
-    const result = await session.completion;
-    try {
-      if (result.outcome.kind === "failed" && result.outcome.reason !== "transport") {
-        throw new Error(result.outcome.message);
-      }
-      if (result.outcome.exitCode !== 0) process.exit(result.outcome.exitCode);
-    } finally {
-      result.release();
-    }
+    return {
+      finish: async () => {
+        const result = await session.completion;
+        try {
+          if (result.outcome.kind === "failed" && result.outcome.reason !== "transport") {
+            throw new Error(result.outcome.message);
+          }
+        } finally {
+          result.release();
+        }
+        if (result.outcome.exitCode !== 0) process.exit(result.outcome.exitCode);
+      },
+    };
   };
   const lockSandbox = deps.withSandboxMutationLock ?? withSandboxMutationLock;
-  await lockSandbox(sandboxName, async () => {
+  const started = await lockSandbox(sandboxName, async () => {
     const current = inspectPortableAgentReceiptDisposition(sandboxName);
     if ((current.kind === "hermes") !== hermesPortableSnapshot) {
       throw new Error("Hermes portable lifecycle authority changed before agent launch.");
     }
     if (current.kind !== "hermes") {
       await beforeOrdinaryLaunch?.();
-      await runOrdinaryAgent();
-      return;
+      return await startOrdinaryAgent();
     }
     if (current.phase !== "active") {
       throw new Error("Hermes portable lifecycle authority changed before agent launch.");
@@ -320,8 +324,7 @@ async function launchAgentWithPortableAuthority(
         throw new Error("Hermes portable registry authority changed before agent launch.");
       }
       acceptedHermesAuthority.command.assertCurrent();
-      await runHermesPortableAgent(gatewayName, acceptedHermesAuthority.command);
-      return;
+      return startHermesPortableAgent(gatewayName, acceptedHermesAuthority.command);
     }
     const recovery = recoverPortableDemoSandboxLifecycleForConnect(
       sandboxName,
@@ -350,11 +353,14 @@ async function launchAgentWithPortableAuthority(
     ) {
       throw new Error("Hermes portable lifecycle authority changed at agent launch.");
     }
-    await runHermesPortableAgent(
+    return startHermesPortableAgent(
       gatewayName,
       qualifyHermesPortableOperatingCommandAuthority(sandboxName),
     );
   });
+  // Waiting and post-command cleanup must run outside both the lifecycle fence
+  // and its async context, so cleanup can acquire fresh authority after exit.
+  await started.finish();
 }
 
 export async function launchSandbox(
