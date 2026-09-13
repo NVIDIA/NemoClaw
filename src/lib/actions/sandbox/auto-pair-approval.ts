@@ -549,43 +549,122 @@ def clone_database_is_current():
         and (current.st_dev, current.st_ino) == (pinned.st_dev, pinned.st_ino)
     )
 
-def clone_sqlite_wal_reader_ready():
+def clone_sqlite_sidecar_metadata(fd, require_nonempty):
+    metadata = os.fstat(fd)
+    if (
+        not stat.S_ISREG(metadata.st_mode)
+        or metadata.st_nlink != 1
+        or metadata.st_gid != os.getegid()
+        or metadata.st_mode & 0o007
+        or (require_nonempty and metadata.st_size < 1)
+        or metadata.st_size > MAX_SQLITE_BYTES
+    ):
+        raise OSError('clone state SQLite sidecar is unsafe')
+    return (
+        metadata.st_dev,
+        metadata.st_ino,
+        metadata.st_uid,
+        metadata.st_gid,
+        metadata.st_size,
+        metadata.st_mtime_ns,
+        metadata.st_mode & 0o7777,
+    )
+
+def clone_sqlite_entry_is_current(entry_name, fd, expected):
+    if not clone_directory_is_current('state', clone_database_dir_fd):
+        return False
+    try:
+        current = os.stat(
+            entry_name,
+            dir_fd=clone_database_dir_fd,
+            follow_symlinks=False,
+        )
+    except OSError:
+        return False
+    current_metadata = (
+        current.st_dev,
+        current.st_ino,
+        current.st_uid,
+        current.st_gid,
+        current.st_size,
+        current.st_mtime_ns,
+        current.st_mode & 0o7777,
+    )
+    descriptor_metadata = clone_sqlite_sidecar_metadata(fd, entry_name.endswith('-shm'))
+    if entry_name.endswith('-shm'):
+        # SQLite's native WAL reader may update read marks in the existing SHM.
+        # Its identity and safety attributes must remain pinned; its mutable
+        # size/time fields are not state evidence and cannot be equality-fenced.
+        stable_fields = (0, 1, 2, 3, 6)
+        return all(
+            current_metadata[index] == expected[index]
+            and descriptor_metadata[index] == expected[index]
+            for index in stable_fields
+        )
+    return current_metadata == expected and descriptor_metadata == expected
+
+def open_clone_wal_descriptors():
     if not clone_directory_is_current('state', clone_database_dir_fd):
         raise OSError('clone state database directory changed')
+    wal_fd = -1
+    shared_memory_fd = -1
     try:
-        wal_metadata = os.stat(
-            'openclaw.sqlite-wal',
-            dir_fd=clone_database_dir_fd,
-            follow_symlinks=False,
+        wal_fd = os.open(
+            'openclaw.sqlite-wal', clone_file_flags, dir_fd=clone_database_dir_fd,
         )
     except FileNotFoundError:
-        return False
-    if (
-        not stat.S_ISREG(wal_metadata.st_mode)
-        or wal_metadata.st_nlink != 1
-        or wal_metadata.st_gid != os.getegid()
-        or wal_metadata.st_mode & 0o007
-        or wal_metadata.st_size > MAX_SQLITE_BYTES
-    ):
-        raise OSError('clone state WAL is unsafe')
+        return None
     try:
-        shm_metadata = os.stat(
-            'openclaw.sqlite-shm',
-            dir_fd=clone_database_dir_fd,
-            follow_symlinks=False,
-        )
-    except FileNotFoundError:
-        raise CloneStateWalNotReady('clone state WAL is missing its shared-memory sidecar')
-    if (
-        not stat.S_ISREG(shm_metadata.st_mode)
-        or shm_metadata.st_nlink != 1
-        or shm_metadata.st_gid != os.getegid()
-        or shm_metadata.st_mode & 0o007
-        or shm_metadata.st_size < 1
-        or shm_metadata.st_size > MAX_SQLITE_BYTES
-    ):
-        raise OSError('clone state shared-memory sidecar is unsafe')
-    return True
+        wal_metadata = clone_sqlite_sidecar_metadata(wal_fd, False)
+        if not clone_sqlite_entry_is_current(
+            'openclaw.sqlite-wal', wal_fd, wal_metadata,
+        ):
+            raise CloneStateWalNotReady('clone state WAL changed')
+        try:
+            shared_memory_fd = os.open(
+                'openclaw.sqlite-shm', clone_file_flags, dir_fd=clone_database_dir_fd,
+            )
+        except FileNotFoundError as error:
+            raise CloneStateWalNotReady(
+                'clone state WAL is missing its shared-memory sidecar',
+            ) from error
+        shared_memory_metadata = clone_sqlite_sidecar_metadata(shared_memory_fd, True)
+        if not clone_sqlite_entry_is_current(
+            'openclaw.sqlite-shm', shared_memory_fd, shared_memory_metadata,
+        ):
+            raise CloneStateWalNotReady('clone state shared-memory sidecar changed')
+        return (wal_fd, wal_metadata, shared_memory_fd, shared_memory_metadata)
+    except Exception:
+        if shared_memory_fd >= 0:
+            os.close(shared_memory_fd)
+        os.close(wal_fd)
+        raise
+
+def regular_open_file_identity_counts():
+    descriptor_root = next(
+        (candidate for candidate in ('/proc/self/fd', '/dev/fd') if os.path.isdir(candidate)),
+        None,
+    )
+    if descriptor_root is None:
+        raise OSError('open descriptor census is unavailable')
+    counts = {}
+    for name in os.listdir(descriptor_root):
+        if not name.isdecimal():
+            continue
+        try:
+            metadata = os.fstat(int(name))
+        except OSError:
+            continue
+        if stat.S_ISREG(metadata.st_mode):
+            identity = (metadata.st_dev, metadata.st_ino)
+            counts[identity] = counts.get(identity, 0) + 1
+    return counts, descriptor_root
+
+def require_sqlite_vfs_descriptor(counts, baseline, fd, expected_delta):
+    metadata = os.fstat(fd)
+    identity = (metadata.st_dev, metadata.st_ino)
+    if counts.get(identity, 0) != baseline.get(identity, 0) + expected_delta:
+        raise CloneStateWalNotReady('SQLite reopened an unvalidated file identity')
 
 def clone_database_is_absent():
     if not clone_state_root_is_current():
@@ -702,21 +781,53 @@ def sqlite_paired_record(row):
 def read_clone_sqlite_state():
     if not clone_database_is_current():
         raise OSError('clone state database changed')
-    # A read-only SQLite connection may create the shared-memory sidecar for a
-    # live WAL database. Never let this observer be the process that mutates
-    # the state directory; retry after the canonical writer publishes -shm.
-    wal_present = clone_sqlite_wal_reader_ready()
-    database_path = os.path.join(state_dir, 'state', 'openclaw.sqlite')
-    database_uri = 'file:' + urllib.parse.quote(database_path, safe='/') + '?mode=ro'
-    if not wal_present:
-        database_uri += '&immutable=1'
-    connection = sqlite3.connect(database_uri, uri=True, timeout=0.25)
-    connection.row_factory = sqlite3.Row
+    database_metadata = clone_sqlite_sidecar_metadata(clone_database_fd, True)
+    if not clone_sqlite_entry_is_current(
+        'openclaw.sqlite', clone_database_fd, database_metadata,
+    ):
+        raise CloneStateWalNotReady('clone state database changed before reading')
+    wal_descriptors = None
+    connection = None
     try:
+        wal_descriptors = open_clone_wal_descriptors()
+        descriptor_baseline, descriptor_root = regular_open_file_identity_counts()
+        database_path = os.path.join(state_dir, 'state', 'openclaw.sqlite')
+        # Native mode=ro preserves SQLite's coherent committed-WAL view without
+        # writing DB/WAL. It may update read marks in the already-existing SHM
+        # coordination cache; the pre-open descriptor requirement prevents this
+        # observer from creating a new source sidecar.
+        database_uri = 'file:' + urllib.parse.quote(database_path, safe='/') + '?mode=ro'
+        if wal_descriptors is None:
+            database_uri += '&immutable=1'
+        connection = sqlite3.connect(database_uri, uri=True, timeout=0.25)
+        after_connect, _ = regular_open_file_identity_counts()
+        require_sqlite_vfs_descriptor(
+            after_connect, descriptor_baseline, clone_database_fd, 1,
+        )
+        connection.row_factory = sqlite3.Row
         connection.execute('PRAGMA query_only = ON')
         connection.execute('PRAGMA trusted_schema = OFF')
         connection.execute('BEGIN')
         schema_version = connection.execute('PRAGMA user_version').fetchone()
+        after_schema_read, _ = regular_open_file_identity_counts()
+        require_sqlite_vfs_descriptor(
+            after_schema_read, descriptor_baseline, clone_database_fd, 1,
+        )
+        if wal_descriptors is not None:
+            require_sqlite_vfs_descriptor(
+                after_schema_read, descriptor_baseline, wal_descriptors[0], 1,
+            )
+            shared_memory_identity = (
+                wal_descriptors[3][0], wal_descriptors[3][1],
+            )
+            shared_memory_delta = (
+                after_schema_read.get(shared_memory_identity, 0)
+                - descriptor_baseline.get(shared_memory_identity, 0)
+            )
+            if descriptor_root == '/proc/self/fd' or shared_memory_delta != 0:
+                require_sqlite_vfs_descriptor(
+                    after_schema_read, descriptor_baseline, wal_descriptors[2], 1,
+                )
         if schema_version is None or schema_version[0] != 15:
             raise ValueError('unsupported canonical device state schema')
         identity_rows = connection.execute(
@@ -755,11 +866,29 @@ def read_clone_sqlite_state():
             or len(auth_by_device) != len(auth_rows)
         ):
             raise ValueError('canonical device state contains duplicate identities')
-        if clone_sqlite_wal_reader_ready() != wal_present:
+        if wal_descriptors is None:
+            late_wal_descriptors = open_clone_wal_descriptors()
+            if late_wal_descriptors is not None:
+                os.close(late_wal_descriptors[2])
+                os.close(late_wal_descriptors[0])
+                raise CloneStateWalNotReady('clone state WAL changed while reading')
+        elif not clone_sqlite_entry_is_current(
+            'openclaw.sqlite-wal', wal_descriptors[0], wal_descriptors[1],
+        ) or not clone_sqlite_entry_is_current(
+            'openclaw.sqlite-shm', wal_descriptors[2], wal_descriptors[3],
+        ):
             raise CloneStateWalNotReady('clone state WAL changed while reading')
+        if not clone_sqlite_entry_is_current(
+            'openclaw.sqlite', clone_database_fd, database_metadata,
+        ):
+            raise CloneStateWalNotReady('clone state database changed while reading')
         connection.rollback()
     finally:
-        connection.close()
+        if connection is not None:
+            connection.close()
+        if wal_descriptors is not None:
+            os.close(wal_descriptors[2])
+            os.close(wal_descriptors[0])
     if not clone_database_is_current():
         raise OSError('clone state database changed')
     return identity, pending_by_id, paired_by_id, auth_by_device

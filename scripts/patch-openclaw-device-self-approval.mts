@@ -101,11 +101,6 @@ const CALL_OMIT_IDENTITY_REPLACEMENT = [
   CALL_OMIT_IDENTITY_MODE_LINE,
   "\tconst mode = params.opts.mode ?? GATEWAY_CLIENT_MODES.CLI;",
 ].join("\n");
-const CALL_OMIT_IDENTITY_SQLITE_REPLACEMENT = [
-  "function shouldOmitDeviceIdentityForGatewayCall(params) {",
-  CALL_OMIT_IDENTITY_MODE_LINE,
-  "\tconst mode = params.opts.mode ?? GATEWAY_CLIENT_MODES.CLI;",
-].join("\n");
 const CALL_STORED_IDENTITY_TARGET =
   "\tconst isLocalCliSharedAuth = mode === GATEWAY_CLIENT_MODES.CLI && clientName === GATEWAY_CLIENT_NAMES.CLI && hasSharedSecretAuth && isLoopback;";
 const CALL_STORED_IDENTITY_REPLACEMENT = [
@@ -1715,7 +1710,7 @@ const BASE_FILE_SPECS: FileSpec[] = [
         result = replaceExactlyOnce(
           result.source,
           CALL_OMIT_IDENTITY_TARGET,
-          sqliteLayout ? CALL_OMIT_IDENTITY_SQLITE_REPLACEMENT : CALL_OMIT_IDENTITY_REPLACEMENT,
+          CALL_OMIT_IDENTITY_REPLACEMENT,
           "gateway call forced device-identity target",
           file,
         );

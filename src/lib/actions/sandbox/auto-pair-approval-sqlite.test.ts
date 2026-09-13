@@ -69,6 +69,179 @@ describe("auto-pair approval SQLite compatibility", () => {
     }
   }
 
+  pyIt25s("rejects a database swapped only while sqlite3.connect reopens its pathname", () => {
+    const policy = readAutoPairApprovalPolicyModule();
+    expect(policy).toBeTruthy();
+    const originalScript = buildAutoPairApprovalScript(
+      Buffer.from(policy as string).toString("base64"),
+      {
+        emitSummary: true,
+        emitReceipt: true,
+        localDeviceOnly: true,
+        budget: { maxApprovals: 1 },
+      },
+    );
+    const tmpDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-db-aba-")));
+    try {
+      const stateDir = path.join(tmpDir, "openclaw-state");
+      const databasePath = path.join(stateDir, "state", "openclaw.sqlite");
+      const attackerPath = path.join(tmpDir, "attacker.sqlite");
+      const bindingCheckpoint = path.join(tmpDir, "database-binding-accepted");
+      fs.mkdirSync(path.dirname(databasePath), { recursive: true });
+      const setup = spawnSync(
+        "python3",
+        [
+          "-c",
+          "import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); c.execute('PRAGMA user_version=15'); c.commit(); c.close()",
+          databasePath,
+        ],
+        { encoding: "utf-8" },
+      );
+      expect(setup.status, setup.stderr).toBe(0);
+      fs.chmodSync(databasePath, 0o660);
+      fs.copyFileSync(databasePath, attackerPath);
+      fs.chmodSync(attackerPath, 0o660);
+      const validatedIdentity = fs.statSync(databasePath);
+      const connect = "        connection = sqlite3.connect(database_uri, uri=True, timeout=0.25)";
+      const attack = [
+        "        validated_path = database_path + '.validated'",
+        "        os.rename(database_path, validated_path)",
+        `        os.rename(${JSON.stringify(attackerPath)}, database_path)`,
+        connect,
+        `        os.rename(database_path, ${JSON.stringify(attackerPath)})`,
+        "        os.rename(validated_path, database_path)",
+      ].join("\n");
+      const postBinding = "        connection.row_factory = sqlite3.Row";
+      const script = originalScript
+        .replace(connect, attack)
+        .replace(
+          postBinding,
+          `        open(${JSON.stringify(bindingCheckpoint)}, 'w').close()\n${postBinding}`,
+        );
+      expect(script).not.toBe(originalScript);
+      expect(script).toContain(JSON.stringify(bindingCheckpoint));
+      fs.writeFileSync(path.join(tmpDir, "openclaw"), "#!/bin/sh\nexit 2\n", { mode: 0o755 });
+
+      const result = spawnSync("sh", ["-c", script], {
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          PATH: `${tmpDir}:/usr/bin:/bin`,
+          OPENCLAW_STATE_DIR: stateDir,
+          OPENCLAW_GATEWAY_PORT: "18789",
+        },
+        timeout: 10_000,
+      });
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(
+        parseAutoPairApprovalReceipt(result.stdout),
+        `${result.stdout}\n${result.stderr}`,
+      ).toBe("list-pending-unsafe");
+      const restoredIdentity = fs.statSync(databasePath);
+      expect([restoredIdentity.dev, restoredIdentity.ino]).toEqual([
+        validatedIdentity.dev,
+        validatedIdentity.ino,
+      ]);
+      expect(fs.existsSync(`${databasePath}.validated`)).toBe(false);
+      expect(fs.existsSync(bindingCheckpoint)).toBe(false);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  pyIt25s("rejects WAL and SHM swapped only while SQLite performs its first read", () => {
+    const policy = readAutoPairApprovalPolicyModule();
+    expect(policy).toBeTruthy();
+    const originalScript = buildAutoPairApprovalScript(
+      Buffer.from(policy as string).toString("base64"),
+      {
+        emitSummary: true,
+        emitReceipt: true,
+        localDeviceOnly: true,
+        budget: { maxApprovals: 1 },
+      },
+    );
+    const tmpDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-wal-aba-")));
+    try {
+      const stateDir = path.join(tmpDir, "openclaw-state");
+      const databasePath = path.join(stateDir, "state", "openclaw.sqlite");
+      fs.mkdirSync(path.dirname(databasePath), { recursive: true });
+      const setup = spawnSync(
+        "python3",
+        [
+          "-c",
+          "import os,sqlite3,sys; c=sqlite3.connect(sys.argv[1]); c.execute('PRAGMA journal_mode=WAL'); c.execute('PRAGMA wal_autocheckpoint=0'); c.execute('CREATE TABLE state(value TEXT)'); c.execute('PRAGMA user_version=15'); c.commit(); os._exit(0)",
+          databasePath,
+        ],
+        { encoding: "utf-8" },
+      );
+      expect(setup.status, setup.stderr).toBe(0);
+      fs.chmodSync(databasePath, 0o660);
+      const walPath = `${databasePath}-wal`;
+      const sharedMemoryPath = `${databasePath}-shm`;
+      const attackerWalPath = path.join(tmpDir, "attacker.sqlite-wal");
+      const attackerSharedMemoryPath = path.join(tmpDir, "attacker.sqlite-shm");
+      const bindingCheckpoint = path.join(tmpDir, "sidecar-binding-accepted");
+      fs.copyFileSync(walPath, attackerWalPath);
+      fs.copyFileSync(sharedMemoryPath, attackerSharedMemoryPath);
+      fs.chmodSync(attackerWalPath, 0o660);
+      fs.chmodSync(attackerSharedMemoryPath, 0o660);
+      const walIdentity = fs.statSync(walPath);
+      const sharedMemoryIdentity = fs.statSync(sharedMemoryPath);
+      const schemaRead =
+        "        schema_version = connection.execute('PRAGMA user_version').fetchone()";
+      const attack = [
+        "        os.rename(database_path + '-wal', database_path + '-wal.validated')",
+        "        os.rename(database_path + '-shm', database_path + '-shm.validated')",
+        `        os.rename(${JSON.stringify(attackerWalPath)}, database_path + '-wal')`,
+        `        os.rename(${JSON.stringify(attackerSharedMemoryPath)}, database_path + '-shm')`,
+        schemaRead,
+        `        os.rename(database_path + '-wal', ${JSON.stringify(attackerWalPath)})`,
+        `        os.rename(database_path + '-shm', ${JSON.stringify(attackerSharedMemoryPath)})`,
+        "        os.rename(database_path + '-wal.validated', database_path + '-wal')",
+        "        os.rename(database_path + '-shm.validated', database_path + '-shm')",
+      ].join("\n");
+      const postBinding = "        if schema_version is None or schema_version[0] != 15:";
+      const script = originalScript
+        .replace(schemaRead, attack)
+        .replace(
+          postBinding,
+          `        open(${JSON.stringify(bindingCheckpoint)}, 'w').close()\n${postBinding}`,
+        );
+      expect(script).not.toBe(originalScript);
+      expect(script).toContain(JSON.stringify(bindingCheckpoint));
+      fs.writeFileSync(path.join(tmpDir, "openclaw"), "#!/bin/sh\nexit 2\n", { mode: 0o755 });
+
+      const result = spawnSync("sh", ["-c", script], {
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          PATH: `${tmpDir}:/usr/bin:/bin`,
+          OPENCLAW_STATE_DIR: stateDir,
+          OPENCLAW_GATEWAY_PORT: "18789",
+        },
+        timeout: 10_000,
+      });
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(parseAutoPairApprovalReceipt(result.stdout)).toBe("list-pending-unsafe");
+      const restoredWalIdentity = fs.statSync(walPath);
+      const restoredSharedMemoryIdentity = fs.statSync(sharedMemoryPath);
+      expect([restoredWalIdentity.dev, restoredWalIdentity.ino]).toEqual([
+        walIdentity.dev,
+        walIdentity.ino,
+      ]);
+      expect([restoredSharedMemoryIdentity.dev, restoredSharedMemoryIdentity.ino]).toEqual([
+        sharedMemoryIdentity.dev,
+        sharedMemoryIdentity.ino,
+      ]);
+      expect(fs.existsSync(bindingCheckpoint)).toBe(false);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   pyIt25s("uses canonical SQLite snapshots without recreating legacy device state", () => {
     const policy = readAutoPairApprovalPolicyModule();
     expect(policy).toBeTruthy();
@@ -231,7 +404,10 @@ print('{}')
         timeout: 10_000,
       });
       expect(result.status, result.stderr).toBe(0);
-      expect(parseAutoPairApprovalReceipt(result.stdout)).toBe("approved-one");
+      expect(
+        parseAutoPairApprovalReceipt(result.stdout),
+        `${result.stdout}\n${result.stderr}`,
+      ).toBe("approved-one");
       expect(fs.readFileSync(approveCallsFile, "utf-8")).toBe(`${requestId}\n`);
       for (const [file, content] of staleLegacyFiles) {
         expect(fs.readFileSync(file, "utf-8")).toBe(content);

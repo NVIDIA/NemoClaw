@@ -509,42 +509,117 @@ def validate_identity_key_pair(public_key_pem, private_key_pem):
     if derived_public_key != expected_public_key:
         raise ValueError('identity key pair mismatch')
 
-def assert_wal_reader_ready(sqlite_state_fd):
-    try:
-        wal = os.stat('openclaw.sqlite-wal', dir_fd=sqlite_state_fd, follow_symlinks=False)
-    except FileNotFoundError:
-        return False
+def sqlite_sidecar_metadata(fd, require_nonempty):
+    metadata = os.fstat(fd)
     if (
-        not stat.S_ISREG(wal.st_mode)
-        or wal.st_nlink != 1
-        or wal.st_gid != os.getegid()
-        or wal.st_mode & 0o007
-        or wal.st_size > MAX_SQLITE_BYTES
+        not stat.S_ISREG(metadata.st_mode)
+        or metadata.st_nlink != 1
+        or metadata.st_gid != os.getegid()
+        or metadata.st_mode & 0o007
+        or (require_nonempty and metadata.st_size < 1)
+        or metadata.st_size > MAX_SQLITE_BYTES
     ):
-        raise OSError('unsafe sqlite WAL')
-    try:
-        shared_memory = os.stat(
-            'openclaw.sqlite-shm', dir_fd=sqlite_state_fd, follow_symlinks=False,
+        raise OSError('unsafe sqlite sidecar')
+    return (
+        metadata.st_dev,
+        metadata.st_ino,
+        metadata.st_uid,
+        metadata.st_gid,
+        metadata.st_size,
+        metadata.st_mtime_ns,
+        metadata.st_mode & 0o7777,
+    )
+
+def sqlite_entry_is_current(sqlite_state_fd, name, fd, expected):
+    current = os.stat(name, dir_fd=sqlite_state_fd, follow_symlinks=False)
+    current_metadata = (
+        current.st_dev,
+        current.st_ino,
+        current.st_uid,
+        current.st_gid,
+        current.st_size,
+        current.st_mtime_ns,
+        current.st_mode & 0o7777,
+    )
+    descriptor_metadata = sqlite_sidecar_metadata(fd, name.endswith('-shm'))
+    if name.endswith('-shm'):
+        # SQLite's native WAL reader may update read marks in the existing SHM.
+        # Its identity and safety attributes must remain pinned; its mutable
+        # size/time fields are not state evidence and cannot be equality-fenced.
+        stable_fields = (0, 1, 2, 3, 6)
+        return all(
+            current_metadata[index] == expected[index]
+            and descriptor_metadata[index] == expected[index]
+            for index in stable_fields
         )
-    except FileNotFoundError as error:
-        # A read-only SQLite connection otherwise creates the missing SHM
-        # sidecar. Let the running gateway finish publishing its WAL state and
-        # retry without mutating OpenClaw-owned artifacts.
-        raise StateChangedError('sqlite WAL is not reader-ready') from error
-    if (
-        not stat.S_ISREG(shared_memory.st_mode)
-        or shared_memory.st_nlink != 1
-        or shared_memory.st_gid != os.getegid()
-        or shared_memory.st_mode & 0o007
-        or shared_memory.st_size < 1
-        or shared_memory.st_size > MAX_SQLITE_BYTES
-    ):
-        raise OSError('unsafe sqlite shared memory')
-    return True
+    return current_metadata == expected and descriptor_metadata == expected
+
+def open_wal_descriptors(sqlite_state_fd):
+    wal_fd = -1
+    shared_memory_fd = -1
+    try:
+        wal_fd = os.open('openclaw.sqlite-wal', file_flags, dir_fd=sqlite_state_fd)
+    except FileNotFoundError:
+        return None
+    try:
+        wal_metadata = sqlite_sidecar_metadata(wal_fd, False)
+        if not sqlite_entry_is_current(
+            sqlite_state_fd, 'openclaw.sqlite-wal', wal_fd, wal_metadata,
+        ):
+            raise StateChangedError('sqlite WAL changed')
+        try:
+            shared_memory_fd = os.open(
+                'openclaw.sqlite-shm', file_flags, dir_fd=sqlite_state_fd,
+            )
+        except FileNotFoundError as error:
+            # A read-only connection to the source would otherwise create the
+            # missing SHM sidecar. Retry until the canonical writer publishes it.
+            raise StateChangedError('sqlite WAL is not reader-ready') from error
+        shared_memory_metadata = sqlite_sidecar_metadata(shared_memory_fd, True)
+        if not sqlite_entry_is_current(
+            sqlite_state_fd,
+            'openclaw.sqlite-shm',
+            shared_memory_fd,
+            shared_memory_metadata,
+        ):
+            raise StateChangedError('sqlite shared memory changed')
+        return (wal_fd, wal_metadata, shared_memory_fd, shared_memory_metadata)
+    except Exception:
+        if shared_memory_fd >= 0:
+            os.close(shared_memory_fd)
+        os.close(wal_fd)
+        raise
+
+def regular_open_file_identity_counts():
+    descriptor_root = next(
+        (candidate for candidate in ('/proc/self/fd', '/dev/fd') if os.path.isdir(candidate)),
+        None,
+    )
+    if descriptor_root is None:
+        raise OSError('open descriptor census is unavailable')
+    counts = {}
+    for name in os.listdir(descriptor_root):
+        if not name.isdecimal():
+            continue
+        try:
+            metadata = os.fstat(int(name))
+        except OSError:
+            continue
+        if stat.S_ISREG(metadata.st_mode):
+            identity = (metadata.st_dev, metadata.st_ino)
+            counts[identity] = counts.get(identity, 0) + 1
+    return counts, descriptor_root
+
+def require_sqlite_vfs_descriptor(counts, baseline, fd, expected_delta):
+    metadata = os.fstat(fd)
+    identity = (metadata.st_dev, metadata.st_ino)
+    if counts.get(identity, 0) != baseline.get(identity, 0) + expected_delta:
+        raise StateChangedError('sqlite reopened an unvalidated file identity')
 
 def read_sqlite_snapshot(state_fd, sqlite_state_fd):
     database_fd = os.open('openclaw.sqlite', file_flags, dir_fd=sqlite_state_fd)
     connection = None
+    wal_descriptors = None
     try:
         before = sqlite_file_metadata(database_fd)
         current = os.stat('openclaw.sqlite', dir_fd=sqlite_state_fd, follow_symlinks=False)
@@ -558,17 +633,45 @@ def read_sqlite_snapshot(state_fd, sqlite_state_fd):
             current.st_mode & 0o7777,
         ) != before:
             raise StateChangedError('sqlite database changed')
-        wal_present = assert_wal_reader_ready(sqlite_state_fd)
+        wal_descriptors = open_wal_descriptors(sqlite_state_fd)
+        descriptor_baseline, descriptor_root = regular_open_file_identity_counts()
         database_path = os.path.join(STATE_DIR, 'state', 'openclaw.sqlite')
+        # Native mode=ro preserves SQLite's coherent committed-WAL view without
+        # writing DB/WAL. It may update read marks in the already-existing SHM
+        # coordination cache; the pre-open descriptor requirement prevents this
+        # observer from creating a new source sidecar.
         database_uri = 'file:' + urllib.parse.quote(database_path, safe='/') + '?mode=ro'
-        if not wal_present:
+        if wal_descriptors is None:
             database_uri += '&immutable=1'
         connection = sqlite3.connect(database_uri, uri=True, timeout=0)
+        after_connect, _ = regular_open_file_identity_counts()
+        require_sqlite_vfs_descriptor(
+            after_connect, descriptor_baseline, database_fd, 1,
+        )
         connection.row_factory = sqlite3.Row
         connection.execute('PRAGMA query_only = ON')
         connection.execute('PRAGMA trusted_schema = OFF')
         connection.execute('BEGIN')
         schema_version = connection.execute('PRAGMA user_version').fetchone()[0]
+        after_schema_read, _ = regular_open_file_identity_counts()
+        require_sqlite_vfs_descriptor(
+            after_schema_read, descriptor_baseline, database_fd, 1,
+        )
+        if wal_descriptors is not None:
+            require_sqlite_vfs_descriptor(
+                after_schema_read, descriptor_baseline, wal_descriptors[0], 1,
+            )
+            shared_memory_identity = (
+                wal_descriptors[3][0], wal_descriptors[3][1],
+            )
+            shared_memory_delta = (
+                after_schema_read.get(shared_memory_identity, 0)
+                - descriptor_baseline.get(shared_memory_identity, 0)
+            )
+            if descriptor_root == '/proc/self/fd' or shared_memory_delta != 0:
+                require_sqlite_vfs_descriptor(
+                    after_schema_read, descriptor_baseline, wal_descriptors[2], 1,
+                )
         if type(schema_version) is not int or schema_version != OPENCLAW_STATE_SCHEMA_VERSION:
             raise ValueError('unsupported sqlite schema version')
         identities = connection.execute(
@@ -637,8 +740,25 @@ def read_sqlite_snapshot(state_fd, sqlite_state_fd):
                 'token': source['token'],
                 'scopes': parse_json_column(source['scopes_json']),
             }
-        if assert_wal_reader_ready(sqlite_state_fd) != wal_present:
-            raise StateChangedError('sqlite WAL changed')
+        if wal_descriptors is None:
+            late_wal_descriptors = open_wal_descriptors(sqlite_state_fd)
+            if late_wal_descriptors is not None:
+                os.close(late_wal_descriptors[2])
+                os.close(late_wal_descriptors[0])
+                raise StateChangedError('sqlite WAL changed')
+        else:
+            if not sqlite_entry_is_current(
+                sqlite_state_fd,
+                'openclaw.sqlite-wal',
+                wal_descriptors[0],
+                wal_descriptors[1],
+            ) or not sqlite_entry_is_current(
+                sqlite_state_fd,
+                'openclaw.sqlite-shm',
+                wal_descriptors[2],
+                wal_descriptors[3],
+            ):
+                raise StateChangedError('sqlite WAL changed')
         connection.execute('COMMIT')
         after = sqlite_file_metadata(database_fd)
         current = os.stat('openclaw.sqlite', dir_fd=sqlite_state_fd, follow_symlinks=False)
@@ -675,6 +795,9 @@ def read_sqlite_snapshot(state_fd, sqlite_state_fd):
     finally:
         if connection is not None:
             connection.close()
+        if wal_descriptors is not None:
+            os.close(wal_descriptors[2])
+            os.close(wal_descriptors[0])
         os.close(database_fd)
 
 def read_snapshot():

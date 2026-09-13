@@ -373,8 +373,100 @@ describe("OpenClaw launch-readiness pairing qualification", () => {
   describe.skipIf(!PYTHON3_AVAILABLE)("state observation", () => {
     const sqliteIt = it.skipIf(!OPENSSL_ED25519_AVAILABLE);
 
+    it("rejects a database swapped only while sqlite3.connect reopens its pathname", () => {
+      writeSqlitePairingState(stateDirectory, { deviceId, publicKey, privateKeyPem });
+      const databasePath = checkpointSqlitePairingState(stateDirectory);
+      const attackerPath = path.join(root, "attacker.sqlite");
+      fs.copyFileSync(databasePath, attackerPath);
+      fs.chmodSync(attackerPath, 0o660);
+      const validatedIdentity = fs.statSync(databasePath);
+      const originalScript = buildOpenClawPairingObservationScript(
+        Buffer.from(POLICY, "utf8").toString("base64"),
+        stateDirectory,
+      );
+      const connect = "        connection = sqlite3.connect(database_uri, uri=True, timeout=0)";
+      const attack = [
+        "        validated_path = database_path + '.validated'",
+        "        os.rename(database_path, validated_path)",
+        `        os.rename(${JSON.stringify(attackerPath)}, database_path)`,
+        connect,
+        `        os.rename(database_path, ${JSON.stringify(attackerPath)})`,
+        "        os.rename(validated_path, database_path)",
+      ].join("\n");
+      const script = originalScript.replace(connect, attack);
+      expect(script).not.toBe(originalScript);
+
+      const result = spawnSync("sh", ["-s"], {
+        encoding: "utf8",
+        env: process.env,
+        input: script,
+        timeout: 10_000,
+      });
+
+      expect(result.status, result.stderr).toBe(3);
+      const restoredIdentity = fs.statSync(databasePath);
+      expect([restoredIdentity.dev, restoredIdentity.ino]).toEqual([
+        validatedIdentity.dev,
+        validatedIdentity.ino,
+      ]);
+      expect(fs.existsSync(`${databasePath}.validated`)).toBe(false);
+    });
+
+    it("rejects WAL and SHM swapped only while SQLite performs its first read", () => {
+      writeSqlitePairingState(stateDirectory, { deviceId, publicKey, privateKeyPem });
+      const databasePath = path.join(stateDirectory, "state", "openclaw.sqlite");
+      const walPath = `${databasePath}-wal`;
+      const sharedMemoryPath = `${databasePath}-shm`;
+      const attackerWalPath = path.join(root, "attacker.sqlite-wal");
+      const attackerSharedMemoryPath = path.join(root, "attacker.sqlite-shm");
+      fs.copyFileSync(walPath, attackerWalPath);
+      fs.copyFileSync(sharedMemoryPath, attackerSharedMemoryPath);
+      fs.chmodSync(attackerWalPath, 0o660);
+      fs.chmodSync(attackerSharedMemoryPath, 0o660);
+      const walIdentity = fs.statSync(walPath);
+      const sharedMemoryIdentity = fs.statSync(sharedMemoryPath);
+      const originalScript = buildOpenClawPairingObservationScript(
+        Buffer.from(POLICY, "utf8").toString("base64"),
+        stateDirectory,
+      );
+      const schemaRead =
+        "        schema_version = connection.execute('PRAGMA user_version').fetchone()[0]";
+      const attack = [
+        "        os.rename(database_path + '-wal', database_path + '-wal.validated')",
+        "        os.rename(database_path + '-shm', database_path + '-shm.validated')",
+        `        os.rename(${JSON.stringify(attackerWalPath)}, database_path + '-wal')`,
+        `        os.rename(${JSON.stringify(attackerSharedMemoryPath)}, database_path + '-shm')`,
+        schemaRead,
+        `        os.rename(database_path + '-wal', ${JSON.stringify(attackerWalPath)})`,
+        `        os.rename(database_path + '-shm', ${JSON.stringify(attackerSharedMemoryPath)})`,
+        "        os.rename(database_path + '-wal.validated', database_path + '-wal')",
+        "        os.rename(database_path + '-shm.validated', database_path + '-shm')",
+      ].join("\n");
+      const script = originalScript.replace(schemaRead, attack);
+      expect(script).not.toBe(originalScript);
+
+      const result = spawnSync("sh", ["-s"], {
+        encoding: "utf8",
+        env: process.env,
+        input: script,
+        timeout: 10_000,
+      });
+
+      expect(result.status, result.stderr).toBe(3);
+      const restoredWalIdentity = fs.statSync(walPath);
+      const restoredSharedMemoryIdentity = fs.statSync(sharedMemoryPath);
+      expect([restoredWalIdentity.dev, restoredWalIdentity.ino]).toEqual([
+        walIdentity.dev,
+        walIdentity.ino,
+      ]);
+      expect([restoredSharedMemoryIdentity.dev, restoredSharedMemoryIdentity.ino]).toEqual([
+        sharedMemoryIdentity.dev,
+        sharedMemoryIdentity.ino,
+      ]);
+    });
+
     sqliteIt(
-      "qualifies the canonical SQLite pairing snapshot without consulting legacy JSON",
+      "qualifies committed WAL state without consulting legacy JSON or mutating DB/WAL",
       () => {
         writeSqlitePairingState(stateDirectory, { deviceId, publicKey, privateKeyPem });
         const database = path.join(stateDirectory, "state", "openclaw.sqlite");
@@ -390,6 +482,11 @@ describe("OpenClaw launch-readiness pairing qualification", () => {
         expect(walProof.status, walProof.stderr).toBe(0);
         writeJson(path.join(stateDirectory, "devices", "paired.json"), {});
         writeJson(path.join(stateDirectory, "identity", "device-auth.json"), {});
+        const sqliteStateDirectory = path.dirname(database);
+        const walPath = `${database}-wal`;
+        const databaseBefore = fs.readFileSync(database);
+        const walBefore = fs.readFileSync(walPath);
+        const entriesBefore = fs.readdirSync(sqliteStateDirectory).sort();
 
         expect(observe()).toMatchObject({
           requiredRoles: ["operator"],
@@ -399,6 +496,9 @@ describe("OpenClaw launch-readiness pairing qualification", () => {
           state: "settled",
           deviceIdentitySha256: expect.stringMatching(/^[a-f0-9]{64}$/),
         });
+        expect(fs.readFileSync(database)).toEqual(databaseBefore);
+        expect(fs.readFileSync(walPath)).toEqual(walBefore);
+        expect(fs.readdirSync(sqliteStateDirectory).sort()).toEqual(entriesBefore);
       },
     );
 
