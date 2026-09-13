@@ -354,7 +354,7 @@ function resolvePinnedDcodeBaseImage(
   if (!result) {
     try {
       result = ensureAgentBaseImage(agent, { forceBaseImageRefresh: true });
-    } catch (error) {
+    } catch {
       try {
         result = ensureAgentBaseImage(agent, { forceBaseImageRebuild: true });
       } catch (buildError) {

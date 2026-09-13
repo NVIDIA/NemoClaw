@@ -231,7 +231,7 @@ describe("onboard machine lifecycle traces (#6225)", () => {
     updateSession((current) => {
       current.checkpoint = session.checkpoint;
     });
-    const { calls, deps } = createDeps({
+    const { deps } = createDeps({
       getSandboxReuseState: () => "not_ready",
       getSandboxRecreateObservation: journal.observe,
       createSandbox: journal.completeCreate,

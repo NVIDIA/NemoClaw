@@ -22,6 +22,7 @@ type ProbeMode =
   | "authoritative-core-gateway"
   | "authoritative-core-gateway-policy-tier"
   | "dashboard-port-composition"
+  | "dashboard-spawn-failure"
   | "ordinary-policy-tier"
   | "providerless-external-component"
   | "providerless-staged-messaging"
@@ -227,6 +228,7 @@ function runSliceProbe(options: ProbeOptions) {
     scriptPath,
     `
 const scenario = ${JSON.stringify(scenario)};
+const dashboardScenario = scenario.mode.startsWith("dashboard-");
 const flowSlices = require(${flowSlicesPath});
 const { advanceTo, branchTo } = require(${resultPath});
 const onboardSession = require(${sessionPath});
@@ -252,7 +254,7 @@ if (scenario.mode === "providerless-external-component") {
   };
 }
 
-if (scenario.mode === "dashboard-port-composition") {
+if (dashboardScenario) {
   const finalizationHandlerDeps = require(${finalizationDepsPath}).finalizationHandlerDeps;
   finalizationHandlerDeps.checkAndRecoverSandboxProcesses = () => undefined;
   finalizationHandlerDeps.settleOrdinaryOpenClawPairing = async () => ({ kind: "settled" });
@@ -260,6 +262,29 @@ if (scenario.mode === "dashboard-port-composition") {
   const createOnboardDashboardHelpers = onboardDashboard.createOnboardDashboardHelpers;
   let dashboardForwardCalls = 0;
   onboardDashboard.createOnboardDashboardHelpers = (deps) => {
+    if (scenario.mode === "dashboard-spawn-failure") {
+      const forward = require(${JSON.stringify(path.join(repoRoot, "src/lib/adapters/openshell/forward-service.ts"))});
+      return createOnboardDashboardHelpers({
+        ...deps,
+        getGatewayForwardRuntimeAuthority: undefined,
+        runCaptureOpenshell: () => "SANDBOX BIND PORT PID STATUS",
+        isPortBoundOnHost: () => false,
+        forwardService: {
+          executable: () => ${JSON.stringify(path.join(tmpDir, "missing-openshell"))},
+          resolveGatewayName: () => "nemoclaw",
+          owns: () => false,
+          launch: (target, options) => {
+            called.push("forward-launch");
+            return forward.launchForwardService(target, {
+              ...options,
+              isReachable: () => false,
+              timeoutMs: 1000,
+              terminateProcessTree: () => { called.push("terminate-process-tree"); },
+            });
+          },
+        },
+      });
+    }
     const nextDashboardForward = () => {
       const port = dashboardForwardCalls === 0 ? 18791 : 18792;
       dashboardForwardCalls += 1;
@@ -286,6 +311,9 @@ if (scenario.mode === "dashboard-port-composition") {
   require(${agentSelectionPath}).createOnboardAgentSelector = () => async () => ({
     name: "hermes",
     displayName: "Hermes Agent",
+    ...(scenario.mode === "dashboard-spawn-failure"
+      ? { dashboard: { kind: "api", port: 8642 } }
+      : {}),
   });
 }
 
@@ -445,7 +473,7 @@ flowSlices.runCoreOnboardFlowSequence = async ({ context, runtime }) => {
   await runtime.applyResult(advanceTo("inference", { metadata: { state: "provider_selection" } }));
   await runtime.applyResult(advanceTo("sandbox", { metadata: { state: "inference" } }));
   await runtime.applyResult(
-    branchTo(scenario.mode === "dashboard-port-composition" ? "agent_setup" : "openclaw", {
+    branchTo(dashboardScenario ? "agent_setup" : "openclaw", {
       metadata: { state: "sandbox" },
     }),
   );
@@ -454,7 +482,7 @@ flowSlices.runCoreOnboardFlowSequence = async ({ context, runtime }) => {
 };
 
 flowSlices.runFinalOnboardFlowSequence = async ({ context, phases }) => {
-  if (scenario.mode === "dashboard-port-composition") {
+  if (dashboardScenario) {
     registry.registerSandbox({
       name: "fsm-sandbox",
       agent: "hermes",
@@ -569,6 +597,16 @@ const { onboard } = require(${onboardPath});
 
 (async () => {
   try {
+    if (scenario.mode === "dashboard-spawn-failure") {
+      await require(${JSON.stringify(path.join(repoRoot, "src/lib/actions/onboard.ts"))}).runOnboardAction({
+        "non-interactive": true,
+        yes: true,
+        "yes-i-accept-third-party-software": true,
+        "no-gpu": true,
+        name: "fsm-sandbox",
+      });
+      throw new Error("onboarding unexpectedly succeeded");
+    }
     await onboard({
       nonInteractive: true,
       autoYes: true,
@@ -592,6 +630,11 @@ const { onboard } = require(${onboardPath});
     throw new Error("expected slice sentinel");
   } catch (error) {
     if (ownsAuthoritativeOnboardLock) onboardSession.releaseOnboardLock();
+    if (scenario.mode === "dashboard-spawn-failure") {
+      called.push("failure:" + String(error?.message));
+      console.log("__RESULT__" + JSON.stringify({ called }));
+      return;
+    }
     if (
       error === sentinel ||
       error?.message === sentinel.message ||
@@ -602,7 +645,7 @@ const { onboard } = require(${onboardPath});
         /supports providerless sandbox creation only/.test(String(error?.message)))
     ) {
       const payload = "__RESULT__" + JSON.stringify({ called });
-      if (scenario.mode === "dashboard-port-composition") {
+      if (dashboardScenario) {
         process.stdout.write(payload + "\\n", () => process.exit(0));
         return;
       }
@@ -718,6 +761,14 @@ describe("live onboard FSM slice boundaries", () => {
   it("enters the final slice after the core slice reaches the branch state", () => {
     assert.deepEqual(runSliceProbe({ slice: "final" }), ["initial:init", "core", "final"]);
   });
+
+  it("reports a missing forward executable through the production onboarding action (#11648)", () => {
+    const called = runSliceProbe({ slice: "final", mode: "dashboard-spawn-failure" });
+    assert.ok(called.includes("forward-launch"), JSON.stringify(called));
+    assert.match(called.at(-1) ?? "", /failure:.*ENOENT/);
+    assert.ok(!called.includes("terminate-process-tree"));
+    assert.ok(!called.some((entry) => entry.startsWith("registry-port:")));
+  }, 60_000);
 
   it("keeps the single dashboard port established during agent onboarding (#8214)", () => {
     assert.deepEqual(runSliceProbe({ slice: "final", mode: "dashboard-port-composition" }), [

@@ -18,11 +18,7 @@ const RESTART_SUCCEEDED = {
   healthPassed: true,
   forwardRecovered: false,
 } as const;
-const RESTART_FAILED = {
-  ok: false,
-  failureLayer: "health timeout",
-  detail: "gateway did not become healthy",
-} as const;
+
 const RESTART_REFUSED = {
   ok: false,
   failureLayer: "MCP reconciliation refusal",

@@ -163,6 +163,16 @@ describe("npm audit handoff", () => {
           npmArchiveSha256: "0".repeat(64),
           npmIntegrity: `sha512-${Buffer.alloc(64).toString("base64")}`,
           npmVersion: "10.9.4",
+          lockedGraphs: [
+            {
+              id: "temporary-graph",
+              integrity: "sha512-fixture",
+              label: "temporary graph fixture",
+              lockSha256: createHash("sha256").update(packageLock).digest("hex"),
+              packageSpec: "temporary-graph@1.0.0",
+              tarballUrl: "https://registry.npmjs.org/temporary-graph/-/temporary-graph-1.0.0.tgz",
+            },
+          ],
         }),
       );
       fs.writeFileSync(
@@ -238,6 +248,16 @@ describe("npm audit handoff", () => {
           npmArchiveSha256: "0".repeat(64),
           npmIntegrity: `sha512-${Buffer.alloc(64).toString("base64")}`,
           npmVersion: "11.18.0",
+          lockedGraphs: [
+            {
+              id: "temporary-graph",
+              integrity: "sha512-fixture",
+              label: "temporary graph fixture",
+              lockSha256: createHash("sha256").update(packageLock).digest("hex"),
+              packageSpec: "temporary-graph@1.0.0",
+              tarballUrl: "https://registry.npmjs.org/temporary-graph/-/temporary-graph-1.0.0.tgz",
+            },
+          ],
         }),
       );
       const rejected = spawnSync(process.execPath, verifierArgs, { encoding: "utf8" });
