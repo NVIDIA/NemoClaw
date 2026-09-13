@@ -1,6 +1,6 @@
 # NemoClaw desired-state prototype
 
-NemoClaw provisions an OpenClaw agent or a Fabric-managed agent runtime from YAML.
+NemoClaw provisions agent runtimes through NeMo Fabric.
 It uses Go, OpenTofu, and OpenShell to plan, apply, export, and destroy a deployment.
 This branch is a local prototype with native Linux ARM64 evidence; it is not a platform or security qualification release.
 
