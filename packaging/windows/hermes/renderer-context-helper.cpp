@@ -17,6 +17,9 @@
 #endif
 static_assert(sizeof(CONTEXT) == 1232 && offsetof(CONTEXT, ContextFlags) == 48 &&
               offsetof(CONTEXT, Rsp) == 152 && offsetof(CONTEXT, Rip) == 248);
+static_assert(sizeof(PROCESS_MACHINE_INFORMATION) == 8 &&
+              offsetof(PROCESS_MACHINE_INFORMATION, MachineAttributes) == 4 &&
+              ProcessMachineTypeInfo == 9);
 #endif
 
 namespace {
@@ -32,6 +35,9 @@ struct Result {
     std::string stage = "input", message;
     uint32_t error = 0, pid = 0, tid = 0, threadPid = 0, flags = 0;
     uint16_t processMachine = 0, nativeMachine = 0;
+    uint16_t actualMachine = 0, machineReserved = 0;
+    uint32_t machineAttributes = 0, machineError = 0, wow64Error = 0;
+    bool architectureQueried = false, machineSucceeded = false, wow64Succeeded = false;
     uint64_t creation = 0;
     bool identityMatched = false, contextCaptured = false;
     bool processClosed = false, threadClosed = false, stackComplete = false;
@@ -118,7 +124,16 @@ std::string json(const Request& request, const Result& result) {
         << ",\"threadProcessId\":" << result.threadPid
         << ",\"creationFiletime\":" << quoted(std::to_string(result.creation))
         << ",\"processMachine\":" << hex(result.processMachine)
-        << ",\"nativeMachine\":" << hex(result.nativeMachine) << '}'
+        << ",\"nativeMachine\":" << hex(result.nativeMachine)
+        << ",\"wow64QueryAttempted\":" << boolean(result.architectureQueried)
+        << ",\"wow64QuerySucceeded\":" << boolean(result.wow64Succeeded)
+        << ",\"wow64QueryError\":" << result.wow64Error << '}'
+        << ",\"machineTypeInfo\":{\"informationClass\":9,\"bytes\":8,\"queryAttempted\":" << boolean(result.architectureQueried)
+        << ",\"querySucceeded\":" << boolean(result.machineSucceeded)
+        << ",\"win32Error\":" << result.machineError
+        << ",\"processMachine\":" << hex(result.actualMachine)
+        << ",\"reserved\":" << result.machineReserved
+        << ",\"machineAttributes\":" << hex(result.machineAttributes) << '}'
         << ",\"identityMatched\":" << boolean(result.identityMatched)
         << ",\"contextCaptured\":" << boolean(result.contextCaptured)
         << ",\"context\":{\"bytes\":1232,\"flags\":" << hex(result.flags) << ",\"registers\":{";
@@ -161,10 +176,22 @@ void capture(const Request& request, Result& result) {
             result.threadPid == request.pid && result.creation == request.creation;
         if (!result.identityMatched) { result.message = "inherited handle identity mismatch"; break; }
         result.stage = "architecture";
-        if (!IsWow64Process2(process, &result.processMachine, &result.nativeMachine)) { failed("IsWow64Process2"); break; }
-        if (result.processMachine != IMAGE_FILE_MACHINE_AMD64 &&
-            !(result.processMachine == IMAGE_FILE_MACHINE_UNKNOWN && result.nativeMachine == IMAGE_FILE_MACHINE_AMD64)) {
-            result.message = "target does not expose AMD64 context"; break;
+        // An UNKNOWN WOW64 machine is not an ARM64 executable classification.
+        // Retain it separately from the documented associated process machine.
+        result.architectureQueried = true;
+        result.wow64Succeeded = IsWow64Process2(process, &result.processMachine, &result.nativeMachine) != FALSE;
+        result.wow64Error = result.wow64Succeeded ? ERROR_SUCCESS : GetLastError();
+        PROCESS_MACHINE_INFORMATION machine{};
+        result.machineSucceeded = GetProcessInformation(process, ProcessMachineTypeInfo, &machine, sizeof(machine)) != FALSE;
+        result.machineError = result.machineSucceeded ? ERROR_SUCCESS : GetLastError();
+        result.actualMachine = machine.ProcessMachine;
+        result.machineReserved = machine.Res0;
+        result.machineAttributes = static_cast<uint32_t>(machine.MachineAttributes);
+        if (!result.machineSucceeded) {
+            result.error = result.machineError; result.message = "GetProcessInformation(ProcessMachineTypeInfo)"; break;
+        }
+        if (result.actualMachine != IMAGE_FILE_MACHINE_AMD64) {
+            result.message = "ProcessMachineTypeInfo does not identify AMD64 target"; break;
         }
         result.stage = "context";
         CONTEXT context{}; context.ContextFlags = CONTEXT_CONTROL | CONTEXT_INTEGER;
