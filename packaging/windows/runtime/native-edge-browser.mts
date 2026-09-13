@@ -90,13 +90,18 @@ async function powershellMetadata(systemRoot: string, file: string, pid?: number
   );
   const script =
     pid === undefined
-      ? "$f=Get-Item -LiteralPath $args[0];$s=Get-AuthenticodeSignature -LiteralPath $f.FullName;[ordered]@{path=$f.FullName;version=$f.VersionInfo.FileVersion;productName=$f.VersionInfo.ProductName;originalFilename=$f.VersionInfo.OriginalFilename;reparsePoint=[bool]($f.Attributes -band [IO.FileAttributes]::ReparsePoint);signatureStatus=[string]$s.Status;signerSubject=if($s.SignerCertificate){$s.SignerCertificate.Subject}else{''};signerThumbprint=if($s.SignerCertificate){$s.SignerCertificate.Thumbprint}else{''}}|ConvertTo-Json -Compress"
-      : "$p=Get-Process -Id ([int]$args[0]) -ErrorAction Stop;[ordered]@{pid=$p.Id;path=$p.Path;creationFiletime=$p.StartTime.ToUniversalTime().ToFileTimeUtc().ToString()}|ConvertTo-Json -Compress";
-  const args = pid === undefined ? [file] : [String(pid)];
+      ? "$f=Get-Item -LiteralPath $env:NEMOCLAW_EDGE_INSPECT_PATH;Import-Module Microsoft.PowerShell.Security -ErrorAction Stop;$s=Get-AuthenticodeSignature -LiteralPath $f.FullName;[ordered]@{path=$f.FullName;version=$f.VersionInfo.FileVersion;productName=$f.VersionInfo.ProductName;originalFilename=$f.VersionInfo.OriginalFilename;reparsePoint=[bool]($f.Attributes -band [IO.FileAttributes]::ReparsePoint);signatureStatus=[string]$s.Status;signerSubject=if($s.SignerCertificate){$s.SignerCertificate.Subject}else{''};signerThumbprint=if($s.SignerCertificate){$s.SignerCertificate.Thumbprint}else{''}}|ConvertTo-Json -Compress"
+      : "$p=Get-Process -Id ([int]$env:NEMOCLAW_EDGE_INSPECT_PID) -ErrorAction Stop;[ordered]@{pid=$p.Id;path=$p.Path;creationFiletime=$p.StartTime.ToUniversalTime().ToFileTimeUtc().ToString()}|ConvertTo-Json -Compress";
   const result = await execFileAsync(
     powershell,
-    ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script, ...args],
+    ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script],
     {
+      env: {
+        ...process.env,
+        ...(pid === undefined
+          ? { NEMOCLAW_EDGE_INSPECT_PATH: file }
+          : { NEMOCLAW_EDGE_INSPECT_PID: String(pid) }),
+      },
       windowsHide: true,
       timeout: 15_000,
       maxBuffer: 64 * 1024,
