@@ -378,6 +378,65 @@ ${serviceIdentityCheck}`,
       .toBe(true);
     expect.soft(selects("push", "src/lib/adapters/openshell/forward-service.ts")).toBe(true);
 
+    expect
+      .soft(selects("pull_request", "src/lib/onboard/experimental/hermes-portable-container.ts"))
+      .toBe(true);
+    expect
+      .soft(selects("pull_request", "src/lib/onboard/experimental/hermes-portable-onboarding.ts"))
+      .toBe(true);
+    expect
+      .soft(
+        selects("pull_request", "src/lib/onboard/experimental/hermes-portable-podman-authority.ts"),
+      )
+      .toBe(true);
+    expect.soft(selects("pull_request", "src/lib/actions/sandbox/exec.ts")).toBe(true);
+    expect.soft(selects("pull_request", "src/lib/actions/sandbox/stop.ts")).toBe(true);
+    expect.soft(selects("pull_request", "src/lib/actions/sandbox/lifecycle/lock.ts")).toBe(true);
+    expect.soft(selects("pull_request", "src/lib/cli/nemoclaw-oclif-command.ts")).toBe(true);
+    expect
+      .soft(selects("pull_request", "src/lib/onboard/experimental/portable-agent-lifecycle.ts"))
+      .toBe(true);
+    expect
+      .soft(selects("pull_request", "src/lib/onboard/experimental/portable-lifecycle-lock.ts"))
+      .toBe(true);
+    expect
+      .soft(selects("pull_request", "src/lib/state/mcp-lifecycle-lock-acquisition.ts"))
+      .toBe(true);
+    expect
+      .soft(selects("pull_request", "src/lib/state/mcp-lifecycle-lock/decisions.ts"))
+      .toBe(true);
+    expect.soft(selects("pull_request", "src/lib/state/launch-readiness-lease.ts")).toBe(true);
+    expect.soft(selects("pull_request", "src/lib/state/registry.ts")).toBe(true);
+    expect
+      .soft(selects("push", "src/lib/onboard/experimental/hermes-portable-container.ts"))
+      .toBe(true);
+    expect
+      .soft(selects("push", "src/lib/onboard/experimental/hermes-portable-onboarding.ts"))
+      .toBe(true);
+    expect
+      .soft(selects("push", "src/lib/onboard/experimental/hermes-portable-podman-authority.ts"))
+      .toBe(true);
+    expect.soft(selects("push", "src/lib/actions/sandbox/exec.ts")).toBe(true);
+    expect.soft(selects("push", "src/lib/actions/sandbox/stop.ts")).toBe(true);
+    expect.soft(selects("push", "src/lib/actions/sandbox/lifecycle/lock.ts")).toBe(true);
+    expect.soft(selects("push", "src/lib/cli/nemoclaw-oclif-command.ts")).toBe(true);
+    expect
+      .soft(selects("push", "src/lib/onboard/experimental/portable-agent-lifecycle.ts"))
+      .toBe(true);
+    expect
+      .soft(selects("push", "src/lib/onboard/experimental/portable-lifecycle-lock.ts"))
+      .toBe(true);
+    expect.soft(selects("push", "src/lib/state/mcp-lifecycle-lock-acquisition.ts")).toBe(true);
+    expect.soft(selects("push", "src/lib/state/mcp-lifecycle-lock/decisions.ts")).toBe(true);
+    expect.soft(selects("push", "src/lib/state/launch-readiness-lease.ts")).toBe(true);
+    expect.soft(selects("push", "src/lib/state/registry.ts")).toBe(true);
+    expect.soft(selects("push", "agents/hermes/Dockerfile")).toBe(true);
+    expect.soft(selects("push", "agents/hermes/start.sh")).toBe(true);
+    expect.soft(selects("push", "agents/hermes/dashboard-external-host.patch")).toBe(true);
+    expect
+      .soft(selects("push", "test/e2e/support/portable-profile-rootless-runtime-workflow.test.ts"))
+      .toBe(true);
+
     expect(workflow.on.pull_request.types).toEqual(["opened", "synchronize", "reopened"]);
     expect(workflow.on.push.paths).toContain("tools/e2e/full-e2e-timeout-contract.mts");
     expect(workflow.on.pull_request.paths).not.toContain("tools/e2e/full-e2e-timeout-contract.mts");
