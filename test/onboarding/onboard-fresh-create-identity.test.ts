@@ -9,12 +9,14 @@ import { createServer } from "node:net";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, it } from "vitest";
+import { describe, it, vi } from "vitest";
 import { decodeManagedStartupProfile } from "../../src/lib/onboard/managed-startup/profile";
 import { mapManagedStartupProfileToAgentEnvironment } from "../../src/lib/onboard/managed-startup/agent-environment";
 import { writeOkOpenshell } from "../helpers/onboard-openshell-fixture";
 import { type CommandEntry, onboardScriptMocksPath } from "../helpers/onboard-split-context";
 import { encodeMessagingPlan, makeMessagingPlan } from "../helpers/messaging-plan-fixtures";
+
+vi.setConfig({ maxConcurrency: 12 });
 
 function runNodeScript(
   scriptPath: string,
