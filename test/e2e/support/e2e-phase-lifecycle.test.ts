@@ -538,7 +538,7 @@ describe("LifecyclePhaseFixture gateway runtime restart helpers", () => {
     runner.enqueue(shellResult(1, "")); // expectHostRuntimeStopped pid probe
     runner.enqueue(shellResult(0, "")); // expectHostRuntimeStopped container probe
     runner.enqueue(shellResult(0)); // lifecycle-gateway-stopped true artifact
-    runner.enqueue(shellResult(0, "status recovered\n")); // start through nemoclaw status
+    runner.enqueue(shellResult(0, "gateway recovered\n")); // start through sandbox recovery
     runner.enqueue(shellResult(0, "Connected to nemoclaw\n")); // waitForGatewayConnected
     const cleanup = new FakeCleanup();
     const host = new HostCliClient(runner);
@@ -560,7 +560,7 @@ describe("LifecyclePhaseFixture gateway runtime restart helpers", () => {
       expect.stringContaining("sh -lc pid_file="),
       "docker container ps --format {{.ID}}\t{{.Names}}",
       "true ",
-      "nemoclaw status",
+      "nemoclaw e2e-survival recover",
       "openshell status",
     ]);
   });
@@ -678,9 +678,9 @@ describe("LifecyclePhaseFixture gateway runtime restart helpers", () => {
     expect(runner.calls).toHaveLength(2);
   });
 
-  it("restores a container runtime through sandbox-specific status", async () => {
+  it("restores a container runtime through sandbox-specific recovery", async () => {
     const runner = new FakeRunner();
-    runner.enqueue(shellResult(0, "status recovered\n"));
+    runner.enqueue(shellResult(0, "gateway recovered\n"));
     const cleanup = new FakeCleanup();
 
     await expect(
@@ -691,11 +691,11 @@ describe("LifecyclePhaseFixture gateway runtime restart helpers", () => {
     ).resolves.toMatchObject({ exitCode: 0 });
 
     expect(runner.calls.map((call) => `${call.command} ${call.args.join(" ")}`)).toEqual([
-      "nemoclaw e2e-survival status",
+      "nemoclaw e2e-survival recover",
     ]);
   });
 
-  it("restarts the stopped user service before a PID or sandbox status fallback", async () => {
+  it("restarts the stopped user service before sandbox recovery", async () => {
     const runner = new FakeRunner();
     const cleanup = new FakeCleanup();
     const fx = fixture(runner, cleanup);
@@ -712,6 +712,15 @@ describe("LifecyclePhaseFixture gateway runtime restart helpers", () => {
       "lifecycle-gateway-user-service-stop",
       "lifecycle-gateway-user-service-restart",
     ]);
+  });
+
+  it("fails closed without a sandbox recovery target when no user service owns the gateway", async () => {
+    await expect(
+      fixture(new FakeRunner(), new FakeCleanup()).startGatewayRuntime({
+        kind: "pid",
+        id: "12345",
+      }),
+    ).rejects.toThrow(/sandbox name is required to recover the stopped pid gateway runtime/i);
   });
 });
 

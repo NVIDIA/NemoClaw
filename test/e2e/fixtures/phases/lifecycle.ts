@@ -738,22 +738,13 @@ export class LifecyclePhaseFixture {
       requireAvailable: options.requireUserService,
     });
     if (userServiceStart) return userServiceStart;
-    if (previousRuntime?.kind === "pid") {
-      return await this.host.nemoclaw(["status"], {
-        artifactName: "lifecycle-gateway-recover-through-nemoclaw-status",
-        env: buildAvailabilityProbeEnv(),
-        timeoutMs: 120_000,
-      });
+    if (!options.sandboxName) {
+      throw new Error(
+        `A sandbox name is required to recover the stopped ${previousRuntime?.kind ?? "unknown"} gateway runtime.`,
+      );
     }
-    if (options.sandboxName) {
-      return await this.host.nemoclaw([options.sandboxName, "status"], {
-        artifactName: `lifecycle-gateway-recover-through-nemoclaw-status-${options.sandboxName}`,
-        env: buildAvailabilityProbeEnv(),
-        timeoutMs: 120_000,
-      });
-    }
-    return await this.host.command("openshell", ["gateway", "start", "--name", "nemoclaw"], {
-      artifactName: "lifecycle-gateway-start",
+    return await this.host.nemoclaw([options.sandboxName, "recover"], {
+      artifactName: `lifecycle-gateway-recover-through-nemoclaw-recover-${options.sandboxName}`,
       env: buildAvailabilityProbeEnv(),
       timeoutMs: 120_000,
     });
