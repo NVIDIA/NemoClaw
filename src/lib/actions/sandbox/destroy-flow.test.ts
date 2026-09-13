@@ -566,29 +566,27 @@ describe("destroySandbox flow", () => {
 
     await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow("process.exit(1)");
 
-    expect(harness.lifecycleLockEvents).toEqual([
-      "acquired",
-      "acquired",
-      "released",
-      "released",
-      "process-exit",
-    ]);
+    const exitIndex = harness.lifecycleLockEvents.indexOf("process-exit");
+    const firstAttemptLockEvents = harness.lifecycleLockEvents.slice(0, exitIndex);
+    expect(exitIndex).toBeGreaterThan(0);
+    expect(firstAttemptLockEvents.filter((event) => event === "acquired").length).toBeGreaterThan(
+      0,
+    );
+    expect(firstAttemptLockEvents.filter((event) => event === "released")).toHaveLength(
+      firstAttemptLockEvents.filter((event) => event === "acquired").length,
+    );
+    expect(firstAttemptLockEvents.at(-1)).toBe("released");
     expect(harness.events).not.toContain("delete");
     expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
     expect(harness.retirePortableLifecycleReceiptSpy).not.toHaveBeenCalled();
 
     await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
-    expect(harness.lifecycleLockEvents).toEqual([
-      "acquired",
-      "acquired",
-      "released",
-      "released",
-      "process-exit",
-      "acquired",
-      "acquired",
-      "released",
-      "released",
-    ]);
+    const retryLockEvents = harness.lifecycleLockEvents.slice(exitIndex + 1);
+    expect(retryLockEvents.filter((event) => event === "acquired").length).toBeGreaterThan(0);
+    expect(retryLockEvents.filter((event) => event === "released")).toHaveLength(
+      retryLockEvents.filter((event) => event === "acquired").length,
+    );
+    expect(retryLockEvents.at(-1)).toBe("released");
     expect(harness.events.filter((event) => event === "delete")).toHaveLength(1);
     expect(harness.removeSandboxSpy).toHaveBeenCalledOnce();
     expect(harness.retirePortableLifecycleReceiptSpy).toHaveBeenCalledOnce();

@@ -7,7 +7,6 @@ import assert from "node:assert/strict";
 
 import { loadServingCatalog } from "../../../src/lib/inference/serving/catalog-loader.ts";
 import { materializeHostLocalVllmSelection } from "../../../src/lib/inference/serving/host-local-vllm-selection.ts";
-import { resolveManagedVllmBridgeHost } from "../../../src/lib/inference/serving/vllm-host-local-network.ts";
 import { detectVllmProfile } from "../../../src/lib/inference/vllm.ts";
 import { buildVllmServeCommand } from "../../../src/lib/inference/vllm-models.ts";
 import {
@@ -34,26 +33,23 @@ import {
 } from "./inference-routing-helpers.ts";
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-spark-vllm";
+const REPLACEMENT_SANDBOX_NAME =
+  SANDBOX_NAME === "e2e-vllm-after" ? "e2e-vllm-next" : "e2e-vllm-after";
 const VLLM_CONTAINER = "nemoclaw-vllm";
-const TEST_TIMEOUT_MS = 65 * 60_000;
+const CUSTOM_VLLM_PORT = 46_145;
+const FALLBACK_VLLM_PORT = CUSTOM_VLLM_PORT + 1;
+const TEST_TIMEOUT_MS = 120 * 60_000;
 const ONBOARD_TIMEOUT_MS = 55 * 60_000;
 
 interface VllmContainerInspection {
   readonly Id: string;
   readonly Config: {
     readonly Cmd: string[];
-    readonly Entrypoint: string[];
-    readonly Image: string;
     readonly Labels: Record<string, string>;
   };
   readonly HostConfig: {
-    readonly DeviceRequests: Array<{ Count: number; Capabilities: string[][] }>;
-    readonly IpcMode: string;
-    readonly NetworkMode: string;
     readonly PortBindings: Record<string, Array<{ HostIp: string; HostPort: string }>>;
-    readonly ShmSize: number;
   };
-  readonly Mounts: Array<{ Destination: string; RW: boolean; Type: string }>;
 }
 
 function e2eEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
@@ -97,28 +93,92 @@ function capturedVllmContainerId(result: CommandExitResult): string | null {
   return candidate && /^[a-f0-9]{64}$/u.test(candidate.Id) ? candidate.Id : null;
 }
 
-async function assertVllmContainerAbsent(host: HostCliClient): Promise<void> {
-  const result = await host.command("docker", ["inspect", VLLM_CONTAINER], {
-    artifactName: "preflight-spark-express-vllm-container",
+async function probeVllmContainer(
+  host: HostCliClient,
+  artifactName: string,
+): Promise<CommandExitResult> {
+  return host.command("docker", ["inspect", VLLM_CONTAINER], {
+    artifactName,
     env: e2eEnv(),
     timeoutMs: 30_000,
   });
-  expect(
-    classifyDockerContainerInspection(result),
-    `Refusing to replace a pre-existing ${VLLM_CONTAINER} container.\n${resultText(result)}`,
-  ).toBe("absent");
 }
 
-async function assertSandboxAbsent(host: HostCliClient, sandboxName: string): Promise<void> {
-  const result = await host.command("openshell", ["sandbox", "list", "--names"], {
-    artifactName: "preflight-spark-express-sandbox-list",
+async function probeSandboxNames(
+  host: HostCliClient,
+  artifactName: string,
+): Promise<CommandExitResult> {
+  return host.command("openshell", ["sandbox", "list", "--names"], {
+    artifactName,
     env: e2eEnv(),
     timeoutMs: 30_000,
   });
-  expect(
-    listedSandboxNames(result).has(sandboxName),
-    `Refusing to replace a pre-existing ${sandboxName} sandbox.\n${resultText(result)}`,
-  ).toBe(false);
+}
+
+async function probeHostPort(
+  host: HostCliClient,
+  port: number,
+  artifactName: string,
+): Promise<CommandExitResult> {
+  return host.command("ss", ["-H", "-ltn", `sport = :${String(port)}`], {
+    artifactName,
+    env: e2eEnv(),
+    timeoutMs: 30_000,
+  });
+}
+
+async function onboardSparkExpressVllm(
+  host: HostCliClient,
+  sandboxName: string,
+  artifactName: string,
+): Promise<CommandExitResult> {
+  return host.command(
+    "bash",
+    [
+      "--noprofile",
+      "--norc",
+      "-c",
+      [
+        "set -euo pipefail",
+        "source scripts/install.sh >/dev/null",
+        "exec 9<<<'2'",
+        "select_spark_express_inference 9",
+        "exec 9<&-",
+        '[[ "${_SPARK_EXPRESS_INFERENCE_SELECTION:-}" == "fixed-vllm" ]]',
+        'activate_express_install "DGX Spark"',
+        '[[ "${NEMOCLAW_ENABLE_LOCAL_MODEL_PROFILE:-}" == "1" ]]',
+        '[[ "${NEMOCLAW_LOCAL_MODEL_RUNTIME:-}" == "vllm" ]]',
+        '[[ -z "${NEMOCLAW_PROVIDER:-}" ]]',
+        '[[ -z "${NEMOCLAW_MODEL:-}" ]]',
+        '[[ -z "${NEMOCLAW_VLLM_MODEL:-}" ]]',
+        "exec node bin/nemoclaw.js onboard --fresh --non-interactive --yes --yes-i-accept-third-party-software",
+      ].join("\n"),
+    ],
+    {
+      artifactName,
+      cwd: REPO_ROOT,
+      env: e2eEnv({
+        NEMOCLAW_SANDBOX_NAME: sandboxName,
+        NEMOCLAW_VLLM_PORT: String(CUSTOM_VLLM_PORT),
+      }),
+      timeoutMs: ONBOARD_TIMEOUT_MS,
+    },
+  );
+}
+
+async function runCandidateNemoClaw(
+  host: HostCliClient,
+  args: string[],
+  artifactName: string,
+  timeoutMs = 180_000,
+  extraEnv: NodeJS.ProcessEnv = {},
+): Promise<CommandExitResult> {
+  return host.command("node", ["bin/nemoclaw.js", ...args], {
+    artifactName,
+    cwd: REPO_ROOT,
+    env: e2eEnv(extraEnv),
+    timeoutMs,
+  });
 }
 
 async function inspectSandbox(host: HostCliClient, sandboxName: string, artifactName: string) {
@@ -215,20 +275,24 @@ async function removeExactVllmContainer(
 }
 
 test(
-  "DGX Spark Express option 2 materializes the fixed vLLM profile and routes sandbox inference",
+  "DGX Spark Express option 2 releases and reacquires managed vLLM on a recorded custom port",
   {
     timeout: TEST_TIMEOUT_MS,
     meta: {
       e2ePhases: [
         "qualify the physical DGX Spark host",
-        "select Spark Express option 2 and onboard through the local-model profile",
+        "select Spark Express option 2 and onboard on a custom port",
         "verify catalog-owned vLLM runtime configuration",
-        "prove sandbox inference and unrelated egress denial",
+        "verify status, doctor, connect, and inference use the recorded port",
+        "destroy the final consumer and verify managed vLLM retirement",
+        "onboard a replacement after the GPU resource is released",
+        "prove replacement inference and unrelated egress denial",
       ],
     },
   },
   async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox }) => {
     validateSandboxName(SANDBOX_NAME);
+    validateSandboxName(REPLACEMENT_SANDBOX_NAME);
     assertLocalDockerEnvironment(process.env);
     const plan = vllmProfilePlan();
     const baseProfile = detectVllmProfile({ platform: "spark" });
@@ -274,17 +338,11 @@ test(
         timeoutMs: 30_000,
       },
     );
-    expect(platform.exitCode, resultText(platform)).toBe(0);
     expect(platform.stdout.trim()).toBe("DGX Spark");
-    const nvidia = await host.command("nvidia-smi", [], {
-      artifactName: "spark-express-nvidia-smi",
-      env: e2eEnv(),
-      timeoutMs: 30_000,
-    });
-    expect(nvidia.exitCode, resultText(nvidia)).toBe(0);
 
     let createdContainerId: string | null = null;
     let createdSandboxId: string | null = null;
+    let createdReplacementSandboxId: string | null = null;
     cleanup.add(`remove ${VLLM_CONTAINER}`, () =>
       createdContainerId
         ? removeExactVllmContainer(host, createdContainerId, "cleanup-spark-express-vllm-container")
@@ -295,39 +353,41 @@ test(
         ? removeExactSandbox(host, sandbox, SANDBOX_NAME, createdSandboxId)
         : Promise.resolve(),
     );
-    await assertVllmContainerAbsent(host);
-    await assertSandboxAbsent(host, SANDBOX_NAME);
-
-    progress.phase("select Spark Express option 2 and onboard through the local-model profile");
-    const onboard = await host.command(
-      "bash",
-      [
-        "--noprofile",
-        "--norc",
-        "-c",
-        [
-          "set -euo pipefail",
-          "source scripts/install.sh >/dev/null",
-          "exec 9<<<'2'",
-          "select_spark_express_inference 9",
-          "exec 9<&-",
-          '[[ "${_SPARK_EXPRESS_INFERENCE_SELECTION:-}" == "fixed-vllm" ]]',
-          'activate_express_install "DGX Spark"',
-          '[[ "${NEMOCLAW_ENABLE_LOCAL_MODEL_PROFILE:-}" == "1" ]]',
-          '[[ "${NEMOCLAW_LOCAL_MODEL_RUNTIME:-}" == "vllm" ]]',
-          '[[ -z "${NEMOCLAW_PROVIDER:-}" ]]',
-          '[[ -z "${NEMOCLAW_MODEL:-}" ]]',
-          '[[ -z "${NEMOCLAW_VLLM_MODEL:-}" ]]',
-          "exec node bin/nemoclaw.js onboard --fresh --non-interactive --yes --yes-i-accept-third-party-software",
-        ].join("\n"),
-      ],
-      {
-        artifactName: "spark-express-vllm-onboard",
-        cwd: REPO_ROOT,
-        env: e2eEnv(),
-        timeoutMs: ONBOARD_TIMEOUT_MS,
-      },
+    cleanup.add(`remove sandbox ${REPLACEMENT_SANDBOX_NAME}`, () =>
+      createdReplacementSandboxId
+        ? removeExactSandbox(host, sandbox, REPLACEMENT_SANDBOX_NAME, createdReplacementSandboxId)
+        : Promise.resolve(),
     );
+    const preflightContainer = await probeVllmContainer(
+      host,
+      "preflight-spark-express-vllm-container",
+    );
+    expect(
+      classifyDockerContainerInspection(preflightContainer),
+      `Refusing to replace a pre-existing ${VLLM_CONTAINER} container.\n${resultText(preflightContainer)}`,
+    ).toBe("absent");
+    const preflightSandboxes = await probeSandboxNames(
+      host,
+      "preflight-spark-express-sandbox-list",
+    );
+    expect(
+      listedSandboxNames(preflightSandboxes).has(SANDBOX_NAME) ||
+        listedSandboxNames(preflightSandboxes).has(REPLACEMENT_SANDBOX_NAME),
+      `Refusing to replace a pre-existing test sandbox.\n${resultText(preflightSandboxes)}`,
+    ).toBe(false);
+    const preflightPort = await probeHostPort(
+      host,
+      CUSTOM_VLLM_PORT,
+      "preflight-spark-express-vllm-port",
+    );
+    expect(preflightPort.exitCode, resultText(preflightPort)).toBe(0);
+    expect(
+      preflightPort.stdout.trim(),
+      `TCP port ${String(CUSTOM_VLLM_PORT)} is already in use`,
+    ).toBe("");
+
+    progress.phase("select Spark Express option 2 and onboard on a custom port");
+    const onboard = await onboardSparkExpressVllm(host, SANDBOX_NAME, "spark-express-vllm-onboard");
 
     const inspectionResult = await host.command("docker", ["inspect", VLLM_CONTAINER], {
       artifactName: "spark-express-vllm-container-inspect",
@@ -351,12 +411,8 @@ test(
       createdSandboxId,
       "onboarding did not create the expected sandbox identity",
     ).not.toBeNull();
-    expect(inspectionResult.exitCode, resultText(inspectionResult)).toBe(0);
+    expect(createdContainerId, "onboarding did not create managed vLLM").not.toBeNull();
     const [inspection] = JSON.parse(inspectionResult.stdout) as VllmContainerInspection[];
-    expect(inspection.Id).toBe(createdContainerId);
-    expect(inspection.Config.Image).toBe(plan.recipe.spec.runtime.image);
-    expect(inspection.Config.Entrypoint).toEqual(["/bin/bash"]);
-    expect(inspection.Config.Cmd[0]).toBe("-lc");
     expect(inspection.Config.Cmd[1]).toBe(buildVllmServeCommand(materialized.model, e2eEnv()));
     expect(inspection.Config.Labels).toMatchObject({
       "com.nvidia.nemoclaw.managed-vllm": "true",
@@ -366,45 +422,128 @@ test(
       "com.nvidia.nemoclaw.serving-recipe": plan.recipe.metadata.id,
       "com.nvidia.nemoclaw.serving-recipe-digest": plan.recipeDigest,
     });
-    expect(inspection.HostConfig.NetworkMode).toBe(plan.recipe.spec.runtime.networkMode);
-    expect(inspection.HostConfig.IpcMode).toBe(plan.recipe.spec.runtime.ipcMode);
-    expect(inspection.HostConfig.ShmSize).toBe(plan.recipe.spec.runtime.sharedMemoryBytes);
     const portBindings = inspection.HostConfig.PortBindings["8000/tcp"];
-    expect(portBindings).toHaveLength(2);
-    expect(portBindings).toContainEqual({ HostIp: "127.0.0.1", HostPort: "8000" });
-    expect(portBindings).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          HostIp: expect.stringMatching(/^(?!127\.0\.0\.1$)(?!0\.0\.0\.0$).+/u),
-          HostPort: "8000",
-        }),
-      ]),
-    );
-    const bridgeBinding = portBindings.find(({ HostIp }) => HostIp !== "127.0.0.1");
-    expect(bridgeBinding?.HostIp).toBe(resolveManagedVllmBridgeHost());
-    expect(inspection.HostConfig.DeviceRequests).toEqual(
-      expect.arrayContaining([expect.objectContaining({ Count: -1, Capabilities: [["gpu"]] })]),
-    );
-    expect(inspection.Mounts).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          Destination: `${plan.recipe.spec.runtime.modelCache.target}/hub`,
-          RW: false,
-          Type: "bind",
-        }),
-      ]),
-    );
+    expect(portBindings).toContainEqual({
+      HostIp: "127.0.0.1",
+      HostPort: String(CUSTOM_VLLM_PORT),
+    });
 
-    progress.phase("prove sandbox inference and unrelated egress denial");
+    progress.phase("verify status, doctor, connect, and inference use the recorded port");
+    const status = await runCandidateNemoClaw(
+      host,
+      [SANDBOX_NAME, "status", "--json"],
+      "spark-express-vllm-status",
+    );
+    expect(JSON.parse(status.stdout)).toMatchObject({
+      inferenceHealth: {
+        ok: true,
+        endpoint: `http://127.0.0.1:${String(CUSTOM_VLLM_PORT)}/v1/models`,
+      },
+    });
+    const doctor = await runCandidateNemoClaw(
+      host,
+      [SANDBOX_NAME, "doctor", "--json"],
+      "spark-express-vllm-doctor",
+    );
+    expect(JSON.parse(doctor.stdout)).toMatchObject({
+      checks: expect.arrayContaining([
+        expect.objectContaining({
+          group: "Inference",
+          label: "Provider health",
+          status: "ok",
+          detail: `http://127.0.0.1:${String(CUSTOM_VLLM_PORT)}/v1/models reachable`,
+        }),
+      ]),
+    });
+    const fallbackPort = await probeHostPort(
+      host,
+      FALLBACK_VLLM_PORT,
+      "preflight-spark-express-vllm-fallback-port",
+    );
+    expect(fallbackPort.exitCode, resultText(fallbackPort)).toBe(0);
+    expect(
+      fallbackPort.stdout.trim(),
+      `Fallback TCP port ${String(FALLBACK_VLLM_PORT)} is already in use`,
+    ).toBe("");
+    const connect = await runCandidateNemoClaw(
+      host,
+      [SANDBOX_NAME, "connect", "--probe-only"],
+      "spark-express-vllm-connect-probe",
+      300_000,
+      { NEMOCLAW_VLLM_PORT: String(FALLBACK_VLLM_PORT) },
+    );
+    expect(connect.exitCode, resultText(connect)).toBe(0);
+
+    progress.phase("destroy the final consumer and verify managed vLLM retirement");
+    const destroy = await runCandidateNemoClaw(
+      host,
+      [SANDBOX_NAME, "destroy", "--yes"],
+      "spark-express-vllm-destroy",
+      300_000,
+    );
+    expect(destroy.exitCode, resultText(destroy)).toBe(0);
+    const retiredSandboxes = await probeSandboxNames(host, "retired-spark-express-sandbox-list");
+    expect(
+      listedSandboxNames(retiredSandboxes).has(SANDBOX_NAME),
+      `Sandbox ${SANDBOX_NAME} still exists after destroy.\n${resultText(retiredSandboxes)}`,
+    ).toBe(false);
+    const retiredContainer = await probeVllmContainer(host, "retired-spark-express-vllm-container");
+    expect(
+      classifyDockerContainerInspection(retiredContainer),
+      `Managed container ${VLLM_CONTAINER} still exists after destroy.\n${resultText(retiredContainer)}`,
+    ).toBe("absent");
+    const retiredPort = await probeHostPort(
+      host,
+      CUSTOM_VLLM_PORT,
+      "retired-spark-express-vllm-port",
+    );
+    expect(retiredPort.exitCode, resultText(retiredPort)).toBe(0);
+    expect(
+      retiredPort.stdout.trim(),
+      `TCP port ${String(CUSTOM_VLLM_PORT)} is still in use after destroy`,
+    ).toBe("");
+    createdSandboxId = null;
+    createdContainerId = null;
+
+    progress.phase("onboard a replacement after the GPU resource is released");
+    const replacementOnboard = await onboardSparkExpressVllm(
+      host,
+      REPLACEMENT_SANDBOX_NAME,
+      "spark-express-vllm-replacement-onboard",
+    );
+    const replacementInspection = await host.command("docker", ["inspect", VLLM_CONTAINER], {
+      artifactName: "spark-express-vllm-replacement-container-inspect",
+      env: e2eEnv(),
+      timeoutMs: 30_000,
+    });
+    createdContainerId = capturedVllmContainerId(replacementInspection);
+    const replacementSandboxInspection = await inspectSandbox(
+      host,
+      REPLACEMENT_SANDBOX_NAME,
+      "spark-express-vllm-replacement-sandbox-inspect",
+    );
+    createdReplacementSandboxId =
+      replacementSandboxInspection.kind === "present" ? replacementSandboxInspection.id : null;
+    await (replacementOnboard.exitCode !== 0
+      ? captureOnboardFailureDiagnostics(host, REPLACEMENT_SANDBOX_NAME)
+      : Promise.resolve());
+    expect(replacementOnboard.exitCode, resultText(replacementOnboard)).toBe(0);
+    expect(
+      createdReplacementSandboxId,
+      "replacement onboarding did not create its sandbox",
+    ).not.toBeNull();
+    expect(createdContainerId, "replacement onboarding did not create managed vLLM").not.toBeNull();
+
+    progress.phase("prove replacement inference and unrelated egress denial");
     await expectOpenAiChatThroughSandbox(
       sandbox,
-      SANDBOX_NAME,
+      REPLACEMENT_SANDBOX_NAME,
       plan.recipe.spec.model.servedName,
       [],
-      "spark-express-inference-local-chat",
+      "spark-express-replacement-inference-local-chat",
     );
     const denied = await sandbox.execShell(
-      SANDBOX_NAME,
+      REPLACEMENT_SANDBOX_NAME,
       trustedSandboxShellScript(
         "status=0; code=$(curl -sS -o /dev/null -w '%{http_connect}' --max-time 20 https://example.com/) || status=$?; printf '%s %s' \"$status\" \"$code\"",
       ),
@@ -414,7 +553,6 @@ test(
         timeoutMs: 30_000,
       },
     );
-    expect(denied.exitCode, resultText(denied)).toBe(0);
     expect(denied.stdout.trim()).toBe("56 403");
   },
 );

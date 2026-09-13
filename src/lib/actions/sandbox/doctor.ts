@@ -409,6 +409,7 @@ function resolveInferenceRoute(
     model: live?.model || sb?.model || "unknown",
     provider: live?.provider || sb?.provider || "unknown",
     effectiveReasoningEffort: resolveDoctorReasoningEffort(sb),
+    recordedEndpointUrl: sb?.endpointUrl,
   };
 }
 

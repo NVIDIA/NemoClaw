@@ -139,6 +139,55 @@ describe("lifecycle option normalization", () => {
     );
   });
 
+  describe("destroy keepVllm resolution", () => {
+    const ENV_KEY = "NEMOCLAW_KEEP_VLLM";
+
+    beforeEach(() => {
+      vi.stubEnv(ENV_KEY, undefined);
+    });
+
+    it("leaves keepVllm unset by default so destroy retires the last managed vLLM container", () => {
+      expect(normalizeDestroySandboxOptions(["--yes"])).toEqual({ force: false, yes: true });
+      expect(normalizeDestroySandboxOptions({ yes: true })).toEqual({ yes: true });
+    });
+
+    it("threads --keep-vllm through argv", () => {
+      expect(normalizeDestroySandboxOptions(["--yes", "--keep-vllm"])).toEqual({
+        force: false,
+        yes: true,
+        keepVllm: true,
+      });
+    });
+
+    it("falls back to NEMOCLAW_KEEP_VLLM when no flag is passed", () => {
+      vi.stubEnv(ENV_KEY, "1");
+      expect(normalizeDestroySandboxOptions(["--yes"])).toEqual({
+        force: false,
+        yes: true,
+        keepVllm: true,
+      });
+      expect(normalizeDestroySandboxOptions({ yes: true })).toEqual({ yes: true, keepVllm: true });
+    });
+
+    it("explicit option object wins over env var", () => {
+      vi.stubEnv(ENV_KEY, "1");
+      expect(normalizeDestroySandboxOptions({ yes: true, keepVllm: false })).toEqual({
+        yes: true,
+        keepVllm: false,
+      });
+    });
+
+    it.each(["0", "false", "No"])("recognises falsy NEMOCLAW_KEEP_VLLM spelling %#", (value) => {
+      vi.stubEnv(ENV_KEY, value);
+      expect(normalizeDestroySandboxOptions({}).keepVllm).toBe(false);
+    });
+
+    it.each(["", "maybe"])("ignores unrecognized NEMOCLAW_KEEP_VLLM spelling %#", (value) => {
+      vi.stubEnv(ENV_KEY, value);
+      expect(normalizeDestroySandboxOptions({}).keepVllm).toBeUndefined();
+    });
+  });
+
   it("preserves typed rebuild options and still accepts compatibility argv", () => {
     expect(
       normalizeRebuildSandboxOptions({

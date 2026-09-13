@@ -249,7 +249,7 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
       group: "Sandbox Management",
       order: 15,
       description: "Stop NIM + delete sandbox",
-      flags: "[--yes|-y|--force] [--cleanup-gateway|--no-cleanup-gateway]",
+      flags: "[--yes|-y|--force] [--cleanup-gateway|--no-cleanup-gateway] [--keep-vllm]",
     },
   ],
   "sandbox:download": [

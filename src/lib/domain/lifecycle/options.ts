@@ -28,13 +28,28 @@ export interface DestroySandboxOptions {
    * decide whether to prompt.
    */
   cleanupGateway?: boolean;
+  /**
+   * Keep the host-global managed vLLM container running after destroying
+   * the last registered sandbox that uses Local vLLM. Resolution order during
+   * normalization: explicit option, then the `--keep-vllm` argv flag, then
+   * `NEMOCLAW_KEEP_VLLM=1`. Anything else retires the container.
+   */
+  keepVllm?: boolean;
 }
 
-function readCleanupGatewayEnv(): boolean | undefined {
-  const raw = (process.env.NEMOCLAW_CLEANUP_GATEWAY ?? "").trim().toLowerCase();
+function readBooleanEnv(name: string): boolean | undefined {
+  const raw = (process.env[name] ?? "").trim().toLowerCase();
   if (raw === "1" || raw === "true" || raw === "yes") return true;
   if (raw === "0" || raw === "false" || raw === "no") return false;
   return undefined;
+}
+
+function readCleanupGatewayEnv(): boolean | undefined {
+  return readBooleanEnv("NEMOCLAW_CLEANUP_GATEWAY");
+}
+
+function readKeepVllmEnv(): boolean | undefined {
+  return readBooleanEnv("NEMOCLAW_KEEP_VLLM");
 }
 
 export interface RebuildSandboxOptions {
@@ -62,16 +77,19 @@ export function normalizeDestroySandboxOptions(
   options: string[] | DestroySandboxOptions = {},
 ): DestroySandboxOptions {
   const envCleanupGateway = readCleanupGatewayEnv();
+  const envKeepVllm = readKeepVllmEnv();
   const nonInteractive = isNonInteractiveEnv();
   if (Array.isArray(options)) {
     const yesIdx = options.lastIndexOf("--cleanup-gateway");
     const noIdx = options.lastIndexOf("--no-cleanup-gateway");
     const cleanupGateway: boolean | undefined =
       yesIdx === -1 && noIdx === -1 ? envCleanupGateway : yesIdx > noIdx;
+    const keepVllm: boolean | undefined = options.includes("--keep-vllm") ? true : envKeepVllm;
     return {
       force: options.includes("--force"),
       yes: options.includes("--yes") || nonInteractive,
       ...(cleanupGateway === undefined ? {} : { cleanupGateway }),
+      ...(keepVllm === undefined ? {} : { keepVllm }),
     };
   }
   return {
@@ -79,6 +97,9 @@ export function normalizeDestroySandboxOptions(
     ...(nonInteractive ? { yes: true } : {}),
     ...(options.cleanupGateway === undefined && envCleanupGateway !== undefined
       ? { cleanupGateway: envCleanupGateway }
+      : {}),
+    ...(options.keepVllm === undefined && envKeepVllm !== undefined
+      ? { keepVllm: envKeepVllm }
       : {}),
   };
 }

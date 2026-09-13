@@ -32,6 +32,7 @@ import {
   cleanupManagedLlamaCppRuntimeForSandbox,
   HOST_LOCAL_VLLM_CONTAINER_NAME,
   HOST_LOCAL_VLLM_MANAGED_LABEL,
+  HOST_LOCAL_VLLM_RUNTIME_RECEIPT_FILE,
   type ManagedLlamaCppCleanupTarget,
   resolveManagedLlamaCppCleanupTarget,
 } from "../../inference/local-model-profile/cleanup";
@@ -2172,17 +2173,24 @@ function removeManagedDistributedVllmRuntime(
 function removeHostLocalModelRuntimes(paths: UninstallPaths, runtime: UninstallRuntime): boolean {
   const sharedRoot = path.dirname(paths.managedSwapMarkerPath);
   const hasLlamaState = runtime.existsSync(path.join(sharedRoot, "managed-llama-cpp"));
-  const hasManagedKey = runtime.existsSync(path.join(sharedRoot, MANAGED_VLLM_API_KEY_FILE));
+  const hasHostLocalVllmState = [
+    MANAGED_VLLM_API_KEY_FILE,
+    HOST_LOCAL_VLLM_RUNTIME_RECEIPT_FILE,
+  ].some((name) => runtime.existsSync(path.join(sharedRoot, name)));
   const hasDistributedReceipt = [
     MANAGED_CLUSTER_VLLM_RUNTIME_RECEIPT_FILE,
     DUAL_STATION_VLLM_RUNTIME_RECEIPT_FILE,
   ].some((name) => runtime.existsSync(path.join(sharedRoot, name)));
-  if (!hasLlamaState && (!hasManagedKey || hasDistributedReceipt)) {
-    if (!hasManagedKey && !hasDistributedReceipt && !removeOrphanedManagedHostLocalVllm(runtime)) {
-      return false;
-    }
-    return true;
+  // A bearerless managed container leaves no key or receipt, and the runtime
+  // cleanup inspects Docker only for recorded vLLM state.
+  if (
+    !hasHostLocalVllmState &&
+    !hasDistributedReceipt &&
+    !removeOrphanedManagedHostLocalVllm(runtime)
+  ) {
+    return false;
   }
+  if (!hasLlamaState && (!hasHostLocalVllmState || hasDistributedReceipt)) return true;
   const result = runtime.runLocalModelRuntimeCleanup({
     env: runtime.env,
     stdio: "inherit",

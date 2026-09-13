@@ -705,4 +705,61 @@ describe("uninstall local model profile cleanup", () => {
     expect(errors.join("\n")).toContain("Host-local model runtime cleanup did not complete");
     expect(runDocker.mock.calls.some(([args]) => args[0] === "rm")).toBe(false);
   });
+
+  it("removes an orphaned bearerless vLLM container before managed llama.cpp cleanup when no vLLM state remains", async () => {
+    const containerId = "d".repeat(64);
+    const runDocker = dockerResults(
+      new Map([[JSON.stringify(ORPHANED_VLLM_INSPECT_ARGS), ok(`${containerId} true\n`)]]),
+    );
+    const runLocalModelRuntimeCleanup = vi.fn(() => ok());
+
+    const result = await runUninstallPlan(
+      { assumeYes: true, deleteModels: false, keepOpenShell: true },
+      {
+        commandExists: (command) => command === "openshell" || command === "docker",
+        env: { HOME: "/tmp/nemoclaw-uninstall-llama-and-bearerless-vllm" } as NodeJS.ProcessEnv,
+        existsSync: (target) => String(target).endsWith("/.nemoclaw/managed-llama-cpp"),
+        isTty: false,
+        log: () => {},
+        run: vi.fn(okWithKnownGatewayList),
+        runDocker,
+        runLocalModelRuntimeCleanup,
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(runDocker).toHaveBeenCalledWith(
+      ["rm", "-f", containerId],
+      expect.objectContaining({ timeout: 10_000 }),
+    );
+    expect(runLocalModelRuntimeCleanup).toHaveBeenCalledOnce();
+    expect(runDocker.mock.invocationCallOrder[0]).toBeLessThan(
+      runLocalModelRuntimeCleanup.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("routes a host-local vLLM runtime receipt through validated cleanup instead of label-only removal", async () => {
+    const runDocker = dockerResults(
+      new Map([[JSON.stringify(ORPHANED_VLLM_INSPECT_ARGS), ok(`${"e".repeat(64)} true\n`)]]),
+    );
+    const runLocalModelRuntimeCleanup = vi.fn(() => ok());
+
+    const result = await runUninstallPlan(
+      { assumeYes: true, deleteModels: false, keepOpenShell: true },
+      {
+        commandExists: (command) => command === "openshell" || command === "docker",
+        env: { HOME: "/tmp/nemoclaw-uninstall-vllm-receipt-only" } as NodeJS.ProcessEnv,
+        existsSync: (target) => String(target).endsWith("/.nemoclaw/host-local-vllm-runtime.json"),
+        isTty: false,
+        log: () => {},
+        run: vi.fn(okWithKnownGatewayList),
+        runDocker,
+        runLocalModelRuntimeCleanup,
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(runLocalModelRuntimeCleanup).toHaveBeenCalledOnce();
+    expect(runDocker.mock.calls.some(([args]) => args[0] === "rm")).toBe(false);
+  });
 });

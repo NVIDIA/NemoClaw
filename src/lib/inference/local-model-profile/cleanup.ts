@@ -67,7 +67,11 @@ import {
 } from "../serving/vllm-host-local-lifecycle";
 import { loadManagedVllmApiKey, managedVllmStateDir } from "../vllm-api-key";
 
-export { HOST_LOCAL_VLLM_CONTAINER_NAME, HOST_LOCAL_VLLM_MANAGED_LABEL };
+export {
+  HOST_LOCAL_VLLM_CONTAINER_NAME,
+  HOST_LOCAL_VLLM_MANAGED_LABEL,
+  HOST_LOCAL_VLLM_RUNTIME_RECEIPT_FILE,
+};
 
 const LLAMA_MANAGED_LABEL = "io.nvidia.nemoclaw.host-local-inference.managed";
 const LLAMA_PROVIDER_LABEL = "io.nvidia.nemoclaw.host-local-inference.provider";
@@ -89,6 +93,7 @@ interface CleanupDeps {
   currentUserId: number | null;
   forceRm: typeof dockerForceRm;
   run: typeof dockerRun;
+  unlink: typeof fs.unlinkSync;
 }
 
 export interface LocalModelRuntimeCleanupOptions {
@@ -174,7 +179,48 @@ function distributedReceiptPresent(stateDir: string): boolean {
   );
 }
 
-function cleanupHostLocalVllm(stateDir: string, deps: CleanupDeps, removed: string[]): void {
+function hostLocalVllmStatePaths(stateDir: string): readonly string[] {
+  return [
+    path.join(stateDir, MANAGED_VLLM_API_KEY_FILE),
+    path.join(stateDir, HOST_LOCAL_VLLM_RUNTIME_RECEIPT_FILE),
+  ];
+}
+
+function cleanupRetiredHostLocalVllmState(
+  stateDir: string,
+  deps: CleanupDeps,
+): { ok: true } | { ok: false; reason: string; remaining: string[] } {
+  const failures: string[] = [];
+  for (const filePath of hostLocalVllmStatePaths(stateDir)) {
+    if (!fs.existsSync(filePath)) continue;
+    try {
+      deps.unlink(filePath);
+    } catch (error) {
+      failures.push(
+        `${path.basename(filePath)}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      // The runtime receipt is last and remains durable authority whenever an
+      // earlier cleanup step fails. A later uninstall can therefore prove and
+      // finish cleanup after the container is already absent.
+      break;
+    }
+  }
+  const remaining = hostLocalVllmStatePaths(stateDir)
+    .filter((filePath) => fs.existsSync(filePath))
+    .map((filePath) => path.basename(filePath));
+  if (failures.length === 0 && remaining.length === 0) return { ok: true };
+  return {
+    ok: false,
+    reason: failures.join("; ") || "private state remained after cleanup",
+    remaining,
+  };
+}
+
+function cleanupHostLocalVllm(
+  stateDir: string,
+  deps: CleanupDeps,
+  removed: string[],
+): HostLocalVllmRetirementResult {
   const hasDistributedReceipt = distributedReceiptPresent(stateDir);
   const inspected = inspectOwnedResource(
     "container",
@@ -183,7 +229,20 @@ function cleanupHostLocalVllm(stateDir: string, deps: CleanupDeps, removed: stri
     "true",
     deps.capture,
   );
-  if (inspected.kind === "absent") return;
+  if (inspected.kind === "absent") {
+    // The key and receipt belong to this container alone; a key that outlives
+    // the container is a credential with no runtime.
+    const cleanup = cleanupRetiredHostLocalVllmState(stateDir, deps);
+    return cleanup.ok
+      ? { status: "absent" }
+      : {
+          status: "partial",
+          containerId: null,
+          reason: cleanup.reason,
+          remaining: cleanup.remaining,
+          removed,
+        };
+  }
   if (inspected.kind === "foreign") {
     throw new Error("host-local vLLM container name is foreign while managed key state remains");
   }
@@ -192,7 +251,9 @@ function cleanupHostLocalVllm(stateDir: string, deps: CleanupDeps, removed: stri
   const authFingerprint = labels?.[HOST_LOCAL_VLLM_AUTH_LABEL];
   const dualRole = labels?.["com.nvidia.nemoclaw.vllm-role"];
   if (dualRole === "head" || dualRole === "worker") {
-    if (hasDistributedReceipt) return;
+    if (hasDistributedReceipt) {
+      return { status: "kept", reason: "distributed vLLM receipt remains" };
+    }
     throw new Error("distributed vLLM container exists without its ownership receipt");
   }
   const apiKey = loadManagedVllmApiKey({ stateDir });
@@ -208,17 +269,23 @@ function cleanupHostLocalVllm(stateDir: string, deps: CleanupDeps, removed: stri
   ) {
     throw new Error("host-local vLLM ownership or authentication does not match persisted state");
   }
-  const servingIdentity = validateHostLocalVllmRuntimeReceipt(
+  validateHostLocalVllmRuntimeReceipt(
     { containerId: inspected.id, labels: labels ?? {}, authFingerprint },
     stateDir,
   );
   const removal = deps.forceRm(inspected.id, { ignoreError: true, suppressOutput: true });
   if (removal.status !== 0) throw new Error("host-local vLLM container removal failed");
   removed.push(`container:${inspected.id}`);
-  if (servingIdentity) {
-    fs.unlinkSync(path.join(stateDir, HOST_LOCAL_VLLM_RUNTIME_RECEIPT_FILE));
-  }
-  fs.unlinkSync(path.join(stateDir, MANAGED_VLLM_API_KEY_FILE));
+  const cleanup = cleanupRetiredHostLocalVllmState(stateDir, deps);
+  return cleanup.ok
+    ? { status: "removed", containerId: inspected.id, removed }
+    : {
+        status: "partial",
+        containerId: inspected.id,
+        reason: cleanup.reason,
+        remaining: cleanup.remaining,
+        removed,
+      };
 }
 
 function requirePrivateManagedState(paths: ManagedLlamaCppStatePaths, uid: number | null): void {
@@ -1363,6 +1430,7 @@ function cleanupManagedLlamaCppRuntimeForSandboxInternal(
         : options.deps.currentUserId,
     forceRm: options.deps?.forceRm ?? dockerForceRm,
     run: options.deps?.run ?? dockerRun,
+    unlink: options.deps?.unlink ?? fs.unlinkSync,
   };
   const removed: string[] = [];
   const preserved: string[] = [];
@@ -1413,21 +1481,152 @@ export function cleanupManagedLlamaCppRuntimeForSandbox(
   return cleanupManagedLlamaCppRuntimeForSandboxInternal(sandboxName, options);
 }
 
+function resolveCleanupDeps(overrides: Partial<CleanupDeps> = {}): CleanupDeps {
+  return {
+    capture: overrides.capture ?? dockerCapture,
+    currentUserId:
+      overrides.currentUserId === undefined
+        ? typeof process.getuid === "function"
+          ? process.getuid()
+          : null
+        : overrides.currentUserId,
+    forceRm: overrides.forceRm ?? dockerForceRm,
+    run: overrides.run ?? dockerRun,
+    unlink: overrides.unlink ?? fs.unlinkSync,
+  };
+}
+
+const DISTRIBUTED_VLLM_LABEL_PREFIX = "com.nvidia.nemoclaw.vllm-";
+
+export type HostLocalVllmRetirementResult =
+  | { status: "absent" }
+  | { status: "kept"; reason: string }
+  | { status: "removed"; containerId: string; removed: string[] }
+  | {
+      status: "partial";
+      containerId: string | null;
+      reason: string;
+      remaining: string[];
+      removed: string[];
+    }
+  | { status: "preserved"; reason: string; removed: string[] };
+
+function removeUnauthenticatedHostLocalVllm(
+  stateDir: string,
+  deps: CleanupDeps,
+  removed: string[],
+): HostLocalVllmRetirementResult {
+  const inspected = inspectOwnedResource(
+    "container",
+    HOST_LOCAL_VLLM_CONTAINER_NAME,
+    HOST_LOCAL_VLLM_MANAGED_LABEL,
+    "true",
+    deps.capture,
+  );
+  if (inspected.kind === "absent") return { status: "absent" };
+  if (inspected.kind === "foreign") {
+    throw new Error("the container does not carry the NemoClaw managed vLLM label");
+  }
+  const config = inspected.row.Config as { Env?: unknown; Labels?: unknown } | undefined;
+  const labels = (config?.Labels ?? {}) as Record<string, unknown>;
+  if (Object.keys(labels).some((label) => label.startsWith(DISTRIBUTED_VLLM_LABEL_PREFIX))) {
+    throw new Error("the container belongs to a distributed vLLM runtime");
+  }
+  if (labels[HOST_LOCAL_VLLM_AUTH_LABEL] !== undefined) {
+    throw new Error("the container is bearer-protected but its persisted API key is missing");
+  }
+  const env = Array.isArray(config?.Env) ? config.Env : [];
+  if (
+    fs.existsSync(path.join(stateDir, HOST_LOCAL_VLLM_RUNTIME_RECEIPT_FILE)) ||
+    env.some((value) => typeof value === "string" && value.startsWith("VLLM_API_KEY="))
+  ) {
+    throw new Error("the container retains authenticated vLLM ownership evidence");
+  }
+  const removal = deps.forceRm(inspected.id, { ignoreError: true, suppressOutput: true });
+  if (removal.status !== 0) throw new Error("Docker could not remove the container");
+  removed.push(`container:${inspected.id}`);
+  return { status: "removed", containerId: inspected.id, removed };
+}
+
+/**
+ * Retire the NemoClaw-managed single-host vLLM container once no registered
+ * sandbox uses it. An authenticated container must match its persisted key and
+ * receipt; a bearerless container must carry the managed label and no
+ * distributed or bearer labels. A distributed receipt keeps its container for
+ * full uninstall; any other container is left in place with the reason.
+ */
+export function retireHostLocalVllmRuntime(
+  options: { homeDir?: string; deps?: Partial<CleanupDeps> } = {},
+): HostLocalVllmRetirementResult {
+  const deps = resolveCleanupDeps(options.deps);
+  const removed: string[] = [];
+  try {
+    const homeDir = canonicalCleanupHomeDir(options.homeDir ?? os.homedir());
+    const vllmStateDir = managedVllmStateDir(homeDir);
+    if (distributedReceiptPresent(vllmStateDir)) {
+      return { status: "kept", reason: "a distributed vLLM receipt owns it until full uninstall" };
+    }
+    if (deps.run(["info"], { ignoreError: true, suppressOutput: true }).status !== 0) {
+      return { status: "preserved", reason: "Docker is unavailable", removed };
+    }
+    if (
+      !fs.existsSync(path.join(vllmStateDir, MANAGED_VLLM_API_KEY_FILE)) &&
+      !fs.existsSync(path.join(vllmStateDir, HOST_LOCAL_VLLM_RUNTIME_RECEIPT_FILE))
+    ) {
+      return removeUnauthenticatedHostLocalVllm(vllmStateDir, deps, removed);
+    }
+    return cleanupHostLocalVllm(vllmStateDir, deps, removed);
+  } catch (error) {
+    return { status: "preserved", reason: (error as Error).message, removed };
+  }
+}
+
+export const HOST_LOCAL_VLLM_PENDING_RETIREMENT_FILE =
+  "host-local-vllm-pending-retirement.json" as const;
+
+function pendingHostLocalVllmRetirementPath(homeDir: string | undefined): string {
+  return path.join(
+    managedVllmStateDir(canonicalCleanupHomeDir(homeDir ?? os.homedir())),
+    HOST_LOCAL_VLLM_PENDING_RETIREMENT_FILE,
+  );
+}
+
+/**
+ * Record that a destroyed Local vLLM sandbox leaves the host-global container
+ * without a registry row. The row is the only proof that the sandbox used the
+ * container, so a destroy retry after an interrupted or preserved retirement
+ * reads this record instead.
+ */
+export function recordPendingHostLocalVllmRetirement(sandboxName: string, homeDir?: string): void {
+  const filePath = pendingHostLocalVllmRetirementPath(homeDir);
+  fs.mkdirSync(path.dirname(filePath), { mode: 0o700, recursive: true });
+  fs.writeFileSync(filePath, `${JSON.stringify({ sandboxName })}\n`, { mode: 0o600 });
+}
+
+/** Sandbox name whose managed vLLM retirement is pending, or null. */
+export function readPendingHostLocalVllmRetirement(homeDir?: string): string | null {
+  try {
+    const parsed = JSON.parse(
+      fs.readFileSync(pendingHostLocalVllmRetirementPath(homeDir), "utf-8"),
+    ) as { sandboxName?: unknown } | null;
+    return typeof parsed?.sandboxName === "string" && parsed.sandboxName !== ""
+      ? parsed.sandboxName
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+/** One settled retirement decision covers the single host-global container, whichever sandbox recorded it. */
+export function clearPendingHostLocalVllmRetirement(homeDir?: string): void {
+  fs.rmSync(pendingHostLocalVllmRetirementPath(homeDir), { force: true });
+}
+
 /** Remove only exact owned host-local runtime resources before uninstall deletes state. */
 export function cleanupLocalModelRuntimes(
   options: LocalModelRuntimeCleanupOptions,
 ): LocalModelRuntimeCleanupResult {
-  const deps: CleanupDeps = {
-    capture: options.deps?.capture ?? dockerCapture,
-    currentUserId:
-      options.deps?.currentUserId === undefined
-        ? typeof process.getuid === "function"
-          ? process.getuid()
-          : null
-        : options.deps.currentUserId,
-    forceRm: options.deps?.forceRm ?? dockerForceRm,
-    run: options.deps?.run ?? dockerRun,
-  };
+  const deps = resolveCleanupDeps(options.deps);
   const removed: string[] = [];
   const preserved: string[] = [];
   try {
@@ -1438,7 +1637,8 @@ export function cleanupLocalModelRuntimes(
       requirePrivateManagedState(llamaPaths, deps.currentUserId);
     }
     const vllmStateRequiresDocker =
-      fs.existsSync(path.join(vllmStateDir, MANAGED_VLLM_API_KEY_FILE)) &&
+      (fs.existsSync(path.join(vllmStateDir, MANAGED_VLLM_API_KEY_FILE)) ||
+        fs.existsSync(path.join(vllmStateDir, HOST_LOCAL_VLLM_RUNTIME_RECEIPT_FILE))) &&
       !distributedReceiptPresent(vllmStateDir);
     if (vllmStateRequiresDocker) {
       const dockerReady =
@@ -1446,7 +1646,12 @@ export function cleanupLocalModelRuntimes(
       if (!dockerReady) {
         throw new Error("Docker is unavailable while host-local vLLM ownership state remains");
       }
-      cleanupHostLocalVllm(vllmStateDir, deps, removed);
+      const vllmCleanup = cleanupHostLocalVllm(vllmStateDir, deps, removed);
+      if (vllmCleanup.status === "partial") {
+        throw new Error(
+          `host-local vLLM private state cleanup is incomplete: ${vllmCleanup.reason}`,
+        );
+      }
     }
     if (statePathExists(llamaPaths.stateDir)) {
       cleanupLlamaCpp(homeDir, deps, removed, {
