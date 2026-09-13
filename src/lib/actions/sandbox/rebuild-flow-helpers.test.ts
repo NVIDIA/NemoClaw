@@ -885,14 +885,13 @@ describe("backupSandboxStateForRebuild failure safety", () => {
 
 describe("warnUnpreservedUserManagedFiles", () => {
   let warnSpy: MockInstance;
-  let logSpy: MockInstance;
   let errorSpy: MockInstance;
   let backupSpy: MockInstance;
   let probeSpy: MockInstance;
 
   beforeEach(() => {
     warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
     errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
     backupSpy = vi

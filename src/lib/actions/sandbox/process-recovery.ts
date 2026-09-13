@@ -16,7 +16,6 @@ import {
 import {
   buildOpenShellRuntimeSelectionEnv,
   captureOpenshell,
-  isCommandTimeout,
   type OpenShellRuntimeSelection,
   runOpenshell,
 } from "../../adapters/openshell/runtime";
@@ -69,7 +68,6 @@ import {
 } from "./forward-recovery";
 import {
   classifyGatewayRestartFailure,
-  type GatewayRestartDeps,
   type GatewayRestartFailureLayer,
   type GatewayRestartResult,
   gatewayTerminalRepairLines,
@@ -94,7 +92,6 @@ import {
   recoverRegisteredRuntimeProviderSandbox,
   relaunchManagedSupervisorSession,
   usesManagedGatewayController,
-  usesLegacyManagedGatewayRecovery,
 } from "./supervisor-relaunch";
 export type { SandboxForwardHealth } from "./forward-health";
 export { resolveSandboxDashboardPort, resolveSandboxLaunchForwardPorts } from "./forward-recovery";

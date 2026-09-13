@@ -1,19 +1,18 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { focusedE2eJobsForChangedFiles } from "./target-inventory.mts";
-import { workflowExecutionSelection } from "./target-inventory.mts";
 import { appendFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 
 import {
+  buildLiveTargetInventory,
   buildLiveTargetMatrix,
   liveTargetGatewayRuntimes,
   type LiveTargetMatrixEntry,
 } from "../../test/e2e/registry/run.ts";
-import { listTargets } from "./target-inventory.mts";
+import { listTargets } from "../../test/e2e/registry/registry.ts";
 import { buildRiskPlan } from "../advisors/risk-plan.mts";
 import {
   type CredentialFreeTestDefinitionRow,
@@ -26,6 +25,7 @@ import {
   SHARED_E2E_JOB_ID,
 } from "./credential-free-tests.mts";
 import { JETSON_DISPATCH_TARGET } from "./jetson-dispatch-contract.mts";
+import { normalizeE2eSelectorIds } from "./selector-aliases.mts";
 import {
   catalogueExclusionReason,
   catalogueMatrix,
@@ -39,8 +39,11 @@ import {
   type E2eExecutionProfile,
   type E2eOptionalCredential,
   pathMatches,
-} from "./target-inventory.mts";
-
+} from "./target-catalogue.mts";
+import {
+  focusedE2eJobsForChangedFiles,
+  readFreeStandingJobsInventory,
+} from "./workflow-boundary.mts";
 import {
   e2eExecutionLabel,
   type E2eExecutionRow,
@@ -124,8 +127,6 @@ const FULL_SUITE_OWNING_PATHS = [
   "test/e2e/fixtures/",
   "tools/e2e/live-vitest-invocation.mts",
   "tools/e2e/workflow-plan.mts",
-  "tools/e2e/target-inventory.mts",
-  "tools/e2e/target-definitions/",
 ] as const;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -178,12 +179,14 @@ function isLiveTargetMatrixEntry(value: unknown): value is LiveTargetMatrixEntry
       "label",
       "onboarding",
       "observableOutcome",
+      "pendingRuntimeSuites",
       "platform",
       "requiredSecrets",
       "runtime_provider",
       "coverage_variant",
       "runner",
       "runtime",
+      "suites",
       "supportReasons",
       "supported",
       "timeout_minutes",
@@ -218,8 +221,10 @@ function isLiveTargetMatrixEntry(value: unknown): value is LiveTargetMatrixEntry
     typeof value.timeout_minutes === "number" &&
     Number.isSafeInteger(value.timeout_minutes) &&
     value.timeout_minutes > 0 &&
+    isStringArray(value.suites) &&
     isStringArray(value.requiredSecrets) &&
     isStringArray(value.supportReasons) &&
+    isStringArray(value.pendingRuntimeSuites) &&
     hasValidExecutionMetadata(value)
   );
 }
@@ -475,7 +480,7 @@ function registryTargetsForChangedFiles(
 }
 
 function workflowJobRuntimeProviders(
-  inventory: ReturnType<typeof workflowExecutionSelection>,
+  inventory: ReturnType<typeof readFreeStandingJobsInventory>,
   job: string,
   gatewayRuntimes: readonly E2eGatewayRuntime[],
 ): E2eRuntimeProvider[] {
@@ -486,7 +491,7 @@ function workflowJobRuntimeProviders(
 }
 
 function runtimeProvidersByJob(
-  inventory: ReturnType<typeof workflowExecutionSelection>,
+  inventory: ReturnType<typeof readFreeStandingJobsInventory>,
   jobs: readonly string[],
   gatewayRuntimes: readonly E2eGatewayRuntime[],
   sharedRows: readonly CredentialFreeTestMatrixRow[] = [],
@@ -517,14 +522,7 @@ function selectorIds(value: string | undefined, label: "jobs" | "targets"): stri
       `Invalid ${label} input; use comma-separated ids containing only letters, numbers, underscores, and hyphens`,
     );
   }
-  return [
-    ...new Set(
-      value
-        .split(",")
-        .map((id) => id.trim())
-        .filter(Boolean),
-    ),
-  ];
+  return normalizeE2eSelectorIds(value.split(","));
 }
 
 function selectTestRows(
@@ -540,7 +538,7 @@ type E2eWorkflowPlanWithoutCoverage = Omit<E2eWorkflowPlan, "coverageMatrix">;
 
 function coverageMatrixForPlan(
   plan: E2eWorkflowPlanWithoutCoverage,
-  inventory: ReturnType<typeof workflowExecutionSelection>,
+  inventory: ReturnType<typeof readFreeStandingJobsInventory>,
 ): E2eExecutionRow[] {
   const catalogueRows = E2E_EXECUTION_PROFILES.flatMap((profile) =>
     plan.catalogueMatrices[profile].map((row) => ({
@@ -588,7 +586,7 @@ function coverageMatrixForPlan(
 
 function withCoverageMatrix(
   plan: E2eWorkflowPlanWithoutCoverage,
-  inventory: ReturnType<typeof workflowExecutionSelection>,
+  inventory: ReturnType<typeof readFreeStandingJobsInventory>,
 ): E2eWorkflowPlan {
   return {
     ...plan,
@@ -597,7 +595,7 @@ function withCoverageMatrix(
 }
 
 export function releaseRequiredWorkflowJobs(): string[] {
-  const inventory = workflowExecutionSelection();
+  const inventory = readFreeStandingJobsInventory();
   const sharedTestsRun = discoverCredentialFreeTests().length > 0;
   const liveTargetsRun = buildLiveTargetMatrix().length > 0;
   const catalogueJobs = E2E_EXECUTION_PROFILES.filter((profile) =>
@@ -647,7 +645,7 @@ export function buildE2eWorkflowPlan(
     }
   }
 
-  const inventory = workflowExecutionSelection();
+  const inventory = readFreeStandingJobsInventory();
   const jetsonDispatchSelected =
     (jobs.length === 1 && jobs[0] === JETSON_DISPATCH_TARGET && targets.length === 0) ||
     (targets.length === 1 && targets[0] === JETSON_DISPATCH_TARGET && jobs.length === 0);
@@ -672,15 +670,11 @@ export function buildE2eWorkflowPlan(
   );
 
   if (jobs.length > 0) {
-    const allowedJobs = new Set([
-      ...inventory.allowedJobs,
-      ...inventory.workflowJobs,
-      ...catalogueIds,
-    ]);
+    const allowedJobs = new Set([...inventory.allowedJobs, ...catalogueIds]);
     for (const job of jobs) {
       if (!allowedJobs.has(job)) {
         throw new Error(
-          `Unknown E2E test ID: ${job}\nAllowed test IDs: ${[...allowedJobs].sort().join(",")}`,
+          `Unknown E2E test ID: ${job}\nAllowed test IDs: ${inventory.allowedJobs.join(",")}`,
         );
       }
     }
@@ -973,7 +967,7 @@ export function validateE2eWorkflowPlan(plan: unknown): E2eWorkflowPlan {
   const { coverageMatrix, ...planWithoutCoverage } = plan as E2eWorkflowPlan;
   const expectedCoverageMatrix = coverageMatrixForPlan(
     planWithoutCoverage,
-    workflowExecutionSelection(),
+    readFreeStandingJobsInventory(),
   );
   if (!isDeepStrictEqual(coverageMatrix, expectedCoverageMatrix)) {
     throw new Error(
@@ -1008,7 +1002,7 @@ export function withoutUnavailableOptionalCredentialTargets(
   const { coverageMatrix: _coverageMatrix, ...planWithoutCoverage } = plan;
   return withCoverageMatrix(
     { ...planWithoutCoverage, catalogueMatrices },
-    workflowExecutionSelection(),
+    readFreeStandingJobsInventory(),
   );
 }
 
@@ -1030,7 +1024,7 @@ function runtimeExclusion(
 
 function runtimeExclusionsForPlan(
   plan: E2eWorkflowPlan,
-  inventory: ReturnType<typeof workflowExecutionSelection>,
+  inventory: ReturnType<typeof readFreeStandingJobsInventory>,
 ): RuntimeExclusion[] {
   const catalogueIds = new Set(
     Object.values(plan.catalogueMatrices)
@@ -1089,11 +1083,12 @@ export function renderE2eWorkflowPlanSummary(
   if (options.includeCoverageAudit === false) {
     return `${lines.join("\n")}\n`;
   }
-  const inventory = workflowExecutionSelection();
+  const inventory = readFreeStandingJobsInventory();
   const explicitOnlyRows = inventory.coverageRows.filter((row) =>
     plan.explicitOnlyJobs.includes(row.id),
   );
   const runtimeExclusions = runtimeExclusionsForPlan(plan, inventory);
+  const unsupportedDeclarations = buildLiveTargetInventory().filter((row) => !row.supported);
   const outcomeRows = new Map<string, E2eExecutionRow[]>();
   for (const row of plan.coverageMatrix) {
     const rows = outcomeRows.get(row.observableOutcome) ?? [];
@@ -1142,6 +1137,24 @@ export function renderE2eWorkflowPlanSummary(
       `| \`${e2eExecutionLabel(row)}\` | ${row.agentRuntime} | ${row.observableOutcome} | ${row.environmentOrInferenceEndpoint} | Explicit dispatch only; excluded from the default release matrix | ${row.unresolvedReason} |`,
     );
   }
+  lines.push(
+    "",
+    "### Unsupported or unresolved typed declarations",
+    "",
+    "| Declaration | Agent runtime | Observable outcome | Environment or inference endpoint | Missing executable ownership |",
+    "| --- | --- | --- | --- | --- |",
+  );
+  for (const row of unsupportedDeclarations) {
+    lines.push(
+      `| \`${row.id}\` | ${row.agentRuntime} | ${row.observableOutcome} | ${row.environmentOrInferenceEndpoint} | ${row.supportReasons.join("; ")} |`,
+    );
+  }
+  lines.push(
+    "",
+    "### Combinatorial gaps",
+    "",
+    `The ${unsupportedDeclarations.length} inert typed declarations above are not executable matrix cells. #8285 owns the decision on the inert cross-runtime foundation, and #8286 owns executable-only registry cleanup after that decision. Unlisted Cartesian-product cells are not required without an accepted supported combination. This migration removes no execution, so no duplicate-to-retained-evidence mapping is required.`,
+  );
   return `${lines.join("\n")}\n`;
 }
 

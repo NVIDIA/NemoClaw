@@ -48,20 +48,9 @@ function proofJob(): WorkflowJob {
   return job!;
 }
 
-function delegationJob(): WorkflowJob {
-  const job = workflow().jobs["portable-cpu-delegation"];
-  expect(job).toBeDefined();
-  return job!;
-}
-
 function namedStep(name: string): WorkflowStep {
   const step = proofJob().steps?.find((candidate) => candidate.name === name);
   expect(step, `missing Podman CPU proof step '${name}'`).toBeDefined();
-  return step!;
-}
-function namedDelegationStep(name: string): WorkflowStep {
-  const step = delegationJob().steps?.find((candidate) => candidate.name === name);
-  expect(step, `missing CPU delegation proof step '${name}'`).toBeDefined();
   return step!;
 }
 type RecordedCommand = {
