@@ -115,11 +115,11 @@ describe("ensureMessagingHostForwardIfConfigured", () => {
     ).toBeNull();
   });
 
-  it("starts the active messaging host forward", () => {
+  it("starts the active messaging host forward", async () => {
     const ensureForward = vi.fn(() => true);
     const note = vi.fn();
 
-    const ok = ensureMessagingHostForwardIfConfigured({
+    const ok = await ensureMessagingHostForwardIfConfigured({
       sandboxName: "demo",
       plan: makePlan(),
       ensureForward,
@@ -133,11 +133,11 @@ describe("ensureMessagingHostForwardIfConfigured", () => {
     );
   });
 
-  it("hydrates compact persisted plans before starting the host forward", () => {
+  it("hydrates compact persisted plans before starting the host forward", async () => {
     const ensureForward = vi.fn(() => true);
     const note = vi.fn();
 
-    const ok = ensureMessagingHostForwardIfConfigured({
+    const ok = await ensureMessagingHostForwardIfConfigured({
       sandboxName: "ms",
       plan: makeCompactTeamsPlan(),
       ensureForward,
@@ -151,11 +151,11 @@ describe("ensureMessagingHostForwardIfConfigured", () => {
     );
   });
 
-  it("skips disabled messaging channels", () => {
+  it("skips disabled messaging channels", async () => {
     const ensureForward = vi.fn(() => true);
     const note = vi.fn();
 
-    const ok = ensureMessagingHostForwardIfConfigured({
+    const ok = await ensureMessagingHostForwardIfConfigured({
       sandboxName: "demo",
       plan: makePlan({ active: false, disabled: true }),
       ensureForward,
@@ -167,11 +167,11 @@ describe("ensureMessagingHostForwardIfConfigured", () => {
     expect(note).not.toHaveBeenCalled();
   });
 
-  it("returns false when the forward cannot be started", () => {
+  it("returns false when the forward cannot be started", async () => {
     const ensureForward = vi.fn(() => false);
     const note = vi.fn();
 
-    const ok = ensureMessagingHostForwardIfConfigured({
+    const ok = await ensureMessagingHostForwardIfConfigured({
       sandboxName: "demo",
       plan: makePlan(),
       ensureForward,
@@ -182,11 +182,11 @@ describe("ensureMessagingHostForwardIfConfigured", () => {
     expect(note).not.toHaveBeenCalled();
   });
 
-  it("reports and exits when the forward cannot be started", () => {
+  it("reports and exits when the forward cannot be started", async () => {
     const ensureForward = vi.fn(() => false);
     const errors: string[] = [];
 
-    expect(() =>
+    await expect(
       ensureMessagingHostForwardIfConfigured({
         sandboxName: "demo",
         plan: makePlan(),
@@ -204,7 +204,7 @@ describe("ensureMessagingHostForwardIfConfigured", () => {
           ],
         },
       }),
-    ).toThrow("process.exit(1)");
+    ).rejects.toThrow("process.exit(1)");
 
     expect(errors.join("\n")).toContain("rollback:manual");
     expect(errors.join("\n")).toContain(

@@ -1659,7 +1659,7 @@ function isHermesAgent(
 }
 
 /** Recover a classified dashboard listener without signalling an unverified owner. */
-function recoverUnhealthyDashboardForward(
+async function recoverUnhealthyDashboardForward(
   sandboxName: string,
   listener: SandboxForwardListener,
   {
@@ -1667,7 +1667,7 @@ function recoverUnhealthyDashboardForward(
     isWsl,
     runtimeSelection,
   }: { quiet: boolean; isWsl?: boolean; runtimeSelection?: OpenShellRuntimeSelection },
-): { recovered: boolean; failureDetail: string } {
+): Promise<{ recovered: boolean; failureDetail: string }> {
   if (!quiet) {
     console.log("");
     if (listener === "unverified") {
@@ -1689,7 +1689,7 @@ function recoverUnhealthyDashboardForward(
     };
   }
   return {
-    recovered: ensureSandboxPortForward(sandboxName, { isWsl, runtimeSelection }),
+    recovered: await ensureSandboxPortForward(sandboxName, { isWsl, runtimeSelection }),
     failureDetail: "the primary dashboard/API host forward could not be re-established",
   };
 }
@@ -1803,22 +1803,21 @@ async function checkAndRecoverSandboxProcessesWithoutHostLock(
     );
     const forwardHealthy = forwardListener === "owned";
     if (forwardHealthy === false) {
-      const { recovered: forwardRecovered, failureDetail: forwardRecoveryFailureDetail } = measure(
-        "forward",
-        () =>
+      const { recovered: forwardRecovered, failureDetail: forwardRecoveryFailureDetail } =
+        await measureAsync("forward", () =>
           recoverUnhealthyDashboardForward(sandboxName, forwardListener, {
             quiet,
             isWsl: isWslOverride,
             runtimeSelection,
           }),
-      );
-      const dashboardForwardRecovered = measure("forward", () =>
+        );
+      const dashboardForwardRecovered = await measureAsync("forward", () =>
         ensureHermesDashboardPortForwardIfEnabled(sandboxName, runtimeSelection),
       );
-      const messagingForwardRecovered = measure("forward", () =>
+      const messagingForwardRecovered = await measureAsync("forward", () =>
         recoverMessagingHostForward(sandboxName, { quiet, runtimeSelection }),
       );
-      const declaredForwardsRecovered = measure("forward", () =>
+      const declaredForwardsRecovered = await measureAsync("forward", () =>
         recoverDeclaredAgentForwardPorts(sandboxName, recoveryPort, {
           quiet,
           runtimeSelection,
@@ -1872,13 +1871,13 @@ async function checkAndRecoverSandboxProcessesWithoutHostLock(
         forwardRecovered: forwardRecovered || anyAuxiliaryRecovered(auxiliaryResults),
       };
     }
-    const dashboardForwardRecovered = measure("forward", () =>
+    const dashboardForwardRecovered = await measureAsync("forward", () =>
       ensureHermesDashboardPortForwardIfEnabled(sandboxName, runtimeSelection),
     );
-    const messagingForwardRecovered = measure("forward", () =>
+    const messagingForwardRecovered = await measureAsync("forward", () =>
       recoverMessagingHostForward(sandboxName, { quiet, runtimeSelection }),
     );
-    const declaredForwardsRecovered = measure("forward", () =>
+    const declaredForwardsRecovered = await measureAsync("forward", () =>
       recoverDeclaredAgentForwardPorts(sandboxName, recoveryPort, { quiet, runtimeSelection }),
     );
     const auxiliaryResults = [
@@ -2123,7 +2122,7 @@ async function checkAndRecoverSandboxProcessesWithoutHostLock(
       );
       if (finalizationFailure) return finalizationFailure;
     }
-    const forwardRecovered = measure("forward", () =>
+    const forwardRecovered = await measureAsync("forward", () =>
       ensureSandboxPortForward(sandboxName, {
         afterSuccess: confirmRelaunchedManagedHealthForForward ?? undefined,
         beforeStart: confirmRelaunchedManagedHealthForForward ?? undefined,
@@ -2144,13 +2143,13 @@ async function checkAndRecoverSandboxProcessesWithoutHostLock(
             : `the managed supervisor health check for the pinned replacement container did not pass during the primary dashboard/API host forward check. Managed supervisor health check result: ${relaunchedManagedHealth.failure.layer}: ${relaunchedManagedHealth.failure.detail}`,
       };
     }
-    const dashboardForwardRecovered = measure("forward", () =>
+    const dashboardForwardRecovered = await measureAsync("forward", () =>
       ensureHermesDashboardPortForwardIfEnabled(sandboxName, runtimeSelection),
     );
-    const messagingForwardRecovered = measure("forward", () =>
+    const messagingForwardRecovered = await measureAsync("forward", () =>
       recoverMessagingHostForward(sandboxName, { quiet, runtimeSelection }),
     );
-    const declaredForwardsRecovered = measure("forward", () =>
+    const declaredForwardsRecovered = await measureAsync("forward", () =>
       recoverDeclaredAgentForwardPorts(sandboxName, recoveryPort, { quiet, runtimeSelection }),
     );
     const auxiliaryResults = [

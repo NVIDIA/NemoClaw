@@ -4,6 +4,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import { lstatSync, readFileSync, readdirSync, readlinkSync, realpathSync } from "node:fs";
 import path from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 
 import { isValidName } from "../../name-validation";
 import { buildOpenShellSubprocessEnv } from "./resolve-shared";
@@ -29,7 +30,7 @@ export interface ForwardServiceTarget {
 
 export interface ForwardServiceLaunchOptions {
   readonly isReachable?: (port: number) => boolean;
-  readonly sleep?: (milliseconds: number) => void;
+  readonly sleep?: (milliseconds: number) => void | Promise<void>;
   readonly sourceEnvironment?: NodeJS.ProcessEnv;
   readonly spawnDetached?: (
     executable: string,
@@ -45,6 +46,11 @@ export interface ForwardServiceLaunchOptions {
 export interface ForwardServiceChild {
   readonly pid?: number;
   unref(): void;
+  on?(event: "error", listener: (error: Error) => void): unknown;
+  on?(
+    event: "exit",
+    listener: (code: number | null, signal: NodeJS.Signals | null) => void,
+  ): unknown;
 }
 
 export interface ForwardServiceProcessTreeTerminationDependencies {
@@ -488,10 +494,10 @@ export function terminateForwardServiceProcessTree(
 }
 
 /** Launch one foreground OpenShell service forward as a detached host child. */
-export function launchForwardService(
+export async function launchForwardService(
   target: ForwardServiceTarget,
   options: ForwardServiceLaunchOptions = {},
-): void {
+): Promise<void> {
   validateForwardServiceTarget(target);
   const isReachable = options.isReachable ?? probeLocalForwardListener;
   if (isReachable(target.localPort)) {
@@ -501,7 +507,7 @@ export function launchForwardService(
     options.spawnDetached ??
     ((executable, args, environment) =>
       spawn(executable, [...args], { detached: true, env: environment, stdio: "ignore" }));
-  const child = spawnDetached(
+  const child: ForwardServiceChild = spawnDetached(
     target.executable,
     buildForwardServiceArgs(target),
     forwardServiceEnvironment(
@@ -511,13 +517,33 @@ export function launchForwardService(
     ),
   );
 
-  const sleep =
-    options.sleep ?? ((milliseconds: number) => Atomics.wait(sleepBuffer, 0, 0, milliseconds));
+  let childFailure: Error | undefined;
+  let notifyFailure: () => void = () => {};
+  const failed = new Promise<void>((resolve) => {
+    notifyFailure = resolve;
+  });
+  // Spawn failures arrive asynchronously, including failures with no child PID.
+  // Keep the error listener installed after handoff so a late child error cannot
+  // become an uncaught EventEmitter error in the caller.
+  child.on?.("error", (error) => {
+    childFailure ??= error;
+    notifyFailure();
+  });
+  child.on?.("exit", (code, signal) => {
+    childFailure ??= new Error(
+      `OpenShell forward service exited before binding ${target.localHost}:${String(target.localPort)} (${signal ? `signal ${signal}` : `status ${String(code)}`})`,
+    );
+    notifyFailure();
+  });
   const deadline = Date.now() + (options.timeoutMs ?? START_TIMEOUT_MS);
   let startupError = new Error(
     `OpenShell forward service did not bind ${target.localHost}:${String(target.localPort)}`,
   );
   while (Date.now() < deadline) {
+    if (childFailure) {
+      startupError = childFailure;
+      break;
+    }
     if (isReachable(target.localPort)) {
       try {
         options.verifyReady?.();
@@ -528,16 +554,30 @@ export function launchForwardService(
       child.unref();
       return;
     }
-    sleep(POLL_INTERVAL_MS);
+    const controller = new AbortController();
+    try {
+      await Promise.race([
+        options.sleep
+          ? options.sleep(POLL_INTERVAL_MS)
+          : delay(POLL_INTERVAL_MS, undefined, { signal: controller.signal }),
+        failed,
+      ]);
+    } finally {
+      controller.abort();
+    }
   }
+  startupError = childFailure ?? startupError;
   try {
-    (options.terminateProcessTree ?? terminateForwardServiceProcessTree)(child);
+    // A failed spawn never created a process group to terminate.
+    if (child.pid !== undefined) {
+      (options.terminateProcessTree ?? terminateForwardServiceProcessTree)(child);
+    }
     if (isReachable(target.localPort)) {
       throw new Error("OpenShell forward service listener remained reachable after termination");
     }
   } catch (cleanupError) {
     throw new ForwardServiceStartupCleanupError(startupError, cleanupError);
   }
-  // Keep the failed child referenced so Node reaps it after this synchronous stack unwinds.
+  // Keep the failed child referenced until Node observes its exit.
   throw startupError;
 }
