@@ -1894,6 +1894,77 @@ export async function finishRendererCaptureOwner(options: {
   }
 }
 
+export async function completeBrowserFirstHostControl(
+  options: {
+    browserFirst: boolean;
+    failure: unknown;
+    attempted: boolean;
+    cleanup: Record<string, boolean>;
+    browserDiagnosticChildrenClosed: boolean;
+    request: ReturnType<typeof personalRequest> | undefined;
+    receipt: Record<string, unknown>;
+    runtime: string;
+    launcher: string;
+    hostControllerPython: string;
+    environment: NodeJS.ProcessEnv;
+    output: string;
+    errors: unknown[];
+  },
+  run: typeof hostBrowserDiagnostic = hostBrowserDiagnostic,
+) {
+  const {
+    browserFirst,
+    failure,
+    attempted,
+    cleanup,
+    browserDiagnosticChildrenClosed,
+    request,
+    receipt,
+    runtime,
+    launcher,
+    hostControllerPython,
+    environment,
+    output,
+    errors,
+  } = options;
+  if (
+    browserFirst &&
+    failure &&
+    attempted &&
+    cleanup.executorClosed &&
+    cleanup.hostDiagnosticChildrenClosed &&
+    browserDiagnosticChildrenClosed &&
+    request
+  ) {
+    // Functional host control runs only after the contained browser-first workload has exited.
+    // It uses the same canonical runtime, fresh owned state and the existing host owner.
+    cleanup.hostDiagnosticChildrenClosed = false;
+    try {
+      const python = (receipt.derivedRuntime as any).criticalFiles.find(
+        (file: any) => file.path === "hermes-agent/venv/Scripts/python.exe",
+      );
+      const diagnostic = await run(
+        request,
+        runtime,
+        path.join(launcher, "probe-personal-python.py"),
+        hostControllerPython,
+        environment,
+        path.join(output, "browser-first-host-control"),
+        python,
+      );
+      receipt.browserFirstHostControl = diagnostic;
+      cleanup.hostDiagnosticChildrenClosed = diagnostic.childrenClosed === true;
+      cleanup.browserDiagnosticComplete &&= diagnostic.cleanupComplete === true;
+      if (!diagnostic.cleanupComplete)
+        errors.push({
+          browserFirstHostControl: diagnostic.error ?? "Host control cleanup incomplete",
+        });
+    } catch (error) {
+      errors.push({ browserFirstHostControl: errorDetail(error) });
+    }
+  }
+}
+
 async function main() {
   if (
     process.platform !== "win32" ||
@@ -2477,8 +2548,23 @@ async function main() {
       browserDiagnosticChildrenClosed &&= recorderSafe;
       cleanup.hostDiagnosticChildrenClosed &&= recorderSafe;
     }
+    await completeBrowserFirstHostControl({
+      browserFirst,
+      failure,
+      attempted,
+      cleanup,
+      browserDiagnosticChildrenClosed,
+      request,
+      receipt,
+      runtime,
+      launcher,
+      hostControllerPython,
+      environment,
+      output,
+      errors,
+    });
     receipt.supplementalDiagnosticDisposition = browserFirst
-      ? "browser-first scheduling diagnostic only; supplemental replays skipped"
+      ? "browser-first scheduling diagnostic; failed contained workload gets one existing functional host control; other replays skipped"
       : rendererPostmortem
         ? "first-workload postmortem diagnostic only; supplemental replays skipped"
         : rendererWerBuildFile

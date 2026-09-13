@@ -14,6 +14,7 @@ import {
   validateRendererPostmortemOwner,
   validatePersonalDiagnosticModes,
   finishRendererCaptureOwner,
+  completeBrowserFirstHostControl,
   personalRequest,
   directBrowserRequest,
   primaryDebugRequest,
@@ -1733,4 +1734,70 @@ test("renderer context admission binds current source, AMD64 bytes and unexecute
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }
+});
+
+test("host comparison starts only after every prior owner closes", async () => {
+  const options = {
+    browserFirst: true,
+    failure: new Error("primary browser failure"),
+    attempted: true,
+    cleanup: {
+      executorClosed: true,
+      hostDiagnosticChildrenClosed: true,
+      browserDiagnosticComplete: true,
+    },
+    browserDiagnosticChildrenClosed: false,
+    request: {} as any,
+    receipt: {} as Record<string, unknown>,
+    runtime: "C:\\runtime",
+    launcher: "C:\\launcher",
+    hostControllerPython: "C:\\python.exe",
+    environment: {},
+    output: "C:\\output",
+    errors: [] as unknown[],
+  };
+  let calls = 0;
+  await completeBrowserFirstHostControl(options, async () => {
+    calls++;
+    return {} as any;
+  });
+  assert.equal(calls, 0);
+  assert.equal(options.cleanup.hostDiagnosticChildrenClosed, true);
+  assert.equal(options.errors.length, 0);
+});
+
+test("uncertain host control retains ownership and the original browser error", async () => {
+  const failure = new Error("original contained browser failure");
+  const options = {
+    browserFirst: true,
+    failure,
+    attempted: true,
+    cleanup: {
+      executorClosed: true,
+      hostDiagnosticChildrenClosed: true,
+      browserDiagnosticComplete: true,
+    },
+    browserDiagnosticChildrenClosed: true,
+    request: {} as any,
+    receipt: {
+      derivedRuntime: {
+        criticalFiles: [
+          { path: "hermes-agent/venv/Scripts/python.exe", bytes: 1, sha256: "a".repeat(64) },
+        ],
+      },
+    } as Record<string, unknown>,
+    runtime: "C:\\runtime",
+    launcher: "C:\\launcher",
+    hostControllerPython: "C:\\python.exe",
+    environment: {},
+    output: "C:\\output",
+    errors: [] as unknown[],
+  };
+  await completeBrowserFirstHostControl(options, async () => {
+    assert.equal(options.cleanup.hostDiagnosticChildrenClosed, false);
+    throw new Error("host control receipt unavailable");
+  });
+  assert.equal(options.failure, failure);
+  assert.equal(options.cleanup.hostDiagnosticChildrenClosed, false);
+  assert.equal(options.errors.length, 1);
 });
