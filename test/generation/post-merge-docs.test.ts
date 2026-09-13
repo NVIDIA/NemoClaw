@@ -350,7 +350,7 @@ const credentials =
   "GH_TOKEN GITHUB_TOKEN NVIDIA_API_KEY OPENAI_API_KEY POST_MERGE_DOCS_API_KEY PR_REVIEW_ADVISOR_API_KEY".split(
     " ",
   );
-type RunnerStage = "create" | "agent" | "export" | "download";
+type RunnerStage = "create" | "bootstrap" | "agent" | "export" | "download";
 function runnerFixture(phase: "author" | "review", startTag = rangeStartTag) {
   const { mainSha, source } = sourceFixture();
   fs.writeFileSync(path.join(source, "docs/guide.mdx"), "later\n");
@@ -396,10 +396,14 @@ function runnerTools(
     author: (repository: string) =>
       fs.writeFileSync(path.join(repository, "docs/guide.mdx"), "authored\n"),
     agentArgs: [] as readonly string[],
+    bootstrapArgs: [] as readonly string[],
     createArgs: [] as readonly string[],
     deleted: false,
   };
   const handlers: Record<string, (args: readonly string[]) => unknown> = {
+    bootstrap: (args) => {
+      state.bootstrapArgs = args;
+    },
     create: (args) => {
       state.createArgs = args;
       fs.cpSync(path.join(root, "work/repo"), sandbox, { recursive: true });
@@ -441,11 +445,11 @@ function runnerTools(
       state.deleted = true;
     },
   };
-  const commands: Record<string, string> = { bash: "export", node: "agent" };
+  const commands: Record<string, string> = { bash: "export", git: "bootstrap", node: "agent" };
   const run: OpenShellTools["run"] = (_command, args, options) => {
     for (const name of credentials) expect(options.env).not.toHaveProperty(name);
     const executable = path.basename(args[args.indexOf("--") + 1] ?? "");
-    const stage = commands[executable] ?? args[1];
+    const stage = args[1] === "create" ? "create" : (commands[executable] ?? args[1]);
     expect(stage).not.toBe(failure);
     return String(handlers[stage](args) ?? "");
   };
@@ -1029,6 +1033,19 @@ describe("post-merge documentation runner", () => {
     );
     expect(state.createArgs.filter((argument) => argument === "--upload")).toHaveLength(3);
     expect(state.createArgs).not.toContain("--driver-config-json");
+    expect(state.createArgs).not.toContain("--");
+    expect(state.bootstrapArgs).toEqual([
+      "sandbox",
+      "exec",
+      "--name",
+      "docs-author",
+      "--",
+      "/usr/bin/git",
+      "-C",
+      "/sandbox/repo",
+      "status",
+      "--short",
+    ]);
     expect(state.agentArgs.join("\n")).not.toContain("GIT_DIR=");
     expect(state.deleted).toBe(true);
   });
@@ -1056,11 +1073,16 @@ describe("post-merge documentation runner", () => {
       },
     });
     expect(state.createArgs).not.toContain("--upload");
+    expect(state.createArgs).not.toContain("--");
     const policyIndex = state.createArgs.indexOf("--policy");
     expect(state.createArgs[policyIndex + 1]).toBe(
       path.join(input.env.TRUSTED_CHECKOUT, "tools/post-merge-docs/review-policy.yaml"),
     );
-    expect(state.createArgs.slice(-6)).toEqual([
+    expect(state.bootstrapArgs).toEqual([
+      "sandbox",
+      "exec",
+      "--name",
+      "docs-review",
       "--",
       "/usr/bin/git",
       "--git-dir=/sandbox/repo/.git",
@@ -1137,7 +1159,7 @@ describe("post-merge documentation runner", () => {
     expect(() => executePostMergeDocs(input.env, tools)).toThrow("bounded regular file");
     expect(state.deleted).toBe(true);
   });
-  it.each<RunnerStage>(["create", "agent", "export", "download"])(
+  it.each<RunnerStage>(["create", "bootstrap", "agent", "export", "download"])(
     "deletes the sandbox after %s fails",
     (stage) => {
       const input = runnerFixture("author");
@@ -1151,6 +1173,7 @@ describe("post-merge documentation runner", () => {
     const { run, tools } = runnerTools(input);
     tools.run = vi
       .fn<OpenShellTools["run"]>()
+      .mockImplementationOnce(run)
       .mockImplementationOnce(run)
       .mockImplementationOnce(run)
       .mockImplementationOnce(run)
@@ -1171,6 +1194,7 @@ describe("post-merge documentation runner", () => {
     const { run, tools } = runnerTools(input);
     tools.run = vi
       .fn<OpenShellTools["run"]>()
+      .mockImplementationOnce(run)
       .mockImplementationOnce(run)
       .mockImplementationOnce(() => {
         throw new Error("agent failed");
