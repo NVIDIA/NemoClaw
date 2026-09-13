@@ -646,6 +646,22 @@ class SelectedNodeControls(unittest.TestCase):
             adapter._install_prebuilt_node(self.root)
             self.assertNotIn("HERMES_TUI_DIR", os.environ)
 
+    def test_native_edge_cdp_uses_the_canonical_override_without_selecting_chromium(self):
+        self.contract()
+        endpoint = "ws://127.0.0.1:51234/devtools/browser/01234567-abcd"
+        with mock.patch.dict(os.environ, {"BROWSER_CDP_URL": endpoint}, clear=True):
+            adapter._install_prebuilt_node(self.root)
+            self.assertEqual(os.environ["BROWSER_CDP_URL"], endpoint)
+            self.assertNotIn("AGENT_BROWSER_EXECUTABLE_PATH", os.environ)
+            self.assertNotIn("PLAYWRIGHT_BROWSERS_PATH", os.environ)
+        with mock.patch.dict(
+            os.environ,
+            {"BROWSER_CDP_URL": "ws://localhost:51234/devtools/browser/foreign"},
+            clear=True,
+        ):
+            with self.assertRaises(adapter.NativeStartupRefusal):
+                adapter._install_prebuilt_node(self.root)
+
     def test_missing_prebuilt_file_does_not_trigger_source_fallback(self):
         record = self.contract()
         (self.root / record["tui"]).unlink()

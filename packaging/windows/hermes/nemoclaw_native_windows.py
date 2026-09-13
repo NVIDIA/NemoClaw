@@ -201,8 +201,20 @@ def _install_prebuilt_node(root: Path) -> None:
     # Official Docker/Nix prebuilt branches bypass source compilation and lazy npm.
     os.environ["HERMES_TUI_DIR"] = str(files["tui"].parent.parent)
     os.environ["HERMES_WEB_DIST"] = str(files["web"].parent)
-    os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(root / "browsers")
-    os.environ["AGENT_BROWSER_EXECUTABLE_PATH"] = str(files["chromium"])
+    edge_cdp = os.environ.get("BROWSER_CDP_URL")
+    if edge_cdp:
+        if not re.fullmatch(
+            r"ws://127\.0\.0\.1:[1-9][0-9]{0,4}/devtools/browser/[A-Za-z0-9-]{1,128}",
+            edge_cdp,
+        ):
+            _refuse("the native Microsoft Edge CDP endpoint is invalid.")
+        # The official Hermes browser interface connects through the guarded
+        # CDP override. No local Chrome/Chromium executable is selected.
+        os.environ.pop("PLAYWRIGHT_BROWSERS_PATH", None)
+        os.environ.pop("AGENT_BROWSER_EXECUTABLE_PATH", None)
+    else:
+        os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(root / "browsers")
+        os.environ["AGENT_BROWSER_EXECUTABLE_PATH"] = str(files["chromium"])
 
 
 class _TempfileOs:

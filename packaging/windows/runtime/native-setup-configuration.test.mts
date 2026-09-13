@@ -216,6 +216,18 @@ function writeGeneratedHermesConfiguration(home: string, options: NativeOptions)
   return parseYaml(fs.readFileSync(path.join(home, "config.yaml"), "utf8"));
 }
 
+test("Hermes starts a distinct authenticated Edge CDP tunnel before Python", () => {
+  const source = interactiveWorkloadSource();
+  const browserTunnel = source.indexOf('required("NEMOCLAW_BROWSER_RELAY_ROOT")');
+  const endpoint = source.indexOf("process.env.BROWSER_CDP_URL =");
+  const hermes = source.indexOf('if (agent === "hermes") {', endpoint);
+  assert(browserTunnel > 0 && endpoint > browserTunnel);
+  assert(hermes > endpoint);
+  assert(source.includes('required("NEMOCLAW_BROWSER_RELAY_TOKEN")'));
+  assert(source.includes('required("NEMOCLAW_BROWSER_CDP_PATH")'));
+  assert(!source.includes("AGENT_BROWSER_EXECUTABLE_PATH ="));
+});
+
 test("unchecked Hermes search replaces persisted enables with the stable disabled-web contract", () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "native-hermes-search-off-"));
   try {

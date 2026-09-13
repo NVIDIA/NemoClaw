@@ -396,6 +396,9 @@ pub(crate) fn run_managed(
     } else {
         command.env_remove("NEMOCLAW_RUNTIME_BROWSER_PIPE");
     }
+    // The trusted host runtime and every descendant are assigned to this
+    // retained kill-on-close job before the runtime begins executing.
+    command.env("NEMOCLAW_RUNTIME_JOB_OWNED", "1");
     let startup_gate = if provisional_service {
         Some(service_startup::Gate::start(job.0)?)
     } else {

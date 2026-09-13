@@ -59,6 +59,7 @@ on:
           - runtime
           - npm-shims
           - export-controls
+          - edge-host-prerequisite
           - personal-candidate
           - personal-browser-first
           - personal-cold-job
@@ -786,6 +787,40 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  official-hermes-edge-host-prerequisite:
+    name: Native ARM64 Microsoft Edge prerequisite
+    if: ${{ github.event_name == 'workflow_dispatch' && !inputs.run_windows_native_installer && inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'edge-host-prerequisite' && !inputs.test_native_windows_runtime && !inputs.profile_native_windows }}
+    runs-on: windows-11-vs2026-arm
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Check out the Windows Edge prerequisite
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Verify standard signed native ARM64 Microsoft Edge
+        shell: pwsh
+        run: |
+          $output = "$env:RUNNER_TEMP\native-edge-prerequisite"
+          $null = New-Item -ItemType Directory -Path $output
+          node --experimental-strip-types --input-type=module -e @'
+          import fs from "node:fs";
+          import path from "node:path";
+          import { detectNativeEdge } from "./packaging/windows/runtime/native-edge-browser.mts";
+          if (process.platform !== "win32" || process.arch !== "arm64") throw new Error("Expected native Windows ARM64 Node.");
+          const identity = await detectNativeEdge();
+          fs.writeFileSync(path.join(process.env.RUNNER_TEMP, "native-edge-prerequisite", "edge-identity.json"), JSON.stringify({ ...identity, executed: false }, null, 2) + "\n", { flag: "wx" });
+          '@
+      - name: Preserve Microsoft Edge identity evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: native-edge-prerequisite-${{ github.sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/native-edge-prerequisite/
+          if-no-files-found: error
+          retention-days: 14
+
   windows-bash-compatibility:
     name: Canonical Bash private-namespace prototype (Windows ARM64)
     if: ${{ github.event_name == 'workflow_dispatch' && !inputs.run_windows_native_installer && inputs.probe_official_hermes_components && inputs.official_hermes_phase == 'bash-compat' && !inputs.test_native_windows_runtime && !inputs.profile_native_windows }}
@@ -929,7 +964,7 @@ jobs:
 
   official-hermes-components:
     name: Official Hermes ${{ inputs.official_hermes_phase || 'components' }} probe (Windows ARM64)
-    if: ${{ github.event_name == 'workflow_dispatch' && !inputs.run_windows_native_installer && inputs.probe_official_hermes_components && inputs.official_hermes_phase != 'host-prerequisites' && inputs.official_hermes_phase != 'application' && inputs.official_hermes_phase != 'system-drive' && inputs.official_hermes_phase != 'npm-shims' && inputs.official_hermes_phase != 'export-controls' && inputs.official_hermes_phase != 'personal-browser-first' && inputs.official_hermes_phase != 'personal-candidate' && inputs.official_hermes_phase != 'personal-cold-job' && inputs.official_hermes_phase != 'personal-renderer-wer' && inputs.official_hermes_phase != 'personal-postmortem' && inputs.official_hermes_phase != 'trace-analysis' && inputs.official_hermes_phase != 'bash-compat' && !inputs.test_native_windows_runtime && !inputs.profile_native_windows }}
+    if: ${{ github.event_name == 'workflow_dispatch' && !inputs.run_windows_native_installer && inputs.probe_official_hermes_components && inputs.official_hermes_phase != 'host-prerequisites' && inputs.official_hermes_phase != 'application' && inputs.official_hermes_phase != 'system-drive' && inputs.official_hermes_phase != 'npm-shims' && inputs.official_hermes_phase != 'export-controls' && inputs.official_hermes_phase != 'edge-host-prerequisite' && inputs.official_hermes_phase != 'personal-browser-first' && inputs.official_hermes_phase != 'personal-candidate' && inputs.official_hermes_phase != 'personal-cold-job' && inputs.official_hermes_phase != 'personal-renderer-wer' && inputs.official_hermes_phase != 'personal-postmortem' && inputs.official_hermes_phase != 'trace-analysis' && inputs.official_hermes_phase != 'bash-compat' && !inputs.test_native_windows_runtime && !inputs.profile_native_windows }}
     runs-on: windows-11-vs2026-arm
     timeout-minutes: ${{ inputs.official_hermes_phase == 'runtime' && 180 || 90 }}
     steps:

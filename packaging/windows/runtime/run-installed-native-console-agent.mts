@@ -28,6 +28,7 @@ import {
 import { nativeHermesConfiguration, readNativeServiceEnvironment } from "./native-options.mts";
 import { startNativeInferenceBroker } from "./native-inference-broker.mts";
 import { startNativeBrokerRelay } from "./native-broker-relay.mts";
+import { startNativeEdgeBrowser } from "./native-edge-browser.mts";
 import { acquireNativeStateSession } from "./native-state.mts";
 
 import { resolveNativeConfiguredInference } from "./native-configured-inference.mts";
@@ -240,6 +241,7 @@ const sitePackages = process.env.NEMOCLAW_AGENT_SITE_PACKAGES;
 const hermesSource = process.env.NEMOCLAW_HERMES_SOURCE_ROOT;
 const dashboard = process.env.NEMOCLAW_AGENT_INTERFACE === "dashboard";
 let brokerTunnel;
+let browserTunnel;
 let bootstrapWritten = false;
 const connectivity = {
   schemaVersion: 1, agent, interface: dashboard ? "dashboard" : "console",
@@ -256,6 +258,17 @@ brokerTunnel = await startNativeBrokerTunnel({
   relayRoot: required("NEMOCLAW_BROKER_RELAY_ROOT"), relayToken: required("NEMOCLAW_BROKER_RELAY_TOKEN"),
   signal: stopWatcher.signal,
 });
+if (agent === "hermes") {
+  browserTunnel = await startNativeBrokerTunnel({
+    relayRoot: required("NEMOCLAW_BROWSER_RELAY_ROOT"),
+    relayToken: required("NEMOCLAW_BROWSER_RELAY_TOKEN"),
+    signal: stopWatcher.signal,
+  });
+  const cdpPath = required("NEMOCLAW_BROWSER_CDP_PATH");
+  if (!/^\/devtools\/browser\/[A-Za-z0-9-]{1,128}$/u.test(cdpPath))
+    throw new Error("The native Microsoft Edge CDP path is invalid.");
+  process.env.BROWSER_CDP_URL = "ws://127.0.0.1:" + browserTunnel.port + cdpPath;
+}
 const proxyPort = String(brokerTunnel.port);
 connectivity.containedPort = brokerTunnel.port;
 const baseUrl = "http://127.0.0.1:" + proxyPort + "/v1";
@@ -576,7 +589,12 @@ try {
   stopWatcher.signal.throwIfAborted();
   child = spawn(executable, args, { cwd: home, env: childEnvironment, stdio: dashboard ? ["ignore", "pipe", "pipe"] : "inherit", windowsHide: dashboard });
   childStopped = observe(child);
-  const childExit = Promise.race([childStopped, brokerTunnel.failure, stopWatcher.requested]);
+  const childExit = Promise.race([
+    childStopped,
+    brokerTunnel.failure,
+    ...(browserTunnel ? [browserTunnel.failure] : []),
+    stopWatcher.requested,
+  ]);
   const dashboardReady = dashboard ? waitForHermesDashboardReady(child, childExit) : null;
   if (dashboard) { child.stdout.pipe(process.stdout, { end: false }); child.stderr.pipe(process.stderr, { end: false }); }
   if (messagingExit) {
@@ -633,6 +651,7 @@ process.exitCode = exitCode;
   throw error;
 } finally {
   await stopWatcher.close();
+  await browserTunnel?.close();
   await brokerTunnel?.close();
 }
 
@@ -734,7 +753,10 @@ async function runNativeConsoleAgentInternal(
   const agentRuntimeRoot = stateSession.stateRoot;
   let broker;
   let brokerRelay: Awaited<ReturnType<typeof startNativeBrokerRelay>> | undefined;
+  let browserRelay: Awaited<ReturnType<typeof startNativeBrokerRelay>> | undefined;
+  let edge: Awaited<ReturnType<typeof startNativeEdgeBrowser>> | undefined;
   let brokerRelayRoot: string | undefined;
+  let browserRelayRoot: string | undefined;
   let runRoot;
   let runtimeRoot;
   let relay;
@@ -787,6 +809,61 @@ async function runNativeConsoleAgentInternal(
     runtimeRoot = path.join(`${systemDrive}\\`, `NemoClawRuntime-${agentId}-${runId}`);
     fs.mkdirSync(runRoot);
     fs.mkdirSync(runtimeRoot);
+    let browserRelayToken: string | undefined;
+    if (agentId === "hermes") {
+      diagnostics.stage("browser");
+      edge = await startNativeEdgeBrowser({
+        profileRoot: path.join(runRoot, "edge-profile"),
+        environment: process.env,
+        signal: webSession?.signal,
+      });
+      diagnostics.capture(
+        "edge.identity",
+        JSON.stringify({
+          ...edge.identity,
+          process: edge.process,
+          profile: "session-owned",
+          endpoint: { host: "127.0.0.1", port: edge.endpoint.port },
+          authenticatedRelay: true,
+          agent: agentId,
+          sessionId: runId,
+        }) + "\n",
+      );
+      browserRelayToken = randomBytes(32).toString("base64url");
+      diagnostics.secret(browserRelayToken);
+      browserRelayRoot = path.join(agentRuntimeRoot, `browser-relay-${runId}`);
+      browserRelay = await startNativeBrokerRelay({
+        relayRoot: browserRelayRoot,
+        relayToken: browserRelayToken,
+        brokerPort: edge.endpoint.port,
+        launcher,
+        signal: webSession?.signal,
+      });
+      void browserRelay.failure.catch(() => {});
+      void edge.failure.catch(() => {});
+      for (const evidenceRoot of [consoleEvidenceRoot, dashboardEvidenceRoot]) {
+        if (!evidenceRoot) continue;
+        fs.writeFileSync(
+          path.join(evidenceRoot, "edge-browser.json"),
+          JSON.stringify({
+            schemaVersion: 1,
+            classification: "native-hermes-edge-browser",
+            agent: agentId,
+            sessionId: runId,
+            identity: edge.identity,
+            process: edge.process,
+            endpoint: { host: "127.0.0.1", port: edge.endpoint.port, path: edge.endpoint.path },
+            profileRoot: path.join(runRoot, "edge-profile"),
+            relayRoot: browserRelayRoot,
+            authenticatedRelay: true,
+            generalHostProxy: false,
+            inheritedKillOnCloseJob: edge.inheritedKillOnCloseJob,
+          }) + "\n",
+          { flag: "wx", mode: 0o600 },
+        );
+      }
+      diagnostics.stage("runtime");
+    }
     const gatewayConfig = writeNativeGatewayConfig(installRoot, runRoot);
     runtimeLease.assertHeld();
     const node = installedNode;
@@ -827,6 +904,7 @@ async function runNativeConsoleAgentInternal(
         `    - ${quoteYamlPath(agentRuntimeRoot)}`,
         `    - ${quoteYamlPath(statusRoot)}`,
         `    - ${quoteYamlPath(brokerRelayRoot)}`,
+        ...(browserRelayRoot ? [`    - ${quoteYamlPath(browserRelayRoot)}`] : []),
         ...(dashboard ? [`    - ${quoteYamlPath(relayRoot)}`] : []),
         "",
       ].join("\n"),
@@ -902,6 +980,13 @@ async function runNativeConsoleAgentInternal(
         NEMOCLAW_AGENT_STOP_REQUEST: path.join(statusRoot, "shutdown"),
         NEMOCLAW_BROKER_RELAY_ROOT: brokerRelayRoot,
         NEMOCLAW_BROKER_RELAY_TOKEN: brokerRelayToken,
+        ...(edge && browserRelayRoot && browserRelayToken
+          ? {
+              NEMOCLAW_BROWSER_RELAY_ROOT: browserRelayRoot,
+              NEMOCLAW_BROWSER_RELAY_TOKEN: browserRelayToken,
+              NEMOCLAW_BROWSER_CDP_PATH: edge.endpoint.path,
+            }
+          : {}),
         ...(dashboard
           ? {
               NEMOCLAW_AGENT_INTERFACE: "dashboard",
@@ -1112,7 +1197,12 @@ async function runNativeConsoleAgentInternal(
       const bootstrapMonitoring = new AbortController();
       const bootstrapResult = publishBootstrap(true, bootstrapMonitoring.signal);
       try {
-        await Promise.race([bootstrapResult, brokerRelay.failure]);
+        await Promise.race([
+          bootstrapResult,
+          brokerRelay.failure,
+          ...(browserRelay ? [browserRelay.failure] : []),
+          ...(edge ? [edge.failure] : []),
+        ]);
       } finally {
         bootstrapMonitoring.abort();
         await bootstrapResult.catch(() => {});
@@ -1138,6 +1228,8 @@ async function runNativeConsoleAgentInternal(
             relay.ready,
             relay.failure,
             brokerRelay.failure,
+            ...(browserRelay ? [browserRelay.failure] : []),
+            ...(edge ? [edge.failure] : []),
             agentExit.then(() => {
               throw new Error("Hermes stopped before its dashboard became ready.");
             }),
@@ -1180,6 +1272,8 @@ async function runNativeConsoleAgentInternal(
             webSession.stopped,
             relay.failure,
             brokerRelay.failure,
+            ...(browserRelay ? [browserRelay.failure] : []),
+            ...(edge ? [edge.failure] : []),
             agentExit.then(() => {
               throw new Error("The Hermes dashboard stopped unexpectedly.");
             }),
@@ -1209,7 +1303,12 @@ async function runNativeConsoleAgentInternal(
         }
       } else {
         diagnostics.stage("agent");
-        exitCode = await Promise.race([agentExit, brokerRelay.failure]);
+        exitCode = await Promise.race([
+          agentExit,
+          brokerRelay.failure,
+          ...(browserRelay ? [browserRelay.failure] : []),
+          ...(edge ? [edge.failure] : []),
+        ]);
       }
       if (exitCode !== 0) fail(`${adapter.displayName} exited with status ${exitCode}`);
       diagnostics.stage("cleanup");
@@ -1256,6 +1355,9 @@ async function runNativeConsoleAgentInternal(
         });
         await cleanup("broker stop signal", async () => {
           if (brokerRelay) await brokerRelay.close();
+        });
+        await cleanup("browser relay stop signal", async () => {
+          if (browserRelay) await browserRelay.close();
         });
         await cleanup("MXC execution cleanup", () =>
           waitForNativeMxcCompletion(openshell, cliEnvironment, sandboxName, gateway, stateSession),
@@ -1339,6 +1441,12 @@ async function runNativeConsoleAgentInternal(
     await attempt("broker transport shutdown", async () => {
       if (brokerRelay) await brokerRelay.dispose();
     });
+    await attempt("browser transport shutdown", async () => {
+      if (browserRelay) await browserRelay.dispose();
+    });
+    await attempt("Microsoft Edge shutdown", async () => {
+      if (edge) await edge.close();
+    });
     await attempt("inference broker shutdown", async () => {
       if (!broker) return;
       const closed = new Promise<void>((resolve) => broker.server.close(() => resolve()));
@@ -1352,6 +1460,7 @@ async function runNativeConsoleAgentInternal(
       dashboardRelayRoot,
       statusRoot,
       brokerRelayRoot,
+      browserRelayRoot,
     ]) {
       await attempt("temporary runtime removal", async () => {
         if (directory && !(await removeDirectory(directory))) {

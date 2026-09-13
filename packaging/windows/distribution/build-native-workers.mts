@@ -47,7 +47,7 @@ function evaluateBuildExpression(text: string, values: Record<string, unknown> =
     '"use strict"; return (' + text + ");",
   )(...Object.values(values));
 }
-function renderFactory(root: string, file: string, name: string) {
+export function renderFactory(root: string, file: string, name: string) {
   const source = parse(file, fs.readFileSync(path.join(root, file), "utf8"));
   const matches = all(source, ts.isFunctionDeclaration).filter((node) => node.name?.text === name);
   if (matches.length !== 1) throw new Error("A build-only source factory is missing or ambiguous.");
@@ -66,7 +66,28 @@ function renderFactory(root: string, file: string, name: string) {
   const hermesDashboardPythonSource = Function(
     helperJs + "\nreturn hermesDashboardPythonSource;",
   )();
-  const value = evaluateBuildExpression("(" + code + ")()", { hermesDashboardPythonSource });
+  const options = parse(
+    "native-options.mts",
+    fs.readFileSync(path.join(root, "native-options.mts"), "utf8"),
+  );
+  const configuration = all(options, ts.isFunctionDeclaration).filter(
+    (node) => node.name?.text === "nativeHermesConfiguration",
+  );
+  if (configuration.length !== 1)
+    throw new Error("The reviewed Hermes configuration source is missing or ambiguous.");
+  const configurationJs = ts.transpileModule(
+    configuration[0].getText(options).replace(/^export\s+/u, ""),
+    {
+      compilerOptions: { target: ts.ScriptTarget.ES2022 },
+    },
+  ).outputText;
+  const nativeHermesConfiguration = Function(
+    configurationJs + "\nreturn nativeHermesConfiguration;",
+  )();
+  const value = evaluateBuildExpression("(" + code + ")()", {
+    hermesDashboardPythonSource,
+    nativeHermesConfiguration,
+  });
   if (typeof value !== "string" || Buffer.byteLength(value) > 256 * 1024)
     throw new Error("Invalid build-time worker source.");
   return value;
