@@ -213,6 +213,11 @@ describe("platform evidence workflow", () => {
 
   it("removes the package credential before the WSL build", () => {
     const install = step("wsl-vitest", "Install dependencies and build in WSL");
-    expect(install.run).toContain("unset NODE_AUTH_TOKEN");
+    const run = install.run ?? "";
+    const unsetIndex = run.indexOf("unset NODE_AUTH_TOKEN");
+    const buildIndex = run.indexOf("npm run build:cli");
+    expect(unsetIndex).toBeGreaterThanOrEqual(0);
+    expect(buildIndex).toBeGreaterThanOrEqual(0);
+    expect(unsetIndex).toBeLessThan(buildIndex);
   });
 });
