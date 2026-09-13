@@ -325,6 +325,77 @@ describe("execSandbox scope-upgrade hint wiring (#9744)", () => {
   });
 });
 
+it.each([
+  { mode: "sync", error: new Error("lock timed out"), commandCode: 0, invocationFailed: false },
+  {
+    mode: "async",
+    error: new Error("migration blocked"),
+    commandCode: 23,
+    invocationFailed: false,
+  },
+  { mode: "async", error: "registry unavailable", commandCode: 1, invocationFailed: true },
+])(
+  "reports $mode cleanup authority failure after command status $commandCode (#11647)",
+  async ({ mode, error, commandCode, invocationFailed }) => {
+    const stderr = vi.spyOn(console, "error").mockImplementation(() => {});
+    const release = vi.fn();
+    const inspect = vi.fn(() => ({ applies: true as const, ok: true, issues: [] }));
+    const exit = vi.fn((code: number): never => {
+      throw new Error(`exit:${code}`);
+    });
+    try {
+      const finish = await startSandboxExec(
+        "alpha",
+        ["true"],
+        {},
+        {
+          selectGateway: () => ({ outcome: "unregistered", gatewayName: null }),
+          commandExecutor: {
+            probeDirectory: async () => ({ state: "present" }),
+            runStreaming: async () => ({
+              outcome: invocationFailed
+                ? { kind: "failed", error: { kind: "invocation", message: "transport failed" } }
+                : { kind: "completed", exitCode: commandCode },
+              release,
+            }),
+          },
+          withCleanupAuthority:
+            mode === "sync"
+              ? () => {
+                  throw error;
+                }
+              : () => Promise.reject(error),
+          cleanupDeps: {
+            getSandbox: () => ({ agent: "openclaw" }),
+            inspectMutableConfigPerms: inspect,
+            repairMutableConfigPerms: () => ({ applied: true, verified: true, errors: [] }),
+          },
+          policyHint: {
+            env: {},
+            probeLogs: () => "",
+            enableAudit: () => {},
+            sleep: async () => {},
+            attempts: 1,
+          },
+          exit,
+        },
+      );
+      await expect(finish()).rejects.toThrow("exit:1");
+      expect(exit).toHaveBeenCalledExactlyOnceWith(1);
+      expect(stderr).toHaveBeenCalledWith(
+        `  OpenClaw permission cleanup failed (command exit ${commandCode}; cleanup exit 1): cleanup authority unavailable: ${error instanceof Error ? error.message : error}`,
+      );
+      expect(
+        stderr.mock.calls.filter(([line]) => String(line).includes("Failed to invoke openshell")),
+      ).toHaveLength(invocationFailed ? 1 : 0);
+      expect(inspect).not.toHaveBeenCalled();
+      expect(release).toHaveBeenCalledOnce();
+    } finally {
+      stderr.mockRestore();
+    }
+  },
+);
+
 it(
   "releases authority to another process before interactive completion (#11647)",
   testTimeoutOptions(15_000),

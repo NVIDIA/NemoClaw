@@ -193,8 +193,14 @@ async function finishSandboxExecRequest(
     const invocationError =
       completed.outcome.kind === "failed" ? completed.outcome.error.message : undefined;
     const cleanup = () => cleanupOpenClawAfterExec(request.sandboxName, cleanupDeps);
-    const cleanupError =
-      (await (withCleanupAuthority ? withCleanupAuthority(cleanup) : cleanup())) ?? undefined;
+    let cleanupError: string | undefined;
+    try {
+      cleanupError =
+        (await (withCleanupAuthority ? withCleanupAuthority(cleanup) : cleanup())) ?? undefined;
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      cleanupError = `cleanup authority unavailable: ${detail}`;
+    }
     return {
       code: cleanupError ? 1 : commandCode,
       commandCode,

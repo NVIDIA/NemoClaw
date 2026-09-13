@@ -85,6 +85,8 @@ describe("interactive launch cleanup", () => {
   ])(
     "binds completion cleanup to the launched sandbox ($replacement)",
     async ({ replacement, cleanupCount, stateFile, error }) => {
+      const stderr = vi.spyOn(console, "error").mockImplementation(() => {});
+      onTestFinished(() => stderr.mockRestore());
       const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-launch-cleanup-"));
       onTestFinished(() => fs.rmSync(stateDir, { recursive: true, force: true }));
       vi.stubEnv("HOME", stateDir);
@@ -134,6 +136,13 @@ describe("interactive launch cleanup", () => {
             inspectMutableConfigPerms: cleanup,
             repairMutableConfigPerms: repair,
           },
+          policyHint: {
+            env: {},
+            probeLogs: () => "",
+            enableAudit: () => {},
+            sleep: async () => {},
+            attempts: 1,
+          },
           exit: (code) => {
             throw new Error(`exit:${code}`);
           },
@@ -150,7 +159,7 @@ describe("interactive launch cleanup", () => {
         observeSandbox,
         withSandboxMutationLock: lock,
       });
-      const completion = expect(launch).rejects.toThrow(error);
+      const completion = expect(launch).rejects.toThrow(error === "exit:0" ? error : "exit:1");
       await childStarted.promise;
       await lock("alpha", () => {
         fs.writeFileSync(statePath, "recorded state\n");
@@ -184,6 +193,9 @@ describe("interactive launch cleanup", () => {
       events.length = 0;
       sessionEnded.resolve();
       await completion;
+      expect(stderr.mock.calls.map(([line]) => line)).toEqual(
+        error === "exit:0" ? [] : [expect.stringMatching(error)],
+      );
       expect(cleanup).toHaveBeenCalledTimes(cleanupCount);
       expect(repair).toHaveBeenCalledTimes(cleanupCount);
       expect(observeSandbox).toHaveBeenCalledTimes(legacy ? 2 : 0);
