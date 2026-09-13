@@ -189,20 +189,21 @@ describe("onboard dashboard helpers", () => {
     { gatewayEndpoint: "https://[::1]:8080", expectedTlsDir: "/external/gateway/tls" },
   ])(
     "keeps an external dashboard URL's forward on loopback through gateway endpoint %s",
-    ({ gatewayEndpoint, expectedTlsDir }) => {
+    async ({ gatewayEndpoint, expectedTlsDir }) => {
       vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", undefined);
       vi.stubEnv("OPENSHELL_LOCAL_TLS_DIR", "/ambient/hostile/tls");
       vi.stubEnv("OPENSHELL_TOKEN", "ambient-hostile-token");
       const spawnDetached = vi.fn<NonNullable<ForwardServiceLaunchOptions["spawnDetached"]>>(
         () => ({ unref: vi.fn() }),
       );
-      const launch = vi.fn((target: ForwardServiceTarget, options?: ForwardServiceLaunchOptions) =>
-        launchForwardService(target, {
-          ...options,
-          isReachable: vi.fn().mockReturnValueOnce(false).mockReturnValueOnce(true),
-          sleep: () => {},
-          spawnDetached,
-        }),
+      const launch = vi.fn(
+        async (target: ForwardServiceTarget, options?: ForwardServiceLaunchOptions) =>
+          await launchForwardService(target, {
+            ...options,
+            isReachable: vi.fn().mockReturnValueOnce(false).mockReturnValueOnce(true),
+            sleep: () => {},
+            spawnDetached,
+          }),
       );
       const owns = vi.fn(() => true);
       const helpers = createOnboardDashboardHelpers({
@@ -233,7 +234,7 @@ describe("onboard dashboard helpers", () => {
 
       try {
         expect(
-          helpers.ensureDashboardForward("my-sandbox", "https://hermes.example.test:18794"),
+          await helpers.ensureDashboardForward("my-sandbox", "https://hermes.example.test:18794"),
         ).toBe(18_794);
         expect(launch.mock.calls[0]?.[0]).toEqual({
           executable: "/usr/local/bin/openshell",
@@ -349,7 +350,14 @@ describe("onboard dashboard helpers", () => {
     },
   ])(
     "$scenario during a fresh dashboard bind race",
-    ({ owns, revalidate, runReadiness, gatewayAuthority, diagnostic, expectedOwnerCalls }) => {
+    async ({
+      owns,
+      revalidate,
+      runReadiness,
+      gatewayAuthority,
+      diagnostic,
+      expectedOwnerCalls,
+    }) => {
       const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
       const launch = vi.fn((_target: ForwardServiceTarget, options?: ForwardServiceLaunchOptions) =>
         runReadiness(options),
@@ -377,17 +385,17 @@ describe("onboard dashboard helpers", () => {
         },
       });
 
-      expect(() =>
+      await expect(
         helpers.ensureDashboardForward("my-sandbox", undefined, {
           revalidateSandboxIdentity: revalidate,
         }),
-      ).toThrow(diagnostic);
+      ).rejects.toThrow(diagnostic);
       expect(owns).toHaveBeenCalledTimes(expectedOwnerCalls);
       expect(warn).not.toHaveBeenCalled();
     },
   );
 
-  it("does not reallocate or adopt an occupied persisted dashboard port", () => {
+  it("does not reallocate or adopt an occupied persisted dashboard port", async () => {
     const launch = vi.fn();
     const runOpenshell = vi.fn(() => ({ status: 0 }));
     const helpers = createOnboardDashboardHelpers({
@@ -415,14 +423,14 @@ describe("onboard dashboard helpers", () => {
       },
     });
 
-    expect(() => helpers.ensureDashboardForward("my-sandbox")).toThrow(
+    await expect(helpers.ensureDashboardForward("my-sandbox")).rejects.toThrow(
       /cannot be reallocated or adopted/u,
     );
     expect(launch).not.toHaveBeenCalled();
     expect(runOpenshell).not.toHaveBeenCalled();
   });
 
-  it("does not reuse an owned forward when its TLS authority drifts", () => {
+  it("does not reuse an owned forward when its TLS authority drifts", async () => {
     const launch = vi.fn();
     const owns = vi.fn(() => true);
     const getGatewayForwardRuntimeAuthority = vi
@@ -460,11 +468,11 @@ describe("onboard dashboard helpers", () => {
       },
     });
 
-    expect(() =>
+    await expect(
       helpers.ensureDashboardForward("my-sandbox", undefined, {
         reuseExistingForward: true,
       }),
-    ).toThrow(/gateway authority changed/u);
+    ).rejects.toThrow(/gateway authority changed/u);
     expect(owns).toHaveBeenCalledOnce();
     expect(launch).not.toHaveBeenCalled();
   });

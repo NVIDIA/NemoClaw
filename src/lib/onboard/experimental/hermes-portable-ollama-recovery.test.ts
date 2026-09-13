@@ -561,11 +561,14 @@ describe("Hermes Portable Ollama inference recovery", () => {
     );
   });
 
-  it("rolls back a prepared probe dependency before the stopped runtime", async () => {
+  it("awaits probe dependency rollback before restoring the stopped runtime", async () => {
     const harness = createHarness();
     const dependency = {
       release: vi.fn(() => harness.events.push("dependency-release")),
-      rollback: vi.fn(() => harness.events.push("dependency-rollback")),
+      rollback: vi.fn(async () => {
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        harness.events.push("dependency-rollback");
+      }),
     };
     vi.mocked(harness.prepared.finalizePublishedResume!).mockImplementation(() => {
       harness.events.push("finalize");
@@ -579,6 +582,7 @@ describe("Hermes Portable Ollama inference recovery", () => {
       ),
     ).rejects.toThrow("finalization failed");
 
+    expect(harness.events).toContain("dependency-rollback");
     expect(dependency.release).not.toHaveBeenCalled();
     expect(harness.events.indexOf("dependency-rollback")).toBeLessThan(
       harness.events.indexOf("rollback"),
@@ -769,7 +773,8 @@ describe("Hermes Portable Ollama inference recovery", () => {
     const harness = createHarness(true, true);
     const dependency = {
       release: vi.fn(),
-      rollback: vi.fn(() => {
+      rollback: vi.fn(async () => {
+        await new Promise<void>((resolve) => setImmediate(resolve));
         harness.events.push("dependency-rollback");
       }),
     };
@@ -793,6 +798,7 @@ describe("Hermes Portable Ollama inference recovery", () => {
       ),
     ).rejects.toThrow("registry finalization failed");
 
+    expect(harness.events).toContain("dependency-rollback");
     expect(dependency.rollback).toHaveBeenCalledOnce();
     expect(harness.prepared.rollback).not.toHaveBeenCalled();
     expect(harness.running()).toBe(true);

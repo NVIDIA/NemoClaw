@@ -4,6 +4,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import { lstatSync, readFileSync, readdirSync, readlinkSync, realpathSync } from "node:fs";
 import path from "node:path";
+import { setImmediate as nextCheckPhase, setTimeout as delay } from "node:timers/promises";
 
 import { isValidName } from "../../name-validation";
 import { buildOpenShellSubprocessEnv } from "./resolve-shared";
@@ -29,7 +30,7 @@ export interface ForwardServiceTarget {
 
 export interface ForwardServiceLaunchOptions {
   readonly isReachable?: (port: number) => boolean;
-  readonly sleep?: (milliseconds: number) => void;
+  readonly sleep?: (milliseconds: number) => void | Promise<void>;
   readonly sourceEnvironment?: NodeJS.ProcessEnv;
   readonly spawnDetached?: (
     executable: string,
@@ -40,12 +41,12 @@ export interface ForwardServiceLaunchOptions {
   /** Verify the bound forward before releasing the child from startup cleanup. */
   readonly verifyReady?: () => void;
   readonly timeoutMs?: number;
-  /** Retain this child for synchronous transaction rollback after readiness succeeds. */
+  /** Retain this child for transaction rollback after readiness succeeds. */
   readonly retainOwnership?: (ownership: ForwardServiceOwnership) => void;
 }
 
 export interface ForwardServiceOwnership {
-  readonly terminate: () => void;
+  readonly terminate: (assertCurrent?: () => void) => void | Promise<void>;
 }
 
 export interface ForwardServiceChild {
@@ -54,6 +55,11 @@ export interface ForwardServiceChild {
   readonly signalCode?: NodeJS.Signals | null;
   once?(event: "exit" | "error", listener: () => void): unknown;
   unref(): void;
+  on?(event: "error", listener: (error: Error) => void): unknown;
+  on?(
+    event: "exit",
+    listener: (code: number | null, signal: NodeJS.Signals | null) => void,
+  ): unknown;
 }
 
 export interface ForwardServiceProcessTreeTerminationDependencies {
@@ -68,6 +74,18 @@ export interface ForwardServiceProcessTreeTerminationDependencies {
     executable: string,
     args: readonly string[],
   ) => { readonly error?: Error; readonly status: number | null };
+}
+
+export class ForwardServiceEarlyExitError extends Error {
+  constructor(
+    target: ForwardServiceTarget,
+    readonly exitCode: number | null,
+    readonly signal: NodeJS.Signals | null,
+  ) {
+    super(
+      `OpenShell forward service exited before binding ${target.localHost}:${String(target.localPort)} (${signal ? `signal ${signal}` : `status ${String(exitCode)}`})`,
+    );
+  }
 }
 
 export class ForwardServiceStartupCleanupError extends AggregateError {
@@ -496,7 +514,7 @@ export function terminateForwardServiceProcessTree(
   });
 }
 
-/** Retain the unreaped child handle, never a rediscovered PID or name-based stop target. */
+/** Retain the spawned child and drain exit callbacks before using its process identity. */
 function retainForwardServiceChild(
   child: ForwardServiceChild,
   terminate: (child: ForwardServiceChild) => void,
@@ -504,10 +522,6 @@ function retainForwardServiceChild(
   const pid = child.pid;
   let exited = false;
   let terminated = false;
-  let synchronousLifetime = true;
-  queueMicrotask(() => {
-    synchronousLifetime = false;
-  });
   child.once?.("exit", () => {
     exited = true;
   });
@@ -515,13 +529,16 @@ function retainForwardServiceChild(
     exited = true;
   });
   return Object.freeze({
-    terminate: () => {
+    terminate: async (assertCurrent) => {
+      // libuv can reap several children before calling their exit handlers. A check-phase
+      // boundary lets that batch finish before we inspect this child, even when cleanup
+      // was requested from another child's exit callback or its promise continuation.
+      await nextCheckPhase();
       if (terminated) return;
-      // Production prepares, releases or rolls back within the spawning stack.
-      // Expire before yielding: libuv can reap several children before their exit callbacks.
-      // Within this stack an exited POSIX child is unreaped; Windows retains its OS handle.
+      assertCurrent?.();
+      // Do not yield between this proof and termination. A POSIX child that exits in
+      // this stack remains unreaped; Windows retains the spawned process handle.
       if (
-        !synchronousLifetime ||
         !child.once ||
         exited ||
         child.exitCode !== null ||
@@ -537,10 +554,10 @@ function retainForwardServiceChild(
 }
 
 /** Launch one foreground OpenShell service forward as a detached host child. */
-export function launchForwardService(
+export async function launchForwardService(
   target: ForwardServiceTarget,
   options: ForwardServiceLaunchOptions = {},
-): void {
+): Promise<void> {
   validateForwardServiceTarget(target);
   const isReachable = options.isReachable ?? probeLocalForwardListener;
   if (isReachable(target.localPort)) {
@@ -550,7 +567,7 @@ export function launchForwardService(
     options.spawnDetached ??
     ((executable, args, environment) =>
       spawn(executable, [...args], { detached: true, env: environment, stdio: "ignore" }));
-  const child = spawnDetached(
+  const child: ForwardServiceChild = spawnDetached(
     target.executable,
     buildForwardServiceArgs(target),
     forwardServiceEnvironment(
@@ -567,13 +584,31 @@ export function launchForwardService(
       )
     : null;
 
-  const sleep =
-    options.sleep ?? ((milliseconds: number) => Atomics.wait(sleepBuffer, 0, 0, milliseconds));
+  let childFailure: Error | undefined;
+  let notifyFailure: () => void = () => {};
+  const failed = new Promise<void>((resolve) => {
+    notifyFailure = resolve;
+  });
+  // Spawn failures arrive asynchronously, including failures with no child PID.
+  // Keep the error listener installed after handoff so a late child error cannot
+  // become an uncaught EventEmitter error in the caller.
+  child.on?.("error", (error) => {
+    childFailure ??= error;
+    notifyFailure();
+  });
+  child.on?.("exit", (code, signal) => {
+    childFailure ??= new ForwardServiceEarlyExitError(target, code, signal);
+    notifyFailure();
+  });
   const deadline = Date.now() + (options.timeoutMs ?? START_TIMEOUT_MS);
   let startupError = new Error(
     `OpenShell forward service did not bind ${target.localHost}:${String(target.localPort)}`,
   );
   while (Date.now() < deadline) {
+    if (childFailure) {
+      startupError = childFailure;
+      break;
+    }
     if (isReachable(target.localPort)) {
       try {
         options.verifyReady?.();
@@ -585,16 +620,35 @@ export function launchForwardService(
       child.unref();
       return;
     }
-    sleep(POLL_INTERVAL_MS);
+    const controller = new AbortController();
+    try {
+      await Promise.race([
+        options.sleep
+          ? Promise.resolve(options.sleep(POLL_INTERVAL_MS)).then(() =>
+              delay(0, undefined, { signal: controller.signal }),
+            )
+          : delay(POLL_INTERVAL_MS, undefined, { signal: controller.signal }),
+        failed,
+      ]);
+    } catch (error) {
+      startupError = childFailure ?? (error instanceof Error ? error : new Error(String(error)));
+      break;
+    } finally {
+      controller.abort();
+    }
   }
+  startupError = childFailure ?? startupError;
   try {
-    (options.terminateProcessTree ?? terminateForwardServiceProcessTree)(child);
+    // A failed spawn never created a process group to terminate.
+    if (child.pid !== undefined) {
+      (options.terminateProcessTree ?? terminateForwardServiceProcessTree)(child);
+    }
     if (isReachable(target.localPort)) {
       throw new Error("OpenShell forward service listener remained reachable after termination");
     }
   } catch (cleanupError) {
     throw new ForwardServiceStartupCleanupError(startupError, cleanupError);
   }
-  // Keep the failed child referenced so Node reaps it after this synchronous stack unwinds.
+  // Keep the failed child referenced until Node observes its exit.
   throw startupError;
 }

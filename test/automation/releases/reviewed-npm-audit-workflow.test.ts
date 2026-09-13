@@ -49,10 +49,6 @@ type WorkflowJob = {
   readonly steps?: readonly WorkflowStep[];
 };
 
-type Workflow = {
-  readonly jobs: Record<string, WorkflowJob>;
-};
-
 type CompositeAction = { readonly runs: WorkflowJob };
 
 const REPO_ROOT = path.join(import.meta.dirname, "../../..");

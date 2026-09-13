@@ -51,10 +51,10 @@ function runInferenceRouteThenDriftLiveIdentity(
 function awaitHermesRouteVerification(harness: ReturnType<typeof createConnectHarness>): void {
   harness.recoverHermesPortableOllamaInferenceSpy.mockImplementation((async (input: {
     verifyRoute: () => Promise<unknown>;
-    prepareProbeDependency?: () => { release: () => void };
+    prepareProbeDependency?: () => Promise<{ release: () => void }>;
   }) => {
     await input.verifyRoute();
-    input.prepareProbeDependency?.().release();
+    (await input.prepareProbeDependency?.())?.release();
     return "reused";
   }) as never);
 }

@@ -48,10 +48,8 @@ import {
   type ManagedBootstrapHeldWorkloadHandle,
   type ManagedBootstrapObservedSnapshot,
   type ManagedBootstrapPreparedAuthority,
-  type ManagedBootstrapPreparedReplacementHandle,
   type ManagedBootstrapRecoveryFailure,
   type ManagedBootstrapRecoveryReceipt,
-  type ManagedBootstrapReplacementHandle,
 } from "./adapter";
 import { MANAGED_BOOTSTRAP_REQUEST_FILE } from "./envelope";
 import {
@@ -2183,7 +2181,7 @@ function createPodmanRuntimePatch(
       },
       ensureApplied: () => undefined,
       waitForSupervisorReconnectIfNeeded: () => undefined,
-      commitAfterReady: async (options?: {
+      commitAfterReady: async (_options?: {
         readonly beforeFinalHandoff?: (replacementRuntimeId: string | null) => void;
       }) => {
         await finalizer?.commit();

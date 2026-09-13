@@ -1,13 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import fs from "node:fs";
-import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import YAML from "yaml";
 
 import {
-  BUNDLED_LOCAL_INFERENCE_GATEWAY_PORTS,
   COMPATIBLE_ENDPOINT_GATEWAY_PORTS,
   gatewayReachableCompatibleEndpointUrl,
   reuseRegisteredProviderWithGatewayEndpoint,
