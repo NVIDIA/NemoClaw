@@ -36,6 +36,14 @@ export function credentialsGatewayRecoveryFailureLines(kind: "query" | "reach"):
   ];
 }
 
+export function credentialsGatewayIdentityFailureLines(kind: "query" | "reach"): string[] {
+  const action = kind === "query" ? "query" : "reach";
+  return [
+    `  Could not ${action} the ${CLI_DISPLAY_NAME} OpenShell gateway because the selected endpoint did not prove the expected gateway identity.`,
+    `  Restore the recorded gateway selection or run '${CLI_NAME} onboard' to bind the current gateway before retrying.`,
+  ];
+}
+
 export function credentialsGatewayAuthorityFailureLines(
   error: unknown,
   operation: "mutation" | "query" = "mutation",
@@ -57,7 +65,18 @@ export async function recoverGatewayOrExit(
   const recovery = await recoverNamedGatewayRuntime();
   if (recovery.recovered) return true;
 
-  reportFailure(credentialsGatewayRecoveryFailureLines(kind));
+  const recoveryEvidence = recovery as typeof recovery & {
+    before?: { recoveryBlocked?: boolean };
+    after?: { recoveryBlocked?: boolean };
+  };
+  const identityUnproven =
+    recoveryEvidence.before?.recoveryBlocked === true ||
+    recoveryEvidence.after?.recoveryBlocked === true;
+  reportFailure(
+    identityUnproven
+      ? credentialsGatewayIdentityFailureLines(kind)
+      : credentialsGatewayRecoveryFailureLines(kind),
+  );
   return false;
 }
 
