@@ -323,6 +323,12 @@ export function openClawAgentJsonProvenanceLines(raw: string): string[] {
   ]);
 }
 
+/** True when response JSON declares a failed tool result in structured metadata. */
+export function openClawAgentFailedToolResultSignal(raw: string): boolean {
+  const docs = parseOpenClawJsonDocuments(raw);
+  return docs.some((doc) => collectToolFailureProvenance(doc).length > 0);
+}
+
 // Read completion markers only from the response envelope's `meta` record.
 // Tool results and tool-call arguments are untrusted and can contain the same
 // fields. Reading them could retry a completed turn and repeat its side effects.

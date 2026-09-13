@@ -833,6 +833,25 @@ describe("runAgentNonJsonPassthrough", () => {
     expect(errText).toMatch(/may have already applied side effects/);
   });
 
+  it("keeps timeout classification precedence when timeout and tool-failure text coexist", async () => {
+    const { stdoutWrites, stderrWrites, exit, proc } = makeNonJsonProcMock();
+    const timedOutWithToolFailure =
+      "LLM request failed.\nTool Call failed\nRequest timed out before a response was generated. Please try again.\n";
+    const runDispatchMock = makeDispatchMock(timedOutWithToolFailure, "", 0);
+    await expect(
+      runAgentNonJsonPassthrough("my-sb", ["openclaw", "agent", "-m", "ping"], proc, {
+        getOpenshellBinary: stubBinary,
+        runDispatch: runDispatchMock,
+      }),
+    ).rejects.toThrow("__exit:1");
+
+    expect(exit).toHaveBeenCalledWith(1);
+    expect(stdoutWrites.join("")).toBe(timedOutWithToolFailure);
+    const errText = stderrWrites.join("");
+    expect(errText).toMatch(/timed out before producing a result/);
+    expect(errText).not.toContain("OpenClaw tool call failed.");
+  });
+
   it("keeps a completed reply that quotes the timeout sentence successful (#8723)", async () => {
     const { stdoutWrites, stderrWrites, exit, proc } = makeNonJsonProcMock();
     const reply =
@@ -932,6 +951,23 @@ describe("runAgentNonJsonPassthrough", () => {
       }),
     ).rejects.toThrow("__exit:0");
     expect(exit).toHaveBeenCalledWith(0);
+  });
+
+  it("fails when stderr-only output reports a tool-call failure", async () => {
+    const { stderrWrites, exit, proc } = makeNonJsonProcMock();
+    const runDispatchMock = makeDispatchMock("", "Tool Call failed\n", 0);
+    await expect(
+      runAgentNonJsonPassthrough("my-sb", ["openclaw", "agent", "--agent", "main"], proc, {
+        getGatewayName: () => null,
+        getOpenshellBinary: stubBinary,
+        runDispatch: runDispatchMock,
+        stdinIsTty: () => false,
+      }),
+    ).rejects.toThrow("__exit:1");
+
+    expect(stderrWrites.join("")).toContain("Tool Call failed");
+    expect(stderrWrites.join("")).toContain("OpenClaw tool call failed.");
+    expect(exit).toHaveBeenCalledWith(1);
   });
 
   it("pins the sandbox's owning gateway when building the dispatch argv", async () => {
