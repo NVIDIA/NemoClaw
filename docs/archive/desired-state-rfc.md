@@ -1,4 +1,8 @@
 <!--
+
+> Historical document. This preserves proposals or results from earlier revisions, including retired commands and unimplemented requirements.
+> Use the [current documentation](../index.md) for instructions and [validation summary](../validation/index.md) for the limits of the evidence.
+
   SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
   SPDX-License-Identifier: Apache-2.0
 -->
@@ -36,7 +40,7 @@ Appendix B records completed research tests and qualification status.
 This RFC extends #10904 beyond onboarding to the core CLI and execution
 architecture. Project adoption requires an `Accept` decision, placement,
 accountable owner, and validation plan under the
-[product scope gate](AGENTS.md#product-scope-gate).
+[product scope gate](https://github.com/NVIDIA/NemoClaw/blob/e9cf24220532e33e704298632d9006b30254efdd/AGENTS.md#product-scope-gate).
 
 ## 1. Recommendation and Rationale
 
@@ -850,7 +854,7 @@ This proposal requests no IANA allocations or registry changes.
 
 - **RFC 2119:** [Key words for use in RFCs to Indicate Requirement Levels](https://www.rfc-editor.org/info/rfc2119/).
 - **RFC 8174:** [Ambiguity of Uppercase vs Lowercase in RFC 2119 Key Words](https://www.rfc-editor.org/info/rfc8174/).
-- [NemoClaw product scope gate](AGENTS.md#product-scope-gate).
+- [NemoClaw product scope gate](https://github.com/NVIDIA/NemoClaw/blob/e9cf24220532e33e704298632d9006b30254efdd/AGENTS.md#product-scope-gate).
 
 ### 13.2. Informative References
 
@@ -925,9 +929,9 @@ Plan again, then repeat planning with deletion protection. Reproduce the second
 with one table returning an error and another returning an empty successful result;
 query each with `count(*)` and inspect both exit status and output.
 
-The managed-inference harness and setup are in [LOCAL_TEST.md](LOCAL_TEST.md).
+The managed-inference harness and setup are in [LOCAL_TEST.md](../validation/run-tests.md).
 Current checks and redacted live artifact references are in
-[VALIDATION.md](VALIDATION.md). This remains a prototype: documented state
+[VALIDATION.md](../validation/index.md). This remains a prototype: documented state
 inspection, the complete plan-action allowlist, credential installation versions,
 and qualified taint recovery in this RFC are still implementation gaps.
 

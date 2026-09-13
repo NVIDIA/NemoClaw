@@ -1,5 +1,9 @@
 # Desired-state prototype validation
 
+> Historical document. This preserves proposals or results from earlier revisions, including retired commands and unimplemented requirements.
+> Use the [current documentation](../index.md) for instructions and [validation summary](../validation/index.md) for the limits of the evidence.
+
+
 Evidence date: 2026-09-11. This is local experiment evidence, not
 supported-platform or release qualification.
 
@@ -28,7 +32,7 @@ workload containers absent; repeating it returned zero changes. The stopped
 initializer, volume, bridge, and state remain. The primary Spark gateway/inference
 deployment stayed running, and both radio containers remained stopped and intact.
 
-[Structured evidence](evidence/destroy-linux-arm64.json) retains the bundle
+[Structured evidence](../validation/evidence/destroy-linux-arm64.json) retains the bundle
 manifest, command results, identity comparisons, and hashes of the complete local
 logs. This qualifies the managed gateway/sandbox teardown path on this host.
 Inference-process teardown uses deterministic Docker fixtures; the primary large
@@ -90,11 +94,11 @@ not rerun during this transfer.
 
 The recipe slice runs on this Linux ARM64 GB10 Spark with 121.7 GiB RAM,
 Docker 29.2.1, NVIDIA driver 580.142, OpenShell 0.0.116, and OpenClaw 2026.9.4.
-[examples/spark.yaml](examples/spark.yaml) contains the resolved runtime and model
+[examples/spark.yaml](../../examples/spark.yaml) contains the resolved runtime and model
 pins. Structured results and pseudonymized identities are in
-[evidence/spark-linux-arm64.json](evidence/spark-linux-arm64.json). Its manifest
+[evidence/spark-linux-arm64.json](../validation/evidence/spark-linux-arm64.json). Its manifest
 identifies the complete local logs by path and SHA-256; database backups and secret
-material are not committed. [LOCAL_TEST.md](LOCAL_TEST.md) has the build, apply,
+material are not committed. [LOCAL_TEST.md](../validation/run-tests.md) has the build, apply,
 and retained-state test commands. Runtime images and weights remain local.
 The final bundle is `0.1.0-dev.g3ab242b52957`; all five platform manifests
 and their three executables were rebuilt and checksum-verified.
@@ -199,7 +203,7 @@ volume, and model installation.
 | Real agent requests | Three successful, nonempty replies |
 
 The final run passed in 236.358 seconds. Redacted identities and the exact bundle
-manifest are in [evidence/managed-ollama-linux-arm64.json](evidence/managed-ollama-linux-arm64.json).
+manifest are in [evidence/managed-ollama-linux-arm64.json](../validation/evidence/managed-ollama-linux-arm64.json).
 The test removed both deployments, Ollama containers, and model volumes after
 success. The dedicated gateway and network were then removed. Downloaded tools,
 images, and local evidence remain. Unrelated containers were not changed.
@@ -217,8 +221,8 @@ nc-prototype-openclaw@sha256:f73285851f5cc9d1862da7aaa603249f2c97fdf431bc4b03a5a
 ```
 
 Earlier external-inference runs are retained in
-[evidence/linux-arm64.json](evidence/linux-arm64.json) and
-[evidence/osquery-refresh-linux-arm64.json](evidence/osquery-refresh-linux-arm64.json).
+[evidence/linux-arm64.json](../validation/evidence/linux-arm64.json) and
+[evidence/osquery-refresh-linux-arm64.json](../validation/evidence/osquery-refresh-linux-arm64.json).
 Live recreation uses a fresh UID on the same gateway. Same-UID recreation on a
 different gateway is covered only by the protocol fixture.
 
@@ -269,7 +273,7 @@ block export. There is no observation subprocess, SQL adapter, or extension in
 the current bundle.
 
 The earlier Docker collector comparison is retained in
-[evidence/ollama-observation-linux-arm64.json](evidence/ollama-observation-linux-arm64.json).
+[evidence/ollama-observation-linux-arm64.json](../validation/evidence/ollama-observation-linux-arm64.json).
 It showed that built-in SQL inventory could not distinguish an unavailable socket
 from no matching containers. It explains the earlier direct-reader decision; it
 is not a benchmark of the current implementation. A net maintenance or latency
@@ -315,7 +319,7 @@ is implemented. The implementation remains a local experiment.
 # Fabric integration, 2026-09-12
 
 Native Linux ARM64 evidence is recorded in
-[evidence/fabric-linux-arm64.json](evidence/fabric-linux-arm64.json).
+[evidence/fabric-linux-arm64.json](../validation/evidence/fabric-linux-arm64.json).
 The pinned Fabric source build and Deep Agents 0.7.13 ran inside a real
 OpenShell 0.0.116 sandbox, using Qwen3 1.7B through Ollama 0.34.0 on DGX Spark.
 `TestLiveFabric` passed in 27.81 seconds. The first request answered `FOUR`;
@@ -340,7 +344,7 @@ up; no automatic recovery or migration was added.
 
 ## Fabric Hermes, 2026-09-12
 
-[evidence/fabric-hermes-linux-arm64.json](evidence/fabric-hermes-linux-arm64.json)
+[evidence/fabric-hermes-linux-arm64.json](../validation/evidence/fabric-hermes-linux-arm64.json)
 records the native Hermes 0.21.0 run through Fabric's pinned Hermes adapter.
 The final image passed `TestLiveFabric` in 16.06 seconds against the same
 OpenShell/Ollama/Qwen3 1.7B setup. Both requests answered `FOUR`, with one
@@ -364,7 +368,7 @@ accuracy, MCP, skills, streaming or other platforms.
 
 ## Hermes tool use, 2026-09-12
 
-[evidence/fabric-hermes-tools-linux-arm64.json](evidence/fabric-hermes-tools-linux-arm64.json)
+[evidence/fabric-hermes-tools-linux-arm64.json](../validation/evidence/fabric-hermes-tools-linux-arm64.json)
 records native terminal and `read_file` execution through the committed Hermes
 image. With Qwen3 4B, the opt-in tool scenario passed in 208.04 seconds. The
 terminal tool ran supplied Python against random file contents absent from the
@@ -388,11 +392,11 @@ model passed with the same file shape and assertions; no image patch was applied
 This establishes terminal/file tool execution, not general task reliability or
 arbitrary code-generation quality. Optional tools, browser, MCP, skills and other
 platforms remain unqualified. The reusable test is opt-in with
-`NEMOCLAW_LIVE_FABRIC_TOOLS=1`; see [LOCAL_TEST.md](LOCAL_TEST.md).
+`NEMOCLAW_LIVE_FABRIC_TOOLS=1`; see [LOCAL_TEST.md](../validation/run-tests.md).
 
 ## Fabric OpenClaw, 2026-09-12
 
-[evidence/fabric-openclaw-linux-arm64.json](evidence/fabric-openclaw-linux-arm64.json)
+[evidence/fabric-openclaw-linux-arm64.json](../validation/evidence/fabric-openclaw-linux-arm64.json)
 records a local prototype adapter for OpenClaw 2026.9.4. The pinned Fabric source
 has no OpenClaw adapter. Fabric starts this adapter through its persistent
 lifecycle contract; the adapter owns an OpenClaw gateway and one session and uses
@@ -432,7 +436,7 @@ streaming, optional native dependencies or other platforms.
 The experimental channel contract passed a native Linux ARM64 run using Fabric
 `51a28c1` and OpenClaw 2026.9.4. Image:
 `nc-prototype-fabric@sha256:d8b8b5daab7d4dfea2aeaa24e62847e2102057321e698f843dcd793e548280b8`.
-Evidence: [fabric-openclaw-channels-linux-arm64.json](evidence/fabric-openclaw-channels-linux-arm64.json).
+Evidence: [fabric-openclaw-channels-linux-arm64.json](../validation/evidence/fabric-openclaw-channels-linux-arm64.json).
 
 Actual Fabric and OpenClaw processes ran against local TLS Telegram and model
 protocol fixtures with Docker networking disabled. Native enrollment, unauthorized
@@ -455,14 +459,14 @@ OpenTofu/provider processes (gateway execution is a fixture).
 This is an adapter-boundary proof, not completed deployment messaging support.
 Generic OpenShell resource provisioning, channel YAML/plan/export integration,
 real Telegram delivery, and WhatsApp remain unqualified/unimplemented as detailed
-in [CHANNEL_EXPERIMENT.md](CHANNEL_EXPERIMENT.md).
+in [CHANNEL_EXPERIMENT.md](channel-experiment.md).
 
 ## Native harness interfaces — 2026-09-12 (local date)
 
 The channel-control extension and NemoClaw `invoke`/`channels` commands are removed.
 Native image:
 `nc-prototype-fabric@sha256:a608340846053d881c3c6b3bdd7541d4f2f53236deaaef8e0b8f44afd8d4e8dd`.
-Evidence: [openclaw-native-interfaces-linux-arm64.json](evidence/openclaw-native-interfaces-linux-arm64.json).
+Evidence: [openclaw-native-interfaces-linux-arm64.json](../validation/evidence/openclaw-native-interfaces-linux-arm64.json).
 
 Native Fabric/OpenClaw processes passed the messaging scenarios through OpenClaw's
 own config, pairing, channel-status and gateway CLI commands. Local Telegram/model
@@ -482,7 +486,7 @@ rejection of reserved deployment-setting drift. Focused Go unit tests, `go vet`,
 and native OpenTofu/provider integration tests passed after rebuilding the bundle.
 The integration tests also reject the removed runtime commands. Live messaging
 account qualification and generic OpenShell messaging infrastructure remain separate
-from these results; see [NATIVE_MESSAGING.md](NATIVE_MESSAGING.md).
+from these results; see [NATIVE_MESSAGING.md](../guides/native-access.md).
 
 ## Complete pinned Fabric adapter inventory — 2026-09-12 (local date)
 
@@ -491,9 +495,9 @@ and Pi. All seven images built and ran natively on Linux ARM64. The inventory te
 compares the builder with every descriptor in both upstream adapter language trees:
 nine upstream adapters, plus the unchanged local OpenClaw adapter. No upstream
 Fabric changes were made. Recipes, versions, and protocol requirements are in
-[FABRIC_HARNESSES.md](FABRIC_HARNESSES.md).
+[FABRIC_HARNESSES.md](../reference/fabric-harnesses.md).
 
-Evidence: [fabric-adapter-matrix-linux-arm64.json](evidence/fabric-adapter-matrix-linux-arm64.json).
+Evidence: [fabric-adapter-matrix-linux-arm64.json](../validation/evidence/fabric-adapter-matrix-linux-arm64.json).
 It records immutable image references, source/dependency provenance, per-harness
 Docker evidence, and real OpenShell deployment state paths.
 
