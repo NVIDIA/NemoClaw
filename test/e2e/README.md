@@ -404,7 +404,7 @@ It then changes the fixture's recorded sandbox fingerprint and requires export t
 The fixture restores the registry in `finally` and removes private export files through its existing cleanup registry.
 The exported effective policy comes from the SDK configuration response and is compared with the
 independent CLI policy observation. This covers the SDK connection and complete export observation boundary; the deterministic adapter tests remain the owners of individual wire shapes and malformed responses.
-The assertion budget is unchanged. Nine export assertions replace nine redundant checks in the same target:
+The target checks these exports:
 
 - Two CLI-file and two OpenShell-version checks are covered by the retained successful onboarding checks.
 - Two intermediate process-start comparisons are covered by the retained comparison after all policy and traffic probes.
@@ -416,8 +416,7 @@ After canonical hosted-inference onboarding, it invokes `config export` through 
 and `nemohermes` launchers and requires the validated documents to have identical specs. It checks
 the Hermes agent type, immutable managed image, hosted route, effective policy, and omission of
 credential values. It then changes the fixture's recorded sandbox fingerprint and requires both
-launchers to fail without publishing a file before restoring the registry. The assertion budget is
-unchanged because this contract replaces a redundant nonempty-log assertion in the same scenario.
+launchers to fail without publishing a file before restoring the registry. The scenario verifies the export failure before restoring the registry.
 
 `tools/e2e/target-inventory.mts` owns target identity and lookup for reusable-profile, shared, typed-driver, specialized workflow, external workflow, and manual executions.
 Typed scenario definitions remain beside the live driver. The inventory rejects duplicate IDs across these routes.
