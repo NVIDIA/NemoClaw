@@ -74,6 +74,10 @@ export function buildDebugCommandDeps(rootDir: string): RunDebugCommandDeps {
   };
 
   const getDefaultSandbox: RunDebugCommandDeps["getDefaultSandbox"] = async () => {
+    assertNoHermesPortableHostAuthority(
+      defaultPortableStateDir(process.env),
+      "debug without --sandbox NAME",
+    );
     const { defaultSandbox, sandboxes } = registry.listSandboxes();
     const selectedName = defaultSandbox ?? sandboxes.find((sandbox) => sandbox.name)?.name;
     if (!selectedName) {

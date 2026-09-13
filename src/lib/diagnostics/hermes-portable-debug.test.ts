@@ -94,6 +94,29 @@ describe("Portable debug", () => {
     }
   });
 
+  it("requires explicit Portable selection when the registry has a default sandbox (#11651)", async () => {
+    vi.resetModules();
+    const { save } = await import("../state/registry/persistence");
+    save({
+      defaultSandbox: "alpha",
+      sandboxes: { alpha: { name: "alpha", agent: "hermes" } },
+    });
+    const { buildDebugCommandDeps: buildIsolatedDebugCommandDeps } =
+      await import("./debug-command-deps");
+    const output = path.join(directory, "debug.tar.gz");
+
+    await expect(
+      runDebugCommandWithOptions(
+        { output },
+        { ...buildIsolatedDebugCommandDeps(process.cwd()), env: {} },
+      ),
+    ).rejects.toThrow("--sandbox NAME");
+
+    expect(fs.existsSync(output)).toBe(false);
+    expect(mocks.capture).not.toHaveBeenCalled();
+    expect(mocks.legacyDebug).not.toHaveBeenCalled();
+  });
+
   it("refuses malformed selected authority before creating output", async () => {
     const output = path.join(directory, "debug.tar.gz");
     fs.writeFileSync(path.join(receiptDirectory, "active.json"), "{invalid json", { mode: 0o600 });
