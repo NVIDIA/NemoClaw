@@ -14,6 +14,7 @@ import {
   acpMessageContainsPong,
   createHermesAcpPromptEvidenceTracker,
   hermesAcpExchangeEvidencePassed,
+  hermesAcpGatewayStoppedPreconditionPassed,
   hermesAcpLiveHostEnv,
   hermesAcpScenarioTimeoutMs,
   isAcpResponse,
@@ -22,6 +23,53 @@ import {
 } from "../fixtures/hermes-acp-live.ts";
 
 describe("Hermes ACP live evidence boundary", () => {
+  const shellResult = ({
+    exitCode,
+    stderr = "",
+    stdout = "",
+    timedOut = false,
+  }: {
+    exitCode: number;
+    stderr?: string;
+    stdout?: string;
+    timedOut?: boolean;
+  }) => ({
+    command: ["openshell", "status"],
+    exitCode,
+    signal: null,
+    timedOut,
+    stdout,
+    stderr,
+    artifacts: { stdout: "", stderr: "", result: "" },
+  });
+
+  it("recognizes the OpenShell 0.0.116 stopped-gateway response (#10947)", () => {
+    expect(
+      hermesAcpGatewayStoppedPreconditionPassed(
+        shellResult({
+          exitCode: 1,
+          stderr:
+            "Error:   × client error (Connect)\n  ├─▶ tcp connect error\n  ╰─▶ Connection refused (os error 111)\n",
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      hermesAcpGatewayStoppedPreconditionPassed(
+        shellResult({ exitCode: 0, stdout: "Status: Disconnected\nGateway: nemoclaw\n" }),
+      ),
+    ).toBe(true);
+    expect(
+      hermesAcpGatewayStoppedPreconditionPassed(
+        shellResult({ exitCode: 1, stderr: "Error: permission denied\n" }),
+      ),
+    ).toBe(false);
+    expect(
+      hermesAcpGatewayStoppedPreconditionPassed(
+        shellResult({ exitCode: 1, stderr: "Connection refused", timedOut: true }),
+      ),
+    ).toBe(false);
+  });
+
   it.each(["installed", "checkout"] as const)(
     "initializes through the %s adapter",
     async (installation) => {

@@ -42,7 +42,10 @@ import {
   type TrustedLocalBaseImageOverride,
   versionGte,
 } from "../sandbox-base-image";
-import { sandboxBaseImageHasSecurityInventory } from "../sandbox-base-image/security-inventory";
+import {
+  hermesSandboxBaseImageHasSecurityInventory,
+  sandboxBaseImageHasSecurityInventory,
+} from "../sandbox-base-image/security-inventory";
 import { getAgentSandboxBaseImageEnvVar } from "./base-image-env";
 import { createDeepAgentsCodeBaseImageResolutionOptions } from "./deep-agents-code-base-image";
 import type { AgentDefinition } from "./defs";
@@ -332,7 +335,8 @@ function createAgentBaseImageResolutionOptions(
     agent.name === "hermes"
       ? {
           validateImage: (imageRef: string) =>
-            hermesBaseImageSupportsMcp(imageRef) && sandboxBaseImageHasSecurityInventory(imageRef),
+            hermesBaseImageSupportsMcp(imageRef) &&
+            hermesSandboxBaseImageHasSecurityInventory(imageRef),
           validationDescription:
             "the required MCP Streamable HTTP and ACP runtimes and the immutable security package inventory",
         }

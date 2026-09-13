@@ -78,12 +78,32 @@ describe("agent base image provisioning", () => {
       const options = resolveSandboxBaseImageMock.mock.calls[0]?.[0] as {
         validateImage?: (imageRef: string) => boolean;
       };
-      dockerCaptureMock
-        .mockReturnValueOnce("nemoclaw-hermes-mcp-runtime-ok")
-        .mockReturnValueOnce("");
+      dockerCaptureMock.mockReturnValueOnce("nemoclaw-hermes-mcp-runtime-ok").mockReturnValue("");
 
       expect(options.validateImage?.("hermes-base:stale-inventory")).toBe(false);
-      expect(dockerCaptureMock).toHaveBeenCalledTimes(2);
+      expect(dockerCaptureMock).toHaveBeenCalledTimes(3);
+    });
+  });
+
+  it("accepts the reviewed security inventory in the Dockerfile-pinned Hermes base", () => {
+    withMockedDocker(({ ensureAgentBaseImage, dockerCaptureMock, resolveSandboxBaseImageMock }) => {
+      ensureAgentBaseImage(makeAgent());
+      const options = resolveSandboxBaseImageMock.mock.calls[0]?.[0] as {
+        validateImage?: (imageRef: string) => boolean;
+      };
+      dockerCaptureMock
+        .mockReturnValueOnce("nemoclaw-hermes-mcp-runtime-ok")
+        .mockReturnValueOnce("")
+        .mockReturnValueOnce("nemoclaw-security-inventory-ok");
+
+      expect(options.validateImage?.("hermes-base:pinned-inventory")).toBe(true);
+      const inventoryProbe = dockerCaptureMock.mock.calls[2]?.[0] as string[];
+      expect(inventoryProbe).toEqual(
+        expect.arrayContaining([
+          "hermes-base:pinned-inventory",
+          expect.stringContaining("nemoclaw-python3.13-htmlparser-fix=3.13.5-2+deb13u4+nemoclaw1"),
+        ]),
+      );
     });
   });
 
