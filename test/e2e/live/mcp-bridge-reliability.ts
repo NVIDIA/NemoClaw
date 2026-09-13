@@ -1,14 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import {
-  buildHermesMcpStatusCommand,
-  OPENCLAW_MCPORTER_ROOT,
-} from "../../../src/lib/actions/sandbox/mcp-bridge-adapter-status";
+import { buildHermesMcpStatusCommand } from "../../../src/lib/actions/sandbox/mcp-bridge-adapter-status";
 import { buildMcpCredentialRevisionObservationCommand } from "../../../src/lib/actions/sandbox/mcp-bridge-provider";
 import type { McpAttachedCredentialRevision } from "../../../src/lib/actions/sandbox/mcp-bridge-provider-readiness";
+import type { McpSourceEntry } from "../../../src/lib/actions/sandbox/mcp-bridge-contracts";
 import { shellQuote } from "../../../src/lib/core/shell-quote";
-import type { McpBridgeEntry } from "../../../src/lib/state/registry";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { assertExitZero, resultText } from "../fixtures/clients/command.ts";
@@ -66,12 +63,14 @@ export async function runDeniedMcpToolCall(
     agent: "openclaw" | "hermes" | "langchain-deepagents-code";
     artifactName: string;
     deniedTool?: string;
+    mcpUrl?: string;
     sandbox: SandboxClient;
     sandboxName: string;
     serverName: string;
     requests: ReadonlyArray<{ rpcMethod?: string }>;
   },
 ): Promise<{ after: number; before: number; policyDenied: boolean; result: ShellProbeResult }> {
+  const targetUrl = options.agent === "openclaw" ? new URL(options.mcpUrl ?? "") : null;
   const countToolCalls = () =>
     options.requests.filter((request) => request.rpcMethod === "tools/call").length;
   const readDenialAuditEvents = async (artifactName: string): Promise<string[] | null> => {
@@ -115,9 +114,14 @@ export async function runDeniedMcpToolCall(
     MCP_BRIDGE_DENIED_TOOL_PROMPT,
     payload,
   ];
+  const deniedToolName = options.deniedTool ?? MCP_BRIDGE_DENIED_TOOL_NAME;
   const command =
     options.agent === "openclaw"
-      ? `nemoclaw-start mcporter --root ${shellQuote(OPENCLAW_MCPORTER_ROOT)} call ${options.serverName}.${options.deniedTool ?? MCP_BRIDGE_DENIED_TOOL_NAME} --args '{}' --output json`
+      ? [
+          `nemoclaw-start node - ${shellQuote(targetUrl)} tools/call deny FAKE_MCP_SECRET ${shellQuote(deniedToolName)} <<'NEMOCLAW_MCP_DENIED_TOOL_PROBE'`,
+          MCP_PROVIDER_REWRITE_PROBE_SOURCE,
+          "NEMOCLAW_MCP_DENIED_TOOL_PROBE",
+        ].join("\n")
       : options.agent === "hermes"
         ? [
             ...HERMES_MCP_ENV_LOAD_COMMANDS,
@@ -166,6 +170,7 @@ export async function runOpenClawDeniedToolUpdateProof(
   sandbox: SandboxClient,
   requests: Array<{ auth: string; rpcMethod?: string; rpcToolName?: string }>,
   sandboxName: string,
+  mcpUrl: string,
 ): Promise<{
   after: number;
   before: number;
@@ -185,12 +190,15 @@ export async function runOpenClawDeniedToolUpdateProof(
     commandOptions("openclaw-clear-denied-tools"),
   );
   const before = requests.filter((request) => request.rpcMethod === "tools/call").length;
-  const call = await sandbox.execShell(
+  const call = await runMcpProviderRewriteProbe(
+    sandbox,
     sandboxName,
-    trustedSandboxShellScript(
-      `nemoclaw-start mcporter --root ${shellQuote(OPENCLAW_MCPORTER_ROOT)} call fake.${MCP_BRIDGE_DENIED_TOOL_NAME} --args '{}' --output json`,
-    ),
-    commandOptions("openclaw-formerly-denied-tool-call"),
+    mcpUrl,
+    "tools/call",
+    "allow",
+    "openclaw-formerly-denied-tool-call",
+    "FAKE_MCP_SECRET",
+    MCP_BRIDGE_DENIED_TOOL_NAME,
   );
   const calls = requests.filter((request) => request.rpcMethod === "tools/call");
   const replace = await host.nemoclaw(
@@ -201,6 +209,7 @@ export async function runOpenClawDeniedToolUpdateProof(
     agent: "openclaw",
     artifactName: "openclaw-restored-denied-tool-call",
     deniedTool: MCP_BRIDGE_DENIED_TOOL_NAME,
+    mcpUrl,
     requests,
     sandbox,
     sandboxName,
@@ -235,13 +244,14 @@ export async function runMcpProviderRewriteProbe(
   expectation: "allow" | "deny" | "deny-strict",
   artifactName: string,
   credentialKey = "FAKE_MCP_SECRET",
+  toolName?: string,
 ): Promise<ShellProbeResult> {
   return sandbox.execShell(
     sandboxName,
     trustedSandboxShellScript(
       [
         "set -eu",
-        `nemoclaw-start node - ${shellQuote(targetUrl)} ${shellQuote(method)} ${shellQuote(expectation)} ${shellQuote(credentialKey)} <<'NEMOCLAW_MCP_PROVIDER_REWRITE_PROBE'`,
+        `nemoclaw-start node - ${shellQuote(targetUrl)} ${shellQuote(method)} ${shellQuote(expectation)} ${shellQuote(credentialKey)}${toolName ? ` ${shellQuote(toolName)}` : ""} <<'NEMOCLAW_MCP_PROVIDER_REWRITE_PROBE'`,
         MCP_PROVIDER_REWRITE_PROBE_SOURCE,
         "NEMOCLAW_MCP_PROVIDER_REWRITE_PROBE",
       ].join("\n"),
@@ -377,17 +387,17 @@ export function isHermesMcpStatusAwaitingRestartSettlement(
     env?.ready === true &&
     typeof provider?.name === "string" &&
     provider.name !== "" &&
-    provider?.registryPresent === true &&
-    provider.gatewayPresent === true &&
+    provider?.present === true &&
+    provider.state === "configured" &&
     provider.attached === true &&
     provider.credentialReady === true &&
     credentialResolution?.ok === null &&
     credentialResolution.detail ===
       "probe skipped: the current OpenShell credential revision could not be observed" &&
-    policy?.registryPresent === true &&
+    policy?.present === true &&
     typeof policy.name === "string" &&
     policy.name !== "" &&
-    policy.gatewayPresent === true &&
+    policy.state === "configured" &&
     adapterStatus?.registered === null &&
     adapterStatus.detail ===
       "Adapter inspection was skipped because the current OpenShell credential revision could not be observed."
@@ -474,7 +484,7 @@ export async function confirmHermesMcpRegistrationAfterRestartSettlement(options
 function hermesEntryFromStatus(
   result: McpStatusCommandResult,
   expected: { server: string; url: string; credentialEnvName: string },
-): McpBridgeEntry | null {
+): McpSourceEntry | null {
   try {
     const status = objectValue(JSON.parse(result.stdout) as unknown);
     const provider = objectValue(status?.provider);
@@ -486,9 +496,7 @@ function hermesEntryFromStatus(
       typeof provider?.name !== "string" ||
       provider.name === "" ||
       typeof policy?.name !== "string" ||
-      policy.name === "" ||
-      typeof status.addedAt !== "string" ||
-      status.addedAt === ""
+      policy.name === ""
     ) {
       return null;
     }
@@ -500,7 +508,6 @@ function hermesEntryFromStatus(
       env: [expected.credentialEnvName],
       providerName: provider.name,
       policyName: policy.name,
-      addedAt: status.addedAt,
     };
   } catch {
     return null;
@@ -656,7 +663,7 @@ export function isHermesRestartTransportFailure(adapter: string, diagnostic: str
   // Hermes transaction helper performs its acknowledged SIGUSR1 gateway reload.
   // NemoClaw cannot repair that transport from this E2E boundary. The live
   // caller first proves one coherent committed bridge, then retries only the
-  // serialized loser and still requires the canonical duplicate rejection.
+  // serialized loser and still requires idempotent success from that source.
   // Remove this classifier when OpenShell preserves command completion across
   // that managed reload or returns a structured post-commit outcome (#6692).
   if (adapter !== "hermes-config") return false;
