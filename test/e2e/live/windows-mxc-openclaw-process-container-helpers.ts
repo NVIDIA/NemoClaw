@@ -108,7 +108,6 @@ export type WindowsMxcHostPreparationDeclaration =
   | "preexisting-compatible-system-drive-acl";
 
 export interface WindowsMxcOpenClawQualificationInputs {
-  readonly allowDiagnosticNameDeletion: boolean;
   readonly artifactDirectory: string;
   readonly declaredHostPreparation: WindowsMxcHostPreparationDeclaration;
   readonly expected: {
@@ -462,9 +461,7 @@ export function buildWindowsMxcSetupFailureReceipt(
   return {
     schemaVersion: WINDOWS_MXC_OPENCLAW_QUALIFICATION_RECEIPT_SCHEMA_VERSION,
     classification: "inactive-candidate",
-    qualificationMode: inputs.allowDiagnosticNameDeletion
-      ? "diagnostic-name-delete"
-      : "authoritative",
+    qualificationMode: "authoritative",
     backend: "process_container",
     configuration: {
       declaredHostPreparation: inputs.declaredHostPreparation,
@@ -702,8 +699,6 @@ export function parseWindowsMxcOpenClawQualificationEnvironment(
   requireDescendant(wxcExecPath, mxcRoot, "wxc-exec", "MXC root");
 
   return {
-    allowDiagnosticNameDeletion:
-      environment.NEMOCLAW_WINDOWS_MXC_ALLOW_NAME_DELETE_DIAGNOSTIC === "1",
     artifactDirectory: realDirectory(
       requiredEnvironment(environment, "E2E_ARTIFACT_DIR"),
       "E2E artifact directory",
@@ -1954,7 +1949,6 @@ function createWindowsMxcOpenClawCompositionInput(input: {
   readonly recordFailure: (record: MxcOpenShellLiveFailureRecord) => void;
 }): WindowsMxcInactiveOnboardingCompositionInput {
   return {
-    allowDiagnosticNameDeletion: input.inputs.allowDiagnosticNameDeletion,
     distributionAuthority: input.distributionAuthority,
     attachmentObservation: createWindowsMxcOpenShellAttachmentObservationRequest(
       input.inputs,
@@ -3066,9 +3060,7 @@ export async function runWindowsMxcOpenClawProcessContainerQualification(
   const receipt: WindowsMxcOpenClawQualificationReceipt = {
     schemaVersion: WINDOWS_MXC_OPENCLAW_QUALIFICATION_RECEIPT_SCHEMA_VERSION,
     classification: "inactive-candidate",
-    qualificationMode: inputs.allowDiagnosticNameDeletion
-      ? "diagnostic-name-delete"
-      : "authoritative",
+    qualificationMode: "authoritative",
     backend: "process_container",
     configuration: {
       declaredHostPreparation: inputs.declaredHostPreparation,

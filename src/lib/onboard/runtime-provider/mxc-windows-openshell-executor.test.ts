@@ -151,7 +151,7 @@ function executor(
 ) {
   const distribution = mxcOpenShellDistributionTestFixture();
   return createMxcWindowsOpenShellExecutor({
-    allowDiagnosticNameDeletion,
+    ...{ allowDiagnosticNameDeletion },
     distributionAuthority: distribution.authority,
     observationRequest: mxcOpenShellAttachmentObservationRequest(distribution.observation),
     environmentReferences,
@@ -697,7 +697,7 @@ describe("inactive trusted Windows OpenShell executor", () => {
     );
   });
 
-  it("permits explicitly marked name deletion only for temporary physical diagnostics (#10585)", async () => {
+  it("keeps immutable-ID deletion when a caller supplies the retired diagnostic option (#10585)", async () => {
     const request = await issuedRequest();
     const test = runtime(request);
 
@@ -714,7 +714,9 @@ describe("inactive trusted Windows OpenShell executor", () => {
       }),
     ).resolves.toMatchObject({ status: 0 });
     expect(test.runtime.runCommand).toHaveBeenCalledWith(
-      expect.objectContaining({ arguments: ["sandbox", "delete", request.sandboxName] }),
+      expect.objectContaining({
+        arguments: ["sandbox", "delete", request.sandboxName, "--expected-id", "sandbox-id-1"],
+      }),
       expect.anything(),
       expect.any(AbortSignal),
     );

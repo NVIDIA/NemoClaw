@@ -26,6 +26,7 @@ function expectQualificationReceipt(
     WINDOWS_MXC_OPENCLAW_QUALIFICATION_RECEIPT_SCHEMA_VERSION,
     "pass",
   ]);
+  expect(receipt.qualificationMode).toBe("authoritative");
   expect(receipt.configuration).toEqual(expectedConfiguration);
   expect(receipt.cleanup).toEqual(expectedCleanup);
   expect([
@@ -61,9 +62,6 @@ qualificationTest(
   async ({ progress }) => {
     progress.phase("qualify the Windows host and validate exact artifact identities");
     const inputs = parseWindowsMxcOpenClawQualificationEnvironment(process.env);
-    expect(inputs.allowDiagnosticNameDeletion).toBe(
-      process.env.NEMOCLAW_WINDOWS_MXC_ALLOW_NAME_DELETE_DIAGNOSTIC === "1",
-    );
     const expectedConfiguration = {
       declaredHostPreparation: inputs.declaredHostPreparation,
       egressProxy: true,

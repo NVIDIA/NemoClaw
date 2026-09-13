@@ -9,24 +9,8 @@ import {
   MXC_OPENSHELL_ATTACHMENT_CONTRACT_VERSION,
   MXC_OPENSHELL_V0_0_24_MXC_V0_7_0_RC1_QUALIFICATION_PROFILE,
   MXC_OPENSHELL_V0_0_24_MXC_V0_7_0_RC1_QUALIFICATION_PROFILE_ID,
-  MXC_OPENSHELL_V0_0_30_MXC_V0_8_0_ACCEPTED_PROFILE,
-  MXC_OPENSHELL_V0_0_30_MXC_V0_8_0_ACCEPTED_PROFILE_ID,
-  MXC_OPENSHELL_V0_0_59_DEV_837_MR105_MXC_V0_8_0_QUALIFICATION_PROFILE,
-  MXC_OPENSHELL_V0_0_59_DEV_837_MR105_MXC_V0_8_0_QUALIFICATION_PROFILE_ID,
-  MXC_OPENSHELL_V0_0_59_DEV_838_MR105_MXC_V0_8_0_QUALIFICATION_PROFILE,
-  MXC_OPENSHELL_V0_0_59_DEV_838_MR105_MXC_V0_8_0_QUALIFICATION_PROFILE_ID,
-  MXC_OPENSHELL_V0_0_59_DEV_839_MR105_MXC_V0_8_0_QUALIFICATION_PROFILE,
-  MXC_OPENSHELL_V0_0_59_DEV_839_MR105_MXC_V0_8_0_QUALIFICATION_PROFILE_ID,
-  MXC_OPENSHELL_V0_0_59_DEV_840_MR105_MXC_V0_7_0_RC1_QUALIFICATION_PROFILE,
-  MXC_OPENSHELL_V0_0_59_DEV_840_MR105_MXC_V0_7_0_RC1_QUALIFICATION_PROFILE_ID,
-  MXC_OPENSHELL_V0_0_59_DEV_841_MR105_MXC_V0_7_0_RC1_QUALIFICATION_PROFILE,
-  MXC_OPENSHELL_V0_0_59_DEV_841_MR105_MXC_V0_7_0_RC1_QUALIFICATION_PROFILE_ID,
-  MXC_OPENSHELL_V0_0_59_DEV_843_MR105_MXC_V0_7_0_RC1_QUALIFICATION_PROFILE,
-  MXC_OPENSHELL_V0_0_59_DEV_843_MR105_MXC_V0_7_0_RC1_QUALIFICATION_PROFILE_ID,
-  MXC_OPENSHELL_V0_0_59_DEV_843_MR105_MXC_V0_8_0_QUALIFICATION_PROFILE,
-  MXC_OPENSHELL_V0_0_59_DEV_843_MR105_MXC_V0_8_0_QUALIFICATION_PROFILE_ID,
-  MXC_OPENSHELL_V0_0_59_DEV_909_MR108_MXC_V0_8_0_QUALIFICATION_PROFILE,
-  MXC_OPENSHELL_V0_0_59_DEV_909_MR108_MXC_V0_8_0_QUALIFICATION_PROFILE_ID,
+  MXC_OPENSHELL_V0_0_59_DEV_927_MR105_MXC_V0_8_0_QUALIFICATION_PROFILE,
+  MXC_OPENSHELL_V0_0_59_DEV_927_MR105_MXC_V0_8_0_QUALIFICATION_PROFILE_ID,
   MxcOpenShellAttachmentError,
   createMxcOpenShellDistributionAuthority,
   createMxcOpenShellQualificationGatewayConfiguration,
@@ -112,162 +96,8 @@ describe("inactive OpenShell MXC installation attachment", () => {
     });
   });
 
-  it("binds the accepted v0.0.30 package to provider-rendered run-local configuration (#10585)", () => {
-    const profile = MXC_OPENSHELL_V0_0_30_MXC_V0_8_0_ACCEPTED_PROFILE;
-    const configured = createMxcOpenShellQualificationGatewayConfiguration({
-      agentPath: "C:\\openclaw\\node.exe",
-      distributionRevision: profile.expectation.distribution.revision,
-      distributionProfileId: profile.profileId,
-      distributionVersion: profile.expectation.distribution.version,
-      egressProxyPort: 18080,
-      relayPath: "C:\\mxc-share\\openshell-supervisor-relay.exe",
-      shareDirectory: "C:\\mxc-share",
-      targetPort: 18889,
-      wxcExecPath: "C:\\mxc-sdk\\bin\\x64\\wxc-exec.exe",
-    });
-    const configSha256 = createHash("sha256").update(configured.content, "utf8").digest("hex");
-    const receipt = qualifyMxcOpenShellAttachment(
-      resolveMxcOpenShellDistributionAuthority(configured.distributionAuthority),
-      {
-        distribution: profile.expectation.distribution,
-        components: profile.expectation.components,
-        gateway: { ...profile.expectation.gateway, configSha256 },
-        distributionRoot: "C:\\OpenShell-v0.0.30",
-        mxcRoot: "C:\\mxc-sdk",
-        cliPath: "C:\\OpenShell-v0.0.30\\openshell.exe",
-        gatewayPath: "C:\\OpenShell-v0.0.30\\openshell-gateway.exe",
-        wxcExecPath: "C:\\mxc-sdk\\bin\\x64\\wxc-exec.exe",
-        gatewayConfigPath: "C:\\qualification\\gateway.toml",
-      },
-    );
-
-    expect(configured.distributionAuthority).toMatchObject({
-      acceptance: "accepted",
-      profileId: MXC_OPENSHELL_V0_0_30_MXC_V0_8_0_ACCEPTED_PROFILE_ID,
-    });
-    expect(receipt.gateway.configSha256).toBe(configSha256);
-    expect(receipt.acceptance).toBe("accepted");
-    expect(Object.isFrozen(configured)).toBe(true);
-  });
-
-  it("keeps the MR !105 developer package qualification-only (#10585)", () => {
-    const profile = MXC_OPENSHELL_V0_0_59_DEV_837_MR105_MXC_V0_8_0_QUALIFICATION_PROFILE;
-    const configured = createMxcOpenShellQualificationGatewayConfiguration({
-      agentPath: "C:\\openclaw\\node.exe",
-      distributionRevision: profile.expectation.distribution.revision,
-      distributionProfileId: profile.profileId,
-      distributionVersion: profile.expectation.distribution.version,
-      egressProxyPort: 18080,
-      relayPath: "C:\\mxc-share\\openshell-supervisor-relay.exe",
-      shareDirectory: "C:\\mxc-share",
-      targetPort: 18889,
-      wxcExecPath: "C:\\mxc-sdk\\bin\\x64\\wxc-exec.exe",
-    });
-
-    expect(configured.distributionAuthority).toMatchObject({
-      acceptance: "qualification",
-      profileId: MXC_OPENSHELL_V0_0_59_DEV_837_MR105_MXC_V0_8_0_QUALIFICATION_PROFILE_ID,
-    });
-  });
-
-  it("binds the rebuilt MR !105 package as qualification-only (#10585)", () => {
-    const profile = MXC_OPENSHELL_V0_0_59_DEV_838_MR105_MXC_V0_8_0_QUALIFICATION_PROFILE;
-    const configured = createMxcOpenShellQualificationGatewayConfiguration({
-      agentPath: "C:\\openclaw\\node.exe",
-      distributionRevision: profile.expectation.distribution.revision,
-      distributionProfileId: profile.profileId,
-      distributionVersion: profile.expectation.distribution.version,
-      egressProxyPort: 18080,
-      relayPath: "C:\\mxc-share\\openshell-supervisor-relay.exe",
-      shareDirectory: "C:\\mxc-share",
-      targetPort: 18889,
-      wxcExecPath: "C:\\mxc-sdk\\bin\\x64\\wxc-exec.exe",
-    });
-
-    expect(configured.distributionAuthority).toMatchObject({
-      acceptance: "qualification",
-      profileId: MXC_OPENSHELL_V0_0_59_DEV_838_MR105_MXC_V0_8_0_QUALIFICATION_PROFILE_ID,
-    });
-  });
-
-  it("binds the host-reachable relay build as qualification-only (#10585)", () => {
-    const profile = MXC_OPENSHELL_V0_0_59_DEV_839_MR105_MXC_V0_8_0_QUALIFICATION_PROFILE;
-    const configured = createMxcOpenShellQualificationGatewayConfiguration({
-      agentPath: "C:\\openclaw\\node.exe",
-      distributionRevision: profile.expectation.distribution.revision,
-      distributionProfileId: profile.profileId,
-      distributionVersion: profile.expectation.distribution.version,
-      egressProxyPort: 18080,
-      relayPath: "C:\\mxc-share\\openshell-supervisor-relay.exe",
-      shareDirectory: "C:\\mxc-share",
-      targetPort: 18889,
-      wxcExecPath: "C:\\mxc-sdk\\bin\\x64\\wxc-exec.exe",
-    });
-
-    expect(configured.distributionAuthority).toMatchObject({
-      acceptance: "qualification",
-      profileId: MXC_OPENSHELL_V0_0_59_DEV_839_MR105_MXC_V0_8_0_QUALIFICATION_PROFILE_ID,
-    });
-  });
-
-  it("binds the control-channel relay build as qualification-only (#10585)", () => {
-    const profile = MXC_OPENSHELL_V0_0_59_DEV_840_MR105_MXC_V0_7_0_RC1_QUALIFICATION_PROFILE;
-    expect(profile.compatibility.mxcVersion).toBe("0.7.0-rc1");
-    expect(profile.expectation.components.wxcExecSha256).toBe(
-      "db0a3422be9e1b396cc1b2547c70ff16b27412438a31c10a45abf370cac86ae2",
-    );
-    const configured = createMxcOpenShellQualificationGatewayConfiguration({
-      agentPath: "C:\\openclaw\\node.exe",
-      distributionRevision: profile.expectation.distribution.revision,
-      distributionProfileId: profile.profileId,
-      distributionVersion: profile.expectation.distribution.version,
-      egressProxyPort: 18080,
-      relayPath: "C:\\mxc-share\\openshell-supervisor-relay.exe",
-      shareDirectory: "C:\\mxc-share",
-      targetPort: 18889,
-      wxcExecPath: "C:\\mxc-sdk\\bin\\x64\\wxc-exec.exe",
-    });
-
-    expect(configured.distributionAuthority).toMatchObject({
-      acceptance: "qualification",
-      profileId: MXC_OPENSHELL_V0_0_59_DEV_840_MR105_MXC_V0_7_0_RC1_QUALIFICATION_PROFILE_ID,
-    });
-  });
-
-  it("binds the AppContainer-compatible MR 105 build as qualification-only (#10585)", () => {
-    const profile = MXC_OPENSHELL_V0_0_59_DEV_841_MR105_MXC_V0_7_0_RC1_QUALIFICATION_PROFILE;
-    expect(profile.compatibility.mxcVersion).toBe("0.7.0-rc1");
-    expect(profile.expectation.distribution.revision).toBe(
-      "464d88fd9ed333db5a66529e8451e94c10e0168d",
-    );
-    const configured = createMxcOpenShellQualificationGatewayConfiguration({
-      agentPath: "C:\\openclaw\\node.exe",
-      distributionRevision: profile.expectation.distribution.revision,
-      distributionProfileId: profile.profileId,
-      distributionVersion: profile.expectation.distribution.version,
-      egressProxyPort: 18080,
-      relayPath: "C:\\mxc-share\\openshell-supervisor-relay.exe",
-      shareDirectory: "C:\\mxc-share",
-      targetPort: 18889,
-      wxcExecPath: "C:\\mxc-sdk\\bin\\x64\\wxc-exec.exe",
-    });
-
-    expect(configured.distributionAuthority).toMatchObject({
-      acceptance: "qualification",
-      profileId: MXC_OPENSHELL_V0_0_59_DEV_841_MR105_MXC_V0_7_0_RC1_QUALIFICATION_PROFILE_ID,
-    });
-  });
-
-  it("retains the current MR 105 head with MXC 0.7 as qualification-only (#10585)", () => {
-    const profile = MXC_OPENSHELL_V0_0_59_DEV_843_MR105_MXC_V0_7_0_RC1_QUALIFICATION_PROFILE;
-    expect(profile.compatibility.mxcVersion).toBe("0.7.0-rc1");
-    expect(profile.compatibility.nativeArchitecture).toBe("arm64");
-    expect(profile.expectation.components.wxcExecSha256).toBe(
-      "e430d0e4f44f616e91db684f8d825a6dc93e06a1262b8d00bcaac7522a317aab",
-    );
-    expect(profile.expectation.distribution.revision).toBe(
-      "d785dc8d86439b3289b0294829aaebd849d01f73",
-    );
+  it("binds the dev.927 qualification package to provider-rendered run-local configuration (#10585)", () => {
+    const profile = MXC_OPENSHELL_V0_0_59_DEV_927_MR105_MXC_V0_8_0_QUALIFICATION_PROFILE;
     const configured = createMxcOpenShellQualificationGatewayConfiguration({
       agentPath: "C:\\openclaw\\node.exe",
       distributionRevision: profile.expectation.distribution.revision,
@@ -279,115 +109,32 @@ describe("inactive OpenShell MXC installation attachment", () => {
       targetPort: 18889,
       wxcExecPath: "C:\\mxc-sdk\\bin\\arm64\\wxc-exec.exe",
     });
-
-    expect(configured.distributionAuthority).toMatchObject({
-      acceptance: "qualification",
-      nativeArchitecture: "arm64",
-      profileId: MXC_OPENSHELL_V0_0_59_DEV_843_MR105_MXC_V0_7_0_RC1_QUALIFICATION_PROFILE_ID,
-    });
-  });
-
-  it("binds the current MR 105 head with native MXC 0.8 egress proxying (#10585)", () => {
-    const profile = MXC_OPENSHELL_V0_0_59_DEV_843_MR105_MXC_V0_8_0_QUALIFICATION_PROFILE;
-    expect(profile.compatibility).toMatchObject({
-      mxcVersion: "0.8.0",
-      nativeArchitecture: "arm64",
-      networkMode: "egress-proxy",
-    });
-    expect(profile.expectation.components.wxcExecSha256).toBe(
-      "dde1c592270e9a659b01dccad70362da7b99fec114885fa4d625507aa775a503",
+    const configSha256 = createHash("sha256").update(configured.content, "utf8").digest("hex");
+    const receipt = qualifyMxcOpenShellAttachment(
+      resolveMxcOpenShellDistributionAuthority(configured.distributionAuthority),
+      {
+        distribution: profile.expectation.distribution,
+        components: profile.expectation.components,
+        gateway: { ...profile.expectation.gateway, configSha256 },
+        distributionRoot: "C:\\OpenShell-dev.927",
+        mxcRoot: "C:\\mxc-sdk",
+        cliPath: "C:\\OpenShell-dev.927\\openshell.exe",
+        gatewayPath: "C:\\OpenShell-dev.927\\openshell-gateway.exe",
+        wxcExecPath: "C:\\mxc-sdk\\bin\\arm64\\wxc-exec.exe",
+        gatewayConfigPath: "C:\\qualification\\gateway.toml",
+      },
     );
-    const configured = createMxcOpenShellQualificationGatewayConfiguration({
-      agentPath: "C:\\mxc-share\\artifact\\node\\node.exe",
-      distributionRevision: profile.expectation.distribution.revision,
-      distributionProfileId: profile.profileId,
-      distributionVersion: profile.expectation.distribution.version,
-      egressProxyPort: 18080,
-      relayPath: "C:\\mxc-share\\openshell-supervisor-relay.exe",
-      shareDirectory: "C:\\mxc-share",
-      targetPort: 18889,
-      wxcExecPath: "C:\\mxc-sdk\\arm64\\wxc-exec.exe",
-    });
 
-    expect(configured.content).toContain("egress_proxy = true");
-    expect(configured.content).toContain('egress_proxy_addr = "127.0.0.1:18080"');
-    expect(configured.content).not.toContain("pc_allow_local_network");
-    expect(configured.content).toContain('"LOCALAPPDATA=C:/mxc-share/home/AppData/Local"');
     expect(configured.distributionAuthority).toMatchObject({
       acceptance: "qualification",
-      nativeArchitecture: "arm64",
-      profileId: MXC_OPENSHELL_V0_0_59_DEV_843_MR105_MXC_V0_8_0_QUALIFICATION_PROFILE_ID,
+      profileId: MXC_OPENSHELL_V0_0_59_DEV_927_MR105_MXC_V0_8_0_QUALIFICATION_PROFILE_ID,
     });
-  });
-
-  it("binds MR 108 per-sandbox proxy authentication with native MXC 0.8 (#10585)", () => {
-    const profile = MXC_OPENSHELL_V0_0_59_DEV_909_MR108_MXC_V0_8_0_QUALIFICATION_PROFILE;
-    expect(profile.compatibility).toMatchObject({
-      mxcVersion: "0.8.0",
-      nativeArchitecture: "arm64",
-      networkMode: "egress-proxy",
-    });
-    expect(profile.expectation.distribution).toEqual({
-      revision: "0c1e7ba92dde5e3a30c57e5e3729e182d67492de",
-      sha256: "54ee15b29ea54a1723434c2c34f6846a3ff1f861cc0c444f92229911de3d3293",
-      version: "0.0.59-dev.909+g0c1e7ba92",
-    });
-    expect(profile.expectation.components).toEqual({
-      cliSha256: "4d1258f0634a6a684b12d147a2053e36d82df00c025f944da2350a0b5fab007c",
-      gatewaySha256: "16700d57ecc8a6b566468040ab93944e694192e4be9d404362fa053da7b3bdca",
-      wxcExecSha256: "dde1c592270e9a659b01dccad70362da7b99fec114885fa4d625507aa775a503",
-    });
-
-    const configured = createMxcOpenShellQualificationGatewayConfiguration({
-      agentPath: "C:\\mxc-share\\artifact\\node\\node.exe",
-      distributionRevision: profile.expectation.distribution.revision,
-      distributionProfileId: profile.profileId,
-      distributionVersion: profile.expectation.distribution.version,
-      egressProxyPort: 18080,
-      relayPath: "C:\\mxc-share\\openshell-supervisor-relay.exe",
-      shareDirectory: "C:\\mxc-share",
-      targetPort: 18889,
-      wxcExecPath: "C:\\mxc-sdk\\arm64\\wxc-exec.exe",
-    });
-
-    expect(configured.content).toContain("egress_proxy = true");
-    expect(configured.content).not.toContain("pc_allow_local_network");
-    expect(configured.distributionAuthority).toMatchObject({
-      acceptance: "qualification",
-      nativeArchitecture: "arm64",
-      profileId: MXC_OPENSHELL_V0_0_59_DEV_909_MR108_MXC_V0_8_0_QUALIFICATION_PROFILE_ID,
-    });
+    expect(receipt.gateway.configSha256).toBe(configSha256);
+    expect(receipt.acceptance).toBe("qualification");
+    expect(Object.isFrozen(configured)).toBe(true);
   });
 
   describe.each([
-    {
-      name: "restacked MR 108",
-      profileId: "openshell-v0-0-59-dev-925-mr108-mxc-v0-8-0-qualification",
-      previousProfileId: "openshell-v0-0-59-dev-909-mr108-mxc-v0-8-0-qualification",
-      previousDistribution: {
-        version: "0.0.59-dev.909+g0c1e7ba92",
-        revision: "0c1e7ba92dde5e3a30c57e5e3729e182d67492de",
-        sha256: "0".repeat(64),
-      },
-      observation: {
-        ...mxcOpenShellAttachmentFixture().observation,
-        distribution: {
-          version: "0.0.59-dev.925+g28fc07191",
-          revision: "28fc0719168dbc1698ee4701d6a7af2c19262be1",
-          sha256: "6751269e91dc245163de6ee46c4b548aaaa46a89eee680b8a77a7042b5ee287d",
-        },
-        components: {
-          cliSha256: "d742b5d9fe44a2a0008ceca02d810407f6f8499a49a804ef30e4a5c07f92ab02",
-          gatewaySha256: "be9ba6118a969f91014312ffee5e77f6ffa07333d12f2771ae71edaf49d1bc2a",
-          wxcExecSha256: "dde1c592270e9a659b01dccad70362da7b99fec114885fa4d625507aa775a503",
-        },
-        gateway: {
-          configSha256: "cafc36920c9caba0a1c540c00e91b3f8ecec95e02fbe7c30cf9ca6603fcb79a4",
-          driver: "mxc",
-          backend: "process_container",
-        },
-      } satisfies MxcOpenShellAttachmentObservation,
-    },
     {
       name: "MR 105 review-fix",
       profileId: "openshell-v0-0-59-dev-927-mr105-mxc-v0-8-0-qualification",
@@ -464,19 +211,18 @@ describe("inactive OpenShell MXC installation attachment", () => {
         },
       );
 
-      it("rejects the package under the previous distribution authority (#10585)", () => {
-        const previousAuthority = resolveMxcOpenShellDistributionAuthority(
-          createMxcOpenShellDistributionAuthority(previousProfileId),
-        );
-        expect(() => qualifyMxcOpenShellAttachment(previousAuthority, observation)).toThrow(
-          /observed distribution identity does not match/u,
-        );
+      it("rejects the retired distribution profile (#10585)", () => {
+        expect(() =>
+          createMxcOpenShellDistributionAuthority(
+            previousProfileId as MxcOpenShellDistributionProfileId,
+          ),
+        ).toThrow(/distribution profile is not provider-owned/u);
       });
     },
   );
 
   it("rejects caller configuration hashes instead of letting observations mint authority (#10585)", () => {
-    const profile = MXC_OPENSHELL_V0_0_30_MXC_V0_8_0_ACCEPTED_PROFILE;
+    const profile = MXC_OPENSHELL_V0_0_59_DEV_927_MR105_MXC_V0_8_0_QUALIFICATION_PROFILE;
     expect(() =>
       createMxcOpenShellQualificationGatewayConfiguration({
         agentPath: "C:\\openclaw\\node.exe",
@@ -487,14 +233,14 @@ describe("inactive OpenShell MXC installation attachment", () => {
         relayPath: "C:\\mxc-share\\openshell-supervisor-relay.exe",
         shareDirectory: "C:\\mxc-share",
         targetPort: 18889,
-        wxcExecPath: "C:\\mxc-sdk\\bin\\x64\\wxc-exec.exe",
+        wxcExecPath: "C:\\mxc-sdk\\bin\\arm64\\wxc-exec.exe",
         configSha256: "6".repeat(64),
       }),
     ).toThrow(/unknown or missing fields/u);
   });
 
   it("rejects drift from provider-rendered configuration before attachment (#10585)", () => {
-    const profile = MXC_OPENSHELL_V0_0_30_MXC_V0_8_0_ACCEPTED_PROFILE;
+    const profile = MXC_OPENSHELL_V0_0_59_DEV_927_MR105_MXC_V0_8_0_QUALIFICATION_PROFILE;
     const configured = createMxcOpenShellQualificationGatewayConfiguration({
       agentPath: "C:\\openclaw\\node.exe",
       distributionRevision: profile.expectation.distribution.revision,
@@ -504,7 +250,7 @@ describe("inactive OpenShell MXC installation attachment", () => {
       relayPath: "C:\\mxc-share\\openshell-supervisor-relay.exe",
       shareDirectory: "C:\\mxc-share",
       targetPort: 18889,
-      wxcExecPath: "C:\\mxc-sdk\\bin\\x64\\wxc-exec.exe",
+      wxcExecPath: "C:\\mxc-sdk\\bin\\arm64\\wxc-exec.exe",
     });
 
     expect(() =>
@@ -517,11 +263,11 @@ describe("inactive OpenShell MXC installation attachment", () => {
             ...profile.expectation.gateway,
             configSha256: "6".repeat(64),
           },
-          distributionRoot: "C:\\OpenShell-v0.0.30",
+          distributionRoot: "C:\\OpenShell-dev.927",
           mxcRoot: "C:\\mxc-sdk",
-          cliPath: "C:\\OpenShell-v0.0.30\\openshell.exe",
-          gatewayPath: "C:\\OpenShell-v0.0.30\\openshell-gateway.exe",
-          wxcExecPath: "C:\\mxc-sdk\\bin\\x64\\wxc-exec.exe",
+          cliPath: "C:\\OpenShell-dev.927\\openshell.exe",
+          gatewayPath: "C:\\OpenShell-dev.927\\openshell-gateway.exe",
+          wxcExecPath: "C:\\mxc-sdk\\bin\\arm64\\wxc-exec.exe",
           gatewayConfigPath: "C:\\qualification\\gateway.toml",
         },
       ),
@@ -531,7 +277,7 @@ describe("inactive OpenShell MXC installation attachment", () => {
   it.each([
     ["openshell-not-provider-owned", /profile is not provider-owned/u],
     [
-      MXC_OPENSHELL_V0_0_30_MXC_V0_8_0_ACCEPTED_PROFILE_ID,
+      MXC_OPENSHELL_V0_0_59_DEV_927_MR105_MXC_V0_8_0_QUALIFICATION_PROFILE_ID,
       /does not match the provider-owned profile/u,
     ],
   ])(
@@ -547,7 +293,7 @@ describe("inactive OpenShell MXC installation attachment", () => {
           relayPath: "C:\\mxc-share\\openshell-supervisor-relay.exe",
           shareDirectory: "C:\\mxc-share",
           targetPort: 18889,
-          wxcExecPath: "C:\\mxc-sdk\\bin\\x64\\wxc-exec.exe",
+          wxcExecPath: "C:\\mxc-sdk\\bin\\arm64\\wxc-exec.exe",
         }),
       ).toThrow(error);
     },

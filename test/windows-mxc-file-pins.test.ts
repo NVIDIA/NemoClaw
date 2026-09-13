@@ -49,8 +49,11 @@ const pinTest = it.extend<{ pins: NativePinFixture }>({
         },
       });
     } finally {
-      await lease?.release();
-      fs.rmSync(directory, { recursive: true, force: true });
+      try {
+        await lease?.release();
+      } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
+      }
     }
   },
 });

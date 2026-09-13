@@ -126,16 +126,26 @@ afterEach(() => {
 });
 
 describe("inactive Windows MXC OpenClaw process_container qualification", () => {
-  it("records observed launch context in schema 9 setup-failure receipts (#8178)", () => {
-    const { environment } = fixture();
-    const inputs = parseFixtureEnvironment(environment);
+  it.each([undefined, "1"])(
+    "records authoritative schema 9 receipts with retired diagnostic option=%s (#8178)",
+    (diagnosticOption) => {
+      const { environment } = fixture();
+      environment.NEMOCLAW_WINDOWS_MXC_ALLOW_NAME_DELETE_DIAGNOSTIC = diagnosticOption;
+      const inputs = parseFixtureEnvironment(environment);
 
-    const context = { processElevated: false, processSessionId: 19, processUserInteractive: true };
-    const receipt = buildWindowsMxcSetupFailureReceipt(inputs, context, true);
+      const context = {
+        processElevated: false,
+        processSessionId: 19,
+        processUserInteractive: true,
+      };
+      const receipt = buildWindowsMxcSetupFailureReceipt(inputs, context, true);
 
-    expect(receipt.schemaVersion).toBe(9);
-    expect(receipt.identities.host).toMatchObject(context);
-  });
+      expect(receipt.schemaVersion).toBe(9);
+      expect(receipt.identities.host).toMatchObject(context);
+      expect(receipt.qualificationMode).toBe("authoritative");
+      expect(inputs).not.toHaveProperty("allowDiagnosticNameDeletion");
+    },
+  );
 
   it.each([true, false])(
     "accepts an interactive session independently of elevation=%s (#8178)",

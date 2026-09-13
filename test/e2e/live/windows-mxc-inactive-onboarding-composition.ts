@@ -28,7 +28,6 @@ import {
 } from "../../../src/lib/onboard/runtime-provider/mxc-windows-openshell-executor.ts";
 
 export interface WindowsMxcInactiveOnboardingCompositionInput {
-  readonly allowDiagnosticNameDeletion?: boolean;
   readonly distributionAuthority: MxcOpenShellDistributionAuthority;
   readonly attachmentObservation: MxcOpenShellAttachmentObservationRequest;
   readonly gatewayName: string;
@@ -57,7 +56,6 @@ export async function createWindowsMxcInactiveOnboardingComposition(
   );
   const attachment = qualifyMxcOpenShellAttachment(attachmentAuthority, observation);
   const boundary = createMxcWindowsOpenShellExecutor({
-    allowDiagnosticNameDeletion: input.allowDiagnosticNameDeletion,
     distributionAuthority: input.distributionAuthority,
     observationRequest: input.attachmentObservation,
     environment: input.executorEnvironment,

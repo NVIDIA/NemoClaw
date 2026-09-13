@@ -632,15 +632,13 @@ directly, or establish Windows support.
 The provider-generated driver configuration records the qualification-only
 OpenShell MR !105 dev.927/MXC 0.8.0 configuration used by this target after
 MR !108 merged into MR !105 and its forwarding, certificate-staging, and
-environment-cleanup review fixes were applied. The dev.925 and dev.909 profiles
-retain their original package identities and are not selected by this target.
+environment-cleanup review fixes were applied. Superseded package profiles are
+not available to this target.
 The selected configuration enables
 `privateNetworkClientServer`, the host egress proxy, and an operator-supplied
 supervisor relay. It does not enable `pc_allow_local_network`. The network
 default remains block. The policy permits graphical DLL loading required by
-Node.js while it denies clipboard access and input injection. The retained
-dev.843/MXC 0.7.0-rc1 profile keeps its prior local-network configuration and
-is not selected by this target.
+Node.js while it denies clipboard access and input injection.
 
 The target requires a Windows ARM64 host that passes the minimum MXC candidate
 check. It rejects a dirty NemoClaw checkout and requires exact expected
@@ -705,7 +703,7 @@ values. Do not put credentials in them.
 | `NEMOCLAW_WINDOWS_MXC_OPENSHELL_RELAY_SHA256` | Expected OpenShell supervisor relay SHA-256 |
 | `NEMOCLAW_WINDOWS_MXC_WXC_EXEC_SHA256` | Expected `wxc-exec.exe` SHA-256 |
 | `NEMOCLAW_WINDOWS_MXC_HOST_PREPARATION` | declaration `wxc-host-prep-prepare-system-drive`, or `preexisting-compatible-system-drive-acl` when a saved successful probe reports DACL augmentation is unnecessary; the target records but does not perform or independently verify host preparation |
-| `NEMOCLAW_WINDOWS_MXC_ALLOW_NAME_DELETE_DIAGNOSTIC` | temporary value `1` permits non-authoritative name deletion only to gather v0.0.30 functional feedback; never use for accepted evidence |
+| `NEMOCLAW_WINDOWS_MXC_ALLOW_NAME_DELETE_DIAGNOSTIC` | retired and ignored; cleanup always requires the immutable sandbox ID |
 | `NEMOCLAW_WINDOWS_MXC_WORK_ROOT` | Existing Windows drive root for fresh, test-owned sibling share and host-state directories |
 | `NEMOCLAW_WINDOWS_MXC_OPENCLAW_ROOT` | Staged native OpenClaw artifact root directly beneath the declared drive root |
 | `NEMOCLAW_WINDOWS_MXC_NODE` | Node.js executable beneath the artifact root |
@@ -776,10 +774,11 @@ The complete create, forward, chat, and cleanup flow runs twice to detect stale
 state. After preflight and local setup succeed, it
 writes a secret-free receipt for either verdict and records whether sensitive
 runtime artifacts were removed. Receipt schema version 9 adds the observed
-host launch context, records whether the run used temporary
-diagnostic name deletion and retains the observed
+host launch context and retains the observed
 gateway-configuration digest, each bounded provider lifecycle result, and
-sanitized provider failure records. It also classifies startup
+sanitized provider failure records. New receipts require authoritative, ID-guarded
+cleanup; historical diagnostic-name-delete receipts cannot pass this target.
+It also classifies startup
 as not observed, spawn failed, exited before readiness, readiness timeout, or ready.
 Create-verification failures retain a fixed stage, error class, elapsed
 milliseconds, and an optional bounded Windows error code. These fields distinguish
@@ -816,7 +815,8 @@ delete the recorded name directly. Preserve the receipt and use an
 OpenShell recovery operation that revalidates the immutable sandbox ID and
 request labels. If the installed package cannot do that, report the resource
 as possibly retained and stop qualification on that host.
-The accepted v0.0.30 package still exposes deletion by mutable sandbox name.
+The previously evaluated v0.0.30 package exposed deletion by mutable sandbox name.
+Its unused profile has been removed; it is not a qualification fallback.
 The checked-in qualification-only profile for the MR 105 developer package
 uses immutable-identity-checked deletion, so it can produce development
 evidence but cannot produce accepted-package evidence. Final qualification

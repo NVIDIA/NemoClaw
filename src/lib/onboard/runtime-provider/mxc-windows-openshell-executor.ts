@@ -80,8 +80,6 @@ export interface MxcWindowsOpenShellExecutorRuntime {
 }
 
 export interface MxcWindowsOpenShellExecutorInput {
-  /** Temporary, qualification-only escape hatch. Never enable for accepted evidence. */
-  readonly allowDiagnosticNameDeletion?: boolean;
   readonly distributionAuthority: MxcOpenShellDistributionAuthority;
   readonly observationRequest: MxcOpenShellAttachmentObservationRequest;
   readonly environment?: NodeJS.ProcessEnv;
@@ -465,7 +463,7 @@ function requireIdentityGuardedDeleteCommand(
   command: MxcOpenShellLiveCommand,
   request: MxcOpenShellCreateRequest,
   sandboxId: string,
-): number {
+): void {
   const sandboxIndex = command.arguments.indexOf("sandbox");
   const expectedTail = ["sandbox", "delete", request.sandboxName, "--expected-id", sandboxId];
   if (sandboxIndex < 0 || !isDeepStrictEqual(command.arguments.slice(sandboxIndex), expectedTail)) {
@@ -473,17 +471,6 @@ function requireIdentityGuardedDeleteCommand(
       "sandbox delete is not bound to the exact immutable sandbox ID",
     );
   }
-  return sandboxIndex;
-}
-
-function diagnosticNameDeleteCommand(
-  command: MxcOpenShellLiveCommand,
-  sandboxIndex: number,
-): MxcOpenShellLiveCommand {
-  return cloneAndDeepFreeze({
-    ...command,
-    arguments: [...command.arguments.slice(0, sandboxIndex + 3)],
-  });
 }
 
 function runStructuredCommand(
@@ -944,12 +931,7 @@ export function createMxcWindowsOpenShellExecutor(
     deleteExact: async ({ attachment, command, request, sandboxId }) => {
       requireIssuedMxcOpenShellCreateRequest(request);
       const fresh = await refreshAttachment(attachment);
-      const sandboxIndex = requireIdentityGuardedDeleteCommand(command, request, sandboxId);
-      if (input.allowDiagnosticNameDeletion === true) {
-        return await runPinned(fresh, diagnosticNameDeleteCommand(command, sandboxIndex), [
-          "delete",
-        ]);
-      }
+      requireIdentityGuardedDeleteCommand(command, request, sandboxId);
       return await runPinned(fresh, command, ["delete"]);
     },
     recordFailure: (record: MxcOpenShellLiveFailureRecord) =>
