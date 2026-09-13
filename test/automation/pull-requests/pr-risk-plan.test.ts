@@ -1118,9 +1118,7 @@ describe("Brev Launchable recommendations", () => {
       expect.objectContaining({
         id: "staging-brev-launchable",
         matchedFiles: [file],
-        reasons: [
-          expect.stringContaining("preinstalled gateway ownership and post-recovery launch"),
-        ],
+        families: ["focused-e2e"],
       }),
     );
     expect(riskPlanRequiredJobIds(result)).not.toContain("staging-brev-launchable-identity");

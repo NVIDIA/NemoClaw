@@ -1110,7 +1110,6 @@ describe("Brev recommendation normalization", () => {
         workflow: "e2e.yaml",
         selectorType: "job",
         required: true,
-        reason: expect.stringContaining("standalone staging-brev-launchable"),
       }),
     );
     expect(coverage.requiredTests.map(({ id }) => id)).toContain("staging-brev-launchable");

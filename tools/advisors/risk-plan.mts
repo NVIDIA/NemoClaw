@@ -229,7 +229,6 @@ export type RiskTier = 0 | 1 | 2 | 3;
 export type RiskFamilyId =
   | "lifecycle-state"
   | "gateway-topology"
-  | "brev-launchable"
   | "upgrade-rebuild"
   | "shared-agent"
   | "inference-policy"
@@ -378,6 +377,9 @@ export function focusedPrE2eTargetsForChangedFiles(
 export function focusedPrE2eJobsForChangedFiles(
   changedFiles: readonly string[],
 ): TrustedFocusedE2eJob[] {
+  const brevLaunchableFiles = stableUnique(
+    changedFiles.filter((file) => BREV_LAUNCHABLE_FILES.has(file)),
+  );
   const journaledRecreateResumeFiles = stableUnique(
     changedFiles.filter((file) => JOURNALED_RECREATE_RESUME_RUNTIME_FILES.has(file)),
   );
@@ -429,6 +431,7 @@ export function focusedPrE2eJobsForChangedFiles(
     ),
   );
   return [
+    { id: "staging-brev-launchable", matchedFiles: brevLaunchableFiles },
     ...(journaledRecreateResumeFiles.length > 0
       ? [
           {
@@ -473,19 +476,6 @@ export function focusedPrE2eJobsForChangedFiles(
 }
 
 export const RISK_RULES: readonly RiskRule[] = [
-  {
-    id: "brev-launchable",
-    summary:
-      "Verify preinstalled gateway ownership and post-recovery launch on the baked Brev image. A maintainer must authorize the standalone staging-brev-launchable run.",
-    tier: 2,
-    requiredJobs: ["staging-brev-launchable"],
-    invariants: [
-      "gateway discovery and cleanup respect the image-declared platform owner",
-      "recovery, probe-only connect, and launch preserve forward listener ownership",
-      "the full Launchable scenario runs; identity smoke alone does not prove runtime recovery",
-    ],
-    matches: (file) => BREV_LAUNCHABLE_FILES.has(file),
-  },
   {
     id: "lifecycle-state",
     summary:
