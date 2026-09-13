@@ -553,23 +553,20 @@ function rollbackPort(
   port: number,
   retained: ReadonlyMap<number, ForwardServiceOwnership>,
 ): void {
-  const now = input.deps.now ?? Date.now;
   try {
-    const deadline =
-      readClock(now) + Math.min(input.operationTimeoutMs, FORWARD_SETTLEMENT_TIMEOUT_MS);
-    if (!Number.isFinite(deadline)) failure("restoration-unproved");
-    const observed = observeForwards(input, true, undefined, deadline, now);
     const ownership = retained.get(port);
-    if (!ownership && !observed.entries.has(port) && observed.states.get(port) === "absent") {
-      return;
-    }
     if (ownership) {
       requireCurrent(input, true);
       ownership.terminate();
       requireCurrent(input, true);
-      const after = observeForwards(input, true, undefined, deadline, now);
-      if (!after.entries.has(port) && after.states.get(port) === "absent") return;
     }
+    // Observation proves cleanup's result; it must not prevent owned-child termination.
+    const now = input.deps.now ?? Date.now;
+    const deadline =
+      readClock(now) + Math.min(input.operationTimeoutMs, FORWARD_SETTLEMENT_TIMEOUT_MS);
+    if (!Number.isFinite(deadline)) failure("restoration-unproved");
+    const observed = observeForwards(input, true, undefined, deadline, now);
+    if (!observed.entries.has(port) && observed.states.get(port) === "absent") return;
   } catch {
     failure("restoration-unproved");
   }

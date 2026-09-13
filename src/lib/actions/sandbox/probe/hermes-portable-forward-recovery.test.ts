@@ -752,22 +752,16 @@ describe("Hermes Portable probe-only forward recovery", () => {
     expect(fixture.currentMutationCalls).toEqual([]);
   });
 
-  it("refuses rollback when the settled PID changes before stop", () => {
+  it("refuses rollback when the retained child's PID changes before termination", () => {
     const fixture = createRecoveryFixture();
     const prepared = prepareHermesPortableLaunchForwards(fixture.input);
-    const captureRollback = fixture.input.deps.captureRollbackList;
-    Object.assign(fixture.input.deps, {
-      captureRollbackList: (args: readonly string[], timeout: number) => {
-        const result = captureRollback(args, timeout);
-        fixture.records.get(18_789)!.pid = 54_321;
-        return result;
-      },
-    });
+    fixture.records.get(18_789)!.pid = 54_321;
 
     expect(() => prepared.rollback()).toThrow(
       expect.objectContaining({ failure: "restoration-unproved" }),
     );
     expect(fixture.rollbackCalls.some((args) => args[1] === "stop")).toBe(false);
+    expect(fixture.records.get(18_789)?.pid).toBe(54_321);
   });
 
   it("fails closed when current authority drifts before recovery", () => {
@@ -857,7 +851,7 @@ describe("Hermes Portable probe-only forward recovery", () => {
     expect(fixture.records.get(8_642)).toBe(preexisting);
   });
 
-  it("preserves a replacement installed after rollback observation", () => {
+  it("preserves a replacement installed during rollback verification", () => {
     const fixture = createRecoveryFixture();
     const prepared = prepareHermesPortableLaunchForwards(fixture.input);
     const captureRollbackList = fixture.input.deps.captureRollbackList;
@@ -1180,7 +1174,7 @@ describe("Hermes Portable connect composition", () => {
     ).toBe(false);
   });
 
-  it("restores a recovered Ollama runtime when forward settlement fails", async () => {
+  it("restores Ollama and retires its owned forward when settlement observation fails", async () => {
     const harness = createConnectHarness({
       agentName: "hermes",
       sessionAgent: { name: "hermes" },
@@ -1220,7 +1214,7 @@ describe("Hermes Portable connect composition", () => {
       "process.exit(1)",
     );
 
-    expect(forward.isRunning()).toBe(true);
+    expect(forward.isRunning()).toBe(false);
     expect(ollamaRunning).toBe(false);
     expect(harness.publishLaunchReadinessSpy).not.toHaveBeenCalled();
   });

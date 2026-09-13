@@ -1131,6 +1131,12 @@ describe("connectSandbox flow", () => {
       forwardsRestored = true;
       harness.forwardServiceOwnerSpy.mockReturnValue(true);
       options?.verifyReady?.();
+      options?.retainOwnership?.({
+        terminate: () => {
+          forwardsRestored = false;
+          harness.forwardServiceOwnerSpy.mockReturnValue(false);
+        },
+      });
     });
 
     await expect(harness.connectSandbox("alpha")).rejects.toThrow("process.exit(0)");

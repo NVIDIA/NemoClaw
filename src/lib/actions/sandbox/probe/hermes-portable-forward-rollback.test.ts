@@ -7,7 +7,10 @@ import { type AddressInfo, createServer } from "node:net";
 import { describe, expect, it, vi } from "vitest";
 
 import { createHermesPortableForwardRecoveryFixture as createRecoveryFixture } from "../../../../../test/support/hermes-portable-forward-recovery-fixture";
-import { recoverHermesPortableLaunchForwards } from "./hermes-portable-forward-recovery";
+import {
+  prepareHermesPortableLaunchForwards,
+  recoverHermesPortableLaunchForwards,
+} from "./hermes-portable-forward-recovery";
 import {
   launchForwardService,
   terminateForwardServiceProcessTree,
@@ -15,6 +18,39 @@ import {
   type ForwardServiceLaunchOptions,
 } from "../../../adapters/openshell/forward-service";
 import { probeLocalForwardListener } from "../../../adapters/openshell/local-forward-listener";
+
+describe("Hermes Portable rollback observation failures", () => {
+  it.each([
+    { label: "failed capture", capture: () => ({ status: 1, output: "" }) },
+    { label: "invalid list", capture: () => ({ status: 0, output: "invalid" }) },
+    {
+      label: "throwing capture",
+      capture: () => {
+        throw new Error("rollback capture failed");
+      },
+    },
+  ])("terminates its retained child before a $label (#11649)", ({ capture }) => {
+    const fixture = createRecoveryFixture();
+    const launch = fixture.input.deps.launchForwardService!;
+    const terminate = vi.fn(() => fixture.records.delete(18_789));
+    Object.assign(fixture.input.deps, {
+      launchForwardService: (
+        target: ForwardServiceTarget,
+        options: ForwardServiceLaunchOptions,
+      ) => {
+        launch(target, options);
+        options.retainOwnership?.({ terminate });
+      },
+      captureRollbackList: capture,
+    });
+    const prepared = prepareHermesPortableLaunchForwards(fixture.input);
+
+    expect(() => prepared.rollback()).toThrow("restoration-unproved");
+    expect(terminate).toHaveBeenCalledOnce();
+    expect(fixture.records.has(18_789)).toBe(false);
+    expect(fixture.currentMutationCalls).toEqual([]);
+  });
+});
 
 describe("Hermes Portable forward rollback with a real child", () => {
   it("rolls back the real adapter child after the second forward fails (#11649)", async () => {
