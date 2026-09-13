@@ -86,6 +86,24 @@ class FinishedHermesIntake(unittest.TestCase):
             with self.assertRaises(ValueError):
                 owner.validate_pin(changed)
 
+    def test_edge_receipt_is_one_exact_bounded_root_document(self):
+        stream = io.BytesIO()
+        with zipfile.ZipFile(stream, "w") as archive:
+            archive.writestr("edge-identity.json", '{"architecture":"arm64"}')
+        with zipfile.ZipFile(io.BytesIO(stream.getvalue())) as archive:
+            raw, value = owner.exact_root_document(
+                archive, "edge-identity.json", 64 * 1024
+            )
+        self.assertEqual(value["architecture"], "arm64")
+        self.assertGreater(len(raw), 0)
+        for name in ("nested/edge-identity.json", "other.json"):
+            stream = io.BytesIO()
+            with zipfile.ZipFile(stream, "w") as archive:
+                archive.writestr(name, "{}")
+            with zipfile.ZipFile(io.BytesIO(stream.getvalue())) as archive:
+                with self.assertRaises(ValueError):
+                    owner.exact_root_document(archive, "edge-identity.json", 64 * 1024)
+
     def test_personal_requires_every_component_and_exact_candidate(self):
         owner.validate_personal(self.personal, self.pin)
         for index in range(4):

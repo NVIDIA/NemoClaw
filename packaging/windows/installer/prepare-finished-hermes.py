@@ -35,6 +35,18 @@ def digest(file):
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
+def exact_root_document(archive, name, maximum):
+    matches = [entry for entry in archive.infolist() if entry.filename == name]
+    require(
+        len(matches) == 1
+        and not matches[0].is_dir()
+        and 0 < matches[0].file_size <= maximum,
+        "Missing, duplicate or oversized root metadata: " + name,
+    )
+    data = archive.read(matches[0])
+    return data, json.loads(data)
+
+
 def source_run(pin, kind):
     if pin["schemaVersion"] == 1:
         return pin["sourceRevision"], pin["runId"]
@@ -522,7 +534,9 @@ def main():
         )
         owner.verify_zip(file, row["bytes"], row["sha256"])
         with zipfile.ZipFile(file) as archive:
-            _, edge_raw, edge_identity = owner.document(archive, "edge-identity.json", 64 * 1024)
+            edge_raw, edge_identity = exact_root_document(
+                archive, "edge-identity.json", 64 * 1024
+            )
         require(
             hashlib.sha256(edge_raw).hexdigest() == pin["edgeReceiptSha256"]
             and edge_identity.get("classification") == "native-arm64-microsoft-edge"
