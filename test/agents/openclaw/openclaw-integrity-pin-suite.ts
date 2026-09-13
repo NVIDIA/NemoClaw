@@ -115,14 +115,12 @@ function requiredMessagingPluginIntegrity(channel: string): string {
   return integrity as string;
 }
 
-const PINNED_OPENCLAW_DIAGNOSTICS_OTEL_INTEGRITY = requiredDockerArg(
-  "OPENCLAW_DIAGNOSTICS_OTEL_2026_9_1_INTEGRITY",
-);
+const PINNED_OPENCLAW_DIAGNOSTICS_OTEL_INTEGRITY =
+  "sha512-3MWLli9L6HTVdrjqHmwOvNvIr6emsnuNQe4iE2sDqb8E5wn4Vq1rcsz+InL1YFudbStr089ZtS0tNAQ6qU+tnA==";
 const PINNED_OPENCLAW_DIAGNOSTICS_OTEL_TARBALL =
   "https://registry.npmjs.org/@openclaw/diagnostics-otel/-/diagnostics-otel-2026.9.1.tgz";
-const PINNED_OPENCLAW_BRAVE_PLUGIN_INTEGRITY = requiredDockerArg(
-  "OPENCLAW_BRAVE_PLUGIN_2026_9_1_INTEGRITY",
-);
+const PINNED_OPENCLAW_BRAVE_PLUGIN_INTEGRITY =
+  "sha512-4+j+eQTToV3k7Cb25MUL6h2uL8cJYyuLytfpd/sJK/HjR43dgKBqKpBsb1+I3w1Jr6PLpnjSf6/I3//3K0cdnA==";
 const PINNED_OPENCLAW_BRAVE_PLUGIN_TARBALL =
   "https://registry.npmjs.org/@openclaw/brave-plugin/-/brave-plugin-2026.9.1.tgz";
 const PINNED_OPENCLAW_SLACK_INTEGRITY = requiredMessagingPluginIntegrity("slack");
@@ -800,6 +798,12 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
 
     if (group === "plugin-install") {
       it("verifies optional non-messaging OpenClaw plugin integrity before install", () => {
+        expect(requiredDockerArg("OPENCLAW_DIAGNOSTICS_OTEL_2026_9_1_INTEGRITY")).toBe(
+          PINNED_OPENCLAW_DIAGNOSTICS_OTEL_INTEGRITY,
+        );
+        expect(requiredDockerArg("OPENCLAW_BRAVE_PLUGIN_2026_9_1_INTEGRITY")).toBe(
+          PINNED_OPENCLAW_BRAVE_PLUGIN_INTEGRITY,
+        );
         const { result, calls } = runOptionalOpenClawPluginBlock();
 
         expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
