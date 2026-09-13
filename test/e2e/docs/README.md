@@ -320,16 +320,9 @@ command execution, test outcomes, or registered resource release.
 
 The retired `--emit-matrix` and `--plan-only` paths must not be reintroduced.
 
-When live E2E behavior changes, change a related fast test in the same PR.
-The parity check discovers matching tests under `test/e2e/support/` and fast tests
-that import live helpers. Live tests also inherit fast tests for their imported helpers.
-Discovery reads source without executing imports.
-
-Use `test/e2e/fast-test-exceptions.json` only when discovery cannot find the owning
-fast test or the behavior requires a live boundary. Keep each exception with an
-explicit fast-test list or a `liveOnlyReason`. Maintainers review these exceptions.
-A changed helper without a discovered test or exception fails the check.
-Comment-only changes do not require a fast-test change.
+When live E2E behavior changes, run the affected fast tests and add regression evidence
+for behavior they do not already protect. Existing tests can provide that evidence without
+a test-file edit. Use live execution when the changed behavior requires a real boundary.
 
 ## Repository Layout
 
@@ -339,7 +332,6 @@ test/e2e/
   fixtures/              # Vitest fixtures, clients, redaction, artifacts, cleanup
   live/                  # Opt-in live E2E target tests
   manifests/             # Product-facing NemoClawInstance desired state
-  fast-test-exceptions.json # Fast-test mappings discovery cannot infer
   registry/              # Typed registry, matrix helpers, expected states
   support/               # Fast fixture/support and metadata tests
 ```

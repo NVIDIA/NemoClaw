@@ -40,7 +40,6 @@
 
 # ── Tests ──
 /test/                              @NVIDIA/nemoclaw-engineer
-/test/e2e/fast-test-exceptions.json          @NVIDIA/nemoclaw-maintainer @NVIDIA/nemoclaw-engineer
 
 # ── CI / GitHub config ──
 /.github/                           @NVIDIA/nemoclaw-maintainer
