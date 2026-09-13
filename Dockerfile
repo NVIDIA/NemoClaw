@@ -203,12 +203,12 @@ RUN --network=default set -eu; \
         *) echo "ERROR: unsupported managed messaging npm target: $TARGETARCH" >&2; exit 1 ;; \
     esac; \
     if [ -f /opt/imported-messaging-npm-cache-seed/manifest.json ]; then \
-        node --experimental-strip-types /opt/nemoclaw-build-tools/checks/materialize-locked-npm-cache-seed.mts \
+        node /opt/nemoclaw-build-tools/checks/materialize-locked-npm-cache-seed.mts \
             copy --lockfile /opt/managed-image-messaging-runtime/package-lock.json \
             --seed /opt/imported-messaging-npm-cache-seed \
             --output /out --os linux --cpu "$npm_target_cpu" --libc glibc; \
     else \
-        node --experimental-strip-types /opt/nemoclaw-build-tools/checks/materialize-locked-npm-cache-seed.mts \
+        node /opt/nemoclaw-build-tools/checks/materialize-locked-npm-cache-seed.mts \
             export --lockfile /opt/managed-image-messaging-runtime/package-lock.json \
             --output /out --os linux --cpu "$npm_target_cpu" --libc glibc; \
     fi
@@ -662,7 +662,7 @@ RUN --mount=type=secret,id=nemoclaw-mcporter-audit-receipt,required=false \
         # files from surviving a same-version reinstall.
         rm -rf /usr/local/lib/node_modules/openclaw /usr/local/bin/openclaw; \
         if [ "$OPENCLAW_VERSION" = "2026.9.1" ]; then \
-            node --experimental-strip-types /scripts/lib/reviewed-npm-archive.mts --verify-lock \
+            node /scripts/lib/reviewed-npm-archive.mts --verify-lock \
                 --lock-sha256 "$OPENCLAW_LOCK_SHA256" \
                 --lockfile /usr/local/lib/nemoclaw/openclaw-runtime/package-lock.json \
                 --registry-origin https://registry.npmjs.org/ \
@@ -1118,7 +1118,7 @@ RUN node /usr/local/lib/nemoclaw/patch-openclaw-device-self-approval.mts \
 # gateway URL.
 # hadolint ignore=DL3059
 RUN if [ "$OPENCLAW_VERSION" = "2026.9.1" ]; then \
-      node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-gateway-daemon-dialback.mts \
+      node /usr/local/lib/nemoclaw/patch-openclaw-gateway-daemon-dialback.mts \
         /usr/local/lib/node_modules/openclaw/dist; \
     fi
 

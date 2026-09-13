@@ -90,7 +90,7 @@ function readGatewayDaemonDialbackBuildCommand(): string {
   const newline = String.fromCharCode(10);
   const expectedBlock = [
     `RUN if [ "$OPENCLAW_VERSION" = "2026.9.1" ]; then ${continuation}`,
-    `      node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-gateway-daemon-dialback.mts ${continuation}`,
+    `      node /usr/local/lib/nemoclaw/patch-openclaw-gateway-daemon-dialback.mts ${continuation}`,
     `        /usr/local/lib/node_modules/openclaw/dist; ${continuation}`,
     "    fi",
   ].join(newline);
@@ -109,7 +109,7 @@ describe("OpenClaw gateway daemon self-dialback patch", () => {
     { expectedCalls: "", version: "2026.4.24" },
     {
       expectedCalls:
-        "--experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-gateway-daemon-dialback.mts /usr/local/lib/node_modules/openclaw/dist\n",
+        "/usr/local/lib/nemoclaw/patch-openclaw-gateway-daemon-dialback.mts /usr/local/lib/node_modules/openclaw/dist\n",
       version: "2026.9.1",
     },
   ])(
