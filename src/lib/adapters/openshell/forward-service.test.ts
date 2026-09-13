@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { type ChildProcess, spawn } from "node:child_process";
-import { once } from "node:events";
+import { EventEmitter, once } from "node:events";
 import {
   existsSync,
   mkdirSync,
@@ -28,6 +28,7 @@ import {
   launchForwardService,
   terminateForwardServiceProcessTree,
   type ForwardServiceLaunchOptions,
+  type ForwardServiceOwnership,
   type ForwardServiceTarget,
 } from "./forward-service";
 import { probeLocalForwardListener } from "./local-forward-listener";
@@ -132,6 +133,83 @@ async function availableLoopbackPort(): Promise<number> {
   );
   return address.port;
 }
+
+describe("retained forward process ownership", () => {
+  it.each(["exit", "error", "pid-changed", "exit-code", "signal-code"] as const)(
+    "rejects termination after %s invalidates the original child (#11649)",
+    (change) => {
+      const child = Object.assign(new EventEmitter(), {
+        pid: detachedChildPid,
+        exitCode: null as number | null,
+        signalCode: null as NodeJS.Signals | null,
+        unref() {},
+      });
+      const terminate = vi.fn();
+      let ownership: ForwardServiceOwnership | undefined;
+      launchForwardService(target, {
+        isReachable: vi.fn().mockReturnValueOnce(false).mockReturnValue(true),
+        spawnDetached: () => child,
+        terminateProcessTree: terminate,
+        retainOwnership: (value) => {
+          ownership = value;
+        },
+      });
+      const mutations = {
+        exit: () => child.emit("exit"),
+        error: () => child.emit("error"),
+        "pid-changed": () => {
+          child.pid += 1;
+        },
+        "exit-code": () => {
+          child.exitCode = 0;
+        },
+        "signal-code": () => {
+          child.signalCode = "SIGTERM";
+        },
+      };
+      mutations[change]();
+      expect(() => ownership!.terminate()).toThrow("child lifetime can no longer be proved");
+      expect(terminate).not.toHaveBeenCalled();
+    },
+  );
+
+  it("retires a retained real listener and makes repeated cleanup harmless (#11649)", async () => {
+    const port = await availableLoopbackPort();
+    let child: ChildProcess | undefined;
+    let closed: Promise<unknown[]> | undefined;
+    let ownership: ForwardServiceOwnership | undefined;
+    try {
+      launchForwardService(
+        { ...target, executable: process.execPath, localPort: port, targetPort: port },
+        {
+          spawnDetached: () => {
+            child = spawn(
+              process.execPath,
+              ["-e", `require("node:net").createServer().listen(${port}, "127.0.0.1")`],
+              { detached: true, stdio: "ignore" },
+            );
+            closed = once(child, "close");
+            return child;
+          },
+          retainOwnership: (value) => {
+            ownership = value;
+          },
+        },
+      );
+      expect(probeLocalForwardListener(port, 100)).toBe(true);
+      ownership!.terminate();
+      ownership!.terminate();
+      await closed;
+      expect(child!.signalCode).toBe("SIGKILL");
+      expect(probeLocalForwardListener(port, 100)).toBe(false);
+    } finally {
+      child?.exitCode === null &&
+        child.signalCode === null &&
+        terminateForwardServiceProcessTree(child);
+      await closed;
+    }
+  }, 10_000);
+});
 
 describe("OpenShell forward service", () => {
   it("builds the direct ForwardTcp command with explicit gateway authority", () => {

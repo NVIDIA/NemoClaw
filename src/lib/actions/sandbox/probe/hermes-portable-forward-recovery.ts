@@ -8,6 +8,7 @@ import {
   isForwardServiceListenerOwner,
   launchForwardService,
   type ForwardServiceLaunchOptions,
+  type ForwardServiceOwnership,
   type ForwardServiceTarget,
 } from "../../../adapters/openshell/forward-service";
 
@@ -471,6 +472,7 @@ function invokeForwardServiceLaunch(
   input: HermesPortableForwardRecoveryInput,
   port: number,
   timing: ReturnType<typeof createForwardTimingRecorder>,
+  retained: Map<number, ForwardServiceOwnership>,
 ): void {
   requireCurrent(input, false);
   const reachable = input.deps.isPortReachable ?? isLocalForwardReachable;
@@ -482,6 +484,7 @@ function invokeForwardServiceLaunch(
         isReachable: (candidatePort) => reachable(candidatePort, input.probeTimeoutMs),
         sourceEnvironment: input.forwardService.sourceEnvironment,
         timeoutMs: input.operationTimeoutMs,
+        retainOwnership: (ownership) => retained.set(port, ownership),
         verifyReady: () => {
           requireCurrent(input, false);
           if (
@@ -545,7 +548,11 @@ function settleTouchedPorts(
   });
 }
 
-function rollbackPort(input: HermesPortableForwardRecoveryInput, port: number): void {
+function rollbackPort(
+  input: HermesPortableForwardRecoveryInput,
+  port: number,
+  retained: ReadonlyMap<number, ForwardServiceOwnership>,
+): void {
   const now = input.deps.now ?? Date.now;
   try {
     const deadline =
@@ -553,6 +560,14 @@ function rollbackPort(input: HermesPortableForwardRecoveryInput, port: number): 
     if (!Number.isFinite(deadline)) failure("restoration-unproved");
     const observed = observeForwards(input, true, undefined, deadline, now);
     if (!observed.entries.has(port) && observed.states.get(port) === "absent") return;
+    const ownership = retained.get(port);
+    if (ownership) {
+      requireCurrent(input, true);
+      ownership.terminate();
+      requireCurrent(input, true);
+      const after = observeForwards(input, true, undefined, deadline, now);
+      if (!after.entries.has(port) && after.states.get(port) === "absent") return;
+    }
   } catch {
     failure("restoration-unproved");
   }
@@ -564,14 +579,24 @@ function rollbackPort(input: HermesPortableForwardRecoveryInput, port: number): 
 function rollbackTouchedPorts(
   input: HermesPortableForwardRecoveryInput,
   touchedPorts: readonly number[],
+  retained: ReadonlyMap<number, ForwardServiceOwnership>,
 ): void {
-  for (const port of [...touchedPorts].reverse()) rollbackPort(input, port);
+  const failures: unknown[] = [];
+  for (const port of [...touchedPorts].reverse()) {
+    try {
+      rollbackPort(input, port, retained);
+    } catch (error) {
+      failures.push(error);
+    }
+  }
+  if (failures.length > 0) failure("restoration-unproved");
 }
 
 function retainForwardRecovery(
   input: HermesPortableForwardRecoveryInput,
   touchedPorts: readonly number[],
   result: HermesPortableForwardRecoveryResult,
+  retained: ReadonlyMap<number, ForwardServiceOwnership>,
 ): PreparedHermesPortableForwardRecovery {
   let state: "prepared" | "released" | "rolled-back" = "prepared";
   return Object.freeze({
@@ -583,8 +608,8 @@ function retainForwardRecovery(
     },
     rollback: () => {
       if (state !== "prepared") failure("restoration-unproved");
+      if (touchedPorts.length > 0) rollbackTouchedPorts(input, touchedPorts, retained);
       state = "rolled-back";
-      if (touchedPorts.length > 0) rollbackTouchedPorts(input, touchedPorts);
     },
   });
 }
@@ -595,6 +620,7 @@ export function prepareHermesPortableLaunchForwards(
 ): PreparedHermesPortableForwardRecovery {
   const timing = createForwardTimingRecorder(input.timing);
   const touchedPorts: number[] = [];
+  const retained = new Map<number, ForwardServiceOwnership>();
   try {
     validatePorts(input);
     const initial = observeForwards(input, false, timing);
@@ -603,16 +629,21 @@ export function prepareHermesPortableLaunchForwards(
     if (missing.length === 0) {
       requireCurrent(input, false);
       timing.finish("proved");
-      return retainForwardRecovery(input, touchedPorts, {
-        kind: "verified",
-        restoredPorts: [],
-      });
+      return retainForwardRecovery(
+        input,
+        touchedPorts,
+        {
+          kind: "verified",
+          restoredPorts: [],
+        },
+        retained,
+      );
     }
 
     const requiredHealthy = new Set(input.ports);
     for (const port of missing) {
       touchedPorts.push(port);
-      invokeForwardServiceLaunch(input, port, timing);
+      invokeForwardServiceLaunch(input, port, timing, retained);
     }
     const final = settleTouchedPorts(input, requiredHealthy, timing);
 
@@ -622,15 +653,20 @@ export function prepareHermesPortableLaunchForwards(
     }
     requireCurrent(input, false);
     timing.finish("proved");
-    return retainForwardRecovery(input, touchedPorts, {
-      kind: "restored",
-      restoredPorts: [...missing],
-    });
+    return retainForwardRecovery(
+      input,
+      touchedPorts,
+      {
+        kind: "restored",
+        restoredPorts: [...missing],
+      },
+      retained,
+    );
   } catch (error) {
     let normalized = normalizeFailure(error);
     try {
       if (touchedPorts.length > 0) {
-        rollbackTouchedPorts(input, touchedPorts);
+        rollbackTouchedPorts(input, touchedPorts, retained);
       }
     } catch {
       normalized = new HermesPortableForwardRecoveryError("restoration-unproved");

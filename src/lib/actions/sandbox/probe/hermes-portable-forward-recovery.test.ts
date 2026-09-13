@@ -23,6 +23,7 @@ import {
   buildForwardServiceArgs,
   ForwardServiceStartupCleanupError,
   type ForwardServiceTarget,
+  type ForwardServiceLaunchOptions,
 } from "../../../adapters/openshell/forward-service";
 
 type LaunchForwardService = NonNullable<
@@ -37,6 +38,52 @@ function launchThen(launch: LaunchForwardService, afterLaunch: () => void): Laun
 }
 
 describe("Hermes Portable probe-only forward recovery", () => {
+  it("rolls back only the retained first child when the second launch fails (#11649)", () => {
+    const fixture = createRecoveryFixture({ ports: [18_789, 8_642] });
+    const launch = fixture.input.deps.launchForwardService!;
+    const terminate = vi.fn(() => fixture.records.delete(18_789));
+    Object.assign(fixture.input.deps, {
+      launchForwardService: vi
+        .fn()
+        .mockImplementationOnce((target, options) => {
+          launch(target, options);
+          options.retainOwnership?.({ terminate });
+        })
+        .mockImplementationOnce(() => {
+          throw new Error("second launch failed before spawn");
+        }),
+    });
+    expect(() => recoverHermesPortableLaunchForwards(fixture.input)).toThrow("recovery-failed");
+    expect(terminate).toHaveBeenCalledOnce();
+    expect([...fixture.records.keys()]).toEqual([]);
+    expect(fixture.currentMutationCalls).toEqual([]);
+  });
+
+  it("retains rollback ownership until cleanup succeeds and permits a safe retry (#11649)", () => {
+    const fixture = createRecoveryFixture({ ports: [18_789] });
+    const launch = fixture.input.deps.launchForwardService!;
+    const terminate = vi
+      .fn()
+      .mockImplementationOnce(() => {
+        throw new Error("temporary cleanup failure");
+      })
+      .mockImplementationOnce(() => fixture.records.delete(18_789));
+    Object.assign(fixture.input.deps, {
+      launchForwardService: (
+        target: ForwardServiceTarget,
+        options: ForwardServiceLaunchOptions,
+      ) => {
+        launch(target, options);
+        options.retainOwnership?.({ terminate });
+      },
+    });
+    const prepared = prepareHermesPortableLaunchForwards(fixture.input);
+    expect(() => prepared.rollback()).toThrow("restoration-unproved");
+    expect(() => prepared.rollback()).not.toThrow();
+    expect(terminate).toHaveBeenCalledTimes(2);
+    expect([...fixture.records.keys()]).toEqual([]);
+  });
+
   it("starts missing forwards sequentially before one joint settlement observation (#10926)", () => {
     const fixture = createRecoveryFixture({ ports: [18_789, 8_642] });
 

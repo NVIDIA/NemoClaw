@@ -40,10 +40,19 @@ export interface ForwardServiceLaunchOptions {
   /** Verify the bound forward before releasing the child from startup cleanup. */
   readonly verifyReady?: () => void;
   readonly timeoutMs?: number;
+  /** Retain this live child for transaction rollback after readiness succeeds. */
+  readonly retainOwnership?: (ownership: ForwardServiceOwnership) => void;
+}
+
+export interface ForwardServiceOwnership {
+  readonly terminate: () => void;
 }
 
 export interface ForwardServiceChild {
   readonly pid?: number;
+  readonly exitCode?: number | null;
+  readonly signalCode?: NodeJS.Signals | null;
+  once?(event: "exit" | "error", listener: () => void): unknown;
   unref(): void;
 }
 
@@ -487,6 +496,40 @@ export function terminateForwardServiceProcessTree(
   });
 }
 
+/** Retain the unreaped child handle, never a rediscovered PID or name-based stop target. */
+function retainForwardServiceChild(
+  child: ForwardServiceChild,
+  terminate: (child: ForwardServiceChild) => void,
+): ForwardServiceOwnership {
+  const pid = child.pid;
+  let exited = false;
+  let terminated = false;
+  child.once?.("exit", () => {
+    exited = true;
+  });
+  child.once?.("error", () => {
+    exited = true;
+  });
+  return Object.freeze({
+    terminate: () => {
+      if (terminated) return;
+      // No await occurs between checking the ChildProcess and signalling it.
+      // Once Node has observed/reaped its exit, the numeric PID is no longer authority.
+      if (
+        !child.once ||
+        exited ||
+        child.exitCode !== null ||
+        child.signalCode !== null ||
+        child.pid !== pid
+      ) {
+        throw new Error("OpenShell forward child lifetime can no longer be proved");
+      }
+      terminate(child);
+      terminated = true;
+    },
+  });
+}
+
 /** Launch one foreground OpenShell service forward as a detached host child. */
 export function launchForwardService(
   target: ForwardServiceTarget,
@@ -511,6 +554,13 @@ export function launchForwardService(
     ),
   );
 
+  const ownership = options.retainOwnership
+    ? retainForwardServiceChild(
+        child,
+        options.terminateProcessTree ?? terminateForwardServiceProcessTree,
+      )
+    : null;
+
   const sleep =
     options.sleep ?? ((milliseconds: number) => Atomics.wait(sleepBuffer, 0, 0, milliseconds));
   const deadline = Date.now() + (options.timeoutMs ?? START_TIMEOUT_MS);
@@ -521,6 +571,7 @@ export function launchForwardService(
     if (isReachable(target.localPort)) {
       try {
         options.verifyReady?.();
+        if (ownership) options.retainOwnership?.(ownership);
       } catch (error) {
         startupError = error instanceof Error ? error : new Error(String(error));
         break;
