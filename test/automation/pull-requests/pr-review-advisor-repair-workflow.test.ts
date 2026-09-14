@@ -21,11 +21,21 @@ function checkoutSteps(job: WorkflowJob): WorkflowStep[] {
   return (job.steps ?? []).filter((step) => step.uses?.startsWith("actions/checkout@"));
 }
 
+function repairToolSteps(job: WorkflowJob): WorkflowStep[] {
+  return (job.steps ?? []).filter(
+    (step) => step.run?.includes("/tools/pr-review-advisor/repair-") && step.run.includes(".mts"),
+  );
+}
+
 const checkoutCases = Object.entries(workflow.jobs).flatMap(([jobName, job]) =>
   checkoutSteps(job).map((checkout, index) => [jobName, index, checkout] as const),
 );
 const jobEnvironmentCases = Object.entries(workflow.jobs).map(
   ([jobName, job]) => [jobName, job.env] as const,
+);
+const trustedExecutionJobs = ["select", "recover", "claim", "resolve", "validate", "publish"];
+const trustedToolCases = trustedExecutionJobs.flatMap((jobName) =>
+  repairToolSteps(workflow.jobs[jobName]).map((step, index) => [jobName, index, step] as const),
 );
 
 describe("manual PR Review Advisor repair workflow", () => {
@@ -85,10 +95,24 @@ describe("manual PR Review Advisor repair workflow", () => {
   });
 
   // source-shape-contract: security -- Every job that executes repair tooling must load it from the immutable workflow revision rather than the mutable PR head
-  it.each(["select", "recover", "claim", "resolve", "validate", "publish"])(
+  it.each(trustedExecutionJobs)(
     "loads %s executable code only from the immutable workflow revision (#10791)",
     (jobName) => {
-      expect(serialized(workflow.jobs[jobName])).toContain("github.workflow_sha");
+      const job = workflow.jobs[jobName];
+      const trustedCheckouts = checkoutSteps(job).filter((step) => step.with?.path === "trusted");
+
+      expect(trustedCheckouts).toHaveLength(1);
+      expect(trustedCheckouts[0]?.with?.ref).toBe("${{ github.workflow_sha }}");
+      expect(repairToolSteps(job).length).toBeGreaterThan(0);
+    },
+  );
+
+  it.each(trustedToolCases)(
+    "executes trusted repair tool %s/%i from the immutable checkout (#10791)",
+    (_jobName, _index, step) => {
+      expect(step.run).toMatch(
+        /"(?:\$TRUSTED_CHECKOUT|\$\{GITHUB_WORKSPACE\}\/trusted)\/tools\/pr-review-advisor\/repair-[a-z-]+[.]mts"/u,
+      );
     },
   );
 
@@ -105,7 +129,7 @@ describe("manual PR Review Advisor repair workflow", () => {
     expect(resolve).toContain("needs.select.outputs.artifact-id");
     expect(validate).toContain("needs.resolve.outputs.artifact-id");
     expect(publish).toContain("needs.validate.outputs.artifact-id");
-    expect([resolve, validate, publish].join("\n")).not.toContain("pattern:");
+    expect([resolve, validate, publish].join("\n")).not.toContain('"pattern":');
   });
 
   // source-shape-contract: security -- The one-shot claim must inspect every check-run page before allowing another model attempt

@@ -25,6 +25,10 @@ export const MAX_REPAIR_PATCH_BYTES = 2 * 1024 * 1024;
 const SHA = /^[0-9a-f]{40}$/u;
 const ATTEMPT = /^sha256:[0-9a-f]{64}$/u;
 
+function codeUnitOrder(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
 function credentialBearingRepairPathJob(headSha: string, changedPaths: readonly string[]) {
   const credentialFree = new Set(discoverCredentialFreeTests().map(({ id }) => id));
   return (
@@ -35,7 +39,9 @@ function credentialBearingRepairPathJob(headSha: string, changedPaths: readonly 
 }
 
 function advisorFindingLedgerDigest(ledgers: readonly AdvisorFindingLedger[]): string {
-  const canonical = [...ledgers].sort((left, right) => left.interest.localeCompare(right.interest));
+  const canonical = [...ledgers].sort((left, right) =>
+    codeUnitOrder(left.interest, right.interest),
+  );
   return `sha256:${sha256(canonicalJson(canonical))}`;
 }
 
@@ -370,7 +376,7 @@ export function selectRepairFindings(
 ): RepairSelection {
   const findings = input.ledgers
     .flatMap(({ findings }) => findings)
-    .sort((a, b) => a.id.localeCompare(b.id));
+    .sort((a, b) => codeUnitOrder(a.id, b.id));
   if (new Set(findings.map(({ id }) => id)).size !== findings.length)
     fail("Advisor ledgers contain duplicate finding IDs");
   if (input.optedFindingIds.some((id) => !findings.some((finding) => finding.id === id)))
@@ -1016,7 +1022,7 @@ function sortedUniqueStrings(value: unknown): value is string[] {
   return (
     Array.isArray(value) &&
     value.every((item) => typeof item === "string" && item.length > 0) &&
-    value.every((item, index) => index === 0 || value[index - 1]! < item)
+    value.every((item, index) => index === 0 || codeUnitOrder(value[index - 1]!, item) < 0)
   );
 }
 

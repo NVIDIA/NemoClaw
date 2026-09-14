@@ -18,6 +18,7 @@ import {
   validationReceipt,
 } from "../../../tools/pr-review-advisor/repair-contract.mts";
 import { reconstructAndSealRepair } from "../../../tools/pr-review-advisor/repair-validate.mts";
+import { ADVISOR_INTERESTS } from "../../../tools/pr-review-advisor/specialist-catalog.mts";
 
 const temporaryDirectories: string[] = [];
 const git = (repository: string, args: string[]): string =>
@@ -91,6 +92,23 @@ function selection(sourceHeadSha: string): RepairSelection {
 }
 
 describe("PR Review Advisor trusted validation", () => {
+  it("keeps validation artifact cardinality aligned with the specialist catalog (#10791)", () => {
+    const schema = JSON.parse(
+      fs.readFileSync(
+        path.join(process.cwd(), "tools/pr-review-advisor/repair-validation.schema.json"),
+        "utf8",
+      ),
+    ) as {
+      properties: {
+        advisor: { properties: { artifactIds: { minItems: number; maxItems: number } } };
+      };
+    };
+    const artifactIds = schema.properties.advisor.properties.artifactIds;
+
+    expect(artifactIds.minItems).toBe(ADVISOR_INTERESTS.length + 1);
+    expect(artifactIds.maxItems).toBe(ADVISOR_INTERESTS.length + 1);
+  });
+
   it("documents candidate execution as a credential-free manual-repair exception (#10791)", () => {
     const readme = fs.readFileSync(
       path.join(process.cwd(), "tools/pr-review-advisor/README.md"),
