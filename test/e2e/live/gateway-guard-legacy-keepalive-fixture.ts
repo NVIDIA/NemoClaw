@@ -32,66 +32,33 @@ const OPENSHELL_OCI_IMAGE_USER_ENV = "OPENSHELL_OCI_IMAGE_USER";
 const MANAGED_STARTUP_ENV_KEY = /^[A-Za-z_][A-Za-z0-9_]*$/u;
 const DEFAULT_RECREATE_TIMEOUT_SECS = 180;
 const DOCKER_CONTAINER_ID_PATTERN = /^[0-9a-f]{64}$/i;
-const managedBootstrapAdapter = (
-  "default" in managedBootstrapAdapterNamespace
-    ? managedBootstrapAdapterNamespace.default
-    : managedBootstrapAdapterNamespace
-) as typeof import("../../../src/lib/onboard/managed-bootstrap/adapter.ts");
-const { assertManagedBootstrapSafeProcessEnvironmentKey } = managedBootstrapAdapter;
-const dockerGpuPatchClone = (
-  "default" in dockerGpuPatchCloneNamespace
-    ? dockerGpuPatchCloneNamespace.default
-    : dockerGpuPatchCloneNamespace
-) as typeof import("../../../src/lib/onboard/docker-gpu-patch-clone.ts");
-const { shouldOmitOpenShellOciImageUser } = dockerGpuPatchClone;
-const dockerGpuPatchFinalize = (
-  "default" in dockerGpuPatchFinalizeNamespace
-    ? dockerGpuPatchFinalizeNamespace.default
-    : dockerGpuPatchFinalizeNamespace
-) as typeof import("../../../src/lib/onboard/docker-gpu-patch-finalize.ts");
-const { finalizeDockerGpuPatchBackup, runOpenShellLifecycleCommand } = dockerGpuPatchFinalize;
-const startupCommandEnv = (
-  "default" in startupCommandEnvNamespace
-    ? startupCommandEnvNamespace.default
-    : startupCommandEnvNamespace
-) as typeof import("../../../src/lib/onboard/docker-startup-command-env.ts");
+// Standalone tsx exposes CJS exports under default; Vitest exposes the namespace.
+function moduleExports<T extends object>(namespace: T): T {
+  return ("default" in namespace ? namespace.default : namespace) as T;
+}
+
+const { assertManagedBootstrapSafeProcessEnvironmentKey } = moduleExports(
+  managedBootstrapAdapterNamespace,
+);
+const { shouldOmitOpenShellOciImageUser } = moduleExports(dockerGpuPatchCloneNamespace);
+const { finalizeDockerGpuPatchBackup, runOpenShellLifecycleCommand } = moduleExports(
+  dockerGpuPatchFinalizeNamespace,
+);
+const startupCommandEnv = moduleExports(startupCommandEnvNamespace);
 const {
   openshellMainProcessSpecEnvValue,
   openshellSandboxCommandEnvValue,
   parseOpenShellMainProcessSpecEnvValue,
 } = startupCommandEnv;
-const startupCommandPatch = (
-  "default" in startupCommandPatchNamespace
-    ? startupCommandPatchNamespace.default
-    : startupCommandPatchNamespace
-) as typeof import("../../../src/lib/onboard/docker-startup-command-patch.ts");
-const { recreateOpenShellDockerSandboxWithStartupCommand } = startupCommandPatch;
-const dockerRun = (
-  "default" in dockerRunNamespace ? dockerRunNamespace.default : dockerRunNamespace
-) as typeof import("../../../src/lib/adapters/docker/run.ts");
-const { dockerCapture: defaultDockerCapture } = dockerRun;
-const openshellRuntime = (
-  "default" in openshellRuntimeNamespace
-    ? openshellRuntimeNamespace.default
-    : openshellRuntimeNamespace
-) as typeof import("../../../src/lib/adapters/openshell/runtime.ts");
-const { createCliOpenShellSandboxCommandExecutor } = (
-  "default" in sandboxCommandCliNamespace
-    ? sandboxCommandCliNamespace.default
-    : sandboxCommandCliNamespace
-) as typeof import("../../../src/lib/adapters/openshell/sandbox-command-cli.ts");
-
-const registry = (
-  "default" in registryNamespace ? registryNamespace.default : registryNamespace
-) as typeof import("../../../src/lib/state/registry.ts");
-const { resolveDirectSandboxContainer } = (
-  "default" in privilegedExecNamespace ? privilegedExecNamespace.default : privilegedExecNamespace
-) as typeof import("../../../src/lib/sandbox/privileged-exec.ts");
-const { readManagedWorkloadAuthority } = (
-  "default" in workloadAuthorityNamespace
-    ? workloadAuthorityNamespace.default
-    : workloadAuthorityNamespace
-) as typeof import("../../../src/lib/onboard/workload/authority.ts");
+const { recreateOpenShellDockerSandboxWithStartupCommand } = moduleExports(
+  startupCommandPatchNamespace,
+);
+const { dockerCapture: defaultDockerCapture } = moduleExports(dockerRunNamespace);
+const openshellRuntime = moduleExports(openshellRuntimeNamespace);
+const { createCliOpenShellSandboxCommandExecutor } = moduleExports(sandboxCommandCliNamespace);
+const registry = moduleExports(registryNamespace);
+const { resolveDirectSandboxContainer } = moduleExports(privilegedExecNamespace);
+const { readManagedWorkloadAuthority } = moduleExports(workloadAuthorityNamespace);
 
 type StartupCommandRecreate = typeof recreateOpenShellDockerSandboxWithStartupCommand;
 type DockerGpuPatchFinalize = typeof finalizeDockerGpuPatchBackup;

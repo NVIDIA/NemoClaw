@@ -370,21 +370,15 @@ export function relaunchManagedSupervisorSession(
       if (!supervisorReady) {
         return finalizeFailure();
       }
-      let replacementOwned = false;
       try {
-        replacementOwned =
+        if (
           resolveContainer(sandboxName, driver, {
             expectedResourceHandle: result.newContainerId,
             retainedDockerBackupId: result.oldContainerId,
-          }) === result.newContainerId;
-      } catch {
-        replacementOwned = false;
-      }
-      if (!replacementOwned) {
-        return finalizeFailure();
-      }
-      let stateRestored = false;
-      try {
+          }) !== result.newContainerId
+        ) {
+          return finalizeFailure();
+        }
         const restored = restoreState(sandboxName, backupManifest.backupPath, {
           targetAgentType: entry.agent || "openclaw",
           ...(entry.fromDockerfile ? { allowCustomImageWholeStateFileRestore: true } : {}),
@@ -418,33 +412,24 @@ export function relaunchManagedSupervisorSession(
               },
             ),
         });
-        stateRestored = restored.success;
-        if (!stateRestored && restored.error) throw new Error(restored.error);
+        if (!restored.success) {
+          if (restored.error) throw new Error(restored.error);
+          return finalizeFailure();
+        }
+        // Apply restored state to a fresh gateway and prove its health before
+        // committing, while the original container remains available for rollback.
+        if (
+          restartRestoredManagedGateway?.(result.newContainerId, result.oldContainerId) !== true
+        ) {
+          return finalizeFailure();
+        }
       } catch (error) {
-        stateRestored = false;
         if (!quiet || process.env.NEMOCLAW_REBUILD_VERBOSE === "1") {
           const detail = error instanceof Error ? error.message : String(error);
           console.error(
-            `  Trusted state restore failed: ${redactFull(redact(detail)).slice(0, 1000)}`,
+            `  Trusted container recovery failed before commit: ${redactFull(redact(detail)).slice(0, 1000)}`,
           );
         }
-      }
-      if (!stateRestored) {
-        return finalizeFailure();
-      }
-      let restoredManagedGatewayReady = false;
-      try {
-        restoredManagedGatewayReady =
-          restartRestoredManagedGateway?.(result.newContainerId, result.oldContainerId) === true;
-      } catch {
-        restoredManagedGatewayReady = false;
-      }
-      if (!restoredManagedGatewayReady) {
-        // Apply restored state to a fresh managed gateway process. OpenClaw
-        // can otherwise retain pre-restore runtime state or enter its
-        // in-process reload path. Keep the previous container available for
-        // rollback until the pinned replacement restart and health proof
-        // both succeed.
         return finalizeFailure();
       }
       const lifecycleDeps = {

@@ -146,7 +146,6 @@ export function privilegedSandboxExecArgv(
   stdin = false,
   sanitizeEnvironment = false,
   expectedContainerId?: string,
-  retainedDockerBackupId?: string,
 ): string[] {
   const { sandbox, control } = privilegedSandboxControl(sandboxName);
   if (!control.buildLegacyDockerArgv) {
@@ -162,7 +161,6 @@ export function privilegedSandboxExecArgv(
     sanitizeEnvironment,
     ...(stdin ? { input: Buffer.alloc(0) } : {}),
     ...(expectedContainerId !== undefined ? { expectedResourceHandle: expectedContainerId } : {}),
-    ...(retainedDockerBackupId !== undefined ? { retainedDockerBackupId } : {}),
   });
 }
 
