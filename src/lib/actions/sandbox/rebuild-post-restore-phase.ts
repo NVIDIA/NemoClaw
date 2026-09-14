@@ -261,12 +261,7 @@ export async function runRebuildPostRestorePhase(
     await reconcileStalePinnedSessionModelsAfterRebuild(sandboxName, log, mcpRuntimeSelection);
 
     try {
-      await reapplyMessagingManifestAfterOpenClawDoctor(
-        sandboxName,
-        messagingPlan,
-        log,
-        mcpRuntimeSelection,
-      );
+      await reapplyMessagingManifestAfterOpenClawDoctor(messagingPlan, log, mcpRuntimeSelection);
     } catch (error) {
       log(
         `Messaging manifest reapply failed: ${error instanceof Error ? error.message : String(error)}`,

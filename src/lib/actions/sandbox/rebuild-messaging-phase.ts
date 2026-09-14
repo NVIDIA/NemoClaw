@@ -108,7 +108,6 @@ function hookOutputsFromBuildSteps(
 
 /** Reapply OpenClaw messaging files that doctor may have rewritten. */
 export async function reapplyMessagingManifestAfterOpenClawDoctor(
-  sandboxName: string,
   plan: SandboxMessagingPlan | null,
   log: (message: string) => void,
   runtimeSelection?: OpenShellRuntimeSelection,

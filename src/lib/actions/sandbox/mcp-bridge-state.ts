@@ -11,7 +11,7 @@ import type { SandboxEntry } from "../../state/registry";
 import type { McpSourceEntry } from "./mcp-bridge-contracts";
 import * as registry from "../../state/registry";
 import { getSandboxTargetGatewayName } from "./gateway-target";
-import { isAgentMcpAdapter, McpBridgeError } from "./mcp-bridge-contracts";
+import { McpBridgeError } from "./mcp-bridge-contracts";
 
 export function getSandboxOrThrow(sandboxName: string): SandboxEntry {
   const sandbox = registry.getSandbox(sandboxName);
@@ -61,16 +61,6 @@ export function getBridgeAdapter(agent: AgentDefinition): AgentMcpAdapter {
     );
   }
   return adapter;
-}
-
-export function getEntryAdapter(
-  entry: Pick<McpSourceEntry, "adapter"> | undefined,
-  agent: AgentDefinition,
-): AgentMcpAdapter | null {
-  if (entry && isAgentMcpAdapter(entry.adapter)) return entry.adapter;
-  return agent.mcpCapability.support === "bridge" && agent.mcpCapability.adapter
-    ? agent.mcpCapability.adapter
-    : null;
 }
 
 export function assertNoDerivedResourceCollision(

@@ -261,7 +261,6 @@ describe("rebuild post-restore phase", () => {
       { localDockerFallbackPolicy: "never", runtimeSelection },
     );
     expect(rebuildMessaging.reapplyMessagingManifestAfterOpenClawDoctor).toHaveBeenCalledWith(
-      "alpha",
       null,
       args.log,
       runtimeSelection,
