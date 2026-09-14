@@ -1,0 +1,23 @@
+[package]
+name = "nemoclaw-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+nemoclaw-sdk = { path = "../nemoclaw-sdk" }
+clap.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true, features = ["signal", "io-std", "io-util"] }
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[[bin]]
+name = "nemoclaw"
+path = "src/main.rs"
+
+[lints]
+workspace = true

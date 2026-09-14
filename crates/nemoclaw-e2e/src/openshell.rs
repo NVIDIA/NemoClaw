@@ -17,6 +17,9 @@ pub struct State {
     pub providers: HashMap<String, p::Provider>,
     pub routes: HashMap<String, p::SetInferenceRouteRequest>,
     pub sandboxes: HashMap<String, p::Sandbox>,
+    pub exec_exit: i32,
+    pub exec_truncated: bool,
+    pub exec_calls: Vec<Vec<String>>,
     pub effects: usize,
     pub conditional_updates: usize,
     pub lose_create: bool,
@@ -124,6 +127,11 @@ impl tower::Service<http::Request<Body>> for Service {
         let state = self.0.clone();
         Box::pin(async move {
             let response = match request.uri().path() {
+                "/openshell.v1.OpenShell/ExecSandbox" => {
+                    tonic::server::Grpc::new(tonic_prost::ProstCodec::default())
+                        .server_streaming(Exec(state), request)
+                        .await
+                }
                 "/openshell.v1.OpenShell/GetGatewayInfo" => {
                     unary(request, state, gateway_info).await
                 }
@@ -431,4 +439,44 @@ fn delete_route(
         state.effects += 1;
     }
     Ok(p::DeleteInferenceRouteResponse { deleted })
+}
+
+struct Exec(Arc<Mutex<State>>);
+impl tonic::server::ServerStreamingService<p::ExecSandboxRequest> for Exec {
+    type Response = p::ExecSandboxEvent;
+    type ResponseStream =
+        tokio_stream::Iter<std::vec::IntoIter<Result<p::ExecSandboxEvent, Status>>>;
+    type Future = std::future::Ready<Result<Response<Self::ResponseStream>, Status>>;
+    fn call(&mut self, request: Request<p::ExecSandboxRequest>) -> Self::Future {
+        let request = request.into_inner();
+        let mut state = self.0.lock().unwrap();
+        if !state.sandboxes.values().any(|sandbox| {
+            sandbox
+                .metadata
+                .as_ref()
+                .is_some_and(|m| m.id == request.sandbox_id)
+        }) {
+            return std::future::ready(Err(Status::not_found("absent")));
+        }
+        let mut events = Vec::new();
+        if request.command.first().is_some_and(|c| c == "openclaw") {
+            events.push(Ok(p::ExecSandboxEvent {
+                payload: Some(p::exec_sandbox_event::Payload::Stdout(
+                    p::ExecSandboxStdout {
+                        data: br#"{"status":"ok","result":{"payloads":[{"text":"FOUR"}]}}"#
+                            .to_vec(),
+                    },
+                )),
+            }));
+        }
+        state.exec_calls.push(request.command);
+        if !state.exec_truncated {
+            events.push(Ok(p::ExecSandboxEvent {
+                payload: Some(p::exec_sandbox_event::Payload::Exit(p::ExecSandboxExit {
+                    exit_code: state.exec_exit,
+                })),
+            }));
+        }
+        std::future::ready(Ok(Response::new(tokio_stream::iter(events))))
+    }
 }

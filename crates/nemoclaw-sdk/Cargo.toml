@@ -21,3 +21,7 @@ ipnet.workspace = true
 openshell-core.workspace = true
 tonic.workspace = true
 tokio.workspace = true
+tempfile.workspace = true
+getrandom.workspace = true
+process-wrap.workspace = true
+tokio-util.workspace = true

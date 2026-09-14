@@ -4,9 +4,11 @@ Rust desired-state SDK and CLI, under construction on an independent branch.
 The Go implementation and its validation remain on `v1-poc`.
 
 See [DESIGN.md](DESIGN.md) for the accepted scope and implementation sequence.
-The SDK currently exposes checked durable bindings and refresh semantics.
-A Rust provider adapter is qualified against OpenTofu for fixture-backed refresh
-and partial-creation state retention. Runtime provisioning is not implemented yet.
+The SDK exposes `plan`, `apply`, `export`, and `destroy`; the CLI delegates the
+same four commands to it. The external OpenShell lifecycle is qualified through
+real OpenTofu and a local gRPC fixture, including interrupted creation, readiness
+failure, observation failure, export/reapply, and resumable destroy. Managed
+Docker, Ollama, and Spark runtimes are still being ported; this is not yet parity.
 See [test instructions](docs/testing.md).
 
 Run `cargo test --workspace`, `cargo fmt --check`, and

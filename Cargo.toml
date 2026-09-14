@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/nemoclaw-sdk", "crates/nemoclaw-provider", "crates/nemoclaw-e2e"]
+members = ["crates/nemoclaw-sdk", "crates/nemoclaw-provider", "crates/nemoclaw-e2e", "crates/nemoclaw-cli"]
 resolver = "3"
 
 [workspace.package]
@@ -33,3 +33,7 @@ tonic-prost = "0.14"
 tower = "0.5"
 http = "1"
 tokio-stream = { version = "0.1", features = ["net"] }
+getrandom = "0.4"
+process-wrap = { version = "10", features = ["tokio1"] }
+tokio-util = "0.7"
+clap = { version = "4", features = ["derive"] }

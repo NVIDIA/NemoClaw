@@ -1,0 +1,294 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+use super::*;
+use crate::{CancellationToken, Error};
+use std::time::Duration;
+
+fn value<'a>(row: &'a Row, key: &str) -> &'a str {
+    row.get(key).map(String::as_str).unwrap_or("")
+}
+fn response_text(bytes: &[u8]) -> Result<String, Error> {
+    if bytes.len() > 1 << 20 {
+        return Err(Error::Conflict("agent response exceeds the probe limit"));
+    }
+    let response: serde_json::Value = serde_json::from_slice(bytes)
+        .map_err(|_| Error::Conflict("agent returned no confirmed response"))?;
+    let payloads = response["result"]["payloads"]
+        .as_array()
+        .ok_or(Error::Conflict("agent returned no confirmed response"))?;
+    if response["status"] != "ok"
+        || payloads.is_empty()
+        || payloads.iter().any(|p| p["isError"] == true)
+    {
+        return Err(Error::Conflict(
+            "agent returned no confirmed successful response",
+        ));
+    }
+    let text = payloads[0]["text"].as_str().unwrap_or("").trim();
+    if text.is_empty() || text.len() > 16 << 10 {
+        return Err(Error::Conflict(
+            "agent response is empty or exceeds the probe limit",
+        ));
+    }
+    Ok(text.into())
+}
+impl OpenShell {
+    pub async fn verify_gateway(&self, driver: &str) -> Result<(), Error> {
+        let info = self
+            .grpc()
+            .get_gateway_info(self.request(proto::GetGatewayInfoRequest {}))
+            .await
+            .map_err(remote_error)?
+            .into_inner();
+        if info.gateway_version != "0.0.116"
+            || info.compute_drivers.len() != 1
+            || (info.compute_drivers[0].name != driver
+                && info.compute_drivers[0]
+                    .capabilities
+                    .as_ref()
+                    .is_none_or(|capability| capability.driver_name != driver))
+        {
+            return Err(Error::Conflict(
+                "gateway version or compute driver does not satisfy the configuration",
+            ));
+        }
+        Ok(())
+    }
+    async fn bound_sandbox(&self, binding: &Row) -> Result<proto::Sandbox, Error> {
+        let sandbox = self
+            .grpc()
+            .get_sandbox(self.request(proto::GetSandboxRequest {
+                name: value(binding, "name").into(),
+                workspace: value(binding, "workspace").into(),
+            }))
+            .await
+            .map_err(remote_error)?
+            .into_inner()
+            .sandbox
+            .ok_or(ObservationError::Incomplete)?;
+        verify_identity(
+            binding,
+            &base(sandbox.metadata.clone(), value(binding, "name"), false)?,
+        )?;
+        Ok(sandbox)
+    }
+    pub async fn exec_bound(
+        &self,
+        binding: &Row,
+        command: Vec<String>,
+        environment: Row,
+        seconds: u32,
+    ) -> Result<(i32, Vec<u8>), Error> {
+        let sandbox = self.bound_sandbox(binding).await?;
+        let mut request = self.request(proto::ExecSandboxRequest {
+            sandbox_id: sandbox.metadata.ok_or(ObservationError::Incomplete)?.id,
+            command,
+            environment: environment.into_iter().collect(),
+            timeout_seconds: seconds,
+            ..Default::default()
+        });
+        request.set_timeout(Duration::from_secs(u64::from(seconds)));
+        let mut stream = self
+            .grpc()
+            .exec_sandbox(request)
+            .await
+            .map_err(remote_error)?
+            .into_inner();
+        let mut output = Vec::new();
+        let mut exit = None;
+        while let Some(event) = stream.message().await.map_err(remote_error)? {
+            if exit.is_some() {
+                return Err(ObservationError::Incomplete.into());
+            }
+            match event.payload.ok_or(ObservationError::Incomplete)? {
+                proto::exec_sandbox_event::Payload::Stdout(chunk) => {
+                    if output.len() + chunk.data.len() > 1 << 20 {
+                        return Err(Error::Conflict("sandbox exec output exceeds limit"));
+                    }
+                    output.extend(chunk.data);
+                }
+                proto::exec_sandbox_event::Payload::Stderr(_) => {}
+                proto::exec_sandbox_event::Payload::Exit(result) => exit = Some(result.exit_code),
+            }
+        }
+        Ok((exit.ok_or(ObservationError::Incomplete)?, output))
+    }
+    fn configuration_command(&self, binding: &Row, health: bool) -> (Vec<String>, Row) {
+        let runtime = value(binding, "agent_runtime");
+        let agent = value(binding, "agent_name");
+        if let Some(harness) = runtime.strip_prefix("fabric-") {
+            let mut command = [
+                "/opt/fabric/bin/python",
+                "/opt/nemoclaw/fabric.py",
+                "check",
+                agent,
+            ]
+            .map(String::from)
+            .to_vec();
+            if harness != "deepagents" {
+                command.push(harness.into());
+            }
+            (command, Row::new())
+        } else {
+            let suffix = if health {
+                "fetch('http://127.0.0.1:18789/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+            } else {
+                "process.exit(0)"
+            };
+            (
+                vec![
+                    "node".into(),
+                    "-e".into(),
+                    format!("{CONFIGURATION_PROBE}{suffix}"),
+                ],
+                [(
+                    "NEMOCLAW_EXPECTED_CONFIG".into(),
+                    environment(agent, runtime)["NEMOCLAW_AGENT_CONFIG"].clone(),
+                )]
+                .into(),
+            )
+        }
+    }
+    pub async fn configuration(&self, binding: &Row) -> Result<(), Error> {
+        let (command, environment) = self.configuration_command(binding, false);
+        let (exit, _) = self.exec_bound(binding, command, environment, 20).await?;
+        if exit != 0 {
+            return Err(Error::Conflict(
+                "agent configuration cannot be independently established",
+            ));
+        }
+        Ok(())
+    }
+    pub async fn ready(&self, binding: &Row, cancel: &CancellationToken) -> Result<(), Error> {
+        let wait = async {
+            loop {
+                let sandbox = self.bound_sandbox(binding).await?;
+                let phase = sandbox.status.ok_or(ObservationError::Incomplete)?.phase;
+                if matches!(
+                    proto::SandboxPhase::try_from(phase),
+                    Ok(proto::SandboxPhase::Error
+                        | proto::SandboxPhase::Deleting
+                        | proto::SandboxPhase::Stopped)
+                ) {
+                    return Err(Error::Conflict(
+                        "sandbox readiness failed; established identity retained",
+                    ));
+                }
+                if phase == proto::SandboxPhase::Ready as i32 {
+                    let (command, environment) = self.configuration_command(binding, true);
+                    if let Ok((exit, _)) = self.exec_bound(binding, command, environment, 20).await
+                    {
+                        if exit == 0 {
+                            return Ok(());
+                        }
+                        if exit == 2 && value(binding, "agent_runtime").is_empty() {
+                            return Err(Error::Conflict(
+                                "agent configuration drifted; resources retained",
+                            ));
+                        }
+                    }
+                }
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            }
+        };
+        tokio::select! {
+            ()=cancel.cancelled()=>Err(Error::Cancelled),
+            result=tokio::time::timeout(Duration::from_secs(120),wait)=>result.map_err(|_|Error::Conflict("agent readiness timed out; resources retained"))?,
+        }
+    }
+    pub async fn inference_ready(&self, binding: &Row) -> Result<(), Error> {
+        let script = match value(binding, "agent_runtime") {
+            "fabric-claude" => ANTHROPIC_PROBE,
+            "fabric-codex" | "fabric-pi" => RESPONSES_PROBE,
+            _ => INFERENCE_PROBE,
+        };
+        let (exit, _) = self
+            .exec_bound(
+                binding,
+                vec!["node".into(), "-e".into(), script.into()],
+                Row::new(),
+                90,
+            )
+            .await?;
+        if exit != 0 {
+            return Err(Error::Conflict(
+                "inference through the sandbox failed; resources retained",
+            ));
+        }
+        Ok(())
+    }
+    pub async fn agent_response(&self, binding: &Row) -> Result<String, Error> {
+        let mut random = [0_u8; 16];
+        getrandom::fill(&mut random).map_err(|_| Error::State("cannot generate probe session"))?;
+        random[6] = (random[6] & 15) | 64;
+        random[8] = (random[8] & 63) | 128;
+        let hex: String = random.iter().map(|b| format!("{b:02x}")).collect();
+        let session = format!(
+            "{}-{}-{}-{}-{}",
+            &hex[..8],
+            &hex[8..12],
+            &hex[12..16],
+            &hex[16..20],
+            &hex[20..]
+        );
+        let command = [
+            "openclaw",
+            "agent",
+            "--agent",
+            value(binding, "agent_name"),
+            "--session-id",
+            &session,
+            "--message",
+            "Reply with the word FOUR.",
+            "--thinking",
+            "off",
+            "--json",
+            "--timeout",
+            "300",
+        ]
+        .map(String::from)
+        .to_vec();
+        let (exit, output) = self.exec_bound(binding, command, Row::new(), 360).await?;
+        if exit != 0 {
+            return Err(Error::Conflict(
+                "actual agent response failed; resources retained",
+            ));
+        }
+        let text = response_text(&output)?;
+        if !text
+            .trim_matches([' ', '\n', '\r', '\t', '.', '!', '\"', '\''])
+            .eq_ignore_ascii_case("FOUR")
+        {
+            return Err(Error::Conflict(
+                "agent did not answer the inference probe; resources retained",
+            ));
+        }
+        Ok(text)
+    }
+}
+
+const CONFIGURATION_PROBE: &str = r###"const fs=require('node:fs'),u=require('node:util');try{const actual=JSON.parse(fs.readFileSync('/sandbox/.openclaw/openclaw.json','utf8'));const expected=JSON.parse(process.env.NEMOCLAW_EXPECTED_CONFIG);for(const k of Object.keys(expected))if(!u.isDeepStrictEqual(actual[k],expected[k]))process.exit(2);}catch{process.exit(2);}"###;
+const INFERENCE_PROBE: &str = r###"fetch('https://inference.local/v1/chat/completions',{method:'POST',headers:{'content-type':'application/json','authorization':'Bearer openshell-placeholder'},body:JSON.stringify({model:'primary',messages:[{role:'user',content:'Reply OK.'}],max_tokens:1,stream:false}),signal:AbortSignal.timeout(80000)}).then(async r=>{const b=await r.json();process.exit(r.ok&&Array.isArray(b.choices)&&b.choices.length>0?0:1)}).catch(()=>process.exit(1))"###;
+const ANTHROPIC_PROBE: &str = r###"fetch('https://inference.local/v1/messages',{method:'POST',headers:{'content-type':'application/json','x-api-key':'openshell-placeholder','anthropic-version':'2023-06-01'},body:JSON.stringify({model:'primary',messages:[{role:'user',content:'Reply OK.'}],max_tokens:1,stream:false}),signal:AbortSignal.timeout(80000)}).then(async r=>{const b=await r.json();process.exit(r.ok&&Array.isArray(b.content)&&b.content.length>0?0:1)}).catch(()=>process.exit(1))"###;
+const RESPONSES_PROBE: &str = r###"fetch('https://inference.local/v1/responses',{method:'POST',headers:{'content-type':'application/json','authorization':'Bearer openshell-placeholder'},body:JSON.stringify({model:'primary',input:'Reply OK.',max_output_tokens:16,stream:false}),signal:AbortSignal.timeout(80000)}).then(async r=>{const b=await r.json();process.exit(r.ok&&Array.isArray(b.output)&&b.output.length>0?0:1)}).catch(()=>process.exit(1))"###;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn agent_reply_requires_confirmed_success_and_non_error_payloads() {
+        assert_eq!(
+            response_text(br#"{"status":"ok","result":{"payloads":[{"text":" FOUR. "}]}}"#)
+                .unwrap(),
+            "FOUR."
+        );
+        for bytes in [
+            br#"{"status":"error","result":{"payloads":[{"text":"FOUR"}]}}"#.as_slice(),
+            br#"{"status":"ok","result":{"payloads":[{"text":"FOUR"},{"isError":true}]}}"#,
+            br#"{"status":"ok","result":{"payloads":[]}}"#,
+        ] {
+            assert!(response_text(bytes).is_err());
+        }
+    }
+}

@@ -32,3 +32,16 @@ NEMOCLAW_TEST_TOFU=/absolute/path/to/tofu \
 NEMOCLAW_TEST_PROVIDER=/absolute/path/to/terraform-provider-nemoclaw \
   cargo test -p nemoclaw-e2e --test opentofu_openshell -- --ignored
 ```
+
+The SDK/CLI lifecycle tests require a verified native bundle (manifest plus CLI,
+OpenTofu, and production provider). They use only the local gRPC fixture:
+
+```sh
+NEMOCLAW_TEST_BUNDLE=/absolute/path/to/bundle \
+  cargo test -p nemoclaw-e2e --test deployment -- --ignored
+```
+
+These tests cover shared SDK/CLI state, interrupted creation, unchanged apply,
+readiness failure without replacement, failed observation without state loss,
+export/reapply, interrupted destroy, and retained workspace recovery. The
+fixture returns protocol responses; it does not establish live agent inference.

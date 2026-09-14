@@ -104,4 +104,12 @@ pub fn refresh<T>(
 pub mod backend;
 pub mod compile;
 pub mod config;
+mod error;
 pub mod openshell;
+mod state;
+pub use error::Error;
+pub mod bundle;
+mod process;
+pub use tokio_util::sync::CancellationToken;
+mod deployment;
+pub use deployment::{Change, Deployment, OperationResult, Outcome, Progress};
