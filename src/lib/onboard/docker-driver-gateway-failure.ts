@@ -51,11 +51,11 @@ function findAvailableGatewayStateArchivePath(stateDir: string): string | null {
 /**
  * Print the incompatible-database diagnosis and its state-move recovery.
  *
- * Managed gateways stop their owning service in the same command chain as the
- * state move, so `Restart=on-failure` cannot replace the process between a
- * separate check and the move. Standalone gateways have no manager to stop and
- * receive the move only after the runtime confirms that no matching gateway
- * process still uses the selected state (#8797; advisor findings PRA-1/PRA-2).
+ * An engaged managed service is stopped before onboarding retries, but service
+ * activity does not prove that no other gateway process uses the selected
+ * state. The retry re-evaluates ownership before it can offer the state move.
+ * Standalone gateways receive the move only after the runtime confirms that no
+ * matching gateway process still uses the selected state (#8797, #11720).
  */
 function printIncompatibleGatewayDatabaseRecovery(
   logPath: string,
@@ -75,7 +75,18 @@ function printIncompatibleGatewayDatabaseRecovery(
   );
   printError("  This can happen after an OpenShell downgrade.");
   const stopCommand = resolveGatewayStopCommand();
-  if (!stopCommand && isGatewayStateInUse?.() !== false) {
+  if (stopCommand) {
+    printError(
+      "  Stop the engaged gateway service, then run onboarding again so NemoClaw can verify that no gateway process still uses the selected state:",
+    );
+    printError(`    ${stopCommand} && ${recoveryCommand}`);
+    printError(
+      "  Service activity alone does not prove that the service owns every process using this gateway state.",
+    );
+    noteOnboardResumeHintShown();
+    return;
+  }
+  if (isGatewayStateInUse?.() !== false) {
     printError("  NemoClaw could not confirm that the standalone gateway process stopped.");
     printError("  Inspect the current listener before stopping anything:");
     printError(
@@ -114,12 +125,8 @@ function printIncompatibleGatewayDatabaseRecovery(
   );
   printError("  Keep the archive owner-only until every required registration is restored.");
   const move = `mkdir -m 700 ${archivePathArg} && mv ${stateDirArg} ${archivedStatePathArg} && ${recoveryCommand}`;
-  printError(
-    stopCommand
-      ? "  Stop the gateway, create the archive, move the selected gateway state, then continue onboarding:"
-      : "  Create the archive, move the selected gateway state, then continue onboarding:",
-  );
-  printError(`    ${stopCommand ? `${stopCommand} && ${move}` : move}`);
+  printError("  Create the archive, move the selected gateway state, then continue onboarding:");
+  printError(`    ${move}`);
   noteOnboardResumeHintShown();
 }
 
