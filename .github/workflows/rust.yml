@@ -1,0 +1,74 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+name: Rust desired-state
+on:
+  push:
+    branches: [v1]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  native:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04-arm
+            platform: linux_arm64
+          - runner: ubuntu-24.04
+            platform: linux_amd64
+          - runner: macos-15
+            platform: darwin_arm64
+          - runner: macos-15-intel
+            platform: darwin_amd64
+          - runner: windows-2025
+            platform: windows_amd64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    env:
+      TEST_PLATFORM: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - name: Install pinned local build tools
+        run: |
+          rustup show
+          python - <<'PY'
+          import hashlib, io, json, os, pathlib, urllib.request, zipfile
+          root = pathlib.Path.cwd()
+          pin = json.loads((root / 'versions.json').read_text())['platforms'][os.environ['TEST_PLATFORM']]['protoc']
+          data = urllib.request.urlopen(pin['url'], timeout=120).read()
+          assert hashlib.sha256(data).hexdigest() == pin['sha256']
+          destination = root / '.tools/protoc'
+          with zipfile.ZipFile(io.BytesIO(data)) as archive:
+              archive.extractall(destination)
+          binary = destination / 'bin' / ('protoc.exe' if os.name == 'nt' else 'protoc')
+          binary.chmod(0o755)
+          with open(os.environ['GITHUB_ENV'], 'a') as output:
+              output.write(f'PROTOC={binary}\n')
+          PY
+      - name: Formatting, lint, and deterministic behavior
+        run: |
+          cargo fmt --check
+          cargo clippy --locked --workspace --all-targets -- -D warnings
+          cargo test --locked --workspace
+      - name: Build and verify native bundle
+        run: cargo run --locked -p nemoclaw-build -- bundle --platform "$TEST_PLATFORM"
+      - name: Execute real OpenTofu and SDK/CLI lifecycle
+        run: |
+          export NEMOCLAW_TEST_BUNDLE="$PWD/dist/$TEST_PLATFORM"
+          suffix=""
+          if [ "$TEST_PLATFORM" = windows_amd64 ]; then suffix=.exe; fi
+          export NEMOCLAW_TEST_TOFU="$NEMOCLAW_TEST_BUNDLE/libexec/tofu$suffix"
+          export NEMOCLAW_TEST_PROVIDER="$PWD/target/debug/terraform-provider-nemoclaw$suffix"
+          cargo build --locked -p nemoclaw-provider
+          cargo test --locked -p nemoclaw-e2e --test provider_protocol -- --ignored
+          cargo test --locked -p nemoclaw-e2e --test opentofu_openshell -- --ignored
+          cargo test --locked -p nemoclaw-e2e --test deployment -- --ignored
+          if [ "$TEST_PLATFORM" != windows_amd64 ]; then
+            cargo test --locked -p nemoclaw-e2e --test ollama -- --ignored
+          fi

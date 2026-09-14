@@ -8,30 +8,50 @@
       "tofu": {
         "url": "https://github.com/opentofu/opentofu/releases/download/v1.12.6/tofu_1.12.6_linux_arm64.zip",
         "sha256": "e573979ba68a17fe7b881752051a694a7efcd970e39521f6a25775197861ed4d"
+      },
+      "protoc": {
+        "url": "https://github.com/protocolbuffers/protobuf/releases/download/v36.1/protoc-36.1-linux-aarch_64.zip",
+        "sha256": "237a68856edf1bd28b6204bddd0596c1cf46d298bc29c620012540b2e44c73e7"
       }
     },
     "linux_amd64": {
       "tofu": {
         "url": "https://github.com/opentofu/opentofu/releases/download/v1.12.6/tofu_1.12.6_linux_amd64.zip",
         "sha256": "5dc43da4f750f33873dc25e94587128709e819e544b7be9016b255316153c3a8"
+      },
+      "protoc": {
+        "url": "https://github.com/protocolbuffers/protobuf/releases/download/v36.1/protoc-36.1-linux-x86_64.zip",
+        "sha256": "c4bc672d9d49214dc8cafdceadf4df92182d6ca8e3ec65a56b2d7de5602669b4"
       }
     },
     "darwin_arm64": {
       "tofu": {
         "url": "https://github.com/opentofu/opentofu/releases/download/v1.12.6/tofu_1.12.6_darwin_arm64.zip",
         "sha256": "e083ee43790ab9e19ad66d9933e24a7244a1412e1d5728f37999ae2163fdac95"
+      },
+      "protoc": {
+        "url": "https://github.com/protocolbuffers/protobuf/releases/download/v36.1/protoc-36.1-osx-aarch_64.zip",
+        "sha256": "de56d57afe30c5d191b11d24ff93dd4025728d7fb43b773886b2d3613e0bdbb2"
       }
     },
     "darwin_amd64": {
       "tofu": {
         "url": "https://github.com/opentofu/opentofu/releases/download/v1.12.6/tofu_1.12.6_darwin_amd64.zip",
         "sha256": "166388e5feed47e107e11721b6366bf91d21e47eccbced75f3cbe0c7184ffd9b"
+      },
+      "protoc": {
+        "url": "https://github.com/protocolbuffers/protobuf/releases/download/v36.1/protoc-36.1-osx-x86_64.zip",
+        "sha256": "ee2c5496e4af0aa6a224894bc0f7025145260e004d890487d510725ce8b473eb"
       }
     },
     "windows_amd64": {
       "tofu": {
         "url": "https://github.com/opentofu/opentofu/releases/download/v1.12.6/tofu_1.12.6_windows_amd64.zip",
         "sha256": "0d1421721cf9ec24b41b698a9620dda218d47fa7e76ac3dc15cdbc13bd79b0bb"
+      },
+      "protoc": {
+        "url": "https://github.com/protocolbuffers/protobuf/releases/download/v36.1/protoc-36.1-win64.zip",
+        "sha256": "390e515cb456e6a978553bdb57baf087b054885077fd6da7f7ff0160279c07d6"
       }
     }
   },
