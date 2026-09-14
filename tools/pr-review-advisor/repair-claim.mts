@@ -4,15 +4,12 @@
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
-import { RepairError } from "./repair-contract.mts";
-
 type CheckRun = { external_id?: unknown };
 
 export function assertRepairAttemptUnclaimed(pages: unknown, attemptKey: string): void {
-  if (!/^sha256:[0-9a-f]{64}$/u.test(attemptKey))
-    throw new RepairError("repair attempt key is invalid");
+  if (!/^sha256:[0-9a-f]{64}$/u.test(attemptKey)) throw new Error("repair attempt key is invalid");
   if (!Array.isArray(pages) || pages.length < 1 || pages.length > 100)
-    throw new RepairError("repair attempt check-run pages are invalid");
+    throw new Error("repair attempt check-run pages are invalid");
   const runs: CheckRun[] = [];
   for (const page of pages) {
     if (
@@ -21,15 +18,15 @@ export function assertRepairAttemptUnclaimed(pages: unknown, attemptKey: string)
       !Array.isArray((page as { check_runs?: unknown }).check_runs) ||
       (page as { check_runs: unknown[] }).check_runs.length > 100
     )
-      throw new RepairError("repair attempt check-run page is invalid");
+      throw new Error("repair attempt check-run page is invalid");
     runs.push(...((page as { check_runs: CheckRun[] }).check_runs ?? []));
   }
   if (runs.some((run) => run.external_id === attemptKey))
-    throw new RepairError("this exact Advisor repair attempt was already claimed");
+    throw new Error("this exact Advisor repair attempt was already claimed");
 }
 
 function required(value: string | undefined, name: string): string {
-  if (!value) throw new RepairError(`${name} is required`);
+  if (!value) throw new Error(`${name} is required`);
   return value;
 }
 

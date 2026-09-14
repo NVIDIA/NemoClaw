@@ -7,6 +7,7 @@ import { buildAdvisorFindingLedger } from "../../../tools/pr-review-advisor/find
 import {
   allowedRepairPath,
   bindRepairSelection,
+  expectedAdvisorRepairArtifactNames,
   selectRepairFindings,
 } from "../../../tools/pr-review-advisor/repair-contract.mts";
 import { selectedAdvisorArtifactIds } from "../../../tools/pr-review-advisor/repair-select.mts";
@@ -84,10 +85,7 @@ describe("PR Review Advisor repair core", () => {
   it("binds a separate repair run to one completed exact Advisor attempt (#10791)", () => {
     const findingLedgers = ledgers();
     const findingId = findingLedgers.flatMap(({ findings }) => findings)[0]!.id;
-    const artifactNames = [
-      "pr-review-advisor-context-77",
-      ...ADVISOR_INTERESTS.map((interest) => `pr-review-specialist-${interest}-2`),
-    ];
+    const artifactNames = expectedAdvisorRepairArtifactNames(77, 2);
     const request = {
       repository: "NVIDIA/NemoClaw",
       prNumber: 42,

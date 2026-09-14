@@ -267,18 +267,23 @@ export type OwnedOpenShellInference = {
   stop: () => Promise<void>;
 };
 
-function startOpenShellInference(
-  env: NodeJS.ProcessEnv,
-  input: OpenShellInferenceOptions,
-  tools: OpenShellTools,
-): OwnedOpenShellInference {
-  validateIdentifier(input.gatewayId, "gatewayId");
-  validateIdentifier(input.modelId, "modelId");
-  validateIdentifier(input.providerName, "providerName");
+export type OwnedOpenShellGateway = {
+  ready: Promise<void>;
+  stop: () => Promise<void>;
+};
 
-  const providerApiKey = required(env.OPENAI_API_KEY, "OPENAI_API_KEY");
+function startOpenShellGateway(
+  env: NodeJS.ProcessEnv,
+  input: {
+    enableBindMounts?: boolean;
+    ephemeralState: boolean;
+    gatewayId: string;
+  },
+  tools: OpenShellTools,
+): OwnedOpenShellGateway & { commandEnv: NodeJS.ProcessEnv } {
+  validateIdentifier(input.gatewayId, "gatewayId");
+
   const commandEnv = credentialFreeEnvironment(env);
-  const providerEnv = { ...commandEnv, OPENAI_API_KEY: providerApiKey };
   const gatewayDirectory = path.join(required(env.RUNNER_TEMP, "RUNNER_TEMP"), "openshell-gateway");
   const gatewayEndpoint = new URL(
     required(env.OPENSHELL_GATEWAY_ENDPOINT, "OPENSHELL_GATEWAY_ENDPOINT"),
@@ -307,23 +312,58 @@ function startOpenShellInference(
   );
   const stopGateway =
     tools.start("openshell-gateway", ["--config", configurationPath], {
-      env: input.ownGateway
+      env: input.ephemeralState
         ? { ...commandEnv, OPENSHELL_DB_URL: "sqlite::memory:?cache=shared" }
         : commandEnv,
       logPath: path.join(gatewayDirectory, "gateway.log"),
     }) ?? (async () => undefined);
 
+  const ready = (async (): Promise<void> => {
+    for (let attempt = 0; attempt < 30; attempt += 1) {
+      try {
+        tools.run("openshell", ["gateway", "info"], { env: commandEnv, timeout: 10_000 });
+        break;
+      } catch {
+        await tools.wait(1000);
+      }
+    }
+    tools.run("openshell", ["gateway", "info"], { env: commandEnv, timeout: 10_000 });
+  })();
+  return { commandEnv, ready, stop: stopGateway };
+}
+
+export function startOwnedOpenShellGateway(
+  env: NodeJS.ProcessEnv,
+  input: { enableBindMounts?: boolean; gatewayId: string },
+  tools: OpenShellTools = defaultOpenShellTools,
+): OwnedOpenShellGateway {
+  return startOpenShellGateway(env, { ...input, ephemeralState: false }, tools);
+}
+
+function startOpenShellInference(
+  env: NodeJS.ProcessEnv,
+  input: OpenShellInferenceOptions,
+  tools: OpenShellTools,
+): OwnedOpenShellInference {
+  validateIdentifier(input.modelId, "modelId");
+  validateIdentifier(input.providerName, "providerName");
+
+  const providerApiKey = required(env.OPENAI_API_KEY, "OPENAI_API_KEY");
+  const gateway = startOpenShellGateway(
+    env,
+    {
+      enableBindMounts: input.enableBindMounts,
+      ephemeralState: input.ownGateway === true,
+      gatewayId: input.gatewayId,
+    },
+    tools,
+  );
+  const commandEnv = gateway.commandEnv;
+  const providerEnv = { ...commandEnv, OPENAI_API_KEY: providerApiKey };
+
   const configure = (async (): Promise<void> => {
     try {
-      for (let attempt = 0; attempt < 30; attempt += 1) {
-        try {
-          tools.run("openshell", ["gateway", "info"], { env: commandEnv, timeout: 10_000 });
-          break;
-        } catch {
-          await tools.wait(1000);
-        }
-      }
-      tools.run("openshell", ["gateway", "info"], { env: commandEnv, timeout: 10_000 });
+      await gateway.ready;
       tools.run(
         "openshell",
         [
@@ -353,7 +393,7 @@ function startOpenShellInference(
     } catch (error) {
       if (input.ownGateway) {
         try {
-          await stopGateway();
+          await gateway.stop();
         } catch (cleanupError) {
           const primary = error instanceof Error ? error.message : String(error);
           const cleanup =
@@ -366,7 +406,7 @@ function startOpenShellInference(
       throw error;
     }
   })();
-  return { configure, stop: stopGateway };
+  return { configure, stop: gateway.stop };
 }
 
 export function startOwnedOpenShellInference(

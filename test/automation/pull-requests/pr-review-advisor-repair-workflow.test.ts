@@ -42,13 +42,18 @@ describe("manual PR Review Advisor repair workflow", () => {
   // source-shape-contract: security -- Model credentials and protected branch-write authority must remain in separate jobs with a credential-free validator between them
   it("separates model access, candidate execution, and protected write authority (#10791)", () => {
     const claim = workflow.jobs.claim;
+    const recover = workflow.jobs.recover;
     const resolve = workflow.jobs.resolve;
     const validate = workflow.jobs.validate;
     const publish = workflow.jobs.publish;
 
+    expect(recover.permissions).toEqual({ contents: "read" });
+    expect(serialized(recover)).not.toMatch(/secrets[.]|OPENAI_API_KEY/u);
     expect(claim.permissions).toEqual({ checks: "write", contents: "read" });
+    expect(claim.needs).toContain("recover");
     expect(serialized(claim)).toContain("external_id");
     expect(serialized(claim)).toContain("conclusion=neutral");
+    expect(serialized(claim)).not.toMatch(/secrets[.]|OPENAI_API_KEY/u);
     expect(resolve.needs).toContain("claim");
     expect(resolve.permissions).toEqual({ actions: "read", contents: "read" });
     expect(serialized(resolve)).toContain("secrets.PR_REVIEW_ADVISOR_API_KEY");
@@ -80,7 +85,7 @@ describe("manual PR Review Advisor repair workflow", () => {
   });
 
   // source-shape-contract: security -- Every job that executes repair tooling must load it from the immutable workflow revision rather than the mutable PR head
-  it.each(["select", "resolve", "validate", "publish"])(
+  it.each(["select", "recover", "claim", "resolve", "validate", "publish"])(
     "loads %s executable code only from the immutable workflow revision (#10791)",
     (jobName) => {
       expect(serialized(workflow.jobs[jobName])).toContain("github.workflow_sha");
@@ -111,16 +116,14 @@ describe("manual PR Review Advisor repair workflow", () => {
     expect(claim).toContain("repair-claim.mts");
   });
 
-  // source-shape-contract: security -- A retry must delete the prior attempt sandbox before creating another credential-free resolver
-  it("reconciles the previous retry sandbox before creating a new one (#10791)", () => {
-    const steps = workflow.jobs.resolve.steps ?? [];
-    const reconcile = steps.findIndex((step) =>
-      step.run?.includes('repair-resolve.mts" reconcile'),
-    );
-    const create = steps.findIndex((step) => step.run?.includes('repair-resolve.mts" create'));
+  // source-shape-contract: security -- A retry must reconcile every prior sandbox before the permanent model-attempt claim can reject repeated execution
+  it("recovers earlier retry sandboxes before claiming model work (#10791)", () => {
+    const recover = serialized(workflow.jobs.recover);
+    const claim = workflow.jobs.claim;
 
-    expect(reconcile).toBeGreaterThan(-1);
-    expect(create).toBeGreaterThan(reconcile);
+    expect(recover).toContain('repair-resolve.mts\\" recover');
+    expect(claim.needs).toContain("recover");
+    expect(serialized(workflow.jobs.resolve)).not.toContain('repair-resolve.mts\\" recover');
   });
 
   // source-shape-contract: security -- A failed create can still allocate a sandbox, so cleanup must always attempt idempotent deletion
@@ -142,7 +145,7 @@ describe("manual PR Review Advisor repair workflow", () => {
   );
 
   // source-shape-contract: security -- Job-level repair paths must use a context GitHub permits while compiling the workflow
-  it.each(["resolve", "validate", "publish"])(
+  it.each(["recover", "resolve", "validate", "publish"])(
     "uses isolated workspace paths for the %s job (#10791)",
     (jobName) => {
       expect(JSON.stringify(workflow.jobs[jobName].env)).toContain("github.workspace");

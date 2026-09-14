@@ -9,6 +9,7 @@ import { parseAdvisorFindingLedger } from "./finding-ledger.mts";
 import {
   assertRepairArtifactDirectory,
   bindRepairSelection,
+  expectedAdvisorRepairArtifactNames,
   positiveInteger,
   readJson,
   repairModelContext,
@@ -32,10 +33,7 @@ export function selectedAdvisorArtifactIds(
 ): number[] {
   const runId = positiveInteger(request.advisorRun.id, "Advisor run ID");
   const runAttempt = positiveInteger(request.advisorRun.run_attempt, "Advisor run attempt");
-  const names = [
-    `pr-review-advisor-context-${runId}`,
-    ...ADVISOR_INTERESTS.map((interest) => `pr-review-specialist-${interest}-${runAttempt}`),
-  ];
+  const names = expectedAdvisorRepairArtifactNames(runId, runAttempt);
   return names
     .map((name) => {
       const matches = request.artifacts.filter((artifact) => artifact.name === name);

@@ -202,6 +202,59 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+  recover:
+    name: Reconcile every earlier retry sandbox
+    needs: select
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    env:
+      OPENSHELL_GATEWAY_ENDPOINT: http://127.0.0.1:8080
+      SANDBOX_NAME: advisor-repair-${{ github.run_id }}-${{ github.run_attempt }}
+      TRUSTED_CHECKOUT: ${{ github.workspace }}/trusted
+    steps:
+      - name: Checkout trusted recovery code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: NVIDIA/NemoClaw
+          ref: ${{ github.workflow_sha }}
+          path: trusted
+          persist-credentials: false
+          lfs: false
+          submodules: false
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: trusted/package-lock.json
+
+      - name: Install trusted dependencies
+        working-directory: ${{ env.TRUSTED_CHECKOUT }}
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Install OpenShell without model credentials
+        run: |
+          env -u GITHUB_TOKEN -u GH_TOKEN -u PR_REVIEW_ADVISOR_API_KEY \
+            NEMOCLAW_NON_INTERACTIVE=1 \
+            bash "$TRUSTED_CHECKOUT/scripts/install-openshell.sh"
+
+      - name: Reconcile every earlier retry sandbox before claiming model work
+        env:
+          RECONCILIATION_RECEIPT_FILE: ${{ runner.temp }}/reconciliation.json
+        run: node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/pr-review-advisor/repair-resolve.mts" recover
+
+      - name: Upload the retry reconciliation receipt
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: advisor-repair-reconciliation-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/reconciliation.json
+          if-no-files-found: warn
+          retention-days: 1
+
   resolve:
     name: Resolve in credential-free OpenShell
     needs:
@@ -285,11 +338,6 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.PR_REVIEW_ADVISOR_API_KEY }}
         run: node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/pr-review-advisor/repair-resolve.mts" configure
 
-      - name: Reconcile the previous retry sandbox
-        env:
-          RECONCILIATION_RECEIPT_FILE: ${{ runner.temp }}/reconciliation.json
-        run: node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/pr-review-advisor/repair-resolve.mts" reconcile
-
       - id: create
         name: Create the credential-free repair sandbox
         run: node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/pr-review-advisor/repair-resolve.mts" create
@@ -322,13 +370,32 @@ jobs:
 
   claim:
     name: Claim the exact one-shot attempt
-    needs: select
+    needs:
+      - select
+      - recover
     runs-on: ubuntu-24.04
-    timeout-minutes: 3
+    timeout-minutes: 5
     permissions:
       checks: write
       contents: read
     steps:
+      - name: Checkout trusted repair code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: NVIDIA/NemoClaw
+          ref: ${{ github.workflow_sha }}
+          path: trusted
+          persist-credentials: false
+          lfs: false
+          submodules: false
+          sparse-checkout: tools/pr-review-advisor/repair-claim.mts
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+
       - name: Reject duplicate model attempts and record the claim
         env:
           ATTEMPT_KEY: ${{ needs.select.outputs.attempt-key }}
@@ -539,6 +606,7 @@ jobs:
     if: ${{ always() }}
     needs:
       - select
+      - recover
       - claim
       - resolve
       - validate
@@ -552,6 +620,7 @@ jobs:
           ATTEMPT_KEY: ${{ needs.select.outputs.attempt-key }}
           CLAIM_RESULT: ${{ needs.claim.result }}
           PUBLISH_RESULT: ${{ needs.publish.result }}
+          RECOVER_RESULT: ${{ needs.recover.result }}
           RESOLVE_RESULT: ${{ needs.resolve.result }}
           SELECT_RESULT: ${{ needs.select.result }}
           VALIDATE_RESULT: ${{ needs.validate.result }}
@@ -561,6 +630,7 @@ jobs:
             echo
             echo "- Attempt: ${ATTEMPT_KEY:-not selected}"
             echo "- Select: $SELECT_RESULT"
+            echo "- Recover: $RECOVER_RESULT"
             echo "- Claim: $CLAIM_RESULT"
             echo "- Resolve: $RESOLVE_RESULT"
             echo "- Validate: $VALIDATE_RESULT"

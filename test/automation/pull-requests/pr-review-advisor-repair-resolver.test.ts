@@ -5,7 +5,7 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { OpenShellTools } from "../../../tools/openshell-agent/runtime.mts";
 
@@ -16,6 +16,8 @@ import {
 import {
   materializeAdvisorRepairWorkspace,
   prepareAdvisorRepairInputs,
+  reconcilePreviousAdvisorRepairSandboxes,
+  recoverAdvisorRepairSandboxes,
   runAdvisorRepairTask,
 } from "../../../tools/pr-review-advisor/repair-resolve.mts";
 
@@ -85,6 +87,114 @@ function selection(sourceHeadSha = "a".repeat(40)): RepairSelection {
 }
 
 describe("PR Review Advisor two-turn resolver", () => {
+  it("recovers every earlier bounded retry before model work (#10791)", async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-repair-recovery-"));
+    temporaryDirectories.push(directory);
+    const stopGateway = vi.fn(async () => undefined);
+    const sandboxNames = "advisor-repair-123-1\nadvisor-repair-123-2\nadvisor-repair-123-3\n";
+    const run = vi
+      .fn<OpenShellTools["run"]>()
+      .mockReturnValueOnce("/trusted/bin/openshell-sandbox")
+      .mockReturnValueOnce("")
+      .mockReturnValueOnce("")
+      .mockReturnValueOnce("")
+      .mockReturnValueOnce(sandboxNames)
+      .mockReturnValueOnce("")
+      .mockReturnValueOnce(sandboxNames)
+      .mockReturnValueOnce("")
+      .mockReturnValueOnce(sandboxNames)
+      .mockReturnValueOnce("");
+    const tools: OpenShellTools = {
+      run,
+      runAsync: () => ({ cancel: () => {}, completion: Promise.resolve() }),
+      start: () => stopGateway,
+      wait: async () => {},
+    };
+    const receiptFile = path.join(directory, "reconciliation.json");
+    const env = {
+      GITHUB_RUN_ATTEMPT: "4",
+      GITHUB_RUN_ID: "123",
+      GITHUB_TOKEN: "must-not-cross-boundary",
+      HOME: directory,
+      OPENAI_API_KEY: "must-not-cross-boundary",
+      OPENSHELL_GATEWAY_ENDPOINT: "http://127.0.0.1:8080",
+      PATH: "/usr/bin",
+      PR_REVIEW_ADVISOR_API_KEY: "must-not-cross-boundary",
+      RUNNER_TEMP: directory,
+      SANDBOX_NAME: "advisor-repair-123-4",
+    };
+
+    const receipt = await recoverAdvisorRepairSandboxes(env, receiptFile, tools);
+
+    expect(receipt).toEqual({
+      version: 1,
+      sandboxNames: ["advisor-repair-123-1", "advisor-repair-123-2", "advisor-repair-123-3"],
+      reconciledSandboxNames: [
+        "advisor-repair-123-1",
+        "advisor-repair-123-2",
+        "advisor-repair-123-3",
+      ],
+      outcome: "success",
+      error: null,
+    });
+    expect(JSON.parse(fs.readFileSync(receiptFile, "utf8"))).toEqual(receipt);
+    expect(
+      run.mock.calls
+        .filter(([, args]) => args[0] === "sandbox" && args[1] === "delete")
+        .map(([, args]) => args.at(-1)),
+    ).toEqual(["advisor-repair-123-1", "advisor-repair-123-2", "advisor-repair-123-3"]);
+    const commandEnvironments = JSON.stringify(run.mock.calls.map(([, , options]) => options.env));
+    expect(commandEnvironments).not.toContain("GITHUB_TOKEN");
+    expect(commandEnvironments).not.toContain("OPENAI_API_KEY");
+    expect(commandEnvironments).not.toContain("PR_REVIEW_ADVISOR_API_KEY");
+    expect(stopGateway).toHaveBeenCalledOnce();
+  });
+
+  it("fails closed with a partial receipt when retry recovery cannot finish (#10791)", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-repair-recovery-"));
+    temporaryDirectories.push(directory);
+    const receiptFile = path.join(directory, "reconciliation.json");
+    const sandboxNames = "advisor-repair-123-1\nadvisor-repair-123-2\nadvisor-repair-123-3\n";
+    const run = vi
+      .fn<OpenShellTools["run"]>()
+      .mockReturnValueOnce(sandboxNames)
+      .mockReturnValueOnce("")
+      .mockReturnValueOnce(sandboxNames)
+      .mockImplementationOnce(() => {
+        throw new Error("delete failed");
+      });
+    const tools: OpenShellTools = {
+      run,
+      runAsync: () => ({ cancel: () => {}, completion: Promise.resolve() }),
+      start: () => {},
+      wait: async () => {},
+    };
+
+    expect(() =>
+      reconcilePreviousAdvisorRepairSandboxes(
+        {
+          GITHUB_RUN_ATTEMPT: "4",
+          GITHUB_RUN_ID: "123",
+          HOME: directory,
+          PATH: "/usr/bin",
+          SANDBOX_NAME: "advisor-repair-123-4",
+        },
+        receiptFile,
+        tools,
+      ),
+    ).toThrow("Failed to delete OpenShell sandbox advisor-repair-123-2");
+    expect(
+      run.mock.calls
+        .filter(([, args]) => args[0] === "sandbox" && args[1] === "delete")
+        .map(([, args]) => args.at(-1)),
+    ).toEqual(["advisor-repair-123-1", "advisor-repair-123-2"]);
+    expect(JSON.parse(fs.readFileSync(receiptFile, "utf8"))).toMatchObject({
+      sandboxNames: ["advisor-repair-123-1", "advisor-repair-123-2", "advisor-repair-123-3"],
+      reconciledSandboxNames: ["advisor-repair-123-1"],
+      outcome: "failure",
+    });
+  });
+
   it("runs exactly two ordered bounded turns in the repair sandbox (#10791)", () => {
     const calls: Array<{ args: readonly string[]; options: { env: NodeJS.ProcessEnv } }> = [];
     const tools: OpenShellTools = {

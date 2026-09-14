@@ -410,7 +410,7 @@ export function selectRepairFindings(
   });
 }
 
-function expectedArtifactNames(runId: number, runAttempt: number): string[] {
+export function expectedAdvisorRepairArtifactNames(runId: number, runAttempt: number): string[] {
   return [
     `pr-review-advisor-context-${runId}`,
     ...ADVISOR_INTERESTS.map((interest) => `pr-review-specialist-${interest}-${runAttempt}`),
@@ -500,7 +500,7 @@ export function bindRepairSelection(input: {
     expired: artifact.expired,
     runId: artifact.workflow_run?.id,
   }));
-  const expected = expectedArtifactNames(advisorRunId, advisorRunAttempt);
+  const expected = expectedAdvisorRepairArtifactNames(advisorRunId, advisorRunAttempt);
   const selectedArtifacts = expected.map((name) => {
     const matches = artifacts.filter((artifact) => artifact.name === name);
     if (matches.length !== 1 || matches[0]?.expired !== false || matches[0]?.runId !== advisorRunId)

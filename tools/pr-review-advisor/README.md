@@ -63,9 +63,11 @@ P1 findings from the trusted documentation, reduction, and verification repair c
 findings, findings with exclusions, credential-bearing validation paths, workflow files, E2E files,
 and other paths outside the narrow repair allowlist fail closed.
 
-Every dispatch claims the exact PR head, Advisor run attempt, and selected finding set before model
-work. The claim is one-shot even when resolution, validation, or publication later fails, so do not
-rerun the same attempt blindly. The workflow then:
+Before claiming model work, every dispatch starts a credential-free recovery boundary and
+reconciles every earlier sandbox name for the same workflow run. It then claims the exact PR head,
+Advisor run attempt, and selected finding set. The claim is one-shot even when resolution,
+validation, or publication later fails. A job rerun can repeat recovery but cannot repeat model
+work, so do not rerun the same attempt blindly. The workflow then:
 
 1. Downloads the complete Advisor artifact set by immutable artifact ID and binds it to the live PR.
 2. Gives a credential-free OpenShell sandbox an identity-free, bounded context and a Git-free tree

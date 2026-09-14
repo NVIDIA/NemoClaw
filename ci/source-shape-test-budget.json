@@ -48,7 +48,7 @@
     },
     {
       "file": "test/automation/pull-requests/pr-review-advisor-repair-workflow.test.ts",
-      "test": "reconciles the previous retry sandbox before creating a new one (#10791)",
+      "test": "recovers earlier retry sandboxes before claiming model work (#10791)",
       "category": "security"
     },
     {
