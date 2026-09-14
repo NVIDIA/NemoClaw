@@ -257,7 +257,7 @@ if (scenario.mode === "active-cancellation") {
     process.execPath,
     [
       "-e",
-      'const fs = require("node:fs"); const [readyPath, releasePath] = process.argv.slice(1); fs.writeFileSync(readyPath, String(process.pid)); const poll = setInterval(() => { if (fs.existsSync(releasePath)) { clearInterval(poll); process.exit(0); } }, 10);',
+      'const fs = require("node:fs"); const [readyPath, releasePath] = process.argv.slice(1); const parentPid = process.ppid; let orphanedAt = null; fs.writeFileSync(readyPath, String(process.pid)); const poll = setInterval(() => { if (fs.existsSync(releasePath)) { clearInterval(poll); process.exit(0); } if (process.ppid !== parentPid) { orphanedAt ??= Date.now(); if (Date.now() - orphanedAt >= 500) { clearInterval(poll); process.exit(0); } } }, 10);',
       activeCloseReadyPath,
       activeCloseReleasePath,
     ],
@@ -831,9 +831,11 @@ describe.concurrent("live onboard FSM slice boundaries", () => {
       assert.equal(probeSettled, false);
       assert.ok(fs.existsSync(childWorkspace));
       process.kill(closeHolderPid, 0);
-      fs.writeFileSync(path.join(childWorkspace, "active-close-hold.release"), "");
+      await vi.waitFor(() => assert.equal(probeSettled, true), {
+        timeout: 5_000,
+        interval: 10,
+      });
       await assert.rejects(probe, /slice probe exited with status null and signal SIGKILL/u);
-      assert.equal(probeSettled, true);
       assert.throws(
         () => process.kill(closeHolderPid, 0),
         (error: NodeJS.ErrnoException) => error.code === "ESRCH",
