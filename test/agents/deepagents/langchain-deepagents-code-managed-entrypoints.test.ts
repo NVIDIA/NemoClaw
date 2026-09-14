@@ -109,7 +109,7 @@ function makeWrapperFixture(
     .replace('/opt/venv/bin/python3 -I - "$auth_file"', 'python3 -I - "$auth_file"')
     .replace(
       "exec /opt/venv/bin/python3 -I -m deepagents_code",
-      `touch "${ranMarker}"; printf 'dcode-tracing=%s,%s,%s,%s,%s,%s,%s,%s,%s analytics=%s openai-proxy=%s shell-allow-list=%s\\n' "$DEEPAGENTS_CODE_LANGSMITH_TRACING" "$DEEPAGENTS_CODE_LANGSMITH_TRACING_V2" "$DEEPAGENTS_CODE_LANGCHAIN_TRACING" "$DEEPAGENTS_CODE_LANGCHAIN_TRACING_V2" "$LANGSMITH_TRACING" "$LANGSMITH_TRACING_V2" "$LANGCHAIN_TRACING" "$LANGCHAIN_TRACING_V2" "$OTEL_ENABLED" "$LANGGRAPH_CLI_NO_ANALYTICS" "\${OPENAI_PROXY-__unset__}" "\${DEEPAGENTS_CODE_SHELL_ALLOW_LIST-__unset__}"; exit 0; : /opt/venv/bin/python3 -I -m deepagents_code`,
+      `touch "${ranMarker}"; printf 'dcode-tracing=%s,%s,%s,%s,%s,%s,%s,%s,%s analytics=%s openai-proxy=%s shell-allow-list=%s approval-mode=%s startup-mode=%s\\n' "$DEEPAGENTS_CODE_LANGSMITH_TRACING" "$DEEPAGENTS_CODE_LANGSMITH_TRACING_V2" "$DEEPAGENTS_CODE_LANGCHAIN_TRACING" "$DEEPAGENTS_CODE_LANGCHAIN_TRACING_V2" "$LANGSMITH_TRACING" "$LANGSMITH_TRACING_V2" "$LANGCHAIN_TRACING" "$LANGCHAIN_TRACING_V2" "$OTEL_ENABLED" "$LANGGRAPH_CLI_NO_ANALYTICS" "\${OPENAI_PROXY-__unset__}" "\${DEEPAGENTS_CODE_SHELL_ALLOW_LIST-__unset__}" "\${DEEPAGENTS_CODE_APPROVAL_MODE-__unset__}" "\${DEEPAGENTS_CODE_STARTUP_MODE-__unset__}"; exit 0; : /opt/venv/bin/python3 -I -m deepagents_code`,
     );
   fs.writeFileSync(envFile, "", "utf8");
   writeAutoApprovalCapability(autoApprovalPath, autoApprovalContent);
@@ -347,18 +347,22 @@ describe.concurrent("LangChain Deep Agents Code managed entrypoints", () => {
     expect(fs.existsSync(ranMarker)).toBe(true);
   });
 
-  it("preserves the native shell allow-list environment only for interactive runs", async () => {
+  it("preserves native local environment settings for interactive runs", async () => {
     const interactiveDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-shell-env-"));
     const interactiveFixture = makeWrapperFixture(interactiveDir);
     const interactive = await runCommand("bash", [interactiveFixture.wrapperPath], {
       env: {
         PATH: process.env.PATH ?? "/usr/bin:/bin",
         DEEPAGENTS_CODE_SHELL_ALLOW_LIST: "recommended",
+        DEEPAGENTS_CODE_APPROVAL_MODE: "auto",
+        DEEPAGENTS_CODE_STARTUP_MODE: "yolo",
       },
       encoding: "utf8",
     });
     expect(interactive.status, interactive.stderr).toBe(0);
     expect(interactive.stdout).toContain("shell-allow-list=recommended");
+    expect(interactive.stdout).toContain("approval-mode=auto");
+    expect(interactive.stdout).toContain("startup-mode=yolo");
 
     const headlessDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-shell-headless-"));
     const headlessFixture = makeWrapperFixture(headlessDir);

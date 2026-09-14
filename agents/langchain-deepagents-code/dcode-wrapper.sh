@@ -11,7 +11,7 @@ if [ "${1:-}" = "--nemoclaw-mcp-capability" ] && [ "$#" -eq 1 ]; then
   exit 0
 fi
 
-unset BASH_ENV ENV OPENAI_PROXY DEEPAGENTS_CODE_APPROVAL_MODE DEEPAGENTS_CODE_STARTUP_MODE
+unset BASH_ENV ENV OPENAI_PROXY
 while IFS= read -r _nemoclaw_auto_approval_env; do
   unset "$_nemoclaw_auto_approval_env"
 done < <(compgen -A variable NEMOCLAW_DCODE_AUTO_APPROVAL || true)

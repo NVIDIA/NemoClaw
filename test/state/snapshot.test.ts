@@ -1387,7 +1387,6 @@ describe("Deep Agents Code durable state files", () => {
         path.join(deepAgentsDir, ".mcp.json"),
         '{"mcpServers":{"reconstructable":{}}}\n',
       );
-
       const openshell = path.join(binDir, "openshell");
       writeExecutable(
         openshell,
@@ -1420,6 +1419,10 @@ if (cmd.includes("hooks.json") && cmd.includes("cat --")) {
   process.stdout.write(fs.readFileSync(path.join(deepAgentsDir, "hooks.json")));
   process.exit(0);
 }
+if (cmd.includes("hooks.json") && cmd.includes('cat > "$tmp"')) {
+  fs.writeFileSync(path.join(deepAgentsDir, "hooks.json"), fs.readFileSync(0));
+  process.exit(0);
+}
 if (cmd.includes(".env") || cmd.includes(".mcp.json")) {
   process.exit(99);
 }
@@ -1439,12 +1442,12 @@ if (cmd.includes("-cf -")) {
   process.exit(r.status || 0);
 }
 if (cmd.includes("tar --no-same-owner -xf -")) {
-  // drain the piped restore tarball in chunks (no full-stream buffering)
-  const buf = Buffer.alloc(65536);
-  while (fs.readSync(0, buf, 0, buf.length, null) > 0) {
-    // discard
-  }
-  process.exit(0);
+  const r = spawnSync("tar", ["--no-same-owner", "-xf", "-", "-C", deepAgentsDir], {
+    stdio: [0, "pipe", "pipe"],
+  });
+  if (r.stdout) fs.writeSync(1, r.stdout);
+  if (r.stderr) fs.writeSync(2, r.stderr);
+  process.exit(r.status || 0);
 }
 process.exit(0);
 `,
@@ -1480,11 +1483,12 @@ process.exit(0);
       const loggedCommands = fs.readFileSync(sshLog, "utf-8");
       expect(loggedCommands).not.toContain(".env");
       expect(loggedCommands).not.toContain(".mcp.json");
-      expect(loggedCommands).not.toContain(".mcp.json");
       // #5753: restore must include agent/skills after backup and recreation.
+      fs.rmSync(path.join(deepAgentsDir, "hooks.json"));
       const restore = sandboxState.restoreSandboxState("deepagents", backup.manifest!.backupPath);
       expect(restore.success).toBe(true);
       expect(restore.restoredDirs).toEqual(expect.arrayContaining([".state", "agent/skills"]));
+      expect(fs.readFileSync(path.join(deepAgentsDir, "hooks.json"), "utf-8")).toBe(hooks);
     } finally {
       oldOpenshell === undefined
         ? delete process.env.NEMOCLAW_OPENSHELL_BIN
