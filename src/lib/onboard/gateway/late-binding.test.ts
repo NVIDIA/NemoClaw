@@ -175,13 +175,16 @@ describe("gateway lifecycle late binding", () => {
     const root = fs.mkdtempSync(path.join(process.cwd(), "nemoclaw-gateway-start-boundary-"));
     const stateDir = path.join(root, "gateway");
     const verifyReachability = vi.fn(async () => undefined);
+    const adapters = gatewayAdaptersForTest();
     const managedStart = vi.fn(
       async (
         options: Parameters<
           typeof import("../docker-driver-gateway-env").startPackageManagedDockerDriverGatewayWithEnvOverride
         >[0],
       ) => {
-        options.runCaptureOpenshell(["status"], { ignoreError: true });
+        await options.observer.observeGatewayReuse({
+          target: { kind: "named", gatewayName: options.gatewayName },
+        });
         await options.verifySandboxBridgeGatewayReachableOrExit(false, {});
         return true;
       },
@@ -212,7 +215,7 @@ describe("gateway lifecycle late binding", () => {
         identityGatewayBin: options.gatewayBin,
       }));
     const start = createDockerDriverGatewayStart({
-      observer: gatewayAdaptersForTest().observer,
+      observer: adapters.observer,
       SUPPORTED_OPENSHELL_FALLBACK_VERSION: "0.0.0",
       checkGatewayPortAvailable: async () => ({ ok: true }),
       clearDockerDriverGatewayRuntimeFiles: vi.fn(),
@@ -310,11 +313,10 @@ describe("gateway lifecycle late binding", () => {
       expect(runtimeIdentityOptions?.env?.OPENSHELL_TOKEN).toBeUndefined();
       expect(runtimeIdentityOptions?.env?.OPENSHELL_DISABLE_TLS).toBeUndefined();
       expect(runtimeIdentityOptions?.env?.OPENSHELL_DISABLE_GATEWAY_AUTH).toBeUndefined();
-      expect(runCaptureOpenshell).toHaveBeenCalledTimes(2);
+      expect(runCaptureOpenshell).toHaveBeenCalledTimes(1);
       const versionOptions = runCaptureOpenshell.mock.calls[0]?.[1] as
         | { env?: Record<string, string>; replaceEnv?: boolean }
         | undefined;
-      const statusOptions = runCaptureOpenshell.mock.calls[1]?.[1] as typeof versionOptions;
       expect(versionOptions).toMatchObject({
         env: expect.objectContaining({
           OPENSHELL_GATEWAY: "resumed",
@@ -323,7 +325,14 @@ describe("gateway lifecycle late binding", () => {
         }),
         replaceEnv: true,
       });
-      expect(statusOptions?.env).toEqual(versionOptions?.env);
+      expect(adapters.observer.observeGatewayReuse).toHaveBeenCalledWith({
+        target: { kind: "named", gatewayName: "resumed" },
+        runtimeSelection: {
+          gatewayName: "resumed",
+          workspace: "default",
+          localTlsDir: path.join(stateDir, "tls"),
+        },
+      });
       expect(versionOptions?.env).not.toHaveProperty("OPENSHELL_GATEWAY_ENDPOINT");
       expect(versionOptions?.env).not.toHaveProperty("OPENSHELL_TOKEN");
       expect(versionOptions?.env).not.toHaveProperty("OPENSHELL_DISABLE_TLS");

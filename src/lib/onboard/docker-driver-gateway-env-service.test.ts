@@ -55,10 +55,6 @@ describe("package-managed Docker-driver gateway env service", () => {
           hasOpenShellGatewayUserService: () => true,
           isDockerDriverGatewayReady: async () => true,
           registerDockerDriverGatewayEndpoint: () => true,
-          runCaptureOpenshell: (args) =>
-            args[0] === "status"
-              ? "Gateway: nemoclaw\nConnected"
-              : "Gateway: nemoclaw\nGateway endpoint: https://127.0.0.1:8080/",
           skipSandboxBridgeReachability: false,
           startOpenShellGatewayUserService: startService,
           verifySandboxBridgeGatewayReachableOrExit: async () => undefined,
@@ -106,10 +102,6 @@ describe("package-managed Docker-driver gateway env service", () => {
           hasOpenShellGatewayUserService: () => true,
           isDockerDriverGatewayReady: async () => true,
           registerDockerDriverGatewayEndpoint: () => true,
-          runCaptureOpenshell: (args) =>
-            args[0] === "status"
-              ? "Gateway: nemoclaw\nConnected"
-              : "Gateway: nemoclaw\nGateway endpoint: https://127.0.0.1:8080/",
           skipSandboxBridgeReachability: false,
           startOpenShellGatewayUserService: (opts) => {
             opts?.prepareServiceEnv?.();
@@ -156,7 +148,6 @@ describe("package-managed Docker-driver gateway env service", () => {
           gatewayName: "nemoclaw",
           hasOpenShellGatewayUserService: () => true,
           registerDockerDriverGatewayEndpoint: () => true,
-          runCaptureOpenshell: () => "",
           skipSandboxBridgeReachability: false,
           startOpenShellGatewayUserService: startService,
           verifySandboxBridgeGatewayReachableOrExit: async () => undefined,
@@ -194,7 +185,6 @@ describe("package-managed Docker-driver gateway env service", () => {
           gatewayName: "nemoclaw",
           hasOpenShellGatewayUserService: () => true,
           registerDockerDriverGatewayEndpoint: () => true,
-          runCaptureOpenshell: () => "",
           skipSandboxBridgeReachability: false,
           startOpenShellGatewayUserService: (opts) => {
             opts?.prepareServiceEnv?.();
@@ -236,7 +226,6 @@ describe("package-managed Docker-driver gateway env service", () => {
           gatewayName: "nemoclaw-18080",
           hasOpenShellGatewayUserService: () => true,
           registerDockerDriverGatewayEndpoint: () => true,
-          runCaptureOpenshell: () => "",
           skipSandboxBridgeReachability: false,
           startOpenShellGatewayUserService: startService,
           verifySandboxBridgeGatewayReachableOrExit: async () => undefined,
@@ -262,7 +251,6 @@ describe("package-managed Docker-driver gateway env service", () => {
         gatewayName: "nemoclaw",
         hasOpenShellGatewayUserService: () => true,
         registerDockerDriverGatewayEndpoint: () => true,
-        runCaptureOpenshell: () => "",
         skipSandboxBridgeReachability: false,
         verifySandboxBridgeGatewayReachableOrExit: async () => undefined,
       }),
@@ -297,7 +285,6 @@ describe("package-managed Docker-driver gateway env service", () => {
             gatewayName: "nemoclaw",
             hasOpenShellGatewayUserService: () => true,
             registerDockerDriverGatewayEndpoint: () => true,
-            runCaptureOpenshell: () => "",
             skipSandboxBridgeReachability: false,
             startOpenShellGatewayUserService: startService,
             verifySandboxBridgeGatewayReachableOrExit: async () => undefined,

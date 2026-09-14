@@ -355,10 +355,6 @@ describe("writeDockerGatewayDebEnvOverride", () => {
           hasOpenShellGatewayUserService: () => true,
           isDockerDriverGatewayReady: async () => true,
           registerDockerDriverGatewayEndpoint: () => true,
-          runCaptureOpenshell: (args) =>
-            args[0] === "status"
-              ? "Gateway: nemoclaw\nConnected"
-              : "Gateway: nemoclaw\nGateway endpoint: https://127.0.0.1:8080/",
           skipSandboxBridgeReachability: false,
           startOpenShellGatewayUserService: (opts) => {
             opts?.prepareServiceEnv?.();
