@@ -17,6 +17,7 @@ const sleepBuffer = new Int32Array(new SharedArrayBuffer(4));
 
 export interface ForwardServiceTarget {
   readonly executable: string;
+  readonly gatewayEndpoint: string;
   readonly gatewayName: string;
   readonly workspace: string;
   readonly sandboxName: string;
@@ -89,20 +90,56 @@ function isPort(value: unknown): value is number {
   return Number.isSafeInteger(value) && Number(value) >= 1 && Number(value) <= 65_535;
 }
 
-function isCanonicalNemoClawGatewayName(value: string): boolean {
-  if (value === "nemoclaw") return true;
+function canonicalNemoClawGatewayPort(value: string): number | null {
+  if (value === "nemoclaw") return 8_080;
   const match = /^nemoclaw-([1-9]\d{0,4})$/u.exec(value);
-  if (!match) return false;
+  if (!match) return null;
   const port = Number(match[1]);
-  return port >= 1 && port <= 65_535 && port !== 8_080;
+  return port >= 1 && port <= 65_535 && port !== 8_080 ? port : null;
+}
+
+function managedGatewayEndpoint(gatewayName: string): string | null {
+  const port = canonicalNemoClawGatewayPort(gatewayName);
+  if (port === null) return null;
+  return port === 443 ? "https://127.0.0.1" : `https://127.0.0.1:${String(port)}`;
+}
+
+function isAuthorityBoundGatewayEndpoint(endpoint: string, gatewayName: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(endpoint);
+  } catch {
+    return false;
+  }
+  const gatewayPort = canonicalNemoClawGatewayPort(gatewayName);
+  let endpointPort = 80;
+  if (parsed.port) {
+    endpointPort = Number(parsed.port);
+  } else if (parsed.protocol === "https:") {
+    endpointPort = 443;
+  }
+  return (
+    gatewayPort !== null &&
+    endpoint === parsed.origin &&
+    (parsed.protocol === "http:" || parsed.protocol === "https:") &&
+    (parsed.hostname === "127.0.0.1" || parsed.hostname === "[::1]" || parsed.hostname === "::1") &&
+    !parsed.username &&
+    !parsed.password &&
+    endpointPort === gatewayPort
+  );
 }
 
 export function validateForwardServiceTarget(target: ForwardServiceTarget): ForwardServiceTarget {
   if (!path.isAbsolute(target.executable) || target.executable.includes("\0")) {
     throw new Error("OpenShell forward service executable must be an absolute path");
   }
-  if (!isCanonicalNemoClawGatewayName(target.gatewayName)) {
+  if (canonicalNemoClawGatewayPort(target.gatewayName) === null) {
     throw new Error("OpenShell forward service gateway must be a canonical NemoClaw gateway");
+  }
+  if (!isAuthorityBoundGatewayEndpoint(target.gatewayEndpoint, target.gatewayName)) {
+    throw new Error(
+      "OpenShell forward service endpoint must be a bare loopback origin matching its gateway port",
+    );
   }
   if (!isValidName(target.workspace)) {
     throw new Error("OpenShell forward service workspace is invalid");
@@ -126,11 +163,13 @@ export function createForwardServiceTarget(
   target: Pick<
     ForwardServiceTarget,
     "executable" | "gatewayName" | "workspace" | "sandboxName" | "localHost"
-  >,
+  > &
+    Partial<Pick<ForwardServiceTarget, "gatewayEndpoint">>,
   port: number,
 ): ForwardServiceTarget {
   return validateForwardServiceTarget({
     ...target,
+    gatewayEndpoint: target.gatewayEndpoint ?? managedGatewayEndpoint(target.gatewayName) ?? "",
     localPort: port,
     targetHost: "127.0.0.1",
     targetPort: port,
@@ -143,6 +182,8 @@ export function buildForwardServiceArgs(target: ForwardServiceTarget): string[] 
   return [
     "--gateway",
     target.gatewayName,
+    "--gateway-endpoint",
+    target.gatewayEndpoint,
     "--workspace",
     target.workspace,
     "forward",
@@ -157,9 +198,21 @@ export function buildForwardServiceArgs(target: ForwardServiceTarget): string[] 
   ];
 }
 
+function trustedHostProbeExecutable(executable: string): string | null {
+  if (executable === "ps") return "/bin/ps";
+  if (executable === "codesign" && process.platform === "darwin") return "/usr/bin/codesign";
+  if (executable === "lsof") {
+    return process.platform === "darwin" ? "/usr/sbin/lsof" : "/usr/bin/lsof";
+  }
+  return null;
+}
+
 function captureProcess(executable: string, args: readonly string[]) {
-  const result = spawnSync(executable, [...args], {
+  const trustedExecutable = trustedHostProbeExecutable(executable);
+  if (!trustedExecutable) return { status: null, stdout: "" };
+  const result = spawnSync(trustedExecutable, [...args], {
     encoding: "utf8",
+    env: buildOpenShellSubprocessEnv(process.env),
     timeout: FORWARD_OWNER_PROBE_TIMEOUT_MS,
   });
   return { status: result.status, stdout: result.stdout ?? "" };
@@ -256,12 +309,15 @@ function processExecutableMatches(
     return executableMatches(path.join(procRoot, pid, "exe"), target.executable);
   }
   if (platform !== "darwin") return false;
-  const result = probe("lsof", ["-a", "-p", pid, "-d", "txt", "-Fn"]);
+  // codesign reports the kernel-selected code hosting chain. Its first path is
+  // the main executable rather than the caller-controlled argv[0].
+  const result = probe("codesign", ["-h", pid]);
   if (result.status !== 0) return false;
-  return result.stdout
+  const [hostingExecutable] = result.stdout
     .split(/\r?\n/u)
-    .filter((line) => line.startsWith("n/"))
-    .some((line) => executableMatches(line.slice(1), target.executable));
+    .map((line) => line.trim())
+    .filter(Boolean);
+  return hostingExecutable !== undefined && executableMatches(hostingExecutable, target.executable);
 }
 
 /** Prove that the current listener is the exact direct ForwardTcp command. */
@@ -275,8 +331,8 @@ export function isForwardServiceListenerOwner(
   const procRoot = options.procRoot ?? "/proc";
   const procWorkLimit = options.procWorkLimit ?? LINUX_PROC_WORK_LIMIT;
   const before = listenerPids(target.localPort, platform, procRoot, procWorkLimit, probe);
-  if (before.length !== 1 || !/^[1-9]\d*$/u.test(before[0])) return false;
-  const pid = before[0];
+  const [pid] = before;
+  if (before.length !== 1 || pid === undefined || !/^[1-9]\d*$/u.test(pid)) return false;
   if (!processExecutableMatches(pid, target, platform, procRoot, probe)) return false;
   const commandLine = probe("ps", ["-ww", "-p", pid, "-o", "args="]);
   if (commandLine.status !== 0) return false;
@@ -286,10 +342,33 @@ export function isForwardServiceListenerOwner(
   return after.length === 1 && after[0] === pid;
 }
 
-function forwardServiceEnvironment(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+function forwardServiceEnvironment(
+  source: NodeJS.ProcessEnv,
+  target: ForwardServiceTarget,
+  preserveExplicitRuntimeSelection: boolean,
+): NodeJS.ProcessEnv {
   const environment = buildOpenShellSubprocessEnv(source);
   const configHome = source.XDG_CONFIG_HOME?.trim();
   if (configHome && path.isAbsolute(configHome)) environment.XDG_CONFIG_HOME = configHome;
+  if (!preserveExplicitRuntimeSelection) return environment;
+  for (const [name, expected] of [
+    ["OPENSHELL_GATEWAY", target.gatewayName],
+    ["OPENSHELL_WORKSPACE", target.workspace],
+  ] as const) {
+    const actual = source[name];
+    if (actual === undefined) continue;
+    if (actual !== expected) {
+      throw new Error(`OpenShell forward service ${name} disagrees with its target`);
+    }
+    environment[name] = actual;
+  }
+  const localTlsDir = source.OPENSHELL_LOCAL_TLS_DIR;
+  if (localTlsDir !== undefined) {
+    if (localTlsDir.includes("\0") || !path.isAbsolute(localTlsDir)) {
+      throw new Error("OpenShell forward service local TLS directory is invalid");
+    }
+    environment.OPENSHELL_LOCAL_TLS_DIR = localTlsDir;
+  }
   return environment;
 }
 
@@ -336,6 +415,7 @@ function resolveTrustedTaskkillExecutable(
 function processGroupHasRunnableMember(pid: number): boolean {
   const result = spawnSync("/bin/ps", ["-axo", "pgid=,stat="], {
     encoding: "utf8",
+    env: buildOpenShellSubprocessEnv(process.env),
     timeout: FORWARD_OWNER_PROBE_TIMEOUT_MS,
   });
   if (result.error || result.status !== 0) {
@@ -389,6 +469,7 @@ export function terminateForwardServiceProcessTree(
     dependencies.taskkill ??
     ((executable: string, args: readonly string[]) => {
       const result = spawnSync(executable, [...args], {
+        env: buildOpenShellSubprocessEnv(dependencies.environment ?? process.env),
         stdio: "ignore",
         timeout: FORWARD_OWNER_PROBE_TIMEOUT_MS,
         windowsHide: true,
@@ -423,7 +504,11 @@ export function launchForwardService(
   const child = spawnDetached(
     target.executable,
     buildForwardServiceArgs(target),
-    forwardServiceEnvironment(options.sourceEnvironment ?? process.env),
+    forwardServiceEnvironment(
+      options.sourceEnvironment ?? process.env,
+      target,
+      options.sourceEnvironment !== undefined,
+    ),
   );
 
   const sleep =

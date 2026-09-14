@@ -64,7 +64,6 @@ export function createRetainedOnboardRecovery(host: RecoveryHostDeps) {
       (
         await recoverNamedGatewayRuntime({
           gatewayName: record.gatewayName,
-          ignoreProbeErrors: true,
         })
       ).recovered,
     observeSandbox: (record) =>

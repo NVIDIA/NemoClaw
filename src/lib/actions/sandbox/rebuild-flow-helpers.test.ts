@@ -93,8 +93,20 @@ describe("rebuild target gateway preflight", () => {
     };
     const recover = vi.spyOn(gatewayRuntime, "recoverNamedGatewayRuntime").mockResolvedValue({
       recovered: true,
-      before: { state: "connected_other", status: "", gatewayInfo: "", activeGateway: null },
-      after: { state: "healthy_named", status: "", gatewayInfo: "", activeGateway: null },
+      before: {
+        state: "connected_other",
+        activeGateway: null,
+        diagnostic: "",
+        recoveryBlocked: false,
+        unavailable: false,
+      },
+      after: {
+        state: "healthy_named",
+        activeGateway: null,
+        diagnostic: "",
+        recoveryBlocked: false,
+        unavailable: false,
+      },
       attempted: true,
     });
 
@@ -127,12 +139,19 @@ describe("rebuild target gateway preflight", () => {
     process.env.OPENSHELL_WORKSPACE = "hostile-workspace";
     const recover = vi.spyOn(gatewayRuntime, "recoverNamedGatewayRuntime").mockResolvedValue({
       recovered: true,
-      before: { state: "connected_other", status: "", gatewayInfo: "", activeGateway: null },
+      before: {
+        state: "connected_other",
+        activeGateway: null,
+        diagnostic: "",
+        recoveryBlocked: false,
+        unavailable: false,
+      },
       after: {
         state: "healthy_named",
-        status: "",
-        gatewayInfo: "",
         activeGateway: "nemoclaw-19080",
+        diagnostic: "",
+        recoveryBlocked: false,
+        unavailable: false,
       },
       attempted: true,
     });
@@ -157,8 +176,20 @@ describe("rebuild target gateway preflight", () => {
   it("fails closed when the target gateway cannot become healthy", async () => {
     vi.spyOn(gatewayRuntime, "recoverNamedGatewayRuntime").mockResolvedValue({
       recovered: false,
-      before: { state: "connected_other", status: "", gatewayInfo: "", activeGateway: null },
-      after: { state: "missing_named", status: "", gatewayInfo: "", activeGateway: null },
+      before: {
+        state: "connected_other",
+        activeGateway: null,
+        diagnostic: "",
+        recoveryBlocked: false,
+        unavailable: false,
+      },
+      after: {
+        state: "missing_named",
+        activeGateway: null,
+        diagnostic: "",
+        recoveryBlocked: false,
+        unavailable: false,
+      },
       attempted: true,
     });
 

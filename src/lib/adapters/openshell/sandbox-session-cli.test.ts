@@ -24,7 +24,7 @@ const command: OpenShellSandboxSessionRequest = {
   output: "capture",
   timeoutSeconds: 90,
 };
-function sessionHarness() {
+function sessionHarness(stdinIsTty = true) {
   const events = new EventEmitter();
   const signals = new EventEmitter();
   const stdout = new EventEmitter();
@@ -54,7 +54,7 @@ function sessionHarness() {
     resolveBinary: () => "/bin/openshell",
     environment: { PATH: "/bin" },
     hostCwd: "/workspace",
-    stdinIsTty: () => true,
+    stdinIsTty: () => stdinIsTty,
     spawnChild,
     restoreTerminal,
     signalSource: {
@@ -83,6 +83,54 @@ afterEach(() => {
 });
 
 describe("OpenShell sessions", () => {
+  it.each([
+    { stdinIsTty: false, forwarded: [["SIGINT"]] },
+    { stdinIsTty: true, forwarded: [] },
+  ])(
+    "forwards inherited-session SIGINT only for a headless parent (TTY: $stdinIsTty)",
+    async ({ stdinIsTty, forwarded }) => {
+      const f = sessionHarness(stdinIsTty);
+      const session = f.executor.start({ ...command, output: "inherit" });
+      try {
+        expect(f.signals.listenerCount("SIGINT")).toBe(1);
+        f.signals.emit("SIGINT");
+        expect(vi.mocked(f.child.kill).mock.calls).toEqual(forwarded);
+      } finally {
+        f.events.emit("close", null, "SIGINT");
+        const completed = await session.completion;
+        expect(completed.outcome).toEqual({ kind: "signalled", signal: "SIGINT", exitCode: 130 });
+        expect(f.restoreTerminal).toHaveBeenCalledOnce();
+        expect(f.signals.listenerCount("SIGINT")).toBe(1);
+        completed.release();
+        expect(f.signals.listenerCount("SIGINT")).toBe(0);
+        expect(f.signals.listenerCount("SIGTERM")).toBe(0);
+      }
+    },
+  );
+
+  it.each(
+    (["capture", "inherit"] as const).flatMap((output) =>
+      [false, undefined].map((stdin) => ({ output, stdin })),
+    ),
+  )(
+    "uses the requested stdin policy with $output output (stdin: $stdin)",
+    async ({ output, stdin }) => {
+      const f = sessionHarness(false);
+      const session = f.executor.start({ ...command, output, stdin });
+      expect(f.spawnChild.mock.calls[0]?.[2].stdio).toEqual([
+        stdin === false ? "ignore" : "inherit",
+        output === "capture" ? "pipe" : "inherit",
+        output === "capture" ? "pipe" : "inherit",
+      ]);
+      f.events.emit("close", 0, null);
+      const completed = await session.completion;
+      expect(completed.outcome).toEqual({ kind: "exited", exitCode: 0 });
+      completed.release();
+      expect(f.signals.listenerCount("SIGINT")).toBe(0);
+      expect(f.signals.listenerCount("SIGTERM")).toBe(0);
+    },
+  );
+
   it("captures a gateway-scoped command and withholds terminal stdin", async () => {
     const f = sessionHarness();
     const session = f.executor.start(command);

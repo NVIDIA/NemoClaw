@@ -106,12 +106,12 @@ function policyWithoutManagedMcpEntries(
   );
 }
 
-function assertMcpTeardownPolicyUnchanged(
+async function assertMcpTeardownPolicyUnchanged(
   sandboxName: string,
   expectedTeardownPolicy: string,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
-): void {
-  const currentPolicy = policies.captureRecordedSandboxBasePolicy(
+): Promise<void> {
+  const currentPolicy = await policies.captureRecordedSandboxBasePolicy(
     sandboxName,
     "verify the live policy before MCP teardown",
     runtimeSelection,
@@ -268,7 +268,7 @@ export async function prepareMcpBridgesForRebuild(
   // mutations so the replacement receives the complete operator-owned
   // document, including the MCP rules that must be removed temporarily from
   // the still-running source sandbox before provider detach.
-  const policyHandoff = policies.captureRecordedSandboxBasePolicy(
+  const policyHandoff = await policies.captureRecordedSandboxBasePolicy(
     sandboxName,
     "capture the live policy before MCP teardown",
     providerRuntimeSelection,
@@ -301,7 +301,7 @@ export async function prepareMcpBridgesForRebuild(
       // The same-name replacement journal fingerprints this source row before
       // MCP teardown removes the live entry from the source sandbox. Rebuild's
       // OpenShell policy handoff already captured the complete live document.
-      removeGeneratedPolicy(sandboxName, entry, {
+      await removeGeneratedPolicy(sandboxName, entry, {
         runtimeSelection: providerRuntimeSelection,
       });
       removedPolicies.push(entry);
@@ -327,7 +327,11 @@ export async function prepareMcpBridgesForRebuild(
       // reattached if sandbox deletion later aborts.
       detached.push(entry);
     }
-    assertMcpTeardownPolicyUnchanged(sandboxName, expectedTeardownPolicy, providerRuntimeSelection);
+    await assertMcpTeardownPolicyUnchanged(
+      sandboxName,
+      expectedTeardownPolicy,
+      providerRuntimeSelection,
+    );
   } catch (error) {
     const rollbackFailures: string[] = [];
     let runtimeRestored = false;
@@ -368,7 +372,7 @@ export async function prepareMcpBridgesForRebuild(
     policyHandoff,
     runtimeSelection: providerRuntimeSelection,
     revalidateBeforeDelete: async () => {
-      assertMcpTeardownPolicyUnchanged(
+      await assertMcpTeardownPolicyUnchanged(
         sandboxName,
         expectedTeardownPolicy,
         providerRuntimeSelection,

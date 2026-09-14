@@ -4788,7 +4788,8 @@ jobs:
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
-      - name: Validate protected runtime activation contract
+      - id: runtime-contract
+        name: Validate protected runtime activation contract
         env:
           CHECKOUT_SHA: ${{ inputs.checkout_sha || github.sha }}
         shell: bash
@@ -4804,17 +4805,31 @@ jobs:
             echo "::error::Protected managed-image runtime activation contract is absent" >&2
             exit 1
           }
-          jq -e '
-            (keys | sort) == ["agents", "contractVersion", "jobId", "platform", "providers"] and
-            .contractVersion == 1 and
-            .jobId == "managed-image-protected-runtime" and
-            .agents == ["openclaw", "hermes", "langchain-deepagents-code"] and
-            .platform == "linux/amd64" and
-            .providers == ["ollama", "nim", "vllm"]
-          ' "$activation" >/dev/null || {
+          runtime_user="$(
+            jq -er '
+              (
+                .jobId == "managed-image-protected-runtime" and
+                .agents == ["openclaw", "hermes", "langchain-deepagents-code"] and
+                .platform == "linux/amd64" and
+                .providers == ["ollama", "nim", "vllm"]
+              ) as $common |
+              if $common and
+                (keys | sort) == ["agents", "contractVersion", "jobId", "platform", "providers"] and
+                .contractVersion == 1
+              then "root"
+              elif $common and
+                (keys | sort) == ["agents", "contractVersion", "jobId", "platform", "providers", "runtimeUser"] and
+                .contractVersion == 2 and
+                .runtimeUser == "sandbox"
+              then "sandbox"
+              else error("invalid protected runtime activation contract")
+              end
+            ' "$activation"
+          )" || {
             echo "::error::Protected managed-image runtime activation contract is invalid" >&2
             exit 1
           }
+          printf 'runtime_user=%s\n' "$runtime_user" >> "$GITHUB_OUTPUT"
           install -d -m 0700 "$E2E_ARTIFACT_DIR"
 
       - id: runtime-hermes-base
@@ -4916,6 +4931,7 @@ jobs:
           BASE_HERMES: ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@${{ steps.runtime-hermes-base.outputs.digest }}
           BASE_OPENCLAW: ${{ steps.runtime-bases.outputs.openclaw }}
           CHECKOUT_SHA: ${{ inputs.checkout_sha || github.sha }}
+          RUNTIME_USER: ${{ steps.runtime-contract.outputs.runtime_user }}
         shell: bash
         run: |
           set -euo pipefail
@@ -4924,6 +4940,7 @@ jobs:
             --revision "$CHECKOUT_SHA" \
             --cohort "$NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT" \
             --platform linux/amd64 \
+            --runtime-user "$RUNTIME_USER" \
             --source-root "$GITHUB_WORKSPACE/.candidate-runtime" \
             --cache-from "$NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE" \
             --audit-evidence-from "$GITHUB_WORKSPACE/.candidate-runtime/artifacts/reviewed-npm-audit" \

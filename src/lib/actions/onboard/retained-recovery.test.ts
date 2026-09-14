@@ -108,12 +108,14 @@ describe("retrying a retained N1x onboarding name", () => {
       isTTY: true,
       fd: 0,
     } as typeof process.stdin);
-    vi.spyOn(gatewayRuntime.gatewayRuntimeDependencies, "captureOpenshell").mockImplementation(
-      (args) => {
-        const output = args[0] === "sandbox" ? "[]" : "Status: Connected\nGateway: nemoclaw\n";
-        return { status: 0, output, stdout: output, stderr: "" };
-      },
-    );
+    vi.spyOn(gatewayRuntime.gatewayRuntimeDependencies, "observeGateway").mockResolvedValue({
+      state: "healthy_named",
+      activeGateway: "nemoclaw",
+      recoveryBlocked: false,
+      unavailable: false,
+      diagnostic: "Connected",
+    });
+    vi.spyOn(gatewayRuntime, "observeNamedGatewaySandboxPresence").mockReturnValue("absent");
     const destroy = vi.spyOn(destroyRuntime, "destroySandbox").mockImplementation(h.deps.destroy);
     const prompt = vi.fn(async () => {
       expect(process.env.OPENSHELL_GATEWAY).toBe("nemoclaw");
@@ -143,12 +145,14 @@ describe("retrying a retained N1x onboarding name", () => {
       isTTY: false,
       fd: 0,
     } as typeof process.stdin);
-    vi.spyOn(gatewayRuntime.gatewayRuntimeDependencies, "captureOpenshell").mockImplementation(
-      (args) => {
-        const output = args[0] === "sandbox" ? "[]" : "Status: Connected\nGateway: nemoclaw\n";
-        return { status: 0, output, stdout: output, stderr: "" };
-      },
-    );
+    vi.spyOn(gatewayRuntime.gatewayRuntimeDependencies, "observeGateway").mockResolvedValue({
+      state: "healthy_named",
+      activeGateway: "nemoclaw",
+      recoveryBlocked: false,
+      unavailable: false,
+      diagnostic: "Connected",
+    });
+    vi.spyOn(gatewayRuntime, "observeNamedGatewaySandboxPresence").mockReturnValue("absent");
     const destroy = vi.spyOn(destroyRuntime, "destroySandbox").mockImplementation(h.deps.destroy);
     const prompt = vi.fn();
 

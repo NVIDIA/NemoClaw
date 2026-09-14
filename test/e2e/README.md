@@ -33,6 +33,21 @@ before those targets run; local runners must provide it themselves.
 - `.github/workflows/sandbox-images.yaml` provides reusable sandbox-image build and test evidence.
   `.github/workflows/e2e.yaml` selects free-standing jobs, including `whatsapp-qr-compact` and `ollama-auth-proxy`.
 
+The `agent-turn-latency` target checks the configured host CLI with both text and
+JSON output, including explicit local mode and a requested timeout. For inline
+messages, the fixture keeps the host pipe open while the wrapper closes the dispatch
+child's stdin. The fixture holds its writer open until command completion, so
+inheriting that pipe blocks until the test timeout, regardless of the model-time cap.
+File-message turns use a relative symlink chain to a file with spaces in its path,
+with competing stdin, in both output formats. Each turn must return the answer
+from the selected input. Parser combinations and stdin aliases belong to the
+unit and real-child tests; this target does not repeat native file-permission errors.
+The first JSON turn also requires at most 60 seconds outside OpenClaw's reported
+agent duration. Missing or inconsistent timing fails that bound.
+These cases are selectable for both Docker and Podman through the existing runtime
+matrix. Host stdin is preserved for nonempty message-file arguments because only
+the sandbox can resolve their paths.
+
 ## CI execution shape
 
 ### Candidate CLI Artifact
@@ -469,6 +484,13 @@ The standard layout writes product evidence and `evidence-manifest.json` under `
 When `shard` is not `default`, the standard layout adds the shard directory.
 The security-posture matrix uses the reviewed flat-shard layout to preserve its existing artifact names.
 The `gpu-double-onboard`, `gpu-e2e`, and `llama-cpp-generic-gpu` targets keep the standard layout and select `linux-amd64-gpu-rtxpro6000-latest-1` through the catalogue.
+The llama.cpp target compares the selected model's authenticated `/v1/models` `meta.n_ctx`
+with the generated OpenClaw primary model's context window, with no explicit context override.
+It retains the compared values in `qualification-evidence.json`. The existing agent turn proves
+inference through the managed route and backend, replacing two duplicate raw chat smoke tests.
+The GPU memory-offload assertion also rejects a missing matching process because its memory value
+is then `NaN`; a separate process-existence assertion is unnecessary. Authentication denial,
+runtime ownership, Ready state, and cleanup assertions remain unchanged.
 The `gpu-e2e` target also qualifies configuration export for an attached native Linux Ollama daemon.
 A separate OpenClaw scenario disables direct sandbox GPU, starts a fixture-owned daemon on port
 11439, and uses normal onboarding to create the managed proxy on port 11440. It exports twice through
@@ -784,8 +806,10 @@ write failure propagates, so that retry artifact may be absent. `tools.invoke`
 assertions prove the plugin version after onboarding, restart, and recreation.
 The job also keeps the test-only tmpfs mount and uses OpenClaw's plugin installer
 across the proven filesystem boundary before restart. `e2e-support` tests own
-deterministic wrapper argument rewriting. Deterministic tests own exact package
-versions and third-party replacement internals. Runtime inspection and catalog
+sandbox-create interception and wrapper argument rewriting. Onboarding and
+recreation load the test-only interceptor; all other OpenShell commands use the
+canonical binary so dashboard forward ownership remains verifiable. Deterministic
+tests own exact package versions and third-party replacement internals. Runtime inspection and catalog
 permutations are outside this live contract. Workspace preservation and policy
 selection retain their focused coverage instead of another assertion in this
 target. The `rebuild-openclaw` job remains the canonical live rebuild coverage.
@@ -1140,6 +1164,22 @@ phase artifact created before exit. A preparation failure can produce no
 artifact. A later early failure can retain only `lane.log`. A successful job
 contains `launchable-e2e.json`, `full-e2e.log`, and `cleanup.json`;
 `cleanup.json` exists only after the job confirms workspace absence.
+The preinstalled suite resolves its gateway name and port from the external
+gateway declaration before registering cleanup. It removes its sandbox but
+does not remove the platform gateway registration or service. Source-install
+runs retain their test-owned gateway cleanup.
+The Launchable controller enables `NEMOCLAW_E2E_COMMAND_EVIDENCE=1` to retain
+completed command records in `full-e2e.log`. Each `NEMOCLAW_E2E_COMMAND` JSON
+line contains redacted argv, UTC start and finish timestamps, duration, exit
+status, signal, and timeout state. Spawn failures also emit a record. Commands
+that explicitly disable artifact persistence emit none. Output bodies remain
+in guest artifacts; this stream does not export them. Oversized command argv
+is omitted with `commandOmitted: "size-limit"`. Abrupt guest or transport loss
+can leave no completion record for an active command. Older baked suites may
+emit no records; the controller reports that absence rather than inferring
+command times from phase reports.
+The preinstalled suite does not run the source-install cold-onboarding budget
+and does not declare that budget as tested coverage.
 When the preinstalled full E2E fails after SSH succeeds, the job attempts to
 append bounded, redacted host state and fixed lifecycle classifications to
 `lane.log` before cleanup. On the host, the SSH command reads the system journal
@@ -1149,6 +1189,10 @@ GitHub-hosted runner or `lane.log`. If a probe fails or the shared budget
 expires, `lane.log` records that result and cleanup continues. The diagnostic
 phase is read-only, uses one 30-second budget, and does not retry the failed E2E
 or repair the workspace.
+The listener diagnostic uses the baked suite's gateway resolver, including its
+declaration path, loopback endpoint parsing, port checks, and conflict checks.
+An unavailable resolver or rejected declaration leaves that probe failed;
+it does not substitute port 8080 or prevent workspace cleanup.
 
 Manual ordinary and full runs exclude the Jetson nvmap job unless `allow_jetson_dispatch` is `true`.
 Set `allow_jetson_dispatch=true` to select `jetson-nvmap-gpu` after the

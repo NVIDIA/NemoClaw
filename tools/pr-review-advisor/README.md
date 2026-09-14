@@ -23,7 +23,7 @@ It intentionally does not report GitHub mergeability, branch protection, CI stat
 3. Prepares the target PR as inert analysis data and executes the trusted Advisor entrypoint from the workflow checkout.
 4. Runs model analysis inside OpenShell. The sandbox receives neither a GitHub token nor the upstream model credential.
 5. Runs one required Pi session for each valid Markdown prompt in `tools/pr-review-advisor/specialists`. Each specialist reads repository evidence and records a native session trace.
-6. Each specialist publishes its Markdown review as the job summary. Its artifact contains the Markdown, native session trace, E2E receipt, and shared review-queue context.
+6. Each specialist publishes its Markdown review as the job summary. Its artifact contains the Markdown, native session trace, E2E receipt, findings ledger, and shared review-queue context.
 7. After every specialist completes successfully, one publisher attempts to post a sticky comment that links to the workflow run. A failed specialist keeps the workflow failed and suppresses publication.
 
 `investigate-turn.mts` owns the shared investigation turn and deterministic context contract. `specialist-tools.mts` owns specialist tool policy and implementations. `specialists.mts` applies each specialist prompt and tool policy. `trusted-guidance.mts` owns the system prompt and checked-in review guidance. `turn-context.mts` and the context modules build bounded deterministic evidence. `run-specialist.mts` composes these modules and writes each specialist's Markdown review and native session trace.
@@ -127,7 +127,7 @@ The discovered specialists use the workflow-configured model and share the same 
 
 ## Artifacts
 
-Each specialist artifact contains a Markdown review, Pi's unchanged native JSONL session, and an E2E recommendation receipt. The
+Each specialist artifact contains a Markdown review, Pi's unchanged native JSONL session, E2E recommendations, a findings ledger, and shared review-queue context. See [Review queue evidence](REVIEW-QUEUE.md) for the consumer contract. The
 workflow run also displays each Markdown review as a job summary. Replace `<interest>` with the
 specialist interest and `<attempt>` with the workflow run attempt number, then download the artifact
 with `gh run download <run-id> --name pr-review-specialist-<interest>-<attempt>`.

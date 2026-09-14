@@ -46,7 +46,7 @@ export function materializePendingMcpDenyTools(entry: McpBridgeEntry): McpBridge
   };
 }
 
-export function applyGeneratedPolicy(
+export async function applyGeneratedPolicy(
   sandboxName: string,
   entry: McpBridgeEntry,
   target: McpBridgeTargetValidation,
@@ -54,7 +54,7 @@ export function applyGeneratedPolicy(
     bindCredential?: boolean;
     runtimeSelection: McpProviderInspectionRuntimeSelection;
   },
-): void {
+): Promise<void> {
   const policyEntry = materializePendingMcpDenyTools(entry);
   const addresses = assertMcpBridgePolicyTarget(policyEntry, target);
   if (addresses.length === 0) {
@@ -80,33 +80,42 @@ export function applyGeneratedPolicy(
           policyEntry.providerName ?? "",
           policyEntry.denyTools,
         );
-  applyGeneratedPolicyContent(sandboxName, policyEntry, content, options.runtimeSelection);
+  await applyGeneratedPolicyContent(sandboxName, policyEntry, content, options.runtimeSelection);
 }
 
-function applyGeneratedPolicyContent(
+async function applyGeneratedPolicyContent(
   sandboxName: string,
   entry: McpBridgeEntry,
   content: string,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
-): void {
+): Promise<void> {
   if (
-    !policies.applyPresetContent(sandboxName, entry.policyName, content, {
+    !(await policies.applyPresetContent(sandboxName, entry.policyName, content, {
       nonFatal: true,
       runtimeSelection,
-    }) ||
-    policies.getPresetContentGatewayState(sandboxName, content, undefined, runtimeSelection) !==
-      "match"
+    })) ||
+    (await policies.getPresetContentGatewayState(
+      sandboxName,
+      content,
+      undefined,
+      runtimeSelection,
+    )) !== "match"
   ) {
     throw new McpBridgeError(`Failed to activate generated MCP policy '${entry.policyName}'.`);
   }
 }
 
-export function applyRecordedGeneratedPolicy(
+export async function applyRecordedGeneratedPolicy(
   sandboxName: string,
   entry: McpBridgeEntry,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
-): void {
-  applyGeneratedPolicyContent(sandboxName, entry, generatedPolicyContent(entry), runtimeSelection);
+): Promise<void> {
+  await applyGeneratedPolicyContent(
+    sandboxName,
+    entry,
+    generatedPolicyContent(entry),
+    runtimeSelection,
+  );
 }
 
 export function assertMcpBridgePolicyTarget(
@@ -204,17 +213,17 @@ export function assertGeneratedPolicyRegistrationMutationSafe(
   };
 }
 
-export function removeGeneratedPolicy(
+export async function removeGeneratedPolicy(
   sandboxName: string,
   entry: McpBridgeEntry,
   options: {
     bestEffort?: boolean;
     runtimeSelection: McpProviderInspectionRuntimeSelection;
   },
-): void {
+): Promise<void> {
   const policyKey = buildMcpBridgePolicyKey(entry.server);
   const content = `network_policies:\n  ${policyKey}: {}\n`;
-  const removed = policies.removePreset(sandboxName, entry.policyName, {
+  const removed = await policies.removePreset(sandboxName, entry.policyName, {
     nonFatal: true,
     presetContent: content,
     runtimeSelection: options.runtimeSelection,
@@ -240,14 +249,14 @@ export function getRegisteredGeneratedPolicy(
   }
 }
 
-export function getPolicyGatewayState(
+export async function getPolicyGatewayState(
   sandboxName: string,
   entry: McpBridgeEntry | undefined,
   runtimeSelection: McpProviderInspectionRuntimeSelection,
-): "absent" | "drift" | "match" | null {
+): Promise<"absent" | "drift" | "match" | null> {
   const registered = getRegisteredGeneratedPolicy(sandboxName, entry);
   if (!registered) return entry ? null : "absent";
-  return policies.getPresetContentGatewayState(
+  return await policies.getPresetContentGatewayState(
     sandboxName,
     registered.content,
     undefined,

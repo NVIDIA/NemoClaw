@@ -444,6 +444,9 @@ describe("complete managed-image publication workflow", () => {
       "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=sandbox",
     );
     expect(contract.run).toContain('.[0].Config.User == "sandbox"');
+    expect(contract.run).toContain(
+      'verify-dcode-conversation-history-image.sh "$image_id" "$PLATFORM" 0',
+    );
     expect(workflow.on?.pull_request?.paths).toEqual(
       expect.arrayContaining([
         ".github/actions/ci-reviewed-npm-audit/**",

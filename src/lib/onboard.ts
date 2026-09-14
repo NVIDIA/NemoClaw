@@ -1342,6 +1342,7 @@ const {
   adoptPackagedGatewayOwnerAfterTrustedInstall,
   assertGatewayStartAllowed,
   bindGatewayOwner,
+  getGatewayForwardRuntimeAuthority,
   getGatewayLocalEndpoint,
   getGatewayOwner,
   getGatewayStartEnv,
@@ -1360,7 +1361,6 @@ const {
   resolveOpenShellGatewayBinary,
   waitForGatewayHttpReady,
 });
-
 const gatewayRegistration = createGatewayRegistration({
   gatewayName: () => GATEWAY_NAME,
   getDockerDriverGatewayEndpointArg,
@@ -1500,6 +1500,7 @@ const sandboxCreateOrchestrationRuntime = {
   get getDashboardForwardPort() {
     return getDashboardForwardPort;
   },
+  ownsForwardServicePort: (n: string, p: number, k?: "dashboard" | "loopback") => ownsFwd(n, p, k),
   readDcodeSelectionDrift: createDcodeSelectionDriftReader(sandboxExec, () => GATEWAY_NAME),
   getDefaultSandboxNameForAgent,
   getDockerDriverGatewayStateDir,
@@ -1583,7 +1584,6 @@ const createSandboxWithBaseImageResolution =
   sandboxCreateOrchestration.createSandboxWithBaseImageResolution(
     sandboxCreateOrchestrationRuntime,
   );
-
 const { createSandbox, createSandboxWithTemporaryManagedRuntime } =
   agentOnboard.createHermesApiPortScopedSandboxEntryPoints({
     createBaseImageResolutionContext: () =>
@@ -1598,7 +1598,6 @@ const { createSandbox, createSandboxWithTemporaryManagedRuntime } =
     },
     resolveComputePlan: dockerDriverPlatform.resolveCurrentOpenShellComputePlan,
   });
-
 // ── Step 3: Inference selection ──────────────────────────────────
 
 type ProviderChoice = import("./onboard/provider-menu").ProviderMenuChoice;
@@ -2492,7 +2491,6 @@ const setupOpenclaw = openclawSetup.createOpenclawSetup({
   agentProductName,
   configureOpenclawSandbox,
 });
-
 const {
   buildChain,
   buildAgentVerifyChain,
@@ -2503,6 +2501,7 @@ const {
   ensureAgentFixedForward,
   fetchGatewayAuthTokenFromSandbox,
   getDashboardForwardPort,
+  ownsForwardServicePort: ownsFwd,
   printDashboard,
   stopAllDashboardForwards,
 } = onboardDashboard.createOnboardDashboardHelpers({
@@ -2518,6 +2517,7 @@ const {
   redact,
   sleep: sleepSeconds,
   productionForwardService: true,
+  getGatewayForwardRuntimeAuthority,
   printAgentDashboardUi: agentOnboard.printDashboardUi,
 });
 const onboardRuntimeBoundary = new OnboardRuntimeBoundary({

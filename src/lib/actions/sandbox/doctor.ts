@@ -3,10 +3,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import {
-  createCliOpenShellSandboxObserver,
-  stripOpenShellCliAnsi,
-} from "../../adapters/openshell/sandbox-observer-cli";
+import { createCliOpenShellSandboxObserver } from "../../adapters/openshell/sandbox-observer-cli";
 import { createCliOpenShellSandboxCommandExecutor } from "../../adapters/openshell/sandbox-command-cli";
 import {
   namedOpenShellGateway,
@@ -98,7 +95,6 @@ type DoctorGatewayProbe = {
 
 type DoctorGatewayProbeOptions = {
   gatewayPort: number;
-  ignoreProbeErrors?: boolean;
   recoverGateway: boolean;
   unavailableHint?: string;
 };
@@ -220,11 +216,7 @@ function collectDoctorHostChecks(sb: SandboxEntry | null | undefined): DoctorHos
 
 async function gatewayLifecycle(gatewayName: string, options: DoctorGatewayProbeOptions) {
   if (!options.recoverGateway) {
-    return options.ignoreProbeErrors === undefined
-      ? getNamedGatewayLifecycleState(gatewayName)
-      : getNamedGatewayLifecycleState(gatewayName, {
-          ignoreProbeErrors: options.ignoreProbeErrors,
-        });
+    return getNamedGatewayLifecycleState(gatewayName);
   }
   const recovery = await recoverNamedGatewayRuntime({ gatewayName });
   return recovery.after || recovery.before;
@@ -235,7 +227,7 @@ async function probeOpenShellGateway(
   options: DoctorGatewayProbeOptions,
 ): Promise<{ check: DoctorCheck; connected: boolean }> {
   const lifecycle = await gatewayLifecycle(gatewayName, options);
-  const cleanStatus = oneLine(stripOpenShellCliAnsi(lifecycle?.status || ""));
+
   const connected = lifecycle?.state === "healthy_named";
   return {
     connected,
@@ -245,7 +237,7 @@ async function probeOpenShellGateway(
       status: connected ? "ok" : "fail",
       detail: connected
         ? `connected to ${gatewayName}`
-        : oneLine(cleanStatus || lifecycle?.gatewayInfo || `not connected to ${gatewayName}`),
+        : oneLine(lifecycle.diagnostic || `not connected to ${gatewayName}`),
       hint: connected
         ? undefined
         : lifecycle?.state === "connected_other" || !options.unavailableHint
@@ -634,7 +626,6 @@ export async function runGlobalDoctor(
       ...(
         await collectDoctorGatewayChecks(gatewayName, null, host.openshellBin, {
           gatewayPort: GATEWAY_PORT,
-          ignoreProbeErrors: true,
           recoverGateway: false,
           unavailableHint: guidance.unavailableHint,
         })
