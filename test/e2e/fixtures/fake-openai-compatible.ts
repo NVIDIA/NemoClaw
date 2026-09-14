@@ -25,6 +25,7 @@ export interface FakeOpenAiCompatibleRequest {
   readonly forbiddenMarkerMatches?: number;
   /** Presence only; the configured non-secret canary is never persisted. */
   readonly requestCanaryPresent?: boolean;
+  readonly toolResultPresent?: boolean;
 }
 
 export interface FakeOpenAiCompatibleServer {

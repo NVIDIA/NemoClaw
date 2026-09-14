@@ -597,9 +597,11 @@ export async function qualifyManagedImageActivation(fixtures: RuntimeFixtures): 
     .requests()
     .filter((request) => request.method === "POST" && request.path === "/v1/chat/completions");
   expect(chatRequests.length).toBeGreaterThanOrEqual(SHIPPED_MANAGED_IMAGE_AGENTS.length * 2);
-  expect(chatRequests.every((request) => request.auth === "ok" && request.model === MODEL)).toBe(
-    true,
-  );
+  expect(
+    chatRequests.every((request) => request.auth === "ok" && request.model === MODEL) &&
+      chatRequests.some((request) => request.requestCanaryPresent === true) &&
+      chatRequests.some((request) => request.toolResultPresent === true),
+  ).toBe(true);
   await artifacts.writeText("docker-argv.log", trace);
   await artifacts.writeJson("managed-image-activation-summary.json", {
     agents: SHIPPED_MANAGED_IMAGE_AGENTS,

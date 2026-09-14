@@ -168,6 +168,13 @@ function latestUserPrompt(payload: JsonObject): string | null {
   return null;
 }
 
+function toolResultPresent(payload: JsonObject): boolean {
+  const entries = Array.isArray(payload.messages) ? payload.messages : [];
+  return entries.some(
+    (entry) => entry && typeof entry === "object" && (entry as JsonObject).role === "tool",
+  );
+}
+
 function requestedPromptReply(payload: JsonObject): string | null {
   if (!replyFromPrompt) return null;
   const embeddedReplies = new Set(
@@ -262,6 +269,7 @@ const server = createServer(async (req, res) => {
     stream: Boolean(payload.stream),
     forbiddenMarkerMatches: forbiddenMarkerMatches(req, raw),
     requestCanaryPresent: requestCanaryPresent(req, raw),
+    toolResultPresent: toolResultPresent(payload),
   });
 
   if (req.method === "POST" && ["/v1/chat/completions", "/chat/completions"].includes(path)) {
