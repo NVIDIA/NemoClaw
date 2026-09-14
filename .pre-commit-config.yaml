@@ -1,0 +1,9 @@
+repos:
+  - repo: local
+    hooks:
+      - id: whitespace
+        name: Check staged whitespace
+        language: system
+        entry: git diff --cached --check
+        pass_filenames: false
+        always_run: true
