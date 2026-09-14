@@ -80,6 +80,20 @@ impl OpenShell {
         environment: Row,
         seconds: u32,
     ) -> Result<(i32, Vec<u8>), Error> {
+        tokio::time::timeout(
+            Duration::from_secs(u64::from(seconds)),
+            self.exec_stream(binding, command, environment, seconds),
+        )
+        .await
+        .map_err(|_| Error::Conflict("sandbox exec timed out; invocation may have had effects"))?
+    }
+    async fn exec_stream(
+        &self,
+        binding: &Row,
+        command: Vec<String>,
+        environment: Row,
+        seconds: u32,
+    ) -> Result<(i32, Vec<u8>), Error> {
         let sandbox = self.bound_sandbox(binding).await?;
         let mut request = self.request(proto::ExecSandboxRequest {
             sandbox_id: sandbox.metadata.ok_or(ObservationError::Incomplete)?.id,

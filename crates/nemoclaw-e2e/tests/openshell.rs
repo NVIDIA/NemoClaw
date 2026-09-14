@@ -141,3 +141,42 @@ async fn sandbox_launch_policy_and_route_identity_survive_read_failures() {
             .is_some()
     );
 }
+
+#[tokio::test]
+async fn sandbox_exec_deadline_bounds_a_stream_that_never_finishes() {
+    let fixture = Fixture::start().await;
+    let mut document = Document::parse(
+        include_str!("../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
+    )
+    .unwrap();
+    document.spec.gateway.endpoint = fixture.endpoint.clone();
+    let client = OpenShell::connect(&document.spec.gateway, Arc::new(EnvironmentSecrets)).unwrap();
+    let generations = ["workspace", "provider", "sandbox"]
+        .into_iter()
+        .map(|k| (k.into(), format!("{k}-generation")))
+        .collect();
+    let mut sandbox = None;
+    for target in targets(&document, &generations).unwrap() {
+        let result = client.ensure(&target.kind, &target.values).await;
+        assert!(result.error.is_none());
+        if target.kind == "sandbox" {
+            sandbox = result.state;
+        }
+    }
+    fixture.state.lock().unwrap().exec_stalled = true;
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        client.exec_bound(
+            &sandbox.unwrap(),
+            vec!["fixture".into()],
+            Default::default(),
+            1,
+        ),
+    )
+    .await;
+    assert!(
+        result.is_ok(),
+        "server accepted the deadline but never completed its stream"
+    );
+    assert!(result.unwrap().is_err());
+}

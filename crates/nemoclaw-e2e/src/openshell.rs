@@ -19,6 +19,7 @@ pub struct State {
     pub sandboxes: HashMap<String, p::Sandbox>,
     pub exec_exit: i32,
     pub exec_truncated: bool,
+    pub exec_stalled: bool,
     pub exec_calls: Vec<Vec<String>>,
     pub effects: usize,
     pub conditional_updates: usize,
@@ -445,7 +446,7 @@ struct Exec(Arc<Mutex<State>>);
 impl tonic::server::ServerStreamingService<p::ExecSandboxRequest> for Exec {
     type Response = p::ExecSandboxEvent;
     type ResponseStream =
-        tokio_stream::Iter<std::vec::IntoIter<Result<p::ExecSandboxEvent, Status>>>;
+        Pin<Box<dyn tokio_stream::Stream<Item = Result<p::ExecSandboxEvent, Status>> + Send>>;
     type Future = std::future::Ready<Result<Response<Self::ResponseStream>, Status>>;
     fn call(&mut self, request: Request<p::ExecSandboxRequest>) -> Self::Future {
         let request = request.into_inner();
@@ -457,6 +458,9 @@ impl tonic::server::ServerStreamingService<p::ExecSandboxRequest> for Exec {
                 .is_some_and(|m| m.id == request.sandbox_id)
         }) {
             return std::future::ready(Err(Status::not_found("absent")));
+        }
+        if state.exec_stalled {
+            return std::future::ready(Ok(Response::new(Box::pin(tokio_stream::pending()))));
         }
         let mut events = Vec::new();
         if request.command.first().is_some_and(|c| c == "openclaw") {
@@ -477,6 +481,6 @@ impl tonic::server::ServerStreamingService<p::ExecSandboxRequest> for Exec {
                 })),
             }));
         }
-        std::future::ready(Ok(Response::new(tokio_stream::iter(events))))
+        std::future::ready(Ok(Response::new(Box::pin(tokio_stream::iter(events)))))
     }
 }
