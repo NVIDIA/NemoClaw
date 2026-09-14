@@ -208,3 +208,37 @@ fn ollama_plan_accounts_for_both_resources_and_never_recreates_bound_model_data(
     assert!(check_plan(&plan, &expected, &bindings).is_err());
     assert!(check_plan(&plan, &expected, &BTreeMap::new()).is_ok());
 }
+
+#[test]
+fn public_operation_futures_fit_the_async_callers_stack_budget() {
+    let document =
+        Document::parse(include_str!("../../tests/fixtures/config/local.yaml").as_bytes()).unwrap();
+    let deployment = Deployment::new(Path::new("unused-state"), Path::new("unused-bundle"));
+    let cancel = CancellationToken::new();
+    // Callers may compose several operations on a normal 2 MiB executor stack.
+    // Keep each public future below 16 KiB; backend work can live on the heap.
+    for (operation, size) in [
+        (
+            "plan",
+            std::mem::size_of_val(&deployment.plan(&document, &cancel)),
+        ),
+        (
+            "apply",
+            std::mem::size_of_val(&deployment.apply(&document, &cancel)),
+        ),
+        ("export", std::mem::size_of_val(&deployment.export(&cancel))),
+        (
+            "plan_destroy",
+            std::mem::size_of_val(&deployment.plan_destroy(&cancel)),
+        ),
+        (
+            "destroy",
+            std::mem::size_of_val(&deployment.destroy(&cancel)),
+        ),
+    ] {
+        assert!(
+            size <= 16 * 1024,
+            "{operation} embeds {size} bytes in its caller"
+        );
+    }
+}

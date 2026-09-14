@@ -121,6 +121,12 @@ no-op, and failed-inventory tests with one container creation and one model pull
 Parity preserves the explicit destroy limitation; splitting it requires a separate
 recovery and storage-retention contract.
 
+Managed apply also exposed a Rust async allocation cost that the release CLI
+hid: composing several debug-build SDK calls overflowed a normal executor
+thread stack. Public plan/apply now heap-allocate their orchestration future,
+with a tested per-operation stack-size budget. SDK qualification must exercise
+its public API directly as well as its CLI consumer.
+
 ## Acceptance evidence
 
 [Validation records](docs/validation/) distinguish deterministic failure tests,

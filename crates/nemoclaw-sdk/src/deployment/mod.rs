@@ -107,14 +107,14 @@ impl Deployment {
         document: &Document,
         cancel: &CancellationToken,
     ) -> Result<OperationResult, Error> {
-        self.run(document, cancel, false).await
+        Box::pin(self.run(document, cancel, false)).await
     }
     pub async fn apply(
         &self,
         document: &Document,
         cancel: &CancellationToken,
     ) -> Result<OperationResult, Error> {
-        self.run(document, cancel, true).await
+        Box::pin(self.run(document, cancel, true)).await
     }
     async fn run(
         &self,
