@@ -172,7 +172,14 @@ pub async fn prepare(
             if info.len() != file.size {
                 return Err(failure("prepared file changed during verification"));
             }
-            fs::File::open(&path)
+            let mut options = fs::OpenOptions::new();
+            options.read(true);
+            // FlushFileBuffers requires write access on Windows, including for
+            // data that the preparation tool already wrote and verified.
+            #[cfg(windows)]
+            options.write(true);
+            options
+                .open(&path)
                 .and_then(|f| f.sync_all())
                 .map_err(|_| failure("cannot sync prepared data"))?;
             let modified = crate::snapshot::modified(&path, file.size)?;
