@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -17,17 +16,14 @@ import { validateE2eWorkflow } from "../../../tools/e2e/workflow-boundary.mts";
 import { readWorkflow } from "../../helpers/e2e-workflow-contract";
 import {
   captureGatewayUpgradeProbeEvidence,
-  gatewayUpgradeBackupEvidence,
   currentGatewayUpgradeInstallerArgs,
   currentNemoclawUpgradeRef,
   GATEWAY_UPGRADE_INSTALL_TIMEOUT_MS,
   legacyGatewayUpgradeHostFirewallOptions,
-  isGatewayUpgradeBackupEvidenceValid,
   oldGatewayUpgradeInstallerArgs,
   throwGatewayUpgradeSetupFailures,
   upgradeGatewayCleanupScript,
   validateLegacyGatewayUpgradeFixture,
-  writeGatewayUpgradeBackupEvidence,
 } from "../live/openshell-gateway-upgrade-helpers.ts";
 
 describe("OpenShell gateway upgrade boundary", () => {
@@ -111,97 +107,6 @@ describe("OpenShell gateway upgrade boundary", () => {
       ["get", ["sandbox", "get", "-g", "nemoclaw", sandboxName]],
       ["list", ["sandbox", "list", "-g", "nemoclaw", "-o", "json"]],
     ]);
-  });
-
-  it.each([
-    { mode: 0o600, tampered: false, valid: true },
-    { mode: 0o644, tampered: false, valid: false },
-    { mode: 0o600, tampered: true, valid: false },
-  ])(
-    "reports handoff integrity without exposing policy content (mode $mode, tampered $tampered)",
-    async ({ mode, tampered, valid }) => {
-      const home = fs.mkdtempSync(path.join(os.tmpdir(), "gateway-handoff-probe-"));
-      try {
-        const backup = path.join(home, ".nemoclaw", "rebuild-backups", "alpha", "2026-09-14");
-        fs.mkdirSync(backup, { recursive: true });
-        const content = "policy-secret-canary";
-        const sha256 = createHash("sha256").update(content).digest("hex");
-        const file = `rebuild-policy-handoff.${sha256}.yaml`;
-        fs.writeFileSync(path.join(backup, file), tampered ? "changed-secret-canary" : content, {
-          mode,
-        });
-        fs.writeFileSync(
-          path.join(backup, "rebuild-manifest.json"),
-          JSON.stringify({
-            sandboxName: "alpha",
-            timestamp: "2026-09-14",
-            backupPath: backup,
-            backupComplete: true,
-            rebuildPolicyHandoff: { file, sha256 },
-            unrelatedSecret: content,
-          }),
-        );
-        fs.writeFileSync(
-          path.join(backup, ".nemoclaw-rebuild-recovery.json"),
-          JSON.stringify({
-            schemaVersion: 3,
-            transactionId: "d15ea5ed-0000-4000-8000-000000000000",
-            sandboxName: "alpha",
-            backupTimestamp: "2026-09-14",
-            gatewayName: "nemoclaw",
-            gatewayPort: 8080,
-            phase: "restore",
-          }),
-          { mode: 0o600 },
-        );
-        const priorName = "2026-09-13";
-        fs.mkdirSync(path.join(path.dirname(backup), priorName));
-        const result = gatewayUpgradeBackupEvidence(path.dirname(backup), [priorName]);
-        expect(result).toEqual({
-          backups: [
-            {
-              manifestValid: true,
-              recoveryPhase: "restore",
-              handoffPresent: true,
-              handoffFileValid: true,
-              handoffValid: valid,
-            },
-          ],
-        });
-        expect(JSON.stringify(result)).not.toContain("secret-canary");
-        expect(isGatewayUpgradeBackupEvidenceValid(result)).toBe(valid);
-      } finally {
-        fs.rmSync(home, { recursive: true, force: true });
-      }
-    },
-  );
-
-  it("accepts handoff absence only after the new backup reaches completed cleanup", () => {
-    expect([
-      isGatewayUpgradeBackupEvidenceValid({
-        backups: [{ manifestValid: true, recoveryPhase: "complete", handoffPresent: false }],
-      }),
-      isGatewayUpgradeBackupEvidenceValid({
-        backups: [{ manifestValid: true, recoveryPhase: "restore", handoffPresent: false }],
-      }),
-      isGatewayUpgradeBackupEvidenceValid({ backups: [] }),
-    ]).toEqual([true, false, false]);
-  });
-
-  it("fails when the required handoff artifact cannot be written", async () => {
-    const writeJson = vi.fn().mockRejectedValue(new Error("artifact storage unavailable"));
-
-    await expect(
-      writeGatewayUpgradeBackupEvidence(
-        { writeJson },
-        "current-install-backup-handoff.json",
-        "/missing-backups",
-      ),
-    ).rejects.toThrow("artifact storage unavailable");
-    expect(writeJson).toHaveBeenCalledExactlyOnceWith(
-      "current-install-backup-handoff.json",
-      expect.objectContaining({ backups: expect.any(Array) }),
-    );
   });
 
   it("freshens only the retryable old fixture install", () => {

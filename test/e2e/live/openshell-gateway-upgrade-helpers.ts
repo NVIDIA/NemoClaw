@@ -1,10 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import fs from "node:fs";
-import path from "node:path";
-
-import { readRebuildPolicyHandoff, type RebuildManifest } from "../../../src/lib/state/sandbox";
 import { shellQuote } from "../fixtures/clients/command.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { REVIEWED_GATEWAY_UPGRADE_FIXTURE } from "../../../tools/e2e/openshell-gateway-upgrade-fixture.mts";
@@ -61,92 +57,6 @@ export function validateLegacyGatewayUpgradeFixture(fixture: LegacyGatewayUpgrad
       `NEMOCLAW_OLD_SANDBOX_BASE_IMAGE_REF must match the reviewed descriptor and use a digest pin; got ${fixture.sandboxBaseImageRef}`,
     );
   }
-}
-
-/** Retain bounded lifecycle and handoff metadata, never policy or manifest contents. */
-export function gatewayUpgradeBackupEvidence(
-  root: string,
-  existingNames: readonly string[] = [],
-): { backups: Record<string, unknown>[] } {
-  const backups: Record<string, unknown>[] = [];
-  try {
-    const existing = new Set(existingNames);
-    for (const name of fs
-      .readdirSync(root)
-      .filter((entry) => !existing.has(entry))
-      .sort()
-      .slice(-3)) {
-      const report: Record<string, unknown> = {};
-      backups.push(report);
-      try {
-        const directory = path.join(root, name);
-        const payload = fs.readFileSync(path.join(directory, "rebuild-manifest.json"), "utf8");
-        const manifest = JSON.parse(payload);
-        report.manifestValid =
-          manifest.sandboxName === path.basename(root) &&
-          manifest.timestamp === name &&
-          manifest.backupPath === directory &&
-          manifest.backupComplete === true;
-        const recoveryPath = path.join(directory, ".nemoclaw-rebuild-recovery.json");
-        if (fs.existsSync(recoveryPath)) {
-          const recovery = JSON.parse(fs.readFileSync(recoveryPath, "utf8"));
-          report.recoveryPhase =
-            recovery?.schemaVersion === 3 &&
-            typeof recovery.transactionId === "string" &&
-            /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(
-              recovery.transactionId,
-            ) &&
-            recovery.sandboxName === manifest.sandboxName &&
-            recovery.backupTimestamp === manifest.timestamp &&
-            recovery.gatewayName === "nemoclaw" &&
-            recovery.gatewayPort === 8080 &&
-            (recovery.phase === "restore" || recovery.phase === "cleanup")
-              ? recovery.phase
-              : "invalid";
-        } else report.recoveryPhase = "complete";
-        const handoff = manifest.rebuildPolicyHandoff;
-        report.handoffPresent = handoff !== null && typeof handoff === "object";
-        if (!report.handoffPresent) continue;
-        const valid =
-          typeof handoff.sha256 === "string" &&
-          /^[a-f0-9]{64}$/.test(handoff.sha256) &&
-          handoff.file === `rebuild-policy-handoff.${handoff.sha256}.yaml`;
-        report.handoffFileValid = valid;
-        if (!valid) continue;
-        report.handoffValid = readRebuildPolicyHandoff(manifest as RebuildManifest) !== null;
-      } catch (error) {
-        report.errorCode = (error as NodeJS.ErrnoException).code ?? "invalid-metadata";
-      }
-    }
-  } catch (error) {
-    backups.push({ errorCode: (error as NodeJS.ErrnoException).code ?? "unreadable-backups" });
-  }
-  return { backups };
-}
-
-/** Accept one new backup with either active valid handoff authority or completed cleanup. */
-export function isGatewayUpgradeBackupEvidenceValid(evidence: {
-  backups: Record<string, unknown>[];
-}): boolean {
-  const [backup] = evidence.backups;
-  return (
-    evidence.backups.length === 1 &&
-    backup?.manifestValid === true &&
-    ((backup.recoveryPhase === "restore" && backup.handoffValid === true) ||
-      (backup.recoveryPhase === "complete" && backup.handoffPresent === false))
-  );
-}
-
-/** Write the required handoff report or fail the E2E evidence contract. */
-export async function writeGatewayUpgradeBackupEvidence(
-  artifacts: { writeJson(name: string, value: unknown): Promise<unknown> },
-  name: string,
-  root: string,
-  existingNames: readonly string[] = [],
-): Promise<{ backups: Record<string, unknown>[] }> {
-  const evidence = gatewayUpgradeBackupEvidence(root, existingNames);
-  await artifacts.writeJson(name, evidence);
-  return evidence;
 }
 
 /** Collect both read-only probes without replacing an installer failure. */

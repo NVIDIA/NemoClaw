@@ -16,6 +16,7 @@ import {
   packReviewedNpmArchive,
   removeReviewedNpmArchive,
 } from "../../../scripts/lib/reviewed-npm-archive.mts";
+import { listBackups, validateRebuildRecoveryManifest } from "../../../src/lib/state/sandbox";
 import { shellQuote } from "../../../src/lib/core/shell-quote";
 import { REVIEWED_GATEWAY_UPGRADE_FIXTURE } from "../../../tools/e2e/openshell-gateway-upgrade-fixture.mts";
 import { type ArtifactSink } from "../fixtures/artifacts.ts";
@@ -39,13 +40,11 @@ import {
   currentNemoclawUpgradeRef,
   GATEWAY_UPGRADE_INSTALL_TIMEOUT_MS,
   legacyGatewayUpgradeHostFirewallOptions,
-  isGatewayUpgradeBackupEvidenceValid,
   oldGatewayUpgradeInstallerArgs,
   throwGatewayUpgradeSetupFailures,
   upgradeGatewayCleanupScript,
   upgradeGatewayStateCleanupScript,
   validateLegacyGatewayUpgradeFixture,
-  writeGatewayUpgradeBackupEvidence,
 } from "./openshell-gateway-upgrade-helpers.ts";
 import {
   patchOldInstallerFixture,
@@ -385,15 +384,23 @@ async function runInstallerPayload(
       timeoutMs: 15_000,
     }),
   );
-  const backupEvidence = await writeGatewayUpgradeBackupEvidence(
-    artifacts,
-    `${label}-backup-handoff.json`,
-    backupRoot,
-    existingBackupNames,
+  const backups = listBackups(SURVIVOR_SANDBOX).filter(
+    (backup) => !existingBackupNames.includes(backup.timestamp),
   );
-  const evidenceValid =
-    !requireBackupEvidence ||
-    (probesCaptured && isGatewayUpgradeBackupEvidenceValid(backupEvidence));
+  const recoveryComplete =
+    backups.length === 1 &&
+    backups.every(
+      (backup) =>
+        validateRebuildRecoveryManifest(SURVIVOR_SANDBOX, "openclaw", backup).ok &&
+        backup.backupComplete === true &&
+        backup.rebuildPolicyHandoff == null &&
+        !fs.existsSync(path.join(backup.backupPath, ".nemoclaw-rebuild-recovery.json")),
+    );
+  await artifacts.writeJson(`${label}-backup-handoff.json`, {
+    backupCount: backups.length,
+    recoveryComplete,
+  });
+  const evidenceValid = !requireBackupEvidence || (probesCaptured && recoveryComplete);
   expect(
     result.exitCode === 0 && evidenceValid,
     `${label} NemoClaw installer or required recovery evidence failed:\n${resultText(result)}`,
