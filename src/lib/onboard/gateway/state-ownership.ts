@@ -35,9 +35,9 @@ export function processEnvironmentUsesSelectedGatewayState(
   );
 }
 
-function readProcessEnvironmentFromPs(
+export function readDockerDriverGatewayProcessEnvironmentFromPs(
   pid: number,
-  runCapture: DockerDriverGatewayStateOwnershipDeps["runCapture"],
+  runCapture: (args: string[], opts?: { ignoreError?: boolean }) => string,
 ): Record<string, string> | null {
   const command = runCapture(["ps", "eww", "-p", String(pid), "-o", "command="], {
     ignoreError: true,
@@ -64,7 +64,7 @@ export function createDockerDriverGatewayStateOwnership(
 ): DockerDriverGatewayStateOwnership {
   const readProcessEnvironment = (pid: number) =>
     (deps.readProcessEnvironment ?? readDockerDriverGatewayProcessEnvironment)(pid) ??
-    readProcessEnvironmentFromPs(pid, deps.runCapture);
+    readDockerDriverGatewayProcessEnvironmentFromPs(pid, deps.runCapture);
 
   function isDockerDriverGatewayPidUsingSelectedState(pid: number): boolean {
     if (!deps.isPidAlive(pid)) return false;

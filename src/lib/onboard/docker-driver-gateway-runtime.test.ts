@@ -282,56 +282,74 @@ describe("docker-driver gateway runtime helpers", () => {
     }
   });
 
-  it("finds a service-manager replacement that uses the selected gateway state (#8797)", () => {
-    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-runtime-"));
-    const recordedPid = 98_760;
-    const replacementPid = 98_761;
-    const gatewayBin = path.join(stateDir, "openshell-gateway");
-    try {
-      withEnv({ NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: stateDir }, () => {
-        const namespace = gatewayIdForStateDir(stateDir);
-        const runCapture = vi.fn((args: string[]) =>
-          args.join(" ") === `ps -p ${String(replacementPid)} -o args=` ? gatewayBin : "",
-        );
-        const { helpers } = makeHelpers({
-          getCachedOpenshellBinary: () => path.join(stateDir, "openshell"),
-          runCapture,
-          runCaptureEx: vi.fn(() => ({
-            stdout: `${String(replacementPid)}\n`,
-            exitCode: 0,
-            timedOut: false,
-          })),
-        });
-        helpers.rememberDockerDriverGatewayPid(recordedPid);
-        vi.spyOn(process, "kill").mockImplementation(((pid) =>
-          pid === replacementPid
-            ? true
-            : (() => {
-                const gone = new Error("ESRCH") as NodeJS.ErrnoException;
-                gone.code = "ESRCH";
-                throw gone;
-              })()) as typeof process.kill);
-        const originalExistsSync = fs.existsSync.bind(fs);
-        const originalReadFileSync = fs.readFileSync.bind(fs);
-        const replacementCmdline = `/proc/${String(replacementPid)}/cmdline`;
-        const replacementEnvironment = `/proc/${String(replacementPid)}/environ`;
-        vi.spyOn(fs, "existsSync").mockImplementation(((candidate) =>
-          candidate === gatewayBin || candidate === replacementCmdline
-            ? true
-            : originalExistsSync(candidate)) as typeof fs.existsSync);
-        vi.spyOn(fs, "readFileSync").mockImplementation(((candidate, options) =>
-          candidate === replacementCmdline
-            ? `${gatewayBin}\0`
-            : candidate === replacementEnvironment
-              ? `NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE=${namespace}\0`
-              : originalReadFileSync(candidate, options as never)) as typeof fs.readFileSync);
+  it.each([
+    {
+      label: "current namespace",
+      processEnvForState: (stateDir: string) => ({
+        NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE: gatewayIdForStateDir(stateDir),
+      }),
+    },
+    {
+      label: "legacy default namespace and database path",
+      processEnvForState: (stateDir: string) => ({
+        NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE: "default",
+        OPENSHELL_DB_URL: `sqlite:${path.join(stateDir, "openshell.db")}`,
+      }),
+    },
+  ])(
+    "finds a service-manager replacement using selected state via $label (#8797)",
+    ({ processEnvForState }) => {
+      const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-runtime-"));
+      const recordedPid = 98_760;
+      const replacementPid = 98_761;
+      const gatewayBin = path.join(stateDir, "openshell-gateway");
+      try {
+        withEnv({ NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: stateDir }, () => {
+          const runCapture = vi.fn((args: string[]) =>
+            args.join(" ") === `ps -p ${String(replacementPid)} -o args=` ? gatewayBin : "",
+          );
+          const { helpers } = makeHelpers({
+            getCachedOpenshellBinary: () => path.join(stateDir, "openshell"),
+            runCapture,
+            runCaptureEx: vi.fn(() => ({
+              stdout: `${String(replacementPid)}\n`,
+              exitCode: 0,
+              timedOut: false,
+            })),
+          });
+          helpers.rememberDockerDriverGatewayPid(recordedPid);
+          vi.spyOn(process, "kill").mockImplementation(((pid) =>
+            pid === replacementPid
+              ? true
+              : (() => {
+                  const gone = new Error("ESRCH") as NodeJS.ErrnoException;
+                  gone.code = "ESRCH";
+                  throw gone;
+                })()) as typeof process.kill);
+          const originalExistsSync = fs.existsSync.bind(fs);
+          const originalReadFileSync = fs.readFileSync.bind(fs);
+          const replacementCmdline = `/proc/${String(replacementPid)}/cmdline`;
+          const replacementEnvironment = `/proc/${String(replacementPid)}/environ`;
+          vi.spyOn(fs, "existsSync").mockImplementation(((candidate) =>
+            candidate === gatewayBin || candidate === replacementCmdline
+              ? true
+              : originalExistsSync(candidate)) as typeof fs.existsSync);
+          vi.spyOn(fs, "readFileSync").mockImplementation(((candidate, options) =>
+            candidate === replacementCmdline
+              ? `${gatewayBin}\0`
+              : candidate === replacementEnvironment
+                ? `${Object.entries(processEnvForState(stateDir))
+                    .map(([key, value]) => `${key}=${value}`)
+                    .join("\0")}\0`
+                : originalReadFileSync(candidate, options as never)) as typeof fs.readFileSync);
 
-        expect(helpers.isDockerDriverGatewayStateInUse()).toBe(true);
-      });
-    } finally {
-      fs.rmSync(stateDir, { recursive: true, force: true });
-    }
-  });
+          expect(helpers.isDockerDriverGatewayStateInUse()).toBe(true);
+        });
+      } finally {
+        fs.rmSync(stateDir, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("fails closed when replacement-process discovery is unavailable (#8797)", () => {
     const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-runtime-"));
