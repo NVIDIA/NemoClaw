@@ -174,3 +174,7 @@ pub fn compile(
         json!({"terraform":{"required_version":format!("= {OPENTOFU_VERSION}"),"required_providers":{"nemoclaw":{"source":PROVIDER_ADDRESS,"version":format!("= {version}")}}},"provider":{"nemoclaw":provider},"resource":resources}),
     )
 }
+
+#[path = "compile_runtime.rs"]
+mod runtime;
+pub use runtime::{compile_runtime, runtime_targets};
