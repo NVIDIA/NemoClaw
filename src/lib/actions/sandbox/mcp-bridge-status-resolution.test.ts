@@ -5,7 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, it, type TestContext, vi } from "vitest";
+import { describe, expect, it, type TestContext } from "vitest";
 import { runOnboardProcessAsync } from "../../../../test/helpers/onboard-child-process-harness";
 
 const sourceRequireHook = path.resolve("test/helpers/onboard-script-mocks.cjs");
@@ -14,7 +14,9 @@ const sourceNodeOptions = [process.env.NODE_OPTIONS, `--require=${sourceRequireH
   .join(" ");
 const harnessTimeoutMs = 60_000;
 
-vi.setConfig({ maxConcurrency: 4, testTimeout: harnessTimeoutMs });
+function describeConcurrentProbeSuite(name: string, factory: () => void): void {
+  describe.concurrent(name, { timeout: harnessTimeoutMs }, factory);
+}
 
 function createTempHome(prefix: string, root = os.tmpdir()): string {
   return fs.mkdtempSync(path.join(root, prefix));
@@ -242,7 +244,7 @@ ${body}
   }
 }
 
-describe.concurrent("MCP status wire-level credential-resolution probe", () => {
+describeConcurrentProbeSuite("MCP status wire-level credential-resolution probe", () => {
   it("removes its home when cancelled before child launch", async (context) => {
     const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-cleanup-"));
     const home = createTempHome("home-", workspaceRoot);
@@ -1258,7 +1260,7 @@ describe.concurrent("MCP status wire-level credential-resolution probe", () => {
   });
 });
 
-describe.concurrent("MCP add post-add credential-resolution probe", () => {
+describeConcurrentProbeSuite("MCP add post-add credential-resolution probe", () => {
   it("warns loudly on an identical-rejection probe without failing the committed add (#6379)", async (context) => {
     const home = createTempHome("nemoclaw-mcp-resolution-add-");
     const { stdout } = await runHarness(
