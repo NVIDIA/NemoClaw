@@ -2552,7 +2552,6 @@ import base64
 import binascii
 import hashlib
 import os
-import pathlib
 import re
 import sqlite3
 import stat
@@ -2615,20 +2614,28 @@ def report_unhandled_watcher_exception(exc_type, _exc_value, _traceback):
 sys.excepthook = report_unhandled_watcher_exception
 
 APPROVAL_POLICY_FILE = '/usr/local/lib/nemoclaw/openclaw_device_approval_policy.py'
+PAIRING_STATE_FILE = os.path.join(
+    os.path.dirname(APPROVAL_POLICY_FILE), 'openclaw_pairing_state.py',
+)
 
 
-def load_approval_policy(path):
+def load_trusted_helper(path, module_name, label):
     helper_stat = os.stat(path)
     mode = helper_stat.st_mode
     if mode & (stat.S_IWGRP | stat.S_IWOTH):
-        raise RuntimeError('approval policy helper is writable by group or other')
+        raise RuntimeError(f'{label} helper is writable by group or other')
     if helper_stat.st_uid == os.geteuid() and mode & stat.S_IWUSR:
-        raise RuntimeError('approval policy helper is writable by the current user')
-    spec = importlib.util.spec_from_file_location('openclaw_device_approval_policy', path)
+        raise RuntimeError(f'{label} helper is writable by the current user')
+    spec = importlib.util.spec_from_file_location(module_name, path)
     if spec is None or spec.loader is None:
-        raise RuntimeError('approval policy helper could not be loaded')
+        raise RuntimeError(f'{label} helper could not be loaded')
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
+    return module
+
+
+def load_approval_policy(path):
+    module = load_trusted_helper(path, 'openclaw_device_approval_policy', 'approval policy')
     return (
         module.approval_request_decision,
         module.gateway_approval_env,
@@ -2637,6 +2644,16 @@ def load_approval_policy(path):
 
 
 approval_request_decision, gateway_approval_env, policy_allowed_scopes = load_approval_policy(APPROVAL_POLICY_FILE)
+pairing_state_reader = None
+
+
+def read_openclaw_pairing_state(*args, **kwargs):
+    global pairing_state_reader
+    if pairing_state_reader is None:
+        pairing_state_reader = load_trusted_helper(
+            PAIRING_STATE_FILE, 'openclaw_pairing_state', 'pairing state',
+        ).read_openclaw_pairing_state
+    return pairing_state_reader(*args, **kwargs)
 
 OPENCLAW = os.environ.get('OPENCLAW_BIN', 'openclaw')
 
@@ -2730,179 +2747,18 @@ def _state_sqlite_path(state_dir):
     return os.path.join(state_dir, 'state', 'openclaw.sqlite')
 
 
-def _state_sqlite_metadata(metadata):
-    if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
-        raise RuntimeError('SQLite state is not a regular single-link file')
-    return (
-        metadata.st_dev,
-        metadata.st_ino,
-        metadata.st_size,
-        metadata.st_mtime_ns,
-    )
-
-
-def _assert_state_sqlite_unchanged(sqlite_path, sqlite_fd, expected_metadata):
-    descriptor_metadata = _state_sqlite_metadata(os.fstat(sqlite_fd))
-    path_metadata = _state_sqlite_metadata(os.stat(sqlite_path, follow_symlinks=False))
-    if descriptor_metadata != expected_metadata or path_metadata != expected_metadata:
-        raise RuntimeError('SQLite state changed while reading pairing state')
-
-
-def _assert_state_sqlite_wal_has_shm(sqlite_path):
-    max_sqlite_bytes = 1024 * 1024 * 1024
-    wal_path = f'{sqlite_path}-wal'
-    shm_path = f'{sqlite_path}-shm'
-    try:
-        wal_metadata = os.stat(wal_path, follow_symlinks=False)
-    except FileNotFoundError:
-        return False
-    if (
-        not stat.S_ISREG(wal_metadata.st_mode)
-        or wal_metadata.st_nlink != 1
-        or wal_metadata.st_gid != os.getegid()
-        or wal_metadata.st_mode & 0o007
-        or wal_metadata.st_size > max_sqlite_bytes
-    ):
-        raise RuntimeError('SQLite WAL sidecar is unsafe')
-    try:
-        shm_metadata = os.stat(shm_path, follow_symlinks=False)
-    except FileNotFoundError as err:
-        raise RuntimeError('SQLite WAL is missing its shared-memory sidecar') from err
-    if (
-        not stat.S_ISREG(shm_metadata.st_mode)
-        or shm_metadata.st_nlink != 1
-        or shm_metadata.st_gid != os.getegid()
-        or shm_metadata.st_mode & 0o007
-        or shm_metadata.st_size < 1
-        or shm_metadata.st_size > max_sqlite_bytes
-    ):
-        raise RuntimeError('SQLite shared-memory sidecar is unsafe')
-    return True
-
-
-def _open_state_sqlite_read_only(sqlite_path):
-    # mode=ro prevents a missing/raced-away database from being created. Keep
-    # query_only enabled as a second guard against accidental mutation if this
-    # compatibility reader grows additional queries later.
-    nofollow = getattr(os, 'O_NOFOLLOW', None)
-    if nofollow is None:
-        raise RuntimeError('SQLite state cannot be opened without symlink protection')
-    sqlite_fd = os.open(
-        sqlite_path,
-        os.O_RDONLY | os.O_CLOEXEC | os.O_NONBLOCK | nofollow,
-    )
-    connection = None
-    database_uri = pathlib.Path(os.path.abspath(sqlite_path)).as_uri() + '?mode=ro'
-    try:
-        expected_metadata = _state_sqlite_metadata(os.fstat(sqlite_fd))
-        _assert_state_sqlite_unchanged(sqlite_path, sqlite_fd, expected_metadata)
-        # Opening a WAL database can create -shm even in mode=ro. Require the
-        # canonical writer to have published that sidecar first so this
-        # observer never mutates the state directory.
-        wal_present = _assert_state_sqlite_wal_has_shm(sqlite_path)
-        # A database whose WAL is absent is safe to open as immutable. This is
-        # required even when its header still records WAL mode: mode=ro alone
-        # can create -shm. A live WAL must instead be read normally so committed
-        # rows remain visible; the canonical writer must have published -shm.
-        if not wal_present:
-            database_uri += '&immutable=1'
-        connection = sqlite3.connect(database_uri, uri=True, timeout=1)
-        connection.row_factory = sqlite3.Row
-        connection.execute('PRAGMA query_only = ON')
-        connection.execute('PRAGMA trusted_schema = OFF')
-        connection.execute('BEGIN')
-        schema_version = connection.execute('PRAGMA user_version').fetchone()
-        if schema_version is None or schema_version[0] != 15:
-            raise RuntimeError('unsupported canonical device state schema')
-        _assert_state_sqlite_unchanged(sqlite_path, sqlite_fd, expected_metadata)
-        return connection, sqlite_fd, expected_metadata, wal_present
-    except Exception:
-        if connection is not None:
-            connection.close()
-        os.close(sqlite_fd)
-        raise
-
-
-def _close_state_sqlite_read_only(
-    connection, sqlite_path, sqlite_fd, expected_metadata, expected_wal_present,
-):
-    try:
-        # Fence the path and pinned descriptor while the read transaction is
-        # still active. A replaced or modified database invalidates all rows
-        # read from this snapshot before they can influence approval.
-        _assert_state_sqlite_unchanged(sqlite_path, sqlite_fd, expected_metadata)
-        if _assert_state_sqlite_wal_has_shm(sqlite_path) != expected_wal_present:
-            raise RuntimeError('SQLite WAL changed while reading pairing state')
-    finally:
-        try:
-            try:
-                connection.rollback()
-            finally:
-                connection.close()
-        finally:
-            os.close(sqlite_fd)
-
-
-def _sqlite_primary_identity(connection):
-    row = connection.execute(
-        '''
-        SELECT device_id, public_key_pem
-        FROM device_identities
-        WHERE identity_key = ?
-        ''',
-        ('primary',),
-    ).fetchone()
-    if row is None:
-        raise RuntimeError('primary SQLite device identity is missing')
-    return {
-        'deviceId': row['device_id'],
-        'publicKeyPem': row['public_key_pem'],
-    }
-
-
 def _sqlite_initial_pairing_snapshot(sqlite_path, request_id):
-    connection, sqlite_fd, expected_metadata, wal_present = _open_state_sqlite_read_only(sqlite_path)
-    try:
-        identity = _sqlite_primary_identity(connection)
-        row = connection.execute(
-            '''
-            SELECT request_id, device_id, public_key, client_id, client_mode,
-                   role, roles_json, scopes_json
-            FROM device_pairing_pending
-            WHERE request_id = ?
-            ''',
-            (request_id,),
-        ).fetchone()
-        if row is None:
-            return identity, None
-        request = {
-            'requestId': row['request_id'],
-            'deviceId': row['device_id'],
-            'publicKey': row['public_key'],
-            'clientId': row['client_id'],
-            'clientMode': row['client_mode'],
-            'role': row['role'],
-            'roles': json.loads(row['roles_json']) if row['roles_json'] is not None else None,
-            'scopes': json.loads(row['scopes_json']) if row['scopes_json'] is not None else None,
-        }
-        return identity, request
-    finally:
-        _close_state_sqlite_read_only(
-            connection, sqlite_path, sqlite_fd, expected_metadata, wal_present,
-        )
+    state_dir = os.path.dirname(os.path.dirname(sqlite_path))
+    records, _database_metadata = read_openclaw_pairing_state(state_dir, timeout=1)
+    return records['identity'], records['pending'].get(request_id)
 
 
 def _local_device_identity():
     state_dir = os.environ.get('OPENCLAW_STATE_DIR') or '/sandbox/.openclaw'
     sqlite_path = _state_sqlite_path(state_dir)
     if os.path.lexists(sqlite_path):
-        connection, sqlite_fd, expected_metadata, wal_present = _open_state_sqlite_read_only(sqlite_path)
-        try:
-            identity = _sqlite_primary_identity(connection)
-        finally:
-            _close_state_sqlite_read_only(
-                connection, sqlite_path, sqlite_fd, expected_metadata, wal_present,
-            )
+        records, _database_metadata = read_openclaw_pairing_state(state_dir, timeout=1)
+        identity = records['identity']
     else:
         identity = _read_json_object(os.path.join(state_dir, 'identity', 'device.json'))
         # Never accept legacy identity state once the canonical database has

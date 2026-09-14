@@ -12,12 +12,25 @@ import {
   buildAutoPairApprovalScript,
   parseAutoPairApprovalReceipt,
   readAutoPairApprovalPolicyModule,
+  readOpenClawPairingStateModule,
 } from "./auto-pair-approval";
 
 describe("auto-pair approval SQLite compatibility", () => {
   const pyIt =
     spawnSync("sh", ["-c", "command -v python3"], { stdio: "ignore" }).status === 0 ? it : it.skip;
   const pyIt25s = (name: string, test: () => void) => pyIt(name, test, 25_000);
+
+  it("embeds the packaged versioned pairing-state adapter", () => {
+    const policy = readAutoPairApprovalPolicyModule();
+    const adapter = readOpenClawPairingStateModule();
+    expect(policy).toBeTruthy();
+    expect(adapter).toContain("ADAPTER_VERSION = 1");
+    expect(
+      buildAutoPairApprovalScript(Buffer.from(policy as string).toString("base64"), {
+        localDeviceOnly: true,
+      }),
+    ).toContain(adapter);
+  });
 
   function expectUnsafeCanonicalState(
     script: string,
@@ -103,7 +116,8 @@ describe("auto-pair approval SQLite compatibility", () => {
       fs.copyFileSync(databasePath, attackerPath);
       fs.chmodSync(attackerPath, 0o660);
       const validatedIdentity = fs.statSync(databasePath);
-      const connect = "        connection = sqlite3.connect(database_uri, uri=True, timeout=0.25)";
+      const connect =
+        "        connection = sqlite3.connect(database_uri, uri=True, timeout=timeout)";
       const attack = [
         "        validated_path = database_path + '.validated'",
         "        os.rename(database_path, validated_path)",
@@ -193,7 +207,7 @@ describe("auto-pair approval SQLite compatibility", () => {
       const walIdentity = fs.statSync(walPath);
       const sharedMemoryIdentity = fs.statSync(sharedMemoryPath);
       const schemaRead =
-        "        schema_version = connection.execute('PRAGMA user_version').fetchone()";
+        '        schema_version = connection.execute("PRAGMA user_version").fetchone()';
       const attack = [
         "        os.rename(database_path + '-wal', database_path + '-wal.validated')",
         "        os.rename(database_path + '-shm', database_path + '-shm.validated')",
@@ -205,7 +219,8 @@ describe("auto-pair approval SQLite compatibility", () => {
         "        os.rename(database_path + '-wal.validated', database_path + '-wal')",
         "        os.rename(database_path + '-shm.validated', database_path + '-shm')",
       ].join("\n");
-      const postBinding = "        if schema_version is None or schema_version[0] != 15:";
+      const postBinding =
+        "        if schema_version is None or schema_version[0] != OPENCLAW_STATE_SCHEMA_VERSION:";
       const script = originalScript
         .replace(schemaRead, attack)
         .replace(

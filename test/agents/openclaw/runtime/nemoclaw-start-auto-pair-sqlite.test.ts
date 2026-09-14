@@ -45,9 +45,12 @@ function startScriptHeredoc(src: string, marker: string): string {
 function autoPairPythonScript(src: string, tmpDir: string): string {
   const statusPath = path.join(tmpDir, "auto-pair-status.json");
   const policyPath = path.join(tmpDir, "openclaw_device_approval_policy.py");
+  const pairingStatePath = path.join(tmpDir, "openclaw_pairing_state.py");
   fs.writeFileSync(statusPath, "", { mode: 0o600 });
   fs.copyFileSync(path.join(APPROVAL_POLICY_DIR, "openclaw_device_approval_policy.py"), policyPath);
+  fs.copyFileSync(path.join(APPROVAL_POLICY_DIR, "openclaw_pairing_state.py"), pairingStatePath);
   fs.chmodSync(policyPath, 0o444);
+  fs.chmodSync(pairingStatePath, 0o444);
   return startScriptHeredoc(src, "PYAUTOPAIR")
     .replace(
       "APPROVAL_POLICY_FILE = '/usr/local/lib/nemoclaw/openclaw_device_approval_policy.py'",
@@ -116,6 +119,38 @@ CREATE TABLE device_pairing_pending (
   is_repair INTEGER,
   ts INTEGER NOT NULL,
   refreshed_at_ms INTEGER
+) STRICT;
+CREATE TABLE device_pairing_paired (
+  device_id TEXT NOT NULL PRIMARY KEY,
+  public_key TEXT NOT NULL,
+  display_name TEXT,
+  operator_label TEXT,
+  platform TEXT,
+  device_family TEXT,
+  client_id TEXT,
+  client_mode TEXT,
+  browser_origin TEXT,
+  role TEXT,
+  roles_json TEXT,
+  scopes_json TEXT,
+  approved_scopes_json TEXT,
+  remote_ip TEXT,
+  tokens_json TEXT,
+  approved_via TEXT,
+  node_surface_json TEXT,
+  pending_node_surface_json TEXT,
+  created_at_ms INTEGER NOT NULL,
+  approved_at_ms INTEGER NOT NULL,
+  last_seen_at_ms INTEGER,
+  last_seen_reason TEXT
+) STRICT;
+CREATE TABLE device_auth_tokens (
+  device_id TEXT NOT NULL,
+  role TEXT NOT NULL,
+  token TEXT NOT NULL,
+  scopes_json TEXT NOT NULL,
+  updated_at_ms INTEGER NOT NULL,
+  PRIMARY KEY (device_id, role)
 ) STRICT;
 PRAGMA user_version = 15;
 ''')
@@ -189,7 +224,9 @@ async function expectUnsafeCanonicalState(
   version: number,
   walContents: readonly string[] = [],
 ): Promise<void> {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auto-pair-reject-"));
+  const tmpDir = fs.realpathSync(
+    fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auto-pair-reject-")),
+  );
   const fakeOpenclaw = path.join(tmpDir, "openclaw");
   const stateDir = path.join(tmpDir, "state");
   const approveLog = path.join(tmpDir, "approve-called");
@@ -244,7 +281,9 @@ describe("nemoclaw-start canonical SQLite auto-pair bootstrap", () => {
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
 
   it("approves a gated initial CLI request from one read-only SQLite snapshot", async () => {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auto-pair-sqlite-"));
+    const tmpDir = fs.realpathSync(
+      fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auto-pair-sqlite-")),
+    );
     const fakeOpenclaw = path.join(tmpDir, "openclaw");
     const stateDir = path.join(tmpDir, "state");
     const identityDir = path.join(stateDir, "identity");
@@ -304,7 +343,9 @@ describe("nemoclaw-start canonical SQLite auto-pair bootstrap", () => {
   }, 40_000);
 
   it("fails closed instead of following a linked canonical SQLite database", async () => {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auto-pair-sqlite-reject-"));
+    const tmpDir = fs.realpathSync(
+      fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auto-pair-sqlite-reject-")),
+    );
     const fakeOpenclaw = path.join(tmpDir, "openclaw");
     const stateDir = path.join(tmpDir, "state");
     const identityDir = path.join(stateDir, "identity");

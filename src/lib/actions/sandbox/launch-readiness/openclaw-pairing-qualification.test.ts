@@ -14,6 +14,7 @@ import {
   buildAutoPairApprovalScript,
   parseAutoPairApprovalReceipt,
   readAutoPairApprovalPolicyModule,
+  readOpenClawPairingStateModule,
 } from "../auto-pair-approval";
 import {
   buildOpenClawPairingObservationScript,
@@ -175,16 +176,22 @@ CREATE TABLE device_identities (
   private_key_pem TEXT NOT NULL, created_at_ms INTEGER NOT NULL, updated_at_ms INTEGER NOT NULL
 );
 CREATE TABLE device_pairing_paired (
-  device_id TEXT PRIMARY KEY, public_key TEXT NOT NULL, client_id TEXT, client_mode TEXT,
-  role TEXT, roles_json TEXT, scopes_json TEXT, approved_scopes_json TEXT, tokens_json TEXT
+  device_id TEXT PRIMARY KEY, public_key TEXT NOT NULL, display_name TEXT,
+  operator_label TEXT, platform TEXT, device_family TEXT, client_id TEXT, client_mode TEXT,
+  browser_origin TEXT, role TEXT, roles_json TEXT, scopes_json TEXT,
+  approved_scopes_json TEXT, remote_ip TEXT, tokens_json TEXT, approved_via TEXT,
+  node_surface_json TEXT, pending_node_surface_json TEXT, created_at_ms INTEGER NOT NULL,
+  approved_at_ms INTEGER NOT NULL, last_seen_at_ms INTEGER, last_seen_reason TEXT
 );
 CREATE TABLE device_pairing_pending (
   request_id TEXT PRIMARY KEY, device_id TEXT NOT NULL, public_key TEXT NOT NULL,
-  client_id TEXT, client_mode TEXT, role TEXT, roles_json TEXT, scopes_json TEXT,
-  is_repair INTEGER
+  display_name TEXT, platform TEXT, device_family TEXT, client_id TEXT, client_mode TEXT,
+  browser_origin TEXT, role TEXT, roles_json TEXT, scopes_json TEXT, remote_ip TEXT,
+  silent INTEGER, is_repair INTEGER, ts INTEGER NOT NULL, refreshed_at_ms INTEGER
 );
 CREATE TABLE device_auth_tokens (
   device_id TEXT NOT NULL, role TEXT NOT NULL, token TEXT NOT NULL, scopes_json TEXT NOT NULL,
+  updated_at_ms INTEGER NOT NULL,
   PRIMARY KEY (device_id, role)
 );
 ''')
@@ -201,25 +208,27 @@ operator = {
   },
 }
 connection.execute(
-  'INSERT INTO device_pairing_paired VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+  'INSERT INTO device_pairing_paired VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
   (
-    value['deviceId'], value['publicKey'], 'cli', 'cli', 'operator', json.dumps(['operator']),
-    json.dumps(value['pairedScopes']), json.dumps(value['pairedScopes']), json.dumps(operator),
+    value['deviceId'], value['publicKey'], None, None, None, None, 'cli', 'cli', None,
+    'operator', json.dumps(['operator']), json.dumps(value['pairedScopes']),
+    json.dumps(value['pairedScopes']), None, json.dumps(operator), None, None, None,
+    1, 1, None, None,
   ),
 )
 connection.execute(
-  'INSERT INTO device_auth_tokens VALUES (?, ?, ?, ?)',
-  (value['deviceId'], 'operator', value['token'], json.dumps(value['scopes'])),
+  'INSERT INTO device_auth_tokens VALUES (?, ?, ?, ?, ?)',
+  (value['deviceId'], 'operator', value['token'], json.dumps(value['scopes']), 1),
 )
 for request in value.get('pending') or []:
   connection.execute(
-    'INSERT INTO device_pairing_pending VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    'INSERT INTO device_pairing_pending VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
     (
-      request['requestId'], request['deviceId'], request['publicKey'],
-      request.get('clientId'), request.get('clientMode'), request.get('role'),
+      request['requestId'], request['deviceId'], request['publicKey'], None, None, None,
+      request.get('clientId'), request.get('clientMode'), None, request.get('role'),
       json.dumps(request['roles']) if 'roles' in request else None,
       json.dumps(request['scopes']) if 'scopes' in request else None,
-      int(request['isRepair']) if 'isRepair' in request else None,
+      None, None, int(request['isRepair']) if 'isRepair' in request else None, 1, None,
     ),
   )
 connection.commit()
@@ -357,6 +366,22 @@ describe("OpenClaw launch-readiness pairing qualification", () => {
     );
   }
 
+  it("embeds the same packaged versioned pairing-state adapter as auto-pair approval", () => {
+    const adapter = readOpenClawPairingStateModule();
+    expect(adapter).toContain("ADAPTER_VERSION = 1");
+    expect(
+      buildOpenClawPairingObservationScript(
+        Buffer.from(POLICY, "utf8").toString("base64"),
+        stateDirectory,
+      ),
+    ).toContain(adapter);
+    expect(
+      buildAutoPairApprovalScript(Buffer.from(POLICY, "utf8").toString("base64"), {
+        localDeviceOnly: true,
+      }),
+    ).toContain(adapter);
+  });
+
   function writePairingOnlyState(): void {
     const pairedPath = path.join(stateDirectory, "devices", "paired.json");
     const authPath = path.join(stateDirectory, "identity", "device-auth.json");
@@ -384,7 +409,8 @@ describe("OpenClaw launch-readiness pairing qualification", () => {
         Buffer.from(POLICY, "utf8").toString("base64"),
         stateDirectory,
       );
-      const connect = "        connection = sqlite3.connect(database_uri, uri=True, timeout=0)";
+      const connect =
+        "        connection = sqlite3.connect(database_uri, uri=True, timeout=timeout)";
       const attack = [
         "        validated_path = database_path + '.validated'",
         "        os.rename(database_path, validated_path)",
@@ -430,7 +456,7 @@ describe("OpenClaw launch-readiness pairing qualification", () => {
         stateDirectory,
       );
       const schemaRead =
-        "        schema_version = connection.execute('PRAGMA user_version').fetchone()[0]";
+        '        schema_version = connection.execute("PRAGMA user_version").fetchone()';
       const attack = [
         "        os.rename(database_path + '-wal', database_path + '-wal.validated')",
         "        os.rename(database_path + '-shm', database_path + '-shm.validated')",
@@ -617,7 +643,7 @@ describe("OpenClaw launch-readiness pairing qualification", () => {
       const legacyFence = script.indexOf("assert_legacy_layout_current()", secondSnapshot);
       const projection = script.indexOf("identity = parse_json(first['identity'][0])");
 
-      expect(script).toContain("connection.execute('PRAGMA trusted_schema = OFF')");
+      expect(script).toContain('connection.execute("PRAGMA trusted_schema = OFF")');
       expect(secondSnapshot).toBeGreaterThan(-1);
       expect(legacyFence).toBeGreaterThan(secondSnapshot);
       expect(projection).toBeGreaterThan(legacyFence);

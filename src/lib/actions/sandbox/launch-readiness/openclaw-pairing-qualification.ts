@@ -8,7 +8,10 @@ import { resolveOpenshellBinary } from "../../../adapters/openshell/command-argv
 import type { LaunchReadinessOpenClawSessionQualification } from "../../../state/launch-readiness-lease";
 import { ROOT } from "../../../state/paths";
 import { WARMUP_TIMEOUT_MS, WATCHER_STATUS_TIMEOUT_MS } from "../auto-pair-warmup";
-import { readAutoPairApprovalPolicyModule } from "../auto-pair-approval";
+import {
+  readAutoPairApprovalPolicyModule,
+  readOpenClawPairingStateModule,
+} from "../auto-pair-approval";
 
 const QUALIFICATION_MARKER = "__NEMOCLAW_OPENCLAW_PAIRING_QUALIFICATION__=";
 const SETTLEMENT_MARKER = "__NEMOCLAW_OPENCLAW_PAIRING_SETTLEMENT__=";
@@ -191,6 +194,7 @@ export function buildOpenClawPairingObservationScript(
     | "repair-settlement"
     | "settlement" = "qualification",
 ): string {
+  const pairingStateModule = readOpenClawPairingStateModule();
   if (!path.posix.isAbsolute(stateDirectory)) {
     throw new OpenClawPairingQualificationError();
   }
@@ -198,6 +202,9 @@ export function buildOpenClawPairingObservationScript(
     !approvalPolicyModuleB64 ||
     Buffer.from(approvalPolicyModuleB64, "base64").toString("base64") !== approvalPolicyModuleB64
   ) {
+    throw new OpenClawPairingQualificationError();
+  }
+  if (!pairingStateModule) {
     throw new OpenClawPairingQualificationError();
   }
   const stateDirectoryB64 = Buffer.from(stateDirectory, "utf8").toString("base64");
@@ -221,13 +228,12 @@ import sqlite3
 import stat
 import subprocess
 import sys
-import urllib.parse
+
+${pairingStateModule}
 
 MARKER = ${JSON.stringify(marker)}
 MAX_ENTRY_BYTES = 512 * 1024
-MAX_SQLITE_BYTES = 1024 * 1024 * 1024
 MAX_SAFE_INTEGER = 9007199254740991
-OPENCLAW_STATE_SCHEMA_VERSION = 15
 REQUIRED_ROLES = ['operator']
 PAIRING_ONLY_SCOPES = ['operator.pairing']
 REQUEST_SCOPES = ['operator.pairing', 'operator.write']
@@ -299,27 +305,6 @@ def file_metadata(fd):
         or metadata.st_size > MAX_ENTRY_BYTES
     ):
         raise OSError('unsafe file')
-    return (
-        metadata.st_dev,
-        metadata.st_ino,
-        metadata.st_uid,
-        metadata.st_gid,
-        metadata.st_size,
-        metadata.st_mtime_ns,
-        metadata.st_mode & 0o7777,
-    )
-
-def sqlite_file_metadata(fd):
-    metadata = os.fstat(fd)
-    if (
-        not stat.S_ISREG(metadata.st_mode)
-        or metadata.st_nlink != 1
-        or metadata.st_gid != os.getegid()
-        or metadata.st_mode & 0o007
-        or metadata.st_size < 1
-        or metadata.st_size > MAX_SQLITE_BYTES
-    ):
-        raise OSError('unsafe sqlite database')
     return (
         metadata.st_dev,
         metadata.st_ino,
@@ -459,15 +444,6 @@ def read_legacy_snapshot(state_fd):
         if devices_fd >= 0:
             os.close(devices_fd)
 
-def optional(row, key, value):
-    if value is not None:
-        row[key] = value
-
-def parse_json_column(value):
-    if not isinstance(value, str):
-        raise ValueError('invalid sqlite JSON column')
-    return json.loads(value)
-
 def safe_timestamp(value):
     return type(value) is int and 0 <= value <= MAX_SAFE_INTEGER
 
@@ -514,296 +490,41 @@ def validate_identity_key_pair(public_key_pem, private_key_pem):
     if derived_public_key != expected_public_key:
         raise ValueError('identity key pair mismatch')
 
-def sqlite_sidecar_metadata(fd, require_nonempty):
-    metadata = os.fstat(fd)
-    if (
-        not stat.S_ISREG(metadata.st_mode)
-        or metadata.st_nlink != 1
-        or metadata.st_gid != os.getegid()
-        or metadata.st_mode & 0o007
-        or (require_nonempty and metadata.st_size < 1)
-        or metadata.st_size > MAX_SQLITE_BYTES
-    ):
-        raise OSError('unsafe sqlite sidecar')
-    return (
-        metadata.st_dev,
-        metadata.st_ino,
-        metadata.st_uid,
-        metadata.st_gid,
-        metadata.st_size,
-        metadata.st_mtime_ns,
-        metadata.st_mode & 0o7777,
-    )
-
-def sqlite_entry_is_current(sqlite_state_fd, name, fd, expected):
-    current = os.stat(name, dir_fd=sqlite_state_fd, follow_symlinks=False)
-    current_metadata = (
-        current.st_dev,
-        current.st_ino,
-        current.st_uid,
-        current.st_gid,
-        current.st_size,
-        current.st_mtime_ns,
-        current.st_mode & 0o7777,
-    )
-    descriptor_metadata = sqlite_sidecar_metadata(fd, name.endswith('-shm'))
-    if name.endswith('-shm'):
-        # SQLite's native WAL reader may update read marks in the existing SHM.
-        # Its identity and safety attributes must remain pinned; its mutable
-        # size/time fields are not state evidence and cannot be equality-fenced.
-        stable_fields = (0, 1, 2, 3, 6)
-        return all(
-            current_metadata[index] == expected[index]
-            and descriptor_metadata[index] == expected[index]
-            for index in stable_fields
-        )
-    return current_metadata == expected and descriptor_metadata == expected
-
-def open_wal_descriptors(sqlite_state_fd):
-    wal_fd = -1
-    shared_memory_fd = -1
-    try:
-        wal_fd = os.open('openclaw.sqlite-wal', file_flags, dir_fd=sqlite_state_fd)
-    except FileNotFoundError:
-        return None
-    try:
-        wal_metadata = sqlite_sidecar_metadata(wal_fd, False)
-        if not sqlite_entry_is_current(
-            sqlite_state_fd, 'openclaw.sqlite-wal', wal_fd, wal_metadata,
-        ):
-            raise StateChangedError('sqlite WAL changed')
-        try:
-            shared_memory_fd = os.open(
-                'openclaw.sqlite-shm', file_flags, dir_fd=sqlite_state_fd,
-            )
-        except FileNotFoundError as error:
-            # A read-only connection to the source would otherwise create the
-            # missing SHM sidecar. Retry until the canonical writer publishes it.
-            raise StateChangedError('sqlite WAL is not reader-ready') from error
-        shared_memory_metadata = sqlite_sidecar_metadata(shared_memory_fd, True)
-        if not sqlite_entry_is_current(
-            sqlite_state_fd,
-            'openclaw.sqlite-shm',
-            shared_memory_fd,
-            shared_memory_metadata,
-        ):
-            raise StateChangedError('sqlite shared memory changed')
-        return (wal_fd, wal_metadata, shared_memory_fd, shared_memory_metadata)
-    except Exception:
-        if shared_memory_fd >= 0:
-            os.close(shared_memory_fd)
-        os.close(wal_fd)
-        raise
-
-def regular_open_file_identity_counts():
-    descriptor_root = next(
-        (candidate for candidate in ('/proc/self/fd', '/dev/fd') if os.path.isdir(candidate)),
-        None,
-    )
-    if descriptor_root is None:
-        raise OSError('open descriptor census is unavailable')
-    counts = {}
-    for name in os.listdir(descriptor_root):
-        if not name.isdecimal():
-            continue
-        try:
-            metadata = os.fstat(int(name))
-        except OSError:
-            continue
-        if stat.S_ISREG(metadata.st_mode):
-            identity = (metadata.st_dev, metadata.st_ino)
-            counts[identity] = counts.get(identity, 0) + 1
-    return counts, descriptor_root
-
-def require_sqlite_vfs_descriptor(counts, baseline, fd, expected_delta):
-    metadata = os.fstat(fd)
-    identity = (metadata.st_dev, metadata.st_ino)
-    if counts.get(identity, 0) != baseline.get(identity, 0) + expected_delta:
-        raise StateChangedError('sqlite reopened an unvalidated file identity')
-
 def read_sqlite_snapshot(state_fd, sqlite_state_fd):
-    database_fd = os.open('openclaw.sqlite', file_flags, dir_fd=sqlite_state_fd)
-    connection = None
-    wal_descriptors = None
-    try:
-        before = sqlite_file_metadata(database_fd)
-        current = os.stat('openclaw.sqlite', dir_fd=sqlite_state_fd, follow_symlinks=False)
-        if (
-            current.st_dev,
-            current.st_ino,
-            current.st_uid,
-            current.st_gid,
-            current.st_size,
-            current.st_mtime_ns,
-            current.st_mode & 0o7777,
-        ) != before:
-            raise StateChangedError('sqlite database changed')
-        wal_descriptors = open_wal_descriptors(sqlite_state_fd)
-        descriptor_baseline, descriptor_root = regular_open_file_identity_counts()
-        database_path = os.path.join(STATE_DIR, 'state', 'openclaw.sqlite')
-        # Native mode=ro preserves SQLite's coherent committed-WAL view without
-        # writing DB/WAL. It may update read marks in the already-existing SHM
-        # coordination cache; the pre-open descriptor requirement prevents this
-        # observer from creating a new source sidecar.
-        database_uri = 'file:' + urllib.parse.quote(database_path, safe='/') + '?mode=ro'
-        if wal_descriptors is None:
-            database_uri += '&immutable=1'
-        connection = sqlite3.connect(database_uri, uri=True, timeout=0)
-        after_connect, _ = regular_open_file_identity_counts()
-        require_sqlite_vfs_descriptor(
-            after_connect, descriptor_baseline, database_fd, 1,
-        )
-        connection.row_factory = sqlite3.Row
-        connection.execute('PRAGMA query_only = ON')
-        connection.execute('PRAGMA trusted_schema = OFF')
-        connection.execute('BEGIN')
-        schema_version = connection.execute('PRAGMA user_version').fetchone()[0]
-        after_schema_read, _ = regular_open_file_identity_counts()
-        require_sqlite_vfs_descriptor(
-            after_schema_read, descriptor_baseline, database_fd, 1,
-        )
-        if wal_descriptors is not None:
-            require_sqlite_vfs_descriptor(
-                after_schema_read, descriptor_baseline, wal_descriptors[0], 1,
-            )
-            shared_memory_identity = (
-                wal_descriptors[3][0], wal_descriptors[3][1],
-            )
-            shared_memory_delta = (
-                after_schema_read.get(shared_memory_identity, 0)
-                - descriptor_baseline.get(shared_memory_identity, 0)
-            )
-            if descriptor_root == '/proc/self/fd' or shared_memory_delta != 0:
-                require_sqlite_vfs_descriptor(
-                    after_schema_read, descriptor_baseline, wal_descriptors[2], 1,
-                )
-        if type(schema_version) is not int or schema_version != OPENCLAW_STATE_SCHEMA_VERSION:
-            raise ValueError('unsupported sqlite schema version')
-        identities = connection.execute(
-            "SELECT identity_key, device_id, public_key_pem, private_key_pem, "
-            "created_at_ms, updated_at_ms "
-            "FROM device_identities WHERE identity_key = 'primary'",
-        ).fetchall()
-        if len(identities) != 1:
-            raise ValueError('invalid primary identity cardinality')
-        identity_row = identities[0]
-        if (
-            not safe_timestamp(identity_row['created_at_ms'])
-            or not safe_timestamp(identity_row['updated_at_ms'])
-        ):
-            raise ValueError('invalid identity timestamps')
-        validate_identity_key_pair(
-            identity_row['public_key_pem'], identity_row['private_key_pem'],
-        )
-        device_id = identity_row['device_id']
-
-        paired = {}
-        for source in connection.execute(
-            'SELECT device_id, public_key, client_id, client_mode, role, roles_json, '
-            'scopes_json, approved_scopes_json, tokens_json FROM device_pairing_paired '
-            'ORDER BY device_id',
-        ):
-            row = {
-                'deviceId': source['device_id'],
-                'publicKey': source['public_key'],
-            }
-            optional(row, 'clientId', source['client_id'])
-            optional(row, 'clientMode', source['client_mode'])
-            optional(row, 'role', source['role'])
-            optional(row, 'roles', parse_json_column(source['roles_json']) if source['roles_json'] is not None else None)
-            optional(row, 'scopes', parse_json_column(source['scopes_json']) if source['scopes_json'] is not None else None)
-            optional(row, 'approvedScopes', parse_json_column(source['approved_scopes_json']) if source['approved_scopes_json'] is not None else None)
-            optional(row, 'tokens', parse_json_column(source['tokens_json']) if source['tokens_json'] is not None else None)
-            paired[source['device_id']] = row
-
-        pending = {}
-        for source in connection.execute(
-            'SELECT request_id, device_id, public_key, client_id, client_mode, role, '
-            'roles_json, scopes_json, is_repair FROM device_pairing_pending ORDER BY request_id',
-        ):
-            row = {
-                'requestId': source['request_id'],
-                'deviceId': source['device_id'],
-                'publicKey': source['public_key'],
-            }
-            optional(row, 'clientId', source['client_id'])
-            optional(row, 'clientMode', source['client_mode'])
-            optional(row, 'role', source['role'])
-            optional(row, 'roles', parse_json_column(source['roles_json']) if source['roles_json'] is not None else None)
-            optional(row, 'scopes', parse_json_column(source['scopes_json']) if source['scopes_json'] is not None else None)
-            optional(row, 'isRepair', source['is_repair'] != 0 if source['is_repair'] is not None else None)
-            pending[source['request_id']] = row
-
-        auth_tokens = {}
-        for source in connection.execute(
-            'SELECT role, token, scopes_json FROM device_auth_tokens '
-            'WHERE device_id = ? ORDER BY role',
-            (device_id,),
-        ):
-            auth_tokens[source['role']] = {
-                'role': source['role'],
-                'token': source['token'],
-                'scopes': parse_json_column(source['scopes_json']),
-            }
-        if wal_descriptors is None:
-            late_wal_descriptors = open_wal_descriptors(sqlite_state_fd)
-            if late_wal_descriptors is not None:
-                os.close(late_wal_descriptors[2])
-                os.close(late_wal_descriptors[0])
-                raise StateChangedError('sqlite WAL changed')
-        else:
-            if not sqlite_entry_is_current(
-                sqlite_state_fd,
-                'openclaw.sqlite-wal',
-                wal_descriptors[0],
-                wal_descriptors[1],
-            ) or not sqlite_entry_is_current(
-                sqlite_state_fd,
-                'openclaw.sqlite-shm',
-                wal_descriptors[2],
-                wal_descriptors[3],
-            ):
-                raise StateChangedError('sqlite WAL changed')
-        connection.execute('COMMIT')
-        after = sqlite_file_metadata(database_fd)
-        current = os.stat('openclaw.sqlite', dir_fd=sqlite_state_fd, follow_symlinks=False)
-        if before != after or (
-            current.st_dev,
-            current.st_ino,
-            current.st_uid,
-            current.st_gid,
-            current.st_size,
-            current.st_mtime_ns,
-            current.st_mode & 0o7777,
-        ) != after or not state_root_is_current(state_fd) or not directory_is_current(state_fd, 'state', sqlite_state_fd):
-            raise StateChangedError('sqlite database changed')
-        return {
-            'layout': 'sqlite',
-            'directories': [directory_metadata(state_fd), directory_metadata(sqlite_state_fd)],
-            'identity': (json.dumps({
-                'deviceId': device_id,
-                'publicKeyPem': identity_row['public_key_pem'],
-                'privateKeyPem': identity_row['private_key_pem'],
-            }, sort_keys=True).encode('utf-8'), before),
-            'auth': (json.dumps({
-                'version': 1,
-                'deviceId': device_id,
-                'tokens': auth_tokens,
-            }, sort_keys=True).encode('utf-8'), before),
-            'paired': (json.dumps(paired, sort_keys=True).encode('utf-8'), before),
-            'pending': (json.dumps(pending, sort_keys=True).encode('utf-8'), before),
-        }
-    except sqlite3.OperationalError as error:
-        if 'locked' in str(error).lower() or 'busy' in str(error).lower():
-            raise StateChangedError('sqlite database is busy') from error
-        raise
-    finally:
-        if connection is not None:
-            connection.close()
-        if wal_descriptors is not None:
-            os.close(wal_descriptors[2])
-            os.close(wal_descriptors[0])
-        os.close(database_fd)
+    records, database_metadata = read_openclaw_pairing_state(
+        STATE_DIR,
+        timeout=0,
+        state_fd=state_fd,
+        sqlite_state_fd=sqlite_state_fd,
+    )
+    identity = records['identity']
+    identity_timestamps = records['identityTimestamps']
+    if (
+        not safe_timestamp(identity_timestamps['createdAtMs'])
+        or not safe_timestamp(identity_timestamps['updatedAtMs'])
+    ):
+        raise ValueError('invalid identity timestamps')
+    validate_identity_key_pair(
+        identity['publicKeyPem'], identity['privateKeyPem'],
+    )
+    device_id = identity['deviceId']
+    auth_tokens = records['authByDevice'].get(device_id, {})
+    return {
+        'layout': 'sqlite',
+        'directories': [directory_metadata(state_fd), directory_metadata(sqlite_state_fd)],
+        'identity': (json.dumps({
+            'deviceId': device_id,
+            'publicKeyPem': identity['publicKeyPem'],
+            'privateKeyPem': identity['privateKeyPem'],
+        }, sort_keys=True).encode('utf-8'), database_metadata),
+        'auth': (json.dumps({
+            'version': 1,
+            'deviceId': device_id,
+            'tokens': auth_tokens,
+        }, sort_keys=True).encode('utf-8'), database_metadata),
+        'paired': (json.dumps(records['paired'], sort_keys=True).encode('utf-8'), database_metadata),
+        'pending': (json.dumps(records['pending'], sort_keys=True).encode('utf-8'), database_metadata),
+    }
 
 def read_snapshot():
     state_fd = open_state_root()
@@ -1080,7 +801,7 @@ try:
         'requiredScopes': TOKEN_SCOPES,
     }
     print(MARKER + json.dumps(projection, sort_keys=True, separators=(',', ':')))
-except (FileNotFoundError, StateChangedError):
+except (FileNotFoundError, StateChangedError, OpenClawPairingStateRetryableError):
     retry_observation()
 except (OSError, ValueError, TypeError, KeyError, binascii.Error, UnicodeError, sqlite3.Error):
     reject()
