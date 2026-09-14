@@ -87,3 +87,33 @@ fn bundles_retain_the_license_from_the_verified_opentofu_archive() {
     );
     assert!(nemoclaw_build::extract_tofu_license(&archive("tofu", b"binary")).is_err());
 }
+
+#[test]
+fn extracted_sources_build_without_git_and_ignore_generated_outputs() {
+    let root = tempfile::tempdir().unwrap();
+    for name in [
+        "Cargo.toml",
+        "Cargo.lock",
+        "rust-toolchain.toml",
+        "versions.json",
+        "LICENSE",
+        "crates/sdk/src/lib.rs",
+        "runtimes/qwen38/Dockerfile",
+    ] {
+        let file = root.path().join(name);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(file, name).unwrap();
+    }
+    let first = nemoclaw_build::source_inputs(root.path()).unwrap();
+    assert_eq!(first.len(), 7);
+    for name in [
+        "target/output",
+        ".local/secret",
+        "crates/sdk/target/generated.rs",
+    ] {
+        let file = root.path().join(name);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(file, b"ignored").unwrap();
+    }
+    assert_eq!(first, nemoclaw_build::source_inputs(root.path()).unwrap());
+}

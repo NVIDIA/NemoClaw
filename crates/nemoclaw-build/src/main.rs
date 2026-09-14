@@ -35,6 +35,7 @@ struct Artifact {
 #[derive(Deserialize)]
 struct Pins {
     rust: String,
+    protobuf: String,
     opentofu: String,
     platforms: BTreeMap<String, BTreeMap<String, Artifact>>,
 }
@@ -54,38 +55,7 @@ fn run(command: &mut Command) -> Result<()> {
     Ok(())
 }
 fn sources() -> Result<Vec<(String, Vec<u8>)>> {
-    let output = Command::new("git")
-        .args([
-            "ls-files",
-            "-z",
-            "--cached",
-            "--others",
-            "--exclude-standard",
-        ])
-        .output()?;
-    if !output.status.success() {
-        return Err("cannot enumerate source inputs".into());
-    }
-    let mut files = BTreeMap::new();
-    for name in output.stdout.split(|b| *b == 0).filter(|n| !n.is_empty()) {
-        let name = std::str::from_utf8(name)?;
-        if !Path::new(name).exists() {
-            continue;
-        }
-        if !fs::symlink_metadata(name)?.is_file() {
-            return Err("source inputs must be regular files".into());
-        }
-        if name.starts_with("crates/")
-            || name.starts_with("runtimes/")
-            || matches!(
-                name,
-                "Cargo.toml" | "Cargo.lock" | "rust-toolchain.toml" | "versions.json" | "LICENSE"
-            )
-        {
-            files.insert(name.into(), fs::read(name)?);
-        }
-    }
-    Ok(files.into_iter().collect())
+    Ok(nemoclaw_build::source_inputs(Path::new("."))?)
 }
 async fn download(artifact: &Artifact) -> Result<Vec<u8>> {
     let directory = Path::new(".build/downloads");
@@ -251,6 +221,14 @@ async fn main() -> Result<()> {
         || !String::from_utf8(version.stdout)?.starts_with(&format!("cargo {} ", pins.rust))
     {
         return Err("build requires the pinned Rust toolchain".into());
+    }
+    let protoc = Command::new(std::env::var_os("PROTOC").unwrap_or_else(|| "protoc".into()))
+        .arg("--version")
+        .output()?;
+    if !protoc.status.success()
+        || String::from_utf8(protoc.stdout)?.trim() != format!("libprotoc {}", pins.protobuf)
+    {
+        return Err("build requires the pinned Protocol Buffers compiler".into());
     }
     match cli.command {
         Action::Bundle { platform } => {

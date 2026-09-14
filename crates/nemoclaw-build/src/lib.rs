@@ -108,3 +108,52 @@ pub fn verify_source_version(expected: &str, files: &[(String, Vec<u8>)]) -> Res
     }
     Ok(())
 }
+
+pub fn source_inputs(root: &std::path::Path) -> Result<Vec<(String, Vec<u8>)>, String> {
+    use std::{collections::BTreeMap, fs, path::Path};
+    fn collect(
+        root: &Path,
+        path: &Path,
+        files: &mut BTreeMap<String, Vec<u8>>,
+    ) -> Result<(), String> {
+        let metadata = fs::symlink_metadata(path).map_err(|_| "source input is unavailable")?;
+        if metadata.is_dir() {
+            for entry in fs::read_dir(path).map_err(|_| "cannot enumerate source inputs")? {
+                let entry = entry.map_err(|_| "source entry unavailable")?;
+                let name = entry.file_name();
+                let name = name.to_string_lossy();
+                if name.starts_with('.') || name == "target" {
+                    continue;
+                }
+                collect(root, &entry.path(), files)?;
+            }
+        } else if metadata.is_file() {
+            let name = path
+                .strip_prefix(root)
+                .map_err(|_| "source outside root")?
+                .to_str()
+                .ok_or("source name is not UTF-8")?
+                .replace('\\', "/");
+            files.insert(
+                name,
+                fs::read(path).map_err(|_| "source input is unreadable")?,
+            );
+        } else {
+            return Err("source inputs must be regular files".into());
+        }
+        Ok(())
+    }
+    let mut files = BTreeMap::new();
+    for name in [
+        "Cargo.toml",
+        "Cargo.lock",
+        "rust-toolchain.toml",
+        "versions.json",
+        "LICENSE",
+        "crates",
+        "runtimes",
+    ] {
+        collect(root, &root.join(name), &mut files)?;
+    }
+    Ok(files.into_iter().collect())
+}
