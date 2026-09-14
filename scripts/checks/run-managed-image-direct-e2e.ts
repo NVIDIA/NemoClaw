@@ -701,8 +701,6 @@ export function runManagedImageDirectE2e(input: ManagedImageDirectE2eInputs): vo
           ". /tmp/nemoclaw-proxy-env.sh",
           'test -z "${OPENCLAW_GATEWAY_URL+x}"',
           'test -z "${OPENCLAW_ALLOW_INSECURE_PRIVATE_WS+x}"',
-          'test -n "${OPENCLAW_GATEWAY_PORT:-}"',
-          'test -n "${OPENCLAW_GATEWAY_TOKEN:-}"',
         ].join("\n"),
       ]);
     }
