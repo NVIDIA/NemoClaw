@@ -188,10 +188,18 @@ describe("GPU E2E helpers", () => {
       artifacts: { stdout: "", stderr: "", result: "" },
     }));
     try {
-      const ready = waitForAttachedOllama(new HostCliClient({ run }), {});
+      const ready = waitForAttachedOllama(new HostCliClient({ run }), {}, "cleanup-ready");
+      const artifactName = `cleanup-ready-attempt-${String(attempts).padStart(2, "0")}`;
       const checked = reason
-        ? expect(ready).rejects.toMatchObject({ reason, lastAttempt: { attempt: attempts } })
-        : expect(ready).resolves.toMatchObject({ attempt: attempts, value: { exitCode: 0 } });
+        ? expect(ready).rejects.toMatchObject({
+            reason,
+            lastAttempt: { attempt: attempts, artifactName },
+          })
+        : expect(ready).resolves.toMatchObject({
+            attempt: attempts,
+            artifactName,
+            value: { exitCode: 0 },
+          });
       await Promise.all([checked, vi.runAllTimersAsync()]);
       expect(run).toHaveBeenCalledTimes(attempts);
     } finally {

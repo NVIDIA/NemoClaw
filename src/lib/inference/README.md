@@ -63,3 +63,8 @@ a provider profile. Export records an explicit absent-profile observation only w
 profile read returns not found. Other read failures and missing workspace profiles remain terminal.
 Both snapshots include the profile evidence, so adding or replacing a profile during export prevents
 publication. Present profiles still undergo the existing complete boundary validation.
+
+Ollama onboarding records no user credential. Export still requires the gateway provider to declare
+exactly the internal `NEMOCLAW_OLLAMA_PROXY_TOKEN` credential used by the managed proxy. It accepts
+either an absent user-credential selection or that explicit internal credential name, verifies the
+live proxy, and omits the credential from the exported document.

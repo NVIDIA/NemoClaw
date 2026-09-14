@@ -29,10 +29,14 @@ export function startAttachedOllama(progress: TestProgress, environment: NodeJS.
   return ownChildProcess(child);
 }
 
-export function waitForAttachedOllama(host: HostCliClient, environment: NodeJS.ProcessEnv) {
+export function waitForAttachedOllama(
+  host: HostCliClient,
+  environment: NodeJS.ProcessEnv,
+  artifactPrefix = "export-daemon-ready",
+) {
   // Connection refusal and curl timeouts are transient while this fixture's child starts.
   return pollUntil({
-    artifactPrefix: "export-daemon-ready",
+    artifactPrefix,
     attempts: 20,
     delayMs: 500,
     probe: (_attempt, artifactName) =>

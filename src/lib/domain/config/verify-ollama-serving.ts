@@ -53,7 +53,7 @@ export function validateOllamaServing(snapshot: QualifiedExportSnapshot): Export
         inference.topology,
         inference.provider,
         inference.api,
-        inference.credentialEnv,
+        inference.credentialEnv ?? OLLAMA_LOCAL_CREDENTIAL_ENV,
         inference.model,
         inference.endpoint,
         snapshot.sandbox.providerNames.filter((name) => name === inference.provider),

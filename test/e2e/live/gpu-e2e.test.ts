@@ -553,7 +553,7 @@ test(
     // Sandbox destruction unloads models through the saved endpoint, so restore it during cleanup.
     cleanup.trackDisposable("restore the fixture daemon for model cleanup", async () => {
       daemonOwner = startAttachedOllama(progress, exportEnv);
-      await waitForAttachedOllama(host, exportEnv);
+      await waitForAttachedOllama(host, exportEnv, "export-cleanup-daemon-ready");
     });
     const rejectedPath = path.join(directory, "must-not-exist.yaml");
     const rejected = await host.command(

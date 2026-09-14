@@ -92,16 +92,29 @@ function mockOllamaSource() {
 
 describe("attached Ollama export pipeline", () => {
   it.each([
-    { name: "legacy global", workspace: "", readProfile: () => Promise.reject({ code: 5 }) },
+    {
+      name: "legacy global without a user credential",
+      workspace: "",
+      credentialEnv: null,
+      readProfile: () => Promise.reject({ code: 5 }),
+    },
     {
       name: "qualified workspace",
       workspace: "default",
+      credentialEnv: null,
       readProfile: () => Promise.resolve(openAiProviderProfile()),
+    },
+    {
+      name: "explicit internal proxy credential",
+      workspace: "",
+      credentialEnv: OLLAMA_LOCAL_CREDENTIAL_ENV,
+      readProfile: () => Promise.reject({ code: 5 }),
     },
   ])(
     "exports the $name binding without reading gateway credentials (#11435)",
-    async ({ workspace, readProfile }) => {
-      const { observed, probe, readCredential, localProvider } = mockOllamaSource();
+    async ({ workspace, credentialEnv, readProfile }) => {
+      const { source, observed, probe, readCredential, localProvider } = mockOllamaSource();
+      source.credentialEnv = credentialEnv;
       localProvider.profileWorkspace = workspace;
       raw.getProviderProfile.mockImplementation(readProfile);
       const { result, writeStdout, publish } = await exportLiveSource();
@@ -130,6 +143,21 @@ describe("attached Ollama export pipeline", () => {
         /NEMOCLAW_OLLAMA_PROXY_TOKEN|credential-canary-value|host\.openshell\.internal/u,
       );
       expect(publish).not.toHaveBeenCalled();
+    },
+  );
+  it.each([
+    { name: "missing", credentials: {} },
+    { name: "different", credentials: { OTHER_TOKEN: "redacted" } },
+    {
+      name: "additional",
+      credentials: { [OLLAMA_LOCAL_CREDENTIAL_ENV]: "redacted", OTHER_TOKEN: "redacted" },
+    },
+  ])(
+    "refuses $name gateway proxy credentials without user credentials (#11435)",
+    async ({ credentials }) => {
+      const { localProvider } = mockOllamaSource();
+      localProvider.credentials = credentials;
+      expectExportRefusal(await exportLiveSource(), { category: "live-verification-failed" });
     },
   );
   it("sanitizes a failed or legacy proxy observation and publishes nothing (#11435)", async () => {
