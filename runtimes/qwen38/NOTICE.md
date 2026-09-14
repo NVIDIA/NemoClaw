@@ -27,7 +27,8 @@ source retrieval. Nothing from this experiment is published automatically.
 
 The Rust supervisor and workspace source are retained in
 `/opt/nemoclaw/source/supervisor-source.tar.gz`. The archive includes `Cargo.lock`,
-vendored dependencies with their original licenses, and Cargo source replacement
-configuration. `supervisor.json` records the compiler version, source version,
+vendored dependencies with their original licenses, OpenShell protobuf build
+inputs and license, and Cargo source replacement configuration. The supervisor
+is compiled offline from that exact archive. `supervisor.json` records the compiler version, source version,
 binary hash, and archive hash. Building requires the pinned Rust toolchain,
 Protocol Buffers compiler, and a native C build toolchain.

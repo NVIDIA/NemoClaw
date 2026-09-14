@@ -42,7 +42,6 @@ pub(super) async fn build_runtime(pins: &Pins) -> Result<()> {
         sha256: recipe.recipe_archive_sha256,
     })
     .await?;
-    build(&["nemoclaw-runtime"], "aarch64-unknown-linux-gnu")?;
     let root = Path::new(".build/spark");
     let context = root.join("context");
     fs::create_dir_all(&context)?;
@@ -67,10 +66,12 @@ pub(super) async fn build_runtime(pins: &Pins) -> Result<()> {
         .collect();
     files.push((".cargo/config.toml".into(), config_path));
     vendor_files(&vendor, &vendor, &mut files)?;
+    openshell_sources(&mut files)?;
     fs::write(
         context.join("supervisor-source.tar.gz"),
         nemoclaw_build::source_archive(&files, recipe.source_date_epoch)?,
     )?;
+    let binary = build_retained_source(root, &context.join("supervisor-source.tar.gz"))?;
     fs::write(context.join("recipe.tar.gz"), archive)?;
     for name in [
         "Dockerfile",
@@ -88,10 +89,7 @@ pub(super) async fn build_runtime(pins: &Pins) -> Result<()> {
         )?;
     }
     fs::copy("LICENSE", context.join("LICENSE"))?;
-    fs::copy(
-        "target/aarch64-unknown-linux-gnu/release/nemoclaw-spark",
-        context.join("nemoclaw-spark"),
-    )?;
+    fs::copy(binary, context.join("nemoclaw-spark"))?;
     let metadata = json!({"rust":pins.rust,"sourceVersion":version,"nemoclaw-spark":bundle::hash_file(&context.join("nemoclaw-spark"))?,"supervisor-source.tar.gz":bundle::hash_file(&context.join("supervisor-source.tar.gz"))?});
     fs::write(
         context.join("supervisor.json"),
@@ -117,4 +115,93 @@ pub(super) async fn build_runtime(pins: &Pins) -> Result<()> {
         .arg(&context))?;
     run(Command::new("docker").args(["load", "-i"]).arg(output))?;
     Ok(())
+}
+
+fn openshell_sources(files: &mut Vec<(String, PathBuf)>) -> Result<()> {
+    let metadata = cargo()
+        .args(["metadata", "--locked", "--offline", "--format-version", "1"])
+        .output()?;
+    if !metadata.status.success() {
+        return Err("cannot locate pinned OpenShell build inputs".into());
+    }
+    let metadata: serde_json::Value = serde_json::from_slice(&metadata.stdout)?;
+    let packages = metadata["packages"]
+        .as_array()
+        .ok_or("incomplete dependency metadata")?;
+    let packages: Vec<_> = packages
+        .iter()
+        .filter(|p| p["name"] == "openshell-core")
+        .collect();
+    if packages.len() != 1 {
+        return Err("ambiguous OpenShell source package".into());
+    }
+    let manifest = Path::new(
+        packages[0]["manifest_path"]
+            .as_str()
+            .ok_or("missing OpenShell source path")?,
+    );
+    let root = manifest
+        .parent()
+        .ok_or("missing OpenShell source directory")?
+        .join("../..");
+    let proto = root.join("proto");
+    let mut paths = Vec::new();
+    vendor_files(&proto, &proto, &mut paths)?;
+    if !paths
+        .iter()
+        .any(|(name, _)| name.ends_with("openshell.proto"))
+    {
+        return Err("OpenShell protobuf sources are incomplete".into());
+    }
+    files.extend(
+        paths
+            .into_iter()
+            .map(|(name, path)| (name.replacen("vendor/", "proto/", 1), path)),
+    );
+    let retained = root.join("licenses/openshell-LICENSE");
+    files.push((
+        "licenses/openshell-LICENSE".into(),
+        if retained.is_file() {
+            retained
+        } else {
+            root.join("LICENSE")
+        },
+    ));
+    Ok(())
+}
+
+fn build_retained_source(root: &Path, archive: &Path) -> Result<PathBuf> {
+    let source = tempfile::tempdir_in(root)?;
+    tar::Archive::new(flate2::read::GzDecoder::new(fs::File::open(archive)?))
+        .unpack(source.path())?;
+    let directory = source.path().canonicalize()?;
+    let target = root.join("runtime-target");
+    fs::create_dir_all(&target)?;
+    let target = target.canonicalize()?;
+    let prefix = directory.to_str().ok_or("build source path is not UTF-8")?;
+    // Compile the exact retained files, using their vendored dependency layout.
+    // Neither dependency cache paths nor a parent repository version may leak
+    // into the binary's inputs when the archive is rebuilt elsewhere.
+    run(cargo()
+        .current_dir(&directory)
+        .args([
+            "build",
+            "--locked",
+            "--offline",
+            "--release",
+            "--target",
+            "aarch64-unknown-linux-gnu",
+            "-p",
+            "nemoclaw-runtime",
+        ])
+        .env_remove("CARGO_ENCODED_RUSTFLAGS")
+        .env("CARGO_TARGET_DIR", &target)
+        .env("GIT_CEILING_DIRECTORIES", &directory)
+        .env(
+            "RUSTFLAGS",
+            format!("--remap-path-prefix={prefix}=/workspace"),
+        )
+        .env("CFLAGS", format!("-ffile-prefix-map={prefix}=/workspace"))
+        .env("CXXFLAGS", format!("-ffile-prefix-map={prefix}=/workspace")))?;
+    Ok(target.join("aarch64-unknown-linux-gnu/release/nemoclaw-spark"))
 }

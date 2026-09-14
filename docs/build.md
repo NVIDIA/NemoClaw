@@ -29,7 +29,10 @@ cargo run -p nemoclaw-build -- spark-runtime
 
 The fixed recipe downloads a checksum-verified source archive, builds the Rust
 supervisor, vendors locked dependencies and their licenses, and assembles a
-source archive with normalized timestamps. The Dockerfile applies the pinned
+source archive with normalized timestamps. It compiles the supervisor offline
+from that exact archive, including OpenShell protobuf inputs that Cargo vendoring
+does not collect. Dependency paths and parent Git metadata are excluded from
+the compiler inputs. The Dockerfile applies the pinned
 patches to the pinned base image and retains the original and modified sources.
 It exports `.build/spark/runtime.tar` and loads the image locally as
 `nc-prototype-qwen38:spark-rust-v1`. This command does not launch inference or
