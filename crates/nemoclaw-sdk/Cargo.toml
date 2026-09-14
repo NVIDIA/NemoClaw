@@ -29,3 +29,7 @@ reqwest.workspace = true
 futures-util.workspace = true
 bollard.workspace = true
 tar.workspace = true
+time.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+rustix.workspace = true

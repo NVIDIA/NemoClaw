@@ -45,3 +45,17 @@ These tests cover shared SDK/CLI state, interrupted creation, unchanged apply,
 readiness failure without replacement, failed observation without state loss,
 export/reapply, interrupted destroy, and retained workspace recovery. The
 fixture returns protocol responses; it does not establish live agent inference.
+
+Read-only live storage qualification requires an explicit OpenTofu runtime state
+file containing the experiment's retained inference volume binding:
+
+```sh
+NEMOCLAW_TEST_RUNTIME_STATE=/absolute/path/to/runtime/terraform.tfstate \
+  cargo test -p nemoclaw-sdk --test managed_live \
+  retained_inference_volume_preserves_its_reference_binding -- --ignored
+```
+
+The separate `existing_spark_runtime_bindings_are_observed_without_mutations`
+test requires both gateway and inference container bindings to exist. Neither
+read-only test creates resources or establishes live agent inference. Retained
+volume evidence is in `validation/rust-storage-linux-arm64.json`.

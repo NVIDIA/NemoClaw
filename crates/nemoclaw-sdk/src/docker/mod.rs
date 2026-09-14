@@ -95,6 +95,22 @@ impl Engine {
             .await
             .map_err(|_| ObservationError::Transport)?
     }
+    pub async fn stat_file(
+        &self,
+        id: &str,
+        path: &str,
+    ) -> Result<Option<bollard::container::PathStatResponse>, Error> {
+        optional(
+            self.api
+                .get_container_archive_info(
+                    id,
+                    Some(bollard::query_parameters::ContainerArchiveInfoOptions {
+                        path: path.into(),
+                    }),
+                )
+                .await,
+        )
+    }
     pub async fn write_files(
         &self,
         id: &str,

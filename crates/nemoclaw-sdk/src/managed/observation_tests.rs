@@ -138,3 +138,13 @@ fn gateway_identity_includes_signing_key_and_persisted_encryption_key() {
         gateway_identity(base, signing, Some(&[8; 32]), 2).unwrap()
     );
 }
+
+#[tokio::test]
+async fn invalid_managed_capacity_requests_fail_before_host_observation() {
+    let (mut spec, _, _, _) = reference();
+    spec.owner.clear();
+    let fixture = Fixture::start(|_| panic!("invalid spec reached engine")).await;
+    let engine = fixture.engine_for(&spec.gateway.engine);
+    let error = engine.check_capacity(&spec, None).await.unwrap_err();
+    assert!(matches!(error, Error::Conflict(_)));
+}

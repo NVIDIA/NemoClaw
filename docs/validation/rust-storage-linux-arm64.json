@@ -1,0 +1,20 @@
+{
+  "observedAt": "2026-09-14T19:34:22Z",
+  "platform": "linux_arm64",
+  "referenceRevision": "b549ccd43e6102b72aa9c65ee17abfe3c429fc0b",
+  "test": "retained_inference_volume_preserves_its_reference_binding",
+  "result": "passed",
+  "runtimeEffects": 0,
+  "stateUnchanged": true,
+  "stateSHA256": "150d8d094b0528f989d7fc26a9aae939bb6a0800db10d5f7c6ec38857cf07f50",
+  "sourceSHA256": {
+    "crates/nemoclaw-sdk/tests/managed_live.rs": "2701134ed9456565db10d5ff44e44f14f546b455103865a87ac328b62320deb7",
+    "crates/nemoclaw-sdk/src/managed/storage.rs": "27cebd89fa9efc67f86fb6581a18f4d05d3b5e6fb24fed18da471cd9af62f4ec",
+    "crates/nemoclaw-sdk/src/docker/mod.rs": "ff815ca0208c6e2d6beda5e084a6c5d3972c327de6be95859639b33c334a2d3c",
+    "Cargo.lock": "90708b9ec7d0e17b0250a49b4fd0f088f43994bc2f692acd392534ac463bb02c"
+  },
+  "limits": [
+    "Confirms retained inference volume identity only.",
+    "Primary gateway and inference containers were already removed; full runtime observation and agent inference remain unqualified."
+  ]
+}
