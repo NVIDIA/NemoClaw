@@ -89,6 +89,7 @@ impl Provider for FixtureProvider {
 }
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let _ = rustls::crypto::ring::default_provider().install_default();
     let directory =
         PathBuf::from(std::env::var_os("NEMOCLAW_FIXTURE_DIR").ok_or("missing fixture directory")?);
     tf_provider::serve(

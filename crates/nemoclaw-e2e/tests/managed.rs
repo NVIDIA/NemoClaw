@@ -28,7 +28,9 @@ fn rust_provider_refreshes_retained_go_storage_without_changes() {
     let directory = tempfile::tempdir().unwrap();
     fs::copy(
         provider,
-        directory.path().join("terraform-provider-nemoclaw"),
+        directory.path().join(nemoclaw_sdk::bundle::executable(
+            "terraform-provider-nemoclaw",
+        )),
     )
     .unwrap();
     fs::write(directory.path().join("tofu.rc"), format!("provider_installation {{ dev_overrides {{ \"registry.opentofu.org/nvidia/nemoclaw\" = {} }} direct {{}} }}",serde_json::to_string(directory.path().to_str().unwrap()).unwrap())).unwrap();

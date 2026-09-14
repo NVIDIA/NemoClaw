@@ -29,7 +29,9 @@ impl Experiment {
         // bundles will be supplied explicitly for SDK/CLI lifecycle tests.
         fs::copy(
             provider,
-            this.dir.path().join("terraform-provider-nemoclaw"),
+            this.dir.path().join(nemoclaw_sdk::bundle::executable(
+                "terraform-provider-nemoclaw",
+            )),
         )
         .unwrap();
         fs::write(this.dir.path().join("tofu.rc"), format!("provider_installation {{ dev_overrides {{ \"registry.opentofu.org/nvidia/nemoclaw\" = {} }} direct {{}} }}", serde_json::to_string(this.dir.path().to_str().unwrap()).unwrap())).unwrap();
