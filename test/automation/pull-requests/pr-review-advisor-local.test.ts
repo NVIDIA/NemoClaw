@@ -24,7 +24,7 @@ const SIGTERM_IGNORING_CHILD_FIXTURE = fileURLToPath(
 const temporaryDirectories: string[] = [];
 
 function temporaryDirectory(): string {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "local-review-test-"));
+  const directory = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "local-review-test-")));
   temporaryDirectories.push(directory);
   return directory;
 }
