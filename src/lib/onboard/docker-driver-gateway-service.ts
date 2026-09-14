@@ -761,21 +761,25 @@ export function hasOpenShellGatewayUserService(
   return resolveOpenShellGatewayUserService(opts) !== null;
 }
 
-/** systemd states that positively prove the unit owns no gateway process. */
-const DISENGAGED_SYSTEMD_ACTIVE_STATES = new Set(["inactive", "failed"]);
+/** systemd states that positively show the unit still owns its lifecycle. */
+const ENGAGED_SYSTEMD_ACTIVE_STATES = new Set([
+  "active",
+  "activating",
+  "deactivating",
+  "reloading",
+]);
 
 /**
- * False only when systemd positively reports the resolved unit as inactive or
- * failed, which means it owns no gateway process.
+ * True only when systemd positively reports that the resolved unit still owns
+ * its lifecycle.
  *
  * An installed unit is not the same thing as the lifecycle owner. After the
  * standalone fallback runs, the unit is installed but inactive while a
  * standalone gateway holds the port, so `systemctl --user stop` exits 0 and
- * frees nothing (#11720). Any other outcome — an unreadable state, a failed
- * query, an unavailable user manager, no `systemctl` at all — leaves the unit
- * treated as engaged, because those cases cannot prove it owns nothing and the
- * fallback flows already depend on the stop being offered. An empty state value
- * is indeterminate for the same reason and keeps the unit engaged.
+ * frees nothing (#11720). An unreadable state, failed query, unavailable user
+ * manager, or unexpected state cannot prove service ownership. Those cases
+ * therefore use the caller's identity-aware standalone-process guard before
+ * it offers any credential-bearing state move.
  */
 function isOpenShellGatewayUserServiceEngaged(
   service: OpenShellGatewayUserServiceTarget,
@@ -786,15 +790,15 @@ function isOpenShellGatewayUserServiceEngaged(
   if (service.manager !== "systemd") return true;
   const env = opts.env ?? process.env;
   const commandExists = opts.commandExists ?? ((command) => defaultCommandExists(command, env));
-  if (!commandExists("systemctl")) return true;
+  if (!commandExists("systemctl")) return false;
   const result = runSystemctlUser(["show", service.serviceName, "--property=ActiveState"], {
     env,
     spawnSyncImpl: opts.spawnSyncImpl ?? spawnSync,
   });
-  if (!result.ok) return true;
+  if (!result.ok) return false;
   const properties = parseSystemctlShow(result.stdout ?? "", ["ActiveState"]);
-  if (!properties) return true;
-  return !DISENGAGED_SYSTEMD_ACTIVE_STATES.has(properties.ActiveState);
+  if (!properties) return false;
+  return ENGAGED_SYSTEMD_ACTIVE_STATES.has(properties.ActiveState);
 }
 
 /**

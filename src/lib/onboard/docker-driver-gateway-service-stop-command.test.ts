@@ -71,24 +71,29 @@ describe("gateway user service stop command ownership (#11720)", () => {
     },
   );
 
-  it("keeps the stop command when systemctl is unavailable", () => {
+  it("withholds the stop command when systemctl is unavailable", () => {
     const { opts } = stopCommandOptions(activeState("inactive"), { commandExists: () => false });
-    expect(getOpenShellGatewayServiceStopCommand(opts)).toBe(STOP_COMMAND);
+    expect(getOpenShellGatewayServiceStopCommand(opts)).toBeNull();
   });
 
-  it("keeps the stop command when the state query fails", () => {
+  it("withholds the stop command when the state query fails", () => {
     const { opts } = stopCommandOptions({ status: 1, stdout: "" });
-    expect(getOpenShellGatewayServiceStopCommand(opts)).toBe(STOP_COMMAND);
+    expect(getOpenShellGatewayServiceStopCommand(opts)).toBeNull();
   });
 
-  it("keeps the stop command when the reported state is empty", () => {
+  it("withholds the stop command when the reported state is empty", () => {
     const { opts } = stopCommandOptions(activeState(""));
-    expect(getOpenShellGatewayServiceStopCommand(opts)).toBe(STOP_COMMAND);
+    expect(getOpenShellGatewayServiceStopCommand(opts)).toBeNull();
   });
 
-  it("keeps the stop command when the state query returns unexpected metadata", () => {
+  it("withholds the stop command when the state query returns unexpected metadata", () => {
     const { opts } = stopCommandOptions({ status: 0, stdout: "MainPID=42\n" });
-    expect(getOpenShellGatewayServiceStopCommand(opts)).toBe(STOP_COMMAND);
+    expect(getOpenShellGatewayServiceStopCommand(opts)).toBeNull();
+  });
+
+  it("withholds the stop command when the state is not an ownership state", () => {
+    const { opts } = stopCommandOptions(activeState("maintenance"));
+    expect(getOpenShellGatewayServiceStopCommand(opts)).toBeNull();
   });
 
   it("returns null when no gateway user service is installed", () => {
