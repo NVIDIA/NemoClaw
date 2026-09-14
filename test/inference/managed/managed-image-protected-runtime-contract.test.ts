@@ -147,16 +147,29 @@ describe("protected managed-image runtime contract", () => {
     const containerId = "a".repeat(64);
     const runCommand = vi.fn<ManagedImageCommandRunner>(() => ({
       status: 0,
-      stdout: "",
-      stderr: '{"msg":"heartbeat: started","intervalMs":120000}\n',
+      stdout: '{"1":{"intervalMs":120000},"2":"heartbeat: started"}\n',
+      stderr: "",
     }));
 
     expect(() => assertOpenClawHeartbeatStart(containerId, {}, runCommand)).not.toThrow();
-    expect(runCommand).toHaveBeenCalledWith(["docker", "logs", containerId], {}, 15_000);
+    expect(runCommand).toHaveBeenCalledWith(
+      [
+        "docker",
+        "exec",
+        "--user",
+        "sandbox",
+        containerId,
+        "/bin/sh",
+        "-c",
+        "cat /tmp/openclaw*/openclaw*.log",
+      ],
+      {},
+      15_000,
+    );
 
     runCommand.mockReturnValue({
       status: 0,
-      stdout: "heartbeat: started intervalMs=1800000\n",
+      stdout: '{"1":{"intervalMs":1800000},"2":"heartbeat: started"}\n',
       stderr: "",
     });
     expect(() => assertOpenClawHeartbeatStart(containerId, {}, runCommand)).toThrow(

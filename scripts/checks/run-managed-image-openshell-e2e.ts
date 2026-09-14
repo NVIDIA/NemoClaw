@@ -502,13 +502,27 @@ export function assertOpenClawHeartbeatStart(
   if (!/^[a-f0-9]{64}$/u.test(containerId)) {
     throw new Error("OpenClaw heartbeat check requires one exact container ID");
   }
-  const result = runCommand(["docker", "logs", containerId], env, 15_000);
+  // Compact console logs omit intervalMs. Read the fresh container's structured logs as its workload user.
+  const result = runCommand(
+    [
+      "docker",
+      "exec",
+      "--user",
+      "sandbox",
+      containerId,
+      "/bin/sh",
+      "-c",
+      "cat /tmp/openclaw*/openclaw*.log",
+    ],
+    env,
+    15_000,
+  );
   if (result.status !== 0 || result.error) {
     throw new Error(
       `could not read managed OpenClaw startup logs (status=${String(result.status)}, spawnError=${String(Boolean(result.error))})`,
     );
   }
-  const heartbeatStart = `${result.stdout ?? ""}\n${result.stderr ?? ""}`
+  const heartbeatStart = String(result.stdout ?? "")
     .split(/\r?\n/u)
     .find((line) => line.includes("heartbeat: started"));
   const configuredInterval = /^(\d+)([smh])$/u.exec(MANAGED_STARTUP_E2E_OPENCLAW_HEARTBEAT_EVERY);
