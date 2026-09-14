@@ -1450,18 +1450,20 @@ For tarball installs:
 systemctl --user stop nemoclaw-openshell-gateway
 ```
 
-A successful stop is not proof that the port is free. When a managed service fails inspection, startup, or its health check, NemoClaw starts the gateway standalone instead, and the service stays installed but inactive. Stopping an inactive service exits `0` without stopping that standalone gateway. Set `gateway_port` below to the affected gateway port, then use that same value in both commands. Confirm the port after the stop:
+A successful stop is not proof that the port is free. When a managed service fails inspection, startup, or its health check, NemoClaw starts the gateway standalone instead, and the service stays installed but inactive. Stopping an inactive service exits `0` without stopping that standalone gateway. Set `gateway_port` below to the affected gateway port, then confirm the port after the stop:
 
 ```bash
 gateway_port=PORT
 ss -lntp | grep ":${gateway_port}"
 ```
 
-If an `openshell-gateway` process still holds the port, the standalone gateway owns it, not the service. Release it with the gateway environment that started it:
+If a process still holds the port, do not infer ownership from the `openshell-gateway` process name. Rerun the identity-aware cleanup path:
 
 ```bash
-NEMOCLAW_GATEWAY_PORT="${gateway_port}" $$nemoclaw uninstall
+$$nemoclaw <name> destroy --cleanup-gateway
 ```
+
+NemoClaw verifies the listener before it reaps host gateway processes. If it reports a foreign or ambiguous owner, use the fresh listener details to identify the owning installation or service and stop it through that owner's lifecycle command. Do not uninstall a selected NemoClaw environment based only on the process name; uninstall removes that environment's gateway state, credentials, and registrations.
 
 <AgentOnly variant="openclaw,hermes">
 
