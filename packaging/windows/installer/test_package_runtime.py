@@ -158,6 +158,52 @@ class PackageComposition(unittest.TestCase):
             self.compose()
         self.assertFalse(self.output.exists())
 
+    def test_finished_image_replaces_the_per_file_runtime_payload(self):
+        identity = self.assembly["runtime"]
+        image = self.fixture.root / "runtime.vhdx"
+        image.write_bytes(b"fixture-finished-runtime-image")
+        receipt = self.fixture.root / "runtime-image.json"
+        receipt.write_text(
+            json.dumps(
+                {
+                    "schemaVersion": 1,
+                    "classification": "finished-runtime-application-image",
+                    "runtimeId": identity["runtimeId"],
+                    "status": "built-detached-and-verified",
+                    "payloadObjects": 1,
+                    "customerExtractionRequired": False,
+                    "runtimeLaunchCopiesRequired": False,
+                    "mountedReadOnly": True,
+                    "manifestSha256": identity["manifestSha256"],
+                    "image": {
+                        "file": image.name,
+                        "bytes": image.stat().st_size,
+                        "sha256": hashlib.sha256(image.read_bytes()).hexdigest(),
+                    },
+                }
+            )
+        )
+        package.compose(
+            self.host,
+            self.fixture.output,
+            self.launcher,
+            self.capabilities,
+            self.output,
+            None,
+            image,
+            receipt,
+        )
+        inputs = json.loads((self.output / "immutable-package-inputs.json").read_text())
+        installed_image = self.output / "images" / (identity["runtimeId"] + ".vhdx")
+        self.assertEqual(inputs["deliveryContract"], "finished-native-image-v1")
+        self.assertEqual(installed_image.read_bytes(), image.read_bytes())
+        self.assertEqual(
+            list((self.output / "runtimes" / identity["runtimeId"]).iterdir()), []
+        )
+        self.assertLess(
+            sum(row["kind"] == "file" for row in package.inventory(self.output)), 100
+        )
+
     def test_shared_node_identity_change_is_refused(self):
         (self.host / "bin/node.exe").write_bytes(b"changed")
         with self.assertRaisesRegex(ValueError, "shared Node differs"):

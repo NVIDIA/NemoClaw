@@ -11,7 +11,10 @@ use super::runtime_transaction::{
 };
 use super::windows_sha256::Sha256;
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::Path;
+use std::fs::OpenOptions;
+use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 
 const STORAGE_HEADER: &str = "NEMOCLAW_MSI_STORAGE_V1\n";
 fn native_error(value: &'static str) -> Error {
@@ -100,6 +103,91 @@ impl WindowsStore {
             self.directory()?
                 .remove(ControlFile::Retired)
                 .map_err(native_error)?;
+        }
+        Ok(())
+    }
+    fn image_paths(runtime_id: &str) -> Result<(PathBuf, PathBuf), Error> {
+        let installation = PathBuf::from(native::installed_path().map_err(native_error)?);
+        Ok((
+            installation.join("images").join(format!("{runtime_id}.vhdx")),
+            installation.join("runtimes").join(runtime_id),
+        ))
+    }
+    fn diskpart(runtime_id: &str, commands: &[String]) -> Result<(), Error> {
+        let installation = PathBuf::from(native::installed_path().map_err(native_error)?);
+        let script = installation.join(format!("runtime-image-{runtime_id}.txt"));
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&script)
+            .map_err(|_| Error::Native("runtime-image-script"))?;
+        for command in commands {
+            writeln!(file, "{command}").map_err(|_| Error::Native("runtime-image-script"))?;
+        }
+        file.sync_all()
+            .map_err(|_| Error::Native("runtime-image-script"))?;
+        drop(file);
+        let system_root = std::env::var_os("SystemRoot")
+            .map(PathBuf::from)
+            .filter(|value| value.is_absolute())
+            .ok_or(Error::Native("runtime-image-system-root"))?;
+        let status = Command::new(system_root.join("System32").join("diskpart.exe"))
+            .args(["/s", script.to_str().ok_or(Error::Identity)?])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map_err(|_| Error::Native("runtime-image-diskpart"));
+        let removed = std::fs::remove_file(&script);
+        if removed.is_err() {
+            return Err(Error::Native("runtime-image-script-cleanup"));
+        }
+        if !status.map_err(|_| Error::Native("runtime-image-diskpart"))?.success() {
+            return Err(Error::Native("runtime-image-diskpart"));
+        }
+        Ok(())
+    }
+    fn attach_image(runtime_id: &str) -> Result<(), Error> {
+        let (image, mount) = Self::image_paths(runtime_id)?;
+        if !image.is_file() || mount.join("runtime.manifest").is_file() {
+            return Ok(());
+        }
+        std::fs::create_dir_all(&mount).map_err(|_| Error::Native("runtime-image-mount"))?;
+        let image = image.to_str().ok_or(Error::Identity)?;
+        let mount = format!("{}\\", mount.to_str().ok_or(Error::Identity)?.trim_end_matches('\\'));
+        Self::diskpart(
+            runtime_id,
+            &[
+                format!("select vdisk file=\"{image}\""),
+                "attach vdisk readonly".into(),
+                "select partition 1".into(),
+                format!("assign mount=\"{mount}\""),
+                "exit".into(),
+            ],
+        )?;
+        if !Path::new(&mount).join("runtime.manifest").is_file() {
+            return Err(Error::Native("runtime-image-mount"));
+        }
+        Ok(())
+    }
+    fn detach_image(runtime_id: &str) -> Result<(), Error> {
+        let (image, mount) = Self::image_paths(runtime_id)?;
+        if !image.is_file() || !mount.join("runtime.manifest").exists() {
+            return Ok(());
+        }
+        Self::diskpart(
+            runtime_id,
+            &[
+                format!(
+                    "select vdisk file=\"{}\"",
+                    image.to_str().ok_or(Error::Identity)?
+                ),
+                "detach vdisk".into(),
+                "exit".into(),
+            ],
+        )?;
+        if mount.join("runtime.manifest").exists() {
+            return Err(Error::Native("runtime-image-detach"));
         }
         Ok(())
     }
@@ -315,10 +403,12 @@ impl NativeStore for WindowsStore {
             return Err(Error::ForeignTransaction);
         }
         native::transition(&expected.runtime_id, &expected.manifest_sha256, false)
-            .map_err(native_error)
+            .map_err(native_error)?;
+        Self::detach_image(&expected.runtime_id)
     }
     fn verify_complete_content(&mut self, expected: &RuntimeIdentity) -> Result<(), Error> {
         expected.validate()?;
+        Self::attach_image(&expected.runtime_id)?;
         let control = self.directory()?;
         let prefix = format!("runtimes/{}", expected.runtime_id);
         let mut manifest = control
@@ -366,6 +456,11 @@ impl NativeStore for WindowsStore {
         let journal = self.journal.as_ref().ok_or(Error::NoTransaction)?;
         if journal.previous.as_ref() != expected {
             return Err(Error::ForeignTransaction);
+        }
+        if let Operation::Install(target) = &journal.operation {
+            if Some(target) != expected {
+                Self::detach_image(&target.runtime_id)?;
+            }
         }
         let current = self.control_descriptor(ControlFile::Current)?;
         if let Some(actual) = &current {

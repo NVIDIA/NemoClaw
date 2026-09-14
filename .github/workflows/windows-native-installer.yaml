@@ -326,10 +326,21 @@ jobs:
             --shared-node "$work\host\bin\node.exe" --node-version 22.23.2 --source-revision $env:GITHUB_SHA --component-identity $component `
             --namespace-receipt "$work\namespace.json" --worker-build "$work\runtime\workers" --executable-build "$work\runtime\executable"
           if ($LASTEXITCODE -ne 0) { throw 'The complete Hermes runtime could not be finalized and sealed.' }
+      - name: Build the selected runtime as one finished application image
+        if: ${{ inputs.finished_windows_agent == 'hermes' }}
+        shell: pwsh
+        run: |
+          $work = "$env:RUNNER_TEMP\finished-windows"
+          $identity = Get-Content -LiteralPath "$work\assembled\runtime-identity.json" -Raw | ConvertFrom-Json
+          & "$env:GITHUB_WORKSPACE\candidate\packaging\windows\installer\build-finished-runtime-image.ps1" `
+            -RuntimeRoot "$work\assembled\runtimes\$($identity.runtimeId)" -RuntimeId $identity.runtimeId `
+            -OutputImage "$work\runtime-image\$($identity.runtimeId).vhdx" `
+            -ReceiptPath "$work\runtime-image\runtime-image.json"
       - name: Build the finished WPF, guarded launcher, transactional MSI and Burn preview
         shell: pwsh
         env:
           PRODUCT_VERSION: ${{ inputs.finished_windows_product_version }}
+          SELECTED_AGENT: ${{ inputs.finished_windows_agent || 'openclaw' }}
         run: |
           $work = "$env:RUNNER_TEMP\finished-windows"
           $tools = "$work\tools"
@@ -340,13 +351,18 @@ jobs:
           [IO.File]::WriteAllText($config, '<configuration><packageSources><clear/><add key="nuget.org" value="https://api.nuget.org/v3/index.json" /></packageSources></configuration>', [Text.UTF8Encoding]::new($false))
           & dotnet tool install wix --version 5.0.2 --tool-path $tools --configfile $config
           if ($LASTEXITCODE -ne 0) { throw 'The pinned WiX tool could not be prepared.' }
+          $imageArguments = @()
+          if ($env:SELECTED_AGENT -ceq 'hermes') {
+            $identity = Get-Content -LiteralPath "$work\assembled\runtime-identity.json" -Raw | ConvertFrom-Json
+            $imageArguments = @('-RuntimeImage', "$work\runtime-image\$($identity.runtimeId).vhdx", '-RuntimeImageReceipt', "$work\runtime-image\runtime-image.json")
+          }
           & "$env:GITHUB_WORKSPACE\candidate\packaging\windows\installer\build-immutable-package.ps1" `
             -SourceRoot "$env:GITHUB_WORKSPACE\candidate" -SourceRevision $env:GITHUB_SHA -ProductVersion $env:PRODUCT_VERSION `
             -HostPayloadRoot "$work\host" -RuntimeAssemblyRoot "$work\assembled" -OutputDirectory "$work\package" `
             -PythonPath (Get-Command python.exe -CommandType Application | Select-Object -First 1).Source `
             -DotNetPath (Get-Command dotnet.exe -CommandType Application | Select-Object -First 1).Source -WixPath "$tools\wix.exe" `
             -SystemDrivePrepPath "$work\system-drive-helper\NemoClawHostPreparation.exe" `
-            -SystemDriveBuildReceipt "$work\system-drive-helper\build-receipt.json" -SystemDriveProofDirectory "$work\system-drive-proof"
+            -SystemDriveBuildReceipt "$work\system-drive-helper\build-receipt.json" -SystemDriveProofDirectory "$work\system-drive-proof" @imageArguments
           Pop-Location
       - name: Publish the downloadable preview before installed acceptance
         id: preview
@@ -385,6 +401,7 @@ jobs:
           path: |
             ${{ runner.temp }}/finished-windows/host/runtime-payload-receipt.json
             ${{ runner.temp }}/finished-windows/assembled/*.json
+            ${{ runner.temp }}/finished-windows/runtime-image/runtime-image.json
             ${{ runner.temp }}/finished-windows/hermes-input/intake.json
             ${{ runner.temp }}/finished-windows/hermes-input/personal-feasibility.json
             ${{ runner.temp }}/finished-windows/hermes-input/personal-request.json

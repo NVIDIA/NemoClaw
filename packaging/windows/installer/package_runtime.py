@@ -169,6 +169,8 @@ def compose(
     capabilities: Path,
     output: Path,
     selection: Path | None,
+    runtime_image: Path | None = None,
+    runtime_image_receipt: Path | None = None,
 ):
     if output.exists() or output.is_symlink():
         raise ValueError("The finished package payload must be fresh.")
@@ -185,6 +187,25 @@ def compose(
         raise ValueError("The selected runtime assembly did not complete.")
     relative = "runtimes/" + identity["runtimeId"]
     verify_seal(assembled / relative, identity)
+    if (runtime_image is None) != (runtime_image_receipt is None):
+        raise ValueError("The runtime image and its receipt must be supplied together.")
+    image = None
+    if runtime_image is not None:
+        ordinary(runtime_image, False)
+        image = read_json(runtime_image_receipt)
+        if (
+            image.get("classification") != "finished-runtime-application-image"
+            or image.get("status") != "built-detached-and-verified"
+            or image.get("runtimeId") != identity["runtimeId"]
+            or image.get("manifestSha256") != identity["manifestSha256"]
+            or image.get("customerExtractionRequired") is not False
+            or image.get("runtimeLaunchCopiesRequired") is not False
+            or image.get("mountedReadOnly") is not True
+            or image.get("payloadObjects") != 1
+            or image.get("image", {}).get("sha256") != hash_file(runtime_image)[1]
+            or image.get("image", {}).get("bytes") != runtime_image.stat().st_size
+        ):
+            raise ValueError("The finished runtime application image differs from its seal.")
     if hash_file(host / "bin/node.exe")[1] != identity["nodeSha256"]:
         raise ValueError("The package shared Node differs from the runtime seal.")
     native = read_json(capabilities, 4096)
@@ -224,18 +245,25 @@ def compose(
                 "runtime-payload-receipt.json",
             }:
                 shutil.copy2(entry, output / entry.name)
-        (output / "runtimes").mkdir()
-        exact_copy(assembled / "runtimes", output / "runtime-copy")
-        # The complete runtime subtree moves once inside the build staging root.
-        # No node.exe is added here; the stable common bin remains the sole owner.
-        (output / "runtime-copy" / identity["runtimeId"]).rename(output / relative)
-        (output / "runtime-copy").rmdir()
+        (output / "runtimes" / identity["runtimeId"]).mkdir(parents=True)
+        if image is None:
+            exact_copy(assembled / "runtimes", output / "runtime-copy")
+            # The complete runtime subtree moves once inside the build staging root.
+            # No node.exe is added here; the stable common bin remains the sole owner.
+            (output / "runtimes" / identity["runtimeId"]).rmdir()
+            (output / "runtime-copy" / identity["runtimeId"]).rename(output / relative)
+            (output / "runtime-copy").rmdir()
+        else:
+            (output / "images").mkdir()
+            shutil.copy2(runtime_image, output / "images" / (identity["runtimeId"] + ".vhdx"))
+            write_json(output / "images" / (identity["runtimeId"] + ".json"), image)
         shutil.copy2(launcher, output / "bin/NemoClaw.exe")
         # Native setup and agent launch use the compiled NemoClaw executable.
         # The generic CLI and its separate app/dependency trees are build inputs only.
         (output / "bin/nemoclaw.cmd").unlink(missing_ok=True)
         (output / "bin/openclaw.cmd").unlink(missing_ok=True)
-        verify_seal(output / relative, identity)
+        if image is None:
+            verify_seal(output / relative, identity)
         write_json(output / "runtime-package-availability.json", document)
         support = read_json(host / "agent-support.json")
         statuses = {row["agent"]: row["status"] for row in document["agents"]}
@@ -267,7 +295,8 @@ def compose(
                     host / "runtime-payload-receipt.json"
                 )[1],
                 "assemblyReceiptSha256": hash_file(assembled / "assembly.json")[1],
-                "deliveryContract": "finished-native-app-v1",
+                "deliveryContract": "finished-native-image-v1" if image else "finished-native-app-v1",
+                **({"runtimeImage": image["image"]} if image else {}),
                 "customerBuildRequired": False,
                 "runtimeLaunchCopiesRequired": False,
                 "installedAcceptance": False,
@@ -399,6 +428,8 @@ def main():
     ):
         prepare.add_argument("--" + name, type=Path, required=True)
     prepare.add_argument("--reviewed-availability", type=Path)
+    prepare.add_argument("--runtime-image", type=Path)
+    prepare.add_argument("--runtime-image-receipt", type=Path)
     build_parser = sub.add_parser("author")
     for name in ("payload", "output", "transaction-helper", "transaction-output"):
         build_parser.add_argument("--" + name, type=Path, required=True)
@@ -418,6 +449,8 @@ def main():
                     args.capabilities,
                     args.output,
                     args.reviewed_availability,
+                    args.runtime_image,
+                    args.runtime_image_receipt,
                 )
             )
         )
@@ -455,10 +488,15 @@ def main():
             stream.write(ET.tostring(wix, encoding="unicode") + "\n")
     else:
         inputs = read_json(args.payload / "immutable-package-inputs.json")
-        verify_seal(
-            args.payload / "runtimes" / inputs["runtime"]["runtimeId"],
-            inputs["runtime"],
-        )
+        if inputs.get("deliveryContract") == "finished-native-image-v1":
+            image = args.payload / "images" / (inputs["runtime"]["runtimeId"] + ".vhdx")
+            if inputs.get("runtimeImage", {}).get("sha256") != hash_file(image)[1]:
+                raise ValueError("The authored runtime image changed after composition.")
+        else:
+            verify_seal(
+                args.payload / "runtimes" / inputs["runtime"]["runtimeId"],
+                inputs["runtime"],
+            )
         stats = payload_authoring(
             args.payload,
             args.output,

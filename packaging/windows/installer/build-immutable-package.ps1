@@ -17,7 +17,9 @@ param(
     [Parameter(Mandatory)][string]$SystemDrivePrepPath,
     [Parameter(Mandatory)][string]$SystemDriveBuildReceipt,
     [Parameter(Mandatory)][string]$SystemDriveProofDirectory,
-    [string]$ReviewedAvailability = ''
+    [string]$ReviewedAvailability = '',
+    [string]$RuntimeImage = '',
+    [string]$RuntimeImageReceipt = ''
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -160,6 +162,8 @@ try {
     $compose = @($composer, 'compose', '--host', $HostPayloadRoot, '--assembled', $RuntimeAssemblyRoot,
         '--launcher', $launcher, '--capabilities', $capabilityPath, '--output', $payload)
     if ($ReviewedAvailability) { $compose += @('--reviewed-availability', $ReviewedAvailability) }
+    if ([bool]$RuntimeImage -ne [bool]$RuntimeImageReceipt) { throw 'The runtime image and receipt must be supplied together.' }
+    if ($RuntimeImage) { $compose += @('--runtime-image', $RuntimeImage, '--runtime-image-receipt', $RuntimeImageReceipt) }
     Invoke-BuildTool $PythonPath $compose 'compose'
     $receipt.phase = 'native-ui-build'
     $project = Join-Path $windows 'bootstrapper\NemoClaw.Bootstrapper.csproj'
@@ -187,26 +191,32 @@ try {
     if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath (Join-Path $cabinetRoot 'immutable-package-inputs.json') -PathType Leaf)) {
         throw 'The short CI cabinet source drive could not be bound to the verified payload.'
     }
-    $runtimePayload = Join-Path $payload (Join-Path 'runtimes' ([string]$assembly.runtime.runtimeId))
-    & $subst $runtimeDrive $runtimePayload
-    if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath (Join-Path $runtimeCabinetRoot 'runtime.manifest') -PathType Leaf)) {
-        & $subst $runtimeDrive /D
-        & $subst $cabinetDrive /D
-        throw 'The short CI runtime cabinet drive could not be bound to the verified runtime.'
+    $imageDelivery = [bool]$RuntimeImage
+    if (-not $imageDelivery) {
+        $runtimePayload = Join-Path $payload (Join-Path 'runtimes' ([string]$assembly.runtime.runtimeId))
+        & $subst $runtimeDrive $runtimePayload
+        if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath (Join-Path $runtimeCabinetRoot 'runtime.manifest') -PathType Leaf)) {
+            & $subst $runtimeDrive /D
+            & $subst $cabinetDrive /D
+            throw 'The short CI runtime cabinet drive could not be bound to the verified runtime.'
+        }
     }
     $cabinetFailure = $null
     try {
-        Invoke-BuildTool $PythonPath @($composer, 'author', '--payload', $payload, '--cabinet-source', $cabinetRoot,
-            '--cabinet-runtime-source', $runtimeCabinetRoot, '--output', $payloadAuthoring,
-            '--transaction-helper', $helper, '--transaction-output', $transactions) 'package-authoring'
+        $author = @($composer, 'author', '--payload', $payload, '--cabinet-source', $cabinetRoot,
+            '--output', $payloadAuthoring, '--transaction-helper', $helper, '--transaction-output', $transactions)
+        if (-not $imageDelivery) { $author += @('--cabinet-runtime-source', $runtimeCabinetRoot) }
+        Invoke-BuildTool $PythonPath $author 'package-authoring'
         Invoke-BuildTool $WixPath @('build', '-arch', 'arm64', '-d', "ProductVersion=$ProductVersion", '-d', "SourceRoot=$SourceRoot",
             '-d', 'NativeRuntimeMsiPrototype=false', '-d', 'ImmutableRuntimePackage=true', '-d', "NativeRuntimeMsiAuthoring=$transactions",
             (Join-Path $windows 'Product.wxs'), $payloadAuthoring, '-pdbtype', 'none', '-wx', '-out', $msi) 'msi-build'
     } catch { $cabinetFailure = $_ }
     finally {
-        & $subst $runtimeDrive /D
-        if ($LASTEXITCODE -ne 0 -and $null -eq $cabinetFailure) {
-            $cabinetFailure = [InvalidOperationException]::new('The short CI runtime cabinet drive could not be released.')
+        if (-not $imageDelivery) {
+            & $subst $runtimeDrive /D
+            if ($LASTEXITCODE -ne 0 -and $null -eq $cabinetFailure) {
+                $cabinetFailure = [InvalidOperationException]::new('The short CI runtime cabinet drive could not be released.')
+            }
         }
         & $subst $cabinetDrive /D
         if ($LASTEXITCODE -ne 0 -and $null -eq $cabinetFailure) {
