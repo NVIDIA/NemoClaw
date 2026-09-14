@@ -723,6 +723,28 @@ describe("privileged sandbox exec routing", () => {
     );
   });
 
+  it("selects an exact pinned labeled container during a lifecycle replacement", () => {
+    expect(
+      selectDirectSandboxContainer(
+        "demo",
+        "backup-id\topenshell-demo-nemoclaw-gpu-backup-123\nreplacement-id\topenshell-demo\n",
+        ["demo"],
+        "replacement-id",
+      ),
+    ).toBe("replacement-id");
+  });
+
+  it("still validates every labeled container owner before selecting a pinned container", () => {
+    expect(() =>
+      selectDirectSandboxContainer(
+        "demo",
+        "replacement-id\topenshell-demo\nforeign-id\topenshell-other\n",
+        ["demo", "other"],
+        "replacement-id",
+      ),
+    ).toThrow(/labels and names disagree.*refusing lifecycle execution/);
+  });
+
   it("rejects malformed Docker metadata", () => {
     expect(() => selectDirectSandboxContainer("demo", "openshell-demo\n", ["demo"])).toThrow(
       /malformed OpenShell sandbox container metadata/,
@@ -1031,6 +1053,28 @@ describe("privileged sandbox exec routing", () => {
           /container identity changed.*refusing privileged execution/i,
         );
         expect(isPinnedSandboxContainerIdentityChangedError(refusal)).toBe(true);
+      },
+    );
+  });
+
+  it("executes against the pinned replacement while its labeled backup still exists", () => {
+    withPrivilegedExecMocks(
+      {
+        getSandbox: () => ({ name: "alpha", openshellDriver: "docker" }),
+        listSandboxes: () => ({ sandboxes: [{ name: "alpha" }], defaultSandbox: "alpha" }),
+        dockerCapture: () =>
+          "backup-id\topenshell-alpha-nemoclaw-gpu-backup-123\nreplacement-id\topenshell-alpha\n",
+      },
+      ({ privilegedSandboxExecArgv }) => {
+        expect(
+          privilegedSandboxExecArgv(
+            "alpha",
+            ["/trusted/control"],
+            false,
+            true,
+            "replacement-id",
+          ).slice(-4),
+        ).toEqual(["--user", "root", "replacement-id", "/trusted/control"]);
       },
     );
   });
