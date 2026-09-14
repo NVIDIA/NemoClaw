@@ -184,9 +184,10 @@ Back up a workspace:
 ./scripts/backup-workspace.sh backup my-assistant
 ```
 
-The helper requires `SOUL.md`, `USER.md`, `IDENTITY.md`, and `AGENTS.md`.
+The helper requires `SOUL.md`, `USER.md`, `IDENTITY.md`, `AGENTS.md`, `TOOLS.md`, and `HEARTBEAT.md`.
 It skips `MEMORY.md` and `memory/` when those optional paths do not exist.
-A backup contains four to six items, depending on which optional paths exist.
+It does not back up `POLICY.md`.
+A backup contains six to eight items, depending on which optional paths exist.
 
 Both optional paths exist in this example.
 
@@ -194,7 +195,7 @@ Expected output:
 
 ```text
 Backing up workspace from sandbox 'my-assistant'...
-Backup saved to /home/user/.nemoclaw/backups/20260320-120000/ (6 items)
+Backup saved to /home/user/.nemoclaw/backups/20260320-120000/ (8 items)
 ```
 
 If a required file cannot download, the helper deletes the new timestamped backup and exits.
@@ -221,9 +222,11 @@ Expected output:
 
 ```text
 AGENTS.md
+HEARTBEAT.md
 IDENTITY.md
 MEMORY.md
 SOUL.md
+TOOLS.md
 USER.md
 memory/
 ```
