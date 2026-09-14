@@ -17,7 +17,10 @@ import {
   type DockerGpuPatchFinalizeOutcome,
   finalizeDockerGpuPatchBackup,
 } from "../../onboard/docker-gpu-patch-finalize";
-import { getDockerGpuSupervisorReconnectTimeoutSecs } from "../../onboard/docker-gpu-supervisor-reconnect";
+import {
+  getDockerGpuSupervisorReconnectTimeoutSecs,
+  waitForOpenShellReplacementReady,
+} from "../../onboard/docker-gpu-supervisor-reconnect";
 import { recreateOpenShellDockerSandboxWithStartupCommand } from "../../onboard/docker-startup-command-patch";
 import { resolveRegisteredRuntimeProvider } from "../../onboard/runtime-provider/selection";
 import { buildSandboxRuntimeEnvArgs } from "../../onboard/sandbox-create-launch";
@@ -60,7 +63,7 @@ export type ManagedSupervisorRelaunchDeps = {
   readManagedWorkloadAuthority?: typeof readManagedWorkloadAuthority;
   resolveDashboardPort?: typeof resolveSandboxDashboardPort;
   resolveContainer?: typeof resolveDirectSandboxContainer;
-  inspectContainer?: (containerId: string) => DockerContainerInspect;
+  inspectContainer?: (containerId: string, timeoutMs?: number) => DockerContainerInspect;
   confirmMissingSupervisor?: (containerId: string) => boolean;
   restartRestoredManagedGateway?: (containerId: string) => boolean;
   backupState?: typeof sandboxState.backupSandboxState;
@@ -130,13 +133,63 @@ export function recoverRegisteredRuntimeProviderSandbox(
   return provider?.recovery.supported === true ? provider.recovery.recover(entry) : null;
 }
 
-function inspectContainer(containerId: string): DockerContainerInspect {
+function inspectContainer(
+  containerId: string,
+  timeoutMs = DOCKER_INSPECT_TIMEOUT_MS,
+): DockerContainerInspect {
   return parseDockerInspectJson(
     dockerCapture(["inspect", "--type", "container", containerId], {
       ignoreError: true,
-      timeout: DOCKER_INSPECT_TIMEOUT_MS,
+      timeout: Math.max(1, Math.min(DOCKER_INSPECT_TIMEOUT_MS, timeoutMs)),
     }),
   );
+}
+
+async function attachReplacementToOpenShellForRestore(
+  sandboxName: string,
+  replacementContainerId: string,
+  driver: string | null,
+  resolveContainer: NonNullable<ManagedSupervisorRelaunchDeps["resolveContainer"]>,
+  inspect: NonNullable<ManagedSupervisorRelaunchDeps["inspectContainer"]>,
+  deps: Pick<
+    ManagedSupervisorRelaunchDeps,
+    "commandExecutor" | "runCaptureOpenshell" | "runOpenshell" | "sleep"
+  >,
+): Promise<boolean> {
+  if (!deps.commandExecutor || !deps.runCaptureOpenshell || !deps.runOpenshell) return false;
+  const timeoutMs = getDockerGpuSupervisorReconnectTimeoutSecs(1) * 1000;
+  const lifecycleOptions = {
+    ignoreError: true,
+    killProcessTreeOnTimeout: true,
+    killSignal: "SIGKILL" as const,
+    suppressOutput: true,
+    timeout: timeoutMs,
+  };
+  try {
+    if (deps.runOpenshell(["sandbox", "stop", sandboxName], lifecycleOptions).status !== 0) {
+      return false;
+    }
+    deps.runOpenshell(["sandbox", "start", sandboxName], lifecycleOptions);
+    const deadlineMs = Date.now() + timeoutMs;
+    const acknowledgement = await waitForOpenShellReplacementReady(sandboxName, deadlineMs, {
+      commandExecutor: deps.commandExecutor,
+      runCaptureOpenshell: deps.runCaptureOpenshell,
+      ...(deps.sleep ? { sleep: deps.sleep } : {}),
+      replacementIsExactAndRunning: (remainingMs) => {
+        if (remainingMs <= DOCKER_INSPECT_TIMEOUT_MS + 5000) return false;
+        const selected = resolveContainer(sandboxName, driver, replacementContainerId);
+        if (!sameContainerId(selected, replacementContainerId)) return false;
+        const replacement = inspect(replacementContainerId, remainingMs - 5000);
+        return (
+          sameContainerId(replacement.Id ?? "", replacementContainerId) &&
+          replacement.State?.Running === true
+        );
+      },
+    });
+    return acknowledgement.acknowledged;
+  } catch {
+    return false;
+  }
 }
 
 function hasLegacyKeepaliveStartup(inspect: DockerContainerInspect): boolean {
@@ -372,6 +425,18 @@ export function relaunchManagedSupervisorSession(
         replacementOwned = false;
       }
       if (!replacementOwned) {
+        return finalizeFailure();
+      }
+      if (
+        !(await attachReplacementToOpenShellForRestore(
+          sandboxName,
+          result.newContainerId,
+          driver,
+          resolveContainer,
+          inspect,
+          deps,
+        ))
+      ) {
         return finalizeFailure();
       }
       let stateRestored = false;

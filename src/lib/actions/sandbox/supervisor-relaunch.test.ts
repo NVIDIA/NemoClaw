@@ -54,7 +54,9 @@ function baseDeps(overrides: ManagedSupervisorRelaunchDeps = {}) {
       .fn()
       .mockReturnValueOnce("old-container-id")
       .mockReturnValue("new-container-id"),
-    inspectContainer: vi.fn(() => ({
+    inspectContainer: vi.fn((containerId: string) => ({
+      Id: containerId,
+      State: { Running: true },
       Config: {
         Env: [
           "OPENSHELL_SANDBOX_COMMAND=sleep infinity",
@@ -213,6 +215,17 @@ describe("relaunchManagedSupervisorSession", () => {
       validateBeforeMutation: expect.any(Function),
     });
     expect(deps.resolveContainer).toHaveBeenNthCalledWith(3, "alpha", "docker", "new-container-id");
+    expect(deps.resolveContainer).toHaveBeenNthCalledWith(4, "alpha", "docker", "new-container-id");
+    expect(deps.runOpenshell).toHaveBeenNthCalledWith(
+      1,
+      ["sandbox", "stop", "alpha"],
+      expect.objectContaining({ killProcessTreeOnTimeout: true, killSignal: "SIGKILL" }),
+    );
+    expect(deps.runOpenshell).toHaveBeenNthCalledWith(
+      2,
+      ["sandbox", "start", "alpha"],
+      expect.objectContaining({ killProcessTreeOnTimeout: true, killSignal: "SIGKILL" }),
+    );
     expect(deps.removeBackup).toHaveBeenCalledWith("alpha", "/tmp/rebuild-backups/alpha/recovery");
     expect(deps.finalize).toHaveBeenCalledWith(
       {
@@ -494,6 +507,44 @@ describe("relaunchManagedSupervisorSession", () => {
     });
   });
 
+  it("rolls back before restore when the reattached replacement is not running", async () => {
+    const deps = baseDeps({
+      inspectContainer: vi.fn((containerId: string) => ({
+        Id: containerId,
+        State: { Running: containerId === "old-container-id" },
+        Config: { Env: ["OPENSHELL_SANDBOX_COMMAND=sleep infinity"] },
+      })),
+    });
+    const relaunch = relaunchManagedSupervisorSession("alpha", { quiet: true, deps });
+
+    await expect(relaunch?.finalize(true)).resolves.toMatchObject({
+      rolledBack: true,
+      stateRestored: false,
+    });
+    expect(deps.restoreState).not.toHaveBeenCalled();
+    expect(deps.finalize).toHaveBeenCalledWith({
+      result: expect.objectContaining({ newContainerId: "new-container-id" }),
+      supervisorReady: false,
+    });
+  });
+
+  it("reconciles a nonzero OpenShell start only through Ready, exec, and exact runtime proof", async () => {
+    const runOpenshell = vi
+      .fn()
+      .mockReturnValueOnce({ status: 0 })
+      .mockReturnValueOnce({ status: 1 });
+    const deps = baseDeps({ runOpenshell });
+    const relaunch = relaunchManagedSupervisorSession("alpha", { quiet: true, deps });
+
+    await expect(relaunch?.finalize(true)).resolves.toMatchObject({
+      rolledBack: false,
+      stateRestored: true,
+    });
+    expect(deps.restoreState).toHaveBeenCalledOnce();
+    expect(deps.commandExecutor.runBuffered).toHaveBeenCalledOnce();
+    expect(deps.resolveContainer).toHaveBeenNthCalledWith(3, "alpha", "docker", "new-container-id");
+  });
+
   it("runs finalization once for concurrent matching callers", async () => {
     let completeFinalization: ((outcome: DockerGpuPatchFinalizeOutcome) => void) | undefined;
     const finalization = new Promise<DockerGpuPatchFinalizeOutcome>((resolve) => {
@@ -506,8 +557,7 @@ describe("relaunchManagedSupervisorSession", () => {
     const second = relaunch?.finalize(true);
 
     expect(second).toBe(first);
-    await Promise.resolve();
-    expect(deps.finalize).toHaveBeenCalledOnce();
+    await vi.waitFor(() => expect(deps.finalize).toHaveBeenCalledOnce());
     await expect(relaunch?.finalize(false)).rejects.toThrow(
       "Supervisor relaunch transaction was finalized with conflicting state.",
     );

@@ -67,16 +67,17 @@ export type DockerGpuSupervisorReconnectDeps = {
   errorPhaseDebouncePolls?: number;
 };
 
-type DockerFinalHandoffDeps = Required<
+export type DockerReplacementReadyDeps = Required<
   Pick<DockerGpuSupervisorReconnectDeps, "runCaptureOpenshell">
 > &
   Required<Pick<DockerGpuSupervisorReconnectDeps, "commandExecutor">> &
   Pick<DockerGpuSupervisorReconnectDeps, "sleep"> & {
     now?: () => Date;
     /**
-     * Prove that the transaction-owned replacement is the sole labeled
-     * container and is still running. The callback must fail closed and keep
-     * its Docker queries within the supplied remaining handoff budget.
+     * Prove that the transaction-owned replacement has the expected identity
+     * and is still running. Final-handoff callers additionally require their
+     * callback to prove it is the sole labeled container. The callback must
+     * fail closed and keep its queries within the remaining handoff budget.
      */
     replacementIsExactAndRunning: (remainingMs: number) => boolean;
   };
@@ -93,7 +94,7 @@ const PROCESS_TREE_BOUNDED_OPENSHELL_OPTIONS = {
 } as const;
 
 function exactReplacementIsRunning(
-  callback: DockerFinalHandoffDeps["replacementIsExactAndRunning"],
+  callback: DockerReplacementReadyDeps["replacementIsExactAndRunning"],
   remainingMs: number,
 ): boolean {
   if (remainingMs <= 0) return false;
@@ -104,19 +105,11 @@ function exactReplacementIsRunning(
   }
 }
 
-/**
- * Confirm the final Docker replacement handoff through OpenShell and Docker.
- *
- * The preceding OpenShell start is the authoritative lifecycle event. Success
- * requires both an OpenShell Ready row with a working sandbox exec and a
- * bounded Docker proof that the exact transaction-owned replacement is the
- * sole running labeled container. Deleting is terminal after that start.
- * Error remains transient only while the exact replacement stays running.
- */
-export async function waitForOpenShellFinalHandoff(
+/** Confirm an OpenShell Ready row, working exec, and exact running replacement. */
+export async function waitForOpenShellReplacementReady(
   sandboxName: string,
   deadlineMs: number,
-  deps: DockerFinalHandoffDeps,
+  deps: DockerReplacementReadyDeps,
 ): Promise<DockerFinalHandoffAcknowledgement> {
   const sleep = deps.sleep ?? defaultSleep;
   const now = deps.now ?? (() => new Date());
@@ -196,6 +189,16 @@ export async function waitForOpenShellFinalHandoff(
     }
   }
   return { acknowledged: false, lastSandboxPhase };
+}
+
+export async function waitForOpenShellFinalHandoff(
+  sandboxName: string,
+  deadlineMs: number,
+  deps: DockerReplacementReadyDeps,
+): Promise<DockerFinalHandoffAcknowledgement> {
+  // The final-handoff caller supplies a stronger callback that proves the
+  // replacement is also the sole labeled container after backup removal.
+  return waitForOpenShellReplacementReady(sandboxName, deadlineMs, deps);
 }
 
 function defaultSleep(seconds: number): void {
