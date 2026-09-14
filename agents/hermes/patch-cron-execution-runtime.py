@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Relocate the pinned Hermes cron execution ledger into writable runtime state.
 
-Hermes v2026.7.20 / 0.19.0 creates ``cron/executions.db`` from the gateway.
+Hermes v2026.8.27 / 0.20.6 creates ``cron/executions.db`` from the gateway.
 NemoClaw keeps ``cron`` separate from the writable execution ledger because it is a high-risk
 location for cron job definitions, so a managed gateway restart cannot reopen
 that database.
@@ -24,10 +24,10 @@ import argparse
 from pathlib import Path
 
 OLD_EXECUTIONS_PATH = (
-    'EXECUTIONS_FILE = get_hermes_home().resolve() / "cron" / "executions.db"'
+    '    path = EXECUTIONS_FILE or (get_hermes_home().resolve() / "cron" / "executions.db")'
 )
 NEW_EXECUTIONS_PATH = (
-    'EXECUTIONS_FILE = get_hermes_home().resolve() / "runtime" / "cron-executions.db"'
+    '    path = EXECUTIONS_FILE or (get_hermes_home().resolve() / "runtime" / "cron-executions.db")'
 )
 EXECUTIONS_CONTEXT = "from hermes_constants import get_hermes_home"
 

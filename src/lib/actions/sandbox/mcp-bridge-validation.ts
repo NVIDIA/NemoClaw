@@ -7,22 +7,27 @@ import crypto from "node:crypto";
 import { resolveOpenshell } from "../../adapters/openshell/resolve";
 import { diagnosticPreview, isValidName, NAME_ALLOWED_FORMAT } from "../../sandbox-name-contract";
 import {
+  inspectMcpDeniedToolSelectors,
+  MCP_DENIED_TOOL_SELECTOR_MAX_COUNT,
+} from "../../security/mcp-denied-tool-selector";
+import {
   normalizeTrustedPrivateHost,
   parseTrustedPrivateHosts,
 } from "../../security/trusted-private-endpoint";
-import type { McpBridgeEntry } from "../../state/registry";
+import type { McpSourceEntry } from "./mcp-bridge-contracts";
 import { buildSubprocessEnv, isSubprocessEnvNameAllowed } from "../../subprocess-env";
 import {
   McpBridgeError,
   type ParsedEnvReference,
   type ParsedMcpAddArgs,
+  type ParsedMcpUpdateArgs,
 } from "./mcp-bridge-contracts";
 import { normalizeMcpServerUrl } from "./mcp-bridge-url-validation";
 // This static import is intentionally fail-closed: TypeScript/build packaging
 // must reject a missing or malformed security manifest instead of letting the
 // CLI start with a weakened credential-name denylist. Input, package, image,
 // and workflow contracts pin its structure, installed path, and version.
-import childVisibleCredentialManifest from "./openshell-child-visible-credentials.v0.0.106.json";
+import childVisibleCredentialManifest from "./openshell-child-visible-credentials.v0.0.116.json";
 
 export {
   MCP_SERVER_URL_MAX_LENGTH,
@@ -34,6 +39,7 @@ export {
 const VALID_SERVER_RE = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
 const VALID_ENV_RE = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/;
 const OPENSHELL_REVISIONED_CREDENTIAL_NAME_RE = /^v[0-9]+_[A-Za-z0-9_]+$/;
+const OPENSHELL_STABLE_CREDENTIAL_NAME_RE = /^s[a-f0-9]{64}_[A-Za-z0-9_]+$/;
 const OPENSHELL_VERSION_OUTPUT_RE =
   /^openshell\s+([0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?)$/;
 const OPENSHELL_VERSION_PROBE_TIMEOUT_MS = 5_000;
@@ -147,7 +153,7 @@ export function assertMcpCredentialBoundaryRuntimeVersion(
 // key and exposes or executes the provider value outside the intended request.
 // sourceBoundary: the versioned JSON manifest pins OpenShell-owned keys to the
 // shipped source commit; NemoClaw owns host and agent runtime-control rejects.
-// whyNotSourceFix: v0.0.106 exposes provider keys to every fresh sandbox exec
+// whyNotSourceFix: v0.0.116 intentionally projects bound credential placeholders
 // and does not advertise safe credential-name capabilities at runtime.
 // regressionTest: the mcp-bridge-input validation/runtime suites check every
 // pinned and runtime key; package contracts require version alignment.
@@ -157,7 +163,7 @@ const OPENSHELL_RAW_CHILD_ENV_KEYS = new Set(childVisibleCredentialManifest.rawC
 const OPENSHELL_REWRITTEN_CHILD_ENV_KEYS = new Set(
   childVisibleCredentialManifest.rewrittenChildValueKeys,
 );
-// OpenShell attaches provider keys to every fresh sandbox exec. A placeholder
+// OpenShell attaches bound provider placeholders to fresh sandbox execs. A placeholder
 // under one of these names can alter a loader, shell, or supported agent
 // runtime before the requested command starts (for example, PYTHONHOME makes
 // Python fail during initialization). Require operators to use a dedicated
@@ -183,11 +189,37 @@ export function validateMcpServerName(name: string): void {
   }
 }
 
+export function normalizeMcpDenyTools(tools: readonly string[]): string[] {
+  const inspection = inspectMcpDeniedToolSelectors(tools);
+  if (!inspection.ok && inspection.reason === "too-many") {
+    throw new McpBridgeError(
+      `MCP denied-tool policy accepts at most ${String(MCP_DENIED_TOOL_SELECTOR_MAX_COUNT)} selectors.`,
+      2,
+    );
+  }
+  if (!inspection.ok) {
+    throw new McpBridgeError(
+      `Invalid MCP denied-tool selector ${diagnosticPreview(inspection.invalidSelector)}. Use 1 to 128 letters, digits, dots, underscores, hyphens, or OpenShell glob characters.`,
+      2,
+    );
+  }
+  if (inspection.duplicate) {
+    throw new McpBridgeError("Duplicate --deny-tool declarations are not accepted.", 2);
+  }
+  return inspection.selectors;
+}
+
 export function validateMcpCredentialEnvName(name: string): void {
   validatePersistedMcpCredentialEnvName(name);
   if (OPENSHELL_REVISIONED_CREDENTIAL_NAME_RE.test(name)) {
     throw new McpBridgeError(
       `MCP credential environment name '${name}' is reserved for OpenShell credential revisions and would be skipped instead of attached. Use a dedicated secret name such as MY_SERVICE_MCP_TOKEN.`,
+      2,
+    );
+  }
+  if (OPENSHELL_STABLE_CREDENTIAL_NAME_RE.test(name)) {
+    throw new McpBridgeError(
+      `MCP credential environment name '${name}' is reserved for OpenShell stable credential handles and would be skipped instead of attached. Use a dedicated secret name such as MY_SERVICE_MCP_TOKEN.`,
       2,
     );
   }
@@ -232,6 +264,7 @@ export function validatePersistedMcpCredentialEnvName(name: string): void {
 
 export function parseMcpAddArgs(argv: string[]): ParsedMcpAddArgs {
   const env: ParsedEnvReference[] = [];
+  const denyTools: string[] = [];
   const trustedPrivateHosts: string[] = [];
   let server = "";
   let rawUrl = "";
@@ -276,6 +309,14 @@ export function parseMcpAddArgs(argv: string[]): ParsedMcpAddArgs {
       rawUrl = argv[++i] ?? "";
       continue;
     }
+    if (token === "--deny-tool") {
+      denyTools.push(argv[++i] ?? "");
+      continue;
+    }
+    if (token?.startsWith("--deny-tool=")) {
+      denyTools.push(token.slice("--deny-tool=".length));
+      continue;
+    }
     if (token?.startsWith("--url=")) {
       rawUrl = token.slice("--url=".length);
       continue;
@@ -307,14 +348,14 @@ export function parseMcpAddArgs(argv: string[]): ParsedMcpAddArgs {
       continue;
     }
     throw new McpBridgeError(
-      "Usage: nemoclaw <sandbox> mcp add <server> --url <https-mcp-url> --env KEY [--trusted-private-host HOST]",
+      "Usage: nemoclaw <sandbox> mcp add <server> --url <https-mcp-url> --env KEY [--deny-tool TOOL ...] [--trusted-private-host HOST]",
       2,
     );
   }
 
   if (!server) {
     throw new McpBridgeError(
-      "Usage: nemoclaw <sandbox> mcp add <server> --url <https-mcp-url> --env KEY [--trusted-private-host HOST]",
+      "Usage: nemoclaw <sandbox> mcp add <server> --url <https-mcp-url> --env KEY [--deny-tool TOOL ...] [--trusted-private-host HOST]",
       2,
     );
   }
@@ -353,12 +394,64 @@ export function parseMcpAddArgs(argv: string[]): ParsedMcpAddArgs {
     );
   }
 
+  const normalizedDenyTools = normalizeMcpDenyTools(denyTools);
+
   return {
     server,
     url,
     env,
+    ...(normalizedDenyTools.length > 0 ? { denyTools: normalizedDenyTools } : {}),
     ...(trustedPrivateHosts.length > 0 ? { trustedPrivateHosts } : {}),
   };
+}
+
+export function parseMcpUpdateArgs(argv: string[]): ParsedMcpUpdateArgs {
+  const denyTools: string[] = [];
+  let server = "";
+  let clearDenyTools = false;
+
+  for (let i = 0; i < argv.length; i++) {
+    const token = argv[i];
+    if (token === "--deny-tool") {
+      denyTools.push(argv[++i] ?? "");
+      continue;
+    }
+    if (token?.startsWith("--deny-tool=")) {
+      denyTools.push(token.slice("--deny-tool=".length));
+      continue;
+    }
+    if (token === "--clear-deny-tools") {
+      clearDenyTools = true;
+      continue;
+    }
+    if (token?.startsWith("-")) {
+      throw new McpBridgeError(`Unknown mcp update option: ${token}`, 2);
+    }
+    if (!server) {
+      server = token ?? "";
+      validateMcpServerName(server);
+      continue;
+    }
+    throw new McpBridgeError(
+      "Usage: nemoclaw <sandbox> mcp update <server> (--deny-tool TOOL [...] | --clear-deny-tools)",
+      2,
+    );
+  }
+
+  if (!server || (denyTools.length === 0 && !clearDenyTools)) {
+    throw new McpBridgeError(
+      "Usage: nemoclaw <sandbox> mcp update <server> (--deny-tool TOOL [...] | --clear-deny-tools)",
+      2,
+    );
+  }
+  if (denyTools.length > 0 && clearDenyTools) {
+    throw new McpBridgeError(
+      "Pass repeated --deny-tool options or --clear-deny-tools, but not both.",
+      2,
+    );
+  }
+
+  return { server, denyTools: clearDenyTools ? [] : normalizeMcpDenyTools(denyTools) };
 }
 
 export function uniqueEnvNames(env: readonly ParsedEnvReference[] | readonly string[]): string[] {
@@ -376,7 +469,7 @@ export function assertAuthenticatedCredentialReference(env: readonly ParsedEnvRe
   validateMcpCredentialEnvName(env[0].name);
 }
 
-export function assertPersistedAuthenticatedBridgeEntry(entry: McpBridgeEntry): void {
+export function assertPersistedAuthenticatedBridgeEntry(entry: McpSourceEntry): void {
   if (!Array.isArray(entry.env) || entry.env.length !== 1 || !entry.providerName) {
     throw new McpBridgeError(
       `MCP server '${entry.server}' has no complete authenticated credential binding. Remove it with --force, then add it again with --env KEY.`,
@@ -386,7 +479,7 @@ export function assertPersistedAuthenticatedBridgeEntry(entry: McpBridgeEntry): 
   validatePersistedMcpCredentialEnvName(entry.env[0]);
 }
 
-export function assertAuthenticatedBridgeEntry(entry: McpBridgeEntry): void {
+export function assertAuthenticatedBridgeEntry(entry: McpSourceEntry): void {
   assertPersistedAuthenticatedBridgeEntry(entry);
   validateMcpCredentialEnvName(entry.env[0]);
 }

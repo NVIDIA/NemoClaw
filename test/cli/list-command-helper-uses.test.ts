@@ -126,7 +126,8 @@ describe("list-command-helper-uses", () => {
     const rootDir = makeFixture("nemoclaw-cmd-helper-", {
       "src/runner.ts": "export default { run(cmd: readonly string[]) { return cmd; } };\n",
       "src/app.ts": 'import runner from "./runner";\nrunner.run(["docker", "ps"]);\n',
-      "test/app.test.ts": 'import runner from "../../src/runner";\nrunner.run(["git", "status"]);\n',
+      "test/app.test.ts":
+        'import runner from "../../src/runner";\nrunner.run(["git", "status"]);\n',
     });
 
     const summaries = parseJsonOutput<CommandSummary[]>(
@@ -141,7 +142,8 @@ describe("list-command-helper-uses", () => {
     const rootDir = makeFixture("nemoclaw-cmd-helper-", {
       "src/runner.ts": "export default { run(cmd: readonly string[]) { return cmd; } };\n",
       "src/app.ts": 'import runner from "./runner";\nrunner.run(["docker", "ps"]);\n',
-      "test/app.test.ts": 'import runner from "../../src/runner";\nrunner.run(["git", "status"]);\n',
+      "test/app.test.ts":
+        'import runner from "../../src/runner";\nrunner.run(["git", "status"]);\n',
     });
 
     const matches = parseJsonOutput<HelperMatch[]>(

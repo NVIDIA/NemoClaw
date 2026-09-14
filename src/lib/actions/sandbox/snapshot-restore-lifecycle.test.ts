@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { withSandboxMutationLock } from "../../state/mcp-lifecycle-lock";
 import * as f from "./snapshot-restore-test-fixture";
+import * as providerAdapters from "../../adapters/openshell/managed-provider-adapter";
 
 const tempHomes: string[] = [];
 beforeEach(() => {
@@ -99,28 +100,46 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
     expect(output).toContain("Restored 1 directories, 1 files");
   });
 
-  it("delegates managed and custom-image snapshot restores to the state layer", async () => {
-    f.getLatestBackupMock.mockReturnValue({
-      snapshotVersion: 4,
-      name: "stable",
-      timestamp: "2026-06-15T00:00:00.000Z",
-      backupPath: "/tmp/backup-alpha",
-    });
-    const { runSandboxSnapshot } = await import("./snapshot");
+  it.each([
+    { label: "managed", fromDockerfile: undefined },
+    { label: "custom-image", fromDockerfile: "/tmp/Dockerfile" },
+  ])(
+    "leaves user-managed Deep Agents MCP config untouched for $label restores",
+    async ({ fromDockerfile }) => {
+      f.getLatestBackupMock.mockReturnValue({
+        snapshotVersion: 4,
+        name: "stable",
+        timestamp: "2026-06-15T00:00:00.000Z",
+        backupPath: "/tmp/backup-alpha",
+      });
+      f.getSandboxMock.mockReturnValue({
+        name: "alpha",
+        agent: "langchain-deepagents-code",
+        ...(fromDockerfile ? { fromDockerfile } : {}),
+      });
+      f.restoreDeepAgentsNativeMcpConfigMock.mockImplementation(() => {
+        throw new Error("Snapshot restore must not rewrite user-managed native MCP config");
+      });
+      f.restoreSandboxStateMock.mockImplementation(() => {
+        f.lifecycleMock.events.push("restore-snapshot-state");
+        return {
+          success: true,
+          restoredDirs: [".state"],
+          restoredFiles: ["config.toml"],
+          failedDirs: [],
+          failedFiles: [],
+        };
+      });
+      const { runSandboxSnapshot } = await import("./snapshot");
 
-    f.getSandboxMock.mockReturnValue({ name: "alpha", agent: "langchain-deepagents-code" });
-    await runSandboxSnapshot("alpha", { kind: "restore" });
-    expect(f.restoreSandboxStateMock).toHaveBeenCalledWith("alpha", "/tmp/backup-alpha");
+      await runSandboxSnapshot("alpha", { kind: "restore" });
 
-    f.getSandboxMock.mockReturnValue({
-      name: "alpha",
-      agent: "langchain-deepagents-code",
-      fromDockerfile: "/tmp/Dockerfile",
-    });
-    await runSandboxSnapshot("alpha", { kind: "restore" });
-    expect(f.restoreSandboxStateMock).toHaveBeenCalledWith("alpha", "/tmp/backup-alpha");
-    expect(f.restoreSandboxStateMock).toHaveBeenCalledTimes(2);
-  });
+      expect(f.restoreDeepAgentsNativeMcpConfigMock).not.toHaveBeenCalled();
+      expect(f.getMcpProviderInspectionRuntimeSelectionMock).not.toHaveBeenCalled();
+      expect(f.lifecycleMock.events).toEqual(["restore-snapshot-state"]);
+      expect(f.restoreSandboxStateMock).toHaveBeenCalledWith("alpha", "/tmp/backup-alpha");
+    },
+  );
 
   it("repairs mutable permissions after restoring OpenClaw config", async () => {
     const consoleLog = vi.spyOn(console, "log").mockImplementation(() => {});
@@ -214,7 +233,7 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
     );
   });
 
-  it("force-deletes a restore destination before creating its replacement", async () => {
+  it("finishes destination messaging cleanup before creating a forced-restore replacement (#9806)", async () => {
     f.getSandboxMock.mockImplementation((name) =>
       name === "alpha"
         ? {
@@ -249,16 +268,75 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
       failedDirs: [],
       failedFiles: [],
     });
+    const createAdapter = providerAdapters.createManagedProviderAdapter;
+    let releaseCleanup!: () => void;
+    let signalCleanupStarted!: () => void;
+    const cleanupPending = new Promise<void>((resolve) => {
+      releaseCleanup = resolve;
+    });
+    const cleanupStarted = new Promise<void>((resolve) => {
+      signalCleanupStarted = resolve;
+    });
+    vi.spyOn(providerAdapters, "createManagedProviderAdapter").mockImplementation((run) => {
+      const adapter = createAdapter(run);
+      return {
+        ...adapter,
+        async deleteProvider(request) {
+          const result = await adapter.deleteProvider(request);
+          signalCleanupStarted();
+          await cleanupPending;
+          return result;
+        },
+      };
+    });
+    const providerDeletes = () =>
+      f.runOpenshellMock.mock.calls
+        .map(([args]) => args)
+        .filter((args) => args[0] === "provider" && args[1] === "delete");
+    let providerDeletesAtCreation: string[][] = [];
+    f.streamSandboxCreateMock.mockImplementation(async () => {
+      providerDeletesAtCreation = providerDeletes();
+      return { status: 0, output: "", sawProgress: false, forcedReady: false };
+    });
     const { runSandboxSnapshot } = await import("./snapshot");
 
-    await runSandboxSnapshot("alpha", {
+    const restore = runSandboxSnapshot("alpha", {
       kind: "restore",
       to: "beta",
       force: true,
       yes: true,
     });
+    try {
+      await Promise.race([
+        cleanupStarted,
+        restore.then(() => {
+          throw new Error("Restore finished without awaiting provider cleanup.");
+        }),
+      ]);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(
+        f.runOpenshellMock.mock.calls.map(([args]) => args).filter((args) => args[1] === "delete"),
+      ).toEqual([
+        ["sandbox", "delete", "beta"],
+        ["provider", "delete", expect.stringMatching(/^beta-/u)],
+      ]);
+      expect(providerDeletes()).toHaveLength(1);
+      expect(f.streamSandboxCreateMock).not.toHaveBeenCalled();
+      expect(f.restoreSandboxStateMock).not.toHaveBeenCalled();
+    } finally {
+      releaseCleanup();
+      await restore;
+    }
 
-    expect(f.lifecycleMock.events).toContain("delete");
+    expect(providerDeletesAtCreation.map((args) => args[2]).sort()).toEqual([
+      "beta-discord-bridge",
+      "beta-slack-app",
+      "beta-slack-bridge",
+      "beta-teams-bridge",
+      "beta-telegram-bridge",
+      "beta-wechat-bridge",
+    ]);
+    expect(providerDeletes()).toEqual(providerDeletesAtCreation);
     expect(f.streamSandboxCreateMock).toHaveBeenCalled();
     expect(f.restoreSandboxStateMock).toHaveBeenCalledWith("beta", "/tmp/backup-alpha");
   });

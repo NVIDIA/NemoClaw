@@ -1,4 +1,4 @@
-#!/usr/bin/env -S node --experimental-strip-types
+#!/usr/bin/env node
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -163,6 +163,8 @@ function isPinnedHermesUvPackageSpec(spec: string): boolean {
 }
 
 export class MessagingBuildApplierError extends Error {}
+
+class MessagingBuildCommandError extends MessagingBuildApplierError {}
 
 export const DEFAULT_MESSAGING_RUNTIME_PLAN_PATH =
   "/usr/local/share/nemoclaw/messaging-runtime-plan.json";
@@ -791,7 +793,6 @@ function installOpenClawPluginPackages(installs: readonly OpenClawPluginInstall[
         runCommand(
           [
             "node",
-            "--experimental-strip-types",
             install.runtimeLock.verifierPath,
             install.runtimeLock.lockFile,
             install.runtimeLock.projectsRoot,
@@ -1337,15 +1338,17 @@ function requireExactNpmPackageSpec(
 function runCommand(args: readonly string[], env: Env): void {
   console.log(`+ ${args.join(" ")}`);
   const result = spawnSync(args[0] as string, args.slice(1), {
+    encoding: "utf8",
     env: env as NodeJS.ProcessEnv,
-    stdio: "inherit",
+    maxBuffer: 64 * 1024 * 1024,
+    stdio: ["ignore", "pipe", "pipe"],
   });
-  if (result.error) throw result.error;
+  if (result.error) throw new MessagingBuildCommandError();
   if (result.status !== 0) {
-    throw new MessagingBuildApplierError(
-      `${args[0]} exited with status ${String(result.status ?? "unknown")}`,
-    );
+    throw new MessagingBuildCommandError();
   }
+  if (result.stdout) process.stdout.write(result.stdout);
+  if (result.stderr) process.stderr.write(result.stderr);
 }
 
 function packVerifiedOpenClawPluginArchive(
@@ -1460,8 +1463,8 @@ function isProviderPlaceholderForEnvKey(value: string, envKey: string): boolean 
 
 function placeholderSuffixMatchesEnvKey(suffix: string, envKey: string): boolean {
   if (suffix === envKey) return true;
-  const revisionMatch = suffix.match(/^v[0-9]+_(.+)$/);
-  return revisionMatch?.[1] === envKey;
+  const generationMatch = suffix.match(/^(?:v[0-9]{1,20}|s[a-f0-9]{64})_(.+)$/);
+  return generationMatch?.[1] === envKey;
 }
 
 function setJsonPath(root: JsonObject, pathValue: string, value: MessagingSerializableValue): void {
@@ -1742,7 +1745,7 @@ function formatGeneratedYamlScalar(value: MessagingSerializableValue): string {
   if (typeof value === "number" || typeof value === "boolean") return String(value);
   if (typeof value !== "string") return JSON.stringify(value);
   if (value === "") return JSON.stringify(value);
-  if (/[:{}\[\],&*?|>!%@`#'\"]/.test(value) || value.includes("\n") || value.trim() !== value) {
+  if (/[:{}[\],&*?|>!%@`#'"]/.test(value) || value.includes("\n") || value.trim() !== value) {
     return JSON.stringify(value);
   }
   return value;
@@ -2074,11 +2077,21 @@ function isMainModule(): boolean {
   return process.argv[1] ? import.meta.url === pathToFileURL(resolve(process.argv[1])).href : false;
 }
 
+function fatalMessagingBuildDiagnostic(error: unknown): string {
+  if (error instanceof MessagingBuildCommandError) {
+    return "Messaging build applier command failed.";
+  }
+  if (error instanceof MessagingBuildApplierError) {
+    return "Messaging build applier rejected invalid or unsafe input.";
+  }
+  return "Messaging build applier failed.";
+}
+
 if (isMainModule()) {
   try {
     main();
   } catch (error) {
-    console.error(error instanceof Error ? error.message : String(error));
+    console.error(fatalMessagingBuildDiagnostic(error));
     process.exit(2);
   }
 }

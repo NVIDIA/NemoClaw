@@ -426,9 +426,7 @@ describe("uninstall across every gateway port (#7791)", () => {
       NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: "/srv/nemoclaw/recorded-gateway-9000",
     });
     expect(childEnv[ALL_GATEWAY_PORTS_ENV]).toBeUndefined();
-    expect(env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR).toBe(
-      "/srv/nemoclaw/selected-gateway",
-    );
+    expect(env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR).toBe("/srv/nemoclaw/selected-gateway");
   });
 
   it.each([

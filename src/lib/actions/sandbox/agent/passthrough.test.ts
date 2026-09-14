@@ -41,21 +41,9 @@ const loadAgentMock = vi.hoisted(() =>
 const isTerminalAgentMock = vi.hoisted(() =>
   vi.fn((agent: { runtime?: { kind?: string } }) => agent.runtime?.kind === "terminal"),
 );
-const buildOpenshellExecArgsMock = vi.hoisted(() =>
-  vi.fn(
-    (
-      _sb: string,
-      cmd: readonly string[],
-      _options?: { timeoutSeconds?: number },
-      _gateway?: string,
-    ) => cmd,
-  ),
-);
-
 vi.mock("../exec", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../exec")>()),
   execSandbox: execMock,
-  buildOpenshellExecArgs: buildOpenshellExecArgsMock,
   wrapExecCommandWithRuntimeEnv: vi.fn((cmd: readonly string[]) => cmd),
   wrapOpenClawAgentCommandWithRuntimeEnv: vi.fn((cmd: readonly string[]) => cmd),
 }));
@@ -72,35 +60,12 @@ vi.mock("../../../../../nemoclaw/src/onboard/config.js", () => ({
   describeOnboardProvider: vi.fn(() => "NVIDIA Endpoint API"),
 }));
 
-import registerPlugin, { type OpenClawPluginApi } from "../../../../../nemoclaw/src/index";
-import { buildOpenshellExecArgs } from "../exec";
 import {
   type AgentNonJsonPassthroughDeps,
   type AgentPassthroughDeps,
   runAgentNonJsonPassthrough,
   runAgentPassthrough,
 } from "./passthrough";
-
-function createPluginApi(): OpenClawPluginApi {
-  return {
-    id: "nemoclaw",
-    name: "NemoClaw",
-    version: "0.1.0",
-    config: {},
-    pluginConfig: {},
-    logger: {
-      info: vi.fn(),
-      warn: vi.fn(),
-      error: vi.fn(),
-      debug: vi.fn(),
-    },
-    registerCommand: vi.fn(),
-    registerProvider: vi.fn(),
-    registerService: vi.fn(),
-    resolvePath: vi.fn((value: string) => value),
-    on: vi.fn(),
-  };
-}
 
 describe("runAgentPassthrough", () => {
   beforeEach(() => {
@@ -143,7 +108,7 @@ describe("runAgentPassthrough", () => {
     ).rejects.toThrow("__exit:2");
     const stderr = writes.join("");
     expect(stderr).toMatch(/port 8643/);
-    expect(stderr).toMatch(/openshell forward start --background 8643 beta/);
+    expect(stderr).toMatch(/nemoclaw beta recover/);
     expect(stderr).toMatch(/http:\/\/127\.0\.0\.1:8643\/v1\/chat\/completions/);
     expect(stderr).not.toMatch(/8642/);
   });
@@ -271,86 +236,69 @@ describe("runAgentPassthrough", () => {
     );
   });
 
-  it("keeps --json as a message value on the normal passthrough path", async () => {
-    const execJson = vi.fn(((): never => {
+  it.each([
+    { label: "a message value", args: ["--agent", "work", "-m", "--json"] },
+    { label: "arguments after --", args: ["--agent", "work", "--", "--json"] },
+    { label: "an unknown option", args: ["--agent", "work", "--json-something", "--json"] },
+    {
+      label: "an unknown option before the selector",
+      args: ["--future-option", "value", "--agent", "work", "--json", "-m", "ping"],
+    },
+    ...[
+      "-a",
+      "--agent",
+      "-m",
+      "--message",
+      "--model",
+      "--provider",
+      "--message-file",
+      "--verbose",
+      "--channel",
+      "--reply-to",
+      "--reply-account",
+      "-t",
+      "--profile",
+      "--log-level",
+      "--container",
+      "--reply-channel",
+      "--session-id",
+      "--session-key",
+      "--thinking",
+      "--timeout",
+      "--to",
+    ].map((flag) => ({
+      label: `a value of ${flag}`,
+      args: ["--session-id", "s-1", flag, "--json"],
+    })),
+  ])("uses normal output for $label", async ({ args }) => {
+    const execJson = vi.fn(() => {
       throw new Error("__unexpected-json");
-    }) as NonNullable<AgentPassthroughDeps["execJson"]>);
-    const execNonJson = vi.fn(((): never => {
+    });
+    const execNonJson = vi.fn(() => {
       throw new Error("__exit:0");
-    }) as NonNullable<AgentPassthroughDeps["execNonJson"]>);
+    });
     getSandboxMock.mockReturnValueOnce({ agent: "openclaw" });
-
     await expect(
-      runAgentPassthrough(
-        "alpha",
-        { extraArgs: ["--agent", "work", "-m", "--json"] },
-        { execJson, execNonJson },
-      ),
+      runAgentPassthrough("alpha", { extraArgs: args }, { execJson, execNonJson }),
     ).rejects.toThrow("__exit:0");
-
     expect(execJson).not.toHaveBeenCalled();
     expect(execMock).not.toHaveBeenCalled();
     expect(execNonJson).toHaveBeenCalledWith(
       "alpha",
-      ["openclaw", "agent", "--agent", "work", "-m", "--json"],
+      ["openclaw", "agent", ...args],
       expect.anything(),
     );
   });
 
-  it("keeps --json after the argv terminator on the normal passthrough path", async () => {
-    const execJson = vi.fn(((): never => {
-      throw new Error("__unexpected-json");
-    }) as NonNullable<AgentPassthroughDeps["execJson"]>);
-    const execNonJson = vi.fn(((): never => {
-      throw new Error("__exit:0");
-    }) as NonNullable<AgentPassthroughDeps["execNonJson"]>);
-    getSandboxMock.mockReturnValueOnce({ agent: "openclaw" });
-
-    await expect(
-      runAgentPassthrough(
-        "alpha",
-        { extraArgs: ["--agent", "work", "--", "--json"] },
-        { execJson, execNonJson },
-      ),
-    ).rejects.toThrow("__exit:0");
-
-    expect(execJson).not.toHaveBeenCalled();
-    expect(execMock).not.toHaveBeenCalled();
-    expect(execNonJson).toHaveBeenCalledWith(
-      "alpha",
-      ["openclaw", "agent", "--agent", "work", "--", "--json"],
-      expect.anything(),
-    );
-  });
-
-  it("keeps --json-something --json on the normal passthrough path", async () => {
-    const execJson = vi.fn(((): never => {
-      throw new Error("__unexpected-json");
-    }) as NonNullable<AgentPassthroughDeps["execJson"]>);
-    const execNonJson = vi.fn(((): never => {
-      throw new Error("__exit:0");
-    }) as NonNullable<AgentPassthroughDeps["execNonJson"]>);
-    getSandboxMock.mockReturnValueOnce({ agent: "openclaw" });
-
-    // The first unknown flag selects conservative passthrough before the later --json token.
-    await expect(
-      runAgentPassthrough(
-        "alpha",
-        { extraArgs: ["--agent", "work", "--json-something", "--json"] },
-        { execJson, execNonJson },
-      ),
-    ).rejects.toThrow("__exit:0");
-
-    expect(execJson).not.toHaveBeenCalled();
-    expect(execMock).not.toHaveBeenCalled();
-    expect(execNonJson).toHaveBeenCalledWith(
-      "alpha",
-      ["openclaw", "agent", "--agent", "work", "--json-something", "--json"],
-      expect.anything(),
-    );
-  });
-
-  it("uses the captured JSON path after documented OpenClaw boolean flags", async () => {
+  it.each([
+    ["--deliver", "-m", "ping"],
+    ["--verbose", "off", "--channel", "slack", "-m", "ping"],
+    ["--local", "--reply-to", "#reports", "--reply-account", "work", "-m", "ping"],
+    ["--message-file=/sandbox/task.md"],
+    ["-t+15555550123", "-m", "ping"],
+    ["-mping"],
+    ["--profile", "work", "--log-level=debug", "--no-color", "-m", "ping"],
+  ])("uses the captured JSON path after agent options %j", async (...prefix) => {
     const execJson = vi.fn(() => {
       throw new Error("__exit:0");
     });
@@ -360,7 +308,7 @@ describe("runAgentPassthrough", () => {
     await expect(
       runAgentPassthrough(
         "alpha",
-        { extraArgs: ["--agent", "work", "--deliver", "--json", "-m", "ping"] },
+        { extraArgs: ["--agent", "work", ...prefix, "--json"] },
         { execJson, process: proc },
       ),
     ).rejects.toThrow("__exit:0");
@@ -368,7 +316,7 @@ describe("runAgentPassthrough", () => {
     expect(execMock).not.toHaveBeenCalled();
     expect(execJson).toHaveBeenCalledWith(
       "alpha",
-      ["openclaw", "agent", "--agent", "work", "--deliver", "--json", "-m", "ping"],
+      ["openclaw", "agent", "--agent", "work", ...prefix, "--json"],
       expect.objectContaining({ stderr: proc.stderr }),
     );
   });
@@ -393,45 +341,6 @@ describe("runAgentPassthrough", () => {
       "alpha",
       ["openclaw", "agent", "--session-id=s1", "--json", "-m", "ping"],
       expect.objectContaining({ stderr: proc.stderr }),
-    );
-  });
-
-  it.each([
-    ["-a", "--json"],
-    ["--agent", "--json"],
-    ["-m", "--json"],
-    ["--message", "--json"],
-    ["--model", "--json"],
-    ["--provider", "--json"],
-    ["--reply-channel", "--json"],
-    ["--session-id", "--json"],
-    ["--session-key", "--json"],
-    ["--thinking", "--json"],
-    ["--timeout", "--json"],
-    ["--to", "--json"],
-  ])("keeps --json consumed by %s on the normal passthrough path", async (flag, value) => {
-    const execJson = vi.fn(((): never => {
-      throw new Error("__unexpected-json");
-    }) as NonNullable<AgentPassthroughDeps["execJson"]>);
-    const execNonJson = vi.fn(((): never => {
-      throw new Error("__exit:0");
-    }) as NonNullable<AgentPassthroughDeps["execNonJson"]>);
-    getSandboxMock.mockReturnValueOnce({ agent: "openclaw" });
-
-    await expect(
-      runAgentPassthrough(
-        "alpha",
-        { extraArgs: ["--session-id", "s-1", flag, value] },
-        { execJson, execNonJson },
-      ),
-    ).rejects.toThrow("__exit:0");
-
-    expect(execJson).not.toHaveBeenCalled();
-    expect(execMock).not.toHaveBeenCalled();
-    expect(execNonJson).toHaveBeenCalledWith(
-      "alpha",
-      ["openclaw", "agent", "--session-id", "s-1", flag, value],
-      expect.anything(),
     );
   });
 
@@ -724,6 +633,27 @@ describe("runAgentPassthrough", () => {
 });
 
 describe("runAgentNonJsonPassthrough", () => {
+  it.each([
+    { args: ["--local", "-m", "ping"], code: 0 },
+    { args: ["-m", "--local"], code: 1 },
+  ])(
+    "distinguishes requested local execution from fallback for $args (#11371)",
+    async ({ args, code }) => {
+      const { proc } = makeNonJsonProcMock();
+      await expect(
+        runAgentNonJsonPassthrough(
+          "my-sb",
+          ["openclaw", "agent", "--agent", "main", ...args],
+          proc,
+          {
+            getOpenshellBinary: stubBinary,
+            getGatewayName: () => null,
+            runDispatch: makeDispatchMock("[agent/embedded] local turn\nPONG\n", "", 0),
+          },
+        ),
+      ).rejects.toThrow(`__exit:${code}`);
+    },
+  );
   function makeNonJsonProcMock() {
     const stdoutWrites: string[] = [];
     const stderrWrites: string[] = [];
@@ -760,11 +690,7 @@ describe("runAgentNonJsonPassthrough", () => {
     return vi.fn(async () => ({
       stdout,
       stderr,
-      status,
-      pid: 1,
-      signal: null,
-      output: [],
-      error: undefined,
+      outcome: { kind: "exited" as const, exitCode: status ?? 1 },
     }));
   }
 
@@ -783,9 +709,11 @@ describe("runAgentNonJsonPassthrough", () => {
     ).rejects.toThrow("__exit:0");
     // Outlasts the requested deadline so the in-sandbox turn still reports its
     // own timeout; the host bound only catches a turn that stops answering.
-    expect(buildOpenshellExecArgsMock.mock.calls[0]?.[2]?.timeoutSeconds).toBe(60);
+    expect(vi.mocked(runDispatchMock).mock.calls[0]?.[0]).toMatchObject({ timeoutSeconds: 60 });
     // The turn still receives the deadline it asked for.
-    expect(buildOpenshellExecArgsMock.mock.calls[0]?.[1]).toContain("30");
+    expect(vi.mocked(runDispatchMock).mock.calls[0]?.[0]).toMatchObject({
+      command: expect.arrayContaining(["30"]),
+    });
   });
 
   it("leaves the host transport unbounded when the turn requests no deadline (#8723)", async () => {
@@ -802,7 +730,10 @@ describe("runAgentNonJsonPassthrough", () => {
         },
       ),
     ).rejects.toThrow("__exit:0");
-    expect(buildOpenshellExecArgsMock.mock.calls[0]?.[2]?.timeoutSeconds).toBeUndefined();
+    expect(vi.mocked(runDispatchMock).mock.calls[0]?.[0]).toHaveProperty(
+      "timeoutSeconds",
+      undefined,
+    );
   });
 
   it("emits a clean embedded-fallback error and exits 1 when EMBEDDED FALLBACK appears in stdout", async () => {
@@ -930,8 +861,7 @@ describe("runAgentNonJsonPassthrough", () => {
   it("returns exit 143 after the supervised OpenShell child receives SIGTERM (#8723)", async () => {
     const { stderrWrites, exit, proc } = makeNonJsonProcMock();
     const runDispatchMock = vi.fn(async () => ({
-      status: null,
-      signal: "SIGTERM" as const,
+      outcome: { kind: "signalled" as const, signal: "SIGTERM" as const, exitCode: 143 },
       stdout: "",
       stderr: "agent turn interrupted\n",
     }));
@@ -993,11 +923,11 @@ describe("runAgentNonJsonPassthrough", () => {
         stdinIsTty: () => false,
       }),
     ).rejects.toThrow("__exit:0");
-    expect(buildOpenshellExecArgs).toHaveBeenCalledWith(
-      "my-sb",
-      expect.anything(),
-      { tty: false },
-      "nemoclaw-8081",
+    expect(runDispatchMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sandboxName: "my-sb",
+        target: { kind: "named", gatewayName: "nemoclaw-8081" },
+      }),
     );
   });
 
@@ -1012,6 +942,9 @@ describe("runAgentNonJsonPassthrough", () => {
         stdinIsTty: () => true,
       }),
     ).rejects.toThrow("__exit:0");
-    expect(vi.mocked(runDispatchMock).mock.calls[0]?.[2]).toEqual({ stdinIsTty: true });
+    expect(vi.mocked(runDispatchMock).mock.calls[0]?.[0]).toMatchObject({
+      output: "capture",
+      tty: false,
+    });
   });
 });

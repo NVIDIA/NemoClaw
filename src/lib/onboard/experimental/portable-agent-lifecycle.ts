@@ -18,6 +18,7 @@ import {
   type HermesPortableLifecycleDeps,
 } from "./hermes-portable-lifecycle";
 import {
+  hasHermesPortableReceiptCandidate,
   inspectPortableAgentReceiptAuthority,
   inspectPortableAgentReceiptAuthorityForClassification,
   inspectPortableAgentReceiptAuthorityForRequalification,
@@ -34,13 +35,26 @@ import {
   type PortableDemoLifecycleRecoveryResult,
   type PortableDemoLifecycleStopResult,
 } from "./portable-demo-lifecycle";
+import { resolveHermesPortableLifecycleLockOptions } from "./portable-lifecycle-lock";
 import { defaultPortableDemoStateDir } from "./portable-runtime-receipt-readiness";
+
+export { defaultPortableDemoStateDir };
+
+/** Resolve the shared lifecycle-lock root for a retained Hermes portable sandbox. */
+export function hermesPortableLifecycleLockOptions(
+  sandboxName: string,
+  env: NodeJS.ProcessEnv = process.env,
+  hasReceiptCandidate: typeof hasHermesPortableReceiptCandidate = hasHermesPortableReceiptCandidate,
+): { readonly stateDir: string } | undefined {
+  return resolveHermesPortableLifecycleLockOptions(sandboxName, env, (name, environment) =>
+    hasReceiptCandidate(name, defaultPortableDemoStateDir(environment)),
+  );
+}
 
 export type PortableAgentLifecycleDeps = PortableDemoLifecycleDeps & HermesPortableLifecycleDeps;
 export type PortableAgentLifecycleStopResult = PortableDemoLifecycleStopResult & {
   readonly portableAgent?: "hermes";
 };
-
 export const HERMES_PORTABLE_UNSUPPORTED_COMMAND_MESSAGE =
   "This command is not supported for an experimental Hermes portable sandbox.";
 export const HERMES_PORTABLE_UNSUPPORTED_DOCTOR_FIX_MESSAGE =
@@ -72,7 +86,6 @@ const RAW_SANDBOX_NAME_COMMANDS = new Set([
 const MULTI_SANDBOX_LIFECYCLE_COMMANDS = new Set(["sandbox:snapshot:restore"]);
 
 const HERMES_PORTABLE_UNSUPPORTED_HOST_EFFECTS = new Set([
-  "debug",
   "inference:get",
   "list",
   "stop",
@@ -82,7 +95,7 @@ const HERMES_PORTABLE_UNSUPPORTED_HOST_EFFECTS = new Set([
   "use",
 ]);
 
-const HERMES_PORTABLE_HOST_FENCED_READS = new Set(["status"]);
+const HERMES_PORTABLE_HOST_FENCED_READS = new Set(["status", "debug"]);
 
 export type HermesPortableCommandPolicy = {
   readonly helpRequested: boolean;
@@ -198,14 +211,27 @@ export function inspectPortableAgentReceiptDisposition(
   );
 }
 
-/** Classify copied Hermes authority while the probe owns its lifecycle fence. */
+/**
+ * Classify copied Hermes authority while the probe owns its lifecycle fence.
+ *
+ * A sandbox with no Hermes portable receipt directory has nothing for the
+ * requalifying reader to admit: the reader returns null on that directory's
+ * ENOENT before it consults any of its extra admission flags, so its answer is
+ * already the classifying reader's answer. Demanding its lifecycle-lock
+ * evidence therefore buys no information, and it cannot be satisfied off the
+ * default gateway: the evidence is keyed on the host-global portable receipt
+ * root while every acquisition keys on the per-gateway state root, so the held
+ * lock is invisible and a plain OpenClaw sandbox fails its probe (#10783).
+ */
 function inspectPortableAgentReceiptDispositionForRequalification(
   sandboxName: string,
   env: NodeJS.ProcessEnv = process.env,
   stateDir = defaultPortableDemoStateDir(env),
 ): PortableAgentReceiptDisposition {
   return receiptDisposition(
-    inspectPortableAgentReceiptAuthorityForRequalification(sandboxName, stateDir),
+    hasHermesPortableReceiptCandidate(sandboxName, stateDir)
+      ? inspectPortableAgentReceiptAuthorityForRequalification(sandboxName, stateDir)
+      : inspectPortableAgentReceiptAuthorityForClassification(sandboxName, stateDir),
   );
 }
 

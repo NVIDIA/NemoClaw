@@ -70,7 +70,10 @@ describe("repo-confined advisor read-only tools", () => {
     const diffPath = path.join(outside, "diff.patch");
     fs.writeFileSync(diffPath, "trusted diff\n", "utf8");
     const read = new Map(
-      createRepoConfinedReadOnlyTools(workspace, undefined, [outside]).map((tool) => [tool.name, tool]),
+      createRepoConfinedReadOnlyTools(workspace, undefined, [outside]).map((tool) => [
+        tool.name,
+        tool,
+      ]),
     ).get("read")!;
 
     const result = await read.execute(
@@ -95,16 +98,14 @@ describe("repo-confined advisor read-only tools", () => {
     ).rejects.toThrow("outside the workspace");
   });
 
-  it.each([
-    "read",
-    "grep",
-    "find",
-    "ls",
-  ])("rejects an absolute outside path through %s (#6446)", async (name) => {
-    await expect(execute(name, toolInputs[name]!(outside))).rejects.toThrow(
-      "outside the workspace",
-    );
-  });
+  it.each(["read", "grep", "find", "ls"])(
+    "rejects an absolute outside path through %s (#6446)",
+    async (name) => {
+      await expect(execute(name, toolInputs[name]!(outside))).rejects.toThrow(
+        "outside the workspace",
+      );
+    },
+  );
 
   it.each([
     ["read", "escaped-file"],
@@ -135,30 +136,30 @@ describe("repo-confined advisor read-only tools", () => {
     await expect(execute("read", { path: traversal })).rejects.toThrow("outside the workspace");
   });
 
-  it.each(
-    piUnicodeSpaces,
-  )("normalizes the Pi SDK %s space before guarding read (#6446)", async (_codePoint, unicodeSpace) => {
-    const unicodePath = `safe${unicodeSpace}target`;
-    fs.writeFileSync(path.join(workspace, unicodePath), "safe\n", "utf8");
-    fs.symlinkSync(path.join(outside, "secret.txt"), path.join(workspace, "safe target"));
+  it.each(piUnicodeSpaces)(
+    "normalizes the Pi SDK %s space before guarding read (#6446)",
+    async (_codePoint, unicodeSpace) => {
+      const unicodePath = `safe${unicodeSpace}target`;
+      fs.writeFileSync(path.join(workspace, unicodePath), "safe\n", "utf8");
+      fs.symlinkSync(path.join(outside, "secret.txt"), path.join(workspace, "safe target"));
 
-    await expect(execute("read", { path: unicodePath })).rejects.toThrow(
-      "resolves outside the workspace",
-    );
-  });
+      await expect(execute("read", { path: unicodePath })).rejects.toThrow(
+        "resolves outside the workspace",
+      );
+    },
+  );
 
-  it.each([
-    "grep",
-    "find",
-    "ls",
-  ])("normalizes Unicode spaces before guarding a %s directory root (#6446)", async (name) => {
-    fs.mkdirSync(path.join(workspace, "safe\u00A0directory"));
-    fs.symlinkSync(outside, path.join(workspace, "safe directory"), "dir");
+  it.each(["grep", "find", "ls"])(
+    "normalizes Unicode spaces before guarding a %s directory root (#6446)",
+    async (name) => {
+      fs.mkdirSync(path.join(workspace, "safe\u00A0directory"));
+      fs.symlinkSync(outside, path.join(workspace, "safe directory"), "dir");
 
-    await expect(execute(name, toolInputs[name]!("safe\u00A0directory"))).rejects.toThrow(
-      "resolves outside the workspace",
-    );
-  });
+      await expect(execute(name, toolInputs[name]!("safe\u00A0directory"))).rejects.toThrow(
+        "resolves outside the workspace",
+      );
+    },
+  );
 
   it("rejects a canonical file target changed by Pi SDK normalization (#6446)", async () => {
     fs.writeFileSync(path.join(workspace, "safe\u00A0target"), "safe\n", "utf8");
@@ -170,23 +171,22 @@ describe("repo-confined advisor read-only tools", () => {
     );
   });
 
-  it.each([
-    "grep",
-    "find",
-    "ls",
-  ])("rejects a canonical %s directory target changed by Pi SDK normalization (#6446)", async (name) => {
-    fs.mkdirSync(path.join(workspace, "safe\u00A0directory"));
-    fs.symlinkSync(
-      path.join(workspace, "safe\u00A0directory"),
-      path.join(workspace, "safe-link"),
-      "dir",
-    );
-    fs.symlinkSync(outside, path.join(workspace, "safe directory"), "dir");
+  it.each(["grep", "find", "ls"])(
+    "rejects a canonical %s directory target changed by Pi SDK normalization (#6446)",
+    async (name) => {
+      fs.mkdirSync(path.join(workspace, "safe\u00A0directory"));
+      fs.symlinkSync(
+        path.join(workspace, "safe\u00A0directory"),
+        path.join(workspace, "safe-link"),
+        "dir",
+      );
+      fs.symlinkSync(outside, path.join(workspace, "safe directory"), "dir");
 
-    await expect(execute(name, toolInputs[name]!("safe-link"))).rejects.toThrow(
-      "not stable under Pi SDK normalization",
-    );
-  });
+      await expect(execute(name, toolInputs[name]!("safe-link"))).rejects.toThrow(
+        "not stable under Pi SDK normalization",
+      );
+    },
+  );
 
   it("reports ordinary read ranges and file size (#9949)", async () => {
     fs.writeFileSync(path.join(workspace, "ranges.txt"), "one\ntwo\nthree\n", "utf8");
@@ -195,9 +195,9 @@ describe("repo-confined advisor read-only tools", () => {
       NonNullable<Parameters<typeof createRepoConfinedReadOnlyTools>[1]>
     >[0][] = [];
     tools = new Map(
-      createRepoConfinedReadOnlyTools(workspace, (observation) => observations.push(observation)).map(
-        (tool) => [tool.name, tool],
-      ),
+      createRepoConfinedReadOnlyTools(workspace, (observation) =>
+        observations.push(observation),
+      ).map((tool) => [tool.name, tool]),
     );
 
     await execute("read", { path: "ranges.txt", offset: 1, limit: 2 });
@@ -221,9 +221,9 @@ describe("repo-confined advisor read-only tools", () => {
       NonNullable<Parameters<typeof createRepoConfinedReadOnlyTools>[1]>
     >[0][] = [];
     tools = new Map(
-      createRepoConfinedReadOnlyTools(workspace, (observation) => observations.push(observation)).map(
-        (tool) => [tool.name, tool],
-      ),
+      createRepoConfinedReadOnlyTools(workspace, (observation) =>
+        observations.push(observation),
+      ).map((tool) => [tool.name, tool]),
     );
 
     const first = await execute("read", { path: "escaped-read.txt", offset: 1 });
@@ -293,9 +293,9 @@ describe("repo-confined advisor read-only tools", () => {
       NonNullable<Parameters<typeof createRepoConfinedReadOnlyTools>[1]>
     >[0][] = [];
     tools = new Map(
-      createRepoConfinedReadOnlyTools(workspace, (observation) => observations.push(observation)).map(
-        (tool) => [tool.name, tool],
-      ),
+      createRepoConfinedReadOnlyTools(workspace, (observation) =>
+        observations.push(observation),
+      ).map((tool) => [tool.name, tool]),
     );
 
     const configuredPath = await canonicalRepoReadPath(workspace, "required.txt");

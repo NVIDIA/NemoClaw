@@ -11,7 +11,8 @@ import { NAME_MAX_LENGTH, NAME_VALID_PATTERN } from "../name-validation";
 import { resolveGatewayName, resolveGatewayPortFromName } from "../onboard/gateway-binding";
 import { GATEWAYS_SUBDIR, nemoclawStateRoot } from "./state-root";
 
-export { GATEWAYS_SUBDIR } from "./state-root";
+export { GATEWAYS_SUBDIR, resolveHome } from "./state-root";
+export { DEFAULT_GATEWAY_PORT } from "../core/ports";
 export {
   releaseManagedGatewayStateLifecycleLock,
   tryAcquireManagedGatewayStateLifecycleLock,
@@ -208,7 +209,9 @@ export function registryOpenShellGatewayStateDir(
     }
   }
   if (recorded.size > 1) {
-    throw stateError(`gateway port ${String(gatewayPort)} has conflicting OpenShell state directories`);
+    throw stateError(
+      `gateway port ${String(gatewayPort)} has conflicting OpenShell state directories`,
+    );
   }
   return recorded.values().next().value ?? null;
 }

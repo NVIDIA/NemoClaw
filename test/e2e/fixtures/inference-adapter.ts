@@ -394,7 +394,7 @@ export async function createE2EInferenceAdapter(
       // alias, so listen on the bridge-facing interfaces. The workflow uses an
       // ephemeral ubuntu-latest VM, an OS-assigned port, and a per-run credential.
       host: "0.0.0.0",
-      launchReplyFromPrompt: true,
+      replyFromPrompt: true,
       model,
       publicHost: SANDBOX_HOST_ALIAS,
       progress: options.progress,

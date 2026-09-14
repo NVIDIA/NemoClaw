@@ -128,6 +128,22 @@ describe("initial sandbox policy real preset merge", () => {
     ]);
   });
 
+  it("lets the Hermes supervisor read the root-issued expected-exit lease", () => {
+    const prepared = prepareInitialSandboxCreatePolicy(
+      repoPath("agents", "hermes", "policy-additions.yaml"),
+      [],
+      { agentName: "hermes" },
+    );
+    const policy = readPreparedPolicy(prepared);
+
+    expect(policy.filesystem_policy?.read_only).toContain(
+      "/run/nemoclaw/managed-gateway-expected-exit",
+    );
+    expect(policy.filesystem_policy?.read_write).not.toContain(
+      "/run/nemoclaw/managed-gateway-expected-exit",
+    );
+  });
+
   it.each(
     managedImagePolicyCases.flatMap((policyCase) =>
       managedStartupReadOnlyPaths.map((trustedPath) => ({ policyCase, trustedPath })),
@@ -278,8 +294,13 @@ describe("initial sandbox policy real preset merge", () => {
 
     const discordBinaries =
       policy.network_policies?.discord?.binaries?.map((binary) => binary.path) ?? [];
-    expect(discordBinaries).toContain("/usr/bin/python3*");
-    expect(discordBinaries).toContain("/opt/hermes/.venv/bin/python");
+    expect(discordBinaries).toEqual([
+      "/opt/hermes/.venv/bin/python3",
+      "/opt/hermes/.venv/bin/python",
+      "/usr/bin/python3",
+      "/usr/bin/python3.13",
+    ]);
+    expect(discordBinaries).not.toContain("/usr/bin/python3*");
     expect(discordBinaries).not.toContain("/usr/bin/node");
 
     const boundProviders =
@@ -617,9 +638,13 @@ describe("initial sandbox policy real preset merge", () => {
       },
     );
     const effective = readPreparedPolicy(prepared);
+    const observability = effective.network_policies?.["observability-otlp-local"];
+    const endpoint = observability?.endpoints?.find(
+      (candidate) => candidate.host === "host.openshell.internal" && candidate.port === 4318,
+    );
 
     expect(prepared.appliedPresets).toContain("observability-otlp-local");
-    expect(effective.network_policies?.["observability-otlp-local"]).toBeDefined();
+    expect(endpoint).not.toHaveProperty("allowed_ips");
   });
 
   it.each([

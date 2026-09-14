@@ -8,10 +8,7 @@ function writeExecutable(target: string, contents: string): void {
   fs.writeFileSync(target, contents, { mode: 0o755 });
 }
 
-export function writeOkOpenshell(
-  fakeBin: string,
-  options: { gatewayPort?: number } = {},
-): void {
+export function writeOkOpenshell(fakeBin: string, options: { gatewayPort?: number } = {}): void {
   const gatewayPort = options.gatewayPort ?? 8080;
   writeExecutable(
     path.join(fakeBin, "openshell"),

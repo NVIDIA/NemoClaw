@@ -67,7 +67,7 @@ export type ChannelHealthCommandRunner = (
   sandboxName: string,
   command: string,
   timeoutMs: number,
-) => ChannelHealthCommandResult | null | undefined;
+) => Promise<ChannelHealthCommandResult | null | undefined>;
 
 /**
  * Options a channel-health status hook accepts. `executeSandboxCommand` is a

@@ -152,7 +152,7 @@ function socketAuthority(): PodmanSocketAuthority {
 
 function openshellExecutableAuthority(): HermesPortableOpenShellExecutableAuthority {
   return {
-    version: "0.0.106",
+    version: "0.0.116",
     executable: {
       executablePath: "/usr/bin/openshell",
       device: "1",

@@ -204,9 +204,9 @@ describe("npm bundled node-tar remediation", () => {
 
     expect(commands).toEqual(["curl"]);
     expect(fs.existsSync(path.join(target.npmRoot, "node_modules", "tar", "old.js"))).toBe(true);
-    expect(
-      fs.existsSync(path.join(target.npmRoot, "node_modules", "tar", "lib", "fixed.js")),
-    ).toBe(false);
+    expect(fs.existsSync(path.join(target.npmRoot, "node_modules", "tar", "lib", "fixed.js"))).toBe(
+      false,
+    );
     expect(fs.readdirSync(path.join(target.npmRoot, "node_modules"))).toEqual(["tar"]);
     expect(() => verifyBundledNpmTar(target.npmRoot)).toThrow("bundles affected tar@7.5.19");
   });

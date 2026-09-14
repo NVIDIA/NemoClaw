@@ -61,7 +61,7 @@ describe("Hermes dashboard recovery helpers", () => {
     ).toBeNull();
   });
 
-  it("restarts the dashboard forward only when the recorded forward is unhealthy", () => {
+  it("restarts the dashboard forward only when the recorded forward is unhealthy", async () => {
     const ensurePortForward = vi.fn(() => true);
     const getRecoveryConfig = () => ({
       publicPort: 9119,
@@ -70,7 +70,7 @@ describe("Hermes dashboard recovery helpers", () => {
     });
 
     expect(
-      ensureHermesDashboardPortForwardIfEnabled("alpha", {
+      await ensureHermesDashboardPortForwardIfEnabled("alpha", {
         getRecoveryConfig,
         isPortForwardHealthy: () => false,
         ensurePortForward,
@@ -79,25 +79,15 @@ describe("Hermes dashboard recovery helpers", () => {
     expect(ensurePortForward).toHaveBeenCalledWith("alpha", 9119);
 
     expect(
-      ensureHermesDashboardPortForwardIfEnabled("alpha", {
+      await ensureHermesDashboardPortForwardIfEnabled("alpha", {
         getRecoveryConfig,
         isPortForwardHealthy: () => true,
         ensurePortForward,
       }),
     ).toBe(true);
 
-    const ensurePortForwardWhenOccupied = vi.fn(() => true);
     expect(
-      ensureHermesDashboardPortForwardIfEnabled("alpha", {
-        getRecoveryConfig,
-        isPortForwardHealthy: () => "occupied",
-        ensurePortForward: ensurePortForwardWhenOccupied,
-      }),
-    ).toBe(false);
-    expect(ensurePortForwardWhenOccupied).not.toHaveBeenCalled();
-
-    expect(
-      ensureHermesDashboardPortForwardIfEnabled("alpha", {
+      await ensureHermesDashboardPortForwardIfEnabled("alpha", {
         getRecoveryConfig: () => null,
         isPortForwardHealthy: () => false,
         ensurePortForward,

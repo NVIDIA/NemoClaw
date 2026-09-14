@@ -30,66 +30,8 @@ type SdkPackageWorkflow = Readonly<{
   permissions?: Readonly<Record<string, string>>;
 }>;
 
-type InstallerHashAction = CompositeAction & {
-  inputs?: Record<string, { required?: boolean }>;
-};
-
-type CodebaseGrowthGuardrailsWorkflow = {
-  jobs: Record<string, WorkflowJob>;
-};
-
-type PrekConfig = {
-  default_stages?: string[];
-  repos: Array<{
-    hooks?: Array<{
-      id: string;
-      always_run?: boolean;
-      entry?: string;
-      files?: string;
-      stages?: string[];
-    }>;
-  }>;
-};
-
-type PackageJson = {
-  scripts: Record<string, string>;
-};
-
-type TypeScriptConfig = {
-  include: string[];
-};
-
-const sharedActionPaths = {
-  staticChecks: "./.github/actions/ci-static-checks",
-  compileArtifacts: "./.github/actions/ci-compile-artifacts",
-  buildTypecheck: "./.github/actions/ci-build-typecheck",
-  cliCoverageShard: "./.github/actions/ci-cli-coverage-shard",
-  cliCoverageMerge: "./.github/actions/ci-cli-coverage-merge",
-  pluginCoverage: "./.github/actions/ci-plugin-coverage",
-  installerIntegration: "./.github/actions/ci-installer-integration",
-} as const;
-
-const trustedPrActionPaths = {
-  staticChecks: "./.trusted-ci-actions/.github/actions/ci-static-checks",
-  compileArtifacts: "./.trusted-ci-actions/.github/actions/ci-compile-artifacts",
-  buildTypecheck: "./.trusted-ci-actions/.github/actions/ci-build-typecheck",
-  cliCoverageShard: "./.trusted-ci-actions/.github/actions/ci-cli-coverage-shard",
-  cliCoverageMerge: "./.trusted-ci-actions/.github/actions/ci-cli-coverage-merge",
-  pluginCoverage: "./.trusted-ci-actions/.github/actions/ci-plugin-coverage",
-  installerIntegration: "./.trusted-ci-actions/.github/actions/ci-installer-integration",
-} as const;
-
 const trustedCheckoutAction = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1";
 const trustedSetupNodeAction = "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020";
-const trustedActionDirs = [
-  ".github/actions/ci-static-checks",
-  ".github/actions/ci-build-typecheck",
-  ".github/actions/ci-compile-artifacts",
-  ".github/actions/ci-cli-coverage-shard",
-  ".github/actions/ci-cli-coverage-merge",
-  ".github/actions/ci-plugin-coverage",
-  ".github/actions/ci-installer-integration",
-] as const;
 
 const cliShardCount = "12";
 const cliShardTimeoutMinutes = 30;
@@ -119,28 +61,12 @@ function requiredStep(action: CompositeAction, stepName: string): WorkflowStep {
   return step;
 }
 
-function requiredStepIndex(action: CompositeAction, stepName: string): number {
-  const stepIndex = action.runs.steps.findIndex((candidate) => candidate.name === stepName);
-  if (stepIndex === -1) {
-    throw new Error(`Missing shared action step: ${stepName}`);
-  }
-  return stepIndex;
-}
-
 function requiredWorkflowStep(job: WorkflowJob, stepName: string): WorkflowStep {
   const step = job.steps?.find((candidate) => candidate.name === stepName);
   if (!step) {
     throw new Error(`Missing workflow step: ${stepName}`);
   }
   return step;
-}
-
-function requiredWorkflowStepIndex(job: WorkflowJob, stepName: string): number {
-  const stepIndex = job.steps?.findIndex((candidate) => candidate.name === stepName) ?? -1;
-  if (stepIndex === -1) {
-    throw new Error(`Missing workflow step: ${stepName}`);
-  }
-  return stepIndex;
 }
 
 function runWorkflowShellStep(
@@ -322,90 +248,6 @@ function runWorkflowShellStepWithJobs(
   }
 }
 
-type LoggedPackageScript = {
-  calls: string[][];
-  stderr: string;
-};
-
-function runLoggedPackageScriptWithOutput(script: string): LoggedPackageScript {
-  const temp = mkdtempSync(join(tmpdir(), "nemoclaw-package-script-"));
-  const fakeBin = join(temp, "bin");
-  const commandLog = join(temp, "commands.jsonl");
-  mkdirSync(fakeBin);
-
-  for (const command of ["npm", "npx", "tsx", "vitest"]) {
-    writeFileSync(
-      join(fakeBin, command),
-      [
-        "#!/usr/bin/env node",
-        'const fs = require("node:fs");',
-        `fs.appendFileSync(process.env.COMMAND_LOG, JSON.stringify(["${command}", ...process.argv.slice(2)]) + "\\n");`,
-      ].join("\n"),
-      { mode: 0o755 },
-    );
-  }
-
-  try {
-    const result = spawnSync("sh", ["-c", script], {
-      encoding: "utf8",
-      env: {
-        ...process.env,
-        COMMAND_LOG: commandLog,
-        PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
-      },
-    });
-    expect(result.status, `Package script failed: ${result.stderr}`).toBe(0);
-    return {
-      calls: readFileSync(commandLog, "utf8")
-        .trim()
-        .split("\n")
-        .filter(Boolean)
-        .map((line) => JSON.parse(line) as string[]),
-      stderr: result.stderr,
-    };
-  } finally {
-    rmSync(temp, { force: true, recursive: true });
-  }
-}
-
-function runLoggedPackageScript(script: string): string[][] {
-  return runLoggedPackageScriptWithOutput(script).calls;
-}
-
-function codeFilterMatchesChangedPaths(workflow: CiWorkflow, paths: string[]): boolean {
-  const filterStep = workflow.jobs.changes.steps?.find((step) => step.id === "filter");
-  const quantifier = filterStep?.with?.["predicate-quantifier"];
-  const filters = String(filterStep?.with?.filters ?? "");
-  const patterns = filters
-    .split("\n")
-    .map((line) => line.trim())
-    .filter((line) => line.startsWith("- "))
-    .map((line) => line.slice(2).replace(/^['"]|['"]$/g, ""));
-
-  const patternMatches = (path: string, pattern: string): boolean => {
-    switch (pattern) {
-      case "**":
-        return true;
-      case "!**/*.md":
-        return !path.endsWith(".md");
-      case "!docs/**":
-        return !path.startsWith("docs/");
-      default:
-        throw new Error(`Unhandled PR workflow code filter pattern: ${pattern}`);
-    }
-  };
-
-  return paths.some((path) => {
-    if (quantifier === "every") {
-      return patterns.every((pattern) => patternMatches(path, pattern));
-    }
-    if (quantifier === "some") {
-      return patterns.some((pattern) => patternMatches(path, pattern));
-    }
-    throw new Error(`Unhandled PR workflow predicate quantifier: ${String(quantifier)}`);
-  });
-}
-
 function installerHashTrustViolations(workflow: CiWorkflow): string[] {
   const steps = workflow.jobs["check-hash"]?.steps ?? [];
   const baseCheckout = steps.find(
@@ -449,26 +291,21 @@ function installerHashTrustViolations(workflow: CiWorkflow): string[] {
 describe("pull request and main workflow contracts", () => {
   const prWorkflow = readYaml<CiWorkflow>(".github/workflows/pr.yaml");
   const mainWorkflow = readYaml<CiWorkflow>(".github/workflows/main.yaml");
-  const dcoWorkflow = readYaml<CiWorkflow>(".github/workflows/dco-check.yaml");
+
   const installerHashWorkflow = readYaml<CiWorkflow>(".github/workflows/installer-hash-check.yaml");
+  const advisorWorkflow = readYaml<CiWorkflow>(".github/workflows/pr-review-advisor.yaml");
   const sdkPackageWorkflow = readYaml<SdkPackageWorkflow>(
     ".github/workflows/openshell-sdk-package-pr.yaml",
   );
+  const reviewedNpmAudit = JSON.parse(readFileSync("ci/reviewed-npm-audit.json", "utf8")) as Record<
+    string,
+    unknown
+  >;
   const sdkPackageJob = sdkPackageWorkflow.jobs["package-openshell-sdk"];
 
-  const installerHashAction = readYaml<InstallerHashAction>(
-    ".github/actions/ci-installer-hash-check/action.yaml",
-  );
-  const prekConfig = readYaml<PrekConfig>(".pre-commit-config.yaml");
-  const packageJson = JSON.parse(readFileSync("package.json", "utf8")) as PackageJson;
-  const cliTypeScriptConfig = JSON.parse(
-    readFileSync("tsconfig.cli.json", "utf8"),
-  ) as TypeScriptConfig;
   const sharedActions = {
     staticChecks: readYaml<CompositeAction>(".github/actions/ci-static-checks/action.yaml"),
-    compileArtifacts: readYaml<CompositeAction>(
-      ".github/actions/ci-compile-artifacts/action.yaml",
-    ),
+    compileArtifacts: readYaml<CompositeAction>(".github/actions/ci-compile-artifacts/action.yaml"),
     buildTypecheck: readYaml<CompositeAction>(".github/actions/ci-build-typecheck/action.yaml"),
     cliCoverageShard: readYaml<CompositeAction>(
       ".github/actions/ci-cli-coverage-shard/action.yaml",
@@ -493,10 +330,7 @@ describe("pull request and main workflow contracts", () => {
   it("verifies changed Hugging Face catalog references without credentials", () => {
     const job = prWorkflow.jobs["hugging-face-models"];
     const filterStep = prWorkflow.jobs.changes.steps?.find((step) => step.id === "filter");
-    const filters = YAML.parse(String(filterStep?.with?.filters ?? "")) as Record<
-      string,
-      string[]
-    >;
+    const filters = YAML.parse(String(filterStep?.with?.filters ?? "")) as Record<string, string[]>;
     const huggingFaceModelFilters = filters.hugging_face_models ?? [];
 
     expect(
@@ -514,7 +348,7 @@ describe("pull request and main workflow contracts", () => {
     expect(stepUses(job)).toEqual([trustedCheckoutAction, trustedSetupNodeAction]);
     expect(requiredWorkflowStep(job, "Checkout").with?.["persist-credentials"]).toBe(false);
     expect(requiredWorkflowStep(job, "Install dependencies").run).toBe(
-      "npm ci --ignore-scripts",
+      "npm ci --ignore-scripts --no-audit --no-fund",
     );
     expect(requiredWorkflowStep(job, "Verify Hugging Face model references").run).toBe(
       "npm run catalog:verify-hugging-face",
@@ -570,9 +404,67 @@ describe("pull request and main workflow contracts", () => {
         NODE_AUTH_TOKEN: "${{ github.event_name == 'push' && github.token || '' }}",
       })),
     );
-    expect(actions.map((action) => requiredStep(action, "Install dependencies").run)).toEqual(
-      actions.map(() => 'bash "$GITHUB_ACTION_PATH/../ci-install-dependencies.sh"'),
+    expect(actions.map((action) => requiredStep(action, "Install dependencies").run)).toEqual([
+      'bash "$GITHUB_ACTION_PATH/../ci-install-dependencies.sh"',
+      'bash "$GITHUB_ACTION_PATH/../ci-install-dependencies.sh"',
+      'bash "$GITHUB_ACTION_PATH/../ci-install-dependencies.sh" none',
+      'bash "$GITHUB_ACTION_PATH/../ci-install-dependencies.sh"',
+      'bash "$GITHUB_ACTION_PATH/../ci-install-dependencies.sh" production',
+      'bash "$GITHUB_ACTION_PATH/../ci-install-dependencies.sh"',
+    ]);
+  });
+
+  // source-shape-contract: security -- The trusted split must retain test-config coverage after compiling candidate production code
+  it.each([
+    ["pull request", prWorkflow],
+    ["main", mainWorkflow],
+  ] as const)(
+    "keeps %s plugin test typechecking after the trusted production build",
+    (_name, workflow) => {
+      expect([workflow.jobs["build-typecheck"].needs].flat()).toContain("compile-artifacts");
+      expect(requiredStep(sharedActions.buildTypecheck, "Typecheck plugin tests").run).toBe(
+        "npm --prefix nemoclaw exec -- tsc --noEmit -p nemoclaw/tsconfig.test.json",
+      );
+      expect(stepRuns(sharedActions.buildTypecheck)).not.toContain(
+        "npm --prefix nemoclaw run typecheck",
+      );
+    },
+  );
+  it.each([
+    ["CLI shards", requiredStep(sharedActions.cliCoverageShard, "Install pinned Pi search tools")],
+    [
+      "Advisor runtime",
+      requiredWorkflowStep(advisorWorkflow.jobs["build-advisor-runtime"], "Install locked runtime"),
+    ],
+  ])("refreshes only Ubuntu package metadata for %s", (_name, installStep) => {
+    const temp = mkdtempSync(join(tmpdir(), "nemoclaw-ubuntu-apt-sources-"));
+    const fakeBin = join(temp, "bin");
+    const aptArgs = join(temp, "apt-args");
+    mkdirSync(fakeBin);
+    writeFileSync(
+      join(fakeBin, "sudo"),
+      '#!/usr/bin/env bash\nprintf "%s\\n" "$@" > "$APT_ARGS"\nexit 86\n',
+      { mode: 0o755 },
     );
+
+    try {
+      const result = runWorkflowShellStep(installStep, {
+        APT_ARGS: aptArgs,
+        PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+      });
+      expect(result.status).toBe(86);
+      expect(readFileSync(aptArgs, "utf8").trim().split("\n")).toEqual([
+        "apt-get",
+        "update",
+        "-qq",
+        "-o",
+        "Dir::Etc::sourcelist=sources.list.d/ubuntu.sources",
+        "-o",
+        "Dir::Etc::sourceparts=-",
+      ]);
+    } finally {
+      rmSync(temp, { force: true, recursive: true });
+    }
   });
 
   // source-shape-contract: security -- The PR workflow must select an exact base-controlled package run before publishing its archive internally
@@ -924,9 +816,7 @@ describe("pull request and main workflow contracts", () => {
       NEMOCLAW_OPEN_SHELL_SDK_OUTPUT_DIRECTORY: "${{ runner.temp }}/openshell-sdk",
       NODE_AUTH_TOKEN: "${{ github.token }}",
     });
-    expect(fetch.run).toContain(
-      "node --experimental-strip-types scripts/checks/package-openshell-sdk-for-pr.mts",
-    );
+    expect(fetch.run).toContain("node scripts/checks/package-openshell-sdk-for-pr.mts");
     expect(fetch.run).toContain("artifact_path=");
     expect(
       (sdkPackageJob.steps ?? [])
@@ -953,6 +843,12 @@ describe("pull request and main workflow contracts", () => {
     const serialized = JSON.stringify(sdkPackageWorkflow);
     expect(serialized).not.toContain("@nvidia/openshell-sdk@0.0.106");
     expect(serialized).not.toContain("nvidia-openshell-sdk-0.0.106.tgz");
+    expect(serialized).not.toContain("NEMOCLAW_OPEN_SHELL_SDK_INCLUDE_REPLACEMENT");
+    expect(reviewedNpmAudit.sourceRegistryPackage).toMatchObject({
+      artifactName: "nvidia-openshell-sdk-0.0.116.tgz",
+      packageSpec: "@nvidia/openshell-sdk@0.0.116",
+    });
+    expect(reviewedNpmAudit).not.toHaveProperty("sourceRegistryPackageReplacement");
   });
 
   // source-shape-contract: security -- PR base SHA action execution prevents pull-request code from authorizing installer hashes
@@ -1054,6 +950,42 @@ describe("pull request and main workflow contracts", () => {
       expect(existsSync(marker)).toBe(false);
     } finally {
       rmSync(temp, { force: true, recursive: true });
+    }
+  });
+
+  // source-shape-contract: compatibility -- The coverage merge must consume the current attempt instead of a stale failed shard report
+  it("replaces stale CLI shard reports when a failed job is rerun", () => {
+    const upload = requiredStep(sharedActions.cliCoverageShard, "Upload CLI shard blob report");
+
+    expect(upload.with).toMatchObject({
+      name: "cli-blob-report-${{ inputs.shard }}",
+      overwrite: true,
+    });
+  });
+
+  it.each([
+    ["cli-build-output", "required=true\n"],
+    ["compiled-test-inputs", ""],
+  ])("uploads the legacy coverage artifact only when the base reads %s", (artifact, expected) => {
+    const root = mkdtempSync(join(tmpdir(), "coverage-artifact-rollout-"));
+    const actionDirectory = join(root, ".trusted-ci-actions/.github/actions/ci-cli-coverage-merge");
+    const output = join(root, "output");
+    try {
+      mkdirSync(actionDirectory, { recursive: true });
+      writeFileSync(join(actionDirectory, "action.yaml"), `with:\n  name: ${artifact}\n`);
+      writeFileSync(output, "");
+      const result = runWorkflowShellStep(
+        requiredWorkflowStep(
+          prWorkflow.jobs["compile-artifacts"],
+          "Detect legacy coverage artifact reader",
+        ),
+        { GITHUB_OUTPUT: output },
+        root,
+      );
+      expect(result.status, result.stderr).toBe(0);
+      expect(readFileSync(output, "utf8")).toBe(expected);
+    } finally {
+      rmSync(root, { force: true, recursive: true });
     }
   });
 
@@ -1221,7 +1153,7 @@ describe("pull request and main workflow contracts", () => {
       PLUGIN_TESTS_RESULT: "success",
       REVIEWED_NPM_AUDIT_RESULT: "success",
       REAL_OPENCLAW_DIST_HARNESS_RESULT: "success",
-      SANDBOX_IMAGES_E2E_RESULT: "success",
+      SANDBOX_IMAGE_CONTRACTS_RESULT: "success",
       STATIC_RESULT: "success",
       WECHAT_RUNTIME_AUDIT_RESULT: "success",
     };
@@ -1261,9 +1193,9 @@ describe("pull request and main workflow contracts", () => {
       mainGate,
       {
         ...successfulMain,
-        SANDBOX_IMAGES_E2E_RESULT: "failure",
+        SANDBOX_IMAGE_CONTRACTS_RESULT: "failure",
       },
-      workflowJobListing([workflowJob(302, "sandbox-images-and-e2e", "failure")]),
+      workflowJobListing([workflowJob(302, "sandbox-image-contracts", "failure")]),
     );
     const malformedFailure = runWorkflowShellStepWithJobs(
       prGate,
@@ -1293,7 +1225,7 @@ describe("pull request and main workflow contracts", () => {
     expect(docsOnlySuccess.status).toBe(0);
     expect(mainSuccess.status).toBe(0);
     expect(mainFailure.status).not.toBe(0);
-    expect(mainFailure.stdout).toContain("sandbox-images-and-e2e failed");
+    expect(mainFailure.stdout).toContain("sandbox-image-contracts failed");
     expect(mainFailure.stdout).toContain(
       "https://github.com/NVIDIA/NemoClaw/actions/runs/123/job/302",
     );

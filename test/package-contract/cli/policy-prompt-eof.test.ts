@@ -25,6 +25,9 @@ const REPO_ROOT = path.join(import.meta.dirname, "../../..");
 const CLI_PATH = JSON.stringify(path.join(REPO_ROOT, "dist", "nemoclaw.js"));
 const POLICIES_PATH = JSON.stringify(path.join(REPO_ROOT, "dist", "lib", "policy", "index.js"));
 const REGISTRY_PATH = JSON.stringify(path.join(REPO_ROOT, "dist", "lib", "state", "registry.js"));
+const CROSS_PORT_PATH = JSON.stringify(
+  path.join(REPO_ROOT, "dist", "lib", "state", "registry", "cross-port.js"),
+);
 
 /**
  * Run a policy command with no preset name and no terminal input. `input: ""`
@@ -36,6 +39,7 @@ function runPolicyCommandAtStdinEof(command: "policy-add" | "policy-remove") {
   const scriptPath = path.join(tmpDir, "policy-prompt-eof-check.js");
   const script = String.raw`
 const registry = require(${REGISTRY_PATH});
+const crossPort = require(${CROSS_PORT_PATH});
 const policies = require(${POLICIES_PATH});
 policies.listPresets = () => [
   { file: "npm.yaml", name: "npm", description: "npm registry access" },
@@ -46,6 +50,10 @@ policies.getAppliedPresets = () => ["npm"];
 registry.getSandbox = (name) =>
   name === "test-sandbox" ? { name } : null;
 registry.listSandboxes = () => ({ sandboxes: [{ name: "test-sandbox" }] });
+crossPort.findSandboxAcrossGatewayRoots = (name) =>
+  name === "test-sandbox"
+    ? { entry: { name }, gatewayPort: null, registryFile: "test-registry" }
+    : null;
 process.argv = ["node", "nemoclaw.js", "test-sandbox", ${JSON.stringify(command)}];
 require(${CLI_PATH});
 `;

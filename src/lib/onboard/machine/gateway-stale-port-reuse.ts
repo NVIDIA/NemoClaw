@@ -43,16 +43,15 @@ export function classifyGatewayPortReuse(input: GatewayPortReuseInput): GatewayP
 export interface HealthyPortReuseInput {
   kind: PreflightPortKind;
   port: number;
-  dashboardPort: number;
   label: string;
   runtimeDisplayName: string;
   gatewayName: string;
   gatewayReuseState: GatewayReuseState;
   externallySupervised: boolean;
+  managedGatewayObservationAuthoritative?: boolean;
   portCheckOptions: CheckPortOpts | undefined;
   supportsLifecycleCommands: boolean;
   destroyGateway: () => boolean;
-  runOpenshell: (args: string[], opts: { ignoreError: true }) => unknown;
   checkPortAvailable: (port?: number, opts?: CheckPortOpts) => Promise<PortProbeResult>;
   verifyGatewayContainerRunning: (gatewayName: string) => GatewayContainerState;
 }
@@ -71,7 +70,7 @@ export type HealthyPortReuseOutcome =
 export async function applyHealthyPortReuse(
   input: HealthyPortReuseInput,
 ): Promise<HealthyPortReuseOutcome | null> {
-  const { kind, port, dashboardPort, label, runtimeDisplayName, gatewayName } = input;
+  const { kind, port, label, runtimeDisplayName, gatewayName } = input;
   if (kind === "other") return null;
   // An occupied externally supervised gateway port is expected. Preserve it
   // unchanged so the FSM can perform the authoritative listener, supervisor,
@@ -81,6 +80,9 @@ export async function applyHealthyPortReuse(
   // The explicit entry kind is authoritative: a dashboard entry can have the
   // same numeric port and must still retain normal conflict handling.
   if (input.externallySupervised) return kind === "gateway" ? "continue" : null;
+  if (input.managedGatewayObservationAuthoritative) {
+    return kind === "gateway" && input.gatewayReuseState === "healthy" ? "continue" : null;
+  }
   if (input.gatewayReuseState !== "healthy") return null;
   // Only probe the container when lifecycle commands are advertised — for
   // package-managed gateways without lifecycle commands the openshell-cluster-*
@@ -94,7 +96,6 @@ export async function applyHealthyPortReuse(
     });
     if (decision === "stale") {
       console.log("  Gateway metadata is stale (container not running). Cleaning up...");
-      input.runOpenshell(["forward", "stop", String(dashboardPort)], { ignoreError: true });
       const gatewayReuseState = destroyGatewayForReuse(
         input.destroyGateway,
         "  ✓ Stale gateway metadata cleaned up",

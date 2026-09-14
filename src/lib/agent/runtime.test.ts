@@ -1,10 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
-import type { AgentDefinition } from "./defs";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import * as registry from "../state/registry";
+import { type AgentDefinition, loadAgent } from "./defs";
 // Import source directly so tests cannot pass against a stale build.
-import { buildRecoveryScript, getRegisteredAgent } from "./runtime";
+import { buildRecoveryScript, getRegisteredAgent, resolveSessionAgentDefinition } from "./runtime";
 
 function makeAgent(overrides: Partial<AgentDefinition> = {}): AgentDefinition {
   return {
@@ -65,6 +66,10 @@ const hermesAgent = makeAgent({
   },
 });
 
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
 describe("getRegisteredAgent", () => {
   it("does not invent an agent when the target registry row is absent or OpenClaw", () => {
     expect(getRegisteredAgent(null)).toBeNull();
@@ -80,13 +85,40 @@ describe("getRegisteredAgent", () => {
     expect(getRegisteredAgent({ agent: "missing-agent" })).toBeNull();
   });
 
-  it.each([
-    "../openclaw",
-    "/tmp/agent",
-    "hermes/../openclaw",
-    "hermes\\openclaw",
-  ])("fails closed for path-like persisted agent name %j", (agent) => {
-    expect(getRegisteredAgent({ agent })).toBeNull();
+  it.each(["../openclaw", "/tmp/agent", "hermes/../openclaw", "hermes\\openclaw"])(
+    "fails closed for path-like persisted agent name %j",
+    (agent) => {
+      expect(getRegisteredAgent({ agent })).toBeNull();
+    },
+  );
+});
+
+describe("resolveSessionAgentDefinition", () => {
+  it("preserves an explicitly selected agent definition", () => {
+    expect(resolveSessionAgentDefinition("alpha", hermesAgent)).toEqual({
+      agent: hermesAgent,
+      requestedName: "hermes",
+      resolved: true,
+    });
+  });
+
+  it("loads the trusted OpenClaw manifest for the legacy null representation", () => {
+    vi.spyOn(registry, "getSandbox").mockReturnValue({ agent: "openclaw" } as never);
+    const resolved = resolveSessionAgentDefinition("alpha", null);
+
+    expect(resolved.resolved).toBe(true);
+    expect(resolved.agent).toBe(loadAgent("openclaw"));
+    expect(resolved.agent?.binary_path).toBe("/usr/local/bin/openclaw");
+  });
+
+  it("preserves an unresolved registered agent instead of changing it to OpenClaw", () => {
+    vi.spyOn(registry, "getSandbox").mockReturnValue({ agent: "missing-agent" } as never);
+
+    expect(resolveSessionAgentDefinition("alpha", null)).toEqual({
+      agent: null,
+      requestedName: "missing-agent",
+      resolved: false,
+    });
   });
 });
 
@@ -155,8 +187,7 @@ describe("buildRecoveryScript", () => {
   // /tmp/nemoclaw-proxy-env.sh, then source a generated recovery env carrying
   // the critical NODE_OPTIONS library guards. The pre-fix recovery path
   // swallowed sourcing errors via `2>/dev/null`, leaving respawned gateways
-  // guard-less and crash-looping on the next library error from ciao,
-  // model-pricing, or anything else hitting a sandboxed syscall.
+  // guard-less and crash-looping on the next recoverable library error.
   describe("hardened library-guard preload chain (#2478)", () => {
     it("sources the generated recovery env after validating the gateway env file", () => {
       const script = buildRecoveryScript(minimalAgent, 19000);
@@ -178,12 +209,10 @@ describe("buildRecoveryScript", () => {
       expect(script).not.toContain(". /tmp/nemoclaw-proxy-env.sh 2>/dev/null");
     });
 
-    it("checks NODE_OPTIONS for the safety-net and ciao preloads after sourcing", () => {
+    it("checks NODE_OPTIONS for the safety-net preload after sourcing", () => {
       const script = buildRecoveryScript(minimalAgent, 19000);
       expect(script).toContain("nemoclaw-sandbox-safety-net");
-      expect(script).toContain("nemoclaw-ciao-network-guard");
       expect(script).toContain("NODE_OPTIONS missing safety-net preload");
-      expect(script).toContain("or ciao preload");
     });
 
     it("stops stale launcher and gateway processes before relaunch", () => {

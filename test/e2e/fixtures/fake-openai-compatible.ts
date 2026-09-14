@@ -40,7 +40,7 @@ export interface FakeOpenAiCompatibleServerOptions {
   readonly apiKey?: string;
   readonly chatContent?: string;
   readonly forbiddenMarkers?: readonly string[];
-  readonly launchReplyFromPrompt?: boolean;
+  readonly replyFromPrompt?: boolean;
   /** Non-secret marker expected in a request under test. */
   readonly requestCanaryMarker?: string;
   readonly host?: string;
@@ -172,7 +172,7 @@ export async function startFakeOpenAiCompatibleServer(
   const host = options.host ?? "127.0.0.1";
   let child: ChildProcess;
   try {
-    child = spawnObservedChild(process.execPath, ["--experimental-strip-types", SERVER_SCRIPT], {
+    child = spawnObservedChild(process.execPath, [SERVER_SCRIPT], {
       activityLabel: "command: fake-openai-compatible-server",
       progress: options.progress,
       spawn: {
@@ -185,7 +185,7 @@ export async function startFakeOpenAiCompatibleServer(
           NEMOCLAW_FAKE_OPENAI_FORBIDDEN_MARKERS: JSON.stringify(options.forbiddenMarkers ?? []),
           NEMOCLAW_FAKE_OPENAI_HOST: host,
           NEMOCLAW_FAKE_OPENAI_LOG_FILE: logFile,
-          NEMOCLAW_FAKE_OPENAI_LAUNCH_REPLY_FROM_PROMPT: options.launchReplyFromPrompt ? "1" : "0",
+          NEMOCLAW_FAKE_OPENAI_REPLY_FROM_PROMPT: options.replyFromPrompt ? "1" : "0",
           NEMOCLAW_FAKE_OPENAI_MAX_MODEL_LEN:
             options.maxModelLen !== undefined ? String(options.maxModelLen) : "",
           NEMOCLAW_FAKE_OPENAI_MODEL: options.model ?? "test-model",

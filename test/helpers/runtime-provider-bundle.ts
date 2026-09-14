@@ -80,6 +80,32 @@ export function createInMemoryRuntimeProviderBundle({
           }
         : { action: "retain" as const, reason: "no-owned-image" as const };
   };
+  const projectGatewayHostRuntime = () => ({
+    providerId,
+    openShellDriver: "memory",
+    bindAddress: "127.0.0.1",
+    grpcHost: "127.0.0.1",
+    sshGatewayHost: "127.0.0.1",
+    portCheckHost: "127.0.0.1",
+    socketPath: null,
+    requiredServerIpSans: [],
+    sandboxHostAddress: null,
+    usesHostGatewayRoute: false,
+    resourceOwnership: { label: "test.managed", value: providerId },
+    gatewayConfig: {
+      sandboxNamespace: "scoped" as const,
+      hostGatewayIp: null,
+      includeSupervisorBin: true,
+      processOwnership: "scoped-namespace" as const,
+    },
+    network: {
+      sandboxSourceCidrs: () => [],
+      inspect: () => undefined,
+      usesHostGatewayRoute: () => false,
+      run: () => ({ status: 0 }),
+      ensureProbeImageCached: () => ({ ok: true as const, alreadyCached: true }),
+    },
+  });
   return {
     identity: {
       contractVersion: RUNTIME_PROVIDER_BUNDLE_CONTRACT_VERSION,
@@ -116,32 +142,9 @@ export function createInMemoryRuntimeProviderBundle({
       supported: true,
       launcher: gatewayLauncher,
       inspectLegacyContainer: false,
-      prepareHostRuntime: () => ({
-        providerId,
-        openShellDriver: "memory",
-        bindAddress: "127.0.0.1",
-        grpcHost: "127.0.0.1",
-        sshGatewayHost: "127.0.0.1",
-        portCheckHost: "127.0.0.1",
-        socketPath: null,
-        requiredServerIpSans: [],
-        sandboxHostAddress: null,
-        usesHostGatewayRoute: false,
-        resourceOwnership: { label: "test.managed", value: providerId },
-        gatewayConfig: {
-          sandboxNamespace: "scoped",
-          hostGatewayIp: null,
-          includeSupervisorBin: true,
-          processOwnership: "scoped-namespace",
-        },
-        network: {
-          sandboxSourceCidrs: () => [],
-          inspect: () => undefined,
-          usesHostGatewayRoute: () => false,
-          run: () => ({ status: 0 }),
-          ensureProbeImageCached: () => ({ ok: true, alreadyCached: true }),
-        },
-      }),
+      ownsHostReadiness: false,
+      observeHostRuntime: projectGatewayHostRuntime,
+      prepareHostRuntime: projectGatewayHostRuntime,
     },
     workload: {
       providerId,
@@ -269,6 +272,12 @@ export function createInMemoryRuntimeProviderBundle({
         { operation: "workload-cleanup", engineId: "memory", displayName: "In-memory" },
       ],
       capture: () => ({ status: 0, stdout: "", stderr: "" }),
+      nvidiaContainer: hostLocalInference
+        ? {
+            capture: () => ({ status: 0, stdout: "", stderr: "" }),
+            cleanup: () => ({ status: "absent" }),
+          }
+        : undefined,
     },
   };
 }

@@ -89,7 +89,7 @@ jobs:
           EVIDENCE_ARTIFACT_NAME: ${{ inputs.evidence_artifact_name }}
           QUALIFICATION_AUTHORITY_PATH: ${{ runner.temp }}/native-runtime-qualification-authority.json
         run: >-
-          node --experimental-strip-types --no-warnings
+          node --no-warnings
           tools/e2e/native-runtime-qualification-collector.mts
 
       - name: Preserve authenticated authority receipt

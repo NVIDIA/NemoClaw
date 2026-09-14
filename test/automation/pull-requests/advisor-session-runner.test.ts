@@ -59,7 +59,8 @@ const sdk = vi.hoisted(() => {
     omitAnalysis: false,
     omitAnalysisPrompts: 0,
     prompts: [] as string[],
-    retryResponses: [] as Array<"exhausted" | "success">,
+    retryCancelled: false,
+    retryResponses: [] as Array<"budget-exceeded" | "exhausted" | "success">,
     terminalResponses: [] as TerminalResponse[],
   };
 
@@ -76,6 +77,7 @@ const sdk = vi.hoisted(() => {
     state.omitAnalysis = false;
     state.omitAnalysisPrompts = 0;
     state.prompts = [];
+    state.retryCancelled = false;
     state.retryResponses = [];
     state.terminalResponses = [];
   };
@@ -179,7 +181,10 @@ const sdk = vi.hoisted(() => {
         Array.from({ length: terminalTool ? terminalPlan.failureCount : 0 }).forEach(() =>
           failTerminalTool(terminalTool as MockTool, emit),
         );
-        const retryError = "429 status code (no body)";
+        const retryError =
+          retryResponse === "budget-exceeded"
+            ? '429: {"message":"Budget has been exceeded!","code":"budget_exceeded"}'
+            : "429 status code (no body)";
         const retryAttemptEvents = [
           {
             type: "message_update",
@@ -209,12 +214,24 @@ const sdk = vi.hoisted(() => {
             { type: "auto_retry_end", success: false, attempt: 1, finalError: retryError },
           ],
         };
-        retryPlans[retryResponse ?? "none"].forEach(emit);
+        await (retryResponse === "budget-exceeded"
+          ? (async () => {
+              retryAttemptEvents.forEach(emit);
+              await Promise.resolve();
+              emit({
+                type: "auto_retry_end",
+                success: false,
+                attempt: 1,
+                finalError: state.retryCancelled ? "Retry cancelled" : retryError,
+              });
+            })()
+          : Promise.resolve(retryPlans[retryResponse ?? "none"].forEach(emit)));
         const omitThisAnalysis = state.omitAnalysis || state.omitAnalysisPrompts > 0;
         state.omitAnalysisPrompts = Math.max(0, state.omitAnalysisPrompts - 1);
         const shouldEmitText =
           !omitThisAnalysis &&
           retryResponse !== "exhausted" &&
+          retryResponse !== "budget-exceeded" &&
           !prompt.startsWith("Prepare ") &&
           (!prompt.includes("Emit no prose before or after") ||
             (state.emitCommitProse && !isRepairPrompt) ||
@@ -239,6 +256,9 @@ const sdk = vi.hoisted(() => {
           });
         emit({ type: "agent_end" });
       },
+      abortRetry: vi.fn(() => {
+        state.retryCancelled = true;
+      }),
       abort: vi.fn(async () => {}),
       exportToHtml: vi.fn(async (outputPath: string) => outputPath),
       dispose: vi.fn(),
@@ -271,10 +291,10 @@ import {
   ADVISOR_OPENSHELL_INFERENCE_BASE_URL,
   type AdvisorPromptTurn,
   advisorRetrySettings,
+  isAdvisorBudgetExceededError,
   READ_ONLY_TOOLS,
   runReadOnlyAdvisor,
 } from "../../../tools/advisors/session.mts";
-import { buildSpecialistInvestigateTurn } from "../../../tools/pr-review-advisor/specialists.mts";
 
 const tempDirs: string[] = [];
 
@@ -372,11 +392,15 @@ afterEach(() => {
 });
 
 describe("advisor session runner", () => {
+  it("distinguishes terminal budget exhaustion from transient rate limiting", () => {
+    expect(isAdvisorBudgetExceededError('{"code":"budget_exceeded"}')).toBe(true);
+    expect(isAdvisorBudgetExceededError("Budget has been exceeded! Try later")).toBe(true);
+    expect(isAdvisorBudgetExceededError("429 status code (no body)")).toBe(false);
+    expect(isAdvisorBudgetExceededError("provider overloaded")).toBe(false);
+  });
+
   it("uses one bounded, specialist-spread retry layer for transient failures", () => {
-    const behavior = advisorRetrySettings(
-      "azure/openai/gpt-5.6-terra",
-      "pr-review-behavior",
-    );
+    const behavior = advisorRetrySettings("azure/openai/gpt-5.6-terra", "pr-review-behavior");
     const dependencyUse = advisorRetrySettings(
       "openai/openai/gpt-5.6-terra",
       "pr-review-dependency-use",
@@ -432,6 +456,17 @@ describe("advisor session runner", () => {
 
     expect(result.fatalError).toBe("429 status code (no body)");
     expect(result.turnErrors).toEqual(["only-analysis: 429 status code (no body)"]);
+    expect(result.raw).toContain("retry_end success=false attempts=1");
+  });
+
+  it("cancels terminal provider budget retries without hiding the cause", async () => {
+    sdk.state.retryResponses = ["budget-exceeded"];
+    const result = await run([analysisTurn("only-analysis")]);
+
+    expect(result.fatalError).toContain("Budget has been exceeded");
+    expect(result.turnErrors).toHaveLength(1);
+    expect(result.turnErrors[0]).toContain("budget_exceeded");
+    expect(result.raw).toContain("retry_cancel terminal=budget_exceeded");
     expect(result.raw).toContain("retry_end success=false attempts=1");
   });
 
@@ -546,116 +581,6 @@ describe("advisor session runner", () => {
     expect(sdk.state.prompts).toHaveLength(1);
   });
 
-  it("connects a specialist diff path to its trusted session read root", async () => {
-    const contextDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "advisor-specialist-context-"));
-    const siblingDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "advisor-specialist-sibling-"));
-    tempDirs.push(contextDirectory, siblingDirectory);
-    const diffPath = path.join(contextDirectory, "diff.patch");
-    const siblingPath = path.join(siblingDirectory, "sibling.patch");
-    fs.writeFileSync(diffPath, "prepared specialist diff\n", "utf8");
-    fs.writeFileSync(siblingPath, "not trusted\n", "utf8");
-    const productionTurn = buildSpecialistInvestigateTurn("customer-value-behavior", {
-      scopeRisk: {},
-      diffPath,
-      controlledWords: "",
-      terminology: {},
-      correctness: {},
-      security: {},
-      tests: {},
-      operations: {},
-      reconciliation: {},
-      metadata: "{}",
-    });
-    const turn: AdvisorPromptTurn = {
-      ...productionTurn,
-      contextToolResults: undefined,
-      requiredToolNames: undefined,
-      requireToolsBeforeText: undefined,
-    };
-
-    const result = await run([turn], undefined, [contextDirectory]);
-
-    expect(result.turnErrors).toEqual([]);
-    expect(sdk.state.readContents).toContain("prepared specialist diff\n");
-
-    await expect(
-      run([{ ...turn, requiredReadPaths: [siblingPath] }], undefined, [contextDirectory]),
-    ).rejects.toThrow(`Advisor read-only path is outside the workspace: ${siblingPath}`);
-  });
-
-  it("deduplicates relative aliases before required-read preparation (#9963)", async () => {
-    sdk.state.terminalResponses = ["success"];
-    const result = await run(
-      [
-        {
-          ...submitTurn("prepare-and-submit"),
-          requiredReadPaths: ["required.txt", "./required.txt"],
-        },
-      ],
-      (directory) => fs.writeFileSync(path.join(directory, "required.txt"), "required\n", "utf8"),
-    );
-
-    expect(result.fatalError).toBeUndefined();
-    expect(result.turnErrors).toEqual([]);
-    expect(result.raw).toContain("required_read_preparation_end prepare-and-submit ok");
-  });
-
-  it("prepares every distinct required read before submission (#9963)", async () => {
-    sdk.state.terminalResponses = ["success"];
-    const result = await run(
-      [
-        {
-          ...submitTurn("prepare-and-submit"),
-          requiredReadPaths: ["first.txt", "second.txt"],
-        },
-      ],
-      (directory) => {
-        fs.writeFileSync(path.join(directory, "first.txt"), "first\n", "utf8");
-        fs.writeFileSync(path.join(directory, "second.txt"), "second\n", "utf8");
-      },
-    );
-
-    expect(result.fatalError).toBeUndefined();
-    expect(result.turnErrors).toEqual([]);
-    expect(sdk.state.prompts).toHaveLength(3);
-    expect(sdk.state.prompts[0]).toMatch(/first\.txt/u);
-    expect(sdk.state.prompts[1]).toMatch(/second\.txt/u);
-    expect(result.raw).toContain("required_read_preparation_end prepare-and-submit ok");
-  });
-
-  it("accepts an empty required file at EOF (#9963)", async () => {
-    const requiredReadTurn: AdvisorPromptTurn = {
-      name: "read-empty",
-      prompt: "Analyze the required file.",
-      requiredReadPaths: ["empty.txt"],
-      requireAssistantText: true,
-    };
-    const result = await run([requiredReadTurn], (directory) =>
-      fs.writeFileSync(path.join(directory, "empty.txt"), "", "utf8"),
-    );
-
-    expect(result.fatalError).toBeUndefined();
-    expect(result.turnErrors).toEqual([]);
-    expect(result.raw).toContain("required_read_preparation_end read-empty ok");
-  });
-
-  it("rejects a required read outside the workspace (#9963)", async () => {
-    const outside = fs.mkdtempSync(path.join(os.tmpdir(), "advisor-required-read-outside-"));
-    tempDirs.push(outside);
-    const outsideFile = path.join(outside, "outside.txt");
-    fs.writeFileSync(outsideFile, "outside\n", "utf8");
-
-    await expect(
-      run([
-        {
-          name: "read-outside",
-          prompt: "Analyze the required file.",
-          requiredReadPaths: [outsideFile],
-        },
-      ]),
-    ).rejects.toThrow("outside the workspace");
-  });
-
   it("allows one failed initial submit followed by one repair success", async () => {
     sdk.state.terminalResponses = ["fail-once", "success"];
     const result = await run([submitTurn("prepare-and-submit")]);
@@ -690,6 +615,25 @@ describe("advisor session runner", () => {
 
     expect(result.fatalError).toBeUndefined();
     expect(result.raw).toContain("terminal_submit_repair_start");
+    expect(sdk.state.prompts).toHaveLength(2);
+  });
+
+  it("accepts tool-disabled analysis repair after a successful terminal submit", async () => {
+    sdk.state.omitAnalysisPrompts = 1;
+    sdk.state.terminalResponses = ["success"];
+    const result = await run([
+      {
+        ...submitTurn("prepare-and-submit"),
+        requireAssistantText: true,
+        assistantTextRepairPrompt: "Return the required analysis.",
+      },
+    ]);
+
+    expect(result.fatalError).toBeUndefined();
+    expect(result.turnErrors).toEqual([]);
+    expect(result.raw).toContain("assistant_text_repair_start prepare-and-submit");
+    expect(result.raw).not.toContain("terminal_submit_repair_start");
+    expect(sdk.state.activeToolCalls).toContainEqual([]);
     expect(sdk.state.prompts).toHaveLength(2);
   });
 

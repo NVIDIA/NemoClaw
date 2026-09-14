@@ -21,7 +21,7 @@ import {
   DEFAULT_ADVISOR_MODEL,
   DEFAULT_ADVISOR_PROVIDER,
 } from "./provider-constants.mts";
-import { canonicalRepoReadPath, createRepoConfinedReadOnlyTools } from "./repo-read-only-tools.mts";
+import { createRepoConfinedReadOnlyTools } from "./repo-read-only-tools.mts";
 import {
   assistantTextRepairErrors,
   assistantTextRepairPrompt,
@@ -36,8 +36,6 @@ import {
   normalizedToolNames,
   promptWithRequiredContextTools,
   READ_ONLY_TOOLS,
-  requiredReadPreparationErrors,
-  requiredReadPreparationPrompt,
   repairableAssistantText,
   repairableAtomicTerminalToolName,
   repairableTerminalSubmitToolName,
@@ -213,22 +211,14 @@ export function openAiAdvisorProviderConfig(
     api: "openai-completions",
     baseUrl,
     models: [
-      advisorModel(
-        modelId,
-        "GPT-5.6 Terra",
-        256000,
-        32768,
-        false,
-        ["text", "image"],
-        {
-          supportsDeveloperRole: false,
-          supportsReasoningEffort: false,
-          supportsStore: false,
-          supportsStrictMode: false,
-          supportsUsageInStreaming: false,
-          maxTokensField: "max_tokens",
-        },
-      ),
+      advisorModel(modelId, "GPT-5.6 Terra", 256000, 32768, false, ["text", "image"], {
+        supportsDeveloperRole: false,
+        supportsReasoningEffort: false,
+        supportsStore: false,
+        supportsStrictMode: false,
+        supportsUsageInStreaming: false,
+        maxTokensField: "max_tokens",
+      }),
     ],
     ["api" + "Key"]: credentialEnv,
   } as AdvisorProviderConfig;
@@ -355,7 +345,6 @@ export async function runReadOnlyAdvisor(
   }
 
   const promptTurns = normalizePromptTurns(options.promptTurns);
-  await canonicalizeRequiredReadPaths(promptTurns, options.cwd, options.additionalReadRoots);
   const contextTools = createAdvisorContextToolRuntime(promptTurns);
   let currentTurnFlow: AdvisorTurnFlowEvent[] = [];
   const customTools = [
@@ -496,6 +485,15 @@ export async function runReadOnlyAdvisor(
       return;
     }
     if (event.type === "auto_retry_start") {
+      if (isAdvisorBudgetExceededError(event.errorMessage)) {
+        currentTurnError = normalizeProviderError(event.errorMessage);
+        raw.append(
+          `[${options.logPrefix}] retry_cancel terminal=budget_exceeded: ${event.errorMessage}\n`,
+        );
+        options.logProgress("Advisor provider budget exhausted; cancelling retries");
+        queueMicrotask(() => session.abortRetry());
+        return;
+      }
       currentTurnError = undefined;
       raw.append(
         `[${options.logPrefix}] retry ${event.attempt}/${event.maxAttempts} delay_ms=${event.delayMs}: ${event.errorMessage}\n`,
@@ -509,8 +507,10 @@ export async function runReadOnlyAdvisor(
       if (event.success) {
         currentTurnError = undefined;
       } else if (event.finalError) {
-        currentTurnError = undefined;
-        captureTurnError("assistant_retry_exhausted", event.finalError);
+        if (!isAdvisorBudgetExceededError(currentTurnError)) {
+          currentTurnError = undefined;
+          captureTurnError("assistant_retry_exhausted", event.finalError);
+        }
       }
       raw.append(
         `[${options.logPrefix}] retry_end success=${event.success} attempts=${event.attempt}\n`,
@@ -579,30 +579,12 @@ export async function runReadOnlyAdvisor(
             await Promise.race([session.prompt(prompt), timeoutPromise]);
             await Promise.race([agentEndPromise, timeoutPromise]);
           };
-          if ((tools.requiredReadPaths?.length ?? 0) > 0) {
-            contextTools.deactivate();
-            session.setActiveToolsByName(["read"]);
-            currentTurnFlow = [];
-            raw.append(`\n[${options.logPrefix}] required_read_preparation_start ${turn.name}\n`);
-            for (const requiredPath of tools.requiredReadPaths!) {
-              const preparationTurn = { ...turn, requiredReadPaths: [requiredPath] };
-              const eventOffset = currentTurnFlow.length;
-              await promptAndWait(requiredReadPreparationPrompt(preparationTurn));
-              const preparationErrors = requiredReadPreparationErrors(
-                turn.name,
-                currentTurnFlow.slice(eventOffset),
-                { ...tools, requiredReadPaths: [requiredPath] },
-              );
-              if (preparationErrors.length > 0) throw new Error(preparationErrors.join("; "));
-            }
-            const preparationFlow = currentTurnFlow;
-            raw.append(`[${options.logPrefix}] required_read_preparation_end ${turn.name} ok\n`);
-            contextTools.activateTurn(turn);
-            session.setActiveToolsByName([READ_ONLY_TOOLS, tools.activeToolNames].flat());
-            currentTurnFlow = preparationFlow;
-          }
           await promptAndWait(promptWithRequiredContextTools(turn.prompt, contextToolNames));
           const initialFlow = currentTurnFlow;
+          // A configured assistant-text repair is a separate, tool-disabled continuation. Preserve
+          // the original flow for terminal-submit validation so the harness's own repair prose is
+          // not mistaken for model activity after a successful submit.
+          let terminalSubmitValidationFlow = initialFlow;
           if (
             repairableAssistantText(turn, initialFlow, tools, successfulToolNames, currentTurnError)
           ) {
@@ -653,7 +635,6 @@ export async function runReadOnlyAdvisor(
             tools,
             currentTurnError,
           );
-          let terminalSubmitValidationFlow = currentTurnFlow;
           const submitRepairToolName = repairableTerminalSubmitToolName(
             turn,
             currentTurnFlow,
@@ -799,27 +780,17 @@ function normalizeProviderError(message: string | undefined): string | undefined
   return normalized || undefined;
 }
 
+export function isAdvisorBudgetExceededError(message: string | undefined): boolean {
+  const normalized = normalizeProviderError(message)?.toLowerCase();
+  return Boolean(
+    normalized &&
+    (normalized.includes("budget_exceeded") || normalized.includes("budget has been exceeded")),
+  );
+}
+
 function errorText(error: unknown): string {
   if (error === undefined || error === null) return "";
   return error instanceof Error ? error.message : String(error);
-}
-
-async function canonicalizeRequiredReadPaths(
-  promptTurns: AdvisorPromptTurn[],
-  cwd: string,
-  additionalReadRoots: string[] = [],
-): Promise<void> {
-  await Promise.all(
-    promptTurns.map(async (turn) => {
-      if (turn.requiredReadPaths === undefined) return;
-      const canonicalPaths = await Promise.all(
-        [...new Set(turn.requiredReadPaths)].map((candidate) =>
-          canonicalRepoReadPath(cwd, candidate, additionalReadRoots),
-        ),
-      );
-      turn.requiredReadPaths = [...new Set(canonicalPaths)];
-    }),
-  );
 }
 
 function normalizePromptTurns(promptTurns: AdvisorPromptTurn[]): AdvisorPromptTurn[] {
@@ -830,7 +801,6 @@ function normalizePromptTurns(promptTurns: AdvisorPromptTurn[]): AdvisorPromptTu
     activeToolNames: normalizedToolNames(turn.activeToolNames),
     requiredToolNames: normalizedToolNames(turn.requiredToolNames),
     requireToolsBeforeText: normalizedToolNames(turn.requireToolsBeforeText),
-    requiredReadPaths: turn.requiredReadPaths,
     requiredReadOneOfPaths: turn.requiredReadOneOfPaths,
     requireAssistantText: turn.requireAssistantText === true,
     assistantTextRepairPrompt:

@@ -99,10 +99,14 @@ export type MaterializeSandboxCreatePlanInput = {
   policylessCreate?: boolean;
   /** Keep provider mutations and attachments behind the exact post-create identity gate. */
   deferSandboxEffectsUntilIdentityVerification?: boolean;
+  /** A verified create resume must rebuild its plan without replaying provider mutations. */
+  skipProviderEffects?: boolean;
   messagingTokenDefs: MessagingTokenDef[];
   /** Non-secret config captured in the messaging plan that owns exact policy endpoints. */
   messagingConfig?: MessagingChannelConfig | null;
-  runProviderPreDeleteCleanup(revalidateSandboxIdentity?: (operation: string) => void): void;
+  runProviderPreDeleteCleanup(
+    revalidateSandboxIdentity?: (operation: string) => void,
+  ): Promise<void>;
   upsertMessagingProviders(
     tokenDefs: MessagingTokenDef[],
     options: {
@@ -110,7 +114,7 @@ export type MaterializeSandboxCreatePlanInput = {
       allowedSandboxes: readonly [string];
       revalidateSandboxIdentity?(operation: string): void;
     },
-  ): string[];
+  ): string[] | Promise<string[]>;
   getHermesToolGatewayProviderName(sandboxName: string): string;
   discloseInitialSandboxPolicy?(policy: InitialSandboxPolicy): void;
   prepareInitialSandboxCreatePolicy?: PrepareInitialSandboxCreatePolicy;

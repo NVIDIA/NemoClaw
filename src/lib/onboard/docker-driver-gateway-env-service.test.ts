@@ -8,12 +8,79 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { writeSafeGatewayAuthConfig } from "../../../test/support/docker-driver-gateway-env-test-support";
 import { startPackageManagedDockerDriverGatewayWithEnvOverride } from "./docker-driver-gateway-env";
+import type { OpenShellGatewayUserServiceOptions } from "./docker-driver-gateway-service";
 
 function homeEnv(home: string, xdgConfigHome = ""): NodeJS.ProcessEnv {
   return { HOME: home, XDG_CONFIG_HOME: xdgConfigHome } as NodeJS.ProcessEnv;
 }
 
 describe("package-managed Docker-driver gateway env service", () => {
+  it("passes the selected OpenShell env to package service startup (#10514)", async () => {
+    const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-env-"));
+    vi.stubEnv("OPENSHELL_GATEWAY", "hostile-gateway");
+    vi.stubEnv("OPENSHELL_WORKSPACE", "hostile-workspace");
+    vi.stubEnv("OPENSHELL_GATEWAY_ENDPOINT", "https://hostile.invalid");
+    vi.stubEnv("OPENSHELL_TOKEN", "hostile-token");
+    vi.stubEnv("OPENSHELL_DISABLE_TLS", "1");
+    vi.stubEnv("OPENSHELL_DISABLE_GATEWAY_AUTH", "1");
+    const selectedEnv: NodeJS.ProcessEnv = {
+      HOME: tempHome,
+      PATH: "/usr/bin",
+      OPENSHELL_GATEWAY: "nemoclaw",
+      OPENSHELL_LOCAL_TLS_DIR: "/recorded/tls",
+      OPENSHELL_WORKSPACE: "default",
+    };
+    let observedEnv: NodeJS.ProcessEnv | undefined;
+    const startService = vi.fn((options) => {
+      const serviceOptions = options as OpenShellGatewayUserServiceOptions;
+      observedEnv = serviceOptions.env;
+      serviceOptions.prepareServiceEnv?.();
+      return { attempted: true, started: true };
+    });
+
+    try {
+      await expect(
+        startPackageManagedDockerDriverGatewayWithEnvOverride({
+          clearDockerDriverGatewayRuntimeFiles: vi.fn(),
+          env: selectedEnv,
+          exitOnFailure: false,
+          gatewayEnv: {
+            OPENSHELL_BIND_ADDRESS: "127.0.0.1",
+            OPENSHELL_GATEWAY_CONFIG: writeSafeGatewayAuthConfig(tempHome),
+            OPENSHELL_SERVER_PORT: "8080",
+          },
+          gatewayName: "nemoclaw",
+          hasOpenShellGatewayUserService: () => true,
+          isDockerDriverGatewayReady: async () => true,
+          registerDockerDriverGatewayEndpoint: () => true,
+          runCaptureOpenshell: (args) =>
+            args[0] === "status"
+              ? "Gateway: nemoclaw\nConnected"
+              : "Gateway: nemoclaw\nGateway endpoint: https://127.0.0.1:8080/",
+          skipSandboxBridgeReachability: false,
+          startOpenShellGatewayUserService: startService,
+          verifySandboxBridgeGatewayReachableOrExit: async () => undefined,
+        }),
+      ).resolves.toBe(true);
+
+      expect(observedEnv).toEqual(selectedEnv);
+      expect(observedEnv).toEqual(
+        expect.objectContaining({
+          OPENSHELL_GATEWAY: "nemoclaw",
+          OPENSHELL_LOCAL_TLS_DIR: "/recorded/tls",
+          OPENSHELL_WORKSPACE: "default",
+        }),
+      );
+      expect(observedEnv?.OPENSHELL_GATEWAY_ENDPOINT).toBeUndefined();
+      expect(observedEnv?.OPENSHELL_TOKEN).toBeUndefined();
+      expect(observedEnv?.OPENSHELL_DISABLE_TLS).toBeUndefined();
+      expect(observedEnv?.OPENSHELL_DISABLE_GATEWAY_AUTH).toBeUndefined();
+    } finally {
+      vi.unstubAllEnvs();
+      fs.rmSync(tempHome, { recursive: true, force: true });
+    }
+  });
+
   it("stages the service and writes its env under one XDG config root (#6903)", async () => {
     const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-env-"));
     const configHome = path.join(tempHome, "xdg-config");
@@ -195,9 +262,7 @@ describe("package-managed Docker-driver gateway env service", () => {
     ).toThrow(/not supported for the OpenShell Docker-driver gateway/);
   });
 
-  it.each(
-    ["signing_key_path", "public_key_path", "kid_path", "gateway_id", "ttl_secs"],
-  )(
+  it.each(["signing_key_path", "public_key_path", "kid_path", "gateway_id", "ttl_secs"])(
     "rejects incomplete gateway JWT config before writing env or starting the service [%s] (#6903)",
     (key) => {
       const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-env-"));

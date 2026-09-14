@@ -82,6 +82,7 @@ describe("CLI OpenShell sandbox observer", () => {
           "gamma unknown 1m ago\n" +
           "delta Ready 2026-03-24 10:00:00 Provisioning\n" +
           "epsilon 1m Running\n" +
+          "zeta 1m stopped\n" +
           "Error: command failed\n" +
           "No sandboxes found.",
       ),
@@ -92,6 +93,7 @@ describe("CLI OpenShell sandbox observer", () => {
         { name: "gamma", phase: "Unknown", readiness: "terminal" },
         { name: "delta", phase: "Provisioning", readiness: "not_ready" },
         { name: "epsilon", phase: "Running", readiness: "ready" },
+        { name: "zeta", phase: "Stopped", readiness: "not_ready" },
       ],
     });
   });

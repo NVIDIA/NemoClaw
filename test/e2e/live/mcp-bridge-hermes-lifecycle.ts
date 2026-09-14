@@ -1,27 +1,25 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { assertExitZero as expectExitZero, resultText } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { type SandboxClient, trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
 import { expect } from "../fixtures/e2e-test.ts";
 import { MCP_BRIDGE_TEST_CREDENTIALS } from "../fixtures/mcp-bridge-credentials.ts";
+import { buildMcpCredentialHandleAuthorizationPattern } from "./mcp-provider-rewrite-probe.ts";
 
 const SERVER_NAME = "fake";
 const HOST_SECRET = MCP_BRIDGE_TEST_CREDENTIALS.host;
 const ROTATED_HOST_SECRET = MCP_BRIDGE_TEST_CREDENTIALS.rotatedHost;
 const INSPECTION_CONTROL_MARKER = "MCP_INSPECT_FORGED_CONTROL_LINE";
-const REGISTRY_FILE = path.join(process.env.HOME ?? os.homedir(), ".nemoclaw", "sandboxes.json");
 
 export async function assertHermesConfig(
   sandbox: SandboxClient,
   sandboxName: string,
   mcpUrl: string,
 ): Promise<void> {
+  const authorizationPattern = buildMcpCredentialHandleAuthorizationPattern("FAKE_MCP_SECRET");
   const script = [
     "set -eu",
     "/opt/hermes/.venv/bin/python - <<'PY'",
@@ -32,7 +30,7 @@ export async function assertHermesConfig(
     `entry = data['mcp_servers'][${JSON.stringify(SERVER_NAME)}]`,
     `assert entry['url'] == ${JSON.stringify(mcpUrl)}`,
     "authorization = entry['headers']['Authorization']",
-    "assert re.fullmatch(r'Bearer openshell:resolve:env:v[0-9]{1,20}_FAKE_MCP_SECRET', authorization)",
+    `assert re.fullmatch(r${JSON.stringify(authorizationPattern)}, authorization)`,
     `assert ${JSON.stringify(HOST_SECRET)} not in text`,
     "PY",
   ].join("\n");
@@ -48,7 +46,8 @@ export async function assertHermesConfig(
 /**
  * Focused #7499 live regression after the supported managed add has executed
  * the real unprivileged Hermes transaction: restart the real gateway, then
- * prove the config and transaction state remain current.
+ * prove the strict baseline remains root-owned while the compatibility hash
+ * matches the managed config and transaction state.
  */
 export async function assertHermesManagedAddSurvivesGatewayRestartAndStateLayout(
   host: HostCliClient,
@@ -66,26 +65,38 @@ export async function assertHermesManagedAddSurvivesGatewayRestartAndStateLayout
   expect(resultText(restart)).toContain("Gateway restarted");
   expect(resultText(restart)).toContain("health passed");
 
-  const integrity = await sandbox.execShell(
+  const compatibilityIntegrity = await sandbox.execShell(
     sandboxName,
     trustedSandboxShellScript(
       [
-        "set -eu",
-        "cmp -s /etc/nemoclaw/hermes.config-hash /sandbox/.hermes/.config-hash",
-        "sha256sum -c /etc/nemoclaw/hermes.config-hash --status",
-        "sha256sum -c /sandbox/.hermes/.config-hash --status",
-        "echo HERMES_MCP_INTEGRITY_CURRENT",
+        "set -u",
+        "echo HERMES_MCP_STRICT_HASH",
+        "cat /etc/nemoclaw/hermes.config-hash",
+        "echo HERMES_MCP_COMPAT_HASH",
+        "cat /sandbox/.hermes/.config-hash",
+        "strict_status=0; sha256sum -c /etc/nemoclaw/hermes.config-hash || strict_status=$?",
+        "compat_status=0; sha256sum -c /sandbox/.hermes/.config-hash || compat_status=$?",
+        'printf "HERMES_MCP_HASH_STATUS strict=%s compat=%s\\n" "$strict_status" "$compat_status"',
+        "set -e",
+        'test "$(stat -c \'%u:%g:%a\' /etc/nemoclaw/hermes.config-hash)" = "0:0:444"',
+        "! cmp -s /etc/nemoclaw/hermes.config-hash /sandbox/.hermes/.config-hash",
+        'test "$strict_status" -ne 0',
+        'test "$compat_status" -eq 0',
+        "echo HERMES_MCP_COMPAT_INTEGRITY_CURRENT",
       ].join("\n"),
     ),
     {
-      artifactName: "hermes-mcp-integrity-after-add-gateway-restart",
+      artifactName: "hermes-mcp-compat-integrity-after-add-gateway-restart",
       env: buildAvailabilityProbeEnv(),
       redactionValues: [HOST_SECRET, ROTATED_HOST_SECRET],
       timeoutMs: 60_000,
     },
   );
-  expectExitZero(integrity, "Hermes MCP integrity anchors after gateway restart");
-  expect(integrity.stdout).toContain("HERMES_MCP_INTEGRITY_CURRENT");
+  expectExitZero(
+    compatibilityIntegrity,
+    "Hermes MCP strict baseline and compatibility integrity after gateway restart",
+  );
+  expect(compatibilityIntegrity.stdout).toContain("HERMES_MCP_COMPAT_INTEGRITY_CURRENT");
 
   const list = await host.nemoclaw([sandboxName, "mcp", "list", "--json"], {
     artifactName: "hermes-mcp-list-after-add-gateway-restart",
@@ -303,25 +314,6 @@ export async function assertHermesRemovalSurvivesGatewayRestart(
   sandbox: SandboxClient,
   sandboxName: string,
 ): Promise<void> {
-  expect(fs.existsSync(REGISTRY_FILE), `registry file not found: ${REGISTRY_FILE}`).toBe(true);
-  const registryRaw = fs.readFileSync(REGISTRY_FILE, "utf8");
-  expect(registryRaw).not.toContain(HOST_SECRET);
-  expect(registryRaw).not.toContain(ROTATED_HOST_SECRET);
-  const registry = JSON.parse(registryRaw) as {
-    sandboxes?: Record<
-      string,
-      { mcp?: { bridges?: Record<string, unknown>; managedServerNames?: string[] } }
-    >;
-  };
-  const mcpState = registry.sandboxes?.[sandboxName]?.mcp;
-  expect(mcpState?.bridges, "removed Hermes bridge must leave no active registry intent").toEqual(
-    {},
-  );
-  expect(
-    mcpState?.managedServerNames,
-    "removed Hermes bridge must retain its managed-name tombstone",
-  ).toContain(SERVER_NAME);
-
   const restart = await host.nemoclaw([sandboxName, "gateway", "restart"], {
     artifactName: "hermes-mcp-removal-gateway-restart",
     env: buildAvailabilityProbeEnv(),

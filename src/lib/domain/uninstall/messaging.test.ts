@@ -18,9 +18,7 @@ describe("uninstall no-op delete wording (#6520, #3456)", () => {
     expect(providerDeleteSkipMessage("nvidia-nim")).toBe(
       "Provider 'nvidia-nim' already removed or unreachable",
     );
-    expect(gatewayDestroySkipMessage("nemoclaw")).toBe(
-      "Gateway 'nemoclaw' already removed or unreachable",
-    );
+    expect(gatewayDestroySkipMessage("nemoclaw")).toBe("Gateway 'nemoclaw' is already absent");
   });
 });
 

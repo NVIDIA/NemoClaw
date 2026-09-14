@@ -26,7 +26,6 @@ delete require.cache[requireDist.resolve(rebuildModulePath)];
 export const agentDefs = requireDist("../../agent/defs.js");
 export const agentOnboard = requireDist("../../agent/onboard.js");
 export const agentRuntime = requireDist("../../agent/runtime.js");
-export const agentForwardStop = requireDist("../../tunnel/agent-forward-stop.js");
 export const buildContextFingerprint = requireDist(
   "../../adapters/fs/build-context-fingerprint.js",
 );
@@ -36,11 +35,15 @@ export const dockerInspect = requireDist("../../adapters/docker/inspect.js");
 export const gatewayDrift = requireDist("../../adapters/openshell/gateway-drift.js");
 export const gatewayRuntime = requireDist("../../gateway-runtime-action.js");
 export const gatewayState = requireDist("./gateway-state.js");
+export const forwardRecovery = requireDist("./forward-recovery.js");
 export const gatewayTeardownAuthority = requireDist(
   "../../onboard/gateway-teardown-authority.js",
 ) as typeof import("../../src/lib/onboard/gateway-teardown-authority");
 export const hermesProviderAuth = requireDist("../../hermes-provider-auth.js");
 export const mcpBridge = requireDist("./mcp-bridge.js");
+export const mcpBridgeProvider = requireDist("./mcp-bridge-provider.js");
+export const mcpBridgeProviderInspection = requireDist("./mcp-bridge-provider-inspection.js");
+export const mcpBridgeSource = requireDist("./mcp-bridge-source.js");
 export const messaging = requireDist("../../messaging/index.js");
 export const messagingHostForwardLifecycle = requireDist("./messaging-host-forward-lifecycle.js");
 export const mutableConfigPerms = requireDist("../../sandbox/mutable-config-perms.js");
@@ -51,6 +54,7 @@ export const removedImmutabilityMigration = requireDist(
   "../../state/migrations/removed-immutability.js",
 );
 export const openshellRuntime = requireDist("../../adapters/openshell/runtime.js");
+export const providerCommand = requireDist("../../adapters/openshell/provider-command.js");
 export const policies = requireDist("../../policy/index.js");
 export const policyState = requireDist("../../adapters/openshell/policy-state.js");
 export const policyGet = requireDist("./policy-get.js");
@@ -68,6 +72,7 @@ export const rebuildPreparedImageContext = requireDist("./rebuild-prepared-image
 export const rebuildRoutePreflight = requireDist("./rebuild-preflight-guards.js");
 export const rebuildUsageNotice = requireDist("./rebuild-usage-notice.js");
 export const registry = requireDist("../../state/registry.js");
+export const crossPortRegistry = requireDist("../../state/registry/cross-port.js");
 export const registryPersistence = requireDist("../../state/registry/persistence.js");
 export const resolve = requireDist("../../adapters/openshell/resolve.js");
 export const sandboxList = requireDist("../../openshell-sandbox-list.js");
@@ -166,6 +171,7 @@ export function installRebuildFlowTestHooks(options: RebuildFlowTestHookOptions 
   });
   afterEach(() => {
     vi.restoreAllMocks();
+    providerCommand.setProviderCommandRuntimeHooksForTest({});
     purgeRebuildModule();
     for (const dir of harnessTempDirs.splice(0)) {
       fs.rmSync(dir, { recursive: true, force: true });

@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   type PrivilegedExec,
   validateOpenClawConfigCandidate,
+  verifyOpenClawConfigPosture,
   writeOpenClawConfigCandidate,
 } from "./openclaw-config-guard";
 
@@ -35,7 +36,13 @@ describe("OpenClaw mutable config guard", () => {
 
     expect(validateOpenClawConfigCandidate({ run }, '{"models":{}}\n')).toEqual([]);
     expect(run).toHaveBeenCalledWith(
-      expect.arrayContaining(["/usr/bin/setpriv", "--reuid=gateway", "sh", "-c"]),
+      expect.arrayContaining([
+        "/usr/bin/setpriv",
+        "--reuid=sandbox",
+        "--regid=sandbox",
+        "sh",
+        "-c",
+      ]),
       '{"models":{}}\n',
     );
   });
@@ -125,5 +132,61 @@ describe("OpenClaw mutable config guard", () => {
     expect(write.issues.join("\n")).toContain("returned no result record");
     expect(write.issues.join("\n")).toContain("execution failed");
     expect(write.issues.join("\n")).toContain("unexpected stderr");
+  });
+});
+
+const postureSuccess = JSON.stringify({
+  type: "result",
+  action: "preflight-restart",
+  status: "ok",
+  configDir: "/sandbox/.openclaw",
+  files: ["openclaw.json", ".config-hash"],
+});
+function postureFailure(code: string, issuePath = "/sandbox/.openclaw") {
+  return [
+    { type: "issue", code, path: issuePath, detail: code },
+    { type: "result", action: "preflight-restart", status: "failed" },
+  ]
+    .map((value) => JSON.stringify(value))
+    .join("\n");
+}
+
+describe("OpenClaw config posture verification", () => {
+  it("accepts the guard's final verdict without selecting modes", () => {
+    const run = vi.fn(() => result({ stdout: postureSuccess }));
+    expect(verifyOpenClawConfigPosture({ run })).toEqual({ issues: [] });
+    expect(run).toHaveBeenCalledWith(
+      expect.arrayContaining(["preflight-restart", "--config-dir", "/sandbox/.openclaw"]),
+    );
+  });
+
+  it.each([
+    ["invalid-restart-posture", "/sandbox/.openclaw"],
+    ["config-not-mutable", "/sandbox/.openclaw/openclaw.json"],
+  ])("recognizes the guard's mode-only refusal: %s", (code, issuePath) => {
+    const run = vi.fn(() => result({ status: 1, stdout: postureFailure(code, issuePath) }));
+    expect(verifyOpenClawConfigPosture({ run })).toMatchObject({
+      repairable: true,
+      issues: [expect.stringContaining(code)],
+    });
+  });
+
+  it.each([
+    { status: 1, stdout: postureFailure("recovery-required") },
+    { status: 1, stdout: postureFailure("startup-not-ready") },
+    { status: 1, stdout: postureFailure("unsupported-config-posture") },
+    { status: 1, stdout: postureFailure("invalid-config-json") },
+    { status: 1, stdout: `noise\n${postureFailure("config-not-mutable")}` },
+    { status: 1, stdout: `${postureFailure("config-not-mutable")}\n${postureSuccess}` },
+    { status: 0, stdout: postureFailure("config-not-mutable") },
+    { status: 1, stdout: postureFailure("config-not-mutable"), stderr: "unexpected" },
+    { status: 1, stdout: postureFailure("config-not-mutable"), error: "transport failed" },
+    { status: 124, stdout: postureSuccess },
+    { status: 1, stdout: postureFailure("config-not-mutable"), signal: "SIGTERM" as const },
+    { status: 1, stdout: postureFailure("config-not-mutable", "/tmp/unrelated") },
+  ])("does not authorize repair from an inconclusive or protected result %#", (outcome) => {
+    const verified = verifyOpenClawConfigPosture({ run: () => result(outcome) });
+    expect(verified.repairable).not.toBe(true);
+    expect(verified.issues).not.toHaveLength(0);
   });
 });

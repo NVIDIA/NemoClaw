@@ -27,10 +27,7 @@ import { GATEWAY_PORT } from "../../core/ports";
 import { spawnExitCode } from "../../core/process-exit";
 import { readLineFromStdin } from "../../core/stdin";
 import { resolveGatewayName } from "../../onboard/gateway-binding";
-import {
-  listGatewayStateRoots,
-  readGatewayOpenShellStateDir,
-} from "../../state/gateway-registry";
+import { listGatewayStateRoots, readGatewayOpenShellStateDir } from "../../state/gateway-registry";
 import {
   runUninstallPlanProduction,
   type UninstallRunDeps,
@@ -67,7 +64,6 @@ export function allGatewayPortsRequested(
 function defaultListGatewayPorts(home: string): readonly number[] {
   return listGatewayStateRoots(home).map((root) => root.gatewayPort);
 }
-
 
 export function uninstallChildArgs(options: UninstallRunOptions): string[] {
   const args = ["internal", "uninstall", "run-plan", "--yes", "--all-gateway-ports-child"];

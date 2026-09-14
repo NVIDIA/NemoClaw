@@ -92,6 +92,7 @@ function requireRuntimeReceipt(
 
 function requireRestoreReceipt(
   bundle: RuntimeProviderBundle,
+  surface: SupportedSnapshotSurface,
   sandbox: SandboxEntry,
   authority: RuntimeProviderManagedProfileRestoreAuthority,
   preflight: RuntimeProviderSnapshotPreflightReceipt,
@@ -107,7 +108,10 @@ function requireRestoreReceipt(
     receipt.managedProfile.profileFingerprint !== authority.profileFingerprint ||
     receipt.lifecycleState !== preflight.lifecycleState ||
     receipt.lifecycleGeneration !== preflight.lifecycleGeneration ||
-    !isDeepStrictEqual(receipt.runtime.acceleration, source.runtime.acceleration)
+    !(surface.canRepresentAcceleration ?? isDeepStrictEqual)(
+      cloneAndDeepFreeze(source.runtime.acceleration),
+      cloneAndDeepFreeze(receipt.runtime.acceleration),
+    )
   ) {
     throw new SandboxSnapshotProviderError(
       `runtime provider '${bundle.identity.id}' returned invalid managed restore proof`,
@@ -272,6 +276,7 @@ export function confirmSandboxRuntimeRestore(
   const providerTarget = cloneAndDeepFreeze(target);
   const restoreReceipt = requireRestoreReceipt(
     bundle,
+    surface,
     target,
     authority.managedProfile,
     authority.preflight,

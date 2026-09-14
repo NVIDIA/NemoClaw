@@ -252,12 +252,18 @@ describe("root OpenClaw config I/O authority", () => {
     const configDir = path.join(root, ".openclaw");
     const racedDir = path.join(root, ".openclaw-raced");
     const checkpoint = path.join(configDir, "000-checkpoint");
-    const normalizer = path.join(
-      import.meta.dirname,
-      "../../../..",
-      "scripts",
-      "lib",
-      "normalize_mutable_config_perms.py",
+    const normalizer = path.join(root, "normalizer.py");
+    fs.writeFileSync(
+      normalizer,
+      fs
+        .readFileSync(
+          path.join(path.dirname(START_SCRIPT), "lib/normalize_mutable_config_perms.py"),
+          "utf-8",
+        )
+        .replace(
+          'if __name__ == "__main__":',
+          'runtime_config_modes = lambda: (0o2770, 0o660)\n\nif __name__ == "__main__":',
+        ),
     );
     fs.mkdirSync(configDir, { mode: 0o700 });
     fs.writeFileSync(path.join(configDir, "openclaw.json"), "{}\n", { mode: 0o600 });

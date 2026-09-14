@@ -100,6 +100,7 @@ describe("applyPreflightGatewayCleanup", () => {
     const log = vi.fn();
     const warn = vi.fn();
     const runOpenshell = vi.fn(() => ({ status: 0 }));
+    const stopAllDashboardForwards = vi.fn();
     const destroyGateway = vi.fn(() => true);
     const destroyGatewayForReuse = vi.fn<
       (destroy: () => boolean, success: string, failure: string) => GatewayReuseState
@@ -117,12 +118,14 @@ describe("applyPreflightGatewayCleanup", () => {
         log,
         warn,
         runOpenshell,
+        stopAllDashboardForwards,
         destroyGateway,
         destroyGatewayForReuse,
       },
       log,
       warn,
       runOpenshell,
+      stopAllDashboardForwards,
       destroyGateway,
       destroyGatewayForReuse,
     };
@@ -173,9 +176,8 @@ describe("applyPreflightGatewayCleanup", () => {
     const next = applyPreflightGatewayCleanup(ctx.deps);
     expect(next).toBe("missing");
     expect(ctx.log).toHaveBeenCalledWith("  Cleaning up previous NemoClaw session...");
-    expect(ctx.runOpenshell).toHaveBeenCalledWith(["forward", "stop", "8081"], {
-      ignoreError: true,
-    });
+    expect(ctx.stopAllDashboardForwards).toHaveBeenCalledOnce();
+    expect(ctx.runOpenshell).not.toHaveBeenCalled();
     expect(ctx.destroyGatewayForReuse).toHaveBeenCalledTimes(1);
     expect(ctx.destroyGateway).toHaveBeenCalledTimes(1);
   });

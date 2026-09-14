@@ -552,7 +552,7 @@ function buildShellInvocation(tarArgv: readonly string[], tarballRemote: string)
 }
 
 function shellQuote(value: string): string {
-  if (/^[A-Za-z0-9._\/=:@%+-]+$/.test(value)) return value;
+  if (/^[A-Za-z0-9._/=:@%+-]+$/.test(value)) return value;
   return `'${value.replace(/'/g, "'\\''")}'`;
 }
 

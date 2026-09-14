@@ -3,16 +3,16 @@
 
 import os from "node:os";
 
+import {
+  isSandboxPortForwardHealthy,
+  teardownSandboxDashboardForward,
+} from "../../../src/lib/actions/sandbox/forward-recovery.ts";
 import { resultText } from "../fixtures/clients/command.ts";
 import { sandboxAccessEnv, trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
-import { runDashboardConnectUntilForwardHandoff } from "./dashboard-connect-handoff.ts";
-import {
-  buildDashboardRemoteBindEnv,
-  dashboardForwardIsRunning,
-} from "./dashboard-remote-bind-env.ts";
+import { buildDashboardRemoteBindEnv } from "./dashboard-remote-bind-env.ts";
 import { parseJsonFromText } from "./json-envelope.ts";
 
 const runDashboardRemoteBindTest =
@@ -22,31 +22,6 @@ const TEST_TIMEOUT_MS = 50 * 60_000;
 
 function testEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   return buildDashboardRemoteBindEnv(SANDBOX_NAME, extra);
-}
-
-function matchingForwardLine(output: string, sandboxName: string, dashboardPort: string): string {
-  return (
-    output
-      .split("\n")
-      .map((line) => line.trim())
-      .find((line) => line.includes(sandboxName) && line.includes(dashboardPort)) ?? ""
-  );
-}
-
-function bindsAllInterfaces(line: string, dashboardPort: string): boolean {
-  return (
-    line.includes(`0.0.0.0:${dashboardPort}`) ||
-    line.includes(`*:${dashboardPort}`) ||
-    new RegExp(`\\b0\\.0\\.0\\.0\\s+${dashboardPort}\\b`).test(line)
-  );
-}
-
-function bindsLoopback(line: string, dashboardPort: string): boolean {
-  return (
-    line.includes(`127.0.0.1:${dashboardPort}`) ||
-    line.includes(`localhost:${dashboardPort}`) ||
-    new RegExp(`\\b127\\.0\\.0\\.1\\s+${dashboardPort}\\b`).test(line)
-  );
 }
 
 function remoteHostCandidate(): string {
@@ -64,7 +39,7 @@ runDashboardRemoteBindTest(
       e2ePhases: [
         "validate dashboard prerequisites",
         "install and onboard dashboard sandbox",
-        "restart dashboard with remote binding",
+        "stop sandbox and restart dashboard with remote binding",
         "verify all-interface dashboard forward",
         "audit exposed dashboard controls",
       ],
@@ -169,53 +144,28 @@ runDashboardRemoteBindTest(
     expect(cliProbe.stdout).toContain("nemoclaw");
     expect(cliProbe.stdout).toContain("openshell");
 
-    progress.phase("restart dashboard with remote binding");
-    await sandbox.openshell(["forward", "stop", dashboardPort], {
-      artifactName: "dashboard-remote-bind-forward-stop",
-      env: sandboxAccessEnv(),
-      timeoutMs: 30_000,
-    });
-
-    const connect = await runDashboardConnectUntilForwardHandoff({
-      artifacts,
-      dashboardPort,
+    progress.phase("stop sandbox and restart dashboard with remote binding");
+    const stop = await host.nemoclaw([sandboxName, "stop"], {
+      artifactName: "dashboard-remote-bind-stop-before-rebind",
       env: testEnv(),
-      progress,
-      sandboxName,
-      signal: cleanup.currentSignal(),
+      redactionValues,
       timeoutMs: 120_000,
     });
-    expect(
-      connect.proof,
-      "nemoclaw connect did not complete or print background-forward proof; see the dashboard-connect-handoff.stdout.txt and dashboard-connect-handoff.stderr.txt artifacts",
-    ).toBe("forward-started");
+    expect(stop.exitCode, `Sandbox stop failed before remote rebind\n${resultText(stop)}`).toBe(0);
+    expect(teardownSandboxDashboardForward(sandboxName)).toBe(true);
+
+    const start = await host.nemoclaw([sandboxName, "start"], {
+      artifactName: "dashboard-remote-bind-start-after-release",
+      env: testEnv(),
+      redactionValues,
+      timeoutMs: 10 * 60_000,
+    });
+    expect(start.exitCode, `Sandbox start failed after remote rebind\n${resultText(start)}`).toBe(
+      0,
+    );
 
     progress.phase("verify all-interface dashboard forward");
-    const forwardList = await sandbox.openshell(["forward", "list"], {
-      artifactName: "dashboard-remote-bind-forward-list",
-      env: sandboxAccessEnv(),
-      timeoutMs: 30_000,
-    });
-    expect(forwardList.exitCode, `openshell forward list failed\n${forwardList.stderr}`).toBe(0);
-    await artifacts.writeText("forward-list.txt", forwardList.stdout);
-
-    const forwardLine = matchingForwardLine(forwardList.stdout, sandboxName, dashboardPort);
-    expect(
-      forwardLine,
-      `No OpenShell forward found for ${sandboxName} on ${dashboardPort}`,
-    ).not.toBe("");
-    expect(
-      dashboardForwardIsRunning(forwardLine),
-      `Dashboard forward is not running after connect handoff: ${forwardLine}`,
-    ).toBe(true);
-    expect(
-      bindsLoopback(forwardLine, dashboardPort),
-      `Dashboard forward is still localhost-only; expected an all-interface bind: ${forwardLine}`,
-    ).toBe(false);
-    expect(
-      bindsAllInterfaces(forwardLine, dashboardPort),
-      `Could not prove dashboard forward uses 0.0.0.0:${dashboardPort}: ${forwardLine}`,
-    ).toBe(true);
+    expect(isSandboxPortForwardHealthy(sandboxName, Number(dashboardPort), "0.0.0.0")).toBe(true);
 
     const forwardReachable = await host.command(
       process.execPath,
@@ -223,11 +173,12 @@ runDashboardRemoteBindTest(
         "-e",
         [
           'const net = require("node:net");',
-          "const socket = net.connect({ host: '127.0.0.1', port: Number(process.argv[1]) });",
+          "const socket = net.connect({ host: process.argv[1], port: Number(process.argv[2]) });",
           "const deadline = setTimeout(() => { socket.destroy(); process.exit(1); }, 5000);",
           "socket.once('connect', () => { clearTimeout(deadline); socket.destroy(); process.exit(0); });",
           "socket.once('error', () => { clearTimeout(deadline); process.exit(1); });",
         ].join("\n"),
+        remoteHost,
         dashboardPort,
       ],
       {

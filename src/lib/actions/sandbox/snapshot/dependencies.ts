@@ -63,10 +63,7 @@ export function requireCurrentSnapshotRuntimeProvider(
 
 export function assertSandboxSnapshotCommandAvailable(
   sandboxName: string,
-  commandId:
-    | "sandbox:snapshot:create"
-    | "sandbox:snapshot:list"
-    | "sandbox:snapshot:restore",
+  commandId: "sandbox:snapshot:create" | "sandbox:snapshot:list" | "sandbox:snapshot:restore",
 ): void {
   assertHermesPortableCommandUnavailable(sandboxName, commandId);
 }
