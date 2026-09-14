@@ -1,29 +1,24 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it, type TestContext, vi } from "vitest";
+import { runOnboardProcessAsync } from "../../../../test/helpers/onboard-child-process-harness";
 
 const sourceRequireHook = path.resolve("test/helpers/onboard-script-mocks.cjs");
 const sourceNodeOptions = [process.env.NODE_OPTIONS, `--require=${sourceRequireHook}`]
   .filter(Boolean)
   .join(" ");
-const tempHomes = new Set<string>();
+const harnessTimeoutMs = 60_000;
 
-function createTempHome(prefix: string): string {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-  tempHomes.add(home);
-  return home;
+vi.setConfig({ maxConcurrency: 4, testTimeout: harnessTimeoutMs });
+
+function createTempHome(prefix: string, root = os.tmpdir()): string {
+  return fs.mkdtempSync(path.join(root, prefix));
 }
-
-afterEach(() => {
-  tempHomes.forEach((home) => fs.rmSync(home, { recursive: true, force: true }));
-  tempHomes.clear();
-});
 
 // Shared subprocess prelude: a healthy committed bridge whose provider
 // metadata is all-green, with the in-sandbox probe answering an identical
@@ -213,16 +208,18 @@ console.log = (...parts) => logLines.push(parts.join(" "));
 console.error = (...parts) => errorLines.push(parts.join(" "));
 `;
 
-function runHarness(
+async function runHarness(
+  context: Pick<TestContext, "signal" | "onTestFinished">,
   home: string,
   body: string,
   options: { controlHttpStatus?: number; probeHttpStatus?: number } = {},
-): { status: number | null; stdout: string } {
-  const probeHttpStatus = options.probeHttpStatus ?? 401;
-  const prelude = harnessPreludeTemplate
-    .replaceAll("__PROBE_HTTP_STATUS__", String(probeHttpStatus))
-    .replaceAll("__CONTROL_HTTP_STATUS__", String(options.controlHttpStatus ?? probeHttpStatus));
-  const script = `
+): Promise<{ status: number | null; stdout: string }> {
+  try {
+    const probeHttpStatus = options.probeHttpStatus ?? 401;
+    const prelude = harnessPreludeTemplate
+      .replaceAll("__PROBE_HTTP_STATUS__", String(probeHttpStatus))
+      .replaceAll("__CONTROL_HTTP_STATUS__", String(options.controlHttpStatus ?? probeHttpStatus));
+    const script = `
 process.env.HOME = ${JSON.stringify(home)};
 ${prelude}
 (async () => {
@@ -232,25 +229,46 @@ ${body}
   process.exit(1);
 });
 `;
-  const result = spawnSync(process.execPath, ["-e", script], {
-    cwd: process.cwd(),
-    encoding: "utf8",
-    env: { ...process.env, HOME: home, NODE_OPTIONS: sourceNodeOptions },
-  });
-  expect(result.status, `harness failed: ${result.stderr}`).toBe(0);
-  return { status: result.status, stdout: result.stdout };
+    const result = await runOnboardProcessAsync(["-e", script], {
+      cwd: process.cwd(),
+      env: { ...process.env, HOME: home, NODE_OPTIONS: sourceNodeOptions },
+      timeoutMs: harnessTimeoutMs,
+      context,
+    });
+    expect(result.status, `harness failed: ${result.stderr}`).toBe(0);
+    return { status: result.status, stdout: result.stdout };
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
 }
 
-describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 }, () => {
-  it.each([
-    [200, 401, true],
-    [401, 401, false],
-    [400, 400, false],
+describe.concurrent("MCP status wire-level credential-resolution probe", () => {
+  it("removes its home when cancelled before child launch", async (context) => {
+    const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-cleanup-"));
+    const home = createTempHome("home-", workspaceRoot);
+    const controller = new AbortController();
+    const reason = new Error("fixture test cancelled");
+    controller.abort(reason);
+    try {
+      await expect(
+        runHarness({ signal: controller.signal, onTestFinished: context.onTestFinished }, home, ""),
+      ).rejects.toBe(reason);
+      expect(fs.readdirSync(workspaceRoot)).toEqual([]);
+    } finally {
+      fs.rmSync(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  it.for([
+    { probeHttpStatus: 200, controlHttpStatus: 401, accepted: true },
+    { probeHttpStatus: 401, controlHttpStatus: 401, accepted: false },
+    { probeHttpStatus: 400, controlHttpStatus: 400, accepted: false },
   ] as const)(
-    "requires wire authorization for an unchanged stable handle (%s/control %s)",
-    (probeHttpStatus, controlHttpStatus, accepted) => {
+    "requires wire authorization for an unchanged stable handle ($probeHttpStatus/control $controlHttpStatus)",
+    async ({ probeHttpStatus, controlHttpStatus, accepted }, context) => {
       const home = createTempHome("nemoclaw-mcp-stable-authorization-");
-      const { stdout } = runHarness(
+      const { stdout } = await runHarness(
+        context,
         home,
         String.raw`
   const status = require("./src/lib/actions/sandbox/mcp-bridge-status.js");
@@ -285,9 +303,10 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
     },
   );
 
-  it("inspects the attachment inventory once for a multi-server source read (#9806)", () => {
+  it("inspects the attachment inventory once for a multi-server source read (#9806)", async (context) => {
     const home = createTempHome("nemoclaw-mcp-status-attachments-");
-    const { stdout } = runHarness(
+    const { stdout } = await runHarness(
+      context,
       home,
       String.raw`
   includeSecondSource = true;
@@ -306,9 +325,10 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
     });
   });
 
-  it("reports a policy-derived entry as configured when direct adapter inspection succeeds", () => {
+  it("reports a policy-derived entry as configured when direct adapter inspection succeeds", async (context) => {
     const home = createTempHome("nemoclaw-mcp-resolution-policy-source-");
-    const { stdout } = runHarness(
+    const { stdout } = await runHarness(
+      context,
       home,
       String.raw`
   policyOnlySourceEnabled = true;
@@ -330,9 +350,10 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
     expect(payload.provider.state).toBe("configured");
   });
 
-  it("refuses status while a legacy source still requires explicit migration", () => {
+  it("refuses status while a legacy source still requires explicit migration", async (context) => {
     const home = createTempHome("nemoclaw-mcp-resolution-legacy-");
-    const { stdout } = runHarness(
+    const { stdout } = await runHarness(
+      context,
       home,
       String.raw`
   legacySourceEnabled = true;
@@ -347,9 +368,10 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
     expect(payload.errorLines.join("\n")).toContain("mcp migrate");
   });
 
-  it("probes by default for a single named server and surfaces the wire failure (#6379)", () => {
+  it("probes by default for a single named server and surfaces the wire failure (#6379)", async (context) => {
     const home = createTempHome("nemoclaw-mcp-resolution-single-");
-    const { stdout } = runHarness(
+    const { stdout } = await runHarness(
+      context,
       home,
       String.raw`
   await bridge.dispatchMcpBridgeCommand("alpha", ["status", "github", "--json"]);
@@ -383,9 +405,10 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
     expect(payload.exitCode).toBe(0);
   });
 
-  it("sends the observed revision and rejects canonical probe authority (#10079)", () => {
+  it("sends the observed revision and rejects canonical probe authority (#10079)", async (context) => {
     const home = createTempHome("nemoclaw-mcp-resolution-revision-");
-    const { stdout } = runHarness(
+    const { stdout } = await runHarness(
+      context,
       home,
       String.raw`
   const outcomes = [];
@@ -428,9 +451,10 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
     expect(outcomes.map((outcome) => outcome.credentialObservationCount)).toEqual([1, 1]);
   });
 
-  it("reports stale persisted revisions for every agent adapter (#10079)", () => {
+  it("reports stale persisted revisions for every agent adapter (#10079)", async (context) => {
     const home = createTempHome("nemoclaw-mcp-status-stale-revision-");
-    const { stdout } = runHarness(
+    const { stdout } = await runHarness(
+      context,
       home,
       String.raw`
   providerCredentialObservation = "v12";
@@ -490,9 +514,10 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
     expect(JSON.stringify(outcomes)).not.toContain("openshell:resolve:env:v11_GITHUB_TOKEN");
   });
 
-  it("lets restart verify a stored credential before repairing a stale adapter revision", () => {
+  it("lets restart verify a stored credential before repairing a stale adapter revision", async (context) => {
     const home = createTempHome("nemoclaw-mcp-status-restart-revision-");
-    const { stdout } = runHarness(
+    const { stdout } = await runHarness(
+      context,
       home,
       String.raw`
   providerCredentialObservation = "v12";
@@ -527,9 +552,10 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
     });
   });
 
-  it("reports an unsafe Deep Agents projection when credential handling would hide it (#10754)", () => {
+  it("reports an unsafe Deep Agents projection when credential handling would hide it (#10754)", async (context) => {
     const home = createTempHome("nemoclaw-mcp-unsafe-deepagents-projection-");
-    const { stdout } = runHarness(
+    const { stdout } = await runHarness(
+      context,
       home,
       String.raw`
   const deepAgentsFixture = require("./test/helpers/mcp-bridge-adapter-deepagents-fixture.ts");
@@ -675,9 +701,10 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
     });
   });
 
-  it("preserves unsupported-credential status for a regular Deep Agents projection (#10754)", () => {
+  it("preserves unsupported-credential status for a regular Deep Agents projection (#10754)", async (context) => {
     const home = createTempHome("nemoclaw-mcp-unsupported-deepagents-credential-");
-    const { stdout } = runHarness(
+    const { stdout } = await runHarness(
+      context,
       home,
       String.raw`
   const deepAgentsFixture = require("./test/helpers/mcp-bridge-adapter-deepagents-fixture.ts");
@@ -718,9 +745,10 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
     });
   });
 
-  it("preserves legacy Deep Agents status when credential handling is unavailable (#10754)", () => {
+  it("preserves legacy Deep Agents status when credential handling is unavailable (#10754)", async (context) => {
     const home = createTempHome("nemoclaw-mcp-legacy-deepagents-projection-");
-    const { stdout } = runHarness(
+    const { stdout } = await runHarness(
+      context,
       home,
       String.raw`
   const deepAgentsFixture = require("./test/helpers/mcp-bridge-adapter-deepagents-fixture.ts");
@@ -776,9 +804,10 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
     });
   });
 
-  it("skips status probe traffic until policy presence and provider readiness are verified (#6379)", () => {
+  it("skips status probe traffic until policy presence and provider readiness are verified (#6379)", async (context) => {
     const home = createTempHome("nemoclaw-mcp-resolution-readiness-");
-    const { stdout } = runHarness(
+    const { stdout } = await runHarness(
+      context,
       home,
       String.raw`
   const outcomes = [];
@@ -841,9 +870,10 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
     });
   });
 
-  it("renders the identical-rejection probe in the human-readable status output (#6379)", () => {
+  it("renders the identical-rejection probe in the human-readable status output (#6379)", async (context) => {
     const home = createTempHome("nemoclaw-mcp-resolution-render-");
-    const { stdout } = runHarness(
+    const { stdout } = await runHarness(
+      context,
       home,
       String.raw`
   await bridge.dispatchMcpBridgeCommand("alpha", ["status", "github"]);
@@ -859,9 +889,10 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
     ).toBe(true);
   });
 
-  it("keeps the status warning for identical 400 explicitly inconclusive (#6379)", () => {
+  it("keeps the status warning for identical 400 explicitly inconclusive (#6379)", async (context) => {
     const home = createTempHome("nemoclaw-mcp-resolution-400-");
-    const { stdout } = runHarness(
+    const { stdout } = await runHarness(
+      context,
       home,
       String.raw`
   await bridge.dispatchMcpBridgeCommand("alpha", ["status", "github", "--json"]);
@@ -880,9 +911,10 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
     expect(warning).not.toContain("the OpenShell host is not rewriting");
   });
 
-  it("never probes from bare status or list so multi-server views stay fast (#6379)", () => {
+  it("never probes from bare status or list so multi-server views stay fast (#6379)", async (context) => {
     const home = createTempHome("nemoclaw-mcp-resolution-list-");
-    const { stdout } = runHarness(
+    const { stdout } = await runHarness(
+      context,
       home,
       String.raw`
   await bridge.dispatchMcpBridgeCommand("alpha", ["status", "--json"]);
@@ -907,9 +939,10 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
     expect(payload.listResolution).toBeNull();
   });
 
-  it("honors --no-probe on a named server and --probe on the multi-server form (#6379)", () => {
+  it("honors --no-probe on a named server and --probe on the multi-server form (#6379)", async (context) => {
     const home = createTempHome("nemoclaw-mcp-resolution-flags-");
-    const { stdout } = runHarness(
+    const { stdout } = await runHarness(
+      context,
       home,
       String.raw`
   await bridge.dispatchMcpBridgeCommand("alpha", ["status", "github", "--no-probe", "--json"]);
@@ -939,9 +972,10 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
     });
   });
 
-  it("rejects combining --probe with --no-probe (#6379)", () => {
+  it("rejects combining --probe with --no-probe (#6379)", async (context) => {
     const home = createTempHome("nemoclaw-mcp-resolution-conflict-");
-    const { stdout } = runHarness(
+    const { stdout } = await runHarness(
+      context,
       home,
       String.raw`
   await bridge.dispatchMcpBridgeCommand("alpha", ["status", "github", "--probe", "--no-probe"]);
@@ -955,9 +989,10 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
     expect(payload.errorLines.join("\n")).toContain("at most one of --probe / --no-probe");
   });
 
-  it("runs authenticated discovery without duplicating the implicit probe (#6901)", () => {
+  it("runs authenticated discovery without duplicating the implicit probe (#6901)", async (context) => {
     const home = createTempHome("nemoclaw-mcp-tools-single-");
-    const { stdout } = runHarness(
+    const { stdout } = await runHarness(
+      context,
       home,
       String.raw`
   await bridge.dispatchMcpBridgeCommand("alpha", ["status", "github", "--tools", "--json"]);
@@ -995,9 +1030,10 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
     });
   });
 
-  it("exits nonzero when a zero-exit runtime reports denied authentication (#10944)", () => {
+  it("exits nonzero when a zero-exit runtime reports denied authentication (#10944)", async (context) => {
     const home = createTempHome("nemoclaw-mcp-tools-auth-failure-");
-    const { stdout } = runHarness(
+    const { stdout } = await runHarness(
+      context,
       home,
       String.raw`
   toolDiscoveryResult = {
@@ -1036,9 +1072,10 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
     });
   });
 
-  it("does not accept a successful payload from a nonzero runtime (#10944)", () => {
+  it("does not accept a successful payload from a nonzero runtime (#10944)", async (context) => {
     const home = createTempHome("nemoclaw-mcp-tools-runtime-failure-");
-    const { stdout } = runHarness(
+    const { stdout } = await runHarness(
+      context,
       home,
       String.raw`
   toolDiscoveryStatus = 7;
@@ -1054,9 +1091,10 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
     expect(payload.rendered.join("\n")).toContain("FAILED");
   });
 
-  it("skips authenticated discovery until provider readiness is verified (#6901)", () => {
+  it("skips authenticated discovery until provider readiness is verified (#6901)", async (context) => {
     const home = createTempHome("nemoclaw-mcp-tools-provider-readiness-");
-    const { stdout } = runHarness(
+    const { stdout } = await runHarness(
+      context,
       home,
       String.raw`
   activePolicyState = "match";
@@ -1168,9 +1206,10 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
     ]);
   });
 
-  it("runs both diagnostics only when --probe is explicit with --tools (#6901)", () => {
+  it("runs both diagnostics only when --probe is explicit with --tools (#6901)", async (context) => {
     const home = createTempHome("nemoclaw-mcp-tools-explicit-probe-");
-    const { stdout } = runHarness(
+    const { stdout } = await runHarness(
+      context,
       home,
       String.raw`
   await bridge.dispatchMcpBridgeCommand("alpha", ["status", "github", "--tools", "--probe", "--json"]);
@@ -1191,9 +1230,10 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
     });
   });
 
-  it("requires a named server for --tools and renders the discovered names (#6901)", () => {
+  it("requires a named server for --tools and renders the discovered names (#6901)", async (context) => {
     const home = createTempHome("nemoclaw-mcp-tools-validation-");
-    const { stdout } = runHarness(
+    const { stdout } = await runHarness(
+      context,
       home,
       String.raw`
   await bridge.dispatchMcpBridgeCommand("alpha", ["status", "--tools"]);
@@ -1218,10 +1258,11 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
   });
 });
 
-describe("MCP add post-add credential-resolution probe", () => {
-  it("warns loudly on an identical-rejection probe without failing the committed add (#6379)", () => {
+describe.concurrent("MCP add post-add credential-resolution probe", () => {
+  it("warns loudly on an identical-rejection probe without failing the committed add (#6379)", async (context) => {
     const home = createTempHome("nemoclaw-mcp-resolution-add-");
-    const { stdout } = runHarness(
+    const { stdout } = await runHarness(
+      context,
       home,
       String.raw`
   const addRestart = require("./src/lib/actions/sandbox/mcp-bridge-add-restart.js");
@@ -1262,9 +1303,10 @@ describe("MCP add post-add credential-resolution probe", () => {
     expect(payload.exitCode).toBe(0);
   });
 
-  it("skips post-add probe traffic when policy presence is absent or unknown (#6379)", () => {
+  it("skips post-add probe traffic when policy presence is absent or unknown (#6379)", async (context) => {
     const home = createTempHome("nemoclaw-mcp-resolution-add-policy-gate-");
-    const { stdout } = runHarness(
+    const { stdout } = await runHarness(
+      context,
       home,
       String.raw`
   const addRestart = require("./src/lib/actions/sandbox/mcp-bridge-add-restart.js");
@@ -1303,9 +1345,10 @@ describe("MCP add post-add credential-resolution probe", () => {
     });
   });
 
-  it("keeps the post-add warning for identical 400 explicitly inconclusive (#6379)", () => {
+  it("keeps the post-add warning for identical 400 explicitly inconclusive (#6379)", async (context) => {
     const home = createTempHome("nemoclaw-mcp-resolution-add-400-");
-    const { stdout } = runHarness(
+    const { stdout } = await runHarness(
+      context,
       home,
       String.raw`
   const addRestart = require("./src/lib/actions/sandbox/mcp-bridge-add-restart.js");
@@ -1326,9 +1369,10 @@ describe("MCP add post-add credential-resolution probe", () => {
     expect(payload.exitCode).toBe(0);
   });
 
-  it("skips the post-add probe when --no-probe is passed (#6379)", () => {
+  it("skips the post-add probe when --no-probe is passed (#6379)", async (context) => {
     const home = createTempHome("nemoclaw-mcp-resolution-add-skip-");
-    const { stdout } = runHarness(
+    const { stdout } = await runHarness(
+      context,
       home,
       String.raw`
   const addRestart = require("./src/lib/actions/sandbox/mcp-bridge-add-restart.js");
