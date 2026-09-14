@@ -14,6 +14,7 @@ const sourceNodeOptions = [process.env.NODE_OPTIONS, `--require=${sourceRequireH
   .join(" ");
 const harnessConcurrency = 4;
 const harnessTimeoutMs = 60_000;
+let runHarnessProcess = runOnboardProcessAsync;
 
 function describeConcurrentProbeSuite(name: string, factory: () => void): void {
   describe.concurrent(name, { timeout: harnessTimeoutMs }, factory);
@@ -258,7 +259,7 @@ ${body}
 });
 `;
     const result = await limitHarness(() =>
-      runOnboardProcessAsync(["-e", script], {
+      runHarnessProcess(["-e", script], {
         cwd: process.cwd(),
         env: { ...process.env, HOME: home, NODE_OPTIONS: sourceNodeOptions },
         timeoutMs: harnessTimeoutMs,
@@ -272,29 +273,38 @@ ${body}
   }
 }
 
-describe("MCP status harness concurrency", () => {
-  it("limits concurrent child launches to four", async () => {
-    const limit = createHarnessLimiter(harnessConcurrency);
+describe("MCP status harness concurrency", { timeout: harnessTimeoutMs }, () => {
+  it("limits runHarness child launches to four", async (context) => {
+    const originalRunHarnessProcess = runHarnessProcess;
+    const homes = Array.from({ length: harnessConcurrency + 1 }, () =>
+      createTempHome("nemoclaw-mcp-concurrency-"),
+    );
     let active = 0;
     let maxActive = 0;
     let releaseAll!: () => void;
     const release = new Promise<void>((resolve) => {
       releaseAll = resolve;
     });
-    const runs = Array.from({ length: harnessConcurrency + 1 }, () =>
-      limit(async () => {
-        active += 1;
-        maxActive = Math.max(maxActive, active);
-        await release;
-        active -= 1;
-      }),
-    );
+    runHarnessProcess = async () => {
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      await release;
+      active -= 1;
+      return { status: 0, signal: null, error: undefined, stdout: "", stderr: "", output: "" };
+    };
+    const runs = homes.map((home) => runHarness(context, home, ""));
 
-    await expect.poll(() => active).toBe(harnessConcurrency);
-    expect(maxActive).toBe(harnessConcurrency);
-    releaseAll();
-    await Promise.all(runs);
-    expect(maxActive).toBe(harnessConcurrency);
+    try {
+      await expect.poll(() => active).toBe(harnessConcurrency);
+      expect(maxActive).toBe(harnessConcurrency);
+      releaseAll();
+      await Promise.all(runs);
+      expect(maxActive).toBe(harnessConcurrency);
+    } finally {
+      releaseAll();
+      await Promise.allSettled(runs);
+      runHarnessProcess = originalRunHarnessProcess;
+    }
   });
 });
 
