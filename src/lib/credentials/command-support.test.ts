@@ -87,4 +87,29 @@ describe("credential gateway recovery diagnostics", () => {
     expect(lines.join("\n")).toContain("Is it running?");
     expect(lines.join("\n")).not.toContain("did not prove the expected gateway identity");
   });
+
+  it("uses recovery guidance when the gateway observation times out", async () => {
+    const canary = "timeout-diagnostic-canary";
+    const timeout = {
+      state: "observation_failed",
+      recoveryBlocked: true,
+      unavailable: true,
+      diagnostic: canary,
+      error: { kind: "timeout" },
+    };
+    mocks.recoverNamedGatewayRuntime.mockResolvedValue({
+      recovered: false,
+      attempted: false,
+      before: timeout,
+      after: timeout,
+    });
+    const reportFailure = vi.fn();
+
+    await expect(recoverGatewayOrExit("reach", reportFailure)).resolves.toBe(false);
+
+    const lines = reportFailure.mock.calls[0][0] as readonly string[];
+    expect(lines.join("\n")).toContain("Is it running?");
+    expect(lines.join("\n")).not.toContain("did not prove the expected gateway identity");
+    expect(lines.join("\n")).not.toContain(canary);
+  });
 });

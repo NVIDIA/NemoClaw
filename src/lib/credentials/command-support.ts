@@ -66,12 +66,14 @@ export async function recoverGatewayOrExit(
   if (recovery.recovered) return true;
 
   const recoveryEvidence = recovery as typeof recovery & {
-    before?: { recoveryBlocked?: boolean };
-    after?: { recoveryBlocked?: boolean };
+    before?: { recoveryBlocked?: boolean; unavailable?: boolean };
+    after?: { recoveryBlocked?: boolean; unavailable?: boolean };
   };
   const identityUnproven =
-    recoveryEvidence.before?.recoveryBlocked === true ||
-    recoveryEvidence.after?.recoveryBlocked === true;
+    (recoveryEvidence.before?.recoveryBlocked === true &&
+      recoveryEvidence.before.unavailable !== true) ||
+    (recoveryEvidence.after?.recoveryBlocked === true &&
+      recoveryEvidence.after.unavailable !== true);
   reportFailure(
     identityUnproven
       ? credentialsGatewayIdentityFailureLines(kind)
