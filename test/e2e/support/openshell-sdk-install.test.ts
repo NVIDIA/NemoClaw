@@ -335,6 +335,87 @@ describe.concurrent("catalogue OpenShell SDK installation", () => {
     },
   );
 
+  it(
+    "rejects a lock-selected SDK that is absent from the reviewed archives",
+    testTimeoutOptions(90_000),
+    async (context) => {
+      const { expect } = context;
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-sdk-cache-miss-"));
+      try {
+        const [reviewedSdk, lockedSdk, transport] = await writePackageArchives(
+          root,
+          [
+            {
+              name: "@nvidia/openshell-sdk",
+              dependencies: { "fixture-transport": "^1.0.0" },
+            },
+            {
+              name: "@nvidia/openshell-sdk",
+              version: "2.0.0",
+              dependencies: { "fixture-transport": "^1.0.0" },
+            },
+            { name: "fixture-transport" },
+          ],
+          context,
+        );
+        const workspace = path.join(root, "workspace");
+        fs.mkdirSync(workspace);
+        const manifest = JSON.stringify({
+          name: "sdk-cache-miss-fixture",
+          version: "1.0.0",
+          optionalDependencies: { "@nvidia/openshell-sdk": "2.0.0" },
+        });
+        const lock = JSON.stringify({
+          name: "sdk-cache-miss-fixture",
+          version: "1.0.0",
+          lockfileVersion: 3,
+          requires: true,
+          packages: {
+            "": JSON.parse(manifest),
+            "node_modules/@nvidia/openshell-sdk": { ...lockedSdk.lock, optional: true },
+            "node_modules/fixture-transport": { ...transport.lock, optional: true },
+          },
+        });
+        fs.writeFileSync(path.join(workspace, "package.json"), manifest);
+        fs.writeFileSync(path.join(workspace, "package-lock.json"), lock);
+        fs.mkdirSync(path.join(root, "openshell-sdk"));
+        fs.copyFileSync(reviewedSdk.archive, path.join(root, "openshell-sdk", "sdk.tgz"));
+        const env = {
+          PATH: process.env.PATH,
+          HOME: root,
+          NPM_CONFIG_CACHE: path.join(root, "cache"),
+          NPM_CONFIG_AUDIT: "false",
+          NPM_CONFIG_FUND: "false",
+          NPM_CONFIG_UPDATE_NOTIFIER: "false",
+          RUNNER_TEMP: root,
+        };
+        await runSuccessfulProcess("npm", ["cache", "add", transport.archive, "--offline"], {
+          cwd: workspace,
+          env,
+          owner: context,
+          timeoutMs: 30_000,
+        });
+
+        await runProcessWithStatus(
+          "bash",
+          ["-c", installScript],
+          {
+            cwd: workspace,
+            env,
+            owner: context,
+            timeoutMs: 60_000,
+          },
+          1,
+        );
+        expect(fs.existsSync(path.join(workspace, "node_modules/@nvidia/openshell-sdk"))).toBe(
+          false,
+        );
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
+
   it.for([
     {
       name: "one reviewed archive",
@@ -436,7 +517,7 @@ describe.concurrent("catalogue OpenShell SDK installation", () => {
             auth: [null, null, null],
           })),
           {
-            args: ["ci", "--ignore-scripts", "--prefer-offline", "--no-audit", "--no-fund"],
+            args: ["ci", "--offline", "--ignore-scripts", "--no-audit", "--no-fund"],
             auth: [null, null, null],
           },
         ].slice(0, calls);

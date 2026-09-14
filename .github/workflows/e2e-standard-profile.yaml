@@ -439,7 +439,7 @@ jobs:
               npm cache add "$archive" --offline --ignore-scripts
           done
           env -u NODE_AUTH_TOKEN -u GITHUB_TOKEN -u GH_TOKEN \
-            npm ci --ignore-scripts --prefer-offline --no-audit --no-fund
+            npm ci --offline --ignore-scripts --no-audit --no-fund
           env -u NODE_AUTH_TOKEN -u GITHUB_TOKEN -u GH_TOKEN \
             node --input-type=module -e 'const { OpenShellClient } = await import("@nvidia/openshell-sdk"); if (typeof OpenShellClient?.connect !== "function") throw new Error("OpenShell SDK connection API is unavailable");'
 
