@@ -421,6 +421,76 @@ describe.concurrent("catalogue OpenShell SDK installation", () => {
     },
   );
 
+  it(
+    "rejects a candidate-local SDK even when it claims a reviewed version",
+    testTimeoutOptions(90_000),
+    async (context) => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-sdk-local-"));
+      try {
+        const [reviewedSdk] = await writePackageArchives(
+          root,
+          [{ name: "@nvidia/openshell-sdk" }],
+          context,
+        );
+        const workspace = path.join(root, "workspace");
+        const localSdk = path.join(workspace, "local-sdk");
+        fs.mkdirSync(localSdk, { recursive: true });
+        fs.writeFileSync(
+          path.join(localSdk, "package.json"),
+          JSON.stringify({ name: "@nvidia/openshell-sdk", version: "1.0.0" }),
+        );
+        const manifest = {
+          name: "sdk-local-fixture",
+          version: "1.0.0",
+          optionalDependencies: { "@nvidia/openshell-sdk": "file:./local-sdk" },
+        };
+        fs.writeFileSync(path.join(workspace, "package.json"), JSON.stringify(manifest));
+        fs.writeFileSync(
+          path.join(workspace, "package-lock.json"),
+          JSON.stringify({
+            ...manifest,
+            lockfileVersion: 3,
+            requires: true,
+            packages: {
+              "": manifest,
+              "local-sdk": { name: "@nvidia/openshell-sdk", version: "1.0.0" },
+              "node_modules/@nvidia/openshell-sdk": {
+                version: "1.0.0",
+                resolved: "file:local-sdk",
+                integrity: reviewedSdk.lock.integrity,
+                optional: true,
+              },
+            },
+          }),
+        );
+        fs.mkdirSync(path.join(root, "openshell-sdk"));
+        fs.copyFileSync(reviewedSdk.archive, path.join(root, "openshell-sdk", "sdk.tgz"));
+
+        await runProcessWithStatus(
+          "bash",
+          ["-c", installScript],
+          {
+            cwd: workspace,
+            env: {
+              PATH: process.env.PATH,
+              HOME: root,
+              NPM_CONFIG_CACHE: path.join(root, "cache"),
+              RUNNER_TEMP: root,
+            },
+            owner: context,
+            timeoutMs: 60_000,
+          },
+          1,
+        );
+        context
+          .expect(fs.existsSync(path.join(workspace, "node_modules/@nvidia/openshell-sdk")))
+          .toBe(false);
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
+
   it.for([
     {
       name: "one reviewed archive",
@@ -484,8 +554,41 @@ describe.concurrent("catalogue OpenShell SDK installation", () => {
         fs.mkdirSync(archiveDirectory);
         fs.mkdirSync(bin);
         fs.writeFileSync(log, "[]");
-        archives.forEach((archive) =>
-          fs.writeFileSync(path.join(archiveDirectory, archive), "fixture"),
+        const packed = await writePackageArchives(
+          directory,
+          [
+            { name: "@nvidia/openshell-sdk", version: "1.0.0" },
+            ...archives.slice(1).map((_, index) => ({
+              name: "@nvidia/openshell-sdk",
+              version: `1.0.${index + 1}`,
+            })),
+          ],
+          context,
+        );
+        const reviewed = packed.slice(0, archives.length);
+        archives.forEach((archive, index) =>
+          fs.copyFileSync(reviewed[index]!.archive, path.join(archiveDirectory, archive)),
+        );
+        const manifest = {
+          name: "sdk-install-check-fixture",
+          version: "1.0.0",
+          optionalDependencies: { "@nvidia/openshell-sdk": "1.0.0" },
+        };
+        fs.writeFileSync(path.join(directory, "package.json"), JSON.stringify(manifest));
+        fs.writeFileSync(
+          path.join(directory, "package-lock.json"),
+          JSON.stringify({
+            ...manifest,
+            lockfileVersion: 3,
+            requires: true,
+            packages: {
+              "": manifest,
+              "node_modules/@nvidia/openshell-sdk": {
+                ...reviewed[0]?.lock,
+                optional: true,
+              },
+            },
+          }),
         );
         fs.writeFileSync(path.join(bin, "npm"), npmFixture, { mode: 0o755 });
         fs.symlinkSync(process.execPath, path.join(bin, "node"));
