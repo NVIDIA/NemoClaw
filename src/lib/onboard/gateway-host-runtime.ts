@@ -15,6 +15,7 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { waitForPort } from "../core/wait";
 import { isGatewayHealthy } from "../state/gateway";
 import type { GatewayPortListenerRawScan } from "./docker-driver-gateway-port-listener";
 import {
@@ -49,11 +50,16 @@ import type { PortProbeResult } from "./preflight";
 /** `systemctl is-active` is a local query; anything slower than this is wedged. */
 const SUPERVISOR_PROBE_TIMEOUT_MS = 5_000;
 
-function restartTrustedPackagedGateway(): void {
+function restartTrustedPackagedGateway(owner: GatewayOwner): void {
   const result = startOpenShellGatewayUserService();
   if (!result.attempted || !result.started) {
     const detail = result.reason ? `: ${result.reason}` : "";
     throw new Error(`OpenShell packaged gateway restart after install failed${detail}`);
+  }
+  // Type=simple can be active before binding. The caller still validates
+  // gateway ownership and protocol readiness after the port becomes reachable.
+  if (!waitForPort(owner.gatewayPort, 30)) {
+    throw new Error("OpenShell packaged gateway did not bind its port after install.");
   }
 }
 
@@ -125,6 +131,11 @@ export interface GatewayHostRuntime {
     persistOwner?: (owner: GatewayOwner) => void,
   ): GatewayOwner;
   bindGatewayOwner(owner: GatewayOwner): void;
+  /** Exact endpoint and optional client TLS bundle for a direct host forward. */
+  getGatewayForwardRuntimeAuthority(): {
+    readonly gatewayEndpoint: string;
+    readonly localTlsDir?: string;
+  };
   /** Local endpoint of the gateway this process operates. */
   getGatewayLocalEndpoint(): string;
   getGatewayOwner(): GatewayOwner;
@@ -555,12 +566,27 @@ export function createGatewayHostRuntime(deps: GatewayHostRuntimeDeps): GatewayH
     boundOwner = owner;
   }
 
-  function getGatewayLocalEndpoint(): string {
-    const owner = getGatewayOwner();
+  function gatewayEndpointForOwner(owner: GatewayOwner): string {
     if (isExternallySupervised(owner) && owner.endpoint) return owner.endpoint;
     const { getGatewayHttpsEndpoint } =
       require("./docker-driver-gateway-env") as typeof import("./docker-driver-gateway-env");
-    return getGatewayHttpsEndpoint(deps.gatewayPort());
+    return new URL(getGatewayHttpsEndpoint(owner.gatewayPort)).origin;
+  }
+
+  function getGatewayForwardRuntimeAuthority(): {
+    readonly gatewayEndpoint: string;
+    readonly localTlsDir?: string;
+  } {
+    const owner = getGatewayOwner();
+    const localTlsDir = getExternalGatewayClientEnv(owner)?.OPENSHELL_LOCAL_TLS_DIR;
+    return {
+      gatewayEndpoint: gatewayEndpointForOwner(owner),
+      ...(localTlsDir ? { localTlsDir } : {}),
+    };
+  }
+
+  function getGatewayLocalEndpoint(): string {
+    return gatewayEndpointForOwner(getGatewayOwner());
   }
 
   function getGatewayStartEnv(): Record<string, string> {
@@ -592,6 +618,7 @@ export function createGatewayHostRuntime(deps: GatewayHostRuntimeDeps): GatewayH
     assertGatewayStartAllowed,
     attachGateway,
     bindGatewayOwner,
+    getGatewayForwardRuntimeAuthority,
     getGatewayLocalEndpoint,
     getGatewayOwner,
     getGatewayStartEnv,

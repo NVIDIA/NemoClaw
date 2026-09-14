@@ -956,23 +956,6 @@ function stopHelperServices(paths: UninstallPaths, runtime: UninstallRuntime): v
     );
 }
 
-function stopMatchingPids(pattern: string, runtime: UninstallRuntime, label: string): void {
-  if (!runtime.commandExists("pgrep")) {
-    runtime.warn(`pgrep not found; skipping ${label}.`);
-    return;
-  }
-  const result = runtime.run("pgrep", ["-f", pattern], { env: runtime.env });
-  const pids = splitNonEmptyLines(result.stdout).map(Number).filter(Number.isFinite);
-  if (pids.length === 0) {
-    runtime.log(`No ${label} found`);
-    return;
-  }
-  for (const pid of pids) {
-    if (runtime.kill(pid) || runtime.kill(pid, "SIGKILL")) runtime.log(`Stopped ${label} ${pid}`);
-    else runtime.warn(`Failed to stop ${label} ${pid}`);
-  }
-}
-
 // Resolve the proxy port from runtime.env (rather than `process.env` at
 // module-load time) so a user who onboarded with NEMOCLAW_OLLAMA_PROXY_PORT
 // set to a custom value sees uninstall scan that same port. Mirrors the
@@ -2105,7 +2088,7 @@ function removeManagedDistributedVllmRuntime(
     state = findManagedDistributedVllmRuntimeReceipts({
       homeDir: runtime.env.HOME || os.homedir(),
     });
-  } catch (error) {
+  } catch {
     runtime.error(
       "Could not inspect managed distributed vLLM rollback state. NemoClaw refused uninstall before making changes.",
     );
@@ -2241,7 +2224,7 @@ function managedLlamaCppCleanupTargets(
       if (target) targets.push(target);
     }
     return targets;
-  } catch (error) {
+  } catch {
     runtime.error(
       "Managed llama.cpp cleanup could not safely inventory gateway-scoped ownership state. NemoClaw did not start the remaining uninstall steps.",
     );

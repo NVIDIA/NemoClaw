@@ -436,13 +436,13 @@ describe("inference selection validation", () => {
   });
 
   it("carries a default-probe WSL timeout through non-interactive teardown (#10413)", async () => {
-    let requestIndex = 0;
+    let _requestIndex = 0;
     const reasoningResponse =
       '{"choices":[{"finish_reason":"length","message":{"content":"","reasoning_content":"Planning the tool call."}}]}';
     const replies = [(response: http.ServerResponse) => response.end(reasoningResponse), () => {}];
     const server = http.createServer((request, response) => {
       request.resume();
-      (replies[requestIndex++] ?? replies[1])(response);
+      (replies[_requestIndex++] ?? replies[1])(response);
     });
     const port = await listen(server);
     const originalExitCode = process.exitCode;

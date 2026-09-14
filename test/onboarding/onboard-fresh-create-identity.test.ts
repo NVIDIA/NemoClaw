@@ -13,7 +13,7 @@ import { describe, it } from "vitest";
 import { decodeManagedStartupProfile } from "../../src/lib/onboard/managed-startup/profile";
 import { mapManagedStartupProfileToAgentEnvironment } from "../../src/lib/onboard/managed-startup/agent-environment";
 import { writeOkOpenshell } from "../helpers/onboard-openshell-fixture";
-import { type CommandEntry, onboardScriptMocksPath } from "../helpers/onboard-split-context";
+import { onboardScriptMocksPath } from "../helpers/onboard-split-context";
 import { encodeMessagingPlan, makeMessagingPlan } from "../helpers/messaging-plan-fixtures";
 
 function runNodeScript(
@@ -48,7 +48,8 @@ describe("fresh create identity", () => {
         expectedOutcome: "managed-provider" as const,
       },
       {
-        title: "rejects provider-backed APF creation before sandbox or provider effects (#9833)",
+        title:
+          "rejects provider-backed external-component creation before sandbox or provider effects (#9833)",
         apfInterceptorRequested: true,
         provider: "nvidia-prod",
         model: "gpt-5.4",
@@ -75,7 +76,7 @@ describe("fresh create identity", () => {
       },
       {
         title:
-          "registers providerless APF only after identity, policy, and checkpoint verification (#9833)",
+          "registers providerless external-component onboarding only after identity, policy, and checkpoint verification (#9833)",
         apfInterceptorRequested: true,
         provider: null,
         model: null,
@@ -926,12 +927,6 @@ if (${JSON.stringify(
         );
         const startup = mapManagedStartupProfileToAgentEnvironment(profile);
         assert.equal(profile.agent, agent?.name ?? "openclaw");
-        assert.equal(
-          startup.configurationEnvironment.NEMOCLAW_INFERENCE_BASE_URL,
-          "https://inference.local/v1",
-        );
-        assert.equal(startup.configurationEnvironment.NEMOCLAW_INFERENCE_PROVIDER_ID, "inference");
-        assert.ok(startup.configurationEnvironment.NEMOCLAW_MODEL);
         assert.ok(
           startup.actions.some(
             (action) => action.kind === "generate-agent-config" && action.agent === profile.agent,
@@ -961,16 +956,41 @@ if (${JSON.stringify(
           ),
           `fresh identity observations must remain scoped to the owning gateway: ${JSON.stringify(ownerScopedObservations)}`,
         );
+        return { profile, startup };
+      };
+      const assertProviderlessInference = () => {
+        const { profile, startup } = assertSuccessfulCreation();
+        assert.equal(profile.inference, null);
+        for (const key of [
+          "NEMOCLAW_MODEL",
+          "NEMOCLAW_INFERENCE_BASE_URL",
+          "NEMOCLAW_INFERENCE_PROVIDER_ID",
+          "NEMOCLAW_UPSTREAM_PROVIDER",
+          "NEMOCLAW_INFERENCE_API",
+        ]) {
+          assert.equal(startup.configurationEnvironment[key], "");
+        }
+        assert.equal(
+          startup.configurationEnvironment.NEMOCLAW_PRIMARY_MODEL_REF,
+          profile.agent === "openclaw" ? "" : undefined,
+        );
       };
       const assertManagedProviderCreation = () => {
-        assertSuccessfulCreation();
+        const { profile, startup } = assertSuccessfulCreation();
+        assert.ok(profile.inference);
+        assert.equal(
+          startup.configurationEnvironment.NEMOCLAW_INFERENCE_BASE_URL,
+          "https://inference.local/v1",
+        );
+        assert.equal(startup.configurationEnvironment.NEMOCLAW_INFERENCE_PROVIDER_ID, "inference");
+        assert.ok(startup.configurationEnvironment.NEMOCLAW_MODEL);
         assert.equal("policyAuthority" in payload.registeredSandbox, false);
         assert.equal("policyCreationReceipt" in payload.registeredSandbox, false);
         assert.match(payload.createCommand, /--policy \S+/u);
         assert.match(payload.createCommand, /--provider nvidia-prod/u);
       };
       const assertProviderlessApfCreation = () => {
-        assertSuccessfulCreation();
+        assertProviderlessInference();
         for (const field of [
           "appliedPolicies",
           "policies",
@@ -1162,7 +1182,7 @@ if (${JSON.stringify(
         );
       };
       const assertPostCreatePolicyChange = () => {
-        assertSuccessfulCreation();
+        assertProviderlessInference();
         assert.equal(payload.savedSession.status, "in_progress");
         assert.notEqual(payload.savedSession.status, "recovery_required");
         assert.deepEqual(payload.retainedRecoveryRecords, []);

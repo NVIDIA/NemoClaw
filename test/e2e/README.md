@@ -26,7 +26,7 @@ before those targets run; local runners must provide it themselves.
   It does not run onboarding or inference and does not satisfy release
   qualification.
 - `.github/workflows/platform-vitest-main.yaml` publishes `CI / Platform Compatibility` for Ubuntu 26.04, macOS, and WSL.
-  On shard 1, its macOS and WSL live E2E run only when the workflow tests `main` and Docker is available.
+  Its independent macOS live job and WSL shard 1 run live E2E only when the workflow tests `main` and Docker is available.
   This workflow does not publish or satisfy `Release qualification`.
 - `.github/workflows/portable-profile-e2e.yaml` publishes experimental portable-profile evidence.
 - `.github/workflows/podman-cpu-proof.yaml` publishes PR-only experimental runtime evidence.
@@ -163,7 +163,7 @@ These are two required acceptance executions, not retries; either failure remain
 The concurrent-add probe retries only the rejected command after status proves that the other
 command committed one coherent bridge. The rejected command must report either the exact portable
 host-lock timeout or the reviewed Hermes restart transport failure. The retry runs once, has its own
-command artifact, and must reject the committed duplicate as already present.
+command artifact, and must succeed idempotently from the verified committed source.
 The workflow records one publication cohort before its PR producer matrix runs. Failed-job reruns
 reuse that cohort and replace only the stable run-scoped artifact owned by each retried agent.
 Consumers accept one complete cohort from the same run at the current or an earlier attempt. They
@@ -183,6 +183,10 @@ Pi full lifecycle qualification runs on Linux AMD64. Linux ARM64 remains release
 managed-image build, startup, publication, and checked-in receipt. The receipt refresh check requires
 the Linux AMD64 and Linux ARM64 receipts to identify one source revision, release, and publication
 cohort.
+
+The gateway restart fixture restarts the user service it stopped. If no service was selected, the candidate CLI startup code starts the registered gateway.
+A selected service that cannot restart remains selected for cleanup; recovery does not switch to another startup path.
+Restart inputs are checked before stopping the gateway. A failed start ends the test before health polling. Sandbox readiness, retained state, and agent turns remain separate assertions.
 
 #### Timing Baseline
 
@@ -280,12 +284,11 @@ boundaries are the behavior under test.
 `.github/workflows/platform-vitest-main.yaml` publishes the `CI / Platform Compatibility` workflow.
 It runs the Ubuntu 26.04 compatibility contracts and the full Vitest suite in four shards on macOS and WSL.
 The matrix disables `fail-fast`.
-The first macOS shard has a 150-minute job timeout. Its live E2E has a
-70-minute timeout, and every other step shares the remaining job time. The
-other shards have 30 minutes.
+Each macOS Vitest shard has a 30-minute budget. The independent macOS live E2E
+job has a 150-minute budget, including its 70-minute live test and cleanup.
 The first WSL shard has a 180-minute budget for root-required contracts and live E2E; the other shards have 90 minutes.
 
-On shard 1, the workflow runs focused macOS and WSL live E2E only when the run tests `main` and Docker is available.
+The independent macOS job and WSL shard 1 run focused live E2E only when the run tests `main` and Docker is available.
 Otherwise, the workflow records the skip and retains the platform contract evidence.
 Therefore, the workflow is platform evidence, not `Release qualification`.
 Only a full manual `.github/workflows/e2e.yaml` run can publish the release check.
@@ -484,15 +487,29 @@ The standard layout writes product evidence and `evidence-manifest.json` under `
 When `shard` is not `default`, the standard layout adds the shard directory.
 The security-posture matrix uses the reviewed flat-shard layout to preserve its existing artifact names.
 The `gpu-double-onboard`, `gpu-e2e`, and `llama-cpp-generic-gpu` targets keep the standard layout and select `linux-amd64-gpu-rtxpro6000-latest-1` through the catalogue.
+The llama.cpp target compares the selected model's authenticated `/v1/models` `meta.n_ctx`
+with the generated OpenClaw primary model's context window, with no explicit context override.
+It retains the compared values in `qualification-evidence.json`. The existing agent turn proves
+inference through the managed route and backend, replacing two duplicate raw chat smoke tests.
+The GPU memory-offload assertion also rejects a missing matching process because its memory value
+is then `NaN`; a separate process-existence assertion is unnecessary. Authentication denial,
+runtime ownership, Ready state, and cleanup assertions remain unchanged.
 The `gpu-e2e` target also qualifies configuration export for an attached native Linux Ollama daemon.
-A separate OpenClaw scenario disables direct sandbox GPU, starts a fixture-owned daemon on port
-11439, and uses normal onboarding to create the managed proxy on port 11440. It exports twice through
+A separate OpenClaw scenario disables direct sandbox GPU and uses normal onboarding to create the
+managed proxy on the target's shared port. It stops the installer service before starting a fixture-owned
+daemon on port 11439 and preparing its model. It exports twice through
 the candidate CLI and real SDK, validates both documents, compares their specs and model digest,
-checks credential omission, and requires a stopped daemon to prevent publication. Private YAML is
+checks credential omission, and requires a stopped daemon to prevent publication. Inference-provider
+definitions omit internal endpoints; the sandbox's explicit network policy is preserved. Private YAML is
 removed through the cleanup registry; retained evidence contains only the selected model, ports,
 managed image, and result booleans. The existing CUDA, authentication, and inference lifecycle
-scenarios remain separate. Daemon readiness polls only connection refusal, for at most 20 reads,
-and records each attempt; onboarding and export mutations are not retried.
+scenarios remain separate. The export fixture requires service shutdown and model preparation to succeed
+before export. Onboarding and model preparation each have a 20-minute limit within the 75-minute
+scenario. It retries read-only daemon readiness checks on connection refusal or curl
+timeout, for at most 20 reads. It records each attempt and stops on any other failure; model
+preparation, onboarding, and export mutations are not retried.
+After stopped-daemon refusal, cleanup restores the fixture daemon so sandbox destruction can unload
+models through the saved endpoint. It destroys the sandbox before stopping that daemon.
 Retained workflow jobs are exceptions to the catalogue shape.
 Keep one only for a multi-job handoff, an unrepresented credential boundary, or an execution contract the reusable profile cannot represent.
 
@@ -1157,6 +1174,22 @@ phase artifact created before exit. A preparation failure can produce no
 artifact. A later early failure can retain only `lane.log`. A successful job
 contains `launchable-e2e.json`, `full-e2e.log`, and `cleanup.json`;
 `cleanup.json` exists only after the job confirms workspace absence.
+The preinstalled suite resolves its gateway name and port from the external
+gateway declaration before registering cleanup. It removes its sandbox but
+does not remove the platform gateway registration or service. Source-install
+runs retain their test-owned gateway cleanup.
+The Launchable controller enables `NEMOCLAW_E2E_COMMAND_EVIDENCE=1` to retain
+completed command records in `full-e2e.log`. Each `NEMOCLAW_E2E_COMMAND` JSON
+line contains redacted argv, UTC start and finish timestamps, duration, exit
+status, signal, and timeout state. Spawn failures also emit a record. Commands
+that explicitly disable artifact persistence emit none. Output bodies remain
+in guest artifacts; this stream does not export them. Oversized command argv
+is omitted with `commandOmitted: "size-limit"`. Abrupt guest or transport loss
+can leave no completion record for an active command. Older baked suites may
+emit no records; the controller reports that absence rather than inferring
+command times from phase reports.
+The preinstalled suite does not run the source-install cold-onboarding budget
+and does not declare that budget as tested coverage.
 When the preinstalled full E2E fails after SSH succeeds, the job attempts to
 append bounded, redacted host state and fixed lifecycle classifications to
 `lane.log` before cleanup. On the host, the SSH command reads the system journal
@@ -1166,6 +1199,10 @@ GitHub-hosted runner or `lane.log`. If a probe fails or the shared budget
 expires, `lane.log` records that result and cleanup continues. The diagnostic
 phase is read-only, uses one 30-second budget, and does not retry the failed E2E
 or repair the workspace.
+The listener diagnostic uses the baked suite's gateway resolver, including its
+declaration path, loopback endpoint parsing, port checks, and conflict checks.
+An unavailable resolver or rejected declaration leaves that probe failed;
+it does not substitute port 8080 or prevent workspace cleanup.
 
 Manual ordinary and full runs exclude the Jetson nvmap job unless `allow_jetson_dispatch` is `true`.
 Set `allow_jetson_dispatch=true` to select `jetson-nvmap-gpu` after the
@@ -1660,7 +1697,8 @@ for the recorded PR number, selected repository, selected commit SHA, base commi
 workflow SHA. A changed PR source repository, head commit SHA, or base commit SHA invalidates a
 head-to-base comparison.
 
-The platform-evidence workflow runs on configured pushes to `main` and supports manual dispatch for branch diagnosis.
+The platform-evidence workflow runs only on configured pushes to `main`.
+It serializes runs for the same ref, retains the pending queue, and does not cancel an older commit when a newer `main` push arrives.
 The experimental portable-profile workflow can run for pull requests, matching `main` pushes, and manual dispatch.
 Its `portable-launch` job runs only when `github.ref` is `refs/heads/main`.
 The `portable-launch` job's exercise step exposes the long-lived repository `NVIDIA_INFERENCE_API_KEY` to the checked-out source through its environment.

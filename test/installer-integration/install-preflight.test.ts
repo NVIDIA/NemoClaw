@@ -9,7 +9,6 @@ import { describe, expect, it, onTestFinished } from "vitest";
 import {
   runStorageRemediationInstallerPreflight,
   writeFailedOnboardSession,
-  writeInstallerReadinessModuleStubs,
   writeNodeStub,
 } from "../helpers/installer-readiness-stubs";
 import {

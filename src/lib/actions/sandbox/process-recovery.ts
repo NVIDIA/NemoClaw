@@ -16,7 +16,6 @@ import {
 import {
   buildOpenShellRuntimeSelectionEnv,
   captureOpenshell,
-  isCommandTimeout,
   type OpenShellRuntimeSelection,
   runOpenshell,
 } from "../../adapters/openshell/runtime";
@@ -48,14 +47,15 @@ import {
   ensureHermesDashboardPortForwardIfEnabled,
   ensureSandboxPortForward,
   createHermesPortableForwardRecoveryInput,
+  describeSandboxForwardListener,
   HermesPortableForwardRecoveryError,
-  isSandboxForwardHealthy,
   prepareHermesPortableLaunchForwards,
   recoverDeclaredAgentForwardPorts,
   recoverHermesPortableLaunchForwards,
   recoverMessagingHostForward,
   resolveSandboxDashboardPort,
   resolveSandboxHealthProbeUrl,
+  unverifiedForwardListenerRefusal,
   verifyHermesPortableLaunchForwards,
   type HermesPortableForwardRecoveryFailure,
   type HermesPortableForwardRecoveryContext,
@@ -64,10 +64,10 @@ import {
   type HermesPortableForwardRecoveryTimingEvidence,
   type HermesPortableForwardVerificationResult,
   type PreparedHermesPortableForwardRecovery,
+  type SandboxForwardListener,
 } from "./forward-recovery";
 import {
   classifyGatewayRestartFailure,
-  type GatewayRestartDeps,
   type GatewayRestartFailureLayer,
   type GatewayRestartResult,
   gatewayTerminalRepairLines,
@@ -92,7 +92,6 @@ import {
   recoverRegisteredRuntimeProviderSandbox,
   relaunchManagedSupervisorSession,
   usesManagedGatewayController,
-  usesLegacyManagedGatewayRecovery,
 } from "./supervisor-relaunch";
 export type { SandboxForwardHealth } from "./forward-health";
 export { resolveSandboxDashboardPort, resolveSandboxLaunchForwardPorts } from "./forward-recovery";
@@ -1656,6 +1655,42 @@ function isHermesAgent(
   return !!agent && agent.name === "hermes";
 }
 
+/** Recover a classified dashboard listener without signalling an unverified owner. */
+async function recoverUnhealthyDashboardForward(
+  sandboxName: string,
+  listener: SandboxForwardListener,
+  {
+    quiet,
+    isWsl,
+    runtimeSelection,
+  }: { quiet: boolean; isWsl?: boolean; runtimeSelection?: OpenShellRuntimeSelection },
+): Promise<{ recovered: boolean; failureDetail: string }> {
+  if (!quiet) {
+    console.log("");
+    if (listener === "unverified") {
+      console.log(
+        `  Dashboard port forward to '${sandboxName}' is held by a listener whose ownership NemoClaw cannot prove.`,
+      );
+    } else {
+      console.log(`  Dashboard port forward to '${sandboxName}' is missing or dead.`);
+      console.log("  Re-establishing...");
+    }
+  }
+  if (listener === "unverified") {
+    console.error(
+      unverifiedForwardListenerRefusal(sandboxName, resolveSandboxDashboardPort(sandboxName)),
+    );
+    return {
+      recovered: false,
+      failureDetail: `host port ${String(resolveSandboxDashboardPort(sandboxName))} is held by a listener that NemoClaw cannot attribute to this sandbox's OpenShell forward, so the dashboard forward was not restored`,
+    };
+  }
+  return {
+    recovered: await ensureSandboxPortForward(sandboxName, { isWsl, runtimeSelection }),
+    failureDetail: "the primary dashboard/API host forward could not be re-established",
+  };
+}
+
 /**
  * Detect and recover from a sandbox that survived a gateway restart but
  * whose OpenClaw processes are not running. Also re-establishes the
@@ -1757,28 +1792,29 @@ async function checkAndRecoverSandboxProcessesWithoutHostLock(
     // Gateway is alive but the host-side forward can still be dead or
     // owned by another sandbox. Probe and re-establish only when
     // necessary so the live-and-healthy path stays a no-op.
-    const forwardHealthy = measure("forward", () =>
-      isSandboxForwardHealthy(sandboxName, {
+    const forwardListener = measure("forward", () =>
+      describeSandboxForwardListener(sandboxName, {
         isWsl: isWslOverride,
         runtimeSelection,
       }),
     );
+    const forwardHealthy = forwardListener === "owned";
     if (forwardHealthy === false) {
-      if (!quiet) {
-        console.log("");
-        console.log(`  Dashboard port forward to '${sandboxName}' is missing or dead.`);
-        console.log("  Re-establishing...");
-      }
-      const forwardRecovered = measure("forward", () =>
-        ensureSandboxPortForward(sandboxName, { isWsl: isWslOverride, runtimeSelection }),
-      );
-      const dashboardForwardRecovered = measure("forward", () =>
+      const { recovered: forwardRecovered, failureDetail: forwardRecoveryFailureDetail } =
+        await measureAsync("forward", () =>
+          recoverUnhealthyDashboardForward(sandboxName, forwardListener, {
+            quiet,
+            isWsl: isWslOverride,
+            runtimeSelection,
+          }),
+        );
+      const dashboardForwardRecovered = await measureAsync("forward", () =>
         ensureHermesDashboardPortForwardIfEnabled(sandboxName, runtimeSelection),
       );
-      const messagingForwardRecovered = measure("forward", () =>
+      const messagingForwardRecovered = await measureAsync("forward", () =>
         recoverMessagingHostForward(sandboxName, { quiet, runtimeSelection }),
       );
-      const declaredForwardsRecovered = measure("forward", () =>
+      const declaredForwardsRecovered = await measureAsync("forward", () =>
         recoverDeclaredAgentForwardPorts(sandboxName, recoveryPort, {
           quiet,
           runtimeSelection,
@@ -1809,8 +1845,7 @@ async function checkAndRecoverSandboxProcessesWithoutHostLock(
           recovered: false,
           forwardRecovered: false,
           forwardRecoveryFailed: true,
-          forwardRecoveryFailureDetail:
-            "the primary dashboard/API host forward could not be re-established",
+          forwardRecoveryFailureDetail,
         };
       }
       if (auxiliaryFailureDetail !== null) {
@@ -1833,13 +1868,13 @@ async function checkAndRecoverSandboxProcessesWithoutHostLock(
         forwardRecovered: forwardRecovered || anyAuxiliaryRecovered(auxiliaryResults),
       };
     }
-    const dashboardForwardRecovered = measure("forward", () =>
+    const dashboardForwardRecovered = await measureAsync("forward", () =>
       ensureHermesDashboardPortForwardIfEnabled(sandboxName, runtimeSelection),
     );
-    const messagingForwardRecovered = measure("forward", () =>
+    const messagingForwardRecovered = await measureAsync("forward", () =>
       recoverMessagingHostForward(sandboxName, { quiet, runtimeSelection }),
     );
-    const declaredForwardsRecovered = measure("forward", () =>
+    const declaredForwardsRecovered = await measureAsync("forward", () =>
       recoverDeclaredAgentForwardPorts(sandboxName, recoveryPort, { quiet, runtimeSelection }),
     );
     const auxiliaryResults = [
@@ -2084,7 +2119,7 @@ async function checkAndRecoverSandboxProcessesWithoutHostLock(
       );
       if (finalizationFailure) return finalizationFailure;
     }
-    const forwardRecovered = measure("forward", () =>
+    const forwardRecovered = await measureAsync("forward", () =>
       ensureSandboxPortForward(sandboxName, {
         afterSuccess: confirmRelaunchedManagedHealthForForward ?? undefined,
         beforeStart: confirmRelaunchedManagedHealthForForward ?? undefined,
@@ -2105,13 +2140,13 @@ async function checkAndRecoverSandboxProcessesWithoutHostLock(
             : `the managed supervisor health check for the pinned replacement container did not pass during the primary dashboard/API host forward check. Managed supervisor health check result: ${relaunchedManagedHealth.failure.layer}: ${relaunchedManagedHealth.failure.detail}`,
       };
     }
-    const dashboardForwardRecovered = measure("forward", () =>
+    const dashboardForwardRecovered = await measureAsync("forward", () =>
       ensureHermesDashboardPortForwardIfEnabled(sandboxName, runtimeSelection),
     );
-    const messagingForwardRecovered = measure("forward", () =>
+    const messagingForwardRecovered = await measureAsync("forward", () =>
       recoverMessagingHostForward(sandboxName, { quiet, runtimeSelection }),
     );
-    const declaredForwardsRecovered = measure("forward", () =>
+    const declaredForwardsRecovered = await measureAsync("forward", () =>
       recoverDeclaredAgentForwardPorts(sandboxName, recoveryPort, { quiet, runtimeSelection }),
     );
     const auxiliaryResults = [

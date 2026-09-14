@@ -28,6 +28,7 @@ import { getLiveGatewayInference } from "../../inference/live";
 import { VLLM_LOCAL_CREDENTIAL_ENV } from "../../inference/serving/vllm-credential-contract";
 import { observeManagedVllmForExport } from "../../inference/serving/vllm-export-runtime";
 import { createOllamaExportProbe } from "../../inference/ollama/proxy";
+import { OLLAMA_LOCAL_CREDENTIAL_ENV } from "../../inference/ollama/contract";
 import { observeOllamaProxy } from "../../inference/ollama/proxy-observation";
 import { normalizeInferenceSelection } from "../../inference/selection";
 import { resolveGatewayName } from "../../onboard/gateway-binding/identity";
@@ -64,14 +65,17 @@ function resolveGatewayBinding(entry: Readonly<SandboxEntry>): { name: string; p
 
 function gatewayFor(entry: Readonly<SandboxEntry>): ObservedExportGateway {
   const { name, port } = resolveGatewayBinding(entry);
+  const configuredStateDir = process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR?.trim();
   const stateDir = resolveGatewayStateDirForPort({
-    configured: process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR,
+    configured: configuredStateDir,
     home: os.homedir(),
     port,
   });
   const stateRootOwned =
-    managedGatewayStateRootOwnershipFailure({ gatewayName: name, gatewayPort: port, stateDir }) ===
-    null;
+    managedGatewayStateRootOwnershipFailure(
+      { gatewayName: name, gatewayPort: port, stateDir },
+      { allowLegacyManagedState: !configuredStateDir },
+    ) === null;
   return {
     name,
     port,
@@ -141,8 +145,15 @@ function providerIdentity(provider: Provider, gatewayName: string, managed: bool
   };
 }
 
-function expectedCredentialKeys(credentialEnv: string | null, managed: boolean): string[] {
+function expectedCredentialKeys(
+  credentialEnv: string | null,
+  managed: boolean,
+  routeProvider: string,
+): string[] {
   if (managed) return [VLLM_LOCAL_CREDENTIAL_ENV];
+  // Ollama onboarding has no user credential; its managed proxy still authenticates the route.
+  if (routeProvider === "ollama-local" && credentialEnv === null)
+    return [OLLAMA_LOCAL_CREDENTIAL_ENV];
   return credentialEnv === null ? [] : [credentialEnv];
 }
 
@@ -172,7 +183,7 @@ function matchesProviderMetadata(
       [
         routeProvider,
         builtin ? "nvidia" : type,
-        expectedCredentialKeys(normalized.credentialEnv, managed),
+        expectedCredentialKeys(normalized.credentialEnv, managed, routeProvider),
         builtin ? [] : [configKey],
       ],
     )
@@ -269,7 +280,9 @@ async function readWebSearchProvider(
     ...(provider.profileWorkspace === undefined
       ? {}
       : { profileWorkspace: provider.profileWorkspace }),
-    ...(provider.managedProfile === undefined ? {} : { profile: provider.managedProfile }),
+    ...(provider.managedProfile === undefined || provider.managedProfile === null
+      ? {}
+      : { profile: provider.managedProfile }),
     credentialKeys: provider.credentialKeys,
     configKeys: provider.configKeys,
   };

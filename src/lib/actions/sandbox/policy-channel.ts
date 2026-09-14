@@ -1473,7 +1473,11 @@ async function addSandboxChannelUnlocked(
     }
     const rebuilt = await promptAndRebuild(sandboxName, `add '${canonical}'`);
     if (rebuilt) {
-      ensureMessagingHostForwardAfterRebuild(sandboxName, plan);
+      if (!(await ensureMessagingHostForwardAfterRebuild(sandboxName, plan))) {
+        throw new Error(
+          `Messaging host forward could not be verified for '${sandboxName}'; channel operation is incomplete. Run 'nemoclaw ${sandboxName} recover' to retry forwarding.`,
+        );
+      }
       await runMessagingHealthChecksAfterRebuild(sandboxName, plan);
     }
     return;
@@ -1551,7 +1555,11 @@ async function addSandboxChannelUnlocked(
 
   const rebuilt = await promptAndRebuild(sandboxName, `add '${canonical}'`);
   if (rebuilt) {
-    ensureMessagingHostForwardAfterRebuild(sandboxName, plan);
+    if (!(await ensureMessagingHostForwardAfterRebuild(sandboxName, plan))) {
+      throw new Error(
+        `Messaging host forward could not be verified for '${sandboxName}'; channel operation is incomplete. Run 'nemoclaw ${sandboxName} recover' to retry forwarding.`,
+      );
+    }
     await runMessagingHealthChecksAfterRebuild(sandboxName, plan);
   }
 }
@@ -2113,7 +2121,11 @@ async function sandboxChannelsSetEnabled(
   console.log(`  ${G}✓${R} Marked ${canonical} ${state} for '${sandboxName}'.`);
   const rebuilt = await promptAndRebuild(sandboxName, `${verb} '${canonical}'`);
   if (rebuilt && !disabled) {
-    ensureMessagingHostForwardAfterRebuild(sandboxName, plan);
+    if (!(await ensureMessagingHostForwardAfterRebuild(sandboxName, plan))) {
+      throw new Error(
+        `Messaging host forward could not be verified for '${sandboxName}'; channel operation is incomplete. Run 'nemoclaw ${sandboxName} recover' to retry forwarding.`,
+      );
+    }
   }
 }
 
