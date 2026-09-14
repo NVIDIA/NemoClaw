@@ -19,6 +19,27 @@ REMOVE_DIRS = {"test", "tests", "__tests__", "docs", "doc", "examples", "example
 REMOVE_SUFFIXES = (".map", ".d.ts", ".d.mts", ".d.cts", ".tsbuildinfo")
 
 
+def package_relative(path, runtime_root):
+    """Return a file's path within its nearest installed npm package."""
+    parent = path.parent
+    while parent != runtime_root:
+        if (parent / "package.json").is_file():
+            return path.relative_to(parent)
+        parent = parent.parent
+    return path.relative_to(runtime_root)
+
+
+def development_file(path, runtime_root):
+    relative = path.relative_to(runtime_root)
+    if "node_modules" not in relative.parts:
+        return False
+    within_package = package_relative(path, runtime_root)
+    return (
+        bool(within_package.parts)
+        and within_package.parts[0].lower() in REMOVE_DIRS
+    ) or path.name.endswith(REMOVE_SUFFIXES)
+
+
 def digest(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
@@ -80,7 +101,7 @@ def prepare(agent, source, node, npm, output):
         relative_path = path.relative_to(output)
         if path == archive or "node_modules" not in relative_path.parts:
             continue
-        if any(part.lower() in REMOVE_DIRS for part in relative_path.parts) or path.name.endswith(REMOVE_SUFFIXES):
+        if development_file(path, output):
             path.unlink()
             removed.append(relative_path.as_posix())
     (output / "package-lock.json").unlink()

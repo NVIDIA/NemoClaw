@@ -1479,8 +1479,10 @@ def assemble(
                 agent, before, destination, installed_agent_root, bytecode
             )
             if audit["maximumFinalInstalledPath"]["characters"] >= 260:
+                longest = audit["maximumFinalInstalledPath"]
                 raise ValueError(
-                    "A selected-agent final installed path exceeds the Windows limit."
+                    "A selected-agent final installed path exceeds the Windows limit: "
+                    f"{longest['characters']} characters, {longest['path']}"
                 )
             write_json(destination / "nemoclaw-runtime-audit.json", audit)
             records.append(

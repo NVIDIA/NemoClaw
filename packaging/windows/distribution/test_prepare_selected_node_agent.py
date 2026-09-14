@@ -39,13 +39,20 @@ class SelectedNodeAgent(unittest.TestCase):
                 package.joinpath("dist").mkdir()
                 package.joinpath("dist/cli.js").write_text("runtime")
                 package.joinpath("dist/cli.js.map").write_text("development")
+                package.joinpath("dist/doc").mkdir()
+                package.joinpath("dist/doc/runtime.js").write_text("required")
+                package.joinpath("docs").mkdir()
+                package.joinpath("docs/guide.md").write_text("development")
                 package.joinpath("LICENSE").write_text("license")
 
             with mock.patch.object(MODULE.subprocess, "run", side_effect=install):
                 receipt = MODULE.prepare("pi", root / "source", node, npm, output)
             self.assertFalse((output / "package-lock.json").exists())
-            self.assertFalse((output / "node_modules/@earendil-works/pi-coding-agent/dist/cli.js.map").exists())
-            self.assertTrue((output / "node_modules/@earendil-works/pi-coding-agent/dist/cli.js").is_file())
+            package = output / "node_modules/@earendil-works/pi-coding-agent"
+            self.assertFalse((package / "dist/cli.js.map").exists())
+            self.assertFalse((package / "docs").exists())
+            self.assertTrue((package / "dist/doc/runtime.js").is_file())
+            self.assertTrue((package / "dist/cli.js").is_file())
             self.assertEqual(receipt["npmVersion"], "10.9.8")
             self.assertEqual(receipt["licenseArchive"]["sourceFiles"], 1)
             self.assertFalse(receipt["customerBuildRequired"])
