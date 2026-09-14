@@ -1,12 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
+import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
 
 type WorkflowStep = {
@@ -23,7 +24,9 @@ type WorkflowJob = {
   env?: Record<string, string>;
   outputs?: Record<string, string>;
   permissions?: Record<string, string>;
+  "runs-on"?: string;
   steps?: WorkflowStep[];
+  "timeout-minutes"?: number;
   needs?: string;
 };
 
@@ -34,21 +37,77 @@ type Workflow = {
 const WORKFLOW_PATH = ".github/workflows/pr-self-hosted.yaml";
 const CANDIDATE_SHA = "a".repeat(40);
 const BASE_SHA = "b".repeat(40);
+const REQUIRED_RUNTIME_AUTHORITY_PATHS = [
+  "src/lib/inference/nim.ts",
+  "src/lib/onboard/provider-selection.ts",
+  "src/lib/onboard/runtime-provider/configured-runtime.ts",
+  "src/lib/onboard/runtime-provider/current.ts",
+  "src/lib/onboard/setup-nim-flow.ts",
+] as const;
+
+type RunProcessResult = {
+  status: number | null;
+  signal: NodeJS.Signals | null;
+  stdout: string;
+  stderr: string;
+};
+
+function runProcess(file: string, args: readonly string[], env: NodeJS.ProcessEnv) {
+  return new Promise<RunProcessResult>((resolve) => {
+    execFile(
+      file,
+      [...args],
+      { encoding: "utf8", env, killSignal: "SIGKILL", timeout: 10_000 },
+      (error, stdout, stderr) => {
+        const signal = error?.signal ?? null;
+        resolve({
+          status: signal ? null : Number(error?.code) || (error ? -1 : 0),
+          signal,
+          stdout,
+          stderr,
+        });
+      },
+    );
+  });
+}
+
+vi.setConfig({ maxConcurrency: 4 });
 
 function workflow(): Workflow {
   return YAML.parse(readFileSync(WORKFLOW_PATH, "utf8")) as Workflow;
 }
 
-function selectGenericGpuLane(
+function selectorScript(): string {
+  const script = workflow().jobs["select-llama-cpp-generic-gpu"]?.steps?.find(
+    (step) => step.name === "Select llama.cpp generic GPU E2E from PR files",
+  )?.run;
+  assert(typeof script === "string", "llama.cpp GPU selector script is missing");
+  return script;
+}
+
+function declaredSelectionPaths(): readonly string[] {
+  const script = selectorScript();
+  const exactPaths = [...script.matchAll(/\.filename == "([^"]+)"/gu)].map(([, value]) => {
+    assert(typeof value === "string", "exact selector path is missing");
+    return value;
+  });
+  const representativePrefixPaths = [...script.matchAll(/startswith\("([^"]+)"\)/gu)].map(
+    ([, value]) => {
+      assert(typeof value === "string", "selector prefix is missing");
+      return `${value}selector-contract.ts`;
+    },
+  );
+  const paths = [...new Set([...exactPaths, ...representativePrefixPaths])].sort();
+  assert(paths.length > 0, "llama.cpp GPU selector inventory is empty");
+  return paths;
+}
+
+async function selectGenericGpuLane(
   changedFiles: readonly string[],
   copiedSha = CANDIDATE_SHA,
   baseSha = BASE_SHA,
 ) {
-  const value = workflow();
-  const script = value.jobs["select-llama-cpp-generic-gpu"]?.steps?.find(
-    (step) => step.name === "Select llama.cpp generic GPU E2E from PR files",
-  )?.run;
-  expect(script).toEqual(expect.any(String));
+  const script = selectorScript();
 
   const directory = mkdtempSync(join(tmpdir(), "nemoclaw-generic-gpu-selector-"));
   const binDirectory = join(directory, "bin");
@@ -70,68 +129,90 @@ fi
   writeFileSync(outputPath, "");
 
   try {
-    const result = spawnSync(
+    const result = await runProcess(
       "bash",
-      ["--noprofile", "--norc", "-e", "-o", "pipefail", "-c", script!],
+      ["--noprofile", "--norc", "-e", "-o", "pipefail", "-c", script],
       {
-        encoding: "utf8",
-        env: {
-          ...process.env,
-          GH_TOKEN: "test-token",
-          GITHUB_REF_NAME: "pull-request/8748",
-          GITHUB_OUTPUT: outputPath,
-          GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
-          GITHUB_SHA: copiedSha,
-          PATH: `${binDirectory}:${process.env.PATH ?? ""}`,
-          PR_FILES_JSON: JSON.stringify([changedFiles.map((filename) => ({ filename }))]),
-          PR_JSON: JSON.stringify({
-            number: 8748,
-            base: { sha: baseSha },
-            head: { sha: CANDIDATE_SHA },
-          }),
-        },
+        ...process.env,
+        GH_TOKEN: "test-token",
+        GITHUB_REF_NAME: "pull-request/8748",
+        GITHUB_OUTPUT: outputPath,
+        GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
+        GITHUB_SHA: copiedSha,
+        PATH: `${binDirectory}:${process.env.PATH ?? ""}`,
+        PR_FILES_JSON: JSON.stringify([changedFiles.map((filename) => ({ filename }))]),
+        PR_JSON: JSON.stringify({
+          number: 8748,
+          base: { sha: baseSha },
+          head: { sha: CANDIDATE_SHA },
+        }),
       },
     );
-    expect(result.status, result.stderr).toBe(0);
+    assert.equal(result.status, 0, result.stderr);
     return readFileSync(outputPath, "utf8").trim();
   } finally {
     rmSync(directory, { force: true, recursive: true });
   }
 }
 
-describe("generic NVIDIA GPU PR selection", () => {
-  it.each([
-    "scripts/install.sh",
-    "src/lib/readiness/host.ts",
-    "src/lib/readiness/onboard-admission.ts",
-    "src/lib/onboard/fatal-runtime-preflight.ts",
-    "src/lib/onboard/overlayfs-auto-fix.ts",
-    "src/lib/onboard/preflight.ts",
-  ])(
+describe.concurrent("generic NVIDIA GPU PR selection", () => {
+  it.for(declaredSelectionPaths())(
     "selects the generic NVIDIA GPU E2E job when %s can change installer readiness",
-    (changedFile) => {
-      expect(selectGenericGpuLane([changedFile])).toBe(`base_sha=${BASE_SHA}\nselected=true`);
+    async (changedFile, { expect }) => {
+      const result = await selectGenericGpuLane([changedFile]);
+      expect(result).toBe(`base_sha=${BASE_SHA}\nselected=true`);
     },
   );
 
-  it("does not select the generic NVIDIA GPU E2E job for unrelated documentation", () => {
-    expect(selectGenericGpuLane(["docs/get-started/quickstart.mdx"])).toBe(
-      `base_sha=${BASE_SHA}\nselected=false`,
-    );
+  it.for(REQUIRED_RUNTIME_AUTHORITY_PATHS)(
+    "independently requires the generic GPU E2E when runtime authority owner %s changes",
+    async (changedFile, { expect }) => {
+      const result = await selectGenericGpuLane([changedFile]);
+      expect(result).toBe(`base_sha=${BASE_SHA}\nselected=true`);
+    },
+  );
+
+  it("does not select the Docker-qualified GPU job for a Podman-only change", async ({
+    expect,
+  }) => {
+    const result = await selectGenericGpuLane(["src/lib/onboard/runtime-provider/podman.ts"]);
+    expect(result).toBe(`base_sha=${BASE_SHA}\nselected=false`);
   });
 
-  it("rejects a copied branch whose commit does not match the current PR head", () => {
-    expect(() => selectGenericGpuLane(["scripts/install.sh"], "b".repeat(40))).toThrow(
+  it("does not treat an N1x identity-only change as generic x86 GPU evidence", async ({
+    expect,
+  }) => {
+    const result = await selectGenericGpuLane(["src/lib/inference/platform-identity/n1x.ts"]);
+    expect(result).toBe(`base_sha=${BASE_SHA}\nselected=false`);
+  });
+
+  it("does not select the generic NVIDIA GPU E2E job for unrelated documentation", async ({
+    expect,
+  }) => {
+    const result = await selectGenericGpuLane(["docs/get-started/quickstart.mdx"]);
+    expect(result).toBe(`base_sha=${BASE_SHA}\nselected=false`);
+  });
+
+  it("rejects a copied branch whose commit does not match the current PR head", async ({
+    expect,
+  }) => {
+    const rejected = selectGenericGpuLane(["scripts/install.sh"], "b".repeat(40));
+    await expect(rejected).rejects.toThrow(
       "Copied PR branch SHA does not match the current PR head",
     );
   });
 
-  it("rejects a PR whose base SHA is not a lowercase 40-character SHA", () => {
-    expect(() => selectGenericGpuLane(["scripts/install.sh"], CANDIDATE_SHA, "main")).toThrow();
+  it("rejects a PR whose base SHA is not a lowercase 40-character SHA", async ({ expect }) => {
+    const rejected = selectGenericGpuLane(["scripts/install.sh"], CANDIDATE_SHA, "main");
+    await expect(rejected).rejects.toThrow();
+  });
+
+  it("pins the Docker-qualified GPU job to the Docker runtime provider", ({ expect }) => {
+    expect(workflow().jobs["llama-cpp-generic-gpu"]?.env?.NEMOCLAW_GATEWAY_RUNTIME).toBe("docker");
   });
 
   // source-shape-contract: security -- The copied PR workflow must run the publication verifier from the validated PR base before the generic GPU job receives its managed-image revision
-  it("binds trusted base publication to the generic NVIDIA GPU job", () => {
+  it("binds trusted base publication to the generic NVIDIA GPU job", ({ expect }) => {
     const value = workflow();
     const selector = value.jobs["select-llama-cpp-generic-gpu"];
 
@@ -168,7 +249,7 @@ describe("generic NVIDIA GPU PR selection", () => {
     expect(publication?.run).toContain("export GITHUB_REF=refs/heads/main");
     expect(publication?.run).toContain('export GITHUB_SHA="$EXPECTED_SHA"');
     expect(publication?.run).toContain(
-      "node --experimental-strip-types --no-warnings tools/e2e/base-image-publication.mts --wait-seconds 3000 --poll-seconds 30",
+      "node --no-warnings tools/e2e/base-image-publication.mts --wait-seconds 3000 --poll-seconds 30",
     );
 
     expect(value.jobs["llama-cpp-generic-gpu"]?.env?.E2E_MANAGED_IMAGE_REVISION).toBe(

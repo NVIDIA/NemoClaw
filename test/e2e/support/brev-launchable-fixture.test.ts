@@ -134,7 +134,13 @@ describe("the Brev Launchable fixture binds staging identity and workspace lifec
     const ownership = fixture.ownership("fixture-workspace");
 
     const workspace = await fixture.create(ownership, "env-fixture123");
-    expect(workspace.id).toBe("workspace-id");
+    expect(workspace).toMatchObject({
+      id: "workspace-id",
+      name: "fixture-workspace",
+      status: "RUNNING",
+      buildStatus: "COMPLETED",
+      shellStatus: "READY",
+    });
     expect(ownership).toEqual({
       name: "fixture-workspace",
       createRequested: true,
@@ -292,6 +298,35 @@ describe("the Brev Launchable fixture binds staging identity and workspace lifec
       "Brev workspace identity changed during readiness",
     );
     expect(ownership.id).toBe("owned-id");
+  });
+
+  it("proves Brev exec readiness after bounded failed probes", async () => {
+    vi.useFakeTimers();
+    const root = temporaryRoot();
+    let attempts = 0;
+    const command = vi.fn(async (_binary: string, args: string[]) => {
+      switch (args[0]) {
+        case "ls":
+          return workspaceResult("owned-id");
+        case "exec":
+          attempts += 1;
+          return { ...result(""), exitCode: attempts < 3 ? 1 : 0 };
+        default:
+          throw new Error(`unexpected command: ${args.join(" ")}`);
+      }
+    });
+    const fixture = createFixture(root, command);
+
+    const readiness = fixture.waitForExec(recordedOwnership(), 100);
+    await vi.runAllTimersAsync();
+    await expect(readiness).resolves.toBeUndefined();
+
+    expect(command.mock.calls.filter((call) => call[1][0] === "exec")).toEqual([
+      ["brev", ["exec", "owned-id", "true"], expect.any(Object)],
+      ["brev", ["exec", "owned-id", "true"], expect.any(Object)],
+      ["brev", ["exec", "owned-id", "true"], expect.any(Object)],
+    ]);
+    expect(fs.existsSync(path.join(root, "brev-exec-readiness-failure.json"))).toBe(false);
   });
 
   it("records the last failed Brev exec readiness attempt", async () => {

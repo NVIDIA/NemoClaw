@@ -41,6 +41,7 @@ import type {
 import * as onboardSession from "../../state/onboard-session";
 import * as registry from "../../state/registry";
 import {
+  clearRebuildMcpHandoff,
   clearRebuildPolicyHandoff,
   listBackups,
   type RebuildManifest,
@@ -94,6 +95,7 @@ interface RebuildRecoveryBackupDeps {
   readonly validateManifest?: typeof validateRebuildRecoveryManifest;
   readonly observePresence?: typeof observeSandboxPresenceOnGateway;
   readonly clearPolicyHandoff?: typeof clearRebuildPolicyHandoff;
+  readonly clearMcpHandoff?: typeof clearRebuildMcpHandoff;
 }
 
 function validateRecoveryIdentity(input: RebuildRecoveryBackupIdentity): void {
@@ -159,15 +161,15 @@ function parseRecoveryRecord(raw: string): RebuildRecoveryBackupRecord | null {
             "transactionId",
           ]
         : value?.schemaVersion === 2
-        ? [
-            "backupTimestamp",
-            "gatewayName",
-            "gatewayPort",
-            "sandboxName",
-            "schemaVersion",
-            "transactionId",
-          ]
-        : ["backupTimestamp", "sandboxName", "schemaVersion", "transactionId"];
+          ? [
+              "backupTimestamp",
+              "gatewayName",
+              "gatewayPort",
+              "sandboxName",
+              "schemaVersion",
+              "transactionId",
+            ]
+          : ["backupTimestamp", "sandboxName", "schemaVersion", "transactionId"];
     if (
       !value ||
       typeof value !== "object" ||
@@ -259,10 +261,7 @@ function recoveryRecordMatches(
   );
 }
 
-function replaceRecoveryRecord(
-  backupPath: string,
-  record: RebuildRecoveryBackupRecordV3,
-): void {
+function replaceRecoveryRecord(backupPath: string, record: RebuildRecoveryBackupRecordV3): void {
   const filePath = recoveryPath(backupPath);
   const temporaryPath = `${filePath}.tmp-${randomUUID()}`;
   let descriptor: number | null = null;
@@ -496,6 +495,11 @@ export function retireRebuildRecoveryBackup(
   if (!(deps.clearPolicyHandoff ?? clearRebuildPolicyHandoff)(manifest)) {
     throw new Error(
       `The retained rebuild policy handoff could not be removed. Recovery remains at '${manifest.backupPath}'.`,
+    );
+  }
+  if (!(deps.clearMcpHandoff ?? clearRebuildMcpHandoff)(manifest)) {
+    throw new Error(
+      `The retained rebuild MCP recovery handoff could not be removed. Recovery remains at '${manifest.backupPath}'.`,
     );
   }
   try {

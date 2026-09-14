@@ -89,21 +89,21 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py one-shot routing", () 
     ]);
   });
 
-  it.each([
-    "-c",
-    "--continue",
-  ])("routes bare %s one-shot invocations to the most recent session (#5254)", (flag) => {
-    const run = runWrapper([flag, "-z", "Repeat the latest turn"], {});
+  it.each(["-c", "--continue"])(
+    "routes bare %s one-shot invocations to the most recent session (#5254)",
+    (flag) => {
+      const run = runWrapper([flag, "-z", "Repeat the latest turn"], {});
 
-    expect(run.status).toBe(0);
-    expect(run.realArgv).toEqual([
-      "chat",
-      "--query",
-      "Repeat the latest turn",
-      "--quiet",
-      "--continue",
-    ]);
-  });
+      expect(run.status).toBe(0);
+      expect(run.realArgv).toEqual([
+        "chat",
+        "--query",
+        "Repeat the latest turn",
+        "--quiet",
+        "--continue",
+      ]);
+    },
+  );
 
   it.each([
     ["-c", "--continue"],
@@ -168,17 +168,17 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py one-shot routing", () 
     expect(run.stderr).toContain("session-name coalescer boundary set is invalid");
   });
 
-  it.each([
-    "--continue",
-    "--resume",
-  ])("passes an explicit managed command after %s through without translating across its boundary (#8011)", (flag) => {
-    const argv = [flag, "daily", "chat", "--oneshot", "Repeat the latest turn"];
+  it.each(["--continue", "--resume"])(
+    "passes an explicit managed command after %s through without translating across its boundary (#8011)",
+    (flag) => {
+      const argv = [flag, "daily", "chat", "--oneshot", "Repeat the latest turn"];
 
-    const run = runWrapper(argv, {});
+      const run = runWrapper(argv, {});
 
-    expect(run.status).toBe(0);
-    expect(run.realArgv).toEqual(argv);
-  });
+      expect(run.status).toBe(0);
+      expect(run.realArgv).toEqual(argv);
+    },
+  );
 
   it.each([
     [
@@ -190,19 +190,22 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py one-shot routing", () 
       ["--profile", "work"],
     ],
     [["--profile=work"], ["--profile", "work"]],
-  ])("preserves profile selector %j before translated chat routing (#5254)", (profileArgs, expected) => {
-    const run = runWrapper([...profileArgs, "-c", "-z", "Repeat the latest turn"], {});
+  ])(
+    "preserves profile selector %j before translated chat routing (#5254)",
+    (profileArgs, expected) => {
+      const run = runWrapper([...profileArgs, "-c", "-z", "Repeat the latest turn"], {});
 
-    expect(run.status).toBe(0);
-    expect(run.realArgv).toEqual([
-      ...expected,
-      "chat",
-      "--query",
-      "Repeat the latest turn",
-      "--quiet",
-      "--continue",
-    ]);
-  });
+      expect(run.status).toBe(0);
+      expect(run.realArgv).toEqual([
+        ...expected,
+        "chat",
+        "--query",
+        "Repeat the latest turn",
+        "--quiet",
+        "--continue",
+      ]);
+    },
+  );
 
   it("preserves explicit approval flags without adding them to ordinary resumed one-shot invocations (#5254)", () => {
     const run = runWrapper(

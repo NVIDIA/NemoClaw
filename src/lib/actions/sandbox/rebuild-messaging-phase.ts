@@ -74,9 +74,7 @@ export function finalizePendingMessagingRemovalsAfterRestore(
 ): SandboxMessagingPlan | null {
   if (!plan) return null;
   const runMessagingOpenshell = createRunMessagingOpenshell(runtimeSelection);
-  const pendingRemovals = plan.channels.filter(
-    (channel) => channel.pendingRemoval === true,
-  );
+  const pendingRemovals = plan.channels.filter((channel) => channel.pendingRemoval === true);
   for (const channel of pendingRemovals) {
     const result = MessagingSetupApplier.removeDisabledChannelAgentConfigAtOpenShell(
       plan,

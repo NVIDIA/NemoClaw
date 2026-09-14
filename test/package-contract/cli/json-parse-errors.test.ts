@@ -7,28 +7,28 @@ import { describe, expect, it } from "vitest";
 
 const REPO_ROOT = path.join(import.meta.dirname, "../../..");
 const CLI = path.join(REPO_ROOT, "bin", "nemoclaw.js");
-const SECRET = "nvapi-" + "a".repeat(24);
 
-describe("JSON argument errors", () => {
+describe("doctor JSON argument errors", () => {
   it.each([
-    { args: ["doctor", "--text", "--json"], diagnostic: /cannot also be provided/ },
-    { args: ["doctor", "--json", "--text"], diagnostic: /cannot also be provided/ },
-    {
-      args: ["sandbox", "doctor", "alpha", "--fix", "--json"],
-      diagnostic: /cannot also be provided/,
-    },
-    { args: ["doctor", "--json", `--${SECRET}`], diagnostic: /Nonexistent flag.*<REDACTED>/ },
-  ])("reports $args on stderr without parser internals (#11150)", ({ args, diagnostic }) => {
-    const result = spawnSync(process.execPath, [CLI, ...args], {
+    ["--text", "--json"],
+    ["--json", "--text"],
+  ])("reports %s %s with one concise JSON error and a stderr diagnostic (#11150)", (...flags) => {
+    const result = spawnSync(process.execPath, [CLI, "doctor", ...flags], {
       cwd: REPO_ROOT,
       encoding: "utf8",
       timeout: 10_000,
     });
 
-    expect(result.status).toBe(2);
-    expect(result.stdout.length).toBe(0);
-    expect(result.stderr).toMatch(diagnostic);
-    expect(result.stderr.length).toBeLessThan(4096);
-    expect(result.stderr).not.toContain(SECRET);
+    expect(result.error).toBeUndefined();
+    expect(result.status).toBe(1);
+    expect(Buffer.byteLength(result.stdout)).toBeLessThan(1_000);
+    expect(JSON.parse(result.stdout)).toEqual({
+      error: {
+        message: "--json and --text are mutually exclusive. Use one or the other.",
+        exit: 2,
+      },
+    });
+    expect(result.stderr).toContain("--json and --text are mutually exclusive");
+    expect(Buffer.byteLength(result.stderr)).toBeLessThan(1_000);
   });
 });

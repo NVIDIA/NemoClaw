@@ -295,34 +295,34 @@ describe("reportSandboxReadinessFailure", () => {
     ]);
   });
 
-  it.each([
-    null,
-    "",
-  ])("falls back to a stable terminal readiness gate for missing phase %s", (failurePhase) => {
-    const deps = readinessDeps();
-    expect(() =>
-      reportSandboxReadinessFailure(
-        readinessOptions({
-          readiness: {
-            ready: false,
-            reason: "terminal_failure_phase",
-            failurePhase,
-          },
-        }),
-        deps,
-      ),
-    ).toThrow(ExitSignal);
-    expectReceiptBlock(deps, [
-      "  Sandbox lifecycle receipt:",
-      "    state: created_but_not_ready",
-      "    sandbox: alpha",
-      "    readiness_gate: sandbox_list:terminal_failure",
-      "    readiness_reason: terminal_failure_phase",
-      "    create_stream_status: 0",
-      "    timeout_seconds: 300",
-      "    terminal_resolution: terminal_failure_retained",
-    ]);
-  });
+  it.each([null, ""])(
+    "falls back to a stable terminal readiness gate for missing phase %s",
+    (failurePhase) => {
+      const deps = readinessDeps();
+      expect(() =>
+        reportSandboxReadinessFailure(
+          readinessOptions({
+            readiness: {
+              ready: false,
+              reason: "terminal_failure_phase",
+              failurePhase,
+            },
+          }),
+          deps,
+        ),
+      ).toThrow(ExitSignal);
+      expectReceiptBlock(deps, [
+        "  Sandbox lifecycle receipt:",
+        "    state: created_but_not_ready",
+        "    sandbox: alpha",
+        "    readiness_gate: sandbox_list:terminal_failure",
+        "    readiness_reason: terminal_failure_phase",
+        "    create_stream_status: 0",
+        "    timeout_seconds: 300",
+        "    terminal_resolution: terminal_failure_retained",
+      ]);
+    },
+  );
 
   it("preserves a non-zero create-stream status when readiness later fails", () => {
     const deps = readinessDeps();

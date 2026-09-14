@@ -648,7 +648,7 @@ describe("Bedrock Runtime OpenAI adapter", () => {
     });
     vi.mocked(readLocalAdapterTextFile).mockReturnValueOnce(token).mockReturnValueOnce("4242");
     runCaptureMock.mockReturnValueOnce(
-      `${process.execPath} --experimental-strip-types --no-warnings ${__test.getAdapterScriptPath()}`,
+      `${process.execPath} --no-warnings ${__test.getAdapterScriptPath()}`,
     );
 
     await expect(
@@ -683,7 +683,7 @@ describe("Bedrock Runtime OpenAI adapter", () => {
     });
     vi.mocked(readLocalAdapterTextFile).mockReturnValueOnce(token).mockReturnValueOnce("4242");
     runCaptureMock.mockReturnValueOnce(
-      `${process.execPath} --experimental-strip-types --no-warnings ${__test.getAdapterScriptPath()}`,
+      `${process.execPath} --no-warnings ${__test.getAdapterScriptPath()}`,
     );
 
     await expect(
@@ -719,7 +719,7 @@ describe("Bedrock Runtime OpenAI adapter", () => {
     vi.mocked(readLocalAdapterJsonFile).mockReturnValueOnce(priorState);
     vi.mocked(readLocalAdapterTextFile).mockReturnValueOnce(token).mockReturnValueOnce("4242");
     runCaptureMock.mockReturnValueOnce(
-      `${process.execPath} --experimental-strip-types --no-warnings ${__test.getAdapterScriptPath()}`,
+      `${process.execPath} --no-warnings ${__test.getAdapterScriptPath()}`,
     );
     vi.mocked(probeLocalAdapterHealth).mockResolvedValueOnce(false).mockResolvedValueOnce(true);
     vi.mocked(waitForLocalAdapterHealth).mockImplementationOnce(async (probe, options) => {
@@ -764,7 +764,7 @@ describe("Bedrock Runtime OpenAI adapter", () => {
     });
     vi.mocked(readLocalAdapterTextFile).mockReturnValueOnce(token).mockReturnValueOnce("4242");
     runCaptureMock.mockReturnValueOnce(
-      `${process.execPath} --experimental-strip-types --no-warnings ${__test.getAdapterScriptPath()}`,
+      `${process.execPath} --no-warnings ${__test.getAdapterScriptPath()}`,
     );
     vi.mocked(waitForLocalAdapterHealth).mockResolvedValueOnce(true);
     vi.mocked(observeBedrockRuntimeAdapterProcess).mockReturnValueOnce(null);

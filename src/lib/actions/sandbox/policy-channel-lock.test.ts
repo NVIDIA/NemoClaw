@@ -43,15 +43,15 @@ describe("policy and channel sandbox mutation locking", () => {
     vi.spyOn(policies, "listPresets").mockReturnValue([
       { file: "pypi.yaml", name: "pypi", description: "Python Package Index access" },
     ]);
-    vi.spyOn(policies, "listCustomPresets").mockReturnValue([]);
-    vi.spyOn(policies, "getAppliedPresets").mockReturnValue(["pypi"]);
-    vi.spyOn(policies, "getGatewayPresets").mockReturnValue(null);
+    vi.spyOn(policies, "listCustomPresets").mockResolvedValue([]);
+    vi.spyOn(policies, "getAppliedPresets").mockResolvedValue(["pypi"]);
+    vi.spyOn(policies, "getGatewayPresets").mockResolvedValue(null);
     vi.spyOn(policies, "loadPresetForSandbox").mockImplementation(
-      (_sandboxName, presetName) =>
+      async (_sandboxName, presetName) =>
         `network_policies:\n  ${presetName}:\n    name: ${presetName}\n    endpoints:\n      - host: example.com\n        port: 443\n`,
     );
     vi.spyOn(policies, "parsePresetPolicyKeys").mockReturnValue(["telegram"]);
-    vi.spyOn(policies, "getPresetContentGatewayState").mockReturnValue("absent");
+    vi.spyOn(policies, "getPresetContentGatewayState").mockResolvedValue("absent");
     vi.spyOn(policies, "getPresetValidationWarning").mockReturnValue(null);
     vi.spyOn(policies, "getPresetEndpoints").mockReturnValue(["example.com"]);
     vi.spyOn(policies, "resolveSandboxBaselinePolicy").mockReturnValue({

@@ -379,11 +379,7 @@ describe("onboarding entry composition boundary", () => {
   it.each([
     ["receiver", "const service = gateway;", "if (enabled) service.start();"],
     ["optional receiver", "const service = gateway;", "service?.start();"],
-    [
-      "member",
-      "const service = gateway; const action = service.start;",
-      "if (enabled) action();",
-    ],
+    ["member", "const service = gateway; const action = service.start;", "if (enabled) action();"],
     ["recovery receiver", "const service = gatewayRecovery;", "service.execute();"],
   ])("checks a gateway action through a static %s alias", (_form, aliases, action) => {
     const actual = collectOnboardEntryDecisions(`
@@ -924,34 +920,34 @@ describe("onboarding entry composition boundary", () => {
     );
   });
 
-  it.each([
-    "ci/onboard-entry-composition-budget.json",
-    "src/lib/onboard.ts",
-  ])("fails closed when %s is unavailable at the composition merge base", (missingPath) => {
-    const revision = "base-revision";
-    const baseBudget = JSON.stringify(EMPTY_BUDGET);
-    const resultsByMissingPath = {
-      "ci/onboard-entry-composition-budget.json": [
-        { status: 0, stdout: revision },
-        { status: 128, stdout: "" },
-      ],
-      "src/lib/onboard.ts": [
-        { status: 0, stdout: revision },
-        { status: 0, stdout: baseBudget },
-        { status: 128, stdout: "" },
-      ],
-    } as const;
-    const results = resultsByMissingPath[missingPath as keyof typeof resultsByMissingPath];
-    const calls: string[][] = [];
-    const git = (args: readonly string[]) => {
-      calls.push([...args]);
-      return results[calls.length - 1];
-    };
+  it.each(["ci/onboard-entry-composition-budget.json", "src/lib/onboard.ts"])(
+    "fails closed when %s is unavailable at the composition merge base",
+    (missingPath) => {
+      const revision = "base-revision";
+      const baseBudget = JSON.stringify(EMPTY_BUDGET);
+      const resultsByMissingPath = {
+        "ci/onboard-entry-composition-budget.json": [
+          { status: 0, stdout: revision },
+          { status: 128, stdout: "" },
+        ],
+        "src/lib/onboard.ts": [
+          { status: 0, stdout: revision },
+          { status: 0, stdout: baseBudget },
+          { status: 128, stdout: "" },
+        ],
+      } as const;
+      const results = resultsByMissingPath[missingPath as keyof typeof resultsByMissingPath];
+      const calls: string[][] = [];
+      const git = (args: readonly string[]) => {
+        calls.push([...args]);
+        return results[calls.length - 1];
+      };
 
-    expect(() => mergeBaseCompositionCeiling(git, "")).toThrow(
-      `could not read ${missingPath} from composition merge base ${revision}`,
-    );
-  });
+      expect(() => mergeBaseCompositionCeiling(git, "")).toThrow(
+        `could not read ${missingPath} from composition merge base ${revision}`,
+      );
+    },
+  );
 
   it("reports a Git execution failure while reading a composition merge-base file", () => {
     const revision = "base-revision";

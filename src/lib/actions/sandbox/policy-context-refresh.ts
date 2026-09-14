@@ -44,16 +44,16 @@ const DEFAULT_UNEXPECTED = (error: unknown) => {
   console.error(`  Unexpected error refreshing ${POLICY_CONTEXT_SANDBOX_PATH}: ${message}`);
 };
 
-export function refreshSandboxPolicyContextFile(
+export async function refreshSandboxPolicyContextFile(
   sandboxName: string,
   deps: RefreshDeps = {},
-): RefreshOutcome {
+): Promise<RefreshOutcome> {
   const write = deps.write ?? writePolicyContextToSandbox;
   const warn = deps.warn ?? DEFAULT_WARN;
   const unexpected = deps.unexpected ?? DEFAULT_UNEXPECTED;
   let result: WritePolicyContextResult;
   try {
-    result = write(sandboxName);
+    result = await write(sandboxName);
   } catch (error: unknown) {
     unexpected(error);
     return {

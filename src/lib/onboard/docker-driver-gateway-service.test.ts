@@ -69,7 +69,7 @@ function officialFormulaInfo(): SpawnSyncLikeResult {
     JSON.stringify({
       formulae: [
         {
-          installed: [{ version: "0.0.106" }],
+          installed: [{ version: "0.0.116" }],
           name: "openshell",
           service: { run: HOMEBREW_SERVICE_PROGRAM },
           tap: "nvidia/openshell",
@@ -461,8 +461,17 @@ describe("docker-driver-gateway-service", () => {
   });
 
   it("uses managed service only after metadata and direct gRPC health are ready (#6903)", async () => {
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
     const events: string[] = [];
     const clock = createVirtualClock();
+    const output = {
+      error: vi.fn(),
+      log: vi.fn(),
+      warn: vi.fn(),
+    };
+    const verifySandboxBridgeGatewayReachableOrExit = vi.fn(async () => {
+      events.push("verify");
+    });
     let registerCount = 0;
 
     await expect(
@@ -478,6 +487,7 @@ describe("docker-driver-gateway-service", () => {
           return true;
         },
         now: clock.now,
+        output,
         registerDockerDriverGatewayEndpoint: () => {
           events.push("register");
           registerCount += 1;
@@ -494,13 +504,16 @@ describe("docker-driver-gateway-service", () => {
           started: true,
           statusCommand: "systemctl --user status nemoclaw-openshell-gateway",
         }),
-        verifySandboxBridgeGatewayReachableOrExit: async () => {
-          events.push("verify");
-        },
+        verifySandboxBridgeGatewayReachableOrExit,
       }),
     ).resolves.toBe(true);
 
     expect(events).toEqual(["register", "sleep", "register", "ready", "clear", "verify"]);
+    expect(output.log).toHaveBeenCalledWith("  Starting OpenShell gateway via managed service...");
+    expect(verifySandboxBridgeGatewayReachableOrExit).toHaveBeenCalledWith(false, {
+      output,
+      skip: false,
+    });
   });
 
   it.each([

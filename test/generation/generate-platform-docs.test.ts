@@ -112,9 +112,13 @@ except ValueError as exc:
     expect(output).not.toContain("NO_ERROR");
   });
 
-  it.each(
-    ["non-list", "empty-list", "non-string-item", "empty-string-item", "whitespace-string-item"],
-  )("rejects malformed platform runtimes via the generator entry path [%s]", (label) => {
+  it.each([
+    "non-list",
+    "empty-list",
+    "non-string-item",
+    "empty-string-item",
+    "whitespace-string-item",
+  ])("rejects malformed platform runtimes via the generator entry path [%s]", (label) => {
     const tmp = mkdtempSync(path.join(tmpdir(), "genplatform-"));
     try {
       const cases = [

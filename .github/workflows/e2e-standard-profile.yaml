@@ -30,6 +30,9 @@ on:
       cli_artifact_provenance:
         required: true
         type: string
+      openshell_sdk_artifact_name:
+        required: true
+        type: string
       managed_image_catalog:
         required: true
         type: string
@@ -418,6 +421,28 @@ jobs:
         with:
           build-cli: "false"
 
+      - name: Download reviewed OpenShell SDK archive
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ inputs.openshell_sdk_artifact_name }}
+          path: ${{ runner.temp }}/openshell-sdk
+
+      - name: Install reviewed OpenShell SDK archive without package credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t archives < <(find "$RUNNER_TEMP/openshell-sdk" -maxdepth 1 -type f -name '*.tgz' -print | sort)
+          test "${#archives[@]}" -ge 1
+          test "${#archives[@]}" -le 2
+          for archive in "${archives[@]}"; do
+            env -u NODE_AUTH_TOKEN -u GITHUB_TOKEN -u GH_TOKEN \
+              npm cache add "$archive" --offline --ignore-scripts
+          done
+          env -u NODE_AUTH_TOKEN -u GITHUB_TOKEN -u GH_TOKEN \
+            npm ci --ignore-scripts --prefer-offline --no-audit --no-fund
+          env -u NODE_AUTH_TOKEN -u GITHUB_TOKEN -u GH_TOKEN \
+            node --input-type=module -e 'const { OpenShellClient } = await import("@nvidia/openshell-sdk"); if (typeof OpenShellClient?.connect !== "function") throw new Error("OpenShell SDK connection API is unavailable");'
+
       - name: Restore exact-commit CLI artifact
         if: ${{ inputs.restore_cli }}
         uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@17759906bd7f80319c58af759dd60cfb893109bf
@@ -425,7 +450,7 @@ jobs:
           provenance-json: ${{ inputs.cli_artifact_provenance }}
 
       - name: Prepare native Podman E2E runtime
-        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@c87144de2c8e2d90b14cf11b31718846e32c65de
+        uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@b39c9ee2bba1bffaabcfe97ae4a7787a5c603ee8
         with:
           enabled: ${{ inputs.runtime_provider == 'podman' && 'true' || 'false' }}
 
@@ -725,6 +750,12 @@ jobs:
         with:
           name: ${{ steps.execution_plan.outputs.upload_name }}
           path: ${{ steps.execution_plan.outputs.artifact_directory }}/
+
+      - name: Restore Docker CLI after native Podman E2E
+        if: ${{ always() && inputs.runtime_provider == 'podman' }}
+        uses: NVIDIA/NemoClaw/.github/actions/restore-native-podman-e2e@b39c9ee2bba1bffaabcfe97ae4a7787a5c603ee8
+        with:
+          enabled: "true"
 
       - name: Clean up Docker auth
         if: always()

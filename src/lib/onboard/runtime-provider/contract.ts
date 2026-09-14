@@ -106,6 +106,32 @@ export interface RuntimeProviderGatewayImageCacheResult {
   readonly details?: string;
 }
 
+export type RuntimeProviderGatewayVersionCompatibility = "compatible" | "drift" | "unknown";
+
+export interface RuntimeProviderOwnedGatewayReadinessInput {
+  readonly environment: NodeJS.ProcessEnv;
+  readonly platform: NodeJS.Platform;
+  readonly architecture: NodeJS.Architecture;
+  readonly gatewayName: string;
+  readonly gatewayPort: number;
+  readonly expectedEndpoint: string;
+  readonly managedGatewayOutputs: readonly string[];
+  readonly portAvailable: boolean;
+  readonly installedOpenShellVersion: string | null;
+  readonly trustedGatewayBin: string | null;
+}
+
+export interface RuntimeProviderOwnedGatewayReadinessObservation {
+  readonly endpointBinding: "match" | "mismatch" | "unknown";
+  readonly listenerScan: {
+    readonly pids: readonly number[];
+    readonly unverifiedPids: readonly number[];
+    readonly complete: boolean;
+  };
+  readonly targetBoundListenerPids: readonly number[];
+  readonly versionCompatibility: RuntimeProviderGatewayVersionCompatibility | null;
+}
+
 /**
  * Provider-owned gateway behavior projected into generic orchestration. None of
  * these values identify a provider; callers consume the behavior without
@@ -140,7 +166,11 @@ export interface RuntimeProviderGatewayHostRuntime {
     sandboxSourceCidrs(): readonly string[];
     inspect(networkName: string): RuntimeProviderGatewayNetworkInfo | undefined;
     usesHostGatewayRoute(): boolean;
-    run(args: readonly string[], timeoutMs: number): RuntimeProviderGatewayCommandResult;
+    run(
+      args: readonly string[],
+      timeoutMs: number,
+      options?: { maxOutputBytes: number; environment?: Record<string, string> },
+    ): RuntimeProviderGatewayCommandResult;
     ensureProbeImageCached(image: string): RuntimeProviderGatewayImageCacheResult;
   };
 }
@@ -469,7 +499,9 @@ export type RuntimeProviderWorkloadCleanupResult =
     };
 
 export interface RuntimeProviderCleanupOperations {
-  readonly detachProviders: () => RuntimeProviderProviderDetachResult;
+  readonly detachProviders: () =>
+    | RuntimeProviderProviderDetachResult
+    | Promise<RuntimeProviderProviderDetachResult>;
 }
 
 /**
@@ -547,15 +579,35 @@ export type RuntimeProviderPreflightDoctorSurface = RuntimeProviderSupportedSurf
   ): RuntimeProviderLifecycleResult | null;
 }>;
 
-export type RuntimeProviderGatewaySurface = RuntimeProviderSupportedSurface<{
+type RuntimeProviderGatewaySurfaceBase = {
   readonly launcher: RuntimeProviderGatewayLauncher;
   readonly inspectLegacyContainer: boolean;
-  /** Explicit authority to replace standard Docker host readiness during admission. */
-  readonly ownsHostReadiness: boolean;
+  /** Project provider-owned gateway behavior without changing host state. */
+  observeHostRuntime(
+    input: RuntimeProviderGatewayHostRuntimeInput,
+  ): RuntimeProviderGatewayHostRuntime;
+  /** Prepare host state, then project the same provider-owned gateway behavior. */
   prepareHostRuntime(
     input: RuntimeProviderGatewayHostRuntimeInput,
   ): RuntimeProviderGatewayHostRuntime;
-}>;
+};
+
+export type RuntimeProviderGatewaySurface = RuntimeProviderSupportedSurface<
+  RuntimeProviderGatewaySurfaceBase &
+    (
+      | {
+          /** Replace standard Docker readiness with provider-owned observation. */
+          readonly ownsHostReadiness: true;
+          observeOwnedGateway(
+            input: RuntimeProviderOwnedGatewayReadinessInput,
+          ): RuntimeProviderOwnedGatewayReadinessObservation;
+        }
+      | {
+          readonly ownsHostReadiness: false;
+          readonly observeOwnedGateway?: never;
+        }
+    )
+>;
 
 export type RuntimeProviderWorkloadSurface = RuntimeProviderSupportedSurface<{
   readonly profile: RuntimeProviderWorkloadProfile;
@@ -646,6 +698,11 @@ export type RuntimeProviderSnapshotSurface =
         sandbox: SandboxEntry,
         preflight: RuntimeProviderSnapshotPreflightReceipt,
       ): RuntimeProviderRuntimeReceipt;
+      /** Compare provider-owned acceleration encodings without widening central authority. */
+      canRepresentAcceleration?(
+        source: RuntimeProviderRuntimeReceipt["acceleration"],
+        target: RuntimeProviderRuntimeReceipt["acceleration"],
+      ): boolean;
       validateRestore(
         sandbox: SandboxEntry,
         preflight: RuntimeProviderSnapshotPreflightReceipt,
@@ -678,7 +735,7 @@ export type RuntimeProviderCleanupSurface =
       prepareDestroy(
         input: RuntimeProviderCleanupInput,
         operations: RuntimeProviderCleanupOperations,
-      ): RuntimeProviderProviderDetachResult;
+      ): RuntimeProviderProviderDetachResult | Promise<RuntimeProviderProviderDetachResult>;
       /**
        * Produce a side-effect-free cleanup plan before any destructive
        * sandbox action. Providers must revalidate the same authority inside

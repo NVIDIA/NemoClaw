@@ -101,6 +101,7 @@ describe("inference selection validation", () => {
   it.each([
     {
       variant: "NVIDIA",
+      provider: "nvidia-nim",
       useNvidiaEndpointProbePayload: true,
       expectedBody: {
         model: "nvidia/nemotron-3-super-120b-a12b",
@@ -113,6 +114,7 @@ describe("inference selection validation", () => {
     },
     {
       variant: "generic",
+      provider: "compatible-endpoint",
       useNvidiaEndpointProbePayload: false,
       expectedBody: {
         model: "nvidia/nemotron-3-super-120b-a12b",
@@ -120,9 +122,19 @@ describe("inference selection validation", () => {
         max_tokens: 16,
       },
     },
+    {
+      variant: "Gemini",
+      provider: "gemini-api",
+      useNvidiaEndpointProbePayload: false,
+      expectedBody: {
+        model: "gemini-2.5-flash",
+        messages: [{ role: "user", content: "Reply with exactly: OK" }],
+        max_tokens: 256,
+      },
+    },
   ])(
-    "emits the $variant Nemotron request through selection validation (#10880)",
-    async ({ useNvidiaEndpointProbePayload, expectedBody }) => {
+    "emits the $variant request through selection validation (#10880)",
+    async ({ provider, useNvidiaEndpointProbePayload, expectedBody }) => {
       let observedBody = "";
       const server = http.createServer((request, response) => {
         let body = "";
@@ -160,13 +172,13 @@ describe("inference selection validation", () => {
       try {
         await expect(
           helpers.validateOpenAiLikeSelection(
-            "NVIDIA Endpoints",
+            provider,
             `http://provider.example.com:${port}/v1`,
-            "nvidia/nemotron-3-super-120b-a12b",
+            expectedBody.model,
             null,
             undefined,
             undefined,
-            { ...probeOptions, useNvidiaEndpointProbePayload },
+            { ...probeOptions, provider, useNvidiaEndpointProbePayload },
           ),
         ).resolves.toEqual({ ok: true, api: "openai-completions" });
         expect(JSON.parse(observedBody)).toEqual(expectedBody);
@@ -424,13 +436,13 @@ describe("inference selection validation", () => {
   });
 
   it("carries a default-probe WSL timeout through non-interactive teardown (#10413)", async () => {
-    let requestIndex = 0;
+    let _requestIndex = 0;
     const reasoningResponse =
       '{"choices":[{"finish_reason":"length","message":{"content":"","reasoning_content":"Planning the tool call."}}]}';
     const replies = [(response: http.ServerResponse) => response.end(reasoningResponse), () => {}];
     const server = http.createServer((request, response) => {
       request.resume();
-      (replies[requestIndex++] ?? replies[1])(response);
+      (replies[_requestIndex++] ?? replies[1])(response);
     });
     const port = await listen(server);
     const originalExitCode = process.exitCode;

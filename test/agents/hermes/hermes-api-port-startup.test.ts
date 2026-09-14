@@ -36,6 +36,8 @@ function runHermesApiPortBootstrap(apiPort: string) {
       timeout: 5000,
       env: {
         ...process.env,
+        CHAT_UI_URL: "",
+        NEMOCLAW_DASHBOARD_PORT: "18789",
         NEMOCLAW_HERMES_API_PORT: apiPort,
       },
     });
@@ -52,14 +54,13 @@ describe("agents/hermes/start.sh API port allocation", () => {
     expect(run.stdout).toContain("PUBLIC_PORT=8645");
   });
 
-  it.each([
-    "8641",
-    "8653",
-    "9000",
-  ])("rejects Hermes API port %s outside the allocation range", (port) => {
-    const run = runHermesApiPortBootstrap(port);
+  it.each(["8641", "8653", "9000"])(
+    "rejects Hermes API port %s outside the allocation range",
+    (port) => {
+      const run = runHermesApiPortBootstrap(port);
 
-    expect(run.status).toBe(1);
-    expect(run.stderr).toContain("Invalid NEMOCLAW_HERMES_API_PORT");
-  });
+      expect(run.status).toBe(1);
+      expect(run.stderr).toContain("Invalid NEMOCLAW_HERMES_API_PORT");
+    },
+  );
 });

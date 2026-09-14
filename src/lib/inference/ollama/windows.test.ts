@@ -2,11 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { EventEmitter } from "node:events";
+import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const require = createRequire(import.meta.url);
 const WINDOWS_DIST_PATH = require.resolve("./windows");
+const { buildWindowsOllamaInstallerCommand } = require(WINDOWS_DIST_PATH);
 const DOCKER_ADAPTER_PATH = require.resolve("../../adapters/docker/runtime");
 const PLATFORM_PATH = require.resolve("../../platform");
 const RUNNER_PATH = require.resolve("../../runner");
@@ -308,16 +310,117 @@ describe("Windows Ollama helper", () => {
     vi.unstubAllEnvs();
   });
 
-  it("leaves the persistent installer binding under the mutation transaction", () => {
-    const { windows, restore } = loadWindowsOllamaWithMocks(vi.fn(), vi.fn());
-
+  it.each([
+    {
+      name: "an object-valued path",
+      result: successfulRun(JSON.stringify({ userHost: null, watcherPath: {}, daemonPath: null })),
+    },
+    { name: "invalid JSON", result: successfulRun("invalid JSON") },
+    { name: "a failed query", result: { ...hostSnapshotRun(null, null, null), status: 1 } },
+  ])("leaves Windows untouched after $name in the snapshot (#11401)", async ({ result }) => {
+    const runCapture = vi.fn();
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { windows, restore } = loadWindowsOllamaWithMocks(
+      vi.fn(() => result),
+      runCapture,
+    );
     try {
-      const installerCommand = windows.buildWindowsOllamaInstallerCommand();
-      expect(installerCommand).toContain("$env:OLLAMA_HOST='127.0.0.1:11434'");
-      expect(installerCommand).not.toContain("SetEnvironmentVariable('OLLAMA_HOST'");
+      expect(windows.setupWindowsOllamaLoopbackBinding()).toEqual({
+        ok: false,
+        reason: "snapshot",
+      });
+      expect(await windows.installOllamaOnWindowsHost()).toEqual({
+        ok: false,
+        path: "",
+        reason: "snapshot",
+      });
+      expect(runCapture).not.toHaveBeenCalled();
     } finally {
       restore();
+      errorSpy.mockRestore();
     }
+  });
+
+  it.skipIf(process.platform !== "win32" && !process.env.WSL_DISTRO_NAME).each([
+    { name: "daemon only", watcher: false, daemon: true },
+    { name: "tray only", watcher: true, daemon: false },
+    { name: "tray and daemon", watcher: true, daemon: true },
+    { name: "no Ollama processes", watcher: false, daemon: false },
+    { name: "unreadable daemon path", watcher: false, daemon: true, unreadable: true },
+    { name: "failed process query", watcher: false, daemon: false, denied: true },
+  ])(
+    "captures Windows process state with $name (#11401)",
+    (scenario) => {
+      const watcherPath = "C:\\Ollama\\ollama app.exe";
+      const daemonPath = "C:\\Ollama\\ollama.exe";
+      const processes = [
+        { ProcessName: "unrelated", Path: null },
+        ...(scenario.watcher ? [{ ProcessName: "ollama app", Path: watcherPath }] : []),
+        ...(scenario.daemon
+          ? [{ ProcessName: "ollama", Path: scenario.unreadable ? null : daemonPath }]
+          : []),
+      ];
+      // Execute the production producer in PowerShell, with only process inventory supplied by the fixture.
+      const fixtureProcesses = processes
+        .map(
+          (entry) =>
+            `[pscustomobject]@{ProcessName='${entry.ProcessName}';Path=${entry.Path === null ? "$null" : `'${entry.Path.replace(/'/g, "''")}'`}}`,
+        )
+        .join("; ");
+      const fixture =
+        `$fixtureProcesses = @(${fixtureProcesses}); ` +
+        "function Get-Process { [CmdletBinding()] param([string]$Name); " +
+        (scenario.denied
+          ? "throw 'process query denied'"
+          : "if ($Name) { $fixtureProcesses | Where-Object ProcessName -eq $Name } else { $fixtureProcesses }") +
+        " }; ";
+      let captured = "";
+      const run = vi
+        .fn<(command: string[]) => { status: number | null; stdout: string; stderr: string }>(() =>
+          successfulRun(),
+        )
+        .mockImplementationOnce((command: string[]) => {
+          const result = spawnSync(
+            "powershell.exe",
+            ["-NoProfile", "-Command", fixture + command[2]],
+            {
+              encoding: "utf8",
+              timeout: 15_000,
+            },
+          );
+          expect(result.error).toBeUndefined();
+          captured = result.stdout;
+          return result;
+        });
+      const runCapture = vi.fn(() => "");
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      const { windows, restore } = loadWindowsOllamaWithMocks(run, runCapture);
+      try {
+        const rejected = scenario.unreadable || scenario.denied;
+        expect(windows.setupWindowsOllamaLoopbackBinding()).toEqual({
+          ok: false,
+          reason: rejected ? "snapshot" : "binding",
+        });
+        const snapshot = rejected ? null : JSON.parse(captured);
+        expect(snapshot?.watcherPath).toBe(
+          rejected ? undefined : scenario.watcher ? watcherPath : null,
+        );
+        expect(snapshot?.daemonPath).toBe(
+          rejected ? undefined : scenario.daemon ? daemonPath : null,
+        );
+        expect(runCapture).toHaveBeenCalledTimes(rejected ? 0 : 1);
+      } finally {
+        restore();
+        errorSpy.mockRestore();
+      }
+    },
+    20_000,
+  );
+
+  it("leaves the persistent installer binding under the mutation transaction", () => {
+    const installerCommand = buildWindowsOllamaInstallerCommand();
+    expect(installerCommand).toContain("$env:OLLAMA_HOST='127.0.0.1:11434'");
+    expect(installerCommand).not.toContain("SetEnvironmentVariable('OLLAMA_HOST'");
   });
 
   it("terminates the PowerShell wrapper when cancellation precedes the PID sentinel", async () => {

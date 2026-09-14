@@ -149,7 +149,9 @@ Use the dedicated gateway state directory created for that port, not a shared or
 Onboarding rejects relative overrides, the shared NemoClaw state root or its parents, and existing nonempty directories without valid NemoClaw-managed gateway configuration.
 Let onboarding create the directory when possible. Every existing ancestor, from its containing directory to the filesystem root, must be a real directory owned by the current user or root and must not be group- or world-writable. If the state directory already exists, it must be an owner-controlled, non-symbolic-link directory with mode `0700`.
 If onboarding stops immediately after reserving that directory, uninstall removes the marker-only reservation only while the selected gateway port is free. Gateway configuration, a runtime marker, or a PID file moves cleanup to the managed-gateway checks instead. A port-bound marked gateway with valid generated configuration can be retired after the port is free and a complete process scan proves that no live process claims its state; a listener or unproven process preserves the directory. Inspect and stop the listener or matching gateway process, then rerun uninstall after the port is free.
-Onboarding holds an exclusive lifecycle lock from reservation through gateway initialization. If uninstall reports that onboarding owns the state directory, wait for onboarding to finish and rerun uninstall; the reservation is preserved.
+Onboarding holds an exclusive lifecycle lock from reservation through gateway initialization.
+If uninstall reports that onboarding owns the state directory while onboarding is active, wait for onboarding to finish and rerun uninstall; the reservation is preserved.
+If the reported `onboard.lock` remains after onboarding ended abruptly, confirm that no NemoClaw onboarding process is active in any environment that shares the state root, remove only the reported lock, and rerun uninstall.
 After successful managed cleanup, uninstall recursively removes that directory and all contents.
 Portable cleanup and `--keep-openshell` preserve it.
 </Warning>
@@ -387,7 +389,8 @@ Resolve the reported SSH, Docker, peer-host, or claim error before you retry.
 Runtime cleanup can partially complete before an error, so inspect every cluster node before retrying.
 When sibling gateways remain, it removes only the selected gateway's resources and port-scoped state and preserves those shared host resources.
 With `--destroy-user-data`, that scoped path removes installer-managed user-local CLI shims under `~/.local/bin/` only when sibling evidence is unidentified (for example odd `~/.nemoclaw/gateways/` entries or an unreadable gateway list). When a confirmed sibling gateway port remains, those shared shims stay with the shared npm CLI package and the other shared host resources.
-A recorded sandbox that OpenShell reports as already removed leaves nothing to delete, so the scoped path reports it, finishes the remaining gateway cleanup, and exits `0`.
+A recorded sandbox that OpenShell reports as already removed leaves nothing to delete, so the scoped path reports it and finishes the remaining gateway cleanup.
+It exits `0` only when gateway registration cleanup succeeds or confirms absence.
 A sandbox that OpenShell cannot reach or refuses to delete still leaves state behind.
 Uninstall exits nonzero and preserves the selected gateway registration, port-scoped state, and selected sandbox registry entry for a retry.
 This failure preservation also applies when you pass `--destroy-user-data`.
@@ -405,7 +408,12 @@ After that acknowledgement, fresh backups for eligible registered non-portable s
 Without `--yes`, a closed standard input or non-TTY shell aborts before backup or cleanup.
 
 `--yes` never skips eligible fresh sandbox backups or purges the preserved host-side entries listed above on its own.
-After a successful or already-absent sandbox deletion, preserving other `sandboxes.json` entries does not preserve the selected sandbox entry or its gateway registration.
+During gateway-scoped cleanup, uninstall removes the selected sandbox entry from `sandboxes.json` after a successful or already-absent sandbox deletion.
+During full uninstall, a preserved `sandboxes.json` file can retain entries for removed sandboxes.
+After gateway registration cleanup succeeds or confirms that the selected gateway is absent, uninstall continues even when it preserves other `sandboxes.json` entries.
+If gateway registration cleanup fails, uninstall exits nonzero and preserves the remaining state.
+Resolve the reported gateway-registration error, then rerun uninstall.
+The warning identifies recognized connection refusals and permission denials with fixed text; it redacts other command output and reports only the failed command and exit status.
 Outside portable cleanup, after uninstall confirms that no sibling gateways remain, it also removes the provider registrations and Docker image that the recorded sandboxes depend on.
 
 Uninstall warns that those records cannot be recovered automatically on reinstall, and the remediation is `$$nemoclaw <name> destroy` followed by `$$nemoclaw onboard`.

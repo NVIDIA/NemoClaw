@@ -6,12 +6,13 @@ import type { StdioOptions } from "node:child_process";
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
+import tty from "node:tty";
 
 import { describe, expect, it, vi } from "vitest";
 import { OLLAMA_PORT, OLLAMA_PROXY_PORT } from "../../../core/ports";
 import { CONTAINER_REACHABILITY_IMAGE } from "../../../inference/local";
-import type { SandboxExecSignalSource } from "../exec";
-import type { AgentDispatchChild } from "./passthrough-dispatch";
+import type { ProcessSessionSignals } from "../../../core/process-session";
+import type { CapturedProcessChild } from "../../../core/process-capture";
 import {
   maybeWarmOllamaAfterDaemonRestart,
   runOllamaRecoveryCapture,
@@ -72,12 +73,12 @@ function completingRecoverySpawner(
     const childEvents = new EventEmitter();
     const stderr = new EventEmitter();
     const stdout = new EventEmitter();
-    const child: AgentDispatchChild = {
+    const child: CapturedProcessChild = {
       exitCode: null,
       signalCode: null,
       kill: vi.fn(() => true),
       once: ((event: string, listener: (...args: unknown[]) => void) =>
-        childEvents.once(event, listener)) as AgentDispatchChild["once"],
+        childEvents.once(event, listener)) as CapturedProcessChild["once"],
       stderr,
       stdout,
     };
@@ -127,8 +128,11 @@ describe("maybeWarmOllamaAfterDaemonRestart", () => {
           model: "qwen3.6:35b",
           endpointUrl: `http://host.openshell.internal:${OLLAMA_PORT}/v1`,
         },
-        { getOllamaHost: () => "host.docker.internal",
-          revalidateOllamaHost: () => "host.docker.internal", runRecoveryCaptureImpl },
+        {
+          getOllamaHost: () => "host.docker.internal",
+          revalidateOllamaHost: () => "host.docker.internal",
+          runRecoveryCaptureImpl,
+        },
       ),
     ).resolves.toEqual({ kind: "warmed", ok: true });
 
@@ -376,13 +380,14 @@ describe("maybeWarmOllamaAfterDaemonRestart", () => {
     expect(cleanups[2]).toHaveBeenCalledOnce();
   });
 
-  it("forwards SIGTERM to an active recovery child and releases its Docker environment", async () => {
+  it.each(["SIGTERM", "SIGINT"] as const)("cleans recovery after %s", async (signal) => {
+    vi.spyOn(tty, "isatty").mockReturnValue(false);
     const childEvents = new EventEmitter();
     const signalEvents = new EventEmitter();
     const stderr = new EventEmitter();
     const stdout = new EventEmitter();
     const cleanup = vi.fn(() => ({ ok: true as const }));
-    const child: AgentDispatchChild = {
+    const child: CapturedProcessChild = {
       exitCode: null,
       signalCode: null,
       kill: vi.fn((signal) => {
@@ -391,11 +396,11 @@ describe("maybeWarmOllamaAfterDaemonRestart", () => {
         return true;
       }),
       once: ((event: string, listener: (...args: unknown[]) => void) =>
-        childEvents.once(event, listener)) as AgentDispatchChild["once"],
+        childEvents.once(event, listener)) as CapturedProcessChild["once"],
       stderr,
       stdout,
     };
-    const signalSource: SandboxExecSignalSource = {
+    const signalSource: ProcessSessionSignals = {
       add: (signal, listener) => signalEvents.on(signal, listener),
       remove: (signal, listener) => signalEvents.off(signal, listener),
     };
@@ -418,15 +423,15 @@ describe("maybeWarmOllamaAfterDaemonRestart", () => {
         spawnRecoveryChild,
       },
     );
-    signalEvents.emit("SIGTERM");
+    signalEvents.emit(signal);
 
     await expect(pending).resolves.toMatchObject({
       exitCode: null,
-      signal: "SIGTERM",
+      signal,
       timedOut: false,
     });
     expect(child.kill).toHaveBeenCalledOnce();
-    expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+    expect(child.kill).toHaveBeenCalledWith(signal);
     expect(spawnRecoveryChild.mock.calls[0]?.[0]).toBe("docker");
     expect(spawnRecoveryChild.mock.calls[0]?.[3]?.DOCKER_CONFIG).toBe(
       "/tmp/credential-free-docker",
@@ -441,7 +446,7 @@ describe("maybeWarmOllamaAfterDaemonRestart", () => {
     const childEvents = new EventEmitter();
     const signalEvents = new EventEmitter();
     const cleanup = vi.fn(() => ({ ok: true as const }));
-    let child: AgentDispatchChild;
+    let child: CapturedProcessChild;
     const kill = vi
       .fn<(signal: NodeJS.Signals) => boolean>()
       .mockReturnValueOnce(true)
@@ -455,11 +460,11 @@ describe("maybeWarmOllamaAfterDaemonRestart", () => {
       signalCode: null,
       kill,
       once: ((event: string, listener: (...args: unknown[]) => void) =>
-        childEvents.once(event, listener)) as AgentDispatchChild["once"],
+        childEvents.once(event, listener)) as CapturedProcessChild["once"],
       stderr: new EventEmitter(),
       stdout: new EventEmitter(),
     };
-    const signalSource: SandboxExecSignalSource = {
+    const signalSource: ProcessSessionSignals = {
       add: (signal, listener) => signalEvents.on(signal, listener),
       remove: (signal, listener) => signalEvents.off(signal, listener),
     };
@@ -564,7 +569,7 @@ describe("maybeWarmOllamaAfterDaemonRestart", () => {
       },
       {
         getOllamaHost: () => "host.docker.internal",
-          revalidateOllamaHost: () => "host.docker.internal",
+        revalidateOllamaHost: () => "host.docker.internal",
         runRecoveryCaptureImpl,
       },
     );
@@ -767,8 +772,11 @@ describe("maybeWarmOllamaAfterDaemonRestart", () => {
           model: "gemma4:26b",
           endpointUrl: `http://host.openshell.internal:${OLLAMA_PORT}/v1`,
         },
-        { getOllamaHost: () => "host.docker.internal",
-          revalidateOllamaHost: () => "host.docker.internal", runRecoveryCaptureImpl },
+        {
+          getOllamaHost: () => "host.docker.internal",
+          revalidateOllamaHost: () => "host.docker.internal",
+          runRecoveryCaptureImpl,
+        },
       ),
     ).resolves.toEqual({
       kind: "skipped",

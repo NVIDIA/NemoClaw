@@ -333,7 +333,7 @@ async function addSandboxPolicyUnlocked(
     policies.listPresets({ agent: sandboxAgent }),
     sandboxAgent,
   );
-  const applied = policies.getAppliedPresets(sandboxName);
+  const applied = await policies.getAppliedPresets(sandboxName);
 
   let answer = null;
   let reapplyState: policies.PresetPolicyState | null = null;
@@ -352,7 +352,9 @@ async function addSandboxPolicyUnlocked(
       // preset files in place (for example to add `tls: skip` endpoints), so
       // compare the preset content against the live gateway policy and fall
       // through to a normal re-apply when it drifted.
-      const customNames = policies.listCustomPresets(sandboxName).map((entry) => entry.name);
+      const customNames = (await policies.listCustomPresets(sandboxName)).map(
+        (entry) => entry.name,
+      );
       if (customNames.includes(preset.name)) {
         // A custom preset owns this name, so the built-in content is the
         // wrong comparison baseline; re-applying it would clobber the custom
@@ -363,7 +365,7 @@ async function addSandboxPolicyUnlocked(
         );
         process.exit(1);
       }
-      const appliedContent = policies.loadPresetForSandbox(
+      const appliedContent = await policies.loadPresetForSandbox(
         sandboxName,
         preset.name,
         messagingPolicyOptions,
@@ -372,12 +374,12 @@ async function addSandboxPolicyUnlocked(
         console.error(`  Could not read the content of preset '${preset.name}'.`);
         process.exit(1);
       }
-      const appliedState = policies.getPresetContentGatewayState(sandboxName, appliedContent);
+      const appliedState = await policies.getPresetContentGatewayState(sandboxName, appliedContent);
       if (appliedState === "match") {
         const needsOpenClawNpmCheck =
           preset.name === "npm" && (sandboxAgent === null || sandboxAgent === "openclaw");
         const npmCompatibilityState = needsOpenClawNpmCheck
-          ? policies.getOpenClawNpmCompatibilityState(sandboxName)
+          ? await policies.getOpenClawNpmCompatibilityState(sandboxName)
           : "match";
         if (npmCompatibilityState === "repair") {
           reapplyState = "drift";
@@ -437,7 +439,11 @@ async function addSandboxPolicyUnlocked(
   }
   if (!answer) return;
 
-  const presetContent = policies.loadPresetForSandbox(sandboxName, answer, messagingPolicyOptions);
+  const presetContent = await policies.loadPresetForSandbox(
+    sandboxName,
+    answer,
+    messagingPolicyOptions,
+  );
   if (!presetContent) return;
 
   if (reapplyState) {
@@ -474,14 +480,14 @@ async function addSandboxPolicyUnlocked(
   }
 
   if (
-    !policies.applyPreset(sandboxName, answer, {
+    !(await policies.applyPreset(sandboxName, answer, {
       suppressDisclosure: true,
       ...messagingPolicyOptions,
-    })
+    }))
   ) {
     process.exit(1);
   }
-  refreshSandboxPolicyContextFile(sandboxName);
+  await refreshSandboxPolicyContextFile(sandboxName);
 }
 
 /**
@@ -548,17 +554,22 @@ async function applyExternalPreset(
   }
 
   try {
-    const result = policies.applyPresetContent(sandboxName, loaded.presetName, loaded.content, {
-      custom: {
-        sourcePath: path.resolve(loaded.filePath),
-        ...(loaded.trustedPrivatePinCapability
-          ? { trustedPrivatePinCapability: loaded.trustedPrivatePinCapability }
-          : {}),
+    const result = await policies.applyPresetContent(
+      sandboxName,
+      loaded.presetName,
+      loaded.content,
+      {
+        custom: {
+          sourcePath: path.resolve(loaded.filePath),
+          ...(loaded.trustedPrivatePinCapability
+            ? { trustedPrivatePinCapability: loaded.trustedPrivatePinCapability }
+            : {}),
+        },
+        suppressDisclosure: true,
       },
-      suppressDisclosure: true,
-    });
+    );
     if (result !== false) {
-      refreshSandboxPolicyContextFile(sandboxName);
+      await refreshSandboxPolicyContextFile(sandboxName);
     }
     return result !== false;
   } catch {
@@ -567,15 +578,15 @@ async function applyExternalPreset(
   }
 }
 
-export function listSandboxPolicies(sandboxName: string) {
+export async function listSandboxPolicies(sandboxName: string) {
   const sandboxEntry = registry.getSandbox(sandboxName);
   const builtin = policies.listPresets({ agent: sandboxEntry?.agent ?? null });
-  const custom = policies.listCustomPresets(sandboxName);
+  const custom = await policies.listCustomPresets(sandboxName);
   const allPresets = [...builtin, ...custom];
 
   // getGatewayPresets returns null when gateway is unreachable, or an
   // array of matched preset names when reachable (possibly empty).
-  const gatewayPresets = policies.getGatewayPresets(sandboxName);
+  const gatewayPresets = await policies.getGatewayPresets(sandboxName);
 
   const provenanceContext = {
     agentName: sandboxEntry?.agent ?? null,
@@ -841,9 +852,9 @@ async function applyChannelAddToGatewayAndRegistry(
   channelName: string,
   acquired: Record<string, string>,
   plan: SandboxMessagingPlan,
-  applyPolicyAfterAttachment?: () => boolean,
+  applyPolicyAfterAttachment?: () => Promise<boolean>,
   upsertMessagingProviders = policyChannelDependencies.upsertMessagingProviders,
-  cleanupCredentialFreePolicy?: () => void,
+  cleanupCredentialFreePolicy?: () => Promise<boolean>,
 ): Promise<boolean | null> {
   const sandboxAgent = registry.getSandbox(sandboxName)?.agent;
   const staticProviderType = staticMessagingProviderTypeForChannel(channelName, sandboxAgent);
@@ -880,7 +891,7 @@ async function applyChannelAddToGatewayAndRegistry(
     console.error(
       "  Paste the secret at the enrollment prompt or export the env var, then re-run.",
     );
-    cleanupCredentialFreePolicy?.();
+    await cleanupCredentialFreePolicy?.();
     process.exit(1);
   }
   tokenDefs.push(...bridgeDefs);
@@ -894,10 +905,10 @@ async function applyChannelAddToGatewayAndRegistry(
     );
     console.error("  in env for this run only. Rerun after starting the gateway.");
     console.error(`  ${gatewayStartGuidance(gatewayName)}`);
-    cleanupCredentialFreePolicy?.();
+    await cleanupCredentialFreePolicy?.();
     process.exit(1);
   }
-  policyChannelDependencies.revalidateChannelProviderPolicy(sandboxName, gatewayName);
+  await policyChannelDependencies.revalidateChannelProviderPolicy(sandboxName, gatewayName);
   try {
     await upsertMessagingProviders(
       tokenDefs,
@@ -914,7 +925,7 @@ async function applyChannelAddToGatewayAndRegistry(
         },
       },
     );
-    if (applyPolicyAfterAttachment && !applyPolicyAfterAttachment()) {
+    if (applyPolicyAfterAttachment && !(await applyPolicyAfterAttachment())) {
       return null;
     }
   } catch (err) {
@@ -933,7 +944,8 @@ async function applyChannelAddToGatewayAndRegistry(
         () => revalidateMessagingProviderAttachmentTarget(sandboxName, gatewayName),
       );
       const updatedProviderNames = err.mutatedProviderNames.filter(
-        (providerName) => !createdProviders.has(providerName) || replacedProviders.has(providerName),
+        (providerName) =>
+          !createdProviders.has(providerName) || replacedProviders.has(providerName),
       );
       const originalFailure = redactFullWithUrls(err instanceof Error ? err.message : String(err))
         .replace(/\s+/gu, " ")
@@ -957,7 +969,7 @@ async function applyChannelAddToGatewayAndRegistry(
           );
         }
       }
-      cleanupCredentialFreePolicy?.();
+      await cleanupCredentialFreePolicy?.();
       process.exit(1);
     }
     const teardown = await applyChannelRemoveToGatewayAndRegistry(
@@ -971,7 +983,7 @@ async function applyChannelAddToGatewayAndRegistry(
         `  ${YW}⚠${R} Partial provider state may remain; run '${CLI_NAME} ${sandboxName} channels remove ${channelName}' once the gateway is reachable.`,
       );
     }
-    cleanupCredentialFreePolicy?.();
+    await cleanupCredentialFreePolicy?.();
     process.exit(1);
   }
   return true;
@@ -1109,7 +1121,9 @@ async function runMessagingHealthChecksAfterRebuild(
     openclawBridgeHealth: {
       sandboxName,
       executeSandboxCommand: (command, timeoutMs) =>
-        executeSandboxExecCommand(sandboxName, command, timeoutMs),
+        executeSandboxExecCommand(sandboxName, command, timeoutMs, {
+          localDockerFallbackPolicy: "read-only",
+        }),
     },
   });
   try {
@@ -1307,23 +1321,23 @@ function hydrateAddChannelEnvFromStoredState(sandboxName: string): void {
   hydrateMessagingChannelConfig(getStoredMessagingChannelConfig(sandboxName, savedSession));
 }
 
-function discloseChannelPresetScope(
+async function discloseChannelPresetScope(
   sandboxName: string,
   presetName: string,
   presetContent: string,
-): policies.PresetPolicyState | null {
-  const gatewayState = policies.getPresetContentGatewayState(sandboxName, presetContent);
+): Promise<policies.PresetPolicyState | null> {
+  const gatewayState = await policies.getPresetContentGatewayState(sandboxName, presetContent);
   policies.logPresetScopeForState(presetName, presetContent, gatewayState);
   return gatewayState;
 }
 
-function loadValidateAndDiscloseChannelPreset(
+async function loadValidateAndDiscloseChannelPreset(
   sandboxName: string,
   channelName: string,
   verb: "add" | "start",
   messagingConfig?: MessagingChannelConfig | null,
-): policies.PresetPolicyState | null {
-  const presetContent = policies.loadPresetForSandbox(sandboxName, channelName, {
+): Promise<policies.PresetPolicyState | null> {
+  const presetContent = await policies.loadPresetForSandbox(sandboxName, channelName, {
     messagingConfig,
   });
   const presetPolicyKeys =
@@ -1341,7 +1355,7 @@ function loadValidateAndDiscloseChannelPreset(
     );
     process.exit(1);
   }
-  return discloseChannelPresetScope(sandboxName, channelName, presetContent);
+  return await discloseChannelPresetScope(sandboxName, channelName, presetContent);
 }
 
 function safeLoadOnboardSession(): ReturnType<typeof onboardSession.loadSession> {
@@ -1392,7 +1406,7 @@ async function addSandboxChannelUnlocked(
 
   // Disclose before credential collection, conflict prompts, or any gateway /
   // registry mutation. The core apply path rechecks immediately before set.
-  const initialDisclosedPresetState = loadValidateAndDiscloseChannelPreset(
+  const initialDisclosedPresetState = await loadValidateAndDiscloseChannelPreset(
     sandboxName,
     canonical,
     "add",
@@ -1407,7 +1421,7 @@ async function addSandboxChannelUnlocked(
   const messagingConfig = getMessagingChannelConfigFromPlan(plan);
   const disclosedPresetState =
     canonical === "wechat"
-      ? loadValidateAndDiscloseChannelPreset(sandboxName, canonical, "add", messagingConfig)
+      ? await loadValidateAndDiscloseChannelPreset(sandboxName, canonical, "add", messagingConfig)
       : initialDisclosedPresetState;
   const acquired = collectManifestCredentials(manifest);
   if (!(await checkChannelAddConflict(sandboxName, canonical, acquired, force))) {
@@ -1425,10 +1439,10 @@ async function addSandboxChannelUnlocked(
   // operator complete pairing after rebuild.
   if (manifest.auth.mode === "in-sandbox-qr") {
     if (
-      !applyChannelPresetIfAvailable(sandboxName, canonical, "add", {
+      !(await applyChannelPresetIfAvailable(sandboxName, canonical, "add", {
         disclosedPresetState,
         messagingConfig,
-      })
+      }))
     ) {
       process.exit(1);
     }
@@ -1442,7 +1456,7 @@ async function addSandboxChannelUnlocked(
     );
     if (!MessagingHostStateApplier.applyPlanToRegistry(sandboxName, plan)) {
       console.error(`  ${YW}⚠${R} Could not persist messaging plan for '${sandboxName}'.`);
-      removeChannelPresetIfPresent(sandboxName, canonical);
+      await removeChannelPresetIfPresent(sandboxName, canonical);
       process.exit(1);
     }
     console.log("");
@@ -1459,7 +1473,11 @@ async function addSandboxChannelUnlocked(
     }
     const rebuilt = await promptAndRebuild(sandboxName, `add '${canonical}'`);
     if (rebuilt) {
-      ensureMessagingHostForwardAfterRebuild(sandboxName, plan);
+      if (!(await ensureMessagingHostForwardAfterRebuild(sandboxName, plan))) {
+        throw new Error(
+          `Messaging host forward could not be verified for '${sandboxName}'; channel operation is incomplete. Run 'nemoclaw ${sandboxName} recover' to retry forwarding.`,
+        );
+      }
       await runMessagingHealthChecksAfterRebuild(sandboxName, plan);
     }
     return;
@@ -1488,14 +1506,14 @@ async function addSandboxChannelUnlocked(
   // the bound policy is applied as a second stage after attachment.
   const cleanupCredentialFreePolicy = wasAlreadyEnabled
     ? undefined
-    : () => removeChannelPresetIfPresent(sandboxName, canonical);
+    : async () => await removeChannelPresetIfPresent(sandboxName, canonical);
   if (
     !wasAlreadyEnabled &&
-    !applyChannelPresetIfAvailable(sandboxName, canonical, "add", {
+    !(await applyChannelPresetIfAvailable(sandboxName, canonical, "add", {
       disclosedPresetState,
       includeMessagingCredentialBindings: false,
       messagingConfig,
-    })
+    }))
   ) {
     process.exit(1);
   }
@@ -1504,8 +1522,8 @@ async function addSandboxChannelUnlocked(
     canonical,
     acquired,
     plan,
-    () =>
-      applyChannelPresetIfAvailable(sandboxName, canonical, "add", {
+    async () =>
+      await applyChannelPresetIfAvailable(sandboxName, canonical, "add", {
         disclosedPresetState,
         messagingConfig,
       }),
@@ -1537,7 +1555,11 @@ async function addSandboxChannelUnlocked(
 
   const rebuilt = await promptAndRebuild(sandboxName, `add '${canonical}'`);
   if (rebuilt) {
-    ensureMessagingHostForwardAfterRebuild(sandboxName, plan);
+    if (!(await ensureMessagingHostForwardAfterRebuild(sandboxName, plan))) {
+      throw new Error(
+        `Messaging host forward could not be verified for '${sandboxName}'; channel operation is incomplete. Run 'nemoclaw ${sandboxName} recover' to retry forwarding.`,
+      );
+    }
     await runMessagingHealthChecksAfterRebuild(sandboxName, plan);
   }
 }
@@ -1563,9 +1585,9 @@ async function rollbackChannelAdd(
     }
     const residual: string[] = ["gateway-providers"];
     if (
-      !applyChannelPresetIfAvailable(sandboxName, canonical, "add", {
+      !(await applyChannelPresetIfAvailable(sandboxName, canonical, "add", {
         messagingConfig: snapshot.priorMessagingConfig,
-      })
+      }))
     ) {
       residual.push("network-policy");
     }
@@ -1618,7 +1640,7 @@ async function rollbackChannelAdd(
     `  ${YW}⚠${R} Rolling back '${canonical}' bridge registration to keep messaging plan and policy state aligned.`,
   );
   clearChannelTokens(channel);
-  removeChannelPresetIfPresent(sandboxName, canonical);
+  await removeChannelPresetIfPresent(sandboxName, canonical);
   const result = await applyChannelRemoveToGatewayAndRegistry(
     sandboxName,
     canonical,
@@ -1633,7 +1655,7 @@ async function rollbackChannelAdd(
   return result;
 }
 
-export function applyChannelPresetIfAvailable(
+export async function applyChannelPresetIfAvailable(
   sandboxName: string,
   channelName: string,
   retryAction: "add" | "start" = "add",
@@ -1642,19 +1664,19 @@ export function applyChannelPresetIfAvailable(
     includeMessagingCredentialBindings?: boolean;
     messagingConfig?: MessagingChannelConfig | null;
   } = {},
-): boolean {
+): Promise<boolean> {
   try {
     const includeMessagingCredentialBindings =
       options.includeMessagingCredentialBindings === undefined
         ? true
         : options.includeMessagingCredentialBindings;
     const applied = Object.prototype.hasOwnProperty.call(options, "disclosedPresetState")
-      ? policies.applyPreset(sandboxName, channelName, {
+      ? await policies.applyPreset(sandboxName, channelName, {
           disclosedPresetState: options.disclosedPresetState,
           includeMessagingCredentialBindings,
           messagingConfig: options.messagingConfig,
         })
-      : policies.applyPreset(sandboxName, channelName, {
+      : await policies.applyPreset(sandboxName, channelName, {
           includeMessagingCredentialBindings,
           messagingConfig: options.messagingConfig,
         });
@@ -1667,7 +1689,7 @@ export function applyChannelPresetIfAvailable(
       );
       return false;
     }
-    refreshSandboxPolicyContextFile(sandboxName);
+    await refreshSandboxPolicyContextFile(sandboxName);
     return true;
   } catch {
     console.error(`  ${YW}⚠${R} Failed to apply '${channelName}' policy preset.`);
@@ -1765,14 +1787,15 @@ function stoppedWechatCleanupFailureGuidance(
 
 /**
  * Wipe durable channel state before rebuild can preserve an obsolete auth blob.
- * OpenShell exec runs first, followed by SSH and the selected provider's stopped-state fallback.
+ * OpenShell exec runs first. A permitted reconciled runtime-provider retry runs before SSH.
+ * OpenClaw WeChat stopped-state cleanup runs last.
  * Fixes #3998.
  */
-function clearSandboxChannelDurableState(
+async function clearSandboxChannelDurableState(
   sandboxName: string,
   channelName: string,
   options: { readonly allowAbsentStoppedState?: boolean } = {},
-): boolean {
+): Promise<boolean> {
   const agent = resolveAgentForSandbox(sandboxName);
   const paths = getSandboxChannelStatePaths(agent, channelName);
   if (!paths.every(isSafeChannelStatePath)) {
@@ -1786,9 +1809,11 @@ function clearSandboxChannelDurableState(
   const sentinelSeen = (result: { stdout?: string | null } | null): boolean =>
     !!result && typeof result.stdout === "string" && result.stdout.includes(CHANNEL_CLEAR_SENTINEL);
 
-  let result = executeSandboxExecCommand(sandboxName, cmd);
+  let result = await executeSandboxExecCommand(sandboxName, cmd, undefined, {
+    localDockerFallbackPolicy: "reconciled",
+  });
   if (!sentinelSeen(result)) {
-    result = executeSandboxCommand(sandboxName, cmd);
+    result = await executeSandboxCommand(sandboxName, cmd);
   }
   if (!sentinelSeen(result) && agent.name === "openclaw" && channelName === "wechat") {
     const stoppedCleanup = policyChannelDependencies.clearStoppedSandboxStateRoots(
@@ -1829,16 +1854,19 @@ function clearSandboxChannelDurableState(
 // no longer reports it active and the L7 proxy stops allow-listing the
 // channel's upstream API. Removal marks the channel disabled before this
 // policy release, so a later provider failure remains retryable.
-export function removeChannelPresetIfPresent(sandboxName: string, channelName: string): boolean {
+export async function removeChannelPresetIfPresent(
+  sandboxName: string,
+  channelName: string,
+): Promise<boolean> {
   const builtinPresets = new Set(policies.listPresets().map((p) => p.name));
   if (!builtinPresets.has(channelName)) {
     return true;
   }
-  if (!policies.getAppliedPresets(sandboxName).includes(channelName)) {
+  if (!(await policies.getAppliedPresets(sandboxName)).includes(channelName)) {
     return true;
   }
   try {
-    const removed = policies.removePreset(sandboxName, channelName);
+    const removed = await policies.removePreset(sandboxName, channelName);
     if (!removed) {
       console.error(`  ${YW}⚠${R} Channel '${channelName}' policy preset failed to un-apply.`);
       console.error(
@@ -1846,7 +1874,7 @@ export function removeChannelPresetIfPresent(sandboxName: string, channelName: s
       );
       return false;
     }
-    refreshSandboxPolicyContextFile(sandboxName);
+    await refreshSandboxPolicyContextFile(sandboxName);
     return true;
   } catch {
     console.error(`  ${YW}⚠${R} Failed to remove '${channelName}' policy preset.`);
@@ -1898,7 +1926,7 @@ async function removeSandboxChannelUnlocked(
   const registryEntry = registry.getSandbox(sandboxName);
   const hasChannelResidue =
     registry.getConfiguredMessagingChannelsFromEntry(registryEntry).includes(canonical) ||
-    policies.getAppliedPresets(sandboxName).includes(canonical);
+    (await policies.getAppliedPresets(sandboxName)).includes(canonical);
   const recoverPhysicalWechatResidue =
     canonical === "wechat" && resolveAgentForSandbox(sandboxName).name === "openclaw";
 
@@ -1933,9 +1961,9 @@ async function removeSandboxChannelUnlocked(
   if (
     requiresStateCleanupBeforeTeardown &&
     (hasChannelResidue || recoverPhysicalWechatResidue) &&
-    !clearSandboxChannelDurableState(sandboxName, canonical, {
+    !(await clearSandboxChannelDurableState(sandboxName, canonical, {
       allowAbsentStoppedState: !hasChannelResidue,
-    })
+    }))
   ) {
     console.error(
       `  Refusing to proceed: '${canonical}' session state is still inside the sandbox.`,
@@ -1977,7 +2005,7 @@ async function removeSandboxChannelUnlocked(
     removeDisabledChannelAgentConfigOrExit(sandboxName, canonical, disabledAgentConfigPlan);
   }
 
-  if (!removeChannelPresetIfPresent(sandboxName, canonical)) {
+  if (!(await removeChannelPresetIfPresent(sandboxName, canonical))) {
     console.error(
       `  ${YW}⚠${R} Channel '${canonical}' remains disabled while policy cleanup is incomplete.`,
     );
@@ -2014,7 +2042,7 @@ async function removeSandboxChannelUnlocked(
   // revocation already prevents the bot from authenticating, so a
   // failure here is a warning, not a bail.
   if (!requiresStateCleanupBeforeTeardown) {
-    clearSandboxChannelDurableState(sandboxName, canonical);
+    await clearSandboxChannelDurableState(sandboxName, canonical);
   }
 
   const rebuilt = await promptAndRebuild(sandboxName, `remove '${canonical}'`);
@@ -2072,7 +2100,7 @@ async function sandboxChannelsSetEnabled(
   }
 
   if (!disabled) {
-    loadValidateAndDiscloseChannelPreset(sandboxName, canonical, "start");
+    await loadValidateAndDiscloseChannelPreset(sandboxName, canonical, "start");
   }
 
   if (dryRun) {
@@ -2093,7 +2121,11 @@ async function sandboxChannelsSetEnabled(
   console.log(`  ${G}✓${R} Marked ${canonical} ${state} for '${sandboxName}'.`);
   const rebuilt = await promptAndRebuild(sandboxName, `${verb} '${canonical}'`);
   if (rebuilt && !disabled) {
-    ensureMessagingHostForwardAfterRebuild(sandboxName, plan);
+    if (!(await ensureMessagingHostForwardAfterRebuild(sandboxName, plan))) {
+      throw new Error(
+        `Messaging host forward could not be verified for '${sandboxName}'; channel operation is incomplete. Run 'nemoclaw ${sandboxName} recover' to retry forwarding.`,
+      );
+    }
   }
 }
 
@@ -2133,11 +2165,11 @@ async function removeSandboxPolicyUnlocked(
 
   // Custom preset names are decoded from their namespaced live OpenShell keys.
   const builtinPresets = policies.listPresets();
-  const customPresets = policies.listCustomPresets(sandboxName);
+  const customPresets = await policies.listCustomPresets(sandboxName);
   const allPresets = [...builtinPresets, ...customPresets];
   // Active preset names come from the current OpenShell policy.
-  const applied = policies.getAppliedPresets(sandboxName);
-  const gatewayPresets = policies.getGatewayPresets(sandboxName);
+  const applied = await policies.getAppliedPresets(sandboxName);
+  const gatewayPresets = await policies.getGatewayPresets(sandboxName);
   const removable = gatewayPresets ? [...new Set([...applied, ...gatewayPresets])] : applied;
 
   const presetArg = options.preset;
@@ -2175,7 +2207,7 @@ async function removeSandboxPolicyUnlocked(
   }
   if (!answer) return;
 
-  const presetContent = policies.loadPresetForSandbox(sandboxName, answer);
+  const presetContent = await policies.loadPresetForSandbox(sandboxName, answer);
   if (!presetContent) return;
 
   const endpoints = policies.getPresetEndpoints(presetContent);
@@ -2193,10 +2225,10 @@ async function removeSandboxPolicyUnlocked(
     if (confirm.trim().toLowerCase().startsWith("n")) return;
   }
 
-  if (!policies.removePreset(sandboxName, answer)) {
+  if (!(await policies.removePreset(sandboxName, answer))) {
     process.exit(1);
   }
-  refreshSandboxPolicyContextFile(sandboxName);
+  await refreshSandboxPolicyContextFile(sandboxName);
 }
 
 function printBaselineEntryScope(prefix: string, key: string, entry: PolicyObject): void {
@@ -2282,12 +2314,12 @@ async function excludeSandboxBaselineUnlocked(
     if (!confirm.trim().toLowerCase().startsWith("y")) return;
   }
 
-  if (!policies.excludeBaselineEntry(sandboxName, key, digest)) {
-    refreshSandboxPolicyContextFile(sandboxName);
+  if (!(await policies.excludeBaselineEntry(sandboxName, key, digest))) {
+    await refreshSandboxPolicyContextFile(sandboxName);
     process.exit(1);
   }
   console.log(`  ${G}✓${R} Excluded baseline entry '${key}' for '${sandboxName}'.`);
-  refreshSandboxPolicyContextFile(sandboxName);
+  await refreshSandboxPolicyContextFile(sandboxName);
 }
 
 export async function restoreSandboxBaseline(
@@ -2362,10 +2394,10 @@ async function restoreSandboxBaselineUnlocked(
     }
   }
 
-  if (!policies.restoreBaselineEntry(sandboxName, key, { expectedTargetDigest })) {
-    refreshSandboxPolicyContextFile(sandboxName);
+  if (!(await policies.restoreBaselineEntry(sandboxName, key, { expectedTargetDigest }))) {
+    await refreshSandboxPolicyContextFile(sandboxName);
     process.exit(1);
   }
   console.log(`  ${G}✓${R} Restored baseline entry '${key}' for '${sandboxName}'.`);
-  refreshSandboxPolicyContextFile(sandboxName);
+  await refreshSandboxPolicyContextFile(sandboxName);
 }

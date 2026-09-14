@@ -220,7 +220,9 @@ describe("gateway GPU passthrough inspection", () => {
       ).toThrow("exit 1");
 
       expect(errors).toContain("    openshell gateway remove nemoclaw");
-      expect(errors).toContain("  If a privileged process remains, do not use a host-wide process match.");
+      expect(errors).toContain(
+        "  If a privileged process remains, do not use a host-wide process match.",
+      );
       expect(errors.join("\n")).toContain(
         "gateway name 'nemoclaw', exact port, command line, PID file, runtime marker, and loaded sandbox namespace",
       );

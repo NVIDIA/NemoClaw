@@ -446,6 +446,15 @@ function validateGatewaySurface(providerId: string, surface: Record<string, unkn
   }
   requireBoolean(surface, "inspectLegacyContainer", "gateway");
   requireBoolean(surface, "ownsHostReadiness", "gateway");
+  if (surface.ownsHostReadiness === true) {
+    requireFunction(surface, "observeOwnedGateway", "gateway");
+  } else if (surface.observeOwnedGateway !== undefined) {
+    throw new RuntimeProviderRegistrationError(
+      "gateway.observeOwnedGateway requires gateway.ownsHostReadiness",
+    );
+  }
+  requireFunction(surface, "observeHostRuntime", "gateway");
+  requireFunction(surface, "prepareHostRuntime", "gateway");
 }
 
 function validateWorkloadSurface(providerId: string, surface: Record<string, unknown>): void {

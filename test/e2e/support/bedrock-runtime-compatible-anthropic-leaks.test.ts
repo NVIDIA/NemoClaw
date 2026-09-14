@@ -62,10 +62,7 @@ describe("Bedrock Runtime leak snapshot process identity", () => {
         ENV_NAME_PATTERN,
         { name: "adapter token", value: "concrete-adapter-token" },
       ]),
-    ).toEqual([
-      "adapter token env name: /proc/1418/environ",
-      "adapter token: /proc/1418/environ",
-    ]);
+    ).toEqual(["adapter token env name: /proc/1418/environ", "adapter token: /proc/1418/environ"]);
   });
 
   it("rejects the provider name in the probe command line and persisted files", () => {

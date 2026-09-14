@@ -38,6 +38,7 @@ export interface PreflightStateOptions<
   gpuRequested: boolean;
   noGpu: boolean;
   allowDeferredN1xManagedVllm?: boolean;
+  allowLegacyDgxStationQualification?: boolean;
   env: NodeJS.ProcessEnv;
   deps: {
     getSandbox(name: string): SandboxEntry | null;
@@ -64,6 +65,7 @@ export interface PreflightStateOptions<
         now?: () => Date;
         containerGpuProof?: Readonly<{ providerId: string; passed: boolean }>;
         allowDeferredN1xOnboarding?: boolean;
+        allowLegacyDgxStationQualification?: boolean;
         resuming: true;
         presentAdvisories?: boolean;
       },
@@ -143,6 +145,7 @@ export async function handlePreflightState<
   gpuRequested,
   noGpu,
   allowDeferredN1xManagedVllm,
+  allowLegacyDgxStationQualification,
   env,
   deps,
 }: PreflightStateOptions<Gpu, SandboxEntry, Host, Config>): Promise<
@@ -205,6 +208,7 @@ export async function handlePreflightState<
       observedAt: hostObservedAt,
       now,
       allowDeferredN1xOnboarding,
+      allowLegacyDgxStationQualification,
       resuming: true,
     });
     // A full detector can run the bounded ARM64 WSL Docker GPU proof. Keep it
@@ -228,6 +232,7 @@ export async function handlePreflightState<
         now,
         ...(containerGpuProof === undefined ? {} : { containerGpuProof }),
         allowDeferredN1xOnboarding,
+        allowLegacyDgxStationQualification,
         resuming: true,
         presentAdvisories: false,
       });

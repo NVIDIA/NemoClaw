@@ -38,6 +38,8 @@ export const GATEWAY_MANAGEMENT_CONTRACT_VERSION = 1;
 /** Environment variable naming a JSON file holding the declaration. */
 export const GATEWAY_MANAGEMENT_ENV_VAR = "NEMOCLAW_GATEWAY_MANAGEMENT";
 
+const HOST_GATEWAY_MANAGEMENT_PATH = "/etc/nemoclaw/gateway-management.json";
+
 export type GatewayManagementMode = "nemoclaw-managed" | "externally-supervised";
 
 /**
@@ -353,8 +355,8 @@ export type GatewayManagementLoadResult =
 
 /**
  * Resolve the declaration for this run. An in-process declaration (a platform
- * profile) wins over the environment file; absent both, the caller gets `null`
- * and keeps NemoClaw's historical self-managed behavior.
+ * profile) wins over the environment file. Without either selector, a host
+ * declaration must be absent before NemoClaw can use self-managed behavior.
  */
 export function loadGatewayManagementDeclaration(
   options: LoadGatewayManagementOptions = {},
@@ -367,7 +369,28 @@ export function loadGatewayManagementDeclaration(
 
   const env = options.env ?? process.env;
   const configuredPath = env[GATEWAY_MANAGEMENT_ENV_VAR]?.trim();
-  if (!configuredPath) return { ok: true, declaration: null, source: null };
+  if (!configuredPath) {
+    try {
+      // Inspect the entry without following symlinks or trusting its contents.
+      // A dangling entry at the host declaration path must block implicit managed startup.
+      fs.lstatSync(HOST_GATEWAY_MANAGEMENT_PATH);
+    } catch (error) {
+      if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+        return { ok: true, declaration: null, source: null };
+      }
+      return {
+        ok: false,
+        reason: `${HOST_GATEWAY_MANAGEMENT_PATH} could not be inspected; restore access before starting a gateway`,
+      };
+    }
+    return {
+      ok: false,
+      reason:
+        `${HOST_GATEWAY_MANAGEMENT_PATH} contains an unselected filesystem entry; ` +
+        `if it is a readable declaration file, set ${GATEWAY_MANAGEMENT_ENV_VAR}=${HOST_GATEWAY_MANAGEMENT_PATH}; ` +
+        "otherwise, use the platform owner's procedure to restore access, remove the stale entry, or relocate it before starting a gateway",
+    };
+  }
 
   const readFile = options.readFile ?? ((filePath: string) => fs.readFileSync(filePath, "utf-8"));
   let contents: string;

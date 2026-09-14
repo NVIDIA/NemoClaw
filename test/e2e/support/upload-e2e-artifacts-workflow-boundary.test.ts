@@ -77,6 +77,31 @@ function validateActionMutation(mutate: (action: MutableAction) => void): string
 }
 
 describe("E2E artifact uploads", () => {
+  it.each([
+    { key: "path", value: "${{ runner.temp }}/" },
+    { key: "name", value: "unscoped-result" },
+    { key: "if-no-files-found", value: "ignore" },
+    { key: "include-hidden-files", value: true },
+  ])("rejects changed receipt upload $key (#11489)", ({ key, value }) => {
+    const workflow = mutableWorkflow();
+    const upload = workflow.jobs["relevant-e2e"].steps!.find(
+      (step) => step.name === "Upload PR E2E results",
+    )!;
+    upload.with![key] = value;
+    expect(validateUploadE2eArtifactsInvocations(workflow)).toContain(
+      "relevant-e2e must not invoke actions/upload-artifact directly",
+    );
+  });
+
+  it("rejects receipt upload from another job (#11489)", () => {
+    const workflow = mutableWorkflow();
+    workflow.jobs["untrusted-reporter"] = workflow.jobs["relevant-e2e"];
+    delete workflow.jobs["relevant-e2e"];
+    expect(validateUploadE2eArtifactsInvocations(workflow)).toContain(
+      "untrusted-reporter must not invoke actions/upload-artifact directly",
+    );
+  });
+
   it("uses the shared uploader in every E2E execution job", () => {
     expect(validateUploadE2eArtifactsAction()).toEqual([]);
     expect(validateUploadE2eArtifactsInvocations(readWorkflow())).toEqual([]);
@@ -237,7 +262,7 @@ describe("E2E artifact uploads", () => {
         "shared-e2e must not declare E2E_EXECUTION_PROFILE",
         "shared-e2e must not declare E2E_JOB",
         "shared-e2e upload-e2e-artifacts invocation must not override its contract",
-        "messaging-providers upload-e2e-artifacts invocation must follow artifact producers and precede only Docker auth cleanup",
+        "messaging-providers upload-e2e-artifacts invocation must follow artifact producers and precede only native Podman restoration and Docker auth cleanup",
       ]),
     );
   });

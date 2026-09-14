@@ -75,9 +75,11 @@ export default async function run_nemoclaw_focused_repair_validation(input: {
   const files = input.files ?? inferred.files,
     tests = input.testFiles ?? inferred.targetedFiles,
     projects = input.projects ?? inferred.projects,
-    safe = /^[A-Za-z0-9_./@-]+$/;
-  if (!files.every((x) => safe.test(x)) || !tests.every((x) => safe.test(x)))
-    throw new Error("File paths contain unsupported characters");
+    safe = (file) =>
+      /^[A-Za-z0-9_.@][A-Za-z0-9_./@-]*$/.test(file) &&
+      file.split("/").every((part) => part !== "" && part !== "." && part !== "..");
+  if (!files.every(safe) || !tests.every(safe))
+    throw new Error("File paths must be normalized repository-relative paths");
   const allowed = new Set([
     "cli",
     "integration",
@@ -89,27 +91,38 @@ export default async function run_nemoclaw_focused_repair_validation(input: {
   if (!projects.every((x) => allowed.has(x))) throw new Error("Unsupported Vitest project");
   const q = (v) => "'" + String(v).replaceAll("'", "'\"'\"'") + "'",
     commands = [],
-    oxc = files.filter((f) => /\.[cm]?[jt]sx?$/.test(f));
+    oxc = files.filter((f) => /\.(cjs|cts|js|jsx|mjs|mts|ts|tsx)$/.test(f));
   if (oxc.length) {
     const mode = (input.formatWrite ?? true) ? "--write" : "--check";
-    commands.push(
-      {
-        name: "Oxfmt",
-        command:
-          "NEMOCLAW_FORMAT_BASE_REF=" +
-          q(baseRef) +
-          " bash tools/lint/format-added-files.sh " +
-          mode +
-          " " +
-          oxc.map(q).join(" "),
-        mutates: mode === "--write",
-      },
-      {
+    commands.push({
+      name: "Oxfmt",
+      command:
+        "for oxc_file in " +
+        oxc.map(q).join(" ") +
+        '; do oxc_path=$oxc_file; while [ "$oxc_path" != . ]; do ' +
+        'if [ -L "$oxc_path" ]; then printf "%s\\n" "Source paths must not contain symbolic links" >&2; exit 2; fi; ' +
+        'oxc_path=$(dirname -- "$oxc_path"); done; done; npx --no-install oxfmt ' +
+        mode +
+        " --no-error-on-unmatched-pattern -- " +
+        oxc.map(q).join(" "),
+      mutates: mode === "--write",
+    });
+    const typeAware = (file) => /^(src\/lib\/adapters\/|nemoclaw\/src\/)/.test(file);
+    const ordinary = oxc.filter((file) => !typeAware(file));
+    const typed = oxc.filter(typeAware);
+    if (ordinary.length)
+      commands.push({
         name: "Oxlint",
         command:
-          "npx --no-install oxlint --no-error-on-unmatched-pattern -- " + oxc.map(q).join(" "),
-      },
-    );
+          "npx --no-install oxlint --no-error-on-unmatched-pattern -- " + ordinary.map(q).join(" "),
+      });
+    if (typed.length)
+      commands.push({
+        name: "Oxlint type-aware",
+        command:
+          "npx --no-install oxlint --type-aware --no-error-on-unmatched-pattern -- " +
+          typed.map(q).join(" "),
+      });
   }
   if (
     input.typecheckCli === true ||

@@ -47,12 +47,14 @@ const reviewedAuditDriver = fs.readFileSync(
   path.join(repoRoot, "scripts", "audit-reviewed-npm-graph.mts"),
   "utf8",
 );
-
+const mcporterAuditHelper = fs.readFileSync(
+  path.join(repoRoot, "scripts", "lib", "verify-mcporter-audit.sh"),
+  "utf8",
+);
 function extractIntegrityGate(contents: string): string {
   const startMarker = 'MCPORTER_EXPECTED_INTEGRITY=""';
   const start = contents.indexOf(startMarker);
-  const helperMarker =
-    "node --experimental-strip-types /scripts/lib/reviewed-npm-archive.mts --verify-only";
+  const helperMarker = "node /scripts/lib/reviewed-npm-archive.mts --verify-only";
   const helperStart = contents.indexOf(helperMarker, start);
   const helperEndMarker = '--label "mcporter ${MCPORTER_VERSION}"';
   const helperEnd = contents.indexOf(helperEndMarker, helperStart) + helperEndMarker.length;
@@ -68,19 +70,6 @@ function extractIntegrityGate(contents: string): string {
     .trim();
 }
 
-function extractAuditReceiptInvocation(contents: string): string {
-  const startMarker = "node --experimental-strip-types /scripts/lib/npm-audit-receipt.mts";
-  const endMarker = "--legacy-npmjs true";
-  const start = contents.indexOf(startMarker);
-  const end = contents.indexOf(endMarker, start);
-  expect(start).toBeGreaterThanOrEqual(0);
-  expect(end).toBeGreaterThan(start);
-  return contents
-    .slice(start, end + endMarker.length)
-    .replace(/\\\s*\n/g, " ")
-    .replace(/\s+/g, " ");
-}
-
 function runIntegrityGate(contents: string, version: string) {
   const script = [
     "set -euo pipefail",
@@ -89,14 +78,14 @@ function runIntegrityGate(contents: string, version: string) {
     `MCPORTER_0_7_3_TARBALL=${JSON.stringify(expectedTarball)}`,
     `npm() { printf '%s\\n' ${JSON.stringify(expectedIntegrity)}; }`,
     "node() {",
-    '  [ "$#" -eq 11 ] && [ "${1:-}" = "--experimental-strip-types" ] || return 81',
-    '  [ "${2:-}" = "/scripts/lib/reviewed-npm-archive.mts" ] && [ "${3:-}" = "--verify-only" ] || return 82',
-    '  [ "${4:-}" = "--package-spec" ] && [ "${5:-}" = "mcporter@${MCPORTER_VERSION}" ] || return 83',
-    '  [ "${6:-}" = "--integrity" ] && [ "${7:-}" = ' +
+    '  [ "$#" -eq 10 ] || return 81',
+    '  [ "${1:-}" = "/scripts/lib/reviewed-npm-archive.mts" ] && [ "${2:-}" = "--verify-only" ] || return 82',
+    '  [ "${3:-}" = "--package-spec" ] && [ "${4:-}" = "mcporter@${MCPORTER_VERSION}" ] || return 83',
+    '  [ "${5:-}" = "--integrity" ] && [ "${6:-}" = ' +
       `${JSON.stringify(expectedIntegrity)} ] || return 84`,
-    '  [ "${8:-}" = "--tarball-url" ] && [ "${9:-}" = ' +
+    '  [ "${7:-}" = "--tarball-url" ] && [ "${8:-}" = ' +
       `${JSON.stringify(expectedTarball)} ] || return 85`,
-    '  [ "${10:-}" = "--label" ] && [ "${11:-}" = "mcporter ${MCPORTER_VERSION}" ] || return 86',
+    '  [ "${9:-}" = "--label" ] && [ "${10:-}" = "mcporter ${MCPORTER_VERSION}" ] || return 86',
     "}",
     extractIntegrityGate(contents),
     "printf 'gate-passed\\n'",
@@ -190,8 +179,8 @@ describe("mcporter image supply-chain controls", () => {
   });
 
   it.each(dockerfiles)("audits the committed dependency graph in $name", ({ contents }) => {
-    const flattenedContents = contents.replace(/\\\s*\n/g, " ").replace(/\s+/g, " ");
-    const auditReceiptInvocation = extractAuditReceiptInvocation(contents);
+    const auditContents = `${contents}\n${mcporterAuditHelper}`;
+    const flattenedContents = auditContents.replace(/\\\s*\n/g, " ").replace(/\s+/g, " ");
     expect(contents).toContain(
       "COPY ci/npm-audit-exceptions.json ci/reviewed-npm-audit.json /scripts/",
     );
@@ -204,29 +193,24 @@ describe("mcporter image supply-chain controls", () => {
         ),
     ).toBe(true);
     expect(flattenedContents).toContain(
-      "node --experimental-strip-types /scripts/lib/reviewed-npm-audit.mts --directory /usr/local/lib/nemoclaw/mcporter-runtime --exceptions /scripts/npm-audit-exceptions.json --graph mcporter-runtime --threshold high",
+      "node /scripts/lib/reviewed-npm-audit.mts --directory /usr/local/lib/nemoclaw/mcporter-runtime --exceptions /scripts/npm-audit-exceptions.json --graph mcporter-runtime --threshold high",
     );
     expect(contents).toContain("ARG NEMOCLAW_MCPORTER_AUDIT_RECEIPT_SHA256=");
+    expect(contents).toContain("ARG NEMOCLAW_MCPORTER_AUDIT_POLICY_RESULT_SHA256=");
     expect(contents).toContain(
       "--mount=type=secret,id=nemoclaw-mcporter-audit-receipt,required=false",
     );
     expect(contents).toContain(
       "--mount=type=secret,id=nemoclaw-mcporter-audit-raw-report,required=false",
     );
-    expect(flattenedContents).toContain(
-      "node --experimental-strip-types /scripts/lib/npm-audit-receipt.mts --receipt",
-    );
-    expect(flattenedContents).toContain(
-      "--package-json /usr/local/lib/nemoclaw/mcporter-runtime/package.json --package-lock /usr/local/lib/nemoclaw/mcporter-runtime/package-lock.json --raw-report",
-    );
-    expect(auditReceiptInvocation).toContain(
-      "--exceptions /scripts/npm-audit-exceptions.json --graph mcporter-runtime --audit-config /scripts/reviewed-npm-audit.json --registry https://registry.yarnpkg.com --threshold high --legacy-npmjs true",
+    expect(contents).toContain(
+      "--mount=type=secret,id=nemoclaw-mcporter-audit-policy-result,required=false",
     );
     expect(expectedReviewedNpmVersion).toMatch(/^[0-9]+\.[0-9]+\.[0-9]+$/);
-    expect(auditReceiptInvocation).not.toContain("--npm-version");
-    expect(contents).not.toContain("--raw-copy");
-    expect(auditReceiptInvocation).not.toMatch(/\bnpm\s+--version\b/);
-    expect(auditReceiptInvocation).not.toMatch(/\$\(|`/);
+    expect(auditContents).not.toContain("/scripts/lib/npm-audit-receipt.mts");
+    expect(auditContents).toContain("sha256sum --check --status");
+    expect(auditContents).toContain("policy_result_sha256");
+    expect(auditContents).not.toContain("--raw-copy");
     expect(contents).not.toContain(`${runtimePrefix} audit --omit=dev --audit-level=low`);
     expect(contents).not.toContain(`${runtimePrefix} audit signatures`);
     expect(flattenedContents).toContain(
@@ -239,9 +223,24 @@ describe("mcporter image supply-chain controls", () => {
     const contents = fs.readFileSync(path.join(repoRoot, "Dockerfile.base"), "utf8");
     const flattenedContents = contents.replace(/\\\s*\n/g, " ").replace(/\s+/g, " ");
 
-    expect(flattenedContents).toContain(
-      '--result /tmp/mcporter-npm-audit-policy.json && cp "$MCPORTER_RAW_REPORT" /tmp/mcporter-npm-audit.json;',
+    expect(contents).toContain(
+      "COPY scripts/lib/verify-mcporter-audit.sh /scripts/lib/verify-mcporter-audit.sh",
     );
+    expect(flattenedContents).toContain(
+      "NEMOCLAW_MCPORTER_AUDIT_REPORT_PATH=/tmp/mcporter-npm-audit.json NEMOCLAW_MCPORTER_AUDIT_RESULT_PATH=/tmp/mcporter-npm-audit-policy.json bash /scripts/lib/verify-mcporter-audit.sh",
+    );
+    const receiptVerification = mcporterAuditHelper.indexOf(
+      '"$receipt_sha256" "$receipt" | sha256sum --check --status',
+    );
+    const rawBinding = mcporterAuditHelper.indexOf(".rawResponseSha256");
+    const rawVerification = mcporterAuditHelper.indexOf(
+      '"$raw_report_sha256" "$raw_report" | sha256sum --check --status',
+    );
+    const reportCopy = mcporterAuditHelper.indexOf('cp -- "$raw_report" "$report_path"');
+    expect(receiptVerification).toBeGreaterThan(-1);
+    expect(rawBinding).toBeGreaterThan(receiptVerification);
+    expect(rawVerification).toBeGreaterThan(rawBinding);
+    expect(reportCopy).toBeGreaterThan(rawVerification);
   });
 
   it("verifies the exact committed dependency graph signatures in trusted CI (#8925)", () => {

@@ -24,7 +24,7 @@ NemoClaw rejects HTTP, ports, paths, credentials, and unrecognized redirect host
 If pairing reports an invalid IDC redirect host, restart the QR flow.
 If the error repeats, preserve the error text without sharing tokens or verbose diagnostics and file an issue.
 
-NemoClaw registers the token as the `<sandbox>-wechat-bridge` OpenShell provider and supplies a revision-scoped OpenShell credential placeholder inside the sandbox.
+NemoClaw registers the token as the `<sandbox>-wechat-bridge` OpenShell provider and supplies an OpenShell stable credential-handle placeholder inside the sandbox.
 The token does not land in the image or on disk inside the running container.
 
 NemoClaw writes the non-secret `WECHAT_ACCOUNT_ID`, `WECHAT_BASE_URL`, and `WECHAT_USER_ID` metadata into the image's channel configuration.

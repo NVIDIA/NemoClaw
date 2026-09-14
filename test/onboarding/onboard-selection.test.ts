@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -61,7 +60,6 @@ import { onboardChildRuntimeSource } from "../helpers/onboard-child-runtime.js";
 import { testTimeout } from "../helpers/timeouts";
 import {
   createWindowsHostOllamaRunCapture,
-  requireFailedProviderResolution,
   requirePresent,
   requireSelectedProviderResolution,
   restoreProcessEnvValue,
@@ -3012,7 +3010,7 @@ reportChildScenario(async () => {
     try {
       const { result, lines } = await captureConsoleOutput(async () => {
         try {
-          resolveNonInteractiveBuildCredential({
+          await resolveNonInteractiveBuildCredential({
             provider: "nvidia-prod",
             helpUrl: "https://build.nvidia.com/settings/api-keys",
             recoveredFromSandbox: false,
@@ -3059,7 +3057,7 @@ reportChildScenario(async () => {
     try {
       const { result, lines } = await captureConsoleOutput(async () => {
         try {
-          resolveNonInteractiveBuildCredential({
+          await resolveNonInteractiveBuildCredential({
             provider: "nvidia-prod",
             helpUrl: "https://build.nvidia.com/settings/api-keys",
             recoveredFromSandbox: false,
@@ -4082,7 +4080,7 @@ if (args[0] === "inference" && args[1] === "set") {
   process.exit(0);
 }
 if (args[0] === "provider" && args[1] === "profile" && args.includes("export")) { process.stdout.write(JSON.stringify({ id: "openai", credentials: [], endpoints: [], binaries: [], inference_capable: true })); process.exit(0); }
-if (args[0] === "provider" && args[1] === "get") { process.exit(1); } // Force provider creation.
+if (args[0] === "provider" && args[1] === "get") { process.stderr.write("provider 'compatible-endpoint' not found"); process.exit(1); } // Force provider creation.
 process.exit(0);
 `,
       { mode: 0o755 },

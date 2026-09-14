@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs, { type BigIntStats } from "node:fs";
 import path from "node:path";
@@ -9,10 +10,7 @@ import type {
   ContainerEngine,
   ContainerEngineCommandResult,
 } from "../../adapters/container-engine";
-import {
-  assertLlamaCppGgufCachePlanDigest,
-  type LlamaCppGgufCachePlan,
-} from "../../inference/llama-cpp/gguf-cache-plan";
+import { assertLlamaCppGgufCachePlanDigest } from "../../inference/llama-cpp/gguf-cache-plan";
 import {
   assertLlamaCppVerifiedLocalModelArtifact,
   buildLlamaCppRequestGuardCommandArgv,
@@ -32,7 +30,6 @@ import {
 import {
   type HostLocalCreateJournalExecutionLease,
   type HostLocalCreateJournalRecord,
-  type HostLocalCreateJournalStore,
   normalizeHostLocalCreateJournalRecord,
 } from "./host-local-create-journal";
 import type {
@@ -52,7 +49,6 @@ import {
 import {
   createPersistedEngineAuthority,
   type PersistedEngineAuthority,
-  type PersistedEngineAuthorityStore,
   requirePersistedEngineAuthority,
 } from "./persisted-engine-authority";
 
@@ -80,6 +76,10 @@ const CURL_CONNECTIVITY_FAILURE_EXIT_CODES = new Set([7, 28]);
 export type DockerLlamaCppManagedLifecycleOptions = HostLocalLlamaCppLifecycleInput;
 
 export interface DockerLlamaCppManagedLifecycleDependencies {
+  readonly hostLoopbackProbe?: (
+    url: string,
+    timeoutSeconds: number,
+  ) => ContainerEngineCommandResult;
   readonly now?: () => number;
   readonly privateBridge?: DockerLlamaCppPrivateBridgeController;
 }
@@ -915,6 +915,17 @@ function captureMutation(
   return result;
 }
 
+function captureHostProbe(
+  options: DockerLlamaCppManagedLifecycleOptions,
+  lease: HostLocalCreateJournalExecutionLease,
+  execute: () => ContainerEngineCommandResult,
+): ContainerEngineCommandResult {
+  options.journalStore.assertExecution(lease);
+  const result = execute();
+  options.journalStore.assertExecution(lease);
+  return result;
+}
+
 function probeReady(
   options: DockerLlamaCppManagedLifecycleOptions,
   lease: HostLocalCreateJournalExecutionLease,
@@ -980,6 +991,27 @@ function privateBridgeAuthority(
   });
 }
 
+function probePrivateLoopbackFromHost(
+  url: string,
+  timeoutSeconds: number,
+): ContainerEngineCommandResult {
+  const spawned = spawnSync(
+    process.execPath,
+    [
+      path.join(__dirname, "docker-llama-cpp-private-bridge-probe-process.js"),
+      url,
+      String(timeoutSeconds),
+    ],
+    { timeout: timeoutSeconds * 1_000 + INSPECT_TIMEOUT_MS },
+  );
+  return {
+    status: typeof spawned.status === "number" ? spawned.status : 1,
+    stdout: String(spawned.stdout ?? ""),
+    stderr: String(spawned.stderr ?? ""),
+    ...(spawned.error ? { error: spawned.error } : {}),
+  };
+}
+
 function probePrivateBridge(
   options: DockerLlamaCppManagedLifecycleOptions,
   bridge: DockerLlamaCppPrivateBridgeController,
@@ -987,6 +1019,7 @@ function probePrivateBridge(
   container: DockerContainerInspection,
   lease: HostLocalCreateJournalExecutionLease,
   execution: MutationExecutionState,
+  hostLoopbackProbe: (url: string, timeoutSeconds: number) => ContainerEngineCommandResult,
 ): void {
   const gateway = inspectGatewayBridge(options.engine);
   const authority = privateBridgeAuthority(options, journal, container, gateway);
@@ -1011,25 +1044,28 @@ function probePrivateBridge(
   ];
   bridge.assertRunning(authority);
   options.journalStore.assertExecution(lease);
+  const loopbackUrl = `http://127.0.0.1:${String(options.bindings.hostPort)}/health`;
   requireSuccess(
     "private loopback bridge probe",
-    captureMutation(
-      options,
-      lease,
-      execution,
-      [
-        "run",
-        "--rm",
-        "--pull=never",
-        "--network",
-        "host",
-        "--entrypoint",
-        "curl",
-        options.probeImageReference,
-        ...curlArguments(`http://127.0.0.1:${String(options.bindings.hostPort)}/health`),
-      ],
-      timeoutSeconds * 1_000 + INSPECT_TIMEOUT_MS,
-    ),
+    options.loopbackProbe === "host-process"
+      ? captureHostProbe(options, lease, () => hostLoopbackProbe(loopbackUrl, timeoutSeconds))
+      : captureMutation(
+          options,
+          lease,
+          execution,
+          [
+            "run",
+            "--rm",
+            "--pull=never",
+            "--network",
+            "host",
+            "--entrypoint",
+            "curl",
+            options.probeImageReference,
+            ...curlArguments(loopbackUrl),
+          ],
+          timeoutSeconds * 1_000 + INSPECT_TIMEOUT_MS,
+        ),
   );
   const sandboxProbe = captureMutation(
     options,
@@ -1338,6 +1374,7 @@ export function createDockerLlamaCppManagedLifecycle(
   readinessTimeoutSeconds(options);
   const qualifiedAuthority = qualifyEngine(options);
   const privateBridge = dependencies.privateBridge ?? createDockerLlamaCppPrivateBridgeController();
+  const hostLoopbackProbe = dependencies.hostLoopbackProbe ?? probePrivateLoopbackFromHost;
 
   const authorizeStaticReceipt = (value: HostLocalInferenceReceipt) => {
     const receipt = normalizeHostLocalInferenceReceipt(value);
@@ -1552,6 +1589,7 @@ export function createDockerLlamaCppManagedLifecycle(
           inspected.container,
           lease,
           execution,
+          hostLoopbackProbe,
         );
         assertModelFilesystemAuthority(options);
         assertApiKeyFileIdentity(options, activeKeyIdentity);
@@ -1694,6 +1732,7 @@ export function createDockerLlamaCppManagedLifecycle(
           inspected.container,
           lease,
           execution,
+          hostLoopbackProbe,
         );
         assertModelFilesystemAuthority(options);
         assertApiKeyFileIdentity(options, activeKeyIdentity);
@@ -1851,7 +1890,15 @@ export function createDockerLlamaCppManagedLifecycle(
         assertApiKeyIdentity(options, startingKeyIdentity, startingApiKeyRootIdentitySha256);
         requireExactNetwork(options, network.id, transactionId);
         probeReady(options, lease, execution);
-        probePrivateBridge(options, privateBridge, journal, started, lease, execution);
+        probePrivateBridge(
+          options,
+          privateBridge,
+          journal,
+          started,
+          lease,
+          execution,
+          hostLoopbackProbe,
+        );
         assertModelFilesystemAuthority(options);
         assertApiKeyIdentity(options, startingKeyIdentity, startingApiKeyRootIdentitySha256);
         requireExactNetwork(options, network.id, transactionId);
@@ -1982,6 +2029,7 @@ export function createDockerLlamaCppManagedLifecycle(
               inspected.container,
               lease,
               execution,
+              hostLoopbackProbe,
             );
             assertModelFilesystemAuthority(options);
             assertApiKeyFileIdentity(options, activeKeyIdentity);

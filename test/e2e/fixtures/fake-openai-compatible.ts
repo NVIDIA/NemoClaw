@@ -172,7 +172,7 @@ export async function startFakeOpenAiCompatibleServer(
   const host = options.host ?? "127.0.0.1";
   let child: ChildProcess;
   try {
-    child = spawnObservedChild(process.execPath, ["--experimental-strip-types", SERVER_SCRIPT], {
+    child = spawnObservedChild(process.execPath, [SERVER_SCRIPT], {
       activityLabel: "command: fake-openai-compatible-server",
       progress: options.progress,
       spawn: {

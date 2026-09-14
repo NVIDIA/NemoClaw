@@ -21,6 +21,7 @@ import { executeSandboxDestroy } from "../../actions/sandbox/destroy-execution";
 import { SANDBOX_DESTROY_TIMEOUT_MS } from "../../actions/sandbox/destroy-gateway";
 import { startSandbox } from "../../actions/sandbox/start";
 import { stopSandbox } from "../../actions/sandbox/stop";
+import { withCurrentPortableHostFence } from "../../state/portable-uninstall-retirement";
 import { loadAgent } from "../../agent/defs";
 import type { SandboxEntry, SandboxWorkloadReceipt } from "../../state/registry/types";
 import { cloneSandboxWorkloadReceipt } from "../../state/registry/workload";
@@ -443,10 +444,10 @@ describe("RuntimeProviderBundle registry contract", () => {
     ],
     [
       "gateway",
-      (bundle: RuntimeProviderBundle) => ({
-        ...bundle.gateway,
-        launcher: "invalid",
-      }),
+      (bundle: RuntimeProviderBundle) => {
+        const { observeHostRuntime: _observeHostRuntime, ...incomplete } = bundle.gateway;
+        return incomplete;
+      },
     ],
     [
       "workload",
@@ -692,6 +693,47 @@ describe("RuntimeProviderBundle registry contract", () => {
     expect(CURRENT_RUNTIME_PROVIDER_BUNDLES.podman?.gateway.ownsHostReadiness).toBe(true);
   });
 
+  it("requires provider-owned readiness observation from a gateway readiness owner (#10984)", () => {
+    const bundle = CURRENT_RUNTIME_PROVIDER_BUNDLES.podman!;
+    const { observeOwnedGateway: _observeOwnedGateway, ...gatewayWithoutObservation } =
+      bundle.gateway;
+
+    expect(() =>
+      createRuntimeProviderBundleRegistry([
+        ["podman", replaceSurface(bundle, "gateway", gatewayWithoutObservation)],
+      ]),
+    ).toThrow(/gateway\.observeOwnedGateway must be a function/u);
+  });
+
+  it("rejects provider-owned readiness observation from a non-owning gateway (#10984)", () => {
+    const bundle = mxcBundle();
+    expect(() =>
+      createRuntimeProviderBundleRegistry([
+        [
+          "mxc",
+          replaceSurface(bundle, "gateway", {
+            ...bundle.gateway,
+            observeOwnedGateway: vi.fn(),
+          }),
+        ],
+      ]),
+    ).toThrow(/observeOwnedGateway requires gateway\.ownsHostReadiness/u);
+  });
+
+  it.each(["observeHostRuntime", "prepareHostRuntime"] as const)(
+    "rejects a gateway surface without %s",
+    (method) => {
+      const bundle = mxcBundle();
+      const { [method]: _missing, ...incomplete } = bundle.gateway;
+
+      expect(() =>
+        createRuntimeProviderBundleRegistry([
+          ["mxc", replaceSurface(bundle, "gateway", incomplete)],
+        ]),
+      ).toThrow(new RegExp(`gateway\\.${method} must be a function`, "u"));
+    },
+  );
+
   it("rejects an unsupported host-local-inference capability with an actionable provider error", () => {
     const bundle = mxcBundle();
 
@@ -909,7 +951,7 @@ describe("sandbox workload ownership receipt", () => {
     const canonicalProfile = Buffer.from(ENCODED_PROFILE, "base64url").toString("utf8");
     const encodedProfile = Buffer.from(
       canonicalProfile.replace(
-        `"model":${JSON.stringify(profile.inference.model)}`,
+        `"model":${JSON.stringify(profile.inference!.model)}`,
         `"model":"nvapi-${"a".repeat(32)}"`,
       ),
       "utf8",
@@ -1073,6 +1115,7 @@ describe("socket-free MXC action contract", () => {
       });
       state.workloads.add(imageTag);
       const getSandbox = vi.fn(() => entry);
+      const updateSandbox = vi.fn(() => true);
       const stopSandboxChannels = vi.fn();
       const teardownSandboxDashboardForward = vi.fn();
       const runOpenshell = vi.fn(() => ({ status: 0, stdout: "", stderr: "" }));
@@ -1080,20 +1123,24 @@ describe("socket-free MXC action contract", () => {
       await expect(
         startSandbox(sandboxName, {
           getSandbox,
+          updateSandbox,
           runtimeProviders: providers,
           log: vi.fn(),
         }),
       ).resolves.toEqual({ exitCode: 0 });
-      expect(
-        stopSandbox(sandboxName, {
-          getSandbox,
-          runtimeProviders: providers,
-          stopSandboxChannels,
-          teardownSandboxDashboardForward,
-          log: vi.fn(),
-          warn: vi.fn(),
-        }),
-      ).toEqual({ exitCode: 0 });
+      await expect(
+        withCurrentPortableHostFence(() =>
+          stopSandbox(sandboxName, {
+            getSandbox,
+            updateSandbox,
+            runtimeProviders: providers,
+            stopSandboxChannels,
+            teardownSandboxDashboardForward,
+            log: vi.fn(),
+            warn: vi.fn(),
+          }),
+        ),
+      ).resolves.toEqual({ exitCode: 0 });
       expect(() => requireInferenceSetRuntimeAuthority(entry, providers)).not.toThrow();
       await expect(
         executeSandboxDestroy({

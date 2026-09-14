@@ -45,6 +45,7 @@ export interface GatewayRecoveryOrchestrationDeps {
     gpu: OnboardGpu,
     options: {
       exitOnFailure: false;
+      output?: StartGatewayForRecoveryOptions["output"];
       runtimeSelection?: StartGatewayForRecoveryOptions["runtimeSelection"];
     },
   ): Promise<void>;

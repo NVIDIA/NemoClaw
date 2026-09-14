@@ -8,7 +8,13 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-const START_SCRIPT = path.join(import.meta.dirname, "..", "../../..", "scripts", "nemoclaw-start.sh");
+const START_SCRIPT = path.join(
+  import.meta.dirname,
+  "..",
+  "../../..",
+  "scripts",
+  "nemoclaw-start.sh",
+);
 
 // Extracts a shell function body (including heredocs) from the start script so
 // the real helper can be exercised in isolation.
@@ -310,94 +316,94 @@ describe("nemoclaw-start in-container gateway healthcheck marker (#4503, #4710)"
   it.each([
     { label: "root launch helper", launchFunction: "launch_openclaw_gateway" },
     { label: "non-root launch helper", launchFunction: "launch_openclaw_gateway_non_root" },
-  ])("clears the marker when $label exits before recording PID identity (#4952)", ({
-    launchFunction,
-  }) => {
-    const src = fs.readFileSync(START_SCRIPT, "utf-8");
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gw-early-exit-"));
-    const markerPath = path.join(tmpDir, "nemoclaw-gateway-local");
+  ])(
+    "clears the marker when $label exits before recording PID identity (#4952)",
+    ({ launchFunction }) => {
+      const src = fs.readFileSync(START_SCRIPT, "utf-8");
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gw-early-exit-"));
+      const markerPath = path.join(tmpDir, "nemoclaw-gateway-local");
 
-    try {
-      const script = [
-        "#!/usr/bin/env bash",
-        "set -euo pipefail",
-        safeTmpHelpers(src),
-        extractShellFunctionFromSource(src, "mark_in_container_gateway").replaceAll(
-          "/tmp/nemoclaw-gateway-local",
-          markerPath,
-        ),
-        extractShellFunctionFromSource(src, "clear_in_container_gateway_marker").replaceAll(
-          "/tmp/nemoclaw-gateway-local",
-          markerPath,
-        ),
-        extractShellFunctionFromSource(src, "arm_openclaw_gateway_supervisor_cleanup"),
-        extractShellFunctionFromSource(src, "launch_openclaw_gateway_process"),
-        extractShellFunctionFromSource(src, launchFunction),
-        "cleanup_openclaw_on_signal() { exit 143; }",
-        "STEP_DOWN_PREFIX_GATEWAY=(env)",
-        "OPENCLAW=/bin/true",
-        "_DASHBOARD_PORT=18789",
-        "GATEWAY_PID=0",
-        "GATEWAY_PID_START_IDENTITY=",
-        "GATEWAY_PID_FILE=",
-        "capture_openclaw_pid_start_identity() { return 1; }",
-        "record_gateway_pid() { :; }",
-        "clear_gateway_pid_record() { :; }",
-        launchFunction,
-      ].join("\n");
-      const result = spawnSync("bash", ["-c", script], {
-        encoding: "utf-8",
-        timeout: 5000,
-      });
-      expect(result.status).toBe(1);
-      expect(fs.existsSync(markerPath)).toBe(false);
-    } finally {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-    }
-  });
+      try {
+        const script = [
+          "#!/usr/bin/env bash",
+          "set -euo pipefail",
+          safeTmpHelpers(src),
+          extractShellFunctionFromSource(src, "mark_in_container_gateway").replaceAll(
+            "/tmp/nemoclaw-gateway-local",
+            markerPath,
+          ),
+          extractShellFunctionFromSource(src, "clear_in_container_gateway_marker").replaceAll(
+            "/tmp/nemoclaw-gateway-local",
+            markerPath,
+          ),
+          extractShellFunctionFromSource(src, "arm_openclaw_gateway_supervisor_cleanup"),
+          extractShellFunctionFromSource(src, "launch_openclaw_gateway_process"),
+          extractShellFunctionFromSource(src, launchFunction),
+          "cleanup_openclaw_on_signal() { exit 143; }",
+          "STEP_DOWN_PREFIX_GATEWAY=(env)",
+          "OPENCLAW=/bin/true",
+          "_DASHBOARD_PORT=18789",
+          "GATEWAY_PID=0",
+          "GATEWAY_PID_START_IDENTITY=",
+          "GATEWAY_PID_FILE=",
+          "capture_openclaw_pid_start_identity() { return 1; }",
+          "record_gateway_pid() { :; }",
+          "clear_gateway_pid_record() { :; }",
+          launchFunction,
+        ].join("\n");
+        const result = spawnSync("bash", ["-c", script], {
+          encoding: "utf-8",
+          timeout: 5000,
+        });
+        expect(result.status).toBe(1);
+        expect(fs.existsSync(markerPath)).toBe(false);
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    },
+  );
 
   it.each([
     { label: "non-root", signal: "TERM", exitCode: 143 },
     { label: "non-root", signal: "INT", exitCode: 130 },
     { label: "root", signal: "TERM", exitCode: 143 },
     { label: "root", signal: "INT", exitCode: 130 },
-  ])("arms $signal cleanup before the $label marker write (#4952)", ({
-    label,
-    signal,
-    exitCode,
-  }) => {
-    const src = fs.readFileSync(START_SCRIPT, "utf-8");
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gw-early-signal-"));
-    const markerPath = path.join(tmpDir, "nemoclaw-gateway-local");
-    const clearFn = extractShellFunctionFromSource(
-      src,
-      "clear_in_container_gateway_marker",
-    ).replaceAll("/tmp/nemoclaw-gateway-local", markerPath);
-    const launchFunction =
-      label === "root" ? "launch_openclaw_gateway" : "launch_openclaw_gateway_non_root";
+  ])(
+    "arms $signal cleanup before the $label marker write (#4952)",
+    ({ label, signal, exitCode }) => {
+      const src = fs.readFileSync(START_SCRIPT, "utf-8");
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gw-early-signal-"));
+      const markerPath = path.join(tmpDir, "nemoclaw-gateway-local");
+      const clearFn = extractShellFunctionFromSource(
+        src,
+        "clear_in_container_gateway_marker",
+      ).replaceAll("/tmp/nemoclaw-gateway-local", markerPath);
+      const launchFunction =
+        label === "root" ? "launch_openclaw_gateway" : "launch_openclaw_gateway_non_root";
 
-    try {
-      const script = [
-        "#!/usr/bin/env bash",
-        "set -euo pipefail",
-        clearFn,
-        extractShellFunctionFromSource(src, "arm_openclaw_gateway_supervisor_cleanup"),
-        extractShellFunctionFromSource(src, "launch_openclaw_gateway_process"),
-        extractShellFunctionFromSource(src, launchFunction),
-        `cleanup_openclaw_on_signal() { exit ${exitCode}; }`,
-        `mark_in_container_gateway() { : > ${JSON.stringify(markerPath)}; kill -${signal} $$; }`,
-        "STEP_DOWN_PREFIX_GATEWAY=(env)",
-        "OPENCLAW=/bin/true",
-        "_DASHBOARD_PORT=18789",
-        launchFunction,
-      ].join("\n");
-      const result = spawnSync("bash", ["-c", script], { encoding: "utf-8", timeout: 5000 });
-      expect(result.status, result.stderr).toBe(exitCode);
-      expect(fs.existsSync(markerPath)).toBe(false);
-    } finally {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-    }
-  });
+      try {
+        const script = [
+          "#!/usr/bin/env bash",
+          "set -euo pipefail",
+          clearFn,
+          extractShellFunctionFromSource(src, "arm_openclaw_gateway_supervisor_cleanup"),
+          extractShellFunctionFromSource(src, "launch_openclaw_gateway_process"),
+          extractShellFunctionFromSource(src, launchFunction),
+          `cleanup_openclaw_on_signal() { exit ${exitCode}; }`,
+          `mark_in_container_gateway() { : > ${JSON.stringify(markerPath)}; kill -${signal} $$; }`,
+          "STEP_DOWN_PREFIX_GATEWAY=(env)",
+          "OPENCLAW=/bin/true",
+          "_DASHBOARD_PORT=18789",
+          launchFunction,
+        ].join("\n");
+        const result = spawnSync("bash", ["-c", script], { encoding: "utf-8", timeout: 5000 });
+        expect(result.status, result.stderr).toBe(exitCode);
+        expect(fs.existsSync(markerPath)).toBe(false);
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    },
+  );
 
   // Exercises the real exit-trap wiring, not just the helper: registers the
   // same `trap clear_in_container_gateway_marker EXIT` the supervisor installs,
