@@ -164,23 +164,6 @@ type CachedFreeStandingJobsInventory = {
 
 const SELECTOR_PATTERN = /^[A-Za-z0-9_-]+(,[A-Za-z0-9_-]+)*$/;
 const SELECTOR_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
-export const RETIRED_CONTROLLER_SELECTOR_IDS = [
-  "credential-migration",
-  "credential-sanitization",
-  "diagnostics",
-  "docs-validation",
-  "gateway-drift-preflight",
-  "gateway-health-honest",
-  "onboard-negative-paths",
-  "openshell-version-pin",
-  "sandbox-rebuild",
-  "ubuntu-repo-cli-smoke",
-  "upgrade-stale-sandbox",
-] as const;
-export const RETIRED_CONTROLLER_TARGET_SELECTOR_IDS = [
-  "sandbox-rebuild",
-  "upgrade-stale-sandbox",
-] as const;
 const LIVE_TEST_FILE_PATTERN = /test\/e2e\/live\/(?:[A-Za-z0-9._-]+\/)*[A-Za-z0-9._-]+\.test\.ts/g;
 const FREE_STANDING_JOB_MARKER = "E2E_JOB";
 const FREE_STANDING_TARGET_MARKER = "E2E_TARGET_ID";
@@ -278,22 +261,7 @@ const CATALOGUE_ROUTED_JOB_NAMES = [
 ] as const;
 const CATALOGUE_RUNNER_EXPRESSION =
   "${{ matrix.runner_key != '' && fromJSON(needs.generate-matrix.outputs.runner_routing)[matrix.runner_key] || matrix.runner }}";
-const COMMON_EGRESS_AGENT_SCENARIO_MATRIX = {
-  include: [
-    {
-      scenario: "openclaw-balanced-weather",
-      selector: "^common-egress.+C1.+$",
-    },
-    {
-      scenario: "openclaw-open-reference",
-      selector: "^common-egress.+C2.+$",
-    },
-    {
-      scenario: "hermes-open-reference",
-      selector: "^common-egress.+C3.+$",
-    },
-  ],
-} as const;
+
 const ROUTED_JOB_NAMES = new Set([
   ...Object.keys(ROUTED_JOB_RUNNER_EXPRESSIONS),
   ...Object.keys(MATRIX_ROUTED_JOB_RUNNER_EXPRESSIONS),
@@ -991,35 +959,6 @@ function requireJobStep(
   return step;
 }
 
-function requireDockerEngineRebuilds(
-  errors: string[],
-  jobName: string,
-  jobEnv: WorkflowRecord,
-  steps: readonly WorkflowStep[],
-): void {
-  const hasSeparateCacheBuilder = steps.some((step) => {
-    const uses = stringValue(step.uses);
-    return (
-      uses.startsWith("docker/setup-buildx-action@") || uses.startsWith("docker/build-push-action@")
-    );
-  });
-  const routesBuildsAwayFromDocker = steps.some((step) => {
-    const run = stringValue(step.run);
-    return (
-      Object.hasOwn(asRecord(step.env), "BUILDX_BUILDER") ||
-      /BUILDX_BUILDER(?:=|<<)/u.test(run) ||
-      /docker\s+buildx\s+use(?:\s|$)/u.test(run)
-    );
-  });
-  if (
-    Object.hasOwn(jobEnv, "BUILDX_BUILDER") ||
-    hasSeparateCacheBuilder ||
-    routesBuildsAwayFromDocker
-  ) {
-    errors.push(`${jobName} must keep rebuild builds on the Docker engine cache`);
-  }
-}
-
 function requireRunContains(
   errors: string[],
   step: WorkflowStep | undefined,
@@ -1579,15 +1518,6 @@ function validateSharedE2eJob(errors: string[], jobs: WorkflowRecord): void {
   );
   requireRunContains(errors, runVitest, `--tags-filter=${CREDENTIAL_FREE_TEST_TAG}`);
   requireRunContains(errors, runVitest, "--reporter=test/e2e/risk-signal-reporter.ts");
-}
-
-function requireNoDockerHubAuthInRun(errors: string[], owner: string, runScript: string): void {
-  if (!runScript) return;
-  const usesDockerLogin = /\bdocker\s+login\b/i.test(runScript);
-  const referencesSecret = /\bsecrets\.[A-Za-z0-9_]+\b|\$\{\{\s*secrets\.[^}]+\}\}/.test(runScript);
-  if (usesDockerLogin || referencesSecret) {
-    errors.push(`${owner} run script must not use docker login or inline secret interpolation`);
-  }
 }
 
 function requireCanonicalDockerHubAuthRun(
@@ -2518,65 +2448,6 @@ function validateStagingBrevLaunchableInput(
   }
 }
 
-function validateRetiredSelectorCompatibilityJob(errors: string[], jobs: WorkflowRecord): void {
-  const job = asRecord(jobs["retired-selector-compatibility"]);
-  if (Object.keys(job).length === 0) {
-    errors.push("workflow missing retired-selector-compatibility job");
-    return;
-  }
-  const jobSelectorGate = RETIRED_CONTROLLER_SELECTOR_IDS.map(
-    (id) => `contains(format(',{0},', inputs.jobs), ',${id},')`,
-  ).join(" || ");
-  const targetSelectorGate = RETIRED_CONTROLLER_TARGET_SELECTOR_IDS.map(
-    (id) => `contains(format(',{0},', inputs.targets), ',${id},')`,
-  ).join(" || ");
-  const expectedIf = `\${{ inputs.checkout_sha != '' && (${jobSelectorGate} || ${targetSelectorGate}) }}`;
-  if (job.if !== expectedIf) {
-    errors.push(
-      "retired-selector-compatibility job selector gate must match retired selector contract",
-    );
-  }
-
-  const steps = asSteps(job.steps);
-  const checkout = steps.find((step) => stringValue(step.uses).startsWith("actions/checkout@"));
-  if (!checkout) {
-    errors.push("retired-selector-compatibility job must check out the candidate revision");
-  } else {
-    requireFullShaAction(errors, checkout, "retired-selector-compatibility checkout");
-    const checkoutWith = asRecord(checkout.with);
-    if (
-      checkoutWith.repository !== "${{ inputs.checkout_repository || github.repository }}" ||
-      checkoutWith.ref !== "${{ inputs.checkout_sha || github.sha }}" ||
-      checkoutWith["persist-credentials"] !== false
-    ) {
-      errors.push("retired-selector-compatibility job must check out the candidate revision");
-    }
-  }
-
-  const verify = namedStep(steps, "Verify retired selector replacements");
-  if (
-    stringValue(verify?.run) !== "npx tsx tools/e2e/retired-selector-compatibility.mts" ||
-    asRecord(verify?.env).JOBS !== "${{ inputs.jobs }}"
-  ) {
-    errors.push("retired-selector-compatibility job must invoke the replacement helper");
-  }
-  if (asRecord(verify?.env).TARGETS !== "${{ inputs.targets }}") {
-    errors.push("retired-selector-compatibility job must forward target selectors");
-  }
-
-  const upload = namedStep(steps, "Upload retired selector compatibility evidence");
-  if (
-    upload?.if !== "always()" ||
-    upload?.uses !== UPLOAD_E2E_ARTIFACTS_ACTION ||
-    !isDeepStrictEqual(asRecord(upload?.with), {
-      name: "e2e-retired-selector-compatibility",
-      path: "e2e-artifacts/live/retired-selector-compatibility/",
-    })
-  ) {
-    errors.push("retired-selector-compatibility job must upload compatibility evidence");
-  }
-}
-
 /** Appends violations that could detach a dispatch receipt from its trusted source and selection. */
 function validateTrustedE2eDispatchReceipt(
   errors: string[],
@@ -2873,7 +2744,6 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   if (Object.hasOwn(jobs, "openshell-gateway-upgrade")) {
     errors.push("workflow must not define superseded openshell-gateway-upgrade job");
   }
-  validateRetiredSelectorCompatibilityJob(errors, jobs);
   const expectedRunName =
     "${{ inputs.checkout_sha != '' && format('E2E PR #{0} ({1})', inputs.pr_number, inputs.correlation_id) || inputs.correlation_id != '' && inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '' && !inputs.allow_jetson_dispatch && format('E2E full {0} ({1})', github.ref_name, inputs.correlation_id) || inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '' && !inputs.allow_jetson_dispatch && format('E2E full {0}', github.ref_name) || inputs.correlation_id != '' && format('E2E {0} ({1})', github.ref_name, inputs.correlation_id) || format('E2E {0}', github.ref_name) }}";
   if (workflow["run-name"] !== expectedRunName) {

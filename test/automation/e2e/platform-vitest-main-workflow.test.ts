@@ -4,7 +4,6 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  readRepoText,
   readYaml,
   type Workflow,
   type WorkflowJob,
@@ -12,10 +11,8 @@ import {
 } from "../../helpers/e2e-workflow-contract";
 
 const WORKFLOW_PATH = ".github/workflows/platform-vitest-main.yaml";
-const WSL_HELPER_PATH = "tools/wsl/ci-helper.ps1";
-const MACOS_REQUIREMENTS_PATH = "ci/platform-vitest-macos-requirements.lock";
+
 const workflow = readYaml<Workflow>(WORKFLOW_PATH);
-const wslHelperSource = readRepoText(WSL_HELPER_PATH);
 
 function job(name: string): WorkflowJob {
   const candidate = workflow.jobs[name];

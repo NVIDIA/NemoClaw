@@ -99,6 +99,7 @@ describe("sandbox base-image pinned platform digest resolution", () => {
   });
 
   it("returns a Dockerfile-pinned platform digest from the resolver path", () => {
+    const validateImage = vi.fn(() => true);
     dockerMocks.imageInspect.mockImplementation((ref: string) => ({
       status: ref === REF || ref === PLATFORM_REF ? 0 : 1,
     }));
@@ -123,6 +124,7 @@ describe("sandbox base-image pinned platform digest resolution", () => {
       ...resolutionOptions(),
       pinnedRemoteRef: REF,
       requirePinnedRemoteRef: true,
+      validateImage,
     });
 
     expect(resolved).toEqual({
@@ -144,6 +146,10 @@ describe("sandbox base-image pinned platform digest resolution", () => {
     });
     expect(dockerMocks.imageInspectFormat).toHaveBeenCalledWith("{{json .RepoDigests}}", REF, {
       ignoreError: true,
+    });
+    expect(validateImage).toHaveBeenCalledWith(REF, {
+      source: "pinned",
+      pinnedRemoteRef: REF,
     });
     expect(dockerMocks.build).not.toHaveBeenCalled();
   });

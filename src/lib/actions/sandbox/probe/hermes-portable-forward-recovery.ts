@@ -1,13 +1,20 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { setTimeout as delay } from "node:timers/promises";
+import { constants as osConstants } from "node:os";
+
+import { createOpenShellOperationDeadline } from "../../../adapters/openshell/operation-deadline";
+
 import { isLocalForwardReachable } from "../forward-health";
 import {
   createForwardServiceTarget,
+  ForwardServiceEarlyExitError,
   ForwardServiceStartupCleanupError,
   isForwardServiceListenerOwner,
   launchForwardService,
   type ForwardServiceLaunchOptions,
+  type ForwardServiceOwnerOptions,
   type ForwardServiceTarget,
 } from "../../../adapters/openshell/forward-service";
 
@@ -68,6 +75,7 @@ export type HermesPortableForwardRecoveryContext =
       readonly cause: "forward-mutation-failed";
       readonly operation: "start" | "stop";
       readonly port: number;
+      readonly startupFailure?: string;
     }
   | { readonly cause: "port-occupied"; readonly port: number };
 
@@ -86,14 +94,17 @@ export interface HermesPortableForwardRecoveryDeps {
   readonly captureCurrentList: (args: readonly string[], timeout: number) => CommandResult;
   readonly captureRollbackList: (args: readonly string[], timeout: number) => CommandResult;
   readonly runCurrentMutation: (args: readonly string[], timeout: number) => MutationResult;
-  readonly isForwardServiceOwner?: (target: ForwardServiceTarget) => boolean;
+  readonly isForwardServiceOwner?: (
+    target: ForwardServiceTarget,
+    options?: ForwardServiceOwnerOptions,
+  ) => boolean;
   readonly launchForwardService?: (
     target: ForwardServiceTarget,
     options: ForwardServiceLaunchOptions,
-  ) => void;
+  ) => void | Promise<void>;
   readonly isPortReachable?: (port: number, timeoutMs?: number) => boolean;
   readonly now?: () => number;
-  readonly sleep?: (milliseconds: number) => void;
+  readonly sleep?: (milliseconds: number) => void | Promise<void>;
 }
 
 export interface HermesPortableForwardRecoveryInput {
@@ -153,6 +164,7 @@ function safeTimingNow(now: () => number): number | null {
 function createForwardTimingRecorder(timing?: HermesPortableForwardRecoveryTiming): {
   readonly finish: (result: HermesPortableForwardRecoveryTimingEvidence["result"]) => void;
   readonly measure: <T>(stage: ForwardTimingStage, operation: () => T) => T;
+  readonly measureAsync: <T>(stage: ForwardTimingStage, operation: () => Promise<T>) => Promise<T>;
 } {
   const now = timing?.now ?? (() => performance.now());
   const startedAt = safeTimingNow(now);
@@ -170,6 +182,21 @@ function createForwardTimingRecorder(timing?: HermesPortableForwardRecoveryTimin
       counts.set(stage, (counts.get(stage) ?? 0) + 1);
       try {
         return operation();
+      } finally {
+        durations.set(
+          stage,
+          Math.min(
+            9_999_999,
+            (durations.get(stage) ?? 0) + elapsed(stageStartedAt, safeTimingNow(now)),
+          ),
+        );
+      }
+    },
+    async measureAsync<T>(stage: ForwardTimingStage, operation: () => Promise<T>): Promise<T> {
+      const stageStartedAt = safeTimingNow(now);
+      counts.set(stage, (counts.get(stage) ?? 0) + 1);
+      try {
+        return await operation();
       } finally {
         durations.set(
           stage,
@@ -334,8 +361,7 @@ function captureForwardEntries(
   input: HermesPortableForwardRecoveryInput,
   rollback: boolean,
   timing?: ReturnType<typeof createForwardTimingRecorder>,
-  deadline?: number,
-  now: () => number = input.deps.now ?? Date.now,
+  budget?: (maximumMs: number) => number,
 ): StrictForwardEntry[] {
   requireCurrent(input, rollback);
   let result: CommandResult;
@@ -344,12 +370,7 @@ function captureForwardEntries(
     const operation = () =>
       capture(
         ["forward", "list", "--gateway", input.gatewayName],
-        remainingBudget(
-          deadline,
-          now,
-          input.probeTimeoutMs,
-          rollback ? undefined : { cause: "forward-settlement-timed-out" },
-        ),
+        budget?.(input.probeTimeoutMs) ?? input.probeTimeoutMs,
       );
     result = timing ? timing.measure("list", operation) : operation();
   } catch (error) {
@@ -380,10 +401,9 @@ function observeForwards(
   input: HermesPortableForwardRecoveryInput,
   rollback: boolean,
   timing?: ReturnType<typeof createForwardTimingRecorder>,
-  deadline?: number,
-  now: () => number = input.deps.now ?? Date.now,
+  budget?: (maximumMs: number) => number,
 ): ForwardObservation {
-  const listedEntries = captureForwardEntries(input, rollback, timing, deadline, now);
+  const listedEntries = captureForwardEntries(input, rollback, timing, budget);
   const entries = new Map<number, StrictForwardEntry>();
   const states = new Map<number, ForwardState>();
   const reachable = input.deps.isPortReachable ?? isLocalForwardReachable;
@@ -404,15 +424,7 @@ function observeForwards(
     requireCurrent(input, rollback);
     let portReachable: boolean;
     try {
-      portReachable = reachable(
-        port,
-        remainingBudget(
-          deadline,
-          now,
-          input.probeTimeoutMs,
-          rollback ? undefined : { cause: "forward-settlement-timed-out" },
-        ),
-      );
+      portReachable = reachable(port, budget?.(input.probeTimeoutMs) ?? input.probeTimeoutMs);
     } catch (error) {
       if (error instanceof HermesPortableForwardRecoveryError) throw error;
       failure(
@@ -430,11 +442,13 @@ function observeForwards(
     try {
       exactOwner = (input.deps.isForwardServiceOwner ?? isForwardServiceListenerOwner)(
         forwardServiceTarget(input, port),
+        { remainingMs: budget },
       );
     } catch {
       exactOwner = false;
     }
     requireCurrent(input, rollback);
+    budget?.(1);
     states.set(port, exactOwner ? "healthy" : "occupied");
   }
   return { entries, states };
@@ -467,46 +481,75 @@ function requireNoOccupied(states: Map<number, ForwardState>): void {
   }
 }
 
-function invokeForwardServiceLaunch(
+async function invokeForwardServiceLaunch(
   input: HermesPortableForwardRecoveryInput,
   port: number,
   timing: ReturnType<typeof createForwardTimingRecorder>,
-): void {
+  remaining: (maximumMs: number) => number,
+): Promise<void> {
   requireCurrent(input, false);
   const reachable = input.deps.isPortReachable ?? isLocalForwardReachable;
   const target = forwardServiceTarget(input, port);
   let readinessVerified = false;
   try {
-    timing.measure("start", () =>
-      (input.deps.launchForwardService ?? launchForwardService)(target, {
-        isReachable: (candidatePort) => reachable(candidatePort, input.probeTimeoutMs),
-        sourceEnvironment: input.forwardService.sourceEnvironment,
-        timeoutMs: input.operationTimeoutMs,
-        verifyReady: () => {
-          requireCurrent(input, false);
-          if (
-            (input.deps.isForwardServiceOwner ?? isForwardServiceListenerOwner)(target) !== true
-          ) {
-            failure("recovery-failed", {
-              cause: "forward-mutation-failed",
-              operation: "start",
-              port,
-            });
-          }
-          requireCurrent(input, false);
-          readinessVerified = true;
-        },
-      }),
+    await timing.measureAsync(
+      "start",
+      async () =>
+        await (input.deps.launchForwardService ?? launchForwardService)(target, {
+          // Startup probes share the allowance; cleanup retains an independent bounded probe.
+          isReachable: (candidatePort, timeoutMs = input.probeTimeoutMs) =>
+            reachable(candidatePort, Math.min(input.probeTimeoutMs, timeoutMs)),
+          sourceEnvironment: input.forwardService.sourceEnvironment,
+          timeoutMs: remaining(input.operationTimeoutMs),
+          now: input.deps.now,
+          sleep: input.deps.sleep,
+          verifyReady: () => {
+            requireCurrent(input, false);
+            if (
+              (input.deps.isForwardServiceOwner ?? isForwardServiceListenerOwner)(target, {
+                remainingMs: remaining,
+              }) !== true
+            ) {
+              failure("recovery-failed", {
+                cause: "forward-mutation-failed",
+                operation: "start",
+                port,
+              });
+            }
+            requireCurrent(input, false);
+            remaining(1);
+            readinessVerified = true;
+          },
+        }),
     );
   } catch (error) {
     if (error instanceof ForwardServiceStartupCleanupError) failure("restoration-unproved");
     if (error instanceof HermesPortableForwardRecoveryError) throw error;
-    failure("recovery-failed", { cause: "forward-mutation-failed", operation: "start", port });
+    failure("recovery-failed", {
+      cause: "forward-mutation-failed",
+      operation: "start",
+      port,
+      startupFailure: describeStartupFailure(error),
+    });
   }
   if (!readinessVerified) {
     failure("recovery-failed", { cause: "forward-mutation-failed", operation: "start", port });
   }
   requireCurrent(input, false);
+}
+
+/** Retain only process status fields; raw spawn messages can contain private paths. */
+function describeStartupFailure(error: unknown): string | undefined {
+  if (error instanceof ForwardServiceEarlyExitError) {
+    if (error.signal && Object.hasOwn(osConstants.signals, error.signal)) {
+      return `signal ${error.signal}`;
+    }
+    if (Number.isSafeInteger(error.exitCode)) return `status ${String(error.exitCode)}`;
+  }
+  if (error instanceof Error && "code" in error) {
+    if (error.code === "ENOENT" || error.code === "EACCES") return error.code;
+  }
+  return undefined;
 }
 
 function readClock(now: () => number, previous?: number): number {
@@ -517,20 +560,26 @@ function readClock(now: () => number, previous?: number): number {
   return current;
 }
 
-function settleTouchedPorts(
+async function settleTouchedPorts(
   input: HermesPortableForwardRecoveryInput,
   requiredHealthy: ReadonlySet<number>,
   timing: ReturnType<typeof createForwardTimingRecorder>,
-): ForwardObservation {
-  return timing.measure("settle", () => {
-    const now = input.deps.now ?? Date.now;
-    const sleep = input.deps.sleep ?? sleepMilliseconds;
+  remaining: (maximumMs: number) => number,
+): Promise<ForwardObservation> {
+  return timing.measureAsync("settle", async () => {
+    const now = input.deps.now ?? (() => performance.now());
+    const sleep = input.deps.sleep ?? delay;
     let previous = readClock(now);
-    const deadline = previous + Math.min(input.operationTimeoutMs, FORWARD_SETTLEMENT_TIMEOUT_MS);
+    const deadline =
+      previous + remaining(Math.min(input.operationTimeoutMs, FORWARD_SETTLEMENT_TIMEOUT_MS));
     if (!Number.isFinite(deadline)) failure("recovery-failed");
 
+    const budget = (maximumMs: number) =>
+      remaining(
+        remainingBudget(deadline, now, maximumMs, { cause: "forward-settlement-timed-out" }),
+      );
     for (let observation = 0; observation < FORWARD_SETTLEMENT_MAX_OBSERVATIONS; observation += 1) {
-      const observed = observeForwards(input, false, timing, deadline, now);
+      const observed = observeForwards(input, false, timing, budget);
       requireNoOccupied(observed.states);
       if ([...requiredHealthy].every((port) => observed.states.get(port) === "healthy")) {
         return observed;
@@ -539,19 +588,21 @@ function settleTouchedPorts(
       const current = readClock(now, previous);
       previous = current;
       if (current >= deadline) break;
-      sleep(Math.min(FORWARD_SETTLEMENT_INTERVAL_MS, deadline - current));
+      await sleep(Math.min(FORWARD_SETTLEMENT_INTERVAL_MS, deadline - current));
     }
     failure("recovery-failed", { cause: "forward-settlement-timed-out" });
   });
 }
 
 function rollbackPort(input: HermesPortableForwardRecoveryInput, port: number): void {
-  const now = input.deps.now ?? Date.now;
+  const now = input.deps.now ?? (() => performance.now());
   try {
     const deadline =
       readClock(now) + Math.min(input.operationTimeoutMs, FORWARD_SETTLEMENT_TIMEOUT_MS);
     if (!Number.isFinite(deadline)) failure("restoration-unproved");
-    const observed = observeForwards(input, true, undefined, deadline, now);
+    const observed = observeForwards(input, true, undefined, (maximumMs) =>
+      remainingBudget(deadline, now, maximumMs),
+    );
     if (!observed.entries.has(port) && observed.states.get(port) === "absent") return;
   } catch {
     failure("restoration-unproved");
@@ -590,18 +641,22 @@ function retainForwardRecovery(
 }
 
 /** Prepare the exact launch-readiness forward set while retaining rollback authority. */
-export function prepareHermesPortableLaunchForwards(
+export async function prepareHermesPortableLaunchForwards(
   input: HermesPortableForwardRecoveryInput,
-): PreparedHermesPortableForwardRecovery {
+): Promise<PreparedHermesPortableForwardRecovery> {
   const timing = createForwardTimingRecorder(input.timing);
   const touchedPorts: number[] = [];
   try {
     validatePorts(input);
-    const initial = observeForwards(input, false, timing);
+    const now = input.deps.now ?? (() => performance.now());
+    const deadline = createOpenShellOperationDeadline(input.operationTimeoutMs, now);
+    const remaining = (maximumMs: number) => deadline.remaining(maximumMs, "forward recovery");
+    const initial = observeForwards(input, false, timing, remaining);
     requireNoOccupied(initial.states);
     const missing = input.ports.filter((port) => initial.states.get(port) !== "healthy");
     if (missing.length === 0) {
       requireCurrent(input, false);
+      remaining(1);
       timing.finish("proved");
       return retainForwardRecovery(input, touchedPorts, {
         kind: "verified",
@@ -612,15 +667,16 @@ export function prepareHermesPortableLaunchForwards(
     const requiredHealthy = new Set(input.ports);
     for (const port of missing) {
       touchedPorts.push(port);
-      invokeForwardServiceLaunch(input, port, timing);
+      await invokeForwardServiceLaunch(input, port, timing, remaining);
     }
-    const final = settleTouchedPorts(input, requiredHealthy, timing);
+    const final = await settleTouchedPorts(input, requiredHealthy, timing, remaining);
 
     requireNoOccupied(final.states);
     if (input.ports.some((port) => final.states.get(port) !== "healthy")) {
       failure("recovery-failed");
     }
     requireCurrent(input, false);
+    remaining(1);
     timing.finish("proved");
     return retainForwardRecovery(input, touchedPorts, {
       kind: "restored",
@@ -642,10 +698,10 @@ export function prepareHermesPortableLaunchForwards(
 }
 
 /** Restore and commit the exact launch-readiness forward set for one Hermes probe. */
-export function recoverHermesPortableLaunchForwards(
+export async function recoverHermesPortableLaunchForwards(
   input: HermesPortableForwardRecoveryInput,
-): HermesPortableForwardRecoveryResult {
-  return prepareHermesPortableLaunchForwards(input).release();
+): Promise<HermesPortableForwardRecoveryResult> {
+  return (await prepareHermesPortableLaunchForwards(input)).release();
 }
 
 /** Verify the exact launch-readiness forward set without starting or stopping a forward. */
@@ -665,9 +721,4 @@ export function verifyHermesPortableLaunchForwards(
   } catch (error) {
     throw normalizeFailure(error);
   }
-}
-
-function sleepMilliseconds(milliseconds: number): void {
-  if (milliseconds <= 0 || !Number.isFinite(milliseconds)) return;
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds);
 }

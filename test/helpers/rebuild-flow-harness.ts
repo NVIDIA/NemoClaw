@@ -43,6 +43,7 @@ export const hermesProviderAuth = requireDist("../../hermes-provider-auth.js");
 export const mcpBridge = requireDist("./mcp-bridge.js");
 export const mcpBridgeProvider = requireDist("./mcp-bridge-provider.js");
 export const mcpBridgeProviderInspection = requireDist("./mcp-bridge-provider-inspection.js");
+export const mcpBridgeSource = requireDist("./mcp-bridge-source.js");
 export const messaging = requireDist("../../messaging/index.js");
 export const messagingHostForwardLifecycle = requireDist("./messaging-host-forward-lifecycle.js");
 export const mutableConfigPerms = requireDist("../../sandbox/mutable-config-perms.js");

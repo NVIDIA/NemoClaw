@@ -16,7 +16,6 @@ import {
 } from "./docker-spec";
 import {
   authority,
-  completion,
   durablePreparation,
   fixture as createFixture,
   heldArgv,
