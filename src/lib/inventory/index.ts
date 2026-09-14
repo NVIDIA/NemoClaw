@@ -30,6 +30,8 @@ export interface SandboxEntry {
   messaging?: SandboxMessagingState | null;
   agent?: string | null;
   dashboardPort?: number | null;
+  /** Browser-facing external dashboard URL persisted from CHAT_UI_URL (#11439). */
+  dashboardExternalUrl?: string | null;
   // Passthrough of the durable registry reservation marker so list and status
   // hide registrations that have not committed their lifecycle yet.
   pendingRouteReservation?: true;
@@ -106,6 +108,8 @@ export interface SandboxInventoryRow {
   policies: string[];
   agent: string;
   dashboardPort?: number | null;
+  /** Browser-facing external dashboard URL when CHAT_UI_URL set an external origin (#11439). */
+  dashboardExternalUrl?: string | null;
   isDefault: boolean;
   activeSessionCount: number | null;
   // #5714: row recovered display-only from the live gateway. Its agent/GPU/
@@ -198,6 +202,8 @@ export interface StatusSandboxRow {
   agent: string;
   phase?: "pending" | "configuring" | "active";
   dashboardPort?: number | null;
+  /** Browser-facing external dashboard URL when CHAT_UI_URL set an external origin (#11439). */
+  dashboardExternalUrl?: string | null;
   isDefault: boolean;
 }
 
@@ -224,6 +230,19 @@ export interface StatusReport {
 function safeStatusString(value: string | null | undefined): string | null {
   if (typeof value !== "string" || value.length === 0) return null;
   return redactFull(value);
+}
+
+/**
+ * Resolve the persisted browser-facing external dashboard URL for a sandbox,
+ * or null when none was configured (loopback-only dashboards report the
+ * `dashboardPort`-derived loopback form instead). Redaction is not applied: the
+ * external URL is an operator-facing address, not a secret (#11439).
+ */
+function resolveDashboardExternalUrl(
+  sandbox: Pick<SandboxEntry, "dashboardExternalUrl">,
+): string | null {
+  const external = sandbox.dashboardExternalUrl;
+  return typeof external === "string" && external.length > 0 ? external : null;
 }
 
 function projectIncompleteOnboarding(
@@ -321,6 +340,9 @@ async function buildSandboxInventoryRow(
     policies: (await getPolicyPresets?.(sandbox.name)) ?? [],
     agent: resolveDisplayAgent(sandbox),
     ...(sandbox.dashboardPort != null ? { dashboardPort: sandbox.dashboardPort } : {}),
+    ...(resolveDashboardExternalUrl(sandbox) != null
+      ? { dashboardExternalUrl: resolveDashboardExternalUrl(sandbox) }
+      : {}),
     isDefault: sandbox.name === defaultSandbox,
     activeSessionCount,
     ...(sandbox.recoveredFromGateway ? { recoveredFromGateway: true } : {}),
@@ -462,7 +484,9 @@ export function renderSandboxInventoryText(
       if (providerDrifted) parts.push(`provider=${sandbox.provider || "unknown"}`);
       log(`      (live OpenShell gateway differs from onboarded: ${parts.join(", ")})`);
     }
-    if (sandbox.dashboardPort != null) {
+    if (sandbox.dashboardExternalUrl != null) {
+      log(`      dashboard: ${sandbox.dashboardExternalUrl}`);
+    } else if (sandbox.dashboardPort != null) {
       log(`      dashboard: http://127.0.0.1:${sandbox.dashboardPort}/`);
     }
   }
@@ -514,6 +538,9 @@ async function buildStatusSandboxRow(
     agent: redactFull(resolveDisplayAgent(sandbox)),
     ...(portablePhase ? { phase: portablePhase } : {}),
     ...(dashboardPort != null ? { dashboardPort } : {}),
+    ...(resolveDashboardExternalUrl(sandbox) != null
+      ? { dashboardExternalUrl: resolveDashboardExternalUrl(sandbox) }
+      : {}),
     isDefault,
   };
 }
@@ -676,6 +703,10 @@ export async function showStatusCommand(deps: ShowStatusCommandDeps): Promise<vo
       const provider = liveProvider || inference.provider;
       const portSuffix = sb.dashboardPort != null ? ` :${sb.dashboardPort}` : "";
       log(`    ${sb.name}${def}${model ? ` (${model})` : ""}${portSuffix}`);
+      const externalDashboardUrl = resolveDashboardExternalUrl(sb);
+      if (externalDashboardUrl) {
+        log(`      Dashboard URL: ${externalDashboardUrl}`);
+      }
       const portablePhase = portablePhases.get(sb.name);
       if (portablePhase) log(`      agent: hermes  phase: ${portablePhase}`);
       if (isDefault && liveModel && liveModel !== inference.model) {

@@ -77,6 +77,8 @@ describe("applyReusedSandboxDashboardState", () => {
         hermesDashboardPort: enabled ? 18789 : undefined,
         hermesDashboardInternalPort: enabled ? 19119 : undefined,
         hermesDashboardTui: undefined,
+        // No external CHAT_UI_URL configured -> loopback stays the reported form.
+        dashboardExternalUrl: null,
         gatewayName: "nemoclaw",
         gatewayPort: 8080,
       });
@@ -87,6 +89,46 @@ describe("applyReusedSandboxDashboardState", () => {
       });
     },
   );
+
+  it("persists the external dashboard URL rebound to the effective port on reuse (#11439)", async () => {
+    const updateSandbox = vi.fn();
+    const ensureDashboardForward = vi.fn(() => 18790);
+    const sandboxGpuConfig: SandboxGpuConfig = {
+      hostGpuDetected: false,
+      hostGpuPlatform: null,
+      sandboxGpuEnabled: false,
+      mode: "auto",
+      sandboxGpuDevice: null,
+      errors: [],
+    };
+
+    await applyReusedSandboxDashboardState({
+      sandboxName: "reuse-me",
+      chatUiUrl: "http://127.0.0.1:18790",
+      env: { CHAT_UI_URL: "https://dash.example.com:18789" },
+      agent: loadAgent("hermes"),
+      model: "test-model",
+      provider: "openai-compatible",
+      selectionVerified: true,
+      sandboxGpuConfig,
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      ensureDashboardForward,
+      hermesDashboardForwarding: {
+        resolveStateForPort: vi.fn(() => ({ enabled: false, config: null })),
+        ensureForState: vi.fn(),
+      },
+      updateSandbox,
+      updateReusedSandboxMetadata: vi.fn(),
+    });
+
+    expect(updateSandbox).toHaveBeenCalledWith(
+      "reuse-me",
+      expect.objectContaining({
+        dashboardExternalUrl: "https://dash.example.com:18790",
+      }),
+    );
+  });
 
   it("skips dashboard forwarding while preserving reuse metadata for terminal agents", async () => {
     const updateSandbox = vi.fn();

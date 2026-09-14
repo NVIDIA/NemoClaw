@@ -7,6 +7,7 @@ import { isDeepStrictEqual } from "node:util";
 import { restoreRecreatedSandboxStateWithManagedAuthority } from "../actions/sandbox/snapshot/restore-authority";
 import type { OpenShellSandboxBufferedCommandExecutor } from "../adapters/openshell/sandbox-command";
 import * as buildContext from "../build-context";
+import { resolveExternalDashboardUrl } from "../dashboard/url";
 import { resolveSandboxImageTagFromCreateOutput } from "../domain/sandbox/image-tag";
 import type {
   OpenClawImagePluginInstall,
@@ -110,6 +111,7 @@ type RegistrationSeed = Omit<
   | "openclawImagePluginInstalls"
   | "hermesDashboardState"
   | "dashboardPort"
+  | "dashboardExternalUrl"
   | "lifecycleGeneration"
   | "lifecycleLiveIdentityFingerprint"
   | "inferenceRouteReservation"
@@ -361,6 +363,7 @@ export function createCreatedSandboxCompletionActions(
 ): CreatedSandboxCompletionActions {
   let chatUiUrl = options.dashboard.chatUiUrl;
   let dashboardPort = 0;
+  let dashboardExternalUrl: string | null = null;
   let hermesDashboardState = options.dashboard.initialHermesState;
   async function verifyCreatedProviderGpu(created: SandboxGpuCreateFlowResult): Promise<void> {
     await dockerGpuLocalInference.verifyGpuSandboxLocalInferenceAndCommitAfterReady(
@@ -400,6 +403,7 @@ export function createCreatedSandboxCompletionActions(
       );
     }
     process.env.CHAT_UI_URL = chatUiUrl;
+    dashboardExternalUrl = resolveExternalDashboardUrl(chatUiUrl);
     hermesDashboardState = options.dashboard.resolveHermesState(dashboardPort);
     deps.revalidateSandboxIdentity?.(
       `recording Hermes dashboard capability for sandbox '${options.finalization.sandboxName}'`,
@@ -506,6 +510,7 @@ export function createCreatedSandboxCompletionActions(
           openclawImagePluginInstalls,
           hermesDashboardState,
           dashboardPort,
+          dashboardExternalUrl,
           ...currentLifecycle,
           inferenceRouteReservation: verifiedInferenceRouteReservation,
           verifiedCreate,

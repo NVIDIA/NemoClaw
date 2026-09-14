@@ -17,6 +17,7 @@ import {
   findAvailableDashboardPort,
   findDashboardForwardOwner,
   getRegistryOccupiedDashboardPorts,
+  lsofOutputBlocksLoopbackBind,
   preflightDashboardPortRangeAvailability,
   reserveCreateSandboxDashboardPort,
   reserveDashboardPort,
@@ -56,6 +57,55 @@ async function unusedLoopbackPort(): Promise<number> {
   await closeServer(server);
   return address.port;
 }
+
+describe("lsofOutputBlocksLoopbackBind interface-specific loopback probe (#11439)", () => {
+  const loopback = (port: number) =>
+    `COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME\nx 1 u 3u IPv4 1 0t0 TCP 127.0.0.1:${port} (LISTEN)`;
+  const external = (port: number) =>
+    `COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME\nsocat 1 u 6u IPv4 1 0t0 TCP 10.63.144.115:${port} (LISTEN)`;
+  const wildcard = (port: number) =>
+    `COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME\nx 1 u 3u IPv4 1 0t0 TCP *:${port} (LISTEN)`;
+
+  it("treats an external-interface-only listener as non-blocking for the loopback bind", () => {
+    expect(lsofOutputBlocksLoopbackBind(external(18789), 18789)).toBe(false);
+  });
+
+  it("treats a loopback listener as blocking", () => {
+    expect(lsofOutputBlocksLoopbackBind(loopback(18789), 18789)).toBe(true);
+  });
+
+  it("treats a wildcard 0.0.0.0 or star listener as blocking, preserving docker-proxy detection (#3260)", () => {
+    expect(lsofOutputBlocksLoopbackBind(wildcard(18789), 18789)).toBe(true);
+    expect(
+      lsofOutputBlocksLoopbackBind("x 1 u 3u IPv4 1 0t0 TCP 0.0.0.0:18789 (LISTEN)", 18789),
+    ).toBe(true);
+  });
+
+  it("treats an IPv6 loopback listener as blocking", () => {
+    expect(
+      lsofOutputBlocksLoopbackBind("x 1 u 3u IPv6 1 0t0 TCP [::1]:18789 (LISTEN)", 18789),
+    ).toBe(true);
+  });
+
+  it("only matches the requested port", () => {
+    expect(lsofOutputBlocksLoopbackBind(loopback(18790), 18789)).toBe(false);
+  });
+
+  it("returns false for empty or missing output", () => {
+    expect(lsofOutputBlocksLoopbackBind("", 18789)).toBe(false);
+    expect(lsofOutputBlocksLoopbackBind(null, 18789)).toBe(false);
+    expect(lsofOutputBlocksLoopbackBind(undefined, 18789)).toBe(false);
+  });
+
+  it("ignores non-LISTEN rows", () => {
+    expect(
+      lsofOutputBlocksLoopbackBind(
+        "x 1 u 3u IPv4 1 0t0 TCP 127.0.0.1:18789->10.0.0.2:5000 (ESTABLISHED)",
+        18789,
+      ),
+    ).toBe(false);
+  });
+});
 
 describe("findDashboardForwardOwner", () => {
   it("parses openshell forward list column format (#2169)", () => {

@@ -1406,6 +1406,8 @@ describe("created sandbox completion actions", () => {
           imageTag: "hermes:test",
           hermesPortableLifecycle: schema5,
           dashboardPort: manageDashboard ? 8643 : 0,
+          // Loopback chatUiUrl -> no external URL persisted (#11439).
+          dashboardExternalUrl: null,
           lifecycleGeneration: "generation-1",
           lifecycleLiveIdentityFingerprint: "a".repeat(64),
           inferenceSelection: inferenceRouteReservation.authority.selection,

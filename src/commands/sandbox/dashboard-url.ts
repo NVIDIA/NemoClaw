@@ -9,7 +9,9 @@ import type { SandboxEntry } from "../../lib/state/registry";
 
 type DashboardUrlRuntimeBridge = {
   fetchGatewayAuthTokenFromSandbox: (sandboxName: string) => string | null;
-  getSandbox: (sandboxName: string) => Pick<SandboxEntry, "agent" | "dashboardPort"> | null;
+  getSandbox: (
+    sandboxName: string,
+  ) => Pick<SandboxEntry, "agent" | "dashboardPort" | "dashboardExternalUrl"> | null;
   getAccessUrl?: (port: number) => string | null;
 };
 

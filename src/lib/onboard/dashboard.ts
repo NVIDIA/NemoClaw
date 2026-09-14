@@ -445,7 +445,13 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
       ["forward", "list", "--gateway", forwardGateway],
       { ignoreError: true },
     );
-    const isPortBound = deps.isPortBoundOnHost ?? isPortBoundOnHost;
+    // The dashboard forward binds `127.0.0.1` by default, so an
+    // external-interface-only listener on the port does not conflict. When the
+    // operator opts into a remote (`0.0.0.0`) bind, every interface conflicts,
+    // so the host-port probe must count listeners on any interface (#3259, #11439).
+    const forwardBindsAllInterfaces = getDashboardForwardTarget(chatUiUrl).startsWith("0.0.0.0:");
+    const isPortBoundRaw = deps.isPortBoundOnHost ?? isPortBoundOnHost;
+    const isPortBound = (port: number): boolean => isPortBoundRaw(port, !forwardBindsAllInterfaces);
     const persistedPort = getPersistedDashboardPort(sandboxName, listSandboxes);
     const registryOccupiedPorts = new Map([
       ...getRegistryOccupiedDashboardPorts(sandboxName, listSandboxes),
