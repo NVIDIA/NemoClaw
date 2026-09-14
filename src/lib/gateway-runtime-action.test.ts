@@ -81,6 +81,36 @@ describe("gateway observations and recovery", () => {
     expect(start).not.toHaveBeenCalled();
   });
 
+  it("recovers a registry-authorized exact target through an offline transport", async () => {
+    const unavailable = {
+      ...observation("observation_failed"),
+      unavailable: true,
+      error: {
+        kind: "transport" as const,
+        reason: "unreachable" as const,
+        message: "The selected gateway is unreachable.",
+      },
+    };
+    const runtimeSelection = { gatewayName: "nemoclaw-8090", workspace: "default" };
+    observe
+      .mockResolvedValueOnce(unavailable)
+      .mockResolvedValueOnce(unavailable)
+      .mockResolvedValueOnce(observation("healthy_named"));
+
+    expect(
+      await gatewayRuntime.recoverNamedGatewayRuntime({
+        authorizeExactTargetTransportRecovery: true,
+        gatewayName: "nemoclaw-8090",
+        runtimeSelection,
+      }),
+    ).toMatchObject({ recovered: true, attempted: true, via: "start" });
+    expect(start).toHaveBeenCalledWith({
+      gatewayName: "nemoclaw-8090",
+      gatewayPort: 8090,
+      runtimeSelection,
+    });
+  });
+
   it("stops recovery after selection when the next observation fails (#10421)", async () => {
     observe
       .mockResolvedValueOnce(observation("connected_other"))

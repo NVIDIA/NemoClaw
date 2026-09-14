@@ -64,6 +64,7 @@ export async function getNamedGatewayLifecycleState(
 type NamedGatewayLifecycleStateName = NamedGatewayLifecycleState["state"];
 
 export type RecoverNamedGatewayRuntimeOptions = {
+  authorizeExactTargetTransportRecovery?: boolean;
   recoverableStates?: readonly NamedGatewayLifecycleStateName[];
   gatewayName?: string;
   output?: GatewayRecoveryOutput;
@@ -90,16 +91,17 @@ export async function recoverNamedGatewayRuntime(options: RecoverNamedGatewayRun
     ],
   );
   const before = await getNamedGatewayLifecycleState(gatewayName, lifecycleOptions);
-  if (before.recoveryBlocked) {
-    options.output?.error(
-      `OpenShell gateway recovery blocked before selection: state=${before.state} error=${before.error?.kind ?? "none"}.`,
-    );
+  const exactTargetTransportRecovery =
+    options.authorizeExactTargetTransportRecovery === true &&
+    options.runtimeSelection?.gatewayName === gatewayName &&
+    before.error?.kind === "transport";
+  if (before.recoveryBlocked && !exactTargetTransportRecovery) {
     return { recovered: false, before, after: before, attempted: false };
   }
   if (before.state === "healthy_named") {
     return { recovered: true, before, after: before, attempted: false };
   }
-  if (!recoverableStates.has(before.state)) {
+  if (!recoverableStates.has(before.state) && !exactTargetTransportRecovery) {
     return { recovered: false, before, after: before, attempted: false };
   }
 
@@ -115,7 +117,9 @@ export async function recoverNamedGatewayRuntime(options: RecoverNamedGatewayRun
     ),
   );
   let after = await getNamedGatewayLifecycleState(gatewayName, lifecycleOptions);
-  if (after.recoveryBlocked) {
+  const exactTargetStillTransportUnreachable =
+    exactTargetTransportRecovery && after.error?.kind === "transport";
+  if (after.recoveryBlocked && !exactTargetStillTransportUnreachable) {
     return { recovered: false, before, after, attempted: true };
   }
   if (after.state === "healthy_named") {
@@ -123,9 +127,9 @@ export async function recoverNamedGatewayRuntime(options: RecoverNamedGatewayRun
     return { recovered: true, before, after, attempted: true, via: "select" };
   }
 
-  const shouldStartGateway = [before.state, after.state].some((state) =>
-    recoverableStates.has(state),
-  );
+  const shouldStartGateway =
+    exactTargetStillTransportUnreachable ||
+    [before.state, after.state].some((state) => recoverableStates.has(state));
   let startFailure: unknown = null;
 
   if (shouldStartGateway) {
