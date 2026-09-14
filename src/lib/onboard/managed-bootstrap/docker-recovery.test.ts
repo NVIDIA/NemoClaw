@@ -800,6 +800,7 @@ describe("Docker managed bootstrap restart recovery", () => {
       replacement,
       timeoutSecs: 1,
     });
+    fake.deps.runOpenshell = vi.fn(() => ({ status: 0, stdout: "", stderr: "" }));
 
     const restarted = createDockerManagedBootstrapAdapter(fake.deps);
     const recovery = await restarted.recoverUnfinishedTransactions();
