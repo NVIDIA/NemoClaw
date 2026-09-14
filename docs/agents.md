@@ -47,3 +47,8 @@ The Docker fixture supplies those prerequisites locally. Use native OpenClaw
 commands through OpenShell sandbox access; there is no NemoClaw invocation or
 channel-management API. A Fabric SDK `run` starts a new runtime rather than
 attaching to the one hosted by NemoClaw.
+
+[Live Fabric qualification](validation/rust-fabric-live-linux-arm64.json) covers
+Deep Agents, Hermes, and Fabric OpenClaw. Hermes rejects the example Spark
+service's 32K context; its successful short-response run used Ollama/Qwen3. This
+does not qualify long-context accuracy or general tool-use reliability.

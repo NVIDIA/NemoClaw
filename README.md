@@ -1,16 +1,16 @@
 # NemoClaw
 
-Rust desired-state SDK and CLI, under construction on an independent branch.
-The Go implementation and its validation remain on `v1-poc`.
+Rust desired-state SDK, CLI, and OpenTofu provider on an independent branch.
+The implementation has reached the experimental scope of `v1-poc` at
+`b549ccd43e6102b72aa9c65ee17abfe3c429fc0b`, including its documented limitations.
 
-See [DESIGN.md](DESIGN.md) for the accepted scope and implementation sequence.
 The SDK exposes `plan`, `apply`, `export`, and `destroy`; the CLI delegates the
-same four commands to it. The external OpenShell lifecycle is qualified through
-real OpenTofu and a local gRPC fixture, including interrupted creation, readiness
-failure, observation failure, export/reapply, and resumable destroy. Managed
-gateway lifecycle and Ollama bundle reconciliation are implemented and tested.
-Native agent/Fabric tooling is retained. Complete Spark inference and all native
-platform results remain qualification gates; this is not yet a parity claim.
+same four commands to it. Qualification covers real OpenTofu, five native bundle
+targets, managed OpenShell, Ollama, Spark model preparation and inference,
+watchdog recovery, and the retained native agent/Fabric interfaces.
+See the [parity evidence and limits](docs/validation/README.md) and
+[architecture findings](RFC-desired-state.md). Project adoption remains a separate
+decision; this branch is an experiment.
 See [build instructions](docs/build.md), [CLI and lifecycle usage](docs/usage.md),
 [SDK access](docs/sdk.md), [agent runtimes](docs/agents.md), and
 [test instructions](docs/testing.md).

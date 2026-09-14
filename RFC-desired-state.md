@@ -99,10 +99,11 @@ values, and missing key files without mutation or disclosure. A stalled exec
 stream demonstrated that a gRPC deadline alone was insufficient; the SDK now
 bounds the complete call and retains uncertainty about invocation effects.
 
-Native builds need a C toolchain and Protocol Buffers compiler. Native Linux
-ARM64 bundle and managed-gateway execution are qualified. Building and executing
-on macOS and Windows remain distinct gates; selecting a target is not evidence
-of runtime support. Podman topology also requires its own evidence.
+Native builds need a C toolchain and Protocol Buffers compiler. Native bundles
+and protocol/lifecycle fixtures pass on Linux ARM64/x64, macOS ARM64/Intel, and
+Windows x64. Managed gateway and GPU execution are qualified on Linux ARM64.
+Native CLI availability does not establish container or GPU backend support on
+every platform. Podman topology still requires its own evidence.
 
 The model runtime retains the recipe archive, original and patched sources,
 preparation tools, licenses, Rust source and vendored dependency licenses. The
@@ -137,14 +138,26 @@ values are required for recovery evidence. See the [kernel memory field definiti
 ## Acceptance evidence
 
 [Validation records](docs/validation/) distinguish deterministic failure tests,
-protocol qualification, native runtime execution, and outstanding live gates.
-The Rust gateway experiment has passed initial create, no-op, retained-storage
-destroy, and explicit recovery. The full Spark gate still requires an actual
-agent reply, unchanged apply without download or preparation, export/reapply,
-safe capacity rejection, and watchdog shutdown followed by explicit recovery.
-Failure fixtures must cover interrupted downloads and preparation, failed startup,
-and observation failures without accidental recreation or data loss.
+protocol qualification, native runtime execution, and remaining platform limits.
+The Rust gateway experiment passed initial create, no-op, retained-storage
+destroy, and explicit recovery. The [Spark run](docs/validation/rust-spark-linux-arm64.json)
+passed a fresh model download, verified PLE preparation, actual OpenClaw reply,
+unchanged apply without download or preparation, export/reapply, safe capacity
+rejection, and watchdog shutdown followed by explicit recovery. Image replacement
+changed only the inference process identity. Initial loading took 670 seconds,
+confirming the need for a multi-minute loading budget with headroom. Deterministic
+fixtures cover interrupted preparation, failed startup, and failed observations;
+live interrupted downloads resumed without losing their storage or binding.
 
-Parity also includes the supported Fabric and native agent interfaces, Ollama
-operations, the five bundle targets, and their documented limitations. Passing a
-subset does not establish parity or a measured reduction in maintained code.
+The [parity matrix](docs/validation/README.md) covers the supported Fabric and
+native agent interfaces, real Ollama reconciliation, five native bundle targets,
+and their documented limitations. The Rust implementation now meets that pinned
+experimental scope. No reduction in maintained code or overall maintenance cost
+has been measured.
+
+Live qualification also found a compatibility boundary absent from YAML shape:
+Hermes rejects the Spark service's 32K context at startup because it requires
+at least 64K. Its retained Go-compatible Ollama/Qwen3 path passed a short native
+response; that does not establish long-context capability. Do not falsify model
+metadata or widen isolation policy to make readiness pass. Backend/agent
+compatibility needs evidence beyond successful provider registration.
