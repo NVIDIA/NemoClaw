@@ -194,6 +194,10 @@ function stageLegacySandboxBuildContext(
     path.join(rootDir, "src", "lib", "tool-disclosure.ts"),
     path.join(buildCtx, "src", "lib", "tool-disclosure.ts"),
   );
+  fs.copyFileSync(
+    path.join(rootDir, "src", "lib", "providerless-inference.ts"),
+    path.join(buildCtx, "src", "lib", "providerless-inference.ts"),
+  );
   stageManagedStartupRuntimeSources(rootDir, buildCtx);
   normalizeReadModesForDockerCopy(path.join(buildCtx, "src"));
   fs.rmSync(path.join(buildCtx, "nemoclaw", "node_modules"), {
@@ -364,6 +368,10 @@ function stageOptimizedSandboxBuildContext(
   fs.copyFileSync(
     path.join(rootDir, "src", "lib", "tool-disclosure.ts"),
     path.join(buildCtx, "src", "lib", "tool-disclosure.ts"),
+  );
+  fs.copyFileSync(
+    path.join(rootDir, "src", "lib", "providerless-inference.ts"),
+    path.join(buildCtx, "src", "lib", "providerless-inference.ts"),
   );
   stageManagedStartupRuntimeSources(rootDir, buildCtx);
   normalizeReadModesForDockerCopy(path.join(buildCtx, "src"));

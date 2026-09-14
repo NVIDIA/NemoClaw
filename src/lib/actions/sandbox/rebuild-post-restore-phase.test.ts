@@ -125,7 +125,7 @@ describe("rebuild post-restore phase", () => {
       unavailableReason: "no-expected-version",
     });
     vi.spyOn(messagingHostForward, "ensureMessagingHostForwardAfterRebuild").mockImplementation(
-      () => {
+      async () => {
         order.push("host-forward");
         return true;
       },
@@ -402,7 +402,7 @@ describe("rebuild post-restore phase", () => {
       return true;
     });
     vi.mocked(messagingHostForward.ensureMessagingHostForwardAfterRebuild).mockImplementation(
-      () => {
+      async () => {
         configHashValid = false;
         return true;
       },
@@ -592,7 +592,7 @@ describe("rebuild post-restore phase", () => {
       return { pid: 77, start_time: 903, drain_token: "restore-token" };
     });
     vi.mocked(messagingHostForward.ensureMessagingHostForwardAfterRebuild).mockImplementation(
-      () => {
+      async () => {
         attemptDispatch();
         return true;
       },
@@ -871,7 +871,7 @@ describe("rebuild post-restore phase", () => {
 
   it("still prints the Hermes API token notice when a non-fatal post-restore step is unverified (#7175)", async () => {
     agentName = "hermes";
-    vi.mocked(messagingHostForward.ensureMessagingHostForwardAfterRebuild).mockReturnValue(false);
+    vi.mocked(messagingHostForward.ensureMessagingHostForwardAfterRebuild).mockResolvedValue(false);
     const args = input();
 
     await runRebuildPostRestorePhase(args);
@@ -885,7 +885,7 @@ describe("rebuild post-restore phase", () => {
 
   it("does not print the Hermes API token notice when prepared backup recovery is incomplete (#7175)", async () => {
     agentName = "hermes";
-    vi.mocked(messagingHostForward.ensureMessagingHostForwardAfterRebuild).mockReturnValue(false);
+    vi.mocked(messagingHostForward.ensureMessagingHostForwardAfterRebuild).mockResolvedValue(false);
     const args = input();
     args.preparedBackupRecovery = true;
 
@@ -921,7 +921,7 @@ describe("rebuild post-restore phase", () => {
       return true;
     });
     vi.mocked(messagingHostForward.ensureMessagingHostForwardAfterRebuild).mockImplementation(
-      () => {
+      async () => {
         observed.push("forward");
         return true;
       },
@@ -935,7 +935,7 @@ describe("rebuild post-restore phase", () => {
   });
 
   it("names the connect recovery command when host forwarding is unverified (#8283)", async () => {
-    vi.mocked(messagingHostForward.ensureMessagingHostForwardAfterRebuild).mockReturnValue(false);
+    vi.mocked(messagingHostForward.ensureMessagingHostForwardAfterRebuild).mockResolvedValue(false);
     const args = input();
 
     await runRebuildPostRestorePhase(args);
@@ -995,7 +995,7 @@ describe("rebuild post-restore phase", () => {
       verified: false,
       errors: ["config is unreadable"],
     });
-    vi.mocked(messagingHostForward.ensureMessagingHostForwardAfterRebuild).mockReturnValue(false);
+    vi.mocked(messagingHostForward.ensureMessagingHostForwardAfterRebuild).mockResolvedValue(false);
     vi.mocked(rebuildMcp.restoreMcpAfterRebuild).mockResolvedValue(false);
     const args = {
       ...input(),

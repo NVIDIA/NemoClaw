@@ -185,6 +185,15 @@ export function runWithInput(
   return runWithEnvInternal(args, env, timeout, input);
 }
 
+export function runWithInputAsync(
+  args: string,
+  input: string,
+  env: Record<string, string | undefined> = {},
+  timeout: number = execTimeout(),
+): Promise<CliRunResult> {
+  return runWithEnvInternalAsync(args, env, timeout, input);
+}
+
 function runWithEnvInternal(
   args: string,
   env: Record<string, string | undefined>,
@@ -233,6 +242,7 @@ async function runWithEnvInternalAsync(
   args: string,
   env: Record<string, string | undefined>,
   timeout: number,
+  input?: string,
 ): Promise<CliRunResult> {
   const parsedArgs = splitCliArgs(args);
   const mergeStderrOnSuccess = parsedArgs.includes("2>&1");
@@ -267,7 +277,7 @@ async function runWithEnvInternalAsync(
           resolve({ code, out: `${stdout}${stderr}${errorOutput}` });
         },
       );
-      child.stdin?.end();
+      child.stdin?.end(input);
     });
   } finally {
     if (implicitHome) fs.rmSync(implicitHome, { force: true, recursive: true });

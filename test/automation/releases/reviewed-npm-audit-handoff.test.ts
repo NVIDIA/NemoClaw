@@ -159,12 +159,28 @@ describe("npm audit handoff", () => {
     const exceptionPolicy = '{"schemaVersion":1,"exceptions":[]}\n';
     const rawReport =
       '{"vulnerabilities":{},"metadata":{"vulnerabilities":{"info":0,"low":0,"moderate":0,"high":0,"critical":0}}}\n';
+    const lockedGraphs = [
+      {
+        id: "temporary-graph",
+        integrity: "sha512-fixture",
+        label: "temporary graph fixture",
+        lockSha256: createHash("sha256").update(packageLock).digest("hex"),
+        packageSpec: "temporary-graph@1.0.0",
+        tarballUrl: "https://registry.npmjs.org/temporary-graph/-/temporary-graph-1.0.0.tgz",
+      },
+    ];
     try {
       fs.writeFileSync(packageJsonFile, packageJson);
       fs.writeFileSync(packageLockFile, packageLock);
       fs.writeFileSync(rawReportFile, rawReport);
       fs.writeFileSync(exceptionFile, exceptionPolicy);
-      fs.writeFileSync(auditConfigFile, JSON.stringify(REVIEWED_NPM_IDENTITY));
+      fs.writeFileSync(
+        auditConfigFile,
+        JSON.stringify({
+          ...REVIEWED_NPM_IDENTITY,
+          lockedGraphs,
+        }),
+      );
       fs.writeFileSync(
         path.join(root, "report.provenance.json"),
         JSON.stringify({ run: { startedAt: new Date().toISOString() } }),
@@ -230,7 +246,11 @@ describe("npm audit handoff", () => {
       fs.rmSync(resultFile);
       fs.writeFileSync(
         auditConfigFile,
-        JSON.stringify({ ...REVIEWED_NPM_IDENTITY, npmVersion: "11.18.0" }),
+        JSON.stringify({
+          ...REVIEWED_NPM_IDENTITY,
+          npmVersion: "11.18.0",
+          lockedGraphs,
+        }),
       );
       const rejected = spawnSync(process.execPath, verifierArgs, { encoding: "utf8" });
       expect(rejected.status).not.toBe(0);

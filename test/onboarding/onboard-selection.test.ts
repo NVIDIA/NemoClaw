@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -61,7 +60,6 @@ import { onboardChildRuntimeSource } from "../helpers/onboard-child-runtime.js";
 import { testTimeout } from "../helpers/timeouts";
 import {
   createWindowsHostOllamaRunCapture,
-  requireFailedProviderResolution,
   requirePresent,
   requireSelectedProviderResolution,
   restoreProcessEnvValue,

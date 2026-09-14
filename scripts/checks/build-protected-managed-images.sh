@@ -20,7 +20,7 @@ source_root="$PWD"
 cache_to=""
 cache_from=""
 audit_evidence_from=""
-runtime_user="root"
+runtime_user="sandbox"
 while (($# > 0)); do
   case "$1" in
     --audit-evidence-from)

@@ -27,6 +27,8 @@
 //   NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME, NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE,
 //   NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION.
 
+import { hasProviderlessInferenceEnvironment } from "../src/lib/providerless-inference.ts";
+
 import {
   chmodSync,
   existsSync,
@@ -792,11 +794,13 @@ export function buildManagedInferenceSafeguardCompaction(
 }
 
 export function buildConfig(env: Env = process.env): JsonObject {
+  const providerless = hasProviderlessInferenceEnvironment(env);
   const proxyHost = env.NEMOCLAW_PROXY_HOST || "10.200.0.1";
   const proxyPort = env.NEMOCLAW_PROXY_PORT || "3128";
   const proxyUrl = `http://${proxyHost}:${proxyPort}`;
   const emitOpenClawManagedProxy = truthyEnvDefault(env, "NEMOCLAW_OPENCLAW_MANAGED_PROXY", true);
   const model = env.NEMOCLAW_MODEL as string;
+  if (!providerless && !model) throw new Error("NEMOCLAW_MODEL is required");
   const rawChatUiUrl = env.CHAT_UI_URL || "";
   let chatUiUrl = rawChatUiUrl || `http://127.0.0.1:${DEFAULT_DASHBOARD_PORT}`;
   const gatewayPort = resolveGatewayPort(env, chatUiUrl);
@@ -840,16 +844,18 @@ export function buildConfig(env: Env = process.env): JsonObject {
     agentHeartbeat = "";
   }
 
-  const modelSpecificSetups = matchingModelSpecificSetups(
-    "openclaw",
-    {
-      model,
-      providerKey,
-      baseUrl: inferenceBaseUrl,
-      inferenceApi,
-    },
-    env,
-  );
+  const modelSpecificSetups = providerless
+    ? []
+    : matchingModelSpecificSetups(
+        "openclaw",
+        {
+          model,
+          providerKey,
+          baseUrl: inferenceBaseUrl,
+          inferenceApi,
+        },
+        env,
+      );
 
   const inferenceCompat = coerceCompatDict(
     decodeJsonEnv(env, "NEMOCLAW_INFERENCE_COMPAT_B64", "e30="),
@@ -882,6 +888,7 @@ export function buildConfig(env: Env = process.env): JsonObject {
   };
   const openclawTools: JsonObject = {
     ...openclawToolOverrides,
+    alsoAllow: ["bundle-mcp"],
     // An explicit direct request is authoritative. Compatibility manifests may
     // downgrade progressive mode to false, but may never re-enable search over
     // a user's direct selection.
@@ -1055,7 +1062,7 @@ export function buildConfig(env: Env = process.env): JsonObject {
   }
 
   const agentDefaults: JsonObject = {
-    model: { primary: primaryModelRef },
+    ...(providerless ? {} : { model: { primary: primaryModelRef } }),
     timeoutSeconds: agentTimeout,
     ...(agentHeartbeat ? { heartbeat: { every: agentHeartbeat, isolatedSession: true } } : {}),
     skipBootstrap: true,
@@ -1094,7 +1101,7 @@ export function buildConfig(env: Env = process.env): JsonObject {
       defaults: agentDefaults,
       list: buildAgentsList(extraAgents, extraAgentsPayload.main),
     },
-    models: { mode: "merge", providers },
+    ...(providerless ? {} : { models: { mode: "merge", providers } }),
     channels,
     tools: openclawTools,
     update: { checkOnStart: false },

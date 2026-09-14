@@ -163,7 +163,7 @@ These are two required acceptance executions, not retries; either failure remain
 The concurrent-add probe retries only the rejected command after status proves that the other
 command committed one coherent bridge. The rejected command must report either the exact portable
 host-lock timeout or the reviewed Hermes restart transport failure. The retry runs once, has its own
-command artifact, and must reject the committed duplicate as already present.
+command artifact, and must succeed idempotently from the verified committed source.
 The workflow records one publication cohort before its PR producer matrix runs. Failed-job reruns
 reuse that cohort and replace only the stable run-scoped artifact owned by each retried agent.
 Consumers accept one complete cohort from the same run at the current or an earlier attempt. They
@@ -183,6 +183,10 @@ Pi full lifecycle qualification runs on Linux AMD64. Linux ARM64 remains release
 managed-image build, startup, publication, and checked-in receipt. The receipt refresh check requires
 the Linux AMD64 and Linux ARM64 receipts to identify one source revision, release, and publication
 cohort.
+
+The gateway restart fixture restarts the user service it stopped. If no service was selected, the candidate CLI startup code starts the registered gateway.
+A selected service that cannot restart remains selected for cleanup; recovery does not switch to another startup path.
+Restart inputs are checked before stopping the gateway. A failed start ends the test before health polling. Sandbox readiness, retained state, and agent turns remain separate assertions.
 
 #### Timing Baseline
 

@@ -13,7 +13,6 @@ import {
 
 const WORKFLOW_PATH = ".github/workflows/platform-vitest-main.yaml";
 const WSL_HELPER_PATH = "tools/wsl/ci-helper.ps1";
-const MACOS_REQUIREMENTS_PATH = "ci/platform-vitest-macos-requirements.lock";
 const REVIEWED_NPM_CONFIG_PATH = "ci/reviewed-npm-audit.json";
 const workflow = readYaml<Workflow>(WORKFLOW_PATH);
 const wslHelperSource = readRepoText(WSL_HELPER_PATH);
