@@ -1,7 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import { finalizationHandlerDeps, finalizationHandlerRuntime } from "../finalization-deps";
 
 import type { SessionUpdates } from "../../../state/onboard-session";
 import type { PreparedExternalComponent } from "../../external-component";
@@ -62,7 +64,7 @@ function createDeps(
     setDefaultSandbox: vi.fn(),
     removeLegacy: vi.fn(),
     cleanupHost: vi.fn(),
-    recoverProcesses: vi.fn(async () => undefined),
+    recoverProcesses: vi.fn(async () => true),
     settleOrdinaryPairing: vi.fn(async () => ({ kind: "settled" as const })),
     ordinaryPairingIncompleteMessage: vi.fn(
       () => "OpenClaw onboarding is incomplete; resume onboarding.",
@@ -454,6 +456,7 @@ describe("finalization handlers", () => {
     let forwardLive = false;
     const recoverProcesses = vi.fn(async () => {
       forwardLive = true;
+      return true;
     });
     const verify = vi.fn(async () => ({ ok: forwardLive }));
     const { deps } = createDeps({
@@ -723,4 +726,52 @@ describe("finalization handlers", () => {
       "  OpenClaw onboarding is incomplete; resume onboarding.",
     );
   });
+});
+
+describe("secret-boundary refusal during finalization", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it.each([
+    { phase: "finalizing", run: handleFinalizationPhase },
+    { phase: "post_verify", run: handlePostVerifyState },
+  ])(
+    "pauses $phase before successful handoff on a recovery refusal (#11758)",
+    async ({ phase, run }) => {
+      vi.spyOn(finalizationHandlerRuntime, "loadProcessRecovery").mockReturnValue({
+        checkAndRecoverSandboxProcesses: vi.fn(async () => ({
+          checked: true,
+          wasRunning: true,
+          recovered: false,
+          forwardRecovered: false,
+          secretBoundaryRefused: true,
+          secretBoundaryReason: "unexpected-marker" as const,
+        })),
+        waitForRecreatedSandboxOpenShellReady: vi.fn(async () => true),
+      });
+      const { deps, calls } = createDeps({
+        checkAndRecoverSandboxProcesses: finalizationHandlerDeps.checkAndRecoverSandboxProcesses,
+        readRegistryAgent: () => "hermes",
+      });
+      const result = await run({
+        ...baseOptions(deps),
+        agent: { name: "hermes" },
+        portableProfileSelected: true,
+      });
+      expect(result.stateResult).toMatchObject({
+        type: "pause",
+        metadata: { state: phase, reason: "recovery_check_incomplete" },
+      });
+      expect(calls.reportReadiness).toHaveBeenCalledExactlyOnceWith(false);
+      expect(calls.error).toHaveBeenCalledWith(expect.stringContaining("secret-boundary"));
+      expect(calls.error).toHaveBeenCalledWith(
+        expect.stringContaining("nemoclaw my-assistant doctor"),
+      );
+      expect(calls.error).toHaveBeenCalledWith(
+        expect.stringContaining("nemoclaw onboard --resume"),
+      );
+      expect(calls.verify).not.toHaveBeenCalled();
+      expect(calls.dashboard).not.toHaveBeenCalled();
+      expect(calls.log).not.toHaveBeenCalledWith(expect.stringContaining("ready"));
+    },
+  );
 });

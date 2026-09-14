@@ -39,8 +39,9 @@ export async function tryReuseHermesPortableOllamaStartup(
   const env = input.env ?? process.env;
   const stateDir = input.stateDir ?? defaultPortableDemoStateDir(env);
   const scope = currentHermesPortableStartupOperation(input.sandboxName);
+  const intent = input.intent;
   if (
-    input.intent !== "connect-probe-only" ||
+    intent !== "connect-probe-only" ||
     env.NEMOCLAW_EXPERIMENTAL_PROFILE !== "portable" ||
     env.NEMOCLAW_EXPERIMENTAL_PORTABLE_STARTUP_REUSE !== "1" ||
     !scope ||
@@ -85,7 +86,7 @@ export async function tryReuseHermesPortableOllamaStartup(
   const inspect = () =>
     measureEntry("exactRuntimeInspection", () =>
       deps.inspectReadinessRuntime({
-        intent: input.intent,
+        intent,
         sandboxName: input.sandboxName,
         entry: input.entry,
         operatingReceipt: operating.receipt,

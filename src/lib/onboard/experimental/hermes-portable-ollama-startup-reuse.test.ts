@@ -19,7 +19,7 @@ describe("Portable inference startup reuse", () => {
   });
   afterEach(() => fs.rmSync(stateDir, { recursive: true, force: true }));
 
-  function setup() {
+  function setup(intent: "connect-probe-only" | "connect-interactive" = "connect-probe-only") {
     const harness = createHarness(true, true);
     harness.input.stateDir = stateDir;
     harness.input.env = {
@@ -31,7 +31,11 @@ describe("Portable inference startup reuse", () => {
       assertCurrent: vi.fn(),
     }));
     const dependency = { release: vi.fn(), rollback: vi.fn() };
-    const input = { ...harness.input, prepareProbeDependency: vi.fn(async () => dependency) };
+    const input = {
+      ...harness.input,
+      intent,
+      prepareProbeDependency: vi.fn(async () => dependency),
+    };
     const overrides = { ...harness.overrides, inspectReadinessRuntime };
     const recover = () => recoverHermesPortableOllamaInference(input, overrides as never);
     const run = () =>
@@ -56,6 +60,16 @@ describe("Portable inference startup reuse", () => {
     expect(h.overrides.inspectReadinessRuntime).toHaveBeenCalledTimes(2);
     expect(h.input.verifyRoute).toHaveBeenCalledOnce();
     expect(h.overrides.prepareRecoveryEntry).not.toHaveBeenCalled();
+    expect(h.dependency.release).toHaveBeenCalledOnce();
+    expect(h.dependency.rollback).not.toHaveBeenCalled();
+  });
+
+  it("uses full recovery authority for interactive connect when startup reuse is enabled", async () => {
+    const h = setup("connect-interactive");
+    await expect(h.run()).resolves.toBe("reused");
+    expect(h.overrides.inspectReadinessRuntime).not.toHaveBeenCalled();
+    expect(h.overrides.prepareRecoveryEntry).toHaveBeenCalledOnce();
+    expect(h.input.verifyRoute).toHaveBeenCalledOnce();
     expect(h.dependency.release).toHaveBeenCalledOnce();
     expect(h.dependency.rollback).not.toHaveBeenCalled();
   });
