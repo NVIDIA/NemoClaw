@@ -80,6 +80,15 @@ const CANONICAL_POST_GENERATOR_INSTRUCTION_SHA256 = new Set([
   "9026e48d7294a60abe57d7fed77aaf27e8088d29c48421a0f2d1260e7a6d5bdc",
   // Reviewed 2026.9.1 optional-plugin archive verification and neutral union install.
   "2cdccfbeaf58c06c1df1d98b066543b1576d43d5742e8eb98a8c7bc71825adee",
+  // The same reviewed install after OpenClaw 2026.9.1 began requiring
+  // explicit acceptance of package-declared plugin capabilities.
+  "46a1858936c680a21252483515f55ebfa2de65fb4352d27ec71d3aaa8d67dbd5",
+  // Reviewed local NemoClaw plugin installation with explicit capability
+  // acceptance; the following inspect and pruning steps are unchanged.
+  "464abc5ff104c8bdeae57e6fdb775b7bda7dd756cba0dd1a7752b7d03e8f8372",
+  // Reviewed neutral-union validation for OpenClaw 2026.9.1's bundled a2a,
+  // reef, and Telegram channel inventory.
+  "6727034f71f9fadce7d076d0e9518c288f904b13b2be8037565b61a87b1dfbb0",
   // COPY --from=openclaw-runtime-payload / /
   // The reviewed scratch payload has no /sandbox/.openclaw content, so this
   // exact late copy preserves the generated remote-dashboard configuration.

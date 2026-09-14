@@ -15,8 +15,7 @@ const repoRoot = path.join(import.meta.dirname, "../..");
 const runtimeRoot = "/usr/local/lib/nemoclaw/mcp-tool-discovery-runtime";
 const managedStartupRuntimeBundle = "managed-startup-image-runtime.bundle";
 const reviewedRuntimeHashOverrides: Readonly<Record<string, string>> = {
-  [managedStartupRuntimeBundle]:
-    "f8eacc2295130873e743841c75be6168492ac1802724ea5c636a85626d0488af",
+  [managedStartupRuntimeBundle]: "f8eacc2295130873e743841c75be6168492ac1802724ea5c636a85626d0488af",
 };
 const dockerfiles = [
   "Dockerfile",
@@ -30,38 +29,21 @@ function createCacheSeedFixture(): {
   retryHelper: string;
   seed: string;
 } {
-  const fixture = fs.mkdtempSync(
-    path.join(os.tmpdir(), "nemoclaw-npm-cache-seed-"),
-  );
+  const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-npm-cache-seed-"));
   const cache = path.join(fixture, "cache");
   const retryHelper = path.join(fixture, "npm-ci-locked.sh");
   const seedDirectory = path.join(fixture, "npm-cache-seed");
-  const seedNames = [
-    "yallist-5.0.0.tgz",
-    "yaml-2.8.3.tgz",
-    "yoctocolors-2.1.2.tgz",
-  ];
+  const seedNames = ["yallist-5.0.0.tgz", "yaml-2.8.3.tgz", "yoctocolors-2.1.2.tgz"];
   const seed = path.join(seedDirectory, seedNames[0]);
   fs.mkdirSync(seedDirectory);
   fs.copyFileSync(
-    path.join(
-      repoRoot,
-      "tools",
-      "mcp-tool-discovery-runtime",
-      "npm-ci-locked.sh",
-    ),
+    path.join(repoRoot, "tools", "mcp-tool-discovery-runtime", "npm-ci-locked.sh"),
     retryHelper,
   );
   fs.chmodSync(retryHelper, 0o755);
   for (const seedName of seedNames) {
     fs.copyFileSync(
-      path.join(
-        repoRoot,
-        "tools",
-        "mcp-tool-discovery-runtime",
-        "npm-cache-seed",
-        seedName,
-      ),
+      path.join(repoRoot, "tools", "mcp-tool-discovery-runtime", "npm-cache-seed", seedName),
       path.join(seedDirectory, seedName),
     );
   }
@@ -69,14 +51,8 @@ function createCacheSeedFixture(): {
   const splitSeedBytes = fs.readFileSync(splitSeed);
   const splitOffset = Math.ceil(splitSeedBytes.length / 2);
   fs.unlinkSync(splitSeed);
-  fs.writeFileSync(
-    `${splitSeed}.part-000`,
-    splitSeedBytes.subarray(0, splitOffset),
-  );
-  fs.writeFileSync(
-    `${splitSeed}.part-001`,
-    splitSeedBytes.subarray(splitOffset),
-  );
+  fs.writeFileSync(`${splitSeed}.part-000`, splitSeedBytes.subarray(0, splitOffset));
+  fs.writeFileSync(`${splitSeed}.part-001`, splitSeedBytes.subarray(splitOffset));
   fs.writeFileSync(
     path.join(fixture, "package.json"),
     `${JSON.stringify(
@@ -118,8 +94,7 @@ function createCacheSeedFixture(): {
           },
           "node_modules/yoctocolors": {
             version: "2.1.2",
-            resolved:
-              "https://registry.npmjs.org/yoctocolors/-/yoctocolors-2.1.2.tgz",
+            resolved: "https://registry.npmjs.org/yoctocolors/-/yoctocolors-2.1.2.tgz",
             integrity:
               "sha512-CzhO+pFNo8ajLM2d2IW/R93ipy99LWjtwblvC1RsoSUMZgyLbYFr221TnSNT7GjGdYui6P459mw9JH/g/zW2ug==",
           },
@@ -133,14 +108,11 @@ function createCacheSeedFixture(): {
 }
 
 describe("MCP tool discovery image contract", () => {
-  it.each(dockerfiles)(
-    "executes the discovery runtime contract in %s",
-    (dockerfilePath) => {
-      expectManagedToolDiscoveryRuntimeImageContract(
-        fs.readFileSync(path.join(repoRoot, dockerfilePath), "utf8"),
-      );
-    },
-  );
+  it.each(dockerfiles)("executes the discovery runtime contract in %s", (dockerfilePath) => {
+    expectManagedToolDiscoveryRuntimeImageContract(
+      fs.readFileSync(path.join(repoRoot, dockerfilePath), "utf8"),
+    );
+  });
 
   it.skipIf(process.platform === "win32")(
     "installs the complete pinned cache seed offline before registry access",
@@ -148,36 +120,24 @@ describe("MCP tool discovery image contract", () => {
       const { cache, fixture, retryHelper } = createCacheSeedFixture();
 
       try {
-        const installResult = spawnSync(
-          "/bin/sh",
-          [retryHelper, "--ignore-scripts"],
-          {
-            encoding: "utf8",
-            cwd: fixture,
-            env: { ...process.env, NPM_CONFIG_CACHE: cache },
-          },
-        );
+        const installResult = spawnSync("/bin/sh", [retryHelper, "--ignore-scripts"], {
+          encoding: "utf8",
+          cwd: fixture,
+          env: { ...process.env, NPM_CONFIG_CACHE: cache },
+        });
 
         expect(installResult).toMatchObject({ status: 0 });
         const installedModule = await import(
-          pathToFileURL(
-            path.join(fixture, "node_modules", "yoctocolors", "index.js"),
-          ).href
+          pathToFileURL(path.join(fixture, "node_modules", "yoctocolors", "index.js")).href
         );
         const installedYaml = await import(
-          pathToFileURL(
-            path.join(fixture, "node_modules", "yaml", "dist", "index.js"),
-          ).href
+          pathToFileURL(path.join(fixture, "node_modules", "yaml", "dist", "index.js")).href
         );
-        expect(
-          stripVTControlCharacters(
-            installedModule.default.red("offline cache seed"),
-          ),
-        ).toBe("offline cache seed");
+        expect(stripVTControlCharacters(installedModule.default.red("offline cache seed"))).toBe(
+          "offline cache seed",
+        );
         expect(installedYaml.parse("enabled: true")).toEqual({ enabled: true });
-        expect(
-          fs.existsSync(path.join(fixture, "node_modules", "yallist", "dist")),
-        ).toBe(true);
+        expect(fs.existsSync(path.join(fixture, "node_modules", "yallist", "dist"))).toBe(true);
       } finally {
         fs.rmSync(fixture, { force: true, recursive: true });
       }
@@ -191,84 +151,66 @@ describe("MCP tool discovery image contract", () => {
       lockfile: "nemoclaw/package-lock.json",
       seedDirectory: "tools/mcp-tool-discovery-runtime/npm-cache-seed",
     },
-  ])(
-    "pins every reachable $label lockfile archive for protected Linux x64 builds",
-    (fixture) => {
-      const seedDirectory = path.join(repoRoot, fixture.seedDirectory);
-      const manifest = JSON.parse(
-        fs.readFileSync(path.join(seedDirectory, "manifest.json"), "utf8"),
+  ])("pins every reachable $label lockfile archive for protected Linux x64 builds", (fixture) => {
+    const seedDirectory = path.join(repoRoot, fixture.seedDirectory);
+    const manifest = JSON.parse(fs.readFileSync(path.join(seedDirectory, "manifest.json"), "utf8"));
+    const seedNames = fs
+      .readdirSync(seedDirectory)
+      .filter((seedName) => seedName !== "manifest.json")
+      .sort();
+    const lock = JSON.parse(fs.readFileSync(path.join(repoRoot, fixture.lockfile), "utf8"));
+
+    expect(manifest).toMatchObject({
+      archiveCount: fixture.archiveCount,
+      kind: "nemoclaw-locked-npm-cache-seed-v1",
+      target: { cpu: "x64", libc: "glibc", os: "linux" },
+    });
+    expect(manifest.archives).toHaveLength(manifest.archiveCount);
+    expect(
+      seedNames
+        .map((seedName) => fs.statSync(path.join(seedDirectory, seedName)).size)
+        .every((size) => size <= 2_000_000),
+    ).toBe(true);
+    manifest.archives.forEach((archive: { archive: string; integrity: string; size: number }) => {
+      const archiveParts = seedNames.filter(
+        (seedName) =>
+          seedName === archive.archive || seedName.startsWith(`${archive.archive}.part-`),
       );
-      const seedNames = fs
-        .readdirSync(seedDirectory)
-        .filter((seedName) => seedName !== "manifest.json")
-        .sort();
-      const lock = JSON.parse(
-        fs.readFileSync(path.join(repoRoot, fixture.lockfile), "utf8"),
+      const expectedParts =
+        archiveParts.length === 1 && archiveParts[0] === archive.archive
+          ? [archive.archive]
+          : archiveParts.map(
+              (_seedName, index) => `${archive.archive}.part-${String(index).padStart(3, "0")}`,
+            );
+      const seed = Buffer.concat(
+        archiveParts.map((seedName) => fs.readFileSync(path.join(seedDirectory, seedName))),
+      );
+      const integrity = `sha512-${crypto.createHash("sha512").update(seed).digest("base64")}`;
+      const matches = (
+        Object.values(lock.packages) as Array<{
+          integrity?: string;
+          resolved?: string;
+        }>
+      ).filter(
+        (entry) =>
+          entry.integrity === integrity &&
+          path.basename(new URL(entry.resolved ?? "https://invalid.invalid/").pathname) ===
+            archive.archive,
       );
 
-      expect(manifest).toMatchObject({
-        archiveCount: fixture.archiveCount,
-        kind: "nemoclaw-locked-npm-cache-seed-v1",
-        target: { cpu: "x64", libc: "glibc", os: "linux" },
-      });
-      expect(manifest.archives).toHaveLength(manifest.archiveCount);
-      expect(
-        seedNames
-          .map(
-            (seedName) => fs.statSync(path.join(seedDirectory, seedName)).size,
-          )
-          .every((size) => size <= 2_000_000),
-      ).toBe(true);
-      manifest.archives.forEach(
-        (archive: { archive: string; integrity: string; size: number }) => {
-          const archiveParts = seedNames.filter(
-            (seedName) =>
-              seedName === archive.archive ||
-              seedName.startsWith(`${archive.archive}.part-`),
-          );
-          const expectedParts =
-            archiveParts.length === 1 && archiveParts[0] === archive.archive
-              ? [archive.archive]
-              : archiveParts.map(
-                  (_seedName, index) =>
-                    `${archive.archive}.part-${String(index).padStart(3, "0")}`,
-                );
-          const seed = Buffer.concat(
-            archiveParts.map((seedName) =>
-              fs.readFileSync(path.join(seedDirectory, seedName)),
-            ),
-          );
-          const integrity = `sha512-${crypto.createHash("sha512").update(seed).digest("base64")}`;
-          const matches = (
-            Object.values(lock.packages) as Array<{
-              integrity?: string;
-              resolved?: string;
-            }>
-          ).filter(
-            (entry) =>
-              entry.integrity === integrity &&
-              path.basename(
-                new URL(entry.resolved ?? "https://invalid.invalid/").pathname,
-              ) === archive.archive,
-          );
-
-          expect(archiveParts).toEqual(expectedParts);
-          expect(seed).toHaveLength(archive.size);
-          expect(integrity).toBe(archive.integrity);
-          expect(matches.length).toBeGreaterThan(0);
-        },
-      );
-    },
-  );
+      expect(archiveParts).toEqual(expectedParts);
+      expect(seed).toHaveLength(archive.size);
+      expect(integrity).toBe(archive.integrity);
+      expect(matches.length).toBeGreaterThan(0);
+    });
+  });
 
   it("does not commit MCP runtime registry archives", () => {
     const seedDirectory = path.join(
       repoRoot,
       "tools/mcp-tool-discovery-runtime/mcp-runtime-npm-cache-seed",
     );
-    const trackedSeedFiles = fs
-      .readdirSync(seedDirectory)
-      .filter((name) => name !== ".gitkeep");
+    const trackedSeedFiles = fs.readdirSync(seedDirectory).filter((name) => name !== ".gitkeep");
 
     expect(trackedSeedFiles).toEqual([]);
   });
@@ -276,41 +218,34 @@ describe("MCP tool discovery image contract", () => {
   // source-shape-contract: security -- Exact reviewed runtime digests reject substituted executable and license artifacts before managed image construction.
   it.each([
     {
-      expectedHash:
-        "0c07b731d2f32a9419605bae4f84329c8d7440528eed2ac6dbcd5835724961e9",
+      expectedHash: "0c07b731d2f32a9419605bae4f84329c8d7440528eed2ac6dbcd5835724961e9",
       relativePath: "managed-startup-image-runtime.bundle",
     },
     {
-      expectedHash:
-        "1ff9641d9bba01bd16459fc76b777b3719d2ffa0743c4d23874ccc955ee017f8",
+      expectedHash: "1ff9641d9bba01bd16459fc76b777b3719d2ffa0743c4d23874ccc955ee017f8",
       relativePath: "mcp-tool-discovery/BUNDLED_PACKAGES.json",
     },
     {
-      expectedHash:
-        "9713deef264ef0faea967655e497c73fa6889057e9df827092722d6f00da8987",
+      expectedHash: "9713deef264ef0faea967655e497c73fa6889057e9df827092722d6f00da8987",
       relativePath: "mcp-tool-discovery/THIRD_PARTY_LICENSES.txt",
     },
     {
-      expectedHash:
-        "825b6050754fd67f9119b4844523570af97a25599576d823bbdd9d583255d1a0",
+      expectedHash: "825b6050754fd67f9119b4844523570af97a25599576d823bbdd9d583255d1a0",
       relativePath: "mcp-tool-discovery/mcp-tool-discovery.bundle",
     },
-  ])(
-    "pins the reviewed image runtime artifacts exactly",
-    ({ expectedHash, relativePath }) => {
-      const bundleRoot = path.join(
-        repoRoot,
-        "tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle",
-      );
-      const actualHash = crypto
-        .createHash("sha256")
-        .update(fs.readFileSync(path.join(bundleRoot, relativePath)))
-        .digest("hex");
-      expect(actualHash, relativePath).toBe(
-        reviewedRuntimeHashOverrides[relativePath] ?? expectedHash,
-      );
-    },
-  );
+  ])("pins the reviewed image runtime artifacts exactly", ({ expectedHash, relativePath }) => {
+    const bundleRoot = path.join(
+      repoRoot,
+      "tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle",
+    );
+    const actualHash = crypto
+      .createHash("sha256")
+      .update(fs.readFileSync(path.join(bundleRoot, relativePath)))
+      .digest("hex");
+    expect(actualHash, relativePath).toBe(
+      reviewedRuntimeHashOverrides[relativePath] ?? expectedHash,
+    );
+  });
 
   it("executes the reviewed MCP discovery runtime artifact", () => {
     const bundleRoot = path.join(
@@ -321,10 +256,7 @@ describe("MCP tool discovery image contract", () => {
       path.join(os.tmpdir(), "nemoclaw-reviewed-mcp-runtime-"),
     );
     try {
-      const executablePath = path.join(
-        executableFixture,
-        "mcp-tool-discovery.mjs",
-      );
+      const executablePath = path.join(executableFixture, "mcp-tool-discovery.mjs");
       fs.copyFileSync(
         path.join(bundleRoot, "mcp-tool-discovery/mcp-tool-discovery.bundle"),
         executablePath,
@@ -349,29 +281,15 @@ describe("MCP tool discovery image contract", () => {
   });
 
   it("accepts Pi only in the refreshed reviewed managed startup runtime", () => {
-    const fixture = fs.mkdtempSync(
-      path.join(os.tmpdir(), "nemoclaw-managed-startup-runtime-"),
-    );
+    const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-managed-startup-runtime-"));
     const bundlePath = path.join(
       repoRoot,
       "tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/managed-startup-image-runtime.bundle",
     );
-    const staleBundlePath = path.join(
-      fixture,
-      "stale-managed-startup-image-runtime.cjs",
-    );
-    const completionFile = path.join(
-      fixture,
-      "managed-bootstrap-completion.json",
-    );
-    const startupCompletionFile = path.join(
-      fixture,
-      "managed-startup-complete.json",
-    );
-    const runtimeEnvironmentFile = path.join(
-      fixture,
-      "managed-startup-runtime.env",
-    );
+    const staleBundlePath = path.join(fixture, "stale-managed-startup-image-runtime.cjs");
+    const completionFile = path.join(fixture, "managed-bootstrap-completion.json");
+    const startupCompletionFile = path.join(fixture, "managed-startup-complete.json");
+    const runtimeEnvironmentFile = path.join(fixture, "managed-startup-runtime.env");
     const bootstrapIdentity = "a".repeat(64);
     const profileFingerprint = "b".repeat(64);
     const runtimeEnvironment = "export NEMOCLAW_MODEL='nvidia/test'\n";
@@ -435,10 +353,8 @@ describe("MCP tool discovery image contract", () => {
       fs.writeFileSync(runtimeEnvironmentFile, runtimeEnvironment, {
         mode: 0o444,
       });
-      const reviewedAgentRegistry =
-        '["openclaw","hermes","langchain-deepagents-code","pi"]';
-      const staleAgentRegistry =
-        '["openclaw","hermes","langchain-deepagents-code"]';
+      const reviewedAgentRegistry = '["openclaw","hermes","langchain-deepagents-code","pi"]';
+      const staleAgentRegistry = '["openclaw","hermes","langchain-deepagents-code"]';
       const reviewedBundle = fs.readFileSync(bundlePath, "utf8");
       fs.writeFileSync(
         staleBundlePath,
@@ -476,8 +392,7 @@ describe("MCP tool discovery image contract", () => {
       expect(verifyBundle(staleBundlePath)).toMatchObject({
         status: 1,
         stdout: "",
-        stderr:
-          "Managed bootstrap envelope is invalid: image completion schema is invalid\n",
+        stderr: "Managed bootstrap envelope is invalid: image completion schema is invalid\n",
       });
     } finally {
       fs.rmSync(fixture, { force: true, recursive: true });
@@ -511,10 +426,7 @@ describe("MCP tool discovery image contract", () => {
   it.each(dockerfiles)(
     "%s copies and probes the bundled runtime at its canonical path (#6901)",
     (relativePath) => {
-      const dockerfile = fs.readFileSync(
-        path.join(repoRoot, relativePath),
-        "utf8",
-      );
+      const dockerfile = fs.readFileSync(path.join(repoRoot, relativePath), "utf8");
 
       expect(dockerfile).toContain(
         "COPY tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/mcp-tool-discovery/mcp-tool-discovery.bundle /opt/mcp-tool-discovery-runtime/dist/mcp-tool-discovery.mjs",
@@ -527,9 +439,7 @@ describe("MCP tool discovery image contract", () => {
       );
       expect(dockerfile).not.toContain("mcp-runtime-npm-cache-seed/");
       expect(dockerfile).not.toContain("install-reviewed-runtime.sh");
-      expect(dockerfile).toContain(
-        `node ${runtimeRoot}/mcp-tool-discovery.mjs`,
-      );
+      expect(dockerfile).toContain(`node ${runtimeRoot}/mcp-tool-discovery.mjs`);
       expect(dockerfile).not.toContain(`${runtimeRoot}/mcp-tool-discovery.ts`);
     },
   );
@@ -537,20 +447,13 @@ describe("MCP tool discovery image contract", () => {
   it.skipIf(process.platform === "win32")(
     "accepts a complete locked tree after npm's exact internal exit-handler failure",
     () => {
-      const fixture = fs.mkdtempSync(
-        path.join(os.tmpdir(), "nemoclaw-npm-complete-tree-"),
-      );
+      const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-npm-complete-tree-"));
       const retryHelper = path.join(fixture, "npm-ci-locked.sh");
       const mockBin = path.join(fixture, "bin");
       const invocations = path.join(fixture, "npm-invocations");
       fs.mkdirSync(mockBin);
       fs.copyFileSync(
-        path.join(
-          repoRoot,
-          "tools",
-          "mcp-tool-discovery-runtime",
-          "npm-ci-locked.sh",
-        ),
+        path.join(repoRoot, "tools", "mcp-tool-discovery-runtime", "npm-ci-locked.sh"),
         retryHelper,
       );
       fs.chmodSync(retryHelper, 0o755);
@@ -590,9 +493,10 @@ esac
         expect(result.stderr).toContain(
           "internal exit-handler failure after completing the locked dependency tree",
         );
-        expect(fs.readFileSync(invocations, "utf8").trim().split("\n")).toEqual(
-          ["ci --omit=dev", "ls --all --json --omit=dev"],
-        );
+        expect(fs.readFileSync(invocations, "utf8").trim().split("\n")).toEqual([
+          "ci --omit=dev",
+          "ls --all --json --omit=dev",
+        ]);
       } finally {
         fs.rmSync(fixture, { force: true, recursive: true });
       }
@@ -602,40 +506,23 @@ esac
   it.skipIf(process.platform === "win32")(
     "completes npm's exact internal exit-handler failure from locked cache archives",
     () => {
-      const fixture = fs.mkdtempSync(
-        path.join(os.tmpdir(), "nemoclaw-mcp-install-retry-"),
-      );
+      const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-install-retry-"));
       const script = path.join(fixture, "install-reviewed-runtime.sh");
       const mockBin = path.join(fixture, "bin");
       const counter = path.join(fixture, "npm-counter");
       const invocations = path.join(fixture, "npm-invocations");
       fs.mkdirSync(mockBin);
       fs.copyFileSync(
-        path.join(
-          repoRoot,
-          "tools",
-          "mcp-tool-discovery-runtime",
-          "install-reviewed-runtime.sh",
-        ),
+        path.join(repoRoot, "tools", "mcp-tool-discovery-runtime", "install-reviewed-runtime.sh"),
         script,
       );
       fs.copyFileSync(
-        path.join(
-          repoRoot,
-          "tools",
-          "mcp-tool-discovery-runtime",
-          "package-lock.json",
-        ),
+        path.join(repoRoot, "tools", "mcp-tool-discovery-runtime", "package-lock.json"),
         path.join(fixture, "package-lock.json"),
       );
       const retryHelper = path.join(fixture, "npm-ci-locked.sh");
       fs.copyFileSync(
-        path.join(
-          repoRoot,
-          "tools",
-          "mcp-tool-discovery-runtime",
-          "npm-ci-locked.sh",
-        ),
+        path.join(repoRoot, "tools", "mcp-tool-discovery-runtime", "npm-ci-locked.sh"),
         retryHelper,
       );
       fs.chmodSync(retryHelper, 0o755);
@@ -690,16 +577,12 @@ exit 0
         expect(result.stderr).toContain(
           "before completing the locked dependency tree; completing it offline from cache",
         );
-        expect(result.stderr).toContain(
-          "fetching one missing lockfile archive for offline retry",
-        );
+        expect(result.stderr).toContain("fetching one missing lockfile archive for offline retry");
         expect(result.stderr).toContain(
           "retrying the missing lockfile archive after a transient network failure",
         );
         expect(fs.readFileSync(counter, "utf8").trim()).toBe("10");
-        expect(
-          fs.readFileSync(invocations, "utf8").trim().split("\n").slice(0, 7),
-        ).toEqual([
+        expect(fs.readFileSync(invocations, "utf8").trim().split("\n").slice(0, 7)).toEqual([
           "ci --ignore-scripts --no-audit --no-fund --no-progress",
           "ls --all --json --ignore-scripts --no-audit --no-fund --no-progress",
           "ci --ignore-scripts --no-audit --no-fund --no-progress --offline",
@@ -717,30 +600,18 @@ exit 0
   it.skipIf(process.platform === "win32")(
     "does not retry a non-internal locked-install failure",
     () => {
-      const fixture = fs.mkdtempSync(
-        path.join(os.tmpdir(), "nemoclaw-mcp-install-failure-"),
-      );
+      const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-install-failure-"));
       const script = path.join(fixture, "install-reviewed-runtime.sh");
       const mockBin = path.join(fixture, "bin");
       const counter = path.join(fixture, "npm-counter");
       fs.mkdirSync(mockBin);
       fs.copyFileSync(
-        path.join(
-          repoRoot,
-          "tools",
-          "mcp-tool-discovery-runtime",
-          "install-reviewed-runtime.sh",
-        ),
+        path.join(repoRoot, "tools", "mcp-tool-discovery-runtime", "install-reviewed-runtime.sh"),
         script,
       );
       const retryHelper = path.join(fixture, "npm-ci-locked.sh");
       fs.copyFileSync(
-        path.join(
-          repoRoot,
-          "tools",
-          "mcp-tool-discovery-runtime",
-          "npm-ci-locked.sh",
-        ),
+        path.join(repoRoot, "tools", "mcp-tool-discovery-runtime", "npm-ci-locked.sh"),
         retryHelper,
       );
       fs.chmodSync(retryHelper, 0o755);

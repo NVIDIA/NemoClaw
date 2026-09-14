@@ -61,6 +61,7 @@ it("restores sandbox as the generated Dockerfile's final user (#9844)", () => {
     versionSourceName: "weather-version-v1.ts",
   });
 
+  expect(dockerfile).toContain("openclaw plugins install --force --accept-capabilities");
   expect(dockerfile.trimEnd()).toMatch(/USER sandbox$/);
 });
 

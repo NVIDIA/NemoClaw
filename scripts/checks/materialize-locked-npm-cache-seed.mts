@@ -183,7 +183,11 @@ function reachablePackagePaths(packages: JsonRecord, target: NpmPlatformTarget):
       targetAllows(entry, "os", target.os) &&
       targetAllows(entry, "cpu", target.cpu) &&
       targetAllows(entry, "libc", target.libc);
-    if (!compatible) {
+    // npm still inspects bundled optional packages while reifying a packed
+    // plugin and can resolve their external dependencies or peers even when
+    // the bundled package itself targets another platform. Traverse those
+    // embedded records so the exact external archives are available offline.
+    if (!compatible && entry.inBundle !== true) {
       if (edge.optional || entry.optional === true) continue;
       throw new Error(`required package-lock dependency is incompatible: ${packagePath}`);
     }

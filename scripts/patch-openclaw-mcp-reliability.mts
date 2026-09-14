@@ -34,12 +34,8 @@ const LIST_TOOLS_PATTERN = [
   "\t\t\t\t\t\t\t\tsuppressUnsupported: Boolean(!capabilities.tools && (capabilities.resources || capabilities.prompts))",
   "\t\t\t\t\t\t\t});",
 ].join("\n");
-const ACQUIRE_LEASE_PATTERN = [
-  "\t\tacquireLease() {",
-  "\t\t\tactiveLeases += 1;",
-].join("\n");
-const TRANSPORT_FACTORY_PATTERN =
-  "function resolveMcpTransport(serverName, rawServer) {";
+const ACQUIRE_LEASE_PATTERN = ["\t\tacquireLease() {", "\t\t\tactiveLeases += 1;"].join("\n");
+const TRANSPORT_FACTORY_PATTERN = "function resolveMcpTransport(serverName, rawServer) {";
 const LOG_WARN_PATTERN = "logWarn(";
 
 const PREPARED_ENTRY_20260901_PATTERN = [
@@ -71,6 +67,26 @@ const START_FAILURE_RETURN_20260901_PATTERN = [
   "\t\t\t\t\t\t};",
 ].join("\n");
 const TRANSPORT_FACTORY_IMPORT_20260901_PATTERN = " t as resolveMcpTransport,";
+const SESSION_SCOPE_BINDINGS_20260901_PATTERN = [
+  "function createSessionMcpRuntime(params) {",
+  "\tconst { loaded, fingerprint: computedFingerprint } = loadSessionMcpConfig({",
+  "\t\tworkspaceDir: params.workspaceDir,",
+  "\t\tcfg: params.cfg,",
+].join("\n");
+const PREPARED_TRANSPORT_SCOPE_20260901_PATTERN = [
+  "\t\t\t\tfor (const [serverName, rawServer] of Object.entries(loaded.mcpServers)) {",
+  "\t\t\t\t\tfailIfDisposed();",
+  "\t\t\t\t\tif (retryServerNames && !retryServerNames.has(serverName)) continue;",
+  "\t\t\t\t\tconst override = params.connectionOverrides?.get(serverName);",
+  "\t\t\t\t\tconst transportSource = override ? applyMcpConnectionOverride(rawServer, override) : rawServer;",
+  "\t\t\t\t\tconst dataDirOwnership = Object.hasOwn(loaded.prepareDataDirsByServer ?? {}, serverName) ? loaded.prepareDataDirsByServer?.[serverName] : void 0;",
+  "\t\t\t\t\tconst resolved = resolveMcpTransport(serverName, transportSource, {",
+  "\t\t\t\t\t\tcfg: params.cfg,",
+  "\t\t\t\t\t\tagentDir: params.agentDir,",
+  "\t\t\t\t\t\tprepareDataDir: dataDirOwnership?.dataDir,",
+  "\t\t\t\t\t\trequesterScope: params.requesterScope",
+  "\t\t\t\t\t});",
+].join("\n");
 
 /** Anchors this patch rewrites; each must appear exactly once before patching. */
 const UNPATCHED_TARGET_PATTERNS = [
@@ -81,10 +97,7 @@ const UNPATCHED_TARGET_PATTERNS = [
   ACQUIRE_LEASE_PATTERN,
 ];
 /** Anchors this patch only reads; the retry reuses the upstream transport factory. */
-const REQUIRED_PATTERNS = [
-  ...UNPATCHED_TARGET_PATTERNS,
-  TRANSPORT_FACTORY_PATTERN,
-];
+const REQUIRED_PATTERNS = [...UNPATCHED_TARGET_PATTERNS, TRANSPORT_FACTORY_PATTERN];
 
 const TASK_OPEN_REPLACEMENT = [
   "\t\t\t\t\ttasks: preparedEntries.map(({ serverName, rawServer, resolved, safeServerName }) => nemoClawWithMcpStartRetry({",
@@ -189,7 +202,6 @@ const SHAPE_20260901 = {
     TASK_OPEN_20260901_PATTERN,
     TASK_CLOSE_20260901_PATTERN,
     START_FAILURE_RETURN_20260901_PATTERN,
-    LIST_TOOLS_PATTERN,
     ACQUIRE_LEASE_PATTERN,
   ],
   required: [
@@ -197,9 +209,10 @@ const SHAPE_20260901 = {
     TASK_OPEN_20260901_PATTERN,
     TASK_CLOSE_20260901_PATTERN,
     START_FAILURE_RETURN_20260901_PATTERN,
-    LIST_TOOLS_PATTERN,
     ACQUIRE_LEASE_PATTERN,
     TRANSPORT_FACTORY_IMPORT_20260901_PATTERN,
+    SESSION_SCOPE_BINDINGS_20260901_PATTERN,
+    PREPARED_TRANSPORT_SCOPE_20260901_PATTERN,
   ],
   patched: [
     MARKER,
@@ -207,18 +220,13 @@ const SHAPE_20260901 = {
     TASK_OPEN_20260901_REPLACEMENT,
     TASK_CLOSE_20260901_REPLACEMENT,
     START_FAILURE_RETURN_20260901_REPLACEMENT,
-    LIST_TOOLS_REPLACEMENT,
     ACQUIRE_LEASE_REPLACEMENT,
   ],
   replacements: [
     [PREPARED_ENTRY_20260901_PATTERN, PREPARED_ENTRY_20260901_REPLACEMENT],
     [TASK_OPEN_20260901_PATTERN, TASK_OPEN_20260901_REPLACEMENT],
     [TASK_CLOSE_20260901_PATTERN, TASK_CLOSE_20260901_REPLACEMENT],
-    [
-      START_FAILURE_RETURN_20260901_PATTERN,
-      START_FAILURE_RETURN_20260901_REPLACEMENT,
-    ],
-    [LIST_TOOLS_PATTERN, LIST_TOOLS_REPLACEMENT],
+    [START_FAILURE_RETURN_20260901_PATTERN, START_FAILURE_RETURN_20260901_REPLACEMENT],
     [ACQUIRE_LEASE_PATTERN, ACQUIRE_LEASE_REPLACEMENT],
   ],
 } as const;
@@ -227,12 +235,13 @@ const SHAPE_20260901 = {
  * Injected compatibility runtime for OpenClaw `bundle-mcp`.
  *
  * Retries exactly one classified transient Streamable HTTP server *startup*
- * failure with a fresh transport and bounded jitter. A tool-capable
- * Streamable HTTP server that returns an empty initial list receives one
- * idempotent list retry on the established transport. The patch also stops a
- * catalog that carries any server diagnostic from becoming the session's
- * stable catalog. A credential, TLS, policy, or configuration rejection is
- * never retried, and keeps its own diagnostic.
+ * failure with a fresh transport and bounded jitter. Legacy layouts also give
+ * a tool-capable Streamable HTTP server that returns an empty initial list one
+ * idempotent list retry on the established transport. OpenClaw 2026.9.1 uses
+ * its newer listAllTools lifecycle instead. The patch also stops a catalog
+ * that carries any server diagnostic from becoming the session's stable
+ * catalog. A credential, TLS, policy, or configuration rejection is never
+ * retried, and keeps its own diagnostic.
  */
 export const INJECTED_START_RETRY_HELPER = [
   MARKER,
@@ -393,9 +402,7 @@ function readOpenClawVersion(distDir: string): string {
     );
   }
   if (typeof payload.version !== "string") {
-    throw new Error(
-      `OpenClaw package metadata missing string version at ${packageJsonPath}`,
-    );
+    throw new Error(`OpenClaw package metadata missing string version at ${packageJsonPath}`);
   }
   return payload.version;
 }
@@ -415,22 +422,17 @@ function listJsFiles(dir: string): string[] {
   for (const entry of entries) {
     const entryPath = path.join(dir, entry.name);
     if (entry.isDirectory()) files.push(...listJsFiles(entryPath));
-    else if (entry.isFile() && entry.name.endsWith(".js"))
-      files.push(entryPath);
+    else if (entry.isFile() && entry.name.endsWith(".js")) files.push(entryPath);
   }
   return files.sort();
 }
 
 /** Fail closed: a recognized bundle-mcp runtime must expose every patch anchor exactly once. */
-export function patchBundleMcpRuntimeText(
-  source: string,
-  filePath: string,
-): PatchTextResult {
+export function patchBundleMcpRuntimeText(source: string, filePath: string): PatchTextResult {
   const currentLayout =
     source.includes(TASK_OPEN_20260901_PATTERN) ||
     source.includes(TASK_OPEN_20260901_REPLACEMENT) ||
-    (source.includes("policyToolEntries: []") &&
-      source.includes("launchDescription"));
+    (source.includes("policyToolEntries: []") && source.includes("launchDescription"));
   const shape = currentLayout ? SHAPE_20260901 : LEGACY_SHAPE;
   if (source.includes(MARKER)) {
     for (const pattern of shape.patched) {
@@ -452,9 +454,7 @@ export function patchBundleMcpRuntimeText(
   }
 
   if (!source.includes(LOG_WARN_PATTERN)) {
-    throw new Error(
-      `${filePath}: bundle-mcp runtime lacks the expected logWarn diagnostic helper`,
-    );
+    throw new Error(`${filePath}: bundle-mcp runtime lacks the expected logWarn diagnostic helper`);
   }
   for (const pattern of shape.required) {
     const count = countOccurrences(source, pattern);
@@ -467,16 +467,13 @@ export function patchBundleMcpRuntimeText(
 
   const importMatch = source.match(/^(?:import[^\n]*\n)+/);
   if (!importMatch) {
-    throw new Error(
-      `${filePath}: bundle-mcp runtime has no import prologue to anchor the helper`,
-    );
+    throw new Error(`${filePath}: bundle-mcp runtime has no import prologue to anchor the helper`);
   }
 
   let text = `${source.slice(0, importMatch[0].length)}${INJECTED_START_RETRY_HELPER}${source.slice(
     importMatch[0].length,
   )}`;
-  for (const [upstream, patched] of shape.replacements)
-    text = text.replace(upstream, patched);
+  for (const [upstream, patched] of shape.replacements) text = text.replace(upstream, patched);
 
   for (const pattern of shape.patched) {
     const count = countOccurrences(text, pattern);
@@ -509,10 +506,7 @@ export function patchOpenClawMcpReliability(distDir: string): {
   const resolvedDist = path.resolve(distDir);
   const version = readOpenClawVersion(resolvedDist);
   const target = resolveBundleMcpRuntimeFile(resolvedDist);
-  const result = patchBundleMcpRuntimeText(
-    fs.readFileSync(target, "utf-8"),
-    target,
-  );
+  const result = patchBundleMcpRuntimeText(fs.readFileSync(target, "utf-8"), target);
   if (result.patched) fs.writeFileSync(target, result.text);
   return { status: result.status, file: target, version };
 }
@@ -530,9 +524,7 @@ export function auditOpenClawMcpReliability(distDir: string): {
   }
   const result = patchBundleMcpRuntimeText(source, target);
   if (result.status !== "already-patched") {
-    throw new Error(
-      `${target}: MCP startup recovery patch state is not stable`,
-    );
+    throw new Error(`${target}: MCP startup recovery patch state is not stable`);
   }
   return { file: target, version };
 }

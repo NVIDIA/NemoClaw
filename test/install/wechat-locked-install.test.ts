@@ -117,7 +117,7 @@ exit 1
       `#!/bin/sh
 mkdir -p "$NPM_CONFIG_CACHE/_cacache/tmp"
 printf 'writable\n' > "$NPM_CONFIG_CACHE/_cacache/tmp/nemoclaw-install-probe"
-printf 'install|%s|offline=%s|peer=%s|cache=%s\n' "$3" "$NPM_CONFIG_OFFLINE" "$NPM_CONFIG_LEGACY_PEER_DEPS" "$NPM_CONFIG_CACHE" >> "$TRACE"
+printf 'install|%s|%s|%s|offline=%s|peer=%s|cache=%s\n' "$3" "$4" "$5" "$NPM_CONFIG_OFFLINE" "$NPM_CONFIG_LEGACY_PEER_DEPS" "$NPM_CONFIG_CACHE" >> "$TRACE"
 `,
     );
     executable(
@@ -162,7 +162,7 @@ printf 'verify|%s|%s|openclaw=%s|offline=%s|cache=%s\n' "$2" "$3" "$4" "$NPM_CON
       const serialized = readMessagingBuildPlanFromEnv(env, "openclaw");
       expect(applyMessagingBuildPhase(serialized, "agent-install", env)).toEqual([]);
       const calls = fs.readFileSync(trace, "utf8");
-      expect(calls).toContain("install|npm-pack:");
+      expect(calls).toContain("install|--force|--accept-capabilities|npm-pack:");
       expect(calls).toContain(
         `npm|view|@tencent-weixin/openclaw-weixin@2.4.3|cache=${fs.realpathSync(installCache)}|offline=true`,
       );

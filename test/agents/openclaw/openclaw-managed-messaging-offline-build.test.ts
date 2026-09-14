@@ -28,6 +28,7 @@ function dockerfileSection(startMarker: string, endMarker: string): string {
 }
 
 describe("OpenClaw managed messaging offline image build", () => {
+  // source-shape-contract: security -- Exact npm overrides bind the offline clean-install graph to reviewed versions embedded in signed plugin archives
   it("binds npm's clean-install view to the versions shipped in reviewed bundles", () => {
     const bundledVersion = (location: string) => {
       const bundled = runtimeLock.packages[location];

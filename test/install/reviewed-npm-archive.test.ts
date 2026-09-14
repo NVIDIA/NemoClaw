@@ -356,6 +356,40 @@ describe("reviewed npm archive", () => {
     ).toThrow("reviewed npm lock has an unowned bundled package");
   });
 
+  it("validates root-bundled dependencies with their own registry identities", () => {
+    const reviewed = cacheRequest();
+    const lockfilePath = path.join(reviewed.tempDirectory as string, "root-bundled-lock.json");
+    fs.writeFileSync(
+      lockfilePath,
+      `${JSON.stringify({
+        lockfileVersion: 3,
+        packages: {
+          "": { bundleDependencies: ["bundled-child"] },
+          "node_modules/bundled-child": {
+            dependencies: { transitive: "3.0.0" },
+            integrity: INTEGRITY,
+            inBundle: true,
+            resolved: "https://registry.npmjs.org/bundled-child/-/bundled-child-2.0.0.tgz",
+            version: "2.0.0",
+          },
+          "node_modules/transitive": {
+            integrity: INTEGRITY,
+            inBundle: true,
+            resolved: "https://registry.npmjs.org/transitive/-/transitive-3.0.0.tgz",
+            version: "3.0.0",
+          },
+        },
+      })}\n`,
+    );
+
+    expect(
+      verifyReviewedNpmLockPackages({
+        lockfilePath,
+        registryOrigin: "https://registry.npmjs.org/",
+      }),
+    ).toEqual(["bundled-child@2.0.0", "transitive@3.0.0"]);
+  });
+
   it("does not exempt declared bundle entries without npm's inBundle ownership marker", () => {
     const reviewed = cacheRequest();
     const lockfilePath = path.join(reviewed.tempDirectory as string, "forged-bundle-lock.json");

@@ -127,6 +127,11 @@
       "category": "security"
     },
     {
+      "file": "test/agents/openclaw/openclaw-managed-messaging-offline-build.test.ts",
+      "test": "binds npm's clean-install view to the versions shipped in reviewed bundles",
+      "category": "security"
+    },
+    {
       "file": "test/agents/openclaw/openclaw-locked-install.test.ts",
       "test": "fails closed on missing required packages and symlinked package roots",
       "category": "security"

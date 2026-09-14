@@ -217,6 +217,73 @@ describe("locked npm cache seed materialization", () => {
     expect(readdirSync(seed).sort()).toEqual(["alpha-1.0.0.tgz", "manifest.json"]);
   });
 
+  it("materializes a canonical archive selected through an npm alias", async () => {
+    const alpha = archive("alpha", "alpha archive");
+    const lockfile = writeLock(testRoot, [alpha.locked]);
+    const lock = JSON.parse(readFileSync(lockfile, "utf8")) as {
+      packages: Record<string, Record<string, unknown>>;
+    };
+    lock.packages[""].dependencies = { "reviewed-alpha": "npm:alpha@1.0.0" };
+    lock.packages["node_modules/reviewed-alpha"] = {
+      ...lock.packages["node_modules/alpha"],
+      name: "alpha",
+      version: "1.0.0",
+    };
+    delete lock.packages["node_modules/alpha"];
+    writeFileSync(lockfile, `${JSON.stringify(lock, null, 2)}\n`);
+    const seed = path.join(testRoot, "seed");
+
+    const manifest = await materializeLockedNpmCacheSeed({
+      downloadArchive: async () => alpha.bytes,
+      lockfile,
+      output: seed,
+      target: TARGET,
+    });
+
+    expect(manifest.archiveCount).toBe(1);
+    expect(readdirSync(seed).sort()).toEqual(["alpha-1.0.0.tgz", "manifest.json"]);
+  });
+
+  it("includes external dependencies reached through incompatible bundled optionals", async () => {
+    const alpha = archive("alpha", "alpha archive");
+    const external = archive("external", "external archive");
+    const lockfile = writeLock(testRoot, [alpha.locked, external.locked]);
+    const lock = JSON.parse(readFileSync(lockfile, "utf8")) as {
+      packages: Record<string, Record<string, unknown>>;
+    };
+    lock.packages[""].dependencies = { alpha: "1.0.0" };
+    lock.packages["node_modules/alpha"].bundleDependencies = ["platform-child"];
+    lock.packages["node_modules/alpha"].optionalDependencies = { "platform-child": "1.0.0" };
+    lock.packages["node_modules/alpha/node_modules/platform-child"] = {
+      cpu: ["wasm32"],
+      dependencies: { external: "1.0.0" },
+      inBundle: true,
+      optional: true,
+      version: "1.0.0",
+    };
+    writeFileSync(lockfile, `${JSON.stringify(lock, null, 2)}\n`);
+    const sources = new Map([
+      [alpha.locked.resolved, alpha.bytes],
+      [external.locked.resolved, external.bytes],
+    ]);
+    const downloadArchive = vi.fn(async (entry: LockedArchive) => sources.get(entry.resolved)!);
+    const seed = path.join(testRoot, "seed");
+
+    const manifest = await materializeLockedNpmCacheSeed({
+      downloadArchive,
+      lockfile,
+      output: seed,
+      target: TARGET,
+    });
+
+    expect(manifest.archiveCount).toBe(2);
+    expect(readdirSync(seed).sort()).toEqual([
+      "alpha-1.0.0.tgz",
+      "external-1.0.0.tgz",
+      "manifest.json",
+    ]);
+  });
+
   it("does not invent an archive for a peer omitted by a legacy-peer lock", async () => {
     const alpha = archive("alpha", "alpha archive");
     const lockfile = writeLock(testRoot, [alpha.locked]);

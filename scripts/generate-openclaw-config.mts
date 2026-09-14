@@ -141,7 +141,8 @@ export const MANAGED_IMAGE_OPENCLAW_MESSAGING_CAPABILITIES = [
 // messaging manifests. Keep those bundled entrypoints explicitly inert without
 // representing them as activatable managed-image capabilities.
 export const MANAGED_IMAGE_OPENCLAW_BUNDLED_INERT_CAPABILITIES = [
-  { channelId: "imessage", pluginId: "imessage" },
+  { channelId: "a2a", pluginId: "a2a" },
+  { channelId: "reef", pluginId: "reef" },
 ] as const;
 const MANAGED_IMAGE_OPENCLAW_NEUTRAL_CAPABILITIES = [
   ...MANAGED_IMAGE_OPENCLAW_MESSAGING_CAPABILITIES,

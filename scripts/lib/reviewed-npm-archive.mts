@@ -585,13 +585,17 @@ function readReviewedLockPackages(
       throw new Error(`reviewed npm lock has invalid inBundle metadata: ${location}`);
     }
     if (record.inBundle === true) {
-      if (!bundledLocations.has(location)) {
+      if (bundledLocations.has(location)) {
+        // npm ships this complete subtree inside the nearest reviewed parent
+        // tarball. The parent's committed SHA-512 authenticates these bytes,
+        // and npm intentionally omits per-entry resolved/integrity metadata here.
+        continue;
+      }
+      if (typeof record.resolved !== "string" || typeof record.integrity !== "string") {
         throw new Error(`reviewed npm lock has an unowned bundled package: ${location}`);
       }
-      // npm ships this complete subtree inside the nearest reviewed parent
-      // tarball. The parent's committed SHA-512 authenticates these bytes, and
-      // npm intentionally omits per-entry resolved/integrity metadata here.
-      continue;
+      // Root bundleDependencies retain their own registry identity in npm's
+      // lockfile, so validate them like any other independently pinned package.
     }
     const locationName = packageNameFromLockLocation(location);
     const packageName = typeof record.name === "string" ? record.name : locationName;
