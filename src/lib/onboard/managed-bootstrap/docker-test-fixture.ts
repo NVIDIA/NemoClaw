@@ -6,7 +6,6 @@ import fs from "node:fs";
 import { expect, vi } from "vitest";
 
 import { managedStartupE2eProfile } from "../../../../scripts/checks/generate-managed-startup-profile-fixture.mts";
-import { dockerContainerName } from "../docker-gpu-patch-clone";
 import type { DockerContainerInspect } from "../docker-gpu-patch-types";
 import { openshellMainProcessSpecEnvValue } from "../docker-startup-command-env";
 import { encodeManagedStartupProfile, type ManagedStartupAgent } from "../managed-startup/profile";
@@ -579,19 +578,7 @@ export function fixture(options: DockerFixtureOptions = {}) {
         : result;
     }),
     runCaptureOpenshell: vi.fn(() => `Name: alpha\nID: ${options.ownerId ?? "sandbox-alpha"}\n`),
-    runOpenshell: vi.fn((args) => {
-      if (args[0] === "sandbox" && args[1] === "start") {
-        const sandboxName = args[2];
-        const target = [original, replacement].find(
-          (value): value is DockerContainerInspect =>
-            value !== null && dockerContainerName(value) === `openshell-${sandboxName}`,
-        );
-        if (target?.State) {
-          target.State = { ...target.State, Running: true, Restarting: false };
-        }
-      }
-      return ok();
-    }),
+    runOpenshell: vi.fn(() => ok()),
     now: () => new Date("2026-07-31T12:30:00.000Z"),
   };
   return {
