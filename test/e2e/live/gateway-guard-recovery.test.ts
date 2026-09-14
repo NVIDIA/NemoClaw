@@ -580,12 +580,8 @@ test(
       timeoutMs: 120_000,
     });
     expect(legacyRestart.exitCode, resultText(legacyRestart)).toBe(0);
-    await waitForSandboxExecReady(
-      host,
-      instance.sandboxName,
-      progress,
-      "legacy-restart-openshell-ready",
-    );
+    // OpenShell records the interrupted keepalive as terminal Error. Recovery
+    // must restore readiness; Docker restart alone cannot satisfy an exec probe.
     await gateway.waitForMissingManagedSupervisor(legacyContainerId, {
       onRetry: (attempt) => progress.event(`managed supervisor absence proof retry ${attempt}`),
     });
@@ -614,6 +610,12 @@ test(
     );
     expect(legacyRecovery.timedOut, "legacy recovery should complete before timeout").toBe(false);
     expect(legacyRecovery.exitCode, "legacy recovery should exit successfully").toBe(0);
+    await waitForSandboxExecReady(
+      host,
+      instance.sandboxName,
+      progress,
+      "legacy-restart-openshell-ready",
+    );
     expectManagedGatewayState(legacyManagedState);
     expect(legacyRecoveredContainerId).not.toBe(legacyContainerId);
     const legacyRecoveredStartupCommand = await inspectStartupCommand(

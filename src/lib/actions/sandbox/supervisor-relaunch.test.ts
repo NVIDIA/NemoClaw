@@ -143,6 +143,9 @@ describe("relaunchManagedSupervisorSession", () => {
 
     expect(relaunch).not.toBeNull();
     expect(relaunch?.containerId).toBe("new-container-id");
+    // A restarted keepalive can leave OpenShell in Error until the final handoff.
+    expect(deps.commandExecutor.runBuffered).not.toHaveBeenCalled();
+    expect(deps.runCaptureOpenshell).not.toHaveBeenCalled();
     expect(deps.recreate).toHaveBeenCalledOnce();
     const options = vi.mocked(deps.recreate).mock.calls[0]?.[0];
     expect(options).toMatchObject({
