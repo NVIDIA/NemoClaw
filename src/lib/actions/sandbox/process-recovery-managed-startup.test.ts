@@ -3,17 +3,27 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import * as forwardService from "../../adapters/openshell/forward-service";
-import * as openshellResolve from "../../adapters/openshell/resolve";
-import * as openshellRuntime from "../../adapters/openshell/runtime";
 import * as agentRuntime from "../../agent/runtime";
 import * as wait from "../../core/wait";
 import * as registry from "../../state/registry";
-import * as forwardHealth from "./forward-health";
 import {
-  checkAndRecoverSandboxProcesses,
+  checkAndRecoverSandboxProcesses as checkAndRecoverSandboxProcessesImpl,
   waitForManagedGatewaySupervisor,
 } from "./process-recovery";
+
+const forwardAdapter = vi.hoisted(() => ({
+  observeForwards: vi.fn(async ({ forwards }) =>
+    forwards.map((forward: object) => ({ state: "owned" as const, forward })),
+  ),
+  startForward: vi.fn(async ({ forward }) => ({ state: "reused" as const, forward })),
+  retireLegacyForward: vi.fn(),
+  verifyForwardRelease: vi.fn(async () => ({ state: "released" as const })),
+}));
+
+vi.mock("../../adapters/openshell/forward-runtime", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../adapters/openshell/forward-runtime")>()),
+  createOpenShellForwardAdapterForAuthority: () => forwardAdapter,
+}));
 
 const ACCEPTED_MANAGED_RECOVERY = {
   status: 0,
@@ -48,13 +58,16 @@ function mockGatewaySandbox(sandboxName: string, agent: "openclaw" | "hermes" = 
   });
 }
 
-function mockRecoveredForward(_sandboxName: string): void {
-  vi.spyOn(forwardHealth, "isLocalForwardReachable").mockReturnValue(true);
-  vi.spyOn(forwardService, "isForwardServiceListenerOwner").mockReturnValue(true);
-  vi.spyOn(openshellResolve, "resolveOpenshell").mockReturnValue("/usr/bin/openshell");
-  vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({
-    status: 0,
-    output: "SANDBOX  BIND  PORT  PID  STATUS",
+function mockRecoveredForward(_sandboxName: string): void {}
+
+function checkAndRecoverSandboxProcesses(
+  sandboxName: string,
+  options: Parameters<typeof checkAndRecoverSandboxProcessesImpl>[1] = {},
+) {
+  return checkAndRecoverSandboxProcessesImpl(sandboxName, {
+    ensureSandboxPortForwardImpl: async () => true,
+    withLifecycleLock: async (_name, operation) => await operation(),
+    ...options,
   });
 }
 

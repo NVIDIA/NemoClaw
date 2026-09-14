@@ -95,7 +95,14 @@ export type OpenShellForwardObservation =
   | OpenShellInvalidForwardRequest;
 
 export type OpenShellForwardStartResult =
-  | Readonly<{ state: "started"; forward: OpenShellForwardIdentity }>
+  | Readonly<{
+      state: "started";
+      forward: OpenShellForwardIdentity;
+      cleanup(request?: {
+        timeoutMs?: number;
+        assertCurrent?: () => Promise<void>;
+      }): Promise<OpenShellForwardReleaseResult>;
+    }>
   | Readonly<{ state: "reused"; forward: OpenShellForwardIdentity }>
   | Readonly<{
       state: "refused";

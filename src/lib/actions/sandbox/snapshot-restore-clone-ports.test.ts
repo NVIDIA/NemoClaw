@@ -17,14 +17,35 @@ import { resolveRebuildHermesDashboardEnv } from "./rebuild-durable-config";
 import * as f from "./snapshot-restore-test-fixture";
 
 const dashboardPortMocks = vi.hoisted(() => ({
-  findAvailableDashboardPort: vi.fn(() => 18901),
+  createOpenShellForwardPortObserver: vi.fn(
+    ({ forwardForPort }: { forwardForPort(port: number): object }) =>
+      async (ports: readonly number[]) =>
+        ports.map((port) => ({ state: "absent" as const, forward: forwardForPort(port) })),
+  ),
+  findAvailableDashboardPortFromObserver: vi.fn(
+    async (
+      _sandboxName: string,
+      preferredPort: number,
+      observeForwardPorts: (ports: readonly number[]) => Promise<readonly object[]>,
+    ) => ({ port: 18901, observations: await observeForwardPorts([preferredPort]) }),
+  ),
   getRegistryOccupiedDashboardPorts: vi.fn(() => new Map<string, string>()),
   getRegistryOccupiedHermesApiPorts: vi.fn(() => new Map<string, string>()),
   withDashboardPortReservationLock: vi.fn(async (operation: () => unknown) => await operation()),
 }));
 
 const hermesApiPortMocks = vi.hoisted(() => ({
-  findAvailableHermesApiPort: vi.fn(() => 8643),
+  findAvailableHermesApiPortFromObserver: vi.fn(
+    async (
+      _sandboxName: string,
+      preferredPort: number,
+      observeForwardPorts: (ports: readonly number[]) => Promise<readonly object[]>,
+    ) => ({ port: 8643, observations: await observeForwardPorts([preferredPort]) }),
+  ),
+}));
+
+const forwardAdapterMocks = vi.hoisted(() => ({
+  create: vi.fn(() => ({ observeForwards: vi.fn() })),
 }));
 
 function parseEnvironmentCommand(args: readonly string[]): {
@@ -42,7 +63,8 @@ function parseEnvironmentCommand(args: readonly string[]): {
 }
 
 vi.mock("../../onboard/dashboard-port", () => ({
-  findAvailableDashboardPort: dashboardPortMocks.findAvailableDashboardPort,
+  createOpenShellForwardPortObserver: dashboardPortMocks.createOpenShellForwardPortObserver,
+  findAvailableDashboardPortFromObserver: dashboardPortMocks.findAvailableDashboardPortFromObserver,
   getRegistryOccupiedDashboardPorts: dashboardPortMocks.getRegistryOccupiedDashboardPorts,
   getRegistryOccupiedHermesApiPorts: dashboardPortMocks.getRegistryOccupiedHermesApiPorts,
   withDashboardPortReservationLock: dashboardPortMocks.withDashboardPortReservationLock,
@@ -50,7 +72,39 @@ vi.mock("../../onboard/dashboard-port", () => ({
 
 vi.mock("../../onboard/hermes-api-port", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../onboard/hermes-api-port")>()),
-  findAvailableHermesApiPort: hermesApiPortMocks.findAvailableHermesApiPort,
+  findAvailableHermesApiPortFromObserver: hermesApiPortMocks.findAvailableHermesApiPortFromObserver,
+}));
+
+vi.mock("../../adapters/openshell/forward-runtime", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../adapters/openshell/forward-runtime")>()),
+  createOpenShellForwardAdapterForAuthority: forwardAdapterMocks.create,
+}));
+
+vi.mock("../../onboard/gateway-teardown-authority", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../onboard/gateway-teardown-authority")>()),
+  resolveGatewayForwardAuthority: ({
+    gatewayName,
+    gatewayPort,
+  }: {
+    gatewayName: string;
+    gatewayPort: number;
+  }) => ({
+    endpoint: null,
+    gatewayName,
+    gatewayPort,
+    mode: "nemoclaw-managed" as const,
+    requiredCapabilities: [],
+    source: "standalone" as const,
+    stateDir: null,
+    supervisor: null,
+  }),
+}));
+
+vi.mock("../../onboard/gateway-host-runtime", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../onboard/gateway-host-runtime")>()),
+  resolveGatewayForwardRuntimeAuthority: (owner: { gatewayPort: number }) => ({
+    gatewayEndpoint: `https://127.0.0.1:${String(owner.gatewayPort)}`,
+  }),
 }));
 
 beforeEach(f.resetSnapshotRestoreMocks);
@@ -97,13 +151,22 @@ describe("runSandboxSnapshot restore: clone port identity", () => {
     });
     const { runSandboxSnapshot } = await import("./snapshot");
     await runSandboxSnapshot("alpha", { kind: "restore", to: "beta" });
-    expect(dashboardPortMocks.findAvailableDashboardPort).toHaveBeenCalledWith(
+    expect(dashboardPortMocks.findAvailableDashboardPortFromObserver).toHaveBeenCalledWith(
       "beta",
       18790,
-      expect.any(String),
-      undefined,
+      expect.any(Function),
       expect.any(Map),
     );
+    const observerFactoryInput = dashboardPortMocks.createOpenShellForwardPortObserver.mock
+      .calls[0]?.[0] as { forwardForPort(port: number): unknown };
+    expect(observerFactoryInput.forwardForPort(18790)).toEqual({
+      gatewayEndpoint: "https://127.0.0.1:18080",
+      gatewayName: "nemoclaw-18080",
+      workspace: "default",
+      sandboxName: "beta",
+      localHost: "127.0.0.1",
+      port: 18790,
+    });
     expect(dashboardPortMocks.withDashboardPortReservationLock).toHaveBeenCalledOnce();
     const createArgs = f.streamSandboxCreateMock.mock.calls[0]?.[1] ?? [];
     expect(createArgs.slice(0, 6)).toEqual([
@@ -421,11 +484,10 @@ describe("runSandboxSnapshot restore: clone port identity", () => {
     f.getLatestBackupMock.mockReturnValue({ ...f.latestBackupFixture });
     const { runSandboxSnapshot } = await import("./snapshot");
     await runSandboxSnapshot("alpha", { kind: "restore", to: "beta" });
-    expect(hermesApiPortMocks.findAvailableHermesApiPort).toHaveBeenCalledWith(
+    expect(hermesApiPortMocks.findAvailableHermesApiPortFromObserver).toHaveBeenCalledWith(
       "beta",
-      undefined,
-      expect.any(String),
-      undefined,
+      8642,
+      expect.any(Function),
       expect.any(Map),
     );
     const createArgs = f.streamSandboxCreateMock.mock.calls[0]?.[1] ?? [];
@@ -465,7 +527,7 @@ describe("runSandboxSnapshot restore: clone port identity", () => {
     f.getLatestBackupMock.mockReturnValue({ ...f.latestBackupFixture });
     const { runSandboxSnapshot } = await import("./snapshot");
     await runSandboxSnapshot("alpha", { kind: "restore", to: "beta" });
-    expect(hermesApiPortMocks.findAvailableHermesApiPort).not.toHaveBeenCalled();
+    expect(hermesApiPortMocks.findAvailableHermesApiPortFromObserver).not.toHaveBeenCalled();
     const createArgs = f.streamSandboxCreateMock.mock.calls[0]?.[1] ?? [];
     expect(createArgs.some((arg) => arg.startsWith(HERMES_API_PORT_ENV))).toBe(false);
     expect(f.registerSandboxMock).toHaveBeenCalledWith(
@@ -476,7 +538,10 @@ describe("runSandboxSnapshot restore: clone port identity", () => {
   });
 
   it("keeps a Hermes clone rebuildable with its new public port and inherited internal port (#6746)", async () => {
-    dashboardPortMocks.findAvailableDashboardPort.mockReturnValueOnce(18902);
+    dashboardPortMocks.findAvailableDashboardPortFromObserver.mockResolvedValueOnce({
+      port: 18902,
+      observations: [],
+    });
     let registeredClone: f.SandboxRecord | null = null;
     f.registerSandboxMock.mockImplementation(
       (entry) => (registeredClone = entry as f.SandboxRecord),
@@ -510,11 +575,10 @@ describe("runSandboxSnapshot restore: clone port identity", () => {
 
     await runSandboxSnapshot("alpha", { kind: "restore", to: "beta" });
 
-    expect(dashboardPortMocks.findAvailableDashboardPort).toHaveBeenCalledWith(
+    expect(dashboardPortMocks.findAvailableDashboardPortFromObserver).toHaveBeenCalledWith(
       "beta",
       18790,
-      expect.any(String),
-      undefined,
+      expect.any(Function),
       new Map([["18901", "alpha (Hermes dashboard internal)"]]),
     );
     expect(f.registerSandboxMock).toHaveBeenCalledWith(
@@ -554,9 +618,9 @@ describe("runSandboxSnapshot restore: clone port identity", () => {
 
   it("aborts before deleting a --force destination when no dashboard port is free (#6746)", async () => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
-    dashboardPortMocks.findAvailableDashboardPort.mockImplementationOnce(() => {
-      throw new Error("All dashboard ports in range 18789-18799 are occupied:");
-    });
+    dashboardPortMocks.findAvailableDashboardPortFromObserver.mockRejectedValueOnce(
+      new Error("All dashboard ports in range 18789-18799 are occupied:"),
+    );
     f.getSandboxMock.mockImplementation((name) => ({
       name: name ?? "alpha",
       agent: "openclaw",
@@ -580,7 +644,7 @@ describe("runSandboxSnapshot restore: clone port identity", () => {
       runSandboxSnapshot("alpha", { kind: "restore", to: "beta", force: true, yes: true }),
     ).rejects.toMatchObject({ exitCode: 1 });
 
-    expect(dashboardPortMocks.findAvailableDashboardPort).toHaveBeenCalled();
+    expect(dashboardPortMocks.findAvailableDashboardPortFromObserver).toHaveBeenCalled();
     expect(consoleError.mock.calls.flat().join("\n")).toContain("are occupied");
     expect(f.lifecycleMock.events).not.toContain("delete");
     expect(f.streamSandboxCreateMock).not.toHaveBeenCalled();
@@ -589,9 +653,9 @@ describe("runSandboxSnapshot restore: clone port identity", () => {
 
   it("aborts before deleting a --force destination when no Hermes API port is free (#8543)", async () => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
-    hermesApiPortMocks.findAvailableHermesApiPort.mockImplementationOnce(() => {
-      throw new Error("All Hermes API ports in range 8642-8652 are occupied:");
-    });
+    hermesApiPortMocks.findAvailableHermesApiPortFromObserver.mockRejectedValueOnce(
+      new Error("All Hermes API ports in range 8642-8652 are occupied:"),
+    );
     f.getSandboxMock.mockImplementation((name) => ({
       name: name ?? "alpha",
       agent: "hermes",
@@ -616,7 +680,7 @@ describe("runSandboxSnapshot restore: clone port identity", () => {
       runSandboxSnapshot("alpha", { kind: "restore", to: "beta", force: true, yes: true }),
     ).rejects.toMatchObject({ exitCode: 1 });
 
-    expect(hermesApiPortMocks.findAvailableHermesApiPort).toHaveBeenCalled();
+    expect(hermesApiPortMocks.findAvailableHermesApiPortFromObserver).toHaveBeenCalled();
     expect(consoleError.mock.calls.flat().join("\n")).toContain("are occupied");
     expect(f.lifecycleMock.events).not.toContain("delete");
     expect(f.streamSandboxCreateMock).not.toHaveBeenCalled();
@@ -650,7 +714,7 @@ describe("runSandboxSnapshot restore: clone port identity", () => {
     f.getLatestBackupMock.mockReturnValue({ ...f.latestBackupFixture });
     const { runSandboxSnapshot } = await import("./snapshot");
     await runSandboxSnapshot("alpha", { kind: "restore", to: "beta" });
-    expect(dashboardPortMocks.findAvailableDashboardPort).not.toHaveBeenCalled();
+    expect(dashboardPortMocks.findAvailableDashboardPortFromObserver).not.toHaveBeenCalled();
     expect(f.registerSandboxMock).toHaveBeenCalledWith(
       expect.objectContaining({ name: "beta", dashboardPort: null }),
       undefined,

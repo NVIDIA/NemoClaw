@@ -1587,6 +1587,30 @@ export function createCliOpenShellForwardAdapter(
 
     if (afterSpawn) return failAfterSpawn(afterSpawn, false);
 
+    const cleanupStartedForward = async (
+      request: {
+        timeoutMs?: number;
+        assertCurrent?: () => Promise<void>;
+      } = {},
+    ): Promise<OpenShellForwardReleaseResult> => {
+      const cleanupTimeoutMs = request.timeoutMs ?? DEFAULT_CLEANUP_TIMEOUT_MS;
+      const cleanupDeadline = now() + cleanupTimeoutMs;
+      const fenceError = await runFence(request.assertCurrent, cleanupDeadline);
+      if (fenceError) return { state: "indeterminate", forwards: [forward], error: fenceError };
+      const termination = await settleWithin(
+        () => terminate(child, remaining(cleanupDeadline, now)),
+        remaining(cleanupDeadline, now),
+      );
+      if (termination.state !== "value" || !termination.value) {
+        return { state: "indeterminate", forwards: [forward], error: CLEANUP_ERROR };
+      }
+      return verifyForwardRelease({
+        forwards: [forward],
+        timeoutMs: remaining(cleanupDeadline, now),
+        assertCurrent: request.assertCurrent,
+      });
+    };
+
     let failureError: OpenShellForwardRuntimeError = TIMEOUT_ERROR;
     let foreign = false;
     do {
@@ -1608,7 +1632,7 @@ export function createCliOpenShellForwardAdapter(
         }
         child.off("error", onError);
         child.unref();
-        return { state: "started", forward };
+        return { state: "started", forward, cleanup: cleanupStartedForward };
       }
       if (readiness.state === "foreign") {
         foreign = true;

@@ -263,25 +263,28 @@ if (dashboardScenario) {
   let dashboardForwardCalls = 0;
   onboardDashboard.createOnboardDashboardHelpers = (deps) => {
     if (scenario.mode === "dashboard-spawn-failure") {
-      const forward = require(${JSON.stringify(path.join(repoRoot, "src/lib/adapters/openshell/forward-service.ts"))});
+      const { createCliOpenShellForwardAdapter } = require(${JSON.stringify(path.join(repoRoot, "src/lib/adapters/openshell/forward-cli.ts"))});
       return createOnboardDashboardHelpers({
         ...deps,
-        getGatewayForwardRuntimeAuthority: undefined,
-        runCaptureOpenshell: () => "SANDBOX BIND PORT PID STATUS",
-        isPortBoundOnHost: () => false,
-        forwardService: {
-          executable: () => ${JSON.stringify(path.join(tmpDir, "missing-openshell"))},
-          resolveGatewayName: () => "nemoclaw",
-          owns: () => false,
-          launch: (target, options) => {
+        getGatewayForwardRuntimeAuthority: () => ({
+          gatewayEndpoint: "https://127.0.0.1:8080",
+        }),
+        resolveForwardGatewayName: () => "nemoclaw",
+        forwardAdapterForAuthority: (authority) => {
+          const adapter = createCliOpenShellForwardAdapter({
+            executable: ${JSON.stringify(path.join(tmpDir, "missing-openshell"))},
+            gatewayEndpoint: authority.gatewayEndpoint,
+            runtimeSelection: authority,
+          });
+          return {
+            ...adapter,
+            observeForwards: async ({ forwards }) =>
+              forwards.map((forward) => ({ state: "absent", forward })),
+            startForward: (request) => {
             called.push("forward-launch");
-            return forward.launchForwardService(target, {
-              ...options,
-              isReachable: () => false,
-              timeoutMs: 1000,
-              terminateProcessTree: () => { called.push("terminate-process-tree"); },
-            });
-          },
+              return adapter.startForward({ ...request, timeoutMs: 1000 });
+            },
+          };
         },
       });
     }
@@ -762,10 +765,11 @@ describe("live onboard FSM slice boundaries", () => {
     assert.deepEqual(runSliceProbe({ slice: "final" }), ["initial:init", "core", "final"]);
   });
 
-  it("reports a missing forward executable through the production onboarding action (#11648)", () => {
+  it("reports a sanitized adapter failure for a missing forward executable (#9808, #11648)", () => {
     const called = runSliceProbe({ slice: "final", mode: "dashboard-spawn-failure" });
     assert.ok(called.includes("forward-launch"), JSON.stringify(called));
-    assert.match(called.at(-1) ?? "", /failure:.*ENOENT/);
+    assert.match(called.at(-1) ?? "", /failure:.*could not prove the forward state/i);
+    assert.doesNotMatch(called.at(-1) ?? "", /ENOENT|missing-openshell/);
     assert.ok(!called.includes("terminate-process-tree"));
     assert.ok(!called.some((entry) => entry.startsWith("registry-port:")));
   }, 60_000);

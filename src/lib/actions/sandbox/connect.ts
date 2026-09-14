@@ -2697,10 +2697,10 @@ async function prepareConnectSandboxWithinLifecycleFence(
             failHermesPortableReadinessAuthority(sandboxName);
           }
           if (runtime.kind === "running-current") {
-            let forward: ReturnType<typeof verifyHermesPortableForwardsForConnectProbe>;
+            let forward: Awaited<ReturnType<typeof verifyHermesPortableForwardsForConnectProbe>>;
             try {
               runtime.assertCurrent();
-              forward = probeTiming!.measure("forward", () =>
+              forward = await probeTiming!.measureAsync("forward", () =>
                 verifyHermesPortableForwardsForConnectProbe({
                   intent: "connect-probe-only",
                   sandboxName,

@@ -45,9 +45,8 @@ export type ConnectHarness = {
   connectSandbox: ConnectSandbox;
   ensureOllamaAuthProxySpy: MockInstance;
   findReachableOllamaHostSpy: MockInstance;
-  forwardReachabilitySpy: MockInstance;
-  forwardServiceOwnerSpy: MockInstance;
-  launchForwardServiceSpy: MockInstance;
+  forwardAdapterObserveSpy: MockInstance;
+  forwardAdapterStartSpy: MockInstance;
   ensureLiveSandboxSpy: MockInstance;
   getSandboxDockerRuntimeSpy: MockInstance;
   dockerStartSpy: MockInstance;
@@ -209,8 +208,7 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     "../../src/lib/onboard/experimental/hermes-portable-ollama-inference.js",
   );
   const processRecovery = requireDist("../../src/lib/actions/sandbox/process-recovery.js");
-  const forwardHealth = requireDist("../../src/lib/actions/sandbox/forward-health.js");
-  const forwardService = requireDist("../../src/lib/adapters/openshell/forward-service.js");
+  const forwardRuntime = requireDist("../../src/lib/adapters/openshell/forward-runtime.js");
   const autoPairApproval = requireDist("../../src/lib/actions/sandbox/auto-pair-approval.js");
   const connectVllmPreflight = requireDist(
     "../../src/lib/actions/sandbox/connect-vllm-preflight.js",
@@ -580,15 +578,19 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
   const checkAndRecoverSpy = vi
     .spyOn(processRecovery, "checkAndRecoverSandboxProcesses")
     .mockReturnValue(options.processCheck ?? { checked: true, wasRunning: true, recovered: false });
-  const forwardReachabilitySpy = vi
-    .spyOn(forwardHealth, "isLocalForwardReachable")
-    .mockReturnValue(true);
-  const forwardServiceOwnerSpy = vi
-    .spyOn(forwardService, "isForwardServiceListenerOwner")
-    .mockReturnValue(true);
-  const launchForwardServiceSpy = vi
-    .spyOn(forwardService, "launchForwardService")
-    .mockImplementation(() => undefined);
+  const forwardAdapterObserveSpy = vi.fn(async ({ forwards }) =>
+    forwards.map((forward: object) => ({ state: "owned" as const, forward })),
+  );
+  const forwardAdapterStartSpy = vi.fn(async ({ forward }) => ({
+    state: "reused" as const,
+    forward,
+  }));
+  vi.spyOn(forwardRuntime, "createOpenShellForwardAdapterForAuthority").mockReturnValue({
+    observeForwards: forwardAdapterObserveSpy,
+    startForward: forwardAdapterStartSpy,
+    retireLegacyForward: vi.fn(),
+    verifyForwardRelease: vi.fn(async () => ({ state: "released" as const })),
+  });
   const verifyHermesPortableLaunchForwardsSpy = vi
     .spyOn(processRecovery, "verifyHermesPortableLaunchForwards")
     .mockReturnValue({ kind: "healthy" });
@@ -731,9 +733,8 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     connectSandbox: requireDist(connectModulePath).connectSandbox,
     ensureOllamaAuthProxySpy,
     findReachableOllamaHostSpy,
-    forwardReachabilitySpy,
-    forwardServiceOwnerSpy,
-    launchForwardServiceSpy,
+    forwardAdapterObserveSpy,
+    forwardAdapterStartSpy,
     ensureLiveSandboxSpy,
     getSandboxDockerRuntimeSpy,
     dockerStartSpy,

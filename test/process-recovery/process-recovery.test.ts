@@ -8,23 +8,40 @@ import os from "node:os";
 import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { OpenShellForwardAdapter } from "../../src/lib/adapters/openshell/forward";
 
 const requireSource = createRequire(import.meta.url);
 const { checkAndRecoverSandboxProcesses: checkAndRecoverSandboxProcessesImpl } = requireSource(
   "../../src/lib/actions/sandbox/process-recovery.ts",
 ) as typeof import("../../src/lib/actions/sandbox/process-recovery.js");
 
-const forwardService = requireSource(
-  "../../src/lib/adapters/openshell/forward-service.ts",
-) as typeof import("../../src/lib/adapters/openshell/forward-service.js");
-const openshellResolve = requireSource(
-  "../../src/lib/adapters/openshell/resolve.ts",
-) as typeof import("../../src/lib/adapters/openshell/resolve.js");
+const forwardRuntime = requireSource(
+  "../../src/lib/adapters/openshell/forward-runtime.ts",
+) as typeof import("../../src/lib/adapters/openshell/forward-runtime.js");
 const gatewayTeardownAuthority = requireSource(
   "../../src/lib/onboard/gateway-teardown-authority.ts",
 ) as typeof import("../../src/lib/onboard/gateway-teardown-authority.js");
 
+const startForward = vi.fn();
+
+function mockForwardObservation(state: "owned" | "foreign" | "indeterminate" = "owned"): void {
+  startForward.mockReset();
+  vi.spyOn(forwardRuntime, "createOpenShellForwardAdapterForAuthority").mockReturnValue({
+    observeForwards: vi.fn<OpenShellForwardAdapter["observeForwards"]>(async ({ forwards }) => {
+      await (state === "indeterminate"
+        ? Promise.reject(new Error("ownership proof unavailable"))
+        : Promise.resolve());
+      const observedState = state === "owned" ? "owned" : "foreign";
+      return forwards.map((forward) => ({ state: observedState, forward }));
+    }),
+    startForward,
+    retireLegacyForward: vi.fn(),
+    verifyForwardRelease: vi.fn(async () => ({ state: "released" })),
+  } as never);
+}
+
 beforeEach(() => {
+  mockForwardObservation();
   vi.spyOn(gatewayTeardownAuthority, "resolveGatewayForwardAuthority").mockImplementation(
     ({ gatewayName, gatewayPort }) => ({
       gatewayName,
@@ -43,7 +60,11 @@ function checkAndRecoverSandboxProcesses(
   sandboxName: string,
   options: Parameters<typeof checkAndRecoverSandboxProcessesImpl>[1] = {},
 ) {
-  return checkAndRecoverSandboxProcessesImpl(sandboxName, { isWsl: false, ...options });
+  return checkAndRecoverSandboxProcessesImpl(sandboxName, {
+    isWsl: false,
+    withLifecycleLock: async (_name, operation) => await operation(),
+    ...options,
+  });
 }
 
 afterEach(() => {
@@ -109,7 +130,6 @@ describe("checkAndRecoverSandboxProcesses", () => {
     const openshellRuntime = requireSource("../../src/lib/adapters/openshell/runtime.js");
     const agentRuntime = requireSource("../../src/lib/agent/runtime.js");
     const registry = requireSource("../../src/lib/state/registry.js");
-    const forwardHealth = requireSource("../../src/lib/actions/sandbox/forward-health.js");
     const runningForward = `SANDBOX  BIND  PORT  PID  STATUS
 hermes-box  127.0.0.1  18789  12345  running`;
     const previousWaitSeconds = process.env.NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS;
@@ -155,8 +175,6 @@ hermes-box  127.0.0.1  18789  12345  running`;
         agent: "hermes",
         dashboardPort: 18789,
       });
-      vi.spyOn(forwardHealth, "isLocalForwardReachable").mockReturnValue(true);
-      vi.spyOn(forwardService, "isForwardServiceListenerOwner").mockReturnValue(true);
       vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({
         status: 0,
         output: runningForward,
@@ -268,7 +286,6 @@ hermes-box  127.0.0.1  18789  12345  running`;
     const openshellRuntime = requireSource("../../src/lib/adapters/openshell/runtime.js");
     const agentRuntime = requireSource("../../src/lib/agent/runtime.js");
     const registry = requireSource("../../src/lib/state/registry.js");
-    const forwardHealth = requireSource("../../src/lib/actions/sandbox/forward-health.js");
     const childProcess = requireSource("node:child_process");
     const previousWaitSeconds = process.env.NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS;
     const previousPollInterval = process.env.NEMOCLAW_GATEWAY_RECOVERY_POLL_INTERVAL_SECONDS;
@@ -326,8 +343,6 @@ hermes-box  127.0.0.1  18789  12345  running`;
         hermesDashboardPort: 9119,
         hermesDashboardInternalPort: 19119,
       });
-      vi.spyOn(forwardHealth, "isLocalForwardReachable").mockReturnValue(true);
-      vi.spyOn(forwardService, "isForwardServiceListenerOwner").mockReturnValue(true);
       vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({
         status: 0,
         output: "SANDBOX  BIND  PORT  PID  STATUS",
@@ -545,7 +560,6 @@ hermes-box  127.0.0.1  18789  12345  running`;
       const openshellRuntime = requireSource("../../src/lib/adapters/openshell/runtime.js");
       const agentRuntime = requireSource("../../src/lib/agent/runtime.js");
       const registry = requireSource("../../src/lib/state/registry.js");
-      const forwardHealth = requireSource("../../src/lib/actions/sandbox/forward-health.js");
       const childProcess = requireSource("node:child_process");
       const requestGatewaySupervisorAction = vi.fn(() => supervisorResult);
 
@@ -564,8 +578,6 @@ hermes-box  127.0.0.1  18789  12345  running`;
         agent: "hermes",
         dashboardPort: 18789,
       });
-      vi.spyOn(forwardHealth, "isLocalForwardReachable").mockReturnValue(true);
-      vi.spyOn(forwardService, "isForwardServiceListenerOwner").mockReturnValue(true);
       vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({
         status: 0,
         output: "SANDBOX  BIND  PORT  PID  STATUS",
@@ -593,7 +605,6 @@ hermes-box  127.0.0.1  18789  12345  running`;
     const openshellRuntime = requireSource("../../src/lib/adapters/openshell/runtime.js");
     const agentRuntime = requireSource("../../src/lib/agent/runtime.js");
     const registry = requireSource("../../src/lib/state/registry.js");
-    const forwardHealth = requireSource("../../src/lib/actions/sandbox/forward-health.js");
     const childProcess = requireSource("node:child_process");
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const requestGatewaySupervisorAction = vi.fn(() => ({
@@ -625,9 +636,6 @@ hermes-box  127.0.0.1  18789  12345  running`;
       agent: "hermes",
       dashboardPort: 18789,
     });
-    vi.spyOn(forwardHealth, "isLocalForwardReachable").mockReturnValue(true);
-    vi.spyOn(forwardService, "isForwardServiceListenerOwner").mockReturnValue(true);
-    vi.spyOn(openshellResolve, "resolveOpenshell").mockReturnValue("/usr/local/bin/openshell");
     vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({
       status: 0,
       output: `SANDBOX  BIND  PORT  PID  STATUS\nhermes-box  127.0.0.1  18789  12345  running`,
@@ -662,7 +670,6 @@ hermes-box  127.0.0.1  18789  12345  running`;
     const openshellRuntime = requireSource("../../src/lib/adapters/openshell/runtime.js");
     const agentRuntime = requireSource("../../src/lib/agent/runtime.js");
     const registry = requireSource("../../src/lib/state/registry.js");
-    const forwardHealth = requireSource("../../src/lib/actions/sandbox/forward-health.js");
     const childProcess = requireSource("node:child_process");
     const requestGatewaySupervisorAction = vi.fn();
 
@@ -677,9 +684,6 @@ hermes-box  127.0.0.1  18789  12345  running`;
       agent: "openclaw",
       dashboardPort: 18789,
     });
-    vi.spyOn(forwardHealth, "isLocalForwardReachable").mockReturnValue(true);
-    vi.spyOn(forwardService, "isForwardServiceListenerOwner").mockReturnValue(true);
-    vi.spyOn(openshellResolve, "resolveOpenshell").mockReturnValue("/usr/local/bin/openshell");
     vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({
       status: 0,
       output: `SANDBOX  BIND  PORT  PID  STATUS\nbeta  127.0.0.1  18789  12345  running`,
@@ -850,7 +854,6 @@ describe("recover with a dashboard port held by a listener the sandbox does not 
       const openshellRuntime = requireSource("../../src/lib/adapters/openshell/runtime.js");
       const agentRuntime = requireSource("../../src/lib/agent/runtime.js");
       const registry = requireSource("../../src/lib/state/registry.js");
-      const forwardHealth = requireSource("../../src/lib/actions/sandbox/forward-health.js");
       const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
       const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
@@ -860,9 +863,13 @@ describe("recover with a dashboard port held by a listener the sandbox does not 
         agent: "openclaw",
         dashboardPort: 18789,
       });
-      vi.spyOn(forwardHealth, "isLocalForwardReachable").mockReturnValue(true);
-      vi.spyOn(forwardService, "isForwardServiceListenerOwner").mockImplementation(proveOwner);
-      const launch = vi.spyOn(forwardService, "launchForwardService");
+      let observationState: "foreign" | "indeterminate" = "foreign";
+      try {
+        proveOwner();
+      } catch {
+        observationState = "indeterminate";
+      }
+      mockForwardObservation(observationState);
       const forwardList = vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({
         status: 0,
         output: "SANDBOX  BIND  PORT  PID  STATUS\n",
@@ -888,7 +895,7 @@ describe("recover with a dashboard port held by a listener the sandbox does not 
           "host port 18789 is held by a listener that NemoClaw cannot attribute",
         ),
       });
-      expect(launch).not.toHaveBeenCalled();
+      expect(startForward).not.toHaveBeenCalled();
       // Direct process identity decides; the legacy forward registry is not ownership evidence.
       expect(
         forwardList.mock.calls.filter(

@@ -3,10 +3,7 @@
 
 import { isAbsolute } from "node:path";
 
-import {
-  buildForwardServiceArgs,
-  createForwardServiceTarget,
-} from "../../../../src/lib/adapters/openshell/forward-service.ts";
+import { buildCliOpenShellForwardServiceArgs } from "../../../../src/lib/adapters/openshell/forward-cli.ts";
 import { buildAvailabilityProbeEnv } from "../availability-env.ts";
 import {
   assertStockManagedImageReceipt,
@@ -238,17 +235,17 @@ export class HostCliClient {
         artifactName: `${artifactName}-listener-after`,
       }),
     ]);
-    const target = createForwardServiceTarget(
-      {
-        executable: commandPath,
-        gatewayName: "nemoclaw",
-        localHost: "127.0.0.1",
-        sandboxName,
-        workspace: "default",
-      },
-      Number(port),
+    const target = {
+      gatewayEndpoint: "https://127.0.0.1:8080",
+      gatewayName: "nemoclaw",
+      workspace: "default",
+      sandboxName,
+      localHost: "127.0.0.1" as const,
+      port: Number(port),
+    };
+    const expectedCommandLine = [commandPath, ...buildCliOpenShellForwardServiceArgs(target)].join(
+      " ",
     );
-    const expectedCommandLine = [commandPath, ...buildForwardServiceArgs(target)].join(" ");
     const afterPids = [
       ...new Set(
         after.stdout

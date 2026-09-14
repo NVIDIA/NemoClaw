@@ -7,10 +7,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { createCliOpenShellForwardAdapter } from "../../../src/lib/adapters/openshell/forward-cli.ts";
 import { resolveOpenshell } from "../../../src/lib/adapters/openshell/resolve.ts";
-import { isLocalForwardReachable } from "../../../src/lib/actions/sandbox/forward-health.ts";
 import { DASHBOARD_PORT } from "../../../src/lib/core/ports.ts";
-import { waitUntil } from "../../../src/lib/core/wait.ts";
 import { pullAndResolveBaseImageDigest } from "../../../src/lib/onboard/base-image.ts";
 import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
@@ -595,10 +594,31 @@ test(
     });
     openshellWrapper.selectImage(pluginImageV2);
     terminateProcessIfRunning(listenerAfterRestart.pid!, "SIGKILL");
+    const forwardAuthority = {
+      gatewayEndpoint: "https://127.0.0.1:8080",
+      gatewayName: "nemoclaw",
+      workspace: "default",
+    } as const;
+    const release = await createCliOpenShellForwardAdapter({
+      executable: openshell.cli,
+      environment: sandboxEnv,
+      gatewayEndpoint: forwardAuthority.gatewayEndpoint,
+      runtimeSelection: forwardAuthority,
+    }).verifyForwardRelease({
+      forwards: [
+        {
+          ...forwardAuthority,
+          sandboxName: SANDBOX_NAME,
+          localHost: "127.0.0.1",
+          port: DASHBOARD_PORT,
+        },
+      ],
+      timeoutMs: 5_000,
+    });
     expect(
-      waitUntil(() => !isLocalForwardReachable(DASHBOARD_PORT, 100), 5, 50),
+      release.state,
       `verified dashboard listener still owns port ${DASHBOARD_PORT} after termination`,
-    ).toBe(true);
+    ).toBe("released");
     const recreate = await runOpenClawPluginWithFailureEvidence({
       operation: "openclaw-plugin-runtime-exdev.recreate-pairing",
       captureDiagnostics: capturePairingDiagnostics,

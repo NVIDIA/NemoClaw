@@ -451,12 +451,11 @@ const {
   skippedStepMessage,
 }: typeof import("./onboard/skipped-step-message") = require("./onboard/skipped-step-message");
 const {
-  findAvailableDashboardPort,
   preflightDashboardPortRangeAvailability,
   reserveCreateSandboxDashboardPort,
   withDashboardPortReservationScope: withSandboxPortReservationScope,
 } = require("./onboard/dashboard-port") as typeof import("./onboard/dashboard-port");
-const authoritativeRebuildTarget: typeof import("./onboard/authoritative-rebuild-target") = require("./onboard/authoritative-rebuild-target");
+const rebuildTarget: typeof import("./onboard/authoritative-rebuild-target") = require("./onboard/authoritative-rebuild-target");
 const { assertDashboardPortNotReserved, buildRequiredPreflightPorts } =
   require("./onboard/preflight-ports") as typeof import("./onboard/preflight-ports");
 const { printPortConflictReport } =
@@ -1473,13 +1472,14 @@ const sandboxCreateOrchestrationRuntime = {
   get ensureDashboardForward() {
     return ensureDashboardForward;
   },
+  forwardObserver: (n: string, k?: "dashboard" | "loopback") => createForwardPortObserver(n, k),
   filterEnabledChannelsByAgent,
   formatSandboxAgentName,
   formatSandboxBuildEstimateNote,
   get getDashboardForwardPort() {
     return getDashboardForwardPort;
   },
-  ownsForwardServicePort: (n: string, p: number, k?: "dashboard" | "loopback") => ownsFwd(n, p, k),
+  getGatewayForwardRuntimeAuthority,
   readDcodeSelectionDrift: createDcodeSelectionDriftReader(sandboxExec, () => GATEWAY_NAME),
   getDefaultSandboxNameForAgent,
   getDockerDriverGatewayStateDir,
@@ -2475,12 +2475,12 @@ const {
   buildAgentVerifyChain,
   buildControlUiUrls,
   buildOrphanedSandboxRollbackMessage,
+  createForwardPortObserver,
   ensureDashboardForward,
   ensureFinalizationAgentDashboardForward,
   ensureAgentFixedForward,
   fetchGatewayAuthTokenFromSandbox,
   getDashboardForwardPort,
-  ownsForwardServicePort: ownsFwd,
   printDashboard,
   stopAllDashboardForwards,
 } = onboardDashboard.createOnboardDashboardHelpers({
@@ -2547,7 +2547,7 @@ async function preflightAuthoritativeRebuildTarget(
   opts: import("./onboard/authoritative-rebuild-target").AuthoritativeRebuildPreflightOptions,
 ): Promise<import("./state/onboard-checkpoint-types").CheckpointGatewayAuthority> {
   const authoritativeGateway = entryDecisions.requireGatewayBinding(
-    authoritativeRebuildTarget.resolveAuthoritativeOnboardGatewayBinding(opts),
+    rebuildTarget.resolveAuthoritativeOnboardGatewayBinding(opts),
   );
   const previous = {
     dashboardPort: _preflightDashboardPort,
@@ -2563,15 +2563,16 @@ async function preflightAuthoritativeRebuildTarget(
   const fail = (message: string): never => {
     throw new Error(message);
   };
+  const forwardAuthority = getGatewayForwardRuntimeAuthority();
   try {
-    await authoritativeRebuildTarget.preflightAuthoritativeRebuildTarget(
+    await rebuildTarget.preflightAuthoritativeRebuildTarget(
       { ...opts, controlUiPort: opts.controlUiPort ?? null },
       {
         resolveBaselinePolicy: resolveSandboxBaselinePolicy,
         bindGatewayAuthority: () => bindGatewayOwner(getGatewayOwner()),
         runFatalRuntimePreflight: async () =>
           preflightGateway.runRuntimePreflight(
-            authoritativeRebuildTarget.authoritativeRebuildRuntimePreflightOptions(opts),
+            rebuildTarget.authoritativeRebuildRuntimePreflightOptions(opts),
             (code) => fail(`onboard runtime preflight exited with code ${String(code)}`),
           ),
         ensureOpenshell: () =>
@@ -2580,7 +2581,7 @@ async function preflightAuthoritativeRebuildTarget(
           ),
         assertGatewayReadiness: preflightGateway.collectGatewayReadiness,
         inferenceRouteState: (p, m) => readInferenceRouteState(authoritativeGateway.name, p, m),
-        captureForwardList: () => runCaptureOpenshell(["forward", "list"], { ignoreError: true }),
+        observeForwardPorts: rebuildTarget.forwardObserver(opts, forwardAuthority),
       },
     );
     return gatewayAuthorityCheckpoint.checkpointGatewayAuthority(getGatewayOwner());
@@ -2601,8 +2602,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
   resetGatewayOwnerBinding();
   setupInferenceFactory.assertNoOpenShellGatewayEndpointOverride();
   const runtimeControlRequests = runtimeControlFlow.applyOnboardRuntimeControlRequests(opts);
-  const authoritativeGateway =
-    authoritativeRebuildTarget.resolveAuthoritativeOnboardGatewayBinding(opts);
+  const authoritativeGateway = rebuildTarget.resolveAuthoritativeOnboardGatewayBinding(opts);
   const previousGatewayBinding = { name: GATEWAY_NAME, port: GATEWAY_PORT };
   const previousOpenshellGateway = process.env.OPENSHELL_GATEWAY;
   const previousOpenshellLocalTlsDir = process.env.OPENSHELL_LOCAL_TLS_DIR;
@@ -2975,7 +2975,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           gatewayName: GATEWAY_NAME,
           inspectSandboxForCreate,
           forceProviderSelection: forceProviderSelectionForAgentChange,
-          ...authoritativeRebuildTarget.rebuildProviderFlowOptions(opts, coreFlowContext),
+          ...rebuildTarget.rebuildProviderFlowOptions(opts, coreFlowContext),
           endpointProvenance,
           env: process.env,
           constants: {
@@ -3067,7 +3067,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           apfInterceptorRequested: session?.apfInterceptorRequested === true,
           hermesPortableLifecycle:
             lockedRuntime.portableRuntimeContext !== null && agent?.name === "hermes",
-          ...authoritativeRebuildTarget.authoritativeRebuildSandboxFlowOptions(opts),
+          ...rebuildTarget.authoritativeRebuildSandboxFlowOptions(opts),
           recreateJournalTargetIntentFingerprint:
             opts.recreateJournalTargetIntentFingerprint ?? null,
           resumeAgentChanged,
@@ -3425,7 +3425,6 @@ module.exports = {
   buildControlUiUrls,
   startGateway,
   startDockerDriverGateway,
-  findAvailableDashboardPort,
   startGatewayForRecovery,
   managedWorkloadOnboard,
   ...{ openshellArgv, runOpenshell, runCaptureOpenshell, sleepSeconds },

@@ -3,6 +3,8 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import type { OpenShellForwardObservation } from "../adapters/openshell/forward";
+import type { OpenShellForwardPortObserver } from "./dashboard-port";
 import {
   authoritativeRebuildSandboxFlowOptions,
   authoritativeRebuildRuntimePreflightOptions,
@@ -27,6 +29,33 @@ const target = {
   controlUiPort: 18789,
 };
 const originalGateway = process.env.OPENSHELL_GATEWAY;
+
+function forwardObserver(
+  state: "absent" | "foreign" | "owned" | "stale" | "indeterminate" = "owned",
+): OpenShellForwardPortObserver {
+  return vi.fn<OpenShellForwardPortObserver>(async (ports) =>
+    ports.map((port): OpenShellForwardObservation => {
+      const forward = {
+        gatewayEndpoint: "https://127.0.0.1:12345",
+        gatewayName: "nemoclaw-12345",
+        workspace: "default",
+        sandboxName: "alpha",
+        localHost: "127.0.0.1" as const,
+        port,
+      };
+      return state === "indeterminate"
+        ? {
+            state,
+            forward,
+            error: {
+              kind: "ownership",
+              message: "NemoClaw could not prove OpenShell forward ownership.",
+            },
+          }
+        : { state, forward };
+    }),
+  );
+}
 
 describe("authoritative rebuild sandbox flow options", () => {
   it("carries only the bounded live OpenShell policy handoff", () => {
@@ -95,7 +124,7 @@ function deps(overrides: Partial<AuthoritativeRebuildTargetDeps> = {}) {
     ensureOpenshell: vi.fn(),
     assertGatewayReadiness: vi.fn(),
     inferenceRouteState: vi.fn((): InferenceRouteState => "matched"),
-    captureForwardList: vi.fn(() => "alpha 127.0.0.1 18789 42 active"),
+    observeForwardPorts: forwardObserver(),
     ...overrides,
   } satisfies AuthoritativeRebuildTargetDeps;
 }
@@ -343,6 +372,10 @@ describe("authoritative rebuild target preflight", () => {
   it("pins the requested gateway for route and forward checks, then restores it", async () => {
     process.env.OPENSHELL_GATEWAY = "before";
     const seen: string[] = [];
+    const observeForwardPorts = vi.fn<OpenShellForwardPortObserver>(async (ports) => {
+      seen.push(`forward:${process.env.OPENSHELL_GATEWAY}`);
+      return forwardObserver("owned")(ports);
+    });
     await preflightAuthoritativeRebuildTarget(
       target,
       deps({
@@ -350,14 +383,12 @@ describe("authoritative rebuild target preflight", () => {
           seen.push(`route:${process.env.OPENSHELL_GATEWAY}`);
           return "matched";
         }),
-        captureForwardList: vi.fn(() => {
-          seen.push(`forward:${process.env.OPENSHELL_GATEWAY}`);
-          return "alpha 127.0.0.1 18789 42 active";
-        }),
+        observeForwardPorts,
       }),
     );
 
     expect(seen).toEqual(["route:nemoclaw-12345", "forward:nemoclaw-12345"]);
+    expect(observeForwardPorts).toHaveBeenCalledWith([18789]);
     expect(process.env.OPENSHELL_GATEWAY).toBe("before");
   });
 
@@ -401,20 +432,50 @@ describe("authoritative rebuild target preflight", () => {
     await expect(
       preflightAuthoritativeRebuildTarget(
         target,
-        deps({ captureForwardList: vi.fn(() => "beta 127.0.0.1 18789 42 active") }),
+        deps({ observeForwardPorts: forwardObserver("foreign") }),
       ),
-    ).rejects.toThrow("belongs to sandbox 'beta'");
+    ).rejects.toThrow("not owned by sandbox 'alpha'");
   });
 
-  it("defers an unlisted port collision until the post-delete ForwardTcp launch", async () => {
+  it("accepts a port that typed observation proves absent", async () => {
     await expect(
       preflightAuthoritativeRebuildTarget(
         target,
+        deps({ observeForwardPorts: forwardObserver("absent") }),
+      ),
+    ).resolves.toBeUndefined();
+  });
+
+  it("accepts an authority-proved stale forward for the exact rebuild target", async () => {
+    await expect(
+      preflightAuthoritativeRebuildTarget(
+        target,
+        deps({ observeForwardPorts: forwardObserver("stale") }),
+      ),
+    ).resolves.toBeUndefined();
+  });
+
+  it("rejects indeterminate dashboard-port ownership", async () => {
+    await expect(
+      preflightAuthoritativeRebuildTarget(
+        target,
+        deps({ observeForwardPorts: forwardObserver("indeterminate") }),
+      ),
+    ).rejects.toThrow(/Cannot prove dashboard port 18789 ownership/);
+  });
+
+  it("skips forward observation when the rebuild has no dashboard port", async () => {
+    const observer = forwardObserver("foreign");
+
+    await expect(
+      preflightAuthoritativeRebuildTarget(
+        { ...target, controlUiPort: null },
         deps({
-          captureForwardList: vi.fn(() => ""),
+          observeForwardPorts: observer,
         }),
       ),
     ).resolves.toBeUndefined();
+    expect(observer).not.toHaveBeenCalled();
   });
 
   it("restores gateway scope when a fatal runtime check throws", async () => {

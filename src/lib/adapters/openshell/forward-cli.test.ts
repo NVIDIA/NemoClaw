@@ -629,7 +629,8 @@ describe("CLI OpenShell direct forward start", () => {
     const probePort = vi
       .fn<ProbePort>()
       .mockResolvedValueOnce({ state: "unbound" })
-      .mockResolvedValueOnce({ state: "bound" });
+      .mockResolvedValueOnce({ state: "bound" })
+      .mockResolvedValueOnce({ state: "unbound" });
     const { adapter, child, spawn, terminate } = createHarness({
       environment: {
         HOME: "/home/tester",
@@ -642,9 +643,11 @@ describe("CLI OpenShell direct forward start", () => {
       probePort,
     });
 
-    await expect(adapter.startForward({ forward })).resolves.toEqual({
+    const started = await adapter.startForward({ forward });
+    expect(started).toMatchObject({
       state: "started",
       forward,
+      cleanup: expect.any(Function),
     });
     expect(spawn).toHaveBeenCalledExactlyOnceWith(
       executable,
@@ -667,6 +670,41 @@ describe("CLI OpenShell direct forward start", () => {
     expect(probePort).toHaveBeenNthCalledWith(2, forward, 30_000);
     expect(inspect).toHaveBeenNthCalledWith(3, forward, child.pid, 30_000);
     expect(child.unref).toHaveBeenCalledOnce();
+    expect(started.state).toBe("started");
+    const cleanup = (started as Extract<typeof started, { state: "started" }>).cleanup;
+    const assertCurrent = vi.fn(async () => undefined);
+    await expect(cleanup({ assertCurrent })).resolves.toEqual({ state: "released" });
+    expect(terminate).toHaveBeenCalledExactlyOnceWith(child, 5_000);
+    expect(probePort).toHaveBeenNthCalledWith(3, forward, 5_000);
+    expect(assertCurrent).toHaveBeenCalledTimes(3);
+  });
+
+  it("does not clean up a started child after cleanup authority drifts", async () => {
+    const inspect = vi
+      .fn<InspectListener>()
+      .mockResolvedValueOnce({ state: "unbound" })
+      .mockResolvedValueOnce({ state: "owned", pid: 4_321 })
+      .mockResolvedValueOnce({ state: "owned", pid: 4_321 });
+    const probePort = vi
+      .fn<ProbePort>()
+      .mockResolvedValueOnce({ state: "unbound" })
+      .mockResolvedValueOnce({ state: "bound" });
+    const { adapter, terminate } = createHarness({ inspect, probePort });
+    const started = await adapter.startForward({ forward });
+    expect(started.state).toBe("started");
+    const cleanup = (started as Extract<typeof started, { state: "started" }>).cleanup;
+
+    await expect(
+      cleanup({
+        assertCurrent: async () => {
+          throw new Error("superseded generation");
+        },
+      }),
+    ).resolves.toEqual({
+      state: "indeterminate",
+      forwards: [forward],
+      error: errors.authority,
+    });
     expect(terminate).not.toHaveBeenCalled();
   });
 
