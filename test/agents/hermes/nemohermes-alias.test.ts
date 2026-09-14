@@ -19,7 +19,7 @@ function runHermes(
   env: Record<string, string | undefined> = {},
 ): Promise<{ code: number; out: string }> {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemohermes-test-"));
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     exec(
       `node "${HERMES_CLI}" ${args}`,
       {
@@ -37,7 +37,12 @@ function runHermes(
         },
       },
       (error, stdout, stderr) => {
-        fs.rmSync(home, { force: true, recursive: true });
+        try {
+          fs.rmSync(home, { force: true, recursive: true });
+        } catch (cleanupError) {
+          reject(cleanupError);
+          return;
+        }
         const code = typeof error?.code === "number" ? error.code : error ? 1 : 0;
         resolve({ code, out: error ? stdout + stderr : stdout });
       },
@@ -50,7 +55,7 @@ function runNemoClaw(
   env: Record<string, string | undefined> = {},
 ): Promise<{ code: number; out: string }> {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemohermes-test-"));
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     exec(
       `node "${NEMOCLAW_CLI}" ${args}`,
       {
@@ -70,7 +75,12 @@ function runNemoClaw(
         },
       },
       (error, stdout, stderr) => {
-        fs.rmSync(home, { force: true, recursive: true });
+        try {
+          fs.rmSync(home, { force: true, recursive: true });
+        } catch (cleanupError) {
+          reject(cleanupError);
+          return;
+        }
         const code = typeof error?.code === "number" ? error.code : error ? 1 : 0;
         resolve({ code, out: error ? stdout + stderr : stdout });
       },
