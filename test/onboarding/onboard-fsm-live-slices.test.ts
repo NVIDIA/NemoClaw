@@ -251,7 +251,7 @@ if (scenario.mode === "active-cancellation") {
     process.execPath,
     [
       "-e",
-      'const fs = require("node:fs"); const [readyPath, releasePath] = process.argv.slice(1); fs.writeFileSync(readyPath, String(process.pid)); const poll = setInterval(() => { if (fs.existsSync(releasePath)) { clearInterval(poll); process.exit(0); } }, 10); setTimeout(() => process.exit(2), 5000);',
+      'const fs = require("node:fs"); const [readyPath, releasePath] = process.argv.slice(1); fs.writeFileSync(readyPath, String(process.pid)); const poll = setInterval(() => { if (fs.existsSync(releasePath)) { clearInterval(poll); process.exit(0); } }, 10);',
       activeCloseReadyPath,
       activeCloseReleasePath,
     ],
