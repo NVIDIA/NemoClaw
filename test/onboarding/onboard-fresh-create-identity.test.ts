@@ -13,7 +13,7 @@ import { describe, it } from "vitest";
 import { decodeManagedStartupProfile } from "../../src/lib/onboard/managed-startup/profile";
 import { mapManagedStartupProfileToAgentEnvironment } from "../../src/lib/onboard/managed-startup/agent-environment";
 import { writeOkOpenshell } from "../helpers/onboard-openshell-fixture";
-import { type CommandEntry, onboardScriptMocksPath } from "../helpers/onboard-split-context";
+import { onboardScriptMocksPath } from "../helpers/onboard-split-context";
 import { encodeMessagingPlan, makeMessagingPlan } from "../helpers/messaging-plan-fixtures";
 
 function runNodeScript(

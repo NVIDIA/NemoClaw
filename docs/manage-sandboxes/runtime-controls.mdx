@@ -96,7 +96,7 @@ OpenShell remains authoritative for sandbox filesystem and network policy enforc
 An agent process can change files that its sandbox identity can write.
 
 For Hermes, direct changes to valid mutable configuration do not block restart. Lifecycle validation can still refuse raw secrets, unsafe paths, raced snapshots, or missing or malformed transaction metadata.
-Use supported host commands for settings owned by NemoClaw so its registry and the running Hermes projection remain aligned for those host-managed operations.
+Use supported host commands for settings that also require host-side route or OpenShell changes. Hermes-owned native configuration remains authoritative for direct runtime edits.
 
 NemoClaw serializes host-side gateway recovery, config and inference writes, snapshots, policy updates, channel updates, and sandbox destruction for each sandbox.
 This mutation lock prevents concurrent host operations from racing on the same registered sandbox.

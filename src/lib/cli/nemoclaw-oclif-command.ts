@@ -129,7 +129,7 @@ export abstract class NemoClawCommand extends Command {
     enforceRemovedImmutabilityMigrationBoundary(sandboxName, {
       allowStateRecord: allowRemovedImmutabilityStateRecord,
     });
-    if (this.isInteractiveConnect(commandId)) {
+    if (this.isInteractiveSession(commandId)) {
       return await super._run<T>();
     }
     const runLocked = () => {
@@ -144,9 +144,10 @@ export abstract class NemoClawCommand extends Command {
     return await withSandboxLifecycleLock(sandboxName, runLocked);
   }
 
-  private isInteractiveConnect(commandId: string | undefined): boolean {
+  private isInteractiveSession(commandId: string | undefined): boolean {
     return (
-      commandId === "sandbox:connect" && this.lifecycleParserOutput?.flags["probe-only"] !== true
+      commandId === "launch" ||
+      (commandId === "sandbox:connect" && this.lifecycleParserOutput?.flags["probe-only"] !== true)
     );
   }
 

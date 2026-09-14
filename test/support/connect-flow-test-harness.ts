@@ -377,7 +377,7 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     .spyOn(hermesInferenceRecovery, "recoverHermesPortableInferenceForConnectProbe")
     .mockImplementation((async (input: {
       verifyRoute: () => Promise<unknown>;
-      prepareProbeDependency?: () => { release: () => void };
+      prepareProbeDependency?: () => Promise<{ release: () => void }>;
     }) => {
       if (options.hermesInferenceRecoveryPhase) {
         throw new hermesOllamaInference.HermesPortableOllamaRecoveryPhaseError(
@@ -394,7 +394,7 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
         );
       }
       await input.verifyRoute();
-      input.prepareProbeDependency?.().release();
+      (await input.prepareProbeDependency?.())?.release();
       return "reused";
     }) as never);
   const hermesReadinessRuntimeCurrentSpy = vi.fn();

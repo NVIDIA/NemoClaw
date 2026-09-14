@@ -115,7 +115,7 @@ describe("Hermes portable direct forward authority", { timeout: 30_000 }, () => 
     { endpoint: "http://127.0.0.1:19080", expectedTlsDir: undefined },
     { endpoint: "https://[::1]:19080", expectedTlsDir: "/external/gateway/tls" },
   ])(
-    "launches against the exact external endpoint $endpoint",
+    "preserves the endpoint $endpoint and ownership allowance (#11652)",
     async ({ endpoint, expectedTlsDir }) => {
       mocks.resolveGatewayForwardAuthority.mockReturnValue(externalGatewayOwner(endpoint));
       const { createHermesPortableForwardRecoveryInput } = await import("./forward-recovery");
@@ -150,6 +150,20 @@ describe("Hermes portable direct forward authority", { timeout: 30_000 }, () => 
       });
       expect(sourceEnvironment?.OPENSHELL_LOCAL_TLS_DIR).toBe(expectedTlsDir);
       expect(sourceEnvironment).not.toHaveProperty("OPENSHELL_TOKEN");
+      const target = {
+        executable: input.forwardService.executablePath,
+        gatewayEndpoint: endpoint,
+        gatewayName: input.gatewayName,
+        workspace: "default",
+        sandboxName: input.sandboxName,
+        localHost: "127.0.0.1" as const,
+        localPort: 18_789,
+        targetHost: "127.0.0.1" as const,
+        targetPort: 18_789,
+      };
+      const remainingMs = vi.fn(() => 25);
+      expect(input.deps.isForwardServiceOwner!(target, { remainingMs })).toBe(true);
+      expect(mocks.isForwardServiceListenerOwner).toHaveBeenCalledWith(target, { remainingMs });
     },
   );
 
@@ -189,7 +203,7 @@ describe("ensureDeclaredAgentForwardPortsHealthy", { timeout: 30_000 }, () => {
     });
     const { ensureSandboxPortForward } = await import("./forward-recovery");
 
-    expect(ensureSandboxPortForward("remote-box")).toBe(true);
+    expect(await ensureSandboxPortForward("remote-box")).toBe(true);
     expect(mocks.isForwardServiceListenerOwner).toHaveBeenCalledWith({
       executable: "/usr/local/bin/openshell",
       gatewayEndpoint: "https://127.0.0.1:8080",
@@ -210,7 +224,7 @@ describe("ensureDeclaredAgentForwardPortsHealthy", { timeout: 30_000 }, () => {
     mocks.isForwardServiceListenerOwner.mockReturnValue(false);
     const { ensureSandboxPortForward } = await import("./forward-recovery");
 
-    expect(ensureSandboxPortForward("foreign-listener")).toBe(false);
+    expect(await ensureSandboxPortForward("foreign-listener")).toBe(false);
     expect(mocks.isForwardServiceListenerOwner).toHaveBeenCalledOnce();
     expect(mocks.launchForwardService).not.toHaveBeenCalled();
   });
@@ -222,7 +236,7 @@ describe("ensureDeclaredAgentForwardPortsHealthy", { timeout: 30_000 }, () => {
       hermesApiPort: 8643,
     });
     const { ensureDeclaredAgentForwardPortsHealthy } = await import("./forward-recovery");
-    expect(ensureDeclaredAgentForwardPortsHealthy("beta", 18790)).toBe(true);
+    expect(await ensureDeclaredAgentForwardPortsHealthy("beta", 18790)).toBe(true);
     expect(mocks.runOpenshell).not.toHaveBeenCalled();
   });
 
@@ -234,7 +248,7 @@ describe("ensureDeclaredAgentForwardPortsHealthy", { timeout: 30_000 }, () => {
       hermesApiPort: 8643,
     });
     const { ensureDeclaredAgentForwardPortsHealthy } = await import("./forward-recovery");
-    expect(ensureDeclaredAgentForwardPortsHealthy("beta", 18790)).toBe(true);
+    expect(await ensureDeclaredAgentForwardPortsHealthy("beta", 18790)).toBe(true);
     expect(mocks.launchForwardService).toHaveBeenCalledWith(
       expect.objectContaining({ localPort: 8643, targetPort: 8643 }),
       expect.objectContaining({ verifyReady: expect.any(Function) }),
@@ -261,7 +275,9 @@ describe("ensureDeclaredAgentForwardPortsHealthy", { timeout: 30_000 }, () => {
     };
     const { ensureDeclaredAgentForwardPortsHealthy } = await import("./forward-recovery");
 
-    expect(ensureDeclaredAgentForwardPortsHealthy("beta", 18790, runtimeSelection)).toBe(true);
+    expect(await ensureDeclaredAgentForwardPortsHealthy("beta", 18790, runtimeSelection)).toBe(
+      true,
+    );
     expect(mocks.launchForwardService).toHaveBeenCalledWith(
       expect.objectContaining({
         gatewayEndpoint: "https://127.0.0.1:19080",
@@ -302,7 +318,7 @@ describe("ensureDeclaredAgentForwardPortsHealthy", { timeout: 30_000 }, () => {
       mocks.launchForwardService.mockImplementation((_target, options) => options.verifyReady?.());
       const { ensureDeclaredAgentForwardPortsHealthy } = await import("./forward-recovery");
 
-      expect(ensureDeclaredAgentForwardPortsHealthy("beta", 18790)).toBe(true);
+      expect(await ensureDeclaredAgentForwardPortsHealthy("beta", 18790)).toBe(true);
       expect(mocks.launchForwardService).toHaveBeenCalledWith(
         expect.objectContaining({
           gatewayEndpoint: endpoint,
@@ -319,7 +335,7 @@ describe("ensureDeclaredAgentForwardPortsHealthy", { timeout: 30_000 }, () => {
   it("keeps the default API port for a sandbox registered without one (#8543)", async () => {
     mocks.getSandbox.mockReturnValue({ agent: "hermes", dashboardPort: 18789 });
     const { ensureDeclaredAgentForwardPortsHealthy } = await import("./forward-recovery");
-    expect(ensureDeclaredAgentForwardPortsHealthy("beta", 18789)).toBe(true);
+    expect(await ensureDeclaredAgentForwardPortsHealthy("beta", 18789)).toBe(true);
     expect(mocks.runOpenshell).not.toHaveBeenCalled();
   });
 });
@@ -355,7 +371,7 @@ describe("a dashboard port held by a listener the sandbox does not own (#11149)"
     mocks.isForwardServiceListenerOwner.mockReturnValue(false);
     const { ensureSandboxPortForward } = await import("./forward-recovery");
 
-    expect(ensureSandboxPortForward("box", { isWsl: false })).toBe(false);
+    expect(await ensureSandboxPortForward("box", { isWsl: false })).toBe(false);
 
     expect(mocks.launchForwardService).not.toHaveBeenCalled();
     expect(mocks.runOpenshell).not.toHaveBeenCalled();
@@ -380,7 +396,7 @@ describe("a dashboard port held by a listener the sandbox does not own (#11149)"
       await import("./forward-recovery");
 
     expect(isSandboxForwardHealthy("box", { isWsl: false })).toBe(false);
-    expect(ensureSandboxPortForward("box", { afterSuccess, isWsl: false })).toBe(false);
+    expect(await ensureSandboxPortForward("box", { afterSuccess, isWsl: false })).toBe(false);
     expect(afterSuccess).not.toHaveBeenCalled();
     expect(mocks.captureOpenshell).not.toHaveBeenCalled();
     expect(mocks.runOpenshell).not.toHaveBeenCalled();
@@ -399,7 +415,7 @@ describe("a dashboard port held by a listener the sandbox does not own (#11149)"
     mocks.isLocalForwardReachable.mockReturnValue(false);
     const { ensureSandboxPortForward } = await import("./forward-recovery");
 
-    expect(ensureSandboxPortForward("box", { isWsl: false })).toBe(true);
+    expect(await ensureSandboxPortForward("box", { isWsl: false })).toBe(true);
 
     expect(mocks.launchForwardService).toHaveBeenCalledWith(
       expect.objectContaining({ gatewayName: "nemoclaw", workspace: "default" }),
@@ -426,7 +442,7 @@ describe("a dashboard port held by a listener the sandbox does not own (#11149)"
     });
     const { ensureSandboxPortForward } = await import("./forward-recovery");
 
-    expect(ensureSandboxPortForward("box", { isWsl: false })).toBe(false);
+    expect(await ensureSandboxPortForward("box", { isWsl: false })).toBe(false);
     expect(mocks.launchForwardService).toHaveBeenCalledOnce();
     expect(mocks.runOpenshell).not.toHaveBeenCalled();
   });
@@ -445,7 +461,7 @@ describe("a dashboard port held by a listener the sandbox does not own (#11149)"
     mocks.launchForwardService.mockImplementation((_target, options) => options.verifyReady?.());
     const { ensureSandboxPortForward } = await import("./forward-recovery");
 
-    expect(ensureSandboxPortForward("box", { isWsl: false })).toBe(false);
+    expect(await ensureSandboxPortForward("box", { isWsl: false })).toBe(false);
     expect(mocks.launchForwardService).toHaveBeenCalledOnce();
     expect(mocks.isForwardServiceListenerOwner).not.toHaveBeenCalled();
   });
@@ -465,7 +481,7 @@ describe("a dashboard port held by a listener the sandbox does not own (#11149)"
     mocks.launchForwardService.mockImplementation((_target, options) => options.verifyReady?.());
     const { ensureSandboxPortForward } = await import("./forward-recovery");
 
-    expect(ensureSandboxPortForward("box", { isWsl: false })).toBe(false);
+    expect(await ensureSandboxPortForward("box", { isWsl: false })).toBe(false);
     expect(mocks.launchForwardService).toHaveBeenCalledOnce();
     expect(mocks.isForwardServiceListenerOwner).toHaveBeenCalledOnce();
   });
@@ -494,7 +510,7 @@ describe("a dashboard port held by a listener the sandbox does not own (#11149)"
       await import("./forward-recovery");
 
     expect(describeSandboxForwardListener("box", { isWsl: false })).toBe("unverified");
-    expect(ensureSandboxPortForward("box", { isWsl: false })).toBe(false);
+    expect(await ensureSandboxPortForward("box", { isWsl: false })).toBe(false);
     expect(mocks.isForwardServiceListenerOwner).not.toHaveBeenCalled();
     expect(mocks.launchForwardService).not.toHaveBeenCalled();
   });
@@ -508,7 +524,7 @@ describe("a dashboard port held by a listener the sandbox does not own (#11149)"
       await import("./forward-recovery");
 
     expect(describeSandboxForwardListener("box", { isWsl: false })).toBe("unverified");
-    expect(ensureSandboxPortForward("box", { isWsl: false })).toBe(false);
+    expect(await ensureSandboxPortForward("box", { isWsl: false })).toBe(false);
     expect(mocks.launchForwardService).not.toHaveBeenCalled();
   });
 
@@ -520,7 +536,7 @@ describe("a dashboard port held by a listener the sandbox does not own (#11149)"
     });
     const { ensureSandboxPortForward } = await import("./forward-recovery");
 
-    expect(ensureSandboxPortForward("box", { isWsl: false })).toBe(false);
+    expect(await ensureSandboxPortForward("box", { isWsl: false })).toBe(false);
     expect(mocks.isForwardServiceListenerOwner).not.toHaveBeenCalled();
     expect(mocks.launchForwardService).not.toHaveBeenCalled();
   });

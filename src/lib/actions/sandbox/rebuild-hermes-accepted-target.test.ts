@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import * as onboardSession from "../../state/onboard-session";
 
 const phaseMocks = vi.hoisted(() => ({
   clearHermesHandoff: vi.fn(),
@@ -11,6 +12,7 @@ const phaseMocks = vi.hoisted(() => ({
   findRecoveryBackup: vi.fn(),
   isRecoveryCleanupOnly: vi.fn(),
   markRecoveryCleanupOnly: vi.fn(),
+  observeMcpStateForRebuild: vi.fn(() => ({ entries: [] })),
   openRecreateJournal: vi.fn(),
   recoverCronRestore: vi.fn(),
   enforceRemovedImmutabilityMigrationBoundary: vi.fn(),
@@ -92,6 +94,11 @@ vi.mock("./rebuild-prepared-recovery", async (importOriginal) => ({
 }));
 vi.mock("./rebuild-restore-phase", () => ({
   runRebuildRestorePhase: phaseMocks.runRestore,
+}));
+
+vi.mock("./rebuild-mcp-phase", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./rebuild-mcp-phase")>()),
+  observeMcpStateForRebuild: phaseMocks.observeMcpStateForRebuild,
 }));
 
 vi.mock("./rebuild-post-restore-phase", async (importOriginal) => ({
@@ -266,6 +273,44 @@ describe("Hermes accepted replacement recovery", () => {
     expect(phaseMocks.cleanupPolicySource).not.toHaveBeenCalled();
     expect(console.log).toHaveBeenCalledWith("  Recovered the accepted replacement for 'alpha'.");
     expect(console.log).toHaveBeenCalledWith(`  Backup is preserved at: ${recoveryBackupPath}`);
+  });
+
+  it("observes current MCP sources when another sandbox owns the recovery transaction", async () => {
+    vi.spyOn(onboardSession, "loadSession").mockReturnValue({
+      checkpoint: { sandboxRecreate: { sandboxName: "beta" } },
+    } as never);
+
+    await expect(
+      rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).resolves.toBeUndefined();
+
+    expect(phaseMocks.observeMcpStateForRebuild).toHaveBeenCalledWith(
+      { name: "alpha" },
+      undefined,
+      true,
+    );
+  });
+
+  it("uses prepared recovery state without executing a stopped source sandbox", async () => {
+    const preflight = await phaseMocks.runPreflight();
+    phaseMocks.runPreflight.mockResolvedValue({
+      ...preflight,
+      recoveryManifest: {
+        backupPath: recoveryBackupPath,
+        timestamp: "2026-08-28T00-00-00-000Z",
+        rebuildPolicyHandoff: { file: "recovery.yaml", sha256: "b".repeat(64) },
+      },
+    });
+
+    await expect(
+      rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).resolves.toBeUndefined();
+
+    expect(phaseMocks.observeMcpStateForRebuild).toHaveBeenCalledWith(
+      { name: "alpha" },
+      undefined,
+      false,
+    );
   });
 
   it("retries intentional-stop cleanup before accepting recovered replacement", async () => {

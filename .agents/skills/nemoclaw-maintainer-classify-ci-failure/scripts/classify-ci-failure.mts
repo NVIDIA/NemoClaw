@@ -13,7 +13,7 @@ import {
   rmSync,
 } from "node:fs";
 import { constants as osConstants } from "node:os";
-import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 

@@ -295,7 +295,6 @@ import {
   READ_ONLY_TOOLS,
   runReadOnlyAdvisor,
 } from "../../../tools/advisors/session.mts";
-import { buildSpecialistInvestigateTurn } from "../../../tools/pr-review-advisor/specialists.mts";
 
 const tempDirs: string[] = [];
 
@@ -616,6 +615,25 @@ describe("advisor session runner", () => {
 
     expect(result.fatalError).toBeUndefined();
     expect(result.raw).toContain("terminal_submit_repair_start");
+    expect(sdk.state.prompts).toHaveLength(2);
+  });
+
+  it("accepts tool-disabled analysis repair after a successful terminal submit", async () => {
+    sdk.state.omitAnalysisPrompts = 1;
+    sdk.state.terminalResponses = ["success"];
+    const result = await run([
+      {
+        ...submitTurn("prepare-and-submit"),
+        requireAssistantText: true,
+        assistantTextRepairPrompt: "Return the required analysis.",
+      },
+    ]);
+
+    expect(result.fatalError).toBeUndefined();
+    expect(result.turnErrors).toEqual([]);
+    expect(result.raw).toContain("assistant_text_repair_start prepare-and-submit");
+    expect(result.raw).not.toContain("terminal_submit_repair_start");
+    expect(sdk.state.activeToolCalls).toContainEqual([]);
     expect(sdk.state.prompts).toHaveLength(2);
   });
 

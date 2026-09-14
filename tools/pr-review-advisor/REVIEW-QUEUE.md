@@ -126,7 +126,9 @@ Generate a UUIDv4 `correlation_id` once for the logical dispatch. Persist the ca
 An accepted response is not passing E2E evidence. Reconcile a returned run ID against GitHub workflow identity and the dispatch receipt.
 For an ambiguous response, read the workflow inventory and match the correlation in `E2E PR #<number> (<uuid>)` plus repository, workflow path, event, and workflow SHA.
 Require one matching run. Zero, multiple, inconsistent, or incomplete results remain unresolved; do not dispatch again automatically.
-`pr-e2e-dispatch-reconciliation.mts` documents the existing bounded bot-controller reconciliation implementation. Its bot actor checks are not suitable for a human dispatcher unchanged.
+The dispatcher must implement this bounded reconciliation directly against the current manual E2E
+workflow contract. Historical bot-controller receipt and retry helpers were retired with the former
+PR E2E controller and are not an authority for human dispatch.
 
 ## Results
 
