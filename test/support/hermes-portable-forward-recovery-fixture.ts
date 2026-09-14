@@ -157,7 +157,6 @@ export function createHermesPortableForwardRecoveryFixture({
           records.set(target.localPort, {
             direct: true,
             owner: "alpha",
-            pid: 12_345,
             reachable: true,
             status: "running",
           });
@@ -166,19 +165,6 @@ export function createHermesPortableForwardRecoveryFixture({
         if (driftCurrentAfterStart) currentAllowed = false;
         options.verifyReady?.();
         if (startStatus !== 0) throw new Error("direct forward launch canary");
-        const owned = records.get(target.localPort);
-        const pid = owned?.pid;
-        let terminated = false;
-        options.retainOwnership?.({
-          terminate: () => {
-            if (terminated) return;
-            if (!owned || records.get(target.localPort) !== owned || owned.pid !== pid) {
-              throw new Error("forward child lifetime can no longer be proved");
-            }
-            records.delete(target.localPort);
-            terminated = true;
-          },
-        });
       },
       isPortReachable: (port) => {
         if (pendingStoppedListener?.port === port) {
@@ -276,11 +262,6 @@ export function configureMissingHermesForwardCapture(
     directForwardRunning = true;
     options.afterStart?.();
     launchOptions.verifyReady?.();
-    launchOptions.retainOwnership?.({
-      terminate: () => {
-        directForwardRunning = false;
-      },
-    });
   });
   return {
     isRunning: () => forwardStatus === "running" || directForwardRunning,

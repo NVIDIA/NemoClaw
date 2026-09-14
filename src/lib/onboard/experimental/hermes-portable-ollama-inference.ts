@@ -704,7 +704,7 @@ export interface HermesPortableOllamaRecoveryInput {
 
 export interface HermesPortableOllamaPreparedProbeDependency {
   readonly release: () => void;
-  readonly rollback: () => void | Promise<void>;
+  readonly rollback: () => void;
 }
 
 interface HermesPortableOllamaRecoveryDeps {
@@ -1241,7 +1241,7 @@ export async function recoverHermesPortableOllamaInference(
       } catch (error) {
         if (preparedDependency) {
           try {
-            await preparedDependency.rollback();
+            preparedDependency.rollback();
           } catch (rollbackError) {
             throw rollbackError;
           }
@@ -1323,7 +1323,7 @@ export async function recoverHermesPortableOllamaInference(
       let dependencyRollbackError: unknown = null;
       if (preparedDependency) {
         try {
-          await preparedDependency.rollback();
+          preparedDependency.rollback();
         } catch (rollbackError) {
           dependencyRollbackError = rollbackError;
         }

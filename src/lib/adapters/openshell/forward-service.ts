@@ -4,7 +4,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import { lstatSync, readFileSync, readdirSync, readlinkSync, realpathSync } from "node:fs";
 import path from "node:path";
-import { setImmediate as nextCheckPhase, setTimeout as delay } from "node:timers/promises";
+import { setTimeout as delay } from "node:timers/promises";
 
 import { isValidName } from "../../name-validation";
 import { buildOpenShellSubprocessEnv } from "./resolve-shared";
@@ -42,20 +42,11 @@ export interface ForwardServiceLaunchOptions {
   /** Verify the bound forward before releasing the child from startup cleanup. */
   readonly verifyReady?: () => void;
   readonly timeoutMs?: number;
-  /** Retain this child for transaction rollback after readiness succeeds. */
-  readonly retainOwnership?: (ownership: ForwardServiceOwnership) => void;
   readonly now?: () => number;
-}
-
-export interface ForwardServiceOwnership {
-  readonly terminate: (assertCurrent?: () => void) => void | Promise<void>;
 }
 
 export interface ForwardServiceChild {
   readonly pid?: number;
-  readonly exitCode?: number | null;
-  readonly signalCode?: NodeJS.Signals | null;
-  once?(event: "exit" | "error", listener: () => void): unknown;
   unref(): void;
   on?(event: "error", listener: (error: Error) => void): unknown;
   on?(
@@ -562,45 +553,6 @@ export function terminateForwardServiceProcessTree(
   });
 }
 
-/** Retain the spawned child and drain exit callbacks before using its process identity. */
-function retainForwardServiceChild(
-  child: ForwardServiceChild,
-  terminate: (child: ForwardServiceChild) => void,
-): ForwardServiceOwnership {
-  const pid = child.pid;
-  let exited = false;
-  let terminated = false;
-  child.once?.("exit", () => {
-    exited = true;
-  });
-  child.once?.("error", () => {
-    exited = true;
-  });
-  return Object.freeze({
-    terminate: async (assertCurrent?: () => void) => {
-      // libuv can reap several children before calling their exit handlers. A check-phase
-      // boundary lets that batch finish before we inspect this child, even when cleanup
-      // was requested from another child's exit callback or its promise continuation.
-      await nextCheckPhase();
-      if (terminated) return;
-      assertCurrent?.();
-      // Do not yield between this proof and termination. A POSIX child that exits in
-      // this stack remains unreaped; Windows retains the spawned process handle.
-      if (
-        !child.once ||
-        exited ||
-        child.exitCode !== null ||
-        child.signalCode !== null ||
-        child.pid !== pid
-      ) {
-        throw new Error("OpenShell forward child lifetime can no longer be proved");
-      }
-      terminate(child);
-      terminated = true;
-    },
-  });
-}
-
 /** Launch one foreground OpenShell service forward as a detached host child. */
 export async function launchForwardService(
   target: ForwardServiceTarget,
@@ -635,13 +587,6 @@ export async function launchForwardService(
   probeAllowance();
   const child: ForwardServiceChild = spawnDetached(target.executable, args, environment);
 
-  const ownership = options.retainOwnership
-    ? retainForwardServiceChild(
-        child,
-        options.terminateProcessTree ?? terminateForwardServiceProcessTree,
-      )
-    : null;
-
   let childFailure: Error | undefined;
   let notifyFailure: () => void = () => {};
   const failed = new Promise<void>((resolve) => {
@@ -669,7 +614,6 @@ export async function launchForwardService(
         if (now() >= deadline) break;
         options.verifyReady?.();
         if (now() >= deadline) break;
-        if (ownership) options.retainOwnership?.(ownership);
         child.unref();
         return;
       }
