@@ -1130,7 +1130,12 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
   let primaryError: unknown;
   let hasPrimaryError = false;
   const cleanupErrors: string[] = [];
+  const exit = process.exit;
   try {
+    // Imported CLI failure paths must unwind this fixture's diagnostics and cleanup.
+    process.exit = (code) => {
+      throw new Error(`Managed-image onboarding called process.exit(${String(code)})`);
+    };
     await assertGatewayPortAvailable();
     const image = parseImmutableManifestReference(input.image);
     resolveLocalImageContentId(input.image, process.env);
@@ -1415,7 +1420,18 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
   } catch (error) {
     primaryError = error;
     hasPrimaryError = true;
+    const diagnostics = [
+      ...(onboard ? [onboard.openshellArgv(["sandbox", "get", input.sandbox])] : []),
+      ["tail", "-n", "80", path.join(stateDir, "openshell-gateway.log")],
+    ];
+    for (const argv of diagnostics) {
+      const result = commandResult(argv, process.env, 5_000);
+      console.error(
+        `Managed-image failure evidence: ${managedImageFailureDetail(`${result.stdout ?? ""}\n${result.stderr ?? ""}`)}`,
+      );
+    }
   } finally {
+    process.exit = exit;
     if (onboard) {
       commandResult(
         onboard.openshellArgv(["sandbox", "delete", input.sandbox]),
