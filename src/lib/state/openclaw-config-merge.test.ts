@@ -745,3 +745,73 @@ describe("mergeOpenClawRestoredConfig", () => {
     ).toThrow("missing explicit load paths");
   });
 });
+
+// Regression: NemoClaw #10244. `agents` restores from the backup, so a
+// snapshot taken before the sandbox was configured with
+// NEMOCLAW_AGENT_HEARTBEAT_EVERY replaced the freshly generated heartbeat and
+// the rebuilt sandbox silently ran OpenClaw's own default interval.
+describe("mergeOpenClawRestoredConfig agent heartbeat ownership (#10244)", () => {
+  type MergedAgents = {
+    agents?: { defaults?: Record<string, unknown>; list?: unknown[] };
+  };
+
+  function merge(backup: unknown, fresh: unknown): MergedAgents {
+    return mergeOpenClawRestoredConfig(backup, fresh) as MergedAgents;
+  }
+
+  it("keeps the freshly configured heartbeat when the backup carries none", () => {
+    const merged = merge(
+      { agents: { defaults: { thinkingDefault: "off" } } },
+      { agents: { defaults: { heartbeat: { every: "2m" } } } },
+    );
+
+    expect(merged.agents?.defaults?.heartbeat).toEqual({ every: "2m" });
+  });
+
+  it("keeps the freshly configured heartbeat over a different backed-up interval", () => {
+    const merged = merge(
+      { agents: { defaults: { heartbeat: { every: "30m" } } } },
+      { agents: { defaults: { heartbeat: { every: "2m" } } } },
+    );
+
+    expect(merged.agents?.defaults?.heartbeat).toEqual({ every: "2m" });
+  });
+
+  it("lets a fresh profile that configures no heartbeat drop a backed-up one", () => {
+    const merged = merge(
+      { agents: { defaults: { heartbeat: { every: "30m" } } } },
+      { agents: { defaults: { thinkingDefault: "off" } } },
+    );
+
+    expect(merged.agents?.defaults).not.toHaveProperty("heartbeat");
+  });
+
+  it("does not copy the merged heartbeat by reference from the fresh config", () => {
+    const fresh = { agents: { defaults: { heartbeat: { every: "2m" } } } };
+    const merged = merge({ agents: { defaults: {} } }, fresh);
+
+    expect(merged.agents?.defaults?.heartbeat).not.toBe(fresh.agents.defaults.heartbeat);
+  });
+
+  it("restores unrelated durable agent settings alongside the fresh heartbeat", () => {
+    const merged = merge(
+      {
+        agents: {
+          defaults: { heartbeat: { every: "30m" }, thinkingDefault: "off" },
+          list: [{ id: "researcher", model: "inference/pinned-by-user" }],
+        },
+      },
+      { agents: { defaults: { heartbeat: { every: "2m" } } } },
+    );
+
+    expect(merged.agents?.defaults?.heartbeat).toEqual({ every: "2m" });
+    expect(merged.agents?.defaults?.thinkingDefault).toBe("off");
+    expect(merged.agents?.list).toEqual([{ id: "researcher", model: "inference/pinned-by-user" }]);
+  });
+
+  it("leaves configs without any agent section untouched", () => {
+    const merged = merge({ tools: {} }, { tools: {} });
+
+    expect(merged).not.toHaveProperty("agents");
+  });
+});
