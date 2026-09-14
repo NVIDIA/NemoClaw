@@ -454,7 +454,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
         'reject_managed_override "managed tool set posture"',
         'reject_managed_override "sandbox isolation"',
         'reject_managed_override "MCP posture"',
-        'reject_managed_override "headless shell posture"',
+        'reject_managed_override "shell allow-list posture"',
       ].every((s) => wrapper.includes(s)),
     ).toBe(true);
     expect(

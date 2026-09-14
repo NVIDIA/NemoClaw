@@ -54,10 +54,10 @@ state_dirs:
 # ── Top-level durable state files ───────────────────────────────
 # config.toml mixes DCode preferences with NemoClaw-managed model routing.
 # Ownership is split into three explicit buckets. Users own only the allowlisted
-# UI and thread preferences, native interpreter settings, and the startup
-# approval mode below. NemoClaw owns the fresh models/update tables and generated
-# provider headers. Unknown, privileged, and security-sensitive backup keys are
-# not restorable and are dropped.
+# ui.show_scrollbar, ui.show_url_open_toast, threads.relative_time, and
+# threads.sort_order preferences below. NemoClaw owns the fresh models/update
+# tables and generated provider headers. Agent-runtime, unknown, executable, and
+# security-sensitive backup keys are not restorable and are dropped.
 # .env is intentionally omitted because it may contain service credentials.
 # .deepagents/.mcp.json is the agent-owned MCP source. NemoClaw writes only
 # direct-HTTP endpoint config and OpenShell placeholders, preserves unrelated
@@ -88,39 +88,6 @@ state_files:
           values:
             - updated_at
             - created_at
-        - key: interpreter.enable_interpreter
-          type: boolean
-        - key: interpreter.timeout_seconds
-          type: number
-          min: 0
-          max: 60
-        - key: interpreter.memory_limit_mb
-          type: integer
-          min: 1
-          max: 512
-        - key: interpreter.max_ptc_calls
-          type: integer
-          min: 0
-          max: 256
-        - key: interpreter.max_result_chars
-          type: integer
-          min: 0
-          max: 65536
-        - key: interpreter.ptc
-          type: enum
-          values:
-            - safe
-            - all
-            - false
-        - key: interpreter.ptc_acknowledge_unsafe
-          type: boolean
-        - key: startup.mode
-          type: enum
-          values:
-            - manual
-            - auto
-            - yolo
-  - hooks.json
 user_managed_files:
   - .deepagents/.env
   - .deepagents/.mcp.json
