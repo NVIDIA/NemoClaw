@@ -214,16 +214,30 @@ describe.concurrent("CLI debug command", () => {
     testTimeoutOptions(30_000),
     async ({ resources }) => {
       const home = resources.temporaryDirectory("nemoclaw-cli-stale-");
-      fs.mkdirSync(path.join(home, ".nemoclaw"), { recursive: true });
+      const localBin = path.join(home, "bin");
+      fs.mkdirSync(localBin, { recursive: true });
+      writeSandboxRegistry(home, "ghost");
       fs.writeFileSync(
-        path.join(home, ".nemoclaw", "sandboxes.json"),
-        JSON.stringify({ sandboxes: {}, defaultSandbox: "ghost" }),
-        { mode: 0o600 },
+        path.join(localBin, "openshell"),
+        [
+          "#!/bin/sh",
+          'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
+          "  echo 'NAME'",
+          "  exit 0",
+          "fi",
+          "exit 0",
+        ].join("\n"),
+        { mode: 0o755 },
       );
-      const r = await runWithEnvAsync("debug --quick 2>&1", { HOME: home }, 30000);
+      const r = await runWithEnvAsync(
+        "debug --quick 2>&1",
+        { HOME: home, PATH: `${localBin}:${process.env.PATH || ""}` },
+        30000,
+      );
       expect(r.code).not.toBe(0);
       expect(r.out).toContain("Warning");
       expect(r.out).toContain("ghost");
+      expect(r.out).toContain("local registry but not in OpenShell");
       expect(r.out).toContain("--sandbox NAME");
     },
   );
