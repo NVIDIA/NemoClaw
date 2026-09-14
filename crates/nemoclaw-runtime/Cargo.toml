@@ -1,0 +1,28 @@
+[package]
+name = "nemoclaw-runtime"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[[bin]]
+name = "nemoclaw-spark"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+nemoclaw-sdk = { path = "../nemoclaw-sdk" }
+async-trait.workspace = true
+tokio = { workspace = true, features = ["signal", "process", "io-util", "fs"] }
+process-wrap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true
+reqwest.workspace = true
+time.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }

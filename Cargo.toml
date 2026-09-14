@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/nemoclaw-sdk", "crates/nemoclaw-provider", "crates/nemoclaw-e2e", "crates/nemoclaw-cli"]
+members = ["crates/nemoclaw-sdk", "crates/nemoclaw-provider", "crates/nemoclaw-e2e", "crates/nemoclaw-cli", "crates/nemoclaw-runtime"]
 resolver = "3"
 
 [workspace.package]
@@ -39,3 +39,4 @@ tokio-util = "0.7"
 clap = { version = "4", features = ["derive"] }
 reqwest = { version = "0.13.4", default-features = false, features = ["rustls", "stream"] }
 futures-util = "0.3"
+time = { version = "0.3", features = ["formatting"] }

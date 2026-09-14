@@ -1374,6 +1374,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "nemoclaw-runtime"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "nemoclaw-sdk",
+ "process-wrap",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "time",
+ "tokio",
+]
+
+[[package]]
 name = "nemoclaw-sdk"
 version = "0.1.0"
 dependencies = [
