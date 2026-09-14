@@ -305,7 +305,7 @@ jobs:
           node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/pr-review-advisor/repair-resolve.mts" export
 
       - name: Delete the repair sandbox
-        if: ${{ always() && steps.create.outcome == 'success' }}
+        if: ${{ always() }}
         env:
           CLEANUP_RECEIPT_FILE: ${{ runner.temp }}/cleanup.json
         run: node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/pr-review-advisor/repair-resolve.mts" delete

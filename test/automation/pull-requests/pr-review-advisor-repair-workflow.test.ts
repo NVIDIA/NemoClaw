@@ -123,6 +123,17 @@ describe("manual PR Review Advisor repair workflow", () => {
     expect(create).toBeGreaterThan(reconcile);
   });
 
+  // source-shape-contract: security -- A failed create can still allocate a sandbox, so cleanup must always attempt idempotent deletion
+  it("always cleans up the repair sandbox after a create attempt (#10791)", () => {
+    const cleanup = (workflow.jobs.resolve.steps ?? []).find((step) =>
+      step.run?.includes('repair-resolve.mts" delete'),
+    );
+
+    expect(cleanup).toBeDefined();
+    expect(cleanup?.if).toBe("${{ always() }}");
+    expect(cleanup?.if).not.toContain("steps.create.outcome");
+  });
+
   it.each(jobEnvironmentCases)(
     "uses contexts available while GitHub compiles the %s job environment (#10791)",
     (_jobName, env) => {
