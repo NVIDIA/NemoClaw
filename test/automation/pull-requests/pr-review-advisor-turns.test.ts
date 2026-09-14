@@ -7,12 +7,16 @@ import { advisorTurnFlowDiagnostics } from "../../../tools/advisors/turn-protoco
 
 describe("PR review advisor turn trace", () => {
   it("reports bounded tool-flow metadata without tool arguments (#11686)", () => {
+    const repeatedUnknownStarts = new Array<{ type: "tool_start"; toolName: string }>(10_000).fill({
+      type: "tool_start",
+      toolName: "untrusted\nvalue",
+    });
     const diagnostics = advisorTurnFlowDiagnostics(
       [
         { type: "tool_start", toolName: "read" },
         { type: "tool_end", toolName: "read", isError: true },
         { type: "tool_end", toolName: "submit", isError: false },
-        { type: "tool_start", toolName: "untrusted\nvalue" },
+        ...repeatedUnknownStarts,
         {
           type: "read",
           path: "/secret/path",
@@ -29,7 +33,7 @@ describe("PR review advisor turn trace", () => {
     expect(diagnostics).toEqual({
       textEvents: 0,
       readEvents: 1,
-      toolStarts: 2,
+      toolStarts: 10_001,
       toolEnds: 2,
       toolFailures: 1,
       failedToolNames: ["read"],

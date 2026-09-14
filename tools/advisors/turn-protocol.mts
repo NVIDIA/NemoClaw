@@ -117,75 +117,82 @@ export type AdvisorTurnFlowDiagnostics = {
   missingRequiredToolNames: string[];
 };
 
+export class AdvisorTurnFlowDiagnosticAccumulator {
+  readonly #availableToolNames: ReadonlySet<string>;
+  readonly #failedToolNames = new Set<string>();
+  readonly #openCalls = new Map<string, number>();
+  readonly #successfulToolNames = new Set<string>();
+  readonly #unmatchedToolEndNames = new Set<string>();
+  #readEvents = 0;
+  #textEvents = 0;
+  #toolEnds = 0;
+  #toolFailures = 0;
+  #toolStarts = 0;
+
+  constructor(availableToolNames: ReadonlySet<string>) {
+    this.#availableToolNames = availableToolNames;
+  }
+
+  record(event: AdvisorTurnFlowEvent): void {
+    if (event.type === "text") {
+      this.#textEvents += 1;
+      return;
+    }
+    if (event.type === "read") {
+      this.#readEvents += 1;
+      return;
+    }
+    const toolName = this.#availableToolNames.has(event.toolName) ? event.toolName : "<unknown>";
+    if (event.type === "tool_start") {
+      this.#toolStarts += 1;
+      this.#openCalls.set(toolName, (this.#openCalls.get(toolName) ?? 0) + 1);
+      return;
+    }
+    this.#toolEnds += 1;
+    if (event.isError) {
+      this.#toolFailures += 1;
+      this.#failedToolNames.add(toolName);
+    } else if (this.#availableToolNames.has(event.toolName)) {
+      this.#successfulToolNames.add(event.toolName);
+    }
+    const openCount = this.#openCalls.get(toolName) ?? 0;
+    if (openCount === 0) {
+      this.#unmatchedToolEndNames.add(toolName);
+      return;
+    }
+    this.#openCalls.set(toolName, openCount - 1);
+  }
+
+  snapshot(requiredToolNames: string[]): AdvisorTurnFlowDiagnostics {
+    const unsettledToolNames = [...this.#openCalls]
+      .filter(([, count]) => count > 0)
+      .map(([toolName]) => toolName)
+      .sort();
+    return {
+      textEvents: this.#textEvents,
+      readEvents: this.#readEvents,
+      toolStarts: this.#toolStarts,
+      toolEnds: this.#toolEnds,
+      toolFailures: this.#toolFailures,
+      failedToolNames: [...this.#failedToolNames].sort(),
+      unmatchedToolEndNames: [...this.#unmatchedToolEndNames].sort(),
+      unsettledToolNames,
+      missingRequiredToolNames: missingRequiredAdvisorToolNames(
+        requiredToolNames,
+        this.#successfulToolNames,
+      ).sort(),
+    };
+  }
+}
+
 export function advisorTurnFlowDiagnostics(
   events: AdvisorTurnFlowEvent[],
   requiredToolNames: string[],
   availableToolNames: ReadonlySet<string>,
 ): AdvisorTurnFlowDiagnostics {
-  const openCalls = new Map<string, number>();
-  const failedToolNames = new Set<string>();
-  const unmatchedToolEndNames = new Set<string>();
-  let textEvents = 0;
-  let readEvents = 0;
-  let toolStarts = 0;
-  let toolEnds = 0;
-  let toolFailures = 0;
-
-  const diagnosticName = (toolName: string): string =>
-    availableToolNames.has(toolName) ? toolName : "<unknown>";
-
-  for (const event of events) {
-    if (event.type === "text") {
-      textEvents += 1;
-      continue;
-    }
-    if (event.type === "read") {
-      readEvents += 1;
-      continue;
-    }
-    const toolName = diagnosticName(event.toolName);
-    if (event.type === "tool_start") {
-      toolStarts += 1;
-      openCalls.set(toolName, (openCalls.get(toolName) ?? 0) + 1);
-      continue;
-    }
-    toolEnds += 1;
-    if (event.isError) {
-      toolFailures += 1;
-      failedToolNames.add(toolName);
-    }
-    const openCount = openCalls.get(toolName) ?? 0;
-    if (openCount === 0) {
-      unmatchedToolEndNames.add(toolName);
-      continue;
-    }
-    openCalls.set(toolName, openCount - 1);
-  }
-
-  const unsettledToolNames = [...openCalls]
-    .filter(([, count]) => count > 0)
-    .map(([toolName]) => toolName)
-    .sort();
-  return {
-    textEvents,
-    readEvents,
-    toolStarts,
-    toolEnds,
-    toolFailures,
-    failedToolNames: [...failedToolNames].sort(),
-    unmatchedToolEndNames: [...unmatchedToolEndNames].sort(),
-    unsettledToolNames,
-    missingRequiredToolNames: missingRequiredAdvisorToolNames(
-      requiredToolNames,
-      new Set(
-        events.flatMap((event) =>
-          event.type === "tool_end" && !event.isError && availableToolNames.has(event.toolName)
-            ? [event.toolName]
-            : [],
-        ),
-      ),
-    ).sort(),
-  };
+  const accumulator = new AdvisorTurnFlowDiagnosticAccumulator(availableToolNames);
+  for (const event of events) accumulator.record(event);
+  return accumulator.snapshot(requiredToolNames);
 }
 
 export function resolveAdvisorTurnTools(

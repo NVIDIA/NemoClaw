@@ -25,7 +25,7 @@ import { createRepoConfinedReadOnlyTools } from "./repo-read-only-tools.mts";
 import {
   assistantTextRepairErrors,
   assistantTextRepairPrompt,
-  advisorTurnFlowDiagnostics,
+  AdvisorTurnFlowDiagnosticAccumulator,
   type AdvisorContextToolResult,
   type AdvisorPromptTurn,
   type AdvisorTurnFlowEvent,
@@ -347,8 +347,10 @@ export async function runReadOnlyAdvisor(
 
   const promptTurns = normalizePromptTurns(options.promptTurns);
   const contextTools = createAdvisorContextToolRuntime(promptTurns);
+  const availableToolNames = new Set(READ_ONLY_TOOLS);
+  for (const toolName of contextTools.allToolNames) availableToolNames.add(toolName);
   let currentTurnFlow: AdvisorTurnFlowEvent[] = [];
-  let currentTurnDiagnosticFlow: AdvisorTurnFlowEvent[] = [];
+  let currentTurnDiagnostics = new AdvisorTurnFlowDiagnosticAccumulator(availableToolNames);
   let currentTurnRepairAttempts = {
     assistantText: false,
     atomicTerminal: false,
@@ -356,7 +358,7 @@ export async function runReadOnlyAdvisor(
   };
   const recordTurnFlow = (event: AdvisorTurnFlowEvent): void => {
     currentTurnFlow.push(event);
-    currentTurnDiagnosticFlow.push(event);
+    currentTurnDiagnostics.record(event);
   };
   const customTools = [
     ...createRepoConfinedReadOnlyTools(
@@ -368,8 +370,6 @@ export async function runReadOnlyAdvisor(
     ),
     ...contextTools.customTools,
   ];
-  const availableToolNames = new Set(READ_ONLY_TOOLS);
-  for (const toolName of contextTools.allToolNames) availableToolNames.add(toolName);
   for (const tool of options.customTools ?? []) {
     const toolName = sanitizeToolName(tool.name);
     if (toolName !== tool.name) {
@@ -562,7 +562,7 @@ export async function runReadOnlyAdvisor(
       currentTurnError = undefined;
       successfulToolNames = new Set();
       currentTurnFlow = [];
-      currentTurnDiagnosticFlow = [];
+      currentTurnDiagnostics = new AdvisorTurnFlowDiagnosticAccumulator(availableToolNames);
       currentTurnRepairAttempts = {
         assistantText: false,
         atomicTerminal: false,
@@ -716,11 +716,7 @@ export async function runReadOnlyAdvisor(
         `Advisor SDK turn ${turnIndex} settled: ${turn.name} status=${settlement.turn.status} textBytes=${turnTextBytes}`,
       );
       if (settlement.turn.error) {
-        const diagnostics = advisorTurnFlowDiagnostics(
-          currentTurnDiagnosticFlow,
-          tools.requiredToolNames,
-          availableToolNames,
-        );
+        const diagnostics = currentTurnDiagnostics.snapshot(tools.requiredToolNames);
         options.logProgress(
           `Advisor SDK turn failure diagnostics: ${JSON.stringify({
             ...diagnostics,

@@ -661,6 +661,23 @@ describe("advisor session runner", () => {
     expect(progress.join("\n")).not.toContain("missing-optional-evidence");
   });
 
+  it("retains diagnostics when analysis repair also omits prose", async () => {
+    sdk.state.omitAnalysisPrompts = 2;
+    const progress: string[] = [];
+
+    const result = await run([analysisTurn("investigate")], undefined, [], (message) =>
+      progress.push(message),
+    );
+
+    expect(result.fatalError).toBe("investigate assistant-text repair omitted required analysis");
+    expect(sdk.state.prompts).toHaveLength(2);
+    expect(progress).toContainEqual(
+      expect.stringContaining(
+        'Advisor SDK turn failure diagnostics: {"textEvents":0,"readEvents":0,"toolStarts":1,"toolEnds":1,"toolFailures":0,"failedToolNames":[],"unmatchedToolEndNames":[],"unsettledToolNames":[],"missingRequiredToolNames":[],"repairAttempts":{"assistantText":true,"atomicTerminal":false,"terminalSubmit":false}}',
+      ),
+    );
+  });
+
   it("repairs omitted required recording tools before submit (#9963)", async () => {
     sdk.state.terminalResponses = ["fail-once", "success"];
     const requiredRecordingTurn = {
