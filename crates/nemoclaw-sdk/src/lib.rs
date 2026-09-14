@@ -117,3 +117,5 @@ pub use deployment::{Change, Deployment, OperationResult, Outcome, Progress};
 pub mod snapshot;
 
 pub mod spark;
+
+pub mod ollama;

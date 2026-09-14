@@ -14,6 +14,7 @@ pub enum Error {
         diagnostic: String,
     },
     Cancelled,
+    OllamaStarting,
 }
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -27,6 +28,9 @@ impl fmt::Display for Error {
                 operation,
                 diagnostic,
             } => write!(f, "OpenTofu {operation} failed: {diagnostic}"),
+            Self::OllamaStarting => {
+                f.write_str("Ollama connection refused; model inventory is unknown")
+            }
             Self::Cancelled => f.write_str(
                 "operation interrupted; retain state and reapply the same configuration",
             ),

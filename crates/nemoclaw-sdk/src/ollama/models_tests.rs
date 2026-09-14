@@ -1,0 +1,110 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+use super::*;
+use std::sync::{Arc, Mutex};
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    net::TcpListener,
+};
+fn model() -> Model {
+    Model {
+        name: "fixture:latest".into(),
+        digest: "a".repeat(64),
+        size: 42,
+    }
+}
+async fn server(
+    responses: Vec<(u16, String)>,
+) -> (Models, Arc<Mutex<Vec<String>>>, tokio::task::JoinHandle<()>) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let client = Models::new(&format!("http://{}/v1", listener.local_addr().unwrap())).unwrap();
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let seen = requests.clone();
+    let task = tokio::spawn(async move {
+        for (status, body) in responses {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = Vec::new();
+            while !request.ends_with(b"\r\n\r\n") {
+                request.push(socket.read_u8().await.unwrap());
+            }
+            let header = String::from_utf8(request).unwrap();
+            let length = header
+                .lines()
+                .find_map(|line| line.strip_prefix("content-length: "))
+                .map(|n| n.parse::<usize>().unwrap())
+                .unwrap_or(0);
+            let mut content = vec![0; length];
+            socket.read_exact(&mut content).await.unwrap();
+            seen.lock()
+                .unwrap()
+                .push(format!("{header}{}", String::from_utf8(content).unwrap()));
+            socket.write_all(format!("HTTP/1.1 {status} Fixture\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len()).as_bytes()).await.unwrap();
+        }
+    });
+    (client, requests, task)
+}
+#[tokio::test]
+async fn only_complete_inventory_can_confirm_model_absence() {
+    for body in [
+        "{}",
+        "{\"models\":null}",
+        "{\"models\":[{}]}",
+        "{\"models\":[]",
+        "{\"models\":[{\"name\":\"other\",\"digest\":\"bad\",\"size\":1}]}",
+    ] {
+        let (client, requests, task) = server(vec![(200, body.into())]).await;
+        assert!(client.ensure("fixture:latest").await.is_err());
+        task.await.unwrap();
+        assert_eq!(requests.lock().unwrap().len(), 1);
+    }
+    let (client, _, task) = server(vec![(200, "{\"models\":[]}".into())]).await;
+    assert_eq!(client.read("fixture:latest").await.unwrap(), None);
+    task.await.unwrap();
+}
+#[tokio::test]
+async fn pull_requires_success_and_reconciliation_before_returning_model_identity() {
+    let inventory = serde_json::json!({"models":[model()]}).to_string();
+    let (client, requests, task) = server(vec![
+        (200, "{\"models\":[]}".into()),
+        (
+            200,
+            "{\"status\":\"downloading\"}\n{\"status\":\"success\"}\n".into(),
+        ),
+        (200, inventory.clone()),
+        (200, inventory),
+    ])
+    .await;
+    assert_eq!(client.ensure("fixture:latest").await.unwrap(), model());
+    assert_eq!(client.ensure("fixture:latest").await.unwrap(), model());
+    task.await.unwrap();
+    let requests = requests.lock().unwrap();
+    assert_eq!(
+        requests.iter().filter(|r| r.starts_with("POST ")).count(),
+        1
+    );
+    assert!(requests[1].ends_with("{\"model\":\"fixture:latest\",\"stream\":true}"));
+}
+#[tokio::test]
+async fn partial_or_ambiguous_pull_is_not_retried_or_claimed_successful() {
+    for events in [
+        "{\"status\":\"downloading\"}\n",
+        "{\"status\":\"success\"}\n{\"status\":\"downloading\"}\n",
+        "{\"error\":\"secret-sentinel\"}\n",
+    ] {
+        let (client, requests, task) =
+            server(vec![(200, "{\"models\":[]}".into()), (200, events.into())]).await;
+        let error = client.ensure("fixture:latest").await.unwrap_err();
+        assert!(!error.to_string().contains("secret-sentinel"));
+        task.await.unwrap();
+        assert_eq!(requests.lock().unwrap().len(), 2);
+    }
+}
+#[tokio::test]
+async fn rejected_inventory_is_failure_even_for_http_not_found() {
+    for status in [401, 403, 404, 500] {
+        let (client, _, task) = server(vec![(status, "secret-sentinel".into())]).await;
+        let error = client.read("fixture:latest").await.unwrap_err();
+        assert!(!error.to_string().contains("secret-sentinel"));
+        task.await.unwrap();
+    }
+}
