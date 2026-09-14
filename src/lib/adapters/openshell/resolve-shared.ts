@@ -84,7 +84,22 @@ function resolveCurrent(
   env: NodeJS.ProcessEnv,
   resolver?: (env: NodeJS.ProcessEnv) => string | null,
 ): string | null {
-  return resolver?.(env) ?? resolveOpenshell({ env });
+  return resolver ? resolver(env) : resolveOpenshell({ env });
+}
+
+/** Verify that a retained executable still has the admitted version and pathname selection. */
+export function assertHermesPortableOpenShellExecutableResolution(
+  expected: HermesPortableOpenShellExecutableAuthority,
+  resolutionEnv: NodeJS.ProcessEnv,
+  deps: HermesPortableOpenShellExecutableAuthorityDeps = {},
+): string {
+  if (
+    expected.version !== HERMES_PORTABLE_OPENSHELL_VERSION ||
+    resolveCurrent(resolutionEnv, deps.resolve) !== expected.executable.executablePath
+  ) {
+    failExecutableAuthority("disagrees with the current OpenShell resolution");
+  }
+  return expected.executable.executablePath;
 }
 
 /** Capture the exact schema-5 OpenShell executable before reservation effects. */
@@ -116,12 +131,7 @@ export function assertHermesPortableOpenShellExecutableAuthority(
   resolutionEnv: NodeJS.ProcessEnv,
   deps: HermesPortableOpenShellExecutableAuthorityDeps = {},
 ): string {
-  if (
-    expected.version !== HERMES_PORTABLE_OPENSHELL_VERSION ||
-    resolveCurrent(resolutionEnv, deps.resolve) !== expected.executable.executablePath
-  ) {
-    failExecutableAuthority("disagrees with the current OpenShell resolution");
-  }
+  assertHermesPortableOpenShellExecutableResolution(expected, resolutionEnv, deps);
   try {
     assertPodmanExecutableAuthority(expected.executable, deps);
   } catch {
@@ -137,12 +147,7 @@ export function assertHermesPortableOpenShellExecutableFileAuthority(
   resolutionEnv: NodeJS.ProcessEnv,
   deps: HermesPortableOpenShellExecutableAuthorityDeps = {},
 ): string {
-  if (
-    expected.version !== HERMES_PORTABLE_OPENSHELL_VERSION ||
-    resolveCurrent(resolutionEnv, deps.resolve) !== expected.executable.executablePath
-  ) {
-    failExecutableAuthority("disagrees with the current OpenShell resolution");
-  }
+  assertHermesPortableOpenShellExecutableResolution(expected, resolutionEnv, deps);
   try {
     assertPodmanExecutableAuthority(expected.executable, deps);
   } catch {
