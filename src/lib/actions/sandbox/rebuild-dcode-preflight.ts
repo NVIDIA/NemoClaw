@@ -205,15 +205,15 @@ function resolveTarget(
   }
 }
 
-function requireInferenceRoute(
+async function requireInferenceRoute(
   sandboxName: string,
   target: ResolvedDcodeRebuildTarget,
   bail: DcodeRebuildPreflightBail,
   runtimeSelection?: OpenShellRuntimeSelection,
   degradeUnavailableRoute = false,
   log?: (message: string) => void,
-): void {
-  const result = probeSandboxInferenceInvocation({
+): Promise<void> {
+  const result = await probeSandboxInferenceInvocation({
     sandboxName,
     agentName: target.agent,
     ...target,
@@ -376,7 +376,7 @@ function resolvePinnedDcodeBaseImage(
   if (!result) {
     try {
       result = ensureAgentBaseImage(agent, { forceBaseImageRefresh: true });
-    } catch (error) {
+    } catch {
       try {
         result = ensureAgentBaseImage(agent, { forceBaseImageRebuild: true });
       } catch (buildError) {
@@ -539,7 +539,7 @@ export async function prepareDcodeReplacementBeforeMutation(
     const session = loadMatchingDcodeSession(sandboxName);
     const target = resolveTarget(entry, resumeConfig, bail, gatewayPort);
     if (!skipLiveRoute)
-      requireInferenceRoute(
+      await requireInferenceRoute(
         sandboxName,
         target,
         bail,
@@ -584,7 +584,7 @@ export async function prepareDcodeReplacementBeforeMutation(
     }
     if (!input.checkGatewaySchema(runtimeSelection)) return null;
     if (!skipLiveRoute)
-      requireInferenceRoute(
+      await requireInferenceRoute(
         sandboxName,
         target,
         bail,
@@ -653,7 +653,7 @@ export async function revalidateDcodeReplacementAtMutationEdge(
   }
   if (!input.checkGatewaySchema(runtimeSelection)) return false;
   if (!skipLiveRoute)
-    requireInferenceRoute(
+    await requireInferenceRoute(
       sandboxName,
       target,
       bail,
@@ -701,7 +701,7 @@ export async function revalidateManagedDcodeWorkloadAtMutationEdge(
   }
   if (!input.checkGatewaySchema(runtimeSelection)) return false;
   if (!skipLiveRoute)
-    requireInferenceRoute(
+    await requireInferenceRoute(
       sandboxName,
       target,
       bail,

@@ -170,7 +170,7 @@ describe("Hermes privileged state capture scripts", () => {
     expect(
       spawnSync("/usr/bin/python3", [
         "-c",
-        `import sqlite3; db = sqlite3.connect(${JSON.stringify(database)}); db.execute('create table state (value text)'); db.execute(\"insert into state values ('saved')\"); db.commit()`,
+        `import sqlite3; db = sqlite3.connect(${JSON.stringify(database)}); db.execute('create table state (value text)'); db.execute("insert into state values ('saved')"); db.commit()`,
       ]).status,
     ).toBe(0);
     const captured = spawnSync(

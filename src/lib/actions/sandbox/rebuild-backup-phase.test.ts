@@ -26,10 +26,7 @@ vi.mock("./rebuild-recreate-journal", async (importOriginal) => ({
   recordRebuildRecoveryBackup: mocks.recordRebuildRecoveryBackup,
 }));
 
-import {
-  type RebuildBackupPhaseInput,
-  runRebuildBackupPhase,
-} from "./rebuild-backup-phase";
+import { type RebuildBackupPhaseInput, runRebuildBackupPhase } from "./rebuild-backup-phase";
 
 const temporaryDirectories: string[] = [];
 

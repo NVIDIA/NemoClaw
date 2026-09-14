@@ -8,19 +8,11 @@
 //   Fast: registry lookup (no SSH, used when agentVersion is already cached)
 //   Slow: SSH exec into sandbox, run version_command, cache result in registry
 
-import { spawnSync } from "child_process";
-
-import {
-  captureSandboxSshConfigCommand,
-  parseVersionFromText,
-} from "../adapters/openshell/client.js";
-import { resolveOpenshell } from "../adapters/openshell/resolve.js";
-import { openshellSandboxSshHost } from "../adapters/openshell/sandbox-ssh-host.js";
-import { OPENSHELL_PROBE_TIMEOUT_MS } from "../adapters/openshell/timeouts.js";
+import { parseVersionFromText } from "../adapters/openshell/client.js";
+import { createCliOpenShellSandboxSshExecutor } from "../adapters/openshell/sandbox-ssh-cli.js";
 import { loadAgent } from "../agent/defs.js";
 import { resolveSandboxGatewayName } from "../onboard/gateway-binding.js";
 import * as registry from "../state/registry.js";
-import { createTempSshConfig } from "./temp-ssh-config.js";
 import { evaluateStaleness } from "./version-scheme.js";
 
 export interface VersionCheckResult {
@@ -103,7 +95,10 @@ function resolveProbeGatewayName(sandboxName: string): string | null {
  * Probe the live agent version inside a sandbox via SSH.
  * Returns the parsed version string or null on failure.
  */
-export function probeAgentVersion(sandboxName: string, gatewayName?: string): string | null {
+export async function probeAgentVersion(
+  sandboxName: string,
+  gatewayName?: string,
+): Promise<string | null> {
   const agent = resolveAgentForSandbox(sandboxName);
 
   // Scope the lookup to the sandbox's own gateway. Without it OpenShell
@@ -120,44 +115,14 @@ export function probeAgentVersion(sandboxName: string, gatewayName?: string): st
   const probeGatewayName = gatewayName ?? resolveProbeGatewayName(sandboxName);
   if (probeGatewayName === null) return null;
 
-  const openshellBinary = resolveOpenshell();
-  if (!openshellBinary) return null;
-
-  const sshConfigResult = captureSandboxSshConfigCommand(openshellBinary, sandboxName, {
-    ignoreError: true,
-    timeout: OPENSHELL_PROBE_TIMEOUT_MS,
-    gatewayName: probeGatewayName,
+  const result = await createCliOpenShellSandboxSshExecutor().run({
+    sandboxName,
+    target: { kind: "named", gatewayName: probeGatewayName },
+    command: agent.versionCommand,
   });
-  if (sshConfigResult.status !== 0) return null;
-  if (!sshConfigResult.output.trim()) return null;
-
-  const tmpSshConfig = createTempSshConfig(sshConfigResult.output, "nemoclaw-ver-");
-  try {
-    const result = spawnSync(
-      "ssh",
-      [
-        "-F",
-        tmpSshConfig.file,
-        "-o",
-        "StrictHostKeyChecking=no",
-        "-o",
-        "UserKnownHostsFile=/dev/null",
-        "-o",
-        "ConnectTimeout=5",
-        "-o",
-        "LogLevel=ERROR",
-        openshellSandboxSshHost(sandboxName),
-        agent.versionCommand,
-      ],
-      { encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"], timeout: 15000 },
-    );
-    if (result.status !== 0) return null;
-    return parseVersionFromText(result.stdout, agent.versionCommand);
-  } catch {
-    return null;
-  } finally {
-    tmpSshConfig.cleanup();
-  }
+  return result.kind === "completed" && result.exitCode === 0
+    ? parseVersionFromText(result.stdout, agent.versionCommand)
+    : null;
 }
 
 /**
@@ -166,10 +131,10 @@ export function probeAgentVersion(sandboxName: string, gatewayName?: string): st
  * Fast path: compare registry.agentVersion against manifest expected_version.
  * Slow path: SSH into sandbox, run version_command, cache result in registry.
  */
-export function checkAgentVersion(
+export async function checkAgentVersion(
   sandboxName: string,
   opts?: VersionCheckOptions,
-): VersionCheckResult {
+): Promise<VersionCheckResult> {
   const agent = resolveAgentForSandbox(sandboxName);
   const expectedVersion = agent.expectedVersion;
 
@@ -238,7 +203,7 @@ export function checkAgentVersion(
   }
 
   // Slow path: SSH exec into sandbox
-  const probed = probeAgentVersion(sandboxName, probeGatewayName);
+  const probed = await probeAgentVersion(sandboxName, probeGatewayName);
   if (probed && sb) {
     // Cache for future fast-path lookups
     registry.updateSandbox(sandboxName, { agentVersion: probed });

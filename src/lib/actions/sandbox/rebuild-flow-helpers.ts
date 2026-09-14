@@ -60,6 +60,7 @@ import {
 
 export { removeStaleRebuildDockerOrphan };
 export { replaceOpenShellRuntimeSelectionEnv, snapshotOpenShellEnv };
+export { resolveSandboxGatewayName };
 
 export type RebuildSandboxEntry = SandboxEntry & { agents?: unknown[] };
 
@@ -218,9 +219,7 @@ export async function resolveRebuildLiveState(
 
   const liveNames = new Set(observed.value.sandboxes.map((sandbox) => sandbox.name));
   log(`Live sandboxes: ${Array.from(liveNames).join(", ") || "(none)"}`);
-  const liveObservation = observed.value.sandboxes.find(
-    (sandbox) => sandbox.name === sandboxName,
-  );
+  const liveObservation = observed.value.sandboxes.find((sandbox) => sandbox.name === sandboxName);
   if (liveObservation) {
     const terminalPhase = liveObservation.readiness === "terminal";
     if (terminalPhase) {
@@ -233,7 +232,7 @@ export async function resolveRebuildLiveState(
 
   const reconciled = await getReconciledSandboxGatewayState(sandboxName);
   if (reconciled.state === "present") {
-    const lifecycle = getNamedGatewayLifecycleState(recordedGateway);
+    const lifecycle = await getNamedGatewayLifecycleState(recordedGateway);
     if (lifecycle.state !== "healthy_named") {
       printWrongGatewayActiveGuidance(
         sandboxName,

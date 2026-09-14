@@ -19,14 +19,14 @@ function makeDeps(overrides: Record<string, unknown> = {}) {
     error: vi.fn(),
     log: vi.fn(),
     hermesProviderAuth: {
-      isHermesProviderRegistered: vi.fn(() => true),
+      isHermesProviderRegistered: vi.fn(async () => true),
       ensureHermesProviderApiKeyCredentials: vi.fn(() => ({})),
       ensureHermesProviderOAuthCredentials: vi.fn(() => ({})),
     },
     getHermesToolGatewayBroker: vi.fn(() => ({
       getHermesToolGatewayProviderName: vi.fn(() => "hermes-tool-gateway"),
     })),
-    providerExistsInGateway: vi.fn(() => true),
+    providerExistsInGateway: vi.fn(async () => true),
     normalizeHermesAuthMethod: vi.fn(() => "api-key"),
     resolveHermesNousApiKey: vi.fn(() => null),
     checkHermesProviderStoreReachable: vi.fn(() => ({ ok: true })),
@@ -76,8 +76,7 @@ describe("setupHermesProviderInference smoke verification", () => {
     });
 
     const setup = setupHermesProviderInference(makeArgs(null), deps as never);
-
-    expect(deps.verifyOnboardInferenceSmoke).toHaveBeenCalledOnce();
+    await vi.waitFor(() => expect(deps.verifyOnboardInferenceSmoke).toHaveBeenCalledOnce());
     expect(deps.registry.updateSandbox).not.toHaveBeenCalled();
     expect(deps.log).not.toHaveBeenCalled();
 

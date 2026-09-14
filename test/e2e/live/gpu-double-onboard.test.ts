@@ -160,18 +160,18 @@ async function expectSandboxInference42(
 test(
   "gpu double onboard keeps Ollama auth proxy token consistent after re-onboard",
   {
-  timeout: LIVE_TIMEOUT_MS,
-  meta: {
-    e2ePhases: [
-      "validate GPU and runtime prerequisites",
-      "install Ollama runtime",
-      "perform first Ollama onboard",
-      "validate first proxy token and inference",
-      "re-onboard GPU sandbox",
-      "validate persisted proxy auth and inference",
-      "remove GPU double-onboard sandbox",
-    ],
-  },
+    timeout: LIVE_TIMEOUT_MS,
+    meta: {
+      e2ePhases: [
+        "validate GPU and runtime prerequisites",
+        "install Ollama runtime",
+        "perform first Ollama onboard",
+        "validate first proxy token and inference",
+        "re-onboard GPU sandbox",
+        "validate persisted proxy auth and inference",
+        "remove GPU double-onboard sandbox",
+      ],
+    },
   },
   async ({
     artifacts,
@@ -182,40 +182,40 @@ test(
     sandbox,
     skip,
   }) => {
-  await artifacts.target.declare({
-    id: "gpu-double-onboard",
-    sandboxName: SANDBOX_NAME,
-    proxyPort: PROXY_PORT,
-    contracts: [
-      "GPU and runtime prerequisites are present",
-      "install.sh onboards with the Ollama provider",
-      "the persisted Ollama auth-proxy token works after first onboard",
-      "nemoclaw onboard --non-interactive --yes recreates the sandbox",
-      "the running proxy accepts the persisted token after re-onboard and rejects unauthenticated/wrong-token requests",
-      "sandbox inference.local reaches Ollama after re-onboard",
-    ],
-  });
+    await artifacts.target.declare({
+      id: "gpu-double-onboard",
+      sandboxName: SANDBOX_NAME,
+      proxyPort: PROXY_PORT,
+      contracts: [
+        "GPU and runtime prerequisites are present",
+        "install.sh onboards with the Ollama provider",
+        "the persisted Ollama auth-proxy token works after first onboard",
+        "nemoclaw onboard --non-interactive --yes recreates the sandbox",
+        "the running proxy accepts the persisted token after re-onboard and rejects unauthenticated/wrong-token requests",
+        "sandbox inference.local reaches Ollama after re-onboard",
+      ],
+    });
 
     await runtimeProvider.requireAvailable({
-    artifactName: "phase-0-runtime-info",
+      artifactName: "phase-0-runtime-info",
       scenarioLabel: "GPU double-onboard",
-  });
-  const smi = await host.command("nvidia-smi", [], {
-    artifactName: "phase-0-nvidia-smi",
-    env: env(),
-    timeoutMs: 30_000,
-  });
-  if (smi.exitCode !== 0) {
-    if (process.env.GITHUB_ACTIONS === "true") throw new Error(resultText(smi));
-    skip(`NVIDIA GPU is required: ${resultText(smi)}`);
-  }
+    });
+    const smi = await host.command("nvidia-smi", [], {
+      artifactName: "phase-0-nvidia-smi",
+      env: env(),
+      timeoutMs: 30_000,
+    });
+    if (smi.exitCode !== 0) {
+      if (process.env.GITHUB_ACTIONS === "true") throw new Error(resultText(smi));
+      skip(`NVIDIA GPU is required: ${resultText(smi)}`);
+    }
 
-  cleanupRegistry.trackDisposable("stop gpu double-onboard Ollama processes", async () => {
-    const stop = await host.command(
-      "bash",
-      [
-        "-lc",
-        String.raw`set +e
+    cleanupRegistry.trackDisposable("stop gpu double-onboard Ollama processes", async () => {
+      const stop = await host.command(
+        "bash",
+        [
+          "-lc",
+          String.raw`set +e
 status=0
 for pattern in '[o]llama serve' '[o]llama-auth-proxy'; do
   pkill -f "$pattern"
@@ -226,185 +226,185 @@ for pattern in '[o]llama serve' '[o]llama-auth-proxy'; do
   esac
 done
 exit "$status"`,
-      ],
-      {
-        artifactName: "cleanup-ollama-processes",
-        env: env(),
-        timeoutMs: 30_000,
-      },
-    );
-    expect(stop.exitCode, resultText(stop)).toBe(0);
-  });
-  const gatewayCleanupOptions = {
-    artifactName: "cleanup-openshell-gateway-destroy",
-    env: env(),
-    timeoutMs: 60_000,
-  };
-  cleanupRegistry.trackGateway(
-    {
-      cleanupGatewayRegistration: (name: string) =>
-        cleanupWhenOpenShellAvailable(
-          host,
-          {
-            artifactName: "cleanup-probe-openshell-gateway",
-            env: gatewayCleanupOptions.env,
-            timeoutMs: 30_000,
-          },
-          () => host.cleanupGatewayRegistration(name, gatewayCleanupOptions),
-        ),
-    },
-    "nemoclaw",
-    gatewayCleanupOptions,
-  );
-  const openshellSandboxCleanupOptions = {
-    artifactName: "cleanup-openshell-sandbox-delete",
-    env: env(),
-    timeoutMs: 60_000,
-  };
-  cleanupRegistry.trackDisposable(`delete OpenShell sandbox ${SANDBOX_NAME}`, () =>
-    cleanupWhenOpenShellAvailable(
-      host,
-      {
-        artifactName: "cleanup-probe-openshell-sandbox",
-        env: openshellSandboxCleanupOptions.env,
-        timeoutMs: 30_000,
-      },
-      () => sandbox.cleanupSandbox(SANDBOX_NAME, openshellSandboxCleanupOptions),
-    ),
-  );
-  const nemoclawSandboxCleanupOptions = {
-    artifactName: "cleanup-nemoclaw-destroy",
-    env: env(),
-    timeoutMs: 120_000,
-  };
-  cleanupRegistry.trackSandbox(
-    {
-      cleanupSandbox: (name: string) =>
-        cleanupWhenCommandAvailable(
-          host,
-          host.commandPath,
-          {
-            artifactName: "cleanup-probe-nemoclaw-sandbox",
-            env: nemoclawSandboxCleanupOptions.env,
-            timeoutMs: 30_000,
-          },
-          () => host.cleanupSandbox(name, nemoclawSandboxCleanupOptions),
-        ),
-    },
-    SANDBOX_NAME,
-    nemoclawSandboxCleanupOptions,
-  );
-  await cleanup(host, sandbox);
-
-  progress.phase("install Ollama runtime");
-  const installOllama = await host.command(
-    "bash",
-    ["-lc", "command -v ollama >/dev/null 2>&1 || curl -fsSL https://ollama.com/install.sh | sh"],
-    {
-      artifactName: "phase-1-install-ollama",
-      env: env(),
-      timeoutMs: 5 * 60_000,
-    },
-  );
-  expect(installOllama.exitCode, resultText(installOllama)).toBe(0);
-  await host.command(
-    "bash",
-    [
-      "-lc",
-      "systemctl --user stop ollama 2>/dev/null || true; systemctl stop ollama 2>/dev/null || true; pkill -f 'ollama serve' 2>/dev/null || true; pkill -f 'ollama-auth-proxy' 2>/dev/null || true",
-    ],
-    {
-      artifactName: "phase-1-stop-preexisting-ollama",
+        ],
+        {
+          artifactName: "cleanup-ollama-processes",
+          env: env(),
+          timeoutMs: 30_000,
+        },
+      );
+      expect(stop.exitCode, resultText(stop)).toBe(0);
+    });
+    const gatewayCleanupOptions = {
+      artifactName: "cleanup-openshell-gateway-destroy",
       env: env(),
       timeoutMs: 60_000,
-    },
-  );
+    };
+    cleanupRegistry.trackGateway(
+      {
+        cleanupGatewayRegistration: (name: string) =>
+          cleanupWhenOpenShellAvailable(
+            host,
+            {
+              artifactName: "cleanup-probe-openshell-gateway",
+              env: gatewayCleanupOptions.env,
+              timeoutMs: 30_000,
+            },
+            () => host.cleanupGatewayRegistration(name, gatewayCleanupOptions),
+          ),
+      },
+      "nemoclaw",
+      gatewayCleanupOptions,
+    );
+    const openshellSandboxCleanupOptions = {
+      artifactName: "cleanup-openshell-sandbox-delete",
+      env: env(),
+      timeoutMs: 60_000,
+    };
+    cleanupRegistry.trackDisposable(`delete OpenShell sandbox ${SANDBOX_NAME}`, () =>
+      cleanupWhenOpenShellAvailable(
+        host,
+        {
+          artifactName: "cleanup-probe-openshell-sandbox",
+          env: openshellSandboxCleanupOptions.env,
+          timeoutMs: 30_000,
+        },
+        () => sandbox.cleanupSandbox(SANDBOX_NAME, openshellSandboxCleanupOptions),
+      ),
+    );
+    const nemoclawSandboxCleanupOptions = {
+      artifactName: "cleanup-nemoclaw-destroy",
+      env: env(),
+      timeoutMs: 120_000,
+    };
+    cleanupRegistry.trackSandbox(
+      {
+        cleanupSandbox: (name: string) =>
+          cleanupWhenCommandAvailable(
+            host,
+            host.commandPath,
+            {
+              artifactName: "cleanup-probe-nemoclaw-sandbox",
+              env: nemoclawSandboxCleanupOptions.env,
+              timeoutMs: 30_000,
+            },
+            () => host.cleanupSandbox(name, nemoclawSandboxCleanupOptions),
+          ),
+      },
+      SANDBOX_NAME,
+      nemoclawSandboxCleanupOptions,
+    );
+    await cleanup(host, sandbox);
 
-  progress.phase("perform first Ollama onboard");
-  const first = await host.command("bash", ["install.sh", "--non-interactive"], {
-    artifactName: "phase-2-install-sh-first-onboard",
-    cwd: REPO_ROOT,
-    env: env(),
-    timeoutMs: execTimeout(30 * 60_000),
-  });
-  expect(first.exitCode, resultText(first)).toBe(0);
+    progress.phase("install Ollama runtime");
+    const installOllama = await host.command(
+      "bash",
+      ["-lc", "command -v ollama >/dev/null 2>&1 || curl -fsSL https://ollama.com/install.sh | sh"],
+      {
+        artifactName: "phase-1-install-ollama",
+        env: env(),
+        timeoutMs: 5 * 60_000,
+      },
+    );
+    expect(installOllama.exitCode, resultText(installOllama)).toBe(0);
+    await host.command(
+      "bash",
+      [
+        "-lc",
+        "systemctl --user stop ollama 2>/dev/null || true; systemctl stop ollama 2>/dev/null || true; pkill -f 'ollama serve' 2>/dev/null || true; pkill -f 'ollama-auth-proxy' 2>/dev/null || true",
+      ],
+      {
+        artifactName: "phase-1-stop-preexisting-ollama",
+        env: env(),
+        timeoutMs: 60_000,
+      },
+    );
 
-  progress.phase("validate first proxy token and inference");
-  const list = await nemoclaw(host, ["list"], "phase-3-nemoclaw-list");
-  expect(list.exitCode, resultText(list)).toBe(0);
-  expect(list.stdout).toContain(SANDBOX_NAME);
-  expect(fs.existsSync(TOKEN_FILE), `${TOKEN_FILE} missing`).toBe(true);
-  const tokenAfterFirst = fs.readFileSync(TOKEN_FILE, "utf8").trim();
-  expect(tokenAfterFirst.length).toBeGreaterThan(10);
-  expect(fileMode(TOKEN_FILE)).toBe("600");
+    progress.phase("perform first Ollama onboard");
+    const first = await host.command("bash", ["install.sh", "--non-interactive"], {
+      artifactName: "phase-2-install-sh-first-onboard",
+      cwd: REPO_ROOT,
+      env: env(),
+      timeoutMs: execTimeout(30 * 60_000),
+    });
+    expect(first.exitCode, resultText(first)).toBe(0);
 
-  const model = GPU_E2E_MODEL;
+    progress.phase("validate first proxy token and inference");
+    const list = await nemoclaw(host, ["list"], "phase-3-nemoclaw-list");
+    expect(list.exitCode, resultText(list)).toBe(0);
+    expect(list.stdout).toContain(SANDBOX_NAME);
+    expect(fs.existsSync(TOKEN_FILE), `${TOKEN_FILE} missing`).toBe(true);
+    const tokenAfterFirst = fs.readFileSync(TOKEN_FILE, "utf8").trim();
+    expect(tokenAfterFirst.length).toBeGreaterThan(10);
+    expect(fileMode(TOKEN_FILE)).toBe("600");
 
-  const firstTokenStatus = await httpStatus(
-    host,
-    `http://127.0.0.1:${PROXY_PORT}/v1/models`,
-    "phase-3-proxy-token-status",
-    tokenAfterFirst,
-  );
-  expect(firstTokenStatus.stdout.trim(), resultText(firstTokenStatus)).toBe("200");
-  await expectSandboxInference42(sandbox, model, "phase-3-sandbox-inference-first-onboard");
+    const model = GPU_E2E_MODEL;
 
-  progress.phase("re-onboard GPU sandbox");
-  const reonboard = await nemoclaw(
-    host,
-    ["onboard", "--non-interactive", "--yes"],
-    "phase-4-reonboard",
-    env({ NEMOCLAW_RECREATE_SANDBOX: "1" }),
-    execTimeout(30 * 60_000),
-  );
-  expect(reonboard.exitCode, resultText(reonboard)).toBe(0);
-  expect(fs.existsSync(TOKEN_FILE), `${TOKEN_FILE} missing after re-onboard`).toBe(true);
-  const tokenAfterSecond = fs.readFileSync(TOKEN_FILE, "utf8").trim();
-  expect(tokenAfterSecond.length).toBeGreaterThan(10);
-  expect(fileMode(TOKEN_FILE)).toBe("600");
-  expect(tokenAfterSecond).toBe(tokenAfterFirst);
+    const firstTokenStatus = await httpStatus(
+      host,
+      `http://127.0.0.1:${PROXY_PORT}/v1/models`,
+      "phase-3-proxy-token-status",
+      tokenAfterFirst,
+    );
+    expect(firstTokenStatus.stdout.trim(), resultText(firstTokenStatus)).toBe("200");
+    await expectSandboxInference42(sandbox, model, "phase-3-sandbox-inference-first-onboard");
 
-  progress.phase("validate persisted proxy auth and inference");
-  const liveStatus = await httpStatus(
-    host,
-    `http://127.0.0.1:${PROXY_PORT}/api/tags`,
-    "phase-5-proxy-live-status",
-  );
-  expect(liveStatus.stdout.trim()).toMatch(/^[1-9][0-9]{2}$/);
-  const authStatus = await httpStatus(
-    host,
-    `http://127.0.0.1:${PROXY_PORT}/v1/models`,
-    "phase-5-proxy-persisted-token-status",
-    tokenAfterFirst,
-  );
-  expect(authStatus.stdout.trim(), resultText(authStatus)).toBe("200");
-  const unauthPost = await host.command(
-    "bash",
-    [
-      "-lc",
-      `curl -s -o /dev/null -w '%{http_code}' --connect-timeout 5 -X POST 'http://127.0.0.1:${PROXY_PORT}/api/generate' -d '{}'`,
-    ],
-    { artifactName: "phase-5-proxy-unauth-post-status", env: env(), timeoutMs: 30_000 },
-  );
-  expect(unauthPost.stdout.trim()).toBe("401");
-  const wrongStatus = await httpStatus(
-    host,
-    `http://127.0.0.1:${PROXY_PORT}/v1/models`,
-    "phase-5-proxy-wrong-token-status",
-    `wrong-${Date.now()}`,
-  );
-  expect(wrongStatus.stdout.trim()).toBe("401");
+    progress.phase("re-onboard GPU sandbox");
+    const reonboard = await nemoclaw(
+      host,
+      ["onboard", "--non-interactive", "--yes"],
+      "phase-4-reonboard",
+      env({ NEMOCLAW_RECREATE_SANDBOX: "1" }),
+      execTimeout(30 * 60_000),
+    );
+    expect(reonboard.exitCode, resultText(reonboard)).toBe(0);
+    expect(fs.existsSync(TOKEN_FILE), `${TOKEN_FILE} missing after re-onboard`).toBe(true);
+    const tokenAfterSecond = fs.readFileSync(TOKEN_FILE, "utf8").trim();
+    expect(tokenAfterSecond.length).toBeGreaterThan(10);
+    expect(fileMode(TOKEN_FILE)).toBe("600");
+    expect(tokenAfterSecond).toBe(tokenAfterFirst);
 
-  await expectSandboxInference42(sandbox, model, "phase-6-sandbox-inference-after-reonboard");
+    progress.phase("validate persisted proxy auth and inference");
+    const liveStatus = await httpStatus(
+      host,
+      `http://127.0.0.1:${PROXY_PORT}/api/tags`,
+      "phase-5-proxy-live-status",
+    );
+    expect(liveStatus.stdout.trim()).toMatch(/^[1-9][0-9]{2}$/);
+    const authStatus = await httpStatus(
+      host,
+      `http://127.0.0.1:${PROXY_PORT}/v1/models`,
+      "phase-5-proxy-persisted-token-status",
+      tokenAfterFirst,
+    );
+    expect(authStatus.stdout.trim(), resultText(authStatus)).toBe("200");
+    const unauthPost = await host.command(
+      "bash",
+      [
+        "-lc",
+        `curl -s -o /dev/null -w '%{http_code}' --connect-timeout 5 -X POST 'http://127.0.0.1:${PROXY_PORT}/api/generate' -d '{}'`,
+      ],
+      { artifactName: "phase-5-proxy-unauth-post-status", env: env(), timeoutMs: 30_000 },
+    );
+    expect(unauthPost.stdout.trim()).toBe("401");
+    const wrongStatus = await httpStatus(
+      host,
+      `http://127.0.0.1:${PROXY_PORT}/v1/models`,
+      "phase-5-proxy-wrong-token-status",
+      `wrong-${Date.now()}`,
+    );
+    expect(wrongStatus.stdout.trim()).toBe("401");
 
-  progress.phase("remove GPU double-onboard sandbox");
-  await cleanup(host, sandbox);
-  const registryFile = path.join(os.homedir(), ".nemoclaw", "sandboxes.json");
-  const registryText = fs.existsSync(registryFile) ? fs.readFileSync(registryFile, "utf8") : "";
-  expect(registryText).not.toContain(SANDBOX_NAME);
-  await artifacts.target.complete({
-    id: "gpu-double-onboard",
-    status: "passed",
-  });
+    await expectSandboxInference42(sandbox, model, "phase-6-sandbox-inference-after-reonboard");
+
+    progress.phase("remove GPU double-onboard sandbox");
+    await cleanup(host, sandbox);
+    const registryFile = path.join(os.homedir(), ".nemoclaw", "sandboxes.json");
+    const registryText = fs.existsSync(registryFile) ? fs.readFileSync(registryFile, "utf8") : "";
+    expect(registryText).not.toContain(SANDBOX_NAME);
+    await artifacts.target.complete({
+      id: "gpu-double-onboard",
+      status: "passed",
+    });
   },
 );

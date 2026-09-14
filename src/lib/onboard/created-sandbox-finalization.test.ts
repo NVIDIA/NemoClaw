@@ -72,13 +72,13 @@ describe("created sandbox registration authority", () => {
 });
 
 describe("new sandbox cancellation recovery", () => {
-  it("preserves recovery guidance when the durable identity is unavailable (#9833)", () => {
+  it("preserves recovery guidance when the durable identity is unavailable (#9833)", async () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const runFile = vi.fn();
     const armCancelRollback = vi.fn();
     const markCancellationRecovery = vi.fn();
 
-    expect(() =>
+    await expect(
       completeOrdinaryOnboardSandboxCreation(
         {
           sandboxName: "new-sandbox",
@@ -102,7 +102,7 @@ describe("new sandbox cancellation recovery", () => {
           applyVmDnsMonkeypatch: vi.fn(),
         },
       ),
-    ).toThrow("Sandbox 'new-sandbox' has no exact identity for cancel recovery.");
+    ).rejects.toThrow("Sandbox 'new-sandbox' has no exact identity for cancel recovery.");
 
     const guidance = error.mock.calls.flat().join("\n");
     expect(guidance).toContain("Sandbox 'new-sandbox' was created on gateway 'nemoclaw'");
@@ -339,12 +339,12 @@ describe("created DCode sandbox finalization", () => {
     expect(restore).not.toHaveBeenCalled();
   });
 
-  it("merges stale backup preferences before live validation and registry publication (#6311)", () => {
+  it("merges stale backup preferences before live validation and registry publication (#6311)", async () => {
     const fixture = makeRestoreFixture();
     const order: string[] = [];
     const registeredConfigs: string[] = [];
     try {
-      finalizeCreatedSandbox(
+      await finalizeCreatedSandbox(
         {
           sandboxName: "dcode",
           restoreBackupPath: fixture.backupPath,
@@ -367,12 +367,17 @@ describe("created DCode sandbox finalization", () => {
             expect(options.allowCustomImageWholeStateFileRestore).toBeUndefined();
             return sandboxState.restoreRecreatedSandboxState(name, backup, options);
           },
-          getDcodeSelectionDrift: (name, provider, model, api) => {
+          getDcodeSelectionDrift: async (name, provider, model, api) => {
             order.push("validate");
             return getDcodeSelectionDrift(name, provider, model, api, {
               getGatewayName: () => "nemoclaw-18081",
-              runCaptureOpenshell: () =>
-                identityFromConfig(fs.readFileSync(fixture.currentPath, "utf8")),
+              commandExecutor: {
+                runBuffered: async () => ({
+                  outcome: { kind: "completed", exitCode: 0 },
+                  stdout: identityFromConfig(fs.readFileSync(fixture.currentPath, "utf8")),
+                  stderr: "",
+                }),
+              },
             });
           },
           register: () => {
@@ -398,9 +403,9 @@ describe("created DCode sandbox finalization", () => {
     }
   });
 
-  it("publishes fresh metadata after endpoint-aware OpenRouter validation (#9555)", () => {
+  it("publishes fresh metadata after endpoint-aware OpenRouter validation (#9555)", async () => {
     const endpointUrl = "https://openrouter.ai/api/v1";
-    const getDcodeSelectionDrift = vi.fn(() => ({
+    const getDcodeSelectionDrift = vi.fn(async () => ({
       changed: false,
       providerChanged: false,
       modelChanged: false,
@@ -410,7 +415,7 @@ describe("created DCode sandbox finalization", () => {
     }));
     const register = vi.fn();
 
-    finalizeCreatedSandbox(
+    await finalizeCreatedSandbox(
       {
         sandboxName: "dcode",
         restoreBackupPath: null,
@@ -470,6 +475,11 @@ describe("created DCode sandbox finalization", () => {
         "Runtime:  Deep Agents Code (terminal)",
       ].join("\n"),
     );
+    const runBuffered = vi.fn(async () => ({
+      outcome: { kind: "completed" as const, exitCode: 0 },
+      stdout: runCaptureOpenshell(),
+      stderr: "",
+    }));
     vi.spyOn(process, "exit").mockImplementation((code): never => {
       throw new Error(`exit ${code}`);
     });
@@ -562,17 +572,8 @@ describe("created DCode sandbox finalization", () => {
         release: null,
         fallbackDiagnostic: null,
       },
-      null,
       vi.fn(),
-      vi.fn((input) => ({
-        schemaVersion: 1,
-        origin: "sandbox-create",
-        gatewayName: input.gatewayName,
-        gatewayPort: input.gatewayPort,
-        sandboxName: input.sandboxName,
-        lifecycleGeneration: input.lifecycleGeneration,
-        sandboxIdentityFingerprint: input.lifecycleLiveIdentityFingerprint,
-      })),
+      { runBuffered },
     ] as unknown as Parameters<typeof createOnboardCreatedSandboxCompletion>;
     const completion = createOnboardCreatedSandboxCompletion(...completionArgs);
     const created = {
@@ -609,13 +610,13 @@ describe("created DCode sandbox finalization", () => {
         lifecycle,
       ),
     ).rejects.toThrow("exit 1");
-    expect(runCaptureOpenshell).toHaveBeenCalledOnce();
+    expect(runBuffered).toHaveBeenCalledOnce();
   });
 
-  it("does not publish registry metadata when live validation fails (#6311)", () => {
+  it("does not publish registry metadata when live validation fails (#6311)", async () => {
     const register = vi.fn();
     const error = vi.fn();
-    expect(() =>
+    await expect(
       finalizeCreatedSandbox(
         {
           sandboxName: "dcode",
@@ -630,7 +631,7 @@ describe("created DCode sandbox finalization", () => {
         {
           discoverFreshOpenClawImagePluginInstalls: vi.fn(),
           restoreRecreatedSandboxState: vi.fn(),
-          getDcodeSelectionDrift: () => ({
+          getDcodeSelectionDrift: async () => ({
             changed: true,
             providerChanged: false,
             modelChanged: true,
@@ -646,22 +647,24 @@ describe("created DCode sandbox finalization", () => {
           },
         },
       ),
-    ).toThrow("exit 1");
+    ).rejects.toThrow("exit 1");
     expect(register).not.toHaveBeenCalled();
     expect(error).toHaveBeenCalledWith(expect.stringContaining("sandbox still exists"));
     expect(error).toHaveBeenCalledWith(expect.stringContaining("rebuild is unsafe"));
-    expect(error).toHaveBeenCalledWith(expect.stringContaining("Recovery remains blocked while this sandbox exists"));
+    expect(error).toHaveBeenCalledWith(
+      expect.stringContaining("Recovery remains blocked while this sandbox exists"),
+    );
     expect(error.mock.calls.flat().join("\n")).not.toContain("openshell sandbox delete");
     expect(error).toHaveBeenCalledWith(expect.stringContaining("nemoclaw onboard"));
   });
 
-  it("rejects registration after a partial workspace restore (#6311)", () => {
+  it("rejects registration after a partial workspace restore (#6311)", async () => {
     const fixture = makeRestoreFixture();
     const register = vi.fn();
     const getDcodeSelectionDrift = vi.fn();
     const error = vi.fn();
     try {
-      expect(() =>
+      await expect(
         finalizeCreatedSandbox(
           {
             sandboxName: "dcode",
@@ -696,7 +699,7 @@ describe("created DCode sandbox finalization", () => {
             },
           },
         ),
-      ).toThrow("exit 1");
+      ).rejects.toThrow("exit 1");
 
       expect(error).toHaveBeenCalledWith(
         "  Warning: workspace state restore was incomplete for sandbox 'dcode'.",
@@ -724,11 +727,11 @@ describe("created DCode sandbox finalization", () => {
     }
   });
 
-  it("keeps custom-image restores outside the managed config merge (#6311)", () => {
+  it("keeps custom-image restores outside the managed config merge (#6311)", async () => {
     const fixture = makeRestoreFixture();
     const registeredConfigs: string[] = [];
     try {
-      finalizeCreatedSandbox(
+      await finalizeCreatedSandbox(
         {
           sandboxName: "custom-dcode",
           restoreBackupPath: fixture.backupPath,
@@ -779,11 +782,11 @@ describe("created OpenClaw sandbox finalization", () => {
     },
   ];
 
-  it("skips image-plugin discovery for a managed OpenClaw image", () => {
+  it("skips image-plugin discovery for a managed OpenClaw image", async () => {
     const discoverFreshOpenClawImagePluginInstalls = vi.fn();
     const register = vi.fn();
 
-    finalizeCreatedSandbox(
+    await finalizeCreatedSandbox(
       {
         sandboxName: "openclaw",
         restoreBackupPath: null,
@@ -811,14 +814,14 @@ describe("created OpenClaw sandbox finalization", () => {
     expect(register).toHaveBeenCalledWith(undefined);
   });
 
-  it("captures and registers a fresh image plugin baseline without a restore", () => {
+  it("captures and registers a fresh image plugin baseline without a restore", async () => {
     const order: string[] = [];
     const restoreRecreatedSandboxState = vi.fn();
     const register = vi.fn(() => {
       order.push("register");
     });
 
-    finalizeCreatedSandbox(
+    await finalizeCreatedSandbox(
       {
         sandboxName: "openclaw",
         restoreBackupPath: null,
@@ -851,7 +854,7 @@ describe("created OpenClaw sandbox finalization", () => {
     expect(register).toHaveBeenCalledWith(pluginInstalls);
   });
 
-  it("preserves the fresh image plugin baseline across recreation before registration", () => {
+  it("preserves the fresh image plugin baseline across recreation before registration", async () => {
     const order: string[] = [];
     const register = vi.fn(() => {
       order.push("register");
@@ -867,7 +870,7 @@ describe("created OpenClaw sandbox finalization", () => {
       };
     });
 
-    finalizeCreatedSandbox(
+    await finalizeCreatedSandbox(
       {
         sandboxName: "openclaw",
         restoreBackupPath: "/tmp/openclaw-backup",
@@ -909,7 +912,7 @@ describe("created OpenClaw sandbox finalization", () => {
     expect(register).toHaveBeenCalledWith(pluginInstalls, expect.anything());
   });
 
-  it("restores through a revalidated target row before publishing it (#10546)", () => {
+  it("restores through a revalidated target row before publishing it (#10546)", async () => {
     const order: string[] = [];
     const prepared = { name: "openclaw" } as SandboxEntry;
     const restoredTarget = { ...prepared } as SandboxEntry;
@@ -923,7 +926,7 @@ describe("created OpenClaw sandbox finalization", () => {
     });
     let revalidation = 0;
 
-    const result = finalizeCreatedSandbox(
+    const result = await finalizeCreatedSandbox(
       {
         sandboxName: "openclaw",
         restoreBackupPath: "/tmp/managed-openclaw-backup",
@@ -971,11 +974,11 @@ describe("created OpenClaw sandbox finalization", () => {
     expect(register).toHaveBeenCalledWith(undefined, publishedTarget);
   });
 
-  it("does not publish the prepared target when managed restore fails (#10546)", () => {
+  it("does not publish the prepared target when managed restore fails (#10546)", async () => {
     const prepared = { name: "openclaw" } as SandboxEntry;
     const register = vi.fn();
 
-    expect(() =>
+    await expect(
       finalizeCreatedSandbox(
         {
           sandboxName: "openclaw",
@@ -1011,17 +1014,17 @@ describe("created OpenClaw sandbox finalization", () => {
           },
         },
       ),
-    ).toThrow("exit 1");
+    ).rejects.toThrow("exit 1");
 
     expect(register).not.toHaveBeenCalled();
   });
 
-  it("fails closed before restore when prepared registration authority is unavailable", () => {
+  it("fails closed before restore when prepared registration authority is unavailable", async () => {
     const register = vi.fn();
     const error = vi.fn();
     const restoreRecreatedSandboxState = vi.fn();
 
-    expect(() =>
+    await expect(
       finalizeCreatedSandbox(
         {
           sandboxName: "openclaw",
@@ -1045,7 +1048,7 @@ describe("created OpenClaw sandbox finalization", () => {
           },
         },
       ),
-    ).toThrow("exit 1");
+    ).rejects.toThrow("exit 1");
 
     expect(restoreRecreatedSandboxState).not.toHaveBeenCalled();
     expect(register).not.toHaveBeenCalled();
@@ -1055,17 +1058,19 @@ describe("created OpenClaw sandbox finalization", () => {
     expect(error).toHaveBeenCalledWith(
       "  State was not restored and registry metadata was not updated.",
     );
-    expect(error).toHaveBeenCalledWith(expect.stringContaining("Recovery remains blocked while this sandbox exists"));
+    expect(error).toHaveBeenCalledWith(
+      expect.stringContaining("Recovery remains blocked while this sandbox exists"),
+    );
     expect(error.mock.calls.flat().join("\n")).not.toContain("openshell sandbox delete");
     expect(error).toHaveBeenCalledWith("  Manual recovery: /tmp/managed-openclaw-backup");
   });
 
-  it("fails closed before restore and registration when provenance discovery fails", () => {
+  it("fails closed before restore and registration when provenance discovery fails", async () => {
     const restoreRecreatedSandboxState = vi.fn();
     const register = vi.fn();
     const error = vi.fn();
 
-    expect(() =>
+    await expect(
       finalizeCreatedSandbox(
         {
           sandboxName: "openclaw",
@@ -1094,7 +1099,7 @@ describe("created OpenClaw sandbox finalization", () => {
           },
         },
       ),
-    ).toThrow("exit 1");
+    ).rejects.toThrow("exit 1");
 
     expect(restoreRecreatedSandboxState).not.toHaveBeenCalled();
     expect(register).not.toHaveBeenCalled();
@@ -1102,7 +1107,9 @@ describe("created OpenClaw sandbox finalization", () => {
     expect(error).toHaveBeenCalledWith(
       "  State was not restored and registry metadata was not updated.",
     );
-    expect(error).toHaveBeenCalledWith(expect.stringContaining("Recovery remains blocked while this sandbox exists"));
+    expect(error).toHaveBeenCalledWith(
+      expect.stringContaining("Recovery remains blocked while this sandbox exists"),
+    );
     expect(error.mock.calls.flat().join("\n")).not.toContain("openshell sandbox delete");
     expect(error).toHaveBeenCalledWith(
       "  Then rerun the original `nemoclaw onboard --from <Dockerfile>` command.",
@@ -1110,11 +1117,11 @@ describe("created OpenClaw sandbox finalization", () => {
     expect(error).toHaveBeenCalledWith("  Manual recovery: /tmp/openclaw-backup");
   });
 
-  it("does not register after a marked backup provenance mismatch", () => {
+  it("does not register after a marked backup provenance mismatch", async () => {
     const register = vi.fn();
     const error = vi.fn();
 
-    expect(() =>
+    await expect(
       finalizeCreatedSandbox(
         {
           sandboxName: "openclaw",
@@ -1151,14 +1158,16 @@ describe("created OpenClaw sandbox finalization", () => {
           },
         },
       ),
-    ).toThrow("exit 1");
+    ).rejects.toThrow("exit 1");
 
     expect(register).not.toHaveBeenCalled();
     expect(error).toHaveBeenCalledWith(expect.stringContaining("future rebuild would be unsafe"));
     expect(error).toHaveBeenCalledWith(
       expect.stringContaining(sandboxState.OPENCLAW_IMAGE_PLUGIN_PROVENANCE_RESTORE_ERROR),
     );
-    expect(error).toHaveBeenCalledWith(expect.stringContaining("Recovery remains blocked while this sandbox exists"));
+    expect(error).toHaveBeenCalledWith(
+      expect.stringContaining("Recovery remains blocked while this sandbox exists"),
+    );
     expect(error.mock.calls.flat().join("\n")).not.toContain("openshell sandbox delete");
     expect(error).toHaveBeenCalledWith(
       "  Then rerun the original `nemoclaw onboard --from <Dockerfile>` command.",
@@ -1198,7 +1207,7 @@ describe("created sandbox completion actions", () => {
         gatewayPort: 8080,
         lifecycleGeneration: "generation-1",
         lifecycleLiveIdentityFingerprint: "a".repeat(64),
-        route: "native" as const,
+        route: schema5 ? ("native" as const) : ("compatibility" as const),
       };
       const inferenceRouteReservation = {
         authority: {
@@ -1221,7 +1230,16 @@ describe("created sandbox completion actions", () => {
       } satisfies QualifiedSandboxInferenceRouteReservation;
       const verifiedCreate = {
         reservation: inferenceRouteReservation,
-        checkpoint: pendingSandboxCreateIdentityForBoundary(verifiedCreateBoundary),
+        checkpoint: {
+          ...pendingSandboxCreateIdentityForBoundary(verifiedCreateBoundary),
+          ...(schema5
+            ? {}
+            : {
+                exactFinalHandoffCommitStarted: true as const,
+                exactFinalHandoffRuntimeId: "b".repeat(64),
+                exactFinalHandoffAcknowledged: true as const,
+              }),
+        },
       } as NonNullable<CreatedSandboxRegistrationInput["verifiedCreate"]>;
       const completion = createCreatedSandboxCompletionActions(
         {
@@ -1280,6 +1298,8 @@ describe("created sandbox completion actions", () => {
               return gpuProof;
             },
             runCaptureOpenshell: vi.fn(),
+            persistFinalHandoffAcknowledgement: vi.fn(),
+            persistFinalHandoffCommitStarted: vi.fn(),
           },
           dashboard: {
             chatUiUrl: "http://127.0.0.1:8643",

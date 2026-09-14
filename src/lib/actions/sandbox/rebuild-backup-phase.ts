@@ -27,8 +27,11 @@ import { backupSandboxStateForRebuild, type RebuildSandboxEntry } from "./rebuil
 import { recordRebuildRecoveryBackup } from "./rebuild-recreate-journal";
 
 export {
-  clearHermesOperatorConfigHandoff,
+  clearRebuildMcpHandoff,
   clearRebuildPolicyHandoff,
+  readRebuildMcpHandoff,
+  writeRebuildMcpHandoff,
+  clearHermesOperatorConfigHandoff,
   writeHermesOperatorConfigHandoff,
   writeRebuildPolicyHandoff,
 } from "../../state/sandbox";
@@ -75,14 +78,14 @@ function bailForUnsafeOpenClawPluginProvenance(input: RebuildBackupPhaseInput): 
   return input.bail("Custom-image OpenClaw plugin provenance is unavailable.");
 }
 
-export function captureRebuildPolicyDocument(
+export async function captureRebuildPolicyDocument(
   sandboxName: string,
   gatewayName: string,
   runtimeSelection?: OpenShellRuntimeSelection,
-): string {
+): Promise<string> {
   let policy: string;
   try {
-    policy = captureRecordedSandboxBasePolicy(
+    policy = await captureRecordedSandboxBasePolicy(
       sandboxName,
       "capture the live policy before sandbox replacement",
       runtimeSelection,
@@ -154,7 +157,7 @@ export async function runRebuildBackupPhase(
   const capturedPolicy =
     input.staleRecovery || preparedRetainedPolicy
       ? null
-      : captureRebuildPolicyDocument(
+      : await captureRebuildPolicyDocument(
           input.sandboxName,
           input.gatewayName,
           input.runtimeSelection,
@@ -224,7 +227,11 @@ export async function runRebuildBackupPhase(
   }
   const policy =
     capturedPolicy ??
-    captureRebuildPolicyDocument(input.sandboxName, input.gatewayName, input.runtimeSelection);
+    (await captureRebuildPolicyDocument(
+      input.sandboxName,
+      input.gatewayName,
+      input.runtimeSelection,
+    ));
   if (backupManifest && !retainedPolicy) {
     try {
       backupManifest = writeRebuildPolicyHandoff(backupManifest, policy);

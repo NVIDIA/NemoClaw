@@ -119,7 +119,7 @@ describe("CLI OpenShell provider adapter", () => {
       }),
     ];
 
-    const results = await Promise.all(operations);
+    const results = await Promise.all(operations.map((operation) => Promise.resolve(operation)));
 
     const expectedFailure = {
       ok: false,
@@ -435,7 +435,9 @@ describe("CLI OpenShell provider adapter", () => {
       {
         env: { TAVILY_API_KEY: credentialValue },
         ignoreError: true,
+        maxBuffer: 64 * 1024,
         stdio: ["ignore", "pipe", "pipe"],
+        suppressOutput: true,
         timeout: 30_000,
       },
     );
@@ -1275,22 +1277,23 @@ describe("CLI OpenShell provider adapter", () => {
     );
   });
 
-  it.each(["NotAttached", "provider search-prod is not attached"])(
-    "treats an idempotent detach result as already detached: %s (#9806)",
-    async (diagnostic) => {
-      const adapter = createCliOpenShellProviderAdapter({
-        run: () => captured(1, "", diagnostic),
-      });
+  it.each([
+    "NotAttached",
+    "provider search-prod is not attached",
+    "Provider search-prod was not attached to sandbox alpha.",
+  ])("treats an idempotent detach result as already detached: %s (#9806)", async (diagnostic) => {
+    const adapter = createCliOpenShellProviderAdapter({
+      run: () => captured(1, "", diagnostic),
+    });
 
-      await expect(
-        adapter.detachProvider({
-          target: selectedOpenShellGateway(),
-          providerName: "search-prod",
-          sandboxName: "alpha",
-        }),
-      ).resolves.toEqual({ ok: true, value: { changed: false } });
-    },
-  );
+    await expect(
+      adapter.detachProvider({
+        target: selectedOpenShellGateway(),
+        providerName: "search-prod",
+        sandboxName: "alpha",
+      }),
+    ).resolves.toEqual({ ok: true, value: { changed: false } });
+  });
 
   it("classifies the exact provider-detach resource-version race (#9806)", async () => {
     const diagnostic =
@@ -1371,7 +1374,7 @@ describe("CLI OpenShell provider adapter", () => {
     });
   });
 
-  it.each(["provider search-prod NotFound", "provider search-prod not found"])(
+  it.each(["provider 'search-prod' NotFound", "provider 'search-prod' not found"])(
     "does not report a missing provider as detached: %s (#9806)",
     async (diagnostic) => {
       const adapter = createCliOpenShellProviderAdapter({

@@ -234,9 +234,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(dockerfile).toContain(
       "COPY src/lib/inference/managed-dcode/identity.ts /opt/nemoclaw-deepagents-code/src/lib/inference/managed-dcode/identity.ts",
     );
-    expect(dockerfile).toContain(
-      "node --experimental-strip-types /opt/nemoclaw-deepagents-code/generate-config.ts",
-    );
+    expect(dockerfile).toContain("node /opt/nemoclaw-deepagents-code/generate-config.ts");
     expect(dockerfile).not.toContain("langchain-deepagents-code-sandbox-base:latest");
     expect(dockerfile).toContain(
       'timeout 10 env -i /usr/local/lib/nemoclaw/dcode-wrapper.sh -n ""',
@@ -280,7 +278,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(dockerfile).toContain(
       "chmod 755 /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-managed-startup-hold /usr/local/bin/nemoclaw-managed-bootstrap",
     );
-    expect(dockerfile).toContain("ARG NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root");
+    expect(dockerfile).toContain("ARG NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=sandbox");
     expect(dockerfile).toContain("root|sandbox) ;; \\");
     expect(dockerfile).toContain("&& command -v setpriv >/dev/null 2>&1");
     expect(dockerfile.trimEnd()).toMatch(
@@ -318,32 +316,6 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(baseDockerfile.split(sourceLine)).toHaveLength(3);
     expect(baseDockerfile).toContain("> /sandbox/.bashrc");
     expect(baseDockerfile).toContain("> /sandbox/.profile");
-  });
-
-  it("reserves the first DCode login profile under a sticky root workspace (#8624)", () => {
-    const dockerfile = readAgentFile("Dockerfile");
-    const loginProfile = readAgentFile("dcode-login-profile.sh");
-    const startScript = readAgentFile("start.sh");
-
-    expect(dockerfile).toContain(
-      "COPY agents/langchain-deepagents-code/dcode-login-profile.sh /usr/local/lib/nemoclaw/dcode-login-profile.sh",
-    );
-    expect(dockerfile).toContain("chown root:sandbox /sandbox");
-    expect(dockerfile).toContain("chmod 1775 /sandbox");
-    expect(dockerfile).toContain(
-      "install -o root -g root -m 0444 /usr/local/lib/nemoclaw/dcode-login-profile.sh /sandbox/.bash_profile",
-    );
-    expect(startScript).toContain("protect_dcode_login_profile");
-    expect(startScript).toContain("verify_dcode_login_profile");
-    expect(startScript).toContain("rm -f -- /sandbox/.bash_profile");
-    expect(startScript).toContain(
-      "[SECURITY] DCode login profile is not protected; rebuild this sandbox.",
-    );
-    expect(loginProfile).toContain('case "${BASH_EXECUTION_STRING:-}" in');
-    expect(loginProfile).toContain('*"/usr/local/lib/nemoclaw/dcode-managed-exec"*)');
-    expect(loginProfile.indexOf("unset BASH_ENV ENV")).toBeLessThan(
-      loginProfile.indexOf("/tmp/nemoclaw-proxy-env.sh"),
-    );
   });
 
   it("serializes the sandbox name into the shell env file for in-sandbox identity", () => {
@@ -482,7 +454,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
         'reject_managed_override "managed tool set posture"',
         'reject_managed_override "sandbox isolation"',
         'reject_managed_override "MCP posture"',
-        'reject_managed_override "shell allow-list posture"',
+        'reject_managed_override "headless shell posture"',
       ].every((s) => wrapper.includes(s)),
     ).toBe(true);
     expect(
@@ -578,23 +550,22 @@ describe("LangChain Deep Agents Code image contracts", () => {
       });
 
       expect(result.status, result.stderr).toBe(0);
-      expect(result.stdout).toBe("NEMOCLAW_DEEPAGENTS_MCP_CAPABILITY=2\n");
+      expect(result.stdout).toBe("NEMOCLAW_DEEPAGENTS_MCP_CAPABILITY=3\n");
       expect(fs.existsSync(ranMarker)).toBe(false);
     } finally {
       fs.rmSync(tempDir, { recursive: true, force: true });
     }
   });
 
-  it("keeps NemoClaw MCP state separate from user discovery", () => {
+  it("loads the agent-native MCP source through the hardened runtime boundary", () => {
     const wrapper = readAgentFile("dcode-wrapper.sh");
     const managedRuntime = readAgentFile("managed-dcode-runtime.py");
     const patcher = readAgentFile("patch-managed-deepagents-code.py");
     const agent = loadAgent("langchain-deepagents-code");
-    const managedPath = "/sandbox/.deepagents/.nemoclaw-mcp.json";
+    const managedPath = "/sandbox/.deepagents/.mcp.json";
 
-    // The pinned release's user/project .mcp.json files remain user-authored.
-    // Managed images suppress discovery and pass only an integrity-bound
-    // snapshot of NemoClaw's dedicated projection.
+    // Managed images suppress ambient project discovery and pass an
+    // integrity-bound snapshot of the agent-native configuration.
     expect(wrapper).toContain("extra_args=(--sandbox none --no-mcp)");
     expect(managedRuntime).toContain(`_MCP_CONFIG_FILE = Path("${managedPath}")`);
     expect(patcher).toContain("managed_mcp_config = _nemoclaw_managed_mcp_config_path()");
@@ -604,7 +575,6 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(patcher).toContain("def discover_mcp_configs(");
     expect(patcher).toContain("return []");
     expect(agent.userManagedFiles).toContain(".deepagents/.mcp.json");
-    expect(agent.userManagedFiles).not.toContain(".deepagents/.nemoclaw-mcp.json");
     expect(wrapper).not.toContain("--mcp-config /sandbox/.mcp.json");
     expect(wrapper).not.toContain("managed_mcp_config_path");
     expect(patcher).not.toContain('managed_mcp_config = "/sandbox/.mcp.json"');

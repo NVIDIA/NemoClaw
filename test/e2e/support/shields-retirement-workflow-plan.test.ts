@@ -48,11 +48,25 @@ describe("Shields retirement upgrade workflow plan", () => {
       expect(selectedWorkflowJobs(targeted)).toEqual(["catalogue-github-read"]);
 
       const unfiltered = buildE2eWorkflowPlan();
-      expect(E2E_TARGET_CATALOGUE).toHaveLength(61);
-      expect(unfiltered.coverageMatrix).toHaveLength(86);
+      expect(E2E_TARGET_CATALOGUE).toHaveLength(63);
+      expect(unfiltered.coverageMatrix).toHaveLength(85);
       expect(unfiltered.coverageMatrix.filter((row) => row.unresolvedReason === "")).toHaveLength(
-        85,
+        84,
       );
+      expect(
+        unfiltered.coverageMatrix.filter(
+          (row) =>
+            row.id === "shields-retirement-upgrade" ||
+            row.id === "shields-config" ||
+            row.id === "hermes-shields-config",
+        ),
+      ).toEqual([
+        expect.objectContaining({
+          id: "shields-retirement-upgrade",
+          variant: "default-docker",
+          unresolvedReason: "",
+        }),
+      ]);
       expect(
         Object.values(unfiltered.catalogueMatrices)
           .flat()

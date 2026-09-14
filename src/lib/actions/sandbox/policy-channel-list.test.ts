@@ -35,29 +35,29 @@ describe("policy list live state", () => {
       { file: "npm.yaml", name: "npm", description: "npm registry" },
       { file: "pypi.yaml", name: "pypi", description: "Python packages" },
     ]);
-    mocks.listCustomPresets.mockReturnValue([]);
-    mocks.getAppliedPresets.mockReturnValue(["npm"]);
-    mocks.getGatewayPresets.mockReturnValue(["npm"]);
+    mocks.listCustomPresets.mockResolvedValue([]);
+    mocks.getAppliedPresets.mockResolvedValue(["npm"]);
+    mocks.getGatewayPresets.mockResolvedValue(["npm"]);
   });
 
-  it("marks presets from the current OpenShell policy as active", () => {
-    listSandboxPolicies("alpha");
+  it("marks presets from the current OpenShell policy as active", async () => {
+    await listSandboxPolicies("alpha");
     expect(output()).toContain("● npm [user-added]");
     expect(output()).toContain("○ pypi");
   });
 
-  it("lists namespaced custom presets derived from live policy", () => {
-    mocks.listCustomPresets.mockReturnValue([
+  it("lists namespaced custom presets derived from live policy", async () => {
+    mocks.listCustomPresets.mockResolvedValue([
       { file: "corp.yaml", name: "corp", description: "custom OpenShell policy" },
     ]);
-    mocks.getAppliedPresets.mockReturnValue(["corp"]);
-    mocks.getGatewayPresets.mockReturnValue(["corp"]);
-    listSandboxPolicies("alpha");
+    mocks.getAppliedPresets.mockResolvedValue(["corp"]);
+    mocks.getGatewayPresets.mockResolvedValue(["corp"]);
+    await listSandboxPolicies("alpha");
     expect(output()).toContain("● corp [user-added]");
   });
 
-  it("does not report a durable baseline exclusion or repair ledger", () => {
-    listSandboxPolicies("alpha");
+  it("does not report a durable baseline exclusion or repair ledger", async () => {
+    await listSandboxPolicies("alpha");
     expect(output()).not.toContain("repair required");
     expect(output()).not.toContain("Baseline exclusions");
   });

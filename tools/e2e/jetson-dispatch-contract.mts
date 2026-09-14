@@ -106,9 +106,7 @@ function requireFields(
     required.some((field) => !Object.hasOwn(value, field)) ||
     Object.keys(value).some((field) => !allowed.has(field))
   ) {
-    throw new Error(
-      `${name} fields do not match Jetson dispatch contract ${contractVersion}`,
-    );
+    throw new Error(`${name} fields do not match Jetson dispatch contract ${contractVersion}`);
   }
 }
 

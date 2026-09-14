@@ -274,7 +274,7 @@ describe("llama.cpp image PR workflow", () => {
       ),
     ).toBe(true);
     expect(namedStep(config, "Compile image manifest").run).toBe(
-      "node --experimental-strip-types --no-warnings scripts/checks/export-llama-cpp-image-config.mts",
+      "node --no-warnings scripts/checks/export-llama-cpp-image-config.mts",
     );
     expect(build.needs).toBe("config");
     expect(build["runs-on"]).toBe("${{ matrix.runner }}");

@@ -6,8 +6,8 @@
 #
 # These checks run INSIDE a real OpenShell sandbox where Landlock is active.
 # They verify that the kernel enforces the filesystem policy: /sandbox and
-# /sandbox/.openclaw are writable (mutable default), trusted shell startup
-# files remain read-only, system paths are read-only, and /tmp is writable.
+# /sandbox/.openclaw are writable (mutable default), system paths are
+# read-only, and /tmp is writable.
 #
 # The managed-image OpenClaw security E2E covers DAC enforcement but cannot
 # exercise Landlock. This script closes that gap.
@@ -55,17 +55,8 @@ else
   fail_test "/sandbox is NOT writable under Landlock: $OUT"
 fi
 
-# ── 2: Cannot modify trusted shell startup files ─────────────────
-info "2. Cannot modify .bashrc/.profile (trusted startup snippets)"
-OUT=$(sandbox_exec "echo '# test' >> /sandbox/.bashrc 2>&1 || echo BASHRC_BLOCKED; sed -i '/^# test$/d' /sandbox/.bashrc 2>/dev/null || true; echo '# test' >> /sandbox/.profile 2>&1 || echo PROFILE_BLOCKED; sed -i '/^# test$/d' /sandbox/.profile 2>/dev/null || true" || true)
-if echo "$OUT" | grep -q "BASHRC_BLOCKED" && echo "$OUT" | grep -q "PROFILE_BLOCKED"; then
-  pass ".bashrc/.profile remain read-only while home is mutable"
-else
-  fail_test ".bashrc/.profile should be read-only trusted startup files: $OUT"
-fi
-
-# ── 3: CAN write to .openclaw (mutable default) ──────────────────
-info "3. Can create files in .openclaw (mutable default)"
+# ── 2: CAN write to .openclaw (mutable default) ──────────────────
+info "2. Can create files in .openclaw (mutable default)"
 OUT=$(sandbox_exec "touch /sandbox/.openclaw/landlock-test && echo OK || echo FAILED" || true)
 if echo "$OUT" | grep -q "OK"; then
   pass ".openclaw dir is writable in mutable-default mode"
@@ -73,8 +64,8 @@ else
   fail_test ".openclaw dir is NOT writable under Landlock: $OUT"
 fi
 
-# ── 4: Cannot write to /usr (system path read-only) ──────────────
-info "4. Cannot write to /usr (system path read-only)"
+# ── 3: Cannot write to /usr (system path read-only) ──────────────
+info "3. Cannot write to /usr (system path read-only)"
 OUT=$(sandbox_exec "touch /usr/landlock-test 2>&1 || echo BLOCKED" || true)
 if echo "$OUT" | grep -qi "BLOCKED\|Permission denied\|Read-only\|EACCES"; then
   pass "/usr is Landlock read-only"
@@ -82,8 +73,8 @@ else
   fail_test "/usr is writable under Landlock: $OUT"
 fi
 
-# ── 5: Cannot write to /etc (system path read-only) ──────────────
-info "5. Cannot write to /etc (system path read-only)"
+# ── 4: Cannot write to /etc (system path read-only) ──────────────
+info "4. Cannot write to /etc (system path read-only)"
 OUT=$(sandbox_exec "touch /etc/landlock-test 2>&1 || echo BLOCKED" || true)
 if echo "$OUT" | grep -qi "BLOCKED\|Permission denied\|Read-only\|EACCES"; then
   pass "/etc is Landlock read-only"
@@ -91,8 +82,8 @@ else
   fail_test "/etc is writable under Landlock: $OUT"
 fi
 
-# ── 6: CAN write to .nemoclaw/state (Landlock read_write via parent) ─
-info "6. Can write to .nemoclaw/state (Landlock read_write)"
+# ── 5: CAN write to .nemoclaw/state (Landlock read_write via parent) ─
+info "5. Can write to .nemoclaw/state (Landlock read_write)"
 OUT=$(sandbox_exec "touch /sandbox/.nemoclaw/state/landlock-test && echo OK || echo FAILED" || true)
 if echo "$OUT" | grep -q "OK"; then
   pass ".nemoclaw/state is writable under Landlock"
@@ -100,8 +91,8 @@ else
   fail_test ".nemoclaw/state is NOT writable under Landlock: $OUT"
 fi
 
-# ── 7: CAN write to /tmp (Landlock read_write) ───────────────────
-info "7. Can write to /tmp (Landlock read_write)"
+# ── 6: CAN write to /tmp (Landlock read_write) ───────────────────
+info "6. Can write to /tmp (Landlock read_write)"
 OUT=$(sandbox_exec "touch /tmp/landlock-test && echo OK || echo FAILED" || true)
 if echo "$OUT" | grep -q "OK"; then
   pass "/tmp is writable under Landlock"
@@ -110,7 +101,7 @@ else
 fi
 
 # ── Cleanup test artifacts ────────────────────────────────────────
-sandbox_exec "sed -i '/^# test$/d' /sandbox/.bashrc /sandbox/.profile 2>/dev/null || true; rm -f /sandbox/landlock-test /sandbox/.openclaw/landlock-test /sandbox/.nemoclaw/state/landlock-test /usr/landlock-test /etc/landlock-test /tmp/landlock-test 2>/dev/null" || true
+sandbox_exec "rm -f /sandbox/landlock-test /sandbox/.openclaw/landlock-test /sandbox/.nemoclaw/state/landlock-test /usr/landlock-test /etc/landlock-test /tmp/landlock-test 2>/dev/null" || true
 
 # ── Summary ───────────────────────────────────────────────────────
 printf '%s\n' "04-landlock-readonly: $PASSED passed, $FAILED failed"

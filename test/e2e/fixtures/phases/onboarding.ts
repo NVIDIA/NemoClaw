@@ -257,15 +257,12 @@ export class OnboardingPhaseFixture {
       );
     }
     const sandboxName = sandboxNameFromOptions(environment.onboarding, options);
-    const candidateManagedImage =
-      options.dcodeBaseImageReference === undefined &&
-      process.env.E2E_WORKLOAD_SOURCE === "managed-image" &&
-      Boolean(process.env.NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON?.trim());
+    const managedImage = process.env.E2E_WORKLOAD_SOURCE === "managed-image";
     const localDockerfile =
       options.dcodeBaseImageReference === undefined &&
       process.env.E2E_WORKLOAD_SOURCE === "local-dockerfile";
     const baseImageReference =
-      localDockerfile || candidateManagedImage
+      localDockerfile || managedImage
         ? undefined
         : requireDcodeBaseImageReference(
             options.dcodeBaseImageReference === undefined

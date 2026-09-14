@@ -247,7 +247,6 @@ describe("sandbox build context staging", () => {
     writeFixture(path.join("scripts", "lib", "gateway-supervisor.sh"));
     writeFixture(path.join("scripts", "lib", "sandbox-rlimits.sh"));
     writeFixture(path.join("scripts", "lib", "openclaw_device_approval_policy.py"));
-    writeFixture(path.join("scripts", "lib", "clean_runtime_shell_env_shim.py"));
     writeFixture(path.join("scripts", "lib", "normalize_mutable_config_perms.py"));
     writeFixture(path.join("scripts", "lib", "refresh-openclaw-wechat-placeholder.py"));
     writeFixture(
@@ -257,6 +256,7 @@ describe("sandbox build context staging", () => {
       path.join("src", "lib", "messaging", "channels", "fixture", "hooks", "example.ts"),
     );
     writeFixture(path.join("src", "lib", "tool-disclosure.ts"));
+    writeFixture(path.join("src", "lib", "providerless-inference.ts"));
     for (const relativePath of [
       "extra-agents-validation.ts",
       path.join("core", "json-types.ts"),
@@ -290,8 +290,8 @@ describe("sandbox build context staging", () => {
     writeFixture(path.join("scripts", "lib", "bundled-npm-package.mts"), "fixture\n", 0o700);
     writeFixture(path.join("scripts", "lib", "seed-reviewed-npm-cache.mts"), "fixture\n", 0o700);
     writeFixture(path.join("scripts", "lib", "reviewed-npm-audit.mts"), "fixture\n", 0o700);
-    writeFixture(path.join("scripts", "lib", "npm-audit-receipt.mts"), "fixture\n", 0o700);
     writeFixture(path.join("scripts", "lib", "openclaw-npm-remediation.mts"), "fixture\n", 0o700);
+    writeFixture(path.join("scripts", "lib", "verify-mcporter-audit.sh"), "fixture\n", 0o700);
     fs.chmodSync(path.join(sourceRoot, "scripts"), 0o700);
     fs.chmodSync(path.join(sourceRoot, "scripts", "lib"), 0o700);
   }
@@ -551,6 +551,9 @@ describe("sandbox build context staging", () => {
       );
       expect((fs.statSync(stagedFile).mode & 0o777).toString(8)).toBe("644");
     }
+    expect(
+      fs.readFileSync(path.join(buildCtx, "scripts/lib/verify-mcporter-audit.sh"), "utf8"),
+    ).toBe(fs.readFileSync(path.join(sourceRoot, "scripts/lib/verify-mcporter-audit.sh"), "utf8"));
   }
 
   it("normalizes restrictive and group-writable modes for Docker COPY", () => {

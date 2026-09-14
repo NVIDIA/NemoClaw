@@ -127,8 +127,7 @@ export function validateHermesGpuStartupWorkflow(
     errors.push(`${JOB_NAME} job must run on the native RTX PRO 6000 GPU runner`);
   }
   if (
-    JSON.stringify(job.needs) !==
-      JSON.stringify(["base-image-publication", "generate-matrix"]) ||
+    JSON.stringify(job.needs) !== JSON.stringify(["base-image-publication", "generate-matrix"]) ||
     job.if !== EXPECTED_SELECTOR
   ) {
     errors.push(`${JOB_NAME} job must use the trusted execution plan behind generate-matrix`);
@@ -285,7 +284,6 @@ if ! @run restore`;
     ni !== restoreI + 1 ||
     ni + 3 !== steps.indexOf(runStep) ||
     node?.uses !== "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020" ||
-    asRecord(node?.with)["node-version"] !== "22" ||
     !trustedEnv(node) ||
     asRecord(node?.env).NODE_OPTIONS !== "" ||
     staleDockerRestore?.name !== "Recover Docker CLI before native Podman E2E" ||

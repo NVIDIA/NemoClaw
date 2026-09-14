@@ -49,12 +49,13 @@ When the default port is already held by another sandbox, `$$nemoclaw onboard` s
 
 <AgentOnly variant="hermes">
 Each Hermes sandbox also needs its own OpenAI-compatible API port.
-When another sandbox or a host listener already holds the default API port `8642`, `$$nemoclaw onboard` scans ports `8642` through `8652`, uses the next free port, and records it for the sandbox.
+When creating a Hermes sandbox, if another sandbox or a host listener already holds the default API port `8642`, `$$nemoclaw onboard` scans ports `8642` through `8652`, uses the next free port, and records it for the sandbox.
 </AgentOnly>
 
 <AgentOnly variant="openclaw,hermes">
 If you intentionally run separate OpenShell gateways on the same host, set a different `NEMOCLAW_GATEWAY_PORT` before each onboarding run.
 NemoClaw isolates the gateway name and local state by port so one port-specific gateway does not replace another.
+Sandbox-scoped commands that read, exec into, or inspect a sandbox, such as `$$nemoclaw <name> exec` and `$$nemoclaw <name> status`, address each sandbox through its recorded gateway binding, so the current shell's `NEMOCLAW_GATEWAY_PORT` does not redirect them. Lifecycle commands such as `$$nemoclaw <name> stop` still act on the gateway that `NEMOCLAW_GATEWAY_PORT` selects.
 A non-default `NEMOCLAW_GATEWAY_PORT` also gets its own host state root at `~/.nemoclaw/gateways/<port>/`, with a separate sandbox registry, snapshots, and legacy credential-migration files, so gateway-scoped state stays segregated while shared host-level files remain under `~/.nemoclaw/`.
 On first use after upgrading, NemoClaw moves legacy rows and related state only when their recorded gateway identity matches the selected port; ambiguous state is left untouched with remediation.
 Provider credentials remain in the OpenShell gateway store.
@@ -65,14 +66,20 @@ Gateway and dashboard cleanup is scoped by sandbox name and port.
 A later onboarding run that uses a different `NEMOCLAW_GATEWAY_PORT` or `--control-ui-port` does not tear down the first sandbox's gateway or dashboard forward.
 </AgentOnly>
 
-<AgentOnly variant="openclaw">
-If re-onboarding finds the registered dashboard port already bound, NemoClaw verifies that the listener is the exact OpenShell forward for that sandbox and reuses it without restarting the sandbox.
-If ownership cannot be proved, onboarding fails closed and reports the listener conflict.
+<AgentOnly variant="openclaw,hermes">
+Repeated onboarding and resume keep the sandbox's registered dashboard port and restore a missing forward on that port.
+If the port is already bound, NemoClaw verifies that the listener is the exact OpenShell forward for that sandbox and reuses it without restarting the sandbox.
+Ports registered to another sandbox, foreign listeners, or unverified ownership stop onboarding with a port conflict error.
+</AgentOnly>
+
+<AgentOnly variant="hermes">
+Hermes also retains or restores its registered OpenAI-compatible API forward using the same ownership checks.
 </AgentOnly>
 
 <AgentOnly variant="deepagents">
 If you intentionally run separate OpenShell gateways on the same host, set a different `NEMOCLAW_GATEWAY_PORT` before each onboarding run.
 NemoClaw isolates the gateway name and local state by port so one port-specific gateway does not replace another.
+Sandbox-scoped commands that read, exec into, or inspect a sandbox, such as `nemo-deepagents <name> exec` and `nemo-deepagents <name> status`, address each sandbox through its recorded gateway binding, so the current shell's `NEMOCLAW_GATEWAY_PORT` does not redirect them. Lifecycle commands such as `nemo-deepagents <name> stop` still act on the gateway that `NEMOCLAW_GATEWAY_PORT` selects.
 A non-default `NEMOCLAW_GATEWAY_PORT` also gets its own host state root at `~/.nemoclaw/gateways/<port>/`, with a separate sandbox registry, snapshots, and legacy credential-migration files, so gateway-scoped state stays segregated while shared host-level files remain under `~/.nemoclaw/`.
 On first use after upgrading, NemoClaw moves legacy rows and related state only when their recorded gateway identity matches the selected port; ambiguous state is left untouched with remediation.
 Provider credentials remain in the OpenShell gateway store.

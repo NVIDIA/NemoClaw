@@ -166,7 +166,11 @@ export interface RuntimeProviderGatewayHostRuntime {
     sandboxSourceCidrs(): readonly string[];
     inspect(networkName: string): RuntimeProviderGatewayNetworkInfo | undefined;
     usesHostGatewayRoute(): boolean;
-    run(args: readonly string[], timeoutMs: number): RuntimeProviderGatewayCommandResult;
+    run(
+      args: readonly string[],
+      timeoutMs: number,
+      options?: { maxOutputBytes: number; environment?: Record<string, string> },
+    ): RuntimeProviderGatewayCommandResult;
     ensureProbeImageCached(image: string): RuntimeProviderGatewayImageCacheResult;
   };
 }
@@ -495,7 +499,9 @@ export type RuntimeProviderWorkloadCleanupResult =
     };
 
 export interface RuntimeProviderCleanupOperations {
-  readonly detachProviders: () => RuntimeProviderProviderDetachResult;
+  readonly detachProviders: () =>
+    | RuntimeProviderProviderDetachResult
+    | Promise<RuntimeProviderProviderDetachResult>;
 }
 
 /**
@@ -692,6 +698,11 @@ export type RuntimeProviderSnapshotSurface =
         sandbox: SandboxEntry,
         preflight: RuntimeProviderSnapshotPreflightReceipt,
       ): RuntimeProviderRuntimeReceipt;
+      /** Compare provider-owned acceleration encodings without widening central authority. */
+      canRepresentAcceleration?(
+        source: RuntimeProviderRuntimeReceipt["acceleration"],
+        target: RuntimeProviderRuntimeReceipt["acceleration"],
+      ): boolean;
       validateRestore(
         sandbox: SandboxEntry,
         preflight: RuntimeProviderSnapshotPreflightReceipt,
@@ -724,7 +735,7 @@ export type RuntimeProviderCleanupSurface =
       prepareDestroy(
         input: RuntimeProviderCleanupInput,
         operations: RuntimeProviderCleanupOperations,
-      ): RuntimeProviderProviderDetachResult;
+      ): RuntimeProviderProviderDetachResult | Promise<RuntimeProviderProviderDetachResult>;
       /**
        * Produce a side-effect-free cleanup plan before any destructive
        * sandbox action. Providers must revalidate the same authority inside

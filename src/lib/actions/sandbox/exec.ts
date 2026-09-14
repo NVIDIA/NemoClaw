@@ -1,15 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import {
-  buildCliOpenShellSandboxExecArgs,
-  createCliOpenShellSandboxCommandExecutor,
-  runCliOpenShellStreamingCommand,
-  type OpenShellCommandChild,
-  type OpenShellCommandChildOptions,
-  type OpenShellCommandSignalSource,
-  type OpenShellCommandSpawner,
-} from "../../adapters/openshell/sandbox-command-cli";
+import { createCliOpenShellSandboxCommandExecutor } from "../../adapters/openshell/sandbox-command-cli";
 import type {
   OpenShellSandboxCommandExecutor,
   OpenShellSandboxCommandRequest,
@@ -18,7 +10,6 @@ import {
   namedOpenShellGateway,
   selectedOpenShellGateway,
 } from "../../adapters/openshell/sandbox-observer";
-import { spawnExitCode } from "../../core/process-exit";
 import { assertNoOpenShellGatewayEndpointOverride } from "../../openshell-gateway-endpoint-guard";
 import type {
   MutableConfigPermsInspection,
@@ -41,28 +32,9 @@ export type SandboxExecOptions = {
   stdin?: boolean;
 };
 
-export type SandboxExecChildOptions = SandboxExecOptions & {
-  hostCwd?: string;
-  hostEnv?: NodeJS.ProcessEnv;
-  subprocessEnv?: NodeJS.ProcessEnv;
-};
-
-export type SandboxExecGatewayRestart = (sandboxName: string) => { ok: boolean };
+export type SandboxExecGatewayRestart = (sandboxName: string) => Promise<{ ok: boolean }>;
 
 export type SandboxExecAgentResolver = (sandboxName: string) => string | null;
-
-export type SpawnLikeResult = {
-  status: number | null;
-  signal?: NodeJS.Signals | null;
-  error?: Error;
-  releaseSignals?: () => void;
-};
-
-export type SandboxExecChild = OpenShellCommandChild;
-
-export type SandboxExecSpawner = OpenShellCommandSpawner;
-
-export type SandboxExecSignalSource = OpenShellCommandSignalSource;
 
 export type SandboxExecCleanupDeps = {
   getSandbox: (sandboxName: string) => Pick<SandboxEntry, "agent"> | null;
@@ -76,27 +48,6 @@ export type SandboxExecCompletion = {
   invocationError?: string;
   cleanupError?: string;
 };
-
-/**
- * Compatibility argv surface for buffered and interactive consumers tracked
- * by #10991 and #10994. Remove it after those callers use typed executors.
- */
-export function buildOpenshellExecArgs(
-  sandboxName: string,
-  command: readonly string[],
-  options: SandboxExecOptions = {},
-  gatewayName?: string,
-): string[] {
-  return buildCliOpenShellSandboxExecArgs({
-    sandboxName,
-    target: gatewayName ? namedOpenShellGateway(gatewayName) : selectedOpenShellGateway(),
-    command,
-    workdir: options.workdir,
-    tty: options.tty,
-    timeoutSeconds: options.timeoutSeconds,
-    stdin: options.stdin,
-  });
-}
 
 // OpenShell accepts LF/CR in command argv while retaining field-specific
 // rejection for NUL-bearing command args and NUL/LF/CR-bearing workdirs. Keep
@@ -119,16 +70,6 @@ function execInputError(command: readonly string[], workdir: string | undefined)
 
 export function workdirMissingMessage(workdir: string): string {
   return `error: --workdir: ${workdir} does not exist inside the sandbox`;
-}
-
-export function computeExitCode(result: SpawnLikeResult): {
-  code: number;
-  errorMessage?: string;
-} {
-  if (result.error) {
-    return { code: 1, errorMessage: result.error.message };
-  }
-  return { code: spawnExitCode(result) };
 }
 
 function repairFailureDetail(
@@ -175,7 +116,8 @@ export function cleanupOpenClawAfterExec(
     const detail = error instanceof Error ? error.message : String(error);
     return `permission inspection failed: ${detail}`;
   }
-  if (inspection.applies && inspection.ok) return null;
+  if (!inspection.applies) return `permission inspection unavailable: ${inspection.reason}`;
+  if (inspection.ok) return null;
 
   let repair: MutableConfigRepairResult;
   try {
@@ -184,42 +126,7 @@ export function cleanupOpenClawAfterExec(
     const detail = error instanceof Error ? error.message : String(error);
     return `permission repair failed: ${detail}`;
   }
-  const repairFailure = repairFailureDetail(inspection, repair);
-  if (repairFailure || !repair.applied) return repairFailure;
-
-  let verification: MutableConfigPermsInspection;
-  try {
-    verification = deps.inspectMutableConfigPerms(sandboxName);
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    return `post-repair permission verification failed: ${detail}`;
-  }
-  if (!verification.applies) {
-    return `post-repair permission verification unavailable: ${verification.reason}`;
-  }
-  if (!verification.ok) {
-    return `post-repair permission verification failed: ${verification.issues.join("; ")}`;
-  }
-  return null;
-}
-
-/**
- * Compatibility child-process surface for interactive consumers tracked by
- * #10994. Remove it after those callers use a typed interactive executor.
- */
-export async function runSandboxExecChild(
-  binary: string,
-  args: readonly string[],
-  options: SandboxExecChildOptions = {},
-  spawnChild?: SandboxExecSpawner,
-  signalSource?: SandboxExecSignalSource,
-): Promise<SpawnLikeResult> {
-  const childOptions: OpenShellCommandChildOptions = {
-    stdin: options.stdin,
-    hostCwd: options.hostCwd,
-    hostEnv: options.hostEnv ?? options.subprocessEnv,
-  };
-  return runCliOpenShellStreamingCommand(binary, args, childOptions, spawnChild, signalSource);
+  return repairFailureDetail(inspection, repair);
 }
 
 export function cleanupFailureMessage(commandCode: number, detail: string): string {
@@ -241,6 +148,8 @@ export type ExecSandboxDeps = {
   /** Post-command observability and cleanup seams. */
   policyHint?: ExecPolicyHintDeps;
   cleanupDeps?: SandboxExecCleanupDeps;
+  /** Reacquire and verify dispatch authority before delayed launch cleanup. */
+  withCleanupAuthority?: (cleanup: () => string | null) => Promise<string | null>;
   /** Activate config written by a successful direct Google Chat pairing approval. */
   restartGateway?: SandboxExecGatewayRestart;
   /** Resolve the sandbox's recorded agent before applying agent-specific post-exec effects. */
@@ -254,8 +163,7 @@ export type ExecSandboxDeps = {
 async function runSandboxExecRequest(
   executor: OpenShellSandboxCommandExecutor,
   request: OpenShellSandboxCommandRequest,
-  cleanupDeps: SandboxExecCleanupDeps,
-): Promise<SandboxExecCompletion> {
+): Promise<Awaited<ReturnType<OpenShellSandboxCommandExecutor["runStreaming"]>>> {
   let completed: Awaited<ReturnType<OpenShellSandboxCommandExecutor["runStreaming"]>>;
   try {
     completed = await executor.runStreaming(request);
@@ -271,11 +179,28 @@ async function runSandboxExecRequest(
       release: () => {},
     };
   }
+  return completed;
+}
+
+async function finishSandboxExecRequest(
+  completed: Awaited<ReturnType<OpenShellSandboxCommandExecutor["runStreaming"]>>,
+  request: OpenShellSandboxCommandRequest,
+  cleanupDeps: SandboxExecCleanupDeps,
+  withCleanupAuthority?: ExecSandboxDeps["withCleanupAuthority"],
+): Promise<SandboxExecCompletion> {
   try {
     const commandCode = completed.outcome.kind === "completed" ? completed.outcome.exitCode : 1;
     const invocationError =
       completed.outcome.kind === "failed" ? completed.outcome.error.message : undefined;
-    const cleanupError = cleanupOpenClawAfterExec(request.sandboxName, cleanupDeps) ?? undefined;
+    const cleanup = () => cleanupOpenClawAfterExec(request.sandboxName, cleanupDeps);
+    let cleanupError: string | undefined;
+    try {
+      cleanupError =
+        (await (withCleanupAuthority ? withCleanupAuthority(cleanup) : cleanup())) ?? undefined;
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      cleanupError = `cleanup authority unavailable: ${detail}`;
+    }
     return {
       code: cleanupError ? 1 : commandCode,
       commandCode,
@@ -299,7 +224,7 @@ export function isGoogleChatPairingApproval(command: readonly string[]): boolean
   );
 }
 
-function defaultRestartGateway(sandboxName: string): { ok: boolean } {
+function defaultRestartGateway(sandboxName: string): Promise<{ ok: boolean }> {
   const { defaultInferenceGatewayRestart } =
     require("../inference-set-gateway-restart") as typeof import("../inference-set-gateway-restart");
   return defaultInferenceGatewayRestart(sandboxName);
@@ -333,6 +258,17 @@ export async function execSandbox(
   options: SandboxExecOptions = {},
   deps: ExecSandboxDeps = {},
 ): Promise<void> {
+  const finish = await startSandboxExec(sandboxName, command, options, deps);
+  await finish();
+}
+
+/** Dispatch under the caller's lifecycle fence; invoke completion after releasing it. */
+export async function startSandboxExec(
+  sandboxName: string,
+  command: readonly string[],
+  options: SandboxExecOptions = {},
+  deps: ExecSandboxDeps = {},
+): Promise<() => Promise<void>> {
   const { CLI_NAME } = require("../../cli/branding");
   const exit = deps.exit ?? process.exit;
   if (command.length === 0) {
@@ -389,71 +325,78 @@ export async function execSandbox(
     deps.policyHint,
     gatewayName,
   );
-  const completion = await runSandboxExecRequest(
-    commandExecutor,
-    {
-      sandboxName,
-      target,
-      command: wrapExecCommandWithRuntimeEnv(command),
-      workdir: options.workdir,
-      tty: options.tty,
-      timeoutSeconds: options.timeoutSeconds,
-      stdin: options.stdin,
-    },
-    deps.cleanupDeps ?? {
-      getSandbox: (name) =>
-        (require("../../state/registry") as typeof import("../../state/registry")).getSandbox(name),
-      inspectMutableConfigPerms: (name) =>
-        (
-          require("../../sandbox/mutable-config-perms") as typeof import("../../sandbox/mutable-config-perms")
-        ).inspectMutableConfigPerms(name),
-      repairMutableConfigPerms: (name) =>
-        (
-          require("../../sandbox/mutable-config-perms") as typeof import("../../sandbox/mutable-config-perms")
-        ).repairMutableConfigPerms(name),
-    },
-  );
-  if (completion.invocationError) {
-    console.error(`  Failed to invoke openshell: ${completion.invocationError}`);
-    console.error("  Ensure 'openshell' is installed and on PATH.");
-  }
-  if (completion.cleanupError) {
-    console.error(cleanupFailureMessage(completion.commandCode, completion.cleanupError));
-  }
-  await emitPolicyDenialHint(completion);
-  let exitCode = completion.code;
-  const googleChatApprovalCommitted =
-    completion.commandCode === 0 && isGoogleChatPairingApproval(command);
-  const managedGoogleChatApproval =
-    googleChatApprovalCommitted && gatewaySelection.outcome === "selected";
-  if (googleChatApprovalCommitted && completion.cleanupError) {
-    console.error(
-      managedGoogleChatApproval
-        ? googleChatPairingActivationFailureMessage(CLI_NAME, sandboxName)
-        : googleChatPairingUnmanagedCleanupFailureMessage(sandboxName),
+  const request: OpenShellSandboxCommandRequest = {
+    sandboxName,
+    target,
+    command: wrapExecCommandWithRuntimeEnv(command),
+    workdir: options.workdir,
+    tty: options.tty,
+    timeoutSeconds: options.timeoutSeconds,
+    stdin: options.stdin,
+  };
+  const pending = runSandboxExecRequest(commandExecutor, request);
+  return async () => {
+    const completion = await finishSandboxExecRequest(
+      await pending,
+      request,
+      deps.cleanupDeps ?? {
+        getSandbox: (name) =>
+          (require("../../state/registry") as typeof import("../../state/registry")).getSandbox(
+            name,
+          ),
+        inspectMutableConfigPerms: (name) =>
+          (
+            require("../../sandbox/mutable-config-perms") as typeof import("../../sandbox/mutable-config-perms")
+          ).inspectMutableConfigPerms(name),
+        repairMutableConfigPerms: (name) =>
+          (
+            require("../../sandbox/mutable-config-perms") as typeof import("../../sandbox/mutable-config-perms")
+          ).repairMutableConfigPerms(name),
+      },
+      deps.withCleanupAuthority,
     );
-  }
-  if (exitCode === 0 && managedGoogleChatApproval) {
-    let recordedAgent: string | null = null;
-    try {
-      recordedAgent = (deps.resolveSandboxAgent ?? defaultResolveSandboxAgent)(sandboxName);
-    } catch {
-      console.error(googleChatPairingActivationFailureMessage(CLI_NAME, sandboxName));
-      exit(1);
+    if (completion.invocationError) {
+      console.error(`  Failed to invoke openshell: ${completion.invocationError}`);
+      console.error("  Ensure 'openshell' is installed and on PATH.");
     }
-    if (recordedAgent === "openclaw") {
-      let restartSucceeded = false;
+    if (completion.cleanupError) {
+      console.error(cleanupFailureMessage(completion.commandCode, completion.cleanupError));
+    }
+    await emitPolicyDenialHint(completion);
+    let exitCode = completion.code;
+    const googleChatApprovalCommitted =
+      completion.commandCode === 0 && isGoogleChatPairingApproval(command);
+    const managedGoogleChatApproval =
+      googleChatApprovalCommitted && gatewaySelection.outcome === "selected";
+    if (googleChatApprovalCommitted && completion.cleanupError) {
+      console.error(
+        managedGoogleChatApproval
+          ? googleChatPairingActivationFailureMessage(CLI_NAME, sandboxName)
+          : googleChatPairingUnmanagedCleanupFailureMessage(sandboxName),
+      );
+    }
+    if (exitCode === 0 && managedGoogleChatApproval) {
+      let recordedAgent: string | null = null;
       try {
-        restartSucceeded = (deps.restartGateway ?? defaultRestartGateway)(sandboxName).ok;
+        recordedAgent = (deps.resolveSandboxAgent ?? defaultResolveSandboxAgent)(sandboxName);
       } catch {
-        // The approval already committed inside OpenClaw. Convert restart
-        // exceptions into the same explicit partial-commit recovery contract.
-      }
-      if (!restartSucceeded) {
         console.error(googleChatPairingActivationFailureMessage(CLI_NAME, sandboxName));
-        exitCode = 1;
+        exit(1);
+      }
+      if (recordedAgent === "openclaw") {
+        let restartSucceeded = false;
+        try {
+          restartSucceeded = (await (deps.restartGateway ?? defaultRestartGateway)(sandboxName)).ok;
+        } catch {
+          // The approval already committed inside OpenClaw. Convert restart
+          // exceptions into the same explicit partial-commit recovery contract.
+        }
+        if (!restartSucceeded) {
+          console.error(googleChatPairingActivationFailureMessage(CLI_NAME, sandboxName));
+          exitCode = 1;
+        }
       }
     }
-  }
-  exit(exitCode);
+    exit(exitCode);
+  };
 }

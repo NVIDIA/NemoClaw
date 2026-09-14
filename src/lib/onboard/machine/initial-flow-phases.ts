@@ -5,6 +5,11 @@ import { spawnSync } from "node:child_process";
 import type { GatewayReuseState } from "../../state/gateway";
 import { type GatewayOwner, isExternallySupervised } from "../gateway-ownership";
 import { formatSandboxGpuPassthroughNote } from "../sandbox-gpu-notes";
+import { assertProviderlessSandboxAgent } from "../sandbox-agent";
+import {
+  ExternalComponentContractError,
+  type PreparedExternalComponent,
+} from "../external-component";
 import type { OnboardFlowContext } from "./flow-context";
 import { UnexpectedOnboardFlowSliceStateError } from "./flow-slice-error";
 import { runInitialOnboardFlowSequence } from "./flow-slices";
@@ -67,6 +72,7 @@ export interface InitialOnboardFlowPhaseOptions<
   >;
   getInitialGatewayReuseState(): GatewayReuseState;
   assertGatewayReadiness(): Promise<void>;
+  prepareExternalComponent?(session: Context["session"]): PreparedExternalComponent | null;
   gatewayName: string;
   recreateSandbox(): boolean;
   requiresBindMounts?: boolean;
@@ -137,6 +143,16 @@ export function createInitialOnboardFlowPhases<
   const preflightPhase: OnboardSequencePhase<Context> = {
     state: "preflight",
     async run(context) {
+      const externalComponent = options.prepareExternalComponent?.(context.session) ?? null;
+      if (context.session?.apfInterceptorRequested === true) {
+        assertProviderlessSandboxAgent(context.agent);
+      }
+      if (externalComponent && (context.resume || options.recreateSandbox())) {
+        throw new ExternalComponentContractError("lifecycle_unsupported");
+      }
+      if (externalComponent) {
+        options.gatewayDeps.assertExternalComponentFreshSandbox(context.requestedSandboxName);
+      }
       const preflightResult = await handlePreflightState({
         resume: context.resume,
         session: context.session,
@@ -183,6 +199,7 @@ export function createInitialOnboardFlowPhases<
             preflightResult.deferredN1xManagedVllmPreviewAccepted,
           resumeHasResolvedGpuIntent: preflightResult.resumeHasResolvedGpuIntent,
           requestedGpuPassthrough: preflightResult.requestedGpuPassthrough,
+          externalComponent,
         },
         result: preflightResult.stateResult,
       };
@@ -192,6 +209,7 @@ export function createInitialOnboardFlowPhases<
   const gatewayPhase: OnboardSequencePhase<Context> = {
     state: "gateway",
     async run(context) {
+      const externalComponent = context.externalComponent ?? null;
       const owner = options.gatewayDeps.resolveGatewayOwner();
       await options.assertGatewayReadiness();
       const gatewayResult = await handleGatewayState({
@@ -208,10 +226,11 @@ export function createInitialOnboardFlowPhases<
         requestedSandboxName: context.requestedSandboxName,
         recreateSandbox: options.recreateSandbox(),
         requiresBindMounts: options.requiresBindMounts === true,
+        externalComponent,
         deps: options.gatewayDeps,
       });
       return {
-        context: { ...context, session: gatewayResult.session },
+        context: { ...context, externalComponent, session: gatewayResult.session },
         result: gatewayResult.stateResult,
       };
     },

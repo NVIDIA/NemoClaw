@@ -70,16 +70,23 @@ describe("gateway recovery", () => {
 
   it("passes the frozen target into the managed gateway starter (#10514)", async () => {
     const deps = createDeps();
+    const output = {
+      error: vi.fn(),
+      log: vi.fn(),
+      step: vi.fn(),
+      warn: vi.fn(),
+    };
     const runtimeSelection = {
       gatewayName: "nemoclaw",
       workspace: "default",
       localTlsDir: "/recorded/tls",
     };
 
-    await startGatewayForRecovery({ runtimeSelection }, deps);
+    await startGatewayForRecovery({ output, runtimeSelection }, deps);
 
     expect(deps.startGatewayWithOptions).toHaveBeenCalledWith(undefined, {
       exitOnFailure: false,
+      output,
       runtimeSelection,
     });
   });

@@ -1,6 +1,6 @@
 ---
 name: nemoclaw-maintainer-policies
-description: Provide read-only NemoClaw maintainer policy. Use for questions about Issue Type, labels, Project fields, release labels, triage, duplicates, blocked items, and maintainer decisions. Trigger keywords - maintainer policy, workflow policy, project workflow, issue type, labels, label taxonomy, needs labels, project status, blocked issue, duplicate issue, daily release label, release train, triage policy.
+description: "Answer NemoClaw maintainer policy questions about triage, labels, Project fields, releases, or competing contributions. Read-only."
 user_invocable: true
 ---
 
@@ -13,9 +13,8 @@ This package contains policy references. This file is its manifest and index.
 
 ## References
 
-- **Workflow overview:** Read [workflow-policy.md](references/workflow-policy.md), [project-workflow.md](references/project-workflow.md), and [daily-flow.md](references/daily-flow.md) in that order.
-  Read [release-train.md](references/release-train.md) for questions about release labels or history.
-- **Agent implementation:** Read [workflow-policy.md](references/workflow-policy.md), [triage-instructions.md](references/triage-instructions.md), [label-taxonomy.json](references/label-taxonomy.json), and [examples.md](references/examples.md) in that order.
+Read the reference that owns the question. Read additional references only when that question crosses their boundaries.
+
 - [references/workflow-policy.md](references/workflow-policy.md) — Source of truth, authorization, Issue Type, label boundaries, and agent-owned labels.
 - [references/triage-instructions.md](references/triage-instructions.md) — Issue and PR evaluation, questions, `needs:*`, confidence, and suggestion payloads.
 - [references/label-taxonomy.md](references/label-taxonomy.md) — Label meaning, selection, compatibility, unknown labels, `agt: *`, and release labels.

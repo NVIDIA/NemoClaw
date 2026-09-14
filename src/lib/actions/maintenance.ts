@@ -21,6 +21,7 @@ import {
 import { SANDBOX_IMAGE_REPOS } from "../domain/sandbox/image-tag";
 import { resolveGatewayName, resolveSandboxGatewayName } from "../onboard/gateway-binding";
 import { captureSandboxListWithGatewayPreflightOrExit } from "../openshell-sandbox-list";
+import { captureRecordedSandboxBasePolicy } from "../policy";
 import { withSandboxMutationLock } from "../state/mcp-lifecycle-lock";
 import { enforceRemovedImmutabilityMigrationBoundary } from "../state/migrations/removed-immutability";
 import * as registry from "../state/registry";
@@ -84,6 +85,38 @@ interface BackupAllSandboxAttempt {
   orphanManifestMessage: string | null;
   stoppedContainerUnavailable: boolean;
   mutationLockError?: unknown;
+}
+
+async function retainStrictPreUpgradePolicy(
+  sandboxName: string,
+  result: sandboxState.BackupResult,
+  enabled: boolean,
+): Promise<sandboxState.BackupResult> {
+  if (!enabled) return result;
+  if (!result.success) {
+    const backupPath = result.manifest?.backupPath;
+    if (!backupPath) return result;
+    if (sandboxState.removeSandboxStateBackup(sandboxName, backupPath)) {
+      const { manifest: _removedManifest, ...withoutPartialBackup } = result;
+      return withoutPartialBackup;
+    }
+    const cleanupError = `Failed strict pre-upgrade backup at '${backupPath}' could not be removed`;
+    return {
+      ...result,
+      error: result.error ? `${result.error}. ${cleanupError}` : cleanupError,
+    };
+  }
+  if (!result.manifest) {
+    throw new Error(
+      `Strict pre-upgrade backup for '${sandboxName}' completed without a published manifest`,
+    );
+  }
+  const policyDocument = await captureRecordedSandboxBasePolicy(
+    sandboxName,
+    "capture the live policy for pre-upgrade recovery",
+  );
+  result.manifest = sandboxState.writeRebuildPolicyHandoff(result.manifest, policyDocument);
+  return result;
 }
 
 function returnStartedSandboxToStopped(
@@ -266,6 +299,7 @@ export async function backupAllUnderPortableHostFence(
   const skipUnreachable =
     options.skipUnreachable ?? shouldSkipUnreachableSandboxBackup(process.env);
   const requireAll = options.requireAll ?? process.env.NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS === "1";
+  const retainPreUpgradePolicy = purpose === "pre-upgrade" && requireAll;
   let backed = 0;
   let failed = 0;
   let skipped = 0;
@@ -293,8 +327,8 @@ export async function backupAllUnderPortableHostFence(
     const attempt = await backupSandboxWithinMutationLock(
       sb.name,
       !readyNames.has(sb.name),
-      (startedForBackup) =>
-        startedForBackup
+      async (startedForBackup) => {
+        const backupResult = await (startedForBackup
           ? backupStartedSandboxState(sb.name)
           : snapshotBackup.backupSandboxStateWithManagedAuthority(
               sb.name,
@@ -302,7 +336,9 @@ export async function backupAllUnderPortableHostFence(
               {
                 getSandbox: registry.getSandbox,
               },
-            ),
+            ));
+        return retainStrictPreUpgradePolicy(sb.name, backupResult, retainPreUpgradePolicy);
+      },
     );
     if (attempt.stoppedContainerUnavailable) {
       if (orphanNames.has(sb.name) && isSandboxContainerDefinitivelyAbsent(sb.name)) {
@@ -355,7 +391,8 @@ export async function backupAllUnderPortableHostFence(
         [...result.failedDirs, ...result.failedFiles],
         result.failedDirReasons,
       );
-      console.error(`  ${RD}✗${R} ${sb.name}: backup failed (${failedItems})`);
+      const failureDetail = [failedItems, result.error].filter(Boolean).join("; ");
+      console.error(`  ${RD}✗${R} ${sb.name}: backup failed (${failureDetail})`);
       failed++;
     }
   };

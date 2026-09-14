@@ -163,7 +163,6 @@ function runApplierProcess(
   return spawnSync(
     "node",
     [
-      "--experimental-strip-types",
       SCRIPT_PATH,
       "--agent",
       agent,
@@ -420,16 +419,7 @@ describe("messaging-build-applier.mts: agent-install", () => {
       try {
         const result = spawnSync(
           "node",
-          [
-            "--experimental-strip-types",
-            SCRIPT_PATH,
-            "--agent",
-            agent,
-            "--phase",
-            "runtime-setup",
-            "--mode",
-            "apply",
-          ],
+          [SCRIPT_PATH, "--agent", agent, "--phase", "runtime-setup", "--mode", "apply"],
           {
             encoding: "utf-8",
             stdio: ["pipe", "pipe", "pipe"],
@@ -575,7 +565,7 @@ describe("messaging-build-applier.mts: agent-install", () => {
           {
             channelId: "slack",
             envKey: "SLACK_BOT_TOKEN",
-            match: "^openshell:resolve:env:(v[0-9]+_)?SLACK_BOT_TOKEN$",
+            match: "^openshell:resolve:env:((?:v[0-9]{1,20}|s[a-f0-9]{64})_)?SLACK_BOT_TOKEN$",
             value: "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
             message:
               "[channels] Normalized SLACK_BOT_TOKEN runtime placeholder to the Bolt-compatible alias",
@@ -583,7 +573,7 @@ describe("messaging-build-applier.mts: agent-install", () => {
           {
             channelId: "slack",
             envKey: "SLACK_APP_TOKEN",
-            match: "^openshell:resolve:env:(v[0-9]+_)?SLACK_APP_TOKEN$",
+            match: "^openshell:resolve:env:((?:v[0-9]{1,20}|s[a-f0-9]{64})_)?SLACK_APP_TOKEN$",
             value: "xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN",
             message:
               "[channels] Normalized SLACK_APP_TOKEN runtime placeholder to the Bolt-compatible alias",
@@ -947,7 +937,7 @@ describe("messaging-build-applier.mts: agent-install", () => {
         fakeNode,
         [
           "#!/bin/sh",
-          'printf \'verify|%s|%s\\n\' "$3" "$4" >> "$OPENCLAW_TRACE"',
+          'printf \'verify|%s|%s\\n\' "$2" "$3" >> "$OPENCLAW_TRACE"',
           "exit 0",
           "",
         ].join("\n"),
@@ -1222,7 +1212,7 @@ describe("messaging-build-applier.mts: agent-install", () => {
         },
         "openclaw",
       );
-      const generatorResult = spawnSync("node", ["--experimental-strip-types", GENERATOR_PATH], {
+      const generatorResult = spawnSync("node", [GENERATOR_PATH], {
         encoding: "utf-8",
         stdio: ["pipe", "pipe", "pipe"],
         env: generatorEnv,
@@ -1271,7 +1261,7 @@ describe("messaging-build-applier.mts: agent-install", () => {
         'if (args[0] !== "doctor" || args[1] !== "--fix" || args[2] !== "--non-interactive") process.exit(46);',
         'const configPath = path.join(process.env.HOME, ".openclaw", "openclaw.json");',
         'const config = JSON.parse(fs.readFileSync(configPath, "utf8"));',
-        'if (config.channels?.telegram?.accounts?.default?.botToken !== undefined) process.exit(40);',
+        "if (config.channels?.telegram?.accounts?.default?.botToken !== undefined) process.exit(40);",
         "if (config.channels?.discord?.enabled !== true) process.exit(41);",
         "if (config.plugins?.entries?.discord?.enabled !== true) process.exit(42);",
         "if (config.plugins?.entries?.slack?.enabled !== true) process.exit(43);",

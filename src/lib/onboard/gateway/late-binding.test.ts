@@ -139,6 +139,48 @@ describe("gateway lifecycle late binding", () => {
     }
   });
 
+  it("does not retry registration or use legacy destroy after a current remove failure", () => {
+    const outcomes = new Map<string, ReturnType<typeof runResult>>([
+      ["gateway select nemoclaw", runResult(1)],
+      ["gateway add https://127.0.0.1:8080 --local --name nemoclaw", runResult(1)],
+      [
+        "gateway remove nemoclaw",
+        { status: 1, stdout: "", stderr: "connection refused" } as ReturnType<
+          typeof import("../../runner").run
+        >,
+      ],
+    ]);
+    const runOpenshell = vi.fn((args: string[]) => outcomes.get(args.join(" ")) ?? runResult());
+    const registration = createGatewayRegistration({
+      gatewayName: () => "nemoclaw",
+      getDockerDriverGatewayEndpointArg: () => "https://127.0.0.1:8080",
+      getGatewayLocalEndpoint: () => "https://127.0.0.1:8080",
+      hasStaleGateway: () => false,
+      isGatewayHealthy: () => false,
+      isLinuxDockerDriverGatewayEnabled: () => true,
+      removeDockerDriverGatewayRegistration: () => true,
+      runCaptureOpenshell: vi.fn(() => ""),
+      runOpenshell,
+      runQuietOpenshell: vi.fn(() => runResult()),
+    });
+
+    expect(
+      registration.registerDockerDriverGatewayEndpoint({
+        gatewayName: "nemoclaw",
+        workspace: "default",
+      }),
+    ).toBe(false);
+    expect(runOpenshell.mock.calls.map(([args]) => args)).toEqual([
+      ["gateway", "select", "nemoclaw"],
+      ["gateway", "add", "https://127.0.0.1:8080", "--local", "--name", "nemoclaw"],
+      ["gateway", "remove", "nemoclaw"],
+    ]);
+    expect(runOpenshell).not.toHaveBeenCalledWith(
+      ["gateway", "destroy", "-g", "nemoclaw"],
+      expect.anything(),
+    );
+  });
+
   it("uses the current binding for recovery select and health commands", async () => {
     let name = "initial";
     const runOpenshell = vi.fn(() => runResult());

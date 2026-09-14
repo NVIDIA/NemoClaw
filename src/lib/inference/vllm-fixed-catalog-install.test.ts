@@ -6,7 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { HostLocalVllmSelectionResult } from "./serving/host-local-vllm-selection";
 import type { VllmProfile } from "./vllm";
 
-type ResolveHostLocalVllmSelection = (typeof import("./serving/host-local-vllm-selection"))["resolveHostLocalVllmSelection"];
+type ResolveHostLocalVllmSelection =
+  (typeof import("./serving/host-local-vllm-selection"))["resolveHostLocalVllmSelection"];
 
 const mocks = vi.hoisted(() => ({
   dockerCapture: vi.fn(),
@@ -468,10 +469,7 @@ describe("fixed catalog vLLM installs", () => {
 
   it("still rejects extra serve arguments for a fixed catalog recipe", async () => {
     process.env.NEMOCLAW_VLLM_MODEL = "muse-glimmer-30b";
-    process.env.NEMOCLAW_VLLM_EXTRA_ARGS_JSON = JSON.stringify([
-      "--max-model-len",
-      "4096",
-    ]);
+    process.env.NEMOCLAW_VLLM_EXTRA_ARGS_JSON = JSON.stringify(["--max-model-len", "4096"]);
     const profile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
     const actualSelection = await vi.importActual<
       typeof import("./serving/host-local-vllm-selection")

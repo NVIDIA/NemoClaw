@@ -222,21 +222,21 @@ export function reconcilePinnedSessionModels(
   };
 }
 
-function executeReconcileCommand(
+async function executeReconcileCommand(
   sandboxName: string,
   command: string,
   runtimeSelection?: OpenShellRuntimeSelection,
 ) {
   return runtimeSelection
-    ? executeSandboxCommand(sandboxName, command, { runtimeSelection })
-    : executeSandboxCommand(sandboxName, command);
+    ? await executeSandboxCommand(sandboxName, command, { runtimeSelection })
+    : await executeSandboxCommand(sandboxName, command);
 }
 
-function readPrimaryModelRef(
+async function readPrimaryModelRef(
   sandboxName: string,
   runtimeSelection?: OpenShellRuntimeSelection,
-): string | null {
-  const res = executeReconcileCommand(
+): Promise<string | null> {
+  const res = await executeReconcileCommand(
     sandboxName,
     `cat ${OPENCLAW_CONFIG_PATH} 2>/dev/null`,
     runtimeSelection,
@@ -267,18 +267,18 @@ function readPrimaryModelRef(
  * discard conversation state. This recovery can be removed when OpenClaw
  * exposes an offline, race-free session-model reset operation.
  */
-export function reconcileStalePinnedSessionModelsAfterRebuild(
+export async function reconcileStalePinnedSessionModelsAfterRebuild(
   sandboxName: string,
   log: RebuildLog,
   runtimeSelection?: OpenShellRuntimeSelection,
-): void {
-  const primary = readPrimaryModelRef(sandboxName, runtimeSelection);
+): Promise<void> {
+  const primary = await readPrimaryModelRef(sandboxName, runtimeSelection);
   if (!primary) {
     log("Session model reconcile skipped: could not read agents.defaults.model.primary");
     return;
   }
   const sessionsPath = defaultAgentSessionsPath(DEFAULT_AGENT_ID);
-  const readResult = executeReconcileCommand(
+  const readResult = await executeReconcileCommand(
     sandboxName,
     `cat ${sessionsPath} 2>/dev/null`,
     runtimeSelection,
@@ -292,7 +292,7 @@ export function reconcileStalePinnedSessionModelsAfterRebuild(
     log("Session model reconcile: no stale pinned session models");
     return;
   }
-  const writeResult = executeReconcileCommand(
+  const writeResult = await executeReconcileCommand(
     sandboxName,
     buildSessionStoreReplaceCommand(sessionsPath, reconciled.content, readResult.stdout),
     runtimeSelection,

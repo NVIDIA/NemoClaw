@@ -125,7 +125,10 @@ describe("CLI debug command", () => {
     "debug scopes OpenShell commands to the registered non-default gateway",
     testTimeoutOptions(30_000),
     ({ resources }) => {
-      const argsLog = path.join(resources.home("nemoclaw-cli-debug-gateway-log-").home, "openshell-args.log");
+      const argsLog = path.join(
+        resources.home("nemoclaw-cli-debug-gateway-log-").home,
+        "openshell-args.log",
+      );
       const env = createDebugCommandTestEnv(resources, "nemoclaw-cli-debug-gateway-", {
         gatewayPort: 18080,
         openshellArgsLog: argsLog,

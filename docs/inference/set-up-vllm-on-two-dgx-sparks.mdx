@@ -50,6 +50,9 @@ The current profile declares `nodeCount: 2`, so its strict selection requires on
 Set `NEMOCLAW_SERVING_PRESET=vllm.dgx-spark-gb10.dual.deepseek-v4-flash-0731` to request the serving profile.
 Either setting makes qualification strict, so a missed requirement stops setup instead of selecting the single-DGX Spark profile.
 
+If an interrupted preset-driven install recorded a model, `$$nemoclaw onboard --resume` verifies that it matches the preset before runtime mutation.
+A mismatch stops setup and directs you to `$$nemoclaw onboard --fresh` to discard the interrupted session.
+
 ## Prepare Both Systems
 
 Prepare both DGX Spark systems before you run the installer.

@@ -31,7 +31,7 @@ export default class GatewayRestartCliCommand extends NemoClawCommand {
 
   public async run(): Promise<void> {
     const { args, flags } = await this.parse(GatewayRestartCliCommand);
-    const result = restartSandboxGateway(args.sandboxName, { quiet: flags.quiet === true });
+    const result = await restartSandboxGateway(args.sandboxName, { quiet: flags.quiet === true });
     if (!result.ok) {
       this.setExitCode(1);
     }

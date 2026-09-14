@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import YAML from "yaml";
+import { validateNemoClawConfig } from "../../../src/lib/config/schema.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { resultText } from "../fixtures/clients/index.ts";
@@ -167,6 +169,32 @@ export async function reuseBraveSandboxWithWebSearchDisabled(
   );
 }
 
+export async function exportBraveConfig(
+  host: HostCliClient,
+  outputPath: string,
+  artifactName: string,
+  redactionValues: string[],
+): Promise<ShellProbeResult> {
+  return await host.command(
+    "node",
+    [CLI_ENTRYPOINT, "config", "export", SANDBOX_NAME, "--output", outputPath, "--json"],
+    { artifactName, cwd: REPO_ROOT, env: commandEnv(), redactionValues, timeoutMs: 60_000 },
+  );
+}
+
+/** Validate private export output before retaining only public spec evidence. */
+export function assertBraveExport(raw: string, credentialValues: readonly string[]) {
+  for (const value of credentialValues) {
+    expect(raw.includes(value), "Export must omit credential values").toBe(false);
+  }
+  const document = validateNemoClawConfig(YAML.parse(raw));
+  const webSearch = document.spec.sandboxes[0]?.integrations?.webSearch;
+  expect(webSearch?.provider).toBe("brave");
+  expect(webSearch?.agentRefs).toEqual(["primary"]);
+  expect(webSearch?.credential.env).toBe("BRAVE_API_KEY");
+  return document.spec;
+}
+
 export function assertBraveConfig(configText: string): string {
   const parsedConfig = JSON.parse(configText) as {
     tools?: { web?: { search?: { enabled?: unknown; provider?: unknown; apiKey?: unknown } } };
@@ -279,12 +307,4 @@ esac`,
     { artifactName: "phase-4c-shell-credential-boundary", timeoutMs: 60_000, redactionValues },
   );
   expect(probe.exitCode, "BRAVE_API_KEY is raw in the sandbox login shell environment").toBe(0);
-}
-
-export function assertBraveResponse(body: string): void {
-  const status = body.match(/HTTP_STATUS:(\d{3})/)?.[1];
-  expect(status, body).toBe("200");
-  const json = body.replace(/\n?HTTP_STATUS:\d{3}\s*$/u, "");
-  const braveResponse = JSON.parse(json) as { web?: { results?: unknown[] } };
-  expect(braveResponse.web?.results?.length ?? 0, json.slice(0, 500)).toBeGreaterThan(0);
 }

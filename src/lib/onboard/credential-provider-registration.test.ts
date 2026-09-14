@@ -215,7 +215,7 @@ describe("credential provider registration", () => {
     },
   ])(
     "reuses a tokenless Hermes Discord provider only when its static profile $condition",
-    ({ endpoints, expected }) => {
+    async ({ endpoints, expected }) => {
       const session = { stagedCredentialProviders: [] } as unknown as Session;
       const runOpenshell = vi.fn((args: string[]) =>
         args.includes("profile") && args.includes("export")
@@ -235,7 +235,7 @@ describe("credential provider registration", () => {
       const registration = createCredentialProviderRegistration(deps);
 
       expect(
-        registration.providerMatchesGatewayCredential(
+        await registration.providerMatchesGatewayCredential(
           "alpha-discord-bridge",
           "discord-hermes-static-v1",
           "DISCORD_BOT_TOKEN",
@@ -262,7 +262,7 @@ describe("credential provider registration", () => {
     },
   );
 
-  it("uses one selected gateway for static profile and provider identity", () => {
+  it("uses one selected gateway for static profile and provider identity", async () => {
     const session = { stagedCredentialProviders: [] } as unknown as Session;
     const commandResults = new Map([
       [
@@ -290,7 +290,7 @@ describe("credential provider registration", () => {
     const registration = createCredentialProviderRegistration(deps);
 
     expect(
-      registration.providerMatchesGatewayCredential(
+      await registration.providerMatchesGatewayCredential(
         "alpha-discord-bridge",
         "discord-hermes-static-v1",
         "DISCORD_BOT_TOKEN",
@@ -325,7 +325,7 @@ describe("credential provider registration", () => {
     {
       condition: "malformed provider metadata",
       result: () => ({ status: 0, stdout: "unexpected output" }),
-      expected: { kind: "collision" as const },
+      expected: { kind: "indeterminate" as const },
     },
     {
       condition: "a thrown gateway command",
@@ -334,14 +334,14 @@ describe("credential provider registration", () => {
       },
       expected: { kind: "indeterminate" as const },
     },
-  ])("preserves $condition when inspecting a credential binding", ({ result, expected }) => {
+  ])("preserves $condition when inspecting a credential binding", async ({ result, expected }) => {
     const session = { stagedCredentialProviders: [] } as unknown as Session;
     const registration = createCredentialProviderRegistration(
       registrationDeps(vi.fn(result), session),
     );
 
     expect(
-      registration.inspectGatewayCredential(
+      await registration.inspectGatewayCredential(
         "alpha-telegram-bridge",
         "nemoclaw-mcp-v1",
         "TELEGRAM_BOT_TOKEN",
@@ -349,7 +349,7 @@ describe("credential provider registration", () => {
     ).toEqual(expected);
   });
 
-  it("treats a failed static profile inspection as indeterminate", () => {
+  it("treats a failed static profile inspection as indeterminate", async () => {
     const session = { stagedCredentialProviders: [] } as unknown as Session;
     const runOpenshell = vi.fn((args: string[]) =>
       args.includes("profile")
@@ -361,7 +361,7 @@ describe("credential provider registration", () => {
     const registration = createCredentialProviderRegistration(deps);
 
     expect(
-      registration.inspectGatewayCredential(
+      await registration.inspectGatewayCredential(
         "alpha-discord-bridge",
         "discord-hermes-static-v1",
         "DISCORD_BOT_TOKEN",
@@ -432,16 +432,20 @@ describe("credential provider registration", () => {
     },
   ])(
     "records migration according to the value sent when $condition",
-    ({ env, ambientValue, expectedMigrated }) => {
+    async ({ env, ambientValue, expectedMigrated }) => {
       const session = { stagedCredentialProviders: [] } as unknown as Session;
-      const runOpenshell = vi.fn(() => ({ status: 0, stdout: "", stderr: "" }));
+      const runOpenshell = vi.fn((args: string[]) =>
+        args[1] === "get"
+          ? providerMetadata("compatible-endpoint", "openai", "COMPATIBLE_API_KEY")
+          : { status: 0, stdout: "", stderr: "" },
+      );
       const deps = registrationDeps(runOpenshell, session);
       deps.getCredential = vi.fn(() => ambientValue);
       deps.stagedLegacyValues = new Map([["COMPATIBLE_API_KEY", "legacy-key"]]);
       deps.migratedLegacyKeys.add("COMPATIBLE_API_KEY");
       const registration = createCredentialProviderRegistration(deps);
 
-      const result = registration.upsertProvider(
+      const result = await registration.upsertProvider(
         "compatible-endpoint",
         "openai",
         "COMPATIBLE_API_KEY",
@@ -460,7 +464,7 @@ describe("credential provider registration", () => {
     },
   );
 
-  it("does not record migration when provider registration fails", () => {
+  it("does not record migration when provider registration fails", async () => {
     const session = { stagedCredentialProviders: [] } as unknown as Session;
     const runOpenshell = vi.fn((args: string[]) => ({
       status: args[1] === "get" ? 1 : 9,
@@ -471,7 +475,7 @@ describe("credential provider registration", () => {
     deps.stagedLegacyValues = new Map([["COMPATIBLE_API_KEY", "legacy-key"]]);
     const registration = createCredentialProviderRegistration(deps);
 
-    const result = registration.upsertProvider(
+    const result = await registration.upsertProvider(
       "compatible-endpoint",
       "openai",
       "COMPATIBLE_API_KEY",
@@ -920,10 +924,7 @@ describe("credential provider registration", () => {
       sandboxCreateProviderArgs: ["--provider", providerName],
     });
     const cleanup = vi.spyOn(MessagingSetupApplier, "cleanupProvidersAtOpenShell");
-    const deps = registrationDeps(
-      vi.fn(),
-      { stagedCredentialProviders: [] } as unknown as Session,
-    );
+    const deps = registrationDeps(vi.fn(), { stagedCredentialProviders: [] } as unknown as Session);
     deps.stagedLegacyValues = new Map([["DISCORD_BOT_TOKEN", DISCORD_SECRET]]);
     deps.persistMigratedLegacyKeys = vi.fn(() => {
       throw new Error("receipt persistence failed");

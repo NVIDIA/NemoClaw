@@ -18,7 +18,6 @@ describe("reviewed npm audit entry point", () => {
       const result = spawnSync(
         process.execPath,
         [
-          "--experimental-strip-types",
           "--input-type=module",
           "--eval",
           `process.argv[1] = ${JSON.stringify(path.join(root, "missing-entrypoint"))}; await import(${JSON.stringify(pathToFileURL(path.join(REPO_ROOT, "scripts/audit-reviewed-npm-graph.mts")).href)});`,

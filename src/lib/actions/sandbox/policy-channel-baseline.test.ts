@@ -43,7 +43,6 @@ const NOUS_ENTRY: PolicyObject = {
   endpoints: [{ host: "nousresearch.com", port: 443 }],
 };
 
-let exitSpy: MockInstance;
 let promptMock: MockInstance;
 let excludeBaselineEntryMock: MockInstance;
 let restoreBaselineEntryMock: MockInstance;
@@ -73,7 +72,7 @@ beforeEach(() => {
   arrangeTerminal(true);
   vi.spyOn(console, "log").mockImplementation(() => undefined);
   vi.spyOn(console, "error").mockImplementation(() => undefined);
-  exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+  vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
     throw new ExitError(code);
   }) as never);
   promptMock = vi.spyOn(store, "prompt").mockResolvedValue("y");
@@ -87,8 +86,8 @@ beforeEach(() => {
     key === "nous_research" ? NOUS_ENTRY : null,
   );
   vi.spyOn(policies, "getSandboxBaselineEntryDigest").mockReturnValue("digest-1");
-  excludeBaselineEntryMock = vi.spyOn(policies, "excludeBaselineEntry").mockReturnValue(true);
-  restoreBaselineEntryMock = vi.spyOn(policies, "restoreBaselineEntry").mockReturnValue(true);
+  excludeBaselineEntryMock = vi.spyOn(policies, "excludeBaselineEntry").mockResolvedValue(true);
+  restoreBaselineEntryMock = vi.spyOn(policies, "restoreBaselineEntry").mockResolvedValue(true);
 });
 
 afterEach(() => {

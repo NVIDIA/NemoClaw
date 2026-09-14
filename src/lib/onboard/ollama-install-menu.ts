@@ -164,9 +164,7 @@ export function resolveOllamaInstallMenuEntry(
   // installed binary meets the floor. A stale daemon without a local binary
   // still needs the installer to provide one.
   const binaryNeedsUpgrade =
-    localUpgradeApplies &&
-    !installedBinaryMeetsMinimum &&
-    (input.hasOllama || daemonNeedsUpgrade);
+    localUpgradeApplies && !installedBinaryMeetsMinimum && (input.hasOllama || daemonNeedsUpgrade);
   const hasUpgradableOllama = binaryNeedsUpgrade || daemonNeedsUpgrade;
   // A Windows-host install only covers the local-inference need when the
   // sandbox can route to it. Under a container runtime without that routing,

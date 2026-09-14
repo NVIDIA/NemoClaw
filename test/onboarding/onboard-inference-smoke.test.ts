@@ -16,6 +16,13 @@ import { testTimeoutOptions } from "../helpers/timeouts";
 // bash or the scenario framework. Refs #5098, #4349.
 const REPO_ROOT = path.join(import.meta.dirname, "../..");
 
+function hasTokenSequence(command: string, sequence: readonly string[]): boolean {
+  const tokens = command.trim().split(/\s+/);
+  return tokens.some((_, index) =>
+    sequence.every((expected, offset) => tokens[index + offset] === expected),
+  );
+}
+
 describe("onboard inference smoke guard (#3253)", () => {
   it(
     "rejects a configured OpenAI-compatible route when chat/completions returns 503",
@@ -25,6 +32,7 @@ describe("onboard inference smoke guard (#3253)", () => {
       const fakeBin = path.join(tmpDir, "bin");
       const scriptPath = path.join(tmpDir, "setup-inference-smoke-check.cjs");
       const curlLogPath = path.join(tmpDir, "curl-probes.log");
+      const commandLogPath = path.join(tmpDir, "openshell-commands.log");
       const onboardPath = JSON.stringify(path.join(REPO_ROOT, "src", "lib", "onboard.ts"));
       const runnerPath = JSON.stringify(path.join(REPO_ROOT, "src", "lib", "runner.ts"));
       const registryPath = JSON.stringify(
@@ -70,10 +78,15 @@ const normalize = (command) => (Array.isArray(command) ? command.join(" ") : Str
 runner.run = (command) => {
   const text = normalize(command);
   calls.push(["run", text]);
+  require("node:fs").appendFileSync(process.env.NEMOCLAW_FAKE_COMMAND_LOG, text + "\n");
   const profileResult = require(${onboardScriptMocksPath}).mockManagedEndpointlessProviderProfileRun(command);
   if (profileResult !== null) return profileResult;
-  if (text.includes("provider") && text.includes("upsert")) {
-    return { status: 0, stdout: "Created provider compatible-endpoint\n", stderr: "" };
+  if (text.includes("provider get") && text.includes("compatible-endpoint")) {
+    return {
+      status: 1,
+      stdout: "",
+      stderr: "provider 'compatible-endpoint' not found",
+    };
   }
   if (text.includes("inference") && text.includes("set")) {
     return { status: 0, stdout: "Inference configured\n", stderr: "" };
@@ -149,6 +162,7 @@ const setupInference = createSetupInference({
             VITEST: "false",
             NEMOCLAW_TEST_NO_SLEEP: "1",
             NEMOCLAW_FAKE_CURL_LOG: curlLogPath,
+            NEMOCLAW_FAKE_COMMAND_LOG: commandLogPath,
             BROKEN_API_KEY: "test-key",
           },
           timeout: 80_000,
@@ -159,6 +173,26 @@ const setupInference = createSetupInference({
           result.status,
           0,
           `setupInference accepted a configured route without proving chat/completions; output:\n${output}`,
+        );
+
+        const commands = fs.readFileSync(commandLogPath, "utf8").trim().split("\n");
+        const providerCreateIndex = commands.findIndex(
+          (command) =>
+            hasTokenSequence(command, ["provider", "create"]) &&
+            hasTokenSequence(command, ["-g", "nemoclaw"]) &&
+            hasTokenSequence(command, ["--name", "compatible-endpoint"]),
+        );
+        const inferenceSetIndex = commands.findIndex(
+          (command) =>
+            hasTokenSequence(command, ["inference", "set"]) &&
+            hasTokenSequence(command, ["-g", "nemoclaw"]) &&
+            hasTokenSequence(command, ["--provider", "compatible-endpoint"]),
+        );
+        assert.ok(providerCreateIndex >= 0, "setupInference did not create compatible-endpoint");
+        assert.ok(inferenceSetIndex >= 0, "setupInference did not configure inference");
+        assert.ok(
+          providerCreateIndex < inferenceSetIndex,
+          "setupInference configured inference before creating compatible-endpoint",
         );
 
         const expectedDiagnostics = [

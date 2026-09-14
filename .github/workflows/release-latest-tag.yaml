@@ -103,5 +103,5 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
         run: >-
-          node --experimental-strip-types --no-warnings scripts/retire-release-label.mts
+          node --no-warnings scripts/retire-release-label.mts
           "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY"

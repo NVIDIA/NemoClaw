@@ -7,10 +7,7 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import {
-  type OnboardEntryOptionsDeps,
-  resolveOnboardEntryOptions,
-} from "../onboard/entry-options";
+import { type OnboardEntryOptionsDeps, resolveOnboardEntryOptions } from "../onboard/entry-options";
 import { hasMigratableLegacySandbox, migrateLegacyPortState } from "./legacy-port-migration";
 import {
   listRetainedSandboxRecoveryRecords,
@@ -447,45 +444,48 @@ describe("legacy non-default gateway state migration", () => {
     const shared = path.join(home, ".nemoclaw");
     const selected = path.join(shared, "gateways", "9123");
     const recoveryFile = path.join(shared, "retained-sandbox-recovery.json");
+    const lockFile = path.join(root(shared, selected), "onboard.lock");
     recordRecovery(recoveryFile, "port-box", 9123, "d");
     const before = fs.readFileSync(recoveryFile, "utf8");
     fs.mkdirSync(root(shared, selected), { recursive: true });
-    fs.writeFileSync(path.join(root(shared, selected), "onboard.lock"), "active writer");
+    fs.writeFileSync(lockFile, "active writer");
 
     expect(() => migrateLegacyPortState({ home, gatewayPort: 9123 })).toThrow(
-      /onboarding lock .* is present/u,
+      `onboarding lock ${lockFile} is present; confirm that no NemoClaw onboarding process in any environment sharing this state root is active, then remove only ${lockFile} and retry; migration will not remove it automatically`,
     );
+    expect(fs.readFileSync(lockFile, "utf8")).toBe("active writer");
     expect(fs.readFileSync(recoveryFile, "utf8")).toBe(before);
     expect(fs.existsSync(path.join(selected, "retained-sandbox-recovery.json"))).toBe(false);
   });
 
-  it.each(
-    ["ollama-proxy-token", "ollama-proxy-port", "ollama-auth-proxy.pid"],
-  )("keeps host-shared Ollama proxy state out of a non-default gateway migration [%s]", (entry) => {
-    const home = makeHome();
-    const shared = path.join(home, ".nemoclaw");
-    const selected = path.join(shared, "gateways", "9123");
-    writeJson(path.join(shared, "sandboxes.json"), {
-      defaultSandbox: "port-box",
-      sandboxes: {
-        "port-box": { name: "port-box", gatewayName: "nemoclaw-9123", gatewayPort: 9123 },
-      },
-    });
-    writeJson(path.join(shared, "credentials.json"), { NVIDIA_API_KEY: "selected-secret" });
-    fs.writeFileSync(path.join(shared, "ollama-proxy-token"), "host-token\n");
-    fs.writeFileSync(path.join(shared, "ollama-proxy-port"), "11435\n");
-    fs.writeFileSync(path.join(shared, "ollama-auth-proxy.pid"), "4242\n");
+  it.each(["ollama-proxy-token", "ollama-proxy-port", "ollama-auth-proxy.pid"])(
+    "keeps host-shared Ollama proxy state out of a non-default gateway migration [%s]",
+    (entry) => {
+      const home = makeHome();
+      const shared = path.join(home, ".nemoclaw");
+      const selected = path.join(shared, "gateways", "9123");
+      writeJson(path.join(shared, "sandboxes.json"), {
+        defaultSandbox: "port-box",
+        sandboxes: {
+          "port-box": { name: "port-box", gatewayName: "nemoclaw-9123", gatewayPort: 9123 },
+        },
+      });
+      writeJson(path.join(shared, "credentials.json"), { NVIDIA_API_KEY: "selected-secret" });
+      fs.writeFileSync(path.join(shared, "ollama-proxy-token"), "host-token\n");
+      fs.writeFileSync(path.join(shared, "ollama-proxy-port"), "11435\n");
+      fs.writeFileSync(path.join(shared, "ollama-auth-proxy.pid"), "4242\n");
 
-    const result = migrateLegacyPortState({ home, gatewayPort: 9123 });
+      const result = migrateLegacyPortState({ home, gatewayPort: 9123 });
 
-    expect(result.warnings).toEqual([]);
+      expect(result.warnings).toEqual([]);
 
-    expect(fs.existsSync(path.join(shared, entry))).toBe(true);
-    expect(fs.existsSync(path.join(selected, entry))).toBe(false);
+      expect(fs.existsSync(path.join(shared, entry))).toBe(true);
+      expect(fs.existsSync(path.join(selected, entry))).toBe(false);
 
-    expect(fs.existsSync(path.join(shared, "credentials.json"))).toBe(false);
-    expect(fs.existsSync(path.join(selected, "credentials.json"))).toBe(true);
-  });
+      expect(fs.existsSync(path.join(shared, "credentials.json"))).toBe(false);
+      expect(fs.existsSync(path.join(selected, "credentials.json"))).toBe(true);
+    },
+  );
 
   it.each([8080, 9123])(
     "removes only generated stale migration-intent directories for gateway port %i",

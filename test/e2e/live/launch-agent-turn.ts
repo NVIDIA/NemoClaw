@@ -3,10 +3,37 @@
 
 import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 
 import { resultText } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
+
+const OPENCLAW_LAUNCH_PROVIDER_ATTEMPTS = 2;
+const OPENCLAW_LAUNCH_PROVIDER_RETRY_DELAY_MS = 1_000;
+const OPENCLAW_LAUNCH_SESSION_TIMEOUT_MS = 280_000;
+const OPENCLAW_LAUNCH_READINESS_PROBE_TIMEOUT_MS = 360_000;
+export const OPENCLAW_LAUNCH_READINESS_LEASE_MAXIMUM_MS =
+  OPENCLAW_LAUNCH_READINESS_PROBE_TIMEOUT_MS +
+  2 *
+    (OPENCLAW_LAUNCH_PROVIDER_ATTEMPTS * OPENCLAW_LAUNCH_SESSION_TIMEOUT_MS +
+      (OPENCLAW_LAUNCH_PROVIDER_ATTEMPTS - 1) * OPENCLAW_LAUNCH_PROVIDER_RETRY_DELAY_MS);
+export const OPENCLAW_LAUNCH_READINESS_LEASE_ACCEPTANCE_TIMEOUT_MS = 30 * 60_000;
+export const OPENCLAW_PROVIDER_UNAVAILABLE_MARKER =
+  "nemoclaw.e2e.launch-failure=provider-unavailable";
+const OPENCLAW_PROVIDER_UNAVAILABLE_FAILURE_PREFIX =
+  "launch did not record the required structured session turns\n";
+
+function isTransientProviderAvailabilityFailure(
+  result: Pick<ShellProbeResult, "stderr">,
+  runId: string,
+): boolean {
+  const finalMarker = `${OPENCLAW_PROVIDER_UNAVAILABLE_MARKER}:${runId}\n`;
+  return (
+    result.stderr.startsWith(OPENCLAW_PROVIDER_UNAVAILABLE_FAILURE_PREFIX) &&
+    result.stderr.endsWith(`\n${finalMarker}`)
+  );
+}
 
 export const OPENCLAW_LAUNCH_RUNTIME_ENV_SCRIPT =
   'if [ -r "/tmp/nemoclaw-proxy-env.sh" ]; then builtin source "/tmp/nemoclaw-proxy-env.sh" || exit $?; fi; builtin unset OPENCLAW_GATEWAY_TOKEN; builtin exec -- "$@"';
@@ -338,18 +365,16 @@ process.execve("/usr/bin/env", ["/usr/bin/env", ...originalArgv], process.env);
 fail("pty_execve_failed");
 `;
 
-// The host shim replaces argv only for the matching OpenClaw launch. It removes
-// its private launch variables before every call to the pinned OpenShell binary.
-export const OPENCLAW_LAUNCH_OPENSHELL_SHIM_SCRIPT = String.raw`#!/usr/bin/env node
+// Intercept only the final TUI spawn; forward ownership still sees the real binary.
+export const OPENCLAW_LAUNCH_OPENSHELL_PRELOAD_SCRIPT = String.raw`// Health-probe Workers replay startup preloads without the CLI's launch authority.
+if (!require("node:worker_threads").isMainThread) return;
 const childProcess = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
+const { syncBuiltinESMExports } = require("node:module");
 
-const argv = process.argv.slice(2);
-// Direct CLI exec paths can inherit launch authority that filtered helpers omit.
 const authorityNames = Object.keys(process.env).filter(
   (name) =>
-    name === "NEMOCLAW_OPENSHELL_BIN" ||
     name === "NEMOCLAW_OPENSHELL_COMMAND" ||
     name.startsWith("NEMOCLAW_LAUNCH_") ||
     name.startsWith("OPENSHELL_NEMOCLAW_LAUNCH_"),
@@ -371,105 +396,110 @@ function arraysEqual(left, right) {
   return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
-function runRealOpenShell(nextArgv) {
-  const env = { ...process.env };
-  for (const name of authorityNames) delete env[name];
-  const result = childProcess.spawnSync(realOpenShell, nextArgv, {
-    env,
-    stdio: "inherit",
-    timeout: 240_000,
-    killSignal: "SIGKILL",
-  });
-  if (result.error) fail("openshell_shim_invocation_failed");
-  if (result.status === null) fail("openshell_shim_signaled");
-  process.exit(result.status);
+if (!path.isAbsolute(realOpenShell || "")) fail("openshell_preload_authority_invalid");
+if (!/^[0-9a-f]{32}$/.test(runId || "") || !path.isAbsolute(interceptPath || "")) {
+  fail("openshell_preload_receipt_invalid");
 }
+if (!monitorStarterScript || !runtimeEnvScript) fail("openshell_preload_script_missing");
 
-if (!path.isAbsolute(realOpenShell || "")) fail("openshell_shim_authority_invalid");
-if (!/^[0-9a-f]{32}$/.test(runId || "")) fail("openshell_shim_run_id_invalid");
-if (!path.isAbsolute(interceptPath || "")) fail("openshell_shim_intercept_path_invalid");
-if (!monitorStarterScript || !runtimeEnvScript) fail("openshell_shim_script_missing");
-
-const sameSandbox =
-  argv[0] === "sandbox" &&
-  argv[1] === "exec" &&
-  argv[2] === "--name" &&
-  argv[3] === sandboxName;
-const separator = argv.indexOf("--");
-const remoteArgv = separator === -1 ? [] : argv.slice(separator + 1);
-const expectedTail = ["bash", "-lc", "openclaw tui"];
-const hasExpectedTail = arraysEqual(remoteArgv.slice(-expectedTail.length), expectedTail);
-const launchLike = sameSandbox && hasExpectedTail;
-
-if (!launchLike) runRealOpenShell(argv);
-
-if (!/^[\x20-\x7e]{1,512}$/.test(firstInput || "")) {
-  fail("openshell_shim_first_input_invalid");
+// Do not forward test authority or recursively preload it in child Node processes.
+for (const name of authorityNames) delete process.env[name];
+const nodeOptions = process.env.NODE_OPTIONS || "";
+const preloadOption = " --require " + JSON.stringify(__filename);
+if (nodeOptions.endsWith(preloadOption)) {
+  const originalOptions = nodeOptions.slice(0, -preloadOption.length);
+  if (originalOptions) process.env.NODE_OPTIONS = originalOptions;
+  else delete process.env.NODE_OPTIONS;
 }
+const spawn = childProcess.spawn;
+childProcess.spawn = (file, argv, options) => {
+  if (file !== realOpenShell || !Array.isArray(argv)) return spawn(file, argv, options);
+  const sameSandbox =
+    argv[0] === "sandbox" &&
+    argv[1] === "exec" &&
+    argv[2] === "--name" &&
+    argv[3] === sandboxName;
+  const separator = argv.indexOf("--");
+  const remoteArgv = separator === -1 ? [] : argv.slice(separator + 1);
+  const expectedTail = ["bash", "-lc", "openclaw tui"];
+  const hasExpectedTail = arraysEqual(remoteArgv.slice(-expectedTail.length), expectedTail);
+  const launchLike = sameSandbox && hasExpectedTail;
 
-let optionIndex = 4;
-if (argv[optionIndex] === "-g") {
-  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(argv[optionIndex + 1] || "")) {
+  if (!launchLike) return spawn(file, argv, options);
+
+  if (!/^[\x20-\x7e]{1,512}$/.test(firstInput || "")) {
+    fail("openshell_preload_first_input_invalid");
+  }
+
+  let optionIndex = 4;
+  if (argv[optionIndex] === "-g") {
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(argv[optionIndex + 1] || "")) {
+      fail("openshell_launch_invocation_invalid");
+    }
+    optionIndex += 2;
+  }
+  const expectedOptions = ["--tty", "--timeout", "0", "--"];
+  const expectedRemote = [
+    "/bin/bash",
+    "--noprofile",
+    "--norc",
+    "-p",
+    "-c",
+    runtimeEnvScript,
+    "nemoclaw-runtime-env",
+    ...expectedTail,
+  ];
+  if (
+    !arraysEqual(argv.slice(optionIndex, optionIndex + expectedOptions.length), expectedOptions) ||
+    optionIndex + expectedOptions.length !== separator + 1 ||
+    !arraysEqual(remoteArgv, expectedRemote)
+  ) {
     fail("openshell_launch_invocation_invalid");
   }
-  optionIndex += 2;
-}
-const expectedOptions = ["--tty", "--timeout", "0", "--"];
-const expectedRemote = [
-  "/bin/bash",
-  "--noprofile",
-  "--norc",
-  "-p",
-  "-c",
-  runtimeEnvScript,
-  "nemoclaw-runtime-env",
-  ...expectedTail,
-];
-if (
-  !arraysEqual(argv.slice(optionIndex, optionIndex + expectedOptions.length), expectedOptions) ||
-  optionIndex + expectedOptions.length !== separator + 1 ||
-  !arraysEqual(remoteArgv, expectedRemote)
-) {
-  fail("openshell_launch_invocation_invalid");
-}
 
-try {
-  fs.writeFileSync(interceptPath, JSON.stringify({ schemaVersion: 1, runId }) + "\n", {
-    encoding: "utf8",
-    flag: "wx",
-    mode: 0o600,
+  try {
+    fs.writeFileSync(interceptPath, JSON.stringify({ schemaVersion: 1, runId }) + "\n", {
+      encoding: "utf8",
+      flag: "wx",
+      mode: 0o600,
+    });
+  } catch (error) {
+    if (error && error.code === "EEXIST") fail("openshell_launch_intercept_duplicate");
+    fail("openshell_launch_intercept_failed");
+  }
+
+  const monitorRoot = "/tmp/nemoclaw-launch-turn-" + runId;
+  // OpenClaw submits --message only after its Gateway subscription and history
+  // load complete. Use a positional parameter so the generated input never
+  // enters shell source.
+  const launchRemoteArgv = [
+    ...remoteArgv.slice(0, -1),
+    'exec openclaw tui --message "$1"',
+    "nemoclaw-launch-first-turn",
+    firstInput,
+  ];
+  const replacement = [
+    ...argv.slice(0, separator + 1),
+    "node",
+    "-e",
+    monitorStarterScript,
+    runId,
+    monitorRoot,
+    ...launchRemoteArgv,
+  ];
+  return spawn(file, replacement, {
+    ...options,
+    timeout: Math.min(options?.timeout || 240_000, 240_000),
+    killSignal: "SIGKILL",
   });
-} catch (error) {
-  if (error && error.code === "EEXIST") fail("openshell_launch_intercept_duplicate");
-  fail("openshell_launch_intercept_failed");
-}
-
-const monitorRoot = "/tmp/nemoclaw-launch-turn-" + runId;
-// OpenClaw submits --message only after its Gateway subscription and history
-// load complete. Use a positional parameter so the generated input never
-// enters shell source.
-const launchRemoteArgv = [
-  ...remoteArgv.slice(0, -1),
-  'exec openclaw tui --message "$1"',
-  "nemoclaw-launch-first-turn",
-  firstInput,
-];
-const replacement = [
-  ...argv.slice(0, separator + 1),
-  "node",
-  "-e",
-  monitorStarterScript,
-  runId,
-  monitorRoot,
-  ...launchRemoteArgv,
-];
-runRealOpenShell(replacement);
+};
+syncBuiltinESMExports();
 `;
 
-// OpenClaw owns the JSONL session store and does not expose a structured
-// result from `nemoclaw launch`. This verifier records an in-sandbox baseline,
-// then qualifies only complete user and assistant records appended after that
-// baseline. Session content never moves to the host.
+// OpenClaw owns the JSONL session store and does not expose a structured result
+// from `nemoclaw launch`. This verifier records an in-sandbox baseline, then
+// qualifies complete turns and exact structured provider failures appended
+// after that baseline. Session content never moves to the host.
 export const OPENCLAW_SESSION_EVIDENCE_SCRIPT = String.raw`
 const crypto = require("node:crypto");
 const fs = require("node:fs");
@@ -944,6 +974,30 @@ function hasStructuredContent(message) {
   return Array.isArray(message.content) && message.content.length > 0;
 }
 
+const providerUnavailableCodes = new Set(["500", "502", "503", "504", "529"]);
+const providerUnavailableError = /^(?:litellm\.)?(?:InternalServerError|ServiceUnavailableError)(?::|$)/;
+const providerNonRetryableError =
+  /(?:authenticat|authori[sz]|unauthori[sz]ed|forbidden|invalid (?:api )?key|credential|\b(?:policy|permission)\b|\b(?:denied|blocked|prohibited)\b)/i;
+
+function isStructuredProviderUnavailable(message) {
+  const errorMessage = typeof message.errorMessage === "string" ? message.errorMessage.trim() : "";
+  const validEmptyContent = JSON.stringify(message.content) === "[]";
+  const identity = [
+    message.role,
+    validEmptyContent,
+    message.stopReason,
+    message.api,
+    message.provider,
+  ].join("\n");
+  return (
+    identity === "assistant\ntrue\nerror\nopenai-completions\ninference" &&
+    typeof message.errorCode === "string" &&
+    providerUnavailableCodes.has(message.errorCode.trim()) &&
+    providerUnavailableError.test(errorMessage) &&
+    !providerNonRetryableError.test(errorMessage)
+  );
+}
+
 function appendedMessages(fileName, baseline) {
   const { offset, complete, raw } = readCompleteSession(fileName);
   const prior = baseline[fileName];
@@ -968,7 +1022,11 @@ function appendedMessages(fileName, baseline) {
     if (!record || record.type !== "message" || !record.message) continue;
     const role = record.message.role;
     if (role !== "user" && role !== "assistant") continue;
-    messages.push({ role, hasStructuredContent: hasStructuredContent(record.message) });
+    messages.push({
+      role,
+      hasStructuredContent: hasStructuredContent(record.message),
+      providerUnavailable: isStructuredProviderUnavailable(record.message),
+    });
   }
   return messages;
 }
@@ -998,14 +1056,25 @@ function qualifyTurns() {
 
   const { messages, sessionId } = changedSessions[0];
   const expectedRoles = Array.from({ length: expectedTurns }, () => ["user", "assistant"]).flat();
+  const providerUnavailableIndex = messages.findIndex((message) => message.providerUnavailable);
   for (const [index, message] of messages.entries()) {
-    if (index >= expectedRoles.length) finish(2, "extra_message", { sessionId });
+    if (index >= expectedRoles.length || (providerUnavailableIndex !== -1 && index > providerUnavailableIndex)) {
+      const reason = index >= expectedRoles.length ? "extra_message" : "message_after_provider_unavailable";
+      finish(2, reason, { sessionId });
+    }
     if (message.role !== expectedRoles[index]) {
       finish(2, "message_order_invalid", { sessionId });
     }
-    if (!message.hasStructuredContent) finish(2, "message_content_empty", { sessionId });
+    if (!message.hasStructuredContent && !message.providerUnavailable) {
+      finish(2, "message_content_empty", { sessionId });
+    }
   }
-  if (messages.length < expectedRoles.length) finish(1);
+  const providerUnavailable = providerUnavailableIndex !== -1;
+  if (providerUnavailable || messages.length < expectedRoles.length) {
+    finish(providerUnavailable ? 3 : 1, providerUnavailable ? "provider_unavailable" : undefined, {
+      sessionId,
+    });
+  }
   finish(0);
 }
 
@@ -1043,12 +1112,13 @@ capture="$session_dir/terminal.log"
 driver_error="$session_dir/pty-driver.err"
 evidence_error="$session_dir/session-evidence.err"
 input="$session_dir/input"
-openshell_shim="$session_dir/openshell-launch-shim"
+openshell_preload="$session_dir/openshell-launch-preload.cjs"
 intercept_path="$session_dir/launch-intercept.json"
 baseline_path="/tmp/nemoclaw-launch-session-$NEMOCLAW_LAUNCH_RUN_ID.json"
 pty_monitor_root="/tmp/nemoclaw-launch-turn-$NEMOCLAW_LAUNCH_RUN_ID"
 session_pid=""
 session_deadline=""
+provider_unavailable_candidate=0
 
 remove_session_baseline() {
   session_evidence cleanup-baseline
@@ -1093,6 +1163,9 @@ cleanup() {
     cleanup_status=1
   fi
   if [[ "$original_status" != 0 ]]; then
+    case "$provider_unavailable_candidate:$cleanup_status" in
+      1:0) printf '\n%s\n' "${OPENCLAW_PROVIDER_UNAVAILABLE_MARKER}:$NEMOCLAW_LAUNCH_RUN_ID" >&2 ;;
+    esac
     exit "$original_status"
   fi
   exit "$cleanup_status"
@@ -1117,6 +1190,11 @@ fail_launch_session() {
   fi
   terminal_diagnostic
   exit 1
+}
+
+fail_provider_unavailable() {
+  provider_unavailable_candidate=1
+  fail_launch_session "launch did not record the required structured session turns"
 }
 
 session_evidence() {
@@ -1150,16 +1228,24 @@ session_evidence() {
 wait_for_turn_count() {
   local expected_turns="$1"
   local evidence_status
+  local session_active
   while (( SECONDS < session_deadline )); do
+    # Sample liveness first so an exited child receives one final evidence qualification.
+    session_active=1
+    kill -0 "$session_pid" 2>/dev/null || session_active=0
     if session_evidence qualify "$expected_turns" >/dev/null 2>"$evidence_error"; then
       return 0
     else
       evidence_status=$?
     fi
     if [[ "$evidence_status" != 1 ]]; then
-      fail_launch_session "structured session evidence was invalid or unavailable (status $evidence_status)"
+      case "$evidence_status" in
+        3) fail_provider_unavailable ;;
+      esac
+      fail_launch_session \
+        "structured session evidence was invalid or unavailable (status $evidence_status)"
     fi
-    if ! kill -0 "$session_pid" 2>/dev/null; then
+    if [[ "$session_active" != 1 ]]; then
       break
     fi
     sleep 1
@@ -1209,8 +1295,8 @@ if ! session_evidence baseline >/dev/null 2>"$evidence_error"; then
   fail_launch_session "launch could not record the structured session baseline"
 fi
 
-printf '%s' "$NEMOCLAW_LAUNCH_OPENSHELL_SHIM_SCRIPT" >"$openshell_shim"
-chmod 700 "$openshell_shim"
+printf '%s' "$NEMOCLAW_LAUNCH_OPENSHELL_PRELOAD_SCRIPT" >"$openshell_preload"
+node_options="$(node -e 'process.stdout.write((process.env.NODE_OPTIONS || "") + " --require " + JSON.stringify(require("node:fs").realpathSync(process.argv[1])))' "$openshell_preload")"
 
 mkfifo -m 600 "$input"
 if [[ -n "$NEMOCLAW_LAUNCH_ENTRYPOINT" ]]; then
@@ -1222,7 +1308,8 @@ else
     "$NEMOCLAW_LAUNCH_COMMAND" launch "$NEMOCLAW_LAUNCH_SANDBOX"
 fi
 
-NEMOCLAW_OPENSHELL_BIN="$openshell_shim" \
+NODE_OPTIONS="$node_options" \
+NEMOCLAW_OPENSHELL_BIN="$openshell_command" \
 OPENSHELL_NEMOCLAW_LAUNCH_REAL_COMMAND="$NEMOCLAW_OPENSHELL_COMMAND" \
 OPENSHELL_NEMOCLAW_LAUNCH_SANDBOX="$NEMOCLAW_LAUNCH_SANDBOX" \
 OPENSHELL_NEMOCLAW_LAUNCH_RUN_ID="$NEMOCLAW_LAUNCH_RUN_ID" \
@@ -1306,6 +1393,9 @@ if session_evidence qualify 2 >/dev/null 2>"$evidence_error"; then
   :
 else
   evidence_status=$?
+  case "$evidence_status" in
+    3) fail_provider_unavailable ;;
+  esac
   fail_launch_session "launch final structured session evidence did not qualify (status $evidence_status)"
 fi
 if ! remove_session_baseline >/dev/null 2>"$evidence_error"; then
@@ -1346,35 +1436,52 @@ export async function runOpenClawLaunchSession(
   if (!options.host.openshellCommandPath.startsWith("/")) {
     throw new Error("launch session coverage requires an absolute OpenShell command path");
   }
-  const inputs = uniqueTurnInputs();
-  const result = await options.host.command("bash", ["-lc", LAUNCH_TURN_SCRIPT], {
-    artifactName: options.artifactName,
-    env: {
-      ...options.env,
-      NEMOCLAW_LAUNCH_COMMAND: options.cliCommand,
-      NEMOCLAW_LAUNCH_ENTRYPOINT: options.cliEntrypoint ?? "",
-      NEMOCLAW_LAUNCH_EXIT_COMMAND: options.exitCommand ?? "",
-      NEMOCLAW_LAUNCH_FIRST_INPUT: inputs.first,
-      NEMOCLAW_LAUNCH_HOST_TMP_ROOT: resolve(options.env.TMPDIR || "/tmp"),
-      NEMOCLAW_LAUNCH_RUN_ID: randomUUID().replaceAll("-", ""),
-      NEMOCLAW_LAUNCH_SANDBOX: options.sandboxName,
-      NEMOCLAW_LAUNCH_SESSION_BUDGET_SECONDS: "230",
-      NEMOCLAW_LAUNCH_SECOND_INPUT: inputs.second,
-      NEMOCLAW_LAUNCH_OPENSHELL_SHIM_SCRIPT: OPENCLAW_LAUNCH_OPENSHELL_SHIM_SCRIPT,
-      NEMOCLAW_LAUNCH_PTY_MONITOR_STARTER_SCRIPT: OPENCLAW_PTY_MONITOR_STARTER_SCRIPT,
-      NEMOCLAW_LAUNCH_RUNTIME_ENV_SCRIPT: OPENCLAW_LAUNCH_RUNTIME_ENV_SCRIPT,
-      NEMOCLAW_LAUNCH_SESSION_EVIDENCE_SCRIPT: OPENCLAW_SESSION_EVIDENCE_SCRIPT,
-      NEMOCLAW_LAUNCH_SESSION_ROOT: "/sandbox/.openclaw/agents/main/sessions",
-      NEMOCLAW_OPENSHELL_COMMAND: options.host.openshellCommandPath,
-      TERM: "xterm-256color",
-    },
-    redactionValues: options.redactionValues,
-    timeoutMs: 280_000,
-  });
-  if (result.exitCode !== 0) {
-    throw new Error(`launch session failed: ${resultText(result)}`);
+  let finalFailure: ShellProbeResult | undefined;
+  let providerUnavailable = false;
+  for (let attempt = 1; attempt <= OPENCLAW_LAUNCH_PROVIDER_ATTEMPTS; attempt += 1) {
+    const inputs = uniqueTurnInputs();
+    const runId = randomUUID().replaceAll("-", "");
+    const result = await options.host.command("bash", ["-lc", LAUNCH_TURN_SCRIPT], {
+      artifactName:
+        attempt === 1
+          ? options.artifactName
+          : `${options.artifactName}-provider-retry-${String(attempt).padStart(2, "0")}`,
+      env: {
+        ...options.env,
+        NEMOCLAW_LAUNCH_COMMAND: options.cliCommand,
+        NEMOCLAW_LAUNCH_ENTRYPOINT: options.cliEntrypoint ?? "",
+        NEMOCLAW_LAUNCH_EXIT_COMMAND: options.exitCommand ?? "",
+        NEMOCLAW_LAUNCH_FIRST_INPUT: inputs.first,
+        NEMOCLAW_LAUNCH_HOST_TMP_ROOT: resolve(options.env.TMPDIR || "/tmp"),
+        NEMOCLAW_LAUNCH_RUN_ID: runId,
+        NEMOCLAW_LAUNCH_SANDBOX: options.sandboxName,
+        NEMOCLAW_LAUNCH_SESSION_BUDGET_SECONDS: "230",
+        NEMOCLAW_LAUNCH_SECOND_INPUT: inputs.second,
+        NEMOCLAW_LAUNCH_OPENSHELL_PRELOAD_SCRIPT: OPENCLAW_LAUNCH_OPENSHELL_PRELOAD_SCRIPT,
+        NEMOCLAW_LAUNCH_PTY_MONITOR_STARTER_SCRIPT: OPENCLAW_PTY_MONITOR_STARTER_SCRIPT,
+        NEMOCLAW_LAUNCH_RUNTIME_ENV_SCRIPT: OPENCLAW_LAUNCH_RUNTIME_ENV_SCRIPT,
+        NEMOCLAW_LAUNCH_SESSION_EVIDENCE_SCRIPT: OPENCLAW_SESSION_EVIDENCE_SCRIPT,
+        NEMOCLAW_LAUNCH_SESSION_ROOT: "/sandbox/.openclaw/agents/main/sessions",
+        NEMOCLAW_OPENSHELL_COMMAND: options.host.openshellCommandPath,
+        TERM: "xterm-256color",
+      },
+      redactionValues: options.redactionValues,
+      timeoutMs: OPENCLAW_LAUNCH_SESSION_TIMEOUT_MS,
+    });
+    if (result.exitCode === 0) return result;
+    finalFailure = result;
+    providerUnavailable = isTransientProviderAvailabilityFailure(result, runId);
+    if (!providerUnavailable) break;
+    if (attempt < OPENCLAW_LAUNCH_PROVIDER_ATTEMPTS) {
+      await delay(OPENCLAW_LAUNCH_PROVIDER_RETRY_DELAY_MS);
+    }
   }
-  return result;
+  const detail = finalFailure ? resultText(finalFailure) : "launch attempt was not executed";
+  throw new Error(
+    providerUnavailable
+      ? `OpenClaw launch provider unavailable after ${OPENCLAW_LAUNCH_PROVIDER_ATTEMPTS} attempts: ${detail}`
+      : `launch session failed: ${detail}`,
+  );
 }
 
 export async function runOpenClawLaunchReadinessLeaseTurns(
@@ -1387,7 +1494,7 @@ export async function runOpenClawLaunchReadinessLeaseTurns(
     artifactName: `${options.artifactName}-probe`,
     env: options.env,
     redactionValues: options.redactionValues,
-    timeoutMs: 360_000,
+    timeoutMs: OPENCLAW_LAUNCH_READINESS_PROBE_TIMEOUT_MS,
   });
   if (probe.exitCode !== 0) {
     throw new Error(`launch readiness producer failed: ${resultText(probe)}`);

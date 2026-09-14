@@ -17,12 +17,12 @@ import {
   validateHermesDashboardWorkflow,
 } from "./hermes-dashboard-workflow-boundary.mts";
 import { validateHermesGpuStartupWorkflow } from "./hermes-gpu-startup-workflow-boundary.mts";
+import { HERMES_ACP_E2E_OWNING_PATHS } from "./hermes-acp-owning-paths.mts";
 import {
   HERMES_TIMEOUT_CONTRACTS,
   HERMES_TIMEOUT_HEADROOM_MAX_MINUTES,
   HERMES_TIMEOUT_HEADROOM_MINUTES,
 } from "./hermes-timeout-contract.mts";
-import { validateLlamaCppDgxSparkQualificationWorkflow } from "./llama-cpp-dgx-spark-qualification-workflow-boundary.mts";
 import { validateManagedImageMultiarchWorkflow } from "./managed-image-multiarch-workflow-boundary.mts";
 import { validateManagedImageProtectedRuntimeWorkflow } from "./managed-image-protected-runtime-workflow-boundary.mts";
 import {
@@ -164,23 +164,6 @@ type CachedFreeStandingJobsInventory = {
 
 const SELECTOR_PATTERN = /^[A-Za-z0-9_-]+(,[A-Za-z0-9_-]+)*$/;
 const SELECTOR_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
-export const RETIRED_CONTROLLER_SELECTOR_IDS = [
-  "credential-migration",
-  "credential-sanitization",
-  "diagnostics",
-  "docs-validation",
-  "gateway-drift-preflight",
-  "gateway-health-honest",
-  "onboard-negative-paths",
-  "openshell-version-pin",
-  "sandbox-rebuild",
-  "ubuntu-repo-cli-smoke",
-  "upgrade-stale-sandbox",
-] as const;
-export const RETIRED_CONTROLLER_TARGET_SELECTOR_IDS = [
-  "sandbox-rebuild",
-  "upgrade-stale-sandbox",
-] as const;
 const LIVE_TEST_FILE_PATTERN = /test\/e2e\/live\/(?:[A-Za-z0-9._-]+\/)*[A-Za-z0-9._-]+\.test\.ts/g;
 const FREE_STANDING_JOB_MARKER = "E2E_JOB";
 const FREE_STANDING_TARGET_MARKER = "E2E_TARGET_ID";
@@ -212,7 +195,6 @@ const FREE_STANDING_SELECTOR_SPECIAL_CASES = new Set([
   "hermes-e2e",
   "hermes-gpu-startup",
   "jetson-nvmap-gpu",
-  "llama-cpp-dgx-spark-qualification",
   "managed-image-multiarch-startup",
   "managed-image-protected-runtime",
   "openshell-credential-generation-window",
@@ -279,22 +261,7 @@ const CATALOGUE_ROUTED_JOB_NAMES = [
 ] as const;
 const CATALOGUE_RUNNER_EXPRESSION =
   "${{ matrix.runner_key != '' && fromJSON(needs.generate-matrix.outputs.runner_routing)[matrix.runner_key] || matrix.runner }}";
-const COMMON_EGRESS_AGENT_SCENARIO_MATRIX = {
-  include: [
-    {
-      scenario: "openclaw-balanced-weather",
-      selector: "^common-egress.+C1.+$",
-    },
-    {
-      scenario: "openclaw-open-reference",
-      selector: "^common-egress.+C2.+$",
-    },
-    {
-      scenario: "hermes-open-reference",
-      selector: "^common-egress.+C3.+$",
-    },
-  ],
-} as const;
+
 const ROUTED_JOB_NAMES = new Set([
   ...Object.keys(ROUTED_JOB_RUNNER_EXPRESSIONS),
   ...Object.keys(MATRIX_ROUTED_JOB_RUNNER_EXPRESSIONS),
@@ -798,7 +765,11 @@ const RESTORED_GATEWAY_PAIRING_RUNTIME_FILES = new Set([
   "src/lib/adapters/openshell/restore-gateway-pairing.ts",
 ]);
 const LIVE_E2E_OWNING_FILE_JOBS = new Map<string, readonly string[]>([
+  ...HERMES_ACP_E2E_OWNING_PATHS.map((file) => [file, ["hermes-e2e"]] as const),
   ["test/e2e/lib/fake-wechat-api.mts", ["messaging-providers"]],
+  ["test/e2e/live/hermes-gpu-startup-proof.ts", ["hermes-gpu-startup"]],
+  ["test/helpers/openshell-gateway-start-output.ts", ["hermes-gpu-startup"]],
+  ["test/e2e/fixtures/openclaw-plugin-runtime-exdev-onboard.ts", ["openclaw-plugin-runtime-exdev"]],
   [
     "test/e2e/live/openclaw-plugin-runtime-exdev-trusted-prebuild.ts",
     ["openclaw-plugin-runtime-exdev"],
@@ -986,35 +957,6 @@ function requireJobStep(
   const step = namedStep(steps, name);
   if (!step) errors.push(`${jobName} job missing step: ${name}`);
   return step;
-}
-
-function requireDockerEngineRebuilds(
-  errors: string[],
-  jobName: string,
-  jobEnv: WorkflowRecord,
-  steps: readonly WorkflowStep[],
-): void {
-  const hasSeparateCacheBuilder = steps.some((step) => {
-    const uses = stringValue(step.uses);
-    return (
-      uses.startsWith("docker/setup-buildx-action@") || uses.startsWith("docker/build-push-action@")
-    );
-  });
-  const routesBuildsAwayFromDocker = steps.some((step) => {
-    const run = stringValue(step.run);
-    return (
-      Object.hasOwn(asRecord(step.env), "BUILDX_BUILDER") ||
-      /BUILDX_BUILDER(?:=|<<)/u.test(run) ||
-      /docker\s+buildx\s+use(?:\s|$)/u.test(run)
-    );
-  });
-  if (
-    Object.hasOwn(jobEnv, "BUILDX_BUILDER") ||
-    hasSeparateCacheBuilder ||
-    routesBuildsAwayFromDocker
-  ) {
-    errors.push(`${jobName} must keep rebuild builds on the Docker engine cache`);
-  }
 }
 
 function requireRunContains(
@@ -1304,14 +1246,17 @@ function requireFullShaAction(
   }
 }
 
-function isReviewedLocalHermesPlatformAction(jobName: string, step: WorkflowStep): boolean {
+function isReviewedLocalAction(jobName: string, step: WorkflowStep): boolean {
   return (
     (jobName === "managed-image-multiarch-startup" &&
       step.name === "Resolve reviewed Hermes platform base image" &&
       step.uses === TRUSTED_MULTIARCH_HERMES_PLATFORM_ACTION) ||
     (jobName === "managed-image-protected-runtime" &&
       step.name === "Resolve reviewed Hermes runtime base image" &&
-      step.uses === REVIEWED_HERMES_PLATFORM_ACTION)
+      step.uses === REVIEWED_HERMES_PLATFORM_ACTION) ||
+    (jobName === "managed-image-protected-runtime" &&
+      step.name === "Reuse or refresh reviewed audit evidence before the offline build" &&
+      step.uses === "./.github/actions/ci-reviewed-npm-audit")
   );
 }
 
@@ -1421,7 +1366,7 @@ function validateFreeStandingInventoryBoundary(
     const steps = asSteps(job.steps);
     requireNoDispatchInputInterpolation(errors, steps);
     for (const step of steps) {
-      if (step.uses && !isReviewedLocalHermesPlatformAction(jobName, step)) {
+      if (step.uses && !isReviewedLocalAction(jobName, step)) {
         requireFullShaAction(errors, step, `${jobName} step '${step.name ?? step.uses}'`);
       }
       if (/\$\{\{\s*secrets\./.test(stringValue(step.run))) {
@@ -1575,15 +1520,6 @@ function validateSharedE2eJob(errors: string[], jobs: WorkflowRecord): void {
   requireRunContains(errors, runVitest, "--reporter=test/e2e/risk-signal-reporter.ts");
 }
 
-function requireNoDockerHubAuthInRun(errors: string[], owner: string, runScript: string): void {
-  if (!runScript) return;
-  const usesDockerLogin = /\bdocker\s+login\b/i.test(runScript);
-  const referencesSecret = /\bsecrets\.[A-Za-z0-9_]+\b|\$\{\{\s*secrets\.[^}]+\}\}/.test(runScript);
-  if (usesDockerLogin || referencesSecret) {
-    errors.push(`${owner} run script must not use docker login or inline secret interpolation`);
-  }
-}
-
 function requireCanonicalDockerHubAuthRun(
   errors: string[],
   authStep: WorkflowStep | undefined,
@@ -1661,6 +1597,7 @@ function requireCanonicalDockerHubCleanupRun(
   }
 }
 
+/** Appends violations of Docker Hub credential placement and authentication ordering across E2E jobs. */
 function validateDockerHubAuthBoundary(errors: string[], jobs: WorkflowRecord): void {
   const e2eJobNames = Object.entries(jobs)
     .filter(([jobName, rawJob]) => {
@@ -1716,9 +1653,6 @@ function validateDockerHubAuthBoundary(errors: string[], jobs: WorkflowRecord): 
       }
       if (jobName === "managed-image-multiarch-startup") {
         return step.name === "Checkout trusted Hermes resolver" ? [index] : [];
-      }
-      if (jobName === "llama-cpp-dgx-spark-qualification") {
-        return step.name === "Checkout exact llama.cpp qualification candidate" ? [index] : [];
       }
       return stringValue(step.uses).startsWith("actions/checkout@") ? [index] : [];
     });
@@ -1984,14 +1918,10 @@ function validateJetsonControllerBoundary(errors: string[], jobs: WorkflowRecord
     errors.push("jetson-nvmap-gpu controller must set up Node.js");
   } else {
     requireFullShaAction(errors, setupNode, "jetson-nvmap-gpu Node setup");
-    if (asRecord(setupNode.with)["node-version"] !== 22) {
-      errors.push("jetson-nvmap-gpu controller must use Node.js 22");
-    }
   }
   const dispatch = namedStep(steps, "Dispatch exact commit to Jetson through operator backend");
   if (
-    dispatch?.run !==
-      "node --experimental-strip-types --no-warnings tools/e2e/jetson-dispatch-client.mts" ||
+    dispatch?.run !== "node --no-warnings tools/e2e/jetson-dispatch-client.mts" ||
     !isDeepStrictEqual(asRecord(dispatch?.env), {
       E2E_ARTIFACT_DIR: "${{ runner.temp }}/e2e-artifacts/live/jetson-nvmap-gpu",
       JETSON_DISPATCH_CANDIDATE_SHA: "${{ inputs.checkout_sha || github.sha }}",
@@ -2065,9 +1995,9 @@ function validateInferenceModeGeneration(
 function validateFullE2eConcurrency(errors: string[], workflow: WorkflowRecord): void {
   const concurrency = asRecord(workflow.concurrency);
   const expectedGroup =
-    "e2e-${{ github.ref }}-${{ inputs.checkout_sha != '' && format('pr-{0}', inputs.pr_number) || (inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '' && format('full-{0}', github.run_id)) || inputs.targets || 'supported' }}-${{ inputs.checkout_sha != '' && 'manual-pr' || inputs.jobs || 'all-jobs' }}";
+    "e2e-${{ github.ref }}-${{ (inputs.jobs == 'staging-brev-launchable' || inputs.jobs == 'staging-brev-launchable-identity' || inputs.include_staging_brev_launchable) && format('launchable-{0}', github.run_id) || inputs.checkout_sha != '' && format('pr-{0}', inputs.pr_number) || inputs.targets || 'supported' }}-${{ inputs.checkout_sha != '' && 'manual-pr' || inputs.jobs || 'all-jobs' }}";
   if (concurrency.group !== expectedGroup) {
-    errors.push("workflow concurrency must isolate each full dispatch with github.run_id");
+    errors.push("workflow concurrency must isolate each Launchable dispatch with github.run_id");
   }
   if (
     concurrency["cancel-in-progress"] !==
@@ -2148,11 +2078,11 @@ function validateStagingBrevLaunchableJob(errors: string[], jobs: WorkflowRecord
   const concurrency = asRecord(job.concurrency);
   if (
     concurrency.group !== "staging-brev-launchable-cpu" ||
-    Object.hasOwn(concurrency, "queue") ||
+    concurrency.queue !== "max" ||
     concurrency["cancel-in-progress"] !== false
   ) {
     errors.push(
-      "staging-brev-launchable concurrency must preserve its Launchable group without cancelling the running job or using unsupported queue keys",
+      "staging-brev-launchable concurrency must queue pending jobs in its Launchable group without cancelling the running job",
     );
   }
   const steps = asSteps(job.steps);
@@ -2180,7 +2110,7 @@ function validateStagingBrevLaunchableJob(errors: string[], jobs: WorkflowRecord
     [prepareEnv, "BREV_API_KEY", "BREV_API_KEY"],
     [prepareEnv, "BREV_ORG_ID", "BREV_ORG_ID"],
     [runEnv, "GH_TOKEN", "NEMOCLAW_IMAGE_DISPATCH_TOKEN"],
-    [runEnv, "NVIDIA_INFERENCE_API_KEY", "NVIDIA_INFERENCE_API_KEY"],
+    [runEnv, "NVIDIA_INFERENCE_API_KEY", "NVIDIA_API_KEY"],
   ] as const) {
     const expected = `\${{ ${trustedRun} && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && secrets.${secret} || '' }}`;
     if (env[key] !== expected) {
@@ -2257,10 +2187,12 @@ function validateStagingBrevLaunchableIdentityJob(errors: string[], jobs: Workfl
   const concurrency = asRecord(job.concurrency);
   if (
     concurrency.group !== "staging-brev-launchable-cpu" ||
-    Object.hasOwn(concurrency, "queue") ||
+    concurrency.queue !== "max" ||
     concurrency["cancel-in-progress"] !== false
   ) {
-    errors.push(`${jobName} must share the non-cancelling Launchable concurrency group`);
+    errors.push(
+      `${jobName} must share the Launchable concurrency group with queue: max and no cancellation`,
+    );
   }
 
   const jobEnv = asRecord(job.env);
@@ -2516,65 +2448,7 @@ function validateStagingBrevLaunchableInput(
   }
 }
 
-function validateRetiredSelectorCompatibilityJob(errors: string[], jobs: WorkflowRecord): void {
-  const job = asRecord(jobs["retired-selector-compatibility"]);
-  if (Object.keys(job).length === 0) {
-    errors.push("workflow missing retired-selector-compatibility job");
-    return;
-  }
-  const jobSelectorGate = RETIRED_CONTROLLER_SELECTOR_IDS.map(
-    (id) => `contains(format(',{0},', inputs.jobs), ',${id},')`,
-  ).join(" || ");
-  const targetSelectorGate = RETIRED_CONTROLLER_TARGET_SELECTOR_IDS.map(
-    (id) => `contains(format(',{0},', inputs.targets), ',${id},')`,
-  ).join(" || ");
-  const expectedIf = `\${{ inputs.checkout_sha != '' && (${jobSelectorGate} || ${targetSelectorGate}) }}`;
-  if (job.if !== expectedIf) {
-    errors.push(
-      "retired-selector-compatibility job selector gate must match retired selector contract",
-    );
-  }
-
-  const steps = asSteps(job.steps);
-  const checkout = steps.find((step) => stringValue(step.uses).startsWith("actions/checkout@"));
-  if (!checkout) {
-    errors.push("retired-selector-compatibility job must check out the candidate revision");
-  } else {
-    requireFullShaAction(errors, checkout, "retired-selector-compatibility checkout");
-    const checkoutWith = asRecord(checkout.with);
-    if (
-      checkoutWith.repository !== "${{ inputs.checkout_repository || github.repository }}" ||
-      checkoutWith.ref !== "${{ inputs.checkout_sha || github.sha }}" ||
-      checkoutWith["persist-credentials"] !== false
-    ) {
-      errors.push("retired-selector-compatibility job must check out the candidate revision");
-    }
-  }
-
-  const verify = namedStep(steps, "Verify retired selector replacements");
-  if (
-    stringValue(verify?.run) !== "npx tsx tools/e2e/retired-selector-compatibility.mts" ||
-    asRecord(verify?.env).JOBS !== "${{ inputs.jobs }}"
-  ) {
-    errors.push("retired-selector-compatibility job must invoke the replacement helper");
-  }
-  if (asRecord(verify?.env).TARGETS !== "${{ inputs.targets }}") {
-    errors.push("retired-selector-compatibility job must forward target selectors");
-  }
-
-  const upload = namedStep(steps, "Upload retired selector compatibility evidence");
-  if (
-    upload?.if !== "always()" ||
-    upload?.uses !== UPLOAD_E2E_ARTIFACTS_ACTION ||
-    !isDeepStrictEqual(asRecord(upload?.with), {
-      name: "e2e-retired-selector-compatibility",
-      path: "e2e-artifacts/live/retired-selector-compatibility/",
-    })
-  ) {
-    errors.push("retired-selector-compatibility job must upload compatibility evidence");
-  }
-}
-
+/** Appends violations that could detach a dispatch receipt from its trusted source and selection. */
 function validateTrustedE2eDispatchReceipt(
   errors: string[],
   generateSteps: readonly WorkflowStep[],
@@ -2586,7 +2460,6 @@ function validateTrustedE2eDispatchReceipt(
   const dispatchReceiptEnv = asRecord(dispatchReceipt?.env);
   const expectedDispatchReceiptEnv = {
     ACTOR: "${{ github.actor }}",
-    ALLOW_DGX_SPARK_RUNNER_QUEUE: "${{ inputs.allow_dgx_spark_runner_queue && 'true' || 'false' }}",
     ALLOW_JETSON_DISPATCH: "${{ inputs.allow_jetson_dispatch && 'true' || 'false' }}",
     ALLOW_JETSON_RUNNER_QUEUE: "false",
     BASE_SHA: "${{ inputs.checkout_sha != '' && inputs.base_sha || github.sha }}",
@@ -2627,7 +2500,7 @@ function validateTrustedE2eDispatchReceipt(
     "workflowRunAttempt: $workflowRunAttempt",
     "jobs: $jobs",
     "targets: $targets",
-    "allowDgxSparkRunnerQueue: $allowDgxSparkRunnerQueue",
+    "allowDgxSparkRunnerQueue: false",
     "allowJetsonDispatch: $allowJetsonDispatch",
     "allowJetsonRunnerQueue: $allowJetsonRunnerQueue",
     "includeStagingBrevLaunchable: $includeStagingBrevLaunchable",
@@ -2663,7 +2536,6 @@ function validateTrustedE2eDispatchReceipt(
   const trustedPrefix = [
     "Build trusted larger-runner routing",
     "Authenticate manual PR dispatch",
-    "Build trusted controller target matrix",
     "Record trusted E2E dispatch receipt",
     "Upload trusted E2E dispatch receipt",
   ];
@@ -2673,7 +2545,7 @@ function validateTrustedE2eDispatchReceipt(
       trustedPrefix,
     ) ||
     authenticationIndex < 0 ||
-    receiptIndex !== authenticationIndex + 2 ||
+    receiptIndex !== authenticationIndex + 1 ||
     uploadIndex !== receiptIndex + 1 ||
     checkoutIndex <= uploadIndex
   ) {
@@ -2716,12 +2588,8 @@ function validateTrustedE2ePlannerBoundary(
     errors.push("trusted E2E planner checkout must use the workflow commit without credentials");
   }
   requireFullShaAction(errors, trustedPlannerSetup, "trusted E2E planner Node setup");
-  if (
-    !isDeepStrictEqual(asRecord(trustedPlannerSetup?.with), {
-      "node-version": 22,
-    })
-  ) {
-    errors.push("trusted E2E planner must use Node 22");
+  if (Object.keys(asRecord(trustedPlannerSetup?.with)).some((key) => key !== "node-version")) {
+    errors.push("trusted E2E planner must not enable additional Node setup inputs");
   }
   if (trustedPlannerInstall?.run !== "npm ci --ignore-scripts --no-audit --no-fund") {
     errors.push("trusted E2E planner dependencies must install without lifecycle scripts");
@@ -2751,9 +2619,6 @@ function validateTrustedE2ePlannerBoundary(
     "${{ (inputs.checkout_sha == '' || steps.candidate_authorization.outputs.nvidia_owned == 'true') && 'true' || 'false' }}"
   ) {
     errors.push("matrix generation step must bind NVIDIA-owned candidate authorization");
-  }
-  if (generateEnv.NVIDIA_OWNED !== "${{ steps.candidate_authorization.outputs.nvidia_owned }}") {
-    errors.push("matrix generation step must bind the authenticated PR repository owner");
   }
 }
 
@@ -2817,6 +2682,7 @@ function validateNativePodmanDockerIsolationWorkflow(workflow: WorkflowRecord): 
   return errors;
 }
 
+/** Returns workflow contract violations before a caller dispatches E2E jobs with credentials or external resources. */
 export function validateE2eWorkflow(workflowValue: unknown): string[] {
   const workflow = asRecord(workflowValue);
   const errors: string[] = [];
@@ -2824,7 +2690,6 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   errors.push(...validateUploadE2eArtifactsWorkflowBoundary(workflow));
   errors.push(...validateHermesDashboardWorkflow(workflow as unknown as HermesDashboardWorkflow));
   errors.push(...validateHermesGpuStartupWorkflow(workflow));
-  errors.push(...validateLlamaCppDgxSparkQualificationWorkflow(workflow));
   errors.push(...validateManagedImageMultiarchWorkflow(workflow));
   errors.push(...validateManagedImageProtectedRuntimeWorkflow(workflow));
   errors.push(
@@ -2879,9 +2744,8 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   if (Object.hasOwn(jobs, "openshell-gateway-upgrade")) {
     errors.push("workflow must not define superseded openshell-gateway-upgrade job");
   }
-  validateRetiredSelectorCompatibilityJob(errors, jobs);
   const expectedRunName =
-    "${{ inputs.checkout_sha != '' && format('E2E PR #{0} ({1})', inputs.pr_number, inputs.correlation_id) || inputs.correlation_id != '' && inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '' && !inputs.allow_jetson_dispatch && !inputs.allow_dgx_spark_runner_queue && format('E2E full {0} ({1})', github.ref_name, inputs.correlation_id) || inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '' && !inputs.allow_jetson_dispatch && !inputs.allow_dgx_spark_runner_queue && format('E2E full {0}', github.ref_name) || inputs.correlation_id != '' && format('E2E {0} ({1})', github.ref_name, inputs.correlation_id) || format('E2E {0}', github.ref_name) }}";
+    "${{ inputs.checkout_sha != '' && format('E2E PR #{0} ({1})', inputs.pr_number, inputs.correlation_id) || inputs.correlation_id != '' && inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '' && !inputs.allow_jetson_dispatch && format('E2E full {0} ({1})', github.ref_name, inputs.correlation_id) || inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '' && !inputs.allow_jetson_dispatch && format('E2E full {0}', github.ref_name) || inputs.correlation_id != '' && format('E2E {0} ({1})', github.ref_name, inputs.correlation_id) || format('E2E {0}', github.ref_name) }}";
   if (workflow["run-name"] !== expectedRunName) {
     errors.push("workflow run-name must expose the unique manual-dispatch correlation ID");
   }
@@ -2901,7 +2765,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   }
   const generateOutputs = asRecord(generateMatrix.outputs);
   if (generateOutputs.matrix !== "${{ steps.matrix.outputs.matrix }}") {
-    errors.push("generate-matrix job must expose trusted controller matrix output");
+    errors.push("generate-matrix job must expose trusted planner matrix output");
   }
   if (generateOutputs.test_matrix !== "${{ steps.matrix.outputs.test_matrix }}") {
     errors.push("generate-matrix job must expose test_matrix output");
@@ -2919,122 +2783,8 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   }
   const generateSteps = asSteps(generateMatrix.steps);
   requireNoDispatchInputInterpolation(errors, generateSteps);
-  const controllerMatrix = requireJobStep(
-    errors,
-    "generate-matrix",
-    generateSteps,
-    "Build trusted controller target matrix",
-  );
-  if (controllerMatrix?.id !== "controller_matrix") {
-    errors.push("trusted controller matrix step must use id controller_matrix");
-  }
-  if (
-    controllerMatrix?.if !==
-    "${{ inputs.checkout_sha != '' && steps.candidate_authorization.outputs.nvidia_owned != 'true' }}"
-  ) {
-    errors.push("trusted controller matrix step must run only for external PR dispatches");
-  }
-  if (controllerMatrix?.shell !== "bash") {
-    errors.push("trusted controller matrix step must use bash");
-  }
-  const controllerMatrixEnv = asRecord(controllerMatrix?.env);
-  if (controllerMatrixEnv.JOBS !== "${{ inputs.jobs }}") {
-    errors.push("trusted controller matrix step must bind jobs through JOBS env");
-  }
-  if (controllerMatrixEnv.TARGETS !== "${{ inputs.targets }}") {
-    errors.push("trusted controller matrix step must bind targets through TARGETS env");
-  }
-  requireRunContains(errors, controllerMatrix, 'case "${JOBS}:${TARGETS}" in');
-  const controllerMatrixScript = stringValue(controllerMatrix?.run);
-  const policyTarget = "ubuntu-policy-custom-missing-presets-negative";
-  const deepAgentsTarget = "ubuntu-repo-cloud-langchain-deepagents-code";
-  const openClawTarget = "ubuntu-repo-cloud-openclaw";
-  const postRebootTarget = "ubuntu-repo-docker-post-reboot-recovery";
-  const defaultMappings = [policyTarget, deepAgentsTarget, openClawTarget, postRebootTarget]
-    .map((target) => `{"id":"${target}","runner":"ubuntu-latest"}`)
-    .join(",");
-  const deepAgentsMapping = `{"id":"${deepAgentsTarget}","runner":"ubuntu-latest","label":"${deepAgentsTarget}"}`;
-  const postRebootMapping = `{"id":"${postRebootTarget}","runner":"ubuntu-latest","label":"${postRebootTarget}"}`;
-  const defaultTestMappings = [
-    {
-      file: "test/onboarding/onboard-managed-image-buildless-e2e.test.ts",
-      id: "onboard-managed-image-buildless-e2e",
-      project: "integration",
-    },
-    {
-      file: "test/platform/images/vllm-docker-storage.test.ts",
-      id: "vllm-docker-storage",
-      project: "integration",
-    },
-  ]
-    .map(({ file, id, project }) => `{"id":"${id}","file":"${file}","project":"${project}"}`)
-    .join(",");
-  requireRunContains(errors, controllerMatrix, `matrix='[${defaultMappings}]'`);
-  requireRunContains(errors, controllerMatrix, `test_matrix='[${defaultTestMappings}]'`);
-  const trustedControllerMatrixScript = [
-    "set -euo pipefail",
-    "test_matrix='[]'",
-    'case "${JOBS}:${TARGETS}" in',
-    ":)",
-    `matrix='[${defaultMappings}]'`,
-    `test_matrix='[${defaultTestMappings}]'`,
-    ";;",
-    "inference-routing: | managed-image-protected-runtime: | native-runtime-qualification-producer: | :jetson-nvmap-gpu)",
-    "matrix='[]'",
-    ";;",
-    `:${deepAgentsTarget})`,
-    `matrix='[${deepAgentsMapping}]'`,
-    ";;",
-    `:${postRebootTarget})`,
-    `matrix='[${postRebootMapping}]'`,
-    ";;",
-    `:${deepAgentsTarget},${postRebootTarget})`,
-    `matrix='[${deepAgentsMapping},${postRebootMapping}]'`,
-    ";;",
-    "*)",
-    'echo "::error::PR E2E target is not approved by the trusted controller" >&2',
-    "exit 1",
-    ";;",
-    "esac",
-    `printf 'matrix=%s\\n' "\${matrix}" >> "\${GITHUB_OUTPUT}"`,
-    `printf 'test_matrix=%s\\n' "\${test_matrix}" >> "\${GITHUB_OUTPUT}"`,
-  ];
-  const controllerMatrixLines = controllerMatrixScript
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean);
-  if (!isDeepStrictEqual(controllerMatrixLines, trustedControllerMatrixScript)) {
-    errors.push("trusted controller matrix must pin typed target runner to ubuntu-latest");
-  }
-  requireRunContains(
-    errors,
-    controllerMatrix,
-    "PR E2E target is not approved by the trusted controller",
-  );
-  requireRunContains(
-    errors,
-    controllerMatrix,
-    `printf 'matrix=%s\\n' "\${matrix}" >> "\${GITHUB_OUTPUT}"`,
-  );
   const generateCheckout = requireStep(errors, generateSteps, "Check out E2E candidate");
   if (!generateCheckout) errors.push("generate-matrix job missing checkout step");
-  const candidateAuthorization = generateSteps.find(
-    (step) => stringValue(step.id) === "candidate_authorization",
-  );
-  if (
-    controllerMatrix &&
-    candidateAuthorization &&
-    generateSteps.indexOf(controllerMatrix) <= generateSteps.indexOf(candidateAuthorization)
-  ) {
-    errors.push("external controller matrix must run after PR ownership authentication");
-  }
-  if (
-    controllerMatrix &&
-    generateCheckout &&
-    generateSteps.indexOf(controllerMatrix) >= generateSteps.indexOf(generateCheckout)
-  ) {
-    errors.push("external controller matrix must run before PR checkout");
-  }
   requireFullShaAction(errors, generateCheckout, "generate-matrix checkout");
   if (asRecord(generateCheckout?.with)["persist-credentials"] !== false) {
     errors.push("generate-matrix checkout step must set persist-credentials=false");
@@ -3043,15 +2793,6 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   const generate = requireStep(errors, generateSteps, "Generate E2E target matrix");
   validateTrustedE2ePlannerBoundary(errors, generateSteps, generate, generateCheckout);
   const generateEnv = asRecord(generate?.env);
-  if (generateEnv.CHECKOUT_SHA !== "${{ inputs.checkout_sha }}") {
-    errors.push("matrix generation step must bind controller checkout through CHECKOUT_SHA env");
-  }
-  if (generateEnv.CONTROLLER_MATRIX !== "${{ steps.controller_matrix.outputs.matrix }}") {
-    errors.push("matrix generation step must receive the trusted controller matrix");
-  }
-  if (generateEnv.CONTROLLER_TEST_MATRIX !== "${{ steps.controller_matrix.outputs.test_matrix }}") {
-    errors.push("matrix generation step must receive the trusted controller test matrix");
-  }
   if (generateEnv.JOBS !== "${{ inputs.jobs }}") {
     errors.push("matrix generation step must pass jobs through JOBS env");
   }
@@ -3062,22 +2803,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   requireRunContains(errors, generate, "npx --no-install tsx tools/e2e/workflow-plan.mts");
   requireRunContains(errors, generate, "--ci-output");
   requireRunContains(errors, generate, "git diff --name-only --diff-filter=ACMRD");
-  requireRunContains(
-    errors,
-    generate,
-    'if [ -n "${CHECKOUT_SHA}" ] && [ "${NVIDIA_OWNED}" != "true" ]',
-  );
   requireRunContains(errors, generate, "GITHUB_OUTPUT");
-  requireRunContains(errors, generate, "expected_controller_matrix=");
-  requireRunContains(errors, generate, "actual_controller_matrix=");
-  requireRunContains(errors, generate, "expected_controller_test_matrix=");
-  requireRunContains(errors, generate, "actual_controller_test_matrix=");
-  requireRunContains(errors, generate, ': > "${GITHUB_OUTPUT}"');
-  requireRunContains(
-    errors,
-    generate,
-    "E2E planner matrix does not match controller-selected targets",
-  );
   validateTrustedE2eDispatchReceipt(errors, generateSteps);
 
   const liveTargets = asRecord(jobs["live"]);

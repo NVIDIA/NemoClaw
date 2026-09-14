@@ -92,6 +92,7 @@ function reviewedConfigSource(
     exceptionFile: "ci/npm-audit-exceptions.json",
     lockedGraphs: [],
     nodeVersion: "22.23.2",
+    npmArchiveSha256: "4bfba8a0c823024d1926ec9d97a37a00eb60fd2adf44b3d34a686fc32e8f51e4",
     npmIntegrity:
       "sha512-OnUGvKW3lJs/ooPKDKUNfz1UmMfF48YWbjNA20QdiWrCVnZaAPppOfHPnfGiPb+1lKIsxjKXQ4UAfDI7PcvLPg==",
     npmVersion: "10.9.4",

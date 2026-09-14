@@ -103,14 +103,15 @@ describe("PR review advisor", () => {
     expect({
       testOrDocs: classifyTestDepth(["test/example.test.ts"]).suggestedTests,
       requiredRiskUsesFactualJobAndTarget:
-        requiredRiskCandidates.some((candidate) => candidate.includes("E2E job validation candidate")) &&
+        requiredRiskCandidates.some((candidate) =>
+          candidate.includes("E2E job validation candidate"),
+        ) &&
         requiredRiskCandidates.some((candidate) =>
           candidate.includes("typed E2E target validation candidate"),
         ) &&
         requiredRiskCandidates.every(
           (candidate) =>
-            candidate.startsWith("Existing ") &&
-            !/\b(?:add|modify|run)\b/i.test(candidate),
+            candidate.startsWith("Existing ") && !/\b(?:add|modify|run)\b/i.test(candidate),
         ),
       runtimePath: classifyTestDepth(["src/lib/example-sandbox.ts"]).suggestedTests,
       runtimeBoundary: classifyTestDepth(["src/lib/example.ts"], undefined, runtimeBoundaryDiff)

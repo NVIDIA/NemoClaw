@@ -26,7 +26,7 @@ start_fake_openai_compatible_api() {
     NEMOCLAW_FAKE_OPENAI_REQUIRE_AUTH="${FAKE_OPENAI_REQUIRE_AUTH:-0}" \
     NEMOCLAW_FAKE_OPENAI_CHAT_CONTENT="${FAKE_OPENAI_CHAT_CONTENT:-ok}" \
     NEMOCLAW_FAKE_OPENAI_RESPONSE_TEXT="${FAKE_OPENAI_RESPONSE_TEXT:-${FAKE_OPENAI_CHAT_CONTENT:-ok}}" \
-    node --experimental-strip-types "$server_script" &
+    node "$server_script" &
   FAKE_OPENAI_PID="$!"
 
   for _ in $(seq 1 "${FAKE_OPENAI_READY_ATTEMPTS:-30}"); do

@@ -1138,9 +1138,7 @@ describe("createSetupNim", () => {
             vllmRunning: true,
             vllmProfile: profile,
             hasVllmImage: true,
-            vllmEntries: [
-              { key: "install-vllm", label: "Start vLLM (N1x) [Deferred preview]" },
-            ],
+            vllmEntries: [{ key: "install-vllm", label: "Start vLLM (N1x) [Deferred preview]" }],
           }),
         installVllm,
         handleVllmSelection,
@@ -1159,9 +1157,7 @@ describe("createSetupNim", () => {
       expect.stringContaining("only if no other gateway or distributed deployment uses it"),
     );
     expect(error).toHaveBeenCalledWith(expect.stringContaining("NEMOCLAW_VLLM_PORT"));
-    expect(error).toHaveBeenCalledWith(
-      expect.stringContaining("NEMOCLAW_PROVIDER=install-vllm"),
-    );
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("NEMOCLAW_PROVIDER=install-vllm"));
     expect(abortNonInteractive).toHaveBeenCalledOnce();
     expect(installVllm).not.toHaveBeenCalled();
     expect(handleVllmSelection).not.toHaveBeenCalled();

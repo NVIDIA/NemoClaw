@@ -67,6 +67,22 @@ function supportState(preset: ServingPreset): ServingSupportState {
   return preset.metadata.supportState ?? "experimental";
 }
 
+/**
+ * Onboarding provider that installs a serving backend, or null when onboarding
+ * cannot configure that backend. Profile discovery and `--profile` share this
+ * mapping so a listed compatible profile always has a provider to run through.
+ */
+export function servingBackendProviderKey(backend: string): string | null {
+  switch (backend) {
+    case "vllm":
+      return "install-vllm";
+    case "install-llama-cpp":
+      return "install-llama-cpp";
+    default:
+      return null;
+  }
+}
+
 function compatibility(
   catalog: CompiledServingCatalog,
   preset: ServingPreset,
@@ -76,15 +92,15 @@ function compatibility(
   if (preset.spec.selection === "disabled" || supportState(preset) === "disabled") {
     return { compatible: false, incompatibilityReason: "Profile is disabled." };
   }
-  if (recipe.spec.backend !== "vllm") {
+  if (servingBackendProviderKey(recipe.spec.backend) === null) {
     return {
       compatible: false,
-      incompatibilityReason: `Backend ${recipe.spec.backend} is not available through Express onboarding yet.`,
+      incompatibilityReason: `Backend ${recipe.spec.backend} is not available through onboarding.`,
     };
   }
-  // Managed vLLM installation still invokes the Docker-backed installer.
-  // Keep Docker readiness authoritative here until onboarding starts vLLM
-  // through the selected runtime provider's host-local operation.
+  // Managed vLLM and llama.cpp installation still invoke the Docker-backed
+  // installers. Keep Docker readiness authoritative here until onboarding
+  // starts them through the selected runtime provider's host-local operation.
   const resolution = resolveManagedInferenceServing(
     {
       readinessReports,

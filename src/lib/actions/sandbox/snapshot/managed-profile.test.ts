@@ -97,32 +97,35 @@ function provider(accepted = true, managedProfileRestore = true): RuntimeProvide
 }
 
 describe("managed snapshot profile restore", () => {
-  it.each([
-    "openclaw",
-    "hermes",
-    "langchain-deepagents-code",
-  ] as const)("validates exact secret-free %s profile authority", (agent) => {
-    const receipt = workload(agent);
-    const source = { sandboxName: "alpha", agentType: agent, workload: receipt };
+  it.each(["openclaw", "hermes", "langchain-deepagents-code"] as const)(
+    "validates exact secret-free %s profile authority",
+    (agent) => {
+      const receipt = workload(agent);
+      const source = { sandboxName: "alpha", agentType: agent, workload: receipt };
 
-    const plan = prepareManagedSnapshotProfileRestore(source, sandbox(agent, receipt), provider());
+      const plan = prepareManagedSnapshotProfileRestore(
+        source,
+        sandbox(agent, receipt),
+        provider(),
+      );
 
-    expect(plan).toMatchObject({
-      schemaVersion: 1,
-      providerId: "mxc",
-      sourceSandboxName: "alpha",
-      targetSandboxName: "alpha",
-      authority: {
-        agent,
-        receipt,
-        profile: { agent },
-      },
-      providerRestoreAuthority: {
-        agent,
-        profileFingerprint: fingerprintManagedStartupProfile(managedStartupE2eProfile(agent)),
-      },
-    });
-  });
+      expect(plan).toMatchObject({
+        schemaVersion: 1,
+        providerId: "mxc",
+        sourceSandboxName: "alpha",
+        targetSandboxName: "alpha",
+        authority: {
+          agent,
+          receipt,
+          profile: { agent },
+        },
+        providerRestoreAuthority: {
+          agent,
+          profileFingerprint: fingerprintManagedStartupProfile(managedStartupE2eProfile(agent)),
+        },
+      });
+    },
+  );
 
   it("returns null for legacy snapshots without managed workload authority", () => {
     expect(
