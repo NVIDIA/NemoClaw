@@ -89,6 +89,10 @@ const CANONICAL_POST_GENERATOR_INSTRUCTION_SHA256 = new Set([
   // Reviewed neutral-union validation for OpenClaw 2026.9.1's bundled a2a,
   // reef, and Telegram channel inventory.
   "6727034f71f9fadce7d076d0e9518c288f904b13b2be8037565b61a87b1dfbb0",
+  // Reviewed 2026.9.1 legacy-state migration hardening, obsolete exec-approval
+  // cleanup, and canonical SQLite ownership repair. This exact instruction
+  // preserves the generated openclaw.json dashboard binding.
+  "5a05a0165f86404dfab14fcd4b0cc94b97eca42c1ebf264b385b245f323d07d0",
   // COPY --from=openclaw-runtime-payload / /
   // The reviewed scratch payload has no /sandbox/.openclaw content, so this
   // exact late copy preserves the generated remote-dashboard configuration.

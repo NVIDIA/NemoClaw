@@ -75,6 +75,10 @@ state_dirs:
     backup: false
   - path: devices
     backup: false
+  # Canonical SQLite pairing and gateway authentication state is machine-local.
+  # Wipe it on destroy, but never include it in portable backups.
+  - path: state
+    backup: false
   - canvas
   - cron
   - memory

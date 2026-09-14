@@ -4,6 +4,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import vm from "node:vm";
 
 import { describe, expect, it } from "vitest";
 
@@ -125,6 +126,35 @@ describe("OpenClaw device self-approval patch upgrades (#4462)", () => {
       expect(
         upgraded.match(/nemoclaw: route bounded CLI device-token scope upgrade into pairing/gu),
       ).toHaveLength(1);
+      expect(upgraded).not.toContain(
+        "const inlineApprovalAttempted = trustedProxyApprovalScopes !== null || pairing.request.silent === true;",
+      );
+      const decideInlineApproval = vm.runInNewContext(
+        `${upgraded}\nshouldAttemptInlineApproval`,
+      ) as (input: Record<string, unknown>) => boolean;
+      const boundedUpgrade = {
+        authMethod: "device-token",
+        connectParams: { client: { id: "cli", mode: "cli" } },
+        devicePublicKey: "public-key-1",
+        existingPairedDevice: {
+          publicKey: "public-key-1",
+          scopes: ["operator.pairing"],
+        },
+        pairing: { request: { isRepair: true, silent: true } },
+        plan: { allowSilentLocalPairing: true },
+        reason: "scope-upgrade",
+        role: "operator",
+        scopes: ["operator.write"],
+        trustedProxyApprovalScopes: null,
+      };
+      expect(decideInlineApproval(boundedUpgrade)).toBe(false);
+      expect(
+        decideInlineApproval({
+          ...boundedUpgrade,
+          existingPairedDevice: { publicKey: "different", scopes: ["operator.pairing"] },
+        }),
+      ).toBe(true);
+      expect(decideInlineApproval({ ...boundedUpgrade, scopes: ["operator.admin"] })).toBe(true);
       expect(runPatch(dist).status).toBe(0);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });

@@ -4,6 +4,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   captureManagedImageOnboardPairingDiagnostics,
+  managedActivationPostRestartAgentTurnScript,
   summarizeOnboardFailureStartupSignals,
 } from "../live/managed-image-activation-e2e-helpers.ts";
 
@@ -48,5 +49,16 @@ describe("managed image activation failure diagnostics", () => {
         redactionValues: ["nemoclaw-managed-activation-e2e-key"],
       }),
     );
+  });
+
+  it("gates only the post-restart OpenClaw turn on inner gateway readiness (#7744)", () => {
+    const command = ["openclaw", "agent", "--session-id", "quoted session"];
+    const script = managedActivationPostRestartAgentTurnScript("openclaw", "after", command);
+
+    expect(script).toContain("http://127.0.0.1:18789/health");
+    expect(script).toContain("OpenClaw gateway did not become ready after OpenShell restart");
+    expect(script).toContain("exec 'openclaw' 'agent' '--session-id' 'quoted session'");
+    expect(managedActivationPostRestartAgentTurnScript("openclaw", "before", command)).toBeNull();
+    expect(managedActivationPostRestartAgentTurnScript("hermes", "after", command)).toBeNull();
   });
 });

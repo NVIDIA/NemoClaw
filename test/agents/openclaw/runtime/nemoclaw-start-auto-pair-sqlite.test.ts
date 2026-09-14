@@ -222,6 +222,7 @@ exit 2
 async function expectUnsafeCanonicalState(
   src: string,
   version: number,
+  expectedReason: string,
   walContents: readonly string[] = [],
 ): Promise<void> {
   const tmpDir = fs.realpathSync(
@@ -270,6 +271,7 @@ async function expectUnsafeCanonicalState(
     expect(run.stdout).toContain(
       "[auto-pair] stage=validation rejected request=request-1 reason=not-allowlisted",
     );
+    expect(run.stdout).toContain(expectedReason);
     expect(fs.existsSync(approveLog)).toBe(false);
     expect(fs.existsSync(`${database}-shm`)).toBe(false);
   } finally {
@@ -395,10 +397,15 @@ describe("nemoclaw-start canonical SQLite auto-pair bootstrap", () => {
   }, 40_000);
 
   it("rejects an unsupported canonical schema", async () => {
-    await expectUnsafeCanonicalState(src, 14);
+    await expectUnsafeCanonicalState(src, 14, "unsupported canonical device state schema");
   }, 40_000);
 
   it("does not create a missing shared-memory sidecar for a nonempty WAL", async () => {
-    await expectUnsafeCanonicalState(src, 15, ["uncheckpointed canonical state"]);
+    await expectUnsafeCanonicalState(
+      src,
+      15,
+      "canonical pairing-state WAL is missing its shared-memory sidecar",
+      ["uncheckpointed canonical state"],
+    );
   }, 40_000);
 });

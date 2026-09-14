@@ -12,12 +12,13 @@ import { extractShellFunctionFromSource } from "../../../helpers/shell-source";
 
 const START_SCRIPT = path.resolve(import.meta.dirname, "../../../../scripts/nemoclaw-start.sh");
 
-function doctorFunction(source: string, configDir: string): string {
+function doctorFunction(source: string, configDir: string, rootMode = false): string {
   return [
     'normalize_mutable_config_perms() { printf \'normalize\\n\' >>"$NORMALIZE_CALLS"; return "${NORMALIZE_EXIT_CODE:-0}"; }',
+    'STEP_DOWN_PREFIX_SANDBOX=("$STEP_DOWN")',
     extractShellFunctionFromSource(source, "run_requested_openclaw_post_upgrade_doctor")
       .replaceAll("/sandbox/.openclaw", configDir)
-      .replace('[ "$(id -u)" -eq 0 ]', '[ "1000" -eq 0 ]'),
+      .replace('[ "$(id -u)" -eq 0 ]', rootMode ? '[ "0" -eq 0 ]' : '[ "1000" -eq 0 ]'),
   ].join("\n");
 }
 
@@ -29,6 +30,8 @@ function fixture() {
   const normalizeCalls = path.join(root, "normalize-calls");
   const openclaw = path.join(root, "openclaw-cli");
   const fakeBin = path.join(root, "bin");
+  const stepDown = path.join(root, "step-down");
+  const stepDownCalls = path.join(root, "step-down-calls");
   fs.mkdirSync(configDir);
   fs.mkdirSync(fakeBin);
   fs.writeFileSync(
@@ -41,7 +44,22 @@ function fixture() {
     `#!/bin/sh\npython3 - "$2" "$3" <<'PY'\nimport os, stat, sys\ns = os.stat(sys.argv[2], follow_symlinks=False)\nvalues = {"%u": str(s.st_uid), "%u %a %h": f"{s.st_uid} {stat.S_IMODE(s.st_mode):o} {s.st_nlink}"}\nprint(values[sys.argv[1]])\nPY\n`,
     { mode: 0o755 },
   );
-  return { calls, configDir, fakeBin, marker, normalizeCalls, openclaw, root };
+  fs.writeFileSync(
+    stepDown,
+    `#!/bin/sh\nprintf 'HOME=%s\\nPATH=%s\\n' "$HOME" "$PATH" >${JSON.stringify(stepDownCalls)}\nprintf 'ARG=%s\\n' "$@" >>${JSON.stringify(stepDownCalls)}\nexec "$@"\n`,
+    { mode: 0o755 },
+  );
+  return {
+    calls,
+    configDir,
+    fakeBin,
+    marker,
+    normalizeCalls,
+    openclaw,
+    root,
+    stepDown,
+    stepDownCalls,
+  };
 }
 
 function fixtureEnv(
@@ -54,10 +72,49 @@ function fixtureEnv(
     OPENCLAW: f.openclaw,
     NORMALIZE_CALLS: f.normalizeCalls,
     PATH: `${f.fakeBin}:${process.env.PATH ?? ""}`,
+    STEP_DOWN: f.stepDown,
   };
 }
 
 describe("nemoclaw-start post-upgrade doctor", () => {
+  it.each([
+    { doctorExitCode: "0", expectedStatus: 0, markerRetained: false },
+    { doctorExitCode: "7", expectedStatus: 1, markerRetained: true },
+  ])(
+    "uses the sandbox identity and environment in root mode (doctor exit $doctorExitCode)",
+    ({ doctorExitCode, expectedStatus, markerRetained }) => {
+      const source = fs.readFileSync(START_SCRIPT, "utf8");
+      const f = fixture();
+      try {
+        fs.writeFileSync(f.marker, "nemoclaw-openclaw-post-upgrade-doctor-v1\n", {
+          mode: 0o600,
+        });
+        const result = spawnSync(
+          "bash",
+          [
+            "-c",
+            `${doctorFunction(source, f.configDir, true)}\nrun_requested_openclaw_post_upgrade_doctor`,
+          ],
+          {
+            encoding: "utf8",
+            env: fixtureEnv(f, { DOCTOR_EXIT_CODE: doctorExitCode }),
+          },
+        );
+
+        expect(result.status).toBe(expectedStatus);
+        expect(fs.existsSync(f.marker)).toBe(markerRetained);
+        const stepDown = fs.readFileSync(f.stepDownCalls, "utf8");
+        expect(stepDown).toContain("HOME=/sandbox\n");
+        expect(stepDown).toContain(`PATH=${f.fakeBin}:`);
+        expect(stepDown).toContain("/sandbox/.local/bin\n");
+        expect(stepDown).toContain(`ARG=${f.openclaw}\n`);
+        expect(stepDown).toContain("ARG=doctor\nARG=--fix\nARG=--yes\nARG=--non-interactive\n");
+      } finally {
+        fs.rmSync(f.root, { recursive: true, force: true });
+      }
+    },
+  );
+
   it("consumes an exact trusted marker only after doctor succeeds", () => {
     const source = fs.readFileSync(START_SCRIPT, "utf8");
     const f = fixture();

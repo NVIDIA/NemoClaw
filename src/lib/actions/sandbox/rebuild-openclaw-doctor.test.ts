@@ -52,6 +52,7 @@ describe("OpenClaw rebuild doctor restart", () => {
       runOpenClawPostRestoreDoctor("alpha", runtimeSelection, {
         captureOpenshell: capture as never,
         executeSandboxExecCommand: execute,
+        now: () => 0,
         sleep,
       }),
     ).resolves.toEqual({ ok: true });
@@ -88,6 +89,7 @@ describe("OpenClaw rebuild doctor restart", () => {
       runOpenClawPostRestoreDoctor("alpha", undefined, {
         captureOpenshell: capture as never,
         executeSandboxExecCommand: vi.fn(async () => null),
+        now: () => 0,
         sleep: vi.fn(async () => undefined),
       }),
     ).resolves.toEqual({
@@ -99,6 +101,7 @@ describe("OpenClaw rebuild doctor restart", () => {
   });
 
   it("fails closed when restart never consumes the marker", async () => {
+    let currentMs = 0;
     const execute = vi
       .fn()
       .mockResolvedValueOnce({ status: 0, stdout: "", stderr: "" })
@@ -108,13 +111,35 @@ describe("OpenClaw rebuild doctor restart", () => {
       runOpenClawPostRestoreDoctor("alpha", undefined, {
         captureOpenshell: vi.fn(() => ({ status: 0, output: "" })) as never,
         executeSandboxExecCommand: execute,
-        sleep: vi.fn(async () => undefined),
+        now: () => currentMs,
+        sleep: vi.fn(async (seconds: number) => {
+          currentMs += seconds * 1_000;
+        }),
       }),
     ).resolves.toEqual({
       ok: false,
       stage: "restart",
       detail: "the sandbox did not consume its doctor request and return a healthy gateway",
     });
-    expect(execute).toHaveBeenCalledTimes(62);
+    expect(execute).toHaveBeenCalledTimes(61);
+  });
+
+  it("caps the final completion probe to the remaining reconciliation budget", async () => {
+    const execute = vi
+      .fn()
+      .mockResolvedValueOnce({ status: 0, stdout: "", stderr: "" })
+      .mockResolvedValueOnce({ status: 0, stdout: "", stderr: "" });
+    const now = vi.fn().mockReturnValueOnce(0).mockReturnValue(179_000);
+
+    await expect(
+      runOpenClawPostRestoreDoctor("alpha", undefined, {
+        captureOpenshell: vi.fn(() => ({ status: 0, output: "" })) as never,
+        executeSandboxExecCommand: execute,
+        now,
+        sleep: vi.fn(async () => undefined),
+      }),
+    ).resolves.toEqual({ ok: true });
+
+    expect(execute.mock.calls[1]?.[2]).toBe(1_000);
   });
 });

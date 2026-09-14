@@ -273,6 +273,7 @@ export async function executeSandboxExecCommand(
 const OPENCLAW_POST_UPGRADE_DOCTOR_MARKER = "/sandbox/.openclaw/.nemoclaw-post-upgrade-doctor";
 const OPENCLAW_POST_UPGRADE_DOCTOR_MARKER_CONTENT = "nemoclaw-openclaw-post-upgrade-doctor-v1";
 const OPENCLAW_DOCTOR_RESTART_TIMEOUT_MS = 5 * 60_000;
+const OPENCLAW_DOCTOR_RECONCILIATION_TIMEOUT_MS = 3 * 60_000;
 
 export type OpenClawPostRestoreDoctorResult =
   | { ok: true }
@@ -281,12 +282,14 @@ export type OpenClawPostRestoreDoctorResult =
 interface OpenClawPostRestoreDoctorDeps {
   captureOpenshell: typeof captureOpenshell;
   executeSandboxExecCommand: typeof executeSandboxExecCommand;
+  now: () => number;
   sleep: typeof sleepSeconds;
 }
 
 const OPENCLAW_POST_RESTORE_DOCTOR_DEPS: OpenClawPostRestoreDoctorDeps = {
   captureOpenshell,
   executeSandboxExecCommand,
+  now: Date.now,
   sleep: sleepSeconds,
 };
 
@@ -359,19 +362,28 @@ export async function runOpenClawPostRestoreDoctor(
   deps.captureOpenshell(["sandbox", "start", sandboxName], lifecycleOptions);
 
   const completionProbe = buildOpenClawPostUpgradeDoctorCompletionProbe(sandboxName);
+  const reconciliationDeadlineMs = deps.now() + OPENCLAW_DOCTOR_RECONCILIATION_TIMEOUT_MS;
   const completed = await waitUntilAsync(
     async () => {
-      const result = await deps.executeSandboxExecCommand(sandboxName, completionProbe, 15_000, {
-        localDockerFallbackPolicy: "never",
-        ...(runtimeSelection ? { runtimeSelection } : {}),
-      });
+      const remainingMs = reconciliationDeadlineMs - deps.now();
+      if (!Number.isFinite(remainingMs) || remainingMs <= 0) return false;
+      const result = await deps.executeSandboxExecCommand(
+        sandboxName,
+        completionProbe,
+        Math.max(1, Math.min(15_000, Math.floor(remainingMs))),
+        {
+          localDockerFallbackPolicy: "never",
+          ...(runtimeSelection ? { runtimeSelection } : {}),
+        },
+      );
       return result?.status === 0;
     },
     {
+      deadlineMs: reconciliationDeadlineMs,
       initialIntervalMs: 3_000,
       maxIntervalMs: 3_000,
       backoffFactor: 1,
-      maxAttempts: 61,
+      now: deps.now,
       sleep: async (milliseconds) => await deps.sleep(milliseconds / 1000),
     },
   );

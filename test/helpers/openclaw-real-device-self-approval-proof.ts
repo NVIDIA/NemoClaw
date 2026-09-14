@@ -94,6 +94,76 @@ function requireOrderedMarkers(source: string, markers: string[], label: string)
 }
 
 function requireRealDeviceTokenAuthLinkage(sources: DistSource[]): string {
+  const sqliteGatewayLayout = sources.some(({ source }) =>
+    source.includes(
+      'const loadGatewayServerMethods = createLazyPromise(() => import("./authenticated-request-dispatch.server-methods.runtime.js"))',
+    ),
+  );
+  if (sqliteGatewayLayout) {
+    const producer = requireExactlyOneDistSource(sources, "SQLite device-token session producer", [
+      'const loadGatewayServerMethods = createLazyPromise(() => import("./authenticated-request-dispatch.server-methods.runtime.js"))',
+      "const nextClient = {",
+      'isDeviceTokenAuth: authMethod === "device-token"',
+      "if (!setClient(nextClient))",
+      "const { handleGatewayRequest } = await loadGatewayServerMethods();",
+      "handleGatewayRequest({",
+    ]);
+    const dispatcher = requireExactlyOneDistSource(sources, "SQLite gateway request dispatcher", [
+      "function createLazyCoreHandlers(params)",
+      "async function handleGatewayRequest(opts)",
+      'devices: () => import("./devices-',
+    ]);
+    const handler = requireExactlyOneDistSource(sources, "SQLite device pairing gateway handler", [
+      '"device.pair.approve": async',
+      "resolveDeviceSessionAuthz(client)",
+      "nemoclaw: bounded same-device scope approval",
+    ]);
+    const resolver = requireExactlyOneDistSource(
+      sources,
+      "SQLite canonical device-session authz resolver",
+      ["function resolveDeviceSessionAuthz(client)", "callerDeviceId: client?.isDeviceTokenAuth"],
+    );
+    requireOrderedMarkers(
+      producer.source,
+      [
+        "const { handleGatewayRequest } = await loadGatewayServerMethods();",
+        "handleGatewayRequest({",
+        "client,",
+      ],
+      "SQLite authenticated request dispatch",
+    );
+    requireOrderedMarkers(
+      producer.source,
+      [
+        "const nextClient = {",
+        'isDeviceTokenAuth: authMethod === "device-token"',
+        "if (!setClient(nextClient))",
+      ],
+      "SQLite device-token client publication",
+    );
+    requireOrderedMarkers(
+      dispatcher.source,
+      [
+        "function createLazyCoreHandlers(params)",
+        `devices: () => import("./${path.basename(handler.file)}")`,
+        "async function handleGatewayRequest(opts)",
+      ],
+      "SQLite dispatcher-to-device-handler linkage",
+    );
+    requireOrderedMarkers(
+      handler.source,
+      [
+        `from "./${path.basename(resolver.file)}"`,
+        '"device.pair.approve": async',
+        "const authz = resolveDeviceSessionAuthz(client);",
+        "nemoclawSelfApprovalIdentity = resolveNemoClawSelfApprovalIdentity(pending, authz, client);",
+        "approveDevicePairing(requestId, { callerScopes: authz.callerScopes, nemoclawSelfApprovalIdentity })",
+      ],
+      "SQLite device-handler-to-authz-resolver linkage",
+    );
+    return handler.file;
+  }
+
   const producer = requireExactlyOneDistSource(sources, "device-token session producer", [
     "const nextClient = {",
     'isDeviceTokenAuth: authMethod === "device-token"',
@@ -165,21 +235,42 @@ function requireRealDeviceTokenAuthLinkage(sources: DistSource[]): string {
 }
 
 function requireRealStoredDeviceAuthLinkage(sources: DistSource[], cliSource: DistSource): void {
-  const gatewayCall = requireExactlyOneDistSource(sources, "stored device-auth gateway call", [
-    "const useStoredDeviceAuth = opts.useStoredDeviceAuth === true;",
-    "const storedAuth = loadStoredOperatorDeviceAuthToken(deviceIdentity);",
-    "opts.requiredStoredDeviceAuthScopes",
-    "scopes: useStoredDeviceAuth ? void 0 : scopes",
-  ]);
+  const sqliteGatewayLayout = sources.some(({ source }) =>
+    source.includes("const requestedStoredDeviceAuth = opts.useStoredDeviceAuth === true;"),
+  );
+  const gatewayCall = requireExactlyOneDistSource(
+    sources,
+    "stored device-auth gateway call",
+    sqliteGatewayLayout
+      ? [
+          "const requestedStoredDeviceAuth = opts.useStoredDeviceAuth === true;",
+          "const useStoredDeviceAuth = requestedStoredDeviceAuth && !hasExplicitAuth;",
+          "storedAuth = loadStoredOperatorDeviceAuthToken(deviceIdentity, deviceAuthScope, opts.sharedStateMode);",
+          "opts.requiredStoredDeviceAuthScopes",
+          "useStoredDeviceAuth ? void 0 : scopes",
+        ]
+      : [
+          "const useStoredDeviceAuth = opts.useStoredDeviceAuth === true;",
+          "const storedAuth = loadStoredOperatorDeviceAuthToken(deviceIdentity);",
+          "opts.requiredStoredDeviceAuthScopes",
+          "scopes: useStoredDeviceAuth ? void 0 : scopes",
+        ],
+  );
   const gatewayHandshake = requireExactlyOneDistSource(
     sources,
     "shared-auth paired-device scope enforcement",
-    [
-      "async function resolveConnectAuthDecisionCore(params)",
-      "if (!params.hasDeviceIdentity || !params.deviceId || authOk || !deviceTokenCandidate) return finish();",
-      "if (device && devicePublicKey) {",
-      'if (!await requirePairing("scope-upgrade", paired)) return;',
-    ],
+    sqliteGatewayLayout
+      ? [
+          "const connectAuthState = await resolveConnectAuthState({",
+          "const pairedScopes = resolvePairedAccessScopes(paired);",
+          'if (!await requirePairing("scope-upgrade", paired)) return {',
+        ]
+      : [
+          "async function resolveConnectAuthDecisionCore(params)",
+          "if (!params.hasDeviceIdentity || !params.deviceId || authOk || !deviceTokenCandidate) return finish();",
+          "if (device && devicePublicKey) {",
+          'if (!await requirePairing("scope-upgrade", paired)) return;',
+        ],
   );
   requireOrderedMarkers(
     gatewayCall.source,
@@ -189,7 +280,9 @@ function requireRealStoredDeviceAuthLinkage(sources: DistSource[], cliSource: Di
       "nemoclaw: force device identity for loopback pairing bootstrap",
       "const mode = params.opts.mode",
       "const isLocalCliSharedAuth =",
-      "!hasStoredOperatorDeviceAuthToken(resolveDeviceIdentityForGatewayCall())",
+      sqliteGatewayLayout
+        ? "!loadStoredOperatorDeviceAuthToken(resolveDeviceIdentityForGatewayCall(params.opts.sharedStateMode), params.deviceAuthScope, params.opts.sharedStateMode)"
+        : "!hasStoredOperatorDeviceAuthToken(resolveDeviceIdentityForGatewayCall())",
       "nemoclaw: retain stored CLI device identity for loopback shared-token scope enforcement",
       "return isLocalBackendSharedAuth || isLocalCliSharedAuth;",
     ],
@@ -197,58 +290,93 @@ function requireRealStoredDeviceAuthLinkage(sources: DistSource[], cliSource: Di
   );
   requireOrderedMarkers(
     gatewayHandshake.source,
-    [
-      "async function resolveConnectAuthDecisionCore(params)",
-      "let authOk = params.state.authOk;",
-      "if (!params.hasDeviceIdentity || !params.deviceId || authOk || !deviceTokenCandidate) return finish();",
-      "if (device && devicePublicKey) {",
-      "const paired = await getPairedDevice(device.id);",
-      "const pairedScopes = resolvePairedAccessScopes(paired);",
-      "if (scopes.length > 0) {",
-      "requestedScopes: scopes,",
-      "allowedScopes: pairedScopes",
-      'if (!await requirePairing("scope-upgrade", paired)) return;',
-    ],
+    sqliteGatewayLayout
+      ? [
+          "const connectAuthState = await resolveConnectAuthState({",
+          "async function authorizeExistingGatewayDevice(params)",
+          "const { context, state, paired, devicePublicKey, clientAccessMetadata, requirePairing } = params;",
+          "const pairedScopes = resolvePairedAccessScopes(paired);",
+          "if (scopes.length > 0) {",
+          "requestedScopes: scopes,",
+          "allowedScopes: pairedScopes",
+          'if (!await requirePairing("scope-upgrade", paired)) return {',
+        ]
+      : [
+          "async function resolveConnectAuthDecisionCore(params)",
+          "let authOk = params.state.authOk;",
+          "if (!params.hasDeviceIdentity || !params.deviceId || authOk || !deviceTokenCandidate) return finish();",
+          "if (device && devicePublicKey) {",
+          "const paired = await getPairedDevice(device.id);",
+          "const pairedScopes = resolvePairedAccessScopes(paired);",
+          "if (scopes.length > 0) {",
+          "requestedScopes: scopes,",
+          "allowedScopes: pairedScopes",
+          'if (!await requirePairing("scope-upgrade", paired)) return;',
+        ],
     "shared-token identity to paired-scope upgrade linkage",
   );
   requireOrderedMarkers(
     gatewayCall.source,
-    [
-      "const useStoredDeviceAuth = opts.useStoredDeviceAuth === true;",
-      "const resolvedCredentials = useStoredDeviceAuth ? {} : await resolveGatewayCredentials(context);",
-      "const storedAuth = loadStoredOperatorDeviceAuthToken(deviceIdentity);",
-      "opts.requiredStoredDeviceAuthScopes",
-      "scopes: useStoredDeviceAuth ? void 0 : scopes",
-    ],
+    sqliteGatewayLayout
+      ? [
+          "const requestedStoredDeviceAuth = opts.useStoredDeviceAuth === true;",
+          "const hasExplicitAuth = Boolean(context.explicitAuth.token || context.explicitAuth.password);",
+          "const useStoredDeviceAuth = requestedStoredDeviceAuth && !hasExplicitAuth;",
+          "skipImplicitAuth: useStoredDeviceAuth,",
+          "storedAuth = loadStoredOperatorDeviceAuthToken(deviceIdentity, deviceAuthScope, opts.sharedStateMode);",
+          "opts.requiredStoredDeviceAuthScopes",
+          "scopes: requestedStoredDeviceAuth && hasExplicitAuth && opts.requiredStoredDeviceAuthScopes ? opts.requiredStoredDeviceAuthScopes : useStoredDeviceAuth ? void 0 : scopes,",
+        ]
+      : [
+          "const useStoredDeviceAuth = opts.useStoredDeviceAuth === true;",
+          "const resolvedCredentials = useStoredDeviceAuth ? {} : await resolveGatewayCredentials(context);",
+          "const storedAuth = loadStoredOperatorDeviceAuthToken(deviceIdentity);",
+          "opts.requiredStoredDeviceAuthScopes",
+          "scopes: useStoredDeviceAuth ? void 0 : scopes",
+        ],
     "stored device-auth credential selection",
   );
-  requireOrderedMarkers(
-    gatewayCall.source,
-    [
-      "deviceIdentity,",
-      "opts.nemoclawDisableStoredDeviceAuth === true",
-      "hostDeps:",
-      "loadDeviceAuthToken: () => null",
-      "storeDeviceAuthToken: () => {}",
-      "clearDeviceAuthToken: () => {}",
-      "minProtocol:",
-    ],
-    "forced paired-token pathname auth bypass",
-  );
+  if (!sqliteGatewayLayout) {
+    requireOrderedMarkers(
+      gatewayCall.source,
+      [
+        "deviceIdentity,",
+        "opts.nemoclawDisableStoredDeviceAuth === true",
+        "hostDeps:",
+        "loadDeviceAuthToken: () => null",
+        "storeDeviceAuthToken: () => {}",
+        "clearDeviceAuthToken: () => {}",
+        "minProtocol:",
+      ],
+      "forced paired-token pathname auth bypass",
+    );
+  }
   requireOrderedMarkers(
     cliSource.source,
-    [
-      `from "./${path.basename(gatewayCall.file)}"`,
-      "const callGatewayCli = async",
-      "callOpts?.usePairedToken === true",
-      "url: callOpts.pinnedGatewayUrl",
-      "token: callOpts.pairedToken",
-      "password: void 0",
-      "nemoclawDisableStoredDeviceAuth: true",
-      "callOpts?.useStoredDeviceAuth === true",
-      "nemoclaw: forward stored device auth for bounded same-device scope approval",
-      "requiredStoredDeviceAuthScopes: callOpts.requiredStoredDeviceAuthScopes",
-    ],
+    sqliteGatewayLayout
+      ? [
+          `from "./${path.basename(gatewayCall.file)}"`,
+          "const callGatewayCli = async",
+          "callOpts?.usePairedToken === true",
+          "url: callOpts.pinnedGatewayUrl",
+          "token: callOpts.pairedToken",
+          "password: void 0",
+          "useStoredDeviceAuth: callOpts?.useStoredDeviceAuth",
+          "nemoclaw: forward stored device auth for bounded same-device scope approval",
+          "requiredStoredDeviceAuthScopes: callOpts?.requiredStoredDeviceAuthScopes",
+        ]
+      : [
+          `from "./${path.basename(gatewayCall.file)}"`,
+          "const callGatewayCli = async",
+          "callOpts?.usePairedToken === true",
+          "url: callOpts.pinnedGatewayUrl",
+          "token: callOpts.pairedToken",
+          "password: void 0",
+          "nemoclawDisableStoredDeviceAuth: true",
+          "callOpts?.useStoredDeviceAuth === true",
+          "nemoclaw: forward stored device auth for bounded same-device scope approval",
+          "requiredStoredDeviceAuthScopes: callOpts.requiredStoredDeviceAuthScopes",
+        ],
     "devices CLI stored-auth bridge",
   );
   requireOrderedMarkers(
@@ -261,7 +389,9 @@ function requireRealStoredDeviceAuthLinkage(sources: DistSource[], cliSource: Di
       "requiredStoredDeviceAuthScopes: [PAIRING_SCOPE]",
       "nemoclaw: use stored device auth for pairing settlement list",
       "callOpts ??= nemoclawSettlementListCallOpts",
-      'callGatewayCli("device.pair.list", opts, {}, callOpts)',
+      sqliteGatewayLayout
+        ? 'callGatewayCli("device.pair.list", opts, {}, { ...callOpts, scopes: callOpts?.scopes ?? [PAIRING_SCOPE] })'
+        : 'callGatewayCli("device.pair.list", opts, {}, callOpts)',
       "const nemoclawLocalList = nemoclawPairedTokenRequested ? readNemoClawPinnedPairingSnapshot() : await listDevicePairing();",
       "nemoclawLocalStoredAuthCandidate = !nemoclawPairedTokenRequested && nemoclawLocalContext.useStoredDeviceAuth;",
       "const nemoclawListCallOpts = nemoclawLocalStoredAuthCandidate ?",
@@ -288,7 +418,9 @@ function requireRealStoredDeviceAuthLinkage(sources: DistSource[], cliSource: Di
   requireOrderedMarkers(
     cliSource.source,
     [
-      "async function approvePairingWithFallback(opts, requestId)",
+      sqliteGatewayLayout
+        ? "async function approvePairingWithFallback(opts, requestId, context)"
+        : "async function approvePairingWithFallback(opts, requestId)",
       "nemoclawUseStoredDeviceAuth",
       "nemoclawUsePairedToken",
       "nemoclawUsePairedToken ? { scopes: [PAIRING_SCOPE], usePairedToken: true",
@@ -1245,6 +1377,180 @@ if (!finalList.pending.some((pending) => pending.requestId === staleRequest.requ
     },
   );
   requireSuccess(proof, "prove real SQLite bounded device self-approval");
+}
+
+async function runLiveSqliteCliGatewaySelfApprovalProof(options: ProofOptions): Promise<void> {
+  const packageDir = path.dirname(options.dist);
+  const openclawEntry = path.join(packageDir, "openclaw.mjs");
+  requireLiveProof(fs.existsSync(openclawEntry), "reviewed OpenClaw CLI entrypoint missing");
+
+  const liveRoot = path.join(options.tmp, "device-approval-live-sqlite");
+  const stateDir = path.join(liveRoot, "state");
+  const homeDir = path.join(liveRoot, "home");
+  const configPath = path.join(liveRoot, "openclaw.json");
+  const gatewayLog = path.join(liveRoot, "gateway.log");
+  fs.mkdirSync(stateDir, { recursive: true });
+  fs.mkdirSync(homeDir, { recursive: true });
+  const port = await reserveLoopbackPort();
+  const gatewayToken = crypto.randomBytes(32).toString("hex");
+  const writeGatewayConfig = (auth: Record<string, unknown>) =>
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({ gateway: { mode: "local", bind: "loopback", port, auth } }),
+    );
+  writeGatewayConfig({ mode: "none" });
+  const {
+    OPENCLAW_GATEWAY_PASSWORD: _gatewayPassword,
+    OPENCLAW_GATEWAY_PORT: _gatewayPort,
+    OPENCLAW_GATEWAY_TOKEN: _gatewayToken,
+    OPENCLAW_GATEWAY_URL: _gatewayUrl,
+    OPENCLAW_PROFILE: _profile,
+    ...inheritedEnv
+  } = process.env;
+  const env: NodeJS.ProcessEnv = {
+    ...inheritedEnv,
+    HOME: homeDir,
+    OPENCLAW_CONFIG_PATH: configPath,
+    OPENCLAW_DISABLE_BUNDLED_PLUGINS: "1",
+    OPENCLAW_NO_AUTO_UPDATE: "1",
+    OPENCLAW_SKIP_CHANNELS: "1",
+    OPENCLAW_SKIP_PROVIDERS: "1",
+    OPENCLAW_STATE_DIR: stateDir,
+  };
+  const runCli = (args: string[], envOverrides: NodeJS.ProcessEnv = {}) =>
+    spawnSync(options.nodeExecutable, [openclawEntry, ...args], {
+      cwd: packageDir,
+      encoding: "utf8",
+      env: { ...env, ...envOverrides },
+      timeout: Math.min(options.timeoutMs, 60_000),
+    });
+  const readCliView = (
+    result: ReturnType<typeof runCli>,
+    label: string,
+  ): Record<string, unknown> => {
+    requireSuccess(result, label);
+    const output = String(result.stdout ?? "").trim();
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(output);
+    } catch {
+      const stderr = String(result.stderr ?? "").trim();
+      throw new Error(
+        `${label} did not return parseable JSON (stdout=${JSON.stringify(output.slice(0, 500))}, stderr=${JSON.stringify(stderr.slice(0, 500))})`,
+      );
+    }
+    const view = asRecord(parsed);
+    requireLiveProof(view, `${label} did not return a JSON object`);
+    return view;
+  };
+  const startGateway = (gatewayEnv: NodeJS.ProcessEnv, append: boolean) => {
+    const gatewayLogFd = fs.openSync(gatewayLog, append ? "a" : "w");
+    const child = spawn(options.nodeExecutable, [openclawEntry, "gateway", "run"], {
+      cwd: packageDir,
+      env: gatewayEnv,
+      stdio: ["ignore", gatewayLogFd, gatewayLogFd],
+    });
+    fs.closeSync(gatewayLogFd);
+    return child;
+  };
+
+  let gateway = startGateway(env, false);
+  let proofPhase = "bootstrap";
+  try {
+    await waitForGatewayReady(gateway, port, options.timeoutMs);
+    const bootstrap = readCliView(
+      runCli(["devices", "list", "--json"], {
+        NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING: "1",
+        OPENCLAW_TEST_RUNTIME_LOG: "1",
+      }),
+      "bootstrap SQLite device through the public CLI",
+    );
+    const bootstrapPaired = Array.isArray(bootstrap.paired) ? bootstrap.paired.map(asRecord) : [];
+    const pairedDevice = bootstrapPaired.find(
+      (device): device is Record<string, unknown> =>
+        device !== null && typeof device.deviceId === "string",
+    );
+    requireLiveProof(pairedDevice, "SQLite CLI bootstrap did not return a paired device");
+    requireExactScopes(pairedDevice.scopes, ["operator.pairing"], "SQLite CLI bootstrap scopes");
+    requireLiveProof(
+      fs.existsSync(path.join(stateDir, "state", "openclaw.sqlite")),
+      "SQLite CLI bootstrap did not create canonical state",
+    );
+
+    proofPhase = "stored-auth-restart";
+    await stopChild(gateway);
+    writeGatewayConfig({ mode: "token" });
+    gateway = startGateway({ ...env, OPENCLAW_GATEWAY_TOKEN: gatewayToken }, true);
+    await waitForGatewayReady(gateway, port, options.timeoutMs);
+    const settlementEnv = {
+      NEMOCLAW_OPENCLAW_PAIRING_SETTLEMENT: "1",
+      OPENCLAW_TEST_RUNTIME_LOG: "1",
+    };
+    const settled = readCliView(
+      runCli(["devices", "list", "--json"], settlementEnv),
+      "list SQLite pairing state through stored CLI auth",
+    );
+    requireLiveProof(
+      Array.isArray(settled.paired) &&
+        settled.paired.some((device) => asRecord(device)?.deviceId === pairedDevice.deviceId),
+      "SQLite stored-auth list did not reach the gateway",
+    );
+
+    proofPhase = "scope-upgrade-request";
+    const beforeApproval = runCli([
+      "gateway",
+      "call",
+      "sessions.create",
+      "--params",
+      "{}",
+      "--json",
+    ]);
+    requireLiveProof(beforeApproval.status !== 0, "SQLite write call bypassed scope approval");
+    const pendingView = readCliView(
+      runCli(["devices", "list", "--json"], settlementEnv),
+      "list SQLite pending scope upgrade through stored CLI auth",
+    );
+    const pending = Array.isArray(pendingView.pending)
+      ? pendingView.pending.map(asRecord).filter((request) => request !== null)
+      : [];
+    const repair = pending.find(
+      (request) =>
+        request.deviceId === pairedDevice.deviceId &&
+        request.clientId === "cli" &&
+        request.clientMode === "cli" &&
+        request.isRepair === true,
+    );
+    requireLiveProof(repair, "SQLite gateway did not publish the CLI scope-upgrade request");
+    requireExactScopes(repair.scopes, ["operator.write"], "SQLite CLI repair request scopes");
+    requireLiveProof(
+      typeof repair.requestId === "string" && repair.requestId.length > 0,
+      "SQLite CLI repair request id missing",
+    );
+
+    proofPhase = "scope-upgrade-approval";
+    requireSuccess(
+      runCli(["devices", "approve", String(repair.requestId), "--json"]),
+      "approve SQLite scope upgrade through the public CLI and gateway",
+    );
+    requireSuccess(
+      runCli(["gateway", "call", "sessions.create", "--params", "{}", "--json"]),
+      "authorize SQLite write call with the rotated stored device token",
+    );
+    const finalView = readCliView(
+      runCli(["devices", "list", "--json"], settlementEnv),
+      "list settled SQLite pairing state through the public CLI",
+    );
+    requireLiveProof(
+      Array.isArray(finalView.pending) &&
+        !finalView.pending.some((request) => asRecord(request)?.requestId === repair.requestId),
+      "SQLite scope-upgrade request remained pending after public approval",
+    );
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`real OpenClaw SQLite CLI/gateway proof failed (${proofPhase}): ${detail}`);
+  } finally {
+    await stopChild(gateway);
+  }
 }
 
 async function waitForGatewayReady(
@@ -2360,6 +2666,8 @@ export async function runRealOpenClawDeviceSelfApprovalProof(options: ProofOptio
           'await persistState(state, baseDir, "both")',
         ],
   );
+  requireRealStoredDeviceAuthLinkage(sources, cliSource);
+  const deviceHandlerFile = requireRealDeviceTokenAuthLinkage(sources);
   if (sqlitePairingLayout) {
     requireExactlyOneDistSource(sources, "patched atomic SQLite pairing persistence runtime", [
       "function persistDevicePairingStoreState(state, baseDir, target, options)",
@@ -2381,6 +2689,7 @@ export async function runRealOpenClawDeviceSelfApprovalProof(options: ProofOptio
     );
     requireSuccess(install, "install reviewed OpenClaw runtime dependencies without scripts");
     runSqliteDeviceSelfApprovalProof(options);
+    await runLiveSqliteCliGatewaySelfApprovalProof(options);
     return;
   }
   requireExactlyOneDistSource(sources, "atomic JSON state rename runtime", [
@@ -2388,14 +2697,13 @@ export async function runRealOpenClawDeviceSelfApprovalProof(options: ProofOptio
     "await params.fsModule.rename(params.src, params.dest)",
   ]);
   const journalBasename = discoverSelfApprovalJournalBasename(pairingStateSource.source);
-  requireRealStoredDeviceAuthLinkage(sources, cliSource);
   const cliProofFile = path.join(options.dist, ".nemoclaw-device-cli-proof.mjs");
   fs.writeFileSync(
     cliProofFile,
     `${cliSource.source}\nexport { resolveApprovePairingScopesForRequest as nemoclawResolveApprovePairingScopesForRequest, resolveNemoClawSelfRepairPairingContext as nemoclawResolveSelfRepairPairingContext };\n`,
   );
   const cliProofUrl = pathToFileURL(cliProofFile).href;
-  const deviceHandlerUrl = pathToFileURL(requireRealDeviceTokenAuthLinkage(sources)).href;
+  const deviceHandlerUrl = pathToFileURL(deviceHandlerFile).href;
 
   // The tarball harness ordinarily needs only generated-file patching. This
   // behavioral proof imports the reviewed pairing module as well, so install
