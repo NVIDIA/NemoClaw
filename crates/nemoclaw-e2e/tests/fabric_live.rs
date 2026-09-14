@@ -14,6 +14,62 @@ use std::{
     sync::Arc,
 };
 
+fn confirmed_reply(harness: &str, response: &[u8]) -> bool {
+    let Ok(value) = serde_json::from_slice::<Value>(response) else {
+        return false;
+    };
+    if !value["error"].is_null() {
+        return false;
+    }
+    let text = if harness == "openclaw" {
+        let Some(payloads) = value["result"]["payloads"].as_array() else {
+            return false;
+        };
+        if value["status"] != "ok"
+            || payloads.is_empty()
+            || payloads.iter().any(|p| p["isError"] == true)
+        {
+            return false;
+        }
+        payloads[0]["text"].as_str()
+    } else {
+        if value["status"] != "succeeded" {
+            return false;
+        }
+        value["output"]["response"].as_str()
+    };
+    text.is_some_and(|text| {
+        text.trim()
+            .trim_end_matches(['.', '!'])
+            .eq_ignore_ascii_case("FOUR")
+    })
+}
+#[test]
+fn a_prompt_echo_or_failed_result_is_not_an_agent_reply() {
+    for response in [
+        json!({"status":"failed","input":"Reply FOUR","output":{"response":"FOUR"}}),
+        json!({"status":"succeeded","output":{"response":"NO"},"input":"Reply FOUR"}),
+        json!({"status":"succeeded","output":{"response":"FOUR"},"error":{"message":"failed"}}),
+    ] {
+        assert!(!confirmed_reply(
+            "deepagents",
+            &serde_json::to_vec(&response).unwrap()
+        ));
+    }
+    assert!(confirmed_reply(
+        "hermes",
+        br#"{"status":"succeeded","output":{"response":"FOUR"},"error":null}"#
+    ));
+    assert!(confirmed_reply(
+        "openclaw",
+        br#"{"status":"ok","result":{"payloads":[{"text":"FOUR"}]}}"#
+    ));
+    assert!(!confirmed_reply(
+        "openclaw",
+        br#"{"status":"ok","result":{"payloads":[{"text":"FOUR","isError":true}]}}"#
+    ));
+}
+
 fn bindings(directory: &Path) -> (Value, Row) {
     let state: Value =
         serde_json::from_slice(&fs::read(directory.join("terraform.tfstate")).unwrap()).unwrap();
@@ -160,12 +216,11 @@ async fn fabric_native_access_and_reconciliation_preserve_the_hosted_runtime() {
         // the hosted runtime by plan/apply or a new NemoClaw invocation API.
         exec(&client, &binding, ["/opt/fabric/bin/python", "-c", "import sys,asyncio,json; sys.path.insert(0,'/opt/nemoclaw'); from fabric import configuration; from nemo_fabric import Fabric,FabricConfig; c=configuration(sys.argv[1],sys.argv[2]); c['runtime']['artifacts']='/sandbox/sdk-smoke'; print(json.dumps(asyncio.run(Fabric().run(FabricConfig.model_validate(c),input='Reply with exactly the word FOUR.',base_dir='/sandbox')).to_mapping()))", &agent.name, &agent.harness].map(String::from).to_vec()).await
     };
-    assert!(
-        String::from_utf8_lossy(&response)
-            .to_uppercase()
-            .contains("FOUR")
-    );
     fs::write(directory.join("native-response.json"), &response).unwrap();
+    assert!(
+        confirmed_reply(&agent.harness, &response),
+        "no confirmed successful native reply"
+    );
     assert_eq!(runtime_id(&client, &binding).await, hosted);
     save(
         "destroy.json",
