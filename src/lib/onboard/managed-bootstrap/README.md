@@ -88,9 +88,10 @@ publishes `rollback-authorized` before replacement deletion; pre-cutover
 staged cleanup removes only the prepared replacement without that journal
 transition. The stopped runtimes exchange names, the provider starts the exact
 replacement by full runtime ID, and OpenShell publishes its supervisor as ready
-before commit. The replacement then remains running through finalization. Commit
-publishes `shared-state-committed` before backup deletion and proves that the same
-replacement supervisor remains connected. Cleanup is bound to full runtime IDs.
+before commit. Commit publishes `shared-state-committed`, moves the replacement
+through an OpenShell-owned stop fence, deletes the rollback backup, and starts the
+same exact replacement once through OpenShell before proving its supervisor and
+runtime identity. Cleanup is bound to full runtime IDs.
 Commit or rollback is claimed
 synchronously before asynchronous finalization begins. Repeated calls for the
 claimed outcome share its one pending result, while the opposite outcome remains

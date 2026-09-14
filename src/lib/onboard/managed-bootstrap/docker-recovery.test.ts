@@ -468,10 +468,12 @@ describe("Docker managed bootstrap restart recovery", () => {
       replacement,
       timeoutSecs: 1,
     });
-    fake.deps.runOpenshell = vi.fn((args) => ({
-      status: args[1] === "start" ? 0 : 1,
-      stderr: args[1] === "start" ? "" : "injected reconnect failure",
-    }));
+    const runLifecycle = fake.deps.runOpenshell;
+    fake.deps.runOpenshell = vi.fn((args, options) =>
+      args[1] === "exec"
+        ? { status: 1, stderr: "injected reconnect failure" }
+        : runLifecycle(args, options),
+    );
     fake.deps.runCaptureOpenshell = vi.fn(() => "alpha  2026-09-09 10:00:00  Error\n");
     fake.deps.errorPhaseDebouncePolls = 1;
 
@@ -588,7 +590,10 @@ describe("Docker managed bootstrap restart recovery", () => {
     expect(fake.journal).toBeNull();
     expect(fake.finalization?.phase).toBe("committed");
     expect(fake.sharedState).toBe("none");
-    expect(dockerMutationEvents(fake.events)).toEqual(mutationsAfterFailedRetirement);
+    expect(dockerMutationEvents(fake.events)).toEqual([
+      ...mutationsAfterFailedRetirement,
+      `stop:${NEW_ID}`,
+    ]);
   });
 
   it("retains durable commit authority after a non-zero Docker removal result", async () => {

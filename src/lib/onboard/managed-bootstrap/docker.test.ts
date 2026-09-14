@@ -374,10 +374,13 @@ describe("Docker managed bootstrap adapter", () => {
       .mockReturnValueOnce({ status: 0 })
       .mockReturnValueOnce({ status: 0 })
       .mockReturnValueOnce({ status: 0 })
+      .mockReturnValueOnce({ status: 0 })
       .mockImplementationOnce(() => {
         expect(fake.journal?.phase).toBe("shared-state-committed");
         expect(fake.original).toBeNull();
-        expect(fake.replacement?.State?.Running).toBe(true);
+        expect(fake.replacement?.State?.Running).toBe(false);
+        assert(fake.replacement?.State);
+        fake.replacement.State = { ...fake.replacement.State, Running: true };
         return { status: 0 };
       })
       .mockReturnValue({ status: 0 });
@@ -464,7 +467,7 @@ describe("Docker managed bootstrap adapter", () => {
     });
     expect(finalized).toMatchObject({ outcome: "committed" });
     expectEventBefore(fake.events, "journal:shared-state-committed", `rm:${OLD_ID}`);
-    expect(fake.events).not.toContain(`stop:${NEW_ID}`);
+    expectEventBefore(fake.events, `stop:${NEW_ID}`, `rm:${OLD_ID}`);
     expectEventBefore(fake.events, "finalization:committed", "journal:removed");
     expect(fake.journal).toBeNull();
     expect(fake.finalization).toMatchObject({ phase: "committed", commitReceipt });
@@ -475,6 +478,8 @@ describe("Docker managed bootstrap adapter", () => {
         ["sandbox", "stop"],
         ["sandbox", "start"],
         ["sandbox", "exec"],
+        ["sandbox", "stop"],
+        ["sandbox", "start"],
         ["sandbox", "exec"],
       ],
     );
@@ -525,6 +530,12 @@ describe("Docker managed bootstrap adapter", () => {
       .mockReturnValueOnce({ status: 0 })
       .mockReturnValueOnce({ status: 0 })
       .mockReturnValueOnce({ status: 0 })
+      .mockReturnValueOnce({ status: 0 })
+      .mockImplementationOnce(() => {
+        assert(fake.replacement?.State);
+        fake.replacement.State = { ...fake.replacement.State, Running: true };
+        return { status: 0 };
+      })
       .mockReturnValueOnce({ status: 1, stderr: "injected readiness failure" })
       .mockReturnValue({ status: 0 });
     const adapter = createDockerManagedBootstrapAdapter(fake.deps);
@@ -618,6 +629,8 @@ describe("Docker managed bootstrap adapter", () => {
     fake.deps.errorPhaseDebouncePolls = 1;
     fake.deps.runOpenshell = vi
       .fn()
+      .mockReturnValueOnce({ status: 0 })
+      .mockReturnValueOnce({ status: 0 })
       .mockReturnValueOnce({ status: 0 })
       .mockReturnValueOnce({ status: 0 })
       .mockReturnValueOnce({ status: 0 })
