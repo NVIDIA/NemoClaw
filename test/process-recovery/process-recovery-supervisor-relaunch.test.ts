@@ -107,10 +107,8 @@ function composedRelaunchTransaction(
       stderr: "",
     })),
   };
-  const resolveContainer = vi
-    .fn()
-    .mockReturnValueOnce(containerIds.old)
-    .mockReturnValue(containerIds.replacement);
+  let currentContainerId = containerIds.old;
+  const resolveContainer = vi.fn(() => currentContainerId);
   const runOpenshell = vi.fn((args: readonly string[]) => {
     order.push(`openshell-${args[1]}`);
     return { status: 0, stdout: "No sandboxes found.\n" };
@@ -157,21 +155,28 @@ function composedRelaunchTransaction(
           commandExecutor,
           runCaptureOpenshell,
           runOpenshell,
-          recreate: vi.fn(() => ({
-            applied: true as const,
-            oldContainerId: containerIds.old,
-            newContainerId: containerIds.replacement,
-            originalName: "openshell-recovery-box",
-            backupContainerName: "openshell-recovery-box-nemoclaw-backup",
-            mode: {
-              kind: "startup-command" as const,
-              label: "persistent sandbox startup command",
-              device: "",
-              args: [],
-            },
-            backupRemoved: false,
-          })),
-          finalize: finalizeTransaction,
+          recreate: vi.fn(() => {
+            currentContainerId = containerIds.replacement;
+            return {
+              applied: true as const,
+              oldContainerId: containerIds.old,
+              newContainerId: containerIds.replacement,
+              originalName: "openshell-recovery-box",
+              backupContainerName: "openshell-recovery-box-nemoclaw-backup",
+              mode: {
+                kind: "startup-command" as const,
+                label: "persistent sandbox startup command",
+                device: "",
+                args: [],
+              },
+              backupRemoved: false,
+            };
+          }),
+          finalize: async (...args) => {
+            const outcome = await finalizeTransaction(...args);
+            currentContainerId = outcome.rolledBack ? containerIds.old : currentContainerId;
+            return outcome;
+          },
         },
       });
     },
@@ -513,7 +518,12 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
       "replacement-container-id",
       "old-container-id",
     );
-    expect(order).toEqual(["restore-state", "post-restore-restart", "commit-container"]);
+    expect(order).toEqual([
+      "openshell-stop",
+      "restore-state",
+      "post-restore-restart",
+      "commit-container",
+    ]);
     expect(finalizeTransaction).toHaveBeenCalledOnce();
     expect(finalizeTransaction).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -744,7 +754,13 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
       recoveryFailureDetail:
         "Sandbox recovery did not complete; the previous container was restored",
     });
-    expect(order).toEqual(["restore-state", "post-restore-restart", "rollback-container"]);
+    expect(order).toEqual([
+      "openshell-stop",
+      "restore-state",
+      "post-restore-restart",
+      "rollback-container",
+      "openshell-start",
+    ]);
     expect(requestPinnedGatewaySupervisorAction).toHaveBeenCalledTimes(3);
     expect(finalizeTransaction).toHaveBeenCalledOnce();
     expect(finalizeTransaction).toHaveBeenCalledWith(

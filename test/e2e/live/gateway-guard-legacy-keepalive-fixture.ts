@@ -8,7 +8,6 @@ import { pathToFileURL } from "node:url";
 import * as dockerRunNamespace from "../../../src/lib/adapters/docker/run.ts";
 import * as openshellRuntimeNamespace from "../../../src/lib/adapters/openshell/runtime.ts";
 import * as sandboxCommandCliNamespace from "../../../src/lib/adapters/openshell/sandbox-command-cli.ts";
-import * as dockerCommandResultNamespace from "../../../src/lib/onboard/docker-command-result.ts";
 import * as managedBootstrapAdapterNamespace from "../../../src/lib/onboard/managed-bootstrap/adapter.ts";
 import * as dockerGpuPatchCloneNamespace from "../../../src/lib/onboard/docker-gpu-patch-clone.ts";
 import * as dockerGpuPatchFinalizeNamespace from "../../../src/lib/onboard/docker-gpu-patch-finalize.ts";
@@ -50,7 +49,7 @@ const dockerGpuPatchFinalize = (
     ? dockerGpuPatchFinalizeNamespace.default
     : dockerGpuPatchFinalizeNamespace
 ) as typeof import("../../../src/lib/onboard/docker-gpu-patch-finalize.ts");
-const { finalizeDockerGpuPatchBackup } = dockerGpuPatchFinalize;
+const { finalizeDockerGpuPatchBackup, runOpenShellLifecycleCommand } = dockerGpuPatchFinalize;
 const startupCommandEnv = (
   "default" in startupCommandEnvNamespace
     ? startupCommandEnvNamespace.default
@@ -71,12 +70,6 @@ const dockerRun = (
   "default" in dockerRunNamespace ? dockerRunNamespace.default : dockerRunNamespace
 ) as typeof import("../../../src/lib/adapters/docker/run.ts");
 const { dockerCapture: defaultDockerCapture } = dockerRun;
-const dockerCommandResult = (
-  "default" in dockerCommandResultNamespace
-    ? dockerCommandResultNamespace.default
-    : dockerCommandResultNamespace
-) as typeof import("../../../src/lib/onboard/docker-command-result.ts");
-const { hasZeroDockerExitStatus } = dockerCommandResult;
 const openshellRuntime = (
   "default" in openshellRuntimeNamespace
     ? openshellRuntimeNamespace.default
@@ -413,26 +406,6 @@ function legacyKeepaliveDockerCapture(
   };
 }
 
-function runFixtureLifecycleCommand(
-  runOpenshell: NonNullable<DockerGpuPatchDeps["runOpenshell"]>,
-  args: string[],
-  timeoutSecs: number,
-): boolean {
-  try {
-    return hasZeroDockerExitStatus(
-      runOpenshell(args, {
-        ignoreError: true,
-        killProcessTreeOnTimeout: true,
-        killSignal: "SIGKILL",
-        suppressOutput: true,
-        timeout: Math.max(1, Math.round(timeoutSecs * 1000)),
-      }),
-    );
-  } catch {
-    return false;
-  }
-}
-
 export async function createLegacyKeepaliveFixture(
   options: LegacyKeepaliveFixtureOptions,
   deps: Partial<LegacyKeepaliveFixtureDeps> = defaultDeps,
@@ -463,7 +436,11 @@ export async function createLegacyKeepaliveFixture(
   // finalizer below then makes OpenShell own the exact replacement start and
   // withholds success until both OpenShell Ready and Docker identity agree.
   requireFixtureInput(
-    runFixtureLifecycleCommand(runOpenshell, ["sandbox", "stop", options.sandboxName], timeoutSecs),
+    runOpenShellLifecycleCommand(
+      runOpenshell,
+      ["sandbox", "stop", options.sandboxName],
+      timeoutSecs,
+    ),
     "legacy keepalive fixture could not stop the sandbox through OpenShell before recreation",
   );
 
@@ -484,7 +461,7 @@ export async function createLegacyKeepaliveFixture(
       // The recreation helper restores the original Docker container before it
       // rejects. Re-enter the OpenShell lifecycle here, while preserving the
       // original failure as the authoritative error for the caller.
-      runFixtureLifecycleCommand(
+      runOpenShellLifecycleCommand(
         runOpenshell,
         ["sandbox", "start", options.sandboxName],
         timeoutSecs,

@@ -15,6 +15,7 @@ import {
 import {
   type DockerGpuPatchFinalizeOutcome,
   finalizeDockerGpuPatchBackup,
+  runOpenShellLifecycleCommand,
 } from "../../onboard/docker-gpu-patch-finalize";
 import { getDockerGpuSupervisorReconnectTimeoutSecs } from "../../onboard/docker-gpu-supervisor-reconnect";
 import { recreateOpenShellDockerSandboxWithStartupCommand } from "../../onboard/docker-startup-command-patch";
@@ -233,6 +234,10 @@ export function relaunchManagedSupervisorSession(
   if (!usesLegacyManagedGatewayRecovery(entry)) return null;
   const startupCommand = reconstructSupervisorLaunchCommand(sandboxName, entry, quiet, deps);
   if (startupCommand === null) return null;
+  const runLifecycleProbe = deps.runOpenshell;
+  const captureLifecycleProbe = deps.runCaptureOpenshell;
+  if (!runLifecycleProbe || !captureLifecycleProbe) return null;
+  const lifecycleTimeoutSecs = getDockerGpuSupervisorReconnectTimeoutSecs(1);
 
   const resolveContainer = deps.resolveContainer ?? resolveDirectSandboxContainer;
   const inspect = deps.inspectContainer ?? inspectContainer;
@@ -304,12 +309,39 @@ export function relaunchManagedSupervisorSession(
     if (!quiet) {
       console.log("  Recreating the sandbox container with its managed startup command...");
     }
-    const result = recreate({
-      sandboxName,
-      openshellSandboxCommand: startupCommand,
-      expectedOldContainerId: containerId,
-      waitForSupervisor: false,
-    });
+    const runOriginalLifecycle = (action: "stop" | "start"): boolean => {
+      try {
+        return (
+          resolveContainer(sandboxName, driver, { expectedResourceHandle: containerId }) ===
+            containerId &&
+          runOpenShellLifecycleCommand(
+            runLifecycleProbe,
+            ["sandbox", action, sandboxName],
+            lifecycleTimeoutSecs,
+          )
+        );
+      } catch {
+        return false;
+      }
+    };
+    let result: DockerGpuPatchResult;
+    try {
+      // OpenShell treats exit of the registered keepalive while Ready as Error.
+      // Stop its durable lifecycle before Docker replaces the main process.
+      if (!runOriginalLifecycle("stop")) {
+        throw new Error("OpenShell did not acknowledge the owned sandbox stop before recreation.");
+      }
+      result = recreate({
+        sandboxName,
+        openshellSandboxCommand: startupCommand,
+        expectedOldContainerId: containerId,
+        waitForSupervisor: false,
+      });
+    } catch (error) {
+      // Rejoin only the sole original container; retain state if that fails.
+      if (!runOriginalLifecycle("start")) pendingStateBackupPath = null;
+      throw error;
+    }
     pendingStateBackupPath = null;
     let completion: {
       supervisorReady: boolean;
@@ -327,10 +359,12 @@ export function relaunchManagedSupervisorSession(
     ): Promise<ManagedSupervisorFinalizeOutcome> => {
       const finalizeFailure = async () => {
         const finalized = await finalize({ result, supervisorReady: false });
+        const rolledBack = finalized.rolledBack && runOriginalLifecycle("start");
         return {
           ...finalized,
+          rolledBack,
           stateRestored: false,
-          ...(finalized.rolledBack ? { stateBackupRemoved: removeSettledStateBackup() } : {}),
+          ...(rolledBack ? { stateBackupRemoved: removeSettledStateBackup() } : {}),
         };
       };
       if (!supervisorReady) {
@@ -413,9 +447,6 @@ export function relaunchManagedSupervisorSession(
         // both succeed.
         return finalizeFailure();
       }
-      const runLifecycleProbe = deps.runOpenshell;
-      const captureLifecycleProbe = deps.runCaptureOpenshell;
-      if (!runLifecycleProbe || !captureLifecycleProbe) return finalizeFailure();
       const lifecycleDeps = {
         commandExecutor,
         runCaptureOpenshell: captureLifecycleProbe,
@@ -427,7 +458,7 @@ export function relaunchManagedSupervisorSession(
           result,
           supervisorReady: true,
           sandboxName,
-          finalHandoffTimeoutSecs: getDockerGpuSupervisorReconnectTimeoutSecs(1),
+          finalHandoffTimeoutSecs: lifecycleTimeoutSecs,
         },
         lifecycleDeps,
       );

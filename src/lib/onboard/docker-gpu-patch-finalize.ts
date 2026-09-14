@@ -73,7 +73,7 @@ const PROCESS_TREE_BOUNDED_OPENSHELL_OPTIONS = {
   killSignal: "SIGKILL",
 } as const;
 
-function runOpenShellLifecycleCommand(
+export function runOpenShellLifecycleCommand(
   runOpenshell: NonNullable<DockerGpuPatchDeps["runOpenshell"]>,
   args: string[],
   timeoutSecs: number,

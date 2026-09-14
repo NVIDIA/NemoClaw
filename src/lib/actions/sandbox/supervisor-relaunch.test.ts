@@ -36,6 +36,13 @@ function patchResult(): DockerGpuPatchResult {
 }
 
 function baseDeps(overrides: ManagedSupervisorRelaunchDeps = {}) {
+  let currentContainerId = "old-container-id";
+  const finalize: NonNullable<ManagedSupervisorRelaunchDeps["finalize"]> =
+    overrides.finalize ??
+    (async ({ supervisorReady }) =>
+      supervisorReady
+        ? { backupRemoved: true, finalHandoffAcknowledged: true, rolledBack: false }
+        : { backupRemoved: false, rolledBack: true });
   return {
     getSandbox: vi.fn(() => ({
       name: "alpha",
@@ -52,10 +59,7 @@ function baseDeps(overrides: ManagedSupervisorRelaunchDeps = {}) {
         }) as never,
     ),
     resolveDashboardPort: vi.fn(() => 18789),
-    resolveContainer: vi
-      .fn()
-      .mockReturnValueOnce("old-container-id")
-      .mockReturnValue("new-container-id"),
+    resolveContainer: vi.fn(() => currentContainerId),
     inspectContainer: vi.fn(() => ({
       Config: { Env: ["OPENSHELL_SANDBOX_COMMAND=sleep infinity"] },
     })),
@@ -88,13 +92,18 @@ function baseDeps(overrides: ManagedSupervisorRelaunchDeps = {}) {
     },
     runOpenshell: vi.fn(() => ({ status: 0, stdout: "No sandboxes found.\n" })),
     runCaptureOpenshell: vi.fn(() => "alpha  2026-08-23 10:00:00  Ready\n"),
-    recreate: vi.fn(() => patchResult()),
-    finalize: vi.fn(async ({ supervisorReady }) =>
-      supervisorReady
-        ? { backupRemoved: true, finalHandoffAcknowledged: true, rolledBack: false }
-        : { backupRemoved: false, rolledBack: true },
-    ),
+    recreate: vi.fn(() => {
+      currentContainerId = "new-container-id";
+      return patchResult();
+    }),
     ...overrides,
+    finalize: vi.fn(
+      async (...args: Parameters<NonNullable<ManagedSupervisorRelaunchDeps["finalize"]>>) => {
+        const outcome = await finalize(...args);
+        currentContainerId = outcome.rolledBack ? "old-container-id" : currentContainerId;
+        return outcome;
+      },
+    ),
   } satisfies ManagedSupervisorRelaunchDeps;
 }
 
@@ -158,6 +167,13 @@ describe("relaunchManagedSupervisorSession", () => {
     expect(relaunch).not.toBeNull();
     expect(relaunch?.containerId).toBe("new-container-id");
     expect(deps.recreate).toHaveBeenCalledOnce();
+    expect(deps.runOpenshell).toHaveBeenCalledWith(
+      ["sandbox", "stop", "alpha"],
+      expect.objectContaining({ timeout: 900000, killProcessTreeOnTimeout: true }),
+    );
+    expect(vi.mocked(deps.runOpenshell).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(deps.recreate).mock.invocationCallOrder[0],
+    );
     const options = vi.mocked(deps.recreate).mock.calls[0]?.[0];
     expect(options).toMatchObject({
       sandboxName: "alpha",
@@ -714,7 +730,9 @@ describe("relaunchManagedSupervisorSession", () => {
       resolveContainer: vi
         .fn()
         .mockReturnValueOnce("old-container-id")
-        .mockReturnValue("new-container"),
+        .mockReturnValueOnce("old-container-id")
+        .mockReturnValueOnce("new-container")
+        .mockReturnValue("old-container-id"),
     });
     const relaunch = relaunchManagedSupervisorSession("alpha", { quiet: true, deps });
 
@@ -788,6 +806,10 @@ describe("relaunchManagedSupervisorSession", () => {
     });
 
     expect(relaunchManagedSupervisorSession("alpha", { quiet: true, deps })).toBeNull();
+    expect(vi.mocked(deps.runOpenshell).mock.calls.map(([args]) => args)).toEqual([
+      ["sandbox", "stop", "alpha"],
+      ["sandbox", "start", "alpha"],
+    ]);
     expect(deps.removeBackup).toHaveBeenCalledWith("alpha", "/tmp/rebuild-backups/alpha/recovery");
   });
 
