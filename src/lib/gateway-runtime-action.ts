@@ -112,7 +112,9 @@ export async function recoverNamedGatewayRuntime(options: RecoverNamedGatewayRun
     ),
   );
   let after = await getNamedGatewayLifecycleState(gatewayName, lifecycleOptions);
-  if (after.recoveryBlocked) {
+  const selectionRemainsUnreachable =
+    before.state === "named_unreachable" && after.error?.kind === "transport";
+  if (after.recoveryBlocked && !selectionRemainsUnreachable) {
     return { recovered: false, before, after, attempted: true };
   }
   if (after.state === "healthy_named") {

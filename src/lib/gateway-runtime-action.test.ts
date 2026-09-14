@@ -132,6 +132,27 @@ describe("gateway observations and recovery", () => {
     },
   );
 
+  it("starts an exact unreachable gateway when selection remains transport-unreachable", async () => {
+    const stillUnreachable = {
+      ...observation("observation_failed"),
+      unavailable: true,
+      error: {
+        kind: "transport" as const,
+        reason: "unreachable" as const,
+        message: "The selected gateway remains unreachable.",
+      },
+    };
+    observe
+      .mockResolvedValueOnce(observation("named_unreachable"))
+      .mockResolvedValueOnce(stillUnreachable)
+      .mockResolvedValueOnce(observation("healthy_named"));
+
+    expect(
+      await gatewayRuntime.recoverNamedGatewayRuntime({ gatewayName: "nemoclaw-8090" }),
+    ).toMatchObject({ recovered: true, via: "start", before: { state: "named_unreachable" } });
+    expect(start).toHaveBeenCalledOnce();
+  });
+
   it("reports a redacted startup failure only after recovery remains unhealthy", async () => {
     const output = { error: vi.fn(), log: vi.fn(), step: vi.fn(), warn: vi.fn() };
     observe.mockResolvedValue(observation("named_unhealthy"));
