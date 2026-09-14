@@ -74,7 +74,7 @@ function baseDeps(overrides: ManagedSupervisorRelaunchDeps = {}) {
       backedUpFiles: [],
       failedFiles: [],
     })) as never,
-    restoreState: vi.fn(() => ({
+    restoreState: vi.fn(async () => ({
       success: true,
       restoredDirs: ["workspace"],
       failedDirs: [],
@@ -464,8 +464,7 @@ describe("relaunchManagedSupervisorSession", () => {
     const second = relaunch?.finalize(true);
 
     expect(second).toBe(first);
-    await Promise.resolve();
-    expect(deps.finalize).toHaveBeenCalledOnce();
+    await vi.waitFor(() => expect(deps.finalize).toHaveBeenCalledOnce());
     await expect(relaunch?.finalize(false)).rejects.toThrow(
       "Supervisor relaunch transaction was finalized with conflicting state.",
     );
@@ -505,7 +504,7 @@ describe("relaunchManagedSupervisorSession", () => {
 
   it("rolls back the container transaction when state restore fails", async () => {
     const deps = baseDeps({
-      restoreState: vi.fn(() => ({
+      restoreState: vi.fn(async () => ({
         success: false,
         restoredDirs: [],
         failedDirs: ["workspace"],
@@ -531,7 +530,7 @@ describe("relaunchManagedSupervisorSession", () => {
   it("re-proves managed health after state restore and before commit", async () => {
     const order: string[] = [];
     const deps = baseDeps({
-      restoreState: vi.fn(() => {
+      restoreState: vi.fn(async () => {
         order.push("restore-state");
         return {
           success: true,
@@ -594,7 +593,7 @@ describe("relaunchManagedSupervisorSession", () => {
   it("rolls back when managed health fails after state restore", async () => {
     const order: string[] = [];
     const deps = baseDeps({
-      restoreState: vi.fn(() => {
+      restoreState: vi.fn(async () => {
         order.push("restore-state");
         return {
           success: true,
