@@ -511,61 +511,6 @@ test(
       [CLI, "config", "export", SANDBOX_NAME, "--output", firstPath, "--json"],
       { artifactName: "export-ollama-first", cwd: REPO_ROOT, env: exportEnv, timeoutMs: 60000 },
     );
-    await host.command(
-      "node",
-      [
-        "-e",
-        `
-      const { Check } = require("typebox/value");
-      const { connectManagedOpenShellSdk } = require("./dist/lib/adapters/openshell/sdk.js");
-      const { createProviders } = require("./dist/lib/adapters/openshell/providers.js");
-      const schemas = require("./dist/lib/adapters/openshell/sdk-read-schema.js");
-      const { load } = require("./dist/lib/state/registry/persistence.js");
-      const report = {};
-      const errorCode = (error) => Number.isInteger(error?.code) ? error.code : null;
-      (async () => {
-        const entry = load().sandboxes[process.env.NEMOCLAW_SANDBOX_NAME];
-        report.selection = { provider: entry.provider, api: entry.preferredInferenceApi, credentialEnv: entry.credentialEnv };
-        const target = { kind: "named", gatewayName: entry.gatewayName };
-        const client = await connectManagedOpenShellSdk(target);
-        const signal = AbortSignal.timeout(15000);
-        const response = await client.raw.getProvider({ name: "ollama-local", workspace: "default" }, { signal });
-        const provider = response.provider;
-        report.provider = {
-          schemaMatches: Check(schemas.ProviderResponseSchema, response),
-          name: provider?.metadata?.name, workspace: provider?.metadata?.workspace,
-          idPresent: Boolean(provider?.metadata?.id), versionType: typeof provider?.metadata?.resourceVersion,
-          type: provider?.type, profileWorkspace: provider?.profileWorkspace,
-          credentialKeys: Object.keys(provider?.credentials ?? {}),
-          credentialHandleKeys: Object.keys(provider?.credentialHandles ?? {}),
-          configKeys: Object.keys(provider?.config ?? {}),
-        };
-        try {
-          const response = await client.raw.getProviderProfile({ id: "openai", workspace: provider.profileWorkspace }, { signal });
-          const profile = response.profile;
-          report.profile = {
-            schemaMatches: Check(schemas.ManagedOpenAiProfileResponseSchema, response),
-            id: profile?.id, source: profile?.source, scope: profile?.scope,
-            resourceVersion: String(profile?.resourceVersion), inferenceCapable: profile?.inferenceCapable,
-            credentialCount: profile?.credentials?.length, endpointCount: profile?.endpoints?.length,
-            binaryCount: profile?.binaries?.length, hasDiscovery: profile?.discovery !== undefined,
-          };
-        } catch (error) { report.profileReadCode = errorCode(error); }
-        try {
-          await createProviders().get({ target, workspace: "default", name: "ollama-local", configKeys: ["OPENAI_BASE_URL"], profileContract: "openai", signal });
-          report.providerReader = "passed";
-        } catch (error) { report.providerReader = error.kind ?? "unknown"; }
-      })().catch((error) => { report.readFailed = true; report.readCode = errorCode(error); })
-        .finally(() => process.stdout.write(JSON.stringify(report) + "\\n"));
-    `,
-      ],
-      {
-        artifactName: "export-provider-diagnostic",
-        cwd: REPO_ROOT,
-        env: exportEnv,
-        timeoutMs: 20000,
-      },
-    );
     expect(exported.exitCode, resultText(exported)).toBe(0);
     const raw = fs.readFileSync(firstPath, "utf8");
     const document = validateNemoClawConfig(YAML.parse(raw));

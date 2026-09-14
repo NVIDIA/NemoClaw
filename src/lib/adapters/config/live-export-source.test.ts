@@ -1016,6 +1016,15 @@ function mockManagedVllmSource(
 }
 
 describe("managed vLLM export pipeline", () => {
+  it("refuses an absent OpenAI profile without publishing (#11435)", async () => {
+    mockManagedVllmSource();
+    raw.getProviderProfile.mockRejectedValue({ code: 5 });
+    expectExportRefusal(await exportLiveSource(), {
+      field: "spec.inferenceProviders[].serving",
+      category: "drifted",
+    });
+  });
+
   it("exports the real fixed onboarding profile and reparses its managed provider", async () => {
     const f = mockManagedVllmSource();
     const output = vi.fn(async (_value: string) => {});

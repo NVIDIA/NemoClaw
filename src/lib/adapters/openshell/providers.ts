@@ -35,7 +35,7 @@ export type Provider = Readonly<
     config: Readonly<Record<string, string>>;
     builtinInferenceEndpoint?: string;
     profileWorkspace?: string;
-    // null records a successful not-found read for the legacy global OpenAI provider type.
+    // null records a successful not-found read at the OpenAI provider's profile binding.
     managedProfile?: Readonly<{
       id: "brave" | "openai";
       source: "builtin" | "user";
@@ -92,7 +92,7 @@ async function readManagedProfile(
     );
   } catch (error) {
     // OpenShell 0.0.116 has an OpenAI provider type without a builtin profile.
-    if (profileId === "openai" && profileWorkspace === "" && isNotFound(error)) return null;
+    if (profileId === "openai" && isNotFound(error)) return null;
     throw error;
   }
   return validateManagedProfileResponse(response, profileId, profileWorkspace);

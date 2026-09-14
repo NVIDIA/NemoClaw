@@ -34,7 +34,8 @@ function hasOllamaOpenAiProfile(evidence: ObservedExportEndpointEvidence | null)
   const provider = evidence?.provider;
   return (
     hasManagedOpenAiProfile(evidence) ||
-    (provider?.profileWorkspace === "" && provider.managedProfile === null)
+    (provider?.managedProfile === null &&
+      (provider.profileWorkspace === "" || provider.profileWorkspace === provider.workspace))
   );
 }
 

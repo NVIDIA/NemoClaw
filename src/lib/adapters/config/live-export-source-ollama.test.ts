@@ -81,7 +81,7 @@ function mockOllamaSource() {
   const localProvider = {
     ...provider().provider,
     metadata: { ...provider().provider.metadata, name: "ollama-local" },
-    profileWorkspace: "",
+    profileWorkspace: "default",
     credentials,
     config: { OPENAI_BASE_URL: source.endpointUrl },
   };
@@ -92,6 +92,12 @@ function mockOllamaSource() {
 
 describe("attached Ollama export pipeline", () => {
   it.each([
+    {
+      name: "legacy workspace without a user credential",
+      workspace: "default",
+      credentialEnv: null,
+      readProfile: () => Promise.reject({ code: 5 }),
+    },
     {
       name: "legacy global without a user credential",
       workspace: "",
@@ -206,15 +212,19 @@ describe("attached Ollama export pipeline", () => {
     );
     expectExportRefusal(await exportLiveSource(), { category: "unstable-source" });
   });
-  it("refuses a profile that appears between export snapshots (#11435)", async () => {
-    mockOllamaSource();
-    const globalProfile = openAiProviderProfile();
-    globalProfile.profile.scope = "platform";
-    raw.getProviderProfile
-      .mockRejectedValueOnce({ code: 5 })
-      .mockResolvedValueOnce(globalProfile)
-      .mockRejectedValueOnce({ code: 5 })
-      .mockResolvedValueOnce(globalProfile);
-    expectExportRefusal(await exportLiveSource(), { category: "unstable-source" });
-  });
+  it.each(["", "default"])(
+    "refuses a profile that appears in %j between export snapshots (#11435)",
+    async (workspace) => {
+      const { localProvider } = mockOllamaSource();
+      localProvider.profileWorkspace = workspace;
+      const presentProfile = openAiProviderProfile();
+      presentProfile.profile.scope = workspace === "" ? "platform" : "workspace";
+      raw.getProviderProfile
+        .mockRejectedValueOnce({ code: 5 })
+        .mockResolvedValueOnce(presentProfile)
+        .mockRejectedValueOnce({ code: 5 })
+        .mockResolvedValueOnce(presentProfile);
+      expectExportRefusal(await exportLiveSource(), { category: "unstable-source" });
+    },
+  );
 });

@@ -212,18 +212,31 @@ describe("OpenShell provider evidence", () => {
     ).rejects.toMatchObject({ kind: "schema" });
   });
 
-  it("records a confirmed absent global OpenAI profile (#11435)", async () => {
-    const { connect, raw } = fixture();
-    raw.getProvider.mockResolvedValue({
-      provider: { ...provider().provider, profileWorkspace: "" },
-    });
-    raw.getProviderProfile.mockRejectedValue({ code: 5 });
-    const result = await createProviders(connect).get({ ...request(), profileContract: "openai" });
-    expect(result).toMatchObject({ profileWorkspace: "", managedProfile: null });
-  });
+  it.each(["", "default"])(
+    "records a confirmed absent OpenAI profile in %j (#11435)",
+    async (workspace) => {
+      const { connect, raw } = fixture();
+      raw.getProvider.mockResolvedValue({
+        provider: { ...provider().provider, profileWorkspace: workspace },
+      });
+      raw.getProviderProfile.mockRejectedValue({ code: 5 });
+      const result = await createProviders(connect).get({
+        ...request(),
+        profileContract: "openai",
+      });
+      expect(result).toMatchObject({ profileWorkspace: workspace, managedProfile: null });
+      expect(raw.getProviderProfile).toHaveBeenCalledWith(
+        { id: "openai", workspace },
+        { signal: expect.any(AbortSignal) },
+      );
+    },
+  );
 
   it.each([
-    { workspace: "default", code: 5, kind: "transport" },
+    { workspace: "foreign", code: 5, kind: "schema" },
+    { workspace: "default", code: 7, kind: "authentication" },
+    { workspace: "default", code: 4, kind: "timeout" },
+    { workspace: "default", code: 13, kind: "transport" },
     { workspace: "", code: 7, kind: "authentication" },
     { workspace: "", code: 4, kind: "timeout" },
     { workspace: "", code: 13, kind: "transport" },
