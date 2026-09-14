@@ -17,6 +17,15 @@ SPEC.loader.exec_module(MODULE)
 
 
 class BytecodeControls(unittest.TestCase):
+    def test_overlong_installed_cache_is_omitted_with_source_retained(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / ("x" * 140 + ".py")
+            source.write_text("VALUE = 1\n")
+            self.assertEqual(MODULE.prepare_tree(root), [])
+            self.assertTrue(source.is_file())
+            self.assertFalse((root / "__pycache__").exists() and any((root / "__pycache__").iterdir()))
+
     def test_timestamp_cache_is_replaced_and_resources_preserved(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

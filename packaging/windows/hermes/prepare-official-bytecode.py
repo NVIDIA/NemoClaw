@@ -19,6 +19,12 @@ import time
 
 PYTHON = "hermes-agent/.hermes-runtime/python/cpython-3.11.16-windows-aarch64-none/python.exe"
 UPSTREAM = "2237be355906fbe6065ce1815711eee52b2d646e"
+INSTALLED_RUNTIME_PREFIX_CHARACTERS = 114
+
+
+def installable_cache(root, cache):
+    relative = cache.relative_to(root).as_posix().replace("/", "\\")
+    return INSTALLED_RUNTIME_PREFIX_CHARACTERS + len(relative) < 260
 
 
 def digest(path):
@@ -95,6 +101,10 @@ def prepare_tree(root):
                 variants.append((optimized, level))
         for output, optimization in variants:
             existed = output.exists()
+            if not installable_cache(root, output):
+                if existed:
+                    output.unlink()
+                continue
             if existed:
                 ordinary(output)
             # No source is imported or executed. Relative code filenames avoid
@@ -193,7 +203,14 @@ def validate_receipt(root, report):
         or report.get("importProof", {}).get("sourceCompilationForbidden") is not True
     ):
         raise ValueError("The canonical runtime lacks its exact CI bytecode proof.")
-    expected_sources = {p.relative_to(root).as_posix() for p in source_files(root)}
+    all_sources = source_files(root)
+    expected_sources = {
+        p.relative_to(root).as_posix()
+        for p in all_sources
+        if installable_cache(
+            root, Path(importlib.util.cache_from_source(str(p), optimization=""))
+        )
+    }
     seen = set()
     sources = set()
     for row in report["files"]:
@@ -279,6 +296,7 @@ def main():
         report["runtimeBefore"] = runtime_totals(root)
         report["files"] = prepare_tree(root)
         report["sourceFileCount"] = len({r["source"] for r in report["files"]})
+        report["skippedLongPathSourceFiles"] = len(source_files(root)) - report["sourceFileCount"]
         report["cacheFileCount"] = len(report["files"])
         report["addedCacheFiles"] = sum(not r["replaced"] for r in report["files"])
         report["replacedCacheFiles"] = sum(r["replaced"] for r in report["files"])
