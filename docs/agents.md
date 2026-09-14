@@ -40,3 +40,10 @@ and retained evidence under `.local`. They do not send external messages.
 [Native messaging evidence](validation/rust-native-openclaw-linux-arm64.json)
 and [harness evidence](validation/rust-fabric-adapters-linux-arm64.json) distinguish
 protocol fixtures from complete live inference qualification.
+
+Real messaging deployment still needs generic egress, mounted secrets, and
+retained sandbox storage that this desired-state schema does not provision.
+The Docker fixture supplies those prerequisites locally. Use native OpenClaw
+commands through OpenShell sandbox access; there is no NemoClaw invocation or
+channel-management API. A Fabric SDK `run` starts a new runtime rather than
+attaching to the one hosted by NemoClaw.

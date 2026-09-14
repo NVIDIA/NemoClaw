@@ -92,8 +92,12 @@ Rust does not remove protocol or packaging work. The pinned high-level OpenShell
 Rust client omits mTLS, so the SDK uses its generated tonic clients with explicit
 certificate and bearer references. The real OpenTofu test exposed a Rustls
 backend-selection panic after HTTP dependencies were added. Selecting the plugin
-transport's crypto backend explicitly fixed that failure. Protocol tests must
-run against the complete production binary, not only a fixture provider.
+transport's crypto backend explicitly fixed that failure. Protocol tests run
+against the complete production binary. Authenticated wire tests now cover valid
+mTLS/bearer references and reject incorrect server trust, client trust, bearer
+values, and missing key files without mutation or disclosure. A stalled exec
+stream demonstrated that a gRPC deadline alone was insufficient; the SDK now
+bounds the complete call and retains uncertainty about invocation effects.
 
 Native builds need a C toolchain and Protocol Buffers compiler. Native Linux
 ARM64 bundle and managed-gateway execution are qualified. Building and executing
@@ -103,13 +107,18 @@ of runtime support. Podman topology also requires its own evidence.
 The model runtime retains the recipe archive, original and patched sources,
 preparation tools, licenses, Rust source and vendored dependency licenses. The
 builder normalizes timestamps and rejects changing source inputs during a build.
-Reproducibility must be demonstrated with matching artifact digests. Source
+An independent offline rebuild from another extraction directory produced an
+identical supervisor binary hash. The archive must include OpenShell protobuf
+inputs omitted by Cargo vendoring, and the build must use that exact vendor
+layout to avoid dependency-path differences. Source
 packaging and dependency maintenance count toward the architecture's cost.
 
 The Go Ollama boundary combines a container and model volume, with a separate
 model resource. A stopped parent prevents authoritative model inventory, which
 can block repair planning. Destroy remains unsupported for that combined resource.
-Parity preserves this explicit limitation; splitting it requires a separate
+The Rust SDK/provider bundle now passes plan, initial apply, export/reapply,
+no-op, and failed-inventory tests with one container creation and one model pull.
+Parity preserves the explicit destroy limitation; splitting it requires a separate
 recovery and storage-retention contract.
 
 ## Acceptance evidence

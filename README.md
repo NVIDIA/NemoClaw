@@ -8,8 +8,12 @@ The SDK exposes `plan`, `apply`, `export`, and `destroy`; the CLI delegates the
 same four commands to it. The external OpenShell lifecycle is qualified through
 real OpenTofu and a local gRPC fixture, including interrupted creation, readiness
 failure, observation failure, export/reapply, and resumable destroy. Managed
-Docker, Ollama, and Spark runtimes are still being ported; this is not yet parity.
-See [test instructions](docs/testing.md).
+gateway lifecycle and Ollama bundle reconciliation are implemented and tested.
+Native agent/Fabric tooling is retained. Complete Spark inference and all native
+platform results remain qualification gates; this is not yet a parity claim.
+See [build instructions](docs/build.md), [CLI and lifecycle usage](docs/usage.md),
+[SDK access](docs/sdk.md), [agent runtimes](docs/agents.md), and
+[test instructions](docs/testing.md).
 
 Run `cargo test --workspace`, `cargo fmt --check`, and
 `cargo clippy --workspace --all-targets -- -D warnings`.
