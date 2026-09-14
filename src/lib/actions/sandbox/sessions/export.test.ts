@@ -700,7 +700,31 @@ describe("exportSandboxSessions", () => {
       });
       expect(consoleWarnSpy).toHaveBeenCalledWith(
         expect.stringMatching(
-          /failed to remove in-sandbox staging tarball '\/sandbox\/\.nemoclaw-staging\/[^']+'.*sandbox 'alpha'.*exit 2.*remove it manually with `[^`]+ sandbox exec --name alpha -- rm -f \/sandbox\/\.nemoclaw-staging\/[^`]+`/,
+          /failed to remove in-sandbox staging tarball '\/sandbox\/\.nemoclaw-staging\/[^']+'.*sandbox 'alpha'.*exit 2.*remove it manually with `[^`]+ sandbox exec -g gateway-alpha --name alpha -- rm -f \/sandbox\/\.nemoclaw-staging\/[^`]+`/,
+        ),
+      );
+    } finally {
+      consoleWarnSpy.mockRestore();
+    }
+  });
+
+  it("keeps the selected-gateway cleanup command unchanged when no gateway is recorded", async () => {
+    getKnownGatewayMock.mockReturnValue(null);
+    captureMock.mockReturnValueOnce(
+      makeCapture(JSON.stringify([{ key: "agent:main:main", sessionId: "sid-a" }])),
+    );
+    runMock.mockReturnValueOnce(makeRun(0)).mockReturnValueOnce(makeRun(2));
+    const consoleWarnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    try {
+      await exportSandboxSessions({
+        sandboxName: "alpha",
+        out: "./out.tgz",
+        format: "tar",
+      });
+      expect(consoleWarnSpy).toHaveBeenCalledWith(
+        expect.stringMatching(
+          /remove it manually with `[^`]+ sandbox exec --name alpha -- rm -f \/sandbox\/\.nemoclaw-staging\/[^`]+`/,
         ),
       );
     } finally {
@@ -728,7 +752,7 @@ describe("exportSandboxSessions", () => {
       ).rejects.toThrow(/Failed to tar sessions/);
       expect(consoleWarnSpy).toHaveBeenCalledWith(
         expect.stringMatching(
-          /failed to remove in-sandbox staging tarball '\/sandbox\/\.nemoclaw-staging\/[^']+'.*sandbox 'alpha'.*exit 3.*remove it manually with `[^`]+ sandbox exec --name alpha -- rm -f \/sandbox\/\.nemoclaw-staging\/[^`]+`/,
+          /failed to remove in-sandbox staging tarball '\/sandbox\/\.nemoclaw-staging\/[^']+'.*sandbox 'alpha'.*exit 3.*remove it manually with `[^`]+ sandbox exec -g gateway-alpha --name alpha -- rm -f \/sandbox\/\.nemoclaw-staging\/[^`]+`/,
         ),
       );
     } finally {

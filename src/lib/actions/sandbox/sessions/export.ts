@@ -181,6 +181,20 @@ function scopeSandboxCommandToTarget(
   return [...args.slice(0, 2), "-g", target.gatewayName, ...args.slice(2)];
 }
 
+function manualRemoteCleanupCommand(input: {
+  sandboxName: string;
+  target: OpenShellSandboxTransferRequest["target"];
+  remotePath: string;
+}): string {
+  return [
+    CLI_NAME,
+    ...scopeSandboxCommandToTarget(
+      ["sandbox", "exec", "--name", input.sandboxName, "--", "rm", "-f", input.remotePath],
+      input.target,
+    ),
+  ].join(" ");
+}
+
 export async function exportSandboxSessions(
   opts: SessionsExportOptions,
 ): Promise<SessionsExportResult> {
@@ -617,8 +631,9 @@ function removeRemoteStagingArtifact(input: {
     { ignoreError: true, stdio: "ignore" },
   );
   if (remoteCleanup.status !== 0) {
+    const manualCleanup = manualRemoteCleanupCommand(input);
     console.warn(
-      `  Warning: failed to remove in-sandbox ${input.artifactLabel} '${input.remotePath}' from sandbox '${input.sandboxName}' (exit ${remoteCleanup.status}). ${input.retainedDataNote}; remove it manually with \`${CLI_NAME} sandbox exec --name ${input.sandboxName} -- rm -f ${input.remotePath}\`.`,
+      `  Warning: failed to remove in-sandbox ${input.artifactLabel} '${input.remotePath}' from sandbox '${input.sandboxName}' (exit ${remoteCleanup.status}). ${input.retainedDataNote}; remove it manually with \`${manualCleanup}\`.`,
     );
   }
 }
