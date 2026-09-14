@@ -93,7 +93,10 @@ function hash(file: string) {
   };
 }
 
-async function powershellMetadata(systemRoot: string, file: string, pid?: number) {
+async function powershellMetadata(environment: NodeJS.ProcessEnv, file: string, pid?: number) {
+  const systemRoot = environment.SystemRoot;
+  if (!systemRoot || !path.win32.isAbsolute(systemRoot))
+    throw new Error("Microsoft Edge identity probe requires the Windows system root.");
   const powershell = path.win32.join(
     systemRoot,
     "System32",
@@ -103,7 +106,7 @@ async function powershellMetadata(systemRoot: string, file: string, pid?: number
   );
   const script =
     pid === undefined
-      ? "try{$f=Get-Item -LiteralPath $env:NEMOCLAW_EDGE_INSPECT_PATH -ErrorAction Stop;Import-Module Microsoft.PowerShell.Security -ErrorAction Stop;$s=Get-AuthenticodeSignature -LiteralPath $f.FullName -ErrorAction Stop;[ordered]@{path=$f.FullName;version=$f.VersionInfo.FileVersion;productName=$f.VersionInfo.ProductName;originalFilename=$f.VersionInfo.OriginalFilename;reparsePoint=[bool]($f.Attributes -band [IO.FileAttributes]::ReparsePoint);signatureStatus=$s.Status.ToString();signerSubject=if($s.SignerCertificate){$s.SignerCertificate.Subject}else{''};signerThumbprint=if($s.SignerCertificate){$s.SignerCertificate.Thumbprint}else{''}}|ConvertTo-Json -Compress}catch{[ordered]@{probeError=$_.Exception.Message;probeType=$_.Exception.GetType().FullName}|ConvertTo-Json -Compress}"
+      ? "try{$f=Get-Item -LiteralPath $env:NEMOCLAW_EDGE_INSPECT_PATH -ErrorAction Stop;Import-Module Microsoft.PowerShell.Security -ErrorAction Stop;$s=Get-AuthenticodeSignature -LiteralPath $f.FullName -ErrorAction Stop;$subject='';$thumbprint='';if($s.SignerCertificate){$subject=$s.SignerCertificate.Subject;$thumbprint=$s.SignerCertificate.Thumbprint};[ordered]@{path=$f.FullName;version=$f.VersionInfo.FileVersion;productName=$f.VersionInfo.ProductName;originalFilename=$f.VersionInfo.OriginalFilename;reparsePoint=[bool]($f.Attributes -band [IO.FileAttributes]::ReparsePoint);signatureStatus=$s.Status.ToString();signerSubject=$subject;signerThumbprint=$thumbprint}|ConvertTo-Json -Compress}catch{[ordered]@{probeError=$_.Exception.Message;probeType=$_.Exception.GetType().FullName}|ConvertTo-Json -Compress}"
       : "$p=Get-Process -Id ([int]$env:NEMOCLAW_EDGE_INSPECT_PID) -ErrorAction Stop;[ordered]@{pid=$p.Id;path=$p.Path;creationFiletime=$p.StartTime.ToUniversalTime().ToFileTimeUtc().ToString()}|ConvertTo-Json -Compress";
   let result;
   try {
@@ -113,7 +116,7 @@ async function powershellMetadata(systemRoot: string, file: string, pid?: number
       ["-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
       {
         env: {
-          ...process.env,
+          ...environment,
           PSModulePath: path.win32.join(
             systemRoot,
             "System32",
@@ -133,8 +136,17 @@ async function powershellMetadata(systemRoot: string, file: string, pid?: number
     );
   } catch (error: any) {
     const stderr = typeof error?.stderr === "string" ? error.stderr.slice(0, 4096) : "";
+    const stdout = typeof error?.stdout === "string" ? error.stdout.slice(0, 4096) : "";
+    const code =
+      typeof error?.code === "string" || typeof error?.code === "number"
+        ? String(error.code).slice(0, 64)
+        : "unknown";
+    const detail = [stderr, stdout, typeof error?.message === "string" ? error.message : ""]
+      .filter(Boolean)
+      .join(" | ")
+      .slice(0, 4096);
     throw new Error(
-      `Microsoft Edge identity probe failed (${Number(error?.code) || 1})${stderr ? `: ${stderr}` : "."}`,
+      `Microsoft Edge identity probe failed (${code})${detail ? `: ${detail}` : "."}`,
     );
   }
   const value = JSON.parse(result.stdout.trim());
@@ -161,7 +173,7 @@ export async function detectNativeEdge(environment: NodeJS.ProcessEnv = process.
   const before = hash(file);
   if (before.machine !== 0xaa64)
     throw new Error("Microsoft Edge is not a native ARM64 executable.");
-  const signed = validateEdgeMetadata(await powershellMetadata(systemRoot, file), file);
+  const signed = validateEdgeMetadata(await powershellMetadata(environment, file), file);
   const after = hash(file);
   if (before.bytes !== after.bytes || before.sha256 !== after.sha256 || after.machine !== 0xaa64)
     throw new Error("Microsoft Edge changed during identity verification.");
@@ -306,7 +318,7 @@ export async function startNativeEdgeBrowser(options: {
     if (!endpoint)
       throw new Error("Microsoft Edge did not become ready within its host startup bound.");
     if (output.exceeded) throw new Error("Microsoft Edge startup output exceeded its bound.");
-    const generation = await powershellMetadata(environment.SystemRoot!, identity.path, child.pid);
+    const generation = await powershellMetadata(environment, identity.path, child.pid);
     if (
       generation.pid !== child.pid ||
       generation.path?.toLowerCase() !== identity.path.toLowerCase() ||
