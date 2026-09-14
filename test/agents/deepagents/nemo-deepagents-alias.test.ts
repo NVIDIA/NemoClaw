@@ -1,14 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { exec } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
 import { afterAll, describe, expect, it, vi } from "vitest";
 
-import { execTimeout } from "../../helpers/timeouts";
+import { runAgentAliasCommand } from "../../helpers/agent-alias-command";
 
 const NEMOCLAW_CLI = path.join(import.meta.dirname, "../../..", "bin", "nemoclaw.js");
 const DEEPAGENTS_ALIAS_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "nemo-deepagents-bin-"));
@@ -20,78 +19,6 @@ vi.setConfig({ maxConcurrency: 4 });
 afterAll(() => {
   fs.rmSync(DEEPAGENTS_ALIAS_DIR, { force: true, recursive: true });
 });
-
-function runDeepAgents(
-  args: string,
-  env: Record<string, string | undefined> = {},
-): Promise<{ code: number; out: string }> {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemo-deepagents-test-"));
-  return new Promise((resolve, reject) => {
-    exec(
-      `"${DEEPAGENTS_CLI}" ${args}`,
-      {
-        encoding: "utf-8",
-        timeout: execTimeout(),
-        env: {
-          ...process.env,
-          HOME: home,
-          // Clear inherited markers so the launcher under test sets them itself.
-          NEMOCLAW_AGENT: undefined,
-          NEMOCLAW_INVOKED_AS: undefined,
-          NEMOCLAW_HEALTH_POLL_COUNT: "1",
-          NEMOCLAW_HEALTH_POLL_INTERVAL: "0",
-          ...env,
-        },
-      },
-      (error, stdout, stderr) => {
-        try {
-          fs.rmSync(home, { force: true, recursive: true });
-        } catch (cleanupError) {
-          reject(cleanupError);
-          return;
-        }
-        const code = typeof error?.code === "number" ? error.code : error ? 1 : 0;
-        resolve({ code, out: error ? stdout + stderr : stdout });
-      },
-    );
-  });
-}
-
-function runNemoClaw(
-  args: string,
-  env: Record<string, string | undefined> = {},
-): Promise<{ code: number; out: string }> {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemo-deepagents-test-"));
-  return new Promise((resolve, reject) => {
-    exec(
-      `node "${NEMOCLAW_CLI}" ${args}`,
-      {
-        encoding: "utf-8",
-        timeout: execTimeout(),
-        env: {
-          ...process.env,
-          HOME: home,
-          // Clear inherited markers so the base nemoclaw bin has a clean slate.
-          NEMOCLAW_AGENT: undefined,
-          NEMOCLAW_INVOKED_AS: undefined,
-          NEMOCLAW_HEALTH_POLL_COUNT: "1",
-          NEMOCLAW_HEALTH_POLL_INTERVAL: "0",
-          ...env,
-        },
-      },
-      (error, stdout, stderr) => {
-        try {
-          fs.rmSync(home, { force: true, recursive: true });
-        } catch (cleanupError) {
-          reject(cleanupError);
-          return;
-        }
-        const code = typeof error?.code === "number" ? error.code : error ? 1 : 0;
-        resolve({ code, out: error ? stdout + stderr : stdout });
-      },
-    );
-  });
-}
 
 function createDeepAgentsRegistry(): { home: string; registryPath: string } {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemo-deepagents-use-"));
@@ -121,20 +48,20 @@ describe.concurrent("nemo-deepagents alias", () => {
   });
 
   it("outputs nemo-deepagents branding for --version", async () => {
-    const { code, out } = await runDeepAgents("--version");
+    const { code, out } = await runAgentAliasCommand(DEEPAGENTS_CLI, "--version");
     expect(code).toBe(0);
     expect(out).toMatch(/^nemo-deepagents v[\d.]+/);
   });
 
   it("nemoclaw --version does not contain nemo-deepagents", async () => {
-    const { code, out } = await runNemoClaw("--version");
+    const { code, out } = await runAgentAliasCommand(NEMOCLAW_CLI, "--version");
     expect(code).toBe(0);
     expect(out).toMatch(/^nemoclaw v[\d.]+/);
     expect(out).not.toContain("nemo-deepagents");
   });
 
   it("help output shows NemoDeepAgents header and alias command names", async () => {
-    const { code, out } = await runDeepAgents("--help");
+    const { code, out } = await runAgentAliasCommand(DEEPAGENTS_CLI, "--help");
     expect(code).toBe(0);
     expect(out).toContain("NemoDeepAgents");
     expect(out).toContain("nemo-deepagents onboard");
@@ -146,7 +73,9 @@ describe.concurrent("nemo-deepagents alias", () => {
     const { home, registryPath } = createDeepAgentsRegistry();
 
     try {
-      const { code, out } = await runDeepAgents("use dcode-beta", { HOME: home });
+      const { code, out } = await runAgentAliasCommand(DEEPAGENTS_CLI, "use dcode-beta", {
+        HOME: home,
+      });
 
       expect(code).toBe(0);
       expect(out).toContain("Default sandbox set to 'dcode-beta' (was 'dcode-alpha').");
@@ -162,7 +91,9 @@ describe.concurrent("nemo-deepagents alias", () => {
     const { home } = createDeepAgentsRegistry();
 
     try {
-      const { code, out } = await runDeepAgents("use dcode-alpha", { HOME: home });
+      const { code, out } = await runAgentAliasCommand(DEEPAGENTS_CLI, "use dcode-alpha", {
+        HOME: home,
+      });
 
       expect(code).toBe(0);
       expect(out).toContain("Sandbox 'dcode-alpha' is already the default.");
@@ -175,7 +106,9 @@ describe.concurrent("nemo-deepagents alias", () => {
     const { home, registryPath } = createDeepAgentsRegistry();
 
     try {
-      const { code, out } = await runDeepAgents("use dcode-missing --json", { HOME: home });
+      const { code, out } = await runAgentAliasCommand(DEEPAGENTS_CLI, "use dcode-missing --json", {
+        HOME: home,
+      });
 
       expect(code).toBe(1);
       expect(JSON.parse(out)).toEqual({
@@ -192,7 +125,7 @@ describe.concurrent("nemo-deepagents alias", () => {
   });
 
   it.sequential("routes nemo-deepagents uninstall as a global command, not a sandbox connect command", async () => {
-    const { code, out } = await runDeepAgents("uninstall --help");
+    const { code, out } = await runAgentAliasCommand(DEEPAGENTS_CLI, "uninstall --help");
     expect(code).toBe(0);
     expect(out).toContain("NemoDeepAgents Uninstaller");
     expect(out).toContain("internal uninstall run-plan");
@@ -202,13 +135,14 @@ describe.concurrent("nemo-deepagents alias", () => {
   it("NEMOCLAW_AGENT and NEMOCLAW_INVOKED_AS are set by the launcher", async () => {
     // The launcher sets both env vars before requiring dist/nemoclaw.
     // --version shows nemo-deepagents branding only when both are set.
-    const { code, out } = await runDeepAgents("--version");
+    const { code, out } = await runAgentAliasCommand(DEEPAGENTS_CLI, "--version");
     expect(code).toBe(0);
     expect(out).toContain("nemo-deepagents");
   });
 
   it("nemoclaw onboard --agent deep agents uses an agent-neutral no-session diagnostic (#9035)", async () => {
-    const { code, out } = await runNemoClaw(
+    const { code, out } = await runAgentAliasCommand(
+      NEMOCLAW_CLI,
       "onboard --agent langchain-deepagents-code --resume --non-interactive --yes-i-accept-third-party-software",
     );
     expect(code).toBe(1);
@@ -216,7 +150,8 @@ describe.concurrent("nemo-deepagents alias", () => {
   });
 
   it("NEMOCLAW_AGENT=deep agents uses an agent-neutral no-session diagnostic (#9035)", async () => {
-    const { code, out } = await runNemoClaw(
+    const { code, out } = await runAgentAliasCommand(
+      NEMOCLAW_CLI,
       "onboard --resume --non-interactive --yes-i-accept-third-party-software",
       { NEMOCLAW_AGENT: "langchain-deepagents-code" },
     );
