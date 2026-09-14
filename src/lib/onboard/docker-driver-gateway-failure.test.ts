@@ -317,6 +317,48 @@ describe("reportDockerDriverGatewayStartFailure (#3111)", () => {
     }
   });
 
+  it("routes a real active service through the managed recovery chain (#11720)", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "gw-fail-"));
+    const log = path.join(dir, "openshell-gateway.log");
+    fs.writeFileSync(
+      log,
+      "migration 6 was previously applied and is missing in the resolved migrations\n",
+    );
+    const home = path.join(dir, "home");
+    const env: NodeJS.ProcessEnv = { HOME: home, PATH: "/usr/bin" };
+    const unitPath = getNemoclawOpenShellGatewayUserServicePath(home, env);
+    const stateInUse = vi.fn(() => true);
+    try {
+      reportDockerDriverGatewayStartFailure(log, makeExitState(), {
+        exitOnFailure: false,
+        gatewayPort: 8080,
+        isGatewayStateInUse: stateInUse,
+        launchLogOffset: 0,
+        resolveGatewayStopCommand: () =>
+          getOpenShellGatewayServiceStopCommand({
+            platform: "linux",
+            env,
+            home,
+            existsSync: (filePath) => filePath === unitPath,
+            lstatSync: (() => ({
+              isSymbolicLink: () => false,
+            })) as unknown as typeof fs.lstatSync,
+            readFileSync: () => NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER_LINE,
+            commandExists: () => true,
+            spawnSyncImpl: () => ({ status: 0, stdout: "ActiveState=active\n" }),
+          }),
+      });
+      const joined = errSpy.mock.calls.map((c: string[]) => c.join(" ")).join("\n");
+      expect(stateInUse).not.toHaveBeenCalled();
+      expect(joined).toContain(
+        `systemctl --user stop nemoclaw-openshell-gateway && mkdir -m 700 '${dir}.incompatible'`,
+      );
+      expect(joined).not.toContain("could not confirm that the standalone gateway process stopped");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it.each([
     ["inactive", { status: 0, stdout: "ActiveState=inactive\n" }],
     ["indeterminate", { status: 1, stdout: "" }],
