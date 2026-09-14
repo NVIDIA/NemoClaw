@@ -46,10 +46,10 @@ export type SandboxRecreateCapture = typeof captureOpenshell;
 
 /**
  * OpenShell 0.0.116 can resolve legacy sandbox metadata but fail while reading
- * the missing spec needed to render `sandbox get`. Inventory does not perform
- * that config read, so this exact diagnostic is safe to recover through list.
+ * the spec or referenced providers needed to render `sandbox get`. Inventory
+ * does not read that config, so these exact diagnostics can fall back to list.
  */
-function isSandboxHasNoSpecGatewayOutput(output: string): boolean {
+function isLegacySandboxConfigUnavailableOutput(output: string): boolean {
   const clean = stripAnsi(String(output)).replace(/\r/g, "").trim();
   const structured = clean.replace(/\n\s*│\s*/g, " ");
   return (
@@ -57,6 +57,9 @@ function isSandboxHasNoSpecGatewayOutput(output: string): boolean {
       clean,
     ) ||
     /^(?:error:\s*)?(?:×\s*)?code:\s*["']Internal error["']\s*,\s*message:\s*["']sandbox has no spec["']$/i.test(
+      structured,
+    ) ||
+    /^(?:error:\s*)?(?:×\s*)?code:\s*'The system is not in a state required for the operation's execution'\s*,\s*message:\s*"provider '[a-z0-9][a-z0-9._-]*' not found"$/i.test(
       structured,
     )
   );
@@ -93,7 +96,7 @@ export function isExplicitMissingSandboxGatewayOutput(
   );
 }
 
-/** Resolve a retained legacy identity without treating an unreadable spec as deletion. */
+/** Resolve a retained legacy identity without treating unreadable config as deletion. */
 export function observeLegacySandboxOnGateway(
   target: SandboxGatewayPresenceTarget,
   probe: CaptureOpenshellResult,
@@ -106,7 +109,7 @@ export function observeLegacySandboxOnGateway(
     probe.signal ||
     probe.status === null ||
     probe.status === 0 ||
-    !isSandboxHasNoSpecGatewayOutput(combined)
+    !isLegacySandboxConfigUnavailableOutput(combined)
   )
     return null;
   const gatewayArgs = target.gatewayName ? ["-g", target.gatewayName] : [];

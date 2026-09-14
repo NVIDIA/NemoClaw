@@ -58,6 +58,18 @@ export function validateLegacyGatewayUpgradeFixture(fixture: LegacyGatewayUpgrad
   }
 }
 
+/** Collect both read-only probes without replacing an installer failure. */
+export async function captureGatewayUpgradeProbeEvidence(
+  sandboxName: string,
+  capture: (name: string, args: readonly string[]) => Promise<unknown>,
+): Promise<void> {
+  const probes = [
+    ["get", ["sandbox", "get", "-g", "nemoclaw", sandboxName]],
+    ["list", ["sandbox", "list", "-g", "nemoclaw", "-o", "json"]],
+  ] as const;
+  await Promise.allSettled(probes.map(async ([name, args]) => capture(name, args)));
+}
+
 export function oldGatewayUpgradeInstallerArgs(installer: string): string[] {
   return [installer, ...NON_INTERACTIVE_INSTALLER_ARGS, "--fresh"];
 }

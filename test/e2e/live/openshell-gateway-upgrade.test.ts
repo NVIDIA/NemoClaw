@@ -34,6 +34,7 @@ import { parseOpenClawAgentText } from "../fixtures/openclaw-agent-output.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
+  captureGatewayUpgradeProbeEvidence,
   currentGatewayUpgradeInstallerArgs,
   currentNemoclawUpgradeRef,
   GATEWAY_UPGRADE_INSTALL_TIMEOUT_MS,
@@ -370,21 +371,14 @@ async function runInstallerPayload(
   });
   artifacts.addRedactionValues(redactionValues);
   await artifacts.writeText(logName, resultText(result));
-  // Retain before/after gateway evidence even when the installer fails.
-  // Probe failures must not replace the existing installer assertion below.
-  await Promise.allSettled(
-    [
-      ["get", `sandbox get -g nemoclaw ${shellQuote(SURVIVOR_SANDBOX)}`],
-      ["list", "sandbox list -g nemoclaw -o json"],
-    ].map(([name, args]) =>
-      bash(host, `openshell ${args}`, {
-        artifactName: `${label}-sandbox-${name}`,
-        captureLimitBytes: 16 * 1024,
-        env,
-        redactionValues,
-        timeoutMs: 15_000,
-      }),
-    ),
+  await captureGatewayUpgradeProbeEvidence(SURVIVOR_SANDBOX, (name, args) =>
+    bash(host, ["openshell", ...args].map(shellQuote).join(" "), {
+      artifactName: `${label}-sandbox-${name}`,
+      captureLimitBytes: 16 * 1024,
+      env,
+      redactionValues,
+      timeoutMs: 15_000,
+    }),
   );
   expect(
     result.exitCode,

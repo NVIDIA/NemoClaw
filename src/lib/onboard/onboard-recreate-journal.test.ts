@@ -346,6 +346,9 @@ describe("non-resumed onboard replacement journal (#7735)", () => {
     `Error: code: 'Internal error', message: "h2 protocol error"`,
     `Error: code: 'Permission denied', message: "sandbox has no spec"`,
     `Error: code: 'Internal error', message: "sandbox has no spec"\nconnection refused`,
+    `Error: code: 'Permission denied', message: "provider 'compatible-endpoint' not found"`,
+    `Error: code: 'The system is not in a state required for the operation's execution', message: "gateway 'nemoclaw' not found"`,
+    `Error: code: 'The system is not in a state required for the operation's execution', message: "provider 'compatible-endpoint' not found"\nconnection refused`,
   ])("does not inventory an unrelated or mixed diagnostic [case %#]", (stderr) => {
     mocks.captureOpenshell.mockReturnValue({ status: 1, output: "", stdout: "", stderr });
     expect(() => open()).toThrow(/neither a live sandbox nor explicit absence/);
@@ -374,6 +377,7 @@ describe("non-resumed onboard replacement journal (#7735)", () => {
     `Error: code: 'Internal error', message: "sandbox has no spec"`,
     `Error:   × code: 'Internal error', message: "sandbox has no spec"\n`,
     `Error:   × code: 'Internal error',\n  │ message: "sandbox has no spec"\n`,
+    `Error:   × code: 'The system is not in a state required for the operation's\n  │ execution', message: "provider 'compatible-endpoint' not found"\n\n`,
   ])("journals retained legacy identity for the OpenShell diagnostic [case %#]", (diagnostic) => {
     const configFailure = {
       status: 1,
@@ -383,9 +387,9 @@ describe("non-resumed onboard replacement journal (#7735)", () => {
     };
     mocks.captureOpenshell
       .mockReturnValueOnce(configFailure)
-      .mockReturnValueOnce(listedPresentProbe())
+      .mockReturnValueOnce(listedPresentProbe("Provisioning"))
       .mockReturnValueOnce(configFailure)
-      .mockReturnValueOnce(listedPresentProbe());
+      .mockReturnValueOnce(listedPresentProbe("Provisioning"));
 
     open();
 
@@ -402,6 +406,7 @@ describe("non-resumed onboard replacement journal (#7735)", () => {
   it.each([
     'status: Internal, message: "sandbox has no spec", details: []',
     `Error: code: 'Internal error', message: "sandbox has no spec"`,
+    `Error: code: 'The system is not in a state required for the operation's execution', message: "provider 'compatible-endpoint' not found"`,
   ])("retains recovery state when a config failure cannot prove absence [case %#]", (stderr) => {
     mocks.captureOpenshell.mockReturnValue({ status: 1, output: "", stdout: "", stderr });
     expect(() =>
