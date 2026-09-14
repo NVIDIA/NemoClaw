@@ -161,7 +161,11 @@ describe("Hermes Portable lifecycle recovery command authority", () => {
       lifecycleGeneration: "generation-1",
     } as registry.SandboxEntry;
     let row = input;
-    vi.spyOn(registry, "getSandbox").mockImplementation(() => row);
+    vi.spyOn(crossPortRegistry, "findSandboxAcrossGatewayRoots").mockImplementation(() => ({
+      entry: row,
+      gatewayPort: 8091,
+      registryFile: "/test/sandboxes.json",
+    }));
     let resolvePolicy!: () => void;
     let notifyEntered!: () => void;
     const policy = new Promise<void>((resolve) => {
