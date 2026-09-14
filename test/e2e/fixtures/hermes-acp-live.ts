@@ -257,6 +257,7 @@ type HermesAcpLiveReceipt = Readonly<{
 
 function hermesAcpStderrCategory(stderr: string): string {
   const categories = [
+    ["recovery blocked before selection", "gateway-authorization-blocked"],
     ["recovery blocked after selection", "gateway-selection-blocked"],
     ["remained unavailable after startup", "gateway-post-start-unavailable"],
     ["could not safely inspect the sandbox registry", "registry-inspection"],

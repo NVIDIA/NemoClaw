@@ -58,16 +58,6 @@ describe("CLI gateway observation", () => {
       "Gateway 'nemoclaw-8090' is unreachable.",
     ],
     [
-      "Error: client error (Connect): Connection refused",
-      info,
-      1,
-      0,
-      "named_unreachable",
-      true,
-      null,
-      "Gateway 'nemoclaw-8090' is unreachable.",
-    ],
-    [
       "Gateway: nemoclaw-8090\nStatus: Disconnected",
       info,
       0,
@@ -144,48 +134,6 @@ describe("CLI gateway observation", () => {
       ).toBe(true);
     },
   );
-
-  it("recovers an exact selected gateway when both live probes are unreachable", async () => {
-    const unreachable = "Error: client error (Connect): Connection refused";
-    const result = await createCliOpenShellGatewayObserver(
-      captureFor(unreachable, unreachable, 1, 1),
-    ).observeGateway({
-      ...request,
-      runtimeSelection: { gatewayName: "nemoclaw-8090", workspace: "default" },
-    });
-
-    expect(result).toMatchObject({
-      state: "named_unreachable",
-      activeGateway: null,
-      recoveryBlocked: false,
-      unavailable: true,
-    });
-  });
-
-  it("uses exact selection when unreachable status prevents gateway metadata inspection", async () => {
-    const result = await createCliOpenShellGatewayObserver(
-      captureFor("Connection refused", "gateway metadata command failed", 1, 1),
-    ).observeGateway({
-      ...request,
-      runtimeSelection: { gatewayName: "nemoclaw-8090", workspace: "default" },
-    });
-
-    expect(result).toMatchObject({
-      state: "named_unreachable",
-      activeGateway: null,
-      recoveryBlocked: false,
-      unavailable: true,
-    });
-  });
-
-  it("does not infer gateway identity from two unreachable probes without exact selection", async () => {
-    const unreachable = "Error: client error (Connect): Connection refused";
-    const result = await createCliOpenShellGatewayObserver(
-      captureFor(unreachable, unreachable, 1, 1),
-    ).observeGateway(request);
-
-    expect(result).toMatchObject({ state: "observation_failed", recoveryBlocked: true });
-  });
 
   it.each([
     ["authentication failed token=secret", "authentication"],

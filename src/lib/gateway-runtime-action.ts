@@ -91,6 +91,9 @@ export async function recoverNamedGatewayRuntime(options: RecoverNamedGatewayRun
   );
   const before = await getNamedGatewayLifecycleState(gatewayName, lifecycleOptions);
   if (before.recoveryBlocked) {
+    options.output?.error(
+      `OpenShell gateway recovery blocked before selection: state=${before.state} error=${before.error?.kind ?? "none"}.`,
+    );
     return { recovered: false, before, after: before, attempted: false };
   }
   if (before.state === "healthy_named") {
@@ -112,12 +115,7 @@ export async function recoverNamedGatewayRuntime(options: RecoverNamedGatewayRun
     ),
   );
   let after = await getNamedGatewayLifecycleState(gatewayName, lifecycleOptions);
-  const selectionRemainsUnreachable =
-    before.state === "named_unreachable" && after.error?.kind === "transport";
-  if (after.recoveryBlocked && !selectionRemainsUnreachable) {
-    options.output?.error(
-      `OpenShell gateway recovery blocked after selection: state=${after.state} error=${after.error?.kind ?? "none"}.`,
-    );
+  if (after.recoveryBlocked) {
     return { recovered: false, before, after, attempted: true };
   }
   if (after.state === "healthy_named") {
@@ -167,10 +165,6 @@ export async function recoverNamedGatewayRuntime(options: RecoverNamedGatewayRun
       .replace(/\s+/gu, " ")
       .trim();
     options.output.error(`OpenShell gateway recovery failed${detail ? `: ${detail}` : "."}`);
-  } else if (options.output) {
-    options.output.error(
-      `OpenShell gateway recovery remained unavailable after startup: state=${after.state} error=${after.error?.kind ?? "none"}.`,
-    );
   }
 
   return { recovered: false, before, after, attempted: true };
