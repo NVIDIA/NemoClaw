@@ -60,7 +60,7 @@ describe("getReconciledSandboxGatewayState owning-gateway guard", () => {
     );
   });
 
-  it("classifies the owner-scoped Internal no-spec response as missing", async () => {
+  it("does not classify an unconfirmed owner-scoped no-spec response as deletion", async () => {
     vi.spyOn(gatewayDrift, "detectOpenShellStateRpcPreflightIssue").mockReturnValue(null);
     vi.spyOn(gatewayDrift, "detectOpenShellStateRpcResultIssue").mockReturnValue(null);
     const capture = vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({
@@ -69,7 +69,7 @@ describe("getReconciledSandboxGatewayState owning-gateway guard", () => {
     } as never);
 
     await expect(getSandboxGatewayState("beta", "nemoclaw-8091")).resolves.toMatchObject({
-      state: "missing",
+      state: "unknown_error",
     });
     expect(capture).toHaveBeenCalledWith(
       ["sandbox", "get", "-g", "nemoclaw-8091", "beta"],

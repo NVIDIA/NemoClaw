@@ -146,7 +146,10 @@ describe("CLI gateway observation", () => {
     ["unexpected failure secret", "command"],
   ])("blocks recovery and redacts %s", async (output, kind) => {
     const capture = captureFor(connected, output, 0, 1);
-    const result = await createCliOpenShellGatewayObserver(capture).observeGateway(request);
+    const result = await createCliOpenShellGatewayObserver(capture).observeGateway({
+      ...request,
+      runtimeSelection: { gatewayName: "nemoclaw-8090", workspace: "default" },
+    });
     expect(result).toMatchObject({
       state: "observation_failed",
       recoveryBlocked: true,
@@ -243,6 +246,48 @@ describe("CLI gateway observation", () => {
     expect(statusOptions.env.OPENSHELL_GATEWAY_ENDPOINT).toBeUndefined();
     expect(process.env.OPENSHELL_GATEWAY).toBe("foreign");
   });
+
+  it.each([
+    [
+      "status",
+      "Gateway: foreign\nclient error (Connect): Connection refused",
+      "Connection refused",
+      1,
+      1,
+    ],
+    ["metadata", "Connection refused", "Gateway: foreign", 1, 0],
+    [
+      "status with multiple declarations",
+      "Gateway: nemoclaw-8090\nGateway: foreign",
+      "Connection refused",
+      0,
+      1,
+    ],
+    [
+      "metadata with multiple declarations",
+      "Connection refused",
+      "Gateway: nemoclaw-8090\nGateway: foreign\nclient error (Connect): Connection refused",
+      1,
+      1,
+    ],
+  ])(
+    "blocks frozen-gateway recovery for a conflicting %s identity (#10947)",
+    async (_, status, metadata, statusCode, metadataCode) => {
+      const capture = captureFor(status, metadata, statusCode, metadataCode);
+
+      const result = await createCliOpenShellGatewayObserver(capture).observeGateway({
+        ...request,
+        runtimeSelection: { gatewayName: "nemoclaw-8090", workspace: "default" },
+      });
+
+      expect(result).toMatchObject({
+        recoveryBlocked: true,
+        state: "observation_failed",
+        unavailable: true,
+        error: { kind: "transport", reason: "identity_mismatch" },
+      });
+    },
+  );
 
   it("rejects mismatched runtime authority without executing a probe", async () => {
     const capture = captureFor(connected, info);

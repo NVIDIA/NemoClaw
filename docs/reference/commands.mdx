@@ -178,6 +178,28 @@ Print the installed NemoClaw CLI version.
 $$nemoclaw --version
 ```
 
+<AgentOnly variant="hermes">
+
+### `nemoclaw-acp`
+
+Connect an external Agent Client Protocol (ACP) client to a managed Hermes sandbox.
+The adapter sends ACP traffic through standard input and standard output, and writes diagnostics to standard error.
+
+```bash
+nemoclaw-acp --sandbox <name> [--gateway <name>] [--timeout <seconds>]
+```
+
+`--sandbox` is required.
+When more than one registered Hermes sandbox has that name, pass `--gateway <name>` to select its owning NemoClaw gateway.
+`--timeout` ends the ACP session after the specified positive number of seconds, up to `86,400`.
+
+Before the adapter starts the session, it revalidates the registered sandbox and its ready state under the sandbox lifecycle lock.
+It also revalidates the sandbox lifecycle generation, identity, and OpenShell gateway.
+It starts an unreachable gateway only when the recorded gateway name exactly matches the selected target.
+A conflicting or ambiguous gateway identity, an authentication, schema, timeout, or other observation failure stops the adapter before gateway startup or session creation.
+
+</AgentOnly>
+
 ### `$$nemoclaw completion`
 
 Generate a tab-completion script for Bash, Zsh, or Fish from the commands and flags available in the installed CLI. The script completes public global commands, the sandbox-first `$$nemoclaw <name> ...` grammar, flags, shell choices, and locally registered sandbox names. If you omit the shell name, `$$nemoclaw completion` detects the target from `$SHELL` and defaults to Bash when it cannot identify Zsh or Fish. The generated script is bound to the CLI name that created it, so install a separate script for each CLI alias you use. It loads sandbox names from the local registry the first time completion runs and caches them for the rest of that shell session.
@@ -2982,7 +3004,16 @@ $$nemoclaw my-assistant upload ./agent-skills/ /sandbox/.deepagents/agent/skills
 
 ### `$$nemoclaw <name> rebuild`
 
-Upgrade a sandbox to the current agent version while preserving workspace state. The command backs up workspace state, captures the current OpenShell policy into a private temporary handoff, destroys the old sandbox, recreates it with the current image, and restores workspace state. Credentials are stripped from backups before storage. The replacement receives the captured OpenShell document directly; NemoClaw does not reconstruct policy from preset records. The replacement uses the recorded compatible-endpoint reasoning mode, reasoning effort, web search selection, and serving-profile provenance instead of ambient shell values. When same-gateway legacy sandbox records use the selected supported provider but omit its credential environment-variable name, rebuild fills only those missing names from the provider's canonical configuration. The target update and peer metadata migration use one registry update. Conflicting credential environment-variable names, custom endpoints, or API families still stop the rebuild. Incomplete routes and invalid gateway bindings also stop the rebuild. NemoClaw checks the shared route again immediately before deleting the original sandbox. Rebuild preserves the recorded sandbox GPU enablement mode and, for an explicitly enabled sandbox, its recorded device selector. It re-resolves the Docker-driver GPU route from the current host and current `NEMOCLAW_DOCKER_GPU_PATCH` value, so native-only, explicitly authorized native-with-fallback, and compatibility-only routing may differ from the original onboarding run. A rebuild preserves the recorded tool-disclosure mode unless `--tool-disclosure` explicitly changes it; it ignores an ambient `NEMOCLAW_TOOL_DISCLOSURE` value while recreating the sandbox. A rebuild preserves the recorded Deep Agents Code observability choice and matching local OTLP policy state unless `--observability` or `--no-observability` explicitly changes them. A rebuild preserves the recorded Deep Agents Code auto-approval capability unless `--dcode-auto-approval` explicitly changes it. A sandbox onboarded with an explicit GPU opt-out (stored as `sandboxGpuMode: "0"`, plus legacy registry entries that only record `gpuEnabled: false`) is recreated with the same opt-out, so the inner `onboard --resume` skips the Docker CDI GPU preflight on hosts without an NVIDIA GPU. Auto-mode sandboxes remain auto.
+Upgrade a sandbox to the current agent version while preserving workspace state. The command backs up workspace state, captures the current OpenShell policy into a private temporary handoff, destroys the old sandbox, recreates it with the current image, and restores workspace state.
+
+<AgentOnly variant="openclaw,hermes">
+
+Prepared backup recovery for a legacy upgrade reuses the digest-verified pre-upgrade policy handoff instead.
+It stops before deletion if that handoff is missing or changed.
+
+</AgentOnly>
+
+Credentials are stripped from backups before storage. The replacement receives the captured OpenShell document directly; NemoClaw does not reconstruct policy from preset records. The replacement uses the recorded compatible-endpoint reasoning mode, reasoning effort, web search selection, and serving-profile provenance instead of ambient shell values. When same-gateway legacy sandbox records use the selected supported provider but omit its credential environment-variable name, rebuild fills only those missing names from the provider's canonical configuration. The target update and peer metadata migration use one registry update. Conflicting credential environment-variable names, custom endpoints, or API families still stop the rebuild. Incomplete routes and invalid gateway bindings also stop the rebuild. NemoClaw checks the shared route again immediately before deleting the original sandbox. Rebuild preserves the recorded sandbox GPU enablement mode and, for an explicitly enabled sandbox, its recorded device selector. It re-resolves the Docker-driver GPU route from the current host and current `NEMOCLAW_DOCKER_GPU_PATCH` value, so native-only, explicitly authorized native-with-fallback, and compatibility-only routing may differ from the original onboarding run. A rebuild preserves the recorded tool-disclosure mode unless `--tool-disclosure` explicitly changes it; it ignores an ambient `NEMOCLAW_TOOL_DISCLOSURE` value while recreating the sandbox. A rebuild preserves the recorded Deep Agents Code observability choice and matching local OTLP policy state unless `--observability` or `--no-observability` explicitly changes them. A rebuild preserves the recorded Deep Agents Code auto-approval capability unless `--dcode-auto-approval` explicitly changes it. A sandbox onboarded with an explicit GPU opt-out (stored as `sandboxGpuMode: "0"`, plus legacy registry entries that only record `gpuEnabled: false`) is recreated with the same opt-out, so the inner `onboard --resume` skips the Docker CDI GPU preflight on hosts without an NVIDIA GPU. Auto-mode sandboxes remain auto.
 
 If replacement onboarding returns nonzero, rebuild stops before post-create state restoration and retains recovery state.
 
@@ -3017,7 +3048,7 @@ If that source cannot be read safely, rebuild stops before deletion even with `-
 NemoClaw carries the source entries only in the bounded rebuild transaction and does not persist a second MCP registry.
 NemoClaw rechecks the source, recorded gateway, resolved targets, policy, and provider identities immediately before deletion.
 Legacy, conflicting, or ambiguous bridge state stops before deletion and points to `mcp migrate` when conversion is available.
-Rebuild independently captures the complete current OpenShell policy and hands it to replacement creation.
+Except for prepared legacy backup recovery, rebuild independently captures the complete current OpenShell policy and hands it to replacement creation.
 NemoClaw sends the delete request and every deletion-confirmation lookup to the sandbox's exact recorded gateway.
 Across every rebuild path, NemoClaw does not attempt to stop local NIM until sandbox deletion is positively confirmed.
 It then attempts NIM cleanup on a best-effort basis.

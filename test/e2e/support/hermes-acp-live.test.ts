@@ -100,15 +100,22 @@ describe("Hermes ACP live evidence boundary", () => {
     ).toBe(false);
   });
 
-  it.each(["installed", "checkout"] as const)(
-    "initializes through the %s adapter",
-    async (installation) => {
+  it.each([
+    ["installed", "initialize", 0],
+    ["checkout", "client-disconnect", 1],
+  ] as const)(
+    "%s adapter initializes and completes %s",
+    async (installation, scenario, exitCode) => {
       const artifactDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-acp-launch-"));
       const adapterEntrypoint = path.join(artifactDir, "nemoclaw-acp");
       fs.writeFileSync(
         adapterEntrypoint,
         `#!${process.execPath}
 const readline = require("node:readline");
+process.stdout.on("error", () => {
+  process.exitCode = 1;
+  process.stdin.destroy();
+});
 readline.createInterface({ input: process.stdin }).on("line", line => {
   const request = JSON.parse(line);
   process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: request.id, result: {} }) + "\\n");
@@ -139,15 +146,15 @@ readline.createInterface({ input: process.stdin }).on("line", line => {
           progress,
           sandbox,
           sandboxName: "e2e-hermes",
-          scenario: "initialize",
+          scenario,
         }),
       ).resolves.toBe(true);
       expect(
-        JSON.parse(fs.readFileSync(path.join(artifactDir, "hermes-acp-initialize.json"), "utf8")),
+        JSON.parse(fs.readFileSync(path.join(artifactDir, `hermes-acp-${scenario}.json`), "utf8")),
       ).toMatchObject({
         passed: true,
         initialized: true,
-        exitCode: 0,
+        exitCode,
         adapterProcessAbsent: true,
         remoteProcessAbsent: true,
         timedOut: false,
