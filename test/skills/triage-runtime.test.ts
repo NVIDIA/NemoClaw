@@ -14,18 +14,13 @@ interface TriageFixture {
   approvedOnly?: boolean;
 }
 
-const requiredChecks = [
-  "checks",
-  "check-hash",
-  "changes",
-  "commit-lint",
-  "dco-check",
-  "E2E / PR Gate",
-].map((name) => ({
-  name,
-  status: "COMPLETED",
-  conclusion: "SUCCESS",
-}));
+const requiredChecks = ["checks", "check-hash", "changes", "commit-lint", "dco-check"].map(
+  (name) => ({
+    name,
+    status: "COMPLETED",
+    conclusion: "SUCCESS",
+  }),
+);
 
 const pullRequests = [
   {
@@ -146,6 +141,21 @@ if (args[0] === "api" && args[1] === "--paginate" && args[2]?.startsWith("repos/
 }
 
 describe("maintainer triage runtime behavior", () => {
+  it("treats the five current required checks as green without the retired E2E context", () => {
+    const result = runTriage({
+      projectOutput: "",
+      reviewDecisions: { 101: "APPROVED", 102: "REVIEW_REQUIRED", 103: "REVIEW_REQUIRED" },
+      approvedOnly: true,
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    const output = JSON.parse(result.stdout);
+    expect(output.queue).toEqual([
+      expect.objectContaining({ number: 101, bucket: "merge-now", reasons: [] }),
+    ]);
+    expect(result.stderr).toContain("Classified: 1 merge-now");
+  });
+
   it("maps live Project Priority into scoring and ignores legacy priority labels", () => {
     const result = runTriage({
       projectOutput: [

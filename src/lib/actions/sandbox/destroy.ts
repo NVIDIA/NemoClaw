@@ -881,10 +881,10 @@ async function destroySandboxUnlocked(
         );
       } else if (destructiveResult.mcpOwnershipRequiresGateway) {
         console.error(
-          `  The OpenShell gateway is unreachable. Local state was preserved because it contains MCP ownership required for exact provider cleanup.`,
+          `  The OpenShell gateway is unreachable. Local routing state was preserved because current MCP sources could not be inspected safely.`,
         );
         console.error(
-          `  Start the gateway (run '${CLI_NAME} ${sandboxName} status'), then retry destroy; --force cannot safely discard MCP ownership.`,
+          `  Start the gateway (run '${CLI_NAME} ${sandboxName} status'), then retry destroy; --force does not bypass MCP source inspection.`,
         );
       } else if (destructiveResult.portableLifecycleOwnershipRequiresGateway) {
         console.error(

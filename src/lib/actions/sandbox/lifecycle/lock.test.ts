@@ -13,10 +13,7 @@ import {
   resolveHermesPortableLifecycleLockOptions,
 } from "../../../onboard/experimental/portable-lifecycle-lock";
 import { isMcpLifecycleLockHeld } from "../../../state/mcp-lifecycle-lock-acquisition";
-import {
-  portableHostFencePath,
-  withCurrentPortableHostFence,
-} from "../../../state/portable-uninstall-retirement";
+import { portableHostFencePath } from "../../../state/portable-uninstall-retirement";
 import { withSandboxLifecycleLock, withSandboxLifecycleLockSync } from "./lock";
 
 describe("Portable-aware sandbox lifecycle lock", () => {

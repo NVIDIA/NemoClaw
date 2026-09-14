@@ -15,7 +15,6 @@ import type {
 import * as openClawPluginRestore from "../state/openclaw-plugin-restore";
 import type { SandboxEntry, SandboxGpuProofResult } from "../state/registry";
 import type { QualifiedSandboxInferenceRouteReservation } from "../state/registry/route-reservation";
-import type { SandboxWorkloadReceipt } from "../state/registry/types";
 import * as sandboxState from "../state/sandbox";
 import {
   MANAGED_SNAPSHOT_RESTORE_AUTHORITY_ERROR,
@@ -603,7 +602,6 @@ type OnboardInferenceSelection = {
 };
 type OnboardMessagingRegistration = {
   readonly plannedMessagingState: RegistrationSeed["plannedMessagingState"];
-  readonly preservedMcpState: RegistrationSeed["preservedMcpState"];
   readonly hermesToolGateways: string[];
 };
 type OnboardCreationFidelity = {

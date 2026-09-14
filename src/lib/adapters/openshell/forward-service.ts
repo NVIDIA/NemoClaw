@@ -4,6 +4,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import { lstatSync, readFileSync, readdirSync, readlinkSync, realpathSync } from "node:fs";
 import path from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 
 import { isValidName } from "../../name-validation";
 import { buildOpenShellSubprocessEnv } from "./resolve-shared";
@@ -11,6 +12,7 @@ import { probeLocalForwardListener } from "./local-forward-listener";
 
 const START_TIMEOUT_MS = 30_000;
 const POLL_INTERVAL_MS = 100;
+const LISTENER_PROBE_TIMEOUT_MS = 1_000;
 const PROCESS_TREE_TERMINATION_TIMEOUT_MS = 5_000;
 const PROCESS_TREE_TERMINATION_POLL_MS = 25;
 const sleepBuffer = new Int32Array(new SharedArrayBuffer(4));
@@ -28,8 +30,8 @@ export interface ForwardServiceTarget {
 }
 
 export interface ForwardServiceLaunchOptions {
-  readonly isReachable?: (port: number) => boolean;
-  readonly sleep?: (milliseconds: number) => void;
+  readonly isReachable?: (port: number, timeoutMs?: number) => boolean;
+  readonly sleep?: (milliseconds: number) => void | Promise<void>;
   readonly sourceEnvironment?: NodeJS.ProcessEnv;
   readonly spawnDetached?: (
     executable: string,
@@ -40,11 +42,17 @@ export interface ForwardServiceLaunchOptions {
   /** Verify the bound forward before releasing the child from startup cleanup. */
   readonly verifyReady?: () => void;
   readonly timeoutMs?: number;
+  readonly now?: () => number;
 }
 
 export interface ForwardServiceChild {
   readonly pid?: number;
   unref(): void;
+  on?(event: "error", listener: (error: Error) => void): unknown;
+  on?(
+    event: "exit",
+    listener: (code: number | null, signal: NodeJS.Signals | null) => void,
+  ): unknown;
 }
 
 export interface ForwardServiceProcessTreeTerminationDependencies {
@@ -61,6 +69,18 @@ export interface ForwardServiceProcessTreeTerminationDependencies {
   ) => { readonly error?: Error; readonly status: number | null };
 }
 
+export class ForwardServiceEarlyExitError extends Error {
+  constructor(
+    target: ForwardServiceTarget,
+    readonly exitCode: number | null,
+    readonly signal: NodeJS.Signals | null,
+  ) {
+    super(
+      `OpenShell forward service exited before binding ${target.localHost}:${String(target.localPort)} (${signal ? `signal ${signal}` : `status ${String(exitCode)}`})`,
+    );
+  }
+}
+
 export class ForwardServiceStartupCleanupError extends AggregateError {
   constructor(startupError: Error, cleanupError: unknown) {
     super(
@@ -74,9 +94,12 @@ export class ForwardServiceStartupCleanupError extends AggregateError {
 type ForwardServiceOwnerProbe = (
   executable: string,
   args: readonly string[],
+  timeoutMs?: number,
 ) => { status: number | null; stdout: string };
 
 export interface ForwardServiceOwnerOptions {
+  /** Remaining time supplied by the operation that owns this verification. */
+  readonly remainingMs?: (maximumMs: number) => number;
   readonly platform?: NodeJS.Platform;
   readonly probe?: ForwardServiceOwnerProbe;
   readonly procRoot?: string;
@@ -207,13 +230,17 @@ function trustedHostProbeExecutable(executable: string): string | null {
   return null;
 }
 
-function captureProcess(executable: string, args: readonly string[]) {
+function captureProcess(
+  executable: string,
+  args: readonly string[],
+  timeoutMs = FORWARD_OWNER_PROBE_TIMEOUT_MS,
+) {
   const trustedExecutable = trustedHostProbeExecutable(executable);
   if (!trustedExecutable) return { status: null, stdout: "" };
   const result = spawnSync(trustedExecutable, [...args], {
     encoding: "utf8",
     env: buildOpenShellSubprocessEnv(process.env),
-    timeout: FORWARD_OWNER_PROBE_TIMEOUT_MS,
+    timeout: timeoutMs,
   });
   return { status: result.status, stdout: result.stdout ?? "" };
 }
@@ -232,12 +259,19 @@ function lsofListenerPids(port: number, probe: ForwardServiceOwnerProbe): string
   ];
 }
 
-function linuxListenerPids(port: number, procRoot: string, workLimit: number): string[] {
+function linuxListenerPids(
+  port: number,
+  procRoot: string,
+  workLimit: number,
+  assertBudget: () => void,
+): string[] {
   if (!Number.isSafeInteger(workLimit) || workLimit < 1) return [];
   const portSuffix = `:${port.toString(16).padStart(4, "0").toUpperCase()}`;
   const socketInodes = new Set<string>();
   try {
+    assertBudget();
     for (const line of readFileSync(path.join(procRoot, "net", "tcp"), "utf8").split("\n")) {
+      assertBudget();
       const fields = line.trim().split(/\s+/u);
       if (
         fields[3] === "0A" &&
@@ -255,11 +289,15 @@ function linuxListenerPids(port: number, procRoot: string, workLimit: number): s
   const pids = new Set<string>();
   let inspected = 0;
   try {
+    assertBudget();
     for (const entry of readdirSync(procRoot, { withFileTypes: true })) {
+      assertBudget();
       if (!entry.isDirectory() || !/^[1-9]\d*$/u.test(entry.name)) continue;
       if (++inspected > workLimit) return [];
       try {
+        assertBudget();
         for (const descriptor of readdirSync(path.join(procRoot, entry.name, "fd"))) {
+          assertBudget();
           if (++inspected > workLimit) return [];
           const link = readlinkSync(path.join(procRoot, entry.name, "fd", descriptor));
           const match = /^socket:\[(\d+)\]$/u.exec(link);
@@ -284,10 +322,11 @@ function listenerPids(
   procRoot: string,
   procWorkLimit: number,
   probe: ForwardServiceOwnerProbe,
+  assertBudget: () => void,
 ): string[] {
   const lsof = lsofListenerPids(port, probe);
   if (lsof !== null || platform !== "linux") return lsof ?? [];
-  return linuxListenerPids(port, procRoot, procWorkLimit);
+  return linuxListenerPids(port, procRoot, procWorkLimit, assertBudget);
 }
 
 function executableMatches(actualExecutable: string, expectedExecutable: string): boolean {
@@ -327,10 +366,29 @@ export function isForwardServiceListenerOwner(
 ): boolean {
   validateForwardServiceTarget(target);
   const platform = options.platform ?? process.platform;
-  const probe = options.probe ?? captureProcess;
+  const capture = options.probe ?? captureProcess;
+  const remaining = options.remainingMs;
+  const assertBudget = () => {
+    remaining?.(1);
+  };
+  const probe: ForwardServiceOwnerProbe = remaining
+    ? (executable, args) => {
+        const result = capture(executable, args, remaining(FORWARD_OWNER_PROBE_TIMEOUT_MS));
+        assertBudget();
+        return result;
+      }
+    : capture;
   const procRoot = options.procRoot ?? "/proc";
   const procWorkLimit = options.procWorkLimit ?? LINUX_PROC_WORK_LIMIT;
-  const before = listenerPids(target.localPort, platform, procRoot, procWorkLimit, probe);
+  const before = listenerPids(
+    target.localPort,
+    platform,
+    procRoot,
+    procWorkLimit,
+    probe,
+    assertBudget,
+  );
+  assertBudget();
   const [pid] = before;
   if (before.length !== 1 || pid === undefined || !/^[1-9]\d*$/u.test(pid)) return false;
   if (!processExecutableMatches(pid, target, platform, procRoot, probe)) return false;
@@ -338,7 +396,15 @@ export function isForwardServiceListenerOwner(
   if (commandLine.status !== 0) return false;
   const expected = [target.executable, ...buildForwardServiceArgs(target)].join(" ");
   if (commandLine.stdout.trim() !== expected) return false;
-  const after = listenerPids(target.localPort, platform, procRoot, procWorkLimit, probe);
+  const after = listenerPids(
+    target.localPort,
+    platform,
+    procRoot,
+    procWorkLimit,
+    probe,
+    assertBudget,
+  );
+  assertBudget();
   return after.length === 1 && after[0] === pid;
 }
 
@@ -450,7 +516,7 @@ export function terminateForwardServiceProcessTree(
         });
       }
     }
-    const now = dependencies.now ?? Date.now;
+    const now = dependencies.now ?? (() => performance.now());
     const sleep =
       dependencies.sleep ??
       ((milliseconds: number) => Atomics.wait(sleepBuffer, 0, 0, milliseconds));
@@ -488,56 +554,99 @@ export function terminateForwardServiceProcessTree(
 }
 
 /** Launch one foreground OpenShell service forward as a detached host child. */
-export function launchForwardService(
+export async function launchForwardService(
   target: ForwardServiceTarget,
   options: ForwardServiceLaunchOptions = {},
-): void {
+): Promise<void> {
   validateForwardServiceTarget(target);
+  const now = options.now ?? (() => performance.now());
+  const deadline = now() + (options.timeoutMs ?? START_TIMEOUT_MS);
+  const timeoutError = new Error(
+    `OpenShell forward service did not bind ${target.localHost}:${String(target.localPort)}`,
+  );
+  const probeAllowance = () => {
+    const remaining = Math.floor(deadline - now());
+    if (remaining <= 0) throw timeoutError;
+    return Math.min(LISTENER_PROBE_TIMEOUT_MS, remaining);
+  };
   const isReachable = options.isReachable ?? probeLocalForwardListener;
-  if (isReachable(target.localPort)) {
+  if (isReachable(target.localPort, probeAllowance())) {
     throw new Error(`Host port ${String(target.localPort)} is already occupied`);
   }
   const spawnDetached =
     options.spawnDetached ??
     ((executable, args, environment) =>
       spawn(executable, [...args], { detached: true, env: environment, stdio: "ignore" }));
-  const child = spawnDetached(
-    target.executable,
-    buildForwardServiceArgs(target),
-    forwardServiceEnvironment(
-      options.sourceEnvironment ?? process.env,
-      target,
-      options.sourceEnvironment !== undefined,
-    ),
+  const args = buildForwardServiceArgs(target);
+  const environment = forwardServiceEnvironment(
+    options.sourceEnvironment ?? process.env,
+    target,
+    options.sourceEnvironment !== undefined,
   );
+  // Recheck after the initial probe and command preparation, before creating a child.
+  probeAllowance();
+  const child: ForwardServiceChild = spawnDetached(target.executable, args, environment);
 
-  const sleep =
-    options.sleep ?? ((milliseconds: number) => Atomics.wait(sleepBuffer, 0, 0, milliseconds));
-  const deadline = Date.now() + (options.timeoutMs ?? START_TIMEOUT_MS);
-  let startupError = new Error(
-    `OpenShell forward service did not bind ${target.localHost}:${String(target.localPort)}`,
-  );
-  while (Date.now() < deadline) {
-    if (isReachable(target.localPort)) {
-      try {
-        options.verifyReady?.();
-      } catch (error) {
-        startupError = error instanceof Error ? error : new Error(String(error));
+  let childFailure: Error | undefined;
+  let notifyFailure: () => void = () => {};
+  const failed = new Promise<void>((resolve) => {
+    notifyFailure = resolve;
+  });
+  // Spawn failures arrive asynchronously, including failures with no child PID.
+  // Keep the error listener installed after handoff so a late child error cannot
+  // become an uncaught EventEmitter error in the caller.
+  child.on?.("error", (error) => {
+    childFailure ??= error;
+    notifyFailure();
+  });
+  child.on?.("exit", (code, signal) => {
+    childFailure ??= new ForwardServiceEarlyExitError(target, code, signal);
+    notifyFailure();
+  });
+  let startupError = timeoutError;
+  try {
+    while (now() < deadline) {
+      if (childFailure) {
+        startupError = childFailure;
         break;
       }
-      child.unref();
-      return;
+      if (isReachable(target.localPort, probeAllowance())) {
+        if (now() >= deadline) break;
+        options.verifyReady?.();
+        if (now() >= deadline) break;
+        child.unref();
+        return;
+      }
+      const sleepMs = Math.min(POLL_INTERVAL_MS, Math.max(0, deadline - now()));
+      const controller = new AbortController();
+      try {
+        await Promise.race([
+          options.sleep
+            ? Promise.resolve(options.sleep(sleepMs)).then(() =>
+                delay(0, undefined, { signal: controller.signal }),
+              )
+            : delay(sleepMs, undefined, { signal: controller.signal }),
+          failed,
+        ]);
+      } finally {
+        controller.abort();
+      }
     }
-    sleep(POLL_INTERVAL_MS);
+  } catch (error) {
+    startupError = error instanceof Error ? error : new Error(String(error));
   }
+  startupError = childFailure ?? startupError;
   try {
-    (options.terminateProcessTree ?? terminateForwardServiceProcessTree)(child);
+    // A failed spawn never created a process group to terminate.
+    if (child.pid !== undefined) {
+      (options.terminateProcessTree ?? terminateForwardServiceProcessTree)(child);
+    }
     if (isReachable(target.localPort)) {
       throw new Error("OpenShell forward service listener remained reachable after termination");
     }
   } catch (cleanupError) {
     throw new ForwardServiceStartupCleanupError(startupError, cleanupError);
   }
-  // Keep the failed child referenced so Node reaps it after this synchronous stack unwinds.
+  // Keep the failed child referenced until Node observes its exit.
   throw startupError;
 }

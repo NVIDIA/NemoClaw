@@ -27,6 +27,13 @@ const START_FAILURE_RETURN_PATTERN = [
   "\t\t\t\t\t\t\t\tdiagnostics: diags",
   "\t\t\t\t\t\t\t};",
 ].join("\n");
+const LIST_TOOLS_PATTERN = [
+  "\t\t\t\t\t\t\tconst listedTools = await listAllToolsBestEffort({",
+  "\t\t\t\t\t\t\t\tclient: session.client,",
+  "\t\t\t\t\t\t\t\ttimeoutMs: getCatalogListTimeoutMs(rawServer, resolved.requestTimeoutMs),",
+  "\t\t\t\t\t\t\t\tsuppressUnsupported: Boolean(!capabilities.tools && (capabilities.resources || capabilities.prompts))",
+  "\t\t\t\t\t\t\t});",
+].join("\n");
 const ACQUIRE_LEASE_PATTERN = ["\t\tacquireLease() {", "\t\t\tactiveLeases += 1;"].join("\n");
 const TRANSPORT_FACTORY_PATTERN = "function resolveMcpTransport(serverName, rawServer) {";
 const LOG_WARN_PATTERN = "logWarn(";
@@ -36,6 +43,7 @@ const UNPATCHED_TARGET_PATTERNS = [
   TASK_OPEN_PATTERN,
   TASK_CLOSE_PATTERN,
   START_FAILURE_RETURN_PATTERN,
+  LIST_TOOLS_PATTERN,
   ACQUIRE_LEASE_PATTERN,
 ];
 /** Anchors this patch only reads; the retry reuses the upstream transport factory. */
@@ -65,6 +73,22 @@ const START_FAILURE_RETURN_REPLACEMENT = [
   "\t\t\t\t\t\t\t\t}",
   "\t\t\t\t\t\t\t};",
 ].join("\n");
+const LIST_TOOLS_REPLACEMENT = [
+  "\t\t\t\t\t\t\tlet listedTools = await listAllToolsBestEffort({",
+  "\t\t\t\t\t\t\t\tclient: session.client,",
+  "\t\t\t\t\t\t\t\ttimeoutMs: getCatalogListTimeoutMs(rawServer, resolved.requestTimeoutMs),",
+  "\t\t\t\t\t\t\t\tsuppressUnsupported: Boolean(!capabilities.tools && (capabilities.resources || capabilities.prompts))",
+  "\t\t\t\t\t\t\t});",
+  '\t\t\t\t\t\t\tif (resolved.transportType === "streamable-http" && capabilities.tools && listedTools.length === 0) {',
+  '\t\t\t\t\t\t\t\tlogWarn(`bundle-mcp: tool-capable server "${serverName}" returned an empty initial tool list; retrying once on the established transport.`);',
+  "\t\t\t\t\t\t\t\tawait nemoClawMcpRetryDelay();",
+  "\t\t\t\t\t\t\t\tlistedTools = await listAllToolsBestEffort({",
+  "\t\t\t\t\t\t\t\t\tclient: session.client,",
+  "\t\t\t\t\t\t\t\t\ttimeoutMs: getCatalogListTimeoutMs(rawServer, resolved.requestTimeoutMs),",
+  "\t\t\t\t\t\t\t\t\tsuppressUnsupported: false",
+  "\t\t\t\t\t\t\t\t});",
+  "\t\t\t\t\t\t\t}",
+].join("\n");
 const ACQUIRE_LEASE_REPLACEMENT = [
   "\t\tacquireLease() {",
   "\t\t\tif (activeLeases === 0 && nemoClawCatalogHasStartDiagnostics(catalog)) catalog = null;",
@@ -76,6 +100,7 @@ const PATCHED_REQUIRED_PATTERNS = [
   TASK_OPEN_REPLACEMENT,
   TASK_CLOSE_REPLACEMENT,
   START_FAILURE_RETURN_REPLACEMENT,
+  LIST_TOOLS_REPLACEMENT,
   ACQUIRE_LEASE_REPLACEMENT,
 ];
 
@@ -83,10 +108,12 @@ const PATCHED_REQUIRED_PATTERNS = [
  * Injected compatibility runtime for OpenClaw `bundle-mcp`.
  *
  * Retries exactly one classified transient Streamable HTTP server *startup*
- * failure with a fresh transport and bounded jitter, and stops a catalog that
- * carries any server diagnostic from becoming the session's stable catalog. A
- * credential, TLS, policy, or configuration rejection is never retried, and
- * keeps its own diagnostic.
+ * failure with a fresh transport and bounded jitter. A tool-capable
+ * Streamable HTTP server that returns an empty initial list receives one
+ * idempotent list retry on the established transport. The patch also stops a
+ * catalog that carries any server diagnostic from becoming the session's
+ * stable catalog. A credential, TLS, policy, or configuration rejection is
+ * never retried, and keeps its own diagnostic.
  */
 export const INJECTED_START_RETRY_HELPER = [
   MARKER,
@@ -316,6 +343,7 @@ export function patchBundleMcpRuntimeText(source: string, filePath: string): Pat
   text = text.replace(TASK_OPEN_PATTERN, TASK_OPEN_REPLACEMENT);
   text = text.replace(TASK_CLOSE_PATTERN, TASK_CLOSE_REPLACEMENT);
   text = text.replace(START_FAILURE_RETURN_PATTERN, START_FAILURE_RETURN_REPLACEMENT);
+  text = text.replace(LIST_TOOLS_PATTERN, LIST_TOOLS_REPLACEMENT);
   text = text.replace(ACQUIRE_LEASE_PATTERN, ACQUIRE_LEASE_REPLACEMENT);
 
   for (const pattern of PATCHED_REQUIRED_PATTERNS) {
