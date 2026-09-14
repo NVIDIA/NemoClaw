@@ -21,16 +21,11 @@ import { getDockerGpuSupervisorReconnectTimeoutSecs } from "../../onboard/docker
 import { recreateOpenShellDockerSandboxWithStartupCommand } from "../../onboard/docker-startup-command-patch";
 import { resolveRegisteredRuntimeProvider } from "../../onboard/runtime-provider/selection";
 import { buildSandboxRuntimeEnvArgs } from "../../onboard/sandbox-create-launch";
-import { parseOpenShellMainProcessSpecEnvValue } from "../../onboard/docker-startup-command-env";
 import { readManagedWorkloadAuthority } from "../../onboard/workload/authority";
-import {
-  executePrivilegedSandboxCommand,
-  resolveDirectSandboxContainer,
-} from "../../sandbox/privileged-exec";
+import { resolveDirectSandboxContainer } from "../../sandbox/privileged-exec";
 import { redact, redactFull } from "../../security/redact";
 import * as registry from "../../state/registry";
 import * as sandboxState from "../../state/sandbox";
-import type { StateRestoreRemoteCommandExecutor } from "../../state/ssh-transport";
 import { resolveSandboxDashboardPort } from "./forward-recovery";
 import { backupSandboxStateWithManagedAuthority } from "./snapshot/backup-authority";
 
@@ -51,7 +46,6 @@ const STATE_BACKUP_RETRY_SECONDS = 2;
 type ManagedSupervisorFinalizeOutcome = DockerGpuPatchFinalizeOutcome & {
   stateRestored?: boolean;
   stateBackupRemoved?: boolean;
-  postHandoffGatewayReady?: boolean;
 };
 
 export type ManagedSupervisorRelaunch = {
@@ -65,13 +59,10 @@ export type ManagedSupervisorRelaunchDeps = {
   readManagedWorkloadAuthority?: typeof readManagedWorkloadAuthority;
   resolveDashboardPort?: typeof resolveSandboxDashboardPort;
   resolveContainer?: typeof resolveDirectSandboxContainer;
-  inspectContainer?: (containerId: string, timeoutMs?: number) => DockerContainerInspect;
+  inspectContainer?: (containerId: string) => DockerContainerInspect;
   confirmMissingSupervisor?: (containerId: string) => boolean;
   restartRestoredManagedGateway?: (containerId: string) => boolean;
-  confirmRestoredManagedGateway?: (containerId: string) => boolean;
   backupState?: typeof sandboxState.backupSandboxState;
-  captureRestoreAuthority?: typeof sandboxState.captureSnapshotRestoreAuthority;
-  createRestoreCommandExecutor?: typeof createPinnedSandboxUserRestoreCommandExecutor;
   sleep?: (seconds: number) => void;
   restoreState?: typeof sandboxState.restoreSandboxState;
   removeBackup?: typeof sandboxState.removeSandboxStateBackup;
@@ -146,67 +137,12 @@ function inspectContainer(containerId: string): DockerContainerInspect {
   );
 }
 
-export function createPinnedSandboxUserRestoreCommandExecutor(
-  sandboxName: string,
-  replacementContainerId: string,
-  execute: typeof executePrivilegedSandboxCommand = executePrivilegedSandboxCommand,
-): StateRestoreRemoteCommandExecutor {
-  return (command, options) =>
-    execute(
-      sandboxName,
-      [
-        "/usr/bin/setpriv",
-        "--reuid=sandbox",
-        "--regid=sandbox",
-        "--init-groups",
-        "--",
-        "/bin/sh",
-        "-c",
-        command,
-      ],
-      {
-        expectedResourceHandle: replacementContainerId,
-        sanitizeEnvironment: true,
-        timeout: options.timeoutMs,
-        ...(options.input !== undefined ? { input: options.input } : {}),
-        ...(options.maxOutputBytes ? { maxOutputBytes: options.maxOutputBytes } : {}),
-      },
-    );
-}
-
-function restoredStatePrecommitReady(
-  persistedAgent: string,
-  containerId: string,
-  executeRestoreCommand: StateRestoreRemoteCommandExecutor,
-  confirmManagedGateway: ((containerId: string) => boolean) | undefined,
-): boolean {
-  if (persistedAgent !== "openclaw") return confirmManagedGateway?.(containerId) === true;
-  const configGuard = executeRestoreCommand(
-    "/usr/bin/python3 -I /usr/local/lib/nemoclaw/openclaw-config-guard.py preflight-restart --config-dir /sandbox/.openclaw",
-    { timeoutMs: 300_000 },
-  );
-  return configGuard.status === 0 && configGuard.signal === null && configGuard.error === undefined;
-}
-
 function hasLegacyKeepaliveStartup(inspect: DockerContainerInspect): boolean {
-  const legacyPrefix = "OPENSHELL_SANDBOX_COMMAND=";
-  const specPrefix = "OPENSHELL_MAIN_PROCESS_SPEC=";
-  const values = (inspect.Config?.Env ?? []).filter(
-    (entry) => entry.startsWith(legacyPrefix) || entry.startsWith(specPrefix),
-  );
-  if (values.length !== 1) return false;
-  const value = values[0]!;
-  if (value.startsWith(legacyPrefix)) {
-    return value.slice(legacyPrefix.length) === LEGACY_OPENSHELL_KEEPALIVE;
-  }
-  try {
-    const spec = parseOpenShellMainProcessSpecEnvValue(value.slice(specPrefix.length));
-    return (
-      spec.command.length === 2 && spec.command[0] === "sleep" && spec.command[1] === "infinity"
-    );
-  } catch {
-    return false;
-  }
+  const prefix = "OPENSHELL_SANDBOX_COMMAND=";
+  const values = (inspect.Config?.Env ?? [])
+    .filter((entry) => entry.startsWith(prefix))
+    .map((entry) => entry.slice(prefix.length));
+  return values.length === 1 && values[0] === LEGACY_OPENSHELL_KEEPALIVE;
 }
 
 function reconstructSupervisorLaunchCommand(
@@ -287,22 +223,16 @@ export function relaunchManagedSupervisorSession(
   const getSandbox = deps.getSandbox ?? registry.getSandbox;
   const entry = getSandbox(sandboxName);
   if (!entry) return null;
-  const persistedAgent = entry.agent ?? "openclaw";
   const driver = entry.openshellDriver?.trim().toLowerCase() ?? null;
   if (!usesLegacyManagedGatewayRecovery(entry)) return null;
   const resolveContainer = deps.resolveContainer ?? resolveDirectSandboxContainer;
   const inspect = deps.inspectContainer ?? inspectContainer;
   const confirmMissingSupervisor = deps.confirmMissingSupervisor;
   const restartRestoredManagedGateway = deps.restartRestoredManagedGateway;
-  const confirmRestoredManagedGateway = deps.confirmRestoredManagedGateway;
   const backupState =
     deps.backupState ??
     ((name: string) => backupSandboxStateWithManagedAuthority(name, {}, { getSandbox }));
   const restoreState = deps.restoreState ?? sandboxState.restoreSandboxState;
-  const captureRestoreAuthority =
-    deps.captureRestoreAuthority ?? sandboxState.captureSnapshotRestoreAuthority;
-  const createRestoreCommandExecutor =
-    deps.createRestoreCommandExecutor ?? createPinnedSandboxUserRestoreCommandExecutor;
   const removeBackup = deps.removeBackup ?? sandboxState.removeSandboxStateBackup;
   const recreate = deps.recreate ?? recreateOpenShellDockerSandboxWithStartupCommand;
   const finalize = deps.finalize ?? finalizeDockerGpuPatchBackup;
@@ -370,15 +300,6 @@ export function relaunchManagedSupervisorSession(
       return null;
     }
     const backupManifest = backup.manifest;
-    const restoreAuthority = captureRestoreAuthority(backupManifest.backupPath, backupManifest);
-    if (!restoreAuthority) {
-      try {
-        removeBackup(sandboxName, backupManifest.backupPath);
-      } catch {
-        // Preserve the content-authority failure that stopped recreation.
-      }
-      return null;
-    }
     pendingStateBackupPath = backupManifest.backupPath;
     if (!quiet) {
       console.log("  Recreating the sandbox container with its managed startup command...");
@@ -418,7 +339,7 @@ export function relaunchManagedSupervisorSession(
       let replacementOwned = false;
       try {
         replacementOwned = sameContainerId(
-          resolveContainer(sandboxName, driver, result.newContainerId),
+          resolveContainer(sandboxName, driver),
           result.newContainerId,
         );
       } catch {
@@ -428,40 +349,27 @@ export function relaunchManagedSupervisorSession(
         return finalizeFailure();
       }
       let stateRestored = false;
-      let restoreCommandExecutor: StateRestoreRemoteCommandExecutor | null = null;
       try {
-        restoreCommandExecutor = createRestoreCommandExecutor(sandboxName, result.newContainerId);
-        stateRestored = restoreState(sandboxName, backupManifest.backupPath, {
-          authority: restoreAuthority,
-          executeCommand: restoreCommandExecutor,
-          validateBeforeMutation: () => {
-            const selected = resolveContainer(sandboxName, driver, result.newContainerId);
-            if (!sameContainerId(selected, result.newContainerId)) {
-              throw new Error("replacement container identity changed");
-            }
-          },
-        }).success;
+        stateRestored = restoreState(sandboxName, backupManifest.backupPath).success;
       } catch {
         stateRestored = false;
       }
       if (!stateRestored) {
         return finalizeFailure();
       }
-      if (!restoreCommandExecutor) return finalizeFailure();
       let restoredManagedGatewayReady = false;
       try {
-        restoredManagedGatewayReady = restoredStatePrecommitReady(
-          persistedAgent,
-          result.newContainerId,
-          restoreCommandExecutor,
-          confirmRestoredManagedGateway,
-        );
+        restoredManagedGatewayReady =
+          restartRestoredManagedGateway?.(result.newContainerId) === true;
       } catch {
         restoredManagedGatewayReady = false;
       }
       if (!restoredManagedGatewayReady) {
-        // Keep the rollback container until the restored config and current
-        // gateway pass a pinned integrity and health probe.
+        // Apply restored state to a fresh managed gateway process. OpenClaw
+        // can otherwise retain pre-restore runtime state or enter its
+        // in-process reload path. Keep the previous container available for
+        // rollback until the pinned replacement restart and health proof
+        // both succeed.
         return finalizeFailure();
       }
       const runLifecycleProbe = deps.runOpenshell;
@@ -479,22 +387,12 @@ export function relaunchManagedSupervisorSession(
           supervisorReady: true,
           sandboxName,
           finalHandoffTimeoutSecs: getDockerGpuSupervisorReconnectTimeoutSecs(1),
-          replacementAlreadyRunning: true,
         },
         lifecycleDeps,
       );
-      let postHandoffGatewayReady = false;
-      try {
-        postHandoffGatewayReady =
-          finalized.finalHandoffAcknowledged === true &&
-          restartRestoredManagedGateway?.(result.newContainerId) === true;
-      } catch {
-        postHandoffGatewayReady = false;
-      }
       return {
         ...finalized,
         stateRestored: true,
-        postHandoffGatewayReady,
         ...(finalized.finalHandoffAcknowledged === true
           ? { stateBackupRemoved: removeSettledStateBackup() }
           : {}),

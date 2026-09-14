@@ -10,18 +10,11 @@ import { shellQuote } from "../runner.js";
 import { buildOpenClawConfigRestoreInputFromSandbox } from "./openclaw-config-restore-input.js";
 import type { OpenClawImagePluginInstall } from "./openclaw-plugin-restore.js";
 import { buildKeyAllowlistMergeRestoreCommand } from "./state-file-key-merge.js";
-import type { StateRestoreRemoteCommandExecutor } from "./ssh-transport.js";
 
 export interface StateFileRestoreSpec {
   path: string;
   strategy: "copy" | "sqlite_backup";
 }
-
-export type PreparedStateFileRestore = {
-  readonly command: string;
-  readonly input: Buffer;
-  readonly path: string;
-};
 
 const SQLITE_RESTORE_PY = [
   "import sqlite3, sys",
@@ -144,8 +137,8 @@ export function buildStateFileRestoreCommand(
   return steps.join("; ");
 }
 
-export function prepareStateFileRestore(
-  sshArgs: readonly string[] | undefined,
+export function restoreStateFile(
+  sshArgs: readonly string[],
   dir: string,
   spec: StateFileRestoreSpec,
   backupPath: string,
@@ -155,10 +148,9 @@ export function prepareStateFileRestore(
   freshImagePluginInstalls?: readonly OpenClawImagePluginInstall[],
   previousImagePluginInstalls?: readonly OpenClawImagePluginInstall[],
   env?: NodeJS.ProcessEnv,
-  executeCommand?: StateRestoreRemoteCommandExecutor,
-): PreparedStateFileRestore | null {
+): boolean {
   const localPath = path.join(backupPath, spec.path);
-  if (!existsSync(localPath)) return null;
+  if (!existsSync(localPath)) return true;
 
   const backupContents = readFileSync(localPath);
   log(`Restoring state file ${spec.path} (${spec.strategy})`);
@@ -176,7 +168,6 @@ export function prepareStateFileRestore(
       previousImagePluginInstalls,
       specPath: spec.path,
       sshArgs,
-      executeCommand,
     });
     if (result.ok) {
       input = result.input;
@@ -193,27 +184,14 @@ export function prepareStateFileRestore(
     command = buildStateFileRestoreCommand(dir, spec, false);
     input = backupContents;
   }
-  if (input === null) return null;
-  return { command, input, path: spec.path };
-}
+  if (input === null) return false;
 
-export function executePreparedStateFileRestore(
-  sshArgs: readonly string[] | undefined,
-  prepared: PreparedStateFileRestore,
-  log: (message: string) => void,
-  env?: NodeJS.ProcessEnv,
-  executeCommand?: StateRestoreRemoteCommandExecutor,
-): boolean {
-  const { command, input } = prepared;
-
-  const result = executeCommand
-    ? executeCommand(command, { input, timeoutMs: 120000 })
-    : spawnSync("ssh", [...(sshArgs ?? []), command], {
-        ...(env ? { env } : {}),
-        input,
-        stdio: ["pipe", "pipe", "pipe"],
-        timeout: 120000,
-      });
+  const result = spawnSync("ssh", [...sshArgs, command], {
+    ...(env ? { env } : {}),
+    input,
+    stdio: ["pipe", "pipe", "pipe"],
+    timeout: 120000,
+  });
 
   if (result.status === 0 && !result.error && !result.signal) return true;
 
@@ -221,38 +199,6 @@ export function executePreparedStateFileRestore(
     (result.stderr?.toString() || "").trim() ||
     result.error?.message ||
     (result.signal ? `signal ${result.signal}` : `exit ${String(result.status)}`);
-  log(`FAILED: state file restore ${prepared.path}: ${detail.substring(0, 200)}`);
+  log(`FAILED: state file restore ${spec.path}: ${detail.substring(0, 200)}`);
   return false;
-}
-
-export function restoreStateFile(
-  sshArgs: readonly string[] | undefined,
-  dir: string,
-  spec: StateFileRestoreSpec,
-  backupPath: string,
-  ownership: StateFileRestoreOwnership | undefined,
-  allowCustomImageWholeStateFileRestore: boolean,
-  log: (message: string) => void,
-  freshImagePluginInstalls?: readonly OpenClawImagePluginInstall[],
-  previousImagePluginInstalls?: readonly OpenClawImagePluginInstall[],
-  env?: NodeJS.ProcessEnv,
-  executeCommand?: StateRestoreRemoteCommandExecutor,
-): boolean {
-  if (!existsSync(path.join(backupPath, spec.path))) return true;
-  const prepared = prepareStateFileRestore(
-    sshArgs,
-    dir,
-    spec,
-    backupPath,
-    ownership,
-    allowCustomImageWholeStateFileRestore,
-    log,
-    freshImagePluginInstalls,
-    previousImagePluginInstalls,
-    env,
-    executeCommand,
-  );
-  return prepared
-    ? executePreparedStateFileRestore(sshArgs, prepared, log, env, executeCommand)
-    : false;
 }

@@ -4,11 +4,7 @@
 import * as agentRuntime from "../../../agent/runtime";
 import { inspectPortableAgentReceiptDisposition } from "../../../onboard/experimental/portable-agent-lifecycle";
 import { withSandboxLifecycleLock } from "../lifecycle/lock";
-import {
-  connectSandbox,
-  restoreSandboxStartupState,
-  waitForManagedGatewaySupervisor,
-} from "../connect";
+import { connectSandbox } from "../connect";
 import {
   prepareHermesCronRestoreRecovery,
   recoverHermesCronRestore,
@@ -32,26 +28,6 @@ export async function recoverSandboxWithHermesCronRestore(sandboxName: string): 
       const agent = agentRuntime.getSessionAgent(sandboxName);
       if (agent?.name === "hermes") {
         prepareHermesCronRestoreRecovery(sandboxName);
-      }
-      let startup = await restoreSandboxStartupState(sandboxName);
-      let recoveryFailureDetail =
-        "recoveryFailureDetail" in startup ? startup.recoveryFailureDetail : null;
-      if (recoveryFailureDetail === "SUPERVISOR_NOT_RUNNING") {
-        const supervisorReady = waitForManagedGatewaySupervisor(sandboxName);
-        if (supervisorReady) {
-          startup = await restoreSandboxStartupState(sandboxName);
-          recoveryFailureDetail =
-            "recoveryFailureDetail" in startup ? startup.recoveryFailureDetail : null;
-        }
-      }
-      if (
-        recoveryFailureDetail ||
-        (startup.checked && startup.wasRunning === false && startup.recovered === false)
-      ) {
-        throw new Error(
-          recoveryFailureDetail ||
-            `Sandbox '${sandboxName}' startup recovery did not restore its managed supervisor.`,
-        );
       }
       await connectSandbox(sandboxName, {
         probeOnly: true,

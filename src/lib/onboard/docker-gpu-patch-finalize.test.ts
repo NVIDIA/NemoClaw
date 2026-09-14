@@ -72,7 +72,7 @@ function commandExecutorThrough(
 }
 
 function readyHandoffDeps() {
-  const runOpenshell = vi.fn((_args: string[]) => ({ status: 0 }));
+  const runOpenshell = vi.fn(() => ({ status: 0 }));
   return {
     runCaptureOpenshell: vi.fn(() => "alpha  2026-08-23 10:00:02  Ready\n"),
     runOpenshell,
@@ -196,57 +196,6 @@ describe("finalizeDockerGpuPatchBackup", () => {
     expect(dockerStop).not.toHaveBeenCalled();
     expect(dockerRm).not.toHaveBeenCalled();
     expect(dockerStart).not.toHaveBeenCalled();
-  });
-
-  it("commits an already-running replacement without ambiguous OpenShell lifecycle selection", async () => {
-    const result = exactDeferredCreateResult();
-    const dockerRm = vi.fn(() => ({ status: 0 }));
-    const dockerStop = vi.fn(() => ({ status: 0 }));
-    const dockerStart = vi.fn(() => ({ status: 0 }));
-    const dockerRun = vi.fn((args: readonly string[]) => ({
-      status: 0,
-      stdout:
-        args[0] === "ps"
-          ? `${result.newContainerId}\n`
-          : args.includes("{{json .State.Running}}")
-            ? "true\n"
-            : "current-gateway\n",
-    }));
-    const handoff = readyHandoffDeps();
-
-    await expect(
-      finalizeDockerGpuPatchBackup(
-        {
-          result,
-          supervisorReady: true,
-          sandboxName: "alpha",
-          finalHandoffTimeoutSecs: 60,
-          replacementAlreadyRunning: true,
-        },
-        { ...handoff, dockerRm, dockerRun, dockerStart, dockerStop },
-      ),
-    ).resolves.toEqual({
-      backupRemoved: true,
-      finalHandoffAcknowledged: true,
-      lastSandboxPhase: "Ready",
-      replacementRestarted: true,
-      rolledBack: false,
-    });
-    expect(dockerRm).toHaveBeenCalledWith(
-      result.oldContainerId,
-      expect.objectContaining({ timeout: expect.any(Number) }),
-    );
-    expect(dockerStop).not.toHaveBeenCalled();
-    expect(dockerStart).not.toHaveBeenCalled();
-    expect(handoff.runOpenshell).toHaveBeenCalledOnce();
-    expect(handoff.runOpenshell.mock.calls[0]?.[0]).toEqual([
-      "sandbox",
-      "exec",
-      "-n",
-      "alpha",
-      "--",
-      "true",
-    ]);
   });
 
   it("uses authoritative OpenShell stop/start around the exact Docker commit (#9531)", async () => {

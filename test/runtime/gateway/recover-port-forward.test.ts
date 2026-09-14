@@ -381,7 +381,9 @@ describe("nemoclaw <name> recover", () => {
       expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
 
       const combined = (result.stdout || "") + (result.stderr || "");
-      expect(combined).toContain("gateway is running in 'alive-sandbox'");
+      expect(combined).toContain(
+        "gateway is running in 'alive-sandbox'; restored dashboard port forward",
+      );
 
       const calls = fs.readFileSync(fixture.invocationLog, "utf-8").split("\n");
       const stopIdx = calls.findIndex((l) => l.startsWith("forward stop "));

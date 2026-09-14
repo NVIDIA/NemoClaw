@@ -42,7 +42,6 @@ export function selectDockerPrivilegedSandboxTarget(
   sandboxName: string,
   labeledContainerRows: string,
   registeredNames: readonly string[] = [sandboxName],
-  expectedResourceHandle?: string,
 ): string | null {
   const names = Array.from(new Set([...registeredNames, sandboxName])).sort(
     (left, right) => right.length - left.length || left.localeCompare(right),
@@ -59,13 +58,6 @@ export function selectDockerPrivilegedSandboxTarget(
       `OpenShell container labels and names disagree for sandbox '${sandboxName}'; ` +
         "refusing lifecycle execution.",
     );
-  }
-  if (expectedResourceHandle !== undefined) {
-    const pinnedCandidates = candidates.filter(({ id }) => id === expectedResourceHandle);
-    if (pinnedCandidates.length > 1) {
-      throw new Error("Docker returned duplicate OpenShell sandbox container identities.");
-    }
-    return pinnedCandidates[0]?.id ?? null;
   }
   if (candidates.length > 1) {
     throw new Error(

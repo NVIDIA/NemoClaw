@@ -53,7 +53,6 @@ type SandboxEntry = import("../../state/registry").SandboxEntry;
 function findDirectSandboxContainer(
   sandboxName: string,
   registeredSandboxNames: readonly string[],
-  expectedResourceHandle?: string,
 ): string | null {
   let output: string;
   try {
@@ -78,12 +77,7 @@ function findDirectSandboxContainer(
       { cause: error },
     );
   }
-  return selectDockerPrivilegedSandboxTarget(
-    sandboxName,
-    output,
-    registeredSandboxNames,
-    expectedResourceHandle,
-  );
+  return selectDockerPrivilegedSandboxTarget(sandboxName, output, registeredSandboxNames);
 }
 
 function expectedDirectContainerPattern(sandboxName: string): string {
@@ -105,7 +99,7 @@ function portableTarget(sandboxName: string, sandbox: SandboxEntry) {
 function resolveDockerTarget(
   input: Pick<
     RuntimeProviderPrivilegedSandboxCommandInput,
-    "expectedResourceHandle" | "registeredSandboxNames" | "sandbox" | "sandboxName"
+    "registeredSandboxNames" | "sandbox" | "sandboxName"
   >,
 ): RuntimeProviderPrivilegedSandboxTarget {
   const portable = portableTarget(input.sandboxName, input.sandbox);
@@ -113,15 +107,8 @@ function resolveDockerTarget(
     portable.assertRuntimeAuthority();
     return Object.freeze({ providerId: "docker", resourceHandle: portable.containerId });
   }
-  const containerId = findDirectSandboxContainer(
-    input.sandboxName,
-    input.registeredSandboxNames,
-    input.expectedResourceHandle,
-  );
+  const containerId = findDirectSandboxContainer(input.sandboxName, input.registeredSandboxNames);
   if (!containerId) {
-    if (input.expectedResourceHandle !== undefined) {
-      throw new PinnedSandboxResourceIdentityChangedError(input.sandboxName);
-    }
     throw new DirectSandboxContainerNotFoundError(
       `No running direct OpenShell sandbox container found for '${input.sandboxName}' ` +
         `(driver: ${input.sandbox.openshellDriver ?? "unspecified"}). Expected one ` +

@@ -31,23 +31,3 @@ export function isSshTransportFailure(result: {
   if (result.status === null) return true;
   return result.status === 255;
 }
-
-export type StateRestoreRemoteCommandOptions = {
-  readonly input?: Buffer;
-  readonly maxOutputBytes?: number;
-  readonly timeoutMs: number;
-};
-
-export type StateRestoreRemoteCommandResult = {
-  readonly error?: Error;
-  readonly signal: NodeJS.Signals | null;
-  readonly status: number | null;
-  readonly stderr: Buffer;
-  readonly stdout: Buffer;
-};
-
-/** Internal restore transport selected and identity-fenced by the caller. */
-export type StateRestoreRemoteCommandExecutor = (
-  command: string,
-  options: StateRestoreRemoteCommandOptions,
-) => StateRestoreRemoteCommandResult;

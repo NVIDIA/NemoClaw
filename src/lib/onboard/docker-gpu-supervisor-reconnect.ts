@@ -113,7 +113,6 @@ function exactReplacementIsRunning(
  * sole running labeled container. Deleting is terminal after that start.
  * Error remains transient only while the exact replacement stays running.
  */
-
 export async function waitForOpenShellFinalHandoff(
   sandboxName: string,
   deadlineMs: number,

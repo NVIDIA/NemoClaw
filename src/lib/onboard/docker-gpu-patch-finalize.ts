@@ -52,7 +52,6 @@ export type DockerGpuPatchFinalizeOptions =
       supervisorReady: true;
       sandboxName: string;
       finalHandoffTimeoutSecs: number;
-      replacementAlreadyRunning?: true;
     };
 
 export type DockerGpuPatchFinalizeOutcome = {
@@ -124,47 +123,6 @@ export async function finalizeDockerGpuPatchBackup(
         lifecycleStopAcknowledged: false,
         finalHandoffAcknowledged: false,
         lastSandboxPhase: null,
-      };
-    }
-    if (options.replacementAlreadyRunning) {
-      const rmResult = resolved.dockerRm(options.result.oldContainerId, containerOpts);
-      const backupRemoved = hasZeroDockerExitStatus(rmResult);
-      if (!backupRemoved) {
-        return {
-          backupRemoved: false,
-          rolledBack: false,
-          finalHandoffAcknowledged: false,
-          lastSandboxPhase: null,
-        };
-      }
-      const now = deps.now ?? (() => new Date());
-      const finalHandoffDeadlineMs =
-        now().getTime() + Math.max(1, options.finalHandoffTimeoutSecs * 1000);
-      const acknowledgement = await waitForOpenShellFinalHandoff(
-        options.sandboxName,
-        finalHandoffDeadlineMs,
-        {
-          commandExecutor: deps.commandExecutor,
-          runCaptureOpenshell: deps.runCaptureOpenshell,
-          sleep: deps.sleep,
-          now,
-          replacementIsExactAndRunning: (remainingMs) =>
-            isExactOpenShellDockerSandboxReplacement(
-              options.sandboxName,
-              options.result.newContainerId,
-              true,
-              { dockerRun: resolved.dockerRun },
-              remainingMs,
-              now,
-            ),
-        },
-      );
-      return {
-        backupRemoved: true,
-        rolledBack: false,
-        replacementRestarted: acknowledgement.acknowledged,
-        finalHandoffAcknowledged: acknowledgement.acknowledged,
-        lastSandboxPhase: acknowledgement.lastSandboxPhase,
       };
     }
     console.log(
