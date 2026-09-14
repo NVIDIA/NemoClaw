@@ -375,8 +375,7 @@ describe("Docker managed bootstrap adapter", () => {
       .mockImplementationOnce(() => {
         expect(fake.journal?.phase).toBe("shared-state-committed");
         expect(fake.original).toBeNull();
-        expect(fake.replacement?.State?.Running).toBe(false);
-        Object.assign(fake.replacement!.State!, { Running: true });
+        expect(fake.replacement?.State?.Running).toBe(true);
         return { status: 0 };
       })
       .mockReturnValue({ status: 0 });
@@ -463,7 +462,7 @@ describe("Docker managed bootstrap adapter", () => {
     });
     expect(finalized).toMatchObject({ outcome: "committed" });
     expectEventBefore(fake.events, "journal:shared-state-committed", `rm:${OLD_ID}`);
-    expectEventBefore(fake.events, `rm:${OLD_ID}`, `stop:${NEW_ID}`);
+    expect(fake.events).not.toContain(`stop:${NEW_ID}`);
     expectEventBefore(fake.events, "finalization:committed", "journal:removed");
     expect(fake.journal).toBeNull();
     expect(fake.finalization).toMatchObject({ phase: "committed", commitReceipt });
@@ -472,7 +471,6 @@ describe("Docker managed bootstrap adapter", () => {
     expect(vi.mocked(fake.deps.runOpenshell!).mock.calls.map(([args]) => args.slice(0, 2))).toEqual(
       [
         ["sandbox", "stop"],
-        ["sandbox", "start"],
         ["sandbox", "exec"],
       ],
     );
@@ -514,8 +512,10 @@ describe("Docker managed bootstrap adapter", () => {
     expect(fake.finalization).toMatchObject({ phase: "committed", commitReceipt });
   });
 
-  it("keeps committed recovery authority when the final OpenShell handoff fails", async () => {
+  it("keeps committed recovery authority when the supervisor does not remain connected", async () => {
     const fake = fixture({ sharedState: "pending" });
+    fake.deps.errorPhaseDebouncePolls = 1;
+    fake.deps.runCaptureOpenshell = vi.fn(() => "alpha Error");
     fake.deps.runOpenshell = vi
       .fn()
       .mockReturnValueOnce({ status: 0 })
@@ -563,10 +563,10 @@ describe("Docker managed bootstrap adapter", () => {
         replacement,
         completion,
       }),
-    ).rejects.toThrow(/OpenShell sandbox start.*injected readiness failure/);
+    ).rejects.toThrow(/supervisor did not reconnect/);
     expect(fake.journal?.phase).toBe("shared-state-committed");
     expect(fake.original).toBeNull();
-    expect(fake.replacement).toMatchObject({ Id: NEW_ID, State: { Running: false } });
+    expect(fake.replacement).toMatchObject({ Id: NEW_ID, State: { Running: true } });
     expectEventBefore(fake.events, "journal:shared-state-committed", `rm:${OLD_ID}`);
   });
 
@@ -612,7 +612,6 @@ describe("Docker managed bootstrap adapter", () => {
     fake.deps.errorPhaseDebouncePolls = 1;
     fake.deps.runOpenshell = vi
       .fn()
-      .mockReturnValueOnce({ status: 0 })
       .mockReturnValueOnce({ status: 0 })
       .mockImplementation(() => {
         assert(fake.replacement?.State);
