@@ -545,8 +545,19 @@ export function createSandboxGpuCreateAttemptRunner(
           },
         })
       : null;
+    // Temporary #8910 qualification path: keep the OpenShell-created Jetson
+    // container intact so native GPU injection from OpenShell #2846 reaches
+    // the built-in cuInit(0) proof without the restart-safe Docker clone.
+    const preserveNativeJetsonRuntime =
+      !managedLifecycle &&
+      !portableLifecycle &&
+      route === "native" &&
+      input.gpuRoutePlan === "native-only" &&
+      input.sandboxGpuConfig.hostGpuPlatform === "jetson" &&
+      !hasRequiredUlimits;
     const persistRestartSafeStartup =
       input.persistStartupCommand === true &&
+      !preserveNativeJetsonRuntime &&
       (route !== "native" || !input.terminalAgent || hasRequiredUlimits);
     const deferRestartSafeCutover =
       !managedLifecycle && !portableLifecycle && !compatibility && persistRestartSafeStartup;
