@@ -1455,6 +1455,7 @@ For a portable experimental-profile sandbox with the recorded `ollama-local` pro
 <AgentOnly variant="hermes">
 
 Hermes Portable forward repair reports the failed boundary and the affected port or operation when available.
+It allows 30 seconds for forward verification and 60 seconds for the complete inspection, start, and verification operation.
 Before mutation, it distinguishes an occupied port, a failed or invalid `openshell forward list` result, unresolved recorded ports, and an inconclusive reachability check.
 After mutation begins, it distinguishes a failed `start` or `stop` operation from a settlement timeout.
 NemoClaw does not stop an unproved owner and does not publish launch-readiness evidence after any of these failures.
@@ -4005,13 +4006,6 @@ inference | | `NEMOCLAW_OLLAMA_PROXY_PORT` | 11435 | Ollama auth proxy | |
   address. WSL uses an all-interface forward for Windows-host reachability. Set to `0.0.0.0` to opt
   in to remote bind on other SSH-deployed hosts. |
 </AgentOnly>
-<AgentOnly variant="openclaw">
-  | `NEMOCLAW_GATEWAY_WS_HOST` | *unset* (auto-derived inside the sandbox; loopback elsewhere) |
-  Host used for the in-sandbox `OPENCLAW_GATEWAY_URL`; inside the sandbox it defaults to the primary
-  interface address so `sessions_spawn` sub-agents can dial the gateway through the enforced network
-  path. |
-</AgentOnly>
-
 If a port value is not a valid integer or falls outside the allowed range, the CLI exits with an error. `NEMOCLAW_GATEWAY_PORT` also cannot overlap configured service, vLLM, Ollama, Ollama proxy, Bedrock Runtime adapter, OpenRouter runtime adapter, or HTTPS Pin Runtime adapter ports, and cannot use reserved auto-allocation ranges or the default inference/proxy ports `8000`, `8081`, `11434`, `11435`, `11436`, `11437`, and `11438`. Port `8081` is reserved for authenticated existing-server attachment and the managed llama.cpp runtime. It cannot be assigned to another configurable NemoClaw service port. Each runtime adapter port must be distinct from the gateway, vLLM, Ollama, Ollama proxy, dashboard allocation range, and other runtime adapter ports. When you run multiple NemoClaw gateways with different `NEMOCLAW_GATEWAY_PORT` values, NemoClaw derives a separate gateway name, state directory, and compatibility container name from the port so one gateway does not tear down another. Only port `8080` uses a NemoClaw-managed Linux systemd user service or macOS Homebrew service. NemoClaw-managed gateways on custom ports run as detached processes and do not change the default gateway service. An externally supervised gateway can use any matching configured port and must be recovered through its declared supervisor. On non-WSL hosts, `NEMOCLAW_OLLAMA_PORT` and `NEMOCLAW_OLLAMA_PROXY_PORT` must be different. If you run Ollama on port 11435, set `NEMOCLAW_OLLAMA_PROXY_PORT` to another free port before onboarding.
 
 `NEMOCLAW_GATEWAY_BIND_ADDRESS` accepts only `127.0.0.1` and `0.0.0.0`, but NemoClaw rejects `0.0.0.0` for Docker-driver gateways while gateway JWT auth is active.
