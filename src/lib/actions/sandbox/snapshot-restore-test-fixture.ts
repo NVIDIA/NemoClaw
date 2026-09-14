@@ -321,7 +321,7 @@ vi.mock("../../adapters/openshell/gateway-reuse-cli", () => ({
       namedMetadata: true,
       shouldSelect: false,
       endpoints: [],
-      endpointBinding: "unknown",
+      endpointBinding: isGatewayHealthyMock() ? "match" : "unknown",
     }),
   }),
 }));

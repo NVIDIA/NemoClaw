@@ -8,6 +8,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as crossPort from "../../state/registry/cross-port";
 import * as runtime from "../../adapters/openshell/runtime";
+import * as resolution from "../../adapters/openshell/resolve";
 import { selectSandboxOwningGateway } from "./gateway-select";
 
 describe("selectSandboxOwningGateway", () => {
@@ -36,11 +37,20 @@ describe("selectSandboxOwningGateway", () => {
       gatewayPort: 8080,
       registryFile: "/test/sandboxes.json",
     });
-    vi.spyOn(runtime, "getOpenshellBinary").mockImplementation(() => {
-      throw new Error("openshell CLI not found. Install OpenShell before using sandbox commands.");
+    const resolveOpenshell = resolution.resolveOpenshell;
+    vi.spyOn(resolution, "resolveOpenshell").mockImplementation(() =>
+      resolveOpenshell({ commandVResult: null, checkExecutable: () => false }),
+    );
+    const diagnostic = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const exit = vi.spyOn(process, "exit").mockImplementation(() => {
+      throw new Error("missing CLI exit");
     });
     const capture = vi.spyOn(runtime, "captureResolvedOpenshell");
-    await expect(selectSandboxOwningGateway("alpha")).rejects.toThrow("openshell CLI not found");
+    await expect(selectSandboxOwningGateway("alpha")).rejects.toThrow("missing CLI exit");
+    expect(exit).toHaveBeenCalledExactlyOnceWith(1);
+    expect(diagnostic).toHaveBeenCalledWith(
+      "openshell CLI not found. Install OpenShell before using sandbox commands.",
+    );
     expect(capture).not.toHaveBeenCalled();
   });
   it("does not change selection for an unregistered sandbox", async () => {
