@@ -310,6 +310,14 @@ _hooks_config = None
 def _load_hooks(): return []
 def _run_single_hook(command, event, payload_bytes): return None
 `,
+  "hooks/manager.py": `from __future__ import annotations
+
+class HooksManager:
+    @classmethod
+    def create(cls, *args, **kwargs): return cls()
+    @classmethod
+    def inert(cls): return cls()
+`,
   "client/non_interactive.py": `from __future__ import annotations
 
 async def run_non_interactive(*args, **kwargs):

@@ -70,6 +70,7 @@ describe("LangChain Deep Agents Code managed package patch", () => {
       "_server_config.py",
       "mcp_tools.py",
       "subagents.py",
+      "hooks/manager.py",
       "client/non_interactive.py",
       "_nemoclaw_managed.py",
     ].forEach((relativePath) => {
@@ -89,6 +90,11 @@ describe("LangChain Deep Agents Code managed package patch", () => {
       "agent",
       "agent.py",
       "_nemoclaw_original_build_model_identity_section = build_model_identity_section",
+    ],
+    [
+      "hooks_manager",
+      "hooks/manager.py",
+      "_nemoclaw_original_hooks_manager_create = HooksManager.create.__func__",
     ],
     [
       "status",
@@ -865,6 +871,7 @@ from deepagents_code import _nemoclaw_managed, nemoclaw_observability
 from deepagents_code import config_manifest
 from deepagents_code.client import non_interactive
 from deepagents_code.client.launch import server
+from deepagents_code.hooks import legacy as hook_legacy
 from deepagents_code.integrations import openai_codex
 from deepagents_code.tui.widgets.auth import AuthManagerScreen, AuthPromptScreen, AuthResult
 from deepagents_code.tui.widgets.codex_auth import CodexAuthScreen
@@ -1032,10 +1039,25 @@ async def validate():
     assert graph_kwargs["rubric_model"] is None
     assert graph_kwargs["async_subagents"] is None
     assert subagents.list_subagents()[0]["model"] is None
+    hook_config_dir = Path(${JSON.stringify(path.join(tempDir, "hook-config"))})
+    hook_config_dir.mkdir()
+    session_hook_marker = Path(${JSON.stringify(path.join(tempDir, "session-hook-ran"))})
+    (hook_config_dir / "hooks.json").write_text(
+        '{"hooks":[{"command":["touch","' + str(session_hook_marker) +
+        '"],"events":["session.start"]}]}',
+        encoding="utf-8",
+    )
+    model_config.DEFAULT_CONFIG_DIR = hook_config_dir
+    hook_legacy._hooks_config = None
+    await hooks.dispatch_hook("session.start", {"thread_id": "thread-1"})
+    assert session_hook_marker.exists()
+
     hook_marker = Path(${JSON.stringify(path.join(tempDir, "hook-ran"))})
     assert hooks._load_hooks()
     hooks._run_single_hook(["touch", str(hook_marker)], "session.start", b"{}")
     assert hook_marker.exists()
+    headless_hook_marker = Path(${JSON.stringify(path.join(tempDir, "headless-hook-ran"))})
+    os.environ["DCODE_FIXTURE_HOOK_MARKER"] = str(headless_hook_marker)
     headless_kwargs = await non_interactive.run_non_interactive(
         "message",
         "assistant",
@@ -1061,6 +1083,8 @@ async def validate():
     assert headless_kwargs["interpreter_ptc"] is None
     assert headless_kwargs["rubric_model"] is None
     assert non_interactive.settings.shell_allow_list is None
+    assert not headless_hook_marker.exists()
+    os.environ.pop("DCODE_FIXTURE_HOOK_MARKER")
     if sys.platform == "linux":
         _nemoclaw_managed._MCP_CONFIG_FILE = Path(${JSON.stringify(managedMcpPath)})
     else:

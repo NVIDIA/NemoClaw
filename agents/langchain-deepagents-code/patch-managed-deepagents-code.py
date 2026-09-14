@@ -712,6 +712,24 @@ def build_model_identity_section(
     )
 '''
 
+HOOK_MANAGER_PATCH = r'''
+
+# NemoClaw-managed Deep Agents Code hardening v2.
+import os as _nemoclaw_os
+
+_nemoclaw_original_hooks_manager_create = HooksManager.create.__func__
+
+
+def _nemoclaw_hooks_manager_create(cls, *args, **kwargs):
+    """Keep executable hooks out of managed headless sessions."""
+    if _nemoclaw_os.environ.get("NEMOCLAW_DCODE_HEADLESS_INTERNAL") == "1":
+        return cls.inert()
+    return _nemoclaw_original_hooks_manager_create(cls, *args, **kwargs)
+
+
+HooksManager.create = classmethod(_nemoclaw_hooks_manager_create)
+'''
+
 SUBAGENTS_PATCH = r'''
 
 # NemoClaw-managed Deep Agents Code hardening v2.
@@ -1206,6 +1224,7 @@ _nemoclaw_original_run_non_interactive = run_non_interactive
 
 async def run_non_interactive(*args, **kwargs):
     """Enforce the managed headless boundary at the final Python call site."""
+    _nemoclaw_os.environ["NEMOCLAW_DCODE_HEADLESS_INTERNAL"] = "1"
     output_format = kwargs.pop("output_format", "text")
     timeout_seconds = kwargs.pop("timeout_seconds", None)
     settings.shell_allow_list = None
@@ -1756,6 +1775,7 @@ def main() -> None:
         "tools": root / "tools.py",
         "model_config": root / "model_config.py",
         "agent": root / "agent.py",
+        "hooks_manager": root / "hooks" / "manager.py",
         "update_check": root / "update_check.py",
         "openai_codex": root / "integrations" / "openai_codex.py",
         "auth_ui": root / "tui" / "widgets" / "auth.py",
@@ -1834,6 +1854,7 @@ def main() -> None:
             ("app", APP_PATCH),
             ("approval", APPROVAL_PATCH),
             ("agent", AGENT_PATCH),
+            ("hooks_manager", HOOK_MANAGER_PATCH),
             ("status", STATUS_PATCH),
             ("welcome", WELCOME_PATCH),
             ("server", SERVER_PATCH),
@@ -1946,6 +1967,12 @@ def main() -> None:
             "load_async_subagents",
             "build_model_identity_section",
         },
+    )
+    _require_methods(
+        paths["hooks_manager"],
+        texts["hooks_manager"],
+        "HooksManager",
+        {"create", "inert"},
     )
     update_tree = _require_functions(
         paths["update_check"],
@@ -2075,6 +2102,11 @@ def main() -> None:
         paths["model_config"], texts["model_config"], MODEL_CONFIG_PATCH
     )
     transformed["agent"] = _append_patch(paths["agent"], texts["agent"], AGENT_PATCH)
+    transformed["hooks_manager"] = _append_patch(
+        paths["hooks_manager"],
+        texts["hooks_manager"],
+        HOOK_MANAGER_PATCH,
+    )
     transformed["update_check"] = _append_patch(
         paths["update_check"], texts["update_check"], UPDATE_CHECK_PATCH
     )

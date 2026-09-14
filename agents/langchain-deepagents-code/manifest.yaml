@@ -93,15 +93,19 @@ state_files:
         - key: interpreter.timeout_seconds
           type: number
           min: 0
+          max: 60
         - key: interpreter.memory_limit_mb
           type: integer
           min: 1
+          max: 512
         - key: interpreter.max_ptc_calls
           type: integer
           min: 0
+          max: 256
         - key: interpreter.max_result_chars
           type: integer
           min: 0
+          max: 65536
         - key: interpreter.ptc
           type: enum
           values:
