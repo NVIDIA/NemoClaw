@@ -35,6 +35,10 @@ function gatewayName(output: string): string | null {
   return names.length === 1 && isValidName(names[0]) ? names[0] : null;
 }
 
+function hasGatewayDeclaration(output: string): boolean {
+  return /^\s*Gateway:/m.test(output);
+}
+
 function failed(
   error: OpenShellSandboxError,
   activeGateway: string | null = null,
@@ -98,8 +102,9 @@ export function createCliOpenShellGatewayObserver(
         const absentStatus = missing.test(statusText);
         const selectedRuntimeUnavailable =
           request.runtimeSelection !== undefined &&
-          (activeGateway === null || activeGateway === name) &&
-          (namedGateway === null || namedGateway === name) &&
+          (activeGateway === name ||
+            (activeGateway === null && !hasGatewayDeclaration(statusText))) &&
+          (namedGateway === name || (namedGateway === null && !hasGatewayDeclaration(infoText))) &&
           statusError?.kind === "transport" &&
           statusError.reason === "unreachable" &&
           infoError?.kind === "transport" &&

@@ -279,6 +279,16 @@ describe("CLI gateway observation", () => {
       "Connection refused",
       "Gateway: foreign\nclient error (Connect): Connection refused",
     ],
+    [
+      "status with multiple declarations",
+      "Gateway: nemoclaw-8090\nGateway: foreign\nclient error (Connect): Connection refused",
+      "Connection refused",
+    ],
+    [
+      "metadata with multiple declarations",
+      "Connection refused",
+      "Gateway: nemoclaw-8090\nGateway: foreign\nclient error (Connect): Connection refused",
+    ],
   ])(
     "blocks frozen-gateway recovery for a conflicting %s identity (#10947)",
     async (_, status, metadata) => {
