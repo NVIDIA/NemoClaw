@@ -48,7 +48,7 @@ it("rejects registry drift during policy observation before recovery mutations (
     lockOptions,
   );
   const fixture = createHermesPortableLifecycleTestDeps(stateDir, receipt, false);
-  let row = fixture.deps.readRegistry!(SANDBOX);
+  let row = fixture.deps.readRegistry();
   let release!: () => void;
   let entered!: () => void;
   const pending = new Promise<void>((resolve) => {
