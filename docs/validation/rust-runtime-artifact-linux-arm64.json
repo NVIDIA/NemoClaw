@@ -10,6 +10,11 @@
   "validation": {
     "independent_offline_archive_rebuild": "identical supervisor SHA256 in a different source directory",
     "packed_preparation_fixtures": 5,
-    "scope": "artifact and preparation fixtures; complete live inference qualification is separate"
+    "scope": "artifact and preparation fixtures; complete live inference qualification is separate",
+    "independent_oci_rebuild": {
+      "manifest_digest": "sha256:e04d4c5ad8b514eaf9fe10c530f69366a9bf999d880afa78854ef5e88e333efa",
+      "matches_original": true,
+      "scope": "same qualified native build host; fixed retained build context"
+    }
   }
 }
