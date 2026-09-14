@@ -200,6 +200,40 @@ describe("protected managed-image runtime contract", () => {
     }
   });
 
+  it.each([
+    { separateLogs: false, intervals: [120000, 1800000] },
+    { separateLogs: false, intervals: [1800000, 120000] },
+    { separateLogs: true, intervals: [120000, 1800000] },
+    { separateLogs: true, intervals: [1800000, 120000] },
+  ])(
+    "rejects conflicting heartbeat intervals $intervals with separateLogs=$separateLogs",
+    ({ separateLogs, intervals }) => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "heartbeat-conflict-"));
+      try {
+        intervals.forEach((intervalMs, index) => {
+          const name = separateLogs ? `openclaw-2026-09-${13 + index}.log` : "openclaw.log";
+          fs.appendFileSync(
+            path.join(root, name),
+            JSON.stringify({
+              "0": JSON.stringify({ subsystem: "gateway/heartbeat" }),
+              "1": { intervalMs, apiKey: "fixture-secret" },
+              "2": "heartbeat: started",
+            }) + "\n",
+          );
+        });
+        const probe = managedOpenClawHeartbeatLogProbe()
+          .replace('"/tmp/openclaw"', JSON.stringify(root))
+          .replace('"/tmp/openclaw-" + process.getuid()', JSON.stringify(root));
+        const result = spawnSync(process.execPath, ["-e", probe], { encoding: "utf8" });
+        expect(result.status).toBe(1);
+        expect(result.stdout).toBe("");
+        expect(result.stderr).toBe("heartbeat-evidence-unavailable");
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
+
   it("requires the exact managed OpenClaw heartbeat interval in startup logs (#10262)", () => {
     const containerId = "a".repeat(64);
     const runCommand = vi.fn<ManagedImageCommandRunner>(() => ({

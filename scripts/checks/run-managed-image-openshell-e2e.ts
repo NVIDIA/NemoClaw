@@ -530,6 +530,7 @@ try {
           if (subsystem.subsystem !== "gateway/heartbeat") continue;
           const value = record["1"]?.intervalMs;
           if (!Number.isSafeInteger(value) || value <= 0) throw new Error();
+          if (interval !== undefined && interval !== value) throw new Error();
           interval = value;
         }
       } finally { fs.closeSync(fd); }
