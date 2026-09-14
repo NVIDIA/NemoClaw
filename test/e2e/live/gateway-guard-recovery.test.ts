@@ -580,12 +580,9 @@ test(
       timeoutMs: 120_000,
     });
     expect(legacyRestart.exitCode, resultText(legacyRestart)).toBe(0);
-    await waitForSandboxExecReady(
-      host,
-      instance.sandboxName,
-      progress,
-      "legacy-restart-openshell-ready",
-    );
+    // An out-of-band Docker restart intentionally leaves OpenShell in phase
+    // Error. Trusted recovery owns the transition back to a managed supervisor,
+    // so requiring sandbox exec readiness here prevents the behavior under test.
     await gateway.waitForMissingManagedSupervisor(legacyContainerId, {
       onRetry: (attempt) => progress.event(`managed supervisor absence proof retry ${attempt}`),
     });
