@@ -49,6 +49,10 @@ export interface SplitProcessSecurityReport {
 }
 
 export interface SecurityPostureSummary {
+  capabilitySurfaces: {
+    connect: CapabilitySurfaceReport;
+    exec: CapabilitySurfaceReport;
+  };
   configureGuard: true;
   hostNonRoot: true;
   rcFilesMutable: true;
@@ -58,6 +62,17 @@ export interface SecurityPostureSummary {
     supervisor: ProcessSecurityIdentity;
   };
   startupLogClean: true;
+}
+
+export interface CapabilitySurfaceReport {
+  capAmb: string;
+  capBnd: string;
+  capEff: string;
+  capInh: string;
+  capPrm: string;
+  gid: number;
+  surface: "connect" | "exec";
+  uid: number;
 }
 
 export interface SecurityPostureExpectations {
@@ -86,6 +101,7 @@ const LIVE_PROCESS_STATES = ["D", "R", "S"] as const;
 const MAX_PROC_ENTRIES = 32_768;
 const MAX_CENSUS_STABILITY_ATTEMPTS = 4;
 const MAX_CENSUS_DIAGNOSTIC_IDENTITIES = 16;
+const CAPABILITY_SURFACE_MARKER = "NEMOCLAW_SECURITY_CAPABILITY_SURFACE";
 // The pinned OpenShell supervisor has the Docker default capabilities plus
 // NET_ADMIN, SYS_ADMIN, SYS_PTRACE, and SYSLOG. Freeze the
 // resulting Linux capability mask so additions and removals both require an
@@ -480,6 +496,66 @@ function requireZeroCapabilities(status: ProcessSecurityStatus, label: string): 
   }
 }
 
+function capabilitySurfaceProbe(surface: CapabilitySurfaceReport["surface"]): string {
+  return String.raw`set -eu
+uid="$(id -u)"
+gid="$(id -g)"
+line='${CAPABILITY_SURFACE_MARKER} surface=${surface} uid='"$uid"' gid='"$gid"
+for field in CapInh CapPrm CapEff CapBnd CapAmb; do
+  value="$(awk -v name="$field:" '$1 == name { print $2; exit }' "/proc/$$/status")"
+  test -n "$value"
+  line="$line $field=$value"
+done
+printf '%s\n' "$line"`;
+}
+
+export function parseCapabilitySurfaceReport(
+  result: ShellProbeResult,
+  surface: CapabilitySurfaceReport["surface"],
+  sandboxUid: number,
+  sandboxGid: number,
+): CapabilitySurfaceReport {
+  requireSuccess(`${surface} child capability surface`, result);
+  const lines = resultText(result)
+    .replaceAll(/\u001b\[[0-9;?]*[ -/]*[@-~]/gu, "")
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith(`${CAPABILITY_SURFACE_MARKER} `));
+  if (lines.length !== 1) {
+    throw new Error(`${surface} child emitted ${lines.length} capability proof markers`);
+  }
+  const pattern = new RegExp(
+    `^${CAPABILITY_SURFACE_MARKER} surface=(connect|exec) uid=(\\d+) gid=(\\d+) CapInh=([0-9a-f]{16}) CapPrm=([0-9a-f]{16}) CapEff=([0-9a-f]{16}) CapBnd=([0-9a-f]{16}) CapAmb=([0-9a-f]{16})$`,
+    "u",
+  );
+  const match = pattern.exec(lines[0]!);
+  if (!match) throw new Error(`${surface} child emitted a malformed capability proof marker`);
+  const report: CapabilitySurfaceReport = {
+    surface: match[1] as CapabilitySurfaceReport["surface"],
+    uid: Number(match[2]),
+    gid: Number(match[3]),
+    capInh: match[4]!,
+    capPrm: match[5]!,
+    capEff: match[6]!,
+    capBnd: match[7]!,
+    capAmb: match[8]!,
+  };
+  if (report.surface !== surface) {
+    throw new Error(`${surface} child reported the ${report.surface} surface`);
+  }
+  if (report.uid !== sandboxUid || report.gid !== sandboxGid) {
+    throw new Error(
+      `${surface} child expected uid=${sandboxUid} gid=${sandboxGid}, got uid=${report.uid} gid=${report.gid}`,
+    );
+  }
+  for (const field of ["capInh", "capPrm", "capEff", "capBnd", "capAmb"] as const) {
+    if (!/^[0]+$/u.test(report[field])) {
+      throw new Error(`${surface} child ${field} expected 0, got ${report[field]}`);
+    }
+  }
+  return report;
+}
+
 function requireExactIds(values: string[], expected: number, label: string): void {
   const exact = String(expected);
   if (values.length !== 4 || values.some((value) => value !== exact)) {
@@ -821,6 +897,45 @@ export async function assertSecurityPosture(
     supervisorCapabilityMask(initialTarget.providerId),
   );
 
+  const execCapabilities = await sandbox.execShell(
+    sandboxName,
+    trustedSandboxShellScript(capabilitySurfaceProbe("exec")),
+    {
+      artifactName: "security-posture-exec-capabilities",
+      env: probeEnv(),
+      timeoutMs: 30_000,
+    },
+  );
+  const execCapabilitySurface = parseCapabilitySurfaceReport(
+    execCapabilities,
+    "exec",
+    splitProcess.sandboxUid,
+    splitProcess.sandboxGid,
+  );
+
+  const connectCapabilities = await host.command(
+    "bash",
+    [
+      "-lc",
+      'printf \'%s\\n\' "$1" | "$2" "$3" connect',
+      "security-posture-connect-capabilities",
+      capabilitySurfaceProbe("connect"),
+      host.commandPath,
+      sandboxName,
+    ],
+    {
+      artifactName: "security-posture-connect-capabilities",
+      env: probeEnv(),
+      timeoutMs: 90_000,
+    },
+  );
+  const connectCapabilitySurface = parseCapabilitySurfaceReport(
+    connectCapabilities,
+    "connect",
+    splitProcess.sandboxUid,
+    splitProcess.sandboxGid,
+  );
+
   const rcFiles = await sandbox.execShell(
     sandboxName,
     trustedSandboxShellScript(String.raw`
@@ -913,7 +1028,7 @@ grep -q 'cannot modify config inside the sandbox' /tmp/nemoclaw-security-guard-p
 log=/tmp/nemoclaw-start.log
 test -f "$log" || { echo MISSING_START_LOG; exit 1; }
 grep -qi '${launchPattern}' "$log" || { echo MISSING_GATEWAY_LAUNCH_MARKER; exit 1; }
-if grep -E 'mktemp:.*(/sandbox/\.\.(bashrc|profile)\.tmp|/sandbox/\.nemoclaw.*tmp)|Permission denied.*(/sandbox/\.bashrc|/sandbox/\.profile)|\[SECURITY( WARNING)?\].*(capsh|CAP_SETPCAP)' "$log"; then
+if grep -E 'mktemp:.*(/sandbox/\.\.(bashrc|profile)\.tmp|/sandbox/\.nemoclaw.*tmp)|Permission denied.*(/sandbox/\.bashrc|/sandbox/\.profile)' "$log"; then
   echo START_LOG_HAS_SECURITY_FAILURE
   exit 1
 fi
@@ -928,6 +1043,10 @@ tail -n 20 "$log"
   requireSuccess("sandbox startup log security posture", startLog);
 
   return {
+    capabilitySurfaces: {
+      connect: connectCapabilitySurface,
+      exec: execCapabilitySurface,
+    },
     configureGuard: true,
     hostNonRoot: true,
     rcFilesMutable: true,

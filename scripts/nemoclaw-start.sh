@@ -195,8 +195,8 @@ fi
 # shellcheck source=scripts/lib/gateway-supervisor.sh
 source "$_GATEWAY_SUPERVISOR"
 
-# Harden RLIMITs (nproc #809 + nofile #4527) as root PID 1, before the capsh
-# drop and the setpriv step-down, so the caps are inherited and unraisable.
+# Harden RLIMITs (nproc #809 + nofile #4527) before privilege step-down.
+# Hard limits are inherited and unraisable by descendants.
 harden_resource_limits
 
 # PATH was already locked down at the top of this script (before the
@@ -240,9 +240,6 @@ else
   mkdir -p /tmp/.npm-cache /tmp/.cache /tmp/.runtime /tmp/.claude
   install -d -m 700 /tmp/.gnupg
 fi
-
-# ── Drop unnecessary Linux capabilities (shared) ────────────────
-drop_capabilities /usr/local/bin/nemoclaw-start "$@"
 
 NEMOCLAW_CMD=("$@")
 

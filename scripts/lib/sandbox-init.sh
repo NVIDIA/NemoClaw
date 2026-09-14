@@ -184,135 +184,6 @@ validate_tmp_permissions() {
   return $failed
 }
 
-# ── Capability dropping ──────────────────────────────────────────
-# OpenShell full enforcement clears the child bounding set before launch.
-# Skip compatibility handling only when all five capability sets are empty.
-# Do not infer enforcement from runtime environment values.
-#
-# Direct-root entrypoints can still need capsh. Their retained bounding caps
-# (chown, fowner, setuid, setgid, kill) support initialization and supervised
-# shutdown; init_step_down_prefixes can remove them when changing user.
-# NEMOCLAW_REQUIRE_CAP_DROP=1 retains fail-closed verification for unavailable
-# drops. The default preserves the legacy warn-and-continue behavior.
-#
-# Single drop/verification list, with bit numbers from linux/capability.h.
-DANGEROUS_CAPS=(
-  "21:cap_sys_admin"
-  "19:cap_sys_ptrace"
-  "13:cap_net_raw"
-  "1:cap_dac_override"
-  "18:cap_sys_chroot"
-  "4:cap_fsetid"
-  "31:cap_setfcap"
-  "27:cap_mknod"
-  "29:cap_audit_write"
-  "10:cap_net_bind_service"
-)
-
-# Comma-separated capability names for `capsh --drop`, derived from DANGEROUS_CAPS.
-dangerous_caps_drop_list() {
-  local entry out=""
-  for entry in "${DANGEROUS_CAPS[@]}"; do
-    out="${out:+$out,}${entry#*:}"
-  done
-  printf '%s' "$out"
-}
-
-# Use built-ins: exec'ing a reader can lower its permitted/effective set and
-# hide capabilities still held by this shell. The caller supplies the fixed
-# procfs path; an explicit file argument also permits deterministic fixtures.
-read_capability_state() {
-  local key value rest bit seen=0 all_zero=1 cap_bnd_hex=""
-  while IFS=$' \t' read -r key value rest; do
-    case "$key" in
-      CapInh:) bit=1 ;;
-      CapPrm:) bit=2 ;;
-      CapEff:) bit=4 ;;
-      CapBnd:)
-        bit=8
-        cap_bnd_hex="$value"
-        ;;
-      CapAmb:) bit=16 ;;
-      *) continue ;;
-    esac
-    [ $((seen & bit)) -eq 0 ] || return 1
-    seen=$((seen | bit))
-    case "$value" in
-      "" | *[!0]*) all_zero=0 ;;
-    esac
-    [ -z "$rest" ] || all_zero=0
-  done <"$1" || return 1
-  printf '%s:%s\n' "$cap_bnd_hex" "$((seen == 31 && all_zero == 1))"
-}
-
-# The first argument is the absolute entrypoint path; remaining args are forwarded.
-drop_capabilities() {
-  local entrypoint="$1"
-  shift
-
-  local cap_state cap_bnd_hex present reason=""
-  if ! cap_state="$(read_capability_state /proc/self/status 2>/dev/null)"; then
-    reason="could not read bounding set from /proc/self/status"
-  else
-    cap_bnd_hex="${cap_state%:*}"
-    [ "${cap_state##*:}" = 1 ] && return 0
-    if [ -z "$cap_bnd_hex" ]; then
-      reason="could not read bounding set from /proc/self/status"
-    elif ! present="$(dangerous_caps_in_capbnd "$cap_bnd_hex")"; then
-      reason="could not parse bounding set (CapBnd=${cap_bnd_hex})"
-    elif [ -n "$present" ]; then
-      reason="dangerous caps remain in bounding set (CapBnd=${cap_bnd_hex}): ${present}"
-    fi
-  fi
-
-  # Keep one capsh attempt for legacy entrypoints even when /proc is unreadable.
-  # The sentinel prevents re-execution loops; it never proves a successful drop.
-  if [ "${NEMOCLAW_CAPS_DROPPED:-}" != "1" ] \
-    && command -v capsh >/dev/null 2>&1 \
-    && capsh --has-p=cap_setpcap 2>/dev/null; then
-    export NEMOCLAW_CAPS_DROPPED=1
-    # capsh expands the positional parameters in its child shell.
-    # shellcheck disable=SC2016
-    exec capsh \
-      --drop="$(dangerous_caps_drop_list)" \
-      -- -c 'exec "$0" "$@"' "$entrypoint" "$@"
-  fi
-
-  [ -z "$reason" ] && return 0
-  if [ "${NEMOCLAW_REQUIRE_CAP_DROP:-}" = "1" ]; then
-    echo "[SECURITY] Refusing to start sandbox: ${reason}" >&2
-    exit 1
-  fi
-  echo "[SECURITY WARNING] Cannot drop bounding-set capabilities with capsh: ${reason}" >&2
-}
-
-# Pure decode: given a CapBnd hex string, echo the comma-separated list of the
-# dangerous capabilities present (empty string if none). Factored out so the
-# residual diagnostic, the strict-mode gate, and the unit tests all share one
-# implementation instead of re-deriving the bit math.
-#
-# Bash arithmetic handles 64-bit ints on 64-bit platforms; CAP_LAST_CAP is ~41
-# today, well within range. Avoids a gawk-strtonum dependency.
-#
-# Returns nonzero with no output if the hex is empty or malformed, so callers
-# can treat "could not parse" the same as "could not read" instead of silently
-# treating an unparseable bounding set as clean (issue #3280).
-dangerous_caps_in_capbnd() {
-  local cap_bnd_hex="$1" val entry bit name present=""
-  case "$cap_bnd_hex" in
-    "" | *[!0-9A-Fa-f]*) return 1 ;;
-  esac
-  val=$((16#$cap_bnd_hex))
-  for entry in "${DANGEROUS_CAPS[@]}"; do
-    bit="${entry%%:*}"
-    name="${entry#*:}"
-    if [ $(((val >> bit) & 1)) -ne 0 ]; then
-      present="${present:+$present,}$name"
-    fi
-  done
-  printf '%s' "$present"
-}
-
 # ── Privilege step-down (issue #3280 follow-up) ──────────────────
 # Uses `setpriv` for every root-to-user transition. When CAP_SETPCAP is
 # available, setpriv also strips the load-bearing caps (cap_setuid,
@@ -331,8 +202,7 @@ dangerous_caps_in_capbnd() {
 #
 # If CAP_SETPCAP is unavailable, setpriv still changes identity and initializes
 # supplementary groups, but cannot remove the remaining load-bearing caps from
-# the bounding set. That case is logged consistently with
-# drop_capabilities. If setpriv itself is unavailable, the prefix
+# the bounding set. If setpriv itself is unavailable, the prefix
 # invokes a fail-closed helper instead of risking execution as root.
 # File-scope array declarations: bash 3.2 (macOS) does not accept `declare -g`,
 # but plain assignment at file scope is global by default. Inside

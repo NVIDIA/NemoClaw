@@ -14,6 +14,7 @@ import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 import {
   assertSecurityPosture,
   OPENSHELL_SUPERVISOR_CAPABILITY_MASK,
+  parseCapabilitySurfaceReport,
   PODMAN_OPENSHELL_SUPERVISOR_CAPABILITY_MASK,
   type ProcessSecurityIdentity,
   parseSplitProcessSecurityReport,
@@ -279,6 +280,25 @@ function successfulProbe(stdout = ""): ShellProbeResult {
   };
 }
 
+function capabilitySurfaceProof(
+  surface: "connect" | "exec",
+  overrides: Partial<Record<"CapInh" | "CapPrm" | "CapEff" | "CapBnd" | "CapAmb", string>> = {},
+): string {
+  const capabilities = {
+    CapInh: ZERO_CAPABILITIES,
+    CapPrm: ZERO_CAPABILITIES,
+    CapEff: ZERO_CAPABILITIES,
+    CapBnd: ZERO_CAPABILITIES,
+    CapAmb: ZERO_CAPABILITIES,
+    ...overrides,
+  };
+  return `NEMOCLAW_SECURITY_CAPABILITY_SURFACE surface=${surface} uid=1000 gid=1000 ${Object.entries(
+    capabilities,
+  )
+    .map(([name, value]) => `${name}=${value}`)
+    .join(" ")}\n`;
+}
+
 afterEach(() => vi.unstubAllEnvs());
 
 describe("security posture fixture", () => {
@@ -535,6 +555,21 @@ describe("security posture fixture", () => {
     expect(validateSplitProcessSecurityReport(report)).toEqual(report);
     expect(parseSplitProcessSecurityReport(JSON.stringify(report))).toEqual(report);
   });
+
+  it.each(["CapInh", "CapPrm", "CapEff", "CapBnd", "CapAmb"] as const)(
+    "rejects a nonzero %s set from an exec child",
+    (field) => {
+      const reportField = `${field[0]!.toLowerCase()}${field.slice(1)}`;
+      expect(() =>
+        parseCapabilitySurfaceReport(
+          successfulProbe(capabilitySurfaceProof("exec", { [field]: "0000000000000001" })),
+          "exec",
+          1000,
+          1000,
+        ),
+      ).toThrow(new RegExp(`exec child ${reportField} expected 0`, "u"));
+    },
+  );
 
   it("accepts the exact OpenShell supervisor groups in either report order", () => {
     const report = validReport();
@@ -962,9 +997,14 @@ describe("security posture fixture", () => {
       ]);
       const command = vi
         .fn<HostCliClient["command"]>()
-        .mockResolvedValueOnce(successfulProbe("uid=1000 gid=1000\n"));
-      const execShell = vi.fn<SandboxClient["execShell"]>(async () => successfulProbe());
-      const host = { command } as unknown as HostCliClient;
+        .mockResolvedValueOnce(successfulProbe("uid=1000 gid=1000\n"))
+        .mockResolvedValueOnce(successfulProbe(capabilitySurfaceProof("connect")));
+      const execShell = vi.fn<SandboxClient["execShell"]>(async (_name, script) =>
+        String(script).includes("surface=exec")
+          ? successfulProbe(capabilitySurfaceProof("exec"))
+          : successfulProbe(),
+      );
+      const host = { command, commandPath: "/tmp/nemoclaw" } as unknown as HostCliClient;
       const sandbox = { execShell } as unknown as SandboxClient;
       const resolvePrivilegedTarget = vi.fn(() => ({
         providerId,
@@ -983,6 +1023,28 @@ describe("security posture fixture", () => {
       });
 
       expect(summary).toEqual({
+        capabilitySurfaces: {
+          connect: {
+            surface: "connect",
+            uid: 1000,
+            gid: 1000,
+            capInh: ZERO_CAPABILITIES,
+            capPrm: ZERO_CAPABILITIES,
+            capEff: ZERO_CAPABILITIES,
+            capBnd: ZERO_CAPABILITIES,
+            capAmb: ZERO_CAPABILITIES,
+          },
+          exec: {
+            surface: "exec",
+            uid: 1000,
+            gid: 1000,
+            capInh: ZERO_CAPABILITIES,
+            capPrm: ZERO_CAPABILITIES,
+            capEff: ZERO_CAPABILITIES,
+            capBnd: ZERO_CAPABILITIES,
+            capAmb: ZERO_CAPABILITIES,
+          },
+        },
         configureGuard: true,
         hostNonRoot: true,
         rcFilesMutable: true,
@@ -993,7 +1055,7 @@ describe("security posture fixture", () => {
         },
         startupLogClean: true,
       });
-      expect(command).toHaveBeenCalledTimes(1);
+      expect(command).toHaveBeenCalledTimes(2);
       expect(resolvePrivilegedTarget).toHaveBeenCalledTimes(2);
       expect(executePrivilegedCommand).toHaveBeenCalledWith(
         SANDBOX_NAME,
@@ -1004,7 +1066,7 @@ describe("security posture fixture", () => {
           timeout: 30_000,
         },
       );
-      expect(execShell).toHaveBeenCalledTimes(4);
+      expect(execShell).toHaveBeenCalledTimes(5);
     },
   );
 

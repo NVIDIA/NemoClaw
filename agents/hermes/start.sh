@@ -210,9 +210,6 @@ else
 fi
 exec > >(tee -a "$_START_LOG") 2> >(tee -a "$_START_LOG" >&2)
 
-# ── Drop unnecessary Linux capabilities (shared) ────────────────
-drop_capabilities /usr/local/bin/nemoclaw-start "$@"
-
 NEMOCLAW_CMD=("$@")
 
 _dashboard_port_raw="${NEMOCLAW_DASHBOARD_PORT:-}"
