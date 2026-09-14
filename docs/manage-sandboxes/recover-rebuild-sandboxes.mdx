@@ -99,6 +99,12 @@ Portable Hermes recovery follows the exact receipt-bound start, authenticated-he
 After Portable `start` completes lifecycle recovery, it checks and repairs the recorded host forwards before reporting success.
 Portable Hermes records the selected OpenShell gateway during onboarding.
 Recovery and uninstall use that recorded gateway, including a non-default gateway selected through `NEMOCLAW_GATEWAY_PORT`.
+If one required forward fails after recovery starts another, NemoClaw terminates only forwards started by that recovery attempt.
+It preserves existing forwards and exits nonzero when it cannot prove cleanup.
+
+When the saved OpenShell phase is `Stopped`, `recover` reconciles it through OpenShell even if the receipt-owned container is already running.
+It does not mutate a saved `Error` state or a `Ready` state with a non-running container.
+Preserve the startup diagnostics and resolve the reported OpenShell state before you retry.
 
 ### Recover Portable Published Ollama
 
@@ -116,7 +122,7 @@ Missing authority, a same-name replacement, or other drift stops recovery before
 Success requires a final route proof from inside the sandbox.
 
 Ordinary `connect` and direct `launch` do not resume the runner.
-For another configured provider, `recover` and `connect --probe-only` verify the recorded inference route and required forwards without requiring or starting an Ollama runner.
+For another configured provider, `recover` and `connect --probe-only` verify the recorded inference route and check and repair required forwards without requiring or starting an Ollama runner.
 If a check fails after recovery starts a stopped runner, NemoClaw restores the runner and registry to their prior states or reports that restoration could not be proved.
 
 <Warning title="Unproved Rollback">
@@ -302,6 +308,11 @@ Use the recovery guidance that matches the reported check:
 - Back up the sandbox state and recreate it with `$$nemoclaw onboard` when the record contains multiple agents. Transactional multi-agent rebuild is not supported.
 - Wait for another onboarding or rebuild operation to finish before retrying. If verified stale-lock cleanup is still in progress, wait briefly and rerun the command. Do not delete the lock manually.
 - Set the live OpenShell inference route to the sandbox's recorded provider and model when rebuild reports route drift.
+
+<AgentOnly variant="openclaw,hermes">
+  Prepared backup recovery reuses its digest-verified pre-upgrade policy handoff at the deletion boundary.
+  It does not recapture the live policy, and it stops before deletion if the handoff is missing or changed.
+</AgentOnly>
 
 A gateway that reports no live inference route does not stop the rebuild. Replacement onboarding configures and verifies the recorded route before it recreates the sandbox.
 
