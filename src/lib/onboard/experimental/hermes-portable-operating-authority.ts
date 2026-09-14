@@ -293,7 +293,14 @@ export function qualifyHermesPortableOperatingAuthority(
         podmanAuthorityDeps,
       ));
   const initial = capture();
-  const assertFiles = reuseQualification
+  // A custom entry capture still gets its own qualification. Its default file
+  // verifiers can retain this instance's proof; injected file verifiers must run.
+  const reuseFiles =
+    startupOperation &&
+    deps.assertOpenShellExecutableFileAuthority === undefined &&
+    deps.capturePodmanExecutableFileAuthority === undefined &&
+    deps.podmanAuthorityDeps === undefined;
+  const assertFiles = reuseFiles
     ? createHermesPortableOperatingFileProof(initial.receipt, env)
     : undefined;
   const canReuseFiles = () =>
