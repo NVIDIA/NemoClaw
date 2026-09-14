@@ -39,7 +39,7 @@ describe("prepare-e2e workflow boundary", () => {
     const checkout = workflow.jobs["generate-matrix"].steps!.find(
       (step) => step.name === "Check out trusted compiled artifact action",
     )!;
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "trusted-build-action-"));
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "trusted-build-action-")));
     try {
       const included = String(checkout.with!["sparse-checkout"]).trim().split("\n");
       fs.cpSync(process.cwd(), root, {
