@@ -62,13 +62,21 @@ try {
     ) | Set-Content -LiteralPath $script -Encoding ascii
     & $diskpart /s $script | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "Runtime image creation failed with status $LASTEXITCODE." }
+    & (Join-Path $env:SystemRoot 'System32\compact.exe') /C /I /Q $mount | Out-Null
+    $compressionProbe = Join-Path $mount '.nemoclaw-compression-probe'
+    [IO.File]::WriteAllBytes($compressionProbe, [byte[]]::new(65536))
+    $compressionInherited = (Get-Item -LiteralPath $compressionProbe).Attributes.HasFlag([IO.FileAttributes]::Compressed)
+    Remove-Item -LiteralPath $compressionProbe -Force
+    if ($LASTEXITCODE -ne 0 -or -not $compressionInherited) {
+        throw 'The runtime image NTFS root could not enable inherited compression.'
+    }
     & (Join-Path $env:SystemRoot 'System32\robocopy.exe') $RuntimeRoot $mount /E /COPY:DAT /DCOPY:DAT /R:0 /W:0 /NFL /NDL /NJH /NJS /NP | Out-Null
     if ($LASTEXITCODE -ge 8) { throw "Runtime image population failed with status $LASTEXITCODE." }
     if ((Get-FileHash -LiteralPath (Join-Path $mount 'runtime.manifest') -Algorithm SHA256).Hash.ToLowerInvariant() -ne
         (Get-FileHash -LiteralPath (Join-Path $RuntimeRoot 'runtime.manifest') -Algorithm SHA256).Hash.ToLowerInvariant()) {
         throw 'The mounted runtime manifest differs after image population.'
     }
-    @("select vdisk file=`"$OutputImage`"", 'detach vdisk', 'exit') |
+    @("select vdisk file=`"$OutputImage`"", 'detach vdisk', 'compact vdisk', 'exit') |
         Set-Content -LiteralPath $detach -Encoding ascii
     & $diskpart /s $detach | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "Runtime image detach failed with status $LASTEXITCODE." }
@@ -78,6 +86,7 @@ try {
         sha256 = (Get-FileHash -LiteralPath $OutputImage -Algorithm SHA256).Hash.ToLowerInvariant()
         maximumMiB = $maximumMiB
     }
+    $receipt['innerFilesystemCompression'] = 'ntfs-inherited-before-population'
     $receipt['manifestSha256'] = (Get-FileHash -LiteralPath (Join-Path $RuntimeRoot 'runtime.manifest') -Algorithm SHA256).Hash.ToLowerInvariant()
     $receipt.status = 'built-detached-and-verified'
 } catch {
