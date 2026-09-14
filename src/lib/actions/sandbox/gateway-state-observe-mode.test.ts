@@ -152,7 +152,7 @@ describe("Hermes Portable inference recovery gateway", () => {
 });
 
 describe("Hermes Portable lifecycle recovery command authority", () => {
-  it("keeps connect authority registry reads live across deferred policy proof (#11479)", async () => {
+  it("passes a live registry reader through the connect authority boundary (#11479)", async () => {
     const input = {
       name: "alpha",
       agent: "hermes",
@@ -182,16 +182,13 @@ describe("Hermes Portable lifecycle recovery command authority", () => {
       notifyEntered();
       await policy;
       expect(deps?.readRegistry?.(name)).toBe(row);
-      throw new Error("registry authority disagrees with the active receipt");
     });
     const proof = assertHermesPortableLifecycleForConnect("alpha", input, "nemoclaw");
-    const rejected = expect(proof).rejects.toThrow(
-      "registry authority disagrees with the active receipt",
-    );
+    const completed = expect(proof).resolves.toBeUndefined();
     await entered;
     row = { ...row, lifecycleGeneration: "generation-2" };
     resolvePolicy();
-    await rejected;
+    await completed;
   });
 
   afterEach(() => {

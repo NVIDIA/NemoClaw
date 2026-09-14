@@ -128,7 +128,7 @@ class ProbeOnlyConnectCommand extends NemoClawCommand {
   static args = { sandboxName: Args.string({ required: true }) };
   static flags = { "probe-only": Flags.boolean() };
   static observed = { host: false, lifecycle: false, portableLifecycle: false };
-  static operation: (sandboxName: string) => void = () => undefined;
+  static operation: (sandboxName: string) => Promise<void> = async () => undefined;
 
   public async run(): Promise<void> {
     const { args } = await this.parse(ProbeOnlyConnectCommand);
@@ -143,7 +143,7 @@ class ProbeOnlyConnectCommand extends NemoClawCommand {
         path.join(portableHostAuthority.defaultPortableStateDir(process.env), "state"),
       ),
     };
-    ProbeOnlyConnectCommand.operation(sandboxName);
+    await ProbeOnlyConnectCommand.operation(sandboxName);
   }
 }
 
@@ -242,7 +242,7 @@ describe("NemoClawCommand", () => {
     ParsedSupportedSandboxCommand.operation = async () => undefined;
     GlobalUnsupportedMutationCommand.ran = false;
     GlobalUseMutationCommand.ran = false;
-    ProbeOnlyConnectCommand.operation = () => undefined;
+    ProbeOnlyConnectCommand.operation = async () => undefined;
     PortableStartCommand.observed = { host: false, lifecycle: false, portableLifecycle: false };
     PortableLaunchCommand.observed = { host: false, lifecycle: false, portableLifecycle: false };
     PortableLaunchCommand.operation = async () => undefined;
@@ -522,8 +522,8 @@ describe("NemoClawCommand", () => {
         ).toBe(true);
         return { kind: "already-current", snapshot: {} as never, assertCurrent: vi.fn() };
       });
-    ProbeOnlyConnectCommand.operation = (sandboxName) => {
-      portableAgentLifecycle.requalifyPortableAgentSandboxAuthority(sandboxName, {
+    ProbeOnlyConnectCommand.operation = async (sandboxName) => {
+      await portableAgentLifecycle.requalifyPortableAgentSandboxAuthority(sandboxName, {
         readRegistry: () => null,
       });
     };
