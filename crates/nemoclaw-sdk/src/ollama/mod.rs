@@ -2,3 +2,5 @@
 // SPDX-License-Identifier: Apache-2.0
 mod models;
 pub use models::*;
+mod service;
+pub use service::{Service, ServiceSpec};
