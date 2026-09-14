@@ -376,6 +376,12 @@ describe("Docker managed bootstrap adapter", () => {
       .mockReturnValueOnce({ status: 0 })
       .mockReturnValueOnce({ status: 0 })
       .mockImplementationOnce(() => {
+        expect(fake.journal?.phase).toBe("openshell-handoff-complete");
+        expect(fake.original).toMatchObject({ Id: OLD_ID, State: { Running: false } });
+        expect(fake.replacement?.State?.Running).toBe(true);
+        return { status: 0 };
+      })
+      .mockImplementationOnce(() => {
         expect(fake.journal?.phase).toBe("shared-state-committed");
         expect(fake.original).toMatchObject({ Id: OLD_ID, State: { Running: false } });
         expect(fake.replacement?.State?.Running).toBe(true);
@@ -477,6 +483,7 @@ describe("Docker managed bootstrap adapter", () => {
         ["sandbox", "start"],
         ["sandbox", "exec"],
         ["sandbox", "exec"],
+        ["sandbox", "exec"],
       ],
     );
 
@@ -520,9 +527,12 @@ describe("Docker managed bootstrap adapter", () => {
   it("keeps committed recovery authority when the supervisor does not remain connected", async () => {
     const fake = fixture({ sharedState: "pending" });
     fake.deps.errorPhaseDebouncePolls = 1;
-    fake.deps.runCaptureOpenshell = vi.fn(() => "alpha Error");
+    fake.deps.runCaptureOpenshell = vi.fn((args) =>
+      args[1] === "list" ? "alpha Error" : "Name: alpha\nID: sandbox-alpha\n",
+    );
     fake.deps.runOpenshell = vi
       .fn()
+      .mockReturnValueOnce({ status: 0 })
       .mockReturnValueOnce({ status: 0 })
       .mockReturnValueOnce({ status: 0 })
       .mockReturnValueOnce({ status: 0 })
@@ -623,6 +633,7 @@ describe("Docker managed bootstrap adapter", () => {
       .mockReturnValueOnce({ status: 0 })
       .mockReturnValueOnce({ status: 0 })
       .mockReturnValueOnce({ status: 0 })
+      .mockReturnValueOnce({ status: 0 })
       .mockImplementation(() => {
         assert(fake.replacement?.State);
         Object.assign(fake.replacement.State, {
@@ -634,7 +645,9 @@ describe("Docker managed bootstrap adapter", () => {
         });
         return { status: 1 };
       });
-    fake.deps.runCaptureOpenshell = vi.fn(() => "alpha Error");
+    fake.deps.runCaptureOpenshell = vi.fn((args) =>
+      args[1] === "list" ? "alpha Error" : "Name: alpha\nID: sandbox-alpha\n",
+    );
     fake.deps.dockerLogs = vi.fn((id, options) => {
       expect(id).toBe(NEW_ID);
       expect(options).toEqual({ tail: 120, timeout: 2_000 });
@@ -971,7 +984,9 @@ describe("Docker managed bootstrap adapter", () => {
   ])(
     "retains both containers when the exact $driftedRuntime identity changes before restoration-failure cleanup (#9486)",
     async ({ drift }) => {
-      const fake = fixture({
+      let fake!: ReturnType<typeof fixture>;
+      fake = fixture({
+        beforeSharedStateCommit: () => drift(fake),
         sharedState: "pending",
         sharedStateCommitResult: { status: 1, stderr: "injected commit failure" },
         sharedStateRollbackResult: {
@@ -1000,7 +1015,6 @@ describe("Docker managed bootstrap adapter", () => {
         replacement,
         timeoutSecs: 1,
       });
-      drift(fake);
 
       const failure = (await adapter
         .finalizeBootstrap({

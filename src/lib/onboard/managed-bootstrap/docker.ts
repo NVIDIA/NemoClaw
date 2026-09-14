@@ -2740,7 +2740,6 @@ export function createDockerManagedBootstrapAdapter(
   };
   const recoverOpenShellHandoff = async (
     journal: DockerBootstrapTransaction,
-    revalidateCompletedHandoff = false,
   ): Promise<DockerBootstrapTransaction> => {
     if (journal.phase !== "bootstrap-complete" && journal.phase !== "openshell-handoff-complete") {
       throw new ManagedBootstrapCommitStateIndeterminateError({
@@ -2748,9 +2747,6 @@ export function createDockerManagedBootstrapAdapter(
         runtimeId: journal.replacementRuntimeId,
         detail: `OpenShell publication is invalid from durable journal phase ${journal.phase}`,
       });
-    }
-    if (journal.phase === "openshell-handoff-complete" && !revalidateCompletedHandoff) {
-      return journal;
     }
     const handoff = observeRecoveredOpenShellHandoff(journal.sandbox, deps);
     if (handoff !== "wait") {
@@ -2863,7 +2859,7 @@ export function createDockerManagedBootstrapAdapter(
         detail: "bootstrap completion recovery found an unexpected shared-state receipt",
       });
     }
-    journal = await recoverOpenShellHandoff(journal, true);
+    journal = await recoverOpenShellHandoff(journal);
     if (sharedStatus === "pending") {
       let outcome;
       try {

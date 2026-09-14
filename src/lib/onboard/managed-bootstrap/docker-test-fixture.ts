@@ -86,6 +86,7 @@ export type DockerFixtureOptions = {
   readonly lostAcknowledgements?: readonly DockerFixtureAcknowledgement[];
   readonly ownerId?: string;
   readonly completionUnavailablePolls?: number;
+  readonly beforeSharedStateCommit?: () => void;
   readonly replacementEnvironment?: (environment: readonly string[]) => readonly string[];
   readonly sharedState?: "committed" | "none" | "pending";
   readonly sharedStateCommitResult?: FixtureCommandResult;
@@ -489,6 +490,7 @@ export function fixture(options: DockerFixtureOptions = {}) {
         case "exec":
           switch (true) {
             case args.includes("--commit-shared-state-transaction"): {
+              options.beforeSharedStateCommit?.();
               const result = options.sharedStateCommitResult ?? ok();
               sharedState = result.status === 0 ? "committed" : sharedState;
               events.push("shared:commit");
