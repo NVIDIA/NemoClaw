@@ -146,8 +146,10 @@ describe.concurrent("CLI debug command", () => {
     },
   );
 
-  it("debug --sandbox NAME rejects an unregistered name and exits non-zero", async () => {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-debug-unknown-"));
+  it("debug --sandbox NAME rejects an unregistered name and exits non-zero", async ({
+    resources,
+  }) => {
+    const home = resources.temporaryDirectory("nemoclaw-cli-debug-unknown-");
     writeSandboxRegistry(home);
     const tarball = path.join(home, "out.tar.gz");
     const r = await runWithEnvAsync(
@@ -164,12 +166,12 @@ describe.concurrent("CLI debug command", () => {
   it(
     "debug --sandbox NAME rejects a stale registry entry missing from the live gateway",
     testTimeoutOptions(30_000),
-    async () => {
+    async ({ resources }) => {
       // Same fixture pattern as createDebugCommandTestEnv but with an openshell
       // stub whose live list intentionally omits the registry name, mirroring
       // the bug where the local registry kept a name the gateway no longer
       // serves.
-      const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-debug-stale-"));
+      const home = resources.temporaryDirectory("nemoclaw-cli-debug-stale-");
       const localBin = path.join(home, "bin");
       fs.mkdirSync(localBin, { recursive: true });
       writeSandboxRegistry(home, "stale-box");
@@ -207,64 +209,72 @@ describe.concurrent("CLI debug command", () => {
     expect(r.out).toContain("--sandbox");
   });
 
-  it("debug warns when default sandbox is stale", testTimeoutOptions(30_000), async () => {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-stale-"));
-    fs.mkdirSync(path.join(home, ".nemoclaw"), { recursive: true });
-    fs.writeFileSync(
-      path.join(home, ".nemoclaw", "sandboxes.json"),
-      JSON.stringify({ sandboxes: {}, defaultSandbox: "ghost" }),
-      { mode: 0o600 },
-    );
-    const r = await runWithEnvAsync("debug --quick 2>&1", { HOME: home }, 30000);
-    expect(r.code).not.toBe(0);
-    expect(r.out).toContain("Warning");
-    expect(r.out).toContain("ghost");
-    expect(r.out).toContain("--sandbox NAME");
-  });
+  it(
+    "debug warns when default sandbox is stale",
+    testTimeoutOptions(30_000),
+    async ({ resources }) => {
+      const home = resources.temporaryDirectory("nemoclaw-cli-stale-");
+      fs.mkdirSync(path.join(home, ".nemoclaw"), { recursive: true });
+      fs.writeFileSync(
+        path.join(home, ".nemoclaw", "sandboxes.json"),
+        JSON.stringify({ sandboxes: {}, defaultSandbox: "ghost" }),
+        { mode: 0o600 },
+      );
+      const r = await runWithEnvAsync("debug --quick 2>&1", { HOME: home }, 30000);
+      expect(r.code).not.toBe(0);
+      expect(r.out).toContain("Warning");
+      expect(r.out).toContain("ghost");
+      expect(r.out).toContain("--sandbox NAME");
+    },
+  );
 
-  it("debug --sandbox skips stale default warning", testTimeoutOptions(30_000), async () => {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-stale-"));
-    fs.mkdirSync(path.join(home, ".nemoclaw"), { recursive: true });
-    fs.writeFileSync(
-      path.join(home, ".nemoclaw", "sandboxes.json"),
-      JSON.stringify({
-        sandboxes: {
-          mybox: {
-            name: "mybox",
-            model: "test-model",
-            provider: "nvidia-prod",
-            gpuEnabled: false,
+  it(
+    "debug --sandbox skips stale default warning",
+    testTimeoutOptions(30_000),
+    async ({ resources }) => {
+      const home = resources.temporaryDirectory("nemoclaw-cli-stale-");
+      fs.mkdirSync(path.join(home, ".nemoclaw"), { recursive: true });
+      fs.writeFileSync(
+        path.join(home, ".nemoclaw", "sandboxes.json"),
+        JSON.stringify({
+          sandboxes: {
+            mybox: {
+              name: "mybox",
+              model: "test-model",
+              provider: "nvidia-prod",
+              gpuEnabled: false,
+            },
           },
-        },
-        defaultSandbox: "ghost",
-      }),
-      { mode: 0o600 },
-    );
-    // Fake openshell so the live-list check sees `mybox`. Without this the
-    // host's real openshell (or absence thereof) decides the assertion.
-    const localBin = path.join(home, "bin");
-    fs.mkdirSync(localBin, { recursive: true });
-    fs.writeFileSync(
-      path.join(localBin, "openshell"),
-      [
-        "#!/bin/sh",
-        'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
-        "  echo 'NAME'",
-        "  echo 'mybox      Ready'",
-        "  exit 0",
-        "fi",
-        "exit 0",
-      ].join("\n"),
-      { mode: 0o755 },
-    );
-    const r = await runWithEnvAsync(
-      "debug --quick --sandbox mybox 2>&1",
-      { HOME: home, PATH: `${localBin}:${process.env.PATH || ""}` },
-      30000,
-    );
-    expect(r.code).toBe(0);
-    expect(r.out).not.toContain("default sandbox 'ghost'");
-    expect(r.out).not.toContain("--sandbox NAME");
-    expect(r.out).toContain("Collecting diagnostics for sandbox 'mybox'");
-  });
+          defaultSandbox: "ghost",
+        }),
+        { mode: 0o600 },
+      );
+      // Fake openshell so the live-list check sees `mybox`. Without this the
+      // host's real openshell (or absence thereof) decides the assertion.
+      const localBin = path.join(home, "bin");
+      fs.mkdirSync(localBin, { recursive: true });
+      fs.writeFileSync(
+        path.join(localBin, "openshell"),
+        [
+          "#!/bin/sh",
+          'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
+          "  echo 'NAME'",
+          "  echo 'mybox      Ready'",
+          "  exit 0",
+          "fi",
+          "exit 0",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+      const r = await runWithEnvAsync(
+        "debug --quick --sandbox mybox 2>&1",
+        { HOME: home, PATH: `${localBin}:${process.env.PATH || ""}` },
+        30000,
+      );
+      expect(r.code).toBe(0);
+      expect(r.out).not.toContain("default sandbox 'ghost'");
+      expect(r.out).not.toContain("--sandbox NAME");
+      expect(r.out).toContain("Collecting diagnostics for sandbox 'mybox'");
+    },
+  );
 });
