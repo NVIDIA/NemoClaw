@@ -357,13 +357,14 @@ describe("docker-driver-gateway-service", () => {
 
   it("restarts the official macOS Homebrew service after validation (#6903)", () => {
     const events: string[] = [];
+    const env = { HOME: "/Users/nvidia" };
     const brew = vi.fn((_command: string, args: string[]) => {
       events.push(args.join(" "));
       return args[0] === "info" ? officialFormulaInfo() : spawnResult();
     });
     const result = startOpenShellGatewayUserService({
       commandExists: (command) => command === "brew",
-      env: {},
+      env,
       homebrewFormulaOperation: trustedBrew(brew),
       platform: "darwin",
       preparePortForServiceStart: () => events.push("prepare-port"),
@@ -387,6 +388,7 @@ describe("docker-driver-gateway-service", () => {
       "prepare-port",
       "services restart openshell",
     ]);
+    expect(env).toEqual({ HOME: "/Users/nvidia" });
   });
 
   it.each([

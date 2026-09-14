@@ -13,6 +13,7 @@ const ACP_SCENARIO_TIMEOUT_MS = 3 * 60_000;
 const ACP_SCENARIO_START_MINIMUM_MS = 10_000;
 const ACP_SESSION_SHUTDOWN_RESERVE_MS = 5_000;
 const ACP_MESSAGE_LIMIT_BYTES = 1024 * 1024;
+const ACP_FAILURE_DIAGNOSTIC_TAIL_CHARS = 512;
 const OPENSHELL_GATEWAY_NAME = "nemoclaw";
 
 export const HERMES_ACP_LIFECYCLE_BUDGET_MS = 12 * 60_000;
@@ -27,6 +28,16 @@ export type HermesAcpLiveScenario =
   | "gateway-restart"
   | "initialize"
   | "remote-exit";
+
+export type HermesAcpFailureClass =
+  | "adapter_start_failed"
+  | "adapter_timeout"
+  | "cleanup_failed"
+  | "gateway_not_ready"
+  | "gateway_recovery_failed"
+  | "protocol_failed"
+  | "transport_start_failed"
+  | "unexpected_exit";
 
 export interface HermesAcpLiveOptions {
   readonly adapterEntrypoint?: string;
@@ -83,6 +94,22 @@ export function hermesAcpGatewayStoppedPreconditionPassed(result: ShellProbeResu
     /tcp connect error/iu.test(text) &&
     /Connection refused \(os error (?:61|111)\)/iu.test(text)
   );
+}
+
+/** Reduce known adapter diagnostics to a fixed, non-sensitive receipt value. */
+export function classifyHermesAcpFailureDiagnostic(text: string): HermesAcpFailureClass | null {
+  if (
+    /OpenShell gateway recovery failed|selected OpenShell gateway could not be recovered/iu.test(
+      text,
+    )
+  ) {
+    return "gateway_recovery_failed";
+  }
+  if (/selected OpenShell gateway is not ready/iu.test(text)) return "gateway_not_ready";
+  if (/Hermes ACP transport could not start safely/iu.test(text)) {
+    return "transport_start_failed";
+  }
+  return null;
 }
 
 export function isAcpResponse(message: unknown, id: number): message is JsonObject {
@@ -242,6 +269,7 @@ type HermesAcpLiveReceipt = Readonly<{
   adapterProcessAbsent: boolean;
   deadlineExpired: boolean;
   exitCode: number | null;
+  failureClass: HermesAcpFailureClass | null;
   initialized: boolean;
   passed: boolean;
   pongObserved: boolean;
@@ -266,7 +294,7 @@ async function writeHermesAcpLiveReceipt(
   });
 }
 
-/** Drive the real packaged adapter while retaining only fixed boolean and exit evidence. */
+/** Drive the real packaged adapter while retaining only fixed status and exit evidence. */
 export async function runHermesAcpLiveScenario(options: HermesAcpLiveOptions): Promise<boolean> {
   const now = options.now ?? Date.now;
   const scenarioTimeoutMs =
@@ -278,6 +306,7 @@ export async function runHermesAcpLiveScenario(options: HermesAcpLiveOptions): P
       adapterProcessAbsent: true,
       deadlineExpired: true,
       exitCode: null,
+      failureClass: null,
       initialized: false,
       passed: false,
       pongObserved: false,
@@ -323,6 +352,8 @@ export async function runHermesAcpLiveScenario(options: HermesAcpLiveOptions): P
   let protocolValid = true;
   const promptEvidence = createHermesAcpPromptEvidenceTracker();
   let stderrObserved = false;
+  let failureClass: HermesAcpFailureClass | null = null;
+  let failureDiagnosticTail = "";
   let childClosed = false;
   const inbox: JsonObject[] = [];
   const waiters = new Set<() => void>();
@@ -367,8 +398,13 @@ export async function runHermesAcpLiveScenario(options: HermesAcpLiveOptions): P
       buffered = lines.pop() ?? "";
       for (const line of lines) consumeLine(line);
     },
-    onStderr: () => {
+    onStderr: (chunk) => {
       stderrObserved = true;
+      if (failureClass !== null) return;
+      const diagnostic = `${failureDiagnosticTail}${chunk}`;
+      failureClass = classifyHermesAcpFailureDiagnostic(diagnostic);
+      failureDiagnosticTail =
+        failureClass === null ? diagnostic.slice(-ACP_FAILURE_DIAGNOSTIC_TAIL_CHARS) : "";
     },
   });
   child.once("close", () => {
@@ -498,10 +534,22 @@ export async function runHermesAcpLiveScenario(options: HermesAcpLiveOptions): P
         sessionCreated,
       }));
 
+  if (passed) {
+    failureClass = null;
+  } else if (failureClass === null) {
+    if (result.spawnError) failureClass = "adapter_start_failed";
+    else if (result.timedOut) failureClass = "adapter_timeout";
+    else if (result.cleanupError || !adapterProcessAbsent || !remoteProcessAbsent) {
+      failureClass = "cleanup_failed";
+    } else if (!protocolValid || !initialized || !scenarioValid) failureClass = "protocol_failed";
+    else failureClass = "unexpected_exit";
+  }
+
   await writeHermesAcpLiveReceipt(options, {
     adapterProcessAbsent,
     deadlineExpired: options.deadlineAtMs !== undefined && now() >= options.deadlineAtMs,
     exitCode: result.exitCode,
+    failureClass,
     initialized,
     passed,
     pongObserved: promptEvidence.pongObserved,
