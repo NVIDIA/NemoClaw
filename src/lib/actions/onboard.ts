@@ -19,17 +19,10 @@ async function runOnboard(
 ): Promise<void> {
   // Keep the monolithic legacy onboarding graph lazy so command metadata/help
   // imports do not execute it. Resolve it only when the user invokes onboard.
-  const { createRetainedOnboardRecovery } = await import("./onboard/retained-recovery");
-  const { onboard, retainedOnboardRecoveryHost } = (await import("../onboard")) as unknown as {
+  const { onboard } = (await import("../onboard")) as unknown as {
     onboard: (onboardOptions?: OnboardOptions) => Promise<void>;
-    retainedOnboardRecoveryHost: Parameters<typeof createRetainedOnboardRecovery>[0];
   };
-  const recoveredName = await createRetainedOnboardRecovery(retainedOnboardRecoveryHost)(options);
-  await onboard({
-    ...options,
-    ...(recoveredName ? { sandboxName: recoveredName, fresh: true, resume: false } : {}),
-    googlechatTunnelRuntime: runtimeDeps.googlechatTunnelRuntime,
-  });
+  await onboard({ ...options, googlechatTunnelRuntime: runtimeDeps.googlechatTunnelRuntime });
 }
 
 function buildOnboardCommandDeps(flags: OnboardFlags, runtimeDeps: OnboardActionRuntimeDeps) {

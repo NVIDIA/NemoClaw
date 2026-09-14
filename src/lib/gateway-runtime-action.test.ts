@@ -3,7 +3,6 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenShellGatewayObservation } from "./adapters/openshell/gateway-observer";
-import * as openshellRuntime from "./adapters/openshell/runtime";
 import * as gatewayRuntime from "./gateway-runtime-action";
 
 function observation(state: OpenShellGatewayObservation["state"]): OpenShellGatewayObservation {
@@ -29,27 +28,7 @@ describe("gateway observations and recovery", () => {
     start.mockReset().mockResolvedValue(undefined);
     vi.stubEnv("OPENSHELL_GATEWAY", "foreign");
   });
-  afterEach(() => {
-    vi.unstubAllEnvs();
-    vi.restoreAllMocks();
-  });
-
-  it.each([
-    { status: 0, stdout: "[]", stderr: "", expected: "absent" },
-    { status: 1, stdout: "", stderr: "Unknown gateway 'nemoclaw'", expected: "unknown" },
-    { status: 0, stdout: "not-json", stderr: "", expected: "unknown" },
-  ])("observes named sandbox presence conservatively: $expected", (result) => {
-    const capture = vi
-      .spyOn(openshellRuntime, "captureResolvedOpenshell")
-      .mockReturnValue({ ...result, output: result.stdout });
-    expect(gatewayRuntime.observeNamedGatewaySandboxPresence("my-assistant", "nemoclaw")).toBe(
-      result.expected,
-    );
-    expect(capture).toHaveBeenCalledWith(
-      ["sandbox", "list", "-g", "nemoclaw", "-o", "json"],
-      expect.objectContaining({ ignoreError: true, includeStreams: true }),
-    );
-  });
+  afterEach(() => vi.unstubAllEnvs());
 
   it("passes the default gateway to the observer without mutating selection", async () => {
     await gatewayRuntime.getNamedGatewayLifecycleState();

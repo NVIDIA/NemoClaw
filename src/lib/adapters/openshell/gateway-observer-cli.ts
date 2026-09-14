@@ -35,15 +35,6 @@ function gatewayName(output: string): string | null {
   return names.length === 1 && isValidName(names[0]) ? names[0] : null;
 }
 
-function reportsUnknownNamedGateway(output: string, name: string): boolean {
-  return output
-    .split(/\r?\n/u)
-    .some(
-      (line) =>
-        line.trim().replace(/^(?:Error:\s*)?(?:×\s*)?/u, "") === `Unknown gateway '${name}'.`,
-    );
-}
-
 function failed(
   error: OpenShellSandboxError,
   activeGateway: string | null = null,
@@ -102,9 +93,8 @@ export function createCliOpenShellGatewayObserver(
         const missing = /\bNo (?:active )?gateway(?: configured)?\b|No gateway metadata found/i;
         const statusError = gatewayError(status);
         const infoError = gatewayError(info);
-        const absentInfo = missing.test(infoText) || reportsUnknownNamedGateway(infoText, name);
-        const absentStatus =
-          missing.test(statusText) || reportsUnknownNamedGateway(statusText, name);
+        const absentInfo = missing.test(infoText);
+        const absentStatus = missing.test(statusText);
         // Only known absence and unreachable responses describe resource state. Other failures are not absence.
         for (const [error, absent, legacy] of [
           [statusError, absentStatus, false],
@@ -116,15 +106,6 @@ export function createCliOpenShellGatewayObserver(
             !(error.kind === "command" && error.reason === "failed" && (absent || legacy))
           )
             return failed(error, activeGateway);
-        }
-        if (/\bunknown gateway\b/iu.test(infoText) && !reportsUnknownNamedGateway(infoText, name)) {
-          return failed(
-            infoError ?? {
-              kind: "schema",
-              message: "OpenShell returned an unrecognized gateway target.",
-            },
-            activeGateway,
-          );
         }
         if (connected && activeGateway === name && absentInfo) {
           return failed(

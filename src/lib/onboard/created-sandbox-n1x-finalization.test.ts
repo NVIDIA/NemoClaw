@@ -27,7 +27,7 @@ import { parseHostLocalInferenceReceipt } from "./runtime-provider/host-local-in
 import type { SetupNimSelectionState } from "./setup-nim-flow";
 import { createSetupNimVllmHandler } from "./setup-nim-vllm";
 
-const sandboxName = "n1x-preview";
+const sandboxName = "my-assistant";
 const model = "nvidia/Qwen3.6-35B-A3B-NVFP4";
 const provider = "vllm-local";
 const previewEnv = { NEMOCLAW_PROVIDER: "install-vllm" };
@@ -371,7 +371,7 @@ it.each([
   ["explicit rebuild denial", true, "n1x", false, previewEnv, false, false],
   ["ordinary N1x opt-out", false, "n1x", undefined, { NEMOCLAW_NO_EXPRESS: "1" }, false, false],
 ] as const)(
-  "carries %s preview acceptance through final registration (#10959)",
+  "carries %s preview acceptance through default-name registration (#11510)",
   async (_case, resume, platform, allow, environment, legacyOnboardRoute, expected) => {
     const flow = await createIntentThroughOnboardFlow({
       resume,

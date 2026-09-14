@@ -16,36 +16,6 @@ function captureFor(status: string, metadata: string, statusCode = 0, infoCode =
 afterEach(() => vi.unstubAllEnvs());
 
 describe("CLI gateway observation", () => {
-  it.each(["No gateway configured", "Error:   × Unknown gateway 'nemoclaw-8090'."])(
-    "recognizes an unknown named gateway after status %s (#11510)",
-    async (status) => {
-      const capture = captureFor(
-        status,
-        "Error:   × Unknown gateway 'nemoclaw-8090'.\n  │ Register it first.",
-        1,
-        1,
-      );
-      expect(
-        await createCliOpenShellGatewayObserver(capture).observeGateway(request),
-      ).toMatchObject({
-        state: "missing_named",
-        recoveryBlocked: false,
-      });
-    },
-  );
-
-  it.each([
-    "Error:   × Unknown gateway 'another-gateway'.",
-    "Error: unexpected text Unknown gateway 'nemoclaw-8090'.",
-    "Error:   × Unknown gateway 'nemoclaw-8090'.\nError: authentication failed",
-  ])("does not authorize recovery from misleading absence: %s", async (metadata) => {
-    const capture = captureFor("No gateway configured", metadata, 1, 1);
-    expect(await createCliOpenShellGatewayObserver(capture).observeGateway(request)).toMatchObject({
-      state: "observation_failed",
-      recoveryBlocked: true,
-    });
-  });
-
   it.each([
     [
       connected,

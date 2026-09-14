@@ -11,7 +11,6 @@ import {
   resolveSandboxGatewayName,
 } from "./onboard/gateway-binding";
 import type { GatewayRecoveryOutput } from "./onboard/gateway-recovery";
-import { classifyOpenShellSandboxPresence } from "./adapters/openshell/sandbox-presence";
 import { sanitizeReadinessText } from "./readiness/sanitize";
 
 export { resolveGatewayName, resolveSandboxGatewayName };
@@ -48,18 +47,6 @@ export const gatewayRuntimeDependencies = {
     return onboard.startGatewayForRecovery(options);
   },
 };
-
-export function observeNamedGatewaySandboxPresence(sandboxName: string, gatewayName: string) {
-  const result = openshellRuntime.captureResolvedOpenshell(
-    ["sandbox", "list", "-g", gatewayName, "-o", "json"],
-    {
-      ignoreError: true,
-      includeStreams: true,
-      timeout: openshellRuntime.OPENSHELL_PROBE_TIMEOUT_MS,
-    },
-  );
-  return classifyOpenShellSandboxPresence(sandboxName, result);
-}
 
 export type NamedGatewayLifecycleState = OpenShellGatewayObservation;
 
