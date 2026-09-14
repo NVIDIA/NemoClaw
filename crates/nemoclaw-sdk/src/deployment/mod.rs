@@ -4,6 +4,7 @@
 #[cfg(test)]
 mod tests;
 
+mod ollama;
 mod plan;
 mod runtime;
 use crate::{
@@ -152,7 +153,17 @@ impl Deployment {
                 "unfinished apply has different intent; reapply its original configuration",
             ));
         }
-        self.require_no_ollama(&document)?;
+        if document.spec.inference_providers[0].ollama.is_some()
+            && record
+                .generations
+                .get("ollama")
+                .is_none_or(String::is_empty)
+        {
+            record.generations.insert(
+                "ollama".into(),
+                Record::new(document.clone())?.generations["ollama"].clone(),
+            );
+        }
         let (runtime_changes, deferred) = self
             .runtime_stage(&bundle, &store, &document, &mut record, apply, cancel)
             .await?;
@@ -166,7 +177,8 @@ impl Deployment {
         let client = OpenShell::connect(&document.spec.gateway, self.secrets.clone())?;
         let bindings = store.bindings()?;
         let targets = compile::targets(&document, &record.generations)?;
-        let allowed = allowed(&targets);
+        let mut allowed = allowed(&targets);
+        ollama::extend_allowed(&document, &record.generations, &mut allowed)?;
         if bindings
             .iter()
             .any(|(address, binding)| !allowed.contains_key(address) || !binding.spec.is_empty())
@@ -175,6 +187,7 @@ impl Deployment {
                 "undeclared resource binding in deployment state",
             ));
         }
+        tokio::select! { ()=cancel.cancelled()=>return Err(Error::Cancelled), result=self.preflight_ollama(&document, &record.generations, &bindings)=>result? }
         (self.progress)(Progress::Preflight);
         tokio::select! {()=cancel.cancelled()=>return Err(Error::Cancelled),result=self.preflight(&client,&document,&targets,&bindings)=>result?}
         self.prepare(
@@ -252,7 +265,7 @@ impl Deployment {
     fn require_no_ollama(&self, document: &Document) -> Result<(), Error> {
         if document.spec.inference_providers[0].ollama.is_some() {
             return Err(Error::Conflict(
-                "managed runtime orchestration is not implemented in this Rust slice yet",
+                "managed Ollama destroy is not supported; its combined service and storage resource retains persistent data",
             ));
         }
         Ok(())
@@ -362,7 +375,7 @@ impl Deployment {
                 "export requires established bindings; reconcile unfinished operations first",
             ));
         }
-        self.require_no_ollama(&record.document)?;
+
         self.export_runtime(&store, &record, cancel).await?;
         (self.progress)(Progress::Exporting);
         let client = OpenShell::connect(&record.document.spec.gateway, self.secrets.clone())?;
@@ -433,6 +446,7 @@ impl Deployment {
                 _ => {}
             }
         }
+        tokio::select! { ()=cancel.cancelled()=>return Err(Error::Cancelled), result=self.export_ollama(&document, &record.generations, &bindings)=>result? }
         document.validate()?;
         Ok(document)
     }

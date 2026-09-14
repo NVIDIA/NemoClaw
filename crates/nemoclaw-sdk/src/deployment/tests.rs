@@ -185,3 +185,26 @@ async fn managed_gateway_plan_apply_noop_destroy_and_recovery_use_real_opentofu(
     deployment.destroy(&cancel).await.unwrap();
     assert!(engine.container(&name).await.unwrap().is_none());
 }
+
+#[test]
+fn ollama_plan_accounts_for_both_resources_and_never_recreates_bound_model_data() {
+    let document =
+        Document::parse(include_str!("../../tests/fixtures/config/managed-ollama.yaml").as_bytes())
+            .unwrap();
+    let record = Record::new(document.clone()).unwrap();
+    let mut expected = allowed(&compile::targets(&document, &record.generations).unwrap());
+    ollama::extend_allowed(&document, &record.generations, &mut expected).unwrap();
+    assert_eq!(expected.len(), 6);
+    let bindings = [(
+        "nemoclaw_ollama_model.inference".into(),
+        StateBinding {
+            id: "engine/container/created/model".into(),
+            ..Default::default()
+        },
+    )]
+    .into();
+    let changes: Vec<_> = expected.iter().map(|(address,row)| json!({"address":address,"change":{"actions":["create"],"before":row}})).collect();
+    let plan: Plan = serde_json::from_value(json!({"resource_changes":changes})).unwrap();
+    assert!(check_plan(&plan, &expected, &bindings).is_err());
+    assert!(check_plan(&plan, &expected, &BTreeMap::new()).is_ok());
+}

@@ -3,3 +3,6 @@
 
 //! Deterministic protocol fixtures shared by SDK and bundle lifecycle tests.
 pub mod openshell;
+
+#[cfg(unix)]
+pub mod docker;
