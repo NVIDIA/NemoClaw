@@ -293,8 +293,8 @@ If verification fails, NemoClaw exits nonzero and does not report a successful r
 Before it backs up or deletes the existing sandbox, `rebuild` validates the recorded sandbox, gateway, inference route, policy, MCP, agent, and operation-lock state. When one of these checks fails, NemoClaw prints `Rebuild preflight failed`, explains how to recover, and ends with `Aborting rebuild`. At this boundary, the existing sandbox is unchanged and no sandbox data has been removed.
 
 For a remote inference provider other than Hermes Provider, preflight checks the selected credential's non-secret expiration metadata from OpenShell.
-For these providers, an expired credential or expiration metadata that NemoClaw cannot verify stops rebuild before backup or deletion, including with `--force`.
-A credential with no expiration or a future expiration continues through the remaining preflight checks.
+For these providers, a provider that no longer exposes the recorded credential key, an expired credential, or expiration metadata that NemoClaw cannot verify stops rebuild before backup or deletion, including with `--force`.
+A provider that exposes the recorded credential key without an expiration entry is treated as non-expiring. That credential or one with a future expiration continues through the remaining preflight checks.
 Hermes Provider uses its separate authentication and credential-binding checks; this expiration-metadata guard does not apply to it.
 
 Use the recovery guidance that matches the reported check:

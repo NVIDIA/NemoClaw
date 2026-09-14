@@ -72,8 +72,11 @@ export async function inspectRebuildGatewayProviderRegistration(
   });
   const expiresAtMs = result.ok && credentialKey ? result.value.credentialExpiresAtMs : undefined;
   const credentialExpiresAtMs = credentialKey ? expiresAtMs?.[credentialKey] : undefined;
+  const credentialKeyMissing = Boolean(
+    result.ok && credentialKey && !result.value.credentialKeys.includes(credentialKey),
+  );
   const registration = result.ok
-    ? credentialKey && expiresAtMs === undefined
+    ? credentialKey && (expiresAtMs === undefined || credentialKeyMissing)
       ? "indeterminate"
       : credentialExpiresAtMs !== undefined &&
           credentialExpiresAtMs > 0 &&

@@ -245,6 +245,31 @@ describe("rebuildSandbox flow: credential preflight", () => {
     expect(harness.removeSandboxRegistryEntryWithReceiptSpy).not.toHaveBeenCalled();
   });
 
+  it("aborts before backup when the provider lacks the selected credential key (#10394)", async () => {
+    const harness = createRebuildFlowHarness({
+      sandboxEntry: {
+        provider: "nvidia-prod",
+        model: MODEL,
+        credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+      },
+      hydrateCredentialEnv: () => "saved-provider-key",
+      runOpenshell: providerRuntime(["nvidia-prod"], {
+        "nvidia-prod": "OTHER_API_KEY",
+      }),
+    });
+    configureSession(harness, "nvidia-prod", "NVIDIA_INFERENCE_API_KEY");
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes", "--force"], { throwOnError: true }),
+    ).rejects.toThrow("Could not verify gateway provider: nvidia-prod");
+
+    expect(diagnostics(harness)).toContain("could not verify provider 'nvidia-prod' in OpenShell");
+    expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
+    expect(harness.onboardSpy).not.toHaveBeenCalled();
+    expectNoSandboxDelete(harness.runOpenshellSpy);
+    expect(harness.removeSandboxRegistryEntryWithReceiptSpy).not.toHaveBeenCalled();
+  });
+
   it.each([
     ["has no expiration map", undefined],
     ["is absent from another credential's expiration map", { OTHER_API_KEY: 1_000 }],
@@ -274,6 +299,35 @@ describe("rebuildSandbox flow: credential preflight", () => {
       expect(harness.backupSandboxStateSpy).toHaveBeenCalledOnce();
     },
   );
+
+  it("preserves the sandbox when the provider loses the selected credential key during backup (#10394)", async () => {
+    let backedUp = false;
+    const validProvider = providerRuntime(["nvidia-prod"]);
+    const mismatchedProvider = providerRuntime(["nvidia-prod"], {
+      "nvidia-prod": "OTHER_API_KEY",
+    });
+    const harness = createRebuildFlowHarness({
+      sandboxEntry: {
+        provider: "nvidia-prod",
+        model: MODEL,
+        credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+      },
+      hydrateCredentialEnv: () => "saved-provider-key",
+      beforeBackup: () => {
+        backedUp = true;
+      },
+      runOpenshell: (args) => (backedUp ? mismatchedProvider(args) : validProvider(args)),
+    });
+    configureSession(harness, "nvidia-prod", "NVIDIA_INFERENCE_API_KEY");
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes", "--force"], { throwOnError: true }),
+    ).rejects.toThrow("is indeterminate before sandbox deletion");
+
+    expect(harness.backupSandboxStateSpy).toHaveBeenCalledOnce();
+    expectNoSandboxDelete(harness.runOpenshellSpy);
+    expect(harness.onboardSpy).not.toHaveBeenCalled();
+  });
 
   it("aborts before backup when provider expiry metadata cannot be verified (#10394)", async () => {
     const registeredProvider = providerRuntime(["nvidia-prod"]);
