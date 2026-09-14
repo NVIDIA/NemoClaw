@@ -31,12 +31,18 @@ describe("agent state directory contract", () => {
   it("keeps OpenClaw machine-local authentication state out of snapshots", () => {
     const agent = loadAgent("openclaw");
 
-    expect(agent.nonBackupStateDirs).toEqual(["plugins", "profiles", "identity", "devices"]);
+    expect(agent.nonBackupStateDirs).toEqual([
+      "plugins",
+      "profiles",
+      "identity",
+      "devices",
+      "state",
+    ]);
     expect(agent.backupStateDirs).not.toEqual(
-      expect.arrayContaining(["plugins", "profiles", "identity", "devices"]),
+      expect.arrayContaining(["plugins", "profiles", "identity", "devices", "state"]),
     );
     expect(agent.stateDirs).toEqual(
-      expect.arrayContaining(["plugins", "profiles", "identity", "devices"]),
+      expect.arrayContaining(["plugins", "profiles", "identity", "devices", "state"]),
     );
   });
 
