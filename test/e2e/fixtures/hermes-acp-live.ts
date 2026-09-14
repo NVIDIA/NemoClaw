@@ -404,9 +404,14 @@ export async function runHermesAcpLiveScenario(options: HermesAcpLiveOptions): P
   if (scenarioValid && options.scenario === "cancel") {
     signalAdapter(child, "SIGTERM");
   } else if (scenarioValid && options.scenario === "client-disconnect") {
-    input.end();
     child.stdout?.destroy();
     child.stderr?.destroy();
+    scenarioValid = await writeRequest(input, {
+      jsonrpc: "2.0",
+      id: 2,
+      method: "session/new",
+      params: { cwd: "/sandbox", mcpServers: [] },
+    });
   } else if (scenarioValid && options.scenario === "gateway-restart") {
     if (!options.restartGateway) {
       scenarioValid = false;
