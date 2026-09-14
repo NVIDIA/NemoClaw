@@ -94,7 +94,8 @@ export async function recoverNamedGatewayRuntime(options: RecoverNamedGatewayRun
   const exactTargetTransportRecovery =
     options.authorizeExactTargetTransportRecovery === true &&
     options.runtimeSelection?.gatewayName === gatewayName &&
-    before.error?.kind === "transport";
+    before.error?.kind === "transport" &&
+    before.error.reason === "unreachable";
   if (before.recoveryBlocked && !exactTargetTransportRecovery) {
     return { recovered: false, before, after: before, attempted: false };
   }
