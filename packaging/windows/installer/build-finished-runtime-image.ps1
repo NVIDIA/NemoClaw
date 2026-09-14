@@ -33,7 +33,12 @@ $topLevelNames = @($files | ForEach-Object {
     ([IO.Path]::GetRelativePath($RuntimeRoot, $_.FullName) -split '[\\/]')[0]
 } | Sort-Object -Unique)
 $sourceManifestSha256 = (Get-FileHash -LiteralPath (Join-Path $RuntimeRoot 'runtime.manifest') -Algorithm SHA256).Hash.ToLowerInvariant()
-$requiredStagingBytes = $logicalBytes + 1GB
+$maximumMiB = [Math]::Max(4096, [Math]::Ceiling(($logicalBytes + 536870912) / 1MB))
+# The dynamic image normally stays close to its compressed payload size, but
+# reserve its full virtual capacity plus working headroom. Runner free space can
+# change while the canonical runtime is sealed; a near-full host volume must
+# fail selection before Robocopy has moved almost the entire source tree.
+$requiredStagingBytes = ([long]$maximumMiB * 1MB) + 1GB
 $stagingDrive = Get-PSDrive -PSProvider FileSystem |
     Where-Object { $_.Free -gt $requiredStagingBytes } |
     Sort-Object -Property Free -Descending |
@@ -45,7 +50,6 @@ $workingImage = if ([string]::Equals([IO.Path]::GetPathRoot($OutputImage), $stag
 } else {
     Join-Path $stagingDrive.Root ('NemoClawRuntime-' + [guid]::NewGuid().ToString('N') + '.vhdx')
 }
-$maximumMiB = [Math]::Max(4096, [Math]::Ceiling(($logicalBytes + 536870912) / 1MB))
 $mount = Join-Path $env:RUNNER_TEMP ('nemoclaw-image-' + [guid]::NewGuid().ToString('N'))
 $diskpart = Join-Path $env:SystemRoot 'System32\diskpart.exe'
 $script = Join-Path $env:RUNNER_TEMP ('nemoclaw-image-' + [guid]::NewGuid().ToString('N') + '.txt')
