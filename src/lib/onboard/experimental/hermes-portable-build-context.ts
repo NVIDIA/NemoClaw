@@ -77,6 +77,7 @@ const LOCAL_COPY_SOURCES = [
   "scripts/lib/openclaw-npm-remediation.mts",
   "scripts/lib/patch-bundled-npm-ip-address.mts",
   "scripts/lib/reviewed-npm-archive.mts",
+  "scripts/lib/reviewed-npm-audit.mts",
   "scripts/lib/reviewed-npm-identity.mts",
   "scripts/lib/sandbox-init.sh",
   "scripts/lib/sandbox-rlimits.sh",

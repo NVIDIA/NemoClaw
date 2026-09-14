@@ -134,6 +134,7 @@ export const HERMES_PORTABLE_BUILD_CONTEXT_FILES = [
   { path: "scripts/lib/openclaw-npm-remediation.mts", mode: "100755" },
   { path: "scripts/lib/patch-bundled-npm-ip-address.mts", mode: "100755" },
   { path: "scripts/lib/reviewed-npm-archive.mts", mode: "100755" },
+  { path: "scripts/lib/reviewed-npm-audit.mts", mode: "100755" },
   { path: "scripts/lib/reviewed-npm-identity.mts", mode: "100755" },
   { path: "scripts/lib/sandbox-init.sh", mode: "100755" },
   { path: "scripts/lib/sandbox-rlimits.sh", mode: "100644" },
