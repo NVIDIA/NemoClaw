@@ -17,6 +17,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 const STORAGE_HEADER: &str = "NEMOCLAW_MSI_STORAGE_V1\n";
+const EMBEDDED_IMAGE_RUNTIME_ID: Option<&str> = option_env!("NEMOCLAW_RUNTIME_IMAGE_ID");
+const EMBEDDED_IMAGE_SHA256: Option<&str> = option_env!("NEMOCLAW_RUNTIME_IMAGE_SHA256");
 fn native_error(value: &'static str) -> Error {
     if value == "runtime-busy" {
         Error::Busy
@@ -408,6 +410,28 @@ impl NativeStore for WindowsStore {
     }
     fn verify_complete_content(&mut self, expected: &RuntimeIdentity) -> Result<(), Error> {
         expected.validate()?;
+        let embedded_image = match (EMBEDDED_IMAGE_RUNTIME_ID, EMBEDDED_IMAGE_SHA256) {
+            (Some(id), Some(digest)) if id == expected.runtime_id => {
+                if digest.len() != 64
+                    || !digest
+                        .bytes()
+                        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+                {
+                    return Err(Error::Identity);
+                }
+                let mut image = self
+                    .directory()?
+                    .open_content_file(&format!("images/{}.vhdx", expected.runtime_id))
+                    .map_err(native_error)?;
+                if hash_file(&mut image)? != digest {
+                    return Err(Error::Native("runtime-image-mismatch"));
+                }
+                true
+            }
+            (Some(_), Some(_)) => false,
+            (None, None) => false,
+            _ => return Err(Error::Identity),
+        };
         Self::attach_image(&expected.runtime_id)?;
         let control = self.directory()?;
         let prefix = format!("runtimes/{}", expected.runtime_id);
@@ -436,6 +460,14 @@ impl NativeStore for WindowsStore {
             .map_err(native_error)?;
         if hash_file(&mut node)? != expected.node_sha256 {
             return Err(Error::Native("runtime-node-mismatch"));
+        }
+        // A package-specific helper pins and hashes the whole VHDX before its
+        // read-only attach. Rewalking and hashing tens of thousands of inner
+        // files adds no integrity evidence and turns installation into runtime
+        // preparation. Loose and previous-version rollback payloads retain the
+        // complete manifest walk below.
+        if embedded_image {
+            return Ok(());
         }
         let mut seen = BTreeSet::new();
         let installation = native::installed_path().map_err(native_error)?;

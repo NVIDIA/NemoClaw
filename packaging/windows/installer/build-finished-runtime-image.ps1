@@ -85,6 +85,9 @@ try {
     if ($LASTEXITCODE -ne 0 -or -not $compressionInherited) {
         throw 'The runtime image NTFS root could not enable inherited compression.'
     }
+    $icacls = Join-Path $env:SystemRoot 'System32\icacls.exe'
+    & $icacls $mount /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)(F)' '*S-1-5-32-544:(OI)(CI)(F)' '*S-1-5-11:(OI)(CI)(RX)' | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'The runtime image root could not apply its read-only consumer ACL.' }
     $copyLog = [IO.Path]::ChangeExtension($ReceiptPath, '.robocopy.log')
     & (Join-Path $env:SystemRoot 'System32\robocopy.exe') $RuntimeRoot $mount /E /MOV /COPY:DT /DCOPY:DT /R:0 /W:0 /NP "/LOG:$copyLog" | Out-Null
     $copyStatus = $LASTEXITCODE
@@ -93,6 +96,8 @@ try {
         $detail = ((Get-Content -LiteralPath $copyLog -Tail 40) -join ' | ')
         throw "Runtime image population failed with status ${copyStatus}: $detail"
     }
+    & $icacls $mount /setowner '*S-1-5-32-544' /T /C /Q | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'The runtime image inventory could not apply its installer-owned identity.' }
     $mountedFiles = @($topLevelNames | ForEach-Object {
         $item = Get-Item -LiteralPath (Join-Path $mount $_) -Force
         if ($item.PSIsContainer) { Get-ChildItem -LiteralPath $item.FullName -Recurse -File -Force } else { $item }
@@ -116,6 +121,7 @@ try {
         maximumMiB = $maximumMiB
     }
     $receipt['innerFilesystemCompression'] = 'ntfs-inherited-before-population'
+    $receipt['innerFilesystemAcl'] = 'system-and-administrators-full-authenticated-users-read-execute; administrators-owned'
     $receipt['manifestSha256'] = $sourceManifestSha256
     $receipt.status = 'built-detached-and-verified'
 } catch {

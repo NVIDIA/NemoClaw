@@ -144,9 +144,29 @@ try {
     $capabilityPath = Join-Path $work 'launcher-capabilities.json'
     [IO.File]::WriteAllText($capabilityPath, (@{schemaVersion=1;launcherSha256=(Get-FileHash -LiteralPath $launcher -Algorithm SHA256).Hash.ToLowerInvariant();capabilities=$capabilities}|ConvertTo-Json -Depth 4), [Text.UTF8Encoding]::new($false))
     $helperTarget = Join-Path $work 'transaction-target'
-    Invoke-BuildTool 'rustup' @('run', '1.95.0-aarch64-pc-windows-msvc', 'cargo', 'rustc', '--locked', '--release',
-        '--target', 'aarch64-pc-windows-msvc', '--manifest-path', (Join-Path $owner 'Cargo.toml'),
-        '--target-dir', $helperTarget, '--', '-C', 'target-feature=+crt-static') 'transaction-build'
+    $previousImageId = $env:NEMOCLAW_RUNTIME_IMAGE_ID
+    $previousImageSha = $env:NEMOCLAW_RUNTIME_IMAGE_SHA256
+    try {
+        if ($RuntimeImage) {
+            $imageReceipt = Get-Content -LiteralPath $RuntimeImageReceipt -Raw | ConvertFrom-Json
+            if ($imageReceipt.runtimeId -cne $assembly.runtime.runtimeId -or $imageReceipt.image.sha256 -cnotmatch '^[a-f0-9]{64}$') {
+                throw 'The finished runtime image identity is invalid before native helper compilation.'
+            }
+            $env:NEMOCLAW_RUNTIME_IMAGE_ID = [string]$imageReceipt.runtimeId
+            $env:NEMOCLAW_RUNTIME_IMAGE_SHA256 = [string]$imageReceipt.image.sha256
+        } else {
+            Remove-Item Env:NEMOCLAW_RUNTIME_IMAGE_ID -ErrorAction SilentlyContinue
+            Remove-Item Env:NEMOCLAW_RUNTIME_IMAGE_SHA256 -ErrorAction SilentlyContinue
+        }
+        Invoke-BuildTool 'rustup' @('run', '1.95.0-aarch64-pc-windows-msvc', 'cargo', 'rustc', '--locked', '--release',
+            '--target', 'aarch64-pc-windows-msvc', '--manifest-path', (Join-Path $owner 'Cargo.toml'),
+            '--target-dir', $helperTarget, '--', '-C', 'target-feature=+crt-static') 'transaction-build'
+    } finally {
+        if ($null -eq $previousImageId) { Remove-Item Env:NEMOCLAW_RUNTIME_IMAGE_ID -ErrorAction SilentlyContinue }
+        else { $env:NEMOCLAW_RUNTIME_IMAGE_ID = $previousImageId }
+        if ($null -eq $previousImageSha) { Remove-Item Env:NEMOCLAW_RUNTIME_IMAGE_SHA256 -ErrorAction SilentlyContinue }
+        else { $env:NEMOCLAW_RUNTIME_IMAGE_SHA256 = $previousImageSha }
+    }
     $helperBuilt = Join-Path $helperTarget 'aarch64-pc-windows-msvc\release\NemoClawRuntimeTransaction.exe'
     $helper = Join-Path $nativeArtifacts 'NemoClawRuntimeTransaction.exe'
     $helperCopyReceipt = Join-Path $OutputDirectory 'compiled-transaction-helper.json'

@@ -91,6 +91,10 @@ try {
   } else { $timings['compiledRuntimeControls'] = 'Hermes acceptance validated capabilities, SEA identity and held runtime tuple.' }
 } catch { $primary = $_ }
 finally {
+  try {
+    $diagnostic = Get-ItemPropertyValue -LiteralPath 'Registry::HKEY_LOCAL_MACHINE\SOFTWARE\NVIDIA\NemoClaw\InstallDiagnostics' -Name RuntimeMaintenancePrimary -ErrorAction SilentlyContinue
+    if ($null -ne $diagnostic) { $timings.nativeRuntimeFailure = @{ retainedPrimary = [string]$diagnostic } }
+  } catch { if ($null -eq $primary) { $primary = $_ } else { Write-Warning 'The original failure is preserved; retained native diagnostic collection also failed.' } }
   # MSI records the helper's actual exit code even when Burn cannot retain its
   # stderr. Capture the bounded classification before uninstall adds another
   # transaction to the same evidence directory.
@@ -103,7 +107,11 @@ finally {
         }
       }
     }
-    if ($runtimeFailures.Count -gt 0) { $timings.nativeRuntimeFailure = $runtimeFailures[-1] }
+    if ($runtimeFailures.Count -gt 0) {
+      $classified = $runtimeFailures[-1]
+      if ($null -eq $timings.nativeRuntimeFailure) { $timings.nativeRuntimeFailure = $classified }
+      else { $timings.nativeRuntimeFailure['msiLogClassification'] = $classified }
+    }
   } catch { if ($null -eq $primary) { $primary = $_ } else { Write-Warning 'The original failure is preserved; native runtime failure classification also failed.' } }
   # Enumerate only after launch samples, so counting does not warm startup paths.
   try {
