@@ -49,6 +49,7 @@ function isExplicitGatewayRegistrationAbsence(output: string, gatewayLabel: stri
     return true;
   }
   return (
+    new RegExp(`^Unknown gateway ['"]${escapedLabel}['"]\\.`, "iu").test(completeDiagnostic) ||
     new RegExp(`^No gateway metadata found for ${namedGateway}\\.?$`, "iu").test(
       completeDiagnostic,
     ) ||
@@ -119,7 +120,7 @@ export function createCliOpenShellGatewayLifecycle(
     const { result, error } = await invoke(request, args);
     if (!error) return { ok: true, state: "completed" };
     if (
-      (operation === "remove" || operation === "destroy") &&
+      (operation === "select" || operation === "remove" || operation === "destroy") &&
       (error.kind === "command" ||
         (error.kind === "transport" && error.reason === "unreachable")) &&
       isExplicitGatewayRegistrationAbsence(result?.output ?? "", request.target.gatewayName)

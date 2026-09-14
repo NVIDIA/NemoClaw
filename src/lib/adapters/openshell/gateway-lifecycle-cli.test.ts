@@ -118,6 +118,33 @@ describe("gateway lifecycle CLI", () => {
     ]);
   });
 
+  it("corroborates an exact missing selection before reporting absence (#11326)", async () => {
+    const capture = vi
+      .fn()
+      .mockResolvedValueOnce({
+        status: 1,
+        output:
+          "Error:   × Unknown gateway 'nemoclaw-8091'.\n  │ Register it first: openshell gateway add <endpoint> --name nemoclaw-8091",
+      })
+      .mockResolvedValueOnce({ status: 0, output: "[]" });
+    await expect(
+      createCliOpenShellGatewayLifecycle(capture).selectGateway({ target }),
+    ).resolves.toEqual({ ok: true, state: "absent" });
+    expect(capture.mock.calls.map(([args]) => args)).toEqual([
+      ["gateway", "select", target.gatewayName],
+      ["gateway", "list", "-o", "json"],
+    ]);
+
+    const mismatchedCapture = vi.fn().mockResolvedValue({
+      status: 1,
+      output: "Error:   × Unknown gateway 'foreign'.",
+    });
+    await expect(
+      createCliOpenShellGatewayLifecycle(mismatchedCapture).selectGateway({ target }),
+    ).resolves.toMatchObject({ ok: false });
+    expect(mismatchedCapture).toHaveBeenCalledOnce();
+  });
+
   it("treats a rejected mutation capture as ambiguous without retrying", async () => {
     const capture = vi.fn().mockRejectedValue(new Error("secret transport detail"));
     const result = await createCliOpenShellGatewayLifecycle(capture).removeGateway({ target });

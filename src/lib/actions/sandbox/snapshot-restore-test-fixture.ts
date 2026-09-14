@@ -315,14 +315,17 @@ vi.mock("../../sandbox/create-stream", () => ({
 
 vi.mock("../../adapters/openshell/gateway-reuse-cli", () => ({
   createCliOpenShellGatewayReuseObserver: () => ({
-    observeGatewayReuse: async () => ({
-      gatewayReuseState: isGatewayHealthyMock() ? "healthy" : "missing",
-      healthy: isGatewayHealthyMock(),
-      namedMetadata: true,
-      shouldSelect: false,
-      endpoints: [],
-      endpointBinding: isGatewayHealthyMock() ? "match" : "unknown",
-    }),
+    observeGatewayReuse: async () => {
+      const healthy = isGatewayHealthyMock();
+      return {
+        gatewayReuseState: healthy ? "healthy" : "missing",
+        healthy,
+        namedMetadata: true,
+        shouldSelect: false,
+        endpoints: [],
+        endpointBinding: healthy ? "match" : "unknown",
+      };
+    },
   }),
 }));
 
