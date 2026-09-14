@@ -5,13 +5,16 @@ import {
   type CaptureOpenshellOptions,
   type CaptureOpenshellResult,
   captureOpenshellCommand,
-  stripAnsi,
 } from "../adapters/openshell/client";
 import { captureOpenshell } from "../adapters/openshell/runtime";
 import { buildSelectedOpenShellSubprocessEnv } from "../adapters/openshell/command-argv";
 import type { OpenShellRuntimeSelection } from "../adapters/openshell/runtime-selection";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../adapters/openshell/timeouts";
 import { observeOpenShellSandboxIdentity } from "../adapters/openshell/sandbox-presence";
+import {
+  isExplicitMissingOpenShellSandboxOutput,
+  isLegacyOpenShellSandboxConfigUnavailableOutput,
+} from "../adapters/openshell/sandbox-observer-cli";
 import { parseSandboxPhase } from "../state/gateway";
 import {
   fingerprintSandboxLiveIdentity,
@@ -44,57 +47,7 @@ type SandboxGatewayPresenceTarget = Pick<SandboxRecreateTarget, "sandboxName" | 
 export type SandboxRecreateObserver = (target: SandboxRecreateTarget) => SandboxRecreateObservation;
 export type SandboxRecreateCapture = typeof captureOpenshell;
 
-/**
- * OpenShell 0.0.116 can resolve legacy sandbox metadata but fail while reading
- * the spec or referenced providers needed to render `sandbox get`. Inventory
- * does not read that config, so these exact diagnostics can fall back to list.
- */
-function isLegacySandboxConfigUnavailableOutput(output: string): boolean {
-  const clean = stripAnsi(String(output)).replace(/\r/g, "").trim();
-  const structured = clean.replace(/\n\s*│\s*/g, " ");
-  return (
-    /^(?:error:\s*)?status:\s*Internal,\s*message:\s*["']sandbox has no spec["'](?:,\s*details:\s*\[\])?(?:,\s*metadata:\s*MetadataMap\s*\{\s*\})?$/i.test(
-      clean,
-    ) ||
-    /^(?:error:\s*)?(?:×\s*)?code:\s*["']Internal error["']\s*,\s*message:\s*["']sandbox has no spec["']$/i.test(
-      structured,
-    ) ||
-    /^(?:error:\s*)?(?:×\s*)?code:\s*'The system is not in a state required for the operation's execution'\s*,\s*message:\s*"provider '[a-z0-9][a-z0-9._-]*' not found"$/i.test(
-      structured,
-    )
-  );
-}
-
-/**
- * Strict absence classifier for destructive owner-gateway reconciliation.
- * Bare NotFound is not sufficient because OpenShell uses it for missing
- * gateways and providers as well as sandboxes.
- */
-export function isExplicitMissingSandboxGatewayOutput(
-  output: string,
-  sandboxName: string,
-): boolean {
-  const clean = stripAnsi(String(output)).replace(/\r/g, "").trim();
-  // Miette wraps long OpenShell 0.0.116 diagnostics onto a `│` continuation
-  // line. Collapse only that renderer-owned boundary before exact matching.
-  const structured = clean.replace(/\n\s*│\s*/g, " ");
-  // OpenShell can omit the requested name from an owner-scoped lookup.
-  // Require both exact structured fields so gateway/provider absence and
-  // transport diagnostics remain ambiguous.
-  const exactStructuredNotFound =
-    /^(?:error:\s*)?(?:×\s*)?code:\s*["']Some requested entity was not found["']\s*,\s*message:\s*["']sandbox not found["']$/i;
-  if (exactStructuredNotFound.test(structured)) return true;
-
-  const escapedName = sandboxName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const namedSandbox = `(?:['"]${escapedName}['"]|${escapedName})`;
-  return (
-    new RegExp(
-      `^(?:error:\\s*)?sandbox\\s+${namedSandbox}\\s+(?:(?:is\\s+)?not\\s+(?:found|present)|does\\s+not\\s+exist)[.!]?$`,
-      "i",
-    ).test(clean) ||
-    new RegExp(`^(?:error:\\s*)?no\\s+such\\s+sandbox\\s+${namedSandbox}[.!]?$`, "i").test(clean)
-  );
-}
+export const isExplicitMissingSandboxGatewayOutput = isExplicitMissingOpenShellSandboxOutput;
 
 /** Resolve a retained legacy identity without treating unreadable config as deletion. */
 export function observeLegacySandboxOnGateway(
@@ -109,7 +62,7 @@ export function observeLegacySandboxOnGateway(
     probe.signal ||
     probe.status === null ||
     probe.status === 0 ||
-    !isLegacySandboxConfigUnavailableOutput(combined)
+    !isLegacyOpenShellSandboxConfigUnavailableOutput(combined)
   )
     return null;
   const gatewayArgs = target.gatewayName ? ["-g", target.gatewayName] : [];

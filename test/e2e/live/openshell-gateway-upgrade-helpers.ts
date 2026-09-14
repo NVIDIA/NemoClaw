@@ -112,6 +112,15 @@ export function gatewayUpgradeBackupEvidence(root: string): { backups: Record<st
   return { backups };
 }
 
+/** Write the required handoff report or fail the E2E evidence contract. */
+export async function writeGatewayUpgradeBackupEvidence(
+  artifacts: { writeJson(name: string, value: unknown): Promise<unknown> },
+  name: string,
+  root: string,
+): Promise<void> {
+  await artifacts.writeJson(name, gatewayUpgradeBackupEvidence(root));
+}
+
 /** Collect both read-only probes without replacing an installer failure. */
 export async function captureGatewayUpgradeProbeEvidence(
   sandboxName: string,

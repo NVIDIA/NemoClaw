@@ -35,7 +35,6 @@ import { REPO_ROOT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
   captureGatewayUpgradeProbeEvidence,
-  gatewayUpgradeBackupEvidence,
   currentGatewayUpgradeInstallerArgs,
   currentNemoclawUpgradeRef,
   GATEWAY_UPGRADE_INSTALL_TIMEOUT_MS,
@@ -45,6 +44,7 @@ import {
   upgradeGatewayCleanupScript,
   upgradeGatewayStateCleanupScript,
   validateLegacyGatewayUpgradeFixture,
+  writeGatewayUpgradeBackupEvidence,
 } from "./openshell-gateway-upgrade-helpers.ts";
 import {
   patchOldInstallerFixture,
@@ -381,14 +381,11 @@ async function runInstallerPayload(
       timeoutMs: 15_000,
     }),
   );
-  await Promise.allSettled([
-    artifacts.writeJson(
-      `${label}-backup-handoff.json`,
-      gatewayUpgradeBackupEvidence(
-        path.join(os.homedir(), ".nemoclaw", "rebuild-backups", SURVIVOR_SANDBOX),
-      ),
-    ),
-  ]);
+  await writeGatewayUpgradeBackupEvidence(
+    artifacts,
+    `${label}-backup-handoff.json`,
+    path.join(os.homedir(), ".nemoclaw", "rebuild-backups", SURVIVOR_SANDBOX),
+  );
   expect(
     result.exitCode,
     `${label} NemoClaw installer returned an unexpected exit code:\n${resultText(result)}`,

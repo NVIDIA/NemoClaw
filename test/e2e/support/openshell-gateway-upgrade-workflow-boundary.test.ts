@@ -26,6 +26,7 @@ import {
   throwGatewayUpgradeSetupFailures,
   upgradeGatewayCleanupScript,
   validateLegacyGatewayUpgradeFixture,
+  writeGatewayUpgradeBackupEvidence,
 } from "../live/openshell-gateway-upgrade-helpers.ts";
 
 describe("OpenShell gateway upgrade boundary", () => {
@@ -153,6 +154,22 @@ describe("OpenShell gateway upgrade boundary", () => {
       }
     },
   );
+
+  it("fails when the required handoff artifact cannot be written", async () => {
+    const writeJson = vi.fn().mockRejectedValue(new Error("artifact storage unavailable"));
+
+    await expect(
+      writeGatewayUpgradeBackupEvidence(
+        { writeJson },
+        "current-install-backup-handoff.json",
+        "/missing-backups",
+      ),
+    ).rejects.toThrow("artifact storage unavailable");
+    expect(writeJson).toHaveBeenCalledExactlyOnceWith(
+      "current-install-backup-handoff.json",
+      expect.objectContaining({ backups: expect.any(Array) }),
+    );
+  });
 
   it("freshens only the retryable old fixture install", () => {
     expect(oldGatewayUpgradeInstallerArgs("old-install.sh")).toEqual([
