@@ -58,13 +58,12 @@ const providerActions = require("./src/lib/actions/sandbox/mcp-bridge-provider.j
 const entry = {
   server: "fake",
   agent: "openclaw",
-  adapter: "mcporter",
+  adapter: "openclaw-config",
   url: "https://mcp.example.test/mcp",
   env: ["EXPECTED_TOKEN"],
   providerName: "alpha-mcp-fake",
   providerId: expectedId,
   policyName: "mcp-bridge-fake",
-  addedAt: "2026-06-01T00:00:00.000Z",
 };
 let outcome = null;
 let message = null;

@@ -58,12 +58,11 @@ state_dirs:
 # threads.sort_order preferences below. NemoClaw owns the fresh models/update
 # tables and generated provider headers. Agent-runtime, unknown, executable, and
 # security-sensitive backup keys are not restorable and are dropped.
-# .env and user-authored .deepagents/.mcp.json content are intentionally omitted
-# because they may contain service credentials. NemoClaw writes only direct-HTTP
-# bridge endpoint config and OpenShell placeholders to its separate
-# .deepagents/.nemoclaw-mcp.json projection, then restores that projection from
-# the registry after rebuild. The managed projection is reconstructable state,
-# not user-authored durable state.
+# .env is intentionally omitted because it may contain service credentials.
+# .deepagents/.mcp.json is the agent-owned MCP source. NemoClaw writes only
+# direct-HTTP endpoint config and OpenShell placeholders, preserves unrelated
+# native entries, and carries managed entries through the bounded rebuild
+# handoff instead of a host-side registry projection.
 state_files:
   - path: config.toml
     restore:

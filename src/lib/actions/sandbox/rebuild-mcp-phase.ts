@@ -3,113 +3,68 @@
 
 import { CLI_NAME } from "../../cli/branding";
 import { G, R, YW } from "../../cli/terminal-style";
+import { OPENSHELL_DEFAULT_WORKSPACE } from "../../adapters/openshell/sandbox-ssh-host";
 import type { DcodeAutoApprovalMode } from "../../onboard/dcode-auto-approval";
 import { explicitObservabilityFlag } from "../../onboard/observability-command-flag";
-import * as registry from "../../state/registry";
 import type { ToolDisclosure } from "../../tool-disclosure";
 import {
   prepareMcpBridgesForAbsentSandboxRebuild,
-  prepareMcpBridgesForExecUnavailableRebuild,
   prepareMcpBridgesForRebuild,
   reattachMcpProvidersAfterRebuildAbort,
   restoreMcpBridgesAfterRebuild,
 } from "./mcp-bridge";
-import { getMcpProviderInspectionRuntimeSelection } from "./mcp-bridge-provider";
-import { executeSandboxCommand, executeSandboxExecCommand } from "./process-recovery";
 import type { RebuildBail } from "./rebuild-credential-preflight";
-import type { RebuildSandboxEntry } from "./rebuild-flow-helpers";
+import { type RebuildSandboxEntry, resolveSandboxGatewayName } from "./rebuild-flow-helpers";
 import type { McpProviderInspectionRuntimeSelection } from "./mcp-bridge-provider";
+import { getMcpProviderInspectionRuntimeSelection } from "./mcp-bridge-provider";
+import { inspectAgentMcpSources, joinMcpEntriesToOpenShell } from "./mcp-bridge-source";
+import type { McpSourceEntry } from "./mcp-bridge-contracts";
 
 export type McpRebuildPreparation = Awaited<ReturnType<typeof prepareMcpBridgesForRebuild>>;
 
-export function getMcpPreparationRuntimeSelection(
+export async function observeMcpStateForRebuild(
   sandbox: RebuildSandboxEntry,
-): ReturnType<typeof getMcpProviderInspectionRuntimeSelection> {
-  return getMcpProviderInspectionRuntimeSelection(sandbox);
-}
-
-/** Prepared-only MCP adds own no external runtime state and need no target authority. */
-export function mcpRebuildRequiresRuntimeSelection(sandbox: RebuildSandboxEntry): boolean {
-  return Object.values(sandbox.mcp?.bridges ?? {}).some((entry) => entry.addState !== "prepared");
-}
-
-export function resolveMcpPreparationRuntimeSelection(
-  sandboxName: string,
-): ReturnType<typeof getMcpProviderInspectionRuntimeSelection> | undefined {
-  const sandbox = registry.getSandbox(sandboxName);
-  if (!sandbox || !mcpRebuildRequiresRuntimeSelection(sandbox)) return undefined;
-  try {
-    return getMcpPreparationRuntimeSelection(sandbox);
-  } catch {
-    return undefined;
-  }
-}
-
-async function canExecuteMcpPreparation(
-  sandboxName: string,
-  runtimeSelection: ReturnType<typeof getMcpProviderInspectionRuntimeSelection>,
-): Promise<boolean> {
-  // Live MCP preparation uses both transports: SSH-backed adapter
-  // inspection/mutation and OpenShell-mediated adapter/provider operations.
-  // Prove both before any mutation. A direct Docker fallback would not prove
-  // that the OpenShell transport itself can run.
-  const sshProbe = await executeSandboxCommand(sandboxName, ":", { runtimeSelection });
-  const execProbe = await executeSandboxExecCommand(sandboxName, ":", undefined, {
-    localDockerFallbackPolicy: "never",
-    runtimeSelection,
-  });
-  return sshProbe !== null && sshProbe.status === 0 && execProbe !== null && execProbe.status === 0;
+  runtimeSelection: McpProviderInspectionRuntimeSelection | undefined,
+  inspectCurrentSource: boolean,
+): Promise<{
+  entries: McpSourceEntry[];
+  runtimeSelection?: McpProviderInspectionRuntimeSelection;
+}> {
+  if (!inspectCurrentSource) return { entries: [] };
+  const sourceRuntime = runtimeSelection ?? {
+    gatewayName: resolveSandboxGatewayName(sandbox),
+    workspace: OPENSHELL_DEFAULT_WORKSPACE,
+  };
+  const sources = await inspectAgentMcpSources(sandbox, sourceRuntime);
+  if (Object.keys(sources.native).length === 0) return { entries: [] };
+  const selectedRuntime = runtimeSelection ?? getMcpProviderInspectionRuntimeSelection(sandbox);
+  const entries = Object.values(
+    await joinMcpEntriesToOpenShell(sandbox, sources.native, selectedRuntime),
+  );
+  return {
+    entries,
+    ...(entries.length > 0 ? { runtimeSelection: selectedRuntime } : {}),
+  };
 }
 
 export async function prepareMcpForRebuild(
   sandboxName: string,
   staleRecovery: boolean,
-  force: boolean,
   bail: RebuildBail,
   frozenRuntimeSelection?: McpProviderInspectionRuntimeSelection,
+  sourceEntries: readonly McpSourceEntry[] = [],
 ): Promise<McpRebuildPreparation | null> {
-  const sandbox = staleRecovery ? undefined : registry.getSandbox(sandboxName);
-  const requiresRuntimeSelection = sandbox ? mcpRebuildRequiresRuntimeSelection(sandbox) : false;
-  const runtimeSelection =
-    frozenRuntimeSelection ??
-    (staleRecovery ? undefined : resolveMcpPreparationRuntimeSelection(sandboxName));
-  // invalidState: OpenShell still reports a live sandbox, but the
-  // side-effect-free `:` command cannot cross every transport required by live
-  // MCP preparation. Every nonzero result is non-authoritative, so interpreting
-  // selected exit codes as proof teardown can run would cross the delete edge.
-  // sourceBoundary: the pinned OpenShell sandbox-exec and SSH transports own
-  // these liveness signals; NemoClaw owns only explicit --force recovery policy.
-  // whyNotSourceFix: an unreachable retained image cannot be repaired before
-  // rebuild, and OpenShell v0.0.85 exposes no stronger adapter-health proof.
-  // regressionTest: rebuild-mcp-phase.test.ts exercises null and representative
-  // nonzero results through this exact force-only branch.
-  // removalCondition: remove this fallback only when OpenShell exposes an
-  // attested read-only adapter snapshot that is safe without sandbox transport.
-  if (
-    force &&
-    !staleRecovery &&
-    requiresRuntimeSelection &&
-    (!runtimeSelection || !(await canExecuteMcpPreparation(sandboxName, runtimeSelection)))
-  ) {
-    console.error(`  ${YW}⚠${R} MCP transport probe failed; --force using host-side MCP recovery`);
-    try {
-      return await prepareMcpBridgesForExecUnavailableRebuild(sandboxName, runtimeSelection);
-    } catch (error) {
-      bail(
-        `Failed to preserve MCP bridges before rebuild (--force host-side recovery): ${error instanceof Error ? error.message : String(error)}`,
-      );
-      return null;
-    }
-  }
-
+  // Source inspection resolves OpenShell authority lazily only after it finds
+  // MCP intent. A retained recovery handoff is the sole eager authority input.
+  const runtimeSelection = frozenRuntimeSelection;
   try {
     return await (staleRecovery
       ? runtimeSelection
-        ? prepareMcpBridgesForAbsentSandboxRebuild(sandboxName, runtimeSelection)
-        : prepareMcpBridgesForAbsentSandboxRebuild(sandboxName)
+        ? prepareMcpBridgesForAbsentSandboxRebuild(sandboxName, runtimeSelection, sourceEntries)
+        : prepareMcpBridgesForAbsentSandboxRebuild(sandboxName, undefined, sourceEntries)
       : runtimeSelection
-        ? prepareMcpBridgesForRebuild(sandboxName, runtimeSelection)
-        : prepareMcpBridgesForRebuild(sandboxName));
+        ? prepareMcpBridgesForRebuild(sandboxName, runtimeSelection, sourceEntries)
+        : prepareMcpBridgesForRebuild(sandboxName, undefined, sourceEntries));
   } catch (error) {
     bail(
       `Failed to preserve MCP bridges before rebuild: ${error instanceof Error ? error.message : String(error)}`,
@@ -134,25 +89,6 @@ export async function reattachMcpAfterDeleteFailure(
     return undefined;
   } catch (error) {
     return error instanceof Error ? error.message : String(error);
-  }
-}
-
-export function restoreMcpRegistryForRebuildRetry(
-  staleRecovery: boolean,
-  entries: McpRebuildPreparation["entries"],
-  original: RebuildSandboxEntry,
-  log: (message: string) => void,
-): void {
-  if (staleRecovery || entries.length === 0) return;
-  try {
-    // MCP-bearing rebuilds deliberately preserve the registry entry instead of
-    // removing it. Restore any metadata overwritten by a partial onboard, but
-    // leave the current default pointer alone: a concurrent `nemoclaw use`
-    // selection must win because this rebuild never moved that pointer.
-    registry.restoreSandboxEntry(original);
-    log("Recreate failed: restored MCP-bearing registry entry for stale recovery retry");
-  } catch (error) {
-    log(`Failed to restore MCP-bearing registry entry after recreate failure: ${String(error)}`);
   }
 }
 

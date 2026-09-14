@@ -202,7 +202,6 @@ const ROUTE_RESERVATION_FIELDS: readonly (keyof SandboxEntry)[] = [
 // The source fingerprint still binds every sandbox, gateway, lifecycle, agent,
 // and workload ownership field.
 const RECEIPT_BOUND_PROJECTION_FIELDS: readonly (keyof SandboxEntry)[] = [
-  "mcp",
   // `messaging` is a rehydrated projection, not durable sandbox identity: the
   // channel commands own it (`channels add|stop|start|remove` rewrite the plan
   // workflow label, disabledChannels, and the derived per-channel active,
