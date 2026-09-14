@@ -20,6 +20,7 @@ import { getLiveGatewayInference } from "../../inference/live";
 import {
   readFailureCanary,
   inventory,
+  configuration,
   provider,
   openAiProviderProfile,
   ollamaSource,
@@ -55,6 +56,11 @@ function mockOllamaSource() {
   const model = EXPORTED_OLLAMA_MODEL;
   const { source, observed } = ollamaSource(model);
   mockSupportedLiveSource(3, 3, source);
+  const effective = configuration();
+  effective.policy.network_policies.api.endpoints = [
+    { host: "host.openshell.internal", port: observed.serving.proxy.hostPort },
+  ];
+  raw.getSandboxConfig.mockResolvedValue(effective);
   const probe = ollamaProbe(observed);
   vi.mocked(createOllamaExportProbe).mockReturnValue(probe);
   vi.mocked(getSandboxEntryInference).mockReturnValue({
@@ -87,7 +93,14 @@ function mockOllamaSource() {
   };
   raw.getProvider.mockResolvedValue({ provider: localProvider });
   raw.getProviderProfile.mockRejectedValue({ code: 5 });
-  return { source, observed, probe, readCredential, localProvider };
+  return {
+    source,
+    observed,
+    probe,
+    readCredential,
+    localProvider,
+    effectivePolicy: effective.policy,
+  };
 }
 
 describe("attached Ollama export pipeline", () => {
@@ -119,7 +132,8 @@ describe("attached Ollama export pipeline", () => {
   ])(
     "exports the $name binding without reading gateway credentials (#11435)",
     async ({ workspace, credentialEnv, readProfile }) => {
-      const { source, observed, probe, readCredential, localProvider } = mockOllamaSource();
+      const { source, observed, probe, readCredential, localProvider, effectivePolicy } =
+        mockOllamaSource();
       source.credentialEnv = credentialEnv;
       localProvider.profileWorkspace = workspace;
       raw.getProviderProfile.mockImplementation(readProfile);
@@ -145,9 +159,11 @@ describe("attached Ollama export pipeline", () => {
       expect(probe.readActiveConfig).toHaveBeenCalledWith(11440);
       expect(probe.readDaemonModels).toHaveBeenCalledWith(11439);
       expect(readCredential).not.toHaveBeenCalled();
-      expect(yaml).not.toMatch(
-        /NEMOCLAW_OLLAMA_PROXY_TOKEN|credential-canary-value|host\.openshell\.internal/u,
+      expect(yaml).not.toMatch(/NEMOCLAW_OLLAMA_PROXY_TOKEN|credential-canary-value/u);
+      expect(JSON.stringify(document.spec.inferenceProviders)).not.toContain(
+        "host.openshell.internal",
       );
+      expect(document.spec.sandboxes[0]!.network.policy.explicit).toEqual(effectivePolicy);
       expect(publish).not.toHaveBeenCalled();
     },
   );

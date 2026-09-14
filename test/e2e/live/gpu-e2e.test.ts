@@ -424,7 +424,7 @@ test(
       boundary:
         "native Linux Docker + attached Ollama daemon + NemoClaw proxy + managed OpenClaw + SDK configuration export",
       credentialBoundary:
-        "The existing proxy owner authenticates observation; exported YAML contains no token or internal endpoint.",
+        "The existing proxy owner authenticates observation; exported inference providers omit credentials and internal endpoints.",
     });
     const exportEnv = env({
       NEMOCLAW_AGENT: "openclaw",
@@ -517,7 +517,9 @@ test(
     const token = readTokenFileChecked(ollamaProxyTokenFile()).token;
     artifacts.addRedactionValues([token]);
     expect(raw.includes(token), "Export must omit the proxy credential").toBe(false);
-    expect(raw).not.toMatch(/NEMOCLAW_OLLAMA_PROXY_TOKEN|host\.openshell\.internal/u);
+    expect(JSON.stringify(document.spec.inferenceProviders)).not.toMatch(
+      /NEMOCLAW_OLLAMA_PROXY_TOKEN|host\.openshell\.internal/u,
+    );
     const tags = await host.command(
       "curl",
       ["-q", "--noproxy", "*", "-fsS", "--max-time", "5", "http://127.0.0.1:11439/api/tags"],

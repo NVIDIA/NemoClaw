@@ -500,7 +500,8 @@ A separate OpenClaw scenario disables direct sandbox GPU and uses normal onboard
 managed proxy on the target's shared port. It stops the installer service before starting a fixture-owned
 daemon on port 11439 and preparing its model. It exports twice through
 the candidate CLI and real SDK, validates both documents, compares their specs and model digest,
-checks credential omission, and requires a stopped daemon to prevent publication. Private YAML is
+checks credential omission, and requires a stopped daemon to prevent publication. Inference-provider
+definitions omit internal endpoints; the sandbox's explicit network policy is preserved. Private YAML is
 removed through the cleanup registry; retained evidence contains only the selected model, ports,
 managed image, and result booleans. The existing CUDA, authentication, and inference lifecycle
 scenarios remain separate. The export fixture requires service shutdown and model preparation to succeed
