@@ -99,6 +99,8 @@ Portable Hermes recovery follows the exact receipt-bound start, authenticated-he
 After Portable `start` completes lifecycle recovery, it checks and repairs the recorded host forwards before reporting success.
 Portable Hermes records the selected OpenShell gateway during onboarding.
 Recovery and uninstall use that recorded gateway, including a non-default gateway selected through `NEMOCLAW_GATEWAY_PORT`.
+If one required forward fails after recovery starts another, NemoClaw terminates only forwards started by that recovery attempt.
+It preserves existing forwards and exits nonzero when it cannot prove cleanup.
 
 ### Recover Portable Published Ollama
 
@@ -129,7 +131,8 @@ $$nemoclaw <sandbox-name> doctor
 ```
 
 Save both results.
-The expected status line is `Portable lifecycle phase: active`.
+The expected status line is `Saved Portable lifecycle phase: active`.
+Status also prints `Runtime and agent health: not probed`.
 The expected doctor line is `Portable lifecycle: agent=Hermes; phase=active`.
 These results prove only that the lifecycle receipt and sandbox registry agree.
 They do not prove that the Podman runner returned to stopped.
