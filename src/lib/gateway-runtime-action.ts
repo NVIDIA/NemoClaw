@@ -105,33 +105,31 @@ export async function recoverNamedGatewayRuntime(options: RecoverNamedGatewayRun
     return { recovered: false, before, after: before, attempted: false };
   }
 
-  gatewayRuntimeDependencies.runOpenshell(
-    ["gateway", "select", gatewayName],
-    openshellRuntime.withSelectedOpenShellCommandOptions(
-      {
-        ignoreError: true,
-        stdio: "ignore",
-        timeout: openshellRuntime.OPENSHELL_OPERATION_TIMEOUT_MS,
-      },
-      options.runtimeSelection,
-    ),
-  );
-  let after = await getNamedGatewayLifecycleState(gatewayName, lifecycleOptions);
-  const exactTargetStillTransportUnreachable =
-    exactTargetTransportRecovery && after.error?.kind === "transport";
-  if (after.recoveryBlocked && !exactTargetStillTransportUnreachable) {
-    options.output?.error(
-      `OpenShell gateway recovery blocked after selection: state=${after.state} error=${after.error?.kind ?? "none"}.`,
+  let after = before;
+  if (!exactTargetTransportRecovery) {
+    gatewayRuntimeDependencies.runOpenshell(
+      ["gateway", "select", gatewayName],
+      openshellRuntime.withSelectedOpenShellCommandOptions(
+        {
+          ignoreError: true,
+          stdio: "ignore",
+          timeout: openshellRuntime.OPENSHELL_OPERATION_TIMEOUT_MS,
+        },
+        options.runtimeSelection,
+      ),
     );
-    return { recovered: false, before, after, attempted: true };
-  }
-  if (after.state === "healthy_named") {
-    process.env.OPENSHELL_GATEWAY = gatewayName;
-    return { recovered: true, before, after, attempted: true, via: "select" };
+    after = await getNamedGatewayLifecycleState(gatewayName, lifecycleOptions);
+    if (after.recoveryBlocked) {
+      return { recovered: false, before, after, attempted: true };
+    }
+    if (after.state === "healthy_named") {
+      process.env.OPENSHELL_GATEWAY = gatewayName;
+      return { recovered: true, before, after, attempted: true, via: "select" };
+    }
   }
 
   const shouldStartGateway =
-    exactTargetStillTransportUnreachable ||
+    exactTargetTransportRecovery ||
     [before.state, after.state].some((state) => recoverableStates.has(state));
   let startFailure: unknown = null;
 
@@ -172,10 +170,6 @@ export async function recoverNamedGatewayRuntime(options: RecoverNamedGatewayRun
       .replace(/\s+/gu, " ")
       .trim();
     options.output.error(`OpenShell gateway recovery failed${detail ? `: ${detail}` : "."}`);
-  } else if (options.output) {
-    options.output.error(
-      `OpenShell gateway recovery remained unavailable after startup: state=${after.state} error=${after.error?.kind ?? "none"}.`,
-    );
   }
 
   return { recovered: false, before, after, attempted: true };

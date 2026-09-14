@@ -251,33 +251,8 @@ type HermesAcpLiveReceipt = Readonly<{
   sessionCreated: boolean;
   signal: NodeJS.Signals | null;
   stderrObserved: boolean;
-  stderrCategory: string;
   timedOut: boolean;
 }>;
-
-function hermesAcpStderrCategory(stderr: string): string {
-  const marker = stderr.includes("recovery blocked after selection")
-    ? "gateway-selection-blocked"
-    : stderr.includes("remained unavailable after startup")
-      ? "gateway-post-start-unavailable"
-      : stderr.includes("gateway recovery failed")
-        ? "gateway-restart-failed"
-        : stderr.includes("sandbox is stopped or not ready")
-          ? "sandbox-not-ready"
-          : stderr.includes("live sandbox identity does not match")
-            ? "sandbox-identity-mismatch"
-            : stderr.includes("could not validate the selected sandbox identity")
-              ? "sandbox-identity-validation"
-              : stderr.includes("gateway is not ready")
-                ? "gateway-not-ready"
-                : stderr
-                  ? "unclassified"
-                  : "none";
-  const state = stderr.match(
-    /state=(healthy_named|named_unreachable|named_unhealthy|connected_other|missing_named|observation_failed) error=(authentication|transport|schema|timeout|command|none)/u,
-  );
-  return `${marker}${state ? `:${state[1]}:${state[2]}` : ""}`;
-}
 
 async function writeHermesAcpLiveReceipt(
   options: HermesAcpLiveOptions,
@@ -312,7 +287,6 @@ export async function runHermesAcpLiveScenario(options: HermesAcpLiveOptions): P
       sessionCreated: false,
       signal: null,
       stderrObserved: false,
-      stderrCategory: "none",
       timedOut: false,
     });
     return false;
@@ -349,7 +323,6 @@ export async function runHermesAcpLiveScenario(options: HermesAcpLiveOptions): P
   let protocolValid = true;
   const promptEvidence = createHermesAcpPromptEvidenceTracker();
   let stderrObserved = false;
-  let stderr = "";
   let childClosed = false;
   const inbox: JsonObject[] = [];
   const waiters = new Set<() => void>();
@@ -394,9 +367,8 @@ export async function runHermesAcpLiveScenario(options: HermesAcpLiveOptions): P
       buffered = lines.pop() ?? "";
       for (const line of lines) consumeLine(line);
     },
-    onStderr: (chunk) => {
+    onStderr: () => {
       stderrObserved = true;
-      stderr = `${stderr}${chunk}`.slice(0, 16_384);
     },
   });
   child.once("close", () => {
@@ -539,7 +511,6 @@ export async function runHermesAcpLiveScenario(options: HermesAcpLiveOptions): P
     sessionCreated,
     signal: result.signal,
     stderrObserved,
-    stderrCategory: hermesAcpStderrCategory(stderr),
     timedOut: result.timedOut,
   });
   return passed;

@@ -92,10 +92,7 @@ describe("gateway observations and recovery", () => {
       },
     };
     const runtimeSelection = { gatewayName: "nemoclaw-8090", workspace: "default" };
-    observe
-      .mockResolvedValueOnce(unavailable)
-      .mockResolvedValueOnce(unavailable)
-      .mockResolvedValueOnce(observation("healthy_named"));
+    observe.mockResolvedValueOnce(unavailable).mockResolvedValueOnce(observation("healthy_named"));
 
     expect(
       await gatewayRuntime.recoverNamedGatewayRuntime({
@@ -109,6 +106,29 @@ describe("gateway observations and recovery", () => {
       gatewayPort: 8090,
       runtimeSelection,
     });
+    expect(run).toHaveBeenCalledOnce();
+    expect(start.mock.invocationCallOrder[0]).toBeLessThan(run.mock.invocationCallOrder[0]);
+  });
+
+  it("does not extend exact-target recovery authority to authentication failures", async () => {
+    observe.mockResolvedValue({
+      ...observation("observation_failed"),
+      error: {
+        kind: "authentication",
+        reason: "unauthorized",
+        message: "The selected gateway rejected authentication.",
+      },
+    });
+
+    expect(
+      await gatewayRuntime.recoverNamedGatewayRuntime({
+        authorizeExactTargetTransportRecovery: true,
+        gatewayName: "nemoclaw-8090",
+        runtimeSelection: { gatewayName: "nemoclaw-8090", workspace: "default" },
+      }),
+    ).toMatchObject({ recovered: false, attempted: false });
+    expect(run).not.toHaveBeenCalled();
+    expect(start).not.toHaveBeenCalled();
   });
 
   it("stops recovery after selection when the next observation fails (#10421)", async () => {
