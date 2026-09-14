@@ -180,3 +180,29 @@ async fn sandbox_exec_deadline_bounds_a_stream_that_never_finishes() {
     );
     assert!(result.unwrap().is_err());
 }
+
+#[tokio::test]
+async fn incomplete_desired_ownership_is_rejected_before_any_create() {
+    for missing in ["owner", "generation", "name"] {
+        let fixture = Fixture::start().await;
+        let gateway = nemoclaw_sdk::config::Gateway {
+            management: "external".into(),
+            endpoint: fixture.endpoint.clone(),
+            ..Default::default()
+        };
+        let client = OpenShell::connect(&gateway, Arc::new(EnvironmentSecrets)).unwrap();
+        let mut desired: nemoclaw_sdk::backend::Row = [
+            ("name".into(), "workspace".into()),
+            ("owner".into(), "owner".into()),
+            ("generation".into(), "generation".into()),
+        ]
+        .into();
+        desired.remove(missing);
+        assert!(client.ensure("workspace", &desired).await.error.is_some());
+        assert_eq!(
+            fixture.state.lock().unwrap().effects,
+            0,
+            "missing {missing} must not leave an unowned resource"
+        );
+    }
+}

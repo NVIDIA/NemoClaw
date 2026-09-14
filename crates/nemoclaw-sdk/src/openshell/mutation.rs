@@ -311,6 +311,33 @@ impl Backend for OpenShell {
         .await
     }
     async fn ensure(&self, kind: &str, desired: &Row) -> Mutation {
+        let fields: &[&str] = match kind {
+            "workspace" => &["name", "owner", "generation"],
+            "provider" => &["name", "owner", "generation", "workspace", "endpoint"],
+            "route" => &[
+                "name",
+                "owner",
+                "generation",
+                "workspace",
+                "provider_name",
+                "model",
+            ],
+            "sandbox" => &[
+                "name",
+                "owner",
+                "generation",
+                "workspace",
+                "image",
+                "agent_name",
+            ],
+            _ => return Mutation::failed(ObservationError::Query),
+        };
+        if fields
+            .iter()
+            .any(|field| value(desired, field).is_empty() || value(desired, field).contains('\0'))
+        {
+            return Mutation::failed(ObservationError::Incomplete);
+        }
         self.reconcile(kind, desired).await
     }
     async fn remove(
