@@ -122,7 +122,13 @@ export function discoverActiveOllamaSandboxNames(
     const activeSandboxes: string[] = [];
     for (const peerName of peerNames) {
       const phase = phases.get(peerName);
-      if (phase === undefined || phase === "Error" || phase === "Failed" || phase === "Evicted") {
+      if (
+        phase === undefined ||
+        phase === "Stopped" ||
+        phase === "Error" ||
+        phase === "Failed" ||
+        phase === "Evicted"
+      ) {
         continue;
       }
       if (phase === null || phase === "Unknown") {
