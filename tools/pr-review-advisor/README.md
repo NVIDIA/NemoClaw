@@ -64,7 +64,7 @@ findings, findings with exclusions, credential-bearing validation paths, workflo
 and other paths outside the narrow repair allowlist fail closed.
 
 Before claiming model work, every dispatch starts a credential-free recovery boundary and
-reconciles every earlier sandbox name for the same workflow run. It then claims the exact PR head,
+reconciles the stable PR-scoped sandbox used by earlier dispatches and retries. It then claims the exact PR head,
 Advisor run attempt, and selected finding set. The claim is one-shot even when resolution,
 validation, or publication later fails. A job rerun can repeat recovery but cannot repeat model
 work, so do not rerun the same attempt blindly. The workflow then:
@@ -110,7 +110,7 @@ Authors and coding agents should follow the shared [PR CI and Review Follow-Up](
 - The gate uses a job-scoped GitHub token to read open PR identity. It receives no model credential.
 - A separate trusted host step collects deterministic GitHub context with `github.token` and writes a bounded, identity-checked context file before model work. The sandbox receives that file, not the token.
 - The OpenShell gateway binds only to loopback and holds the upstream provider credential. The sandbox uses `https://inference.local/v1` with an inert SDK key, and receives neither the provider credential nor a GitHub token.
-- The separate publisher has pull-request write permission, but receives neither the model secret, specialist artifacts, nor the untrusted PR worktree. It rechecks the latest PR commit immediately before posting only the workflow-run link.
+- The normal Advisor comment publisher has pull-request write permission, but receives neither the model secret, specialist artifacts, nor the untrusted PR worktree. It rechecks the latest PR commit immediately before posting only the workflow-run link. The separate manual repair publisher receives protected `contents: write` authority only after validation and can compare-and-swap one verified commit onto the PR branch when all publication controls pass.
 - Sticky publication updates only a marker-bearing comment owned by `github-actions[bot]`; a user-authored marker cannot claim the update target. Publication errors remain visible in the publisher logs.
 - The workflow posts advisory comments only; it does not approve, request changes, merge, push, label, or dispatch E2E.
 - The checked-in risk plan is deterministic and additive. PR Review Advisor reviews every listed invariant and required job for missing evidence, but does not dispatch jobs. Maintainers decide whether to run its recommended E2E coverage through the [separate manual E2E procedure](../../.agents/skills/nemoclaw-maintainer-day/MERGE-GATE.md).
@@ -177,8 +177,11 @@ workflow run also displays each Markdown review as a job summary. Replace `<inte
 specialist interest and `<attempt>` with the workflow run attempt number, then download the artifact
 with `gh run download <run-id> --name pr-review-specialist-<interest>-<attempt>`.
 
-The publisher has the only pull-request write permission. It receives neither the model credential
-nor the specialist artifacts. It posts only the workflow-run link.
+The normal Advisor comment publisher has the only pull-request write permission in the review
+workflow. It receives neither the model credential nor the specialist artifacts and posts only the
+workflow-run link. The separate manual repair workflow can give its protected publisher
+`contents: write` authority after validation; that publisher can compare-and-swap one verified
+commit onto the PR branch when all publication controls pass.
 
 ## Local run
 

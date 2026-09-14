@@ -67,25 +67,17 @@ function writeCleanupReceipt<
   return receipt;
 }
 
-const MAX_REPAIR_RUN_ATTEMPTS = 100;
-
 function advisorRepairSandboxIdentity(env: NodeJS.ProcessEnv): {
   current: string;
   previous: string[];
 } {
-  const runId = required(env.GITHUB_RUN_ID, "GITHUB_RUN_ID");
-  const attemptText = required(env.GITHUB_RUN_ATTEMPT, "GITHUB_RUN_ATTEMPT");
-  if (!/^[1-9]\d*$/u.test(runId) || runId.length > 20 || !/^[1-9]\d*$/u.test(attemptText))
-    throw new RepairError("Advisor repair run identity is invalid");
-  const attempt = Number(attemptText);
-  if (!Number.isSafeInteger(attempt) || attempt > MAX_REPAIR_RUN_ATTEMPTS)
-    throw new RepairError("Advisor repair run attempt is invalid");
+  const prNumber = required(env.PR_NUMBER, "PR_NUMBER");
+  if (!/^[1-9]\d*$/u.test(prNumber) || prNumber.length > 15)
+    throw new RepairError("Advisor repair PR identity is invalid");
+  const sandboxName = `advisor-repair-pr-${prNumber}`;
   return {
-    current: `advisor-repair-${runId}-${attempt}`,
-    previous: Array.from(
-      { length: attempt - 1 },
-      (_, index) => `advisor-repair-${runId}-${index + 1}`,
-    ),
+    current: sandboxName,
+    previous: [sandboxName],
   };
 }
 
@@ -308,7 +300,7 @@ export function reconcilePreviousAdvisorRepairSandboxes(
 ): AdvisorRepairReconciliationReceipt {
   const identity = advisorRepairSandboxIdentity(env);
   if (required(env.SANDBOX_NAME, "SANDBOX_NAME") !== identity.current)
-    throw new RepairError("Advisor repair sandbox identity does not match the workflow run");
+    throw new RepairError("Advisor repair sandbox identity does not match the pull request");
   const reconciledSandboxNames: string[] = [];
   try {
     for (const sandboxName of identity.previous) {

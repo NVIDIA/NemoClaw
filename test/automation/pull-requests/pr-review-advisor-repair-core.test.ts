@@ -8,6 +8,7 @@ import {
   allowedRepairPath,
   bindRepairSelection,
   expectedAdvisorRepairArtifactNames,
+  repairModelContext,
   selectRepairFindings,
 } from "../../../tools/pr-review-advisor/repair-contract.mts";
 import { selectedAdvisorArtifactIds } from "../../../tools/pr-review-advisor/repair-select.mts";
@@ -43,6 +44,67 @@ function ledgers() {
           : { findings: [], noFindingsReason: "No blocker in this specialist area." },
     }),
   );
+}
+
+function repairRequest(
+  state: unknown = { pull: { state: "open" }, comments: [], reviewComments: [] },
+) {
+  const findingLedgers = ledgers();
+  const findingId = findingLedgers.flatMap(({ findings }) => findings)[0]!.id;
+  const artifactNames = expectedAdvisorRepairArtifactNames(77, 2);
+  return {
+    repository: "NVIDIA/NemoClaw",
+    prNumber: 42,
+    sourceHeadSha: headSha,
+    sourceBaseSha: baseSha,
+    workflowSha,
+    actor: "maintainer",
+    triggeringActor: "maintainer",
+    currentRunId: 77,
+    currentRunAttempt: 2,
+    optedFindingIds: [findingId],
+    pullRequest: {
+      state: "open",
+      draft: false,
+      user: { login: "contributor" },
+      head: { ref: "fix/example", sha: headSha, repo: { full_name: "NVIDIA/NemoClaw" } },
+      base: {
+        ref: "main",
+        sha: baseSha,
+        repo: { full_name: "NVIDIA/NemoClaw", node_id: "R_repo" },
+      },
+    },
+    sourceCommit: { commit: { message: "fix: correct example" } },
+    advisorRun: {
+      id: 77,
+      run_attempt: 2,
+      event: "workflow_dispatch",
+      status: "completed",
+      conclusion: "success",
+      path: ".github/workflows/pr-review-advisor.yaml",
+      workflow_sha: workflowSha,
+      repository: { full_name: "NVIDIA/NemoClaw" },
+      pull_requests: [],
+    },
+    advisorWorkflowComparison: {
+      status: "identical",
+      base_commit: { sha: workflowSha },
+      merge_base_commit: { sha: workflowSha },
+    },
+    artifacts: artifactNames.map((name, index) => ({
+      id: index + 100,
+      name,
+      expired: false,
+      workflow_run: { id: 77 },
+    })),
+    ledgers: findingLedgers,
+    state,
+    reviews: [],
+    permissions: {
+      actor: { permission: "write", role_name: "maintain" },
+      triggeringActor: { permission: "admin", role_name: "admin" },
+    },
+  };
 }
 
 describe("PR Review Advisor repair core", () => {
@@ -83,62 +145,8 @@ describe("PR Review Advisor repair core", () => {
   });
 
   it("binds a separate repair run to one completed exact Advisor attempt (#10791)", () => {
-    const findingLedgers = ledgers();
-    const findingId = findingLedgers.flatMap(({ findings }) => findings)[0]!.id;
-    const artifactNames = expectedAdvisorRepairArtifactNames(77, 2);
-    const request = {
-      repository: "NVIDIA/NemoClaw",
-      prNumber: 42,
-      sourceHeadSha: headSha,
-      sourceBaseSha: baseSha,
-      workflowSha,
-      actor: "maintainer",
-      triggeringActor: "maintainer",
-      currentRunId: 77,
-      currentRunAttempt: 2,
-      optedFindingIds: [findingId],
-      pullRequest: {
-        state: "open",
-        draft: false,
-        user: { login: "contributor" },
-        head: { ref: "fix/example", sha: headSha, repo: { full_name: "NVIDIA/NemoClaw" } },
-        base: {
-          ref: "main",
-          sha: baseSha,
-          repo: { full_name: "NVIDIA/NemoClaw", node_id: "R_repo" },
-        },
-      },
-      sourceCommit: { commit: { message: "fix: correct example" } },
-      advisorRun: {
-        id: 77,
-        run_attempt: 2,
-        event: "workflow_dispatch",
-        status: "completed",
-        conclusion: "success",
-        path: ".github/workflows/pr-review-advisor.yaml",
-        workflow_sha: workflowSha,
-        repository: { full_name: "NVIDIA/NemoClaw" },
-        pull_requests: [],
-      },
-      advisorWorkflowComparison: {
-        status: "identical",
-        base_commit: { sha: workflowSha },
-        merge_base_commit: { sha: workflowSha },
-      },
-      artifacts: artifactNames.map((name, index) => ({
-        id: index + 100,
-        name,
-        expired: false,
-        workflow_run: { id: 77 },
-      })),
-      ledgers: findingLedgers,
-      state: { pull: { state: "open" }, comments: [], reviewComments: [] },
-      reviews: [],
-      permissions: {
-        actor: { permission: "write", role_name: "maintain" },
-        triggeringActor: { permission: "admin", role_name: "admin" },
-      },
-    };
+    const request = repairRequest();
+    const findingId = request.ledgers.flatMap(({ findings }) => findings)[0]!.id;
 
     expect(bindRepairSelection(request)).toMatchObject({
       sourceHeadSha: headSha,
@@ -190,5 +198,41 @@ describe("PR Review Advisor repair core", () => {
         advisorRun: { ...request.advisorRun, status: "in_progress", conclusion: null },
       }),
     ).toThrow("successful trusted workflow revision");
+  });
+
+  it("redacts unlabelled credential shapes before model egress (#10791)", () => {
+    const awsCredential = ["AKIA", "ABCDEFGHIJKLMNOP"].join("");
+    const jwtCredential = ["eyJabcdef", "payload123", "signature123"].join(".");
+    const privateKeyLabel = ["PRIVATE", "KEY"].join(" ");
+    const state = {
+      pull: {
+        state: "open",
+        title: `AWS credential ${awsCredential}`,
+        body: [
+          `JWT ${jwtCredential}`,
+          `-----BEGIN ${privateKeyLabel}-----`,
+          "private-key-body",
+          `-----END ${privateKeyLabel}-----`,
+        ].join("\n"),
+      },
+      comments: [],
+      reviewComments: [],
+    };
+    const request = repairRequest(state);
+    const selection = bindRepairSelection(request);
+    const context = JSON.stringify(
+      repairModelContext(selection, {
+        state,
+        reviews: request.reviews,
+        specialistSummaries: Object.fromEntries(
+          ADVISOR_INTERESTS.map((interest) => [interest, `${interest} is clear.`]),
+        ),
+      }),
+    );
+
+    expect(context).not.toContain(awsCredential);
+    expect(context).not.toContain(jwtCredential);
+    expect(context).not.toContain(privateKeyLabel);
+    expect(context).toContain("[credential removed]");
   });
 });

@@ -48,7 +48,12 @@
     },
     {
       "file": "test/automation/pull-requests/pr-review-advisor-repair-workflow.test.ts",
-      "test": "recovers earlier retry sandboxes before claiming model work (#10791)",
+      "test": "recovers the PR-scoped sandbox before claiming model work (#10791)",
+      "category": "security"
+    },
+    {
+      "file": "test/automation/pull-requests/pr-review-advisor-repair-workflow.test.ts",
+      "test": "retains protected publication inputs through the approval window (#10791)",
       "category": "security"
     },
     {

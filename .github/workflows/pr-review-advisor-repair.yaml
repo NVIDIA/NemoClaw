@@ -200,10 +200,10 @@ jobs:
           name: advisor-repair-selection-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/selection/
           if-no-files-found: error
-          retention-days: 1
+          retention-days: 31
 
   recover:
-    name: Reconcile every earlier retry sandbox
+    name: Reconcile the PR-scoped repair sandbox
     needs: select
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -211,7 +211,8 @@ jobs:
       contents: read
     env:
       OPENSHELL_GATEWAY_ENDPOINT: http://127.0.0.1:8080
-      SANDBOX_NAME: advisor-repair-${{ github.run_id }}-${{ github.run_attempt }}
+      PR_NUMBER: ${{ inputs.pr_number }}
+      SANDBOX_NAME: advisor-repair-pr-${{ inputs.pr_number }}
       TRUSTED_CHECKOUT: ${{ github.workspace }}/trusted
     steps:
       - name: Checkout trusted recovery code
@@ -241,7 +242,7 @@ jobs:
             NEMOCLAW_NON_INTERACTIVE=1 \
             bash "$TRUSTED_CHECKOUT/scripts/install-openshell.sh"
 
-      - name: Reconcile every earlier retry sandbox before claiming model work
+      - name: Reconcile the PR-scoped sandbox before claiming model work
         env:
           RECONCILIATION_RECEIPT_FILE: ${{ runner.temp }}/reconciliation.json
         run: node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/pr-review-advisor/repair-resolve.mts" recover
@@ -275,7 +276,8 @@ jobs:
       REPAIR_DOWNLOAD_DIR: ${{ github.workspace }}/.repair/download
       RESOLUTION_WORKDIR: ${{ github.workspace }}/.repair/workspace
       RESOLVER_CONFIG_DIR: ${{ github.workspace }}/.repair/pi-config
-      SANDBOX_NAME: advisor-repair-${{ github.run_id }}-${{ github.run_attempt }}
+      PR_NUMBER: ${{ inputs.pr_number }}
+      SANDBOX_NAME: advisor-repair-pr-${{ inputs.pr_number }}
       SELECTION_DIR: ${{ github.workspace }}/.repair/selection
       SOURCE_REPOSITORY: ${{ github.workspace }}/source
       TRUSTED_CHECKOUT: ${{ github.workspace }}/trusted
@@ -378,7 +380,7 @@ jobs:
           name: advisor-repair-candidate-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ env.ARTIFACT_DIR }}/
           if-no-files-found: error
-          retention-days: 1
+          retention-days: 31
 
   claim:
     name: Claim the exact one-shot attempt
@@ -509,7 +511,7 @@ jobs:
           name: advisor-repair-validated-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/validated/
           if-no-files-found: error
-          retention-days: 1
+          retention-days: 31
 
   publish:
     name: Publish with protected compare-and-swap authority

@@ -140,14 +140,20 @@ describe("manual PR Review Advisor repair workflow", () => {
     expect(claim).toContain("repair-claim.mts");
   });
 
-  // source-shape-contract: security -- A retry must reconcile every prior sandbox before the permanent model-attempt claim can reject repeated execution
-  it("recovers earlier retry sandboxes before claiming model work (#10791)", () => {
-    const recover = serialized(workflow.jobs.recover);
+  // source-shape-contract: security -- A stable PR-scoped identity lets every dispatch reconcile the same sandbox before the permanent model-attempt claim
+  it("recovers the PR-scoped sandbox before claiming model work (#10791)", () => {
+    const recoverJob = workflow.jobs.recover;
+    const resolveJob = workflow.jobs.resolve;
+    const recover = serialized(recoverJob);
     const claim = workflow.jobs.claim;
 
     expect(recover).toContain('repair-resolve.mts\\" recover');
+    expect(recoverJob.env?.PR_NUMBER).toBe("${{ inputs.pr_number }}");
+    expect(recoverJob.env?.SANDBOX_NAME).toBe("advisor-repair-pr-${{ inputs.pr_number }}");
+    expect(resolveJob.env?.PR_NUMBER).toBe("${{ inputs.pr_number }}");
+    expect(resolveJob.env?.SANDBOX_NAME).toBe("advisor-repair-pr-${{ inputs.pr_number }}");
     expect(claim.needs).toContain("recover");
-    expect(serialized(workflow.jobs.resolve)).not.toContain('repair-resolve.mts\\" recover');
+    expect(serialized(resolveJob)).not.toContain('repair-resolve.mts\\" recover');
   });
 
   // source-shape-contract: security -- A failed create can still allocate a sandbox, so cleanup must always attempt idempotent deletion
@@ -170,6 +176,23 @@ describe("manual PR Review Advisor repair workflow", () => {
     expect(cleanupUpload?.if).toBe("${{ always() }}");
     expect(cleanupUpload?.with?.path).toBe("${{ runner.temp }}/cleanup.json");
     expect(cleanupUpload?.with?.["retention-days"]).toBe(1);
+  });
+
+  // source-shape-contract: security -- Protected publication inputs must remain available for validation throughout GitHub's approval window
+  it("retains protected publication inputs through the approval window (#10791)", () => {
+    const selection = (workflow.jobs.select.steps ?? []).find((step) =>
+      String(step.with?.name ?? "").startsWith("advisor-repair-selection-"),
+    );
+    const candidate = (workflow.jobs.resolve.steps ?? []).find((step) =>
+      String(step.with?.name ?? "").startsWith("advisor-repair-candidate-"),
+    );
+    const validated = (workflow.jobs.validate.steps ?? []).find((step) =>
+      String(step.with?.name ?? "").startsWith("advisor-repair-validated-"),
+    );
+
+    expect(selection?.with?.["retention-days"]).toBe(31);
+    expect(candidate?.with?.["retention-days"]).toBe(31);
+    expect(validated?.with?.["retention-days"]).toBe(31);
   });
 
   // source-shape-contract: security -- A model-declared no-repair outcome must never cross into candidate execution or protected publication

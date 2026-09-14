@@ -88,11 +88,11 @@ function selection(sourceHeadSha = "a".repeat(40)): RepairSelection {
 }
 
 describe("PR Review Advisor two-turn resolver", () => {
-  it("recovers every earlier bounded retry before model work (#10791)", async () => {
+  it("recovers the PR-scoped sandbox across fresh dispatches before model work (#10791)", async () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-repair-recovery-"));
     temporaryDirectories.push(directory);
     const stopGateway = vi.fn(async () => undefined);
-    const sandboxNames = "advisor-repair-123-1\nadvisor-repair-123-2\nadvisor-repair-123-3\n";
+    const sandboxNames = "advisor-repair-pr-42\n";
     const run = vi
       .fn<OpenShellTools["run"]>()
       .mockReturnValueOnce("/trusted/bin/openshell-sandbox")
@@ -113,28 +113,25 @@ describe("PR Review Advisor two-turn resolver", () => {
     };
     const receiptFile = path.join(directory, "reconciliation.json");
     const env = {
-      GITHUB_RUN_ATTEMPT: "4",
-      GITHUB_RUN_ID: "123",
+      GITHUB_RUN_ATTEMPT: "1",
+      GITHUB_RUN_ID: "456",
       GITHUB_TOKEN: "must-not-cross-boundary",
       HOME: directory,
       OPENAI_API_KEY: "must-not-cross-boundary",
       OPENSHELL_GATEWAY_ENDPOINT: "http://127.0.0.1:8080",
       PATH: "/usr/bin",
+      PR_NUMBER: "42",
       PR_REVIEW_ADVISOR_API_KEY: "must-not-cross-boundary",
       RUNNER_TEMP: directory,
-      SANDBOX_NAME: "advisor-repair-123-4",
+      SANDBOX_NAME: "advisor-repair-pr-42",
     };
 
     const receipt = await recoverAdvisorRepairSandboxes(env, receiptFile, tools);
 
     expect(receipt).toEqual({
       version: 1,
-      sandboxNames: ["advisor-repair-123-1", "advisor-repair-123-2", "advisor-repair-123-3"],
-      reconciledSandboxNames: [
-        "advisor-repair-123-1",
-        "advisor-repair-123-2",
-        "advisor-repair-123-3",
-      ],
+      sandboxNames: ["advisor-repair-pr-42"],
+      reconciledSandboxNames: ["advisor-repair-pr-42"],
       outcome: "success",
       error: null,
     });
@@ -143,7 +140,7 @@ describe("PR Review Advisor two-turn resolver", () => {
       run.mock.calls
         .filter(([, args]) => args[0] === "sandbox" && args[1] === "delete")
         .map(([, args]) => args.at(-1)),
-    ).toEqual(["advisor-repair-123-1", "advisor-repair-123-2", "advisor-repair-123-3"]);
+    ).toEqual(["advisor-repair-pr-42"]);
     const commandEnvironments = JSON.stringify(run.mock.calls.map(([, , options]) => options.env));
     expect(commandEnvironments).not.toContain("GITHUB_TOKEN");
     expect(commandEnvironments).not.toContain("OPENAI_API_KEY");
@@ -155,11 +152,9 @@ describe("PR Review Advisor two-turn resolver", () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-repair-recovery-"));
     temporaryDirectories.push(directory);
     const receiptFile = path.join(directory, "reconciliation.json");
-    const sandboxNames = "advisor-repair-123-1\nadvisor-repair-123-2\nadvisor-repair-123-3\n";
+    const sandboxNames = "advisor-repair-pr-42\n";
     const run = vi
       .fn<OpenShellTools["run"]>()
-      .mockReturnValueOnce(sandboxNames)
-      .mockReturnValueOnce("")
       .mockReturnValueOnce(sandboxNames)
       .mockImplementationOnce(() => {
         throw new Error("delete failed");
@@ -174,24 +169,25 @@ describe("PR Review Advisor two-turn resolver", () => {
     expect(() =>
       reconcilePreviousAdvisorRepairSandboxes(
         {
-          GITHUB_RUN_ATTEMPT: "4",
-          GITHUB_RUN_ID: "123",
+          GITHUB_RUN_ATTEMPT: "1",
+          GITHUB_RUN_ID: "456",
           HOME: directory,
           PATH: "/usr/bin",
-          SANDBOX_NAME: "advisor-repair-123-4",
+          PR_NUMBER: "42",
+          SANDBOX_NAME: "advisor-repair-pr-42",
         },
         receiptFile,
         tools,
       ),
-    ).toThrow("Failed to delete OpenShell sandbox advisor-repair-123-2");
+    ).toThrow("Failed to delete OpenShell sandbox advisor-repair-pr-42");
     expect(
       run.mock.calls
         .filter(([, args]) => args[0] === "sandbox" && args[1] === "delete")
         .map(([, args]) => args.at(-1)),
-    ).toEqual(["advisor-repair-123-1", "advisor-repair-123-2"]);
+    ).toEqual(["advisor-repair-pr-42"]);
     expect(JSON.parse(fs.readFileSync(receiptFile, "utf8"))).toMatchObject({
-      sandboxNames: ["advisor-repair-123-1", "advisor-repair-123-2", "advisor-repair-123-3"],
-      reconciledSandboxNames: ["advisor-repair-123-1"],
+      sandboxNames: ["advisor-repair-pr-42"],
+      reconciledSandboxNames: [],
       outcome: "failure",
     });
   });

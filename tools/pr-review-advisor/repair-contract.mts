@@ -568,6 +568,17 @@ function modelText(value: unknown, selection: RepairSelection, maximumCharacters
   ].filter((identity) => identity.length >= 3);
   for (const identity of identities) result = result.split(identity).join("[identity removed]");
   return result
+    .replace(
+      /-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----[\s\S]*?(?:-----END (?:[A-Z0-9]+ )*PRIVATE KEY-----|$)/gu,
+      "[credential removed]",
+    )
+    .replace(/\b(?:AKIA|ASIA)[0-9A-Z]{12,}\b/gu, "[credential removed]")
+    .replace(
+      /\beyJ[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{6,}\b/gu,
+      "[credential removed]",
+    )
+    .replace(/\bhf_[A-Za-z0-9]{16,}\b/gu, "[credential removed]")
+    .replace(/\bxox[abprs]-[A-Za-z0-9-]{8,}\b/gu, "[credential removed]")
     .replace(/(?:github_pat_|ghp_|nvapi-|sk-)[A-Za-z0-9_-]{20,}/gu, "[credential removed]")
     .replace(
       /((?:api[_-]?key|authorization|password|secret|token)\s*[:=]\s*)(?:"[^"]*"|'[^']*'|\S+)/giu,
