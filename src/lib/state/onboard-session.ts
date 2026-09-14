@@ -77,6 +77,7 @@ import {
   isOnboardStateLockOwned,
   onboardStateRoot,
   releaseOnboardStateLock,
+  type OnboardLockResult,
   type OnboardStateLockHandle,
 } from "./onboard-session/lock";
 import type { SandboxEntry, SandboxHostMount } from "./registry/types";
@@ -84,6 +85,10 @@ import { hasUnsafeHostMountTerminalText } from "./registry/host-mount";
 
 export { normalizePersistedSandboxHostMounts } from "./registry/host-mount";
 export type { RetainedSandboxRecoveryRecord } from "./onboard-session/retained-sandbox-recovery";
+export type {
+  OnboardLockInfo as LockInfo,
+  OnboardLockResult as LockResult,
+} from "./onboard-session/lock";
 
 export const SESSION_VERSION = 1;
 export const MACHINE_SNAPSHOT_VERSION = 1;
@@ -349,21 +354,6 @@ export interface WechatConfig {
   // WeChat user id of the operator who scanned the QR. PII-adjacent but not
   // secret — added to the DM allowlist by default.
   userId?: string;
-}
-
-export interface LockInfo {
-  pid: number;
-  startedAt: string | null;
-  command: string | null;
-}
-
-export interface LockResult {
-  acquired: boolean;
-  lockFile: string;
-  stale: boolean;
-  holderPid?: number;
-  holderStartedAt?: string | null;
-  holderCommand?: string | null;
 }
 
 export interface SessionUpdates {
@@ -1454,7 +1444,7 @@ export function isOnboardLockHeldByCurrentProcess(): boolean {
   return heldLockHandle !== null && isOnboardStateLockOwned(heldLockHandle);
 }
 
-export function acquireOnboardLock(command: string | null = null): LockResult {
+export function acquireOnboardLock(command: string | null = null): OnboardLockResult {
   const acquisition = acquireOnboardStateLock(
     SESSION_DIR,
     process.env.HOME || "/tmp",

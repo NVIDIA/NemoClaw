@@ -74,6 +74,7 @@ interface RunInterruptedUninstallOptions {
   gatewayNames?: string[];
   onLog?: (message: string) => void;
   prepareState?: (stateRoot: string) => void;
+  rmSync?: typeof fs.rmSync;
 }
 
 async function runInterruptedUninstall(
@@ -123,7 +124,7 @@ async function runInterruptedUninstall(
         stateDir: null,
         supervisor: null,
       }),
-      rmSync: fs.rmSync,
+      rmSync: options.rmSync ?? fs.rmSync,
       run: (command, args) => {
         calls.push([command, ...args]);
         return command === "pgrep" || command === "ps"
@@ -325,6 +326,63 @@ describe("interrupted pre-gateway uninstall races (#11395)", () => {
         "Recovered preserved state from an interrupted uninstall: backups",
       );
       expect(fs.existsSync(detachedRoot)).toBe(false);
+    } finally {
+      fs.rmSync(tmpHome, { force: true, recursive: true });
+    }
+  });
+
+  it.each([
+    [
+      "parent",
+      (tmpHome: string, _port: number) => path.join(tmpHome, ".nemoclaw-uninstall-staging"),
+    ],
+    [
+      "selected gateway root",
+      (tmpHome: string, port: number) =>
+        path.join(tmpHome, ".nemoclaw-uninstall-staging", String(port)),
+    ],
+  ])("preserves selected state when the staging %s is broadly accessible", async (_, target) => {
+    const tmpHome = fs.mkdtempSync(path.join(process.cwd(), "nemoclaw-uninstall-unsafe-staging-"));
+    const port = 9123;
+    const stagingPath = target(tmpHome, port);
+    fs.mkdirSync(stagingPath, { mode: 0o700, recursive: true });
+    fs.chmodSync(stagingPath, 0o777);
+    try {
+      const result = await runInterruptedUninstall(tmpHome, port);
+
+      expect(result.outcome.exitCode).toBe(1);
+      expect(fs.existsSync(result.stateRoot)).toBe(true);
+      expect(result.errors.join("\n")).toContain("grants access to group or other users");
+      expect(fs.statSync(stagingPath).mode & 0o777).toBe(0o777);
+    } finally {
+      fs.rmSync(tmpHome, { force: true, recursive: true });
+    }
+  });
+
+  it("reports and preserves detached state when recursive removal fails", async () => {
+    const tmpHome = fs.mkdtempSync(path.join(process.cwd(), "nemoclaw-uninstall-detached-rm-"));
+    const port = 9123;
+    const detachedRoot = path.join(tmpHome, ".nemoclaw-uninstall-staging", String(port));
+    const failRemoval: typeof fs.rmSync = () => {
+      throw new Error("injected detached-state removal failure");
+    };
+    const rmSync: typeof fs.rmSync = (target, options) =>
+      (path.resolve(String(target)) === path.resolve(detachedRoot) ? failRemoval : fs.rmSync)(
+        target,
+        options,
+      );
+    try {
+      const result = await runInterruptedUninstall(tmpHome, port, { rmSync });
+
+      expect(result.outcome.exitCode).toBe(1);
+      expect(fs.existsSync(result.stateRoot)).toBe(false);
+      expect(fs.existsSync(detachedRoot)).toBe(true);
+      expect(result.errors.join("\n")).toContain(
+        `Unable to remove detached interrupted-onboarding state at ${detachedRoot}`,
+      );
+      expect(result.errors.join("\n")).toContain(
+        "Cleanup stopped with recovery state at that path",
+      );
     } finally {
       fs.rmSync(tmpHome, { force: true, recursive: true });
     }

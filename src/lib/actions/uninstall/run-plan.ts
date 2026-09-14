@@ -3607,6 +3607,14 @@ interface InterruptedUninstallStagingPaths {
   root: string;
 }
 
+function interruptedUninstallStagingTrustFailure(stat: fs.Stats): string | null {
+  if (stat.isSymbolicLink() || !stat.isDirectory()) return "it is not a regular directory";
+  if (typeof process.getuid !== "function") return "current-user ownership cannot be verified";
+  if (stat.uid !== process.getuid()) return "it is not owned by the current user";
+  if ((stat.mode & 0o077) !== 0) return "it grants access to group or other users";
+  return null;
+}
+
 function interruptedUninstallStagingPaths(
   paths: UninstallPaths,
   runtime: UninstallRuntime,
@@ -3629,8 +3637,11 @@ function interruptedUninstallStagingPaths(
     if (!isErrnoException(error) || error.code !== "EEXIST") throw error;
   }
   const stat = fs.lstatSync(parent);
-  if (stat.isSymbolicLink() || !stat.isDirectory()) {
-    throw new Error("the interrupted-uninstall staging path is not a trusted directory");
+  const trustFailure = interruptedUninstallStagingTrustFailure(stat);
+  if (trustFailure) {
+    throw new Error(
+      `the interrupted-uninstall staging path is not trusted because ${trustFailure}`,
+    );
   }
   return { parent, root: path.join(parent, String(GATEWAY_PORT)) };
 }
@@ -3651,9 +3662,10 @@ function recoverAbandonedInterruptedUninstallState(
     );
     return false;
   }
-  if (stat.isSymbolicLink() || !stat.isDirectory()) {
+  const trustFailure = interruptedUninstallStagingTrustFailure(stat);
+  if (trustFailure) {
     runtime.warn(
-      `Abandoned interrupted-uninstall state at ${stagingRoot} is not a trusted directory. It was preserved for manual recovery.`,
+      `Abandoned interrupted-uninstall state at ${stagingRoot} is not trusted because ${trustFailure}. It was preserved for manual recovery.`,
     );
     return false;
   }
@@ -3774,7 +3786,14 @@ function removeInterruptedStateRootAfterFinalCleanup(
       }
     }
   }
-  runtime.rmSync(detachedStateRoot, { force: true, recursive: true });
+  try {
+    runtime.rmSync(detachedStateRoot, { force: true, recursive: true });
+  } catch (error) {
+    runtime.warn(
+      `Unable to remove detached interrupted-onboarding state at ${detachedStateRoot}: ${formatError(error)}. Cleanup stopped with recovery state at that path.`,
+    );
+    return false;
+  }
   try {
     fs.rmdirSync(staging.parent);
   } catch {
