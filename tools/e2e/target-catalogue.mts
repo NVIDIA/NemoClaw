@@ -277,6 +277,7 @@ const PI_IMAGE_SOURCE_OWNING_PATHS = [
   "scripts/lib/entrypoint-env-wrapper.sh",
   "scripts/lib/patch-bundled-npm-ip-address.mts",
   "scripts/lib/reviewed-npm-archive.mts",
+  "scripts/lib/reviewed-npm-audit.mts",
   "scripts/lib/reviewed-npm-identity.mts",
   "scripts/lib/sandbox-rlimits.sh",
   "scripts/managed-bootstrap-entrypoint.c",
