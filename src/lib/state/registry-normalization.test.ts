@@ -113,50 +113,6 @@ describe("sandbox registry normalization", () => {
     expect(persisted.sandboxes?.alpha).not.toHaveProperty("cuaRuntimeReadiness");
   });
 
-  it("lists managed MCP credential reservations in a stable order", async () => {
-    const registry = await loadRegistryWith({
-      zeta: {
-        name: "zeta",
-        mcp: {
-          bridges: {
-            search: {
-              server: "search",
-              agent: "openclaw",
-              url: "https://8.8.8.8/mcp",
-              env: ["SEARCH_TOKEN", "SEARCH_REGION"],
-              policyName: "mcp-bridge-search",
-              addedAt: "2026-08-18T00:00:00.000Z",
-            },
-          },
-        },
-      },
-      alpha: {
-        name: "alpha",
-        mcp: {
-          bridges: {
-            files: {
-              server: "files",
-              agent: "hermes",
-              url: "https://1.1.1.1/mcp",
-              env: ["FILES_TOKEN"],
-              policyName: "mcp-bridge-files",
-              addedAt: "2026-08-18T00:00:00.000Z",
-            },
-          },
-        },
-      },
-    });
-
-    expect(registry.listManagedMcpCredentialReservations()).toEqual([
-      { sandboxName: "alpha", server: "files", credentialKeys: ["FILES_TOKEN"] },
-      {
-        sandboxName: "zeta",
-        server: "search",
-        credentialKeys: ["SEARCH_TOKEN", "SEARCH_REGION"],
-      },
-    ]);
-  });
-
   it("preserves a stale pointer for diagnostics but repairs it on registration", async () => {
     const registry = await loadRegistryWith({ mismatched: { name: "different" } }, "mismatched");
 

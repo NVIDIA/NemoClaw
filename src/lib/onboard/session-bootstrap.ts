@@ -7,7 +7,10 @@ import { normalizeProcessExitCode } from "../core/process-exit";
 import type { ServingProfileProvenance } from "../inference/serving/types";
 import { NEMOCLAW_VLLM_GPU_DEVICE_ENV, parseVllmGpuDevice } from "../inference/vllm-models";
 import { PERSONAL_POLICY_TIER_NAME } from "../policy/tiers";
-import { redact, redactFull, redactSensitiveText } from "../security/redact";
+export {
+  redactOnboardDiagnosticText,
+  redactOnboardCommandDiagnosticText,
+} from "./diagnostics/redaction";
 import { isDecisionSelected } from "../state/onboard-checkpoint-decision";
 import {
   deriveCheckpointFromSession,
@@ -224,14 +227,6 @@ export function wrapOnboardDeferredExit<TOptions extends DeferredExitOptions>(
     if (resolvedOptions.deferProcessExit === true) throw deferredExit;
     originalProcessExit(deferredExit.code);
   };
-}
-
-export function redactOnboardDiagnosticText(message: string): string {
-  return redactSensitiveText(message) ?? "";
-}
-
-export function redactOnboardCommandDiagnosticText(message: string): string {
-  return redactSensitiveText(redact(redactFull(message))) ?? "";
 }
 
 export function createPortableOnboardEnvironmentScope(

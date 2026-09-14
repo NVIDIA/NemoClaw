@@ -54,6 +54,7 @@ require.cache[onboardPath] = {
   filename: onboardPath,
   loaded: true,
   exports: {
+    ...require(onboardPath),
     onboard: async () => {
       resolveNonInteractiveBuildCredential({
         provider: "nvidia-prod",

@@ -1,16 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import fs from "node:fs";
-import path from "node:path";
 import { describe, expect, it } from "vitest";
-import YAML from "yaml";
 
 import { parseGatewayInference } from "../../src/lib/inference/config.js";
 import { resolveOnboardManagedBootstrapLaunch } from "../../src/lib/onboard/managed-workload/onboard-orchestration.js";
 import { validateName } from "../../src/lib/runner.js";
 
-const repoRoot = path.resolve(import.meta.dirname, "../..");
 describe("OpenShell 0.0.99 executable contracts", () => {
   it("binds managed Docker activation to the v0.0.99 supervisor workdir argv (#8497)", () => {
     const authorityStore = {};

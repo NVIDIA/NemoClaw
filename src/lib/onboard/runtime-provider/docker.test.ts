@@ -7,6 +7,7 @@ import {
   createDockerRuntimeProviderBundle,
   type DockerRuntimeProviderDependencies,
 } from "./docker";
+import * as dockerCommands from "../../adapters/docker/run";
 import type { RuntimeProviderLifecycleInput } from "./contract";
 
 const GPU_PROOF_RESOURCE = {
@@ -404,5 +405,43 @@ describe("Docker provider OpenShell lifecycle dispatch", () => {
     });
     expect(captureSandboxLifecycle).not.toHaveBeenCalled();
     expect(beforeStop).not.toHaveBeenCalled();
+  });
+});
+
+describe("Docker network command bounds", () => {
+  it("uses the selected socket, output limit, and forced timeout for provisioning (#11606)", () => {
+    const dockerRun = vi.spyOn(dockerCommands, "dockerRun").mockReturnValue({
+      status: null,
+      signal: "SIGKILL",
+      stdout: Buffer.alloc(0),
+      stderr: Buffer.alloc(0),
+      error: Object.assign(new Error("deadline"), { code: "ETIMEDOUT" }),
+      pid: 1,
+      output: [],
+    });
+    const gateway = createDockerRuntimeProviderBundle().gateway as Extract<
+      ReturnType<typeof createDockerRuntimeProviderBundle>["gateway"],
+      { supported: true }
+    >;
+    const runtime = gateway.observeHostRuntime({ environment: {}, platform: "linux" });
+    const args = ["network", "create", "--driver", "bridge", "--attachable", "generic-network"];
+    const result = runtime.network.run(args, 30_000, {
+      maxOutputBytes: 16 * 1024,
+      environment: { DOCKER_HOST: "unix:///run/user/1000/docker.sock" },
+    });
+    expect(dockerRun).toHaveBeenCalledWith(args, {
+      timeout: 30_000,
+      maxBuffer: 16 * 1024,
+      killSignal: "SIGKILL",
+      env: { DOCKER_HOST: "unix:///run/user/1000/docker.sock" },
+      ignoreError: true,
+      suppressOutput: true,
+    });
+    expect(result).toMatchObject({
+      status: null,
+      signal: "SIGKILL",
+      timedOut: true,
+      errorCode: "ETIMEDOUT",
+    });
   });
 });

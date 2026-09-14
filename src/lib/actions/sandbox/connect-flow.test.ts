@@ -51,10 +51,10 @@ function runInferenceRouteThenDriftLiveIdentity(
 function awaitHermesRouteVerification(harness: ReturnType<typeof createConnectHarness>): void {
   harness.recoverHermesPortableOllamaInferenceSpy.mockImplementation((async (input: {
     verifyRoute: () => Promise<unknown>;
-    prepareProbeDependency?: () => { release: () => void };
+    prepareProbeDependency?: () => Promise<{ release: () => void }>;
   }) => {
     await input.verifyRoute();
-    input.prepareProbeDependency?.().release();
+    (await input.prepareProbeDependency?.())?.release();
     return "reused";
   }) as never);
 }
@@ -1131,6 +1131,12 @@ describe("connectSandbox flow", () => {
       forwardsRestored = true;
       harness.forwardServiceOwnerSpy.mockReturnValue(true);
       options?.verifyReady?.();
+      options?.retainOwnership?.({
+        terminate: () => {
+          forwardsRestored = false;
+          harness.forwardServiceOwnerSpy.mockReturnValue(false);
+        },
+      });
     });
 
     await expect(harness.connectSandbox("alpha")).rejects.toThrow("process.exit(0)");
