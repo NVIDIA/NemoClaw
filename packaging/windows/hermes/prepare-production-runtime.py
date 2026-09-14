@@ -23,12 +23,26 @@ PROJECT_TREES = (
     "hermes-agent/evals/",
 )
 WINDOWS_UNUSED_TREES = (
+    "bin/uv.exe",
+    "bin/uvw.exe",
+    "bin/uvx.exe",
     "ffmpeg/",
+    "git/clangarm64/bin/git-lfs.exe",
+    "git/clangarm64/bin/scalar.exe",
+    "git/clangarm64/libexec/git-core/scalar.exe",
     "git/clangarm64/share/doc/",
     "hermes-agent/plugins/platforms/photon/sidecar/",
     "hermes-agent/website/",
     "hermes-agent/.hermes-runtime/python/cpython-3.11.16-windows-aarch64-none/Lib/site-packages/pip",
     "hermes-agent/.hermes-runtime/python/cpython-3.11.16-windows-aarch64-none/Lib/site-packages/setuptools",
+    "node/CHANGELOG.md",
+    "node/README.md",
+    "node/corepack",
+    "node/install_tools.bat",
+    "node/node_modules/",
+    "node/nodevars.bat",
+    "node/npm",
+    "node/npx",
 )
 DECLARATIONS = (".d.ts", ".d.mts", ".d.cts")
 # Git 2.54 help opens generated HTML/man/info; these are their build inputs.
