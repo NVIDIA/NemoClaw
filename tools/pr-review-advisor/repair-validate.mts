@@ -14,6 +14,7 @@ import {
   repairValidationPlan,
   type RepairSelection,
   type ValidatedCandidate,
+  validateRepairPatch,
   validationReceipt,
 } from "./repair-contract.mts";
 
@@ -106,6 +107,33 @@ export function validateAndSealRepair(input: {
   );
 }
 
+export function reconstructAndSealRepair(input: {
+  selection: RepairSelection;
+  sourceCheckout: string;
+  candidateDirectory: string;
+  patchFile: string;
+  proposalFile: string;
+  outputDirectory: string;
+  run?: RepairValidationRunner;
+}): ValidatedCandidate {
+  const candidate = validateRepairPatch({
+    sourceCheckout: input.sourceCheckout,
+    destination: input.candidateDirectory,
+    selection: input.selection,
+    patchFile: input.patchFile,
+    proposalFile: input.proposalFile,
+  });
+  validateAndSealRepair({
+    selection: input.selection,
+    candidate,
+    candidateDirectory: input.candidateDirectory,
+    patchFile: input.patchFile,
+    outputDirectory: input.outputDirectory,
+    run: input.run,
+  });
+  return candidate;
+}
+
 function required(value: string | undefined, name: string): string {
   if (!value) throw new Error(`${name} is required`);
   return value;
@@ -113,11 +141,18 @@ function required(value: string | undefined, name: string): string {
 
 function main(): void {
   const inputDirectory = required(process.env.INPUT_DIR, "INPUT_DIR");
-  validateAndSealRepair({
-    selection: parseSelection(readJson(path.join(inputDirectory, "context", "selection.json"))),
-    candidate: readJson(path.join(inputDirectory, "candidate.json")) as ValidatedCandidate,
-    candidateDirectory: required(process.env.CANDIDATE_DIR, "CANDIDATE_DIR"),
-    patchFile: path.join(inputDirectory, "candidate", "repair.patch"),
+  const candidateArtifactDirectory = path.join(inputDirectory, "candidate");
+  const selection = parseSelection(
+    readJson(path.join(inputDirectory, "context", "selection.json")),
+  );
+  const candidateDirectory = required(process.env.CANDIDATE_DIR, "CANDIDATE_DIR");
+  const patchFile = path.join(candidateArtifactDirectory, "repair.patch");
+  reconstructAndSealRepair({
+    selection,
+    sourceCheckout: required(process.env.SOURCE_REPOSITORY, "SOURCE_REPOSITORY"),
+    candidateDirectory,
+    patchFile,
+    proposalFile: path.join(candidateArtifactDirectory, "proposal.json"),
     outputDirectory: required(process.env.OUTPUT_DIR, "OUTPUT_DIR"),
   });
 }

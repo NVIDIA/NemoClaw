@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { appendFileSync } from "node:fs";
+import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 import {
@@ -12,6 +13,7 @@ import {
   updateVerifiedRef,
 } from "../pull-requests/publication.mts";
 import {
+  assertRepairArtifactDirectory,
   assertLiveRepairState,
   assertValidatedRepair,
   fullSha,
@@ -31,6 +33,14 @@ export async function prepareAdvisorRepair(input: {
   receiptPath: string;
   workDirectory: string;
 }): Promise<string> {
+  assertRepairArtifactDirectory(path.dirname(input.selectionPath), {
+    "model-context.json": 5 * 1024 * 1024,
+    "selection.json": 1024 * 1024,
+  });
+  assertRepairArtifactDirectory(path.dirname(input.receiptPath), {
+    "repair.patch": 2 * 1024 * 1024,
+    "validation.json": 1024 * 1024,
+  });
   const selection = parseSelection(readJson(input.selectionPath));
   const receipt = parseValidationReceipt(readJson(input.receiptPath));
   const candidate = validateRepairPatch({

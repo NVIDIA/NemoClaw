@@ -9,6 +9,7 @@ import {
   bindRepairSelection,
   selectRepairFindings,
 } from "../../../tools/pr-review-advisor/repair-contract.mts";
+import { selectedAdvisorArtifactIds } from "../../../tools/pr-review-advisor/repair-select.mts";
 import { ADVISOR_INTERESTS } from "../../../tools/pr-review-advisor/specialist-catalog.mts";
 
 const headSha = "a".repeat(40);
@@ -142,6 +143,17 @@ describe("PR Review Advisor repair core", () => {
       findingIds: [findingId],
       advisor: { runId: 77, runAttempt: 2 },
     });
+    expect(selectedAdvisorArtifactIds(request)).toEqual(
+      request.artifacts.map(({ id }) => id).sort((left, right) => left - right),
+    );
+    expect(() =>
+      selectedAdvisorArtifactIds({
+        ...request,
+        artifacts: request.artifacts.map((artifact, index) =>
+          index === 0 ? { ...artifact, expired: true } : artifact,
+        ),
+      }),
+    ).toThrow("Advisor artifact set is incomplete");
     expect(() =>
       bindRepairSelection({
         ...request,

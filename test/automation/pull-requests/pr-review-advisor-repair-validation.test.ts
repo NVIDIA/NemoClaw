@@ -15,10 +15,9 @@ import {
   readJson,
   repairValidationPlan,
   type RepairSelection,
-  validateRepairPatch,
   validationReceipt,
 } from "../../../tools/pr-review-advisor/repair-contract.mts";
-import { validateAndSealRepair } from "../../../tools/pr-review-advisor/repair-validate.mts";
+import { reconstructAndSealRepair } from "../../../tools/pr-review-advisor/repair-validate.mts";
 
 const temporaryDirectories: string[] = [];
 const git = (repository: string, args: string[]): string =>
@@ -128,22 +127,16 @@ describe("PR Review Advisor trusted validation", () => {
         outcome: "proposed",
       }),
     );
-    const candidate = validateRepairPatch({
-      sourceCheckout: source,
-      destination: validated,
-      selection: selected,
-      patchFile,
-      proposalFile,
-    });
     vi.stubEnv("GITHUB_TOKEN", "github-secret");
     vi.stubEnv("OPENAI_API_KEY", "model-secret");
     const environments: NodeJS.ProcessEnv[] = [];
 
-    validateAndSealRepair({
+    const candidate = reconstructAndSealRepair({
       selection: selected,
-      candidate,
-      candidateDirectory: candidate.repository,
+      sourceCheckout: source,
+      candidateDirectory: validated,
       patchFile,
+      proposalFile,
       outputDirectory: output,
       run: (_executable, _arguments, _workingDirectory, environment) => {
         environments.push(environment);

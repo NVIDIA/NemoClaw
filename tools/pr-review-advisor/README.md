@@ -49,6 +49,40 @@ On automatic runs, the gate accepts a successful `CI / Pull Request` run whose n
 `gate true`. It uses the source repository, branch, and commit to resolve one open PR through the
 GitHub API. Manual dispatch does not require CI-run evidence.
 
+## Manual repair workflow
+
+`.github/workflows/pr-review-advisor-repair.yaml` is a maintainer-only, manual workflow for one
+explicitly authorized repair attempt. It does not run after the Advisor automatically. Dispatch it
+from `main` with the exact same-repository PR number, PR head and base commits, successful Advisor
+run ID, and a nonempty JSON array of finding IDs. Set `repository_egress_authorized` only after
+authorizing the bounded repository context to cross the existing Advisor model boundary.
+
+The selected PR must be open, non-draft, based on `main`, and owned by this repository. Both the
+actor and triggering actor must have maintain or admin permission. The workflow accepts only P0 or
+P1 findings from the trusted documentation, reduction, and verification repair classes. Security
+findings, findings with exclusions, credential-bearing validation paths, workflow files, E2E files,
+and other paths outside the narrow repair allowlist fail closed.
+
+Every dispatch claims the exact PR head, Advisor run attempt, and selected finding set before model
+work. The claim is one-shot even when resolution, validation, or publication later fails, so do not
+rerun the same attempt blindly. The workflow then:
+
+1. Downloads the complete Advisor artifact set by immutable artifact ID and binds it to the live PR.
+2. Gives a credential-free OpenShell sandbox an identity-free, bounded context and a Git-free tree
+   made from the exact PR commit, then runs exactly two repair turns.
+3. Reconstructs the proposed patch in a job without model credentials or write permission and runs
+   `npm ci --ignore-scripts --no-audit --no-fund`, `npm run check:diff`, and
+   `npm run test:changed`. A documentation repair also runs `npm run docs`.
+4. Optionally publishes one verified commit with a compare-and-swap update after rechecking that the
+   PR head, discussion, and review state have not changed.
+
+Publication requires all three controls: the dispatch input `repair_publish`, the repository
+variable `PR_REVIEW_ADVISOR_REPAIR_ENABLED=true`, and approval for the protected
+`advisor-repair-publish` environment. Only the protected publisher receives `contents: write`; it
+receives neither the model secret nor the untrusted model workspace. Leave `repair_publish` false to
+generate and validate an artifact without updating the PR branch, while remembering that the run
+still consumes its one-shot claim.
+
 ## Author and agent follow-up
 
 Authors and coding agents should follow the shared [PR CI and Review Follow-Up](../../.agents/skills/_shared/pr-follow-up.md) workflow after opening a PR or pushing follow-up commits. If SSH, authentication, remote access, authorization, or permission problems prevent reading comments or pushing fixes, follow [Git and GitHub Access Hard Stop](../../.agents/skills/_shared/git-github-hard-stop.md).

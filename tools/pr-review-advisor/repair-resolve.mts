@@ -113,6 +113,89 @@ function instructions(selection: RepairSelection): string[] {
   ];
 }
 
+const MATERIALIZED_TREE_LIMIT = 128 * 1024 * 1024;
+
+function trustedGit(repository: string, arguments_: string[], maximum = MATERIALIZED_TREE_LIMIT) {
+  return execFileSync(
+    "git",
+    [
+      "-c",
+      "core.hooksPath=/dev/null",
+      "-c",
+      "filter.lfs.smudge=",
+      "-c",
+      "filter.lfs.process=",
+      ...arguments_,
+    ],
+    {
+      cwd: repository,
+      env: {
+        ...process.env,
+        GIT_CONFIG_GLOBAL: "/dev/null",
+        GIT_CONFIG_NOSYSTEM: "1",
+        GIT_LFS_SKIP_SMUDGE: "1",
+        GIT_TERMINAL_PROMPT: "0",
+      },
+      maxBuffer: maximum + 1,
+    },
+  );
+}
+
+export function materializeAdvisorRepairWorkspace(input: {
+  baseDirectory: string;
+  selectionFile: string;
+  sourceRepository: string;
+  workDirectory: string;
+}): void {
+  const selection = parseSelection(readJson(input.selectionFile));
+  const workRepository = path.join(input.workDirectory, "repo");
+  for (const directory of [input.baseDirectory, input.workDirectory]) {
+    rmSync(directory, { force: true, recursive: true });
+    mkdirSync(directory, { recursive: true, mode: 0o700 });
+  }
+  mkdirSync(workRepository, { recursive: true, mode: 0o700 });
+
+  const records = trustedGit(input.sourceRepository, [
+    "ls-tree",
+    "-rz",
+    "--full-tree",
+    selection.sourceHeadSha,
+  ])
+    .toString("utf8")
+    .split("\0");
+  if (records.at(-1) === "") records.pop();
+  let totalBytes = 0;
+  for (const record of records) {
+    const separator = record.indexOf("\t");
+    const header = separator < 0 ? [] : record.slice(0, separator).split(" ");
+    const file = separator < 0 ? "" : record.slice(separator + 1);
+    const [mode, type, object] = header;
+    if (
+      !file ||
+      file.startsWith("/") ||
+      /[\u0000-\u001f\u007f]/u.test(file) ||
+      path.posix.normalize(file) !== file ||
+      file.split("/").some((part) => part === "." || part === "..") ||
+      !/^[0-9a-f]{40}$/u.test(object ?? "")
+    ) {
+      throw new RepairError("repair source tree contains an invalid path or object");
+    }
+    if (mode === "120000" && type === "blob") continue;
+    if (type !== "blob" || (mode !== "100644" && mode !== "100755")) {
+      throw new RepairError(`repair source tree contains an unsupported object: ${file}`);
+    }
+    const content = trustedGit(input.sourceRepository, ["cat-file", "blob", object!]);
+    totalBytes += content.length;
+    if (totalBytes > MATERIALIZED_TREE_LIMIT)
+      throw new RepairError("repair source tree exceeds the materialization limit");
+    for (const root of [input.baseDirectory, workRepository]) {
+      const destination = path.join(root, file);
+      mkdirSync(path.dirname(destination), { recursive: true, mode: 0o700 });
+      writeFileSync(destination, content, { flag: "wx", mode: mode === "100755" ? 0o755 : 0o644 });
+    }
+  }
+}
+
 export function prepareAdvisorRepairInputs(input: {
   selectionFile: string;
   modelContextFile: string;
@@ -425,6 +508,14 @@ function exportRepair(env: NodeJS.ProcessEnv): void {
 
 async function main(): Promise<void> {
   switch (required(process.argv[2], "repair resolve command")) {
+    case "materialize":
+      materializeAdvisorRepairWorkspace({
+        baseDirectory: required(process.env.REPAIR_BASE_DIR, "REPAIR_BASE_DIR"),
+        selectionFile: required(process.env.SELECTION_FILE, "SELECTION_FILE"),
+        sourceRepository: required(process.env.SOURCE_REPOSITORY, "SOURCE_REPOSITORY"),
+        workDirectory: required(process.env.RESOLUTION_WORKDIR, "RESOLUTION_WORKDIR"),
+      });
+      return;
     case "prepare":
       prepareAdvisorRepairInputs({
         selectionFile: required(process.env.SELECTION_FILE, "SELECTION_FILE"),

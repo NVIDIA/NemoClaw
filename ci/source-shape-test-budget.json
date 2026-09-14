@@ -22,6 +22,26 @@
       "category": "security"
     },
     {
+      "file": "test/automation/pull-requests/pr-review-advisor-repair-workflow.test.ts",
+      "test": "has one manual entrypoint and no ambient permissions (#10791)",
+      "category": "security"
+    },
+    {
+      "file": "test/automation/pull-requests/pr-review-advisor-repair-workflow.test.ts",
+      "test": "separates model access, candidate execution, and protected write authority (#10791)",
+      "category": "security"
+    },
+    {
+      "file": "test/automation/pull-requests/pr-review-advisor-repair-workflow.test.ts",
+      "test": "loads %s executable code only from the immutable workflow revision (#10791)",
+      "category": "security"
+    },
+    {
+      "file": "test/automation/pull-requests/pr-review-advisor-repair-workflow.test.ts",
+      "test": "uses immutable artifact IDs across both trust promotions (#10791)",
+      "category": "security"
+    },
+    {
       "file": "test/e2e/live/hermes-e2e.test.ts",
       "test": "hermes-e2e: install.sh onboards Hermes and proves health plus live inference",
       "category": "security"

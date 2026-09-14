@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -10,7 +11,10 @@ import {
   attemptKey,
   type RepairSelection,
 } from "../../../tools/pr-review-advisor/repair-contract.mts";
-import { prepareAdvisorRepairInputs } from "../../../tools/pr-review-advisor/repair-resolve.mts";
+import {
+  materializeAdvisorRepairWorkspace,
+  prepareAdvisorRepairInputs,
+} from "../../../tools/pr-review-advisor/repair-resolve.mts";
 
 const temporaryDirectories: string[] = [];
 
@@ -20,8 +24,7 @@ afterEach(() => {
   temporaryDirectories.length = 0;
 });
 
-function selection(): RepairSelection {
-  const sourceHeadSha = "a".repeat(40);
+function selection(sourceHeadSha = "a".repeat(40)): RepairSelection {
   const baseSha = "b".repeat(40);
   const findingIds = ["F-documentation-standard-work-example"];
   const key = attemptKey({
@@ -79,6 +82,59 @@ function selection(): RepairSelection {
 }
 
 describe("PR Review Advisor two-turn resolver", () => {
+  it("materializes exact blobs without candidate attributes or symlinks (#10791)", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-repair-materialize-"));
+    temporaryDirectories.push(directory);
+    const repository = path.join(directory, "source");
+    fs.mkdirSync(repository);
+    const git = (arguments_: string[]) =>
+      execFileSync("git", arguments_, {
+        cwd: repository,
+        env: {
+          ...process.env,
+          GIT_CONFIG_GLOBAL: "/dev/null",
+          GIT_CONFIG_NOSYSTEM: "1",
+        },
+      })
+        .toString("utf8")
+        .trim();
+    git(["init", "--initial-branch=main"]);
+    git(["config", "user.name", "Repair Test"]);
+    git(["config", "user.email", "repair@example.test"]);
+    fs.mkdirSync(path.join(repository, "docs"));
+    fs.writeFileSync(path.join(repository, "docs", "example.mdx"), "before\n");
+    fs.writeFileSync(path.join(repository, "script.sh"), "#!/bin/sh\n");
+    fs.chmodSync(path.join(repository, "script.sh"), 0o755);
+    fs.symlinkSync("docs/example.mdx", path.join(repository, "link"));
+    fs.writeFileSync(path.join(repository, ".gitattributes"), "docs/example.mdx export-subst\n");
+    git(["add", "."]);
+    git(["commit", "-m", "test: create source tree"]);
+    const headSha = git(["rev-parse", "HEAD"]);
+    const selectionFile = path.join(directory, "selection.json");
+    fs.writeFileSync(selectionFile, JSON.stringify(selection(headSha)));
+
+    const baseDirectory = path.join(directory, "base");
+    const workDirectory = path.join(directory, "work");
+    materializeAdvisorRepairWorkspace({
+      baseDirectory,
+      selectionFile,
+      sourceRepository: repository,
+      workDirectory,
+    });
+
+    expect(fs.readFileSync(path.join(baseDirectory, "docs", "example.mdx"), "utf8")).toBe(
+      "before\n",
+    );
+    expect(fs.existsSync(path.join(baseDirectory, "link"))).toBe(false);
+    expect(fs.statSync(path.join(baseDirectory, "script.sh")).mode & 0o777).toBe(0o755);
+    const materializedWorktree = path.join(workDirectory, "repo");
+    expect(fs.readFileSync(path.join(materializedWorktree, "docs", "example.mdx"), "utf8")).toBe(
+      "before\n",
+    );
+    expect(fs.existsSync(path.join(materializedWorktree, "link"))).toBe(false);
+    expect(fs.statSync(path.join(materializedWorktree, "script.sh")).mode & 0o777).toBe(0o755);
+  });
+
   it("creates exactly two commit-blind prompts and bounded model input (#10791)", () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-repair-resolver-"));
     temporaryDirectories.push(directory);

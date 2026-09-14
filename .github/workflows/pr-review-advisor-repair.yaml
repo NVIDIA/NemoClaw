@@ -1,0 +1,556 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: Automation / PR Review Advisor Repair
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Open same-repository PR number
+        required: true
+        type: number
+      source_head_sha:
+        description: Exact PR head reviewed by the Advisor
+        required: true
+        type: string
+      base_sha:
+        description: Exact PR base reviewed by the Advisor
+        required: true
+        type: string
+      advisor_run_id:
+        description: Successful exact-head PR Review Advisor run ID
+        required: true
+        type: number
+      finding_ids_json:
+        description: JSON array of exact finding IDs authorized for repair
+        required: true
+        type: string
+      repository_egress_authorized:
+        description: Send bounded repository context through the approved Advisor model boundary
+        required: true
+        default: false
+        type: boolean
+      repair_publish:
+        description: Publish the validated repair through the protected environment
+        required: true
+        default: false
+        type: boolean
+
+permissions: {}
+
+concurrency:
+  group: advisor-repair-${{ inputs.pr_number }}
+  cancel-in-progress: false
+
+env:
+  PI_IMAGE: ghcr.io/nvidia/openshell-community/sandboxes/pi@sha256:00d0c5e9e733f94f6db3eaa2ab70d4fd75bcc4aace6b13a54535cbf2dd20dfcd
+
+jobs:
+  select:
+    name: Bind exact Advisor evidence
+    if: ${{ github.ref == 'refs/heads/main' && inputs.repository_egress_authorized }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
+    outputs:
+      artifact-id: ${{ steps.upload.outputs.artifact-id }}
+      attempt-key: ${{ steps.bind.outputs.attempt-key }}
+      base-sha: ${{ steps.bind.outputs.base-sha }}
+      head-ref: ${{ steps.bind.outputs.head-ref }}
+      source-head-sha: ${{ steps.bind.outputs.source-head-sha }}
+    env:
+      TRUSTED_CHECKOUT: ${{ github.workspace }}/trusted
+    steps:
+      - name: Checkout trusted repair code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: NVIDIA/NemoClaw
+          ref: ${{ github.workflow_sha }}
+          path: trusted
+          persist-credentials: false
+          lfs: false
+          submodules: false
+          sparse-checkout: |
+            package.json
+            package-lock.json
+            tools/advisors
+            tools/e2e
+            tools/post-merge-docs
+            tools/pr-merge-conflict-fixer
+            tools/pr-review-advisor
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: trusted/package-lock.json
+
+      - name: Install trusted dependencies
+        working-directory: ${{ env.TRUSTED_CHECKOUT }}
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - id: collect
+        name: Collect exact live and Advisor state
+        env:
+          ACTOR: ${{ github.actor }}
+          ADVISOR_RUN_ID: ${{ inputs.advisor_run_id }}
+          BASE_SHA: ${{ inputs.base_sha }}
+          FINDING_IDS_JSON: ${{ inputs.finding_ids_json }}
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          SOURCE_HEAD_SHA: ${{ inputs.source_head_sha }}
+          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REPOSITORY" == "NVIDIA/NemoClaw" ]]
+          [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]]
+          [[ "$ADVISOR_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$SOURCE_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          jq -e 'type == "array" and length > 0 and all(.[]; type == "string" and length > 0)' \
+            <<<"$FINDING_IDS_JSON" >/dev/null
+          output="$RUNNER_TEMP/selection-input"
+          mkdir -p "$output"
+          gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" >"$output/pull.json"
+          gh api "repos/$GITHUB_REPOSITORY/commits/$SOURCE_HEAD_SHA" >"$output/source-commit.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$ADVISOR_RUN_ID" >"$output/advisor-run.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$ADVISOR_RUN_ID/artifacts?per_page=100" \
+            --paginate --slurp | jq '[.[] | .artifacts[]]' >"$output/artifacts.json"
+          gh api "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments?per_page=100" \
+            --paginate --slurp | jq '[.[][]]' >"$output/comments.json"
+          gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/comments?per_page=100" \
+            --paginate --slurp | jq '[.[][]]' >"$output/review-comments.json"
+          gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/reviews?per_page=100" \
+            --paginate --slurp | jq '[.[][]]' >"$output/reviews.json"
+          gh api "repos/$GITHUB_REPOSITORY/collaborators/$ACTOR/permission" \
+            >"$output/actor-permission.json"
+          gh api "repos/$GITHUB_REPOSITORY/collaborators/$TRIGGERING_ACTOR/permission" \
+            >"$output/triggering-actor-permission.json"
+          jq -n \
+            --arg actor "$ACTOR" \
+            --argjson currentRunId "$ADVISOR_RUN_ID" \
+            --argjson findingIds "$FINDING_IDS_JSON" \
+            --arg prNumber "$PR_NUMBER" \
+            --arg repository "$GITHUB_REPOSITORY" \
+            --arg sourceBaseSha "$BASE_SHA" \
+            --arg sourceHeadSha "$SOURCE_HEAD_SHA" \
+            --arg triggeringActor "$TRIGGERING_ACTOR" \
+            --arg workflowSha "$WORKFLOW_SHA" \
+            --slurpfile actorPermission "$output/actor-permission.json" \
+            --slurpfile advisorRun "$output/advisor-run.json" \
+            --slurpfile artifacts "$output/artifacts.json" \
+            --slurpfile comments "$output/comments.json" \
+            --slurpfile pull "$output/pull.json" \
+            --slurpfile reviewComments "$output/review-comments.json" \
+            --slurpfile reviews "$output/reviews.json" \
+            --slurpfile sourceCommit "$output/source-commit.json" \
+            --slurpfile triggeringPermission "$output/triggering-actor-permission.json" \
+            '{repository:$repository, prNumber:($prNumber|tonumber), sourceHeadSha:$sourceHeadSha,
+              sourceBaseSha:$sourceBaseSha, workflowSha:$workflowSha, actor:$actor,
+              triggeringActor:$triggeringActor, currentRunId:$currentRunId,
+              currentRunAttempt:$advisorRun[0].run_attempt, optedFindingIds:$findingIds,
+              pullRequest:$pull[0], sourceCommit:$sourceCommit[0], advisorRun:$advisorRun[0],
+              artifacts:$artifacts[0], state:{pull:$pull[0], comments:$comments[0],
+              reviewComments:$reviewComments[0]}, reviews:$reviews[0],
+              permissions:{actor:$actorPermission[0], triggeringActor:$triggeringPermission[0]}}' \
+            >"$output/request.json"
+          printf '%s\n' "request-file=$output/request.json" >>"$GITHUB_OUTPUT"
+
+      - id: artifact-ids
+        name: Select immutable Advisor artifact IDs
+        env:
+          REQUEST_FILE: ${{ steps.collect.outputs.request-file }}
+        run: node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/pr-review-advisor/repair-select.mts" artifact-ids
+
+      - name: Download exact Advisor artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ steps.artifact-ids.outputs.artifact-ids }}
+          github-token: ${{ github.token }}
+          repository: NVIDIA/NemoClaw
+          run-id: ${{ inputs.advisor_run_id }}
+          path: ${{ runner.temp }}/advisor-artifacts
+          merge-multiple: false
+
+      - id: bind
+        name: Bind the repair selection and identity-free model context
+        env:
+          ADVISOR_ARTIFACT_DIR: ${{ runner.temp }}/advisor-artifacts
+          OUTPUT_DIR: ${{ runner.temp }}/selection
+          REQUEST_FILE: ${{ steps.collect.outputs.request-file }}
+        run: node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/pr-review-advisor/repair-select.mts" bind
+
+      - id: upload
+        name: Upload the bound selection
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: advisor-repair-selection-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/selection/
+          if-no-files-found: error
+          retention-days: 1
+
+  resolve:
+    name: Resolve in credential-free OpenShell
+    needs:
+      - select
+      - claim
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      artifact-id: ${{ steps.upload.outputs.artifact-id }}
+    env:
+      ARTIFACT_DIR: ${{ runner.temp }}/repair-artifact
+      OPENSHELL_GATEWAY_ENDPOINT: http://127.0.0.1:8080
+      REPAIR_BASE_DIR: ${{ runner.temp }}/repair-base/repo
+      REPAIR_DOWNLOAD_DIR: ${{ runner.temp }}/repair-download
+      RESOLUTION_WORKDIR: ${{ runner.temp }}/repair-workspace
+      RESOLVER_CONFIG_DIR: ${{ runner.temp }}/pi-config
+      SANDBOX_NAME: advisor-repair-${{ github.run_id }}-${{ github.run_attempt }}
+      SELECTION_DIR: ${{ runner.temp }}/selection
+      SOURCE_REPOSITORY: ${{ github.workspace }}/source
+      TRUSTED_CHECKOUT: ${{ github.workspace }}/trusted
+    steps:
+      - name: Checkout trusted repair code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: NVIDIA/NemoClaw
+          ref: ${{ github.workflow_sha }}
+          path: trusted
+          persist-credentials: false
+          lfs: false
+          submodules: false
+
+      - name: Checkout exact PR head as inert data
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: NVIDIA/NemoClaw
+          ref: ${{ needs.select.outputs.source-head-sha }}
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+          lfs: false
+          submodules: false
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+
+      - name: Install trusted dependencies
+        working-directory: ${{ env.TRUSTED_CHECKOUT }}
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Download exact repair selection
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.select.outputs.artifact-id }}
+          path: ${{ env.SELECTION_DIR }}
+          merge-multiple: true
+
+      - name: Materialize a Git-free regular-file workspace
+        env:
+          SELECTION_FILE: ${{ env.SELECTION_DIR }}/selection.json
+        run: node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/pr-review-advisor/repair-resolve.mts" materialize
+
+      - name: Prepare bounded model inputs
+        env:
+          MODEL_CONTEXT_FILE: ${{ env.SELECTION_DIR }}/model-context.json
+          SELECTION_FILE: ${{ env.SELECTION_DIR }}/selection.json
+        run: node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/pr-review-advisor/repair-resolve.mts" prepare
+
+      - name: Install OpenShell
+        run: |
+          env -u GITHUB_TOKEN -u GH_TOKEN -u PR_REVIEW_ADVISOR_API_KEY \
+            NEMOCLAW_NON_INTERACTIVE=1 \
+            bash "$TRUSTED_CHECKOUT/scripts/install-openshell.sh"
+
+      - name: Configure the host inference boundary
+        env:
+          OPENAI_API_KEY: ${{ secrets.PR_REVIEW_ADVISOR_API_KEY }}
+        run: node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/pr-review-advisor/repair-resolve.mts" configure
+
+      - id: create
+        name: Create the credential-free repair sandbox
+        run: node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/pr-review-advisor/repair-resolve.mts" create
+
+      - name: Run exactly two repair turns
+        run: node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/pr-review-advisor/repair-resolve.mts" run
+
+      - name: Download and export the untrusted proposal
+        env:
+          SELECTION_FILE: ${{ env.SELECTION_DIR }}/selection.json
+        run: |
+          node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/pr-review-advisor/repair-resolve.mts" download
+          node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/pr-review-advisor/repair-resolve.mts" export
+
+      - name: Delete the repair sandbox
+        if: ${{ always() && steps.create.outcome == 'success' }}
+        env:
+          CLEANUP_RECEIPT_FILE: ${{ runner.temp }}/cleanup.json
+        run: node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/pr-review-advisor/repair-resolve.mts" delete
+
+      - id: upload
+        name: Upload the untrusted repair artifact
+        if: ${{ success() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: advisor-repair-candidate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.ARTIFACT_DIR }}/
+          if-no-files-found: error
+          retention-days: 1
+
+  claim:
+    name: Claim the exact one-shot attempt
+    needs: select
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    permissions:
+      checks: write
+      contents: read
+    steps:
+      - name: Reject duplicate model attempts and record the claim
+        env:
+          ATTEMPT_KEY: ${{ needs.select.outputs.attempt-key }}
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_HEAD_SHA: ${{ needs.select.outputs.source-head-sha }}
+        run: |
+          set -euo pipefail
+          [[ "$ATTEMPT_KEY" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ "$SOURCE_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
+          existing="$RUNNER_TEMP/attempt-checks.json"
+          gh api -H "Accept: application/vnd.github+json" \
+            "repos/$GITHUB_REPOSITORY/commits/$SOURCE_HEAD_SHA/check-runs?check_name=Advisor%20Repair%20Attempt&per_page=100" \
+            >"$existing"
+          jq -e --arg attempt "$ATTEMPT_KEY" \
+            'all(.check_runs[]; .external_id != $attempt)' "$existing" >/dev/null
+          gh api --method POST "repos/$GITHUB_REPOSITORY/check-runs" \
+            -f name='Advisor Repair Attempt' \
+            -f head_sha="$SOURCE_HEAD_SHA" \
+            -f external_id="$ATTEMPT_KEY" \
+            -f status=completed \
+            -f conclusion=neutral \
+            -f 'output[title]=Advisor repair attempt claimed' \
+            -f 'output[summary]=This exact head, Advisor run, and finding set has consumed its one model attempt.' \
+            >/dev/null
+
+  validate:
+    name: Validate without credentials or write authority
+    needs:
+      - select
+      - resolve
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      artifact-id: ${{ steps.upload.outputs.artifact-id }}
+    env:
+      INPUT_DIR: ${{ runner.temp }}/input
+      SOURCE_REPOSITORY: ${{ github.workspace }}/source
+      TRUSTED_CHECKOUT: ${{ github.workspace }}/trusted
+    steps:
+      - name: Checkout trusted repair code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: NVIDIA/NemoClaw
+          ref: ${{ github.workflow_sha }}
+          path: trusted
+          persist-credentials: false
+          lfs: false
+          submodules: false
+
+      - name: Checkout exact PR head as inert data
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: NVIDIA/NemoClaw
+          ref: ${{ needs.select.outputs.source-head-sha }}
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+          lfs: false
+          submodules: false
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+
+      - name: Install trusted dependencies
+        working-directory: ${{ env.TRUSTED_CHECKOUT }}
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Download exact repair inputs
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.select.outputs.artifact-id }}
+          path: ${{ env.INPUT_DIR }}/context
+          merge-multiple: true
+
+      - name: Download exact untrusted candidate
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.resolve.outputs.artifact-id }}
+          path: ${{ env.INPUT_DIR }}/candidate
+          merge-multiple: true
+
+      - name: Reconstruct, test, and seal the candidate
+        env:
+          CANDIDATE_DIR: ${{ runner.temp }}/candidate
+          OUTPUT_DIR: ${{ runner.temp }}/validated
+        run: node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/pr-review-advisor/repair-validate.mts"
+
+      - id: upload
+        name: Upload only the validated patch and receipt
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: advisor-repair-validated-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/validated/
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    name: Publish with protected compare-and-swap authority
+    needs:
+      - select
+      - validate
+    if: ${{ inputs.repair_publish && vars.PR_REVIEW_ADVISOR_REPAIR_ENABLED == 'true' }}
+    environment: advisor-repair-publish
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      actions: read
+      contents: write
+      pull-requests: read
+    env:
+      SELECTION_DIR: ${{ runner.temp }}/selection
+      SOURCE_REPOSITORY: ${{ github.workspace }}/source
+      TRUSTED_CHECKOUT: ${{ github.workspace }}/trusted
+      VALIDATED_DIR: ${{ runner.temp }}/validated
+    steps:
+      - name: Checkout trusted publisher code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: NVIDIA/NemoClaw
+          ref: ${{ github.workflow_sha }}
+          path: trusted
+          persist-credentials: false
+          lfs: false
+          submodules: false
+
+      - name: Checkout exact source tree as inert data
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: NVIDIA/NemoClaw
+          ref: ${{ needs.select.outputs.source-head-sha }}
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+          lfs: false
+          submodules: false
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+
+      - name: Install trusted dependencies
+        working-directory: ${{ env.TRUSTED_CHECKOUT }}
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Download exact selection
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.select.outputs.artifact-id }}
+          path: ${{ env.SELECTION_DIR }}
+          merge-multiple: true
+
+      - name: Download exact validated artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.validate.outputs.artifact-id }}
+          path: ${{ env.VALIDATED_DIR }}
+          merge-multiple: true
+
+      - id: prepare
+        name: Reconstruct the exact validated GitHub commit
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PATCH_FILE: ${{ env.VALIDATED_DIR }}/repair.patch
+          RECEIPT_FILE: ${{ env.VALIDATED_DIR }}/validation.json
+          SELECTION_FILE: ${{ env.SELECTION_DIR }}/selection.json
+          WORK_DIRECTORY: ${{ runner.temp }}/published-candidate
+        run: node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/pr-review-advisor/repair-publish.mts" prepare
+
+      - name: Re-read exact live PR and review state
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+        run: |
+          set -euo pipefail
+          output="$RUNNER_TEMP/live-state"
+          mkdir -p "$output"
+          gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" >"$output/pull.json"
+          gh api "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments?per_page=100" \
+            --paginate --slurp | jq '[.[][]]' >"$output/comments.json"
+          gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/comments?per_page=100" \
+            --paginate --slurp | jq '[.[][]]' >"$output/review-comments.json"
+          gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/reviews?per_page=100" \
+            --paginate --slurp | jq '[.[][]]' >"$output/reviews.json"
+          jq -n --slurpfile pull "$output/pull.json" --slurpfile comments "$output/comments.json" \
+            --slurpfile reviewComments "$output/review-comments.json" \
+            '{pull:$pull[0], comments:$comments[0], reviewComments:$reviewComments[0]}' \
+            >"$output/state.json"
+
+      - id: publish
+        name: Compare-and-swap the verified commit onto the PR branch
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PREPARED_SHA: ${{ steps.prepare.outputs.prepared-sha }}
+          REVIEWS_FILE: ${{ runner.temp }}/live-state/reviews.json
+          SELECTION_FILE: ${{ env.SELECTION_DIR }}/selection.json
+          STATE_FILE: ${{ runner.temp }}/live-state/state.json
+        run: node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/pr-review-advisor/repair-publish.mts" publish
+
+  audit:
+    name: Record bounded repair outcome
+    if: ${{ always() }}
+    needs:
+      - select
+      - claim
+      - resolve
+      - validate
+      - publish
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    permissions: {}
+    steps:
+      - name: Write job summary
+        env:
+          ATTEMPT_KEY: ${{ needs.select.outputs.attempt-key }}
+          CLAIM_RESULT: ${{ needs.claim.result }}
+          PUBLISH_RESULT: ${{ needs.publish.result }}
+          RESOLVE_RESULT: ${{ needs.resolve.result }}
+          SELECT_RESULT: ${{ needs.select.result }}
+          VALIDATE_RESULT: ${{ needs.validate.result }}
+        run: |
+          {
+            echo "## PR Review Advisor repair"
+            echo
+            echo "- Attempt: ${ATTEMPT_KEY:-not selected}"
+            echo "- Select: $SELECT_RESULT"
+            echo "- Claim: $CLAIM_RESULT"
+            echo "- Resolve: $RESOLVE_RESULT"
+            echo "- Validate: $VALIDATE_RESULT"
+            echo "- Publish: $PUBLISH_RESULT"
+          } >>"$GITHUB_STEP_SUMMARY"
