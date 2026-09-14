@@ -303,10 +303,17 @@ async function waitForRequiredOpenShellSupervisorReconnect(
   });
 }
 
+const RECOVERED_OPENSHELL_RECONNECTABLE_PHASES = new Set([
+  "Provisioning",
+  "Ready",
+  "Error",
+  "Starting",
+]);
+
 function observeRecoveredOpenShellHandoff(
   sandbox: ManagedBootstrapSandboxIdentity,
   deps: ResolvedDeps,
-): "start-required" | "wait" | "unknown" {
+): "stopped" | "wait" | "unknown" {
   if (!deps.runCaptureOpenshell) return "unknown";
   try {
     const sandboxId = parseOpenShellSandboxId(
@@ -326,7 +333,8 @@ function observeRecoveredOpenShellHandoff(
     });
     const entry = parseLiveSandboxEntries(list).find(({ name }) => name === sandbox.sandboxName);
     if (!entry?.phase) return "unknown";
-    return entry.phase === "Stopped" ? "start-required" : "wait";
+    if (entry.phase === "Stopped") return "stopped";
+    return RECOVERED_OPENSHELL_RECONNECTABLE_PHASES.has(entry.phase) ? "wait" : "unknown";
   } catch {
     return "unknown";
   }
@@ -2587,6 +2595,17 @@ export function createDockerManagedBootstrapAdapter(
         detail: "shared state is pending after the durable commit fence",
       });
     }
+    const handoff = observeRecoveredOpenShellHandoff(journal.sandbox, deps);
+    if (handoff !== "wait") {
+      throw new ManagedBootstrapCommitStateIndeterminateError({
+        bootstrapIdentity: journal.bootstrapIdentity,
+        runtimeId: journal.replacementRuntimeId,
+        detail:
+          handoff === "stopped"
+            ? "the committed OpenShell sandbox is stopped and cannot be restarted safely through the name-only lifecycle API"
+            : "the committed OpenShell sandbox identity and reconnectable phase could not be proven",
+      });
+    }
     const supervisorReconnectTimeoutSecs = getDockerGpuSupervisorReconnectTimeoutSecs(1);
     if (
       !(await waitForRequiredOpenShellSupervisorReconnect(
@@ -2622,6 +2641,13 @@ export function createDockerManagedBootstrapAdapter(
         bootstrapIdentity: journal.bootstrapIdentity,
         cleanupRuntimeId: journal.replacementRuntimeId,
         detail: supervisorReconnectFailureDetail(journal.replacementRuntimeId, deps),
+      });
+    }
+    if (observeRecoveredOpenShellHandoff(journal.sandbox, deps) !== "wait") {
+      throw new ManagedBootstrapCommitStateIndeterminateError({
+        bootstrapIdentity: journal.bootstrapIdentity,
+        runtimeId: journal.replacementRuntimeId,
+        detail: "the committed OpenShell sandbox identity changed during recovered reconnect",
       });
     }
     const afterHandoff = deps.journalStore.load(journal.bootstrapIdentity);
@@ -2724,21 +2750,17 @@ export function createDockerManagedBootstrapAdapter(
       });
     }
     const handoff = observeRecoveredOpenShellHandoff(journal.sandbox, deps);
-    if (handoff === "unknown") {
+    if (handoff !== "wait") {
       throw new ManagedBootstrapCommitStateIndeterminateError({
         bootstrapIdentity: journal.bootstrapIdentity,
         runtimeId: journal.replacementRuntimeId,
-        detail: "OpenShell publication state could not be proven without a read-only sandbox phase",
+        detail:
+          handoff === "stopped"
+            ? "the OpenShell sandbox is stopped and cannot be restarted safely through the name-only lifecycle API"
+            : "OpenShell publication state could not be proven in a reconnectable sandbox phase",
       });
     }
     const supervisorReconnectTimeoutSecs = getDockerGpuSupervisorReconnectTimeoutSecs(1);
-    if (handoff === "start-required") {
-      runRequiredOpenShellLifecycleCommand(
-        deps,
-        ["sandbox", "start", journal.sandbox.sandboxName],
-        supervisorReconnectTimeoutSecs,
-      );
-    }
     if (
       !(await waitForRequiredOpenShellSupervisorReconnect(
         journal.sandbox.sandboxName,
@@ -2758,6 +2780,13 @@ export function createDockerManagedBootstrapAdapter(
         bootstrapIdentity: journal.bootstrapIdentity,
         runtimeId: journal.replacementRuntimeId,
         detail: "durable authority changed during recovered OpenShell publication",
+      });
+    }
+    if (observeRecoveredOpenShellHandoff(journal.sandbox, deps) !== "wait") {
+      throw new ManagedBootstrapCommitStateIndeterminateError({
+        bootstrapIdentity: journal.bootstrapIdentity,
+        runtimeId: journal.replacementRuntimeId,
+        detail: "OpenShell sandbox identity changed during recovered publication",
       });
     }
     assertCompletedCutoverRuntimeState(afterHandoff, deps);
