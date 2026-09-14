@@ -102,4 +102,5 @@ pub fn refresh<T>(
 }
 
 pub mod backend;
+pub mod compile;
 pub mod config;

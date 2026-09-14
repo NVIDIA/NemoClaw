@@ -1,0 +1,100 @@
+{
+  "provider": {
+    "nemoclaw": {
+      "endpoint": "http://127.0.0.1:17671",
+      "ollama_engine": "unix:///var/run/docker.sock"
+    }
+  },
+  "resource": {
+    "nemoclaw_ollama": {
+      "service": {
+        "bind_address": "172.20.0.1:11436",
+        "generation": "ollama-generation",
+        "image": "ollama/ollama@sha256:684d8674b4315fa18f4f0e973a118ec2652ed96f67563277839985175858e0ba",
+        "lifecycle": {
+          "prevent_destroy": true
+        },
+        "name": "nc-8bb56695710753e3-ollama",
+        "network": "nc-prototype-slice",
+        "owner": "87d485ad-fba7-4197-9eaa-aa97cc97446b",
+        "running": "true"
+      }
+    },
+    "nemoclaw_ollama_model": {
+      "inference": {
+        "endpoint": "http://172.20.0.1:11436/v1",
+        "lifecycle": {
+          "prevent_destroy": true
+        },
+        "model": "qwen3:0.6b",
+        "service_id": "${nemoclaw_ollama.service.id}"
+      }
+    },
+    "nemoclaw_provider": {
+      "inference": {
+        "credential_env": "",
+        "endpoint": "http://172.20.0.1:11436/v1",
+        "generation": "provider-generation",
+        "lifecycle": {
+          "prevent_destroy": true
+        },
+        "name": "local",
+        "owner": "87d485ad-fba7-4197-9eaa-aa97cc97446b",
+        "provider_type": "",
+        "workspace": "${nemoclaw_workspace.deployment.name}"
+      }
+    },
+    "nemoclaw_route": {
+      "primary": {
+        "depends_on": [
+          "nemoclaw_ollama_model.inference"
+        ],
+        "generation": "workspace-generation",
+        "lifecycle": {
+          "prevent_destroy": true
+        },
+        "model": "qwen3:0.6b",
+        "name": "primary",
+        "owner": "87d485ad-fba7-4197-9eaa-aa97cc97446b",
+        "provider_name": "${nemoclaw_provider.inference.name}",
+        "workspace": "${nemoclaw_workspace.deployment.name}"
+      }
+    },
+    "nemoclaw_sandbox": {
+      "agent": {
+        "agent_name": "main",
+        "agent_runtime": "",
+        "depends_on": [
+          "nemoclaw_route.primary"
+        ],
+        "generation": "sandbox-generation",
+        "image": "nc-prototype-openclaw@sha256:f73285851f5cc9d1862da7aaa603249f2c97fdf431bc4b03a5a435af897405f3",
+        "lifecycle": {
+          "prevent_destroy": true
+        },
+        "name": "assistant",
+        "owner": "87d485ad-fba7-4197-9eaa-aa97cc97446b",
+        "workspace": "${nemoclaw_workspace.deployment.name}"
+      }
+    },
+    "nemoclaw_workspace": {
+      "deployment": {
+        "generation": "workspace-generation",
+        "lifecycle": {
+          "prevent_destroy": true
+        },
+        "name": "nc-8bb56695710753e3",
+        "owner": "87d485ad-fba7-4197-9eaa-aa97cc97446b"
+      }
+    }
+  },
+  "terraform": {
+    "required_providers": {
+      "nemoclaw": {
+        "source": "registry.opentofu.org/nvidia/nemoclaw",
+        "version": "= 0.1.0"
+      }
+    },
+    "required_version": "= 1.12.6"
+  }
+}

@@ -1,0 +1,72 @@
+{
+  "provider": {
+    "nemoclaw": {
+      "endpoint": "http://127.0.0.1:17681"
+    }
+  },
+  "resource": {
+    "nemoclaw_provider": {
+      "inference": {
+        "credential_env": "",
+        "endpoint": "http://172.20.0.1:11446/v1",
+        "generation": "provider-generation",
+        "lifecycle": {
+          "prevent_destroy": true
+        },
+        "name": "local",
+        "owner": "c4a639f3-2bd3-42ba-8f5d-658d7913b0f9",
+        "provider_type": "",
+        "workspace": "${nemoclaw_workspace.deployment.name}"
+      }
+    },
+    "nemoclaw_route": {
+      "primary": {
+        "generation": "workspace-generation",
+        "lifecycle": {
+          "prevent_destroy": true
+        },
+        "model": "fixture-model",
+        "name": "primary",
+        "owner": "c4a639f3-2bd3-42ba-8f5d-658d7913b0f9",
+        "provider_name": "${nemoclaw_provider.inference.name}",
+        "workspace": "${nemoclaw_workspace.deployment.name}"
+      }
+    },
+    "nemoclaw_sandbox": {
+      "agent": {
+        "agent_name": "main",
+        "agent_runtime": "fabric-pi",
+        "depends_on": [
+          "nemoclaw_route.primary"
+        ],
+        "generation": "sandbox-generation",
+        "image": "nc-prototype-fabric@sha256:69a045d358a5ef73cb4e448aa9555c2d198272445a39e80981145c4acffc4e1b",
+        "lifecycle": {
+          "prevent_destroy": true
+        },
+        "name": "assistant",
+        "owner": "c4a639f3-2bd3-42ba-8f5d-658d7913b0f9",
+        "workspace": "${nemoclaw_workspace.deployment.name}"
+      }
+    },
+    "nemoclaw_workspace": {
+      "deployment": {
+        "generation": "workspace-generation",
+        "lifecycle": {
+          "prevent_destroy": true
+        },
+        "name": "nc-7d7dd0c26797bf18",
+        "owner": "c4a639f3-2bd3-42ba-8f5d-658d7913b0f9"
+      }
+    }
+  },
+  "terraform": {
+    "required_providers": {
+      "nemoclaw": {
+        "source": "registry.opentofu.org/nvidia/nemoclaw",
+        "version": "= 0.1.0"
+      }
+    },
+    "required_version": "= 1.12.6"
+  }
+}
