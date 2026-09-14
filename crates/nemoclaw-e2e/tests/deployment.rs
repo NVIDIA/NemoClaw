@@ -160,3 +160,54 @@ async fn readiness_and_observation_failures_retain_bindings_and_recover_without_
     assert!(fixture.state.lock().unwrap().providers.is_empty());
     assert!(fixture.state.lock().unwrap().sandboxes.is_empty());
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires explicit verified NEMOCLAW_TEST_BUNDLE"]
+async fn destroy_does_not_require_the_inference_credential_or_rewrite_its_reference() {
+    struct Credential;
+    impl nemoclaw_sdk::openshell::Secrets for Credential {
+        fn resolve(&self, name: &str) -> Result<String, nemoclaw_sdk::ObservationError> {
+            assert_eq!(name, "NEMOCLAW_TEST_REMOVED_INFERENCE_KEY");
+            Ok("fixture-inference-secret".into())
+        }
+    }
+    let bundle = PathBuf::from(std::env::var_os("NEMOCLAW_TEST_BUNDLE").unwrap());
+    let directory = tempfile::tempdir().unwrap();
+    let fixture = Fixture::start().await;
+    let mut document = Document::parse(
+        include_str!("../../nemoclaw-sdk/tests/fixtures/config/local.yaml").as_bytes(),
+    )
+    .unwrap();
+    document.spec.gateway.endpoint = fixture.endpoint.clone();
+    document.spec.inference_providers[0].endpoint = "https://inference.example.test/v1".into();
+    document.spec.inference_providers[0].credential = Some(nemoclaw_sdk::config::Credential {
+        env: "NEMOCLAW_TEST_REMOVED_INFERENCE_KEY".into(),
+    });
+    let cancel = CancellationToken::new();
+    Deployment::new(directory.path(), &bundle)
+        .with_secrets(std::sync::Arc::new(Credential))
+        .apply(&document, &cancel)
+        .await
+        .unwrap();
+    let deployment = Deployment::new(directory.path(), &bundle);
+    let effects = fixture.state.lock().unwrap().effects;
+    assert_eq!(
+        deployment
+            .plan_destroy(&cancel)
+            .await
+            .unwrap()
+            .changes
+            .len(),
+        3
+    );
+    assert_eq!(fixture.state.lock().unwrap().effects, effects);
+    assert_eq!(
+        deployment.destroy(&cancel).await.unwrap().outcome,
+        Outcome::Destroyed
+    );
+    let record: serde_json::Value =
+        serde_json::from_slice(&fs::read(directory.path().join("intent.json")).unwrap()).unwrap();
+    assert_eq!(record["document"], serde_json::to_value(&document).unwrap());
+    assert!(fixture.state.lock().unwrap().providers.is_empty());
+    assert!(fixture.state.lock().unwrap().sandboxes.is_empty());
+}

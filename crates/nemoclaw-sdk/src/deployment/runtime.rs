@@ -377,6 +377,16 @@ impl Deployment {
     }
 }
 
+// Teardown uses gateway authentication but never invokes inference. Keep the
+// retained document and resource graph intact; narrow only subprocess secrets.
+fn destroy_environment(document: &Document) -> Document {
+    let mut environment = document.clone();
+    for provider in &mut environment.spec.inference_providers {
+        provider.credential = None;
+    }
+    environment
+}
+
 impl Deployment {
     pub(super) async fn teardown_stages(
         &self,
@@ -447,7 +457,7 @@ impl Deployment {
                 self.tofu(
                     &bundle,
                     stage,
-                    &record.document,
+                    &destroy_environment(&record.document),
                     &[
                         "apply",
                         "-input=false",
@@ -559,13 +569,19 @@ impl Deployment {
         self.tofu(
             bundle,
             store,
-            &record.document,
+            &destroy_environment(&record.document),
             &["init", "-upgrade", "-input=false", "-no-color"],
             cancel,
         )
         .await?;
         let plan = self
-            .saved_plan(bundle, store, &record.document, "destroy.plan", cancel)
+            .saved_plan(
+                bundle,
+                store,
+                &destroy_environment(&record.document),
+                "destroy.plan",
+                cancel,
+            )
             .await?;
         Ok((
             check_destroy_plan(&plan, &expected, &bindings, &retained)?,
