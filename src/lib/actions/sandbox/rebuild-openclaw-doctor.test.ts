@@ -121,7 +121,7 @@ describe("OpenClaw rebuild doctor restart", () => {
       stage: "restart",
       detail: "the sandbox did not consume its doctor request and return a healthy gateway",
     });
-    expect(execute).toHaveBeenCalledTimes(121);
+    expect(currentMs).toBe(2 * 3 * 60_000);
   });
 
   it("retries one stop/start cycle after a transient unready replacement", async () => {
