@@ -8,6 +8,7 @@ import * as openshellResolve from "../../adapters/openshell/resolve";
 import * as openshellRuntime from "../../adapters/openshell/runtime";
 import * as agentRuntime from "../../agent/runtime";
 import * as wait from "../../core/wait";
+import * as gatewayTeardownAuthority from "../../onboard/gateway-teardown-authority";
 import * as registry from "../../state/registry";
 import * as privilegedExec from "../../sandbox/privileged-exec";
 import * as forwardHealth from "./forward-health";
@@ -50,6 +51,18 @@ function mockGatewaySandbox(sandboxName: string, agent: "openclaw" | "hermes" = 
 }
 
 function mockRecoveredForward(_sandboxName: string): void {
+  vi.spyOn(gatewayTeardownAuthority, "resolveGatewayForwardAuthority").mockImplementation(
+    ({ gatewayName, gatewayPort }) => ({
+      gatewayName,
+      gatewayPort,
+      mode: "nemoclaw-managed",
+      source: "standalone",
+      endpoint: null,
+      stateDir: null,
+      supervisor: null,
+      requiredCapabilities: [],
+    }),
+  );
   vi.spyOn(forwardHealth, "isLocalForwardReachable").mockReturnValue(true);
   vi.spyOn(forwardService, "isForwardServiceListenerOwner").mockReturnValue(true);
   vi.spyOn(openshellResolve, "resolveOpenshell").mockReturnValue("/usr/bin/openshell");
@@ -233,13 +246,10 @@ describe("checkAndRecoverSandboxProcesses managed startup", () => {
           ...(discovery ? { managedContainerDiscoveryUnavailable: true as const } : {}),
         })
         .mockReturnValueOnce(ACCEPTED_MANAGED_RECOVERY);
-      const relaunchManagedSupervisorSessionImpl = vi.fn(() => null);
-
       const result = await checkAndRecoverSandboxProcesses(sandboxName, {
         quiet: true,
         isSandboxGatewayRunningImpl: async () => false,
         requestGatewaySupervisorAction,
-        relaunchManagedSupervisorSessionImpl,
         waitForRecreatedSandboxOpenShellReadyImpl: async () => true,
       });
 
@@ -250,7 +260,6 @@ describe("checkAndRecoverSandboxProcesses managed startup", () => {
         forwardRecovered: true,
       });
       expect(requestGatewaySupervisorAction).toHaveBeenCalledTimes(2);
-      expect(relaunchManagedSupervisorSessionImpl).not.toHaveBeenCalled();
     },
   );
 
@@ -263,13 +272,10 @@ describe("checkAndRecoverSandboxProcesses managed startup", () => {
       stdout: "",
       stderr: "SUPERVISOR_DISCOVERY_PENDING\nunexpected diagnostic",
     }));
-    const relaunchManagedSupervisorSessionImpl = vi.fn(() => null);
-
     const result = await checkAndRecoverSandboxProcesses(sandboxName, {
       quiet: true,
       isSandboxGatewayRunningImpl: async () => false,
       requestGatewaySupervisorAction,
-      relaunchManagedSupervisorSessionImpl,
     });
 
     expect(result).toMatchObject({
@@ -279,7 +285,6 @@ describe("checkAndRecoverSandboxProcesses managed startup", () => {
       forwardRecovered: false,
     });
     expect(requestGatewaySupervisorAction).toHaveBeenCalledOnce();
-    expect(relaunchManagedSupervisorSessionImpl).not.toHaveBeenCalled();
   });
 
   it("does not retry a managed-container identity mismatch (#9466)", async () => {
@@ -293,13 +298,10 @@ describe("checkAndRecoverSandboxProcesses managed startup", () => {
         `PRIVILEGED_CONTROL_UNAVAILABLE: OpenShell container identity changed for sandbox ` +
         `'${sandboxName}'; refusing privileged execution against a different container.`,
     }));
-    const relaunchManagedSupervisorSessionImpl = vi.fn(() => null);
-
     const result = await checkAndRecoverSandboxProcesses(sandboxName, {
       quiet: true,
       isSandboxGatewayRunningImpl: async () => false,
       requestGatewaySupervisorAction,
-      relaunchManagedSupervisorSessionImpl,
     });
 
     expect(result).toMatchObject({
@@ -309,7 +311,6 @@ describe("checkAndRecoverSandboxProcesses managed startup", () => {
       forwardRecovered: false,
     });
     expect(requestGatewaySupervisorAction).toHaveBeenCalledOnce();
-    expect(relaunchManagedSupervisorSessionImpl).not.toHaveBeenCalled();
   });
 
   it("shares one deadline across managed recovery controller calls (#11107)", async () => {
@@ -474,17 +475,13 @@ describe("managed container discovery settlement", () => {
     expect({ calls, seconds }).toEqual({ calls: 31, seconds: 90 });
   });
 
-  it("waits through supervisor startup before recreation after delayed discovery (#11107)", async () => {
+  it("stops after delayed discovery proves the native supervisor is absent (#11107)", async () => {
     const sandboxName = "hermes-discovery";
     mockGatewaySandbox(sandboxName, "hermes");
     vi.stubEnv("NEMOCLAW_GATEWAY_RECOVERY_POLL_INTERVAL_SECONDS", "3");
     let seconds = 0;
     vi.spyOn(wait, "sleepSeconds").mockImplementation((duration) => {
       seconds += duration;
-    });
-    const relaunch = vi.fn(() => {
-      expect(seconds).toBe(66);
-      return null;
     });
     const result = await checkAndRecoverSandboxProcesses(sandboxName, {
       quiet: true,
@@ -496,10 +493,9 @@ describe("managed container discovery settlement", () => {
           seconds < 36 ? PENDING_MANAGED_CONTAINER_DISCOVERY.stderr : "SUPERVISOR_NOT_RUNNING",
         ...(seconds < 36 ? { managedContainerDiscoveryUnavailable: true as const } : {}),
       }),
-      relaunchManagedSupervisorSessionImpl: relaunch,
     });
     expect(result.recovered).toBe(false);
-    expect(relaunch).toHaveBeenCalledOnce();
+    expect(seconds).toBe(66);
   });
 
   it("honors an explicit shorter discovery bound (#11107)", () => {
@@ -531,17 +527,14 @@ describe("managed container discovery settlement", () => {
       vi.spyOn(wait, "sleepSeconds").mockImplementation((duration) => {
         seconds += duration;
       });
-      const relaunch = vi.fn(() => null);
       const result = await checkAndRecoverSandboxProcesses(sandboxName, {
         quiet: true,
         isSandboxGatewayRunningImpl: async () => false,
         requestGatewaySupervisorAction: () =>
           seconds >= readyAt ? ACCEPTED_MANAGED_RECOVERY : PENDING_MANAGED_CONTAINER_DISCOVERY,
-        relaunchManagedSupervisorSessionImpl: relaunch,
         waitForRecreatedSandboxOpenShellReadyImpl: async () => true,
       });
       expect({ recovered: result.recovered, elapsed: seconds }).toEqual({ recovered, elapsed });
-      expect(relaunch).not.toHaveBeenCalled();
     },
   );
 });
