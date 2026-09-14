@@ -3,6 +3,7 @@
 
 import { type ChildProcess, spawn } from "node:child_process";
 import { EventEmitter, once } from "node:events";
+import { createOpenShellOperationDeadline } from "./operation-deadline";
 import {
   existsSync,
   mkdirSync,
@@ -28,6 +29,7 @@ import {
   launchForwardService,
   terminateForwardServiceProcessTree,
   type ForwardServiceLaunchOptions,
+  type ForwardServiceOwnership,
   type ForwardServiceTarget,
 } from "./forward-service";
 import { probeLocalForwardListener } from "./local-forward-listener";
@@ -133,6 +135,287 @@ async function availableLoopbackPort(): Promise<number> {
   return address.port;
 }
 
+describe("retained forward process ownership", () => {
+  it("retains ownership across asynchronous startup and cleanup (#11649)", async () => {
+    const child = Object.assign(new EventEmitter(), {
+      pid: detachedChildPid,
+      exitCode: null,
+      signalCode: null,
+      unref() {},
+    });
+    const terminate = vi.fn();
+    let ownership: ForwardServiceOwnership | undefined;
+    await launchForwardService(target, {
+      isReachable: vi.fn().mockReturnValueOnce(false).mockReturnValue(true),
+      spawnDetached: () => child,
+      terminateProcessTree: terminate,
+      retainOwnership: (value) => {
+        ownership = value;
+      },
+    });
+    await Promise.resolve();
+
+    await Promise.all([ownership!.terminate(), ownership!.terminate()]);
+    expect(terminate).toHaveBeenCalledOnce();
+  });
+
+  it.each(["exit", "error", "pid-changed", "exit-code", "signal-code"] as const)(
+    "rejects termination after %s invalidates the original child (#11649)",
+    async (change) => {
+      const child = Object.assign(new EventEmitter(), {
+        pid: detachedChildPid,
+        exitCode: null as number | null,
+        signalCode: null as NodeJS.Signals | null,
+        unref() {},
+      });
+      const terminate = vi.fn();
+      let ownership: ForwardServiceOwnership | undefined;
+      await launchForwardService(target, {
+        isReachable: vi.fn().mockReturnValueOnce(false).mockReturnValue(true),
+        spawnDetached: () => child,
+        terminateProcessTree: terminate,
+        retainOwnership: (value) => {
+          ownership = value;
+        },
+      });
+      const mutations = {
+        exit: () => child.emit("exit"),
+        error: () => child.emit("error"),
+        "pid-changed": () => {
+          child.pid += 1;
+        },
+        "exit-code": () => {
+          child.exitCode = 0;
+        },
+        "signal-code": () => {
+          child.signalCode = "SIGTERM";
+        },
+      };
+      mutations[change]();
+      await expect(ownership!.terminate()).rejects.toThrow(
+        "child lifetime can no longer be proved",
+      );
+      expect(terminate).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["exit", "authority"] as const)(
+    "checks %s changes while cleanup waits for exit callbacks (#11649)",
+    async (change) => {
+      const child = Object.assign(new EventEmitter(), {
+        pid: detachedChildPid,
+        exitCode: null,
+        signalCode: null,
+        unref() {},
+      });
+      const terminate = vi.fn();
+      let ownership: ForwardServiceOwnership | undefined;
+      await launchForwardService(target, {
+        isReachable: vi.fn().mockReturnValueOnce(false).mockReturnValue(true),
+        spawnDetached: () => child,
+        terminateProcessTree: terminate,
+        retainOwnership: (value) => {
+          ownership = value;
+        },
+      });
+      const assertCurrent = vi.fn();
+      const cleanup = ownership!.terminate(assertCurrent);
+      expect(terminate).not.toHaveBeenCalled();
+      const invalidate = {
+        exit: () => child.emit("exit", 0, null),
+        authority: () =>
+          assertCurrent.mockImplementation(() => {
+            throw new Error("rollback authority changed");
+          }),
+      };
+      invalidate[change]();
+      await expect(cleanup).rejects.toThrow(
+        change === "exit" ? "child lifetime can no longer be proved" : "rollback authority changed",
+      );
+      expect(terminate).not.toHaveBeenCalled();
+    },
+  );
+
+  it("retires a retained real listener and makes repeated cleanup harmless (#11649)", async () => {
+    const port = await availableLoopbackPort();
+    let child: ChildProcess | undefined;
+    let closed: Promise<unknown[]> | undefined;
+    let ownership: ForwardServiceOwnership | undefined;
+    try {
+      await launchForwardService(
+        { ...target, executable: process.execPath, localPort: port, targetPort: port },
+        {
+          spawnDetached: () => {
+            child = spawn(
+              process.execPath,
+              ["-e", `require("node:net").createServer().listen(${port}, "127.0.0.1")`],
+              { detached: true, stdio: "ignore" },
+            );
+            closed = once(child, "close");
+            return child;
+          },
+          retainOwnership: (value) => {
+            ownership = value;
+          },
+        },
+      );
+      expect(probeLocalForwardListener(port, 100)).toBe(true);
+      await ownership!.terminate();
+      await ownership!.terminate();
+      await closed;
+      expect(child!.exitCode !== null || child!.signalCode !== null).toBe(true);
+      expect(probeLocalForwardListener(port, 100)).toBe(false);
+    } finally {
+      child?.exitCode === null &&
+        child.signalCode === null &&
+        terminateForwardServiceProcessTree(child);
+      await closed;
+    }
+  }, 10_000);
+});
+
+describe("forward startup allowance", () => {
+  it.each([0, 100])(
+    "rejects an exhausted %i ms allowance before probing or spawning (#11652)",
+    async (timeoutMs) => {
+      const isReachable = vi.fn(() => false);
+      const spawnDetached = vi.fn(() => ({ pid: detachedChildPid, unref: vi.fn() }));
+      await expect(
+        launchForwardService(target, {
+          timeoutMs,
+          now: vi.fn().mockReturnValueOnce(0).mockReturnValue(100),
+          isReachable,
+          spawnDetached,
+          terminateProcessTree: vi.fn(),
+        }),
+      ).rejects.toThrow("did not bind");
+      expect(isReachable).not.toHaveBeenCalled();
+      expect(spawnDetached).not.toHaveBeenCalled();
+    },
+  );
+
+  it("does not spawn after the initial probe exhausts the allowance (#11652)", async () => {
+    let elapsed = 0;
+    const isReachable = vi
+      .fn()
+      .mockImplementationOnce(() => {
+        elapsed = 100;
+        return false;
+      })
+      .mockReturnValue(false);
+    const spawnDetached = vi.fn(() => ({ pid: detachedChildPid, unref: vi.fn() }));
+    await expect(
+      launchForwardService(target, {
+        timeoutMs: 100,
+        now: () => elapsed,
+        isReachable,
+        spawnDetached,
+        terminateProcessTree: vi.fn(),
+      }),
+    ).rejects.toThrow("did not bind");
+    expect(spawnDetached).not.toHaveBeenCalled();
+    expect(isReachable).toHaveBeenCalledExactlyOnceWith(target.localPort, 100);
+  });
+
+  it("cleans up the child when a startup probe throws at the deadline (#11652)", async () => {
+    const child = { pid: detachedChildPid, unref: vi.fn() };
+    const terminateProcessTree = vi.fn();
+    const isReachable = vi
+      .fn()
+      .mockReturnValueOnce(false)
+      .mockImplementationOnce(() => {
+        throw new Error("startup allowance exhausted");
+      })
+      .mockReturnValue(false);
+    await expect(
+      launchForwardService(target, {
+        isReachable,
+        spawnDetached: () => child,
+        terminateProcessTree,
+      }),
+    ).rejects.toThrow("startup allowance exhausted");
+    expect(terminateProcessTree).toHaveBeenCalledExactlyOnceWith(child);
+    expect(child.unref).not.toHaveBeenCalled();
+  });
+
+  it("rejects readiness that finishes after the startup allowance (#11652)", async () => {
+    let elapsed = 0;
+    const child = { pid: detachedChildPid, unref: vi.fn() };
+    const terminateProcessTree = vi.fn();
+    await expect(
+      launchForwardService(target, {
+        timeoutMs: 100,
+        now: () => elapsed,
+        isReachable: vi
+          .fn()
+          .mockReturnValueOnce(false)
+          .mockReturnValueOnce(true)
+          .mockReturnValue(false),
+        verifyReady: () => {
+          elapsed = 100;
+        },
+        spawnDetached: () => child,
+        terminateProcessTree,
+      }),
+    ).rejects.toThrow("did not bind");
+    expect(terminateProcessTree).toHaveBeenCalledExactlyOnceWith(child);
+    expect(child.unref).not.toHaveBeenCalled();
+  });
+
+  it("shares the allowance between the initial port probe and startup polling (#11652)", async () => {
+    let elapsed = 0;
+    const allowances: number[] = [];
+    const terminateProcessTree = vi.fn();
+    const startupProbe = (_port: number, allowance?: number) => {
+      allowances.push(allowance!);
+      elapsed += Math.min(60, allowance!);
+      return false;
+    };
+    await expect(
+      launchForwardService(target, {
+        timeoutMs: 100,
+        now: () => elapsed,
+        isReachable: vi
+          .fn()
+          .mockImplementationOnce(startupProbe)
+          .mockImplementationOnce(startupProbe)
+          .mockReturnValue(false),
+        sleep: (milliseconds) => {
+          elapsed += milliseconds;
+        },
+        spawnDetached: () => ({ pid: detachedChildPid, unref() {} }),
+        terminateProcessTree,
+      }),
+    ).rejects.toThrow("did not bind");
+    expect(allowances).toEqual([100, 40]);
+    expect(elapsed).toBe(100);
+  });
+
+  it("uses monotonic time when the wall clock moves backwards (#11652)", async () => {
+    let elapsed = 0;
+    let wall = 10_000;
+    const wallClock = vi.spyOn(Date, "now").mockImplementation(() => wall);
+    try {
+      await expect(
+        launchForwardService(target, {
+          timeoutMs: 100,
+          now: () => elapsed,
+          isReachable: () => false,
+          spawnDetached: () => ({ pid: detachedChildPid, unref() {} }),
+          terminateProcessTree: () => undefined,
+          sleep: (milliseconds) => {
+            wall += milliseconds - (elapsed === 0 ? 1_000 : 0);
+            elapsed += milliseconds;
+          },
+        }),
+      ).rejects.toThrow("did not bind");
+      expect(elapsed).toBe(100);
+    } finally {
+      wallClock.mockRestore();
+    }
+  });
+});
+
 describe("OpenShell forward service", () => {
   it("builds the direct ForwardTcp command with explicit gateway authority", () => {
     expect(buildForwardServiceArgs(target)).toEqual([
@@ -235,6 +518,25 @@ describe("OpenShell forward service", () => {
         target.localPort,
       ),
     ).toThrow(/bare loopback origin matching its gateway port/u);
+  });
+
+  it("shares the remaining allowance across ownership subprocesses (#11652)", () => {
+    const expected = [ownerTarget.executable, ...buildForwardServiceArgs(ownerTarget)].join(" ");
+    const response = darwinOwnerProbe(`${expected}\n`);
+    let elapsed = 0;
+    const allowances: number[] = [];
+    const probe = (executable: string, args: readonly string[], timeoutMs = 5_000) => {
+      allowances.push(timeoutMs);
+      elapsed += Math.min(60, timeoutMs);
+      return response(executable, args);
+    };
+    const deadline = createOpenShellOperationDeadline(100, () => elapsed);
+    const remainingMs = (maximumMs: number) => deadline.remaining(maximumMs, "ownership");
+    expect(() =>
+      isForwardServiceListenerOwner(ownerTarget, { platform: "darwin", probe, remainingMs }),
+    ).toThrow("operation allowance exhausted");
+    expect(allowances).toEqual([100, 40]);
+    expect(elapsed).toBe(100);
   });
 
   it("proves the exact direct ForwardTcp listener before reuse", () => {
@@ -676,16 +978,20 @@ describe("OpenShell forward service", () => {
   );
 
   it("terminates a detached service that does not bind before the deadline", async () => {
+    let startupElapsed = 0;
     const child = { pid: detachedChildPid, unref: vi.fn() };
     const terminateProcessTree = vi.fn();
 
     await expect(
       launchForwardService(target, {
         isReachable: () => false,
-        sleep: () => {},
-        spawnDetached: () => child,
+        now: () => startupElapsed,
+        spawnDetached: () => {
+          startupElapsed = 100;
+          return child;
+        },
         terminateProcessTree,
-        timeoutMs: 0,
+        timeoutMs: 100,
       }),
     ).rejects.toThrow(/did not bind/u);
     expect(terminateProcessTree).toHaveBeenCalledWith(child);
@@ -693,16 +999,21 @@ describe("OpenShell forward service", () => {
   });
 
   it("fails closed when timeout cleanup cannot be proved", async () => {
+    let startupElapsed = 0;
     const cleanupError = new Error("tree remained live");
 
     await expect(
       launchForwardService(target, {
         isReachable: () => false,
-        spawnDetached: () => ({ pid: detachedChildPid, unref: vi.fn() }),
+        now: () => startupElapsed,
+        spawnDetached: () => {
+          startupElapsed = 100;
+          return { pid: detachedChildPid, unref: vi.fn() };
+        },
         terminateProcessTree: () => {
           throw cleanupError;
         },
-        timeoutMs: 0,
+        timeoutMs: 100,
       }),
     ).rejects.toThrow(
       expect.objectContaining({
@@ -731,13 +1042,18 @@ describe("OpenShell forward service", () => {
   });
 
   it("fails closed when POSIX process-group settlement is not proved", async () => {
+    let startupElapsed = 0;
     const signalProcess = vi.fn();
     const now = vi.fn().mockReturnValueOnce(0).mockReturnValue(5_000);
 
     await expect(
       launchForwardService(target, {
         isReachable: () => false,
-        spawnDetached: () => ({ pid: detachedChildPid, unref: vi.fn() }),
+        now: () => startupElapsed,
+        spawnDetached: () => {
+          startupElapsed = 100;
+          return { pid: detachedChildPid, unref: vi.fn() };
+        },
         terminateProcessTree: (child) =>
           terminateForwardServiceProcessTree(child, {
             now,
@@ -746,7 +1062,7 @@ describe("OpenShell forward service", () => {
             signalProcess,
             sleep: () => {},
           }),
-        timeoutMs: 0,
+        timeoutMs: 100,
       }),
     ).rejects.toThrow(expect.objectContaining({ name: ForwardServiceStartupCleanupError.name }));
     expect(signalProcess).toHaveBeenCalledWith(-detachedChildPid, "SIGKILL");

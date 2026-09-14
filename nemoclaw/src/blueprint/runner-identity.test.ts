@@ -1108,78 +1108,85 @@ describe("blueprint identity wrapper", () => {
     expect(store.get(`/fakehome/.nemoclaw/state/runs/${plan.run_id}/rolled_back`)).toBeUndefined();
   });
 
-  it("surfaces a validated ownership receipt and preserves it when rollback is unsafe (#9833)", async () => {
-    const stateDir = "/fakehome/.nemoclaw/state/runs/identity-run";
-    const receipt = {
-      provider_type: "okta-runtime-v1",
-      provider_name: "acme-okta-runtime",
-      credential_key: "OKTA_ACCESS_TOKEN",
-      provider_created: true,
-      attachment_created: true,
-    };
-    store.set(stateDir, { type: "dir" });
-    store.set(`${stateDir}/plan.json`, {
-      type: "file",
-      content: JSON.stringify({
-        run_id: "identity-run",
-        sandbox_name: "test-sandbox",
-        sandbox_created_by_apply: true,
-        inference_provider_created_by_apply: true,
-        inference: { provider_name: "test-provider", provider_type: "openai" },
-        identity: receipt,
-      }),
-    });
-    responseQueue([
-      [
-        "provider get test-provider",
-        [{ exitCode: 0, stdout: matchingInferenceProvider, stderr: "" }],
-      ],
-      [
-        "provider get acme-okta-runtime",
+  it.each([true, false])(
+    "preserves runtime identity when other resources are owned: %s (#9833)",
+    async (ownsOtherResources) => {
+      const stateDir = "/fakehome/.nemoclaw/state/runs/identity-run";
+      const receipt = {
+        provider_type: "okta-runtime-v1",
+        provider_name: "acme-okta-runtime",
+        credential_key: "OKTA_ACCESS_TOKEN",
+        provider_created: true,
+        attachment_created: true,
+      };
+      store.set(stateDir, { type: "dir" });
+      store.set(`${stateDir}/plan.json`, {
+        type: "file",
+        content: JSON.stringify({
+          run_id: "identity-run",
+          sandbox_name: "test-sandbox",
+          sandbox_created_by_apply: ownsOtherResources,
+          inference_provider_created_by_apply: ownsOtherResources,
+          inference: { provider_name: "test-provider", provider_type: "openai" },
+          identity: receipt,
+        }),
+      });
+      responseQueue([
         [
-          { exitCode: 0, stdout: matchingProvider, stderr: "" },
-          { exitCode: 0, stdout: matchingProvider, stderr: "" },
+          "provider get test-provider",
+          [{ exitCode: 0, stdout: matchingInferenceProvider, stderr: "" }],
         ],
-      ],
-    ]);
-    const stdout = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
-    actionStatus("identity-run");
-    const statusOutput = stdout.mock.calls.map(([chunk]) => String(chunk)).join("");
-    expect(statusOutput).toContain('"provider_created": true');
-    expect(statusOutput).toContain('"attachment_created": true');
-    expect(statusOutput).toContain('"inference_provider_created_by_apply": true');
-    stdout.mockRestore();
-    await expect(actionRollback("identity-run")).rejects.toThrow(
-      /mutable sandbox and provider names/u,
-    );
+        [
+          "provider get acme-okta-runtime",
+          [
+            { exitCode: 0, stdout: matchingProvider, stderr: "" },
+            { exitCode: 0, stdout: matchingProvider, stderr: "" },
+          ],
+        ],
+      ]);
+      const stdout = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+      actionStatus("identity-run");
+      const statusOutput = stdout.mock.calls.map(([chunk]) => String(chunk)).join("");
+      expect(statusOutput).toContain('"provider_created": true');
+      expect(statusOutput).toContain('"attachment_created": true');
+      expect(statusOutput).toContain(
+        `"inference_provider_created_by_apply": ${ownsOtherResources}`,
+      );
+      stdout.mockRestore();
+      const originalPlan = store.get(`${stateDir}/plan.json`);
+      await expect(actionRollback("identity-run")).rejects.toThrow(
+        /mutable sandbox and provider names/u,
+      );
 
-    expect(mockExeca).not.toHaveBeenCalledWith(
-      "openshell",
-      ["sandbox", "provider", "detach", "test-sandbox", "acme-okta-runtime"],
-      expect.anything(),
-    );
-    expect(mockExeca).not.toHaveBeenCalledWith(
-      "openshell",
-      ["provider", "delete", "acme-okta-runtime"],
-      expect.anything(),
-    );
-    expect(mockExeca).not.toHaveBeenCalledWith(
-      "openshell",
-      ["sandbox", "stop", "-g", "test-gateway", "test-sandbox"],
-      expect.anything(),
-    );
-    expect(mockExeca).not.toHaveBeenCalledWith(
-      "openshell",
-      ["sandbox", "remove", "-g", "test-gateway", "test-sandbox"],
-      expect.anything(),
-    );
-    expect(mockExeca).not.toHaveBeenCalledWith(
-      "openshell",
-      ["provider", "delete", "test-provider"],
-      expect.anything(),
-    );
-    expect(store.get(`${stateDir}/rolled_back`)).toBeUndefined();
-  });
+      expect(mockExeca).not.toHaveBeenCalledWith(
+        "openshell",
+        ["sandbox", "provider", "detach", "test-sandbox", "acme-okta-runtime"],
+        expect.anything(),
+      );
+      expect(mockExeca).not.toHaveBeenCalledWith(
+        "openshell",
+        ["provider", "delete", "acme-okta-runtime"],
+        expect.anything(),
+      );
+      expect(mockExeca).not.toHaveBeenCalledWith(
+        "openshell",
+        ["sandbox", "stop", "-g", "test-gateway", "test-sandbox"],
+        expect.anything(),
+      );
+      expect(mockExeca).not.toHaveBeenCalledWith(
+        "openshell",
+        ["sandbox", "remove", "-g", "test-gateway", "test-sandbox"],
+        expect.anything(),
+      );
+      expect(mockExeca).not.toHaveBeenCalledWith(
+        "openshell",
+        ["provider", "delete", "test-provider"],
+        expect.anything(),
+      );
+      expect(store.get(`${stateDir}/rolled_back`)).toBeUndefined();
+      expect(store.get(`${stateDir}/plan.json`)).toEqual(originalPlan);
+    },
+  );
 
   it("blocks rollback when the persisted identity ownership receipt is invalid", async () => {
     const stateDir = "/fakehome/.nemoclaw/state/runs/invalid-identity-run";

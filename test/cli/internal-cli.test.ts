@@ -1,59 +1,46 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
-import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
-const CLI = path.join(import.meta.dirname, "../..", "bin", "nemoclaw.js");
+import { runWithEnvAsync } from "./helpers";
 
-describe("internal oclif namespace", () => {
-  it("passes internal subcommands directly to oclif space-separated routing", () => {
-    const result = spawnSync(process.execPath, [CLI, "internal", "dns", "fix-coredns", "--help"], {
-      encoding: "utf-8",
-    });
+vi.setConfig({ maxConcurrency: 4 });
 
-    expect(result.status).toBe(0);
-    expect(result.stdout).toContain("Internal: patch CoreDNS");
-    expect(result.stdout).toContain("nemoclaw internal dns fix-coredns [gateway-name]");
+describe.concurrent("internal oclif namespace", () => {
+  it("passes internal subcommands directly to oclif space-separated routing", async () => {
+    const result = await runWithEnvAsync("internal dns fix-coredns --help");
+
+    expect(result.code).toBe(0);
+    expect(result.out).toContain("Internal: patch CoreDNS");
+    expect(result.out).toContain("nemoclaw internal dns fix-coredns [gateway-name]");
   });
 
-  it("exposes setup-proxy as an oclif-routed internal subcommand", () => {
-    const result = spawnSync(process.execPath, [CLI, "internal", "dns", "setup-proxy", "--help"], {
-      encoding: "utf-8",
-    });
+  it("exposes setup-proxy as an oclif-routed internal subcommand", async () => {
+    const result = await runWithEnvAsync("internal dns setup-proxy --help");
 
-    expect(result.status).toBe(0);
-    expect(result.stdout).toContain("Internal: configure sandbox DNS proxy");
-    expect(result.stdout).toContain(
-      "nemoclaw internal dns setup-proxy <gateway-name> <sandbox-name>",
-    );
+    expect(result.code).toBe(0);
+    expect(result.out).toContain("Internal: configure sandbox DNS proxy");
+    expect(result.out).toContain("nemoclaw internal dns setup-proxy <gateway-name> <sandbox-name>");
   });
 
-  it("exposes uninstall plan commands through oclif routing", () => {
-    const result = spawnSync(
-      process.execPath,
-      [CLI, "internal", "uninstall", "run-plan", "--help"],
-      {
-        encoding: "utf-8",
-      },
-    );
+  it("exposes uninstall plan commands through oclif routing", async () => {
+    const result = await runWithEnvAsync("internal uninstall run-plan --help");
 
-    expect(result.status).toBe(0);
-    expect(result.stdout).toContain("NemoClaw Uninstaller");
-    expect(result.stdout).toContain("--delete-models");
-    expect(result.stdout).toContain("--keep-openshell");
-    expect(result.stdout).toContain("--yes");
+    expect(result.code).toBe(0);
+    expect(result.out).toContain("NemoClaw Uninstaller");
+    expect(result.out).toContain("--delete-models");
+    expect(result.out).toContain("--keep-openshell");
+    expect(result.out).toContain("--yes");
   });
 
-  it("names only port-specific gateway resources when the gateway port is non-default (#10763)", () => {
-    const preview = spawnSync(process.execPath, [CLI, "internal", "uninstall", "plan", "--json"], {
-      encoding: "utf-8",
-      env: { ...process.env, NEMOCLAW_GATEWAY_PORT: "8091" },
+  it("names only port-specific gateway resources when the gateway port is non-default (#10763)", async () => {
+    const preview = await runWithEnvAsync("internal uninstall plan --json", {
+      NEMOCLAW_GATEWAY_PORT: "8091",
     });
 
-    expect(preview.status).toBe(0);
-    const plan = JSON.parse(preview.stdout) as {
+    expect(preview.code).toBe(0);
+    const plan = JSON.parse(preview.out) as {
       gatewayName: string;
       steps: { actions: { kind: string; name?: string }[] }[];
     };
@@ -77,104 +64,65 @@ describe("internal oclif namespace", () => {
     });
   });
 
-  it("exposes the dev npm-link shim command through oclif routing", () => {
-    const result = spawnSync(
-      process.execPath,
-      [CLI, "internal", "dev", "npm-link-or-shim", "--help"],
-      {
-        encoding: "utf-8",
-      },
-    );
+  it("exposes the dev npm-link shim command through oclif routing", async () => {
+    const result = await runWithEnvAsync("internal dev npm-link-or-shim --help");
 
-    expect(result.status).toBe(0);
-    expect(result.stdout).toContain("Internal: link the checkout CLI or create a dev shim");
-    expect(result.stdout).toContain("nemoclaw internal dev npm-link-or-shim");
+    expect(result.code).toBe(0);
+    expect(result.out).toContain("Internal: link the checkout CLI or create a dev shim");
+    expect(result.out).toContain("nemoclaw internal dev npm-link-or-shim");
   });
 
-  it("exposes installer plan commands through oclif routing", () => {
-    const help = spawnSync(process.execPath, [CLI, "internal", "installer", "plan", "--help"], {
-      encoding: "utf-8",
-    });
+  it("exposes installer plan commands through oclif routing", async () => {
+    const help = await runWithEnvAsync("internal installer plan --help");
 
-    expect(help.status).toBe(0);
-    expect(help.stdout).toContain("Internal: build the NemoClaw installer plan");
-    expect(help.stdout).toContain("nemoclaw internal installer plan [--json]");
+    expect(help.code).toBe(0);
+    expect(help.out).toContain("Internal: build the NemoClaw installer plan");
+    expect(help.out).toContain("nemoclaw internal installer plan [--json]");
 
-    const result = spawnSync(
-      process.execPath,
-      [
-        CLI,
-        "internal",
-        "installer",
-        "plan",
-        "--json",
-        "--install-ref",
-        "v1.2.3",
-        "--provider",
-        "cloud",
-        "--node-version",
-        "v22.19.0",
-        "--npm-version",
-        "10.0.0",
-      ],
-      { encoding: "utf-8" },
+    const result = await runWithEnvAsync(
+      "internal installer plan --json --install-ref v1.2.3 --provider cloud --node-version v22.19.0 --npm-version 10.0.0",
     );
 
-    expect(result.status).toBe(0);
-    expect(JSON.parse(result.stdout)).toMatchObject({
+    expect(result.code).toBe(0);
+    expect(JSON.parse(result.out)).toMatchObject({
       installRef: "v1.2.3",
       provider: { normalized: "build", raw: "cloud", valid: true },
       runtime: { ok: true },
     });
   });
 
-  it("exposes installer ref and env normalization helpers through oclif routing", () => {
-    const ref = spawnSync(
-      process.execPath,
-      [CLI, "internal", "installer", "resolve-release-tag", "--json", "--install-tag", "v2.0.0"],
-      { encoding: "utf-8" },
+  it("exposes installer ref and env normalization helpers through oclif routing", async () => {
+    const ref = await runWithEnvAsync(
+      "internal installer resolve-release-tag --json --install-tag v2.0.0",
     );
-    const env = spawnSync(
-      process.execPath,
-      [CLI, "internal", "installer", "normalize-env", "--json", "--provider", "nim"],
-      { encoding: "utf-8" },
-    );
+    const env = await runWithEnvAsync("internal installer normalize-env --json --provider nim");
 
-    expect(ref.status).toBe(0);
-    expect(JSON.parse(ref.stdout)).toEqual({ installRef: "v2.0.0" });
-    expect(env.status).toBe(0);
-    expect(JSON.parse(env.stdout)).toMatchObject({
+    expect(ref.code).toBe(0);
+    expect(JSON.parse(ref.out)).toEqual({ installRef: "v2.0.0" });
+    expect(env.code).toBe(0);
+    expect(JSON.parse(env.out)).toMatchObject({
       installRef: "lkg",
       provider: { normalized: "nim-local", raw: "nim", valid: true },
     });
   });
 
-  it("fails the experimental voice gateway gate before parsing required flags (#8378)", () => {
-    const env = { ...process.env };
-    delete env.NEMOCLAW_EXPERIMENTAL_VOICE_GATEWAY;
-
-    const result = spawnSync(process.execPath, [CLI, "internal", "voice-gateway", "serve"], {
-      encoding: "utf-8",
-      env,
+  it("fails the experimental voice gateway gate before parsing required flags (#8378)", async () => {
+    const result = await runWithEnvAsync("internal voice-gateway serve", {
+      NEMOCLAW_EXPERIMENTAL_VOICE_GATEWAY: "",
     });
 
-    expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain("Experimental voice gateway is disabled");
-    expect(result.stderr).not.toContain("Missing required flag");
+    expect(result.code).not.toBe(0);
+    expect(result.out).toContain("Experimental voice gateway is disabled");
+    expect(result.out).not.toContain("Missing required flag");
   });
 
-  it("ships hidden help for the feature-gated voice gateway command (#8378)", () => {
-    const result = spawnSync(
-      process.execPath,
-      [CLI, "internal", "voice-gateway", "serve", "--help"],
-      {
-        encoding: "utf-8",
-        env: { ...process.env, NEMOCLAW_EXPERIMENTAL_VOICE_GATEWAY: "1" },
-      },
-    );
+  it("ships hidden help for the feature-gated voice gateway command (#8378)", async () => {
+    const result = await runWithEnvAsync("internal voice-gateway serve --help", {
+      NEMOCLAW_EXPERIMENTAL_VOICE_GATEWAY: "1",
+    });
 
-    expect(result.status).toBe(0);
-    expect(result.stdout).toContain("Internal: serve the experimental voice gateway");
-    expect(result.stdout).toContain("--runtime-identity");
+    expect(result.code).toBe(0);
+    expect(result.out).toContain("Internal: serve the experimental voice gateway");
+    expect(result.out).toContain("--runtime-identity");
   });
 });

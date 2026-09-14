@@ -163,7 +163,7 @@ These are two required acceptance executions, not retries; either failure remain
 The concurrent-add probe retries only the rejected command after status proves that the other
 command committed one coherent bridge. The rejected command must report either the exact portable
 host-lock timeout or the reviewed Hermes restart transport failure. The retry runs once, has its own
-command artifact, and must reject the committed duplicate as already present.
+command artifact, and must succeed idempotently from the verified committed source.
 The workflow records one publication cohort before its PR producer matrix runs. Failed-job reruns
 reuse that cohort and replace only the stable run-scoped artifact owned by each retried agent.
 Consumers accept one complete cohort from the same run at the current or an earlier attempt. They
@@ -496,14 +496,21 @@ The GPU memory-offload assertion also rejects a missing matching process because
 is then `NaN`; a separate process-existence assertion is unnecessary. Authentication denial,
 runtime ownership, Ready state, and cleanup assertions remain unchanged.
 The `gpu-e2e` target also qualifies configuration export for an attached native Linux Ollama daemon.
-A separate OpenClaw scenario disables direct sandbox GPU, starts a fixture-owned daemon on port
-11439, and uses normal onboarding to create the managed proxy on port 11440. It exports twice through
+A separate OpenClaw scenario disables direct sandbox GPU and uses normal onboarding to create the
+managed proxy on the target's shared port. It stops the installer service before starting a fixture-owned
+daemon on port 11439 and preparing its model. It exports twice through
 the candidate CLI and real SDK, validates both documents, compares their specs and model digest,
-checks credential omission, and requires a stopped daemon to prevent publication. Private YAML is
+checks credential omission, and requires a stopped daemon to prevent publication. Inference-provider
+definitions omit internal endpoints; the sandbox's explicit network policy is preserved. Private YAML is
 removed through the cleanup registry; retained evidence contains only the selected model, ports,
 managed image, and result booleans. The existing CUDA, authentication, and inference lifecycle
-scenarios remain separate. Daemon readiness polls only connection refusal, for at most 20 reads,
-and records each attempt; onboarding and export mutations are not retried.
+scenarios remain separate. The export fixture requires service shutdown and model preparation to succeed
+before export. Onboarding and model preparation each have a 20-minute limit within the 75-minute
+scenario. It retries read-only daemon readiness checks on connection refusal or curl
+timeout, for at most 20 reads. It records each attempt and stops on any other failure; model
+preparation, onboarding, and export mutations are not retried.
+After stopped-daemon refusal, cleanup restores the fixture daemon so sandbox destruction can unload
+models through the saved endpoint. It destroys the sandbox before stopping that daemon.
 Retained workflow jobs are exceptions to the catalogue shape.
 Keep one only for a multi-job handoff, an unrepresented credential boundary, or an execution contract the reusable profile cannot represent.
 
