@@ -451,11 +451,25 @@ test(
       artifactName: "restart-stop-dashboard-forward",
       env: buildAvailabilityProbeEnv(),
     });
-    const restart = await host.command("docker", ["restart", originalContainerId], {
-      artifactName: "restart-docker-restart",
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: 120_000,
-    });
+    // Keep OpenShell's durable phase out of Error while Docker restarts the
+    // registered main process. Docker still reuses the exact persisted command.
+    const restart = await host.command(
+      "bash",
+      [
+        "-eu",
+        "-c",
+        '"$1" sandbox stop "$2"\ndocker restart "$3"\n"$1" sandbox start "$2"',
+        "persisted-startup-restart",
+        host.openshellCommandPath,
+        instance.sandboxName,
+        originalContainerId,
+      ],
+      {
+        artifactName: "restart-docker-handoff",
+        env: buildAvailabilityProbeEnv(),
+        timeoutMs: 120_000,
+      },
+    );
     expect(restart.exitCode, resultText(restart)).toBe(0);
     await waitForSandboxExecReady(host, instance.sandboxName, progress, "restart-openshell-ready");
 
