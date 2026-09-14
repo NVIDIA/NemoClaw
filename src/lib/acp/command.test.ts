@@ -308,6 +308,25 @@ describe("Hermes ACP command", () => {
     ]);
   });
 
+  it("reports retained temporary SSH credential cleanup guidance (#10947)", async () => {
+    const message =
+      'NemoClaw could not remove the temporary SSH configuration at "/tmp/nemoclaw-acp-retained". Remove that directory before running nemoclaw-acp again.';
+    const transport: HermesAcpSshTransport = {
+      run: vi.fn(async (request) => {
+        request.onSessionStarted?.();
+        return {
+          kind: "failed" as const,
+          error: { kind: "cleanup" as const, message },
+          exitCode: 1,
+        };
+      }),
+    };
+    const fixture = commandHarness({ transport });
+
+    expect(await fixture.run(["--sandbox", "alpha"])).toBe(1);
+    expect(fixture.diagnostics.text()).toBe(`${message}\n`);
+  });
+
   it("fails closed when the registered target changes while waiting for the lifecycle fence", async () => {
     const first = registryEntry("alpha");
     const changed = registryEntry("alpha", 8080, { lifecycleGeneration: "generation-2" });

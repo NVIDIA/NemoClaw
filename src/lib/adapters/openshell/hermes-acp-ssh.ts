@@ -7,6 +7,7 @@ export const HERMES_ACP_EXECUTABLE = "/usr/local/bin/hermes-acp";
 
 export type HermesAcpSshFailureKind =
   | "cancelled"
+  | "cleanup"
   | "client_disconnect"
   | "incompatible"
   | "invocation"

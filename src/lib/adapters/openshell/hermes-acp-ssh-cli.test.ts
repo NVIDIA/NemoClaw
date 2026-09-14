@@ -6,6 +6,7 @@ import { EventEmitter } from "node:events";
 import { PassThrough, Readable, Writable } from "node:stream";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { TempSshConfigCleanupError } from "../../sandbox/temp-ssh-config";
 import {
   buildHermesAcpProbeSshArgs,
   buildHermesAcpSessionSshArgs,
@@ -28,6 +29,11 @@ function sshConfig(gatewayName = "nemoclaw"): string {
   ].join("\n");
 }
 const PROBE_OUTPUT = "0.20.6\n0.9.0\n";
+const SESSION_STATUS_NONCE = "0123456789abcdef0123456789abcdef";
+
+function sessionStatusFrame(status: number): string {
+  return `\x1enemoclaw-acp-status-v1:${SESSION_STATUS_NONCE}:${String(status)}\x1e`;
+}
 
 type FakeChild = Omit<
   ChildProcessWithoutNullStreams,
@@ -83,6 +89,11 @@ function probeChild(output = PROBE_OUTPUT, status = 0): FakeChild {
   });
 }
 
+function finishSession(child: FakeChild, status: number): void {
+  child.stderr.write(sessionStatusFrame(status));
+  child.finish(0);
+}
+
 function collectingWritable(options: { delay?: boolean; fail?: boolean } = {}): {
   stream: Writable;
   text: () => string;
@@ -129,6 +140,7 @@ function harness(
     access: vi.fn(),
     captureOpenShell,
     createTempConfig,
+    createSessionStatusNonce: () => SESSION_STATUS_NONCE,
     openshellVersion: vi.fn(() => "0.0.116"),
     platform: "linux",
     resolveOpenshell: () => "/usr/bin/openshell",
@@ -168,23 +180,35 @@ describe("CLI Hermes ACP SSH transport", () => {
     vi.unstubAllEnvs();
   });
 
-  it("constructs only fixed probe and hermes-acp commands", () => {
+  it("constructs only fixed probe and status-framed hermes-acp commands (#10947)", () => {
     const probe = buildHermesAcpProbeSshArgs("/tmp/acp/ssh_config", "openshell-alpha.default");
-    const session = buildHermesAcpSessionSshArgs("/tmp/acp/ssh_config", "openshell-alpha.default");
+    const session = buildHermesAcpSessionSshArgs(
+      "/tmp/acp/ssh_config",
+      "openshell-alpha.default",
+      SESSION_STATUS_NONCE,
+    );
 
     expect(probe.slice(0, -1)).toEqual(session.slice(0, -1));
     expect(probe.at(-1)).toContain('m.version("hermes-agent")');
     expect(probe.at(-1)).toContain('m.version("agent-client-protocol")');
-    expect(session.at(-1)).toBe("/usr/local/bin/hermes-acp");
-    expect(session.slice(0, -1)).not.toContain("sh");
-    expect(session.slice(0, -1)).not.toContain("/bin/sh");
+    expect(session.at(-1)).toContain("/bin/sh -c");
+    expect(session.at(-1)).toContain("/usr/local/bin/hermes-acp");
+    expect(session.at(-1)).toContain("nemoclaw-acp-status-v1");
+    expect(session.at(-1)).toContain(SESSION_STATUS_NONCE);
+    expect(() =>
+      buildHermesAcpSessionSshArgs(
+        "/tmp/acp/ssh_config",
+        "openshell-alpha.default",
+        "$(untrusted)",
+      ),
+    ).toThrow("Hermes ACP session status nonce is invalid");
   });
 
   it("forwards duplex bytes with backpressure and keeps stderr out of ACP output", async () => {
     const session = fakeChild((child, input) => {
       child.stderr.write("request payload and credential-shaped diagnostic");
       child.stdout.write(`reply:${input}`);
-      child.finish(0);
+      finishSession(child, 0);
     });
     const fixture = harness([probeChild(), session]);
     const io = streams(Readable.from(["first", "-second"]));
@@ -205,7 +229,7 @@ describe("CLI Hermes ACP SSH transport", () => {
     vi.stubEnv("NVIDIA_INFERENCE_API_KEY", "provider-secret");
     vi.stubEnv("OPENSHELL_TOKEN", "openshell-secret");
     vi.stubEnv("SSH_AUTH_SOCK", "/tmp/private-agent.sock");
-    const session = fakeChild((child) => child.finish(0));
+    const session = fakeChild((child) => finishSession(child, 0));
     const fixture = harness([probeChild(), session]);
     const io = streams();
 
@@ -260,7 +284,7 @@ describe("CLI Hermes ACP SSH transport", () => {
   it("preserves a remote nonzero status while reducing remote diagnostics", async () => {
     const session = fakeChild((child) => {
       child.stderr.write("Authorization: Bearer secret\nACP request body");
-      child.finish(42);
+      finishSession(child, 42);
     });
     const fixture = harness([probeChild(), session]);
     const io = streams();
@@ -276,6 +300,27 @@ describe("CLI Hermes ACP SSH transport", () => {
       "nemoclaw-acp: the remote adapter reported diagnostic output.\n",
     );
     expect(io.diagnostics.text()).not.toMatch(/Bearer|request body|secret/u);
+    expect(fixture.cleanup).toHaveBeenCalledOnce();
+  });
+
+  it("preserves remote exit 255 without classifying it as an SSH failure (#10947)", async () => {
+    const session = fakeChild((child) => {
+      const frame = sessionStatusFrame(255);
+      child.stderr.write(frame.slice(0, 19));
+      child.stderr.write(frame.slice(19));
+      child.finish(0);
+    });
+    const fixture = harness([probeChild(), session]);
+    const io = streams();
+
+    const result = await fixture.transport.run({
+      gatewayName: "nemoclaw",
+      sandboxName: "alpha",
+      streams: io.value,
+    });
+
+    expect(result).toEqual({ kind: "completed", exitCode: 255 });
+    expect(io.diagnostics.text()).toBe("");
     expect(fixture.cleanup).toHaveBeenCalledOnce();
   });
 
@@ -389,7 +434,7 @@ describe("CLI Hermes ACP SSH transport", () => {
 
     await vi.waitFor(() => expect(onSessionStarted).toHaveBeenCalledOnce());
     expect(session.exitCode).toBeNull();
-    session.finish(0);
+    finishSession(session, 0);
 
     await expect(pending).resolves.toEqual({ kind: "completed", exitCode: 0 });
   });
@@ -446,6 +491,80 @@ describe("CLI Hermes ACP SSH transport", () => {
 
     expect(result).toMatchObject({ kind: "failed", error: { kind: "transport" }, exitCode: 255 });
     expect(fixture.cleanup).toHaveBeenCalledOnce();
+  });
+
+  it("fails closed when SSH completes without a session-bound remote status (#10947)", async () => {
+    const session = fakeChild((child) => child.finish(0));
+    const fixture = harness([probeChild(), session]);
+    const io = streams();
+
+    const result = await fixture.transport.run({
+      gatewayName: "nemoclaw",
+      sandboxName: "alpha",
+      streams: io.value,
+    });
+
+    expect(result).toMatchObject({
+      kind: "failed",
+      error: { kind: "transport" },
+      exitCode: 255,
+    });
+    expect(fixture.cleanup).toHaveBeenCalledOnce();
+  });
+
+  it("reports cleanup failure with the retained credential path (#10947)", async () => {
+    const cleanup = vi.fn(() => {
+      throw new Error("remove failed");
+    });
+    const createTempConfig = vi.fn(() => ({
+      dir: "/tmp/nemoclaw-acp-retained",
+      file: "/tmp/nemoclaw-acp-retained/ssh_config",
+      cleanup,
+    }));
+    const session = fakeChild((child) => finishSession(child, 0));
+    const fixture = harness([probeChild(), session], { createTempConfig });
+    const io = streams();
+
+    const result = await fixture.transport.run({
+      gatewayName: "nemoclaw",
+      sandboxName: "alpha",
+      streams: io.value,
+    });
+
+    expect(result).toEqual({
+      kind: "failed",
+      error: {
+        kind: "cleanup",
+        message:
+          'NemoClaw could not remove the temporary SSH configuration at "/tmp/nemoclaw-acp-retained". Remove that directory before running nemoclaw-acp again.',
+      },
+      exitCode: 1,
+    });
+    expect(cleanup).toHaveBeenCalledOnce();
+  });
+
+  it("reports a retained path when temporary SSH configuration creation cannot clean up (#10947)", async () => {
+    const createTempConfig = vi.fn(() => {
+      throw new TempSshConfigCleanupError("/tmp/nemoclaw-acp-create-retained", new Error());
+    });
+    const fixture = harness([], { createTempConfig });
+    const io = streams();
+
+    const result = await fixture.transport.run({
+      gatewayName: "nemoclaw",
+      sandboxName: "alpha",
+      streams: io.value,
+    });
+
+    expect(result).toMatchObject({
+      kind: "failed",
+      error: {
+        kind: "cleanup",
+        message: expect.stringContaining('"/tmp/nemoclaw-acp-create-retained"'),
+      },
+      exitCode: 1,
+    });
+    expect(fixture.spawnSsh).not.toHaveBeenCalled();
   });
 
   it.each([

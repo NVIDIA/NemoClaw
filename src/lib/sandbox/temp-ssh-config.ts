@@ -11,12 +11,21 @@ export type TempSshConfig = {
   cleanup: () => void;
 };
 
-function removeTempDir(dir: string): void {
-  try {
-    fs.rmSync(dir, { recursive: true, force: true });
-  } catch {
-    /* best effort */
+export class TempSshConfigCleanupError extends Error {
+  readonly dir: string;
+
+  constructor(dir: string, cause: unknown) {
+    super(
+      `NemoClaw failed to remove temporary OpenShell SSH configuration at ${JSON.stringify(dir)}`,
+      { cause },
+    );
+    this.name = "TempSshConfigCleanupError";
+    this.dir = dir;
   }
+}
+
+function removeTempDir(dir: string): void {
+  fs.rmSync(dir, { recursive: true, force: true });
 }
 
 export function createTempSshConfig(contents: string, prefix: string): TempSshConfig {
@@ -25,7 +34,17 @@ export function createTempSshConfig(contents: string, prefix: string): TempSshCo
   try {
     fs.writeFileSync(file, contents, { mode: 0o600 });
   } catch (error) {
-    removeTempDir(dir);
+    try {
+      removeTempDir(dir);
+    } catch (cleanupError) {
+      throw new TempSshConfigCleanupError(
+        dir,
+        new AggregateError(
+          [error, cleanupError],
+          "Could not create or remove the temporary SSH configuration",
+        ),
+      );
+    }
     throw error;
   }
 
@@ -33,7 +52,11 @@ export function createTempSshConfig(contents: string, prefix: string): TempSshCo
     dir,
     file,
     cleanup: () => {
-      removeTempDir(dir);
+      try {
+        removeTempDir(dir);
+      } catch (error) {
+        throw new TempSshConfigCleanupError(dir, error);
+      }
     },
   };
 }
