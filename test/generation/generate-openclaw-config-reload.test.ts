@@ -100,7 +100,7 @@ describe("gateway.reload pin (#4710)", () => {
     },
   );
 
-  it("preserves bounded OpenClaw write metadata across managed regeneration (#7744)", () => {
+  it("preserves supported OpenClaw metadata and drops rejected legacy keys (#7744)", () => {
     const configDir = path.join(tmpDir, ".openclaw");
     fs.mkdirSync(configDir, { recursive: true });
     const configPath = path.join(configDir, "openclaw.json");
@@ -108,7 +108,7 @@ describe("gateway.reload pin (#4710)", () => {
       configPath,
       JSON.stringify({
         meta: {
-          lastTouchedVersion: "2026.7.1",
+          lastTouchedVersion: "2026.9.1",
           lastTouchedAt: "2026-08-11T22:45:04.591Z",
           unownedField: "must-not-cross-the-managed-boundary",
         },
@@ -128,8 +128,7 @@ describe("gateway.reload pin (#4710)", () => {
 
     const written = JSON.parse(fs.readFileSync(configPath, "utf-8"));
     expect(written.meta).toEqual({
-      lastTouchedVersion: "2026.7.1",
-      lastTouchedAt: "2026-08-11T22:45:04.591Z",
+      lastTouchedVersion: "2026.9.1",
     });
   });
 
@@ -142,7 +141,7 @@ describe("gateway.reload pin (#4710)", () => {
       `${configPath}.bak`,
       JSON.stringify({
         meta: {
-          lastTouchedVersion: "2026.7.1",
+          lastTouchedVersion: "2026.9.1",
           lastTouchedAt: "2026-08-11T22:45:04.591Z",
           unownedField: "must-not-cross-the-managed-boundary",
         },
@@ -156,8 +155,7 @@ describe("gateway.reload pin (#4710)", () => {
 
     const written = JSON.parse(fs.readFileSync(configPath, "utf-8"));
     expect(written.meta).toEqual({
-      lastTouchedVersion: "2026.7.1",
-      lastTouchedAt: "2026-08-11T22:45:04.591Z",
+      lastTouchedVersion: "2026.9.1",
     });
     expect(written.agents.defaults.model.primary).toBe(BASE_ENV.NEMOCLAW_PRIMARY_MODEL_REF);
     expect(written.models.providers.stale).toBeUndefined();
@@ -166,7 +164,7 @@ describe("gateway.reload pin (#4710)", () => {
   });
 
   it.each([
-    ["partial", { lastTouchedVersion: "2026.7.1" }],
+    ["missing-version", { lastTouchedAt: "2026-08-11T22:45:04.591Z" }],
     [
       "unbounded",
       { lastTouchedVersion: "v".repeat(257), lastTouchedAt: "2026-08-11T22:45:04.591Z" },

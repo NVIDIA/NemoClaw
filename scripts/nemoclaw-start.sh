@@ -2300,11 +2300,13 @@ try {
   const gateway = cfg.gateway && typeof cfg.gateway === "object" ? cfg.gateway : (cfg.gateway = {});
   const auth = gateway.auth && typeof gateway.auth === "object" ? gateway.auth : (gateway.auth = {});
   auth.token = tokenUrlSafe(32);
-  const meta = cfg.meta && typeof cfg.meta === "object" ? cfg.meta : (cfg.meta = {});
-  // Record OpenClaw's configuration-write metadata. Without this field,
-  // OpenClaw 2026.7 can classify the authenticated configuration as overwritten
-  // and restore the tokenless build-time backup before gateway authentication resolves.
-  meta.lastTouchedAt = new Date().toISOString();
+  // OpenClaw 2026.9.1 rejects the legacy timestamp key. Scrub it defensively
+  // while retaining supported metadata such as `lastTouchedVersion`.
+  const meta = cfg.meta;
+  if (meta && typeof meta === "object" && !Array.isArray(meta)) {
+    delete meta.lastTouchedAt;
+    if (Object.keys(meta).length === 0) delete cfg.meta;
+  }
 
   const dirPath = pathModule.dirname(path);
   let fd;

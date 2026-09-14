@@ -489,9 +489,9 @@ describe("nemoclaw-start gateway token export (#1114)", () => {
     );
   });
 
-  it("generates a gateway token before writing the runtime shell env (#3256)", () => {
+  it("generates a gateway token and scrubs rejected legacy metadata (#3256)", () => {
     const { result, envFile, configAfter, hashAfter } = runGatewayTokenHarness(
-      JSON.stringify({ gateway: { auth: {} } }),
+      '{"gateway":{"auth":{}},"meta":{"lastTouchedVersion":"2026.9.1","lastTouchedAt":"2026-09-13T00:00:00.000Z"}}',
       "stale-token",
       "18790",
       true,
@@ -499,7 +499,7 @@ describe("nemoclaw-start gateway token export (#1114)", () => {
 
     expect(result.status, result.stderr || result.stdout).toBe(0);
     expect(configAfter.gateway.auth.token).not.toBe("");
-    expect(Number.isNaN(Date.parse(configAfter.meta.lastTouchedAt))).toBe(false);
+    expect(configAfter.meta).toEqual({ lastTouchedVersion: "2026.9.1" });
     expect(envFile).toContain("export OPENCLAW_GATEWAY_PORT='18790'");
     expect(envFile).toContain("export NEMOCLAW_OPENCLAW_GATEWAY_URL='ws://127.0.0.1:18790'");
     expect(envFile).not.toContain("export OPENCLAW_GATEWAY_URL='ws://127.0.0.1:18790'");

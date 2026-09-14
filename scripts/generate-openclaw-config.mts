@@ -1156,16 +1156,11 @@ function readExistingOpenClawConfig(configPath: string): JsonObject | null {
 }
 
 function openClawContinuityMetadata(value: unknown): JsonObject | null {
-  if (
-    !isObject(value) ||
-    !boundedOpenClawMetadataText(value.lastTouchedVersion) ||
-    !boundedOpenClawMetadataText(value.lastTouchedAt)
-  ) {
+  if (!isObject(value) || !boundedOpenClawMetadataText(value.lastTouchedVersion)) {
     return null;
   }
   return {
     lastTouchedVersion: value.lastTouchedVersion,
-    lastTouchedAt: value.lastTouchedAt,
   };
 }
 
@@ -1176,8 +1171,9 @@ function preserveExistingOpenClawState(config: JsonObject, configPath: string): 
   // metadata carried by its last-known-good snapshot, then restores the old
   // config with `missing-meta-vs-last-good`. The final image-generation pass
   // can leave the active file without metadata while its exact OpenClaw-owned
-  // `.bak` retains it, so prefer the active pair and otherwise inspect only
-  // that one fixed backup path. Copy only the two bounded continuity fields;
+  // `.bak` retains it, so prefer the active value and otherwise inspect only
+  // that one fixed backup path. OpenClaw 2026.9.1 rejects the legacy
+  // `lastTouchedAt` key, so carry forward only the bounded version field;
   // every NemoClaw-owned routing field still comes from the managed profile.
   const continuityMeta =
     openClawContinuityMetadata(existing?.meta) ??
