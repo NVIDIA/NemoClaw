@@ -251,8 +251,24 @@ type HermesAcpLiveReceipt = Readonly<{
   sessionCreated: boolean;
   signal: NodeJS.Signals | null;
   stderrObserved: boolean;
+  stderrCategory: string;
   timedOut: boolean;
 }>;
+
+function hermesAcpStderrCategory(stderr: string): string {
+  const categories = [
+    ["could not safely inspect the sandbox registry", "registry-inspection"],
+    ["not a compatible managed Hermes sandbox", "registry-incompatible"],
+    ["changed before the ACP adapter could start", "registry-changed"],
+    ["gateway could not be recovered", "gateway-recovery-error"],
+    ["gateway is not ready", "gateway-not-ready"],
+    ["could not validate the selected sandbox identity", "sandbox-identity"],
+    ["transport could not start safely", "transport-start"],
+    ["OpenShell SSH could not reach", "ssh-unreachable"],
+  ] as const;
+  const match = categories.find(([text]) => stderr.includes(text));
+  return match?.[1] ?? (stderr ? "unclassified" : "none");
+}
 
 async function writeHermesAcpLiveReceipt(
   options: HermesAcpLiveOptions,
@@ -287,6 +303,7 @@ export async function runHermesAcpLiveScenario(options: HermesAcpLiveOptions): P
       sessionCreated: false,
       signal: null,
       stderrObserved: false,
+      stderrCategory: "none",
       timedOut: false,
     });
     return false;
@@ -323,6 +340,7 @@ export async function runHermesAcpLiveScenario(options: HermesAcpLiveOptions): P
   let protocolValid = true;
   const promptEvidence = createHermesAcpPromptEvidenceTracker();
   let stderrObserved = false;
+  let stderr = "";
   let childClosed = false;
   const inbox: JsonObject[] = [];
   const waiters = new Set<() => void>();
@@ -367,8 +385,9 @@ export async function runHermesAcpLiveScenario(options: HermesAcpLiveOptions): P
       buffered = lines.pop() ?? "";
       for (const line of lines) consumeLine(line);
     },
-    onStderr: () => {
+    onStderr: (chunk) => {
       stderrObserved = true;
+      stderr = `${stderr}${chunk}`.slice(0, 16_384);
     },
   });
   child.once("close", () => {
@@ -511,6 +530,7 @@ export async function runHermesAcpLiveScenario(options: HermesAcpLiveOptions): P
     sessionCreated,
     signal: result.signal,
     stderrObserved,
+    stderrCategory: hermesAcpStderrCategory(stderr),
     timedOut: result.timedOut,
   });
   return passed;
