@@ -121,7 +121,7 @@ export function createCliOpenShellGatewayObserver(
           ((!infoError && named) || unsupported)
         )
           state = "healthy_named";
-        else if (activeGateway === name && named && statusError?.kind === "transport")
+        else if (named && statusError?.kind === "transport" && statusError.reason === "unreachable")
           state = "named_unreachable";
         else if (activeGateway === name && named) state = "named_unhealthy";
         else if (!statusError && connected && activeGateway && activeGateway !== name)
