@@ -354,6 +354,7 @@ export function createDockerDriverGatewayStart(
       }
       reportDockerDriverGatewayStartFailure(logPath, childExit, {
         exitOnFailure,
+        gatewayPort: deps.gatewayPort(),
         isGatewayStateInUse: deps.isDockerDriverGatewayStateInUse,
         launchLogOffset: log.startOffset,
         ...(output ? { printError: (message?: string) => output.error(message ?? "") } : {}),

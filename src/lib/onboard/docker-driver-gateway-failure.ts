@@ -24,6 +24,8 @@ import {
 
 export type ReportDockerDriverGatewayStartFailureOpts = {
   exitOnFailure: boolean;
+  /** Selected host port, used to print a fresh listener-verification command. */
+  gatewayPort?: number;
   /** Byte offset where the current gateway launch began writing the append-only log. */
   launchLogOffset: number;
   /** Identity-aware selected-state ownership probe supplied by the onboarding runtime. */
@@ -57,6 +59,7 @@ function findAvailableGatewayStateArchivePath(stateDir: string): string | null {
  */
 function printIncompatibleGatewayDatabaseRecovery(
   logPath: string,
+  gatewayPort: number | undefined,
   isGatewayStateInUse: (() => boolean) | undefined,
   resolveGatewayStopCommand: () => string | null,
   printError: (message?: string) => void,
@@ -74,6 +77,18 @@ function printIncompatibleGatewayDatabaseRecovery(
   const stopCommand = resolveGatewayStopCommand();
   if (!stopCommand && isGatewayStateInUse?.() !== false) {
     printError("  NemoClaw could not confirm that the standalone gateway process stopped.");
+    printError("  Inspect the current listener before stopping anything:");
+    printError(
+      gatewayPort === undefined
+        ? "    sudo lsof -iTCP -sTCP:LISTEN -P -n"
+        : `    sudo lsof -i :${gatewayPort} -sTCP:LISTEN -P -n`,
+    );
+    printError("  Verify each listed PID's user and full command:");
+    printError("    ps -p <PID> -o user=,args=");
+    printError(
+      "  Stop it through its verified owning service or installation. Otherwise, repeat both checks immediately before signaling only that PID.",
+    );
+    printError("  Do not infer ownership from the process name.");
     printError("  Stop the gateway, then run onboarding again:");
     printError(`    ${recoveryCommand}`);
     printError(
@@ -113,6 +128,7 @@ export function reportDockerDriverGatewayStartFailure(
   childExit: ChildExitState,
   {
     exitOnFailure,
+    gatewayPort,
     launchLogOffset,
     isGatewayStateInUse,
     printError = console.error,
@@ -141,6 +157,7 @@ export function reportDockerDriverGatewayStartFailure(
   } else if (failure.kind === "database_migration_incompatible") {
     printIncompatibleGatewayDatabaseRecovery(
       logPath,
+      gatewayPort,
       isGatewayStateInUse,
       resolveGatewayStopCommand,
       printError,

@@ -299,12 +299,16 @@ describe("reportDockerDriverGatewayStartFailure (#3111)", () => {
     try {
       reportDockerDriverGatewayStartFailure(log, makeExitState(), {
         exitOnFailure: false,
+        gatewayPort: 8080,
         isGatewayStateInUse: probe,
         launchLogOffset: 0,
         resolveGatewayStopCommand: () => null,
       });
       const joined = errSpy.mock.calls.map((c: string[]) => c.join(" ")).join("\n");
       expect(joined).toContain("could not confirm that the standalone gateway process stopped");
+      expect(joined).toContain("sudo lsof -i :8080 -sTCP:LISTEN -P -n");
+      expect(joined).toContain("ps -p <PID> -o user=,args=");
+      expect(joined).toContain("Do not infer ownership from the process name");
       expect(joined).not.toContain(`mkdir -m 700 '${dir}.incompatible'`);
       expect(joined).not.toContain("systemctl --user stop");
       expect(joined).not.toContain("brew services stop");
@@ -332,6 +336,7 @@ describe("reportDockerDriverGatewayStartFailure (#3111)", () => {
       try {
         reportDockerDriverGatewayStartFailure(log, makeExitState(), {
           exitOnFailure: false,
+          gatewayPort: 8080,
           isGatewayStateInUse: stateInUse,
           launchLogOffset: 0,
           resolveGatewayStopCommand: () =>
@@ -351,6 +356,8 @@ describe("reportDockerDriverGatewayStartFailure (#3111)", () => {
         const joined = errSpy.mock.calls.map((c: string[]) => c.join(" ")).join("\n");
         expect(stateInUse).toHaveBeenCalledOnce();
         expect(joined).toContain("could not confirm that the standalone gateway process stopped");
+        expect(joined).toContain("sudo lsof -i :8080 -sTCP:LISTEN -P -n");
+        expect(joined).toContain("ps -p <PID> -o user=,args=");
         expect(joined).not.toContain(`mkdir -m 700 '${dir}.incompatible'`);
         expect(joined).not.toContain("systemctl --user stop");
       } finally {
