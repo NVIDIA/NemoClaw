@@ -3,7 +3,7 @@
 
 import { createHash } from "node:crypto";
 
-import { describe, expect, it, vi } from "vitest";
+import { assert, describe, expect, it, vi } from "vitest";
 
 import {
   assertPodmanExecutableAuthority,
@@ -80,6 +80,41 @@ function authorityDeps(
 }
 
 describe("Podman executable authority", () => {
+  it.each(["file", "parent"])(
+    "redacts credentials in rejected %s paths before creating shared errors",
+    (kind) => {
+      const secret = `nvapi-${"a".repeat(60)}`;
+      const parent = `/opt/${secret}`;
+      const executablePath = `${parent}/podman`;
+      const readFile = vi.fn(() => EXECUTABLE_BYTES);
+      let failure: unknown;
+      try {
+        capturePodmanExecutableAuthority(
+          executablePath,
+          authorityDeps({
+            readFile,
+            /** Make only the selected file or parent writable; preserve all other authority checks. */
+            lstat: (filePath) =>
+              filePath === executablePath
+                ? executableStat({ mode: kind === "file" ? 0o100775n : 0o100755n })
+                : directoryStat(filePath, {
+                    mode: kind === "parent" && filePath === parent ? 0o40775n : 0o40755n,
+                  }),
+          }),
+        );
+      } catch (error) {
+        failure = error;
+      }
+      assert(failure instanceof Error);
+      expect(failure.message).not.toContain(secret);
+      expect(failure.stack).not.toContain(secret);
+      expect(failure.message).toContain("<REDACTED>");
+      expect(failure.message).toContain("has mode 0775");
+      expect(failure.message).toContain("Remove group and other write permission");
+      expect(readFile).not.toHaveBeenCalled();
+    },
+  );
+
   it("captures immutable metadata and a content digest from a canonical absolute file", () => {
     const lstat = vi.fn((filePath: string) =>
       filePath === EXECUTABLE_PATH ? executableStat() : directoryStat(filePath),

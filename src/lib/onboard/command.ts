@@ -61,6 +61,7 @@ import {
   type OnboardResumeIntentSnapshot,
   type ResolvedOnboardResumeIntent,
   isOnboardDeferredExitError,
+  redactOnboardErrorText,
   redactOnboardDiagnosticText,
 } from "./session-bootstrap";
 
@@ -530,8 +531,9 @@ function promptCancellationCode(error: unknown): "EOF" | "SIGINT" | null {
   return code === "EOF" || code === "SIGINT" ? code : null;
 }
 
+/** Report operator errors without exposing multiline secrets or truncating later recovery lines. */
 function reportOnboardCommandError(deps: RunOnboardCommandDeps, message: string): number {
-  const redacted = message.split("\n").map(redactOnboardDiagnosticText).join("\n");
+  const redacted = redactOnboardErrorText(message);
   (deps.error ?? console.error)(redacted);
   return 1;
 }
@@ -577,8 +579,8 @@ function handleOnboardCommandError(error: unknown, deps: RunOnboardCommandDeps):
   // a stack trace or — as in the original bug — exiting 0 silently (#5976).
   if (cancellationCode !== "EOF") {
     if (error instanceof Error) {
-      error.message = error.message.split("\n").map(redactOnboardDiagnosticText).join("\n");
-      error.stack = error.stack?.split("\n").map(redactOnboardDiagnosticText).join("\n");
+      error.message = redactOnboardErrorText(error.message);
+      error.stack = error.stack && redactOnboardErrorText(error.stack);
     }
     throw error;
   }

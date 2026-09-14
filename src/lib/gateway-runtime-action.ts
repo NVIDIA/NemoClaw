@@ -64,6 +64,7 @@ export async function getNamedGatewayLifecycleState(
 type NamedGatewayLifecycleStateName = NamedGatewayLifecycleState["state"];
 
 export type RecoverNamedGatewayRuntimeOptions = {
+  authorizeExactTargetTransportRecovery?: boolean;
   recoverableStates?: readonly NamedGatewayLifecycleStateName[];
   gatewayName?: string;
   output?: GatewayRecoveryOutput;
@@ -90,39 +91,47 @@ export async function recoverNamedGatewayRuntime(options: RecoverNamedGatewayRun
     ],
   );
   const before = await getNamedGatewayLifecycleState(gatewayName, lifecycleOptions);
-  if (before.recoveryBlocked) {
+  const exactTargetTransportRecovery =
+    options.authorizeExactTargetTransportRecovery === true &&
+    options.runtimeSelection?.gatewayName === gatewayName &&
+    before.error?.kind === "transport" &&
+    before.error.reason === "unreachable";
+  if (before.recoveryBlocked && !exactTargetTransportRecovery) {
     return { recovered: false, before, after: before, attempted: false };
   }
   if (before.state === "healthy_named") {
     return { recovered: true, before, after: before, attempted: false };
   }
-  if (!recoverableStates.has(before.state)) {
+  if (!recoverableStates.has(before.state) && !exactTargetTransportRecovery) {
     return { recovered: false, before, after: before, attempted: false };
   }
 
-  gatewayRuntimeDependencies.runOpenshell(
-    ["gateway", "select", gatewayName],
-    openshellRuntime.withSelectedOpenShellCommandOptions(
-      {
-        ignoreError: true,
-        stdio: "ignore",
-        timeout: openshellRuntime.OPENSHELL_OPERATION_TIMEOUT_MS,
-      },
-      options.runtimeSelection,
-    ),
-  );
-  let after = await getNamedGatewayLifecycleState(gatewayName, lifecycleOptions);
-  if (after.recoveryBlocked) {
-    return { recovered: false, before, after, attempted: true };
-  }
-  if (after.state === "healthy_named") {
-    process.env.OPENSHELL_GATEWAY = gatewayName;
-    return { recovered: true, before, after, attempted: true, via: "select" };
+  let after = before;
+  if (!exactTargetTransportRecovery) {
+    gatewayRuntimeDependencies.runOpenshell(
+      ["gateway", "select", gatewayName],
+      openshellRuntime.withSelectedOpenShellCommandOptions(
+        {
+          ignoreError: true,
+          stdio: "ignore",
+          timeout: openshellRuntime.OPENSHELL_OPERATION_TIMEOUT_MS,
+        },
+        options.runtimeSelection,
+      ),
+    );
+    after = await getNamedGatewayLifecycleState(gatewayName, lifecycleOptions);
+    if (after.recoveryBlocked) {
+      return { recovered: false, before, after, attempted: true };
+    }
+    if (after.state === "healthy_named") {
+      process.env.OPENSHELL_GATEWAY = gatewayName;
+      return { recovered: true, before, after, attempted: true, via: "select" };
+    }
   }
 
-  const shouldStartGateway = [before.state, after.state].some((state) =>
-    recoverableStates.has(state),
-  );
+  const shouldStartGateway =
+    exactTargetTransportRecovery ||
+    [before.state, after.state].some((state) => recoverableStates.has(state));
   let startFailure: unknown = null;
 
   if (shouldStartGateway) {

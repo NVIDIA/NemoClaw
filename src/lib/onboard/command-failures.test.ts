@@ -6,6 +6,7 @@ import { assert, describe, expect, it, vi } from "vitest";
 import { captureHermesPortableOpenShellExecutableAuthority } from "../adapters/openshell/resolve-shared";
 import { PodmanExecutablePermissionError } from "../adapters/podman/executable-authority";
 import { runOnboardCommand } from "./command";
+import { GatewayManagementDeclarationError } from "./gateway-management";
 
 /** Expose the exit code without terminating the test process. */
 function exitWithCode(code: number): never {
@@ -13,6 +14,65 @@ function exitWithCode(code: number): never {
 }
 
 describe("onboarding command failures", () => {
+  it("redacts a complete private-key block before rethrowing an onboarding error", async () => {
+    const payload = "synthetic-key-payload".repeat(20);
+    const pem = [
+      "-----BEGIN " + "PRIVATE KEY-----",
+      payload,
+      "-----END " + "PRIVATE KEY-----",
+    ].join("\n");
+    const failure = new Error(`Operation failed\n${pem}\nRetry after correcting permissions.`);
+    await expect(
+      runOnboardCommand({
+        flags: {},
+        env: {},
+        /** Preserve the original error object while exercising the command's failure boundary. */
+        runOnboard: async () => {
+          throw failure;
+        },
+        error: vi.fn(),
+        exit: exitWithCode,
+      }),
+    ).rejects.toBe(failure);
+    expect(failure.message).not.toContain("synthetic-key-payload");
+    expect(failure.message).not.toContain("PRIVATE KEY");
+    expect(failure.stack).not.toContain("synthetic-key-payload");
+    expect(failure.stack).not.toContain("PRIVATE KEY");
+    expect(failure.message).toContain("<REDACTED>");
+    expect(failure.message).toContain("Retry after correcting permissions.");
+    expect(failure.stack).toContain("Retry after correcting permissions.");
+  });
+
+  it("redacts a complete private-key block before reporting a typed onboarding error", async () => {
+    const payload = "synthetic-key-payload".repeat(20);
+    const pem = [
+      "-----BEGIN " + "RSA PRIVATE KEY-----",
+      payload,
+      "-----END " + "RSA PRIVATE KEY-----",
+    ].join("\n");
+    const error = vi.fn();
+    await expect(
+      runOnboardCommand({
+        flags: {},
+        env: {},
+        /** Reach the typed reporting path without creating gateway resources. */
+        runOnboard: async () => {
+          throw new GatewayManagementDeclarationError(
+            `Operation failed\n${pem}\nRetry after correcting permissions.`,
+          );
+        },
+        error,
+        exit: exitWithCode,
+      }),
+    ).rejects.toThrow("exit:1");
+    expect(error).toHaveBeenCalledOnce();
+    const diagnostic = String(error.mock.calls[0]?.[0]);
+    expect(diagnostic).not.toContain("synthetic-key-payload");
+    expect(diagnostic).not.toContain("PRIVATE KEY");
+    expect(diagnostic).toContain("<REDACTED>");
+    expect(diagnostic).toContain("Retry after correcting permissions.");
+  });
+
   it("redacts rejected executable paths before rethrowing onboarding failures (#11717)", async () => {
     const secret = `nvapi-${"a".repeat(60)}`;
     const rejectedPath = `/opt/${secret}/\u001b[31m/bin`;
@@ -21,15 +81,19 @@ describe("onboarding command failures", () => {
     const failure: unknown = await runOnboardCommand({
       flags: {},
       env: {},
+      /** Exercise the production capture wrapper without starting onboarding resources. */
       runOnboard: async () => {
         captureHermesPortableOpenShellExecutableAuthority(
           "/opt/openshell",
           {},
           {},
           {
+            /** Keep resolution stable so the test reaches permission validation. */
             resolve: () => "/opt/openshell",
+            /** Exclude symlink rejection from the permission diagnostic scenario. */
             realpath: (filePath) => filePath,
             uid: 1000,
+            /** Model a filesystem refusal carrying a secret-shaped path and terminal control. */
             lstat: () => {
               throw new PodmanExecutablePermissionError(rejectedPath, 0o40775n);
             },
@@ -93,6 +157,7 @@ describe("onboarding command failures", () => {
       runOnboardCommand({
         flags: {},
         env: {},
+        /** Preserve a non-secret error instance across the command boundary. */
         runOnboard: async () => {
           throw failure;
         },

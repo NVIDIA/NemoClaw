@@ -205,6 +205,7 @@ describe("Hermes portable OpenShell executable authority", () => {
       const deps = {
         ...harness.deps,
         runVersion,
+        /** Change only the selected mode so rejection cannot be attributed to another invariant. */
         lstat: (filePath: string): PodmanExecutableStat => {
           const stat = harness.deps.lstat?.(filePath);
           assert(stat, "Executable stat fixture is missing.");
@@ -213,6 +214,7 @@ describe("Hermes portable OpenShell executable authority", () => {
             : stat;
         },
       };
+      /** Exercise the same capture boundary before and after repairing the mode. */
       const capture = () =>
         captureHermesPortableOpenShellExecutableAuthority(
           AUTHORITY_BINARY,
@@ -237,6 +239,7 @@ describe("Hermes portable OpenShell executable authority", () => {
     expect(() =>
       captureHermesPortableOpenShellExecutableAuthority(AUTHORITY_BINARY, childEnv, childEnv, {
         ...harness.deps,
+        /** Simulate an unrelated filesystem failure that must remain opaque. */
         lstat: () => {
           throw new Error("private filesystem failure detail");
         },
@@ -265,12 +268,14 @@ describe("Hermes portable OpenShell executable authority", () => {
       );
       const deps = {
         ...harness.deps,
+        /** Invalidate parent permissions after the original authority was captured. */
         lstat: (filePath: string): PodmanExecutableStat => {
           const stat = harness.deps.lstat?.(filePath);
           assert(stat, "Executable stat fixture is missing.");
           return filePath === "/opt/nemoclaw/bin" ? { ...stat, mode: 0o40775n } : stat;
         },
       };
+      /** Exercise the selected revalidation path with the retained authority. */
       const verify = () =>
         kind === "version"
           ? assertHermesPortableOpenShellExecutableAuthority(authority, childEnv, childEnv, deps)
