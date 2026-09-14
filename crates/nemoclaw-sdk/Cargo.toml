@@ -27,3 +27,5 @@ process-wrap.workspace = true
 tokio-util.workspace = true
 reqwest.workspace = true
 futures-util.workspace = true
+bollard.workspace = true
+tar.workspace = true

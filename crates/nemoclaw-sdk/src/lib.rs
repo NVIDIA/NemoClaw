@@ -119,3 +119,5 @@ pub mod snapshot;
 pub mod spark;
 
 pub mod ollama;
+
+pub mod docker;
