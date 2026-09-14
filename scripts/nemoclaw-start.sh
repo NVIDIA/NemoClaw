@@ -475,38 +475,9 @@ else
 fi
 PUBLIC_PORT="$_DASHBOARD_PORT"
 export OPENCLAW_GATEWAY_PORT="$_DASHBOARD_PORT"
-# Gateway WebSocket URL host. Default to the sandbox's own primary interface
-# address rather than loopback: spawned sub-agent runtimes (sessions_spawn)
-# dial OPENCLAW_GATEWAY_URL from inside the enforced process tree, where the
-# OpenShell L7 proxy transparently intercepts connect() and hard-denies
-# loopback destinations regardless of policy. With a loopback URL every child
-# WebSocket upgrade dies with `1006 abnormal closure (no close frame)` and
-# nothing reaches the gateway log. The gateway listens on 0.0.0.0 and the
-# eth0 address is allowlisted in the base sandbox policy
-# (openclaw_gateway_dialback in openclaw-sandbox.yaml), so the same dial
-# works from both enforced and unenforced contexts. Falls back to loopback
-# when no interface address is detectable (the pre-fix behavior). Override
-# with NEMOCLAW_GATEWAY_WS_HOST.
-_GATEWAY_WS_HOST="${NEMOCLAW_GATEWAY_WS_HOST:-}"
-# Only auto-derive inside a real sandbox (the Dockerfile.base image always
-# has /sandbox); on dev machines and CI runners the loopback default is
-# kept. NEMOCLAW_SANDBOX_ROOT is overridable for tests. `|| true` keeps
-# the assignment safe under `set -o pipefail` when hostname lacks -I.
-if [ -z "$_GATEWAY_WS_HOST" ] && [ -d "${NEMOCLAW_SANDBOX_ROOT:-/sandbox}" ]; then
-  _GATEWAY_WS_HOST="$(hostname -I 2>/dev/null | awk '{print $1}' || true)"
-fi
-if [ -z "$_GATEWAY_WS_HOST" ]; then
-  _GATEWAY_WS_HOST="127.0.0.1"
-fi
-export OPENCLAW_GATEWAY_URL="ws://${_GATEWAY_WS_HOST}:${_DASHBOARD_PORT}"
-if [ "$_GATEWAY_WS_HOST" != "127.0.0.1" ]; then
-  # The OpenClaw client refuses plaintext ws:// to non-loopback private
-  # addresses unless this break-glass is set. The sandbox bridge is a
-  # host-local veth pair — frames never leave the machine — and the
-  # alternative (loopback) is unconditionally blocked by the L7 proxy,
-  # which breaks sessions_spawn entirely.
-  export OPENCLAW_ALLOW_INSECURE_PRIVATE_WS=1
-fi
+# Leave the native gateway URL unset by default. OpenClaw resolves the local
+# gateway from its configuration as sandbox-local loopback, including custom
+# ports. Explicit operator endpoint choices remain in the inherited environment.
 OPENCLAW="$(command -v openclaw)" # Resolve once, use absolute path everywhere
 _SANDBOX_HOME="/sandbox"          # Home dir for the sandbox user (useradd -d /sandbox in Dockerfile.base)
 _OPENCLAW_STATE_DIR="${_SANDBOX_HOME}/.openclaw"
@@ -2530,13 +2501,9 @@ start_auto_pair() {
   if [ "$(id -u)" -eq 0 ]; then
     run_prefix=("${STEP_DOWN_PREFIX_SANDBOX[@]}")
   fi
-  # The gateway must retain NemoClaw's private-interface URL, but the watcher
-  # is an ordinary OpenClaw CLI client. Source the trusted runtime environment
-  # in this child only so an injected private URL is removed before the first
-  # `devices list`. The first list call keeps shared gateway auth but uses the
-  # reviewed child-only marker to retain CLI identity, allowing OpenClaw's
-  # canonical local-loopback pairing bootstrap. Later calls use device auth.
-  # An explicit URL override is preserved by write_runtime_shell_env().
+  # Source the trusted runtime environment in this child so the first
+  # `devices list` uses OpenClaw's native loopback and shared gateway auth.
+  # Later calls use device auth.
   (
     if [ -r "$_RUNTIME_SHELL_ENV_FILE" ]; then
       # shellcheck source=/dev/null
@@ -3503,7 +3470,7 @@ export AWS_EC2_METADATA_DISABLED="true"
 export JITI_FS_CACHE="false"
 PROXYEOF
     local _openclaw_env_name _openclaw_env_value _escaped_openclaw_env_value
-    local _escaped_gateway_port _escaped_gateway_url _escaped_gateway_token
+    local _escaped_gateway_port _escaped_gateway_token _escaped_gateway_url
     for _openclaw_env_name in OPENCLAW_HOME OPENCLAW_STATE_DIR OPENCLAW_CONFIG_PATH OPENCLAW_OAUTH_DIR OPENCLAW_WORKSPACE_DIR; do
       _openclaw_env_value="${!_openclaw_env_name:-}"
       [ -n "$_openclaw_env_value" ] || continue
@@ -3523,28 +3490,13 @@ PROXYEOF
     fi
     if [ -n "${OPENCLAW_GATEWAY_URL:-}" ]; then
       _escaped_gateway_url="$(printf '%s' "$OPENCLAW_GATEWAY_URL" | sed "s/'/'\\\\''/g")"
-      # Preserve NemoClaw's sandbox-interface dial-back URL for the few
-      # NemoClaw-owned commands that require it without forcing ordinary
-      # OpenClaw CLI clients onto the explicit remote-gateway pairing path.
-      printf "export NEMOCLAW_OPENCLAW_GATEWAY_URL='%s'\n" "$_escaped_gateway_url"
-      # Bake the trusted value into case syntax instead of consulting the
-      # caller-mutable NEMOCLAW_* alias. Imported shell functions can shadow
-      # `[` but cannot shadow `case`; a failed/shadowed unset only withholds
-      # the token below rather than pairing it with another destination.
-      printf "case \"\${OPENCLAW_GATEWAY_URL:-}\" in\n"
-      printf "  '' | '%s')\n" "$_escaped_gateway_url"
-      cat <<'GATEWAYURLENVEOF'
-    unset OPENCLAW_GATEWAY_URL
-    unset OPENCLAW_ALLOW_INSECURE_PRIVATE_WS
-    ;;
-esac
-GATEWAYURLENVEOF
+      printf "export OPENCLAW_GATEWAY_URL='%s'\n" "$_escaped_gateway_url"
+    else
+      printf 'unset OPENCLAW_GATEWAY_URL\n'
     fi
-    if [ -n "${OPENCLAW_ALLOW_INSECURE_PRIVATE_WS:-}" ]; then
-      # Retain the matching break-glass under the same private namespace.
-      # WhatsApp reinjects it only for its gateway-backed login command.
-      printf "export NEMOCLAW_OPENCLAW_ALLOW_INSECURE_PRIVATE_WS='1'\n"
-    fi
+    # This legacy bypass was only needed by the removed private-interface
+    # route. Never let an inherited value re-enable insecure remote WebSockets.
+    printf 'unset OPENCLAW_ALLOW_INSECURE_PRIVATE_WS\n'
     # #7795: bake the sandbox name for the connect-shell hints below.
     # OpenShell exports OPENSHELL_SANDBOX as the boolean "1" to every process it
     # spawns inside the sandbox — this entrypoint included — and only its own
@@ -3722,34 +3674,8 @@ openclaw() {
           # code fits on the screen.
           case "$_login_help:$_login_channel" in
             0:whatsapp)
-              # NemoClaw#6413: do NOT re-inject the stashed private veth URL
-              # (NEMOCLAW_OPENCLAW_GATEWAY_URL): a private-IP origin makes the
-              # gateway's locality check strip operator scopes regardless of
-              # token auth, so the login's own post-pair channels.start restart
-              # is denied with "missing scope: operator.admin". With no URL in
-              # the environment OpenClaw resolves ws://127.0.0.1:<port> from
-              # its own config — the same loopback resolution the `devices
-              # approve` wrapper (NemoClaw#4462) relies on — and the post-pair
-              # restart succeeds without any token-bearing reconcile. That
-              # single change dictates this block's shape: an unset URL is the
-              # healthy default rather than an error, the ws:// scheme and
-              # loopback-host checks plus the pairing banner apply only to an
-              # explicitly exported OPENCLAW_GATEWAY_URL (kept as a
-              # loopback-only operator escape hatch), and
-              # the login runs in a subshell that exports the override env
-              # only when present — an empty-but-set OPENCLAW_GATEWAY_URL is
-              # not equivalent to an unset one for OpenClaw's config
-              # resolution.
-              #
-              # Root cause + removal condition: the scope-strip is OpenClaw
-              # gateway locality behavior. "Fixing" it here would mean
-              # patching gateway auth to trust private-veth origins — erasing
-              # the same-device signal the #4462 bounded-approval patch
-              # deliberately preserves — so this wrapper sides with the
-              # locality model instead. Remove once the pinned OpenClaw keeps
-              # operator scopes for a token-authed post-pair channels.start
-              # over the stashed private URL (re-run the #6413 fresh-install
-              # repro to confirm before deleting).
+              # An unset URL uses OpenClaw's configured sandbox-local loopback.
+              # Explicit operator overrides remain limited to loopback below.
               _nemoclaw_whatsapp_gateway_url="${OPENCLAW_GATEWAY_URL:-}"
               _nemoclaw_whatsapp_insecure_ws="${OPENCLAW_ALLOW_INSECURE_PRIVATE_WS:-}"
               _nemoclaw_whatsapp_gateway_allowed=1
@@ -3955,7 +3881,13 @@ openclaw() {
       # later cannot inherit the token, and use an absolute executable so an
       # imported `command` function cannot intercept the decision.
       case "${OPENCLAW_GATEWAY_URL:-}" in
-        "") /usr/bin/env openclaw "$@" ;;
+        *@*) /usr/bin/env -u OPENCLAW_GATEWAY_TOKEN openclaw "$@" ;;
+        "" | ws://127.0.0.1 | ws://127.0.0.1:* | ws://127.0.0.1/* | \
+          wss://127.0.0.1 | wss://127.0.0.1:* | wss://127.0.0.1/* | \
+          ws://localhost | ws://localhost:* | ws://localhost/* | \
+          wss://localhost | wss://localhost:* | wss://localhost/* | \
+          "ws://[::1]" | "ws://[::1]:"* | "ws://[::1]/"* | \
+          "wss://[::1]" | "wss://[::1]:"* | "wss://[::1]/"*) /usr/bin/env openclaw "$@" ;;
         *) /usr/bin/env -u OPENCLAW_GATEWAY_TOKEN openclaw "$@" ;;
       esac
       local _nemoclaw_oc_status=$?
