@@ -1486,6 +1486,8 @@ dependencies = [
  "nemoclaw-sdk",
  "openshell-core",
  "prost",
+ "rcgen",
+ "rustls",
  "serde_json",
  "tempfile",
  "tf-provider",

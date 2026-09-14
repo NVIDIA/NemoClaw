@@ -22,6 +22,7 @@ pub struct State {
     pub exec_stalled: bool,
     pub exec_calls: Vec<Vec<String>>,
     pub effects: usize,
+    pub expected_bearer: Option<String>,
     pub conditional_updates: usize,
     pub lose_create: bool,
     pub lose_delete: bool,
@@ -60,12 +61,26 @@ pub struct Fixture {
 }
 impl Fixture {
     pub async fn start() -> Self {
+        Self::start_with_tls(None).await
+    }
+    pub async fn start_with_tls(tls: Option<tonic::transport::ServerTlsConfig>) -> Self {
+        if tls.is_some() {
+            let _ = rustls::crypto::ring::default_provider().install_default();
+        }
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let endpoint = format!("http://{}", listener.local_addr().unwrap());
+        let endpoint = format!(
+            "{}://{}",
+            if tls.is_some() { "https" } else { "http" },
+            listener.local_addr().unwrap()
+        );
         let state = Arc::new(Mutex::new(State::default()));
         let service = Service(state.clone());
         let task = tokio::spawn(async move {
-            tonic::transport::Server::builder()
+            let mut server = tonic::transport::Server::builder();
+            if let Some(tls) = tls {
+                server = server.tls_config(tls).unwrap();
+            }
+            server
                 .add_service(InferenceService(service.clone()))
                 .add_service(service)
                 .serve_with_incoming(tokio_stream::wrappers::TcpListenerStream::new(listener))
@@ -127,6 +142,21 @@ impl tower::Service<http::Request<Body>> for Service {
     fn call(&mut self, request: http::Request<Body>) -> Self::Future {
         let state = self.0.clone();
         Box::pin(async move {
+            if state
+                .lock()
+                .unwrap()
+                .expected_bearer
+                .as_ref()
+                .is_some_and(|expected| {
+                    request
+                        .headers()
+                        .get("authorization")
+                        .and_then(|v| v.to_str().ok())
+                        != Some(expected.as_str())
+                })
+            {
+                return Ok(Status::unauthenticated("fixture bearer rejected").into_http());
+            }
             let response = match request.uri().path() {
                 "/openshell.v1.OpenShell/ExecSandbox" => {
                     tonic::server::Grpc::new(tonic_prost::ProstCodec::default())

@@ -7,6 +7,8 @@ license.workspace = true
 publish = false
 
 [dependencies]
+rcgen = "0.14.10"
+rustls.workspace = true
 nemoclaw-sdk = { path = "../nemoclaw-sdk" }
 nemoclaw-provider = { path = "../nemoclaw-provider" }
 async-trait.workspace = true
